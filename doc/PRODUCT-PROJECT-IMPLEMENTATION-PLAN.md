@@ -5599,6 +5599,58 @@ SPEC).** Полное ТЗ — `doc/MULTI-FORMAT-EXPORT-SPEC.md`, чернови
   scripts/sync-legal.mjs --check` — без изменений (эта стадия не
   трогает юридические тексты).
 
+**Внеплановый фикс (после этапа 77) — неверная типизация Prisma-транзакций
+ломала реальную сборку на Vercel.** Реальный деплой (`npm run build` с
+по-настоящему сгенерированным `@prisma/client`, не песочница) упал с 39
+ошибками `tsc` — `Argument ... is not assignable`/`No overload matches
+this call` на каждом interactive-transaction вызове проекта. Корень: 13
+мест по всему бэкенду типизировали callback-параметр `$transaction` как
+`tx: typeof this.prisma` — полный тип `PrismaService` (со своими
+NestJS-полями `logger`/`onModuleInit`/`onModuleDestroy`/`$on` и др.),
+тогда как реальный объект транзакции Prisma — это `Omit<PrismaClient,
+'$connect' | '$disconnect' | '$on' | '$use' | '$extends'>`, у него этих
+полей физически нет. В песочнице это не ловилось никогда — `@prisma/client`
+здесь не генерируется (`403` на `binaries.prisma.sh`), а стаб-клиент
+типизирует всё как `any`; ошибка была видна только там, где Prisma
+действительно генерируется — то есть в CI/на Vercel, а не локально за все
+предыдущие 77 этапов.
+
+Правка (везде одним и тем же приёмом): у callback'ов, переданных напрямую
+в `$transaction(async (tx) => ...)`, явная аннотация типа параметра
+`tx` просто убрана — TypeScript контекстно выводит правильный тип сам,
+без риска разойтись с версией Prisma. Там, где `tx` передаётся дальше в
+отдельный приватный метод как явный параметр (не может быть выведен из
+контекста) — тип `Prisma.TransactionClient` (официально экспортируемый
+Prisma тип ровно для этого случая) вместо `typeof this.prisma`.
+Затронутые файлы: `user-voices.service.ts`, `blog.service.ts`,
+`publication.service.ts`, `credit-ledger.service.ts`, `billing.service.ts`
+(два `$transaction`-вызова и приватный `applySuccessfulPayment(tx: ...)`),
+`shared-video.service.ts`, `ab-test.service.ts` (`$transaction`-вызов и
+приватный `assertNotBusy(..., tx: ... = this.prisma)`),
+`product-feed-import-worker.service.ts`, `catalog-batch.service.ts` (два
+вызова). Ни один из фиксов не меняет поведение в рантайме — только
+типизацию; `shared-video.service.ts`'s второй заявленный в логе Vercel
+`error` (`toView(await this.keepOwnCopy(row))`, `any[]` вместо
+`SharedVideoRow`) был не отдельным дефектом, а тем же самым корнем: когда
+перегрузка `$transaction` не резолвится из-за несовместимого `tx`,
+TypeScript в некоторых случаях откатывается к сигнатуре
+array-перегрузки (`$transaction(arg: PrismaPromise<any>[])`) и выводит
+результат как `any[]` — фикс типа `tx` исправил и это заодно, без
+отдельной правки.
+
+Проверка: полный jest в `backend/` — те же **2001/143**, из тех же
+**17 падают/5 наборов** (тот же долг, не задет). `eslint --max-warnings
+0` по всем девяти изменённым файлам — чисто (после `--fix` для
+форматирования, которое сдвинулось из-за укоротившейся сигнатуры
+callback'а). `grep -rn "tx: typeof this.prisma" src` — пусто, паттерн
+закрыт полностью, не только в местах, где он был замечен изначально.
+`node scripts/check-docs.mjs`/`node scripts/sync-legal.mjs --check` —
+без расхождений. Реальную проверку `tsc` с настоящим сгенерированным
+клиентом в песочнице повторить нельзя (та же сетевая блокировка) —
+уверенность в фиксе только из чтения точного текста ошибок Vercel и
+понимания официального типа Prisma, а не из локального перепрогона
+`tsc`; следующий реальный деплой — единственная стопроцентная проверка.
+
 ## Проверка на каждом этапе (сквозное)
 
 - `npx tsc --noEmit` в `backend/`, `frontend/` — без новых ошибок.

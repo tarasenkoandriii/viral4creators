@@ -270,7 +270,7 @@ export class ProductFeedImportWorkerService {
     // каждой строки (фаза 2, через ProjectService.addItem) — так лимит
     // учитывает и то, что могло появиться в проекте руками между этим
     // тиком и предыдущим.
-    await this.prisma.$transaction(async (tx: typeof this.prisma) => {
+    await this.prisma.$transaction(async (tx) => {
       await tx.productFeedImportItem.createMany({
         data: rows.map((row, index) => ({
           runId: run.id,

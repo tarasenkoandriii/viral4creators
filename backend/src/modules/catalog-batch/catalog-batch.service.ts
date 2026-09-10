@@ -212,7 +212,7 @@ export class CatalogBatchService {
     for (let attempt = 0; attempt < MAX_SERIALIZATION_RETRIES; attempt++) {
       try {
         const run = await this.prisma.$transaction(
-          async (tx: typeof this.prisma) => {
+          async (tx) => {
             const stillBusy: { productItemId: string }[] =
               await tx.catalogBatchItem.findMany({
                 where: {
@@ -384,7 +384,7 @@ export class CatalogBatchService {
     for (let attempt = 0; attempt < MAX_SERIALIZATION_RETRIES; attempt++) {
       try {
         return await this.prisma.$transaction(
-          async (tx: typeof this.prisma) => {
+          async (tx) => {
             const candidates: { id: string; productItemId: string }[] =
               await tx.catalogBatchItem.findMany({
                 where: {

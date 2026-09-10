@@ -148,7 +148,7 @@ export class UserVoicesService {
     // она и есть резерв: следующий параллельный запрос увидит её в
     // count() (WHERE status != FAILED) и получит отказ, даже пока
     // Resemble этого первого запроса ещё не ответил.
-    await this.prisma.$transaction(async (tx: typeof this.prisma) => {
+    await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`user-voices:${userId}`}))`;
       const count = await tx.userVoice.count({
         where: { userId, status: { not: 'FAILED' } },

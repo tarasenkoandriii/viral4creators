@@ -24,6 +24,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanService } from '../plan/plan.service';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
@@ -325,49 +326,47 @@ export class BillingService {
     // следующая доставка того же successful_payment проходит весь путь
     // заново с чистого листа — двойного начисления не будет: см.
     // `findUnique` в начале блока.
-    const applied = await this.prisma.$transaction(
-      async (tx: typeof this.prisma) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`payment:${sp.telegram_payment_charge_id}`}))`;
-        const existing = await tx.payment.findUnique({
-          where: {
-            method_providerRef: {
-              method: 'STARS',
-              providerRef: sp.telegram_payment_charge_id,
-            },
-          },
-        });
-        if (existing) return ALREADY_PROCESSED; // уже полностью применено прежней транзакцией
-        const payment = await tx.payment.create({
-          data: {
-            userId: payload.userId,
+    const applied = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`payment:${sp.telegram_payment_charge_id}`}))`;
+      const existing = await tx.payment.findUnique({
+        where: {
+          method_providerRef: {
             method: 'STARS',
-            purpose: payload.purpose,
-            plan:
-              payload.purpose === 'SUBSCRIPTION'
-                ? (payload.target as PlanId)
-                : null,
-            creditsGranted:
-              payload.purpose === 'CREDIT_PACK'
-                ? (creditPackById(payload.target)?.credits ?? null)
-                : null,
-            status: 'SUCCEEDED',
-            currency: 'XTR',
-            amount: sp.total_amount,
-            amountMicroUsd: estimateAmountMicroUsd('STARS', sp.total_amount),
             providerRef: sp.telegram_payment_charge_id,
           },
-        });
-        // Возвращает PlanId (продолжить `applyPurchasedPlan` после коммита)
-        // или null (пакет кредитов — тут больше нечего делать).
-        return this.applySuccessfulPayment(
-          tx,
-          payment,
-          payload.purpose,
-          payload.target,
-          null,
-        );
-      },
-    );
+        },
+      });
+      if (existing) return ALREADY_PROCESSED; // уже полностью применено прежней транзакцией
+      const payment = await tx.payment.create({
+        data: {
+          userId: payload.userId,
+          method: 'STARS',
+          purpose: payload.purpose,
+          plan:
+            payload.purpose === 'SUBSCRIPTION'
+              ? (payload.target as PlanId)
+              : null,
+          creditsGranted:
+            payload.purpose === 'CREDIT_PACK'
+              ? (creditPackById(payload.target)?.credits ?? null)
+              : null,
+          status: 'SUCCEEDED',
+          currency: 'XTR',
+          amount: sp.total_amount,
+          amountMicroUsd: estimateAmountMicroUsd('STARS', sp.total_amount),
+          providerRef: sp.telegram_payment_charge_id,
+        },
+      });
+      // Возвращает PlanId (продолжить `applyPurchasedPlan` после коммита)
+      // или null (пакет кредитов — тут больше нечего делать).
+      return this.applySuccessfulPayment(
+        tx,
+        payment,
+        payload.purpose,
+        payload.target,
+        null,
+      );
+    });
     if (applied === ALREADY_PROCESSED) return; // повторная доставка — уже обработано
     if (applied) await this.plans.applyPurchasedPlan(payload.userId, applied);
     await this.notify.stat(
@@ -449,29 +448,27 @@ export class BillingService {
     // 'PENDING'` внутри той же транзакции и не начисляет повторно —
     // раньше `findUnique` вне транзакции оставлял окно между чтением и
     // `update`, в которое умещались обе параллельные доставки.
-    const applied = await this.prisma.$transaction(
-      async (tx: typeof this.prisma) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`payment:${body.orderReference}`}))`;
-        const fresh = await tx.payment.findUnique({
-          where: { id: payment.id },
-        });
-        if (!fresh || fresh.status !== 'PENDING') return ALREADY_PROCESSED;
-        const updated = await tx.payment.update({
-          where: { id: payment.id },
-          data: {
-            status: 'SUCCEEDED',
-            rawPayload: sanitizeWayForPayRawPayload(body),
-          },
-        });
-        return this.applySuccessfulPayment(
-          tx,
-          updated,
-          payment.purpose as 'SUBSCRIPTION' | 'CREDIT_PACK',
-          (payment.plan as string | null) ?? '',
-          recTokenEnc,
-        );
-      },
-    );
+    const applied = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`payment:${body.orderReference}`}))`;
+      const fresh = await tx.payment.findUnique({
+        where: { id: payment.id },
+      });
+      if (!fresh || fresh.status !== 'PENDING') return ALREADY_PROCESSED;
+      const updated = await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'SUCCEEDED',
+          rawPayload: sanitizeWayForPayRawPayload(body),
+        },
+      });
+      return this.applySuccessfulPayment(
+        tx,
+        updated,
+        payment.purpose as 'SUBSCRIPTION' | 'CREDIT_PACK',
+        (payment.plan as string | null) ?? '',
+        recTokenEnc,
+      );
+    });
     if (applied === ALREADY_PROCESSED) return ack; // конкурентная доставка уже обработала платёж
     if (applied) await this.plans.applyPurchasedPlan(payment.userId, applied);
     await this.notify.stat(
@@ -497,7 +494,7 @@ export class BillingService {
    * его через `PlanService.applyPurchasedPlan`, иначе `null`.
    */
   private async applySuccessfulPayment(
-    tx: typeof this.prisma,
+    tx: Prisma.TransactionClient,
     payment: {
       id: string;
       userId: string;

@@ -234,27 +234,25 @@ export class SharedVideoService {
     // консультативной блокировки, что и в PublicationService.create(),
     // и по той же причине (частичный уникальный индекс не выражается в
     // schema.prisma, CI сверяет базу со схемой через `migrate diff`).
-    const row = await this.prisma.$transaction(
-      async (tx: typeof this.prisma) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`shared-video:${sessionId}`}))`;
+    const row = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`shared-video:${sessionId}`}))`;
 
-        const open = await tx.sharedVideoPage.findFirst({
-          where: { sessionId, status: { in: ['PENDING', 'PUBLISHED'] } },
-          select: { id: true, status: true },
-        });
-        if (open) {
-          throw new ConflictException(
-            open.status === 'PUBLISHED'
-              ? 'This video already has a public page'
-              : 'This video already has a pending shared-page request',
-          );
-        }
+      const open = await tx.sharedVideoPage.findFirst({
+        where: { sessionId, status: { in: ['PENDING', 'PUBLISHED'] } },
+        select: { id: true, status: true },
+      });
+      if (open) {
+        throw new ConflictException(
+          open.status === 'PUBLISHED'
+            ? 'This video already has a public page'
+            : 'This video already has a pending shared-page request',
+        );
+      }
 
-        return (await tx.sharedVideoPage.create({
-          data: { userId, sessionId, libraryEntryId, ...snap },
-        })) as SharedVideoRow;
-      },
-    );
+      return (await tx.sharedVideoPage.create({
+        data: { userId, sessionId, libraryEntryId, ...snap },
+      })) as SharedVideoRow;
+    });
     return toView(await this.keepOwnCopy(row));
   }
 

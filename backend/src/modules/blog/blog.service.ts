@@ -151,35 +151,33 @@ export class BlogService {
 
     const textChanged = dto.title !== undefined || dto.bodyHtml !== undefined;
 
-    const updated = await this.prisma.$transaction(
-      async (tx: typeof this.prisma) => {
-        await tx.blogPost.update({ where: { id }, data });
-        if (textChanged) {
-          // batchJobId НЕ трогаем: старая пачка xAI отработала честно (по
-          // старому тексту), просто её результат больше не годится — новый
-          // прогон перевода заведёт новую пачку сам.
-          await tx.blogPostTranslation.updateMany({
-            where: {
-              postId: id,
-              status: {
-                in: [BlogTranslationStatus.READY, BlogTranslationStatus.QUEUED],
-              },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.blogPost.update({ where: { id }, data });
+      if (textChanged) {
+        // batchJobId НЕ трогаем: старая пачка xAI отработала честно (по
+        // старому тексту), просто её результат больше не годится — новый
+        // прогон перевода заведёт новую пачку сам.
+        await tx.blogPostTranslation.updateMany({
+          where: {
+            postId: id,
+            status: {
+              in: [BlogTranslationStatus.READY, BlogTranslationStatus.QUEUED],
             },
-            data: {
-              status: BlogTranslationStatus.PENDING,
-              title: null,
-              bodyHtml: null,
-            },
-          });
-        }
-        // Фетч ПОСЛЕ обоих обновлений — translations в ответе отражают
-        // сброс, а не состояние до него.
-        return tx.blogPost.findUniqueOrThrow({
-          where: { id },
-          include: { translations: true },
+          },
+          data: {
+            status: BlogTranslationStatus.PENDING,
+            title: null,
+            bodyHtml: null,
+          },
         });
-      },
-    );
+      }
+      // Фетч ПОСЛЕ обоих обновлений — translations в ответе отражают
+      // сброс, а не состояние до него.
+      return tx.blogPost.findUniqueOrThrow({
+        where: { id },
+        include: { translations: true },
+      });
+    });
 
     this.logger.log(
       `запись блога ${id} отредактирована: ${JSON.stringify(Object.keys(data))}`,

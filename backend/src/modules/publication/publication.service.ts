@@ -254,36 +254,34 @@ export class PublicationService {
     // это принципиально за пулером (PgBouncer в режиме транзакций), где
     // соединение возвращается в пул сразу после транзакции и сессионная
     // блокировка утекла бы на чужой запрос.
-    const row = await this.prisma.$transaction(
-      async (tx: typeof this.prisma) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`publication:${sessionId}:${dto.platform}`}))`;
+    const row = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`publication:${sessionId}:${dto.platform}`}))`;
 
-        const open = await tx.publicationRequest.findFirst({
-          where: {
-            sessionId,
-            platform: dto.platform,
-            status: { in: ['PENDING', 'APPROVED'] },
-          },
-          select: { id: true, status: true },
-        });
-        if (open) {
-          throw new ConflictException(
-            `This video is already in the ${dto.platform} queue (${open.status})`,
-          );
-        }
+      const open = await tx.publicationRequest.findFirst({
+        where: {
+          sessionId,
+          platform: dto.platform,
+          status: { in: ['PENDING', 'APPROVED'] },
+        },
+        select: { id: true, status: true },
+      });
+      if (open) {
+        throw new ConflictException(
+          `This video is already in the ${dto.platform} queue (${open.status})`,
+        );
+      }
 
-        return (await tx.publicationRequest.create({
-          data: {
-            userId,
-            sessionId,
-            projectId: session.projectId ?? null,
-            productItemId: session.productItemId ?? null,
-            platform: dto.platform,
-            ...snap,
-          },
-        })) as PublicationRow;
-      },
-    );
+      return (await tx.publicationRequest.create({
+        data: {
+          userId,
+          sessionId,
+          projectId: session.projectId ?? null,
+          productItemId: session.productItemId ?? null,
+          platform: dto.platform,
+          ...snap,
+        },
+      })) as PublicationRow;
+    });
     // §22 (этап 39, А-2.6): заявка намеренно переживает сессию, но
     // ссылалась на файл, ВЛАДЕЛЕЦ которого — сессия. TTL в сутки уносил
     // его вместе с ней, и оператор в понедельник открывал пятничную

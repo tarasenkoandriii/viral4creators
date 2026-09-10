@@ -31,7 +31,7 @@ import {
 } from '../../common/types/generation.types';
 import { SessionStatus } from '../../common/types/session.types';
 import { PlanService } from '../plan/plan.service';
-import { AbTestVariantStatus } from '@prisma/client';
+import { AbTestVariantStatus, Prisma } from '@prisma/client';
 
 /** Число вариантов на один запуск — решение владельца продукта: всегда 3. */
 export const AB_TEST_VARIANT_COUNT = 3;
@@ -158,7 +158,7 @@ export class AbTestService {
     for (let attempt = 0; attempt < MAX_SERIALIZATION_RETRIES; attempt++) {
       try {
         return await this.prisma.$transaction(
-          async (tx: typeof this.prisma) => {
+          async (tx) => {
             await this.assertNotBusy(dto.sourceSessionId, tx);
             const created = await tx.abTestRun.create({
               data: {
@@ -208,7 +208,7 @@ export class AbTestService {
    */
   private async assertNotBusy(
     sourceSessionId: string,
-    tx: typeof this.prisma = this.prisma,
+    tx: Prisma.TransactionClient = this.prisma,
   ): Promise<void> {
     const busy = await tx.abTestVariant.findFirst({
       where: {

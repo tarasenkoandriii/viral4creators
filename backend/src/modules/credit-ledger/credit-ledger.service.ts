@@ -89,7 +89,7 @@ export class CreditLedgerService {
     generatedVideoId: string,
   ): Promise<boolean> {
     if (!userId) return false;
-    return this.prisma.$transaction(async (tx: typeof this.prisma) => {
+    return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`credit:${userId}`}))`;
 
       const r = (await tx.creditLedger.aggregate({
