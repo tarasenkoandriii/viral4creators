@@ -128,7 +128,8 @@ generate` (сама генерация клиента переменных ок�
 4. Впишите оба в `backend/.env` (или в Environment Variables на Vercel —
    для Preview и Production можно указать один и тот же проект Supabase
    или завести отдельный под Preview, как удобнее).
-5. Примените миграцию на реальную базу:
+5. Первичное применение миграций на реальную базу — руками, один раз,
+   до первого деплоя (пока `DIRECT_URL` ещё не факт, что вписан в Vercel):
    ```bash
    cd backend
    npx prisma migrate deploy
@@ -136,6 +137,20 @@ generate` (сама генерация клиента переменных ок�
    (использует `DIRECT_URL` через `backend/prisma.config.ts`, см. выше;
    `DATABASE_URL` дальше в рантайме использует пуленный коннект через
    `PrismaService`'s driver adapter).
+
+   Дальше это уже не нужно делать руками при каждом новом изменении
+   схемы: билд-команда `backend/package.json` (`"build": "prisma
+   generate && prisma migrate deploy && nest build"`) сама накатывает
+   ещё не применённые миграции на КАЖДОМ деплое, Preview и Production —
+   именно поэтому `DIRECT_URL` обязателен в Environment Variables на
+   Vercel, а не только в `.env` для локальной разработки (без него билд
+   не сможет накатить миграции и упадёт). Раньше эта команда только
+   генерировала клиент (`prisma generate && nest build`), из-за чего на
+   проде накопился разрыв в несколько неприменённых миграций — см.
+   «Внеплановый фикс №8» в `PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`.
+   `prisma migrate deploy` идемпотентна и безопасна при параллельных
+   запусках (использует advisory lock через `_prisma_migrations`) — два
+   одновременных деплоя не накатят одну и ту же миграцию дважды.
 
 ## Локальная разработка (docker-compose)
 
