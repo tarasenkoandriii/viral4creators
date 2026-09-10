@@ -1,0 +1,37 @@
+# Development-only image for local docker-compose debugging.
+# Not used for Vercel deployment — Vercel builds/runs the backend as
+# serverless Functions, not a container (see DOCKER.md and the Vercel
+# readiness audit for that separate path).
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Prisma's engines need OpenSSL to detect the right binary variant on
+# Alpine (musl) — node:20-alpine doesn't ship the openssl CLI by default,
+# and without it `prisma generate`/`migrate` can fail outright (a
+# long-standing Prisma-on-Alpine caveat, independent of network access).
+RUN apk add --no-cache openssl
+
+# Copy Prisma schema + config before installing dependencies. prisma.config.ts
+# (Prisma 7 — see its own doc comment, and doc/PRISMA-SUPABASE.md) is what
+# the CLI reads for `prisma migrate`/introspection; schema.prisma no longer
+# carries a connection string at all, so `prisma generate` here needs no
+# DATABASE_URL/DIRECT_URL to be set — it only reads the schema's shape.
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+COPY package*.json ./
+# Skip postinstall scripts during npm install to avoid prisma generate failing
+RUN npm install --ignore-scripts
+# Generate Prisma client
+RUN npx prisma generate
+
+# Real source is bind-mounted over this by docker-compose for hot-reload;
+# this COPY only matters if the image is ever built/run without compose.
+COPY . .
+
+EXPOSE 3000
+# Node inspector port for the debugger (see start:docker:debug in package.json)
+EXPOSE 9229
+
+CMD ["npm", "run", "start:dev"]

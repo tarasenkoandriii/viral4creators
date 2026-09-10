@@ -1,0 +1,159 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Global styles — ported from SilverFinance src/app/globals.css. The
+ * previous file was the untouched Vite template (dark #242424 body with
+ * `place-items: center`, `#root { padding: 2rem; text-align: center }`)
+ * fighting the Tailwind layout on every screen — gone entirely.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Акцент по темам (этап 29, аудит светлой и тёмной темы). Светлая тема
+     берёт sky-600: тот же тон, но читаемый на белом (≈4.6:1 вместо ≈1.5:1
+     у sky-300, которым акцент был всегда). Чернила НА акцентной заливке
+     при этом меняются в обратную сторону — белые на светлой, почти
+     чёрные на тёмной. */
+  /* Б-4.7: белые чернила на sky-600 дают 4.1:1 — норма 4.5. Акцент в
+     светлой теме темнеет до sky-700 (#0369a1): на белом это ≈5.7:1 как
+     текст, и ≈5.7:1 белым по заливке — то есть читаемы обе стороны. */
+  --accent: 3 105 161;
+  --accent-on: 255 255 255;
+  --silver-400: 95 107 129;
+  /* Б-4.6: вторичный тон текста тоже по темам. #5f6b81 на белом — 5.9:1.
+     Этап 50 (В-5.9): на подложке неактивной вкладки навигации тот же тон
+     давал 4,47 — чуть ниже нормы; #54607a там даёт ≈5,4. */
+  --silver-500: 84 96 122;
+}
+.dark {
+  --accent: 125 211 252;
+  --accent-on: 17 20 26;
+  --silver-400: 154 164 184;
+  /* Этап 50 (В-5.9): #737f97 на собственной подложке пилюли или бейджа
+     (60 % silver-800 поверх карточки) давал 3,53, на фоне неактивной
+     вкладки — 3,66. Этап 44 мерил его на фоне страницы, где выходило 4,58.
+     Поднимаем до тона silver-400: на тех же подложках 5,7–5,9. */
+  --silver-500: 154 164 184;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-silver-50 text-silver-900 antialiased font-display;
+  margin: 0;
+  min-width: 320px;
+  /* Telegram WebView: safe areas on notched phones (viewport-fit=cover in index.html). */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.dark body {
+  @apply bg-silver-950 text-silver-100;
+}
+
+/* Numeric / price typography */
+.tabular {
+  @apply font-mono;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Atmospheric backdrop */
+.backdrop-grid {
+  background-image:
+    radial-gradient(
+      circle at 20% 0%,
+      rgba(56, 189, 248, 0.08),
+      transparent 40%
+    ),
+    radial-gradient(
+      circle at 80% 100%,
+      rgba(122, 143, 151, 0.1),
+      transparent 45%
+    );
+}
+
+/* Metallic sheen text used for the wordmark */
+.sheen {
+  background: theme('backgroundImage.silver-sheen');
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  @apply animate-sheen;
+}
+/* SilverFinance is dark-first: its light gradient stops (#f7f8fa) vanish
+   on the light ground, so the wordmark gets a dark-metal variant there. */
+html:not(.dark) .sheen {
+  background-image: linear-gradient(
+    120deg,
+    #3b4658 0%,
+    #8892a6 25%,
+    #1f2733 50%,
+    #8892a6 75%,
+    #3b4658 100%
+  );
+}
+
+@layer components {
+  /* Form controls — the one recipe every input/textarea/select in
+     SilverFinance uses; kept as a class so native elements and the Field
+     primitive share it. */
+  .input {
+    @apply w-full min-h-[44px] rounded-lg bg-transparent border border-silver-200/70 dark:border-silver-800 px-3 py-2 text-sm text-silver-900 dark:text-silver-100 placeholder:text-silver-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-50 transition-colors;
+  }
+  .input-error {
+    @apply border-rose-500 focus:border-rose-500 focus:ring-rose-500/30;
+  }
+  .label {
+    @apply block text-sm text-silver-400 mb-1;
+  }
+  .hint {
+    @apply text-xs text-silver-400;
+  }
+}
+
+/* Затенение края у прокручиваемой полосы вкладок (components/ui/Tabs.tsx).
+   Маска, а не градиент-накладка: полоса лежит на полупрозрачной карточке,
+   и любой сплошной цвет поверх неё выдал бы себя швом. Классы вешаются
+   только на ту сторону, за которой действительно есть ещё вкладки, —
+   иначе подсказка врёт. Цвет здесь не участвует вовсе, поэтому обе темы
+   обслуживаются одним правилом. */
+.tab-strip-more-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+.tab-strip-more-left {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 24px), transparent);
+}
+.tab-strip-more-left.tab-strip-more-right {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent
+  );
+}
+
+/* Thin scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-silver-300 dark:bg-silver-700 rounded-full;
+}

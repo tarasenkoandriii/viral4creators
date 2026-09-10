@@ -1,0 +1,239 @@
+# API — все маршруты бэкенда
+
+Полный список того, что реально отдаёт `backend/` (глобальный префикс
+`/api`, ответы завёрнуты `ResponseInterceptor` в
+`{ success, data, meta }`). Появился на этапе 28 после сквозной сверки:
+часть маршрутов не была описана нигде, а один — `GET /api/health` — был
+описан в четырёх документах, но не существовал.
+
+**Правило:** новый контроллер → строка в этой таблице. Здесь только
+маршруты; смысл и решения — в `doc/PRODUCT-PROJECT-SPEC.md`, рецепты
+локальных прогонов — в `doc/LOCAL-DEVELOPMENT.md`.
+
+## Кто может звать
+
+| Доступ | Что означает |
+| --- | --- |
+| **открыто** | без заголовков; предъявителем выступает UUID сессии (§7.8). С этапа 42 поверх стоит глобальный `SessionOwnerGuard`: если у сессии есть владелец, запрос обязан прийти от него — иначе 403 «Эта сессия принадлежит другому аккаунту». С этапа 49 первый опознанный запрос к ничьей сессии привязывает её к вошедшему (В-3.4) |
+| **идентичность** | `TelegramIdentityGuard`: initData из Telegram, cookie обычного логина или `X-Dev-User-Id` при `ALLOW_DEV_AUTH`. Для cookie любой не-GET запрос дополнительно проверяется по `Origin` против `CORS_ORIGIN` (этап 41, `common/csrf.ts`) — 403 «Cross-origin request rejected» |
+| **оператор** | `AdminSessionGuard` (cookie админки) + флаг `isOperator` (`assertOperator` первой строкой каждого обработчика) |
+| **вход/выход** | маршруты `telegram-login/*` и `admin/auth/*` под `OriginGuard` (этап 49): форма с чужого сайта не может ни посадить посетителя в чужую сессию, ни выкинуть оператора. С этапа 54 входы (`callback`, `dev-login`) и `POST /api/sessions` ещё и под `RateLimitGuard` — 10 (входы) / 30 (сессии) запросов в минуту с одного адреса, счётчик в базе (`rate_limits`); сверх — 429 с `Retry-After` |
+| **секрет крона** | заголовок `Authorization: Bearer $CRON_SECRET`, сравнение constant-time. Переменная не задана — 503 на всех десяти маршрутах (этап 54, Б-3.3); открыты без секрета они только на dev-стенде (`ALLOW_DEV_AUTH=true` вне production) |
+
+## Служебные
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `GET /api/health` | открыто | жив ли сервис и видит ли он базу (`status`, `database`, `uptimeSeconds`) |
+| `GET /api/reference/countries` | открыто | справочник стран → валюта/язык для формы проекта |
+
+## Сессия и генерация (§1–§5, §15)
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `POST /api/sessions` | открыто | создать сессию (под идентичностью привяжется к пользователю) |
+| `GET /api/sessions/:id` | открыто | всё состояние сессии |
+| `POST /api/sessions/:id/video/upload-url` | открыто | presigned PUT для файла-референса |
+| `POST /api/sessions/:id/video/youtube` | открыто | зарегистрировать ссылку как референс |
+| `POST /api/sessions/:id/video/library` | открыто | взять готовый разбор из библиотеки (§21) |
+| `POST /api/sessions/:id/analysis` | открыто | запустить разбор (или взять из кеша библиотеки); 409, если разбор уже идёт (замок, ТЗ §30.3) |
+| `GET /api/sessions/:id/analysis` | открыто | результат разбора |
+| `PATCH /api/sessions/:id/analysis` | открыто | правки текста разбора |
+| `POST /api/sessions/:id/analysis/previews/upload-url` | открыто | presigned PUT для кадров-превью (§18.1) |
+| `POST /api/sessions/:id/analysis/previews/confirm` | открыто | подтвердить кадры → `previewUrl` в разборе |
+| `GET/PUT /api/sessions/:id/analysis/selection` | открыто | снятые сцены и массовка (§19) |
+| `GET/PUT /api/sessions/:id/characters` | открыто | кастинг персонажей (§10) |
+| `POST /api/sessions/:id/characters/:cid/photo/upload-url` | открыто | фото-замена персонажа |
+| `POST /api/sessions/:id/characters/:cid/photo/confirm` | открыто | подтвердить фото-замену |
+| `GET /api/sessions/:id/scenes` | открыто | свои сцены сессии (§17) |
+| `POST /api/sessions/:id/scenes/upload-url` | открыто | presigned PUT для сцены (минтит `sceneId`) |
+| `POST /api/sessions/:id/scenes/confirm` | открыто | подтвердить сцену |
+| `PATCH /api/sessions/:id/scenes/:sceneId` | открыто | название/описание сцены |
+| `DELETE /api/sessions/:id/scenes/:sceneId` | открыто | удалить сцену (и её файл) |
+| `GET/PUT/DELETE /api/sessions/:id/references` | открыто | три слота `referenceImages`; `DELETE` — вернуть авто-правило |
+| `GET/POST/PATCH /api/sessions/:id/relevance` | открыто | отчёт о релевантности референса товару (§18.3) |
+| `POST /api/sessions/:id/product` | открыто | данные товара для этой сессии |
+| `POST /api/sessions/:id/product/image/upload-url` | открыто | presigned PUT для фото товара в сессии |
+| `PATCH /api/sessions/:id/brand-manifest` | открыто | правки копии манифеста для этого ролика (§12) |
+| `POST /api/sessions/:id/prompt` | открыто | собрать промпт (GPT-5); 409, если сборка уже идёт (замок, ТЗ §30.3) |
+| `PATCH /api/sessions/:id/prompt` | открыто | правки промпта; необязательное поле `voiceoverScript` — текст озвучки (§15.2), не передан — прежний текст сохраняется |
+| `POST /api/sessions/:id/prompt/approve` | открыто | утвердить промпт |
+| `POST /api/sessions/:id/generate` | открыто | генерация ролика (Veo); повтор при записанном идущем рендере возвращает его же, параллельный запуск в окне старта — 409 (замок, ТЗ §30.3); `quality: 'standard'` — только с признаком пакета `fullQualityVideo` (403 у Lite) |
+| `GET /api/sessions/:id/generate` | открыто | статус генерации; здесь же опрашивается обрезка кадра (§16.1) |
+| `POST /api/sessions/:id/export` | открыто | этап 75: автоэкспорт под площадки, ярус A — пакетная дешёвая обрезка готового файла под несколько форматов ТОГО ЖЕ семейства кадра, один платёж на весь батч (`doc/MULTI-FORMAT-EXPORT-SPEC.md`) |
+| `POST /api/sessions/:id/export/rerender` | открыто | ярус B: второй платный рендер Veo тем же одобренным промптом для формата ИЗ ДРУГОГО семейства кадра — новая дочерняя сессия |
+| `GET /api/sessions/:id/export/status` | открыто | статус автоэкспорта, оба яруса |
+| `GET/POST /api/sessions/:id/audit` | открыто | аудит готового ролика на артефакты (§11) |
+| `POST /api/sessions/:id/audit/apply` | открыто | положить предложенный промпт в черновик |
+| `GET/POST /api/sessions/:id/sound-check` | открыто | этап 73: звучит ли озвучка Veo-ролика как живой человек, а не TTS — отдельно от аудита артефактов |
+| `GET/POST /api/sessions/:id/publications` | идентичность | заявки на публикацию (§8) |
+| `DELETE /api/sessions/:id/publications/:requestId` | идентичность | отозвать заявку |
+| `GET/POST /api/sessions/:id/shared-video` | идентичность | публичная страница ролика (§40): список заявок / создать |
+| `DELETE /api/sessions/:id/shared-video/:pageId` | идентичность | отозвать — в ЛЮБОМ статусе (не только «на модерации»), с удалением своей копии видео и фото |
+
+## Проекты, товары, бренд (§6–§7, §12, §17.1)
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `POST/GET /api/projects` | идентичность | создать проект / список |
+| `GET/PATCH/DELETE /api/projects/:id` | идентичность | проект (удаление уносит фото товаров) |
+| `POST /api/projects/:id/items` | идентичность | добавить товар |
+| `PATCH/DELETE /api/projects/:id/items/:itemId` | идентичность | товар: поля, аудитория (§18.2), удаление |
+| `POST /api/projects/:id/items/:itemId/photo/upload-url` | идентичность | presigned PUT для фото товара |
+| `POST /api/projects/:id/items/:itemId/photo/process` | идентичность | распознать категорию/аудиторию + аналоги (SerpApi) |
+| `POST /api/projects/:id/items/:itemId/voice/upload-url` | идентичность | presigned PUT для голосового описания |
+| `POST /api/projects/:id/items/:itemId/voice/transcribe` | идентичность | расшифровка (Gemini), файл удаляется сразу |
+| `POST/GET /api/projects/:id/items/:itemId/sessions` | идентичность | создать сессию из товара (снимок) / её прогоны |
+| `POST/GET /api/brand-manifests` | идентичность | манифест бренда: создать / список |
+| `GET/PATCH/DELETE /api/brand-manifests/:id` | идентичность | манифест (удаление уносит фото персонажей и сцен) |
+| `POST /api/brand-manifests/:id/characters` | идентичность | персонаж бренда |
+| `PATCH/DELETE /api/brand-manifests/:id/characters/:cid` | идентичность | правка / удаление персонажа |
+| `POST /api/brand-manifests/:id/characters/:cid/photo/upload-url` | идентичность | presigned PUT фото персонажа |
+| `POST /api/brand-manifests/:id/characters/:cid/photo/confirm` | идентичность | подтвердить фото персонажа |
+| `POST /api/brand-manifests/:id/scenes` | идентичность | постоянная сцена бренда (§17.1) |
+| `PATCH/DELETE /api/brand-manifests/:id/scenes/:sid` | идентичность | правка / удаление сцены |
+| `POST /api/brand-manifests/:id/scenes/:sid/photo/upload-url` | идентичность | presigned PUT фото сцены |
+| `POST /api/brand-manifests/:id/scenes/:sid/photo/confirm` | идентичность | подтвердить фото сцены |
+| `GET /api/youtube-search?q=&regionCode=&language=` | идентичность | поиск референса на YouTube (суточный лимит) |
+| `POST /api/projects/:id/catalog-batch` | идентичность | пакетная генерация по каталогу (§44, этап 65): перенести уже одобренный разбор+промпт исходной сессии на остальные товары линейки; только Premium (`PlanFeature 'library'`); тело `{ sourceSessionId, productItemIds }`, ответ `{ batchId, itemCount, skipped }` — товары, уже занятые другой активной партией, пропускаются, а не дублируются |
+| `GET /api/projects/:id/catalog-batch/:batchId` | идентичность | статус партии: сводка `{pending, generating, done, failed}` + по каждому товару живое состояние его сессии (без записи обратно в `CatalogBatchItem` — рендер отслеживается штатно) |
+| `POST /api/projects/:id/ab-test` | идентичность | A/B-варианты одного ролика (§45, этап 66): из уже одобренного ролика исходной сессии собрать 3 дубля с разным хуком и CTA; только Premium (`PlanFeature 'library'`); тело `{ sourceSessionId }`, один синхронный вызов GPT-5 на весь запуск, ответ `{ runId, variantCount }` — `variantCount` может быть меньше 3, если модель вернула не все варианты |
+| `GET /api/projects/:id/ab-test/:runId` | идентичность | статус запуска A/B-вариантов: сводка `{pending, generating, done, failed}` + по каждому варианту `hookLabel`/`ctaLabel` и живое состояние его сессии (тот же приём, что у статуса партии — без записи обратно в `AbTestVariant`, рендер отслеживается штатно) |
+| `POST /api/projects/:id/feed-imports` | идентичность | товарный фид — импорт каталога по ссылке (§47, этап 68): разовый снимок YML- или CSV-фида; только Premium (`PlanFeature 'library'`), только для LINE-проекта; тело `{ sourceUrl }` — проверяется SSRF-guard'ом ДО создания запуска; ответ `{ runId }` |
+| `GET /api/projects/:id/feed-imports` | идентичность | список запусков импорта фида этого проекта — сводки `{status, totalRows, importedCount, skippedCount, failedCount}` без строк |
+| `GET /api/projects/:id/feed-imports/:runId` | идентичность | статус одного запуска: та же сводка + все строки фида (`rowIndex`, `title`, `status`, `reason`, `productItemId`) — счётчики читаются как есть из строки запуска, не пересчитываются на каждый опрос |
+
+## Библиотека разборов (§21)
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `GET /api/library/recommend?sessionId=&limit=` | открыто | рекомендации под товар сессии (публичные + свои приватные) |
+| `GET /api/library/:entryId` | открыто | одна запись (только признаки, без самого разбора) |
+| `GET /api/admin/library` | оператор | список с фильтрами `visibility`, `sourceType`, `q`, пагинацией |
+| `GET /api/admin/library/:id` | оператор | запись целиком, включая разбор |
+| `PATCH /api/admin/library/:id` | оператор | видимость (причина обязательна при скрытии) и категория |
+| `DELETE /api/admin/library/:id` | оператор | удалить запись и её копии кадров |
+
+## Публичная страница ролика (ТЗ §40, TODO §III.1, этап 60)
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `GET /api/shared-video/:id` | открыто | снимок страницы (только `PUBLISHED`) — читает `landing/src/app/video/[id]/page.tsx`; бампит `viewCount` |
+| `POST /api/shared-video/:id/fork` | открыто, БЕЗ идентичности и без гейта тарифа | «Сделать такой же»: новая анонимная сессия; если у страницы есть привязка к записи библиотеки и она видна (§21) — разбор подставляется в новую сессию |
+
+## Каналы выгрузки (ТЗ §14.2/14.4, этап 61)
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `POST /api/channels/oauth/:platform/start` | идентичность | обычный POST (не голая ссылка — identity едет заголовками, не cookie), возвращает `{ url }`, дальнейший редирект на площадку делает сам браузер |
+| `GET /api/channels/oauth/:platform/callback?code=&state=` | открыто (дёргает сам Google/TikTok) | завершает OAuth, `userId` — из подписанного `state`; отдаёт HTML-страницу с редиректом обратно в TMA (`TMA_PUBLIC_URL`) |
+| `GET /api/channels` | идентичность | подключённые каналы текущего пользователя |
+| `DELETE /api/channels/:id` | идентичность, только свой канал | отключить (best-effort отзыв гранта у площадки) |
+
+## Оплата: Telegram Stars и WayForPay (ТЗ §41, TODO §III.3, этап 62)
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `GET /api/billing/prices` | открыто | цены подписок и пакетов кредитов (XTR и минорные единицы WayForPay) — публичная, читается и анонимно |
+| `POST /api/billing/checkout/subscription` | идентичность | `{ plan: 'STANDARD'\|'PREMIUM', method: 'STARS'\|'WAYFORPAY' }` → `{ starsInvoiceUrl }` либо `{ wayforpayFormUrl, wayforpayFields }` (подписанные поля POST-формы, не голая ссылка) |
+| `POST /api/billing/checkout/credit-pack` | идентичность | `{ packId, method }` → та же форма ответа, что у подписки |
+| `POST /api/billing/webhook/telegram` | открыто, секрет в заголовке `X-Telegram-Bot-Api-Secret-Token` (`TELEGRAM_WEBHOOK_SECRET`) | `pre_checkout_query`/`successful_payment` из тела Telegram Update; идемпотентность — `@@unique([method, providerRef])` на `Payment`, `providerRef = telegram_payment_charge_id` |
+| `POST /api/billing/webhook/wayforpay` | открыто, подпись `merchantSignature` в теле | приём результата оплаты/регулярного платежа; обязан ответить строгой квитанцией `{orderReference, status:'accept', time, signature}` — иначе WayForPay повторяет доставку |
+
+## Блог (ТЗ §36, TODO §II.3–II.4, этап 57)
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `GET /api/blog?locale=&category=&page=&pageSize=` | открыто | список опубликованных записей; без `locale` — оригинальный язык |
+| `GET /api/blog/:slug?locale=` | открыто | одна запись; `isRequestedLocale: false`, если готового перевода на запрошенную локаль ещё нет (отдаётся оригинал, честно помеченный) |
+| `GET /api/admin/blog?status=&category=&page=&pageSize=` | оператор | список с фильтрами, включая черновики |
+| `GET /api/admin/blog/:id` | оператор | запись целиком + статус каждого перевода |
+| `POST /api/admin/blog` | оператор | ручная запись (новости, кейсы, обновления продукта — тот же экран, TODO §II.3) |
+| `PATCH /api/admin/blog/:id` | оператор | правка текста; сбрасывает READY/QUEUED-переводы на PENDING |
+| `POST /api/admin/blog/:id/approve` | оператор | DRAFT → APPROVED |
+| `POST /api/admin/blog/:id/reject` | оператор | → REJECTED; `{ reason }` обязателен |
+| `POST /api/admin/blog/:id/publish` | оператор | APPROVED → PUBLISHED |
+| `POST /api/admin/blog/:id/unpublish` | оператор | PUBLISHED → APPROVED, без отклонения |
+| `DELETE /api/admin/blog/:id` | оператор | удалить запись |
+
+## Идентичность, оферта, админка
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `POST /api/telegram-login/callback` | открыто | вход через Telegram Login Widget (вне Telegram) |
+| `POST /api/telegram-login/dev-login` | открыто (только `ALLOW_DEV_AUTH`) | локальный вход без Telegram |
+| `POST /api/telegram-login/logout` | открыто | выйти |
+| `GET /api/telegram-login/me` | открыто | `{ loggedIn }` — честно отвечает и без сессии |
+| `GET /api/tts/voices?language=` | идентичность | каталог голосов синтеза (§15.3); `configured: false` + причина, если ключа нет — не ошибка; ответ содержит `provider` — активный провайдер (`elevenlabs`/`resemble`, doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md §4.1), маршрут один и тот же для обоих |
+| `POST /api/tts/preview` | идентичность | проба голоса (§15.5): фраза ≤ 300 символов → mp3 в `data:`-URL; 30 проб в сутки на пользователя, блокировка и бюджет проверяются раньше потолка |
+| `POST /api/voices/upload-url` | идентичность | этап 73: presigned PUT для образца голоса для клонирования (`voiceCloning`, Standard и выше) |
+| `POST /api/voices/clone` | идентичность | подтвердить загрузку → запустить обучение у Resemble AI; требует `consent: true`; лимит 3 голоса на пользователя (неудачные не считаются) |
+| `GET /api/voices` | идентичность | список своих клонированных голосов со статусом (`training`/`ready`/`failed`); попутно подтягивает готовность у Resemble (poll-фоллбек, если вебхук не настроен) |
+| `DELETE /api/voices/:id` | идентичность | удалить свой клон (запись, файл в Blob, голос на стороне Resemble) |
+| `POST /api/voices/webhook/resemble?secret=` | секрет в query | вебхук готовности обучения от Resemble; секрет — query-параметр, не заголовок (формат вебхука Resemble фиксирован) |
+| `GET /api/me/terms` | идентичность | принята ли текущая версия оферты (§20) |
+| `POST /api/me/terms/accept` | идентичность | зафиксировать принятие |
+| `GET /api/me/marketing-consent` | идентичность | статус согласия на рассылку подборки роликов (§42, этап 63) — `consented`/`consentedAt`/`revokedAt`, без версии документа |
+| `POST /api/me/marketing-consent` | идентичность | подписаться (или переподписаться поверх уже отозванного согласия) |
+| `POST /api/me/marketing-consent/revoke` | идентичность | отписаться в один клик |
+| `GET /api/me/plan` | открыто | режим + матрица (§23), блокировка (§25.3), состояние суточного лимита (§26.4, без сумм), `subscription` (план/статус/`currentPeriodEnd`/`cancelAtPeriodEnd` или `null`) и `credits.balance` (§41, этап 62); без идентичности — честный `LITE` |
+| `PATCH /api/me/plan` | идентичность | сменить режим: на `LITE` при включённой оплате — запрос отмены подписки (`cancelAtPeriodEnd: true`, доступ до конца периода); на `STANDARD`/`PREMIUM` при `PLANS_BILLING_ENABLED=true` — 403 с указанием на `POST /api/billing/checkout/subscription` (§41, этап 62); пока `PLANS_BILLING_ENABLED=false` — бесплатно, любой режим |
+| `POST /api/admin/auth/telegram-callback` | открыто | вход оператора |
+| `POST /api/admin/auth/dev-login` | открыто (только `ALLOW_DEV_AUTH`) | локальный вход оператора |
+| `POST /api/admin/auth/logout` | открыто | выйти из админки |
+| `GET /api/admin/auth/me` | сессия админки | кто вошёл |
+| `GET /api/admin/sessions` | оператор | список сессий |
+| `GET/DELETE /api/admin/sessions/:id` | оператор | сессия / удалить |
+| `GET /api/admin/users?q=&plan=&operators=1&blocked=1&page=&pageSize=` | оператор | пользователи: режим, права, счётчики активности; сводка `byPlan` — по всей базе (§25) |
+| `GET /api/admin/users/:id` | оператор | карточка пользователя + 10 последних сессий + баланс кредитов и подписка (§41, этап 62) |
+| `PATCH /api/admin/users/:id` | оператор | режим, флаг оператора, блокировка (`isBlocked`, `blockedReason`); снять оператора или заблокировать САМОГО СЕБЯ нельзя (403) |
+| `POST /api/admin/users/:id/cancel-subscription` | оператор | отменить подписку пользователя (`cancelAtPeriodEnd: true`, без возврата денег) — тот же эффект, что кнопка «Отменить подписку» в TMA (§41, этап 62) |
+| `GET /api/admin/costs?top=` | оператор | расходы на ИИ (§26): итоги, разбивка по провайдерам/операциям/моделям, топ по тратам, действующий прайс |
+| `GET /api/admin/telemetry` | оператор | агрегаты по сессиям |
+| `GET /api/admin/settings` | оператор | проверка переменных окружения |
+| `GET /api/admin/publications?status=&page=&pageSize=` | оператор | очередь модерации публикаций (§8) |
+| `GET /api/admin/publications/:id` | оператор | одна заявка целиком |
+| `POST /api/admin/publications/:id/approve` | оператор | одобрить; `{ channelId?, privacy? }` — без `channelId` сервис сам находит канал (проект → бренд-манифест → единственный канал автора); крон-воркер выгружает автоматически (§14.5) |
+| `POST /api/admin/publications/:id/reject` | оператор | отклонить; `{ reason }` обязателен и дословно уходит автору |
+| `POST /api/admin/publications/:id/retry` | оператор | FAILED → APPROVED, сброс `attempts`/`nextAttemptAt`/`publishError`/`uploadJobId` (§14.5) |
+| `GET /api/admin/shared-videos?status=&page=&pageSize=` | оператор | очередь модерации публичных страниц ролика (§40) |
+| `GET /api/admin/shared-videos/:id` | оператор | одна заявка целиком |
+| `POST /api/admin/shared-videos/:id/approve` | оператор | одобрить — страница сразу доступна на лендинге |
+| `POST /api/admin/shared-videos/:id/reject` | оператор | отклонить; `{ reason }` обязателен; копия ролика НЕ удаляется — автор отзывает сам (`DELETE .../shared-video/:pageId`) |
+| `GET /api/admin/payments?status=&method=&page=&pageSize=` | оператор | список платежей с фильтрами по статусу/методу (§41, этап 62) |
+| `POST /api/admin/payments/:id/refund` | оператор | возврат: Stars — реальный вызов `refundStarPayment`; WayForPay — только пометка `REFUNDED` на своей стороне, реальный возврат делается вручную в личном кабинете WayForPay |
+| `GET /api/admin/marketing/broadcasts?page=&pageSize=` | оператор | история выпусков рассылки (§42, этап 63): сводка доставки sent/failed/skipped/pending на каждый + текущее число активных подписчиков; read-only, отбор контента для выпуска автоматический |
+| `GET /api/admin/catalog-batches?page=&pageSize=` | оператор | список партий пакетной генерации (§44, этап 65): проект, инициатор, сводка `{pending, generating, done, failed, total}` по товарам; read-only, вмешиваться нечем — партия либо идёт, либо завершилась |
+| `GET /api/admin/ab-tests?page=&pageSize=` | оператор | список запусков A/B-вариантов (§45, этап 66): проект, инициатор, исходная сессия, сводка `{pending, generating, done, failed, total}` по вариантам; read-only, вмешиваться нечем — запуск либо идёт, либо завершился |
+| `GET /api/admin/feed-imports?page=&pageSize=` | оператор | список запусков импорта товарного фида (§47, этап 68): проект, инициатор, ссылка на фид, статус, сводка `{totalRows, importedCount, skippedCount, failedCount}`; read-only, вмешиваться нечем — запуск либо идёт, либо завершился; в отличие от партий/A/B-запусков, сводка не пересчитывается `groupBy`, а читается готовой из строки запуска |
+| `GET /api/admin/cron/registry` | оператор | реестр одиннадцати крон-задач: `jobKey` + описание (§69, этап 69; export-sync-run добавлен этапом 76) |
+| `GET /api/admin/cron/history?jobKey=` | оператор | история прогонов из `CronRunLog` — без `jobKey` последние по всем джобам вперемешку, с `jobKey` — история одного джоба (§69, этап 69) |
+| `POST /api/admin/cron/:jobKey/run?debug=` | оператор | ручной запуск одного из одиннадцати кронов (та же бизнес-логика, что у настоящего крона Vercel, через общий `CronJobsService`); `debug` у десяти джобов раскрывает подробный `debugLog` результата, у `sweep-orphans` дополнительно означает `dryRun` (ничего не удаляет); ограничен `RateLimitGuard` (5 запросов/15с — кроны дёргают платные внешние API) (§69, этап 69) |
+
+## Крон и обслуживание
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `GET /api/cron/cleanup-sessions` | секрет крона | удалить истёкшие сессии вместе с их файлами (ежедневно 03:00 UTC, `backend/vercel.json`) |
+| `GET /api/cron/report` | секрет крона | суточный отчёт в служебный канал статистики (ежедневно 06:00 UTC, ТЗ §28); по понедельникам добавляет недельные числа. Ничего не удаляет; отвечает тем же текстом, что ушёл в канал, `sent` — по ответу Telegram, а не по постановке в очередь (этап 47) |
+| `GET /api/cron/sweep-orphans?dryRun=1&limit=&minAgeHours=&cursor=` | секрет крона | подметатель осиротевших файлов (ежедневно 03:30 UTC, этап 29); с этапа 41 ходит по четырём префиксам — `sessions/`, `projects/`, `brand-manifests/`, `publications/` — и отдаёт разбивку `byScope`; с этапа 47 каждая область досматривается до конца курсора (потолки 40 страниц / 120 с), в ответе `complete` и `pages` по областям — без `complete: true` ноль сирот ничего не значит; `dryRun=1` — прогон без удаления (`doc/STORAGE-AUDIT.md`) |
+| `GET /api/cron/blog` | секрет крона | генератор черновиков блога, затем очередь перевода xAI Grok Batch API, последовательно, одним маршрутом (ежедневно 04:00 UTC, этап 57, ТЗ §36) — без `BLOG_CATEGORIES`/`GROK_API_KEY` честно отвечает 200 и не делает ничего |
+| `GET /api/cron/publish` | секрет крона | берёт до `PUBLISH_CRON_BATCH` заявок `APPROVED` с подключённым каналом, выгружает в YouTube/TikTok, бэкофф при ошибке (каждые 2 минуты, `backend/vercel.json`, требует план Vercel Pro — этап 61, ТЗ §14.5) |
+| `GET /api/cron/billing-renew` | секрет крона | продление подписок: WayForPay — списание по `recTokenEnc`, бэкофф при отказе; Stars — сверка `currentPeriodEnd` без пришедшего вебхука продления → `PAST_DUE` → `CANCELED` + понижение до LITE (ежедневно 05:00 UTC, `backend/vercel.json`, Vercel Pro НЕ требуется — этап 62, ТЗ §41) |
+| `GET /api/cron/marketing-broadcast` | секрет крона | сборка нового выпуска рассылки (не чаще раза в `MARKETING_BROADCAST_FREQUENCY_DAYS` дней) + доставка партии с бэкоффом, одним маршрутом; блокировка бота пользователем на попытке отправки снимает согласие автоматически (ежедневно 07:00 UTC, `backend/vercel.json`, Vercel Pro НЕ требуется — этап 63, ТЗ §42) |
+| `GET /api/cron/catalog-batch-run` | секрет крона | пакетная генерация по каталогу (§44, этап 65): до `CATALOG_BATCH_CRON_BATCH` строк за тик, claim-цикл по образцу `/cron/publish` — на каждый товар создать сессию из снимка, перенести разбор, собрать и одобрить промпт, запустить рендер, одним заходом без остановки на подтверждение; бэкофф `2^attempts` минут при временной ошибке, план понижен/заблокирован — сразу терминальный `FAILED` (каждые 2 минуты, `backend/vercel.json`, та же частота и потому тот же уже действующий план Vercel Pro, что у `/cron/publish` — этап 65, ТЗ §44) |
+| `GET /api/cron/ab-test-run` | секрет крона | A/B-варианты одного ролика (§45, этап 66): до `AB_TEST_CRON_BATCH` строк за тик, claim-цикл по образцу `/cron/catalog-batch-run` — но БЕЗ вызова GPT-5 (текст всех вариантов уже готов, собран одним вызовом при создании запуска): на каждый вариант создать сессию из снимка, перенести разбор, посеять уже готовый текст (`seedPrompt`, не `generatePrompt`), одобрить, запустить рендер; тот же бэкофф/`FAILED`-приём, что у `/cron/catalog-batch-run` (каждые 2 минуты, `backend/vercel.json`, тот же уже действующий план Vercel Pro) |
+| `GET /api/cron/feed-import-run` | секрет крона | товарный фид (§47, этап 68): два тика подряд одного вызова — фаза 1 (до `PRODUCT_FEED_IMPORT_CRON_BATCH` запусков) скачивает и разбирает YML/CSV-фид, заводит строки; фаза 2 (тот же лимит строк) валидирует и заводит позиции через `ProjectService.addItem`, дописывает категорию/фото напрямую в БД; SSRF-guard проверяется повторно перед скачиванием; сетевой сбой — бэкофф `2^attempts` минут, SSRF-отказ/пустой фид/превышение размера — терминальный `FAILED` сразу (каждые 2 минуты, `backend/vercel.json`, тот же уже действующий план Vercel Pro) |
+| `GET /api/cron/export-sync-run` | секрет крона | крон-аналог `advanceGenerating()` для автоэкспорта яруса B (Е-2.3 шестого аудита, этап 76): досматривает статус дочерних рендеров независимо от того, открыт ли у пользователя экран прогресса — без него закрытие приложения до конца рендера рисковало потерей уже оплаченного файла по TTL сессии (каждые 1-2 минуты, `backend/vercel.json`) |
+
+Если `CRON_SECRET` не задан, все одиннадцать маршрутов отвечают 503 (этап 54,
+Б-3.3) — до этого они были открыты, и одна забытая переменная делала
+метлу публичной. Исключение — dev-стенд: `ALLOW_DEV_AUTH=true` при
+`NODE_ENV !== production` открывает крон для `curl`, как и dev-вход
+(`doc/DEPLOYMENT.md`, `doc/TELEGRAM-ADMIN.md`).
+
+Ошибки любого маршрута приходят в одном формате: `{ success: false,
+error: { code, message }, meta: { requestId, timestamp, path } }`. Текст
+`message` написан для пользователя только у ошибок, которые сервер бросил
+сам (4xx, 409, 429); всё непредвиденное — одинаковая фраза и `requestId`,
+по которому запись ищется в логе (этап 54, Б-3.6).

@@ -1,0 +1,21 @@
+# Development-only image for local docker-compose debugging (see
+# docker-compose.dev.yml, doc/TELEGRAM-ADMIN.md). Not used for Vercel
+# deployment — Vercel builds this as its own Next.js project (see
+# doc/DEPLOYMENT.md).
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+# Real source is bind-mounted over this by docker-compose for hot-reload;
+# this COPY only matters if the image is ever built/run without compose.
+COPY . .
+
+EXPOSE 3002
+
+# -H 0.0.0.0: Next.js's dev server otherwise isn't reachable from outside
+# the container (mirrors frontend/Dockerfile.dev's --host 0.0.0.0 for Vite).
+CMD ["npx", "next", "dev", "-p", "3002", "-H", "0.0.0.0"]

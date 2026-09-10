@@ -1,0 +1,253 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
+import { ElevenLabsService } from './elevenlabs.service';
+
+const KEYS = ['VOICE_API_KEY', 'VOICE_ID', 'VOICE_MODEL'] as const;
+
+function withEnv(env: Partial<Record<(typeof KEYS)[number], string>>) {
+  for (const k of KEYS) delete process.env[k];
+  Object.assign(process.env, env);
+  return new ElevenLabsService();
+}
+
+function mockFetch(impl: jest.Mock) {
+  (global as any).fetch = impl;
+  return impl;
+}
+
+describe('ElevenLabsService (ТЗ §15.3)', () => {
+  afterEach(() => {
+    for (const k of KEYS) delete process.env[k];
+  });
+
+  it('без ключа — пропуск, а не ошибка, и без сетевого вызова', async () => {
+    // Не настроенный TTS это состояние стенда: ролик у пользователя есть,
+    // говорит в нём голос Veo, продукт работает как раньше.
+    const fetchMock = mockFetch(jest.fn());
+    const svc = withEnv({});
+    expect(svc.configured()).toBe(false);
+    const r = await svc.synthesize({ text: 'привет' });
+    expect(r).toEqual({
+      ok: false,
+      skipped: true,
+      reason: expect.stringContaining('VOICE_API_KEY'),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('пустой текст — тоже пропуск', async () => {
+    const svc = withEnv({ VOICE_API_KEY: 'k' });
+    const r = await svc.synthesize({ text: '   ' });
+    expect(r).toMatchObject({ ok: false, skipped: true });
+  });
+
+  it('успех отдаёт байты, голос, модель и число символов', async () => {
+    const fetchMock = mockFetch(
+      jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      }),
+    );
+    const svc = withEnv({ VOICE_API_KEY: 'k' });
+    const r = await svc.synthesize({ text: 'Привет, мир' });
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.audio.length).toBe(3);
+    expect(r.characters).toBe('Привет, мир'.length);
+    expect(r.model).toBe('eleven_multilingual_v2');
+    expect(r.voiceId).toBe('EXAVITQu4vr4xnSDxMaL');
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/text-to-speech/EXAVITQu4vr4xnSDxMaL');
+    expect(init.headers['xi-api-key']).toBe('k');
+    expect(JSON.parse(init.body)).toMatchObject({
+      text: 'Привет, мир',
+      model_id: 'eleven_multilingual_v2',
+      output_format: 'mp3_44100_128',
+    });
+  });
+
+  it('голос бренда и модель из настроек перекрывают умолчания', async () => {
+    const fetchMock = mockFetch(
+      jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1]).buffer,
+      }),
+    );
+    const svc = withEnv({ VOICE_API_KEY: 'k', VOICE_ID: 'env-voice' });
+    const r = await svc.synthesize({ text: 'x', voiceId: 'brand-voice' });
+    expect(r.ok && r.voiceId).toBe('brand-voice');
+    expect(fetchMock.mock.calls[0][0]).toContain('/brand-voice');
+  });
+
+  it('ошибка провайдера — это сбой, а не пропуск', async () => {
+    // Разница важна: пропуск интерфейс показывает спокойной пометкой,
+    // сбой — причиной, с которой можно идти разбираться.
+    mockFetch(
+      jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: async () => 'unauthorized',
+      }),
+    );
+    const svc = withEnv({ VOICE_API_KEY: 'bad' });
+    const r = await svc.synthesize({ text: 'x' });
+    expect(r).toMatchObject({ ok: false, skipped: false });
+    expect((r as { reason: string }).reason).toContain('401');
+  });
+
+  it('сетевой сбой не бросает исключение', async () => {
+    // Единственный способ уронить генерацию из-за необязательного
+    // улучшения — бросить отсюда.
+    mockFetch(jest.fn().mockRejectedValue(new Error('ETIMEDOUT')));
+    const svc = withEnv({ VOICE_API_KEY: 'k' });
+    await expect(svc.synthesize({ text: 'x' })).resolves.toMatchObject({
+      ok: false,
+      skipped: false,
+    });
+  });
+
+  it('пустой ответ провайдера считается сбоем', async () => {
+    mockFetch(
+      jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }),
+    );
+    const svc = withEnv({ VOICE_API_KEY: 'k' });
+    expect(await svc.synthesize({ text: 'x' })).toMatchObject({
+      ok: false,
+      skipped: false,
+    });
+  });
+
+  it('слишком длинный текст режется, а не роняет запрос', async () => {
+    const fetchMock = mockFetch(
+      jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1]).buffer,
+      }),
+    );
+    const svc = withEnv({ VOICE_API_KEY: 'k' });
+    const r = await svc.synthesize({ text: 'а'.repeat(9000) });
+    expect(r.ok && r.characters).toBe(5000);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).text).toHaveLength(5000);
+  });
+
+  describe('субтитры: /with-timestamps (этап 67)', () => {
+    it('timestamps: true уходит на другой путь и разбирает alignment', async () => {
+      const fetchMock = mockFetch(
+        jest.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            audio_base64: Buffer.from([1, 2, 3]).toString('base64'),
+            normalized_alignment: {
+              characters: ['п', 'р', 'и'],
+              character_start_times_seconds: [0, 0.1, 0.2],
+              character_end_times_seconds: [0.1, 0.2, 0.3],
+            },
+          }),
+        }),
+      );
+      const svc = withEnv({ VOICE_API_KEY: 'k' });
+      const r = await svc.synthesize({ text: 'при', timestamps: true });
+
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.audio.length).toBe(3);
+      expect(r.alignment).toEqual({
+        characters: ['п', 'р', 'и'],
+        starts: [0, 0.1, 0.2],
+        ends: [0.1, 0.2, 0.3],
+      });
+      expect(fetchMock.mock.calls[0][0]).toContain('/with-timestamps');
+    });
+
+    it('обычный запрос (без timestamps) не трогает /with-timestamps и не даёт alignment', async () => {
+      const fetchMock = mockFetch(
+        jest.fn().mockResolvedValue({
+          ok: true,
+          arrayBuffer: async () => new Uint8Array([1]).buffer,
+        }),
+      );
+      const svc = withEnv({ VOICE_API_KEY: 'k' });
+      const r = await svc.synthesize({ text: 'x' });
+      expect(fetchMock.mock.calls[0][0]).not.toContain('with-timestamps');
+      expect(r.ok && r.alignment).toBeUndefined();
+    });
+
+    it('не-JSON ответ на /with-timestamps — сбой, а не падение процесса', async () => {
+      mockFetch(
+        jest.fn().mockResolvedValue({
+          ok: true,
+          json: async () => {
+            throw new Error('not json');
+          },
+        }),
+      );
+      const svc = withEnv({ VOICE_API_KEY: 'k' });
+      const r = await svc.synthesize({ text: 'x', timestamps: true });
+      expect(r).toMatchObject({ ok: false, skipped: false });
+    });
+
+    it('ответ без audio_base64 — сбой с внятной причиной', async () => {
+      mockFetch(
+        jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) }),
+      );
+      const svc = withEnv({ VOICE_API_KEY: 'k' });
+      const r = await svc.synthesize({ text: 'x', timestamps: true });
+      expect(r).toMatchObject({ ok: false, skipped: false });
+      expect((r as { reason: string }).reason).toContain('audio_base64');
+    });
+
+    it('пустое выравнивание в ответе не роняет успешный синтез', async () => {
+      // alignment необязателен — отсутствие normalized_alignment не должно
+      // превращать успешный синтез в сбой, только оставлять субтитры без
+      // реального тайминга (эвристика подхватит выше по стеку).
+      mockFetch(
+        jest.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            audio_base64: Buffer.from([9]).toString('base64'),
+          }),
+        }),
+      );
+      const svc = withEnv({ VOICE_API_KEY: 'k' });
+      const r = await svc.synthesize({ text: 'x', timestamps: true });
+      expect(r.ok).toBe(true);
+      expect(r.ok && r.alignment).toBeUndefined();
+    });
+  });
+
+  it('пустой каталог голосов объясняет себя причиной', async () => {
+    // «Ничего не нашлось» без причины оператор прочитает как поломку.
+    mockFetch(
+      jest
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => ({ voices: [] }) }),
+    );
+    const svc = withEnv({ VOICE_API_KEY: 'k' });
+    const r = await svc.voices('ru');
+    expect(r.voices).toEqual([]);
+    expect(r.error).toContain('0 голосов');
+  });
+
+  it('каталог отдаёт голоса без дублей', async () => {
+    mockFetch(
+      jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          voices: [
+            { voice_id: 'a', name: 'Аня', preview_url: 'u1' },
+            { voice_id: 'a', name: 'Аня (дубль)' },
+            { voiceId: 'b', name: 'Богдан' },
+          ],
+        }),
+      }),
+    );
+    const svc = withEnv({ VOICE_API_KEY: 'k' });
+    const r = await svc.voices();
+    expect(r.voices.map((v) => v.voiceId)).toEqual(['a', 'b']);
+    expect(r.voices[0]).toMatchObject({ name: 'Аня', previewUrl: 'u1' });
+  });
+});

@@ -1,0 +1,262 @@
+# Devil's Advocate → viral4creators: полный локальный стенд с dev-входами
+# (Telegram-логин для TMA, dev-login для админки) — см.
+# doc/TELEGRAM-ADMIN.md для пошаговой инструкции и что открывать в
+# браузере.
+#
+# Отдельный файл, а НЕ правка docker-compose.yml. Причина: базовый
+# docker-compose.yml — инфраструктура для тех, кому Telegram-контекст не
+# нужен вообще (просто backend+frontend+db), и он остаётся рабочим ровно
+# в том виде, в каком был. Кому нужен полный стенд с админкой и
+# лендингом — берёт этот файл.
+#
+#   docker compose -f docker-compose.dev.yml up -d --build
+#
+# (или просто `make up`, если Makefile уже подхватил viral4creators —
+# см. Makefile).
+#
+# ВАЖНО ПРО ПОРТЫ: этот файл публикует Postgres на 5432, backend на 3000
+# — как и базовый docker-compose.yml. Два файла ОДНОВРЕМЕННО поднимать
+# нельзя — второй упадёт с "port is already allocated". Это осознанно:
+# один и тот же порт означает, что DATABASE_URL из backend/.env.example
+# работает и там, и там без правок.
+#
+# ПОЧЕМУ ЗДЕСЬ НЕТ container_name: тот же паттерн, что уже показал себя
+# в другом проекте того же стека — фиксированные имена контейнеров
+# приводили к неочевидной поломке (compose переиспользует существующий
+# контейнер с таким именем вместе с его СТАРОЙ сетью, и сервисы по имени
+# не резолвятся). Без container_name compose именует контейнеры сам
+# (viral4creators-dev-db-1 и т.д.) и пересоздаёт их при смене конфигурации;
+# обращение по ИМЕНИ СЕРВИСА при этом не меняется.
+
+name: viral4creators-dev
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://postgres:postgres@db:5432/viral4creators?schema=public
+  DIRECT_URL: postgresql://postgres:postgres@db:5432/viral4creators?schema=public
+  NODE_ENV: development
+  PORT: '3000'
+  # Дев-вход. ALLOW_DEV_AUTH=true включает и заголовок X-Dev-User-Id для
+  # TMA (backend/src/modules/telegram-auth), и POST /admin/auth/dev-login
+  # для админки (backend/src/modules/admin-auth). Второй предохранитель —
+  # NODE_ENV!==production (см. dev-login.ts), поэтому одной этой
+  # переменной в проде недостаточно, чтобы открыть админку.
+  ALLOW_DEV_AUTH: 'true'
+  DEV_USER_ID: ${DEV_USER_ID:-123}
+  # CORS_ORIGIN — три dev-порта (TMA, admin, landing) плюс сам admin для
+  # AdminSessionGuard'а CSRF-проверки (см. admin-session.guard.ts).
+  CORS_ORIGIN: http://localhost:5173,http://localhost:3002,http://localhost:3003
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  ADMIN_LOGIN_BOT_TOKEN: ${ADMIN_LOGIN_BOT_TOKEN:-}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  LAOZHANG_API_KEY: ${LAOZHANG_API_KEY:-}
+  LAOZHANG_API_BASE_URL: ${LAOZHANG_API_BASE_URL:-}
+  BLOB_READ_WRITE_TOKEN: ${BLOB_READ_WRITE_TOKEN:-}
+  BLOB_STORE_ID: ${BLOB_STORE_ID:-}
+  SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
+  # Товар/Проект (doc/PRODUCT-PROJECT-SPEC.md, этап 1 плана реализации).
+  # Все необязательные — без ключа соответствующий эндпоинт откажет на
+  # вызове, старт стенда не затронут. Числовые лимиты — дефолты те же,
+  # что в configuration.ts (50, 20 и 3), чтобы `make up` без .env.docker
+  # вёл себя так же, как бэкенд без этих переменных вообще.
+  SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
+  SERPAPI_DAILY_LIMIT_PER_USER: ${SERPAPI_DAILY_LIMIT_PER_USER:-50}
+  YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+  YOUTUBE_SEARCH_DAILY_LIMIT_PER_USER: ${YOUTUBE_SEARCH_DAILY_LIMIT_PER_USER:-20}
+  AUDIT_AUTO_ITERATIONS_LIMIT: ${AUDIT_AUTO_ITERATIONS_LIMIT:-3}
+  PROJECT_LINE_ITEM_LIMIT: ${PROJECT_LINE_ITEM_LIMIT:-20}
+  # Постобработка ролика (§15/§16.1): обрезка кадра и своя озвучка. Оба
+  # ключа необязательны — без них стенд работает как до этапов 34–35:
+  # родной формат Veo и его же голос, с честной пометкой в интерфейсе.
+  FFMPEG_API_KEY: ${FFMPEG_API_KEY:-}
+  VOICE_API_KEY: ${VOICE_API_KEY:-}
+  VOICE_ID: ${VOICE_ID:-}
+  VOICE_MODEL: ${VOICE_MODEL:-}
+  # Свой домен хранилища, если он есть (§12, этап 38). Пусто — только
+  # стандартный домен Vercel Blob; проверку это не отключает.
+  BLOB_PUBLIC_HOSTS: ${BLOB_PUBLIC_HOSTS:-}
+  # Выгрузка одобренных роликов в YouTube/TikTok (§14, этап 61). Ключи —
+  # необязательные, без них подключение канала честно откажет на вызове.
+  # API_PUBLIC_URL/TMA_PUBLIC_URL — не секреты, а адреса самого стенда
+  # (по образцу VITE_LANDING_URL/NEXT_PUBLIC_TMA_URL ниже), поэтому
+  # захардкожены, а не читаются из .env.docker.
+  GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+  GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+  TIKTOK_CLIENT_KEY: ${TIKTOK_CLIENT_KEY:-}
+  TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET:-}
+  CHANNEL_TOKEN_KEY: ${CHANNEL_TOKEN_KEY:-}
+  API_PUBLIC_URL: http://localhost:3000/api
+  TMA_PUBLIC_URL: http://localhost:5173
+  # Рассылка: рекламный канал (§42, этап 63) — ссылки в сообщении бота
+  # ведут на публичные страницы лендинга, тот же приём, что и выше.
+  LANDING_PUBLIC_URL: http://localhost:3003
+  # Оплата: Telegram Stars и WayForPay (§41, этап 62). Тоже необязательные
+  # — бэкенд по умолчанию (PLANS_BILLING_ENABLED не задан здесь = 'false')
+  # держит все режимы бесплатными без единого ключа отсюда. Цены
+  # (SUBSCRIPTION_PRICE_*/CREDIT_PACK_*) в docker-compose не выведены — это
+  # код-плейсхолдеры, переопределяются напрямую в .env.docker при
+  # необходимости (см. backend/.env.example).
+  TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+  WAYFORPAY_MERCHANT_ACCOUNT: ${WAYFORPAY_MERCHANT_ACCOUNT:-}
+  WAYFORPAY_MERCHANT_SECRET: ${WAYFORPAY_MERCHANT_SECRET:-}
+  WAYFORPAY_DOMAIN: ${WAYFORPAY_DOMAIN:-}
+  PAYMENT_TOKEN_KEY: ${PAYMENT_TOKEN_KEY:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=viral4creators
+    ports:
+      - '5432:5432'
+    volumes:
+      - viral4creators-dev-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:latest
+    ports:
+      - '8080:8080'
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    environment:
+      <<: *backend-env
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/prisma:/app/prisma
+      - ./backend/prisma.config.ts:/app/prisma.config.ts
+      - ./backend/nest-cli.json:/app/nest-cli.json
+      - ./backend/tsconfig.json:/app/tsconfig.json
+      - ./backend/.eslintrc.js:/app/.eslintrc.js
+      - ./backend/.prettierrc:/app/.prettierrc
+      - /app/node_modules
+      # Anonymous volume, protecting the container's own compiled output —
+      # requires nest-cli.json's `deleteOutDir: false` (see that file's
+      # comment): `nest start --watch` normally deletes+recreates outDir
+      # on every rebuild, but a volume MOUNT POINT itself can't be rmdir'd
+      # from inside the container (only its contents can), which fails
+      # with `EBUSY: resource busy or locked, rmdir '/app/dist'`.
+      - /app/dist
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && npm run start:docker:debug"
+    restart: unless-stopped
+
+  # TMA — существующий frontend/, работающий и как обычный сайт, и как
+  # Telegram Mini App (см. doc/TELEGRAM-ADMIN.md). VITE_ALLOW_DEV_AUTH
+  # включает X-Dev-User-Id при открытии вне Telegram (обычный браузер), а
+  # также кнопку dev-входа для ПОСТОЯННОГО cookie-логина (кнопка «Войти
+  # через Telegram», modules/telegram-login) — два независимых механизма,
+  # оба за одним флагом. VITE_TELEGRAM_BOT_USERNAME — тот же бот, что и
+  # у backend'а (TELEGRAM_BOT_TOKEN); Telegram Login Widget всё равно не
+  # откроется на localhost (см. doc/TELEGRAM-ADMIN.md), но переменную
+  # можно проверить, что она хотя бы подставляется.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      - VITE_USE_POLLING=true
+      - VITE_API_BASE_URL=http://localhost:3000/api
+      - VITE_ALLOW_DEV_AUTH=true
+      - VITE_DEV_USER_ID=${DEV_USER_ID:-123}
+      - VITE_TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-}
+      # Этап 60 (ТЗ §40): браузер строит по нему ссылку «Открыть
+      # страницу»/«Поделиться» на опубликованную публичную страницу
+      # ролика — тот же localhost:3003, что видит и сам браузер.
+      - VITE_LANDING_URL=http://localhost:3003
+    ports:
+      - '5173:5173'
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js
+      - ./frontend/postcss.config.js:/app/postcss.config.js
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/tsconfig.node.json:/app/tsconfig.node.json
+      - /app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile.dev
+    environment:
+      - NODE_ENV=development
+      # Браузер, а не контейнер, ходит на этот адрес — NEXT_PUBLIC_*
+      # попадают в клиентский бандл, у которого нет docker-сети.
+      # Обязательно с /api — у бэкенда глобальный префикс роутов
+      # (main.ts: app.setGlobalPrefix('api')), реальный роут —
+      # /api/admin/auth/dev-login, а не /admin/auth/dev-login (без
+      # этого суффикса именно так и падает: 404 Cannot POST
+      # /admin/auth/dev-login).
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:3000/api
+      - NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-}
+      - NEXT_PUBLIC_ALLOW_DEV_AUTH=true
+      - NEXT_PUBLIC_DEV_USER_ID=${DEV_USER_ID:-123}
+      # Этап 60 (ТЗ §40): вкладка «Публичные страницы» строит по нему
+      # ссылку «Открыть страницу» — браузер, не контейнер, поэтому
+      # localhost:3003, как и у остальных NEXT_PUBLIC_* здесь.
+      - NEXT_PUBLIC_LANDING_URL=http://localhost:3003
+    ports:
+      - '3002:3002'
+    volumes:
+      - ./admin/src:/app/src
+      - ./admin/next.config.js:/app/next.config.js
+      - ./admin/tsconfig.json:/app/tsconfig.json
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  landing:
+    build:
+      context: ./landing
+      dockerfile: Dockerfile.dev
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_TMA_URL=http://localhost:5173
+      # Этап 58: в отличие от NEXT_PUBLIC_API_BASE_URL у admin/ — сам
+      # контейнер (Server Component/route.ts), а не браузер посетителя,
+      # ходит за блогом, поэтому адрес — DNS-имя сервиса в docker-сети
+      # (`backend`), а не localhost, и БЕЗ префикса NEXT_PUBLIC_ (в
+      # клиентский бандл эта переменная попадать не должна).
+      - API_BASE_URL=http://backend:3000/api
+      # Абсолютный адрес самого лендинга — sitemap/RSS/JSON-LD (см.
+      # landing/.env.example). На dev-стенде обращения снаружи всё равно
+      # идут на localhost:3003 — этого значения достаточно.
+      - SITE_URL=http://localhost:3003
+    ports:
+      - '3003:3003'
+    volumes:
+      - ./landing/src:/app/src
+      - ./landing/next.config.js:/app/next.config.js
+      - ./landing/tsconfig.json:/app/tsconfig.json
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  viral4creators-dev-db-data:

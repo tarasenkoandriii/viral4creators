@@ -1,0 +1,36 @@
+import { Module } from '@nestjs/common';
+import { AdminAuthModule } from '../admin-auth/admin-auth.module';
+import { StorageModule } from '../storage/storage.module';
+import { AdminPanelController } from './admin-panel.controller';
+import { AdminPanelService } from './admin-panel.service';
+import { AdminUsersService } from './admin-users.service';
+import { AdminBillingService } from './admin-billing.service';
+import { AdminMarketingService } from './admin-marketing.service';
+import { AdminCatalogBatchService } from './admin-catalog-batch.service';
+import { AdminAbTestService } from './admin-ab-test.service';
+import { AdminFeedImportService } from './admin-feed-import.service';
+
+@Module({
+  // StorageModule — удаление сессии оператором уносит и её файлы (Б-5.9).
+  // TelegramStarsService (AdminBillingService.refund(),
+  // AdminUsersService.cancelSubscription()) с этапа 64 доступен глобально
+  // через TelegramStarsModule (Г-2.2 аудита round4) — импортировать
+  // BillingModule ради него больше не нужно.
+  imports: [AdminAuthModule, StorageModule],
+  controllers: [AdminPanelController],
+  providers: [
+    AdminPanelService,
+    AdminUsersService,
+    AdminBillingService,
+    // AdminMarketingService/AdminCatalogBatchService/AdminAbTestService/
+    // AdminFeedImportService — только PrismaService, отдельного модуля не
+    // требуют (этапы 63/65/66/68).
+    AdminMarketingService,
+    AdminCatalogBatchService,
+    AdminAbTestService,
+    AdminFeedImportService,
+  ],
+  // Суточный отчёт крона берёт телеметрию отсюда (ТЗ §28, этап 45).
+  exports: [AdminPanelService],
+})
+export class AdminPanelModule {}

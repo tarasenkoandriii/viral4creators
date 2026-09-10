@@ -1,0 +1,211 @@
+{
+  "meta": {
+    "title": "viral4creators — UGC ads from a single example",
+    "description": "Upload one successful UGC ad video — get a new one, for your product, in the same style. Video breakdown by Gemini, generation on Google Veo 3.1, free and with no sign-up.",
+    "keywords": ["UGC ads", "AI video generation", "Google Veo 3.1", "ad video", "video ad generator"]
+  },
+  "header": {
+    "nav": [
+      { "href": "#how", "label": "How it works" },
+      { "href": "#features", "label": "Features" },
+      { "href": "#plans", "label": "Plans" },
+      { "href": "#roadmap", "label": "Roadmap" },
+      { "href": "#faq", "label": "FAQ" }
+    ],
+    "open": "Open",
+    "menuOpenAria": "Open menu",
+    "menuCloseAria": "Close menu",
+    "navAriaLabel": "Page sections",
+    "blogLabel": "Blog"
+  },
+  "hero": {
+    "badge": "Free · No sign-up",
+    "title": "One winning video → a new ad for your product",
+    "subtitle": "viral4creators breaks down a reference UGC video and generates a new ad video for your product, keeping what made the original work.",
+    "ctaPrimary": "Try it for free",
+    "ctaDemo": "Watch the demo",
+    "note": "Works right in the browser and as a Telegram Mini App — opens instantly, nothing to install."
+  },
+  "demo": {
+    "title": "What it looks like in practice",
+    "lead": "The full path from a reference video to a finished ad video — in one demo.",
+    "iframeTitle": "viral4creators — demo",
+    "noVideo": "Video not loading?",
+    "openYoutube": "Open on YouTube"
+  },
+  "features": {
+    "title": "Features",
+    "items": [
+      { "icon": "◐", "title": "AI reference breakdown", "text": "Gemini pulls out timestamped scenes, cast, extras, style and pacing — and separately assesses who the video is aimed at and what it's selling." },
+      { "icon": "◎", "title": "Relevance check", "text": "The video's audience is compared against your product's buyers: a 0–100 score, the reasoning behind it, a list of mismatches, and concrete edits for the prompt." },
+      { "icon": "▤", "title": "Library of breakdowns", "text": "Every breakdown is saved and offered to others as a ready-made scenario, matched to the product's category and audience. The same video is never broken down twice — fast and free." },
+      { "icon": "▣", "title": "Projects, products, brand", "text": "A product catalog with photos, category, comparable prices, plus a brand manifest: style, voice-over voice, recurring characters and locations — set once, used in every video." },
+      { "icon": "☺", "title": "Characters and scenes under control", "text": "Choose who stays, who's dropped, who's swapped for your own photo — and which three images the model will actually see. Everything else is described to it in words." },
+      { "icon": "✎", "title": "A prompt you can see", "text": "The text prompt is assembled automatically from the breakdown, the product and the brand, goes through moderation, and stays fully editable." },
+      { "icon": "▶", "title": "Google Veo 3.1, two render qualities", "text": "Fast (Veo 3.1 Lite) — noticeably quicker; cinematic (full Veo 3.1) — better-looking and slower. The choice is made on every generation and isn't tied to your service plan." },
+      { "icon": "⌕", "title": "Artifact check", "text": "After generation, Gemini reviews the result and proposes a fixed prompt: stray hands, garbled text, a missing product. You can also describe the problem yourself." },
+      { "icon": "⧉", "title": "Browser and Telegram — one product", "text": "Works as a regular website and as a Telegram Mini App at the same time, with no difference in functionality — start in the browser, continue in Telegram." }
+    ]
+  },
+  "steps": {
+    "title": "How it works",
+    "lead": "Nine steps from uploading a reference to a finished file.",
+    "items": [
+      { "title": "Add a product", "text": "A project and a product: a photo (used to determine category, target audience and comparable prices), a description as text or voice, and a price. The quick path without a project also works — then the product is described right inside the wizard." },
+      { "title": "Pick a reference", "text": "Four ways: search YouTube, paste a link, upload your own file up to 100MB, or — on the Premium plan — a ready-made breakdown from the service's library, instant and with no new AI call." },
+      { "title": "AI breaks down the video", "text": "Gemini extracts timestamped scenes, cast and extras, visual style, pacing and aspect ratio — and assesses who the video is aimed at and what it's selling." },
+      { "title": "Check relevance", "text": "A separate check compares the video's audience with your product's buyers: a score, the reasoning behind it, and concrete edits — whether cloning this reference is even worth it." },
+      { "title": "Assemble the shot list", "text": "Remove unwanted characters, scenes and extras — clicking any of them highlights the relevant lines of the breakdown. A character can be swapped for your own photo, a description, or a brand character." },
+      { "title": "Get the prompt", "text": "GPT-5 assembles a text-to-video prompt from the breakdown, the product, the brand manifest, the voice-over language and the relevance suggestions. The prompt can be edited by hand." },
+      { "title": "Choose the format and images for Veo", "text": "Aspect ratio — 16:9 and 9:16 on any plan, plus 3:4, 1:1 or a custom one from Standard up — and which three images the model will get as references: characters, your scenes, brand scenes, product photo. Everything else goes into the prompt as text." },
+      { "title": "Generate the video", "text": "Google Veo 3.1 renders the new ad video — pick fast or more cinematic render quality." },
+      { "title": "Review and grab it", "text": "A separate artifact check will propose a fixed prompt for a re-generation. The finished video is a direct file link; you can also queue it for moderation to publish." }
+    ]
+  },
+  "plans": {
+    "title": "Plans",
+    "freeNote": "Right now all three plans are free and switch right inside the app — this is a rollout period, not a price list.",
+    "priceFree": "free",
+    "items": [
+      {
+        "id": "lite",
+        "title": "Lite",
+        "summary": "The shortest path from a winning example to a finished video: reference breakdown, product, prompt, video.",
+        "included": [
+          "AI reference breakdown with scenes, characters and extras",
+          "Reference search on YouTube, a link, or your own file",
+          "Prompt assembly and manual editing",
+          "16:9 or 9:16 generation — the formats Veo renders natively",
+          "Download the finished file"
+        ],
+        "excluded": [
+          "Library of ready-made breakdowns",
+          "Relevance check and video artifact audit",
+          "Brand manifest, your own scenes, photo character swap",
+          "Aspect ratios beyond the two native ones"
+        ],
+        "note": "The default plan — work starts on it with no setup at all."
+      },
+      {
+        "id": "standard",
+        "title": "Standard",
+        "summary": "The full feature set of the service, except the library of ready-made breakdowns.",
+        "included": [
+          "Everything in Lite",
+          "Reference-to-product relevance check",
+          "Finished video artifact audit and a fixed prompt",
+          "Brand manifest: style, voice, recurring characters and locations",
+          "Your own scenes and manual pick of three images for Veo",
+          "Photo character swap",
+          "Any aspect ratio, including a custom one",
+          "Publishing through the service"
+        ],
+        "excluded": ["Library of ready-made breakdowns"],
+        "note": null
+      },
+      {
+        "id": "premium",
+        "title": "Premium",
+        "summary": "Everything, plus the library: ready-made scenarios matched to your product's audience and an instant breakdown of videos already seen.",
+        "included": [
+          "Everything in Standard",
+          "Library of breakdowns matched by product category and audience",
+          "Instant start from an existing breakdown — no new AI call"
+        ],
+        "excluded": [],
+        "note": null,
+        "highlight": true
+      }
+    ]
+  },
+  "details": {
+    "title": "More about the project",
+    "lead": "How the thing behind the buttons actually works — no marketing promises.",
+    "items": [
+      { "title": "What a \"breakdown\" actually is, and why it's this detailed", "text": "The reference goes into Gemini whole — as a YouTube link or a file. What comes back is a structure: timestamped scenes with headings, cast members with a description of their look and role, extras kept separate from the cast, visual style, pacing, aspect ratio, plus an assessment of the video's audience and what it's selling. A breakdown isn't a summary — it's the raw material the prompt is later built from: every piece of it can be dropped, edited or replaced." },
+      { "title": "Why relevance is scored separately", "text": "A winning video isn't universal — it worked for its own audience. A separate check compares who the reference is aimed at with who buys your product — by age, gender, interests, category and price tier — and answers with a 0–100 score, the reasoning behind it, a list of mismatches, and concrete prompt edits. Sometimes the honest answer is: pick a different reference." },
+      { "title": "The brand manifest — set once, used in every video", "text": "Style, tone, voice-over voice, recurring characters and locations are described once and plugged into every video of the brand. A session gets a copy of the manifest at launch time: edits inside a video don't change the brand itself, and changing the brand doesn't retroactively rewrite what's already been made." },
+      { "title": "What the model sees as an image, and what as words", "text": "Veo accepts no more than three reference images. The service shows exactly which three will be sent — characters, your scenes, brand scenes, product photo — and lets you assemble that set by hand. Anything that doesn't make the slots is described in the prompt as text instead of being lost." },
+      { "title": "The library of breakdowns and privacy", "text": "The breakdown of every public video is saved and offered to others as a ready-made scenario — making a repeat analysis unnecessary. Breakdowns of videos uploaded as a file are private: only the author sees them, and they never appear in shared results. Under the terms of use, breakdowns themselves are the service's intellectual property; your product, your materials and the finished video remain yours." },
+      { "title": "Files and how long they're kept", "text": "References, product photos, frame captures and finished videos live in Vercel Blob. Every file has an owner in the database, and deleting the owner deletes the file: an expired session takes its files with it, a deleted product takes its photo, a deleted manifest takes its character and scene photos. Daily cleanup is backed up by a separate sweep for orphaned files." },
+      { "title": "Browser and Telegram — one app", "text": "The same product opens as a regular website and as a Telegram Mini App, with no difference in capabilities. An anonymous session works without signing in; signing in through Telegram is needed for projects, the product catalog, the brand manifest and any plan above Lite — those are tied to a user." },
+      { "title": "Open source", "text": "The source code is available on GitHub; development followed the GitHub Spec Kit methodology — the spec and implementation plan live in the repository next to the code and are updated along with it." }
+    ]
+  },
+  "roadmap": {
+    "title": "Roadmap",
+    "lead": "What already works is above, on this page. This is where the product is headed next. Horizons, not dates: deadlines in a product built on someone else's models live only until that model's next release.",
+    "items": [
+      { "title": "Rock-solid basics", "outcome": "The acceptance checklist passes end to end, with no \"doesn't work yet here\".", "items": ["Debt from an end-to-end audit of code, database, layout and docs", "A cinematic touch — a smooth camera push-in", "Tests for money gateways, file cleanup and access checks"] },
+      { "title": "A video goes out into the world and spreads on its own", "outcome": "From \"uploaded a reference\" to \"published and shared\" — without leaving the product.", "items": ["Upload to YouTube and TikTok straight from the moderation queue", "A dedicated page for a finished video: watch it and make one just like it", "Reposting a video to your own Telegram group or channel", "Burned-in captions with brand styling and automatic timing"] },
+      { "title": "Audience and revenue", "outcome": "The service gets pricing plans, its own feed, and an API key for third-party apps.", "items": ["Pricing and payment: subscriptions, generation packs, Telegram Stars", "An opt-in weekly digest of standout videos, sent via Telegram", "A feed with likes and reposts; paying subscribers can publish to it", "An external API by key for the Premium plan"] },
+      { "title": "A storefront and inbound search", "outcome": "Someone searching for ads in their niche finds the product on their own and lands in the wizard.", "items": ["A blog: fresh videos in a category with a breakdown of the techniques used", "An RSS feed of new ad videos rated highly by AI", "A news sitemap and structured markup for the posts", "A trend library by category, built into the product", "A multilingual app and landing page interface (ru/uk/en/de/es)"] },
+      { "title": "From one video to a whole stream of them", "outcome": "A hundred-item catalog covers a month's content plan in one evening.", "items": ["Batch generation: one reference applied to every product in a project", "A/B variants of the hook and the call to action", "Catalog import from a store instead of manual entry", "Scene templates to start without a reference at all", "Localizing one video into several languages", "A publishing scheduler and a check against each platform's rules"] },
+      { "title": "Indistinguishable from footage that was actually shot", "outcome": "Viewers can't tell a video was generated, and a series reads as one consistent brand.", "items": ["Your actual product on screen, not something that merely resembles it", "A recurring brand ambassador and a clone of their voice", "Lip-sync to your own audio track", "Videos longer than eight seconds"] },
+      { "title": "Results and infrastructure", "outcome": "The service can answer \"what video should we shoot next\" — and plugs into other products.", "items": ["Platform performance stats fed back into the product", "Reference picks based on what actually worked for you", "A virality score before generation", "Video economics: cost, views, payback", "An agency mode, white-labeling, and client reporting", "Team collaboration and webhooks for external systems"] }
+    ]
+  },
+  "faq": {
+    "title": "Frequently asked questions",
+    "items": [
+      { "question": "Do I need to sign up?", "answer": "No. The session is anonymous and created automatically on your first visit — you only need to accept the public offer and terms of use once, before your first breakdown. Signing in through Telegram is available but optional: it's needed for projects, the product catalog, the brand manifest, and to come back to your sessions later." },
+      { "question": "Which video formats are supported?", "answer": "MP4, MOV and AVI up to 100MB, or simply a link to a public YouTube video — in which case there's nothing to download or upload at all." },
+      { "question": "How long does video generation take?", "answer": "Once the prompt is approved, the video is usually ready in 3–5 minutes — the time depends on the chosen mode (Fast or Standard) and current load on Veo 3.1." },
+      { "question": "How much does it cost?", "answer": "Right now, nothing: all three plans — Lite, Standard and Premium — are free and switch right inside the app. This is a rollout period; whatever you've already made stays yours once paid plans arrive. Later, Lite is planned to become conditionally free — in exchange for liking the project's YouTube channel and sending a few links to the service." },
+      { "question": "What's the difference between the plans?", "answer": "Lite is the minimal path: reference breakdown and video generation in 16:9 or 9:16. Standard adds a relevance check, a video artifact audit, a brand manifest, your own scenes, photo character swap, any aspect ratio, and publishing. Premium is Standard plus the library of ready-made breakdowns. You can switch plans at any time without affecting projects, videos or breakdowns you've already made." },
+      { "question": "Where are my files stored, and when are they deleted?", "answer": "In Vercel Blob — the reference, product photos and the finished video all live in the same storage. Every file has an owner in the database: an expired session takes its files with it, a deleted product takes its photo, a deleted manifest takes its character and scene photos. Cleanup runs daily, and a separate pass picks up orphaned files." },
+      { "question": "Who owns the breakdowns and the finished videos?", "answer": "The service creates the reference breakdown, and under the terms of use the breakdowns belong to it — that's exactly what lets the library offer them to other users. Your product, your uploaded materials and the generated video remain yours. Breakdowns of videos uploaded as a file are private: only the author sees them." },
+      { "question": "Can I use it from Telegram?", "answer": "Yes — the same product works both as a regular website in a browser and as a Telegram Mini App inside Telegram, with the same set of features." },
+      { "question": "Can I manually edit the video breakdown or the prompt?", "answer": "Yes, at both steps: after the automatic reference analysis and after the automatic prompt generation, both results can be edited before moving on." },
+      { "question": "Is this an open-source project?", "answer": "Yes — the source code is available on GitHub, and development followed the GitHub Spec Kit methodology." }
+    ]
+  },
+  "finalCta": {
+    "title": "Ready to try it?",
+    "text": "Upload a reference video and get a first version of your ad in a few minutes.",
+    "cta": "Open viral4creators"
+  },
+  "footer": {
+    "demo": "Demo on YouTube",
+    "github": "GitHub",
+    "offer": "Public Offer",
+    "terms": "Terms of Use",
+    "builtWith": "Built with GitHub Spec Kit",
+    "legalNoticeOtherLocale": "The public offer and terms of use are currently available in Russian only."
+  },
+  "notFound": {
+    "title": "Page not found",
+    "text": "This page doesn't exist — the link may be outdated.",
+    "backHome": "Back home"
+  },
+  "localeSwitcher": {
+    "label": "Language"
+  },
+  "blog": {
+    "metaTitleSuffix": " — viral4creators blog",
+    "listTitle": "Blog",
+    "listLead": "This week's trending ad videos with a breakdown of the techniques that made them work — plus product news.",
+    "empty": "No published posts yet — check back later.",
+    "readMore": "Read",
+    "backToList": "← Back to all posts",
+    "untranslatedNotice": "A translation into this language isn't ready yet — showing the original post.",
+    "publishedLabel": "Published",
+    "prevPage": "← Back",
+    "nextPage": "Next →",
+    "pageOf": "Page {{page}} of {{total}}",
+    "sourceCta": "Analyze a similar video",
+    "watchOnYoutube": "Watch on YouTube",
+    "notFoundTitle": "Post not found",
+    "notFoundText": "This post doesn't exist — the link may be outdated, or the post was unpublished.",
+    "breadcrumbHome": "Home"
+  },
+  "sharedVideo": {
+    "metaTitleSuffix": " — made with viral4creators",
+    "backToHome": "← Back to home",
+    "priceLabel": "Price",
+    "makeSameCta": "Make one like this",
+    "shareCta": "Share",
+    "linkCopied": "Link copied",
+    "poweredBy": "This video was made with viral4creators — from someone else's example, in a couple of minutes, for free."
+  }
+}

@@ -1,0 +1,211 @@
+{
+  "meta": {
+    "title": "viral4creators — UGC-Werbung aus einem einzigen Beispiel",
+    "description": "Laden Sie ein erfolgreiches UGC-Werbevideo hoch — erhalten Sie ein neues, für Ihr Produkt, im selben Stil. Videoanalyse mit Gemini, Generierung mit Google Veo 3.1, kostenlos und ohne Registrierung.",
+    "keywords": ["UGC-Werbung", "KI-Videogenerierung", "Google Veo 3.1", "Werbevideo", "Video-Ad-Generator"]
+  },
+  "header": {
+    "nav": [
+      { "href": "#how", "label": "So funktioniert's" },
+      { "href": "#features", "label": "Funktionen" },
+      { "href": "#plans", "label": "Tarife" },
+      { "href": "#roadmap", "label": "Roadmap" },
+      { "href": "#faq", "label": "FAQ" }
+    ],
+    "open": "Öffnen",
+    "menuOpenAria": "Menü öffnen",
+    "menuCloseAria": "Menü schließen",
+    "navAriaLabel": "Seitenbereiche",
+    "blogLabel": "Blog"
+  },
+  "hero": {
+    "badge": "Kostenlos · Keine Registrierung",
+    "title": "Ein erfolgreiches Video → neue Werbung für Ihr Produkt",
+    "subtitle": "viral4creators analysiert ein UGC-Referenzvideo und generiert daraus ein neues Werbevideo für Ihr Produkt — und bewahrt dabei, was das Original erfolgreich gemacht hat.",
+    "ctaPrimary": "Kostenlos testen",
+    "ctaDemo": "Demo ansehen",
+    "note": "Funktioniert direkt im Browser und als Telegram Mini App — startet sofort, keine Installation nötig."
+  },
+  "demo": {
+    "title": "So sieht es in der Praxis aus",
+    "lead": "Der komplette Weg vom Referenzvideo zum fertigen Werbevideo — in einer einzigen Demo.",
+    "iframeTitle": "viral4creators — Demo",
+    "noVideo": "Video lädt nicht?",
+    "openYoutube": "Auf YouTube öffnen"
+  },
+  "features": {
+    "title": "Funktionen",
+    "items": [
+      { "icon": "◐", "title": "KI-Analyse der Referenz", "text": "Gemini extrahiert Szenen mit Zeitstempeln, Darsteller, Statisten, Stil und Tempo — und beurteilt separat, an wen sich das Video richtet und was es bewirbt." },
+      { "icon": "◎", "title": "Relevanzprüfung", "text": "Die Zielgruppe des Videos wird mit den Käufern Ihres Produkts verglichen: eine Bewertung von 0 bis 100, die Begründung dazu, eine Liste der Abweichungen und konkrete Änderungen für den Prompt." },
+      { "icon": "▤", "title": "Bibliothek der Analysen", "text": "Jede Analyse wird gespeichert und anderen als fertiges Szenario angeboten, passend zu Kategorie und Zielgruppe des Produkts. Dasselbe Video wird nie zweimal analysiert — schnell und kostenlos." },
+      { "icon": "▣", "title": "Projekte, Produkte, Marke", "text": "Ein Produktkatalog mit Fotos, Kategorie, Vergleichspreisen, plus ein Markenmanifest: Stil, Sprecherstimme, wiederkehrende Charaktere und Orte — einmal festgelegt, für alle Videos genutzt." },
+      { "icon": "☺", "title": "Charaktere und Szenen unter Kontrolle", "text": "Wer bleibt, wer entfällt, wer durch ein eigenes Foto ersetzt wird — und welche drei Bilder das Modell tatsächlich sieht. Alles andere wird ihm in Worten beschrieben." },
+      { "icon": "✎", "title": "Ein Prompt, den man sieht", "text": "Der Text-Prompt wird automatisch aus Analyse, Produkt und Marke zusammengestellt, durchläuft eine Moderation und bleibt vollständig bearbeitbar." },
+      { "icon": "▶", "title": "Google Veo 3.1, zwei Render-Qualitäten", "text": "Schnell (Veo 3.1 Lite) — spürbar zügiger; kinematografisch (volles Veo 3.1) — hochwertiger und langsamer. Die Wahl trifft man bei jeder Generierung neu, unabhängig vom gewählten Tarif." },
+      { "icon": "⌕", "title": "Artefaktprüfung", "text": "Nach der Generierung prüft Gemini das Ergebnis und schlägt einen korrigierten Prompt vor: überzählige Hände, verzerrter Text, ein fehlendes Produkt. Das Problem lässt sich auch in eigenen Worten beschreiben." },
+      { "icon": "⧉", "title": "Browser und Telegram — ein Produkt", "text": "Funktioniert gleichzeitig als gewöhnliche Website und als Telegram Mini App, ohne Unterschied im Funktionsumfang — im Browser starten, in Telegram fortsetzen." }
+    ]
+  },
+  "steps": {
+    "title": "So funktioniert's",
+    "lead": "Neun Schritte vom Hochladen der Referenz bis zur fertigen Datei.",
+    "items": [
+      { "title": "Produkt anlegen", "text": "Projekt und Produkt: ein Foto (daraus werden Kategorie, Zielgruppe und Vergleichspreise bestimmt), eine Beschreibung als Text oder Sprache, ein Preis. Der schnelle Weg ohne Projekt funktioniert ebenfalls — dann wird das Produkt direkt im Assistenten beschrieben." },
+      { "title": "Referenz wählen", "text": "Vier Wege: YouTube-Suche, ein Link, eine eigene Datei bis 100 MB und — im Premium-Tarif — eine fertige Analyse aus der Bibliothek des Dienstes, sofort und ohne neuen KI-Aufruf." },
+      { "title": "KI analysiert das Video", "text": "Gemini extrahiert Szenen mit Zeitstempeln, Darsteller und Statisten, visuellen Stil, Tempo und Seitenverhältnis — und beurteilt, an wen sich dieses Video richtet und was es bewirbt." },
+      { "title": "Relevanz prüfen", "text": "Eine separate Prüfung vergleicht die Zielgruppe des Videos mit den Käufern Ihres Produkts: eine Bewertung, die Begründung dazu und konkrete Änderungen — ob es sich überhaupt lohnt, diese Referenz zu klonen." },
+      { "title": "Bildaufbau zusammenstellen", "text": "Überflüssige Charaktere, Szenen und Statisten entfernen — ein Klick auf einen davon hebt die passenden Zeilen der Analyse hervor. Ein Charakter lässt sich durch ein eigenes Foto, eine Beschreibung oder einen Marken-Charakter ersetzen." },
+      { "title": "Prompt erhalten", "text": "GPT-5 stellt einen Text-zu-Video-Prompt aus Analyse, Produkt, Markenmanifest, Sprache der Vertonung und Relevanz-Hinweisen zusammen. Der Prompt lässt sich von Hand anpassen." },
+      { "title": "Format und Bilder für Veo wählen", "text": "Seitenverhältnis — 16:9 und 9:16 in jedem Tarif, 3:4, 1:1 oder ein eigenes ab Standard — sowie die drei Bilder, die das Modell als Referenz erhält: Charaktere, eigene Szenen, Markenszenen, Produktfoto. Alles Weitere fließt als Text in den Prompt." },
+      { "title": "Video generieren", "text": "Google Veo 3.1 rendert das neue Werbevideo — wahlweise in schneller oder kinematografischerer Render-Qualität." },
+      { "title": "Prüfen und abholen", "text": "Eine separate Artefaktprüfung schlägt einen korrigierten Prompt für eine erneute Generierung vor. Das fertige Video steht als direkter Datei-Link zur Verfügung; es lässt sich auch zur Moderation für die Veröffentlichung einreichen." }
+    ]
+  },
+  "plans": {
+    "title": "Tarife",
+    "freeNote": "Derzeit sind alle drei Tarife kostenlos und lassen sich direkt in der App umschalten — das ist eine Testphase, keine Preisliste.",
+    "priceFree": "kostenlos",
+    "items": [
+      {
+        "id": "lite",
+        "title": "Lite",
+        "summary": "Der kürzeste Weg von einem erfolgreichen Beispiel zum fertigen Video: Referenzanalyse, Produkt, Prompt, Video.",
+        "included": [
+          "KI-Referenzanalyse mit Szenen, Charakteren und Statisten",
+          "Referenzsuche auf YouTube, per Link oder eigener Datei",
+          "Prompt-Erstellung und manuelle Bearbeitung",
+          "Generierung in 16:9 oder 9:16 — die Formate, die Veo nativ rendert",
+          "Download der fertigen Datei"
+        ],
+        "excluded": [
+          "Bibliothek fertiger Analysen",
+          "Relevanzprüfung und Video-Artefakt-Audit",
+          "Markenmanifest, eigene Szenen, Charakteraustausch per Foto",
+          "Seitenverhältnisse über die beiden nativen hinaus"
+        ],
+        "note": "Der Standardtarif — die Arbeit beginnt darauf ohne jede Einrichtung."
+      },
+      {
+        "id": "standard",
+        "title": "Standard",
+        "summary": "Der volle Funktionsumfang des Dienstes, mit Ausnahme der Bibliothek fertiger Analysen.",
+        "included": [
+          "Alles aus Lite",
+          "Relevanzprüfung der Referenz für Ihr Produkt",
+          "Artefakt-Audit des fertigen Videos und ein korrigierter Prompt",
+          "Markenmanifest: Stil, Stimme, wiederkehrende Charaktere und Orte",
+          "Eigene Szenen und manuelle Auswahl der drei Bilder für Veo",
+          "Charakteraustausch per eigenem Foto",
+          "Jedes Seitenverhältnis, auch benutzerdefiniert",
+          "Veröffentlichung über den Dienst"
+        ],
+        "excluded": ["Bibliothek fertiger Analysen"],
+        "note": null
+      },
+      {
+        "id": "premium",
+        "title": "Premium",
+        "summary": "Alles zusammen mit der Bibliothek: fertige Szenarien passend zur Zielgruppe Ihres Produkts und eine sofortige Analyse bereits gesehener Videos.",
+        "included": [
+          "Alles aus Standard",
+          "Bibliothek von Analysen, passend zu Kategorie und Zielgruppe des Produkts",
+          "Sofortstart mit einer vorhandenen Analyse — ohne neuen KI-Aufruf"
+        ],
+        "excluded": [],
+        "note": null,
+        "highlight": true
+      }
+    ]
+  },
+  "details": {
+    "title": "Mehr über das Projekt",
+    "lead": "Wie das, was sich hinter den Buttons verbirgt, tatsächlich funktioniert — ohne Marketingversprechen.",
+    "items": [
+      { "title": "Was eine „Analyse“ genau ist und warum sie so detailliert ausfällt", "text": "Die Referenz geht als Ganzes an Gemini — per YouTube-Link oder als Datei. Zurück kommt eine Struktur: Szenen mit Zeitstempeln und Überschriften, Darsteller mit Beschreibung von Aussehen und Rolle, Statisten getrennt von den Hauptfiguren, visueller Stil, Tempo, Seitenverhältnis, dazu eine Einschätzung der Zielgruppe des Videos und dessen, was es bewirbt. Die Analyse ist keine Nacherzählung, sondern das Material, aus dem später der Prompt zusammengesetzt wird: Jeder Teil davon lässt sich entfernen, anpassen oder ersetzen." },
+      { "title": "Warum Relevanz separat bewertet wird", "text": "Ein erfolgreiches Video ist nicht universell — es war für seine eigene Zielgruppe erfolgreich. Eine separate Prüfung vergleicht, an wen sich die Referenz richtet, mit den Käufern Ihres Produkts — nach Alter, Geschlecht, Interessen, Kategorie und Preisniveau — und liefert eine Bewertung von 0 bis 100, die Begründung dazu, eine Liste der Abweichungen und konkrete Prompt-Änderungen. Manchmal lautet die ehrliche Antwort: eine andere Referenz wählen." },
+      { "title": "Das Markenmanifest — einmal festgelegt, für alle Videos genutzt", "text": "Stil, Tonalität, Sprecherstimme, wiederkehrende Charaktere und Orte werden einmalig beschrieben und in jedes Video der Marke übernommen. In eine Sitzung gelangt eine Kopie des Manifests zum Zeitpunkt des Starts: Änderungen innerhalb eines Videos verändern nicht die Marke selbst, und eine Änderung der Marke schreibt bereits Erstelltes nicht rückwirkend um." },
+      { "title": "Was das Modell als Bild sieht und was in Worten", "text": "Veo akzeptiert höchstens drei Referenzbilder. Der Dienst zeigt genau, welche drei übermittelt werden — Charaktere, eigene Szenen, Markenszenen, Produktfoto — und erlaubt es, diese Auswahl von Hand zusammenzustellen. Alles, was keinen Platz findet, wird stattdessen als Text im Prompt beschrieben und geht nicht verloren." },
+      { "title": "Die Bibliothek der Analysen und der Datenschutz", "text": "Die Analyse jedes öffentlichen Videos wird gespeichert und anderen als fertiges Szenario angeboten — das macht eine erneute Analyse überflüssig. Analysen von Videos, die als Datei hochgeladen wurden, sind privat: Nur der Autor sieht sie, in der allgemeinen Ausgabe erscheinen sie nicht. Laut Nutzungsbedingungen sind die Analysen selbst geistiges Eigentum des Dienstes; Ihr Produkt, Ihre Materialien und das fertige Video bleiben Ihnen." },
+      { "title": "Dateien und Aufbewahrungsfristen", "text": "Referenzen, Produktfotos, Standbilder und fertige Videos liegen in Vercel Blob. Jede Datei hat einen Besitzer in der Datenbank, und das Löschen des Besitzers löscht die Datei: eine abgelaufene Sitzung nimmt ihre Dateien mit, ein gelöschtes Produkt sein Foto, ein gelöschtes Manifest die Fotos von Charakteren und Szenen. Die tägliche Bereinigung wird durch einen separaten Durchlauf für verwaiste Dateien ergänzt." },
+      { "title": "Browser und Telegram — eine Anwendung", "text": "Dasselbe Produkt öffnet sich als gewöhnliche Website und als Telegram Mini App, ohne Unterschied im Funktionsumfang. Eine anonyme Sitzung funktioniert ohne Anmeldung; die Anmeldung über Telegram wird für Projekte, den Produktkatalog, das Markenmanifest und Tarife oberhalb von Lite benötigt — sie sind an einen Nutzer gebunden." },
+      { "title": "Offener Quellcode", "text": "Der Quellcode ist auf GitHub verfügbar, die Entwicklung folgte der GitHub-Spec-Kit-Methodik: Lastenheft und Umsetzungsplan liegen im Repository neben dem Code und werden zusammen mit ihm aktualisiert." }
+    ]
+  },
+  "roadmap": {
+    "title": "Roadmap",
+    "lead": "Was schon funktioniert, steht weiter oben auf dieser Seite. Hier geht es darum, wohin sich das Produkt als Nächstes entwickelt. Horizonte statt Termine: Fristen in einem Produkt, das auf fremden Modellen aufbaut, gelten nur bis zu deren nächstem Release.",
+    "items": [
+      { "title": "Zuverlässig im Betrieb", "outcome": "Die Abnahme-Checkliste wird vollständig durchlaufen, ohne „funktioniert hier noch nicht“.", "items": ["Nacharbeiten aus einem durchgängigen Audit von Code, Datenbank, Layout und Dokumentation", "Ein kinematografischer Effekt — ein sanfter Kamera-Push-in", "Tests für Zahlungs-Gateways, Dateibereinigung und Zugriffsprüfungen"] },
+      { "title": "Ein Video geht in die Welt hinaus und verbreitet sich von selbst", "outcome": "Von „Referenz hochgeladen“ bis „veröffentlicht und geteilt“ — ohne das Produkt zu verlassen.", "items": ["Upload zu YouTube und TikTok direkt aus der Moderationswarteschlange", "Eine eigene Seite für ein fertiges Video: ansehen und ein ähnliches erstellen", "Video-Repost in die eigene Telegram-Gruppe oder den eigenen Kanal", "Eingebrannte Untertitel mit Markenstil und automatischem Timing"] },
+      { "title": "Zielgruppe und Umsatz", "outcome": "Der Dienst erhält Tarife, einen eigenen Feed und einen Schlüssel für Drittanbieter-Programme.", "items": ["Tarife und Bezahlung: Abonnement, Generierungspakete, Telegram Stars", "Eine optionale wöchentliche Auswahl der besten Videos per Telegram", "Ein Feed mit Likes und Reposts; zahlende Abonnenten können darin veröffentlichen", "Eine externe API per Schlüssel für den Premium-Tarif"] },
+      { "title": "Schaufenster und eingehende Suche", "outcome": "Wer in seiner Nische nach Werbung sucht, findet das Produkt von selbst und landet direkt im Assistenten.", "items": ["Ein Blog: aktuelle Videos einer Kategorie mit Analyse der verwendeten Techniken", "Ein RSS-Feed neuer, von der KI hoch bewerteter Werbevideos", "Eine News-Sitemap und strukturierte Auszeichnung der Beiträge", "Eine Trend-Bibliothek nach Kategorien, direkt im Produkt", "Eine mehrsprachige Oberfläche für App und Landingpage (ru/uk/en/de/es)"] },
+      { "title": "Von einem Video zu einem ganzen Strom", "outcome": "Ein Katalog mit hundert Positionen deckt den Monatsplan für Inhalte an einem Abend ab.", "items": ["Stapelgenerierung: eine Referenz für alle Produkte eines Projekts", "A/B-Varianten von Hook und Call-to-Action", "Katalogimport aus einem Shop statt manueller Anlage", "Szenenvorlagen für den Start ohne Referenz", "Lokalisierung eines Videos in mehrere Sprachen", "Ein Veröffentlichungsplaner mit Prüfung der Plattformregeln"] },
+      { "title": "Nicht von echten Aufnahmen zu unterscheiden", "outcome": "Zuschauer erkennen ein Video nicht als generiert, und eine Serie wird als eine einheitliche Marke wahrgenommen.", "items": ["Ihr tatsächliches Produkt im Bild, nicht nur ein ähnliches", "Ein wiederkehrender Markenbotschafter mit geklonter Stimme", "Lippensynchronisation mit der eigenen Tonspur", "Videos länger als acht Sekunden"] },
+      { "title": "Ergebnisse und Infrastruktur", "outcome": "Der Dienst beantwortet die Frage „welches Video als Nächstes drehen“ — und lässt sich in fremde Produkte einbinden.", "items": ["Plattform-Statistiken zurück ins Produkt", "Referenzauswahl basierend darauf, was bei Ihnen tatsächlich funktioniert hat", "Eine Viralitätsbewertung vor der Generierung", "Video-Ökonomie: Kosten, Aufrufe, Amortisation", "Ein Agenturmodus, White-Label und Kundenberichte", "Teamarbeit und Webhooks für externe Systeme"] }
+    ]
+  },
+  "faq": {
+    "title": "Häufig gestellte Fragen",
+    "items": [
+      { "question": "Ist eine Registrierung erforderlich?", "answer": "Nein. Die Sitzung ist anonym und wird beim ersten Besuch automatisch erstellt — man muss nur einmal, vor der ersten Analyse, dem öffentlichen Angebot und den Nutzungsbedingungen zustimmen. Die Anmeldung über Telegram ist verfügbar, aber optional: Sie wird für Projekte, den Produktkatalog, das Markenmanifest und um später zu eigenen Sitzungen zurückzukehren benötigt." },
+      { "question": "Welche Videoformate werden unterstützt?", "answer": "MP4, MOV und AVI bis 100 MB, oder einfach ein Link zu einem öffentlichen YouTube-Video — dann muss überhaupt keine Datei heruntergeladen oder hochgeladen werden." },
+      { "question": "Wie lange dauert die Videogenerierung?", "answer": "Sobald der Prompt bestätigt ist, ist das Video meist innerhalb von 3–5 Minuten fertig — die Dauer hängt vom gewählten Modus (Fast oder Standard) und der aktuellen Auslastung von Veo 3.1 ab." },
+      { "question": "Was kostet das?", "answer": "Derzeit nichts: Alle drei Tarife — Lite, Standard und Premium — sind kostenlos und lassen sich direkt in der App umschalten. Das ist eine Testphase; wenn eine Bezahlung eingeführt wird, bleibt bereits Erstelltes erhalten. Später soll Lite bedingt kostenlos werden — gegen ein Like des Projekt-YouTube-Kanals und einige an den Dienst gesendete Links." },
+      { "question": "Worin unterscheiden sich die Tarife?", "answer": "Lite ist der minimale Weg: Referenzanalyse und Videogenerierung in 16:9 oder 9:16. Standard ergänzt eine Relevanzprüfung, einen Video-Audit, ein Markenmanifest, eigene Szenen, Charakteraustausch per Foto, beliebige Seitenverhältnisse und die Veröffentlichung. Premium ist Standard plus die Bibliothek fertiger Analysen. Der Tarif lässt sich jederzeit wechseln, ohne bereits erstellte Projekte, Videos oder Analysen zu beeinträchtigen." },
+      { "question": "Wo werden meine Dateien gespeichert und wann werden sie gelöscht?", "answer": "In Vercel Blob — Referenz, Produktfoto und fertiges Video liegen im selben Speicher. Jede Datei hat einen Besitzer in der Datenbank: Eine abgelaufene Sitzung nimmt ihre Dateien mit, ein gelöschtes Produkt sein Foto, ein gelöschtes Manifest die Fotos von Charakteren und Szenen. Die Bereinigung läuft täglich, verwaiste Dateien erfasst ein separater Durchlauf." },
+      { "question": "Wem gehören die Analysen und die fertigen Videos?", "answer": "Die Analyse der Referenz erstellt der Dienst, und laut Nutzungsbedingungen gehören die Analysen ihm — genau deshalb kann die Bibliothek sie anderen anbieten. Ihr Produkt, Ihre hochgeladenen Materialien und das generierte Video bleiben Ihnen. Analysen von als Datei hochgeladenen Videos sind privat: Nur der Autor sieht sie." },
+      { "question": "Kann man es über Telegram nutzen?", "answer": "Ja — dasselbe Produkt funktioniert sowohl als gewöhnliche Website im Browser als auch als Telegram Mini App innerhalb von Telegram, mit demselben Funktionsumfang." },
+      { "question": "Kann man die Videoanalyse oder den Prompt manuell bearbeiten?", "answer": "Ja, an beiden Stellen: nach der automatischen Analyse der Referenz und nach der automatischen Generierung des Prompts lassen sich beide Ergebnisse anpassen, bevor es weitergeht." },
+      { "question": "Ist das ein Open-Source-Projekt?", "answer": "Ja — der Quellcode ist auf GitHub verfügbar, die Entwicklung folgte der GitHub-Spec-Kit-Methodik." }
+    ]
+  },
+  "finalCta": {
+    "title": "Bereit, es auszuprobieren?",
+    "text": "Laden Sie ein Referenzvideo hoch und erhalten Sie in wenigen Minuten eine erste Version Ihrer Werbung.",
+    "cta": "viral4creators öffnen"
+  },
+  "footer": {
+    "demo": "Demo auf YouTube",
+    "github": "GitHub",
+    "offer": "Vertragsangebot",
+    "terms": "Nutzungsbedingungen",
+    "builtWith": "Built with GitHub Spec Kit",
+    "legalNoticeOtherLocale": "Vertragsangebot und Nutzungsbedingungen sind derzeit nur auf Russisch verfügbar."
+  },
+  "notFound": {
+    "title": "Seite nicht gefunden",
+    "text": "Diese Seite existiert nicht — der Link ist möglicherweise veraltet.",
+    "backHome": "Zur Startseite"
+  },
+  "localeSwitcher": {
+    "label": "Sprache"
+  },
+  "blog": {
+    "metaTitleSuffix": " — viral4creators Blog",
+    "listTitle": "Blog",
+    "listLead": "Die angesagten Werbevideos dieser Woche mit einer Analyse der Techniken, die sie erfolgreich gemacht haben — plus Produktneuigkeiten.",
+    "empty": "Noch keine veröffentlichten Beiträge — schauen Sie später vorbei.",
+    "readMore": "Lesen",
+    "backToList": "← Zu allen Beiträgen",
+    "untranslatedNotice": "Eine Übersetzung in diese Sprache ist noch nicht fertig — es wird das Original angezeigt.",
+    "publishedLabel": "Veröffentlicht",
+    "prevPage": "← Zurück",
+    "nextPage": "Weiter →",
+    "pageOf": "Seite {{page}} von {{total}}",
+    "sourceCta": "Ein ähnliches Video analysieren",
+    "watchOnYoutube": "Auf YouTube ansehen",
+    "notFoundTitle": "Beitrag nicht gefunden",
+    "notFoundText": "Diesen Beitrag gibt es nicht — der Link ist möglicherweise veraltet oder der Beitrag wurde zurückgezogen.",
+    "breadcrumbHome": "Startseite"
+  },
+  "sharedVideo": {
+    "metaTitleSuffix": " — erstellt mit viral4creators",
+    "backToHome": "← Zur Startseite",
+    "priceLabel": "Preis",
+    "makeSameCta": "So eins machen",
+    "shareCta": "Teilen",
+    "linkCopied": "Link kopiert",
+    "poweredBy": "Dieses Video wurde mit viral4creators erstellt — nach einem fremden Beispiel, in wenigen Minuten und kostenlos."
+  }
+}

@@ -1,0 +1,18 @@
+# Development-only image for local docker-compose debugging.
+# Not used for Vercel deployment — Vercel builds this as a static site from
+# `npm run build` (see DOCKER.md and the Vercel readiness audit).
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+# Real source is bind-mounted over this by docker-compose for hot-reload;
+# this COPY only matters if the image is ever built/run without compose.
+COPY . .
+
+EXPOSE 5173
+
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

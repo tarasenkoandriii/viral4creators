@@ -1,0 +1,108 @@
+# Local development & debugging only.
+#
+# This does NOT reflect how the app runs on Vercel — there the backend
+# becomes serverless Functions and the frontend a static build. This
+# compose file exists purely so both halves can be run and debugged
+# together on your machine, matching the standard NestJS+Vite+Docker
+# Compose workflow. See doc/DOCKER.md for the debugger attach steps.
+
+services:
+  # Local-only Postgres standing in for Supabase during development —
+  # SessionService talks to this via Prisma exactly the same way it talks
+  # to real Supabase Postgres in Preview/Production (see
+  # doc/PRISMA-SUPABASE.md). Nothing here needs PgBouncer/pooling — it's one
+  # dev container, not many concurrent serverless invocations.
+  db:
+    image: postgres:16-alpine
+    container_name: viral4creators-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=viral4creators
+    ports:
+      - '5432:5432'
+    volumes:
+      - viral4creators-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: viral4creators-backend
+    env_file:
+      - ./backend/.env
+    environment:
+      # Overrides whatever PORT is set to in backend/.env, so the port
+      # inside the container always matches what's published below.
+      - PORT=3000
+      # Overrides backend/.env's DATABASE_URL/DIRECT_URL (which default to
+      # `localhost`, for running the backend natively outside Docker) —
+      # inside the compose network the Postgres container is reachable at
+      # the service name `db`, not `localhost`.
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/viral4creators?schema=public
+      - DIRECT_URL=postgresql://postgres:postgres@db:5432/viral4creators?schema=public
+    ports:
+      - '3000:3000'
+      - '9229:9229' # Node inspector — attach a debugger here
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/prisma:/app/prisma
+      - ./backend/prisma.config.ts:/app/prisma.config.ts
+      - ./backend/nest-cli.json:/app/nest-cli.json
+      - ./backend/tsconfig.json:/app/tsconfig.json
+      - ./backend/.eslintrc.js:/app/.eslintrc.js
+      - ./backend/.prettierrc:/app/.prettierrc
+      # Anonymous volume: keeps the container's own node_modules (installed
+      # for Linux/musl during image build) instead of whatever got bind-mounted
+      # from the host above — otherwise a host-installed node_modules (built
+      # on macOS/Windows, with different native bindings) would silently
+      # shadow it.
+      - /app/node_modules
+      # Anonymous volume, protecting the container's own compiled output —
+      # requires nest-cli.json's `deleteOutDir: false` (see that file's
+      # comment): `nest start --watch` normally deletes+recreates outDir
+      # on every rebuild, but a volume MOUNT POINT itself can't be rmdir'd
+      # from inside the container (only its contents can), which fails
+      # with `EBUSY: resource busy or locked, rmdir '/app/dist'`.
+      - /app/dist
+    depends_on:
+      db:
+        condition: service_healthy
+    # Apply any pending migrations against the local db, then start Nest —
+    # safe to run on every container start (a no-op once migrations are
+    # already applied).
+    command: sh -c "npx prisma migrate deploy && npm run start:docker:debug"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: viral4creators-frontend
+    env_file:
+      - ./frontend/.env
+    environment:
+      - VITE_USE_POLLING=true
+    ports:
+      - '5173:5173'
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js
+      - ./frontend/postcss.config.js:/app/postcss.config.js
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/tsconfig.node.json:/app/tsconfig.node.json
+      - /app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  viral4creators-db-data:

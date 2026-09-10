@@ -1,0 +1,230 @@
+# CI — то, что раньше прогонялось руками на каждом этапе (ТЗ §27, этап 33).
+#
+# Зачем это появилось так поздно: 442 теста, 17 написанных вручную
+# миграций и `sync-legal --check`, специально сделанный «для CI»,
+# существовали, но запускал их только человек и только когда вспоминал.
+#
+# Главное, чего не может песочница разработки и может CI: **сеть до
+# binaries.prisma.sh**. Поэтому здесь Prisma-клиент генерируется
+# по-настоящему, а миграции накатываются на живой Postgres и сверяются со
+# схемой. Именно это все прошлые этапы приходилось откладывать до стенда.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Новый пуш в ту же ветку отменяет предыдущий прогон: смысла проверять
+  # уже устаревший коммит нет.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  backend:
+    name: backend — тесты, типы, линт
+    runs-on: ubuntu-latest
+
+    services:
+      # Настоящий Postgres той же мажорной версии, что в docker-compose и
+      # в Supabase: миграции обязаны проверяться на том, на чём поедут.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: viral4creators
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/viral4creators
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/viral4creators
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # `postinstall` сам зовёт `prisma generate` — в CI это работает,
+      # в песочнице нет, и отсюда все «Property 'x' does not exist on
+      # type 'PrismaService'» в локальном tsc.
+      - run: npm ci
+        working-directory: backend
+      # `npm audit` на высоких (этап 53, В-6.17): TODO вёл 14 предупреждений
+      # руками, и новое высокое никто не заметил бы до следующего аудита.
+      # Пока `continue-on-error` — известные высокие закрываются мажорными
+      # обновлениями (I-Б.5), и красить весь CI ими до того дня нечестно;
+      # шаг виден в логе и станет обязательным вместе с обновлением.
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true
+        working-directory: backend
+
+      - name: prisma validate
+        run: npx prisma validate
+        working-directory: backend
+
+      - name: миграции накатываются на чистый Postgres 16
+        run: npx prisma migrate deploy
+        working-directory: backend
+
+      # Самая ценная проверка всего файла. Миграции написаны РУКАМИ (см.
+      # doc/TELEGRAM-ADMIN.md §5), поэтому схема и миграции могут молча
+      # разойтись: правку в schema.prisma легко забыть перенести в SQL, и
+      # на проде это всплывёт как «колонки нет». Diff между базой, куда
+      # накатились миграции, и schema.prisma обязан быть пустым.
+      # Флаги здесь именно такие, какие понимает Prisma 7: `--from-url` и
+      # `--to-schema-datamodel` были УДАЛЕНЫ в седьмой версии, и шаг с
+      # ними падал с «flag was removed» — то есть самая ценная проверка
+      # в этом файле не работала вовсе (найдено на этапе 38). Источник
+      # строки подключения — prisma.config.ts (там DIRECT_URL).
+      - name: схема и миграции не разошлись
+        run: |
+          npx prisma migrate diff \
+            --from-config-datasource \
+            --to-schema prisma/schema.prisma \
+            --exit-code
+        working-directory: backend
+
+      - name: типы
+        run: npx tsc --noEmit
+        working-directory: backend
+
+      - name: линт
+        run: npx eslint "src/**/*.ts" --max-warnings 0
+        working-directory: backend
+
+      # `--json --outputFile` нужен не ради красоты: scripts/check-docs.mjs
+      # берёт из этого отчёта число тестов. Статически его честно не
+      # посчитать — `it.each` и тесты в циклах разворачиваются в рантайме.
+      # Один прогон — и отчёт для check-docs, и пороги покрытия (этап 53,
+      # В-6.16): раньше набор гонялся дважды подряд, ~35 лишних секунд на
+      # каждый пуш. `--json --outputFile` и `--coverage` совместимы.
+      #
+      # Порог покрытия — НЕ на проект целиком (общий процент ничего не
+      # говорит и провоцирует писать тесты ради процента), а на восемь
+      # файлов (список — `coverageThreshold` в backend/package.json), где
+      # непокрытая строка стоит денег или файлов:
+      #  - common/blob-paths.ts — какие блобы удалять вместе с сессией;
+      #    непокрытая ветка здесь = вечная утечка самых тяжёлых файлов
+      #    (аудит 2026-09-06, §5: `postPathname` и `voiceoverPathname`
+      #    имели ноль попаданий при 96 % по файлу);
+      #  - common/ai-pricing.ts — прайс; потерянная ставка даёт
+      #    «молчаливый ноль» в отчёте о деньгах;
+      #  - common/spend-limits.ts — дневные потолки расхода;
+      #  - modules/plan — кто и что вправе делать за деньги;
+      #  - квоты SerpApi/YouTube и служебный канал (этап 49).
+      - name: тесты и покрытие опасных файлов
+        run: npx jest --ci --coverage --coverageReporters=text-summary --json --outputFile=jest-results.json
+        working-directory: backend
+
+      # Числа в документах разъезжались с реальностью на этапах 25, 28 и
+      # 30 — каждый раз их правили руками. Теперь это проверка, и стоит
+      # она здесь, а не в джобе `repo`, потому что ей нужен отчёт jest.
+      - name: счётчики в документах совпадают с реальностью
+        run: node scripts/check-docs.mjs
+
+
+  frontend:
+    name: frontend (TMA) — типы, линт, unit-скрипты, сборка
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+        working-directory: frontend
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true
+        working-directory: frontend
+
+      - name: типы
+        run: npx tsc --noEmit -p tsconfig.json
+        working-directory: frontend
+
+      - name: линт
+        run: npx eslint . --ext ts,tsx --max-warnings 0
+        working-directory: frontend
+
+      # Тестового раннера во фронтенде нет — проверки живут скриптами
+      # `npx tsx scripts/*.test.ts`. Запуск описан ОДИН раз, в
+      # `frontend/package.json` как `npm test`: пока он существовал только
+      # здесь, прогнать фронтенд-тесты локально было нечем, и они
+      # проверялись только в CI (аудит 2026-09-06, §5).
+      - name: unit-скрипты
+        run: npm test
+        working-directory: frontend
+
+      - name: сборка
+        run: npx vite build
+        working-directory: frontend
+
+  next-apps:
+    name: ${{ matrix.app }} — типы и сборка
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [admin, landing]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - run: npm ci
+        working-directory: ${{ matrix.app }}
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true
+        working-directory: ${{ matrix.app }}
+
+      - name: типы
+        run: npx tsc --noEmit -p tsconfig.json
+        working-directory: ${{ matrix.app }}
+
+      # Этап 53 (В-6.11): две кодовые базы из четырёх не линтовались никогда
+      # — у admin/ и landing/ не было ни конфигурации, ни скрипта.
+      - name: линт
+        run: npx next lint --max-warnings 0
+        working-directory: ${{ matrix.app }}
+
+      - name: сборка
+        run: npx next build
+        working-directory: ${{ matrix.app }}
+
+  repo:
+    name: репозиторий — юридические тексты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # doc/legal/*.md — единственный источник правды; сгенерированные
+      # модули в frontend/ и landing/ обязаны ему соответствовать, а
+      # версия — совпадать с TERMS_VERSION на бэкенде.
+      - name: юридические тексты синхронны
+        run: node scripts/sync-legal.mjs --check

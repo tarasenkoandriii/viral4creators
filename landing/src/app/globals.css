@@ -1,0 +1,1070 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0b0d;
+  --bg-alt: #121215;
+  --fg: #ececec;
+  --muted: #9a9a9a;
+  --accent: #6c8cff;
+  --accent-fg: #06060a;
+  --border: #2a2a2e;
+  --card: #151517;
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  /* Шапка липкая, поэтому якорь без отступа уводит заголовок раздела ПОД
+     неё: по «Режимы» в меню попадаешь на середину карточек. Найдено при
+     повторном аудите лендинга (этап 29). */
+  scroll-padding-top: 80px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+}
+
+a {
+  color: var(--accent);
+}
+
+.wrap {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ---------- Header ---------- */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(11, 11, 13, 0.85);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.site-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+}
+
+/* Б-4.12: логотип — тоже ссылка (на главную), 111×25.5 не хватало. */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+/* Ссылка шапки — 20px текста, и на телефоне по ней промахивались (аудит
+   2026-09-06, А-3.12). Высота доводится до рекомендованных 44px без
+   единого лишнего пикселя в раскладке: шапка и так 64px, ссылки в ней
+   просто центрируются. */
+/* Б-4.12: «FAQ» — 28px по ширине. Горизонтальный паддинг добирает цель
+   до 44px, отрицательный отступ гасит прирост, чтобы шапка не разъехалась. */
+.site-nav a:not(.cta) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 6px;
+  margin: 0 -6px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+  transition: color 0.15s;
+}
+
+.site-nav a:not(.cta):hover {
+  color: var(--fg);
+}
+
+.menu-toggle {
+  display: none;
+  flex-direction: column;
+  gap: 5px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  /* Б-4.3: бургер — единственный вход в меню на ≤720px, и был 38×32.
+     Ссылки внутри меню этап 40 довёл до 44px, до кнопки, которая их
+     открывает, правка не дошла. Полоски внутри не меняются. */
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+}
+
+.menu-toggle span {
+  display: block;
+  width: 22px;
+  height: 2px;
+  background: var(--fg);
+  border-radius: 1px;
+}
+
+@media (max-width: 720px) {
+  .menu-toggle {
+    display: flex;
+  }
+
+  .site-nav {
+    position: absolute;
+    top: 64px;
+    left: 0;
+    right: 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 8px 24px 16px;
+    display: none;
+  }
+
+  .site-nav a:not(.cta) {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* В раскрытом меню ссылка занимает всю ширину строки — цель нажатия
+     тогда не только высокая, но и широкая. */
+  .site-nav a:not(.cta) {
+    display: flex;
+  }
+
+  .site-nav .cta {
+    margin-top: 16px;
+    text-align: center;
+  }
+
+  .site-nav-open {
+    display: flex;
+  }
+}
+
+/* Этап 55 — переключатель языка в шапке. Тот же паттерн высоты цели
+   нажатия (44px), что и у ссылок навигации рядом. */
+.locale-switcher select {
+  min-height: 44px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.locale-switcher select:hover,
+.locale-switcher select:focus {
+  color: var(--fg);
+}
+
+@media (max-width: 720px) {
+  .locale-switcher {
+    margin-top: 16px;
+    align-self: flex-start;
+  }
+}
+
+/* Видимо только скринридерам — заголовок переключателя языка не дублируем
+   визуально рядом с самим select (aria-label уже на нём), но подпись
+   должна быть в разметке для доступности. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Buttons ---------- */
+
+.cta {
+  display: inline-block;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+  padding: 14px 28px;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.cta:hover {
+  opacity: 0.9;
+}
+
+.cta:active {
+  transform: scale(0.98);
+}
+
+/* Б-4.4: главный призыв страницы был 37px по высоте. */
+.cta-small {
+  padding: 12px 18px;
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.cta-ghost {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+
+.cta-ghost:hover {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+/* ---------- Hero ---------- */
+
+.hero {
+  padding: 96px 0 64px;
+  text-align: center;
+  background: radial-gradient(ellipse 60% 50% at 50% 0%, rgba(108, 140, 255, 0.16), transparent);
+}
+
+.badge {
+  display: inline-block;
+  font-size: 13px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 16px;
+  margin-bottom: 20px;
+}
+
+.hero h1 {
+  font-size: clamp(32px, 5vw, 52px);
+  margin: 0 0 16px;
+}
+
+.hero p {
+  color: var(--muted);
+  font-size: 18px;
+  max-width: 620px;
+  margin: 0 auto 32px;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.hero-note {
+  margin-top: 24px !important;
+  font-size: 14px !important;
+  max-width: 480px;
+}
+
+/* ---------- Section shared ---------- */
+
+section:not(.hero) {
+  padding: 64px 0;
+  border-top: 1px solid var(--border);
+}
+
+section h2 {
+  font-size: 28px;
+  margin: 0 0 12px;
+  text-align: center;
+}
+
+.section-lead {
+  color: var(--muted);
+  text-align: center;
+  margin: 0 auto 40px;
+  max-width: 560px;
+}
+
+/* ---------- Demo ---------- */
+
+.demo-frame {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%; /* 16:9 */
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.demo-frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.demo-link {
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 16px;
+}
+
+/* Б-4.12: «Открыть на YouTube» — 133×16. */
+.demo-link a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: -11px 0;
+}
+
+/* ---------- Features ---------- */
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;
+}
+
+.feature {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.feature:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.feature-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(108, 140, 255, 0.12);
+  color: var(--accent);
+  font-size: 18px;
+  margin-bottom: 14px;
+}
+
+.feature h3 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.feature p {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ---------- Steps ---------- */
+
+.steps-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+.steps-grid li {
+  display: flex;
+  gap: 16px;
+}
+
+.step-number {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.steps-grid strong {
+  display: block;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+
+.steps-grid p {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ---------- FAQ ---------- */
+
+.faq-list {
+  max-width: 720px;
+  margin: 0 auto;
+  border-top: 1px solid var(--border);
+}
+
+.faq-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.faq-question {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: left;
+  padding: 20px 4px;
+  cursor: pointer;
+}
+
+.faq-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.faq-answer {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+  padding: 0 4px 20px;
+  max-width: 640px;
+}
+
+/* ---------- Режимы (ТЗ §23) ---------- */
+
+.plans-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.plan {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.plan-highlight {
+  border-color: var(--accent);
+}
+
+.plan-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.plan-head h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.plan-price {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.plan-summary {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.plan-list li {
+  padding-left: 22px;
+  position: relative;
+}
+
+.plan-list li::before {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.plan-yes::before {
+  content: '✓';
+  color: var(--accent);
+}
+
+/* Закрытое показывается, а не прячется: сравнение без второй половины —
+   не сравнение, а реклама старшего пакета. */
+.plan-no {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.plan-no::before {
+  content: '×';
+}
+
+.plan-note {
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ---------- Подробнее о проекте ---------- */
+
+.details-grid {
+  display: grid;
+  /* min() обязателен: голый minmax(300px) на экране 320px даёт колонку
+     шире вьюпорта, и вся страница получает горизонтальную прокрутку. */
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 20px;
+}
+
+.detail {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.detail h3 {
+  margin: 0 0 10px;
+  font-size: 17px;
+}
+
+.detail p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* ---------- Roadmap ---------- */
+
+.roadmap-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 16px;
+}
+
+.roadmap-item {
+  display: grid;
+  /* Номер фиксирован, тело тянется; min-content у второй колонки нет —
+     иначе длинный пункт списка растянет строку шире экрана. */
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+.roadmap-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: rgba(108, 140, 255, 0.12);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.roadmap-body h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+
+.roadmap-outcome {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.roadmap-body ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+@media (max-width: 520px) {
+  /* На узком экране номер над заголовком читается лучше, чем колонка
+     в 40px, отъедающая треть ширины у текста. */
+  .roadmap-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+
+/* ---------- Final CTA ---------- */
+
+.final-cta {
+  text-align: center;
+}
+
+.final-cta p {
+  color: var(--muted);
+  margin: 0 auto 28px;
+  max-width: 480px;
+}
+
+/* ---------- Footer ---------- */
+
+footer {
+  padding: 32px 0 48px;
+  color: var(--muted);
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.footer-links {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+/* То же самое в подвале: три ссылки высотой 21px в ряд — стабильный
+   источник промахов (А-3.12). Отрицательный вертикальный отступ гасит
+   прирост, чтобы подвал не подрос на 46px. */
+.footer-links a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  margin: -11px -4px;
+  padding: 0 4px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.footer-links a:hover {
+  color: var(--fg);
+}
+
+/* Этап 55 — предупреждение у Оферты/Условий использования на локалях,
+   где эти документы ещё не переведены (см. app/[locale]/page.tsx). */
+.legal-notice {
+  width: 100%;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── Юридические документы (spec §20) ─────────────────────────────── */
+
+.legal-page {
+  padding: 48px 0 72px;
+}
+
+/* Б-4.12: «← На главную» — единственный путь назад со страницы оферты
+   на телефоне, и был 93×16. Отрицательный отступ гасит прирост высоты. */
+.legal-back {
+  margin-bottom: 24px;
+  font-size: 14px;
+}
+
+.legal-back a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: -11px 0;
+}
+
+.legal {
+  max-width: 760px;
+}
+
+.legal h1 {
+  font-size: 30px;
+  line-height: 1.2;
+  margin: 0 0 20px;
+}
+
+.legal h2 {
+  font-size: 19px;
+  line-height: 1.3;
+  margin: 32px 0 10px;
+}
+
+.legal p,
+.legal li {
+  font-size: 15px;
+  line-height: 1.7;
+  opacity: 0.88;
+}
+
+.legal p {
+  margin: 0 0 12px;
+}
+
+.legal ul {
+  margin: 0 0 14px;
+  padding-left: 20px;
+}
+
+.legal li {
+  margin-bottom: 6px;
+}
+
+.legal-note {
+  border-left: 3px solid rgba(125, 211, 252, 0.5);
+  padding: 10px 14px;
+  margin-top: 24px;
+  background: rgba(125, 211, 252, 0.06);
+  border-radius: 0 10px 10px 0;
+  font-size: 14px;
+  opacity: 0.75;
+}
+
+.legal-links {
+  display: flex;
+  gap: 18px;
+  margin-top: 40px;
+  font-size: 14px;
+}
+
+/* Б-4.12: ссылки между документами были 155×21. */
+.legal-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* ── Блог/новости (этап 58, TODO §II.3) ───────────────────────────────── */
+
+.blog-page {
+  padding: 48px 0 72px;
+}
+
+.blog-lead {
+  color: var(--muted);
+  max-width: 640px;
+  margin: 0 0 32px;
+}
+
+.blog-empty {
+  color: var(--muted);
+}
+
+.blog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 20px;
+}
+
+.blog-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  text-decoration: none;
+  color: var(--fg);
+  transition: border-color 0.15s;
+}
+
+.blog-card:hover {
+  border-color: var(--accent);
+}
+
+.blog-card-thumb {
+  aspect-ratio: 16 / 9;
+  background: var(--bg-alt);
+  object-fit: cover;
+  width: 100%;
+}
+
+.blog-card-body {
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.blog-card-category {
+  font-size: 12px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.blog-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1.35;
+}
+
+.blog-card-meta {
+  margin-top: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Этап 58 (§36.4): "isRequestedLocale: false" — честная пометка о том,
+   что показан оригинал, а не перевод на выбранный язык, а не молчаливая
+   подмена (solar-shop-урок, см. ТЗ §35.1/§37). */
+.blog-notice {
+  font-size: 13px;
+  color: var(--muted);
+  border-left: 3px solid rgba(255, 200, 87, 0.5);
+  padding: 8px 12px;
+  margin: 0 0 20px;
+  background: rgba(255, 200, 87, 0.06);
+  border-radius: 0 10px 10px 0;
+}
+
+.blog-pagination {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 32px;
+}
+
+.blog-back {
+  margin-bottom: 24px;
+  font-size: 14px;
+}
+
+.blog-back a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: -11px 0;
+}
+
+.blog-article {
+  max-width: 760px;
+}
+
+.blog-article-category {
+  font-size: 13px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+}
+
+.blog-article h1 {
+  font-size: 30px;
+  line-height: 1.2;
+  margin: 0 0 10px;
+}
+
+.blog-article-meta {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 24px;
+}
+
+.blog-article-embed {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin: 0 0 24px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+}
+
+.blog-article-embed iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.blog-article-body {
+  font-size: 15px;
+  line-height: 1.7;
+  opacity: 0.92;
+}
+
+.blog-article-body p {
+  margin: 0 0 14px;
+}
+
+.blog-article-cta {
+  margin-top: 32px;
+}
+
+/* ── Публичная страница ролика (ТЗ §40, этап 60) ──────────────────────── */
+
+.shared-video-page {
+  padding: 48px 0 72px;
+  max-width: 640px;
+}
+
+.shared-video-back {
+  margin-bottom: 24px;
+  font-size: 14px;
+}
+
+.shared-video-back a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: -11px 0;
+}
+
+.shared-video-player {
+  width: 100%;
+  /* Формат подставляется инлайном из аспект-рейшо оригинала (9:16 у
+     большинства UGC-роликов, поэтому фиксированный 16/9, как у блога,
+     здесь бы обрезал портретное видео сверху и снизу). */
+  max-height: 80vh;
+  margin: 0 auto 24px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+}
+
+.shared-video-player video {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.shared-video-title {
+  font-size: 26px;
+  line-height: 1.25;
+  margin: 0 0 20px;
+}
+
+.shared-video-product {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px;
+  margin-bottom: 24px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.shared-video-product-photo {
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.shared-video-product-name {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.shared-video-product-desc {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+.shared-video-product-price {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  margin: 0;
+}
+
+.shared-video-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.shared-video-actions button {
+  cursor: pointer;
+  font: inherit;
+}
+
+.shared-video-powered {
+  font-size: 13px;
+  color: var(--muted);
+}
+

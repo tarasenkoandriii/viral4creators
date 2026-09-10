@@ -1,0 +1,375 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0b0d;
+  --fg: #e6e6e6;
+  --muted: #8a8a8a;
+  --border: #2a2a2e;
+  --signal-critical: #f36a6a;
+  --signal-warning: #e8b13a;
+  --signal-ok: #5fbf77;
+  /* Акцент понадобился на этапе 31 — полоски долей на вкладке «Расходы».
+     До этого палитра админки обходилась сигнальными цветами, и `var(--accent)`
+     молча резолвился в ничто: полоска рисовалась прозрачной. */
+  --accent: #6ea8fe;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+/* Б-4.9: тач-цели. Админку открывают с телефона (об этом сказано ниже
+   в этом же файле), а кнопки были 32.9px, поля и селекты 33–35px при
+   норме 44. `min-height` вместо увеличенного паддинга: ряды кнопок в
+   таблицах не разъезжаются. */
+button {
+  background: #1c1c20;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 14px;
+  min-height: 44px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.15;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Поля ввода не имели никаких стилей вообще (аудит 2026-09-06, А-3.3):
+   браузерное умолчание давало 19–21px против 33px у кнопки рядом, и
+   ряд «поле + кнопка» выглядел сломанным — особенно селект смены режима
+   в каждой строке «Пользователей». Правила намеренно повторяют кнопку
+   до последнего пикселя: одинаковый шрифт, паддинг и рамка дают
+   одинаковую высоту без магических чисел.
+   Чекбоксы и радио исключены — им нативный вид идёт больше. */
+input:not([type='checkbox']):not([type='radio']),
+select,
+textarea {
+  background: #1c1c20;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-height: 44px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.15;
+  /* Поле в flex-строке иначе не даёт строке ужаться уже своей
+     внутренней ширины и растягивает документ. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.5;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* Таблицы админки шире экрана телефона по определению — в них 5–6
+   колонок с датами и суммами, и сжимать их некуда. Поэтому прокрутка
+   уезжает ВНУТРЬ карточки, а не в документ: тот же приём, что в TMA у
+   `frontend/src/components/YoutubeSearch.tsx`. До этого таблица
+   «Пользователей» (930px) растягивала документ на всех ширинах вплоть
+   до 768px — аудит 2026-09-06, А-3.2. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Этап 50 (В-5.1; Б-4.5 был помечен закрытым и не был). Две правки,
+   которые вместе рассыпали таблицы с телефона в столбики по одной букве:
+   `min(520px, 100%)` разрешал таблице сжаться до ширины обёртки, а
+   `overflow-wrap: anywhere` на каждой ячейке обнулял её минимальную
+   ширину — и семь колонок «Модерации» делили 296px поровну, по 28px на
+   «П-л-а-т-ф-о-р-м-а», а кнопки действий уезжали за видимую часть
+   скроллера. Ряд был 1004px высотой.
+
+   Теперь таблица не сжимается уже 720px и честно прокручивается внутри
+   `.table-scroll`; узкие таблицы («Телеметрия» на две колонки) помечены
+   `.table-narrow` и остаются по ширине обёртки. */
+.table-scroll > table {
+  min-width: 720px;
+}
+.table-scroll > table.table-narrow {
+  min-width: min(520px, 100%);
+}
+
+th,
+td {
+  text-align: left;
+  /* Б-4.10: без `vertical-align` короткие ячейки центрировались по
+     высоте самой длинной строки — на «Настройках» это ~150px пустоты
+     между шапкой и первой строкой. */
+  vertical-align: top;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  /* Б-4.1: длинное имя без пробелов (в Telegram их бывает до 64
+     символов) не имеет права растягивать колонку — таблица разъезжалась
+     с 940 до 1568px, и действия уходили за правый край.
+     `break-word`, а не `anywhere` (этап 50): `anywhere` обнуляет
+     минимальную ширину ячейки и рвёт обычные слова по буквам, когда
+     колонок много; `break-word` ломает только то, что иначе не влезает. */
+  overflow-wrap: break-word;
+}
+
+/* Шапка переносится: семь ссылок плюс id и «Выйти» в одну нерушимую
+   строку требовали 797px, и документ имел эту ширину на КАЖДОЙ странице
+   админки — со смартфона были видны только первые две вкладки (аудит
+   2026-09-06, А-3.1). */
+.admin-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Ссылка сама по себе — строка текста высотой 19px; вертикальный
+   паддинг доводит цель нажатия до высоты соседней кнопки, а заодно
+   разводит перенесённые строки. */
+.admin-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+}
+
+/* Этап 50 (В-5.18): текущая вкладка отличается — раньше семь ссылок
+   были одного цвета и веса, и оператор не видел, где он. */
+.admin-nav a[aria-current='page'] {
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Прижимает «кто вошёл + Выйти» к правому краю — и на общей строке со
+   ссылками, и на своей собственной после переноса. */
+.admin-nav-me {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.page {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
+
+/* Страницы, выросшие из `<main style={{ padding: 20 }}>`: класс нужен,
+   чтобы паддинг слушался медиазапроса ниже — инлайновый стиль его не
+   слышит. */
+.admin-main {
+  padding: 20px;
+}
+
+.card {
+  background: #141417;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* Тревожный текст: причина блокировки, ошибка загрузки страницы,
+   перерасход суточного лимита («сегодня $5.20 / $5.00»).
+
+   Класс использовался в девяти местах и НЕ БЫЛ ОПРЕДЕЛЁН — рядом жили
+   и переменная `--signal-critical`, и `.badge-status-critical`, а
+   самого правила не было (Б-4.2). Оператор видел обычный белый текст,
+   причём соседняя НОРМАЛЬНАЯ строка приглушена `.muted` — то есть
+   тревога читалась тише нормы. */
+.critical {
+  color: var(--signal-critical);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.stat-tile {
+  background: #141417;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.stat-tile .value {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+/* ---------- Settings tab (env-var status) ---------- */
+
+.settings-group {
+  margin-bottom: 28px;
+}
+
+.settings-group h2 {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.badge-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.badge-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge-status-ok {
+  color: var(--signal-ok);
+  background: rgba(95, 191, 119, 0.14);
+}
+
+.badge-status-warning {
+  color: var(--signal-warning);
+  background: rgba(232, 177, 58, 0.14);
+}
+
+.badge-status-critical {
+  color: var(--signal-critical);
+  background: rgba(243, 106, 106, 0.14);
+}
+
+/* ---------- Узкий экран ---------- */
+
+/* Единственный брейкпоинт админки, и он осмысленный: 720px — ширина, на
+   которой перенесённая шапка перестаёт занимать половину экрана, а поля
+   формы поиска ещё стоят в ряд. Ниже неё админку открывают с телефона —
+   сообщением из чата про конкретного пользователя, — и каждые лишние
+   8px паддинга там отнимаются у содержимого. Прокрутка таблиц уже живёт
+   внутри карточек (`.table-scroll`), так что сжимать остаётся только
+   поля вокруг. До этого этапа во всём CSS админки не было ни одного
+   `@media` (аудит 2026-09-06, А-3.4). */
+@media (max-width: 720px) {
+  .admin-nav {
+    gap: 2px 14px;
+    padding: 6px 12px;
+  }
+
+  .page,
+  .admin-main {
+    padding: 16px 12px;
+  }
+
+  .card {
+    padding: 14px;
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+  }
+
+  .stat-tile {
+    padding: 12px;
+  }
+
+  h1 {
+    font-size: 22px;
+  }
+
+  .share-bar {
+    display: none;
+  }
+
+  /* Форма поиска на телефоне встаёт в столбец: `minWidth: 260` у поля
+     иначе разрывает строку пополам и оставляет кнопку одну. */
+  .filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filters input:not([type='checkbox']):not([type='radio']),
+  .filters select,
+  .filters button {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+
+/* Б-4.9: чекбоксы фильтров были 13×13 — попасть пальцем нельзя.
+   Увеличиваем сам чекбокс и делаем цель касания подписью-обёрткой. */
+.filters input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+}
+
+.filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+
+/* Б-4.9: ссылка на сессию/пользователя внутри строки таблицы — цель
+   касания 16–48px по ширине и 30px по высоте. Растягиваем её на всю
+   ячейку: попасть пальцем в идентификатор из 26 символов иначе нельзя,
+   а перенос строки делает высоту непредсказуемой. */
+td a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 44px;
+  margin: -11px 0;
+}

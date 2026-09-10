@@ -1,0 +1,17 @@
+# Development-only image for local docker-compose debugging (see
+# docker-compose.dev.yml, doc/TELEGRAM-ADMIN.md). Not used for Vercel
+# deployment — Vercel builds this as its own Next.js project (see
+# doc/DEPLOYMENT.md).
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+
+EXPOSE 3003
+
+CMD ["npx", "next", "dev", "-p", "3003", "-H", "0.0.0.0"]

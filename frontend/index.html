@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Design system fonts (same as SilverFinance): Sora for UI, JetBrains Mono for prices/numbers. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <title>Viral4Creators - UGC Video Cloner [POC]</title>
+    <!--
+      Official Telegram WebApp SDK — makes this app work as a Telegram
+      Mini App (TMA) when opened inside Telegram (see
+      doc/TELEGRAM-ADMIN.md and src/lib/telegram.ts). Safe to include
+      unconditionally: outside Telegram it just defines a no-op
+      window.Telegram global, the ordinary browser flow is unaffected.
+    -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

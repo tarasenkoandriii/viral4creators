@@ -1,0 +1,267 @@
+/**
+ * ProjectSessionService — starts a generation Session FROM a ProductItem
+ * (doc/PRODUCT-PROJECT-SPEC.md §7.8, Stage 10 of the plan) and keeps the
+ * per-session Brand Manifest copy editable (§12).
+ *
+ * The one rule everything here follows: the Session gets COPIES. Item
+ * fields land in `data.productInformation`, manifest fields + characters
+ * in `data.brandManifestSnapshot`; `projectId` / `productItemId` are set
+ * only so the UI can show "из какого товара этот ролик" and list a
+ * project's sessions. Editing the item or the manifest afterwards does
+ * not touch sessions already created, and editing a session's snapshot
+ * never writes back to the manifest (open question §12.3 — left as a
+ * future explicit action).
+ */
+
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { SessionService } from '../../common/session.service';
+import { TTS_PROVIDER } from '../tts/tts.module';
+import { TtsProvider } from '../tts/tts.types';
+import { Session } from '../../common/types/session.types';
+import { BrandManifestSnapshot } from '../../common/types/brand-manifest.types';
+import {
+  brandManifestSnapshotFrom,
+  productInformationFromItem,
+  SnapshotItemSource,
+  SnapshotManifestSource,
+  SnapshotProjectSource,
+} from './snapshot';
+import { UpdateBrandSnapshotRequestDto } from './dto/update-brand-snapshot.dto';
+
+/** Structural row shapes (see project.service.ts for why not Prisma types). */
+interface ItemWithProjectRow extends SnapshotItemSource {
+  projectId: string;
+  project: SnapshotProjectSource & {
+    id: string;
+    brandManifest: SnapshotManifestSource | null;
+  };
+}
+
+interface SessionListRow {
+  id: string;
+  status: string;
+  createdAt: Date;
+  lastActivityAt: Date;
+  data: unknown;
+}
+
+/** Row of GET /projects/:id/items/:itemId/sessions — history, not the full Session. */
+export interface ItemSessionSummary {
+  sessionId: string;
+  status: string;
+  createdAt: string;
+  lastActivityAt: string;
+  /** Public URL of the finished video, when the run got that far. */
+  videoUrl: string | null;
+  hasBrandManifest: boolean;
+}
+
+@Injectable()
+export class ProjectSessionService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly sessions: SessionService,
+    @Inject(TTS_PROVIDER) private readonly tts: TtsProvider,
+  ) {}
+
+  /**
+   * POST /projects/:projectId/items/:itemId/sessions
+   * Ownership is checked through the parent project, like every item
+   * route in ProjectService.
+   */
+  async createFromItem(
+    userId: string,
+    projectId: string,
+    itemId: string,
+    /** UI-локаль фронтенда (этап 59, ТЗ §35.5) — см. SessionService.createSession. */
+    locale?: string,
+  ): Promise<Session> {
+    const item: ItemWithProjectRow | null =
+      await this.prisma.productItem.findFirst({
+        where: { id: itemId, projectId, project: { userId } },
+        include: {
+          project: {
+            include: {
+              brandManifest: {
+                include: {
+                  characters: { orderBy: { createdAt: 'asc' as const } },
+                  scenes: { orderBy: { createdAt: 'asc' as const } },
+                },
+              },
+            },
+          },
+        },
+      });
+    if (!item) {
+      throw new NotFoundException(
+        `Item ${itemId} not found in project ${projectId}`,
+      );
+    }
+
+    const now = new Date();
+    const manifest = item.project.brandManifest;
+    return this.sessions.createSession(
+      userId,
+      {
+        projectId: item.project.id,
+        productItemId: item.id,
+        productInformation: productInformationFromItem(item, item.project, now),
+        ...(manifest
+          ? { brandManifestSnapshot: brandManifestSnapshotFrom(manifest, now) }
+          : {}),
+      },
+      locale,
+    );
+  }
+
+  /** GET /projects/:projectId/items/:itemId/sessions — newest first. */
+  async listForItem(
+    userId: string,
+    projectId: string,
+    itemId: string,
+  ): Promise<ItemSessionSummary[]> {
+    const owned = await this.prisma.productItem.findFirst({
+      where: { id: itemId, projectId, project: { userId } },
+      select: { id: true },
+    });
+    if (!owned) {
+      throw new NotFoundException(
+        `Item ${itemId} not found in project ${projectId}`,
+      );
+    }
+    const rows: SessionListRow[] = await this.prisma.session.findMany({
+      where: { productItemId: itemId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        lastActivityAt: true,
+        data: true,
+      },
+    });
+    return rows.map(toSummary);
+  }
+
+  /**
+   * PATCH /sessions/:sessionId/brand-manifest — edit THIS session's copy.
+   * 404 when the session has no snapshot: there is nothing to edit, and
+   * silently inventing one would hide a client bug (a project-less session
+   * has no manifest to start from).
+   */
+  async updateSnapshot(
+    sessionId: string,
+    dto: UpdateBrandSnapshotRequestDto,
+  ): Promise<BrandManifestSnapshot> {
+    const session = await this.sessions.getSession(sessionId);
+    if (!session) {
+      throw new NotFoundException(`Session ${sessionId} not found`);
+    }
+    if (!session.brandManifestSnapshot) {
+      throw new NotFoundException(
+        `Session ${sessionId} has no brand manifest snapshot to edit`,
+      );
+    }
+    // Шестой аудит, Е-4.1: тот же дословный дефект и тот же приём, что в
+    // brand-manifest.service.ts (см. её доккомментарий) — принадлежит ли
+    // voiceId СВОЕМУ клону на Resemble, а не активному на стенде
+    // TTS_PROVIDER. Анонимная сессия (`session.userId` нет) клонов не
+    // имеет — запрос не нужен.
+    const voiceId = dto.ttsVoiceId?.trim();
+    const isResembleClone =
+      !!voiceId && !!session.userId
+        ? !!(await this.prisma.userVoice.findFirst({
+            where: { userId: session.userId, resembleVoiceId: voiceId },
+            select: { id: true },
+          }))
+        : false;
+    const next = applySnapshotEdit(
+      session.brandManifestSnapshot,
+      dto,
+      this.tts.providerKey,
+      isResembleClone,
+    );
+    const updated = await this.sessions.updateSession(sessionId, {
+      brandManifestSnapshot: next,
+    });
+    if (!updated?.brandManifestSnapshot) {
+      throw new NotFoundException(`Session ${sessionId} not found`);
+    }
+    return updated.brandManifestSnapshot;
+  }
+}
+
+/**
+ * Pure merge — exported for the unit test. `activeProviderKey` —
+ * `TtsProvider.providerKey` активного на стенде провайдера
+ * (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md §4.2), передаётся вызывающим
+ * (у которого есть DI), а не читается здесь — эта функция намеренно
+ * остаётся чистой (без Nest-инъекций) для юнит-теста в изоляции. Тот
+ * же принцип, что у `manifestDataFromDto` в brand-manifest.service.ts:
+ * клиент не решает, какой провайдер сейчас активен, и не присылает
+ * `ttsProvider` в DTO вовсе.
+ */
+export function applySnapshotEdit(
+  current: BrandManifestSnapshot,
+  dto: UpdateBrandSnapshotRequestDto,
+  activeProviderKey: string,
+  // Шестой аудит, Е-4.1 — тот же смысл, что у `manifestDataFromDto` в
+  // brand-manifest.service.ts (см. её доккомментарий): вызывающий решает
+  // ДО вызова, чтобы функция осталась чистой для юнит-теста в изоляции.
+  isResembleClone = false,
+  now: Date = new Date(),
+): BrandManifestSnapshot {
+  return {
+    ...current,
+    ...(dto.styleNotes !== undefined ? { styleNotes: dto.styleNotes } : {}),
+    ...(dto.voiceNotes !== undefined ? { voiceNotes: dto.voiceNotes } : {}),
+    ...(dto.voiceMode !== undefined ? { voiceMode: dto.voiceMode } : {}),
+    ...(dto.ttsVoiceId !== undefined
+      ? {
+          ttsVoiceId: dto.ttsVoiceId,
+          // §4.2 + Е-4.1: голос очищен (null) — провайдер тоже не нужен;
+          // свой клон на Resemble — провайдер безусловно 'resemble'.
+          ttsProvider: dto.ttsVoiceId
+            ? isResembleClone
+              ? 'resemble'
+              : activeProviderKey
+            : null,
+        }
+      : {}),
+    ...(dto.ttsModel !== undefined ? { ttsModel: dto.ttsModel } : {}),
+    ...(dto.cameraMove !== undefined ? { cameraMove: dto.cameraMove } : {}),
+    ...(dto.subtitlesMode !== undefined
+      ? { subtitlesMode: dto.subtitlesMode }
+      : {}),
+    ...(dto.subtitleTheme !== undefined
+      ? { subtitleTheme: dto.subtitleTheme }
+      : {}),
+    ...(dto.filters !== undefined ? { filters: dto.filters } : {}),
+    ...(dto.effects !== undefined ? { effects: dto.effects } : {}),
+    ...(dto.characters !== undefined
+      ? {
+          characters: dto.characters.map((c) => ({
+            sourceCharacterId: c.sourceCharacterId ?? null,
+            label: c.label,
+            photoUrl: c.photoUrl ?? null,
+            description: c.description ?? null,
+          })),
+        }
+      : {}),
+    editedAt: now.toISOString(),
+  };
+}
+
+function toSummary(row: SessionListRow): ItemSessionSummary {
+  const data = (row.data as Record<string, unknown> | null) ?? {};
+  const video = data.generatedVideo as { downloadUrl?: string } | null;
+  return {
+    sessionId: row.id,
+    status: row.status,
+    createdAt: row.createdAt.toISOString(),
+    lastActivityAt: row.lastActivityAt.toISOString(),
+    videoUrl: video?.downloadUrl ?? null,
+    hasBrandManifest: !!data.brandManifestSnapshot,
+  };
+}

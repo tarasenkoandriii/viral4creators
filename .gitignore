@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.next/
+*.tsbuildinfo
+
+# Env files (never commit real secrets — .env.example files are the templates)
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+admin/.env
+landing/.env
+.env.docker
+
+# Logs
+npm-debug.log*
+*.log
+
+# Test coverage
+coverage/
+
+# OS/editor cruft
+.DS_Store
+__MACOSX/
+
+# Отчёт jest для scripts/check-docs.mjs (ТЗ §27) — рабочий файл, не коммит.
+jest-results.json

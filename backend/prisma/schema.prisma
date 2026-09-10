@@ -1,0 +1,1877 @@
+// Prisma schema for session persistence.
+//
+// Replaces the old in-memory `Map` in SessionService (common/session.service.ts).
+// That Map lived in one Node process's memory — fine for a single
+// long-running server, but not for Vercel Functions, where two HTTP
+// requests belonging to the same workflow session (e.g. the analysis or
+// video-generation status poll) aren't guaranteed to land on the same
+// warm instance. See VERCEL-READINESS-AUDIT.md, finding #2.
+//
+// Target: Supabase Postgres. DATABASE_URL should be Supabase's pooled
+// (PgBouncer, port 6543) connection string — required so that many
+// concurrent serverless invocations don't each open their own direct
+// Postgres connection and exhaust Supabase's connection limit.
+// DIRECT_URL (port 5432) is used only by `prisma migrate`, which needs a
+// non-pooled connection. See PRISMA-SUPABASE.md for where to get both.
+//
+// Prisma 7 deprecated `url`/`directUrl`/`shadowDatabaseUrl` in this
+// `datasource` block entirely — connection strings moved out of the
+// schema. CLI commands (`migrate`, introspection) now read the connection
+// string from ../prisma.config.ts's `datasource.url` (set to DIRECT_URL —
+// the same non-pooled role `directUrl` played here); the running
+// PrismaClient instantiates its own driver adapter directly with
+// DATABASE_URL instead of reading it from this file at all — see
+// PrismaService (backend/src/prisma/prisma.service.ts). See
+// doc/PRISMA-SUPABASE.md for the full explanation.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  // pg_trgm — триграммные индексы под поиск оператора по подстроке
+  // (этап 54, В-4.9): `ILIKE '%…%'` иначе читает таблицу целиком.
+  extensions = [pg_trgm]
+}
+
+// One row per workflow session. `status` and `lastActivityAt` are real
+// columns (queryable, used for TTL cleanup); everything the workflow
+// produces along the way — reference video, analysis, product info,
+// prompt, generated video — lives in one JSON blob (`data`) shaped exactly
+// like the optional fields on the `Session` TypeScript type
+// (common/types/session.types.ts). That keeps this schema stable even as
+// those nested shapes evolve, at the cost of not being able to query
+// inside them in SQL — session lookups are always by id anyway.
+model Session {
+  id             String   @id @default(uuid())
+  status         String
+  createdAt      DateTime @default(now())
+  lastActivityAt DateTime @default(now())
+  data           Json     @default("{}")
+
+  /// Статус рендера, вынесенный из `data.generatedVideo.status` (этап 51,
+  /// В-4.1). Телеметрия считала провалы фильтром по JSON-пути и
+  /// распаковывала всю колонку `data` у каждой строки: 39 мс и 86 МБ
+  /// буферов уже на штатных 3 500 сессиях, 2,6 с на 300 тысячах. Колонку
+  /// ведёт `SessionService.updateSession` — одним выражением в том же
+  /// UPDATE, что пишет `data`, поэтому разойтись им негде. Индекс по
+  /// выражению был бы дешевле, но в схеме не выражается, а CI сверяет базу
+  /// со схемой.
+  generationStatus String?
+
+  // Telegram-логин (см. modules/telegram-auth): кто создал сессию, если
+  // она вообще создана из Telegram-контекста (TMA-заголовок initData или
+  // dev-bypass). NULL для анонимных сессий из обычного браузера — это и
+  // есть подавляющее большинство существующих строк, поведение вне
+  // Telegram не меняется вообще (см. TelegramIdentityMiddleware). Связь
+  // нужна только для списка/телеметрии в админке (modules/admin-panel).
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Товар/Проект (doc/PRODUCT-PROJECT-SPEC.md §7.8, решено: Project 1—*
+  // Session). Оба поля ОПЦИОНАЛЬНЫ и служат только для истории/навигации
+  // «из какого проекта/товара этот прогон» — сами данные товара при
+  // создании Session КОПИРУЮТСЯ снимком в `data.productInformation`
+  // (а манифеста бренда — в `data.brandManifestSnapshot`), а не читаются
+  // по этой связи. Поэтому SetNull, не Cascade: удаление проекта не
+  // должно уничтожать уже сгенерированные ролики, они самодостаточны.
+  // Анонимная Session без Project (как сегодня) остаётся полностью
+  // валидной — NULL в обоих полях.
+  projectId     String?
+  project       Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  productItemId String?
+  productItem   ProductItem? @relation(fields: [productItemId], references: [id], onDelete: SetNull)
+
+  @@index([lastActivityAt])
+  @@index([userId])
+  @@index([projectId])
+  /// Этап 51: телеметрия и отчёт считают провалы рендера и воронку по
+  /// статусам — оба фильтра шли полным сканом.
+  @@index([generationStatus])
+  @@index([status])
+  @@index([productItemId])
+  // Обслуживает AdminPanelService.getTelemetry() (createdLast24h/7d — фильтр
+  // по createdAt) и AdminPanelService.listSessions() (orderBy createdAt) —
+  // до этого индекса на createdAt не было вообще, оба запроса шли polным
+  // сканом таблицы. Добавлено по итогам аудита БД, см. doc/DATABASE-AUDIT.md.
+  @@index([createdAt])
+  @@map("sessions")
+}
+
+// Режимы сервиса — ТЗ §23. Значения совпадают с PlanId в common/plans.ts.
+enum UserPlan {
+  LITE
+  STANDARD
+  PREMIUM
+}
+
+// Пункт [telegram-admin]: минимальный пользователь для Telegram-логина.
+// Перенос паттерна из проекта Devil's Advocate (см. doc/TELEGRAM-ADMIN.md),
+// урезанный до того, что реально нужно этому продукту — без ролей
+// модерации/онбординга, которых здесь нет.
+model User {
+  id         String   @id @default(cuid())
+  telegramId String   @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  // Отображаемое имя — только для UI ("Вошли как ..." в frontend/admin),
+  // ни на что не влияет. Приходит из Telegram Login Widget payload или
+  // initData, когда доступно; у dev-пользователей остаётся NULL (UI
+  // показывает telegramId как есть, вида "dev-123").
+  firstName String?
+  username  String?
+
+  // Единственный флаг доступа к /admin. НЕ self-service — выставляется
+  // вручную в БД (psql/Adminer) тем, кто управляет деплойментом; см.
+  // doc/TELEGRAM-ADMIN.md. Dev-login (ALLOW_DEV_AUTH) выставляет его
+  // принудительно, чтобы локальный стенд не требовал ручного шага.
+  isOperator Boolean @default(false)
+
+  sessions           Session[]
+  adminSessions      AdminSession[]
+  userSessions       UserSession[]
+  projects           Project[]
+  brandManifests     BrandManifest[]
+  serpApiUsage       SerpApiUsage[]
+  youtubeSearchUsage YoutubeSearchUsage[]
+  publications       PublicationRequest[]
+  moderated          PublicationRequest[] @relation("PublicationModerator")
+  libraryEntries     AnalysisLibraryEntry[]
+  moderatedLibrary   AnalysisLibraryEntry[] @relation("LibraryModerator")
+  moderatedBlogPosts BlogPost[]             @relation("BlogPostModerator")
+  sharedVideoPages   SharedVideoPage[]
+  moderatedShares    SharedVideoPage[]      @relation("SharedVideoModerator")
+  publishingChannels PublishingChannel[]
+
+  // Оплата (этап 62, ТЗ §41): история платежей, текущая подписка (одна
+  // активная на пользователя — см. Subscription.userId @unique) и леджер
+  // купленных/потраченных кредитов на генерацию.
+  payments      Payment[]
+  subscription  Subscription?
+  creditLedger  CreditLedger[]
+
+  // Согласие на рассылку подборки удачных роликов через Telegram-бота
+  // (ТЗ §42, этап 63, TODO §III.4). Две даты, а не один булев флаг: нужна
+  // и дата согласия (для аудита), и дата отписки (для истории, а не
+  // просто «сейчас нет»). Активная подписка — marketingConsentAt IS NOT
+  // NULL AND marketingConsentRevokedAt IS NULL. Отписка происходит тремя
+  // равнозначными путями: явной кнопкой в TMA, автоматически при отказе
+  // Telegram доставить сообщение («бот заблокирован») и — для новых
+  // согласий поверх уже отозванного — просто новым accept().
+  marketingConsentAt        DateTime?
+  marketingConsentRevokedAt DateTime?
+  marketingDeliveries       MarketingDelivery[]
+
+  // Пакетная генерация по каталогу (ТЗ §44, этап 65, TODO §III.5) — кто
+  // запустил партию; нужно для списания кредитов и для истории в админке.
+  catalogBatchRuns CatalogBatchRun[]
+
+  // A/B-варианты одного ролика (TODO §III.6, этап 66) — кто запустил
+  // сборку вариантов; та же цель, что у catalogBatchRuns выше.
+  abTestRuns AbTestRun[]
+
+  // Импорт товарного фида по ссылке (TODO §Уровень 2 п.8, этап 68) — кто
+  // запустил импорт; та же цель (списание/история), что у catalogBatchRuns.
+  productFeedImportRuns ProductFeedImportRun[]
+
+  // Клонирование голоса — self-service, этап 73, TODO п.32.
+  userVoices UserVoice[]
+
+  // Принятие оферты и условий использования (ТЗ §20, этап 24): когда и
+  // какую версию документов пользователь принял. Анонимный путь хранит
+  // согласие в браузере; здесь — только для идентифицированных.
+  termsAcceptedAt DateTime?
+  termsVersion    String?
+
+  // Режим сервиса (ТЗ §23, этап 29). LITE по умолчанию — самый узкий
+  // пакет; сейчас все три бесплатны и переключаются самим пользователем,
+  // поэтому это просто поле, а не покупка. Матрица возможностей —
+  // common/plans.ts, в БД её нет намеренно: границы пакетов будут
+  // двигаться чаще, чем схема.
+  plan        UserPlan  @default(LITE)
+  planSince   DateTime?
+  /// Режим выбран самим пользователем, пока оплаты нет (этап 54, Б-3.8):
+  /// функции режима ему доступны, а суточный потолок расхода остаётся
+  /// как у Lite. Оператор, назначая режим из админки, сбрасывает флаг.
+  planSelfService Boolean @default(false)
+
+  // Блокировка (ТЗ §25.3, этап 31). Заблокированному запрещены ПЛАТНЫЕ
+  // вызовы — разбор, релевантность, промпт, генерация, аудит и всё, что
+  // тратит внешние API; читать и скачивать уже сделанное он может.
+  // Режим при блокировке НЕ трогается сознательно: на Lite заблокированный
+  // переедет сам, когда закончится оплаченный период.
+  isBlocked     Boolean   @default(false)
+  blockedAt     DateTime?
+  blockedReason String?
+
+  aiUsage AiUsage[]
+
+  /// Шестой аудит, Е-5.1: `users` — самая крупная и быстрее всего
+  /// растущая таблица проекта, а индекса не имела ни одного, кроме
+  /// unique на telegramId. `AdminUsersService.list()` — дефолтный вид
+  /// вкладки «Пользователи» (самый частый экран оператора) — без
+  /// фильтров сортирует по createdAt всей таблицей (Seq Scan + Sort).
+  @@index([createdAt])
+  /// Этап 54 (В-4.9) сознательно НЕ завёл эти индексы здесь же, где для
+  /// analysis_library — на тогдашнем размере (тысячи строк) Seq Scan был
+  /// быстрее самого индекса (см. миграцию `rate_limits_plan_origin_trgm`).
+  /// К шестому аудиту таблица выросла настолько, что тот же тройной
+  /// `ILIKE '%q%'` (`AdminUsersService.list()`: telegramId/username/
+  /// firstName) снова читает её целиком без индекса — тот же класс
+  /// поиска оператора по подстроке, что уже решён GIN-триграммами для
+  /// analysis_library.
+  @@index([telegramId(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_telegramId_trgm_idx")
+  @@index([username(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_username_trgm_idx")
+  @@index([firstName(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_firstName_trgm_idx")
+  @@map("users")
+}
+
+// Постоянный (30 дней) cookie-логин для обычного браузерного frontend/
+// (вне Telegram) — см. modules/telegram-login и doc/TELEGRAM-ADMIN.md.
+// НЕЗАВИСИМА от AdminSession (админка) и от TMA-идентификации
+// (TelegramIdentityMiddleware, там нет состояния на сервере вообще):
+// логин здесь не даёт никаких прав, только привязывает браузер к
+// Telegram-пользователю, чтобы последующие анонимные сессии создавались
+// уже с userId — ровно то же, что и так происходит автоматически внутри
+// Telegram через initData, просто доступно и вне Telegram, по кнопке.
+model UserSession {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // @unique уже создаёт индекс для поиска по token — отдельный @@index
+  // здесь не нужен (был явно указан раньше, но это дублирующий индекс
+  // на ту же колонку; убран по итогам аудита БД, см. doc/DATABASE-AUDIT.md).
+  token     String   @unique
+  expiresAt DateTime // 30 дней от создания
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  /// Уборка истёкших входов ходит по этому полю (`deleteMany where expiresAt
+  /// lt now`) и до этапа 40 делала это сканом всей таблицы — причём не
+  /// только по расписанию, но и внутри КАЖДОГО входа, где удалять чаще
+  /// всего нечего. Измерено на 60 тыс. строк: 22,9 мс со строками на
+  /// удаление и 3,3 мс без них.
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
+
+// Сессия входа в админ-панель — httpOnly cookie, НЕЗАВИСИМАЯ от
+// TMA-идентификации выше (там нет состояния на сервере вообще, initData
+// проверяется на каждый запрос заново). См. modules/admin-auth.
+model AdminSession {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // @unique уже создаёт индекс для поиска по token — см. аналогичный
+  // комментарий у UserSession выше.
+  token     String   @unique // случайная строка, отдаётся клиенту как httpOnly cookie
+  expiresAt DateTime // 7 дней от создания
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  /// То же, что у user_sessions: уборка ходит по expiresAt.
+  @@index([expiresAt])
+  @@map("admin_sessions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Товар / Проект / Манифест бренда — doc/PRODUCT-PROJECT-SPEC.md (§5 —
+// черновая модель, доведённая здесь до v1-финала по решениям §7, §9–§12).
+// Этап 2 плана реализации (doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md).
+//
+// Ключевое отличие от Session: это ПОСТОЯННЫЙ каталог (товар, цена,
+// стиль бренда), не одноразовый прогон — на него не распространяется
+// TTL-очистка сессий (cron cleanup-sessions трогает только `sessions`).
+// Зачем при этом остаётся Session — см. ТЗ §7.8, последний абзац.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Один товар ИЛИ линейка (варианты одного товара) — ТЗ §2. Страна задаёт
+// валюту цены жёстко, единую для всей линейки (§7.1–§7.2, решено).
+model Project {
+  id     String  @id @default(cuid())
+  userId String?
+  /// Cascade, а не SetNull (этап 40, А-1.11): проект — личный каталог
+  /// владельца, и без него он не «общий», а недостижимый ни одним
+  /// запросом: все выборки идут по `userId`. До этого удаление аккаунта
+  /// оставляло в базе строки-призраки вместе с фото в хранилище, которые
+  /// метла не подбирает (она ходит только по префиксу `sessions/`).
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type        ProjectType
+  title       String
+  countryCode String // ISO 3166-1 alpha-2, напр. "UA" — ТЗ §6.3
+  currency    String // ISO 4217, выводится из countryCode при создании, отдельно не редактируется (§7.2)
+
+  // Необязательная привязка к Манифесту бренда (§12) — единый стиль /
+  // персонажи для всех проектов бренда. NULL = проект без манифеста,
+  // работает ровно как описано в ТЗ §1–§11. SetNull: удалить манифест ≠
+  // удалить проекты, которые его использовали.
+  brandManifestId String?
+  brandManifest   BrandManifest? @relation(fields: [brandManifestId], references: [id], onDelete: SetNull)
+
+  /**
+   * Канал по умолчанию для выгрузки (этап 61, ТЗ §14.2): один на
+   * платформу на проект. NULL — при одобрении заявки этого проекта
+   * сервис пробует канал манифеста бренда (см. BrandManifest ниже),
+   * иначе заявка висит APPROVED без канала. SetNull: отключение канала
+   * не должно рушить проект.
+   */
+  youtubeChannelId String?
+  youtubeChannel   PublishingChannel? @relation("ProjectYoutubeChannel", fields: [youtubeChannelId], references: [id], onDelete: SetNull)
+  tiktokChannelId  String?
+  tiktokChannel    PublishingChannel? @relation("ProjectTiktokChannel", fields: [tiktokChannelId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  items        ProductItem[]
+  sessions     Session[]
+  publications PublicationRequest[]
+  catalogBatchRuns CatalogBatchRun[]
+  abTestRuns   AbTestRun[]
+  productFeedImportRuns ProductFeedImportRun[]
+
+  @@index([userId])
+  @@index([brandManifestId])
+  @@index([youtubeChannelId])
+  @@index([tiktokChannelId])
+  @@map("projects")
+}
+
+enum ProjectType {
+  SINGLE
+  LINE
+}
+
+// Одна позиция (SKU) внутри проекта — ТЗ §2. Лимит на линейку (§7.3, 20
+// по умолчанию) — в коде сервиса, не в БД: это настройка, не инвариант.
+model ProductItem {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  title String? // своё название у каждого товара линейки (§4, Экран 1); у одиночного может совпадать с project.title
+
+  photoUrl  String? // Vercel Blob URL — тот же флоу, что и у остальных файлов (§7.7, решено)
+  // Ключ кеша поиска аналогов (§7.5, решено): SHA-256 файла. Совпадение
+  // хеша => отдаём уже сохранённые ProductAnalog этого товара без
+  // повторного (платного) вызова SerpApi. Индексирован, потому что
+  // поиск «есть ли уже такой хеш» — первый шаг каждой обработки фото.
+  photoHash String?
+
+  description String? // итоговый текст: голосовая расшифровка (§6.2) + ручные правки
+  // Авто-определяется при обработке фото (§6.1, как в SilverFinance),
+  // руками не вводится; свободный текст, без справочника (§9.4, решено).
+  // Используется для предзаполнения YouTube-поиска (§9) и как тег при
+  // публикации (§8, Todo).
+  category    String?
+  // Целевая аудитория товара (ТЗ §18, этап 23): оценка Gemini по фото
+  // (возраст, пол, интересы, резюме) с правками пользователя. Json —
+  // структура AudienceProfile (common/types/audience.types.ts); держим
+  // в Json, а не в колонках: набор полей ещё будет меняться по реальным
+  // роликам, а запросов по нему нет — только показать и сравнить.
+  audience    Json?
+
+  price       Decimal?           @db.Decimal(12, 2) // в валюте проекта (project.currency)
+  priceSource ProductPriceSource @default(MANUAL)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  analogs      ProductAnalog[]
+  sessions     Session[]
+  publications PublicationRequest[]
+  catalogBatchItems CatalogBatchItem[]
+
+  @@index([projectId])
+  @@index([photoHash])
+  @@map("product_items")
+}
+
+enum ProductPriceSource {
+  MANUAL // введена руками
+  ANALOG // принята из цены одного из найденных аналогов
+}
+
+// Результат поиска по фото (SerpApi Google Lens `visual_matches`, §6.1).
+// Сохраняется, а не запрашивается заново: (а) кеш по photoHash, см.
+// ProductItem; (б) чтобы видеть, из какого аналога взята цена.
+model ProductAnalog {
+  id            String      @id @default(cuid())
+  productItemId String
+  productItem   ProductItem @relation(fields: [productItemId], references: [id], onDelete: Cascade)
+
+  title         String
+  sourceUrl     String
+  price         Decimal? @db.Decimal(12, 2)
+  currency      String? // валюта ИСТОЧНИКА — может не совпадать с валютой проекта
+  thumbnailUrl  String?
+  relevanceRank Int // позиция в исходной выдаче — сортировка «по умолчанию» (§4, Экран 3)
+
+  createdAt DateTime @default(now())
+
+  @@index([productItemId])
+  @@map("product_analogs")
+}
+
+// Манифест бренда — ТЗ §12. НАДПРОЕКТНАЯ сущность: не принадлежит одному
+// Project, привязывается к любому их числу; один пользователь может вести
+// несколько (разные бренды). Хранит стиль (фильтры/эффекты/заметки) и
+// библиотеку переиспользуемых персонажей бренда.
+//
+// filters/effects — Json намеренно: точная структура — открытый вопрос
+// ТЗ §12.1, решается на этапе 7 плана; менять под неё схему БД не
+// придётся.
+model BrandManifest {
+  id     String  @id @default(cuid())
+  userId String?
+  /// Cascade по той же причине, что у Project (этап 40, А-1.11).
+  /// Библиотека разборов — сознательное исключение: там `SetNull`, потому
+  /// что разборы принадлежат сервису (§4 условий) и переживают автора.
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title      String
+  filters    Json?
+  effects    Json?
+  styleNotes String? // текстовое описание стиля — в промпт наравне с overallAesthetic/dominantColors анализа (§12)
+  voiceNotes String? // голос и тон озвучки бренда (§13) — в бриф промпта
+
+  /// Как озвучивать ролик (ТЗ §15, этап 35):
+  /// veo — речь синтезирует сам Veo (как было до этапа 35);
+  /// voiceover — наш синтез поверх ролика, звук Veo уходит в фон;
+  /// dub — наш синтез вместо звука Veo.
+  voiceMode  String  @default("veo")
+  /// Голос провайдера синтеза; пусто — голос по умолчанию стенда.
+  ttsVoiceId String?
+  /// Модель провайдера синтеза; пусто — модель по умолчанию стенда.
+  ttsModel   String?
+  /// Какой провайдер выпустил ttsVoiceId ('elevenlabs' | 'resemble' | ...) —
+  /// doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md §4.2/6.2. null — запись до
+  /// этого поля (провайдер на момент записи не восстановим постфактум)
+  /// или голос не выбран; для НОВЫХ записей сервисный слой
+  /// (BrandManifestService, ProjectSessionService) проставляет его сам
+  /// при каждом изменении ttsVoiceId — без этого смена активного
+  /// TTS_PROVIDER на стенде делает существующие ttsVoiceId
+  /// бессмысленными без единой ошибки.
+  ttsProvider String?
+
+  /// Движение камеры (ТЗ §29, этап 46): none — статичный кадр как
+  /// раньше, push-in — медленный непрерывный наезд. Часть стиля серии,
+  /// поэтому здесь, а не в параметрах генерации: замораживается в
+  /// снимке манифеста вместе с голосом.
+  cameraMove String  @default("none")
+
+  /// Жёстко вшитые субтитры (TODO §Уровень 2.7, этап 67): off — как
+  /// раньше, on — субтитры выжигаются в ролик тем же проходом ffmpeg,
+  /// что кроп и голос. Умолчание off — новое поле не должно тихо
+  /// включить лишнюю обработку существующим брендам после миграции
+  /// (тот же принцип, что у voiceMode/cameraMove выше).
+  subtitlesMode String @default("off")
+  /// Пресетная тема оформления (common/subtitles.ts) — значима только
+  /// при subtitlesMode: on.
+  subtitleTheme String @default("classic")
+
+  /**
+   * Канал по умолчанию для проектов бренда без своего (этап 61, ТЗ
+   * §14.2) — второй, менее приоритетный уровень после Project.*ChannelId.
+   */
+  youtubeChannelId String?
+  youtubeChannel   PublishingChannel? @relation("ManifestYoutubeChannel", fields: [youtubeChannelId], references: [id], onDelete: SetNull)
+  tiktokChannelId  String?
+  tiktokChannel    PublishingChannel? @relation("ManifestTiktokChannel", fields: [tiktokChannelId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  projects   Project[]
+  characters BrandCharacter[]
+  scenes     BrandScene[]
+
+  @@index([userId])
+  @@index([youtubeChannelId])
+  @@index([tiktokChannelId])
+  @@map("brand_manifests")
+}
+
+// Переиспользуемый персонаж бренда — ТЗ §12 / §10 (третий вариант формы
+// замены персонажа). Загружается один раз в манифест, дальше ВЫБИРАЕТСЯ,
+// а не перезагружается. Cascade: персонажи без манифеста бессмысленны.
+model BrandCharacter {
+  id              String        @id @default(cuid())
+  brandManifestId String
+  brandManifest   BrandManifest @relation(fields: [brandManifestId], references: [id], onDelete: Cascade)
+
+  label       String // как показывать в UI, напр. "Модель 1"
+  photoUrl    String? // Vercel Blob; «скин» — уходит в Veo как referenceImage (§10.2, лимит 3 на запрос — §10.3)
+  description String? // текстовое описание внешности — в промпт, когда фото нет или не поместилось в лимит
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([brandManifestId])
+  @@map("brand_characters")
+}
+
+// Постоянная сцена бренда (локация / съёмочная площадка) — ТЗ §17.1
+// (решено на этапе 22). Зеркало BrandCharacter: загружается один раз в
+// манифест, копируется в снимок сессии и попадает в кандидаты слотов
+// референсов (kind 'scene', origin 'brand') рядом с сессионными сценами
+// этапа 21. Cascade: сцена без манифеста бессмысленна.
+model BrandScene {
+  id              String        @id @default(cuid())
+  brandManifestId String
+  brandManifest   BrandManifest @relation(fields: [brandManifestId], references: [id], onDelete: Cascade)
+
+  label       String // «Шоурум», «Кухня студии»
+  photoUrl    String? // Vercel Blob; в Veo как referenceImage (§17), лимит 3 на запрос
+  description String? // словами — когда фото нет или не поместилось в слот
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([brandManifestId])
+  @@map("brand_scenes")
+}
+
+// Счётчик платных вызовов SerpApi по пользователю и суткам (UTC) — ТЗ §7.5
+// (решено: конфигурируемый дневной лимит, `SERPAPI_DAILY_LIMIT_PER_USER`).
+// Одна строка на (userId, day); инкремент — атомарный `update { count:
+// { increment: 1 } }` через upsert. Считаются только ВЫПОЛНЕННЫЕ поиски
+// (SerpApi ответил 200 — именно их SerpApi и тарифицирует), не попытки:
+// отказ по ключу/сети не должен съедать лимит пользователя. Кеш по
+// photoHash (ProductItem) сюда не попадает вообще — он и существует,
+// чтобы не платить. Не чистится cron'ом: строк мало (пользователи ×
+// дни), и они же — история расходов для админки.
+model SerpApiUsage {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /**
+   * UTC-сутки в формате YYYY-MM-DD — строкой, чтобы ключ был точным, без таймзонных сюрпризов DateTime.
+   */
+  day    String
+  count  Int    @default(0)
+
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([userId, day])
+  @@map("serp_api_usage")
+}
+
+/**
+ * Счётчик поисков YouTube Data API по пользователю/суткам — ТЗ §6.4 (квота
+ * Google общая на деплой, ~100 search.list в день), этап 11 плана. Та же
+ * форма, что SerpApiUsage — намеренно отдельная таблица, а не общая с
+ * колонкой kind: у двух счётчиков разные лимиты и разные причины
+ * существования, а объединение потребовало бы миграции уже работающей
+ * таблицы ради экономии одной модели.
+ */
+model YoutubeSearchUsage {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day    String
+  count  Int    @default(0)
+
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([userId, day])
+  @@map("youtube_search_usage")
+}
+
+/**
+ * Очередь публикации с модерацией — ТЗ §8 (Todo) / §11 «Опубликовать»,
+ * этап 18 плана, ЧАСТЬ БЕЗ ИНТЕГРАЦИЙ: кнопка «Опубликовать» ставит ролик
+ * в очередь, оператор в админке подтверждает или отклоняет; сама выгрузка
+ * в YouTube/TikTok (OAuth, upload API) — отдельное ТЗ, здесь для неё
+ * оставлены поля PUBLISHED/FAILED, externalUrl, externalId, publishError.
+ * Заявка ЖИВЁТ ДОЛЬШЕ Session: сессии чистятся по TTL (cron), а очередь
+ * модерации — нет. Поэтому sessionId — просто строка без FK, а всё, что
+ * нужно оператору и будущей выгрузке (URL ролика, pathname в Blob,
+ * заголовок, описание, теги), СКОПИРОВАНО сюда при постановке в очередь.
+ * Теги включают категорию товара (ProductItem.category, ТЗ §8).
+ */
+enum PublicationPlatform {
+  YOUTUBE
+  TIKTOK
+}
+
+enum PublicationStatus {
+  PENDING // ждёт оператора
+  APPROVED // одобрено, ждёт выгрузки (канал не выбран — «канал не подключён», см. channelId)
+  REJECTED // отклонено оператором, с причиной
+  PUBLISHED // выгружено (заполняются externalUrl/externalId)
+  FAILED // выгрузка не удалась (publishError), попытки исчерпаны
+}
+
+/// Видимость выгруженного ролика на площадке (этап 61, ТЗ §14.3). До
+/// прохождения аудита соответствия у Google/TikTok ЛЮБОЙ выбор всё равно
+/// принудительно приватный на стороне площадки (§14.4) — поле здесь лишь
+/// фиксирует, что попросил оператор, а не что получилось по факту.
+enum PublicationPrivacy {
+  PRIVATE
+  UNLISTED
+  PUBLIC
+}
+
+model PublicationRequest {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /**
+   * Session.id без FK — заявка переживает TTL-очистку сессий.
+   */
+  sessionId        String
+  generatedVideoId String
+
+  projectId     String?
+  project       Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  productItemId String?
+  productItem   ProductItem? @relation(fields: [productItemId], references: [id], onDelete: SetNull)
+
+  platform PublicationPlatform
+  status   PublicationStatus   @default(PENDING)
+
+  /**
+   * Снимок на момент постановки в очередь.
+   */
+  videoUrl      String
+  videoPathname String
+  title         String
+  description   String
+  tags          String[]
+  category      String?
+
+  moderatorId  String?
+  moderator    User?     @relation("PublicationModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
+  moderatedAt  DateTime?
+  rejectReason String?
+
+  externalUrl  String?
+  externalId   String?
+  publishError String?
+  publishedAt  DateTime?
+
+  /**
+   * Выгрузка (этап 61, ТЗ §14). channelId — куда выгружать; NULL у
+   * APPROVED значит «канал не подключён» (не ошибка, а отсутствие места
+   * назначения — воркер такие строки не берёт, см. PublishWorkerService).
+   * SetNull, а не Cascade: отключение канала не должно рвать уже
+   * выгруженные/ожидающие заявки — только оставлять их без назначения.
+   */
+  channelId String?
+  channel   PublishingChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  privacy   PublicationPrivacy @default(PRIVATE)
+
+  /// Backoff воркера (§14.5): attempts растёт на каждую неудачу,
+  /// nextAttemptAt = now + 2^attempts мин; после maxAttempts — FAILED.
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime?
+  /// YouTube — resumable-сессия; при повторной попытке (Г-2.11 — обрыв
+  /// процесса ПОСЛЕ открытия сессии, но ДО подтверждённого результата)
+  /// воркер запрашивает её статус (`PUT Content-Range: bytes */N`)
+  /// вместо открытия новой, чтобы не плодить дубль на площадке. TikTok —
+  /// publish_id между init и poll status. Смысл зависит от platform,
+  /// отдельных колонок не заводим.
+  uploadJobId String?
+
+  /// Г-2.11 (аудит round4, этап 64): атомарный claim строки воркером
+  /// выгрузки. Cron `*/2` мин, а загрузка ролика в YouTube длится минуты
+  /// (весь файл одним PUT) — без блокировки второй тик, начавшийся до
+  /// завершения первого, брал ту же APPROVED-строку и грузил ролик
+  /// повторно (защита по `externalId` срабатывает только ПОСЛЕ
+  /// завершения). Ставится на claim (`now + 15m`, с запасом на самую
+  /// долгую загрузку) и явно снимается воркером по завершении обработки
+  /// строки в этом тике (успех/неудача/«ещё обрабатывается площадкой»);
+  /// не снятое значение — форензик-след упавшего процесса, само
+  /// протухает через 15 минут для следующего тика.
+  lockedUntil DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([status, createdAt])
+  /// Этап 51 (В-4.5): пункт «Все» в модерации сортирует по времени без
+  /// фильтра по статусу — составной индекс при пустом статусе не работает,
+  /// и на 60 тыс. заявок шёл полный скан с сортировкой (33 мс против 0,2).
+  @@index([createdAt])
+  @@index([userId])
+  @@index([sessionId])
+  /// Б-1.4: без этих трёх индексов удаление проекта проверяло внешние
+  /// ключи полным сканом заявок — 105,4 мс на проект с тремя товарами
+  /// против 1,8 мс с ними, и число сканов равно числу товаров.
+  @@index([projectId])
+  @@index([productItemId])
+  @@index([moderatorId])
+  /// Этап 61: воркер выбирает `WHERE status='APPROVED' AND channelId IS
+  /// NOT NULL AND nextAttemptAt <= now()` каждые 1-2 минуты — без индекса
+  /// это полный скан таблицы заявок на каждый тик крона.
+  @@index([channelId])
+  @@index([status, channelId, nextAttemptAt])
+  @@map("publication_requests")
+}
+
+/**
+ * Публичная страница ролика и петля шеринга — ТЗ §40 (этап 60,
+ * TODO.md §III.1). В отличие от PublicationRequest выше (очередь НА
+ * ВНЕШНЮЮ площадку с последующей выгрузкой) — здесь страница живёт на
+ * самом сервисе (`landing/`), у неё свой постоянный URL, счётчики
+ * просмотров/конверсий и форк-механика «Сделать такой же».
+ *
+ * Тот же принцип снимка, что у PublicationRequest: sessionId — строка
+ * без FK (страница переживает TTL-очистку сессий), всё нужное для показа
+ * СКОПИРОВАНО при публикации, собственная копия видео и фото товара —
+ * под собственным Blob-префиксом `shared-videos/<id>/`.
+ */
+enum SharedVideoStatus {
+  PENDING // ждёт оператора
+  PUBLISHED // одобрено, страница видна всем
+  REJECTED // отклонено оператором, с причиной
+}
+
+model SharedVideoPage {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /**
+   * Session.id/generatedVideoId без FK — та же причина, что у
+   * PublicationRequest: страница обязана пережить TTL-уборку сессии.
+   */
+  sessionId        String
+  generatedVideoId String
+
+  status SharedVideoStatus @default(PENDING)
+
+  /**
+   * Снимок на момент публикации.
+   */
+  videoUrl             String
+  videoPathname        String
+  aspectRatio          String?
+  title                String
+  productName          String
+  productDescription   String?
+  price                Float?
+  currency             String?
+  category             String?
+  productImageUrl      String?
+  productImagePathname String?
+  locale               String
+
+  /**
+   * AnalysisLibraryEntry.id — источник разбора этой сессии в библиотеке
+   * (§21), для кнопки «Сделать такой же» на публичной странице. Без FK
+   * (та же причина, что у sessionId): запись библиотеки может быть
+   * удалена оператором, страница шеринга при этом не должна падать.
+   * Видимость проверяется ДИНАМИЧЕСКИ в момент форка через
+   * LibraryService.canView() — видимость записи могла измениться после
+   * публикации этой страницы.
+   */
+  libraryEntryId String?
+
+  moderatorId  String?
+  moderator    User?     @relation("SharedVideoModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
+  moderatedAt  DateTime?
+  rejectReason String?
+
+  /** Переходы на страницу и сессии, дошедшие до первой генерации — best-effort. */
+  viewCount            Int @default(0)
+  firstGenerationCount Int @default(0)
+
+  /** Когда страница вошла в выпуск рассылки (ТЗ §42, этап 63) — NULL,
+   * пока не показана ни разу. Отбор следующего выпуска берёт только
+   * PUBLISHED-страницы с этим полем пустым, чтобы не повторять одну и
+   * ту же карточку в каждом выпуске. */
+  featuredInBroadcastAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@index([sessionId])
+  @@index([moderatorId])
+  @@index([status, featuredInBroadcastAt])
+  @@map("shared_video_pages")
+}
+
+/// Статус OAuth-гранта канала (этап 61, ТЗ §14.3-14.4). ACTIVE — токены
+/// рабочие; REVOKED — refresh не прошёл (отозван пользователем на стороне
+/// площадки) или explicit disconnect не сумел отозвать грант у провайдера
+/// (best-effort, статус у нас всё равно REVOKED); EXPIRED зарезервирован
+/// на случай площадки без refresh-токена вовсе — сегодня не используется
+/// (и YouTube, и TikTok его выдают).
+enum ChannelStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+/// Канал YouTube/TikTok, принадлежащий ПРОЕКТУ/бренду (владелец —
+/// пользователь, подключивший OAuth), НЕ конечным пользователям TMA
+/// (ТЗ §14.2: «публикуем в каналы, принадлежащие проекту/бренду»).
+/// Токены — только зашифрованными (token-crypto.ts, AES-256-GCM), никогда
+/// в логах/ответах API; оператор в админке видит канал только как
+/// справочник (название/статус), без токенов вообще.
+model PublishingChannel {
+  id     String              @id @default(cuid())
+  userId String
+  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform PublicationPlatform
+
+  /// YouTube channelId / TikTok open_id.
+  externalId String
+  title      String
+  avatarUrl  String?
+
+  accessTokenEnc  String
+  refreshTokenEnc String?
+  expiresAt       DateTime?
+  scopes          String[]
+  status          ChannelStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  publications      PublicationRequest[]
+  projectsAsYoutube Project[]      @relation("ProjectYoutubeChannel")
+  projectsAsTiktok  Project[]      @relation("ProjectTiktokChannel")
+  manifestsAsYoutube BrandManifest[] @relation("ManifestYoutubeChannel")
+  manifestsAsTiktok  BrandManifest[] @relation("ManifestTiktokChannel")
+
+  @@unique([platform, externalId])
+  @@index([userId])
+  @@map("publishing_channels")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Библиотека разборов — ТЗ §21 (этап 24). Каждый завершённый разбор Gemini
+// сохраняется здесь целиком (JSON VideoAnalysis) с ключом источника:
+//   yt:<videoId>      — YouTube-ссылка
+//   sha256:<hash>     — загруженный файл
+// Две роли: (1) кеш Gemini — тот же источник второй раз не анализируется,
+// разбор копируется из библиотеки; (2) третий путь выбора сценария —
+// рекомендации по аудитории и категории товара (GET /library/recommend).
+// Разборы — интеллектуальная собственность сервиса (оферта §…, условия
+// использования §…), поэтому библиотека общая для всех пользователей;
+// userId/sessionId — только происхождение записи, не владение.
+// Видимость записи библиотеки — ТЗ §21.1/§21.3 (этап 25).
+// PUBLIC  — участвует в рекомендациях всем (разборы публичных YouTube-ссылок).
+// PRIVATE — только автору: разбор чужого ЗАГРУЖЕННОГО файла показывать
+//           посторонним нечестно, у него нет публичного источника, а на
+//           превью может быть что угодно. Кеш при этом общий (см. ниже).
+// HIDDEN  — скрыта оператором: не рекомендуется И не отдаётся из кеша,
+//           чтобы следующий анализ того же источника сделал разбор заново.
+enum LibraryVisibility {
+  PUBLIC
+  PRIVATE
+  HIDDEN
+}
+
+model AnalysisLibraryEntry {
+  id        String @id @default(cuid())
+  sourceKey String @unique // yt:<videoId> | sha256:<hex>
+  sourceType String // youtube | upload
+  sourceUrl  String? // публичная YouTube-ссылка; для файла — null
+  title      String? // название: YouTube-title (если знали) или первая сцена
+  thumbnailUrl String? // превью первой сцены (Blob) или i.ytimg.com
+
+  analysis Json // полный VideoAnalysis (sceneBreakdown, characters, scenes, extras, audience, promotedProduct)
+
+  // Денормализовано для ранжирования без разбора JSON в запросе:
+  category          String? // promotedProduct.category
+  audienceGender    String? // women | men | any
+  audienceAgeRange  String?
+  audienceInterests String[] @default([])
+  aspectRatio       String? // originalVideo.frame.aspectRatio
+  sceneCount        Int      @default(0)
+  characterCount    Int      @default(0)
+
+  usageCount Int @default(0) // сколько раз разбор взяли из библиотеки (кеш + рекомендации)
+
+  // Модерация и приватность (ТЗ §21.1/§21.3). Выставляются оператором в
+  // админке либо при создании записи (загрузка файла → PRIVATE) и НЕ
+  // перезаписываются повторным анализом того же источника.
+  visibility     LibraryVisibility @default(PUBLIC)
+  hiddenReason   String? // причина скрытия — видна только оператору
+  moderatedAt    DateTime?
+  moderatedById  String?
+  moderatedBy    User?     @relation("LibraryModerator", fields: [moderatedById], references: [id], onDelete: SetNull)
+
+  sessionId String? // сессия-источник (без FK: сессии живут по TTL)
+  userId    String?
+  user      User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  /// Рекомендации (§21.2) фильтруют по видимости и сортируют по
+  /// популярности: без составного индекса Postgres поднимал с диска ВСЕ
+  /// публичные строки и делал top-N heapsort — 11,1 мс на 20 тыс.
+  /// публичных записей против 0,32 мс с ним (в 35 раз), и таблица растёт
+  /// линейно, потому что не чистится никогда.
+  @@index([visibility, usageCount(sort: Desc), createdAt(sort: Desc)])
+  @@index([createdAt])
+  @@index([userId])
+  // Отдельный индекс по одной `visibility` снят на этапе 44 (Б-1.6):
+  // он был левым префиксом составного выше, а налог с каждой вставки
+  // платил свой.
+  /// Б-1.4: удаление оператора проверяло эту ссылку полным сканом
+  /// библиотеки — 328–365 мс на пользователя против 16,1 мс.
+  @@index([moderatedById])
+  // Этап 54 (В-4.9): поиск оператора по подстроке — GIN по триграммам.
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "analysis_library_title_trgm_idx")
+  @@index([category(ops: raw("gin_trgm_ops"))], type: Gin, map: "analysis_library_category_trgm_idx")
+  @@index([sourceKey(ops: raw("gin_trgm_ops"))], type: Gin, map: "analysis_library_sourceKey_trgm_idx")
+  @@map("analysis_library")
+}
+
+
+/// Журнал расходов на внешние платные вызовы (ТЗ §26, этап 31).
+///
+/// Одна строка = один вызов. Деньги хранятся в МИКРОДОЛЛАРАХ целым
+/// числом: сложение float-долларов по миллиону строк даёт копеечный
+/// дрейф, а сумма расходов — единственная цифра на этой вкладке, которой
+/// обязаны верить. Пересчёт в доллары делает интерфейс.
+///
+/// Строка переживает и сессию (TTL, §22), и пользователя: расход уже
+/// понесён, и удалять его вместе с тем, на кого он был потрачен, значит
+/// терять историю затрат. Поэтому `sessionId` — без FK, а `userId` —
+/// `ON DELETE SET NULL`.
+model AiUsage {
+  id String @id @default(cuid())
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  sessionId String? // без FK: сессии удаляются по TTL, расход остаётся
+
+  /// Вызов был анонимным В МОМЕНТ записи (§26.4, этап 40).
+  ///
+  /// `userId IS NULL` для этого не годится: у него два смысла. Второй
+  /// появляется при удалении аккаунта — `onDelete: SetNull` обнуляет
+  /// владельца, и весь расход удалённого пользователя мгновенно
+  /// перетекает в ОБЩИЙ потолок анонимных, выбивая его для всех
+  /// остальных. Флаг проставляется при вставке и уже не меняется.
+  anonymous Boolean @default(false)
+
+  /// GEMINI | OPENAI | VEO | SERPAPI | YOUTUBE | FFMPEG | ELEVENLABS —
+  /// кто выставит счёт.
+  provider String
+  /// Что именно делали: analysis, relevance, audit, transcribe,
+  /// product-photo, prompt, generation, analog-search, video-search,
+  /// reframe, voiceover.
+  operation String
+  /// Идентификатор модели/эндпоинта как он ушёл в запрос.
+  model String
+
+  /// Все входные токены запроса, включая кешированные — как их считает
+  /// провайдер.
+  inputTokens  Int @default(0)
+  /// Из них повторно использованные (кеш): тарифицируются заметно дешевле
+  /// (§26.1). До этапа 32 их не было, и расход завышался.
+  cachedInputTokens Int @default(0)
+  outputTokens Int @default(0)
+  /// Секунды сгенерированного видео (Veo) — там счёт идёт за них.
+  seconds      Int @default(0)
+  /// Вызовы с поштучной ценой (SerpApi, YouTube) — там счёт за запрос.
+  calls        Int @default(1)
+  /// Символы синтезированной речи (ElevenLabs) — у TTS счёт идёт за них,
+  /// а не за токены (§15.3, этап 35).
+  characters   Int @default(0)
+
+  costMicroUsd Int @default(0)
+  /// Версия прайса, по которой посчитано (common/ai-pricing.ts). Без неё
+  /// нельзя объяснить, почему одинаковые вызовы стоят разное.
+  pricingVersion String
+  /// true, если ставки для модели в прайсе не нашлось: объём записан,
+  /// деньги — нули. Интерфейс обязан показать это отдельно, иначе ноль
+  /// читается как «бесплатно».
+  unpriced Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  /// Общий потолок анонимных (§26.4) читает эту пару.
+  @@index([createdAt])
+  @@index([sessionId])
+  // Индекс `(anonymous, createdAt)` снят на этапе 44 (Б-1.5):
+  // планировщик его не брал (24–30 мс по `createdAt` против 10,6 мс
+  // принудительно), а 43 МБ и налог на каждую вставку платились всегда.
+  // Рабочий вариант — частичный индекс `WHERE anonymous` — в схеме не
+  // выражается, а CI сверяет базу со схемой.
+  @@map("ai_usage")
+}
+
+/// Состояние дедупликации тревог служебного канала (ТЗ §28.3, этап 47).
+/// Одна строка на отпечаток («тип плюс место», без переменной части);
+/// решение «слать или копить» принимает один INSERT … ON CONFLICT в
+/// TelegramNotifyService — атомарно для всех экземпляров функции.
+model AlertState {
+  fingerprint String   @id
+  /// Когда отпечаток уходил в канал в последний раз.
+  lastSentAt  DateTime
+  /// Сколько повторов накопилось с тех пор (текущее окно).
+  suppressed  Int      @default(0)
+  /// Сколько ушло в сводку «и ещё N раз» при последней отправке.
+  reported    Int      @default(0)
+
+  @@map("alert_states")
+}
+
+/// Счётчики частоты запросов (этап 54, Б-3.7): фиксированные окна по ключу
+/// «маршрут|IP». В базе, а не в памяти экземпляра — по той же причине, что
+/// `alert_states`. Строки закрывшихся окон убирает крон уборки.
+model RateLimit {
+  key         String   @id
+  windowStart DateTime
+  count       Int      @default(1)
+
+  @@index([windowStart])
+  @@map("rate_limits")
+}
+
+/// Блог/новости (doc/TODO.md §II.3–II.4, ТЗ §35–36, этап 57). Технически
+/// перенесена архитектура `Article`/`ArticleTranslation` из "solar shop"
+/// (§35.1) — здесь она называется `BlogPost`, потому что `doc/TODO.md`
+/// уже описал эту модель под этим именем ДО запроса на перенос solar
+/// shop, и это имя — авторитетное для наполнения продукта (§35.2:
+/// переносится схема, а не контент солар-шопа). Источник наполнения —
+/// `YoutubeSearchService` + разбор Gemini (TODO §II.3), НЕ RSS.
+enum BlogPostStatus {
+  DRAFT // ждёт оператора — создан кроном или вручную (TODO §II.3)
+  APPROVED // одобрен; виден только оператору, пока не PUBLISHED
+  PUBLISHED // на публичной витрине лендинга
+  REJECTED // отклонён, с причиной (rejectReason)
+}
+
+enum BlogPostSource {
+  YOUTUBE_TREND // суточный крон: YoutubeSearchService + разбор Gemini
+  MANUAL // "тот же экран управляет ручными записями" (TODO §II.3)
+}
+
+enum BlogTranslationStatus {
+  PENDING // ждёт очередной пачки перевода
+  QUEUED // включён в поданную пачку xAI (batchJobId проставлен)
+  READY // перевод получен и сохранён
+  FAILED // xAI не вернул результат по этому запросу пачки
+}
+
+enum GrokBatchJobStatus {
+  SUBMITTED // подана в xAI, ждём готовности (GrokBatchService.getBatchStatus)
+  COMPLETED // все результаты забраны и разложены по переводам
+  FAILED // submitBatch вернул ошибку — пачка не была подана вовсе
+}
+
+model BlogPost {
+  id       String         @id @default(cuid())
+  slug     String         @unique
+  status   BlogPostStatus @default(DRAFT)
+  source   BlogPostSource
+  /// Ниша ролика — то же понятие, что "категории" в TODO §II.3/§II.4
+  /// (используется и как ключ ленты, когда та появится, — открытый
+  /// вопрос 35.3).
+  category String
+
+  /// Заполнено при source = YOUTUBE_TREND. Ролик НЕ перезаливается
+  /// (TODO §II.3: "Права на чужие ролики") — только ссылка/embed по
+  /// videoId и обложка YouTube; уникальность не даёт кроном завести один
+  /// и тот же ролик дважды.
+  youtubeVideoId      String? @unique
+  youtubeChannelTitle String?
+  youtubeViewCount    Int?
+  thumbnailUrl        String?
+
+  /// Оценка Gemini по тем же критериям, что уже использует сервис для
+  /// релевантности референсов (крючок, темп, оффер, качество съёмки) —
+  /// TODO §II.4. Порог для черновика — `BLOG_MIN_SCORE_TO_DRAFT` (config,
+  /// не константа: "высокая оценка" на старте — не то же, что через
+  /// месяц).
+  score          Float?
+  scoreReasoning String? @db.Text
+
+  /// Локаль оригинала — TODO §II.3 не ограничивает её русским (ручная
+  /// запись может быть создана оператором на любом языке продукта);
+  /// генератор (source = YOUTUBE_TREND) всегда пишет `ru`.
+  originalLocale String @default("ru")
+  title          String
+  bodyHtml       String @db.Text
+
+  moderatorId  String?
+  moderator    User?     @relation("BlogPostModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
+  moderatedAt  DateTime?
+  rejectReason String?
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+
+  translations BlogPostTranslation[]
+
+  @@index([status, createdAt])
+  @@index([category])
+  /// Публичная витрина (этап 58) сортирует опубликованное по дате.
+  @@index([publishedAt])
+  @@map("blog_posts")
+}
+
+model BlogPostTranslation {
+  id     String   @id @default(cuid())
+  postId String
+  post   BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  /// Один из четырёх НЕ-оригинальных языков продукта (locale !=
+  /// post.originalLocale) — оригинал живёт в самом BlogPost, отдельной
+  /// строки перевода на свой же язык не заводится.
+  locale String
+  status BlogTranslationStatus @default(PENDING)
+
+  title    String?
+  bodyHtml String? @db.Text
+
+  batchJobId String?
+  batchJob   GrokBatchJob? @relation(fields: [batchJobId], references: [id], onDelete: SetNull)
+
+  errorMessage String?
+  translatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([postId, locale])
+  @@index([status])
+  @@index([batchJobId])
+  @@map("blog_post_translations")
+}
+
+/// Очередь пачек xAI Grok Batch API (ТЗ §35.1, решение пересмотрено по
+/// прямому запросу пользователя — см. историю в PRODUCT-PROJECT-SPEC.md).
+/// Одна строка = один вызов `GrokBatchService.submitBatch`; заводится
+/// вместе с `BlogPostTranslation` в этом же этапе, не раньше (без FK на
+/// перевод строка была бы бессмысленной).
+model GrokBatchJob {
+  id         String             @id @default(cuid())
+  /// Null, пока submitBatch не вернул id — короткое окно между записью
+  /// строки и ответом xAI; статус в это время SUBMITTED.
+  xaiBatchId String?            @unique
+  status     GrokBatchJobStatus @default(SUBMITTED)
+
+  requestCount Int     @default(0)
+  errorMessage String?
+
+  submittedAt DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+
+  translations BlogPostTranslation[]
+
+  @@index([status])
+  @@map("grok_batch_jobs")
+}
+
+/// Суточный потолок YouTube-поисков генератора черновиков блога (TODO
+/// §II.3: "свой потолок, отдельный от пользовательского"). НЕ переиспользует
+/// `YoutubeSearchUsage` — та требует `userId`, а у генератора пользователя
+/// нет; заводить фиктивного пользователя ради счётчика было бы обманом
+/// схемы. Не переиспользует и `rate_limits` — та таблица чистится кроном
+/// раз в час (`pruneRateLimits`, окна которой рассчитаны на минуты, не на
+/// сутки) и молча обнулила бы суточный счётчик среди дня. Одна строка на
+/// сутки — `day` сам служит первичным ключом.
+model BlogYoutubeSearchUsage {
+  day   String @id
+  count Int    @default(0)
+
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@map("blog_youtube_search_usage")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Оплата — Telegram Stars и WayForPay, подписки Standard/Premium и разовые
+// пакеты кредитов (ТЗ §41, этап 62). До этого этапа PLANS_BILLING_ENABLED
+// всегда был false — все три режима бесплатны, пользователь переключался
+// сам через PATCH /api/me/plan. Здесь режим становится покупкой.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Способ оплаты. У каждого своя механика продления — см. Subscription.method
+/// и doc/PRODUCT-PROJECT-SPEC.md §41.2.
+enum PaymentMethod {
+  STARS
+  WAYFORPAY
+}
+
+/// Что покупали — месячная подписка (меняет User.plan) или разовый пакет
+/// кредитов на генерацию (пополняет CreditLedger, plan не трогает).
+enum PaymentPurpose {
+  SUBSCRIPTION
+  CREDIT_PACK
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+/// ACTIVE — доступ оплачен и не отменён; PAST_DUE — очередное продление не
+/// прошло (для WayForPay: recToken отказал; для Stars: не пришло ожидаемое
+/// продление), крон-воркер (billing-renewal) даёт ограниченное число попыток
+/// прежде чем перевести в CANCELED; CANCELED — подписка закончилась (отмена
+/// пользователем на конец периода ИЛИ исчерпание попыток продления),
+/// User.plan уже понижен до LITE. RENEWING (Г-2.7 аудита round4, этап 64) —
+/// временный claim-статус: `WayForPayRenewalService.charge()` ставит его
+/// атомарным `updateMany` ДО списания карты (условие — тот же
+/// `currentPeriodEnd`, что видел крон, и статус ещё не RENEWING), чтобы два
+/// одновременных прогона (ручной curl + cron, два инстанса Vercel) не
+/// списали с карты дважды; по завершении попытки статус всегда уходит в
+/// ACTIVE/PAST_DUE/CANCELED — здесь не задерживается.
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  RENEWING
+}
+
+/// PURCHASE — начисление за оплату пакета; CONSUME — списание одного
+/// кредита при старте рендера ролика; REFUND — возврат кредита при неудаче
+/// рендера (парный CONSUME); ADMIN_ADJUST — ручная правка оператором
+/// (доброй воли компенсация, исправление ошибки).
+enum CreditLedgerReason {
+  PURCHASE
+  CONSUME
+  REFUND
+  ADMIN_ADJUST
+}
+
+/// Один платёж — от старта чекаута до конечного статуса. Строка создаётся
+/// в PENDING ДО редиректа/инвойса (нужен стабильный providerRef для формы
+/// WayForPay и для идемпотентности вебхука), обновляется вебхуком.
+/// НЕ удаляется никогда — это финансовая история, TTL-уборка её не касается
+/// (в отличие от Session).
+model Payment {
+  id     String        @id @default(cuid())
+  userId String
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  method  PaymentMethod
+  purpose PaymentPurpose
+  status  PaymentStatus @default(PENDING)
+
+  /// Заполнено только для purpose=SUBSCRIPTION — какой режим покупали.
+  plan UserPlan?
+  /// Заполнено только для purpose=CREDIT_PACK — сколько кредитов начислит
+  /// успешная оплата (сама операция начисления — CreditLedger.grant()).
+  creditsGranted Int?
+
+  /// Сумма как её видит платёжка: у Stars — целые XTR (копеек не бывает),
+  /// у WayForPay — минорные единицы валюты мерчанта (копейки/центы).
+  currency String
+  amount   Int
+
+  /// Оценка суммы в микродолларах по ФИКСИРОВАННОМУ курсу из
+  /// common/billing-pricing.ts (не живая биржа) — только для сведения с
+  /// отчётами AiUsage, не бухгалтерская точность (§41, открытый вопрос).
+  amountMicroUsd Int?
+
+  /// Идемпотентность: telegram_payment_charge_id (Stars) или orderReference
+  /// (WayForPay) — второй вебхук с тем же значением ловится на нарушении
+  /// уникального индекса, а не повторной обработкой платежа.
+  providerRef String
+
+  /// Сырое тело вебхука провайдера — для разбора спорных случаев саппортом,
+  /// без необходимости просить пользователя прислать скриншот.
+  rawPayload Json?
+
+  failureReason String?
+
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  creditLedger CreditLedger[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([method, providerRef])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("payments")
+}
+
+/// Текущая подписка пользователя — одна активная на пользователя (@unique),
+/// не история (история — Payment.subscriptionId). recTokenEnc заполнен
+/// только у WayForPay (регулярный платёж — сервер сам инициирует списание);
+/// у Stars продление делает сам Telegram (родной subscription_period), крон
+/// только сверяет, что продление действительно пришло — recTokenEnc там
+/// всегда NULL.
+model Subscription {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  plan   UserPlan
+  method PaymentMethod
+  status SubscriptionStatus @default(ACTIVE)
+
+  currentPeriodEnd DateTime
+  /// Пользователь запросил отмену через PATCH /api/me/plan {plan:'LITE'} —
+  /// доступ остаётся до конца УЖЕ оплаченного периода (нечестно понижать
+  /// сразу после оплаты); billing-renewal переводит в CANCELED и понижает
+  /// User.plan, когда currentPeriodEnd наступит, вместо попытки продлить.
+  cancelAtPeriodEnd Boolean @default(false)
+
+  /// Зашифрован token-crypto.ts (тот же формат, что PublishingChannel.
+  /// accessTokenEnc), ключ — PAYMENT_TOKEN_KEY, отдельный от
+  /// CHANNEL_TOKEN_KEY: разные секреты разной чувствительности не должны
+  /// делить один ключ шифрования.
+  recTokenEnc String?
+
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  /// Крон продления (cron/billing-renew) ходит по этому полю: currentPeriodEnd
+  /// <= now(), status != CANCELED.
+  @@index([status, currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+/// Леджер кредитов на генерацию — add-only, баланс = SUM(delta), не
+/// кэшируется (тот же дух, что AiUsage: сумма не дрейфует, кэш дрейфует).
+/// НЕ распространяется на остальные восемь платных мест сервиса (разбор,
+/// релевантность, промпт, постобработка, поиск, озвучка, распознавание
+/// фото, аудит) — кредит это оплаченный РОЛИК, ворота только в
+/// GenerationService.generateVideo()/markFailed(), см. §41.1.
+model CreditLedger {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Положительный — начисление (PURCHASE/ADMIN_ADJUST/REFUND),
+  /// отрицательный — списание (CONSUME).
+  delta  Int
+  reason CreditLedgerReason
+
+  paymentId String?
+  payment   Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  /// GeneratedVideo.generatedVideoId (JSON-блоб Session.data, без FK — тот
+  /// же принцип, что AiUsage.sessionId) — ключ идемпотентности CONSUME/
+  /// REFUND одной попытки рендера. NULL у PURCHASE/ADMIN_ADJUST.
+  generatedVideoId String?
+
+  createdAt DateTime @default(now())
+
+  /// NULL в generatedVideoId не коллидируют в Postgres — PURCHASE/
+  /// ADMIN_ADJUST (generatedVideoId=NULL) уникальным индексом не задеты,
+  /// только пары CONSUME/REFUND одной попытки рендера.
+  @@unique([generatedVideoId, reason])
+  /// Ключ идемпотентности начисления за оплату (Г-2.5 аудита round4,
+  /// этап 64): одна строка PURCHASE на один Payment, даже если
+  /// `applySuccessfulPayment` вызовется дважды (ретрай вебхука после
+  /// сбоя между обновлением статуса платежа и начислением). NULL в
+  /// paymentId (ADMIN_ADJUST/CONSUME/REFUND) не коллидируют — тот же
+  /// принцип, что у generatedVideoId выше.
+  @@unique([paymentId, reason])
+  @@index([userId])
+  @@map("credit_ledger")
+}
+
+/// Рассылка подборки удачных роликов через Telegram-бота (ТЗ §42, этап
+/// 63, doc/TODO.md §III.4) — рекламный канал, до которого можно
+/// достучаться без платы за показ. Один выпуск не чаще раза в
+/// marketing.frequencyDays; содержимое — снимок id уже опубликованных
+/// (SharedVideoPage.status=PUBLISHED) страниц на момент сборки, а не
+/// живая ссылка на них: страница-источник может быть отозвана автором
+/// уже ПОСЛЕ рассылки, история выпуска при этом не должна пустеть.
+model MarketingBroadcast {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  /// SharedVideoPage.id, в порядке показа. Без FK — та же причина, что у
+  /// SharedVideoPage.sessionId: источник может исчезнуть, снимок остаётся.
+  sharedVideoPageIds String[]
+
+  deliveries MarketingDelivery[]
+
+  @@map("marketing_broadcasts")
+}
+
+enum MarketingDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+/// Одна строка — одна попытка доставить один выпуск одному подписчику.
+/// Бэкофф — тот же приём и та же формула (2^attempts минут), что у
+/// PublicationRequest.attempts/nextAttemptAt (этап 61): свой битый
+/// получатель не должен ни блокировать остальных, ни рассылаться
+/// бесконечно — после maxAttempts строка становится FAILED и воркер её
+/// больше не берёт.
+model MarketingDelivery {
+  id          String             @id @default(cuid())
+  broadcastId String
+  broadcast   MarketingBroadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status        MarketingDeliveryStatus @default(PENDING)
+  attempts      Int                     @default(0)
+  nextAttemptAt DateTime?
+  error         String?
+  sentAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  /// Один и тот же выпуск не заводит вторую строку тому же подписчику —
+  /// createMany({skipDuplicates:true}) на шаге сборки опирается именно на
+  /// этот индекс, а не на предварительную выборку "кому уже создано".
+  @@unique([broadcastId, userId])
+  /// Воркер берёт строки по этому условию: (status=PENDING) OR
+  /// (status=FAILED AND nextAttemptAt<=now()) — оба случая покрывает один
+  /// индекс по (status, nextAttemptAt).
+  @@index([status, nextAttemptAt])
+  @@map("marketing_deliveries")
+}
+
+/// Пакетная генерация по каталогу (ТЗ §44, этап 65, doc/TODO.md §III.5):
+/// один уже одобренный ролик (разбор + промпт) переносится на все
+/// остальные товары линейки за один заход. Одна строка — один запуск
+/// партии; сам разбор переносится через AnalysisLibraryEntry (та же
+/// функция, что у обычной библиотеки, §21) — здесь только libraryEntryId,
+/// без FK, тем же приёмом, что у SharedVideoPage.sessionId: запись партии
+/// в истории не обязана исчезать, если библиотечная запись позже пропадёт.
+/// Доступна только Premium — тем же признаком пакета 'library', без
+/// отдельной строки в матрице возможностей.
+model CatalogBatchRun {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  libraryEntryId  String
+  /// Чья сессия дала стиль партии — только для истории/UI, без FK (та
+  /// же логика "снимок, не ссылка", что у остальных полей ниже).
+  sourceSessionId String
+  /// VideoQuality исходного ролика — тот же для всей партии (единый стиль).
+  quality     String
+  aspectRatio String?
+  /// UI-локаль инициатора (этап 59/64) — прокидывается в каждую
+  /// дочернюю сессию воркером.
+  locale      String?
+
+  createdAt DateTime @default(now())
+
+  items CatalogBatchItem[]
+
+  @@index([projectId])
+  /// Список истории («Партии») сортирует по createdAt без фильтра по
+  /// projectId — составной индекс выше её не покрывает (пятый аудит,
+  /// Д-4.1, тот же класс, что PublicationRequest закрыл на этапе 51,
+  /// В-4.5).
+  @@index([createdAt])
+  @@map("catalog_batch_runs")
+}
+
+enum CatalogBatchItemStatus {
+  PENDING
+  GENERATING
+  DONE
+  FAILED
+}
+
+/// Одна строка — один товар партии. Бэкофф — та же формула (2^attempts
+/// минут), что у PublicationRequest (этап 61) и MarketingDelivery (этап
+/// 63). Claim (lockedUntil) — тот же приём, что закрыл Г-2.11
+/// (publish-worker.service.ts, этап 61/64): атомарный updateMany перед
+/// любым внешним вызовом, иначе перекрытие двух тиков крона запускает
+/// генерацию для одного товара дважды.
+///
+/// Статус НЕ различает "сессия создана"/"промпт одобрен"/"Veo-job
+/// стартовал" — это подшаги одного тика воркера. GENERATING значит
+/// "Veo-job запущен, дальше как обычно" — сам рендер (готово/провал)
+/// отслеживается штатно через session.data.generatedVideo, без
+/// повторной записи сюда: экран статуса партии читает это состояние
+/// живьём из сессии в момент запроса (см. CatalogBatchService.getStatus).
+model CatalogBatchItem {
+  id            String      @id @default(cuid())
+  batchId       String
+  batch         CatalogBatchRun @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  productItemId String
+  productItem   ProductItem @relation(fields: [productItemId], references: [id], onDelete: Cascade)
+
+  /// Появляется, когда воркер создал дочернюю сессию для этого товара.
+  sessionId String?
+
+  status        CatalogBatchItemStatus @default(PENDING)
+  attempts      Int                    @default(0)
+  nextAttemptAt DateTime?
+  /// Claim перед обработкой строки в этом тике — снимается по её
+  /// завершении (успех или окончательный отказ); TTL — предохранитель
+  /// на случай, если сам процесс упадёт посреди обработки.
+  lockedUntil   DateTime?
+  error         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  /// Один товар не заводит вторую строку в ОДНОЙ партии.
+  @@unique([batchId, productItemId])
+  /// Воркер берёт строки по (status=PENDING) OR (status=FAILED AND
+  /// nextAttemptAt<=now()) — оба случая покрывает один индекс.
+  @@index([status, nextAttemptAt])
+  /// Пятый аудит (Д-4.6): проверка «занятости» товара при создании новой
+  /// партии (`CatalogBatchService.create()`) ищет по `productItemId IN
+  /// (...)` ПОПЕРЁК партий — ни составной unique (ведущая колонка
+  /// batchId, не productItemId), ни индекс выше (ведущая status) её не
+  /// покрывают. Сегодня дёшево (малая доля строк в переходном статусе),
+  /// но не бесплатно — обычный, а не частичный индекс: тот же довод, что
+  /// у 20260908160000_drop_unused_indexes про migrate diff в CI.
+  @@index([productItemId])
+  @@map("catalog_batch_items")
+}
+
+/// A/B-варианты одного ролика (TODO §III.6, этап 66): из одного уже
+/// одобренного ролика (тот же товар, тот же стиль) собираются 3
+/// дополнительных дубля, отличающихся только хуком (открывающие секунды)
+/// и CTA (закрывающий бит) — раскадровка, камера, персонажи, темп и
+/// цвет остаются теми же. В отличие от CatalogBatchRun (этап 65), где
+/// каждая строка требует своего текста промпта (товар разный), здесь
+/// текст всех 3 вариантов известен целиком уже в момент создания запуска
+/// — ОДНИМ вызовом GPT-5 (PromptService.generateAbVariants), не по
+/// одному на строку в воркере. Разбор переносится тем же способом, что у
+/// CatalogBatchRun — через AnalysisLibraryEntry, без FK (снимок, не
+/// ссылка). Доступ — та же Premium-проверка, тот же признак 'library'.
+model AbTestRun {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Чей ролик стал образцом — только для истории/UI, без FK (тот же
+  /// приём "снимок, не ссылка", что у CatalogBatchRun.sourceSessionId).
+  sourceSessionId String
+  /// Тот же товар, что у исходной сессии — воркеру нужен для
+  /// createFromItem при создании каждой дочерней сессии-варианта.
+  productItemId String
+  libraryEntryId String
+
+  quality     String
+  aspectRatio String?
+  locale      String?
+
+  createdAt DateTime @default(now())
+
+  variants AbTestVariant[]
+
+  @@index([projectId])
+  /// Тот же класс дефекта, что у CatalogBatchRun выше (Д-4.1).
+  @@index([createdAt])
+  @@map("ab_test_runs")
+}
+
+enum AbTestVariantStatus {
+  PENDING
+  GENERATING
+  DONE
+  FAILED
+}
+
+/// Одна строка — один вариант (хук+CTA). `promptText`/`voiceoverScript`
+/// уже готовы в момент создания строки (из единственного вызова GPT-5 в
+/// AbTestService.create) — воркеру не нужно повторно звать GPT-5, только
+/// посеять готовый текст (PromptService.seedPrompt) и стартовать рендер.
+/// Claim/бэкофф — тот же приём, что у CatalogBatchItem/PublicationRequest.
+model AbTestVariant {
+  id           String    @id @default(cuid())
+  runId        String
+  run          AbTestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  variantIndex Int
+
+  /// Короткие подписи для экрана прогресса — не участвуют в самой
+  /// генерации, только в интерфейсе ("Хук: вопрос" / "CTA: скидка 20%").
+  hookLabel String
+  ctaLabel  String
+
+  /// Полный Veo-текст и текст озвучки этого варианта — из ОДНОГО вызова
+  /// GPT-5 при создании запуска (см. комментарий модели выше).
+  promptText      String  @db.Text
+  voiceoverScript String? @db.Text
+
+  /// Появляется, когда воркер создал дочернюю сессию для этого варианта.
+  sessionId String?
+
+  status        AbTestVariantStatus @default(PENDING)
+  attempts      Int                 @default(0)
+  nextAttemptAt DateTime?
+  /// Claim перед обработкой строки в этом тике — тот же приём, что у
+  /// CatalogBatchItem.lockedUntil.
+  lockedUntil DateTime?
+  error       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  /// Стабильный порядок вариантов внутри одного запуска.
+  @@unique([runId, variantIndex])
+  /// Воркер берёт строки по (status=PENDING) OR (status=FAILED AND
+  /// nextAttemptAt<=now()) — тот же индекс, что у CatalogBatchItem.
+  @@index([status, nextAttemptAt])
+  @@map("ab_test_variants")
+}
+
+// Импорт товарного фида по ссылке (TODO §Уровень 2 п.8, этап 68, §47).
+// Разовый снимок каталога, не периодическая синхронизация (решено с
+// владельцем продукта) — один ProductFeedImportRun = одна попытка
+// импорта одной ссылки. Тот же claim/бэкофф-приём, что у CatalogBatchRun/
+// CatalogBatchItem (этап 65): атомарный updateMany перед любым внешним
+// вызовом, 2^attempts минут бэкоффа на сетевых сбоях, немедленный
+// permanent-отказ (nextAttemptAt: null) на несетевых (SSRF-отказ, битый
+// формат, пустой фид).
+enum ProductFeedImportRunStatus {
+  PENDING
+  IMPORTING
+  DONE
+  FAILED
+}
+
+model ProductFeedImportRun {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  sourceUrl String
+
+  status ProductFeedImportRunStatus @default(PENDING)
+  /// Claim/бэкофф для тика «забрать фид» (см. product-feed-import-worker.service.ts) —
+  /// тот же приём, что у CatalogBatchItem.attempts/nextAttemptAt/lockedUntil.
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime?
+  lockedUntil   DateTime?
+  error         String?
+
+  /// Заполняются по ходу обработки — экран прогресса читает их живьём,
+  /// не дожидаясь DONE (тот же принцип, что у CatalogBatchService.getStatus).
+  totalRows     Int @default(0)
+  importedCount Int @default(0)
+  skippedCount  Int @default(0)
+  failedCount   Int @default(0)
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  items ProductFeedImportItem[]
+
+  @@index([projectId])
+  @@index([status, nextAttemptAt])
+  /// Тот же класс дефекта, что у CatalogBatchRun/AbTestRun выше (Д-4.1).
+  @@index([createdAt])
+  @@map("product_feed_import_runs")
+}
+
+enum ProductFeedImportItemStatus {
+  PENDING
+  IMPORTED
+  SKIPPED
+  FAILED
+}
+
+/// Одна строка разобранного фида. SKIPPED — окончательный отказ без
+/// смысла повторять (нет обязательных полей, валюта строки не совпадает
+/// с валютой проекта, достигнут лимит позиций проекта); FAILED — тот же
+/// смысл, что у CatalogBatchItem.FAILED: временный сбой (сейчас — крайне
+/// редкий, обычная ошибка БД), с бэкоффом до исчерпания attempts.
+model ProductFeedImportItem {
+  id    String               @id @default(cuid())
+  runId String
+  run   ProductFeedImportRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  rowIndex     Int
+  title        String?
+  price        Decimal? @db.Decimal(12, 2)
+  currency     String?
+  description  String?
+  photoUrl     String?
+  categoryText String?
+
+  /// Заполняется после успешного addItem() — снимок, не FK (та же логика
+  /// «снимок, не ссылка», что у CatalogBatchItem.sessionId): позицию
+  /// потом можно отредактировать или удалить, история строки фида от
+  /// этого не должна портиться каскадом.
+  productItemId String?
+
+  status        ProductFeedImportItemStatus @default(PENDING)
+  attempts      Int                         @default(0)
+  nextAttemptAt DateTime?
+  lockedUntil   DateTime?
+  reason        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([runId])
+  @@index([status, nextAttemptAt])
+  @@map("product_feed_import_items")
+}
+
+// Этап 69 (доп. ТЗ «Кроны в админке», аналогично Solar Shop). Одна
+// строка на КАЖДЫЙ прогон одного из десяти кронов — и настоящий, по
+// расписанию Vercel (CronController), и ручной, из админки
+// (AdminCronController). RUNNING ставится перед вызовом
+// CronJobsService.runX(), SUCCESS/FAILED — по его исходу; никакого
+// PARTIAL (в отличие от CronJobRun у Solar Shop) — ни у одного из
+// десяти результатов сегодня нет отдельного булева «частичный провал»,
+// заводить эвристику ради этой таблицы незачем. debugLog заполняется
+// ТОЛЬКО если запуск был с debugMode=true (см. admin-cron.service.ts —
+// там же решено, что именно debug показывает для каждого из десяти
+// джобов); summary — короткая человекочитаемая строка, видна всегда.
+enum CronRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+model CronRunLog {
+  id  String @id @default(cuid())
+  /// Ключ джоба — 'report' | 'blog' | 'publish' | 'billing-renew' |
+  /// 'marketing-broadcast' | 'catalog-batch-run' | 'ab-test-run' |
+  /// 'feed-import-run' | 'cleanup-sessions' | 'sweep-orphans' (см.
+  /// AdminCronService.JOB_REGISTRY — единственное место, где список
+  /// живёт как код, а не только здесь как свободная строка).
+  jobKey String
+
+  /// Ручной запуск оператором из админки — req.userId (тот же
+  /// идентификатор, который остальные admin-сервисы логируют как
+  /// actorId). Настоящий Vercel Cron (пятый аудит, Д-4.3: раньше сюда
+  /// НЕ писал вовсе — история показывала только ручные прогоны) пишет
+  /// константу `VERCEL_CRON_TRIGGERED_BY` из cron-jobs.service.ts
+  /// ('vercel-cron') — своего идентификатора оператора у него нет.
+  triggeredBy String
+
+  debugMode Boolean       @default(false)
+  status    CronRunStatus @default(RUNNING)
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+
+  summary      String?
+  /// Сырой JSON результата — только если debugMode=true, иначе null.
+  debugLog     Json?
+  errorMessage String?
+
+  @@index([jobKey, startedAt])
+  /// Пятый аудит (Д-4.2): дефолтный (самый частый) режим вкладки
+  /// «Кроны» — «последние прогоны по всем джобам вперемешку», БЕЗ
+  /// jobKey в WHERE (`AdminCronService.getHistory()` без аргумента) —
+  /// составной индекс выше с ведущей jobKey тут бесполезен, планировщику
+  /// нужна константа на ведущей колонке. Тот же класс и та же правка,
+  /// что publication_requests (этап 51, В-4.5) и три истории партий/
+  /// A/B/фида (Д-4.1) уже получили — обычный индекс РЯДОМ с составным,
+  /// не вместо.
+  @@index([startedAt])
+  @@map("cron_run_logs")
+}
+
+/// Джоб-уровневый замок поверх поштучного claim строк воркеров (пятый
+/// аудит, Д-3.3): `CatalogBatchWorkerService`/`AbTestWorkerService`/
+/// `ProductFeedImportWorkerService` уже не дают ДВУМ тикам обработать
+/// ОДНУ И ТУ ЖЕ строку партии (claim через `lockedUntil` на самой
+/// строке) — но ничто не мешало им обработать РАЗНЫЕ строки ОДНОЙ И ТОЙ
+/// ЖЕ партии одновременно, каждый пройдя свою проверку дневного
+/// денежного лимита ДО того, как другой успеет записать расход. До
+/// этапа 69 источником перекрытия было только совпадение расписания
+/// Vercel Cron; этап 69 добавил кнопку ручного запуска в админке — и
+/// вместе с ней двойной клик оператора как новый путь к той же гонке.
+/// Один ряд на `jobKey`, TTL как защита от «зависшего» замка, если
+/// процесс упал посередине прогона — см. `common/cron-job-lock.ts` за
+/// логикой захвата/снятия и объяснением, почему здесь НЕ
+/// `pg_advisory_xact_lock` (уже используется в publication/credit-ledger/
+/// billing для КОРОТКИХ транзакций — здесь под замком целый `runBatch()`
+/// с сетевыми вызовами, для чего session-scoped advisory-лок не подходит
+/// под PgBouncer в режиме transaction pooling).
+model CronJobLock {
+  /// 'catalog-batch-run' | 'ab-test-run' | 'feed-import-run' — та же
+  /// тройка ключей, что в CronRunLog.jobKey для этих джобов.
+  jobKey String @id
+
+  /// null — замок свободен. Дата в прошлом — замок просрочен (процесс
+  /// упал, не снял явно) и подхватывается следующим тиком как свободный.
+  lockedUntil DateTime?
+
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@map("cron_job_locks")
+}
+
+/// Клонирование голоса пользователем (этап 73, TODO п.32,
+/// doc/AI-ACTORS-NO-REFERENCE-SPEC.md §3, doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md
+/// §4.3) — self-service, привязан к ПОЛЬЗОВАТЕЛЮ, не к BrandManifest
+/// (в отличие от голоса бренда сегодня): голос принадлежит подписчику.
+/// Асинхронный поток Resemble AI, не синхронный `voiceId` в одном
+/// ответе, как у ElevenLabs `/v1/voices/add` — отсюда статус, а не
+/// прямая запись готового voiceId при создании строки.
+enum UserVoiceStatus {
+  TRAINING
+  READY
+  FAILED
+}
+
+model UserVoice {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Имя голоса, как его назвал пользователь — не путать с resembleVoiceId.
+  label String
+
+  status UserVoiceStatus @default(TRAINING)
+
+  /// UUID голоса на стороне Resemble — известен СРАЗУ по ответу
+  /// `POST /api/v2/voices` (`{uuid, status: "pending"}`), даже пока
+  /// обучение ещё не завершилось; используется и для сопоставления
+  /// вебхука, и как `ttsVoiceId` в BrandManifest после READY, и для
+  /// poll-фоллбека (§5.4 TTS-спека).
+  resembleVoiceId String?
+
+  /// Исходная запись голоса, Blob — та же логика уборки, что у
+  /// остальных пользовательских файлов (метла подберёт по префиксу
+  /// `users/`, если строка удалена, а блоб — нет).
+  sampleUrl String
+
+  /// Явное согласие на использование записи для клонирования (TODO
+  /// §3.6.3) — обязательное поле, не отдельная таблица согласий: тот
+  /// же уровень регламента, что решение по товару в кадре (§3.6/§5.2
+  /// AVATAR-LIPSYNC-PIPELINE-SPEC.md, этап 73) — код фиксирует факт
+  /// подтверждения, не хранит юридический текст отдельно.
+  consentAt DateTime
+
+  /// Причина FAILED — с вебхука или от самого вызова Resemble.
+  error String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([resembleVoiceId])
+  @@map("user_voices")
+}

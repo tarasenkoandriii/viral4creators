@@ -1,0 +1,49 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/cleanup-sessions",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/sweep-orphans",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/report",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/blog",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/publish",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/billing-renew",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/marketing-broadcast",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/catalog-batch-run",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/ab-test-run",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/feed-import-run",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/export-sync-run",
+      "schedule": "*/2 * * * *"
+    }
+  ]
+}
