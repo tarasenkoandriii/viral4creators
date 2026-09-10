@@ -70,7 +70,7 @@ export class AdminMarketingService {
     const items = await Promise.all(
       rows.map(async (b: BroadcastListRow) => {
         const grouped = (await this.prisma.marketingDelivery.groupBy({
-          by: ['status'],
+          by: ['status'] as const,
           where: { broadcastId: b.id },
           _count: { _all: true },
         })) as Array<{ status: string; _count: { _all: number } }>;

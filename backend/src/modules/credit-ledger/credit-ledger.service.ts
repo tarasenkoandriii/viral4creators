@@ -59,7 +59,7 @@ export class CreditLedgerService {
   async balancesFor(userIds: string[]): Promise<Record<string, number>> {
     if (userIds.length === 0) return {};
     const rows = (await this.prisma.creditLedger.groupBy({
-      by: ['userId'],
+      by: ['userId'] as const,
       where: { userId: { in: userIds } },
       _sum: { delta: true },
     })) as Array<{ userId: string; _sum: { delta: number | null } }>;

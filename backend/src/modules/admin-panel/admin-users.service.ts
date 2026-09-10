@@ -205,7 +205,10 @@ export class AdminUsersService {
       this.prisma.user.count({ where }),
       // Сводка считается по ВСЕЙ базе, без `where`: цифра «сколько у нас
       // кого» под отфильтрованным списком читалась бы как общая и врала.
-      this.prisma.user.groupBy({ by: ['plan'], _count: { _all: true } }),
+      this.prisma.user.groupBy({
+        by: ['plan'] as const,
+        _count: { _all: true },
+      }),
       this.prisma.user.count({ where: { isOperator: true } }),
       this.prisma.user.count({ where: { isBlocked: true } }),
     ]);

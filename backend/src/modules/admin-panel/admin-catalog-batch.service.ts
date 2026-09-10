@@ -71,7 +71,7 @@ export class AdminCatalogBatchService {
     const items = await Promise.all(
       rows.map(async (b: BatchListRow) => {
         const grouped = (await this.prisma.catalogBatchItem.groupBy({
-          by: ['status'],
+          by: ['status'] as const,
           where: { batchId: b.id },
           _count: { _all: true },
         })) as Array<{ status: string; _count: { _all: number } }>;

@@ -236,7 +236,15 @@ export class BrandManifestService {
   async remove(userId: string, manifestId: string): Promise<void> {
     await this.findOwn(userId, manifestId);
     const prefix = `brand-manifests/${manifestId}/`;
-    const [characters, scenes]: [AssetRow[], AssetRow[]] = await Promise.all([
+    // Узкий `select` (только `photoUrl` — единственное, что здесь читаем)
+    // не удовлетворяет полному `AssetRow[]`: та же ошибка класса «select
+    // уже сузил результат, а объявленный тип требует больше полей», что
+    // в library.service.ts/project.service.ts (см. doc/PRODUCT-PROJECT-
+    // IMPLEMENTATION-PLAN.md, «Внеплановый фикс №2»).
+    const [characters, scenes]: [
+      Pick<AssetRow, 'photoUrl'>[],
+      Pick<AssetRow, 'photoUrl'>[],
+    ] = await Promise.all([
       this.prisma.brandCharacter.findMany({
         where: { brandManifestId: manifestId },
         select: { photoUrl: true },

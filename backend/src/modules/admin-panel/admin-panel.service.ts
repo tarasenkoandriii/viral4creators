@@ -186,7 +186,10 @@ export class AdminPanelService {
       failedGenerations,
     ] = await Promise.all([
       this.prisma.session.count(),
-      this.prisma.session.groupBy({ by: ['status'], _count: { _all: true } }),
+      this.prisma.session.groupBy({
+        by: ['status'] as const,
+        _count: { _all: true },
+      }),
       this.prisma.session.count({ where: { createdAt: { gte: since24h } } }),
       this.prisma.session.count({ where: { createdAt: { gte: since7d } } }),
       // Этап 51 (В-4.1): статус рендера — колонка с индексом, а не путь в

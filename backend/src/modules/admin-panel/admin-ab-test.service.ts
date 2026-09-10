@@ -75,7 +75,7 @@ export class AdminAbTestService {
     const items = await Promise.all(
       rows.map(async (r: RunListRow) => {
         const grouped = (await this.prisma.abTestVariant.groupBy({
-          by: ['status'],
+          by: ['status'] as const,
           where: { runId: r.id },
           _count: { _all: true },
         })) as Array<{ status: string; _count: { _all: number } }>;

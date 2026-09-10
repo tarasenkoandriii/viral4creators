@@ -286,7 +286,7 @@ export class AiUsageService {
   ): Promise<Record<string, number>> {
     if (userIds.length === 0) return {};
     const rows = (await this.prisma.aiUsage.groupBy({
-      by: ['userId'],
+      by: ['userId'] as const,
       where: {
         userId: { in: userIds },
         createdAt: { gte: startOfDayUtc(now) },
@@ -338,7 +338,7 @@ export class AiUsageService {
 
     const bucket = async (field: 'provider' | 'operation' | 'model') => {
       const rows = (await this.prisma.aiUsage.groupBy({
-        by: [field],
+        by: [field] as const,
         _sum: { costMicroUsd: true },
         _count: { _all: true },
       })) as Array<
@@ -389,7 +389,7 @@ export class AiUsageService {
       // `take` сюда ехали ВСЕ пользователи с расходом (измерено: 3 750
       // строк, 243 мс) ради десяти строк на экране.
       this.prisma.aiUsage.groupBy({
-        by: ['userId'],
+        by: ['userId'] as const,
         where: { userId: { not: null } },
         _sum: { costMicroUsd: true },
         _count: { _all: true },
@@ -517,7 +517,7 @@ export class AiUsageService {
   ): Promise<Record<string, { costMicroUsd: number; calls: number }>> {
     if (userIds.length === 0) return {};
     const rows = (await this.prisma.aiUsage.groupBy({
-      by: ['userId'],
+      by: ['userId'] as const,
       where: { userId: { in: userIds } },
       _sum: { costMicroUsd: true },
       _count: { _all: true },
@@ -539,7 +539,7 @@ export class AiUsageService {
   /** Разбивка расхода одного пользователя по операциям. */
   async breakdownForUser(userId: string): Promise<CostBucket[]> {
     const rows = (await this.prisma.aiUsage.groupBy({
-      by: ['operation'],
+      by: ['operation'] as const,
       where: { userId },
       _sum: { costMicroUsd: true },
       _count: { _all: true },
