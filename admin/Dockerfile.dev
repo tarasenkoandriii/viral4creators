@@ -3,7 +3,7 @@
 # deployment — Vercel builds this as its own Next.js project (see
 # doc/DEPLOYMENT.md).
 
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 

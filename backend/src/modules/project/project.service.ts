@@ -146,7 +146,14 @@ export class ProjectService {
   }
 
   async listProjects(userId: string): Promise<ProjectSummaryView[]> {
-    const rows: ProjectRow[] = await this.prisma.project.findMany({
+    // Только то, что реально читает toProjectSummaryView (счётчик товаров
+    // и «заполнен ли товар») — не полный ItemRow, той же логике, что
+    // library.service.ts's candidates() экономит колонку `analysis`.
+    const rows: Array<
+      Omit<ProjectRow, 'items'> & {
+        items: Pick<ItemRow, 'id' | 'price' | 'description'>[];
+      }
+    > = await this.prisma.project.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
       include: {
@@ -576,7 +583,11 @@ export function toProjectView(row: ProjectRow): ProjectView {
   };
 }
 
-export function toProjectSummaryView(row: ProjectRow): ProjectSummaryView {
+export function toProjectSummaryView(
+  row: Omit<ProjectRow, 'items'> & {
+    items?: Pick<ItemRow, 'price' | 'description'>[];
+  },
+): ProjectSummaryView {
   const items = row.items ?? [];
   return {
     id: row.id,

@@ -43,6 +43,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { libraryEntryPathnames } from '../../common/blob-paths';
@@ -181,7 +182,13 @@ export class LibraryService {
       sourceUrl: input.sourceUrl,
       title: facets.title,
       thumbnailUrl: facets.thumbnailUrl,
-      analysis: analysis as unknown as Record<string, unknown>,
+      // `Record<string, unknown>` doesn't satisfy Prisma's real generated
+      // Json input type (`InputJsonValue` requires JSON-safe values, not
+      // arbitrary `unknown`) — invisible in the sandbox (stub client types
+      // this as `any`), a real `tsc` on Vercel rejects it. `Prisma.
+      // InputJsonValue` is the type Prisma itself expects here (same
+      // pattern as `session.service.ts`'s `seeded as Prisma.InputJsonValue`).
+      analysis: analysis as unknown as Prisma.InputJsonValue,
       category: facets.category,
       audienceGender: facets.audienceGender,
       audienceAgeRange: facets.audienceAgeRange,
@@ -243,7 +250,7 @@ export class LibraryService {
       await this.prisma.analysisLibraryEntry.update({
         where: { sourceKey },
         data: {
-          analysis: withCopies as unknown as Record<string, unknown>,
+          analysis: withCopies as unknown as Prisma.InputJsonValue,
           thumbnailUrl: facets.thumbnailUrl,
         },
       });
@@ -366,7 +373,9 @@ export class LibraryService {
    * Анонимная сессия видит только публичное — своих записей у неё быть
    * не может.
    */
-  private async candidates(viewerId: string | null): Promise<LibraryRow[]> {
+  private async candidates(
+    viewerId: string | null,
+  ): Promise<Omit<LibraryRow, 'analysis'>[]> {
     const order = [
       { usageCount: 'desc' as const },
       { createdAt: 'desc' as const },
@@ -395,7 +404,7 @@ export class LibraryService {
       userId: true,
       createdAt: true,
     } as const;
-    const publicRows: LibraryRow[] =
+    const publicRows: Omit<LibraryRow, 'analysis'>[] =
       await this.prisma.analysisLibraryEntry.findMany({
         where: { visibility: 'PUBLIC' },
         orderBy: order,
@@ -404,7 +413,7 @@ export class LibraryService {
       });
     if (!viewerId) return publicRows;
 
-    const ownRows: LibraryRow[] =
+    const ownRows: Omit<LibraryRow, 'analysis'>[] =
       await this.prisma.analysisLibraryEntry.findMany({
         where: { visibility: 'PRIVATE', userId: viewerId },
         orderBy: order,
@@ -698,7 +707,7 @@ export class LibraryService {
   }
 }
 
-function toRankable(row: LibraryRow): RankableEntry {
+function toRankable(row: Omit<LibraryRow, 'analysis'>): RankableEntry {
   return {
     category: row.category,
     audienceGender: row.audienceGender,
@@ -709,7 +718,7 @@ function toRankable(row: LibraryRow): RankableEntry {
 }
 
 export function toView(
-  row: LibraryRow,
+  row: Omit<LibraryRow, 'analysis'>,
   viewerId: string | null = null,
 ): LibraryEntryView {
   return {

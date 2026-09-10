@@ -3,12 +3,12 @@
 # serverless Functions, not a container (see DOCKER.md and the Vercel
 # readiness audit for that separate path).
 
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
 # Prisma's engines need OpenSSL to detect the right binary variant on
-# Alpine (musl) — node:20-alpine doesn't ship the openssl CLI by default,
+# Alpine (musl) — node:24-alpine doesn't ship the openssl CLI by default,
 # and without it `prisma generate`/`migrate` can fail outright (a
 # long-standing Prisma-on-Alpine caveat, independent of network access).
 RUN apk add --no-cache openssl

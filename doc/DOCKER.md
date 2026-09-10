@@ -39,7 +39,7 @@
 docker compose exec db psql -U postgres -d viral4creators
 ```
 
-Примечание: сборка образов тянет `node:20-alpine` с Docker Hub — в моей
+Примечание: сборка образов тянет `node:24-alpine` с Docker Hub — в моей
 песочнице исходящий трафик на registry-1.docker.io был запрещён (в вашем
 окружении такого ограничения скорее всего нет). `docker compose config`
 я прогнал и синтаксис/связи сервисов подтверждены валидными, но сам
@@ -142,7 +142,7 @@ docker compose logs -f frontend
 
 ## Если что-то не собирается/не стартует
 
-- **`node:20-alpine: ... Forbidden` при `docker compose build`** — сеть или
+- **`node:24-alpine: ... Forbidden` при `docker compose build`** — сеть или
   Docker Hub недоступны оттуда, откуда собираете; проверьте доступ к
   `registry-1.docker.io` или используйте зеркало реестра.
 - **Бэкенд падает сразу на старте с `Missing required environment

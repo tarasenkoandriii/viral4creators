@@ -40,6 +40,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { head } from '@vercel/blob';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
@@ -123,22 +124,6 @@ interface CachedItem {
   id: string;
   category: string | null;
   analogs: CachedAnalogRow[];
-}
-
-/**
- * Minimal view of the Prisma transaction client used by `persist` — the
- * three delegates and methods it touches. Structural on purpose: keeps
- * this file compiling where `prisma generate` hasn't run (see
- * doc/TELEGRAM-ADMIN.md §5); with a generated client, Prisma's real
- * TransactionClient satisfies it.
- */
-interface PersistTx {
-  productAnalog: {
-    deleteMany(args: unknown): Promise<unknown>;
-    createMany(args: unknown): Promise<unknown>;
-  };
-  productItem: { update(args: unknown): Promise<unknown> };
-  project: { update(args: unknown): Promise<unknown> };
 }
 
 interface OwnedItem {
@@ -408,18 +393,31 @@ export class ProductAnalogService {
     }
     if (data.titleIfEmpty) itemData.title = data.titleIfEmpty;
 
-    const row = await this.prisma.$transaction(async (tx: PersistTx) => {
+    // Явная аннотация параметра `tx` здесь раньше была отдельным
+    // структурным интерфейсом (`PersistTx`, методы с `args: unknown`) —
+    // тот же корневой баг, что и 39-ошибочная волна на Vercel (см.
+    // doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md, «Внеплановый фикс»):
+    // явный тип параметра колбэка `$transaction` не резолвится с
+    // реальным сгенерированным клиентом, только с локальным стабом.
+    // Аннотация убрана — TypeScript выводит правильный тип `tx`
+    // из контекста сам; `itemData`/`data.analogs`, оставшиеся нестрого
+    // типизированными (см. их объявление выше), приводятся явным
+    // касом к типам, которых Prisma ожидает на входе.
+    const row = await this.prisma.$transaction(async (tx) => {
       if (data.analogs !== null) {
         await tx.productAnalog.deleteMany({ where: { productItemId: itemId } });
         if (data.analogs.length > 0) {
           await tx.productAnalog.createMany({
-            data: data.analogs.map((a) => ({ ...a, productItemId: itemId })),
+            data: data.analogs.map((a) => ({
+              ...a,
+              productItemId: itemId,
+            })) as unknown as Prisma.ProductAnalogCreateManyInput[],
           });
         }
       }
       const updated = (await tx.productItem.update({
         where: { id: itemId },
-        data: itemData,
+        data: itemData as unknown as Prisma.ProductItemUpdateInput,
         include: { analogs: { orderBy: { relevanceRank: 'asc' } } },
       })) as Parameters<typeof toItemView>[0];
       await tx.project.update({
