@@ -7,6 +7,7 @@ import {
 import { LibraryService } from './library.service';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
+import { StorageModule } from '../storage/storage.module';
 
 /**
  * Shared library of Gemini analyses — cache + recommendations (spec §21).
@@ -21,9 +22,19 @@ import { AdminPanelModule } from '../admin-panel/admin-panel.module';
  * (за `AdminSessionGuard`) и `AdminPanelModule` (за `AdminPanelService.
  * assertOperator`) добавлены в импорты — тот же набор, что уже использует
  * `PublicationModule` для своего админского контроллера.
+ *
+ * НАЙДЕНО И ИСПРАВЛЕНО ПОПУТНО (реальный краш на проде, 2026-09-10):
+ * `StorageModule` не был в импортах, хотя `LibraryService` уже давно
+ * (Stage 26 — копии кадров-превью под собственным префиксом библиотеки,
+ * см. её `copyPreviews`) внедряет `BlobService` третьим параметром
+ * конструктора. В песочнице `nest build`/тесты (там `BlobService` мокается
+ * в спеках самого `LibraryService`, минуя реальный DI-граф Nest) это не
+ * ловилось никогда — только настоящий запуск Nest поднимает граф модулей
+ * и падает с "Nest can't resolve dependencies of the LibraryService ...
+ * BlobService at index [2] is available in the LibraryModule context".
  */
 @Module({
-  imports: [AdminAuthModule, AdminPanelModule],
+  imports: [AdminAuthModule, AdminPanelModule, StorageModule],
   controllers: [
     LibraryController,
     LibraryVideoController,

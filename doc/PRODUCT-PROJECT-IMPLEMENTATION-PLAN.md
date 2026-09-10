@@ -5964,6 +5964,60 @@ scripts/sync-legal.mjs --check` — без расхождений. В отлич
 только показанный образец; настоящий `tsc` в песочнице по-прежнему
 недоступен, так что подтверждение — только следующий реальный деплой.
 
+**Внеплановый фикс №6 — настоящий краш Nest при старте на проде (не
+build-time, а рантайм): `LibraryModule` не импортировал
+`StorageModule`.** В отличие от всех пяти предыдущих волн (все — ошибки
+`tsc` на реальном сгенерированном Prisma-клиенте, никогда не видимые в
+песочнице), эта — обычный краш NestJS при поднятии графа модулей на
+самом старте контейнера: `Nest can't resolve dependencies of the
+LibraryService (PrismaService, SessionService, ?, PlanService). Please
+make sure that the argument BlobService at index [2] is available in
+the LibraryModule context.`
+
+Причина: `LibraryService` внедряет `BlobService` третьим параметром
+конструктора уже давно (этап 26, копии кадров-превью под собственным
+префиксом библиотеки — метод `copyPreviews`), а `BlobService`
+предоставляется и экспортируется только `StorageModule`
+(`storage.module.ts`: `providers: [BlobService], exports: [BlobService]`).
+`LibraryModule` импортировал `AdminAuthModule`/`AdminPanelModule`, но
+никогда — `StorageModule`, то есть DI-граф Nest не мог найти
+`BlobService` для `LibraryService`. Почему это не ловилось ни разу за
+всю историю правок (ни в одной из пяти предыдущих волн, ни в обычных
+прогонах `jest`): `library.service.spec.ts` мокает `BlobService`
+напрямую руками (`new LibraryService(prismaMock, sessionsMock,
+blobMock, plansMock)`), полностью минуя реальную регистрацию модулей —
+юнит-тест никогда не поднимает настоящий `LibraryModule` и потому
+никогда не проверяет его список `imports`. Только настоящий запуск
+`nest start`/продакшен-контейнера строит граф модулей целиком и падает
+на этой нехватке.
+
+Правка: в `library.module.ts` добавлен `import { StorageModule } from
+'../storage/storage.module';` и `StorageModule` добавлен в `imports`
+(`imports: [AdminAuthModule, AdminPanelModule, StorageModule]`), с
+доккомментарием, объясняющим причину и почему её не ловили тесты.
+
+Системная проверка (тот же принцип, что после каждого предыдущего
+класса багов — grep всех `$transaction`, всех `groupBy`, всех
+Json-полей на запись): написан разовый скрипт, статически
+разбирающий каждый `@Module(...)` в `backend/src/modules/` —
+конструктор каждого провайдера каждого модуля сверяется с тем, что
+все внедряемые им локальные провайдеры либо объявлены в том же
+модуле, либо экспортируются каким-то ИМПОРТИРУЕМЫМ модулем (либо тот
+модуль `@Global()`). Скрипт подтверждённо ловит именно этот баг (при
+временном откате правки — единственная находка: `LibraryModule` /
+`BlobService`); на текущем дереве (после правки) — «NO ISSUES FOUND»,
+других экземпляров того же класса («провайдер внедряет чужой сервис,
+но его модуль не импортирован») в проекте не осталось.
+
+Проверка: `eslint --max-warnings 0` на `library.module.ts` — чисто.
+Полный jest в `backend/` — те же **2001/143**, из тех же **17
+падают/5 наборов** (тот же долг, без изменений). `node
+scripts/check-docs.mjs`/`node scripts/sync-legal.mjs --check` — без
+расхождений. Настоящий запуск Nest в песочнице недоступен (тот же
+класс ограничения, что и с `tsc` на сгенерированном Prisma-клиенте), так
+что итоговое подтверждение — следующий реальный деплой/старт
+контейнера.
+
 ## Проверка на каждом этапе (сквозное)
 
 - `npx tsc --noEmit` в `backend/`, `frontend/` — без новых ошибок.
