@@ -63,7 +63,7 @@ import {
 } from '../../common/subtitles';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { FfmpegApiService } from './ffmpeg-api.service';
-import { TTS_PROVIDER } from '../tts/tts.module';
+import { TTS_PROVIDER } from '../tts/tts-provider.token';
 import { TtsProvider } from '../tts/tts.types';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';

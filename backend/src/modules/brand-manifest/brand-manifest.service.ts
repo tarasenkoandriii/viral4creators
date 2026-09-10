@@ -44,7 +44,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import { PlanService } from '../plan/plan.service';
-import { TTS_PROVIDER } from '../tts/tts.module';
+import { TTS_PROVIDER } from '../tts/tts-provider.token';
 import { TtsProvider } from '../tts/tts.types';
 import {
   BrandCharacterView,

@@ -16,7 +16,7 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../common/session.service';
-import { TTS_PROVIDER } from '../tts/tts.module';
+import { TTS_PROVIDER } from '../tts/tts-provider.token';
 import { TtsProvider } from '../tts/tts.types';
 import { Session } from '../../common/types/session.types';
 import { BrandManifestSnapshot } from '../../common/types/brand-manifest.types';

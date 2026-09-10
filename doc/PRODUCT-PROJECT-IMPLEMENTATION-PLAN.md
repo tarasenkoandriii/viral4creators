@@ -6018,6 +6018,70 @@ scripts/check-docs.mjs`/`node scripts/sync-legal.mjs --check` — без
 что итоговое подтверждение — следующий реальный деплой/старт
 контейнера.
 
+**Внеплановый фикс №7 — второй реальный краш Nest при старте, другой
+механизм: цикл импортов между `tts.module.ts` и `tts.controller.ts`
+обнулял DI-токен `TTS_PROVIDER`.** Пользователь прислал следующий
+рантайм-лог сразу после фикса №6, тоже не `tsc`, а настоящий провал
+поднятия графа модулей: `Nest can't resolve dependencies of the
+TtsController (?, PlanService, AiUsageService, PrismaService). ...
+argument dependency at index [0] is available in the TtsModule
+context`, и строкой выше — собственная диагностика Nest: `Nest
+encountered an undefined dependency. This may be due to a circular
+import or a missing dependency declaration.`
+
+Причина — НЕ пропущенный импорт модуля (как в фиксе №6), а классический
+цикл CommonJS-require между ДВУМЯ файлами: `tts.module.ts` импортировал
+`TtsController` из `./tts.controller` (для `controllers:
+[TtsController]`) СТРОКОЙ РАНЬШЕ, чем в том же файле объявлялся `export
+const TTS_PROVIDER = Symbol(...)`; а `tts.controller.ts` импортировал
+`TTS_PROVIDER` обратно из `./tts.module`. При старте: Node начинает
+исполнять `tts.module.ts`, доходит до импорта контроллера ДО строки с
+`TTS_PROVIDER`, тот требует `tts.module.ts` обратно — получает частично
+заполненный `exports`-объект, где `TTS_PROVIDER` ещё `undefined` —
+декоратор `@Inject(TTS_PROVIDER)` в `TtsController` захватывает это
+`undefined` НАВСЕГДА (декораторы выполняются один раз, синхронно, в
+момент определения класса). Проверено воспроизведением МЕХАНИЗМА в
+изоляции (два маленьких `.js`-файла, повторяющих точно такой же
+порядок `require`/объявления, без Nest и без TypeScript): «сломанная»
+версия действительно захватывает `undefined` (и Node сам явно
+предупреждает: «Accessing non-existent property 'TTS_PROVIDER' of
+module exports inside circular dependency»), «исправленная» — тот же
+самый символ, что и после полной загрузки модуля.
+
+В песочнице это не ловилось по той же причине, что и фикс №6: спеки
+`TtsController` и всех потребителей токена создают их вручную (`new
+TtsController(ttsMock, ...)`), минуя настоящую загрузку файлов Node и
+настоящую систему DI Nest.
+
+Правка — стандартный для NestJS способ разрывать такие циклы: вынести
+токен в отдельный файл, ни от кого из потребителей не зависящий.
+Новый `backend/src/modules/tts/tts-provider.token.ts` содержит только
+`export const TTS_PROVIDER = Symbol('TTS_PROVIDER');` с подробным
+доккомментарием о причине. `tts.module.ts` импортирует токен оттуда же,
+что и все четыре потребителя, которые раньше брали `TTS_PROVIDER` из
+`tts.module.ts`: `tts.controller.ts` (тот самый, что и вызывал цикл),
+`project-session.service.ts`, `brand-manifest.service.ts`,
+`postprod.service.ts` — ни один из них не создаёт цикл с новым файлом
+токена, потому что файл токена ни от кого из них не зависит.
+
+Системная проверка (тот же принцип, что и после каждого предыдущего
+класса багов): написан второй разовый скрипт, строящий граф импортов
+всего `backend/src` (без `.spec.ts`) и находящий ЛЮБУЮ пару файлов,
+импортирующих друг друга напрямую (двухфайловый цикл — необходимое
+условие для этого класса бага, независимо от Nest). До правки скрипт
+находил ровно один такой цикл — `tts.module.ts` ↔ `tts.controller.ts`;
+после правки — «Found 0 direct 2-file import cycles» по всему проекту:
+других мест с этим же классом уязвимости не осталось.
+
+Проверка: `eslint --max-warnings 0` на все шесть изменённых/новых
+файлов — чисто. Полный jest в `backend/` — те же **2001/143**, из тех
+же **17 падают/5 наборов** (тот же долг, без изменений). `node
+scripts/check-docs.mjs`/`node scripts/sync-legal.mjs --check` — без
+расхождений. Настоящий запуск Nest в песочнице по-прежнему недоступен,
+но сам механизм (частично исполненный `exports`-объект при цикле
+CommonJS-require) — факт языка/платформы, не Nest, и он воспроизведён и
+подтверждён напрямую, а не только по аналогии с логом.
+
 ## Проверка на каждом этапе (сквозное)
 
 - `npx tsc --noEmit` в `backend/`, `frontend/` — без новых ошибок.

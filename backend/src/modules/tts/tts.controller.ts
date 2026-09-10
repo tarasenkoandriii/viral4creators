@@ -27,7 +27,7 @@ import {
   IdentifiedRequest,
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
-import { TTS_PROVIDER } from './tts.module';
+import { TTS_PROVIDER } from './tts-provider.token';
 import { TtsProvider, VoiceOption } from './tts.types';
 import { PreviewVoiceRequestDto } from './dto/preview-voice.dto';
 import { PlanService } from '../plan/plan.service';
