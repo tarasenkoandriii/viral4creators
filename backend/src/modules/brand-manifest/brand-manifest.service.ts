@@ -178,11 +178,18 @@ export class BrandManifestService {
       throw new BadRequestException('title is required to create a manifest');
     }
     const isResembleClone = await this.isOwnResembleVoice(userId, dto);
+    // `manifestDataFromDto` возвращает `Record<string, unknown>` (нужно
+    // для `update()`, где ЛЮБОЕ поле, включая `title`, может отсутствовать
+    // при частичной правке) — статически Prisma не может убедиться, что
+    // здесь, при СОЗДАНИИ, обязательный `title` в объекте есть, хотя
+    // проверка выше (`if (!dto.title?.trim()) throw ...`) это по факту
+    // гарантирует. Каст, а не смена типа `manifestDataFromDto` — та же
+    // функция используется и в `update()`, где `title` необязателен.
     const row: ManifestRow = await this.prisma.brandManifest.create({
       data: {
         userId,
         ...manifestDataFromDto(dto, this.tts.providerKey, isResembleClone),
-      },
+      } as unknown as Prisma.BrandManifestUncheckedCreateInput,
       include: FULL_INCLUDE,
     });
     return toManifestView(row);

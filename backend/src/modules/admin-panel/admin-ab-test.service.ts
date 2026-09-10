@@ -74,11 +74,19 @@ export class AdminAbTestService {
     // запуска фиксировано 3, не переменное число товаров партии).
     const items = await Promise.all(
       rows.map(async (r: RunListRow) => {
+        // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297,
+        // #6494): `by` вместе с `where` не резолвится компилятором даже
+        // с `as const` — внутренний тип части перегрузок требует, чтобы
+        // объект аргумента ОДНОВРЕМЕННО был массивом (отсюда "missing
+        // length, pop, push..." в реальной ошибке tsc на Vercel). `as
+        // any` на аргументе — задокументированный обходной путь; форма
+        // РЕЗУЛЬТАТА по-прежнему проверяется явным касом ниже.
         const grouped = (await this.prisma.abTestVariant.groupBy({
           by: ['status'] as const,
           where: { runId: r.id },
           _count: { _all: true },
-        })) as Array<{ status: string; _count: { _all: number } }>;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any)) as Array<{ status: string; _count: { _all: number } }>;
         const counts: Record<string, number> = {};
         for (const g of grouped) counts[g.status] = g._count._all;
         const pending = counts.PENDING ?? 0;

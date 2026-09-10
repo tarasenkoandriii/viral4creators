@@ -18,6 +18,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /** Postgres unique-violation — see Prisma error codes. Проверяется по
@@ -58,11 +59,19 @@ export class CreditLedgerService {
    */
   async balancesFor(userIds: string[]): Promise<Record<string, number>> {
     if (userIds.length === 0) return {};
+    // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297, #6494):
+    // `by` вместе с `where` не резолвится компилятором даже с `as const`
+    // — сложный внутренний тип части перегрузок требует, чтобы объект
+    // аргумента ОДНОВРЕМЕННО был массивом (отсюда "missing length, pop,
+    // push..." в реальной ошибке tsc на Vercel). `as any` на аргументе —
+    // задокументированный обходной путь; форма РЕЗУЛЬТАТА по-прежнему
+    // проверяется явным касом ниже.
     const rows = (await this.prisma.creditLedger.groupBy({
       by: ['userId'] as const,
       where: { userId: { in: userIds } },
       _sum: { delta: true },
-    })) as Array<{ userId: string; _sum: { delta: number | null } }>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)) as Array<{ userId: string; _sum: { delta: number | null } }>;
     const result: Record<string, number> = {};
     for (const row of rows) result[row.userId] = row._sum.delta ?? 0;
     return result;
@@ -162,7 +171,16 @@ export class CreditLedgerService {
     userId: string,
     delta: number,
     paymentId: string | null,
-    tx?: typeof this.prisma,
+    // `Prisma.TransactionClient`, не `typeof this.prisma` (=`PrismaService`)
+    // — тот же корневой баг, что и «Внеплановый фикс №1» (39 ошибок), но
+    // здесь не в самом колбэке `$transaction`, а в СИГНАТУРЕ обычного
+    // метода, куда вызывающий (`billing.service.ts`'s
+    // `applySuccessfulPayment`, уже типизированный правильно) передаёт
+    // реальный `tx`. `typeof this.prisma` в этом файле — тип
+    // `PrismaService`, а не транзакционного клиента; их несовместимость
+    // была невидна в песочнице (нестабный клиент), но не в реальной
+    // сборке (см. doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md).
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
     const client = tx ?? this.prisma;
     try {

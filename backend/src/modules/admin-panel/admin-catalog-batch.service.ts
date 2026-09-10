@@ -70,11 +70,14 @@ export class AdminCatalogBatchService {
     // латание находки на живую без повода.
     const items = await Promise.all(
       rows.map(async (b: BatchListRow) => {
+        // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297,
+        // #6494) — см. тот же комментарий в `admin-ab-test.service.ts`.
         const grouped = (await this.prisma.catalogBatchItem.groupBy({
           by: ['status'] as const,
           where: { batchId: b.id },
           _count: { _all: true },
-        })) as Array<{ status: string; _count: { _all: number } }>;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any)) as Array<{ status: string; _count: { _all: number } }>;
         const counts: Record<string, number> = {};
         for (const g of grouped) counts[g.status] = g._count._all;
         const pending = counts.PENDING ?? 0;

@@ -285,6 +285,10 @@ export class AiUsageService {
     now: Date = new Date(),
   ): Promise<Record<string, number>> {
     if (userIds.length === 0) return {};
+    // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297, #6494):
+    // `by` вместе с `where` не резолвится компилятором даже с `as const`
+    // — `as any` на аргументе обходит это; форма РЕЗУЛЬТАТА по-прежнему
+    // проверяется явным касом ниже.
     const rows = (await this.prisma.aiUsage.groupBy({
       by: ['userId'] as const,
       where: {
@@ -292,7 +296,11 @@ export class AiUsageService {
         createdAt: { gte: startOfDayUtc(now) },
       },
       _sum: { costMicroUsd: true },
-    })) as Array<{ userId: string; _sum: { costMicroUsd: number | null } }>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)) as Array<{
+      userId: string;
+      _sum: { costMicroUsd: number | null };
+    }>;
     const out: Record<string, number> = {};
     for (const r of rows) out[r.userId] = r._sum.costMicroUsd ?? 0;
     return out;
@@ -337,11 +345,15 @@ export class AiUsageService {
     };
 
     const bucket = async (field: 'provider' | 'operation' | 'model') => {
+      // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297,
+      // #6494) — см. тот же комментарий выше в этом файле; здесь ломает
+      // не `where`, а сочетание `_sum` и `_count` сразу.
       const rows = (await this.prisma.aiUsage.groupBy({
         by: [field] as const,
         _sum: { costMicroUsd: true },
         _count: { _all: true },
-      })) as Array<
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any)) as Array<
         Record<string, string> & {
           _sum: { costMicroUsd: number | null };
           _count: { _all: number };
@@ -388,6 +400,9 @@ export class AiUsageService {
       // Топ-10 считается в базе, а не в Node (Б-1.7): без `orderBy` и
       // `take` сюда ехали ВСЕ пользователи с расходом (измерено: 3 750
       // строк, 243 мс) ради десяти строк на экране.
+      // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297,
+      // #6494) — `orderBy`+`take` тут ЕСТЬ (как советуют многие обходные
+      // пути в issues), и всё равно не резолвится: `as any` на аргументе.
       this.prisma.aiUsage.groupBy({
         by: ['userId'] as const,
         where: { userId: { not: null } },
@@ -395,7 +410,8 @@ export class AiUsageService {
         _count: { _all: true },
         orderBy: { _sum: { costMicroUsd: 'desc' } },
         take: topLimit,
-      }) as Promise<
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any) as Promise<
         Array<{
           userId: string;
           _sum: { costMicroUsd: number | null };
@@ -516,12 +532,15 @@ export class AiUsageService {
     userIds: string[],
   ): Promise<Record<string, { costMicroUsd: number; calls: number }>> {
     if (userIds.length === 0) return {};
+    // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297, #6494)
+    // — см. тот же комментарий выше в этом файле.
     const rows = (await this.prisma.aiUsage.groupBy({
       by: ['userId'] as const,
       where: { userId: { in: userIds } },
       _sum: { costMicroUsd: true },
       _count: { _all: true },
-    })) as Array<{
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)) as Array<{
       userId: string;
       _sum: { costMicroUsd: number | null };
       _count: { _all: number };
@@ -538,12 +557,15 @@ export class AiUsageService {
 
   /** Разбивка расхода одного пользователя по операциям. */
   async breakdownForUser(userId: string): Promise<CostBucket[]> {
+    // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297, #6494)
+    // — см. тот же комментарий выше в этом файле.
     const rows = (await this.prisma.aiUsage.groupBy({
       by: ['operation'] as const,
       where: { userId },
       _sum: { costMicroUsd: true },
       _count: { _all: true },
-    })) as Array<{
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)) as Array<{
       operation: string;
       _sum: { costMicroUsd: number | null };
       _count: { _all: number };
