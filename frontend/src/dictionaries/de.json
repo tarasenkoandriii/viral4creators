@@ -63,6 +63,10 @@
   "localeSwitcher": {
     "label": "Sprache"
   },
+  "themeToggle": {
+    "switchToDark": "Dunkles Thema aktivieren",
+    "switchToLight": "Helles Thema aktivieren"
+  },
   "audience": {
     "genderLabels": {
       "women": "Frauen",

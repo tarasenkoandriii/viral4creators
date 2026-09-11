@@ -63,6 +63,10 @@
   "localeSwitcher": {
     "label": "Язык"
   },
+  "themeToggle": {
+    "switchToDark": "Включить тёмную тему",
+    "switchToLight": "Включить светлую тему"
+  },
   "audience": {
     "genderLabels": {
       "women": "женщины",

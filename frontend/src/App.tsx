@@ -45,6 +45,7 @@ import { FeedScreen } from './features/feed/FeedScreen';
 import { pollPlanState } from './services/billing-api';
 import { Alert, Button, EmptyState } from './components/ui';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
+import { ThemeToggle } from './components/ThemeToggle';
 import { useI18n } from './lib/i18n-context';
 
 /**
@@ -199,6 +200,7 @@ function App() {
             </button>
             <div className="flex items-center gap-2">
               <LanguageSwitcher />
+              <ThemeToggle />
               {/* Режим — рядом с входом, а не четвёртой вкладкой: на 390px
                 четыре вкладки не помещаются, а знать свой режим нужно
                 всегда, чтобы замок ниже не выглядел поломкой. */}

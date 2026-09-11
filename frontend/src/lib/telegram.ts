@@ -19,6 +19,8 @@
  * X-Dev-User-Id (зеркально dev-bypass на бэкенде, ALLOW_DEV_AUTH=true).
  */
 
+import { readStoredThemePreference } from './theme';
+
 export interface TelegramWebApp {
   initData: string;
   // Этап 55 — только для НАЧАЛЬНОГО определения языка интерфейса
@@ -77,12 +79,22 @@ export function isTelegramWebAppAvailable(): boolean {
 
 /**
  * Тема (класс `dark` на <html>, см. tailwind.config.js darkMode:'class').
- * Внутри Telegram — следуем tg.colorScheme (как TMA SilverFinance);
- * вне Telegram — за системной настройкой, с тёмной по умолчанию
- * (index.html стартует с class="dark", чтобы не было вспышки светлого).
- * Экспортирована отдельно, чтобы вызывать и при смене темы на лету.
+ * Этап 81: явный выбор человека (см. lib/theme.ts, ThemeToggle) теперь
+ * приоритетнее автоматики — ровно как явный выбор языка приоритетнее
+ * initData Telegram (initialLocale() в lib/i18n.ts). Автоматика (без
+ * явного выбора) не изменилась: внутри Telegram — следуем
+ * tg.colorScheme, вне Telegram — за системной настройкой, с тёмной по
+ * умолчанию (index.html стартует с class="dark", чтобы не было вспышки
+ * светлого). Экспортирована отдельно, чтобы вызывать и при смене темы
+ * на лету (сама живая смена — событие Telegram themeChanged/matchMedia
+ * — тоже игнорируется, если человек уже переключал тему явно, см. ниже).
  */
 export function applyTheme(): void {
+  const stored = readStoredThemePreference();
+  if (stored) {
+    document.documentElement.classList.toggle('dark', stored === 'dark');
+    return;
+  }
   const webApp = getTelegramWebApp();
   const prefersDark =
     typeof window !== 'undefined' &&
@@ -117,14 +129,21 @@ export function initTelegramWebApp(): void {
   // silver-50), а не Telegram'овские themeParams — иначе шапка Telegram
   // и тело приложения получаются разного оттенка. Telegram красит
   // системную шапку в то, что мы передадим.
-  const bg = webApp.colorScheme === 'light' ? '#f7f8fa' : '#11141a';
-  webApp.setBackgroundColor(bg);
-  webApp.setHeaderColor(bg);
+  //
+  // Этап 81: раньше здесь читался webApp.colorScheme напрямую — при
+  // явном выборе темы человеком (см. lib/theme.ts) это стало враньём
+  // (webApp.colorScheme — тема САМОГО Telegram, а не выбор человека
+  // внутри приложения). Источник истины теперь один — класс `dark` на
+  // <html>, уже выставленный applyTheme() строкой выше с учётом
+  // явного выбора.
+  const chromeColor = () =>
+    document.documentElement.classList.contains('dark') ? '#0e1621' : '#f7f8fa';
+  webApp.setBackgroundColor(chromeColor());
+  webApp.setHeaderColor(chromeColor());
   webApp.onEvent?.('themeChanged', () => {
     applyTheme();
-    const next = webApp.colorScheme === 'light' ? '#f7f8fa' : '#11141a';
-    webApp.setBackgroundColor(next);
-    webApp.setHeaderColor(next);
+    webApp.setBackgroundColor(chromeColor());
+    webApp.setHeaderColor(chromeColor());
   });
 }
 
