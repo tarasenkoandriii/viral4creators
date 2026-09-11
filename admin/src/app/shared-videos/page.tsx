@@ -184,6 +184,12 @@ export default function SharedVideosPage() {
                               {item.viewCount}
                               {' · дошли до генерации: '}
                               {item.firstGenerationCount}
+                              {/* Этап 80 (TODO §III.9): лента внутри TMA — тот же счётчик,
+                                  что и остальные, показывается рядом с уже существующими. */}
+                              {' · лайков: '}
+                              {item.likeCount}
+                              {' · репостов: '}
+                              {item.shareCount}
                             </div>
                           )}
                           {item.status === 'REJECTED' && item.rejectReason && (

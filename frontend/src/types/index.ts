@@ -473,8 +473,38 @@ export interface SharedVideoPage {
   rejectReason: string | null;
   viewCount: number;
   firstGenerationCount: number;
+  /** Лента (этап 80, TODO §III.9) — см. doc/SOCIAL-FEED-SPEC.md §3.1. */
+  likeCount: number;
+  shareCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+// ── Лента (этап 80, TODO §III.9, doc/SOCIAL-FEED-SPEC.md) — надстройка
+//    над SharedVideoPage: только PUBLISHED, для показа внутри TMA ──
+
+export interface SharedVideoFeedItem {
+  id: string;
+  videoUrl: string;
+  aspectRatio: string | null;
+  title: string;
+  productName: string;
+  productDescription: string | null;
+  price: number | null;
+  currency: string | null;
+  category: string | null;
+  productImageUrl: string | null;
+  locale: string;
+  viewCount: number;
+  likeCount: number;
+  shareCount: number;
+  createdAt: string;
+  likedByViewer: boolean;
+}
+
+export interface SharedVideoFeedResult {
+  items: SharedVideoFeedItem[];
+  nextCursor: string | null;
 }
 
 /** Row of GET /youtube-search (spec §6.4 table columns + `url` for registerYoutubeVideo). */

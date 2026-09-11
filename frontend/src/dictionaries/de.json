@@ -351,7 +351,8 @@
     "typeLine": "Linie",
     "typeSingle": "Produkt",
     "readyCount": "{{complete}}/{{total}} fertig",
-    "quickGenerate": "Schnelle Generierung ohne Projekt"
+    "quickGenerate": "Schnelle Generierung ohne Projekt",
+    "feedLink": "Feed veröffentlichter Videos"
   },
   "projectCreateScreen": {
     "title": "Neues Projekt",
@@ -876,6 +877,16 @@
     "unauthAlert": "Melden Sie sich über Telegram an, um Guthaben zu kaufen — das Guthaben gehört zum Konto.",
     "backToPlan": "Zu den Tarifen",
     "legalNotePrefix": "Vor der Zahlung gelten:"
+  },
+  "feedScreen": {
+    "title": "Feed",
+    "hint": "Veröffentlichte Videos anderer Nutzer — liken und teilen.",
+    "emptyTitle": "Noch nichts hier",
+    "emptyHint": "Sobald jemand ein Video veröffentlicht und ein Operator es freigibt, erscheint es hier.",
+    "loginToLike": "Zum Liken die App in Telegram öffnen oder oben anmelden.",
+    "shareButton": "Teilen",
+    "viewsLabel": "Aufrufe",
+    "loadMore": "Mehr anzeigen"
   },
   "shareVideoPanel": {
     "title": "Öffentliche Seite",

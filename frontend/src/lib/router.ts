@@ -33,6 +33,7 @@ export type Route =
   | { name: 'plan' }
   | { name: 'channels' }
   | { name: 'credits' }
+  | { name: 'feed' }
   | { name: 'not-found'; path: string };
 
 export function parseRoute(hash: string): Route {
@@ -99,6 +100,7 @@ export function parseRoute(hash: string): Route {
   if (parts[0] === 'plan') return { name: 'plan' };
   if (parts[0] === 'channels') return { name: 'channels' };
   if (parts[0] === 'credits') return { name: 'credits' };
+  if (parts[0] === 'feed') return { name: 'feed' };
   if (parts[0] === 'legal' && parts[1]) {
     return { name: 'legal', slug: parts[1] };
   }
@@ -155,4 +157,5 @@ export const routes = {
   plan: () => '/plan',
   channels: () => '/channels',
   credits: () => '/credits',
+  feed: () => '/feed',
 };

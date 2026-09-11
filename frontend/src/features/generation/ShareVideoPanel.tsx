@@ -41,6 +41,7 @@ import {
   listSharedVideos,
   withdrawSharedVideo,
 } from '../../services/projects-api';
+import { recordSharedVideoShare } from '../../services/feed-api';
 import type { SharedVideoPage, SharedVideoStatus } from '../../types';
 import { useI18n } from '../../lib/i18n-context';
 import type { Dictionary } from '../../lib/get-dictionary';
@@ -146,14 +147,21 @@ export function ShareVideoPanel({
     try {
       if (navigator.share) {
         await navigator.share({ title: p.title, url });
-        return;
+      } else {
+        await navigator.clipboard.writeText(url);
+        setCopiedId(p.id);
+        setTimeout(() => setCopiedId((id) => (id === p.id ? null : id)), 2000);
       }
-      await navigator.clipboard.writeText(url);
-      setCopiedId(p.id);
-      setTimeout(() => setCopiedId((id) => (id === p.id ? null : id)), 2000);
     } catch {
-      // Пользователь закрыл системный шаринг — не ошибка.
+      // Пользователь закрыл системный шаринг — не ошибка, и до
+      // shareCount (ниже) в этом случае дело не доходит.
+      return;
     }
+    // Этап 80 (TODO §III.9, doc/SOCIAL-FEED-SPEC.md §5): тот же счётчик,
+    // что бампает кнопка «Поделиться» в ленте — владелец делится
+    // собственным роликом, действие то же самое. Best-effort, не должно
+    // портить уже случившийся шеринг.
+    void recordSharedVideoShare(p.id).catch(() => undefined);
   };
 
   if (loadError !== null && isUnauthorized(loadError)) {

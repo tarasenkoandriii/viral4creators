@@ -40,6 +40,8 @@ import { Session } from '../../common/types/session.types';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { normalizeLocale } from '../../common/locale';
 import {
+  SharedVideoFeedItemView,
+  SharedVideoFeedResult,
   SharedVideoListResult,
   SharedVideoPageView,
   SharedVideoPublicView,
@@ -76,6 +78,8 @@ interface SharedVideoRow {
   rejectReason: string | null;
   viewCount: number;
   firstGenerationCount: number;
+  likeCount: number;
+  shareCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -171,6 +175,8 @@ export function toView(row: SharedVideoRow): SharedVideoPageView {
     rejectReason: row.rejectReason,
     viewCount: row.viewCount,
     firstGenerationCount: row.firstGenerationCount,
+    likeCount: row.likeCount,
+    shareCount: row.shareCount,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -190,8 +196,18 @@ export function toPublicView(row: SharedVideoRow): SharedVideoPublicView {
     productImageUrl: row.productImageUrl,
     locale: row.locale,
     viewCount: row.viewCount,
+    likeCount: row.likeCount,
+    shareCount: row.shareCount,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+/** Лента (этап 80) — `toPublicView` + флаг "уже лайкнул этот вошедший". */
+export function toFeedItemView(
+  row: SharedVideoRow,
+  likedByViewer: boolean,
+): SharedVideoFeedItemView {
+  return { ...toPublicView(row), likedByViewer };
 }
 
 @Injectable()
@@ -224,6 +240,12 @@ export class SharedVideoService {
     // Форк-сторона (посетитель, ниже) намеренно этой проверке не
     // подчиняется — см. `fork()`.
     await this.plans.assertUser(userId, 'publication');
+    // Этап 80, TODO §III.9: «право публикации — у платного и
+    // незаблокированного подписчика» — тариф уже проверен строкой выше,
+    // блокировка до этой правки не проверялась вовсе (см.
+    // doc/SOCIAL-FEED-SPEC.md §1). Уже PUBLISHED-страницы блокировка не
+    // трогает — только вход в новую заявку.
+    await this.plans.assertUserNotBlocked(userId);
     const session = await this.ownSession(userId, sessionId);
     const snap = snapshotFromSession(session, dto);
     const libraryEntryId = await this.resolveLibraryEntryId(
@@ -450,6 +472,153 @@ export class SharedVideoService {
         }`,
       );
     }
+  }
+
+  // ── Лента (этап 80, TODO §III.9, doc/SOCIAL-FEED-SPEC.md §4) ────────────
+
+  /**
+   * GET /shared-video/feed — без гварда (лента читаема анонимно, как и
+   * одиночная страница), но `viewerUserId` подставляется контроллером из
+   * `req.telegramUserId`, если middleware его заполнила (см. doc §4) —
+   * НЕ требуем identity для чтения, только используем её, если она уже
+   * есть, чтобы посчитать `likedByViewer`.
+   *
+   * Курсор — id последней строки предыдущей порции; сортировка
+   * `(createdAt desc, id desc)` даёт стабильный порядок, `cursor`/`skip:
+   * 1` Prisma — стандартный приём курсорной пагинации по уникальному
+   * полю поверх составной сортировки.
+   */
+  async listFeed(opts: {
+    cursor?: string | null;
+    pageSize: number;
+    viewerUserId?: string | null;
+  }): Promise<SharedVideoFeedResult> {
+    const rows: SharedVideoRow[] = await this.prisma.sharedVideoPage.findMany({
+      where: { status: 'PUBLISHED' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: opts.pageSize + 1,
+      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    });
+    const hasMore = rows.length > opts.pageSize;
+    const page = hasMore ? rows.slice(0, opts.pageSize) : rows;
+
+    let likedIds = new Set<string>();
+    if (opts.viewerUserId && page.length > 0) {
+      const likes: Array<{ sharedVideoPageId: string }> =
+        await this.prisma.sharedVideoLike.findMany({
+          where: {
+            userId: opts.viewerUserId,
+            sharedVideoPageId: { in: page.map((r) => r.id) },
+          },
+          select: { sharedVideoPageId: true },
+        });
+      likedIds = new Set(likes.map((l) => l.sharedVideoPageId));
+    }
+
+    return {
+      items: page.map((row) => toFeedItemView(row, likedIds.has(row.id))),
+      nextCursor: hasMore ? page[page.length - 1].id : null,
+    };
+  }
+
+  /**
+   * POST /shared-video/:id/like — идемпотентно (TODO §III.9: «лайк
+   * привязан к Telegram-пользователю, иначе накрутка ничего не стоит»,
+   * doc/SOCIAL-FEED-SPEC.md §3.2/§4). Требует identity (гвард в
+   * контроллере), НЕ проверяет тариф/блокировку — лайк не тратит внешние
+   * API, ограничение «только платные» из TODO относится к публикации,
+   * не к вовлечённости.
+   */
+  async like(
+    userId: string,
+    id: string,
+  ): Promise<{ likeCount: number; likedByViewer: boolean }> {
+    const row = await this.findPublished(id);
+    try {
+      // Без $transaction — тот же best-effort уровень строгости, что у
+      // остальных счётчиков в этом файле (viewCount/firstGenerationCount):
+      // редчайший сбой ВТОРОГО вызова (счётчик не бампнулся при уже
+      // созданном лайке) не хуже уже существующей асимметрии в
+      // markConverted/bumpViewCount, а не заводит новую категорию риска.
+      await this.prisma.sharedVideoLike.create({
+        data: { userId, sharedVideoPageId: id },
+      });
+    } catch (e) {
+      // P2002 — уже лайкнул раньше (уникальный индекс §3.2): не ошибка,
+      // повторный лайк — no-op, отдаём текущее состояние как есть.
+      if (this.isUniqueViolation(e)) {
+        return { likeCount: row.likeCount, likedByViewer: true };
+      }
+      throw e;
+    }
+    await this.prisma.sharedVideoPage.update({
+      where: { id },
+      data: { likeCount: { increment: 1 } },
+    });
+    return { likeCount: row.likeCount + 1, likedByViewer: true };
+  }
+
+  /** DELETE /shared-video/:id/like — снятие лайка, тоже идемпотентно. */
+  async unlike(
+    userId: string,
+    id: string,
+  ): Promise<{ likeCount: number; likedByViewer: boolean }> {
+    const row = await this.findPublished(id);
+    const deleted = await this.prisma.sharedVideoLike.deleteMany({
+      where: { userId, sharedVideoPageId: id },
+    });
+    if (deleted.count === 0) {
+      // Не был лайкнут — no-op, а не 404: клиент мог уже снять лайк в
+      // другой вкладке, повторный DELETE не должен выглядеть ошибкой.
+      return { likeCount: row.likeCount, likedByViewer: false };
+    }
+    await this.prisma.sharedVideoPage.update({
+      where: { id },
+      data: { likeCount: { decrement: 1 } },
+    });
+    return { likeCount: Math.max(row.likeCount - 1, 0), likedByViewer: false };
+  }
+
+  /**
+   * POST /shared-video/:id/share — best-effort, тот же паттерн, что
+   * `bumpViewCount`: и кнопка «Поделиться» в ленте, и та же кнопка в
+   * `ShareVideoPanel` (владелец делится собственным роликом) бампают
+   * один и тот же счётчик (doc/SOCIAL-FEED-SPEC.md §5). Не требует
+   * identity и не проверяет статус жёстко — страница уже показана
+   * клиенту, если он досюда дошёл.
+   */
+  async recordShare(id: string): Promise<void> {
+    try {
+      await this.prisma.sharedVideoPage.update({
+        where: { id },
+        data: { shareCount: { increment: 1 } },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `shareCount bump failed for ${id}: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+  }
+
+  private async findPublished(id: string): Promise<SharedVideoRow> {
+    const row = await this.find(id);
+    if (row.status !== 'PUBLISHED') {
+      throw new NotFoundException(`Shared video page ${id} not found`);
+    }
+    return row;
+  }
+
+  /** Prisma P2002 (unique constraint violation) — структурно, без импорта
+   * `Prisma.PrismaClientKnownRequestError` (тот же приём избегания
+   * прямого импорта из `@prisma/client`, что и структурный `SharedVideoRow`
+   * выше — см. комментарий в project.service.ts). */
+  private isUniqueViolation(e: unknown): boolean {
+    return (
+      typeof e === 'object' &&
+      e !== null &&
+      'code' in e &&
+      (e as { code?: unknown }).code === 'P2002'
+    );
   }
 
   // ── Operator side (/admin, behind AdminSessionGuard + isOperator) ──────

@@ -144,6 +144,7 @@ model User {
   moderatedBlogPosts BlogPost[]             @relation("BlogPostModerator")
   sharedVideoPages   SharedVideoPage[]
   moderatedShares    SharedVideoPage[]      @relation("SharedVideoModerator")
+  sharedVideoLikes   SharedVideoLike[]
   publishingChannels PublishingChannel[]
 
   // Оплата (этап 62, ТЗ §41): история платежей, текущая подписка (одна
@@ -787,6 +788,16 @@ model SharedVideoPage {
   viewCount            Int @default(0)
   firstGenerationCount Int @default(0)
 
+  /** Лента (этап 80, TODO §III.9) — денормализованные счётчики, тот же
+   * приём, что viewCount выше: сортировка/отображение в ленте не должны
+   * каждый раз считать COUNT(*) по SharedVideoLike. shareCount бампает
+   * и кнопка «Поделиться» в ленте, и та же кнопка в ShareVideoPanel
+   * (владелец делится собственным роликом) — один счётчик, две точки
+   * входа, см. doc/SOCIAL-FEED-SPEC.md §5. */
+  likeCount  Int @default(0)
+  shareCount Int @default(0)
+  likes      SharedVideoLike[]
+
   /** Когда страница вошла в выпуск рассылки (ТЗ §42, этап 63) — NULL,
    * пока не показана ни разу. Отбор следующего выпуска берёт только
    * PUBLISHED-страницы с этим полем пустым, чтобы не повторять одну и
@@ -802,6 +813,26 @@ model SharedVideoPage {
   @@index([moderatorId])
   @@index([status, featuredInBroadcastAt])
   @@map("shared_video_pages")
+}
+
+/// Лайк ленты (этап 80, TODO §III.9, doc/SOCIAL-FEED-SPEC.md §3.2) — один
+/// лайк на пару (userId, sharedVideoPageId): и защита от накрутки («лайк
+/// привязан к Telegram-пользователю»), и естественная идемпотентность
+/// повторного POST. onDelete: Cascade с обеих сторон — лайк не переживает
+/// ни удаление пользователя, ни withdraw() страницы автором.
+model SharedVideoLike {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  sharedVideoPageId String
+  sharedVideoPage   SharedVideoPage @relation(fields: [sharedVideoPageId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, sharedVideoPageId])
+  @@index([sharedVideoPageId])
+  @@map("shared_video_likes")
 }
 
 /// Статус OAuth-гранта канала (этап 61, ТЗ §14.3-14.4). ACTIVE — токены

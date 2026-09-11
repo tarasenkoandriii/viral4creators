@@ -34,6 +34,11 @@ export interface PublicSharedVideoPage {
   productImageUrl: string | null;
   locale: string;
   viewCount: number;
+  /** Лента внутри TMA (этап 80, TODO §III.9) — поле зеркалит бэкенд для
+   * типовой полноты (doc/SOCIAL-FEED-SPEC.md §2: сама лента и лайки —
+   * только в TMA, лендинг их не показывает и не использует). */
+  likeCount: number;
+  shareCount: number;
   createdAt: string;
 }
 

@@ -139,6 +139,9 @@ export interface SharedVideoPage {
   rejectReason: string | null;
   viewCount: number;
   firstGenerationCount: number;
+  /** Лента (этап 80, TODO §III.9) — см. doc/SOCIAL-FEED-SPEC.md §3.1. */
+  likeCount: number;
+  shareCount: number;
   createdAt: string;
   updatedAt: string;
 }

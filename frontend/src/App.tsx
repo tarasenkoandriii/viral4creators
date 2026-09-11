@@ -41,6 +41,7 @@ import { ManifestsListScreen } from './features/brand/ManifestsListScreen';
 import { ManifestScreen } from './features/brand/ManifestScreen';
 import { ChannelsScreen } from './features/channels/ChannelsScreen';
 import { CreditsScreen } from './features/credits/CreditsScreen';
+import { FeedScreen } from './features/feed/FeedScreen';
 import { pollPlanState } from './services/billing-api';
 import { Alert, Button, EmptyState } from './components/ui';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
@@ -332,6 +333,7 @@ function App() {
           {route.name === 'plan' && <PlanScreen />}
           {route.name === 'channels' && <ChannelsScreen />}
           {route.name === 'credits' && <CreditsScreen />}
+          {route.name === 'feed' && <FeedScreen />}
           {route.name === 'not-found' && (
             <EmptyState
               title={dict.notFound.title}

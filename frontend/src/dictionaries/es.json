@@ -351,7 +351,8 @@
     "typeLine": "línea",
     "typeSingle": "producto",
     "readyCount": "{{complete}}/{{total}} listo",
-    "quickGenerate": "Generación rápida sin proyecto"
+    "quickGenerate": "Generación rápida sin proyecto",
+    "feedLink": "Feed de videos publicados"
   },
   "projectCreateScreen": {
     "title": "Nuevo proyecto",
@@ -876,6 +877,16 @@
     "unauthAlert": "Inicie sesión con Telegram para comprar créditos — el saldo está vinculado a la cuenta.",
     "backToPlan": "A los planes",
     "legalNotePrefix": "Antes de pagar, revisa:"
+  },
+  "feedScreen": {
+    "title": "Feed",
+    "hint": "Videos publicados por otros usuarios — dale like y compártelos.",
+    "emptyTitle": "Todavía no hay nada",
+    "emptyHint": "En cuanto alguien publique un video y un operador lo apruebe, aparecerá aquí.",
+    "loginToLike": "Para dar like, abre la app dentro de Telegram o inicia sesión desde la cabecera.",
+    "shareButton": "Compartir",
+    "viewsLabel": "visualizaciones",
+    "loadMore": "Mostrar más"
   },
   "shareVideoPanel": {
     "title": "Página pública",

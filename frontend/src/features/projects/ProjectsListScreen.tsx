@@ -3,7 +3,7 @@
  * long-lived catalog, so the list comes before Экран 1).
  */
 
-import { FolderOpen, Layers, Package, Plus, Zap } from 'lucide-react';
+import { FolderOpen, Heart, Layers, Package, Plus, Zap } from 'lucide-react';
 import { Badge, Button, Card, EmptyState, Spinner } from '../../components/ui';
 import { listProjects } from '../../services/projects-api';
 import { useAsync } from '../../lib/useAsync';
@@ -98,13 +98,26 @@ export function ProjectsListScreen() {
       )}
 
       {!loading && (
-        <button
-          type="button"
-          onClick={() => navigate(routes.generate())}
-          className="mt-4 flex min-h-[44px] w-full items-center justify-center gap-1.5 text-xs text-silver-400 hover:text-accent"
-        >
-          <Zap size={12} /> {dict.projectsListScreen.quickGenerate}
-        </button>
+        // Этап 80 (TODO §III.9): точка входа в ленту — тем же приёмом,
+        // что и «Быстрая генерация» ниже (тихая текстовая ссылка в
+        // подвале, а не четвёртая вкладка в App.tsx — три уже упираются
+        // в ширину 390px).
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+          <button
+            type="button"
+            onClick={() => navigate(routes.feed())}
+            className="flex min-h-[44px] items-center gap-1.5 text-xs text-silver-400 hover:text-accent"
+          >
+            <Heart size={12} /> {dict.projectsListScreen.feedLink}
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(routes.generate())}
+            className="flex min-h-[44px] items-center gap-1.5 text-xs text-silver-400 hover:text-accent"
+          >
+            <Zap size={12} /> {dict.projectsListScreen.quickGenerate}
+          </button>
+        </div>
       )}
     </div>
   );

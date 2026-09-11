@@ -4,6 +4,15 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+// Этап 80: этот сервис инжектирует PlanService, чей файл (и цепочка ЕГО
+// импортов) трогает @prisma/client напрямую — недоступный в песочнице
+// клиент рушит ЗАГРУЗКУ модуля ещё до того, как тест успевает подменить
+// что-либо конструктором. Тот же приём, что и в
+// admin-panel.controller.spec.ts: подменяем модуль целиком заглушкой ДО
+// реального импорта — конструкторные моки ниже (plansMock()) их не
+// заменяют, а дополняют (сервис всё равно получает мок через DI).
+jest.mock('../plan/plan.service', () => ({ PlanService: class {} }));
+jest.mock('../../common/session.service', () => ({ SessionService: class {} }));
 import {
   SharedVideoService,
   snapshotFromSession,
@@ -78,6 +87,8 @@ const row = (over: Record<string, unknown> = {}) => ({
   rejectReason: null,
   viewCount: 0,
   firstGenerationCount: 0,
+  likeCount: 0,
+  shareCount: 0,
   createdAt: now,
   updatedAt: now,
   ...over,
@@ -147,6 +158,7 @@ function build(
     rows?: unknown[];
     found?: unknown;
     libraryEntry?: unknown;
+    likes?: unknown[];
   } = {},
 ) {
   let lastRow: ReturnType<typeof row> | null = null;
@@ -187,6 +199,11 @@ function build(
         ),
       delete: jest.fn().mockResolvedValue(undefined),
     },
+    sharedVideoLike: {
+      create: jest.fn().mockResolvedValue({ id: 'like1' }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findMany: jest.fn().mockResolvedValue(opts.likes ?? []),
+    },
     analysisLibraryEntry: {
       findUnique: jest
         .fn()
@@ -217,11 +234,12 @@ function build(
   const library = {
     applyEntryToSessionFree: jest.fn().mockResolvedValue(undefined),
   };
+  const plans = plansMock();
   return {
     service: new SharedVideoService(
       prisma as never,
       sessions as never,
-      plansMock() as never,
+      plans as never,
       library as never,
       blob as never,
     ),
@@ -229,6 +247,7 @@ function build(
     sessions,
     blob,
     library,
+    plans,
   };
 }
 
@@ -405,6 +424,163 @@ describe('SharedVideoService.markConverted', () => {
       where: { id: 'sv1' },
       data: { firstGenerationCount: { increment: 1 } },
     });
+  });
+});
+
+describe('SharedVideoService.create — этап 80, блокировка (TODO §III.9)', () => {
+  it('заблокированный не может поставить страницу на модерацию', async () => {
+    const { service, plans } = build();
+    plans.assertUserNotBlocked.mockRejectedValueOnce(
+      new ForbiddenException('заблокирован'),
+    );
+    await expect(service.create('u1', 's1', {})).rejects.toThrow(
+      /заблокирован/,
+    );
+  });
+
+  it('проверка блокировки идёт ПОСЛЕ проверки тарифа', async () => {
+    const { service, plans } = build();
+    plans.assertUser.mockRejectedValueOnce(new ForbiddenException('тариф'));
+    await expect(service.create('u1', 's1', {})).rejects.toThrow(/тариф/);
+    expect(plans.assertUserNotBlocked).not.toHaveBeenCalled();
+  });
+});
+
+describe('SharedVideoService.listFeed — этап 80 (TODO §III.9)', () => {
+  it('только PUBLISHED, новые сверху, курсор — id последней строки', async () => {
+    const { service, prisma } = build({
+      rows: [row({ id: 'a' }), row({ id: 'b' })],
+    });
+    const r = await service.listFeed({ cursor: null, pageSize: 20 });
+    expect(prisma.sharedVideoPage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: 'PUBLISHED' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 21,
+      }),
+    );
+    expect(r.items).toHaveLength(2);
+    expect(r.nextCursor).toBeNull();
+  });
+
+  it('nextCursor — id последней строки страницы, когда есть ещё', async () => {
+    const rows = Array.from({ length: 3 }, (_, i) => row({ id: `p${i}` }));
+    const { service, prisma } = build({ rows });
+    const r = await service.listFeed({ cursor: null, pageSize: 2 });
+    expect(r.items).toHaveLength(2);
+    expect(r.nextCursor).toBe('p1');
+    expect(prisma.sharedVideoPage.findMany).toHaveBeenCalledWith(
+      expect.not.objectContaining({ cursor: expect.anything() }),
+    );
+
+    await service.listFeed({ cursor: 'p1', pageSize: 2 });
+    expect(prisma.sharedVideoPage.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: { id: 'p1' }, skip: 1 }),
+    );
+  });
+
+  it('likedByViewer — только по лайкам ЭТОГО вошедшего, и только если есть identity', async () => {
+    const rows = [row({ id: 'a' }), row({ id: 'b' })];
+    const { service, prisma } = build({
+      rows,
+      likes: [{ sharedVideoPageId: 'a' }],
+    });
+    const anon = await service.listFeed({ cursor: null, pageSize: 20 });
+    expect(prisma.sharedVideoLike.findMany).not.toHaveBeenCalled();
+    expect(anon.items.every((i) => i.likedByViewer === false)).toBe(true);
+
+    const identified = await service.listFeed({
+      cursor: null,
+      pageSize: 20,
+      viewerUserId: 'u1',
+    });
+    expect(prisma.sharedVideoLike.findMany).toHaveBeenCalledWith({
+      where: { userId: 'u1', sharedVideoPageId: { in: ['a', 'b'] } },
+      select: { sharedVideoPageId: true },
+    });
+    expect(identified.items.find((i) => i.id === 'a')?.likedByViewer).toBe(
+      true,
+    );
+    expect(identified.items.find((i) => i.id === 'b')?.likedByViewer).toBe(
+      false,
+    );
+  });
+});
+
+describe('SharedVideoService.like/unlike — этап 80 (TODO §III.9)', () => {
+  it('like — только PUBLISHED, создаёт лайк и бампает likeCount', async () => {
+    const { service, prisma } = build({ found: row({ status: 'PENDING' }) });
+    await expect(service.like('u1', 'sv1')).rejects.toThrow(NotFoundException);
+
+    prisma.sharedVideoPage.findUnique.mockResolvedValue(
+      row({ status: 'PUBLISHED', likeCount: 3 }),
+    );
+    const r = await service.like('u1', 'sv1');
+    expect(prisma.sharedVideoLike.create).toHaveBeenCalledWith({
+      data: { userId: 'u1', sharedVideoPageId: 'sv1' },
+    });
+    expect(prisma.sharedVideoPage.update).toHaveBeenCalledWith({
+      where: { id: 'sv1' },
+      data: { likeCount: { increment: 1 } },
+    });
+    expect(r).toEqual({ likeCount: 4, likedByViewer: true });
+  });
+
+  it('повторный like — идемпотентно (P2002), без второго инкремента', async () => {
+    const { service, prisma } = build({
+      found: row({ status: 'PUBLISHED', likeCount: 5 }),
+    });
+    prisma.sharedVideoLike.create.mockRejectedValueOnce({ code: 'P2002' });
+    const r = await service.like('u1', 'sv1');
+    expect(r).toEqual({ likeCount: 5, likedByViewer: true });
+    expect(prisma.sharedVideoPage.update).not.toHaveBeenCalled();
+  });
+
+  it('неожиданная ошибка create — не глотается', async () => {
+    const { service, prisma } = build({
+      found: row({ status: 'PUBLISHED' }),
+    });
+    prisma.sharedVideoLike.create.mockRejectedValueOnce(new Error('db down'));
+    await expect(service.like('u1', 'sv1')).rejects.toThrow('db down');
+  });
+
+  it('unlike — удаляет лайк и уменьшает likeCount, не ниже нуля', async () => {
+    const { service, prisma } = build({
+      found: row({ status: 'PUBLISHED', likeCount: 1 }),
+    });
+    const r = await service.unlike('u1', 'sv1');
+    expect(prisma.sharedVideoLike.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 'u1', sharedVideoPageId: 'sv1' },
+    });
+    expect(prisma.sharedVideoPage.update).toHaveBeenCalledWith({
+      where: { id: 'sv1' },
+      data: { likeCount: { decrement: 1 } },
+    });
+    expect(r).toEqual({ likeCount: 0, likedByViewer: false });
+  });
+
+  it('unlike без предшествующего лайка — no-op, не ошибка', async () => {
+    const { service, prisma } = build({
+      found: row({ status: 'PUBLISHED', likeCount: 0 }),
+    });
+    prisma.sharedVideoLike.deleteMany.mockResolvedValueOnce({ count: 0 });
+    const r = await service.unlike('u1', 'sv1');
+    expect(prisma.sharedVideoPage.update).not.toHaveBeenCalled();
+    expect(r).toEqual({ likeCount: 0, likedByViewer: false });
+  });
+});
+
+describe('SharedVideoService.recordShare — этап 80 (TODO §III.9)', () => {
+  it('бампает shareCount, best-effort при сбое', async () => {
+    const { service, prisma } = build();
+    await service.recordShare('sv1');
+    expect(prisma.sharedVideoPage.update).toHaveBeenCalledWith({
+      where: { id: 'sv1' },
+      data: { shareCount: { increment: 1 } },
+    });
+
+    prisma.sharedVideoPage.update.mockRejectedValueOnce(new Error('gone'));
+    await expect(service.recordShare('sv1')).resolves.toBeUndefined();
   });
 });
 

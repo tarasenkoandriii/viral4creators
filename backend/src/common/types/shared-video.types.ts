@@ -33,6 +33,9 @@ export interface SharedVideoPageView {
   rejectReason: string | null;
   viewCount: number;
   firstGenerationCount: number;
+  /** Лента (этап 80, TODO §III.9) — см. doc/SOCIAL-FEED-SPEC.md §3.1. */
+  likeCount: number;
+  shareCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,5 +67,24 @@ export interface SharedVideoPublicView {
   productImageUrl: string | null;
   locale: string;
   viewCount: number;
+  likeCount: number;
+  shareCount: number;
   createdAt: string;
+}
+
+/**
+ * Лента (этап 80, TODO §III.9, doc/SOCIAL-FEED-SPEC.md §4) —
+ * GET /shared-video/feed. Та же публичная проекция + флаг «уже лайкнул
+ * этот вошедший пользователь» (только если identity была — см. §4:
+ * маршрут без гварда, `req.telegramUserId` заполняется опционально).
+ */
+export interface SharedVideoFeedItemView extends SharedVideoPublicView {
+  likedByViewer: boolean;
+}
+
+export interface SharedVideoFeedResult {
+  items: SharedVideoFeedItemView[];
+  /** id последней страницы страницы — передать назад в `cursor` за
+   * следующей порцией; null — дальше ленты нет. */
+  nextCursor: string | null;
 }

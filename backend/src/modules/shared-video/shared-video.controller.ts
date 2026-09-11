@@ -5,8 +5,15 @@
  *   DELETE /sessions/:sessionId/shared-video/:pageId       withdraw at any status
  *
  * Public side (no guard — landing + «Сделать такой же», этап 60):
+ *   GET  /shared-video/feed          feed of PUBLISHED pages (этап 80, TODO §III.9)
  *   GET  /shared-video/:id           published page (bumps viewCount)
  *   POST /shared-video/:id/fork      new anonymous session, forks the analysis
+ *   POST /shared-video/:id/share     best-effort +1 to shareCount (этап 80)
+ *
+ * Feed engagement (TelegramIdentityGuard — a like without identity is
+ * meaningless, этап 80, doc/SOCIAL-FEED-SPEC.md §4):
+ *   POST   /shared-video/:id/like
+ *   DELETE /shared-video/:id/like
  *
  * Operator side (AdminSessionGuard + isOperator, like the rest of /admin):
  *   GET  /admin/shared-videos?status=&page=&pageSize=
@@ -31,6 +38,7 @@ import {
   IdentifiedRequest,
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
+import { TelegramIdentifiedRequest } from '../telegram-auth/telegram-identity.middleware';
 import {
   AdminAuthenticatedRequest,
   AdminSessionGuard,
@@ -43,6 +51,7 @@ import {
   RejectSharedVideoRequestDto,
 } from './dto/shared-video.dto';
 import {
+  SharedVideoFeedResult,
   SharedVideoListResult,
   SharedVideoPageView,
   SharedVideoPublicView,
@@ -90,6 +99,28 @@ export class SharedVideoController {
 export class PublicSharedVideoController {
   constructor(private readonly service: SharedVideoService) {}
 
+  /**
+   * GET /shared-video/feed — ДО `:id` ниже: иначе Nest матчит статичный
+   * `feed` как значение `:id` (порядок объявления маршрутов внутри
+   * контроллера значим). Без гварда, но подхватывает
+   * `req.telegramUserId`, если middleware её уже заполнила (initData/
+   * dev-bypass/login-cookie) — не требуем identity для чтения ленты,
+   * только используем её при наличии, чтобы посчитать `likedByViewer`
+   * (этап 80, doc/SOCIAL-FEED-SPEC.md §4).
+   */
+  @Get('feed')
+  feed(
+    @Req() req: TelegramIdentifiedRequest,
+    @Query('cursor') cursor?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<SharedVideoFeedResult> {
+    return this.service.listFeed({
+      cursor: cursor || null,
+      pageSize: Math.min(Math.max(parseInt(pageSize ?? '20', 10) || 20, 1), 50),
+      viewerUserId: req.telegramUserId ?? null,
+    });
+  }
+
   @Get(':id')
   get(@Param('id') id: string): Promise<SharedVideoPublicView> {
     return this.service.getPublic(id);
@@ -101,6 +132,47 @@ export class PublicSharedVideoController {
     @Body() dto: ForkSharedVideoRequestDto,
   ): Promise<{ sessionId: string }> {
     return this.service.fork(id, dto);
+  }
+
+  /**
+   * POST /shared-video/:id/share — этап 80: best-effort +1 к
+   * `shareCount`, тот же паттерн, что бамп `viewCount` в `getPublic()`.
+   * Вызывается и из ленты, и из `ShareVideoPanel` (владелец делится
+   * собственным роликом) — один счётчик, две точки входа.
+   */
+  @Post(':id/share')
+  @HttpCode(204)
+  async share(@Param('id') id: string): Promise<void> {
+    await this.service.recordShare(id);
+  }
+}
+
+/**
+ * Лайк ленты (этап 80, TODO §III.9) — требует identity: лайк без
+ * личности не имеет смысла (антинакрутка, doc/SOCIAL-FEED-SPEC.md §3.2).
+ * Отдельный контроллер, а не гвард на пару методов `PublicSharedVideoController`
+ * выше — тот целиком открыт, смешивать гвард на части одного класса
+ * менее явно, чем отдельный класс с собственным `@UseGuards`.
+ */
+@Controller('shared-video')
+@UseGuards(TelegramIdentityGuard)
+export class SharedVideoLikeController {
+  constructor(private readonly service: SharedVideoService) {}
+
+  @Post(':id/like')
+  like(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+  ): Promise<{ likeCount: number; likedByViewer: boolean }> {
+    return this.service.like(req.telegramUserId, id);
+  }
+
+  @Delete(':id/like')
+  unlike(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+  ): Promise<{ likeCount: number; likedByViewer: boolean }> {
+    return this.service.unlike(req.telegramUserId, id);
   }
 }
 
