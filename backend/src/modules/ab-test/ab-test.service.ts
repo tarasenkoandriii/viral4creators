@@ -31,7 +31,8 @@ import {
 } from '../../common/types/generation.types';
 import { SessionStatus } from '../../common/types/session.types';
 import { PlanService } from '../plan/plan.service';
-import { AbTestVariantStatus, Prisma } from '@prisma/client';
+import { AbTestVariantStatus, Prisma, WorkflowKind } from '@prisma/client';
+import { logWorkflowStage } from '../../common/workflow-stage-events';
 
 /** Число вариантов на один запуск — решение владельца продукта: всегда 3. */
 export const AB_TEST_VARIANT_COUNT = 3;
@@ -183,6 +184,26 @@ export class AbTestService {
                 voiceoverScript: d.voiceoverScript,
               })),
             });
+            // Событие воронки (этап 78) — тот же приём, что у
+            // `CatalogBatchService.create()`: `createMany` не возвращает
+            // id, читаем их отдельным запросом по только что созданному
+            // `created.id` (коллизий нет — свежий cuid).
+            const createdVariants: { id: string }[] =
+              await tx.abTestVariant.findMany({
+                where: { runId: created.id },
+                select: { id: true },
+              });
+            await Promise.all(
+              createdVariants.map((v) =>
+                logWorkflowStage(
+                  tx,
+                  WorkflowKind.AB_TEST_VARIANT,
+                  v.id,
+                  null,
+                  'PENDING',
+                ),
+              ),
+            );
             return { runId: created.id, variantCount: drafts.length };
           },
           { isolationLevel: 'Serializable' },
@@ -252,6 +273,13 @@ export class AbTestService {
           await this.prisma.abTestVariant
             .update({ where: { id: variant.id }, data: { status: 'DONE' } })
             .catch(() => undefined);
+          await logWorkflowStage(
+            this.prisma,
+            WorkflowKind.AB_TEST_VARIANT,
+            variant.id,
+            'GENERATING',
+            'DONE',
+          );
         } else if (video?.status === GenerationStatus.FAILED) {
           status = 'FAILED';
           error = video.error?.message ?? 'Рендер не удался';
@@ -261,6 +289,13 @@ export class AbTestService {
               data: { status: 'FAILED', error },
             })
             .catch(() => undefined);
+          await logWorkflowStage(
+            this.prisma,
+            WorkflowKind.AB_TEST_VARIANT,
+            variant.id,
+            'GENERATING',
+            'FAILED',
+          );
         }
       }
       views.push({

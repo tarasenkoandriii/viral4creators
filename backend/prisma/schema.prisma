@@ -1875,3 +1875,51 @@ model UserVoice {
   @@index([resembleVoiceId])
   @@map("user_voices")
 }
+
+// Этап 78 — воронка движения по воркфлоу (doc/WORKFLOW-FUNNEL-SPEC.md,
+// doc/WORKFLOW-FUNNEL-COHORT-CONVERSION-SPEC.md). Три существующих
+// воркфлоу (Session/CatalogBatchItem/AbTestVariant) хранят только
+// ТЕКУЩИЙ статус — сама модель ниже НЕ заменяет их, а добавляет
+// append-only историю переходов, без которой ни событийная воронка, ни
+// когортная конверсия физически невозможны (данные о переходе,
+// перезаписанном в старой колонке status, взять больше неоткуда).
+enum WorkflowKind {
+  SESSION
+  CATALOG_BATCH_ITEM
+  AB_TEST_VARIANT
+}
+
+/// Событие «сущность воркфлоу перешла в статус X» — append-only,
+/// никогда не обновляется и не удаляется. Существующие статусные
+/// колонки (Session.status, CatalogBatchItem.status,
+/// AbTestVariant.status) остаются источником ТЕКУЩЕГО состояния, как
+/// сегодня; эта таблица — единственный источник ИСТОРИИ переходов
+/// (doc/WORKFLOW-FUNNEL-SPEC.md §3.1).
+model WorkflowStageEvent {
+  id         String       @id @default(cuid())
+  workflow   WorkflowKind
+  entityId   String
+  /// Статус ДО этого перехода. NULL только для самого первого события
+  /// сущности (создание — переход «из ниоткуда»). Нужен для разбивки
+  /// терминальных ошибок по тому, с какой стадии сорвалась сущность
+  /// (ТЗ §7.2), но пишется на КАЖДОМ событии, не только на ошибках —
+  /// один и тот же код записи, не отдельная ветка для особого случая.
+  fromStage  String?
+  /// Статус, В КОТОРЫЙ перешли — по нему считается основная воронка
+  /// (ТЗ §3.3) и когорта (COHORT-CONVERSION-SPEC.md §3.1).
+  stage      String
+  occurredAt DateTime     @default(now())
+
+  /// Обслуживает основной запрос воронки: сколько РАЗНЫХ entityId
+  /// получили событие (workflow, stage) внутри окна [from, to) — и,
+  /// той же формой, when workflow+stage=$startStage — момент старта
+  /// когорты (COHORT-CONVERSION-SPEC.md §5, оптимизация по индексу).
+  @@index([workflow, stage, occurredAt])
+  /// Обслуживает разбивку ошибок по источнику (ТЗ §3.2/§5): тот же
+  /// фильтр по workflow+stage+occurredAt, но группировка по fromStage
+  /// вместо подсчёта entityId — отдельный индекс, потому что ведущая
+  /// колонка после stage здесь другая (fromStage, не occurredAt
+  /// конкретно для COUNT).
+  @@index([workflow, stage, fromStage])
+  @@map("workflow_stage_events")
+}

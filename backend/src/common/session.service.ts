@@ -21,11 +21,12 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, Session as SessionRow } from '@prisma/client';
+import { Prisma, Session as SessionRow, WorkflowKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { Session, SessionStatus } from './types/session.types';
 import { sessionBlobPathnames } from './blob-paths';
 import { normalizeLocale } from './locale';
+import { logWorkflowStage } from './workflow-stage-events';
 
 /**
  * Сколько сессий чистим за один прогон крона. Ограничение осознанное:
@@ -201,6 +202,18 @@ export class SessionService {
     });
 
     this.logger.log(`Created session ${row.id}`);
+    // Этап 78 (doc/WORKFLOW-FUNNEL-SPEC.md §3.2) — самое первое событие
+    // сущности, `fromStage: null`, «переход из ниоткуда». Отдельный путь
+    // записи от `updateSession` ниже: сессия только что создана через
+    // `prisma.session.create()`, не через UPDATE, откуда брать
+    // предыдущий статус для сравнения было бы неоткуда и не нужно.
+    await logWorkflowStage(
+      this.prisma,
+      WorkflowKind.SESSION,
+      row.id,
+      null,
+      row.status,
+    );
     return this.toSession(row);
   }
 
@@ -256,17 +269,39 @@ export class SessionService {
     // `data`: телеметрии и отчёту нужен статус рендера без распаковки
     // всей колонки, а отдельная запись означала бы место, где они могут
     // разойтись.
+    // Этап 78 (doc/WORKFLOW-FUNNEL-SPEC.md §3.2) — CTE `old` читает статус
+    // ДО этого UPDATE тем же круговым походом в базу, что и сам запрос
+    // (не отдельный SELECT заранее — между ним и UPDATE снова мог бы
+    // вклиниться параллельный запрос, тот самый race, ради которого этот
+    // метод вообще стал одним атомарным запросом на этапе 47). Событие
+    // воронки пишется только при РЕАЛЬНОЙ смене статуса — большинство
+    // вызовов `updateSession` статус не трогают вовсе (`status` в правке
+    // отсутствует → `COALESCE` оставляет старое значение → `previousStatus
+    // === status` → событие не пишется).
     const json = JSON.stringify(patch);
-    const rows = await this.prisma.$queryRaw<SessionRow[]>`
+    const rows = await this.prisma.$queryRaw<
+      Array<SessionRow & { previousStatus: string }>
+    >`
+      WITH old AS (SELECT status FROM sessions WHERE id = ${sessionId})
       UPDATE "sessions"
       SET "data" = "data" || ${json}::jsonb,
           "generationStatus" = ("data" || ${json}::jsonb) -> 'generatedVideo' ->> 'status',
           "status" = COALESCE(${status}, "status"),
           "lastActivityAt" = NOW()
-      WHERE "id" = ${sessionId}
-      RETURNING *
+      FROM old
+      WHERE "sessions"."id" = ${sessionId}
+      RETURNING "sessions".*, old.status AS "previousStatus"
     `;
     const row = rows[0];
+    if (row && status !== null && row.previousStatus !== row.status) {
+      await logWorkflowStage(
+        this.prisma,
+        WorkflowKind.SESSION,
+        sessionId,
+        row.previousStatus,
+        row.status,
+      );
+    }
     return row ? this.toSession(row) : undefined;
   }
 

@@ -77,9 +77,22 @@ function setup(
         opts.stillBusy === undefined ? (opts.busy ?? null) : opts.stillBusy,
       ),
     createMany: jest.fn().mockResolvedValue(undefined),
+    // Этап 78 — `createMany` не возвращает id, пост-createMany подбор id
+    // созданных строк для события воронки эхом отражает последний вызов
+    // `createMany` (тот же приём, что у catalog-batch.service.spec.ts).
+    findMany: jest.fn(() => {
+      const lastCreateMany = (
+        txAbTestVariant.createMany as jest.Mock
+      ).mock.calls.slice(-1)[0]?.[0]?.data as unknown[] | undefined;
+      return Promise.resolve(
+        (lastCreateMany ?? []).map((_, i) => ({ id: `created-variant-${i}` })),
+      );
+    }),
   };
   let remainingFailures = opts.serializationFailuresBeforeSuccess ?? 0;
+  const workflowStageEvent = { create: jest.fn().mockResolvedValue({}) };
   const prisma = {
+    workflowStageEvent,
     analysisLibraryEntry: {
       findUnique: jest
         .fn()
@@ -106,7 +119,11 @@ function setup(
           throw err;
         }
         expect(options).toEqual({ isolationLevel: 'Serializable' });
-        return fn({ abTestRun, abTestVariant: txAbTestVariant });
+        return fn({
+          abTestRun,
+          abTestVariant: txAbTestVariant,
+          workflowStageEvent,
+        });
       },
     ),
   };
@@ -319,6 +336,32 @@ describe('AbTestService.create', () => {
       ).rejects.toMatchObject({ code: 'P2034' });
     });
   });
+
+  describe('событие воронки (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md §3.2)', () => {
+    it('на каждый созданный вариант пишется первое событие, fromStage: null', async () => {
+      const { service, prisma } = setup({ drafts: [draft(1), draft(2)] });
+      await service.create('user1', 'proj1', {
+        sourceSessionId: 'src-session',
+      });
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledTimes(2);
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'AB_TEST_VARIANT',
+          entityId: 'created-variant-0',
+          fromStage: null,
+          stage: 'PENDING',
+        },
+      });
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'AB_TEST_VARIANT',
+          entityId: 'created-variant-1',
+          fromStage: null,
+          stage: 'PENDING',
+        },
+      });
+    });
+  });
 });
 
 describe('AbTestService.getStatus', () => {
@@ -340,6 +383,8 @@ describe('AbTestService.getStatus', () => {
           catch: jest.fn().mockResolvedValue(undefined),
         }),
       },
+      // Этап 78 — событие воронки при оппортунистической синхронизации.
+      workflowStageEvent: { create: jest.fn().mockResolvedValue({}) },
     };
     const service = new AbTestService(
       prisma as never,
@@ -391,10 +436,18 @@ describe('AbTestService.getStatus', () => {
       where: { id: 'variant1' },
       data: { status: 'DONE' },
     });
+    expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+      data: {
+        workflow: 'AB_TEST_VARIANT',
+        entityId: 'variant1',
+        fromStage: 'GENERATING',
+        stage: 'DONE',
+      },
+    });
   });
 
   it('GENERATING с провалившимся рендером — статус FAILED и текст ошибки из сессии', async () => {
-    const { service } = setupStatus({
+    const { service, prisma } = setupStatus({
       run: {
         id: 'run1',
         userId: 'user1',
@@ -421,6 +474,14 @@ describe('AbTestService.getStatus', () => {
     const result = await service.getStatus('user1', 'proj1', 'run1');
     expect(result.variants[0].status).toBe('FAILED');
     expect(result.variants[0].error).toBe('Veo отказал');
+    expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+      data: {
+        workflow: 'AB_TEST_VARIANT',
+        entityId: 'variant1',
+        fromStage: 'GENERATING',
+        stage: 'FAILED',
+      },
+    });
   });
 
   it('PENDING без sessionId — не трогает сессии вовсе', async () => {

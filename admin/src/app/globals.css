@@ -149,7 +149,11 @@ td {
 /* Шапка переносится: семь ссылок плюс id и «Выйти» в одну нерушимую
    строку требовали 797px, и документ имел эту ширину на КАЖДОЙ странице
    админки — со смартфона были видны только первые две вкладки (аудит
-   2026-09-06, А-3.1). */
+   2026-09-06, А-3.1). Список успел вырасти до шестнадцати пунктов и
+   переноситься на две строки уже на десктопе — свёрнут в пять пунктов
+   верхнего уровня через выпадающие группы (`.admin-nav-group` ниже);
+   `flex-wrap` остаётся как страховка на узких экранах, а не как
+   основной способ уместить меню. */
 .admin-nav {
   display: flex;
   flex-wrap: wrap;
@@ -184,6 +188,74 @@ td {
   align-items: center;
   gap: 12px;
   margin-left: auto;
+}
+
+/* Двухуровневое меню (шестнадцать разделов свёрнуты в пять пунктов
+   верхнего уровня — «Сессии» + четыре выпадающих группы): у группы своя
+   кнопка-триггер и абсолютно позиционированный список под ней. */
+.admin-nav-group {
+  position: relative;
+}
+
+/* Кнопка группы выглядит как соседняя ссылка `.admin-nav a`, а не как
+   обычная `button` (border/фон из общего правила `button` в этом файле
+   были бы чужеродны в строке навигации). */
+.admin-nav-group-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+.admin-nav-group-btn-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.admin-nav-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  margin: 4px 0 0;
+  padding: 6px;
+  list-style: none;
+  background: #141417;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 200px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.admin-nav-dropdown li + li {
+  margin-top: 2px;
+}
+
+.admin-nav-dropdown a {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: 6px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-nav-dropdown a:hover {
+  background: #1c1c20;
+}
+
+/* Внутри выпадающего списка активный пункт отмечен только цветом/весом —
+   нижнее подчёркивание из общего правила `.admin-nav a[aria-current='page']`
+   уместно на горизонтальной строке вкладок, но не на строке списка. */
+.admin-nav-dropdown a[aria-current='page'] {
+  box-shadow: none;
 }
 
 .page {
@@ -289,6 +361,49 @@ td {
   background: rgba(243, 106, 106, 0.14);
 }
 
+/* ---------- Воронка движения по воркфлоу (этап 78) ---------- */
+
+/* Горизонтальная прокрутка ряда стадий на телефоне (у сессии 8 стадий,
+   тот же приём, что у широких таблиц — `.table-scroll`). Партия/A-B (3
+   стадии) в прокрутке не нуждаются, но обёртка безвредна и для них. */
+.workflow-diagram-scroll {
+  overflow-x: auto;
+}
+
+.workflow-diagram {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workflow-stage {
+  background: #18181c;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  min-width: 96px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.workflow-stage-count {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.workflow-arrow {
+  color: var(--muted);
+  padding: 0 4px;
+  flex: 0 0 auto;
+}
+
+.workflow-failures {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
 /* ---------- Узкий экран ---------- */
 
 /* Единственный брейкпоинт админки, и он осмысленный: 720px — ширина, на
@@ -321,6 +436,11 @@ td {
 
   .stat-tile {
     padding: 12px;
+  }
+
+  .workflow-stage {
+    min-width: 80px;
+    padding: 8px 10px;
   }
 
   h1 {

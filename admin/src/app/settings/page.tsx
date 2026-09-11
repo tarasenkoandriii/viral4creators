@@ -28,9 +28,16 @@ function groupChecks(checks: EnvCheckResult[]): Array<[string, EnvCheckResult[]]
   return order.map((group) => [group, byGroup.get(group)!]);
 }
 
+type ViewMode = 'all' | 'attention';
+
 export default function SettingsPage() {
   const [result, setResult] = useState<EnvSettingsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Список переменных вырос настолько, что даже при полном порядке на
+  // экране десятки строк «Корректно» — искать среди них единственную
+  // проблемную неудобно. Фильтр чисто на клиенте, без похода на бэкенд:
+  // `checks` уже содержит `ok` на каждую строку.
+  const [mode, setMode] = useState<ViewMode>('all');
 
   useEffect(() => {
     getEnvSettings()
@@ -55,6 +62,15 @@ export default function SettingsPage() {
   }
 
   const problems = result.checks.filter((c) => !c.ok);
+  // При «только требует внимания» из каждой группы остаются только
+  // проблемные строки; группы, полностью прошедшие проверку, из вида
+  // пропадают целиком — иначе остались бы пустые заголовки разделов.
+  const visibleGroups = groupChecks(result.checks)
+    .map(([group, checks]): [string, EnvCheckResult[]] => [
+      group,
+      mode === 'attention' ? checks.filter((c) => !c.ok) : checks,
+    ])
+    .filter(([, checks]) => checks.length > 0);
 
   return (
     <div className="page">
@@ -75,7 +91,22 @@ export default function SettingsPage() {
         </span>
       </div>
 
-      {groupChecks(result.checks).map(([group, checks]) => (
+      <div className="filters" style={{ marginBottom: 20, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <select
+          aria-label="Какие настройки показывать"
+          value={mode}
+          onChange={(e) => setMode(e.target.value as ViewMode)}
+        >
+          <option value="all">Все настройки</option>
+          <option value="attention">Только требуется внимание</option>
+        </select>
+      </div>
+
+      {mode === 'attention' && visibleGroups.length === 0 && (
+        <p className="muted">Проблемных переменных нет — переключитесь на «Все настройки», чтобы увидеть полный список.</p>
+      )}
+
+      {visibleGroups.map(([group, checks]) => (
         <div className="settings-group" key={group}>
           <h2>{group}</h2>
           <div className="table-scroll">

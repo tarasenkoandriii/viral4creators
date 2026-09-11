@@ -37,6 +37,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { WorkflowKind } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadConfiguration } from '../../config/configuration';
 import {
@@ -49,6 +50,7 @@ import { LibraryService } from '../library/library.service';
 import { PromptService } from '../prompt/prompt.service';
 import { GenerationService } from '../generation/generation.service';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
+import { logWorkflowStage } from '../../common/workflow-stage-events';
 import {
   DailySpendLimitExceededException,
   startOfDayUtc,
@@ -70,6 +72,9 @@ interface ClaimableRow {
   voiceoverScript: string | null;
   sessionId: string | null;
   attempts: number;
+  /** Статус строки на момент выборки этим тиком — fromStage для события
+   * воронки (этап 78), тот же приём, что у `CatalogBatchWorkerService`. */
+  status: string;
 }
 
 interface RunRow {
@@ -180,6 +185,7 @@ export class AbTestWorkerService {
         voiceoverScript: true,
         sessionId: true,
         attempts: true,
+        status: true,
       },
       orderBy: { createdAt: 'asc' },
       take: this.cfg().cronBatch,
@@ -270,6 +276,13 @@ export class AbTestWorkerService {
             where: { id: row.id },
             data: { status: 'DONE', lockedUntil: null },
           });
+          await logWorkflowStage(
+            this.prisma,
+            WorkflowKind.AB_TEST_VARIANT,
+            row.id,
+            'GENERATING',
+            'DONE',
+          );
           completed += 1;
         } else if (video.status === GenerationStatus.FAILED) {
           await this.prisma.abTestVariant.update({
@@ -280,6 +293,13 @@ export class AbTestWorkerService {
               lockedUntil: null,
             },
           });
+          await logWorkflowStage(
+            this.prisma,
+            WorkflowKind.AB_TEST_VARIANT,
+            row.id,
+            'GENERATING',
+            'FAILED',
+          );
           renderFailed += 1;
         } else {
           await this.prisma.abTestVariant
@@ -373,6 +393,13 @@ export class AbTestWorkerService {
       where: { id: row.id },
       data: { status: 'GENERATING', lockedUntil: null, error: null },
     });
+    await logWorkflowStage(
+      this.prisma,
+      WorkflowKind.AB_TEST_VARIANT,
+      row.id,
+      row.status,
+      'GENERATING',
+    );
   }
 
   /** Бэкофф — attempts++, nextAttemptAt = now + 2^attempts мин, тот же
@@ -412,6 +439,13 @@ export class AbTestWorkerService {
         lockedUntil: null,
       },
     });
+    await logWorkflowStage(
+      this.prisma,
+      WorkflowKind.AB_TEST_VARIANT,
+      row.id,
+      row.status,
+      'FAILED',
+    );
     this.logger.warn(
       `Вариант ${row.variantIndex} (запуск ${row.runId}): попытка ${attempts}/${maxAttempts} не удалась — ${message}` +
         (isDailyLimit

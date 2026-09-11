@@ -30,6 +30,9 @@ import type {
   CronRunLog,
   AvatarVideo,
   SoundCheckState,
+  WorkflowWindow,
+  WorkflowFunnelResult,
+  WorkflowCohortConversionResult,
 } from './types';
 
 // ── Аутентификация (backend/src/modules/admin-auth) ──
@@ -89,6 +92,20 @@ export function getTelemetry() {
  * пояснение, см. backend/src/modules/admin-panel/env-settings.ts. */
 export function getEnvSettings() {
   return apiGet<EnvSettingsResult>('/admin/settings');
+}
+
+// ── Воронка движения по воркфлоу (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md,
+// doc/WORKFLOW-FUNNEL-COHORT-CONVERSION-SPEC.md) ──
+
+export function getWorkflowFunnel(window: WorkflowWindow) {
+  return apiGet<WorkflowFunnelResult>('/admin/workflow-funnel', { window });
+}
+
+export function getWorkflowCohortConversion(window: WorkflowWindow) {
+  return apiGet<WorkflowCohortConversionResult>(
+    '/admin/workflow-funnel/cohort-conversion',
+    { window },
+  );
 }
 
 // ── Очередь публикации (backend/src/modules/publication) ──

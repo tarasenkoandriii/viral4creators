@@ -31,7 +31,8 @@ import {
 import { SessionStatus } from '../../common/types/session.types';
 import { isItemComplete } from '../project/project.service';
 import { PlanService } from '../plan/plan.service';
-import { CatalogBatchItemStatus } from '@prisma/client';
+import { CatalogBatchItemStatus, WorkflowKind } from '@prisma/client';
+import { logWorkflowStage } from '../../common/workflow-stage-events';
 
 export interface StartCatalogBatchResult {
   batchId: string;
@@ -250,6 +251,28 @@ export class CatalogBatchService {
                 productItemId,
               })),
             });
+            // Событие воронки (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md §3.2) —
+            // первое событие каждой созданной строки, fromStage: null.
+            // `createMany` не возвращает вставленные id (обычный Prisma,
+            // без `createManyAndReturn`) — id читаем отдельным запросом по
+            // только что созданному `created.id`, коллизий с другими
+            // партиями быть не может (только что сгенерированный cuid).
+            const createdRows: { id: string; productItemId: string }[] =
+              await tx.catalogBatchItem.findMany({
+                where: { batchId: created.id },
+                select: { id: true, productItemId: true },
+              });
+            await Promise.all(
+              createdRows.map((r) =>
+                logWorkflowStage(
+                  tx,
+                  WorkflowKind.CATALOG_BATCH_ITEM,
+                  r.id,
+                  null,
+                  'PENDING',
+                ),
+              ),
+            );
             return {
               batchId: created.id,
               itemCount: finalToCreate.length,
@@ -309,6 +332,13 @@ export class CatalogBatchService {
           await this.prisma.catalogBatchItem
             .update({ where: { id: item.id }, data: { status: 'DONE' } })
             .catch(() => undefined);
+          await logWorkflowStage(
+            this.prisma,
+            WorkflowKind.CATALOG_BATCH_ITEM,
+            item.id,
+            'GENERATING',
+            'DONE',
+          );
         } else if (video?.status === GenerationStatus.FAILED) {
           status = 'FAILED';
           error = video.error?.message ?? 'Рендер не удался';
@@ -318,6 +348,13 @@ export class CatalogBatchService {
               data: { status: 'FAILED', error },
             })
             .catch(() => undefined);
+          await logWorkflowStage(
+            this.prisma,
+            WorkflowKind.CATALOG_BATCH_ITEM,
+            item.id,
+            'GENERATING',
+            'FAILED',
+          );
         }
       }
       views.push({
@@ -439,6 +476,19 @@ export class CatalogBatchService {
                 lockedUntil: null,
               },
             });
+            // Событие воронки — `toRetry` уже отфильтрован по status:
+            // 'FAILED' (см. candidates выше), fromStage всегда 'FAILED'.
+            await Promise.all(
+              toRetry.map((c) =>
+                logWorkflowStage(
+                  tx,
+                  WorkflowKind.CATALOG_BATCH_ITEM,
+                  c.id,
+                  'FAILED',
+                  'PENDING',
+                ),
+              ),
+            );
             return { retried: toRetry.length, skippedBusy };
           },
           { isolationLevel: 'Serializable' },

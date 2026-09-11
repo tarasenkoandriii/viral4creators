@@ -1,5 +1,7 @@
 import { Header } from '../../components/Header';
 import { Faq } from '../../components/Faq';
+import { HowItWorks } from '../../components/HowItWorks';
+import { IllustrationIcon } from '../../components/IllustrationIcon';
 import { getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../lib/i18n';
 import {
@@ -69,10 +71,14 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
           <div className="wrap">
             <h2>{dict.features.title}</h2>
             <div className="features-grid">
-              {dict.features.items.map((feature) => (
+              {dict.features.items.map((feature, index) => (
                 <div className="feature" key={feature.title}>
                   <div className="feature-icon" aria-hidden="true">
-                    {feature.icon}
+                    {/* Фаза 2 ТЗ (doc/LANDING-ILLUSTRATIONS-BRIEF.md §2) —
+                        line-art SVG вместо глифа-заглушки; тот же
+                        компонент и та же по позиции файловая раскладка
+                        (feature-1.svg…feature-9.svg), что у #how. */}
+                    <IllustrationIcon name={`feature-${index + 1}`} size={20} />
                   </div>
                   <h3>{feature.title}</h3>
                   <p>{feature.text}</p>
@@ -86,17 +92,7 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
           <div className="wrap">
             <h2>{dict.steps.title}</h2>
             <p className="section-lead">{dict.steps.lead}</p>
-            <ol className="steps-grid">
-              {dict.steps.items.map((step, index) => (
-                <li key={step.title}>
-                  <span className="step-number">{index + 1}</span>
-                  <div>
-                    <strong>{step.title}</strong>
-                    <p>{step.text}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
+            <HowItWorks steps={dict.steps} variant="teaser" hrefBase={`/${locale}/how-it-works`} />
           </div>
         </section>
 

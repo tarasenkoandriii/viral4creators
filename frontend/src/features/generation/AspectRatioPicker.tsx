@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Crop, Lock, Scan } from 'lucide-react';
+import { Crop, Lock, Scan, Star } from 'lucide-react';
 import { Alert, Field, Input, Pills } from '../../components/ui';
 import {
   isVeoNative,
@@ -76,7 +76,14 @@ export function AspectRatioPicker({
             <Lock size={9} /> {s.label}
           </span>
         ),
-        sub: s.value === referenceAspectRatio ? `★ ${sub}` : sub,
+        sub:
+          s.value === referenceAspectRatio ? (
+            <span className="inline-flex items-center gap-0.5">
+              <Star size={9} /> {sub}
+            </span>
+          ) : (
+            sub
+          ),
         disabled: !ratioAllowed(s.value),
       };
     }),

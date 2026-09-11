@@ -333,7 +333,6 @@ function MyVoicesSection({
       alive = false;
       window.clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [training, voices]);
 
   useEffect(() => () => stopTimer(), []);

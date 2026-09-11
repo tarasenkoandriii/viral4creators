@@ -137,7 +137,9 @@ describe('snapshotFromSession — семейство кадра под площ�
 
   it('заявка на площадку того же семейства, что уже отрендерено — берёт основной файл как раньше', () => {
     // TikTok хочет 9:16 — ролик уже 9:16, вариант из exportVariants не нужен.
-    const snap = snapshotFromSession(sessionWithVariant(), { platform: 'TIKTOK' });
+    const snap = snapshotFromSession(sessionWithVariant(), {
+      platform: 'TIKTOK',
+    });
     expect(snap.videoUrl).toBe('https://blob.test/sessions/s1/generated.mp4');
   });
 
@@ -164,7 +166,9 @@ describe('snapshotFromSession — семейство кадра под площ�
   });
 
   it('другое семейство, но подходящего готового варианта нет — прежнее поведение (что лежит, то и уходит)', () => {
-    const snap = snapshotFromSession(sessionWithVariant(), { platform: 'YOUTUBE' });
+    const snap = snapshotFromSession(sessionWithVariant(), {
+      platform: 'YOUTUBE',
+    });
     expect(snap.videoUrl).toBe('https://blob.test/sessions/s1/generated.mp4');
   });
 

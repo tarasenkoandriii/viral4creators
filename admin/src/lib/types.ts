@@ -593,3 +593,80 @@ export interface SoundCheck {
 export interface SoundCheckState {
   history: SoundCheck[];
 }
+
+// ── Воронка движения по воркфлоу (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md,
+// doc/WORKFLOW-FUNNEL-COHORT-CONVERSION-SPEC.md) — модель
+// backend/src/modules/admin-panel/admin-panel.service.ts
+// (getWorkflowFunnel/getWorkflowCohortConversion) — держать в синхроне
+// вручную. Окна СКОЛЬЗЯЩИЕ от текущего момента, не календарные.
+
+export type WorkflowWindow = 'hour' | 'day' | 'week' | 'month';
+export type WorkflowName = 'session' | 'catalog_batch' | 'ab_test';
+
+export interface WorkflowFunnelStage {
+  key: string;
+  label: string;
+  count: number;
+  uniqueUsers: number | null;
+}
+
+/** Терминальная ошибка разбита по стадии, с которой сорвалась сущность
+ * (§7.2 родительского ТЗ), не общим числом. */
+export interface WorkflowFunnelFailureBreakdown {
+  fromStage: string;
+  fromLabel: string;
+  count: number;
+  uniqueUsers: number;
+}
+
+export interface WorkflowFunnelBlock {
+  workflow: WorkflowName;
+  label: string;
+  /** Основной путь, БЕЗ терминальной ошибки. */
+  stages: WorkflowFunnelStage[];
+  /** Отсортировано по count desc. */
+  failures: WorkflowFunnelFailureBreakdown[];
+  totalFailed: number;
+}
+
+export interface WorkflowFunnelResult {
+  window: WorkflowWindow;
+  from: string;
+  to: string;
+  blocks: WorkflowFunnelBlock[];
+}
+
+export interface CohortConversionStage {
+  key: string;
+  label: string;
+  /** Нарастающим итогом, ≤ cohortSize. */
+  reached: number;
+  /** 0..1. */
+  pctOfCohort: number;
+  /** Обычно 0..1, но может быть > 1.0 при обходе стадий (когортный ТЗ
+   * §4.1) — НЕ обрезать до 100%. `null` для первой стадии после старта
+   * когорты и когда предыдущая стадия ни разу не достигнута. */
+  pctOfPrevious: number | null;
+  /** `null`, если `reached === 0`. */
+  avgDurationFromStartMs: number | null;
+}
+
+export interface CohortConversionBlock {
+  workflow: WorkflowName;
+  label: string;
+  /** Сущностей, попавших в когорту (= первая стадия, pctOfCohort всегда 1). */
+  cohortSize: number;
+  /** БЕЗ стартовой стадии — она вынесена в cohortSize. */
+  stages: CohortConversionStage[];
+  /** false = «когорта ещё не завершена», см. когортный ТЗ §3.2. */
+  matured: boolean;
+  /** ISO — когда станет matured. */
+  maturesAt: string;
+}
+
+export interface WorkflowCohortConversionResult {
+  window: WorkflowWindow;
+  from: string;
+  to: string;
+  blocks: CohortConversionBlock[];
+}

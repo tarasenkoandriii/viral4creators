@@ -23,7 +23,7 @@ import {
   AdminSessionGuard,
   AdminAuthenticatedRequest,
 } from '../admin-auth/admin-session.guard';
-import { AdminPanelService } from './admin-panel.service';
+import { AdminPanelService, WorkflowWindow } from './admin-panel.service';
 import { AdminUsersService } from './admin-users.service';
 import { AdminBillingService } from './admin-billing.service';
 import { AdminMarketingService } from './admin-marketing.service';
@@ -61,6 +61,18 @@ export class AdjustCreditDto {
   @IsInt()
   @NotEquals(0)
   delta!: number;
+}
+
+const WORKFLOW_WINDOWS: WorkflowWindow[] = ['hour', 'day', 'week', 'month'];
+
+/** Этап 78 — невалидный/отсутствующий `?window=` тихо откатывается на
+ * `day` (тот же уровень строгости, что у `page`/`pageSize` выше —
+ * список сессий тоже не бросает 400 на мусорный `page`), а не 400: это
+ * аналитический экран для оператора, не форма с пользовательским вводом. */
+function parseWorkflowWindow(value?: string): WorkflowWindow {
+  return WORKFLOW_WINDOWS.includes(value as WorkflowWindow)
+    ? (value as WorkflowWindow)
+    : 'day';
 }
 
 /**
@@ -139,6 +151,29 @@ export class AdminPanelController {
   async settings(@Req() req: AdminAuthenticatedRequest) {
     await this.adminPanel.assertOperator(req.userId);
     return this.adminPanel.getEnvSettings();
+  }
+
+  // ── Воронка движения по воркфлоу (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md,
+  // doc/WORKFLOW-FUNNEL-COHORT-CONVERSION-SPEC.md) ─────────────────────
+
+  @Get('workflow-funnel')
+  async workflowFunnel(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('window') window?: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.adminPanel.getWorkflowFunnel(parseWorkflowWindow(window));
+  }
+
+  @Get('workflow-funnel/cohort-conversion')
+  async workflowFunnelCohortConversion(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('window') window?: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.adminPanel.getWorkflowCohortConversion(
+      parseWorkflowWindow(window),
+    );
   }
 
   // ── Пользователи (ТЗ §25, этап 30) ───────────────────────────────────

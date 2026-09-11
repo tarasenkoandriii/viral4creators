@@ -177,7 +177,6 @@ function App() {
         navigate(routes.plan());
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

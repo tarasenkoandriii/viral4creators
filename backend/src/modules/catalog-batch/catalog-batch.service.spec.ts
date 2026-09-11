@@ -78,16 +78,37 @@ function setup(
     create: jest.fn().mockResolvedValue({ id: 'batch1' }),
     findUnique: jest.fn(),
   };
+  const workflowStageEvent = { create: jest.fn().mockResolvedValue({}) };
   const txCatalogBatchItem = {
-    findMany: jest
-      .fn()
-      .mockResolvedValue(
+    // Этот мок обслуживает ДВА разных запроса внутри транзакции:
+    // проверку "ещё не занято" (`where.productItemId`, Д-2.2) и, после
+    // неё, пост-createMany подбор id только что созданных строк
+    // (`where.batchId`, этап 78 — `createMany` id не возвращает).
+    // Различаем по форме `where`, эхом отражая последний вызов
+    // `createMany`, а не гадая наперёд, какие productItemId создаст тест.
+    findMany: jest.fn((args: { where?: { batchId?: string } } = {}) => {
+      if (args?.where?.batchId) {
+        const lastCreateMany = (
+          txCatalogBatchItem.createMany as jest.Mock
+        ).mock.calls.slice(-1)[0]?.[0]?.data as
+          | { productItemId: string }[]
+          | undefined;
+        return Promise.resolve(
+          (lastCreateMany ?? []).map((d, i) => ({
+            id: `created-item-${i}`,
+            productItemId: d.productItemId,
+          })),
+        );
+      }
+      return Promise.resolve(
         opts.stillBusy === undefined ? (opts.busy ?? []) : opts.stillBusy,
-      ),
+      );
+    }),
     createMany: jest.fn().mockResolvedValue(undefined),
   };
   let remainingFailures = opts.serializationFailuresBeforeSuccess ?? 0;
   const prisma = {
+    workflowStageEvent,
     analysisLibraryEntry: {
       findUnique: jest
         .fn()
@@ -127,6 +148,7 @@ function setup(
         return fn({
           catalogBatchRun,
           catalogBatchItem: txCatalogBatchItem,
+          workflowStageEvent,
         });
       },
     ),
@@ -350,7 +372,10 @@ describe('CatalogBatchService.create', () => {
     // именно проверка ВНУТРИ транзакции (по её собственному tx-клиенту)
     // обязана увидеть 'pi1' занятым — иначе Д-2.2 не была бы закрыта.
     expect(prisma.catalogBatchItem.findMany).toHaveBeenCalledTimes(1);
-    expect(txCatalogBatchItem.findMany).toHaveBeenCalledTimes(1);
+    // Внутри транзакции теперь два вызова: сама проверка "занят" (Д-2.2)
+    // и, после неё, пост-createMany подбор id созданных строк для
+    // события воронки (этап 78, `createMany` id не возвращает).
+    expect(txCatalogBatchItem.findMany).toHaveBeenCalledTimes(2);
   });
 
   it('Д-2.2: конкурентная транзакция заняла ВСЕ товары к моменту tx-проверки — 400, транзакция откатывается', async () => {
@@ -391,6 +416,43 @@ describe('CatalogBatchService.create', () => {
         productItemIds: ['pi1', 'pi2'],
       }),
     ).rejects.toMatchObject({ code: 'P2034' });
+  });
+
+  describe('событие воронки (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md §3.2)', () => {
+    it('на каждую созданную строку пишется первое событие, fromStage: null', async () => {
+      const { service, prisma } = setup();
+      await service.create('user1', 'proj1', {
+        sourceSessionId: 'src-session',
+        productItemIds: ['pi1', 'pi2'],
+      });
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledTimes(2);
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'CATALOG_BATCH_ITEM',
+          entityId: 'created-item-0',
+          fromStage: null,
+          stage: 'PENDING',
+        },
+      });
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'CATALOG_BATCH_ITEM',
+          entityId: 'created-item-1',
+          fromStage: null,
+          stage: 'PENDING',
+        },
+      });
+    });
+
+    it('пропущенный (busy) товар не создаёт строку — событие пишется только на реально созданные', async () => {
+      const { service, prisma } = setup({ busy: [{ productItemId: 'pi1' }] });
+      await service.create('user1', 'proj1', {
+        sourceSessionId: 'src-session',
+        productItemIds: ['pi1', 'pi2'],
+      });
+      // Один реально созданный товар (pi2) — одно событие.
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -433,9 +495,11 @@ describe('CatalogBatchService.retry', () => {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     };
     let remainingFailures = opts.serializationFailuresBeforeSuccess ?? 0;
+    const workflowStageEvent = { create: jest.fn().mockResolvedValue({}) };
     const prisma = {
       catalogBatchRun,
       catalogBatchItem: txCatalogBatchItem,
+      workflowStageEvent,
       $transaction: jest.fn(
         async (
           fn: (tx: unknown) => unknown,
@@ -448,7 +512,11 @@ describe('CatalogBatchService.retry', () => {
             throw err;
           }
           expect(options).toEqual({ isolationLevel: 'Serializable' });
-          return fn({ catalogBatchRun, catalogBatchItem: txCatalogBatchItem });
+          return fn({
+            catalogBatchRun,
+            catalogBatchItem: txCatalogBatchItem,
+            workflowStageEvent,
+          });
         },
       ),
     };
@@ -580,6 +648,46 @@ describe('CatalogBatchService.retry', () => {
       expect(prisma.$transaction).toHaveBeenCalledTimes(3);
     });
   });
+
+  describe('событие воронки (этап 78) — fromStage всегда FAILED', () => {
+    it('на каждую повторённую строку пишется событие FAILED → PENDING', async () => {
+      const { service, prisma } = setupRetry({
+        candidates: [
+          { id: 'item1', productItemId: 'pi1' },
+          { id: 'item2', productItemId: 'pi2' },
+        ],
+      });
+      await service.retry('user1', 'proj1', 'batch1');
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledTimes(2);
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'CATALOG_BATCH_ITEM',
+          entityId: 'item1',
+          fromStage: 'FAILED',
+          stage: 'PENDING',
+        },
+      });
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'CATALOG_BATCH_ITEM',
+          entityId: 'item2',
+          fromStage: 'FAILED',
+          stage: 'PENDING',
+        },
+      });
+    });
+
+    it('занятый другой партией товар исключён — событие для него не пишется', async () => {
+      const { service, prisma } = setupRetry({
+        candidates: [{ id: 'item1', productItemId: 'pi1' }],
+        busy: [{ productItemId: 'pi1' }],
+      });
+      await expect(
+        service.retry('user1', 'proj1', 'batch1', 'pi1'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.workflowStageEvent.create).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('CatalogBatchService.getStatus', () => {
@@ -601,6 +709,8 @@ describe('CatalogBatchService.getStatus', () => {
           catch: jest.fn().mockResolvedValue(undefined),
         }),
       },
+      // Этап 78 — событие воронки при оппортунистической синхронизации.
+      workflowStageEvent: { create: jest.fn().mockResolvedValue({}) },
     };
     const service = new CatalogBatchService(
       prisma as never,
@@ -650,10 +760,18 @@ describe('CatalogBatchService.getStatus', () => {
       where: { id: 'item1' },
       data: { status: 'DONE' },
     });
+    expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+      data: {
+        workflow: 'CATALOG_BATCH_ITEM',
+        entityId: 'item1',
+        fromStage: 'GENERATING',
+        stage: 'DONE',
+      },
+    });
   });
 
   it('GENERATING с провалившимся рендером — статус FAILED и текст ошибки из сессии', async () => {
-    const { service } = setupStatus({
+    const { service, prisma } = setupStatus({
       run: {
         id: 'batch1',
         userId: 'user1',
@@ -679,6 +797,37 @@ describe('CatalogBatchService.getStatus', () => {
     const result = await service.getStatus('user1', 'proj1', 'batch1');
     expect(result.items[0].status).toBe('FAILED');
     expect(result.items[0].error).toBe('Veo отказал');
+    expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+      data: {
+        workflow: 'CATALOG_BATCH_ITEM',
+        entityId: 'item1',
+        fromStage: 'GENERATING',
+        stage: 'FAILED',
+      },
+    });
+  });
+
+  it('GENERATING, рендер ещё идёт — событие не пишется', async () => {
+    const { service, prisma } = setupStatus({
+      run: {
+        id: 'batch1',
+        userId: 'user1',
+        projectId: 'proj1',
+        items: [
+          {
+            id: 'item1',
+            productItemId: 'pi1',
+            sessionId: 'sess1',
+            status: 'GENERATING',
+            error: null,
+            productItem: { title: 'Товар 1', photoUrl: null },
+          },
+        ],
+      },
+      session: { generatedVideo: { status: GenerationStatus.PROCESSING } },
+    });
+    await service.getStatus('user1', 'proj1', 'batch1');
+    expect(prisma.workflowStageEvent.create).not.toHaveBeenCalled();
   });
 
   it('PENDING без sessionId — не трогает сессии вовсе', async () => {

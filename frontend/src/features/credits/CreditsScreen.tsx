@@ -152,7 +152,7 @@ export function CreditsScreen() {
                   disabled={busy !== null}
                   onClick={() => void buy(pack, 'STARS')}
                 >
-                  {dict.creditsScreen.starsButton} · {pack.stars} ⭐
+                  {dict.creditsScreen.starsButton} · {pack.stars}
                 </Button>
                 <Button
                   block

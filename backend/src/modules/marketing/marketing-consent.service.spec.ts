@@ -3,11 +3,20 @@ jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { MarketingConsentService, toStatus } from './marketing-consent.service';
 
-function build(row: unknown) {
+function build(row: Record<string, unknown> | null) {
   const prisma = {
     user: {
       findUnique: jest.fn().mockResolvedValue(row),
-      update: jest.fn().mockResolvedValue(row),
+      // Реальный `prisma.user.update()` возвращает строку ПОСЛЕ записи —
+      // мок должен слить `data` из вызова поверх исходной строки, а не
+      // молча отдавать её как была: иначе `revoke()`/`accept()` в тесте
+      // видят несуществующий "предыдущий" `marketingConsentRevokedAt` и
+      // `toStatus()` считает подписку активной уже после отписки.
+      update: jest
+        .fn()
+        .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve({ ...row, ...data }),
+        ),
     },
   };
   return { svc: new MarketingConsentService(prisma as any), prisma };

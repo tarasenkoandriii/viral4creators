@@ -332,6 +332,71 @@ if (undocumented.length > 0) {
   console.log(`ok   переменные окружения: все ${envVarsInCode().length} описаны в DEPLOYMENT.md или .env.docker.example`);
 }
 
+// ── Симметрия локалей `landing/src/dictionaries/*.json` (аудит трёх
+// последних ТЗ, doc/LANDING-HOW-IT-WORKS-VISUAL-SPEC.md §8 — «дёшево и
+// предотвращает будущий молчаливый разъезд локалей») ────────────────────
+//
+// JSON-модули типизируют строковые значения как `string`, а не литералы —
+// `tsc`/`next build` НЕ ловят перекос набора необязательных полей
+// (`badge`/`highlight`) между локалями (проверено эмпирически при
+// подготовке этой проверки: `tsc --noEmit` проходит даже когда одна
+// локаль по ошибке несёт `badge` не на том шаге). Раз тип-система не
+// страхует — страхует этот скрипт: ровно 9 элементов в `steps.items` у
+// каждой локали, одинаковый набор ключей на каждой позиции (сверка с
+// `ru.json` как эталоном) и каждое `badge`-значение — один из ключей
+// `steps.badges`.
+
+const DICT_LOCALES = ['ru', 'uk', 'en', 'de', 'es'];
+
+function loadDict(locale) {
+  return JSON.parse(read(`landing/src/dictionaries/${locale}.json`));
+}
+
+function checkStepsSymmetry() {
+  const dicts = Object.fromEntries(DICT_LOCALES.map((l) => [l, loadDict(l)]));
+  const reference = dicts.ru.steps.items;
+  const badgeKeys = new Set(Object.keys(dicts.ru.steps.badges));
+  const problems = [];
+
+  if (reference.length !== 9) {
+    problems.push(`ru.json: steps.items содержит ${reference.length}, а не 9 элементов`);
+  }
+
+  for (const locale of DICT_LOCALES) {
+    const items = dicts[locale].steps.items;
+    if (items.length !== reference.length) {
+      problems.push(`${locale}.json: steps.items содержит ${items.length}, а не ${reference.length} (как ru.json)`);
+      continue;
+    }
+    items.forEach((item, i) => {
+      const gotKeys = Object.keys(item).sort().join(',');
+      const wantKeys = Object.keys(reference[i]).sort().join(',');
+      if (gotKeys !== wantKeys) {
+        problems.push(
+          `${locale}.json: steps.items[${i}] (шаг ${i + 1}) — набор полей «${gotKeys}», ` +
+            `а в ru.json «${wantKeys}»`,
+        );
+      }
+      if (item.badge !== undefined && !badgeKeys.has(item.badge)) {
+        problems.push(
+          `${locale}.json: steps.items[${i}] (шаг ${i + 1}) — badge «${item.badge}» ` +
+            `не входит в steps.badges (${[...badgeKeys].join('/')})`,
+        );
+      }
+    });
+  }
+
+  if (problems.length > 0) {
+    failed++;
+    console.log(`FAIL симметрия steps.items по локалям (landing/src/dictionaries):`);
+    for (const p of problems) console.log(`  - ${p}`);
+  } else {
+    console.log(`ok   симметрия steps.items по локалям: 9 шагов × 5 локалей, поля и бейджи совпадают`);
+  }
+}
+
+checkStepsSymmetry();
+
 if (failed) {
   console.error(
     `\n${failed} расхождени(е/я) между документами и кодом. ` +

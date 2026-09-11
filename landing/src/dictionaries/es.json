@@ -2,15 +2,36 @@
   "meta": {
     "title": "viral4creators — anuncios UGC a partir de un solo ejemplo",
     "description": "Sube un video publicitario UGC exitoso y obtén uno nuevo, para tu producto, en el mismo estilo. Análisis del video con Gemini, generación con Google Veo 3.1, gratis y sin registro.",
-    "keywords": ["publicidad UGC", "generación de video con IA", "Google Veo 3.1", "video publicitario", "generador de anuncios en video"]
+    "keywords": [
+      "publicidad UGC",
+      "generación de video con IA",
+      "Google Veo 3.1",
+      "video publicitario",
+      "generador de anuncios en video"
+    ]
   },
   "header": {
     "nav": [
-      { "href": "#how", "label": "Cómo funciona" },
-      { "href": "#features", "label": "Funciones" },
-      { "href": "#plans", "label": "Planes" },
-      { "href": "#roadmap", "label": "Hoja de ruta" },
-      { "href": "#faq", "label": "FAQ" }
+      {
+        "href": "#how",
+        "label": "Cómo funciona"
+      },
+      {
+        "href": "#features",
+        "label": "Funciones"
+      },
+      {
+        "href": "#plans",
+        "label": "Planes"
+      },
+      {
+        "href": "#roadmap",
+        "label": "Hoja de ruta"
+      },
+      {
+        "href": "#faq",
+        "label": "FAQ"
+      }
     ],
     "open": "Abrir",
     "menuOpenAria": "Abrir menú",
@@ -36,31 +57,177 @@
   "features": {
     "title": "Funciones",
     "items": [
-      { "icon": "◐", "title": "Análisis de la referencia con IA", "text": "Gemini extrae escenas con marcas de tiempo, elenco, extras, estilo y ritmo, y evalúa por separado a quién está dirigido el video y qué está promocionando." },
-      { "icon": "◎", "title": "Verificación de relevancia", "text": "La audiencia del video se compara con los compradores de tu producto: una puntuación de 0 a 100, la explicación del razonamiento, una lista de discrepancias y cambios concretos para el prompt." },
-      { "icon": "▤", "title": "Biblioteca de análisis", "text": "Cada análisis se guarda y se ofrece a otros como un guion ya listo, ajustado a la categoría y la audiencia del producto. El mismo video nunca se analiza dos veces: es rápido y gratuito." },
-      { "icon": "▣", "title": "Proyectos, productos, marca", "text": "Un catálogo de productos con fotos, categoría y precios comparables, más un manifiesto de marca: estilo, voz de locución, personajes y ubicaciones recurrentes — se define una vez y se usa en todos los videos." },
-      { "icon": "☺", "title": "Personajes y escenas bajo control", "text": "Decide quién se queda, quién se elimina y quién se reemplaza por tu propia foto — y qué tres imágenes verá realmente el modelo. Todo lo demás se le describe con palabras." },
-      { "icon": "✎", "title": "Un prompt que puedes ver", "text": "El prompt de texto se genera automáticamente a partir del análisis, el producto y la marca, pasa por moderación y permanece totalmente editable." },
-      { "icon": "▶", "title": "Google Veo 3.1, dos calidades de renderizado", "text": "Rápida (Veo 3.1 Lite) — notablemente más veloz; cinematográfica (Veo 3.1 completo) — más cuidada y lenta. La elección se hace en cada generación y no depende del plan del servicio." },
-      { "icon": "⌕", "title": "Verificación de artefactos", "text": "Tras la generación, Gemini revisa el resultado y propone un prompt corregido: manos de más, texto distorsionado, un producto que desapareció. También puedes describir el problema con tus propias palabras." },
-      { "icon": "⧉", "title": "Navegador y Telegram — un solo producto", "text": "Funciona a la vez como sitio web normal y como Telegram Mini App, sin ninguna diferencia funcional — empieza en el navegador y continúa en Telegram." }
+      {
+        "icon": "◐",
+        "title": "Análisis de la referencia con IA",
+        "text": "Gemini extrae escenas con marcas de tiempo, elenco, extras, estilo y ritmo, y evalúa por separado a quién está dirigido el video y qué está promocionando."
+      },
+      {
+        "icon": "◎",
+        "title": "Verificación de relevancia",
+        "text": "La audiencia del video se compara con los compradores de tu producto: una puntuación de 0 a 100, la explicación del razonamiento, una lista de discrepancias y cambios concretos para el prompt."
+      },
+      {
+        "icon": "▤",
+        "title": "Biblioteca de análisis",
+        "text": "Cada análisis se guarda y se ofrece a otros como un guion ya listo, ajustado a la categoría y la audiencia del producto. El mismo video nunca se analiza dos veces: es rápido y gratuito."
+      },
+      {
+        "icon": "▣",
+        "title": "Proyectos, productos, marca",
+        "text": "Un catálogo de productos con fotos, categoría y precios comparables, más un manifiesto de marca: estilo, voz de locución, personajes y ubicaciones recurrentes — se define una vez y se usa en todos los videos."
+      },
+      {
+        "icon": "☺",
+        "title": "Personajes y escenas bajo control",
+        "text": "Decide quién se queda, quién se elimina y quién se reemplaza por tu propia foto — y qué tres imágenes verá realmente el modelo. Todo lo demás se le describe con palabras."
+      },
+      {
+        "icon": "✎",
+        "title": "Un prompt que puedes ver",
+        "text": "El prompt de texto se genera automáticamente a partir del análisis, el producto y la marca, pasa por moderación y permanece totalmente editable."
+      },
+      {
+        "icon": "▶",
+        "title": "Google Veo 3.1, dos calidades de renderizado",
+        "text": "Rápida (Veo 3.1 Lite) — notablemente más veloz; cinematográfica (Veo 3.1 completo) — más cuidada y lenta. La elección se hace en cada generación y no depende del plan del servicio."
+      },
+      {
+        "icon": "⌕",
+        "title": "Verificación de artefactos",
+        "text": "Tras la generación, Gemini revisa el resultado y propone un prompt corregido: manos de más, texto distorsionado, un producto que desapareció. También puedes describir el problema con tus propias palabras."
+      },
+      {
+        "icon": "⧉",
+        "title": "Navegador y Telegram — un solo producto",
+        "text": "Funciona a la vez como sitio web normal y como Telegram Mini App, sin ninguna diferencia funcional — empieza en el navegador y continúa en Telegram."
+      }
     ]
   },
   "steps": {
     "title": "Cómo funciona",
     "lead": "Nueve pasos desde subir la referencia hasta obtener el archivo final.",
     "items": [
-      { "title": "Agrega un producto", "text": "Un proyecto y un producto: una foto (a partir de ella se determinan la categoría, la audiencia objetivo y los precios comparables), una descripción en texto o voz, y un precio. El camino rápido sin proyecto también funciona — entonces el producto se describe directamente en el asistente." },
-      { "title": "Elige una referencia", "text": "Cuatro formas: búsqueda en YouTube, un enlace, tu propio archivo de hasta 100 MB y — en el plan Premium — un análisis ya listo de la biblioteca del servicio, al instante y sin una nueva llamada a la IA." },
-      { "title": "La IA analiza el video", "text": "Gemini extrae escenas con marcas de tiempo, elenco y extras, estilo visual, ritmo y formato de encuadre — y evalúa a quién está dirigido este video y qué está promocionando." },
-      { "title": "Verifica la relevancia", "text": "Una verificación aparte compara la audiencia del video con los compradores de tu producto: una puntuación, la explicación del razonamiento y cambios concretos — si realmente vale la pena clonar esa referencia." },
-      { "title": "Arma la composición del video", "text": "Elimina personajes, escenas y extras innecesarios — al hacer clic en cualquiera de ellos se resaltan las líneas correspondientes del análisis. Un personaje puede reemplazarse por tu propia foto, una descripción o un personaje de marca." },
-      { "title": "Obtén el prompt", "text": "GPT-5 arma un prompt de texto a video a partir del análisis, el producto, el manifiesto de marca, el idioma de la locución y las sugerencias de relevancia. El prompt se puede editar a mano." },
-      { "title": "Elige el formato y las imágenes para Veo", "text": "Relación de aspecto — 16:9 y 9:16 en cualquier plan, además de 3:4, 1:1 o una personalizada desde Standard en adelante — y qué tres imágenes recibirá el modelo como referencia: personajes, tus escenas, escenas de marca, foto del producto. Todo lo demás se incluye como texto en el prompt." },
-      { "title": "Genera el video", "text": "Google Veo 3.1 renderiza el nuevo video publicitario — a elección, calidad rápida o más cinematográfica." },
-      { "title": "Revisa y descárgalo", "text": "Una verificación aparte de artefactos propondrá un prompt corregido para una nueva generación. El video terminado se entrega como un enlace directo al archivo; también puedes ponerlo en la cola de moderación para publicarlo." }
-    ]
+      {
+        "title": "Agrega un producto",
+        "shortLabel": "Producto",
+        "text": "Un proyecto y un producto: una foto (a partir de ella se determinan la categoría, la audiencia objetivo y los precios comparables), una descripción en texto o voz, y un precio. El camino rápido sin proyecto también funciona — entonces el producto se describe directamente en el asistente.",
+        "icon": "▧",
+        "details": []
+      },
+      {
+        "title": "Elige una referencia",
+        "shortLabel": "Referencia",
+        "text": "Cuatro formas: búsqueda en YouTube, un enlace, tu propio archivo de hasta 100 MB y — en el plan Premium — un análisis ya listo de la biblioteca del servicio, al instante y sin una nueva llamada a la IA.",
+        "icon": "▶",
+        "badge": "premium",
+        "highlight": "Búsqueda en YouTube, un enlace, tu propio archivo — o un análisis ya listo de la biblioteca (Premium)",
+        "details": [
+          "Biblioteca de análisis ya listos — sin una nueva llamada a la IA (Premium)",
+          "Búsqueda en YouTube — requiere inicio de sesión",
+          "Un enlace de YouTube o tu propio archivo de hasta 100 MB"
+        ]
+      },
+      {
+        "title": "La IA analiza el video",
+        "shortLabel": "Análisis IA",
+        "text": "Gemini extrae escenas con marcas de tiempo, elenco y extras, estilo visual, ritmo y formato de encuadre — y evalúa a quién está dirigido este video y qué está promocionando.",
+        "icon": "◐",
+        "highlight": "No hay que ingresar nada — la IA analiza el video por escenas por sí sola",
+        "details": [
+          "No hay que ingresar nada — la IA muestra el análisis por escenas por sí sola"
+        ]
+      },
+      {
+        "title": "Verifica la relevancia",
+        "shortLabel": "Relevancia",
+        "text": "Una verificación aparte compara la audiencia del video con los compradores de tu producto: una puntuación, la explicación del razonamiento y cambios concretos — si realmente vale la pena clonar esa referencia.",
+        "icon": "◎",
+        "badge": "standard",
+        "highlight": "Casilla «tener en cuenta en la generación» — decides si la sugerencia influye en el resultado",
+        "details": [
+          "Casilla «Tener en cuenta en la generación» — añade la sugerencia al prompt",
+          "Botón «Verificar de nuevo» — un nuevo análisis de relevancia",
+          "Botón «Elegir otra referencia» — volver al paso 2"
+        ]
+      },
+      {
+        "title": "Arma la composición del video",
+        "shortLabel": "Composición",
+        "text": "Elimina personajes, escenas y extras innecesarios — al hacer clic en cualquiera de ellos se resaltan las líneas correspondientes del análisis. Un personaje puede reemplazarse por tu propia foto, una descripción o un personaje de marca.",
+        "icon": "☺",
+        "badge": "standard",
+        "highlight": "Clic en un personaje o escena — lo activa o desactiva en el video",
+        "details": [
+          "Clic en un personaje — lo activa o desactiva en el video",
+          "Reemplazar un personaje: tal cual, con tu propia foto (Standard+), con texto o con un personaje de marca",
+          "Clic en una escena o extras — la activa o desactiva en el cuadro",
+          "Voz, subtítulos y movimiento de cámara — desde el manifiesto de marca (para productos con proyecto)"
+        ]
+      },
+      {
+        "title": "Obtén el prompt",
+        "shortLabel": "Prompt",
+        "text": "GPT-5 arma un prompt de texto a video a partir del análisis, el producto, el manifiesto de marca, el idioma de la locución y las sugerencias de relevancia. El prompt se puede editar a mano.",
+        "icon": "✎",
+        "highlight": "El prompt final se puede editar a mano antes de generar",
+        "details": [
+          "Botón «Generar prompt» — texto listo a partir del análisis y el producto",
+          "El prompt se puede ajustar a mano antes de guardar",
+          "Un campo de texto aparte para la locución — si se elige una voz propia"
+        ]
+      },
+      {
+        "title": "Elige el formato y las imágenes para Veo",
+        "shortLabel": "Formato e imágenes",
+        "text": "Relación de aspecto — 16:9 y 9:16 en cualquier plan, además de 3:4, 1:1 o una personalizada desde Standard en adelante — y qué tres imágenes recibirá el modelo como referencia: personajes, tus escenas, escenas de marca, foto del producto. Todo lo demás se incluye como texto en el prompt.",
+        "icon": "⧉",
+        "badge": "standard",
+        "highlight": "Relación de aspecto y hasta tres imágenes de referencia para Veo — bajo tu control",
+        "details": [
+          "Calidad de renderizado: «Rápida» o «Cinematográfica» (Standard+)",
+          "Hasta tres imágenes de referencia para Veo — tus propias escenas y fotos (Standard+)",
+          "Relación de aspecto: 16:9 y 9:16 en cualquier plan, el resto desde Standard"
+        ]
+      },
+      {
+        "title": "Genera el video",
+        "shortLabel": "Renderizado",
+        "text": "Google Veo 3.1 renderiza el nuevo video publicitario — a elección, calidad rápida o más cinematográfica.",
+        "icon": "▣",
+        "highlight": "Una foto del producto obligatoria — el resto lo hace Veo",
+        "details": [
+          "La foto del producto es obligatoria — sin ella el botón de generar no aparece",
+          "Botón «Generar video publicitario»",
+          "Si falla — «Generar de nuevo»"
+        ]
+      },
+      {
+        "title": "Revisa y descárgalo",
+        "shortLabel": "Resultado",
+        "text": "Una verificación aparte de artefactos propondrá un prompt corregido para una nueva generación. El video terminado se entrega como un enlace directo al archivo; también puedes ponerlo en la cola de moderación para publicarlo.",
+        "icon": "⌕",
+        "badge": "standard",
+        "highlight": "Verificación de artefactos, publicación, exportación a varias plataformas a la vez — con un clic",
+        "details": [
+          "Verificación de artefactos y de audio (Standard+)",
+          "Publicación y página para compartir (Standard+, requiere inicio de sesión)",
+          "Exportación a varias plataformas a la vez — sin pagar el renderizado otra vez (Standard+)",
+          "Un lote para toda la línea de productos y 3 variantes A/B (Premium, solo productos con proyecto)"
+        ]
+      }
+    ],
+    "badges": {
+      "standard": "Standard+",
+      "premium": "Premium",
+      "login": "requiere inicio de sesión"
+    },
+    "moreLink": "Ver todos los pasos en detalle →",
+    "page": {
+      "metaTitle": "Cómo funciona — de la referencia al video terminado | viral4creators",
+      "metaDescription": "Nueve pasos del proceso de generación: qué ingresas en cada paso y qué obtienes, con los límites de cada plan."
+    },
+    "detailsToggle": "Qué puedes hacer con el video terminado"
   },
   "plans": {
     "title": "Planes",
@@ -100,7 +267,9 @@
           "Cualquier formato de encuadre, incluido uno personalizado",
           "Publicación a través del servicio"
         ],
-        "excluded": ["Biblioteca de análisis ya listos"],
+        "excluded": [
+          "Biblioteca de análisis ya listos"
+        ],
         "note": null
       },
       {
@@ -122,42 +291,163 @@
     "title": "Más sobre el proyecto",
     "lead": "Cómo funciona realmente lo que se esconde detrás de los botones — sin promesas de marketing.",
     "items": [
-      { "title": "Qué es exactamente un «análisis» y por qué es tan detallado", "text": "La referencia se envía a Gemini por completo — como enlace de YouTube o como archivo. Lo que vuelve es una estructura: escenas con marcas de tiempo y títulos, personajes con descripción de apariencia y rol, extras separados de los protagonistas, estilo visual, ritmo, formato de encuadre, además de una evaluación de la audiencia del video y de lo que promociona. El análisis no es un resumen, sino el material a partir del cual luego se arma el prompt: cada parte puede quitarse, ajustarse o reemplazarse." },
-      { "title": "Por qué la relevancia se calcula por separado", "text": "Un video exitoso no es universal: fue exitoso para su propia audiencia. Una verificación aparte compara a quién está dirigida la referencia con quién compra tu producto — por edad, género, intereses, categoría y nivel de precio — y responde con una puntuación de 0 a 100, la explicación del razonamiento, una lista de discrepancias y cambios concretos en el prompt. A veces la respuesta honesta es: elige otra referencia." },
-      { "title": "El manifiesto de marca: una sola vez para todos los videos", "text": "El estilo, el tono, la voz de locución, los personajes y ubicaciones recurrentes se describen una sola vez y se aplican a cada video de la marca. En cada sesión se usa una copia del manifiesto tal como estaba al iniciarla: los ajustes dentro de un video no cambian la marca en sí, y un cambio en la marca no reescribe retroactivamente lo ya hecho." },
-      { "title": "Qué ve el modelo como imagen y qué como palabras", "text": "Veo acepta como máximo tres imágenes de referencia. El servicio muestra exactamente cuáles tres se enviarán — personajes, tus escenas, escenas de marca, foto del producto — y permite armar ese conjunto a mano. Todo lo que no entra en esos espacios se describe como texto en el prompt en lugar de perderse." },
-      { "title": "La biblioteca de análisis y la privacidad", "text": "El análisis de cada video público se guarda y se ofrece a otros como guion ya listo, lo que hace innecesario un nuevo análisis. Los análisis de videos subidos como archivo son privados: solo los ve el autor y no aparecen en los resultados compartidos. Según los términos de uso, los análisis en sí son propiedad intelectual del servicio; tu producto, tus materiales y el video terminado siguen siendo tuyos." },
-      { "title": "Archivos y plazos de conservación", "text": "Las referencias, fotos de productos, capturas de fotogramas y videos terminados se guardan en Vercel Blob. Cada archivo tiene un propietario en la base de datos, y eliminar al propietario elimina el archivo: una sesión vencida se lleva sus archivos, un producto eliminado se lleva su foto, un manifiesto eliminado se lleva las fotos de personajes y escenas. La limpieza diaria se complementa con un barrido aparte para archivos huérfanos." },
-      { "title": "Navegador y Telegram — una sola aplicación", "text": "El mismo producto se abre como un sitio web normal y como Telegram Mini App, sin diferencias en las funciones. Una sesión anónima funciona sin iniciar sesión; iniciar sesión con Telegram es necesario para proyectos, el catálogo de productos, el manifiesto de marca y cualquier plan por encima de Lite — están vinculados a un usuario." },
-      { "title": "Código abierto", "text": "El código fuente está disponible en GitHub; el desarrollo siguió la metodología GitHub Spec Kit: las especificaciones y el plan de implementación están en el repositorio junto al código y se actualizan junto con él." }
+      {
+        "title": "Qué es exactamente un «análisis» y por qué es tan detallado",
+        "text": "La referencia se envía a Gemini por completo — como enlace de YouTube o como archivo. Lo que vuelve es una estructura: escenas con marcas de tiempo y títulos, personajes con descripción de apariencia y rol, extras separados de los protagonistas, estilo visual, ritmo, formato de encuadre, además de una evaluación de la audiencia del video y de lo que promociona. El análisis no es un resumen, sino el material a partir del cual luego se arma el prompt: cada parte puede quitarse, ajustarse o reemplazarse."
+      },
+      {
+        "title": "Por qué la relevancia se calcula por separado",
+        "text": "Un video exitoso no es universal: fue exitoso para su propia audiencia. Una verificación aparte compara a quién está dirigida la referencia con quién compra tu producto — por edad, género, intereses, categoría y nivel de precio — y responde con una puntuación de 0 a 100, la explicación del razonamiento, una lista de discrepancias y cambios concretos en el prompt. A veces la respuesta honesta es: elige otra referencia."
+      },
+      {
+        "title": "El manifiesto de marca: una sola vez para todos los videos",
+        "text": "El estilo, el tono, la voz de locución, los personajes y ubicaciones recurrentes se describen una sola vez y se aplican a cada video de la marca. En cada sesión se usa una copia del manifiesto tal como estaba al iniciarla: los ajustes dentro de un video no cambian la marca en sí, y un cambio en la marca no reescribe retroactivamente lo ya hecho."
+      },
+      {
+        "title": "Qué ve el modelo como imagen y qué como palabras",
+        "text": "Veo acepta como máximo tres imágenes de referencia. El servicio muestra exactamente cuáles tres se enviarán — personajes, tus escenas, escenas de marca, foto del producto — y permite armar ese conjunto a mano. Todo lo que no entra en esos espacios se describe como texto en el prompt en lugar de perderse."
+      },
+      {
+        "title": "La biblioteca de análisis y la privacidad",
+        "text": "El análisis de cada video público se guarda y se ofrece a otros como guion ya listo, lo que hace innecesario un nuevo análisis. Los análisis de videos subidos como archivo son privados: solo los ve el autor y no aparecen en los resultados compartidos. Según los términos de uso, los análisis en sí son propiedad intelectual del servicio; tu producto, tus materiales y el video terminado siguen siendo tuyos."
+      },
+      {
+        "title": "Archivos y plazos de conservación",
+        "text": "Las referencias, fotos de productos, capturas de fotogramas y videos terminados se guardan en Vercel Blob. Cada archivo tiene un propietario en la base de datos, y eliminar al propietario elimina el archivo: una sesión vencida se lleva sus archivos, un producto eliminado se lleva su foto, un manifiesto eliminado se lleva las fotos de personajes y escenas. La limpieza diaria se complementa con un barrido aparte para archivos huérfanos."
+      },
+      {
+        "title": "Navegador y Telegram — una sola aplicación",
+        "text": "El mismo producto se abre como un sitio web normal y como Telegram Mini App, sin diferencias en las funciones. Una sesión anónima funciona sin iniciar sesión; iniciar sesión con Telegram es necesario para proyectos, el catálogo de productos, el manifiesto de marca y cualquier plan por encima de Lite — están vinculados a un usuario."
+      },
+      {
+        "title": "Código abierto",
+        "text": "El código fuente está disponible en GitHub; el desarrollo siguió la metodología GitHub Spec Kit: las especificaciones y el plan de implementación están en el repositorio junto al código y se actualizan junto con él."
+      }
     ]
   },
   "roadmap": {
     "title": "Hoja de ruta",
     "lead": "Lo que ya funciona está más arriba en esta página. Aquí se muestra hacia dónde va el producto a continuación. Horizontes, no fechas: los plazos en un producto que depende de modelos de terceros solo duran hasta el próximo lanzamiento de esos modelos.",
     "items": [
-      { "title": "Funciona de forma confiable", "outcome": "La lista de verificación de aceptación se completa por entero, sin «esto todavía no funciona».", "items": ["Deuda técnica tras una auditoría integral de código, base de datos, maquetación y documentos", "Un toque cinematográfico: un suave acercamiento de cámara", "Pruebas para las pasarelas de pago, la limpieza de archivos y las verificaciones de acceso"] },
-      { "title": "Un video sale al mundo y se difunde solo", "outcome": "Desde «subí una referencia» hasta «publicado y compartido» — sin salir del producto.", "items": ["Publicación en YouTube y TikTok directamente desde la cola de moderación", "Una página propia para cada video terminado: verlo y crear uno similar", "Republicar el video en tu propio grupo o canal de Telegram", "Subtítulos incrustados con el estilo de la marca y sincronización automática"] },
-      { "title": "Audiencia e ingresos", "outcome": "El servicio incorpora planes de precio, un feed propio y una clave para programas de terceros.", "items": ["Planes y pagos: suscripción, paquetes de generaciones, Telegram Stars", "Una selección semanal opcional de los mejores videos, enviada por Telegram", "Un feed con «me gusta» y republicaciones; los suscriptores de pago pueden publicar en él", "Una API externa con clave para el plan Premium"] },
-      { "title": "Escaparate y búsqueda entrante", "outcome": "Alguien que busca anuncios en su nicho llega por su cuenta y termina en el asistente.", "items": ["Un blog: videos recientes de una categoría con análisis de las técnicas usadas", "Un feed RSS de nuevos videos publicitarios bien valorados por la IA", "Un mapa del sitio de noticias y marcado estructurado de las publicaciones", "Una biblioteca de tendencias por categoría, integrada en el producto", "Una interfaz multilingüe para la app y la landing (ru/uk/en/de/es)"] },
-      { "title": "De un video a un flujo continuo", "outcome": "Un catálogo de cien productos cubre el plan de contenido de un mes en una sola tarde.", "items": ["Generación por lotes: una referencia aplicada a todos los productos de un proyecto", "Variantes A/B del gancho inicial y la llamada a la acción", "Importación del catálogo desde una tienda en lugar de carga manual", "Plantillas de escena para empezar sin ninguna referencia", "Localización de un mismo video en varios idiomas", "Un planificador de publicaciones con verificación de las reglas de cada plataforma"] },
-      { "title": "Indistinguible de una grabación real", "outcome": "El espectador no reconoce el video como generado, y una serie se percibe como una sola marca coherente.", "items": ["Tu producto real en pantalla, no algo que solo se le parece", "Un embajador de marca recurrente con un clon de su voz", "Sincronización labial con tu propia pista de audio", "Videos de más de ocho segundos"] },
-      { "title": "Resultados e infraestructura", "outcome": "El servicio puede responder «qué video grabar a continuación» — y se integra con productos de terceros.", "items": ["Estadísticas de las plataformas de vuelta al producto", "Selección de referencias según lo que realmente funcionó para ti", "Una puntuación de viralidad antes de generar", "Economía del video: costo, visualizaciones, retorno", "Un modo agencia, marca blanca e informes para clientes", "Trabajo en equipo y webhooks para sistemas externos"] }
+      {
+        "title": "Funciona de forma confiable",
+        "outcome": "La lista de verificación de aceptación se completa por entero, sin «esto todavía no funciona».",
+        "items": [
+          "Deuda técnica tras una auditoría integral de código, base de datos, maquetación y documentos",
+          "Un toque cinematográfico: un suave acercamiento de cámara",
+          "Pruebas para las pasarelas de pago, la limpieza de archivos y las verificaciones de acceso"
+        ]
+      },
+      {
+        "title": "Un video sale al mundo y se difunde solo",
+        "outcome": "Desde «subí una referencia» hasta «publicado y compartido» — sin salir del producto.",
+        "items": [
+          "Publicación en YouTube y TikTok directamente desde la cola de moderación",
+          "Una página propia para cada video terminado: verlo y crear uno similar",
+          "Republicar el video en tu propio grupo o canal de Telegram",
+          "Subtítulos incrustados con el estilo de la marca y sincronización automática"
+        ]
+      },
+      {
+        "title": "Audiencia e ingresos",
+        "outcome": "El servicio incorpora planes de precio, un feed propio y una clave para programas de terceros.",
+        "items": [
+          "Planes y pagos: suscripción, paquetes de generaciones, Telegram Stars",
+          "Una selección semanal opcional de los mejores videos, enviada por Telegram",
+          "Un feed con «me gusta» y republicaciones; los suscriptores de pago pueden publicar en él",
+          "Una API externa con clave para el plan Premium"
+        ]
+      },
+      {
+        "title": "Escaparate y búsqueda entrante",
+        "outcome": "Alguien que busca anuncios en su nicho llega por su cuenta y termina en el asistente.",
+        "items": [
+          "Un blog: videos recientes de una categoría con análisis de las técnicas usadas",
+          "Un feed RSS de nuevos videos publicitarios bien valorados por la IA",
+          "Un mapa del sitio de noticias y marcado estructurado de las publicaciones",
+          "Una biblioteca de tendencias por categoría, integrada en el producto",
+          "Una interfaz multilingüe para la app y la landing (ru/uk/en/de/es)"
+        ]
+      },
+      {
+        "title": "De un video a un flujo continuo",
+        "outcome": "Un catálogo de cien productos cubre el plan de contenido de un mes en una sola tarde.",
+        "items": [
+          "Generación por lotes: una referencia aplicada a todos los productos de un proyecto",
+          "Variantes A/B del gancho inicial y la llamada a la acción",
+          "Importación del catálogo desde una tienda en lugar de carga manual",
+          "Plantillas de escena para empezar sin ninguna referencia",
+          "Localización de un mismo video en varios idiomas",
+          "Un planificador de publicaciones con verificación de las reglas de cada plataforma"
+        ]
+      },
+      {
+        "title": "Indistinguible de una grabación real",
+        "outcome": "El espectador no reconoce el video como generado, y una serie se percibe como una sola marca coherente.",
+        "items": [
+          "Tu producto real en pantalla, no algo que solo se le parece",
+          "Un embajador de marca recurrente con un clon de su voz",
+          "Sincronización labial con tu propia pista de audio",
+          "Videos de más de ocho segundos"
+        ]
+      },
+      {
+        "title": "Resultados e infraestructura",
+        "outcome": "El servicio puede responder «qué video grabar a continuación» — y se integra con productos de terceros.",
+        "items": [
+          "Estadísticas de las plataformas de vuelta al producto",
+          "Selección de referencias según lo que realmente funcionó para ti",
+          "Una puntuación de viralidad antes de generar",
+          "Economía del video: costo, visualizaciones, retorno",
+          "Un modo agencia, marca blanca e informes para clientes",
+          "Trabajo en equipo y webhooks para sistemas externos"
+        ]
+      }
     ]
   },
   "faq": {
     "title": "Preguntas frecuentes",
     "items": [
-      { "question": "¿Hace falta registrarse?", "answer": "No. La sesión es anónima y se crea automáticamente en la primera visita — solo hay que aceptar una vez la oferta pública y los términos de uso antes del primer análisis. Iniciar sesión con Telegram está disponible pero es opcional: se necesita para proyectos, el catálogo de productos, el manifiesto de marca y para volver más tarde a tus sesiones." },
-      { "question": "¿Qué formatos de video se admiten?", "answer": "MP4, MOV y AVI de hasta 100 MB, o simplemente un enlace a un video público de YouTube — en ese caso no hace falta descargar ni subir ningún archivo." },
-      { "question": "¿Cuánto tarda la generación del video?", "answer": "Una vez aprobado el prompt, el video suele estar listo en 3 a 5 minutos — el tiempo depende del modo elegido (Fast o Standard) y de la carga actual de Veo 3.1." },
-      { "question": "¿Cuánto cuesta?", "answer": "Por ahora, nada: los tres planes — Lite, Standard y Premium — son gratuitos y se cambian directamente desde la aplicación. Es un período de prueba; cuando se introduzcan los pagos, lo que ya hayas hecho seguirá siendo tuyo. Más adelante, Lite pasará a ser condicionalmente gratuito — a cambio de dar «me gusta» al canal de YouTube del proyecto y enviar algunos enlaces al servicio." },
-      { "question": "¿En qué se diferencian los planes entre sí?", "answer": "Lite es el camino mínimo: análisis de la referencia y generación del video en 16:9 o 9:16. Standard añade verificación de relevancia, auditoría del video, manifiesto de marca, escenas propias, reemplazo de personajes por foto, cualquier formato de encuadre y publicación. Premium es Standard más la biblioteca de análisis ya listos. El plan se puede cambiar en cualquier momento sin afectar los proyectos, videos o análisis ya creados." },
-      { "question": "¿Dónde se guardan mis archivos y cuándo se eliminan?", "answer": "En Vercel Blob — la referencia, la foto del producto y el video terminado se guardan en el mismo almacenamiento. Cada archivo tiene un propietario en la base de datos: una sesión vencida se lleva sus archivos, un producto eliminado se lleva su foto, un manifiesto eliminado se lleva las fotos de personajes y escenas. La limpieza se ejecuta a diario, y un proceso aparte recoge los archivos huérfanos." },
-      { "question": "¿A quién pertenecen los análisis y los videos terminados?", "answer": "El análisis de la referencia lo crea el servicio, y según los términos de uso los análisis le pertenecen — precisamente por eso la biblioteca puede ofrecerlos a otros usuarios. Tu producto, tus materiales subidos y el video generado siguen siendo tuyos. Los análisis de videos subidos como archivo son privados: solo los ve el autor." },
-      { "question": "¿Se puede usar desde Telegram?", "answer": "Sí — el mismo producto funciona tanto como un sitio web normal en el navegador como una Telegram Mini App dentro de Telegram, con el mismo conjunto de funciones." },
-      { "question": "¿Se puede editar manualmente el análisis del video o el prompt?", "answer": "Sí, en ambos pasos: después del análisis automático de la referencia y después de la generación automática del prompt, ambos resultados se pueden ajustar antes de continuar." },
-      { "question": "¿Es un proyecto de código abierto?", "answer": "Sí — el código fuente está disponible en GitHub, y el desarrollo siguió la metodología GitHub Spec Kit." }
+      {
+        "question": "¿Hace falta registrarse?",
+        "answer": "No. La sesión es anónima y se crea automáticamente en la primera visita — solo hay que aceptar una vez la oferta pública y los términos de uso antes del primer análisis. Iniciar sesión con Telegram está disponible pero es opcional: se necesita para proyectos, el catálogo de productos, el manifiesto de marca y para volver más tarde a tus sesiones."
+      },
+      {
+        "question": "¿Qué formatos de video se admiten?",
+        "answer": "MP4, MOV y AVI de hasta 100 MB, o simplemente un enlace a un video público de YouTube — en ese caso no hace falta descargar ni subir ningún archivo."
+      },
+      {
+        "question": "¿Cuánto tarda la generación del video?",
+        "answer": "Una vez aprobado el prompt, el video suele estar listo en 3 a 5 minutos — el tiempo depende del modo elegido (Fast o Standard) y de la carga actual de Veo 3.1."
+      },
+      {
+        "question": "¿Cuánto cuesta?",
+        "answer": "Por ahora, nada: los tres planes — Lite, Standard y Premium — son gratuitos y se cambian directamente desde la aplicación. Es un período de prueba; cuando se introduzcan los pagos, lo que ya hayas hecho seguirá siendo tuyo. Más adelante, Lite pasará a ser condicionalmente gratuito — a cambio de dar «me gusta» al canal de YouTube del proyecto y enviar algunos enlaces al servicio."
+      },
+      {
+        "question": "¿En qué se diferencian los planes entre sí?",
+        "answer": "Lite es el camino mínimo: análisis de la referencia y generación del video en 16:9 o 9:16. Standard añade verificación de relevancia, auditoría del video, manifiesto de marca, escenas propias, reemplazo de personajes por foto, cualquier formato de encuadre y publicación. Premium es Standard más la biblioteca de análisis ya listos. El plan se puede cambiar en cualquier momento sin afectar los proyectos, videos o análisis ya creados."
+      },
+      {
+        "question": "¿Dónde se guardan mis archivos y cuándo se eliminan?",
+        "answer": "En Vercel Blob — la referencia, la foto del producto y el video terminado se guardan en el mismo almacenamiento. Cada archivo tiene un propietario en la base de datos: una sesión vencida se lleva sus archivos, un producto eliminado se lleva su foto, un manifiesto eliminado se lleva las fotos de personajes y escenas. La limpieza se ejecuta a diario, y un proceso aparte recoge los archivos huérfanos."
+      },
+      {
+        "question": "¿A quién pertenecen los análisis y los videos terminados?",
+        "answer": "El análisis de la referencia lo crea el servicio, y según los términos de uso los análisis le pertenecen — precisamente por eso la biblioteca puede ofrecerlos a otros usuarios. Tu producto, tus materiales subidos y el video generado siguen siendo tuyos. Los análisis de videos subidos como archivo son privados: solo los ve el autor."
+      },
+      {
+        "question": "¿Se puede usar desde Telegram?",
+        "answer": "Sí — el mismo producto funciona tanto como un sitio web normal en el navegador como una Telegram Mini App dentro de Telegram, con el mismo conjunto de funciones."
+      },
+      {
+        "question": "¿Se puede editar manualmente el análisis del video o el prompt?",
+        "answer": "Sí, en ambos pasos: después del análisis automático de la referencia y después de la generación automática del prompt, ambos resultados se pueden ajustar antes de continuar."
+      },
+      {
+        "question": "¿Es un proyecto de código abierto?",
+        "answer": "Sí — el código fuente está disponible en GitHub, y el desarrollo siguió la metodología GitHub Spec Kit."
+      }
     ]
   },
   "finalCta": {

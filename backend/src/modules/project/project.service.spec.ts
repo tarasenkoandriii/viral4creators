@@ -249,18 +249,23 @@ describe('ProjectService', () => {
     const items = (n: number) =>
       Array.from({ length: n }, (_, i) => ({ id: `i${i}` }));
 
-    it('allows the 20th item and rejects the 21st in a LINE project (default limit)', async () => {
+    it('allows the 500th item and rejects the 501st in a LINE project (default limit)', async () => {
+      // Дефолт поднят с 20 до 500 продуктовым решением на этапе импорта
+      // фида (doc/PRODUCT-PROJECT-SPEC.md §47.6, `PROJECT_LINE_ITEM_LIMIT=500`
+      // в `backend/.env.example`) — этот тест проверял старое число 20,
+      // разошедшееся с кодом ещё тогда; расхождение не ловилось до
+      // первого честного прогона jest в песочнице (этап 78).
       prisma.project.findFirst.mockResolvedValue(
-        projectRow({ items: items(19) }),
+        projectRow({ items: items(499) }),
       );
       prisma.productItem.create.mockResolvedValue(itemRow());
       await expect(service.addItem(USER, 'p1', {})).resolves.toBeDefined();
 
       prisma.project.findFirst.mockResolvedValue(
-        projectRow({ items: items(20) }),
+        projectRow({ items: items(500) }),
       );
       await expect(service.addItem(USER, 'p1', {})).rejects.toThrow(
-        /at most 20 items/,
+        /at most 500 items/,
       );
       expect(prisma.productItem.create).toHaveBeenCalledTimes(1);
     });

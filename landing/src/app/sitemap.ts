@@ -20,7 +20,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   for (const locale of locales) {
     entries.push(
       { url: `${SITE_URL}/${locale}`, lastModified: now },
-      { url: `${SITE_URL}/${locale}/blog`, lastModified: now }
+      { url: `${SITE_URL}/${locale}/blog`, lastModified: now },
+      // Этап 79 (doc/LANDING-HOW-IT-WORKS-VISUAL-SPEC.md §3.4) —
+      // выделенная страница «Как это работает», того же уровня, что
+      // /blog.
+      { url: `${SITE_URL}/${locale}/how-it-works`, lastModified: now }
     );
   }
 

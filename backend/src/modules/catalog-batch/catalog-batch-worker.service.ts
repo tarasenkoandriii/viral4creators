@@ -52,6 +52,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { WorkflowKind } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadConfiguration } from '../../config/configuration';
 import {
@@ -64,6 +65,7 @@ import { LibraryService } from '../library/library.service';
 import { PromptService } from '../prompt/prompt.service';
 import { GenerationService } from '../generation/generation.service';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
+import { logWorkflowStage } from '../../common/workflow-stage-events';
 import {
   DailySpendLimitExceededException,
   startOfDayUtc,
@@ -83,6 +85,11 @@ interface ClaimableRow {
   productItemId: string;
   sessionId: string | null;
   attempts: number;
+  /** Статус строки НА МОМЕНТ выборки этим тиком — нужен как fromStage
+   * для события воронки (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md §3.2):
+   * `findMany` ниже выбирает и PENDING, и просроченный FAILED одним
+   * запросом, поэтому конкретное значение узнаём только через select. */
+  status: string;
 }
 
 interface BatchRow {
@@ -196,6 +203,7 @@ export class CatalogBatchWorkerService {
         productItemId: true,
         sessionId: true,
         attempts: true,
+        status: true,
       },
       orderBy: { createdAt: 'asc' },
       take: this.cfg().cronBatch,
@@ -294,6 +302,13 @@ export class CatalogBatchWorkerService {
             where: { id: row.id },
             data: { status: 'DONE', lockedUntil: null },
           });
+          await logWorkflowStage(
+            this.prisma,
+            WorkflowKind.CATALOG_BATCH_ITEM,
+            row.id,
+            'GENERATING',
+            'DONE',
+          );
           completed += 1;
         } else if (video.status === GenerationStatus.FAILED) {
           await this.prisma.catalogBatchItem.update({
@@ -304,6 +319,13 @@ export class CatalogBatchWorkerService {
               lockedUntil: null,
             },
           });
+          await logWorkflowStage(
+            this.prisma,
+            WorkflowKind.CATALOG_BATCH_ITEM,
+            row.id,
+            'GENERATING',
+            'FAILED',
+          );
           renderFailed += 1;
         } else {
           // Всё ещё рендерится или идёт постобработка — снять замок,
@@ -409,6 +431,13 @@ export class CatalogBatchWorkerService {
       where: { id: row.id },
       data: { status: 'GENERATING', lockedUntil: null, error: null },
     });
+    await logWorkflowStage(
+      this.prisma,
+      WorkflowKind.CATALOG_BATCH_ITEM,
+      row.id,
+      row.status,
+      'GENERATING',
+    );
   }
 
   /** Бэкофф — attempts++, nextAttemptAt = now + 2^attempts мин, тот же
@@ -458,6 +487,13 @@ export class CatalogBatchWorkerService {
         lockedUntil: null,
       },
     });
+    await logWorkflowStage(
+      this.prisma,
+      WorkflowKind.CATALOG_BATCH_ITEM,
+      row.id,
+      row.status,
+      'FAILED',
+    );
     this.logger.warn(
       `Товар ${row.productItemId} (партия ${row.batchId}): попытка ${attempts}/${maxAttempts} не удалась — ${message}` +
         (isDailyLimit

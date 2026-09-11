@@ -16,6 +16,9 @@ function row(overrides: Record<string, unknown> = {}) {
     productItemId: 'pi1',
     sessionId: null,
     attempts: 0,
+    // Этап 78 — из какой ветки OR (`PENDING`/просроченный `FAILED`)
+    // пришла строка, нужно как fromStage событию воронки.
+    status: 'PENDING',
     ...overrides,
   };
 }
@@ -109,6 +112,8 @@ function setup(
         .fn()
         .mockResolvedValue(opts.batch === undefined ? batchRow() : opts.batch),
     },
+    // Этап 78 (doc/WORKFLOW-FUNNEL-SPEC.md) — событие воронки, best-effort.
+    workflowStageEvent: { create: jest.fn().mockResolvedValue({}) },
     // Джоб-уровневый замок (Д-3.3) — по умолчанию всегда свободен:
     // `create` успешен на первом же вызове, `runBatch()` идёт обычным
     // путём. `jobLockHeld: true` эмулирует уже занятый замок (`create`
@@ -609,6 +614,121 @@ describe('CatalogBatchWorkerService', () => {
         where: { jobKey: 'catalog-batch-run' },
         data: { lockedUntil: null },
       });
+    });
+  });
+
+  describe('событие воронки (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md §3.2)', () => {
+    it('claim → GENERATING: fromStage берётся из status выбранной строки (PENDING)', async () => {
+      const { service, prisma } = setup({ rows: [row({ status: 'PENDING' })] });
+      await service.runBatch();
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'CATALOG_BATCH_ITEM',
+          entityId: 'item1',
+          fromStage: 'PENDING',
+          stage: 'GENERATING',
+        },
+      });
+    });
+
+    it('claim → GENERATING: строка пришла из просроченного FAILED — fromStage тоже FAILED', async () => {
+      const { service, prisma } = setup({ rows: [row({ status: 'FAILED' })] });
+      await service.runBatch();
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'CATALOG_BATCH_ITEM',
+          entityId: 'item1',
+          fromStage: 'FAILED',
+          stage: 'GENERATING',
+        },
+      });
+    });
+
+    it('claim не удался — событие не пишется (шаг вообще не выполнялся)', async () => {
+      const { service, prisma } = setup({ rows: [row()], claimCount: 0 });
+      await service.runBatch();
+      expect(prisma.workflowStageEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('recordFailure: fromStage берётся из status строки, а не всегда GENERATING', async () => {
+      const { service, prisma, library } = setup({
+        rows: [row({ status: 'FAILED' })],
+      });
+      library.applyToSession.mockRejectedValueOnce(new Error('boom'));
+      await service.runBatch();
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'CATALOG_BATCH_ITEM',
+          entityId: 'item1',
+          fromStage: 'FAILED',
+          stage: 'FAILED',
+        },
+      });
+      // Строка так и не дошла до claim→GENERATING (упала раньше) —
+      // событие GENERATING для неё писаться не должно.
+      expect(prisma.workflowStageEvent.create).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ stage: 'GENERATING' }),
+        }),
+      );
+    });
+
+    it('advanceGenerating: рендер завершён — событие GENERATING → DONE', async () => {
+      const { service, prisma } = setup({
+        generatingRows: [generatingRow()],
+        videoStatus: { status: 'complete', postStatus: 'skipped' },
+      });
+      await service.runBatch();
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'CATALOG_BATCH_ITEM',
+          entityId: 'gitem1',
+          fromStage: 'GENERATING',
+          stage: 'DONE',
+        },
+      });
+    });
+
+    it('advanceGenerating: Veo вернул FAILED — событие GENERATING → FAILED', async () => {
+      const { service, prisma } = setup({
+        generatingRows: [generatingRow()],
+        videoStatus: { status: 'failed', error: { message: 'Veo отказал' } },
+      });
+      await service.runBatch();
+      expect(prisma.workflowStageEvent.create).toHaveBeenCalledWith({
+        data: {
+          workflow: 'CATALOG_BATCH_ITEM',
+          entityId: 'gitem1',
+          fromStage: 'GENERATING',
+          stage: 'FAILED',
+        },
+      });
+    });
+
+    it('advanceGenerating: рендер ещё идёт — событие не пишется', async () => {
+      const { service, prisma } = setup({
+        generatingRows: [generatingRow()],
+        videoStatus: { status: 'processing' },
+      });
+      await service.runBatch();
+      expect(prisma.workflowStageEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('getVideoStatus упал с ошибкой — событие не пишется (статус строки не изменился)', async () => {
+      const { service, prisma, generation } = setup({
+        generatingRows: [generatingRow()],
+      });
+      generation.getVideoStatus.mockRejectedValueOnce(new Error('сеть легла'));
+      await service.runBatch();
+      expect(prisma.workflowStageEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('сбой самой записи события не роняет тик (logWorkflowStage проглатывает ошибку)', async () => {
+      const { service, prisma } = setup({ rows: [row()] });
+      prisma.workflowStageEvent.create.mockRejectedValueOnce(
+        new Error('analytics db insert failed'),
+      );
+      await expect(service.runBatch()).resolves.toMatchObject({ started: 1 });
     });
   });
 });

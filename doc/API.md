@@ -191,6 +191,8 @@
 | `GET /api/admin/costs?top=` | оператор | расходы на ИИ (§26): итоги, разбивка по провайдерам/операциям/моделям, топ по тратам, действующий прайс |
 | `GET /api/admin/telemetry` | оператор | агрегаты по сессиям |
 | `GET /api/admin/settings` | оператор | проверка переменных окружения |
+| `GET /api/admin/workflow-funnel?window=hour\|day\|week\|month` | оператор | событийная воронка по трём воркфлоу (сессия/пакетная генерация/A-B-варианты, §3 doc/WORKFLOW-FUNNEL-SPEC.md, этап 78): сколько раз каждая стадия была ДОСТИГНУТА за окно — событийный счётчик, не когорта |
+| `GET /api/admin/workflow-funnel/cohort-conversion?window=hour\|day\|week\|month` | оператор | когортная конверсия по тем же трём воркфлоу (doc/WORKFLOW-FUNNEL-COHORT-CONVERSION-SPEC.md, этап 78): что случилось с сущностями, СТАРТОВАВШИМИ в окне, без ограничения по времени перехода; помечает незавершённые когорты (`matured: false`) |
 | `GET /api/admin/publications?status=&page=&pageSize=` | оператор | очередь модерации публикаций (§8) |
 | `GET /api/admin/publications/:id` | оператор | одна заявка целиком |
 | `POST /api/admin/publications/:id/approve` | оператор | одобрить; `{ channelId?, privacy? }` — без `channelId` сервис сам находит канал (проект → бренд-манифест → единственный канал автора); крон-воркер выгружает автоматически (§14.5) |
