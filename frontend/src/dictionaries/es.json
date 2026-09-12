@@ -1032,6 +1032,7 @@
     "generatedLabel": "Anuncio generado",
     "afterProcessingLabel": "Después del procesamiento",
     "originalVeoLabel": "Original de Veo",
+    "previousAttemptLabel": "Intento del {{date}}",
     "formatLabel": "Formato: {{ratio}}",
     "reframePendingNote": "— grabado en {{rendered}}, recortando a {{target}}; el video de abajo ya se puede ver, el enlace se actualizará solo.",
     "croppedFromNote": "— recortado de {{rendered}}.",

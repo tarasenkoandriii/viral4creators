@@ -63,6 +63,25 @@ const VEO_MODELS: Record<VideoQuality, string> = {
 const DEFAULT_QUALITY: VideoQuality = 'fast';
 
 /**
+ * Доп. запрос владельца продукта, по итогам реального аудита (пролив
+ * пива, битый текстовый оверлей, лишний звук, резкий обрыв в конце):
+ * Veo поддерживает `negativePrompt` на Vertex AI и для более старой
+ * Veo 3.0 через Gemini API (официальный пример Google — "barking,
+ * woofing" для ролика с собакой). НЕ подключено намеренно: этот же
+ * параметр отсутствует в официальной таблице параметров именно Veo
+ * 3.1 (в отличие от aspectRatio/durationSeconds, которые в ней есть),
+ * а у Veo 3.1 через Gemini Developer API (не Vertex) уже есть
+ * задокументированная история параметров «в доке есть, API отвечает
+ * 400 not supported» — reference_images, last_frame,
+ * personGeneration=allow_adult, и ровно так же вела себя generateAudio
+ * (см. её собственную историю в этом файле) до этапа, где её убрали
+ * совсем. Без реальной проверки живым вызовом (сети к API нет)
+ * подключать его — рисковать сломать ВСЕ генерации разом ради ещё не
+ * подтверждённого улучшения. Если понадобится — сначала проверить на
+ * одном ручном вызове, не на всём трафике.
+ */
+
+/**
  * Сколько держится замок запуска (этап 47). Клиентский таймаут — 120 с,
  * сборка референсов и старт Veo укладываются в него почти всегда;
  * запас нужен на случай, когда экземпляр функции умер, не сняв замок
@@ -267,7 +286,14 @@ export class GenerationService {
     }
 
     const generatedVideoId = uuidv4();
-    const pathname = `sessions/${sessionId}/generated.mp4`;
+    // Доп. запрос владельца продукта: история версий. Раньше путь был
+    // фиксированным (`sessions/${sessionId}/generated.mp4`) — каждая
+    // новая попытка молча ЗАТИРАЛА файл предыдущей в Blob, так что
+    // «показать прошлую версию» было невозможно даже теоретически: её
+    // уже не существовало. Уникальный путь на попытку хранит каждую
+    // версию отдельно; уборка старых версий — открытый вопрос (список
+    // может расти), но это дешевле, чем терять файлы безвозвратно.
+    const pathname = `sessions/${sessionId}/generated-${generatedVideoId}.mp4`;
 
     // Этап 62 (ТЗ §41.1): купленный кредит — это оплаченный РОЛИК, значит
     // проверяется он именно тут, под замком `claimWork('generate')`
@@ -533,8 +559,24 @@ export class GenerationService {
         })),
       };
 
+      // Доп. запрос владельца продукта: полная история версий. Уходящая
+      // попытка архивируется РОВНО здесь — в момент, когда её всё равно
+      // заменяет новая, и только если она уже завершилась (COMPLETE
+      // или FAILED). Идущую (PENDING/PROCESSING) сюда попасть не
+      // может: `generateVideo()` выше возвращает её же вместо повторного
+      // старта (Б-2.3) — до этого момента дело просто не доходит.
+      const previous = session.generatedVideo;
+      const previousFinished =
+        previous &&
+        (previous.status === GenerationStatus.COMPLETE ||
+          previous.status === GenerationStatus.FAILED);
+      const videoHistory = previousFinished
+        ? [previous, ...(session.videoHistory ?? [])]
+        : (session.videoHistory ?? []);
+
       await this.sessionService.updateSession(sessionId, {
         generatedVideo,
+        videoHistory,
         status: SessionStatus.GENERATING_VIDEO,
       });
 

@@ -1032,6 +1032,7 @@
     "generatedLabel": "Generierte Werbung",
     "afterProcessingLabel": "Nach der Bearbeitung",
     "originalVeoLabel": "Veo-Original",
+    "previousAttemptLabel": "Versuch vom {{date}}",
     "formatLabel": "Format: {{ratio}}",
     "reframePendingNote": "— aufgenommen in {{rendered}}, wird auf {{target}} zugeschnitten; das Video unten kann bereits angesehen werden, der Link aktualisiert sich von selbst.",
     "croppedFromNote": "— zugeschnitten aus {{rendered}}.",

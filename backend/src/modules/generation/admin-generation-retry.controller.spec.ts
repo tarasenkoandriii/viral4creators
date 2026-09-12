@@ -260,3 +260,87 @@ describe('AdminGenerationRetryController.applyFixAndRetry (реальный сл
     expect(result).toEqual({ sessionId: 's1' });
   });
 });
+
+describe('AdminGenerationRetryController.versions (доп. запрос владельца продукта: кнопка на каждую версию)', () => {
+  it('требует assertOperator до чтения данных', async () => {
+    const { controller, adminPanel, req } = build({ data: {} });
+    const order: string[] = [];
+    adminPanel.assertOperator.mockImplementation(async () => {
+      order.push('assertOperator');
+    });
+    await controller.versions(req, 's1');
+    order.push('after');
+    expect(order[0]).toBe('assertOperator');
+  });
+
+  it('сессия не найдена — 404', async () => {
+    const { controller, req } = build(null);
+    await expect(controller.versions(req, 'missing')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('текущая попытка первая и помечена isCurrent, история — за ней в её собственном порядке', async () => {
+    const { controller, req } = build({
+      data: {
+        generatedVideo: { generatedVideoId: 'v3', status: 'complete' },
+        videoHistory: [
+          { generatedVideoId: 'v2', status: 'failed' },
+          { generatedVideoId: 'v1', status: 'complete' },
+        ],
+      },
+    });
+    const result = await controller.versions(req, 's1');
+    expect(result.map((v) => [v.generatedVideoId, v.isCurrent])).toEqual([
+      ['v3', true],
+      ['v2', false],
+      ['v1', false],
+    ]);
+  });
+
+  it('нет generatedVideo и нет истории — пустой список, не падение', async () => {
+    const { controller, req } = build({ data: {} });
+    await expect(controller.versions(req, 's1')).resolves.toEqual([]);
+  });
+
+  it('аудиты подставляются к своей версии по generatedVideoId, не все подряд', async () => {
+    const { controller, req } = build({
+      data: {
+        generatedVideo: { generatedVideoId: 'v2', status: 'complete' },
+        videoHistory: [{ generatedVideoId: 'v1', status: 'failed' }],
+        videoAudit: {
+          history: [
+            {
+              auditId: 'a2',
+              generatedVideoId: 'v2',
+              verdict: 'clean',
+              summary: 'ок',
+              promptFix: null,
+            },
+            {
+              auditId: 'a1',
+              generatedVideoId: 'v1',
+              verdict: 'issues',
+              summary: 'артефакты',
+              promptFix: { suggestedText: 'x' },
+            },
+          ],
+        },
+      },
+    });
+    const result = await controller.versions(req, 's1');
+    const v2 = result.find((v) => v.generatedVideoId === 'v2')!;
+    const v1 = result.find((v) => v.generatedVideoId === 'v1')!;
+    expect(v2.audits).toEqual([
+      { auditId: 'a2', verdict: 'clean', summary: 'ок', hasPromptFix: false },
+    ]);
+    expect(v1.audits).toEqual([
+      {
+        auditId: 'a1',
+        verdict: 'issues',
+        summary: 'артефакты',
+        hasPromptFix: true,
+      },
+    ]);
+  });
+});

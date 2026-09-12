@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { listSessions, retrySessionGeneration, pollSessionStatus, runVideoAudit, applyFixAndRetry } from '../../lib/endpoints';
-import type { SessionListResult, SessionSortKey, SortDirection, AuditStateView } from '../../lib/types';
+import { listSessions, retrySessionGeneration, pollSessionStatus, runVideoAudit, applyFixAndRetry, getSessionVersions } from '../../lib/endpoints';
+import type { SessionListResult, SessionSortKey, SortDirection, AuditStateView, VideoVersion } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
 const STATUSES = [
@@ -90,6 +90,10 @@ export default function SessionsPage() {
   const [auditResults, setAuditResults] = useState<Record<string, AuditStateView>>({});
   const [fixingId, setFixingId] = useState<string | null>(null);
   const [fixError, setFixError] = useState<string | null>(null);
+  const [expandedVersionsId, setExpandedVersionsId] = useState<string | null>(null);
+  const [versionsBySession, setVersionsBySession] = useState<Record<string, VideoVersion[]>>({});
+  const [versionsLoadingId, setVersionsLoadingId] = useState<string | null>(null);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
 
   // Фильтры — по одному useState на колонку, тот же принцип, что был у
   // единственного фильтра status раньше.
@@ -204,6 +208,31 @@ export default function SessionsPage() {
       );
     } finally {
       setFixingId(null);
+    }
+  };
+
+  // Доп. запрос владельца продукта: «должно быть несколько кнопок для
+  // каждой версии» — раскрывается по клику, а не грузится сразу для
+  // всех строк списка (история — отдельный запрос на сессию, незачем
+  // тянуть её для строк, которые никто не разворачивал).
+  const handleToggleVersions = async (id: string) => {
+    if (expandedVersionsId === id) {
+      setExpandedVersionsId(null);
+      return;
+    }
+    setExpandedVersionsId(id);
+    setVersionsError(null);
+    if (versionsBySession[id]) return;
+    setVersionsLoadingId(id);
+    try {
+      const versions = await getSessionVersions(id);
+      setVersionsBySession((prev) => ({ ...prev, [id]: versions }));
+    } catch (err) {
+      setVersionsError(
+        err instanceof ApiRequestError ? err.message : 'Не удалось загрузить историю версий'
+      );
+    } finally {
+      setVersionsLoadingId(null);
     }
   };
 
@@ -451,6 +480,7 @@ export default function SessionsPage() {
       {retryError && <p className="critical">{retryError}</p>}
       {auditError && <p className="critical">{auditError}</p>}
       {fixError && <p className="critical">{fixError}</p>}
+      {versionsError && <p className="critical">{versionsError}</p>}
 
       {result && (
         <>
@@ -524,43 +554,87 @@ export default function SessionsPage() {
                     {visibleColumns.has('owner') && <td>{ownerLabel(s)}</td>}
                     {visibleColumns.has('video') && (
                       <td>
-                        {s.hasGeneratedVideo && s.downloadUrl ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
-                            <a href={s.downloadUrl} target="_blank" rel="noopener noreferrer">
-                              ▶ Смотреть
-                            </a>
-                            <button
-                              type="button"
-                              disabled={auditingId === s.sessionId}
-                              onClick={() => handleAudit(s.sessionId)}
-                            >
-                              {auditingId === s.sessionId ? 'Проверяю…' : '🔍 На артефакты'}
-                            </button>
-                            {auditResults[s.sessionId]?.history[0] && (
-                              <span
-                                className="muted"
-                                style={{ fontSize: 11, maxWidth: 220 }}
-                                title={auditResults[s.sessionId].history[0].summary}
-                              >
-                                {auditResults[s.sessionId].history[0].verdict}:{' '}
-                                {auditResults[s.sessionId].history[0].summary}
-                              </span>
-                            )}
-                            {auditResults[s.sessionId]?.history[0]?.promptFix && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                          {s.hasGeneratedVideo && s.downloadUrl ? (
+                            <>
+                              <a href={s.downloadUrl} target="_blank" rel="noopener noreferrer">
+                                ▶ Смотреть
+                              </a>
                               <button
                                 type="button"
-                                disabled={fixingId === s.sessionId}
-                                onClick={() => handleApplyFixAndRetry(s.sessionId)}
+                                disabled={auditingId === s.sessionId}
+                                onClick={() => handleAudit(s.sessionId)}
                               >
-                                {fixingId === s.sessionId
-                                  ? 'Исправляю…'
-                                  : '🛠 Исправить и перегенерировать'}
+                                {auditingId === s.sessionId ? 'Проверяю…' : '🔍 На артефакты'}
                               </button>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
+                              {auditResults[s.sessionId]?.history[0] && (
+                                <span
+                                  className="muted"
+                                  style={{ fontSize: 11, maxWidth: 220 }}
+                                  title={auditResults[s.sessionId].history[0].summary}
+                                >
+                                  {auditResults[s.sessionId].history[0].verdict}:{' '}
+                                  {auditResults[s.sessionId].history[0].summary}
+                                </span>
+                              )}
+                              {auditResults[s.sessionId]?.history[0]?.promptFix && (
+                                <button
+                                  type="button"
+                                  disabled={fixingId === s.sessionId}
+                                  onClick={() => handleApplyFixAndRetry(s.sessionId)}
+                                >
+                                  {fixingId === s.sessionId
+                                    ? 'Исправляю…'
+                                    : '🛠 Исправить и перегенерировать'}
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                          {/* Доп. запрос владельца продукта: тогл виден независимо от
+                              того, завершилась ли ТЕКУЩАЯ попытка — история прошлых
+                              попыток (включая проваленные) не зависит от неё. */}
+                          <button type="button" onClick={() => handleToggleVersions(s.sessionId)}>
+                            {expandedVersionsId === s.sessionId ? '▴ Версии' : '▾ Версии'}
+                          </button>
+                          {expandedVersionsId === s.sessionId && (
+                            <div
+                              className="card"
+                              style={{ padding: 8, display: 'flex', flexDirection: 'column', gap: 6, minWidth: 260 }}
+                            >
+                              {versionsLoadingId === s.sessionId && (
+                                <span className="muted">Загрузка…</span>
+                              )}
+                              {versionsBySession[s.sessionId]?.length === 0 && (
+                                <span className="muted">Прошлых попыток нет</span>
+                              )}
+                              {versionsBySession[s.sessionId]?.map((v) => (
+                                <div
+                                  key={v.generatedVideoId}
+                                  style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11 }}
+                                >
+                                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                    {v.isCurrent && <strong>текущая</strong>}
+                                    <span className="muted">{v.status}</span>
+                                    <span className="muted">{v.quality ?? '—'} · {v.aspectRatio ?? '—'}</span>
+                                    {v.downloadUrl && (
+                                      <a href={v.downloadUrl} target="_blank" rel="noopener noreferrer">
+                                        ▶
+                                      </a>
+                                    )}
+                                  </div>
+                                  {v.audits.map((a) => (
+                                    <span key={a.auditId} className="muted" title={a.summary}>
+                                      {a.verdict}: {a.summary}
+                                      {a.hasPromptFix ? ' (есть фикс)' : ''}
+                                    </span>
+                                  ))}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </td>
                     )}
                     {visibleColumns.has('createdAt') && (

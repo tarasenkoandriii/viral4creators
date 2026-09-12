@@ -63,9 +63,11 @@ import { VideoAuditService } from '../video-audit/video-audit.service';
 import { PromptService } from '../prompt/prompt.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  GeneratedVideo,
   GenerationStatus,
   VideoQuality,
 } from '../../common/types/generation.types';
+import { VideoAudit } from '../../common/types/audit.types';
 
 @Controller('admin/sessions')
 @UseGuards(AdminSessionGuard)
@@ -210,4 +212,78 @@ export class AdminGenerationRetryController {
     );
     return this.adminPanel.getSession(id);
   }
+
+  /**
+   * Полная история версий (доп. запрос владельца продукта: «должно
+   * быть несколько кнопок для каждой версии») — до этого каждая
+   * попытка молча перезаписывала файл предыдущей в Blob по
+   * фиксированному пути; посмотреть старую версию было физически
+   * нечем (см. доккомментарий `pathname` в generation.service.ts).
+   * Каждая версия — с её собственными аудитами (сверка по
+   * `generatedVideoId`, который `VideoAuditService` пишет в каждую
+   * запись истории уже сейчас, без доп. правок).
+   */
+  @Get(':id/versions')
+  async versions(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ): Promise<VideoVersionView[]> {
+    await this.adminPanel.assertOperator(req.userId);
+
+    const row = await this.prisma.session.findUnique({ where: { id } });
+    if (!row) {
+      throw new NotFoundException(`Session ${id} not found`);
+    }
+    const data = (row.data as Record<string, unknown>) ?? {};
+    const current = data.generatedVideo as GeneratedVideo | undefined;
+    const history = (data.videoHistory as GeneratedVideo[] | undefined) ?? [];
+    const audits =
+      (data.videoAudit as { history?: VideoAudit[] } | undefined)?.history ??
+      [];
+
+    const versions: Array<GeneratedVideo & { isCurrent: boolean }> = [
+      ...(current ? [{ ...current, isCurrent: true }] : []),
+      ...history.map((v) => ({ ...v, isCurrent: false })),
+    ];
+
+    return versions.map((v) => ({
+      generatedVideoId: v.generatedVideoId,
+      status: v.status,
+      downloadUrl: v.downloadUrl ?? null,
+      quality: v.quality ?? null,
+      aspectRatio: v.aspectRatio ?? null,
+      initiatedAt: v.initiatedAt,
+      completedAt: v.completedAt ?? null,
+      isCurrent: v.isCurrent,
+      audits: audits
+        .filter((a) => a.generatedVideoId === v.generatedVideoId)
+        .map((a) => ({
+          auditId: a.auditId,
+          verdict: a.verdict,
+          summary: a.summary,
+          hasPromptFix: a.promptFix != null,
+        })),
+    }));
+  }
+}
+
+export interface VideoVersionAuditView {
+  auditId: string;
+  verdict: 'clean' | 'issues' | 'unknown';
+  summary: string;
+  hasPromptFix: boolean;
+}
+
+export interface VideoVersionView {
+  generatedVideoId: string;
+  status: string;
+  downloadUrl: string | null;
+  quality: string | null;
+  aspectRatio: string | null;
+  initiatedAt: unknown;
+  completedAt: unknown;
+  /** Действующая (последняя) попытка — `session.generatedVideo`, а не
+   * архивная запись в `videoHistory`. */
+  isCurrent: boolean;
+  audits: VideoVersionAuditView[];
 }

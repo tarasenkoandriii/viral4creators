@@ -1032,6 +1032,7 @@
     "generatedLabel": "Generated ad",
     "afterProcessingLabel": "After processing",
     "originalVeoLabel": "Veo original",
+    "previousAttemptLabel": "Attempt from {{date}}",
     "formatLabel": "Format: {{ratio}}",
     "reframePendingNote": "— shot in {{rendered}}, cropping to {{target}}; the video below is already watchable, the link will update itself.",
     "croppedFromNote": "— cropped from {{rendered}}.",

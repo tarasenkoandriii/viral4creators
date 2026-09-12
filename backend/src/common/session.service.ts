@@ -83,6 +83,12 @@ const DATA_KEYS = [
   // Звуковой чек-звук (этап 73, common/sound-check.ts) — общая история
   // для Veo- и аватар-пайплайнов, не трогает 'videoAudit'.
   'soundCheck',
+  // Доп. запрос владельца продукта: история прошлых попыток генерации
+  // (`GeneratedVideo[]`, самая свежая первая) — см. доккомментарий поля
+  // в session.types.ts. Пишется НЕ отдельным вызовом, а тем же UPDATE,
+  // что перезаписывает 'generatedVideo' новой попыткой
+  // (generation.service.ts, startGeneration()).
+  'videoHistory',
 ] as const;
 
 /**

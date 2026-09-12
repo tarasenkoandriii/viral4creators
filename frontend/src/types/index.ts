@@ -27,6 +27,10 @@ export interface Session {
   productInformation?: ProductInformation;
   generationPrompt?: GenerationPrompt;
   generatedVideo?: GeneratedVideo;
+  /** Прошлые завершённые/проваленные попытки генерации (доп. запрос
+   * владельца продукта: полная история версий) — самая свежая первая.
+   * Зеркало бэкендового `Session.videoHistory`. */
+  videoHistory?: GeneratedVideo[];
   brandManifestSnapshot?: BrandManifestSnapshot;
   characterCasting?: CharacterCasting;
   relevance?: RelevanceState;

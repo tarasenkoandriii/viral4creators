@@ -1040,6 +1040,7 @@
     "generatedLabel": "Згенерована реклама",
     "afterProcessingLabel": "Після обробки",
     "originalVeoLabel": "Оригінал Veo",
+    "previousAttemptLabel": "Спроба від {{date}}",
     "formatLabel": "Формат: {{ratio}}",
     "reframePendingNote": "— знято в {{rendered}}, обрізаємо до {{target}}; ролик нижче вже можна дивитися, посилання оновиться саме.",
     "croppedFromNote": "— обрізано з {{rendered}}.",

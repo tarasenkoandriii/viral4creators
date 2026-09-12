@@ -38,6 +38,25 @@ export interface SessionListResult {
   pageSize: number;
 }
 
+export interface VideoVersionAudit {
+  auditId: string;
+  verdict: 'clean' | 'issues' | 'unknown';
+  summary: string;
+  hasPromptFix: boolean;
+}
+
+export interface VideoVersion {
+  generatedVideoId: string;
+  status: string;
+  downloadUrl: string | null;
+  quality: string | null;
+  aspectRatio: string | null;
+  initiatedAt: string | null;
+  completedAt: string | null;
+  isCurrent: boolean;
+  audits: VideoVersionAudit[];
+}
+
 export interface VideoAudit {
   auditId: string;
   status: 'complete' | 'failed';

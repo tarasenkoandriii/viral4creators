@@ -457,6 +457,56 @@ describe('GenerationService.generateVideo — повтор при идущем �
   });
 });
 
+describe('GenerationService.generateVideo — история версий (доп. запрос владельца продукта)', () => {
+  it('путь в Blob уникален на попытку — раньше был фиксированным и затирал прошлую версию', async () => {
+    const { svc, sessions } = build();
+    const video = await svc.generateVideo('s1');
+    expect(video.pathname).toBe(`sessions/s1/generated-${video.generatedVideoId}.mp4`);
+    const [, patch] = sessions.updateSession.mock.calls[0];
+    expect(patch.generatedVideo.pathname).toBe(video.pathname);
+  });
+
+  it('нет прошлой попытки — videoHistory пустой, ничего не архивируется', async () => {
+    const { svc, sessions } = build();
+    await svc.generateVideo('s1');
+    const [, patch] = sessions.updateSession.mock.calls[0];
+    expect(patch.videoHistory).toEqual([]);
+  });
+
+  it('прошлая попытка COMPLETE/FAILED — архивируется в videoHistory ПЕРЕД перезаписью', async () => {
+    for (const status of [GenerationStatus.COMPLETE, GenerationStatus.FAILED]) {
+      const previous = {
+        generatedVideoId: 'old-1',
+        status,
+        pathname: 'sessions/s1/generated-old-1.mp4',
+      };
+      const { svc, sessions } = build({
+        ...readySession(),
+        generatedVideo: previous,
+      });
+      const video = await svc.generateVideo('s1');
+      const [, patch] = sessions.updateSession.mock.calls[0];
+      expect(patch.videoHistory).toEqual([previous]);
+      // Новая попытка остаётся в generatedVideo, не в истории.
+      expect(patch.generatedVideo.generatedVideoId).toBe(video.generatedVideoId);
+      sessions.updateSession.mockClear();
+    }
+  });
+
+  it('прошлая история сохраняется — новая версия становится первой (самой свежей), не заменяет список', async () => {
+    const olderStill = { generatedVideoId: 'old-0', status: GenerationStatus.FAILED };
+    const previous = { generatedVideoId: 'old-1', status: GenerationStatus.COMPLETE };
+    const { svc, sessions } = build({
+      ...readySession(),
+      generatedVideo: previous,
+      videoHistory: [olderStill],
+    });
+    await svc.generateVideo('s1');
+    const [, patch] = sessions.updateSession.mock.calls[0];
+    expect(patch.videoHistory).toEqual([previous, olderStill]);
+  });
+});
+
 describe('GenerationService.generateVideo — замок и запись расхода (этап 47)', () => {
   it('занятый замок — 409 до скачивания фото и до Veo', async () => {
     // В-2.2 / В-3.1: тридцать одновременных запросов проходили и

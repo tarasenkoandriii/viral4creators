@@ -59,7 +59,7 @@ import { useFeature } from '../../lib/plan-context';
 import { useI18n } from '../../lib/i18n-context';
 
 export function GenerationWizard() {
-  const { dict } = useI18n();
+  const { dict, locale } = useI18n();
   const [videoQuality, setVideoQuality] = useState<VideoQuality>('fast');
   // Spec §16: the ad's picture format — starts from the reference's frame
   // once detected; the user can pick any standard ratio or a custom W:H.
@@ -80,6 +80,7 @@ export function GenerationWizard() {
     isUploadingImage,
     imageUploadProgress,
     generatedVideo,
+    videoHistory,
     isGeneratingVideo,
     originalVideoUrl,
     error,
@@ -558,8 +559,15 @@ export function GenerationWizard() {
                 // §15.5: исходник Veo остаётся доступным. Переключатель
                 // рядом с плеером, а не ссылкой в новую вкладку: «до и
                 // после» имеет смысл только когда их видно подряд.
-                variants={
-                  generatedVideo.postStatus === 'complete' &&
+                //
+                // Доп. запрос владельца продукта: полная история версий —
+                // тот же переключатель, просто с добавленными пунктами.
+                // Раньше каждый повтор молча затирал файл предыдущей
+                // попытки в Blob, посмотреть старую версию было нечем;
+                // теперь путь на попытку уникален, и `videoHistory`
+                // хранит их все (см. useWorkflow.ts, handleGenerateVideo).
+                variants={[
+                  ...(generatedVideo.postStatus === 'complete' &&
                   generatedVideo.renderedUrl
                     ? [
                         {
@@ -573,8 +581,21 @@ export function GenerationWizard() {
                           url: generatedVideo.renderedUrl,
                         },
                       ]
-                    : undefined
-                }
+                    : []),
+                  ...videoHistory
+                    .filter(
+                      (v): v is typeof v & { downloadUrl: string } =>
+                        Boolean(v.downloadUrl)
+                    )
+                    .map((v) => ({
+                      key: v.generatedVideoId,
+                      label: dict.generationWizard.previousAttemptLabel.replace(
+                        '{{date}}',
+                        new Date(v.initiatedAt).toLocaleString(locale)
+                      ),
+                      url: v.downloadUrl,
+                    })),
+                ]}
               />
             </div>
             {generatedVideo.aspectRatio && (

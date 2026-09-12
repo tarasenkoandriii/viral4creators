@@ -64,6 +64,9 @@ interface UseWorkflowState {
   isUploadingImage: boolean;
   imageUploadProgress: number;
   generatedVideo: GeneratedVideo | null;
+  /** Прошлые завершённые/проваленные попытки генерации (доп. запрос
+   * владельца продукта: полная история версий) — самая свежая первая. */
+  videoHistory: GeneratedVideo[];
   isGeneratingVideo: boolean;
   originalVideoUrl: string | null;
   error: string | null;
@@ -130,6 +133,7 @@ function restoreFromSession(
     analysis: session.videoAnalysis ?? null,
     prompt: session.generationPrompt ?? null,
     generatedVideo: session.generatedVideo ?? null,
+    videoHistory: session.videoHistory ?? [],
     brandManifest: session.brandManifestSnapshot ?? null,
     referenceAspectRatio: session.originalVideo?.frame?.aspectRatio ?? null,
     // Кнопку «Сгенерировать» на идущем рендере показывать нельзя: это
@@ -214,6 +218,7 @@ export function useWorkflow() {
     isUploadingImage: false,
     imageUploadProgress: 0,
     generatedVideo: null,
+    videoHistory: [],
     isGeneratingVideo: false,
     originalVideoUrl: null,
     error: null,
@@ -1185,10 +1190,25 @@ export function useWorkflow() {
           aspectRatio
         );
 
-        setState((prev) => ({
-          ...prev,
-          generatedVideo: video,
-        }));
+        setState((prev) => {
+          // Доп. запрос владельца продукта: полная история версий —
+          // тот же принцип, что и на бэкенде (generation.service.ts,
+          // startGeneration()): уходящая попытка архивируется РОВНО
+          // здесь, и только если она уже завершилась (complete или
+          // failed). Идущая (pending/processing) сюда попасть не
+          // может — новый старт при ней вообще не разрешён (Б-2.3).
+          const previous = prev.generatedVideo;
+          const previousFinished =
+            previous &&
+            (previous.status === 'complete' || previous.status === 'failed');
+          return {
+            ...prev,
+            generatedVideo: video,
+            videoHistory: previousFinished
+              ? [previous, ...prev.videoHistory]
+              : prev.videoHistory,
+          };
+        });
 
         startVideoPolling(state.sessionId);
       } catch (error) {

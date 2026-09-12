@@ -14,6 +14,7 @@ import type {
   SessionSortKey,
   SortDirection,
   AuditStateView,
+  VideoVersion,
   TelemetryResult,
   EnvSettingsResult,
   VoiceoverProviderKey,
@@ -134,6 +135,14 @@ export function runVideoAudit(sessionId: string) {
  * перегенерирует — три шага одним кликом. */
 export function applyFixAndRetry(sessionId: string) {
   return apiPost<SessionDetail>(`/admin/sessions/${sessionId}/apply-fix-and-retry`);
+}
+
+/** Доп. запрос владельца продукта: «должно быть несколько кнопок для
+ * каждой версии» — раньше каждая новая попытка молча перезаписывала
+ * файл предыдущей в Blob, смотреть было нечего. Теперь путь на попытку
+ * уникален, и этот маршрут собирает их все вместе с их же аудитами. */
+export function getSessionVersions(sessionId: string) {
+  return apiGet<VideoVersion[]>(`/admin/sessions/${sessionId}/versions`);
 }
 
 export function getTelemetry() {
