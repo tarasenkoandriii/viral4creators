@@ -60,6 +60,7 @@ import {
 import { AdminPanelService } from '../admin-panel/admin-panel.service';
 import { GenerationService } from './generation.service';
 import { VideoAuditService } from '../video-audit/video-audit.service';
+import { PromptService } from '../prompt/prompt.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   GenerationStatus,
@@ -73,6 +74,7 @@ export class AdminGenerationRetryController {
     private readonly adminPanel: AdminPanelService,
     private readonly generation: GenerationService,
     private readonly videoAudit: VideoAuditService,
+    private readonly prompt: PromptService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -146,5 +148,66 @@ export class AdminGenerationRetryController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.videoAudit.run(id, {});
+  }
+
+  /**
+   * «Виправити і перегенерувати» — доп. запрос владельца продукта после
+   * реального случая: аудит нашёл артефакты (пролив пива, битый
+   * текстовый оверлей, лишний звук, обрыв в конце), и простое
+   * «Повторить» с ТЕМ ЖЕ промптом просто воспроизвело бы их снова.
+   *
+   * Три шага одним кликом — то же, что пользователь сделал бы сам через
+   * визард (§11.2: правка ложится в PromptEditor как черновик, «Применить»
+   * → одобрение → генерация), но за него:
+   *  1. `VideoAuditService.applyFix` — текст последнего аудита с
+   *     `promptFix` становится черновиком промпта; это ЖЕ действие
+   *     сбрасывает `approvedAt` (тот же путь, что ручная правка текста
+   *     пользователем) — без шага 2 `generateVideo` откажет с «промпт не
+   *     одобрен».
+   *  2. `PromptService.approvePrompt` — за пользователя одобряет
+   *     применённый черновик; это ЕДИНСТВЕННОЕ место во всём контроллере,
+   *     где оператор решает ЗА владельца сессии, а не просто повторяет
+   *     его же действие — обосновано тем, что чинить конкретно эти
+   *     артефакты и так его работа (найдены его же аудитом), а держать
+   *     ролик сломанным в ожидании, что автор зайдёт и нажмёт
+   *     «одобрить» сам, хуже.
+   *  3. `GenerationService.generateVideo` — тот же платный повтор, что и
+   *     `retry()` выше, с теми же качеством/форматом.
+   */
+  @Post(':id/apply-fix-and-retry')
+  async applyFixAndRetry(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+
+    const row = await this.prisma.session.findUnique({ where: { id } });
+    if (!row) {
+      throw new NotFoundException(`Session ${id} not found`);
+    }
+    const data = (row.data as Record<string, unknown>) ?? {};
+    const videoAuditState = data.videoAudit as
+      | { history?: Array<{ auditId: string; promptFix?: unknown }> }
+      | undefined;
+    // Newest first (см. VideoAuditState) — последний прогон, не первый.
+    const latestAudit = videoAuditState?.history?.[0];
+    if (!latestAudit?.promptFix) {
+      throw new ForbiddenException(
+        `Сессия ${id}: нет свежего аудита с предложенным исправлением — сначала запустите проверку на артефакты`,
+      );
+    }
+
+    await this.videoAudit.applyFix(id, { auditId: latestAudit.auditId });
+    await this.prompt.approvePrompt(id);
+
+    const generatedVideo = data.generatedVideo as
+      | { quality?: VideoQuality; aspectRatio?: string }
+      | undefined;
+    await this.generation.generateVideo(
+      id,
+      generatedVideo?.quality,
+      generatedVideo?.aspectRatio,
+    );
+    return this.adminPanel.getSession(id);
   }
 }

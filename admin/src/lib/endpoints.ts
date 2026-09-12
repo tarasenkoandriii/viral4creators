@@ -127,6 +127,15 @@ export function runVideoAudit(sessionId: string) {
   return apiPost<AuditStateView>(`/admin/sessions/${sessionId}/audit`);
 }
 
+/** Доп. запрос владельца продукта, после реального случая: аудит нашёл
+ * артефакты, и простое «Повторить» с тем же промптом воспроизвело бы их
+ * снова. Применяет предложенное аудитом исправление к черновику
+ * промпта, одобряет его за отсутствующего пользователя и тут же
+ * перегенерирует — три шага одним кликом. */
+export function applyFixAndRetry(sessionId: string) {
+  return apiPost<SessionDetail>(`/admin/sessions/${sessionId}/apply-fix-and-retry`);
+}
+
 export function getTelemetry() {
   return apiGet<TelemetryResult>('/admin/telemetry');
 }

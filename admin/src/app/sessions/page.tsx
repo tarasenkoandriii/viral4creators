@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { listSessions, retrySessionGeneration, pollSessionStatus, runVideoAudit } from '../../lib/endpoints';
+import { listSessions, retrySessionGeneration, pollSessionStatus, runVideoAudit, applyFixAndRetry } from '../../lib/endpoints';
 import type { SessionListResult, SessionSortKey, SortDirection, AuditStateView } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -88,6 +88,8 @@ export default function SessionsPage() {
   const [auditingId, setAuditingId] = useState<string | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
   const [auditResults, setAuditResults] = useState<Record<string, AuditStateView>>({});
+  const [fixingId, setFixingId] = useState<string | null>(null);
+  const [fixError, setFixError] = useState<string | null>(null);
 
   // Фильтры — по одному useState на колонку, тот же принцип, что был у
   // единственного фильтра status раньше.
@@ -172,6 +174,36 @@ export default function SessionsPage() {
       );
     } finally {
       setAuditingId(null);
+    }
+  };
+
+  // Реальный случай: аудит нашёл артефакты (пролив, битый текстовый
+  // оверлей, лишний звук, обрыв в конце) — простое «Повторить» с тем же
+  // промптом воспроизвело бы их снова. Три шага одним кликом на сервере
+  // (применить фикс → одобрить за отсутствующего пользователя →
+  // перегенерировать); здесь — тот же паттерн patch-строки на месте,
+  // что у handleRetry.
+  const handleApplyFixAndRetry = async (id: string) => {
+    setFixingId(id);
+    setFixError(null);
+    try {
+      const updated = await applyFixAndRetry(id);
+      setResult((prev) =>
+        prev
+          ? {
+              ...prev,
+              items: prev.items.map((item) =>
+                item.sessionId === id ? { ...item, ...updated } : item
+              ),
+            }
+          : prev
+      );
+    } catch (err) {
+      setFixError(
+        err instanceof ApiRequestError ? err.message : 'Не удалось применить исправление и перегенерировать'
+      );
+    } finally {
+      setFixingId(null);
     }
   };
 
@@ -418,6 +450,7 @@ export default function SessionsPage() {
       {error && <p className="critical">{error}</p>}
       {retryError && <p className="critical">{retryError}</p>}
       {auditError && <p className="critical">{auditError}</p>}
+      {fixError && <p className="critical">{fixError}</p>}
 
       {result && (
         <>
@@ -512,6 +545,17 @@ export default function SessionsPage() {
                                 {auditResults[s.sessionId].history[0].verdict}:{' '}
                                 {auditResults[s.sessionId].history[0].summary}
                               </span>
+                            )}
+                            {auditResults[s.sessionId]?.history[0]?.promptFix && (
+                              <button
+                                type="button"
+                                disabled={fixingId === s.sessionId}
+                                onClick={() => handleApplyFixAndRetry(s.sessionId)}
+                              >
+                                {fixingId === s.sessionId
+                                  ? 'Исправляю…'
+                                  : '🛠 Исправить и перегенерировать'}
+                              </button>
                             )}
                           </div>
                         ) : (

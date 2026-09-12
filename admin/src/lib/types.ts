@@ -43,6 +43,9 @@ export interface VideoAudit {
   status: 'complete' | 'failed';
   verdict: 'clean' | 'issues' | 'unknown';
   summary: string;
+  /** Есть ли предложенное исправление промпта — от него зависит,
+   * показывать ли «Исправить и перегенерировать». */
+  promptFix: { suggestedText: string } | null;
 }
 
 export interface AuditStateView {

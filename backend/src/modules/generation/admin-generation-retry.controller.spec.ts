@@ -21,6 +21,13 @@ function build(sessionRow: { data: unknown } | null) {
       limit: 5,
       overLimit: false,
     }),
+    applyFix: jest.fn().mockResolvedValue({
+      prompt: { finalText: 'исправленный текст' },
+      state: { history: [], appliedFixes: 1, limit: 5, overLimit: false },
+    }),
+  };
+  const prompt = {
+    approvePrompt: jest.fn().mockResolvedValue({ approvedAt: new Date() }),
   };
   const prisma = {
     session: { findUnique: jest.fn().mockResolvedValue(sessionRow) },
@@ -29,10 +36,11 @@ function build(sessionRow: { data: unknown } | null) {
     adminPanel as any,
     generation as any,
     videoAudit as any,
+    prompt as any,
     prisma as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
-  return { controller, adminPanel, generation, videoAudit, prisma, req };
+  return { controller, adminPanel, generation, videoAudit, prompt, prisma, req };
 }
 
 describe('AdminGenerationRetryController', () => {
@@ -154,5 +162,101 @@ describe('AdminGenerationRetryController.audit (доп. запрос владе�
       limit: 5,
       overLimit: false,
     });
+  });
+});
+
+describe('AdminGenerationRetryController.applyFixAndRetry (реальный случай: аудит нашёл артефакты, тупое «Повторить» воспроизвело бы их снова)', () => {
+  const withAudit = (over: Record<string, unknown> = {}) => ({
+    data: {
+      videoAudit: {
+        history: [
+          {
+            auditId: 'audit-1',
+            promptFix: { suggestedText: 'исправленный текст' },
+          },
+        ],
+      },
+      generatedVideo: { quality: 'standard', aspectRatio: '9:16' },
+      ...over,
+    },
+  });
+
+  it('нет аудита с promptFix вовсе — 403, ничего не запускается', async () => {
+    const { controller, videoAudit, prompt, generation, req } = build({
+      data: {},
+    });
+    await expect(
+      controller.applyFixAndRetry(req, 's1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(videoAudit.applyFix).not.toHaveBeenCalled();
+    expect(prompt.approvePrompt).not.toHaveBeenCalled();
+    expect(generation.generateVideo).not.toHaveBeenCalled();
+  });
+
+  it('аудит есть, но без promptFix (чистый вердикт) — тоже 403', async () => {
+    const { controller, req } = build({
+      data: { videoAudit: { history: [{ auditId: 'a1' }] } },
+    });
+    await expect(
+      controller.applyFixAndRetry(req, 's1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('три шага по порядку: применить фикс → одобрить → перегенерировать', async () => {
+    const { controller, videoAudit, prompt, generation, req } = build(
+      withAudit(),
+    );
+    const order: string[] = [];
+    videoAudit.applyFix.mockImplementation(async () => {
+      order.push('applyFix');
+      return { prompt: {}, state: {} };
+    });
+    prompt.approvePrompt.mockImplementation(async () => {
+      order.push('approvePrompt');
+      return {};
+    });
+    generation.generateVideo.mockImplementation(async () => {
+      order.push('generateVideo');
+      return {};
+    });
+
+    await controller.applyFixAndRetry(req, 's1');
+
+    expect(order).toEqual(['applyFix', 'approvePrompt', 'generateVideo']);
+  });
+
+  it('берёт auditId САМОГО СВЕЖЕГО аудита (первый в history), не первый по времени', async () => {
+    const { controller, videoAudit, req } = build({
+      data: {
+        videoAudit: {
+          history: [
+            { auditId: 'newest', promptFix: { suggestedText: 'x' } },
+            { auditId: 'older', promptFix: { suggestedText: 'y' } },
+          ],
+        },
+        generatedVideo: {},
+      },
+    });
+    await controller.applyFixAndRetry(req, 's1');
+    expect(videoAudit.applyFix).toHaveBeenCalledWith('s1', {
+      auditId: 'newest',
+    });
+  });
+
+  it('перегенерация — с тем же качеством/форматом, что были у проваленной/исходной записи', async () => {
+    const { controller, generation, req } = build(withAudit());
+    await controller.applyFixAndRetry(req, 's1');
+    expect(generation.generateVideo).toHaveBeenCalledWith(
+      's1',
+      'standard',
+      '9:16',
+    );
+  });
+
+  it('успешный прогон возвращает свежую сводку сессии', async () => {
+    const { controller, adminPanel, req } = build(withAudit());
+    const result = await controller.applyFixAndRetry(req, 's1');
+    expect(adminPanel.getSession).toHaveBeenCalledWith('s1');
+    expect(result).toEqual({ sessionId: 's1' });
   });
 });
