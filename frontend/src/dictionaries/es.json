@@ -323,7 +323,8 @@
       "characterReplacement": "Sustitución de personajes en la foto",
       "customAspectRatio": "Cualquier formato de imagen",
       "fullQualityVideo": "Modelo Veo completo",
-      "voiceCloning": "Clonar tu propia voz"
+      "voiceCloning": "Clonar tu propia voz",
+      "voiceDub": "Doblaje (reemplazo completo de la voz de Veo)"
     },
     "legalNotePrefix": "Antes de pagar, revisa:"
   },

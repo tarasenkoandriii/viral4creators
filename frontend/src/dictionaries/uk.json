@@ -323,7 +323,8 @@
       "characterReplacement": "Заміна персонажів фото",
       "customAspectRatio": "Будь-який формат кадру",
       "fullQualityVideo": "Повна модель Veo",
-      "voiceCloning": "Клонування власного голосу"
+      "voiceCloning": "Клонування власного голосу",
+      "voiceDub": "Дубляж (повна заміна голосу Veo)"
     },
     "legalNotePrefix": "Перед оплатою ознайомтесь:"
   },

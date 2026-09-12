@@ -323,7 +323,8 @@
       "characterReplacement": "Austausch von Personen im Foto",
       "customAspectRatio": "Beliebiges Seitenverhältnis",
       "fullQualityVideo": "Vollständiges Veo-Modell",
-      "voiceCloning": "Eigene Stimme klonen"
+      "voiceCloning": "Eigene Stimme klonen",
+      "voiceDub": "Synchronisation (Veo-Stimme vollständig ersetzt)"
     },
     "legalNotePrefix": "Vor der Zahlung gelten:"
   },

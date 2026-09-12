@@ -74,6 +74,8 @@ const FEATURE_ORDER: PlanFeature[] = [
   'fullQualityVideo',
   // Этап 73 (TODO п.32): клонирование своего голоса через Resemble AI.
   'voiceCloning',
+  // Доп. запрос владельца продукта: дубляж — премиальный уровень озвучки.
+  'voiceDub',
 ];
 
 function formatDate(iso: string, locale: string): string {
