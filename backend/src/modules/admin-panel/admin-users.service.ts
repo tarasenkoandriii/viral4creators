@@ -268,7 +268,8 @@ export class AdminUsersService {
         // Этап 51 (В-4.4): десять последних сессий без колонки `data`.
         selectSessionSummaries(this.prisma, {
           userId: id,
-          orderBy: 'lastActivityAt',
+          sortBy: 'lastActivityAt',
+          sortDir: 'desc',
           take: 10,
         }),
         this.aiUsage.forUsers([id]),
