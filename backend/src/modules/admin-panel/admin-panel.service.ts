@@ -20,6 +20,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   SessionSummaryRow,
   selectSessionSummaries,
+  countSessionSummaries,
+  SessionSortKey,
+  SortDirection,
 } from '../../common/session-summary';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { Session } from '../../common/types/session.types';
@@ -46,24 +49,41 @@ function summaryFromSlim(row: SessionSummaryRow): SessionSummary {
   return {
     sessionId: row.id,
     status: row.status,
+    generationStatus: row.generationStatus ?? null,
     createdAt: row.createdAt,
     lastActivityAt: row.lastActivityAt,
     userId: row.userId,
+    ownerPlan: row.ownerPlan ?? null,
+    ownerUsername: row.ownerUsername ?? null,
+    ownerFirstName: row.ownerFirstName ?? null,
     productName: row.productName ?? null,
     hasGeneratedVideo: Boolean(row.downloadUrl),
     downloadUrl: row.downloadUrl ?? null,
+    quality: row.quality ?? null,
+    voiceMode: row.voiceMode ?? null,
   };
 }
 
 export interface SessionSummary {
   sessionId: string;
   status: string;
+  /** `Session.generationStatus` (этап 51) — статус самого рендера,
+   * отдельно от статуса сессии в целом. */
+  generationStatus: string | null;
   createdAt: Date;
   lastActivityAt: Date;
   userId: string | null;
+  /** Тариф владельца на момент запроса — `null` у анонимных сессий. */
+  ownerPlan: string | null;
+  ownerUsername: string | null;
+  ownerFirstName: string | null;
   productName: string | null;
   hasGeneratedVideo: boolean;
   downloadUrl: string | null;
+  /** 'fast' | 'standard' — качество рендера, если генерация была. */
+  quality: string | null;
+  /** 'veo' | 'voiceover' | 'dub' — режим озвучки бренда в снимке сессии. */
+  voiceMode: string | null;
 }
 
 export interface SessionListResult {
@@ -292,19 +312,39 @@ export class AdminPanelService {
 
   async listSessions(opts: {
     status?: string;
+    quality?: string;
+    voiceMode?: string;
+    plan?: string;
+    createdFrom?: Date;
+    createdTo?: Date;
+    search?: string;
+    sortBy: SessionSortKey;
+    sortDir: SortDirection;
     page: number;
     pageSize: number;
   }): Promise<SessionListResult> {
-    const where = opts.status ? { status: opts.status } : {};
+    const filter = {
+      status: opts.status,
+      quality: opts.quality,
+      voiceMode: opts.voiceMode,
+      plan: opts.plan,
+      createdFrom: opts.createdFrom,
+      createdTo: opts.createdTo,
+      search: opts.search,
+    };
     const [rows, total] = await Promise.all([
       // Этап 51 (В-4.4): без колонки `data` — см. common/session-summary.ts.
       selectSessionSummaries(this.prisma, {
-        status: opts.status,
-        orderBy: 'createdAt',
+        ...filter,
+        sortBy: opts.sortBy,
+        sortDir: opts.sortDir,
         skip: (opts.page - 1) * opts.pageSize,
         take: opts.pageSize,
       }),
-      this.prisma.session.count({ where }),
+      // Тот же фильтр, что у выборки (не отдельный ORM `where`) — иначе
+      // счётчик и список могут разойтись при первом же новом фильтре,
+      // который забудут добавить в оба места.
+      countSessionSummaries(this.prisma, filter),
     ]);
 
     return {
@@ -684,9 +724,16 @@ export class AdminPanelService {
     return summaryFromSlim({
       id: row.id,
       status: row.status,
+      generationStatus: row.generationStatus,
       createdAt: row.createdAt,
       lastActivityAt: row.lastActivityAt,
       userId: row.userId,
+      // Однострочная деталь сессии не джойнит `users` (см.
+      // session-summary.ts — джойн существует ради списка): у оператора
+      // здесь и так есть `userId` и `data` целиком, если понадобится тариф.
+      ownerPlan: null,
+      ownerUsername: null,
+      ownerFirstName: null,
       productName:
         (
           (row.data as Record<string, unknown>)?.productInformation as
@@ -699,6 +746,18 @@ export class AdminPanelService {
             | { downloadUrl?: string }
             | undefined
         )?.downloadUrl ?? null,
+      quality:
+        (
+          (row.data as Record<string, unknown>)?.generatedVideo as
+            | { quality?: string }
+            | undefined
+        )?.quality ?? null,
+      voiceMode:
+        (
+          (row.data as Record<string, unknown>)?.brandManifestSnapshot as
+            | { voiceMode?: string }
+            | undefined
+        )?.voiceMode ?? null,
     });
   }
 }

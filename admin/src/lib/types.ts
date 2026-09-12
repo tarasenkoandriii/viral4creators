@@ -8,15 +8,24 @@ export interface AdminMe {
   isOperator: boolean;
 }
 
+export type SessionSortKey = 'createdAt' | 'lastActivityAt' | 'status' | 'plan';
+export type SortDirection = 'asc' | 'desc';
+
 export interface SessionSummary {
   sessionId: string;
   status: string;
+  generationStatus: string | null;
   createdAt: string;
   lastActivityAt: string;
   userId: string | null;
+  ownerPlan: string | null;
+  ownerUsername: string | null;
+  ownerFirstName: string | null;
   productName: string | null;
   hasGeneratedVideo: boolean;
   downloadUrl: string | null;
+  quality: string | null;
+  voiceMode: string | null;
 }
 
 export interface SessionListResult {

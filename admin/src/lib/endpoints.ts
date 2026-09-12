@@ -11,6 +11,8 @@ import type {
   LibraryVisibility,
   SessionListResult,
   SessionDetail,
+  SessionSortKey,
+  SortDirection,
   TelemetryResult,
   EnvSettingsResult,
   VoiceoverProviderKey,
@@ -73,7 +75,21 @@ export function getMe() {
 
 // ── Сессии (backend/src/modules/admin-panel) ──
 
-export function listSessions(params: { status?: string; page?: number; pageSize?: number } = {}) {
+export function listSessions(
+  params: {
+    status?: string;
+    quality?: string;
+    voiceMode?: string;
+    plan?: string;
+    createdFrom?: string;
+    createdTo?: string;
+    search?: string;
+    sortBy?: SessionSortKey;
+    sortDir?: SortDirection;
+    page?: number;
+    pageSize?: number;
+  } = {}
+) {
   return apiGet<SessionListResult>('/admin/sessions', params);
 }
 

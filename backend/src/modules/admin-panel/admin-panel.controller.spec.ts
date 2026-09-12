@@ -48,11 +48,21 @@ function build() {
     getWorkflowCohortConversion: jest
       .fn()
       .mockResolvedValue({ cohort: 'stub' }),
+    listSessions: jest.fn().mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 20,
+    }),
   };
   // Остальные семь зависимостей контроллера не участвуют ни в одном из
   // двух проверяемых маршрутов — им намеренно ничего не подставляем
   // (реальный вызов через них бросил бы TypeError, что и подтверждает,
   // что тест не задевает чужую логику).
+  const voiceoverSettings = {
+    get: jest.fn(),
+    setDefault: jest.fn(),
+  };
   const controller = new AdminPanelController(
     adminPanel as any,
     undefined as any,
@@ -62,9 +72,10 @@ function build() {
     undefined as any,
     undefined as any,
     undefined as any,
+    voiceoverSettings as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
-  return { controller, adminPanel, req };
+  return { controller, adminPanel, voiceoverSettings, req };
 }
 
 describe('AdminPanelController — /admin/workflow-funnel*', () => {
@@ -149,5 +160,117 @@ describe('AdminPanelController — /admin/workflow-funnel*', () => {
       controller.workflowFunnelCohortConversion(req, 'month'),
     ).rejects.toThrow(ForbiddenException);
     expect(adminPanel.getWorkflowCohortConversion).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPanelController — GET /admin/sessions (доп. запрос владельца продукта: сортировки и фильтры по колонкам)', () => {
+  it('требует assertOperator до обращения к данным', async () => {
+    const { controller, adminPanel, req } = build();
+    const callOrder: string[] = [];
+    adminPanel.assertOperator.mockImplementation(async () => {
+      callOrder.push('assertOperator');
+    });
+    adminPanel.listSessions.mockImplementation(async () => {
+      callOrder.push('listSessions');
+      return { items: [], total: 0, page: 1, pageSize: 20 };
+    });
+
+    await controller.listSessions(req);
+
+    expect(callOrder).toEqual(['assertOperator', 'listSessions']);
+  });
+
+  it('валидные фильтры и сортировка передаются как есть', async () => {
+    const { controller, adminPanel, req } = build();
+    await controller.listSessions(
+      req,
+      'error',
+      'standard',
+      'dub',
+      'PREMIUM',
+      '2026-09-01',
+      '2026-09-10',
+      ' anna ',
+      'plan',
+      'asc',
+      '2',
+      '50',
+    );
+    expect(adminPanel.listSessions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'error',
+        quality: 'standard',
+        voiceMode: 'dub',
+        plan: 'PREMIUM',
+        search: 'anna',
+        sortBy: 'plan',
+        sortDir: 'asc',
+        page: 2,
+        pageSize: 50,
+      }),
+    );
+    const call = adminPanel.listSessions.mock.calls[0][0];
+    expect(call.createdFrom).toBeInstanceOf(Date);
+    expect(call.createdTo).toBeInstanceOf(Date);
+  });
+
+  it('мусорные voiceMode/plan/sortBy/sortDir тихо отбрасываются — не 400', async () => {
+    const { controller, adminPanel, req } = build();
+    await controller.listSessions(
+      req,
+      undefined,
+      undefined,
+      'not-a-mode',
+      'GOLD',
+      undefined,
+      undefined,
+      undefined,
+      'unknown-column',
+      'sideways',
+    );
+    expect(adminPanel.listSessions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        voiceMode: undefined,
+        plan: undefined,
+        sortBy: 'createdAt',
+        sortDir: 'desc',
+      }),
+    );
+  });
+
+  it('невалидная дата отбрасывается, а не падает', async () => {
+    const { controller, adminPanel, req } = build();
+    await controller.listSessions(
+      req,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'не дата',
+    );
+    expect(adminPanel.listSessions).toHaveBeenCalledWith(
+      expect.objectContaining({ createdFrom: undefined }),
+    );
+  });
+
+  it('page/pageSize сохраняют прежние границы (минимум 1, максимум 100)', async () => {
+    const { controller, adminPanel, req } = build();
+    await controller.listSessions(
+      req,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      '0',
+      '9999',
+    );
+    expect(adminPanel.listSessions).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, pageSize: 100 }),
+    );
   });
 });

@@ -32,9 +32,23 @@ import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { VOICEOVER_PROVIDER_KEYS } from '../tts/default-tts-provider';
-import { PlanId, PLAN_IDS } from '../../common/plans';
+import { PlanId, PLAN_IDS, isPlanId } from '../../common/plans';
+import { isVoiceMode } from '../../common/voice-mode';
+import {
+  isSessionSortKey,
+  isSortDirection,
+} from '../../common/session-summary';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { pricingTable, PRICING_VERSION } from '../../common/ai-pricing';
+
+/** `undefined` — не задан; `null` — задан, но мусор (не портит, а просто
+ * не фильтрует по нему, тот же принцип терпимости, что у `page`/`pageSize`
+ * ниже: аналитический экран оператора не бросает 400 на кривой query). */
+function parseDateParam(v: string | undefined): Date | undefined {
+  if (!v) return undefined;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
 
 export class PatchAdminUserDto {
   @IsOptional()
@@ -113,12 +127,30 @@ export class AdminPanelController {
   async listSessions(
     @Req() req: AdminAuthenticatedRequest,
     @Query('status') status?: string,
+    @Query('quality') quality?: string,
+    @Query('voiceMode') voiceMode?: string,
+    @Query('plan') plan?: string,
+    @Query('createdFrom') createdFrom?: string,
+    @Query('createdTo') createdTo?: string,
+    @Query('search') search?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortDir') sortDir?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.adminPanel.listSessions({
       status,
+      // Мусорное/неизвестное значение фильтра — тот же принцип, что у
+      // sortBy/sortDir ниже: тихо не фильтровать по нему, а не 400.
+      quality: quality?.trim() || undefined,
+      voiceMode: isVoiceMode(voiceMode) ? voiceMode : undefined,
+      plan: isPlanId(plan) ? plan : undefined,
+      createdFrom: parseDateParam(createdFrom),
+      createdTo: parseDateParam(createdTo),
+      search: search?.trim() || undefined,
+      sortBy: isSessionSortKey(sortBy) ? sortBy : 'createdAt',
+      sortDir: isSortDirection(sortDir) ? sortDir : 'desc',
       page: Math.max(parseInt(page ?? '1', 10) || 1, 1),
       pageSize: Math.min(
         Math.max(parseInt(pageSize ?? '20', 10) || 20, 1),

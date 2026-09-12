@@ -141,6 +141,25 @@ export function TermsGate({ onAccepted }: { onAccepted: () => void }) {
       >
         {dict.termsGate.submit}
       </Button>
+
+      {/* Доп. запрос владельца продукта: та же реферальная ссылка Claude,
+          что в подвале (`App.tsx`) — на самом первом экране тоже. Тот же
+          env (`VITE_CLAUDE_REFERRAL_URL`), тот же текст словаря
+          (`footer.madeWithClaude`) — вторая копия того же перевода была
+          бы лишней. */}
+      <div className="mt-3 text-center text-[11px] text-silver-400">
+        <a
+          href={
+            import.meta.env.VITE_CLAUDE_REFERRAL_URL ||
+            'https://claude.ai/referral/P7cQCOjbvg?s=android'
+          }
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+        >
+          {dict.footer.madeWithClaude}
+        </a>
+      </div>
     </Card>
   );
 }

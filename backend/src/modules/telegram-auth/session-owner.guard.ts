@@ -14,7 +14,7 @@
  *     библиотеки владельца сессии;
  *   - `POST /api/sessions/:id/{analysis,prompt,generate,audit,relevance}`
  *     — платные вызовы за счёт ЧУЖОГО дневного бюджета (у Premium это до
- *     $30 в сутки);
+ *     $100 в сутки);
  *   - `POST /api/sessions/:id/video/upload-url` — сброс кастинга и
  *     выбора сцен чужой сессии плюс presigned PUT в чужой префикс.
  *

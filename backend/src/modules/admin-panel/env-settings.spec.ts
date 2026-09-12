@@ -310,7 +310,7 @@ describe('getEnvSettings — режимы и деньги (§23, §26)', () => {
     // Не заданный потолок показывает умолчание из того же кода, который
     // его и применяет.
     expect(find(results, 'DAILY_SPEND_LIMIT_USD_PREMIUM').value).toBe(
-      '$30 в сутки',
+      '$100 в сутки',
     );
   });
 
