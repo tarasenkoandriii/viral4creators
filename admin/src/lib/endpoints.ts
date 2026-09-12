@@ -117,14 +117,14 @@ export function pollSessionStatus(id: string) {
 }
 
 /** Доп. запрос владельца продукта: проверка на артефакты прямо из
- * админки — та же кнопка, что видит пользователь на готовом ролике.
- * Специально НЕ `/admin/sessions/...` — это публичный, «сессия — сама
- * себе пропуск» маршрут (`sessions/:id/audit`), и результат пишется в
- * ту же `Session.data.videoAudit`, которую читает собственный визард
- * пользователя (`GET /sessions/:id/audit`) — клиенту он виден без
- * какой-либо отдельной синхронизации. */
+ * админки. Идёт через `/admin/sessions/:id/audit`, НЕ через публичный
+ * `/sessions/:id/audit` — тот стоит за `SessionOwnerGuard` и требует
+ * Telegram-личность владельца сессии, которой у оператора нет и быть
+ * не может (см. доккомментарий `AdminGenerationRetryController`).
+ * Результат при этом всё равно виден клиенту: адмінский маршрут пишет
+ * в ту же `Session.data.videoAudit`, что читает визард пользователя. */
 export function runVideoAudit(sessionId: string) {
-  return apiPost<AuditStateView>(`/sessions/${sessionId}/audit`);
+  return apiPost<AuditStateView>(`/admin/sessions/${sessionId}/audit`);
 }
 
 export function getTelemetry() {

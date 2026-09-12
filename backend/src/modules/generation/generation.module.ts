@@ -6,6 +6,7 @@ import { StorageModule } from '../storage/storage.module';
 import { SharedVideoModule } from '../shared-video/shared-video.module';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
+import { VideoAuditModule } from '../video-audit/video-audit.module';
 
 /**
  * GenerationModule handles video generation operations.
@@ -14,15 +15,22 @@ import { AdminPanelModule } from '../admin-panel/admin-panel.module';
  * созданной по ссылке шеринга (`session.sharedFromPageId`), сервис
  * бампает счётчик конверсии страницы-источника.
  *
- * `AdminAuthModule`/`AdminPanelModule` — ради `AdminGenerationRetryController`
- * (доп. запрос владельца продукта: кнопка повтора провалившегося
- * рендера прямо из админки). Импорт односторонний — см. доккомментарий
- * самого контроллера за тем, почему это не сделано наоборот
- * (`AdminPanelModule` не может импортировать этот модуль без цикла
- * через `SharedVideoModule`).
+ * `AdminAuthModule`/`AdminPanelModule`/`VideoAuditModule` — ради
+ * `AdminGenerationRetryController` (доп. запрос владельца продукта:
+ * кнопка повтора рендера и проверки на артефакты прямо из админки).
+ * Импорт односторонний — см. доккомментарий самого контроллера за тем,
+ * почему это не сделано наоборот (`AdminPanelModule` не может
+ * импортировать этот модуль без цикла через `SharedVideoModule`).
+ * `VideoAuditModule` тянет только `StorageModule` — цикла не создаёт.
  */
 @Module({
-  imports: [StorageModule, SharedVideoModule, AdminAuthModule, AdminPanelModule],
+  imports: [
+    StorageModule,
+    SharedVideoModule,
+    AdminAuthModule,
+    AdminPanelModule,
+    VideoAuditModule,
+  ],
   controllers: [GenerationController, AdminGenerationRetryController],
   providers: [GenerationService],
   exports: [GenerationService],

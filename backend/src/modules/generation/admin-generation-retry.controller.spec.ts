@@ -14,16 +14,25 @@ function build(sessionRow: { data: unknown } | null) {
     generateVideo: jest.fn().mockResolvedValue({ status: GenerationStatus.PROCESSING }),
     getVideoStatus: jest.fn().mockResolvedValue({ status: GenerationStatus.PROCESSING }),
   };
+  const videoAudit = {
+    run: jest.fn().mockResolvedValue({
+      history: [{ verdict: 'clean', summary: 'ок' }],
+      appliedFixes: 0,
+      limit: 5,
+      overLimit: false,
+    }),
+  };
   const prisma = {
     session: { findUnique: jest.fn().mockResolvedValue(sessionRow) },
   };
   const controller = new AdminGenerationRetryController(
     adminPanel as any,
     generation as any,
+    videoAudit as any,
     prisma as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
-  return { controller, adminPanel, generation, prisma, req };
+  return { controller, adminPanel, generation, videoAudit, prisma, req };
 }
 
 describe('AdminGenerationRetryController', () => {
@@ -112,5 +121,38 @@ describe('AdminGenerationRetryController.pollStatus (без него запущ�
     expect(generation.getVideoStatus).toHaveBeenCalledWith('s1');
     expect(adminPanel.getSession).toHaveBeenCalledWith('s1');
     expect(result).toEqual({ sessionId: 's1' });
+  });
+});
+
+describe('AdminGenerationRetryController.audit (доп. запрос владельца продукта: аудит виден и клиенту)', () => {
+  it('требует assertOperator до запуска проверки', async () => {
+    const { controller, adminPanel, videoAudit, req } = build({ data: {} });
+    const order: string[] = [];
+    adminPanel.assertOperator.mockImplementation(async () => {
+      order.push('assertOperator');
+    });
+    videoAudit.run.mockImplementation(async () => {
+      order.push('run');
+      return { history: [], appliedFixes: 0, limit: 5, overLimit: false };
+    });
+    await controller.audit(req, 's1');
+    expect(order).toEqual(['assertOperator', 'run']);
+  });
+
+  it('зовёт VideoAuditService.run напрямую — не публичный /sessions/:id/audit — с пустым DTO', async () => {
+    const { controller, videoAudit, req } = build({ data: {} });
+    await controller.audit(req, 's1');
+    expect(videoAudit.run).toHaveBeenCalledWith('s1', {});
+  });
+
+  it('возвращает состояние аудита как есть — та же запись, что читает визард пользователя', async () => {
+    const { controller, videoAudit, req } = build({ data: {} });
+    const result = await controller.audit(req, 's1');
+    expect(result).toEqual({
+      history: [{ verdict: 'clean', summary: 'ок' }],
+      appliedFixes: 0,
+      limit: 5,
+      overLimit: false,
+    });
   });
 });
