@@ -3,10 +3,18 @@
  *
  * `getVideoStatus` — единственный путь, по которому оплаченный рендер
  * превращается в файл у пользователя: разбор ответа операции Veo, оба
- * `markFailed`, скачивание у Google (двумя разными способами), заливка в
- * наш Blob и передача в постобработку. До этого файла из всего перехода
- * не исполнялась ни одна строка — а именно на этом стыке жили две
- * главные находки первого аудита.
+ * `markFailed`, скачивание у Google и заливка в наш Blob, передача в
+ * постобработку. До этого файла из всего перехода не исполнялась ни одна
+ * строка — а именно на этом стыке жили две главные находки первого аудита.
+ *
+ * Опрос статуса и скачивание идут сырым REST (`fetch`), а не через
+ * `@google/genai`: SDK-метод `operations.getVideosOperation()` рассчитан на
+ * живой объект операции от предыдущего вызова SDK (несёт приватный метод
+ * `_fromAPIResponse`), а сессия между запросами хранит только строку
+ * `veoOperationName` — реконструированный из неё голый `{ name }` этого
+ * метода не имеет, и SDK падает на КАЖДОМ опросе (`TypeError:
+ * operation._fromAPIResponse is not a function`, см. прод-логи). Поэтому
+ * здесь мокается `global.fetch`, а не `@google/genai`.
  *
  * Цена ошибки здесь несимметрична. Рендер уже оплачен: любая ветка,
  * которая по недоразумению помечает его FAILED (например, обычный сетевой
@@ -20,19 +28,13 @@
  */
 
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
-const getVideosOperation = jest.fn();
-const download = jest.fn();
 jest.mock('@google/genai', () => ({
   GoogleGenAI: jest.fn().mockImplementation(() => ({
     models: { generateVideos: jest.fn() },
-    operations: { getVideosOperation },
-    files: { download },
   })),
   VideoGenerationReferenceType: { ASSET: 'ASSET' },
 }));
 
-import { existsSync } from 'fs';
-import { writeFile } from 'fs/promises';
 import { NotFoundException } from '@nestjs/common';
 import {
   GenerationService,
@@ -52,6 +54,15 @@ beforeAll(() => {
 afterAll(() => {
   if (keyBefore === undefined) delete process.env.GOOGLE_GEMINI_API_KEY;
   else process.env.GOOGLE_GEMINI_API_KEY = keyBefore;
+});
+
+const fetchMock = jest.fn();
+const originalFetch = global.fetch;
+beforeAll(() => {
+  global.fetch = fetchMock as unknown as typeof fetch;
+});
+afterAll(() => {
+  global.fetch = originalFetch;
 });
 
 /** Ролик, за который уже заплачено и который ещё рендерится. */
@@ -138,19 +149,32 @@ function build(generatedVideo: GeneratedVideo | null = inFlight()) {
   };
 }
 
-/** Ответ Veo о завершённой операции с инлайновыми байтами. */
-const doneWithBytes = (bytes = 'видео') => ({
+/** Ответ REST `fetch` со статусом операции (`res.json()`), не сама операция. */
+const jsonRes = (body: unknown, ok = true, status = 200) => ({
+  ok,
+  status,
+  json: async () => body,
+});
+
+/** Ответ REST `fetch` на скачивание видеофайла по `uri` (`res.arrayBuffer()`). */
+const bufRes = (bytes: string, ok = true, status = 200) => ({
+  ok,
+  status,
+  arrayBuffer: async () => new TextEncoder().encode(bytes).buffer,
+});
+
+/** Сырой конверт REST-ответа Veo о завершённой операции со ссылкой на файл. */
+const doneWithUri = (uri = 'https://veo.googleapis/tmp/1') => ({
   done: true,
   response: {
-    generatedVideos: [
-      { video: { videoBytes: Buffer.from(bytes).toString('base64') } },
-    ],
+    generateVideoResponse: {
+      generatedSamples: [{ video: { uri } }],
+    },
   },
 });
 
 beforeEach(() => {
-  getVideosOperation.mockReset();
-  download.mockReset();
+  fetchMock.mockReset();
 });
 
 describe('getVideoStatus — рендер ещё идёт', () => {
@@ -159,7 +183,7 @@ describe('getVideoStatus — рендер ещё идёт', () => {
     // uploadBuffer на каждом «ещё рендерится» — это трафик и мусор в
     // хранилище на ровном месте.
     const { svc, sessions, blob, postprod } = build();
-    getVideosOperation.mockResolvedValue({ done: false });
+    fetchMock.mockResolvedValueOnce(jsonRes({ done: false }));
 
     const result = await svc.getVideoStatus('s1');
 
@@ -175,7 +199,7 @@ describe('getVideoStatus — рендер ещё идёт', () => {
     // спокойно дорендерится. Возвращаем прежнее состояние и ждём
     // следующего опроса.
     const { svc, sessions } = build();
-    getVideosOperation.mockRejectedValue(new Error('ECONNRESET'));
+    fetchMock.mockRejectedValueOnce(new Error('ECONNRESET'));
 
     const result = await svc.getVideoStatus('s1');
 
@@ -187,7 +211,7 @@ describe('getVideoStatus — рендер ещё идёт', () => {
   it('без имени операции опрашивать нечего — Veo не дёргается', async () => {
     const { svc } = build(inFlight({ veoOperationName: undefined }));
     const result = await svc.getVideoStatus('s1');
-    expect(getVideosOperation).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(result.status).toBe(GenerationStatus.PROCESSING);
   });
 
@@ -195,11 +219,12 @@ describe('getVideoStatus — рендер ещё идёт', () => {
     // Имя — единственная ниточка к оплаченному рендеру: потеряв её,
     // забрать результат нельзя ничем.
     const { svc } = build();
-    getVideosOperation.mockResolvedValue({ done: false });
+    fetchMock.mockResolvedValueOnce(jsonRes({ done: false }));
     await svc.getVideoStatus('s1');
-    expect(getVideosOperation).toHaveBeenCalledWith({
-      operation: { name: 'operations/veo-1' },
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://generativelanguage.googleapis.com/v1beta/operations/veo-1',
+      { headers: { 'x-goog-api-key': 'test-key' } },
+    );
   });
 });
 
@@ -217,7 +242,7 @@ describe('getVideoStatus — дедлайн рендера (этап 52, В-2.8)
     expect(result.error?.code).toBe('VIDEO_GENERATION_TIMEOUT');
     // Повтор законен: разбор и промпт живы.
     expect(result.error?.retryable).toBe(true);
-    expect(getVideosOperation).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     const state = read() as { status: string };
     expect(state.status).toBe(SessionStatus.ERROR);
   });
@@ -228,7 +253,7 @@ describe('getVideoStatus — дедлайн рендера (этап 52, В-2.8)
         initiatedAt: new Date(Date.now() - RENDER_DEADLINE_MS + 60_000),
       }),
     );
-    getVideosOperation.mockRejectedValue(new Error('ECONNRESET'));
+    fetchMock.mockRejectedValueOnce(new Error('ECONNRESET'));
     const result = await svc.getVideoStatus('s1');
     expect(result.status).toBe(GenerationStatus.PROCESSING);
   });
@@ -252,10 +277,12 @@ describe('getVideoStatus — оба markFailed', () => {
     // Без этой ветки экран остаётся в «идёт рендер» навсегда, а причина
     // отказа (обычно — политика контента) не доходит до пользователя.
     const { svc, read, postprod, blob, creditLedger } = build();
-    getVideosOperation.mockResolvedValue({
-      done: true,
-      error: { message: 'Prompt rejected by safety filters' },
-    });
+    fetchMock.mockResolvedValueOnce(
+      jsonRes({
+        done: true,
+        error: { message: 'Prompt rejected by safety filters' },
+      }),
+    );
 
     const result = await svc.getVideoStatus('s1');
 
@@ -279,10 +306,12 @@ describe('getVideoStatus — оба markFailed', () => {
     // отделяет «Veo сказал done и ничего не дал» от падения по
     // `undefined` где-нибудь в downloadVeoVideo.
     const { svc, read } = build();
-    getVideosOperation.mockResolvedValue({
-      done: true,
-      response: { generatedVideos: [] },
-    });
+    fetchMock.mockResolvedValueOnce(
+      jsonRes({
+        done: true,
+        response: { generateVideoResponse: { generatedSamples: [] } },
+      }),
+    );
 
     const result = await svc.getVideoStatus('s1');
 
@@ -294,21 +323,30 @@ describe('getVideoStatus — оба markFailed', () => {
   it('упавший рендер второй раз не опрашивается', async () => {
     const { svc } = build(inFlight({ status: GenerationStatus.FAILED }));
     const result = await svc.getVideoStatus('s1');
-    expect(getVideosOperation).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(result.status).toBe(GenerationStatus.FAILED);
   });
 });
 
 describe('getVideoStatus — забрать файл у Google и положить к себе', () => {
-  it('инлайновые байты декодируются из base64 и уходят в Blob по пути сессии', async () => {
+  it('операция готова: файл качается по ссылке (REST + ключ) и уходит в Blob по пути сессии', async () => {
     // Путь файла зафиксирован при запуске генерации; залив по другому
     // пути, мы бы получили ролик, которого не найдёт ни уборка сессий,
     // ни метла — то есть вечный мусор с чужой ссылкой в сессии.
     const { svc, blob, read } = build();
-    getVideosOperation.mockResolvedValue(doneWithBytes('содержимое ролика'));
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonRes(doneWithUri('https://veo.googleapis/tmp/1')),
+      )
+      .mockResolvedValueOnce(bufRes('содержимое ролика'));
 
     const result = await svc.getVideoStatus('s1');
 
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://veo.googleapis/tmp/1',
+      { headers: { 'x-goog-api-key': 'test-key' } },
+    );
     expect(blob.uploadBuffer).toHaveBeenCalledWith(
       'sessions/s1/generated.mp4',
       Buffer.from('содержимое ролика'),
@@ -323,76 +361,11 @@ describe('getVideoStatus — забрать файл у Google и положит
     expect(read()).toMatchObject({ status: SessionStatus.VIDEO_COMPLETE });
   });
 
-  it('Veo отдал ссылку вместо байтов: файл качается SDK и читается с диска', async () => {
-    // Вторая, совершенно отдельная ветка получения файла: у ссылки
-    // Google требует свою авторизацию, поэтому качает SDK, а не fetch.
-    const { svc, blob } = build();
-    getVideosOperation.mockResolvedValue({
-      done: true,
-      response: {
-        generatedVideos: [{ video: { uri: 'https://veo.googleapis/tmp/1' } }],
-      },
-    });
-    download.mockImplementation(
-      async ({ downloadPath }: { downloadPath: string }) => {
-        await writeFile(downloadPath, Buffer.from('скачанный ролик'));
-      },
-    );
-
-    const result = await svc.getVideoStatus('s1');
-
-    expect(download).toHaveBeenCalledWith(
-      expect.objectContaining({
-        file: { uri: 'https://veo.googleapis/tmp/1' },
-      }),
-    );
-    expect(blob.uploadBuffer).toHaveBeenCalledWith(
-      'sessions/s1/generated.mp4',
-      Buffer.from('скачанный ролик'),
-      'video/mp4',
-    );
-    expect(result.status).toBe(GenerationStatus.COMPLETE);
-  });
-
-  it('временный файл на диске функции не остаётся ни при успехе, ни при сбое', async () => {
-    // У Vercel-функции диск общий на весь тёплый инстанс и не бесконечный.
-    // Ролик — это мегабайты; забытый `unlink` в `finally` наполняет /tmp
-    // молча, а падать начинают уже соседние запросы.
-    const paths: string[] = [];
-    for (const failing of [false, true]) {
-      const { svc } = build();
-      getVideosOperation.mockResolvedValue({
-        done: true,
-        response: {
-          generatedVideos: [{ video: { uri: 'https://veo.googleapis/tmp/1' } }],
-        },
-      });
-      download.mockImplementation(
-        async ({ downloadPath }: { downloadPath: string }) => {
-          paths.push(downloadPath);
-          await writeFile(downloadPath, Buffer.from('ролик'));
-          if (failing) throw new Error('оборвалось на середине');
-        },
-      );
-
-      await svc.getVideoStatus('s1');
-    }
-
-    expect(paths).toHaveLength(2);
-    for (const p of paths) {
-      expect(existsSync(p)).toBe(false);
-    }
-  });
-
   it('скачивание не удалось — ролик FAILED с кодом VIDEO_DOWNLOAD_FAILED', async () => {
     const { svc, read, postprod } = build();
-    getVideosOperation.mockResolvedValue({
-      done: true,
-      response: {
-        generatedVideos: [{ video: { uri: 'https://veo.googleapis/tmp/1' } }],
-      },
-    });
-    download.mockRejectedValue(new Error('403 от Google'));
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(doneWithUri()))
+      .mockRejectedValueOnce(new Error('403 от Google'));
 
     const result = await svc.getVideoStatus('s1');
 
@@ -410,7 +383,9 @@ describe('getVideoStatus — забрать файл у Google и положит
     // Ролик, помеченный COMPLETE без файла в хранилище, — это ссылка в
     // никуда: пользователь видит «готово» и получает 404 при скачивании.
     const { svc, blob, read, postprod } = build();
-    getVideosOperation.mockResolvedValue(doneWithBytes());
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(doneWithUri()))
+      .mockResolvedValueOnce(bufRes('ролик'));
     blob.uploadBuffer.mockRejectedValue(new Error('blob: quota exceeded'));
 
     const result = await svc.getVideoStatus('s1');
@@ -435,7 +410,9 @@ describe('getVideoStatus — передача в постобработку (§1
         reframePending: true,
       }),
     );
-    getVideosOperation.mockResolvedValue(doneWithBytes());
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(doneWithUri()))
+      .mockResolvedValueOnce(bufRes('ролик'));
 
     const result = await svc.getVideoStatus('s1');
 
@@ -459,7 +436,9 @@ describe('getVideoStatus — передача в постобработку (§1
     // записан в сессию.
     const order: string[] = [];
     const { svc, sessions, postprod } = build();
-    getVideosOperation.mockResolvedValue(doneWithBytes());
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(doneWithUri()))
+      .mockResolvedValueOnce(bufRes('ролик'));
     const realUpdate = sessions.updateSession.getMockImplementation()!;
     sessions.updateSession.mockImplementation(async (id, patch) => {
       order.push('сессия');
@@ -487,7 +466,7 @@ describe('getVideoStatus — передача в постобработку (§1
 
     const result = await svc.getVideoStatus('s1');
 
-    expect(getVideosOperation).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(postprod.poll).toHaveBeenCalledWith('s1', expect.any(Object));
     expect(
       (result as GeneratedVideo & { postProduction: { status: string } })

@@ -28,7 +28,7 @@
  *    способ понять, что композиция поехала или голос лёг не туда.
  */
 
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { BlobService } from '../storage/blob.service';
 import { SessionService } from '../../common/session.service';
 import {
@@ -63,8 +63,7 @@ import {
 } from '../../common/subtitles';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { FfmpegApiService } from './ffmpeg-api.service';
-import { TTS_PROVIDER } from '../tts/tts-provider.token';
-import { TtsProvider } from '../tts/tts.types';
+import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
 import { Session } from '../../common/types/session.types';
@@ -170,7 +169,7 @@ export class PostProductionService {
 
   constructor(
     private readonly api: FfmpegApiService,
-    @Inject(TTS_PROVIDER) private readonly tts: TtsProvider,
+    private readonly ttsResolver: TtsProviderResolverService,
     private readonly blob: BlobService,
     private readonly sessions: SessionService,
     private readonly aiUsage: AiUsageService,
@@ -847,9 +846,15 @@ export class PostProductionService {
     // его — заведомо обречённый платный вызов. `null` — старая запись
     // или голос не выбран — пропускает проверку намеренно (нечего
     // сверять, а не «сверка провалена»).
-    if (work.ttsProvider && work.ttsProvider !== this.tts.providerKey) {
+    //
+    // «Активный на стенде» теперь читается заново на каждый вызов
+    // (доп. запрос владельца продукта: ручной селектор в админке —
+    // см. tts-provider-resolver.service.ts), а не выбирается один раз
+    // при холодном старте функции.
+    const tts = await this.ttsResolver.resolve();
+    if (work.ttsProvider && work.ttsProvider !== tts.providerKey) {
       this.logger.warn(
-        `голос настроен для провайдера ${work.ttsProvider}, активен ${this.tts.providerKey} — синтез пропущен`,
+        `голос настроен для провайдера ${work.ttsProvider}, активен ${tts.providerKey} — синтез пропущен`,
       );
       return {
         patch: {
@@ -861,7 +866,7 @@ export class PostProductionService {
       };
     }
 
-    const outcome = await this.tts.synthesize({
+    const outcome = await tts.synthesize({
       text: work.speech,
       voiceId: work.voiceId,
       model: work.ttsModel,
@@ -884,7 +889,7 @@ export class PostProductionService {
 
     await this.aiUsage.record({
       operation: 'voiceover',
-      model: `${this.tts.providerKey}-tts`,
+      model: `${tts.providerKey}-tts`,
       sessionId,
       characters: outcome.characters,
     });

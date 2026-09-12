@@ -30,6 +30,8 @@ import { AdminMarketingService } from './admin-marketing.service';
 import { AdminCatalogBatchService } from './admin-catalog-batch.service';
 import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
+import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
+import { VOICEOVER_PROVIDER_KEYS } from '../tts/default-tts-provider';
 import { PlanId, PLAN_IDS } from '../../common/plans';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { pricingTable, PRICING_VERSION } from '../../common/ai-pricing';
@@ -61,6 +63,14 @@ export class AdjustCreditDto {
   @IsInt()
   @NotEquals(0)
   delta!: number;
+}
+
+/** Доп. запрос владельца продукта: ручной селектор «Озвучка по
+ * умолчанию» — три допустимых значения, см.
+ * `../tts/default-tts-provider.ts`. */
+export class SetVoiceoverProviderDto {
+  @IsIn(VOICEOVER_PROVIDER_KEYS as unknown as string[])
+  provider!: string;
 }
 
 const WORKFLOW_WINDOWS: WorkflowWindow[] = ['hour', 'day', 'week', 'month'];
@@ -96,6 +106,7 @@ export class AdminPanelController {
     private readonly catalogBatch: AdminCatalogBatchService,
     private readonly abTest: AdminAbTestService,
     private readonly feedImport: AdminFeedImportService,
+    private readonly voiceoverSettings: AdminVoiceoverSettingsService,
   ) {}
 
   @Get('sessions')
@@ -151,6 +162,30 @@ export class AdminPanelController {
   async settings(@Req() req: AdminAuthenticatedRequest) {
     await this.adminPanel.assertOperator(req.userId);
     return this.adminPanel.getEnvSettings();
+  }
+
+  /**
+   * «Озвучка по умолчанию» — доп. запрос владельца продукта: ручной
+   * селектор elevenlabs/resemble/veo на той же вкладке «Настройки»,
+   * рядом со статусом переменных окружения выше. В отличие от
+   * `GET /admin/settings`, это не диагностика, а РЕДАКТИРУЕМАЯ
+   * настройка: `PATCH` меняет активного провайдера немедленно, без
+   * передеплоя (см. `PlatformSettingsService`/
+   * `TtsProviderResolverService`).
+   */
+  @Get('settings/voiceover-provider')
+  async getVoiceoverProvider(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.voiceoverSettings.get();
+  }
+
+  @Patch('settings/voiceover-provider')
+  async setVoiceoverProvider(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetVoiceoverProviderDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.voiceoverSettings.setDefault(dto.provider, req.userId);
   }
 
   // ── Воронка движения по воркфлоу (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md,

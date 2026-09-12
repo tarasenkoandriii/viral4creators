@@ -27,6 +27,7 @@ import {
   ChevronDown,
   ChevronUp,
   Image as ImageIcon,
+  Lock,
   MapPin,
   Pencil,
   Plus,
@@ -68,6 +69,7 @@ import {
   subtitleThemeOptions,
 } from '../../lib/subtitle-theme';
 import { useAsync } from '../../lib/useAsync';
+import { useFeature } from '../../lib/plan-context';
 import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import type { Locale } from '../../lib/i18n';
@@ -309,6 +311,7 @@ function StyleForm({
   onError: (msg: string | null) => void;
 }) {
   const { dict } = useI18n();
+  const dub = useFeature('voiceDub');
   const [title, setTitle] = useState(manifest.title);
   const [styleNotes, setStyleNotes] = useState(manifest.styleNotes ?? '');
   const [voiceNotes, setVoiceNotes] = useState(manifest.voiceNotes ?? '');
@@ -449,7 +452,14 @@ function StyleForm({
               },
               {
                 value: 'dub' as VoiceMode,
-                label: dict.manifestScreen.voiceOptionDub,
+                label: dub.allowed ? (
+                  dict.manifestScreen.voiceOptionDub
+                ) : (
+                  <span className="inline-flex items-center gap-1">
+                    <Lock size={9} /> {dict.manifestScreen.voiceOptionDub}
+                  </span>
+                ),
+                disabled: !dub.allowed,
               },
             ]}
           />

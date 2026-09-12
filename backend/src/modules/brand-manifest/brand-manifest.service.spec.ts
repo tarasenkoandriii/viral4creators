@@ -7,7 +7,7 @@ jest.mock('@vercel/blob', () => ({ head: jest.fn() }));
 
 import { head } from '@vercel/blob';
 import { Prisma } from '@prisma/client';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import {
   BrandManifestService,
   characterPhotoPathname,
@@ -100,7 +100,7 @@ function build() {
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const plans = plansMock();
-  const tts = { providerKey: 'elevenlabs' };
+  const tts = { resolve: jest.fn().mockResolvedValue({ providerKey: 'elevenlabs' }) };
   const svc = new BrandManifestService(
     prisma as any,
     blob as any,
@@ -224,6 +224,35 @@ describe('manifests', () => {
     });
   });
 
+  it('доп. запрос владельца продукта: create с voiceMode dub проверяет тариф voiceDub (Premium)', async () => {
+    const { svc, prisma, plans } = build();
+    prisma.brandManifest.create.mockResolvedValue(manifestRow());
+    await svc.create(USER, { title: 'Мой бренд', voiceMode: 'dub' });
+    expect(plans.assertUser).toHaveBeenCalledWith(USER, 'voiceDub');
+  });
+
+  it('voiceMode voiceover/veo при create — тариф voiceDub не спрашивается', async () => {
+    const { svc, prisma, plans } = build();
+    prisma.brandManifest.create.mockResolvedValue(manifestRow());
+    await svc.create(USER, { title: 'Мой бренд', voiceMode: 'voiceover' });
+    expect(plans.assertUser).not.toHaveBeenCalledWith(USER, 'voiceDub');
+  });
+
+  it('тариф не позволяет dub при create — падает раньше записи в базу', async () => {
+    const { svc, prisma, plans } = build();
+    plans.assertUser.mockImplementation(
+      async (_userId: string, feature: string) => {
+        if (feature === 'voiceDub') {
+          throw new ForbiddenException('Дубляж доступен в режиме Premium');
+        }
+      },
+    );
+    await expect(
+      svc.create(USER, { title: 'Мой бренд', voiceMode: 'dub' }),
+    ).rejects.toThrow(/Premium/);
+    expect(prisma.brandManifest.create).not.toHaveBeenCalled();
+  });
+
   it('list/get are scoped to the owner; get 404s on a miss', async () => {
     const { svc, prisma } = build();
     prisma.brandManifest.findMany.mockResolvedValue([]);
@@ -251,6 +280,47 @@ describe('manifests', () => {
     expect(prisma.brandManifest.update.mock.calls[0][0].data).toEqual({
       filters: Prisma.DbNull,
     });
+  });
+
+  it('доп. запрос владельца продукта: update с voiceMode dub тоже проверяет voiceDub — не только create', async () => {
+    const { svc, prisma, plans } = build();
+    prisma.brandManifest.findFirst.mockResolvedValue(manifestRow());
+    await svc.update(USER, 'bm1', { voiceMode: 'dub' });
+    expect(plans.assertUser).toHaveBeenCalledWith(USER, 'voiceDub');
+  });
+
+  it('тариф не позволяет dub при update — падает раньше записи, манифест не трогается', async () => {
+    const { svc, prisma, plans } = build();
+    prisma.brandManifest.findFirst.mockResolvedValue(manifestRow());
+    plans.assertUser.mockImplementation(
+      async (_userId: string, feature: string) => {
+        if (feature === 'voiceDub') {
+          throw new ForbiddenException('Дубляж доступен в режиме Premium');
+        }
+      },
+    );
+    await expect(
+      svc.update(USER, 'bm1', { voiceMode: 'dub' }),
+    ).rejects.toThrow(/Premium/);
+    expect(prisma.brandManifest.update).not.toHaveBeenCalled();
+  });
+
+  it('манифест уже был dub — повторное сохранение не переспрашивает тариф (даунгрейд не блокирует остальные правки)', async () => {
+    const { svc, prisma, plans } = build();
+    prisma.brandManifest.findFirst.mockResolvedValue(
+      manifestRow({ voiceMode: 'dub' }),
+    );
+    prisma.brandManifest.update.mockResolvedValue(
+      manifestRow({ voiceMode: 'dub', styleNotes: 'новый стиль' }),
+    );
+    // Форма шлёт текущий voiceMode при каждом сохранении, не только
+    // когда его действительно поменяли — пользователь мог уйти с
+    // Premium и просто правит стиль.
+    await svc.update(USER, 'bm1', {
+      voiceMode: 'dub',
+      styleNotes: 'новый стиль',
+    });
+    expect(plans.assertUser).not.toHaveBeenCalledWith(USER, 'voiceDub');
   });
 
   it('remove checks ownership then deletes (cascade/SetNull is the DB’s job)', async () => {

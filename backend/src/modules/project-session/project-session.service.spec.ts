@@ -63,13 +63,15 @@ function build(overrides: { item?: unknown; sessionRows?: unknown[] } = {}) {
     getSession: jest.fn(),
     updateSession: jest.fn(),
   };
-  const tts = { providerKey: 'elevenlabs' };
+  const tts = { resolve: jest.fn().mockResolvedValue({ providerKey: 'elevenlabs' }) };
+  const plans = { assertUser: jest.fn().mockResolvedValue(undefined) };
   const service = new ProjectSessionService(
     prisma as never,
     sessions as never,
     tts as never,
+    plans as never,
   );
-  return { service, prisma, sessions, tts };
+  return { service, prisma, sessions, tts, plans };
 }
 
 describe('ProjectSessionService.createFromItem', () => {
@@ -288,6 +290,80 @@ describe('ProjectSessionService.updateSnapshot', () => {
       select: { id: true },
     });
     expect(result.ttsProvider).toBe('resemble');
+  });
+
+  it('доп. запрос владельца продукта: voiceMode dub проверяет тариф voiceDub (Premium)', async () => {
+    const { service, sessions, plans } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      userId: 'u1',
+      brandManifestSnapshot: snapshot,
+    });
+    sessions.updateSession.mockImplementation(
+      async (
+        _id: string,
+        u: { brandManifestSnapshot: BrandManifestSnapshot },
+      ) => ({ sessionId: 's1', brandManifestSnapshot: u.brandManifestSnapshot }),
+    );
+    await service.updateSnapshot('s1', { voiceMode: 'dub' });
+    expect(plans.assertUser).toHaveBeenCalledWith('u1', 'voiceDub');
+  });
+
+  it('voiceMode voiceover/veo — тариф voiceDub не спрашивается вовсе', async () => {
+    const { service, sessions, plans } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      userId: 'u1',
+      brandManifestSnapshot: snapshot,
+    });
+    sessions.updateSession.mockImplementation(
+      async (
+        _id: string,
+        u: { brandManifestSnapshot: BrandManifestSnapshot },
+      ) => ({ sessionId: 's1', brandManifestSnapshot: u.brandManifestSnapshot }),
+    );
+    await service.updateSnapshot('s1', { voiceMode: 'voiceover' });
+    expect(plans.assertUser).not.toHaveBeenCalledWith('u1', 'voiceDub');
+  });
+
+  it('снимок уже был dub — повторное сохранение не переспрашивает тариф (даунгрейд не блокирует остальные правки)', async () => {
+    const { service, sessions, plans } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      userId: 'u1',
+      brandManifestSnapshot: { ...snapshot, voiceMode: 'dub' },
+    });
+    sessions.updateSession.mockImplementation(
+      async (
+        _id: string,
+        u: { brandManifestSnapshot: BrandManifestSnapshot },
+      ) => ({ sessionId: 's1', brandManifestSnapshot: u.brandManifestSnapshot }),
+    );
+    // Правит другое поле, voiceMode шлётся тем же ('dub'), как всегда
+    // делает форма — но пользователь мог давно уйти с Premium.
+    await service.updateSnapshot('s1', {
+      voiceMode: 'dub',
+      styleNotes: 'новый стиль',
+    });
+    expect(plans.assertUser).not.toHaveBeenCalledWith('u1', 'voiceDub');
+  });
+
+  it('тариф не позволяет dub — ForbiddenException, снимок не пишется', async () => {
+    const { service, sessions, plans } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      userId: 'u1',
+      brandManifestSnapshot: snapshot,
+    });
+    plans.assertUser.mockRejectedValueOnce(
+      Object.assign(new Error('Дубляж доступен в режиме Premium'), {
+        name: 'ForbiddenException',
+      }),
+    );
+    await expect(
+      service.updateSnapshot('s1', { voiceMode: 'dub' }),
+    ).rejects.toThrow(/Premium/);
+    expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 });
 

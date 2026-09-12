@@ -57,6 +57,24 @@ export interface EnvSettingsResult {
   allOk: boolean;
 }
 
+// ── Озвучка по умолчанию (backend/src/modules/admin-panel/admin-voiceover-settings.service.ts) ──
+
+export type VoiceoverProviderKey = 'elevenlabs' | 'resemble' | 'veo';
+
+export interface VoiceoverProviderOptionView {
+  key: VoiceoverProviderKey;
+  /** Настроен ли ключ/аккаунт на этом стенде — у `veo` всегда `true`. */
+  configured: boolean;
+}
+
+export interface VoiceoverProviderSettingsView {
+  active: VoiceoverProviderKey;
+  /** `admin` — задано явно в этом экране; `env-default` — стенд ни разу
+   * не трогал селектор (используется старый TTS_PROVIDER/дефолт). */
+  source: 'admin' | 'env-default';
+  options: VoiceoverProviderOptionView[];
+}
+
 // ── Очередь публикации (backend/src/modules/publication, этап 18) ──
 
 export type PublicationPlatform = 'YOUTUBE' | 'TIKTOK';

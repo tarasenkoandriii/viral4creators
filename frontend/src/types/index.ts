@@ -754,7 +754,10 @@ export type PlanFeature =
   /** Полная модель Veo вместо Lite (§26.1, этап 47). */
   | 'fullQualityVideo'
   /** Клонирование своего голоса через Resemble (этап 73, TODO п.32). */
-  | 'voiceCloning';
+  | 'voiceCloning'
+  /** Дубляж (voiceMode: 'dub') — полная замена звука Veo своим голосом,
+   * доп. запрос владельца продукта: премиальный уровень озвучки. */
+  | 'voiceDub';
 
 export interface PlanDefinition {
   id: PlanId;

@@ -403,6 +403,25 @@ function App() {
           >
             {dict.footer.credits}
           </button>
+          <span className="mx-1.5 opacity-40">·</span>
+          {/* Доп. запрос владельца продукта: реферальная ссылка Claude —
+              ссылка в env (`VITE_CLAUDE_REFERRAL_URL`), а не зашита в код:
+              реферальный код можно сменить без правки исходников. Фоллбек —
+              тот же адрес, что дал владелец продукта, на случай, если
+              переменную забыли задать на стенде. Обычная ссылка, а не
+              `navigate()`: адрес внешний (claude.ai), открывается в новой
+              вкладке — уводить пользователя со страницы было бы враждебно. */}
+          <a
+            href={
+              import.meta.env.VITE_CLAUDE_REFERRAL_URL ||
+              'https://claude.ai/referral/P7cQCOjbvg?s=android'
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+          >
+            {dict.footer.madeWithClaude}
+          </a>
         </footer>
       </div>
     </PlanContext.Provider>

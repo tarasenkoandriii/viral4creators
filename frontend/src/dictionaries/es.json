@@ -48,7 +48,8 @@
     "terms": "Términos",
     "plans": "Planes",
     "channels": "Canales",
-    "credits": "Créditos"
+    "credits": "Créditos",
+    "madeWithClaude": "Hecho con Claude — semana gratis"
   },
   "notFound": {
     "title": "Página no encontrada",
@@ -86,9 +87,9 @@
   },
   "voiceMode": {
     "hints": {
-      "veo": "El propio modelo sintetiza el habla a partir de las líneas del prompt. No hay nada que configurar, pero la voz es distinta cada vez.",
-      "voiceover": "La voz elegida lee las líneas mientras el sonido original del clip queda de fondo — se conservan la música y el ambiente.",
-      "dub": "La voz elegida lee las líneas y el sonido del clip se reemplaza por completo. Útil si el modelo terminó hablando con su propia voz."
+      "veo": "El propio modelo sintetiza el habla a partir de las líneas del prompt. No hay nada que configurar, pero la voz es distinta cada vez. Gratis — incluido en cada generación.",
+      "voiceover": "La voz elegida lee las líneas mientras el sonido original del clip queda de fondo — se conservan la música y el ambiente. Desde el plan Standard: se factura por carácter, además del coste del render.",
+      "dub": "La voz elegida lee las líneas y el sonido del clip se reemplaza por completo. Útil si el modelo terminó hablando con su propia voz. Plan Premium: se factura por carácter, además del coste del render."
     }
   },
   "subtitleTheme": {
@@ -583,9 +584,9 @@
     "voiceNotesHint": "Carácter de la voz, ritmo, estilo, restricciones: el texto pasará al prompt. El idioma de las réplicas se elige en el paso «Producto».",
     "voiceNotesPlaceholder": "Voz femenina tranquila, 30+, amistosa, sin jerga ni exclamaciones; ritmo medio…",
     "voiceLabel": "Cómo doblar",
-    "voiceOptionVeo": "Voz de Veo",
-    "voiceOptionVoiceover": "Voz en off",
-    "voiceOptionDub": "Doblaje",
+    "voiceOptionVeo": "Voz de Veo (gratis)",
+    "voiceOptionVoiceover": "Voz en off (standard)",
+    "voiceOptionDub": "Doblaje (premium)",
     "cameraMoveLabel": "Movimiento de cámara",
     "subtitlesLabel": "Subtítulos",
     "subtitlesOptionOff": "Desactivados",
@@ -706,9 +707,9 @@
     "voicePlaceholder": "Voz femenina tranquila, sin jerga…",
     "voiceModeLabel": "Con qué doblar este video",
     "voiceModeOptions": {
-      "veo": "Voz de Veo",
-      "voiceover": "Voz en off",
-      "dub": "Doblaje"
+      "veo": "Voz de Veo (gratis)",
+      "voiceover": "Voz en off (standard)",
+      "dub": "Doblaje (premium)"
     },
     "cameraMoveLabel": "Movimiento de cámara",
     "subtitlesModeLabel": "Subtítulos para este video",

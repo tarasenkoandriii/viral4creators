@@ -17,7 +17,6 @@ import {
   Body,
   Controller,
   Get,
-  Inject,
   Post,
   Query,
   Req,
@@ -27,8 +26,8 @@ import {
   IdentifiedRequest,
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
-import { TTS_PROVIDER } from './tts-provider.token';
-import { TtsProvider, VoiceOption } from './tts.types';
+import { TtsProviderResolverService } from './tts-provider-resolver.service';
+import { VoiceOption } from './tts.types';
 import { PreviewVoiceRequestDto } from './dto/preview-voice.dto';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
@@ -73,7 +72,7 @@ export const PREVIEWS_PER_DAY = 30;
 @UseGuards(TelegramIdentityGuard)
 export class TtsController {
   constructor(
-    @Inject(TTS_PROVIDER) private readonly tts: TtsProvider,
+    private readonly ttsResolver: TtsProviderResolverService,
     private readonly plans: PlanService,
     private readonly aiUsage: AiUsageService,
     private readonly prisma: PrismaService,
@@ -83,7 +82,8 @@ export class TtsController {
   async voices(
     @Query('language') language?: string,
   ): Promise<VoiceCatalogueResponse> {
-    const configured = this.tts.configured();
+    const tts = await this.ttsResolver.resolve();
+    const configured = tts.configured();
     if (!configured) {
       // Не ошибка и не 500: ненастроенный синтез — штатное состояние
       // стенда, и экран обязан сказать это спокойно.
@@ -91,17 +91,17 @@ export class TtsController {
         configured: false,
         voices: [],
         error: 'озвучка на этом стенде не подключена',
-        provider: this.tts.providerKey,
+        provider: tts.providerKey,
       };
     }
-    const { voices, error } = await this.tts.voices(
+    const { voices, error } = await tts.voices(
       language?.trim() || undefined,
     );
     return {
       configured: true,
       voices: await this.excludeClonedVoices(voices),
       error,
-      provider: this.tts.providerKey,
+      provider: tts.providerKey,
     };
   }
 
@@ -152,7 +152,8 @@ export class TtsController {
       };
     }
 
-    const outcome = await this.tts.synthesize({
+    const tts = await this.ttsResolver.resolve();
+    const outcome = await tts.synthesize({
       text: dto.text,
       voiceId: dto.voiceId ?? null,
       model: dto.model ?? null,
@@ -170,7 +171,7 @@ export class TtsController {
 
     await this.aiUsage.record({
       operation: 'voiceover-preview',
-      model: `${this.tts.providerKey}-tts`,
+      model: `${tts.providerKey}-tts`,
       userId,
       characters: outcome.characters,
     });

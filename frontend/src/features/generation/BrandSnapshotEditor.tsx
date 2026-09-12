@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, Palette } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Lock, Palette } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -37,6 +37,7 @@ import { VoicePicker } from '../brand/VoicePicker';
 import { voiceModeHint } from '../../lib/voice-mode';
 import type { JsonObject } from '../../types/project';
 import { useI18n } from '../../lib/i18n-context';
+import { useFeature } from '../../lib/plan-context';
 
 export function BrandSnapshotEditor({
   sessionId,
@@ -48,6 +49,7 @@ export function BrandSnapshotEditor({
   onSaved: (s: BrandManifestSnapshot) => void;
 }) {
   const { dict } = useI18n();
+  const dub = useFeature('voiceDub');
   const [styleNotes, setStyleNotes] = useState(snapshot.styleNotes ?? '');
   const [voiceNotes, setVoiceNotes] = useState(snapshot.voiceNotes ?? '');
   const [cameraMove, setCameraMove] = useState<CameraMove>(
@@ -186,7 +188,15 @@ export function BrandSnapshotEditor({
               },
               {
                 value: 'dub' as VoiceMode,
-                label: dict.brandSnapshotEditor.voiceModeOptions.dub,
+                label: dub.allowed ? (
+                  dict.brandSnapshotEditor.voiceModeOptions.dub
+                ) : (
+                  <span className="inline-flex items-center gap-1">
+                    <Lock size={9} />{' '}
+                    {dict.brandSnapshotEditor.voiceModeOptions.dub}
+                  </span>
+                ),
+                disabled: !dub.allowed,
               },
             ]}
           />

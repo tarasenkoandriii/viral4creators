@@ -48,7 +48,8 @@
     "terms": "Bedingungen",
     "plans": "Tarife",
     "channels": "Kanäle",
-    "credits": "Guthaben"
+    "credits": "Guthaben",
+    "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis"
   },
   "notFound": {
     "title": "Seite nicht gefunden",
@@ -86,9 +87,9 @@
   },
   "voiceMode": {
     "hints": {
-      "veo": "Das Modell synthetisiert die Sprache selbst anhand der Zeilen im Prompt. Nichts einzustellen, aber die Stimme ist jedes Mal neu.",
-      "voiceover": "Die gewählte Stimme liest die Zeilen, der Originalton des Clips bleibt im Hintergrund — Musik und Atmosphäre bleiben erhalten.",
-      "dub": "Die gewählte Stimme liest die Zeilen, der Ton des Clips wird komplett ersetzt. Nützlich, wenn das Modell doch mit eigener Stimme gesprochen hat."
+      "veo": "Das Modell synthetisiert die Sprache selbst anhand der Zeilen im Prompt. Nichts einzustellen, aber die Stimme ist jedes Mal neu. Kostenlos — in jeder Generierung enthalten.",
+      "voiceover": "Die gewählte Stimme liest die Zeilen, der Originalton des Clips bleibt im Hintergrund — Musik und Atmosphäre bleiben erhalten. Ab Standard: Abrechnung nach Zeichen, zusätzlich zum Rendering.",
+      "dub": "Die gewählte Stimme liest die Zeilen, der Ton des Clips wird komplett ersetzt. Nützlich, wenn das Modell doch mit eigener Stimme gesprochen hat. Premium: Abrechnung nach Zeichen, zusätzlich zum Rendering."
     }
   },
   "subtitleTheme": {
@@ -583,9 +584,9 @@
     "voiceNotesHint": "Stimmcharakter, Tempo, Art, Verbote — der Text fließt in den Prompt ein. Die Sprache der Sprechtexte wird im Schritt „Produkt“ gewählt.",
     "voiceNotesPlaceholder": "Ruhige weibliche Stimme, 30+, freundlich, ohne Slang und Ausrufe; mittleres Tempo…",
     "voiceLabel": "Womit vertonen",
-    "voiceOptionVeo": "Veo-Stimme",
-    "voiceOptionVoiceover": "Voiceover",
-    "voiceOptionDub": "Synchronisation",
+    "voiceOptionVeo": "Veo-Stimme (kostenlos)",
+    "voiceOptionVoiceover": "Voiceover (standard)",
+    "voiceOptionDub": "Synchronisation (premium)",
     "cameraMoveLabel": "Kamerabewegung",
     "subtitlesLabel": "Untertitel",
     "subtitlesOptionOff": "Aus",
@@ -706,9 +707,9 @@
     "voicePlaceholder": "Ruhige weibliche Stimme, kein Slang…",
     "voiceModeLabel": "Womit dieses Video vertont wird",
     "voiceModeOptions": {
-      "veo": "Veo-Stimme",
-      "voiceover": "Voiceover",
-      "dub": "Synchro"
+      "veo": "Veo-Stimme (kostenlos)",
+      "voiceover": "Voiceover (standard)",
+      "dub": "Synchro (premium)"
     },
     "cameraMoveLabel": "Kamerabewegung",
     "subtitlesModeLabel": "Untertitel für dieses Video",

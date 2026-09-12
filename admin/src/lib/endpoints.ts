@@ -13,6 +13,8 @@ import type {
   SessionDetail,
   TelemetryResult,
   EnvSettingsResult,
+  VoiceoverProviderKey,
+  VoiceoverProviderSettingsView,
   PublicationListResult,
   PublicationPrivacy,
   PublicationRequest,
@@ -92,6 +94,18 @@ export function getTelemetry() {
  * пояснение, см. backend/src/modules/admin-panel/env-settings.ts. */
 export function getEnvSettings() {
   return apiGet<EnvSettingsResult>('/admin/settings');
+}
+
+/** «Озвучка по умолчанию» — в отличие от getEnvSettings() выше, это не
+ * диагностика, а редактируемая настройка (см. её PATCH ниже). */
+export function getVoiceoverProviderSettings() {
+  return apiGet<VoiceoverProviderSettingsView>('/admin/settings/voiceover-provider');
+}
+
+export function setVoiceoverProviderDefault(provider: VoiceoverProviderKey) {
+  return apiPatch<VoiceoverProviderSettingsView>('/admin/settings/voiceover-provider', {
+    provider,
+  });
 }
 
 // ── Воронка движения по воркфлоу (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md,

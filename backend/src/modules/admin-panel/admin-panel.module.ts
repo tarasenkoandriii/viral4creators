@@ -9,13 +9,17 @@ import { AdminMarketingService } from './admin-marketing.service';
 import { AdminCatalogBatchService } from './admin-catalog-batch.service';
 import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
+import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 
 @Module({
   // StorageModule — удаление сессии оператором уносит и её файлы (Б-5.9).
   // TelegramStarsService (AdminBillingService.refund(),
   // AdminUsersService.cancelSubscription()) с этапа 64 доступен глобально
   // через TelegramStarsModule (Г-2.2 аудита round4) — импортировать
-  // BillingModule ради него больше не нужно.
+  // BillingModule ради него больше не нужно. ElevenLabsService/
+  // ResembleService/PlatformSettingsService (AdminVoiceoverSettingsService)
+  // доступны так же глобально через TtsModule — импортировать его здесь
+  // не нужно по той же причине.
   imports: [AdminAuthModule, StorageModule],
   controllers: [AdminPanelController],
   providers: [
@@ -29,6 +33,7 @@ import { AdminFeedImportService } from './admin-feed-import.service';
     AdminCatalogBatchService,
     AdminAbTestService,
     AdminFeedImportService,
+    AdminVoiceoverSettingsService,
   ],
   // Суточный отчёт крона берёт телеметрию отсюда (ТЗ §28, этап 45).
   exports: [AdminPanelService],

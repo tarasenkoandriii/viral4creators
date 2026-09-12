@@ -48,7 +48,8 @@
     "terms": "Terms",
     "plans": "Plans",
     "channels": "Channels",
-    "credits": "Credits"
+    "credits": "Credits",
+    "madeWithClaude": "Made with Claude — 1 week free"
   },
   "notFound": {
     "title": "Page not found",
@@ -86,9 +87,9 @@
   },
   "voiceMode": {
     "hints": {
-      "veo": "The model synthesizes speech itself from the lines in the prompt. Nothing to configure, but the voice is different every time.",
-      "voiceover": "The chosen voice reads the lines while the clip's own sound stays underneath — music and atmosphere are kept.",
-      "dub": "The chosen voice reads the lines and the clip's sound is replaced entirely. Use this if the model ended up speaking in its own voice anyway."
+      "veo": "The model synthesizes speech itself from the lines in the prompt. Nothing to configure, but the voice is different every time. Free — included in every render.",
+      "voiceover": "The chosen voice reads the lines while the clip's own sound stays underneath — music and atmosphere are kept. Standard plan and up: billed by character, on top of the render.",
+      "dub": "The chosen voice reads the lines and the clip's sound is replaced entirely. Use this if the model ended up speaking in its own voice anyway. Premium plan: billed by character, on top of the render."
     }
   },
   "subtitleTheme": {
@@ -583,9 +584,9 @@
     "voiceNotesHint": "Voice character, pace, manner, restrictions — this text goes into the prompt. The line language is chosen at the \"Product\" step.",
     "voiceNotesPlaceholder": "Calm female voice, 30+, friendly, no slang or exclamations; medium pace…",
     "voiceLabel": "How to voice it",
-    "voiceOptionVeo": "Veo voice",
-    "voiceOptionVoiceover": "Voiceover",
-    "voiceOptionDub": "Dub",
+    "voiceOptionVeo": "Veo voice (free)",
+    "voiceOptionVoiceover": "Voiceover (standard)",
+    "voiceOptionDub": "Dub (premium)",
     "cameraMoveLabel": "Camera movement",
     "subtitlesLabel": "Subtitles",
     "subtitlesOptionOff": "Off",
@@ -706,9 +707,9 @@
     "voicePlaceholder": "Calm female voice, no slang…",
     "voiceModeLabel": "How to voice this clip",
     "voiceModeOptions": {
-      "veo": "Veo voice",
-      "voiceover": "Voiceover",
-      "dub": "Dub"
+      "veo": "Veo voice (free)",
+      "voiceover": "Voiceover (standard)",
+      "dub": "Dub (premium)"
     },
     "cameraMoveLabel": "Camera move",
     "subtitlesModeLabel": "Subtitles for this video",

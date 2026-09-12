@@ -72,7 +72,18 @@ export type PlanFeature =
    * умолчанию — тот же тариф, что brandManifest (Standard и выше),
    * это МОЖНО пересмотреть отдельно, не трогая эту декларацию типа.
    */
-  | 'voiceCloning';
+  | 'voiceCloning'
+  /**
+   * Режим озвучки `dub` (voice-mode.ts, §15.1) — заменяет звук Veo
+   * целиком, а не микширует его в фон, как `voiceover`. Доп. запрос
+   * владельца продукта: явно более дорогой/премиальный уровень
+   * озвучки, поэтому отдельный признак, а не тот же `brandManifest`
+   * (Standard и выше), которым уже гейтится `voiceover` — сам факт
+   * входа в манифест бренда. `voiceover` дополнительного признака не
+   * получает: он и есть «обычная» озвучка, доступная всем, кому вообще
+   * доступен манифест бренда.
+   */
+  | 'voiceDub';
 
 export interface PlanDefinition {
   id: PlanId;
@@ -105,6 +116,8 @@ const ALL: Record<PlanFeature, boolean> = {
   // Этап 73: тот же тариф, что brandManifest ниже (Standard и выше) —
   // временное решение открытого вопроса §3.6.1, см. доккомментарий типа.
   voiceCloning: true,
+  // По умолчанию доступен (как library) — конкретные тарифы ниже сужают.
+  voiceDub: true,
 };
 
 export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
@@ -125,6 +138,7 @@ export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
       customAspectRatio: false,
       fullQualityVideo: false,
       voiceCloning: false,
+      voiceDub: false,
     },
     aspectRatios: NATIVE_ASPECT_RATIOS,
   },
@@ -132,15 +146,15 @@ export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
     id: 'STANDARD',
     title: 'Standard',
     summary:
-      'Весь функционал сервиса, кроме библиотеки готовых разборов: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра.',
-    features: { ...ALL, library: false },
+      'Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.',
+    features: { ...ALL, library: false, voiceDub: false },
     aspectRatios: [],
   },
   PREMIUM: {
     id: 'PREMIUM',
     title: 'Premium',
     summary:
-      'Всё вместе с библиотекой разборов: готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.',
+      'Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.',
     features: { ...ALL },
     aspectRatios: [],
   },
@@ -161,37 +175,37 @@ const PLAN_SUMMARY: Readonly<Record<SupportedLocale, Record<PlanId, string>>> =
     ru: {
       LITE: 'Разбор референса и генерация ролика в 16:9 или 9:16 — самый короткий путь от примера к результату.',
       STANDARD:
-        'Весь функционал сервиса, кроме библиотеки готовых разборов: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра.',
+        'Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.',
       PREMIUM:
-        'Всё вместе с библиотекой разборов: готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.',
+        'Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.',
     },
     uk: {
       LITE: 'Аналіз референсу та генерація ролика у форматі 16:9 або 9:16 — найкоротший шлях від прикладу до результату.',
       STANDARD:
-        'Весь функціонал сервісу, крім бібліотеки готових розборів: бренд, персонажі, сцени, релевантність, аудит, публікація, будь-які формати кадру.',
+        'Весь функціонал сервісу, крім бібліотеки готових розборів і дубляжу: бренд, персонажі, сцени, релевантність, аудит, публікація, будь-які формати кадру, озвучка власним голосом поверх звуку Veo.',
       PREMIUM:
-        'Все разом із бібліотекою розборів: готові сценарії під аудиторію вашого товару та миттєвий розбір уже бачених роликів.',
+        'Все разом із бібліотекою розборів і дубляжем (повна заміна звуку Veo власним голосом): готові сценарії під аудиторію вашого товару та миттєвий розбір уже бачених роликів.',
     },
     en: {
       LITE: 'Reference analysis and video generation in 16:9 or 9:16 — the shortest path from example to result.',
       STANDARD:
-        'Everything the service offers except the analysis library: brand, characters, scenes, relevance, audit, publishing, any aspect ratio.',
+        "Everything the service offers except the analysis library and dub: brand, characters, scenes, relevance, audit, publishing, any aspect ratio, your own voice mixed over Veo's sound.",
       PREMIUM:
-        "Everything, including the analysis library: ready-made scripts tailored to your product's audience and instant analysis of videos you've already seen.",
+        "Everything, including the analysis library and dub (your own voice fully replacing Veo's sound): ready-made scripts tailored to your product's audience and instant analysis of videos you've already seen.",
     },
     de: {
       LITE: 'Referenzanalyse und Videogenerierung im Format 16:9 oder 9:16 — der kürzeste Weg vom Beispiel zum Ergebnis.',
       STANDARD:
-        'Der gesamte Funktionsumfang außer der Analysebibliothek: Marke, Charaktere, Szenen, Relevanz, Audit, Veröffentlichung, beliebige Seitenverhältnisse.',
+        'Der gesamte Funktionsumfang außer der Analysebibliothek und der Synchronisation: Marke, Charaktere, Szenen, Relevanz, Audit, Veröffentlichung, beliebige Seitenverhältnisse, eigene Stimme über den Veo-Ton gemischt.',
       PREMIUM:
-        'Alles inklusive Analysebibliothek: fertige Skripte für die Zielgruppe Ihres Produkts und sofortige Analyse bereits gesehener Videos.',
+        'Alles inklusive Analysebibliothek und Synchronisation (eigene Stimme ersetzt den Veo-Ton vollständig): fertige Skripte für die Zielgruppe Ihres Produkts und sofortige Analyse bereits gesehener Videos.',
     },
     es: {
       LITE: 'Análisis de referencia y generación de video en 16:9 o 9:16 — el camino más corto del ejemplo al resultado.',
       STANDARD:
-        'Todas las funciones del servicio excepto la biblioteca de análisis: marca, personajes, escenas, relevancia, auditoría, publicación, cualquier relación de aspecto.',
+        'Todas las funciones del servicio excepto la biblioteca de análisis y el doblaje: marca, personajes, escenas, relevancia, auditoría, publicación, cualquier relación de aspecto, tu propia voz mezclada sobre el sonido de Veo.',
       PREMIUM:
-        'Todo junto con la biblioteca de análisis: guiones listos para la audiencia de tu producto y análisis instantáneo de videos ya vistos.',
+        'Todo junto con la biblioteca de análisis y el doblaje (tu propia voz reemplaza por completo el sonido de Veo): guiones listos para la audiencia de tu producto y análisis instantáneo de videos ya vistos.',
     },
   };
 
@@ -250,6 +264,7 @@ export function featureDeniedMessage(feature: PlanFeature): string {
     fullQualityVideo: 'Полная модель Veo',
     avatarLipsync: 'Говорящий AI-аватар (пилот)',
     voiceCloning: 'Клонирование своего голоса',
+    voiceDub: 'Дубляж (полная замена звука Veo своим голосом)',
   };
   return `${what[feature]} доступна в режиме ${need}. Сейчас все режимы бесплатны — переключитесь в настройках режима.`;
 }

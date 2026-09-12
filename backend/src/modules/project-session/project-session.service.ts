@@ -13,11 +13,11 @@
  * future explicit action).
  */
 
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../common/session.service';
-import { TTS_PROVIDER } from '../tts/tts-provider.token';
-import { TtsProvider } from '../tts/tts.types';
+import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
+import { PlanService } from '../plan/plan.service';
 import { Session } from '../../common/types/session.types';
 import { BrandManifestSnapshot } from '../../common/types/brand-manifest.types';
 import {
@@ -62,7 +62,8 @@ export class ProjectSessionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
-    @Inject(TTS_PROVIDER) private readonly tts: TtsProvider,
+    private readonly ttsResolver: TtsProviderResolverService,
+    private readonly plans: PlanService,
   ) {}
 
   /**
@@ -163,6 +164,20 @@ export class ProjectSessionService {
         `Session ${sessionId} has no brand manifest snapshot to edit`,
       );
     }
+    // Доп. запрос владельца продукта: дубляж — премиальный уровень
+    // озвучки (см. тот же гейт в brand-manifest.service.ts). Правка
+    // снимка — тоже активный выбор voiceMode, а не то же самое, что
+    // «манифест уже существует» — проверяем тариф ЗДЕСЬ, а не только
+    // при создании манифеста. Только переход В dub, не пересылку уже
+    // выставленного значения — та же причина, что в
+    // brand-manifest.service.ts: форма шлёт текущий voiceMode при
+    // каждом сохранении.
+    if (
+      dto.voiceMode === 'dub' &&
+      session.brandManifestSnapshot.voiceMode !== 'dub'
+    ) {
+      await this.plans.assertUser(session.userId, 'voiceDub');
+    }
     // Шестой аудит, Е-4.1: тот же дословный дефект и тот же приём, что в
     // brand-manifest.service.ts (см. её доккомментарий) — принадлежит ли
     // voiceId СВОЕМУ клону на Resemble, а не активному на стенде
@@ -176,10 +191,11 @@ export class ProjectSessionService {
             select: { id: true },
           }))
         : false;
+    const tts = await this.ttsResolver.resolve();
     const next = applySnapshotEdit(
       session.brandManifestSnapshot,
       dto,
-      this.tts.providerKey,
+      tts.providerKey,
       isResembleClone,
     );
     const updated = await this.sessions.updateSession(sessionId, {

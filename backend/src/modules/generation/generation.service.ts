@@ -12,14 +12,10 @@ import { FOREIGN_BLOB_URL_MESSAGE, isOwnBlobUrl } from '../../common/blob-url';
 import {
   GoogleGenAI,
   GenerateVideosOperation,
-  Video,
   VideoGenerationReferenceImage,
   VideoGenerationReferenceType,
 } from '@google/genai';
-import { createGeminiClient } from '../../common/gemini-client';
-import * as fs from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
+import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { SessionService } from '../../common/session.service';
 import { PlanService } from '../plan/plan.service';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
@@ -649,17 +645,47 @@ export class GenerationService {
       );
     }
 
-    let operation: GenerateVideosOperation;
+    // Раньше здесь стоял `this.genai.operations.getVideosOperation({
+    // operation: { name: current.veoOperationName } as GenerateVideosOperation })`.
+    // Это ломалось НА КАЖДОМ опросе: `getVideosOperation` рассчитан на
+    // живой объект операции, полученный от предыдущего вызова SDK — тот
+    // объект несёт приватный метод `_fromAPIResponse(...)`, которым SDK
+    // сам себя обновляет по ответу API. Сессия между запросами хранит
+    // только строку `veoOperationName` (это Vercel Function — прежний
+    // живой объект не переживает инстанс, который его вернул), так что
+    // подсунутый литерал `{ name }` этого метода не имеет —
+    // `TypeError: operation._fromAPIResponse is not a function` на
+    // каждый вызов, без единого исключения. Ошибка ловилась ниже и
+    // тихо возвращала `current` — рендер никогда не мог завершиться,
+    // только истечь по `renderExpired` через RENDER_DEADLINE_MS.
+    // Опрашиваем сырой REST — то же самое, что делает официальный
+    // REST-пример в доке Veo (`GET {base}/{operation_name}`), без
+    // зависимости от внутренних (`_`-префиксных) деталей SDK.
+    const apiKey = geminiApiKey();
+    if (!apiKey) {
+      throw new Error(
+        'GEMINI_API_KEY or GOOGLE_GEMINI_API_KEY environment variable is required',
+      );
+    }
+
+    let operation: {
+      done?: boolean;
+      error?: { message?: string };
+      response?: {
+        generateVideoResponse?: {
+          generatedSamples?: Array<{ video?: { uri?: string } }>;
+        };
+      };
+    };
     try {
-      operation = await this.genai.operations.getVideosOperation({
-        // Only `name` is actually needed to address the operation; the
-        // rest of GenerateVideosOperation's fields are optional, so this
-        // structurally satisfies the type without round-tripping the
-        // whole object through session storage.
-        operation: {
-          name: current.veoOperationName,
-        } as GenerateVideosOperation,
-      });
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/${current.veoOperationName}`,
+        { headers: { 'x-goog-api-key': apiKey } },
+      );
+      if (!res.ok) {
+        throw new Error(`Veo operation status HTTP ${res.status}`);
+      }
+      operation = await res.json();
     } catch (error) {
       // Transient network hiccup — report the last known state and let
       // the client's poll loop retry rather than failing the whole job.
@@ -676,15 +702,15 @@ export class GenerationService {
         sessionId,
         current,
         'VIDEO_GENERATION_FAILED',
-        String(
-          operation.error['message'] || 'Veo failed to generate the video',
-        ),
+        String(operation.error.message || 'Veo failed to generate the video'),
         true,
       );
     }
 
-    const video = operation.response?.generatedVideos?.[0]?.video;
-    if (!video) {
+    const videoUri =
+      operation.response?.generateVideoResponse?.generatedSamples?.[0]?.video
+        ?.uri;
+    if (!videoUri) {
       return await this.markFailed(
         sessionId,
         current,
@@ -697,7 +723,7 @@ export class GenerationService {
     let videoBuffer: Buffer;
     let blobUrl: string;
     try {
-      videoBuffer = await this.downloadVeoVideo(video);
+      videoBuffer = await this.downloadVeoVideo(videoUri);
       ({ url: blobUrl } = await this.blobService.uploadBuffer(
         current.pathname,
         videoBuffer,
@@ -741,23 +767,23 @@ export class GenerationService {
   }
 
   /**
-   * Fetch the rendered video's bytes. Veo either inlines them
-   * (`videoBytes`, base64) or returns a temporary Google-hosted `uri` that
-   * has to be downloaded via the SDK (which handles the required auth) —
-   * handle both.
+   * Fetch the rendered video's bytes from Veo's temporary Google-hosted
+   * `uri` (2-day retention). The same API key that starts/polls the
+   * operation authorises the download — same as the official REST
+   * example (`x-goog-api-key` header), no SDK object required.
    */
-  private async downloadVeoVideo(video: Video): Promise<Buffer> {
-    if (video.videoBytes) {
-      return Buffer.from(video.videoBytes, 'base64');
+  private async downloadVeoVideo(uri: string): Promise<Buffer> {
+    const apiKey = geminiApiKey();
+    if (!apiKey) {
+      throw new Error(
+        'GEMINI_API_KEY or GOOGLE_GEMINI_API_KEY environment variable is required',
+      );
     }
-
-    const tmpPath = path.join(os.tmpdir(), `veo-${uuidv4()}.mp4`);
-    try {
-      await this.genai.files.download({ file: video, downloadPath: tmpPath });
-      return await fs.readFile(tmpPath);
-    } finally {
-      await fs.unlink(tmpPath).catch(() => undefined);
+    const res = await fetch(uri, { headers: { 'x-goog-api-key': apiKey } });
+    if (!res.ok) {
+      throw new Error(`Failed to download Veo video: HTTP ${res.status}`);
     }
+    return Buffer.from(await res.arrayBuffer());
   }
 
   private async markFailed(

@@ -35,6 +35,9 @@ describe('матрица режимов (ТЗ §23)', () => {
       'fullQualityVideo',
       // Этап 73: клонирование голоса — тот же тариф, что brandManifest.
       'voiceCloning',
+      // Доп. запрос владельца продукта: дубляж — премиальный уровень
+      // озвучки, LITE его не видит по той же причине, что и остальное.
+      'voiceDub',
     ] as const) {
       expect(planAllows('LITE', f)).toBe(false);
     }
@@ -91,6 +94,16 @@ describe('матрица режимов (ТЗ §23)', () => {
     expect(planAllows('PREMIUM', 'voiceCloning')).toBe(true);
     expect(minimalPlanFor('voiceCloning')).toBe('STANDARD');
     expect(featureDeniedMessage('voiceCloning')).toContain('Standard');
+  });
+
+  it('voiceDub — доп. запрос владельца продукта: дубляж только в Premium, не как voiceover (Standard)', () => {
+    // voiceover сам по себе не гейтится отдельным признаком — он входит
+    // в 'brandManifest' (Standard и выше); voiceDub уже, ровно premium.
+    expect(planAllows('LITE', 'voiceDub')).toBe(false);
+    expect(planAllows('STANDARD', 'voiceDub')).toBe(false);
+    expect(planAllows('PREMIUM', 'voiceDub')).toBe(true);
+    expect(minimalPlanFor('voiceDub')).toBe('PREMIUM');
+    expect(featureDeniedMessage('voiceDub')).toContain('Premium');
   });
 
   it('текст отказа называет нужный режим и говорит, что сейчас бесплатно', () => {

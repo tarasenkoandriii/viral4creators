@@ -34,7 +34,6 @@ import {
 } from '../../common/subtitles';
 import {
   BadRequestException,
-  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -44,8 +43,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import { PlanService } from '../plan/plan.service';
-import { TTS_PROVIDER } from '../tts/tts-provider.token';
-import { TtsProvider } from '../tts/tts.types';
+import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import {
   BrandCharacterView,
   BrandManifestSummaryView,
@@ -161,7 +159,7 @@ export class BrandManifestService {
     private readonly prisma: PrismaService,
     private readonly blobService: BlobService,
     private readonly plans: PlanService,
-    @Inject(TTS_PROVIDER) private readonly tts: TtsProvider,
+    private readonly ttsResolver: TtsProviderResolverService,
   ) {}
 
   // ── Manifests ─────────────────────────────────────────────────────────
@@ -177,7 +175,16 @@ export class BrandManifestService {
     if (!dto.title?.trim()) {
       throw new BadRequestException('title is required to create a manifest');
     }
+    // Доп. запрос владельца продукта: дубляж (voiceMode: 'dub') —
+    // премиальный уровень озвучки, отдельный от обычного voiceover,
+    // который уже под тем же гейтом, что brandManifest выше. Проверяем
+    // здесь, а не в чистой manifestDataFromDto: тариф решает вызывающий
+    // сервис (см. её же доккомментарий про activeProviderKey).
+    if (dto.voiceMode === 'dub') {
+      await this.plans.assertUser(userId, 'voiceDub');
+    }
     const isResembleClone = await this.isOwnResembleVoice(userId, dto);
+    const tts = await this.ttsResolver.resolve();
     // `manifestDataFromDto` возвращает `Record<string, unknown>` (нужно
     // для `update()`, где ЛЮБОЕ поле, включая `title`, может отсутствовать
     // при частичной правке) — статически Prisma не может убедиться, что
@@ -188,7 +195,7 @@ export class BrandManifestService {
     const row: ManifestRow = await this.prisma.brandManifest.create({
       data: {
         userId,
-        ...manifestDataFromDto(dto, this.tts.providerKey, isResembleClone),
+        ...manifestDataFromDto(dto, tts.providerKey, isResembleClone),
       } as unknown as Prisma.BrandManifestUncheckedCreateInput,
       include: FULL_INCLUDE,
     });
@@ -215,10 +222,19 @@ export class BrandManifestService {
     dto: BrandManifestRequestDto,
   ): Promise<BrandManifestView> {
     const current = await this.findOwn(userId, manifestId, FULL_INCLUDE);
+    // Только переход В dub спрашивает тариф — иначе даунгрейднутый
+    // пользователь с уже выбранным (когда-то законно) dub не смог бы
+    // сохранить вообще ничего в манифесте: форма пересылает текущий
+    // voiceMode при каждом сохранении, не только когда его действительно
+    // поменяли.
+    if (dto.voiceMode === 'dub' && current.voiceMode !== 'dub') {
+      await this.plans.assertUser(userId, 'voiceDub');
+    }
     const isResembleClone = await this.isOwnResembleVoice(userId, dto);
+    const tts = await this.ttsResolver.resolve();
     const data = manifestDataFromDto(
       dto,
-      this.tts.providerKey,
+      tts.providerKey,
       isResembleClone,
     );
     if (Object.keys(data).length === 0) return toManifestView(current);
