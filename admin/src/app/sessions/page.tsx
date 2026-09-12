@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { listSessions, retrySessionGeneration, pollSessionStatus } from '../../lib/endpoints';
-import type { SessionListResult, SessionSortKey, SortDirection } from '../../lib/types';
+import { listSessions, retrySessionGeneration, pollSessionStatus, runVideoAudit } from '../../lib/endpoints';
+import type { SessionListResult, SessionSortKey, SortDirection, AuditStateView } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
 const STATUSES = [
@@ -85,6 +85,9 @@ export default function SessionsPage() {
   const [page, setPage] = useState(1);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [auditingId, setAuditingId] = useState<string | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditResults, setAuditResults] = useState<Record<string, AuditStateView>>({});
 
   // Фильтры — по одному useState на колонку, тот же принцип, что был у
   // единственного фильтра status раньше.
@@ -150,6 +153,25 @@ export default function SessionsPage() {
       );
     } finally {
       setRetryingId(null);
+    }
+  };
+
+  // Доп. запрос владельца продукта: та же проверка на артефакты, что
+  // видит пользователь на готовом ролике, только запущенная оператором.
+  // Результат кладётся в ту же запись сессии, которую читает визард
+  // пользователя — второй, отдельной видимости заводить не пришлось.
+  const handleAudit = async (id: string) => {
+    setAuditingId(id);
+    setAuditError(null);
+    try {
+      const state = await runVideoAudit(id);
+      setAuditResults((prev) => ({ ...prev, [id]: state }));
+    } catch (err) {
+      setAuditError(
+        err instanceof ApiRequestError ? err.message : 'Не удалось запустить проверку на артефакты'
+      );
+    } finally {
+      setAuditingId(null);
     }
   };
 
@@ -395,6 +417,7 @@ export default function SessionsPage() {
 
       {error && <p className="critical">{error}</p>}
       {retryError && <p className="critical">{retryError}</p>}
+      {auditError && <p className="critical">{auditError}</p>}
 
       {result && (
         <>
@@ -460,11 +483,41 @@ export default function SessionsPage() {
                       <td className="muted">{s.quality ?? '—'}</td>
                     )}
                     {visibleColumns.has('voiceMode') && (
-                      <td className="muted">{s.voiceMode ?? '—'}</td>
+                      // Пустое значение — не «нет данных», а дефолт §15.1:
+                      // не выбрано явно = veo. Прочерк здесь читался бы
+                      // как «неизвестно», хотя на самом деле известно.
+                      <td className="muted">{s.voiceMode ?? 'veo'}</td>
                     )}
                     {visibleColumns.has('owner') && <td>{ownerLabel(s)}</td>}
                     {visibleColumns.has('video') && (
-                      <td>{s.hasGeneratedVideo ? '✓' : <span className="muted">—</span>}</td>
+                      <td>
+                        {s.hasGeneratedVideo && s.downloadUrl ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                            <a href={s.downloadUrl} target="_blank" rel="noopener noreferrer">
+                              ▶ Смотреть
+                            </a>
+                            <button
+                              type="button"
+                              disabled={auditingId === s.sessionId}
+                              onClick={() => handleAudit(s.sessionId)}
+                            >
+                              {auditingId === s.sessionId ? 'Проверяю…' : '🔍 На артефакты'}
+                            </button>
+                            {auditResults[s.sessionId]?.history[0] && (
+                              <span
+                                className="muted"
+                                style={{ fontSize: 11, maxWidth: 220 }}
+                                title={auditResults[s.sessionId].history[0].summary}
+                              >
+                                {auditResults[s.sessionId].history[0].verdict}:{' '}
+                                {auditResults[s.sessionId].history[0].summary}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
                     )}
                     {visibleColumns.has('createdAt') && (
                       <td className="muted">{new Date(s.createdAt).toLocaleString('ru-RU')}</td>

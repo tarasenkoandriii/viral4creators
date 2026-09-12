@@ -38,6 +38,20 @@ export interface SessionListResult {
   pageSize: number;
 }
 
+export interface VideoAudit {
+  auditId: string;
+  status: 'complete' | 'failed';
+  verdict: 'clean' | 'issues' | 'unknown';
+  summary: string;
+}
+
+export interface AuditStateView {
+  history: VideoAudit[];
+  appliedFixes: number;
+  limit: number;
+  overLimit: boolean;
+}
+
 export interface SessionDetail extends SessionSummary {
   data: unknown;
 }

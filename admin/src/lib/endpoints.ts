@@ -13,6 +13,7 @@ import type {
   SessionDetail,
   SessionSortKey,
   SortDirection,
+  AuditStateView,
   TelemetryResult,
   EnvSettingsResult,
   VoiceoverProviderKey,
@@ -113,6 +114,17 @@ export function retrySessionGeneration(id: string) {
  * визарда, который опрашивал бы статус за пользователя. */
 export function pollSessionStatus(id: string) {
   return apiGet<SessionDetail>(`/admin/sessions/${id}/status`);
+}
+
+/** Доп. запрос владельца продукта: проверка на артефакты прямо из
+ * админки — та же кнопка, что видит пользователь на готовом ролике.
+ * Специально НЕ `/admin/sessions/...` — это публичный, «сессия — сама
+ * себе пропуск» маршрут (`sessions/:id/audit`), и результат пишется в
+ * ту же `Session.data.videoAudit`, которую читает собственный визард
+ * пользователя (`GET /sessions/:id/audit`) — клиенту он виден без
+ * какой-либо отдельной синхронизации. */
+export function runVideoAudit(sessionId: string) {
+  return apiPost<AuditStateView>(`/sessions/${sessionId}/audit`);
 }
 
 export function getTelemetry() {
