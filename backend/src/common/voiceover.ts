@@ -1,8 +1,10 @@
 /**
  * Voice-over language for the generated ad (spec §13, "минимум" pass).
  *
- * Nothing here synthesises speech — Veo does that itself
- * (`generateAudio: true`). What this module decides is the LANGUAGE the
+ * Nothing here synthesises speech — Veo generates audio natively and
+ * always-on (no config flag controls it; the Gemini API rejects an
+ * explicit `generateAudio` field as of Veo 3.1, see generation.service.ts).
+ * What this module decides is the LANGUAGE the
  * spoken lines and on-screen text must be in, and how the brief tells the
  * prompt-writer to build those lines from the product description the
  * user typed or dictated. Priority:

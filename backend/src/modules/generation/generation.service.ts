@@ -425,7 +425,6 @@ export class GenerationService {
         config: {
           durationSeconds: VIDEO_DURATION_SECONDS,
           aspectRatio: frame,
-          generateAudio: true,
           ...(referenceImages ? { referenceImages } : {}),
         },
       });
