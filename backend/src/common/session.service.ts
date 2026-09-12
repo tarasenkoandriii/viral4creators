@@ -286,7 +286,7 @@ export class SessionService {
       UPDATE "sessions"
       SET "data" = "data" || ${json}::jsonb,
           "generationStatus" = ("data" || ${json}::jsonb) -> 'generatedVideo' ->> 'status',
-          "status" = COALESCE(${status}, "status"),
+          "status" = COALESCE(${status}, "sessions"."status"),
           "lastActivityAt" = NOW()
       FROM old
       WHERE "sessions"."id" = ${sessionId}

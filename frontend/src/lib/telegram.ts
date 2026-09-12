@@ -106,9 +106,35 @@ export function applyTheme(): void {
   document.documentElement.classList.toggle('dark', dark);
 }
 
+/**
+ * Telegram при каждом открытии Mini App дописывает в URL hash свой
+ * служебный payload — `#tgWebAppData=...&tgWebAppVersion=...&tgWebAppPlatform=...`
+ * (это единственный способ, которым TMA передаёт initData в WebView на
+ * старте; тот же initData отдельно доступен через `webApp.initData`,
+ * так что сам hash приложению не нужен). Роутер (lib/router.ts) читает
+ * `window.location.hash` как ЕДИНСТВЕННЫЙ источник маршрута — без этой
+ * очистки он получает вместо пути строку от Telegram, ни один `if` в
+ * `parseRoute` не совпадает, и первый же экран внутри Telegram — «Страница
+ * не найдена». Deep-линки через Telegram `start_param` в проекте не
+ * используются (см. комментарий в hooks/useWorkflow.ts — параметр
+ * приходит query-строкой), так что просто отбрасываем весь hash целиком,
+ * ДО того как `useRoute()` в App.tsx впервые его прочитает (эта функция
+ * вызывается в main.tsx синхронно, до `ReactDOM...render()`).
+ */
+function stripTelegramLaunchHash(): void {
+  if (typeof window === 'undefined') return;
+  if (!window.location.hash.includes('tgWebAppData=')) return;
+  window.history.replaceState(
+    null,
+    '',
+    window.location.pathname + window.location.search
+  );
+}
+
 /** Безопасный no-op вне Telegram — вызывать один раз при монтировании
  * приложения (см. main.tsx). */
 export function initTelegramWebApp(): void {
+  stripTelegramLaunchHash();
   applyTheme();
   if (
     !getTelegramWebApp() &&
