@@ -41,6 +41,8 @@ describe('selectSessionSummaries', () => {
       `"data" -> 'brandManifestSnapshot' ->> 'voiceMode'`,
     );
     expect(sql).toContain('LEFT JOIN "users" u');
+    expect(sql).toContain(`'generatedVideo' -> 'error' ->> 'message'`);
+    expect(sql).toContain(`'generatedVideo' -> 'error' ->> 'code'`);
     expect(sql).not.toMatch(/SELECT \*|,\s*s\."data"\s*,|s\."data"\s+FROM/);
   });
 

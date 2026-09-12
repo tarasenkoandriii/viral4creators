@@ -101,6 +101,13 @@ export function deleteSession(id: string) {
   return apiDelete<{ ok: true }>(`/admin/sessions/${id}`);
 }
 
+/** Доп. запрос владельца продукта: тот же платный рендер с теми же
+ * настройками, что и кнопка «Повторить» у пользователя — просто из
+ * админки. Работает только для сессий с проваленным рендером. */
+export function retrySessionGeneration(id: string) {
+  return apiPost<SessionDetail>(`/admin/sessions/${id}/retry`);
+}
+
 export function getTelemetry() {
   return apiGet<TelemetryResult>('/admin/telemetry');
 }

@@ -20,6 +20,17 @@ import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.servic
   // ResembleService/PlatformSettingsService (AdminVoiceoverSettingsService)
   // доступны так же глобально через TtsModule — импортировать его здесь
   // не нужно по той же причине.
+  //
+  // GenerationModule НЕ импортирован здесь нарочно: он тянет
+  // SharedVideoModule, а тот сам импортирует AdminPanelModule (ради
+  // AdminSharedVideoController) — импорт в обратную сторону замкнул бы
+  // цикл AdminPanelModule → GenerationModule → SharedVideoModule →
+  // AdminPanelModule. Правило проекта одностороннее (см.
+  // SharedVideoModule): admin-контроллер конкретной фичи живёт В МОДУЛЕ
+  // этой фичи и импортирует AdminPanelModule сам, а не наоборот —
+  // поэтому кнопка повтора рендера (доп. запрос владельца продукта)
+  // реализована как отдельный контроллер в GenerationModule
+  // (admin-retry.controller.ts), а не как метод здесь.
   imports: [AdminAuthModule, StorageModule],
   controllers: [AdminPanelController],
   providers: [

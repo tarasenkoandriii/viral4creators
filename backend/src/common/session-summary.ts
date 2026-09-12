@@ -34,6 +34,11 @@ export interface SessionSummaryRow {
   downloadUrl: string | null;
   quality: string | null;
   voiceMode: string | null;
+  /** Доп. запрос владельца продукта: причина провала рендера — видна
+   * прямо в списке, не только при переходе в детали сессии. */
+  errorCode: string | null;
+  errorMessage: string | null;
+  errorRetryable: boolean | null;
 }
 
 export const SESSION_SORT_KEYS = [
@@ -134,7 +139,10 @@ const SELECT_FROM = `
          s."data" -> 'productInformation' ->> 'productName' AS "productName",
          s."data" -> 'generatedVideo' ->> 'downloadUrl' AS "downloadUrl",
          s."data" -> 'generatedVideo' ->> 'quality' AS "quality",
-         s."data" -> 'brandManifestSnapshot' ->> 'voiceMode' AS "voiceMode"
+         s."data" -> 'brandManifestSnapshot' ->> 'voiceMode' AS "voiceMode",
+         s."data" -> 'generatedVideo' -> 'error' ->> 'code' AS "errorCode",
+         s."data" -> 'generatedVideo' -> 'error' ->> 'message' AS "errorMessage",
+         (s."data" -> 'generatedVideo' -> 'error' ->> 'retryable')::boolean AS "errorRetryable"
   FROM "sessions" s
   LEFT JOIN "users" u ON u."id" = s."userId"
 `;

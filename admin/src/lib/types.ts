@@ -26,6 +26,9 @@ export interface SessionSummary {
   downloadUrl: string | null;
   quality: string | null;
   voiceMode: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  errorRetryable: boolean | null;
 }
 
 export interface SessionListResult {

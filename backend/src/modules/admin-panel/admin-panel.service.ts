@@ -61,6 +61,9 @@ function summaryFromSlim(row: SessionSummaryRow): SessionSummary {
     downloadUrl: row.downloadUrl ?? null,
     quality: row.quality ?? null,
     voiceMode: row.voiceMode ?? null,
+    errorCode: row.errorCode ?? null,
+    errorMessage: row.errorMessage ?? null,
+    errorRetryable: row.errorRetryable ?? null,
   };
 }
 
@@ -84,6 +87,13 @@ export interface SessionSummary {
   quality: string | null;
   /** 'veo' | 'voiceover' | 'dub' — режим озвучки бренда в снимке сессии. */
   voiceMode: string | null;
+  /** Доп. запрос владельца продукта: причина провала — видна прямо в
+   * списке, рядом с кнопкой повтора (см. `retryGeneration` ниже). */
+  errorCode: string | null;
+  errorMessage: string | null;
+  /** `null` — рендера/ошибки не было вовсе, отличать от `false`
+   * (провал есть, но не повторяемый — например бан контент-фильтром). */
+  errorRetryable: boolean | null;
 }
 
 export interface SessionListResult {
@@ -758,6 +768,30 @@ export class AdminPanelService {
             | { voiceMode?: string }
             | undefined
         )?.voiceMode ?? null,
+      errorCode:
+        (
+          (
+            (row.data as Record<string, unknown>)?.generatedVideo as
+              | { error?: { code?: string } }
+              | undefined
+          )?.error
+        )?.code ?? null,
+      errorMessage:
+        (
+          (
+            (row.data as Record<string, unknown>)?.generatedVideo as
+              | { error?: { message?: string } }
+              | undefined
+          )?.error
+        )?.message ?? null,
+      errorRetryable:
+        (
+          (
+            (row.data as Record<string, unknown>)?.generatedVideo as
+              | { error?: { retryable?: boolean } }
+              | undefined
+          )?.error
+        )?.retryable ?? null,
     });
   }
 }

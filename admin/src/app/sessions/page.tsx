@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { listSessions } from '../../lib/endpoints';
+import { listSessions, retrySessionGeneration } from '../../lib/endpoints';
 import type { SessionListResult, SessionSortKey, SortDirection } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -83,6 +83,8 @@ export default function SessionsPage() {
   const [result, setResult] = useState<SessionListResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
 
   // Фильтры — по одному useState на колонку, тот же принцип, что был у
   // единственного фильтра status раньше.
@@ -121,6 +123,34 @@ export default function SessionsPage() {
       setSortDir('desc');
     }
     setPage(1);
+  };
+
+  // Доп. запрос владельца продукта: та же кнопка «Повторить», что видит
+  // пользователь при проваленном рендере, но из админки. Патчим строку
+  // на месте ответом сервера, а не перезагружаем весь список — ответ
+  // уже несёт свежий статус (обычно снова 'processing').
+  const handleRetry = async (id: string) => {
+    setRetryingId(id);
+    setRetryError(null);
+    try {
+      const updated = await retrySessionGeneration(id);
+      setResult((prev) =>
+        prev
+          ? {
+              ...prev,
+              items: prev.items.map((item) =>
+                item.sessionId === id ? { ...item, ...updated } : item
+              ),
+            }
+          : prev
+      );
+    } catch (err) {
+      setRetryError(
+        err instanceof ApiRequestError ? err.message : 'Не удалось перезапустить рендер'
+      );
+    } finally {
+      setRetryingId(null);
+    }
   };
 
   useEffect(() => {
@@ -306,6 +336,7 @@ export default function SessionsPage() {
       </div>
 
       {error && <p className="critical">{error}</p>}
+      {retryError && <p className="critical">{retryError}</p>}
 
       {result && (
         <>
@@ -340,7 +371,27 @@ export default function SessionsPage() {
                     </td>
                     {visibleColumns.has('status') && <td>{s.status}</td>}
                     {visibleColumns.has('generationStatus') && (
-                      <td className="muted">{s.generationStatus ?? '—'}</td>
+                      <td className="muted">
+                        {s.generationStatus === 'failed' ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                            <span title={s.errorMessage ?? undefined}>
+                              failed{s.errorCode ? ` (${s.errorCode})` : ''}
+                            </span>
+                            {s.errorMessage && (
+                              <span style={{ fontSize: 11, maxWidth: 220 }}>{s.errorMessage}</span>
+                            )}
+                            <button
+                              type="button"
+                              disabled={retryingId === s.sessionId}
+                              onClick={() => handleRetry(s.sessionId)}
+                            >
+                              {retryingId === s.sessionId ? 'Запускаю…' : '↻ Повторить'}
+                            </button>
+                          </div>
+                        ) : (
+                          s.generationStatus ?? '—'
+                        )}
+                      </td>
                     )}
                     {visibleColumns.has('product') && (
                       <td>{s.productName ?? <span className="muted">—</span>}</td>
