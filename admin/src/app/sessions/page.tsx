@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { listSessions, retrySessionGeneration } from '../../lib/endpoints';
+import { listSessions, retrySessionGeneration, pollSessionStatus } from '../../lib/endpoints';
 import type { SessionListResult, SessionSortKey, SortDirection } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -180,6 +180,64 @@ export default function SessionsPage() {
       cancelled = true;
     };
   }, [status, quality, voiceMode, plan, createdFrom, createdTo, search, sortBy, sortDir, page]);
+
+  // Без этого опроса рендер, запущенный из админки (кнопкой «Повторить»
+  // ниже), никогда не продвинется дальше 'processing' — у оператора нет
+  // собственного визарда, который опрашивал бы статус за пользователя
+  // (обычно это делает клиент пользователя каждые 4 с). Опрашиваем
+  // КАЖДУЮ строку, у которой рендер ещё идёт — не только ту, что только
+  // что перезапустили: так же подхватывается 'processing', оставшийся
+  // от предыдущей открытой вкладки/сессии оператора.
+  const pollTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+
+  useEffect(() => {
+    if (!result) return;
+    const active = new Set(
+      result.items
+        .filter((s) => s.generationStatus === 'pending' || s.generationStatus === 'processing')
+        .map((s) => s.sessionId)
+    );
+
+    for (const [id, timer] of pollTimers.current) {
+      if (!active.has(id)) {
+        clearInterval(timer);
+        pollTimers.current.delete(id);
+      }
+    }
+
+    for (const id of active) {
+      if (pollTimers.current.has(id)) continue;
+      const timer = setInterval(() => {
+        pollSessionStatus(id)
+          .then((updated) => {
+            setResult((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    items: prev.items.map((item) =>
+                      item.sessionId === id ? { ...item, ...updated } : item
+                    ),
+                  }
+                : prev
+            );
+          })
+          .catch(() => {
+            // Сетевая икота — тот же принцип, что у визарда пользователя:
+            // не хоронить прогресс из-за одного неудачного опроса,
+            // попробуем на следующем тике.
+          });
+      }, 4000);
+      pollTimers.current.set(id, timer);
+    }
+  }, [result]);
+
+  useEffect(() => {
+    const timers = pollTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearInterval(timer);
+      timers.clear();
+    };
+  }, []);
 
   const totalPages = result ? Math.max(Math.ceil(result.total / result.pageSize), 1) : 1;
   const visibleColumnDefs = useMemo(
@@ -388,6 +446,8 @@ export default function SessionsPage() {
                               {retryingId === s.sessionId ? 'Запускаю…' : '↻ Повторить'}
                             </button>
                           </div>
+                        ) : s.generationStatus === 'processing' || s.generationStatus === 'pending' ? (
+                          <span>{s.generationStatus} · опрашиваю…</span>
                         ) : (
                           s.generationStatus ?? '—'
                         )}

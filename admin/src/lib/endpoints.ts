@@ -108,6 +108,13 @@ export function retrySessionGeneration(id: string) {
   return apiPost<SessionDetail>(`/admin/sessions/${id}/retry`);
 }
 
+/** Без этого опроса рендер, запущенный из админки (retry выше), никогда
+ * не продвинется дальше 'processing' — у оператора нет собственного
+ * визарда, который опрашивал бы статус за пользователя. */
+export function pollSessionStatus(id: string) {
+  return apiGet<SessionDetail>(`/admin/sessions/${id}/status`);
+}
+
 export function getTelemetry() {
   return apiGet<TelemetryResult>('/admin/telemetry');
 }

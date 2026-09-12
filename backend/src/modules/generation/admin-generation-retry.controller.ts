@@ -25,6 +25,7 @@
 import {
   Controller,
   ForbiddenException,
+  Get,
   NotFoundException,
   Param,
   Post,
@@ -80,6 +81,29 @@ export class AdminGenerationRetryController {
       generatedVideo.quality,
       generatedVideo.aspectRatio,
     );
+    return this.adminPanel.getSession(id);
+  }
+
+  /**
+   * Опрос статуса из админки — без него запущенный отсюда рендер
+   * никогда не сдвинется дальше 'processing': обычно статус
+   * продвигает опрос клиентского визарда пользователя
+   * (`GET /sessions/:id/generate`, каждые 4 с), а у оператора,
+   * запустившего повтор ЗА пользователя, своего клиента для этого нет.
+   * Зовёт ту же `GenerationService.getVideoStatus`, что и обычный
+   * визард — она и только она умеет забрать готовый файл у Veo,
+   * положить в Blob и пометить сессию завершённой/упавшей; простое
+   * чтение строки (`AdminPanelService.getSession`) само по себе ничего
+   * не продвигает. Список сессий в админке зовёт этот маршрут по
+   * таймеру, пока статус 'pending'/'processing'.
+   */
+  @Get(':id/status')
+  async pollStatus(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    await this.generation.getVideoStatus(id);
     return this.adminPanel.getSession(id);
   }
 }

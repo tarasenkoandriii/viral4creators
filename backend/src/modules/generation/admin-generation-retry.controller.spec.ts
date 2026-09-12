@@ -12,6 +12,7 @@ function build(sessionRow: { data: unknown } | null) {
   };
   const generation = {
     generateVideo: jest.fn().mockResolvedValue({ status: GenerationStatus.PROCESSING }),
+    getVideoStatus: jest.fn().mockResolvedValue({ status: GenerationStatus.PROCESSING }),
   };
   const prisma = {
     session: { findUnique: jest.fn().mockResolvedValue(sessionRow) },
@@ -88,6 +89,27 @@ describe('AdminGenerationRetryController', () => {
       data: { generatedVideo: { status: GenerationStatus.FAILED } },
     });
     const result = await controller.retry(req, 's1');
+    expect(adminPanel.getSession).toHaveBeenCalledWith('s1');
+    expect(result).toEqual({ sessionId: 's1' });
+  });
+});
+
+describe('AdminGenerationRetryController.pollStatus (без него запущенный из админки рендер не продвинется)', () => {
+  it('требует assertOperator до опроса', async () => {
+    const { controller, adminPanel, req } = build({ data: {} });
+    const order: string[] = [];
+    adminPanel.assertOperator.mockImplementation(async () => {
+      order.push('assertOperator');
+    });
+    await controller.pollStatus(req, 's1');
+    order.push('after');
+    expect(order[0]).toBe('assertOperator');
+  });
+
+  it('зовёт getVideoStatus (не просто читает строку) и возвращает свежую сводку', async () => {
+    const { controller, adminPanel, generation, req } = build({ data: {} });
+    const result = await controller.pollStatus(req, 's1');
+    expect(generation.getVideoStatus).toHaveBeenCalledWith('s1');
     expect(adminPanel.getSession).toHaveBeenCalledWith('s1');
     expect(result).toEqual({ sessionId: 's1' });
   });
