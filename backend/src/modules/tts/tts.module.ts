@@ -48,11 +48,20 @@ import { PlatformSettingsService } from '../../common/platform-settings.service'
     PlatformSettingsService,
     TtsProviderResolverService,
   ],
-  // `ResembleService` экспортируется отдельно (этап 72,
-  // doc/AVATAR-LIPSYNC-PIPELINE-SPEC.md §3.2, шаг 2): пилот говорящего
-  // аватара использует именно Resemble, а не активный на стенде выбор
-  // — владелец продукта выбрал этот провайдер явно для этой задачи,
-  // независимо от того, чем сейчас озвучивает обычный Veo-пайплайн.
-  exports: [TtsProviderResolverService, PlatformSettingsService, ResembleService],
+  // `ElevenLabsService`/`ResembleService` экспортируются по отдельности
+  // (не только через `TtsProviderResolverService`): `ResembleService` —
+  // пилот говорящего аватара (этап 72, doc/AVATAR-LIPSYNC-PIPELINE-SPEC.md
+  // §3.2, шаг 2) использует именно Resemble напрямую, а не активный на
+  // стенде выбор; `ElevenLabsService` — `AdminVoiceoverSettingsService`
+  // (admin-panel, вне этого модуля) читает `configured()` у ОБОИХ
+  // провайдеров напрямую, чтобы показать в /settings, какие из них вообще
+  // на этом стенде настроены — @Global() делает провайдер доступным
+  // снаружи, только если он в этом списке, а не просто зарегистрирован.
+  exports: [
+    TtsProviderResolverService,
+    PlatformSettingsService,
+    ElevenLabsService,
+    ResembleService,
+  ],
 })
 export class TtsModule {}
