@@ -59,6 +59,30 @@ export const PROMPT_IN_FLIGHT_MESSAGE =
   'Промпт уже собирается — дождитесь ответа первого запроса.';
 
 /**
+ * Разбирает `ApiError`, которую бросает `@google/genai` при отказе
+ * Gemini API — подтверждено буквально по реальным логам прода
+ * (2026-09-13): `.message` целиком является JSON-строкой вида
+ * `{"error":{"code":429,"message":"...","status":"RESOURCE_EXHAUSTED"}}`,
+ * не структурированным объектом с отдельными полями `.status`/`.code` —
+ * тот SDK устроен иначе, чем `AxiosError`, который эта функция заменяет.
+ * Если `error.message` не JSON (сетевой сбой, таймаут, что угодно ещё
+ * не в этой форме) — возвращает оба поля `undefined`, не бросает сама.
+ */
+function parseGeminiApiError(
+  error: unknown,
+): { status?: number; upstream?: string } {
+  if (!(error instanceof Error)) return {};
+  try {
+    const parsed = JSON.parse(error.message) as {
+      error?: { code?: number; message?: string };
+    };
+    return { status: parsed?.error?.code, upstream: parsed?.error?.message };
+  } catch {
+    return {};
+  }
+}
+
+/**
  * PromptService generates and manages text-to-video prompts
  */
 @Injectable()
@@ -362,37 +386,36 @@ Please respond with a valid JSON object only, with two keys:
       );
 
       // Этап 54 (Б-3.6): текст ответа апстрима — в лог (выше), клиенту —
-      // класс сбоя и код. Раньше сюда уходило `data.error.message` OpenAI
-      // целиком: адрес шлюза, имя модели, иногда — эхо запроса.
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const upstream = error.response?.data?.error?.message;
-        if (upstream) {
-          this.logger.error(`ответ сервиса ИИ (${status}): ${upstream}`);
-        }
+      // класс сбоя и код. Раньше здесь разбирался AxiosError от
+      // Laozhang.ai; при переходе на Gemini (`@google/genai`) выяснилось,
+      // что этот SDK кидает не AxiosError, а свой `ApiError`, у которого
+      // `.message` — это ЦЕЛИКОМ JSON-строка вида
+      // `{"error":{"code":429,"message":"...","status":"RESOURCE_EXHAUSTED"}}`
+      // — подтверждено буквально по реальным логам прода (2026-09-13,
+      // тот самый 404 на gemini-2.5-flash и 429 на исчерпанных кредитах),
+      // не догадкой по документации.
+      const { status, upstream } = parseGeminiApiError(error);
+      if (upstream) {
+        this.logger.error(`ответ сервиса ИИ (${status}): ${upstream}`);
+      }
 
-        if (
-          error.code === 'ECONNABORTED' ||
-          error.message.includes('timeout')
-        ) {
-          throw new BadRequestException(
-            'Сервис ИИ отвечал слишком долго. Попробуйте ещё раз.',
-          );
-        } else if (status === 401) {
-          throw new BadRequestException(
-            'Ключ сервиса ИИ не принят. Сообщите оператору.',
-          );
-        } else if (status === 429) {
-          throw new BadRequestException(
-            'Сервис ИИ ограничил частоту запросов. Попробуйте через минуту.',
-          );
-        } else {
-          throw new BadRequestException(
-            `Не удалось составить бриф: сервис ИИ ответил ошибкой${
-              status ? ` (код ${status})` : ''
-            }. Попробуйте ещё раз.`,
-          );
-        }
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('timeout') || message.includes('ECONNABORTED')) {
+        throw new BadRequestException(
+          'Сервис ИИ отвечал слишком долго. Попробуйте ещё раз.',
+        );
+      } else if (status === 401 || status === 403) {
+        throw new BadRequestException(
+          'Ключ сервиса ИИ не принят. Сообщите оператору.',
+        );
+      } else if (status === 429) {
+        throw new BadRequestException(
+          'Сервис ИИ ограничил частоту запросов. Попробуйте через минуту.',
+        );
+      } else if (status) {
+        throw new BadRequestException(
+          `Не удалось составить бриф: сервис ИИ ответил ошибкой (код ${status}). Попробуйте ещё раз.`,
+        );
       }
 
       // Не сетевая ошибка (пустой ответ модели, неожиданная форма JSON):
@@ -569,35 +592,30 @@ Please respond with a valid JSON object only, with one key "variants": an array 
         error,
       );
 
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const upstream = error.response?.data?.error?.message;
-        if (upstream) {
-          this.logger.error(`ответ сервиса ИИ (${status}): ${upstream}`);
-        }
+      // Тот же разбор, что у generatePrompt выше — см. доккомментарий
+      // parseGeminiApiError за подтверждением по реальным логам прода.
+      const { status, upstream } = parseGeminiApiError(error);
+      if (upstream) {
+        this.logger.error(`ответ сервиса ИИ (${status}): ${upstream}`);
+      }
 
-        if (
-          error.code === 'ECONNABORTED' ||
-          error.message.includes('timeout')
-        ) {
-          throw new BadRequestException(
-            'Сервис ИИ отвечал слишком долго. Попробуйте ещё раз.',
-          );
-        } else if (status === 401) {
-          throw new BadRequestException(
-            'Ключ сервиса ИИ не принят. Сообщите оператору.',
-          );
-        } else if (status === 429) {
-          throw new BadRequestException(
-            'Сервис ИИ ограничил частоту запросов. Попробуйте через минуту.',
-          );
-        } else {
-          throw new BadRequestException(
-            `Не удалось собрать A/B-варианты: сервис ИИ ответил ошибкой${
-              status ? ` (код ${status})` : ''
-            }. Попробуйте ещё раз.`,
-          );
-        }
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('timeout') || message.includes('ECONNABORTED')) {
+        throw new BadRequestException(
+          'Сервис ИИ отвечал слишком долго. Попробуйте ещё раз.',
+        );
+      } else if (status === 401 || status === 403) {
+        throw new BadRequestException(
+          'Ключ сервиса ИИ не принят. Сообщите оператору.',
+        );
+      } else if (status === 429) {
+        throw new BadRequestException(
+          'Сервис ИИ ограничил частоту запросов. Попробуйте через минуту.',
+        );
+      } else if (status) {
+        throw new BadRequestException(
+          `Не удалось собрать A/B-варианты: сервис ИИ ответил ошибкой (код ${status}). Попробуйте ещё раз.`,
+        );
       }
 
       throw new BadRequestException(

@@ -322,6 +322,23 @@ describe('PromptService.generatePrompt — замок и запись расхо
     expect(bad.sessions.releaseWork).toHaveBeenCalledWith('s1', 'prompt');
   });
 
+  // Доп. запрос владельца продукта: найдено по реальному сбою в проде
+  // (2026-09-13) — `@google/genai` кидает `ApiError`, чьё `.message`
+  // целиком является JSON-строкой вида `{"error":{"code":429,...}}`, не
+  // структурированным AxiosError, который этот путь разбирал раньше.
+  // Тест воспроизводит буквально тот формат, что был в реальном логе.
+  it('реальный формат ошибки Gemini (429, квота исчерпана) — понятное сообщение, не падение на разборе', async () => {
+    const { svc, post } = buildLocked(true);
+    post.mockRejectedValue(
+      new Error(
+        '{"error":{"code":429,"message":"Your prepayment credits are depleted.","status":"RESOURCE_EXHAUSTED"}}',
+      ),
+    );
+    await expect(svc.generatePrompt('s1')).rejects.toThrow(
+      /ограничил частоту запросов/,
+    );
+  });
+
   it('расход записан до того, как метод вернул ответ (В-2.1)', async () => {
     const { svc, aiUsage } = buildLocked(true);
     let recorded = false;
