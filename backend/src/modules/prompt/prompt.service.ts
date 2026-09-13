@@ -47,6 +47,7 @@ import {
 } from '../../common/ab-variant-response';
 import { cameraBriefText, normalizeCameraMove } from '../../common/camera-move';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
+import { AiOperation } from '../../common/ai-pricing';
 import { PlanService } from '../plan/plan.service';
 
 /**
@@ -132,7 +133,7 @@ export class PromptService {
   private async callTextModel(
     prompt: string,
     options: {
-      operation: string;
+      operation: AiOperation;
       sessionId: string;
       temperature?: number;
       maxOutputTokens?: number;

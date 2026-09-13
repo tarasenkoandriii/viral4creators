@@ -104,7 +104,12 @@ export type AiOperation =
   // 'voiceover'/'voiceover-preview': то платит за СИНТЕЗ речи уже
   // готовым голосом, это платит за само ОБУЧЕНИЕ нового голоса у
   // Resemble, один раз на клон, не за каждый ролик.
-  | 'voice-clone';
+  | 'voice-clone'
+  // Переписывание сцены под метки <IMAGE_N> для Grok reference-to-video
+  // (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §15.3) — отдельно от 'prompt':
+  // узкий, дешёвый шаг поверх уже готового текста сцены, не сама сборка
+  // промпта, должен быть виден в отчёте расходов отдельной строкой.
+  | 'grok-reference-rewrite';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -125,6 +130,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'analysis-translate': 'Перевод разбора видео',
   'avatar-generation': 'Аватар-видео (пилот)',
   'voice-clone': 'Клонирование голоса',
+  'grok-reference-rewrite': 'Переписывание сцены для Grok-референсов',
 };
 
 export interface ModelRate {
