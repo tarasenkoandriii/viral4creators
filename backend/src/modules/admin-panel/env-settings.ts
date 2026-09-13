@@ -299,22 +299,24 @@ export function getEnvSettings(
   }
 
   {
+    // Найдено при аудите (по прямому запросу, 2026-09-13): генерация
+    // промпта/A-B-вариантов/переписывания для Grok-референсов переведена
+    // на Gemini (`PromptService`, см. её доккомментарий конструктора) —
+    // этот ключ и его модель БОЛЬШЕ НИГДЕ не читаются. Раньше запись была
+    // `required: true`/`critical` при отсутствии — ложная тревога:
+    // отсутствие этого ключа сейчас ничего не ломает, но старая
+    // формулировка убеждала бы в обратном.
     const raw = env.LAOZHANG_API_KEY || env.OPENAI_API_KEY;
     const set = Boolean(raw?.trim());
-    const placeholder = isPlaceholder(raw);
-    const ok = set && !placeholder;
     results.push({
       key: 'LAOZHANG_API_KEY (или OPENAI_API_KEY)',
       group: 'AI-ключи',
-      required: true,
+      required: false,
       set,
-      ok,
-      severity: ok ? 'ok' : 'critical',
-      message: !set
-        ? 'Не задан — генерация текстового промпта (GPT-5) не будет работать.'
-        : placeholder
-          ? 'Похоже на незаменённый плейсхолдер из .env.example.'
-          : 'Задан.',
+      ok: true,
+      severity: 'ok',
+      message:
+        'Больше не используется — генерация промпта переведена на Gemini (см. GEMINI_API_KEY выше). Можно убрать из .env, если не нужен для чего-то другого.',
     });
   }
 
@@ -327,8 +329,8 @@ export function getEnvSettings(
       set: raw !== undefined,
       ok: true,
       severity: 'ok',
-      message: 'Базовый URL API для генерации текста.',
-      value: raw ?? 'https://api.laozhang.ai/v1 (по умолчанию)',
+      message: 'Больше не используется — см. примечание к LAOZHANG_API_KEY выше.',
+      value: raw ?? '(не используется)',
     });
   }
 

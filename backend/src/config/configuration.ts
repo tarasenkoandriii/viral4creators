@@ -312,6 +312,13 @@ export const loadConfiguration = (): Configuration => {
       model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
     },
 
+    // Найдено при аудите (по прямому запросу, 2026-09-13): вся эта секция
+    // не читается больше НИГДЕ в коде — генерация промпта/A-B-вариантов/
+    // переписывания для Grok-референсов (`PromptService`, единственный
+    // прежний потребитель) переведена на Gemini. Не удаляю саму секцию —
+    // риск зацепить фикстуры тестов, которые могут собирать полный
+    // объект `Configuration` литералом, выше пользы от удаления мёртвого
+    // кода; тот же принцип уже применён к `gemini.model` выше.
     openai: {
       apiKey: process.env.LAOZHANG_API_KEY || process.env.OPENAI_API_KEY || '',
       baseUrl:

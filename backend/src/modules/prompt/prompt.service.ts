@@ -11,7 +11,9 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import axios, { AxiosInstance } from 'axios';
+import { GoogleGenAI } from '@google/genai';
+import { createGeminiClient } from '../../common/gemini-client';
+import { GEMINI_MODEL } from '../../common/gemini-model';
 import { v4 as uuidv4 } from 'uuid';
 import { SessionService } from '../../common/session.service';
 import {
@@ -44,7 +46,6 @@ import {
   parseAbVariantsResponse,
 } from '../../common/ab-variant-response';
 import { cameraBriefText, normalizeCameraMove } from '../../common/camera-move';
-import { loadConfiguration } from '../../config/configuration';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
 
@@ -63,9 +64,7 @@ export const PROMPT_IN_FLIGHT_MESSAGE =
 @Injectable()
 export class PromptService {
   private readonly logger = new Logger(PromptService.name);
-  private readonly httpClient: AxiosInstance;
-  private readonly gptModel: string;
-  private readonly fastModel: string;
+  private readonly genai: GoogleGenAI;
 
   // Basic moderation patterns (simple keyword matching for POC)
   private readonly moderationPatterns = [
@@ -87,28 +86,53 @@ export class PromptService {
     private readonly aiUsage: AiUsageService,
     private readonly plans: PlanService,
   ) {
-    // Get OpenAI/laozhang.ai configuration from centralized config
-    const config = loadConfiguration();
-    const apiKey = config.openai.apiKey;
-    const baseUrl = config.openai.baseUrl;
-    this.gptModel = config.openai.gptModel;
-    this.fastModel = config.openai.fastModel;
+    // Доп. запрос владельца продукта: генерация промптов (и A/B-варианты,
+    // и переписывание сцены для Grok-референсов) переведена с GPT-5 через
+    // Laozhang.ai на Gemini — тот же провайдер, что уже настроен и
+    // работает для разбора видео/релевантности, чтобы не держать третий
+    // отдельный платный аккаунт (найдено по реальному сбою: 403 «квота
+    // исчерпана» на аккаунте Laozhang, 2026-09-13). `createGeminiClient()`
+    // сам бросит понятную ошибку, если GEMINI_API_KEY не задан — тот же
+    // принцип, что уже применяется в AnalysisService/RelevanceService.
+    this.genai = createGeminiClient();
+  }
 
-    if (!apiKey) {
-      throw new Error(
-        'OPENAI_API_KEY or LAOZHANG_API_KEY environment variable is required',
-      );
-    }
-
-    // Initialize axios client for laozhang.ai API
-    this.httpClient = axios.create({
-      baseURL: baseUrl,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+  /**
+   * Единая точка вызова текстовой модели для всего этого класса — до
+   * этой правки каждый из трёх вызовов (`generatePrompt`, A/B-варианты,
+   * `rewriteForGrokReferences`) заново собирал `httpClient.post(...)` с
+   * похожей, но не идентичной обработкой ошибок. Один общий путь проще
+   * держать в курсе того, что провайдер сменился, — не забыть обновить
+   * какой-то из трёх при следующей смене.
+   */
+  private async callTextModel(
+    prompt: string,
+    options: {
+      operation: string;
+      sessionId: string;
+      temperature?: number;
+      maxOutputTokens?: number;
+      /** Просить у Gemini `application/json` напрямую (§ AnalysisService
+       * уже делает так же), а не полагаться только на инструкцию в
+       * тексте промпта, как это делал GPT-5. */
+      json?: boolean;
+    },
+  ): Promise<string> {
+    const response = await this.genai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: [{ text: prompt }],
+      config: {
+        temperature: options.temperature ?? 0.7,
+        maxOutputTokens: options.maxOutputTokens ?? 4000,
+        ...(options.json ? { responseMimeType: 'application/json' } : {}),
       },
-      timeout: 120000, // 120 second timeout for GPT-5 (prompt generation can be slow)
     });
+    await this.aiUsage.recordGemini(response, {
+      operation: options.operation,
+      model: GEMINI_MODEL,
+      sessionId: options.sessionId,
+    });
+    return response.text?.trim() ?? '';
   }
 
   /**
@@ -245,79 +269,22 @@ Please respond with a valid JSON object only, with two keys:
       }
 `;
 
-      // [PROD] Call GPT-5 via laozhang.ai
-      const response = await this.httpClient.post('/chat/completions', {
-        model: this.gptModel,
-        messages: [{ role: 'user', content: userMessage }],
-        temperature: 0.7,
-        max_tokens: 4000,
-      });
-
-      // DEBUG
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      // const response: any = {};
-      // response.data = {
-      //   id: 'chatcmpl-CfVgjLYMX3CHZcKNsupj595S3k2r1',
-      //   object: 'chat.completion',
-      //   created: 1764009293,
-      //   model: 'gpt-5-2025-08-07',
-      //   choices: [
-      //     {
-      //       index: 0,
-      //       message: {
-      //         role: 'assistant',
-      //         content:
-      //           '{\n  "prompt": "8 seconds; UGC smartphone realism, 35mm-equivalent prime lens, shallow depth of field, 4K, 24fps. Subject + action: A fast, clean UGC unboxing-to-testimonial sequence showcasing SuperBelly Mango Passion Fruit as an easy daily gut-support drink. Aesthetic: bright natural daylight, lifestyle product demo with authentic testimonial energy, minimal props, no distracting clutter.\\nCamera movement: Scene 1 (0:00–0:01.5) slight upward pan from inside an open mango-yellow shipping box to a matte mango-yellow SuperBelly pouch; Scene 2 (0:01.5–0:03.5) static medium shot on woman in a bright kitchen, hard cut to tight detail of scoop; Scene 3 (0:03.5–0:05.5) static medium close-up on man speaking; Scene 4 (0:05.5–0:08.0) medium close-up on man holding a clear shaker, hard cut to overhead product flat lay.\\nPacing: fast and upbeat with snappy hard cuts on the musical beat; quick intro hook, direct benefit line, punchy CTA finish.\\nColors: mango-yellow and passionfruit purple accents, fresh greens, crisp white backgrounds, warm wood tones, natural skin tones. High contrast but soft shadows.\\nAudio: upbeat tropical pop bed (light marimba, claps, soft kick), medium intensity, rises slightly toward the end; subtle foley for the powder scoop; clean, intimate VO. No reverb.\\nText overlay: persistent top-left sans-serif, white with soft drop shadow: “Free Shaker Bottle + 5 Free Travel Sticks.” Keep size readable on mobile; animate in subtly at 0:00 and gently scale up 5% at the CTA.\\nDialogue (timed to scenes):\\n- Scene 1 (0:00–0:01.5, female VO over unboxing): “Remembering to take all of my supplements is a lot sometimes.”\\n- Scene 2 (0:01.5–0:03.5, female VO over medium shot and scoop close-up): “And this is so much more than just a mango passion fruit drink—it’s packed with prebiotics, probiotics, and belly-loving fiber.”\\n- Scene 3 (0:03.5–0:05.5, male on-camera): “It’s helped my gut health, regularity, and daily energy—and I’ve noticed way less bloating.”\\n- Scene 4 (0:05.5–0:08.0, male VO on shaker and flat lay): “Order SuperBelly Mango Passion Fruit now and get a free shaker bottle and five free travel sticks.”\\nVisual direction by scene:\\n- Scene 1 Hook (0:00–0:01.5): Medium close-up; hand with rings gently lifts a large matte mango-yellow SuperBelly pouch from a custom-fit mango-yellow box lined with tropical leaf print. Clear white “SuperBelly” wordmark, flavor copy “Mango Passion Fruit,” and small icons: Prebiotic • Probiotic • Fiber. Bright, even daylight; soft shadows. No VFX.\\n- Scene 2 Solution (0:01.5–0:03.5): Medium shot; smiling woman in white tee and jeans, slight three-quarter angle in a sunlit minimalist kitchen, holding a clear shaker with a golden-mango drink (tiny bubbles, condensation). Hard cut to close-up of a mango-colored scoop pulling sunny-yellow powder from a brushed-metal canister; a soft “scoop” foley. Subtle logo visible on shaker.\\n- Scene 3 Benefits (0:03.5–0:05.5): Medium close-up; bearded man with glasses and cap, blue hoodie over green tee, holding the SuperBelly pouch at chest level, gesturing with animated excitement. Bright, soft, even lighting with gentle shadow for depth. Clean white patterned wall behind.\\n- Scene 4 CTA (0:05.5–0:08.0): Medium close-up; same man now holds a clear BPA-free shaker with SuperBelly logo toward camera, smiles. Hard cut to overhead flat lay: five mango-yellow SuperBelly travel sticks fanned neatly on warm walnut wood beside the pouch and shaker. The overlay text subtly scales up. Music hits a feel-good flourish on the last beat.\\nEnd with: CTA visual and audio: freeze on the overhead flat lay of the five travel sticks, pouch, and shaker with the overlay “Free Shaker Bottle + 5 Free Travel Sticks” and a small URL/tag @SuperBelly in bottom-right; music button resolves on the final word of the CTA VO."\n}',
-      //         refusal: null,
-      //         annotations: [],
-      //       },
-      //       finish_reason: 'stop',
-      //     },
-      //   ],
-      //   usage: {
-      //     prompt_tokens: 1667,
-      //     completion_tokens: 3562,
-      //     total_tokens: 5229,
-      //     prompt_tokens_details: { cached_tokens: 0, audio_tokens: 0 },
-      //     completion_tokens_details: {
-      //       reasoning_tokens: 2560,
-      //       audio_tokens: 0,
-      //       accepted_prediction_tokens: 0,
-      //       rejected_prediction_tokens: 0,
-      //     },
-      //   },
-      //   service_tier: 'default',
-      //   system_fingerprint: null,
-      // };
-
-      // ТЗ §26: у ответа chat.completions расход в `usage`; модель берём
-      // ту, что реально вернул провайдер (через прокси она может
-      // отличаться от заказанной), и только если он её не назвал —
-      // заказанную.
-      await this.aiUsage.recordOpenAi(response.data, {
+      // Доп. запрос владельца продукта: переведено с GPT-5/Laozhang.ai на
+      // Gemini (см. доккомментарий конструктора) — `callTextModel` сам
+      // просит `application/json`, что надёжнее словесной инструкции
+      // ниже, которую раньше приходилось давать GPT-5 текстом.
+      const generatedText = await this.callTextModel(userMessage, {
         operation: 'prompt',
-        model: (response.data as { model?: string })?.model ?? this.gptModel,
         sessionId,
+        temperature: 0.7,
+        maxOutputTokens: 4000,
+        json: true,
       });
-
-      console.log('GPT-5 response:', JSON.stringify(response.data));
-
-      // Optional-chained all the way through `choices` too — a wrong
-      // LAOZHANG_API_BASE_URL (missing /v1) hits a different endpoint
-      // that returns a 200 with a non-OpenAI-shaped body (no `choices`
-      // array at all); response.data.choices[0] without the leading
-      // `?.` throws a plain TypeError there, which used to fall through
-      // to the catch block's generic "Please try again" (below) with no
-      // trace of what actually happened.
-      const generatedText =
-        response.data?.choices?.[0]?.message?.content?.trim() || '';
 
       if (!generatedText) {
-        this.logger.error(
-          `Empty response from GPT-5. Response data: ${JSON.stringify(response.data)}`,
-        );
+        this.logger.error(`Empty response from Gemini for session ${sessionId}`);
         throw new Error(
-          'GPT-5 returned an empty response. This may be due to content filtering or API issues.',
+          'Gemini returned an empty response. This may be due to content filtering or API issues.',
         );
       }
 
@@ -564,31 +531,23 @@ Please respond with a valid JSON object only, with one key "variants": an array 
       }
 `;
 
-      const response = await this.httpClient.post('/chat/completions', {
-        model: this.gptModel,
-        messages: [{ role: 'user', content: userMessage }],
-        temperature: 0.8,
-        max_tokens: 6000,
-      });
-
       // ТЗ §26 — та же учётная запись, что у обычной сборки промпта, но
       // отдельной операцией ('ab-variants', common/ai-pricing.ts) — иной
       // профиль по токенам, должна быть видна в отчёте расходов отдельно.
-      await this.aiUsage.recordOpenAi(response.data, {
+      const generatedText = await this.callTextModel(userMessage, {
         operation: 'ab-variants',
-        model: (response.data as { model?: string })?.model ?? this.gptModel,
         sessionId,
+        temperature: 0.8,
+        maxOutputTokens: 6000,
+        json: true,
       });
-
-      const generatedText =
-        response.data?.choices?.[0]?.message?.content?.trim() || '';
 
       if (!generatedText) {
         this.logger.error(
-          `Empty response from GPT-5 for A/B variants. Response data: ${JSON.stringify(response.data)}`,
+          `Empty response from Gemini for A/B variants, session ${sessionId}`,
         );
         throw new Error(
-          'GPT-5 returned an empty response. This may be due to content filtering or API issues.',
+          'Gemini returned an empty response. This may be due to content filtering or API issues.',
         );
       }
 
@@ -843,8 +802,12 @@ Please respond with a valid JSON object only, with one key "variants": an array 
    * конвенция xAI хочет метки ВНУТРИ действия («they wear the shirt
    * from <IMAGE_2>») — это и делает этот метод: узкий, точный
    * переписывающий шаг (не творческий — сцена уже придумана, здесь
-   * только вплетаются метки), поэтому `OPENAI_FAST_MODEL`
-   * (config.openai.fastModel), а не основной `gptModel`.
+   * только вплетаются метки). Изначально этот шаг звал отдельную,
+   * более дешёвую модель (`OPENAI_FAST_MODEL`) — с переходом на Gemini
+   * (по прямому запросу, 2026-09-13, см. доккомментарий конструктора)
+   * зовёт тот же `GEMINI_MODEL`, что и остальные два вызова этого
+   * класса — отдельной "быстрой" модели под Gemini не заводили, раз
+   * все три вызова уже используют одну и ту же.
    *
    * Отказоустойчиво: любая ошибка (сеть, модель отказала, пустой
    * ответ) — лог и откат на `grokReferencePromptText()` (то же
@@ -854,6 +817,7 @@ Please respond with a valid JSON object only, with one key "variants": an array 
   async rewriteForGrokReferences(
     sceneText: string,
     plan: ReferencePlan,
+    sessionId: string,
   ): Promise<string> {
     if (plan.images.length === 0) return sceneText;
 
@@ -873,20 +837,16 @@ Please respond with a valid JSON object only, with one key "variants": an array 
       .join('; ');
 
     try {
-      const response = await this.httpClient.post('/chat/completions', {
-        model: this.fastModel,
-        messages: [
-          {
-            role: 'user',
-            content: `Rewrite the following video scene description so that each reference image is mentioned NATURALLY, INSIDE the action it belongs to — the same way a director's shot list would cite reference photos — using the exact tag syntax <IMAGE_N>. Reference tags and what they show: ${refDescriptions}. Do not add a separate list of references at the end — weave each tag into the sentence describing what that character/product/location does or looks like in the scene. Keep everything else about the scene (camera, pacing, dialogue, on-screen text) unchanged. Return ONLY the rewritten scene text, nothing else.\n\nScene:\n${sceneText}`,
-          },
-        ],
-        temperature: 0.3,
-        max_tokens: 2000,
-      });
+      const rewritten = await this.callTextModel(
+        `Rewrite the following video scene description so that each reference image is mentioned NATURALLY, INSIDE the action it belongs to — the same way a director's shot list would cite reference photos — using the exact tag syntax <IMAGE_N>. Reference tags and what they show: ${refDescriptions}. Do not add a separate list of references at the end — weave each tag into the sentence describing what that character/product/location does or looks like in the scene. Keep everything else about the scene (camera, pacing, dialogue, on-screen text) unchanged. Return ONLY the rewritten scene text, nothing else.\n\nScene:\n${sceneText}`,
+        {
+          operation: 'grok-reference-rewrite',
+          sessionId,
+          temperature: 0.3,
+          maxOutputTokens: 2000,
+        },
+      );
 
-      const rewritten: string | undefined =
-        response.data?.choices?.[0]?.message?.content?.trim();
       if (!rewritten) {
         this.logger.warn(
           'rewriteForGrokReferences: пустой ответ модели — откат на grokReferencePromptText',

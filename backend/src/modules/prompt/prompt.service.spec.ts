@@ -6,7 +6,7 @@ import { PromptService } from './prompt.service';
 import { ModerationStatus } from '../../common/types/prompt.types';
 import { SessionStatus } from '../../common/types/session.types';
 
-const KEY = 'OPENAI_API_KEY';
+const KEY = 'GEMINI_API_KEY';
 
 function build(prompt: Record<string, unknown> | null) {
   const session: Record<string, unknown> = {
@@ -21,7 +21,7 @@ function build(prompt: Record<string, unknown> | null) {
   };
   const svc = new PromptService(
     sessions as any,
-    { recordOpenAi: jest.fn() } as any,
+    { recordGemini: jest.fn() } as any,
     { assertCanSpendSession: jest.fn() } as any,
   );
   return { svc, sessions, session };
@@ -118,7 +118,7 @@ describe('PromptService.generatePrompt — что уходит в Veo (Б-2.1)',
 
   /**
    * Сессия, готовая к генерации промпта: разбор завершён, товар описан.
-   * `httpClient` подменяется — сетевых вызовов в этих проверках нет.
+   * `genai` подменяется — сетевых вызовов в этих проверках нет.
    */
   function buildGen(content: string) {
     const session: Record<string, unknown> = {
@@ -137,13 +137,11 @@ describe('PromptService.generatePrompt — что уходит в Veo (Б-2.1)',
     };
     const svc = new PromptService(
       sessions as any,
-      { recordOpenAi: jest.fn() } as any,
+      { recordGemini: jest.fn() } as any,
       { assertCanSpendSession: jest.fn() } as any,
     );
-    const post = jest.fn().mockResolvedValue({
-      data: { choices: [{ message: { content } }], usage: {} },
-    });
-    (svc as any).httpClient = { post };
+    const post = jest.fn().mockResolvedValue({ text: content });
+    (svc as any).genai = { models: { generateContent: post } };
     return { svc, sessions, post };
   }
 
@@ -214,25 +212,20 @@ describe('PromptService.generatePrompt — движение камеры (ТЗ �
         claimWork: jest.fn().mockResolvedValue(true),
         releaseWork: jest.fn().mockResolvedValue(undefined),
       } as any,
-      { recordOpenAi: jest.fn() } as any,
+      { recordGemini: jest.fn() } as any,
       { assertCanSpendSession: jest.fn() } as any,
     );
-    const post = jest.fn().mockResolvedValue({
-      data: {
-        choices: [{ message: { content: 'готовый промпт' } }],
-        usage: {},
-      },
-    });
-    (svc as any).httpClient = { post };
+    const post = jest.fn().mockResolvedValue({ text: 'готовый промпт' });
+    (svc as any).genai = { models: { generateContent: post } };
     return { svc, post };
   }
 
   /** Текст брифа, ушедший в GPT-5. */
   function sentBrief(post: jest.Mock): string {
-    const body = post.mock.calls[0][1] as {
-      messages: { content: string }[];
+    const body = post.mock.calls[0][0] as {
+      contents: { text: string }[];
     };
-    return body.messages.map((m) => m.content).join('\n');
+    return body.contents.map((c) => c.text).join('\n');
   }
 
   it('заказанный наезд доезжает до модели', async () => {
@@ -291,16 +284,14 @@ describe('PromptService.generatePrompt — замок и запись расхо
       claimWork: jest.fn().mockResolvedValue(claimed),
       releaseWork: jest.fn().mockResolvedValue(undefined),
     };
-    const aiUsage = { recordOpenAi: jest.fn().mockResolvedValue(undefined) };
+    const aiUsage = { recordGemini: jest.fn().mockResolvedValue(undefined) };
     const svc = new PromptService(
       sessions as any,
       aiUsage as any,
       { assertCanSpendSession: jest.fn() } as any,
     );
-    const post = jest.fn().mockResolvedValue({
-      data: { choices: [{ message: { content: 'промпт' } }], usage: {} },
-    });
-    (svc as any).httpClient = { post };
+    const post = jest.fn().mockResolvedValue({ text: 'промпт' });
+    (svc as any).genai = { models: { generateContent: post } };
     return { svc, sessions, post, aiUsage };
   }
 
@@ -334,7 +325,7 @@ describe('PromptService.generatePrompt — замок и запись расхо
   it('расход записан до того, как метод вернул ответ (В-2.1)', async () => {
     const { svc, aiUsage } = buildLocked(true);
     let recorded = false;
-    aiUsage.recordOpenAi.mockImplementation(
+    aiUsage.recordGemini.mockImplementation(
       () =>
         new Promise<void>((resolve) =>
           setTimeout(() => {
@@ -383,16 +374,14 @@ describe('PromptService.generateAbVariants — набор вариантов о�
       claimWork: jest.fn().mockResolvedValue(claimed),
       releaseWork: jest.fn().mockResolvedValue(undefined),
     };
-    const aiUsage = { recordOpenAi: jest.fn().mockResolvedValue(undefined) };
+    const aiUsage = { recordGemini: jest.fn().mockResolvedValue(undefined) };
     const svc = new PromptService(
       sessions as any,
       aiUsage as any,
       { assertCanSpendSession: jest.fn() } as any,
     );
-    const post = jest.fn().mockResolvedValue({
-      data: { choices: [{ message: { content } }], usage: {} },
-    });
-    (svc as any).httpClient = { post };
+    const post = jest.fn().mockResolvedValue({ text: content });
+    (svc as any).genai = { models: { generateContent: post } };
     return { svc, sessions, post, aiUsage };
   }
 
@@ -476,7 +465,7 @@ describe('PromptService.generateAbVariants — набор вариантов о�
   it('расход записан отдельной операцией — видна отдельной строкой в отчёте §26', async () => {
     const { svc, aiUsage } = buildAb(THREE_VARIANTS);
     await svc.generateAbVariants('s1', 3);
-    expect(aiUsage.recordOpenAi).toHaveBeenCalledWith(
+    expect(aiUsage.recordGemini).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ operation: 'ab-variants', sessionId: 's1' }),
     );
@@ -523,10 +512,10 @@ describe('PromptService.seedPrompt — посев уже готового тек
     const post = jest.fn();
     const svc = new PromptService(
       sessions as any,
-      { recordOpenAi: jest.fn() } as any,
+      { recordGemini: jest.fn() } as any,
       { assertCanSpendSession: jest.fn() } as any,
     );
-    (svc as any).httpClient = { post };
+    (svc as any).genai = { models: { generateContent: post } };
     return { svc, sessions, post };
   }
 

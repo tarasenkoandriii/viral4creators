@@ -811,6 +811,7 @@ export class GenerationService {
       sceneText = await this.promptService.rewriteForGrokReferences(
         session.generationPrompt!.finalText,
         plan,
+        sessionId,
       );
       this.logger.log(
         `Grok reference-to-video: ${plan.images
