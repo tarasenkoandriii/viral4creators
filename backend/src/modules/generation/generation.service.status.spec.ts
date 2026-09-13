@@ -608,7 +608,10 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
 
     const result = await svc.getVideoStatus('s1');
 
-    expect(result.postProduction).toEqual({ status: 'pending' });
+    expect(
+      (result as GeneratedVideo & { postProduction: { status: string } })
+        .postProduction,
+    ).toEqual({ status: 'pending' });
     expect(postprod.start).toHaveBeenCalled();
     expect(read()).toMatchObject({ status: SessionStatus.VIDEO_COMPLETE });
   });
@@ -688,7 +691,10 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
 
     const result = await svc.getVideoStatus('s1');
 
-    expect(result.postProduction).toEqual({ status: 'pending' });
+    expect(
+      (result as GeneratedVideo & { postProduction: { status: string } })
+        .postProduction,
+    ).toEqual({ status: 'pending' });
     expect(postprod.start).toHaveBeenCalled();
     expect(read()).toMatchObject({ status: SessionStatus.VIDEO_COMPLETE });
   });

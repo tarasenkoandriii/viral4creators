@@ -30,3 +30,5 @@ __MACOSX/
 
 # Отчёт jest для scripts/check-docs.mjs (ТЗ §27) — рабочий файл, не коммит.
 jest-results.json
+.vercel
+.env*

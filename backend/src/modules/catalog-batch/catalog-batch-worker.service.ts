@@ -696,7 +696,7 @@ export class CatalogBatchWorkerService {
       pathname,
       fileName: 'generated.mp4',
       mimeType: 'video/mp4',
-      status: VideoGenerationStatus.COMPLETE,
+      status: GenerationStatus.COMPLETE,
       initiatedAt: new Date(),
       completedAt: new Date(),
       fileSize: videoBuffer.length,
@@ -710,8 +710,8 @@ export class CatalogBatchWorkerService {
     const previous = session.generatedVideo;
     const previousFinished =
       previous &&
-      (previous.status === VideoGenerationStatus.COMPLETE ||
-        previous.status === VideoGenerationStatus.FAILED);
+      (previous.status === GenerationStatus.COMPLETE ||
+        previous.status === GenerationStatus.FAILED);
     const videoHistory = previousFinished
       ? [previous, ...(session.videoHistory ?? [])]
       : (session.videoHistory ?? []);
