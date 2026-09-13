@@ -719,6 +719,19 @@ export interface GeneratedVideo {
   estimatedCompletionTime?: string;
   downloadUrl?: string;
   quality?: VideoQuality;
+  /**
+   * Найдено при повторном разборе сборки: этот интерфейс — отдельная,
+   * независимая копия `GeneratedVideo` (не та, что в `types/index.ts`,
+   * которую правили раньше) — именно её реально импортирует
+   * `useWorkflow.ts` (`from '../services/api'`), значит именно сюда
+   * нужно было добавлять эти поля с самого начала.
+   */
+  provider?: 'veo' | 'grok';
+  resolution?: '480p' | '720p' | '1080p';
+  avoidText?: string;
+  chainSegmentsDone?: number;
+  chainSegmentsTotal?: number;
+  chainTargetDurationSeconds?: number;
   error?: {
     code: string;
     message: string;
