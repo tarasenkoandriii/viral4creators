@@ -193,15 +193,16 @@ describe('GenerationService.generateVideo — деньги проверяютс�
     // Занизить отчёт о расходах опаснее, чем завысить: по нему планируют
     // бюджет, а невидимые неудачные рендеры превращают его в фантазию.
     //
-    // Модель — 'veo-3.0-generate-001', не '...3.1...': ТЗ §1 (этап 5
-    // плана §14) — сессия без персонажей бренда + `standard` → авто-
-    // выбор Veo 3.0 ради `negativePrompt`, см. `veo-model-choice.ts`.
+    // Модель — снова 'veo-3.1-generate-preview': авто-выбор Veo 3.0
+    // (ТЗ §1, этап 5 плана §14) отключён после реального сбоя в проде
+    // (2026-09-13, 404 на первую догадку об ID модели) — см.
+    // `VEO_3_0_ENABLED` в `veo-model-choice.ts`.
     const { svc, aiUsage } = build();
     const video = await svc.generateVideo('s1', 'standard');
 
     expect(aiUsage.record).toHaveBeenCalledWith({
       operation: 'generation',
-      model: 'veo-3.0-generate-001',
+      model: 'veo-3.1-generate-preview',
       seconds: 8,
       sessionId: 's1',
     });
