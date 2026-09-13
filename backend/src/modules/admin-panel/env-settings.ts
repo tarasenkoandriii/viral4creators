@@ -294,7 +294,7 @@ export function getEnvSettings(
       severity: 'ok',
       message:
         'Модель Gemini для всех пяти вызовов: разбор видео, релевантность, аудит ролика, распознавание фото, расшифровка голоса. Модели вне прайса пишутся в расход как unpriced.',
-      value: raw ?? 'gemini-2.5-flash (по умолчанию)',
+      value: raw ?? 'gemini-3.6-flash (по умолчанию)',
     });
   }
 

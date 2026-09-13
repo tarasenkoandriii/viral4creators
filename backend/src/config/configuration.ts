@@ -304,7 +304,12 @@ export const loadConfiguration = (): Configuration => {
     gemini: {
       apiKey:
         process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '',
-      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      // Не используется нигде в коде на 2026-09-13 (единственный реальный
+      // источник — GEMINI_MODEL в common/gemini-model.ts) — не убираю,
+      // раз это не мой объём аудита, но держу значение по умолчанию тем же,
+      // что и там, чтобы не вводить в заблуждение, если это когда-то
+      // подключат.
+      model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
     },
 
     openai: {

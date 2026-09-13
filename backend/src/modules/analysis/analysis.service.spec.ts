@@ -32,6 +32,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { AnalysisService } from './analysis.service';
+import { GEMINI_MODEL } from '../../common/gemini-model';
 import {
   AnalysisStatus,
   VideoAnalysis,
@@ -436,7 +437,10 @@ describe('AnalysisService — деньги и согласие проверяю�
 
     expect(aiUsage.recordGemini).toHaveBeenCalledWith(expect.anything(), {
       operation: 'analysis',
-      model: 'gemini-2.5-flash',
+      // По имени константы, не жёсткой строкой — тест не должен ломаться
+      // каждый раз, когда Google меняет доступность модели по умолчанию
+      // (найдено по реальной ошибке 404 в проде, 2026-09-13).
+      model: GEMINI_MODEL,
       sessionId: 's1',
     });
     // Первая запись сессии — статус ANALYZING, дальше расход, и только

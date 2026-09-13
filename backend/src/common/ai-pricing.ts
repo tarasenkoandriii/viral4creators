@@ -188,6 +188,21 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
     outputPerMTok: 10 * USD,
     note: 'ai.google.dev, сверено 2026-09-06 (ставка для запросов до 200k токенов); ставка кеша — четверть входной',
   },
+  // Найдено при аудите (Gemini API вернул 404 на новый ключ — `gemini-2.5-flash`
+  // недоступна новым пользователям, Google сам указал заменить на эту модель).
+  // Официальная страница cloud.google.com/gemini-enterprise-agent-platform:
+  // вводная ставка $0.75/$3.75 за 1M токенов действует ДО 31.12.2026, затем
+  // вырастет до $1.50/$7.50 — если счёт разойдётся после 2027-01-01, первым
+  // делом проверить именно эту дату, не искать другую причину.
+  'gemini-3.6-flash': {
+    provider: 'GEMINI',
+    inputPerMTok: 0.75 * USD,
+    // Кеш-чтение — 1/10 от входной ставки (cloud.google.com), не 1/4, как у
+    // 2.5-flash/2.5-pro выше — разные модели, разная скидка на кеш.
+    cachedInputPerMTok: 0.075 * USD,
+    outputPerMTok: 3.75 * USD,
+    note: 'cloud.google.com, сверено 2026-09-13; вводная ставка до 2026-12-31, далее $1.50/$7.50',
+  },
   'veo-3.1-generate-preview': {
     provider: 'VEO',
     perSecond: 0.4 * USD,
