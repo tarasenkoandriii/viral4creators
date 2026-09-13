@@ -138,11 +138,23 @@ export class GrokVideoService {
    * понижает `1080p` до `720p`, а не отклоняет запрос: тихая деградация
    * качества честнее отказа там, где вызывающий мог не знать про этот
    * потолок именно у этого режима.
+   *
+   * `extendVideoUrl` — Scene Extension (ТЗ §9, этап 4 плана §14):
+   * продолжает СУЩЕСТВУЮЩЕЕ видео (предыдущий сегмент цепочки) с
+   * последнего кадра. Официально подтверждено — `docs.x.ai`, поле
+   * `video_url` (Python SDK: `client.video.extend(video_url=...,
+   * duration=...)`) — «Only one mode can be active per request»,
+   * взаимоисключающе с `imageUrl`/`referenceImageUrls` (та же логика
+   * XOR, что уже здесь есть). `durationSeconds` в этом режиме — это
+   * ДЛИНА ДОБАВЛЯЕМОГО сегмента, не итоговая длина ролика — расчёт,
+   * сколько сегментов и какой длины нужно всего, живёт в
+   * `common/video-extension-plan.ts`, не здесь.
    */
   async startGeneration(params: {
     prompt: string;
     imageUrl?: string;
     referenceImageUrls?: string[];
+    extendVideoUrl?: string;
     durationSeconds: number;
     aspectRatio: string;
     resolution: GrokResolution;
@@ -150,11 +162,16 @@ export class GrokVideoService {
     if (!this.apiKey) {
       throw new Error('GROK_API_KEY не задан');
     }
-    if (params.imageUrl && params.referenceImageUrls?.length) {
+    const modesSet = [
+      params.imageUrl,
+      params.referenceImageUrls?.length,
+      params.extendVideoUrl,
+    ].filter(Boolean).length;
+    if (modesSet > 1) {
       // Программная ошибка вызывающего, не ввод пользователя — не
       // локализуем, это никогда не должно дойти до интерфейса.
       throw new Error(
-        'GrokVideoService.startGeneration: imageUrl и referenceImageUrls взаимоисключающие (§15 ТЗ)',
+        'GrokVideoService.startGeneration: imageUrl/referenceImageUrls/extendVideoUrl взаимоисключающие (§9, §15 ТЗ)',
       );
     }
     const resolution =
@@ -174,6 +191,9 @@ export class GrokVideoService {
                 url,
               })),
             }
+          : {}),
+        ...(params.extendVideoUrl
+          ? { video_url: params.extendVideoUrl }
           : {}),
         duration: params.durationSeconds,
         aspect_ratio: params.aspectRatio,

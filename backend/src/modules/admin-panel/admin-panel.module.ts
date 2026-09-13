@@ -10,6 +10,7 @@ import { AdminCatalogBatchService } from './admin-catalog-batch.service';
 import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
+import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 
 @Module({
   // StorageModule — удаление сессии оператором уносит и её файлы (Б-5.9).
@@ -45,6 +46,7 @@ import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.servic
     AdminAbTestService,
     AdminFeedImportService,
     AdminVoiceoverSettingsService,
+    AdminAnalysisSettingsService,
   ],
   // Суточный отчёт крона берёт телеметрию отсюда (ТЗ §28, этап 45).
   exports: [AdminPanelService],

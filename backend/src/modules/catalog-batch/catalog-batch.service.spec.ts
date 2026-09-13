@@ -310,6 +310,44 @@ describe('CatalogBatchService.create', () => {
     );
   });
 
+  // Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) — найдено
+  // при аудите: без явного прокидывания DTO → `create()` партия НИКОГДА
+  // не могла стать Grok-партией (схема даёт дефолт 'veo' молча), то
+  // есть весь путь воркера был недостижим через реальный API.
+  it('provider/resolution из DTO доходят до создания партии (иначе Grok-путь воркера недостижим)', async () => {
+    const { service, prisma } = setup({});
+    await service.create('user1', 'proj1', {
+      sourceSessionId: 'src-session',
+      productItemIds: ['pi1', 'pi2'],
+      provider: 'grok',
+      resolution: '480p',
+    });
+    expect(prisma.catalogBatchRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          provider: 'grok',
+          resolution: '480p',
+        }),
+      }),
+    );
+  });
+
+  it('без provider в DTO — партия остаётся veo по умолчанию', async () => {
+    const { service, prisma } = setup({});
+    await service.create('user1', 'proj1', {
+      sourceSessionId: 'src-session',
+      productItemIds: ['pi1', 'pi2'],
+    });
+    expect(prisma.catalogBatchRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          provider: 'veo',
+          resolution: null,
+        }),
+      }),
+    );
+  });
+
   it('все выбранные товары заняты другой партией — 400, партия не создаётся вовсе', async () => {
     const { service, prisma } = setup({
       busy: [{ productItemId: 'pi1' }, { productItemId: 'pi2' }],
@@ -335,7 +373,7 @@ describe('CatalogBatchService.create', () => {
     expect(prisma.catalogBatchItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: { in: ['PENDING', 'GENERATING', 'DONE'] },
+          status: { in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'] },
         }),
       }),
     );
@@ -350,7 +388,7 @@ describe('CatalogBatchService.create', () => {
     expect(txCatalogBatchItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: { in: ['PENDING', 'GENERATING', 'DONE'] },
+          status: { in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'] },
         }),
       }),
     );
@@ -631,7 +669,7 @@ describe('CatalogBatchService.retry', () => {
         where: {
           batchId: { not: 'batch1' },
           productItemId: { in: ['pi1'] },
-          status: { in: ['PENDING', 'GENERATING', 'DONE'] },
+          status: { in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'] },
         },
         select: { productItemId: true },
       });
@@ -851,5 +889,40 @@ describe('CatalogBatchService.getStatus', () => {
     const result = await service.getStatus('user1', 'proj1', 'batch1');
     expect(result.items[0].status).toBe('PENDING');
     expect(sessions.getSession).not.toHaveBeenCalled();
+  });
+
+  // Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) — найдено
+  // при аудите: 'BATCH_QUEUED' (Grok-строки, ждущие подачи как одна
+  // пачка) не входил ни в одну из четырёх категорий сводки — такие
+  // строки были невидимы, `summary` не досчитывался бы до общего числа.
+  it('BATCH_QUEUED считается вместе с PENDING в сводке, не теряется', async () => {
+    const { service } = setupStatus({
+      run: {
+        id: 'batch1',
+        userId: 'user1',
+        projectId: 'proj1',
+        items: [
+          { productItemId: 'p1', status: 'PENDING', productItem: {} },
+          { productItemId: 'p2', status: 'BATCH_QUEUED', productItem: {} },
+          { productItemId: 'p3', status: 'BATCH_QUEUED', productItem: {} },
+          { productItemId: 'p4', status: 'DONE', productItem: {} },
+        ],
+      },
+    });
+    const result = await service.getStatus('user1', 'proj1', 'batch1');
+    expect(result.summary).toEqual({
+      pending: 3,
+      generating: 0,
+      done: 1,
+      failed: 0,
+    });
+    // Ключевая проверка самой находки: сумма сводки должна совпадать с
+    // числом строк партии — до исправления 2 строки пропадали молча.
+    expect(
+      result.summary.pending +
+        result.summary.generating +
+        result.summary.done +
+        result.summary.failed,
+    ).toBe(result.items.length);
   });
 });

@@ -22,6 +22,13 @@ import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
 import { GrokVideoService, GrokResolution } from './grok-video.service';
 import { PromptService } from '../prompt/prompt.service';
 import {
+  buildExtensionPlan,
+  chainCostMicroUsd,
+} from '../../common/video-extension-plan';
+import { pickVeoModel, usesVeo30 } from '../../common/veo-model-choice';
+import { estimateCost } from '../../common/ai-pricing';
+import { DailySpendLimitExceededException } from '../../common/spend-limits';
+import {
   allowsAspectRatio,
   featureDeniedMessage,
   planAllows,
@@ -69,18 +76,29 @@ const DEFAULT_QUALITY: VideoQuality = 'fast';
  * пива, битый текстовый оверлей, лишний звук, резкий обрыв в конце):
  * Veo поддерживает `negativePrompt` на Vertex AI и для более старой
  * Veo 3.0 через Gemini API (официальный пример Google — "barking,
- * woofing" для ролика с собакой). НЕ подключено намеренно: этот же
- * параметр отсутствует в официальной таблице параметров именно Veo
- * 3.1 (в отличие от aspectRatio/durationSeconds, которые в ней есть),
- * а у Veo 3.1 через Gemini Developer API (не Vertex) уже есть
- * задокументированная история параметров «в доке есть, API отвечает
- * 400 not supported» — reference_images, last_frame,
- * personGeneration=allow_adult, и ровно так же вела себя generateAudio
- * (см. её собственную историю в этом файле) до этапа, где её убрали
- * совсем. Без реальной проверки живым вызовом (сети к API нет)
- * подключать его — рисковать сломать ВСЕ генерации разом ради ещё не
- * подтверждённого улучшения. Если понадобится — сначала проверить на
- * одном ручном вызове, не на всём трафике.
+ * woofing" для ролика с собакой). Этот же параметр отсутствует в
+ * официальной таблице параметров именно Veo 3.1 (в отличие от
+ * aspectRatio/durationSeconds, которые в ней есть), а у Veo 3.1 через
+ * Gemini Developer API (не Vertex) уже есть задокументированная
+ * история параметров «в доке есть, API отвечает 400 not supported» —
+ * reference_images, last_frame, personGeneration=allow_adult, и ровно
+ * так же вела себя generateAudio (см. её собственную историю в этом
+ * файле) до этапа, где её убрали совсем.
+ *
+ * ОБНОВЛЕНО (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §1, этап 5 плана
+ * §14): изначальное решение здесь было НЕ подключать `negativePrompt`
+ * вовсе, чтобы не рисковать сломать ВСЕ генерации разом ради ещё не
+ * подтверждённого улучшения. По прямому запросу подключено — но не
+ * широко, а УЗКО: только когда авто-выбор (`veo-model-choice.ts`,
+ * `usesVeo30()`) сам определил, что сессия идёт на Veo 3.0 (нет
+ * персонажей бренда + `quality: 'standard'`) — там `negativePrompt`
+ * подтверждён официально, риск сломать Veo 3.1-трафик не возникает,
+ * потому что 3.1-трафик этот параметр вообще не видит (см.
+ * `startVeoGeneration`, `isVeo30`/`avoidText`). Точный ID модели Veo
+ * 3.0 всё ещё не подтверждён (`common/ai-pricing.ts`) — тот же
+ * принцип «сначала проверить на одном ручном вызове», просто
+ * сработавший только на этой узкой ветке, а не блокирующий её
+ * реализацию целиком.
  */
 
 /**
@@ -181,6 +199,12 @@ export class GenerationService {
    * @param quality - 'fast' (default, Lite model) or 'standard' (full Veo 3.1) — только для `provider === 'veo'`.
    * @param provider - 'veo' (default, текущее поведение) или 'grok'.
    * @param resolution - только для `provider === 'grok'`; Veo разрешение не запрашивает явно (§10.1 ТЗ).
+   * @param targetDurationSeconds - доп. запрос владельца продукта (§9,
+   *   этап 4 плана §14): ролик длиннее 8 секунд через Scene Extension.
+   *   `undefined`/`<= 8` — обычная, однократная генерация, как раньше.
+   * @param avoidText - доп. запрос владельца продукта (§1/§6, этап 5
+   *   плана §14): поле «Чего избежать» — `negativePrompt` на Veo 3.0,
+   *   best-effort строкой в промпт иначе (§4.1 ТЗ).
    * @returns Generated video metadata with PROCESSING status
    */
   async generateVideo(
@@ -189,6 +213,8 @@ export class GenerationService {
     aspectRatio?: string,
     provider: 'veo' | 'grok' = 'veo',
     resolution?: GrokResolution,
+    targetDurationSeconds?: number,
+    avoidText?: string,
   ): Promise<GeneratedVideo> {
     // §23: в Lite доступны только родные для Veo форматы — 16:9 и 9:16.
     // §25.3: заблокированному генерация запрещена — это самый дорогой
@@ -248,6 +274,77 @@ export class GenerationService {
       return inFlight;
     }
 
+    // Доп. запрос владельца продукта (ТЗ §9.4, этап 4 плана §14) —
+    // ролик длиннее 8 секунд через Scene Extension.
+    let extensionPlan: ReturnType<typeof buildExtensionPlan> | undefined;
+    if (targetDurationSeconds && targetDurationSeconds > VIDEO_DURATION_SECONDS) {
+      // Явный запрет для Lite — независимо от провайдера (§9.4 ТЗ):
+      // не влезает НИ В ОДНУ комбинацию по деньгам (проверено в самом
+      // ТЗ, §11.6/§9.4), поэтому явная подпись «недоступно», а не
+      // ожидание, что бюджетная проверка ниже откажет сама.
+      if (access.plan === 'LITE') {
+        throw new ForbiddenException(
+          'Ролики длиннее 8 секунд недоступны на тарифе Lite',
+        );
+      }
+
+      extensionPlan = buildExtensionPlan(
+        provider,
+        targetDurationSeconds,
+        session.videoAnalysis?.referenceDurationSeconds,
+      );
+
+      // Бюджет всей цепочки — заранее, целиком, не по одному вызову за
+      // раз (§9.4 ТЗ): иначе ролик мог бы оборваться посередине от
+      // нехватки денег, а не по выбору длины.
+      // Найдено при аудите (ТЗ §7, тот же принцип): цена цепочки должна
+      // отражать РЕАЛЬНО выбранную модель, не только тир качества —
+      // иначе оценка бюджета молча разойдётся с реальным списанием в
+      // момент, когда цены Veo 3.0/3.1 перестанут случайно совпадать
+      // (сейчас у обеих $0.40/сек, но `common/ai-pricing.ts` явно
+      // помечает цену Veo 3.0 как неподтверждённую).
+      const model =
+        provider === 'grok'
+          ? `${this.grokVideo.modelName}:${resolution ?? '480p'}`
+          : pickVeoModel(
+              buildReferencePlan(session),
+              quality,
+              VEO_MODELS[quality],
+            );
+      const perCallEstimate = estimateCost(model, {
+        seconds: VIDEO_DURATION_SECONDS,
+      });
+      const totalChainCostMicroUsd = chainCostMicroUsd(
+        extensionPlan,
+        perCallEstimate.costMicroUsd,
+      );
+      const verdict = await this.aiUsage.budget(
+        owner?.userId ?? null,
+        access.spendPlan,
+      );
+      if (
+        verdict.allowed &&
+        verdict.remainingMicroUsd < totalChainCostMicroUsd
+      ) {
+        this.logger.warn(
+          `сессия ${sessionId}: цепочка из ${extensionPlan.totalCalls} вызовов ` +
+            `(${totalChainCostMicroUsd} мкд) не помещается в остаток дневного лимита ` +
+            `(${verdict.remainingMicroUsd} мкд) — отказ целиком, не частично`,
+        );
+        throw new DailySpendLimitExceededException(
+          `Ролик на ${extensionPlan.targetDurationSeconds} секунд стоил бы больше остатка дневного лимита — выберите короче или попробуйте завтра`,
+        );
+      }
+      if (!verdict.allowed) {
+        // Обычная проверка ниже (в startGeneration/startVeoGeneration)
+        // всё равно откажет — здесь просто не даём цепочке начаться
+        // с заведомо нулевым остатком, с тем же классом ошибки.
+        throw new DailySpendLimitExceededException(
+          'Дневной лимит расхода уже исчерпан',
+        );
+      }
+    }
+
     // Этап 47 (В-2.2 / В-3.1): проверка выше видит только рендер, который
     // уже ЗАПИСАН, а запись происходит после скачивания фото, референсов
     // и самого вызова Veo — через секунды. Повтор после клиентского
@@ -274,6 +371,8 @@ export class GenerationService {
         aspectRatio,
         provider,
         resolution,
+        extensionPlan,
+        avoidText,
       );
     } finally {
       // Успех или провал — замок снимается: при успехе повтор увидит
@@ -289,6 +388,8 @@ export class GenerationService {
     aspectRatio?: string,
     provider: 'veo' | 'grok' = 'veo',
     resolution?: GrokResolution,
+    extensionPlan?: ReturnType<typeof buildExtensionPlan>,
+    avoidText?: string,
   ): Promise<GeneratedVideo> {
     const sessionId = session.sessionId;
     if (!session.generationPrompt || !session.generationPrompt.approvedAt) {
@@ -353,6 +454,8 @@ export class GenerationService {
             pathname,
             resolution ?? '480p',
             aspectRatio,
+            extensionPlan,
+            avoidText,
           )
         : await this.startVeoGeneration(
             session,
@@ -361,6 +464,8 @@ export class GenerationService {
             pathname,
             quality,
             aspectRatio,
+            extensionPlan,
+            avoidText,
           );
     } catch (error) {
       // Е-1.4 шестого аудита: `VeoOperationOrphanedError` значит, что Veo
@@ -387,6 +492,8 @@ export class GenerationService {
     pathname: string,
     quality: VideoQuality,
     aspectRatio?: string,
+    extensionPlan?: ReturnType<typeof buildExtensionPlan>,
+    avoidText?: string,
   ): Promise<GeneratedVideo> {
     // Оба уже проверены вызывающим (`startGeneration`) до резерва кредита
     // — здесь просто читаем поля снова (и заново сужаем тип для
@@ -457,6 +564,18 @@ export class GenerationService {
       session.originalVideo?.frame?.aspectRatio ??
       '9:16';
     let render = planRender(target);
+
+    // Доп. запрос владельца продукта (ТЗ §1/§6, этап 5 плана §14) —
+    // пониженный приоритет (см. доккомментарий `veo-model-choice.ts`):
+    // Veo 3.0 только для `standard` без персонажей бренда — у Veo 3.0
+    // нет Lite-аналога, `fast` всегда остаётся на Veo 3.1 Lite, как и
+    // раньше.
+    const veoModel = pickVeoModel(plan, quality, VEO_MODELS[quality]);
+    const isVeo30 = usesVeo30(plan, quality);
+    // «Чего избежать» — настоящий `negativePrompt` на Veo 3.0 (§1 ТЗ);
+    // иначе (Veo 3.1, `fast`) — best-effort строкой в промпт (§4.1 ТЗ):
+    // `negativePrompt` там не подтверждён (§3 ТЗ), молчаливая потеря
+    // ввода пользователя хуже, чем более слабый эффект.
     const promptText = [
       session.generationPrompt.finalText,
       // Spec §17: the authoritative "reference image N = …" mapping, computed
@@ -464,26 +583,28 @@ export class GenerationService {
       referenceMappingText(plan),
       `Output format: ${render.rendered} ${render.rendered === '9:16' ? 'vertical' : 'horizontal'} video.`,
       render.compositionNote ?? '',
+      avoidText && !isVeo30 ? `Avoid: ${avoidText}` : '',
     ]
       .filter(Boolean)
       .join('\n');
 
     const start = (frame: VeoAspectRatio) =>
       this.genai.models.generateVideos({
-        model: VEO_MODELS[quality],
+        model: veoModel,
         prompt: promptText,
         ...(imageInput ? { image: imageInput } : {}),
         config: {
           durationSeconds: VIDEO_DURATION_SECONDS,
           aspectRatio: frame,
           ...(referenceImages ? { referenceImages } : {}),
+          ...(avoidText && isVeo30 ? { negativePrompt: avoidText } : {}),
         },
       });
 
     let operation: GenerateVideosOperation;
     try {
       this.logger.log(
-        `Starting Veo (${quality} -> ${VEO_MODELS[quality]}, ${render.rendered} for target ${target}) generation for session ${sessionId}`,
+        `Starting Veo (${quality} -> ${veoModel}, ${render.rendered} for target ${target}) generation for session ${sessionId}`,
       );
       try {
         operation = await start(render.rendered);
@@ -563,7 +684,7 @@ export class GenerationService {
       // а невидимые неудачные рендеры превращают его в фантазию.
       await this.aiUsage.record({
         operation: 'generation',
-        model: VEO_MODELS[quality],
+        model: veoModel,
         seconds: VIDEO_DURATION_SECONDS,
         sessionId,
       });
@@ -586,6 +707,14 @@ export class GenerationService {
           label: i.label,
           characterId: i.characterId,
         })),
+        ...(extensionPlan && extensionPlan.totalCalls > 1
+          ? {
+              chainSegmentsDone: 1,
+              chainSegmentsTotal: extensionPlan.totalCalls,
+              chainTargetDurationSeconds: extensionPlan.targetDurationSeconds,
+            }
+          : {}),
+        ...(avoidText ? { avoidText } : {}),
       };
 
       // Доп. запрос владельца продукта: полная история версий. Уходящая
@@ -643,6 +772,8 @@ export class GenerationService {
     pathname: string,
     resolution: GrokResolution,
     aspectRatio?: string,
+    extensionPlan?: ReturnType<typeof buildExtensionPlan>,
+    avoidText?: string,
   ): Promise<GeneratedVideo> {
     if (!this.grokVideo.isConfigured()) {
       throw new BadRequestException(
@@ -689,9 +820,14 @@ export class GenerationService {
     }
 
     const target = normaliseAspectRatio(aspectRatio) ?? '9:16';
+    // «Чего избежать» на Grok — тот же best-effort приём, что у Veo 3.1
+    // (§4.1 ТЗ): решённый открытый вопрос §9.4 — Grok не рассматривался
+    // в §1–7, потому что писались до появления Grok в этом ТЗ; решено
+    // не заводить отдельную логику, а переиспользовать тот же приём.
     const promptText = [
       sceneText,
       `Output format: ${target === '9:16' ? 'vertical' : 'horizontal'} video.`,
+      avoidText ? `Avoid: ${avoidText}` : '',
     ]
       .filter(Boolean)
       .join('\n');
@@ -753,6 +889,14 @@ export class GenerationService {
           label: i.label,
           characterId: i.characterId,
         })),
+        ...(extensionPlan && extensionPlan.totalCalls > 1
+          ? {
+              chainSegmentsDone: 1,
+              chainSegmentsTotal: extensionPlan.totalCalls,
+              chainTargetDurationSeconds: extensionPlan.targetDurationSeconds,
+            }
+          : {}),
+        ...(avoidText ? { avoidText } : {}),
       };
 
       const previous = session.generatedVideo;
@@ -867,6 +1011,41 @@ export class GenerationService {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) return false;
     return !buildReferencePlan(session).legacyFirstFrame;
+  }
+
+  /**
+   * Найдено при аудите (ТЗ §7): контроллер (`GET /generate/estimate`,
+   * §11.3) считал цену дисклеймера по `VEO_MODELS[quality]` напрямую,
+   * не учитывая авто-выбор Veo 3.0 (§1, этап 5 плана §14) — тот же
+   * пробел, что был в самой `generateVideo()` до этого исправления.
+   * Сейчас у Veo 3.0/3.1 совпадает цена, поэтому расхождение раньше
+   * было незаметным — но `common/ai-pricing.ts` прямо помечает цену
+   * Veo 3.0 как неподтверждённую, и дисклеймер не должен молча
+   * разойтись с ней в будущем.
+   */
+  async pickVeoModelForSession(
+    sessionId: string,
+    quality: VideoQuality,
+  ): Promise<string> {
+    const session = await this.sessionService.getSession(sessionId);
+    if (!session) return VEO_MODELS[quality];
+    return pickVeoModel(buildReferencePlan(session), quality, VEO_MODELS[quality]);
+  }
+
+  /**
+   * Доп. запрос владельца продукта — нужен контроллеру
+   * (`GET /generate/estimate`, §9.4/§11.3 ТЗ) для дисклеймера цены
+   * цепочки: сколько секунд референс, если анализ его уже сообщил
+   * (`AnalysisService`, вывод из `scenes[last].end`).
+   */
+  async getReferenceDurationSeconds(
+    sessionId: string,
+  ): Promise<{ referenceDurationSeconds?: number }> {
+    const session = await this.sessionService.getSession(sessionId);
+    return {
+      referenceDurationSeconds:
+        session?.videoAnalysis?.referenceDurationSeconds,
+    };
   }
 
   async getVideoStatus(sessionId: string): Promise<GeneratedVideo> {
@@ -1019,6 +1198,25 @@ export class GenerationService {
       );
     }
 
+    // Доп. запрос владельца продукта (ТЗ §9, этап 4 плана §14): сегмент
+    // готов, но цепочка ещё не дописана — продолжаем расширением вместо
+    // финализации. `blobUrl` здесь ещё пригодится: `current.pathname`
+    // уже содержит РАСТУЩЕЕ видео (каждый следующий Veo-вызов основан на
+    // последнем кадре предыдущего — см. `continueVeoChain`), так что
+    // сохранение сюда же перед продолжением не теряется, только пока не
+    // выдаётся пользователю как готовое.
+    if (
+      current.chainSegmentsTotal &&
+      (current.chainSegmentsDone ?? 1) < current.chainSegmentsTotal
+    ) {
+      return await this.continueVeoChain(
+        sessionId,
+        session,
+        current,
+        videoBuffer,
+      );
+    }
+
     const completed: GeneratedVideo = {
       ...current,
       status: GenerationStatus.COMPLETE,
@@ -1140,6 +1338,18 @@ export class GenerationService {
       );
     }
 
+    // Доп. запрос владельца продукта (ТЗ §9, этап 4 плана §14): сегмент
+    // готов, но цепочка ещё не дописана — продолжаем расширением.
+    // В отличие от Veo, Grok Extend принимает URL, а не байты (§10.1
+    // ТЗ) — используем `blobUrl`, только что полученный выше, не
+    // скачиваем и не кодируем ничего заново.
+    if (
+      current.chainSegmentsTotal &&
+      (current.chainSegmentsDone ?? 1) < current.chainSegmentsTotal
+    ) {
+      return await this.continueGrokChain(sessionId, session, current, blobUrl);
+    }
+
     const completed: GeneratedVideo = {
       ...current,
       status: GenerationStatus.COMPLETE,
@@ -1158,6 +1368,218 @@ export class GenerationService {
     this.logger.log(`Grok video generation complete for session ${sessionId}`);
 
     return this.postprod.start(sessionId, completed);
+  }
+
+  /**
+   * Продолжает цепочку Scene Extension (ТЗ §9, этап 4 плана §14) —
+   * запускает следующий сегмент поверх только что скачанного, не
+   * финализирует ролик.
+   *
+   * ⚠️ Форма параметра `video` для расширения — ГЕНЕРАЛИЗАЦИЯ, не
+   * подтверждённый факт. Официальный пример на `ai.google.dev`
+   * показывает RAW REST-тело `video: {inlineData: {mimeType, data}}`,
+   * но УЖЕ РАБОТАЮЩИЙ в этом файле код для параметра `image` (тот же
+   * SDK, `@google/genai`) использует другое имя поля —
+   * `{imageBytes, mimeType}`, не `{inlineData: {...}}`. Здесь применена
+   * форма ПО АНАЛОГИИ с `image`/`imageBytes` (`video`/`videoBytes`) —
+   * логика в том, что это тот же SDK и, вероятно, та же конвенция
+   * именования для соседнего типа параметра, а не сырой REST — но это
+   * ДОГАДКА, не проверенный факт, и её нужно сверить одним тестовым
+   * вызовом до реального трафика (тот же принцип, что уже трижды
+   * применялся в этом ТЗ). Есть и отдельный открытый баг-репорт
+   * (discuss.ai.google.dev, 31 окт 2025) о том, что параметр `video`
+   * вообще отклоняется как некорректный на этом эндпоинте — то есть
+   * степень неопределённости здесь ВЫШЕ, чем у остального этого файла.
+   */
+  private async continueVeoChain(
+    sessionId: string,
+    session: Session,
+    current: GeneratedVideo,
+    previousSegmentBuffer: Buffer,
+  ): Promise<GeneratedVideo> {
+    const quality = current.quality ?? DEFAULT_QUALITY;
+    const target = current.renderedAspectRatio ?? current.aspectRatio ?? '9:16';
+    // Тот же выбор модели, что был у базового сегмента (ТЗ §1, этап 5
+    // плана §14) — пересчитываем от того же плана референсов, а не
+    // берём `VEO_MODELS[quality]` заново: продолжение цепочки должно
+    // идти той же моделью, что и её начало, иначе расширение почти
+    // наверняка просто не примет чужую модель на входе.
+    const plan = buildReferencePlan(session);
+    const veoModel = pickVeoModel(plan, quality, VEO_MODELS[quality]);
+    const isVeo30 = usesVeo30(plan, quality);
+
+    let operation: { name?: string };
+    try {
+      // Найдено при аудите: без явной оговорки «это продолжение» модель
+      // получала БУКВАЛЬНО тот же текст сцены, что и первый сегмент —
+      // для сцены с законченным действием («открывает подарок и
+      // улыбается») это могло бы означать «начни действие заново» на
+      // каждом следующем сегменте, а не «продолжай». Официальный
+      // механизм расширения и так подхватывает стиль/персонажей/сцену
+      // с последнего кадра — эта строка только уточняет НАМЕРЕНИЕ
+      // (продолжать, не повторять), не переписывает саму сцену заново.
+      const continuationPrompt = [
+        session.generationPrompt!.finalText,
+        'This is a continuation of the same shot — keep the action, characters, and setting continuous with the previous segment. Do not restart or repeat the described action from the beginning.',
+        current.avoidText && !isVeo30 ? `Avoid: ${current.avoidText}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      operation = await this.genai.models.generateVideos({
+        model: veoModel,
+        prompt: continuationPrompt,
+        // См. доккомментарий метода — форма поля не подтверждена.
+        video: {
+          videoBytes: previousSegmentBuffer.toString('base64'),
+          mimeType: 'video/mp4',
+        },
+        config: {
+          durationSeconds: VIDEO_DURATION_SECONDS,
+          aspectRatio: target as VeoAspectRatio,
+          ...(current.avoidText && isVeo30
+            ? { negativePrompt: current.avoidText }
+            : {}),
+        },
+      } as Parameters<typeof this.genai.models.generateVideos>[0]);
+    } catch (error) {
+      this.logger.error(
+        `Veo chain: не удалось продолжить цепочку (сегмент ${(current.chainSegmentsDone ?? 1) + 1}/${current.chainSegmentsTotal}) для сессии ${sessionId}:`,
+        error,
+      );
+      return await this.markFailed(
+        sessionId,
+        current,
+        'VIDEO_EXTENSION_FAILED',
+        this.extractErrorMessage(error),
+        true,
+      );
+    }
+
+    if (!operation.name) {
+      return await this.markFailed(
+        sessionId,
+        current,
+        'VIDEO_EXTENSION_NO_OPERATION',
+        'Veo did not return an operation for the next chain segment',
+        true,
+      );
+    }
+
+    // Тот же принцип, что при первом сегменте (§26 ТЗ): расход
+    // пишется в момент запуска этого сегмента, не по завершении.
+    await this.aiUsage.record({
+      operation: 'generation',
+      model: veoModel,
+      seconds: VIDEO_DURATION_SECONDS,
+      sessionId,
+    });
+
+    const nextSegmentsDone = (current.chainSegmentsDone ?? 1) + 1;
+    const continued: GeneratedVideo = {
+      ...current,
+      veoOperationName: operation.name,
+      chainSegmentsDone: nextSegmentsDone,
+      // Найдено при аудите (ТЗ §9, этап 4 плана §14): без этого сброса
+      // `renderExpired()` считал бы дедлайн от начала ВСЕЙ цепочки, а
+      // не от старта этого сегмента — цепочка из 5-7 сегментов почти
+      // неизбежно проваливалась бы по мнимому таймауту (20 минут на
+      // ВСЮ цепочку — не то же самое, что 20 минут на один сегмент,
+      // который сам по себе завершался бы успешно и быстро).
+      initiatedAt: new Date(),
+      // Статус остаётся PROCESSING — ролик ещё не готов пользователю,
+      // даже если этот отдельный сегмент только что завершился.
+    };
+
+    await this.sessionService.updateSession(sessionId, {
+      generatedVideo: continued,
+    });
+
+    this.logger.log(
+      `Veo chain: сегмент ${nextSegmentsDone}/${current.chainSegmentsTotal} запущен для сессии ${sessionId}`,
+    );
+
+    return continued;
+  }
+
+  /**
+   * Продолжает цепочку Grok Extend (ТЗ §9, этап 4 плана §14) — тот же
+   * принцип, что `continueVeoChain`, но через `GrokVideoService`.
+   * Официально подтверждено — `docs.x.ai`, поле `video_url`
+   * (`client.video.extend(video_url=..., duration=...)`) — см.
+   * доккомментарий `GrokVideoService.startGeneration` — форма здесь
+   * ЛУЧШЕ подтверждена, чем у Veo, но всё ещё не проверена живым
+   * вызовом (§9.4 ТЗ — тот же принцип, что уже трижды применялся).
+   */
+  private async continueGrokChain(
+    sessionId: string,
+    session: Session,
+    current: GeneratedVideo,
+    previousSegmentUrl: string,
+  ): Promise<GeneratedVideo> {
+    const resolution = current.resolution ?? '480p';
+    const target = current.aspectRatio ?? '9:16';
+    // Найдено при аудите — то же самое, что у Veo-версии выше: без
+    // явной оговорки модель получала бы буквально тот же текст сцены
+    // на каждом сегменте, что для сцены с законченным действием могло
+    // бы означать «начни заново», а не «продолжай».
+    const continuationPrompt = [
+      session.generationPrompt!.finalText,
+      'This is a continuation of the same shot — keep the action, characters, and setting continuous with the previous segment. Do not restart or repeat the described action from the beginning.',
+      current.avoidText ? `Avoid: ${current.avoidText}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    let requestId: string;
+    try {
+      ({ requestId } = await this.grokVideo.startGeneration({
+        prompt: continuationPrompt,
+        extendVideoUrl: previousSegmentUrl,
+        durationSeconds: VIDEO_DURATION_SECONDS,
+        aspectRatio: target,
+        resolution,
+      }));
+    } catch (error) {
+      this.logger.error(
+        `Grok chain: не удалось продолжить цепочку (сегмент ${(current.chainSegmentsDone ?? 1) + 1}/${current.chainSegmentsTotal}) для сессии ${sessionId}:`,
+        error,
+      );
+      return await this.markFailed(
+        sessionId,
+        current,
+        'VIDEO_EXTENSION_FAILED',
+        this.extractErrorMessage(error),
+        true,
+      );
+    }
+
+    await this.aiUsage.record({
+      operation: 'generation',
+      model: `${this.grokVideo.modelName}:${resolution}`,
+      seconds: VIDEO_DURATION_SECONDS,
+      sessionId,
+    });
+
+    const nextSegmentsDone = (current.chainSegmentsDone ?? 1) + 1;
+    const continued: GeneratedVideo = {
+      ...current,
+      grokRequestId: requestId,
+      chainSegmentsDone: nextSegmentsDone,
+      // Тот же сброс, что и у Veo-версии — см. её комментарий выше:
+      // без него дедлайн считался бы от начала всей цепочки, а не от
+      // старта этого сегмента.
+      initiatedAt: new Date(),
+    };
+
+    await this.sessionService.updateSession(sessionId, {
+      generatedVideo: continued,
+    });
+
+    this.logger.log(
+      `Grok chain: сегмент ${nextSegmentsDone}/${current.chainSegmentsTotal} запущен для сессии ${sessionId}`,
+    );
+
+    return continued;
   }
 
   private async downloadVeoVideo(uri: string): Promise<Buffer> {

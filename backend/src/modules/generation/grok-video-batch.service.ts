@@ -95,6 +95,15 @@ export class GrokVideoBatchService {
     return this.apiKey.length > 0;
   }
 
+  /** Имя модели, для составного ключа в `common/ai-pricing.ts`
+   * (`{modelName}:{resolution}`, §11.5/§10.2 ТЗ) — тот же геттер, что
+   * уже есть у `GrokVideoService`, нужен воркеру каталог-партий для
+   * расчёта стоимости пачки перед подачей (найдено при аудите §16 —
+   * до этого расчёта не было вовсе). */
+  get modelName(): string {
+    return this.model;
+  }
+
   private headers() {
     return {
       'Content-Type': 'application/json',

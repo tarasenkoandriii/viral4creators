@@ -677,6 +677,26 @@ export interface GeneratedVideo {
   estimatedCompletionTime?: string;
   downloadUrl?: string;
   quality?: VideoQuality;
+  /**
+   * Доп. запрос владельца продукта (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md
+   * §10–11) — найдено при аудите (§16): бэкенд отдаёт эти поля в ответе
+   * `GeneratedVideo` уже давно, но фронтендный тип их не объявлял —
+   * значит, ни история версий, ни экран генерации не могли их прочитать
+   * даже теоретически, хотя данные уже приходили.
+   */
+  provider?: 'veo' | 'grok';
+  /** Только для `provider === 'grok'` (§10.1 ТЗ). */
+  resolution?: '480p' | '720p' | '1080p';
+  /** Поле «Чего избежать» (§1/§6 ТЗ). */
+  avoidText?: string;
+  /**
+   * Ролики длиннее 8 секунд через Scene Extension (§9 ТЗ, этап 4 плана
+   * §14) — все три вместе или ни одного; `undefined` — обычная,
+   * однократная генерация.
+   */
+  chainSegmentsDone?: number;
+  chainSegmentsTotal?: number;
+  chainTargetDurationSeconds?: number;
   error?: {
     code: string;
     message: string;
@@ -858,7 +878,12 @@ export type CatalogBatchItemStatus =
   | 'PENDING'
   | 'GENERATING'
   | 'DONE'
-  | 'FAILED';
+  | 'FAILED'
+  // Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) — найдено
+  // при аудите: без этого значения тип расходился с реальностью — бэкенд
+  // теперь может прислать 'BATCH_QUEUED' (Grok-строка, ждущая подачи как
+  // одна пачка), а этот union о нём не знал вовсе.
+  | 'BATCH_QUEUED';
 
 export interface CatalogBatchItemView {
   productItemId: string;

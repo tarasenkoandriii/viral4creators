@@ -28,15 +28,9 @@ import { PromptModule } from '../prompt/prompt.module';
  * тянет только `StorageModule`, `PromptModule` не тянет вообще ничего —
  * ни один цикла не создаёт.
  *
- * `GrokVideoBatchService` (§13 ТЗ, этап 2 плана §14) — зарегистрирован
- * здесь как готовый клиент, но НЕ подключён к
- * `CatalogBatchWorkerService` в этом заходе и НЕ экспортирован из
- * модуля — само подключение (какой из существующих циклов claim'ит
- * работу под него, как получать URL готового видео из ответа батча в
- * рамках `getVideoStatus`) требует более широкой, отдельной правки
- * `catalog-batch`-модуля, которую этот заход сознательно не трогает
- * (доп. риск для уже работающего кода без реальной проверки формата
- * ответа xAI — см. доккомментарий самого сервиса).
+ * `GrokVideoBatchService` (§13 ТЗ, этап 2 плана §14) — экспортирован
+ * для `CatalogBatchModule` (единственный на сегодня потребитель —
+ * `CatalogBatchWorkerService`, партии по каталогу).
  */
 @Module({
   imports: [
@@ -49,6 +43,6 @@ import { PromptModule } from '../prompt/prompt.module';
   ],
   controllers: [GenerationController, AdminGenerationRetryController],
   providers: [GenerationService, GrokVideoService, GrokVideoBatchService],
-  exports: [GenerationService],
+  exports: [GenerationService, GrokVideoBatchService],
 })
 export class GenerationModule {}

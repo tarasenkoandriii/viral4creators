@@ -18,7 +18,12 @@ function unwrap<T>(res: { data?: T }, what: string): T {
 
 export async function startCatalogBatch(
   projectId: string,
-  dto: { sourceSessionId: string; productItemIds: string[] }
+  dto: {
+    sourceSessionId: string;
+    productItemIds: string[];
+    provider?: 'veo' | 'grok';
+    resolution?: '480p' | '720p' | '1080p';
+  }
 ): Promise<StartCatalogBatchResult> {
   return unwrap(
     await api.post<StartCatalogBatchResult>(

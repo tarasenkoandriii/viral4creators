@@ -8,13 +8,17 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { GenerationService, VEO_MODELS } from './generation.service';
+import { GenerationService } from './generation.service';
 import { GenerateVideoRequestDto } from './dto/generate-video-request.dto';
 import { GenerateVideoResponseDto } from './dto/generate-video-response.dto';
 import { GetVideoStatusResponseDto } from './dto/get-video-status-response.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { estimateCost } from '../../common/ai-pricing';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
+import {
+  buildExtensionPlan,
+  chainCostMicroUsd,
+} from '../../common/video-extension-plan';
 import { loadConfiguration } from '../../config/configuration';
 import { VideoQuality } from '../../common/types/generation.types';
 
@@ -44,6 +48,8 @@ export class GenerationController {
       dto.aspectRatio,
       dto.provider,
       dto.resolution,
+      dto.targetDurationSeconds,
+      dto.avoidText,
     );
 
     return {
@@ -92,7 +98,15 @@ export class GenerationController {
     @Query('provider') provider?: 'veo' | 'grok',
     @Query('quality') quality?: VideoQuality,
     @Query('resolution') resolution?: '480p' | '720p' | '1080p',
-  ): Promise<{ costUsd: number; unpriced: boolean; pricingVersion: string }> {
+    @Query('targetDurationSeconds') targetDurationSeconds?: string,
+  ): Promise<{
+    costUsd: number;
+    unpriced: boolean;
+    pricingVersion: string;
+    segments: number;
+    targetDurationSeconds: number;
+    wasCapped: boolean;
+  }> {
     // §15 ТЗ: reference-to-video (сессии с персонажами бренда)
     // ограничен 720p у Grok — если пользователь выбрал 1080p, реальная
     // генерация тихо понизит его сама (`GrokVideoService`), и
@@ -106,12 +120,48 @@ export class GenerationController {
     const model =
       provider === 'grok'
         ? `${loadConfiguration().grok.videoModel}:${effectiveResolution ?? '480p'}`
-        : VEO_MODELS[quality ?? 'fast'];
-    const estimate = estimateCost(model, { seconds: VIDEO_DURATION_SECONDS });
+        : await this.generationService.pickVeoModelForSession(
+            sessionId,
+            quality ?? 'fast',
+          );
+    const perCallEstimate = estimateCost(model, {
+      seconds: VIDEO_DURATION_SECONDS,
+    });
+
+    // Доп. запрос владельца продукта (ТЗ §9.4, этап 4 плана §14) —
+    // ролик длиннее 8 секунд: дисклеймер должен показать цену ВСЕЙ
+    // цепочки, не одного вызова, тем же расчётом, что и реальная
+    // проверка бюджета в `generateVideo()` — одна формула, не две.
+    const requested = targetDurationSeconds
+      ? parseInt(targetDurationSeconds, 10)
+      : undefined;
+    if (requested && requested > VIDEO_DURATION_SECONDS) {
+      const referenceDurationSeconds = (
+        await this.generationService.getReferenceDurationSeconds(sessionId)
+      ).referenceDurationSeconds;
+      const plan = buildExtensionPlan(
+        provider ?? 'veo',
+        requested,
+        referenceDurationSeconds,
+      );
+      return {
+        costUsd:
+          chainCostMicroUsd(plan, perCallEstimate.costMicroUsd) / 1_000_000,
+        unpriced: perCallEstimate.unpriced,
+        pricingVersion: perCallEstimate.pricingVersion,
+        segments: plan.totalCalls,
+        targetDurationSeconds: plan.targetDurationSeconds,
+        wasCapped: plan.wasCapped,
+      };
+    }
+
     return {
-      costUsd: estimate.costMicroUsd / 1_000_000,
-      unpriced: estimate.unpriced,
-      pricingVersion: estimate.pricingVersion,
+      costUsd: perCallEstimate.costMicroUsd / 1_000_000,
+      unpriced: perCallEstimate.unpriced,
+      pricingVersion: perCallEstimate.pricingVersion,
+      segments: 1,
+      targetDurationSeconds: VIDEO_DURATION_SECONDS,
+      wasCapped: false,
     };
   }
 }

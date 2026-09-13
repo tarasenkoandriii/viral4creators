@@ -177,7 +177,12 @@ export class CatalogBatchService {
       await this.prisma.catalogBatchItem.findMany({
         where: {
           productItemId: { in: requestedIds },
-          status: { in: ['PENDING', 'GENERATING', 'DONE'] },
+          // Найдено при аудите (ТЗ §13, этап 2 плана §14): без 'BATCH_QUEUED'
+          // товар, уже стоящий в очереди на подачу как Grok-пачка, считался
+          // бы свободным — вторая параллельная партия могла бы завести для
+          // него ещё одну оплаченную генерацию, тот же риск задвоения,
+          // которого этот же busy-чек уже избегает для PENDING/GENERATING/DONE.
+          status: { in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'] },
         },
         select: { productItemId: true },
       });
@@ -218,7 +223,12 @@ export class CatalogBatchService {
               await tx.catalogBatchItem.findMany({
                 where: {
                   productItemId: { in: requestedIds },
-                  status: { in: ['PENDING', 'GENERATING', 'DONE'] },
+                  // Найдено при аудите (ТЗ §13, этап 2 плана §14): без 'BATCH_QUEUED'
+          // товар, уже стоящий в очереди на подачу как Grok-пачка, считался
+          // бы свободным — вторая параллельная партия могла бы завести для
+          // него ещё одну оплаченную генерацию, тот же риск задвоения,
+          // которого этот же busy-чек уже избегает для PENDING/GENERATING/DONE.
+          status: { in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'] },
                 },
                 select: { productItemId: true },
               });
@@ -243,6 +253,14 @@ export class CatalogBatchService {
                   'fast') as VideoQuality,
                 aspectRatio: source.generatedVideo?.aspectRatio ?? null,
                 locale: source.locale ?? null,
+                // Найдено при аудите (ТЗ §13, этап 2 плана §14): без
+                // этих двух полей партия физически не могла стать
+                // Grok-партией — схема даёт дефолт 'veo' сама по себе,
+                // но ничто в API до этого исправления его не
+                // переопределяло, то есть весь Grok-путь воркера был
+                // недостижим через реальный вызов.
+                provider: dto.provider ?? 'veo',
+                resolution: dto.resolution ?? null,
               },
             });
             await tx.catalogBatchItem.createMany({
@@ -367,8 +385,16 @@ export class CatalogBatchService {
       });
     }
 
+    // Найдено при аудите (ТЗ §13, этап 2 плана §14): `BATCH_QUEUED`
+    // (Grok-строки, ждущие подачи как одна пачка) не входил ни в одну
+    // из четырёх категорий — такие строки были невидимы в сводке,
+    // summary не досчитывался бы до `views.length`. С точки зрения
+    // пользователя «ждёт подачи в пачку» — та же категория, что
+    // «ждёт своей очереди» (PENDING), поэтому считаем вместе.
     const summary = {
-      pending: views.filter((v) => v.status === 'PENDING').length,
+      pending: views.filter(
+        (v) => v.status === 'PENDING' || v.status === 'BATCH_QUEUED',
+      ).length,
       generating: views.filter((v) => v.status === 'GENERATING').length,
       done: views.filter((v) => v.status === 'DONE').length,
       failed: views.filter((v) => v.status === 'FAILED').length,
@@ -446,7 +472,12 @@ export class CatalogBatchService {
                   productItemId: {
                     in: candidates.map((c) => c.productItemId),
                   },
-                  status: { in: ['PENDING', 'GENERATING', 'DONE'] },
+                  // Найдено при аудите (ТЗ §13, этап 2 плана §14): без 'BATCH_QUEUED'
+          // товар, уже стоящий в очереди на подачу как Grok-пачка, считался
+          // бы свободным — вторая параллельная партия могла бы завести для
+          // него ещё одну оплаченную генерацию, тот же риск задвоения,
+          // которого этот же busy-чек уже избегает для PENDING/GENERATING/DONE.
+          status: { in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'] },
                 },
                 select: { productItemId: true },
               });

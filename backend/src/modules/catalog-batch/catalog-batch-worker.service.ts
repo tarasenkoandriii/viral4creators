@@ -58,12 +58,22 @@ import { loadConfiguration } from '../../config/configuration';
 import {
   GenerationStatus,
   VideoQuality,
+  GeneratedVideo,
 } from '../../common/types/generation.types';
 import { ProjectSessionService } from '../project-session/project-session.service';
 import { SessionService } from '../../common/session.service';
 import { LibraryService } from '../library/library.service';
 import { PromptService } from '../prompt/prompt.service';
 import { GenerationService } from '../generation/generation.service';
+import { GrokVideoBatchService } from '../generation/grok-video-batch.service';
+import { GrokResolution } from '../generation/grok-video.service';
+import { PlanService } from '../plan/plan.service';
+import { AiUsageService } from '../ai-usage/ai-usage.service';
+import { estimateCost } from '../../common/ai-pricing';
+import { BlobService } from '../storage/blob.service';
+import { SessionStatus } from '../../common/types/session.types';
+import { v4 as uuidv4 } from 'uuid';
+import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import { logWorkflowStage } from '../../common/workflow-stage-events';
 import {
@@ -100,6 +110,10 @@ interface BatchRow {
   quality: string;
   aspectRatio: string | null;
   locale: string | null;
+  /** Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14). */
+  provider: string;
+  resolution: string | null;
+  xaiBatchId: string | null;
 }
 
 export interface CatalogBatchRunResult {
@@ -112,6 +126,12 @@ export interface CatalogBatchRunResult {
   renderChecked: number;
   renderCompleted: number;
   renderFailed: number;
+  /** Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) — то
+   * же самое, что renderChecked/renderCompleted/renderFailed выше, но
+   * для строк, ушедших через xAI Batch API, не синхронный путь. */
+  grokBatchesSubmitted: number;
+  grokBatchItemsCompleted: number;
+  grokBatchItemsFailed: number;
 }
 
 /** Отказ по правилам сервиса (план понижен, пользователь заблокирован,
@@ -148,6 +168,18 @@ export class CatalogBatchWorkerService {
     private readonly library: LibraryService,
     private readonly prompt: PromptService,
     private readonly generation: GenerationService,
+    private readonly grokBatch: GrokVideoBatchService,
+    private readonly blob: BlobService,
+    // Найдено при аудите (ТЗ §13, этап 2 плана §14): Grok-путь этого
+    // воркера вызывает `GrokVideoBatchService` НАПРЯМУЮ, минуя
+    // `GenerationService.generateVideo()` — а именно там живут проверка
+    // дневного бюджета и запись фактического расхода для ВСЕХ ОСТАЛЬНЫХ
+    // путей генерации в проекте. Без этих двух сервисов здесь Grok-
+    // партии по каталогу могли запускаться без единой проверки бюджета
+    // и НИКОГДА не попадали в отчёт о расходах — реальные деньги,
+    // потраченные у xAI, были бы невидимы для всей системы учёта.
+    private readonly plans: PlanService,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   private cfg() {
@@ -172,6 +204,9 @@ export class CatalogBatchWorkerService {
         renderChecked: 0,
         renderCompleted: 0,
         renderFailed: 0,
+        grokBatchesSubmitted: 0,
+        grokBatchItemsCompleted: 0,
+        grokBatchItemsFailed: 0,
       };
     }
     try {
@@ -234,6 +269,12 @@ export class CatalogBatchWorkerService {
       }
     }
 
+    // Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14): та же
+    // идея, что у `advanceGenerating()` выше — идёт после обработки
+    // новых строк тика, чтобы строки, только что поставленные в очередь
+    // этим же тиком, тоже подхватились подачей пачки, если она наберётся.
+    const grokBatches = await this.advanceGrokBatches();
+
     const result: CatalogBatchRunResult = {
       processed: rows.length,
       started,
@@ -242,13 +283,23 @@ export class CatalogBatchWorkerService {
       renderChecked: advanced.checked,
       renderCompleted: advanced.completed,
       renderFailed: advanced.renderFailed,
+      grokBatchesSubmitted: grokBatches.submitted,
+      grokBatchItemsCompleted: grokBatches.completed,
+      grokBatchItemsFailed: grokBatches.failed,
     };
-    if (rows.length > 0 || advanced.checked > 0) {
+    if (
+      rows.length > 0 ||
+      advanced.checked > 0 ||
+      grokBatches.submitted > 0 ||
+      grokBatches.completed > 0 ||
+      grokBatches.failed > 0
+    ) {
       this.logger.log(
         `Крон партийной генерации: обработано ${result.processed}, стартовало ${result.started}, ` +
           `ошибок ${result.failed}, в очереди ${result.stillPending}; досмотр рендера: ` +
           `проверено ${result.renderChecked}, готово ${result.renderCompleted}, ` +
-          `провалилось ${result.renderFailed}`,
+          `провалилось ${result.renderFailed}; Grok-пачки: подано ${result.grokBatchesSubmitted}, ` +
+          `готово строк ${result.grokBatchItemsCompleted}, провалилось строк ${result.grokBatchItemsFailed}`,
       );
     }
     return result;
@@ -351,6 +402,327 @@ export class CatalogBatchWorkerService {
     return { checked: rows.length, completed, renderFailed };
   }
 
+  /**
+   * Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) — то же
+   * место в цикле тика, что `advanceGenerating()` выше, но для строк,
+   * идущих через xAI Batch API вместо синхронного вызова.
+   *
+   * ⚠️ Форма запроса/ответа Batch API для видео НЕ подтверждена
+   * реальным вызовом (см. доккомментарий `GrokVideoBatchService`) —
+   * этот метод наследует тот же риск. Не включать на партии с реальными
+   * деньгами без предварительного тестового вызова (§13.5 ТЗ).
+   */
+  private async advanceGrokBatches(): Promise<{
+    submitted: number;
+    completed: number;
+    failed: number;
+  }> {
+    const submitted = await this.submitReadyGrokBatches();
+    const polled = await this.pollInFlightGrokBatches();
+    return { submitted, completed: polled.completed, failed: polled.failed };
+  }
+
+  /**
+   * Партия готова к подаче, когда набралась хотя бы одна `BATCH_QUEUED`
+   * строка и ни одной ещё не дошедшей до этого статуса (PENDING или
+   * ожидающий повтора FAILED) — одна партия = одна xAI-пачка
+   * (`CatalogBatchRun.xaiBatchId` — единственное поле, не список),
+   * подавать частями было бы некуда записывать второй ID.
+   */
+  private async submitReadyGrokBatches(): Promise<number> {
+    const grokRuns = await this.prisma.catalogBatchRun.findMany({
+      where: { provider: 'grok', xaiBatchId: null },
+      select: { id: true, userId: true, resolution: true, aspectRatio: true },
+    });
+
+    let submitted = 0;
+    for (const run of grokRuns) {
+      const [queuedCount, notReadyCount] = await Promise.all([
+        this.prisma.catalogBatchItem.count({
+          where: { batchId: run.id, status: 'BATCH_QUEUED' },
+        }),
+        this.prisma.catalogBatchItem.count({
+          where: {
+            batchId: run.id,
+            OR: [
+              { status: 'PENDING' },
+              { status: 'FAILED', nextAttemptAt: { not: null } },
+            ],
+          },
+        }),
+      ]);
+      if (queuedCount === 0 || notReadyCount > 0) continue;
+
+      const queuedItems = await this.prisma.catalogBatchItem.findMany({
+        where: { batchId: run.id, status: 'BATCH_QUEUED' },
+        select: { id: true, sessionId: true, productItemId: true },
+      });
+
+      const requestItems: {
+        batchRequestId: string;
+        prompt: string;
+        imageUrl?: string;
+        durationSeconds: number;
+        aspectRatio: string;
+        resolution: GrokResolution;
+      }[] = [];
+      const skipped: { id: string; reason: string }[] = [];
+
+      for (const item of queuedItems) {
+        const session = item.sessionId
+          ? await this.sessions.getSession(item.sessionId)
+          : null;
+        const promptText = session?.generationPrompt?.finalText;
+        const imageUrl = session?.productInformation?.productImageUrl;
+        if (!promptText || !imageUrl) {
+          // Тот же случай, что явно отклоняет `startGrokGeneration`
+          // (§15 ТЗ — сессии с персонажами бренда пока не проходят
+          // через простой `imageUrl`) — здесь партия просто пропускает
+          // эту строку, не рискуя подать пачку без промпта вовсе.
+          skipped.push({
+            id: item.id,
+            reason: !promptText
+              ? 'нет одобренного промпта'
+              : 'нет фото товара (возможно, сессия с персонажами бренда — reference-to-video для партий не реализован)',
+          });
+          continue;
+        }
+        requestItems.push({
+          batchRequestId: item.id,
+          prompt: promptText,
+          imageUrl,
+          durationSeconds: VIDEO_DURATION_SECONDS,
+          aspectRatio: run.aspectRatio ?? '9:16',
+          resolution: (run.resolution as GrokResolution | null) ?? '480p',
+        });
+      }
+
+      for (const s of skipped) {
+        await this.prisma.catalogBatchItem.update({
+          where: { id: s.id },
+          data: { status: 'FAILED', error: s.reason, lockedUntil: null },
+        });
+      }
+
+      if (requestItems.length === 0) continue;
+
+      // Найдено при аудите (ТЗ §13, этап 2 плана §14): этот путь
+      // вызывает `GrokVideoBatchService` НАПРЯМУЮ, минуя
+      // `GenerationService.generateVideo()`, где для ВСЕХ остальных
+      // путей генерации в проекте живёт и проверка бюджета, и запись
+      // расхода — без этой проверки партия могла бы уйти в xAI без
+      // единого взгляда на дневной лимит пользователя. Тот же принцип,
+      // что уже применён в §9.4 к цепочкам Scene Extension: стоимость
+      // всей партии проверяется заранее, целиком, не по одному
+      // элементу за раз.
+      const resolutionForPricing =
+        (run.resolution as GrokResolution | null) ?? '480p';
+      const perItemMicroUsd = estimateCost(
+        `${this.grokBatch.modelName}:${resolutionForPricing}`,
+        { seconds: VIDEO_DURATION_SECONDS },
+      ).costMicroUsd;
+      const totalBatchMicroUsd = perItemMicroUsd * requestItems.length;
+      const access = await this.plans.accessOf(run.userId);
+      const verdict = await this.aiUsage.budget(run.userId, access.spendPlan);
+      if (!verdict.allowed || verdict.remainingMicroUsd < totalBatchMicroUsd) {
+        this.logger.warn(
+          `Grok-пачка для партии ${run.id} (${requestItems.length} строк, ` +
+            `${totalBatchMicroUsd} мкд) не помещается в остаток дневного ` +
+            `лимита пользователя ${run.userId} — вся партия помечена FAILED, ` +
+            `не подана частично`,
+        );
+        await this.prisma.catalogBatchItem.updateMany({
+          where: { id: { in: requestItems.map((r) => r.batchRequestId) } },
+          data: {
+            status: 'FAILED',
+            error:
+              'Дневной лимит расхода не покрывает стоимость этой Grok-партии целиком',
+            lockedUntil: null,
+          },
+        });
+        continue;
+      }
+
+      const result = await this.grokBatch.submitBatch(
+        `catalog-batch-${run.id}`,
+        requestItems,
+      );
+      if (result.error) {
+        this.logger.warn(
+          `Grok-пачка для партии ${run.id} не подана: ${result.error}`,
+        );
+        // Не FAILED навсегда — как обычная временная неудача (тот же
+        // принцип, что recordFailure() для сетевых сбоев): строки
+        // остаются BATCH_QUEUED, следующий тик попробует подать снова.
+        continue;
+      }
+
+      // Расход пишется в момент запуска (тот же принцип, что уже
+      // применяется во всех остальных путях этого проекта, §26 ТЗ) —
+      // одной записью на партию, не по элементу: xAI выставит счёт за
+      // всю пачку, отчёт о расходах должен отражать то же самое.
+      await this.aiUsage.record({
+        operation: 'generation',
+        model: `${this.grokBatch.modelName}:${resolutionForPricing}`,
+        seconds: VIDEO_DURATION_SECONDS * requestItems.length,
+        sessionId: run.id,
+      });
+
+      await this.prisma.catalogBatchRun.update({
+        where: { id: run.id },
+        data: { xaiBatchId: result.xaiBatchId },
+      });
+      await this.prisma.catalogBatchItem.updateMany({
+        where: { id: { in: requestItems.map((r) => r.batchRequestId) } },
+        data: { status: 'GENERATING' },
+      });
+      submitted += 1;
+      this.logger.log(
+        `Grok-пачка ${result.xaiBatchId} подана для партии ${run.id} (${requestItems.length} строк, пропущено ${skipped.length}).`,
+      );
+    }
+    return submitted;
+  }
+
+  /**
+   * Опрашивает уже поданные пачки; по готовности (`pendingCount === 0`)
+   * забирает результаты и финализирует каждую строку — то же самое,
+   * что синхронный путь делает через `GenerationService.pollGrokStatus`,
+   * но здесь напрямую, потому что эти сессии никогда не проходили через
+   * синхронный `generateVideo()`.
+   */
+  private async pollInFlightGrokBatches(): Promise<{
+    completed: number;
+    failed: number;
+  }> {
+    const inFlight = await this.prisma.catalogBatchRun.findMany({
+      where: {
+        provider: 'grok',
+        xaiBatchId: { not: null },
+        items: { some: { status: 'GENERATING' } },
+      },
+      select: { id: true, xaiBatchId: true, aspectRatio: true },
+    });
+
+    let completed = 0;
+    let failed = 0;
+    for (const run of inFlight) {
+      const status = await this.grokBatch.getBatchStatus(run.xaiBatchId!);
+      if (!status || status.pendingCount > 0) continue; // ещё не готово или сбой опроса — попробуем следующим тиком
+
+      const urlsByItemId = await this.grokBatch.getBatchResults(
+        run.xaiBatchId!,
+      );
+      const generatingItems = await this.prisma.catalogBatchItem.findMany({
+        where: { batchId: run.id, status: 'GENERATING' },
+        select: { id: true, sessionId: true, productItemId: true },
+      });
+
+      for (const item of generatingItems) {
+        const url = urlsByItemId[item.id];
+        if (!url || !item.sessionId) {
+          await this.prisma.catalogBatchItem.update({
+            where: { id: item.id },
+            data: {
+              status: 'FAILED',
+              error: 'Grok batch завершился без результата для этой строки',
+              lockedUntil: null,
+            },
+          });
+          failed += 1;
+          continue;
+        }
+
+        try {
+          await this.finalizeGrokBatchItem(
+            item.sessionId,
+            url,
+            run.aspectRatio ?? '9:16',
+          );
+          await this.prisma.catalogBatchItem.update({
+            where: { id: item.id },
+            data: { status: 'DONE', lockedUntil: null },
+          });
+          completed += 1;
+        } catch (error) {
+          await this.prisma.catalogBatchItem.update({
+            where: { id: item.id },
+            data: {
+              status: 'FAILED',
+              error: error instanceof Error ? error.message : String(error),
+              lockedUntil: null,
+            },
+          });
+          failed += 1;
+        }
+      }
+    }
+    return { completed, failed };
+  }
+
+  /**
+   * Скачивает готовое видео Grok-пачки и сохраняет так же, как
+   * `GenerationService.pollGrokStatus` сохраняет синхронный путь —
+   * та же форма `GeneratedVideo`, тот же Blob. Отдельная копия, не
+   * вызов приватного метода `GenerationService` — тот метод завязан на
+   * `current: GeneratedVideo`, которого у только что поданной через
+   * batch строки никогда не было (сессия не проходила через
+   * `generateVideo()` вовсе).
+   */
+  private async finalizeGrokBatchItem(
+    sessionId: string,
+    videoUrl: string,
+    aspectRatio: string,
+  ): Promise<void> {
+    const session = await this.sessions.getSession(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+
+    const res = await fetch(videoUrl);
+    if (!res.ok) {
+      throw new Error(`Grok batch video download HTTP ${res.status}`);
+    }
+    const videoBuffer = Buffer.from(await res.arrayBuffer());
+
+    const generatedVideoId = uuidv4();
+    const pathname = `sessions/${sessionId}/generated-${generatedVideoId}.mp4`;
+    const { url: blobUrl } = await this.blob.uploadBuffer(
+      pathname,
+      videoBuffer,
+      'video/mp4',
+    );
+
+    const completedVideo: GeneratedVideo = {
+      generatedVideoId,
+      pathname,
+      fileName: 'generated.mp4',
+      mimeType: 'video/mp4',
+      status: VideoGenerationStatus.COMPLETE,
+      initiatedAt: new Date(),
+      completedAt: new Date(),
+      fileSize: videoBuffer.length,
+      downloadUrl: blobUrl,
+      provider: 'grok',
+      aspectRatio,
+      reframePending: false,
+      references: [],
+    };
+
+    const previous = session.generatedVideo;
+    const previousFinished =
+      previous &&
+      (previous.status === VideoGenerationStatus.COMPLETE ||
+        previous.status === VideoGenerationStatus.FAILED);
+    const videoHistory = previousFinished
+      ? [previous, ...(session.videoHistory ?? [])]
+      : (session.videoHistory ?? []);
+
+    await this.sessions.updateSession(sessionId, {
+      generatedVideo: completedVideo,
+      videoHistory,
+      status: SessionStatus.VIDEO_COMPLETE,
+    });
+  }
+
   /** Снимок партии — с кэшем на один прогон `runBatch` (несколько строк
    * одной партии не должны читать `CatalogBatchRun` по многу раз).
    * Возвращаемый тип объявлен явно (`Promise<BatchRow>`, не выведен из
@@ -419,6 +791,30 @@ export class CatalogBatchWorkerService {
       await this.prompt.generatePrompt(sessionId);
       await this.prompt.approvePrompt(sessionId);
     }
+
+    if (batch.provider === 'grok') {
+      // Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14):
+      // Grok идёт через xAI Batch API, не через синхронный вызов —
+      // сама подача (много строк как ОДНА пачка) происходит отдельно,
+      // в `advanceGrokBatches()`, не здесь. Эта строка просто встаёт в
+      // очередь на подачу — GPT-5-промпт уже готов и одобрен выше,
+      // этого достаточно, чтобы участвовать в следующей подаче.
+      if (!videoStarted) {
+        await this.prisma.catalogBatchItem.update({
+          where: { id: row.id },
+          data: { status: 'BATCH_QUEUED', lockedUntil: null, error: null },
+        });
+        await logWorkflowStage(
+          this.prisma,
+          WorkflowKind.CATALOG_BATCH_ITEM,
+          row.id,
+          row.status,
+          'BATCH_QUEUED',
+        );
+      }
+      return;
+    }
+
     if (!videoStarted) {
       await this.generation.generateVideo(
         sessionId,

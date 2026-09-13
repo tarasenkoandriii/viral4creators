@@ -1,14 +1,32 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getEnvSettings, getVoiceoverProviderSettings, setVoiceoverProviderDefault } from '../../lib/endpoints';
-import type { EnvCheckResult, EnvSettingsResult, VoiceoverProviderKey, VoiceoverProviderSettingsView } from '../../lib/types';
+import {
+  getEnvSettings,
+  getVoiceoverProviderSettings,
+  setVoiceoverProviderDefault,
+  getAnalysisProviderSettings,
+  setAnalysisProviderDefault,
+} from '../../lib/endpoints';
+import type {
+  EnvCheckResult,
+  EnvSettingsResult,
+  VoiceoverProviderKey,
+  VoiceoverProviderSettingsView,
+  AnalysisProviderKey,
+  AnalysisProviderSettingsView,
+} from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
 const PROVIDER_LABEL: Record<VoiceoverProviderKey, string> = {
   elevenlabs: 'ElevenLabs',
   resemble: 'Resemble',
   veo: 'Veo (бесплатно, встроенный голос модели)',
+};
+
+const ANALYSIS_PROVIDER_LABEL: Record<AnalysisProviderKey, string> = {
+  gemini: 'Gemini',
+  grok: 'Grok',
 };
 
 const SEVERITY_LABEL: Record<EnvCheckResult['severity'], string> = {
@@ -119,6 +137,81 @@ function VoiceoverProviderCard() {
   );
 }
 
+/**
+ * «Разбор референса по умолчанию» — доп. запрос владельца продукта: тот
+ * же принцип, что у VoiceoverProviderCard выше (ТЗ §17). `grok` показан
+ * в списке, но недоступен для выбора — `select` не даёт его выбрать
+ * (`disabled` на `<option>`), сам разбор через Grok ещё не реализован.
+ */
+function AnalysisProviderCard() {
+  const [state, setState] = useState<AnalysisProviderSettingsView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    getAnalysisProviderSettings()
+      .then(setState)
+      .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку разбора видео'));
+  };
+
+  useEffect(load, []);
+
+  const handleChange = async (provider: AnalysisProviderKey) => {
+    if (!state || provider === state.active) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await setAnalysisProviderDefault(provider);
+      setState(updated);
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить настройку разбора видео');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Разбор референса по умолчанию</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Какая модель анализирует загруженное видео (сцены, персонажи, аудитория, товар). Grok показан в списке, но
+        выбрать его пока нельзя — сам разбор через Grok ещё не реализован, доступен только Gemini.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>{error}</p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && (
+        <>
+          <div className="filters" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <select
+              aria-label="Разбор референса по умолчанию"
+              value={state.active}
+              disabled={saving}
+              onChange={(e) => handleChange(e.target.value as AnalysisProviderKey)}
+            >
+              {state.options.map((opt) => (
+                <option key={opt.key} value={opt.key} disabled={!opt.available}>
+                  {ANALYSIS_PROVIDER_LABEL[opt.key]}
+                  {!opt.available ? ` — ${opt.unavailableReason ?? 'недоступно'}` : ''}
+                </option>
+              ))}
+            </select>
+            {saving && <span className="muted">Сохраняю…</span>}
+          </div>
+          <p className="muted" style={{ fontSize: 13 }}>
+            {state.source === 'admin'
+              ? 'Задано вручную на этом экране.'
+              : 'Ещё не менялось здесь — используется Gemini по умолчанию.'}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const [result, setResult] = useState<EnvSettingsResult | null>(null);
@@ -173,6 +266,7 @@ export default function SettingsPage() {
       </p>
 
       <VoiceoverProviderCard />
+      <AnalysisProviderCard />
 
       <div className="card" style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
         <StatusBadge severity={result.allOk ? 'ok' : problems.some((p) => p.severity === 'critical') ? 'critical' : 'warning'} />

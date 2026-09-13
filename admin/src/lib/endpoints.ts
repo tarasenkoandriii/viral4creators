@@ -19,6 +19,8 @@ import type {
   EnvSettingsResult,
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
+  AnalysisProviderKey,
+  AnalysisProviderSettingsView,
   PublicationListResult,
   PublicationPrivacy,
   PublicationRequest,
@@ -164,6 +166,18 @@ export function getVoiceoverProviderSettings() {
 
 export function setVoiceoverProviderDefault(provider: VoiceoverProviderKey) {
   return apiPatch<VoiceoverProviderSettingsView>('/admin/settings/voiceover-provider', {
+    provider,
+  });
+}
+
+/** «Разбор референса по умолчанию» — тот же принцип, что у озвучки выше
+ * (ТЗ §17). */
+export function getAnalysisProviderSettings() {
+  return apiGet<AnalysisProviderSettingsView>('/admin/settings/analysis-provider');
+}
+
+export function setAnalysisProviderDefault(provider: AnalysisProviderKey) {
+  return apiPatch<AnalysisProviderSettingsView>('/admin/settings/analysis-provider', {
     provider,
   });
 }

@@ -310,6 +310,9 @@ describe('ExportService (TODO §35, doc/MULTI-FORMAT-EXPORT-SPEC.md, этап 75
         'child-1',
         'standard',
         '16:9',
+        undefined,
+        undefined,
+        undefined,
       );
       expect(r.childSessionId).toBe('child-1');
       const savedVariant = sessions.updateSession.mock.calls
@@ -322,6 +325,33 @@ describe('ExportService (TODO §35, doc/MULTI-FORMAT-EXPORT-SPEC.md, этап 75
         status: 'pending',
         childSessionId: 'child-1',
       });
+    });
+
+    // Доп. запрос владельца продукта (ТЗ §9, этап 4 плана §14) — найдено
+    // при ПОВТОРНОМ аудите: та же находка, что уже была для
+    // provider/resolution — переэкспорт цепочки Scene Extension в
+    // другой формат без этого поля тихо давал бы обычные 8 секунд
+    // вместо той же итоговой длины в новом формате.
+    it('переэкспорт цепочки Scene Extension — сохраняет chainTargetDurationSeconds в новом формате', async () => {
+      const { svc, generation } = build({
+        session: plainSession({
+          generatedVideo: {
+            ...VIDEO,
+            chainSegmentsDone: 7,
+            chainSegmentsTotal: 7,
+            chainTargetDurationSeconds: 56,
+          },
+        }),
+      });
+      await svc.startRerender('s1', '16:9', 'youtube', 'standard');
+      expect(generation.generateVideo).toHaveBeenCalledWith(
+        'child-1',
+        'standard',
+        '16:9',
+        undefined,
+        undefined,
+        56,
+      );
     });
 
     it('отказ generateVideo (гейт/лимит/блокировка) доходит до пользователя, а не глотается', async () => {

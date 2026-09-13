@@ -16,7 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { Layers } from 'lucide-react';
-import { Alert, Button, Card, EmptyState, Spinner } from '../../components/ui';
+import { Alert, Button, Card, EmptyState, Pills, Spinner } from '../../components/ui';
 import { getProject, errorMessage } from '../../services/projects-api';
 import { getSession } from '../../services/api';
 import { startCatalogBatch } from '../../services/catalog-batch-api';
@@ -47,6 +47,14 @@ export function CatalogBatchStartScreen({
   const [selected, setSelected] = useState<Set<string> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Доп. запрос владельца продукта: Grok как провайдер для партии (ТЗ
+  // VEO-MODEL-VERSION-CHOICE-SPEC.md §10–11/§13, этап 2 плана §14) —
+  // найдено при аудите (§16.3): без этого выбора в интерфейсе весь
+  // Grok-путь воркера партий был недостижим через реальный API.
+  const [provider, setProvider] = useState<'veo' | 'grok'>('veo');
+  const [resolution, setResolution] = useState<'480p' | '720p' | '1080p'>(
+    '480p'
+  );
 
   const candidates = useMemo(
     () =>
@@ -84,6 +92,8 @@ export function CatalogBatchStartScreen({
       const result = await startCatalogBatch(projectId, {
         sourceSessionId,
         productItemIds,
+        provider,
+        resolution: provider === 'grok' ? resolution : undefined,
       });
       navigate(routes.catalogBatch(projectId, result.batchId), true);
     } catch (e) {
@@ -128,6 +138,38 @@ export function CatalogBatchStartScreen({
           {error}
         </Alert>
       )}
+
+      {/* Доп. запрос владельца продукта: провайдер видео для партии (§16.3
+          аудита ТЗ) — тот же выбор, что уже есть на экране одиночной
+          генерации (GenerationWizard), просто применяется ко всей партии
+          сразу, а не к одному ролику. */}
+      <div className="mb-4">
+        <span className="label">{dict.generationWizard.providerLabel}</span>
+        <Pills
+          value={provider}
+          onChange={setProvider}
+          options={[
+            { value: 'veo', label: dict.generationWizard.providerVeoLabel },
+            { value: 'grok', label: dict.generationWizard.providerGrokLabel },
+          ]}
+        />
+        {provider === 'grok' && (
+          <>
+            <span className="label">
+              {dict.generationWizard.resolutionLabel}
+            </span>
+            <Pills
+              value={resolution}
+              onChange={setResolution}
+              options={[
+                { value: '480p', label: '480p' },
+                { value: '720p', label: '720p' },
+                { value: '1080p', label: '1080p' },
+              ]}
+            />
+          </>
+        )}
+      </div>
 
       {candidates.length === 0 ? (
         <EmptyState

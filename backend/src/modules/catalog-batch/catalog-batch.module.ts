@@ -6,6 +6,7 @@ import { ProjectSessionModule } from '../project-session/project-session.module'
 import { LibraryModule } from '../library/library.module';
 import { PromptModule } from '../prompt/prompt.module';
 import { GenerationModule } from '../generation/generation.module';
+import { StorageModule } from '../storage/storage.module';
 
 /**
  * CatalogBatchModule — пакетная генерация по каталогу (ТЗ §44, этап 65).
@@ -14,6 +15,10 @@ import { GenerationModule } from '../generation/generation.module';
  * нужно. `ProjectSessionModule`/`LibraryModule`/`PromptModule`/
  * `GenerationModule` — НЕ `@Global()` (тот же приём, что у
  * `BillingModule` → `LegalModule`, этап 64), поэтому импортируются явно.
+ * `StorageModule` (§13 ТЗ, этап 2 плана §14) — `BlobService`, нужен
+ * воркеру самому сохранять готовое видео из результатов xAI-пачки
+ * (Grok batch не проходит через `GenerationService.getVideoStatus()`,
+ * который делает это для синхронного пути).
  */
 @Module({
   imports: [
@@ -21,6 +26,7 @@ import { GenerationModule } from '../generation/generation.module';
     LibraryModule,
     PromptModule,
     GenerationModule,
+    StorageModule,
   ],
   controllers: [CatalogBatchController],
   providers: [CatalogBatchService, CatalogBatchWorkerService],

@@ -85,6 +85,35 @@ export interface GeneratedVideo {
    * терять информацию о том, какой из двух реально там лежит. */
   grokRequestId?: string;
 
+  /**
+   * Доп. запрос владельца продукта: ролики длиннее 8 секунд через Scene
+   * Extension (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §9, этап 4 плана
+   * §14). Все три поля вместе или ни одного — `undefined` означает
+   * обычную, однократную генерацию, как было раньше этой фичи.
+   */
+  /** Сколько сегментов цепочки уже готово — включая текущий, ещё не
+   * дописанный (растёт по мере продолжений); статус видео остаётся
+   * PROCESSING, пока `chainSegmentsDone < chainSegmentsTotal`. */
+  chainSegmentsDone?: number;
+  /** Сколько сегментов нужно всего — из `buildExtensionPlan()`
+   * (`common/video-extension-plan.ts`), посчитано один раз при старте. */
+  chainSegmentsTotal?: number;
+  /** Итоговая длительность ролика в секундах, к которой идёт цепочка —
+   * может быть меньше того, что изначально просил пользователь, если
+   * запрос был урезан потолком провайдера/референса (см. `wasCapped`
+   * в `ExtensionPlan`). */
+  chainTargetDurationSeconds?: number;
+
+  /**
+   * Доп. запрос владельца продукта: поле «Чего избежать» (ТЗ
+   * VEO-MODEL-VERSION-CHOICE-SPEC.md §1/§6, этап 5 плана §14) —
+   * свободный текст, что не должно случиться в кадре. Уходит в
+   * настоящий `negativePrompt`, когда авто-выбор включил Veo 3.0
+   * (`common/veo-model-choice.ts`, `usesVeo30()`); иначе — best-effort
+   * строкой в основной промпт (Veo 3.1, `fast`, Grok — §4.1 ТЗ).
+   */
+  avoidText?: string;
+
   /** When generation was started */
   initiatedAt: Date;
 

@@ -1172,7 +1172,9 @@ export function useWorkflow() {
       quality: VideoQuality = 'fast',
       aspectRatio?: string | null,
       provider?: 'veo' | 'grok',
-      resolution?: '480p' | '720p' | '1080p'
+      resolution?: '480p' | '720p' | '1080p',
+      targetDurationSeconds?: number,
+      avoidText?: string
     ) => {
       if (!state.sessionId) {
         setState((prev) => ({
@@ -1194,7 +1196,9 @@ export function useWorkflow() {
           quality,
           aspectRatio,
           provider,
-          resolution
+          resolution,
+          targetDurationSeconds,
+          avoidText
         );
 
         setState((prev) => {

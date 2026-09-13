@@ -739,7 +739,9 @@ export async function generateVideo(
   quality: VideoQuality = 'fast',
   aspectRatio?: string | null,
   provider?: 'veo' | 'grok',
-  resolution?: '480p' | '720p' | '1080p'
+  resolution?: '480p' | '720p' | '1080p',
+  targetDurationSeconds?: number,
+  avoidText?: string
 ): Promise<GeneratedVideo> {
   const response = await api.post<GeneratedVideo>(
     `/sessions/${sessionId}/generate`,
@@ -748,6 +750,8 @@ export async function generateVideo(
       ...(aspectRatio ? { aspectRatio } : {}),
       ...(provider ? { provider } : {}),
       ...(resolution ? { resolution } : {}),
+      ...(targetDurationSeconds ? { targetDurationSeconds } : {}),
+      ...(avoidText ? { avoidText } : {}),
     }
   );
 
@@ -775,14 +779,27 @@ export async function getCostEstimate(
   sessionId: string,
   provider: 'veo' | 'grok',
   quality?: VideoQuality,
-  resolution?: '480p' | '720p' | '1080p'
-): Promise<{ costUsd: number; unpriced: boolean }> {
+  resolution?: '480p' | '720p' | '1080p',
+  targetDurationSeconds?: number
+): Promise<{
+  costUsd: number;
+  unpriced: boolean;
+  segments: number;
+  targetDurationSeconds: number;
+  wasCapped: boolean;
+}> {
   const params = new URLSearchParams({ provider });
   if (quality) params.set('quality', quality);
   if (resolution) params.set('resolution', resolution);
-  const response = await api.get<{ costUsd: number; unpriced: boolean }>(
-    `/sessions/${sessionId}/generate/estimate?${params.toString()}`
-  );
+  if (targetDurationSeconds)
+    params.set('targetDurationSeconds', String(targetDurationSeconds));
+  const response = await api.get<{
+    costUsd: number;
+    unpriced: boolean;
+    segments: number;
+    targetDurationSeconds: number;
+    wasCapped: boolean;
+  }>(`/sessions/${sessionId}/generate/estimate?${params.toString()}`);
   if (!response.data) {
     throw new Error('Failed to estimate cost');
   }

@@ -1,4 +1,13 @@
-import { IsIn, IsOptional, Matches } from 'class-validator';
+import {
+  IsIn,
+  IsOptional,
+  Matches,
+  IsInt,
+  Min,
+  Max,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { VideoQuality } from '../../../common/types/generation.types';
 
 /**
@@ -39,4 +48,27 @@ export class GenerateVideoRequestDto {
   @IsOptional()
   @IsIn(['480p', '720p', '1080p'])
   resolution?: '480p' | '720p' | '1080p';
+
+  /**
+   * Доп. запрос владельца продукта: ролик длиннее 8 секунд через Scene
+   * Extension (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §9, этап 4 плана
+   * §14). Отсутствует или `<= 8` — обычная генерация, как раньше.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  targetDurationSeconds?: number;
+
+  /**
+   * Доп. запрос владельца продукта: поле «Чего избежать» (ТЗ §1/§6,
+   * этап 5 плана §14) — свободный текст, что не должно случиться в
+   * кадре. Ограничение длины — та же грубая защита, что у остальных
+   * свободных текстовых полей (никаких известных лимитов провайдеров
+   * не заменяет).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  avoidText?: string;
 }

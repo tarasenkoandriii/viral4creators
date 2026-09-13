@@ -524,6 +524,17 @@ export class AnalysisService {
                   source: 'gemini' as const,
                 }
               : existingFrame;
+        // Доп. запрос владельца продукта (ТЗ §9.4, этап 4 плана §14) —
+        // длительность референса выводится из уже разобранных сцен
+        // (`scenes[last].end`), не отдельным полем в схеме Gemini и не
+        // через ffprobe — тот же принцип экономии вызовов, что у
+        // `reframe.ts` («Почему без ffprobe»): сцены и так уже просят
+        // "start"/"end" в секундах ОРИГИНАЛЬНОГО видео, последняя граница
+        // и есть общая длительность.
+        const referenceDurationSeconds =
+          scenes && scenes.length > 0
+            ? scenes[scenes.length - 1].end
+            : undefined;
         await this.sessionService.updateSession(sessionId, {
           videoAnalysis: {
             ...session.videoAnalysis,
@@ -534,6 +545,9 @@ export class AnalysisService {
             ...(extras !== undefined ? { extras } : {}),
             ...(audience !== undefined ? { audience } : {}),
             ...(promotedProduct !== undefined ? { promotedProduct } : {}),
+            ...(referenceDurationSeconds !== undefined
+              ? { referenceDurationSeconds }
+              : {}),
           },
           ...(session.originalVideo && nextFrame
             ? { originalVideo: { ...session.originalVideo, frame: nextFrame } }

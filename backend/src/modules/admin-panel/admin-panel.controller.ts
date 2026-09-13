@@ -32,6 +32,8 @@ import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { VOICEOVER_PROVIDER_KEYS } from '../tts/default-tts-provider';
+import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
+import { ANALYSIS_PROVIDER_KEYS } from '../analysis/default-analysis-provider';
 import { PlanId, PLAN_IDS, isPlanId } from '../../common/plans';
 import { isVoiceMode } from '../../common/voice-mode';
 import {
@@ -87,6 +89,13 @@ export class SetVoiceoverProviderDto {
   provider!: string;
 }
 
+/** Доп. запрос владельца продукта: тот же селектор, что выше, но для
+ * модели разбора референса (ТЗ §17). */
+export class SetAnalysisProviderDto {
+  @IsIn(ANALYSIS_PROVIDER_KEYS as unknown as string[])
+  provider!: string;
+}
+
 const WORKFLOW_WINDOWS: WorkflowWindow[] = ['hour', 'day', 'week', 'month'];
 
 /** Этап 78 — невалидный/отсутствующий `?window=` тихо откатывается на
@@ -121,6 +130,7 @@ export class AdminPanelController {
     private readonly abTest: AdminAbTestService,
     private readonly feedImport: AdminFeedImportService,
     private readonly voiceoverSettings: AdminVoiceoverSettingsService,
+    private readonly analysisSettings: AdminAnalysisSettingsService,
   ) {}
 
   @Get('sessions')
@@ -218,6 +228,28 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.voiceoverSettings.setDefault(dto.provider, req.userId);
+  }
+
+  /**
+   * «Разбор референса по умолчанию» — доп. запрос владельца продукта:
+   * тот же принцип, что у селектора озвучки выше, для модели, которая
+   * анализирует загруженное видео (ТЗ §17). ⚠️ `grok` — приближение
+   * через отдельные кадры, не эквивалент разбора Gemini целиком (см.
+   * доккомментарий `default-analysis-provider.ts`).
+   */
+  @Get('settings/analysis-provider')
+  async getAnalysisProvider(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.analysisSettings.get();
+  }
+
+  @Patch('settings/analysis-provider')
+  async setAnalysisProvider(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetAnalysisProviderDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.analysisSettings.setDefault(dto.provider, req.userId);
   }
 
   // ── Воронка движения по воркфлоу (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md,

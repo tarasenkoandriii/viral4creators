@@ -1528,6 +1528,20 @@ model CatalogBatchRun {
   /// дочернюю сессию воркером.
   locale      String?
 
+  /// Доп. запрос владельца продукта: Grok как провайдер (ТЗ
+  /// VEO-MODEL-VERSION-CHOICE-SPEC.md §10–11, §13, этап 2 плана §14).
+  /// По умолчанию 'veo' — существующие строки без миграции данных
+  /// ведут себя как раньше.
+  provider   String  @default("veo")
+  /// Только для provider='grok' (§10.1 ТЗ — Veo разрешение не
+  /// запрашивает явно).
+  resolution String?
+  /// ID пачки на стороне xAI (§13 ТЗ) — заполняется один раз, когда
+  /// воркер собрал очередь и подал её как ОДНУ пачку в Batch API.
+  /// `null`, пока провайдер 'veo' (партия вообще не проходит через
+  /// batch) или пока для 'grok' ещё не набралась очередь на подачу.
+  xaiBatchId String?
+
   createdAt DateTime @default(now())
 
   items CatalogBatchItem[]
@@ -1546,6 +1560,12 @@ enum CatalogBatchItemStatus {
   GENERATING
   DONE
   FAILED
+  /// Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14): только
+  /// для provider='grok' на родительской партии — промпт уже одобрен,
+  /// строка ждёт, пока воркер соберёт очередь и подаст её как ОДНУ
+  /// пачку в xAI Batch API (см. `CatalogBatchRun.xaiBatchId`). После
+  /// подачи переходит в GENERATING, как и обычный путь.
+  BATCH_QUEUED
 }
 
 /// Одна строка — один товар партии. Бэкофф — та же формула (2^attempts

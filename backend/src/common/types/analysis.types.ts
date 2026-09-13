@@ -219,6 +219,19 @@ export interface VideoAnalysis {
   /** True when this analysis was copied from the library instead of a fresh Gemini call (§21). */
   fromLibrary?: boolean;
 
+  /**
+   * Доп. запрос владельца продукта: длительность референсного видео в
+   * секундах (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §9.4, этап 4 плана
+   * §14) — триггер для предложения ролика длиннее 8 секунд через Scene
+   * Extension. Раньше это поле не заполнялось вовсе (найдено при
+   * подготовке ТЗ) — ни здесь, ни через ffprobe отдельно; заполняется
+   * тем же вызовом Gemini, что уже разбирает референс, не отдельным
+   * проходом (тот же принцип экономии вызовов, что у `reframe.ts`,
+   * "Почему без ffprobe"). `undefined` — анализ предшествует этому
+   * полю или Gemini не смог определить длительность.
+   */
+  referenceDurationSeconds?: number;
+
   /** User's edited version of scene breakdown (optional) */
   userEdits?: string;
 

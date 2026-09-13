@@ -98,6 +98,61 @@ describe('AdminGenerationRetryController', () => {
       's1',
       'standard',
       '9:16',
+      undefined,
+      undefined,
+      undefined,
+    );
+  });
+
+  // Доп. запрос владельца продукта (ТЗ §10–11, найдено при аудите):
+  // повтор проваленного Grok-рендера не должен тихо уезжать на Veo —
+  // тот же принцип, что уже применён к quality/aspectRatio выше.
+  it('проваленный Grok-рендер — повтор с тем же provider/resolution, не тихий переход на Veo', async () => {
+    const { controller, generation, req } = build({
+      data: {
+        generatedVideo: {
+          status: GenerationStatus.FAILED,
+          provider: 'grok',
+          resolution: '480p',
+        },
+      },
+    });
+    await controller.retry(req, 's1');
+    expect(generation.generateVideo).toHaveBeenCalledWith(
+      's1',
+      undefined,
+      undefined,
+      'grok',
+      '480p',
+      undefined,
+    );
+  });
+
+  // Доп. запрос владельца продукта (ТЗ §9, этап 4 плана §14) — найдено
+  // при ПОВТОРНОМ аудите: та же находка, что уже была для
+  // provider/resolution, но для поля, добавленного в другом заходе —
+  // без него повтор упавшего НА СЕРЕДИНЕ цепочки сегмента тихо
+  // откатывался бы на обычную однократную 8-секундную генерацию.
+  it('проваленный сегмент цепочки — повтор с тем же chainTargetDurationSeconds, не откат на обычную генерацию', async () => {
+    const { controller, generation, req } = build({
+      data: {
+        generatedVideo: {
+          status: GenerationStatus.FAILED,
+          provider: 'veo',
+          chainSegmentsDone: 3,
+          chainSegmentsTotal: 7,
+          chainTargetDurationSeconds: 56,
+        },
+      },
+    });
+    await controller.retry(req, 's1');
+    expect(generation.generateVideo).toHaveBeenCalledWith(
+      's1',
+      undefined,
+      undefined,
+      'veo',
+      undefined,
+      56,
     );
   });
 
@@ -250,6 +305,9 @@ describe('AdminGenerationRetryController.applyFixAndRetry (реальный сл
       's1',
       'standard',
       '9:16',
+      undefined,
+      undefined,
+      undefined,
     );
   });
 

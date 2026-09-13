@@ -53,6 +53,7 @@ export interface VideoVersion {
   aspectRatio: string | null;
   provider: string | null;
   resolution: string | null;
+  avoidText: string | null;
   initiatedAt: string | null;
   completedAt: string | null;
   isCurrent: boolean;
@@ -123,6 +124,25 @@ export interface VoiceoverProviderSettingsView {
    * не трогал селектор (используется старый TTS_PROVIDER/дефолт). */
   source: 'admin' | 'env-default';
   options: VoiceoverProviderOptionView[];
+}
+
+// ── Разбор референса по умолчанию (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §17) ──
+
+export type AnalysisProviderKey = 'gemini' | 'grok';
+
+export interface AnalysisProviderOptionView {
+  key: AnalysisProviderKey;
+  configured: boolean;
+  /** По прямому запросу владельца продукта: сам разбор через Grok ещё
+   * не реализован — пункт показывается, но выбрать его нельзя. */
+  available: boolean;
+  unavailableReason?: string;
+}
+
+export interface AnalysisProviderSettingsView {
+  active: AnalysisProviderKey;
+  source: 'admin' | 'env-default';
+  options: AnalysisProviderOptionView[];
 }
 
 // ── Очередь публикации (backend/src/modules/publication, этап 18) ──

@@ -192,12 +192,16 @@ describe('GenerationService.generateVideo — деньги проверяютс�
   it('расход пишется в момент ЗАПУСКА рендера, а не по его завершении', async () => {
     // Занизить отчёт о расходах опаснее, чем завысить: по нему планируют
     // бюджет, а невидимые неудачные рендеры превращают его в фантазию.
+    //
+    // Модель — 'veo-3.0-generate-001', не '...3.1...': ТЗ §1 (этап 5
+    // плана §14) — сессия без персонажей бренда + `standard` → авто-
+    // выбор Veo 3.0 ради `negativePrompt`, см. `veo-model-choice.ts`.
     const { svc, aiUsage } = build();
     const video = await svc.generateVideo('s1', 'standard');
 
     expect(aiUsage.record).toHaveBeenCalledWith({
       operation: 'generation',
-      model: 'veo-3.1-generate-preview',
+      model: 'veo-3.0-generate-001',
       seconds: 8,
       sessionId: 's1',
     });

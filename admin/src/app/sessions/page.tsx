@@ -626,6 +626,14 @@ export default function SessionsPage() {
                                       </a>
                                     )}
                                   </div>
+                                  {/* Доп. запрос владельца продукта: «Чего избежать» видно
+                                      оператору (§4/§16.6 ТЗ) — тот же принцип, что уже
+                                      применён к provider/resolution выше. */}
+                                  {v.avoidText && (
+                                    <div className="muted" style={{ fontStyle: 'italic' }}>
+                                      Избегать: {v.avoidText}
+                                    </div>
+                                  )}
                                   {v.audits.map((a) => (
                                     <span key={a.auditId} className="muted" title={a.summary}>
                                       {a.verdict}: {a.summary}

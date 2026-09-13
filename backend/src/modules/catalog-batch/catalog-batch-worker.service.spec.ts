@@ -76,6 +76,48 @@ function setup(
      * по умолчанию `false` (замок свободен, `runBatch()` выполняется как
      * раньше для всех существующих тестов). */
     jobLockHeld?: boolean;
+    /** Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) —
+     * партии с `provider: 'grok'`, готовые к подаче/уже поданные в xAI
+     * Batch API — по умолчанию пусто, существующие Veo-тесты не видят
+     * разницы. */
+    grokRuns?: unknown[];
+    /** Партии provider='grok' с уже поданной пачкой (`xaiBatchId` не
+     * null) и хотя бы одной GENERATING-строкой — для
+     * `pollInFlightGrokBatches()`, отдельно от `grokRuns` выше (та
+     * ветка ищет партии БЕЗ поданной пачки). */
+    grokInFlightRuns?: unknown[];
+    /** Счётчик `catalogBatchItem.count` (используется
+     * `submitReadyGrokBatches()` для проверки готовности партии к
+     * подаче) — по умолчанию 0, партия сразу отсекается как «нет строк
+     * в очереди», существующие тесты не задевают этот путь. */
+    /** `submitReadyGrokBatches()` — сколько строк уже `BATCH_QUEUED`
+     * для партии по умолчанию (0 — партия не готова, путь не идёт
+     * дальше). */
+    grokQueuedCount?: number;
+    /** То же — сколько строк ещё НЕ дошли до готовности (PENDING или
+     * ожидающий повтора FAILED); ненулевое значение блокирует подачу
+     * даже при непустой очереди. */
+    grokNotReadyCount?: number;
+    grokSubmitResult?: unknown;
+    grokBatchStatus?: unknown;
+    grokBatchResults?: Record<string, string>;
+    /** Строки в `submitReadyGrokBatches()` (полные данные для подачи —
+     * id/sessionId/productItemId), возвращаемые вторым `findMany`
+     * (после проверки `count`, см. выше). */
+    grokQueuedItems?: unknown[];
+    /** Строки в `pollInFlightGrokBatches()` (уже `GENERATING`,
+     * пришедшие через Grok-пачку, отличаются от `generatingRows`
+     * наличием `batchId` в запросе). */
+    grokGeneratingItems?: unknown[];
+    /** Найдено при аудите (ТЗ §13, этап 2 плана §14) — переопределяет
+     * щедрый дефолт `aiUsage.budget()` для теста, который проверяет
+     * саму находку (бюджет не покрывает партию → все строки FAILED). */
+    aiUsageBudget?: {
+      allowed: boolean;
+      limitMicroUsd: number;
+      spentMicroUsd: number;
+      remainingMicroUsd: number;
+    };
   } = {},
 ) {
   const generatingIds = new Set(
@@ -83,16 +125,27 @@ function setup(
   );
   const prisma = {
     catalogBatchItem: {
-      // Два РАЗНЫХ запроса делят один мок: Д-1.1-досмотр
-      // (`where.status === 'GENERATING'`) и выборка новых/просроченных
-      // строк (`where.OR`) — различаем по форме `where`, а не по
+      // Три-четыре РАЗНЫХ запроса делят один мок: Д-1.1-досмотр
+      // (`where.status === 'GENERATING'`, без `batchId` — весь проект),
+      // выборка новых/просроченных строк (`where.OR`), подача Grok-
+      // пачки (`where.status === 'BATCH_QUEUED'`) и опрос Grok-пачки
+      // (`where.status === 'GENERATING'` СО `batchId` — одна партия,
+      // §13 ТЗ, этап 2 плана §14) — различаем по форме `where`, а не по
       // порядку вызова.
-      findMany: jest.fn((args: { where?: { status?: string } } = {}) =>
-        Promise.resolve(
-          args?.where?.status === 'GENERATING'
-            ? (opts.generatingRows ?? [])
-            : (opts.rows ?? []),
-        ),
+      findMany: jest.fn(
+        (args: { where?: { status?: string; batchId?: string } } = {}) => {
+          if (args?.where?.status === 'BATCH_QUEUED') {
+            return Promise.resolve(opts.grokQueuedItems ?? []);
+          }
+          if (args?.where?.status === 'GENERATING' && args?.where?.batchId) {
+            return Promise.resolve(opts.grokGeneratingItems ?? []);
+          }
+          return Promise.resolve(
+            args?.where?.status === 'GENERATING'
+              ? (opts.generatingRows ?? [])
+              : (opts.rows ?? []),
+          );
+        },
       ),
       // Claim, тот же приём, что у PublishWorkerService (Г-2.11) — по
       // умолчанию всегда успешно захвачена; различаем по id строки, а
@@ -106,11 +159,41 @@ function setup(
         }),
       ),
       update: jest.fn().mockResolvedValue(undefined),
+      // Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) —
+      // безопасный дефолт для существующих тестов, которые не знают
+      // про Grok-пачки: ноль строк «не готовы к подаче» и ноль
+      // «в очереди» — `submitReadyGrokBatches()` сразу отсекается по
+      // `queuedCount === 0` и не идёт дальше, не трогая остальные моки.
+      // Различаем два разных запроса по форме `where`, тот же приём,
+      // что у `findMany` выше.
+      count: jest.fn((args: { where?: { status?: string } } = {}) =>
+        Promise.resolve(
+          args?.where?.status === 'BATCH_QUEUED'
+            ? (opts.grokQueuedCount ?? 0)
+            : (opts.grokNotReadyCount ?? 0),
+        ),
+      ),
     },
     catalogBatchRun: {
       findUnique: jest
         .fn()
         .mockResolvedValue(opts.batch === undefined ? batchRow() : opts.batch),
+      // Доп. запрос владельца продукта (ТЗ §13) — по умолчанию нет
+      // Grok-партий вовсе, `submitReadyGrokBatches()`/
+      // `pollInFlightGrokBatches()` сразу возвращают пустой список и
+      // не делают ничего — существующие Veo-сценарии не видят разницы.
+      // Различаем два запроса по форме `where.xaiBatchId`: `null` —
+      // подача (ищет партии БЕЗ поданной пачки), объект `{not: null}` —
+      // опрос (партии С уже поданной пачкой).
+      findMany: jest.fn(
+        (args: { where?: { xaiBatchId?: unknown } } = {}) =>
+          Promise.resolve(
+            args?.where?.xaiBatchId === null
+              ? (opts.grokRuns ?? [])
+              : (opts.grokInFlightRuns ?? []),
+          ),
+      ),
+      update: jest.fn().mockResolvedValue(undefined),
     },
     // Этап 78 (doc/WORKFLOW-FUNNEL-SPEC.md) — событие воронки, best-effort.
     workflowStageEvent: { create: jest.fn().mockResolvedValue({}) },
@@ -140,6 +223,10 @@ function setup(
       .mockResolvedValue(
         opts.sessionState === undefined ? {} : opts.sessionState,
       ),
+    // Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) —
+    // используется `finalizeGrokBatchItem()` при завершении строки,
+    // пришедшей через Grok-пачку.
+    updateSession: jest.fn().mockResolvedValue(undefined),
   };
   const library = {
     applyToSession: jest.fn().mockResolvedValue(undefined),
@@ -154,6 +241,42 @@ function setup(
       .fn()
       .mockResolvedValue(opts.videoStatus ?? { status: 'processing' }),
   };
+  // Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14).
+  const grokBatch = {
+    isConfigured: jest.fn().mockReturnValue(false),
+    submitBatch: jest
+      .fn()
+      .mockResolvedValue(opts.grokSubmitResult ?? { xaiBatchId: 'batch1' }),
+    getBatchStatus: jest.fn().mockResolvedValue(opts.grokBatchStatus ?? null),
+    getBatchResults: jest
+      .fn()
+      .mockResolvedValue(opts.grokBatchResults ?? {}),
+    modelName: 'grok-imagine-video-1.5',
+  };
+  const blob = {
+    uploadBuffer: jest
+      .fn()
+      .mockResolvedValue({ url: 'https://blob.test/video.mp4' }),
+  };
+  // Найдено при аудите (ТЗ §13, этап 2 плана §14) — без проверки
+  // бюджета и записи расхода Grok-партии по каталогу могли уйти в xAI
+  // без единого взгляда на дневной лимит. По умолчанию — щедрый лимит,
+  // существующие тесты (не про Grok-подачу вовсе) не видят разницы;
+  // тесты на саму находку переопределяют `aiUsageBudget` явно.
+  const plans = {
+    accessOf: jest.fn().mockResolvedValue({ spendPlan: 'PREMIUM' }),
+  };
+  const aiUsage = {
+    budget: jest.fn().mockResolvedValue(
+      opts.aiUsageBudget ?? {
+        allowed: true,
+        limitMicroUsd: 100_000_000,
+        spentMicroUsd: 0,
+        remainingMicroUsd: 100_000_000,
+      },
+    ),
+    record: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new CatalogBatchWorkerService(
     prisma as never,
     projectSession as never,
@@ -161,6 +284,10 @@ function setup(
     library as never,
     prompt as never,
     generation as never,
+    grokBatch as never,
+    blob as never,
+    plans as never,
+    aiUsage as never,
   );
   return {
     service,
@@ -170,6 +297,10 @@ function setup(
     library,
     prompt,
     generation,
+    grokBatch,
+    blob,
+    plans,
+    aiUsage,
   };
 }
 
@@ -729,6 +860,328 @@ describe('CatalogBatchWorkerService', () => {
         new Error('analytics db insert failed'),
       );
       await expect(service.runBatch()).resolves.toMatchObject({ started: 1 });
+    });
+  });
+
+  // Доп. запрос владельца продукта (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md
+  // §13, этап 2 плана реализации §14) — Grok идёт через xAI Batch API,
+  // не через синхронный `generateVideo()`.
+  describe('Grok-пачки (§13 ТЗ)', () => {
+    it('processOne с provider=grok ставит строку в BATCH_QUEUED, не зовёт generateVideo()', async () => {
+      const { service, prisma, generation } = setup({
+        rows: [row()],
+        batch: batchRow({ provider: 'grok', resolution: '480p' }),
+        sessionState: { generationPrompt: { approvedAt: null } },
+      });
+      await service.runBatch();
+      expect(generation.generateVideo).not.toHaveBeenCalled();
+      expect(prisma.catalogBatchItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'item1' },
+          data: expect.objectContaining({ status: 'BATCH_QUEUED' }),
+        }),
+      );
+    });
+
+    it('уже стартованную (videoStarted) grok-строку не переставляет в очередь повторно', async () => {
+      const { service, generation, prisma } = setup({
+        rows: [row()],
+        batch: batchRow({ provider: 'grok' }),
+        sessionState: {
+          generationPrompt: { approvedAt: new Date() },
+          generatedVideo: { status: 'PROCESSING' },
+        },
+      });
+      await service.runBatch();
+      expect(generation.generateVideo).not.toHaveBeenCalled();
+      expect(prisma.catalogBatchItem.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'BATCH_QUEUED' }),
+        }),
+      );
+    });
+
+    describe('submitReadyGrokBatches', () => {
+      it('очередь пуста — ничего не подаёт', async () => {
+        const { service, grokBatch } = setup({
+          grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '9:16' }],
+          grokQueuedCount: 0,
+        });
+        await service.runBatch();
+        expect(grokBatch.submitBatch).not.toHaveBeenCalled();
+      });
+
+      it('есть ещё не готовые (PENDING/retry-FAILED) строки — ждёт, не подаёт частично', async () => {
+        const { service, grokBatch } = setup({
+          grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '9:16' }],
+          grokQueuedCount: 2,
+          grokNotReadyCount: 1,
+        });
+        await service.runBatch();
+        expect(grokBatch.submitBatch).not.toHaveBeenCalled();
+      });
+
+      it('очередь готова целиком — подаёт одной пачкой, помечает строки GENERATING', async () => {
+        const { service, grokBatch, prisma } = setup({
+          grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '9:16' }],
+          grokQueuedCount: 1,
+          grokNotReadyCount: 0,
+          grokQueuedItems: [
+            { id: 'item1', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+          sessionState: {
+            generationPrompt: { finalText: 'a cat on a table' },
+            productInformation: { productImageUrl: 'https://blob.test/p.png' },
+          },
+          grokSubmitResult: { xaiBatchId: 'batch_xai_1' },
+        });
+
+        await service.runBatch();
+
+        expect(grokBatch.submitBatch).toHaveBeenCalledWith(
+          'catalog-batch-run1',
+          [
+            expect.objectContaining({
+              batchRequestId: 'item1',
+              prompt: 'a cat on a table',
+              imageUrl: 'https://blob.test/p.png',
+              aspectRatio: '9:16',
+              resolution: '480p',
+            }),
+          ],
+        );
+        expect(prisma.catalogBatchRun.update).toHaveBeenCalledWith({
+          where: { id: 'run1' },
+          data: { xaiBatchId: 'batch_xai_1' },
+        });
+        expect(prisma.catalogBatchItem.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: ['item1'] } },
+          data: { status: 'GENERATING' },
+        });
+      });
+
+      // Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) —
+      // найдено при аудите: до исправления этот путь вызывал
+      // `GrokVideoBatchService` напрямую, минуя `GenerationService`, где
+      // для всех остальных путей проекта живёт и проверка бюджета, и
+      // запись расхода — реальные деньги, потраченные у xAI, были бы
+      // невидимы для отчёта о расходах.
+      it('успешная подача — расход записывается на всю партию одной записью', async () => {
+        const { service, aiUsage } = setup({
+          grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '9:16' }],
+          grokQueuedCount: 1,
+          grokNotReadyCount: 0,
+          grokQueuedItems: [
+            { id: 'item1', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+          sessionState: {
+            generationPrompt: { finalText: 'a cat on a table' },
+            productInformation: { productImageUrl: 'https://blob.test/p.png' },
+          },
+          grokSubmitResult: { xaiBatchId: 'batch_xai_1' },
+        });
+
+        await service.runBatch();
+
+        expect(aiUsage.record).toHaveBeenCalledWith(
+          expect.objectContaining({
+            operation: 'generation',
+            model: 'grok-imagine-video-1.5:480p',
+            seconds: 8,
+          }),
+        );
+      });
+
+      it('бюджет не покрывает стоимость всей партии — все строки FAILED, submitBatch не вызывается', async () => {
+        const { service, grokBatch, prisma } = setup({
+          grokRuns: [
+            { id: 'run1', userId: 'u1', resolution: '480p', aspectRatio: '9:16' },
+          ],
+          grokQueuedCount: 1,
+          grokNotReadyCount: 0,
+          grokQueuedItems: [
+            { id: 'item1', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+          sessionState: {
+            generationPrompt: { finalText: 'a cat on a table' },
+            productInformation: { productImageUrl: 'https://blob.test/p.png' },
+          },
+          // 480p × 8с = $0.64 = 640_000 мкд за строку — остаток заведомо
+          // меньше этого, партия не должна уйти ни частично, ни целиком.
+          aiUsageBudget: {
+            allowed: true,
+            limitMicroUsd: 200_000,
+            spentMicroUsd: 0,
+            remainingMicroUsd: 200_000,
+          },
+        });
+
+        await service.runBatch();
+
+        expect(grokBatch.submitBatch).not.toHaveBeenCalled();
+        expect(prisma.catalogBatchItem.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: ['item1'] } },
+          data: expect.objectContaining({ status: 'FAILED' }),
+        });
+      });
+
+      it('строка без одобренного промпта или фото товара — пропускается с FAILED, не блокирует остальные', async () => {
+        const { service, grokBatch, prisma } = setup({
+          grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '9:16' }],
+          grokQueuedCount: 1,
+          grokNotReadyCount: 0,
+          grokQueuedItems: [
+            { id: 'item-no-prompt', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+          sessionState: { generationPrompt: null, productInformation: null },
+        });
+
+        await service.runBatch();
+
+        expect(grokBatch.submitBatch).not.toHaveBeenCalled();
+        expect(prisma.catalogBatchItem.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 'item-no-prompt' },
+            data: expect.objectContaining({ status: 'FAILED' }),
+          }),
+        );
+      });
+
+      it('xAI отклоняет подачу — строки остаются в очереди для следующего тика, не FAILED', async () => {
+        const { service, prisma } = setup({
+          grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '9:16' }],
+          grokQueuedCount: 1,
+          grokNotReadyCount: 0,
+          grokQueuedItems: [
+            { id: 'item1', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+          sessionState: {
+            generationPrompt: { finalText: 'x' },
+            productInformation: { productImageUrl: 'https://blob.test/p.png' },
+          },
+          grokSubmitResult: { error: 'xAI вернул статус 500' },
+        });
+
+        await service.runBatch();
+
+        expect(prisma.catalogBatchRun.update).not.toHaveBeenCalled();
+        expect(prisma.catalogBatchItem.updateMany).not.toHaveBeenCalledWith(
+          expect.objectContaining({ data: { status: 'GENERATING' } }),
+        );
+      });
+    });
+
+    describe('pollInFlightGrokBatches', () => {
+      it('пачка ещё не готова (pendingCount > 0) — ничего не делает', async () => {
+        const { service, grokBatch } = setup({
+          grokInFlightRuns: [
+            { id: 'run1', xaiBatchId: 'batch_xai_1', aspectRatio: '9:16' },
+          ],
+          grokBatchStatus: {
+            totalCount: 3,
+            completedCount: 1,
+            pendingCount: 2,
+            errorCount: 0,
+          },
+        });
+        await service.runBatch();
+        expect(grokBatch.getBatchResults).not.toHaveBeenCalled();
+      });
+
+      it('опрос статуса не удался (null) — не падает, пробует следующим тиком', async () => {
+        const { service, grokBatch } = setup({
+          grokInFlightRuns: [
+            { id: 'run1', xaiBatchId: 'batch_xai_1', aspectRatio: '9:16' },
+          ],
+          grokBatchStatus: null,
+        });
+        await expect(service.runBatch()).resolves.toBeDefined();
+        expect(grokBatch.getBatchResults).not.toHaveBeenCalled();
+      });
+
+      it('пачка готова, результат найден — скачивает, сохраняет в Blob, помечает DONE', async () => {
+        const fetchMock = jest.fn().mockResolvedValue({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        });
+        const originalFetch = global.fetch;
+        global.fetch = fetchMock as unknown as typeof fetch;
+
+        try {
+          const { service, prisma, blob, sessions } = setup({
+            grokInFlightRuns: [
+              { id: 'run1', xaiBatchId: 'batch_xai_1', aspectRatio: '9:16' },
+            ],
+            grokGeneratingItems: [
+              { id: 'item1', sessionId: 'sess1', productItemId: 'pi1' },
+            ],
+            grokBatchStatus: {
+              totalCount: 1,
+              completedCount: 1,
+              pendingCount: 0,
+              errorCount: 0,
+            },
+            grokBatchResults: { item1: 'https://vidgen.x.ai/done.mp4' },
+            sessionState: { generatedVideo: undefined, videoHistory: [] },
+          });
+
+          const result = await service.runBatch();
+
+          expect(fetchMock).toHaveBeenCalledWith('https://vidgen.x.ai/done.mp4');
+          expect(blob.uploadBuffer).toHaveBeenCalledWith(
+            expect.stringContaining('sessions/sess1/generated-'),
+            expect.any(Buffer),
+            'video/mp4',
+          );
+          expect(sessions.updateSession).toHaveBeenCalledWith(
+            'sess1',
+            expect.objectContaining({
+              generatedVideo: expect.objectContaining({
+                status: 'complete',
+                provider: 'grok',
+                downloadUrl: 'https://blob.test/video.mp4',
+              }),
+            }),
+          );
+          expect(prisma.catalogBatchItem.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+              where: { id: 'item1' },
+              data: expect.objectContaining({ status: 'DONE' }),
+            }),
+          );
+          expect(result.grokBatchItemsCompleted).toBe(1);
+        } finally {
+          global.fetch = originalFetch;
+        }
+      });
+
+      it('пачка готова, но результата для строки нет — FAILED, не падает на остальных', async () => {
+        const { service, prisma } = setup({
+          grokInFlightRuns: [
+            { id: 'run1', xaiBatchId: 'batch_xai_1', aspectRatio: '9:16' },
+          ],
+          grokGeneratingItems: [
+            { id: 'item-missing', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+          grokBatchStatus: {
+            totalCount: 1,
+            completedCount: 0,
+            pendingCount: 0,
+            errorCount: 1,
+          },
+          grokBatchResults: {},
+        });
+
+        const result = await service.runBatch();
+
+        expect(prisma.catalogBatchItem.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 'item-missing' },
+            data: expect.objectContaining({ status: 'FAILED' }),
+          }),
+        );
+        expect(result.grokBatchItemsFailed).toBe(1);
+      });
     });
   });
 });

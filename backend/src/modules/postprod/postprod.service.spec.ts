@@ -578,6 +578,35 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       expect(api.submit.mock.calls[0][0].commands[0]).toContain('subtitles=');
     });
 
+    // Доп. запрос владельца продукта (ТЗ §9, этап 4 плана §14) — найдено
+    // при аудите: до исправления эвристика тайминга субтитров получала
+    // жёстко зашитые 8 секунд независимо от реальной длины ролика —
+    // для цепочки Scene Extension субтитры сжимались бы в первые 8
+    // секунд, а не растягивались на весь ролик.
+    it('veo + цепочка Scene Extension — субтитры считаются на реальную длину, не на 8 секунд', async () => {
+      const { svc, blob } = build({
+        session: subtitled('veo'),
+      });
+      const longVideo: GeneratedVideo = {
+        ...VIDEO,
+        chainSegmentsDone: 3,
+        chainSegmentsTotal: 3,
+        chainTargetDurationSeconds: 24,
+      };
+      await svc.start('s1', longVideo);
+
+      const srtCall = blob.uploadBuffer.mock.calls.find((c: unknown[]) =>
+        String(c[0]).endsWith('subtitles.srt'),
+      );
+      expect(srtCall).toBeDefined();
+      const srtText = (srtCall![1] as Buffer).toString('utf-8');
+      // Последняя реплика должна заканчиваться близко к реальным 24
+      // секундам — метка за пределами ~9 секунд в принципе невозможна
+      // при старом (жёстко зашитом на 8) поведении, это и есть прямая
+      // проверка находки.
+      expect(srtText).toMatch(/00:00:2[0-4],\d{3}/);
+    });
+
     it('voiceover + subtitlesMode: on — timestamps: true передан в TTS', async () => {
       const { svc, tts } = build({
         session: subtitled('voiceover'),

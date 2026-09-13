@@ -48,6 +48,18 @@ function statusMeta(
         icon: <Circle size={16} className="text-silver-400" />,
         tone: undefined,
       };
+    // Найдено при аудите (ТЗ §13, этап 2 плана §14): без этой ветки
+    // `switch` не покрывал `BATCH_QUEUED` (Grok-строки, ждущие подачи
+    // как одна пачка) — функция возвращала `undefined`, и экран падал
+    // при деструктуризации `{label, icon, tone}` на первой же такой
+    // строке. С точки зрения пользователя это та же категория
+    // «ожидание», что и PENDING — тот же ярлык и иконка.
+    case 'BATCH_QUEUED':
+      return {
+        label: dict.catalogBatch.statusPending,
+        icon: <Circle size={16} className="text-silver-400" />,
+        tone: undefined,
+      };
     case 'GENERATING':
       return {
         label: dict.catalogBatch.statusGenerating,
@@ -65,6 +77,16 @@ function statusMeta(
         label: dict.catalogBatch.statusFailed,
         icon: <XCircle size={16} className="text-rose-500" />,
         tone: 'danger' as const,
+      };
+    default:
+      // Защита от будущего значения статуса, для которого забудут
+      // добавить ветку сюда — тот же принцип, что уже применён для
+      // 'BATCH_QUEUED' выше: лучше показать «ожидание», чем уронить
+      // весь экран прогресса на одной строке.
+      return {
+        label: dict.catalogBatch.statusPending,
+        icon: <Circle size={16} className="text-silver-400" />,
+        tone: undefined,
       };
   }
 }

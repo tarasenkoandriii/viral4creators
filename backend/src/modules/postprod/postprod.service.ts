@@ -92,6 +92,17 @@ interface Work {
    * `veo` (этап 67).
    */
   speechStartSeconds: number;
+  /**
+   * Доп. запрос владельца продукта: ролики длиннее 8 секунд через Scene
+   * Extension (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §9, этап 4 плана
+   * §14) — найдено при аудите: эвристика тайминга субтитров
+   * (`heuristicCueTimings`) получала жёстко зашитую
+   * `VIDEO_DURATION_SECONDS` вместо реальной длины ролика — для
+   * цепочки из нескольких сегментов субтитры считались бы так, будто
+   * видео длится 8 секунд, а не до 56 (Veo) или 30 (Grok), сжимая или
+   * обрывая их посреди реального ролика.
+   */
+  totalDurationSeconds: number;
   voiceId: string | null;
   ttsModel: string | null;
   language: string | null;
@@ -806,6 +817,8 @@ export class PostProductionService {
       subtitleTheme,
       speech,
       speechStartSeconds: speech ? firstCueSeconds(script) : 0,
+      totalDurationSeconds:
+        video.chainTargetDurationSeconds ?? VIDEO_DURATION_SECONDS,
       voiceId: brand?.ttsVoiceId ?? null,
       ttsModel: brand?.ttsModel ?? null,
       ttsProvider: brand?.ttsProvider ?? null,
@@ -955,7 +968,7 @@ export class PostProductionService {
       : heuristicCueTimings(
           work.speech,
           work.speechStartSeconds,
-          VIDEO_DURATION_SECONDS,
+          work.totalDurationSeconds,
         );
 
     const srt = buildSrt(cues);

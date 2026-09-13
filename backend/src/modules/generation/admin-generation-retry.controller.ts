@@ -93,11 +93,21 @@ export class AdminGenerationRetryController {
     }
     const data = (row.data as Record<string, unknown>) ?? {};
     const generatedVideo = data.generatedVideo as
-      | { quality?: VideoQuality; aspectRatio?: string; status?: string }
+      | {
+          quality?: VideoQuality;
+          aspectRatio?: string;
+          status?: string;
+          provider?: 'veo' | 'grok';
+          resolution?: '480p' | '720p' | '1080p';
+          chainTargetDurationSeconds?: number;
+        }
       | undefined;
     // Качество/формат — те, что были в упавшей попытке, а не по
     // умолчанию: повтор должен воспроизводить тот же рендер, а не тихо
-    // подменять его настройки.
+    // подменять его настройки. Найдено при аудите (ТЗ §10–11): то же
+    // самое касается provider/resolution — без них повтор Grok-сессии
+    // тихо уезжал на Veo, хотя рядом же в этом самом комментарии
+    // сказано, что повтор не должен подменять настройки молча.
     if (generatedVideo?.status !== GenerationStatus.FAILED) {
       throw new ForbiddenException(
         `Сессия ${id}: повтор доступен только для проваленного рендера (сейчас: ${generatedVideo?.status ?? 'рендера не было'})`,
@@ -107,6 +117,14 @@ export class AdminGenerationRetryController {
       id,
       generatedVideo.quality,
       generatedVideo.aspectRatio,
+      generatedVideo.provider,
+      generatedVideo.resolution,
+      // Найдено при повторном аудите (ТЗ §9, этап 4 плана §14): без
+      // этого поля повтор упавшего НА СЕРЕДИНЕ цепочки сегмента тихо
+      // откатывался бы на обычную однократную 8-секундную генерацию —
+      // тот же класс ошибки, что уже был найден для provider/resolution
+      // выше, просто для поля, которое появилось в другом заходе.
+      generatedVideo.chainTargetDurationSeconds,
     );
     return this.adminPanel.getSession(id);
   }
@@ -203,12 +221,23 @@ export class AdminGenerationRetryController {
     await this.prompt.approvePrompt(id);
 
     const generatedVideo = data.generatedVideo as
-      | { quality?: VideoQuality; aspectRatio?: string }
+      | {
+          quality?: VideoQuality;
+          aspectRatio?: string;
+          provider?: 'veo' | 'grok';
+          resolution?: '480p' | '720p' | '1080p';
+          chainTargetDurationSeconds?: number;
+        }
       | undefined;
     await this.generation.generateVideo(
       id,
       generatedVideo?.quality,
       generatedVideo?.aspectRatio,
+      generatedVideo?.provider,
+      generatedVideo?.resolution,
+      // Найдено при повторном аудите (ТЗ §9, этап 4 плана §14) — та же
+      // находка, что и в `retry()` выше.
+      generatedVideo?.chainTargetDurationSeconds,
     );
     return this.adminPanel.getSession(id);
   }
@@ -254,6 +283,7 @@ export class AdminGenerationRetryController {
       aspectRatio: v.aspectRatio ?? null,
       provider: v.provider ?? 'veo',
       resolution: v.resolution ?? null,
+      avoidText: v.avoidText ?? null,
       initiatedAt: v.initiatedAt,
       completedAt: v.completedAt ?? null,
       isCurrent: v.isCurrent,
@@ -288,6 +318,11 @@ export interface VideoVersionView {
   provider: string | null;
   /** Только для `provider === 'grok'` (§10.1 ТЗ — Veo разрешение не запрашивает явно). */
   resolution: string | null;
+  /** Доп. запрос владельца продукта: поле «Чего избежать» (ТЗ §1/§6) —
+   * видно оператору тем же принципом, что и provider/resolution выше
+   * (§4 ТЗ — «версия видна и клиенту, и оператору»), добавлено при
+   * аудите §16.6. */
+  avoidText: string | null;
   initiatedAt: unknown;
   completedAt: unknown;
   /** Действующая (последняя) попытка — `session.generatedVideo`, а не

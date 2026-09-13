@@ -80,7 +80,13 @@ export class AdminCatalogBatchService {
         } as any)) as Array<{ status: string; _count: { _all: number } }>;
         const counts: Record<string, number> = {};
         for (const g of grouped) counts[g.status] = g._count._all;
-        const pending = counts.PENDING ?? 0;
+        // Найдено при аудите (ТЗ §13, этап 2 плана §14) — тот же пробел,
+        // что был в пользовательском `CatalogBatchService.getStatus()`:
+        // 'BATCH_QUEUED' (Grok-строки, ждущие подачи как одна пачка) не
+        // считался нигде — `total` не досчитывался бы до реального
+        // числа строк партии. Считаем вместе с PENDING — та же
+        // категория «ожидание» с точки зрения оператора.
+        const pending = (counts.PENDING ?? 0) + (counts.BATCH_QUEUED ?? 0);
         const generating = counts.GENERATING ?? 0;
         const done = counts.DONE ?? 0;
         const failed = counts.FAILED ?? 0;

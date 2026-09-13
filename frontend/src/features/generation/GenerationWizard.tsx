@@ -72,9 +72,20 @@ export function GenerationWizard() {
   const [grokResolution, setGrokResolution] = useState<
     '480p' | '720p' | '1080p'
   >('480p');
+  // Доп. запрос владельца продукта: ролик длиннее 8 секунд через Scene
+  // Extension (ТЗ §9, этап 4 плана §14). `8` = обычная генерация, как
+  // раньше — сервер игнорирует значения не больше базовой длительности.
+  const [targetDuration, setTargetDuration] = useState(8);
+  // Доп. запрос владельца продукта: поле «Чего избежать» (ТЗ §1/§6,
+  // этап 5 плана §14) — найдено при аудите: бекенд был готов, но поле
+  // ввода в интерфейсе отсутствовало вовсе, фича была недостижима.
+  const [avoidText, setAvoidText] = useState('');
   const [costEstimate, setCostEstimate] = useState<{
     costUsd: number;
     unpriced: boolean;
+    segments: number;
+    targetDurationSeconds: number;
+    wasCapped: boolean;
   } | null>(null);
 
   // Spec §16: the ad's picture format — starts from the reference's frame
@@ -144,7 +155,8 @@ export function GenerationWizard() {
       sessionId,
       videoProvider,
       videoProvider === 'veo' ? videoQuality : undefined,
-      videoProvider === 'grok' ? grokResolution : undefined
+      videoProvider === 'grok' ? grokResolution : undefined,
+      targetDuration > 8 ? targetDuration : undefined
     )
       .then((est) => {
         if (!cancelled) setCostEstimate(est);
@@ -155,7 +167,7 @@ export function GenerationWizard() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, videoProvider, videoQuality, grokResolution]);
+  }, [sessionId, videoProvider, videoQuality, grokResolution, targetDuration]);
 
   /**
    * Spec §19: активный фильтр — персонаж, сцена или массовка. Живёт здесь,
@@ -547,8 +559,55 @@ export function GenerationWizard() {
                         '{{cost}}',
                         costEstimate.costUsd.toFixed(2)
                       )}
+                      {costEstimate.segments > 1 &&
+                        ` (${costEstimate.segments} ${dict.generationWizard.chainSegmentsLabel})`}
+                      {costEstimate.wasCapped &&
+                        ` — ${dict.generationWizard.durationCappedLabel.replace(
+                          '{{seconds}}',
+                          String(costEstimate.targetDurationSeconds)
+                        )}`}
                     </p>
                   )}
+                </div>
+                <div className="mb-4">
+                  {/* Доп. запрос владельца продукта: ролик длиннее 8 секунд
+                      через Scene Extension (ТЗ §9, этап 4 плана §14). Explicit
+                      seconds — §9.4 "Длительность в секундах — явно". */}
+                  <span className="label">
+                    {dict.generationWizard.durationLabel}
+                  </span>
+                  <input
+                    type="number"
+                    min={8}
+                    max={60}
+                    step={1}
+                    value={targetDuration}
+                    onChange={(e) =>
+                      setTargetDuration(
+                        Math.max(8, Math.min(60, Number(e.target.value) || 8))
+                      )
+                    }
+                    className="duration-input"
+                  />
+                  <span className="hint">
+                    {dict.generationWizard.durationHint}
+                  </span>
+                </div>
+                <div className="mb-4">
+                  {/* Доп. запрос владельца продукта: поле «Чего избежать»
+                      (ТЗ §1/§6, этап 5 плана §14) — необязательное,
+                      свободный текст. */}
+                  <span className="label">
+                    {dict.generationWizard.avoidTextLabel}
+                  </span>
+                  <input
+                    type="text"
+                    maxLength={500}
+                    value={avoidText}
+                    onChange={(e) => setAvoidText(e.target.value)}
+                    placeholder={dict.generationWizard.avoidTextPlaceholder}
+                    className="avoid-text-input"
+                  />
                 </div>
                 {sessionId && referenceAssets.allowed && (
                   <div className="mb-4">
@@ -585,7 +644,9 @@ export function GenerationWizard() {
                       videoQuality,
                       effectiveAspectRatio,
                       videoProvider,
-                      videoProvider === 'grok' ? grokResolution : undefined
+                      videoProvider === 'grok' ? grokResolution : undefined,
+                      targetDuration > 8 ? targetDuration : undefined,
+                      avoidText.trim() || undefined
                     )
                   }
                 >
@@ -604,17 +665,44 @@ export function GenerationWizard() {
               />
               <Busy
                 title={
-                  generatedVideo
-                    ? dict.generationWizard.renderingBusyTitle
-                    : dict.generationWizard.submittingBusyTitle
+                  // Найдено при аудите озвучки/пайплайна (по прямому
+                  // запросу): раньше это было безусловно
+                  // «Veo рендерит…»/«Отправляем задачу в Veo…»,
+                  // независимо от того, какой провайдер реально выбран
+                  // (§10–11 ТЗ) — при Grok заголовок называл чужого
+                  // провайдера на каждой генерации, не в редком крае.
+                  (generatedVideo?.provider ?? videoProvider) === 'grok'
+                    ? generatedVideo
+                      ? dict.generationWizard.renderingBusyTitleGrok
+                      : dict.generationWizard.submittingBusyTitleGrok
+                    : generatedVideo
+                      ? dict.generationWizard.renderingBusyTitle
+                      : dict.generationWizard.submittingBusyTitle
                 }
                 hint={
-                  generatedVideo
-                    ? dict.generationWizard.statusHint.replace(
-                        '{{status}}',
-                        generatedVideo.status
-                      )
-                    : dict.generationWizard.preparingHint
+                  // Доп. запрос владельца продукта: ролики длиннее 8
+                  // секунд (§9 ТЗ, этап 4 плана §14) — найдено при
+                  // аудите (§16): без этого пользователь видел бы
+                  // просто «processing» на весь ланцюжок сегментов
+                  // (потенциально 20+ минут), без единого признака
+                  // прогресса.
+                  generatedVideo?.chainSegmentsTotal &&
+                  generatedVideo.chainSegmentsTotal > 1
+                    ? dict.generationWizard.chainProgressHint
+                        .replace(
+                          '{{done}}',
+                          String(generatedVideo.chainSegmentsDone ?? 1)
+                        )
+                        .replace(
+                          '{{total}}',
+                          String(generatedVideo.chainSegmentsTotal)
+                        )
+                    : generatedVideo
+                      ? dict.generationWizard.statusHint.replace(
+                          '{{status}}',
+                          generatedVideo.status
+                        )
+                      : dict.generationWizard.preparingHint
                 }
               />
               <FeaturePanel>
