@@ -74,7 +74,17 @@ export class CatalogBatchService {
   async create(
     userId: string,
     projectId: string,
-    dto: { sourceSessionId: string; productItemIds: string[] },
+    dto: {
+      sourceSessionId: string;
+      productItemIds: string[];
+      // Доп. запрос владельца продукта (ТЗ §10–11/§13, этап 2 плана
+      // §14) — этот inline-тип дублирует форму
+      // `StartCatalogBatchRequestDto`, а не ссылается на неё; при
+      // добавлении полей в сам класс DTO эти два поля здесь забыли
+      // обновить — найдено по реальной ошибке сборки, не заранее.
+      provider?: 'veo' | 'grok';
+      resolution?: '480p' | '720p' | '1080p';
+    },
   ): Promise<StartCatalogBatchResult> {
     // Решение владельца продукта: партия доступна только Premium, тем
     // же признаком, что и обычная библиотека разборов.
