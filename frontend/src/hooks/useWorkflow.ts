@@ -1168,7 +1168,12 @@ export function useWorkflow() {
   );
 
   const handleGenerateVideo = useCallback(
-    async (quality: VideoQuality = 'fast', aspectRatio?: string | null) => {
+    async (
+      quality: VideoQuality = 'fast',
+      aspectRatio?: string | null,
+      provider?: 'veo' | 'grok',
+      resolution?: '480p' | '720p' | '1080p'
+    ) => {
       if (!state.sessionId) {
         setState((prev) => ({
           ...prev,
@@ -1187,7 +1192,9 @@ export function useWorkflow() {
         const video = await generateVideo(
           state.sessionId,
           quality,
-          aspectRatio
+          aspectRatio,
+          provider,
+          resolution
         );
 
         setState((prev) => {

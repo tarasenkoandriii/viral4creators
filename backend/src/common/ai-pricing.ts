@@ -198,6 +198,31 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
     perSecond: 0.15 * USD,
     note: 'опубликованная при запуске ставка; на прайс-странице на 2026-09-06 не нашлась — ПРОВЕРИТЬ',
   },
+  // Доп. запрос владельца продукта: Grok как провайдер видео (ТЗ
+  // VEO-MODEL-VERSION-CHOICE-SPEC.md §10–11). Одна модель xAI,
+  // ТРИ ставки по разрешению (§10.2 ТЗ, официально: docs.x.ai,
+  // модель `grok-imagine-video-1.5`) — `ModelRate.perSecond` держит
+  // ОДНУ ставку на модель, а не запись под разрешение, поэтому три
+  // отдельных ключа с суффиксом разрешения, а не правка структуры
+  // `ModelRate` целиком (свободная строка — `MODEL_RATES` уже
+  // `Record<string, ModelRate>`, составной ключ не требует нового
+  // поля). `generation.service.ts`/`grok-video.service.ts` передают
+  // сюда именно эту составную строку, не голое имя модели.
+  'grok-imagine-video-1.5:480p': {
+    provider: 'GROK',
+    perSecond: 0.08 * USD,
+    note: 'docs.x.ai, сверено при подготовке ТЗ (§10.2) — ПРОВЕРИТЬ перед стройкой',
+  },
+  'grok-imagine-video-1.5:720p': {
+    provider: 'GROK',
+    perSecond: 0.14 * USD,
+    note: 'docs.x.ai, сверено при подготовке ТЗ (§10.2) — ПРОВЕРИТЬ перед стройкой',
+  },
+  'grok-imagine-video-1.5:1080p': {
+    provider: 'GROK',
+    perSecond: 0.25 * USD,
+    note: 'docs.x.ai, сверено при подготовке ТЗ (§10.2) — ПРОВЕРИТЬ перед стройкой',
+  },
   'gpt-5': {
     provider: 'OPENAI',
     inputPerMTok: 1.25 * USD,

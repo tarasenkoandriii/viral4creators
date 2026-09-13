@@ -293,6 +293,8 @@ describe('модули спрашивают разрешение режима (�
       notify as never,
       {} as never,
       creditLedger as never,
+      {} as never,
+      {} as never,
     );
     await expect(svc.generateVideo('s1', 'fast', '1:1')).rejects.toBeInstanceOf(
       ForbiddenException,
@@ -339,6 +341,8 @@ describe('модули спрашивают разрешение режима (�
         notify as never,
         {} as never,
         creditLedger as never,
+        {} as never,
+        {} as never,
       );
       await expect(svc.generateVideo('s1', 'fast', ratio)).resolves.toEqual(
         expect.objectContaining({ aspectRatio: ratio }),

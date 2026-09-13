@@ -440,6 +440,54 @@ export function referenceMappingText(plan: ReferencePlan): string {
 }
 
 /**
+ * То же самое, что `referenceMappingText`, но для Grok reference-to-
+ * video (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §15) — официальная
+ * конвенция xAI ожидает метки `<IMAGE_1>`, `<IMAGE_2>` … ПРЯМО в тексте
+ * промпта, а не отдельным списком-приложением, как у Veo.
+ *
+ * Честно: это ПРИБЛИЖЕНИЕ к конвенции, не точное следование ей.
+ * Официальный пример вплетает метку В ДЕЙСТВИЕ («they wear the shirt
+ * from <IMAGE_2>») — это требует переписывать саму сцену под каждый
+ * референс, а не добавлять список после неё; тот текст пишет GPT-5 для
+ * Veo и ничего не знает про метки Grok. Здесь — тот же список, что у
+ * Veo, просто с меткой вместо номера («Reference <IMAGE_2> shows …»)
+ * — модель, скорее всего, поймёт связь (метки те же, что в массиве
+ * `reference_images`, и упомянуты рядом с описанием того, что на них),
+ * но это не то же самое, что естественная фраза внутри действия.
+ * Кандидат на улучшение через отдельный шаг генерации текста (§8 ТЗ),
+ * если качество этого приближения окажется недостаточным на практике.
+ */
+export function grokReferencePromptText(plan: ReferencePlan): string {
+  if (plan.images.length === 0) return '';
+  const what = (i: ReferenceImageSource): string => {
+    if (i.kind === 'character')
+      return `the person "${i.label}" — match their appearance exactly`;
+    if (i.kind === 'scene')
+      return `the location/set "${i.label}" — shoot the ad in this place`;
+    return `the actual product "${i.label}" — it must look exactly like this`;
+  };
+  const lines = plan.images.map(
+    (i) => `Reference <IMAGE_${i.index}> shows ${what(i)}.`,
+  );
+  const textOnly = [
+    ...plan.characters
+      .filter((c) => c.referenceIndex === null)
+      .map((c) => c.label),
+    ...plan.scenes.filter((s) => s.referenceIndex === null).map((s) => s.label),
+    ...(plan.productReferenceIndex === null &&
+    plan.candidates.some((c) => c.kind === 'product')
+      ? [plan.candidates.find((c) => c.kind === 'product')!.label]
+      : []),
+  ];
+  if (textOnly.length > 0) {
+    lines.push(
+      `Not shown as images, described in the text above: ${textOnly.join('; ')}.`,
+    );
+  }
+  return lines.join(' ');
+}
+
+/**
  * Brand section (§12). Open question §12.2 — override vs complement — is
  * resolved here provisionally as "complement; on conflict the brand wins":
  * the reference's aesthetic stays the backbone (that is the whole point of

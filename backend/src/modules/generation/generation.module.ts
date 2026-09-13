@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { GenerationController } from './generation.controller';
 import { AdminGenerationRetryController } from './admin-generation-retry.controller';
 import { GenerationService } from './generation.service';
+import { GrokVideoService } from './grok-video.service';
+import { GrokVideoBatchService } from './grok-video-batch.service';
 import { StorageModule } from '../storage/storage.module';
 import { SharedVideoModule } from '../shared-video/shared-video.module';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
@@ -25,6 +27,16 @@ import { PromptModule } from '../prompt/prompt.module';
  * этот модуль без цикла через `SharedVideoModule`). `VideoAuditModule`
  * тянет только `StorageModule`, `PromptModule` не тянет вообще ничего —
  * ни один цикла не создаёт.
+ *
+ * `GrokVideoBatchService` (§13 ТЗ, этап 2 плана §14) — зарегистрирован
+ * здесь как готовый клиент, но НЕ подключён к
+ * `CatalogBatchWorkerService` в этом заходе и НЕ экспортирован из
+ * модуля — само подключение (какой из существующих циклов claim'ит
+ * работу под него, как получать URL готового видео из ответа батча в
+ * рамках `getVideoStatus`) требует более широкой, отдельной правки
+ * `catalog-batch`-модуля, которую этот заход сознательно не трогает
+ * (доп. риск для уже работающего кода без реальной проверки формата
+ * ответа xAI — см. доккомментарий самого сервиса).
  */
 @Module({
   imports: [
@@ -36,7 +48,7 @@ import { PromptModule } from '../prompt/prompt.module';
     PromptModule,
   ],
   controllers: [GenerationController, AdminGenerationRetryController],
-  providers: [GenerationService],
+  providers: [GenerationService, GrokVideoService, GrokVideoBatchService],
   exports: [GenerationService],
 })
 export class GenerationModule {}

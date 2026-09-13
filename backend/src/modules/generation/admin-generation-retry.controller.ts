@@ -252,6 +252,8 @@ export class AdminGenerationRetryController {
       downloadUrl: v.downloadUrl ?? null,
       quality: v.quality ?? null,
       aspectRatio: v.aspectRatio ?? null,
+      provider: v.provider ?? 'veo',
+      resolution: v.resolution ?? null,
       initiatedAt: v.initiatedAt,
       completedAt: v.completedAt ?? null,
       isCurrent: v.isCurrent,
@@ -280,6 +282,12 @@ export interface VideoVersionView {
   downloadUrl: string | null;
   quality: string | null;
   aspectRatio: string | null;
+  /** Доп. запрос владельца продукта: Grok как второй провайдер (ТЗ
+   * §10–11) — `null` у старых записей до этой фичи, трактуется как
+   * `'veo'` (текущее поведение). */
+  provider: string | null;
+  /** Только для `provider === 'grok'` (§10.1 ТЗ — Veo разрешение не запрашивает явно). */
+  resolution: string | null;
   initiatedAt: unknown;
   completedAt: unknown;
   /** Действующая (последняя) попытка — `session.generatedVideo`, а не

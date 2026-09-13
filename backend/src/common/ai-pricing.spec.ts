@@ -29,6 +29,22 @@ describe('ai-pricing (ТЗ §26)', () => {
     ).toBe(1_200_000);
   });
 
+  it('Grok — три разных ставки по разрешению на одну модель, не одна общая (§10.2 ТЗ)', () => {
+    // 480p $0.08, 720p $0.14, 1080p $0.25 — за 8-секундный ролик.
+    expect(
+      estimateCost('grok-imagine-video-1.5:480p', { seconds: 8 }, {})
+        .costMicroUsd,
+    ).toBe(640_000);
+    expect(
+      estimateCost('grok-imagine-video-1.5:720p', { seconds: 8 }, {})
+        .costMicroUsd,
+    ).toBe(1_120_000);
+    expect(
+      estimateCost('grok-imagine-video-1.5:1080p', { seconds: 8 }, {})
+        .costMicroUsd,
+    ).toBe(2_000_000);
+  });
+
   it('синтез речи считается в символах, а не в токенах', () => {
     // Тариф Creator: $22 за 100 000 символов, то есть $0.22 за тысячу.
     // До этой проверки ветка `perMChars` не исполнялась ни разу: потеря

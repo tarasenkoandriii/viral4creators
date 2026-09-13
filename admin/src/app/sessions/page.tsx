@@ -617,7 +617,9 @@ export default function SessionsPage() {
                                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                                     {v.isCurrent && <strong>текущая</strong>}
                                     <span className="muted">{v.status}</span>
-                                    <span className="muted">{v.quality ?? '—'} · {v.aspectRatio ?? '—'}</span>
+                                    <span className="muted">
+                                      {v.provider === 'grok' ? `Grok · ${v.resolution ?? '—'}` : `Veo · ${v.quality ?? '—'}`} · {v.aspectRatio ?? '—'}
+                                    </span>
                                     {v.downloadUrl && (
                                       <a href={v.downloadUrl} target="_blank" rel="noopener noreferrer">
                                         ▶

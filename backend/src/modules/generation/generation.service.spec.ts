@@ -90,6 +90,19 @@ function build(session: unknown = readySession()) {
     reserveForGeneration: jest.fn().mockResolvedValue(false),
     refundIfReserved: jest.fn().mockResolvedValue(undefined),
   };
+  // Доп. запрос владельца продукта: Grok как провайдер (§10-11 ТЗ) —
+  // по умолчанию не настроен, тот же принцип, что уже настроенные
+  // моки выше (пустые/false по умолчанию, тесты сами переопределяют
+  // нужное).
+  const grokVideo = {
+    isConfigured: jest.fn().mockReturnValue(false),
+    startGeneration: jest.fn(),
+    getStatus: jest.fn(),
+    modelName: 'grok-imagine-video-1.5',
+  };
+  const promptService = {
+    rewriteForGrokReferences: jest.fn().mockResolvedValue('rewritten scene'),
+  };
   const svc = new GenerationService(
     sessions as never,
     blob as never,
@@ -99,6 +112,8 @@ function build(session: unknown = readySession()) {
     notify as never,
     sharedVideos as never,
     creditLedger as never,
+    grokVideo as never,
+    promptService as never,
   );
   return {
     svc,
@@ -109,6 +124,8 @@ function build(session: unknown = readySession()) {
     postprod,
     sharedVideos,
     creditLedger,
+    grokVideo,
+    promptService,
   };
 }
 

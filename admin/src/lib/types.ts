@@ -51,6 +51,8 @@ export interface VideoVersion {
   downloadUrl: string | null;
   quality: string | null;
   aspectRatio: string | null;
+  provider: string | null;
+  resolution: string | null;
   initiatedAt: string | null;
   completedAt: string | null;
   isCurrent: boolean;

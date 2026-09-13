@@ -737,11 +737,18 @@ export interface GeneratedVideo {
 export async function generateVideo(
   sessionId: string,
   quality: VideoQuality = 'fast',
-  aspectRatio?: string | null
+  aspectRatio?: string | null,
+  provider?: 'veo' | 'grok',
+  resolution?: '480p' | '720p' | '1080p'
 ): Promise<GeneratedVideo> {
   const response = await api.post<GeneratedVideo>(
     `/sessions/${sessionId}/generate`,
-    { quality, ...(aspectRatio ? { aspectRatio } : {}) }
+    {
+      quality,
+      ...(aspectRatio ? { aspectRatio } : {}),
+      ...(provider ? { provider } : {}),
+      ...(resolution ? { resolution } : {}),
+    }
   );
 
   if (!response.data) {
@@ -755,6 +762,31 @@ export async function generateVideo(
       : response.data;
 
   return data;
+}
+
+/**
+ * Доп. запрос владельца продукта: расчёт цены заранее, при выборе
+ * провайдера/качества/разрешения (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md
+ * §11.3) — до кнопки «Сгенерировать», не после. Сессия в URL — только
+ * для единообразия с остальными маршрутами генерации, сама сессия не
+ * используется бэкендом для этого расчёта.
+ */
+export async function getCostEstimate(
+  sessionId: string,
+  provider: 'veo' | 'grok',
+  quality?: VideoQuality,
+  resolution?: '480p' | '720p' | '1080p'
+): Promise<{ costUsd: number; unpriced: boolean }> {
+  const params = new URLSearchParams({ provider });
+  if (quality) params.set('quality', quality);
+  if (resolution) params.set('resolution', resolution);
+  const response = await api.get<{ costUsd: number; unpriced: boolean }>(
+    `/sessions/${sessionId}/generate/estimate?${params.toString()}`
+  );
+  if (!response.data) {
+    throw new Error('Failed to estimate cost');
+  }
+  return response.data;
 }
 
 /**

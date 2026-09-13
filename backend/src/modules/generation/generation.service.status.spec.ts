@@ -137,6 +137,15 @@ function build(generatedVideo: GeneratedVideo | null = inFlight()) {
     notify as never,
     sharedVideos as never,
     creditLedger as never,
+    {
+      isConfigured: jest.fn().mockReturnValue(false),
+      startGeneration: jest.fn(),
+      getStatus: jest.fn(),
+      modelName: 'grok-imagine-video-1.5',
+    } as never,
+    {
+      rewriteForGrokReferences: jest.fn().mockResolvedValue('rewritten scene'),
+    } as never,
   );
   return {
     svc,

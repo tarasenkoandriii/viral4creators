@@ -27,6 +27,17 @@ export interface Configuration {
     apiKey: string;
     baseUrl: string;
     gptModel: string;
+    /**
+     * Доп. запрос владельца продукта: узкий, точный шаг переписывания
+     * промпта под конвенцию Grok reference-to-video (ТЗ
+     * VEO-MODEL-VERSION-CHOICE-SPEC.md §8.5 п.2, §15.3) — не творческая
+     * задача вроде написания сцены, поэтому дешевле/быстрее
+     * `OPENAI_GPT_MODEL`. Имя модели на момент подготовки — ПРОВЕРИТЬ
+     * на `console.x.ai`/OpenAI-совместимой панели laozhang.ai перед
+     * первым реальным вызовом, тот же принцип, что уже применяется к
+     * остальным моделям в этом файле.
+     */
+    fastModel: string;
   };
 
   // CORS
@@ -102,6 +113,15 @@ export interface Configuration {
      * его на `console.x.ai` перед первым реальным запуском перевода.
      */
     model: string;
+    /**
+     * Доп. запрос владельца продукта: Grok как провайдер видео-генерации
+     * (§10–11 ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md). Официальное имя на
+     * момент подготовки ТЗ — `grok-imagine-video-1.5` (GA, не preview,
+     * docs.x.ai) — ПРОВЕРИТЬ на `console.x.ai` перед первым реальным
+     * запуском: то же самое предупреждение, что уже есть у остальных
+     * моделей в этом файле и в `common/ai-pricing.ts`.
+     */
+    videoModel: string;
   };
 
   // Блог (doc/TODO.md §II.3–II.4, ТЗ §36, этап 57). Конфиг заведён вместе
@@ -294,6 +314,7 @@ export const loadConfiguration = (): Configuration => {
         process.env.OPENAI_API_BASE_URL ||
         'https://api.laozhang.ai/v1',
       gptModel: process.env.OPENAI_GPT_MODEL || 'gpt-5',
+      fastModel: process.env.OPENAI_FAST_MODEL || 'gpt-5-mini',
     },
 
     cors: {
@@ -333,6 +354,7 @@ export const loadConfiguration = (): Configuration => {
     grok: {
       apiKey: process.env.GROK_API_KEY || '',
       model: process.env.GROK_MODEL || 'grok-4-fast',
+      videoModel: process.env.GROK_VIDEO_MODEL || 'grok-imagine-video-1.5',
     },
 
     blog: {

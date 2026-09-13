@@ -19,6 +19,8 @@ import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { SessionService } from '../../common/session.service';
 import { PlanService } from '../plan/plan.service';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
+import { GrokVideoService, GrokResolution } from './grok-video.service';
+import { PromptService } from '../prompt/prompt.service';
 import {
   allowsAspectRatio,
   featureDeniedMessage,
@@ -55,7 +57,7 @@ import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
  * why "fast" maps to Lite rather than a dedicated Fast model).
  */
 
-const VEO_MODELS: Record<VideoQuality, string> = {
+export const VEO_MODELS: Record<VideoQuality, string> = {
   fast: 'veo-3.1-lite-generate-preview',
   standard: 'veo-3.1-generate-preview',
 };
@@ -164,6 +166,8 @@ export class GenerationService {
     private readonly notify: TelegramNotifyService,
     private readonly sharedVideos: SharedVideoService,
     private readonly creditLedger: CreditLedgerService,
+    private readonly grokVideo: GrokVideoService,
+    private readonly promptService: PromptService,
   ) {
     // Ключ — явно в SDK (этап 53, В-6.15): `new GoogleGenAI({})` читал
     // только свои переменные, и GOOGLE_GEMINI_API_KEY до него не доходил.
@@ -171,15 +175,20 @@ export class GenerationService {
   }
 
   /**
-   * Start a Veo video generation job.
+   * Start a Veo or Grok video generation job (ТЗ
+   * VEO-MODEL-VERSION-CHOICE-SPEC.md §10–11, этап 1 плана реализации).
    * @param sessionId - Session UUID
-   * @param quality - 'fast' (default, Lite model) or 'standard' (full Veo 3.1)
+   * @param quality - 'fast' (default, Lite model) or 'standard' (full Veo 3.1) — только для `provider === 'veo'`.
+   * @param provider - 'veo' (default, текущее поведение) или 'grok'.
+   * @param resolution - только для `provider === 'grok'`; Veo разрешение не запрашивает явно (§10.1 ТЗ).
    * @returns Generated video metadata with PROCESSING status
    */
   async generateVideo(
     sessionId: string,
     quality: VideoQuality = DEFAULT_QUALITY,
     aspectRatio?: string,
+    provider: 'veo' | 'grok' = 'veo',
+    resolution?: GrokResolution,
   ): Promise<GeneratedVideo> {
     // §23: в Lite доступны только родные для Veo форматы — 16:9 и 9:16.
     // §25.3: заблокированному генерация запрещена — это самый дорогой
@@ -199,8 +208,11 @@ export class GenerationService {
       throw new ForbiddenException(featureDeniedMessage('customAspectRatio'));
     }
     // Этап 47 (В-2.6): полная модель в 2,7 раза дороже Lite, а параметр
-    // приходит телом запроса — проверяем, как и формат кадра.
+    // приходит телом запроса — проверяем, как и формат кадра. У Grok
+    // нет понятия `quality` (§11.2 ТЗ — там своя ось, разрешение) —
+    // проверка применима только к `provider === 'veo'`.
     if (
+      provider === 'veo' &&
       quality !== DEFAULT_QUALITY &&
       !planAllows(access.plan, 'fullQualityVideo')
     ) {
@@ -256,7 +268,13 @@ export class GenerationService {
       throw new ConflictException(GENERATION_IN_FLIGHT_MESSAGE);
     }
     try {
-      return await this.startGeneration(session, quality, aspectRatio);
+      return await this.startGeneration(
+        session,
+        quality,
+        aspectRatio,
+        provider,
+        resolution,
+      );
     } finally {
       // Успех или провал — замок снимается: при успехе повтор увидит
       // записанный `generatedVideo`, при провале повтор разрешён.
@@ -269,6 +287,8 @@ export class GenerationService {
     session: Session,
     quality: VideoQuality,
     aspectRatio?: string,
+    provider: 'veo' | 'grok' = 'veo',
+    resolution?: GrokResolution,
   ): Promise<GeneratedVideo> {
     const sessionId = session.sessionId;
     if (!session.generationPrompt || !session.generationPrompt.approvedAt) {
@@ -325,14 +345,23 @@ export class GenerationService {
     // (`usedCredit=false`, обычный дневной лимит) или он уже возвращён —
     // безопасно звать всегда, не только когда `usedCredit` истинен.
     try {
-      return await this.startVeoGeneration(
-        session,
-        sessionId,
-        generatedVideoId,
-        pathname,
-        quality,
-        aspectRatio,
-      );
+      return provider === 'grok'
+        ? await this.startGrokGeneration(
+            session,
+            sessionId,
+            generatedVideoId,
+            pathname,
+            resolution ?? '480p',
+            aspectRatio,
+          )
+        : await this.startVeoGeneration(
+            session,
+            sessionId,
+            generatedVideoId,
+            pathname,
+            quality,
+            aspectRatio,
+          );
     } catch (error) {
       // Е-1.4 шестого аудита: `VeoOperationOrphanedError` значит, что Veo
       // УЖЕ реально стартовала (деньги потрачены) — автоматический
@@ -593,6 +622,167 @@ export class GenerationService {
   }
 
   /**
+   * Аналог `startVeoGeneration` для Grok (ТЗ
+   * VEO-MODEL-VERSION-CHOICE-SPEC.md §10–11, этап 1 плана реализации).
+   *
+   * Область этой первой версии — НАМЕРЕННО ограничена: поддерживается
+   * только `plan.legacyFirstFrame` (одно фото товара, тот же путь, что
+   * у Veo без персонажей бренда) — множественные референс-изображения
+   * персонажей («reference-to-video» у Grok, до 7 изображений, §10.1
+   * ТЗ) НЕ реализованы в этом проходе: тот режим не исследован так же
+   * тщательно (форма запроса под несколько `image_url` не подтверждена
+   * документацией так, как подтверждён простой `image_url`) — честнее
+   * явно отказать, чем притвориться, что работает. Сессии с
+   * персонажами остаются на Veo, пока это не будет отдельно
+   * реализовано.
+   */
+  private async startGrokGeneration(
+    session: Session,
+    sessionId: string,
+    generatedVideoId: string,
+    pathname: string,
+    resolution: GrokResolution,
+    aspectRatio?: string,
+  ): Promise<GeneratedVideo> {
+    if (!this.grokVideo.isConfigured()) {
+      throw new BadRequestException(
+        'Grok video provider is not configured (GROK_API_KEY missing)',
+      );
+    }
+
+    const plan = buildReferencePlan(session);
+
+    let imageUrl: string | undefined;
+    let referenceImageUrls: string[] | undefined;
+    let sceneText: string;
+    if (plan.legacyFirstFrame) {
+      const productImageUrl = session.productInformation?.productImageUrl;
+      if (!productImageUrl) {
+        throw new BadRequestException(
+          'Product image URL is required for Grok generation (productImageUrl missing on session)',
+        );
+      }
+      imageUrl = productImageUrl;
+      sceneText = session.generationPrompt!.finalText;
+    } else {
+      // Доп. запрос владельца продукта: reference-to-video (ТЗ §15) —
+      // тот же XOR, что у Veo (`image` vs `referenceImages`), просто
+      // с другими полями запроса.
+      referenceImageUrls = await Promise.all(
+        plan.images.map((ref) => this.resolveReferenceUrl(ref)),
+      );
+      // Доп. запрос владельца продукта (ТЗ §15.3): переписанная версия
+      // ЗАМЕНЯЕТ исходный текст сцены, а не добавляется к нему — она
+      // уже содержит всё содержимое сцены, просто с вплетёнными метками
+      // <IMAGE_N> (см. доккомментарий `rewriteForGrokReferences`).
+      // Конкатенация с оригиналом задвоила бы описание сцены целиком.
+      // Откатывается на прежнее приближение сам при сбое.
+      sceneText = await this.promptService.rewriteForGrokReferences(
+        session.generationPrompt!.finalText,
+        plan,
+      );
+      this.logger.log(
+        `Grok reference-to-video: ${plan.images
+          .map((i) => `#${i.index} ${i.kind}:${i.label}`)
+          .join(', ')}`,
+      );
+    }
+
+    const target = normaliseAspectRatio(aspectRatio) ?? '9:16';
+    const promptText = [
+      sceneText,
+      `Output format: ${target === '9:16' ? 'vertical' : 'horizontal'} video.`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    let requestId: string;
+    try {
+      this.logger.log(
+        `Starting Grok (${this.grokVideo.modelName}, ${resolution}) generation for session ${sessionId}`,
+      );
+      ({ requestId } = await this.grokVideo.startGeneration({
+        prompt: promptText,
+        imageUrl,
+        referenceImageUrls,
+        durationSeconds: VIDEO_DURATION_SECONDS,
+        aspectRatio: target,
+        resolution,
+      }));
+    } catch (error) {
+      this.logger.error('Failed to start Grok generation:', error);
+      throw new BadRequestException(
+        `Failed to start video generation: ${this.extractErrorMessage(error)}`,
+      );
+    }
+
+    // Тот же принцип «с этой точки деньги, скорее всего, уже
+    // потрачены», что у Veo выше (Е-1.4) — тот же класс ошибки
+    // (`VeoOperationOrphanedError`, имя историческое, значение —
+    // «операция стартовала у провайдера, а мы её потеряли» — не
+    // специфично для Veo как такового; переименовывать не стал, чтобы
+    // не задевать классификацию `NON_RETRYABLE_NAMES` в воркерах
+    // партии/A-B, которая проверяет это имя по строке).
+    try {
+      await this.aiUsage.record({
+        operation: 'generation',
+        // Составной ключ — та же цена по разрешению, что в
+        // `common/ai-pricing.ts` (§11.5/§10.2 ТЗ): одна модель Grok,
+        // три разные ставки, не одна.
+        model: `${this.grokVideo.modelName}:${resolution}`,
+        seconds: VIDEO_DURATION_SECONDS,
+        sessionId,
+      });
+
+      const generatedVideo: GeneratedVideo = {
+        generatedVideoId,
+        pathname,
+        fileName: 'generated.mp4',
+        mimeType: 'video/mp4',
+        status: GenerationStatus.PROCESSING,
+        initiatedAt: new Date(),
+        provider: 'grok',
+        resolution,
+        grokRequestId: requestId,
+        aspectRatio: target,
+        renderedAspectRatio: undefined,
+        reframePending: false,
+        references: plan.images.map((i) => ({
+          index: i.index,
+          kind: i.kind,
+          label: i.label,
+          characterId: i.characterId,
+        })),
+      };
+
+      const previous = session.generatedVideo;
+      const previousFinished =
+        previous &&
+        (previous.status === GenerationStatus.COMPLETE ||
+          previous.status === GenerationStatus.FAILED);
+      const videoHistory = previousFinished
+        ? [previous, ...(session.videoHistory ?? [])]
+        : (session.videoHistory ?? []);
+
+      await this.sessionService.updateSession(sessionId, {
+        generatedVideo,
+        videoHistory,
+        status: SessionStatus.GENERATING_VIDEO,
+      });
+
+      return generatedVideo;
+    } catch (error) {
+      this.logger.error(
+        `КРИТИЧНО: Grok стартовал (requestId=${requestId}) для сессии ${sessionId}, но запись результата упала — рендер оплачен и идёт в фоне, но не привязан ни к чему в базе: ${this.extractErrorMessage(error)}`,
+      );
+      throw new VeoOperationOrphanedError(
+        `Рендер уже стартовал (${requestId}), но сохранить состояние не удалось — обратитесь в поддержку, не запускайте повторно`,
+        requestId,
+      );
+    }
+  }
+
+  /**
    * Bytes of one reference image: our own Blob pathname when we uploaded
    * it (character skins, product photo), else the public URL (brand
    * character photos live under the manifest's pathnames — we only hold
@@ -629,12 +819,56 @@ export class GenerationService {
   }
 
   /**
+   * То же самое, что `fetchReference` выше, но возвращает URL, а не
+   * байты — для Grok reference-to-video (ТЗ §15), который принимает
+   * картинки ссылкой (§10.1 ТЗ), а не в теле запроса. Та же проверка
+   * `isOwnBlobUrl`/`FOREIGN_BLOB_URL_MESSAGE`, что у `fetchReference` —
+   * пусть здесь скачивает не наш сервер, а Grok, доверие к источнику
+   * URL должно быть тем же самым, не слабее.
+   */
+  private async resolveReferenceUrl(
+    ref: ReferenceImageSource,
+  ): Promise<string> {
+    if (ref.pathname) {
+      return this.blobService.getPublicUrl(ref.pathname);
+    }
+    if (!ref.url) {
+      throw new BadRequestException(
+        `Reference image ${ref.index} (${ref.label}) has neither a pathname nor a URL`,
+      );
+    }
+    if (!isOwnBlobUrl(ref.url)) {
+      this.logger.warn(
+        `референс ${ref.index} (${ref.label}) указывает вне нашего хранилища — пропущен`,
+      );
+      throw new BadRequestException(
+        `Reference image ${ref.index} (${ref.label}): ${FOREIGN_BLOB_URL_MESSAGE}`,
+      );
+    }
+    return ref.url;
+  }
+
+  /**
    * Check (and, if newly complete, resolve) video generation status.
    * Called repeatedly by the client's poll loop — makes at most one Veo
    * API call per invocation.
    * @param sessionId - Session UUID
    * @returns Current video generation status
    */
+  /**
+   * Доп. запрос владельца продукта: нужно контроллеру
+   * (`GET /generate/estimate`, §11.3 ТЗ) — расчёт цены должен знать,
+   * что для сессий с персонажами бренда Grok reference-to-video (§15
+   * ТЗ) молча понижает `1080p` до `720p` (см.
+   * `GrokVideoService.startGeneration`) — иначе дисклеймер показал бы
+   * цену 1080p за ролик, который на самом деле выйдет 720p.
+   */
+  async isReferenceMode(sessionId: string): Promise<boolean> {
+    const session = await this.sessionService.getSession(sessionId);
+    if (!session) return false;
+    return !buildReferencePlan(session).legacyFirstFrame;
+  }
+
   async getVideoStatus(sessionId: string): Promise<GeneratedVideo> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
@@ -663,6 +897,10 @@ export class GenerationService {
 
     if (current.status === GenerationStatus.FAILED) {
       return current;
+    }
+
+    if (current.provider === 'grok') {
+      return this.pollGrokStatus(sessionId, session, current);
     }
 
     if (!current.veoOperationName) {
@@ -814,6 +1052,114 @@ export class GenerationService {
    * operation authorises the download — same as the official REST
    * example (`x-goog-api-key` header), no SDK object required.
    */
+  /**
+   * Аналог основного тела `getVideoStatus` для Grok — тот же принцип
+   * (дедлайн, провал помечен retryable, скачать и сохранить готовый
+   * файл), но свой источник статуса и своё скачивание: у Grok видео
+   * отдаётся обычной временной ссылкой, без заголовка авторизации,
+   * который нужен для скачивания у Veo (`downloadVeoVideo`).
+   *
+   * Не пытается переиспользовать общий код с Veo-веткой ниже —
+   * сознательный выбор: та ветка проверена в бою, трогать её ради
+   * общего пути с ещё не проверенным на реальном трафике Grok — риск
+   * не в ту сторону (см. доккомментарий `GrokVideoService` — три места
+   * там прямо помечены как неподтверждённые).
+   */
+  private async pollGrokStatus(
+    sessionId: string,
+    session: Session,
+    current: GeneratedVideo,
+  ): Promise<GeneratedVideo> {
+    if (renderExpired(current)) {
+      return await this.markFailed(
+        sessionId,
+        current,
+        'VIDEO_GENERATION_TIMEOUT',
+        `Grok не ответил за ${RENDER_DEADLINE_MS / 60000} минут — попробуйте сгенерировать ещё раз`,
+        true,
+      );
+    }
+
+    if (!current.grokRequestId) {
+      // Не должно случаться на практике — как и у Veo выше, нечего опрашивать.
+      return current;
+    }
+
+    let status: { done: boolean; error?: string; videoUrl?: string };
+    try {
+      status = await this.grokVideo.getStatus(current.grokRequestId);
+    } catch (error) {
+      this.logger.warn(`Grok status check failed, will retry: ${error}`);
+      return current; // transient — same tolerance as the Veo branch above
+    }
+
+    if (!status.done) {
+      return current; // still rendering
+    }
+
+    if (status.error) {
+      return await this.markFailed(
+        sessionId,
+        current,
+        'VIDEO_GENERATION_FAILED',
+        status.error,
+        true,
+      );
+    }
+
+    if (!status.videoUrl) {
+      return await this.markFailed(
+        sessionId,
+        current,
+        'VIDEO_GENERATION_NO_OUTPUT',
+        'Grok reported completion but returned no video',
+        true,
+      );
+    }
+
+    let videoBuffer: Buffer;
+    let blobUrl: string;
+    try {
+      const res = await fetch(status.videoUrl);
+      if (!res.ok) {
+        throw new Error(`Grok video download HTTP ${res.status}`);
+      }
+      videoBuffer = Buffer.from(await res.arrayBuffer());
+      ({ url: blobUrl } = await this.blobService.uploadBuffer(
+        current.pathname,
+        videoBuffer,
+        'video/mp4',
+      ));
+    } catch (error) {
+      return await this.markFailed(
+        sessionId,
+        current,
+        'VIDEO_DOWNLOAD_FAILED',
+        this.extractErrorMessage(error),
+        true,
+      );
+    }
+
+    const completed: GeneratedVideo = {
+      ...current,
+      status: GenerationStatus.COMPLETE,
+      completedAt: new Date(),
+      fileSize: videoBuffer.length,
+      downloadUrl: blobUrl,
+    };
+
+    await this.sessionService.updateSession(sessionId, {
+      generatedVideo: completed,
+      status: SessionStatus.VIDEO_COMPLETE,
+    });
+
+    await this.sharedVideos.markConverted(session.sharedFromPageId);
+
+    this.logger.log(`Grok video generation complete for session ${sessionId}`);
+
+    return this.postprod.start(sessionId, completed);
+  }
+
   private async downloadVeoVideo(uri: string): Promise<Buffer> {
     const apiKey = geminiApiKey();
     if (!apiKey) {

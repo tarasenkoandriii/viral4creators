@@ -24,6 +24,8 @@ import {
   buildReferencePlan,
   characterBriefText,
   sceneBriefText,
+  ReferencePlan,
+  grokReferencePromptText,
 } from '../../common/reference-plan';
 import { relevanceBriefText } from '../relevance/relevance-response';
 import {
@@ -63,6 +65,7 @@ export class PromptService {
   private readonly logger = new Logger(PromptService.name);
   private readonly httpClient: AxiosInstance;
   private readonly gptModel: string;
+  private readonly fastModel: string;
 
   // Basic moderation patterns (simple keyword matching for POC)
   private readonly moderationPatterns = [
@@ -89,6 +92,7 @@ export class PromptService {
     const apiKey = config.openai.apiKey;
     const baseUrl = config.openai.baseUrl;
     this.gptModel = config.openai.gptModel;
+    this.fastModel = config.openai.fastModel;
 
     if (!apiKey) {
       throw new Error(
@@ -829,5 +833,72 @@ Please respond with a valid JSON object only, with one key "variants": an array 
       flags.length > 0 ? ModerationStatus.FLAGGED : ModerationStatus.PENDING;
 
     return { status, flags };
+  }
+
+  /**
+   * Доп. запрос владельца продукта: реализация улучшения из ТЗ §15.3 —
+   * `grokReferencePromptText()` (`common/reference-plan.ts`) добавляет
+   * список «Reference <IMAGE_N> shows …» ПОСЛЕ текста сцены, который
+   * написан для Veo и ничего не знает про метки Grok. Официальная
+   * конвенция xAI хочет метки ВНУТРИ действия («they wear the shirt
+   * from <IMAGE_2>») — это и делает этот метод: узкий, точный
+   * переписывающий шаг (не творческий — сцена уже придумана, здесь
+   * только вплетаются метки), поэтому `OPENAI_FAST_MODEL`
+   * (config.openai.fastModel), а не основной `gptModel`.
+   *
+   * Отказоустойчиво: любая ошибка (сеть, модель отказала, пустой
+   * ответ) — лог и откат на `grokReferencePromptText()` (то же
+   * приближение, что было раньше) — генерация не должна падать из-за
+   * необязательного шага косметики промпта.
+   */
+  async rewriteForGrokReferences(
+    sceneText: string,
+    plan: ReferencePlan,
+  ): Promise<string> {
+    if (plan.images.length === 0) return sceneText;
+
+    const fallback = () =>
+      [sceneText, grokReferencePromptText(plan)].filter(Boolean).join('\n');
+
+    const refDescriptions = plan.images
+      .map((i) => {
+        const what =
+          i.kind === 'character'
+            ? `the person "${i.label}"`
+            : i.kind === 'scene'
+              ? `the location/set "${i.label}"`
+              : `the actual product "${i.label}"`;
+        return `<IMAGE_${i.index}> = ${what}`;
+      })
+      .join('; ');
+
+    try {
+      const response = await this.httpClient.post('/chat/completions', {
+        model: this.fastModel,
+        messages: [
+          {
+            role: 'user',
+            content: `Rewrite the following video scene description so that each reference image is mentioned NATURALLY, INSIDE the action it belongs to — the same way a director's shot list would cite reference photos — using the exact tag syntax <IMAGE_N>. Reference tags and what they show: ${refDescriptions}. Do not add a separate list of references at the end — weave each tag into the sentence describing what that character/product/location does or looks like in the scene. Keep everything else about the scene (camera, pacing, dialogue, on-screen text) unchanged. Return ONLY the rewritten scene text, nothing else.\n\nScene:\n${sceneText}`,
+          },
+        ],
+        temperature: 0.3,
+        max_tokens: 2000,
+      });
+
+      const rewritten: string | undefined =
+        response.data?.choices?.[0]?.message?.content?.trim();
+      if (!rewritten) {
+        this.logger.warn(
+          'rewriteForGrokReferences: пустой ответ модели — откат на grokReferencePromptText',
+        );
+        return fallback();
+      }
+      return rewritten;
+    } catch (error) {
+      this.logger.warn(
+        `rewriteForGrokReferences: вызов не удался (${error instanceof Error ? error.message : String(error)}) — откат на grokReferencePromptText`,
+      );
+      return fallback();
+    }
   }
 }

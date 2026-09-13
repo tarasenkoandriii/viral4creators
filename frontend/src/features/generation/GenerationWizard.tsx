@@ -11,7 +11,7 @@
  * + aspect ratio (generation step), audit and publication (result step).
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Clapperboard,
   Download,
@@ -54,6 +54,7 @@ import {
   Pills,
 } from '../../components/ui';
 import type { VideoQuality } from '../../services/api';
+import { getCostEstimate } from '../../services/api';
 import { navigate, routes } from '../../lib/router';
 import { useFeature } from '../../lib/plan-context';
 import { useI18n } from '../../lib/i18n-context';
@@ -61,6 +62,21 @@ import { useI18n } from '../../lib/i18n-context';
 export function GenerationWizard() {
   const { dict, locale } = useI18n();
   const [videoQuality, setVideoQuality] = useState<VideoQuality>('fast');
+  // Доп. запрос владельца продукта: Grok как второй провайдер видео
+  // (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §10–11, этап 1 плана
+  // реализации, §14). У Grok нет понятия `quality` — своя ось,
+  // разрешение (§11.2 ТЗ) — переключатель качества заменяется
+  // переключателем разрешения, когда выбран Grok, а не добавляется
+  // третьим полем.
+  const [videoProvider, setVideoProvider] = useState<'veo' | 'grok'>('veo');
+  const [grokResolution, setGrokResolution] = useState<
+    '480p' | '720p' | '1080p'
+  >('480p');
+  const [costEstimate, setCostEstimate] = useState<{
+    costUsd: number;
+    unpriced: boolean;
+  } | null>(null);
+
   // Spec §16: the ad's picture format — starts from the reference's frame
   // once detected; the user can pick any standard ratio or a custom W:H.
   const [aspectRatio, setAspectRatio] = useState<string | null>(null);
@@ -116,6 +132,30 @@ export function GenerationWizard() {
     clearError,
     showError,
   } = useWorkflow();
+
+  // Доп. запрос владельца продукта: расчёт цены сразу при выборе, до
+  // кнопки «Сгенерировать» (ТЗ §11.3) — общий принцип, не только для
+  // Grok: любой выбор, меняющий стоимость, сразу показывает
+  // пересчитанную цену.
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    getCostEstimate(
+      sessionId,
+      videoProvider,
+      videoProvider === 'veo' ? videoQuality : undefined,
+      videoProvider === 'grok' ? grokResolution : undefined
+    )
+      .then((est) => {
+        if (!cancelled) setCostEstimate(est);
+      })
+      .catch(() => {
+        if (!cancelled) setCostEstimate(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, videoProvider, videoQuality, grokResolution]);
 
   /**
    * Spec §19: активный фильтр — персонаж, сцена или массовка. Живёт здесь,
@@ -439,30 +479,76 @@ export function GenerationWizard() {
                   }
                 />
                 <div className="mb-4">
+                  <span className="label">
+                    {dict.generationWizard.providerLabel}
+                  </span>
+                  <Pills
+                    value={videoProvider}
+                    onChange={setVideoProvider}
+                    options={[
+                      {
+                        value: 'veo',
+                        label: dict.generationWizard.providerVeoLabel,
+                      },
+                      {
+                        value: 'grok',
+                        label: dict.generationWizard.providerGrokLabel,
+                      },
+                    ]}
+                  />
+                </div>
+                <div className="mb-4">
                   {/* Названия намеренно НЕ «Lite» и «Standard»: так теперь
                       зовутся режимы сервиса (ТЗ §23), и два разных выбора
                       с одинаковыми словами на одном экране — верный способ
                       заставить человека решить, что он покупает качество
                       рендера. Здесь выбирается модель, а не режим. */}
-                  <span className="label">
-                    {dict.generationWizard.qualityLabel}
-                  </span>
-                  <Pills
-                    value={videoQuality}
-                    onChange={setVideoQuality}
-                    options={[
-                      {
-                        value: 'fast',
-                        label: dict.generationWizard.qualityFastLabel,
-                        sub: dict.generationWizard.qualityFastSub,
-                      },
-                      {
-                        value: 'standard',
-                        label: dict.generationWizard.qualityStandardLabel,
-                        sub: dict.generationWizard.qualityStandardSub,
-                      },
-                    ]}
-                  />
+                  {videoProvider === 'veo' ? (
+                    <>
+                      <span className="label">
+                        {dict.generationWizard.qualityLabel}
+                      </span>
+                      <Pills
+                        value={videoQuality}
+                        onChange={setVideoQuality}
+                        options={[
+                          {
+                            value: 'fast',
+                            label: dict.generationWizard.qualityFastLabel,
+                            sub: dict.generationWizard.qualityFastSub,
+                          },
+                          {
+                            value: 'standard',
+                            label: dict.generationWizard.qualityStandardLabel,
+                            sub: dict.generationWizard.qualityStandardSub,
+                          },
+                        ]}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <span className="label">
+                        {dict.generationWizard.resolutionLabel}
+                      </span>
+                      <Pills
+                        value={grokResolution}
+                        onChange={setGrokResolution}
+                        options={[
+                          { value: '480p', label: '480p' },
+                          { value: '720p', label: '720p' },
+                          { value: '1080p', label: '1080p' },
+                        ]}
+                      />
+                    </>
+                  )}
+                  {costEstimate && !costEstimate.unpriced && (
+                    <p className="hint">
+                      {dict.generationWizard.estimatedCostLabel.replace(
+                        '{{cost}}',
+                        costEstimate.costUsd.toFixed(2)
+                      )}
+                    </p>
+                  )}
                 </div>
                 {sessionId && referenceAssets.allowed && (
                   <div className="mb-4">
@@ -495,7 +581,12 @@ export function GenerationWizard() {
                   size="lg"
                   icon={<Video size={16} />}
                   onClick={() =>
-                    startGenerateVideo(videoQuality, effectiveAspectRatio)
+                    startGenerateVideo(
+                      videoQuality,
+                      effectiveAspectRatio,
+                      videoProvider,
+                      videoProvider === 'grok' ? grokResolution : undefined
+                    )
                   }
                 >
                   {generatedVideo?.status === 'failed'
