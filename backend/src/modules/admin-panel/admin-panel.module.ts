@@ -12,6 +12,7 @@ import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { AdminVideoProviderSettingsService } from './admin-video-provider-settings.service';
+import { AdminGrokTransportSettingsService } from './admin-grok-transport-settings.service';
 
 @Module({
   // StorageModule — удаление сессии оператором уносит и её файлы (Б-5.9).
@@ -49,6 +50,7 @@ import { AdminVideoProviderSettingsService } from './admin-video-provider-settin
     AdminVoiceoverSettingsService,
     AdminAnalysisSettingsService,
     AdminVideoProviderSettingsService,
+    AdminGrokTransportSettingsService,
   ],
   // Суточный отчёт крона берёт телеметрию отсюда (ТЗ §28, этап 45).
   exports: [AdminPanelService],

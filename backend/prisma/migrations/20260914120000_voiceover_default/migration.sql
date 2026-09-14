@@ -14,6 +14,6 @@
 --     их режим — часть отснятого ролика.
 --     Если на стенде есть бренды, где 'veo' выбран осознанно, — уберите
 --     UPDATE перед применением.
-ALTER TABLE "BrandManifest" ALTER COLUMN "voiceMode" SET DEFAULT 'voiceover';
+ALTER TABLE "brand_manifests" ALTER COLUMN "voiceMode" SET DEFAULT 'voiceover';
 
-UPDATE "BrandManifest" SET "voiceMode" = 'voiceover' WHERE "voiceMode" = 'veo';
+UPDATE "brand_manifests" SET "voiceMode" = 'voiceover' WHERE "voiceMode" = 'veo';

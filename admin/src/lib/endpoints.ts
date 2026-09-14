@@ -23,6 +23,8 @@ import type {
   AnalysisProviderSettingsView,
   VideoProviderKey,
   VideoProviderSettingsView,
+  GrokTransportKey,
+  GrokTransportSettingsView,
   PublicationListResult,
   PublicationPrivacy,
   PublicationRequest,
@@ -194,6 +196,18 @@ export function getVideoProviderSettings() {
 export function setVideoProviderDefault(provider: VideoProviderKey) {
   return apiPatch<VideoProviderSettingsView>('/admin/settings/video-provider', {
     provider,
+  });
+}
+
+/** «Транспорт Grok для одиночных роликов» — синхронные вызовы или
+ * Batch API (доп. запрос владельца продукта, 14.09.2026). */
+export function getGrokTransportSettings() {
+  return apiGet<GrokTransportSettingsView>('/admin/settings/grok-transport');
+}
+
+export function setGrokTransport(transport: GrokTransportKey) {
+  return apiPatch<GrokTransportSettingsView>('/admin/settings/grok-transport', {
+    transport,
   });
 }
 

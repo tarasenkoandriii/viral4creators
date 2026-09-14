@@ -99,10 +99,13 @@ describe('GrokVideoBatchService', () => {
           {
             batch_request_id: 'gen-1',
             batch_request: {
-              videos_generations: {
+              // Ключ — `{service}_{rpc}` по аналогии с подтверждённым
+              // `chat_get_completion`; тело — по proto GenerateVideoRequest
+              // (`image: { url }`, не `image_url`). См. доккомментарий класса.
+              video_generate_video: {
                 model: 'grok-imagine-video-1.5',
                 prompt: 'A product on a table',
-                image_url: 'https://blob.test/product.png',
+                image: { url: 'https://blob.test/product.png' },
                 duration: 8,
                 aspect_ratio: '9:16',
                 resolution: '480p',
@@ -131,7 +134,7 @@ describe('GrokVideoBatchService', () => {
 
       const [, addBody] = mockedAxios.post.mock.calls[1];
       expect(
-        (addBody as any).batch_requests[0].batch_request.videos_generations
+        (addBody as any).batch_requests[0].batch_request.video_generate_video
           .reference_images,
       ).toEqual([{ url: 'https://blob.test/a.png' }, { url: 'https://blob.test/b.png' }]);
     });
@@ -193,7 +196,9 @@ describe('GrokVideoBatchService', () => {
               batch_request_id: 'gen-1',
               batch_result: {
                 response: {
-                  videos_generations: {
+                  // Имя oneof-ключа в REST не подтверждено — парсер
+                  // ищет любой объект с `video.url`.
+                  video_response: {
                     video: { url: 'https://vidgen.x.ai/result-1.mp4' },
                   },
                 },
@@ -229,7 +234,7 @@ describe('GrokVideoBatchService', () => {
                 batch_request_id: 'gen-1',
                 batch_result: {
                   response: {
-                    videos_generations: { video: { url: 'https://x/1.mp4' } },
+                    video_generate_video: { video: { url: 'https://x/1.mp4' } },
                   },
                 },
               },
@@ -245,7 +250,7 @@ describe('GrokVideoBatchService', () => {
                 batch_request_id: 'gen-2',
                 batch_result: {
                   response: {
-                    videos_generations: { video: { url: 'https://x/2.mp4' } },
+                    video_generate_video: { video: { url: 'https://x/2.mp4' } },
                   },
                 },
               },
@@ -259,5 +264,71 @@ describe('GrokVideoBatchService', () => {
       });
       expect(mockedAxios.get).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+// Доп. запрос владельца продукта (14.09.2026): транспорт Grok = batch
+// для одиночных роликов — расширение цепочки тоже пачкой.
+describe('GrokVideoBatchService — расширение и ошибки (одиночные ролики)', () => {
+  beforeEach(() => {
+    mockedAxios.post.mockReset();
+    mockedAxios.get.mockReset();
+    process.env.GROK_API_KEY = 'test-key';
+  });
+
+  it('submitExtendBatch — video_extension_request по proto: video.url + duration, без формата/разрешения', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce({ status: 200, data: { batch_id: 'batch_ext' } })
+      .mockResolvedValueOnce({ status: 200, data: {} });
+
+    const r = await new GrokVideoBatchService().submitExtendBatch('ext', [
+      {
+        batchRequestId: 'gen-1-ext-1',
+        prompt: 'continue',
+        videoUrl: 'https://blob.test/seg1.mp4',
+        durationSeconds: 5,
+      },
+    ]);
+
+    expect(r).toEqual({ xaiBatchId: 'batch_ext' });
+    const [, addBody] = mockedAxios.post.mock.calls[1];
+    expect(addBody).toEqual({
+      batch_requests: [
+        {
+          batch_request_id: 'gen-1-ext-1',
+          batch_request: {
+            video_extend_video: {
+              model: 'grok-imagine-video-1.5',
+              prompt: 'continue',
+              video: { url: 'https://blob.test/seg1.mp4' },
+              duration: 5,
+            },
+          },
+        },
+      ],
+    });
+  });
+
+  it('getBatchResultsDetailed — ошибка запроса (google.rpc.Status) отделена от успехов', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        results: [
+          {
+            batch_request_id: 'ok',
+            batch_result: {
+              response: { video_generate_video: { video: { url: 'https://x/ok.mp4' } } },
+            },
+          },
+          {
+            batch_request_id: 'bad',
+            batch_result: { error: { code: 3, message: 'content moderated' } },
+          },
+        ],
+      },
+    });
+    const r = await new GrokVideoBatchService().getBatchResultsDetailed('b');
+    expect(r.urlsByRequestId).toEqual({ ok: 'https://x/ok.mp4' });
+    expect(r.errorsByRequestId).toEqual({ bad: 'content moderated (code 3)' });
   });
 });

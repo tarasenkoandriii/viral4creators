@@ -20,6 +20,13 @@ import { SessionService } from '../../common/session.service';
 import { PlanService } from '../plan/plan.service';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
 import { GrokVideoService, GrokResolution } from './grok-video.service';
+import { GrokVideoBatchService } from './grok-video-batch.service';
+import { PlatformSettingsService } from '../../common/platform-settings.service';
+import {
+  GROK_VIDEO_TRANSPORT_SETTING_KEY,
+  GrokVideoTransportKey,
+  resolveGrokVideoTransport,
+} from './grok-video-transport';
 import { PromptService } from '../prompt/prompt.service';
 import {
   buildExtensionPlan,
@@ -116,13 +123,20 @@ export const GENERATION_IN_FLIGHT_MESSAGE =
 /** Сколько ждём Veo, прежде чем закрыть рендер сбоем (этап 52, В-2.8). */
 export const RENDER_DEADLINE_MS = 20 * 60 * 1000;
 
+/** Batch API xAI — «обычно до 24 часов»; запас сверху, чтобы не
+ * закрыть сбоем пачку, которую xAI ещё честно обрабатывает. */
+export const BATCH_RENDER_DEADLINE_MS = 26 * 60 * 60 * 1000;
+
 export function renderExpired(
-  video: Pick<GeneratedVideo, 'initiatedAt'>,
+  video: Pick<GeneratedVideo, 'initiatedAt' | 'xaiBatchId'>,
   now: number = Date.now(),
 ): boolean {
   // Даты из JSON приходят строками.
   const started = new Date(video.initiatedAt).getTime();
-  return Number.isFinite(started) && now - started > RENDER_DEADLINE_MS;
+  const deadline = video.xaiBatchId
+    ? BATCH_RENDER_DEADLINE_MS
+    : RENDER_DEADLINE_MS;
+  return Number.isFinite(started) && now - started > deadline;
 }
 
 /**
@@ -186,6 +200,10 @@ export class GenerationService {
     private readonly creditLedger: CreditLedgerService,
     private readonly grokVideo: GrokVideoService,
     private readonly promptService: PromptService,
+    // Транспорт Grok для одиночных роликов (доп. запрос владельца
+    // продукта, 14.09.2026): батч-клиент и настройка стенда.
+    private readonly grokBatch: GrokVideoBatchService,
+    private readonly settings: PlatformSettingsService,
   ) {
     // Ключ — явно в SDK (этап 53, В-6.15): `new GoogleGenAI({})` читал
     // только свои переменные, и GOOGLE_GEMINI_API_KEY до него не доходил.
@@ -727,6 +745,7 @@ export class GenerationService {
               chainSegmentsDone: 1,
               chainSegmentsTotal: extensionPlan.totalCalls,
               chainTargetDurationSeconds: extensionPlan.targetDurationSeconds,
+              chainSegmentSeconds: extensionPlan.segments,
             }
           : {}),
         ...(avoidText ? { avoidText } : {}),
@@ -848,19 +867,54 @@ export class GenerationService {
       .filter(Boolean)
       .join('\n');
 
-    let requestId: string;
+    const baseSegmentSeconds =
+      extensionPlan?.segments[0] ?? VIDEO_DURATION_SECONDS;
+
+    // Транспорт — операторская настройка стенда (`grok-video-transport.ts`):
+    // читается при каждом старте, так что смена в админке действует на
+    // следующий ролик без передеплоя; уже начатый ролик дорисовывается
+    // своим транспортом (см. `continueGrokChain`).
+    const transport = await this.grokTransport();
+
+    let requestId: string | undefined;
+    let xaiBatchId: string | undefined;
+    let xaiBatchRequestId: string | undefined;
     try {
       this.logger.log(
-        `Starting Grok (${this.grokVideo.modelName}, ${resolution}) generation for session ${sessionId}`,
+        `Starting Grok (${this.grokVideo.modelName}, ${resolution}, ${baseSegmentSeconds}s, ${transport}) generation for session ${sessionId}`,
       );
-      ({ requestId } = await this.grokVideo.startGeneration({
-        prompt: promptText,
-        imageUrl,
-        referenceImageUrls,
-        durationSeconds: VIDEO_DURATION_SECONDS,
-        aspectRatio: target,
-        resolution,
-      }));
+      if (transport === 'batch') {
+        // Пачка из одного запроса; ключ запроса — id этой попытки.
+        xaiBatchRequestId = generatedVideoId;
+        const submitted = await this.grokBatch.submitBatch(
+          `single-${sessionId}-${generatedVideoId}`,
+          [
+            {
+              batchRequestId: xaiBatchRequestId,
+              prompt: promptText,
+              imageUrl,
+              referenceImageUrls,
+              durationSeconds: baseSegmentSeconds,
+              aspectRatio: target,
+              resolution,
+            },
+          ],
+        );
+        if (submitted.error) throw new Error(submitted.error);
+        xaiBatchId = submitted.xaiBatchId;
+      } else {
+        ({ requestId } = await this.grokVideo.startGeneration({
+          prompt: promptText,
+          imageUrl,
+          referenceImageUrls,
+          // Сбой 14.09.2026 («при любой длительности — 8 секунд»): у Grok
+          // длительность нативная (1–15 с), берём её из плана, а не из
+          // константы Veo. Без плана (запрос ≤ 8 с) — прежние 8.
+          durationSeconds: baseSegmentSeconds,
+          aspectRatio: target,
+          resolution,
+        }));
+      }
     } catch (error) {
       this.logger.error('Failed to start Grok generation:', error);
       throw new BadRequestException(
@@ -882,7 +936,7 @@ export class GenerationService {
         // `common/ai-pricing.ts` (§11.5/§10.2 ТЗ): одна модель Grok,
         // три разные ставки, не одна.
         model: `${this.grokVideo.modelName}:${resolution}`,
-        seconds: VIDEO_DURATION_SECONDS,
+        seconds: baseSegmentSeconds,
         sessionId,
       });
 
@@ -895,7 +949,8 @@ export class GenerationService {
         initiatedAt: new Date(),
         provider: 'grok',
         resolution,
-        grokRequestId: requestId,
+        ...(requestId ? { grokRequestId: requestId } : {}),
+        ...(xaiBatchId ? { xaiBatchId, xaiBatchRequestId } : {}),
         aspectRatio: target,
         renderedAspectRatio: undefined,
         reframePending: false,
@@ -910,6 +965,7 @@ export class GenerationService {
               chainSegmentsDone: 1,
               chainSegmentsTotal: extensionPlan.totalCalls,
               chainTargetDurationSeconds: extensionPlan.targetDurationSeconds,
+              chainSegmentSeconds: extensionPlan.segments,
             }
           : {}),
         ...(avoidText ? { avoidText } : {}),
@@ -932,12 +988,14 @@ export class GenerationService {
 
       return generatedVideo;
     } catch (error) {
+      // Для батча зацепка — id пачки, для синхронного пути — request_id.
+      const handle = requestId ?? xaiBatchId ?? '';
       this.logger.error(
-        `КРИТИЧНО: Grok стартовал (requestId=${requestId}) для сессии ${sessionId}, но запись результата упала — рендер оплачен и идёт в фоне, но не привязан ни к чему в базе: ${this.extractErrorMessage(error)}`,
+        `КРИТИЧНО: Grok стартовал (${transport}=${handle}) для сессии ${sessionId}, но запись результата упала — рендер оплачен и идёт в фоне, но не привязан ни к чему в базе: ${this.extractErrorMessage(error)}`,
       );
       throw new VeoOperationOrphanedError(
-        `Рендер уже стартовал (${requestId}), но сохранить состояние не удалось — обратитесь в поддержку, не запускайте повторно`,
-        requestId,
+        `Рендер уже стартовал (${handle}), но сохранить состояние не удалось — обратитесь в поддержку, не запускайте повторно`,
+        handle,
       );
     }
   }
@@ -1279,6 +1337,51 @@ export class GenerationService {
    * не в ту сторону (см. доккомментарий `GrokVideoService` — три места
    * там прямо помечены как неподтверждённые).
    */
+  /** Настройка стенда «транспорт Grok» — см. `grok-video-transport.ts`. */
+  private async grokTransport(): Promise<GrokVideoTransportKey> {
+    return resolveGrokVideoTransport(
+      await this.settings.get(GROK_VIDEO_TRANSPORT_SETTING_KEY),
+    );
+  }
+
+  /**
+   * Статус одиночного ролика, поданного пачкой — в той же форме, что
+   * `GrokVideoService.getStatus`, чтобы `pollGrokStatus` не ветвился
+   * дальше этой точки. Готовность пачки — `pendingCount === 0` (тот же
+   * принцип, что у каталог-партий); затем результат ищется по нашему
+   * `batch_request_id`. Недоступный статус (HTTP-ошибка, `null`) —
+   * «ещё не готово», не сбой: вызывающий и так терпит транзиентные
+   * ошибки опроса.
+   */
+  private async grokBatchStatus(
+    current: GeneratedVideo,
+  ): Promise<{ done: boolean; error?: string; videoUrl?: string }> {
+    const batchStatus = await this.grokBatch.getBatchStatus(
+      current.xaiBatchId!,
+    );
+    if (!batchStatus || batchStatus.pendingCount > 0) {
+      return { done: false };
+    }
+    const key = current.xaiBatchRequestId ?? current.generatedVideoId;
+    const results = await this.grokBatch.getBatchResultsDetailed(
+      current.xaiBatchId!,
+    );
+    const videoUrl = results.urlsByRequestId[key];
+    if (videoUrl) return { done: true, videoUrl };
+    const error = results.errorsByRequestId[key];
+    if (error) return { done: true, error };
+    if (batchStatus.errorCount > 0) {
+      return {
+        done: true,
+        error: `xAI batch ${current.xaiBatchId}: запрос ${key} завершился ошибкой без текста`,
+      };
+    }
+    // Пачка отчиталась «готово», а результата по нашему ключу нет —
+    // скорее всего, страница результатов ещё не догнала статус;
+    // опрос продолжится, дедлайн батча его ограничит.
+    return { done: false };
+  }
+
   private async pollGrokStatus(
     sessionId: string,
     session: Session,
@@ -1294,14 +1397,16 @@ export class GenerationService {
       );
     }
 
-    if (!current.grokRequestId) {
+    if (!current.grokRequestId && !current.xaiBatchId) {
       // Не должно случаться на практике — как и у Veo выше, нечего опрашивать.
       return current;
     }
 
     let status: { done: boolean; error?: string; videoUrl?: string };
     try {
-      status = await this.grokVideo.getStatus(current.grokRequestId);
+      status = current.xaiBatchId
+        ? await this.grokBatchStatus(current)
+        : await this.grokVideo.getStatus(current.grokRequestId!);
     } catch (error) {
       this.logger.warn(`Grok status check failed, will retry: ${error}`);
       return current; // transient — same tolerance as the Veo branch above
@@ -1519,12 +1624,12 @@ export class GenerationService {
 
   /**
    * Продолжает цепочку Grok Extend (ТЗ §9, этап 4 плана §14) — тот же
-   * принцип, что `continueVeoChain`, но через `GrokVideoService`.
-   * Официально подтверждено — `docs.x.ai`, поле `video_url`
-   * (`client.video.extend(video_url=..., duration=...)`) — см.
-   * доккомментарий `GrokVideoService.startGeneration` — форма здесь
-   * ЛУЧШЕ подтверждена, чем у Veo, но всё ещё не проверена живым
-   * вызовом (§9.4 ТЗ — тот же принцип, что уже трижды применялся).
+   * принцип, что `continueVeoChain`, но через
+   * `GrokVideoService.extendVideo()` — отдельный эндпоинт
+   * `/v1/videos/extensions` (docs.x.ai, с curl-примером; см.
+   * доккомментарий метода). У Grok расширение всегда одно (вход
+   * расширения ограничен 15 с), так что «цепочка» здесь — база +
+   * один хвост; длины обоих — в `chainSegmentSeconds`.
    */
   private async continueGrokChain(
     sessionId: string,
@@ -1533,7 +1638,6 @@ export class GenerationService {
     previousSegmentUrl: string,
   ): Promise<GeneratedVideo> {
     const resolution = current.resolution ?? '480p';
-    const target = current.aspectRatio ?? '9:16';
     // Найдено при аудите — то же самое, что у Veo-версии выше: без
     // явной оговорки модель получала бы буквально тот же текст сцены
     // на каждом сегменте, что для сцены с законченным действием могло
@@ -1546,15 +1650,46 @@ export class GenerationService {
       .filter(Boolean)
       .join('\n');
 
-    let requestId: string;
+    // Длина добавляемой части — из плана (`segments[next]`); записи до
+    // 14.09.2026 поля не имеют — тогда прежние 8 (в допуске 2–10 с).
+    const nextIndex = current.chainSegmentsDone ?? 1;
+    const extendSeconds =
+      current.chainSegmentSeconds?.[nextIndex] ?? VIDEO_DURATION_SECONDS;
+
+    let requestId: string | undefined;
+    let xaiBatchId: string | undefined;
+    let xaiBatchRequestId: string | undefined;
     try {
-      ({ requestId } = await this.grokVideo.startGeneration({
-        prompt: continuationPrompt,
-        extendVideoUrl: previousSegmentUrl,
-        durationSeconds: VIDEO_DURATION_SECONDS,
-        aspectRatio: target,
-        resolution,
-      }));
+      if (current.xaiBatchId) {
+        // База шла пачкой — расширение тоже пачкой (тот же транспорт
+        // на весь ролик, см. `grok-video-transport.ts`), новая пачка
+        // из одного `video_extension_request`.
+        xaiBatchRequestId = `${current.generatedVideoId}-ext-${nextIndex}`;
+        const submitted = await this.grokBatch.submitExtendBatch(
+          `single-${sessionId}-${xaiBatchRequestId}`,
+          [
+            {
+              batchRequestId: xaiBatchRequestId,
+              prompt: continuationPrompt,
+              videoUrl: previousSegmentUrl,
+              durationSeconds: extendSeconds,
+            },
+          ],
+        );
+        if (submitted.error) throw new Error(submitted.error);
+        xaiBatchId = submitted.xaiBatchId;
+      } else {
+        // Сбой 14.09.2026: раньше — `startGeneration({ extendVideoUrl })`
+        // на `/v1/videos/generations`, где такого поля нет, и xAI молча
+        // рендерил новый 8-секундный ролик вместо продолжения. Теперь —
+        // отдельный `/v1/videos/extensions` (см. `extendVideo`); формат
+        // и разрешение там не принимаются — наследуются от входа.
+        ({ requestId } = await this.grokVideo.extendVideo({
+          prompt: continuationPrompt,
+          videoUrl: previousSegmentUrl,
+          durationSeconds: extendSeconds,
+        }));
+      }
     } catch (error) {
       this.logger.error(
         `Grok chain: не удалось продолжить цепочку (сегмент ${(current.chainSegmentsDone ?? 1) + 1}/${current.chainSegmentsTotal}) для сессии ${sessionId}:`,
@@ -1572,7 +1707,7 @@ export class GenerationService {
     await this.aiUsage.record({
       operation: 'generation',
       model: `${this.grokVideo.modelName}:${resolution}`,
-      seconds: VIDEO_DURATION_SECONDS,
+      seconds: extendSeconds,
       sessionId,
     });
 
@@ -1580,6 +1715,7 @@ export class GenerationService {
     const continued: GeneratedVideo = {
       ...current,
       grokRequestId: requestId,
+      ...(xaiBatchId ? { xaiBatchId, xaiBatchRequestId } : {}),
       chainSegmentsDone: nextSegmentsDone,
       // Тот же сброс, что и у Veo-версии — см. её комментарий выше:
       // без него дедлайн считался бы от начала всей цепочки, а не от

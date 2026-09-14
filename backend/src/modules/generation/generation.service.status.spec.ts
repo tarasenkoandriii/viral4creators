@@ -140,7 +140,19 @@ function build(
     startGeneration: jest
       .fn()
       .mockResolvedValue({ requestId: 'grok-req-2' }),
+    // Продолжение цепочки — отдельный эндпоинт (сбой 14.09.2026).
+    extendVideo: jest.fn().mockResolvedValue({ requestId: 'grok-req-2' }),
     getStatus: jest.fn(),
+    modelName: 'grok-imagine-video-1.5',
+  };
+  // Транспорт Grok = batch (14.09.2026): пачка из одного запроса.
+  const grokBatch = {
+    submitBatch: jest.fn().mockResolvedValue({ xaiBatchId: 'batch-1' }),
+    submitExtendBatch: jest
+      .fn()
+      .mockResolvedValue({ xaiBatchId: 'batch-ext-1' }),
+    getBatchStatus: jest.fn(),
+    getBatchResultsDetailed: jest.fn(),
     modelName: 'grok-imagine-video-1.5',
   };
   const svc = new GenerationService(
@@ -156,10 +168,14 @@ function build(
     {
       rewriteForGrokReferences: jest.fn().mockResolvedValue('rewritten scene'),
     } as never,
+    grokBatch as never,
+    // Транспорт Grok (14.09.2026): по умолчанию sync — как до настройки.
+    { get: jest.fn().mockResolvedValue(null) } as never,
   );
   return {
     svc,
     sessions,
+    grokBatch,
     blob,
     postprod,
     sharedVideos,
@@ -634,7 +650,7 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
     expect(read()).toMatchObject({ status: SessionStatus.ERROR });
   });
 
-  it('Grok: сегмент готов, цепочка не дописана — запускает следующий через extendVideoUrl', async () => {
+  it('Grok: сегмент готов, цепочка не дописана — запускает расширение через extendVideo', async () => {
     const { svc, grokVideo, aiUsage } = build(
       inFlight({
         provider: 'grok',
@@ -642,6 +658,7 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
         veoOperationName: undefined,
         chainSegmentsDone: 1,
         chainSegmentsTotal: 2,
+        chainSegmentSeconds: [15, 5],
         resolution: '480p',
       }),
       { generationPrompt: { finalText: 'a product spins', approvedAt: new Date() } },
@@ -655,21 +672,26 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
 
     const result = await svc.getVideoStatus('s1');
 
-    expect(grokVideo.startGeneration).toHaveBeenCalledWith(
+    // Сбой 14.09.2026: НЕ `startGeneration` с video_url (там его нет),
+    // а `/v1/videos/extensions` — со своей длиной хвоста из плана.
+    expect(grokVideo.startGeneration).not.toHaveBeenCalled();
+    expect(grokVideo.extendVideo).toHaveBeenCalledWith(
       expect.objectContaining({
-        extendVideoUrl: 'https://blob.test/sessions/s1/generated.mp4',
+        videoUrl: 'https://blob.test/sessions/s1/generated.mp4',
+        durationSeconds: 5,
         // Не точное равенство — та же оговорка о продолжении, что у Veo.
         prompt: expect.stringContaining('a product spins'),
-        resolution: '480p',
       }),
     );
-    expect(grokVideo.startGeneration.mock.calls[0][0].prompt).toContain(
+    expect(grokVideo.extendVideo.mock.calls[0][0].prompt).toContain(
       'continuation of the same shot',
     );
     expect(result.status).toBe(GenerationStatus.PROCESSING);
     expect(result.chainSegmentsDone).toBe(2);
     expect(result.grokRequestId).toBe('grok-req-2');
-    expect(aiUsage.record).toHaveBeenCalled();
+    expect(aiUsage.record).toHaveBeenCalledWith(
+      expect.objectContaining({ seconds: 5 }),
+    );
   });
 
   it('Grok: последний сегмент цепочки — финализирует как обычно', async () => {
@@ -697,5 +719,132 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
     ).toEqual({ status: 'pending' });
     expect(postprod.start).toHaveBeenCalled();
     expect(read()).toMatchObject({ status: SessionStatus.VIDEO_COMPLETE });
+  });
+});
+
+// Доп. запрос владельца продукта (14.09.2026): транспорт Grok = batch
+// для одиночных роликов (`grok-video-transport.ts`).
+describe('getVideoStatus — Grok через Batch API', () => {
+  const batched = (over: Partial<GeneratedVideo> = {}) =>
+    inFlight({
+      provider: 'grok',
+      veoOperationName: undefined,
+      grokRequestId: undefined,
+      xaiBatchId: 'batch-1',
+      xaiBatchRequestId: 'gv-1',
+      generatedVideoId: 'gv-1',
+      resolution: '480p',
+      ...over,
+    });
+
+  it('пачка ещё в обработке (pendingCount > 0) — PROCESSING без вызова результатов', async () => {
+    const { svc, grokBatch } = build(batched());
+    grokBatch.getBatchStatus.mockResolvedValueOnce({
+      totalCount: 1,
+      completedCount: 0,
+      pendingCount: 1,
+      errorCount: 0,
+    });
+    const result = await svc.getVideoStatus('s1');
+    expect(result.status).toBe(GenerationStatus.PROCESSING);
+    expect(grokBatch.getBatchResultsDetailed).not.toHaveBeenCalled();
+  });
+
+  it('пачка готова — результат по нашему batch_request_id скачивается и финализируется', async () => {
+    const { svc, grokBatch, read, postprod } = build(
+      batched({ chainSegmentsDone: 1, chainSegmentsTotal: 1 }),
+      {
+        generationPrompt: {
+          finalText: 'a product spins',
+          approvedAt: new Date(),
+        },
+      },
+    );
+    grokBatch.getBatchStatus.mockResolvedValueOnce({
+      totalCount: 1,
+      completedCount: 1,
+      pendingCount: 0,
+      errorCount: 0,
+    });
+    grokBatch.getBatchResultsDetailed.mockResolvedValueOnce({
+      urlsByRequestId: { 'gv-1': 'https://vidgen.x.ai/batch-final.mp4' },
+      errorsByRequestId: {},
+    });
+    fetchMock.mockResolvedValueOnce(bufRes('финал из пачки'));
+
+    await svc.getVideoStatus('s1');
+
+    expect(postprod.start).toHaveBeenCalled();
+    expect(read()).toMatchObject({ status: SessionStatus.VIDEO_COMPLETE });
+  });
+
+  it('пачка готова с ошибкой по нашему запросу — FAILED с текстом xAI', async () => {
+    const { svc, grokBatch } = build(batched());
+    grokBatch.getBatchStatus.mockResolvedValueOnce({
+      totalCount: 1,
+      completedCount: 0,
+      pendingCount: 0,
+      errorCount: 1,
+    });
+    grokBatch.getBatchResultsDetailed.mockResolvedValueOnce({
+      urlsByRequestId: {},
+      errorsByRequestId: { 'gv-1': 'content moderated (code 3)' },
+    });
+    const result = await svc.getVideoStatus('s1');
+    expect(result.status).toBe(GenerationStatus.FAILED);
+    expect(result.error?.code).toBe('VIDEO_GENERATION_FAILED');
+    expect(result.error?.message).toContain('content moderated');
+  });
+
+  it('база шла пачкой — расширение цепочки тоже пачкой, не синхронным extendVideo', async () => {
+    const { svc, grokBatch, grokVideo } = build(
+      batched({
+        chainSegmentsDone: 1,
+        chainSegmentsTotal: 2,
+        chainSegmentSeconds: [15, 5],
+      }),
+      {
+        generationPrompt: {
+          finalText: 'a product spins',
+          approvedAt: new Date(),
+        },
+      },
+    );
+    grokBatch.getBatchStatus.mockResolvedValueOnce({
+      totalCount: 1,
+      completedCount: 1,
+      pendingCount: 0,
+      errorCount: 0,
+    });
+    grokBatch.getBatchResultsDetailed.mockResolvedValueOnce({
+      urlsByRequestId: { 'gv-1': 'https://vidgen.x.ai/seg1.mp4' },
+      errorsByRequestId: {},
+    });
+    fetchMock.mockResolvedValueOnce(bufRes('сегмент 1'));
+
+    const result = await svc.getVideoStatus('s1');
+
+    expect(grokVideo.extendVideo).not.toHaveBeenCalled();
+    expect(grokBatch.submitExtendBatch).toHaveBeenCalledWith(
+      expect.any(String),
+      [
+        expect.objectContaining({
+          batchRequestId: 'gv-1-ext-1',
+          videoUrl: 'https://blob.test/sessions/s1/generated.mp4',
+          durationSeconds: 5,
+        }),
+      ],
+    );
+    expect(result.status).toBe(GenerationStatus.PROCESSING);
+    expect(result.xaiBatchId).toBe('batch-ext-1');
+    expect(result.xaiBatchRequestId).toBe('gv-1-ext-1');
+    expect(result.chainSegmentsDone).toBe(2);
+  });
+
+  it('дедлайн батча — сутки с запасом, а не 20 минут синхронного пути', () => {
+    const started = new Date('2026-09-14T10:00:00Z').getTime();
+    const video = batched({ initiatedAt: new Date(started) });
+    expect(renderExpired(video, started + 60 * 60 * 1000)).toBe(false);
+    expect(renderExpired(video, started + 27 * 60 * 60 * 1000)).toBe(true);
   });
 });

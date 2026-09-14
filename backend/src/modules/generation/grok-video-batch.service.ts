@@ -15,31 +15,45 @@
  * addition to chat completions». Это РЕАЛЬНАЯ, датированная запись в
  * официальных release notes — сам факт поддержки не под вопросом.
  *
- * ## ⚠️⚠️ Что НЕ подтверждено — здесь неопределённости БОЛЬШЕ, чем в
- * `GrokVideoService` (синхронный клиент, этап 1) и даже больше, чем
- * обычно в этом проекте для внешних API
+ * ## Форма одного элемента пачки — по официальной proto-схеме
+ * (`github.com/xai-org/xai-proto`, `proto/xai/api/v1/batch.proto`,
+ * сверено 14.09.2026)
  *
- * Для CHAT `GrokBatchService` знает точную форму обёртки одного
- * запроса в пачке — `batch_request: { chat_get_completion: {...} } }`
- * — потому что она была сверена с РЕАЛЬНЫМИ ответами сервера в другом
- * проекте (см. доккомментарий того файла). Для ВИДЕО такой сверки
- * никто не делал, и ни один источник, включая официальные release
- * notes, не показывает буквальный пример JSON одного элемента пачки
- * для видео — только факт, что тип запроса поддерживается.
+ * `BatchRequest { batch_request_id; oneof request { completion_request;
+ * image_request; video_request (GenerateVideoRequest);
+ * video_extension_request (ExtendVideoRequest) } }` — то есть видео-
+ * генерация И расширение видео в пачке поддерживаются на уровне схемы,
+ * а не только релиз-нотой. Результат — `BatchResult { batch_request_id;
+ * oneof result { response: BatchResultData { oneof response {
+ * completion_response; image_response; video_response (VideoResponse
+ * { video: { url } }) } }; error: google.rpc.Status } }`.
  *
- * Ключ обёртки ниже (`videos_generations`) — ДОГАДКА по аналогии с
- * `chat_get_completion` (снейк-кейс от имени эндпоинта
- * `/v1/videos/generations`), НЕ факт. Реальное имя может быть другим
- * (`video_generation`, `video`, что угодно ещё). Это НЕ то же самое
- * предупреждение, что уже трижды помогало в этом ТЗ («документация
- * есть, но не проверено вызовом») — здесь даже документации с точной
- * формой нет, есть только релиз-нота о самом факте поддержки.
+ * ## ⚠️ Что остаётся неподтверждённым — имена ключей в REST-JSON
  *
- * **Перед любым реальным использованием: обязательный тестовый вызов
- * на одну запись, сверка реального ответа xAI, и правка этого файла
- * по факту — то же самое предупреждение о `GrokBatchService`
- * («форма — не догадка, а наблюдение над реальным сервером») должно
- * стать верным и для этого файла тоже, а прямо сейчас не является.**
+ * REST-шлюз xAI НЕ использует proto-имена полей oneof буквально: для
+ * чата proto говорит `completion_request`, а реальный сервер (сверено
+ * в `GrokBatchService`, наблюдение, не чтение доки) принимает
+ * `chat_get_completion` — то есть `{service}_{rpc}` в snake_case
+ * (`Chat.GetCompletion`). По той же конвенции для видео:
+ * `Video.GenerateVideo` → `video_generate_video`,
+ * `Video.ExtendVideo` → `video_extend_video`. Это ВЫВОД по одной
+ * подтверждённой точке, не второе наблюдение. Поэтому:
+ *   - оба ключа вынесены в константы и переопределяются переменными
+ *     окружения `GROK_BATCH_VIDEO_REQUEST_KEY` /
+ *     `GROK_BATCH_VIDEO_EXTEND_KEY` — если первый живой вызов вернёт
+ *     400 с «unknown field», ключ правится без пересборки;
+ *   - разбор результата НЕ завязан на имя ключа: берётся первый
+ *     объект в `batch_result.response`, у которого есть `video.url`
+ *     (форма `VideoResponse.video.url` подтверждена и proto, и живым
+ *     синхронным ответом `GET /v1/videos/{id}` — см. `GrokVideoService`).
+ *   - тело самого запроса — по proto `GenerateVideoRequest`: `prompt`,
+ *     `model`, `image: { url }` (ImageUrlContent — объект, НЕ `image_url`),
+ *     `reference_images: [{ url }]`, `duration`, `aspect_ratio`,
+ *     `resolution`; `ExtendVideoRequest`: `prompt`, `model`,
+ *     `video: { url }`, `duration` (длина ДОБАВЛЯЕМОЙ части, 2–10 с).
+ *
+ * **Перед первым реальным использованием: пробная пачка на одну
+ * запись, сверка ответа сервера, и правка ключей выше по факту.**
  *
  * Учёт расхода — ответственность вызывающего кода, тот же принцип
  * разделения, что уже применён в `GrokBatchService`/`AiUsageService`
@@ -52,6 +66,14 @@ import { GrokResolution } from './grok-video.service';
 
 const XAI_BASE_URL = 'https://api.x.ai/v1';
 const REQUEST_TIMEOUT_MS = 20_000;
+
+/** Ключи oneof в REST-JSON пачки — см. доккомментарий класса
+ * («`{service}_{rpc}` по аналогии с подтверждённым
+ * `chat_get_completion`»), переопределяются окружением. */
+export const GROK_BATCH_VIDEO_REQUEST_KEY =
+  process.env.GROK_BATCH_VIDEO_REQUEST_KEY || 'video_generate_video';
+export const GROK_BATCH_VIDEO_EXTEND_KEY =
+  process.env.GROK_BATCH_VIDEO_EXTEND_KEY || 'video_extend_video';
 
 /** Та же защита от зацикленной пагинации, что уже есть у GrokBatchService. */
 const MAX_RESULT_PAGES = 50;
@@ -66,6 +88,25 @@ export interface GrokVideoBatchRequestItem {
   durationSeconds: number;
   aspectRatio: string;
   resolution: GrokResolution;
+}
+
+/** Расширение существующего ролика в пачке (`video_extension_request`
+ * в proto) — то же, что `GrokVideoService.extendVideo`, но
+ * асинхронно. `durationSeconds` — длина добавляемой части (2–10 с);
+ * формат и разрешение наследуются от входа, не задаются. */
+export interface GrokVideoBatchExtendItem {
+  batchRequestId: string;
+  prompt: string;
+  videoUrl: string;
+  durationSeconds: number;
+}
+
+export interface GrokVideoBatchResults {
+  /** URL готового видео по `batch_request_id` — только успешные. */
+  urlsByRequestId: Record<string, string>;
+  /** Текст ошибки xAI по `batch_request_id` — для тех, кто упал
+   * (`BatchResult.error`, google.rpc.Status). */
+  errorsByRequestId: Record<string, string>;
 }
 
 export interface GrokVideoBatchStatus {
@@ -137,27 +178,9 @@ export class GrokVideoBatchService {
     );
 
     try {
-      const createRes = await axios.post(
-        `${XAI_BASE_URL}/batches`,
-        { name },
-        {
-          headers: this.headers(),
-          timeout: REQUEST_TIMEOUT_MS,
-          validateStatus: () => true,
-        },
-      );
-      if (createRes.status < 200 || createRes.status >= 300) {
-        return {
-          error: `xAI вернул статус ${createRes.status} при создании пачки: ${JSON.stringify(createRes.data).slice(0, 300)}`,
-        };
-      }
-      const xaiBatchId: string | undefined =
-        createRes.data?.id ?? createRes.data?.batch_id;
-      if (!xaiBatchId) {
-        return {
-          error: `ответ xAI не содержит ни "id", ни "batch_id": ${JSON.stringify(createRes.data).slice(0, 300)}`,
-        };
-      }
+      const created = await this.createBatch(name);
+      if (created.error !== undefined) return { error: created.error };
+      const xaiBatchId = created.xaiBatchId;
 
       this.logger.log(
         `видео-пачка создана: ${xaiBatchId}. Добавляю ${items.length} запросов...`,
@@ -165,12 +188,14 @@ export class GrokVideoBatchService {
 
       const batchRequests = items.map((item) => ({
         batch_request_id: item.batchRequestId,
-        // ⚠️ НЕ подтверждено — см. доккомментарий класса.
+        // Ключ oneof — см. доккомментарий класса (вывод по аналогии,
+        // переопределяется окружением); тело — по proto
+        // `GenerateVideoRequest`.
         batch_request: {
-          videos_generations: {
+          [GROK_BATCH_VIDEO_REQUEST_KEY]: {
             model: this.model,
             prompt: item.prompt,
-            ...(item.imageUrl ? { image_url: item.imageUrl } : {}),
+            ...(item.imageUrl ? { image: { url: item.imageUrl } } : {}),
             ...(item.referenceImageUrls?.length
               ? {
                   reference_images: item.referenceImageUrls.map((url) => ({
@@ -185,30 +210,110 @@ export class GrokVideoBatchService {
         },
       }));
 
-      const addRes = await axios.post(
-        `${XAI_BASE_URL}/batches/${xaiBatchId}/requests`,
-        { batch_requests: batchRequests },
-        {
-          headers: this.headers(),
-          timeout: REQUEST_TIMEOUT_MS,
-          validateStatus: () => true,
-        },
-      );
-      if (addRes.status < 200 || addRes.status >= 300) {
-        return {
-          error: `xAI вернул статус ${addRes.status} при добавлении запросов: ${JSON.stringify(addRes.data).slice(0, 300)}`,
-        };
-      }
-
-      this.logger.log(
-        `видео-пачка ${xaiBatchId} подана полностью (${items.length} запросов). Обработка на стороне xAI — обычно до 24 часов, проверка статуса по расписанию.`,
-      );
-      return { xaiBatchId };
+      return await this.addRequests(name, xaiBatchId, batchRequests);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`не удалось подать видео-пачку "${name}": ${message}`);
       return { error: message };
     }
+  }
+
+  /**
+   * Пачка расширений (`video_extension_request` в proto) — для
+   * продолжения цепочки одиночного ролика, начатого через батч
+   * (`GenerationService.continueGrokChain`). Отдельный метод, а не
+   * `kind` в `submitBatch`: у расширения другое тело и другие
+   * ограничения (без формата/разрешения), смешивать их в одном
+   * интерфейсе значило бы половину полей делать необязательными.
+   */
+  async submitExtendBatch(
+    name: string,
+    items: GrokVideoBatchExtendItem[],
+  ): Promise<GrokVideoBatchSubmitResult> {
+    if (!this.apiKey) return { error: 'GROK_API_KEY не задан' };
+    if (items.length === 0) {
+      return { error: 'пустой список запросов для пачки' };
+    }
+
+    this.logger.log(
+      `создаю пачку расширений "${name}" (${items.length} запросов)...`,
+    );
+    try {
+      const created = await this.createBatch(name);
+      if (created.error !== undefined) return { error: created.error };
+      const xaiBatchId = created.xaiBatchId;
+
+      const batchRequests = items.map((item) => ({
+        batch_request_id: item.batchRequestId,
+        batch_request: {
+          [GROK_BATCH_VIDEO_EXTEND_KEY]: {
+            model: this.model,
+            prompt: item.prompt,
+            video: { url: item.videoUrl },
+            duration: item.durationSeconds,
+          },
+        },
+      }));
+
+      return await this.addRequests(name, xaiBatchId, batchRequests);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `не удалось подать пачку расширений "${name}": ${message}`,
+      );
+      return { error: message };
+    }
+  }
+
+  private async createBatch(name: string): Promise<GrokVideoBatchSubmitResult> {
+    const createRes = await axios.post(
+      `${XAI_BASE_URL}/batches`,
+      { name },
+      {
+        headers: this.headers(),
+        timeout: REQUEST_TIMEOUT_MS,
+        validateStatus: () => true,
+      },
+    );
+    if (createRes.status < 200 || createRes.status >= 300) {
+      return {
+        error: `xAI вернул статус ${createRes.status} при создании пачки: ${JSON.stringify(createRes.data).slice(0, 300)}`,
+      };
+    }
+    const xaiBatchId: string | undefined =
+      createRes.data?.id ?? createRes.data?.batch_id;
+    if (!xaiBatchId) {
+      return {
+        error: `ответ xAI не содержит ни "id", ни "batch_id": ${JSON.stringify(createRes.data).slice(0, 300)}`,
+      };
+    }
+    return { xaiBatchId };
+  }
+
+  private async addRequests(
+    name: string,
+    xaiBatchId: string,
+    batchRequests: unknown[],
+  ): Promise<GrokVideoBatchSubmitResult> {
+    const addRes = await axios.post(
+      `${XAI_BASE_URL}/batches/${xaiBatchId}/requests`,
+      { batch_requests: batchRequests },
+      {
+        headers: this.headers(),
+        timeout: REQUEST_TIMEOUT_MS,
+        validateStatus: () => true,
+      },
+    );
+    if (addRes.status < 200 || addRes.status >= 300) {
+      return {
+        error: `xAI вернул статус ${addRes.status} при добавлении запросов: ${JSON.stringify(addRes.data).slice(0, 300)}`,
+      };
+    }
+
+    this.logger.log(
+      `видео-пачка ${xaiBatchId} ("${name}") подана полностью (${batchRequests.length} запросов). Обработка на стороне xAI — обычно до 24 часов, проверка статуса по расписанию.`,
+    );
+    return { xaiBatchId };
   }
 
   /** Готовность — `pendingCount === 0`, тот же принцип и то же
@@ -250,11 +355,18 @@ export class GrokVideoBatchService {
    * вызывающий обязан скачать и сохранить в свой Blob СРАЗУ, не
    * откладывая на следующий прогон крона.
    */
-  async getBatchResults(
+  async getBatchResults(xaiBatchId: string): Promise<Record<string, string>> {
+    return (await this.getBatchResultsDetailed(xaiBatchId)).urlsByRequestId;
+  }
+
+  /** То же, плюс ошибки по запросам — одиночному ролику нужно
+   * отличить «ещё не готово» от «упало» (`GenerationService.pollGrokStatus`). */
+  async getBatchResultsDetailed(
     xaiBatchId: string,
-  ): Promise<Record<string, string>> {
+  ): Promise<GrokVideoBatchResults> {
     const urlsByRequestId: Record<string, string> = {};
-    if (!this.apiKey) return urlsByRequestId;
+    const errorsByRequestId: Record<string, string> = {};
+    if (!this.apiKey) return { urlsByRequestId, errorsByRequestId };
 
     this.logger.log(`забираю результаты видео-пачки ${xaiBatchId}...`);
 
@@ -292,7 +404,12 @@ export class GrokVideoBatchService {
           if (!batchRequestId) continue;
 
           const url = this.extractBatchResultUrl(record);
-          if (url) urlsByRequestId[batchRequestId] = url;
+          if (url) {
+            urlsByRequestId[batchRequestId] = url;
+            continue;
+          }
+          const error = this.extractBatchResultError(record);
+          if (error) errorsByRequestId[batchRequestId] = error;
         }
 
         paginationToken = res.data?.pagination_token;
@@ -308,20 +425,44 @@ export class GrokVideoBatchService {
       );
     }
 
-    return urlsByRequestId;
+    return { urlsByRequestId, errorsByRequestId };
   }
 
-  /** ⚠️ Путь до `video.url` внутри `batch_result` — та же догадка по
-   * аналогии, что и у запроса (см. доккомментарий класса), не факт. */
+  /**
+   * `batch_result.response.<oneof-ключ>.video.url` — имя oneof-ключа
+   * в REST не подтверждено (см. доккомментарий класса), поэтому
+   * ищется ЛЮБОЙ объект в `response`, у которого есть `video.url`:
+   * форма `VideoResponse { video: { url } }` подтверждена и proto, и
+   * живым синхронным ответом.
+   */
   private extractBatchResultUrl(item: Record<string, unknown>): string | null {
     const batchResult = item.batch_result as
-      | {
-          response?: {
-            videos_generations?: { video?: { url?: string } };
-          };
-        }
+      | { response?: Record<string, unknown> }
       | undefined;
-    const url = batchResult?.response?.videos_generations?.video?.url;
-    return typeof url === 'string' ? url : null;
+    const response = batchResult?.response;
+    if (!response || typeof response !== 'object') return null;
+    for (const value of Object.values(response)) {
+      const url = (value as { video?: { url?: unknown } } | null)?.video?.url;
+      if (typeof url === 'string' && url) return url;
+    }
+    return null;
+  }
+
+  /** `BatchResult.error` — google.rpc.Status `{ code, message }`. */
+  private extractBatchResultError(
+    item: Record<string, unknown>,
+  ): string | null {
+    const batchResult = item.batch_result as
+      | { error?: { code?: number; message?: string } }
+      | undefined;
+    const error = batchResult?.error;
+    if (!error) return null;
+    const message =
+      typeof error.message === 'string' && error.message
+        ? error.message
+        : 'xAI batch: запрос завершился ошибкой';
+    return error.code !== undefined
+      ? `${message} (code ${error.code})`
+      : message;
   }
 }

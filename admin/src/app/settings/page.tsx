@@ -9,6 +9,8 @@ import {
   setAnalysisProviderDefault,
   getVideoProviderSettings,
   setVideoProviderDefault,
+  getGrokTransportSettings,
+  setGrokTransport,
 } from '../../lib/endpoints';
 import type {
   EnvCheckResult,
@@ -19,6 +21,8 @@ import type {
   AnalysisProviderSettingsView,
   VideoProviderKey,
   VideoProviderSettingsView,
+  GrokTransportKey,
+  GrokTransportSettingsView,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -295,6 +299,84 @@ function VideoProviderCard() {
   );
 }
 
+/**
+ * Транспорт Grok для одиночных роликов (доп. запрос владельца продукта,
+ * 14.09.2026): как мастер ходит в xAI за одним роликом — синхронно
+ * (минуты) или через Batch API (дешевле, но «обычно до 24 часов»).
+ * На весь стенд, без привязки к бренду; действует на следующий старт.
+ */
+function GrokTransportCard() {
+  const [state, setState] = useState<GrokTransportSettingsView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    getGrokTransportSettings()
+      .then(setState)
+      .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку транспорта Grok'));
+  };
+
+  useEffect(load, []);
+
+  const handleChange = async (transport: GrokTransportKey) => {
+    if (!state || transport === state.active) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await setGrokTransport(transport);
+      setState(updated);
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить настройку транспорта Grok');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Транспорт Grok для одиночных роликов</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Как мастер отправляет в xAI одиночную генерацию — и один сегмент, и цепочку «база + расширение».
+        Синхронные вызовы отвечают за минуты. Batch API дешевле по прайсу xAI, но обрабатывается
+        «обычно до 24 часов»; ролик всё это время висит в статусе рендера и появится сам, как только
+        пачка готова. Действует на следующий запуск; уже идущий ролик дорисовывается своим транспортом.
+        Каталог-партии и перевод блога всегда идут батчем — на них это не влияет.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>{error}</p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && (
+        <>
+          <div className="filters" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <select
+              aria-label="Транспорт Grok для одиночных роликов"
+              value={state.active}
+              disabled={saving}
+              onChange={(e) => handleChange(e.target.value as GrokTransportKey)}
+            >
+              {state.options.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {opt.key === 'batch' ? 'Batch API (дешевле, до 24 часов)' : 'Синхронные вызовы (минуты)'}
+                </option>
+              ))}
+            </select>
+            {saving && <span className="muted">Сохраняю…</span>}
+          </div>
+          <p className="muted" style={{ fontSize: 13 }}>
+            {state.source === 'admin'
+              ? 'Задано вручную на этом экране.'
+              : 'Ещё не менялось здесь — используются синхронные вызовы.'}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [result, setResult] = useState<EnvSettingsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -350,6 +432,7 @@ export default function SettingsPage() {
       <VoiceoverProviderCard />
       <AnalysisProviderCard />
       <VideoProviderCard />
+      <GrokTransportCard />
 
       <div className="card" style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
         <StatusBadge severity={result.allOk ? 'ok' : problems.some((p) => p.severity === 'critical') ? 'critical' : 'warning'} />

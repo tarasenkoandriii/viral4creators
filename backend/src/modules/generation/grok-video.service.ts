@@ -85,6 +85,13 @@ import { loadConfiguration } from '../../config/configuration';
 const XAI_BASE_URL = 'https://api.x.ai/v1';
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/** Нативная длительность генерации, docs.x.ai (Video Generation): 1–15 с. */
+const GROK_MIN_DURATION_SECONDS = 1;
+const GROK_MAX_DURATION_SECONDS = 15;
+/** Длина добавляемой части у расширения, docs.x.ai (Video Extension): 2–10 с. */
+const GROK_MIN_EXTEND_DURATION_SECONDS = 2;
+const GROK_MAX_EXTEND_DURATION_SECONDS = 10;
+
 export type GrokResolution = '480p' | '720p' | '1080p';
 
 export interface GrokVideoStartResult {
@@ -147,22 +154,19 @@ export class GrokVideoService {
    * качества честнее отказа там, где вызывающий мог не знать про этот
    * потолок именно у этого режима.
    *
-   * `extendVideoUrl` — Scene Extension (ТЗ §9, этап 4 плана §14):
-   * продолжает СУЩЕСТВУЮЩЕЕ видео (предыдущий сегмент цепочки) с
-   * последнего кадра. Официально подтверждено — `docs.x.ai`, поле
-   * `video_url` (Python SDK: `client.video.extend(video_url=...,
-   * duration=...)`) — «Only one mode can be active per request»,
-   * взаимоисключающе с `imageUrl`/`referenceImageUrls` (та же логика
-   * XOR, что уже здесь есть). `durationSeconds` в этом режиме — это
-   * ДЛИНА ДОБАВЛЯЕМОГО сегмента, не итоговая длина ролика — расчёт,
-   * сколько сегментов и какой длины нужно всего, живёт в
-   * `common/video-extension-plan.ts`, не здесь.
+   * `durationSeconds` — нативная длительность ролика, 1–15 с
+   * (docs.x.ai, Video Generation) — НЕ фиксированные 8: до 14.09.2026
+   * сюда всегда приходило `VIDEO_DURATION_SECONDS`, из-за чего любой
+   * запрос длиннее 8 с рендерился восьмисекундным. Сколько секунд
+   * просить — решает `common/video-extension-plan.ts` (`segments[0]`).
+   *
+   * Расширение существующего ролика — НЕ этот метод, а `extendVideo()`
+   * ниже: у xAI это отдельный эндпоинт с другим телом.
    */
   async startGeneration(params: {
     prompt: string;
     imageUrl?: string;
     referenceImageUrls?: string[];
-    extendVideoUrl?: string;
     durationSeconds: number;
     aspectRatio: string;
     resolution: GrokResolution;
@@ -170,16 +174,19 @@ export class GrokVideoService {
     if (!this.apiKey) {
       throw new Error('GROK_API_KEY не задан');
     }
-    const modesSet = [
-      params.imageUrl,
-      params.referenceImageUrls?.length,
-      params.extendVideoUrl,
-    ].filter(Boolean).length;
-    if (modesSet > 1) {
+    if (params.imageUrl && params.referenceImageUrls?.length) {
       // Программная ошибка вызывающего, не ввод пользователя — не
       // локализуем, это никогда не должно дойти до интерфейса.
       throw new Error(
-        'GrokVideoService.startGeneration: imageUrl/referenceImageUrls/extendVideoUrl взаимоисключающие (§9, §15 ТЗ)',
+        'GrokVideoService.startGeneration: imageUrl/referenceImageUrls взаимоисключающие (§15 ТЗ)',
+      );
+    }
+    if (
+      params.durationSeconds < GROK_MIN_DURATION_SECONDS ||
+      params.durationSeconds > GROK_MAX_DURATION_SECONDS
+    ) {
+      throw new Error(
+        `GrokVideoService.startGeneration: duration ${params.durationSeconds} вне 1–${GROK_MAX_DURATION_SECONDS} с (docs.x.ai)`,
       );
     }
     const resolution =
@@ -200,9 +207,6 @@ export class GrokVideoService {
               })),
             }
           : {}),
-        ...(params.extendVideoUrl
-          ? { video_url: params.extendVideoUrl }
-          : {}),
         duration: params.durationSeconds,
         aspect_ratio: params.aspectRatio,
         resolution,
@@ -210,13 +214,74 @@ export class GrokVideoService {
       { headers: this.headers(), timeout: REQUEST_TIMEOUT_MS, validateStatus: () => true },
     );
 
+    return this.readRequestId(res, 'Grok video start');
+  }
+
+  /**
+   * Scene Extension (ТЗ §9, этап 4 плана §14) — продолжает
+   * СУЩЕСТВУЮЩЕЕ видео с последнего кадра; результат — один склеенный
+   * ролик (оригинал + продолжение), забирается тем же `getStatus()`.
+   *
+   * Найдено по реальному сбою 14.09.2026 («при любой длительности —
+   * 8 секунд»): раньше продолжение слалось на `/v1/videos/generations`
+   * с полем `video_url` — такого поля у этого эндпоинта нет, xAI его
+   * молча игнорировал и рендерил НОВЫЙ ролик с нуля, который затирал
+   * первый сегмент. Подтверждено официально (`docs.x.ai/developers/
+   * model-capabilities/video/extension`, с curl-примером):
+   *   - `POST https://api.x.ai/v1/videos/extensions`;
+   *   - тело `{ model, prompt, duration, video: { url } }` — видео
+   *     объектом `{ url }`, как у `reference_images`, не голой строкой;
+   *   - `duration` — длина ДОБАВЛЯЕМОЙ части, 2–10 с (по умолчанию 6);
+   *   - вход — .mp4 длиной 2–15 с; поэтому расширить можно только
+   *     базовый сегмент, «цепочки» из нескольких расширений у Grok нет
+   *     (см. `GROK_MAX_SECONDS` в `common/video-extension-plan.ts`);
+   *   - `aspect_ratio`/`resolution` НЕ принимаются: формат наследуется
+   *     от входа, выход не выше 720p — 1080p-база после расширения
+   *     станет 720p, это ограничение API, не наше.
+   * Ответ — тот же `request_id`, что у генерации; опрос — тот же
+   * `GET /v1/videos/{request_id}`.
+   */
+  async extendVideo(params: {
+    prompt: string;
+    videoUrl: string;
+    durationSeconds: number;
+  }): Promise<GrokVideoStartResult> {
+    if (!this.apiKey) {
+      throw new Error('GROK_API_KEY не задан');
+    }
+    if (
+      params.durationSeconds < GROK_MIN_EXTEND_DURATION_SECONDS ||
+      params.durationSeconds > GROK_MAX_EXTEND_DURATION_SECONDS
+    ) {
+      throw new Error(
+        `GrokVideoService.extendVideo: duration ${params.durationSeconds} вне ${GROK_MIN_EXTEND_DURATION_SECONDS}–${GROK_MAX_EXTEND_DURATION_SECONDS} с (docs.x.ai)`,
+      );
+    }
+
+    const res = await axios.post(
+      `${XAI_BASE_URL}/videos/extensions`,
+      {
+        model: this.model,
+        prompt: params.prompt,
+        duration: params.durationSeconds,
+        video: { url: params.videoUrl },
+      },
+      { headers: this.headers(), timeout: REQUEST_TIMEOUT_MS, validateStatus: () => true },
+    );
+
+    return this.readRequestId(res, 'Grok video extend');
+  }
+
+  /** Общее для генерации и расширения чтение `request_id` из ответа. */
+  private readRequestId(
+    res: { status: number; data?: { request_id?: string; id?: string } },
+    what: string,
+  ): GrokVideoStartResult {
     if (res.status >= 400) {
       this.logger.error(
-        `Grok video start failed: HTTP ${res.status} — ${JSON.stringify(res.data)}`,
+        `${what} failed: HTTP ${res.status} — ${JSON.stringify(res.data)}`,
       );
-      throw new Error(
-        `Grok video generation failed to start (HTTP ${res.status})`,
-      );
+      throw new Error(`${what} failed to start (HTTP ${res.status})`);
     }
 
     // Не подтверждено буквально (см. доккомментарий класса, п.1) —
@@ -225,11 +290,9 @@ export class GrokVideoService {
       res.data?.request_id ?? res.data?.id;
     if (!requestId) {
       this.logger.error(
-        `Grok video start: ответ без request_id — ${JSON.stringify(res.data)}`,
+        `${what}: ответ без request_id — ${JSON.stringify(res.data)}`,
       );
-      throw new Error(
-        'Grok video generation: не удалось прочитать request_id из ответа',
-      );
+      throw new Error(`${what}: не удалось прочитать request_id из ответа`);
     }
 
     return { requestId };

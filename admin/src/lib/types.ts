@@ -160,6 +160,21 @@ export interface VideoProviderSettingsView {
   options: VideoProviderOptionView[];
 }
 
+// ── Транспорт Grok для одиночных роликов (доп. запрос владельца
+// продукта, 14.09.2026; backend grok-video-transport.ts) ──
+
+export type GrokTransportKey = 'sync' | 'batch';
+
+export interface GrokTransportOptionView {
+  key: GrokTransportKey;
+}
+
+export interface GrokTransportSettingsView {
+  active: GrokTransportKey;
+  source: 'admin' | 'env-default';
+  options: GrokTransportOptionView[];
+}
+
 // ── Очередь публикации (backend/src/modules/publication, этап 18) ──
 
 export type PublicationPlatform = 'YOUTUBE' | 'TIKTOK';

@@ -36,6 +36,8 @@ import { AdminAnalysisSettingsService } from './admin-analysis-settings.service'
 import { ANALYSIS_PROVIDER_KEYS } from '../analysis/default-analysis-provider';
 import { AdminVideoProviderSettingsService } from './admin-video-provider-settings.service';
 import { VIDEO_PROVIDER_KEYS } from '../generation/default-video-provider';
+import { AdminGrokTransportSettingsService } from './admin-grok-transport-settings.service';
+import { GROK_VIDEO_TRANSPORT_KEYS } from '../generation/grok-video-transport';
 import { PlanId, PLAN_IDS, isPlanId } from '../../common/plans';
 import { isVoiceMode } from '../../common/voice-mode';
 import {
@@ -106,6 +108,11 @@ export class SetVideoProviderDto {
   provider!: string;
 }
 
+export class SetGrokTransportDto {
+  @IsIn(GROK_VIDEO_TRANSPORT_KEYS as unknown as string[])
+  transport!: string;
+}
+
 const WORKFLOW_WINDOWS: WorkflowWindow[] = ['hour', 'day', 'week', 'month'];
 
 /** Этап 78 — невалидный/отсутствующий `?window=` тихо откатывается на
@@ -142,6 +149,7 @@ export class AdminPanelController {
     private readonly voiceoverSettings: AdminVoiceoverSettingsService,
     private readonly analysisSettings: AdminAnalysisSettingsService,
     private readonly videoProviderSettings: AdminVideoProviderSettingsService,
+    private readonly grokTransportSettings: AdminGrokTransportSettingsService,
   ) {}
 
   @Get('sessions')
@@ -283,6 +291,26 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.videoProviderSettings.setDefault(dto.provider, req.userId);
+  }
+
+  /**
+   * Транспорт Grok для одиночных роликов — доп. запрос владельца
+   * продукта (14.09.2026): синхронные вызовы или Batch API, на весь
+   * стенд, без привязки к бренду (`grok-video-transport.ts`).
+   */
+  @Get('settings/grok-transport')
+  async getGrokTransport(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.grokTransportSettings.get();
+  }
+
+  @Patch('settings/grok-transport')
+  async setGrokTransport(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetGrokTransportDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.grokTransportSettings.set(dto.transport, req.userId);
   }
 
   // ── Воронка движения по воркфлоу (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md,

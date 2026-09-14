@@ -97,6 +97,7 @@ function build(session: unknown = readySession()) {
   const grokVideo = {
     isConfigured: jest.fn().mockReturnValue(false),
     startGeneration: jest.fn(),
+    extendVideo: jest.fn(),
     getStatus: jest.fn(),
     modelName: 'grok-imagine-video-1.5',
   };
@@ -114,6 +115,8 @@ function build(session: unknown = readySession()) {
     creditLedger as never,
     grokVideo as never,
     promptService as never,
+    { submitBatch: jest.fn(), submitExtendBatch: jest.fn() } as never,
+    { get: jest.fn().mockResolvedValue(null) } as never,
   );
   return {
     svc,

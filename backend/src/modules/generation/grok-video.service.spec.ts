@@ -64,3 +64,93 @@ describe('GrokVideoService.getStatus', () => {
     expect(result.error).toContain('404');
   });
 });
+
+// Найдено по реальному сбою 14.09.2026 («при любой длительности — 8
+// секунд»): продолжение цепочки слалось на `/v1/videos/generations` с
+// несуществующим полем `video_url`, а базовый вызов всегда просил 8 с.
+// Тесты фиксируют подтверждённую документацией форму
+// (`docs.x.ai/developers/model-capabilities/video/extension`).
+describe('GrokVideoService.startGeneration / extendVideo (длительность)', () => {
+  beforeEach(() => {
+    mockedAxios.post.mockReset();
+  });
+
+  it('startGeneration передаёт нативную длительность, а не константу 8', async () => {
+    mockedAxios.post.mockResolvedValue({
+      status: 200,
+      data: { request_id: 'r1' },
+    });
+    const svc = new GrokVideoService();
+    await svc.startGeneration({
+      prompt: 'p',
+      durationSeconds: 12,
+      aspectRatio: '9:16',
+      resolution: '480p',
+    });
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'https://api.x.ai/v1/videos/generations',
+      expect.objectContaining({ duration: 12 }),
+      expect.anything(),
+    );
+  });
+
+  it('startGeneration отвергает длительность вне 1–15 с до вызова API', async () => {
+    const svc = new GrokVideoService();
+    await expect(
+      svc.startGeneration({
+        prompt: 'p',
+        durationSeconds: 16,
+        aspectRatio: '9:16',
+        resolution: '480p',
+      }),
+    ).rejects.toThrow(/1–15/);
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  it('extendVideo идёт на /v1/videos/extensions с video: { url } и длиной хвоста', async () => {
+    mockedAxios.post.mockResolvedValue({
+      status: 200,
+      data: { request_id: 'r2' },
+    });
+    const svc = new GrokVideoService();
+    const result = await svc.extendVideo({
+      prompt: 'continue',
+      videoUrl: 'https://blob.test/seg1.mp4',
+      durationSeconds: 5,
+    });
+    expect(result).toEqual({ requestId: 'r2' });
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'https://api.x.ai/v1/videos/extensions',
+      {
+        model: 'grok-imagine-video-1.5',
+        prompt: 'continue',
+        duration: 5,
+        video: { url: 'https://blob.test/seg1.mp4' },
+      },
+      expect.anything(),
+    );
+    const body = mockedAxios.post.mock.calls[0][1] as Record<string, unknown>;
+    expect(body).not.toHaveProperty('video_url');
+    expect(body).not.toHaveProperty('aspect_ratio');
+    expect(body).not.toHaveProperty('resolution');
+  });
+
+  it('extendVideo отвергает хвост вне 2–10 с до вызова API', async () => {
+    const svc = new GrokVideoService();
+    await expect(
+      svc.extendVideo({
+        prompt: 'c',
+        videoUrl: 'https://x/1.mp4',
+        durationSeconds: 1,
+      }),
+    ).rejects.toThrow(/2–10/);
+    await expect(
+      svc.extendVideo({
+        prompt: 'c',
+        videoUrl: 'https://x/1.mp4',
+        durationSeconds: 11,
+      }),
+    ).rejects.toThrow(/2–10/);
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+});
