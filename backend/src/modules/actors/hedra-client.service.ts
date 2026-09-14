@@ -50,6 +50,9 @@ const PENDING = new Set(['IN_QUEUE', 'IN_PROGRESS', 'QUEUED', 'PROCESSING']);
 const COMPLETE = new Set(['COMPLETED', 'COMPLETE', 'SUCCEEDED']);
 const FAILURE = new Set(['FAILED', 'ERROR', 'CANCELLED', 'CANCELED']);
 
+/** М-6.5 седьмого аудита: единый таймаут JSON-вызовов Hedra. */
+const HEDRA_TIMEOUT_MS = 30_000;
+
 @Injectable()
 export class HedraClientService {
   private readonly logger = new Logger(HedraClientService.name);
@@ -64,7 +67,15 @@ export class HedraClientService {
     return !!this.key();
   }
 
-  private async withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  private async withRetry<T>(
+    fn: () => Promise<T>,
+    label: string,
+    // М-6.5 седьмого аудита: для платного submit сетевая ошибка БЕЗ
+    // статуса (обрыв после того, как запрос долетел) не повторяется —
+    // повтор создал бы второй платный job, а jobId первого нигде не
+    // сохранён. Повторяются только явные 429/5xx.
+    retryWithoutStatus = true,
+  ): Promise<T> {
     let last: unknown;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -72,7 +83,10 @@ export class HedraClientService {
       } catch (e) {
         last = e;
         const status = (e as { status?: number }).status;
-        const transient = !status || status === 429 || status >= 500;
+        const transient =
+          (!status && retryWithoutStatus) ||
+          status === 429 ||
+          (status ?? 0) >= 500;
         this.logger.warn(
           `${label}: попытка ${attempt}/3 не удалась — ${
             e instanceof Error ? e.message : String(e)
@@ -90,7 +104,10 @@ export class HedraClientService {
     init: RequestInit,
     expectedStatuses: number[],
   ): Promise<Record<string, unknown>> {
-    const res = await fetch(`${this.base}${path}`, init);
+    const res = await fetch(`${this.base}${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(HEDRA_TIMEOUT_MS),
+    });
     const text = await res.text();
     if (!expectedStatuses.includes(res.status)) {
       const err = Object.assign(
@@ -138,6 +155,7 @@ export class HedraClientService {
           [200, 201, 202],
         ),
       'hedra submit',
+      false,
     );
 
     const jobId = (data.job_id ?? data.jobId ?? data.id) as string | undefined;

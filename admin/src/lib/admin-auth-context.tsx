@@ -50,10 +50,15 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       setUnreachable(null);
     } catch (err) {
       setMe(null);
-      if (err instanceof ApiRequestError) {
+      if (err instanceof ApiRequestError && err.httpStatus === 401) {
         // 401 — честный редирект на /login, не молчаливый показ пустых данных.
         setUnreachable(null);
         if (pathname !== '/login') router.replace('/login');
+      } else if (err instanceof ApiRequestError) {
+        // Аудит 14.09.2026 (М-7.9): 502/503/500 от шлюза — это «сервис
+        // недоступен», а не «не вошёл»; раньше любой ApiRequestError
+        // выбрасывал на /login, где тот же 5xx повторялся при входе.
+        setUnreachable(`Сервис ответил ошибкой ${err.httpStatus}: ${err.message}`);
       } else {
         // Не ответ сервера, а его отсутствие: редирект на /login только
         // запутает — входить не во что.

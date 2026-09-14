@@ -91,6 +91,9 @@ const TERMINAL_FAILURE_STATUSES = new Set(['Declined', 'Expired', 'Voided']);
 /** Отличимый от `PlanId | null` маркер «эта доставка вебхука уже была
  * применена раньше» — конкурентная/повторная доставка внутри
  * `$transaction` под advisory-замком (Г-2.5/Г-2.6). */
+/** Порядок тарифов для сравнения «дороже/дешевле» (М-1.1). */
+const PLAN_RANK: Record<PlanId, number> = { LITE: 0, STANDARD: 1, PREMIUM: 2 };
+
 const ALREADY_PROCESSED = Symbol('billing:already-processed');
 
 @Injectable()
@@ -135,6 +138,55 @@ export class BillingService {
 
   // ── Старт покупки ─────────────────────────────────────────────────
 
+  /**
+   * См. М-1.1 в `startSubscriptionCheckout`: отменить в Telegram
+   * действующую Stars-подписку пользователя перед выпуском нового
+   * подписочного инвойса. Идентификатор — `telegram_payment_charge_id`
+   * последнего успешного Stars-платежа за подписку (тот же ключ, что у
+   * `PlanService.notifyTelegramCancellation`). Неудача отмены — не
+   * повод блокировать покупку: логируем громко, чтобы оператор снял
+   * старую подписку вручную, но не оставляем пользователя без апгрейда.
+   */
+  private async cancelExistingStarsSubscription(userId: string): Promise<void> {
+    const existing = await this.prisma.subscription.findUnique({
+      where: { userId },
+      select: { method: true, status: true },
+    });
+    if (
+      !existing ||
+      existing.method !== 'STARS' ||
+      existing.status === 'CANCELED'
+    ) {
+      return;
+    }
+    const [user, lastPayment] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { telegramId: true },
+      }),
+      this.prisma.payment.findFirst({
+        where: {
+          userId,
+          method: 'STARS',
+          purpose: 'SUBSCRIPTION',
+          status: 'SUCCEEDED',
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { providerRef: true },
+      }),
+    ]);
+    if (!user?.telegramId || !lastPayment) return;
+    const ok = await this.stars.cancelSubscription(
+      user.telegramId,
+      lastPayment.providerRef,
+    );
+    if (!ok) {
+      this.logger.warn(
+        `user ${userId}: не удалось отменить прежнюю Stars-подписку (${lastPayment.providerRef}) перед новым инвойсом — проверьте вручную, иначе Telegram будет продлевать обе`,
+      );
+    }
+  }
+
   async startSubscriptionCheckout(
     userId: string,
     plan: 'STANDARD' | 'PREMIUM',
@@ -150,6 +202,18 @@ export class BillingService {
     const title = `Подписка ${plan} — месяц`;
     if (method === 'STARS') {
       this.assertStarsConfigured();
+      // М-1.1 седьмого аудита: у Telegram Stars нет «смены плана» —
+      // каждый инвойс с `subscription_period` заводит ОТДЕЛЬНУЮ
+      // автопродляемую подписку. Апгрейд STANDARD→PREMIUM без этого
+      // шага оставлял обе: старая продлевалась через 30 дней и её
+      // `successful_payment` (план из payload инвойса) откатывал
+      // пользователя на STANDARD при списанных 3500 XTR/мес, а
+      // `setPlan('LITE')` отменял в Telegram только последнюю. Поэтому
+      // перед новым инвойсом старая Stars-подписка отменяется на стороне
+      // Telegram; локальная строка не трогается — её обновит платёж по
+      // новому инвойсу (`applySuccessfulPayment`: `max(periodEnd)+30d`,
+      // оплаченное время не теряется).
+      await this.cancelExistingStarsSubscription(userId);
       const payload = signStarsInvoicePayload(
         { userId, purpose: 'SUBSCRIPTION', target: plan },
         this.cfg().paymentTokenKey,
@@ -207,6 +271,18 @@ export class BillingService {
     const title = `Пакет: ${pack.title}`;
     if (method === 'STARS') {
       this.assertStarsConfigured();
+      // М-1.1 седьмого аудита: у Telegram Stars нет «смены плана» —
+      // каждый инвойс с `subscription_period` заводит ОТДЕЛЬНУЮ
+      // автопродляемую подписку. Апгрейд STANDARD→PREMIUM без этого
+      // шага оставлял обе: старая продлевалась через 30 дней и её
+      // `successful_payment` (план из payload инвойса) откатывал
+      // пользователя на STANDARD при списанных 3500 XTR/мес, а
+      // `setPlan('LITE')` отменял в Telegram только последнюю. Поэтому
+      // перед новым инвойсом старая Stars-подписка отменяется на стороне
+      // Telegram; локальная строка не трогается — её обновит платёж по
+      // новому инвойсу (`applySuccessfulPayment`: `max(periodEnd)+30d`,
+      // оплаченное время не теряется).
+      await this.cancelExistingStarsSubscription(userId);
       const payload = signStarsInvoicePayload(
         { userId, purpose: 'CREDIT_PACK', target: pack.id },
         this.cfg().paymentTokenKey,
@@ -365,6 +441,7 @@ export class BillingService {
         payload.purpose,
         payload.target,
         null,
+        sp.is_recurring === true,
       );
     });
     if (applied === ALREADY_PROCESSED) return; // повторная доставка — уже обработано
@@ -504,6 +581,9 @@ export class BillingService {
     purpose: 'SUBSCRIPTION' | 'CREDIT_PACK',
     planOrPackId: string,
     recTokenEnc: string | null,
+    /** Stars: `successful_payment.is_recurring` — автопродление, а не
+     * новая покупка (М-1.1 седьмого аудита). */
+    isRecurring = false,
   ): Promise<PlanId | null> {
     if (purpose === 'CREDIT_PACK') {
       // Число кредитов резолвится по каталогу и записывается на саму
@@ -549,6 +629,38 @@ export class BillingService {
         `Оплата подписки после запроса отмены — подписка НЕ реанимирована: payment=${payment.id}, user=${payment.userId}`,
       );
       return null;
+    }
+    if (
+      existing &&
+      existing.status !== 'CANCELED' &&
+      isRecurring &&
+      existing.plan !== plan &&
+      PLAN_RANK[plan] < PLAN_RANK[existing.plan as PlanId]
+    ) {
+      // М-1.1 седьмого аудита, вторая линия защиты: автопродление
+      // ПРЕЖНЕЙ (более дешёвой) Stars-подписки, которую Telegram не
+      // отменил, не должно откатывать план пользователя, уже
+      // заплатившего за более дорогой. Деньги получены — время
+      // продлеваем, план оставляем текущим; оператору — тревога, чтобы
+      // снять лишнюю подписку в Telegram.
+      this.logger.error(
+        `user ${payment.userId}: пришло автопродление Stars по плану ${plan}, хотя действует ${existing.plan} — вторая подписка в Telegram не отменена (payment=${payment.id}); план не понижен`,
+      );
+      const base =
+        existing.currentPeriodEnd > new Date()
+          ? existing.currentPeriodEnd
+          : new Date();
+      await tx.subscription.update({
+        where: { userId: payment.userId },
+        data: {
+          status: 'ACTIVE',
+          currentPeriodEnd: new Date(
+            base.getTime() + SUBSCRIPTION_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+          ),
+          payments: { connect: { id: payment.id } },
+        },
+      });
+      return existing.plan as PlanId;
     }
     if (existing) {
       // Продление раньше срока (ранний ретрай или смена способа оплаты)

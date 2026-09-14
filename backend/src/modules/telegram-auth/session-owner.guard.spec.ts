@@ -51,6 +51,35 @@ describe('sessionIdFromRequest', () => {
   });
 });
 
+describe('SessionOwnerGuard — admin-периметр (М-4.1 седьмого аудита)', () => {
+  it('/api/admin/actors/:sessionId/* пропускается без чтения сессии — там свой AdminSessionGuard', async () => {
+    const { guard, prisma } = build('owner-1');
+    const ok = await guard.canActivate(
+      ctx({
+        originalUrl: '/api/admin/actors/s1/status',
+        params: { sessionId: 's1' },
+        telegramUserId: undefined,
+      }),
+    );
+    expect(ok).toBe(true);
+    expect(prisma.session.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('обычный маршрут с тем же параметром по-прежнему проверяет владельца', async () => {
+    const { guard } = build('owner-1');
+    await expect(
+      guard.canActivate(
+        ctx({
+          originalUrl: '/api/sessions/s1/video',
+          params: { sessionId: 's1' },
+          telegramUserId: 'someone-else',
+        }),
+      ),
+    ).rejects.toBeDefined();
+  });
+});
+
 describe('SessionOwnerGuard (Б-3.4)', () => {
   it('чужая сессия с владельцем — отказ', async () => {
     const { guard } = build('u1');

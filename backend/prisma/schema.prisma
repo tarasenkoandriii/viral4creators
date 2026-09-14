@@ -1317,7 +1317,12 @@ enum CreditLedgerReason {
 model Payment {
   id     String        @id @default(cuid())
   userId String
-  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// М-5.5 седьмого аудита: `Restrict`, не `Cascade` — финансовая
+  /// история переживает удаление аккаунта (providerRef/rawPayload —
+  /// единственные следы для споров и идемпотентности вебхуков);
+  /// удаление пользователя с платежами должно анонимизировать, а не
+  /// стирать (миграция 20261026090000_finance_restrict).
+  user   User          @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   method  PaymentMethod
   purpose PaymentPurpose
@@ -1412,7 +1417,8 @@ model Subscription {
 model CreditLedger {
   id     String @id @default(cuid())
   userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// М-5.5: та же логика, что у Payment — журнал не удаляется.
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   /// Положительный — начисление (PURCHASE/ADMIN_ADJUST/REFUND),
   /// отрицательный — списание (CONSUME).
@@ -1893,6 +1899,11 @@ model CronJobLock {
   /// упал, не снял явно) и подхватывается следующим тиком как свободный.
   lockedUntil DateTime?
 
+  /// М-3.7 седьмого аудита: кто держит замок. `releaseJobLock` снимает
+  /// замок только со своим токеном — иначе первый (затянувшийся) прогон
+  /// в `finally` обнулял замок второго, и третий стартовал параллельно.
+  ownerToken String?
+
   updatedAt DateTime @default(now()) @updatedAt
 
   @@map("cron_job_locks")
@@ -1996,5 +2007,10 @@ model WorkflowStageEvent {
   /// колонка после stage здесь другая (fromStage, не occurredAt
   /// конкретно для COUNT).
   @@index([workflow, stage, fromStage])
+  /// М-5.7 седьмого аудита: воронка группирует по stage (не константа)
+  /// внутри окна occurredAt, когорта — JOIN по entityId; оба запроса
+  /// не покрывались индексами выше.
+  @@index([workflow, occurredAt])
+  @@index([workflow, entityId])
   @@map("workflow_stage_events")
 }

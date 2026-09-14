@@ -25,6 +25,8 @@
   "wizardErrors": {
     "sessionCreateFailed": "Couldn't create the session",
     "analysisStatusFailed": "Couldn't check the analysis status",
+    "analysisFailed": "Analysis failed",
+    "videoFailed": "Video generation failed",
     "analysisStartFailed": "Couldn't start the analysis",
     "uploadFailed": "Upload failed",
     "libraryPickFailed": "Couldn't pull the analysis from the library",
@@ -1054,6 +1056,7 @@
     "textCardLoadError": "Couldn't prepare the text cards. This won't stop you from continuing with the finished prompt.",
     "preparingHint": "Assembling references and starting the render — this takes a few seconds",
     "generatingNote": "Usually 3–5 minutes. Don't close the page.",
+    "generatingBatchNote": "The video is queued at xAI — this can take up to 24 hours. You can close this page: the result will appear here on its own.",
     "videoDoneTitle": "Video is ready",
     "videoDoneHint": "Compare it with the original below.",
     "originalLabel": "Original",

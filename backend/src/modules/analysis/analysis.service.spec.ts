@@ -106,6 +106,11 @@ function build(
     sessionId: 's1',
     userId: 'userId' in over ? over.userId : 'u1',
     originalVideo: 'originalVideo' in over ? over.originalVideo : uploaded(),
+    // Спека отстала от кода (этап 59/60): разбор канонически на
+    // английском и переводится на локаль сессии отдельным (дешёвым)
+    // Gemini-вызовом. Тесты кеша считают ВИДЕО-вызовы Gemini — фиксируем
+    // локаль `en`, чтобы перевод не примешивался к счётчику.
+    locale: 'en',
   };
   const sessionService = {
     getSession: jest.fn(async () => (state ? { ...state } : null)),

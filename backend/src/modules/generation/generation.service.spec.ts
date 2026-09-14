@@ -682,7 +682,7 @@ describe('GenerationService.fetchReference — вторая линия защи�
     const { svc } = build();
     const own = 'https://x.public.blob.vercel-storage.com/sessions/s1/c1.png';
     const bytes = await (svc as any).fetchReference(ref({ url: own }));
-    expect(fetchSpy).toHaveBeenCalledWith(own);
+    expect(fetchSpy).toHaveBeenCalledWith(own, expect.anything());
     expect([...bytes]).toEqual([1, 2, 3]);
 
     fetchSpy.mockResolvedValue({ ok: false, status: 404 } as never);

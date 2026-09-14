@@ -43,9 +43,21 @@ function build() {
         ),
     },
   };
-  const stars = { refundStarPayment: jest.fn().mockResolvedValue(true) };
+  // М-1.6: возврат откатывает услугу в транзакции — сторно кредитов /
+  // снятие автопродления.
+  Object.assign(prisma, {
+    creditLedger: { create: jest.fn().mockResolvedValue({}) },
+    subscription: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn(prisma),
+    ),
+  });
+  const stars = {
+    refundStarPayment: jest.fn().mockResolvedValue(true),
+    cancelSubscription: jest.fn().mockResolvedValue(true),
+  };
   const svc = new AdminBillingService(prisma as any, stars as any);
-  return { svc, prisma, stars };
+  return { svc, prisma: prisma as typeof prisma & Record<string, any>, stars };
 }
 
 describe('AdminBillingService.listPayments', () => {
@@ -132,5 +144,43 @@ describe('AdminBillingService.refund', () => {
       expect.objectContaining({ data: { status: 'REFUNDED' } }),
     );
     expect(res.status).toBe('REFUNDED');
+  });
+});
+
+// М-1.6 седьмого аудита.
+describe('AdminBillingService.refund — откат услуги', () => {
+  it('пакет кредитов: сторно на -creditsGranted с reason REFUND и paymentId', async () => {
+    const { svc, prisma } = build();
+    await svc.refund('op1', 'pay1');
+    expect(prisma.creditLedger.create).toHaveBeenCalledWith({
+      data: { userId: 'u1', delta: -20, reason: 'REFUND', paymentId: 'pay1' },
+    });
+    expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('повторное сторно (P2002) — не падает, статус всё равно REFUNDED', async () => {
+    const { svc, prisma } = build();
+    prisma.creditLedger.create.mockRejectedValueOnce(
+      Object.assign(new Error('dup'), { code: 'P2002' }),
+    );
+    const res = await svc.refund('op1', 'pay1');
+    expect(res.status).toBe('REFUNDED');
+  });
+
+  it('подписка Stars: снимается автопродление и отменяется подписка в Telegram', async () => {
+    const { svc, prisma, stars } = build();
+    prisma.payment.findUnique.mockResolvedValue(
+      payment({
+        purpose: 'SUBSCRIPTION',
+        plan: 'STANDARD',
+        creditsGranted: null,
+      }),
+    );
+    await svc.refund('op1', 'pay1');
+    expect(prisma.subscription.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { cancelAtPeriodEnd: true } }),
+    );
+    expect(stars.cancelSubscription).toHaveBeenCalledWith('12345', 'ref1');
+    expect(prisma.creditLedger.create).not.toHaveBeenCalled();
   });
 });

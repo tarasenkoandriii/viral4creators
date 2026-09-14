@@ -35,9 +35,14 @@ describe('tryAcquireJobLock', () => {
       prisma as never,
       'catalog-batch-run',
     );
-    expect(result).toBe(true);
+    // М-3.7: результат — токен владельца (truthy), не голый true.
+    expect(typeof result).toBe('string');
     expect(prisma.cronJobLock.create).toHaveBeenCalledWith({
-      data: { jobKey: 'catalog-batch-run', lockedUntil: expect.any(Date) },
+      data: {
+        jobKey: 'catalog-batch-run',
+        lockedUntil: expect.any(Date),
+        ownerToken: result,
+      },
     });
     expect(prisma.cronJobLock.updateMany).not.toHaveBeenCalled();
   });
@@ -52,13 +57,13 @@ describe('tryAcquireJobLock', () => {
       'ab-test-run',
       1000,
     );
-    expect(result).toBe(true);
+    expect(typeof result).toBe('string');
     expect(prisma.cronJobLock.updateMany).toHaveBeenCalledWith({
       where: {
         jobKey: 'ab-test-run',
         OR: [{ lockedUntil: null }, { lockedUntil: { lt: expect.any(Date) } }],
       },
-      data: { lockedUntil: expect.any(Date) },
+      data: { lockedUntil: expect.any(Date), ownerToken: result },
     });
   });
 
@@ -97,7 +102,16 @@ describe('releaseJobLock', () => {
     await releaseJobLock(prisma as never, 'catalog-batch-run');
     expect(prisma.cronJobLock.updateMany).toHaveBeenCalledWith({
       where: { jobKey: 'catalog-batch-run' },
-      data: { lockedUntil: null },
+      data: { lockedUntil: null, ownerToken: null },
+    });
+  });
+
+  it('М-3.7: с токеном — снимает только СВОЙ замок (where.ownerToken)', async () => {
+    const prisma = prismaMock({});
+    await releaseJobLock(prisma as never, 'catalog-batch-run', 'tok-1');
+    expect(prisma.cronJobLock.updateMany).toHaveBeenCalledWith({
+      where: { jobKey: 'catalog-batch-run', ownerToken: 'tok-1' },
+      data: { lockedUntil: null, ownerToken: null },
     });
   });
 

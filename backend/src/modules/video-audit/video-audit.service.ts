@@ -13,6 +13,7 @@
 
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -75,6 +76,9 @@ export interface ApplyFixResult {
   state: AuditStateView;
 }
 
+/** М-2.5: TTL замка аудита — с запасом сверх одного Gemini-вызова. */
+const AUDIT_CLAIM_TTL_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class VideoAuditService {
   private readonly logger = new Logger(VideoAuditService.name);
@@ -107,6 +111,41 @@ export class VideoAuditService {
 
   /** POST /sessions/:id/audit */
   async run(
+    sessionId: string,
+    dto: RunAuditRequestDto,
+  ): Promise<AuditStateView> {
+    // М-2.5 седьмого аудита: замок на платный вызов + перечитывание
+    // истории под ним (см. `runGuarded`).
+    return this.runGuarded(sessionId, 'audit', () =>
+      this.runUnlocked(sessionId, dto),
+    );
+  }
+
+  /** Замок вида работы вокруг платного Gemini-вызова; занятый замок —
+   * 409, как у `generateVideo`. */
+  private async runGuarded<T>(
+    sessionId: string,
+    kind: 'audit' | 'sound-check',
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const claimed = await this.sessions.claimWork(
+      sessionId,
+      kind,
+      AUDIT_CLAIM_TTL_MS,
+    );
+    if (!claimed) {
+      throw new ConflictException(
+        'Проверка уже идёт — дождитесь её результата',
+      );
+    }
+    try {
+      return await fn();
+    } finally {
+      await this.sessions.releaseWork(sessionId, kind);
+    }
+  }
+
+  private async runUnlocked(
     sessionId: string,
     dto: RunAuditRequestDto,
   ): Promise<AuditStateView> {
@@ -206,7 +245,10 @@ export class VideoAuditService {
     }
     audit.completedAt = new Date();
 
-    const state = this.append(session.videoAudit, audit);
+    // История перечитывается перед записью: за время Gemini-вызова
+    // её мог дополнить applyFix или параллельный тик.
+    const fresh = await this.sessions.getSession(sessionId);
+    const state = this.append(fresh?.videoAudit ?? session.videoAudit, audit);
     await this.sessions.updateSession(sessionId, { videoAudit: state });
     return this.view(state);
   }
@@ -219,6 +261,14 @@ export class VideoAuditService {
    * это тоже платный вызов Gemini на тот же файл.
    */
   async runSoundCheck(sessionId: string): Promise<{ history: SoundCheck[] }> {
+    return this.runGuarded(sessionId, 'sound-check', () =>
+      this.runSoundCheckUnlocked(sessionId),
+    );
+  }
+
+  private async runSoundCheckUnlocked(
+    sessionId: string,
+  ): Promise<{ history: SoundCheck[] }> {
     const session = await this.load(sessionId);
     await this.plans.assertCanSpendUser(session.userId ?? null);
     await this.plans.assertUser(session.userId ?? null, 'audit');
@@ -270,7 +320,11 @@ export class VideoAuditService {
     }
     check.completedAt = new Date();
 
-    const state = appendSoundCheck(session.soundCheck, check);
+    const fresh = await this.sessions.getSession(sessionId);
+    const state = appendSoundCheck(
+      fresh?.soundCheck ?? session.soundCheck,
+      check,
+    );
     await this.sessions.updateSession(sessionId, { soundCheck: state });
     return state;
   }

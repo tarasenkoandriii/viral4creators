@@ -23,15 +23,22 @@ export function Pills<T extends string>({
   onChange,
   disabled,
   columns,
+  ariaLabel,
 }: {
   value: T;
   options: PillOption<T>[];
   onChange: (v: T) => void;
   disabled?: boolean;
   columns?: number;
+  /** Подпись группы для скринридера (аудит 14.09.2026, М-7.6). */
+  ariaLabel?: string;
 }) {
   return (
     <div
+      // М-7.6: группа — radiogroup, каждая пилюля — radio с aria-checked,
+      // иначе скринридер читал набор одинаковых кнопок без выбранного.
+      role="radiogroup"
+      aria-label={ariaLabel}
       className="grid gap-2"
       style={{
         gridTemplateColumns: `repeat(${columns ?? options.length}, minmax(0, 1fr))`,
@@ -43,6 +50,8 @@ export function Pills<T extends string>({
           <button
             key={o.value}
             type="button"
+            role="radio"
+            aria-checked={active}
             disabled={disabled || o.disabled}
             onClick={() => {
               onChange(o.value);

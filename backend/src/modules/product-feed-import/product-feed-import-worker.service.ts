@@ -161,7 +161,7 @@ export class ProductFeedImportWorkerService {
     try {
       return await this.runTickLocked();
     } finally {
-      await releaseJobLock(this.prisma, JOB_KEY);
+      await releaseJobLock(this.prisma, JOB_KEY, acquired);
     }
   }
 

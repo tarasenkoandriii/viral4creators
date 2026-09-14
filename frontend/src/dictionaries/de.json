@@ -25,6 +25,8 @@
   "wizardErrors": {
     "sessionCreateFailed": "Sitzung konnte nicht erstellt werden",
     "analysisStatusFailed": "Analysestatus konnte nicht geprüft werden",
+    "analysisFailed": "Analyse fehlgeschlagen",
+    "videoFailed": "Videogenerierung fehlgeschlagen",
     "analysisStartFailed": "Analyse konnte nicht gestartet werden",
     "uploadFailed": "Upload fehlgeschlagen",
     "libraryPickFailed": "Analyse konnte nicht aus der Bibliothek übernommen werden",
@@ -1054,6 +1056,7 @@
     "textCardLoadError": "Die Textkarten konnten nicht vorbereitet werden. Das Fortfahren mit dem fertigen Prompt ist trotzdem möglich.",
     "preparingHint": "Referenzen werden zusammengestellt und das Rendering gestartet — das dauert ein paar Sekunden",
     "generatingNote": "Normalerweise 3–5 Minuten. Schließen Sie die Seite nicht.",
+    "generatingBatchNote": "Das Video ist bei xAI in der Warteschlange — das kann bis zu 24 Stunden dauern. Sie können die Seite schließen: das Ergebnis erscheint hier von selbst.",
     "videoDoneTitle": "Video ist fertig",
     "videoDoneHint": "Vergleichen Sie es unten mit dem Original.",
     "originalLabel": "Original",

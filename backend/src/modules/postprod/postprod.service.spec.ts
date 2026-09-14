@@ -92,7 +92,9 @@ function build(
   return {
     svc: new PostProductionService(
       api as any,
-      tts as any,
+      // Спека отстала от кода: сервис получает резолвер провайдера
+      // (`TtsProviderResolverService.resolve()`), а не сам провайдер.
+      { resolve: jest.fn().mockResolvedValue(tts) } as any,
       blob as any,
       sessions as any,
       aiUsage as any,

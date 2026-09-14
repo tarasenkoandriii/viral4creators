@@ -20,18 +20,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-
-/** Postgres unique-violation — see Prisma error codes. Проверяется по
- * структуре, а не импортом `Prisma.PrismaClientKnownRequestError`: в этой
- * песочнице Prisma-клиент не сгенерирован для новых моделей, и лишняя
- * зависимость от его типов здесь не нужна — код и код ошибки достаточно. */
-function isUniqueConstraintViolation(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { code?: unknown }).code === 'P2002'
-  );
-}
+import { isUniqueConstraintViolation } from '../../common/prisma-errors';
 
 @Injectable()
 export class CreditLedgerService {

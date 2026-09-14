@@ -661,12 +661,41 @@ export class LibraryService {
     const days = libraryUnusedTtlDays();
     if (days === 0) return { count: 0, hasMore: false, disabled: true };
     const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    // М-3.13 седьмого аудита: `usageCount` растёт только при первом
+    // `applyToSession`, а партия по каталогу / A/B-запуск ссылаются на
+    // запись по `libraryEntryId` без FK и могут ждать своего тика дольше
+    // TTL (Е-1.2: «повтор завтра»). Такие записи не трогаем.
+    const referenced = await Promise.all([
+      this.prisma.catalogBatchRun.findMany({
+        where: {
+          items: {
+            some: {
+              status: {
+                in: ['PENDING', 'FAILED', 'BATCH_QUEUED', 'GENERATING'],
+              },
+            },
+          },
+        },
+        select: { libraryEntryId: true },
+      }),
+      this.prisma.abTestRun.findMany({
+        where: {
+          variants: { some: { status: { in: ['PENDING', 'GENERATING'] } } },
+        },
+        select: { libraryEntryId: true },
+      }),
+    ]);
+    const referencedIds = referenced
+      .flat()
+      .map((r) => (r as { libraryEntryId: string | null }).libraryEntryId)
+      .filter((id): id is string => !!id);
     const rows: Array<Pick<LibraryRow, 'id' | 'sourceKey' | 'analysis'>> =
       await this.prisma.analysisLibraryEntry.findMany({
         where: {
           usageCount: 0,
           createdAt: { lt: cutoff },
           visibility: { not: 'HIDDEN' },
+          ...(referencedIds.length ? { id: { notIn: referencedIds } } : {}),
         },
         select: { id: true, sourceKey: true, analysis: true },
         orderBy: { createdAt: 'asc' },

@@ -98,6 +98,10 @@ function build(
     updateSession: jest.fn(async (_id: string, patch: object) => {
       state = { ...(state ?? {}), ...patch };
     }),
+    // М-2.2 седьмого аудита: продолжение цепочки — под замком
+    // 'chain-continue'; по умолчанию замок свободен.
+    claimWork: jest.fn().mockResolvedValue(true),
+    releaseWork: jest.fn().mockResolvedValue(undefined),
   };
   const blob = {
     downloadBuffer: jest.fn(),
@@ -137,9 +141,7 @@ function build(
   // Scene Extension: `startGeneration` здесь же и мок продолжения.
   const grokVideo = {
     isConfigured: jest.fn().mockReturnValue(false),
-    startGeneration: jest
-      .fn()
-      .mockResolvedValue({ requestId: 'grok-req-2' }),
+    startGeneration: jest.fn().mockResolvedValue({ requestId: 'grok-req-2' }),
     // Продолжение цепочки — отдельный эндпоинт (сбой 14.09.2026).
     extendVideo: jest.fn().mockResolvedValue({ requestId: 'grok-req-2' }),
     getStatus: jest.fn(),
@@ -260,7 +262,7 @@ describe('getVideoStatus — рендер ещё идёт', () => {
     await svc.getVideoStatus('s1');
     expect(fetchMock).toHaveBeenCalledWith(
       'https://generativelanguage.googleapis.com/v1beta/operations/veo-1',
-      { headers: { 'x-goog-api-key': 'test-key' } },
+      expect.objectContaining({ headers: { 'x-goog-api-key': 'test-key' } }),
     );
   });
 });
@@ -382,7 +384,7 @@ describe('getVideoStatus — забрать файл у Google и положит
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       'https://veo.googleapis/tmp/1',
-      { headers: { 'x-goog-api-key': 'test-key' } },
+      expect.objectContaining({ headers: { 'x-goog-api-key': 'test-key' } }),
     );
     expect(blob.uploadBuffer).toHaveBeenCalledWith(
       'sessions/s1/generated.mp4',
@@ -534,8 +536,9 @@ describe('getVideoStatus — чего нет, того нет', () => {
  * GenerationService()` порождает свой инстанс с СВОЕЙ функцией). */
 function latestGenerateVideosMock() {
   const mock = GoogleGenAI as unknown as jest.Mock;
-  const last = mock.mock.results[mock.mock.results.length - 1]
-    .value as { models: { generateVideos: jest.Mock } };
+  const last = mock.mock.results[mock.mock.results.length - 1].value as {
+    models: { generateVideos: jest.Mock };
+  };
   return last.models.generateVideos;
 }
 
@@ -547,10 +550,14 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
   it('Veo: сегмент готов, цепочка не дописана — запускает следующий, статус остаётся PROCESSING', async () => {
     const { svc, sessions, read, aiUsage } = build(
       inFlight({ chainSegmentsDone: 1, chainSegmentsTotal: 3 }),
-      { generationPrompt: { finalText: 'a cat walks', approvedAt: new Date() } },
+      {
+        generationPrompt: { finalText: 'a cat walks', approvedAt: new Date() },
+      },
     );
     fetchMock
-      .mockResolvedValueOnce(jsonRes(doneWithUri('https://veo.googleapis/tmp/1')))
+      .mockResolvedValueOnce(
+        jsonRes(doneWithUri('https://veo.googleapis/tmp/1')),
+      )
       .mockResolvedValueOnce(bufRes('сегмент 1'));
     latestGenerateVideosMock().mockResolvedValueOnce({
       name: 'operations/veo-2',
@@ -591,10 +598,14 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
         // НЕ унаследовать эту почти-истёкшую точку отсчёта дальше.
         initiatedAt: new Date(Date.now() - RENDER_DEADLINE_MS + 60_000),
       }),
-      { generationPrompt: { finalText: 'a cat walks', approvedAt: new Date() } },
+      {
+        generationPrompt: { finalText: 'a cat walks', approvedAt: new Date() },
+      },
     );
     fetchMock
-      .mockResolvedValueOnce(jsonRes(doneWithUri('https://veo.googleapis/tmp/1')))
+      .mockResolvedValueOnce(
+        jsonRes(doneWithUri('https://veo.googleapis/tmp/1')),
+      )
       .mockResolvedValueOnce(bufRes('сегмент 1'));
     latestGenerateVideosMock().mockResolvedValueOnce({
       name: 'operations/veo-2',
@@ -616,10 +627,14 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
   it('Veo: последний сегмент цепочки — финализирует как обычно', async () => {
     const { svc, read, postprod } = build(
       inFlight({ chainSegmentsDone: 3, chainSegmentsTotal: 3 }),
-      { generationPrompt: { finalText: 'a cat walks', approvedAt: new Date() } },
+      {
+        generationPrompt: { finalText: 'a cat walks', approvedAt: new Date() },
+      },
     );
     fetchMock
-      .mockResolvedValueOnce(jsonRes(doneWithUri('https://veo.googleapis/tmp/3')))
+      .mockResolvedValueOnce(
+        jsonRes(doneWithUri('https://veo.googleapis/tmp/3')),
+      )
       .mockResolvedValueOnce(bufRes('финальный сегмент'));
 
     const result = await svc.getVideoStatus('s1');
@@ -635,10 +650,14 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
   it('Veo: продолжение цепочки не удалось — FAILED, не молчаливый застой', async () => {
     const { svc, read } = build(
       inFlight({ chainSegmentsDone: 1, chainSegmentsTotal: 3 }),
-      { generationPrompt: { finalText: 'a cat walks', approvedAt: new Date() } },
+      {
+        generationPrompt: { finalText: 'a cat walks', approvedAt: new Date() },
+      },
     );
     fetchMock
-      .mockResolvedValueOnce(jsonRes(doneWithUri('https://veo.googleapis/tmp/1')))
+      .mockResolvedValueOnce(
+        jsonRes(doneWithUri('https://veo.googleapis/tmp/1')),
+      )
       .mockResolvedValueOnce(bufRes('сегмент 1'));
     latestGenerateVideosMock().mockRejectedValueOnce(
       new Error('video parameter rejected'),
@@ -661,7 +680,12 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
         chainSegmentSeconds: [15, 5],
         resolution: '480p',
       }),
-      { generationPrompt: { finalText: 'a product spins', approvedAt: new Date() } },
+      {
+        generationPrompt: {
+          finalText: 'a product spins',
+          approvedAt: new Date(),
+        },
+      },
     );
     grokVideo.getStatus.mockResolvedValueOnce({
       done: true,
@@ -703,7 +727,12 @@ describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
         chainSegmentsDone: 1,
         chainSegmentsTotal: 1,
       }),
-      { generationPrompt: { finalText: 'a product spins', approvedAt: new Date() } },
+      {
+        generationPrompt: {
+          finalText: 'a product spins',
+          approvedAt: new Date(),
+        },
+      },
     );
     grokVideo.getStatus.mockResolvedValueOnce({
       done: true,
@@ -846,5 +875,88 @@ describe('getVideoStatus — Grok через Batch API', () => {
     const video = batched({ initiatedAt: new Date(started) });
     expect(renderExpired(video, started + 60 * 60 * 1000)).toBe(false);
     expect(renderExpired(video, started + 27 * 60 * 60 * 1000)).toBe(true);
+  });
+});
+
+// М-2.2/М-1.3 седьмого аудита: продолжение цепочки без замка запускало
+// второй платный сегмент из каждого конкурентного опроса.
+describe('getVideoStatus — продолжение цепочки под замком chain-continue', () => {
+  it('замок занят другим опросом — платный старт следующего сегмента пропускается', async () => {
+    const { svc, grokVideo, sessions, aiUsage } = build(
+      inFlight({
+        provider: 'grok',
+        grokRequestId: 'grok-req-1',
+        veoOperationName: undefined,
+        chainSegmentsDone: 1,
+        chainSegmentsTotal: 2,
+        chainSegmentSeconds: [15, 5],
+      }),
+      {
+        generationPrompt: {
+          finalText: 'a product spins',
+          approvedAt: new Date(),
+        },
+      },
+    );
+    sessions.claimWork.mockResolvedValueOnce(false);
+    grokVideo.getStatus.mockResolvedValueOnce({
+      done: true,
+      videoUrl: 'https://vidgen.x.ai/segment1.mp4',
+    });
+    fetchMock.mockResolvedValueOnce(bufRes('сегмент 1'));
+
+    const result = await svc.getVideoStatus('s1');
+
+    expect(sessions.claimWork).toHaveBeenCalledWith(
+      's1',
+      'chain-continue',
+      expect.any(Number),
+    );
+    expect(grokVideo.extendVideo).not.toHaveBeenCalled();
+    expect(aiUsage.record).not.toHaveBeenCalled();
+    expect(result.status).toBe(GenerationStatus.PROCESSING);
+    expect(result.chainSegmentsDone).toBe(1);
+  });
+
+  it('под замком видно, что сегмент уже продвинут — второй старт не делается, отдаётся запись из базы', async () => {
+    const { svc, grokVideo, sessions } = build(
+      inFlight({
+        provider: 'grok',
+        grokRequestId: 'grok-req-1',
+        veoOperationName: undefined,
+        chainSegmentsDone: 1,
+        chainSegmentsTotal: 2,
+        chainSegmentSeconds: [15, 5],
+      }),
+      {
+        generationPrompt: {
+          finalText: 'a product spins',
+          approvedAt: new Date(),
+        },
+      },
+    );
+    grokVideo.getStatus.mockResolvedValueOnce({
+      done: true,
+      videoUrl: 'https://vidgen.x.ai/segment1.mp4',
+    });
+    fetchMock.mockResolvedValueOnce(bufRes('сегмент 1'));
+    // Первый вызов getSession — сам опрос; второй (под замком) — уже
+    // продвинутая другим опросом запись.
+    const first = await sessions.getSession();
+    sessions.getSession.mockResolvedValueOnce(first).mockResolvedValueOnce({
+      ...first,
+      generatedVideo: {
+        ...(first as { generatedVideo: GeneratedVideo }).generatedVideo,
+        chainSegmentsDone: 2,
+        grokRequestId: 'grok-req-other',
+      },
+    });
+
+    const result = await svc.getVideoStatus('s1');
+
+    expect(grokVideo.extendVideo).not.toHaveBeenCalled();
+    expect(result.chainSegmentsDone).toBe(2);
+    expect(result.grokRequestId).toBe('grok-req-other');
+    expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'chain-continue');
   });
 });

@@ -119,6 +119,26 @@ it('«готово» без ролика ведёт туда, откуда ес�
   );
 });
 
+it('М-7.5: пересобранный непринятый промпт сильнее старого готового ролика', () => {
+  assert.equal(
+    stepFromSession({
+      status: 'prompt_generated',
+      generatedVideo: { status: 'complete' },
+      generationPrompt: { approvedAt: undefined },
+    }),
+    'prompt-generation'
+  );
+  // Одобренный промпт при готовом ролике — по-прежнему экран результата.
+  assert.equal(
+    stepFromSession({
+      status: 'prompt_generated',
+      generatedVideo: { status: 'complete' },
+      generationPrompt: { approvedAt: '2026-09-14T00:00:00Z' },
+    }),
+    'complete'
+  );
+});
+
 it('пустая сессия — первый шаг', () => {
   assert.equal(stepFromSession(null), 'upload');
   assert.equal(stepFromSession({}), 'upload');

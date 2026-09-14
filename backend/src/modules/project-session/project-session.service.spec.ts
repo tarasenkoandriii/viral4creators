@@ -63,7 +63,9 @@ function build(overrides: { item?: unknown; sessionRows?: unknown[] } = {}) {
     getSession: jest.fn(),
     updateSession: jest.fn(),
   };
-  const tts = { resolve: jest.fn().mockResolvedValue({ providerKey: 'elevenlabs' }) };
+  const tts = {
+    resolve: jest.fn().mockResolvedValue({ providerKey: 'elevenlabs' }),
+  };
   const plans = { assertUser: jest.fn().mockResolvedValue(undefined) };
   const service = new ProjectSessionService(
     prisma as never,
@@ -224,6 +226,61 @@ describe('ProjectSessionService.updateSnapshot', () => {
     expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 
+  it('М-2.6/М-7.1: смена режима озвучки сбрасывает одобрение промпта в том же UPDATE', async () => {
+    const { service, sessions } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      brandManifestSnapshot: { ...snapshot, voiceMode: 'veo' },
+      generationPrompt: { finalText: 'talking head', approvedAt: new Date() },
+    });
+    sessions.updateSession.mockImplementation(
+      async (
+        _id: string,
+        u: { brandManifestSnapshot: BrandManifestSnapshot },
+      ) => ({
+        sessionId: 's1',
+        brandManifestSnapshot: u.brandManifestSnapshot,
+      }),
+    );
+    await service.updateSnapshot('s1', { voiceMode: 'voiceover' });
+    expect(sessions.updateSession).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({
+        generationPrompt: expect.objectContaining({
+          finalText: 'talking head',
+          approvedAt: undefined,
+        }),
+      }),
+    );
+  });
+
+  it('М-2.6: тот же режим или правка, не влияющая на бриф (styleNotes), одобрение не трогает', async () => {
+    const { service, sessions } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      brandManifestSnapshot: { ...snapshot, voiceMode: 'voiceover' },
+      generationPrompt: { finalText: 'x', approvedAt: new Date() },
+    });
+    sessions.updateSession.mockImplementation(
+      async (
+        _id: string,
+        u: { brandManifestSnapshot: BrandManifestSnapshot },
+      ) => ({
+        sessionId: 's1',
+        brandManifestSnapshot: u.brandManifestSnapshot,
+      }),
+    );
+    await service.updateSnapshot('s1', {
+      voiceMode: 'voiceover',
+      styleNotes: 'n',
+    });
+    const patch = sessions.updateSession.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(patch).not.toHaveProperty('generationPrompt');
+  });
+
   it('merges the edit into the session copy only (never the manifest)', async () => {
     const { service, sessions, prisma } = build();
     sessions.getSession.mockResolvedValue({
@@ -303,7 +360,10 @@ describe('ProjectSessionService.updateSnapshot', () => {
       async (
         _id: string,
         u: { brandManifestSnapshot: BrandManifestSnapshot },
-      ) => ({ sessionId: 's1', brandManifestSnapshot: u.brandManifestSnapshot }),
+      ) => ({
+        sessionId: 's1',
+        brandManifestSnapshot: u.brandManifestSnapshot,
+      }),
     );
     await service.updateSnapshot('s1', { voiceMode: 'dub' });
     expect(plans.assertUser).toHaveBeenCalledWith('u1', 'voiceDub');
@@ -320,7 +380,10 @@ describe('ProjectSessionService.updateSnapshot', () => {
       async (
         _id: string,
         u: { brandManifestSnapshot: BrandManifestSnapshot },
-      ) => ({ sessionId: 's1', brandManifestSnapshot: u.brandManifestSnapshot }),
+      ) => ({
+        sessionId: 's1',
+        brandManifestSnapshot: u.brandManifestSnapshot,
+      }),
     );
     await service.updateSnapshot('s1', { voiceMode: 'voiceover' });
     expect(plans.assertUser).not.toHaveBeenCalledWith('u1', 'voiceDub');
@@ -337,7 +400,10 @@ describe('ProjectSessionService.updateSnapshot', () => {
       async (
         _id: string,
         u: { brandManifestSnapshot: BrandManifestSnapshot },
-      ) => ({ sessionId: 's1', brandManifestSnapshot: u.brandManifestSnapshot }),
+      ) => ({
+        sessionId: 's1',
+        brandManifestSnapshot: u.brandManifestSnapshot,
+      }),
     );
     // Правит другое поле, voiceMode шлётся тем же ('dub'), как всегда
     // делает форма — но пользователь мог давно уйти с Premium.

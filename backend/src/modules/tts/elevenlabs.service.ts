@@ -32,6 +32,9 @@ import {
 /** Лимит одного запроса у мультиязычной модели — режем до него. */
 const MAX_CHARACTERS = 5000;
 
+/** М-6.5 седьмого аудита: таймаут внешних HTTP-вызовов. */
+const EXTERNAL_TIMEOUT_MS = 60_000;
+
 @Injectable()
 export class ElevenLabsService implements TtsProvider {
   readonly providerKey = 'elevenlabs';
@@ -98,6 +101,7 @@ export class ElevenLabsService implements TtsProvider {
     try {
       const res = await fetch(`${this.base}${path}`, {
         method: 'POST',
+        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
         headers: { 'Content-Type': 'application/json', 'xi-api-key': key },
         body: JSON.stringify({
           text: payloadText,
@@ -236,6 +240,7 @@ export class ElevenLabsService implements TtsProvider {
     try {
       const res = await fetch(`${this.base}/shared-voices?${params}`, {
         headers: { 'xi-api-key': key },
+        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
       });
       if (!res.ok) {
         return {

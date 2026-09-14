@@ -90,6 +90,10 @@ function build(session: Record<string, unknown> | null = { sessionId: 's1' }) {
       delete: jest.fn(),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    // М-3.13: записи, на которые ссылаются незавершённые партии/A-B,
+    // уборка не трогает — по умолчанию таких нет.
+    catalogBatchRun: { findMany: jest.fn().mockResolvedValue([]) },
+    abTestRun: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const sessions = {
     getSession: jest.fn().mockResolvedValue(session),
@@ -686,5 +690,18 @@ describe('LibraryService.pruneUnused — невостребованные раз
     );
     prisma.analysisLibraryEntry.deleteMany.mockResolvedValue({ count: 200 });
     expect((await svc.pruneUnused()).hasMore).toBe(true);
+  });
+});
+
+describe('LibraryService.pruneUnused — М-3.13: записи с незавершённой партией не удаляются', () => {
+  it('libraryEntryId ожидающей партии попадает в notIn', async () => {
+    const { svc, prisma } = build();
+    process.env.LIBRARY_UNUSED_TTL_DAYS = '7';
+    prisma.catalogBatchRun.findMany.mockResolvedValueOnce([
+      { libraryEntryId: 'lib-busy' },
+    ]);
+    await svc.pruneUnused();
+    const where = prisma.analysisLibraryEntry.findMany.mock.calls[0][0].where;
+    expect(where.id).toEqual({ notIn: ['lib-busy'] });
   });
 });

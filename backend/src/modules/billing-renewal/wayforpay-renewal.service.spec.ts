@@ -21,6 +21,8 @@ function build() {
     payment: {
       upsert: jest.fn().mockResolvedValue({ id: 'pay1' }),
       update: jest.fn().mockResolvedValue({}),
+      // М-1.4: прежние попытки этого периода — по умолчанию нет.
+      findMany: jest.fn().mockResolvedValue([]),
     },
     subscription: {
       // Claim (Г-2.7) — по умолчанию успешно захвачен, тесты гонки
@@ -170,10 +172,12 @@ describe('WayForPayRenewalService.charge — неудача внутри гре�
     });
     const outcome = await svc.charge(subscription());
     expect(outcome).toBe('past_due');
-    expect(prisma.subscription.update).toHaveBeenCalledWith({
-      where: { id: 's1' },
-      data: { status: 'PAST_DUE' },
-    });
+    expect(prisma.subscription.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 's1' }),
+        data: { status: 'PAST_DUE' },
+      }),
+    );
     expect(plans.applyPurchasedPlan).not.toHaveBeenCalled();
   });
 
@@ -205,10 +209,12 @@ describe('WayForPayRenewalService.charge — грейс-период исчер�
     });
     const outcome = await svc.charge(overdueBeyondGrace());
     expect(outcome).toBe('canceled');
-    expect(prisma.subscription.update).toHaveBeenCalledWith({
-      where: { id: 's1' },
-      data: { status: 'CANCELED' },
-    });
+    expect(prisma.subscription.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 's1' }),
+        data: { status: 'CANCELED' },
+      }),
+    );
     expect(plans.applyPurchasedPlan).toHaveBeenCalledWith('u1', 'LITE');
   });
 
@@ -228,7 +234,8 @@ describe('WayForPayRenewalService.charge — отсутствие recToken', () 
     expect(outcome).toBe('canceled');
     expect(plans.applyPurchasedPlan).toHaveBeenCalledWith('u1', 'LITE');
     expect(wayforpay.chargeRecToken).not.toHaveBeenCalled();
-    expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
+    // М-1.5: отмена — условная (updateMany по снимку срока), claim'а нет.
+    expect(prisma.subscription.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it('повреждённый recTokenEnc (не расшифровывается) — не роняет крон, идёт по грейсу', async () => {
@@ -238,5 +245,71 @@ describe('WayForPayRenewalService.charge — отсутствие recToken', () 
     );
     expect(['past_due', 'canceled']).toContain(outcome);
     expect(wayforpay.chargeRecToken).not.toHaveBeenCalled();
+  });
+});
+
+// М-1.4/М-1.5 седьмого аудита.
+describe('WayForPayRenewalService.charge — номер заказа и условные статусы', () => {
+  it('после терминального отказа новая попытка идёт с суффиксом, незавершённая — переиспользует номер', async () => {
+    const { svc, prisma, wayforpay } = build();
+    wayforpay.chargeRecToken.mockResolvedValue({
+      ok: false,
+      transactionStatus: 'Declined',
+      rawPayload: {},
+    });
+    const sub = subscription();
+    const base = `sub:s1:${sub.currentPeriodEnd.getTime()}`;
+    prisma.payment.findMany.mockResolvedValueOnce([
+      { providerRef: base, status: 'FAILED' },
+    ]);
+    await svc.charge(sub);
+    expect(
+      prisma.payment.upsert.mock.calls[0][0].where.method_providerRef
+        .providerRef,
+    ).toBe(`${base}:1`);
+
+    prisma.payment.findMany.mockResolvedValueOnce([
+      { providerRef: base, status: 'FAILED' },
+      { providerRef: `${base}:1`, status: 'PENDING' },
+    ]);
+    await svc.charge(sub);
+    expect(
+      prisma.payment.upsert.mock.calls[1][0].where.method_providerRef
+        .providerRef,
+    ).toBe(`${base}:1`);
+  });
+
+  it('промежуточный статус (InProcessing) — Payment остаётся PENDING, не FAILED', async () => {
+    const { svc, prisma, wayforpay } = build();
+    wayforpay.chargeRecToken.mockResolvedValue({
+      ok: false,
+      transactionStatus: 'InProcessing',
+      rawPayload: {},
+    });
+    await svc.charge(subscription());
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'PENDING' }),
+      }),
+    );
+  });
+
+  it('срок сдвинулся во время продления (count 0) — не отменяем и не понижаем до LITE', async () => {
+    const { svc, prisma, plans, wayforpay } = build();
+    prisma.subscription.updateMany
+      .mockResolvedValueOnce({ count: 1 }) // claim
+      .mockResolvedValueOnce({ count: 0 }); // giveUp — уже продлили
+    wayforpay.chargeRecToken.mockResolvedValue({
+      ok: false,
+      transactionStatus: 'Declined',
+      rawPayload: {},
+    });
+    const outcome = await svc.charge(
+      subscription({
+        currentPeriodEnd: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000),
+      }),
+    );
+    expect(outcome).toBe('past_due');
+    expect(plans.applyPurchasedPlan).not.toHaveBeenCalled();
   });
 });

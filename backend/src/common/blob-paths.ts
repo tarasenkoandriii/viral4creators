@@ -60,6 +60,26 @@ export function sessionBlobPathnames(session: Session): string[] {
   if (session.generatedVideo?.subtitlePathname) {
     paths.add(session.generatedVideo.subtitlePathname);
   }
+  // Текст-карточки промпта (`text-card.service.ts`, `sessions/<id>/
+  // text-card-<role>.png`) — М-5.8 седьмого аудита, тот же класс, что
+  // Е-2.6: путь хранится в `generationPrompt.onScreenTextMoments[]`.
+  for (const m of session.generationPrompt?.onScreenTextMoments ?? []) {
+    if (m.cardPathname) paths.add(m.cardPathname);
+  }
+
+  // Прошлые попытки (`videoHistory`, М-2.1/М-5.1 седьмого аудита): у
+  // каждой свой `generated-<uuid>.mp4` плюс те же производные, что у
+  // текущей — без этого цикла они жили бы в Blob до суточной метлы
+  // после удаления строки, как сироты без ссылки из БД.
+  for (const past of session.videoHistory ?? []) {
+    if (past.pathname) paths.add(past.pathname);
+    if (past.postPathname) paths.add(past.postPathname);
+    if (past.voiceoverPathname) paths.add(past.voiceoverPathname);
+    if (past.subtitlePathname) paths.add(past.subtitlePathname);
+    for (const v of past.exportVariants ?? []) {
+      if (v.pathname) paths.add(v.pathname);
+    }
+  }
 
   // Пилот говорящего аватара (этап 72, `doc/AVATAR-LIPSYNC-PIPELINE-SPEC.md`)
   // — четыре файла того же префикса сессии (Е-2.6 шестого аудита, тот же

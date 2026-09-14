@@ -442,6 +442,14 @@ export class ExportService {
         );
       }
     }
-    return { checked: ids.length, failed };
+    // Тот же тик досматривает одиночные ролики, поданные через Batch API
+    // xAI (М-1.2/М-2.3/М-5.2 седьмого аудита) — один крон-маршрут на все
+    // «внешние асинхронные рендеры без открытой вкладки», чтобы не
+    // множить записи в vercel.json и реестре admin-cron.
+    const grok = await this.generation.runGrokBatchSyncTick(limit);
+    return {
+      checked: ids.length + grok.checked,
+      failed: failed + grok.failed,
+    };
   }
 }

@@ -18,6 +18,28 @@ import axios from 'axios';
 const INIT_URL = 'https://open.tiktokapis.com/v2/post/publish/video/init/';
 const STATUS_URL = 'https://open.tiktokapis.com/v2/post/publish/status/fetch/';
 
+/** М-6.5 седьмого аудита: без таймаутов зависший TLS держал крон-тик до
+ * убийства функции Vercel, не снимая лок строки штатно. */
+const REQUEST_TIMEOUT_MS = 30_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+const UPLOAD_TIMEOUT_MS = 180_000;
+
+/** HTTP 200 с `error.code !== 'ok'` — ошибка площадки, не «ещё идёт»
+ * (М-6.3 седьмого аудита). Бросает с `status: 400`, чтобы воркер считал
+ * её терминальной для этой попытки (recordFailure → backoff/FAILED). */
+function assertTiktokOk(data: unknown, what: string): void {
+  const err = (data as { error?: { code?: string; message?: string } } | null)
+    ?.error;
+  if (err?.code && err.code !== 'ok') {
+    throw Object.assign(
+      new Error(
+        `TikTok: ${what} — ${err.code}${err.message ? `: ${err.message}` : ''}`,
+      ),
+      { status: 400 },
+    );
+  }
+}
+
 export interface TiktokUploadInput {
   title: string;
   description: string;
@@ -45,6 +67,7 @@ export class TiktokUploadService {
   ): Promise<TiktokInitResult> {
     const source = await axios.get<ArrayBuffer>(input.videoUrl, {
       responseType: 'arraybuffer',
+      timeout: DOWNLOAD_TIMEOUT_MS,
     });
     const size = source.data.byteLength;
     // TikTok не разделяет title/description на площадке — единая подпись
@@ -78,8 +101,10 @@ export class TiktokUploadService {
           'Content-Type': 'application/json; charset=UTF-8',
         },
         validateStatus: () => true,
+        timeout: REQUEST_TIMEOUT_MS,
       },
     );
+    if (res.status < 400) assertTiktokOk(res.data, 'init');
     const publishId = res.data?.data?.publish_id as string | undefined;
     const uploadUrl = res.data?.data?.upload_url as string | undefined;
     if (res.status >= 400 || !publishId || !uploadUrl) {
@@ -97,6 +122,7 @@ export class TiktokUploadService {
   async uploadBytes(uploadUrl: string, videoUrl: string): Promise<void> {
     const source = await axios.get<ArrayBuffer>(videoUrl, {
       responseType: 'arraybuffer',
+      timeout: DOWNLOAD_TIMEOUT_MS,
     });
     const bytes = Buffer.from(source.data);
     const res = await axios.put(uploadUrl, bytes, {
@@ -107,6 +133,7 @@ export class TiktokUploadService {
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
       validateStatus: () => true,
+      timeout: UPLOAD_TIMEOUT_MS,
     });
     if (res.status >= 400) {
       throw Object.assign(
@@ -132,6 +159,7 @@ export class TiktokUploadService {
           'Content-Type': 'application/json; charset=UTF-8',
         },
         validateStatus: () => true,
+        timeout: REQUEST_TIMEOUT_MS,
       },
     );
     if (res.status >= 400) {
@@ -142,6 +170,11 @@ export class TiktokUploadService {
         { status: res.status },
       );
     }
+    // М-6.3 седьмого аудита: Content Posting API отвечает HTTP 200 с
+    // `error.code !== 'ok'` (access_token_invalid, invalid_params,
+    // scope_not_authorized…) — раньше это читалось как «ещё
+    // обрабатывается» и заявка опрашивалась вечно.
+    assertTiktokOk(res.data, 'опрос статуса');
     const status = res.data?.data?.status as string | undefined;
     const postIds = res.data?.data?.publicly_available_post_id as
       | Array<string | number>

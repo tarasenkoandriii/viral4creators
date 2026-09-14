@@ -29,7 +29,7 @@ describe('PlanController (ТЗ §23)', () => {
     const { ctrl, service } = build('LITE');
     const view = await ctrl.get({} as any);
 
-    expect(service.stateOf).toHaveBeenCalledWith(null);
+    expect(service.stateOf).toHaveBeenCalledWith(null, expect.any(String));
     expect(view.plan).toBe('LITE');
     // Интерфейс рисует замки из этой матрицы — она должна приходить
     // целиком, включая режимы, которых у пользователя нет.
@@ -40,7 +40,7 @@ describe('PlanController (ТЗ §23)', () => {
   it('GET у вошедшего отдаёт его режим', async () => {
     const { ctrl, service } = build('PREMIUM');
     const view = await ctrl.get({ telegramUserId: 'u1' } as any);
-    expect(service.stateOf).toHaveBeenCalledWith('u1');
+    expect(service.stateOf).toHaveBeenCalledWith('u1', expect.any(String));
     expect(view.plan).toBe('PREMIUM');
   });
 
@@ -67,7 +67,7 @@ describe('PlanController (ТЗ §23)', () => {
     expect(service.setPlan).toHaveBeenCalledWith('u1', 'PREMIUM');
     // Ответ пересобирается через stateOf — чтобы вместе с новым режимом
     // приехали и блокировка, и остаток лимита.
-    expect(service.stateOf).toHaveBeenCalledWith('u1');
+    expect(service.stateOf).toHaveBeenCalledWith('u1', expect.any(String));
     expect(view.plan).toBe('LITE');
   });
 

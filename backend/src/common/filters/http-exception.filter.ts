@@ -68,6 +68,18 @@ export function internalErrorMessage(locale: SupportedLocale): string {
   return INTERNAL_ERROR_MESSAGE_BY_LOCALE[locale];
 }
 
+/**
+ * М-4.3 седьмого аудита: путь без query-строки — в ней живут секрет
+ * вебхука Resemble (`?secret=`, по проектному решению) и одноразовый
+ * OAuth-`code`; полный `request.url` уходил и в лог, и в `meta.path`.
+ */
+function safePath(request: { url?: string; path?: string }): string {
+  if (request.path) return request.path;
+  const url = request.url ?? '';
+  const q = url.indexOf('?');
+  return q === -1 ? url : url.slice(0, q);
+}
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -97,7 +109,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       }
       // 4xx — ожидаемые ответы, им хватает warn; 5xx, брошенные нами
       // намеренно, — всё равно авария.
-      const line = `${request.method} ${request.url} → ${status} ${errorCode}: ${errorMessage} [${requestId}]`;
+      const line = `${request.method} ${safePath(request)} → ${status} ${errorCode}: ${errorMessage} [${requestId}]`;
       if (status >= 500) this.logger.error(line, stackOf(exception));
       else this.logger.warn(line);
     } else {
@@ -107,7 +119,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
           ? `${exception.name}: ${exception.message}`
           : String(exception);
       this.logger.error(
-        `${request.method} ${request.url} → 500 ${detail} [${requestId}]`,
+        `${request.method} ${safePath(request)} → 500 ${detail} [${requestId}]`,
         stackOf(exception),
       );
     }
@@ -121,7 +133,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       meta: {
         timestamp: new Date().toISOString(),
         requestId,
-        path: request.url,
+        path: safePath(request),
       },
     };
 

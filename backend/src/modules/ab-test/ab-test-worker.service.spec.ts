@@ -244,6 +244,7 @@ describe('AbTestWorkerService', () => {
         'sess-new',
         'fast',
         '9:16',
+        'veo',
       );
       expect(prisma.abTestVariant.update).toHaveBeenCalledWith({
         where: { id: 'variant1' },
@@ -277,6 +278,7 @@ describe('AbTestWorkerService', () => {
         'sess-existing',
         'fast',
         '9:16',
+        'veo',
       );
     });
 
@@ -591,11 +593,15 @@ describe('AbTestWorkerService', () => {
       const { service, prisma } = setup({ rows: [] });
       await service.runBatch();
       expect(prisma.cronJobLock.create).toHaveBeenCalledWith({
-        data: { jobKey: 'ab-test-run', lockedUntil: expect.any(Date) },
+        data: {
+          jobKey: 'ab-test-run',
+          lockedUntil: expect.any(Date),
+          ownerToken: expect.any(String),
+        },
       });
       expect(prisma.cronJobLock.updateMany).toHaveBeenCalledWith({
-        where: { jobKey: 'ab-test-run' },
-        data: { lockedUntil: null },
+        where: { jobKey: 'ab-test-run', ownerToken: expect.any(String) },
+        data: { lockedUntil: null, ownerToken: null },
       });
     });
   });

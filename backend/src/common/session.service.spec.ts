@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
-import { SessionService } from './session.service';
+import { DATA_KEYS, SessionService } from './session.service';
 
 /**
  * Захват постобработки (ТЗ §15.4, этап 37).
@@ -145,6 +145,37 @@ describe('SessionService — круговорот полей сессии (Б-2.
     await svc.updateSession('s1', { productInformation: undefined });
     const back = await svc.getSession('s1');
     expect(back?.librarySourceKey).toBe('yt:abc123');
+  });
+
+  it('КАЖДЫЙ ключ DATA_KEYS читается обратно (М-2.1/М-5.1 седьмого аудита — третий случай класса)', async () => {
+    // `locale` (этап 60) и `videoHistory` (седьмой аудит) — оба писались
+    // по списку, но отсутствовали в `toSession`. Проверка по списку, а
+    // не по одному полю, чтобы четвёртого случая не было.
+    const { svc } = buildRoundTrip();
+    for (const key of DATA_KEYS) {
+      const marker = { probe: key } as never;
+      await svc.updateSession('s1', { [key]: marker } as never);
+      const back = (await svc.getSession('s1')) as unknown as Record<
+        string,
+        unknown
+      >;
+      expect({ key, value: back[key] }).toEqual({ key, value: marker });
+    }
+  });
+
+  it('videoHistory накапливается, а не усекается до одной записи', async () => {
+    const { svc } = buildRoundTrip();
+    const v = (id: string) => ({ generatedVideoId: id }) as never;
+    await svc.updateSession('s1', { videoHistory: [v('a')] });
+    const first = await svc.getSession('s1');
+    await svc.updateSession('s1', {
+      videoHistory: [v('b'), ...(first?.videoHistory ?? [])],
+    });
+    const back = await svc.getSession('s1');
+    expect(back?.videoHistory?.map((x) => x.generatedVideoId)).toEqual([
+      'b',
+      'a',
+    ]);
   });
 
   it('в правку попадают только затронутые ключи', async () => {

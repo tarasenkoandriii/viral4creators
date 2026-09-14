@@ -48,7 +48,8 @@ export interface CleanupResult {
  * Ключи Session, которые живут в JSON-колонке `data`. По этому списку
  * `updateSession` собирает правку: ключ вне списка в колонку не попадёт.
  */
-const DATA_KEYS = [
+/** Экспорт — только для теста круговорота полей (session.service.spec.ts). */
+export const DATA_KEYS = [
   'originalVideo',
   'videoAnalysis',
   'productInformation',
@@ -133,6 +134,24 @@ export const WORK_KINDS = [
   // молча теряется. Рецидив ровно того класса гонки, который уже закрыт
   // для 'avatar-generate'/'avatar-subtitle-burn'.
   'avatar-sound-check',
+  // Продолжение цепочки Scene Extension (М-2.2/М-1.3 седьмого аудита):
+  // переход к следующему сегменту запускается из ОПРОСА статуса
+  // (`getVideoStatus`/`pollGrokStatus`) после того, как опрос увидел
+  // готовый сегмент, — то есть из хот-пути, который опрашивают две
+  // вкладки, таймер админки и крон экспорта одновременно. Между «увидел
+  // done» и записью `continued` — скачивание, заливка и платный старт
+  // следующего сегмента; без замка каждый конкурентный опрос стартовал
+  // бы свой сегмент (двойная оплата), а последняя запись затирала бы
+  // `veoOperationName`/`grokRequestId` первого — оплаченный рендер
+  // осиротел бы. Тот же класс, что 'avatar-subtitle-burn'.
+  'chain-continue',
+  // Аудит ролика и проверка звука (М-2.5 седьмого аудита — рецидив
+  // Е-3.1 на соседнем сервисе): платный Gemini-вызов, затем запись
+  // всей истории целиком; двойной клик = две оплаты и потерянная
+  // запись. Два вида — у них разные поля (`videoAudit`/`soundCheck`),
+  // друг друга блокировать незачем.
+  'audit',
+  'sound-check',
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
@@ -444,12 +463,49 @@ export class SessionService {
   async findSessionsWithPendingTierBExport(limit: number): Promise<string[]> {
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       SELECT "id" FROM "sessions"
-      WHERE "data" -> 'generatedVideo' -> 'exportVariants'
+      WHERE "generationStatus" = 'complete'
+        AND "data" -> 'generatedVideo' -> 'exportVariants'
             @> '[{"tier":"B","status":"pending"}]'::jsonb
       ORDER BY "lastActivityAt" ASC
       LIMIT ${limit}
     `;
     return rows.map((r) => r.id);
+  }
+
+  /**
+   * Одиночные ролики, поданные через Batch API xAI (транспорт Grok =
+   * batch, `grok-video-transport.ts`) и ещё не досмотренные — для
+   * крон-досмотра `GenerationService.runGrokBatchSyncTick` (М-1.2/М-2.3/
+   * М-5.2 седьмого аудита: статус пачки двигал только клиентский опрос,
+   * результат у xAI живёт час, а TTL сессии — сутки при дедлайне батча
+   * 26 ч). Сужение по индексированной колонке `generationStatus`
+   * (тот же приём, что рекомендован для М-5.4), путь JSON — уже по
+   * отфильтрованным строкам.
+   */
+  async findSessionsWithPendingGrokBatch(limit: number): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "sessions"
+      WHERE "generationStatus" = 'processing'
+        AND "data" -> 'generatedVideo' ->> 'xaiBatchId' IS NOT NULL
+      ORDER BY "lastActivityAt" ASC
+      LIMIT ${limit}
+    `;
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * Продлить жизнь сессиям, за которые сейчас идёт внешняя асинхронная
+   * работа (пачка xAI до суток): `getSession` — чистое чтение и
+   * `lastActivityAt` не сдвигает, поэтому TTL-уборка (24 ч) удаляла
+   * такие сессии раньше результата (М-5.2/М-5.3 седьмого аудита).
+   * Только колонка, `data` не трогается — гонок с JSON-правками нет.
+   */
+  async touchSessions(sessionIds: string[]): Promise<void> {
+    if (sessionIds.length === 0) return;
+    await this.prisma.session.updateMany({
+      where: { id: { in: sessionIds } },
+      data: { lastActivityAt: new Date() },
+    });
   }
 
   async updateSessionStatus(
@@ -563,6 +619,15 @@ export class SessionService {
         undefined) as Session['sharedFromPageId'],
       avatarVideo: (data.avatarVideo ?? undefined) as Session['avatarVideo'],
       soundCheck: (data.soundCheck ?? undefined) as Session['soundCheck'],
+      // М-2.1/М-5.1 седьмого аудита — третий случай класса Б-2.2 в этом
+      // же методе (после `locale`): ключ писался (`DATA_KEYS`), но не
+      // читался, поэтому `[previous, ...(session.videoHistory ?? [])]`
+      // в generation.service.ts всегда собирал массив из ОДНОГО элемента
+      // — история версий молча усекалась при каждом старте, а файлы
+      // прошлых попыток выпадали из `sessionBlobPathnames`. Тест
+      // `session.service.spec.ts` («каждый DATA_KEYS читается обратно»)
+      // закрывает класс целиком.
+      videoHistory: (data.videoHistory ?? undefined) as Session['videoHistory'],
       userId: row.userId ?? null,
       projectId: row.projectId ?? null,
       productItemId: row.productItemId ?? null,

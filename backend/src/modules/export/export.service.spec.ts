@@ -87,6 +87,10 @@ function build(
   const generation = {
     generateVideo: jest.fn().mockResolvedValue(undefined),
     getVideoStatus: jest.fn().mockResolvedValue(VIDEO),
+    // Седьмой аудит: тот же крон-тик досматривает и Grok-пачки.
+    runGrokBatchSyncTick: jest
+      .fn()
+      .mockResolvedValue({ checked: 0, failed: 0 }),
   };
   const postprod = {
     startExport: over.postprodStartError

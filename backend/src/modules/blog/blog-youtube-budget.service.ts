@@ -48,6 +48,9 @@ export class BlogYoutubeBudgetService {
   /** Занять один слот суточного бюджета атомарно. */
   async reserve(now: Date = new Date()): Promise<boolean> {
     const day = utcDay(now);
+    // М-3.12 седьмого аудита: `WHERE count < limit` действует только в
+    // ветке ON CONFLICT — первый вызов за сутки при `limit = 0` проходил.
+    if (this.limit <= 0) return false;
     const affected = await this.prisma.$executeRaw`
       INSERT INTO "blog_youtube_search_usage" ("day", "count", "updatedAt")
       VALUES (${day}, 1, NOW())

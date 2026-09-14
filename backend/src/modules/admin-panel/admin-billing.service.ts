@@ -23,6 +23,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isUniqueConstraintViolation } from '../../common/prisma-errors';
 import { TelegramStarsService } from '../billing/telegram-stars.service';
 
 export interface AdminPaymentRow {
@@ -155,11 +156,55 @@ export class AdminBillingService {
       );
     }
 
-    const updated = await this.prisma.payment.update({
-      where: { id },
-      data: { status: 'REFUNDED' },
-      include: { user: { select: { telegramId: true } } },
+    // М-1.6 седьмого аудита: возврат денег без отката услуги оставлял
+    // кредиты пакета на балансе (их тратили) и месяц подписки с
+    // автопродлением в Telegram. Откат — в одной транзакции со статусом;
+    // сторно кредитов идемпотентно по `@@unique([paymentId, reason])`.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.payment.update({
+        where: { id },
+        data: { status: 'REFUNDED' },
+        include: { user: { select: { telegramId: true } } },
+      });
+      if (payment.purpose === 'CREDIT_PACK' && payment.creditsGranted) {
+        try {
+          await tx.creditLedger.create({
+            data: {
+              userId: payment.userId,
+              delta: -payment.creditsGranted,
+              reason: 'REFUND',
+              paymentId: payment.id,
+            },
+          });
+        } catch (error) {
+          if (!isUniqueConstraintViolation(error)) throw error; // уже сторнировано
+        }
+      }
+      if (payment.purpose === 'SUBSCRIPTION') {
+        // Доступ до конца оплаченного периода не отбираем (деньги
+        // возвращены за него, но резать сессию посреди рендера — хуже),
+        // а автопродление снимаем — как оператор делает вручную через
+        // `AdminUsersService.cancelSubscription`.
+        await tx.subscription.updateMany({
+          where: { userId: payment.userId, status: { not: 'CANCELED' } },
+          data: { cancelAtPeriodEnd: true },
+        });
+      }
+      return row;
     });
+    if (payment.purpose === 'SUBSCRIPTION' && payment.method === 'STARS') {
+      // Telegram продолжил бы списывать Stars по своей подписке — та же
+      // нотификация, что у отмены оператором (Г-2.2).
+      const ok = await this.stars.cancelSubscription(
+        payment.user.telegramId,
+        payment.providerRef,
+      );
+      if (!ok) {
+        this.logger.warn(
+          `operator ${actorId}: возврат ${id} — не удалось отменить Stars-подписку в Telegram, проверьте вручную`,
+        );
+      }
+    }
     return this.rowOf(updated);
   }
 

@@ -157,6 +157,13 @@ const NON_RETRYABLE_NAMES = new Set([
   'VeoOperationOrphanedError',
 ]);
 
+/** М-6.5 седьмого аудита: скачивание готового ролика — с таймаутом. */
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
+/** М-3.6: метка «подача пачки начата» в `CatalogBatchRun.xaiBatchId`. */
+const PENDING_SUBMIT_PREFIX = 'pending:';
+const STALE_SUBMIT_MS = 10 * 60 * 1000;
+
 @Injectable()
 export class CatalogBatchWorkerService {
   private readonly logger = new Logger(CatalogBatchWorkerService.name);
@@ -212,7 +219,7 @@ export class CatalogBatchWorkerService {
     try {
       return await this.runBatchLocked();
     } finally {
-      await releaseJobLock(this.prisma, JOB_KEY);
+      await releaseJobLock(this.prisma, JOB_KEY, acquired);
     }
   }
 
@@ -318,7 +325,16 @@ export class CatalogBatchWorkerService {
     renderFailed: number;
   }> {
     const rows = await this.prisma.catalogBatchItem.findMany({
-      where: { status: 'GENERATING', sessionId: { not: null } },
+      // М-3.5 седьмого аудита: Grok-строки досматриваются пачкой
+      // (`pollInFlightGrokBatches`), у них нет `generatedVideo`, и опрос
+      // через `getVideoStatus` каждый тик бросал NotFound впустую, а
+      // при `take: cronBatch` ещё и вытеснял Veo-строки более поздних
+      // партий из выборки на сутки.
+      where: {
+        status: 'GENERATING',
+        sessionId: { not: null },
+        batch: { provider: { not: 'grok' } },
+      },
       select: {
         id: true,
         batchId: true,
@@ -430,6 +446,7 @@ export class CatalogBatchWorkerService {
    * подавать частями было бы некуда записывать второй ID.
    */
   private async submitReadyGrokBatches(): Promise<number> {
+    await this.warnStalePendingSubmissions();
     const grokRuns = await this.prisma.catalogBatchRun.findMany({
       where: { provider: 'grok', xaiBatchId: null },
       select: { id: true, userId: true, resolution: true, aspectRatio: true },
@@ -523,6 +540,28 @@ export class CatalogBatchWorkerService {
       ).costMicroUsd;
       const totalBatchMicroUsd = perItemMicroUsd * requestItems.length;
       const access = await this.plans.accessOf(run.userId);
+      // М-3.10 седьмого аудита: заблокированный после создания партии
+      // пользователь не должен получить оплаченную подачу — та же
+      // проверка, что у синхронного пути (`assertUserNotBlocked`).
+      try {
+        await this.plans.assertUserNotBlocked(run.userId);
+      } catch (error) {
+        this.logger.warn(
+          `Grok-пачка для партии ${run.id}: владелец ${run.userId} заблокирован — партия помечена FAILED`,
+        );
+        await this.prisma.catalogBatchItem.updateMany({
+          where: { batchId: run.id, status: 'BATCH_QUEUED' },
+          data: {
+            status: 'FAILED',
+            error:
+              error instanceof Error
+                ? error.message
+                : 'Пользователь заблокирован',
+            lockedUntil: null,
+          },
+        });
+        continue;
+      }
       const verdict = await this.aiUsage.budget(run.userId, access.spendPlan);
       if (!verdict.allowed || verdict.remainingMicroUsd < totalBatchMicroUsd) {
         this.logger.warn(
@@ -543,10 +582,37 @@ export class CatalogBatchWorkerService {
         continue;
       }
 
-      const result = await this.grokBatch.submitBatch(
-        `catalog-batch-${run.id}`,
-        requestItems,
-      );
+      // М-3.6 седьмого аудита: между успешной подачей (деньги у xAI) и
+      // записью `xaiBatchId` функция Vercel могла оборваться — следующий
+      // тик видел `xaiBatchId: null` и подавал ту же пачку второй раз.
+      // Метка «подача начата» ставится ДО вызова; при ответе с ошибкой
+      // снимается (пачка не создана или отменена в `submitBatch`), при
+      // обрыве — остаётся, и такой партии крон больше не касается, а
+      // оператор находит пачку в консоли xAI по имени
+      // `catalog-batch-<run.id>` (см. `warnStalePendingSubmissions`).
+      const claimedForSubmit = await this.prisma.catalogBatchRun.updateMany({
+        where: { id: run.id, xaiBatchId: null },
+        data: { xaiBatchId: `${PENDING_SUBMIT_PREFIX}${Date.now()}` },
+      });
+      if (claimedForSubmit.count === 0) continue; // параллельный тик уже подаёт
+
+      let result: Awaited<ReturnType<GrokVideoBatchService['submitBatch']>>;
+      try {
+        result = await this.grokBatch.submitBatch(
+          `catalog-batch-${run.id}`,
+          requestItems,
+        );
+      } catch (error) {
+        // `submitBatch` сам ловит свои ошибки и возвращает `{ error }`;
+        // сюда попадает только неожиданное — метку оставляем, это
+        // сигнал «состояние пачки у xAI неизвестно».
+        this.logger.error(
+          `Grok-пачка для партии ${run.id}: неожиданный сбой подачи, метка подачи оставлена для ручного разбора — ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        continue;
+      }
       if (result.error) {
         this.logger.warn(
           `Grok-пачка для партии ${run.id} не подана: ${result.error}`,
@@ -554,6 +620,10 @@ export class CatalogBatchWorkerService {
         // Не FAILED навсегда — как обычная временная неудача (тот же
         // принцип, что recordFailure() для сетевых сбоев): строки
         // остаются BATCH_QUEUED, следующий тик попробует подать снова.
+        await this.prisma.catalogBatchRun.update({
+          where: { id: run.id },
+          data: { xaiBatchId: null },
+        });
         continue;
       }
 
@@ -565,7 +635,12 @@ export class CatalogBatchWorkerService {
         operation: 'generation',
         model: `${this.grokBatch.modelName}:${resolutionForPricing}`,
         seconds: VIDEO_DURATION_SECONDS * requestItems.length,
-        sessionId: run.id,
+        // М-3.1 седьмого аудита: раньше сюда уходил `sessionId: run.id`
+        // — id ПАРТИИ, не сессии; `AiUsageService` не находил такую
+        // сессию, писал расход анонимным, и суточный лимит владельца
+        // партии его никогда не видел. Владелец известен напрямую.
+        userId: run.userId,
+        sessionId: null,
       });
 
       await this.prisma.catalogBatchRun.update({
@@ -591,6 +666,28 @@ export class CatalogBatchWorkerService {
    * но здесь напрямую, потому что эти сессии никогда не проходили через
    * синхронный `generateVideo()`.
    */
+  /** М-3.6: партии с меткой подачи старше 10 минут — подача оборвалась
+   * между вызовом xAI и записью id; автоматически не переподаём
+   * (двойная оплата), только громко зовём оператора. */
+  private async warnStalePendingSubmissions(): Promise<void> {
+    const stale = await this.prisma.catalogBatchRun.findMany({
+      where: {
+        provider: 'grok',
+        xaiBatchId: { startsWith: PENDING_SUBMIT_PREFIX },
+      },
+      select: { id: true, xaiBatchId: true },
+    });
+    for (const run of stale) {
+      const startedAt = Number(
+        run.xaiBatchId!.slice(PENDING_SUBMIT_PREFIX.length),
+      );
+      if (Date.now() - startedAt < STALE_SUBMIT_MS) continue;
+      this.logger.error(
+        `Партия ${run.id}: подача Grok-пачки оборвалась после вызова xAI — проверьте в консоли xAI пачку "catalog-batch-${run.id}" и либо впишите её id в xaiBatchId, либо сбросьте xaiBatchId в NULL для повторной подачи`,
+      );
+    }
+  }
+
   private async pollInFlightGrokBatches(): Promise<{
     completed: number;
     failed: number;
@@ -599,6 +696,7 @@ export class CatalogBatchWorkerService {
       where: {
         provider: 'grok',
         xaiBatchId: { not: null },
+        NOT: { xaiBatchId: { startsWith: PENDING_SUBMIT_PREFIX } },
         items: { some: { status: 'GENERATING' } },
       },
       select: { id: true, xaiBatchId: true, aspectRatio: true },
@@ -610,13 +708,34 @@ export class CatalogBatchWorkerService {
       const status = await this.grokBatch.getBatchStatus(run.xaiBatchId!);
       if (!status || status.pendingCount > 0) continue; // ещё не готово или сбой опроса — попробуем следующим тиком
 
-      const urlsByItemId = await this.grokBatch.getBatchResults(
+      const results = await this.grokBatch.getBatchResultsDetailed(
         run.xaiBatchId!,
       );
+      if (!results.complete) {
+        // М-3.2/М-6.2 седьмого аудита: результаты прочитаны не до конца
+        // (429/5xx/таймаут на `/results`) — это не «xAI ничего не
+        // вернул», а «мы не смогли прочитать». Оплаченная партия ждёт
+        // следующего тика (через 2 минуты); результаты живут час.
+        this.logger.warn(
+          `партия ${run.id}: результаты пачки ${run.xaiBatchId} прочитаны не полностью — повтор следующим тиком`,
+        );
+        continue;
+      }
+      const urlsByItemId = results.urlsByRequestId;
       const generatingItems = await this.prisma.catalogBatchItem.findMany({
         where: { batchId: run.id, status: 'GENERATING' },
         select: { id: true, sessionId: true, productItemId: true },
       });
+
+      // М-5.3/М-3.3 седьмого аудита: дочерние сессии партии не
+      // обновляются, пока пачка считается в xAI (до суток), и
+      // TTL-уборка (24 ч от `lastActivityAt`) удаляла их раньше
+      // результата. Каждый тик опроса продлевает им жизнь.
+      await this.sessions.touchSessions(
+        generatingItems
+          .map((i) => i.sessionId)
+          .filter((id): id is string => !!id),
+      );
 
       for (const item of generatingItems) {
         const url = urlsByItemId[item.id];
@@ -625,7 +744,9 @@ export class CatalogBatchWorkerService {
             where: { id: item.id },
             data: {
               status: 'FAILED',
-              error: 'Grok batch завершился без результата для этой строки',
+              error:
+                results.errorsByRequestId[item.id] ??
+                'Grok batch завершился без результата для этой строки',
               lockedUntil: null,
             },
           });
@@ -677,7 +798,9 @@ export class CatalogBatchWorkerService {
     const session = await this.sessions.getSession(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
 
-    const res = await fetch(videoUrl);
+    const res = await fetch(videoUrl, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
     if (!res.ok) {
       throw new Error(`Grok batch video download HTTP ${res.status}`);
     }

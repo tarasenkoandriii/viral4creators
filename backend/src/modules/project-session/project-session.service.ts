@@ -198,8 +198,31 @@ export class ProjectSessionService {
       tts.providerKey,
       isResembleClone,
     );
+    // М-2.6/М-7.1 седьмого аудита: режим озвучки и субтитры входят в
+    // бриф промпта (`voiceModeBriefText`: «никто не говорит в кадре» при
+    // своём голосе). Одобренный промпт, собранный под прежний режим,
+    // после смены обязан потерять одобрение ЗДЕСЬ, на сервере — а не
+    // полагаться на то, что клиент успешно вызовет пересборку вторым
+    // запросом (GPT 429/таймаут оставлял старое одобрение, и
+    // «Сгенерировать» проходило с несогласованными брифом и озвучкой).
+    // Та же семантика, что у `PromptService.updatePrompt`/`applyFix`.
+    const briefChanged =
+      (dto.voiceMode !== undefined &&
+        dto.voiceMode !== session.brandManifestSnapshot.voiceMode) ||
+      (dto.subtitlesMode !== undefined &&
+        dto.subtitlesMode !== session.brandManifestSnapshot.subtitlesMode);
+    const resetApproval =
+      briefChanged && session.generationPrompt?.approvedAt
+        ? {
+            generationPrompt: {
+              ...session.generationPrompt,
+              approvedAt: undefined,
+            },
+          }
+        : {};
     const updated = await this.sessions.updateSession(sessionId, {
       brandManifestSnapshot: next,
+      ...resetApproval,
     });
     if (!updated?.brandManifestSnapshot) {
       throw new NotFoundException(`Session ${sessionId} not found`);

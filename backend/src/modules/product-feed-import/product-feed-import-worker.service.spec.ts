@@ -612,11 +612,15 @@ describe('джоб-уровневый замок (Д-3.3, пятый аудит)
     const { service, prisma } = setup({ runs: [], items: [] });
     await service.runTick();
     expect(prisma.cronJobLock.create).toHaveBeenCalledWith({
-      data: { jobKey: 'feed-import-run', lockedUntil: expect.any(Date) },
+      data: {
+        jobKey: 'feed-import-run',
+        lockedUntil: expect.any(Date),
+        ownerToken: expect.any(String),
+      },
     });
     expect(prisma.cronJobLock.updateMany).toHaveBeenCalledWith({
-      where: { jobKey: 'feed-import-run' },
-      data: { lockedUntil: null },
+      where: { jobKey: 'feed-import-run', ownerToken: expect.any(String) },
+      data: { lockedUntil: null, ownerToken: null },
     });
   });
 });

@@ -68,6 +68,9 @@ interface RenewableSubscription {
 
 export type RenewalOutcome = 'renewed' | 'past_due' | 'canceled';
 
+/** Терминальные отказы WayForPay — те же, что у вебхука (Г-2.4). */
+const TERMINAL_FAILURE_STATUSES = new Set(['Declined', 'Expired', 'Voided']);
+
 @Injectable()
 export class WayForPayRenewalService {
   private readonly logger = new Logger(WayForPayRenewalService.name);
@@ -123,7 +126,7 @@ export class WayForPayRenewalService {
       );
       return overdueDays > GRACE_PERIOD_DAYS
         ? this.giveUp(subscription)
-        : this.markPastDue(subscription.id);
+        : this.markPastDue(subscription);
     }
 
     const price = subscriptionPriceFor(
@@ -133,7 +136,18 @@ export class WayForPayRenewalService {
     // ретрае (после сбоя ДО того, как currentPeriodEnd успел сдвинуться)
     // даёт тот же orderReference — WayForPay видит повтор и не спишет
     // дважды.
-    const orderReference = `sub:${subscription.id}:${subscription.currentPeriodEnd.getTime()}`;
+    const baseReference = `sub:${subscription.id}:${subscription.currentPeriodEnd.getTime()}`;
+    // М-1.4 седьмого аудита: тот же orderReference переиспользуется ТОЛЬКО
+    // пока прежняя попытка не завершилась (PENDING — сетевой сбой или
+    // промежуточный статус 3DS): WayForPay дедуплицирует по номеру
+    // заказа, и это защита от двойного списания. После терминального
+    // отказа (Declined/Expired/Voided) повтор с тем же номером получил
+    // бы тот же отказ — карта не пробовалась бы ни разу за весь грейс.
+    // Поэтому каждая новая попытка после отказа — свой суффикс.
+    const orderReference = await this.orderReferenceFor(
+      subscription.id,
+      baseReference,
+    );
     // PENDING-строка ДО списания — если процесс упадёт между вызовом
     // WayForPay и записью результата, строка уже существует и следующий
     // ретрай найдёт её по тому же orderReference вместо создания новой.
@@ -175,13 +189,22 @@ export class WayForPayRenewalService {
       // строку и тот же orderReference (см. upsert выше).
       return overdueDays > GRACE_PERIOD_DAYS
         ? this.giveUp(subscription)
-        : this.markPastDue(subscription.id);
+        : this.markPastDue(subscription);
     }
 
+    // Промежуточные статусы (InProcessing/Pending/WaitingAuthComplete —
+    // Г-2.4 в вебхуке) — не отказ: строка остаётся PENDING, следующая
+    // попытка переиспользует тот же номер заказа.
+    const terminalFailure =
+      !result.ok && TERMINAL_FAILURE_STATUSES.has(result.transactionStatus);
     await this.prisma.payment.update({
       where: { id: payment.id },
       data: {
-        status: result.ok ? 'SUCCEEDED' : 'FAILED',
+        status: result.ok
+          ? 'SUCCEEDED'
+          : terminalFailure
+            ? 'FAILED'
+            : 'PENDING',
         rawPayload: sanitizeWayForPayRawPayload(result.rawPayload),
         failureReason: result.ok ? null : result.transactionStatus,
       },
@@ -190,7 +213,7 @@ export class WayForPayRenewalService {
     if (!result.ok) {
       return overdueDays > GRACE_PERIOD_DAYS
         ? this.giveUp(subscription)
-        : this.markPastDue(subscription.id);
+        : this.markPastDue(subscription);
     }
 
     const extended = new Date(
@@ -214,21 +237,69 @@ export class WayForPayRenewalService {
     return 'renewed';
   }
 
-  private async markPastDue(subscriptionId: string): Promise<RenewalOutcome> {
-    await this.prisma.subscription.update({
-      where: { id: subscriptionId },
+  /** Номер заказа для этой попытки — см. комментарий у `baseReference`
+   * в `charge()`: незавершённая попытка переиспользуется, после
+   * терминального отказа — новый суффикс по числу отказов. */
+  private async orderReferenceFor(
+    subscriptionId: string,
+    baseReference: string,
+  ): Promise<string> {
+    const attempts = await this.prisma.payment.findMany({
+      where: {
+        subscriptionId,
+        method: 'WAYFORPAY',
+        providerRef: { startsWith: baseReference },
+      },
+      select: { providerRef: true, status: true },
+    });
+    const pending = attempts.find((a) => a.status === 'PENDING');
+    if (pending) return pending.providerRef;
+    const failed = attempts.filter((a) => a.status === 'FAILED').length;
+    return failed === 0 ? baseReference : `${baseReference}:${failed}`;
+  }
+
+  /**
+   * М-1.5 седьмого аудита (тот же класс, что Е-1.1): статус пишется
+   * условно, по снимку `currentPeriodEnd` — между выборкой воркера и
+   * этой записью вебхук новой покупки мог уже поставить ACTIVE с новым
+   * сроком, и безусловный UPDATE затирал бы оплаченную подписку на
+   * PAST_DUE/CANCELED.
+   */
+  private async markPastDue(
+    subscription: RenewableSubscription,
+  ): Promise<RenewalOutcome> {
+    const updated = await this.prisma.subscription.updateMany({
+      where: {
+        id: subscription.id,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+      },
       data: { status: 'PAST_DUE' },
     });
+    if (updated.count === 0) {
+      this.logger.log(
+        `Подписка ${subscription.id}: срок сдвинулся во время продления — PAST_DUE не ставим`,
+      );
+    }
     return 'past_due';
   }
 
   private async giveUp(
     subscription: RenewableSubscription,
   ): Promise<RenewalOutcome> {
-    await this.prisma.subscription.update({
-      where: { id: subscription.id },
+    const updated = await this.prisma.subscription.updateMany({
+      where: {
+        id: subscription.id,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+      },
       data: { status: 'CANCELED' },
     });
+    if (updated.count === 0) {
+      // Кто-то (вебхук покупки) уже продлил — отменять и понижать нечего.
+      this.logger.log(
+        `Подписка ${subscription.id}: срок сдвинулся во время продления — отмену пропускаем`,
+      );
+      return 'past_due';
+    }
     await this.plans.applyPurchasedPlan(subscription.userId, 'LITE');
     this.logger.log(
       `Подписка ${subscription.id} отменена (грейс исчерпан) — пользователь ${subscription.userId} переведён на LITE`,

@@ -277,7 +277,17 @@ export class BlogTranslationService {
       return true;
     }
 
-    const rawResults = await this.grokBatch.getBatchResults(xaiBatchId);
+    const detailed = await this.grokBatch.getBatchResultsDetailed(xaiBatchId);
+    if (!detailed.complete) {
+      // М-3.2б седьмого аудита: результаты прочитаны не полностью —
+      // «не смогли прочитать», а не «xAI не перевёл». Ждём следующего
+      // тика, ничего не помечаем и расход не пишем.
+      this.logger.warn(
+        `пачка ${xaiBatchId}: результаты прочитаны не полностью — повтор следующим тиком`,
+      );
+      return false;
+    }
+    const rawResults = detailed.resultsByRequestId;
     const rows: PendingTranslationRow[] = queued.map((t) => ({
       id: t.id,
       locale: t.locale,

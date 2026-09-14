@@ -14,7 +14,8 @@ import { signStarsInvoicePayload } from './stars-invoice-payload.util';
 const PAYMENT_TOKEN_KEY = 'a'.repeat(43) + '='; // произвольная валидная base64-строка для HMAC
 
 function build() {
-  const prisma = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prisma: any = {
     payment: {
       // creditsGranted=5 — соответствует умолчанию тестов ниже (пакет
       // 'small' по каталогу billing-pricing.ts). Тесты, которым важно
@@ -26,13 +27,23 @@ function build() {
         creditsGranted: 5,
       }),
       findUnique: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
       update: jest.fn(),
+    },
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ telegramId: '777' }),
     },
     subscription: {
       findUnique: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({}),
       create: jest.fn().mockResolvedValue({}),
     },
+    // Спека отстала от кода: вебхуки идут в `$transaction` с advisory-
+    // замком (Г-2.x); мок прозрачно передаёт тот же объект как `tx`.
+    $executeRaw: jest.fn().mockResolvedValue(0),
+    $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn(prisma),
+    ),
   };
   const plans = { applyPurchasedPlan: jest.fn().mockResolvedValue(undefined) };
   const creditLedger = { grant: jest.fn().mockResolvedValue(undefined) };
@@ -40,6 +51,7 @@ function build() {
     configured: jest.fn().mockReturnValue(true),
     createInvoiceLink: jest.fn().mockResolvedValue('https://t.me/invoice/abc'),
     answerPreCheckoutQuery: jest.fn().mockResolvedValue(undefined),
+    cancelSubscription: jest.fn().mockResolvedValue(true),
   };
   const wayforpay = {
     configured: jest.fn().mockReturnValue(true),
@@ -139,6 +151,39 @@ describe('BillingService.startSubscriptionCheckout — старт покупки
       }),
     );
     expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it('М-1.1: действующая Stars-подписка отменяется в Telegram ДО нового подписочного инвойса (апгрейд без двойного списания)', async () => {
+    const { svc, prisma, stars } = build();
+    prisma.subscription.findUnique.mockResolvedValue({
+      method: 'STARS',
+      status: 'ACTIVE',
+    });
+    prisma.payment.findFirst.mockResolvedValue({ providerRef: 'charge-old' });
+    const calls: string[] = [];
+    stars.cancelSubscription.mockImplementation(async () => {
+      calls.push('cancel');
+      return true;
+    });
+    stars.createInvoiceLink.mockImplementation(async () => {
+      calls.push('invoice');
+      return 'https://t.me/invoice/new';
+    });
+
+    await svc.startSubscriptionCheckout('u1', 'PREMIUM', 'STARS');
+
+    expect(stars.cancelSubscription).toHaveBeenCalledWith('777', 'charge-old');
+    expect(calls).toEqual(['cancel', 'invoice']);
+  });
+
+  it('М-1.1: без действующей Stars-подписки (или с WayForPay/отменённой) в Telegram ничего не отменяется', async () => {
+    const { svc, prisma, stars } = build();
+    prisma.subscription.findUnique.mockResolvedValue({
+      method: 'WAYFORPAY',
+      status: 'ACTIVE',
+    });
+    await svc.startSubscriptionCheckout('u1', 'PREMIUM', 'STARS');
+    expect(stars.cancelSubscription).not.toHaveBeenCalled();
   });
 
   it('Stars не настроен — 503, а не тихий отказ', async () => {
@@ -267,6 +312,7 @@ describe('BillingService — вебхук Telegram (Stars)', () => {
       'u1',
       expect.any(Number),
       'pay1',
+      expect.anything(), // tx
     );
   });
 
@@ -289,13 +335,15 @@ describe('BillingService — вебхук Telegram (Stars)', () => {
     expect(prisma.subscription.create).toHaveBeenCalled();
   });
 
-  it('повторная доставка того же charge_id — не падает и не начисляет дважды (P2002)', async () => {
+  it('повторная доставка того же charge_id — не падает и не начисляет дважды (advisory-замок + findUnique под ним)', async () => {
     const { svc, creditLedger, prisma } = build();
-    const err = Object.assign(new Error('unique'), { code: 'P2002' });
-    prisma.payment.create.mockRejectedValueOnce(err);
+    // Идемпотентность теперь не через P2002, а через чтение под
+    // `pg_advisory_xact_lock` в той же транзакции (Г-2.x).
+    prisma.payment.findUnique.mockResolvedValueOnce({ id: 'pay-existing' });
     await svc.handleTelegramUpdate({
       message: { successful_payment: successfulPayment() },
     });
+    expect(prisma.payment.create).not.toHaveBeenCalled();
     expect(creditLedger.grant).not.toHaveBeenCalled();
   });
 
@@ -436,7 +484,12 @@ describe('BillingService — вебхук WayForPay', () => {
       reasonCode: 1100,
       merchantSignature: 'sig',
     });
-    expect(creditLedger.grant).toHaveBeenCalledWith('u1', 20, 'pay1');
+    expect(creditLedger.grant).toHaveBeenCalledWith(
+      'u1',
+      20,
+      'pay1',
+      expect.anything(), // tx
+    );
   });
 
   it('WayForPay: пакет кредитов без сохранённого числа — не падает, но и не начисляет', async () => {

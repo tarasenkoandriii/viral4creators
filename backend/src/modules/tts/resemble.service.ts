@@ -66,6 +66,9 @@ interface ResembleVoicesResponse {
   voices?: Array<Record<string, unknown>>;
 }
 
+/** М-6.5 седьмого аудита: таймаут внешних HTTP-вызовов. */
+const EXTERNAL_TIMEOUT_MS = 60_000;
+
 @Injectable()
 export class ResembleService implements TtsProvider {
   readonly providerKey = 'resemble';
@@ -124,6 +127,7 @@ export class ResembleService implements TtsProvider {
     try {
       const res = await fetch(`${this.synthesizeBase}/synthesize`, {
         method: 'POST',
+        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${key}`,
@@ -257,6 +261,7 @@ export class ResembleService implements TtsProvider {
     try {
       const res = await fetch(`${this.manageBase}/voices`, {
         headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
       });
       if (!res.ok) {
         return {
@@ -325,6 +330,7 @@ export class ResembleService implements TtsProvider {
     try {
       const res = await fetch(`${this.manageBase}/voices`, {
         method: 'POST',
+        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${key}`,
@@ -381,7 +387,10 @@ export class ResembleService implements TtsProvider {
     try {
       const res = await fetch(
         `${this.manageBase}/voices/${encodeURIComponent(resembleVoiceId)}`,
-        { headers: { Authorization: `Bearer ${key}` } },
+        {
+          headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
+        },
       );
       if (!res.ok) return undefined;
       const data = (await res.json().catch(() => ({}))) as Record<
@@ -408,7 +417,11 @@ export class ResembleService implements TtsProvider {
     try {
       const res = await fetch(
         `${this.manageBase}/voices/${encodeURIComponent(resembleVoiceId)}`,
-        { method: 'DELETE', headers: { Authorization: `Bearer ${key}` } },
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
+        },
       );
       if (!res.ok) {
         this.logger.warn(

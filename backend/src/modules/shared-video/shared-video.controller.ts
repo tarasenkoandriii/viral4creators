@@ -45,6 +45,7 @@ import {
 } from '../admin-auth/admin-session.guard';
 import { AdminPanelService } from '../admin-panel/admin-panel.service';
 import { SharedVideoService } from './shared-video.service';
+import { RateLimit, RateLimitGuard } from '../../common/rate-limit';
 import {
   CreateSharedVideoRequestDto,
   ForkSharedVideoRequestDto,
@@ -126,7 +127,12 @@ export class PublicSharedVideoController {
     return this.service.getPublic(id);
   }
 
+  // М-4.5 седьмого аудита: форк создаёт сессию (строка в базе + файлы)
+  // без входа — тот же лимит и тот же ключ, что у `POST /sessions`
+  // (Б-3.7), иначе публичный маршрут обходил его целиком.
   @Post(':id/fork')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ name: 'session-create', limit: 30, windowSec: 60 })
   fork(
     @Param('id') id: string,
     @Body() dto: ForkSharedVideoRequestDto,

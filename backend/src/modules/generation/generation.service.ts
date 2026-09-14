@@ -19,7 +19,11 @@ import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { SessionService } from '../../common/session.service';
 import { PlanService } from '../plan/plan.service';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
-import { GrokVideoService, GrokResolution } from './grok-video.service';
+import {
+  GrokVideoService,
+  GrokResolution,
+  effectiveGrokResolution,
+} from './grok-video.service';
 import { GrokVideoBatchService } from './grok-video-batch.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 import {
@@ -127,6 +131,9 @@ export const RENDER_DEADLINE_MS = 20 * 60 * 1000;
  * закрыть сбоем пачку, которую xAI ещё честно обрабатывает. */
 export const BATCH_RENDER_DEADLINE_MS = 26 * 60 * 60 * 1000;
 
+/** Сколько сессий с Grok-пачкой досматривает один крон-тик. */
+export const GROK_BATCH_SYNC_BATCH = 50;
+
 export function renderExpired(
   video: Pick<GeneratedVideo, 'initiatedAt' | 'xaiBatchId'>,
   now: number = Date.now(),
@@ -184,6 +191,9 @@ export class VeoOperationOrphanedError extends InternalServerErrorException {
  *    assumption — every HTTP request is short regardless of how long the
  *    overall generation takes.
  */
+/** М-6.5 седьмого аудита: скачивание готового ролика — с таймаутом. */
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
 @Injectable()
 export class GenerationService {
   private readonly logger = new Logger(GenerationService.name);
@@ -335,7 +345,12 @@ export class GenerationService {
       // помечает цену Veo 3.0 как неподтверждённую).
       const model =
         provider === 'grok'
-          ? `${this.grokVideo.modelName}:${resolution ?? '480p'}`
+          ? // М-2.8: оценка цепочки — по фактическому разрешению (референсы
+            // бренда → 720p); та же функция, что у учёта.
+            `${this.grokVideo.modelName}:${effectiveGrokResolution(
+              resolution ?? '480p',
+              { references: !buildReferencePlan(session).legacyFirstFrame },
+            )}`
           : pickVeoModel(
               buildReferencePlan(session),
               quality,
@@ -395,8 +410,24 @@ export class GenerationService {
       throw new ConflictException(GENERATION_IN_FLIGHT_MESSAGE);
     }
     try {
+      // М-2.7 седьмого аудита: проверка «рендер уже идёт» выше сделана по
+      // снимку, прочитанному ДО замка; запрос, прочитавший сессию до
+      // записи `generatedVideo` конкурентом и взявший замок после его
+      // `releaseWork`, запустил бы второй платный рендер. Перечитываем.
+      const fresh = await this.sessionService.getSession(sessionId);
+      const freshInFlight = fresh?.generatedVideo;
+      if (
+        freshInFlight &&
+        (freshInFlight.status === GenerationStatus.PENDING ||
+          freshInFlight.status === GenerationStatus.PROCESSING)
+      ) {
+        this.logger.warn(
+          `сессия ${sessionId}: рендер стартовал параллельно между чтением и замком — возвращаю его же`,
+        );
+        return freshInFlight;
+      }
       return await this.startGeneration(
-        session,
+        fresh ?? session,
         quality,
         aspectRatio,
         provider,
@@ -740,11 +771,17 @@ export class GenerationService {
           label: i.label,
           characterId: i.characterId,
         })),
+        // М-2.4 седьмого аудита: целевая длительность пишется всегда,
+        // когда план строился — у Grok 9–15 с это ОДИН нативный вызов
+        // без цепочки, и без этого поля субтитры/перерендер/админ-повтор
+        // считали ролик восьмисекундным.
+        ...(extensionPlan
+          ? { chainTargetDurationSeconds: extensionPlan.targetDurationSeconds }
+          : {}),
         ...(extensionPlan && extensionPlan.totalCalls > 1
           ? {
               chainSegmentsDone: 1,
               chainSegmentsTotal: extensionPlan.totalCalls,
-              chainTargetDurationSeconds: extensionPlan.targetDurationSeconds,
               chainSegmentSeconds: extensionPlan.segments,
             }
           : {}),
@@ -917,8 +954,22 @@ export class GenerationService {
       }
     } catch (error) {
       this.logger.error('Failed to start Grok generation:', error);
+      // М-1.8 седьмого аудита (остаток Е-1.2 для Grok-пути): транзиентный
+      // 429/5xx или сетевой обрыв — ServiceUnavailableException, чтобы
+      // воркеры партии/A-B ретраили, а не хоронили строку навсегда.
+      const message = this.extractErrorMessage(error);
+      const httpStatus = Number(/HTTP (\d{3})/.exec(message)?.[1] ?? NaN);
+      const transient =
+        (Number.isFinite(httpStatus) &&
+          (httpStatus === 429 || httpStatus >= 500)) ||
+        /timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(message);
+      if (transient) {
+        throw new ServiceUnavailableException(
+          `Grok временно недоступен: ${message}`,
+        );
+      }
       throw new BadRequestException(
-        `Failed to start video generation: ${this.extractErrorMessage(error)}`,
+        `Failed to start video generation: ${message}`,
       );
     }
 
@@ -935,7 +986,9 @@ export class GenerationService {
         // Составной ключ — та же цена по разрешению, что в
         // `common/ai-pricing.ts` (§11.5/§10.2 ТЗ): одна модель Grok,
         // три разные ставки, не одна.
-        model: `${this.grokVideo.modelName}:${resolution}`,
+        // М-6.6/М-1.7: ставка — по ФАКТИЧЕСКОМУ разрешению (референсы →
+        // не выше 720p), иначе журнал дороже реального счёта xAI.
+        model: `${this.grokVideo.modelName}:${effectiveGrokResolution(resolution, { references: !!referenceImageUrls?.length })}`,
         seconds: baseSegmentSeconds,
         sessionId,
       });
@@ -960,11 +1013,17 @@ export class GenerationService {
           label: i.label,
           characterId: i.characterId,
         })),
+        // М-2.4 седьмого аудита: целевая длительность пишется всегда,
+        // когда план строился — у Grok 9–15 с это ОДИН нативный вызов
+        // без цепочки, и без этого поля субтитры/перерендер/админ-повтор
+        // считали ролик восьмисекундным.
+        ...(extensionPlan
+          ? { chainTargetDurationSeconds: extensionPlan.targetDurationSeconds }
+          : {}),
         ...(extensionPlan && extensionPlan.totalCalls > 1
           ? {
               chainSegmentsDone: 1,
               chainSegmentsTotal: extensionPlan.totalCalls,
-              chainTargetDurationSeconds: extensionPlan.targetDurationSeconds,
               chainSegmentSeconds: extensionPlan.segments,
             }
           : {}),
@@ -1027,7 +1086,9 @@ export class GenerationService {
         `Reference image ${ref.index} (${ref.label}): ${FOREIGN_BLOB_URL_MESSAGE}`,
       );
     }
-    const res = await fetch(ref.url);
+    const res = await fetch(ref.url, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
     if (!res.ok) {
       throw new BadRequestException(
         `Failed to fetch reference image ${ref.index} (${ref.label}): HTTP ${res.status}`,
@@ -1213,7 +1274,10 @@ export class GenerationService {
     try {
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/${current.veoOperationName}`,
-        { headers: { 'x-goog-api-key': apiKey } },
+        {
+          headers: { 'x-goog-api-key': apiKey },
+          signal: AbortSignal.timeout(30_000),
+        },
       );
       if (!res.ok) {
         throw new Error(`Veo operation status HTTP ${res.status}`);
@@ -1283,11 +1347,8 @@ export class GenerationService {
       current.chainSegmentsTotal &&
       (current.chainSegmentsDone ?? 1) < current.chainSegmentsTotal
     ) {
-      return await this.continueVeoChain(
-        sessionId,
-        session,
-        current,
-        videoBuffer,
+      return await this.continueChainGuarded(sessionId, current, () =>
+        this.continueVeoChain(sessionId, session, current, videoBuffer),
       );
     }
 
@@ -1337,6 +1398,36 @@ export class GenerationService {
    * не в ту сторону (см. доккомментарий `GrokVideoService` — три места
    * там прямо помечены как неподтверждённые).
    */
+  /**
+   * Крон-досмотр одиночных роликов, поданных через Batch API (М-1.2/
+   * М-2.3/М-5.2 седьмого аудита) — тот же принцип, что
+   * `ExportService.runSyncTick` для яруса B: статус двигается и без
+   * открытой вкладки, результат (живёт у xAI час) скачивается в том же
+   * тике, а `touchSessions` продлевает сессии, чтобы TTL-уборка не
+   * удалила их раньше 26-часового дедлайна батча. Вызывается из
+   * `ExportService.runSyncTick` (крон `export-sync-run`, каждые 2 мин).
+   */
+  async runGrokBatchSyncTick(
+    limit: number = GROK_BATCH_SYNC_BATCH,
+  ): Promise<{ checked: number; failed: number }> {
+    const ids =
+      await this.sessionService.findSessionsWithPendingGrokBatch(limit);
+    if (ids.length === 0) return { checked: 0, failed: 0 };
+    await this.sessionService.touchSessions(ids);
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await this.getVideoStatus(id);
+      } catch (error) {
+        failed += 1;
+        this.logger.warn(
+          `крон-досмотр Grok-пачки: сессия ${id} — ${this.extractErrorMessage(error)}`,
+        );
+      }
+    }
+    return { checked: ids.length, failed };
+  }
+
   /** Настройка стенда «транспорт Grok» — см. `grok-video-transport.ts`. */
   private async grokTransport(): Promise<GrokVideoTransportKey> {
     return resolveGrokVideoTransport(
@@ -1392,7 +1483,9 @@ export class GenerationService {
         sessionId,
         current,
         'VIDEO_GENERATION_TIMEOUT',
-        `Grok не ответил за ${RENDER_DEADLINE_MS / 60000} минут — попробуйте сгенерировать ещё раз`,
+        current.xaiBatchId
+          ? `xAI не обработал пачку за ${BATCH_RENDER_DEADLINE_MS / 3_600_000} часов — попробуйте сгенерировать ещё раз`
+          : `Grok не ответил за ${RENDER_DEADLINE_MS / 60000} минут — попробуйте сгенерировать ещё раз`,
         true,
       );
     }
@@ -1439,7 +1532,9 @@ export class GenerationService {
     let videoBuffer: Buffer;
     let blobUrl: string;
     try {
-      const res = await fetch(status.videoUrl);
+      const res = await fetch(status.videoUrl, {
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      });
       if (!res.ok) {
         throw new Error(`Grok video download HTTP ${res.status}`);
       }
@@ -1468,7 +1563,9 @@ export class GenerationService {
       current.chainSegmentsTotal &&
       (current.chainSegmentsDone ?? 1) < current.chainSegmentsTotal
     ) {
-      return await this.continueGrokChain(sessionId, session, current, blobUrl);
+      return await this.continueChainGuarded(sessionId, current, () =>
+        this.continueGrokChain(sessionId, session, current, blobUrl),
+      );
     }
 
     const completed: GeneratedVideo = {
@@ -1512,6 +1609,49 @@ export class GenerationService {
    * вообще отклоняется как некорректный на этом эндпоинте — то есть
    * степень неопределённости здесь ВЫШЕ, чем у остального этого файла.
    */
+  /**
+   * М-2.2/М-1.3 седьмого аудита: продолжение цепочки — под замком
+   * `claimWork('chain-continue')` и с перечитыванием сессии под ним.
+   * Проигравший опрос (замок занят) или опоздавший (под замком видно,
+   * что сегмент уже продвинут другим опросом) возвращает актуальную
+   * запись и НЕ стартует свой платный сегмент. Тот же приём, что у
+   * `pollExport`/`advanceSubtitleBurn`.
+   */
+  private async continueChainGuarded(
+    sessionId: string,
+    current: GeneratedVideo,
+    run: () => Promise<GeneratedVideo>,
+  ): Promise<GeneratedVideo> {
+    const claimed = await this.sessionService.claimWork(
+      sessionId,
+      'chain-continue',
+      GENERATE_CLAIM_TTL_MS,
+    );
+    if (!claimed) {
+      this.logger.warn(
+        `сессия ${sessionId}: продолжение цепочки уже идёт в другом опросе — этот пропускает`,
+      );
+      return current;
+    }
+    try {
+      const fresh = await this.sessionService.getSession(sessionId);
+      const latest = fresh?.generatedVideo;
+      if (
+        !latest ||
+        latest.generatedVideoId !== current.generatedVideoId ||
+        (latest.chainSegmentsDone ?? 1) !== (current.chainSegmentsDone ?? 1) ||
+        latest.status !== GenerationStatus.PROCESSING
+      ) {
+        // Другой опрос уже продвинул (или закрыл) цепочку между нашим
+        // чтением и замком — отдаём то, что в базе, без второго старта.
+        return latest ?? current;
+      }
+      return await run();
+    } finally {
+      await this.sessionService.releaseWork(sessionId, 'chain-continue');
+    }
+  }
+
   private async continueVeoChain(
     sessionId: string,
     session: Session,
@@ -1706,7 +1846,8 @@ export class GenerationService {
 
     await this.aiUsage.record({
       operation: 'generation',
-      model: `${this.grokVideo.modelName}:${resolution}`,
+      // М-2.8: выход расширения — не выше 720p, по такой ставке и учёт.
+      model: `${this.grokVideo.modelName}:${effectiveGrokResolution(resolution, { extension: true })}`,
       seconds: extendSeconds,
       sessionId,
     });
@@ -1741,7 +1882,10 @@ export class GenerationService {
         'GEMINI_API_KEY or GOOGLE_GEMINI_API_KEY environment variable is required',
       );
     }
-    const res = await fetch(uri, { headers: { 'x-goog-api-key': apiKey } });
+    const res = await fetch(uri, {
+      headers: { 'x-goog-api-key': apiKey },
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
     if (!res.ok) {
       throw new Error(`Failed to download Veo video: HTTP ${res.status}`);
     }

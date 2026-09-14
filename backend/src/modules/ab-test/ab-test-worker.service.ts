@@ -157,7 +157,7 @@ export class AbTestWorkerService {
     try {
       return await this.runBatchLocked();
     } finally {
-      await releaseJobLock(this.prisma, JOB_KEY);
+      await releaseJobLock(this.prisma, JOB_KEY, acquired);
     }
   }
 

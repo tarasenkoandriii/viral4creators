@@ -32,9 +32,7 @@ describe('GrokVideoBatchService', () => {
     });
 
     it('getBatchStatus — null, без HTTP-вызова', async () => {
-      expect(
-        await new GrokVideoBatchService().getBatchStatus('b1'),
-      ).toBeNull();
+      expect(await new GrokVideoBatchService().getBatchStatus('b1')).toBeNull();
       expect(mockedAxios.get).not.toHaveBeenCalled();
     });
 
@@ -125,7 +123,10 @@ describe('GrokVideoBatchService', () => {
         {
           batchRequestId: 'gen-2',
           prompt: 'A character walks',
-          referenceImageUrls: ['https://blob.test/a.png', 'https://blob.test/b.png'],
+          referenceImageUrls: [
+            'https://blob.test/a.png',
+            'https://blob.test/b.png',
+          ],
           durationSeconds: 8,
           aspectRatio: '9:16',
           resolution: '720p',
@@ -136,7 +137,10 @@ describe('GrokVideoBatchService', () => {
       expect(
         (addBody as any).batch_requests[0].batch_request.video_generate_video
           .reference_images,
-      ).toEqual([{ url: 'https://blob.test/a.png' }, { url: 'https://blob.test/b.png' }]);
+      ).toEqual([
+        { url: 'https://blob.test/a.png' },
+        { url: 'https://blob.test/b.png' },
+      ]);
     });
 
     it('ошибка при создании пачки — не идёт дальше добавления запросов', async () => {
@@ -215,9 +219,7 @@ describe('GrokVideoBatchService', () => {
       mockedAxios.get.mockResolvedValueOnce({
         status: 200,
         data: {
-          results: [
-            { batch_request_id: 'gen-failed', batch_result: {} },
-          ],
+          results: [{ batch_request_id: 'gen-failed', batch_result: {} }],
         },
       });
       const results = await withKey().getBatchResults('batch_1');
@@ -317,7 +319,9 @@ describe('GrokVideoBatchService — расширение и ошибки (оди
           {
             batch_request_id: 'ok',
             batch_result: {
-              response: { video_generate_video: { video: { url: 'https://x/ok.mp4' } } },
+              response: {
+                video_generate_video: { video: { url: 'https://x/ok.mp4' } },
+              },
             },
           },
           {
@@ -330,5 +334,73 @@ describe('GrokVideoBatchService — расширение и ошибки (оди
     const r = await new GrokVideoBatchService().getBatchResultsDetailed('b');
     expect(r.urlsByRequestId).toEqual({ ok: 'https://x/ok.mp4' });
     expect(r.errorsByRequestId).toEqual({ bad: 'content moderated (code 3)' });
+  });
+});
+
+// М-6.7 седьмого аудита: xAI молча проигнорировал ключ запроса → в пачке
+// 0 элементов; сверяем сразу после подачи и отменяем сироту.
+describe('GrokVideoBatchService — сверка num_requests после подачи (М-6.7)', () => {
+  beforeEach(() => {
+    mockedAxios.post.mockReset();
+    mockedAxios.get.mockReset();
+    process.env.GROK_API_KEY = 'test-key';
+  });
+
+  it('число принятых запросов не совпадает — ошибка вместо 26-часового ожидания, пачка отменяется', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce({ status: 200, data: { id: 'b1' } }) // create
+      .mockResolvedValueOnce({ status: 200, data: {} }) // add
+      .mockResolvedValueOnce({ status: 200, data: {} }); // cancel
+    mockedAxios.get.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        state: {
+          num_requests: 0,
+          num_pending: 0,
+          num_success: 0,
+          num_error: 0,
+        },
+      },
+    });
+    const r = await new GrokVideoBatchService().submitBatch('x', [
+      {
+        batchRequestId: 'g1',
+        prompt: 'p',
+        durationSeconds: 8,
+        aspectRatio: '9:16',
+        resolution: '480p',
+      },
+    ]);
+    expect(r.error).toMatch(/принял 0 из 1/);
+    expect(mockedAxios.post.mock.calls[2][0]).toBe(
+      'https://api.x.ai/v1/batches/b1/cancel',
+    );
+  });
+
+  it('число совпало — пачка считается поданной', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce({ status: 200, data: { id: 'b1' } })
+      .mockResolvedValueOnce({ status: 200, data: {} });
+    mockedAxios.get.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        state: {
+          num_requests: 1,
+          num_pending: 1,
+          num_success: 0,
+          num_error: 0,
+        },
+      },
+    });
+    const r = await new GrokVideoBatchService().submitBatch('x', [
+      {
+        batchRequestId: 'g1',
+        prompt: 'p',
+        durationSeconds: 8,
+        aspectRatio: '9:16',
+        resolution: '480p',
+      },
+    ]);
+    expect(r).toEqual({ xaiBatchId: 'b1' });
   });
 });

@@ -128,6 +128,9 @@ export const AVATAR_IN_FLIGHT_MESSAGE =
 export const AVATAR_SOUND_CHECK_IN_FLIGHT_MESSAGE =
   'Проверка звука для этой сессии уже выполняется — дождитесь ответа первого запроса.';
 
+/** М-6.5 седьмого аудита: скачивание готового ролика — с таймаутом. */
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
 @Injectable()
 export class ActorsService {
   private readonly logger = new Logger(ActorsService.name);
@@ -1044,7 +1047,9 @@ export class ActorsService {
   }
 
   private async download(url: string): Promise<Buffer> {
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
     if (!res.ok) {
       throw new Error(`скачивание результата Hedra: HTTP ${res.status}`);
     }

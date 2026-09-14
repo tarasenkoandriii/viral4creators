@@ -2,6 +2,9 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { isRenderInFlight, stepFromSession } from '../lib/session-step';
 import { shouldKeepPolling } from '../lib/video-polling';
+
+/** М-7.3: интервал опроса ролика, поданного через Batch API xAI. */
+const BATCH_POLL_INTERVAL_MS = 60_000;
 import {
   createSession,
   forkSharedVideo,
@@ -240,6 +243,10 @@ export function useWorkflow() {
   const inFlight = useRef(false);
   /** Подряд идущие сбои опроса: после ролика они не повод для красной ошибки. */
   const pollFailures = useRef(0);
+  /** М-7.3: последний реальный опрос батч-ролика (см. startVideoPolling). */
+  const lastBatchPollAt = useRef(0);
+  /** М-7.4: подряд идущие сбои опроса разбора — прерываем после трёх. */
+  const analysisPollFailures = useRef(0);
   /**
    * Последнее состояние для чтения ВНУТРИ интервала. `setState`-колбэк
    * туда не годится: решение «показывать ошибку или молча перестать
@@ -472,6 +479,7 @@ export function useWorkflow() {
       const tick = async () => {
         try {
           const analysis = await getAnalysisStatus(sessionId);
+          analysisPollFailures.current = 0;
           if (analysis.status === 'complete') {
             stopAnalysisPolling();
             setState((prev) => ({
@@ -509,11 +517,17 @@ export function useWorkflow() {
               // карточкой и без единой кнопки: уйти можно было только
               // перезагрузкой страницы, о которой нигде не сказано.
               currentStep: 'upload',
-              error: analysis.error?.message || 'Разбор не удался',
+              error: analysis.error?.message || dict.wizardErrors.analysisFailed,
             }));
           }
         } catch (error) {
           console.error('Error checking analysis status:', error);
+          // М-7.4 седьмого аудита: в Mini App фоновые запросы регулярно
+          // обрываются; одна ошибка сети выбрасывала на шаг «Видео», а
+          // повторная загрузка референса запускала второй платный разбор.
+          // Тот же допуск, что у опроса рендера: три сбоя подряд.
+          analysisPollFailures.current += 1;
+          if (analysisPollFailures.current < 3) return;
           stopAnalysisPolling();
           setState((prev) => ({
             ...prev,
@@ -530,6 +544,7 @@ export function useWorkflow() {
       // Первый тик сразу: при восстановлении разбор мог уже закончиться,
       // и ждать три секунды ради этого незачем.
       void tick();
+      analysisPollFailures.current = 0;
       analysisPollingInterval.current = window.setInterval(
         () => void tick(),
         3000
@@ -1109,6 +1124,18 @@ export function useWorkflow() {
         // интервала. Наложение тиков — дублирующая работа на сервере и
         // лишние запросы отсюда.
         if (inFlight.current) return;
+        // М-7.3 седьмого аудита: свёрнутая вкладка не опрашивает; ролик
+        // через Batch API xAI (до суток) — раз в минуту, а не каждые 4 с
+        // (иначе ~23 000 запросов в сутки с одной вкладки, каждый —
+        // вызов xAI). Готовность всё равно досмотрит серверный крон.
+        if (typeof document !== 'undefined' && document.hidden) return;
+        if (
+          stateRef.current.generatedVideo?.xaiBatchId &&
+          Date.now() - lastBatchPollAt.current < BATCH_POLL_INTERVAL_MS
+        ) {
+          return;
+        }
+        lastBatchPollAt.current = Date.now();
         inFlight.current = true;
         try {
           const status = await getVideoStatus(sessionId);
@@ -1130,7 +1157,7 @@ export function useWorkflow() {
             setState((prev) => ({
               ...prev,
               isGeneratingVideo: false,
-              error: status.error?.message || 'Video generation failed',
+              error: status.error?.message || dict.wizardErrors.videoFailed,
             }));
           } else if (!shouldKeepPolling(status)) {
             // Ролик снят И постобработка завершилась (готова, упала или
@@ -1323,7 +1350,12 @@ export function useWorkflow() {
   const changeVoiceMode = useCallback(
     async (voiceMode: VoiceMode) => {
       if (!state.sessionId) return;
-      if (state.brandManifest?.voiceMode === voiceMode) return;
+      // М-7.8: снимок без поля показывается как 'veo' — клик по уже
+      // подсвеченной пилюле не должен запускать платную пересборку.
+      if ((state.brandManifest?.voiceMode ?? 'veo') === voiceMode) return;
+      // М-7.2: пока идёт рендер, режим не меняем — иначе опрос рендера
+      // продолжит писать generatedVideo поверх шага промпта.
+      if (state.isGeneratingVideo) return;
       stopVideoPolling();
       setState((prev) => ({ ...prev, isGeneratingPrompt: true, error: null }));
       try {
@@ -1342,9 +1374,18 @@ export function useWorkflow() {
           currentStep: 'prompt-generation',
         }));
       } catch (error) {
+        // М-7.1: снимок уже мог смениться, а сервер при смене режима
+        // сбрасывает одобрение промпта (project-session.service.ts) —
+        // старый одобренный промпт больше не действителен. Возвращаем
+        // на шаг промпта без него: пользователь пересоберёт вручную,
+        // а «Сгенерировать» по несогласованному брифу недоступна.
         setState((prev) => ({
           ...prev,
           isGeneratingPrompt: false,
+          prompt: null,
+          generatedVideo: null,
+          isGeneratingVideo: false,
+          currentStep: 'prompt-generation',
           error: errorMessage(
             error,
             dict.wizardErrors.promptBuildFailed,
@@ -1353,7 +1394,13 @@ export function useWorkflow() {
         }));
       }
     },
-    [state.sessionId, state.brandManifest?.voiceMode, stopVideoPolling, dict]
+    [
+      state.sessionId,
+      state.brandManifest?.voiceMode,
+      state.isGeneratingVideo,
+      stopVideoPolling,
+      dict,
+    ]
   );
 
   /**

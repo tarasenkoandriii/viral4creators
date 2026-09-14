@@ -54,6 +54,9 @@ export interface YoutubeSessionStatus {
   bytesUploaded: number;
 }
 
+/** М-6.5 седьмого аудита: таймаут вызовов YouTube (заливка одним PUT — с запасом). */
+const YT_TIMEOUT_MS = 180_000;
+
 @Injectable()
 export class YoutubeUploadService {
   /** Шаг 1 — открыть resumable-сессию, вернуть её URI (заголовок Location). */
@@ -76,6 +79,7 @@ export class YoutubeUploadService {
       },
     };
     const res = await axios.post(UPLOAD_INIT_URL, body, {
+      timeout: YT_TIMEOUT_MS,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json; charset=UTF-8',
@@ -106,6 +110,7 @@ export class YoutubeUploadService {
     accessToken: string,
   ): Promise<YoutubeSessionStatus> {
     const res = await axios.put(sessionUri, undefined, {
+      timeout: YT_TIMEOUT_MS,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Range': 'bytes */*',
@@ -177,6 +182,7 @@ export class YoutubeUploadService {
         `bytes ${offset}-${full.length - 1}/${full.length}`;
     }
     const res = await axios.put(sessionUri, bytes, {
+      timeout: YT_TIMEOUT_MS,
       headers,
       maxBodyLength: Infinity,
       maxContentLength: Infinity,

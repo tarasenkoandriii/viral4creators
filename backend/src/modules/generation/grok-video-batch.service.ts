@@ -107,6 +107,12 @@ export interface GrokVideoBatchResults {
   /** Текст ошибки xAI по `batch_request_id` — для тех, кто упал
    * (`BatchResult.error`, google.rpc.Status). */
   errorsByRequestId: Record<string, string>;
+  /** `false` — страницы результатов прочитаны НЕ полностью (HTTP-ошибка,
+   * таймаут, обрыв пагинации): отсутствие url у запроса тогда ничего не
+   * значит, и вызывающий обязан повторить в следующий тик, а не
+   * закрывать строки сбоем (М-3.2/М-6.2 седьмого аудита: транзиентный
+   * 502 на `/results` помечал ВСЮ оплаченную партию FAILED навсегда). */
+  complete: boolean;
 }
 
 export interface GrokVideoBatchStatus {
@@ -205,7 +211,13 @@ export class GrokVideoBatchService {
               : {}),
             duration: item.durationSeconds,
             aspect_ratio: item.aspectRatio,
-            resolution: item.resolution,
+            // То же понижение, что у синхронного `startGeneration`
+            // (reference-to-video — не выше 720p, М-3.8 седьмого аудита):
+            // иначе один и тот же ролик проходит в sync и падает в batch.
+            resolution:
+              item.referenceImageUrls?.length && item.resolution === '1080p'
+                ? '720p'
+                : item.resolution,
           },
         },
       }));
@@ -305,8 +317,22 @@ export class GrokVideoBatchService {
       },
     );
     if (addRes.status < 200 || addRes.status >= 300) {
+      await this.cancelBatchQuietly(xaiBatchId);
       return {
         error: `xAI вернул статус ${addRes.status} при добавлении запросов: ${JSON.stringify(addRes.data).slice(0, 300)}`,
+      };
+    }
+
+    // М-6.7 седьмого аудита: имя oneof-ключа видео-запроса выведено по
+    // аналогии, не подтверждено; если шлюз xAI молча проигнорирует
+    // неизвестный ключ (как он уже сделал с `video_url`), элементы
+    // пачки не появятся — `num_requests` останется 0, и опрос ждал бы
+    // дедлайна 26 ч. Сверяем сразу и падаем громко.
+    const state = await this.getBatchStatus(xaiBatchId);
+    if (state && state.totalCount !== batchRequests.length) {
+      await this.cancelBatchQuietly(xaiBatchId);
+      return {
+        error: `xAI принял ${state.totalCount} из ${batchRequests.length} запросов пачки ${xaiBatchId} — вероятно, неверный ключ запроса (см. GROK_BATCH_VIDEO_REQUEST_KEY / GROK_BATCH_VIDEO_EXTEND_KEY)`,
       };
     }
 
@@ -314,6 +340,28 @@ export class GrokVideoBatchService {
       `видео-пачка ${xaiBatchId} ("${name}") подана полностью (${batchRequests.length} запросов). Обработка на стороне xAI — обычно до 24 часов, проверка статуса по расписанию.`,
     );
     return { xaiBatchId };
+  }
+
+  /** Пустая/битая пачка на стороне xAI после неудачной подачи — не
+   * оставлять сиротой (М-6.7). Best-effort: `CancelBatch` есть в proto
+   * (`BatchMgmt.CancelBatch`), REST-путь — по конвенции; сбой отмены
+   * только логируется. */
+  private async cancelBatchQuietly(xaiBatchId: string): Promise<void> {
+    try {
+      await axios.post(
+        `${XAI_BASE_URL}/batches/${xaiBatchId}/cancel`,
+        {},
+        {
+          headers: this.headers(),
+          timeout: REQUEST_TIMEOUT_MS,
+          validateStatus: () => true,
+        },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `не удалось отменить пачку-сироту ${xaiBatchId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /** Готовность — `pendingCount === 0`, тот же принцип и то же
@@ -366,7 +414,8 @@ export class GrokVideoBatchService {
   ): Promise<GrokVideoBatchResults> {
     const urlsByRequestId: Record<string, string> = {};
     const errorsByRequestId: Record<string, string> = {};
-    if (!this.apiKey) return { urlsByRequestId, errorsByRequestId };
+    let complete = false;
+    if (!this.apiKey) return { urlsByRequestId, errorsByRequestId, complete };
 
     this.logger.log(`забираю результаты видео-пачки ${xaiBatchId}...`);
 
@@ -413,7 +462,10 @@ export class GrokVideoBatchService {
         }
 
         paginationToken = res.data?.pagination_token;
-        if (!paginationToken) break;
+        if (!paginationToken) {
+          complete = true;
+          break;
+        }
       }
 
       this.logger.log(
@@ -425,7 +477,7 @@ export class GrokVideoBatchService {
       );
     }
 
-    return { urlsByRequestId, errorsByRequestId };
+    return { urlsByRequestId, errorsByRequestId, complete };
   }
 
   /**

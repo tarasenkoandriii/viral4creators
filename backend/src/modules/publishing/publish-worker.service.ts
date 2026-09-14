@@ -52,7 +52,15 @@ interface PublishableRow {
   uploadJobId: string | null;
   attempts: number;
   status: PublicationStatus;
+  /** Момент одобрения — точка отсчёта дедлайна опроса TikTok (М-6.3). */
+  moderatedAt?: Date | null;
 }
+
+/** М-6.3 седьмого аудита: у стадии опроса TikTok не было дедлайна —
+ * протухший `publish_id` (байты не залились, заявка старая) давал
+ * вечный «в процессе» каждые 2 минуты. Сутки — с запасом сверх
+ * реального времени обработки площадки. */
+const TIKTOK_POLL_DEADLINE_MS = 24 * 60 * 60 * 1000;
 
 /** Г-2.11: claim держим не дольше самой долгой реалистичной заливки, с
  * запасом. */
@@ -245,6 +253,15 @@ export class PublishWorkerService {
       return false; // готовность — на следующих тиках, через poll
     }
     const poll = await this.tiktok.pollStatus(row.uploadJobId, accessToken);
+    if (
+      poll.status === 'processing' &&
+      row.moderatedAt &&
+      Date.now() - new Date(row.moderatedAt).getTime() > TIKTOK_POLL_DEADLINE_MS
+    ) {
+      throw new Error(
+        `TikTok: публикация не завершилась за ${TIKTOK_POLL_DEADLINE_MS / 3_600_000} часов (publish_id ${row.uploadJobId})`,
+      );
+    }
     if (poll.status === 'published') {
       // TikTok SELF_ONLY не даёт публичной ссылки — открыть ролик может
       // только сам автор, из приложения/Studio.

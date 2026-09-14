@@ -170,8 +170,8 @@ describe('BillingRenewalWorkerService.runBatch — джоб-уровневый �
     const { svc, prisma } = build([]);
     await svc.runBatch();
     expect(prisma.cronJobLock.updateMany).toHaveBeenCalledWith({
-      where: { jobKey: 'billing-renew' },
-      data: { lockedUntil: null },
+      where: { jobKey: 'billing-renew', ownerToken: expect.any(String) },
+      data: { lockedUntil: null, ownerToken: null },
     });
   });
 
@@ -183,8 +183,8 @@ describe('BillingRenewalWorkerService.runBatch — джоб-уровневый �
     await svc.runBatch();
     expect(prisma.cronJobLock.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { jobKey: 'billing-renew' },
-        data: { lockedUntil: null },
+        where: { jobKey: 'billing-renew', ownerToken: expect.any(String) },
+        data: { lockedUntil: null, ownerToken: null },
       }),
     );
   });

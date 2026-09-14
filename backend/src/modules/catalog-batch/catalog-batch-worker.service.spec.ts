@@ -86,6 +86,8 @@ function setup(
      * `pollInFlightGrokBatches()`, отдельно от `grokRuns` выше (та
      * ветка ищет партии БЕЗ поданной пачки). */
     grokInFlightRuns?: unknown[];
+    /** М-3.6: партии с оборвавшейся подачей (`xaiBatchId` = `pending:<ts>`). */
+    grokPendingRuns?: unknown[];
     /** Счётчик `catalogBatchItem.count` (используется
      * `submitReadyGrokBatches()` для проверки готовности партии к
      * подаче) — по умолчанию 0, партия сразу отсекается как «нет строк
@@ -101,6 +103,7 @@ function setup(
     grokSubmitResult?: unknown;
     grokBatchStatus?: unknown;
     grokBatchResults?: Record<string, string>;
+    grokBatchResultsComplete?: boolean;
     /** Строки в `submitReadyGrokBatches()` (полные данные для подачи —
      * id/sessionId/productItemId), возвращаемые вторым `findMany`
      * (после проверки `count`, см. выше). */
@@ -185,15 +188,23 @@ function setup(
       // Различаем два запроса по форме `where.xaiBatchId`: `null` —
       // подача (ищет партии БЕЗ поданной пачки), объект `{not: null}` —
       // опрос (партии С уже поданной пачкой).
-      findMany: jest.fn(
-        (args: { where?: { xaiBatchId?: unknown } } = {}) =>
-          Promise.resolve(
-            args?.where?.xaiBatchId === null
-              ? (opts.grokRuns ?? [])
-              : (opts.grokInFlightRuns ?? []),
-          ),
-      ),
+      findMany: jest.fn((args: { where?: { xaiBatchId?: unknown } } = {}) => {
+        const key = args?.where?.xaiBatchId as
+          | null
+          | { not?: unknown; startsWith?: string }
+          | undefined;
+        // М-3.6: третья форма — `{ startsWith: 'pending:' }` (поиск
+        // оборвавшихся подач) — по умолчанию пусто.
+        if (key && typeof key === 'object' && 'startsWith' in key) {
+          return Promise.resolve(opts.grokPendingRuns ?? []);
+        }
+        return Promise.resolve(
+          key === null ? (opts.grokRuns ?? []) : (opts.grokInFlightRuns ?? []),
+        );
+      }),
       update: jest.fn().mockResolvedValue(undefined),
+      // М-3.6: метка «подача начата» — по умолчанию захватывается.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     // Этап 78 (doc/WORKFLOW-FUNNEL-SPEC.md) — событие воронки, best-effort.
     workflowStageEvent: { create: jest.fn().mockResolvedValue({}) },
@@ -227,6 +238,8 @@ function setup(
     // используется `finalizeGrokBatchItem()` при завершении строки,
     // пришедшей через Grok-пачку.
     updateSession: jest.fn().mockResolvedValue(undefined),
+    // М-5.3 седьмого аудита: опрос пачки продлевает жизнь дочерним сессиям.
+    touchSessions: jest.fn().mockResolvedValue(undefined),
   };
   const library = {
     applyToSession: jest.fn().mockResolvedValue(undefined),
@@ -248,9 +261,14 @@ function setup(
       .fn()
       .mockResolvedValue(opts.grokSubmitResult ?? { xaiBatchId: 'batch1' }),
     getBatchStatus: jest.fn().mockResolvedValue(opts.grokBatchStatus ?? null),
-    getBatchResults: jest
-      .fn()
-      .mockResolvedValue(opts.grokBatchResults ?? {}),
+    getBatchResults: jest.fn().mockResolvedValue(opts.grokBatchResults ?? {}),
+    // М-3.2/М-6.2 седьмого аудита: воркер читает подробный результат с
+    // флагом полноты; по умолчанию — «прочитано полностью».
+    getBatchResultsDetailed: jest.fn().mockResolvedValue({
+      urlsByRequestId: opts.grokBatchResults ?? {},
+      errorsByRequestId: {},
+      complete: opts.grokBatchResultsComplete ?? true,
+    }),
     modelName: 'grok-imagine-video-1.5',
   };
   const blob = {
@@ -265,6 +283,8 @@ function setup(
   // тесты на саму находку переопределяют `aiUsageBudget` явно.
   const plans = {
     accessOf: jest.fn().mockResolvedValue({ spendPlan: 'PREMIUM' }),
+    // М-3.10: блокировка владельца проверяется перед подачей пачки.
+    assertUserNotBlocked: jest.fn().mockResolvedValue(undefined),
   };
   const aiUsage = {
     budget: jest.fn().mockResolvedValue(
@@ -318,7 +338,7 @@ describe('CatalogBatchWorkerService', () => {
     it('пустая очередь — processed: 0 без обращений к сессиям', async () => {
       const { service, library } = setup({ rows: [] });
       const result = await service.runBatch();
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         processed: 0,
         started: 0,
         failed: 0,
@@ -343,7 +363,7 @@ describe('CatalogBatchWorkerService', () => {
         setup({ rows: [row()] });
       const result = await service.runBatch();
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         processed: 1,
         started: 1,
         failed: 0,
@@ -370,6 +390,7 @@ describe('CatalogBatchWorkerService', () => {
         'sess-new',
         'fast',
         '9:16',
+        'veo',
       );
       expect(prisma.catalogBatchItem.update).toHaveBeenCalledWith({
         where: { id: 'item1' },
@@ -404,6 +425,7 @@ describe('CatalogBatchWorkerService', () => {
         'sess-existing',
         'fast',
         '9:16',
+        'veo',
       );
     });
 
@@ -445,7 +467,7 @@ describe('CatalogBatchWorkerService', () => {
         claimCount: 0,
       });
       const result = await service.runBatch();
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         processed: 1,
         started: 0,
         failed: 0,
@@ -467,7 +489,7 @@ describe('CatalogBatchWorkerService', () => {
       const { service, prisma, library } = setup({ rows: [row()] });
       library.applyToSession.mockRejectedValueOnce(new Error('network drop'));
       const result = await service.runBatch();
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         processed: 1,
         started: 0,
         failed: 1,
@@ -614,7 +636,7 @@ describe('CatalogBatchWorkerService', () => {
       });
       library.applyToSession.mockRejectedValueOnce(new Error('boom on a'));
       const result = await service.runBatch();
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         processed: 2,
         started: 1,
         failed: 1,
@@ -709,7 +731,7 @@ describe('CatalogBatchWorkerService', () => {
         generatingRows: [generatingRow()],
       });
       const result = await service.runBatch();
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         processed: 0,
         started: 0,
         failed: 0,
@@ -725,11 +747,15 @@ describe('CatalogBatchWorkerService', () => {
       const { service, prisma } = setup({ rows: [] });
       await service.runBatch();
       expect(prisma.cronJobLock.create).toHaveBeenCalledWith({
-        data: { jobKey: 'catalog-batch-run', lockedUntil: expect.any(Date) },
+        data: {
+          jobKey: 'catalog-batch-run',
+          lockedUntil: expect.any(Date),
+          ownerToken: expect.any(String),
+        },
       });
       expect(prisma.cronJobLock.updateMany).toHaveBeenCalledWith({
-        where: { jobKey: 'catalog-batch-run' },
-        data: { lockedUntil: null },
+        where: { jobKey: 'catalog-batch-run', ownerToken: expect.any(String) },
+        data: { lockedUntil: null, ownerToken: null },
       });
     });
 
@@ -742,8 +768,8 @@ describe('CatalogBatchWorkerService', () => {
       // recordFailure сам по себе не бросает — но замок должен сняться
       // в любом случае, через finally, а не только на «счастливом» пути.
       expect(prisma.cronJobLock.updateMany).toHaveBeenCalledWith({
-        where: { jobKey: 'catalog-batch-run' },
-        data: { lockedUntil: null },
+        where: { jobKey: 'catalog-batch-run', ownerToken: expect.any(String) },
+        data: { lockedUntil: null, ownerToken: null },
       });
     });
   });
@@ -995,7 +1021,12 @@ describe('CatalogBatchWorkerService', () => {
       it('бюджет не покрывает стоимость всей партии — все строки FAILED, submitBatch не вызывается', async () => {
         const { service, grokBatch, prisma } = setup({
           grokRuns: [
-            { id: 'run1', userId: 'u1', resolution: '480p', aspectRatio: '9:16' },
+            {
+              id: 'run1',
+              userId: 'u1',
+              resolution: '480p',
+              aspectRatio: '9:16',
+            },
           ],
           grokQueuedCount: 1,
           grokNotReadyCount: 0,
@@ -1064,10 +1095,39 @@ describe('CatalogBatchWorkerService', () => {
 
         await service.runBatch();
 
-        expect(prisma.catalogBatchRun.update).not.toHaveBeenCalled();
+        // М-3.6: метка подачи снята обратно в NULL — id пачки не записан.
+        expect(prisma.catalogBatchRun.update).toHaveBeenCalledWith({
+          where: { id: 'run1' },
+          data: { xaiBatchId: null },
+        });
+        expect(prisma.catalogBatchRun.update).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              xaiBatchId: expect.stringMatching(/^batch/),
+            }),
+          }),
+        );
         expect(prisma.catalogBatchItem.updateMany).not.toHaveBeenCalledWith(
           expect.objectContaining({ data: { status: 'GENERATING' } }),
         );
+      });
+
+      it('М-3.6: параллельный тик уже поставил метку подачи (count 0) — подача пропускается', async () => {
+        const { service, prisma, grokBatch } = setup({
+          grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '9:16' }],
+          grokQueuedCount: 1,
+          grokNotReadyCount: 0,
+          grokQueuedItems: [
+            { id: 'item1', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+          sessionState: {
+            generationPrompt: { finalText: 'x' },
+            productInformation: { productImageUrl: 'https://blob.test/p.png' },
+          },
+        });
+        prisma.catalogBatchRun.updateMany.mockResolvedValueOnce({ count: 0 });
+        await service.runBatch();
+        expect(grokBatch.submitBatch).not.toHaveBeenCalled();
       });
     });
 
@@ -1085,7 +1145,7 @@ describe('CatalogBatchWorkerService', () => {
           },
         });
         await service.runBatch();
-        expect(grokBatch.getBatchResults).not.toHaveBeenCalled();
+        expect(grokBatch.getBatchResultsDetailed).not.toHaveBeenCalled();
       });
 
       it('опрос статуса не удался (null) — не падает, пробует следующим тиком', async () => {
@@ -1096,7 +1156,37 @@ describe('CatalogBatchWorkerService', () => {
           grokBatchStatus: null,
         });
         await expect(service.runBatch()).resolves.toBeDefined();
-        expect(grokBatch.getBatchResults).not.toHaveBeenCalled();
+        expect(grokBatch.getBatchResultsDetailed).not.toHaveBeenCalled();
+      });
+
+      it('М-3.2: результаты прочитаны не полностью (сбой /results) — строки НЕ помечаются FAILED, ждут следующего тика', async () => {
+        const { service, prisma, grokBatch, sessions } = setup({
+          grokInFlightRuns: [
+            { id: 'run1', xaiBatchId: 'batch1', aspectRatio: '9:16' },
+          ],
+          grokBatchStatus: {
+            totalCount: 1,
+            completedCount: 1,
+            pendingCount: 0,
+            errorCount: 0,
+          },
+          grokBatchResults: {},
+          grokBatchResultsComplete: false,
+          grokGeneratingItems: [
+            { id: 'item1', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+        });
+        const r = await service.runBatch();
+        expect(grokBatch.getBatchResultsDetailed).toHaveBeenCalledWith(
+          'batch1',
+        );
+        expect(prisma.catalogBatchItem.update).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ status: 'FAILED' }),
+          }),
+        );
+        expect(r.grokBatchItemsFailed).toBe(0);
+        expect(sessions.touchSessions).not.toHaveBeenCalled();
       });
 
       it('пачка готова, результат найден — скачивает, сохраняет в Blob, помечает DONE', async () => {
@@ -1127,7 +1217,10 @@ describe('CatalogBatchWorkerService', () => {
 
           const result = await service.runBatch();
 
-          expect(fetchMock).toHaveBeenCalledWith('https://vidgen.x.ai/done.mp4');
+          expect(fetchMock).toHaveBeenCalledWith(
+            'https://vidgen.x.ai/done.mp4',
+            expect.anything(),
+          );
           expect(blob.uploadBuffer).toHaveBeenCalledWith(
             expect.stringContaining('sessions/sess1/generated-'),
             expect.any(Buffer),

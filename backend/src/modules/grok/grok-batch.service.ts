@@ -235,8 +235,23 @@ export class GrokBatchService {
    * принцип разделения, что уже применён в AiUsageService.record.
    */
   async getBatchResults(xaiBatchId: string): Promise<Record<string, string>> {
+    return (await this.getBatchResultsDetailed(xaiBatchId)).resultsByRequestId;
+  }
+
+  /**
+   * М-3.2б седьмого аудита: `complete: false` — страницы результатов
+   * прочитаны не полностью (HTTP-ошибка/таймаут/обрыв пагинации);
+   * отсутствие текста у запроса тогда ничего не значит, и вызывающий
+   * обязан повторить следующим тиком, а не помечать переводы FAILED
+   * (и не писать по ним расход).
+   */
+  async getBatchResultsDetailed(xaiBatchId: string): Promise<{
+    resultsByRequestId: Record<string, string>;
+    complete: boolean;
+  }> {
     const resultsByRequestId: Record<string, string> = {};
-    if (!this.apiKey) return resultsByRequestId;
+    let complete = false;
+    if (!this.apiKey) return { resultsByRequestId, complete };
 
     this.logger.log(`забираю результаты пачки ${xaiBatchId}...`);
 
@@ -278,7 +293,10 @@ export class GrokBatchService {
         }
 
         paginationToken = res.data?.pagination_token;
-        if (!paginationToken) break;
+        if (!paginationToken) {
+          complete = true;
+          break;
+        }
       }
 
       this.logger.log(
@@ -290,7 +308,7 @@ export class GrokBatchService {
       );
     }
 
-    return resultsByRequestId;
+    return { resultsByRequestId, complete };
   }
 
   private extractBatchResultText(item: Record<string, unknown>): string | null {

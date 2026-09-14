@@ -76,6 +76,7 @@ function VoiceoverProviderCard() {
   const [saving, setSaving] = useState(false);
 
   const load = () => {
+    setError(null);
     getVoiceoverProviderSettings()
       .then(setState)
       .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку озвучки'));
@@ -107,7 +108,18 @@ function VoiceoverProviderCard() {
       </p>
 
       {error && (
-        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>{error}</p>
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {/* Аудит 14.09.2026 (М-7.9): ошибка загрузки — не тупик, а «Повторить». */}
+          {!state && (
+            <>
+              {' '}
+              <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+                Повторить
+              </button>
+            </>
+          )}
+        </p>
       )}
 
       {!state && !error && <p className="muted">Загрузка…</p>}
@@ -157,6 +169,7 @@ function AnalysisProviderCard() {
   const [saving, setSaving] = useState(false);
 
   const load = () => {
+    setError(null);
     getAnalysisProviderSettings()
       .then(setState)
       .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку разбора видео'));
@@ -187,7 +200,18 @@ function AnalysisProviderCard() {
       </p>
 
       {error && (
-        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>{error}</p>
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {/* Аудит 14.09.2026 (М-7.9): ошибка загрузки — не тупик, а «Повторить». */}
+          {!state && (
+            <>
+              {' '}
+              <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+                Повторить
+              </button>
+            </>
+          )}
+        </p>
       )}
 
       {!state && !error && <p className="muted">Загрузка…</p>}
@@ -236,6 +260,7 @@ function VideoProviderCard() {
   const [saving, setSaving] = useState(false);
 
   const load = () => {
+    setError(null);
     getVideoProviderSettings()
       .then(setState)
       .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку провайдера видео'));
@@ -266,7 +291,18 @@ function VideoProviderCard() {
       </p>
 
       {error && (
-        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>{error}</p>
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {/* Аудит 14.09.2026 (М-7.9): ошибка загрузки — не тупик, а «Повторить». */}
+          {!state && (
+            <>
+              {' '}
+              <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+                Повторить
+              </button>
+            </>
+          )}
+        </p>
       )}
 
       {!state && !error && <p className="muted">Загрузка…</p>}
@@ -311,6 +347,7 @@ function GrokTransportCard() {
   const [saving, setSaving] = useState(false);
 
   const load = () => {
+    setError(null);
     getGrokTransportSettings()
       .then(setState)
       .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку транспорта Grok'));
@@ -344,7 +381,18 @@ function GrokTransportCard() {
       </p>
 
       {error && (
-        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>{error}</p>
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {/* Аудит 14.09.2026 (М-7.9): ошибка загрузки — не тупик, а «Повторить». */}
+          {!state && (
+            <>
+              {' '}
+              <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+                Повторить
+              </button>
+            </>
+          )}
+        </p>
       )}
 
       {!state && !error && <p className="muted">Загрузка…</p>}
@@ -386,16 +434,23 @@ export default function SettingsPage() {
   // `checks` уже содержит `ok` на каждую строку.
   const [mode, setMode] = useState<ViewMode>('all');
 
-  useEffect(() => {
+  const load = () => {
+    setError(null);
     getEnvSettings()
       .then(setResult)
       .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройки'));
-  }, []);
+  };
+
+  useEffect(load, []);
 
   if (error) {
     return (
       <div className="page">
         <p style={{ color: 'var(--signal-critical)' }}>{error}</p>
+        {/* Аудит 14.09.2026 (М-7.9): «Повторить» вместо тупика с перезагрузкой страницы. */}
+        <button type="button" onClick={load}>
+          Повторить
+        </button>
       </div>
     );
   }

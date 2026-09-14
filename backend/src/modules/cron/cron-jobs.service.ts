@@ -43,6 +43,7 @@ import {
 } from '../../common/orphan-sweep';
 import { pruneRateLimits } from '../../common/rate-limit';
 import { buildRunSummary } from './cron-run-summary';
+import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 
 /**
  * `triggeredBy` для прогонов НАСТОЯЩЕГО Vercel Cron (`CronController` →
@@ -262,12 +263,30 @@ export class CronJobsService {
       ReturnType<BlogTranslationService['runTranslationCron']>
     >;
   }> {
-    const generation = await this.blogGeneration.runDailyGeneration();
-    const translation = await this.blogTranslation.runTranslationCron();
-    this.logger.log(
-      `Крон блога: генерация ${JSON.stringify(generation)}, перевод ${JSON.stringify(translation)}`,
-    );
-    return { generation, translation };
+    // М-3.9 седьмого аудита: без джоб-замка двойной клик оператора на
+    // «blog» подавал одни и те же переводы двумя оплаченными пачками и
+    // дважды звал Gemini для черновиков. Тот же замок, что у остальных
+    // крон-воркеров.
+    const acquired = await tryAcquireJobLock(this.prisma, 'blog');
+    if (!acquired) {
+      this.logger.warn(
+        'Крон блога: предыдущий прогон ещё держит замок — пропуск',
+      );
+      return {
+        generation: { skipped: true } as never,
+        translation: { skipped: true } as never,
+      };
+    }
+    try {
+      const generation = await this.blogGeneration.runDailyGeneration();
+      const translation = await this.blogTranslation.runTranslationCron();
+      this.logger.log(
+        `Крон блога: генерация ${JSON.stringify(generation)}, перевод ${JSON.stringify(translation)}`,
+      );
+      return { generation, translation };
+    } finally {
+      await releaseJobLock(this.prisma, 'blog', acquired);
+    }
   }
 
   /** Крон-воркер выгрузки одобренных заявок в YouTube/TikTok (этап 61). */
@@ -307,7 +326,15 @@ export class CronJobsService {
    * доккомментарий `ExportService.runSyncTick`.
    */
   async runExportSyncRun(): Promise<{ checked: number; failed: number }> {
-    return this.exportService.runSyncTick();
+    // М-3.9 седьмого аудита: два перекрывающихся тика опрашивали одну
+    // дочернюю сессию параллельно.
+    const acquired = await tryAcquireJobLock(this.prisma, 'export-sync-run');
+    if (!acquired) return { checked: 0, failed: 0 };
+    try {
+      return await this.exportService.runSyncTick();
+    } finally {
+      await releaseJobLock(this.prisma, 'export-sync-run', acquired);
+    }
   }
 
   /**

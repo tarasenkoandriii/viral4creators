@@ -77,6 +77,9 @@ function build(session: Partial<Session> | undefined) {
       stored = { ...stored, ...u };
       return stored;
     }),
+    // М-2.5 седьмого аудита: замок на платный вызов — по умолчанию свободен.
+    claimWork: jest.fn().mockResolvedValue(true),
+    releaseWork: jest.fn().mockResolvedValue(undefined),
   };
   const blob = {
     downloadBuffer: jest.fn().mockResolvedValue(Buffer.from('mp4')),
@@ -330,5 +333,34 @@ describe('VideoAuditService.applyFix', () => {
       text: '  my own edited version  ',
     });
     expect(r.prompt.finalText).toBe('my own edited version');
+  });
+});
+
+// М-2.5 седьмого аудита: замок вокруг платного Gemini-вызова.
+describe('VideoAuditService — замки audit / sound-check (М-2.5)', () => {
+  it('замок занят — 409 до любого платного вызова', async () => {
+    const { service, sessions } = build({
+      sessionId: 's1',
+      generatedVideo: {
+        status: 'complete',
+        downloadUrl: 'https://x/v.mp4',
+      } as never,
+    });
+    sessions.claimWork.mockResolvedValueOnce(false);
+    await expect(service.run('s1', {} as never)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(generateContent).not.toHaveBeenCalled();
+  });
+
+  it('замок берётся видом audit и снимается в finally даже при ошибке', async () => {
+    const { service, sessions } = build(undefined);
+    await expect(service.run('missing', {} as never)).rejects.toBeDefined();
+    expect(sessions.claimWork).toHaveBeenCalledWith(
+      'missing',
+      'audit',
+      expect.any(Number),
+    );
+    expect(sessions.releaseWork).toHaveBeenCalledWith('missing', 'audit');
   });
 });

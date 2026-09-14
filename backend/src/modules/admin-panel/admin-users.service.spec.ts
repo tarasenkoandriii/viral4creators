@@ -48,6 +48,14 @@ function build(user: Record<string, unknown> | null = row()) {
     session: { findMany: jest.fn().mockResolvedValue([]) },
     // Этап 51: последние сессии карточки читаются сырым запросом без `data`.
     $queryRaw: jest.fn().mockResolvedValue([]),
+    // Спека отстала от кода: сводка сессий пользователя идёт через
+    // `session-summary.ts` (`$queryRawUnsafe` с параметрами, этап 51);
+    // счётчик — `{ count }`.
+    $queryRawUnsafe: jest
+      .fn()
+      .mockImplementation(async (sql: string) =>
+        /COUNT\(/i.test(sql) ? [{ count: BigInt(0) }] : [],
+      ),
     // Этап 62: подписки — своим сервисом внутри AdminUsersService.
     subscription: {
       findMany: jest.fn().mockResolvedValue([]),

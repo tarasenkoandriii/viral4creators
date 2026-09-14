@@ -437,7 +437,7 @@ export class CatalogBatchService {
   ): Promise<{ retried: number; skippedBusy: string[] }> {
     const run = await this.prisma.catalogBatchRun.findUnique({
       where: { id: batchId },
-      select: { id: true, userId: true, projectId: true },
+      select: { id: true, userId: true, projectId: true, provider: true },
     });
     if (!run || run.userId !== userId || run.projectId !== projectId) {
       throw new NotFoundException(`Batch ${batchId} not found`);
@@ -530,6 +530,22 @@ export class CatalogBatchService {
                 ),
               ),
             );
+            // М-3.4 седьмого аудита: у Grok-партии одна пачка на партию
+            // (`xaiBatchId`), и `submitReadyGrokBatches` берёт только
+            // `xaiBatchId: null` — повторённые строки доходили до
+            // BATCH_QUEUED и висели вечно. Если ни одна строка уже не
+            // считается в xAI, партию можно подать заново новой пачкой.
+            if (run.provider === 'grok') {
+              const stillGenerating = await tx.catalogBatchItem.count({
+                where: { batchId, status: 'GENERATING' },
+              });
+              if (stillGenerating === 0) {
+                await tx.catalogBatchRun.update({
+                  where: { id: batchId },
+                  data: { xaiBatchId: null },
+                });
+              }
+            }
             return { retried: toRetry.length, skippedBusy };
           },
           { isolationLevel: 'Serializable' },

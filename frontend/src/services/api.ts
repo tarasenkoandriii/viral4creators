@@ -745,6 +745,9 @@ export interface GeneratedVideo {
   chainSegmentsDone?: number;
   chainSegmentsTotal?: number;
   chainTargetDurationSeconds?: number;
+  /** Транспорт Grok = batch (М-7.3 седьмого аудита): xAI обрабатывает
+   * пачку «до 24 часов» — опрос реже, подсказка другая. */
+  xaiBatchId?: string;
   error?: {
     code: string;
     message: string;

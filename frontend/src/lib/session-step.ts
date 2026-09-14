@@ -55,6 +55,17 @@ export function stepFromSession(
 ): WorkflowStep {
   if (!session) return 'upload';
 
+  // М-7.5 седьмого аудита: промпт пересобран после готового ролика
+  // (смена режима озвучки, ревизия) — сервер поставил `prompt_generated`
+  // и снял одобрение, а старый ролик в сессии остался. Показывать после
+  // reload экран СТАРОГО ролика — прятать новый непринятый промпт.
+  if (
+    session.status === 'prompt_generated' &&
+    !session.generationPrompt?.approvedAt
+  ) {
+    return 'prompt-generation';
+  }
+
   // Готовый ролик — вне зависимости от `status`: постобработка могла
   // оставить сессию в `generating_video`, а ролик у пользователя уже есть.
   if (session.generatedVideo?.status === 'complete') return 'complete';

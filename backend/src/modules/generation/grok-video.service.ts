@@ -13,7 +13,7 @@
  * ## Что подтверждено официальной документацией (`docs.x.ai`) на
  * момент написания — см. ТЗ §10.1, §10.5:
  *   - `POST https://api.x.ai/v1/videos/generations` с телом
- *     `{ model, prompt, image_url?, duration, aspect_ratio, resolution }`
+ *     `{ model, prompt, image?: { url }, duration, aspect_ratio, resolution }`
  *     запускает генерацию.
  *   - Модель GA, официальное имя на момент подготовки ТЗ —
  *     `grok-imagine-video-1.5` (см. `config.grok.videoModel`).
@@ -63,7 +63,7 @@
  * класса файла выше:
  *   - Поле — `reference_images`, массив объектов `{ url }` (НЕ голых
  *     строк) — до 7 штук.
- *   - Несовместимо с `image_url` в одном запросе — «Only one mode can
+ *   - Несовместимо с `image` в одном запросе — «Only one mode can
  *     be active per request» — то же взаимоисключение, что уже
  *     реализовано у Veo (`image` XOR `referenceImages`,
  *     `generation.service.ts`).
@@ -96,6 +96,22 @@ export type GrokResolution = '480p' | '720p' | '1080p';
 
 export interface GrokVideoStartResult {
   requestId: string;
+}
+
+/**
+ * Фактическое разрешение, которое отдаст xAI (М-6.6/М-1.7/М-2.8
+ * седьмого аудита): reference-to-video и расширение — не выше 720p.
+ * Одна функция для запроса, учёта расхода и оценки, чтобы они не
+ * расходились.
+ */
+export function effectiveGrokResolution(
+  requested: GrokResolution,
+  opts: { references?: boolean; extension?: boolean },
+): GrokResolution {
+  if ((opts.references || opts.extension) && requested === '1080p') {
+    return '720p';
+  }
+  return requested;
 }
 
 export interface GrokVideoStatusResult {
@@ -189,17 +205,22 @@ export class GrokVideoService {
         `GrokVideoService.startGeneration: duration ${params.durationSeconds} вне 1–${GROK_MAX_DURATION_SECONDS} с (docs.x.ai)`,
       );
     }
-    const resolution =
-      params.referenceImageUrls?.length && params.resolution === '1080p'
-        ? '720p'
-        : params.resolution;
+    const resolution = effectiveGrokResolution(params.resolution, {
+      references: !!params.referenceImageUrls?.length,
+    });
 
     const res = await axios.post(
       `${XAI_BASE_URL}/videos/generations`,
       {
         model: this.model,
         prompt: params.prompt,
-        ...(params.imageUrl ? { image_url: params.imageUrl } : {}),
+        // М-6.1 седьмого аудита: REST-поле — `image: { url }`
+        // (ImageUrlContent, docs.x.ai image-to-video + proto
+        // GenerateVideoRequest.image), НЕ `image_url` — это kwarg
+        // Python SDK. Неизвестное поле xAI молча игнорирует (так уже
+        // было с `video_url`, см. `extendVideo`), то есть до правки
+        // image-to-video тихо рендерился как text-to-video без товара.
+        ...(params.imageUrl ? { image: { url: params.imageUrl } } : {}),
         ...(params.referenceImageUrls?.length
           ? {
               reference_images: params.referenceImageUrls.map((url) => ({
@@ -325,6 +346,12 @@ export class GrokVideoService {
       this.logger.error(
         `Grok video status failed: HTTP ${res.status} — ${JSON.stringify(res.data)}`,
       );
+      // М-6.4 седьмого аудита: 404/410 — request_id неизвестен или
+      // удалён, это постоянная ошибка, а не «ещё идёт» — иначе опрос
+      // крутится до дедлайна с вводящим в заблуждение таймаутом.
+      if (res.status === 404 || res.status === 410) {
+        return { done: true, error: `xAI: запрос не найден (HTTP ${res.status})` };
+      }
       return { done: false, error: `HTTP ${res.status}` };
     }
 
@@ -337,8 +364,18 @@ export class GrokVideoService {
     if (!isDone) {
       // 'error' — тоже не подтверждено буквально; трактуем любой явный
       // статус ошибки как ошибку, не как "ещё идёт".
-      if (status === 'error' || status === 'failed') {
-        return { done: true, error: res.data?.error ?? 'Grok video generation failed' };
+      // М-6.4: `expired` — третий терминальный статус по документации
+      // (done | failed | expired); `error` может быть объектом.
+      if (status === 'error' || status === 'failed' || status === 'expired') {
+        const raw: unknown = res.data?.error;
+        const message =
+          typeof raw === 'string'
+            ? raw
+            : ((raw as { message?: string } | undefined)?.message ??
+              (status === 'expired'
+                ? 'xAI: запрос истёк (expired)'
+                : 'Grok video generation failed'));
+        return { done: true, error: message };
       }
       return { done: false };
     }

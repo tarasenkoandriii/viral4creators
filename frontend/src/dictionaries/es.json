@@ -25,6 +25,8 @@
   "wizardErrors": {
     "sessionCreateFailed": "No se pudo crear la sesión",
     "analysisStatusFailed": "No se pudo comprobar el estado del análisis",
+    "analysisFailed": "El análisis falló",
+    "videoFailed": "La generación del video falló",
     "analysisStartFailed": "No se pudo iniciar el análisis",
     "uploadFailed": "La carga no se completó",
     "libraryPickFailed": "No se pudo tomar el análisis de la biblioteca",
@@ -1054,6 +1056,7 @@
     "textCardLoadError": "No se pudieron preparar las tarjetas de texto. Esto no impide continuar con el prompt ya generado.",
     "preparingHint": "Reuniendo referencias e iniciando el renderizado — esto tarda unos segundos",
     "generatingNote": "Normalmente 3–5 minutos. No cierres la página.",
+    "generatingBatchNote": "El video está en cola en xAI — puede tardar hasta 24 horas. Puedes cerrar esta página: el resultado aparecerá aquí solo.",
     "videoDoneTitle": "El video está listo",
     "videoDoneHint": "Compáralo con el original a continuación.",
     "originalLabel": "Original",

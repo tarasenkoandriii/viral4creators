@@ -601,7 +601,11 @@ export function GenerationWizard() {
             !isGeneratingVideo &&
             generatedVideo?.status !== 'complete' &&
             generatedVideo?.status !== 'processing' &&
-            generatedVideo?.status !== 'pending' && (
+            generatedVideo?.status !== 'pending' &&
+            // М-7.2: во время пересборки промпта (смена режима озвучки)
+            // карточка запуска скрыта — иначе можно стартовать платный
+            // рендер по старому промпту параллельно с пересборкой.
+            !isGeneratingPrompt && (
               <Card className="p-5 animate-fadeIn">
                 <CardHeader
                   icon={<Clapperboard size={18} className="text-accent" />}
@@ -834,6 +838,15 @@ export function GenerationWizard() {
               </Card>
             )}
 
+          {isGeneratingPrompt && (
+            <Card className="p-5">
+              <Busy
+                title={dict.generationWizard.promptBusyTitle}
+                hint={dict.generationWizard.promptBusyHint}
+              />
+            </Card>
+          )}
+
           {isGeneratingVideo && (
             <Card className="p-5">
               <CardHeader
@@ -884,7 +897,9 @@ export function GenerationWizard() {
               />
               <FeaturePanel>
                 <p className="text-xs text-silver-500 dark:text-silver-300">
-                  {dict.generationWizard.generatingNote}
+                  {generatedVideo?.xaiBatchId
+                    ? dict.generationWizard.generatingBatchNote
+                    : dict.generationWizard.generatingNote}
                 </p>
               </FeaturePanel>
             </Card>

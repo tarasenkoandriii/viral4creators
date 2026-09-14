@@ -65,6 +65,11 @@ function build() {
     sharedVideoPage: { findMany: jest.fn().mockResolvedValue([]) },
     // Е-5.2 шестого аудита, этап 76: users/ — пятая область метлы.
     user: { findMany: jest.fn().mockResolvedValue([]) },
+    // М-3.9 седьмого аудита: джоб-замок у blog / export-sync-run.
+    cronJobLock: {
+      create: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     // Пятый аудит, Д-4.3: `runAndLog` пишет строку CronRunLog вокруг
     // прогона настоящего Vercel Cron.
     cronRunLog: {

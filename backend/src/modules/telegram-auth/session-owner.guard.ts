@@ -83,6 +83,17 @@ export class SessionOwnerGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<RequestWithParams>();
+    // М-4.1 седьмого аудита: admin-периметр защищён своим
+    // `AdminSessionGuard` (cookie оператора), пользовательской
+    // идентичности у него нет. `ActorsController` живёт на
+    // `/admin/actors/:sessionId/*` — этот гвард отвечал 403 оператору
+    // на любой сессии с владельцем и мог привязать ничью сессию к
+    // оператору, если у него в браузере жила и `user_session`.
+    const path: string =
+      (req as { originalUrl?: string; url?: string }).originalUrl ??
+      (req as { url?: string }).url ??
+      '';
+    if (/^\/(api\/)?admin(\/|$)/.test(path)) return true;
     const sessionId = sessionIdFromRequest(req);
     if (!sessionId) return true;
 

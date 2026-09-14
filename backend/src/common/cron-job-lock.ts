@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 /**
  * Джоб-уровневый замок поверх поштучного claim строк (пятый аудит,
  * Д-3.3). Три крон-воркера (`catalog-batch-run`, `ab-test-run`,
@@ -62,11 +63,16 @@ export async function tryAcquireJobLock(
   prisma: PrismaService,
   jobKey: string,
   ttlMs: number = JOB_LOCK_MS,
-): Promise<boolean> {
+): Promise<string | false> {
   const lockedUntil = new Date(Date.now() + ttlMs);
+  // М-3.7 седьмого аудита: токен владельца — возвращается вызывающему и
+  // проверяется при снятии; результат остаётся truthy/falsy, как раньше.
+  const ownerToken = randomUUID();
   try {
-    await prisma.cronJobLock.create({ data: { jobKey, lockedUntil } });
-    return true;
+    await prisma.cronJobLock.create({
+      data: { jobKey, lockedUntil, ownerToken },
+    });
+    return ownerToken;
   } catch (error) {
     // P2002 — строка для этого jobKey уже существует (обычный случай,
     // не первый прогон джоба вообще) — падаем на условный updateMany
@@ -82,9 +88,9 @@ export async function tryAcquireJobLock(
       jobKey,
       OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }],
     },
-    data: { lockedUntil },
+    data: { lockedUntil, ownerToken },
   });
-  return claim.count > 0;
+  return claim.count > 0 ? ownerToken : false;
 }
 
 /** Снимает замок явно — вызывается из `finally` вызывающего кода, чтобы
@@ -93,8 +99,15 @@ export async function tryAcquireJobLock(
 export async function releaseJobLock(
   prisma: PrismaService,
   jobKey: string,
+  /** Токен из `tryAcquireJobLock` (М-3.7): без него — снятие без
+   * проверки владельца, как до седьмого аудита (оставлено для
+   * совместимости, все штатные вызовы токен передают). */
+  ownerToken?: string | false,
 ): Promise<void> {
   await prisma.cronJobLock
-    .updateMany({ where: { jobKey }, data: { lockedUntil: null } })
+    .updateMany({
+      where: { jobKey, ...(ownerToken ? { ownerToken } : {}) },
+      data: { lockedUntil: null, ownerToken: null },
+    })
     .catch(() => undefined);
 }

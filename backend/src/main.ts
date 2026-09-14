@@ -92,6 +92,38 @@ async function bootstrap() {
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
   });
+  // М-4.4 седьмого аудита: для wildcard-записей (`*.vercel.app`, preview)
+  // cookie-идентичность не выдаём — `Access-Control-Allow-Credentials`
+  // остаётся только у точных совпадений. Anonymous preview-фронты
+  // работают через `X-Telegram-Init-Data`, им credentials не нужны;
+  // а чужой `evil.vercel.app` иначе читал бы ответы аутентифицированных
+  // GET с `user_session`/`admin_session`.
+  app.use(
+    (
+      req: { headers: Record<string, string | undefined> },
+      res: {
+        removeHeader: (name: string) => void;
+        on: (ev: string, cb: () => void) => void;
+      },
+      next: () => void,
+    ) => {
+      const origin = req.headers.origin;
+      const exact = !!origin && allowedOrigins.includes(origin);
+      if (origin && !exact) {
+        // Заголовок ставит cors-middleware позже нас — снимаем при отправке.
+        const originalWriteHead = (
+          res as unknown as { writeHead: (...a: unknown[]) => unknown }
+        ).writeHead;
+        (
+          res as unknown as { writeHead: (...a: unknown[]) => unknown }
+        ).writeHead = function (...args: unknown[]) {
+          res.removeHeader('Access-Control-Allow-Credentials');
+          return originalWriteHead.apply(this, args);
+        };
+      }
+      next();
+    },
+  );
 
   // Global validation pipe
   app.useGlobalPipes(
