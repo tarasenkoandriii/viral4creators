@@ -448,7 +448,10 @@ model BrandManifest {
   /// veo — речь синтезирует сам Veo (как было до этапа 35);
   /// voiceover — наш синтез поверх ролика, звук Veo уходит в фон;
   /// dub — наш синтез вместо звука Veo.
-  voiceMode  String  @default("veo")
+  /// Умолчание 'voiceover' (миграция 20260914120000_voiceover_default,
+  /// см. common/voice-mode.ts DEFAULT_VOICE_MODE): модели читают
+  /// кириллицу с неверными ударениями, свой синтез — правило.
+  voiceMode  String  @default("voiceover")
   /// Голос провайдера синтеза; пусто — голос по умолчанию стенда.
   ttsVoiceId String?
   /// Модель провайдера синтеза; пусто — модель по умолчанию стенда.

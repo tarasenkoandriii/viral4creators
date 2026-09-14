@@ -1025,6 +1025,8 @@
     "qualityStandardLabel": "Filmisch",
     "qualityStandardSub": "Volles Veo 3.1 — dauert länger",
     "providerLabel": "Video-Anbieter",
+    "voiceModeLabel": "Stimme für dieses Video",
+    "voiceModeSwitchNote": "Ein Moduswechsel erstellt den Prompt neu — er muss erneut freigegeben werden.",
     "providerVeoLabel": "Veo",
     "providerGrokLabel": "Grok",
     "resolutionLabel": "Auflösung",

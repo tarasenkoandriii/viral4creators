@@ -49,7 +49,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: 'generationStatus', label: 'Статус рендера' },
   { key: 'product', label: 'Товар' },
   { key: 'quality', label: 'Качество' },
-  { key: 'voiceMode', label: 'Озвучка' },
+  { key: 'voiceMode', label: 'Режим озвучки' },
   { key: 'owner', label: 'Владелец', sortKey: 'plan' },
   { key: 'video', label: 'Видео' },
   { key: 'createdAt', label: 'Создана', sortKey: 'createdAt' },

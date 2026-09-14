@@ -16,7 +16,26 @@
 export const VOICE_MODES = ['veo', 'voiceover', 'dub'] as const;
 export type VoiceMode = (typeof VOICE_MODES)[number];
 
-export const DEFAULT_VOICE_MODE: VoiceMode = 'veo';
+/**
+ * Умолчание для НОВЫХ брендов (Prisma `BrandManifest.voiceMode @default`
+ * и форма манифеста на фронтенде). Доп. запрос владельца продукта
+ * (14.09.2026): модели (Veo и Grok одинаково) читают кириллицу с
+ * неверными ударениями, поэтому свой синтез поверх ролика — правило, а
+ * голос модели — осознанное исключение. Смена этого значения меняет
+ * ТОЛЬКО умолчание для новых записей; уже выбранный режим бренда и
+ * снимки сессий не трогает (их мигрирует отдельная миграция
+ * `20260914120000_voiceover_default`).
+ */
+export const DEFAULT_VOICE_MODE: VoiceMode = 'voiceover';
+
+/**
+ * Что считать режимом записи, у которой поля нет вовсе — данные до этапа
+ * 35, когда речь синтезировала только сама модель. Намеренно НЕ равно
+ * `DEFAULT_VOICE_MODE`: для старого снимка без поля «свой голос поверх»
+ * означал бы платный синтез при повторном рендере — а такого выбора
+ * никто не делал.
+ */
+export const LEGACY_VOICE_MODE: VoiceMode = 'veo';
 
 export const VOICE_MODE_LABEL: Record<VoiceMode, string> = {
   veo: 'Голос Veo',
@@ -39,7 +58,7 @@ export function isVoiceMode(value: unknown): value is VoiceMode {
 }
 
 export function normalizeVoiceMode(value: unknown): VoiceMode {
-  return isVoiceMode(value) ? value : DEFAULT_VOICE_MODE;
+  return isVoiceMode(value) ? value : LEGACY_VOICE_MODE;
 }
 
 /** Наш синтез участвует — значит нужен текст, голос и проход ffmpeg. */

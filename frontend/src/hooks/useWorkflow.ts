@@ -23,13 +23,14 @@ import {
   GeneratedVideo,
   VideoQuality,
 } from '../services/api';
-import type { BrandManifestSnapshot, Session } from '../types';
+import type { BrandManifestSnapshot, Session, VoiceMode } from '../types';
 import type { YoutubeSearchDefaults } from '../components/YoutubeSearch';
 import { aspectRatioFromSize, readVideoSize } from '../lib/aspect-ratio';
 import { captureFrames, previewRequests } from '../lib/frame-capture';
 import {
   applyLibraryEntry,
   errorMessage,
+  updateBrandSnapshot,
   uploadPreviewFrames,
 } from '../services/projects-api';
 import { readStoredLocale, defaultLocale } from '../lib/i18n';
@@ -1304,6 +1305,58 @@ export function useWorkflow() {
   }, []);
 
   /**
+   * Переключатель озвучки на шаге генерации (доп. запрос владельца
+   * продукта, 14.09.2026: модели читают кириллицу с неверными
+   * ударениями, режим нужно менять на каждой сессии, не возвращаясь к
+   * шагу разбора).
+   *
+   * Режим — часть снимка бренда ЭТОЙ сессии (тот же PATCH, что у
+   * BrandSnapshotEditor), но он ещё и меняет промпт: при своём голосе
+   * в бриф уходит «никто не говорит в кадре» (voiceModeBriefText на
+   * сервере). Уже одобренный промпт собран под старый режим, поэтому
+   * после смены он пересобирается сразу и сессия возвращается на шаг
+   * промпта — тем же путём, что startRevision: сервер сбрасывает
+   * одобрение, пользователь смотрит новый текст и одобряет заново.
+   * Это осознанная цена одного лишнего вызова GPT против ролика, где
+   * персонаж артикулирует одно, а слышно другое.
+   */
+  const changeVoiceMode = useCallback(
+    async (voiceMode: VoiceMode) => {
+      if (!state.sessionId) return;
+      if (state.brandManifest?.voiceMode === voiceMode) return;
+      stopVideoPolling();
+      setState((prev) => ({ ...prev, isGeneratingPrompt: true, error: null }));
+      try {
+        const snapshot = await updateBrandSnapshot(state.sessionId, {
+          voiceMode,
+        });
+        setState((prev) => ({ ...prev, brandManifest: snapshot }));
+        const prompt = await generatePrompt(state.sessionId);
+        setState((prev) => ({
+          ...prev,
+          isGeneratingPrompt: false,
+          prompt,
+          generatedVideo: null,
+          isGeneratingVideo: false,
+          error: null,
+          currentStep: 'prompt-generation',
+        }));
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          isGeneratingPrompt: false,
+          error: errorMessage(
+            error,
+            dict.wizardErrors.promptBuildFailed,
+            dict.errors
+          ),
+        }));
+      }
+    },
+    [state.sessionId, state.brandManifest?.voiceMode, stopVideoPolling, dict]
+  );
+
+  /**
    * Cleanup polling on unmount
    */
   useEffect(() => {
@@ -1329,6 +1382,7 @@ export function useWorkflow() {
     goToStep,
     selectableSteps,
     setBrandManifest,
+    changeVoiceMode,
     startRevision,
     submitProductInfo: handleSubmitProductInfo,
     generatePrompt: handleGeneratePrompt,

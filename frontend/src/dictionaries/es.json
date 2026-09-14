@@ -1025,6 +1025,8 @@
     "qualityStandardLabel": "Cinematográfico",
     "qualityStandardSub": "Veo 3.1 completo — tarda más",
     "providerLabel": "Proveedor de video",
+    "voiceModeLabel": "Voz para este video",
+    "voiceModeSwitchNote": "Cambiar el modo regenera el prompt: tendrás que aprobarlo de nuevo.",
     "providerVeoLabel": "Veo",
     "providerGrokLabel": "Grok",
     "resolutionLabel": "Resolución",

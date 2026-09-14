@@ -16,6 +16,7 @@ import {
   Clapperboard,
   Download,
   ImagePlus,
+  Lock,
   Palette,
   Sparkles,
   Type as TypeIcon,
@@ -62,6 +63,8 @@ import {
   type OnScreenTextMoment,
 } from '../../services/api';
 import { navigate, routes } from '../../lib/router';
+import { voiceModeHint } from '../../lib/voice-mode';
+import type { VoiceMode } from '../../types';
 import { useFeature } from '../../lib/plan-context';
 import { useI18n } from '../../lib/i18n-context';
 
@@ -142,6 +145,7 @@ export function GenerationWizard() {
     goToStep,
     selectableSteps,
     setBrandManifest,
+    changeVoiceMode,
     startRevision,
     submitProductInfo,
     generatePrompt,
@@ -217,6 +221,9 @@ export function GenerationWizard() {
    */
   const relevance = useFeature('relevance');
   const audit = useFeature('audit');
+  // Тот же гейт, что у BrandSnapshotEditor: дубляж — премиальный
+  // уровень озвучки, сервер это тоже проверяет (updateSnapshot).
+  const dub = useFeature('voiceDub');
   const publication = useFeature('publication');
   const referenceAssets = useFeature('referenceAssets');
 
@@ -609,6 +616,57 @@ export function GenerationWizard() {
                       : dict.generationWizard.videoReadyHint
                   }
                 />
+                {/* Доп. запрос владельца продукта (14.09.2026): режим
+                    озвучки — на каждой сессии, прямо здесь, а не только
+                    в редакторе снимка на шаге разбора. Модели читают
+                    кириллицу с неверными ударениями, и возвращаться за
+                    этим на три шага назад — верный способ забыть.
+                    Смена режима пересобирает промпт и возвращает на
+                    его одобрение (см. changeVoiceMode в useWorkflow). */}
+                {brandManifest && (
+                  <div className="mb-4">
+                    <span className="label">
+                      {dict.generationWizard.voiceModeLabel}
+                    </span>
+                    <Pills
+                      value={brandManifest.voiceMode ?? 'veo'}
+                      onChange={(mode: VoiceMode) => void changeVoiceMode(mode)}
+                      disabled={isGeneratingPrompt}
+                      columns={3}
+                      options={[
+                        {
+                          value: 'veo' as VoiceMode,
+                          label: dict.brandSnapshotEditor.voiceModeOptions.veo,
+                        },
+                        {
+                          value: 'voiceover' as VoiceMode,
+                          label:
+                            dict.brandSnapshotEditor.voiceModeOptions.voiceover,
+                        },
+                        {
+                          value: 'dub' as VoiceMode,
+                          label: dub.allowed ? (
+                            dict.brandSnapshotEditor.voiceModeOptions.dub
+                          ) : (
+                            <span className="inline-flex items-center gap-1">
+                              <Lock size={9} />{' '}
+                              {dict.brandSnapshotEditor.voiceModeOptions.dub}
+                            </span>
+                          ),
+                          disabled: !dub.allowed,
+                        },
+                      ]}
+                    />
+                    <p className="hint mt-1">
+                      {isGeneratingPrompt
+                        ? dict.generationWizard.promptBusyTitle
+                        : `${voiceModeHint(
+                            brandManifest.voiceMode ?? 'veo',
+                            dict.voiceMode.hints
+                          )} ${dict.generationWizard.voiceModeSwitchNote}`}
+                    </p>
+                  </div>
+                )}
                 <div className="mb-4">
                   <span className="label">
                     {dict.generationWizard.providerLabel}

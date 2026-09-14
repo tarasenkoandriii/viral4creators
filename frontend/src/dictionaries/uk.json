@@ -1033,6 +1033,8 @@
     "qualityStandardLabel": "Кінематографічне",
     "qualityStandardSub": "Повний Veo 3.1 — довше",
     "providerLabel": "Провайдер відео",
+    "voiceModeLabel": "Чим озвучувати цей ролик",
+    "voiceModeSwitchNote": "Зміна режиму перезбере промпт — його потрібно буде схвалити знову.",
     "providerVeoLabel": "Veo",
     "providerGrokLabel": "Grok",
     "resolutionLabel": "Роздільність",
