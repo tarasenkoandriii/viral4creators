@@ -27,11 +27,13 @@ import {
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
 import { TtsProviderResolverService } from './tts-provider-resolver.service';
+import { isVoiceoverProviderKey } from './default-tts-provider';
 import { VoiceOption } from './tts.types';
 import { PreviewVoiceRequestDto } from './dto/preview-voice.dto';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AnalysisService } from '../analysis/analysis.service';
 
 export interface VoiceCatalogueResponse {
   /** Настроен ли синтез на этом стенде — от этого зависит весь экран. */
@@ -76,13 +78,24 @@ export class TtsController {
     private readonly plans: PlanService,
     private readonly aiUsage: AiUsageService,
     private readonly prisma: PrismaService,
+    private readonly analysis: AnalysisService,
   ) {}
 
   @Get('voices')
   async voices(
     @Query('language') language?: string,
+    // Доп. запрос владельца продукта: явный выбор провайдера в обход
+    // платформенного дефолта (§ той же логики, что и у `resolveByKey`
+    // в резолвере) — нужен экрану выбора голоса ДЛЯ ОДНОЙ СЕССИИ,
+    // когда бренд не задал голос и пользователь хочет посмотреть/
+    // прослушать каталог конкретно Resemble, даже если на платформе
+    // сейчас активен другой провайдер.
+    @Query('provider') provider?: string,
   ): Promise<VoiceCatalogueResponse> {
-    const tts = await this.ttsResolver.resolve();
+    const tts =
+      provider && isVoiceoverProviderKey(provider)
+        ? this.ttsResolver.resolveByKey(provider)
+        : await this.ttsResolver.resolve();
     const configured = tts.configured();
     if (!configured) {
       // Не ошибка и не 500: ненастроенный синтез — штатное состояние
@@ -152,9 +165,52 @@ export class TtsController {
       };
     }
 
-    const tts = await this.ttsResolver.resolve();
+    // Доп. запрос владельца продукта: проба репликами оригинального
+    // референсного видео — сервер сам достаёт текст из анализа сессии
+    // (не клонирование голоса диктора, только текст его реплик, см.
+    // доккомментарий `AnalysisService.extractOriginalDialogueSample()`).
+    let previewText = dto.text;
+    if (dto.useOriginalDialogue) {
+      if (!dto.sessionId) {
+        return {
+          ok: false,
+          used,
+          limit: PREVIEWS_PER_DAY,
+          skipped: false,
+          reason: 'useOriginalDialogue требует sessionId',
+        };
+      }
+      const sample = await this.analysis.extractOriginalDialogueSample(
+        dto.sessionId,
+      );
+      if (!sample) {
+        return {
+          ok: false,
+          used,
+          limit: PREVIEWS_PER_DAY,
+          skipped: false,
+          reason:
+            'В оригинальном видео не нашлось реплик для пробы — попробуйте свой текст',
+        };
+      }
+      previewText = sample;
+    }
+    if (!previewText) {
+      return {
+        ok: false,
+        used,
+        limit: PREVIEWS_PER_DAY,
+        skipped: false,
+        reason: 'Нужен text или useOriginalDialogue+sessionId',
+      };
+    }
+
+    const tts =
+      dto.provider && isVoiceoverProviderKey(dto.provider)
+        ? this.ttsResolver.resolveByKey(dto.provider)
+        : await this.ttsResolver.resolve();
     const outcome = await tts.synthesize({
-      text: dto.text,
+      text: previewText,
       voiceId: dto.voiceId ?? null,
       model: dto.model ?? null,
     });

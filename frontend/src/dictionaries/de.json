@@ -509,6 +509,7 @@
     "sampleAriaLabel": "Testphrase für die Stimme",
     "samplePlaceholder": "Phrase zum Testen…",
     "listenButton": "Anhören",
+    "listenOriginalButton": "Mit Original-Zeilen anhören",
     "previewCount": "Tests heute: {{used}} von {{limit}}",
     "previewFailed": "Test fehlgeschlagen",
     "providerMismatch": "Diese Stimme wurde für einen anderen Sprachsynthese-Anbieter gewählt — bitte erneut auswählen"

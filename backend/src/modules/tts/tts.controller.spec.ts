@@ -38,17 +38,37 @@ function build(
   const prisma = {
     userVoice: { findMany: jest.fn().mockResolvedValue([]) },
   };
+  // Найдено при доп. запросе (добавление явного выбора провайдера,
+  // resolveByKey): этот мок был написан ДО рефакторинга на
+  // `TtsProviderResolverService` (см. её доккомментарий — «было:
+  // статическая фабрика») и передавал сам `tts` первым аргументом
+  // конструктора как если бы он и был резолвером — `as any` скрывал
+  // несовпадение типов, но `this.ttsResolver.resolve()` у реального
+  // объекта без метода `resolve()` упал бы `TypeError` в рантайме.
+  // Обёрнуто в настоящий мок резолвера — `resolve()`/`resolveByKey()`
+  // оба возвращают тот же `tts`, раз в этих тестах не важно, какой
+  // именно ключ запросили.
+  const ttsResolver = {
+    resolve: jest.fn().mockResolvedValue(tts),
+    resolveByKey: jest.fn().mockReturnValue(tts),
+  };
+  const analysis = {
+    extractOriginalDialogueSample: jest.fn().mockResolvedValue(null),
+  };
   return {
     ctl: new TtsController(
-      tts as any,
+      ttsResolver as any,
       plans as any,
       aiUsage as any,
       prisma as any,
+      analysis as any,
     ),
     tts,
+    ttsResolver,
     plans,
     aiUsage,
     prisma,
+    analysis,
   };
 }
 
@@ -228,6 +248,89 @@ describe('TtsController (ТЗ §15.3)', () => {
       expect(r.reason).toContain('401');
       // Неудавшаяся проба в счёт не идёт — платить не за что.
       expect(aiUsage.record).not.toHaveBeenCalled();
+    });
+  });
+
+  // Доп. запрос владельца продукта: явный выбор провайдера ДЛЯ ОДНОЙ
+  // СЕССИИ, в обход платформенного дефолта — экран выбора голоса
+  // должен уметь показать/прослушать каталог Resemble, даже если на
+  // платформе сейчас активен другой провайдер.
+  describe('явный выбор провайдера (?provider=/dto.provider)', () => {
+    it('voices(provider) зовёт resolveByKey, не resolve — платформенный дефолт не трогаем', async () => {
+      const { ctl, ttsResolver } = build();
+      await ctl.voices(undefined, 'resemble');
+      expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('resemble');
+      expect(ttsResolver.resolve).not.toHaveBeenCalled();
+    });
+
+    it('voices() без provider — как раньше, resolve() платформенного дефолта', async () => {
+      const { ctl, ttsResolver } = build();
+      await ctl.voices();
+      expect(ttsResolver.resolve).toHaveBeenCalled();
+      expect(ttsResolver.resolveByKey).not.toHaveBeenCalled();
+    });
+
+    it('voices(provider) с мусорным значением — тихий откат на платформенный дефолт, не 400', async () => {
+      const { ctl, ttsResolver } = build();
+      await ctl.voices(undefined, 'sora');
+      expect(ttsResolver.resolve).toHaveBeenCalled();
+      expect(ttsResolver.resolveByKey).not.toHaveBeenCalled();
+    });
+
+    it('preview с dto.provider зовёт resolveByKey', async () => {
+      const { ctl, ttsResolver } = build();
+      await ctl.preview(req, { text: 'x', provider: 'resemble' });
+      expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('resemble');
+      expect(ttsResolver.resolve).not.toHaveBeenCalled();
+    });
+  });
+
+  // Доп. запрос владельца продукта: проба репликами ОРИГИНАЛА, не
+  // клонирование его диктора — только текст реплик, синтезированный
+  // кандидатом на замену голосом.
+  describe('проба репликами оригинала (useOriginalDialogue)', () => {
+    it('useOriginalDialogue без sessionId — понятный отказ, не падение', async () => {
+      const { ctl, analysis } = build();
+      const r = await ctl.preview(req, { useOriginalDialogue: true });
+      expect(r.ok).toBe(false);
+      expect(r.reason).toContain('sessionId');
+      expect(analysis.extractOriginalDialogueSample).not.toHaveBeenCalled();
+    });
+
+    it('useOriginalDialogue + sessionId — берёт текст из AnalysisService, не от клиента', async () => {
+      const { ctl, tts, analysis } = build();
+      analysis.extractOriginalDialogueSample.mockResolvedValue(
+        'Купи уже наконец!',
+      );
+      await ctl.preview(req, {
+        useOriginalDialogue: true,
+        sessionId: 's1',
+      });
+      expect(analysis.extractOriginalDialogueSample).toHaveBeenCalledWith(
+        's1',
+      );
+      expect(tts.synthesize).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'Купи уже наконец!' }),
+      );
+    });
+
+    it('в оригинале реплик не нашлось (null) — понятная причина, не пустая проба', async () => {
+      const { ctl, tts, analysis } = build();
+      analysis.extractOriginalDialogueSample.mockResolvedValue(null);
+      const r = await ctl.preview(req, {
+        useOriginalDialogue: true,
+        sessionId: 's1',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.reason).toContain('не нашлось реплик');
+      expect(tts.synthesize).not.toHaveBeenCalled();
+    });
+
+    it('ни text, ни useOriginalDialogue — понятный отказ', async () => {
+      const { ctl, tts } = build();
+      const r = await ctl.preview(req, {});
+      expect(r.ok).toBe(false);
+      expect(tts.synthesize).not.toHaveBeenCalled();
     });
   });
 });

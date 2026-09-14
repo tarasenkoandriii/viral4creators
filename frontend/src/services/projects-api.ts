@@ -1058,8 +1058,21 @@ export interface VoiceCatalogue {
   provider: string;
 }
 
-export async function getVoices(language?: string): Promise<VoiceCatalogue> {
-  const query = language ? `?language=${encodeURIComponent(language)}` : '';
+/**
+ * Доп. запрос владельца продукта: `provider` — необязательный, явный
+ * выбор каталога конкретного провайдера в обход платформенного
+ * дефолта (нужен экрану выбора голоса для сессии, когда бренд не
+ * задал голос, а пользователь хочет посмотреть каталог именно
+ * Resemble, даже если на платформе сейчас активен другой провайдер).
+ */
+export async function getVoices(
+  language?: string,
+  provider?: string
+): Promise<VoiceCatalogue> {
+  const params = new URLSearchParams();
+  if (language) params.set('language', language);
+  if (provider) params.set('provider', provider);
+  const query = params.toString() ? `?${params.toString()}` : '';
   return unwrap(await api.get<VoiceCatalogue>(`/tts/voices${query}`), 'voices');
 }
 
@@ -1075,14 +1088,31 @@ export interface VoicePreview {
   skipped?: boolean;
 }
 
+/**
+ * `text` — `null`, когда используется `options.useOriginalDialogue`
+ * (сервер сам достаёт текст из анализа сессии, см.
+ * `AnalysisService.extractOriginalDialogueSample()` на бекенде — НЕ
+ * клонирование голоса диктора оригинала, только текст его реплик,
+ * прочитанный кандидат-голосом).
+ */
 export async function previewVoice(
-  text: string,
-  voiceId?: string | null
+  text: string | null,
+  voiceId?: string | null,
+  options?: {
+    provider?: string;
+    useOriginalDialogue?: boolean;
+    sessionId?: string;
+  }
 ): Promise<VoicePreview> {
   return unwrap(
     await api.post<VoicePreview>('/tts/preview', {
-      text,
+      ...(text ? { text } : {}),
       ...(voiceId ? { voiceId } : {}),
+      ...(options?.provider ? { provider: options.provider } : {}),
+      ...(options?.useOriginalDialogue
+        ? { useOriginalDialogue: true }
+        : {}),
+      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
     }),
     'preview'
   );

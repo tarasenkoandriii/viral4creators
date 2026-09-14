@@ -207,6 +207,7 @@ export function BrandSnapshotEditor({
             onChange={setTtsVoiceId}
             disabled={saving}
             voiceProvider={snapshot.ttsProvider}
+            sessionId={sessionId}
           />
         )}
 

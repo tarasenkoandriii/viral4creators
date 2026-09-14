@@ -509,6 +509,7 @@
     "sampleAriaLabel": "Voice preview phrase",
     "samplePlaceholder": "Phrase to preview…",
     "listenButton": "Listen",
+    "listenOriginalButton": "Preview with original's lines",
     "previewCount": "Previews today: {{used}} of {{limit}}",
     "previewFailed": "preview failed",
     "providerMismatch": "This voice was picked for a different synthesis provider — pick a voice again"

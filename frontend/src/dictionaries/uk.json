@@ -509,6 +509,7 @@
     "sampleAriaLabel": "Фраза для проби голосу",
     "samplePlaceholder": "Фраза для проби…",
     "listenButton": "Прослухати",
+    "listenOriginalButton": "Прослухати репліками оригіналу",
     "previewCount": "Проб сьогодні: {{used}} із {{limit}}",
     "previewFailed": "проба не вдалася",
     "providerMismatch": "Цей голос обрано для іншого провайдера синтезу — оберіть голос знову"

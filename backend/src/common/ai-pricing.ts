@@ -117,7 +117,12 @@ export type AiOperation =
   // моменты из готового текста), не сама сборка. Та же логика,
   // непоследовательно применённая с первого раза — исправлено при
   // повторном проходе, не сразу.
-  | 'text-extraction';
+  | 'text-extraction'
+  // Доп. запрос владельца продукта — вычленение короткого образца
+  // РЕЧИ из оригинального референсного видео (не текста на экране,
+  // не тот же вызов, что 'text-extraction' выше) — для пробы голоса
+  // кандидатом на замену, не для самого промпта.
+  | 'original-dialogue-extraction';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -140,6 +145,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'voice-clone': 'Клонирование голоса',
   'grok-reference-rewrite': 'Переписывание сцены для Grok-референсов',
   'text-extraction': 'Извлечение текста на экране',
+  'original-dialogue-extraction': 'Извлечение реплик оригинала для пробы голоса',
 };
 
 export interface ModelRate {

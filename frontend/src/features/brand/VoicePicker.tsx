@@ -47,6 +47,7 @@ export function VoicePicker({
   onChange,
   disabled,
   voiceProvider,
+  sessionId,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -59,6 +60,15 @@ export function VoicePicker({
    * от провайдера, который сейчас не активен, и звук не получится.
    */
   voiceProvider?: string | null;
+  /**
+   * Доп. запрос владельца продукта — нужен для пробы репликами
+   * ОРИГИНАЛЬНОГО референсного видео (см.
+   * `AnalysisService.extractOriginalDialogueSample()` на бекенде).
+   * Только на экране сессии (`BrandSnapshotEditor.tsx`) — у самого
+   * бренда (`ManifestScreen.tsx`) нет своего оригинального видео,
+   * поэтому там этот проп не передаётся, и кнопка не показывается.
+   */
+  sessionId?: string;
 }) {
   const { dict } = useI18n();
   const [state, setState] = useState<VoiceCatalogue | null>(null);
@@ -97,12 +107,24 @@ export function VoicePicker({
 
   // Проба стоит денег и ограничена числом в сутки, поэтому она по
   // нажатию, а не автоматически при выборе голоса.
-  const listen = async () => {
+  //
+  // Доп. запрос владельца продукта: `useOriginal` — проба репликами
+  // ОРИГИНАЛЬНОГО референсного видео вместо своего текста в `sample`.
+  // НЕ клонирование голоса диктора оригинала — сервер сам достаёт
+  // ТЕКСТ его реплик (`AnalysisService.extractOriginalDialogueSample()`)
+  // и озвучивает его выбранным кандидат-голосом.
+  const listen = async (useOriginal = false) => {
     setPreviewing(true);
     setPreviewNote(null);
     setAudio(null);
     try {
-      const r = await previewVoice(sample.trim(), value || null);
+      const r = await previewVoice(
+        useOriginal ? null : sample.trim(),
+        value || null,
+        useOriginal && sessionId
+          ? { useOriginalDialogue: true, sessionId }
+          : undefined
+      );
       if (r.ok && r.audio) {
         setAudio(r.audio);
         setPreviewNote(
@@ -190,12 +212,28 @@ export function VoicePicker({
                 variant="outline"
                 size="sm"
                 className="ml-auto shrink-0"
-                onClick={listen}
+                onClick={() => listen()}
                 loading={previewing}
                 disabled={disabled || previewing || !sample.trim()}
               >
                 {dict.voicePicker.listenButton}
               </Button>
+              {/* Доп. запрос владельца продукта: проба репликами
+                  ОРИГИНАЛЬНОГО референсного видео — только на экране
+                  сессии (`sessionId` передан), у самого бренда своего
+                  оригинала нет. */}
+              {sessionId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => listen(true)}
+                  loading={previewing}
+                  disabled={disabled || previewing}
+                >
+                  {dict.voicePicker.listenOriginalButton}
+                </Button>
+              )}
             </div>
             {audio && (
               <audio className="w-full" controls autoPlay src={audio} />

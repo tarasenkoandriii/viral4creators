@@ -646,4 +646,89 @@ export class AnalysisService {
 
     return updatedAnalysis;
   }
+
+  /**
+   * Доп. запрос владельца продукта — короткий образец РЕЧИ (не текста
+   * на экране) из оригинального референсного видео, для пробы голоса
+   * кандидатом на замену (§ этот же принцип, что уже применён к
+   * `PromptService.extractLiteralTexts()`, только источник другой —
+   * `sceneBreakdown` уже готового разбора, не сгенерированный промпт).
+   *
+   * НЕ клонирование голоса диктора оригинала — только вычленение ТЕКСТА
+   * его реплик, чтобы кандидат-голос прочитал их СВОИМ голосом. Диктор
+   * оригинала — почти всегда третье лицо (нанятый актёр озвучки из
+   * чужой рекламы), не согласившееся на клонирование своего голоса —
+   * тот же принцип, что уже защищает клонирование явным чекбоксом
+   * согласия в `VoicePicker.tsx`/`UserVoicesController`.
+   *
+   * Кэшируется на `analysis.originalDialogueSample` — вычленяется один
+   * раз, не на каждый клик «прослушать». `null` (не `undefined`) —
+   * вычленено, но реплик в оригинале не было (не значит «повторить
+   * попытку», в отличие от собственно отсутствия попытки).
+   *
+   * Best-effort, как и `extractLiteralTexts()`: сбой — `null`, не
+   * исключение, проба голоса просто останется недоступна с этим
+   * текстом, session не падает.
+   */
+  async extractOriginalDialogueSample(
+    sessionId: string,
+  ): Promise<string | null> {
+    const session = await this.sessionService.getSession(sessionId);
+    const analysis = session?.videoAnalysis;
+    if (!analysis) return null;
+    if (analysis.originalDialogueSample !== undefined) {
+      return analysis.originalDialogueSample;
+    }
+
+    let sample: string | null = null;
+    try {
+      const response = await this.genai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [
+          {
+            text: `Below is a scene-by-scene breakdown of a reference video ad. Extract ONLY the spoken dialogue/voiceover lines (not scene descriptions, not on-screen text) as a single short sample suitable for a text-to-speech voice preview — combine the lines in order, ≤280 characters total. If there is no spoken dialogue/voiceover at all, respond with an empty string.\n\nBreakdown:\n${analysis.sceneBreakdown}\n\nRespond with a valid JSON object only: {"sample": "..."}`,
+          },
+        ],
+        config: {
+          temperature: 0.1,
+          maxOutputTokens: 300,
+          responseMimeType: 'application/json',
+        },
+      });
+      await this.aiUsage.recordGemini(response, {
+        operation: 'original-dialogue-extraction',
+        model: GEMINI_MODEL,
+        sessionId,
+      });
+      const raw = response?.text?.trim();
+      if (raw) {
+        const parsed = JSON.parse(raw) as { sample?: unknown };
+        if (typeof parsed.sample === 'string' && parsed.sample.trim()) {
+          sample = parsed.sample.trim().slice(0, 280);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `extractOriginalDialogueSample: вызов не удался (${error instanceof Error ? error.message : String(error)}) — сессия ${sessionId} продолжит без пробы оригинала`,
+      );
+      // Сбой вызова — НЕ кэшируем как "реплик нет" (`null`), в отличие
+      // от genuинно пустого результата модели выше: транзиентная
+      // ошибка не должна навсегда закрыть повторную попытку. Метод
+      // просто вернёт null в этот раз, следующий вызов попробует снова
+      // (originalDialogueSample останется `undefined` на сессии).
+      return null;
+    }
+
+    // Кэшируем результат — успешный (строка) или genuинно пустой
+    // (null) — на сессии, чтобы не звать модель повторно на каждый
+    // клик «прослушать».
+    const fresh = await this.sessionService.getSession(sessionId);
+    if (fresh?.videoAnalysis) {
+      await this.sessionService.updateSession(sessionId, {
+        videoAnalysis: { ...fresh.videoAnalysis, originalDialogueSample: sample },
+      });
+    }
+
+    return sample;
+  }
 }

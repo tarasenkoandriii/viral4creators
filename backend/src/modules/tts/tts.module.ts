@@ -5,6 +5,7 @@ import { VeoPassthroughService } from './veo-passthrough.service';
 import { TtsProviderResolverService } from './tts-provider-resolver.service';
 import { TtsController } from './tts.controller';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
+import { AnalysisModule } from '../analysis/analysis.module';
 
 /**
  * Переключаемый провайдер синтеза — doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md
@@ -40,6 +41,7 @@ import { PlatformSettingsService } from '../../common/platform-settings.service'
  */
 @Global()
 @Module({
+  imports: [AnalysisModule],
   controllers: [TtsController],
   providers: [
     ElevenLabsService,

@@ -59,4 +59,17 @@ export class TtsProviderResolverService {
   async resolve(): Promise<TtsProvider> {
     return this.registry()[await this.resolveKey()];
   }
+
+  /**
+   * Доп. запрос владельца продукта: явный выбор провайдера в обход
+   * платформенного дефолта — нужен, когда пользователь хочет выбрать
+   * (и прослушать) голос конкретного провайдера ДЛЯ ОДНОЙ СЕССИИ, даже
+   * если на платформе сейчас активен другой (например, глобально
+   * ElevenLabs, но для этого ролика — Resemble). Синхронный поиск в
+   * том же реестре, что и `resolve()` — не ходит в БД, раз ключ уже
+   * известен вызывающему явно.
+   */
+  resolveByKey(key: VoiceoverProviderKey): TtsProvider {
+    return this.registry()[key];
+  }
 }
