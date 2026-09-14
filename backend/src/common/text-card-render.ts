@@ -122,6 +122,34 @@ export async function renderTextCard(req: TextCardRequest): Promise<Buffer> {
   // функция реально вызвана.
   const satori = (await import('satori')).default;
   const { Resvg } = await import('@resvg/resvg-js');
+
+  // Попытка почина самого ENOENT (не только его последствий) — по
+  // прямому запросу, после того как `vercel.json` → `functions.*
+  // .includeFiles` не подошёл для этого способа развёртывания
+  // (server.js, не /api-директория). Vercel's `@vercel/nft` трассирует
+  // `fs`-обращения статическим анализом (официальная документация:
+  // «This uses static analysis to inspect any import, require, and fs
+  // usage») — сам `harfbuzzjs` находит `hb.wasm` через
+  // `__dirname + "/hb.wasm"` внутри СВОЕГО кода, который трассировщик
+  // почему-то не подхватывает (подтверждено чужим найденным случаем
+  // с той же ошибкой на satori 0.33). Явная, «плоская» ссылка на файл
+  // прямо в НАШЕМ коде — не факт, что сработает лучше (не проверено,
+  // нет доступа к реальному Vercel в этой среде), но это единственный
+  // предложенный официальной документацией путь, раз includeFiles
+  // недоступен для этого типа развёртывания.
+  try {
+    const hbWasmPath = join(
+      require.resolve('harfbuzzjs/package.json'),
+      '..',
+      'hb.wasm',
+    );
+    readFileSync(hbWasmPath);
+  } catch {
+    // Не мешает основному рендеру — если это не помогло, ниже всё
+    // равно упадёт с тем же ENOENT, что и раньше, но best-effort в
+    // `TextCardService` его поймает, сессия не упадёт (см. ТЗ §20.3).
+  }
+
   const { regular, bold } = loadFonts();
   const { width, height } = CARD_DIMENSIONS[req.aspectRatio];
   const fontSize = fontSizeFor(req.text, width);
