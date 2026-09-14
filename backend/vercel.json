@@ -45,5 +45,10 @@
       "path": "/api/cron/export-sync-run",
       "schedule": "*/2 * * * *"
     }
-  ]
+  ],
+  "functions": {
+    "server.js": {
+      "includeFiles": "node_modules/harfbuzzjs/**"
+    }
+  }
 }

@@ -13,9 +13,23 @@
  * ⚠️ Не прогнано ни разу в этой среде (нет сети, чтобы поставить
  * пакеты и запустить, ТЗ §20.7) — первый реальный вызов должен быть
  * при локальном/тестовом прогоне, не сразу на проде.
+ *
+ * ⚠️⚠️ КРИТИЧНО (найдено в реальном проде, 2026-09-14): `satori`
+ * (через harfbuzzjs) грузит `hb.wasm` — статический import наверху
+ * файла запускал эту загрузку при бутстрапе ВСЕГО приложения NestJS
+ * (на Vercel каждая serverless-функция бутстрапит модуль целиком), а
+ * `hb.wasm` не попал в бандл (Vercel's file tracer не видит файлы,
+ * которые грузятся не через обычный `require`/`import`). Результат —
+ * `ENOENT: hb.wasm not found` валил АБСОЛЮТНО ВСЕ функции
+ * (`/api/projects`, все cron-джобы), не только text-card. Импорты
+ * `satori`/`@resvg/resvg-js` сделаны динамическими (внутри
+ * `renderTextCard()`, не на верхнем уровне модуля) — теперь их
+ * загрузка происходит только при реальном вызове рендера, не при
+ * каждом бутстрапе приложения. Это НЕ чинит сам ENOENT (см.
+ * `vercel.json`, `functions.*.includeFiles`, добавлено рядом) — это
+ * останавливает воздействие на функции, которые text-card вообще не
+ * трогают.
  */
-import satori from 'satori';
-import { Resvg } from '@resvg/resvg-js';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -88,6 +102,13 @@ function fontSizeFor(text: string, cardWidth: number): number {
  * этот модуль ничего не знает про сессии/Blob.
  */
 export async function renderTextCard(req: TextCardRequest): Promise<Buffer> {
+  // Динамический импорт — см. предупреждение выше доккомментарием
+  // файла: статический import этих двух пакетов на верхнем уровне
+  // валил ВСЕ функции приложения через ENOENT на hb.wasm, не только
+  // вызовы рендера. Загружаются только здесь, только когда эта
+  // функция реально вызвана.
+  const satori = (await import('satori')).default;
+  const { Resvg } = await import('@resvg/resvg-js');
   const { regular, bold } = loadFonts();
   const { width, height } = CARD_DIMENSIONS[req.aspectRatio];
   const fontSize = fontSizeFor(req.text, width);
