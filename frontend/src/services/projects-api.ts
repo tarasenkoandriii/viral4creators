@@ -434,6 +434,53 @@ export const addBrandCharacter = (
   manifestId: string,
   input: CharacterInput & { label: string }
 ) => addBrandAsset('characters', manifestId, input);
+
+/**
+ * Доп. запрос владельца продукта: сохранить замену персонажа,
+ * сделанную на экране сессии (`kind: 'photo' | 'text'` в
+ * `CharacterCasting.tsx`), постоянным персонажем бренда —
+ * `photoPathname` копируется на бекенде в постоянный путь (не
+ * переиспользуется напрямую — сессионное фото удаляется вместе с
+ * сессией).
+ */
+export async function addCharacterFromSessionCast(
+  manifestId: string,
+  input: {
+    label: string;
+    description?: string | null;
+    photoPathname?: string | null;
+  }
+): Promise<BrandCharacterView> {
+  return unwrap(
+    await api.post<BrandCharacterView>(
+      `/brand-manifests/${manifestId}/characters/from-session-cast`,
+      input
+    ),
+    'characters'
+  );
+}
+
+/**
+ * Доп. запрос владельца продукта: статичное превью персонажа из
+ * текстового описания (двойной клик по описанию в
+ * `CharacterCasting.tsx`). `url: null` — Gemini не смог (best-effort
+ * на бекенде, не исключение) — не значит «повторить точно так же»,
+ * просто не получилось в этот раз.
+ */
+export async function generateCharacterPreview(
+  sessionId: string,
+  characterId: string,
+  description: string
+): Promise<{ url: string | null }> {
+  return unwrap(
+    await api.post<{ url: string | null }>(
+      `/sessions/${sessionId}/characters/${characterId}/preview`,
+      { description }
+    ),
+    'preview'
+  );
+}
+
 export const updateBrandCharacter = (
   manifestId: string,
   characterId: string,

@@ -53,6 +53,7 @@ import {
 } from '../../common/types/brand-manifest.types';
 import { BrandManifestRequestDto } from './dto/brand-manifest-request.dto';
 import { BrandCharacterRequestDto } from './dto/brand-character-request.dto';
+import { AddCharacterFromSessionCastDto } from './dto/add-character-from-session-cast.dto';
 import {
   CharacterPhotoConfirmRequestDto,
   CharacterPhotoUploadUrlRequestDto,
@@ -309,6 +310,45 @@ export class BrandManifestService {
     characterId: string,
   ): Promise<void> {
     return this.removeAsset('characters', userId, manifestId, characterId);
+  }
+
+  /**
+   * Доп. запрос владельца продукта — сохранить замену персонажа,
+   * сделанную на экране сессии (`kind: 'photo' | 'text'` в
+   * `CharacterCasting.tsx`), постоянным персонажем бренда. Переиспользует
+   * уже существующие кирпичи (`addCharacter`, `blobService.copyBlob`,
+   * `confirmAssetPhoto`) — не дублирует их логику заново.
+   *
+   * Фото копируется, не переиспользуется напрямую: сессионное фото
+   * удаляется вместе с сессией (см. `CastReplacement.photoPathname`),
+   * прямая ссылка стала бы битой уже после этой же сессии. Best-effort
+   * по копированию — `copyBlob` сам возвращает `null` при сбое (лог
+   * внутри неё же), персонаж всё равно создаётся с текстом, просто без
+   * фото, а не падает целиком из-за одной картинки.
+   */
+  async addCharacterFromSessionCast(
+    userId: string,
+    manifestId: string,
+    dto: AddCharacterFromSessionCastDto,
+  ): Promise<BrandCharacterView> {
+    const created = await this.addCharacter(userId, manifestId, {
+      label: dto.label,
+      description: dto.description,
+    });
+
+    if (!dto.photoPathname) return created;
+
+    const toPathname = `brand-manifests/${manifestId}/characters/${created.id}/photo.jpg`;
+    const url = await this.blobService.copyBlob(
+      dto.photoPathname,
+      toPathname,
+      'image/jpeg',
+    );
+    if (!url) return created; // копирование не удалось — персонаж остаётся без фото, не падаем
+
+    return this.confirmAssetPhoto('characters', userId, manifestId, created.id, {
+      pathname: toPathname,
+    });
   }
 
   createCharacterPhotoUploadUrl(

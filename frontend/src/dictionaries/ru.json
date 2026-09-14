@@ -722,6 +722,8 @@
       "dub": "Свой вместо (premium)"
     },
     "cameraMoveLabel": "Движение камеры",
+    "saveVoiceToBrandButton": "Сохранить голос в брендбук",
+    "voiceSavedToBrand": "Сохранено в брендбук",
     "subtitlesModeLabel": "Субтитры для этого ролика",
     "subtitlesModeOptions": {
       "off": "Выключены",
@@ -987,6 +989,10 @@
     "textApplyCta": "Применить",
     "photoOnly": "только фото",
     "brandPhotoNote": "Фото персонажа бренда уже в хранилище — грузить заново не нужно.",
+    "saveToBrandButton": "Сохранить в брендбук",
+    "savedToBrand": "Сохранено в брендбук",
+    "previewGenerating": "Генерирую превью…",
+    "previewFailed": "Не удалось сгенерировать превью — попробуйте ещё раз",
     "prominence": {
       "main": "главный",
       "secondary": "второй план",

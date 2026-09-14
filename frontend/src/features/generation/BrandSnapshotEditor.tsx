@@ -20,7 +20,7 @@ import {
   Textarea,
 } from '../../components/ui';
 import { JsonField } from '../brand/JsonField';
-import { errorMessage, updateBrandSnapshot } from '../../services/projects-api';
+import { errorMessage, updateBrandSnapshot, updateBrandManifest } from '../../services/projects-api';
 import { cameraMoveHint, cameraMoveOptions } from '../../lib/camera-move';
 import {
   subtitleThemeHint,
@@ -80,6 +80,15 @@ export function BrandSnapshotEditor({
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
+  // Доп. запрос владельца продукта: сохранить выбранный здесь голос
+  // ПОСТОЯННО в брендбук (`BrandManifest.ttsVoiceId`), не только в
+  // снимок этой сессии — чтобы не выбирать его заново в каждой новой
+  // сессии того же бренда.
+  const [savingVoiceToBrand, setSavingVoiceToBrand] = useState(false);
+  const [voiceToBrandNote, setVoiceToBrandNote] = useState<string | null>(
+    null,
+  );
+
   const dirty =
     (styleNotes.trim() || null) !== (snapshot.styleNotes ?? null) ||
     (voiceNotes.trim() || null) !== (snapshot.voiceNotes ?? null) ||
@@ -120,6 +129,26 @@ export function BrandSnapshotEditor({
       setError(errorMessage(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Доп. запрос владельца продукта: сохранить выбранный голос в
+  // брендбук постоянно. `snapshot.brandManifestId` может указывать на
+  // манифест, который с тех пор удалили («for display only, may be
+  // deleted later» — её же доккомментарий) — сервер ответит понятной
+  // ошибкой, не крашем, `errorMessage()` её покажет как есть.
+  const saveVoiceToBrand = async () => {
+    setSavingVoiceToBrand(true);
+    setVoiceToBrandNote(null);
+    try {
+      await updateBrandManifest(snapshot.brandManifestId, {
+        ttsVoiceId: ttsVoiceId.trim() || null,
+      });
+      setVoiceToBrandNote(dict.brandSnapshotEditor.voiceSavedToBrand);
+    } catch (e) {
+      setVoiceToBrandNote(errorMessage(e));
+    } finally {
+      setSavingVoiceToBrand(false);
     }
   };
 
@@ -209,6 +238,25 @@ export function BrandSnapshotEditor({
             voiceProvider={snapshot.ttsProvider}
             sessionId={sessionId}
           />
+        )}
+
+        {voiceMode !== 'veo' && ttsVoiceId.trim() && (
+          <div className="mt-1 flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              loading={savingVoiceToBrand}
+              disabled={saving || savingVoiceToBrand}
+              onClick={() => void saveVoiceToBrand()}
+            >
+              {dict.brandSnapshotEditor.saveVoiceToBrandButton}
+            </Button>
+            {voiceToBrandNote && (
+              <span className="text-xs text-silver-500">
+                {voiceToBrandNote}
+              </span>
+            )}
+          </div>
         )}
 
         {/* §29: движение камеры правится и здесь — в отличие от голоса,

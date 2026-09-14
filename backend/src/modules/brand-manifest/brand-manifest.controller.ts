@@ -43,6 +43,7 @@ import {
 } from './brand-manifest.service';
 import { BrandManifestRequestDto } from './dto/brand-manifest-request.dto';
 import { BrandCharacterRequestDto } from './dto/brand-character-request.dto';
+import { AddCharacterFromSessionCastDto } from './dto/add-character-from-session-cast.dto';
 import {
   CharacterPhotoConfirmRequestDto,
   CharacterPhotoUploadUrlRequestDto,
@@ -105,6 +106,24 @@ export class BrandManifestController {
     @Body() dto: BrandCharacterRequestDto,
   ): Promise<BrandCharacterView> {
     return this.service.addCharacter(req.telegramUserId, manifestId, dto);
+  }
+
+  /**
+   * Доп. запрос владельца продукта: сохранить замену персонажа с
+   * экрана сессии (`CharacterCasting.tsx`) постоянным персонажем
+   * бренда — не повторять фото/описание вручную в каждой новой сессии.
+   */
+  @Post(':manifestId/characters/from-session-cast')
+  addCharacterFromSessionCast(
+    @Req() req: IdentifiedRequest,
+    @Param('manifestId') manifestId: string,
+    @Body() dto: AddCharacterFromSessionCastDto,
+  ): Promise<BrandCharacterView> {
+    return this.service.addCharacterFromSessionCast(
+      req.telegramUserId,
+      manifestId,
+      dto,
+    );
   }
 
   @Patch(':manifestId/characters/:characterId')

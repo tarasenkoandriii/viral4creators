@@ -45,6 +45,8 @@ import { useFeature } from '../../lib/plan-context';
 import {
   errorMessage,
   getCasting,
+  addCharacterFromSessionCast,
+  generateCharacterPreview,
   putCasting,
   uploadCastPhoto,
   type CastInput,
@@ -370,6 +372,7 @@ export function CharacterCasting({
                   cast={focusedCast}
                   color={characterColor(characters.indexOf(focusedCharacter))}
                   brandCharacters={brandManifest?.characters ?? []}
+                  brandManifestId={brandManifest?.brandManifestId ?? null}
                   productName={productName}
                   productDescription={productDescription}
                   saving={saving}
@@ -410,6 +413,7 @@ function ReplacementForm({
   cast,
   color,
   brandCharacters,
+  brandManifestId,
   productName,
   productDescription,
   saving,
@@ -422,6 +426,10 @@ function ReplacementForm({
   cast: CharacterCast;
   color: ReturnType<typeof characterColor>;
   brandCharacters: BrandCharacterSnapshot[];
+  /** Доп. запрос владельца продукта — нужен для кнопки «Сохранить в
+   * брендбук»; `null`, если у сессии нет брендбука вовсе (кнопка тогда
+   * не показывается). */
+  brandManifestId: string | null;
   productName: string | null;
   productDescription: string | null;
   saving: boolean;
@@ -447,6 +455,64 @@ function ReplacementForm({
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Доп. запрос владельца продукта: сохранить эту замену (фото/текст)
+  // постоянным персонажем бренда — не повторять её вручную в каждой
+  // новой сессии того же бренда.
+  const [savingToBrand, setSavingToBrand] = useState(false);
+  const [savedToBrandNote, setSavedToBrandNote] = useState<string | null>(
+    null,
+  );
+
+  const saveToBrand = async () => {
+    if (!brandManifestId) return;
+    setSavingToBrand(true);
+    setSavedToBrandNote(null);
+    try {
+      await addCharacterFromSessionCast(brandManifestId, {
+        label: character.label,
+        description: cast.replacement.description,
+        photoPathname: cast.replacement.photoPathname,
+      });
+      setSavedToBrandNote(dict.characterCasting.savedToBrand);
+    } catch (e) {
+      setSavedToBrandNote(errorMessage(e));
+    } finally {
+      setSavingToBrand(false);
+    }
+  };
+
+  // Доп. запрос владельца продукта: статичное превью персонажа из
+  // текстового описания — по двойному клику на поле описания, ещё до
+  // того, как оно сохранено кнопкой ниже. Не становится референсом
+  // автоматически — только показать пользователю, как модель может
+  // понять словесное описание.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [generatingPreview, setGeneratingPreview] = useState(false);
+  const [previewNote, setPreviewNote] = useState<string | null>(null);
+
+  const generatePreview = async () => {
+    if (!text.trim() || generatingPreview) return;
+    setGeneratingPreview(true);
+    setPreviewNote(null);
+    setPreviewUrl(null);
+    try {
+      const { url } = await generateCharacterPreview(
+        sessionId,
+        character.id,
+        text.trim(),
+      );
+      if (url) {
+        setPreviewUrl(url);
+      } else {
+        setPreviewNote(dict.characterCasting.previewFailed);
+      }
+    } catch (e) {
+      setPreviewNote(errorMessage(e));
+    } finally {
+      setGeneratingPreview(false);
+    }
+  };
 
   const onPhoto = async (file: File | undefined) => {
     if (!file) return;
@@ -592,9 +658,25 @@ function ReplacementForm({
               rows={5}
               value={text}
               onChange={(e) => setText(e.target.value.slice(0, 2000))}
+              onDoubleClick={() => void generatePreview()}
               disabled={saving}
             />
           </Field>
+          {generatingPreview && (
+            <p className="text-xs text-silver-400">
+              {dict.characterCasting.previewGenerating}
+            </p>
+          )}
+          {previewUrl && (
+            <img
+              src={previewUrl}
+              alt=""
+              className="h-40 w-32 rounded-lg border border-silver-200 object-cover dark:border-silver-800"
+            />
+          )}
+          {previewNote && (
+            <p className="text-xs text-silver-400">{previewNote}</p>
+          )}
           <Button
             size="sm"
             block
@@ -676,6 +758,31 @@ function ReplacementForm({
           </li>
         </ul>
       )}
+
+      {/* Доп. запрос владельца продукта: сохранить эту замену
+          (фото/текст) постоянным персонажем бренда. Не показывается
+          для kind 'brand' — такая замена уже ссылается на существующего
+          персонажа бренда, сохранять нечего. */}
+      {brandManifestId &&
+        (cast.replacement.kind === 'photo' ||
+          cast.replacement.kind === 'text') && (
+          <div className="mt-2 flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              loading={savingToBrand}
+              disabled={saving || savingToBrand}
+              onClick={() => void saveToBrand()}
+            >
+              {dict.characterCasting.saveToBrandButton}
+            </Button>
+            {savedToBrandNote && (
+              <span className="text-xs text-silver-500">
+                {savedToBrandNote}
+              </span>
+            )}
+          </div>
+        )}
     </div>
   );
 }

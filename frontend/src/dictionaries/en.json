@@ -714,6 +714,8 @@
       "dub": "Dub (premium)"
     },
     "cameraMoveLabel": "Camera move",
+    "saveVoiceToBrandButton": "Save voice to brand book",
+    "voiceSavedToBrand": "Saved to brand book",
     "subtitlesModeLabel": "Subtitles for this video",
     "subtitlesModeOptions": {
       "off": "Off",
@@ -979,6 +981,10 @@
     "textApplyCta": "Apply",
     "photoOnly": "photo only",
     "brandPhotoNote": "The brand character's photo is already in storage — no need to upload it again.",
+    "saveToBrandButton": "Save to brand book",
+    "savedToBrand": "Saved to brand book",
+    "previewGenerating": "Generating preview…",
+    "previewFailed": "Couldn't generate a preview — try again",
     "prominence": {
       "main": "main",
       "secondary": "secondary",

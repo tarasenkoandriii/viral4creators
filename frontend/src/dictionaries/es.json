@@ -714,6 +714,8 @@
       "dub": "Doblaje (premium)"
     },
     "cameraMoveLabel": "Movimiento de cámara",
+    "saveVoiceToBrandButton": "Guardar voz en el manual de marca",
+    "voiceSavedToBrand": "Guardado en el manual de marca",
     "subtitlesModeLabel": "Subtítulos para este video",
     "subtitlesModeOptions": {
       "off": "Desactivados",
@@ -979,6 +981,10 @@
     "textApplyCta": "Aplicar",
     "photoOnly": "solo foto",
     "brandPhotoNote": "La foto del personaje de marca ya está guardada — no hace falta subirla de nuevo.",
+    "saveToBrandButton": "Guardar en el manual de marca",
+    "savedToBrand": "Guardado en el manual de marca",
+    "previewGenerating": "Generando vista previa…",
+    "previewFailed": "No se pudo generar la vista previa — inténtalo de nuevo",
     "prominence": {
       "main": "principal",
       "secondary": "secundario",

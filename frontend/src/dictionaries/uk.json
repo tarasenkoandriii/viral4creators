@@ -722,6 +722,8 @@
       "dub": "Дубляж (premium)"
     },
     "cameraMoveLabel": "Рух камери",
+    "saveVoiceToBrandButton": "Зберегти голос у брендбук",
+    "voiceSavedToBrand": "Збережено в брендбук",
     "subtitlesModeLabel": "Субтитри для цього ролика",
     "subtitlesModeOptions": {
       "off": "Вимкнені",
@@ -987,6 +989,10 @@
     "textApplyCta": "Застосувати",
     "photoOnly": "тільки фото",
     "brandPhotoNote": "Фото персонажа бренду вже в сховищі — завантажувати заново не потрібно.",
+    "saveToBrandButton": "Зберегти в брендбук",
+    "savedToBrand": "Збережено в брендбук",
+    "previewGenerating": "Генерую прев'ю…",
+    "previewFailed": "Не вдалося згенерувати прев'ю — спробуйте ще раз",
     "prominence": {
       "main": "головний",
       "secondary": "другий план",

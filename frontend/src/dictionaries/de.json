@@ -714,6 +714,8 @@
       "dub": "Synchro (premium)"
     },
     "cameraMoveLabel": "Kamerabewegung",
+    "saveVoiceToBrandButton": "Stimme im Markenbuch speichern",
+    "voiceSavedToBrand": "Im Markenbuch gespeichert",
     "subtitlesModeLabel": "Untertitel für dieses Video",
     "subtitlesModeOptions": {
       "off": "Aus",
@@ -979,6 +981,10 @@
     "textApplyCta": "Übernehmen",
     "photoOnly": "nur Foto",
     "brandPhotoNote": "Das Foto des Marken-Charakters liegt bereits im Speicher — ein erneuter Upload ist nicht nötig.",
+    "saveToBrandButton": "Im Markenbuch speichern",
+    "savedToBrand": "Im Markenbuch gespeichert",
+    "previewGenerating": "Vorschau wird erstellt…",
+    "previewFailed": "Vorschau konnte nicht erstellt werden — versuchen Sie es erneut",
     "prominence": {
       "main": "Hauptfigur",
       "secondary": "Nebenfigur",
