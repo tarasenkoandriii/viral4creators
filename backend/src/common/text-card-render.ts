@@ -94,6 +94,14 @@ export async function renderTextCard(req: TextCardRequest): Promise<Buffer> {
   const isCta = req.role === 'cta';
 
   const svg = await satori(
+    // `as any` — не обход runtime-поведения, а обход типизации: сам
+    // `satori` официально документирует этот путь («React-elements-like
+    // objects that have type, props.children and props.style») как
+    // штатный способ вызова без JSX-транспилятора, но его TS-сигнатура
+    // типизирует параметр как `ReactNode` из react — обычный объектный
+    // литерал (без реального импорта React) структурно ему не
+    // соответствует чисто по типам, не по факту. Найдено по логу
+    // реальной сборки (TS2345), не предположено заранее.
     {
       type: 'div',
       props: {
@@ -142,7 +150,7 @@ export async function renderTextCard(req: TextCardRequest): Promise<Buffer> {
             : []),
         ],
       },
-    },
+    } as any,
     {
       width,
       height,
