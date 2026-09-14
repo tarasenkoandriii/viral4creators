@@ -74,6 +74,7 @@ function build() {
     undefined as any,
     voiceoverSettings as any,
     undefined as any,
+    undefined as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
   return { controller, adminPanel, voiceoverSettings, req };

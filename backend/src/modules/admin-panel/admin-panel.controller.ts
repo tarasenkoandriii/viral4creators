@@ -34,6 +34,8 @@ import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.servic
 import { VOICEOVER_PROVIDER_KEYS } from '../tts/default-tts-provider';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { ANALYSIS_PROVIDER_KEYS } from '../analysis/default-analysis-provider';
+import { AdminVideoProviderSettingsService } from './admin-video-provider-settings.service';
+import { VIDEO_PROVIDER_KEYS } from '../generation/default-video-provider';
 import { PlanId, PLAN_IDS, isPlanId } from '../../common/plans';
 import { isVoiceMode } from '../../common/voice-mode';
 import {
@@ -96,6 +98,14 @@ export class SetAnalysisProviderDto {
   provider!: string;
 }
 
+/** Доп. запрос владельца продукта: провайдер видео-генерации по
+ * умолчанию (ТЗ §11.1/§20 — закрывает недостающую админскую половину
+ * решения, найденную при аудите). */
+export class SetVideoProviderDto {
+  @IsIn(VIDEO_PROVIDER_KEYS as unknown as string[])
+  provider!: string;
+}
+
 const WORKFLOW_WINDOWS: WorkflowWindow[] = ['hour', 'day', 'week', 'month'];
 
 /** Этап 78 — невалидный/отсутствующий `?window=` тихо откатывается на
@@ -131,6 +141,7 @@ export class AdminPanelController {
     private readonly feedImport: AdminFeedImportService,
     private readonly voiceoverSettings: AdminVoiceoverSettingsService,
     private readonly analysisSettings: AdminAnalysisSettingsService,
+    private readonly videoProviderSettings: AdminVideoProviderSettingsService,
   ) {}
 
   @Get('sessions')
@@ -250,6 +261,28 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.analysisSettings.setDefault(dto.provider, req.userId);
+  }
+
+  /**
+   * «Провайдер видео-генерации по умолчанию» — доп. запрос владельца
+   * продукта: закрывает недостающую админскую половину решения §11.1
+   * (найдено при аудите §20) — экран генерации предзаполняется этим
+   * значением, пользователь может переопределить на конкретной
+   * генерации, тот же принцип, что уже есть у `quality`.
+   */
+  @Get('settings/video-provider')
+  async getVideoProvider(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.videoProviderSettings.get();
+  }
+
+  @Patch('settings/video-provider')
+  async setVideoProvider(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetVideoProviderDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.videoProviderSettings.setDefault(dto.provider, req.userId);
   }
 
   // ── Воронка движения по воркфлоу (этап 78, doc/WORKFLOW-FUNNEL-SPEC.md,

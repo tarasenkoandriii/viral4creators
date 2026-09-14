@@ -24,6 +24,15 @@ function build(prompt: Record<string, unknown> | null) {
     { recordGemini: jest.fn() } as any,
     { assertCanSpendSession: jest.fn() } as any,
   );
+  // Найдено при повторном аудите §20: `updatePrompt()` теперь тоже
+  // вызывает модель (`extractLiteralTexts()`, чтобы текстовые карточки
+  // не расходились с правкой) — без мока здесь ушёл бы настоящий
+  // сетевой запрос на фейковый ключ. Мок настроен на отказ намеренно:
+  // эти тесты про текст озвучки, не про text-card — `extractLiteralTexts`
+  // должен просто вернуть `null` (сбой) и не мешать основной проверке.
+  (svc as any).genai = {
+    models: { generateContent: jest.fn().mockRejectedValue(new Error('not mocked in this suite')) },
+  };
   return { svc, sessions, session };
 }
 
@@ -336,6 +345,26 @@ describe('PromptService.generatePrompt — замок и запись расхо
     );
     await expect(svc.generatePrompt('s1')).rejects.toThrow(
       /ограничил частоту запросов/,
+    );
+  });
+
+  // Найдено при аудите: `extractLiteralTexts()` изначально записывала
+  // расход под операцией 'prompt', слитно с основной сборкой — та же
+  // причина, что уже развела 'grok-reference-rewrite' отдельной
+  // строкой (§15.3 ТЗ), не была применена сюда с первого раза.
+  it('извлечение текстовых моментов пишется отдельной операцией "text-extraction", не слитно с "prompt"', async () => {
+    const { svc, aiUsage } = buildLocked(true);
+    await svc.generatePrompt('s1');
+    expect(aiUsage.recordGemini).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ operation: 'prompt', sessionId: 's1' }),
+    );
+    expect(aiUsage.recordGemini).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        operation: 'text-extraction',
+        sessionId: 's1',
+      }),
     );
   });
 

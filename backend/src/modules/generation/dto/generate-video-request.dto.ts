@@ -21,7 +21,9 @@ import { VideoQuality } from '../../../common/types/generation.types';
  * второй провайдер видео (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §10–11).
  * `resolution` имеет смысл только при `provider === 'grok'` — Veo
  * разрешение не запрашивает явно (§10.1 ТЗ); сервис игнорирует его для
- * `provider === 'veo'` (или отсутствующего — дефолт `'veo'`).
+ * `provider === 'veo'` (или отсутствующего — дефолт `'veo'`; пользователь
+ * получает Grok по умолчанию через сам мастер, а не через этот дефолт —
+ * см. `GenerationWizard.tsx`, ТЗ §20).
  */
 export class GenerateVideoRequestDto {
   @IsOptional()

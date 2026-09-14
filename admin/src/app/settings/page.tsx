@@ -7,6 +7,8 @@ import {
   setVoiceoverProviderDefault,
   getAnalysisProviderSettings,
   setAnalysisProviderDefault,
+  getVideoProviderSettings,
+  setVideoProviderDefault,
 } from '../../lib/endpoints';
 import type {
   EnvCheckResult,
@@ -15,6 +17,8 @@ import type {
   VoiceoverProviderSettingsView,
   AnalysisProviderKey,
   AnalysisProviderSettingsView,
+  VideoProviderKey,
+  VideoProviderSettingsView,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -213,6 +217,84 @@ function AnalysisProviderCard() {
   );
 }
 
+/**
+ * «Провайдер видео-генерации по умолчанию» — доп. запрос владельца
+ * продукта: закрывает недостающую админскую половину решения §11.1
+ * (найдено при аудите ТЗ §20) — раньше это был только код-дефолт в
+ * `GenerationWizard.tsx`, теперь оператор может поменять его здесь,
+ * без передеплоя фронтенда. В отличие от `AnalysisProviderCard` выше,
+ * оба провайдера уже полностью реализованы — нет пункта «показан, но
+ * недоступен».
+ */
+function VideoProviderCard() {
+  const [state, setState] = useState<VideoProviderSettingsView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    getVideoProviderSettings()
+      .then(setState)
+      .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку провайдера видео'));
+  };
+
+  useEffect(load, []);
+
+  const handleChange = async (provider: VideoProviderKey) => {
+    if (!state || provider === state.active) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await setVideoProviderDefault(provider);
+      setState(updated);
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить настройку провайдера видео');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Провайдер видео-генерации по умолчанию</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Какой провайдер предзаполнен на экране генерации при первом открытии. Пользователь всегда может выбрать
+        другой на конкретной генерации — это влияет только на то, что выбрано изначально.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>{error}</p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && (
+        <>
+          <div className="filters" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <select
+              aria-label="Провайдер видео-генерации по умолчанию"
+              value={state.active}
+              disabled={saving}
+              onChange={(e) => handleChange(e.target.value as VideoProviderKey)}
+            >
+              {state.options.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {opt.key === 'grok' ? 'Grok' : 'Veo'}
+                </option>
+              ))}
+            </select>
+            {saving && <span className="muted">Сохраняю…</span>}
+          </div>
+          <p className="muted" style={{ fontSize: 13 }}>
+            {state.source === 'admin'
+              ? 'Задано вручную на этом экране.'
+              : 'Ещё не менялось здесь — используется Grok по умолчанию.'}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [result, setResult] = useState<EnvSettingsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -267,6 +349,7 @@ export default function SettingsPage() {
 
       <VoiceoverProviderCard />
       <AnalysisProviderCard />
+      <VideoProviderCard />
 
       <div className="card" style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
         <StatusBadge severity={result.allOk ? 'ok' : problems.some((p) => p.severity === 'critical') ? 'critical' : 'warning'} />

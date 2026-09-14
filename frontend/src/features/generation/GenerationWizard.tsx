@@ -18,6 +18,7 @@ import {
   ImagePlus,
   Palette,
   Sparkles,
+  Type as TypeIcon,
   Video,
 } from 'lucide-react';
 import { useWorkflow } from '../../hooks/useWorkflow';
@@ -54,7 +55,12 @@ import {
   Pills,
 } from '../../components/ui';
 import type { VideoQuality } from '../../services/api';
-import { getCostEstimate } from '../../services/api';
+import {
+  getCostEstimate,
+  getDefaultVideoProvider,
+  ensureTextCards,
+  type OnScreenTextMoment,
+} from '../../services/api';
 import { navigate, routes } from '../../lib/router';
 import { useFeature } from '../../lib/plan-context';
 import { useI18n } from '../../lib/i18n-context';
@@ -68,7 +74,11 @@ export function GenerationWizard() {
   // разрешение (§11.2 ТЗ) — переключатель качества заменяется
   // переключателем разрешения, когда выбран Grok, а не добавляется
   // третьим полем.
-  const [videoProvider, setVideoProvider] = useState<'veo' | 'grok'>('veo');
+  // Доп. запрос владельца продукта: Grok — фолбэк на время загрузки
+  // настройки оператора ниже (useEffect, ТЗ §11.1/§20) — больше слотов
+  // для референсов (7 против 3 у Veo), значит и для text-card из §20,
+  // и для персонажей одновременно, без риска 400 при их сумме.
+  const [videoProvider, setVideoProvider] = useState<'veo' | 'grok'>('grok');
   const [grokResolution, setGrokResolution] = useState<
     '480p' | '720p' | '1080p'
   >('480p');
@@ -144,6 +154,29 @@ export function GenerationWizard() {
     showError,
   } = useWorkflow();
 
+  // Доп. запрос владельца продукта (ТЗ §11.1/§20 — админская половина
+  // решения о провайдере по умолчанию, найденная недостающей при
+  // аудите): при открытии экрана читаем настройку оператора, а не
+  // держим Grok зашитым в коде фронтенда — `useState('grok')` выше
+  // остаётся как фолбэк на время, пока этот запрос не ответил (или не
+  // смог), не как единственный источник дефолта.
+  useEffect(() => {
+    let cancelled = false;
+    getDefaultVideoProvider()
+      .then(({ provider }) => {
+        if (!cancelled) setVideoProvider(provider);
+      })
+      .catch(() => {
+        // Молча остаёмся на фолбэке из useState — экран не должен
+        // блокироваться или ломаться из-за одного диагностического
+        // запроса.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Доп. запрос владельца продукта: расчёт цены сразу при выборе, до
   // кнопки «Сгенерировать» (ТЗ §11.3) — общий принцип, не только для
   // Grok: любой выбор, меняющий стоимость, сразу показывает
@@ -188,6 +221,43 @@ export function GenerationWizard() {
   const referenceAssets = useFeature('referenceAssets');
 
   const effectiveAspectRatio = aspectRatio ?? referenceAspectRatio ?? '9:16';
+
+  // Доп. запрос владельца продукта (ТЗ §20.4 п.3 — исправлено при
+  // аудите собственной реализации): изначально text-card планировались
+  // на экране кастинга персонажей, ДО генерации промпта — но
+  // `extractLiteralTexts()` извлекает моменты ИЗ уже готового текста
+  // промпта (`prompt.service.ts`), которого на экране кастинга ещё не
+  // существует (кастинг — шаг `analysis-complete`, промпт — шаг
+  // `prompt-generation`, позже). Показывается ниже, рядом с
+  // `PromptEditor`, где `prompt` уже реально существует. Объявлено
+  // здесь, ПОСЛЕ `effectiveAspectRatio` — тот же класс сбоя (TS2448,
+  // использование до объявления в той же области видимости), что уже
+  // ловился в этом файле раньше.
+  const [textCards, setTextCards] = useState<OnScreenTextMoment[] | null>(
+    null,
+  );
+  const [textCardsError, setTextCardsError] = useState<string | null>(null);
+  const [textCardsRefreshing, setTextCardsRefreshing] = useState(false);
+
+  const loadTextCards = () => {
+    if (!sessionId) return;
+    setTextCardsError(null);
+    setTextCardsRefreshing(true);
+    ensureTextCards(sessionId, effectiveAspectRatio)
+      .then(setTextCards)
+      .catch(() =>
+        // Best-effort — тот же принцип, что и на бекенде
+        // (`extractLiteralTexts`/рендер карточки): сбой здесь не
+        // должен мешать работе с уже готовым и оплаченным промптом.
+        setTextCardsError(dict.generationWizard.textCardLoadError),
+      )
+      .finally(() => setTextCardsRefreshing(false));
+  };
+
+  useEffect(() => {
+    if (prompt?.promptId) loadTextCards();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt?.promptId]);
 
   const workflowSteps = dict.generationWizard.steps;
 
@@ -438,6 +508,55 @@ export function GenerationWizard() {
               }
             />
           )}
+
+          {/* Доп. запрос владельца продукта (ТЗ §20) — text-card:
+              референс-картинка с готовым текстом вместо надежды на то,
+              что модель нарисует текст сама. */}
+          {(textCards?.length ?? 0) > 0 && (
+            <Card className="p-5">
+              <CardHeader
+                icon={<TypeIcon size={18} className="text-accent" />}
+                title={dict.generationWizard.textCardsTitle}
+                hint={dict.generationWizard.textCardsHint}
+              />
+              {textCardsError && (
+                <Alert tone="error" className="mb-3">
+                  {textCardsError}
+                </Alert>
+              )}
+              <div className="flex flex-wrap gap-3">
+                {textCards!.map((moment) => (
+                  <div key={moment.role} className="w-24">
+                    <div className="overflow-hidden rounded-lg border border-silver-200 dark:border-silver-800">
+                      {moment.cardUrl ? (
+                        <img
+                          src={moment.cardUrl}
+                          alt={moment.text}
+                          className="aspect-[9/16] w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex aspect-[9/16] w-full items-center justify-center bg-silver-100 dark:bg-silver-900">
+                          <Sparkles size={16} className="animate-pulse text-silver-400" />
+                        </div>
+                      )}
+                    </div>
+                    <p className="mt-1 text-center text-[10px] text-silver-500">
+                      {moment.role}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <Button
+                className="mt-3"
+                size="sm"
+                variant="outline"
+                loading={textCardsRefreshing}
+                onClick={loadTextCards}
+              >
+                {dict.generationWizard.textCardsRefresh}
+              </Button>
+            </Card>
+          )}
         </div>
       )}
 
@@ -499,12 +618,12 @@ export function GenerationWizard() {
                     onChange={setVideoProvider}
                     options={[
                       {
-                        value: 'veo',
-                        label: dict.generationWizard.providerVeoLabel,
-                      },
-                      {
                         value: 'grok',
                         label: dict.generationWizard.providerGrokLabel,
+                      },
+                      {
+                        value: 'veo',
+                        label: dict.generationWizard.providerVeoLabel,
                       },
                     ]}
                   />

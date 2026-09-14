@@ -51,7 +51,7 @@ export function CatalogBatchStartScreen({
   // VEO-MODEL-VERSION-CHOICE-SPEC.md §10–11/§13, этап 2 плана §14) —
   // найдено при аудите (§16.3): без этого выбора в интерфейсе весь
   // Grok-путь воркера партий был недостижим через реальный API.
-  const [provider, setProvider] = useState<'veo' | 'grok'>('veo');
+  const [provider, setProvider] = useState<'veo' | 'grok'>('grok');
   const [resolution, setResolution] = useState<'480p' | '720p' | '1080p'>(
     '480p'
   );
@@ -149,8 +149,8 @@ export function CatalogBatchStartScreen({
           value={provider}
           onChange={setProvider}
           options={[
-            { value: 'veo', label: dict.generationWizard.providerVeoLabel },
             { value: 'grok', label: dict.generationWizard.providerGrokLabel },
+            { value: 'veo', label: dict.generationWizard.providerVeoLabel },
           ]}
         />
         {provider === 'grok' && (

@@ -145,6 +145,21 @@ export interface AnalysisProviderSettingsView {
   options: AnalysisProviderOptionView[];
 }
 
+// ── Провайдер видео-генерации по умолчанию (ТЗ §11.1/§20 — админская
+// половина решения, найденная недостающей при аудите) ──
+
+export type VideoProviderKey = 'grok' | 'veo';
+
+export interface VideoProviderOptionView {
+  key: VideoProviderKey;
+}
+
+export interface VideoProviderSettingsView {
+  active: VideoProviderKey;
+  source: 'admin' | 'env-default';
+  options: VideoProviderOptionView[];
+}
+
 // ── Очередь публикации (backend/src/modules/publication, этап 18) ──
 
 export type PublicationPlatform = 'YOUTUBE' | 'TIKTOK';

@@ -109,7 +109,15 @@ export type AiOperation =
   // (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §15.3) — отдельно от 'prompt':
   // узкий, дешёвый шаг поверх уже готового текста сцены, не сама сборка
   // промпта, должен быть виден в отчёте расходов отдельной строкой.
-  | 'grok-reference-rewrite';
+  | 'grok-reference-rewrite'
+  // Найдено при аудите: `extractLiteralTexts()` (§20.2 того же ТЗ)
+  // изначально писался под операцию 'prompt' — но по той же самой
+  // причине, что уже разделила 'grok-reference-rewrite' выше: узкий,
+  // дешёвый шаг ПОСЛЕ уже готового промпта (вычленяет text-card
+  // моменты из готового текста), не сама сборка. Та же логика,
+  // непоследовательно применённая с первого раза — исправлено при
+  // повторном проходе, не сразу.
+  | 'text-extraction';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -131,6 +139,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'avatar-generation': 'Аватар-видео (пилот)',
   'voice-clone': 'Клонирование голоса',
   'grok-reference-rewrite': 'Переписывание сцены для Grok-референсов',
+  'text-extraction': 'Извлечение текста на экране',
 };
 
 export interface ModelRate {

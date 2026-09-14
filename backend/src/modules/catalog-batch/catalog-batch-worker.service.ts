@@ -816,10 +816,15 @@ export class CatalogBatchWorkerService {
     }
 
     if (!videoStarted) {
+      // Явно 'veo' — этот путь достигается только для НЕ-Grok партий
+      // (Grok-провайдер уходит в отдельную ветку BATCH_QUEUED раньше в
+      // этом же методе) — не полагаться на дефолт параметра, который
+      // может поменяться для пользовательского мастера (ТЗ §20).
       await this.generation.generateVideo(
         sessionId,
         batch.quality as VideoQuality,
         batch.aspectRatio ?? undefined,
+        'veo',
       );
     }
 

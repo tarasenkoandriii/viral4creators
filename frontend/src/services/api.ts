@@ -532,6 +532,19 @@ export interface GenerationPrompt {
   voiceoverScriptEdited?: string;
   finalVoiceoverScript?: string;
   voiceoverScriptSource?: 'field' | 'dialogue' | 'none';
+  /**
+   * Доп. запрос владельца продукта (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md
+   * §20.2) — найдено при реализации: этот интерфейс, как и
+   * `GeneratedVideo` раньше в этом же файле, отдельная копия типа, не
+   * та, что в backend/src/common/types/prompt.types.ts — добавлено
+   * сразу, чтобы не повторить ту же находку по факту сбоя сборки.
+   */
+  onScreenTextMoments?: {
+    text: string;
+    role: 'hook' | 'callout' | 'cta';
+    cardUrl?: string;
+    cardTextHash?: string;
+  }[];
 }
 
 /**
@@ -817,6 +830,81 @@ export async function getCostEstimate(
     throw new Error('Failed to estimate cost');
   }
   return response.data;
+}
+
+/**
+ * Доп. запрос владельца продукта: провайдер видео-генерации по
+ * умолчанию (ТЗ §11.1/§20 — админская половина решения, найденная
+ * недостающей при аудите). Публичный (не админский) эндпоинт —
+ * `GenerationWizard.tsx` вызывает это при открытии экрана генерации,
+ * не хардкодит провайдера в коде фронтенда.
+ */
+export async function getDefaultVideoProvider(): Promise<{
+  provider: 'grok' | 'veo';
+  options: ('grok' | 'veo')[];
+}> {
+  const response = await api.get<{
+    provider: 'grok' | 'veo';
+    options: ('grok' | 'veo')[];
+  }>('/generation-settings/default-provider');
+  // Отказоустойчиво: если эндпоинт недоступен (сеть, деплой без этой
+  // фичи ещё не докатился) — тот же фолбэк, что и в самом бекенде
+  // (`default-video-provider.ts`), не пустой экран.
+  return response.data ?? { provider: 'grok', options: ['grok', 'veo'] };
+}
+
+/**
+ * Доп. запрос владельца продукта (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md
+ * §20) — референс-картинка с готовым текстом вместо надежды на то,
+ * что модель нарисует текст сама.
+ */
+export interface OnScreenTextMoment {
+  text: string;
+  role: 'hook' | 'callout' | 'cta';
+  cardUrl?: string;
+  cardTextHash?: string;
+}
+
+/**
+ * Бекенд принимает только '9:16' | '16:9' | '1:1' (`EnsureTextCardsRequestDto`)
+ * — экран генерации оперирует более широким набором соотношений
+ * («4:5» и т.п.), эта функция сводит любое к ближайшему из трёх
+ * поддерживаемых пресетов карточки, а не отклоняет незнакомые.
+ */
+function normalizeCardAspect(raw: string | null | undefined): '9:16' | '16:9' | '1:1' {
+  const match = raw?.match(/^(\d+):(\d+)$/);
+  if (!match) return '9:16';
+  const w = Number(match[1]);
+  const h = Number(match[2]);
+  if (w === h) return '1:1';
+  return w > h ? '16:9' : '9:16';
+}
+
+/**
+ * Рендерит/актуализирует text-card для сессии — вызывается экраном
+ * генерации (`GenerationWizard.tsx`, рядом с `PromptEditor`) при
+ * появлении готового промпта (§20.4 п.3 ТЗ, скорректировано при
+ * аудите — исходно планировалось на экране кастинга персонажей, до
+ * генерации промпта, но `onScreenTextMoments` физически не
+ * существует до этого момента). Идемпотентно на бекенде — можно
+ * вызывать повторно, не только один раз.
+ *
+ * `brandColor` был убран (аудит §20.9/§20.10) — произвольный
+ * клиентский параметр без источника данных на сервере
+ * (`BrandManifestSnapshot` не хранит цвет), а поскольку он входил в
+ * хэш устаревания карточки, это был вектор злоупотребления: перебор
+ * цветов от клиента заставлял бы каждый раз рендерить и заливать в
+ * Blob заново, в обход идемпотентности.
+ */
+export async function ensureTextCards(
+  sessionId: string,
+  aspectRatio: string | null | undefined
+): Promise<OnScreenTextMoment[]> {
+  const response = await api.post<OnScreenTextMoment[]>(
+    `/sessions/${sessionId}/text-cards/ensure`,
+    { aspectRatio: normalizeCardAspect(aspectRatio) }
+  );
+  return response.data ?? [];
 }
 
 /**

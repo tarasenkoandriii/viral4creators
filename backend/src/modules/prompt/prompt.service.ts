@@ -19,6 +19,7 @@ import { SessionService } from '../../common/session.service';
 import {
   GenerationPrompt,
   ModerationStatus,
+  OnScreenTextMoment,
 } from '../../common/types/prompt.types';
 import { SessionStatus } from '../../common/types/session.types';
 import {
@@ -342,6 +343,17 @@ Please respond with a valid JSON object only, with two keys:
       // Модерация смотрит на то, что действительно уйдёт в Veo.
       const moderation = this.moderateContent(promptText);
 
+      // Доп. запрос владельца продукта (ТЗ §20.2, оживление никогда не
+      // сделанного Этапа 3 из §8.5 п.1) — отдельный, дешёвый вызов
+      // ПОСЛЕ основного промпта, не вместо него. Best-effort: сбой
+      // здесь не должен ронять уже готовый и оплаченный основной
+      // промпт — тот же принцип отказоустойчивости, что уже применён
+      // в `rewriteForGrokReferences()`.
+      const onScreenTextMoments = await this.extractLiteralTexts(
+        promptText,
+        sessionId,
+      );
+
       // Create prompt object
       const prompt: GenerationPrompt = {
         promptId: uuidv4(),
@@ -354,6 +366,11 @@ Please respond with a valid JSON object only, with two keys:
         voiceoverScript: parts.script ?? undefined,
         finalVoiceoverScript: parts.script ?? undefined,
         voiceoverScriptSource: parts.source,
+        // `null` (сбой) и `[]` (текста нет) равнозначны здесь — это
+        // ПЕРВОЕ извлечение, прежних моментов, которые стоило бы
+        // сохранить при сбое, ещё не существует (в отличие от
+        // `updatePrompt()` ниже).
+        ...(onScreenTextMoments?.length ? { onScreenTextMoments } : {}),
       };
 
       // Передаём ТОЛЬКО затронутые ключи, а не весь прочитанный снимок
@@ -731,6 +748,20 @@ Please respond with a valid JSON object only, with one key "variants": an array 
       session.generationPrompt.finalVoiceoverScript = trimmed;
     }
 
+    // Найдено при повторном аудите §20: без этого `onScreenTextMoments`
+    // (§20.2) навсегда оставался бы таким, каким его извлекли из ПЕРВОЙ
+    // версии промпта — правка текста здесь никогда не отражалась бы в
+    // текстовых карточках, и хэш в `TextCardService` не смог бы
+    // обнаружить расхождение (нечему было бы измениться).
+    //
+    // `result === null` — сбой вызова, не «текста теперь нет»: тогда
+    // СОХРАНЯЕМ прежние моменты (и уже отрендеренные для них
+    // text-card) вместо того, чтобы стереть их транзиентной ошибкой.
+    const result = await this.extractLiteralTexts(editedText, sessionId);
+    if (result !== null) {
+      session.generationPrompt.onScreenTextMoments = result;
+    }
+
     // Только промпт — по той же причине, что выше (А-2.3).
     await this.sessionService.updateSession(sessionId, {
       generationPrompt: session.generationPrompt,
@@ -811,6 +842,77 @@ Please respond with a valid JSON object only, with one key "variants": an array 
       flags.length > 0 ? ModerationStatus.FLAGGED : ModerationStatus.PENDING;
 
     return { status, flags };
+  }
+
+  /**
+   * Оживление никогда не сделанного Этапа 3 (§8.5 п.1 ТЗ) — по
+   * прямому запросу для §20.2 (text-card): отдельный, дешёвый вызов
+   * той же `GEMINI_MODEL`, что и весь остальной класс, ПОСЛЕ основной
+   * сборки промпта — вычленяет из уже готового `Text overlay: [...]`
+   * до трёх отдельных текстовых моментов по ролям (hook/callout/cta).
+   *
+   * Не пытается угадывать роли для сцен, где текста на экране нет
+   * вовсе — модель прямо просят вернуть пустой массив в этом случае,
+   * не выдумывать текст, которого не было в промпте.
+   *
+   * Отказоустойчиво, как и `rewriteForGrokReferences` ниже: любая
+   * ошибка — лог и пустой массив, не падение уже готового и
+   * оплаченного основного промпта.
+   */
+  private async extractLiteralTexts(
+    promptText: string,
+    sessionId: string,
+  ): Promise<OnScreenTextMoment[] | null> {
+    try {
+      const raw = await this.callTextModel(
+        `Below is a complete video generation prompt for an 8-second UGC ad. Find every distinct piece of ON-SCREEN TEXT it describes (the "Text overlay" field or any other mention of text/words appearing visually in the frame — NOT spoken dialogue, NOT scene descriptions). For each one, classify its role: "hook" (an opening line/slogan shown early), "callout" (a mid-video detail like a price, discount, or feature), or "cta" (a closing call-to-action, e.g. a website, promo code, or "order now"). If the prompt describes NO on-screen text at all, return an empty array — do not invent text that isn't there. Each text must be ≤100 characters, verbatim from the prompt (do not paraphrase or translate it).\n\nPrompt:\n${promptText}\n\nRespond with a valid JSON object only: {"moments": [{"text": "...", "role": "hook" | "callout" | "cta"}, ...]}`,
+        {
+          // Найдено при аудите: раньше было 'prompt' — та же логика,
+          // что уже развела 'grok-reference-rewrite' отдельно от
+          // 'prompt' (§15.3 ТЗ), сюда не была применена с первого
+          // раза. Отдельная строка расхода, не слитая с основной
+          // сборкой промпта.
+          operation: 'text-extraction',
+          sessionId,
+          temperature: 0.2,
+          maxOutputTokens: 500,
+          json: true,
+        },
+      );
+      // Пустой ответ модели — не то же самое, что «сбой вызова»: сеть и
+      // модель отработали, просто без содержимого. Это генуинный
+      // результат «текста нет», не повод хранить старые моменты.
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as { moments?: unknown };
+      if (!Array.isArray(parsed.moments)) return [];
+      const validRoles = new Set(['hook', 'callout', 'cta']);
+      return parsed.moments
+        .filter(
+          (m): m is OnScreenTextMoment =>
+            !!m &&
+            typeof m === 'object' &&
+            typeof (m as OnScreenTextMoment).text === 'string' &&
+            (m as OnScreenTextMoment).text.length > 0 &&
+            (m as OnScreenTextMoment).text.length <= 100 &&
+            validRoles.has((m as OnScreenTextMoment).role),
+        )
+        // Не больше одной карточки на роль (§20.4 п.1 предполагает
+        // ровно три возможных слота, не больше) — если модель вернула
+        // дубликаты роли, оставляем первую.
+        .filter((m, i, arr) => arr.findIndex((x) => x.role === m.role) === i);
+    } catch (error) {
+      // Найдено при повторном аудите §20 (правка `updatePrompt()`,
+      // вызывающей этот метод повторно): `null`, не `[]` — сбой сети/
+      // модели должен ОТЛИЧАТЬСЯ от «текста на экране нет» genuinely.
+      // Иначе транзиентная ошибка при правке промпта тихо стёрла бы
+      // уже успешно отрендеренные text-card с прошлого извлечения —
+      // вызывающий код обязан на `null` СОХРАНИТЬ прежние моменты, не
+      // затирать их пустым массивом.
+      this.logger.warn(
+        `extractLiteralTexts: вызов не удался (${error instanceof Error ? error.message : String(error)}) — сессия ${sessionId} продолжит без text-card`,
+      );
+      return null;
+    }
   }
 
   /**

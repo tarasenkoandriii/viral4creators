@@ -28,7 +28,7 @@ export interface ReferenceSelection {
   updatedAt: string;
 }
 
-export type ReferenceCandidateKind = 'character' | 'scene' | 'product';
+export type ReferenceCandidateKind = 'character' | 'scene' | 'product' | 'text-card';
 
 /** What the UI shows in the chooser. */
 export interface ReferenceCandidateView {

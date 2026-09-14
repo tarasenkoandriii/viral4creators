@@ -38,7 +38,7 @@ export const REFERENCE_IMAGE_CAP = 3;
 export interface ReferenceImageSource {
   /** 1-based, as referred to in the Veo prompt ("reference image 2"). */
   index: number;
-  kind: 'character' | 'scene' | 'product';
+  kind: 'character' | 'scene' | 'product' | 'text-card';
   candidateId: ReferenceCandidateId;
   characterId: string | null;
   label: string;
@@ -47,6 +47,10 @@ export interface ReferenceImageSource {
   /** Public URL fallback (brand character photos). */
   url: string | null;
   mimeType: string;
+  /** Только для `kind === 'text-card'` (ТЗ §20.2/§20.6) — какую роль
+   * текста несёт эта карточка, нужно `generation.service.ts`, чтобы
+   * процитировать её в правильном месте сцены промпта. */
+  textCardRole?: 'hook' | 'callout' | 'cta';
 }
 
 export interface CharacterBrief {
@@ -94,6 +98,11 @@ type PlanSession = Pick<
   | 'scenes'
   | 'referenceSelection'
   | 'brandManifestSnapshot'
+  // Доп. запрос владельца продукта (ТЗ §20.2/§20.4) — text-card
+  // кандидаты читаются из `generationPrompt.onScreenTextMoments`,
+  // только те, у которых уже есть `cardUrl` (отрендерены отдельным
+  // шагом, `TextCardService`, не здесь — эта функция остаётся чистой).
+  | 'generationPrompt'
 >;
 
 function mimeFromUrlOrPath(s: string | null, fallback = 'image/jpeg'): string {
@@ -198,6 +207,48 @@ export function buildReferencePlan(
         },
       });
     }
+  }
+
+  // Доп. запрос владельца продукта (ТЗ §20.2/§20.4 п.1): text-card
+  // кандидаты — сразу после персонажей, до сцен/товара. Только уже
+  // отрендеренные (`cardUrl` заполнен `TextCardService` отдельным
+  // шагом) — эта функция остаётся чистой, сама рендерить не может.
+  // Порядок внутри text-card — по роли (cta > hook > callout, §20.4
+  // п.1), не по порядку в массиве `onScreenTextMoments`.
+  const TEXT_CARD_ROLE_PRIORITY: Record<'cta' | 'hook' | 'callout', number> = {
+    cta: 0,
+    hook: 1,
+    callout: 2,
+  };
+  const textCardMoments = (
+    session.generationPrompt?.onScreenTextMoments ?? []
+  )
+    .filter((m) => !!m.cardUrl)
+    .sort(
+      (a, b) => TEXT_CARD_ROLE_PRIORITY[a.role] - TEXT_CARD_ROLE_PRIORITY[b.role],
+    );
+  for (const moment of textCardMoments) {
+    const id = `text-card:${moment.role}`;
+    candidates.push({
+      view: {
+        id,
+        kind: 'text-card',
+        label: `Текст: ${moment.role}`,
+        thumbnailUrl: moment.cardUrl!,
+        textFallback: moment.text,
+        origin: 'session',
+      },
+      source: {
+        kind: 'text-card',
+        candidateId: id,
+        characterId: null,
+        label: `Текст: ${moment.role}`,
+        pathname: moment.cardPathname ?? null,
+        url: moment.cardUrl!,
+        mimeType: 'image/png',
+        textCardRole: moment.role,
+      },
+    });
   }
 
   const sceneBriefs: SceneBrief[] = [];
@@ -416,6 +467,12 @@ export function referenceMappingText(plan: ReferencePlan): string {
       return `the person "${i.label}" — match their appearance exactly`;
     if (i.kind === 'scene')
       return `the location/set "${i.label}" — shoot the ad in this place`;
+    if (i.kind === 'text-card')
+      // Доп. запрос владельца продукта (ТЗ §20.6) — узкая, буквальная
+      // формулировка: цель не «стилизуй под это», а «скопируй текст
+      // отсюда посимвольно», та же логика, что уже даёт «match their
+      // appearance exactly» персонажам, только для текста, не лица.
+      return `the exact on-screen text for this moment — copy it character-for-character from the image, do not alter, retype, or paraphrase it`;
     return `the actual product "${i.label}" — it must look exactly like this`;
   };
   const lines = plan.images.map(
@@ -464,6 +521,8 @@ export function grokReferencePromptText(plan: ReferencePlan): string {
       return `the person "${i.label}" — match their appearance exactly`;
     if (i.kind === 'scene')
       return `the location/set "${i.label}" — shoot the ad in this place`;
+    if (i.kind === 'text-card')
+      return `the exact on-screen text for this moment — copy it character-for-character from the image, do not alter, retype, or paraphrase it`;
     return `the actual product "${i.label}" — it must look exactly like this`;
   };
   const lines = plan.images.map(

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { GenerationController } from './generation.controller';
+import { GenerationPublicSettingsController } from './generation-public-settings.controller';
+import { AdminVideoProviderSettingsService } from '../admin-panel/admin-video-provider-settings.service';
 import { AdminGenerationRetryController } from './admin-generation-retry.controller';
 import { GenerationService } from './generation.service';
 import { GrokVideoService } from './grok-video.service';
@@ -41,8 +43,17 @@ import { PromptModule } from '../prompt/prompt.module';
     VideoAuditModule,
     PromptModule,
   ],
-  controllers: [GenerationController, AdminGenerationRetryController],
-  providers: [GenerationService, GrokVideoService, GrokVideoBatchService],
+  controllers: [
+    GenerationController,
+    AdminGenerationRetryController,
+    GenerationPublicSettingsController,
+  ],
+  providers: [
+    GenerationService,
+    GrokVideoService,
+    GrokVideoBatchService,
+    AdminVideoProviderSettingsService,
+  ],
   exports: [GenerationService, GrokVideoBatchService],
 })
 export class GenerationModule {}

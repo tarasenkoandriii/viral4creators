@@ -7,13 +7,17 @@
 import { Module } from '@nestjs/common';
 import { PromptController } from './prompt.controller';
 import { PromptService } from './prompt.service';
+import { TextCardController } from './text-card.controller';
+import { TextCardService } from './text-card.service';
+import { StorageModule } from '../storage/storage.module';
 
 /**
  * PromptModule provides prompt generation and management functionality
  */
 @Module({
-  controllers: [PromptController],
-  providers: [PromptService],
+  imports: [StorageModule],
+  controllers: [PromptController, TextCardController],
+  providers: [PromptService, TextCardService],
   exports: [PromptService],
 })
 export class PromptModule {}

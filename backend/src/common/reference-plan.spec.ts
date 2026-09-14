@@ -2,6 +2,7 @@ import {
   brandBriefText,
   buildReferencePlan,
   characterBriefText,
+  grokReferencePromptText,
   referenceMappingText,
   sceneBriefText,
 } from './reference-plan';
@@ -447,5 +448,78 @@ describe('brand scenes from the manifest snapshot (§17.1, Stage 22)', () => {
     });
     expect(plan.candidates.map((c) => c.id)).toEqual(['product']);
     expect(plan.legacyFirstFrame).toBe(true);
+  });
+
+  // Доп. запрос владельца продукта (ТЗ §20.2/§20.4 п.1) — text-card:
+  // референс-изображение с готовым текстом вместо надежды на то, что
+  // модель нарисует текст сама.
+  describe('text-card (§20)', () => {
+    it('момент без cardUrl (ещё не отрендерен) не становится кандидатом', () => {
+      const plan = buildReferencePlan({
+        ...session([cast('c1', 1)]),
+        generationPrompt: {
+          onScreenTextMoments: [{ text: 'Купи сейчас', role: 'cta' }],
+        } as never,
+      });
+      expect(plan.candidates.some((c) => c.kind === 'text-card')).toBe(false);
+    });
+
+    it('момент с cardUrl становится кандидатом сразу после персонажей, до сцен/товара', () => {
+      const plan = buildReferencePlan({
+        ...session([cast('c1', 1, { kind: 'photo', photoUrl: 'https://blob.test/c1.png' })]),
+        generationPrompt: {
+          onScreenTextMoments: [
+            { text: 'Купи сейчас', role: 'cta', cardUrl: 'https://blob.test/cta.png' },
+          ],
+        } as never,
+      });
+      const kinds = plan.candidates.map((c) => c.kind);
+      expect(kinds).toEqual(['character', 'text-card', 'product']);
+    });
+
+    it('порядок нескольких карточек — по роли (cta > hook > callout), не по порядку в массиве', () => {
+      const plan = buildReferencePlan({
+        ...session(undefined),
+        generationPrompt: {
+          onScreenTextMoments: [
+            { text: 'Скидка 20%', role: 'callout', cardUrl: 'https://blob.test/callout.png' },
+            { text: 'Смотри сюда', role: 'hook', cardUrl: 'https://blob.test/hook.png' },
+            { text: 'Купи сейчас', role: 'cta', cardUrl: 'https://blob.test/cta.png' },
+          ],
+        } as never,
+      });
+      const textCards = plan.candidates.filter((c) => c.kind === 'text-card');
+      expect(textCards.map((c) => c.id)).toEqual([
+        'text-card:cta',
+        'text-card:hook',
+        'text-card:callout',
+      ]);
+    });
+
+    it('только text-card, без персонажей/сцен — всё равно включает референс-режим, не легаси-первый-кадр', () => {
+      const plan = buildReferencePlan({
+        ...session(undefined),
+        generationPrompt: {
+          onScreenTextMoments: [
+            { text: 'Купи сейчас', role: 'cta', cardUrl: 'https://blob.test/cta.png' },
+          ],
+        } as never,
+      });
+      expect(plan.legacyFirstFrame).toBe(false);
+      expect(plan.images.some((i) => i.kind === 'text-card')).toBe(true);
+    });
+
+    it('referenceMappingText/grokReferencePromptText — требуют копировать текст посимвольно, не переписывать', () => {
+      const plan = buildReferencePlan({
+        ...session(undefined),
+        generationPrompt: {
+          onScreenTextMoments: [
+            { text: 'Купи сейчас', role: 'cta', cardUrl: 'https://blob.test/cta.png' },
+          ],
+        } as never,
+      });
+      expect(referenceMappingText(plan)).toContain('character-for-character');
+      expect(grokReferencePromptText(plan)).toContain('character-for-character');
+    });
   });
 });

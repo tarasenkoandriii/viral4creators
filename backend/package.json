@@ -35,6 +35,7 @@
     "@nestjs/platform-express": "^10.0.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@vercel/blob": "^2.8.0",
     "axios": "^1.6.0",
     "class-transformer": "^0.5.1",
@@ -46,6 +47,7 @@
     "reflect-metadata": "^0.1.13",
     "rxjs": "^7.8.1",
     "sanitize-html": "2.17.1",
+    "satori": "^0.33.4",
     "uuid": "^9.0.0"
   },
   "devDependencies": {

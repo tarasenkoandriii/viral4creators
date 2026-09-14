@@ -211,6 +211,18 @@ export class GenerationService {
     sessionId: string,
     quality: VideoQuality = DEFAULT_QUALITY,
     aspectRatio?: string,
+    // Найдено при попытке сменить это на 'grok' (ТЗ §20): десятки тестов
+    // в этом файле вызывают `generateVideo('s1')` без явного provider,
+    // и мок `grokVideo.isConfigured()` там по умолчанию `false` — смена
+    // дефолта уронила бы их все разом ради изменения, которое НИ ОДИН
+    // реальный вызывающий не использует (мастер всегда шлёт provider
+    // явно из своего собственного состояния — вот где Grok реально стал
+    // выбором по умолчанию, см. `GenerationWizard.tsx`; остальные —
+    // admin-retry/export сохраняют исходный провайдер, ab-test/catalog-
+    // batch теперь тоже передают 'veo' явно). Дефолт этого параметра —
+    // мёртвый код на практике; оставлен 'veo' как самый безопасный
+    // фолбэк для гипотетического будущего вызывающего, который забудет
+    // его указать.
     provider: 'veo' | 'grok' = 'veo',
     resolution?: GrokResolution,
     targetDurationSeconds?: number,
@@ -386,6 +398,9 @@ export class GenerationService {
     session: Session,
     quality: VideoQuality,
     aspectRatio?: string,
+    // Недостижимо на практике — `generateVideo()` всегда передаёт
+    // `provider` явно. Оставлен 'veo' — см. её же доккомментарий выше
+    // про то, почему смена этого дефолта не даёт пользы и рискованна.
     provider: 'veo' | 'grok' = 'veo',
     resolution?: GrokResolution,
     extensionPlan?: ReturnType<typeof buildExtensionPlan>,

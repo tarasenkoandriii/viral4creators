@@ -21,6 +21,8 @@ import type {
   VoiceoverProviderSettingsView,
   AnalysisProviderKey,
   AnalysisProviderSettingsView,
+  VideoProviderKey,
+  VideoProviderSettingsView,
   PublicationListResult,
   PublicationPrivacy,
   PublicationRequest,
@@ -178,6 +180,19 @@ export function getAnalysisProviderSettings() {
 
 export function setAnalysisProviderDefault(provider: AnalysisProviderKey) {
   return apiPatch<AnalysisProviderSettingsView>('/admin/settings/analysis-provider', {
+    provider,
+  });
+}
+
+/** «Провайдер видео-генерации по умолчанию» — тот же принцип, что у
+ * озвучки/разбора выше (ТЗ §11.1/§20 — админская половина решения,
+ * найденная недостающей при аудите). */
+export function getVideoProviderSettings() {
+  return apiGet<VideoProviderSettingsView>('/admin/settings/video-provider');
+}
+
+export function setVideoProviderDefault(provider: VideoProviderKey) {
+  return apiPatch<VideoProviderSettingsView>('/admin/settings/video-provider', {
     provider,
   });
 }

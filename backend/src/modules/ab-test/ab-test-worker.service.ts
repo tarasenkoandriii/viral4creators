@@ -382,10 +382,17 @@ export class AbTestWorkerService {
       await this.prompt.approvePrompt(sessionId);
     }
     if (!videoStarted) {
+      // Явно 'veo' — не полагаться на дефолт параметра: A/B-тестирование
+      // никогда не расширялось под Grok (нет provider-поля в его схеме,
+      // см. аудит §16.4) — если дефолт когда-нибудь поменяют для
+      // пользовательского мастера (ТЗ §20, «максимальный профит»), этот
+      // вызов не должен тихо потянуться следом туда, где это не
+      // проверялось вовсе.
       await this.generation.generateVideo(
         sessionId,
         run.quality as VideoQuality,
         run.aspectRatio ?? undefined,
+        'veo',
       );
     }
 
