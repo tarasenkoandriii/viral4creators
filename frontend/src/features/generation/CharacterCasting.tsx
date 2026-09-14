@@ -79,7 +79,6 @@ export function CharacterCasting({
   productDescription,
   previewsStatus = 'idle',
   onHighlight,
-  aspectRatio,
 }: {
   sessionId: string;
   characters: AnalysisCharacter[];
