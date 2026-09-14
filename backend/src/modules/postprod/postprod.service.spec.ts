@@ -429,14 +429,15 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       expect(r.postStatus).toBe('pending');
     });
 
-    it('снимок без режима читается как «голос Veo»', async () => {
-      // Сессии, созданные до этапа 35, работают ровно как раньше.
+    it('снимок без режима читается как «свой голос поверх» (15.09.2026)', async () => {
+      // Раньше — «голос Veo» (данные до этапа 35); теперь умолчание одно
+      // на всю систему, иначе «veo» просачивался через каждую точку без поля.
       const { svc, tts } = build({
         session: session({ brandManifestSnapshot: { title: 'бренд' } }),
       });
       const r = await svc.start('s1', VIDEO);
-      expect(tts.synthesize).not.toHaveBeenCalled();
-      expect(r.voiceMode).toBe('veo');
+      expect(r.voiceMode).toBe('voiceover');
+      expect(tts.synthesize).toHaveBeenCalled();
     });
   });
 

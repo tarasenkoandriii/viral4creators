@@ -316,7 +316,9 @@ function StyleForm({
   const [styleNotes, setStyleNotes] = useState(manifest.styleNotes ?? '');
   const [voiceNotes, setVoiceNotes] = useState(manifest.voiceNotes ?? '');
   const [voiceMode, setVoiceMode] = useState<VoiceMode>(
-    manifest.voiceMode ?? 'veo'
+    // 15.09.2026: умолчание — свой голос; 'veo' здесь заставляло форму
+    // нового манифеста сохранять голос модели явно.
+    manifest.voiceMode ?? 'voiceover'
   );
   const [ttsVoiceId, setTtsVoiceId] = useState(manifest.ttsVoiceId ?? '');
   const [cameraMove, setCameraMove] = useState<CameraMove>(
@@ -341,7 +343,7 @@ function StyleForm({
     title.trim() !== manifest.title ||
     (styleNotes.trim() || null) !== (manifest.styleNotes ?? null) ||
     (voiceNotes.trim() || null) !== (manifest.voiceNotes ?? null) ||
-    voiceMode !== (manifest.voiceMode ?? 'veo') ||
+    voiceMode !== (manifest.voiceMode ?? 'voiceover') ||
     (ttsVoiceId.trim() || null) !== (manifest.ttsVoiceId ?? null) ||
     cameraMove !== (manifest.cameraMove ?? 'none') ||
     subtitlesMode !== (manifest.subtitlesMode ?? 'off') ||

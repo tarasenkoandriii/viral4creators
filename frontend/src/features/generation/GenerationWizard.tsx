@@ -633,7 +633,7 @@ export function GenerationWizard() {
                       {dict.generationWizard.voiceModeLabel}
                     </span>
                     <Pills
-                      value={brandManifest.voiceMode ?? 'veo'}
+                      value={brandManifest.voiceMode ?? 'voiceover'}
                       onChange={(mode: VoiceMode) => void changeVoiceMode(mode)}
                       disabled={isGeneratingPrompt}
                       columns={3}
@@ -665,7 +665,7 @@ export function GenerationWizard() {
                       {isGeneratingPrompt
                         ? dict.generationWizard.promptBusyTitle
                         : `${voiceModeHint(
-                            brandManifest.voiceMode ?? 'veo',
+                            brandManifest.voiceMode ?? 'voiceover',
                             dict.voiceMode.hints
                           )} ${dict.generationWizard.voiceModeSwitchNote}`}
                     </p>

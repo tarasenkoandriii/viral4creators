@@ -1352,7 +1352,7 @@ export function useWorkflow() {
       if (!state.sessionId) return;
       // М-7.8: снимок без поля показывается как 'veo' — клик по уже
       // подсвеченной пилюле не должен запускать платную пересборку.
-      if ((state.brandManifest?.voiceMode ?? 'veo') === voiceMode) return;
+      if ((state.brandManifest?.voiceMode ?? 'voiceover') === voiceMode) return;
       // М-7.2: пока идёт рендер, режим не меняем — иначе опрос рендера
       // продолжит писать generatedVideo поверх шага промпта.
       if (state.isGeneratingVideo) return;

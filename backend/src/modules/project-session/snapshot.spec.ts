@@ -182,8 +182,9 @@ describe('brandManifestSnapshotFrom', () => {
       brandManifestId: 'bm1',
       title: 'Бренд',
       styleNotes: 'тёплые тона',
-      // Этап 35: озвучка замораживается вместе с остальным брендом.
-      voiceMode: 'veo',
+      // Этап 35: озвучка замораживается вместе с остальным брендом;
+      // 15.09.2026: манифест без поля читается как «свой голос поверх».
+      voiceMode: 'voiceover',
       ttsVoiceId: null,
       ttsModel: null,
       ttsProvider: null,
