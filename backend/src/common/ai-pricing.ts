@@ -308,6 +308,21 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
     perSecond: 0.25 * USD,
     note: 'docs.x.ai, сверено при подготовке ТЗ (§10.2) — ПРОВЕРИТЬ перед стройкой',
   },
+  // Расширение видео (`/v1/videos/extensions`) идёт моделью
+  // `grok-imagine-video` (docs.x.ai, Video Extension; у `-1.5` расширение
+  // не поддерживается — живой ответ 14.09.2026). Выход не выше 720p,
+  // ставки взяты как у `-1.5` — на прайсе xAI отдельной строки для
+  // расширения не найдено, ПРОВЕРИТЬ по фактическому списанию.
+  'grok-imagine-video:480p': {
+    provider: 'GROK',
+    perSecond: 0.08 * USD,
+    note: 'как у grok-imagine-video-1.5, отдельной строки в прайсе не найдено — ПРОВЕРИТЬ',
+  },
+  'grok-imagine-video:720p': {
+    provider: 'GROK',
+    perSecond: 0.14 * USD,
+    note: 'как у grok-imagine-video-1.5, отдельной строки в прайсе не найдено — ПРОВЕРИТЬ',
+  },
   'gpt-5': {
     provider: 'OPENAI',
     inputPerMTok: 1.25 * USD,

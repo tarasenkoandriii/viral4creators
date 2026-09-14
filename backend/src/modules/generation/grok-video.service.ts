@@ -128,11 +128,13 @@ export class GrokVideoService {
   private readonly logger = new Logger(GrokVideoService.name);
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly extendModel: string;
 
   constructor() {
     const config = loadConfiguration();
     this.apiKey = config.grok.apiKey;
     this.model = config.grok.videoModel;
+    this.extendModel = config.grok.videoExtendModel;
   }
 
   /** Есть ли ключ — чтобы вызывающий мог отказать быстро и понятно,
@@ -147,6 +149,12 @@ export class GrokVideoService {
    * вызывающего (`generation.service.ts`). */
   get modelName(): string {
     return this.model;
+  }
+
+  /** Модель расширения — отдельная (см. `config.grok.videoExtendModel`):
+   * `grok-imagine-video-1.5` расширение не поддерживает. */
+  get extendModelName(): string {
+    return this.extendModel;
   }
 
   private headers() {
@@ -282,7 +290,7 @@ export class GrokVideoService {
     const res = await axios.post(
       `${XAI_BASE_URL}/videos/extensions`,
       {
-        model: this.model,
+        model: this.extendModel,
         prompt: params.prompt,
         duration: params.durationSeconds,
         video: { url: params.videoUrl },

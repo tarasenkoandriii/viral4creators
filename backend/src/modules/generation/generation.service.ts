@@ -1847,7 +1847,7 @@ export class GenerationService {
     await this.aiUsage.record({
       operation: 'generation',
       // М-2.8: выход расширения — не выше 720p, по такой ставке и учёт.
-      model: `${this.grokVideo.modelName}:${effectiveGrokResolution(resolution, { extension: true })}`,
+      model: `${this.grokVideo.extendModelName}:${effectiveGrokResolution(resolution, { extension: true })}`,
       seconds: extendSeconds,
       sessionId,
     });

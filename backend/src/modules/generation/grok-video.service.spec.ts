@@ -2,7 +2,11 @@ import axios from 'axios';
 
 jest.mock('../../config/configuration', () => ({
   loadConfiguration: () => ({
-    grok: { apiKey: 'test-grok-key', videoModel: 'grok-imagine-video-1.5' },
+    grok: {
+      apiKey: 'test-grok-key',
+      videoModel: 'grok-imagine-video-1.5',
+      videoExtendModel: 'grok-imagine-video',
+    },
   }),
 }));
 jest.mock('axios');
@@ -166,7 +170,8 @@ describe('GrokVideoService.startGeneration / extendVideo (длительност
     expect(mockedAxios.post).toHaveBeenCalledWith(
       'https://api.x.ai/v1/videos/extensions',
       {
-        model: 'grok-imagine-video-1.5',
+        // Расширение — отдельной моделью (у -1.5 не поддерживается).
+        model: 'grok-imagine-video',
         prompt: 'continue',
         duration: 5,
         video: { url: 'https://blob.test/seg1.mp4' },

@@ -128,11 +128,13 @@ export class GrokVideoBatchService {
   private readonly logger = new Logger(GrokVideoBatchService.name);
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly extendModel: string;
 
   constructor() {
     const config = loadConfiguration();
     this.apiKey = config.grok.apiKey;
     this.model = config.grok.videoModel;
+    this.extendModel = config.grok.videoExtendModel;
   }
 
   isConfigured(): boolean {
@@ -256,7 +258,9 @@ export class GrokVideoBatchService {
         batch_request_id: item.batchRequestId,
         batch_request: {
           [GROK_BATCH_VIDEO_EXTEND_KEY]: {
-            model: this.model,
+            // Живой ответ 14.09.2026: у `grok-imagine-video-1.5` расширение
+            // не поддерживается — отдельная модель из конфига.
+            model: this.extendModel,
             prompt: item.prompt,
             video: { url: item.videoUrl },
             duration: item.durationSeconds,

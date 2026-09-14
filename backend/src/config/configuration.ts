@@ -122,6 +122,13 @@ export interface Configuration {
      * моделей в этом файле и в `common/ai-pricing.ts`.
      */
     videoModel: string;
+    /**
+     * Модель для `POST /v1/videos/extensions`. Найдено живым вызовом
+     * 14.09.2026: `grok-imagine-video-1.5` отвечает «Video extension is
+     * not supported for this model»; в примере docs.x.ai (Video
+     * Extension) стоит `grok-imagine-video` — оно и по умолчанию.
+     */
+    videoExtendModel: string;
   };
 
   // Блог (doc/TODO.md §II.3–II.4, ТЗ §36, этап 57). Конфиг заведён вместе
@@ -367,6 +374,8 @@ export const loadConfiguration = (): Configuration => {
       apiKey: process.env.GROK_API_KEY || '',
       model: process.env.GROK_MODEL || 'grok-4-fast',
       videoModel: process.env.GROK_VIDEO_MODEL || 'grok-imagine-video-1.5',
+      videoExtendModel:
+        process.env.GROK_VIDEO_EXTEND_MODEL || 'grok-imagine-video',
     },
 
     blog: {

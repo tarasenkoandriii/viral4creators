@@ -300,7 +300,8 @@ describe('GrokVideoBatchService — расширение и ошибки (оди
           batch_request_id: 'gen-1-ext-1',
           batch_request: {
             video_extension: {
-              model: 'grok-imagine-video-1.5',
+              // Расширение — отдельной моделью (у -1.5 не поддерживается).
+              model: 'grok-imagine-video',
               prompt: 'continue',
               video: { url: 'https://blob.test/seg1.mp4' },
               duration: 5,
