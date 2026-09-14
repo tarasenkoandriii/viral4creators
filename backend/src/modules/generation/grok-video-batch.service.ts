@@ -28,20 +28,18 @@
  * completion_response; image_response; video_response (VideoResponse
  * { video: { url } }) } }; error: google.rpc.Status } }`.
  *
- * ## ⚠️ Что остаётся неподтверждённым — имена ключей в REST-JSON
+ * ## Имена ключей в REST-JSON — ПОДТВЕРЖДЕНЫ живым ответом (14.09.2026)
  *
- * REST-шлюз xAI НЕ использует proto-имена полей oneof буквально: для
- * чата proto говорит `completion_request`, а реальный сервер (сверено
- * в `GrokBatchService`, наблюдение, не чтение доки) принимает
- * `chat_get_completion` — то есть `{service}_{rpc}` в snake_case
- * (`Chat.GetCompletion`). По той же конвенции для видео:
- * `Video.GenerateVideo` → `video_generate_video`,
- * `Video.ExtendVideo` → `video_extend_video`. Это ВЫВОД по одной
- * подтверждённой точке, не второе наблюдение. Поэтому:
- *   - оба ключа вынесены в константы и переопределяются переменными
- *     окружения `GROK_BATCH_VIDEO_REQUEST_KEY` /
- *     `GROK_BATCH_VIDEO_EXTEND_KEY` — если первый живой вызов вернёт
- *     400 с «unknown field», ключ правится без пересборки;
+ * REST-шлюз xAI не использует proto-имена полей oneof буквально. Первая
+ * попытка по аналогии с `chat_get_completion` (`video_generate_video`)
+ * получила 422 с исчерпывающим списком от самого сервера:
+ * «unknown variant `video_generate_video`, expected one of
+ * `chat_get_completion`, `responses`, `image_generation`, `image_edit`,
+ * `video_generation`, `video_extension`». Итого:
+ *   - генерация — `video_generation`, расширение — `video_extension`;
+ *   - оба ключа по-прежнему переопределяются переменными окружения
+ *     `GROK_BATCH_VIDEO_REQUEST_KEY` / `GROK_BATCH_VIDEO_EXTEND_KEY` на
+ *     случай смены схемы у xAI;
  *   - разбор результата НЕ завязан на имя ключа: берётся первый
  *     объект в `batch_result.response`, у которого есть `video.url`
  *     (форма `VideoResponse.video.url` подтверждена и proto, и живым
@@ -51,9 +49,9 @@
  *     `reference_images: [{ url }]`, `duration`, `aspect_ratio`,
  *     `resolution`; `ExtendVideoRequest`: `prompt`, `model`,
  *     `video: { url }`, `duration` (длина ДОБАВЛЯЕМОЙ части, 2–10 с).
- *
- * **Перед первым реальным использованием: пробная пачка на одну
- * запись, сверка ответа сервера, и правка ключей выше по факту.**
+ *     Форма ТЕЛА внутри ключа живым батчем ещё не подтверждена (422 был
+ *     на имени ключа, до разбора тела) — первая успешная пачка это
+ *     покажет; при 422 «unknown field» внутри тела править здесь.
  *
  * Учёт расхода — ответственность вызывающего кода, тот же принцип
  * разделения, что уже применён в `GrokBatchService`/`AiUsageService`
@@ -67,13 +65,12 @@ import { GrokResolution } from './grok-video.service';
 const XAI_BASE_URL = 'https://api.x.ai/v1';
 const REQUEST_TIMEOUT_MS = 20_000;
 
-/** Ключи oneof в REST-JSON пачки — см. доккомментарий класса
- * («`{service}_{rpc}` по аналогии с подтверждённым
- * `chat_get_completion`»), переопределяются окружением. */
+/** Ключи oneof в REST-JSON пачки — подтверждены ответом 422 самого xAI
+ * (см. доккомментарий класса), переопределяются окружением. */
 export const GROK_BATCH_VIDEO_REQUEST_KEY =
-  process.env.GROK_BATCH_VIDEO_REQUEST_KEY || 'video_generate_video';
+  process.env.GROK_BATCH_VIDEO_REQUEST_KEY || 'video_generation';
 export const GROK_BATCH_VIDEO_EXTEND_KEY =
-  process.env.GROK_BATCH_VIDEO_EXTEND_KEY || 'video_extend_video';
+  process.env.GROK_BATCH_VIDEO_EXTEND_KEY || 'video_extension';
 
 /** Та же защита от зацикленной пагинации, что уже есть у GrokBatchService. */
 const MAX_RESULT_PAGES = 50;

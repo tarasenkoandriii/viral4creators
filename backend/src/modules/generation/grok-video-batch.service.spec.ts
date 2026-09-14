@@ -100,7 +100,7 @@ describe('GrokVideoBatchService', () => {
               // Ключ — `{service}_{rpc}` по аналогии с подтверждённым
               // `chat_get_completion`; тело — по proto GenerateVideoRequest
               // (`image: { url }`, не `image_url`). См. доккомментарий класса.
-              video_generate_video: {
+              video_generation: {
                 model: 'grok-imagine-video-1.5',
                 prompt: 'A product on a table',
                 image: { url: 'https://blob.test/product.png' },
@@ -135,7 +135,7 @@ describe('GrokVideoBatchService', () => {
 
       const [, addBody] = mockedAxios.post.mock.calls[1];
       expect(
-        (addBody as any).batch_requests[0].batch_request.video_generate_video
+        (addBody as any).batch_requests[0].batch_request.video_generation
           .reference_images,
       ).toEqual([
         { url: 'https://blob.test/a.png' },
@@ -236,7 +236,7 @@ describe('GrokVideoBatchService', () => {
                 batch_request_id: 'gen-1',
                 batch_result: {
                   response: {
-                    video_generate_video: { video: { url: 'https://x/1.mp4' } },
+                    video_generation: { video: { url: 'https://x/1.mp4' } },
                   },
                 },
               },
@@ -252,7 +252,7 @@ describe('GrokVideoBatchService', () => {
                 batch_request_id: 'gen-2',
                 batch_result: {
                   response: {
-                    video_generate_video: { video: { url: 'https://x/2.mp4' } },
+                    video_generation: { video: { url: 'https://x/2.mp4' } },
                   },
                 },
               },
@@ -299,7 +299,7 @@ describe('GrokVideoBatchService — расширение и ошибки (оди
         {
           batch_request_id: 'gen-1-ext-1',
           batch_request: {
-            video_extend_video: {
+            video_extension: {
               model: 'grok-imagine-video-1.5',
               prompt: 'continue',
               video: { url: 'https://blob.test/seg1.mp4' },
@@ -320,7 +320,7 @@ describe('GrokVideoBatchService — расширение и ошибки (оди
             batch_request_id: 'ok',
             batch_result: {
               response: {
-                video_generate_video: { video: { url: 'https://x/ok.mp4' } },
+                video_generation: { video: { url: 'https://x/ok.mp4' } },
               },
             },
           },
