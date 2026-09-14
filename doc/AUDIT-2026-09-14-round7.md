@@ -166,7 +166,7 @@ batch-транспорте того же дня: результат живёт �
 | М-6.6 / М-1.7 / М-2.8 | `grok-video.service.ts` (`effectiveGrokResolution`), `generation.service.ts` | в учёт расхода и в оценку цепочки идёт ФАКТИЧЕСКОЕ разрешение Grok: с референсами и у расширений 1080p понижается до 720p, как это делает сам API; раньше списывалось по запрошенному |
 | М-3.2б | `grok/grok-batch.service.ts` (`getBatchResultsDetailed` → `complete`), `blog-translation.service.ts` | перевод блога применяется только при полном наборе результатов; неполная страница пачки больше не пишет «переведено» по части языков |
 | М-3.7 (частично) | `schema.prisma` (`CronJobLock.ownerToken`), миграция (та же, `ALTER TABLE cron_job_locks ADD COLUMN "ownerToken"`), `common/cron-job-lock.ts`, 6 вызывающих | `tryAcquireJobLock` возвращает токен владельца, `releaseJobLock` снимает замок только своим токеном — просроченный и перехваченный замок не снимается «чужим» finally; спеки обновлены. Построчный claim в опросе пачек и бюджет тика — не сделаны (отдельная задача) |
-| М-4.4 | `main.ts` | после `enableCors` — прослойка, снимающая `Access-Control-Allow-Credentials` для origin'ов вне точного списка `allowedOrigins` (wildcard-совпадения остаются без credentials) |
+| М-4.4 | `main.ts` | **ОТКАЧЕНО в тот же день.** Прослойка снимала `Access-Control-Allow-Credentials` для wildcard-origin'ов, но мини-апп шлёт все запросы с `withCredentials: true` — браузер отверг ответы прод-фронта на `*.vercel.app` (на сервере 200, в приложении «нет связи с сервером»). Фикс возможен только в паре с фронтом: `withCredentials` условно (когда есть cookie-логин) + прод-origin точной строкой в `CORS_ORIGIN` |
 | М-5.8 | `common/blob-paths.ts` | пути текст-карточек (`cardPathname` из `generationPrompt.onScreenTextMoments`) учитываются при обходе blob'ов сессии — иначе чистка считала их сиротами; тест |
 | М-7.6 | `frontend/.../ui/Pills.tsx` | `role="radiogroup"` + `aria-label`, каждая пилюля — `role="radio"` с `aria-checked`; скринридер читает выбранный вариант |
 | М-7.9 | `admin/.../settings/page.tsx`, `admin-auth-context.tsx` | у четырёх карточек настроек и у страницы env — «Повторить» при ошибке загрузки; редирект на `/login` только при 401, 5xx показывается как «сервис ответил ошибкой N» с «Повторить» |
@@ -183,6 +183,9 @@ batch-транспорте того же дня: результат живёт �
   аккаунт (а не `userId` из `state`); это отдельная фича со схемой
   (`ChannelStatus.PENDING_CONFIRM`, токен подтверждения) и UX возврата в
   приложение. Остаётся открытой средней.
+- **М-4.4** — снятие credentials для wildcard-origin'ов ломает мини-апп,
+  пока `withCredentials: true` стоит на всех запросах; нужна парная
+  правка фронта (см. таблицу четвёртого захода).
 - **М-3.8б, М-5.6, М-1.9, М-1.10, М-3.11, М-5.9, М-5.10** — требуют
   продуктовых решений (умолчание озвучки без манифеста, гейт Grok 1080p,
   retention событий, бренд-референсы в каталог-партиях); описаны с
@@ -360,7 +363,7 @@ ACTIVE и тут же затирается. **Фикс:** `updateMany` с усл
 ### М-4.3 (низкая, ИСПРАВЛЕНО в третьем заходе). `HttpExceptionFilter` логирует полный `request.url` — включая `?secret=` вебхука Resemble
 `http-exception.filter.ts:122-147`. **Фикс:** `request.path` или `redact()`.
 
-### М-4.4 (низкая, ИСПРАВЛЕНО в четвёртом заходе). CORS с `credentials: true` для wildcard `*.vercel.app`
+### М-4.4 (низкая, попытка фикса откачена — см. четвёртый заход). CORS с `credentials: true` для wildcard `*.vercel.app`
 `main.ts:60-83`. **Фикс:** credentials только для точных совпадений.
 
 ### М-4.5 (низкая, ИСПРАВЛЕНО в третьем заходе). `POST /shared-video/:id/fork` создаёт сессию в обход лимита `session-create`
