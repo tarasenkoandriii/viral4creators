@@ -36,16 +36,19 @@ export class CharacterPreviewService {
   }
 
   /**
-   * Возвращает публичный Blob URL сгенерированного превью или `null`
-   * при сбое (best-effort, тот же принцип, что и у `extractLiteralTexts`/
-   * `renderTextCard` — сбой не должен ронять экран кастинга, ради
-   * которого это превью и вызвано).
+   * Возвращает публичный Blob URL и pathname сгенерированного превью,
+   * или `{url: null, pathname: null}` при сбое (best-effort, тот же
+   * принцип, что и у `extractLiteralTexts`/`renderTextCard` — сбой не
+   * должен ронять экран кастинга, ради которого это превью и вызвано).
+   * `pathname` нужен вызывающему для `promoteToPhoto()` ниже — не
+   * восстанавливается из URL надёжно (Blob URL и internal pathname —
+   * разные строки).
    */
   async generateFromText(
     sessionId: string,
     characterId: string,
     description: string,
-  ): Promise<string | null> {
+  ): Promise<{ url: string | null; pathname: string | null }> {
     try {
       const response = await this.genai.models.generateContent({
         model: GEMINI_IMAGE_MODEL,
@@ -81,7 +84,7 @@ export class CharacterPreviewService {
         this.logger.warn(
           `CharacterPreviewService: ответ Gemini без изображения — сессия ${sessionId}, персонаж ${characterId}`,
         );
-        return null;
+        return { url: null, pathname: null };
       }
 
       const buffer = Buffer.from(imagePart.inlineData.data, 'base64');
@@ -89,12 +92,38 @@ export class CharacterPreviewService {
       const ext = mimeType === 'image/jpeg' ? 'jpg' : 'png';
       const pathname = `sessions/${sessionId}/character-preview-${characterId}.${ext}`;
       const { url } = await this.blob.uploadBuffer(pathname, buffer, mimeType);
-      return url;
+      return { url, pathname };
     } catch (error) {
       this.logger.warn(
         `CharacterPreviewService: вызов не удался (${error instanceof Error ? error.message : String(error)}) — сессия ${sessionId}, персонаж ${characterId}`,
       );
-      return null;
+      return { url: null, pathname: null };
     }
+  }
+
+  /**
+   * Доп. запрос владельца продукта: «продвинуть» уже сгенерированное
+   * превью до статуса настоящего фото персонажа — копирует байты из
+   * временного пути превью в путь, который ожидает
+   * `CastingService.confirmPhoto()` (`sessions/{id}/characters/{cid}/photo.<ext>`
+   * — точный формат см. `CastPhotoConfirmRequestDto`), возвращает этот
+   * путь для последующего вызова `confirmPhoto()`. Само подтверждение
+   * НЕ здесь — переиспользуется уже существующий, уже проверенный путь
+   * (`CastingController.confirm`), не дублируется его логика.
+   *
+   * `null` — копирование не удалось (например, превью уже удалено или
+   * никогда не существовало) — вызывающий не должен пытаться
+   * подтверждать несуществующий путь.
+   */
+  async copyPreviewToPhotoPath(
+    sessionId: string,
+    characterId: string,
+    previewPathname: string,
+  ): Promise<string | null> {
+    const ext = previewPathname.endsWith('.jpg') ? 'jpg' : 'png';
+    const contentType = ext === 'jpg' ? 'image/jpeg' : 'image/png';
+    const toPathname = `sessions/${sessionId}/characters/${characterId}/photo.${ext}`;
+    const url = await this.blob.copyBlob(previewPathname, toPathname, contentType);
+    return url ? toPathname : null;
   }
 }

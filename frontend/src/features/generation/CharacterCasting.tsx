@@ -47,6 +47,7 @@ import {
   getCasting,
   addCharacterFromSessionCast,
   generateCharacterPreview,
+  promotePreviewToPhoto,
   putCasting,
   uploadCastPhoto,
   type CastInput,
@@ -488,22 +489,28 @@ function ReplacementForm({
   // автоматически — только показать пользователю, как модель может
   // понять словесное описание.
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewPathname, setPreviewPathname] = useState<string | null>(
+    null,
+  );
   const [generatingPreview, setGeneratingPreview] = useState(false);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
+  const [usingAsPhoto, setUsingAsPhoto] = useState(false);
 
   const generatePreview = async () => {
     if (!text.trim() || generatingPreview) return;
     setGeneratingPreview(true);
     setPreviewNote(null);
     setPreviewUrl(null);
+    setPreviewPathname(null);
     try {
-      const { url } = await generateCharacterPreview(
+      const { url, pathname } = await generateCharacterPreview(
         sessionId,
         character.id,
         text.trim(),
       );
-      if (url) {
+      if (url && pathname) {
         setPreviewUrl(url);
+        setPreviewPathname(pathname);
       } else {
         setPreviewNote(dict.characterCasting.previewFailed);
       }
@@ -511,6 +518,33 @@ function ReplacementForm({
       setPreviewNote(errorMessage(e));
     } finally {
       setGeneratingPreview(false);
+    }
+  };
+
+  // Доп. запрос владельца продукта: продвинуть уже сгенерированное
+  // превью до статуса настоящего фото персонажа — дальше оно
+  // используется как обычная загруженная фотография (референс для
+  // Veo/Grok), не только превью для самого пользователя. Названа без
+  // префикса `use` намеренно — см. доккомментарий `promotePreviewToPhoto`
+  // в `projects-api.ts`.
+  const applyPreviewAsPhoto = async () => {
+    if (!previewPathname || usingAsPhoto) return;
+    setUsingAsPhoto(true);
+    setPreviewNote(null);
+    try {
+      const c = await promotePreviewToPhoto(
+        sessionId,
+        character.id,
+        previewPathname,
+        text.trim() || null,
+      );
+      onUploaded(c);
+      setPreviewUrl(null);
+      setPreviewPathname(null);
+    } catch (e) {
+      setPreviewNote(errorMessage(e));
+    } finally {
+      setUsingAsPhoto(false);
     }
   };
 
@@ -668,11 +702,22 @@ function ReplacementForm({
             </p>
           )}
           {previewUrl && (
-            <img
-              src={previewUrl}
-              alt=""
-              className="h-40 w-32 rounded-lg border border-silver-200 object-cover dark:border-silver-800"
-            />
+            <div className="flex items-start gap-2">
+              <img
+                src={previewUrl}
+                alt=""
+                className="h-40 w-32 rounded-lg border border-silver-200 object-cover dark:border-silver-800"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                loading={usingAsPhoto}
+                disabled={usingAsPhoto}
+                onClick={() => void applyPreviewAsPhoto()}
+              >
+                {dict.characterCasting.useAsPhotoButton}
+              </Button>
+            </div>
           )}
           {previewNote && (
             <p className="text-xs text-silver-400">{previewNote}</p>

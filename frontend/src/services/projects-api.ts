@@ -463,21 +463,50 @@ export async function addCharacterFromSessionCast(
 /**
  * Доп. запрос владельца продукта: статичное превью персонажа из
  * текстового описания (двойной клик по описанию в
- * `CharacterCasting.tsx`). `url: null` — Gemini не смог (best-effort
- * на бекенде, не исключение) — не значит «повторить точно так же»,
- * просто не получилось в этот раз.
+ * `CharacterCasting.tsx`). `url`/`pathname`: `null` — Gemini не смог
+ * (best-effort на бекенде, не исключение) — не значит «повторить точно
+ * так же», просто не получилось в этот раз. `pathname` нужен для
+ * `usePreviewAsPhoto()` ниже, если пользователь решит продвинуть
+ * превью до настоящего фото.
  */
 export async function generateCharacterPreview(
   sessionId: string,
   characterId: string,
   description: string
-): Promise<{ url: string | null }> {
+): Promise<{ url: string | null; pathname: string | null }> {
   return unwrap(
-    await api.post<{ url: string | null }>(
+    await api.post<{ url: string | null; pathname: string | null }>(
       `/sessions/${sessionId}/characters/${characterId}/preview`,
       { description }
     ),
     'preview'
+  );
+}
+
+/**
+ * Доп. запрос владельца продукта: «использовать как фото» — продвигает
+ * уже сгенерированное превью (`pathname` из `generateCharacterPreview`)
+ * до статуса настоящего фото персонажа — дальше оно ведёт себя как
+ * обычная загруженная фотография (референс для Veo/Grok, §10.2/§15
+ * ТЗ), не только превью для самого пользователя.
+ *
+ * Названа без префикса `use` намеренно — с ним ESLint-правило
+ * `react-hooks/rules-of-hooks` принимает обычную асинхронную функцию
+ * за React-хук по одному соглашению об именах и требует вызывать её
+ * по хуковым правилам, которых у неё нет.
+ */
+export async function promotePreviewToPhoto(
+  sessionId: string,
+  characterId: string,
+  previewPathname: string,
+  description?: string | null
+): Promise<CharacterCasting> {
+  return unwrap(
+    await api.post<CharacterCasting>(
+      `/sessions/${sessionId}/characters/${characterId}/preview/use-as-photo`,
+      { previewPathname, description }
+    ),
+    'casting'
   );
 }
 
