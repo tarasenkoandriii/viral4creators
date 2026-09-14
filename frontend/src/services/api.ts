@@ -725,7 +725,7 @@ export interface GeneratedVideo {
   /** Spec §10.2/§10.3 — which photos Veo received as referenceImages. */
   references?: Array<{
     index: number;
-    kind: 'character' | 'scene' | 'product';
+    kind: 'character' | 'scene' | 'product' | 'text-card';
     label: string;
     characterId: string | null;
   }>;

@@ -189,10 +189,16 @@ export interface GeneratedVideo {
    * What Veo received as `referenceImages` (spec §10.2/§10.3, Stage 15) —
    * empty for the legacy first-frame path. Kept so the result screen and
    * the post-generation audit (§11) can say which photos shaped the video.
+   *
+   * Найдено при аудите (ТЗ VEO-MODEL-VERSION-CHOICE-SPEC.md §20) —
+   * `'text-card'` добавлен в `kind` следом за
+   * `ReferenceImageSource.kind` (`common/reference-plan.ts`), тем же
+   * классом ошибки, что уже несколько раз всплывал в этом проекте:
+   * дублирующий, более узкий тип не обновился вместе с источником.
    */
   references?: Array<{
     index: number;
-    kind: 'character' | 'scene' | 'product';
+    kind: 'character' | 'scene' | 'product' | 'text-card';
     label: string;
     characterId: string | null;
   }>;
