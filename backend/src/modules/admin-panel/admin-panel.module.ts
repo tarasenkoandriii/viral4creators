@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
-import { StorageModule } from '../storage/storage.module';
 import { AdminPanelController } from './admin-panel.controller';
 import { AdminPanelService } from './admin-panel.service';
 import { AdminUsersService } from './admin-users.service';
@@ -15,7 +14,12 @@ import { AdminVideoProviderSettingsService } from './admin-video-provider-settin
 import { AdminGrokTransportSettingsService } from './admin-grok-transport-settings.service';
 
 @Module({
-  // StorageModule — удаление сессии оператором уносит и её файлы (Б-5.9).
+  // StorageModule здесь больше не нужен (этап 89): удаление сессии
+  // оператором раньше уносило и её файлы синхронно (Б-5.9), напрямую
+  // через `BlobService`; теперь `AdminPanelService.deleteSession` зовёт
+  // `SessionService.softDeleteSession` (доступен глобально, `AppModule`)
+  // — файлы физически убирает крон-уборка (`purgeSoftDeletedSessions`,
+  // `CronModule`, у него свой `StorageModule`), не этот модуль.
   // TelegramStarsService (AdminBillingService.refund(),
   // AdminUsersService.cancelSubscription()) с этапа 64 доступен глобально
   // через TelegramStarsModule (Г-2.2 аудита round4) — импортировать
@@ -34,7 +38,7 @@ import { AdminGrokTransportSettingsService } from './admin-grok-transport-settin
   // поэтому кнопка повтора рендера (доп. запрос владельца продукта)
   // реализована как отдельный контроллер в GenerationModule
   // (admin-retry.controller.ts), а не как метод здесь.
-  imports: [AdminAuthModule, StorageModule],
+  imports: [AdminAuthModule],
   controllers: [AdminPanelController],
   providers: [
     AdminPanelService,

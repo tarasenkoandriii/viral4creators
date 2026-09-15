@@ -46,8 +46,19 @@ export class PostprodVideosService {
     userId: string,
     page: number,
     pageSize: number,
+    // `offset` (найдено доп. аудитом, HIGH) — явный сдвиг для «Показать
+    // ещё» вместо расчёта `(page - 1) * pageSize`: PostprodScreen.tsx
+    // удаляет строку локально сразу после успешного DELETE, не
+    // перезагружая список — а `total`/фактически загруженное количество
+    // после этого меньше, чем `page * pageSize`. Номинальный расчёт по
+    // page тянул бы следующую порцию С ПРОБЕЛОМ на границе страниц —
+    // один ролик молча пропадал бы из списка (не 404, не ошибка — просто
+    // никогда не показывался). Когда offset не передан (первая загрузка
+    // страницы, `PostprodScreen`'а начальный useAsync-вызов) — старый
+    // расчёт по page как раньше.
+    offset?: number,
   ): Promise<PostprodVideoListResult> {
-    const skip = (page - 1) * pageSize;
+    const skip = offset ?? (page - 1) * pageSize;
     const [rows, total] = await Promise.all([
       selectPostprodVideoSummaries(this.prisma, userId, skip, pageSize),
       countPostprodVideoSummaries(this.prisma, userId),

@@ -76,3 +76,34 @@ export interface ProjectSummaryView {
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * Этап 89: «умный» алерт перед `DELETE /projects/:id` — счётчики ПРЯМЫХ
+ * потомков проекта (`onDelete: Cascade` в schema.prisma), не полный
+ * список того, что унесёт каскад. Не включает `sessions` — они
+ * переживают удаление проекта (`SetNull`, не `Cascade`, см.
+ * доккомментарий `Session.projectId` в schema.prisma).
+ *
+ * Уточнение (найдено доп. аудитом, MEDIUM — раньше здесь было сказано
+ * «ровно то, что уносит каскад», что не так): у каждого `catalogBatchRuns`/
+ * `abTestRuns`/`feedImportRuns` есть свои дочерние строки
+ * (`CatalogBatchItem`/`AbTestVariant`/`ProductFeedImportItem`), которые
+ * каскад унесёт вместе с родителем, но которые этот превью НЕ считает —
+ * посчитать их отдельным запросом ради текста диалога сочли не стоящим
+ * ещё одного JOIN/COUNT на каждое удаление; сам текст диалога
+ * (`deleteConfirm.willDelete` в словарях) уже сформулирован как список
+ * «что уйдёт», а не как исчерпывающий счёт всех строк БД, так что
+ * неполнота здесь — известное упрощение, не баг.
+ */
+export interface ProjectDeletePreview {
+  items: number;
+  catalogBatchRuns: number;
+  abTestRuns: number;
+  feedImportRuns: number;
+}
+
+/** То же самое, только для одного товара (`DELETE .../items/:itemId`). */
+export interface ItemDeletePreview {
+  analogs: number;
+  catalogBatchItems: number;
+}

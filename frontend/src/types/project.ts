@@ -71,6 +71,26 @@ export interface ProjectSummaryView {
   updatedAt: string;
 }
 
+/**
+ * «Умный» алерт удаления (этап 89) — точные счётчики того, что реально
+ * каскадом уйдёт из БД при `DELETE`, а не общая фраза «это необратимо».
+ * Само удаление — софт-delete (см. backend `common/soft-delete.ts`),
+ * но пользователю это не показывается: интерфейс не предлагает
+ * восстановление, поэтому текст остаётся «удалит», а не «пометит».
+ */
+export interface ProjectDeletePreview {
+  items: number;
+  catalogBatchRuns: number;
+  abTestRuns: number;
+  feedImportRuns: number;
+}
+
+/** То же самое, только для одного товара (`DELETE .../items/:itemId`). */
+export interface ItemDeletePreview {
+  analogs: number;
+  catalogBatchItems: number;
+}
+
 export interface CountryOption {
   code: string;
   currency: string;

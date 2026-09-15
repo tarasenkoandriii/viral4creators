@@ -14,14 +14,30 @@
  * Состояние — не `useWorkflow` (тот жёстко завязан на один
  * localStorage-активный sessionId, см. usePostprodVideo), а лёгкий
  * `usePostprodVideo`.
+ *
+ * Удаление (этап 88.2, прямой запрос владельца продукта): кнопка в
+ * правом верхнем углу, тот же приём (`ScreenHeader`'s `action`), что и
+ * «Удалить проект» на `ProjectScreen` — тем же значком `Trash2`, для
+ * единого языка иконок по приложению (буквальный «крестик» здесь читался
+ * бы как «закрыть», а не «удалить»).
  */
 
-import { Clapperboard } from 'lucide-react';
-import { EmptyState, LockedNote, Spinner } from '../../components/ui';
+import { useState } from 'react';
+import { Clapperboard, Trash2 } from 'lucide-react';
+import {
+  Alert,
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  LockedNote,
+  Spinner,
+} from '../../components/ui';
 import { useFeature } from '../../lib/plan-context';
 import { useI18n } from '../../lib/i18n-context';
-import { routes } from '../../lib/router';
+import { navigate, routes } from '../../lib/router';
 import { ScreenHeader, LoadError } from '../projects/shared';
+import { errorMessage } from '../../services/projects-api';
+import { deletePostprodVideo } from '../../services/postprod-api';
 import { VideoPlayer } from '../../components/VideoPlayer';
 import { usePostprodVideo } from '../../hooks/usePostprodVideo';
 import { RevoicePanel } from '../generation/RevoicePanel';
@@ -43,7 +59,30 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
     error,
     reVoice,
     setSnapshot,
+    reload,
   } = usePostprodVideo(sessionId);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // «Умный» алерт удаления (этап 89): у Session нет превью счётчиков
+  // (все её связи в БД — SetNull, каскадить нечему, см. doc/
+  // PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md), поэтому диалог сразу
+  // показывает честный текст без запроса счётчиков.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const onConfirmDelete = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deletePostprodVideo(sessionId);
+      setConfirmOpen(false);
+      navigate(routes.postprod(), true);
+    } catch (e) {
+      setDeleteError(errorMessage(e));
+      setConfirmOpen(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -60,7 +99,11 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
           title={dict.postprodVideoScreen.untitledTitle}
           back={routes.postprod()}
         />
-        <LoadError error={error} />
+        {/* Найдено доп. аудитом (LOW): раньше без onRetry — единственный
+            выход был «назад» на список, хотя сетевая икота часто чинится
+            повторной попыткой на месте (тот же приём, что PostprodScreen
+            уже даёт своей LoadError). */}
+        <LoadError error={error} onRetry={reload} />
       </div>
     );
   }
@@ -86,7 +129,22 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
       <ScreenHeader
         title={productName || dict.postprodVideoScreen.untitledTitle}
         back={routes.postprod()}
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Trash2 size={14} />}
+            onClick={() => setConfirmOpen(true)}
+            aria-label={dict.postprodVideoScreen.deleteAriaLabel}
+          />
+        }
       />
+
+      {deleteError && (
+        <Alert tone="error" onDismiss={() => setDeleteError(null)}>
+          {deleteError}
+        </Alert>
+      )}
 
       <VideoPlayer
         videoUrl={video.downloadUrl}
@@ -102,7 +160,15 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
                 },
                 {
                   key: 'source',
-                  label: dict.generationWizard.originalVeoLabel,
+                  // Найдено при доп. аудите: раньше безусловно «Оригинал
+                  // Veo» независимо от video.provider — на Grok-роликах
+                  // подпись называла чужого провайдера (тот же класс
+                  // бага, что GenerationWizard уже чинил для
+                  // busy-заголовков, см. её доккомментарий).
+                  label:
+                    video.provider === 'grok'
+                      ? dict.generationWizard.originalGrokLabel
+                      : dict.generationWizard.originalVeoLabel,
                   url: video.renderedUrl,
                 },
               ]
@@ -145,6 +211,16 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
           productName={productName}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={dict.deleteConfirm.sessionTitle}
+        busy={deleting}
+        onConfirm={() => void onConfirmDelete()}
+        onCancel={() => setConfirmOpen(false)}
+      >
+        <p>{dict.deleteConfirm.sessionBody}</p>
+      </ConfirmDialog>
     </div>
   );
 }

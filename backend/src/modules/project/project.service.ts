@@ -34,9 +34,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { loadConfiguration } from '../../config/configuration';
 import { currencyForCountry } from '../../common/data/countries';
 import {
+  ItemDeletePreview,
   ProductAnalogView,
   ProductItemView,
   ProductPriceSource,
+  ProjectDeletePreview,
   ProjectSummaryView,
   ProjectType,
   ProjectView,
@@ -49,6 +51,15 @@ import { BlobService } from '../storage/blob.service';
 import { itemPhotoPathname } from '../../common/blob-paths';
 import { AudienceProfile } from '../../common/types/audience.types';
 import { audienceOf } from '../project-session/snapshot';
+import {
+  ProjectItemPurgeResult,
+  SOFT_DELETE_GRACE_MS,
+} from '../../common/soft-delete';
+import { isRecordNotFoundError } from '../../common/prisma-errors';
+
+/** Батч на один прогон крона — тот же порядок величины, что
+ * `CLEANUP_BATCH` в `session.service.ts`. */
+const PURGE_BATCH = 500;
 
 /**
  * Minimal structural types for what we read back from Prisma. Written
@@ -97,9 +108,15 @@ interface ProjectRow {
   items?: ItemRow[];
 }
 
-/** Ordering of nested items/analogs used by every read that includes them. */
+/**
+ * Ordering of nested items/analogs used by every read that includes
+ * them. `where: { deletedAt: null }` (этап 89) — мягко удалённый товар
+ * не должен всплывать в списке живого проекта просто потому, что
+ * физическая уборка ещё не наступила.
+ */
 const ITEMS_INCLUDE = {
   items: {
+    where: { deletedAt: null },
     orderBy: { createdAt: 'asc' as const },
     include: { analogs: { orderBy: { relevanceRank: 'asc' as const } } },
   },
@@ -154,10 +171,11 @@ export class ProjectService {
         items: Pick<ItemRow, 'id' | 'price' | 'description'>[];
       }
     > = await this.prisma.project.findMany({
-      where: { userId },
+      where: { userId, deletedAt: null },
       orderBy: { updatedAt: 'desc' },
       include: {
         items: {
+          where: { deletedAt: null },
           select: { id: true, price: true, description: true },
         },
       },
@@ -229,31 +247,100 @@ export class ProjectService {
   }
 
   /**
-   * Items and analogs go with it (DB cascade); Sessions created from it
-   * survive with projectId → NULL (spec §7.8 — they carry their own
-   * snapshot). Verified against a real Postgres in Stage 2, see
-   * doc/DATABASE-AUDIT.md.
+   * Софт-delete (этап 89) — раньше это был немедленный `prisma.project.
+   * delete()`, каскадом уносивший товары/аналоги и прогоны пакетной
+   * генерации/A-B-теста/импорта фида (см. `onDelete: Cascade` в schema.
+   * prisma) прямо в этом запросе. Теперь запрос только ставит метку;
+   * физическое удаление (тот же каскад БД плюс файлы товаров в Blob) —
+   * за `purgeSoftDeletedProjects()` из крона, спустя `SOFT_DELETE_GRACE_MS`.
+   * Sessions, созданные из проекта, по-прежнему переживают удаление в
+   * любом случае — `projectId` → NULL (spec §7.8, `SetNull`, не Cascade).
    */
   async deleteProject(userId: string, projectId: string): Promise<void> {
     await this.findOwnProject(userId, projectId);
-    // Файлы товаров живут в Blob и каскадом БД не удаляются — соберём их
-    // до удаления строк (doc/STORAGE-AUDIT.md, этап 26).
-    //
-    // По ПРЕФИКСУ, а не по списку `photoUrl` (Б-2.8). Удаление одного
-    // товара уже метёт префикс с этапа 39 (А-2.14) — именно потому, что
-    // имена голосовых записей это отметки времени и в базе их нет. У
-    // удаления проекта эта правка не появилась, и загруженное, но не
-    // обработанное фото и нерасшифрованная запись переживали проект
-    // навсегда.
-    const items: Array<{ id: string; photoUrl: string | null }> =
-      await this.prisma.productItem.findMany({
-        where: { projectId },
-        select: { id: true, photoUrl: true },
-      });
-    await this.prisma.project.delete({ where: { id: projectId } });
-    for (const item of items) {
-      await this.deleteItemFiles(projectId, item.id, item.photoUrl ?? null);
+    await this.prisma.project.update({
+      where: { id: projectId },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  /**
+   * «Умный» алерт (этап 89, прямой запрос владельца продукта) — перед
+   * удалением проекта пользователь должен видеть не «удалить проект?», а
+   * сколько всего реально уйдёт вместе с ним. Считает прямых потомков,
+   * которых унесёт DB-каскад (см. `deleteProject`) — не их собственных
+   * детей (CatalogBatchItem/AbTestVariant/ProductFeedImportItem тоже
+   * каскадятся, но отдельно не считаются, см. доккомментарий
+   * `ProjectDeletePreview`, найдено доп. аудитом): sessions в этот
+   * список НЕ входят — они переживают удаление (SetNull).
+   */
+  async getProjectDeletePreview(
+    userId: string,
+    projectId: string,
+  ): Promise<ProjectDeletePreview> {
+    await this.findOwnProject(userId, projectId);
+    const [items, catalogBatchRuns, abTestRuns, feedImportRuns] =
+      await Promise.all([
+        this.prisma.productItem.count({
+          where: { projectId, deletedAt: null },
+        }),
+        this.prisma.catalogBatchRun.count({ where: { projectId } }),
+        this.prisma.abTestRun.count({ where: { projectId } }),
+        this.prisma.productFeedImportRun.count({ where: { projectId } }),
+      ]);
+    return { items, catalogBatchRuns, abTestRuns, feedImportRuns };
+  }
+
+  /**
+   * Крон-проход (этап 89): проекты, мягко удалённые больше
+   * `SOFT_DELETE_GRACE_MS` назад — физически. Тот же порядок, что был в
+   * старом синхронном `deleteProject`: собрать пути файлов товаров ДО
+   * удаления строки (каскад БД снесёт сами товары вместе с проектом за
+   * один `delete`, но файлы в Blob каскадом не уносятся — doc/
+   * STORAGE-AUDIT.md, этап 26), затем удалить строку, затем — файлы.
+   */
+  async purgeSoftDeletedProjects(
+    maxRows = PURGE_BATCH,
+  ): Promise<ProjectItemPurgeResult> {
+    const cutoff = new Date(Date.now() - SOFT_DELETE_GRACE_MS);
+    const rows: Array<{ id: string }> = await this.prisma.project.findMany({
+      where: { deletedAt: { lt: cutoff } },
+      orderBy: { deletedAt: 'asc' },
+      take: maxRows,
+      select: { id: true },
+    });
+    if (rows.length === 0) return { count: 0, hasMore: false };
+
+    let count = 0;
+    for (const { id: projectId } of rows) {
+      // Свой try/catch на проект: сбой одного не должен ронять партию.
+      try {
+        const items: Array<{ id: string; photoUrl: string | null }> =
+          await this.prisma.productItem.findMany({
+            where: { projectId },
+            select: { id: true, photoUrl: true },
+          });
+        await this.prisma.project.delete({ where: { id: projectId } });
+        count += 1;
+        for (const item of items) {
+          await this.deleteItemFiles(projectId, item.id, item.photoUrl ?? null);
+        }
+      } catch (e) {
+        // isRecordNotFoundError (P2025) — та же ситуация, что и в
+        // purgeSoftDeletedItems: строка уже пропала (два параллельных
+        // прогона крона, или проект уже физически убран другим путём).
+        // «Уже нечего удалять» — не сбой, не логируем как warn.
+        const alreadyGone = isRecordNotFoundError(e);
+        if (!alreadyGone) {
+          this.logger.warn(
+            `не удалось физически удалить мягко удалённый проект ${projectId}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        }
+      }
     }
+    return { count, hasMore: rows.length === maxRows };
   }
 
   // ── Items ─────────────────────────────────────────────────────────────
@@ -264,7 +351,7 @@ export class ProjectService {
     dto: ProductItemRequestDto,
   ): Promise<ProductItemView> {
     const project = await this.findOwnProject(userId, projectId, {
-      items: { select: { id: true } },
+      items: { where: { deletedAt: null }, select: { id: true } },
     });
     const count = project.items?.length ?? 0;
 
@@ -351,15 +438,87 @@ export class ProjectService {
     }
   }
 
+  /**
+   * Софт-delete (этап 89) — тот же приём, что у `deleteProject`: строка
+   * (и файлы в Blob) физически исчезает не здесь, а из
+   * `purgeSoftDeletedItems()` спустя `SOFT_DELETE_GRACE_MS`.
+   */
   async deleteItem(
     userId: string,
     projectId: string,
     itemId: string,
   ): Promise<void> {
-    const item = await this.findOwnItem(userId, projectId, itemId);
-    await this.prisma.productItem.delete({ where: { id: itemId } });
+    await this.findOwnItem(userId, projectId, itemId);
+    await this.prisma.productItem.update({
+      where: { id: itemId },
+      data: { deletedAt: new Date() },
+    });
     await this.touchProject(projectId);
-    await this.deleteItemFiles(projectId, itemId, item.photoUrl ?? null);
+  }
+
+  /** «Умный» алерт (этап 89) для удаления одного товара. */
+  async getItemDeletePreview(
+    userId: string,
+    projectId: string,
+    itemId: string,
+  ): Promise<ItemDeletePreview> {
+    await this.findOwnItem(userId, projectId, itemId);
+    const [analogs, catalogBatchItems] = await Promise.all([
+      this.prisma.productAnalog.count({ where: { productItemId: itemId } }),
+      this.prisma.catalogBatchItem.count({
+        where: { productItemId: itemId },
+      }),
+    ]);
+    return { analogs, catalogBatchItems };
+  }
+
+  /**
+   * Крон-проход (этап 89): товары, мягко удалённые ПООТДЕЛЬНОСТИ (не
+   * вместе с целым проектом — тот случай уносит `purgeSoftDeletedProjects`
+   * за один каскадный `delete`) больше `SOFT_DELETE_GRACE_MS` назад.
+   */
+  async purgeSoftDeletedItems(
+    maxRows = PURGE_BATCH,
+  ): Promise<ProjectItemPurgeResult> {
+    const cutoff = new Date(Date.now() - SOFT_DELETE_GRACE_MS);
+    const rows: Array<{
+      id: string;
+      projectId: string;
+      photoUrl: string | null;
+    }> = await this.prisma.productItem.findMany({
+      where: { deletedAt: { lt: cutoff } },
+      orderBy: { deletedAt: 'asc' },
+      take: maxRows,
+      select: { id: true, projectId: true, photoUrl: true },
+    });
+    if (rows.length === 0) return { count: 0, hasMore: false };
+
+    let count = 0;
+    for (const item of rows) {
+      try {
+        // Родительский проект мог быть удалён физически этим же прогоном
+        // (`purgeSoftDeletedProjects`) — тогда строки товара уже нет,
+        // Prisma бросит P2025, ловим и просто пропускаем как «уже нечего
+        // удалять», не как сбой.
+        await this.prisma.productItem.delete({ where: { id: item.id } });
+        count += 1;
+        await this.deleteItemFiles(
+          item.projectId,
+          item.id,
+          item.photoUrl ?? null,
+        );
+      } catch (e) {
+        const alreadyGone = isRecordNotFoundError(e);
+        if (!alreadyGone) {
+          this.logger.warn(
+            `не удалось физически удалить мягко удалённый товар ${item.id}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        }
+      }
+    }
+    return { count, hasMore: rows.length === maxRows };
   }
 
   /**
@@ -430,8 +589,11 @@ export class ProjectService {
     projectId: string,
     include?: Record<string, unknown>,
   ): Promise<ProjectRow> {
+    // `deletedAt: null` (этап 89) — мягко удалённый проект читается как
+    // «не найдено», тем же 404, что и чужой/несуществующий: грейс-период
+    // до физической уборки не должен давать доступ, которого больше нет.
     const row: ProjectRow | null = await this.prisma.project.findFirst({
-      where: { id: projectId, userId },
+      where: { id: projectId, userId, deletedAt: null },
       ...(include ? { include } : {}),
     });
     if (!row) {
@@ -446,9 +608,16 @@ export class ProjectService {
     itemId: string,
   ): Promise<ItemRow> {
     // Ownership is checked through the parent: the item must belong to a
-    // project that belongs to the caller.
+    // project that belongs to the caller. `deletedAt: null` on both —
+    // мягко удалённый товар или его мягко удалённый проект читаются как
+    // «не найдено» (этап 89).
     const row: ItemRow | null = await this.prisma.productItem.findFirst({
-      where: { id: itemId, projectId, project: { userId } },
+      where: {
+        id: itemId,
+        projectId,
+        deletedAt: null,
+        project: { userId, deletedAt: null },
+      },
     });
     if (!row) {
       throw new NotFoundException(

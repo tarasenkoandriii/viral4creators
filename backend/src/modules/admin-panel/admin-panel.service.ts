@@ -12,11 +12,11 @@
 import {
   ForbiddenException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Session as SessionRow, WorkflowKind } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SessionService } from '../../common/session.service';
 import {
   SessionSummaryRow,
   selectSessionSummaries,
@@ -25,24 +25,12 @@ import {
   SortDirection,
 } from '../../common/session-summary';
 import { GenerationStatus } from '../../common/types/generation.types';
-import { Session } from '../../common/types/session.types';
-import { sessionBlobPathnames } from '../../common/blob-paths';
-import { BlobService } from '../storage/blob.service';
 import { getEnvSettings, EnvCheckResult } from './env-settings';
 import {
   SESSION_COHORT_HORIZON_MS,
   BATCH_COHORT_HORIZON_MS,
   isCohortMatured,
 } from '../../common/workflow-funnel-cohort';
-
-/**
- * Строка Postgres → та форма Session, которую понимает
- * `sessionBlobPathnames`: ему нужны только `sessionId` и ключи из JSON.
- */
-function sessionFromRow(row: SessionRow): Session {
-  const data = (row.data as Record<string, unknown>) ?? {};
-  return { sessionId: row.id, ...data } as unknown as Session;
-}
 
 /** Сводка из узкой строки (common/session-summary.ts). */
 function summaryFromSlim(row: SessionSummaryRow): SessionSummary {
@@ -309,11 +297,9 @@ export interface WorkflowCohortConversionResult {
 
 @Injectable()
 export class AdminPanelService {
-  private readonly logger = new Logger(AdminPanelService.name);
-
   constructor(
     private readonly prisma: PrismaService,
-    private readonly blob: BlobService,
+    private readonly sessionService: SessionService,
   ) {}
 
   /** Единственный флаг доступа для MVP-админки — НЕ self-service,
@@ -376,8 +362,16 @@ export class AdminPanelService {
     };
   }
 
+  /**
+   * `deletedAt: null` (этап 89) — мягко удалённая сессия не видна и
+   * оператору: тот же приём, что `SessionService.getSession` для её
+   * владельца, только `findFirst` вместо `findUnique` — второе поле в
+   * `where` рядом с `id`.
+   */
   async getSession(id: string): Promise<SessionSummary & { data: unknown }> {
-    const row = await this.prisma.session.findUnique({ where: { id } });
+    const row = await this.prisma.session.findFirst({
+      where: { id, deletedAt: null },
+    });
     if (!row) {
       throw new NotFoundException(`Session ${id} not found`);
     }
@@ -385,36 +379,21 @@ export class AdminPanelService {
   }
 
   /**
-   * Удаление сессии оператором — вместе с её файлами (Б-5.9).
+   * Удаление сессии оператором — софт-delete (этап 89).
    *
-   * Правило §22 одно на весь проект: удаление владельца обязано удалить
-   * файл. Этот путь его нарушал — строку сносил, а ролик, референс и
-   * кадры оставлял в хранилище. Их подобрала бы метла через сутки, но
-   * только потому, что она есть, а не потому, что здесь так задумано.
-   *
-   * Порядок тот же, что у суточной уборки: собрать пути → удалить
-   * строку → удалить файлы. При сбое хранилища останется мусор, а не
-   * живая сессия со ссылками на исчезнувшие файлы.
+   * До этой правки — отдельная от пользовательской реализация (Б-5.9,
+   * этап 88.2): собрать пути файлов → удалить строку → удалить файлы,
+   * синхронно в этом запросе. Явный запрос владельца продукта на этапе
+   * 89 — «тот же механизм в админке для сессий» — закрыл это удвоение:
+   * оператор зовёт тот же `SessionService.softDeleteSession`, что и
+   * пользовательский `DELETE /sessions/:id`. Строка получает `deletedAt`
+   * и перестаёт быть видна (`getSession`/`listSessions` выше), а
+   * физическую уборку строки и файлов в Blob уносит
+   * `purgeSoftDeletedSessions()` из крона спустя `SOFT_DELETE_GRACE_MS`.
    */
   async deleteSession(id: string): Promise<{ ok: true }> {
-    const row = await this.prisma.session.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException(`Session ${id} not found`);
-
-    const paths = sessionBlobPathnames(sessionFromRow(row));
-    await this.prisma.session.delete({ where: { id } });
-
-    if (paths.length > 0) {
-      try {
-        await this.blob.deleteMany(paths);
-      } catch (error) {
-        // Сессии уже нет; ронять ответ оператору из-за хранилища
-        // незачем — остаток подберёт метла.
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.warn(
-          `сессия ${id} удалена, но её файлы убрать не удалось: ${message}`,
-        );
-      }
-    }
+    const { deleted } = await this.sessionService.softDeleteSession(id);
+    if (!deleted) throw new NotFoundException(`Session ${id} not found`);
     return { ok: true };
   }
 
@@ -793,28 +772,22 @@ export class AdminPanelService {
         )?.voiceMode ?? null,
       errorCode:
         (
-          (
-            (row.data as Record<string, unknown>)?.generatedVideo as
-              | { error?: { code?: string } }
-              | undefined
-          )?.error
-        )?.code ?? null,
+          (row.data as Record<string, unknown>)?.generatedVideo as
+            | { error?: { code?: string } }
+            | undefined
+        )?.error?.code ?? null,
       errorMessage:
         (
-          (
-            (row.data as Record<string, unknown>)?.generatedVideo as
-              | { error?: { message?: string } }
-              | undefined
-          )?.error
-        )?.message ?? null,
+          (row.data as Record<string, unknown>)?.generatedVideo as
+            | { error?: { message?: string } }
+            | undefined
+        )?.error?.message ?? null,
       errorRetryable:
         (
-          (
-            (row.data as Record<string, unknown>)?.generatedVideo as
-              | { error?: { retryable?: boolean } }
-              | undefined
-          )?.error
-        )?.retryable ?? null,
+          (row.data as Record<string, unknown>)?.generatedVideo as
+            | { error?: { retryable?: boolean } }
+            | undefined
+        )?.error?.retryable ?? null,
     });
   }
 }

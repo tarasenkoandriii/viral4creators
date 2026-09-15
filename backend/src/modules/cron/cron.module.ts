@@ -16,6 +16,7 @@ import { CatalogBatchModule } from '../catalog-batch/catalog-batch.module';
 import { AbTestModule } from '../ab-test/ab-test.module';
 import { ProductFeedImportModule } from '../product-feed-import/product-feed-import.module';
 import { ExportModule } from '../export/export.module';
+import { ProjectModule } from '../project/project.module';
 
 /**
  * CronModule
@@ -39,6 +40,10 @@ import { ExportModule } from '../export/export.module';
   // ProductFeedImportModule — за воркером импорта товарного фида (этап 68).
   // ExportModule — за крон-аналогом advanceGenerating для автоэкспорта
   // яруса B (этап 76, Е-2.3 шестого аудита).
+  // ProjectModule — за purgeSoftDeletedProjects/purgeSoftDeletedItems
+  // (этап 89): та же суточная уборка (`runCleanupSessions`), что убирает
+  // мягко удалённые сессии, теперь физически убирает и мягко удалённые
+  // Project/ProductItem — ProjectService уже держит свой BlobService.
   // AdminAuthModule — за AdminSessionGuard для нового AdminCronController
   // (этап 69, ручной запуск кронов из админки). Лист графа модулей (сам
   // ничего не импортирует) — довесить его сюда не создаёт цикла, в
@@ -59,6 +64,7 @@ import { ExportModule } from '../export/export.module';
     AbTestModule,
     ProductFeedImportModule,
     ExportModule,
+    ProjectModule,
   ],
   controllers: [CronController, AdminCronController],
   providers: [CronJobsService, AdminCronService],

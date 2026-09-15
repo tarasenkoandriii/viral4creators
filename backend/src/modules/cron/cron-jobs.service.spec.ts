@@ -37,8 +37,22 @@ jest.mock('../blog/blog-translation.service', () => ({
 // импортирует `ProjectService` (переиспользует `addItem()`, этап 68), а
 // тот тоже рантайм-импортирует `Prisma` из `@prisma/client` — тот же
 // приём, что понадобился `product-feed-import-worker.service.spec.ts`
-// (см. doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md, этап 68).
+// (см. doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md, этап 68). Этап 89:
+// `CronJobsService` теперь и сам импортирует `ProjectService` напрямую
+// (`purgeSoftDeletedProjects`/`purgeSoftDeletedItems`) — тот же мок,
+// второй причины мокать его больше не требуется.
 jest.mock('../project/project.service', () => ({ ProjectService: class {} }));
+// `catalogBatchWorker`/`abTestWorker` (этапы 65/66) рантайм-используют
+// `WorkflowKind.CATALOG_BATCH_ITEM`/`WorkflowKind.AB_TEST_VARIANT` —
+// тот же класс проблемы, что у четырёх сервисов выше, просто не
+// заведённый в мок вовремя (эти тесты в этой песочнице не запускали с
+// этапа 65/66 до этапа 89 — см. doc/CI.md).
+jest.mock('../catalog-batch/catalog-batch-worker.service', () => ({
+  CatalogBatchWorkerService: class {},
+}));
+jest.mock('../ab-test/ab-test-worker.service', () => ({
+  AbTestWorkerService: class {},
+}));
 
 import { CronJobsService, VERCEL_CRON_TRIGGERED_BY } from './cron-jobs.service';
 
@@ -53,6 +67,23 @@ function build() {
       blobPathnames: ['sessions/dead/generated.mp4'],
       hasMore: false,
     }),
+    // Этап 89 — по умолчанию нечего физически убирать (грейс-период
+    // никто не прошёл); тесты, которым нужен непустой прогон, сами
+    // переопределяют мок.
+    purgeSoftDeletedSessions: jest
+      .fn()
+      .mockResolvedValue({ count: 0, blobPathnames: [], hasMore: false }),
+  };
+  // Этап 89: `CronJobsService` зовёт `purgeSoftDeletedProjects`/
+  // `purgeSoftDeletedItems` из того же суточного прогона — см.
+  // `runCleanupSessions`.
+  const projectService = {
+    purgeSoftDeletedProjects: jest
+      .fn()
+      .mockResolvedValue({ count: 0, hasMore: false }),
+    purgeSoftDeletedItems: jest
+      .fn()
+      .mockResolvedValue({ count: 0, hasMore: false }),
   };
   const prisma = {
     adminSession: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
@@ -210,6 +241,7 @@ function build() {
   };
   const service = new CronJobsService(
     sessionService as never,
+    projectService as never,
     prisma as never,
     blobService as never,
     notify as never,
@@ -230,6 +262,7 @@ function build() {
     service,
     library,
     sessionService,
+    projectService,
     prisma,
     blobService,
     byPrefix,
@@ -305,9 +338,15 @@ describe('CronJobsService — уборка сессий партиями', () =>
     const { CLEANUP_TIME_BUDGET_MS } = await import('./cron-jobs.service');
     const realNow = Date.now;
     let calls = 0;
+    // Джоб-замок (этап 89, доп. аудит): `tryAcquireJobLock` теперь тоже
+    // читает `Date.now()` (для `lockedUntil`) ДО того, как сам прогон
+    // засечёт свой `started` — на один вызов раньше, чем было до замка.
+    // Первые ДВА вызова — замок и `started` — возвращают одно и то же
+    // «сейчас»; с третьего вызова (первая проверка бюджета в цикле) —
+    // время, уже вышедшее за бюджет.
     Date.now = () => {
       calls += 1;
-      return calls === 1 ? 1_000_000 : 1_000_000 + CLEANUP_TIME_BUDGET_MS + 1;
+      return calls <= 2 ? 1_000_000 : 1_000_000 + CLEANUP_TIME_BUDGET_MS + 1;
     };
     try {
       const result = await service.runCleanupSessions();
@@ -316,6 +355,132 @@ describe('CronJobsService — уборка сессий партиями', () =>
     } finally {
       Date.now = realNow;
     }
+  });
+
+  // Найдено доп. аудитом (MEDIUM): метод зовётся и суточным расписанием, и
+  // ручной кнопкой админки (admin-cron.service.ts) — тот же риск двойного
+  // прогона, что уже обосновал джоб-замок у runBlog/runExportSyncRun (см.
+  // доккомментарий runCleanupSessions).
+  it('джоб-замок: второй прогон поверх уже идущего — пропуск, ничего не тронуто', async () => {
+    const { service, sessionService, projectService, blobService, prisma } =
+      build();
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.runCleanupSessions();
+
+    expect(result).toEqual({
+      deletedCount: 0,
+      deletedBlobs: 0,
+      hasMoreSessions: false,
+      deletedAdminSessions: 0,
+      deletedUserSessions: 0,
+      deletedLibraryEntries: 0,
+      hasMoreLibraryEntries: false,
+      purgedSoftDeletedSessions: 0,
+      purgedSoftDeletedProjects: 0,
+      purgedSoftDeletedItems: 0,
+      hasMoreSoftDeleted: false,
+      skipped: true,
+    });
+    expect(sessionService.cleanupExpiredSessions).not.toHaveBeenCalled();
+    expect(projectService.purgeSoftDeletedProjects).not.toHaveBeenCalled();
+    expect(blobService.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Этап 89: тот же суточный прогон (`runCleanupSessions`) физически убирает
+ * Project/ProductItem/Session, мягко удалённые дольше грейс-периода — не
+ * отдельный крон-джоб (см. доккомментарий метода). Партии/бюджет — тот же
+ * приём, что уже проверен выше для TTL-уборки сессий.
+ */
+describe('CronJobsService — физическая уборка мягко удалённых Project/ProductItem/Session (этап 89)', () => {
+  it('зовёт все три purge-метода и суммирует их счётчики в результате', async () => {
+    const { service, sessionService, projectService } = build();
+    sessionService.purgeSoftDeletedSessions.mockResolvedValue({
+      count: 3,
+      blobPathnames: ['sessions/soft/generated.mp4'],
+      hasMore: false,
+    });
+    projectService.purgeSoftDeletedProjects.mockResolvedValue({
+      count: 1,
+      hasMore: false,
+    });
+    projectService.purgeSoftDeletedItems.mockResolvedValue({
+      count: 2,
+      hasMore: false,
+    });
+
+    const result = await service.runCleanupSessions();
+
+    expect(result.purgedSoftDeletedSessions).toBe(3);
+    expect(result.purgedSoftDeletedProjects).toBe(1);
+    expect(result.purgedSoftDeletedItems).toBe(2);
+    expect(result.hasMoreSoftDeleted).toBe(false);
+  });
+
+  it('пути файлов мягко удалённых сессий уходят в ТОТ ЖЕ deleteMany, что и TTL-уборка', async () => {
+    // Project/ProductItem чистят свои файлы сами (ProjectService уже
+    // держит BlobService) — сюда попадают только пути сессий.
+    const { service, sessionService, blobService } = build();
+    sessionService.purgeSoftDeletedSessions.mockResolvedValue({
+      count: 1,
+      blobPathnames: ['sessions/soft/generated.mp4'],
+      hasMore: false,
+    });
+
+    await service.runCleanupSessions();
+
+    expect(blobService.deleteMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        'sessions/dead/generated.mp4',
+        'sessions/soft/generated.mp4',
+      ]),
+    );
+  });
+
+  it('items доедает свою очередь партиями, независимо от sessions/projects (уже пустых)', async () => {
+    const { service, projectService } = build();
+    projectService.purgeSoftDeletedItems
+      .mockResolvedValueOnce({ count: 500, hasMore: true })
+      .mockResolvedValueOnce({ count: 500, hasMore: true })
+      .mockResolvedValueOnce({ count: 7, hasMore: false });
+
+    const result = await service.runCleanupSessions();
+
+    expect(projectService.purgeSoftDeletedItems).toHaveBeenCalledTimes(3);
+    expect(result.purgedSoftDeletedItems).toBe(1007);
+    expect(result.hasMoreSoftDeleted).toBe(false);
+  });
+
+  it('hasMoreSoftDeleted — true, когда партий/бюджета не хватило на весь остаток', async () => {
+    const { service, projectService } = build();
+    projectService.purgeSoftDeletedProjects.mockResolvedValue({
+      count: 500,
+      hasMore: true,
+    });
+    const { CLEANUP_MAX_PASSES } = await import('./cron-jobs.service');
+
+    const result = await service.runCleanupSessions();
+
+    expect(projectService.purgeSoftDeletedProjects).toHaveBeenCalledTimes(
+      CLEANUP_MAX_PASSES,
+    );
+    expect(result.hasMoreSoftDeleted).toBe(true);
+  });
+
+  it('нечего чистить — покой: purge зовётся по одному разу каждый, счётчики нулевые', async () => {
+    const { service, sessionService, projectService } = build();
+    const result = await service.runCleanupSessions();
+    expect(sessionService.purgeSoftDeletedSessions).toHaveBeenCalledTimes(1);
+    expect(projectService.purgeSoftDeletedProjects).toHaveBeenCalledTimes(1);
+    expect(projectService.purgeSoftDeletedItems).toHaveBeenCalledTimes(1);
+    expect(result.purgedSoftDeletedSessions).toBe(0);
+    expect(result.purgedSoftDeletedProjects).toBe(0);
+    expect(result.purgedSoftDeletedItems).toBe(0);
   });
 });
 
@@ -580,6 +745,7 @@ describe('CronJobsService — метла идёт до конца курсора
       sharedVideoPage: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const service = new CronJobsService(
+      {} as never,
       {} as never,
       prisma as never,
       blobService as never,

@@ -82,6 +82,21 @@ describe('PostprodVideosService.listFinishedVideos', () => {
     expect(result).toEqual({ items: [], total: 57, page: 3, pageSize: 20 });
   });
 
+  // Найдено доп. аудитом (HIGH) — см. доккомментарий listFinishedVideos:
+  // явный offset должен перекрывать расчёт по page (та же ситуация,
+  // после локального удаления строки на клиенте, что и вызывает баг без
+  // этого параметра).
+  it('явный offset перекрывает расчёт (page - 1) * pageSize', async () => {
+    selectMock.mockResolvedValue([]);
+    countMock.mockResolvedValue(19);
+
+    const service = new PostprodVideosService({} as any);
+    const result = await service.listFinishedVideos('user-1', 2, 20, 19);
+
+    expect(selectMock).toHaveBeenCalledWith({}, 'user-1', 19, 20);
+    expect(result).toEqual({ items: [], total: 19, page: 2, pageSize: 20 });
+  });
+
   it('даты сериализуются в ISO-строки', async () => {
     selectMock.mockResolvedValue([row()]);
     countMock.mockResolvedValue(1);

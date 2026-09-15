@@ -29,8 +29,10 @@ function build(sessionRow: { data: unknown } | null) {
   const prompt = {
     approvePrompt: jest.fn().mockResolvedValue({ approvedAt: new Date() }),
   };
+  // findFirst, не findUnique (этап 89, доп. аудит) — контроллер теперь
+  // фильтрует `deletedAt: null` тем же приёмом, что и AdminPanelService.
   const prisma = {
-    session: { findUnique: jest.fn().mockResolvedValue(sessionRow) },
+    session: { findFirst: jest.fn().mockResolvedValue(sessionRow) },
   };
   const controller = new AdminGenerationRetryController(
     adminPanel as any,

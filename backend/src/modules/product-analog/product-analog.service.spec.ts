@@ -340,10 +340,13 @@ describe('processPhoto', () => {
 
     const r = await svc.processPhoto(USER, 'p1', 'i1', dto);
 
-    // cache lookup is scoped to the user and requires saved analogs
+    // cache lookup is scoped to the user and requires saved analogs; также
+    // фильтрует deletedAt: null (этап 89, найдено доп. аудитом) — мягко
+    // удалённый товар/проект не должен отдавать закешированные аналоги.
     expect(prisma.productItem.findFirst.mock.calls[1][0].where).toEqual({
       photoHash: hashPhoto(PHOTO),
-      project: { userId: USER },
+      deletedAt: null,
+      project: { userId: USER, deletedAt: null },
       analogs: { some: {} },
     });
     // lens is localised to the project's market (UA → hl uk)

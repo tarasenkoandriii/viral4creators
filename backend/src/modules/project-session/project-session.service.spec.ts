@@ -80,9 +80,17 @@ describe('ProjectSessionService.createFromItem', () => {
   it('checks ownership through the parent project', async () => {
     const { service, prisma } = build();
     await service.createFromItem('u1', 'p1', 'i1');
+    // deletedAt: null на строке и на project (этап 89, найдено доп.
+    // аудитом) — мягко удалённые товар/проект не должны позволять
+    // завести новую сессию генерации.
     expect(prisma.productItem.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'i1', projectId: 'p1', project: { userId: 'u1' } },
+        where: {
+          id: 'i1',
+          projectId: 'p1',
+          deletedAt: null,
+          project: { userId: 'u1', deletedAt: null },
+        },
       }),
     );
   });

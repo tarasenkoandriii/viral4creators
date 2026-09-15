@@ -95,7 +95,8 @@ const JOB_REGISTRY: CronJobInfo[] = [
   {
     jobKey: 'cleanup-sessions',
     description:
-      'Уборка истёкших сессий (и их файлов), admin/user-сессий и невостребованной библиотеки.',
+      'Уборка истёкших сессий (и их файлов), admin/user-сессий, невостребованной библиотеки, а также ' +
+      'мягко удалённых Project/ProductItem/Session (этап 89) старше грейс-периода.',
   },
   {
     jobKey: 'sweep-orphans',

@@ -7,8 +7,11 @@
 import {
   Body,
   Controller,
+  Delete,
+  HttpCode,
   Post,
   Get,
+  NotFoundException,
   Param,
   Req,
   UseGuards,
@@ -63,5 +66,34 @@ export class SessionsController {
   ): Promise<Session | null> {
     const session = await this.sessionService.getSession(sessionId);
     return session || null;
+  }
+
+  /**
+   * Удалить свою сессию (ролик) — мягко (этап 89).
+   * DELETE /sessions/:sessionId
+   *
+   * Этап 88.2, прямой запрос владельца продукта после вкладки
+   * «Постпрод»: штатного способа удалить свой готовый ролик не было
+   * вообще (только оператор в админке, `AdminPanelController.
+   * deleteSession`). Владение проверяет глобальный `SessionOwnerGuard`
+   * (см. `app.module.ts`) до того, как запрос сюда дойдёт — тот же
+   * приём, что у `POST /sessions/:id/postprod/revoice` и
+   * `POST /sessions/:id/export`, отдельный гвард здесь не нужен.
+   *
+   * Этап 89: строка больше не исчезает синхронно с этим запросом — ставит
+   * `deletedAt` (`SessionService.softDeleteSession`), физическую уборку
+   * строки и файлов в Blob уносит `purgeSoftDeletedSessions()` из крона
+   * спустя `SOFT_DELETE_GRACE_MS`. Фронт показывает «умный» алерт ДО
+   * этого запроса — честную копию без обещания восстановить (см.
+   * `doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`, этап 89): у Session
+   * нет DB-каскада, который стоило бы посчитать (все связи `SetNull`).
+   */
+  @Delete(':sessionId')
+  @HttpCode(204)
+  async deleteSession(@Param('sessionId') sessionId: string): Promise<void> {
+    const { deleted } = await this.sessionService.softDeleteSession(sessionId);
+    if (!deleted) {
+      throw new NotFoundException(`Session ${sessionId} not found`);
+    }
   }
 }

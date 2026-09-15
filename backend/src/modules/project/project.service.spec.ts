@@ -81,6 +81,7 @@ function makePrisma() {
         { price: decimal('790.00'), currency: 'UAH' },
         { price: decimal('5.00'), currency: null },
       ]),
+      count: jest.fn().mockResolvedValue(0),
     },
     productItem: {
       create: jest.fn(),
@@ -88,7 +89,14 @@ function makePrisma() {
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
+    // Этап 89 — «умный» алерт перед удалением проекта считает эти три
+    // счётчика (только .count(), больше сервис у них ничего не читает).
+    catalogBatchRun: { count: jest.fn().mockResolvedValue(0) },
+    catalogBatchItem: { count: jest.fn().mockResolvedValue(0) },
+    abTestRun: { count: jest.fn().mockResolvedValue(0) },
+    productFeedImportRun: { count: jest.fn().mockResolvedValue(0) },
     brandManifest: { findFirst: jest.fn() },
   };
 }
@@ -186,18 +194,21 @@ describe('ProjectService', () => {
   });
 
   describe('ownership scoping — every lookup filters by userId', () => {
-    it('getProject queries { id, userId } and 404s on a miss', async () => {
+    it('getProject queries { id, userId, deletedAt: null } and 404s on a miss', async () => {
       prisma.project.findFirst.mockResolvedValue(null);
       await expect(service.getProject(USER, 'p-other')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+      // deletedAt: null (этап 89) — мягко удалённый чужой не видней, чем
+      // несуществующий: тот же 404 и до, и в грейс-период.
       expect(prisma.project.findFirst.mock.calls[0][0].where).toEqual({
         id: 'p-other',
         userId: USER,
+        deletedAt: null,
       });
     });
 
-    it('item lookups go through the parent project owner', async () => {
+    it('item lookups go through the parent project owner, both deletedAt: null', async () => {
       prisma.productItem.findFirst.mockResolvedValue(null);
       await expect(
         service.updateItem(USER, 'p1', 'i9', { price: 1 }),
@@ -205,7 +216,8 @@ describe('ProjectService', () => {
       expect(prisma.productItem.findFirst.mock.calls[0][0].where).toEqual({
         id: 'i9',
         projectId: 'p1',
-        project: { userId: USER },
+        deletedAt: null,
+        project: { userId: USER, deletedAt: null },
       });
       expect(prisma.productItem.update).not.toHaveBeenCalled();
     });
@@ -236,12 +248,15 @@ describe('ProjectService', () => {
       expect(prisma.productAnalog.findMany).toHaveBeenCalledTimes(3);
     });
 
-    it('listProjects is scoped to the caller and newest-edited first', async () => {
+    it('listProjects is scoped to the caller, live rows only, newest-edited first', async () => {
       prisma.project.findMany.mockResolvedValue([]);
       await service.listProjects(USER);
       const arg = prisma.project.findMany.mock.calls[0][0];
-      expect(arg.where).toEqual({ userId: USER });
+      // deletedAt: null (этап 89) — мягко удалённый проект не должен
+      // всплывать в списке своего же владельца в грейс-период.
+      expect(arg.where).toEqual({ userId: USER, deletedAt: null });
       expect(arg.orderBy).toEqual({ updatedAt: 'desc' });
+      expect(arg.include.items.where).toEqual({ deletedAt: null });
     });
   });
 
@@ -478,104 +493,187 @@ describe('ProjectService', () => {
     });
   });
 
-  describe('уборка фото при удалении (этап 26, doc/STORAGE-AUDIT.md)', () => {
+  describe('deleteProject / deleteItem — софт-delete (этап 89)', () => {
     const PHOTO =
       'https://x.public.blob.vercel-storage.com/projects/p1/items/i1/photo.jpg';
 
-    it('deleteItem уносит и фото, и голосовые записи описания', async () => {
-      // Голосовые записи (§6.2) лежат под тем же префиксом с именем из
-      // отметки времени — перечислить их по базе нельзя.
-      blob.listByPrefix.mockResolvedValue({
-        blobs: [
-          { pathname: 'projects/p1/items/i1/photo.jpg' },
-          { pathname: 'projects/p1/items/i1/voice-1757000000000.webm' },
-          { pathname: 'projects/p1/items/i1/voice-1757000009999.webm' },
-        ],
-        cursor: null,
-      });
-      prisma.productItem.findFirst.mockResolvedValue({
-        id: 'i1',
-        projectId: 'p1',
-        photoUrl: PHOTO,
-        project: { userId: USER },
-      });
-      await service.deleteItem(USER, 'p1', 'i1');
-      expect(blob.listByPrefix).toHaveBeenCalledWith(
-        'projects/p1/items/i1/',
-        expect.anything(),
-      );
-      const deleted = blob.deleteMany.mock.calls[0][0] as string[];
-      expect(deleted).toContain(
-        'projects/p1/items/i1/voice-1757000000000.webm',
-      );
-      expect(deleted).toContain(
-        'projects/p1/items/i1/voice-1757000009999.webm',
-      );
-      expect(deleted).toContain('projects/p1/items/i1/photo.jpg');
-    });
-
-    it('сбой хранилища не роняет удаление товара', async () => {
-      // Пользователь просил удалить товар, а не подождать хранилище.
-      blob.listByPrefix.mockRejectedValue(new Error('blob недоступен'));
-      prisma.productItem.findFirst.mockResolvedValue({
-        id: 'i1',
-        projectId: 'p1',
-        photoUrl: PHOTO,
-        project: { userId: USER },
-      });
-      await expect(
-        service.deleteItem(USER, 'p1', 'i1'),
-      ).resolves.toBeUndefined();
-      expect(prisma.productItem.delete).toHaveBeenCalled();
-    });
-
-    it('deleteItem удаляет фото товара из хранилища', async () => {
-      prisma.productItem.findFirst.mockResolvedValue({
-        id: 'i1',
-        projectId: 'p1',
-        photoUrl: PHOTO,
-        project: { userId: USER },
-      });
-      await service.deleteItem(USER, 'p1', 'i1');
-      expect(prisma.productItem.delete).toHaveBeenCalledWith({
-        where: { id: 'i1' },
-      });
-      expect(blob.deleteMany).toHaveBeenCalledWith([
-        'projects/p1/items/i1/photo.jpg',
-      ]);
-    });
-
-    it('товар без фото — в хранилище не ходим вовсе', async () => {
-      prisma.productItem.findFirst.mockResolvedValue({
-        id: 'i1',
-        projectId: 'p1',
-        photoUrl: null,
-        project: { userId: USER },
-      });
-      await service.deleteItem(USER, 'p1', 'i1');
-      expect(blob.deleteMany).not.toHaveBeenCalled();
-    });
-
-    it('deleteProject собирает фото всех товаров ДО удаления строк', async () => {
+    it('deleteProject лишь ставит deletedAt — строка и файлы остаются нетронутыми до крона', async () => {
       prisma.project.findFirst.mockResolvedValue(projectRow());
-      prisma.productItem.findMany.mockResolvedValue([
-        { photoUrl: PHOTO },
-        { photoUrl: null },
-      ]);
+      await service.deleteProject(USER, 'p1');
+      expect(prisma.project.update).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expect(prisma.project.delete).not.toHaveBeenCalled();
+      expect(prisma.productItem.findMany).not.toHaveBeenCalled();
+      expect(blob.listByPrefix).not.toHaveBeenCalled();
+    });
+
+    it('deleteProject 404s на чужой/уже мягко удалённый проект и ничего не пишет', async () => {
+      prisma.project.findFirst.mockResolvedValue(null);
+      await expect(service.deleteProject(USER, 'p1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.project.update).not.toHaveBeenCalled();
+    });
+
+    it('deleteItem лишь ставит deletedAt и трогает updatedAt проекта — файлы уносит крон, не этот запрос', async () => {
+      prisma.productItem.findFirst.mockResolvedValue({
+        id: 'i1',
+        projectId: 'p1',
+        photoUrl: PHOTO,
+        deletedAt: null,
+        project: { userId: USER, deletedAt: null },
+      });
+      await service.deleteItem(USER, 'p1', 'i1');
+      expect(prisma.productItem.update).toHaveBeenCalledWith({
+        where: { id: 'i1' },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expect(prisma.productItem.delete).not.toHaveBeenCalled();
+      expect(blob.listByPrefix).not.toHaveBeenCalled();
+      expect(blob.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.project.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'p1' } }),
+      );
+    });
+  });
+
+  describe('getProjectDeletePreview / getItemDeletePreview — «умный» алерт (этап 89)', () => {
+    it('getProjectDeletePreview считает ровно то, что унесёт DB-каскад проекта (без sessions — SetNull)', async () => {
+      prisma.project.findFirst.mockResolvedValue(projectRow());
+      prisma.productItem.count.mockResolvedValue(3);
+      prisma.catalogBatchRun.count.mockResolvedValue(2);
+      prisma.abTestRun.count.mockResolvedValue(1);
+      prisma.productFeedImportRun.count.mockResolvedValue(0);
+
+      const preview = await service.getProjectDeletePreview(USER, 'p1');
+
+      expect(preview).toEqual({
+        items: 3,
+        catalogBatchRuns: 2,
+        abTestRuns: 1,
+        feedImportRuns: 0,
+      });
+      expect(prisma.productItem.count).toHaveBeenCalledWith({
+        where: { projectId: 'p1', deletedAt: null },
+      });
+      expect(prisma.catalogBatchRun.count).toHaveBeenCalledWith({
+        where: { projectId: 'p1' },
+      });
+    });
+
+    it('getProjectDeletePreview 404s на чужой проект', async () => {
+      prisma.project.findFirst.mockResolvedValue(null);
+      await expect(
+        service.getProjectDeletePreview(USER, 'p-other'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('getItemDeletePreview считает аналоги и позиции пакетной генерации товара', async () => {
+      prisma.productItem.findFirst.mockResolvedValue(itemRow());
+      prisma.productAnalog.count.mockResolvedValue(4);
+      prisma.catalogBatchItem.count.mockResolvedValue(1);
+
+      const preview = await service.getItemDeletePreview(USER, 'p1', 'i1');
+
+      expect(preview).toEqual({ analogs: 4, catalogBatchItems: 1 });
+      expect(prisma.catalogBatchItem.count).toHaveBeenCalledWith({
+        where: { productItemId: 'i1' },
+      });
+    });
+  });
+
+  describe('purgeSoftDeletedProjects / purgeSoftDeletedItems — крон спустя грейс-период (этап 89, doc/STORAGE-AUDIT.md)', () => {
+    const PHOTO =
+      'https://x.public.blob.vercel-storage.com/projects/p1/items/i1/photo.jpg';
+
+    it('пустая партия — ничего не трогает', async () => {
+      prisma.project.findMany.mockResolvedValue([]);
+      await expect(service.purgeSoftDeletedProjects()).resolves.toEqual({
+        count: 0,
+        hasMore: false,
+      });
+      expect(prisma.project.delete).not.toHaveBeenCalled();
+    });
+
+    it('purgeSoftDeletedProjects собирает фото товаров ДО каскадного удаления строки проекта', async () => {
+      prisma.project.findMany.mockResolvedValue([{ id: 'p1' }]);
       const order: string[] = [];
       prisma.productItem.findMany.mockImplementation(async () => {
         order.push('read');
-        return [{ photoUrl: PHOTO }];
+        return [{ id: 'i1', photoUrl: PHOTO }];
       });
       prisma.project.delete.mockImplementation(async () => {
         order.push('delete');
         return {};
       });
-      await service.deleteProject(USER, 'p1');
+
+      const result = await service.purgeSoftDeletedProjects();
+
       expect(order).toEqual(['read', 'delete']);
+      expect(prisma.project.delete).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+      });
       expect(blob.deleteMany).toHaveBeenCalledWith([
         'projects/p1/items/i1/photo.jpg',
       ]);
+      expect(result).toEqual({ count: 1, hasMore: false });
+    });
+
+    it('purgeSoftDeletedItems уносит и фото, и голосовые записи товара, удалённого поодиночке', async () => {
+      // Голосовые записи (§6.2) лежат под тем же префиксом с именем из
+      // отметки времени — перечислить их по базе нельзя.
+      prisma.productItem.findMany.mockResolvedValue([
+        { id: 'i1', projectId: 'p1', photoUrl: PHOTO },
+      ]);
+      blob.listByPrefix.mockResolvedValue({
+        blobs: [
+          { pathname: 'projects/p1/items/i1/photo.jpg' },
+          { pathname: 'projects/p1/items/i1/voice-1757000000000.webm' },
+        ],
+        cursor: null,
+      });
+
+      const result = await service.purgeSoftDeletedItems();
+
+      expect(prisma.productItem.delete).toHaveBeenCalledWith({
+        where: { id: 'i1' },
+      });
+      const deleted = blob.deleteMany.mock.calls[0][0] as string[];
+      expect(deleted).toContain('projects/p1/items/i1/photo.jpg');
+      expect(deleted).toContain(
+        'projects/p1/items/i1/voice-1757000000000.webm',
+      );
+      expect(result).toEqual({ count: 1, hasMore: false });
+    });
+
+    it('P2025 (родителя уже унёс purgeSoftDeletedProjects этим же прогоном) — тихий пропуск, не сбой', async () => {
+      prisma.productItem.findMany.mockResolvedValue([
+        { id: 'i1', projectId: 'p1', photoUrl: null },
+      ]);
+      prisma.productItem.delete.mockRejectedValue({ code: 'P2025' });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const warnSpy = jest.spyOn((service as any).logger, 'warn');
+
+      const result = await service.purgeSoftDeletedItems();
+
+      expect(result).toEqual({ count: 0, hasMore: false });
+      expect(blob.listByPrefix).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('сбой хранилища не роняет крон-уборку — строка товара уже удалена, это best-effort', async () => {
+      prisma.productItem.findMany.mockResolvedValue([
+        { id: 'i1', projectId: 'p1', photoUrl: PHOTO },
+      ]);
+      blob.listByPrefix.mockRejectedValue(new Error('blob недоступен'));
+
+      await expect(service.purgeSoftDeletedItems()).resolves.toEqual({
+        count: 1,
+        hasMore: false,
+      });
+      expect(prisma.productItem.delete).toHaveBeenCalled();
     });
   });
 });

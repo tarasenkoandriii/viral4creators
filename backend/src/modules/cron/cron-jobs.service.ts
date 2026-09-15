@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SessionService } from '../../common/session.service';
+import { ProjectService } from '../project/project.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
@@ -119,6 +120,28 @@ export interface CleanupSessionsResult {
   deletedUserSessions: number;
   deletedLibraryEntries: number;
   hasMoreLibraryEntries: boolean;
+  /**
+   * Этап 89: Project/ProductItem/Session, мягко удалённые (`deletedAt`)
+   * пользователем или оператором и старше `SOFT_DELETE_GRACE_MS` — физически
+   * убраны этим прогоном. Тот же суточный джоб, не отдельный: см.
+   * доккомментарий `runCleanupSessions` ниже.
+   */
+  purgedSoftDeletedSessions: number;
+  purgedSoftDeletedProjects: number;
+  purgedSoftDeletedItems: number;
+  /** Хоть один из трёх счётчиков выше уперся в `PURGE_BATCH`/`CLEANUP_BATCH`
+   * за отведённые партии/время — остаток доберёт завтрашний прогон. */
+  hasMoreSoftDeleted: boolean;
+  /**
+   * Найдено доп. аудитом (MEDIUM) — тот же приём джоб-замка, что уже
+   * есть у `runBlog`/`runExportSyncRun` (см. `common/cron-job-lock.ts`):
+   * этот джоб зовётся и суточным расписанием (`cron.controller.ts`), и
+   * ручной кнопкой в админке (`admin-cron.service.ts`) — двойной клик
+   * оператора поверх уже идущего суточного прогона мог бы удвоить
+   * партии `deleteMany`/`purgeSoftDeleted*` и уборку блобов. `true`,
+   * когда замок уже держал другой прогон — остальные поля тогда нулевые
+   * (ничего не сделано, не «сделано и получилось 0»). */
+  skipped?: boolean;
 }
 
 @Injectable()
@@ -127,6 +150,7 @@ export class CronJobsService {
 
   constructor(
     private readonly sessionService: SessionService,
+    private readonly projectService: ProjectService,
     private readonly prisma: PrismaService,
     private readonly blobService: BlobService,
     private readonly notify: TelegramNotifyService,
@@ -347,16 +371,75 @@ export class CronJobsService {
    * времени — см. доккомментарий, прежде живший на
    * `CronController.cleanupSessions`.
    *
+   * ## Софт-delete Project/ProductItem/Session (этап 89)
+   *
+   * Тот же прогон физически убирает Project/ProductItem/Session, мягко
+   * удалённые пользователем («умный» алерт + `deletedAt`,
+   * `ProjectService`/`SessionService`) или оператором в админке дольше
+   * `SOFT_DELETE_GRACE_MS` (`common/soft-delete.ts`) назад — НЕ отдельный
+   * крон-джоб: заводить ради этого ещё одну запись в `vercel.json`/
+   * `JOB_REGISTRY` означало бы держать в расписании два похожих суточных
+   * прохода вместо одного, а смысл у обоих один — «убрать то, что уже
+   * никому не нужно». Тот же приём, что уже объединяет в этом методе TTL
+   * сессий, admin/user-сессии и библиотеку.
+   *
    * ## Чего этот метод НЕ чистит (пятый аудит, Д-4.4)
    *
    * `CatalogBatchRun`/`CatalogBatchItem`, `AbTestRun`/`AbTestVariant`,
    * `ProductFeedImportRun`/`ProductFeedImportItem` (этапы 65–68) растут
-   * без ограничения — ни этот метод, ни какой-либо другой джоб из
-   * `JOB_REGISTRY` их не трогает. Осознанно принятый риск при текущем
-   * масштабе (см. doc/DEPLOYMENT.md — известное ограничение), а не
-   * забытая правка; при росте объёма нужен отдельный джоб.
+   * без ограничения САМИ ПО СЕБЕ — ни этот метод, ни какой-либо другой
+   * джоб из `JOB_REGISTRY` их не трогает НАПРЯМУЮ. Осознанно принятый
+   * риск при текущем масштабе (см. doc/DEPLOYMENT.md — известное
+   * ограничение), а не забытая правка; при росте объёма нужен отдельный
+   * джоб. Софт-delete проекта (этап 89) их косвенно уносит — но только
+   * вместе с целым проектом (DB-каскад в `purgeSoftDeletedProjects`), не
+   * как самостоятельную уборку.
+   *
+   * ## Джоб-замок (найдено доп. аудитом, MEDIUM)
+   *
+   * Этот метод зовётся и суточным расписанием (`cron.controller.ts`), и
+   * ручной кнопкой в админке (`admin-cron.service.ts`) — тот же второй
+   * путь к перекрытию, что уже обосновал замок у `runBlog`/
+   * `runExportSyncRun` (см. доккомментарий `common/cron-job-lock.ts`):
+   * двойной клик оператора поверх уже идущего суточного прогона мог бы
+   * удвоить партии `deleteMany`/`purgeSoftDeleted*` и повторно запустить
+   * уборку одних и тех же блобов. Сама раскладка на партии внутри
+   * прогона (`CLEANUP_MAX_PASSES`/`CLEANUP_TIME_BUDGET_MS` ниже) от
+   * этого не спасала — она не даёт ОДНОМУ прогону зависнуть, а не два
+   * прогона друг друга обогнать.
    */
   async runCleanupSessions(): Promise<CleanupSessionsResult> {
+    const acquired = await tryAcquireJobLock(this.prisma, 'cleanup-sessions');
+    if (!acquired) {
+      this.logger.warn(
+        'Крон уборки сессий: предыдущий прогон ещё держит замок — пропуск',
+      );
+      return {
+        deletedCount: 0,
+        deletedBlobs: 0,
+        hasMoreSessions: false,
+        deletedAdminSessions: 0,
+        deletedUserSessions: 0,
+        deletedLibraryEntries: 0,
+        hasMoreLibraryEntries: false,
+        purgedSoftDeletedSessions: 0,
+        purgedSoftDeletedProjects: 0,
+        purgedSoftDeletedItems: 0,
+        hasMoreSoftDeleted: false,
+        skipped: true,
+      };
+    }
+    try {
+      return await this.runCleanupSessionsLocked();
+    } finally {
+      await releaseJobLock(this.prisma, 'cleanup-sessions', acquired);
+    }
+  }
+
+  /** Тело прогона — вынесено из `runCleanupSessions` НЕИЗМЕНЁННЫМ, чтобы
+   * новый джоб-замок обёртки выше не заставлял переотступать ~150 строк
+   * существующей логики партий (см. её доккомментарий). */
+  private async runCleanupSessionsLocked(): Promise<CleanupSessionsResult> {
     const started = Date.now();
     let expired = await this.sessionService.cleanupExpiredSessions();
     let passes = 1;
@@ -380,6 +463,66 @@ export class CronJobsService {
       );
     }
 
+    // Этап 89 — три отдельных цикла партий, один на сущность: у каждой
+    // свой курсор (`deletedAt`) и свой лимит партии (`PURGE_BATCH` в
+    // project.service.ts / `CLEANUP_BATCH` здесь), путать их в один цикл
+    // значило бы гонять пустые прогоны по уже опустевшей сущности, пока
+    // другая ещё не досмотрена. Session отдаёт пути файлов сюда (у
+    // сервиса своего BlobService нет — тот же приём, что у TTL-уборки
+    // выше); Project/ProductItem чистят свои файлы сами (`ProjectService`
+    // уже держит `BlobService`).
+    let purgedSessions = await this.sessionService.purgeSoftDeletedSessions();
+    let sessionPurgePasses = 1;
+    let purgedSessionsCount = purgedSessions.count;
+    collected.push(...purgedSessions.blobPathnames);
+    while (
+      purgedSessions.hasMore &&
+      sessionPurgePasses < CLEANUP_MAX_PASSES &&
+      Date.now() - started < CLEANUP_TIME_BUDGET_MS
+    ) {
+      purgedSessions = await this.sessionService.purgeSoftDeletedSessions();
+      collected.push(...purgedSessions.blobPathnames);
+      purgedSessionsCount += purgedSessions.count;
+      sessionPurgePasses += 1;
+    }
+
+    let purgedProjects = await this.projectService.purgeSoftDeletedProjects();
+    let projectPurgePasses = 1;
+    let purgedProjectsCount = purgedProjects.count;
+    while (
+      purgedProjects.hasMore &&
+      projectPurgePasses < CLEANUP_MAX_PASSES &&
+      Date.now() - started < CLEANUP_TIME_BUDGET_MS
+    ) {
+      purgedProjects = await this.projectService.purgeSoftDeletedProjects();
+      purgedProjectsCount += purgedProjects.count;
+      projectPurgePasses += 1;
+    }
+
+    let purgedItems = await this.projectService.purgeSoftDeletedItems();
+    let itemPurgePasses = 1;
+    let purgedItemsCount = purgedItems.count;
+    while (
+      purgedItems.hasMore &&
+      itemPurgePasses < CLEANUP_MAX_PASSES &&
+      Date.now() - started < CLEANUP_TIME_BUDGET_MS
+    ) {
+      purgedItems = await this.projectService.purgeSoftDeletedItems();
+      purgedItemsCount += purgedItems.count;
+      itemPurgePasses += 1;
+    }
+
+    const hasMoreSoftDeleted =
+      purgedSessions.hasMore || purgedProjects.hasMore || purgedItems.hasMore;
+    if (hasMoreSoftDeleted) {
+      this.logger.warn(
+        `мягко удалённых старше грейс-периода осталось больше, чем ` +
+          `помещается в один прогон (sessions=${purgedSessionsCount}, ` +
+          `projects=${purgedProjectsCount}, items=${purgedItemsCount}) — ` +
+          'доберём завтра',
+      );
+    }
+
     let deletedBlobs = 0;
     try {
       deletedBlobs = await this.blobService.deleteMany(collected);
@@ -392,7 +535,9 @@ export class CronJobsService {
     }
     this.logger.log(
       `Cleaned up ${deletedCount} expired session(s) in ${passes} pass(es), ` +
-        `${deletedBlobs}/${collected.length} blob(s)` +
+        `${deletedBlobs}/${collected.length} blob(s); ` +
+        `purged soft-deleted: ${purgedSessionsCount} session(s), ` +
+        `${purgedProjectsCount} project(s), ${purgedItemsCount} item(s)` +
         (expired.hasMore
           ? ' — истёкших осталось больше, доберём следующим прогоном'
           : ''),
@@ -404,7 +549,9 @@ export class CronJobsService {
         this.prisma.adminSession.deleteMany({
           where: { expiresAt: { lt: now } },
         }),
-        this.prisma.userSession.deleteMany({ where: { expiresAt: { lt: now } } }),
+        this.prisma.userSession.deleteMany({
+          where: { expiresAt: { lt: now } },
+        }),
         // Этап 47: отпечатки тревог живут в базе — убираем забытые здесь
         // же, чтобы таблица не была единственной без уборки.
         this.notify.pruneStates(now),
@@ -448,6 +595,10 @@ export class CronJobsService {
       deletedUserSessions: userResult.count,
       deletedLibraryEntries: library.count,
       hasMoreLibraryEntries: library.hasMore,
+      purgedSoftDeletedSessions: purgedSessionsCount,
+      purgedSoftDeletedProjects: purgedProjectsCount,
+      purgedSoftDeletedItems: purgedItemsCount,
+      hasMoreSoftDeleted,
     };
   }
 

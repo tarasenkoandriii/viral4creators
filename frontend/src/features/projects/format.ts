@@ -36,3 +36,19 @@ export function itemLabel(
     fallback.replace('{{index}}', String(index + 1))
   );
 }
+
+/**
+ * Числовые формы через `Intl.PluralRules` (этап 56/89) — тот же приём,
+ * что в ManifestScreen/ManifestsListScreen, вынесенный сюда, потому что
+ * «умный» алерт удаления (этап 89, ConfirmDialog в ProjectScreen)
+ * собирает счётчики под-сущностей той же формулой.
+ */
+export function pluralForm(
+  n: number,
+  locale: Locale,
+  forms: Partial<Record<Intl.LDMLPluralRule, string>>
+): string {
+  const rule = new Intl.PluralRules(locale).select(n);
+  const template = forms[rule] ?? forms.other ?? '';
+  return template.replace('{{n}}', String(n));
+}

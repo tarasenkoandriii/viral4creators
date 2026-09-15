@@ -944,7 +944,15 @@ export function GenerationWizard() {
                         },
                         {
                           key: 'source',
-                          label: dict.generationWizard.originalVeoLabel,
+                          // Найдено при доп. аудите: раньше это было
+                          // безусловно «Оригинал Veo», как и busy-заголовок
+                          // выше до своего фикса — при Grok подпись
+                          // называла чужого провайдера на каждом готовом
+                          // ролике, не в редком крае.
+                          label:
+                            generatedVideo.provider === 'grok'
+                              ? dict.generationWizard.originalGrokLabel
+                              : dict.generationWizard.originalVeoLabel,
                           url: generatedVideo.renderedUrl,
                         },
                       ]

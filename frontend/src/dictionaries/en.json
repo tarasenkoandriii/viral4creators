@@ -13,7 +13,10 @@
     "close": "Close",
     "comparePlans": "Compare plans",
     "availableIn": "Available in {{plan}}",
-    "unavailable": "Unavailable"
+    "unavailable": "Unavailable",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "checkingWhatWillBeDeleted": "Checking what will be deleted…"
   },
   "errors": {
     "tooManyRequests": "Too many requests — please try again shortly",
@@ -420,9 +423,7 @@
     "videoCopyHint": "Item data{{extra}} will be copied into a new generation run; next — reference video, analysis, prompt.",
     "andBrandManifestSuffix": " and the brand manifest",
     "videoButtonLine": "Video: {{item}}",
-    "videoButtonSingle": "Go to video generation",
-    "confirmDeleteItem": "Delete this item from the line?",
-    "confirmDeleteProject": "Delete the whole project? Videos already generated will be kept."
+    "videoButtonSingle": "Go to video generation"
   },
   "itemScreen": {
     "steps": {
@@ -998,7 +999,13 @@
     }
   },
   "generationWizard": {
-    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
+    "steps": [
+      "Video",
+      "Analysis",
+      "Product",
+      "Prompt",
+      "Generation"
+    ],
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
     "openProjectCta": "Open project",
@@ -1060,6 +1067,7 @@
     "generatedLabel": "Generated ad",
     "afterProcessingLabel": "After processing",
     "originalVeoLabel": "Veo original",
+    "originalGrokLabel": "Grok original",
     "previousAttemptLabel": "Attempt from {{date}}",
     "formatLabel": "Format: {{ratio}}",
     "reframePendingNote": "— shot in {{rendered}}, cropping to {{target}}; the video below is already watchable, the link will update itself.",
@@ -1179,12 +1187,13 @@
     "revoiceBadge": "Re-voice available",
     "processingBadge": "Processing",
     "failedBadge": "Post-processing failed",
-    "openButton": "Open"
+    "deleteAriaLabel": "Delete video"
   },
   "postprodVideoScreen": {
     "notFoundTitle": "Video not found",
     "notFoundHint": "The session may have been deleted, or this isn't your video.",
-    "untitledTitle": "Video"
+    "untitledTitle": "Video",
+    "deleteAriaLabel": "Delete video"
   },
   "feedImport": {
     "panelTitle": "Import products by link",
@@ -1213,5 +1222,40 @@
     "rowFailed": "Failed",
     "rowSkipped": "Skipped",
     "problemsMore": "And {{count}} more"
+  },
+  "deleteConfirm": {
+    "projectTitle": "Delete the project?",
+    "itemTitle": "Delete this item?",
+    "sessionTitle": "Delete this video?",
+    "willDelete": "This will also delete from the database:",
+    "nothingElseProject": "No sub-entities — only the project itself will be deleted.",
+    "nothingElseItem": "No analogs or other data — only the item itself will be deleted.",
+    "previewFailed": "Couldn't load the exact list — but the deletion will still affect related data.",
+    "alreadyDeleted": "Already deleted (e.g. from another device) — the list has been refreshed.",
+    "sessionBody": "The video, its generation history, and all session files will be deleted. This can't be undone from the interface.",
+    "items": {
+      "one": "{{n}} item",
+      "other": "{{n}} items"
+    },
+    "catalogBatchRuns": {
+      "one": "{{n}} batch generation run",
+      "other": "{{n}} batch generation runs"
+    },
+    "abTestRuns": {
+      "one": "{{n}} A/B test run",
+      "other": "{{n}} A/B test runs"
+    },
+    "feedImportRuns": {
+      "one": "{{n}} feed import run",
+      "other": "{{n}} feed import runs"
+    },
+    "analogs": {
+      "one": "{{n}} found analog",
+      "other": "{{n}} found analogs"
+    },
+    "catalogBatchItems": {
+      "one": "{{n}} batch generation item",
+      "other": "{{n}} batch generation items"
+    }
   }
 }

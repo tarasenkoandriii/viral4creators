@@ -13,7 +13,10 @@
     "close": "Cerrar",
     "comparePlans": "Comparar planes",
     "availableIn": "Disponible en {{plan}}",
-    "unavailable": "No disponible"
+    "unavailable": "No disponible",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "checkingWhatWillBeDeleted": "Comprobando qué se eliminará…"
   },
   "errors": {
     "tooManyRequests": "Demasiadas solicitudes — inténtelo de nuevo en un momento",
@@ -420,9 +423,7 @@
     "videoCopyHint": "Los datos del producto{{extra}} se copiarán en una nueva ejecución de generación; a continuación — vídeo de referencia, análisis, prompt.",
     "andBrandManifestSuffix": " y el manifiesto de marca",
     "videoButtonLine": "Vídeo: {{item}}",
-    "videoButtonSingle": "Ir a la generación del vídeo",
-    "confirmDeleteItem": "¿Eliminar este producto de la línea?",
-    "confirmDeleteProject": "¿Eliminar todo el proyecto? Los vídeos ya generados se conservarán."
+    "videoButtonSingle": "Ir a la generación del vídeo"
   },
   "itemScreen": {
     "steps": {
@@ -998,7 +999,13 @@
     }
   },
   "generationWizard": {
-    "steps": ["Video", "Análisis", "Producto", "Prompt", "Generación"],
+    "steps": [
+      "Video",
+      "Análisis",
+      "Producto",
+      "Prompt",
+      "Generación"
+    ],
     "errorTitle": "Error",
     "prefilledAlert": "Los datos del producto se tomaron del proyecto — es una copia del momento de inicio; los cambios aquí no modifican el producto en sí.",
     "openProjectCta": "Abrir proyecto",
@@ -1060,6 +1067,7 @@
     "generatedLabel": "Anuncio generado",
     "afterProcessingLabel": "Después del procesamiento",
     "originalVeoLabel": "Original de Veo",
+    "originalGrokLabel": "Original de Grok",
     "previousAttemptLabel": "Intento del {{date}}",
     "formatLabel": "Formato: {{ratio}}",
     "reframePendingNote": "— grabado en {{rendered}}, recortando a {{target}}; el video de abajo ya se puede ver, el enlace se actualizará solo.",
@@ -1179,12 +1187,13 @@
     "revoiceBadge": "Redoblaje disponible",
     "processingBadge": "Procesando",
     "failedBadge": "La postproducción falló",
-    "openButton": "Abrir"
+    "deleteAriaLabel": "Eliminar vídeo"
   },
   "postprodVideoScreen": {
     "notFoundTitle": "Vídeo no encontrado",
     "notFoundHint": "Puede que la sesión se haya eliminado, o que no sea tu vídeo.",
-    "untitledTitle": "Vídeo"
+    "untitledTitle": "Vídeo",
+    "deleteAriaLabel": "Eliminar vídeo"
   },
   "feedImport": {
     "panelTitle": "Importar productos por enlace",
@@ -1213,5 +1222,40 @@
     "rowFailed": "Fallido",
     "rowSkipped": "Omitido",
     "problemsMore": "Y {{count}} más"
+  },
+  "deleteConfirm": {
+    "projectTitle": "¿Eliminar el proyecto?",
+    "itemTitle": "¿Eliminar este producto?",
+    "sessionTitle": "¿Eliminar este vídeo?",
+    "willDelete": "Junto con él, también se eliminará de la base de datos:",
+    "nothingElseProject": "No hay sub-entidades — solo se eliminará el proyecto.",
+    "nothingElseItem": "No hay análogos ni otros datos — solo se eliminará el producto.",
+    "previewFailed": "No se pudo cargar la lista exacta — pero la eliminación afectará igualmente a los datos relacionados.",
+    "alreadyDeleted": "Ya se eliminó (por ejemplo, desde otro dispositivo) — la lista se actualizó.",
+    "sessionBody": "El vídeo, su historial de generación y todos los archivos de la sesión se eliminarán. No se puede deshacer desde la interfaz.",
+    "items": {
+      "one": "{{n}} producto",
+      "other": "{{n}} productos"
+    },
+    "catalogBatchRuns": {
+      "one": "{{n}} ejecución de generación por lotes",
+      "other": "{{n}} ejecuciones de generación por lotes"
+    },
+    "abTestRuns": {
+      "one": "{{n}} ejecución de prueba A/B",
+      "other": "{{n}} ejecuciones de prueba A/B"
+    },
+    "feedImportRuns": {
+      "one": "{{n}} importación de feed",
+      "other": "{{n}} importaciones de feed"
+    },
+    "analogs": {
+      "one": "{{n}} análogo encontrado",
+      "other": "{{n}} análogos encontrados"
+    },
+    "catalogBatchItems": {
+      "one": "{{n}} elemento de generación por lotes",
+      "other": "{{n}} elementos de generación por lotes"
+    }
   }
 }

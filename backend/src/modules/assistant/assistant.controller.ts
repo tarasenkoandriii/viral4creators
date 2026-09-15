@@ -92,35 +92,61 @@ export class AssistantController {
     const wantsSse = accept.includes('text/event-stream');
     const request = dto as unknown as AssistantChatRequest;
 
-    if (!wantsSse) {
-      await this.chatJson(request, ip, res);
-      return;
-    }
+    // Найдено доп. аудитом (HIGH): раньше единственным сигналом «посетитель
+    // ушёл» в SSE-ветке был `res.writableEnded` — это флаг «сервер сам
+    // вызвал res.end()», а не «клиент разорвал соединение», и разрыв
+    // соединения клиентом его никогда не взводил. Закрытая вкладка не
+    // останавливала стрим Gemini — он тянулся (и тратил дневной бюджет)
+    // до штатных таймаутов AssistantService (30 с/90 с). `close` — тот
+    // самый сигнал (и у запроса, и у ответа — какой из двух сработает
+    // раньше, зависит от прокси/клиента); дёргает AbortSignal, который
+    // AssistantService.streamChat теперь принимает третьим аргументом и
+    // объединяет со своим внутренним AbortController (тем же, что уже
+    // используют её таймауты). Опциональные `?.` — тестовые дублёры
+    // `req`/`res` в spec не обязаны быть полноценными EventEmitter'ами.
+    const abortController = new AbortController();
+    const onClose = () => abortController.abort();
+    req.on?.('close', onClose);
+    res.on?.('close', onClose);
 
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
     try {
-      for await (const event of this.assistant.streamChat(request, ip)) {
-        if (res.writableEnded) break; // посетитель уже закрыл вкладку
-        writeSseEvent(res, event);
+      if (!wantsSse) {
+        await this.chatJson(request, ip, res, abortController.signal);
+        return;
       }
-    } catch (error) {
-      // Сюда попадают только сбои самой записи в ответ (например,
-      // разорванное соединение) — AssistantService.streamChat уже не
-      // бросает исключений наружу (см. его доккомментарий).
-      if (!res.writableEnded) {
-        writeSseEvent(res, {
-          type: 'error',
-          code: 'upstream',
-          message: assistantErrorMessage('upstream', request.locale),
-        });
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      try {
+        for await (const event of this.assistant.streamChat(
+          request,
+          ip,
+          abortController.signal,
+        )) {
+          if (abortController.signal.aborted) break;
+          writeSseEvent(res, event);
+        }
+      } catch (error) {
+        // Сюда попадают только сбои самой записи в ответ (например,
+        // разорванное соединение) — AssistantService.streamChat уже не
+        // бросает исключений наружу (см. его доккомментарий).
+        if (!res.writableEnded) {
+          writeSseEvent(res, {
+            type: 'error',
+            code: 'upstream',
+            message: assistantErrorMessage('upstream', request.locale),
+          });
+        }
+      } finally {
+        if (!res.writableEnded) res.end();
       }
     } finally {
-      if (!res.writableEnded) res.end();
+      req.off?.('close', onClose);
+      res.off?.('close', onClose);
     }
   }
 
@@ -129,13 +155,14 @@ export class AssistantController {
     request: AssistantChatRequest,
     ip: string,
     res: Response,
+    signal: AbortSignal,
   ): Promise<void> {
     let text = '';
     let actions: AssistantAction[] = [];
     let usage = { in: 0, out: 0, cached: 0 };
     let error: { code: string; message: string } | null = null;
 
-    for await (const event of this.assistant.streamChat(request, ip)) {
+    for await (const event of this.assistant.streamChat(request, ip, signal)) {
       switch (event.type) {
         case 'token':
           text += event.t;
@@ -152,6 +179,11 @@ export class AssistantController {
       }
     }
 
+    // Клиент уже разорвал соединение — писать ответ некому (и, на
+    // некоторых транспортах, `res.json()` на уже закрытый сокет бросит
+    // исключение).
+    if (signal.aborted) return;
+
     if (error) {
       const status =
         error.code === 'rate_limited'
@@ -159,7 +191,15 @@ export class AssistantController {
           : error.code === 'disabled' || error.code === 'budget_exhausted'
             ? 503
             : 502;
-      res.status(status).json({ error });
+      // Найдено доп. аудитом (MEDIUM): раньше `text`/`actions` терялись
+      // при ошибке, хотя AssistantService.streamChat явно копит и
+      // сохраняет то, что успело прийти до сбоя (§4.4 п.7 — «клиент
+      // показывает то, что успело прийти»), и SSE-путь именно так и
+      // делает: токены уже отрисованы построчно к моменту события
+      // `error`. Запасной JSON-вариант отдавал тот же обрыв стрима как
+      // пустой ответ с одной ошибкой — расхождение с SSE-путём для
+      // одной и той же логики (см. доккомментарий класса).
+      res.status(status).json({ error, text, actions, usage });
       return;
     }
     res.status(200).json({ text, actions, usage });

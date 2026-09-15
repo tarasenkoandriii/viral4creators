@@ -1,112 +1,95 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 /**
- * Б-5.9: удаление сессии оператором уносит и её файлы.
- *
- * Правило §22 одно на весь проект — удаление владельца обязано удалить
- * файл, — и этот путь был единственным, который его нарушал: строку
- * сносил, а ролик, референс и кадры оставлял. Мусор подобрала бы метла
- * через сутки, но только потому, что она есть.
+ * Этап 89: удаление сессии оператором — софт-delete через
+ * `SessionService.softDeleteSession`, «тот же механизм», что и
+ * пользовательский `DELETE /sessions/:id` (прямой запрос владельца
+ * продукта). Раньше (Б-5.9, этап 88.2) этот путь удалял строку и файлы
+ * синхронно, своей отдельной реализацией — та история и её тесты
+ * («пути собираются ДО удаления строки» и т. п.) переехали в
+ * `SessionService.purgeSoftDeletedSessions` (`session.service.spec.ts`),
+ * которая теперь единственная физически удаляет строку.
  */
+// PrismaService и @prisma/client тянут сгенерированный клиент, которого в
+// песочнице нет (`prisma generate` недоступен, doc/CI.md). `WorkflowKind`
+// — то, что `admin-panel.service.ts` реально использует как значение
+// (сравнения `descriptor.kind === WorkflowKind.SESSION` и т. п. в воронке,
+// этап 78), не только как тип — тот же приём, что в
+// `project.service.spec.ts`/`session.service.spec.ts` для `Prisma.DbNull`.
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
+jest.mock('@prisma/client', () => ({
+  Prisma: { DbNull: Symbol.for('Prisma.DbNull') },
+  WorkflowKind: {
+    SESSION: 'SESSION',
+    CATALOG_BATCH_ITEM: 'CATALOG_BATCH_ITEM',
+    AB_TEST_VARIANT: 'AB_TEST_VARIANT',
+  },
+}));
 
-import { ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AdminPanelService } from './admin-panel.service';
 
-const row = (data: Record<string, unknown> = {}) => ({
-  id: 's1',
-  status: 'video_complete',
-  createdAt: new Date('2026-09-01T10:00:00Z'),
-  lastActivityAt: new Date('2026-09-01T11:00:00Z'),
-  userId: 'u1',
-  projectId: null,
-  productItemId: null,
-  data: {
-    generatedVideo: {
-      pathname: 'sessions/s1/generated.mp4',
-      postPathname: 'sessions/s1/generated-1080x1350.mp4',
-      voiceoverPathname: 'sessions/s1/voiceover.mp3',
-      downloadUrl: 'https://blob.test/sessions/s1/generated.mp4',
-    },
-    ...data,
-  },
-});
-
-function build(found: unknown = row()) {
+function build(
+  opts: {
+    session?: unknown;
+    softDeleteResult?: { deleted: boolean };
+  } = {},
+) {
   const prisma = {
     session: {
-      findUnique: jest.fn().mockResolvedValue(found),
-      delete: jest.fn().mockResolvedValue(undefined),
+      findFirst: jest.fn().mockResolvedValue(opts.session ?? null),
     },
   };
-  const blob = { deleteMany: jest.fn().mockResolvedValue(3) };
+  const sessionService = {
+    softDeleteSession: jest
+      .fn()
+      .mockResolvedValue(opts.softDeleteResult ?? { deleted: true }),
+  };
   return {
-    svc: new AdminPanelService(prisma as any, blob as any),
+    svc: new AdminPanelService(prisma as any, sessionService as any),
     prisma,
-    blob,
+    sessionService,
   };
 }
 
-describe('AdminPanelService.deleteSession (Б-5.9)', () => {
-  beforeEach(() => {
-    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-  });
-  afterEach(() => jest.restoreAllMocks());
-
-  it('удаляет строку и ВСЕ файлы сессии', async () => {
-    const { svc, prisma, blob } = build();
-
+describe('AdminPanelService.deleteSession — софт-delete (этап 89)', () => {
+  it('зовёт SessionService.softDeleteSession — тот же механизм, что у пользователя', async () => {
+    const { svc, sessionService } = build();
     await expect(svc.deleteSession('s1')).resolves.toEqual({ ok: true });
-
-    expect(prisma.session.delete).toHaveBeenCalledWith({ where: { id: 's1' } });
-    const paths = blob.deleteMany.mock.calls[0][0] as string[];
-    // Самые тяжёлые файлы сервиса — ролик, обрезанная версия и дорожка.
-    expect(paths).toEqual(
-      expect.arrayContaining([
-        'sessions/s1/generated.mp4',
-        'sessions/s1/generated-1080x1350.mp4',
-        'sessions/s1/voiceover.mp3',
-      ]),
-    );
+    expect(sessionService.softDeleteSession).toHaveBeenCalledWith('s1');
   });
 
-  it('пути собираются ДО удаления строки', async () => {
-    // Обратный порядок означал бы, что при сбое между шагами файлы
-    // становятся сиротами без единой ссылки.
-    const order: string[] = [];
-    const { svc, prisma, blob } = build();
-    prisma.session.delete.mockImplementation(async () => {
-      order.push('строка');
-    });
-    blob.deleteMany.mockImplementation(async () => {
-      order.push('файлы');
-      return 3;
-    });
-
-    await svc.deleteSession('s1');
-
-    expect(order).toEqual(['строка', 'файлы']);
-  });
-
-  it('сбой хранилища не отменяет удаление: сессии уже нет', async () => {
-    const { svc, blob } = build();
-    blob.deleteMany.mockRejectedValue(new Error('Blob недоступен'));
-
-    await expect(svc.deleteSession('s1')).resolves.toEqual({ ok: true });
-  });
-
-  it('сессия без файлов не зовёт хранилище впустую', async () => {
-    const { svc, blob } = build(row({ generatedVideo: undefined }));
-    await svc.deleteSession('s1');
-    expect(blob.deleteMany).not.toHaveBeenCalled();
-  });
-
-  it('несуществующая сессия — 404 и ни одного удаления', async () => {
-    const { svc, prisma, blob } = build(null);
+  it('несуществующая/уже удалённая сессия — 404', async () => {
+    const { svc } = build({ softDeleteResult: { deleted: false } });
     await expect(svc.deleteSession('нет')).rejects.toBeInstanceOf(
       NotFoundException,
     );
-    expect(prisma.session.delete).not.toHaveBeenCalled();
-    expect(blob.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPanelService.getSession — мягко удалённая не видна оператору (этап 89)', () => {
+  it('запрашивает строку с deletedAt: null', async () => {
+    const { svc, prisma } = build({
+      session: {
+        id: 's1',
+        status: 'video_complete',
+        generationStatus: null,
+        createdAt: new Date('2026-09-01T10:00:00Z'),
+        lastActivityAt: new Date('2026-09-01T11:00:00Z'),
+        userId: 'u1',
+        data: {},
+      },
+    });
+    await svc.getSession('s1');
+    expect(prisma.session.findFirst).toHaveBeenCalledWith({
+      where: { id: 's1', deletedAt: null },
+    });
+  });
+
+  it('мягко удалённая (не найдена с deletedAt: null) — 404', async () => {
+    const { svc } = build({ session: null });
+    await expect(svc.getSession('s1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
 

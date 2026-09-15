@@ -5,6 +5,7 @@ export * from './Pills';
 export * from './Badge';
 export * from './Spinner';
 export * from './Alert';
+export * from './ConfirmDialog';
 export * from './Tabs';
 export * from './EmptyState';
 export * from './Stepper';

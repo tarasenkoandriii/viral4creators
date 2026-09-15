@@ -32,6 +32,18 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
     const r = result as { text?: string };
     if (typeof r.text === 'string') return r.text;
   }
+  // Найдено доп. аудитом (MEDIUM, вместе с добавлением джоб-замка у
+  // `runCleanupSessions`): без этой ветки пропущенный (заблокированный
+  // другим прогоном) запуск выглядел бы в журнале как «всё по нулям» —
+  // неотличимо от «прогнал и правда нечего было чистить».
+  if (
+    jobKey === 'cleanup-sessions' &&
+    result &&
+    typeof result === 'object' &&
+    (result as { skipped?: boolean }).skipped
+  ) {
+    return 'пропущен — предыдущий прогон ещё держал замок';
+  }
   if (jobKey === 'blog' && result && typeof result === 'object') {
     const r = result as { generation?: object; translation?: object };
     const gen = r.generation

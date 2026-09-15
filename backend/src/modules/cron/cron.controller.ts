@@ -241,8 +241,9 @@ export class CronController {
    * GET /api/cron/cleanup-sessions
    *
    * Deletes sessions older than SESSION_TTL_HOURS. Also prunes expired
-   * `AdminSession`/`UserSession` rows and unused library entries — см.
-   * доккомментарий на `CronJobsService.runCleanupSessions`.
+   * `AdminSession`/`UserSession` rows, unused library entries, and (этап 89)
+   * physically purges Project/ProductItem/Session soft-deleted past their
+   * grace period — см. доккомментарий на `CronJobsService.runCleanupSessions`.
    *
    * Scheduled to run once daily via Vercel Cron (backend/vercel.json) — the
    * fastest interval Hobby allows, and it matches the default 24h TTL.

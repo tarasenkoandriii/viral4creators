@@ -83,9 +83,11 @@ export class ProductFeedImportService {
     // каталогом из многих товаров.
     await this.plans.assertUser(userId, 'library');
 
+    // `deletedAt: null` (этап 89, найдено доп. аудитом) — иначе можно
+    // запустить импорт фида в мягко удалённый проект весь грейс-период.
     const project: { id: string; type: string } | null =
       await this.prisma.project.findFirst({
-        where: { id: projectId, userId },
+        where: { id: projectId, userId, deletedAt: null },
         select: { id: true, type: true },
       });
     if (!project) {
@@ -138,7 +140,7 @@ export class ProductFeedImportService {
     projectId: string,
   ): Promise<FeedImportRunSummary[]> {
     const project = await this.prisma.project.findFirst({
-      where: { id: projectId, userId },
+      where: { id: projectId, userId, deletedAt: null },
       select: { id: true },
     });
     if (!project) {

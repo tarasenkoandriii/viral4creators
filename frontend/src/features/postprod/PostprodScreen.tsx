@@ -15,13 +15,22 @@
  */
 
 import { useState } from 'react';
-import { Clapperboard, Mic2 } from 'lucide-react';
-import { Button, Card, EmptyState, Spinner } from '../../components/ui';
+import { Clapperboard, Mic2, Trash2 } from 'lucide-react';
+import {
+  Alert,
+  Button,
+  Card,
+  ConfirmDialog,
+  EmptyState,
+  Spinner,
+} from '../../components/ui';
 import { useAsync } from '../../lib/useAsync';
 import { useI18n } from '../../lib/i18n-context';
 import { navigate, routes } from '../../lib/router';
 import { ScreenHeader, LoadError } from '../projects/shared';
+import { errorMessage } from '../../services/projects-api';
 import {
+  deletePostprodVideo,
   listPostprodVideos,
   type PostprodVideoListResult,
   type PostprodVideoSummary,
@@ -40,10 +49,14 @@ function VideoRow({
   item,
   dict,
   locale,
+  deleting,
+  onDelete,
 }: {
   item: PostprodVideoSummary;
   dict: ReturnType<typeof useI18n>['dict'];
   locale: string;
+  deleting: boolean;
+  onDelete: () => void;
 }) {
   return (
     <Card
@@ -91,6 +104,18 @@ function VideoRow({
             )}
           </div>
         </div>
+        <button
+          type="button"
+          aria-label={dict.postprodScreen.deleteAriaLabel}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          disabled={deleting}
+          className="inline-flex h-fit shrink-0 min-h-[44px] min-w-[44px] items-center justify-center rounded-lg p-1.5 text-silver-400 hover:bg-rose-500/10 hover:text-rose-500 disabled:opacity-50"
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
     </Card>
   );
@@ -104,16 +129,57 @@ export function PostprodScreen() {
       []
     );
   const [loadingMore, setLoadingMore] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // «Умный» алерт удаления (этап 89) — тот же честный, без-превью текст,
+  // что и на PostprodVideoScreen (см. её doc-комментарий у onConfirmDelete).
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const items = data?.items ?? [];
   const hasMore = !!data && data.items.length < data.total;
+
+  const onConfirmDelete = async () => {
+    const sessionId = pendingDeleteId;
+    if (!sessionId) return;
+    setDeletingId(sessionId);
+    setDeleteError(null);
+    try {
+      await deletePostprodVideo(sessionId);
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              items: prev.items.filter((i) => i.sessionId !== sessionId),
+              total: prev.total - 1,
+            }
+          : prev
+      );
+      setPendingDeleteId(null);
+    } catch (e) {
+      setDeleteError(errorMessage(e));
+      setPendingDeleteId(null);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const loadMore = async () => {
     if (!data || loadingMore) return;
     setLoadingMore(true);
     try {
       const nextPage = data.page + 1;
-      const next = await listPostprodVideos(nextPage, data.pageSize);
+      // offset = реально загруженное количество (найдено доп. аудитом,
+      // HIGH), не (page) * pageSize: onConfirmDelete убирает строку
+      // локально без перезагрузки списка, так что после хотя бы одного
+      // удаления номинальная страница и фактическое количество
+      // расходятся — умножение пропускало бы один ролик на границе
+      // страниц (см. доккомментарий PostprodVideosService.
+      // listFinishedVideos).
+      const next = await listPostprodVideos(
+        nextPage,
+        data.pageSize,
+        data.items.length
+      );
       setData((prev) =>
         prev ? { ...next, items: [...prev.items, ...next.items] } : next
       );
@@ -139,6 +205,16 @@ export function PostprodScreen() {
       )}
       {!loading && error ? <LoadError error={error} onRetry={reload} /> : null}
 
+      {deleteError && (
+        <Alert
+          tone="error"
+          className="mb-3"
+          onDismiss={() => setDeleteError(null)}
+        >
+          {deleteError}
+        </Alert>
+      )}
+
       {!loading && !error && items.length === 0 && (
         <EmptyState
           icon={<Clapperboard size={28} />}
@@ -163,6 +239,8 @@ export function PostprodScreen() {
               item={item}
               dict={dict}
               locale={locale}
+              deleting={deletingId === item.sessionId}
+              onDelete={() => setPendingDeleteId(item.sessionId)}
             />
           ))}
 
@@ -178,6 +256,16 @@ export function PostprodScreen() {
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        title={dict.deleteConfirm.sessionTitle}
+        busy={deletingId !== null}
+        onConfirm={() => void onConfirmDelete()}
+        onCancel={() => setPendingDeleteId(null)}
+      >
+        <p>{dict.deleteConfirm.sessionBody}</p>
+      </ConfirmDialog>
     </div>
   );
 }

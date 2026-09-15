@@ -462,7 +462,8 @@
     "offer": "Public Offer",
     "terms": "Terms of Use",
     "builtWith": "Built with GitHub Spec Kit",
-    "legalNoticeOtherLocale": "The public offer and terms of use are currently available in Russian only."
+    "legalNoticeOtherLocale": "The public offer and terms of use are currently available in Russian only.",
+    "madeWithClaude": "Made with Claude — 1 week free"
   },
   "notFound": {
     "title": "Page not found",

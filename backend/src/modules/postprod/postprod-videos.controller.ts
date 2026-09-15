@@ -28,11 +28,18 @@ export class PostprodVideosController {
     @Req() req: IdentifiedRequest,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    // См. доккомментарий PostprodVideosService.listFinishedVideos —
+    // явный сдвиг для догрузки следующей порции после локального
+    // удаления строки на клиенте.
+    @Query('offset') offset?: string,
   ): Promise<PostprodVideoListResult> {
+    const parsedOffset =
+      offset !== undefined ? Math.max(parseInt(offset, 10) || 0, 0) : undefined;
     return this.videos.listFinishedVideos(
       req.telegramUserId,
       Math.max(parseInt(page ?? '1', 10) || 1, 1),
       Math.min(Math.max(parseInt(pageSize ?? '20', 10) || 20, 1), 100),
+      parsedOffset,
     );
   }
 }

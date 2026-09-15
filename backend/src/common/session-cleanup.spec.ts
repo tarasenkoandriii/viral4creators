@@ -77,4 +77,13 @@ describe('cleanupExpiredSessions', () => {
     expect((await svc.cleanupExpiredSessions(3)).hasMore).toBe(true);
     expect((await svc.cleanupExpiredSessions(10)).hasMore).toBe(false);
   });
+
+  it('этап 88.1: сессии с готовым роликом исключены из выборки и удаления по TTL', async () => {
+    const { svc, prisma } = build([row('s1')]);
+    await svc.cleanupExpiredSessions();
+    const findWhere = prisma.session.findMany.mock.calls[0][0].where;
+    expect(findWhere.generationStatus).toEqual({ not: 'complete' });
+    const deleteWhere = prisma.session.deleteMany.mock.calls[0][0].where;
+    expect(deleteWhere.generationStatus).toEqual({ not: 'complete' });
+  });
 });

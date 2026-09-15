@@ -6,6 +6,7 @@ import { AssistantWidget } from '../../components/AssistantWidget';
 import { getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../lib/i18n';
 import {
+  CLAUDE_REFERRAL_URL,
   DEMO_YOUTUBE_EMBED_URL,
   DEMO_YOUTUBE_URL,
   GITHUB_REPO_URL,
@@ -207,6 +208,12 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
             <a href="/legal/terms-of-use">{dict.footer.terms}</a>
             <a href={SPEC_KIT_URL} target="_blank" rel="noreferrer">
               {dict.footer.builtWith}
+            </a>
+            {/* Доп. запрос владельца продукта: та же реферальная ссылка
+                Claude, что уже в футере TMA (frontend/src/App.tsx) — тот
+                же текст словаря переиспользован, а не переведён заново. */}
+            <a href={CLAUDE_REFERRAL_URL} target="_blank" rel="noreferrer">
+              {dict.footer.madeWithClaude}
             </a>
           </nav>
           {/* Юридические документы намеренно одноязычные (см. middleware.ts,

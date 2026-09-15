@@ -27,6 +27,7 @@ import { Session, SessionStatus } from './types/session.types';
 import { sessionBlobPathnames } from './blob-paths';
 import { normalizeLocale } from './locale';
 import { logWorkflowStage } from './workflow-stage-events';
+import { SOFT_DELETE_GRACE_MS, SoftDeletePurgeResult } from './soft-delete';
 
 /**
  * Сколько сессий чистим за один прогон крона. Ограничение осознанное:
@@ -255,10 +256,16 @@ export class SessionService {
    * Get session by ID
    * @param sessionId - Session UUID
    * @returns Session or undefined if not found
+   *
+   * `deletedAt: null` (этап 89) — мягко удалённая сессия (пользователь
+   * нажал «удалить» в «Постпроде» или её удалил оператор в админке) читается
+   * как «не найдено» весь грейс-период до `purgeSoftDeletedSessions()`,
+   * тем же приёмом, что `ProjectService.findOwnProject`/`findOwnItem`.
+   * `findFirst`, не `findUnique`: второе поле в `where` рядом с `id`.
    */
   async getSession(sessionId: string): Promise<Session | undefined> {
-    const row = await this.prisma.session.findUnique({
-      where: { id: sessionId },
+    const row = await this.prisma.session.findFirst({
+      where: { id: sessionId, deletedAt: null },
     });
     return row ? this.toSession(row) : undefined;
   }
@@ -554,25 +561,105 @@ export class SessionService {
   }
 
   /**
-   * Delete session
-   * @param sessionId - Session UUID
-   * @returns True if deleted, false if not found
+   * Софт-delete (этап 89) — заменяет прежний
+   * `deleteSessionAndCollectBlobPaths` (этап 88.2, удалял строку и
+   * собирал пути файлов синхронно). Оба явных пути удаления сессии —
+   * `DELETE /sessions/:id` (пользователь убирает свой ролик из
+   * «Постпрода», владение проверяет глобальный `SessionOwnerGuard` до
+   * того, как запрос сюда дойдёт) и `AdminPanelService.deleteSession`
+   * (оператор в админке) — теперь зовут этот один метод: явный запрос
+   * владельца продукта на этапе 89 был «тот же механизм в админке для
+   * сессий», а не две параллельные копии одной идеи.
+   *
+   * Строка помечается `deletedAt` и остаётся в базе весь грейс-период
+   * (`SOFT_DELETE_GRACE_MS`, `common/soft-delete.ts`) — `getSession` и
+   * админские `listSessions`/`getSession` (`common/session-summary.ts`)
+   * читают её как отсутствующую. Физическую уборку строки и файлов в Blob
+   * уносит `purgeSoftDeletedSessions()` из крона — тот же приём, что у
+   * `ProjectService.deleteProject`/`deleteItem`.
+   *
+   * `updateMany`, не `update`: не бросает, если строки уже нет или она
+   * уже мягко удалена — `count` сам говорит, сработало ли.
+   *
+   * @returns `deleted=false`, если строки не было или она уже мягко
+   * удалена — идемпотентно, вызывающий сам решает, 404 это или тихий успех.
    */
-  async deleteSession(sessionId: string): Promise<boolean> {
-    try {
-      await this.prisma.session.delete({ where: { id: sessionId } });
-      return true;
-    } catch {
-      // Prisma throws (P2025) when the row doesn't exist — same
-      // "false if not found" contract the in-memory version had.
-      return false;
+  async softDeleteSession(sessionId: string): Promise<{ deleted: boolean }> {
+    const result = await this.prisma.session.updateMany({
+      where: { id: sessionId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    return { deleted: result.count > 0 };
+  }
+
+  /**
+   * Крон-проход (этап 89): сессии, мягко удалённые больше
+   * `SOFT_DELETE_GRACE_MS` назад — та же последовательность «собрать пути
+   * → удалить строки», что у `cleanupExpiredSessions()` ниже. Файлы в Blob
+   * удаляет вызывающий (`CronJobsService`, у него есть `BlobService`,
+   * здесь — нет).
+   */
+  async purgeSoftDeletedSessions(
+    maxSessions = CLEANUP_BATCH,
+  ): Promise<SoftDeletePurgeResult> {
+    const cutoff = new Date(Date.now() - SOFT_DELETE_GRACE_MS);
+    const rows: SessionRow[] = await this.prisma.session.findMany({
+      where: { deletedAt: { lt: cutoff } },
+      orderBy: { deletedAt: 'asc' },
+      take: maxSessions,
+    });
+    if (rows.length === 0) {
+      return { count: 0, blobPathnames: [], hasMore: false };
     }
+    const blobPathnames = rows.flatMap((row) =>
+      sessionBlobPathnames(this.toSession(row)),
+    );
+    // Условие по времени повторяется на удалении — та же осторожность,
+    // что у `cleanupExpiredSessions`: если строку тронули между выборкой
+    // и удалением (маловероятно для уже мягко удалённой, но дёшево
+    // перепроверить), лишнего не снесём.
+    const result = await this.prisma.session.deleteMany({
+      where: {
+        id: { in: rows.map((r) => r.id) },
+        deletedAt: { lt: cutoff },
+      },
+    });
+    return {
+      count: result.count,
+      blobPathnames,
+      hasMore: rows.length === maxSessions,
+    };
   }
 
   /**
    * Clean up expired sessions (sessions older than TTL)
    * Should be called periodically by a scheduled task
    * @returns Number of sessions cleaned up
+   *
+   * ## Сессии с готовым роликом не трогаем (этап 88.1)
+   *
+   * `generationStatus: { not: 'complete' }` в обоих WHERE — до этой правки
+   * TTL (по умолчанию 24 ч бездействия, `SESSION_TTL_HOURS`) удалял ЛЮБУЮ
+   * сессию, включая уже готовый, оплаченный ролик, если пользователь не
+   * открывал её сутки. Ровно тот же класс дефекта, что уже описан на
+   * `findSessionsWithPendingTierBExport`/`findSessionsWithPendingPostProduction`
+   * (там лечили клиентским поллингом + `touchSessions`, потому что работа
+   * ещё шла асинхронно) — но здесь работа уже ЗАВЕРШЕНА, продлевать
+   * `lastActivityAt` нечем: `getSession()` (чистое чтение, вкладка
+   * «Постпрод») его не двигает. Вкладка «Постпрод» (этап 88) показывает
+   * ВСЕ готовые ролики пользователя без ограничения по времени — TTL,
+   * бравший верх раньше открытия вкладки, значит ролик физически исчезал
+   * из БД и Blob, а `PostprodVideoScreen` показывал «Ролик не найден»
+   * (баг, о котором сообщил пользователь после этапа 88). Сессии без
+   * готового ролика (черновики, брошенные на середине) по-прежнему
+   * подчищаются штатно — прячем от TTL только `generationStatus =
+   * 'complete'`. `not: 'complete'` на nullable-колонке включает и `NULL`
+   * (черновик без generatedVideo вообще), что и требуется.
+   *
+   * `deletedAt: null` (этап 89) — мягко удалённая сессия не нуждается в
+   * этой уборке: она уже ждёт `purgeSoftDeletedSessions()` (свой,
+   * более короткий срок — `SOFT_DELETE_GRACE_MS`), и подхватывать её
+   * ещё и здесь незачем.
    */
   async cleanupExpiredSessions(
     maxSessions = CLEANUP_BATCH,
@@ -583,7 +670,11 @@ export class SessionService {
     // (doc/STORAGE-AUDIT.md, дефект этапа 26). Партия ограничена: крон на
     // Vercel живёт 300 секунд, а накопиться могло много.
     const rows: SessionRow[] = await this.prisma.session.findMany({
-      where: { lastActivityAt: { lt: cutoff } },
+      where: {
+        lastActivityAt: { lt: cutoff },
+        generationStatus: { not: 'complete' },
+        deletedAt: null,
+      },
       orderBy: { lastActivityAt: 'asc' },
       take: maxSessions,
     });
@@ -595,10 +686,14 @@ export class SessionService {
     );
     // Условие по времени повторяется: сессия, которую тронули между
     // выборкой и удалением, больше не истёкшая — её трогать нельзя.
+    // `generationStatus` повторён по той же причине, что и выше — на
+    // случай, если рендер успел завершиться между выборкой и удалением.
     const result = await this.prisma.session.deleteMany({
       where: {
         id: { in: rows.map((r) => r.id) },
         lastActivityAt: { lt: cutoff },
+        generationStatus: { not: 'complete' },
+        deletedAt: null,
       },
     });
     return {

@@ -17,7 +17,7 @@ type PluralForms = Partial<Record<Intl.LDMLPluralRule, string>>;
 
 export type Dictionary = Omit<
   typeof ru,
-  'manifestsListScreen' | 'manifestScreen'
+  'manifestsListScreen' | 'manifestScreen' | 'deleteConfirm'
 > & {
   manifestsListScreen: Omit<typeof ru.manifestsListScreen, 'usedInProjects'> & {
     usedInProjects: PluralForms;
@@ -33,6 +33,27 @@ export type Dictionary = Omit<
         countHint: PluralForms;
       };
     };
+  };
+  /**
+   * «Умный» алерт удаления (этап 89) — счётчики под-сущностей
+   * (items/catalogBatchRuns/…) идут через `Intl.PluralRules`, как и
+   * остальные числовые формы словаря выше.
+   */
+  deleteConfirm: Omit<
+    typeof ru.deleteConfirm,
+    | 'items'
+    | 'catalogBatchRuns'
+    | 'abTestRuns'
+    | 'feedImportRuns'
+    | 'analogs'
+    | 'catalogBatchItems'
+  > & {
+    items: PluralForms;
+    catalogBatchRuns: PluralForms;
+    abTestRuns: PluralForms;
+    feedImportRuns: PluralForms;
+    analogs: PluralForms;
+    catalogBatchItems: PluralForms;
   };
 };
 

@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { getSession, deleteSession } from '../../../lib/endpoints';
 import type { SessionDetail } from '../../../lib/types';
 import { ApiRequestError } from '../../../lib/admin-api';
+import { ConfirmDialog } from '../../../components/ConfirmDialog';
 
 export default function SessionDetailPage() {
   const params = useParams<{ id: string }>();
@@ -12,6 +13,11 @@ export default function SessionDetailPage() {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // «Умный» алерт удаления (этап 89) — тот же механизм, что на TMA-
+  // стороне (ProjectScreen/PostprodScreen): вместо `confirm(...)` —
+  // модалка. У сессии нет под-сущностей для превью (см. doc-комментарий
+  // ConfirmDialog.tsx), поэтому тело диалога — фиксированный текст.
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     getSession(params.id)
@@ -20,7 +26,6 @@ export default function SessionDetailPage() {
   }, [params.id]);
 
   const handleDelete = async () => {
-    if (!confirm(`Удалить сессию ${params.id}? Это необратимо.`)) return;
     setDeleting(true);
     try {
       await deleteSession(params.id);
@@ -28,6 +33,7 @@ export default function SessionDetailPage() {
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : 'Не удалось удалить сессию');
       setDeleting(false);
+      setConfirmOpen(false);
     }
   };
 
@@ -81,9 +87,20 @@ export default function SessionDetailPage() {
         </pre>
       </div>
 
-      <button type="button" onClick={() => void handleDelete()} disabled={deleting}>
+      <button type="button" onClick={() => setConfirmOpen(true)} disabled={deleting}>
         {deleting ? 'Удаление…' : 'Удалить сессию'}
       </button>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title={`Удалить сессию ${params.id}?`}
+        busy={deleting}
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setConfirmOpen(false)}
+      >
+        Ролик (если сгенерирован), история генерации и все файлы сессии
+        будут удалены. Восстановить через интерфейс нельзя.
+      </ConfirmDialog>
     </div>
   );
 }

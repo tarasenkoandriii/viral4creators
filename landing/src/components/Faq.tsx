@@ -12,7 +12,18 @@ export function Faq() {
       {dict.faq.items.map((item, index) => {
         const isOpen = openIndex === index;
         return (
-          <div className={`faq-item ${isOpen ? 'faq-item-open' : ''}`} key={item.question}>
+          <div
+            className={`faq-item ${isOpen ? 'faq-item-open' : ''}`}
+            key={item.question}
+            // Найдено доп. аудитом: ИИ-консультант умеет прислать action
+            // {kind:'faq', faqIndex} (backend/assistant/actions.ts
+            // валидирует диапазон), но раньше это поле нигде на фронтенде
+            // не читалось — клик по подсказке всегда просто прыгал к
+            // началу секции FAQ целиком, что бы ни ответил ассистент.
+            // `data-faq-index` — тот же приём, что уже есть у
+            // `data-plan-id` для action 'plan' (см. AssistantWidget.tsx).
+            data-faq-index={index}
+          >
             <button
               type="button"
               className="faq-question"

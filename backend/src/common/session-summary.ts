@@ -114,7 +114,12 @@ function buildWhere(
     params.push(v);
     return `$${params.length}`;
   };
-  const conditions: string[] = [];
+  // Мягко удалённая сессия (этап 89, `deletedAt`) — не показываем её
+  // оператору так же, как не показываем владельцу (`SessionService.
+  // getSession`): в грейс-период до физической уборки
+  // (`purgeSoftDeletedSessions`) строка ещё жива в базе, но уже не
+  // существует ни для кого, кто её не удалял.
+  const conditions: string[] = [`s."deletedAt" IS NULL`];
   if (q.status) conditions.push(`s."status" = ${bind(q.status)}`);
   if (q.userId) conditions.push(`s."userId" = ${bind(q.userId)}`);
   if (q.quality) {

@@ -28,6 +28,15 @@ jest.mock('../blog/blog-translation.service', () => ({
   BlogTranslationService: class {},
 }));
 jest.mock('../project/project.service', () => ({ ProjectService: class {} }));
+// Этап 89: тот же класс проблемы, что у четырёх сервисов выше, просто
+// не заведённый в мок вовремя (этапы 65/66) — см. тот же комментарий в
+// `cron-jobs.service.spec.ts`.
+jest.mock('../catalog-batch/catalog-batch-worker.service', () => ({
+  CatalogBatchWorkerService: class {},
+}));
+jest.mock('../ab-test/ab-test-worker.service', () => ({
+  AbTestWorkerService: class {},
+}));
 
 import {
   ServiceUnavailableException,

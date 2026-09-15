@@ -462,7 +462,8 @@
     "offer": "Oferta pública",
     "terms": "Términos de uso",
     "builtWith": "Built with GitHub Spec Kit",
-    "legalNoticeOtherLocale": "La oferta pública y los términos de uso solo están disponibles en ruso por el momento."
+    "legalNoticeOtherLocale": "La oferta pública y los términos de uso solo están disponibles en ruso por el momento.",
+    "madeWithClaude": "Hecho con Claude — semana gratis"
   },
   "notFound": {
     "title": "Página no encontrada",

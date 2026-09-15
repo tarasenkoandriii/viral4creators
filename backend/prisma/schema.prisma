@@ -51,6 +51,18 @@ model Session {
   lastActivityAt DateTime @default(now())
   data           Json     @default("{}")
 
+  /// Софт-delete (этап 89): `DELETE /sessions/:id` (пользователь,
+  /// «Постпрод») и админское удаление больше не сносят строку сразу —
+  /// ставят метку, строка перестаёт быть видна (`getSession`,
+  /// `AdminPanelService.listSessions`/`getSession` фильтруют
+  /// `deletedAt: null`), а физически ряд и его файлы в Blob уносит
+  /// новый крон-проход `purgeSoftDeletedSessions()` спустя
+  /// `SOFT_DELETE_GRACE_MS` — тем же приёмом, что уже используется для
+  /// TTL-уборки (`cleanupExpiredSessions`), только повод другой: там
+  /// причина — бездействие, здесь — явное намерение удалить. NULL —
+  /// обычное состояние живой сессии.
+  deletedAt DateTime?
+
   /// Статус рендера, вынесенный из `data.generatedVideo.status` (этап 51,
   /// В-4.1). Телеметрия считала провалы фильтром по JSON-пути и
   /// распаковывала всю колонку `data` у каждой строки: 39 мс и 86 МБ
@@ -87,6 +99,8 @@ model Session {
   @@index([lastActivityAt])
   @@index([userId])
   @@index([projectId])
+  /// Этап 89: `purgeSoftDeletedSessions()` фильтрует по этой колонке.
+  @@index([deletedAt])
   /// Этап 51: телеметрия и отчёт считают провалы рендера и воронку по
   /// статусам — оба фильтра шли полным сканом.
   @@index([generationStatus])
@@ -332,6 +346,18 @@ model Project {
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
+  /// Софт-delete (этап 89): `DELETE /projects/:id` ставит метку вместо
+  /// немедленного `DELETE FROM projects` — читающие запросы
+  /// (`findOwnProject`/`listProjects`) фильтруют `deletedAt: null`, а
+  /// физическое удаление (и вместе с ним DB-каскад на `items`/
+  /// `catalogBatchRuns`/`abTestRuns`/`productFeedImportRuns`, плюс файлы
+  /// товаров в Blob) уносит `purgeSoftDeletedProjects()` спустя
+  /// `SOFT_DELETE_GRACE_MS`. Причина: «Умный алерт» перед удалением
+  /// показывает, сколько всего под капотом реально снесётся — было
+  /// неожиданностью, что каскад тянет не только товары, но и прогоны
+  /// пакетной генерации/A-B-теста/импорта фида (doc/STORAGE-AUDIT.md).
+  deletedAt DateTime?
+
   items        ProductItem[]
   sessions     Session[]
   publications PublicationRequest[]
@@ -343,6 +369,7 @@ model Project {
   @@index([brandManifestId])
   @@index([youtubeChannelId])
   @@index([tiktokChannelId])
+  @@index([deletedAt])
   @@map("projects")
 }
 
@@ -386,6 +413,15 @@ model ProductItem {
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
+  /// Софт-delete (этап 89) — тот же приём, что у `Project.deletedAt`:
+  /// `DELETE /projects/:id/items/:itemId` ставит метку, читающие запросы
+  /// фильтруют `deletedAt: null`, `purgeSoftDeletedItems()` физически
+  /// удаляет (каскадом уносит и `analogs`/`catalogBatchItems`) спустя
+  /// `SOFT_DELETE_GRACE_MS`. Не трогается отдельно, если удаляется
+  /// родительский проект целиком — тогда каскад БД при
+  /// `purgeSoftDeletedProjects()` делает то же самое за один DELETE.
+  deletedAt DateTime?
+
   analogs      ProductAnalog[]
   sessions     Session[]
   publications PublicationRequest[]
@@ -393,6 +429,7 @@ model ProductItem {
 
   @@index([projectId])
   @@index([photoHash])
+  @@index([deletedAt])
   @@map("product_items")
 }
 

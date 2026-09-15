@@ -44,16 +44,18 @@ describe('selectSessionSummaries', () => {
     // «не тот провайдер».
     expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'provider'`);
     expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'resolution'`);
-    expect(sql).toContain(
-      `"data" -> 'brandManifestSnapshot' ->> 'voiceMode'`,
-    );
+    expect(sql).toContain(`"data" -> 'brandManifestSnapshot' ->> 'voiceMode'`);
     expect(sql).toContain('LEFT JOIN "users" u');
     expect(sql).toContain(`'generatedVideo' -> 'error' ->> 'message'`);
     expect(sql).toContain(`'generatedVideo' -> 'error' ->> 'code'`);
     expect(sql).not.toMatch(/SELECT \*|,\s*s\."data"\s*,|s\."data"\s+FROM/);
   });
 
-  it('без фильтров — WHERE не пишется вовсе, параметры только take/skip', async () => {
+  it('без фильтров — WHERE несёт только deletedAt IS NULL (этап 89), параметры только take/skip', async () => {
+    // До этапа 89 без фильтров WHERE не писался вовсе; софт-delete
+    // сессий добавил условие БЕЗ параметра (литерал `IS NULL`, не
+    // связывание) — оно есть всегда, остальные фильтры по-прежнему
+    // опциональны.
     const { prisma } = build();
     await selectSessionSummaries(prisma as any, {
       sortBy: 'createdAt',
@@ -64,7 +66,8 @@ describe('selectSessionSummaries', () => {
       string,
       ...unknown[],
     ];
-    expect(sql).not.toContain('WHERE');
+    expect(sql).toContain('WHERE s."deletedAt" IS NULL');
+    expect(sql).not.toContain('AND');
     expect(params).toEqual([5, 0]);
   });
 
@@ -85,9 +88,7 @@ describe('selectSessionSummaries', () => {
       ...unknown[],
     ];
     expect(sql).toContain('s."status" = $1');
-    expect(sql).toContain(
-      `s."data" -> 'generatedVideo' ->> 'quality' = $2`,
-    );
+    expect(sql).toContain(`s."data" -> 'generatedVideo' ->> 'quality' = $2`);
     expect(sql).toContain(
       `s."data" -> 'brandManifestSnapshot' ->> 'voiceMode' = $3`,
     );

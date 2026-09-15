@@ -12,11 +12,18 @@
  * умеет JSON-путь) и не вытягивая всю колонку `data` целиком — на
  * список из многих сессий одного активного пользователя это ощутимо
  * дороже (см. доккомментарий в session-summary.ts и предупреждение в
- * schema.prisma у `data`). В отличие от admin-panel, здесь ровно два
- * условия в WHERE (userId + generationStatus='complete', индексные
- * колонки — не JSON-путь) и фиксированная сортировка (самый недавний
- * ролик первым) — отдельная `buildWhere`/выбор колонки сортировки не
- * нужны.
+ * schema.prisma у `data`). В отличие от admin-panel, здесь ровно три
+ * условия в WHERE (userId + generationStatus='complete' +
+ * deletedAt IS NULL, все — индексные колонки, не JSON-путь) и
+ * фиксированная сортировка (самый недавний ролик первым) — отдельная
+ * `buildWhere`/выбор колонки сортировки не нужны.
+ *
+ * `deletedAt IS NULL` (этап 89, найдено доп. аудитом — CRITICAL): без
+ * этого условия мягко удалённая Session (см. common/soft-delete.ts)
+ * весь грейс-период продолжала всплывать в списке «Постпрод» — ролик,
+ * который пользователь только что удалил, оставался виден и открывался
+ * заново, хотя `PostprodVideoScreen`'а по прямому GET-у по id уже
+ * фильтрует то же поле (`SessionService.getSession`).
  */
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -50,6 +57,7 @@ const SELECT_FROM = `
          s."data" -> 'generatedVideo' ->> 'resolution' AS "resolution"
   FROM "sessions" s
   WHERE s."userId" = $1 AND s."generationStatus" = 'complete'
+    AND s."deletedAt" IS NULL
 `;
 
 /** `skip`/`take` — уже нормализованные (см. controller: page/pageSize
@@ -76,7 +84,7 @@ export async function countPostprodVideoSummaries(
   prisma: PrismaService,
   userId: string,
 ): Promise<number> {
-  const sql = `SELECT COUNT(*)::bigint AS "count" FROM "sessions" s WHERE s."userId" = $1 AND s."generationStatus" = 'complete'`;
+  const sql = `SELECT COUNT(*)::bigint AS "count" FROM "sessions" s WHERE s."userId" = $1 AND s."generationStatus" = 'complete' AND s."deletedAt" IS NULL`;
   const rows = await prisma.$queryRawUnsafe<{ count: bigint }[]>(sql, userId);
   return Number(rows[0]?.count ?? 0);
 }

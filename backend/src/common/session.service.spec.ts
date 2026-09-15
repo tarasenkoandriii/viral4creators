@@ -1,5 +1,19 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
+// PrismaService и @prisma/client тянут сгенерированный клиент, которого в
+// песочнице нет (`prisma generate` недоступен — сеть до binaries.prisma.sh
+// закрыта, doc/CI.md). `WorkflowKind` — единственное отсюда, что
+// `session.service.ts` реально использует как значение (`.SESSION`), не
+// только как тип — тот же приём, что в `project.service.spec.ts` для
+// `Prisma.DbNull`.
 jest.mock('../prisma/prisma.service', () => ({ PrismaService: class {} }));
+jest.mock('@prisma/client', () => ({
+  Prisma: { DbNull: Symbol.for('Prisma.DbNull') },
+  WorkflowKind: {
+    SESSION: 'SESSION',
+    CATALOG_BATCH_ITEM: 'CATALOG_BATCH_ITEM',
+    AB_TEST_VARIANT: 'AB_TEST_VARIANT',
+  },
+}));
 
 import { DATA_KEYS, SessionService } from './session.service';
 
@@ -135,7 +149,7 @@ function buildRoundTrip() {
     productItemId: null,
   };
   const prisma = {
-    session: { findUnique: jest.fn().mockResolvedValue(row) },
+    session: { findFirst: jest.fn().mockResolvedValue(row) },
     // Этап 78: `updateSession` пишет событие воронки best-effort через
     // `logWorkflowStage` — она сама глотает ошибки, так что этот мок
     // нужен только тем тестам, которые хотят убедиться, что запись
@@ -240,7 +254,7 @@ describe('SessionService — круговорот полей сессии (Б-2.
     const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join('?');
     expect(sql).toContain('"data" || ?::jsonb');
     // Чтения перед записью нет: читать-и-писать — это и есть гонка.
-    expect(prisma.session.findUnique).not.toHaveBeenCalled();
+    expect(prisma.session.findFirst).not.toHaveBeenCalled();
   });
 
   it('статус пишется только когда передан', async () => {
@@ -268,7 +282,7 @@ describe('SessionService — круговорот полей сессии (Б-2.
 
   it('несуществующая сессия — undefined, а не исключение', async () => {
     const prisma = {
-      session: { findUnique: jest.fn() },
+      session: { findFirst: jest.fn() },
       $queryRaw: jest.fn().mockResolvedValue([]),
     };
     const svc = new SessionService(prisma as any);
@@ -407,5 +421,131 @@ describe('SessionService.claimWork / releaseWork (этап 47)', () => {
     await svc.releaseWork('s1', 'generate');
     const sql = (prisma.$executeRaw.mock.calls[0][0] as string[]).join('?');
     expect(sql).toContain('#- ARRAY');
+  });
+});
+
+/**
+ * Этап 89: `DELETE /sessions/:id` (пользователь, «Постпрод») и
+ * `AdminPanelService.deleteSession` (оператор) — «тот же механизм»:
+ * оба зовут `softDeleteSession`, который лишь ставит `deletedAt`. Раньше
+ * (этап 88.2) этот метод назывался `deleteSessionAndCollectBlobPaths` и
+ * удалял строку с файлами синхронно — та часть контракта (собрать пути
+ * ДО физического удаления строки) переехала в `purgeSoftDeletedSessions`
+ * ниже, единственное место, которое теперь удаляет строку по-настоящему.
+ */
+describe('SessionService.softDeleteSession (этап 89)', () => {
+  function buildSoftDelete(count: number) {
+    const prisma = {
+      session: { updateMany: jest.fn().mockResolvedValue({ count }) },
+    };
+    return { svc: new SessionService(prisma as any), prisma };
+  }
+
+  it('ставит deletedAt, а не удаляет строку', async () => {
+    const { svc, prisma } = buildSoftDelete(1);
+    expect(await svc.softDeleteSession('s1')).toEqual({ deleted: true });
+    expect(prisma.session.updateMany).toHaveBeenCalledWith({
+      where: { id: 's1', deletedAt: null },
+      data: { deletedAt: expect.any(Date) },
+    });
+  });
+
+  it('сессии не было (или уже мягко удалена) — deleted=false, не исключение', async () => {
+    const { svc } = buildSoftDelete(0);
+    expect(await svc.softDeleteSession('nope')).toEqual({ deleted: false });
+  });
+});
+
+/**
+ * Крон-проход (этап 89): физически убирает строки, мягко удалённые
+ * больше `SOFT_DELETE_GRACE_MS` назад — тот же контракт «собрать пути
+ * файлов ДО удаления строки», что был у прежнего
+ * `deleteSessionAndCollectBlobPaths` (этап 88.2) и остаётся у
+ * `cleanupExpiredSessions` ниже.
+ */
+describe('SessionService.purgeSoftDeletedSessions (этап 89)', () => {
+  const row = (id: string, data: Record<string, unknown> = {}) => ({
+    id,
+    status: 'complete',
+    createdAt: new Date('2026-09-06T12:00:00Z'),
+    lastActivityAt: new Date('2026-09-06T12:00:00Z'),
+    data,
+    userId: 'u1',
+    projectId: null,
+    productItemId: null,
+  });
+
+  function buildPurge(rows: Record<string, unknown>[]) {
+    const prisma = {
+      session: {
+        findMany: jest.fn().mockResolvedValue(rows),
+        deleteMany: jest.fn().mockResolvedValue({ count: rows.length }),
+      },
+    };
+    return { svc: new SessionService(prisma as any), prisma };
+  }
+
+  it('пустая партия — ничего не удаляет', async () => {
+    const { svc, prisma } = buildPurge([]);
+    expect(await svc.purgeSoftDeletedSessions()).toEqual({
+      count: 0,
+      blobPathnames: [],
+      hasMore: false,
+    });
+    expect(prisma.session.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('собирает пути файлов ДО удаления строк', async () => {
+    const { svc, prisma } = buildPurge([
+      row('s1', { generatedVideo: { pathname: 'sessions/s1/generated.mp4' } }),
+    ]);
+    const result = await svc.purgeSoftDeletedSessions();
+    expect(result.count).toBe(1);
+    expect(result.blobPathnames).toContain('sessions/s1/generated.mp4');
+    expect(prisma.session.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['s1'] }, deletedAt: { lt: expect.any(Date) } },
+    });
+    const findOrder = prisma.session.findMany.mock.invocationCallOrder[0];
+    const deleteOrder = prisma.session.deleteMany.mock.invocationCallOrder[0];
+    expect(findOrder).toBeLessThan(deleteOrder);
+  });
+
+  it('партия ровно maxSessions — hasMore=true', async () => {
+    const { svc } = buildPurge([row('s1')]);
+    const result = await svc.purgeSoftDeletedSessions(1);
+    expect(result.hasMore).toBe(true);
+  });
+});
+
+/**
+ * `deletedAt: null` (этап 89) — обе читающие/убирающие точки не должны
+ * трогать мягко удалённую сессию: `getSession` (пользователь/остальной
+ * бэкенд) её не видит, `cleanupExpiredSessions` (TTL-уборка брошенных
+ * сессий) её не трогает — она уже ждёт `purgeSoftDeletedSessions`.
+ */
+describe('SessionService — deletedAt: null фильтрация (этап 89)', () => {
+  it('getSession запрашивает { id, deletedAt: null }', async () => {
+    const prisma = {
+      session: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const svc = new SessionService(prisma as any);
+    await svc.getSession('s1');
+    expect(prisma.session.findFirst).toHaveBeenCalledWith({
+      where: { id: 's1', deletedAt: null },
+    });
+  });
+
+  it('cleanupExpiredSessions исключает мягко удалённые из выборки и удаления', async () => {
+    const prisma = {
+      session: {
+        findMany: jest.fn().mockResolvedValue([]),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const svc = new SessionService(prisma as any);
+    await svc.cleanupExpiredSessions();
+    expect(prisma.session.findMany.mock.calls[0][0].where).toMatchObject({
+      deletedAt: null,
+    });
   });
 });

@@ -48,10 +48,12 @@ import type {
   BrandManifestSummaryView,
   BrandManifestView,
   CountryOption,
+  ItemDeletePreview,
   JsonObject,
   ProcessPhotoResult,
   ProductItemView,
   ProductPriceSource,
+  ProjectDeletePreview,
   ProjectSummaryView,
   ProjectType,
   ProjectView,
@@ -62,6 +64,18 @@ import type {
 
 export function isUnauthorized(err: unknown): boolean {
   return axios.isAxiosError(err) && err.response?.status === 401;
+}
+
+/**
+ * Найдено доп. аудитом (LOW) — раньше 404 от `getItemDeletePreview`/
+ * `getProjectDeletePreview` (уже удалено, например с другого устройства
+ * или другой вкладкой) и обычный сбой сети читались одинаково: пустой
+ * `preview` и общий текст «не удалось посчитать точно» (см.
+ * ProjectScreen.tsx's onDeleteItem/onDeleteProject). 404 здесь —
+ * не «не смогли посчитать», а «нечего удалять».
+ */
+export function isNotFoundError(err: unknown): boolean {
+  return axios.isAxiosError(err) && err.response?.status === 404;
 }
 
 /**
@@ -170,6 +184,22 @@ export async function deleteProject(projectId: string): Promise<void> {
   await api.delete(`/projects/${projectId}`);
 }
 
+/**
+ * «Умный» алерт удаления (этап 89): точные счётчики того, что каскадом
+ * уйдёт из БД вместе с проектом — до самого `deleteProject`, чтобы
+ * диалог подтверждения мог показать их пользователю, а не общую фразу.
+ */
+export async function getProjectDeletePreview(
+  projectId: string
+): Promise<ProjectDeletePreview> {
+  return unwrap(
+    await api.get<ProjectDeletePreview>(
+      `/projects/${projectId}/delete-preview`
+    ),
+    'delete-preview'
+  );
+}
+
 // ── Items ──────────────────────────────────────────────────────────────
 
 export type AudienceInput = Omit<Partial<AudienceProfile>, 'source'>;
@@ -212,6 +242,19 @@ export async function deleteItem(
   itemId: string
 ): Promise<void> {
   await api.delete(`/projects/${projectId}/items/${itemId}`);
+}
+
+/** То же самое (см. `getProjectDeletePreview`), только для одного товара. */
+export async function getItemDeletePreview(
+  projectId: string,
+  itemId: string
+): Promise<ItemDeletePreview> {
+  return unwrap(
+    await api.get<ItemDeletePreview>(
+      `/projects/${projectId}/items/${itemId}/delete-preview`
+    ),
+    'delete-preview'
+  );
 }
 
 // ── Photo → analogs (two-step presigned Blob flow, spec §6.1) ───────────
@@ -1185,9 +1228,7 @@ export async function previewVoice(
       ...(text ? { text } : {}),
       ...(voiceId ? { voiceId } : {}),
       ...(options?.provider ? { provider: options.provider } : {}),
-      ...(options?.useOriginalDialogue
-        ? { useOriginalDialogue: true }
-        : {}),
+      ...(options?.useOriginalDialogue ? { useOriginalDialogue: true } : {}),
       ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
     }),
     'preview'

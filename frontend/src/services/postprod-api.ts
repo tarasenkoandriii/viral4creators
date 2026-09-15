@@ -16,6 +16,11 @@
  * pageSize}`), не курсором, как у `getFeed`: список — «мои ролики», а
  * не бесконечная общая лента, и бэкенд уже считает `total` тем же
  * способом, что и постранично админский список сессий.
+ *
+ * `deletePostprodVideo` (этап 88.2) — штатное удаление своего ролика
+ * (`DELETE /sessions/:id`, новый маршрут в `sessions.controller.ts`);
+ * владение проверяет глобальный `SessionOwnerGuard` на бэкенде, здесь —
+ * просто вызов.
  */
 
 import { api } from './api';
@@ -65,13 +70,25 @@ export interface PostprodVideoListResult {
 
 export async function listPostprodVideos(
   page = 1,
-  pageSize = 20
+  pageSize = 20,
+  // `offset` (найдено доп. аудитом, HIGH) — явный сдвиг для «Показать
+  // ещё» после локального удаления строки на экране (см.
+  // PostprodScreen.tsx's loadMore и доккомментарий бэкендового
+  // PostprodVideosService.listFinishedVideos): без него следующая
+  // порция считалась бы по номинальному номеру страницы и пропускала
+  // бы один ролик на границе.
+  offset?: number
 ): Promise<PostprodVideoListResult> {
   const params = new URLSearchParams();
   params.set('page', String(page));
   params.set('pageSize', String(pageSize));
+  if (offset !== undefined) params.set('offset', String(offset));
   return unwrap(
     await api.get<PostprodVideoListResult>(`/postprod/videos?${params}`),
     'список роликов'
   );
+}
+
+export async function deletePostprodVideo(sessionId: string): Promise<void> {
+  await api.delete(`/sessions/${sessionId}`);
 }

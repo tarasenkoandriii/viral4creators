@@ -20,6 +20,7 @@ import {
   Badge,
   Button,
   Card,
+  ConfirmDialog,
   EmptyState,
   Select,
   Spinner,
@@ -30,16 +31,112 @@ import {
   deleteItem,
   deleteProject,
   errorMessage,
+  getItemDeletePreview,
   getProject,
+  getProjectDeletePreview,
+  isNotFoundError,
   listBrandManifests,
   updateProject,
 } from '../../services/projects-api';
+import type {
+  ItemDeletePreview,
+  ProjectDeletePreview,
+} from '../../types/project';
 import { useAsync } from '../../lib/useAsync';
 import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import { LoadError, ScreenHeader } from './shared';
-import { formatPrice, itemLabel } from './format';
+import { formatPrice, itemLabel, pluralForm } from './format';
 import { FeedImportPanel } from './FeedImportPanel';
+
+/** Одна непустая строка счётчика — `null`, если считать нечего (0). */
+function countLine(
+  n: number,
+  locale: ReturnType<typeof useI18n>['locale'],
+  forms: Parameters<typeof pluralForm>[2]
+): string | null {
+  return n > 0 ? pluralForm(n, locale, forms) : null;
+}
+
+/**
+ * Тело диалога подтверждения — «умный» алерт удаления (этап 89): точные
+ * счётчики под-сущностей вместо общей фразы «это необратимо». Пока
+ * `preview` не пришёл (ушёл 404/ошибка сети), диалог не блокирует
+ * удаление — просто честно говорит, что список неточный.
+ */
+function ProjectDeletePreviewBody({
+  preview,
+  locale,
+  dict,
+}: {
+  preview: ProjectDeletePreview | null;
+  locale: ReturnType<typeof useI18n>['locale'];
+  dict: ReturnType<typeof useI18n>['dict'];
+}) {
+  if (!preview) return <p>{dict.deleteConfirm.previewFailed}</p>;
+  const lines = [
+    countLine(preview.items, locale, dict.deleteConfirm.items),
+    countLine(
+      preview.catalogBatchRuns,
+      locale,
+      dict.deleteConfirm.catalogBatchRuns
+    ),
+    countLine(preview.abTestRuns, locale, dict.deleteConfirm.abTestRuns),
+    countLine(
+      preview.feedImportRuns,
+      locale,
+      dict.deleteConfirm.feedImportRuns
+    ),
+  ].filter((l): l is string => l !== null);
+  if (lines.length === 0) {
+    return <p>{dict.deleteConfirm.nothingElseProject}</p>;
+  }
+  return (
+    <>
+      <p>{dict.deleteConfirm.willDelete}</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-4">
+        {lines.map((l) => (
+          <li key={l}>{l}</li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function ItemDeletePreviewBody({
+  preview,
+  locale,
+  dict,
+}: {
+  preview: ItemDeletePreview | null;
+  locale: ReturnType<typeof useI18n>['locale'];
+  dict: ReturnType<typeof useI18n>['dict'];
+}) {
+  if (!preview) return <p>{dict.deleteConfirm.previewFailed}</p>;
+  const lines = [
+    countLine(preview.analogs, locale, dict.deleteConfirm.analogs),
+    countLine(
+      preview.catalogBatchItems,
+      locale,
+      dict.deleteConfirm.catalogBatchItems
+    ),
+  ].filter((l): l is string => l !== null);
+  if (lines.length === 0) {
+    return <p>{dict.deleteConfirm.nothingElseItem}</p>;
+  }
+  return (
+    <>
+      <p>{dict.deleteConfirm.willDelete}</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-4">
+        {lines.map((l) => (
+          <li key={l}>{l}</li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+type PendingDelete = { kind: 'project' } | { kind: 'item'; itemId: string };
 
 export function ProjectScreen({ projectId }: { projectId: string }) {
   const { dict, locale } = useI18n();
@@ -52,6 +149,19 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   } = useAsync(() => getProject(projectId), [projectId]);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // «Умный» алерт удаления (этап 89): открытие диалога и загрузка
+  // точных счётчиков — два отдельных шага, счётчики могут прийти позже
+  // (или не прийти вовсе) без блокировки самого диалога.
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(
+    null
+  );
+  const [projectPreview, setProjectPreview] =
+    useState<ProjectDeletePreview | null>(null);
+  const [itemPreview, setItemPreview] = useState<ItemDeletePreview | null>(
+    null
+  );
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   // Brand manifest attach/detach (spec §12) — optional, so a failure to
   // list manifests must not break the project screen itself.
   const manifests = useAsync(() => listBrandManifests().catch(() => []), []);
@@ -121,31 +231,84 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     }
   };
 
-  const onDeleteItem = async (itemId: string) => {
-    if (!window.confirm(dict.projectScreen.confirmDeleteItem)) return;
-    setBusy(itemId);
+  // Открывает диалог сразу (не ждёт ответа сети) и подгружает точные
+  // счётчики отдельно — так модалка не «зависает» пустой на медленной
+  // сети, а показывает спиннер внутри уже открытого диалога.
+  const onDeleteItem = (itemId: string) => {
     setActionError(null);
-    try {
-      await deleteItem(projectId, itemId);
-      setData((p) =>
-        p ? { ...p, items: p.items.filter((i) => i.id !== itemId) } : p
-      );
-    } catch (e) {
-      setActionError(errorMessage(e));
-    } finally {
-      setBusy(null);
-    }
+    setItemPreview(null);
+    setPendingDelete({ kind: 'item', itemId });
+    setPreviewLoading(true);
+    getItemDeletePreview(projectId, itemId)
+      .then((p) => setItemPreview(p))
+      .catch((e) => {
+        if (isNotFoundError(e)) {
+          // Найдено доп. аудитом (LOW): 404 здесь — не «не смогли
+          // посчитать точно» (previewFailed), а «уже удалено» (другая
+          // вкладка/устройство, или срок мягкого удаления истёк). Диалог
+          // над несуществующим товаром закрываем и обновляем список, а не
+          // оставляем висеть с общим текстом ошибки.
+          setPendingDelete(null);
+          setActionError(dict.deleteConfirm.alreadyDeleted);
+          void reload();
+          return;
+        }
+        setItemPreview(null);
+      })
+      .finally(() => setPreviewLoading(false));
   };
 
-  const onDeleteProject = async () => {
-    if (!window.confirm(dict.projectScreen.confirmDeleteProject)) return;
-    setBusy('delete');
+  const onDeleteProject = () => {
+    setActionError(null);
+    setProjectPreview(null);
+    setPendingDelete({ kind: 'project' });
+    setPreviewLoading(true);
+    getProjectDeletePreview(projectId)
+      .then((p) => setProjectPreview(p))
+      .catch((e) => {
+        if (isNotFoundError(e)) {
+          // Тот же фикс, что и в onDeleteItem выше (этап 89, доп. аудит).
+          setPendingDelete(null);
+          setActionError(dict.deleteConfirm.alreadyDeleted);
+          navigate(routes.projects(), true);
+          return;
+        }
+        setProjectPreview(null);
+      })
+      .finally(() => setPreviewLoading(false));
+  };
+
+  const onCancelDelete = () => {
+    if (deleteBusy) return;
+    setPendingDelete(null);
+  };
+
+  const onConfirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleteBusy(true);
+    setActionError(null);
     try {
-      await deleteProject(projectId);
-      navigate(routes.projects(), true);
+      if (pendingDelete.kind === 'project') {
+        await deleteProject(projectId);
+        setPendingDelete(null);
+        navigate(routes.projects(), true);
+        return;
+      }
+      await deleteItem(projectId, pendingDelete.itemId);
+      setData((p) =>
+        p
+          ? {
+              ...p,
+              items: p.items.filter((i) => i.id !== pendingDelete.itemId),
+            }
+          : p
+      );
+      setPendingDelete(null);
     } catch (e) {
       setActionError(errorMessage(e));
-      setBusy(null);
+      setPendingDelete(null);
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -200,7 +363,6 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
             size="sm"
             icon={<Trash2 size={14} />}
             onClick={onDeleteProject}
-            loading={busy === 'delete'}
             aria-label={dict.projectScreen.deleteProjectAriaLabel}
           />
         }
@@ -289,9 +451,8 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
                     aria-label={dict.projectScreen.deleteItemAriaLabel}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void onDeleteItem(item.id);
+                      onDeleteItem(item.id);
                     }}
-                    disabled={busy === item.id}
                     className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg p-1.5 text-silver-400 hover:bg-rose-500/10 hover:text-rose-500 disabled:opacity-50"
                   >
                     <Trash2 size={14} />
@@ -419,6 +580,33 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
           </div>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={
+          pendingDelete?.kind === 'project'
+            ? dict.deleteConfirm.projectTitle
+            : dict.deleteConfirm.itemTitle
+        }
+        loadingBody={previewLoading}
+        busy={deleteBusy}
+        onConfirm={() => void onConfirmDelete()}
+        onCancel={onCancelDelete}
+      >
+        {pendingDelete?.kind === 'project' ? (
+          <ProjectDeletePreviewBody
+            preview={projectPreview}
+            locale={locale}
+            dict={dict}
+          />
+        ) : (
+          <ItemDeletePreviewBody
+            preview={itemPreview}
+            locale={locale}
+            dict={dict}
+          />
+        )}
+      </ConfirmDialog>
     </div>
   );
 }

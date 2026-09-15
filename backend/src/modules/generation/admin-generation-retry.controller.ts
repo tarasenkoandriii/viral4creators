@@ -87,7 +87,17 @@ export class AdminGenerationRetryController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
 
-    const row = await this.prisma.session.findUnique({ where: { id } });
+    // `findFirst` + `deletedAt: null`, не `findUnique({ where: { id } })`
+    // (этап 89, найдено доп. аудитом): это было единственное чтение
+    // сессии в контроллере, обходившее фильтр мягкого удаления — тот же,
+    // что `AdminPanelService.getSession` уже применяет для финального
+    // ответа этого же метода несколькими строками ниже (см. её
+    // доккомментарий). Мягко удалённая сессия весь грейс-период
+    // оставалась доступна повтору рендера, хотя оператор её уже не
+    // видит в списке.
+    const row = await this.prisma.session.findFirst({
+      where: { id, deletedAt: null },
+    });
     if (!row) {
       throw new NotFoundException(`Session ${id} not found`);
     }
@@ -201,7 +211,10 @@ export class AdminGenerationRetryController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
 
-    const row = await this.prisma.session.findUnique({ where: { id } });
+    // Тот же фикс, что и в `retry` выше (этап 89, доп. аудит).
+    const row = await this.prisma.session.findFirst({
+      where: { id, deletedAt: null },
+    });
     if (!row) {
       throw new NotFoundException(`Session ${id} not found`);
     }
@@ -259,7 +272,10 @@ export class AdminGenerationRetryController {
   ): Promise<VideoVersionView[]> {
     await this.adminPanel.assertOperator(req.userId);
 
-    const row = await this.prisma.session.findUnique({ where: { id } });
+    // Тот же фикс, что и в `retry` выше (этап 89, доп. аудит).
+    const row = await this.prisma.session.findFirst({
+      where: { id, deletedAt: null },
+    });
     if (!row) {
       throw new NotFoundException(`Session ${id} not found`);
     }

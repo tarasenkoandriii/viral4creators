@@ -13,7 +13,10 @@
     "close": "Schließen",
     "comparePlans": "Tarife vergleichen",
     "availableIn": "Verfügbar in {{plan}}",
-    "unavailable": "Nicht verfügbar"
+    "unavailable": "Nicht verfügbar",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "checkingWhatWillBeDeleted": "Wird geprüft, was gelöscht wird…"
   },
   "errors": {
     "tooManyRequests": "Zu viele Anfragen — bitte versuchen Sie es gleich noch einmal",
@@ -420,9 +423,7 @@
     "videoCopyHint": "Die Produktdaten{{extra}} werden in einen neuen Generierungslauf kopiert; als Nächstes — Referenzvideo, Analyse, Prompt.",
     "andBrandManifestSuffix": " und das Marken-Manifest",
     "videoButtonLine": "Video: {{item}}",
-    "videoButtonSingle": "Zur Videogenerierung",
-    "confirmDeleteItem": "Dieses Produkt aus der Serie löschen?",
-    "confirmDeleteProject": "Das gesamte Projekt löschen? Bereits generierte Videos bleiben erhalten."
+    "videoButtonSingle": "Zur Videogenerierung"
   },
   "itemScreen": {
     "steps": {
@@ -998,7 +999,13 @@
     }
   },
   "generationWizard": {
-    "steps": ["Video", "Analyse", "Produkt", "Prompt", "Generierung"],
+    "steps": [
+      "Video",
+      "Analyse",
+      "Produkt",
+      "Prompt",
+      "Generierung"
+    ],
     "errorTitle": "Fehler",
     "prefilledAlert": "Die Produktdaten wurden aus dem Projekt übernommen — das ist eine Kopie zum Startzeitpunkt; Änderungen hier ändern nicht das Produkt selbst.",
     "openProjectCta": "Projekt öffnen",
@@ -1060,6 +1067,7 @@
     "generatedLabel": "Generierte Werbung",
     "afterProcessingLabel": "Nach der Bearbeitung",
     "originalVeoLabel": "Veo-Original",
+    "originalGrokLabel": "Grok-Original",
     "previousAttemptLabel": "Versuch vom {{date}}",
     "formatLabel": "Format: {{ratio}}",
     "reframePendingNote": "— aufgenommen in {{rendered}}, wird auf {{target}} zugeschnitten; das Video unten kann bereits angesehen werden, der Link aktualisiert sich von selbst.",
@@ -1179,12 +1187,13 @@
     "revoiceBadge": "Neuvertonung möglich",
     "processingBadge": "Wird verarbeitet",
     "failedBadge": "Nachbearbeitung fehlgeschlagen",
-    "openButton": "Öffnen"
+    "deleteAriaLabel": "Video löschen"
   },
   "postprodVideoScreen": {
     "notFoundTitle": "Video nicht gefunden",
     "notFoundHint": "Die Sitzung wurde möglicherweise gelöscht, oder dies ist nicht Ihr Video.",
-    "untitledTitle": "Video"
+    "untitledTitle": "Video",
+    "deleteAriaLabel": "Video löschen"
   },
   "feedImport": {
     "panelTitle": "Produkte per Link importieren",
@@ -1213,5 +1222,40 @@
     "rowFailed": "Fehlgeschlagen",
     "rowSkipped": "Übersprungen",
     "problemsMore": "Und {{count}} weitere"
+  },
+  "deleteConfirm": {
+    "projectTitle": "Projekt löschen?",
+    "itemTitle": "Artikel löschen?",
+    "sessionTitle": "Video löschen?",
+    "willDelete": "Damit werden auch aus der Datenbank gelöscht:",
+    "nothingElseProject": "Keine Unter-Entitäten — es wird nur das Projekt selbst gelöscht.",
+    "nothingElseItem": "Keine Analoga oder anderen Daten — es wird nur der Artikel selbst gelöscht.",
+    "previewFailed": "Die genaue Liste konnte nicht geladen werden — die Löschung betrifft aber trotzdem verknüpfte Daten.",
+    "alreadyDeleted": "Bereits gelöscht (z. B. von einem anderen Gerät) — die Liste wurde aktualisiert.",
+    "sessionBody": "Das Video, sein Generierungsverlauf und alle Sitzungsdateien werden gelöscht. Über die Oberfläche nicht wiederherstellbar.",
+    "items": {
+      "one": "{{n}} Artikel",
+      "other": "{{n}} Artikel"
+    },
+    "catalogBatchRuns": {
+      "one": "{{n}} Stapelgenerierungslauf",
+      "other": "{{n}} Stapelgenerierungsläufe"
+    },
+    "abTestRuns": {
+      "one": "{{n}} A/B-Test-Lauf",
+      "other": "{{n}} A/B-Test-Läufe"
+    },
+    "feedImportRuns": {
+      "one": "{{n}} Feed-Import-Lauf",
+      "other": "{{n}} Feed-Import-Läufe"
+    },
+    "analogs": {
+      "one": "{{n}} gefundenes Analogon",
+      "other": "{{n}} gefundene Analoga"
+    },
+    "catalogBatchItems": {
+      "one": "{{n}} Stapelgenerierungs-Position",
+      "other": "{{n}} Stapelgenerierungs-Positionen"
+    }
   }
 }

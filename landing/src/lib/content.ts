@@ -20,6 +20,19 @@ export const GITHUB_REPO_URL = 'https://github.com/IuriiD/viral4creators';
 export const SPEC_KIT_URL = 'https://github.com/github/spec-kit';
 
 /**
+ * Доп. запрос владельца продукта: реферальная ссылка Claude в футере
+ * лендинга — тот же приём и тот же fallback-адрес, что уже в TMA
+ * (`frontend/src/App.tsx`/`TermsGate.tsx`, `VITE_CLAUDE_REFERRAL_URL`):
+ * ссылка в env, а не зашита в код, чтобы реферальный код можно было
+ * сменить без правки исходников. Next.js-эквивалент той же переменной —
+ * `NEXT_PUBLIC_` префикс обязателен для значений, читаемых в клиентском
+ * бандле (тот же приём, что уже у `NEXT_PUBLIC_TMA_URL` выше).
+ */
+export const CLAUDE_REFERRAL_URL =
+  process.env.NEXT_PUBLIC_CLAUDE_REFERRAL_URL ??
+  'https://claude.ai/referral/P7cQCOjbvg?s=android';
+
+/**
  * Этап 58 (TODO §II.5): абсолютный адрес самого лендинга. До блога он
  * нигде не требовался — весь контент был на относительных путях внутри
  * одного домена. `sitemap.xml`/`sitemap-news.xml` обязаны содержать

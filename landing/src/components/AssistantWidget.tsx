@@ -555,9 +555,31 @@ export function AssistantWidget({ locale, dict, page, variant }: AssistantWidget
           window.location.href = `/${locale}#plans`;
           return;
         }
-        case 'faq':
+        case 'faq': {
+          // Найдено доп. аудитом: `faqIndex` раньше нигде не читался —
+          // тот же приём, что уже есть у 'plan' выше (querySelector по
+          // data-атрибуту + scrollIntoView + вспышка), теперь открывает
+          // ИМЕННО тот вопрос, который назвал ассистент, а не просто
+          // прокручивает к началу списка.
+          const faqIndex = action.faqIndex;
+          if (page === 'home' && typeof faqIndex === 'number') {
+            const item = document.querySelector<HTMLElement>(
+              `[data-faq-index="${faqIndex}"]`
+            );
+            if (item) {
+              const question = item.querySelector<HTMLButtonElement>('.faq-question');
+              if (question && question.getAttribute('aria-expanded') !== 'true') {
+                question.click();
+              }
+              item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              item.classList.add('plan-flash');
+              setTimeout(() => item.classList.remove('plan-flash'), 1500);
+              return;
+            }
+          }
           window.location.href = page === 'home' ? '#faq' : `/${locale}#faq`;
           return;
+        }
         case 'legal':
           if (action.slug === 'offer' || action.slug === 'terms-of-use') {
             window.location.href = `/legal/${action.slug}`;

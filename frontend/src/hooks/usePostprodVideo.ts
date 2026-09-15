@@ -47,6 +47,12 @@ export function usePostprodVideo(sessionId: string) {
   const [error, setError] = useState<unknown>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inFlight = useRef(false);
+  // Найдено доп. аудитом (LOW) — `PostprodVideoScreen`'а LoadError не мог
+  // предложить «Повторить» без способа перезапустить загрузку заново, не
+  // покидая экран (единственный выход был «назад» на список). Тот же
+  // приём, что часто используют другие экраны: счётчик в зависимостях
+  // эффекта, инкремент которого — единственная задача reload().
+  const [reloadKey, setReloadKey] = useState(0);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -100,8 +106,10 @@ export function usePostprodVideo(sessionId: string) {
       alive = false;
       stopPolling();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- перезапуск только по смене sessionId
-  }, [sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- перезапуск только по смене sessionId/reloadKey
+  }, [sessionId, reloadKey]);
+
+  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
   const reVoice = useCallback(
     async (voiceoverScript?: string) => {
@@ -136,5 +144,6 @@ export function usePostprodVideo(sessionId: string) {
     error,
     reVoice,
     setSnapshot,
+    reload,
   };
 }

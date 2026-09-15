@@ -143,8 +143,12 @@ export class CatalogBatchService {
       description: string | null;
       photoUrl: string | null;
     }
+    // `deletedAt: null` (этап 89, найдено доп. аудитом): без него мягко
+    // удалённый товар молча проходил бы весь грейс-период — не как
+    // «отсутствует» (см. ветку `missing` ниже), а как обычный товар в
+    // партии.
     const items: ProductItemSlim[] = await this.prisma.productItem.findMany({
-      where: { id: { in: requestedIds }, projectId },
+      where: { id: { in: requestedIds }, projectId, deletedAt: null },
       select: {
         id: true,
         price: true,

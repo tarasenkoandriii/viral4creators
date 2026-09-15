@@ -33,6 +33,7 @@
 | --- | --- | --- |
 | `POST /api/sessions` | открыто | создать сессию (под идентичностью привяжется к пользователю) |
 | `GET /api/sessions/:id` | открыто | всё состояние сессии |
+| `DELETE /api/sessions/:id` | открыто | удалить свой готовый ролик из «Постпрода» (этап 88.2); с этапа 89 — софт-delete: ставит `deletedAt` (`SessionService.softDeleteSession`, общий метод с `DELETE /api/admin/sessions/:id` ниже — «тот же механизм»), физическая уборка строки и файлов в Blob — фоновым кроном спустя грейс-период (24 ч); 404, если сессии уже нет (в т.ч. уже мягко удалённой) |
 | `POST /api/sessions/:id/video/upload-url` | открыто | presigned PUT для файла-референса |
 | `POST /api/sessions/:id/video/youtube` | открыто | зарегистрировать ссылку как референс |
 | `POST /api/sessions/:id/video/library` | открыто | взять готовый разбор из библиотеки (§21) |
@@ -78,9 +79,11 @@
 | Метод и путь | Доступ | Назначение |
 | --- | --- | --- |
 | `POST/GET /api/projects` | идентичность | создать проект / список |
-| `GET/PATCH/DELETE /api/projects/:id` | идентичность | проект (удаление уносит фото товаров) |
+| `GET/PATCH/DELETE /api/projects/:id` | идентичность | проект; `DELETE` — софт-delete (этап 89): ставит `deletedAt`, физическая уборка строки/фото товаров/файлов — фоновым кроном спустя грейс-период (24 ч), не синхронно в запросе |
+| `GET /api/projects/:id/delete-preview` | идентичность | «умный» алерт удаления (этап 89): точные счётчики того, что каскадом уйдёт из БД вместе с проектом — `{items, catalogBatchRuns, abTestRuns, feedImportRuns}`, до самого `DELETE` |
 | `POST /api/projects/:id/items` | идентичность | добавить товар |
-| `PATCH/DELETE /api/projects/:id/items/:itemId` | идентичность | товар: поля, аудитория (§18.2), удаление |
+| `PATCH/DELETE /api/projects/:id/items/:itemId` | идентичность | товар: поля, аудитория (§18.2); `DELETE` — софт-delete (этап 89, тот же приём, что у проекта) |
+| `GET /api/projects/:id/items/:itemId/delete-preview` | идентичность | то же самое (см. выше), только для одного товара — `{analogs, catalogBatchItems}` |
 | `POST /api/projects/:id/items/:itemId/photo/upload-url` | идентичность | presigned PUT для фото товара |
 | `POST /api/projects/:id/items/:itemId/photo/process` | идентичность | распознать категорию/аудиторию + аналоги (SerpApi) |
 | `POST /api/projects/:id/items/:itemId/voice/upload-url` | идентичность | presigned PUT для голосового описания |
@@ -193,7 +196,7 @@
 | `POST /api/admin/auth/logout` | открыто | выйти из админки |
 | `GET /api/admin/auth/me` | сессия админки | кто вошёл |
 | `GET /api/admin/sessions` | оператор | список сессий |
-| `GET/DELETE /api/admin/sessions/:id` | оператор | сессия / удалить |
+| `GET/DELETE /api/admin/sessions/:id` | оператор | сессия / удалить — с этапа 89 тот же софт-delete через `SessionService.softDeleteSession`, что у пользовательского `DELETE /api/sessions/:id` выше |
 | `GET /api/admin/users?q=&plan=&operators=1&blocked=1&page=&pageSize=` | оператор | пользователи: режим, права, счётчики активности; сводка `byPlan` — по всей базе (§25) |
 | `GET /api/admin/users/:id` | оператор | карточка пользователя + 10 последних сессий + баланс кредитов и подписка (§41, этап 62) |
 | `PATCH /api/admin/users/:id` | оператор | режим, флаг оператора, блокировка (`isBlocked`, `blockedReason`); снять оператора или заблокировать САМОГО СЕБЯ нельзя (403) |

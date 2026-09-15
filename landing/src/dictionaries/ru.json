@@ -462,7 +462,8 @@
     "offer": "Оферта",
     "terms": "Условия использования",
     "builtWith": "Built with GitHub Spec Kit",
-    "legalNoticeOtherLocale": "Договор и условия использования пока доступны только на русском языке."
+    "legalNoticeOtherLocale": "Договор и условия использования пока доступны только на русском языке.",
+    "madeWithClaude": "Сделано с Claude — неделя бесплатно"
   },
   "notFound": {
     "title": "Страница не найдена",

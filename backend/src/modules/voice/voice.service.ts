@@ -169,8 +169,17 @@ export class VoiceService {
     projectId: string,
     itemId: string,
   ): Promise<void> {
+    // `deletedAt: null` (этап 89, найдено доп. аудитом) — тот же класс
+    // дыры, что и в ProductAnalogService/ProjectSessionService: без
+    // фильтра голосовую заметку можно было записать поверх мягко
+    // удалённого товара весь грейс-период.
     const item = await this.prisma.productItem.findFirst({
-      where: { id: itemId, projectId, project: { userId } },
+      where: {
+        id: itemId,
+        projectId,
+        deletedAt: null,
+        project: { userId, deletedAt: null },
+      },
       select: { id: true },
     });
     if (!item) {

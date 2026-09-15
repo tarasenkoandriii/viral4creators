@@ -216,7 +216,8 @@ export class ProductAnalogService {
     const cached: CachedItem | null = await this.prisma.productItem.findFirst({
       where: {
         photoHash,
-        project: { userId },
+        deletedAt: null,
+        project: { userId, deletedAt: null },
         analogs: { some: {} },
       },
       select: {
@@ -340,8 +341,18 @@ export class ProductAnalogService {
     projectId: string,
     itemId: string,
   ): Promise<OwnedItem> {
+    // `deletedAt: null` on both item and project (этап 89, найдено доп.
+    // аудитом): без этого фильтра мягко удалённый товар — или товар
+    // мягко удалённого проекта — оставался доступен для загрузки фото и
+    // поиска аналогов весь грейс-период, тем же классом дыры, что уже
+    // закрыт в ProjectService.findOwnItem.
     const item: OwnedItem | null = await this.prisma.productItem.findFirst({
-      where: { id: itemId, projectId, project: { userId } },
+      where: {
+        id: itemId,
+        projectId,
+        deletedAt: null,
+        project: { userId, deletedAt: null },
+      },
       select: {
         id: true,
         projectId: true,

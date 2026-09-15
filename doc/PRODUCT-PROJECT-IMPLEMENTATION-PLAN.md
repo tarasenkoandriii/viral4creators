@@ -2600,30 +2600,39 @@ jest-правилами), tsc чист, 21 миграция подряд на ч
 зелёные, покрытие выросло с 57,7 % до 66,2 %.
 
 ## Итоговая сверка (обновлена после этапа 80 — лента, лайки и репосты;
-маршруты/контроллеры/миграции/таблицы пересчитаны заново на этапе 82 —
-ИИ-консультант; счётчик тестов ниже по строке — всё ещё после этапа 80,
-см. оговорку в самой строке)
+маршруты/контроллеры пересчитаны заново на этапе 82 — ИИ-консультант, и
+снова на этапе 89 (два новых `GET .../delete-preview`); миграции/таблицы
+пересчитаны на этапе 89 (`scripts/check-docs.mjs`); счётчик тестов ниже
+по строке — всё ещё после этапа 80, см. оговорку в самой строке)
 
-- Backend: **214 маршрутов в 44 контроллерах** (число пересчитано
-  заново `scripts/check-docs.mjs` при этапе 82 — предыдущая строка
-  «189/39» держалась с этапа 80 и не учитывала прирост стадий 78б/79/81
-  между тем сквозным подсчётом и этим; этап 82 (ИИ-консультант, §"Сделано
-  (этап 82…)" выше) сам добавил ровно 2 контроллера
-  (`AssistantController`, `AssistantAdminController`) и 6 маршрутов
-  (`GET/POST /assistant/config,chat,event`, `GET/PATCH /admin/settings/assistant`,
-  `GET /admin/assistant`); остаток разницы с «189/39» — из стадий,
-  прошедших без обновления именно этой сводной строки, а не из этого
-  этапа), eslint 0 ошибок по всем файлам, изменённым этапом
+- Backend: **219 маршрутов в 46 контроллерах** (214/44 после этапа 82 —
+  предыдущая строка «189/39» держалась с этапа 80 и не учитывала прирост
+  стадий 78б/79/81 между тем сквозным подсчётом и этим; этап 82
+  (ИИ-консультант, §"Сделано (этап 82…)" выше) сам добавил ровно 2
+  контроллера (`AssistantController`, `AssistantAdminController`) и 6
+  маршрутов (`GET/POST /assistant/config,chat,event`,
+  `GET/PATCH /admin/settings/assistant`, `GET /admin/assistant`); остаток
+  разницы с «189/39» — из стадий, прошедших без обновления именно этой
+  сводной строки, а не из этого этапа; этапы 83–88 добавили свои
+  контроллеры/маршруты без обновления этой строки — отсюда разница с
+  214/44; этап 89 (софт-delete + «умный» алерт удаления) сам добавил
+  ровно 2 маршрута — `GET /projects/:id/delete-preview`,
+  `GET /projects/:id/items/:itemId/delete-preview` — без новых
+  контроллеров), eslint 0 ошибок по всем файлам, изменённым этапом
   (`--max-warnings 0`), `prisma validate` пройден локально (схема
-  валидна); все **49** миграции подряд на чистом Postgres 16
-  (**42** таблиц — этап 82 добавил ровно одну новую таблицу,
-  `assistant_events`, и ровно одну миграцию,
-  `20261027090100_assistant_event`, применённую и подтверждённую на
-  локальном Postgres 16 этой же песочницы — `docker` здесь недоступен
-  («no such file or directory» у демона), но нашёлся отдельно
-  установленный кластер `postgresql-16` (`pg_lsclusters`, выключен по
-  умолчанию — `sudo pg_ctlcluster 16 main start`), тем же способом, что
-  описан в `doc/TELEGRAM-ADMIN.md` §5).
+  валидна); все **50** миграции подряд на чистом Postgres 16
+  (**42** таблиц — этап 89 добавил ровно одну новую миграцию
+  (`deletedAt` на `projects`/`product_items`/`sessions`, см. §"Сделано
+  (этап 89…)" ниже), ни одной новой таблицы — три существующие таблицы
+  получили по одной новой колонке (`deletedAt`) с обычным индексом
+  каждая; этап 82
+  добавил ровно одну новую таблицу, `assistant_events`, и ровно одну
+  миграцию, `20261027090100_assistant_event`, применённую и
+  подтверждённую на локальном Postgres 16 этой же песочницы — `docker`
+  здесь недоступен («no such file or directory» у демона), но нашёлся
+  отдельно установленный кластер `postgresql-16` (`pg_lsclusters`,
+  выключен по умолчанию — `sudo pg_ctlcluster 16 main start`), тем же
+  способом, что описан в `doc/TELEGRAM-ADMIN.md` §5).
   **2067 теста / 146 наборов** (2051/145 после аудита кода трёх
   последних ТЗ + 16 тестов этапа 80 — см. новый абзац прироста ниже;
   этап 82 добавил свои тесты — минимум 56 в четырёх новых спек-файлах,
@@ -7618,6 +7627,539 @@ build`) — чисто, `npm test` (`scripts/*.test.ts`, включая обно
 проверки пройдены. `node scripts/check-docs.mjs` — маршруты/контроллеры
 обновлены (216/46), осталось то же единственное пред-существующее
 расхождение («переменные окружения»), не связано с этой правкой.
+
+**Сделано (этап 88.1 — готовые ролики больше не «протухают» по TTL).**
+Владелец продукта после этапа 88, живым тестом: «настройки под
+переозвучку в порядке — но говорит что не мой ролик в процессе», со
+скриншотами `PostprodVideoScreen` в состоянии «Ролик не найден» рядом
+с исправно открывшимся `RevoicePanel` того же ролика в другой раз.
+
+Причина — не про владение (текст подсказки «это не ваш ролик» оказался
+моей же общей заглушкой, введшей владельца продукта в заблуждение
+насчёт диагноза, а не отражением реальной проверки). `GET /sessions/
+:sessionId` при отсутствующей строке отдаёт `200 {data: null}`, а не
+403/404 (`sessions.controller.ts`), и фронтовый `getSession()` разворачивает
+это в чистый `null` без исключения — то же самое состояние экрана, что
+даёт настоящий «не найден». Строка пропадала физически:
+`cleanupExpiredSessions()` (крон `cleanup-sessions`, раз в сутки,
+`SESSION_TTL_HOURS=24` по умолчанию) безусловно удаляла ЛЮБУЮ сессию
+старше суток бездействия — включая уже готовый, оплаченный ролик.
+`getSession()` (её использует новый `usePostprodVideo`) — чистое чтение,
+`lastActivityAt` не двигает (тот же доккомментарий уже предупреждал об
+этом на `touchSessions`). Ровно тот же класс дефекта, что этапы 76/77
+уже чинили для незавершённого яруса B автоэкспорта и Grok-пачек
+(`findSessionsWithPendingTierBExport`/`findSessionsWithPendingGrokBatch`
++ `touchSessions` из крон-тика) — только там работа ещё шла асинхронно,
+а здесь она уже завершена: продлевать `lastActivityAt` нечем, значит
+решение не «продлить», а «исключить из уборки». До этапа 88 это было
+терпимо (единственный путь к ролику — активный `sessionId` мастера,
+обычно открываемый в тот же день), но именно вкладка «Постпрод» ввела
+инвариант «список ВСЕХ готовых роликов без ограничения по времени»,
+которому TTL-уборка прямо противоречит.
+
+Правка — один фильтр в обоих `WHERE` `cleanupExpiredSessions()`
+(`backend/src/common/session.service.ts`): `generationStatus: { not:
+'complete' }`. Черновики и брошенные на середине сессии по-прежнему
+убираются штатно; `not: 'complete'` на nullable-колонке заодно верно
+включает `NULL` (сессии без `generatedVideo` вообще). Обратная сторона
+осознанно принята и записана в `doc/STORAGE-AUDIT.md` (новый раздел):
+Blob-файлы готового ролика (и всё, что рядом с ним под тем же `<id>` —
+превью, фото-персонажей, своя сцена) с этого момента не удаляются TTL
+вообще, только оператором в админке — раз сама идея «Постпрода» это
+«все готовые ролики пользователя навсегда», хранение растёт без
+ограничения; штатного пользовательского «удалить свой ролик» сейчас
+нет — стоит следить за счётом за Blob и/или завести такую кнопку
+отдельным этапом, если объём станет заметным.
+
+Файлы: `backend/src/common/session.service.ts`
+(`cleanupExpiredSessions`, доккомментарий), `backend/src/common/
+session-cleanup.spec.ts` (новый кейс на оба `WHERE`), `doc/
+STORAGE-AUDIT.md` (новый раздел + шаги проверки на стенде переписаны —
+TTL-уборка теперь проверяется на черновике, а не на готовом ролике;
+удаление готового — через админку), `doc/ACCEPTANCE-CHECKLIST.md`
+(тот же пересмотр шага 6b).
+
+Проверка: `npx tsc --noEmit` и `npx eslint` в `backend/` — чисто (те же
+пред-существующие ошибки непосгенерированного Prisma-клиента, ни одна
+не касается правки). `npx jest` в `backend/` — 928/928 прежних проверок
+по-прежнему проходят; `session-cleanup.spec.ts` (новый кейс входит в
+тот же файл) не компилируется по тому же ограничению песочницы, что и
+`session.service.spec.ts` до него, — написан, но не выполнен здесь;
+проверено вручную по `WHERE`, которые тест сверяет с исходником.
+`node scripts/check-docs.mjs` — то же единственное пред-существующее
+расхождение («переменные окружения»), новых нет.
+
+**Сделано (этап 88.2 — удаление своего ролика/сессии; кнопки удаления
+проекта/товара уже существовали).** Прямой запрос владельца продукта
+сразу за этапом 88.1: «сделай — и такую же кнопку крестик в правом
+верхнем углу — для удаления сессий или проектов — их тоже нет».
+Проверка кода перед реализацией показала, что для проектов и товаров
+(`ProjectScreen`) удаление уже было — кнопка-корзина в правом верхнем
+углу через `ScreenHeader`'s `action` (проект) и в строке каждого товара
+(этап 26/42, Б-2.8). Не было ровно одного: штатного способа удалить
+СЕССИЮ (готовый ролик) — только оператор в админке
+(`AdminPanelController.deleteSession`). Раньше это было терпимо (на
+ролик до этапа 88 вообще не было отдельного экрана), но с «Постпродом»
+пользователь смотрит на список своих роликов и явно ждёт кнопку
+удаления рядом — ровно то, что он и попросил.
+
+- **Новый маршрут `DELETE /sessions/:sessionId`** в уже существующем
+  `SessionsController` (`POST`/`GET` там уже были) — не отдельный
+  контроллер, потому что у сессий и так один контроллер на все три
+  действия. Владение проверяет глобальный `SessionOwnerGuard` (тот же
+  приём, что у `POST /sessions/:id/postprod/revoice` и
+  `POST /sessions/:id/export` — отдельный гвард на маршруте не нужен);
+  несуществующая сессия — 404 (гвард её пропускает мимо себя, «404
+  отдаёт сам обработчик», как и было задумано в его доккомментарии).
+- **`SessionService.deleteSessionAndCollectBlobPaths`** — тот же
+  порядок «собрать пути → удалить строку», что у
+  `cleanupExpiredSessions()`. Заменил собой старый
+  `deleteSession(): Promise<boolean>`, который нигде не вызывался и не
+  собирал пути вообще — использовать его как есть значило бы повторить
+  баг Б-5.9 (удалённая сессия без чистки Blob). `AdminPanelService.
+  deleteSession` не тронут (не рефакторил на общий метод — трогать
+  стабильный, уже покрытый тестами админский путь ради дедупликации
+  посчитал неоправданным риском).
+- **Файлы в Blob удаляет `SessionsController`** через `BlobService`
+  (новый импорт `StorageModule` в `SessionsModule`), best-effort — тот
+  же приём, что у крона и у админского удаления: строка уже удалена,
+  ронять ответ из-за сбоя хранилища незачем, остаток подберёт метла.
+- **Фронтенд.** Кнопка-корзина в правом верхнем углу
+  `PostprodVideoScreen` (`ScreenHeader`'s `action`) — буквальный
+  «крестик» не стали делать: у него в интерфейсе уже устоявшийся смысл
+  «закрыть», а не «удалить» (кнопка `×` нигде в проекте не удаляет), и
+  весь остальной проект уже говорит на языке `Trash2` для удаления
+  (`ProjectScreen`) — тот же значок здесь, для единообразия, а не
+  новый. Тот же значок и там же (правый край строки, `stopPropagation`)
+  добавлен и в список `PostprodScreen` — тем же приёмом, что
+  построчное удаление товара на `ProjectScreen`. Оба места удаляют
+  через `deletePostprodVideo` (`services/postprod-api.ts`, тонкая
+  обёртка над `DELETE /sessions/:id`), с `window.confirm` (тот же
+  приём, что `onDeleteProject`/`onDeleteItem`) и локальным обновлением
+  состояния без перезагрузки списка (список — фильтрует удалённую
+  запись и уменьшает `total`; экран одного ролика — уходит на
+  `routes.postprod()` с `replace:true`, чтобы «назад» не вело на
+  удалённый ролик).
+- **Побочный эффект, дополняющий этап 88.1** (`doc/STORAGE-AUDIT.md`):
+  раз готовые ролики больше не удаляются TTL, а штатного способа
+  избавиться от старых не было, Blob рос бы бесконтрольно. Теперь
+  пользователь может почистить «Постпрод» сам — Blob больше не растёт
+  БЕЗОСТАНОВОЧНО, но по-прежнему ничто не делает это автоматически:
+  если пользователь не удаляет старые ролики сам, они остаются
+  навсегда. Раздел про этап 88.1 в `doc/STORAGE-AUDIT.md` обновлён.
+
+Файлы: `backend/src/common/session.service.ts`
+(`deleteSessionAndCollectBlobPaths`, заменил старый `deleteSession`),
+`backend/src/common/session.service.spec.ts` (новые кейсы),
+`backend/src/modules/sessions/sessions.controller.ts` (`DELETE
+/:sessionId`), `backend/src/modules/sessions/sessions.module.ts`
+(импорт `StorageModule`), `doc/API.md`, `README.md` (217/46),
+`frontend/src/services/postprod-api.ts` (`deletePostprodVideo`),
+`frontend/src/features/postprod/PostprodVideoScreen.tsx`,
+`frontend/src/features/postprod/PostprodScreen.tsx`,
+`frontend/src/dictionaries/{ru,uk,en,de,es}.json`
+(`postprodScreen`/`postprodVideoScreen` — `deleteAriaLabel`,
+`confirmDelete`), `doc/STORAGE-AUDIT.md`.
+
+Проверка: `npx tsc --noEmit` и `npx eslint` в `backend/` и `frontend/`
+на всех изменённых файлах — чисто (в `backend/` те же
+пред-существующие ошибки непосгенерированного Prisma-клиента, ни одна
+не касается правки). `npx jest` в `backend/` — 928/928 прежних проверок
+по-прежнему проходят (новые кейсы в `session.service.spec.ts` —
+написаны, но не компилируются в этой песочнице по тому же
+ограничению, что и раньше; логика проверена вручную по мокам, которые
+тест на них строит). В `frontend/`: `npm run build` (`tsc && vite
+build`) — чисто, `npm test` — все проверки, включая симметрию словарей
+по 5 локалям, пройдены. `node scripts/check-docs.mjs` — маршруты
+обновлены (217/46), то же единственное пред-существующее расхождение
+(«переменные окружения»), новых нет.
+
+**Сделано (этап 89 — «умный» алерт удаления + софт-delete Project/
+ProductItem/Session + тот же механизм в админке).** Прямой запрос
+владельца продукта, дословно: «добавить интеллектуальный алерт при
+удалении проекта и других комплексных сущностей — показывать какие
+именно под-сущности будут удалены из базы; реализовать софт-delete —
+такие сущности уже можно подчищать кроном; реализовать тот же механизм
+в админке для сессий». Три части одного решения: `DELETE` перестаёт
+быть синхронным и необратимым сразу же — интерфейс сперва честно
+показывает, что каскадом уйдёт из БД, а сама уборка строки и файлов в
+Blob откладывается на грейс-период и физически выполняется кроном.
+
+Решения, закрывшие открытые вопросы до реализации: область — только
+Project/ProductItem/Session (Brand Manifest, ProductAnalog и прочее вне
+скоупа — их `DELETE` остаётся синхронным, как раньше); грейс-период —
+захардкоженная константа `SOFT_DELETE_GRACE_MS = 24 ч`, НЕ env-переменная
+(настраивать нечего — восстановления через интерфейс нет и не
+планируется); у Project/ProductItem превью — реальные счётчики каскада
+из БД, у Session превью нет вовсе (все её связи `SetNull`, каскадить
+нечему — честный фиксированный текст вместо пустых счётчиков); крон
+физической уборки не заводит новый маршрут/джобу, а встраивается в уже
+существующий ежедневный `cleanup-sessions` (`CronJobsService.
+runCleanupSessions`) — три новых пасса с тем же батч/бюджет-лимитом
+(`CLEANUP_MAX_PASSES`/`CLEANUP_TIME_BUDGET_MS`), что и у TTL-уборки.
+
+- **Схема.** Миграция `20261028090000_soft_delete_project_item_session`
+  (написана вручную — сеть до `binaries.prisma.sh` недоступна, см.
+  `doc/TELEGRAM-ADMIN.md` §5) — три новые колонки `deletedAt
+  TIMESTAMP(3)` с обычным индексом каждая на `projects`, `product_items`,
+  `sessions`; ни одной новой таблицы.
+- **`ProjectService`** — `findOwnProject`/`findOwnItem` (общая точка
+  входа для владельческих маршрутов) фильтруют `deletedAt: null`, так
+  что мягко удалённая строка ведёт себя как несуществующая для всего
+  API, не только для `DELETE`. `deleteProject`/`deleteItem` теперь
+  ставят `deletedAt` (`update`) вместо каскадного `delete` + синхронной
+  чистки Blob. Новые `getProjectDeletePreview`/`getItemDeletePreview` —
+  считают `items`/`catalogBatchRuns`/`abTestRuns`/`feedImportRuns` (для
+  проекта) и `analogs`/`catalogBatchItems` (для товара) через `.count()`
+  по живым связям — до самого удаления, для диалога подтверждения.
+  Новые `purgeSoftDeletedProjects`/`purgeSoftDeletedItems` — батчами
+  (`PURGE_BATCH = 500`) находят строки с `deletedAt` старше
+  грейс-периода, каскадно удаляют их (реальный `delete` — Prisma сама
+  снесёт `ProductAnalog`/`CatalogBatchItem`/и т.д. через `onDelete:
+  Cascade` схемы) и чистят их файлы в Blob тем же кодом, что раньше
+  вызывался синхронно; гонка «родитель-проект уже физически удалён этим
+  же проходом, а его товар — отдельной строкой в очереди» закрыта новой
+  `isRecordNotFoundError` (P2025, структурная проверка без рантайм-
+  импорта `Prisma.PrismaClientKnownRequestError`, см. ниже) — тихо
+  пропускается, не роняет прогон.
+- **`ProjectController`** — два новых маршрута,
+  `GET :projectId/delete-preview` и
+  `GET :projectId/items/:itemId/delete-preview`, оба под тем же
+  `TelegramIdentityGuard`/владельческой проверкой, что и сам `DELETE`
+  рядом.
+- **`common/prisma-errors.ts`** — новая `isRecordNotFoundError` (P2025),
+  тем же приёмом, что уже была `isUniqueConstraintViolation` (P2002):
+  структурная проверка `error.code`, а не `instanceof
+  Prisma.PrismaClientKnownRequestError` — последнее требует рантайм-
+  импорта `Prisma` из `@prisma/client`, который в этой песочнице не
+  типизируется без сгенерированного клиента.
+- **`SessionService`** — «тот же механизм», как и просил владелец
+  продукта: `softDeleteSession` — один метод (`updateMany` с
+  `deletedAt: null` в фильтре, идемпотентно), которым теперь пользуются
+  ОБА маршрута — пользовательский `DELETE /sessions/:id`
+  (`SessionsController`) и админский `DELETE /api/admin/sessions/:id`
+  (`AdminPanelService`, который для этого стал инжектить
+  `SessionService` — доступно без явного импорта модуля, `SessionService`
+  уже `@Global()`). Раньше (этап 88.2) это были два независимых
+  раздельных обработчика — теперь один источник правды. `getSession`
+  фильтрует `deletedAt: null` (та же логика 404-в-грейс-периоде, что у
+  `ProjectService`). Новая `purgeSoftDeletedSessions` — то же самое, что
+  `purgeSoftDeletedProjects`/`Items`, только собирает пути файлов и
+  отдаёт их вызывающему коду (тот же `SoftDeletePurgeResult`, что уже
+  был в `common/soft-delete.ts` до этого этапа) — сам крон уносит файлы
+  через уже существующий `BlobService.deleteMany`.
+- **`session-summary.ts`** (питает админский список сессий) —
+  `buildWhere()` теперь всегда начинает с `s."deletedAt" IS NULL`
+  (литерал, не параметр — мягко удалённые сессии не видны оператору в
+  списке вообще, не только по прямому `GET`).
+  `cleanupExpiredSessions` (TTL-уборка черновиков, этап 88.1) тоже
+  фильтрует `deletedAt: null` — TTL и софт-delete не пересекаются.
+- **`SessionsController`/`SessionsModule`** — контроллер больше не
+  трогает `BlobService` напрямую (файлы теперь уносит крон, не запрос),
+  поэтому `StorageModule` ушёл из импортов модуля.
+- **`CronJobsService.runCleanupSessions`** — после существующего
+  TTL-прохода добавлены три независимых пасс/бюджет-лимитных цикла:
+  `purgeSoftDeletedSessions` → `purgeSoftDeletedProjects` →
+  `purgeSoftDeletedItems`, каждый до `CLEANUP_MAX_PASSES` проходов или
+  исчерпания `CLEANUP_TIME_BUDGET_MS`. Пути файлов мягко удалённых
+  сессий уходят в тот же `collected`-массив, что и TTL-уборка — один
+  вызов `BlobService.deleteMany` на всё; `ProjectService` чистит свои
+  файлы сама (уже умела). Результат (`CleanupSessionsResult`) пополнился
+  `purgedSoftDeletedSessions/Projects/Items` и `hasMoreSoftDeleted` —
+  видно в истории ручных прогонов в админке (`AdminCronService`).
+  `CronModule` — новый импорт `ProjectModule` (без риска цикличности:
+  `ProjectModule` импортирует только `StorageModule`).
+- **Фронтенд TMA — «умный» алерт вместо `window.confirm`.** Новый
+  `components/ui/ConfirmDialog.tsx` — модалка (оверлей + карточка,
+  Esc/клик-мимо закрывают, кроме как во время самого удаления), общая
+  для всех трёх мест. `ProjectScreen.tsx` — `onDeleteProject`/
+  `onDeleteItem` открывают диалог сразу и подгружают точные счётчики
+  отдельным запросом (`getProjectDeletePreview`/`getItemDeletePreview`);
+  тело диалога — список ненулевых счётчиков с числовыми формами через
+  `Intl.PluralRules` (`pluralForm`, перенесена в `features/projects/
+  format.ts` — тот же приём, что уже был у `ManifestScreen` для похожей
+  задачи), либо честный текст «под-сущностей нет», либо, если сам
+  запрос счётчиков не удался, «не удалось загрузить точный список» — и
+  в этом случае диалог НЕ блокирует удаление, просто не обещает точности.
+  `PostprodScreen.tsx`/`PostprodVideoScreen.tsx` — тот же компонент, но
+  без запроса счётчиков (у Session превью не бывает по архитектуре) —
+  сразу фиксированный текст про то, что ролик и файлы сессии будут
+  удалены без возможности восстановить через интерфейс. Новые ключи
+  словаря — `common.cancel/delete/checkingWhatWillBeDeleted` и
+  `deleteConfirm.*` (заголовки, счётчики с числовыми формами,
+  запасные тексты) во всех пяти локалях.
+- **Админка — тот же механизм для сессий.** Новый
+  `components/ConfirmDialog.tsx` (простой CSS admin-панели, без
+  Tailwind — свои классы `.dialog-overlay`/`.dialog-card`/
+  `.dialog-actions`/`.button-danger` в `globals.css`). `sessions/[id]/
+  page.tsx` — `confirm(...)` заменён на диалог с тем же честным текстом,
+  что и на TMA-стороне (без счётчиков — по той же причине).
+- **Документация.** `doc/API.md` — два новых маршрута, обновлено
+  описание `DELETE`-семантики у всех четырёх изменённых маршрутов
+  (софт-delete вместо немедленного удаления). `doc/STORAGE-AUDIT.md` —
+  новый раздел «Удаление стало софт-delete с грейс-периодом», плюс
+  правки в разделах, которые раньше называли удаление синхронным
+  (таблица путей не менялась — она про ВЛАДЕЛЬЦА файла, не про тайминг).
+  `doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md` (эта запись + «Итоговая
+  сверка» — 50 миграций, 219/46 маршрутов/контроллеров),
+  `doc/ACCEPTANCE-CHECKLIST.md`, `doc/CI.md`, `doc/TELEGRAM-ADMIN.md`
+  (×2), `README.md` — число миграций/маршрутов синхронизировано с
+  `scripts/check-docs.mjs`.
+
+Файлы: backend —
+`prisma/schema.prisma`, `prisma/migrations/
+20261028090000_soft_delete_project_item_session/migration.sql`,
+`src/common/prisma-errors.ts` (`isRecordNotFoundError`),
+`src/common/types/project.types.ts` (`ProjectDeletePreview`,
+`ItemDeletePreview`), `src/modules/project/project.service.ts`,
+`src/modules/project/project.service.spec.ts`,
+`src/modules/project/project.controller.ts`,
+`src/common/session.service.ts`, `src/common/session.service.spec.ts`,
+`src/common/session-summary.ts`, `src/common/session-summary.spec.ts`,
+`src/modules/sessions/sessions.controller.ts`,
+`src/modules/sessions/sessions.module.ts`,
+`src/modules/admin-panel/admin-panel.service.ts`,
+`src/modules/admin-panel/admin-panel.service.spec.ts`,
+`src/modules/admin-panel/admin-panel.module.ts`,
+`src/modules/cron/cron-jobs.service.ts`,
+`src/modules/cron/cron-jobs.service.spec.ts`,
+`src/modules/cron/cron.module.ts`, `src/modules/cron/cron.controller.ts`,
+`src/modules/cron/cron.controller.spec.ts`,
+`src/modules/cron/admin-cron.service.ts`,
+`src/modules/cron/admin-cron.service.spec.ts`. Frontend —
+`src/types/project.ts`, `src/services/projects-api.ts`,
+`src/components/ui/ConfirmDialog.tsx` (новый),
+`src/components/ui/index.ts`, `src/features/projects/ProjectScreen.tsx`,
+`src/features/projects/format.ts` (`pluralForm`),
+`src/features/postprod/PostprodScreen.tsx`,
+`src/features/postprod/PostprodVideoScreen.tsx`,
+`src/lib/get-dictionary.ts`, `src/dictionaries/{ru,uk,en,de,es}.json`.
+Admin — `src/components/ConfirmDialog.tsx` (новый),
+`src/app/globals.css`, `src/app/sessions/[id]/page.tsx`. Доки —
+`doc/API.md`, `doc/STORAGE-AUDIT.md`,
+`doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`,
+`doc/ACCEPTANCE-CHECKLIST.md`, `doc/CI.md`, `doc/TELEGRAM-ADMIN.md`,
+`README.md`.
+
+Проверка: `npx tsc --noEmit` в `backend/` — чисто (те же 503
+пред-существующие строки непосгенерированного Prisma-клиента, ни одна
+не касается правки); `npx eslint` на изменённых файлах — чисто.
+`npx jest --config jest.config.sandbox.json` (полный прогон, без
+фильтра, временный конфиг для песочницы — см. doc-комментарий вверху
+любого `*.spec.ts` этого этапа) — **1497/1497 тестов, 120/167 наборов**
+(47 пред-существующих «не может загрузиться» по тому же ограничению
+Prisma-клиента, ни один из них не тронут этим этапом — проверено по
+именам файлов). Новые/переписанные спек-файлы:
+`project.service.spec.ts` (36/36), `session.service.spec.ts`,
+`admin-panel.service.spec.ts`, `session-summary.spec.ts` (8/8),
+`cron-jobs.service.spec.ts` (включая новый набор про физическую уборку
+трёх видов сущностей одним проходом). Попутно найден и закрыт
+пред-существующий пробел трёх спек-файлов (`cron-jobs.service.spec.ts`,
+`cron.controller.spec.ts`, `admin-cron.service.spec.ts`) — они не
+мокали `CatalogBatchWorkerService`/`AbTestWorkerService` (этапы 65/66),
+из-за чего не загружались в этой песочнице вообще, независимо от правок
+этого этапа; исправлено тем же приёмом, что уже применён к четырём
+другим сервисам в тех же файлах. `frontend/`: `npx tsc --noEmit`,
+`npx eslint`, `npm run build` — чисто. `admin/`: `npx tsc --noEmit`,
+`npx eslint`, `npm run build` (`next build`) — чисто, 23/23 страниц
+собраны. `node scripts/check-docs.mjs` — все числовые расхождения,
+связанные с этим этапом (миграции 49→50, маршруты 217→219), закрыты;
+осталось одно пред-существующее, не связанное с этим этапом
+(«переменные окружения» — `GEMINI_IMAGE_MODEL`/`GROK_VIDEO_MODEL`/
+`OPENAI_FAST_MODEL`/`VITE_CLAUDE_REFERRAL_URL`, не трогалось этим
+этапом).
+
+**Сделано (этап 90 — реклама Claude на лендинге, фикс подписи «Veo» на
+Grok-роликах, девятый сквозной аудит ИИ-советника/софт-delete/
+постпродакшна и исправление всех его находок одним проходом).** Один
+запрос владельца продукта, четыре части: «добавь на футер лендинга
+рекламу клауде — тот же словарь переиспользовать», «в постпродашене всё
+ещё написано Вео, хотя стенд использовал Грок», «проведи детальный
+аудит ИИ советника + софт делете + постпродакшна», «исправь все
+замечания аудита в одном проходе».
+
+- **Реклама Claude в футере лендинга.** `landing/src/lib/content.ts` —
+  новая `CLAUDE_REFERRAL_URL` (тот же приём и тот же fallback-адрес, что
+  уже у TMA — `frontend/src/App.tsx`/`TermsGate.tsx`,
+  `VITE_CLAUDE_REFERRAL_URL`; на Next.js — `NEXT_PUBLIC_`-эквивалент
+  переменной). `landing/src/app/[locale]/page.tsx` — ссылка в футере.
+  Ключ словаря `footer.madeWithClaude` — тот же текст, что уже был у
+  TMA, добавлен во все пять локалей `landing/src/dictionaries/*.json`
+  («тот же словарь переиспользовать», как просил владелец продукта).
+- **Подпись провайдера на исходном ролике постпродакшна.**
+  `PostprodVideoScreen.tsx` безусловно подписывала неотредактированный
+  вариант «Оригинал Veo», даже когда генерация шла через Grok (тот же
+  класс бага, что `GenerationWizard` уже чинил для заголовков занятости
+  — см. её доккомментарий). Подпись теперь зависит от
+  `video.provider === 'grok'` — `originalGrokLabel`/`originalVeoLabel`
+  в словаре TMA (5 локалей).
+- **Девятый сквозной аудит** (по прямому запросу владельца продукта,
+  без отдельного файла с находками — триаж и правки одним проходом) трёх
+  областей: ИИ-советник (`modules/assistant/`, этап 82), софт-delete
+  (`common/soft-delete.ts` и потребители, этап 89), постпродакшн
+  (`modules/postprod/`, `postprod-video-summary.ts`, этапы 84/88/88.1/
+  88.2). Ниже — все находки, закрытые кодом в этом же проходе.
+- **Софт-delete — не хватало `deletedAt: null` на нескольких путях,
+  найденных ПОСЛЕ этапа 89** (владельческие проверки и один кеш-запрос
+  молча обслуживали мягко удалённые проект/товар весь грейс-период,
+  как будто ничего не удалялось): `ProductAnalogService.findOwnedItem` +
+  кеш-запрос по `photoHash` в `processPhoto`; `ProjectSessionService.
+  createFromItem`/`listForItem`; `VoiceService.assertOwnedItem`;
+  `CatalogBatchService` — выборка позиций партии; `ProductFeedImportService.
+  create`/`list`; `AdminGenerationRetryController.retry`/
+  `applyFixAndRetry`/`versions` — единственное место в контроллере,
+  раньше читавшее сессию через `prisma.session.findUnique({ where: { id
+  } })` в обход фильтра (у `AdminPanelService.getSession` он уже был);
+  `postprod-video-summary.ts` — CRITICAL: и основной `SELECT`, и
+  `countPostprodVideoSummaries` отдавали мягко удалённые сессии в список
+  готовых роликов постпродакшна. Все правки — тот же приём, что уже
+  задан этапом 89 (`deletedAt: null` на строке и через родительскую
+  цепочку `project: { deletedAt: null }`), с обновлёнными спек-файлами.
+- **`ProjectService`** — `purgeSoftDeletedProjects` теперь тем же
+  приёмом, что уже был у `purgeSoftDeletedItems`, тихо пропускает P2025
+  через `isRecordNotFoundError` вместо предупреждения в лог на каждую
+  гонку «родитель уже физически удалён». Доккомментарий
+  `ProjectDeletePreview` (`common/types/project.types.ts`) поправлен —
+  раньше обещал полный список того, что уйдёт каскадом, на деле считает
+  только прямых детей, не внуков (найдено доп. аудитом, MEDIUM; решено
+  править документацию, а не добавлять запросы по внукам — дешевле и
+  безопаснее для диалога подтверждения, который и так не обязан быть
+  бухгалтерски точным).
+- **ИИ-советник (`assistant.service.ts`/`assistant.controller.ts`).**
+  HIGH: у Gemini-стрима не было `maxOutputTokens` — добавлен лимит 2000.
+  HIGH: отключение клиента (закрытие SSE-соединения) не останавливало
+  уже идущий платный стрим — `chat()` в контроллере заводит
+  `AbortController`, слушает `close` у `req`/`res`, передаёт `signal`
+  третьим параметром в `streamChat`, который сливает его со своим
+  внутренним контроллером. Заодно (MEDIUM) `chatJson` — фоллбек на
+  случай, если стрим недоступен — раньше на ошибке терял уже накопленные
+  `text`/`actions`; теперь отдаёт их в теле ответа даже при ошибке.
+  Найдена, но НЕ исправлена в этом проходе (документированный
+  сознательный отказ — доккомментарий над проверкой `spentToday` в
+  `assistant.service.ts`, MEDIUM): гонка TOCTOU между чтением суточного
+  бюджета и списанием следующего платного вызова — цена ошибки мала
+  (несколько параллельных сообщений одного пользователя в узком окне),
+  а точечная защита (лок/атомарный инкремент) требует отдельного
+  решения о том, как считать бюджет ИИ-советника вообще (сейчас это не
+  критично оплачиваемая функция).
+- **Постпродакшн — рассинхрон пагинации при удалении (HIGH).**
+  `listFinishedVideos` получил необязательный `offset` (по умолчанию
+  считается как раньше, `(page - 1) * pageSize`); фронтенд
+  (`postprod-api.ts` → `PostprodScreen.tsx`) при «Показать ещё» теперь
+  передаёт фактическое число уже загруженных карточек, а не номер
+  страницы — так подгрузка не пропускает и не дублирует ролики, если
+  между запросами что-то удалили. Отдельно — `usePostprodVideo.ts`
+  получил `reload`, `PostprodVideoScreen.tsx` подключил его к кнопке
+  «Повторить» на экране ошибки (LOW, раньше кнопки не было вовсе).
+- **404 при удалении — отдельная ветка (LOW).** `projects-api.ts` —
+  новая `isNotFoundError`; `ProjectScreen.tsx` при удалении уже
+  отсутствующей записи (гонка с другим устройством/вкладкой) закрывает
+  диалог и показывает `deleteConfirm.alreadyDeleted` (новый ключ, 5
+  локалей) вместо общей ветки «не удалось загрузить точный список».
+- **Диалог подтверждения — доступность (LOW).** И TMA-, и
+  admin-варианты `ConfirmDialog.tsx` получили начальный фокус на кнопку
+  и `Tab`-ловушку внутри модалки (раньше фокус после открытия оставался
+  на странице позади). У admin-варианта также не было вовсе
+  accessible-имени диалога — добавлены `id`/`aria-labelledby` на
+  заголовок (TMA-вариант его уже имел).
+- **Крон уборки сессий — не было джоб-замка (MEDIUM).**
+  `runCleanupSessions` зовётся и суточным расписанием, и ручной кнопкой
+  админки (`admin-cron.service.ts`) — тот же риск двойного прогона, что
+  уже обосновал `CronJobLock` у `runBlog`/`runExportSyncRun` (этап 74).
+  Метод разбит на тонкую обёртку (захват/снятие замка) и
+  `runCleanupSessionsLocked` — тело прогона перенесено НЕИЗМЕНЁННЫМ,
+  чтобы не переотступать ~150 строк уже протестированной логики партий.
+  При пропуске (замок уже занят) — все счётчики нулевые, `skipped:
+  true`; `cron-run-summary.ts` формирует для этого случая отдельную
+  понятную строку вместо вводящих в заблуждение нулей.
+- **Мелкие находки, закрытые правкой без доккомментария (LOW).**
+  Пять мёртвых ключей словаря убраны из всех пяти локалей TMA (
+  `projectScreen.confirmDeleteItem`/`confirmDeleteProject`,
+  `postprodScreen.confirmDelete`/`openButton`,
+  `postprodVideoScreen.confirmDelete` — заменены диалогом ещё на этапе
+  89/88.2, но старые ключи не убрали). `faqIndex` в action-кнопках
+  ИИ-советника лендинга был объявлен и валидировался
+  (`backend/assistant/actions.ts`), но нигде не читался на фронтенде —
+  клик по подсказке всегда просто прокручивал к началу всего раздела
+  FAQ. `Faq.tsx` — новый `data-faq-index` на каждый пункт (тот же
+  приём, что уже есть `data-plan-id` у action `plan`);
+  `AssistantWidget.tsx` — `case 'faq':` теперь ищет нужный пункт,
+  раскрывает его и прокручивает к нему с подсветкой, тем же кодом, что
+  и `case 'plan':`. `FAQ_ITEMS_COUNT` в `actions.ts` (число вопросов
+  FAQ для валидации `faqIndex`) держится вручную, не выводится из
+  словарей — доккомментарий расширен явным предупреждением о риске
+  рассинхрона при правке FAQ.
+- **Найдено, но сознательно НЕ исправлено в этом проходе
+  (документированный отказ, не забытая находка).** Доккомментарий в
+  `common/soft-delete.ts` (MEDIUM): READ-пути к Session везде фильтруют
+  `deletedAt: null`, но несколько WRITE-путей по уже известному
+  `sessionId` — `SessionService.updateSession`/`claimWork`/
+  `releaseWork`/`claimPostProduction` (атомарные `$executeRaw`/
+  `$queryRaw` ради конкурентной безопасности) и условная привязка
+  анонимной сессии в `SessionOwnerGuard` — не проверяют `deletedAt`.
+  Цена ошибки мала (доступ уже проверен выше по стеку, окно гонки —
+  секунды, строка и так исчезнет с концом грейс-периода), а добавление
+  фильтра в каждый из этих путей — не механическая правка, а отдельное
+  решение для каждого (что должен делать PATCH к уже удалённой сессии).
+  Отдельная системная находка (LOW, не исправлена, не документирована
+  отдельным комментарием): `Button`/`Card` в обоих UI-наборах — простые
+  функциональные компоненты без `React.forwardRef`, из-за чего им нельзя
+  напрямую передать `ref` — для доступности (фокус-ловушка выше) это
+  обходится через `ref` на внешний `<div>` и `querySelectorAll`, но
+  сама архитектура компонентов не тронута.
+
+Файлы: landing —
+`src/lib/content.ts`, `src/app/[locale]/page.tsx`,
+`src/dictionaries/{ru,uk,en,de,es}.json`, `src/components/Faq.tsx`,
+`src/components/AssistantWidget.tsx`. Frontend —
+`src/features/postprod/PostprodVideoScreen.tsx`,
+`src/dictionaries/{ru,uk,en,de,es}.json`,
+`src/services/postprod-api.ts`, `src/features/postprod/
+PostprodScreen.tsx`, `src/hooks/usePostprodVideo.ts`,
+`src/services/projects-api.ts`, `src/features/projects/ProjectScreen.tsx`,
+`src/components/ui/ConfirmDialog.tsx`. Admin —
+`src/components/ConfirmDialog.tsx`. Backend —
+`src/modules/product-analog/product-analog.service.ts` (+`.spec.ts`),
+`src/modules/project-session/project-session.service.ts` (+`.spec.ts`),
+`src/modules/voice/voice.service.ts`,
+`src/modules/catalog-batch/catalog-batch.service.ts`,
+`src/modules/product-feed-import/product-feed-import.service.ts`,
+`src/modules/project/project.service.ts`,
+`src/common/types/project.types.ts`,
+`src/modules/generation/admin-generation-retry.controller.ts`
+(+`.spec.ts`), `src/common/postprod-video-summary.ts` (+`.spec.ts`),
+`src/modules/assistant/assistant.service.ts`,
+`src/modules/assistant/assistant.controller.ts` (+`.spec.ts`),
+`src/modules/assistant/actions.ts`,
+`src/modules/postprod/postprod-videos.service.ts` (+`.spec.ts`),
+`src/modules/postprod/postprod-videos.controller.ts`,
+`src/modules/cron/cron-jobs.service.ts` (+`.spec.ts`),
+`src/modules/cron/cron-run-summary.ts`, `src/common/soft-delete.ts`.
+
+Проверка: `npx tsc --noEmit` в `backend/` — чисто (503 строки в логе,
+все пред-существующие по ограничению непосгенерированного
+Prisma-клиента в песочнице — ни одна не связана с правками этого
+этапа, включая точечно перепроверенную `product-analog.service.ts:417`,
+не тронутую этим проходом). `npx eslint` на всех изменённых файлах —
+без новых замечаний (найденные ошибки/warning — во всех случаях в
+строках, не тронутых этим этапом: пред-существующий долг форматирования
+и пара `any`/неиспользуемых переменных в существующих тестах). `npx
+jest --config jest.config.sandbox.json` — **1499/1499 тестов, 120/167
+наборов** (те же 47 пред-существующих «не может загрузиться» по
+ограничению Prisma-клиента, что и на этапе 89 — ни один не связан с
+правками этого этапа). При первом прогоне таргетных спеков нашлись и
+исправлены три реальных регресса от правок этого же этапа (не
+пред-существующий долг): `product-analog.service.spec.ts` и
+`project-session.service.spec.ts` ожидали старый `where` без
+`deletedAt: null`; `cron-jobs.service.spec.ts` — тест на второй
+предохранитель по времени не учитывал, что `tryAcquireJobLock` теперь
+тоже читает `Date.now()` до начала самого прогона, сдвигая мок на один
+вызов. `frontend/`: `npx tsc --noEmit`, `npx eslint`, `npx vite build`
+— чисто. `admin/`: `npx tsc --noEmit`, `npx eslint`, `next build` —
+чисто, 23/23 страниц. `landing/`: `npx tsc --noEmit`, `npx eslint`,
+`next build` — чисто, 25/25 страниц. `node scripts/check-docs.mjs` —
+одно расхождение, то же пред-существующее и не связанное с этим этапом
+(`OPENAI_FAST_MODEL`).
 
 ## Проверка на каждом этапе (сквозное)
 

@@ -128,7 +128,15 @@ export class AssistantService {
   async *streamChat(
     request: AssistantChatRequest,
     clientIpAddr: string,
+    // Найдено доп. аудитом (HIGH) — сигнал разрыва соединения от
+    // AssistantController (`req`/`res` `close`), объединяемый ниже с
+    // собственным AbortController этого метода (тем же, что уже дёргают
+    // таймауты FIRST_TOKEN_TIMEOUT_MS/TOTAL_TIMEOUT_MS): без него
+    // закрытая клиентом вкладка не останавливала стрим Gemini раньше
+    // штатных 30/90 секунд.
+    externalSignal?: AbortSignal,
   ): AsyncGenerator<AssistantStreamEvent> {
+    if (externalSignal?.aborted) return; // клиент ушёл ещё до первого токена
     const locale = normalizeLocale(request.locale);
     const startedAt = Date.now();
 
@@ -142,6 +150,25 @@ export class AssistantService {
       return;
     }
 
+    // Известная гонка (найдено доп. аудитом, MEDIUM, сознательно не
+    // чинится в этом заходе): читаем «сколько уже потрачено» и решаем
+    // ДО платного вызова, а не резервируем слот атомарно, как
+    // `SerpApiUsageService.reserve()`/`release()` для дневного лимита
+    // аналогов (см. её доккомментарий про тот же класс TOCTOU-гонки,
+    // однажды уже случившейся в проде). Несколько параллельных вопросов
+    // от разных посетителей могут все пройти эту проверку одновременно и
+    // все зайти в Gemini, пока строка `AssistantExchange`/`AiUsage`
+    // предыдущего ещё не записана — бюджет может быть превышен на
+    // ширину этой гонки. Не резервируем слот здесь по тем же причинам,
+    // по которым `SerpApiUsageService` резервирует: перенос той же
+    // атомарной схемы (резерв → вызов → списание/возврат) на бюджет в
+    // деньгах, а не в счётчике запросов, требует отдельного story —
+    // здесь только дневной SOFT-лимит расходов (§7.2), не защита от
+    // злоупотребления (та — отдельный RateLimitGuard на IP, 10/мин,
+    // 60/час), и цена ошибки — не критична (небольшой перерасход
+    // бюджета в редкий момент пиковой одновременности, не потеря
+    // данных). Не мой объём аудита — если гонка станет заметна на
+    // практике, чинить по образцу SerpApiUsageService.
     const spentToday = await this.aiUsage.spentTodayForOperation('assistant');
     if (spentToday >= settings.dailyBudgetMicroUsd) {
       yield {
@@ -179,6 +206,14 @@ export class AssistantService {
     const contents = request.messages.map((m) => toGeminiContent(m));
 
     const controller = new AbortController();
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort();
+      else {
+        externalSignal.addEventListener('abort', () => controller.abort(), {
+          once: true,
+        });
+      }
+    }
     const totalTimer = setTimeout(() => controller.abort(), TOTAL_TIMEOUT_MS);
     let firstTokenTimer: ReturnType<typeof setTimeout> | null = setTimeout(
       () => controller.abort(),
@@ -194,7 +229,20 @@ export class AssistantService {
       const stream = await this.genai.models.generateContentStream({
         model: settings.model,
         contents,
-        config: { systemInstruction, abortSignal: controller.signal },
+        config: {
+          systemInstruction,
+          abortSignal: controller.signal,
+          // Найдено доп. аудитом (HIGH): без явного потолка не было
+          // ничего, что остановило бы аномально длинный ответ раньше
+          // TOTAL_TIMEOUT_MS — 90 с стрима на неограниченный по
+          // токенам вывод, оплаченные как обычный запрос. Спек (§3.2/
+          // §6.2 doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md) целится в
+          // 300–600 токенов и 2–6 предложений на ответ; 2000 — щедрый
+          // запас поверх этого (под `<<<actions>>>`-блок и длинные
+          // ответы на составные вопросы), а не жёсткая обрезка нормального
+          // ответа.
+          maxOutputTokens: 2000,
+        },
       });
 
       for await (const chunk of stream) {

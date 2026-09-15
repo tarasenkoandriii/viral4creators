@@ -36,6 +36,10 @@ describe('selectPostprodVideoSummaries', () => {
     // список, никакого LEFT JOIN на users (это не админский экран).
     expect(sql).toContain(`s."userId" = $1`);
     expect(sql).toContain(`s."generationStatus" = 'complete'`);
+    // Этап 89, найдено доп. аудитом (CRITICAL) — без этого условия
+    // мягко удалённая сессия весь грейс-период продолжала всплывать в
+    // списке «Постпрод».
+    expect(sql).toContain(`s."deletedAt" IS NULL`);
     expect(sql).not.toContain('LEFT JOIN');
     expect(params).toEqual(['user-1', 20, 0]);
   });
@@ -60,6 +64,7 @@ describe('countPostprodVideoSummaries', () => {
     ];
     expect(sql).toContain('COUNT(*)');
     expect(sql).toContain(`s."userId" = $1`);
+    expect(sql).toContain(`s."deletedAt" IS NULL`);
     expect(sql).not.toContain('ORDER BY');
     expect(sql).not.toContain('LIMIT');
     expect(params).toEqual(['user-1']);

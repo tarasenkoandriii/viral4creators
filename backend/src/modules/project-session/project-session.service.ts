@@ -78,9 +78,17 @@ export class ProjectSessionService {
     /** UI-локаль фронтенда (этап 59, ТЗ §35.5) — см. SessionService.createSession. */
     locale?: string,
   ): Promise<Session> {
+    // `deletedAt: null` (этап 89, найдено доп. аудитом): без него можно
+    // было запустить новую сессию генерации от мягко удалённого товара
+    // весь грейс-период — тот же класс дыры, что и в ProductAnalogService.
     const item: ItemWithProjectRow | null =
       await this.prisma.productItem.findFirst({
-        where: { id: itemId, projectId, project: { userId } },
+        where: {
+          id: itemId,
+          projectId,
+          deletedAt: null,
+          project: { userId, deletedAt: null },
+        },
         include: {
           project: {
             include: {
@@ -123,7 +131,12 @@ export class ProjectSessionService {
     itemId: string,
   ): Promise<ItemSessionSummary[]> {
     const owned = await this.prisma.productItem.findFirst({
-      where: { id: itemId, projectId, project: { userId } },
+      where: {
+        id: itemId,
+        projectId,
+        deletedAt: null,
+        project: { userId, deletedAt: null },
+      },
       select: { id: true },
     });
     if (!owned) {

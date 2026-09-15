@@ -79,6 +79,30 @@ describe('AssistantController.chat — §4.3', () => {
     expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith({
       error: { code: 'budget_exhausted', message: 'позже' },
+      text: '',
+      actions: [],
+      usage: { in: 0, out: 0, cached: 0 },
+    });
+  });
+
+  // Найдено доп. аудитом (MEDIUM): частичный текст, накопленный до
+  // обрыва стрима, теперь не теряется в JSON-запасном варианте — то же
+  // самое SSE-путь уже показывает построчно к моменту `event: error`.
+  it('JSON-фолбэк: ошибка после части токенов — {error} несёт и накопленный text/actions', async () => {
+    const { controller } = build([
+      { type: 'token', t: 'начало ответа' },
+      { type: 'actions', items: [{ kind: 'open-app' }] },
+      { type: 'error', code: 'upstream', message: 'сбой' },
+    ]);
+    const { res } = fakeRes();
+    const req: any = { headers: {} };
+    await controller.chat(dto, req, res);
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.json).toHaveBeenCalledWith({
+      error: { code: 'upstream', message: 'сбой' },
+      text: 'начало ответа',
+      actions: [{ kind: 'open-app' }],
+      usage: { in: 0, out: 0, cached: 0 },
     });
   });
 
