@@ -494,6 +494,35 @@ export class SessionService {
   }
 
   /**
+   * Ролики с готовым Veo-рендером, чья постобработка (обрезка кадра и/или
+   * своя озвучка, `PostProductionService`) ещё не завершена — для
+   * крон-досмотра `GenerationService.runPostProductionSyncTick`. Тот же
+   * класс дефекта, что у яруса B автоэкспорта и Grok-пачек
+   * (Е-2.3/М-1.2-5.2): единственный путь, двигавший `postStatus`, —
+   * `GET /sessions/:id/video-status`, вызываемый только клиентским
+   * поллингом (`useWorkflow.ts`). Закрыл вкладку/свернул приложение до
+   * того, как ffmpeg-задача у провайдера завершилась, — `postStatus`
+   * остаётся `'pending'` навсегда: даже собственный дедлайн постобработки
+   * (`postProductionExpired`) никогда не сработает, потому что его
+   * проверяет тот же `poll()`, который без клиента никто не вызывает.
+   * Аудит ролика (`VideoAuditService.run`) при этом бессрочно отказывает
+   * с «Ролик ещё обрабатывается» — хотя сама внешняя задача давно готова
+   * или давно протухла.
+   */
+  async findSessionsWithPendingPostProduction(
+    limit: number,
+  ): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "sessions"
+      WHERE "generationStatus" = 'complete'
+        AND "data" -> 'generatedVideo' ->> 'postStatus' = 'pending'
+      ORDER BY "lastActivityAt" ASC
+      LIMIT ${limit}
+    `;
+    return rows.map((r) => r.id);
+  }
+
+  /**
    * Продлить жизнь сессиям, за которые сейчас идёт внешняя асинхронная
    * работа (пачка xAI до суток): `getSession` — чистое чтение и
    * `lastActivityAt` не сдвигает, поэтому TTL-уборка (24 ч) удаляла

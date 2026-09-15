@@ -236,6 +236,7 @@
     "saveEdits": "Guardar cambios",
     "approveAnyway": "Aprobar de todos modos",
     "approve": "Aprobar prompt",
+    "continueApproved": "Continuar",
     "footerNote": "El prompt aprobado pasará a la generación del vídeo publicitario"
   },
   "videoUpload": {

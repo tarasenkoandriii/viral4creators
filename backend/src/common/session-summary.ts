@@ -33,6 +33,15 @@ export interface SessionSummaryRow {
   productName: string | null;
   downloadUrl: string | null;
   quality: string | null;
+  /** `data.generatedVideo.provider` — 'veo' | 'grok' | null (отсутствие
+   * значит 'veo', см. doc-комментарий у `quality`/`resolution` ниже). */
+  provider: string | null;
+  /** `data.generatedVideo.resolution` — своя ось качества у Grok
+   * ('480p' | '720p' | '1080p'), не совпадает с `quality` (та только у
+   * Veo). Без этого поля колонка «Качество» у Grok-роликов всегда
+   * читала пустой `quality` и показывала прочерк — не потому что
+   * данных нет, а потому что не тот путь читали (этап 86). */
+  resolution: string | null;
   voiceMode: string | null;
   /** Доп. запрос владельца продукта: причина провала рендера — видна
    * прямо в списке, не только при переходе в детали сессии. */
@@ -139,6 +148,8 @@ const SELECT_FROM = `
          s."data" -> 'productInformation' ->> 'productName' AS "productName",
          s."data" -> 'generatedVideo' ->> 'downloadUrl' AS "downloadUrl",
          s."data" -> 'generatedVideo' ->> 'quality' AS "quality",
+         s."data" -> 'generatedVideo' ->> 'provider' AS "provider",
+         s."data" -> 'generatedVideo' ->> 'resolution' AS "resolution",
          s."data" -> 'brandManifestSnapshot' ->> 'voiceMode' AS "voiceMode",
          s."data" -> 'generatedVideo' -> 'error' ->> 'code' AS "errorCode",
          s."data" -> 'generatedVideo' -> 'error' ->> 'message' AS "errorMessage",

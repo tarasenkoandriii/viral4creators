@@ -543,7 +543,19 @@ export default function SessionsPage() {
                       <td>{s.productName ?? <span className="muted">—</span>}</td>
                     )}
                     {visibleColumns.has('quality') && (
-                      <td className="muted">{s.quality ?? '—'}</td>
+                      // У Grok нет понятия `quality` — своя ось, `resolution`
+                      // (см. комментарий у generation.service.ts). Колонка
+                      // раньше читала только `quality` и потому у Grok-роликов
+                      // — по дефолту фронтенда почти все ролики — всегда была
+                      // прочерком, хотя данные были, просто по другому полю
+                      // (этап 86).
+                      <td className="muted">
+                        {s.quality || s.resolution
+                          ? s.provider === 'grok'
+                            ? `Grok · ${s.resolution ?? '—'}`
+                            : `Veo · ${s.quality ?? '—'}`
+                          : '—'}
+                      </td>
                     )}
                     {visibleColumns.has('voiceMode') && (
                       // Пустое значение — не «нет данных», а дефолт §15.1:

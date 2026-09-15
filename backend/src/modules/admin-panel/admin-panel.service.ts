@@ -60,6 +60,8 @@ function summaryFromSlim(row: SessionSummaryRow): SessionSummary {
     hasGeneratedVideo: Boolean(row.downloadUrl),
     downloadUrl: row.downloadUrl ?? null,
     quality: row.quality ?? null,
+    provider: row.provider ?? null,
+    resolution: row.resolution ?? null,
     voiceMode: row.voiceMode ?? null,
     errorCode: row.errorCode ?? null,
     errorMessage: row.errorMessage ?? null,
@@ -83,8 +85,17 @@ export interface SessionSummary {
   productName: string | null;
   hasGeneratedVideo: boolean;
   downloadUrl: string | null;
-  /** 'fast' | 'standard' — качество рендера, если генерация была. */
+  /** 'fast' | 'standard' — качество рендера, ТОЛЬКО у Veo (`provider`
+   * не 'grok'). У Grok — `null` не значит «нет данных», см. `resolution`. */
   quality: string | null;
+  /** 'veo' | 'grok' | null — `null` исторически значит 'veo' (поле
+   * появилось позже, писалось только для Grok — см. GeneratedVideo). */
+  provider: string | null;
+  /** '480p' | '720p' | '1080p' — своя ось качества у Grok, не пересекается
+   * с `quality` (этап 86: колонка «Качество» в админке раньше читала
+   * только `quality` и у Grok-роликов — а это, по дефолту фронтенда,
+   * почти все — всегда была пустой). */
+  resolution: string | null;
   /** 'veo' | 'voiceover' | 'dub' — режим озвучки бренда в снимке сессии. */
   voiceMode: string | null;
   /** Доп. запрос владельца продукта: причина провала — видна прямо в
@@ -762,6 +773,18 @@ export class AdminPanelService {
             | { quality?: string }
             | undefined
         )?.quality ?? null,
+      provider:
+        (
+          (row.data as Record<string, unknown>)?.generatedVideo as
+            | { provider?: string }
+            | undefined
+        )?.provider ?? null,
+      resolution:
+        (
+          (row.data as Record<string, unknown>)?.generatedVideo as
+            | { resolution?: string }
+            | undefined
+        )?.resolution ?? null,
       voiceMode:
         (
           (row.data as Record<string, unknown>)?.brandManifestSnapshot as

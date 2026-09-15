@@ -447,9 +447,14 @@ export class ExportService {
     // «внешние асинхронные рендеры без открытой вкладки», чтобы не
     // множить записи в vercel.json и реестре admin-cron.
     const grok = await this.generation.runGrokBatchSyncTick(limit);
+    // И постобработку (обрезка кадра / своя озвучка) — тот же класс
+    // дефекта: без открытой вкладки `postStatus` не двигается никогда
+    // (см. `GenerationService.runPostProductionSyncTick`), а аудит
+    // ролика бессрочно отказывает с «Ролик ещё обрабатывается».
+    const postprod = await this.generation.runPostProductionSyncTick(limit);
     return {
-      checked: ids.length + grok.checked,
-      failed: failed + grok.failed,
+      checked: ids.length + grok.checked + postprod.checked,
+      failed: failed + grok.failed + postprod.failed,
     };
   }
 }

@@ -91,6 +91,11 @@ function build(
     runGrokBatchSyncTick: jest
       .fn()
       .mockResolvedValue({ checked: 0, failed: 0 }),
+    // Этап 84: и постобработку (обрезка кадра / своя озвучка) —
+    // см. `runSyncTick — постобработка` ниже.
+    runPostProductionSyncTick: jest
+      .fn()
+      .mockResolvedValue({ checked: 0, failed: 0 }),
   };
   const postprod = {
     startExport: over.postprodStartError
@@ -692,6 +697,30 @@ describe('ExportService (TODO §35, doc/MULTI-FORMAT-EXPORT-SPEC.md, этап 75
       expect(sessions.findSessionsWithPendingTierBExport).toHaveBeenCalledWith(
         50,
       );
+    });
+
+    // Этап 84: готовый ролик показывал «Скачать», а аудит бессрочно
+    // отвечал «ещё обрабатывается» — `postStatus` двигал только
+    // клиентский поллинг. Один крон-маршрут на все «внешние асинхронные
+    // рендеры без открытой вкладки» (тот же приём, что у Grok выше) —
+    // вклад постобработки в checked/failed должен складываться с
+    // остальными двумя источниками, а не подменять их.
+    it('складывает checked/failed постобработки с ярусом B и Grok-пачками', async () => {
+      const { svc, sessions, generation } = build();
+      generation.runPostProductionSyncTick.mockResolvedValue({
+        checked: 4,
+        failed: 1,
+      });
+      generation.runGrokBatchSyncTick.mockResolvedValue({
+        checked: 2,
+        failed: 0,
+      });
+      sessions.findSessionsWithPendingTierBExport.mockResolvedValue(['s1']);
+      jest.spyOn(svc, 'syncStatus').mockResolvedValue(VIDEO);
+
+      const r = await svc.runSyncTick(50);
+      expect(r).toEqual({ checked: 1 + 2 + 4, failed: 0 + 0 + 1 });
+      expect(generation.runPostProductionSyncTick).toHaveBeenCalledWith(50);
     });
   });
 });

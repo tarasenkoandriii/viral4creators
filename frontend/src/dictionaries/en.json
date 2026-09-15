@@ -236,6 +236,7 @@
     "saveEdits": "Save edits",
     "approveAnyway": "Approve anyway",
     "approve": "Approve prompt",
+    "continueApproved": "Continue",
     "footerNote": "The approved prompt will go into generating the ad video"
   },
   "videoUpload": {

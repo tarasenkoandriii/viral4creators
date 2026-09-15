@@ -240,17 +240,23 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
           className="flex-1"
           onClick={() => void handleApprove()}
           loading={isApproving}
-          disabled={
-            isApproving ||
-            isUpdating ||
-            !editedText.trim() ||
-            (isApproved && !dirty)
-          }
+          disabled={isApproving || isUpdating || !editedText.trim()}
         >
           {isFlagged
             ? dict.promptEditor.approveAnyway
-            : isApproved
-              ? dict.promptEditor.approvedBadge
+            : isApproved && !dirty
+              ? // Вернулись на этот шаг по степперу (этап 52, В-1.5) на
+                // уже утверждённый, без правок промпт — раньше кнопка тут
+                // становилась disabled с той же надписью, что и бейдж
+                // «Утверждён», и продолжить со шага можно было только
+                // малозаметным кликом по кружку степпера дальше
+                // (Stepper.tsx красит его как обычный будущий шаг, хотя
+                // он уже кликабелен). Теперь кнопка остаётся рабочей:
+                // повторное утверждение бесплатно и идемпотентно
+                // (PromptService.approvePrompt — только новый
+                // `approvedAt`), и уводит на шаг генерации ролика тем же
+                // путём, что и первое утверждение.
+                dict.promptEditor.continueApproved
               : dict.promptEditor.approve}
         </Button>
       </div>

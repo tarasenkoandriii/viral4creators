@@ -62,6 +62,10 @@ function build(session: unknown = readySession()) {
     updateSession: jest.fn().mockResolvedValue(undefined),
     claimWork: jest.fn().mockResolvedValue(true),
     releaseWork: jest.fn().mockResolvedValue(undefined),
+    // Этап 84: крон-досмотр постобработки — по умолчанию ничего не
+    // находит, тесты `runPostProductionSyncTick` переопределяют явно.
+    findSessionsWithPendingPostProduction: jest.fn().mockResolvedValue([]),
+    touchSessions: jest.fn().mockResolvedValue(undefined),
   };
   const blob = {
     downloadBuffer: jest.fn().mockResolvedValue(Buffer.from('изображение')),
@@ -486,7 +490,9 @@ describe('GenerationService.generateVideo — история версий (до�
   it('путь в Blob уникален на попытку — раньше был фиксированным и затирал прошлую версию', async () => {
     const { svc, sessions } = build();
     const video = await svc.generateVideo('s1');
-    expect(video.pathname).toBe(`sessions/s1/generated-${video.generatedVideoId}.mp4`);
+    expect(video.pathname).toBe(
+      `sessions/s1/generated-${video.generatedVideoId}.mp4`,
+    );
     const [, patch] = sessions.updateSession.mock.calls[0];
     expect(patch.generatedVideo.pathname).toBe(video.pathname);
   });
@@ -513,14 +519,22 @@ describe('GenerationService.generateVideo — история версий (до�
       const [, patch] = sessions.updateSession.mock.calls[0];
       expect(patch.videoHistory).toEqual([previous]);
       // Новая попытка остаётся в generatedVideo, не в истории.
-      expect(patch.generatedVideo.generatedVideoId).toBe(video.generatedVideoId);
+      expect(patch.generatedVideo.generatedVideoId).toBe(
+        video.generatedVideoId,
+      );
       sessions.updateSession.mockClear();
     }
   });
 
   it('прошлая история сохраняется — новая версия становится первой (самой свежей), не заменяет список', async () => {
-    const olderStill = { generatedVideoId: 'old-0', status: GenerationStatus.FAILED };
-    const previous = { generatedVideoId: 'old-1', status: GenerationStatus.COMPLETE };
+    const olderStill = {
+      generatedVideoId: 'old-0',
+      status: GenerationStatus.FAILED,
+    };
+    const previous = {
+      generatedVideoId: 'old-1',
+      status: GenerationStatus.COMPLETE,
+    };
     const { svc, sessions } = build({
       ...readySession(),
       generatedVideo: previous,
@@ -695,6 +709,70 @@ describe('GenerationService.fetchReference — вторая линия защи�
     const { svc } = build();
     await expect((svc as any).fetchReference(ref({}))).rejects.toBeInstanceOf(
       BadRequestException,
+    );
+  });
+});
+
+/**
+ * Этап 84 (лендинг-аудит + скриншот пользователя): готовый ролик уже
+ * показывал «Скачать», а `VideoAuditService.run` бессрочно отвечал
+ * «Ролик ещё обрабатывается» — `postStatus` двигал только клиентский
+ * поллинг (`GET /sessions/:id/video-status`), и закрытая вкладка между
+ * «Veo закончил» и «ffmpeg-задача готова» оставляла его в `pending`
+ * навсегда. Тот же принцип, что `runGrokBatchSyncTick` выше по файлу и
+ * `ExportService.runSyncTick` для яруса B: крон досматривает сессии без
+ * открытой вкладки через уже существующий `getVideoStatus()` (тот сам
+ * вызывает `postprod.poll()` для `status === 'complete'`).
+ */
+describe('GenerationService.runPostProductionSyncTick (этап 84)', () => {
+  it('ничего не найдено — checked: 0, getVideoStatus не вызывается, touchSessions не трогается', async () => {
+    const { svc, sessions } = build();
+    const spy = jest.spyOn(svc, 'getVideoStatus');
+    const r = await svc.runPostProductionSyncTick(50);
+    expect(r).toEqual({ checked: 0, failed: 0 });
+    expect(sessions.findSessionsWithPendingPostProduction).toHaveBeenCalledWith(
+      50,
+    );
+    expect(sessions.touchSessions).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('досматривает каждую найденную сессию и продлевает её TTL', async () => {
+    const { svc, sessions } = build();
+    sessions.findSessionsWithPendingPostProduction.mockResolvedValue([
+      's1',
+      's2',
+    ]);
+    const spy = jest
+      .spyOn(svc, 'getVideoStatus')
+      .mockResolvedValue({} as never);
+    const r = await svc.runPostProductionSyncTick(50);
+    expect(r).toEqual({ checked: 2, failed: 0 });
+    expect(sessions.touchSessions).toHaveBeenCalledWith(['s1', 's2']);
+    expect(spy).toHaveBeenCalledWith('s1');
+    expect(spy).toHaveBeenCalledWith('s2');
+  });
+
+  it('одна сессия падает — не роняет весь тик, остальные досматриваются', async () => {
+    const { svc, sessions } = build();
+    sessions.findSessionsWithPendingPostProduction.mockResolvedValue([
+      's1',
+      's2',
+      's3',
+    ]);
+    jest.spyOn(svc, 'getVideoStatus').mockImplementation(async (id: string) => {
+      if (id === 's2') throw new Error('boom');
+      return {} as never;
+    });
+    const r = await svc.runPostProductionSyncTick(50);
+    expect(r).toEqual({ checked: 3, failed: 1 });
+  });
+
+  it('лимит по умолчанию — POSTPROD_SYNC_BATCH', async () => {
+    const { svc, sessions } = build();
+    await svc.runPostProductionSyncTick();
+    expect(sessions.findSessionsWithPendingPostProduction).toHaveBeenCalledWith(
+      50,
     );
   });
 });

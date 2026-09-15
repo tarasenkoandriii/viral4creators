@@ -236,6 +236,7 @@
     "saveEdits": "Änderungen speichern",
     "approveAnyway": "Trotzdem genehmigen",
     "approve": "Prompt genehmigen",
+    "continueApproved": "Weiter",
     "footerNote": "Der genehmigte Prompt wird zur Generierung des Werbevideos verwendet"
   },
   "videoUpload": {

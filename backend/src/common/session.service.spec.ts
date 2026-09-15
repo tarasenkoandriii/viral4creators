@@ -81,6 +81,43 @@ describe('SessionService.findSessionsWithPendingTierBExport (Е-2.3 шестог
 });
 
 /**
+ * Восьмой аудит (лендинг + скриншот пользователя, этап 84): готовый
+ * ролик показывает «Скачать», но `VideoAuditService.run` бессрочно
+ * отвечает «Ролик ещё обрабатывается», потому что `postStatus` двигал
+ * только клиентский поллинг — закрыл вкладку между «Veo закончил» и
+ * «ffmpeg-задача готова», и `postStatus` остаётся `pending` навсегда.
+ */
+describe('SessionService.findSessionsWithPendingPostProduction (этап 84)', () => {
+  function buildQuery(rows: { id: string }[]) {
+    const prisma = { $queryRaw: jest.fn().mockResolvedValue(rows) };
+    return { svc: new SessionService(prisma as any), prisma };
+  }
+
+  it('возвращает id найденных сессий', async () => {
+    const { svc } = buildQuery([{ id: 's1' }, { id: 's2' }]);
+    expect(await svc.findSessionsWithPendingPostProduction(50)).toEqual([
+      's1',
+      's2',
+    ]);
+  });
+
+  it('ничего не найдено — пустой массив, не исключение', async () => {
+    const { svc } = buildQuery([]);
+    expect(await svc.findSessionsWithPendingPostProduction(50)).toEqual([]);
+  });
+
+  it('запрос фильтрует по видео complete + postStatus pending, с лимитом', async () => {
+    const { svc, prisma } = buildQuery([]);
+    await svc.findSessionsWithPendingPostProduction(25);
+    const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(sql).toContain(`"generationStatus" = 'complete'`);
+    expect(sql).toContain(`'postStatus' = 'pending'`);
+    expect(sql).toContain('LIMIT');
+    expect(prisma.$queryRaw.mock.calls[0][1]).toBe(25);
+  });
+});
+
+/**
  * Подмена базы, которая ведёт себя как Postgres на `"data" || $patch`:
  * сливает верхние ключи, а не переписывает колонку. Модульная область
  * видимости — переиспользуется и ниже, в describe про событие воронки

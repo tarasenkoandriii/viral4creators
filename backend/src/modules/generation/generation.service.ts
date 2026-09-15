@@ -134,6 +134,9 @@ export const BATCH_RENDER_DEADLINE_MS = 26 * 60 * 60 * 1000;
 /** Сколько сессий с Grok-пачкой досматривает один крон-тик. */
 export const GROK_BATCH_SYNC_BATCH = 50;
 
+/** Сколько сессий с зависшей постобработкой досматривает один крон-тик. */
+export const POSTPROD_SYNC_BATCH = 50;
+
 export function renderExpired(
   video: Pick<GeneratedVideo, 'initiatedAt' | 'xaiBatchId'>,
   now: number = Date.now(),
@@ -1422,6 +1425,42 @@ export class GenerationService {
         failed += 1;
         this.logger.warn(
           `крон-досмотр Grok-пачки: сессия ${id} — ${this.extractErrorMessage(error)}`,
+        );
+      }
+    }
+    return { checked: ids.length, failed };
+  }
+
+  /**
+   * Крон-досмотр постобработки (обрезка кадра / своя озвучка,
+   * `PostProductionService`) — тот же принцип, что `runGrokBatchSyncTick`
+   * выше и `ExportService.runSyncTick` для яруса B. До этой правки
+   * `postStatus` двигал ТОЛЬКО клиентский поллинг
+   * (`GET /sessions/:id/video-status`, `useWorkflow.ts`): закрыл
+   * приложение/свернул вкладку между «Veo закончил» и «ffmpeg-задача
+   * готова» — `postStatus` остаётся `'pending'` навсегда, а вместе с ним
+   * и собственный дедлайн постобработки (`postProductionExpired`),
+   * который проверяется только внутри того же `poll()`. Пользователь
+   * тем временем видит «Скачать» (видео как таковое готово) и получает
+   * от аудита ролика бессрочный отказ «Ролик ещё обрабатывается».
+   * `getVideoStatus()` внутри уже вызывает `postprod.poll()` для
+   * `status === COMPLETE` — отдельного вызова `poll()` здесь не нужно.
+   */
+  async runPostProductionSyncTick(
+    limit: number = POSTPROD_SYNC_BATCH,
+  ): Promise<{ checked: number; failed: number }> {
+    const ids =
+      await this.sessionService.findSessionsWithPendingPostProduction(limit);
+    if (ids.length === 0) return { checked: 0, failed: 0 };
+    await this.sessionService.touchSessions(ids);
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await this.getVideoStatus(id);
+      } catch (error) {
+        failed += 1;
+        this.logger.warn(
+          `крон-досмотр постобработки: сессия ${id} — ${this.extractErrorMessage(error)}`,
         );
       }
     }

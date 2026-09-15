@@ -37,6 +37,13 @@ describe('selectSessionSummaries', () => {
     expect(sql).toContain(`"data" -> 'productInformation' ->> 'productName'`);
     expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'downloadUrl'`);
     expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'quality'`);
+    // Этап 86: колонка «Качество» в админке раньше читала только
+    // `quality` (только у Veo) — у Grok-роликов (своя ось, `resolution`,
+    // никогда не `quality`) это всегда было прочерком. Оба поля должны
+    // идти в выборку, иначе фронт не сможет отличить «нет данных» от
+    // «не тот провайдер».
+    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'provider'`);
+    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'resolution'`);
     expect(sql).toContain(
       `"data" -> 'brandManifestSnapshot' ->> 'voiceMode'`,
     );

@@ -47,7 +47,15 @@ export function Stepper({
                     ? 'bg-accent text-accent-on'
                     : active
                       ? 'ring-2 ring-accent text-accent'
-                      : 'bg-silver-200/60 dark:bg-silver-800/60 text-silver-500'
+                      : clickable
+                        ? // Вернулись назад по степперу на уже пройденный
+                          // шаг (этап 52) — следующий шаг остаётся
+                          // доступным (`selectable`), но красился как
+                          // самый обычный недостижимый: тонкая рамка
+                          // отличает «можно кликнуть и продолжить» от
+                          // «сначала пройдите предыдущие».
+                          'border border-accent/50 text-accent/80'
+                        : 'bg-silver-200/60 dark:bg-silver-800/60 text-silver-500'
                 }`}
               >
                 {done ? <Check size={12} /> : i + 1}

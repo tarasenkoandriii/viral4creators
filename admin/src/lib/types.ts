@@ -25,6 +25,8 @@ export interface SessionSummary {
   hasGeneratedVideo: boolean;
   downloadUrl: string | null;
   quality: string | null;
+  provider: string | null;
+  resolution: string | null;
   voiceMode: string | null;
   errorCode: string | null;
   errorMessage: string | null;
