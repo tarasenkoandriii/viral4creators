@@ -259,14 +259,29 @@ export class ResembleService implements TtsProvider {
       return { voices: [], error: 'RESEMBLE_API_KEY не задан' };
     }
     try {
-      const res = await fetch(`${this.manageBase}/voices`, {
-        headers: { Authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
-      });
+      // 15.09.2026, по живому «Resemble 400 при запросе списка голосов»:
+      // у `GET /api/v2/voices` параметр `page` ОБЯЗАТЕЛЕН (docs.resemble.ai,
+      // List voices: page ≥ 1 required; page_size 10–1000, по умолчанию 10).
+      // Без него — 400, и весь каталог голосов в форме бренда пустой,
+      // а озвучка Resemble молча не подключается. Берём максимум за раз:
+      // каталог у аккаунта небольшой, пагинация тут не нужна.
+      const res = await fetch(
+        `${this.manageBase}/voices?page=1&page_size=1000`,
+        {
+          headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
+        },
+      );
       if (!res.ok) {
+        const body =
+          typeof res.text === 'function'
+            ? await res.text().catch(() => '')
+            : '';
         return {
           voices: [],
-          error: `Resemble ${res.status} при запросе списка голосов`,
+          error: `Resemble ${res.status} при запросе списка голосов${
+            body ? `: ${body.slice(0, 200)}` : ''
+          }`,
         };
       }
       const data = (await res.json()) as ResembleVoicesResponse;

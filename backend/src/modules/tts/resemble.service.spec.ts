@@ -328,8 +328,9 @@ describe('ResembleService (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md)', () => {
         accent: 'uk',
         previewUrl: null,
       });
+      // `page` обязателен у Resemble (без него 400, 15.09.2026).
       expect(fetchMock.mock.calls[0][0]).toBe(
-        'https://app.resemble.ai/api/v2/voices',
+        'https://app.resemble.ai/api/v2/voices?page=1&page_size=1000',
       );
     });
 
