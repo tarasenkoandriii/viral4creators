@@ -42,6 +42,10 @@ import {
   SweepScope,
 } from '../../common/orphan-sweep';
 import { pruneRateLimits } from '../../common/rate-limit';
+import {
+  pruneAssistantExchanges,
+  pruneAssistantEvents,
+} from '../assistant/assistant-prune';
 import { buildRunSummary } from './cron-run-summary';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 
@@ -395,27 +399,42 @@ export class CronJobsService {
     );
 
     const now = new Date();
-    const [adminResult, userResult, , library] = await Promise.all([
-      this.prisma.adminSession.deleteMany({
-        where: { expiresAt: { lt: now } },
-      }),
-      this.prisma.userSession.deleteMany({ where: { expiresAt: { lt: now } } }),
-      // Этап 47: отпечатки тревог живут в базе — убираем забытые здесь
-      // же, чтобы таблица не была единственной без уборки.
-      this.notify.pruneStates(now),
-      // Этап 51 (В-4.6): невостребованные разборы библиотеки — вторая по
-      // скорости роста таблица, до этого не чистилась ничем.
-      this.library.pruneUnused(now),
-      // Этап 54 (Б-3.7): закрывшиеся окна счётчиков частоты.
-      pruneRateLimits(this.prisma, now).catch((error: unknown) => {
-        this.logger.warn(
-          `не удалось убрать счётчики частоты: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        return 0;
-      }),
-    ]);
+    const [adminResult, userResult, , library, , assistantExchangesPruned] =
+      await Promise.all([
+        this.prisma.adminSession.deleteMany({
+          where: { expiresAt: { lt: now } },
+        }),
+        this.prisma.userSession.deleteMany({ where: { expiresAt: { lt: now } } }),
+        // Этап 47: отпечатки тревог живут в базе — убираем забытые здесь
+        // же, чтобы таблица не была единственной без уборки.
+        this.notify.pruneStates(now),
+        // Этап 51 (В-4.6): невостребованные разборы библиотеки — вторая по
+        // скорости роста таблица, до этого не чистилась ничем.
+        this.library.pruneUnused(now),
+        // Этап 54 (Б-3.7): закрывшиеся окна счётчиков частоты.
+        pruneRateLimits(this.prisma, now).catch((error: unknown) => {
+          this.logger.warn(
+            `не удалось убрать счётчики частоты: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return 0;
+        }),
+        // ИИ-консультант на лендинге (ТЗ §10): ретенция 30 дней у обеих
+        // журнальных таблиц — обмены и клиентские события виджета.
+        pruneAssistantExchanges(this.prisma, now).catch((error: unknown) => {
+          this.logger.warn(
+            `не удалось убрать журнал ИИ-консультанта: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return 0;
+        }),
+        pruneAssistantEvents(this.prisma, now).catch((error: unknown) => {
+          this.logger.warn(
+            `не удалось убрать события ИИ-консультанта: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return 0;
+        }),
+      ]);
     this.logger.log(
-      `Cleaned up ${adminResult.count} expired admin session(s), ${userResult.count} expired user session(s)` +
+      `Cleaned up ${adminResult.count} expired admin session(s), ${userResult.count} expired user session(s), ${assistantExchangesPruned} assistant exchange(s)` +
         (library.disabled
           ? ''
           : `, ${library.count} unused library entr(y/ies)${library.hasMore ? ' (есть ещё, доберём завтра)' : ''}`),

@@ -14,6 +14,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { matchesAllowedOrigin } from './common/cors-origin-match';
 import {
   loadConfiguration,
   validateConfiguration,
@@ -67,20 +68,10 @@ async function bootstrap() {
         return callback(null, true);
       }
 
-      const isAllowed = allowedOrigins.some((allowedEntry) => {
-        if (allowedEntry.startsWith('*.')) {
-          // "*.vercel.app" matches "https://foo.vercel.app" but not
-          // "https://vercel.app" itself or "https://notvercel.app".
-          const suffix = allowedEntry.slice(1); // ".vercel.app"
-          try {
-            const { hostname } = new URL(requestOrigin);
-            return hostname.endsWith(suffix) && hostname !== suffix.slice(1);
-          } catch {
-            return false;
-          }
-        }
-        return allowedEntry === requestOrigin;
-      });
+      // Вынесено в common/cors-origin-match.ts (ТЗ ассистента на
+      // лендинге, §4.2.3): та же логика теперь нужна и
+      // `PublicOriginGuard` — сравнение осталось буквально тем же.
+      const isAllowed = matchesAllowedOrigin(requestOrigin, allowedOrigins);
 
       callback(
         isAllowed

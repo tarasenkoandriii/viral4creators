@@ -128,7 +128,15 @@ export type AiOperation =
   // Gemini-генерация изображения, не текста, отдельная модель
   // (`common/gemini-image-model.ts`), должна быть видна в отчёте
   // расходов отдельной строкой.
-  | 'character-preview';
+  | 'character-preview'
+  // ИИ-консультант на лендинге (doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md
+  // §5.2/§7.2) — единственная операция, у которой нет ни `sessionId`, ни
+  // `userId` вовсе (анонимный посетитель до входа в мини-апп): суточный
+  // бюджет считается по ЭТОЙ операции отдельно от общего анонимного
+  // потолка продукта (`AiUsageService.spentTodayForOperation`), поэтому
+  // строка отчёта расходов обязана быть видна отдельно и от остальной
+  // анонимной активности, и от любой другой операции.
+  | 'assistant';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -153,6 +161,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'text-extraction': 'Извлечение текста на экране',
   'original-dialogue-extraction': 'Извлечение реплик оригинала для пробы голоса',
   'character-preview': 'Превью персонажа из текста',
+  assistant: 'ИИ-консультант на лендинге',
 };
 
 export interface ModelRate {

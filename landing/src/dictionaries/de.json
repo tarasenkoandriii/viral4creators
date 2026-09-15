@@ -107,6 +107,7 @@
   "steps": {
     "title": "So funktioniert's",
     "lead": "Neun Schritte vom Hochladen der Referenz bis zur fertigen Datei.",
+    "askAbout": "Zu diesem Schritt fragen",
     "items": [
       {
         "title": "Produkt anlegen",
@@ -497,5 +498,29 @@
     "shareCta": "Teilen",
     "linkCopied": "Link kopiert",
     "poweredBy": "Dieses Video wurde mit viral4creators erstellt — nach einem fremden Beispiel, in wenigen Minuten und kostenlos."
+  },
+  "assistant": {
+    "floatingLabel": "Eine Frage?",
+    "widgetTitle": "KI-Berater",
+    "openAria": "Chat mit dem KI-Berater öffnen",
+    "closeAria": "Schließen",
+    "inputPlaceholder": "Ihre Frage eingeben…",
+    "inputAria": "Ihre Frage an den Berater",
+    "send": "Senden",
+    "disclaimer": "Antworten stammen von einer KI auf Basis der Produktbeschreibung; Bedingungen und Preise finden Sie im Angebot und auf der Tarifseite.",
+    "emptyHint": "Zum Beispiel:",
+    "typing": "tippt…",
+    "errorNetwork": "Keine Verbindung. Bitte prüfen Sie Ihr Netzwerk.",
+    "retry": "Erneut versuchen",
+    "errorRateLimited": "Zu viele Fragen hintereinander, bitte warten Sie eine Minute.",
+    "errorBudget": "Der Berater pausiert bis morgen — schauen Sie in die Anleitung und die FAQ.",
+    "errorUpstream": "Antwort konnte nicht abgerufen werden.",
+    "askAboutPrefill": "Was muss ich für den Schritt „{{title}}“ vorbereiten?",
+    "actionOpenApp": "App öffnen",
+    "actionStep": "Schritt anzeigen",
+    "actionPlan": "Tarif ansehen",
+    "actionFaq": "In den FAQ ansehen",
+    "actionLegal": "Dokument öffnen",
+    "charsLeft": "Noch {{n}} Zeichen"
   }
 }

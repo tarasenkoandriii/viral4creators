@@ -11,6 +11,8 @@ import {
   setVideoProviderDefault,
   getGrokTransportSettings,
   setGrokTransport,
+  getAssistantSettings,
+  setAssistantSettings,
 } from '../../lib/endpoints';
 import type {
   EnvCheckResult,
@@ -23,6 +25,7 @@ import type {
   VideoProviderSettingsView,
   GrokTransportKey,
   GrokTransportSettingsView,
+  AssistantAdminSettingsView,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -425,6 +428,188 @@ function GrokTransportCard() {
   );
 }
 
+/** Форматирует micro-USD (1_000_000 = $1) для короткой строки статуса —
+ * та же величина, что уже показывает вкладка «Расходы» (costs/page.tsx),
+ * здесь только для «сегодня потрачено X из Y». */
+function formatUsd(microUsd: number): string {
+  return `$${(microUsd / 1_000_000).toFixed(2)}`;
+}
+
+/**
+ * «ИИ-консультант» — включение/выключение, проактивный режим, дневной
+ * бюджет и модель (ТЗ §9, §13: «запуск сначала с assistant_enabled=off
+ * на проде» — рубильник здесь и есть тот самый выключатель). В отличие
+ * от карточек выше (один select, одно значение) — три независимых поля,
+ * поэтому черновик (`draft`) со своей кнопкой «Сохранить», а не смена
+ * применяется на каждый onChange: ползунок бюджета в долларах, случайно
+ * задетый на середине ввода, не должен улетать в PATCH на каждую цифру.
+ *
+ * Модель — свободный текст, не select: список допустимых Gemini-моделей
+ * (`GEMINI_MODEL_CHOICES` в backend/src/modules/assistant/dto) выводится
+ * из прайса (`common/ai-pricing.ts`) и не отдаётся отдельным эндпоинтом
+ * наружу — заводить его специально ради одного select в этой карточке
+ * посчитано избыточным; невалидное имя модели бэкенд отклонит `IsIn`,
+ * ошибка PATCH покажет это оператору тем же способом, что и остальные
+ * ошибки сохранения на этой странице.
+ */
+function AssistantSettingsCard() {
+  const [state, setState] = useState<AssistantAdminSettingsView | null>(null);
+  const [draft, setDraft] = useState<{
+    enabled: boolean;
+    proactiveEnabled: boolean;
+    dailyBudgetUsd: string;
+    model: string;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const load = () => {
+    setError(null);
+    getAssistantSettings()
+      .then((s) => {
+        setState(s);
+        setDraft({
+          enabled: s.enabled,
+          proactiveEnabled: s.proactiveEnabled,
+          dailyBudgetUsd: (s.dailyBudgetMicroUsd / 1_000_000).toString(),
+          model: s.model,
+        });
+      })
+      .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройки консультанта'));
+  };
+
+  useEffect(load, []);
+
+  const dirty =
+    !!state &&
+    !!draft &&
+    (draft.enabled !== state.enabled ||
+      draft.proactiveEnabled !== state.proactiveEnabled ||
+      draft.model !== state.model ||
+      Number(draft.dailyBudgetUsd) !== state.dailyBudgetMicroUsd / 1_000_000);
+
+  const handleSave = async () => {
+    if (!draft) return;
+    const dailyBudgetUsd = Number(draft.dailyBudgetUsd);
+    if (!Number.isFinite(dailyBudgetUsd) || dailyBudgetUsd < 0) {
+      setError('Дневной бюджет должен быть неотрицательным числом');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await setAssistantSettings({
+        enabled: draft.enabled,
+        proactiveEnabled: draft.proactiveEnabled,
+        dailyBudgetUsd,
+        model: draft.model.trim() || undefined,
+      });
+      setState(updated);
+      setDraft({
+        enabled: updated.enabled,
+        proactiveEnabled: updated.proactiveEnabled,
+        dailyBudgetUsd: (updated.dailyBudgetMicroUsd / 1_000_000).toString(),
+        model: updated.model,
+      });
+      setSavedAt(Date.now());
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить настройки консультанта');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>ИИ-консультант на лендинге</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Обучающий чат-виджет на главной и на /how-it-works (doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md). Выключен по
+        умолчанию — включайте, только когда готовы следить за расходами первые дни. Подробная лента вопросов и
+        агрегаты — на вкладке «ИИ-консультант».
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {!state && (
+            <>
+              {' '}
+              <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+                Повторить
+              </button>
+            </>
+          )}
+        </p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && draft && (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={draft.enabled}
+                disabled={saving}
+                onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+              />
+              Консультант включён
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={draft.proactiveEnabled}
+                disabled={saving}
+                onChange={(e) => setDraft({ ...draft, proactiveEnabled: e.target.checked })}
+              />
+              Проактивные подсказки (пауза на шаге, задержка на тарифах, уход со страницы…)
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              Дневной бюджет, $
+              <input
+                type="number"
+                min={0}
+                max={1000}
+                step="0.01"
+                value={draft.dailyBudgetUsd}
+                disabled={saving}
+                style={{ width: 100 }}
+                onChange={(e) => setDraft({ ...draft, dailyBudgetUsd: e.target.value })}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              Модель Gemini
+              <input
+                type="text"
+                value={draft.model}
+                disabled={saving}
+                style={{ width: 220 }}
+                onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+              />
+            </label>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <button type="button" disabled={saving || !dirty} onClick={() => void handleSave()}>
+              {saving ? 'Сохраняю…' : 'Сохранить'}
+            </button>
+            {!dirty && savedAt && <span className="muted">Сохранено.</span>}
+          </div>
+
+          <p className="muted" style={{ fontSize: 13 }}>
+            Сегодня: {state.today.questions} вопрос(ов), из них {state.today.proactiveQuestions} по проактивным
+            подсказкам. Потрачено {formatUsd(state.today.spentMicroUsd)} из {formatUsd(state.today.budgetMicroUsd)} (
+            {state.today.percentOfBudget}%). База знаний собрана {new Date(state.knowledgeBuiltAt).toLocaleString('ru-RU')}
+            {state.knowledgeCommit ? ` (commit ${state.knowledgeCommit.slice(0, 7)})` : ''}.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [result, setResult] = useState<EnvSettingsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -488,6 +673,7 @@ export default function SettingsPage() {
       <AnalysisProviderCard />
       <VideoProviderCard />
       <GrokTransportCard />
+      <AssistantSettingsCard />
 
       <div className="card" style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
         <StatusBadge severity={result.allOk ? 'ok' : problems.some((p) => p.severity === 'critical') ? 'critical' : 'warning'} />

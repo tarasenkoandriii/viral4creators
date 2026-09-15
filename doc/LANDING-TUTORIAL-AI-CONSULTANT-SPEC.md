@@ -824,7 +824,7 @@ $3.75/M ≈ $0.0015. Итого ≈ **$0.003 за ответ с кешем**, �
 `proactiveTips`, §6.6.2 — они собираются тем же скриптом).
 
 Бэкенд: `admin-assistant-settings.service.ts` + маршруты
-`GET/PUT /admin/settings/assistant` под `AdminSessionGuard`.
+`GET/PATCH /admin/settings/assistant` под `AdminSessionGuard` (PATCH, не PUT — тот же метод, что уже приняли в проекте для остальных редактируемых настроек admin/settings, см. их реализацию).
 
 ## 10. Аналитика и ревью качества
 

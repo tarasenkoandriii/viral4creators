@@ -1200,3 +1200,429 @@ footer {
   color: var(--muted);
 }
 
+/* ---------- ИИ-консультант (AssistantWidget) ---------- */
+
+/* «Спросить об этом шаге» — кнопка внутри каждой карточки шага (§6.2 ТЗ
+   AI-консультанта); визуально как тихая ссылка, не как основной CTA
+   карточки (тот уже занят cta/cta-ghost в других местах страницы). */
+.step-ask-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.step-ask-btn:hover,
+.step-ask-btn:focus-visible {
+  opacity: 0.8;
+}
+
+/* Аудит (раунд 8, М8-1). `HowItWorks.tsx` — серверный компонент без
+   доступа к рантайм-флагу `assistant.enabled` и рендерит кнопку
+   безусловно на обеих страницах (teaser на главной, full на
+   /how-it-works); `AssistantWidget` же при выключенном советнике
+   возвращает `null` целиком, так что и `.assistant-widget-floating`, и
+   `.assistant-widget-embedded` в DOM попросту не оказывается. Тем же
+   приёмом, что и коллапс сетки на /how-it-works ниже (`:has()` от
+   отсутствия узла), кнопка скрывается на уровне `body`, когда в DOM нет
+   ни одного `.assistant-widget` — не оставляя её видимой, но
+   нерабочей, пока (или если) конфиг ещё не подтвердил `enabled: true`.
+   Деградация без `:has()` — кнопка снова видна, но не ломает вёрстку. */
+body:not(:has(.assistant-widget)) .step-ask-btn {
+  display: none;
+}
+
+/* Сетка 1fr 360px на /[locale]/how-it-works (§6.1 ТЗ) — how-diagram
+   сегодня занимает всю ширину `.wrap`; колонка встроенной панели того же
+   ширины, что и плавающая панель на главной (см. .assistant-panel ниже),
+   чтобы поле ввода не «прыгало» между двумя местами виджета. */
+.how-it-works-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 32px;
+  align-items: start;
+}
+
+@media (min-width: 1100px) {
+  .how-it-works-layout {
+    grid-template-columns: 1fr 360px;
+  }
+  .how-it-works-assistant {
+    position: sticky;
+    top: 96px;
+  }
+}
+
+/* Аудит (этап 83): assistant.enabled по умолчанию выключен в проде
+   (§13 ТЗ) — AssistantWidget тогда рендерит null, и `<aside
+   class="how-it-works-assistant">` остаётся truly childless (React null
+   — не placeholder-div). Без этого правила зарезервированная колонка
+   360px оставалась бы пустым блоком у каждого посетителя при первом
+   запуске. `:empty` матчит именно такой childless-узел; `:has()` в 2026
+   году поддерживается повсеместно, а на случай браузера без неё —
+   деградация лишь до пустого места, а не до сломанной вёрстки. */
+.how-it-works-assistant:empty {
+  display: none;
+}
+
+@media (min-width: 1100px) {
+  .how-it-works-layout:has(.how-it-works-assistant:empty) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.assistant-widget-embedded .assistant-panel {
+  width: 100%;
+}
+
+/* Общая панель — используется и в плавающем варианте (главная), и как
+   постоянно открытая встроенная панель (/how-it-works). */
+.assistant-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(360px, 100%);
+  max-height: 70vh;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.assistant-panel-embedded {
+  max-height: none;
+  height: 560px;
+}
+
+.assistant-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.assistant-close-btn,
+.assistant-tip-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.assistant-close-btn:hover,
+.assistant-tip-close:hover {
+  color: var(--fg);
+}
+
+.assistant-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.assistant-empty p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+
+.assistant-suggested {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assistant-suggested-btn {
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.assistant-suggested-btn:hover,
+.assistant-suggested-btn:focus-visible {
+  border-color: var(--accent);
+}
+
+.assistant-message {
+  max-width: 92%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.assistant-message p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.assistant-message-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.assistant-message-assistant {
+  align-self: flex-start;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+}
+
+.assistant-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.assistant-action-btn {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.assistant-action-btn:hover,
+.assistant-action-btn:focus-visible {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.assistant-error {
+  align-self: flex-start;
+  max-width: 92%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid #ff6b6b;
+  font-size: 13px;
+}
+
+.assistant-error p {
+  margin: 0 0 6px;
+}
+
+.assistant-retry-btn {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.assistant-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.assistant-textarea {
+  flex: 1;
+  resize: none;
+  min-height: 36px;
+  max-height: 96px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+}
+
+.assistant-textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.assistant-send-btn {
+  padding: 0 16px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.assistant-send-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.assistant-panel-footer {
+  padding: 0 16px 12px;
+}
+
+.assistant-chars-left {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.assistant-disclaimer {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* Плавающий вариант — только на главной. */
+.assistant-widget-floating {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.assistant-floating-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-radius: 999px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.assistant-floating-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent-fg);
+  animation: assistant-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes assistant-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.4);
+  }
+}
+
+/* Тот же принцип, что и глобальный сброс (:26) — при reduced-motion
+   пульсация выключается ИМ, здесь только доводим до конца визуальный
+   смысл: точка остаётся статичной, а не «замирает» в случайной фазе
+   анимации, в которой её застал сброс. */
+@media (prefers-reduced-motion: reduce) {
+  .assistant-floating-dot {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.assistant-tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.assistant-tip-text {
+  flex: 1;
+  text-align: left;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.assistant-tip-embedded {
+  margin-bottom: 10px;
+  max-width: none;
+}
+
+/* Кратковременная подсветка карточки тарифа при клике по действию `plan`
+   в ответе консультанта (§5.4 ТЗ) — тот же приём, что уже есть у сайта
+   для «текущего» состояния (.plan-highlight), но временный класс вместо
+   постоянного модификатора. */
+.plan-flash {
+  animation: assistant-plan-flash 1.5s ease-out;
+}
+
+@keyframes assistant-plan-flash {
+  0% {
+    box-shadow: 0 0 0 3px var(--accent);
+  }
+  100% {
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plan-flash {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--accent);
+  }
+}
+
+@media (max-width: 480px) {
+  .assistant-widget-floating {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    align-items: stretch;
+  }
+  .assistant-panel {
+    width: 100%;
+    max-height: 80vh;
+  }
+}
+

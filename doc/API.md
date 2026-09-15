@@ -156,6 +156,14 @@
 | `POST /api/admin/blog/:id/unpublish` | оператор | PUBLISHED → APPROVED, без отклонения |
 | `DELETE /api/admin/blog/:id` | оператор | удалить запись |
 
+## ИИ-консультант на лендинге (doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md, этап 82)
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `GET /api/assistant/config` | открыто, кешируется (`Cache-Control: public, max-age=300`) | включён ли консультант, стартовые вопросы-подсказки, проактивные подсказки по локалям, версия базы знаний |
+| `POST /api/assistant/chat` | открыто (`PublicOriginGuard` + `RateLimitGuard`, 10/мин и 60/час) | вопрос посетителя → потоковый ответ; SSE при `Accept: text/event-stream`, иначе JSON-запасной вариант `{text,actions,usage}` (§4.3) — единственный маршрут во всём бэкенде, что сам пишет `@Res()` в обход `ResponseInterceptor` |
+| `POST /api/assistant/event` | открыто (`PublicOriginGuard` + `RateLimitGuard`, 30/мин) | батч клиентской телеметрии виджета (open/ask/action_click/close/proactive_*) — best-effort, ошибка записи не возвращается как ошибка ответа |
+
 ## Идентичность, оферта, админка
 
 | Метод и путь | Доступ | Назначение |
@@ -191,6 +199,9 @@
 | `GET /api/admin/costs?top=` | оператор | расходы на ИИ (§26): итоги, разбивка по провайдерам/операциям/моделям, топ по тратам, действующий прайс |
 | `GET /api/admin/telemetry` | оператор | агрегаты по сессиям |
 | `GET /api/admin/settings` | оператор | проверка переменных окружения |
+| `GET /api/admin/settings/assistant` | оператор | настройки ИИ-консультанта (включён/выключен, проактивный режим, дневной бюджет, модель) + счётчики за сегодня (§9/§10, этап 82) |
+| `PATCH /api/admin/settings/assistant` | оператор | изменить настройки консультанта — все поля необязательны, частичное обновление (тот же метод, что у остальных редактируемых admin/settings) |
+| `GET /api/admin/assistant?flagged=&locale=&stepId=&search=&page=&pageSize=&days=` | оператор | лента обменов вопрос/ответ с фильтрами + агрегаты за 7 и, опционально, 30 дней (§10, этап 82) |
 | `GET /api/admin/workflow-funnel?window=hour\|day\|week\|month` | оператор | событийная воронка по трём воркфлоу (сессия/пакетная генерация/A-B-варианты, §3 doc/WORKFLOW-FUNNEL-SPEC.md, этап 78): сколько раз каждая стадия была ДОСТИГНУТА за окно — событийный счётчик, не когорта |
 | `GET /api/admin/workflow-funnel/cohort-conversion?window=hour\|day\|week\|month` | оператор | когортная конверсия по тем же трём воркфлоу (doc/WORKFLOW-FUNNEL-COHORT-CONVERSION-SPEC.md, этап 78): что случилось с сущностями, СТАРТОВАВШИМИ в окне, без ограничения по времени перехода; помечает незавершённые когорты (`matured: false`) |
 | `GET /api/admin/publications?status=&page=&pageSize=` | оператор | очередь модерации публикаций (§8) |

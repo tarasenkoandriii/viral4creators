@@ -134,6 +134,22 @@ export function HowItWorks({ steps, variant, hrefBase }: HowItWorksProps) {
               )}
 
               {variant === 'teaser' && highlight && <p className="step-highlight">{highlight}</p>}
+
+              {/* Точка входа в ИИ-консультанта с контекстом конкретного
+                  шага (§6.2 ТЗ AI-консультанта) — сама кнопка не требует
+                  JS для рендера (SSR), но без JS ничего не произойдёт по
+                  клику: AssistantWidget слушает эти data-атрибуты через
+                  делегирование на document (виджет и так весь клиентский,
+                  деградация «нет JS → нет консультанта» уже верна для
+                  всей фичи, не только для этой кнопки). */}
+              <button
+                type="button"
+                className="step-ask-btn"
+                data-assistant-ask-step={n}
+                data-assistant-step-title={step.title}
+              >
+                {steps.askAbout}
+              </button>
             </li>
           );
         })}

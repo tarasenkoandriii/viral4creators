@@ -1071,6 +1071,79 @@ model PlatformSetting {
   @@map("platform_settings")
 }
 
+/// Журнал вопросов/ответов ИИ-консультанта на лендинге
+/// (doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md §10). Отдельная таблица,
+/// а не переиспользование `AiUsage` (та уже пишет расход операции
+/// 'assistant' — этого достаточно для денег, но не для содержимого
+/// диалога и ревью качества, ради которых эта таблица и существует):
+/// здесь — текст вопроса/ответа, разобранные `actions`, флаг ревью и
+/// хеш IP, ничего из этого `AiUsage` не хранит и не должен.
+model AssistantExchange {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  locale String
+  /// 'home' | 'how-it-works' — откуда пришёл вопрос (аналитика §10).
+  page   String
+  /// 1..9 — карточка обучалки, если вопрос задан через «Спросить об
+  /// этом шаге» или проактивный триггер «пауза на шаге» (§6.6.1).
+  stepId Int?
+
+  question String
+  answer   String
+
+  /// Разобранный и провалидированный блок `actions` (§5.4) — то, что
+  /// реально ушло посетителю, а не сырой текст модели с разделителем.
+  actions Json?
+
+  inTokens     Int @default(0)
+  outTokens    Int @default(0)
+  cachedTokens Int @default(0)
+  costMicroUsd Int @default(0)
+  latencyMs    Int @default(0)
+
+  /// Пост-фильтр (§5.5) отметил ответ как подозрительный — не
+  /// удаляется и не скрывается сам по себе, только видно оператору на
+  /// `/assistant` для ревью.
+  flagged Boolean @default(false)
+
+  /// sha256(ip + суточная соль), не сам IP — §8: в проактивной таблице
+  /// анализа диалогов IP-адресу самому по себе делать нечего.
+  ipHash String
+
+  /// 'user' — открыто обычным кликом/вопросом; 'proactive' — открыто
+  /// кликом по проактивному сигналу (§6.6, §10).
+  triggeredBy String @default("user")
+
+  @@index([createdAt])
+  @@index([flagged, createdAt])
+  @@map("assistant_exchanges")
+}
+
+/// Клиентские события виджета консультанта (ТЗ §10, `POST /assistant/event`,
+/// батч) — счётчик воронки open→ask→action_click и, отдельно, проактивной
+/// воронки proactive_shown→proactive_engaged по триггеру (§6.6.1). Само ТЗ
+/// не заводило для этого отдельную модель (только упоминало маршрут) — без
+/// таблицы «доля proactive_shown → proactive_engaged по каждому триггеру»
+/// (§10) считать было бы не из чего, поэтому таблица добавлена здесь, при
+/// реализации, тем же приёмом, что и остальные короткие событийные логи
+/// проекта (WorkflowStageEvent, CronRunLog).
+model AssistantEvent {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  /// 'open' | 'ask' | 'action_click' | 'close' | 'proactive_shown' |
+  /// 'proactive_dismissed' | 'proactive_engaged'.
+  kind String
+  /// `open` — 'user'|'proactive'; `action_click` — kind кнопки;
+  /// `proactive_*` — имя триггера (§6.6.1). Свободная строка, не enum —
+  /// то же соображение, что и `triggeredBy` выше.
+  detail String?
+
+  @@index([kind, createdAt])
+  @@map("assistant_events")
+}
+
 model AlertState {
   fingerprint String   @id
   /// Когда отпечаток уходил в канал в последний раз.

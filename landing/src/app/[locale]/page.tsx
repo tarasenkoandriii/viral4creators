@@ -2,6 +2,7 @@ import { Header } from '../../components/Header';
 import { Faq } from '../../components/Faq';
 import { HowItWorks } from '../../components/HowItWorks';
 import { IllustrationIcon } from '../../components/IllustrationIcon';
+import { AssistantWidget } from '../../components/AssistantWidget';
 import { getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../lib/i18n';
 import {
@@ -105,6 +106,7 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
                 <div
                   className={`plan${'highlight' in plan && plan.highlight ? ' plan-highlight' : ''}`}
                   key={plan.id}
+                  data-plan-id={plan.id}
                 >
                   <div className="plan-head">
                     <h3>{plan.title}</h3>
@@ -213,6 +215,10 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
           {locale !== 'ru' && <p className="legal-notice">{dict.footer.legalNoticeOtherLocale}</p>}
         </div>
       </footer>
+
+      {/* Плавающая кнопка + панель ИИ-консультанта (§4.1, §6 ТЗ) — вне
+          <main>, фиксированное позиционирование через CSS. */}
+      <AssistantWidget locale={locale} dict={dict.assistant} page="home" variant="floating" />
     </>
   );
 }

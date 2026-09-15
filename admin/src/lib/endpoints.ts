@@ -25,6 +25,9 @@ import type {
   VideoProviderSettingsView,
   GrokTransportKey,
   GrokTransportSettingsView,
+  AssistantAdminSettingsView,
+  SetAssistantSettingsInput,
+  AssistantAdminResult,
   PublicationListResult,
   PublicationPrivacy,
   PublicationRequest,
@@ -521,4 +524,34 @@ export function getAvatarSoundCheck(sessionId: string) {
 
 export function runAvatarSoundCheck(sessionId: string) {
   return apiPost<SoundCheckState>(`/admin/actors/${sessionId}/sound-check`);
+}
+
+// ── ИИ-консультант на лендинге (doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md) ──
+
+export function getAssistantSettings() {
+  return apiGet<AssistantAdminSettingsView>('/admin/settings/assistant');
+}
+
+export function setAssistantSettings(input: SetAssistantSettingsInput) {
+  return apiPatch<AssistantAdminSettingsView>('/admin/settings/assistant', input);
+}
+
+export function getAssistantAdmin(params: {
+  flagged?: boolean;
+  locale?: string;
+  stepId?: number;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+  days?: 7 | 30;
+}) {
+  return apiGet<AssistantAdminResult>('/admin/assistant', {
+    flagged: params.flagged === undefined ? undefined : String(params.flagged),
+    locale: params.locale,
+    stepId: params.stepId,
+    search: params.search,
+    page: params.page,
+    pageSize: params.pageSize,
+    days: params.days,
+  });
 }

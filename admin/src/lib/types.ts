@@ -791,3 +791,84 @@ export interface WorkflowCohortConversionResult {
   to: string;
   blocks: CohortConversionBlock[];
 }
+
+// ── ИИ-консультант на лендинге (doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md,
+// backend/src/modules/assistant) ──
+
+export interface AssistantSettingsView {
+  enabled: boolean;
+  proactiveEnabled: boolean;
+  dailyBudgetMicroUsd: number;
+  model: string;
+}
+
+export interface AssistantAdminSettingsView extends AssistantSettingsView {
+  knowledgeBuiltAt: string;
+  knowledgeCommit: string;
+  today: {
+    questions: number;
+    proactiveQuestions: number;
+    spentMicroUsd: number;
+    budgetMicroUsd: number;
+    percentOfBudget: number;
+  };
+}
+
+export interface SetAssistantSettingsInput {
+  enabled?: boolean;
+  proactiveEnabled?: boolean;
+  /** Доллары, не микро-доллары — конвертирует бэкенд (SetAssistantSettingsDto). */
+  dailyBudgetUsd?: number;
+  model?: string;
+}
+
+export type AssistantActionKind = 'step' | 'open-app' | 'plan' | 'faq' | 'legal';
+
+export interface AssistantAction {
+  kind: AssistantActionKind;
+  stepId?: number;
+  planId?: string;
+  faqIndex?: number;
+  slug?: string;
+}
+
+export interface AssistantExchangeRow {
+  id: string;
+  createdAt: string;
+  locale: string;
+  page: string;
+  stepId: number | null;
+  question: string;
+  answer: string;
+  actions: AssistantAction[] | null;
+  inTokens: number;
+  outTokens: number;
+  cachedTokens: number;
+  costMicroUsd: number;
+  latencyMs: number;
+  flagged: boolean;
+  triggeredBy: string;
+}
+
+export interface AssistantFeedResult {
+  rows: AssistantExchangeRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface AssistantAggregates {
+  days: number;
+  questionsPerDay: number;
+  avgCostMicroUsd: number;
+  budgetExhaustedCount: number;
+  /** 0..1. */
+  actionsOpenAppShare: number;
+  topQuestions: Array<{ question: string; count: number }>;
+}
+
+export interface AssistantAdminResult {
+  feed: AssistantFeedResult;
+  aggregates7: AssistantAggregates;
+  aggregates30: AssistantAggregates | null;
+}

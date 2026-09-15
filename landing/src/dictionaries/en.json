@@ -107,6 +107,7 @@
   "steps": {
     "title": "How it works",
     "lead": "Nine steps from uploading a reference to a finished file.",
+    "askAbout": "Ask about this step",
     "items": [
       {
         "title": "Add a product",
@@ -497,5 +498,29 @@
     "shareCta": "Share",
     "linkCopied": "Link copied",
     "poweredBy": "This video was made with viral4creators — from someone else's example, in a couple of minutes, for free."
+  },
+  "assistant": {
+    "floatingLabel": "Got a question?",
+    "widgetTitle": "AI consultant",
+    "openAria": "Open chat with the AI consultant",
+    "closeAria": "Close",
+    "inputPlaceholder": "Type your question…",
+    "inputAria": "Your question for the consultant",
+    "send": "Send",
+    "disclaimer": "Answers are given by AI based on the product description; terms and prices are in the offer and the plans page.",
+    "emptyHint": "For example:",
+    "typing": "typing…",
+    "errorNetwork": "No connection. Check your network.",
+    "retry": "Retry",
+    "errorRateLimited": "Too many questions in a row, please wait a minute.",
+    "errorBudget": "The consultant is resting until tomorrow — check the tutorial and FAQ.",
+    "errorUpstream": "Couldn't get a response.",
+    "askAboutPrefill": "What do I need to prepare for the \"{{title}}\" step?",
+    "actionOpenApp": "Open the app",
+    "actionStep": "Show step",
+    "actionPlan": "View plan",
+    "actionFaq": "View in FAQ",
+    "actionLegal": "Open document",
+    "charsLeft": "{{n}} characters left"
   }
 }

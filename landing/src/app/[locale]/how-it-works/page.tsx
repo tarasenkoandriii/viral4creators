@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Header } from '../../../components/Header';
 import { HowItWorks } from '../../../components/HowItWorks';
+import { AssistantWidget } from '../../../components/AssistantWidget';
 import { getDictionary } from '../../../lib/get-dictionary';
 import { isLocale, locales, OG_LOCALES, type Locale } from '../../../lib/i18n';
 
@@ -47,7 +48,17 @@ export default function HowItWorksPage({ params }: { params: { locale: string } 
       <main className="wrap how-it-works-page">
         <h1>{dict.steps.title}</h1>
         <p className="how-it-works-lead">{dict.steps.lead}</p>
-        <HowItWorks steps={dict.steps} variant="full" hrefBase="" />
+        {/* Сетка 1fr 360px (§6.1 ТЗ AI-консультанта) — встроенная панель
+            справа от блок-схемы на ≥1100px, под ней — на узких экранах
+            (.how-it-works-layout в globals.css). */}
+        <div className="how-it-works-layout">
+          <div className="how-it-works-main">
+            <HowItWorks steps={dict.steps} variant="full" hrefBase="" />
+          </div>
+          <aside className="how-it-works-assistant" aria-label={dict.assistant.widgetTitle}>
+            <AssistantWidget locale={locale} dict={dict.assistant} page="how-it-works" variant="embedded" />
+          </aside>
+        </div>
       </main>
     </>
   );

@@ -106,6 +106,70 @@ describe('RateLimitGuard', () => {
   });
 });
 
+/**
+ * Два правила на одном маршруте (ассистент на лендинге, ТЗ §7.1) —
+ * `@RateLimit([ruleA, ruleB])`. Проверяется отдельно от одноправильных
+ * тестов выше, чтобы смена формата метаданных (объект → массив) не
+ * задела существующие ~10 маршрутов, которые продолжают присылать
+ * одно правило (уже покрыто тестами выше — `build(..., RULE)` кладёт
+ * ровно объект, не массив, и они по-прежнему проходят).
+ */
+describe('RateLimitGuard — два правила (§7.1)', () => {
+  const NARROW: RateLimitRule = {
+    name: 'assistant-chat',
+    limit: 10,
+    windowSec: 60,
+  };
+  const WIDE: RateLimitRule = {
+    name: 'assistant-chat-hour',
+    limit: 60,
+    windowSec: 3600,
+  };
+
+  function buildMulti(
+    rules: RateLimitRule[],
+    responses: Array<number | Error>,
+  ) {
+    const prisma = { $queryRaw: jest.fn(), $executeRaw: jest.fn() };
+    for (const r of responses) {
+      if (r instanceof Error) prisma.$queryRaw.mockRejectedValueOnce(r);
+      else prisma.$queryRaw.mockResolvedValueOnce([{ count: r }]);
+    }
+    const reflector = { get: jest.fn(() => rules) };
+    const guard = new RateLimitGuard(reflector as never, prisma as never);
+    const context = {
+      getHandler: () => ({}),
+      switchToHttp: () => ({
+        getRequest: () => ({ headers: {}, ip: '10.0.0.1', socket: {} }),
+        getResponse: () => ({ setHeader: jest.fn() }),
+      }),
+    };
+    return { guard, prisma, context };
+  }
+
+  it('обе проверки в пределах лимита — пропускает, обе учтены в базе', async () => {
+    const { guard, prisma, context } = buildMulti([NARROW, WIDE], [3, 20]);
+    await expect(guard.canActivate(context as never)).resolves.toBe(true);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('первое (узкое) правило превышено — 429, второе не проверяется', async () => {
+    const { guard, prisma, context } = buildMulti([NARROW, WIDE], [11]);
+    await expect(guard.canActivate(context as never)).rejects.toBeInstanceOf(
+      HttpException,
+    );
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('узкое ок, широкое превышено — 429 после обеих проверок', async () => {
+    const { guard, prisma, context } = buildMulti([NARROW, WIDE], [5, 61]);
+    await expect(guard.canActivate(context as never)).rejects.toBeInstanceOf(
+      HttpException,
+    );
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('clientIp', () => {
   it('первый адрес из x-forwarded-for; без заголовка — адрес сокета', () => {
     expect(

@@ -10,7 +10,9 @@
   },
   "scripts": {
     "postinstall": "prisma generate",
+    "prebuild": "ts-node --transpile-only scripts/build-assistant-knowledge.ts",
     "build": "prisma generate && prisma migrate deploy && nest build",
+    "build:assistant-knowledge": "ts-node --transpile-only scripts/build-assistant-knowledge.ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",

@@ -31,6 +31,17 @@
  * сессии (строка в базе с каждого запроса) и входы через Telegram (там
  * перебирают подписи).
  *
+ * ## Два окна на одном маршруте (ассистент на лендинге, ТЗ §7.1)
+ *
+ * `@RateLimit()` принимает и одно правило (как раньше — все существующие
+ * маршруты не меняются), и массив правил на случай, когда узкое окно
+ * (10/мин — не дать одному человеку залить чат вопросами) недостаточно
+ * само по себе (10 запросов в минуту весь час подряд — тоже слишком
+ * много для бесплатного анонимного чата). Гвард проверяет ВСЕ правила по
+ * очереди одним и тем же ключом `${name}|${ip}` (имя правила своё у
+ * каждого — окна не складываются друг с другом); первое сработавшее
+ * останавливает запрос 429-м.
+ *
  * ## Почему отказ базы ПРОПУСКАЕТ запрос
  *
  * Ограничитель — тормоз от злоупотребления, а не дверь. Если база не
@@ -63,8 +74,13 @@ export interface RateLimitRule {
 
 export const RATE_LIMIT_KEY = 'rateLimit';
 
-/** Правило для маршрута; применяется вместе с `@UseGuards(RateLimitGuard)`. */
-export const RateLimit = (rule: RateLimitRule) =>
+/**
+ * Правило (или несколько) для маршрута; применяется вместе с
+ * `@UseGuards(RateLimitGuard)`. Один объект — как везде до сих пор;
+ * массив — второе, более широкое окно на том же маршруте (§7.1 ТЗ
+ * ассистента на лендинге).
+ */
+export const RateLimit = (rule: RateLimitRule | RateLimitRule[]) =>
   SetMetadata(RATE_LIMIT_KEY, rule);
 
 export const RATE_LIMIT_MESSAGE =
@@ -83,24 +99,34 @@ export class RateLimitGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const rule = this.reflector.get<RateLimitRule | undefined>(
-      RATE_LIMIT_KEY,
-      context.getHandler(),
-    );
-    if (!rule) return true;
+    const metadata = this.reflector.get<
+      RateLimitRule | RateLimitRule[] | undefined
+    >(RATE_LIMIT_KEY, context.getHandler());
+    if (!metadata) return true;
+    const rules = Array.isArray(metadata) ? metadata : [metadata];
 
     const req = context.switchToHttp().getRequest<Request>();
     const ip = clientIp(req);
     const now = new Date();
-    const verdict = await this.hit(`${rule.name}|${ip}`, rule, now);
-    if (verdict.count <= rule.limit) return true;
 
-    const res = context.switchToHttp().getResponse<Response>();
-    res.setHeader('Retry-After', String(verdict.retryAfterSec));
-    this.logger.warn(
-      `${rule.name}: ${verdict.count} запросов за окно с ${ip} при лимите ${rule.limit}`,
-    );
-    throw new HttpException(RATE_LIMIT_MESSAGE, HttpStatus.TOO_MANY_REQUESTS);
+    // Все правила проверяются, а не только первое сработавшее окно —
+    // иначе снятие узкого лимита само по себе ведёт лишний INSERT ради
+    // окна, которое всё равно не решает.
+    for (const rule of rules) {
+      const verdict = await this.hit(`${rule.name}|${ip}`, rule, now);
+      if (verdict.count > rule.limit) {
+        const res = context.switchToHttp().getResponse<Response>();
+        res.setHeader('Retry-After', String(verdict.retryAfterSec));
+        this.logger.warn(
+          `${rule.name}: ${verdict.count} запросов за окно с ${ip} при лимите ${rule.limit}`,
+        );
+        throw new HttpException(
+          RATE_LIMIT_MESSAGE,
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+    return true;
   }
 
   /** Один запрос: завести, прибавить или начать новое окно. */

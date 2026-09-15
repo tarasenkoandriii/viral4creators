@@ -107,6 +107,7 @@
   "steps": {
     "title": "Cómo funciona",
     "lead": "Nueve pasos desde subir la referencia hasta obtener el archivo final.",
+    "askAbout": "Preguntar sobre este paso",
     "items": [
       {
         "title": "Agrega un producto",
@@ -497,5 +498,29 @@
     "shareCta": "Compartir",
     "linkCopied": "Enlace copiado",
     "poweredBy": "Este video se hizo con viral4creators — a partir del ejemplo de otra persona, en un par de minutos y gratis."
+  },
+  "assistant": {
+    "floatingLabel": "¿Tienes una pregunta?",
+    "widgetTitle": "Consultor de IA",
+    "openAria": "Abrir el chat con el consultor de IA",
+    "closeAria": "Cerrar",
+    "inputPlaceholder": "Escribe tu pregunta…",
+    "inputAria": "Tu pregunta para el consultor",
+    "send": "Enviar",
+    "disclaimer": "Las respuestas las da una IA según la descripción del producto; las condiciones y los precios están en la oferta y en la página de planes.",
+    "emptyHint": "Por ejemplo:",
+    "typing": "escribiendo…",
+    "errorNetwork": "Sin conexión. Comprueba tu red.",
+    "retry": "Reintentar",
+    "errorRateLimited": "Demasiadas preguntas seguidas, espera un minuto.",
+    "errorBudget": "El consultor descansa hasta mañana — revisa el tutorial y las preguntas frecuentes.",
+    "errorUpstream": "No se pudo obtener respuesta.",
+    "askAboutPrefill": "¿Qué necesito preparar para el paso «{{title}}»?",
+    "actionOpenApp": "Abrir la aplicación",
+    "actionStep": "Mostrar paso",
+    "actionPlan": "Ver plan",
+    "actionFaq": "Ver en preguntas frecuentes",
+    "actionLegal": "Abrir documento",
+    "charsLeft": "Quedan {{n}} caracteres"
   }
 }
