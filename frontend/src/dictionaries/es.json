@@ -543,7 +543,6 @@
     "pickButton": "Usar",
     "deleteButton": "Eliminar",
     "deleteConfirm": "¿Eliminar la voz «{{label}}»? Esta acción no se puede deshacer.",
-    "providerNote": "Una voz clonada se puede elegir para la narración cuando el proveedor de síntesis del stand sea Resemble (actualmente: {{provider}}).",
     "limitReached": "Se alcanzó el límite de {{max}} voces — elimina una para clonar otra."
   },
   "manifestsListScreen": {
@@ -1173,6 +1172,13 @@
     "panelTitle": "Doblar de nuevo el vídeo",
     "panelHint": "Una nueva pista de audio (y subtítulos a juego) sin volver a renderizar con Veo — el vídeo original no cambia.",
     "scriptLabel": "Texto de las réplicas",
+    "providerLabel": "Proveedor de síntesis",
+    "providerCurrent": "Como ahora",
+    "providerElevenlabs": "ElevenLabs",
+    "providerResemble": "Resemble",
+    "providerHint": "Una elección explícita: el catálogo de voces y el nuevo doblaje usarán justo este proveedor, aunque en el stand esté activo otro distinto ahora mismo.",
+    "prelistenCta": "Escuchar antes",
+    "prelistenHint": "Elige antes una voz arriba: la escucha previa lee tu texto de réplicas con esa voz.",
     "submitCta": "Doblar de nuevo",
     "footerNote": "Se cobra como una postproducción normal: una nueva síntesis de voz y un nuevo trabajo de procesamiento."
   },

@@ -22,7 +22,11 @@
  * значило бы откатить выбор оператора.
  */
 
-export const VOICEOVER_PROVIDER_KEYS = ['elevenlabs', 'resemble', 'veo'] as const;
+export const VOICEOVER_PROVIDER_KEYS = [
+  'elevenlabs',
+  'resemble',
+  'veo',
+] as const;
 
 export type VoiceoverProviderKey = (typeof VOICEOVER_PROVIDER_KEYS)[number];
 
@@ -37,10 +41,24 @@ const FALLBACK_KEY: VoiceoverProviderKey = 'elevenlabs';
 export function isVoiceoverProviderKey(
   value: string | null | undefined,
 ): value is VoiceoverProviderKey {
-  return (VOICEOVER_PROVIDER_KEYS as readonly string[]).includes(
-    value ?? '',
-  );
+  return (VOICEOVER_PROVIDER_KEYS as readonly string[]).includes(value ?? '');
 }
+
+/**
+ * Подмножество `VOICEOVER_PROVIDER_KEYS` БЕЗ `'veo'` — настоящие
+ * провайдеры синтеза, которые имеет смысл выбирать явно ДЛЯ ОДНОЙ
+ * СЕССИИ (этап 91: `UpdateBrandSnapshotRequestDto.ttsProvider`,
+ * `RevoicePanel`). `'veo'` сюда не входит намеренно: это не провайдер,
+ * а «не озвучивать вовсе» — тег `ttsProvider: 'veo'` на голосе с
+ * непустым `ttsVoiceId` привёл бы `postprod.service.ts` к
+ * гарантированному отказу синтеза (`VeoPassthroughService` всегда
+ * `skipped: true`), то есть к обречённому платному вызову переозвучки
+ * — том самом, от чего вся эта проверка изначально защищала.
+ */
+export const EXPLICIT_TTS_PROVIDER_KEYS = ['elevenlabs', 'resemble'] as const;
+
+export type ExplicitTtsProviderKey =
+  (typeof EXPLICIT_TTS_PROVIDER_KEYS)[number];
 
 /**
  * Чистая функция — сознательно без обращения к `process.env` или БД

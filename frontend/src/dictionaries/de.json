@@ -543,7 +543,6 @@
     "pickButton": "Verwenden",
     "deleteButton": "Löschen",
     "deleteConfirm": "Stimme „{{label}}“ löschen? Das kann nicht rückgängig gemacht werden.",
-    "providerNote": "Eine geklonte Stimme kann für die Vertonung gewählt werden, sobald der aktive Sprachsynthese-Anbieter des Stands Resemble ist (aktuell: {{provider}}).",
     "limitReached": "Limit von {{max}} Stimmen erreicht — löschen Sie eine, um eine neue zu klonen."
   },
   "manifestsListScreen": {
@@ -1173,6 +1172,13 @@
     "panelTitle": "Video neu vertonen",
     "panelHint": "Eine neue Tonspur (und passende Untertitel) ohne neuen Veo-Render — das ursprüngliche Video bleibt unverändert.",
     "scriptLabel": "Sprechertext",
+    "providerLabel": "Sprachsynthese-Anbieter",
+    "providerCurrent": "Wie bisher",
+    "providerElevenlabs": "ElevenLabs",
+    "providerResemble": "Resemble",
+    "providerHint": "Eine bewusste Wahl — der Stimmenkatalog und die Neuvertonung selbst nutzen genau diesen Anbieter, auch wenn auf dem Stand gerade ein anderer aktiv ist.",
+    "prelistenCta": "Vorab anhören",
+    "prelistenHint": "Wählen Sie zuerst oben eine Stimme — das Vorab-Hören liest Ihren Sprechertext mit dieser Stimme vor.",
     "submitCta": "Neu vertonen",
     "footerNote": "Wird wie eine normale Nachbearbeitung abgerechnet — eine neue Sprachsynthese und ein neuer Verarbeitungsauftrag."
   },

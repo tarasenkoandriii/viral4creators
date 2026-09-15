@@ -48,6 +48,8 @@ export function VoicePicker({
   disabled,
   voiceProvider,
   sessionId,
+  providerOverride,
+  onProviderOverrideChange,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -69,6 +71,20 @@ export function VoicePicker({
    * поэтому там этот проп не передаётся, и кнопка не показывается.
    */
   sessionId?: string;
+  /**
+   * Этап 91 (доп. запрос владельца продукта — явный выбор провайдера в
+   * `RevoicePanel`, «способ переозвучки можно выбрать явно»). Когда
+   * задан — каталог (`getVoices`) и проба (`listen`) читаются у ЭТОГО
+   * провайдера, в обход платформенного дефолта, тем же приёмом, что уже
+   * поддержан бэкендом для `/tts/voices`/`/tts/preview` (см. их
+   * доккомментарии). Селектор рисует и держит состояние вызывающий
+   * (`RevoicePanel`) — здесь только используется, чтобы не удваивать
+   * его в `BrandSnapshotEditor.tsx`/`ManifestScreen.tsx`, которые этот
+   * проп не передают (там `undefined` — прежнее поведение без изменений).
+   */
+  providerOverride?: string | null;
+  /** Только для проброса в `MyVoicesSection` — см. её `onPick`. */
+  onProviderOverrideChange?: (p: string | null) => void;
 }) {
   const { dict } = useI18n();
   const [state, setState] = useState<VoiceCatalogue | null>(null);
@@ -80,7 +96,8 @@ export function VoicePicker({
 
   useEffect(() => {
     let alive = true;
-    getVoices()
+    setLoading(true);
+    getVoices(undefined, providerOverride ?? undefined)
       .then((c) => alive && setState(c))
       .catch(() =>
         alive
@@ -101,7 +118,7 @@ export function VoicePicker({
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [providerOverride]);
 
   const chosen = state?.voices.find((v) => v.voiceId === value) ?? null;
 
@@ -121,9 +138,12 @@ export function VoicePicker({
       const r = await previewVoice(
         useOriginal ? null : sample.trim(),
         value || null,
-        useOriginal && sessionId
-          ? { useOriginalDialogue: true, sessionId }
-          : undefined
+        {
+          provider: providerOverride ?? undefined,
+          ...(useOriginal && sessionId
+            ? { useOriginalDialogue: true, sessionId }
+            : {}),
+        }
       );
       if (r.ok && r.audio) {
         setAudio(r.audio);
@@ -181,8 +201,12 @@ export function VoicePicker({
 
         {/* doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md §4.2: голос помечен, каким
             провайдером выпущен — расхождение с активным на стенде значит,
-            что value — чужой идентификатор, и звук не получится. */}
-        {value &&
+            что value — чужой идентификатор, и звук не получится.
+            Этап 91: при активном явном `providerOverride` это
+            предупреждение — шум, а не сигнал (пользователь СОЗНАТЕЛЬНО
+            смотрит каталог другого провайдера, ещё не сохранившись). */}
+        {!providerOverride &&
+          value &&
           voiceProvider &&
           state?.provider &&
           voiceProvider !== state.provider && (
@@ -247,8 +271,14 @@ export function VoicePicker({
 
       <div className="mt-4">
         <MyVoicesSection
-          activeProvider={state?.provider ?? ''}
-          onPick={onChange}
+          onPick={(voiceId) => {
+            onChange(voiceId);
+            // Этап 91: свой клон — всегда Resemble (см. applySnapshotEdit,
+            // Е-4.1) — синхронизируем явный выбор провайдера тем же
+            // выбором, чтобы каталог/проба/итоговое сохранение не
+            // разъехались с только что выбранным голосом.
+            onProviderOverrideChange?.('resemble');
+          }}
           disabled={disabled}
         />
       </div>
@@ -292,12 +322,9 @@ function statusTone(
 }
 
 function MyVoicesSection({
-  activeProvider,
   onPick,
   disabled,
 }: {
-  /** Активный на стенде провайдер синтеза (`VoiceCatalogue.provider`). */
-  activeProvider: string;
   onPick: (voiceId: string) => void;
   disabled?: boolean;
 }) {
@@ -546,23 +573,23 @@ function MyVoicesSection({
                   <Button
                     variant="outline"
                     size="sm"
-                    // Шестой аудит, Е-4.1: раньше кнопка только показывала
-                    // предупреждение текстом ниже, а сам выбор проходил —
-                    // сервер тегировал клон АКТИВНЫМ на стенде провайдером
-                    // (см. brand-manifest.service.ts) вместо настоящего
-                    // Resemble, и синтез потом гарантированно проваливался.
-                    // Реальная блокировка выбора — единственный надёжный
-                    // барьер на клиенте, раз само клонирование всегда идёт
-                    // через Resemble независимо от активного TTS_PROVIDER.
-                    disabled={disabled || activeProvider !== 'resemble'}
-                    title={
-                      activeProvider !== 'resemble'
-                        ? t.providerNote.replace(
-                            '{{provider}}',
-                            activeProvider || '—'
-                          )
-                        : undefined
-                    }
+                    // Шестой аудит, Е-4.1: кнопка когда-то была
+                    // разблокирована, но выбор проходил вхолостую — сервер
+                    // тегировал клон АКТИВНЫМ на стенде провайдером вместо
+                    // настоящего Resemble (см. applySnapshotEdit), и
+                    // синтез потом гарантированно проваливался. Блокировка
+                    // до нужного активного провайдера была барьером
+                    // против ЭТОГО.
+                    //
+                    // Этап 91 снял первопричину с двух концов: клон
+                    // теперь ВСЕГДА тегируется 'resemble' безусловно (то
+                    // же Е-4.1, applySnapshotEdit это уже умел), а
+                    // `postprod.service.ts` при синтезе зовёт ИМЕННО
+                    // тегированный провайдер (`resolveByKey`), а не
+                    // сверяет его с активным на стенде. Блокировка кнопки
+                    // ничего больше не защищает — держать её означало бы
+                    // запрещать рабочий выбор.
+                    disabled={disabled}
                     onClick={() => onPick(v.resembleVoiceId!)}
                   >
                     {t.pickButton}
@@ -582,18 +609,6 @@ function MyVoicesSection({
           ))}
         </ul>
       )}
-
-      {/* §4.2 doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md: голос сохраняется с
-          провайдером, АКТИВНЫМ на стенде на момент сохранения — выбор
-          клона имеет смысл только тогда, когда этот провайдер и есть
-          Resemble, иначе сохранённый ttsProvider не будет соответствовать
-          реальному владельцу идентификатора. */}
-      {voices.some((v) => v.status === 'ready') &&
-        activeProvider !== 'resemble' && (
-          <p className="mt-2 text-[11px] text-amber-500">
-            {t.providerNote.replace('{{provider}}', activeProvider || '—')}
-          </p>
-        )}
 
       {adding && (
         <div className="mt-3 space-y-3 border-t border-silver-200/60 pt-3 dark:border-silver-800">

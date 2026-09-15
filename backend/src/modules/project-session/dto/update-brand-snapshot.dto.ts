@@ -14,6 +14,10 @@ import {
 } from 'class-validator';
 import { IsJsonObject } from '../../brand-manifest/dto/json-object.validator';
 import { VOICE_MODES, VoiceMode } from '../../../common/voice-mode';
+import {
+  EXPLICIT_TTS_PROVIDER_KEYS,
+  ExplicitTtsProviderKey,
+} from '../../tts/default-tts-provider';
 import { CAMERA_MOVES, CameraMove } from '../../../common/camera-move';
 import {
   SUBTITLES_MODES,
@@ -96,6 +100,24 @@ export class UpdateBrandSnapshotRequestDto {
   @IsString()
   @Length(1, 120)
   ttsVoiceId?: string | null;
+
+  /**
+   * Явный выбор провайдера синтеза ДЛЯ ЭТОЙ СЕССИИ, в обход
+   * платформенного дефолта (этап 91, доп. запрос владельца продукта —
+   * `RevoicePanel`: «способ переозвучки можно выбрать явно» + реальная
+   * предпрослушка тем же выбором). Не пропускает `'veo'` — это не
+   * провайдер синтеза, а «не озвучивать вовсе»
+   * (`VeoPassthroughService.synthesize()` всегда `skipped: true`);
+   * отправка ttsProvider тут имеет смысл только вместе с `ttsVoiceId` —
+   * без него сервер тег всё равно не сохранит (см. `applySnapshotEdit`).
+   * Необязательное поле: не задано — прежнее поведение (клон → всегда
+   * `resemble`, иначе активный на стенде провайдер).
+   */
+  @IsOptional()
+  @IsIn(EXPLICIT_TTS_PROVIDER_KEYS, {
+    message: `ttsProvider must be one of: ${EXPLICIT_TTS_PROVIDER_KEYS.join(', ')}`,
+  })
+  ttsProvider?: ExplicitTtsProviderKey;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)

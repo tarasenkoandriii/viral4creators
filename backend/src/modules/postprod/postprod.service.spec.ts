@@ -89,12 +89,17 @@ function build(
           : Promise.resolve(),
       ),
   };
+  // Этап 91: `resolveByKey` тоже отдаёт `tts` — для большинства тестов
+  // неважно, каким ключом его позвали, а тесты про явный провайдер
+  // (ниже) сверяют сам факт и аргумент вызова через мок `ttsResolver`.
+  const ttsResolver = {
+    resolve: jest.fn().mockResolvedValue(tts),
+    resolveByKey: jest.fn().mockReturnValue(tts),
+  };
   return {
     svc: new PostProductionService(
       api as any,
-      // Спека отстала от кода: сервис получает резолвер провайдера
-      // (`TtsProviderResolverService.resolve()`), а не сам провайдер.
-      { resolve: jest.fn().mockResolvedValue(tts) } as any,
+      ttsResolver as any,
       blob as any,
       sessions as any,
       aiUsage as any,
@@ -103,6 +108,7 @@ function build(
     plans,
     api,
     tts,
+    ttsResolver,
     blob,
     sessions,
     aiUsage,
@@ -270,8 +276,8 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       );
     });
 
-    describe('рассинхрон провайдера голоса (§4.2 doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md)', () => {
-      const mismatched = session({
+    describe('явный тег провайдера голоса — этап 91 (было «рассинхрон провайдера», §4.2 doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md)', () => {
+      const tagged = session({
         brandManifestSnapshot: {
           voiceMode: 'voiceover',
           ttsVoiceId: 'brand-1',
@@ -279,32 +285,25 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
         },
       });
 
-      it('несовпадение brand.ttsProvider с активным провайдером — сбой без сетевого вызова', async () => {
-        const { svc, tts } = build({
-          session: mismatched,
-          ttsProviderKey: 'elevenlabs',
+      it('тег ≠ активный на стенде — синтез всё равно идёт ЧЕРЕЗ ТЕГ (resolveByKey), не через платформенный дефолт', async () => {
+        // До этапа 91 это был сбой без сетевого вызова («защита от
+        // обречённого платного вызова»). Явный выбор провайдера в
+        // RevoicePanel сделал тег источником правды — voiceId пришёл из
+        // каталога именно тегированного провайдера, вызов корректен.
+        const { svc, tts, ttsResolver } = build({
+          session: tagged,
+          ttsProviderKey: 'elevenlabs', // активный на стенде — другой
         });
         const r = await svc.start('s1', VIDEO);
-        expect(tts.synthesize).not.toHaveBeenCalled();
-        expect(r.voiceStatus).toBe('failed');
-        expect(r.voiceError).toContain('другого провайдера');
+        expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('resemble');
+        expect(ttsResolver.resolve).not.toHaveBeenCalled();
+        expect(tts.synthesize).toHaveBeenCalled();
+        expect(r.voiceStatus).toBe('synthesized');
       });
 
-      it('несовпадение провайдера не отменяет обрезку — та же деградация, что и у прочих сбоев синтеза', async () => {
-        const { svc, api } = build({
-          session: mismatched,
-          ttsProviderKey: 'elevenlabs',
-        });
-        const r = await svc.start('s1', VIDEO);
-        expect(api.submit).toHaveBeenCalledTimes(1);
-        expect(api.submit.mock.calls[0][0].commands[0]).toContain('crop=');
-        expect(api.submit.mock.calls[0][0].commands[0]).not.toContain('amix');
-        expect(r.postStatus).toBe('pending');
-      });
-
-      it('провайдер совпадает — синтез идёт как обычно', async () => {
+      it('провайдер совпадает — синтез идёт как обычно (через resolveByKey, тот же результат)', async () => {
         const { svc, tts } = build({
-          session: mismatched,
+          session: tagged,
           ttsProviderKey: 'resemble',
         });
         const r = await svc.start('s1', VIDEO);
@@ -312,9 +311,11 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
         expect(r.voiceStatus).toBe('synthesized');
       });
 
-      it('brand.ttsProvider не задан (старая запись) — проверка пропускается, синтез идёт', async () => {
-        const { svc, tts } = build({ session: voiced }); // voiced: ttsProvider не задан
+      it('brand.ttsProvider не задан (старая запись) — читает АКТИВНЫЙ на стенде провайдер (resolve()), синтез идёт', async () => {
+        const { svc, tts, ttsResolver } = build({ session: voiced }); // voiced: ttsProvider не задан
         const r = await svc.start('s1', VIDEO);
+        expect(ttsResolver.resolve).toHaveBeenCalled();
+        expect(ttsResolver.resolveByKey).not.toHaveBeenCalled();
         expect(tts.synthesize).toHaveBeenCalled();
         expect(r.voiceStatus).toBe('synthesized');
       });

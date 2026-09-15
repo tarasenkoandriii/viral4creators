@@ -727,6 +727,13 @@ export interface BrandSnapshotInput {
   /** Озвучка (§15.1, этап 35). */
   voiceMode?: VoiceMode;
   ttsVoiceId?: string | null;
+  /**
+   * Явный выбор провайдера синтеза ДЛЯ ЭТОЙ СЕССИИ, в обход
+   * платформенного дефолта (этап 91, `RevoicePanel`) — см. доккомментарий
+   * `UpdateBrandSnapshotRequestDto.ttsProvider` на бэкенде. `'veo'` не
+   * входит намеренно: это не провайдер синтеза, а «не озвучивать вовсе».
+   */
+  ttsProvider?: 'elevenlabs' | 'resemble';
   ttsModel?: string | null;
   /** Движение камеры (§29, этап 46). */
   cameraMove?: CameraMove;

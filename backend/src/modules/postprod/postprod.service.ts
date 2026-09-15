@@ -64,6 +64,7 @@ import {
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { FfmpegApiService } from './ffmpeg-api.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
+import { isVoiceoverProviderKey } from '../tts/default-tts-provider';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
 import { Session } from '../../common/types/session.types';
@@ -1083,30 +1084,26 @@ export class PostProductionService {
     }
 
     // doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md §4.2: голос помечен, каким
-    // провайдером выпущен — если это ЗАДАНО и не совпадает с активным
-    // на стенде, `voiceId` для другого провайдера бессмысленен, и звать
-    // его — заведомо обречённый платный вызов. `null` — старая запись
-    // или голос не выбран — пропускает проверку намеренно (нечего
-    // сверять, а не «сверка провалена»).
-    //
-    // «Активный на стенде» теперь читается заново на каждый вызов
-    // (доп. запрос владельца продукта: ручной селектор в админке —
-    // см. tts-provider-resolver.service.ts), а не выбирается один раз
-    // при холодном старте функции.
-    const tts = await this.ttsResolver.resolve();
-    if (work.ttsProvider && work.ttsProvider !== tts.providerKey) {
-      this.logger.warn(
-        `голос настроен для провайдера ${work.ttsProvider}, активен ${tts.providerKey} — синтез пропущен`,
-      );
-      return {
-        patch: {
-          voiceStatus: 'failed',
-          voiceError:
-            'голос настроен для другого провайдера синтеза — выберите голос заново в манифесте бренда',
-        },
-        url: null,
-      };
-    }
+    // провайдером выпущен. До этапа 91 это было только пометкой для
+    // СВЕРКИ — реальный синтез всегда шёл через платформенный дефолт
+    // (`resolve()`), а несовпадение с ним значило отказ (`voiceId` для
+    // другого провайдера бессмысленен для АКТИВНОГО провайдера, звать
+    // его — заведомо обречённый платный вызов). Этап 91 (доп. запрос
+    // владельца продукта — явный выбор провайдера ДЛЯ ОДНОЙ ПЕРЕОЗВУЧКИ
+    // из `RevoicePanel`, тот же смысл, что `resolveByKey` уже даёт
+    // `/tts/preview` и `/tts/voices` — см. их доккомментарии) сделал тег
+    // ИСТОЧНИКОМ ПРАВДЫ, а не сверкой: если он задан, зовём ИМЕННО его
+    // (`resolveByKey`), какой бы провайдер ни был активен на стенде
+    // сейчас, — `voiceId` пришёл из каталога именно этого провайдера
+    // (см. `TtsController.voices()`/`applySnapshotEdit`), так что вызов
+    // не «обречённый», а корректный. Мисконфигурация конкретного
+    // провайдера (нет ключа/баланса) по-прежнему ловится ниже, штатно
+    // — `outcome.ok === false` — как и раньше. `null` — старая запись
+    // или голос не выбран — читает активный на стенде провайдер
+    // (`resolve()`), как и до этого этапа.
+    const tts = isVoiceoverProviderKey(work.ttsProvider)
+      ? this.ttsResolver.resolveByKey(work.ttsProvider)
+      : await this.ttsResolver.resolve();
 
     const outcome = await tts.synthesize({
       text: work.speech,

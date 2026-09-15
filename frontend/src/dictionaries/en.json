@@ -543,7 +543,6 @@
     "pickButton": "Use",
     "deleteButton": "Delete",
     "deleteConfirm": "Delete the voice \"{{label}}\"? This can't be undone.",
-    "providerNote": "A cloned voice can be picked for narration once the stand's synthesis provider is Resemble (currently: {{provider}}).",
     "limitReached": "Reached the limit of {{max}} voices — delete one to clone a new one."
   },
   "manifestsListScreen": {
@@ -1173,6 +1172,13 @@
     "panelTitle": "Re-voice the video",
     "panelHint": "A new audio track (and matching subtitles) without a new Veo render — the original footage stays the same.",
     "scriptLabel": "Voiceover script",
+    "providerLabel": "Synthesis provider",
+    "providerCurrent": "Keep current",
+    "providerElevenlabs": "ElevenLabs",
+    "providerResemble": "Resemble",
+    "providerHint": "An explicit choice — the voice catalogue and the re-voice itself will use this provider, even if a different one is active on the stand right now.",
+    "prelistenCta": "Pre-listen",
+    "prelistenHint": "Pick a voice above first — the pre-listen reads your script text in that voice.",
     "submitCta": "Re-voice",
     "footerNote": "Billed like regular post-processing — a new voice synthesis and a new processing job."
   },

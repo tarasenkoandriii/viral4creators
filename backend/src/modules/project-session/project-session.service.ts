@@ -249,10 +249,23 @@ export class ProjectSessionService {
  * `TtsProvider.providerKey` активного на стенде провайдера
  * (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md §4.2), передаётся вызывающим
  * (у которого есть DI), а не читается здесь — эта функция намеренно
- * остаётся чистой (без Nest-инъекций) для юнит-теста в изоляции. Тот
- * же принцип, что у `manifestDataFromDto` в brand-manifest.service.ts:
- * клиент не решает, какой провайдер сейчас активен, и не присылает
- * `ttsProvider` в DTO вовсе.
+ * остаётся чистой (без Nest-инъекций) для юнит-теста в изоляции.
+ *
+ * До этапа 91 клиент не решал, какой провайдер сейчас активен, и не
+ * присылал `ttsProvider` в DTO вовсе — тег всегда выводился сервером
+ * (клон → `resemble`, иначе активный на стенде). Этап 91 (доп. запрос
+ * владельца продукта — явный выбор провайдера в `RevoicePanel`, «и
+ * только если человеку подходит — жмёт переозвучить») добавил
+ * `dto.ttsProvider`: явный выбор ОДНОГО ИЗ ДВУХ настоящих провайдеров
+ * синтеза (`elevenlabs`/`resemble` — DTO не пропускает `'veo'`, см. её
+ * доккомментарий) для ОДНОЙ сессии, в обход платформенного дефолта —
+ * тот же смысл, что `resolveByKey` уже даёт `/tts/voices`/`/tts/preview`
+ * (см. их доккомментарии), теперь распространённый и на само сохранение
+ * тега, который читает `postprod.service.ts` при реальном синтезе.
+ * Приоритет тот же, что был у `activeProviderKey`: собственный клон на
+ * Resemble — ВСЕГДА `resemble` (серверный факт из БД, не клиентская
+ * догадка), иначе — явный выбор клиента, если он есть, иначе — прежнее
+ * поведение (активный на стенде).
  */
 export function applySnapshotEdit(
   current: BrandManifestSnapshot,
@@ -274,10 +287,12 @@ export function applySnapshotEdit(
           ttsVoiceId: dto.ttsVoiceId,
           // §4.2 + Е-4.1: голос очищен (null) — провайдер тоже не нужен;
           // свой клон на Resemble — провайдер безусловно 'resemble'.
+          // Этап 91: иначе — явный выбор клиента (`dto.ttsProvider`),
+          // если он есть, иначе — прежнее поведение (активный на стенде).
           ttsProvider: dto.ttsVoiceId
             ? isResembleClone
               ? 'resemble'
-              : activeProviderKey
+              : (dto.ttsProvider ?? activeProviderKey)
             : null,
         }
       : {}),

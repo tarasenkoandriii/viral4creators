@@ -357,6 +357,31 @@ describe('ProjectSessionService.updateSnapshot', () => {
     expect(result.ttsProvider).toBe('resemble');
   });
 
+  it('этап 91 (доп. запрос владельца продукта, RevoicePanel): явный ttsProvider в DTO доходит до снимка сессии', async () => {
+    const { service, sessions } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      userId: 'u1',
+      brandManifestSnapshot: snapshot,
+    });
+    sessions.updateSession.mockImplementation(
+      async (
+        _id: string,
+        u: { brandManifestSnapshot: BrandManifestSnapshot },
+      ) => ({
+        sessionId: 's1',
+        brandManifestSnapshot: u.brandManifestSnapshot,
+      }),
+    );
+    const result = await service.updateSnapshot('s1', {
+      ttsVoiceId: 'catalog-voice-1',
+      ttsProvider: 'resemble',
+    });
+    // Платформенный дефолт этого build() — 'elevenlabs' (см. tts.resolve
+    // мок ниже) — явный выбор клиента его перекрывает.
+    expect(result.ttsProvider).toBe('resemble');
+  });
+
   it('доп. запрос владельца продукта: voiceMode dub проверяет тариф voiceDub (Premium)', async () => {
     const { service, sessions, plans } = build();
     sessions.getSession.mockResolvedValue({
@@ -509,6 +534,31 @@ describe('applySnapshotEdit', () => {
     const next = applySnapshotEdit(
       base,
       { ttsVoiceId: 'clone-1' },
+      'elevenlabs',
+      true,
+      now,
+    );
+    expect(next.ttsProvider).toBe('resemble');
+  });
+
+  it('этап 91: явный dto.ttsProvider побеждает активный на стенде провайдер', () => {
+    const next = applySnapshotEdit(
+      base,
+      { ttsVoiceId: 'v1', ttsProvider: 'resemble' },
+      'elevenlabs', // активный на стенде — другой
+      false,
+      now,
+    );
+    expect(next.ttsProvider).toBe('resemble');
+  });
+
+  it('этап 91: явный dto.ttsProvider не отменяет распознанный свой клон — клон всё равно resemble', () => {
+    const next = applySnapshotEdit(
+      base,
+      // Гипотетическое рассогласование клиента (прислал 'elevenlabs' на
+      // voiceId, который сервер узнал как СВОЙ клон Resemble) —
+      // серверный факт из БД (isResembleClone) авторитетнее.
+      { ttsVoiceId: 'clone-1', ttsProvider: 'elevenlabs' },
       'elevenlabs',
       true,
       now,
