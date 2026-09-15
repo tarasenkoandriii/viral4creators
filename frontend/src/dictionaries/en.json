@@ -533,6 +533,7 @@
     "labelPlaceholder": "E.g. \"Maria's voice\"",
     "consentLabel": "I confirm I have the right to use this recording to clone a voice.",
     "submitButton": "Clone",
+    "submitHint": "Enter a voice name and confirm the rights to the recording to clone.",
     "statusTraining": "Training",
     "statusReady": "Ready",
     "statusFailed": "Failed",

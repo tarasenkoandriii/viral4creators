@@ -684,6 +684,11 @@ function MyVoicesSection({
                   {t.cancelButton}
                 </Button>
               </div>
+              {/* 15.09.2026: кнопка без названия/согласия была просто тусклой —
+                  пользователь не понимал, почему «не даёт клонировать». */}
+              {(!label.trim() || !consent) && !submitting && (
+                <p className="text-xs text-silver-400">{t.submitHint}</p>
+              )}
             </div>
           )}
         </div>

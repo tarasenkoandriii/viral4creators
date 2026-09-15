@@ -533,6 +533,7 @@
     "labelPlaceholder": "Z. B. „Marias Stimme“",
     "consentLabel": "Ich bestätige, dass ich berechtigt bin, diese Aufnahme zum Klonen einer Stimme zu verwenden.",
     "submitButton": "Klonen",
+    "submitHint": "Geben Sie einen Namen ein und bestätigen Sie die Rechte an der Aufnahme, um zu klonen.",
     "statusTraining": "Wird trainiert",
     "statusReady": "Bereit",
     "statusFailed": "Fehlgeschlagen",

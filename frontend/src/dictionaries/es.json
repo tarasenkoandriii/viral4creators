@@ -533,6 +533,7 @@
     "labelPlaceholder": "Por ejemplo, «Voz de María»",
     "consentLabel": "Confirmo que tengo derecho a usar esta grabación para clonar una voz.",
     "submitButton": "Clonar",
+    "submitHint": "Introduce un nombre y confirma los derechos sobre la grabación para clonar.",
     "statusTraining": "Entrenando",
     "statusReady": "Lista",
     "statusFailed": "Error",
