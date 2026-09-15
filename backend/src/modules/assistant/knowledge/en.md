@@ -2,6 +2,13 @@
 
 _Собрано автоматически 2026-09-15 из lending/frontend/backend; коммит — local._
 
+## Mini-app sections
+
+- **Projects** — A product or line for which ads are generated
+- **Brand** — A single style and characters for all of a brand's projects
+- **Production** — the generation wizard — from choosing a reference to a finished video (see the tutorial steps below)
+- **Postprod** — All your finished videos: re-voice, export, publish and share.
+
 ## Tutorial steps
 
 ### 1. Add a product
@@ -52,13 +59,21 @@ Google Veo 3.1 renders the new ad video — pick fast or more cinematic render q
 - "Generate the ad video" button
 - On failure — "Generate again"
 
-### 9. Review and grab it
-A separate artifact check will propose a fixed prompt for a re-generation. The finished video is a direct file link; you can also queue it for moderation to publish.
+### 9. Review the result
+A separate artifact check will propose a fixed prompt for a re-generation. For a product from a project, a batch run for the whole line and three A/B hook variants are right there. The finished video is a direct file link, then an “Open in Postprod” button.
 (available from plan: Standard+)
 - Artifact check and sound check (Standard+)
-- Publication and a shareable page (Standard+, sign-in required)
-- Export to several platforms at once — no extra render charge (Standard+)
 - A batch run for a whole product line, and 3 A/B variants (Premium, products with a project only)
+- An “Open in Postprod” button — the same video, alongside all your other ones
+
+### 10. Manage it in Postprod
+A separate Postprod tab with all your finished videos, not just the latest one. Change the script and the voice — with an explicit synthesis provider and an honest pre-listen before you pay — without a new Veo render. Export to several platforms and publish with a shareable page.
+(available from plan: Standard+)
+- Re-voice without a new Veo render — only the audio, subtitles and script change (Standard+)
+- Voice synthesis provider — ElevenLabs or Resemble explicitly, or “as is”
+- Pre-listen to the exact text, voice and provider combination — before paying for the re-voice
+- Export to several platforms at once — no extra render charge (Standard+)
+- Publication and a shareable page (Standard+, sign-in required)
 
 ## Frequently asked questions
 

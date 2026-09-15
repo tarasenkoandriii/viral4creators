@@ -198,8 +198,9 @@ export class AssistantService {
     }
 
     const knowledgeMd = ASSISTANT_KNOWLEDGE[locale] ?? '';
+    // Этап 92: обучалка выросла до 10 шагов (десятый — «Постпродакшн»).
     const step =
-      request.stepId && request.stepId >= 1 && request.stepId <= 9
+      request.stepId && request.stepId >= 1 && request.stepId <= 10
         ? ASSISTANT_STEPS[locale]?.[request.stepId - 1]
         : undefined;
     const systemInstruction = buildSystemInstruction(locale, knowledgeMd, step);

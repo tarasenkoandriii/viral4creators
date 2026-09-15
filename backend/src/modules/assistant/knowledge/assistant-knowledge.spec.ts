@@ -8,6 +8,7 @@
 import {
   buildAll,
   LOCALES,
+  navLabelsFor,
   PROACTIVE_TIPS,
   stepsFor,
 } from '../../../../scripts/build-assistant-knowledge';
@@ -33,9 +34,19 @@ describe('assistant knowledge base', () => {
     },
   );
 
-  it.each(LOCALES)('%s.md contains all nine tutorial steps', (locale) => {
+  it.each(LOCALES)(
+    '%s.md lists all four mini-app nav sections (this catches a silent drift after the tab count changes again)',
+    (locale) => {
+      const md = buildAll()[locale];
+      for (const label of navLabelsFor(locale)) {
+        expect(md).toContain(label);
+      }
+    },
+  );
+
+  it.each(LOCALES)('%s.md contains all ten tutorial steps', (locale) => {
     const md = buildAll()[locale];
-    for (let n = 1; n <= 9; n++) {
+    for (let n = 1; n <= 10; n++) {
       expect(md).toMatch(new RegExp(`###\\s*${n}\\.`));
     }
   });
@@ -55,10 +66,10 @@ describe('assistant knowledge base', () => {
   });
 
   it.each(LOCALES)(
-    '%s: ASSISTANT_STEPS in generated.ts matches stepsFor() (9 steps, CI parity)',
+    '%s: ASSISTANT_STEPS in generated.ts matches stepsFor() (10 steps, CI parity)',
     (locale) => {
       const fresh = stepsFor(locale);
-      expect(fresh).toHaveLength(9);
+      expect(fresh).toHaveLength(10);
       expect(ASSISTANT_STEPS[locale]).toEqual(fresh);
     },
   );
@@ -69,7 +80,7 @@ describe('assistant knowledge base', () => {
       const tips = PROACTIVE_TIPS[locale];
       expect(tips.plans.length).toBeGreaterThan(0);
       expect(tips.exitIntent.length).toBeGreaterThan(0);
-      for (const stepId of ['2', '4', '5', '7', '9']) {
+      for (const stepId of ['2', '4', '5', '7', '9', '10']) {
         expect(tips.step[stepId]?.length ?? 0).toBeGreaterThan(0);
       }
     },

@@ -106,7 +106,7 @@
   },
   "steps": {
     "title": "Cómo funciona",
-    "lead": "Nueve pasos desde subir la referencia hasta obtener el archivo final.",
+    "lead": "Diez pasos desde subir la referencia hasta obtener el archivo final.",
     "askAbout": "Preguntar sobre este paso",
     "items": [
       {
@@ -204,17 +204,31 @@
         ]
       },
       {
-        "title": "Revisa y descárgalo",
-        "shortLabel": "Resultado",
-        "text": "Una verificación aparte de artefactos propondrá un prompt corregido para una nueva generación. El video terminado se entrega como un enlace directo al archivo; también puedes ponerlo en la cola de moderación para publicarlo.",
+        "title": "Revisa el resultado",
+        "shortLabel": "Revisión",
+        "text": "Una verificación aparte de artefactos propondrá un prompt corregido para una nueva generación. Para un producto de un proyecto, ahí mismo tienes un lote para toda la línea y tres variantes A/B del gancho. El video terminado se entrega como un enlace directo al archivo, y después el botón «Abrir en Postprod».",
         "icon": "⌕",
         "badge": "standard",
-        "highlight": "Verificación de artefactos, publicación, exportación a varias plataformas a la vez — con un clic",
+        "highlight": "Verificación de artefactos — y el botón «Abrir en Postprod» directo a ese mismo video",
         "details": [
           "Verificación de artefactos y de audio (Standard+)",
-          "Publicación y página para compartir (Standard+, requiere inicio de sesión)",
+          "Un lote para toda la línea de productos y 3 variantes A/B (Premium, solo productos con proyecto)",
+          "Botón «Abrir en Postprod» — el mismo video, junto con todos tus demás videos"
+        ]
+      },
+      {
+        "title": "Gestiónalo en Postprod",
+        "shortLabel": "Postprod",
+        "text": "Una pestaña aparte, «Postprod», con todos tus videos terminados, no solo el último. Cambia el texto y la voz — con un proveedor de síntesis explícito y una escucha previa honesta antes de pagar — sin un nuevo renderizado en Veo. Exporta a varias plataformas y publica con una página para compartir.",
+        "icon": "⇉",
+        "badge": "standard",
+        "highlight": "Redoblaje sin nuevo renderizado, proveedor explícito y escucha previa — antes de pagar",
+        "details": [
+          "Redoblaje sin nuevo renderizado en Veo — solo cambian el audio, los subtítulos y el texto (Standard+)",
+          "Proveedor de síntesis de voz — ElevenLabs o Resemble de forma explícita, o «como está»",
+          "Escucha previa de la combinación exacta de texto, voz y proveedor — antes de pagar el redoblaje",
           "Exportación a varias plataformas a la vez — sin pagar el renderizado otra vez (Standard+)",
-          "Un lote para toda la línea de productos y 3 variantes A/B (Premium, solo productos con proyecto)"
+          "Publicación y página para compartir (Standard+, requiere inicio de sesión)"
         ]
       }
     ],
@@ -226,7 +240,7 @@
     "moreLink": "Ver todos los pasos en detalle →",
     "page": {
       "metaTitle": "Cómo funciona — de la referencia al video terminado | viral4creators",
-      "metaDescription": "Nueve pasos del proceso de generación: qué ingresas en cada paso y qué obtienes, con los límites de cada plan."
+      "metaDescription": "Diez pasos del proceso de generación: qué ingresas en cada paso y qué obtienes, con los límites de cada plan."
     },
     "detailsToggle": "Qué puedes hacer con el video terminado"
   },
@@ -268,9 +282,7 @@
           "Cualquier formato de encuadre, incluido uno personalizado",
           "Publicación a través del servicio"
         ],
-        "excluded": [
-          "Biblioteca de análisis ya listos"
-        ],
+        "excluded": ["Biblioteca de análisis ya listos"],
         "note": null
       },
       {

@@ -106,7 +106,7 @@
   },
   "steps": {
     "title": "How it works",
-    "lead": "Nine steps from uploading a reference to a finished file.",
+    "lead": "Ten steps from uploading a reference to a finished file.",
     "askAbout": "Ask about this step",
     "items": [
       {
@@ -204,17 +204,31 @@
         ]
       },
       {
-        "title": "Review and grab it",
-        "shortLabel": "Result",
-        "text": "A separate artifact check will propose a fixed prompt for a re-generation. The finished video is a direct file link; you can also queue it for moderation to publish.",
+        "title": "Review the result",
+        "shortLabel": "Review",
+        "text": "A separate artifact check will propose a fixed prompt for a re-generation. For a product from a project, a batch run for the whole line and three A/B hook variants are right there. The finished video is a direct file link, then an “Open in Postprod” button.",
         "icon": "⌕",
         "badge": "standard",
-        "highlight": "Artifact check, publication, export to several platforms at once — one click each",
+        "highlight": "Artifact check, then an “Open in Postprod” button for this same video",
         "details": [
           "Artifact check and sound check (Standard+)",
-          "Publication and a shareable page (Standard+, sign-in required)",
+          "A batch run for a whole product line, and 3 A/B variants (Premium, products with a project only)",
+          "An “Open in Postprod” button — the same video, alongside all your other ones"
+        ]
+      },
+      {
+        "title": "Manage it in Postprod",
+        "shortLabel": "Postprod",
+        "text": "A separate Postprod tab with all your finished videos, not just the latest one. Change the script and the voice — with an explicit synthesis provider and an honest pre-listen before you pay — without a new Veo render. Export to several platforms and publish with a shareable page.",
+        "icon": "⇉",
+        "badge": "standard",
+        "highlight": "Re-voice without a new render, explicit provider choice, and a pre-listen — before you pay",
+        "details": [
+          "Re-voice without a new Veo render — only the audio, subtitles and script change (Standard+)",
+          "Voice synthesis provider — ElevenLabs or Resemble explicitly, or “as is”",
+          "Pre-listen to the exact text, voice and provider combination — before paying for the re-voice",
           "Export to several platforms at once — no extra render charge (Standard+)",
-          "A batch run for a whole product line, and 3 A/B variants (Premium, products with a project only)"
+          "Publication and a shareable page (Standard+, sign-in required)"
         ]
       }
     ],
@@ -226,7 +240,7 @@
     "moreLink": "See every step in detail →",
     "page": {
       "metaTitle": "How it works — from reference to finished video | viral4creators",
-      "metaDescription": "Nine steps of the generation pipeline: what you enter at each step and what you get out of it, with plan limits."
+      "metaDescription": "Ten steps of the generation pipeline: what you enter at each step and what you get out of it, with plan limits."
     },
     "detailsToggle": "What you can do with the finished video"
   },
@@ -268,9 +282,7 @@
           "Any aspect ratio, including a custom one",
           "Publishing through the service"
         ],
-        "excluded": [
-          "Library of ready-made breakdowns"
-        ],
+        "excluded": ["Library of ready-made breakdowns"],
         "note": null
       },
       {

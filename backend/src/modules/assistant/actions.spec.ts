@@ -59,7 +59,7 @@ describe('parseActions (ТЗ §5.4)', () => {
     expect(parseActions(raw)).toHaveLength(3);
   });
 
-  it('невалидный stepId (вне 1..9) отбрасывает элемент', () => {
+  it('невалидный stepId (вне 1..10) отбрасывает элемент', () => {
     const raw = JSON.stringify({ items: [{ kind: 'step', stepId: 99 }] });
     expect(parseActions(raw)).toEqual([]);
   });

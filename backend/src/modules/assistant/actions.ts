@@ -68,7 +68,8 @@ function isValidAction(value: unknown): value is AssistantAction {
   }
   switch (v.kind as AssistantActionKind) {
     case 'step':
-      return typeof v.stepId === 'number' && v.stepId >= 1 && v.stepId <= 9;
+      // Этап 92: обучалка выросла до 10 шагов (десятый — «Постпродакшн»).
+      return typeof v.stepId === 'number' && v.stepId >= 1 && v.stepId <= 10;
     case 'open-app':
       return true;
     case 'plan':

@@ -95,6 +95,41 @@ const WIZARD_HINT_ALLOWLIST: Array<{ path: string[]; label: string }> = [
   { path: ['myVoices', 'limitReached'], label: 'Клонирование голоса — лимит' },
 ];
 
+/**
+ * Этап 93 (доп. запрос владельца продукта: «обнови ИИ-ассистента с учётом
+ * правок в навигации ТМА»). У мини-аппа 4 вкладки (было 3 до этапа 88,
+ * когда переозвучка/экспорт/публикация переехали в новую «Постпрод») —
+ * ассистент должен явно знать их порядок и точные подписи, а не
+ * восстанавливать структуру по обрывкам в шагах обучалки (это уже
+ * подводило шаги 9/10 самой обучалки до этой же правки). Подписи вкладок
+ * читаются из `frontend/src/dictionaries` (`nav.*`) тем же принципом, что
+ * и весь остальной генератор — код, а не ручной текст, который расходится
+ * с продуктом. Подсказки для «Проекты»/«Бренд»/«Постпрод» — те же строки,
+ * что видит пользователь на соответствующем экране-списке; для
+ * «Продакшн» (вкладка мастера) такого единого поля нет — мастер описан
+ * целиком ниже, шагами обучалки, поэтому здесь одна вручную переведённая
+ * строка-исключение.
+ */
+const NAV_SECTION_KEYS = ['projects', 'brand', 'generate', 'postprod'] as const;
+
+const NAV_HINT_PATH: Record<
+  (typeof NAV_SECTION_KEYS)[number],
+  string[] | null
+> = {
+  projects: ['projectsListScreen', 'hint'],
+  brand: ['manifestsListScreen', 'hint'],
+  generate: null,
+  postprod: ['postprodScreen', 'hint'],
+};
+
+const NAV_GENERATE_HINT: Record<Locale, string> = {
+  ru: 'мастер генерации ролика — от выбора референса до готового видео (см. шаги обучалки ниже)',
+  uk: 'майстер генерації ролика — від вибору референсу до готового відео (див. кроки обучалки нижче)',
+  en: 'the generation wizard — from choosing a reference to a finished video (see the tutorial steps below)',
+  de: 'der Generierungsassistent — von der Referenzauswahl bis zum fertigen Video (siehe die Anleitungsschritte unten)',
+  es: 'el asistente de generación — desde elegir la referencia hasta el video terminado (ver los pasos del tutorial más abajo)',
+};
+
 function readJson(dir: string, locale: Locale): Record<string, unknown> {
   const p = path.join(dir, `${locale}.json`);
   return JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -116,6 +151,7 @@ function get(obj: unknown, segments: string[]): unknown {
 const SECTION_TITLE: Record<Locale, Record<string, string>> = {
   ru: {
     header: 'База знаний ИИ-консультанта viral4creators',
+    navSections: 'Разделы мини-аппа',
     steps: 'Шаги обучалки',
     faq: 'Частые вопросы',
     plans: 'Тарифы и возможности',
@@ -130,6 +166,7 @@ const SECTION_TITLE: Record<Locale, Record<string, string>> = {
   },
   uk: {
     header: 'База знань ІІ-консультанта viral4creators',
+    navSections: 'Розділи міні-застосунку',
     steps: 'Кроки навчалки',
     faq: 'Часті запитання',
     plans: 'Тарифи та можливості',
@@ -144,6 +181,7 @@ const SECTION_TITLE: Record<Locale, Record<string, string>> = {
   },
   en: {
     header: 'viral4creators AI consultant knowledge base',
+    navSections: 'Mini-app sections',
     steps: 'Tutorial steps',
     faq: 'Frequently asked questions',
     plans: 'Plans and features',
@@ -158,6 +196,7 @@ const SECTION_TITLE: Record<Locale, Record<string, string>> = {
   },
   de: {
     header: 'Wissensdatenbank des viral4creators-KI-Beraters',
+    navSections: 'Bereiche der Mini-App',
     steps: 'Anleitungsschritte',
     faq: 'Häufige Fragen',
     plans: 'Tarife und Funktionen',
@@ -172,6 +211,7 @@ const SECTION_TITLE: Record<Locale, Record<string, string>> = {
   },
   es: {
     header: 'Base de conocimiento del consultor de IA de viral4creators',
+    navSections: 'Secciones de la mini-app',
     steps: 'Pasos del tutorial',
     faq: 'Preguntas frecuentes',
     plans: 'Planes y funciones',
@@ -197,6 +237,19 @@ function buildKnowledge(locale: Locale): string {
   lines.push(
     `_Собрано автоматически ${new Date().toISOString().slice(0, 10)} из lending/frontend/backend; коммит — ${process.env.VERCEL_GIT_COMMIT_SHA ?? 'local'}._`,
   );
+  lines.push('');
+
+  // ── Разделы мини-аппа (этап 93) ──────────────────────────────────────
+  lines.push(`## ${t.navSections}`);
+  lines.push('');
+  for (const key of NAV_SECTION_KEYS) {
+    const label = get(frontendDict, ['nav', key]) as string;
+    const hintPath = NAV_HINT_PATH[key];
+    const hint = hintPath
+      ? (get(frontendDict, hintPath) as string)
+      : NAV_GENERATE_HINT[locale];
+    lines.push(`- **${label}** — ${hint}`);
+  }
   lines.push('');
 
   // ── Шаги обучалки ──────────────────────────────────────────────────
@@ -375,6 +428,7 @@ export const PROACTIVE_TIPS: Record<Locale, ProactiveTips> = {
       '5': 'Не понятно, как собрать состав кадра? Спросите',
       '7': 'Не понятно, какой формат выбрать? Спросите',
       '9': 'Не получилось с первого раза? Спросите, что можно поправить',
+      '10': 'Не уверены, каким провайдером переозвучить? Спросите — и попробуйте пред-прослушку',
     },
     plans: 'Сомневаетесь, какой тариф нужен для вашей задачи? Опишите её',
     exitIntent: 'Если не нашли ответ — спросите, это быстрее, чем в Telegram',
@@ -386,6 +440,7 @@ export const PROACTIVE_TIPS: Record<Locale, ProactiveTips> = {
       '5': 'Не зрозуміло, як зібрати склад кадру? Запитайте',
       '7': 'Не зрозуміло, який формат обрати? Запитайте',
       '9': 'Не вийшло з першого разу? Запитайте, що можна виправити',
+      '10': 'Не впевнені, яким провайдером переозвучити? Запитайте — і спробуйте попереднє прослуховування',
     },
     plans:
       'Сумніваєтеся, який тариф потрібен для вашого завдання? Опишіть його',
@@ -399,6 +454,7 @@ export const PROACTIVE_TIPS: Record<Locale, ProactiveTips> = {
       '5': 'Not sure how to put the frame together? Ask',
       '7': 'Not sure which aspect ratio to pick? Ask',
       '9': "Didn't work on the first try? Ask what to fix",
+      '10': 'Not sure which provider to re-voice with? Ask — and try the pre-listen',
     },
     plans: 'Not sure which plan fits your case? Describe it',
     exitIntent:
@@ -411,6 +467,7 @@ export const PROACTIVE_TIPS: Record<Locale, ProactiveTips> = {
       '5': 'Unklar, wie die Bildkomposition zusammengestellt wird? Fragen Sie',
       '7': 'Unklar, welches Format Sie wählen sollen? Fragen Sie',
       '9': 'Beim ersten Versuch nicht geklappt? Fragen Sie, was zu ändern ist',
+      '10': 'Unsicher, mit welchem Anbieter neu vertonen? Fragen Sie — und probieren Sie das Vorab-Anhören',
     },
     plans:
       'Unsicher, welcher Tarif zu Ihrer Aufgabe passt? Beschreiben Sie sie',
@@ -424,6 +481,7 @@ export const PROACTIVE_TIPS: Record<Locale, ProactiveTips> = {
       '5': '¿No está claro cómo componer el cuadro? Pregunta',
       '7': '¿No sabes qué formato elegir? Pregunta',
       '9': '¿No funcionó a la primera? Pregunta qué se puede ajustar',
+      '10': '¿No sabes con qué proveedor redoblar? Pregunta — y prueba la escucha previa',
     },
     plans: '¿No sabes qué plan necesitas? Descríbelo',
     exitIntent:
@@ -459,6 +517,15 @@ export function stepsFor(locale: Locale): AssistantStepItem[] {
     details: s.details ?? [],
     ...(s.badge ? { badge: s.badge } : {}),
   }));
+}
+
+/**
+ * Подписи вкладок мини-аппа (этап 93) — для теста, что база знаний
+ * упоминает КАЖДУЮ из них (не только три первые по памяти).
+ */
+export function navLabelsFor(locale: Locale): string[] {
+  const dict = readJson(FRONTEND_DICT_DIR, locale);
+  return NAV_SECTION_KEYS.map((key) => get(dict, ['nav', key]) as string);
 }
 
 function buildAllSteps(): Record<Locale, AssistantStepItem[]> {

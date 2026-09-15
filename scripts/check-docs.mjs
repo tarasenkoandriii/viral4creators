@@ -341,10 +341,11 @@ if (undocumented.length > 0) {
 // (`badge`/`highlight`) между локалями (проверено эмпирически при
 // подготовке этой проверки: `tsc --noEmit` проходит даже когда одна
 // локаль по ошибке несёт `badge` не на том шаге). Раз тип-система не
-// страхует — страхует этот скрипт: ровно 9 элементов в `steps.items` у
-// каждой локали, одинаковый набор ключей на каждой позиции (сверка с
-// `ru.json` как эталоном) и каждое `badge`-значение — один из ключей
-// `steps.badges`.
+// страхует — страхует этот скрипт: ровно 10 элементов в `steps.items` у
+// каждой локали (этап 92 добавил десятый шаг — раздел «Постпродакшн»,
+// TMA-навигация выросла с 3 до 4 вкладок), одинаковый набор ключей на
+// каждой позиции (сверка с `ru.json` как эталоном) и каждое
+// `badge`-значение — один из ключей `steps.badges`.
 
 const DICT_LOCALES = ['ru', 'uk', 'en', 'de', 'es'];
 
@@ -358,8 +359,8 @@ function checkStepsSymmetry() {
   const badgeKeys = new Set(Object.keys(dicts.ru.steps.badges));
   const problems = [];
 
-  if (reference.length !== 9) {
-    problems.push(`ru.json: steps.items содержит ${reference.length}, а не 9 элементов`);
+  if (reference.length !== 10) {
+    problems.push(`ru.json: steps.items содержит ${reference.length}, а не 10 элементов`);
   }
 
   for (const locale of DICT_LOCALES) {
@@ -391,7 +392,7 @@ function checkStepsSymmetry() {
     console.log(`FAIL симметрия steps.items по локалям (landing/src/dictionaries):`);
     for (const p of problems) console.log(`  - ${p}`);
   } else {
-    console.log(`ok   симметрия steps.items по локалям: 9 шагов × 5 локалей, поля и бейджи совпадают`);
+    console.log(`ok   симметрия steps.items по локалям: 10 шагов × 5 локалей, поля и бейджи совпадают`);
   }
 }
 

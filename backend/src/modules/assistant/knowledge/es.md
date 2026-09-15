@@ -2,6 +2,13 @@
 
 _Собрано автоматически 2026-09-15 из lending/frontend/backend; коммит — local._
 
+## Secciones de la mini-app
+
+- **Proyectos** — Producto o línea para la que se genera publicidad
+- **Marca** — Un estilo y unos personajes unificados para todos los proyectos de la marca
+- **Producción** — el asistente de generación — desde elegir la referencia hasta el video terminado (ver los pasos del tutorial más abajo)
+- **Postprod** — Todos tus vídeos terminados: redoblaje, exportación, publicación y compartir.
+
 ## Pasos del tutorial
 
 ### 1. Agrega un producto
@@ -52,13 +59,21 @@ Google Veo 3.1 renderiza el nuevo video publicitario — a elección, calidad r�
 - Botón «Generar video publicitario»
 - Si falla — «Generar de nuevo»
 
-### 9. Revisa y descárgalo
-Una verificación aparte de artefactos propondrá un prompt corregido para una nueva generación. El video terminado se entrega como un enlace directo al archivo; también puedes ponerlo en la cola de moderación para publicarlo.
+### 9. Revisa el resultado
+Una verificación aparte de artefactos propondrá un prompt corregido para una nueva generación. Para un producto de un proyecto, ahí mismo tienes un lote para toda la línea y tres variantes A/B del gancho. El video terminado se entrega como un enlace directo al archivo, y después el botón «Abrir en Postprod».
 (disponible desde el plan: Standard+)
 - Verificación de artefactos y de audio (Standard+)
-- Publicación y página para compartir (Standard+, requiere inicio de sesión)
-- Exportación a varias plataformas a la vez — sin pagar el renderizado otra vez (Standard+)
 - Un lote para toda la línea de productos y 3 variantes A/B (Premium, solo productos con proyecto)
+- Botón «Abrir en Postprod» — el mismo video, junto con todos tus demás videos
+
+### 10. Gestiónalo en Postprod
+Una pestaña aparte, «Postprod», con todos tus videos terminados, no solo el último. Cambia el texto y la voz — con un proveedor de síntesis explícito y una escucha previa honesta antes de pagar — sin un nuevo renderizado en Veo. Exporta a varias plataformas y publica con una página para compartir.
+(disponible desde el plan: Standard+)
+- Redoblaje sin nuevo renderizado en Veo — solo cambian el audio, los subtítulos y el texto (Standard+)
+- Proveedor de síntesis de voz — ElevenLabs o Resemble de forma explícita, o «como está»
+- Escucha previa de la combinación exacta de texto, voz y proveedor — antes de pagar el redoblaje
+- Exportación a varias plataformas a la vez — sin pagar el renderizado otra vez (Standard+)
+- Publicación y página para compartir (Standard+, requiere inicio de sesión)
 
 ## Preguntas frecuentes
 

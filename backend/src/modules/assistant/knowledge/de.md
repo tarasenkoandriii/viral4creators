@@ -2,6 +2,13 @@
 
 _Собрано автоматически 2026-09-15 из lending/frontend/backend; коммит — local._
 
+## Bereiche der Mini-App
+
+- **Projekte** — Produkt oder Produktlinie, für die Werbung generiert wird
+- **Marke** — Ein einheitlicher Stil und Charaktere für alle Projekte einer Marke
+- **Produktion** — der Generierungsassistent — von der Referenzauswahl bis zum fertigen Video (siehe die Anleitungsschritte unten)
+- **Postprod** — Alle Ihre fertigen Videos: Neuvertonung, Export, Veröffentlichung und Teilen.
+
 ## Anleitungsschritte
 
 ### 1. Produkt anlegen
@@ -52,13 +59,21 @@ Google Veo 3.1 rendert das neue Werbevideo — wahlweise in schneller oder kinem
 - Schaltfläche „Werbevideo generieren"
 - Bei Fehlschlag — „Erneut generieren"
 
-### 9. Prüfen und abholen
-Eine separate Artefaktprüfung schlägt einen korrigierten Prompt für eine erneute Generierung vor. Das fertige Video steht als direkter Datei-Link zur Verfügung; es lässt sich auch zur Moderation für die Veröffentlichung einreichen.
+### 9. Ergebnis prüfen
+Eine separate Artefaktprüfung schlägt einen korrigierten Prompt für eine erneute Generierung vor. Bei einem Produkt aus einem Projekt gibt es gleich einen Batch-Lauf für die ganze Produktlinie und drei A/B-Varianten des Hooks. Das fertige Video steht als direkter Datei-Link zur Verfügung, danach folgt die Schaltfläche „In Postprod öffnen“.
 (verfügbar ab Tarif: Standard+)
 - Artefaktprüfung und Sound-Check (Standard+)
-- Veröffentlichung und Seite zum Teilen (Standard+, Anmeldung nötig)
-- Export für mehrere Plattformen zugleich — ohne erneute Render-Gebühr (Standard+)
 - Ein Batch-Lauf für die ganze Produktlinie und 3 A/B-Varianten (Premium, nur für Produkte mit Projekt)
+- Schaltfläche „In Postprod öffnen“ — dasselbe Video, zusammen mit all Ihren anderen
+
+### 10. In Postprod verwalten
+Ein eigener Tab „Postprod“ mit all Ihren fertigen Videos, nicht nur dem letzten. Ändern Sie Text und Stimme — mit expliziter Wahl des Synthese-Anbieters und einem ehrlichen Vorab-Anhören vor der Zahlung — ganz ohne neues Veo-Rendering. Exportieren Sie für mehrere Plattformen und veröffentlichen Sie mit einer Seite zum Teilen.
+(verfügbar ab Tarif: Standard+)
+- Neu vertonen ohne neues Veo-Rendering — nur Ton, Untertitel und Text ändern sich (Standard+)
+- Sprachsynthese-Anbieter — explizit ElevenLabs oder Resemble, oder „wie bisher“
+- Die genaue Kombination aus Text, Stimme und Anbieter vorab anhören — vor der Zahlung für die Neuvertonung
+- Export für mehrere Plattformen zugleich — ohne erneute Render-Gebühr (Standard+)
+- Veröffentlichung und Seite zum Teilen (Standard+, Anmeldung nötig)
 
 ## Häufige Fragen
 

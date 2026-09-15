@@ -106,7 +106,7 @@
   },
   "steps": {
     "title": "So funktioniert's",
-    "lead": "Neun Schritte vom Hochladen der Referenz bis zur fertigen Datei.",
+    "lead": "Zehn Schritte vom Hochladen der Referenz bis zur fertigen Datei.",
     "askAbout": "Zu diesem Schritt fragen",
     "items": [
       {
@@ -204,17 +204,31 @@
         ]
       },
       {
-        "title": "Prüfen und abholen",
-        "shortLabel": "Ergebnis",
-        "text": "Eine separate Artefaktprüfung schlägt einen korrigierten Prompt für eine erneute Generierung vor. Das fertige Video steht als direkter Datei-Link zur Verfügung; es lässt sich auch zur Moderation für die Veröffentlichung einreichen.",
+        "title": "Ergebnis prüfen",
+        "shortLabel": "Prüfung",
+        "text": "Eine separate Artefaktprüfung schlägt einen korrigierten Prompt für eine erneute Generierung vor. Bei einem Produkt aus einem Projekt gibt es gleich einen Batch-Lauf für die ganze Produktlinie und drei A/B-Varianten des Hooks. Das fertige Video steht als direkter Datei-Link zur Verfügung, danach folgt die Schaltfläche „In Postprod öffnen“.",
         "icon": "⌕",
         "badge": "standard",
-        "highlight": "Artefaktprüfung, Veröffentlichung, Export für mehrere Plattformen zugleich — per Klick",
+        "highlight": "Artefaktprüfung — und die Schaltfläche „In Postprod öffnen“ zu genau diesem Video",
         "details": [
           "Artefaktprüfung und Sound-Check (Standard+)",
-          "Veröffentlichung und Seite zum Teilen (Standard+, Anmeldung nötig)",
+          "Ein Batch-Lauf für die ganze Produktlinie und 3 A/B-Varianten (Premium, nur für Produkte mit Projekt)",
+          "Schaltfläche „In Postprod öffnen“ — dasselbe Video, zusammen mit all Ihren anderen"
+        ]
+      },
+      {
+        "title": "In Postprod verwalten",
+        "shortLabel": "Postprod",
+        "text": "Ein eigener Tab „Postprod“ mit all Ihren fertigen Videos, nicht nur dem letzten. Ändern Sie Text und Stimme — mit expliziter Wahl des Synthese-Anbieters und einem ehrlichen Vorab-Anhören vor der Zahlung — ganz ohne neues Veo-Rendering. Exportieren Sie für mehrere Plattformen und veröffentlichen Sie mit einer Seite zum Teilen.",
+        "icon": "⇉",
+        "badge": "standard",
+        "highlight": "Neu vertonen ohne neues Rendering, expliziter Anbieter und Vorab-Anhören — vor der Zahlung",
+        "details": [
+          "Neu vertonen ohne neues Veo-Rendering — nur Ton, Untertitel und Text ändern sich (Standard+)",
+          "Sprachsynthese-Anbieter — explizit ElevenLabs oder Resemble, oder „wie bisher“",
+          "Die genaue Kombination aus Text, Stimme und Anbieter vorab anhören — vor der Zahlung für die Neuvertonung",
           "Export für mehrere Plattformen zugleich — ohne erneute Render-Gebühr (Standard+)",
-          "Ein Batch-Lauf für die ganze Produktlinie und 3 A/B-Varianten (Premium, nur für Produkte mit Projekt)"
+          "Veröffentlichung und Seite zum Teilen (Standard+, Anmeldung nötig)"
         ]
       }
     ],
@@ -226,7 +240,7 @@
     "moreLink": "Alle Schritte im Detail ansehen →",
     "page": {
       "metaTitle": "So funktioniert's — von der Referenz zum fertigen Video | viral4creators",
-      "metaDescription": "Neun Schritte der Generierungs-Pipeline: was Sie in jedem Schritt eingeben und was dabei herauskommt, mit den Tarifgrenzen."
+      "metaDescription": "Zehn Schritte der Generierungs-Pipeline: was Sie in jedem Schritt eingeben und was dabei herauskommt, mit den Tarifgrenzen."
     },
     "detailsToggle": "Was Sie mit dem fertigen Video tun können"
   },
@@ -268,9 +282,7 @@
           "Jedes Seitenverhältnis, auch benutzerdefiniert",
           "Veröffentlichung über den Dienst"
         ],
-        "excluded": [
-          "Bibliothek fertiger Analysen"
-        ],
+        "excluded": ["Bibliothek fertiger Analysen"],
         "note": null
       },
       {
