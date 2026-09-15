@@ -2,7 +2,8 @@
   "nav": {
     "projects": "Projects",
     "brand": "Brand",
-    "generate": "Generate"
+    "generate": "Production",
+    "postprod": "Postprod"
   },
   "header": {
     "tagline": "UGC video cloner",
@@ -997,13 +998,7 @@
     }
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analysis",
-      "Product",
-      "Prompt",
-      "Generation"
-    ],
+    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
     "openProjectCta": "Open project",
@@ -1094,6 +1089,9 @@
     "auditLockedBody": "Gemini reviews the finished video, looking for generation artifacts — extra fingers, warped text, a swapped product — and suggests a fixed prompt to regenerate. You can download the video without the audit too.",
     "publishLockedTitle": "Publishing through the service",
     "publishLockedBody": "A request goes into the moderation queue, and once approved, the video is uploaded to your channel. Downloading the file and publishing it yourself works in any plan.",
+    "postprodCtaTitle": "Re-voice, export, publish",
+    "postprodCtaHint": "All post-production for this video lives in the Postprod tab.",
+    "postprodCtaButton": "Open in Postprod",
     "whatsNextTitle": "What's next?",
     "downloadCta": "Download",
     "anotherVideoCta": "Another video"
@@ -1162,6 +1160,31 @@
       "square": "Square (social)",
       "classic": "Classic screen"
     }
+  },
+  "revoicePanel": {
+    "panelTitle": "Re-voice the video",
+    "panelHint": "A new audio track (and matching subtitles) without a new Veo render — the original footage stays the same.",
+    "scriptLabel": "Voiceover script",
+    "submitCta": "Re-voice",
+    "footerNote": "Billed like regular post-processing — a new voice synthesis and a new processing job."
+  },
+  "postprodScreen": {
+    "title": "Postprod",
+    "hint": "All your finished videos: re-voice, export, publish and share.",
+    "emptyTitle": "No finished videos yet",
+    "emptyHint": "Shoot your first video in the Production tab — it'll show up here once it's ready.",
+    "goToProductionCta": "Go to Production",
+    "loadMore": "Load more",
+    "untitledProduct": "Untitled",
+    "revoiceBadge": "Re-voice available",
+    "processingBadge": "Processing",
+    "failedBadge": "Post-processing failed",
+    "openButton": "Open"
+  },
+  "postprodVideoScreen": {
+    "notFoundTitle": "Video not found",
+    "notFoundHint": "The session may have been deleted, or this isn't your video.",
+    "untitledTitle": "Video"
   },
   "feedImport": {
     "panelTitle": "Import products by link",

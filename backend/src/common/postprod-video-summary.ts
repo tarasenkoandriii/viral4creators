@@ -1,0 +1,82 @@
+/**
+ * Сводка «моих готовых роликов» — для вкладки «Постпрод» в TMA (этап 88:
+ * «добавить вкладку постпрод — на ней список роликов которые возможно
+ * переозвучить и весь комплект постпродакшена перенести туда»). Список
+ * показывает ВСЕ готовые ролики пользователя (не только пригодные для
+ * переозвучки — экспорт/публикация/шаринг применимы к любому), но у
+ * каждой строки есть `canRevoice`, чтобы фронтенд показывал кнопку
+ * «Переозвучить» только там, где это в принципе возможно.
+ *
+ * Тот же приём, что у session-summary.ts (админский список сессий):
+ * JSON-путь читаем прямо в SELECT, не через Prisma `select` (она не
+ * умеет JSON-путь) и не вытягивая всю колонку `data` целиком — на
+ * список из многих сессий одного активного пользователя это ощутимо
+ * дороже (см. доккомментарий в session-summary.ts и предупреждение в
+ * schema.prisma у `data`). В отличие от admin-panel, здесь ровно два
+ * условия в WHERE (userId + generationStatus='complete', индексные
+ * колонки — не JSON-путь) и фиксированная сортировка (самый недавний
+ * ролик первым) — отдельная `buildWhere`/выбор колонки сортировки не
+ * нужны.
+ */
+import { PrismaService } from '../prisma/prisma.service';
+
+export interface PostprodVideoSummaryRow {
+  sessionId: string;
+  createdAt: Date;
+  lastActivityAt: Date;
+  productName: string | null;
+  generatedVideoId: string | null;
+  downloadUrl: string | null;
+  renderedUrl: string | null;
+  postStatus: string | null;
+  voiceMode: string | null;
+  aspectRatio: string | null;
+  quality: string | null;
+  provider: string | null;
+  resolution: string | null;
+}
+
+const SELECT_FROM = `
+  SELECT s."id" AS "sessionId", s."createdAt", s."lastActivityAt",
+         s."data" -> 'productInformation' ->> 'productName' AS "productName",
+         s."data" -> 'generatedVideo' ->> 'generatedVideoId' AS "generatedVideoId",
+         s."data" -> 'generatedVideo' ->> 'downloadUrl' AS "downloadUrl",
+         s."data" -> 'generatedVideo' ->> 'renderedUrl' AS "renderedUrl",
+         s."data" -> 'generatedVideo' ->> 'postStatus' AS "postStatus",
+         s."data" -> 'generatedVideo' ->> 'voiceMode' AS "voiceMode",
+         s."data" -> 'generatedVideo' ->> 'aspectRatio' AS "aspectRatio",
+         s."data" -> 'generatedVideo' ->> 'quality' AS "quality",
+         s."data" -> 'generatedVideo' ->> 'provider' AS "provider",
+         s."data" -> 'generatedVideo' ->> 'resolution' AS "resolution"
+  FROM "sessions" s
+  WHERE s."userId" = $1 AND s."generationStatus" = 'complete'
+`;
+
+/** `skip`/`take` — уже нормализованные (см. controller: page/pageSize
+ * зажаты в разумные границы раньше, чем дошли досюда). */
+export async function selectPostprodVideoSummaries(
+  prisma: PrismaService,
+  userId: string,
+  skip: number,
+  take: number,
+): Promise<PostprodVideoSummaryRow[]> {
+  // Тай-брейкер по id — тот же приём, что в session-summary.ts: без него
+  // строки с одинаковым createdAt на границе страницы могут поменять
+  // порядок между запросами.
+  const sql = `${SELECT_FROM} ORDER BY s."createdAt" DESC, s."id" DESC LIMIT $2 OFFSET $3`;
+  return prisma.$queryRawUnsafe<PostprodVideoSummaryRow[]>(
+    sql,
+    userId,
+    take,
+    skip,
+  );
+}
+
+export async function countPostprodVideoSummaries(
+  prisma: PrismaService,
+  userId: string,
+): Promise<number> {
+  const sql = `SELECT COUNT(*)::bigint AS "count" FROM "sessions" s WHERE s."userId" = $1 AND s."generationStatus" = 'complete'`;
+  const rows = await prisma.$queryRawUnsafe<{ count: bigint }[]>(sql, userId);
+  return Number(rows[0]?.count ?? 0);
+}

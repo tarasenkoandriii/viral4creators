@@ -7405,6 +7405,220 @@ Postgres. `node scripts/check-docs.mjs` — одно расхождение
 (про `GEMINI_IMAGE_MODEL`/`GROK_VIDEO_MODEL`/`OPENAI_FAST_MODEL`/
 `VITE_CLAUDE_REFERRAL_URL`), не трогалось.
 
+**Сделано (этап 87 — переозвучка готового ролика без перегенерации).**
+Прямой запрос владельца продукта: «есть ли возможность в постпродакшене
+переозвучивать готовый ролик без его перегенерации? если нету нужен
+такой воркфлоу». Такой возможности не было: `PostProductionService.start()`
+(озвучка + субтитры + обрезка одной задачей ffmpeg, ТЗ §15.4/§16.1)
+запускается РОВНО один раз сразу после Veo/Grok — захват
+(`claimPostProduction`) пускает только при пустом `postStatus`, а после
+первого прохода он уже `'complete'`/`'failed'`/`'skipped'`, и второй
+вызов просто возвращал видео как есть. Уточнил объём тремя вопросами
+(`AskUserQuestion`): кнопка — в Mini App на экране готового ролика;
+меняются и текст реплик, и голос; тарифицируется как обычная
+постобработка (`PlanService.assertCanSpendSession`, без отдельного
+лимита).
+
+- **Новый вход, не переиспользование `start()`.** `PostProductionService.
+  reVoice(sessionId, video, { voiceoverScript? })` — свой замок (`'revoice'`
+  в `WORK_KINDS`, `session.service.ts`) и своя проверка: доступно только
+  когда основной рендер `COMPLETE`, а постобработка не `'pending'`.
+  Захватить работу и ЗАНОВО прочитать сессию под замком — тот же приём,
+  что `startExport` (Е-2.1 шестого аудита), а не читать-и-писать поверх
+  снимка, полученного до захвата.
+- **Источник — `renderedUrl`, не `downloadUrl`.** `start()` кроит и
+  озвучивает файл от Veo/Grok, а по завершении (`poll()`) переносит эту
+  ссылку в `renderedUrl` — «и как страховка, и чтобы сравнить „до и
+  после“» (решение 4 в шапке `postprod.service.ts`). Для переозвучки это
+  ровно то, что нужно: `renderedUrl ?? downloadUrl` — необработанный
+  кадр, на который накладывается НОВАЯ дорожка. Взять вместо него
+  `downloadUrl` значило бы свести старый голос с новым в одну дорожку.
+- **Крой считается заново, не по `reframePending`.** Этот флаг —
+  одноразовый, `poll()` гасит его после первого прохода, чтобы `start()`
+  не резал уже обрезанный файл повторно. Для повторного прохода
+  наоборот: крой нужен на КАЖДОМ проходе, потому что источник — снова
+  сырой `renderedUrl`. Новый `cropTarget()` считает то же решение
+  напрямую от `video.aspectRatio`/`NATIVE`, в обход `reframePending`.
+- **Текст реплик правится узко, не через `PromptService.updatePrompt`.**
+  Тот метод рассчитан на правку ДО генерации: требует полный текст
+  промпта (не только реплики), сбрасывает `approvedAt`, гоняет
+  модерацию и Gemini `extractLiteralTexts` — ничего из этого не нужно
+  для готового ролика. `reVoice()` пишет только
+  `generationPrompt.finalVoiceoverScript`/`voiceoverScriptEdited`, тем же
+  полем, которое уже читает `planWork()`. Голос (`ttsVoiceId`/провайдер)
+  правится СУЩЕСТВУЮЩИМ `PATCH /sessions/:id/brand-manifest`
+  (`ProjectSessionService.updateSnapshot`, уже проверяет тариф и
+  принадлежность Resemble-клона, не гейтится статусом сессии) — второй
+  раз это дублировать не пришлось.
+- **Бросает, а не сохраняет причину в поле** — тот же принцип, что у
+  `startExport` (в отличие от `start()`, вызываемого из хот-пути опроса
+  статуса): явное платное действие пользователя, отказ должен дойти до
+  кнопки сразу. Новый `PostProdController` (первый HTTP-вход у модуля
+  постобработки — раньше её звали только изнутри) ловит `PostProdError`
+  и заворачивает в `BadRequestException`, тем же приёмом, что
+  `ExportService.startBatch` — `PostProdError` обычный `Error`, не
+  Nest `HttpException`, и не перехваченный дошёл бы до клиента как 500.
+- **Фронтенд.** `RevoicePanel.tsx` — новая панель на экране готового
+  ролика (рядом с `ExportPanel`), показывается только когда
+  `usesOwnVoice(video.voiceMode)` (у голоса Veo отдельной дорожки нет —
+  переозвучивать нечего) и постобработка сейчас не идёт; поле текста
+  реплик переиспользует потолок в 5000 символов
+  (`UpdatePromptRequestDto`), голос — существующий `VoicePicker`
+  (`features/brand/VoicePicker.tsx`, тот же, что в
+  `BrandSnapshotEditor`). Своего опроса статуса не заводит:
+  `useWorkflow.reVoice()` обновляет `generatedVideo` в общем состоянии и
+  запускает уже существующий `startVideoPolling` — `shouldKeepPolling`
+  (`lib/video-polling.ts`) уже умеет ждать `status: 'complete'` +
+  `postStatus: 'pending'`, ровно то состояние, в которое переходит видео
+  после запуска переозвучки, второй канал опроса заводить не пришлось.
+
+Файлы: `backend/src/common/session.service.ts` (`WORK_KINDS`),
+`backend/src/modules/postprod/postprod.service.ts` (`reVoice`,
+`cropTarget`, `REVOICE_CLAIM_TTL_MS`),
+`backend/src/modules/postprod/postprod.controller.ts` (новый),
+`backend/src/modules/postprod/postprod.module.ts`,
+`backend/src/modules/postprod/dto/revoice-request.dto.ts` (новый),
+`backend/src/modules/postprod/postprod.service.spec.ts`,
+`frontend/src/services/postprod-api.ts` (новый),
+`frontend/src/hooks/useWorkflow.ts` (`reVoice`),
+`frontend/src/features/generation/RevoicePanel.tsx` (новый),
+`frontend/src/features/generation/GenerationWizard.tsx`,
+`frontend/src/lib/voice-mode.ts` (`usesOwnVoice`),
+`frontend/src/dictionaries/{ru,uk,en,de,es}.json` (`revoicePanel`).
+
+Проверка: `npx tsc --noEmit` и `npx eslint` в `backend/` и в `frontend/`
+на всех изменённых файлах — чисто (в `backend/` те же типовые ошибки
+непосгенерированного Prisma-клиента, что и на предыдущих этапах этой
+песочницы, ни одна не касается затронутых файлов). `npx jest
+postprod.service.spec.ts` — 13 новых проверок (недоступность для
+голоса Veo, отказ на неготовом ролике/идущей постобработке без захвата
+замка, занятый замок, источник `renderedUrl` vs `downloadUrl`, крой по
+`aspectRatio` в обход `reframePending`, правка текста ДО синтеза,
+бюджет ДО синтеза, провал синтеза, успешный запуск, снятие замка в
+`finally` и при успехе, и при отказе) написаны по тому же шаблону, что
+и остальные проверки файла, но не выполнены в песочнице: тот же файл
+транзитивно импортирует `SessionService` из `common/session.service.ts`,
+который уже падает на типах непосгенерированного `PrismaService` при
+попытке импорта через `ts-jest` — то же известное ограничение
+песочницы, что и на предыдущих этапах (`prisma generate` блокируется
+403 от binaries.prisma.sh); проверено в CI/на реальном Postgres. В
+`frontend/`: `npm run build` (`tsc && vite build`) — чисто; `npm test`
+(`scripts/*.test.ts`, включая `video-polling.test.ts` — критично для
+этой правки, т.к. `RevoicePanel` полагается на существующий
+`shouldKeepPolling`, не заводит свой опрос) — все проверки пройдены.
+Компонентных тестов на саму панель не добавлено — та же причина, что на
+этапе 85: во фронтенде нет инфраструктуры рендер-тестов React-
+компонентов. `node scripts/check-docs.mjs` — то же единственное
+пред-существующее расхождение («переменные окружения»), не связано с
+этой правкой, не трогалось.
+
+**Сделано (этап 88 — вкладка «Постпрод» в TMA).** Прямой запрос
+владельца продукта: «переименовать на тма вкладку генерация на
+продакшн / добавить вкладку постпрод — на ней список роликов которые
+возможно переозвучить и весь комплект постпродакшена перенести туда».
+Уточнил объём двумя вопросами (`AskUserQuestion`), т.к. решение
+затрагивало новый бэкенд-маршрут и границы «что считается постпродом»:
+список показывает ВСЕ готовые ролики пользователя (не только пригодные
+для переозвучки — экспорт применим к любому), и вместе с переозвучкой и
+экспортом переехали публикация и шаринг; аудит/саундчек остались в
+мастере (умеют откатить его на шаг промпта и перегенерировать —
+у ролика вне мастера нет «шага, куда вернуться»), как и пакетная
+генерация по каталогу/A-B-тест (привязаны к `projectId` конкретного
+проекта, а этот экран открывает любой ролик, в т.ч. без проекта).
+
+- **Нового списка роликов не было вообще.** Ближайшее —
+  `ProjectSessionService.listForItem` (`GET /projects/:id/items/:itemId/
+  sessions`) — мёртвый код (нигде не вызывается на фронтенде), привязан
+  к одному товару каталога, и в его `ItemSessionSummary` нет `voiceMode`
+  — по этому полю (`data.generatedVideo.voiceMode`, не индексированная
+  колонка) и решается, доступна ли переозвучка. Понадобился новый
+  маршрут `GET /postprod/videos` — глобальный (не по проекту/товару), с
+  личностью (`TelegramIdentityGuard`, тот же приём, что у `/projects`:
+  список, на который возвращаются позже, не может быть анонимным).
+- **`postprod-video-summary.ts` — тот же приём, что `session-summary.ts`
+  (этап 51/86, админский список сессий), но проще.** JSON-путь читается
+  прямо в SQL (`$queryRawUnsafe`), не через Prisma `select` (не умеет
+  JSON-путь) и не вытягивая всю колонку `data` — тот же довод про
+  стоимость на масштабе, что и у админского списка. В отличие от него —
+  ровно два условия в `WHERE` (`userId` + `generationStatus='complete'`,
+  обе настоящие индексированные колонки, не JSON-путь) и фиксированная
+  сортировка (самый недавний ролик первым) — отдельная `buildWhere` и
+  выбор колонки сортировки не нужны, поэтому это отдельный файл, а не
+  расширение админского.
+- **Пагинация страницами, не курсором.** У ленты (`GET /shared-video/
+  feed`) — курсор, потому что это общая бесконечная лента; здесь — «мои
+  ролики», конечный список одного пользователя, и `total` уже считается
+  тем же способом, что у постраничного админского списка сессий
+  (`{items,total,page,pageSize}`).
+- **`canRevoice` считается на бэкенде, не на фронтенде.** Использует уже
+  существующий `usesOwnVoice()` (`common/voice-mode.ts`, тот же, что
+  проверяет сам `PostProductionService.reVoice`) — правило «доступна ли
+  переозвучка» живёт в одном месте, а не дублируется в двух слоях.
+- **Экран одного ролика — не `useWorkflow`, а новый лёгкий
+  `usePostprodVideo`.** `useWorkflow` жёстко держит один активный
+  `sessionId` в `localStorage['sessionId']` и весь конечный автомат
+  мастера (upload → ... → complete, см. его доккомментарий у
+  init-эффекта) — переиспользовать его для СТОРОННЕГО (не текущего
+  активного) ролика значило бы либо сломать резюме активной сессии
+  мастера при следующей перезагрузке, либо городить вторую скрытую
+  копию того же состояния. `usePostprodVideo(sessionId)` — то немногое,
+  что реально нужно перенесённым панелям: `getSession()` один раз,
+  сокращённый опрос статуса (тот же интервал 4с и пауза на свёрнутой
+  вкладке, что у `useWorkflow.startVideoPolling`, без batch-специфичного
+  троттлинга xAI) и два колбэка (`reVoice`, `setSnapshot`).
+- **Два независимых зеркала `GeneratedVideo` (`types/index.ts` и
+  `services/api.ts`, см. доккомментарий у `services/api.ts`) снова дали
+  о себе знать** — `getSession()` возвращает первое (строгий enum-статус),
+  `getVideoStatus()`/`reVoiceVideo()` — второе (строковый union), которое
+  ждут `RevoicePanel`/`ExportPanel`. `useWorkflow.ts` обходит это тем,
+  что вообще не типизирует своё состояние через `Session`; тот же приём
+  здесь — локальный тип `PostprodSession` с одним переопределённым полем.
+- **Навигация.** Новый хеш-роут `#/postprod` (список) и
+  `#/postprod/:sessionId` (один ролик) — тот же двухсегментный приём,
+  что у `#/brand-manifests/:id`; добавлен в исключения `inProjects`
+  (`App.tsx`) той же строкой, что и `'generate'`, иначе подсвечивалась
+  бы вкладка «Проекты». Вкладка «Генерация» переименована в «Продакшн»
+  (`nav.generate`) — сам ключ словаря не переименован (менять ключ
+  значило бы менять его везде, где он читается), только значение, во
+  всех пяти локалях. На финальном экране мастера панели заменены одной
+  кнопкой-переходом на `#/postprod/:sessionId` того же ролика — чтобы
+  пользователь, ищущий переозвучку/экспорт по старой памяти, не терялся.
+
+Файлы: `backend/src/common/postprod-video-summary.ts` (новый),
+`backend/src/common/postprod-video-summary.spec.ts` (новый),
+`backend/src/modules/postprod/postprod-videos.service.ts` (новый),
+`backend/src/modules/postprod/postprod-videos.service.spec.ts` (новый),
+`backend/src/modules/postprod/postprod-videos.controller.ts` (новый),
+`backend/src/modules/postprod/postprod.module.ts`,
+`frontend/src/services/postprod-api.ts` (`listPostprodVideos`),
+`frontend/src/hooks/usePostprodVideo.ts` (новый),
+`frontend/src/features/postprod/PostprodScreen.tsx` (новый),
+`frontend/src/features/postprod/PostprodVideoScreen.tsx` (новый),
+`frontend/src/App.tsx`, `frontend/src/lib/router.ts`,
+`frontend/src/features/generation/GenerationWizard.tsx` (панели
+переозвучки/экспорта/публикации/шаринга убраны, заменены переходом),
+`frontend/src/dictionaries/{ru,uk,en,de,es}.json` (`nav.postprod`,
+`nav.generate`, `postprodScreen`, `postprodVideoScreen`,
+`generationWizard.postprodCta*`), `frontend/scripts/router.test.ts`,
+`README.md`, `doc/API.md`.
+
+Проверка: `npx tsc --noEmit` и `npx eslint` в `backend/` и `frontend/`
+на всех изменённых файлах — чисто (в `backend/` те же типовые ошибки
+непосгенерированного Prisma-клиента, что на предыдущих этапах, ни одна
+не касается новой бизнес-логики). `npx jest` в `backend/` — 928/928
+исполнившихся проверок прошли (82 из 167 сьютов не скомпилировались по
+тому же известному ограничению песочницы — транзитивный импорт
+`SessionService`/сырых SQL-запросов через непосгенерированный
+`PrismaClient`, включая оба новых файла с `$queryRawUnsafe`; проверено
+в CI/на реальном Postgres), `postprod-videos.service.spec.ts` (не
+завязан на Prisma напрямую, мокает `postprod-video-summary.ts`
+целиком) выполнился — 3/3. В `frontend/`: `npm run build` (`tsc && vite
+build`) — чисто, `npm test` (`scripts/*.test.ts`, включая обновлённый
+`router.test.ts` с новыми маршрутами `/postprod`/`/postprod/:id`) — все
+проверки пройдены. `node scripts/check-docs.mjs` — маршруты/контроллеры
+обновлены (216/46), осталось то же единственное пред-существующее
+расхождение («переменные окружения»), не связано с этой правкой.
+
 ## Проверка на каждом этапе (сквозное)
 
 - `npx tsc --noEmit` в `backend/`, `frontend/` — без новых ошибок.

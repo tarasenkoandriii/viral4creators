@@ -242,7 +242,7 @@ Telegram login and a project it becomes:
 
 ## API Documentation
 
-`doc/API.md` is the current, complete route list (214 routes in 44 controller files; CI checks the count). The older
+`doc/API.md` is the current, complete route list (216 routes in 46 controller files; CI checks the count). The older
 [specs/001-ugc-video-generator/contracts/openapi.yaml](specs/001-ugc-video-generator/contracts/openapi.yaml)
 covers only the ten routes of the first milestone and is kept as history.
 

@@ -38,11 +38,8 @@ import { TermsGate } from '../../components/TermsGate';
 import { BrandSnapshotEditor } from './BrandSnapshotEditor';
 import { AuditPanel } from './AuditPanel';
 import { SoundCheckPanel } from './SoundCheckPanel';
-import { PublishPanel } from './PublishPanel';
-import { ShareVideoPanel } from './ShareVideoPanel';
 import { CatalogBatchPanel } from './CatalogBatchPanel';
 import { AbTestPanel } from './AbTestPanel';
-import { ExportPanel } from './ExportPanel';
 import { AspectRatioPicker } from './AspectRatioPicker';
 import { ReferenceSlotsPanel } from './ReferenceSlotsPanel';
 import {
@@ -128,7 +125,6 @@ export function GenerationWizard() {
     projectId,
     productName,
     productDescription,
-    productCategory,
     marketLanguage,
     dialogueLanguage,
     referenceAspectRatio,
@@ -224,7 +220,6 @@ export function GenerationWizard() {
   // Тот же гейт, что у BrandSnapshotEditor: дубляж — премиальный
   // уровень озвучки, сервер это тоже проверяет (updateSnapshot).
   const dub = useFeature('voiceDub');
-  const publication = useFeature('publication');
   const referenceAssets = useFeature('referenceAssets');
 
   const effectiveAspectRatio = aspectRatio ?? referenceAspectRatio ?? '9:16';
@@ -240,9 +235,7 @@ export function GenerationWizard() {
   // здесь, ПОСЛЕ `effectiveAspectRatio` — тот же класс сбоя (TS2448,
   // использование до объявления в той же области видимости), что уже
   // ловился в этом файле раньше.
-  const [textCards, setTextCards] = useState<OnScreenTextMoment[] | null>(
-    null,
-  );
+  const [textCards, setTextCards] = useState<OnScreenTextMoment[] | null>(null);
   const [textCardsError, setTextCardsError] = useState<string | null>(null);
   const [textCardsRefreshing, setTextCardsRefreshing] = useState(false);
 
@@ -256,7 +249,7 @@ export function GenerationWizard() {
         // Best-effort — тот же принцип, что и на бекенде
         // (`extractLiteralTexts`/рендер карточки): сбой здесь не
         // должен мешать работе с уже готовым и оплаченным промптом.
-        setTextCardsError(dict.generationWizard.textCardLoadError),
+        setTextCardsError(dict.generationWizard.textCardLoadError)
       )
       .finally(() => setTextCardsRefreshing(false));
   };
@@ -543,7 +536,10 @@ export function GenerationWizard() {
                         />
                       ) : (
                         <div className="flex aspect-[9/16] w-full items-center justify-center bg-silver-100 dark:bg-silver-900">
-                          <Sparkles size={16} className="animate-pulse text-silver-400" />
+                          <Sparkles
+                            size={16}
+                            className="animate-pulse text-silver-400"
+                          />
                         </div>
                       )}
                     </div>
@@ -954,9 +950,8 @@ export function GenerationWizard() {
                       ]
                     : []),
                   ...videoHistory
-                    .filter(
-                      (v): v is typeof v & { downloadUrl: string } =>
-                        Boolean(v.downloadUrl)
+                    .filter((v): v is typeof v & { downloadUrl: string } =>
+                      Boolean(v.downloadUrl)
                     )
                     .map((v) => ({
                       key: v.generatedVideoId,
@@ -1168,46 +1163,31 @@ export function GenerationWizard() {
             </LockedNote>
           )}
 
-          {sessionId && !publication.allowed && !publication.loading && (
-            <LockedNote
-              title={dict.generationWizard.publishLockedTitle}
-              lock={publication.lock}
-            >
-              {dict.generationWizard.publishLockedBody}
-            </LockedNote>
-          )}
-          {sessionId && publication.allowed && (
-            <PublishPanel
-              key={`pub-${generatedVideo.generatedVideoId}`}
-              sessionId={sessionId}
-              generatedVideoId={generatedVideo.generatedVideoId}
-              productName={productName}
-              productDescription={productDescription}
-              category={productCategory}
-            />
-          )}
-          {/* Этап 60 (ТЗ §40): та же тарифная граница, что и у публикации
-              на YouTube/TikTok — «выпустить ролик наружу» от Standard,
-              см. решение в plan-е этапа. Отдельный LockedNote не нужен —
-              publication.lock уже показан панелью PublishPanel выше. */}
-          {sessionId && publication.allowed && (
-            <ShareVideoPanel
-              key={`share-${generatedVideo.generatedVideoId}`}
-              sessionId={sessionId}
-              generatedVideoId={generatedVideo.generatedVideoId}
-              productName={productName}
-            />
-          )}
-
-          {/* Этап 75 (TODO §III, п.35): автоэкспорт под площадки — не
-              привязан к проекту (в отличие от панелей ниже), доступен
-              для любого готового ролика. */}
+          {/* Этап 88 (доп. запрос владельца продукта): переозвучка,
+              экспорт, публикация и шаринг переехали во вкладку
+              «Постпрод» (#/postprod/:sessionId) — единый список ВСЕХ
+              готовых роликов пользователя, а не только текущей сессии
+              мастера. Здесь — просто переход туда, с уже открытым этим
+              роликом. */}
           {sessionId && (
-            <ExportPanel
-              key={`export-${generatedVideo.generatedVideoId}`}
-              sessionId={sessionId}
-              video={generatedVideo}
-            />
+            <Card className="p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold">
+                    {dict.generationWizard.postprodCtaTitle}
+                  </h3>
+                  <p className="mt-0.5 text-xs text-silver-400">
+                    {dict.generationWizard.postprodCtaHint}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(routes.postprodVideo(sessionId))}
+                >
+                  {dict.generationWizard.postprodCtaButton}
+                </Button>
+              </div>
+            </Card>
           )}
 
           {/* Этап 65 (ТЗ §44): «Сделать так же для всей линейки» — только

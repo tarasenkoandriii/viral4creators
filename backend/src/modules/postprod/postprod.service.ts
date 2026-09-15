@@ -159,6 +159,12 @@ export const EXPORT_DEADLINE_MS = POSTPROD_DEADLINE_MS;
  * независимо от того, какой ярус его последним переписал. */
 export const EXPORT_CLAIM_TTL_MS = 3 * 60 * 1000;
 
+/** Захват работы 'revoice' (этап 87) — тот же порядок, что у 'export':
+ * синтез TTS + сборка субтитров + отправка задачи ffmpeg укладываются в
+ * реалистичный сетевой таймаут, дольше — сеть/провайдер действительно
+ * недоступны, а не просто «ещё считает». */
+export const REVOICE_CLAIM_TTL_MS = 3 * 60 * 1000;
+
 /** Самый ранний `requestedAt` среди ожидающих вариантов одного батча —
  * все варианты одного вызова `startExport` получают его одновременно,
  * так что для дедлайна достаточно самого старого. */
@@ -367,6 +373,229 @@ export class PostProductionService {
         postError: message,
       });
     }
+  }
+
+  /**
+   * Переозвучить уже готовый ролик БЕЗ повторной генерации у Veo/Grok
+   * (доп. запрос владельца продукта, этап 87: «в постпродакшене
+   * переозвучить готовый ролик без перегенерации»).
+   *
+   * ## Почему `start()` для этого не годится
+   *
+   * `start()` запускается РОВНО один раз: захват (`claimPostProduction`)
+   * пускает только при пустом `postStatus`, а после первого прохода он
+   * уже `'complete'`/`'failed'`/`'skipped'` — повторный вызов просто
+   * вернул бы `video` как есть (быстрая отсечка в самом начале `start()`).
+   * Нужен отдельный вход со своим замком (`'revoice'` в `WORK_KINDS`,
+   * тем же приёмом, что `startExport`: захватить работу, ЗАНОВО прочитать
+   * сессию под замком — Е-2.1 шестого аудита — и только потом платить) и
+   * своим источником для ffmpeg.
+   *
+   * ## Откуда берётся исходник
+   *
+   * `start()` кроит и озвучивает файл, который отдал Veo/Grok
+   * (`video.downloadUrl` на тот момент), и по завершении переносит эту
+   * ссылку в `renderedUrl` (см. `poll()`) — специально «и как страховка,
+   * и потому что сравнить „до и после“ иногда единственный способ
+   * понять, что… голос лёг не туда» (решение 4 в шапке файла). Здесь
+   * это ровно то, что нужно: `renderedUrl ?? downloadUrl` — тот же
+   * необработанный кадр, на который можно наложить НОВУЮ дорожку. Взять
+   * вместо него `downloadUrl` значило бы свести старый голос с новым в
+   * одну дорожку — то же видео, но с двумя наложенными репликами.
+   *
+   * ## Почему крой считается заново, не по `reframePending`
+   *
+   * `planWork()` определяет, нужен ли крой, по одноразовому флагу
+   * `reframePending` — он специально гасится после первого прохода
+   * (`poll()`), чтобы `start()` не кроил уже обрезанный файл повторно.
+   * Здесь наоборот: обрезка нужна на КАЖДОМ проходе, потому что источник
+   * — снова сырой, необрезанный `renderedUrl`. `cropTarget()` считает
+   * то же решение напрямую от `video.aspectRatio`/`NATIVE`, в обход
+   * `reframePending`.
+   *
+   * ## Что можно менять
+   *
+   * Голос (`ttsVoiceId`/`ttsProvider` в снимке бренда) правится ДО
+   * вызова существующим `PATCH /sessions/:id/brand-manifest`
+   * (`ProjectSessionService.updateSnapshot`) — тот маршрут уже проверяет
+   * тариф, принадлежность клона на Resemble и не гейтится статусом
+   * сессии, второй раз всё это здесь дублировать незачем. Текст реплик
+   * (`voiceoverScript`, необязателен) правится ПРЯМО здесь — узкой
+   * записью в `generationPrompt.finalVoiceoverScript`/
+   * `voiceoverScriptEdited`, а не через `PromptService.updatePrompt`:
+   * тот метод рассчитан на правку ДО генерации (требует полный текст
+   * промпта, сбрасывает `approvedAt`, гоняет модерацию и Gemini
+   * `extractLiteralTexts`) — ничего из этого не должно происходить
+   * ради правки одних только реплик у уже готового ролика.
+   *
+   * ## Почему бросает, а не сохраняет причину в поле
+   *
+   * Тот же принцип, что у `startExport` (см. её доккомментарий): это
+   * явное платное действие пользователя, а не хот-путь опроса статуса
+   * — отказ должен дойти до кнопки сразу, а не спрятаться в `postError`,
+   * который пользователь увидит только зайдя в детали ролика.
+   */
+  async reVoice(
+    sessionId: string,
+    video: GeneratedVideo,
+    overrides: { voiceoverScript?: string } = {},
+  ): Promise<GeneratedVideo> {
+    if (video.status !== GenerationStatus.COMPLETE || !video.downloadUrl) {
+      throw new PostProdError(
+        'ролик ещё не готов — переозвучка доступна только для готового ролика',
+      );
+    }
+    if (video.postStatus === 'pending') {
+      throw new PostProdError(
+        'постобработка уже выполняется — дождитесь её завершения',
+      );
+    }
+
+    const claimed = await this.sessions.claimWork(
+      sessionId,
+      'revoice',
+      REVOICE_CLAIM_TTL_MS,
+    );
+    if (!claimed) {
+      throw new PostProdError(
+        'переозвучка уже запущена — дождитесь её завершения',
+      );
+    }
+    try {
+      const fresh = await this.sessions.getSession(sessionId);
+      const freshVideo = fresh?.generatedVideo ?? video;
+      if (
+        freshVideo.status !== GenerationStatus.COMPLETE ||
+        !freshVideo.downloadUrl
+      ) {
+        throw new PostProdError(
+          'ролик ещё не готов — переозвучка доступна только для готового ролика',
+        );
+      }
+      if (freshVideo.postStatus === 'pending') {
+        throw new PostProdError(
+          'постобработка уже выполняется — дождитесь её завершения',
+        );
+      }
+
+      // Текст правится ЛОКАЛЬНО, не через возврат `updateSession` — тот
+      // сливает верхние ключи целиком и может вернуть `undefined`, если
+      // сессия пропала между чтением и записью; полагаться на его форму
+      // ради brandManifestSnapshot/остального контента `planWork()`
+      // ниже было бы лишним риском потерять то, что уже прочитали.
+      let generationPrompt = fresh?.generationPrompt;
+      if (overrides.voiceoverScript !== undefined && generationPrompt) {
+        const trimmed = overrides.voiceoverScript.trim();
+        generationPrompt = {
+          ...generationPrompt,
+          voiceoverScriptEdited: trimmed,
+          finalVoiceoverScript: trimmed,
+        };
+        await this.sessions.updateSession(sessionId, { generationPrompt });
+      }
+
+      const work = this.planWork(
+        fresh ? { ...fresh, generationPrompt } : fresh,
+        freshVideo,
+      );
+      if (!usesOwnVoice(work.voiceMode)) {
+        throw new PostProdError(
+          'переозвучка недоступна — в этом ролике голос ведёт сама Veo, отдельной звуковой дорожки нет',
+        );
+      }
+
+      const source = freshVideo.renderedUrl ?? freshVideo.downloadUrl;
+      const wantsSubtitles = work.subtitlesMode === 'on';
+      const crop = this.cropTarget(freshVideo);
+
+      // §26.4: платный вызов, инициированный явным действием пользователя
+      // — та же граница, что у `startExport` (см. её доккомментарий):
+      // проверяем ДО синтеза, а не только перед отправкой ffmpeg-задачи,
+      // потому что сам синтез — уже отдельный платный вызов.
+      await this.plans.assertCanSpendSession(sessionId);
+
+      let patch: Partial<GeneratedVideo> = {
+        voiceMode: work.voiceMode,
+        subtitlesMode: work.subtitlesMode,
+      };
+      const voice = await this.synthesize(sessionId, work, wantsSubtitles);
+      patch = { ...patch, ...voice.patch };
+      if (!voice.url) {
+        throw new PostProdError(
+          voice.patch.voiceError
+            ? `не удалось синтезировать голос: ${voice.patch.voiceError}`
+            : 'нечего переозвучивать — реплики пустые',
+        );
+      }
+
+      let subsUrl: string | null = null;
+      if (wantsSubtitles) {
+        const subs = await this.buildSubtitles(
+          sessionId,
+          work,
+          voice.alignment,
+        );
+        patch = { ...patch, ...subs.patch };
+        subsUrl = subs.url;
+      }
+
+      let plan;
+      try {
+        plan = planPostProduction({
+          targetAspectRatio: crop,
+          voiceInputKey: 'voice',
+          voiceMode: work.voiceMode === 'dub' ? 'dub' : 'voiceover',
+          voiceDelayMs: Math.round(work.speechStartSeconds * 1000),
+          subtitlesInputKey: subsUrl ? 'subs' : null,
+          subtitleForceStyle: subsUrl
+            ? SUBTITLE_THEME_FORCE_STYLE[work.subtitleTheme]
+            : null,
+        });
+      } catch (e) {
+        const message = e instanceof PostProdError ? e.message : String(e);
+        throw new PostProdError(`переозвучка невозможна: ${message}`);
+      }
+
+      const inputs: Record<string, string> = { source, voice: voice.url };
+      if (subsUrl) inputs.subs = subsUrl;
+
+      const job = await this.api.submit({
+        inputs,
+        outputs: [plan.outputName],
+        commands: [plan.command],
+      });
+      await this.aiUsage.record({
+        operation: 'reframe',
+        model: 'ffmpeg-api',
+        sessionId,
+      });
+      this.logger.log(
+        `переозвучка запущена (задача ${job.jobId}) для сессии ${sessionId}`,
+      );
+      return this.save(sessionId, freshVideo, {
+        ...patch,
+        postStatus: 'pending',
+        postJobId: job.jobId,
+        postStartedAt: new Date(),
+        postError: undefined,
+      });
+    } finally {
+      await this.sessions.releaseWork(sessionId, 'revoice');
+    }
+  }
+
+  /**
+   * Тот же крой, что определялся бы `planWork()` при ПЕРВОМ проходе —
+   * но не по одноразовому `reframePending` (после первого прохода уже
+   * `false`), а напрямую по цели: формат вне нативных Veo-форматов
+   * значит «кроить», и это верно на КАЖДОМ проходе постобработки, не
+   * только на первом (`reVoice()` — второй и далее).
+   */
+  private cropTarget(video: GeneratedVideo): string | null {
+    const target = video.aspectRatio ?? null;
+    return target && !(NATIVE as readonly string[]).includes(target)
+      ? target
+      : null;
   }
 
   /**

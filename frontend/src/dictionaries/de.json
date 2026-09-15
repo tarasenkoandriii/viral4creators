@@ -2,7 +2,8 @@
   "nav": {
     "projects": "Projekte",
     "brand": "Marke",
-    "generate": "Generieren"
+    "generate": "Produktion",
+    "postprod": "Postprod"
   },
   "header": {
     "tagline": "UGC video cloner",
@@ -997,13 +998,7 @@
     }
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analyse",
-      "Produkt",
-      "Prompt",
-      "Generierung"
-    ],
+    "steps": ["Video", "Analyse", "Produkt", "Prompt", "Generierung"],
     "errorTitle": "Fehler",
     "prefilledAlert": "Die Produktdaten wurden aus dem Projekt übernommen — das ist eine Kopie zum Startzeitpunkt; Änderungen hier ändern nicht das Produkt selbst.",
     "openProjectCta": "Projekt öffnen",
@@ -1094,6 +1089,9 @@
     "auditLockedBody": "Gemini prüft das fertige Video und sucht nach Generierungsartefakten — überzählige Finger, verzerrter Text, ein vertauschtes Produkt — und schlägt einen korrigierten Prompt zur erneuten Generierung vor. Das Video kann auch ohne Prüfung heruntergeladen werden.",
     "publishLockedTitle": "Veröffentlichung über den Dienst",
     "publishLockedBody": "Ein Antrag geht in die Moderationswarteschlange, und nach der Genehmigung wird das Video auf Ihren Kanal hochgeladen. Die Datei herunterladen und manuell veröffentlichen geht in jedem Tarif.",
+    "postprodCtaTitle": "Neuvertonung, Export, Veröffentlichung",
+    "postprodCtaHint": "Die gesamte Nachbearbeitung für dieses Video finden Sie im Tab „Postprod“.",
+    "postprodCtaButton": "In Postprod öffnen",
     "whatsNextTitle": "Wie geht es weiter?",
     "downloadCta": "Herunterladen",
     "anotherVideoCta": "Noch ein Video"
@@ -1162,6 +1160,31 @@
       "square": "Quadrat (Social Media)",
       "classic": "Klassisches Format"
     }
+  },
+  "revoicePanel": {
+    "panelTitle": "Video neu vertonen",
+    "panelHint": "Eine neue Tonspur (und passende Untertitel) ohne neuen Veo-Render — das ursprüngliche Video bleibt unverändert.",
+    "scriptLabel": "Sprechertext",
+    "submitCta": "Neu vertonen",
+    "footerNote": "Wird wie eine normale Nachbearbeitung abgerechnet — eine neue Sprachsynthese und ein neuer Verarbeitungsauftrag."
+  },
+  "postprodScreen": {
+    "title": "Postprod",
+    "hint": "Alle Ihre fertigen Videos: Neuvertonung, Export, Veröffentlichung und Teilen.",
+    "emptyTitle": "Noch keine fertigen Videos",
+    "emptyHint": "Drehen Sie Ihr erstes Video im Tab „Produktion“ — es erscheint hier, sobald es fertig ist.",
+    "goToProductionCta": "Zur Produktion",
+    "loadMore": "Mehr anzeigen",
+    "untitledProduct": "Ohne Titel",
+    "revoiceBadge": "Neuvertonung möglich",
+    "processingBadge": "Wird verarbeitet",
+    "failedBadge": "Nachbearbeitung fehlgeschlagen",
+    "openButton": "Öffnen"
+  },
+  "postprodVideoScreen": {
+    "notFoundTitle": "Video nicht gefunden",
+    "notFoundHint": "Die Sitzung wurde möglicherweise gelöscht, oder dies ist nicht Ihr Video.",
+    "untitledTitle": "Video"
   },
   "feedImport": {
     "panelTitle": "Produkte per Link importieren",

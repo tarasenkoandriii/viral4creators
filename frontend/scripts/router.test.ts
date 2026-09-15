@@ -34,6 +34,11 @@ const cases: Array<[string, unknown]> = [
     { name: 'ab-test', projectId: 'p1', runId: 'run1' },
   ],
   ['#/generate', { name: 'generate' }],
+  // Этап 88: /postprod (список готовых роликов) и /postprod/:sessionId
+  // (переозвучка/экспорт/публикация/шаринг одного ролика).
+  ['#/postprod', { name: 'postprod' }],
+  ['#/postprod/', { name: 'postprod' }],
+  ['#/postprod/sess1', { name: 'postprod-video', sessionId: 'sess1' }],
   ['#/plan', { name: 'plan' }],
   ['#/channels', { name: 'channels' }],
   ['#/credits', { name: 'credits' }],

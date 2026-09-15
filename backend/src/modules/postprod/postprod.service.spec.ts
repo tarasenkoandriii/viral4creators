@@ -1146,4 +1146,156 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       expect(r.exportVariants![0].status).toBe('complete');
     });
   });
+
+  describe('reVoice — переозвучка готового ролика без перегенерации (этап 87)', () => {
+    const DONE_VIDEO: GeneratedVideo = {
+      ...VIDEO,
+      status: GenerationStatus.COMPLETE,
+      postStatus: 'complete',
+      // После первого прохода постобработки исходник — уже здесь
+      // (`poll()` переносит его сюда), `downloadUrl` — уже ГОТОВЫЙ файл
+      // со старым голосом.
+      renderedUrl: 'https://blob.test/sessions/s1/generated.mp4',
+      downloadUrl: 'https://blob.test/sessions/s1/generated-4x5.mp4',
+      reframePending: false, // одноразовый флаг уже снят первым проходом
+    };
+    const voiced = session({
+      brandManifestSnapshot: { voiceMode: 'voiceover', ttsVoiceId: 'brand-1' },
+    });
+
+    it('видео с голосом Veo — переозвучивать нечего, отдельной дорожки нет', async () => {
+      const { svc } = build({ session: session() /* voiceMode: 'veo' */ });
+      await expect(svc.reVoice('s1', DONE_VIDEO)).rejects.toThrow(
+        /голос ведёт сама Veo/,
+      );
+    });
+
+    it('ролик ещё не готов — переозвучка отказывает сразу, не занимая замок', async () => {
+      const { svc, sessions } = build({ session: voiced });
+      await expect(
+        svc.reVoice('s1', {
+          ...DONE_VIDEO,
+          status: GenerationStatus.PROCESSING,
+        }),
+      ).rejects.toThrow(/ещё не готов/);
+      expect(sessions.claimWork).not.toHaveBeenCalled();
+    });
+
+    it('постобработка уже выполняется — отказ без повторного запуска', async () => {
+      const { svc, sessions } = build({ session: voiced });
+      await expect(
+        svc.reVoice('s1', { ...DONE_VIDEO, postStatus: 'pending' }),
+      ).rejects.toThrow(/уже выполняется/);
+      expect(sessions.claimWork).not.toHaveBeenCalled();
+    });
+
+    it('замок занят параллельной переозвучкой — отказ, а не тихий no-op', async () => {
+      const { svc, sessions } = build({
+        session: voiced,
+        exportClaimed: false, // build() один флаг на все claimWork-замки
+      });
+      await expect(svc.reVoice('s1', DONE_VIDEO)).rejects.toThrow(
+        /уже запущена/,
+      );
+      expect(sessions.getSession).not.toHaveBeenCalled();
+    });
+
+    it('источник для ffmpeg — renderedUrl (сырой файл), а НЕ downloadUrl (уже с прежним голосом)', async () => {
+      const { svc, api } = build({ session: voiced });
+      await svc.reVoice('s1', DONE_VIDEO);
+      expect(api.submit.mock.calls[0][0].inputs.source).toBe(
+        DONE_VIDEO.renderedUrl,
+      );
+    });
+
+    it('renderedUrl ещё нет (первой постобработки не было) — используется downloadUrl', async () => {
+      const { svc, api } = build({ session: voiced });
+      const noRendered = { ...DONE_VIDEO, renderedUrl: undefined };
+      await svc.reVoice('s1', noRendered);
+      expect(api.submit.mock.calls[0][0].inputs.source).toBe(
+        noRendered.downloadUrl,
+      );
+    });
+
+    it('крой определяется заново по aspectRatio/NATIVE, а не по устаревшему reframePending', async () => {
+      // reframePending уже false (первый проход его снял), но формат
+      // всё ещё некоренной для Veo — кроить нужно на каждом проходе.
+      const { svc, api } = build({ session: voiced });
+      await svc.reVoice('s1', DONE_VIDEO);
+      expect(api.submit.mock.calls[0][0].commands[0]).toContain('crop=');
+    });
+
+    it('новый текст реплик перезаписывает finalVoiceoverScript ДО синтеза и уходит в TTS', async () => {
+      const { svc, sessions, tts } = build({ session: voiced });
+      await svc.reVoice('s1', DONE_VIDEO, {
+        voiceoverScript: 'Новый текст для дубляжа.',
+      });
+      expect(sessions.updateSession).toHaveBeenCalledWith(
+        's1',
+        expect.objectContaining({
+          generationPrompt: expect.objectContaining({
+            finalVoiceoverScript: 'Новый текст для дубляжа.',
+            voiceoverScriptEdited: 'Новый текст для дубляжа.',
+          }),
+        }),
+      );
+      expect(tts.synthesize.mock.calls[0][0].text).toBe(
+        'Новый текст для дубляжа.',
+      );
+    });
+
+    it('без overrides.voiceoverScript — текст не трогается, идёт прежний', async () => {
+      const { svc, sessions, tts } = build({ session: voiced });
+      await svc.reVoice('s1', DONE_VIDEO);
+      expect(sessions.updateSession).not.toHaveBeenCalledWith(
+        's1',
+        expect.objectContaining({ generationPrompt: expect.anything() }),
+      );
+      expect(tts.synthesize.mock.calls[0][0].text).toBe(
+        'Это работает. Берите сейчас.',
+      );
+    });
+
+    it('бюджет проверяется ДО синтеза — отказ тарифа не оплачивает TTS', async () => {
+      const { svc, tts } = build({
+        session: voiced,
+        denied: 'дневной лимит исчерпан',
+      });
+      await expect(svc.reVoice('s1', DONE_VIDEO)).rejects.toThrow(
+        /дневной лимит исчерпан/,
+      );
+      expect(tts.synthesize).not.toHaveBeenCalled();
+    });
+
+    it('синтез не удался — переозвучка падает явно, а не молча оставляет старый ролик', async () => {
+      const { svc, tts } = build({ session: voiced });
+      tts.synthesize.mockResolvedValueOnce({
+        ok: false,
+        skipped: false,
+        reason: 'провайдер синтеза недоступен',
+      });
+      await expect(svc.reVoice('s1', DONE_VIDEO)).rejects.toThrow(
+        /провайдер синтеза недоступен/,
+      );
+    });
+
+    it('успех — postStatus снова pending с новым postJobId, тем же путём подхватывается общим poll()', async () => {
+      const { svc, api } = build({ session: voiced });
+      const r = await svc.reVoice('s1', DONE_VIDEO);
+      expect(r.postStatus).toBe('pending');
+      expect(r.postJobId).toBe('job1');
+      expect(r.postError).toBeUndefined();
+      expect(api.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('замок снимается в finally — и при успехе, и при отказе', async () => {
+      const { svc, sessions } = build({ session: voiced, denied: 'нет денег' });
+      await expect(svc.reVoice('s1', DONE_VIDEO)).rejects.toThrow();
+      expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'revoice');
+
+      const ok = build({ session: voiced });
+      await ok.svc.reVoice('s1', DONE_VIDEO);
+      expect(ok.sessions.releaseWork).toHaveBeenCalledWith('s1', 'revoice');
+    });
+  });
 });

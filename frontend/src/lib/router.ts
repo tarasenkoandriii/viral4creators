@@ -26,6 +26,8 @@ export type Route =
   | { name: 'feed-import-start'; projectId: string }
   | { name: 'feed-import'; projectId: string; runId: string }
   | { name: 'generate' }
+  | { name: 'postprod' }
+  | { name: 'postprod-video'; sessionId: string }
   | { name: 'manifests' }
   | { name: 'manifest-new' }
   | { name: 'manifest'; manifestId: string }
@@ -97,6 +99,13 @@ export function parseRoute(hash: string): Route {
     }
   }
   if (parts[0] === 'generate') return { name: 'generate' };
+  // Этап 88: /postprod (список готовых роликов) и /postprod/:sessionId
+  // (переозвучка/экспорт/публикация/шаринг одного ролика) — тот же
+  // двухсегментный приём, что у /brand-manifests/:id ниже.
+  if (parts[0] === 'postprod') {
+    if (parts.length === 1) return { name: 'postprod' };
+    if (parts[1]) return { name: 'postprod-video', sessionId: parts[1] };
+  }
   if (parts[0] === 'plan') return { name: 'plan' };
   if (parts[0] === 'channels') return { name: 'channels' };
   if (parts[0] === 'credits') return { name: 'credits' };
@@ -150,6 +159,8 @@ export const routes = {
   feedImport: (projectId: string, runId: string) =>
     `/projects/${projectId}/feed-import/${runId}`,
   generate: () => '/generate',
+  postprod: () => '/postprod',
+  postprodVideo: (sessionId: string) => `/postprod/${sessionId}`,
   manifests: () => '/brand-manifests',
   manifestNew: () => '/brand-manifests/new',
   manifest: (id: string) => `/brand-manifests/${id}`,

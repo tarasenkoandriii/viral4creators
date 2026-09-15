@@ -2,7 +2,8 @@
   "nav": {
     "projects": "Proyectos",
     "brand": "Marca",
-    "generate": "Generar"
+    "generate": "Producción",
+    "postprod": "Postprod"
   },
   "header": {
     "tagline": "UGC video cloner",
@@ -997,13 +998,7 @@
     }
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Análisis",
-      "Producto",
-      "Prompt",
-      "Generación"
-    ],
+    "steps": ["Video", "Análisis", "Producto", "Prompt", "Generación"],
     "errorTitle": "Error",
     "prefilledAlert": "Los datos del producto se tomaron del proyecto — es una copia del momento de inicio; los cambios aquí no modifican el producto en sí.",
     "openProjectCta": "Abrir proyecto",
@@ -1094,6 +1089,9 @@
     "auditLockedBody": "Gemini revisa el video terminado en busca de artefactos de generación — dedos de más, texto deformado, un producto cambiado — y propone un prompt corregido para regenerar. También puedes descargar el video sin la auditoría.",
     "publishLockedTitle": "Publicación a través del servicio",
     "publishLockedBody": "La solicitud entra en la cola de moderación y, tras la aprobación, el video se sube a tu canal. Descargar el archivo y publicarlo tú mismo funciona en cualquier plan.",
+    "postprodCtaTitle": "Redoblaje, exportación, publicación",
+    "postprodCtaHint": "Toda la posproducción de este video está en la pestaña «Postprod».",
+    "postprodCtaButton": "Abrir en Postprod",
     "whatsNextTitle": "¿Qué sigue?",
     "downloadCta": "Descargar",
     "anotherVideoCta": "Otro video"
@@ -1162,6 +1160,31 @@
       "square": "Cuadrado (redes sociales)",
       "classic": "Pantalla clásica"
     }
+  },
+  "revoicePanel": {
+    "panelTitle": "Doblar de nuevo el vídeo",
+    "panelHint": "Una nueva pista de audio (y subtítulos a juego) sin volver a renderizar con Veo — el vídeo original no cambia.",
+    "scriptLabel": "Texto de las réplicas",
+    "submitCta": "Doblar de nuevo",
+    "footerNote": "Se cobra como una postproducción normal: una nueva síntesis de voz y un nuevo trabajo de procesamiento."
+  },
+  "postprodScreen": {
+    "title": "Postprod",
+    "hint": "Todos tus vídeos terminados: redoblaje, exportación, publicación y compartir.",
+    "emptyTitle": "Todavía no hay vídeos terminados",
+    "emptyHint": "Graba tu primer vídeo en la pestaña «Producción» — aparecerá aquí en cuanto esté listo.",
+    "goToProductionCta": "Ir a Producción",
+    "loadMore": "Mostrar más",
+    "untitledProduct": "Sin título",
+    "revoiceBadge": "Redoblaje disponible",
+    "processingBadge": "Procesando",
+    "failedBadge": "La postproducción falló",
+    "openButton": "Abrir"
+  },
+  "postprodVideoScreen": {
+    "notFoundTitle": "Vídeo no encontrado",
+    "notFoundHint": "Puede que la sesión se haya eliminado, o que no sea tu vídeo.",
+    "untitledTitle": "Vídeo"
   },
   "feedImport": {
     "panelTitle": "Importar productos por enlace",

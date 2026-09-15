@@ -14,3 +14,15 @@ export function voiceModeHint(
 ): string {
   return t[mode];
 }
+
+/**
+ * Есть ли у ролика ОТДЕЛЬНАЯ звуковая дорожка, наложенная постобработкой
+ * (§15.1) — в отличие от `'veo'`, где голос ведёт сама модель прямо в
+ * кадре. Тот же смысл, что у бэкендового `usesOwnVoice`
+ * (common/voice-mode.ts) — используется, чтобы решить, есть ли вообще
+ * что переозвучить без повторного рендера (доп. запрос владельца
+ * продукта, этап 87, `RevoicePanel`).
+ */
+export function usesOwnVoice(mode: VoiceMode | undefined): boolean {
+  return mode === 'voiceover' || mode === 'dub';
+}

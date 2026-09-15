@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { FolderKanban, Palette, Zap } from 'lucide-react';
+import { Clapperboard, FolderKanban, Palette, Zap } from 'lucide-react';
 import { TelegramLoginButton } from './components/TelegramLoginButton';
 import { useRoute, navigate, routes } from './lib/router';
 import { PlanContext } from './lib/plan-context';
@@ -27,6 +27,8 @@ import { PlanScreen } from './features/plan/PlanScreen';
 import { AccountNotice } from './components/AccountNotice';
 import type { PlanState } from './types';
 import { GenerationWizard } from './features/generation/GenerationWizard';
+import { PostprodScreen } from './features/postprod/PostprodScreen';
+import { PostprodVideoScreen } from './features/postprod/PostprodVideoScreen';
 import { LegalScreen } from './features/legal/LegalScreen';
 import { ProjectsListScreen } from './features/projects/ProjectsListScreen';
 import { ProjectCreateScreen } from './features/projects/ProjectCreateScreen';
@@ -92,10 +94,14 @@ function App() {
   const inProjects =
     !inBrand &&
     route.name !== 'generate' &&
+    route.name !== 'postprod' &&
+    route.name !== 'postprod-video' &&
     route.name !== 'plan' &&
     route.name !== 'channels' &&
     route.name !== 'credits' &&
     route.name !== 'not-found';
+  const inPostprod =
+    route.name === 'postprod' || route.name === 'postprod-video';
 
   /**
    * Режим (ТЗ §23) грузится один раз на всё приложение: замков много, и
@@ -247,6 +253,13 @@ function App() {
               >
                 {dict.nav.generate}
               </NavTab>
+              <NavTab
+                active={inPostprod}
+                onClick={() => navigate(routes.postprod())}
+                icon={<Clapperboard size={13} />}
+              >
+                {dict.nav.postprod}
+              </NavTab>
             </nav>
           </div>
         </header>
@@ -331,6 +344,13 @@ function App() {
             />
           )}
           {route.name === 'generate' && <GenerationWizard />}
+          {route.name === 'postprod' && <PostprodScreen />}
+          {route.name === 'postprod-video' && (
+            <PostprodVideoScreen
+              key={route.sessionId}
+              sessionId={route.sessionId}
+            />
+          )}
           {route.name === 'legal' && <LegalScreen slug={route.slug} />}
           {route.name === 'plan' && <PlanScreen />}
           {route.name === 'channels' && <ChannelsScreen />}
