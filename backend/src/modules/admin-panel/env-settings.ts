@@ -329,7 +329,8 @@ export function getEnvSettings(
       set: raw !== undefined,
       ok: true,
       severity: 'ok',
-      message: 'Больше не используется — см. примечание к LAOZHANG_API_KEY выше.',
+      message:
+        'Больше не используется — см. примечание к LAOZHANG_API_KEY выше.',
       value: raw ?? '(не используется)',
     });
   }
@@ -794,6 +795,70 @@ export function getEnvSettings(
         ? 'Задан — оператор может запустить рендер аватар-ролика (POST /admin/actors/:sessionId/generate). Голос берётся из RESEMBLE_API_KEY выше.'
         : 'Не задан — ручной запуск пилота отвечает понятной ошибкой, остальной продукт не затронут.',
       // Значение не показываем — секрет.
+    });
+  }
+
+  // ── Обучалка (fixture-исполнитель сценариев, TutorialScenarioRunnerService
+  //    / UiSnapshotRunnerService, doc/DEPLOYMENT.md) ──
+  //
+  // Без этих трёх кроны `tutorial-scenario-run` и `ui-snapshot-run` не
+  // падают — они тихо возвращают `{skipped: "..."}` (fail-closed, не
+  // fail-crash), и до этого аудита оператор узнавал об этом только по
+  // логу конкретного прогона в «Кронах». Строки здесь — чтобы это было
+  // видно на вкладке «Настройки» заранее, а не постфактум.
+
+  {
+    const raw = env.FIXTURE_USER_TOKEN;
+    const set = Boolean(raw?.trim());
+    results.push({
+      key: 'FIXTURE_USER_TOKEN',
+      group: 'Обучалка',
+      required: false,
+      set,
+      ok: set,
+      severity: set ? 'ok' : 'warning',
+      message: set
+        ? 'Задан — регресс-раннер обучалки (tutorial-scenario-run/ui-snapshot-run) аутентифицируется заголовком X-Fixture-Token и может пройти дальше проверки окружения.'
+        : 'Не задан — tutorial-scenario-run и ui-snapshot-run скипаются с "фикстурный вход не настроен", ещё до обращения к базе. Сгенерировать: openssl rand -hex 16.',
+      // Значение не показываем — секрет (см. .env.example: секретный токен фикстурного входа).
+    });
+  }
+
+  {
+    // Не секрет: это просто идентификатор фикстурного пользователя
+    // (telegramId), не даёт доступа сам по себе — доступ даёт
+    // FIXTURE_USER_TOKEN выше. Видеть значение нужно, чтобы свериться с
+    // тем, что заведено в БД скриптом seed-fixture-user.ts.
+    const raw = env.FIXTURE_TELEGRAM_ID;
+    results.push({
+      key: 'FIXTURE_TELEGRAM_ID',
+      group: 'Обучалка',
+      required: false,
+      set: raw !== undefined,
+      ok: true,
+      severity: 'ok',
+      message:
+        'Telegram ID фикстурного пользователя. Сама по себе запись User с этим telegramId в базе не появляется — её создаёт разовый ручной запуск `npm run seed:fixture-user` (см. doc/DEPLOYMENT.md). Без неё раннеры скипаются с "фикстурный пользователь не заведён", даже если все три переменные этой группы заданы.',
+      value: raw ?? 'fixture-tutorial-runner (по умолчанию)',
+    });
+  }
+
+  {
+    const raw = env.TMA_PUBLIC_URL;
+    const ok = raw === undefined || /^https?:\/\//.test(raw.trim());
+    results.push({
+      key: 'TMA_PUBLIC_URL',
+      group: 'Обучалка',
+      required: false,
+      set: raw !== undefined,
+      ok,
+      severity: ok ? (raw ? 'ok' : 'warning') : 'warning',
+      message: !ok
+        ? 'Задан, но не похож на URL — регресс-раннер откроет headless-браузером страницу, которой нет, и каждый шаг сценария будет падать.'
+        : raw
+          ? 'Публичный адрес TMA (frontend) — регресс-раннер открывает его headless-браузером и проходит по шагам обучалки как реальный пользователь.'
+          : 'Не задан — tutorial-scenario-run и ui-snapshot-run скипаются с "фикстурный вход не настроен", ещё до обращения к базе.',
+      value: raw,
     });
   }
 

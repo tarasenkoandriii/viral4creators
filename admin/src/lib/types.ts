@@ -882,6 +882,38 @@ export interface AssistantAdminResult {
   aggregates30: AssistantAggregates | null;
 }
 
+// ── Сценарии обучалки (§4.10/§4.11 ТЗ,
+// backend/src/modules/tutorial-scenario/tutorial-scenario-admin.*, этап
+// 94; страница подключена этапом 105) — список сгенерированных
+// сценариев регресс-раннера и одобрение costly=true перед автоматическим
+// исполнением ──
+
+export interface TutorialScenarioRow {
+  id: string;
+  createdAt: string;
+  subjectKey: string;
+  locale: string;
+  /** Список шагов ScenarioStep (goto/fill/click/waitFor/assertVisible/assertText/triggerPaidOperation) — не исполняемый код. */
+  steps: unknown;
+  generatedBy: string;
+  costly: boolean;
+  estimatedCostMicroUsd: number | null;
+  costUnpriced: boolean;
+  approved: boolean;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  lastRunError: string | null;
+}
+
+export interface TutorialScenarioListResult {
+  rows: TutorialScenarioRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 // ── Обучающие видео (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md
 // §4.8/§4.9, backend/src/modules/tutorial-runner, этап 99) — вкладки
 // «Видео-контент»/«Состояние данных» ──

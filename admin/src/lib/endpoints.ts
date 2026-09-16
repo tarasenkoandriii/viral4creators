@@ -31,6 +31,8 @@ import type {
   TutorialVideoListResult,
   TutorialVideoDataStatus,
   TutorialVideoAssetRow,
+  TutorialScenarioListResult,
+  TutorialScenarioRow,
   PublicationListResult,
   PublicationPlatform,
   PublicationPrivacy,
@@ -558,6 +560,33 @@ export function getAssistantAdmin(params: {
     pageSize: params.pageSize,
     days: params.days,
   });
+}
+
+// ── Сценарии обучалки — одобрение costly=true перед автоматическим
+// исполнением (§4.10/§4.11 ТЗ,
+// backend/src/modules/tutorial-scenario/tutorial-scenario-admin.*, этап
+// 94; страница подключена этапом 105) ──
+
+export function getTutorialScenarios(params: {
+  subjectKey?: string;
+  locale?: string;
+  costly?: boolean;
+  approved?: boolean;
+  page?: number;
+  pageSize?: number;
+}) {
+  return apiGet<TutorialScenarioListResult>('/admin/tutorial-scenarios', {
+    subjectKey: params.subjectKey,
+    locale: params.locale,
+    costly: params.costly === undefined ? undefined : String(params.costly),
+    approved: params.approved === undefined ? undefined : String(params.approved),
+    page: params.page,
+    pageSize: params.pageSize,
+  });
+}
+
+export function approveTutorialScenario(id: string) {
+  return apiPatch<TutorialScenarioRow>(`/admin/tutorial-scenarios/${id}/approve`);
 }
 
 // ── Обучающие видео — вкладки «Видео-контент»/«Состояние данных»

@@ -56,6 +56,10 @@ const SECRET_KEYS = [
   // Этап 73 (TODO п.32): секрет вебхука подтверждения клона голоса —
   // тот же класс, что TELEGRAM_WEBHOOK_SECRET выше.
   'RESEMBLE_WEBHOOK_SECRET',
+  // Этап 105 (аудит лендинга/обучалки, доп. заход): секретный токен
+  // fixture-входа регресс-раннера обучалки — тот же класс, что
+  // CRON_SECRET выше.
+  'FIXTURE_USER_TOKEN',
 ];
 
 /**
@@ -110,6 +114,12 @@ const PUBLIC_VALUE_KEYS = [
   // `API_PUBLIC_URL`, что уже собирает callback OAuth-каналов и вебхук
   // WayForPay — не отдельная переменная.
   'API_PUBLIC_URL',
+  // Этап 105: telegramId фикстурного пользователя и публичный адрес TMA
+  // — ни то ни другое не секрет само по себе (доступ даёт
+  // FIXTURE_USER_TOKEN выше), а видеть значение нужно, чтобы свериться с
+  // seed-fixture-user.ts и с реальным адресом фронтенда.
+  'FIXTURE_TELEGRAM_ID',
+  'TMA_PUBLIC_URL',
 ];
 
 /**
@@ -262,6 +272,51 @@ describe('getEnvSettings — ключи постобработки и озвуч
       'FFMPEG_API_BASE_URL',
     );
     expect(row.ok).toBe(false);
+  });
+});
+
+describe('getEnvSettings — обучалка (fixture-раннер, этап 105)', () => {
+  it('без всех трёх — все три жёлтые, честно называют "скипается"', () => {
+    const results = getEnvSettings({});
+    expect(find(results, 'FIXTURE_USER_TOKEN').ok).toBe(false);
+    expect(find(results, 'FIXTURE_USER_TOKEN').message).toContain('скипаются');
+    const tmaRow = find(results, 'TMA_PUBLIC_URL');
+    expect(tmaRow.ok).toBe(true); // не задан — не "неправильный формат", а просто не задан
+    expect(tmaRow.severity).toBe('warning');
+  });
+
+  it('FIXTURE_TELEGRAM_ID не задан — показывает умолчание из .env.example', () => {
+    const row = find(getEnvSettings({}), 'FIXTURE_TELEGRAM_ID');
+    expect(row.ok).toBe(true);
+    expect(row.value).toContain('fixture-tutorial-runner');
+    expect(row.message).toContain('seed:fixture-user');
+  });
+
+  it('TMA_PUBLIC_URL без схемы — предупреждение, с ней — зелёный', () => {
+    expect(
+      find(
+        getEnvSettings({ TMA_PUBLIC_URL: 'app.example.com' }),
+        'TMA_PUBLIC_URL',
+      ).ok,
+    ).toBe(false);
+    const ok = find(
+      getEnvSettings({ TMA_PUBLIC_URL: 'https://app.example.com' }),
+      'TMA_PUBLIC_URL',
+    );
+    expect(ok.ok).toBe(true);
+    expect(ok.severity).toBe('ok');
+    expect(ok.value).toBe('https://app.example.com');
+  });
+
+  it('все три заданы — все три зелёные', () => {
+    const results = getEnvSettings({
+      FIXTURE_USER_TOKEN: 'k',
+      FIXTURE_TELEGRAM_ID: 'fixture-tutorial-runner',
+      TMA_PUBLIC_URL: 'https://app.example.com',
+    });
+    expect(find(results, 'FIXTURE_USER_TOKEN').ok).toBe(true);
+    expect(find(results, 'FIXTURE_TELEGRAM_ID').ok).toBe(true);
+    expect(find(results, 'TMA_PUBLIC_URL').ok).toBe(true);
   });
 });
 

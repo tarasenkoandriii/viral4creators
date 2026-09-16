@@ -10063,6 +10063,89 @@ total: 0, passed: 0, failed: 0, outcomes: []}`, ни разу не обрати�
 `doc/LANDING-TUTORIAL-TEST-SCENARIOS.md` (новый),
 `doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`.
 
+## Сделано (этап 105 — видимость fixture-переменных обучалки в «Настройках» + страница одобрения costly-сценариев)
+
+Прямое продолжение этапа 104: после того, как владелец продукта вручную
+прогнал реальные кроны обучалки на проде (скриншоты `/cron`, `/settings`,
+`/assistant`), выяснилось, что (а) три переменные, от которых зависит,
+скипается ли `tutorial-scenario-run`/`ui-snapshot-run`, не видны на
+вкладке «Настройки» рядом с остальными проверками окружения, и (б)
+единственный способ одобрить `costly=true` сценарий — прямой вызов
+`PATCH /admin/tutorial-scenarios/:id/approve` (curl/Postman), потому что
+у рабочих с этапа 94 эндпоинтов никогда не было страницы в админке —
+собственный доккомментарий контроллера прямо называл это «UI
+подключается отдельным заходом».
+
+**1. `FIXTURE_USER_TOKEN`/`FIXTURE_TELEGRAM_ID`/`TMA_PUBLIC_URL` на
+вкладке «Настройки».** Добавлена секция «Обучалка» в
+`backend/src/modules/admin-panel/env-settings.ts` (единственное место,
+откуda `GET /admin/settings` берёт список проверок — расширять пришлось
+только его):
+- `FIXTURE_USER_TOKEN` — секрет (значение не показывается), жёлтый без
+  него с прямой подсказкой «tutorial-scenario-run и ui-snapshot-run
+  скипаются… Сгенерировать: `openssl rand -hex 16`».
+- `FIXTURE_TELEGRAM_ID` — не секрет (просто id, доступ даёт токен выше),
+  показывает умолчание `fixture-tutorial-runner` и явно предупреждает,
+  что сама переменная не создаёт запись `User` в базе — это делает
+  отдельный ручной `npm run seed:fixture-user`.
+- `TMA_PUBLIC_URL` — не секрет, зелёный/жёлтый/жёлтый-с-предупреждением
+  по тому же паттерну, что `FFMPEG_API_BASE_URL` (формат URL).
+
+`env-settings.spec.ts` (тест-предохранитель файла: маркерами задаются
+ВСЕ известные переменные, и множество видимых наружу обязано совпасть
+с явным allowlist) обновлён — `FIXTURE_USER_TOKEN` в `SECRET_KEYS`,
+`FIXTURE_TELEGRAM_ID`/`TMA_PUBLIC_URL` в `PUBLIC_VALUE_KEYS` — плюс
+отдельный `describe` с 4 новыми тестами на форматную проверку и
+дефолтные сообщения.
+
+**2. Страница «Сценарии обучалки» в админке.** Новый роут
+`admin/src/app/tutorial-scenarios/page.tsx` по образцу `cron/page.tsx`
+(фильтры + таблица + кнопка-действие с перезагрузкой списка) и
+«Видео-контент» на `/assistant` (пагинация, `errText`-хелпер): список
+`TutorialScenario` с фильтрами по `subjectKey`/локали/`costly`/`approved`,
+раскрывающийся просмотр шагов сценария (`ScenarioStep[]`, не
+исполняемый код — тот же принцип безопасности, что в доккомментарии
+Prisma-модели), кнопка «Одобрить» с `window.confirm`, называющим
+прикидку стоимости прогона и явно говорящим, что это разрешение тратить
+деньги при автоматическом прогоне, а не то же самое, что «одобрено»
+(`reviewed`) у `TutorialVideoAsset` на соседней вкладке — и отдельно
+напоминающим, что одобрение НЕ снимает fixture-скип (два независимых
+гейта, см. доккомментарий `TutorialScenarioRunnerService`). Backend не
+менялся — оба эндпоинта (`GET /admin/tutorial-scenarios`, `PATCH
+.../approve`) существовали и были покрыты тестами с этапа 94; поправлен
+только доккомментарий контроллера, чтобы не врать про отсутствие UI.
+Добавлены `getTutorialScenarios`/`approveTutorialScenario` в
+`admin/src/lib/endpoints.ts` (тот же `apiGet`/`apiPatch`-паттерн, что у
+`getTutorialVideoAssets`/`setTutorialVideoReviewed`) и типы
+`TutorialScenarioRow`/`TutorialScenarioListResult` в `admin/src/lib/types.ts`.
+Ссылка на страницу — в группу «Система» `AdminNav.tsx`, между
+«ИИ-консультант» и «Настройки».
+
+Проверено: `npx tsc --noEmit -p tsconfig.json` в `admin/` — чисто;
+`npx next lint --max-warnings 0` в `admin/` — чисто; `npx eslint` (с
+`--fix` на форматирование) на изменённых backend-файлах — чисто;
+`npx jest src/modules/admin-panel/env-settings.spec.ts` в `backend/` —
+34/34 зелёных (было 30 до этапа); `node scripts/check-docs.mjs` из
+корня — все проверки прошли, включая «переменные окружения: все 103
+описаны в DEPLOYMENT.md или .env.docker.example» (обе новые несекретные
+переменные и так уже были описаны там с этапа их появления в коде —
+этот этап только сделал их видимыми в UI, не добавлял новых env-ключей
+в приложение). `npx jest src/modules/tutorial-scenario` — 2 из 5 наборов
+падают на известном ограничении песочницы (не сгенерирован Prisma-клиент,
+`Cannot find module '.prisma/client/default'`/`TS2339` на методах
+`PrismaService`) — то же самое падение, что и у НЕТРОНУТЫХ этим этапом
+файлов (`admin-users.service.spec.ts`, `platform-settings.service.ts`),
+подтверждено прогоном `src/common/reference-plan.spec.ts` (не при делах,
+зелёный) в качестве базовой линии; сама я не меняла ни
+`tutorial-scenario-admin.service.ts`, ни его тест.
+
+Файлы: `backend/src/modules/admin-panel/env-settings.ts`,
+`backend/src/modules/admin-panel/env-settings.spec.ts`,
+`backend/src/modules/tutorial-scenario/tutorial-scenario-admin.controller.ts`
+(только доккомментарий), `admin/src/app/tutorial-scenarios/page.tsx`
+(новый), `admin/src/lib/endpoints.ts`, `admin/src/lib/types.ts`,
+`admin/src/components/AdminNav.tsx`, `doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`.
+
 ## Проверка на каждом этапе (сквозное)
 
 - `npx tsc --noEmit` в `backend/`, `frontend/` — без новых ошибок.
