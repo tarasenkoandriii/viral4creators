@@ -611,14 +611,18 @@ export class PublicationService {
         'Сборка видео ещё не завершена — публиковать нечего',
       );
     }
+    // Локальная const — не asset.blobUrl напрямую — намеренно: сужение
+    // TS от `string | null` до `string` из проверки выше не переживает
+    // границу замыкания $transaction(async (tx) => {...}) ниже (TS не
+    // умеет доказать, что свойство объекта не изменится к моменту
+    // вызова колбэка), а локальная const-переменная примитивного типа —
+    // переживает.
+    const blobUrl: string = asset.blobUrl;
     // Путь выводится из РЕАЛЬНОГО blobUrl (а не собирается заново по
     // шаблону из subjectKey/id) — та же функция, что уже отводит чужие
     // пути у itemPhotoPathname, читает истину, а не повторяет соглашение
     // об именовании из tutorial-scenario-runner.service.ts второй раз.
-    const videoPathname = pathnameFromBlobUrl(
-      asset.blobUrl,
-      'tutorial-videos/',
-    );
+    const videoPathname = pathnameFromBlobUrl(blobUrl, 'tutorial-videos/');
     if (!videoPathname) {
       throw new BadRequestException(
         `blobUrl обучающего видео ${assetId} не под ожидаемым префиксом tutorial-videos/ — публикация невозможна`,
@@ -667,7 +671,7 @@ export class PublicationService {
           generatedVideoId: null,
           platform: dto.platform,
           status: 'APPROVED',
-          videoUrl: asset.blobUrl,
+          videoUrl: blobUrl,
           videoPathname,
           title: (dto.title?.trim() || asset.title).slice(0, 100),
           description: (dto.description ?? '').trim().slice(0, 5000),

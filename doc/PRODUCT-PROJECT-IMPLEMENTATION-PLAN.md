@@ -9776,6 +9776,72 @@ launch-browser,session,session-manager,http-routes,ws-handler,main}.ts`,
 `doc/LIVE-LOGIN-RELAY-SPEC.md` (§3 — задокументирован переход на
 CommonJS), `doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`.
 
+## Сделано (этап 102а — README `live-login-relay/` + фикс боевого билда backend, найденного реальным деплоем Vercel)
+
+Тем же заходом, по запросу владельца продукта: добавлен
+`live-login-relay/README.md` (требования, быстрый старт без Docker,
+полная таблица переменных окружения, `docker compose`, интеграция с
+backend через общий секрет, пошаговый деплой на Dokploy по уже
+принятому в `doc/CLIENT-SITE-TUTORIAL-SPEC.md` §7.4.9 решению, раздел
+частых проблем) — спека (`doc/LIVE-LOGIN-RELAY-SPEC.md`) остаётся
+источником истины по протоколу/архитектуре, README её не дублирует, а
+ссылается.
+
+**Отдельно — реальный лог деплоя Vercel** (не песочница, боевой билд
+`backend` на коммите `c7e2755`) показал `nest build` (`tsc`), упавший
+на двух ошибках типов, обе — не связаны с `live-login-relay/`:
+
+1. `src/modules/cron/cron-jobs.service.spec.ts:792` — `Expected 20
+   arguments, but got 19`. Причина — конструктор `CronJobsService`
+   получил 20-й параметр `uiSnapshotRunner: UiSnapshotRunnerService` на
+   этапе 100 (крон-обход интерфейса TMA), и основной хелпер сборки
+   сервиса в тестах (`buildService()`, там же в файле) был обновлён
+   тогда же — а вот второй, отдельный хелпер `buildPaged()` (используется
+   только тестами постраничного поиска сирот у `pruneUnused`, ниже по
+   файлу) остался с 19 аргументами. В песочнице этот файл не грузится
+   вовсе (нет сгенерированного `@prisma/client`, тот же класс из 47
+   непрогоняемых наборов, что и в записи этапа 101) — поэтому
+   `tsc`-ошибка компиляции была не видна локально, только на реальном
+   `nest build`, который компилирует ВЕСЬ проект целиком, включая
+   `.spec.ts`-файлы. Исправлено добавлением недостающего 20-го
+   `{} as never,` — тем же плейсхолдером, что у остальных 18 позиционных
+   аргументов этого хелпера, которые тест не проверяет напрямую.
+2. `src/modules/publication/publication.service.ts:670` —
+   `videoUrl: asset.blobUrl` не проходил проверку типов:
+   `TutorialVideoAsset.blobUrl` в схеме — `String?`, а
+   `PublicationRequestCreateInput.videoUrl` — обязательный `string`.
+   Сужение типа от проверки чуть выше (`if (... || !asset.blobUrl)
+   throw …`, добавлено этапом 101) реально исключает `null`, но TS не
+   переносит это сужение свойства объекта через границу замыкания
+   `$transaction(async (tx) => {...})`, внутри которого стоит
+   `create()` — TS консервативно не может доказать, что `asset.blobUrl`
+   не поменяется к моменту вызова колбэка. Тот же класс ошибки, что и
+   TS2554 выше — недостижим локальным `tsc --noEmit` в этой песочнице,
+   потому что там ошибка тонет в лавине из ~60 не относящихся к делу
+   `Property 'X' does not exist on type 'PrismaService'` (следствие
+   отсутствующего `@prisma/client`), а на реальном билде с настоящим
+   клиентом это единственная реальная ошибка типов. Исправлено
+   стандартным приёмом «сузить один раз в локальную `const`, прежде чем
+   входить в замыкание» — `const blobUrl: string = asset.blobUrl;`
+   сразу после проверки, используется и в `pathnameFromBlobUrl(blobUrl,
+   …)`, и внутри `$transaction` вместо прямого обращения к
+   `asset.blobUrl`.
+
+Оба фикса точечные, не меняют поведение — только состав аргументов
+мока в тесте и место сужения типа. Проверено доступным здесь способом:
+`npx tsc --noEmit -p .` в `backend/` — оба конкретных диагностических
+сообщения (`TS2554` у `cron-jobs.service.spec.ts`, `videoUrl`/`TS2322`
+у `publication.service.ts`) больше не встречаются в выводе; оставшиеся
+ошибки — тот же самый, уже задокументированный шум от отсутствующего в
+песочнице `@prisma/client`, не регресс этой правки. `npx eslint` на
+обоих файлов — чисто. Следующий реальный деплой Vercel — первое место,
+где это подтвердится зелёной сборкой.
+
+Файлы: `live-login-relay/README.md` (новый),
+`backend/src/modules/cron/cron-jobs.service.spec.ts`,
+`backend/src/modules/publication/publication.service.ts`,
+`doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`.
+
 ## Проверка на каждом этапе (сквозное)
 
 - `npx tsc --noEmit` в `backend/`, `frontend/` — без новых ошибок.

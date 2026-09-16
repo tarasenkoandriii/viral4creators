@@ -816,6 +816,7 @@ describe('CronJobsService — метла идёт до конца курсора
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     return { service, blobService };
   }
