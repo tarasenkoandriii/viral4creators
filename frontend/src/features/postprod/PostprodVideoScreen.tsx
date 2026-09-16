@@ -39,6 +39,7 @@ import { ScreenHeader, LoadError } from '../projects/shared';
 import { errorMessage } from '../../services/projects-api';
 import { deletePostprodVideo } from '../../services/postprod-api';
 import { VideoPlayer } from '../../components/VideoPlayer';
+import { VideoProcessingStatus } from '../../components/VideoProcessingStatus';
 import { usePostprodVideo } from '../../hooks/usePostprodVideo';
 import { RevoicePanel } from '../generation/RevoicePanel';
 import { ExportPanel } from '../generation/ExportPanel';
@@ -175,6 +176,15 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
             : undefined
         }
       />
+
+      {/* Найдено доп. аудитом (HIGH, этап 88) — см. доккомментарий
+          VideoProcessingStatus: раньше этот экран не показывал НИЧЕГО
+          про провал кропа/озвучки/субтитров, если только сам
+          RevoicePanel не решал показать свой единственный алерт (а он
+          вообще не рендерится при voiceMode === 'veo'). Независим от
+          RevoicePanel специально — не должен зависеть от его условия
+          рендера. */}
+      <VideoProcessingStatus video={video} dict={dict} />
 
       <RevoicePanel
         sessionId={sessionId}

@@ -90,6 +90,24 @@ export class CatalogBatchService {
     // же признаком, что и обычная библиотека разборов.
     await this.plans.assertUser(userId, 'library');
 
+    // Найдено доп. аудитом (MEDIUM, этап 89): до этой проверки `create`
+    // никогда не читал сам Project — принадлежность устанавливалась
+    // только транзитивно через `source.userId`/`source.projectId`, и
+    // проверялся `deletedAt` только у каждого ProductItem (см. ниже), не
+    // у самого проекта. Мягкое удаление проекта не каскадирует
+    // `deletedAt` на его товары сразу (только при физической чистке), so
+    // партию можно было поставить в очередь (200 + batchId) против только
+    // что удалённого владельцем проекта — а дальше каждый товар падал в
+    // CatalogBatchWorkerService с confusing «не найдено» вместо честного
+    // 404 сразу. Тот же паттерн, что и в product-feed-import.service.ts.
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!project) {
+      throw new NotFoundException(`Project ${projectId} not found`);
+    }
+
     const source = await this.sessions.getSession(dto.sourceSessionId);
     if (!source || source.userId !== userId || source.projectId !== projectId) {
       throw new NotFoundException(
@@ -238,11 +256,13 @@ export class CatalogBatchService {
                 where: {
                   productItemId: { in: requestedIds },
                   // Найдено при аудите (ТЗ §13, этап 2 плана §14): без 'BATCH_QUEUED'
-          // товар, уже стоящий в очереди на подачу как Grok-пачка, считался
-          // бы свободным — вторая параллельная партия могла бы завести для
-          // него ещё одну оплаченную генерацию, тот же риск задвоения,
-          // которого этот же busy-чек уже избегает для PENDING/GENERATING/DONE.
-          status: { in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'] },
+                  // товар, уже стоящий в очереди на подачу как Grok-пачка, считался
+                  // бы свободным — вторая параллельная партия могла бы завести для
+                  // него ещё одну оплаченную генерацию, тот же риск задвоения,
+                  // которого этот же busy-чек уже избегает для PENDING/GENERATING/DONE.
+                  status: {
+                    in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'],
+                  },
                 },
                 select: { productItemId: true },
               });
@@ -487,11 +507,13 @@ export class CatalogBatchService {
                     in: candidates.map((c) => c.productItemId),
                   },
                   // Найдено при аудите (ТЗ §13, этап 2 плана §14): без 'BATCH_QUEUED'
-          // товар, уже стоящий в очереди на подачу как Grok-пачка, считался
-          // бы свободным — вторая параллельная партия могла бы завести для
-          // него ещё одну оплаченную генерацию, тот же риск задвоения,
-          // которого этот же busy-чек уже избегает для PENDING/GENERATING/DONE.
-          status: { in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'] },
+                  // товар, уже стоящий в очереди на подачу как Grok-пачка, считался
+                  // бы свободным — вторая параллельная партия могла бы завести для
+                  // него ещё одну оплаченную генерацию, тот же риск задвоения,
+                  // которого этот же busy-чек уже избегает для PENDING/GENERATING/DONE.
+                  status: {
+                    in: ['PENDING', 'BATCH_QUEUED', 'GENERATING', 'DONE'],
+                  },
                 },
                 select: { productItemId: true },
               });

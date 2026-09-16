@@ -1,0 +1,39 @@
+{
+  "name": "live-login-relay",
+  "version": "1.0.0",
+  "description": "Пилот сервиса удалённой live-сессии входа (doc/LIVE-LOGIN-RELAY-SPEC.md) — CDP-скринкаст + проброс ввода, отдельный деплоймый пакет монорепо.",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": "24.x"
+  },
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --fix",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "puppeteer-core": "^23.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.2",
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.42.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-jest": "^28.14.0",
+    "eslint-plugin-prettier": "^5.0.0",
+    "jest": "^29.5.0",
+    "prettier": "^3.0.0",
+    "ts-jest": "^29.1.0",
+    "tsx": "^4.15.0",
+    "typescript": "^5.5.0"
+  }
+}

@@ -8,6 +8,7 @@ import { YoutubeSearchModule } from '../youtube-search/youtube-search.module';
 import { GrokModule } from '../grok/grok.module';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
+import { StorageModule } from '../storage/storage.module';
 
 /**
  * BlogModule — блог продукта (doc/TODO.md §II.3-II.5, ТЗ §36, этап 57):
@@ -18,10 +19,18 @@ import { AdminPanelModule } from '../admin-panel/admin-panel.module';
  *
  * `PrismaService` и `AiUsageService` — `@Global()`-модули (см.
  * app.module.ts), явный импорт им не нужен, тот же принцип, что у
- * остальных модулей этого бэкенда.
+ * остальных модулей этого бэкенда. `StorageModule` — за `BlobService`
+ * (этап 95): `BlogGenerationService` перезаливает обложку в собственный
+ * Blob, `blog-cover-image.ts`.
  */
 @Module({
-  imports: [YoutubeSearchModule, GrokModule, AdminAuthModule, AdminPanelModule],
+  imports: [
+    YoutubeSearchModule,
+    GrokModule,
+    AdminAuthModule,
+    AdminPanelModule,
+    StorageModule,
+  ],
   controllers: [BlogController, AdminBlogController],
   providers: [
     BlogService,

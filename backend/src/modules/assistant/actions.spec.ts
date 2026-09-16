@@ -47,6 +47,42 @@ describe('parseActions (ТЗ §5.4)', () => {
     expect(result[0]).toEqual({ kind: 'step', stepId: 7 });
   });
 
+  it('kind:video с непустым subjectKey проходит (этап 99, §4.8)', () => {
+    const raw = JSON.stringify({
+      items: [{ kind: 'video', subjectKey: 'plan-upgrade' }],
+    });
+    expect(parseActions(raw)).toEqual([
+      { kind: 'video', subjectKey: 'plan-upgrade' },
+    ]);
+  });
+
+  it('kind:video с пустым subjectKey отбрасывает элемент', () => {
+    const raw = JSON.stringify({
+      items: [{ kind: 'video', subjectKey: '  ' }],
+    });
+    expect(parseActions(raw)).toEqual([]);
+  });
+
+  it('kind:video без subjectKey отбрасывает элемент', () => {
+    const raw = JSON.stringify({ items: [{ kind: 'video' }] });
+    expect(parseActions(raw)).toEqual([]);
+  });
+
+  it('не больше одного video-действия — второе отбрасывается структурно (аудит §10, п.8)', () => {
+    const raw = JSON.stringify({
+      items: [
+        { kind: 'video', subjectKey: 'first' },
+        { kind: 'step', stepId: 2 },
+        { kind: 'video', subjectKey: 'second' },
+      ],
+    });
+    const result = parseActions(raw);
+    expect(result).toEqual([
+      { kind: 'video', subjectKey: 'first' },
+      { kind: 'step', stepId: 2 },
+    ]);
+  });
+
   it('обрезает до 3 элементов', () => {
     const raw = JSON.stringify({
       items: [

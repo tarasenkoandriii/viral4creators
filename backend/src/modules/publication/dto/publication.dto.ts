@@ -57,3 +57,44 @@ export class ApprovePublicationRequestDto {
   @IsIn(['PRIVATE', 'UNLISTED', 'PUBLIC'])
   privacy?: 'PRIVATE' | 'UNLISTED' | 'PUBLIC';
 }
+
+/**
+ * POST /admin/tutorial-video-assets/:id/publish (этап 101, ТЗ §4.7,
+ * Фаза 3) — в отличие от заявки на рекламный ролик, здесь нет ни сессии,
+ * ни проекта/бренд-манифеста, откуда угадать канал по умолчанию, поэтому
+ * `channelId` обязателен (должен принадлежать оператору, вызвавшему
+ * публикацию, и совпадать по платформе — см. `PublicationService.
+ * publishTutorialVideo`). `privacy` необязателен: по умолчанию UNLISTED
+ * (не PRIVATE, как у рекламных роликов) — прямая рекомендация спеки, дать
+ * посмотреть по прямой ссылке до показа всем.
+ */
+export class PublishTutorialVideoDto {
+  @IsIn(['YOUTUBE', 'TIKTOK'])
+  platform!: 'YOUTUBE' | 'TIKTOK';
+
+  @IsString()
+  channelId!: string;
+
+  @IsOptional()
+  @IsIn(['PRIVATE', 'UNLISTED', 'PUBLIC'])
+  privacy?: 'PRIVATE' | 'UNLISTED' | 'PUBLIC';
+
+  /** По умолчанию — заголовок шага/сценария (TutorialVideoAsset.title). */
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  title?: string;
+
+  /** По умолчанию — пусто: у обучающего видео нет готового описания. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  description?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  tags?: string[];
+}

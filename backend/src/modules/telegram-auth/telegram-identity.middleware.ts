@@ -19,10 +19,17 @@
  *
  * Порядок проверки источников identity (первый найденный побеждает):
  *   1. `X-Telegram-Init-Data` — внутри Telegram, самый сильный сигнал.
- *   2. `X-Dev-User-Id` — dev-обход (только ALLOW_DEV_AUTH=true).
- *   3. Cookie `user_session` — постоянный логин обычного браузера вне
+ *   2. `X-Fixture-Token` — служебный вход автоматического исполнителя
+ *      сценариев обучающих видео (§3.3 ТЗ
+ *      doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md, этап 97, см.
+ *      common/fixture-token.ts). Проверяется раньше dev-обхода: в
+ *      отличие от него, работает и на проде (требует настоящий
+ *      секрет, а не просто снятый предохранитель), значит сигнал
+ *      сильнее.
+ *   3. `X-Dev-User-Id` — dev-обход (только ALLOW_DEV_AUTH=true).
+ *   4. Cookie `user_session` — постоянный логин обычного браузера вне
  *      Telegram, см. modules/telegram-login. Проверяется последней,
- *      потому что первые два всегда сильнее и специфичнее источника
+ *      потому что первые три всегда сильнее и специфичнее источника
  *      запроса (сама TMA внутри Telegram эту cookie не ставит).
  *
  * См. doc/TELEGRAM-ADMIN.md.
@@ -47,11 +54,13 @@ import {
 } from '../telegram-login/cookie.util';
 import { CSRF_REJECTED_MESSAGE, isOriginAllowed } from '../../common/csrf';
 import { isDevAuthAllowed } from '../admin-auth/dev-login';
+import { fixtureTelegramIdFromHeader } from '../../common/fixture-token';
 
 export interface TelegramIdentifiedRequest extends Request {
   /** Internal User.id (не telegramId), выставлен только если Telegram-
-   * идентификация состоялась (initData или dev-bypass). Отсутствует для
-   * обычных анонимных запросов — вызывающий код обязан это учитывать. */
+   * идентификация состоялась (initData, fixture-токен или dev-bypass).
+   * Отсутствует для обычных анонимных запросов — вызывающий код обязан
+   * это учитывать. */
   telegramUserId?: string;
 }
 
@@ -96,6 +105,12 @@ export class TelegramIdentityMiddleware implements NestMiddleware {
       );
     }
 
+    const fixtureUserId = await this.tryFixtureToken(req);
+    if (fixtureUserId) {
+      req.telegramUserId = fixtureUserId;
+      return next();
+    }
+
     const devUserId = await this.tryDevBypass(req);
     if (devUserId) {
       req.telegramUserId = devUserId;
@@ -133,6 +148,32 @@ export class TelegramIdentityMiddleware implements NestMiddleware {
     }
 
     next();
+  }
+
+  /**
+   * Служебный вход автоматического исполнителя сценариев обучающих
+   * видео (§3.3 ТЗ, этап 97) — заголовок `X-Fixture-Token` со
+   * значением `FIXTURE_USER_TOKEN`. Как и dev-bypass — никогда не
+   * бросает: неверный или отсутствующий токен просто не даёт identity,
+   * запрос идёт дальше как обычно (следующим источником или анонимно).
+   * Проверка секрета вынесена в `common/fixture-token.ts` (fail-closed
+   * + constant-time, тот же приём, что `cron-secret.ts`); здесь —
+   * только upsert пользователя тем же идиомом, что `tryDevBypass`.
+   */
+  private async tryFixtureToken(req: Request): Promise<string | null> {
+    const header = req.headers['x-fixture-token'];
+    if (!header || Array.isArray(header)) return null;
+
+    const telegramId = fixtureTelegramIdFromHeader(header, process.env);
+    if (!telegramId) return null;
+
+    const user = await this.prisma.user.upsert({
+      where: { telegramId },
+      update: {},
+      create: { telegramId },
+    });
+
+    return user.id;
   }
 
   /**

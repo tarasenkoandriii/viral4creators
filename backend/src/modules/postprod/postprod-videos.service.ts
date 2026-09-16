@@ -75,7 +75,17 @@ export class PostprodVideosService {
         voiceMode: isVoiceMode(row.voiceMode) ? row.voiceMode : null,
         aspectRatio: row.aspectRatio,
         quality: row.quality,
-        provider: row.provider,
+        // Найдено доп. аудитом (MEDIUM): в отличие от session-summary.ts
+        // и admin-generation-retry.controller.ts's `versions()`
+        // (`provider: v.provider ?? 'veo'`), это единственное место в
+        // проекте, где `provider` из БД отдавался как есть — Veo-путь
+        // (`GenerationService`) вообще не пишет это поле, так что для
+        // подавляющего большинства роликов оно `null`. Сейчас это
+        // безобидно (см. её же доккомментарий — фронт это поле пока не
+        // отрисовывает), но ловушка на будущее: подключить бейдж без
+        // этого дефолта значит показать «неизвестно» вместо «Veo» почти
+        // всегда.
+        provider: row.provider ?? 'veo',
         resolution: row.resolution,
         canRevoice: isVoiceMode(row.voiceMode) && usesOwnVoice(row.voiceMode),
       })),

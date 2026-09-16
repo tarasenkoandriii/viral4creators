@@ -51,6 +51,7 @@ function productItem(id: string, overrides: Record<string, unknown> = {}) {
 
 function setup(
   opts: {
+    project?: unknown;
     source?: unknown;
     items?: unknown[];
     busy?: unknown[];
@@ -118,6 +119,13 @@ function setup(
             : opts.libraryEntry,
         ),
     },
+    project: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(
+          opts.project === undefined ? { id: 'proj1' } : opts.project,
+        ),
+    },
     productItem: {
       findMany: jest
         .fn()
@@ -172,6 +180,25 @@ describe('CatalogBatchService.create', () => {
       productItemIds: ['pi1', 'pi2'],
     });
     expect(plans.assertUser).toHaveBeenCalledWith('user1', 'library');
+  });
+
+  // Найдено доп. аудитом (MEDIUM, этап 89): раньше `create` никогда не
+  // читал сам Project — партию можно было поставить в очередь против
+  // только что мягко удалённого владельцем проекта, и каждый товар потом
+  // падал в воркере с confusing «не найдено» вместо честного 404 сразу.
+  it('проект не найден/мягко удалён — 404 до чтения исходной сессии', async () => {
+    const { service, prisma, sessions } = setup({ project: null });
+    await expect(
+      service.create('user1', 'proj1', {
+        sourceSessionId: 'src-session',
+        productItemIds: ['pi1', 'pi2'],
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.project.findFirst).toHaveBeenCalledWith({
+      where: { id: 'proj1', userId: 'user1', deletedAt: null },
+      select: { id: true },
+    });
+    expect(sessions.getSession).not.toHaveBeenCalled();
   });
 
   it('исходная сессия не найдена — 404', async () => {

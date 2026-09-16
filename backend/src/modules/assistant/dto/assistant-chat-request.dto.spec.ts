@@ -27,17 +27,18 @@ describe('AssistantChatRequestDto under the real ValidationPipe (ТЗ §4.3)', (
     await ok(base);
   });
 
-  it('принимает stepId 1..9 и triggeredBy', async () => {
+  it('принимает stepId 1..10 (десятый шаг — «Постпродакшн», этап 92) и triggeredBy', async () => {
     await ok({ ...base, stepId: 7, triggeredBy: 'proactive' });
+    await ok({ ...base, stepId: 10 });
   });
 
   it('отклоняет неизвестную локаль', async () => {
     await bad({ ...base, locale: 'fr' });
   });
 
-  it('отклоняет stepId вне 1..9', async () => {
+  it('отклоняет stepId вне 1..10', async () => {
     await bad({ ...base, stepId: 0 });
-    await bad({ ...base, stepId: 10 });
+    await bad({ ...base, stepId: 11 });
   });
 
   it('отклоняет пустой messages', async () => {

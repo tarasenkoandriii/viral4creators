@@ -162,21 +162,44 @@ export class AssistantController {
     let usage = { in: 0, out: 0, cached: 0 };
     let error: { code: string; message: string } | null = null;
 
-    for await (const event of this.assistant.streamChat(request, ip, signal)) {
-      switch (event.type) {
-        case 'token':
-          text += event.t;
-          break;
-        case 'actions':
-          actions = event.items;
-          break;
-        case 'done':
-          usage = event.usage;
-          break;
-        case 'error':
-          error = { code: event.code, message: event.message };
-          break;
+    try {
+      for await (const event of this.assistant.streamChat(
+        request,
+        ip,
+        signal,
+      )) {
+        switch (event.type) {
+          case 'token':
+            text += event.t;
+            break;
+          case 'actions':
+            actions = event.items;
+            break;
+          case 'done':
+            usage = event.usage;
+            break;
+          case 'error':
+            error = { code: event.code, message: event.message };
+            break;
+        }
       }
+    } catch {
+      // Найдено доп. аудитом (MEDIUM): без этого try/catch исключение,
+      // брошенное ДО первого yield генератора (например, сбой БД внутри
+      // AssistantSettingsService.get() или
+      // AiUsageService.spentTodayForOperation() — оба ждутся в
+      // AssistantService.streamChat без собственного try/catch), улетало
+      // из chatJson наружу мимо контракта этого метода и долетало только
+      // до глобального HttpExceptionFilter, чей ответ
+      // ({success:false,error:{code,message}}) не совпадает с
+      // задокументированным {error,text,actions,usage} — расхождение с
+      // тем, что на любой сбой отдаёт SSE-ветка (см. доккомментарий
+      // класса: «Логика ОДНА для обоих путей»). Симметрично SSE-catch'у
+      // выше — сворачиваем в тот же upstream-error.
+      error = {
+        code: 'upstream',
+        message: assistantErrorMessage('upstream', request.locale),
+      };
     }
 
     // Клиент уже разорвал соединение — писать ответ некому (и, на

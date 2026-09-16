@@ -17,6 +17,9 @@ import { AbTestModule } from '../ab-test/ab-test.module';
 import { ProductFeedImportModule } from '../product-feed-import/product-feed-import.module';
 import { ExportModule } from '../export/export.module';
 import { ProjectModule } from '../project/project.module';
+import { TutorialScenarioModule } from '../tutorial-scenario/tutorial-scenario.module';
+import { TutorialRunnerModule } from '../tutorial-runner/tutorial-runner.module';
+import { UiSnapshotModule } from '../ui-snapshot/ui-snapshot.module';
 
 /**
  * CronModule
@@ -44,6 +47,18 @@ import { ProjectModule } from '../project/project.module';
   // (этап 89): та же суточная уборка (`runCleanupSessions`), что убирает
   // мягко удалённые сессии, теперь физически убирает и мягко удалённые
   // Project/ProductItem — ProjectService уже держит свой BlobService.
+  // TutorialScenarioModule — за TutorialScenarioGeneratorService (этап
+  // 94, doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.10) — генерация
+  // сценариев для будущей автозаписи обучающих видео, тот же приём
+  // делегирования, что у остальных крон-воркеров этого списка.
+  // TutorialRunnerModule — за TutorialScenarioRunnerService (этап 97,
+  // §5 того же ТЗ) — исполнение уже сгенерированных сценариев headless-
+  // браузером против фикстурного пользователя, отдельный крон-слот от
+  // генерации (см. доккомментарий TutorialRunnerModule).
+  // UiSnapshotModule — за UiSnapshotRunnerService (этап 100, §3 того же
+  // ТЗ, «Фаза 1») — крон-обход интерфейса TMA и слежение за внешним
+  // видом, отдельный крон-слот и от генерации сценариев, и от
+  // исполнения (см. доккомментарий UiSnapshotModule).
   // AdminAuthModule — за AdminSessionGuard для нового AdminCronController
   // (этап 69, ручной запуск кронов из админки). Лист графа модулей (сам
   // ничего не импортирует) — довесить его сюда не создаёт цикла, в
@@ -65,6 +80,9 @@ import { ProjectModule } from '../project/project.module';
     ProductFeedImportModule,
     ExportModule,
     ProjectModule,
+    TutorialScenarioModule,
+    TutorialRunnerModule,
+    UiSnapshotModule,
   ],
   controllers: [CronController, AdminCronController],
   providers: [CronJobsService, AdminCronService],

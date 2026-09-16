@@ -169,6 +169,12 @@ function build() {
       draftsCreated: 0,
       skippedBudget: false,
     }),
+    // Этап 95: третий шаг /api/cron/blog — тот же приём делегирования.
+    runCoverImageBackfill: jest.fn().mockResolvedValue({
+      candidates: 0,
+      uploaded: 0,
+      stillFallback: 0,
+    }),
   };
   const blogTranslation = {
     runTranslationCron: jest.fn().mockResolvedValue({
@@ -239,6 +245,37 @@ function build() {
   const exportService = {
     runSyncTick: jest.fn().mockResolvedValue({ checked: 0, failed: 0 }),
   };
+  // Этап 94: генератор сценариев для будущей автозаписи обучающих видео —
+  // тот же приём делегирования, что у остальных воркеров выше.
+  const tutorialScenarioGenerator = {
+    run: jest.fn().mockResolvedValue({
+      subjectKeys: 10,
+      generated: 10,
+      costly: 0,
+      failed: 0,
+      failures: [],
+    }),
+  };
+  // Этап 96: исполнитель уже сгенерированных сценариев — тот же приём
+  // делегирования, что у tutorialScenarioGenerator выше.
+  const tutorialScenarioRunner = {
+    run: jest.fn().mockResolvedValue({
+      total: 0,
+      passed: 0,
+      failed: 0,
+      outcomes: [],
+    }),
+  };
+  // Этап 100: крон-обход интерфейса TMA (§3 ТЗ) — тот же приём
+  // делегирования, что у tutorialScenarioRunner выше.
+  const uiSnapshotRunner = {
+    run: jest.fn().mockResolvedValue({
+      total: 0,
+      changed: 0,
+      failed: 0,
+      outcomes: [],
+    }),
+  };
   const service = new CronJobsService(
     sessionService as never,
     projectService as never,
@@ -257,6 +294,9 @@ function build() {
     abTestWorker as never,
     feedImportWorker as never,
     exportService as never,
+    tutorialScenarioGenerator as never,
+    tutorialScenarioRunner as never,
+    uiSnapshotRunner as never,
   );
   return {
     service,
@@ -272,6 +312,11 @@ function build() {
     billingRenewal,
     marketingBroadcast,
     exportService,
+    tutorialScenarioGenerator,
+    tutorialScenarioRunner,
+    uiSnapshotRunner,
+    blogGeneration,
+    blogTranslation,
   };
 }
 
@@ -769,6 +814,8 @@ describe('CronJobsService — метла идёт до конца курсора
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
+      {} as never,
     );
     return { service, blobService };
   }
@@ -910,5 +957,187 @@ describe('CronJobsService.runExportSyncRun — крон-аналог для ав
     // Без аргументов — сам runSyncTick использует свой умолчальный лимит.
     expect(exportService.runSyncTick).toHaveBeenCalledWith();
     expect(result).toEqual({ checked: 5, failed: 1 });
+  });
+});
+
+describe('CronJobsService.runTutorialScenarioGenerate — генерация сценариев для автозаписи обучающих видео (этап 94, ТЗ §4.10)', () => {
+  it('делегирует TutorialScenarioGeneratorService.run и отдаёт его результат как есть', async () => {
+    const { service, tutorialScenarioGenerator } = build();
+    tutorialScenarioGenerator.run.mockResolvedValue({
+      subjectKeys: 10,
+      generated: 8,
+      costly: 2,
+      failed: 2,
+      failures: [{ subjectKey: '3', reason: 'JSON не распарсился' }],
+    });
+
+    const result = await service.runTutorialScenarioGenerate();
+
+    expect(tutorialScenarioGenerator.run).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      subjectKeys: 10,
+      generated: 8,
+      costly: 2,
+      failed: 2,
+      failures: [{ subjectKey: '3', reason: 'JSON не распарсился' }],
+    });
+  });
+
+  // Тот же джоб-замок, что у runBlog/runExportSyncRun — двойной клик
+  // оператора («ручной запуск» в админке) поверх уже идущего суточного
+  // прогона не должен звать Gemini второй раз параллельно.
+  it('джоб-замок: второй прогон поверх уже идущего — пропуск, генератор не вызван', async () => {
+    const { service, prisma, tutorialScenarioGenerator } = build();
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.runTutorialScenarioGenerate();
+
+    expect(tutorialScenarioGenerator.run).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      subjectKeys: 0,
+      generated: 0,
+      costly: 0,
+      failed: 0,
+      failures: [],
+    });
+  });
+});
+
+describe('CronJobsService.runTutorialScenarioRun — исполнение сценариев обучающих видео (этап 97, §5 ТЗ)', () => {
+  it('делегирует TutorialScenarioRunnerService.run и отдаёт его результат как есть', async () => {
+    const { service, tutorialScenarioRunner } = build();
+    tutorialScenarioRunner.run.mockResolvedValue({
+      total: 3,
+      passed: 2,
+      failed: 1,
+      outcomes: [{ id: 'ts-1', subjectKey: '1', ok: true }],
+    });
+
+    const result = await service.runTutorialScenarioRun();
+
+    expect(tutorialScenarioRunner.run).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      total: 3,
+      passed: 2,
+      failed: 1,
+      outcomes: [{ id: 'ts-1', subjectKey: '1', ok: true }],
+    });
+  });
+
+  // Свой джоб-лок, отдельный от tutorial-scenario-generate (см.
+  // доккомментарий метода) — двойной запуск (ручной поверх ночного)
+  // не должен открывать второй Chromium параллельно.
+  it('джоб-замок: второй прогон поверх уже идущего — пропуск, исполнитель не вызван', async () => {
+    const { service, prisma, tutorialScenarioRunner } = build();
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.runTutorialScenarioRun();
+
+    expect(tutorialScenarioRunner.run).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      skipped: 'предыдущий прогон ещё не завершился',
+      total: 0,
+      passed: 0,
+      failed: 0,
+      outcomes: [],
+    });
+  });
+});
+
+describe('CronJobsService.runUiSnapshotRun — крон-обход интерфейса TMA (этап 100, §3 ТЗ)', () => {
+  it('делегирует UiSnapshotRunnerService.run и отдаёт его результат как есть', async () => {
+    const { service, uiSnapshotRunner } = build();
+    uiSnapshotRunner.run.mockResolvedValue({
+      total: 5,
+      changed: 1,
+      failed: 0,
+      outcomes: [{ routeKey: 'generate', changed: true }],
+    });
+
+    const result = await service.runUiSnapshotRun();
+
+    expect(uiSnapshotRunner.run).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      total: 5,
+      changed: 1,
+      failed: 0,
+      outcomes: [{ routeKey: 'generate', changed: true }],
+    });
+  });
+
+  // Свой джоб-лок, отдельный и от tutorial-scenario-generate, и от
+  // tutorial-scenario-run (см. доккомментарий метода) — повторный запуск
+  // (ручной поверх крона на расписании `*/2 * * * *`) не должен открывать
+  // второй Chromium параллельно.
+  it('джоб-замок: второй прогон поверх уже идущего — пропуск, исполнитель не вызван', async () => {
+    const { service, prisma, uiSnapshotRunner } = build();
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.runUiSnapshotRun();
+
+    expect(uiSnapshotRunner.run).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      skipped: 'предыдущий прогон ещё не завершился',
+      total: 0,
+      changed: 0,
+      failed: 0,
+      outcomes: [],
+    });
+  });
+});
+
+describe('CronJobsService.runBlog — генерация + перевод + бэкофилл обложек (этап 95, третий шаг)', () => {
+  it('зовёт все три шага по очереди и складывает результаты в один объект', async () => {
+    const { service, blogGeneration, blogTranslation } = build();
+
+    const result = await service.runBlog();
+
+    expect(blogGeneration.runDailyGeneration).toHaveBeenCalled();
+    expect(blogTranslation.runTranslationCron).toHaveBeenCalled();
+    expect(blogGeneration.runCoverImageBackfill).toHaveBeenCalled();
+    expect(result).toEqual({
+      generation: {
+        categoriesTried: 0,
+        candidatesConsidered: 0,
+        draftsCreated: 0,
+        skippedBudget: false,
+      },
+      translation: {
+        polledJobs: 0,
+        completedJobs: 0,
+        translationsEnsured: 0,
+        submittedBatch: 'not-configured',
+      },
+      coverBackfill: { candidates: 0, uploaded: 0, stillFallback: 0 },
+    });
+  });
+
+  // Тот же джоб-замок, что у runCleanupSessions/runTutorialScenarioGenerate.
+  it('джоб-замок: второй прогон поверх уже идущего — пропуск, ничего не вызвано', async () => {
+    const { service, prisma, blogGeneration, blogTranslation } = build();
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.runBlog();
+
+    expect(blogGeneration.runDailyGeneration).not.toHaveBeenCalled();
+    expect(blogTranslation.runTranslationCron).not.toHaveBeenCalled();
+    expect(blogGeneration.runCoverImageBackfill).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      generation: { skipped: true },
+      translation: { skipped: true },
+      coverBackfill: { skipped: true },
+    });
   });
 });

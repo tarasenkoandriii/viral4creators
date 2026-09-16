@@ -28,7 +28,11 @@ import type {
   AssistantAdminSettingsView,
   SetAssistantSettingsInput,
   AssistantAdminResult,
+  TutorialVideoListResult,
+  TutorialVideoDataStatus,
+  TutorialVideoAssetRow,
   PublicationListResult,
+  PublicationPlatform,
   PublicationPrivacy,
   PublicationRequest,
   SharedVideoListResult,
@@ -554,4 +558,56 @@ export function getAssistantAdmin(params: {
     pageSize: params.pageSize,
     days: params.days,
   });
+}
+
+// ── Обучающие видео — вкладки «Видео-контент»/«Состояние данных»
+// (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.9,
+// backend/src/modules/tutorial-runner/tutorial-video-admin.*, этап 99) ──
+
+export function getTutorialVideoAssets(params: {
+  subjectKey?: string;
+  locale?: string;
+  reviewed?: boolean;
+  page?: number;
+  pageSize?: number;
+}) {
+  return apiGet<TutorialVideoListResult>('/admin/tutorial-video-assets', {
+    subjectKey: params.subjectKey,
+    locale: params.locale,
+    reviewed: params.reviewed === undefined ? undefined : String(params.reviewed),
+    page: params.page,
+    pageSize: params.pageSize,
+  });
+}
+
+export function setTutorialVideoReviewed(id: string, reviewed: boolean) {
+  return apiPatch<TutorialVideoAssetRow>(`/admin/tutorial-video-assets/${id}/review`, {
+    reviewed,
+  });
+}
+
+export function getTutorialVideoDataStatus() {
+  return apiGet<TutorialVideoDataStatus>('/admin/tutorial-video-assets/data-status');
+}
+
+/**
+ * Этап 101 (ТЗ §4.7, Фаза 3) — публикация одобренного обучающего видео на
+ * YouTube/TikTok, тем же конвейером, что рекламные ролики
+ * (`PublicationService.publishTutorialVideo`). В отличие от
+ * `approvePublication`, `channelId` здесь ОБЯЗАТЕЛЕН — угадывать канал
+ * неоткуда (нет ни проекта, ни бренд-манифеста), он должен принадлежать
+ * именно оператору, вызвавшему публикацию.
+ */
+export function publishTutorialVideo(
+  id: string,
+  opts: {
+    platform: PublicationPlatform;
+    channelId: string;
+    privacy?: PublicationPrivacy;
+    title?: string;
+    description?: string;
+    tags?: string[];
+  },
+) {
+  return apiPost<PublicationRequest>(`/admin/tutorial-video-assets/${id}/publish`, opts);
 }

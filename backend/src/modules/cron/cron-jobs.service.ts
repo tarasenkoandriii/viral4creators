@@ -35,6 +35,18 @@ import {
 } from '../product-feed-import/product-feed-import-worker.service';
 import { ExportService } from '../export/export.service';
 import {
+  TutorialScenarioGenerateResult,
+  TutorialScenarioGeneratorService,
+} from '../tutorial-scenario/tutorial-scenario-generator.service';
+import {
+  TutorialScenarioRunResult,
+  TutorialScenarioRunnerService,
+} from '../tutorial-runner/tutorial-scenario-runner.service';
+import {
+  UiSnapshotRunResult,
+  UiSnapshotRunnerService,
+} from '../ui-snapshot/ui-snapshot-runner.service';
+import {
   EMPTY_KINDS,
   orphanSweepPlan,
   ownerIdOf,
@@ -166,6 +178,9 @@ export class CronJobsService {
     private readonly abTestWorker: AbTestWorkerService,
     private readonly feedImportWorker: ProductFeedImportWorkerService,
     private readonly exportService: ExportService,
+    private readonly tutorialScenarioGenerator: TutorialScenarioGeneratorService,
+    private readonly tutorialScenarioRunner: TutorialScenarioRunnerService,
+    private readonly uiSnapshotRunner: UiSnapshotRunnerService,
   ) {}
 
   /**
@@ -281,7 +296,9 @@ export class CronJobsService {
 
   /**
    * Суточный крон блога (doc/TODO.md §II.3, ТЗ §36, этап 57): генерация
-   * черновиков + очередь перевода, одним вызовом.
+   * черновиков + очередь перевода + бэкофилл обложек (этап 95, третий
+   * шаг), одним вызовом — тот же принцип экономии крон-слотов Vercel
+   * Hobby, что уже объединил первые два шага.
    */
   async runBlog(): Promise<{
     generation: Awaited<
@@ -289,6 +306,9 @@ export class CronJobsService {
     >;
     translation: Awaited<
       ReturnType<BlogTranslationService['runTranslationCron']>
+    >;
+    coverBackfill: Awaited<
+      ReturnType<BlogGenerationService['runCoverImageBackfill']>
     >;
   }> {
     // М-3.9 седьмого аудита: без джоб-замка двойной клик оператора на
@@ -303,15 +323,17 @@ export class CronJobsService {
       return {
         generation: { skipped: true } as never,
         translation: { skipped: true } as never,
+        coverBackfill: { skipped: true } as never,
       };
     }
     try {
       const generation = await this.blogGeneration.runDailyGeneration();
       const translation = await this.blogTranslation.runTranslationCron();
+      const coverBackfill = await this.blogGeneration.runCoverImageBackfill();
       this.logger.log(
-        `Крон блога: генерация ${JSON.stringify(generation)}, перевод ${JSON.stringify(translation)}`,
+        `Крон блога: генерация ${JSON.stringify(generation)}, перевод ${JSON.stringify(translation)}, бэкофилл обложек ${JSON.stringify(coverBackfill)}`,
       );
-      return { generation, translation };
+      return { generation, translation, coverBackfill };
     } finally {
       await releaseJobLock(this.prisma, 'blog', acquired);
     }
@@ -362,6 +384,94 @@ export class CronJobsService {
       return await this.exportService.runSyncTick();
     } finally {
       await releaseJobLock(this.prisma, 'export-sync-run', acquired);
+    }
+  }
+
+  /**
+   * Генерация сценариев для будущей автозаписи обучающих видео (этап
+   * 94, doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.10) — один
+   * прогон Gemini-текстом на шаг обучалки, без браузера/видео (§5 того
+   * же ТЗ пока не реализован). Джоб-лок тем же приёмом, что у
+   * `runExportSyncRun`/`runBlog` — прогон делает десять сетевых вызовов
+   * подряд, не мгновенный, и расписание нечастое (раз в сутки,
+   * `backend/vercel.json`), но перекрытие всё равно возможно при ручном
+   * повторном запуске оператором.
+   */
+  async runTutorialScenarioGenerate(): Promise<TutorialScenarioGenerateResult> {
+    const acquired = await tryAcquireJobLock(
+      this.prisma,
+      'tutorial-scenario-generate',
+    );
+    if (!acquired) {
+      return {
+        subjectKeys: 0,
+        generated: 0,
+        costly: 0,
+        failed: 0,
+        failures: [],
+      };
+    }
+    try {
+      return await this.tutorialScenarioGenerator.run();
+    } finally {
+      await releaseJobLock(this.prisma, 'tutorial-scenario-generate', acquired);
+    }
+  }
+
+  /**
+   * Исполнение уже сгенерированных сценариев (этап 97, §5 ТЗ) —
+   * отдельный крон-слот и отдельный джоб-лок от `tutorial-scenario-
+   * generate` (см. доккомментарий `TutorialRunnerModule`): прогон
+   * держит открытым настоящий headless-браузер несколько минут (до
+   * `RUN_DEADLINE_MS`), и повторный запуск оператором из админки поверх
+   * ещё идущего не должен открывать второй Chromium параллельно.
+   */
+  async runTutorialScenarioRun(): Promise<TutorialScenarioRunResult> {
+    const acquired = await tryAcquireJobLock(
+      this.prisma,
+      'tutorial-scenario-run',
+    );
+    if (!acquired) {
+      return {
+        skipped: 'предыдущий прогон ещё не завершился',
+        total: 0,
+        passed: 0,
+        failed: 0,
+        outcomes: [],
+      };
+    }
+    try {
+      return await this.tutorialScenarioRunner.run();
+    } finally {
+      await releaseJobLock(this.prisma, 'tutorial-scenario-run', acquired);
+    }
+  }
+
+  /**
+   * Крон-обход интерфейса TMA (этап 100, §3 ТЗ, «Фаза 1» дорожной карты
+   * §6.1) — снимает скриншоты фиксированного списка маршрутов (§3.8),
+   * сравнивает с предыдущим снимком той же комбинации маршрут×локаль×
+   * тема, при расхождении шлёт тревогу. Джоб-лок тем же приёмом, что у
+   * `runTutorialScenarioRun` — прогон держит headless-браузер открытым
+   * несколько минут, повторный запуск (расписание раз в две минуты,
+   * `backend/vercel.json`, тот же темп, что у `catalog-batch-run` и
+   * соседей) не должен открывать второй Chromium поверх ещё идущего.
+   */
+  async runUiSnapshotRun(): Promise<UiSnapshotRunResult> {
+    const acquired = await tryAcquireJobLock(this.prisma, 'ui-snapshot-run');
+    if (!acquired) {
+      return {
+        skipped: 'предыдущий прогон ещё не завершился',
+        total: 0,
+        changed: 0,
+        failed: 0,
+        outcomes: [],
+      };
+    }
+    try {
+      return await this.uiSnapshotRunner.run();
+    } finally {
+      await releaseJobLock(this.prisma, 'ui-snapshot-run', acquired);
     }
   }
 

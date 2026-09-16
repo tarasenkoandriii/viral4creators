@@ -1,0 +1,78 @@
+/**
+ * Общие типы протокола — doc/LIVE-LOGIN-RELAY-SPEC.md §7.1, §8.2, §8.3.
+ */
+
+export type SessionState = 'created' | 'streaming' | 'finalizing' | 'closed';
+
+/** Ровно то, что отдаёт CDP `Network.getAllCookies` (§7.1). */
+export interface CdpCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  secure: boolean;
+  httpOnly: boolean;
+  sameSite?: 'Strict' | 'Lax' | 'None';
+  expires: number;
+}
+
+export interface SessionResult {
+  cookies: CdpCookie[];
+  finalUrl: string;
+}
+
+export type CloseReason =
+  | 'wall-timeout'
+  | 'idle-timeout'
+  | 'finalized'
+  | 'cancelled'
+  | 'server-shutdown'
+  | 'superseded';
+
+export interface FrameMetadata {
+  offsetTop: number;
+  pageScaleFactor: number;
+  deviceWidth: number;
+  deviceHeight: number;
+  scrollOffsetX: number;
+  scrollOffsetY: number;
+}
+
+/** §8.2 — сервер → клиент. */
+export type ServerMessage =
+  | {
+      type: 'frame';
+      data: string; // base64 JPEG
+      metadata: FrameMetadata;
+      frameAckId: number;
+    }
+  | { type: 'navigated'; url: string }
+  | { type: 'error'; message: string }
+  | { type: 'closed'; reason: CloseReason };
+
+export type MouseEventType =
+  'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel';
+export type MouseButton = 'left' | 'right' | 'middle';
+export type KeyEventType = 'keyDown' | 'keyUp' | 'char';
+
+/** §8.3 — клиент → сервер. */
+export type ClientMessage =
+  | { type: 'auth'; token: string }
+  | {
+      type: 'mouse';
+      event: MouseEventType;
+      x: number;
+      y: number;
+      button?: MouseButton;
+      deltaX?: number;
+      deltaY?: number;
+    }
+  | {
+      type: 'key';
+      event: KeyEventType;
+      key: string;
+      code: string;
+      text?: string;
+    }
+  | { type: 'resize'; width: number; height: number }
+  | { type: 'ping' };

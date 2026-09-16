@@ -55,6 +55,7 @@ import { ProductFeedImportModule } from './modules/product-feed-import/product-f
 import { ActorsModule } from './modules/actors/actors.module';
 import { UserVoicesModule } from './modules/user-voices/user-voices.module';
 import { AssistantModule } from './modules/assistant/assistant.module';
+import { TutorialScenarioModule } from './modules/tutorial-scenario/tutorial-scenario.module';
 import { SessionService } from './common/session.service';
 import { APP_GUARD } from '@nestjs/core';
 import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
@@ -111,6 +112,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     UserVoicesModule,
     ExportModule,
     AssistantModule,
+    TutorialScenarioModule,
   ],
   providers: [
     SessionService,

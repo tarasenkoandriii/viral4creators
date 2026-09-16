@@ -11,13 +11,18 @@ export interface AssistantChatMessage {
   content: string;
 }
 
-/** §5.4 — формат `actions` в ответе модели. */
+/** §5.4 — формат `actions` в ответе модели. `video` — этап 99
+ * (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.8): в отличие от
+ * остальных пяти (все ссылаются на СТАТИЧЕСКИЕ, известные заранее
+ * каталоги), доступность видео ДИНАМИЧЕСКАЯ — зависит от того, что уже
+ * отснято и одобрено в `TutorialVideoAsset`. */
 export type AssistantActionKind =
   | 'step'
   | 'open-app'
   | 'plan'
   | 'faq'
-  | 'legal';
+  | 'legal'
+  | 'video';
 
 export interface AssistantAction {
   kind: AssistantActionKind;
@@ -25,6 +30,15 @@ export interface AssistantAction {
   planId?: string;
   faqIndex?: number;
   slug?: string;
+  /** Только у kind:'video'. Модель называет ТОЛЬКО это поле — `url`/
+   * `title` резолвятся и подставляются сервером (`AssistantService.
+   * resolveVideoActions`), никогда не берутся из текста модели (см.
+   * `actions.ts`'s `isValidAction`/`parseActions`). */
+  subjectKey?: string;
+  /** Подставляется сервером — см. `subjectKey`. */
+  url?: string;
+  /** Подставляется сервером — см. `subjectKey`. */
+  title?: string;
 }
 
 export interface AssistantChatRequest {

@@ -203,7 +203,19 @@ export class AssistantService {
       request.stepId && request.stepId >= 1 && request.stepId <= 10
         ? ASSISTANT_STEPS[locale]?.[request.stepId - 1]
         : undefined;
-    const systemInstruction = buildSystemInstruction(locale, knowledgeMd, step);
+    // Этап 99 (§4.8) — в отличие от знаний/шагов выше, список видео не
+    // статический: он зависит от того, что уже отснято И одобрено в
+    // админке (`TutorialVideoAsset.reviewed`), поэтому запрашивается
+    // заново на КАЖДЫЙ чат-запрос, а не кешируется рядом с
+    // ASSISTANT_KNOWLEDGE/ASSISTANT_STEPS (принятая цена — лишний round-
+    // trip в Postgres на запрос, см. doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md).
+    const videoSubjectKeys = await this.availableVideoSubjectKeys(locale);
+    const systemInstruction = buildSystemInstruction(
+      locale,
+      knowledgeMd,
+      step,
+      videoSubjectKeys,
+    );
     const contents = request.messages.map((m) => toGeminiContent(m));
 
     const controller = new AbortController();
@@ -319,7 +331,10 @@ export class AssistantService {
     }
 
     const { rawActionsJson } = splitActionsBlock(fullText);
-    const actions = parseActions(rawActionsJson);
+    const actions = await this.resolveVideoActions(
+      parseActions(rawActionsJson),
+      locale,
+    );
     if (actions.length > 0) {
       yield { type: 'actions', items: actions };
     }
@@ -355,7 +370,10 @@ export class AssistantService {
     model: string,
   ): Promise<void> {
     const { text, rawActionsJson } = splitActionsBlock(fullText);
-    const actions = parseActions(rawActionsJson);
+    const actions = await this.resolveVideoActions(
+      parseActions(rawActionsJson),
+      locale,
+    );
     const visibleText = text.trim();
     const maskedAnswer = maskSensitiveEcho(visibleText).slice(0, 4000);
     const flagged = containsForbiddenPromise(visibleText);
@@ -413,6 +431,83 @@ export class AssistantService {
         `не удалось записать AssistantExchange: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  /**
+   * Этап 99 (§4.8) — список `subjectKey`, доступных модели для
+   * kind:"video" прямо сейчас: только `reviewed:true` (одобрено в
+   * админке — доп. проверка, что видео УЖЕ собрано, `blobUrl` не пуст),
+   * только для локали запроса. Возвращаются УНИКАЛЬНЫЕ ключи — если для
+   * одного subjectKey накопилось несколько одобренных версий, модели
+   * достаточно знать, что ключ существует; какую именно версию отдать
+   * посетителю, решает `resolveVideoActions` ниже (последнюю по
+   * `createdAt`).
+   */
+  private async availableVideoSubjectKeys(
+    locale: SupportedLocale,
+  ): Promise<string[]> {
+    try {
+      const rows = await this.prisma.tutorialVideoAsset.findMany({
+        where: { locale, reviewed: true, blobUrl: { not: null } },
+        select: { subjectKey: true },
+        distinct: ['subjectKey'],
+      });
+      return rows.map((r) => r.subjectKey);
+    } catch (error) {
+      // Мягкий отказ — как и весь остальной консультант (§7.4): сбой
+      // этого доп. запроса не должен ронять ответ, просто модель в этот
+      // раз не увидит раздел с видео и не предложит kind:"video".
+      this.logger.warn(
+        `ассистент: не удалось получить список видео для промпта — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Этап 99 (§4.8) — подставляет `url`/`title` в единственное (см.
+   * `parseActions`'s ограничение «не больше одного video») действие
+   * kind:"video", ЕСЛИ модель назвала `subjectKey` из списка, реально
+   * одобренного в этот момент. Текст модели для URL не используется
+   * никогда — только что запрошенная у базы строка `TutorialVideoAsset`
+   * (см. `assistant.types.ts`'s доккомментарий у `AssistantAction`).
+   * Не найдено/не одобрено (могло успеть перестать быть `reviewed` между
+   * генерацией промпта и этим моментом — гонка допустима, цена ошибки
+   * низкая) → действие молча выбрасывается, а не отдаётся с пустым URL.
+   */
+  private async resolveVideoActions(
+    actions: AssistantAction[],
+    locale: SupportedLocale,
+  ): Promise<AssistantAction[]> {
+    const videoAction = actions.find((a) => a.kind === 'video');
+    if (!videoAction || !videoAction.subjectKey) return actions;
+
+    let asset: { blobUrl: string | null; title: string } | null = null;
+    try {
+      asset = await this.prisma.tutorialVideoAsset.findFirst({
+        where: {
+          subjectKey: videoAction.subjectKey,
+          locale,
+          reviewed: true,
+          blobUrl: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { blobUrl: true, title: true },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `ассистент: не удалось резолвнуть video-действие — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    if (!asset || !asset.blobUrl) {
+      return actions.filter((a) => a !== videoAction);
+    }
+    const resolvedUrl = asset.blobUrl;
+    const resolvedTitle = asset.title;
+    return actions.map((a) =>
+      a === videoAction ? { ...a, url: resolvedUrl, title: resolvedTitle } : a,
+    );
   }
 }
 

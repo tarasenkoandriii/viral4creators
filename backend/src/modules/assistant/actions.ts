@@ -20,7 +20,12 @@ const VALID_KINDS: readonly AssistantActionKind[] = [
   'plan',
   'faq',
   'legal',
+  'video',
 ];
+
+/** Разумный верхний предел длины `subjectKey` — не смысловая граница,
+ * просто защита от бессмысленно длинной строки в JSON от модели. */
+const SUBJECT_KEY_MAX_LENGTH = 100;
 
 const VALID_LEGAL_SLUGS = ['offer', 'terms-of-use'];
 
@@ -85,6 +90,14 @@ function isValidAction(value: unknown): value is AssistantAction {
       );
     case 'legal':
       return typeof v.slug === 'string' && VALID_LEGAL_SLUGS.includes(v.slug);
+    case 'video':
+      // Модель называет только subjectKey — url/title подставляет сервер
+      // (assistant.service.ts's resolveVideoActions), см. assistant.types.ts.
+      return (
+        typeof v.subjectKey === 'string' &&
+        v.subjectKey.trim().length > 0 &&
+        v.subjectKey.length <= SUBJECT_KEY_MAX_LENGTH
+      );
     default:
       return false;
   }
@@ -108,5 +121,16 @@ export function parseActions(rawActionsJson: string | null): AssistantAction[] {
   const items = (parsed as { items?: unknown[] })?.items;
   if (!Array.isArray(items)) return [];
   const valid = items.filter(isValidAction);
-  return valid.slice(0, 3);
+  const limited = valid.slice(0, 3);
+  // Аудит §10, п.8: не больше одного video-действия на ответ — это
+  // структурное ограничение в коде, а не только инструкция в промпте
+  // (модель может её не соблюсти). Первое встреченное сохраняется,
+  // остальные молча отбрасываются.
+  let sawVideo = false;
+  return limited.filter((action) => {
+    if (action.kind !== 'video') return true;
+    if (sawVideo) return false;
+    sawVideo = true;
+    return true;
+  });
 }

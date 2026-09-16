@@ -27,6 +27,7 @@ import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { aspectRatioFamily } from '../../common/aspect-ratio';
+import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import {
   PublicationListResult,
   PublicationPlatform,
@@ -37,6 +38,7 @@ import {
 import {
   ApprovePublicationRequestDto,
   CreatePublicationRequestDto,
+  PublishTutorialVideoDto,
   RejectPublicationRequestDto,
 } from './dto/publication.dto';
 
@@ -44,8 +46,11 @@ import {
 interface PublicationRow {
   id: string;
   userId: string;
-  sessionId: string;
-  generatedVideoId: string;
+  /** null у заявок Фазы 3 (этап 101) — см. `tutorialVideoAssetId`. */
+  sessionId: string | null;
+  generatedVideoId: string | null;
+  /** Этап 101 (ТЗ §4.7): заявка на публикацию обучающего видео. */
+  tutorialVideoAssetId: string | null;
   projectId: string | null;
   productItemId: string | null;
   platform: PublicationPlatform;
@@ -182,6 +187,7 @@ export function toView(row: PublicationRow): PublicationRequestView {
     userId: row.userId,
     sessionId: row.sessionId,
     generatedVideoId: row.generatedVideoId,
+    tutorialVideoAssetId: row.tutorialVideoAssetId,
     projectId: row.projectId,
     productItemId: row.productItemId,
     platform: row.platform,
@@ -544,6 +550,136 @@ export class PublicationService {
       },
     );
     return toView(updated);
+  }
+
+  /**
+   * Фаза 3 (этап 101, ТЗ §4.7) — публикация обучающего видео
+   * (`TutorialVideoAsset`) на YouTube/TikTok, тем же конвейером, что уже
+   * обслуживает рекламные ролики (`PublicationRequest` + этот же
+   * `PublishWorkerService`, без отдельной модели/воркера — см. полное
+   * обоснование в doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.7 и
+   * "## Сделано (этап 101 — ...)" в PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md).
+   *
+   * Три отличия от `create()`+`approve()` рекламного ролика — все
+   * намеренные, не упрощение по недосмотру:
+   *
+   * 1. Заявка заводится СРАЗУ `APPROVED`, минуя `PENDING`. У ad-видео
+   *    PENDING/APPROVED — это разделение «автор попросил» / «оператор
+   *    проверил», потому что автор — недоверенный конечный пользователь.
+   *    Здесь и то, и другое действие — один и тот же оператор (публикует
+   *    только `reviewed:true`, то есть уже проверенное на вкладке
+   *    «Видео-контент»), второй проверки не существует и придумывать её
+   *    незачем.
+   * 2. `userId`/`moderatorId` — ОБА оператор, вызвавший публикацию, не
+   *    «автор ролика» (обучающее видео не принадлежит никакому конечному
+   *    пользователю). Отсюда и обязательный `channelId`: канал ищется по
+   *    владению ИМ, а не через проект/бренд-манифест — обучающее видео ни
+   *    к тому, ни к другому не привязано. Оператор подключает канал (тот
+   *    же `/channels/oauth/...`, что и у обычного пользователя) под
+   *    СВОИМ Telegram-аккаунтом с `isOperator:true` и передаёт его id сюда.
+   * 3. Своя копия ролика (`keepOwnCopy`, §22/этап 39) не делается: она
+   *    существует для рекламных роликов, чтобы заявка пережила TTL
+   *    сессии, а `TutorialVideoAsset.blobUrl` и так лежит в постоянном,
+   *    не TTL'мом префиксе `tutorial-videos/` — копировать нечего.
+   */
+  async publishTutorialVideo(
+    assetId: string,
+    operatorUserId: string,
+    dto: PublishTutorialVideoDto,
+  ): Promise<PublicationRequestView> {
+    const asset: {
+      id: string;
+      subjectKey: string;
+      locale: string;
+      title: string;
+      reviewed: boolean;
+      assemblyStatus: string;
+      blobUrl: string | null;
+    } | null = await this.prisma.tutorialVideoAsset.findUnique({
+      where: { id: assetId },
+    });
+    if (!asset) {
+      throw new NotFoundException(`Обучающее видео ${assetId} не найдено`);
+    }
+    if (!asset.reviewed) {
+      throw new BadRequestException(
+        'Видео ещё не одобрено (reviewed=false) — сначала одобрите его на вкладке «Видео-контент»',
+      );
+    }
+    if (asset.assemblyStatus !== 'complete' || !asset.blobUrl) {
+      throw new BadRequestException(
+        'Сборка видео ещё не завершена — публиковать нечего',
+      );
+    }
+    // Путь выводится из РЕАЛЬНОГО blobUrl (а не собирается заново по
+    // шаблону из subjectKey/id) — та же функция, что уже отводит чужие
+    // пути у itemPhotoPathname, читает истину, а не повторяет соглашение
+    // об именовании из tutorial-scenario-runner.service.ts второй раз.
+    const videoPathname = pathnameFromBlobUrl(
+      asset.blobUrl,
+      'tutorial-videos/',
+    );
+    if (!videoPathname) {
+      throw new BadRequestException(
+        `blobUrl обучающего видео ${assetId} не под ожидаемым префиксом tutorial-videos/ — публикация невозможна`,
+      );
+    }
+
+    const channel = await this.prisma.publishingChannel.findUnique({
+      where: { id: dto.channelId },
+    });
+    if (
+      !channel ||
+      channel.userId !== operatorUserId ||
+      channel.platform !== dto.platform
+    ) {
+      throw new BadRequestException(
+        `channelId ${dto.channelId} — не действующий ${dto.platform}-канал, подключённый именно этим оператором`,
+      );
+    }
+
+    const row: PublicationRow = await this.prisma.$transaction(async (tx) => {
+      // Тот же приём, что в create(): проверка «нет уже поданной заявки»
+      // и создание — под одной advisory-блокировкой, отдельный
+      // namespace ключа (`tutorial-publish:`, не `publication:`) не даёт
+      // пересечься с блокировкой заявок от сессий.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`tutorial-publish:${assetId}:${dto.platform}`}))`;
+
+      const existing: { id: string; status: string } | null =
+        await tx.publicationRequest.findFirst({
+          where: { tutorialVideoAssetId: assetId, platform: dto.platform },
+          select: { id: true, status: true },
+        });
+      if (existing) {
+        throw new ConflictException(
+          `Это видео уже в очереди ${dto.platform} (${existing.status}, заявка ${existing.id})` +
+            (existing.status === 'FAILED'
+              ? ' — используйте «Повторить» на этой заявке, а не публикуйте заново'
+              : ''),
+        );
+      }
+
+      return (await tx.publicationRequest.create({
+        data: {
+          userId: operatorUserId,
+          tutorialVideoAssetId: assetId,
+          sessionId: null,
+          generatedVideoId: null,
+          platform: dto.platform,
+          status: 'APPROVED',
+          videoUrl: asset.blobUrl,
+          videoPathname,
+          title: (dto.title?.trim() || asset.title).slice(0, 100),
+          description: (dto.description ?? '').trim().slice(0, 5000),
+          tags: uniqueTags(dto.tags ?? []),
+          moderatorId: operatorUserId,
+          moderatedAt: new Date(),
+          channelId: channel.id,
+          privacy: dto.privacy ?? 'UNLISTED',
+        },
+      })) as PublicationRow;
+    });
+    return toView(row);
   }
 
   /**

@@ -2,8 +2,8 @@
  * Этап 69: бизнес-логика кронов переехала в `CronJobsService` (см.
  * `cron-jobs.service.spec.ts`) — этот файл проверяет только то, что
  * реально осталось в `CronController`: секрет закрывает КАЖДЫЙ из
- * десяти маршрутов, а при верном секрете контроллер честно делегирует
- * в `CronJobsService` и возвращает результат как есть.
+ * четырнадцати маршрутов, а при верном секрете контроллер честно
+ * делегирует в `CronJobsService` и возвращает результат как есть.
  *
  * Оба маршрута про удаление файлов из Blob (`cleanup-sessions`,
  * `sweep-orphans`) — необратимая операция, и единственный барьер до неё
@@ -55,6 +55,25 @@ function build() {
     runAbTestRun: jest.fn().mockResolvedValue({ processed: 0 }),
     runFeedImportRun: jest.fn().mockResolvedValue({ claimedRuns: 0 }),
     runExportSyncRun: jest.fn().mockResolvedValue({ checked: 0, failed: 0 }),
+    runTutorialScenarioGenerate: jest.fn().mockResolvedValue({
+      subjectKeys: 10,
+      generated: 10,
+      costly: 0,
+      failed: 0,
+      failures: [],
+    }),
+    runTutorialScenarioRun: jest.fn().mockResolvedValue({
+      total: 0,
+      passed: 0,
+      failed: 0,
+      outcomes: [],
+    }),
+    runUiSnapshotRun: jest.fn().mockResolvedValue({
+      total: 0,
+      changed: 0,
+      failed: 0,
+      outcomes: [],
+    }),
     runCleanupSessions: jest.fn().mockResolvedValue({ deletedCount: 2 }),
     runSweepOrphans: jest.fn().mockResolvedValue({ deleted: 0, dryRun: false }),
     // Пятый аудит, Д-4.3: контроллер больше не зовёт `runX()` напрямую —
@@ -99,7 +118,7 @@ function devStand(): void {
   process.env.NODE_ENV = 'test';
 }
 
-describe('CronController — секрет закрывает каждый из одиннадцати маршрутов', () => {
+describe('CronController — секрет закрывает каждый из четырнадцати маршрутов', () => {
   const cases: Array<
     [
       string,
@@ -135,6 +154,21 @@ describe('CronController — секрет закрывает каждый из �
       'export-sync-run',
       (c) => c.exportSyncRunCron('Bearer подделка'),
       'runExportSyncRun',
+    ],
+    [
+      'tutorial-scenario-generate',
+      (c) => c.tutorialScenarioGenerateCron('Bearer подделка'),
+      'runTutorialScenarioGenerate',
+    ],
+    [
+      'tutorial-scenario-run',
+      (c) => c.tutorialScenarioRunCron('Bearer подделка'),
+      'runTutorialScenarioRun',
+    ],
+    [
+      'ui-snapshot-run',
+      (c) => c.uiSnapshotRunCron('Bearer подделка'),
+      'runUiSnapshotRun',
     ],
     [
       'cleanup-sessions',
@@ -237,6 +271,17 @@ describe('CronController — каждый маршрут оборачивает 
     ['ab-test-run', (c) => c.abTestRunCron(), 'ab-test-run'],
     ['feed-import-run', (c) => c.feedImportRunCron(), 'feed-import-run'],
     ['export-sync-run', (c) => c.exportSyncRunCron(), 'export-sync-run'],
+    [
+      'tutorial-scenario-generate',
+      (c) => c.tutorialScenarioGenerateCron(),
+      'tutorial-scenario-generate',
+    ],
+    [
+      'tutorial-scenario-run',
+      (c) => c.tutorialScenarioRunCron(),
+      'tutorial-scenario-run',
+    ],
+    ['ui-snapshot-run', (c) => c.uiSnapshotRunCron(), 'ui-snapshot-run'],
     ['cleanup-sessions', (c) => c.cleanupSessions(), 'cleanup-sessions'],
   ];
 

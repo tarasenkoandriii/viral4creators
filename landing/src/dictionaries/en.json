@@ -534,6 +534,7 @@
     "actionPlan": "View plan",
     "actionFaq": "View in FAQ",
     "actionLegal": "Open document",
+    "actionVideo": "Watch video",
     "charsLeft": "{{n}} characters left"
   }
 }

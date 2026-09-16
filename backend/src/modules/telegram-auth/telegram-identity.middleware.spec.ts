@@ -135,4 +135,68 @@ describe('TelegramIdentityMiddleware — CSRF (Б-3.1)', () => {
     await mw.use(req, {} as any, jest.fn());
     expect(req.telegramUserId).toBeUndefined();
   });
+
+  describe('fixture-токен (§3.3 ТЗ, этап 97)', () => {
+    beforeEach(() => {
+      process.env.FIXTURE_USER_TOKEN = 'sekret';
+      process.env.FIXTURE_TELEGRAM_ID = 'fixture-1';
+    });
+    afterEach(() => {
+      delete process.env.FIXTURE_USER_TOKEN;
+      delete process.env.FIXTURE_TELEGRAM_ID;
+    });
+
+    it('верный X-Fixture-Token даёт identity и проходит CSRF-проверку Origin', async () => {
+      // Как и dev-bypass — это заголовок, не cookie: браузер его сам не
+      // пришлёт, проверка Origin для него бессмысленна.
+      const { mw, prisma } = build(null);
+      prisma.user.upsert.mockResolvedValue({ id: 'usr_fixture' });
+      const req = request('POST', 'https://зло.example', undefined, {
+        'x-fixture-token': 'sekret',
+      });
+      const next = jest.fn();
+      await mw.use(req, {} as any, next);
+      expect(req.telegramUserId).toBe('usr_fixture');
+      expect(prisma.user.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { telegramId: 'fixture-1' } }),
+      );
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('неверный X-Fixture-Token не даёт identity и не блокирует запрос', async () => {
+      const { mw } = build(null);
+      const req = request('POST', ALLOWLIST, undefined, {
+        'x-fixture-token': 'неверно',
+      });
+      const next = jest.fn();
+      await mw.use(req, {} as any, next);
+      expect(req.telegramUserId).toBeUndefined();
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('без FIXTURE_USER_TOKEN в окружении заголовок ничего не даёт (fail-closed)', async () => {
+      delete process.env.FIXTURE_USER_TOKEN;
+      const { mw } = build(null);
+      const req = request('POST', ALLOWLIST, undefined, {
+        'x-fixture-token': 'sekret',
+      });
+      await mw.use(req, {} as any, jest.fn());
+      expect(req.telegramUserId).toBeUndefined();
+    });
+
+    it('fixture-токен проверяется раньше dev-обхода', async () => {
+      process.env.ALLOW_DEV_AUTH = 'true';
+      const { mw, prisma } = build(null);
+      prisma.user.upsert.mockResolvedValue({ id: 'usr_fixture' });
+      const req = request('POST', ALLOWLIST, undefined, {
+        'x-fixture-token': 'sekret',
+        'x-dev-user-id': '123',
+      });
+      await mw.use(req, {} as any, jest.fn());
+      expect(req.telegramUserId).toBe('usr_fixture');
+      expect(prisma.user.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { telegramId: 'fixture-1' } }),
+      );
+    });
+  });
 });

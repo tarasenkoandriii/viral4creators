@@ -144,8 +144,14 @@ export class ProjectSessionService {
         `Item ${itemId} not found in project ${projectId}`,
       );
     }
+    // Найдено доп. аудитом (MEDIUM, этап 89): единственная выборка Session
+    // в проекте без `deletedAt: null` — без этого фильтра мягко удалённая
+    // сессия (со своим видео/ссылкой на скачивание) снова появлялась бы
+    // здесь на весь grace-период. Сравни SessionService.getSession,
+    // AdminPanelService.getSession, postprod-video-summary.ts —
+    // у всех фильтр есть.
     const rows: SessionListRow[] = await this.prisma.session.findMany({
-      where: { productItemId: itemId },
+      where: { productItemId: itemId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,

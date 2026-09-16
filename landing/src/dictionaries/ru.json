@@ -532,6 +532,7 @@
     "actionPlan": "Смотреть тариф",
     "actionFaq": "Смотреть в FAQ",
     "actionLegal": "Открыть документ",
+    "actionVideo": "Смотреть видео",
     "charsLeft": "Осталось {{n}} симв."
   }
 }

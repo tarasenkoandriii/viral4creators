@@ -1,0 +1,293 @@
+# live-login-relay
+
+Отдельный always-on сервис live-сессии входа: держит один headless
+Chromium-браузер на сессию, стримит его экран через CDP
+(`Page.startScreencast`) по WebSocket в браузер пользователя и
+ретранслирует туда-обратно мышь/клавиатуру (`Input.dispatch*`). Нужен
+для того, чтобы пользователь мог сам ввести логин/пароль/капчу/2FA на
+чужом сайте (для последующего парсинга цен клиента), не отдавая пароль
+приложению напрямую.
+
+Полная спецификация протокола, модели данных и решений —
+[`doc/LIVE-LOGIN-RELAY-SPEC.md`](../doc/LIVE-LOGIN-RELAY-SPEC.md) (этот
+README — только «как поставить и запустить», без повторения
+архитектурных решений оттуда). Контекст, зачем сервис вообще нужен —
+[`doc/CLIENT-SITE-TUTORIAL-SPEC.md`](../doc/CLIENT-SITE-TUTORIAL-SPEC.md)
+§7.4. Пакет самостоятельный — отдельный `package.json`, отдельный
+Docker-образ, деплоится отдельно от `backend/`/`frontend`/`admin`/
+`landing`, не тянет Prisma/NestJS.
+
+## Содержание
+
+- [Требования](#требования)
+- [Быстрый старт (локально, без Docker)](#быстрый-старт-локально-без-docker)
+- [Переменные окружения](#переменные-окружения)
+- [Скрипты `package.json`](#скрипты-packagejson)
+- [Проверка, что сервис поднялся](#проверка-что-сервис-поднялся)
+- [Запуск в Docker (docker-compose)](#запуск-в-docker-docker-compose)
+- [Интеграция с backend](#интеграция-с-backend)
+- [Деплой на прод (Dokploy)](#деплой-на-прод-dokploy)
+- [Тесты и линт](#тесты-и-линт)
+- [Частые проблемы](#частые-проблемы)
+- [Устройство API вкратце](#устройство-api-вкратце)
+
+## Требования
+
+- **Node.js 24.x** (зафиксировано в `package.json` → `engines.node`;
+  более старая версия технически может собрать проект, но не
+  гарантирована — Dockerfile использует `node:24-bookworm-slim`).
+- **Установленный Chromium/Chrome** — сервис использует
+  `puppeteer-core` (не полный `puppeteer`), он **не скачивает браузер
+  сам**, только запускает уже существующий бинарник по пути в
+  `PUPPETEER_EXECUTABLE_PATH`. Для локальной разработки нужен
+  Chromium/Chrome, установленный на машине заранее:
+  - macOS (Homebrew): `brew install --cask chromium` (или используйте
+    обычный установленный Google Chrome — путь обычно
+    `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`);
+  - Debian/Ubuntu: `sudo apt-get install -y chromium`;
+  - путь к бинарнику узнать так: `which chromium || which
+    chromium-browser || which google-chrome`.
+- Для прод-запуска через Docker Chromium ставить на хост не нужно —
+  он устанавливается внутри образа (`Dockerfile`).
+- Docker + Docker Compose — только если запускаете контейнером
+  (раздел «Запуск в Docker» ниже); для локальной разработки не
+  обязательны.
+
+## Быстрый старт (локально, без Docker)
+
+```bash
+cd live-login-relay
+npm install
+
+cp .env.example .env
+# откройте .env и заполните минимум два обязательных значения:
+#   PUPPETEER_EXECUTABLE_PATH — путь из `which chromium` выше
+#   LIVE_LOGIN_RELAY_SECRET   — любая случайная строка для локалки,
+#                               например: openssl rand -hex 32
+
+npm run dev
+```
+
+`npm run dev` поднимает сервис через `tsx watch` (перезапуск при
+изменении файлов в `src/`) на порту из `.env` (по умолчанию `8088`).
+Без обеих обязательных переменных процесс осознанно откажется
+стартовать и выведет, какой именно переменной не хватает — это не
+баг, а fail-fast проверка в `src/config.ts` (см. `doc/
+LIVE-LOGIN-RELAY-SPEC.md` §4): сервис не должен подниматься в заведомо
+нерабочем состоянии и падать на первом же запросе.
+
+## Переменные окружения
+
+Полный список — `.env.example` в этой папке (там же — обоснование
+каждого дефолта). Кратко:
+
+| Переменная | Обязательна | Дефолт | Смысл |
+|---|---|---|---|
+| `PORT` | нет | `8088` | HTTP/WS-порт сервиса |
+| `PUPPETEER_EXECUTABLE_PATH` | **да** | — | путь к бинарнику Chromium/Chrome |
+| `LIVE_LOGIN_RELAY_SECRET` | **да** | — | общий секрет с backend, заголовок `X-Relay-Secret` на каждом запросе к API реле |
+| `MAX_CONCURRENT_SESSIONS` | нет | `10` | потолок одновременных живых сессий (браузеров) |
+| `SESSION_WALL_TIMEOUT_MS` | нет | `180000` | максимальное время жизни сессии (общий таймаут, 3 мин) |
+| `SESSION_IDLE_TIMEOUT_MS` | нет | `60000` | сессия закрывается, если нет ввода дольше этого времени (1 мин) |
+| `RESULT_CACHE_MS` | нет | `60000` | сколько результат (куки) остаётся доступен по `GET /sessions/:id/result` после закрытия сессии, прежде чем она выселяется из памяти |
+| `WS_AUTH_TIMEOUT_MS` | нет | `5000` | сколько ждать `{type:'auth',token}` первым сообщением WS-соединения, иначе разрыв |
+| `LOG_LEVEL` | нет | `info` | `debug` \| `info` \| `warn` \| `error` |
+| `NODE_ENV` | нет | — | не читается кодом сервиса напрямую, оставлен для совместимости с общими средствами мониторинга/логирования |
+
+Оба обязательных значения без дефолта — процесс не стартует, если их
+нет (см. `src/config.ts`, `ConfigError`). Числовые переменные, если
+заданы, обязаны быть положительными числами — иначе тоже отказ
+стартовать с понятным сообщением.
+
+## Скрипты `package.json`
+
+```bash
+npm run build       # tsc -p tsconfig.json → dist/
+npm run start        # node dist/main.js (нужен предварительный build)
+npm run dev           # tsx watch src/main.ts — горячая перезагрузка для разработки
+npm run lint          # eslint "src/**/*.ts" "test/**/*.ts" --fix
+npm test              # jest — единичный прогон
+npm run test:watch    # jest --watch
+```
+
+Перед сборкой/деплоем стоит прогнать все три проверки подряд (то же,
+что делает CI монорепо для остальных пакетов):
+
+```bash
+npm run build && npx jest && npm run lint
+```
+
+## Проверка, что сервис поднялся
+
+```bash
+curl http://localhost:8088/health
+# {"ok":true,"activeSessions":0,"maxSessions":10}
+```
+
+`/health` — единственный маршрут без проверки `X-Relay-Secret`
+(намеренно, см. `src/http-routes.ts`) — годится для healthcheck'а
+оркестратора без прокидывания секрета в него.
+
+Остальные маршруты требуют заголовок `X-Relay-Secret` со значением
+`LIVE_LOGIN_RELAY_SECRET` из `.env`. Быстрая ручная проверка создания
+сессии:
+
+```bash
+curl -X POST http://localhost:8088/sessions \
+  -H "X-Relay-Secret: <тот_же_секрет_что_в_.env>" \
+  -H "Content-Type: application/json" \
+  -d '{"startUrl":"https://example.com/login","allowedOrigin":"https://example.com"}'
+# {"sessionId":"…","streamToken":"…","wsPath":"/sessions/…/stream"}
+```
+
+Дальше — подключение к `wsPath` по WebSocket, первым сообщением
+`{"type":"auth","token":"<streamToken>"}` (см. §8 спеки для полного
+протокола кадров/ввода). Это ручная проверка на уровне «сервис жив и
+отвечает» — реальный клиент этого протокола реализует `backend`/
+`frontend`, а не curl.
+
+## Запуск в Docker (docker-compose)
+
+Свой `docker-compose.yml` в этой папке — не тот же файл, что
+`docker-compose.yml`/`docker-compose.dev.yml` в корне монорепо (у
+сервиса нет ни Postgres, ни зависимостей от остальных пакетов
+проекта). Chromium ставится внутри образа — на хосте ничего
+устанавливать не нужно.
+
+```bash
+cd live-login-relay
+cp .env.example .env
+# заполните LIVE_LOGIN_RELAY_SECRET (PUPPETEER_EXECUTABLE_PATH для
+# Docker-запуска можно не трогать — Dockerfile уже прописывает его
+# ENV-строкой на /usr/bin/chromium)
+
+docker compose up --build
+```
+
+Порт по умолчанию `8088:8088` (меняется в `docker-compose.yml`, если
+нужно). Встроенный healthcheck контейнера дергает `/health` каждые
+15 секунд.
+
+Если при заметном числе одновременных сессий Chromium в контейнере
+ведёт себя нестабильно (частая проблема headless-Chromium в Docker,
+не специфичная для этого сервиса) — раскомментируйте `shm_size:
+'512mb'` в `docker-compose.yml` (строка уже там, закомментирована с
+пояснением).
+
+Собрать образ без `compose`, вручную:
+
+```bash
+docker build -t live-login-relay .
+docker run --rm -p 8088:8088 \
+  -e LIVE_LOGIN_RELAY_SECRET=<секрет> \
+  live-login-relay
+```
+
+## Интеграция с backend
+
+Реле не знает о backend'е ничего, кроме общего секрета — интеграция
+целиком описана со стороны backend в `doc/CLIENT-SITE-TUTORIAL-SPEC.md`
+§7.4. Для локального стенда с обеими сторонами сразу — в `.env`
+backend'а (`backend/.env`) нужны:
+
+```
+LIVE_LOGIN_RELAY_URL=http://localhost:8088
+LIVE_LOGIN_RELAY_SECRET=<то_же_самое_значение,_что_в_live-login-relay/.env>
+```
+
+Эта интеграция опциональна для самого backend'а — по тому же принципу
+мягкой деградации, что уже применён для `CHANNEL_TOKEN_KEY`
+(`backend/src/common/token-crypto.ts`): если переменные не заданы,
+backend стартует нормально, просто функциональность live-входа
+недоступна и кнопка её вызова скрывается на фронтенде.
+
+## Деплой на прод (Dokploy)
+
+Решение по хостингу уже принято и обосновано в
+`doc/CLIENT-SITE-TUTORIAL-SPEC.md` §7.4.9 (Railway проверен и отклонён
+— не запускает `docker-compose.yml` как есть; выбран **Dokploy**, как
+явно подтверждено владельцем продукта). Практические шаги:
+
+1. Небольшой VPS с поддержкой Docker (провайдер — любой, единственное
+   требование Dokploy к хосту).
+2. Установить Dokploy на VPS его штатной shell-командой (см.
+   официальную документацию Dokploy).
+3. В UI Dokploy импортировать `live-login-relay/docker-compose.yml`
+   **как есть**, без переписывания под формат платформы — Dokploy
+   умеет нативно разворачивать произвольный Compose-файл, это и было
+   решающим доводом при выборе площадки.
+4. В переменных окружения сервиса внутри Dokploy задать
+   `LIVE_LOGIN_RELAY_SECRET` (тот же секрет, что заведён в переменных
+   Vercel-деплоя backend'а) — `PUPPETEER_EXECUTABLE_PATH` уже
+   зафиксирован в образе, трогать не нужно.
+5. После первого деплоя — свериться, что путь к Chromium в конкретной
+   версии Debian-образа не разъехался: `docker run --rm
+   <образ> which chromium` должен вернуть `/usr/bin/chromium` (тот
+   же путь, что уже прописан `ENV PUPPETEER_EXECUTABLE_PATH` в
+   `Dockerfile`, строка 25). Если разъехался — меняется только эта
+   одна строка Dockerfile, остальной код завязан лишь на переменную
+   окружения, не на конкретный путь.
+6. Проверить `https://<домен-реле>/health` отвечает `{"ok":true,…}`,
+   затем прописать `LIVE_LOGIN_RELAY_URL=https://<домен-реле>` в
+   переменных Vercel-деплоя backend'а.
+
+## Тесты и линт
+
+```bash
+npx jest                                   # все тесты (unit, без реального Chromium — моки)
+npx jest test/session.spec.ts             # только один файл
+npx eslint "src/**/*.ts" "test/**/*.ts"   # линт без автофикса
+npx eslint "src/**/*.ts" "test/**/*.ts" --fix
+```
+
+Тесты не запускают настоящий браузер — `Session`/`SessionManager`
+принимают браузер через DI (`RelayBrowser`/`RelayPage`/
+`RelayCdpSession` в `src/session.ts`), в тестах подставляются лёгкие
+jest-моки этих интерфейсов (см. `test/session.spec.ts`,
+`test/session-manager.spec.ts`). Реальный Chromium для тестов не
+требуется вообще.
+
+## Частые проблемы
+
+- **«PUPPETEER_EXECUTABLE_PATH не задан» при старте.** Обязательная
+  переменная, дефолта нет намеренно (§4 спеки) — заполните `.env`
+  путём из `which chromium`/`which google-chrome`.
+- **«LIVE_LOGIN_RELAY_SECRET не задан».** Так же обязательна, без
+  dev-исключения (сознательно, в отличие от `cron-secret.ts` в
+  backend'е — см. `src/auth.ts`) — любое непустое значение подходит
+  для локалки, для прода должно совпадать с тем, что прописано в
+  backend'е.
+- **Chromium падает/зависает при запуске в Docker с большим числом
+  сессий.** Раскомментируйте `shm_size: '512mb'` в
+  `docker-compose.yml` — типовая проблема headless Chromium в
+  контейнерах с маленьким `/dev/shm` по умолчанию.
+- **401 на любой запрос, кроме `/health`.** Проверьте, что заголовок
+  называется точно `X-Relay-Secret` и его значение побайтово совпадает
+  со значением `LIVE_LOGIN_RELAY_SECRET` в `.env`/переменных
+  окружения контейнера (сравнение — `timingSafeEqual`, сравнение длин
+  тоже участвует — лишний пробел на конце ломает совпадение, хотя
+  сравнение и трим значения делает при чтении конфига, см.
+  `src/auth.ts`/`src/config.ts`).
+- **410 на `GET /sessions/:id/result`.** Сессию уже принудительно
+  закрыли (истёк `SESSION_WALL_TIMEOUT_MS`/`SESSION_IDLE_TIMEOUT_MS`,
+  вызван `DELETE`, либо сервис перезапускался) раньше, чем вызывающий
+  успел забрать результат — не баг, а гонка по времени; отличается от
+  `404` (сессии никогда не было/уже выселена из кэша) и `409` (сессия
+  ещё не готова — WS не подключался).
+- **503 на `POST /sessions`.** Либо достигнут `MAX_CONCURRENT_
+  SESSIONS`, либо сервис в процессе грациозного завершения
+  (получен `SIGTERM`/`SIGINT`) и новые сессии сознательно отклоняются.
+
+## Устройство API вкратце
+
+Полный протокол (включая формат WS-кадров скринкаста и событий ввода)
+— `doc/LIVE-LOGIN-RELAY-SPEC.md` §7–§8. Только список маршрутов для
+ориентира:
+
+| Маршрут | Секрет нужен | Назначение |
+|---|---|---|
+| `GET /health` | нет | статус сервиса, счётчик активных сессий |
+| `POST /sessions` | да | создать сессию — запускает браузер, переходит на `startUrl`, возвращает `sessionId`/`streamToken`/`wsPath` |
+| `GET /sessions/:id/stream` (WS upgrade) | нет (аутентификация — первым WS-сообщением `streamToken`) | скринкаст + ввод |
+| `GET /sessions/:id/result` | да | финализация — собирает куки, закрывает браузер, идемпотентна в пределах `RESULT_CACHE_MS` |
+| `DELETE /sessions/:id` | да | принудительно закрыть сессию (best-effort, идемпотентно) |

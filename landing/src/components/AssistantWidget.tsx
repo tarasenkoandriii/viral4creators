@@ -24,7 +24,7 @@ import { TMA_URL } from '../lib/content';
 
 type AssistantDict = Dictionary['assistant'];
 
-type AssistantActionKind = 'step' | 'open-app' | 'plan' | 'faq' | 'legal';
+type AssistantActionKind = 'step' | 'open-app' | 'plan' | 'faq' | 'legal' | 'video';
 
 interface AssistantAction {
   kind: AssistantActionKind;
@@ -32,6 +32,11 @@ interface AssistantAction {
   planId?: string;
   faqIndex?: number;
   slug?: string;
+  /** Только у kind:'video' (этап 99, §4.8) — подставлены сервером, см.
+   * backend/src/modules/assistant/assistant.types.ts. */
+  subjectKey?: string;
+  url?: string;
+  title?: string;
 }
 
 interface ChatMessage {
@@ -585,6 +590,17 @@ export function AssistantWidget({ locale, dict, page, variant }: AssistantWidget
             window.location.href = `/legal/${action.slug}`;
           }
           return;
+        case 'video':
+          // Этап 99 (§4.8) — url подставлен СЕРВЕРОМ (не моделью, см.
+          // assistant.types.ts), поэтому просто открываем — та же логика,
+          // что у 'open-app'. Пустой url значит, что резолв на бэкенде не
+          // нашёл одобренного видео (гонка/устаревший промпт) — тогда
+          // кнопка не должна была прийти вовсе, но на всякий случай не
+          // открываем пустую вкладку.
+          if (action.url) {
+            window.open(action.url, '_blank', 'noopener,noreferrer');
+          }
+          return;
       }
     },
     [locale, page, queueEvent],
@@ -903,6 +919,13 @@ function actionLabel(action: AssistantAction, dict: AssistantDict): string {
       return dict.actionFaq;
     case 'legal':
       return dict.actionLegal;
+    case 'video':
+      // Этап 99 (§4.8) — title приходит от сервера (заголовок конкретного
+      // одобренного видео), это точнее общей подписи из словаря; если
+      // сервер его почему-то не подставил (см. `resolveVideoActions` в
+      // assistant.service.ts — не найдено/не одобрено), используем
+      // обычную переводную подпись как запасной вариант.
+      return action.title || dict.actionVideo;
     default:
       return dict.actionOpenApp;
   }

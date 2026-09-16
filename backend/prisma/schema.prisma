@@ -668,10 +668,26 @@ model PublicationRequest {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /**
-   * Session.id без FK — заявка переживает TTL-очистку сессий.
+   * Session.id без FK — заявка переживает TTL-очистку сессий. Обе строки
+   * null у заявок Фазы 3 (этап 101, ТЗ §4.7) — публикация обучающего
+   * видео заводится не от сессии/сгенерированного ролика, а от
+   * `TutorialVideoAsset` (см. `tutorialVideoAssetId` ниже); настоящей
+   * сессии/ролика в этом случае просто не существует, а не «забыли
+   * заполнить».
    */
-  sessionId        String
-  generatedVideoId String
+  sessionId        String?
+  generatedVideoId String?
+
+  /**
+   * Мягкая ссылка на `TutorialVideoAsset`, из которого заведена заявка
+   * (Фаза 3, ТЗ §4.7, этап 101) — тот же журнальный приём, что у
+   * `TutorialVideoAsset.scenarioId`: не FK, потому что обучающее видео
+   * может быть перегенерировано/удалено независимо от уже поданной
+   * заявки на публикацию. Ровно одно из `sessionId`/`tutorialVideoAssetId`
+   * заполнено — это заявка либо от рекламного ролика, либо от
+   * обучающего видео, никогда не то и другое сразу.
+   */
+  tutorialVideoAssetId String?
 
   projectId     String?
   project       Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
@@ -757,6 +773,10 @@ model PublicationRequest {
   /// это полный скан таблицы заявок на каждый тик крона.
   @@index([channelId])
   @@index([status, channelId, nextAttemptAt])
+  /// Этап 101: проверка «нет уже поданной заявки на публикацию этого
+  /// обучающего видео на эту площадку» — под тем же advisory-lock, что и
+  /// у сессии/площадки в `PublicationService.create`.
+  @@index([tutorialVideoAssetId])
   @@map("publication_requests")
 }
 
@@ -1255,6 +1275,16 @@ model BlogPost {
   youtubeChannelTitle String?
   youtubeViewCount    Int?
   thumbnailUrl        String?
+
+  /// Исходный URL картинки-кандидата (превью YouTube или найденный
+  /// og:image), ДО перезаливки в собственный Blob (этап 95,
+  /// `blog-cover-image.ts`). `thumbnailUrl` — единственное поле показа
+  /// (лендинг/админка его не меняли), это поле — только для бэкофилла:
+  /// если перезаливка в момент создания черновика не удалась,
+  /// `thumbnailUrl` остаётся равен `sourceImageUrl` (мягкий откат на
+  /// хотлинк), и это совпадение — сигнал для `runCoverImageBackfill()`
+  /// повторить попытку.
+  sourceImageUrl String?
 
   /// Оценка Gemini по тем же критериям, что уже использует сервис для
   /// релевантности референсов (крючок, темп, оффер, качество съёмки) —
@@ -1945,7 +1975,8 @@ model CronRunLog {
   id  String @id @default(cuid())
   /// Ключ джоба — 'report' | 'blog' | 'publish' | 'billing-renew' |
   /// 'marketing-broadcast' | 'catalog-batch-run' | 'ab-test-run' |
-  /// 'feed-import-run' | 'cleanup-sessions' | 'sweep-orphans' (см.
+  /// 'feed-import-run' | 'export-sync-run' | 'cleanup-sessions' |
+  /// 'sweep-orphans' | 'tutorial-scenario-generate' (этап 94, см.
   /// AdminCronService.JOB_REGISTRY — единственное место, где список
   /// живёт как код, а не только здесь как свободная строка).
   jobKey String
@@ -2123,4 +2154,190 @@ model WorkflowStageEvent {
   @@index([workflow, occurredAt])
   @@index([workflow, entityId])
   @@map("workflow_stage_events")
+}
+
+/// Сценарий для автозаписи обучающего видео
+/// (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.10/§4.11, этап
+/// 94) — список шагов, которые сгенерировал ИИ по крону
+/// `tutorial-scenario-generate`, а не написал разработчик руками.
+/// Append-only, тем же приёмом, что `UiSnapshot`/`TutorialVideoAsset`
+/// того же ТЗ (§3.4/§4.4, ещё не реализованы): каждая регенерация —
+/// новая строка, «текущий» сценарий для subjectKey+locale — последняя
+/// по времени. Сама ИГРА сценария (headless-браузер, §5 того же ТЗ) —
+/// отдельная, пока не реализованная часть; эта модель — только
+/// хранение и денежный гейт перед тем, как играть станет можно
+/// технически.
+model TutorialScenario {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  /// Индекс шага обучалки (1..10, строкой — см. ASSISTANT_STEPS в
+  /// backend/src/modules/assistant/knowledge/generated.ts) — свободная
+  /// строка, не число: тот же приём, что jobKey у CronRunLog, задел на
+  /// будущие свободные ключи воркфлоу за пределами обучалки (§4.4 того
+  /// же ТЗ), хотя эта итерация генератора заполняет только шаги.
+  subjectKey String
+  locale     String
+
+  /// Список шагов из фиксированного словаря примитивов (`ScenarioStep`
+  /// — goto/fill/click/waitFor/assertVisible/assertText/
+  /// triggerPaidOperation, `modules/tutorial-scenario/scenario-steps.types.ts`)
+  /// — НЕ исполняемый код. Осознанная граница безопасности (§4.10 ТЗ):
+  /// модель, которая пишет код, который затем сам исполняется по
+  /// расписанию, — прямой путь к инъекции; ограниченный словарь этого
+  /// не допускает структурно.
+  steps Json
+
+  /// 'ai' (крон, по умолчанию) | 'manual' — свободная строка, тот же
+  /// принцип, что jobKey у CronRunLog.
+  generatedBy String @default("ai")
+
+  /// true, если хотя бы один шаг — triggerPaidOperation (§4.11 ТЗ).
+  costly                Boolean @default(false)
+  estimatedCostMicroUsd Int?
+  /// Ставки хотя бы для одной модели среди платных шагов не нашлось
+  /// (`estimateCost()` вернул `unpriced: true`, `common/ai-pricing.ts`)
+  /// — `estimatedCostMicroUsd` в этом случае ЗАНИЖЕН, не «ноль значит
+  /// бесплатно». Тот же принцип, что `unpriced` у `AiUsage` (этап
+  /// 31/32): оператор должен увидеть предупреждение явно, а не
+  /// молчаливую цифру — добавлено при реализации, не было в
+  /// первоначальном черновике модели в ТЗ §4.10.
+  costUnpriced Boolean @default(false)
+
+  /// Явное одобрение оператора ПЕРЕД тем, как costly=true сценарий
+  /// разрешено исполнять автоматически (§4.11 ТЗ) — независимо от
+  /// `reviewed` у результата (§4.6 того же ТЗ, для видео, не для
+  /// сценария): одно решение «можно тратить деньги», другое — «можно
+  /// показывать людям».
+  approved   Boolean   @default(false)
+  approvedBy String?
+  approvedAt DateTime?
+
+  /// Заполняются исполнением сценария (§5 ТЗ, `tutorial-scenario-run`,
+  /// этап 97) — 'ok' | 'failed', та же свободная строка, что jobKey у
+  /// CronRunLog.
+  lastRunAt     DateTime?
+  lastRunStatus String?
+  lastRunError  String?
+
+  @@index([subjectKey, locale, createdAt])
+  @@index([costly, approved])
+  @@map("tutorial_scenarios")
+}
+
+/// Захваченные кадры успешного прогона сценария (§4.4 ТЗ), собранные в
+/// один ролик-слайд-шоу (этап 98, `tutorial-runner/tutorial-video-
+/// assembly.ts`) — НЕ «обучающее видео» в человеческом смысле (§4.1 ТЗ),
+/// сырой материал до ручного ревью (`reviewed`).
+model TutorialVideoAsset {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  /// Тот же ключ, что у TutorialScenario — шаг обучалки или свободный
+  /// ключ воркфлоу.
+  subjectKey String
+  locale     String
+
+  /// = ASSISTANT_STEPS[locale][subjectKey-1].title той же локали (§4.4
+  /// ТЗ) — не отдельно придуманный текст; для subjectKey вне диапазона
+  /// шагов (свободный ключ воркфлоу) — сам subjectKey.
+  title String
+
+  /// Мягкая ссылка на строку TutorialScenario, из которой собран этот
+  /// ролик — НЕ Prisma-связь (тот же журнальный приём §2.7, что у
+  /// CronRunLog/AlertState: сценарий может быть перегенерирован или
+  /// удалён без каскада по уже снятым видео).
+  scenarioId String?
+  /// Сколько кадров-транзитов лежит в Blob под
+  /// `tutorial-video-frames/{scenarioId}/{0..frameCount-1}.jpg` — нужно
+  /// только чтобы опрос сборки (см. `assemblyJobId`) знал, что удалить
+  /// после того, как внешний ffmpeg-api их скачал (тот же транзитный
+  /// принцип, что у референсного видео анализа, `storage/
+  /// blob.service.ts`: скачано один раз — удалено сразу).
+  frameCount Int?
+
+  /// Заполняется, когда сборка (см. ниже) успешно завершилась — публичная
+  /// ссылка в НАШЕМ Blob (§4.3 ТЗ: скачано с внешнего ffmpeg-api и
+  /// перезалито к себе, тот же приём, что PostProductionService.poll).
+  blobUrl String?
+  /// Заполняется, если видео ушло во внешний хостинг (Фаза 3, §4.3-б),
+  /// пока не используется.
+  externalUrl String?
+  durationMs  Int?
+
+  /// Ручное подтверждение оператором ПЕРЕД показом посетителям (§4.1,
+  /// §4.6 ТЗ) — сырая запись сама по себе никогда не публикуется.
+  /// Осмысленно только при assemblyStatus='complete' — незавершённая
+  /// сборка не может быть одобрена, потому что показывать ещё нечего.
+  reviewed Boolean @default(false)
+
+  /// Состояние асинхронной сборки через внешний ffmpeg-api — 'pending'
+  /// (кадры загружены в Blob, задача отправлена) | 'complete' | 'failed'.
+  /// Свободная строка, тот же принцип, что jobKey у CronRunLog.
+  assemblyStatus    String    @default("pending")
+  assemblyError     String?
+  /// jobId внешнего ffmpeg-api (`FfmpegApiService.submit()`) — опрашивается
+  /// следующим тиком `tutorial-scenario-run` (тот же приём, что
+  /// `postJobId` у PostProductionService.poll: submit на одном тике,
+  /// poll на следующем, не блокирующий цикл в одном вызове).
+  assemblyJobId     String?
+  assemblyStartedAt DateTime?
+
+  @@index([subjectKey, locale, createdAt])
+  /// Горячий путь чтения консультанта (§4.8 ТЗ, будущий этап) — «какие
+  /// subjectKey уже есть одобренными для этой локали».
+  @@index([locale, reviewed, subjectKey])
+  /// Опрос незавершённых сборок на каждом тике — без индекса это полный
+  /// скан таблицы на каждый прогон крона.
+  @@index([assemblyStatus])
+  @@map("tutorial_video_assets")
+}
+
+/// Часть А ТЗ (§3, этап 100) — метаданные крон-обхода интерфейса
+/// (`ui-snapshot-run`): для набора (routeKey × locale × theme) —
+/// перцептивный хэш скриншота и сравнение с хэшем предыдущего снимка
+/// ТОЙ ЖЕ комбинации. Сами PNG — в Blob (§3.4 ТЗ), здесь только
+/// метаданные, тот же приём, что у TutorialVideoAsset.blobUrl.
+model UiSnapshot {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  /// route.name из frontend/src/lib/router.ts (через route-templates.ts),
+  /// не URL — переживает рефакторинг путей.
+  routeKey String
+  locale   String
+  /// Единственное значение в MVP — 'light' (§3.8 ТЗ); поле на будущее,
+  /// не enum, тот же приём, что jobKey у CronRunLog.
+  theme String @default("light")
+
+  /// Отсутствует, когда снимок не удалось СНЯТЬ (см. `error` ниже) —
+  /// отклонение от исходного черновика схемы в §3.4 ТЗ (обязательный
+  /// String), сделанное по пункту 6 аудита (§10): «маршрут не изменился»
+  /// и «маршрут не удалось проверить» — разные состояния, которые
+  /// нельзя путать молча.
+  blobUrl String?
+  /// URL снимка, с которым сравнивали; null у самого первого снимка
+  /// этой комбинации routeKey+locale+theme.
+  comparedToUrl String?
+  /// Перцептивный dHash ЭТОГО снимка (hex, `perceptual-hash.ts`) — не
+  /// часть исходного черновика §3.4 ТЗ, добавлено при реализации: без
+  /// него сравнение со следующим снимком требовало бы заново скачивать
+  /// и перехэшировать предыдущий PNG из Blob на каждом тике, вместо
+  /// одного дешёвого чтения строки из этой же таблицы.
+  diffHash String?
+  /// Нормализованное расстояние Хэмминга между dHash-ами (0..1) —
+  /// осмысленно, только когда error=null (см. UiSnapshotRunnerService).
+  diffScore Float?
+  changed   Boolean @default(false)
+
+  /// Заполняется вместо blobUrl/diffScore/changed, когда сам ЗАХВАТ
+  /// снимка провалился (браузер, навигация, Blob) — по пункту 6 аудита
+  /// (§10 ТЗ): без этого поля сбой поставщика посреди батча молча
+  /// превращался бы в «ничего не изменилось» по всем непройденным
+  /// маршрутам, что и есть тот самый ложный сигнал, ради которого эта
+  /// фича вообще существует.
+  error String?
+
+  @@index([routeKey, locale, theme, createdAt])
+  @@map("ui_snapshots")
 }

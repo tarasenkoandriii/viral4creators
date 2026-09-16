@@ -187,8 +187,11 @@ export type PublicationPrivacy = 'PRIVATE' | 'UNLISTED' | 'PUBLIC';
 export interface PublicationRequest {
   id: string;
   userId: string;
-  sessionId: string;
-  generatedVideoId: string;
+  /** null у заявок Фазы 3 (этап 101, §4.7) — см. tutorialVideoAssetId. */
+  sessionId: string | null;
+  generatedVideoId: string | null;
+  /** Этап 101 (§4.7): заявка на публикацию обучающего видео, не ролика. */
+  tutorialVideoAssetId: string | null;
   projectId: string | null;
   productItemId: string | null;
   platform: PublicationPlatform;
@@ -824,7 +827,7 @@ export interface SetAssistantSettingsInput {
   model?: string;
 }
 
-export type AssistantActionKind = 'step' | 'open-app' | 'plan' | 'faq' | 'legal';
+export type AssistantActionKind = 'step' | 'open-app' | 'plan' | 'faq' | 'legal' | 'video';
 
 export interface AssistantAction {
   kind: AssistantActionKind;
@@ -832,6 +835,10 @@ export interface AssistantAction {
   planId?: string;
   faqIndex?: number;
   slug?: string;
+  /** Только у kind:'video' (этап 99, §4.8) — подставлены сервером. */
+  subjectKey?: string;
+  url?: string;
+  title?: string;
 }
 
 export interface AssistantExchangeRow {
@@ -873,4 +880,58 @@ export interface AssistantAdminResult {
   feed: AssistantFeedResult;
   aggregates7: AssistantAggregates;
   aggregates30: AssistantAggregates | null;
+}
+
+// ── Обучающие видео (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md
+// §4.8/§4.9, backend/src/modules/tutorial-runner, этап 99) — вкладки
+// «Видео-контент»/«Состояние данных» ──
+
+export type TutorialVideoAssemblyStatus = 'pending' | 'submitted' | 'completed' | 'failed';
+
+export interface TutorialVideoAssetRow {
+  id: string;
+  createdAt: string;
+  subjectKey: string;
+  locale: string;
+  title: string;
+  scenarioId: string | null;
+  frameCount: number | null;
+  blobUrl: string | null;
+  externalUrl: string | null;
+  durationMs: number | null;
+  reviewed: boolean;
+  assemblyStatus: TutorialVideoAssemblyStatus;
+  assemblyError: string | null;
+  assemblyJobId: string | null;
+  assemblyStartedAt: string | null;
+}
+
+export interface TutorialVideoListResult {
+  rows: TutorialVideoAssetRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface TutorialVideoCoverageCell {
+  subjectKey: string;
+  locale: string;
+  reviewedCount: number;
+}
+
+export interface TutorialVideoLastRun {
+  jobKey: string;
+  status: CronRunStatus | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  summary: string | null;
+  errorMessage: string | null;
+}
+
+export interface TutorialVideoDataStatus {
+  knowledge: { builtAt: string; commit: string };
+  /** Локаль → число шагов обучалки в базе знаний ассистента. */
+  stepCounts: Record<string, number>;
+  videoCoverage: TutorialVideoCoverageCell[];
+  lastRuns: TutorialVideoLastRun[];
 }

@@ -75,6 +75,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
       <div className="overflow-hidden rounded-xl bg-black ring-1 ring-silver-200/60 dark:ring-silver-800">
+        {/* data-qa-mask — этап 100 (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-
+            SPEC.md §3.5): постер/первый кадр разных роликов различается,
+            это заведомо переменная зона для крон-обхода UI-снимков
+            (`ui-snapshot-run`), маскируется перед сравнением. */}
         <video
           key={src}
           src={src}
@@ -82,6 +86,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           className="w-full h-auto"
           playsInline
           preload="metadata"
+          data-qa-mask="video-preview"
         >
           Your browser does not support the video tag.
         </video>

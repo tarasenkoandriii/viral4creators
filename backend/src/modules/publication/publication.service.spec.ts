@@ -244,6 +244,7 @@ function build(
     brandManifest?: unknown;
     channel?: unknown;
     channels?: unknown[];
+    tutorialVideoAsset?: unknown;
   } = {},
 ) {
   let lastRow: ReturnType<typeof row> | null = null;
@@ -315,6 +316,23 @@ function build(
         .fn()
         .mockResolvedValue('channel' in opts ? opts.channel : null),
       findMany: jest.fn().mockResolvedValue(opts.channels ?? []),
+    },
+    // Этап 101 (ТЗ §4.7): по умолчанию — готовое одобренное видео, тот же
+    // приём, что у остальных мок-полей (переопределяется через opts).
+    tutorialVideoAsset: {
+      findUnique: jest.fn().mockResolvedValue(
+        'tutorialVideoAsset' in opts
+          ? opts.tutorialVideoAsset
+          : {
+              id: 'tv1',
+              subjectKey: 'generate',
+              locale: 'ru',
+              title: 'Как сгенерировать первый ролик',
+              reviewed: true,
+              assemblyStatus: 'complete',
+              blobUrl: 'https://blob.test/tutorial-videos/generate/tv1.mp4',
+            },
+      ),
     },
     $executeRaw: jest.fn().mockResolvedValue(1),
     // Транзакция здесь не декорация: проверка «нет открытой заявки» и
@@ -700,5 +718,150 @@ describe('PublicationService — копия ролика после отказа
     const r = await service.reject('pr1', 'op1', { reason: 'причина' });
 
     expect(r.status).toBe('REJECTED');
+  });
+});
+
+/**
+ * Фаза 3 (этап 101, ТЗ §4.7) — публикация обучающего видео тем же
+ * конвейером, что рекламные ролики: `PublicationRequest` заводится сразу
+ * `APPROVED`, `userId`/`moderatorId` — оператор, канал — только его
+ * собственный, тот же advisory-lock-приём, что у `create()`.
+ */
+describe('PublicationService.publishTutorialVideo', () => {
+  const okChannel = { id: 'ch1', userId: 'op1', platform: 'YOUTUBE' };
+
+  it('404, если видео не найдено', async () => {
+    const { service } = build({ tutorialVideoAsset: null });
+    await expect(
+      service.publishTutorialVideo('tv1', 'op1', {
+        platform: 'YOUTUBE',
+        channelId: 'ch1',
+      }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('отказывает неодобренному видео (reviewed=false)', async () => {
+    const { service } = build({
+      tutorialVideoAsset: { reviewed: false, assemblyStatus: 'complete' },
+    });
+    await expect(
+      service.publishTutorialVideo('tv1', 'op1', {
+        platform: 'YOUTUBE',
+        channelId: 'ch1',
+      }),
+    ).rejects.toThrow(/не одобрено/);
+  });
+
+  it('отказывает незавершённой сборке даже у reviewed=true (setReviewed не проверяет это сам)', async () => {
+    const { service } = build({
+      tutorialVideoAsset: {
+        reviewed: true,
+        assemblyStatus: 'pending',
+        blobUrl: null,
+      },
+    });
+    await expect(
+      service.publishTutorialVideo('tv1', 'op1', {
+        platform: 'YOUTUBE',
+        channelId: 'ch1',
+      }),
+    ).rejects.toThrow(/не завершена/);
+  });
+
+  it('отказывает channelId чужого владельца или другой платформы', async () => {
+    const { service: s1 } = build({
+      channel: { id: 'ch1', userId: 'someone-else', platform: 'YOUTUBE' },
+    });
+    await expect(
+      s1.publishTutorialVideo('tv1', 'op1', {
+        platform: 'YOUTUBE',
+        channelId: 'ch1',
+      }),
+    ).rejects.toThrow(BadRequestException);
+
+    const { service: s2 } = build({
+      channel: { id: 'ch1', userId: 'op1', platform: 'TIKTOK' },
+    });
+    await expect(
+      s2.publishTutorialVideo('tv1', 'op1', {
+        platform: 'YOUTUBE',
+        channelId: 'ch1',
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('409, если заявка на эту площадку от этого видео уже подана', async () => {
+    const { service } = build({
+      channel: okChannel,
+      open: { id: 'pr-old', status: 'APPROVED' },
+    });
+    await expect(
+      service.publishTutorialVideo('tv1', 'op1', {
+        platform: 'YOUTUBE',
+        channelId: 'ch1',
+      }),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('создаёт заявку сразу APPROVED, с оператором как userId/moderatorId и путём из реального blobUrl', async () => {
+    const { service, prisma } = build({ channel: okChannel });
+    const v = await service.publishTutorialVideo('tv1', 'op1', {
+      platform: 'YOUTUBE',
+      channelId: 'ch1',
+    });
+
+    expect(prisma.publicationRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: 'op1',
+        moderatorId: 'op1',
+        tutorialVideoAssetId: 'tv1',
+        sessionId: null,
+        generatedVideoId: null,
+        platform: 'YOUTUBE',
+        status: 'APPROVED',
+        channelId: 'ch1',
+        videoUrl: 'https://blob.test/tutorial-videos/generate/tv1.mp4',
+        videoPathname: 'tutorial-videos/generate/tv1.mp4',
+        title: 'Как сгенерировать первый ролик',
+        privacy: 'UNLISTED',
+      }),
+    });
+    expect(v.status).toBe('APPROVED');
+    expect(v.privacy).toBe('UNLISTED');
+    expect(v.tutorialVideoAssetId).toBe('tv1');
+  });
+
+  it('явные title/privacy/описание/теги переопределяют значения по умолчанию', async () => {
+    const { service, prisma } = build({ channel: okChannel });
+    await service.publishTutorialVideo('tv1', 'op1', {
+      platform: 'YOUTUBE',
+      channelId: 'ch1',
+      title: '  Свой заголовок  ',
+      description: 'своё описание',
+      tags: ['#Урок', 'урок'],
+      privacy: 'PUBLIC',
+    });
+    expect(prisma.publicationRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        title: 'Свой заголовок',
+        description: 'своё описание',
+        tags: ['Урок'],
+        privacy: 'PUBLIC',
+      }),
+    });
+  });
+
+  it('проверка и создание идут под своим namespace advisory-блокировки (не пересекается с create() сессий)', async () => {
+    const { service, prisma } = build({ channel: okChannel });
+    await service.publishTutorialVideo('tv1', 'op1', {
+      platform: 'YOUTUBE',
+      channelId: 'ch1',
+    });
+    const [chunks, key] = prisma.$executeRaw.mock.calls[0] as [
+      string[],
+      string,
+    ];
+    expect(chunks.join('?')).toContain('pg_advisory_xact_lock');
+    expect(key).toBe('tutorial-publish:tv1:YOUTUBE');
   });
 });

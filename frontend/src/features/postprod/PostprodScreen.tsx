@@ -67,6 +67,10 @@ function VideoRow({
         <div
           className="w-20 shrink-0 overflow-hidden rounded-lg bg-black/5 dark:bg-white/5"
           style={{ aspectRatio: cssAspectRatio(item.aspectRatio) }}
+          // data-qa-mask — этап 100 (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-
+          // VIDEO-SPEC.md §3.5): миниатюра каждого ролика своя, заведомо
+          // переменная зона для крон-обхода UI-снимков (`ui-snapshot-run`).
+          data-qa-mask="video-thumb"
         >
           {item.downloadUrl && (
             <video
@@ -82,10 +86,40 @@ function VideoRow({
           <p className="truncate text-sm font-semibold">
             {item.productName || dict.postprodScreen.untitledProduct}
           </p>
-          <p className="mt-0.5 text-xs text-silver-400">
+          <p
+            className="mt-0.5 text-xs text-silver-400"
+            // data-qa-mask — та же причина: дата создания меняется сама
+            // по себе, без единой правки вёрстки (§3.5).
+            data-qa-mask="created-at"
+          >
             {new Date(item.createdAt).toLocaleString(locale)}
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {/* Найдено доп. аудитом (MEDIUM): весь смысл этой сводки —
+                «UI showing provider/quality info per video» (доккомментарий
+                postprod-video-summary.ts) — бэкенд считает эти три поля
+                до конца, но список их не показывал нигде. Бейдж
+                провайдера + (для Grok — разрешение, для Veo — качество
+                рендера, они у провайдеров разные оси) теми же строками
+                словаря, что уже использует шаг «Генерация» —
+                отдельных ключей не заводили. */}
+            <span className="rounded-full bg-silver-400/15 px-2 py-0.5 text-[11px] font-medium text-silver-500 dark:text-silver-300">
+              {item.provider === 'grok'
+                ? dict.generationWizard.providerGrokLabel
+                : dict.generationWizard.providerVeoLabel}
+            </span>
+            {item.provider === 'grok' && item.resolution && (
+              <span className="rounded-full bg-silver-400/15 px-2 py-0.5 text-[11px] font-medium text-silver-500 dark:text-silver-300">
+                {item.resolution}
+              </span>
+            )}
+            {item.provider !== 'grok' && item.quality && (
+              <span className="rounded-full bg-silver-400/15 px-2 py-0.5 text-[11px] font-medium text-silver-500 dark:text-silver-300">
+                {item.quality === 'standard'
+                  ? dict.generationWizard.qualityStandardLabel
+                  : dict.generationWizard.qualityFastLabel}
+              </span>
+            )}
             {item.canRevoice && (
               <span className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent">
                 <Mic2 size={11} />
@@ -180,9 +214,24 @@ export function PostprodScreen() {
         data.pageSize,
         data.items.length
       );
-      setData((prev) =>
-        prev ? { ...next, items: [...prev.items, ...next.items] } : next
-      );
+      setData((prev) => {
+        if (!prev) return next;
+        // Найдено доп. аудитом (MEDIUM): `offset = items.length`
+        // компенсирует только строки, УБРАННЫЕ из-под текущего окна
+        // (локальное удаление, см. доккомментарий сервиса) — не строки,
+        // ДОБАВЛЕННЫЕ выше него. Список отсортирован `createdAt DESC`, и
+        // ролик, доснявшийся, пока вкладка открыта, встаёт новой первой
+        // строкой, сдвигая вниз все уже загруженные; следующий «Показать
+        // ещё» с тем же offset тогда повторно возвращает последнюю уже
+        // отрисованную строку — дубликат `sessionId`, дубликат React
+        // `key`. Дедуп при склейке — минимальное исправление: сам
+        // инвариант «offset = сколько строк реально на экране» при этом
+        // не ломается (после фильтрации count не меняется относительно
+        // того, что уже отрисовано).
+        const known = new Set(prev.items.map((i) => i.sessionId));
+        const fresh = next.items.filter((i) => !known.has(i.sessionId));
+        return { ...next, items: [...prev.items, ...fresh] };
+      });
     } catch {
       // «Показать ещё» — не критично: страница остаётся прежней, кнопка
       // просто разрешает попробовать снова, без отдельного алерта.

@@ -1,5 +1,5 @@
 /**
- * AdminCronService — реестр одиннадцати крон-задач + ручной запуск из
+ * AdminCronService — реестр четырнадцати крон-задач + ручной запуск из
  * админки с записью истории (этап 69, доп. ТЗ «Кроны в админке»,
  * аналогично Solar Shop). Инжектит `CronJobsService` напрямую (тот же
  * модуль `CronModule` — без кросс-модульного импорта, см.
@@ -46,7 +46,7 @@ export interface CronRunLogRow {
 }
 
 /**
- * Реестр — те же одиннадцать маршрутов `/api/cron/*`, тексты описаний
+ * Реестр — те же двенадцать маршрутов `/api/cron/*`, тексты описаний
  * переиспользуют формулировки из доккомментариев `cron.controller.ts`
  * (не выдумываются заново).
  */
@@ -91,6 +91,21 @@ const JOB_REGISTRY: CronJobInfo[] = [
     jobKey: 'export-sync-run',
     description:
       'Досмотр статуса дочерних рендеров автоэкспорта яруса B независимо от открытого экрана прогресса.',
+  },
+  {
+    jobKey: 'tutorial-scenario-generate',
+    description:
+      'Генерация сценариев для будущей автозаписи обучающих видео (ИИ по шагам обучалки), с прикидкой стоимости.',
+  },
+  {
+    jobKey: 'tutorial-scenario-run',
+    description:
+      'Исполнение уже сгенерированных (и, если платных, одобренных) сценариев headless-браузером против фикстурного пользователя — регрессионный прогон экранов мастера.',
+  },
+  {
+    jobKey: 'ui-snapshot-run',
+    description:
+      'Крон-обход интерфейса TMA (5 маршрутов, ru/light) headless-браузером против фикстурного пользователя — скриншот, перцептивный хэш, сравнение с предыдущим снимком того же маршрута, тревога при расхождении.',
   },
   {
     jobKey: 'cleanup-sessions',
@@ -211,6 +226,12 @@ export class AdminCronService {
         return this.jobs.runFeedImportRun();
       case 'export-sync-run':
         return this.jobs.runExportSyncRun();
+      case 'tutorial-scenario-generate':
+        return this.jobs.runTutorialScenarioGenerate();
+      case 'tutorial-scenario-run':
+        return this.jobs.runTutorialScenarioRun();
+      case 'ui-snapshot-run':
+        return this.jobs.runUiSnapshotRun();
       case 'cleanup-sessions':
         return this.jobs.runCleanupSessions();
       case 'sweep-orphans':

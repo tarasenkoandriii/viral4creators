@@ -30,6 +30,7 @@ import { ProductInput } from '../../components/ProductInput';
 import { PromptEditor } from '../../components/PromptEditor';
 import { ImageUpload } from '../../components/ImageUpload';
 import { VideoPlayer } from '../../components/VideoPlayer';
+import { VideoProcessingStatus } from '../../components/VideoProcessingStatus';
 import { CharacterCasting } from './CharacterCasting';
 import { AnalysisInsights } from './AnalysisInsights';
 import { RelevancePanel } from './RelevancePanel';
@@ -972,159 +973,10 @@ export function GenerationWizard() {
                 ]}
               />
             </div>
-            {generatedVideo.aspectRatio && (
-              <p className="mt-3 text-xs text-silver-400">
-                {dict.generationWizard.formatLabel.replace(
-                  '{{ratio}}',
-                  generatedVideo.aspectRatio
-                )}
-                {/* §15.4/§16.1: постобработка идёт после того, как ролик
-                    уже отдан, поэтому здесь четыре разных честных
-                    состояния, а не одно обещание «появится позже». */}
-                {generatedVideo.postStatus === 'pending' &&
-                  generatedVideo.reframePending && (
-                    <>
-                      {' '}
-                      {dict.generationWizard.reframePendingNote
-                        .replace(
-                          '{{rendered}}',
-                          generatedVideo.renderedAspectRatio ?? ''
-                        )
-                        .replace('{{target}}', generatedVideo.aspectRatio)}
-                    </>
-                  )}
-                {generatedVideo.postStatus === 'complete' &&
-                  generatedVideo.renderedAspectRatio !==
-                    generatedVideo.aspectRatio && (
-                    <>
-                      {' '}
-                      {dict.generationWizard.croppedFromNote.replace(
-                        '{{rendered}}',
-                        generatedVideo.renderedAspectRatio ?? ''
-                      )}
-                    </>
-                  )}
-                {generatedVideo.postStatus === 'failed' && (
-                  <>
-                    {' '}
-                    {dict.generationWizard.postFailedNote
-                      .replace(
-                        '{{rendered}}',
-                        generatedVideo.renderedAspectRatio ?? ''
-                      )
-                      .replace(
-                        '{{errorSuffix}}',
-                        generatedVideo.postError
-                          ? ` (${generatedVideo.postError})`
-                          : ''
-                      )}
-                  </>
-                )}
-                {generatedVideo.postStatus === 'skipped' &&
-                  generatedVideo.reframePending &&
-                  generatedVideo.renderedAspectRatio && (
-                    <>
-                      {' '}
-                      {dict.generationWizard.reframeSkippedNote
-                        .replace(
-                          '{{rendered}}',
-                          generatedVideo.renderedAspectRatio
-                        )
-                        .replace('{{target}}', generatedVideo.aspectRatio)}
-                    </>
-                  )}
-              </p>
-            )}
-            {/* Б-2.7: отказ постобработки по дневному лимиту или
-                блокировке приходит в `postError`, но не показывался
-                НИГДЕ, если резать было нечего: при родном формате все
-                ветки выше молчат, а `voiceStatus` в этом случае не
-                выставляется вовсе — строка «Озвучка:» оставалась
-                пустой. Человек видел ролик со звуком модели и ни слова
-                о причине. */}
-            {generatedVideo.postStatus === 'skipped' &&
-              generatedVideo.postError &&
-              !generatedVideo.reframePending && (
-                <p className="mt-1 text-xs text-amber-500">
-                  {dict.generationWizard.processingSkippedNote.replace(
-                    '{{error}}',
-                    generatedVideo.postError
-                  )}
-                </p>
-              )}
-            {/* §15: озвучка — отдельное состояние. «Не подключено» и
-                «сломалось» показаны по-разному: первое не повод идти
-                разбираться, второе — повод. */}
-            {generatedVideo.voiceMode && generatedVideo.voiceMode !== 'veo' && (
-              <p className="mt-1 text-xs text-silver-400">
-                {dict.generationWizard.voiceLabel}{' '}
-                {/* Постобработка могла не начаться вовсе (лимит,
-                    блокировка) — тогда статуса озвучки нет, и молчать
-                    здесь нельзя (Б-2.7). */}
-                {!generatedVideo.voiceStatus &&
-                  (generatedVideo.postStatus === 'skipped' ||
-                    generatedVideo.postStatus === 'failed') &&
-                  `${dict.generationWizard.voiceNotDone.replace(
-                    '{{reason}}',
-                    generatedVideo.postError ??
-                      dict.generationWizard.noReasonDefault
-                  )} ${dict.generationWizard.voiceModelSoundNote}`}
-                {generatedVideo.voiceStatus === 'synthesized' &&
-                  (generatedVideo.postStatus === 'pending'
-                    ? dict.generationWizard.voiceRecordedApplying
-                    : generatedVideo.postStatus === 'complete'
-                      ? generatedVideo.voiceMode === 'dub'
-                        ? dict.generationWizard.voiceOwnReplace
-                        : dict.generationWizard.voiceOwnOverlay
-                      : dict.generationWizard.voiceRecorded)}
-                {/* Причина здесь уже готовая фраза («озвучка на этом
-                    стенде не подключена», «текста озвучки нет») —
-                    приписывать к ней свою значит повторяться. */}
-                {generatedVideo.voiceStatus === 'skipped' &&
-                  `${generatedVideo.voiceError ?? dict.generationWizard.voiceNotConnectedDefault}. ${dict.generationWizard.voiceModelSoundNote}`}
-                {generatedVideo.voiceStatus === 'failed' &&
-                  `${dict.generationWizard.voiceFailed.replace(
-                    '{{reason}}',
-                    generatedVideo.voiceError ??
-                      dict.generationWizard.noReasonDefault
-                  )} ${dict.generationWizard.voiceModelSoundNote}`}
-              </p>
-            )}
-            {/* Этап 67: субтитры — третий ингредиент того же прохода
-                ffmpeg, что кроп и голос, но третий, независимый статус
-                (та же логика, что у голоса — провал сборки субтитров не
-                отменяет ни кроп, ни звук). Абзац скрыт целиком, если
-                бренд субтитры не заказывал (subtitlesMode !== 'on'). */}
-            {generatedVideo.subtitlesMode === 'on' && (
-              <p className="mt-1 text-xs text-silver-400">
-                {dict.generationWizard.subtitlesLabel}{' '}
-                {/* Постобработка могла не начаться вовсе (лимит,
-                    блокировка) — тогда статуса субтитров нет, и молчать
-                    здесь нельзя, по той же причине, что и у голоса. */}
-                {!generatedVideo.subtitleStatus &&
-                  (generatedVideo.postStatus === 'skipped' ||
-                    generatedVideo.postStatus === 'failed') &&
-                  dict.generationWizard.subtitlesSkipped.replace(
-                    '{{reason}}',
-                    generatedVideo.postError ??
-                      dict.generationWizard.noReasonDefault
-                  )}
-                {generatedVideo.subtitleStatus === 'burned' &&
-                  dict.generationWizard.subtitlesBurned}
-                {generatedVideo.subtitleStatus === 'skipped' &&
-                  dict.generationWizard.subtitlesSkipped.replace(
-                    '{{reason}}',
-                    generatedVideo.subtitleError ??
-                      dict.generationWizard.noReasonDefault
-                  )}
-                {generatedVideo.subtitleStatus === 'failed' &&
-                  dict.generationWizard.subtitlesFailed.replace(
-                    '{{reason}}',
-                    generatedVideo.subtitleError ??
-                      dict.generationWizard.noReasonDefault
-                  )}
-              </p>
-            )}
+            {/* Вынесено в общий компонент (доп. аудит, этап 88, HIGH) —
+                та же разметка теперь и у `PostprodVideoScreen`, см. её
+                доккомментарий. */}
+            <VideoProcessingStatus video={generatedVideo} dict={dict} />
             {generatedVideo.references &&
               generatedVideo.references.length > 0 && (
                 <p className="mt-3 text-xs text-silver-400">

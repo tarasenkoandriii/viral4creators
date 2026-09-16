@@ -106,4 +106,29 @@ describe('PostprodVideosService.listFinishedVideos', () => {
 
     expect(result.items[0].createdAt).toBe('2026-09-01T10:00:00.000Z');
   });
+
+  // Найдено доп. аудитом (MEDIUM): Veo-путь генерации вообще не пишет
+  // `provider` в БД — без дефолта строка выше отдавала бы `null` для
+  // подавляющего большинства роликов, тот же класс бага, что
+  // session-summary.ts и admin-generation-retry.controller.ts уже
+  // закрыли у себя (`provider ?? 'veo'`).
+  it('provider=null из БД (Veo-путь не пишет поле) → отдаётся как "veo"', async () => {
+    selectMock.mockResolvedValue([row({ provider: null })]);
+    countMock.mockResolvedValue(1);
+
+    const service = new PostprodVideosService({} as any);
+    const result = await service.listFinishedVideos('user-1', 1, 20);
+
+    expect(result.items[0].provider).toBe('veo');
+  });
+
+  it('provider=grok из БД — передаётся как есть', async () => {
+    selectMock.mockResolvedValue([row({ provider: 'grok' })]);
+    countMock.mockResolvedValue(1);
+
+    const service = new PostprodVideosService({} as any);
+    const result = await service.listFinishedVideos('user-1', 1, 20);
+
+    expect(result.items[0].provider).toBe('grok');
+  });
 });

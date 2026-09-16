@@ -29,6 +29,18 @@ import {
 import { blogSlugFor } from './blog-slug';
 import { sanitizeBlogHtml } from '../../common/sanitize-blog-html';
 import { BlogPostStatus } from '@prisma/client';
+import { BlobService } from '../storage/blob.service';
+import { downloadAndUploadBlogCoverImage } from './blog-cover-image';
+import { fetchOgImage } from '../../common/og-image-fetcher';
+
+/**
+ * Сколько записей за один прогон бэкофилла обложек (`/api/cron/blog`,
+ * третий шаг после генерации и перевода) — щедро с запасом относительно
+ * `draftsPerRunLimit` (обычно на порядок меньше кандидатов реально
+ * нуждаются в повторе), но с потолком, чтобы не съесть весь
+ * GENERATION_TIME_BUDGET_MS на одних загрузках картинок.
+ */
+export const COVER_BACKFILL_LIMIT = 20;
 
 /**
  * Vercel Cron Job живёт 300 с (Hobby); генерация делает синхронный вызов
@@ -48,6 +60,7 @@ export class BlogGenerationService {
     private readonly youtubeSearch: YoutubeSearchService,
     private readonly budget: BlogYoutubeBudgetService,
     private readonly aiUsage: AiUsageService,
+    private readonly blob: BlobService,
   ) {
     this.genai = createGeminiClient();
   }
@@ -191,17 +204,21 @@ export class BlogGenerationService {
       return false;
     }
 
+    const slug = blogSlugFor(analysis.title, candidate.videoId);
+    const cover = await this.resolveCoverImage(candidate, slug);
+
     try {
       await this.prisma.blogPost.create({
         data: {
-          slug: blogSlugFor(analysis.title, candidate.videoId),
+          slug,
           status: BlogPostStatus.DRAFT,
           source: 'YOUTUBE_TREND',
           category,
           youtubeVideoId: candidate.videoId,
           youtubeChannelTitle: candidate.channelTitle,
           youtubeViewCount: candidate.viewCount,
-          thumbnailUrl: candidate.thumbnailUrl,
+          thumbnailUrl: cover.thumbnailUrl,
+          sourceImageUrl: cover.sourceImageUrl,
           score: analysis.score,
           scoreReasoning: analysis.scoreReasoning,
           originalLocale: 'ru',
@@ -221,6 +238,108 @@ export class BlogGenerationService {
       );
       return false;
     }
+  }
+
+  /**
+   * Обложка черновика (этап 95): перезаливаем YouTube-превью в
+   * собственный Blob (`blog-cover-image.ts`), а на редкий случай, когда
+   * YouTube Data API вообще не дал превью (`candidate.thumbnailUrl ===
+   * null`) — пробуем og:image со страницы самого ролика через
+   * `og-image-fetcher.ts` (тот же общий модуль, что и
+   * `headless-chromium.ts`, портированный из Solar Shop). Любая неудача
+   * на любом шаге не блокирует публикацию черновика — просто обложки не
+   * будет вовсе (`thumbnailUrl`/`sourceImageUrl` остаются null), тот же
+   * принцип "текст важнее картинки", что и в `blog-cover-image.ts`.
+   */
+  private async resolveCoverImage(
+    candidate: { videoId: string; thumbnailUrl: string | null },
+    slug: string,
+  ): Promise<{ thumbnailUrl: string | null; sourceImageUrl: string | null }> {
+    if (candidate.thumbnailUrl) {
+      return downloadAndUploadBlogCoverImage(
+        candidate.thumbnailUrl,
+        slug,
+        this.blob,
+      );
+    }
+
+    const watchUrl = `https://www.youtube.com/watch?v=${candidate.videoId}`;
+    const og = await fetchOgImage(watchUrl);
+    if (!og.imageUrl) {
+      this.logger.log(
+        `У ролика ${candidate.videoId} нет thumbnailUrl, og:image-запасной вариант тоже не дал картинки: ${og.diagnostic}`,
+      );
+      return { thumbnailUrl: null, sourceImageUrl: null };
+    }
+    return downloadAndUploadBlogCoverImage(og.imageUrl, slug, this.blob);
+  }
+
+  /**
+   * Бэкофилл обложек (этап 95): для черновиков/постов, у которых
+   * перезаливка в момент создания не удалась (`thumbnailUrl` до сих пор
+   * равен `sourceImageUrl` — мягкий откат на хотлинк), пробуем ещё раз.
+   * Вызывается третьим шагом из `CronJobsService.runBlog` — тот же
+   * маршрут `/api/cron/blog`, отдельного крон-слота не заводится
+   * (Vercel Hobby считает кроны поштучно, тот же принцип, что уже
+   * объединяет генерацию и перевод в одном вызове).
+   */
+  async runCoverImageBackfill(limit = COVER_BACKFILL_LIMIT): Promise<{
+    candidates: number;
+    uploaded: number;
+    stillFallback: number;
+  }> {
+    // Берём с запасом (не всё, что попало в выборку по sourceImageUrl,
+    // обязательно всё ещё нуждается в повторе — сравнение с
+    // thumbnailUrl ниже фильтрует именно "откат ещё не заменён"), но не
+    // без предела — иначе один прогон рискует читать всю таблицу.
+    const rows: {
+      id: string;
+      slug: string;
+      thumbnailUrl: string | null;
+      sourceImageUrl: string | null;
+    }[] = await this.prisma.blogPost.findMany({
+      where: { sourceImageUrl: { not: null } },
+      select: {
+        id: true,
+        slug: true,
+        thumbnailUrl: true,
+        sourceImageUrl: true,
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit * 4,
+    });
+
+    const pending = rows
+      .filter((r) => r.sourceImageUrl && r.thumbnailUrl === r.sourceImageUrl)
+      .slice(0, limit);
+
+    let uploaded = 0;
+    for (const row of pending) {
+      const result = await downloadAndUploadBlogCoverImage(
+        row.sourceImageUrl as string,
+        row.slug,
+        this.blob,
+      );
+      if (result.thumbnailUrl !== row.sourceImageUrl) {
+        await this.prisma.blogPost.update({
+          where: { id: row.id },
+          data: { thumbnailUrl: result.thumbnailUrl },
+        });
+        uploaded++;
+      }
+    }
+
+    if (pending.length > 0) {
+      this.logger.log(
+        `Бэкофилл обложек блога: ${uploaded}/${pending.length} перезалито в свой Blob.`,
+      );
+    }
+
+    return {
+      candidates: pending.length,
+      uploaded,
+      stillFallback: pending.length - uploaded,
+    };
   }
 }
 

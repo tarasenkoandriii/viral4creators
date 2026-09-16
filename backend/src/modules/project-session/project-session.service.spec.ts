@@ -168,7 +168,7 @@ describe('ProjectSessionService.listForItem', () => {
     const list = await service.listForItem('u1', 'p1', 'i1');
     expect(prisma.session.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { productItemId: 'i1' },
+        where: { productItemId: 'i1', deletedAt: null },
         orderBy: { createdAt: 'desc' },
       }),
     );

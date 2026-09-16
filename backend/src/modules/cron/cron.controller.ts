@@ -238,6 +238,88 @@ export class CronController {
   }
 
   /**
+   * GET /api/cron/tutorial-scenario-generate — генерация сценариев для
+   * будущей автозаписи обучающих видео (этап 94,
+   * doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.10). Раз в сутки
+   * (`backend/vercel.json`), а не «каждые 1-2 минуты», как у
+   * `/cron/catalog-batch-run` и соседей: §4.11 того же ТЗ прямо просит
+   * сценарии генерировать заметно реже, чем идёт бесплатная съёмка —
+   * это десять последовательных вызовов Gemini за один прогон, торопиться
+   * некуда, а прикидка стоимости платных сценариев только копится в базе
+   * до отдельного одобрения оператором.
+   *
+   * Best-effort в том же смысле, что у остальных крон-маршрутов: без
+   * `GEMINI_API_KEY`/`GOOGLE_GEMINI_API_KEY` воркер бросит исключение при
+   * создании клиента — прогон целиком считается неудачным (в отличие от
+   * «нашли ноль подходящих строк» у большинства соседей, тут нечего
+   * найти без самого вызова ИИ).
+   */
+  @Get('tutorial-scenario-generate')
+  async tutorialScenarioGenerateCron(
+    @Headers('authorization') authHeader?: string,
+  ) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'tutorial-scenario-generate',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runTutorialScenarioGenerate(),
+    );
+  }
+
+  /**
+   * GET /api/cron/tutorial-scenario-run — исполнение уже сгенерированных
+   * сценариев (этап 97, §5 ТЗ) headless-браузером против фикстурного
+   * пользователя (§3.3 ТЗ). Свой крон-слот, через час после `/tutorial-
+   * scenario-generate` (`backend/vercel.json`) — то самое окно между
+   * генерацией и первым исполнением, за которое платный сценарий должен
+   * успеть получить (или не получить) одобрение оператора; запускать их
+   * одним проходом обесценило бы это одобрение.
+   *
+   * Best-effort в другом смысле, чем у соседей: без `FIXTURE_USER_TOKEN`/
+   * `FIXTURE_TELEGRAM_ID`/`TMA_PUBLIC_URL` или незаведённого фикстурного
+   * пользователя воркер не бросает — отдаёт `{skipped: string}` и
+   * логирует предупреждение (см. `TutorialScenarioRunnerService`): это
+   * ожидаемое состояние стенда до того, как оператор один раз настроит
+   * фикстуру, а не поломка, достойная 500 и записи FAILED на каждом
+   * ночном прогоне.
+   */
+  @Get('tutorial-scenario-run')
+  async tutorialScenarioRunCron(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'tutorial-scenario-run',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runTutorialScenarioRun(),
+    );
+  }
+
+  /**
+   * GET /api/cron/ui-snapshot-run — крон-обход интерфейса TMA (этап 100,
+   * §3 doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md, «Фаза 1»).
+   * Расписание — раз в две минуты (`backend/vercel.json`) — тот же темп,
+   * что у `/cron/catalog-batch-run` и соседей (§3.6 ТЗ: батчинг по
+   * времени, а не по числу маршрутов за раз).
+   *
+   * Best-effort в том же смысле, что `/tutorial-scenario-run`: без
+   * `FIXTURE_USER_TOKEN`/`FIXTURE_TELEGRAM_ID`/`TMA_PUBLIC_URL` или
+   * незаведённого фикстурного пользователя воркер не бросает — отдаёт
+   * `{skipped: string}` (см. `UiSnapshotRunnerService`), а не 500 на
+   * каждом прогоне стенда до однократной настройки фикстуры оператором.
+   */
+  @Get('ui-snapshot-run')
+  async uiSnapshotRunCron(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'ui-snapshot-run',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runUiSnapshotRun(),
+    );
+  }
+
+  /**
    * GET /api/cron/cleanup-sessions
    *
    * Deletes sessions older than SESSION_TTL_HOURS. Also prunes expired

@@ -81,6 +81,25 @@ function build() {
       .fn()
       .mockResolvedValue({ claimedRuns: 1, importedItems: 10 }),
     runExportSyncRun: jest.fn().mockResolvedValue({ checked: 3, failed: 0 }),
+    runTutorialScenarioGenerate: jest.fn().mockResolvedValue({
+      subjectKeys: 10,
+      generated: 9,
+      costly: 1,
+      failed: 1,
+      failures: [{ subjectKey: '5', reason: 'JSON не распарсился' }],
+    }),
+    runUiSnapshotRun: jest.fn().mockResolvedValue({
+      total: 5,
+      changed: 1,
+      failed: 0,
+      outcomes: [],
+    }),
+    runTutorialScenarioRun: jest.fn().mockResolvedValue({
+      total: 3,
+      passed: 2,
+      failed: 1,
+      outcomes: [],
+    }),
     runCleanupSessions: jest
       .fn()
       .mockResolvedValue({ deletedCount: 7, deletedBlobs: 3 }),
@@ -93,9 +112,9 @@ function build() {
 }
 
 describe('AdminCronService — реестр и неизвестный jobKey', () => {
-  it('реестр содержит все одиннадцать джобов', () => {
+  it('реестр содержит все четырнадцать джобов', () => {
     const { service } = build();
-    expect(service.getRegistry()).toHaveLength(11);
+    expect(service.getRegistry()).toHaveLength(14);
   });
 
   it('запуск неизвестного jobKey отклоняется до вызова CronJobsService', async () => {
@@ -143,6 +162,65 @@ describe('AdminCronService — debug у девяти джобов только �
     expect(jobs.runExportSyncRun).toHaveBeenCalledTimes(1);
     expect(row.status).toBe('SUCCESS');
     expect(row.summary).toContain('checked=3');
+  });
+
+  it('tutorial-scenario-generate: делегирует CronJobsService.runTutorialScenarioGenerate (этап 94, ТЗ §4.10)', async () => {
+    const { service, jobs } = build();
+    const row = await service.run(
+      'tutorial-scenario-generate',
+      'admin-1',
+      false,
+    );
+    expect(jobs.runTutorialScenarioGenerate).toHaveBeenCalledTimes(1);
+    expect(row.status).toBe('SUCCESS');
+    expect(row.summary).toContain('generated=9');
+  });
+
+  it('tutorial-scenario-run: делегирует CronJobsService.runTutorialScenarioRun (этап 97, §5 ТЗ)', async () => {
+    const { service, jobs } = build();
+    const row = await service.run('tutorial-scenario-run', 'admin-1', false);
+    expect(jobs.runTutorialScenarioRun).toHaveBeenCalledTimes(1);
+    expect(row.status).toBe('SUCCESS');
+    expect(row.summary).toContain('passed=2');
+  });
+
+  // Тот же приём, что cleanup-sessions выше, для нового джоба (см.
+  // доккомментарий cron-run-summary.ts): пропуск из-за ненастроенной
+  // фикстуры не должен читаться в истории как «0 сценариев вообще».
+  it('tutorial-scenario-run: пропуск из-за ненастроенной фикстуры виден в summary', async () => {
+    const { service, jobs } = build();
+    jobs.runTutorialScenarioRun.mockResolvedValue({
+      skipped: 'фикстурный вход не настроен',
+      total: 0,
+      passed: 0,
+      failed: 0,
+      outcomes: [],
+    });
+    const row = await service.run('tutorial-scenario-run', 'admin-1', false);
+    expect(row.summary).toContain('фикстурный вход не настроен');
+  });
+
+  it('ui-snapshot-run: делегирует CronJobsService.runUiSnapshotRun (этап 100, §3 ТЗ)', async () => {
+    const { service, jobs } = build();
+    const row = await service.run('ui-snapshot-run', 'admin-1', false);
+    expect(jobs.runUiSnapshotRun).toHaveBeenCalledTimes(1);
+    expect(row.status).toBe('SUCCESS');
+    expect(row.summary).toContain('changed=1');
+  });
+
+  // Тот же приём, что у tutorial-scenario-run выше — пропуск из-за
+  // ненастроенной фикстуры не должен читаться как «0 маршрутов вообще».
+  it('ui-snapshot-run: пропуск из-за ненастроенной фикстуры виден в summary', async () => {
+    const { service, jobs } = build();
+    jobs.runUiSnapshotRun.mockResolvedValue({
+      skipped: 'фикстурный вход не настроен',
+      total: 0,
+      changed: 0,
+      failed: 0,
+      outcomes: [],
+    });
+    const row = await service.run('ui-snapshot-run', 'admin-1', false);
+    expect(row.summary).toContain('фикстурный вход не настроен');
   });
 });
 

@@ -209,7 +209,15 @@ export default function PublicationsPage() {
                             </div>
                           )}
                           <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                            <Link href={`/sessions/${item.sessionId}`}>сессия {item.sessionId.slice(0, 8)}…</Link>
+                            {item.tutorialVideoAssetId ? (
+                              // Этап 101 (§4.7): заявка от обучающего видео, не от
+                              // сессии — сессии в принципе не существует.
+                              <span>обучающее видео {item.tutorialVideoAssetId.slice(0, 8)}…</span>
+                            ) : (
+                              item.sessionId && (
+                                <Link href={`/sessions/${item.sessionId}`}>сессия {item.sessionId.slice(0, 8)}…</Link>
+                              )
+                            )}
                             {' · '}
                             <a href={item.videoUrl} target="_blank" rel="noreferrer">
                               скачать

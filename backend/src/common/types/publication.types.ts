@@ -20,8 +20,12 @@ export type PublicationPrivacy = 'PRIVATE' | 'UNLISTED' | 'PUBLIC';
 export interface PublicationRequestView {
   id: string;
   userId: string;
-  sessionId: string;
-  generatedVideoId: string;
+  /** null у заявок Фазы 3 (этап 101, ТЗ §4.7) — см. `tutorialVideoAssetId`. */
+  sessionId: string | null;
+  generatedVideoId: string | null;
+  /** Этап 101 (ТЗ §4.7): заполнено вместо sessionId/generatedVideoId у
+   * заявок на публикацию обучающего видео, не рекламного ролика. */
+  tutorialVideoAssetId: string | null;
   projectId: string | null;
   productItemId: string | null;
   platform: PublicationPlatform;

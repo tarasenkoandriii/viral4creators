@@ -44,6 +44,30 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
   ) {
     return 'пропущен — предыдущий прогон ещё держал замок';
   }
+  // Тот же приём, что у cleanup-sessions выше: без этой ветки прогон,
+  // пропущенный из-за ненастроенной фикстуры (§3.3 ТЗ,
+  // `TutorialScenarioRunnerService.run()`) или джоб-замка, выглядел бы
+  // в журнале как «0 сценариев» — неотличимо от «сценариев и правда
+  // ещё нет ни одного». Причина пропуска — то единственное, что
+  // оператору тут интересно увидеть без раскрытия debug.
+  if (
+    jobKey === 'tutorial-scenario-run' &&
+    result &&
+    typeof result === 'object' &&
+    typeof (result as { skipped?: string }).skipped === 'string'
+  ) {
+    return `пропущен — ${(result as { skipped: string }).skipped}`;
+  }
+  // Тот же приём, что у tutorial-scenario-run выше (этап 100,
+  // UiSnapshotRunnerService.run()).
+  if (
+    jobKey === 'ui-snapshot-run' &&
+    result &&
+    typeof result === 'object' &&
+    typeof (result as { skipped?: string }).skipped === 'string'
+  ) {
+    return `пропущен — ${(result as { skipped: string }).skipped}`;
+  }
   if (jobKey === 'blog' && result && typeof result === 'object') {
     const r = result as { generation?: object; translation?: object };
     const gen = r.generation

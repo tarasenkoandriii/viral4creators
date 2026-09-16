@@ -236,6 +236,21 @@ Telegram-логин, который их и породил.
      401 (секрет задан, заголовка нет), а не 503 (секрет не задан) и не
      200. На dev-стенде (`ALLOW_DEV_AUTH=true` вне production) крон открыт
      без секрета — те же два предохранителя, что у dev-входа.
+   - `FIXTURE_USER_TOKEN` и `FIXTURE_TELEGRAM_ID` (§3.3 ТЗ
+     doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md, этап 97,
+     `backend/src/common/fixture-token.ts`) — служебный вход
+     автоматического исполнителя сценариев обучающих видео (крон
+     `/api/cron/tutorial-scenario-run`): headless-браузер шлёт заголовок
+     `X-Fixture-Token`, middleware сверяет constant-time и выдаёт
+     identity пользователя с `telegramId=FIXTURE_TELEGRAM_ID`. Не
+     ALLOW_DEV_AUTH — тот обход недоступен на проде, а этот исполнитель
+     обязан работать именно там. Не заданы — крон-джоб не падает, просто
+     логирует предупреждение и пропускает прогон (см.
+     `TutorialScenarioRunnerService`). `FIXTURE_USER_TOKEN` генерируется
+     так же, как `CRON_SECRET`; фикстурного пользователя и его данные
+     (проект/товар/манифест/сессия с роликом) заводит отдельный
+     ops-скрипт `backend/scripts/seed-fixture-user.ts`, запускается
+     вручную один раз, не частью деплоя.
    - `SERPAPI_API_KEY` (§6.1) и `SERPAPI_DAILY_LIMIT_PER_USER` — поиск
      аналогов товара. Не задан — экран аналогов честно откажет, но
      остальной сценарий работает.
@@ -416,6 +431,30 @@ Telegram-логин, который их и породил.
      - `BLOG_TRANSLATE_BATCH_LIMIT` — максимум ожидающих переводов,
        отправляемых одним batch-запросом к xAI за прогон крона; не
        задана — умолчание из кода (50).
+   - **Headless Chromium (`common/headless-chromium.ts`, этап 95) —
+     og:image-запасной вариант для обложки блога, и общая инфраструктура
+     для будущего исполнителя сценариев обучающих видео (§5
+     doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md).** Все переменные
+     необязательны для Vercel — без них модуль сам качает
+     `@sparticuz/chromium-min` с GitHub при первом вызове; заданы они
+     обычно только для локального Docker-стенда.
+     - `PUPPETEER_EXECUTABLE_PATH` — путь к системному Chromium (для
+       локального Docker-образа, где он уже установлен пакетом
+       ОС/дистрибутива); задана — модуль вообще не трогает
+       `@sparticuz/chromium-min`/GitHub. На Vercel не задавать.
+     - `CHROMIUM_PACK_URL` — переопределяет URL архива Chromium (по
+       умолчанию `chromium-v127.0.0-pack.tar` с релизов
+       github.com/Sparticuz/chromium, версия прибита гвоздями под
+       протокол установленного `puppeteer-core` 23.x). Менять только
+       вместе с версией `puppeteer-core`.
+     - `AWS_EXECUTION_ENV`, `AWS_LAMBDA_JS_RUNTIME` — не задаются
+       вручную нигде: модуль сам подставляет `AWS_LAMBDA_JS_RUNTIME`,
+       если не видит ни одной из них, — подсказка рантайма, без которой
+       `@sparticuz/chromium-min` не распаковывает системные библиотеки
+       Chromium на Vercel (тот не выставляет их сам, хотя под капотом та
+       же AWS Lambda). Упомянуты здесь только чтобы явно задать одну из
+       них вручную было НЕ нужно — это диагностический, а не
+       конфигурационный путь.
    - **ИИ-консультант на лендинге (doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md,
      этап 82)** — выключен по умолчанию (`assistant_enabled` в
      `PlatformSetting`, включается в админке, `/settings`), поэтому все

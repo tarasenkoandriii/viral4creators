@@ -534,6 +534,7 @@
     "actionPlan": "Дивитись тариф",
     "actionFaq": "Дивитись у FAQ",
     "actionLegal": "Відкрити документ",
+    "actionVideo": "Дивитись відео",
     "charsLeft": "Залишилось {{n}} симв."
   }
 }

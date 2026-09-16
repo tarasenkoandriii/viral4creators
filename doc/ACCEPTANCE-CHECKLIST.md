@@ -71,9 +71,17 @@ Veo-рендере, ручная правка баланса кредитов о
 не выполнение тестов; прогон заодно вскрыл те же 17 падающих тестов и 6
 не запускающихся наборов, что и на этапе 71 — долг предыдущих этапов,
 не новый дефект, см. туда же), eslint 0 ошибок,
-`prisma validate`; все 50
-миграций применяются подряд к чистому Postgres 16 (42 таблиц), включая
-новую миграцию этапа 89
+`prisma validate`; все 55
+миграций применяются подряд к чистому Postgres 16 (45 таблиц), включая
+новую миграцию этапа 101 (`20261116090000_publication_requests_tutorial_video_link`
+— `tutorialVideoAssetId` + nullable `sessionId`/`generatedVideoId` на
+`publication_requests`, ни одной новой таблицы), новую таблицу и
+миграцию этапа 100 (`20261115090000_ui_snapshots` —
+таблица `ui_snapshots`), новую таблицу и миграцию этапа 98 (`20261031090000_tutorial_video_assets`
+— таблица `tutorial_video_assets`), новую миграцию этапа 95 (`20261030090000_blog_source_image_url` —
+колонка `sourceImageUrl` на `blog_posts`, ни одной новой таблицы), этапа
+94 (`20261029090000_tutorial_scenarios` — новая
+таблица `tutorial_scenarios`), этапа 89
 (`20261028090000_soft_delete_project_item_session` — три новые колонки
 `deletedAt` на `projects`/`product_items`/`sessions` с обычным индексом
 каждая, ни одной новой таблицы) и этапа 82

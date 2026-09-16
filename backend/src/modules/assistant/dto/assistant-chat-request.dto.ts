@@ -65,10 +65,15 @@ export class AssistantChatRequestDto {
   @IsIn(SUPPORTED_LOCALES)
   locale!: string;
 
+  // Найдено доп. аудитом: обучалка выросла до 10 шагов (этап 92, десятый
+  // — «Постпродакшн»), а этот предел остался от старой девятишаговой
+  // версии — POST с stepId:10 (легитимный для последнего шага) отклонялся
+  // ValidationPipe'ом ещё до контроллера. Верхняя граница здесь обязана
+  // совпадать с проверками в assistant.service.ts и actions.ts (обе — 10).
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Max(9)
+  @Max(10)
   stepId?: number;
 
   @IsIn(['home', 'how-it-works'])

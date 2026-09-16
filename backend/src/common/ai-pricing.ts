@@ -136,7 +136,16 @@ export type AiOperation =
   // потолка продукта (`AiUsageService.spentTodayForOperation`), поэтому
   // строка отчёта расходов обязана быть видна отдельно и от остальной
   // анонимной активности, и от любой другой операции.
-  | 'assistant';
+  | 'assistant'
+  // Генерация сценария обучающего видео по крону `tutorial-scenario-
+  // generate` (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.10,
+  // этап 94) — второй случай без `sessionId`/`userId` вовсе (тот же
+  // класс, что 'assistant' выше): фоновый крон, не действие живого
+  // пользователя. Сама генерация — дешёвый текстовый вызов Gemini, не
+  // путать с платными операциями, которые СГЕНЕРИРОВАННЫЙ сценарий
+  // может упоминать внутри себя (§4.11) — те не вызываются здесь,
+  // только описываются как план на будущее исполнение.
+  | 'tutorial-scenario-generate';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -162,6 +171,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'original-dialogue-extraction': 'Извлечение реплик оригинала для пробы голоса',
   'character-preview': 'Превью персонажа из текста',
   assistant: 'ИИ-консультант на лендинге',
+  'tutorial-scenario-generate': 'Генерация сценария обучающего видео',
 };
 
 export interface ModelRate {

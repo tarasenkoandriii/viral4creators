@@ -26,7 +26,6 @@ import {
   GeneratedVideo,
   VideoQuality,
 } from '../services/api';
-import { reVoiceVideo } from '../services/postprod-api';
 import type { BrandManifestSnapshot, Session, VoiceMode } from '../types';
 import type { YoutubeSearchDefaults } from '../components/YoutubeSearch';
 import { aspectRatioFromSize, readVideoSize } from '../lib/aspect-ratio';
@@ -518,7 +517,8 @@ export function useWorkflow() {
               // карточкой и без единой кнопки: уйти можно было только
               // перезагрузкой страницы, о которой нигде не сказано.
               currentStep: 'upload',
-              error: analysis.error?.message || dict.wizardErrors.analysisFailed,
+              error:
+                analysis.error?.message || dict.wizardErrors.analysisFailed,
             }));
           }
         } catch (error) {
@@ -1278,36 +1278,6 @@ export function useWorkflow() {
   );
 
   /**
-   * Переозвучить уже готовый ролик БЕЗ повторной генерации (доп. запрос
-   * владельца продукта, этап 87 — постпродакшен-переозвучка). Тонкий
-   * обработчик, тем же приёмом, что `handleGenerateVideo`: свой вызов
-   * сервиса + тот же общий опрос (`startVideoPolling`) подхватывает
-   * результат — `postStatus` вновь уходит в `'pending'`, а
-   * `shouldKeepPolling` уже умеет ждать именно это состояние (готовый
-   * `status` + идущая постобработка), второго канала опроса заводить не
-   * пришлось.
-   *
-   * Ошибку НЕ гасим здесь и не пишем в общий `error` экрана — бросаем
-   * дальше: `RevoicePanel` показывает её у себя, тем же приёмом, что
-   * `ExportPanel` у своих действий (вызывает сервис напрямую, ловит
-   * ошибку локально). Здесь состояние приходится трогать — успешный
-   * ответ обязан попасть в общий `generatedVideo`, иначе главная кнопка
-   * «Скачать» продолжала бы указывать на старую озвучку.
-   */
-  const handleReVoice = useCallback(
-    async (voiceoverScript?: string) => {
-      if (!state.sessionId) {
-        throw new Error(dict.wizardErrors.noActiveSession);
-      }
-      const video = await reVoiceVideo(state.sessionId, voiceoverScript);
-      setState((prev) => ({ ...prev, generatedVideo: video }));
-      startVideoPolling(state.sessionId);
-      return video;
-    },
-    [state.sessionId, startVideoPolling, dict]
-  );
-
-  /**
    * Analysis accepted as-is → product step. (Editing + saving the analysis
    * gets there through handleUpdateAnalysis; this is the no-edit path.)
    */
@@ -1469,7 +1439,6 @@ export function useWorkflow() {
     selectProductImage: handleImageSelect,
     uploadProductImage: handleUploadProductImage,
     generateVideo: handleGenerateVideo,
-    reVoice: handleReVoice,
     clearError,
     showError,
   };

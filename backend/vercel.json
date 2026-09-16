@@ -44,6 +44,18 @@
     {
       "path": "/api/cron/export-sync-run",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/tutorial-scenario-generate",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/tutorial-scenario-run",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/ui-snapshot-run",
+      "schedule": "*/2 * * * *"
     }
   ]
 }
