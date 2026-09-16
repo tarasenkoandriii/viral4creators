@@ -46,15 +46,15 @@ GPT-5 arma un prompt de texto a video a partir del análisis, el producto, el ma
 - El prompt se puede ajustar a mano antes de guardar
 - Un campo de texto aparte para la locución — si se elige una voz propia
 
-### 7. Elige el formato y las imágenes para Veo
+### 7. Elige el formato y las imágenes de referencia
 Relación de aspecto — 16:9 y 9:16 en cualquier plan, además de 3:4, 1:1 o una personalizada desde Standard en adelante — y qué tres imágenes recibirá el modelo como referencia: personajes, tus escenas, escenas de marca, foto del producto. Todo lo demás se incluye como texto en el prompt.
 (disponible desde el plan: Standard+)
 - Calidad de renderizado: «Rápida» o «Cinematográfica» (Standard+)
-- Hasta tres imágenes de referencia para Veo — tus propias escenas y fotos (Standard+)
+- Hasta tres imágenes de referencia para el motor de generación — tus propias escenas y fotos (Standard+)
 - Relación de aspecto: 16:9 y 9:16 en cualquier plan, el resto desde Standard
 
 ### 8. Genera el video
-Google Veo 3.1 renderiza el nuevo video publicitario — a elección, calidad rápida o más cinematográfica.
+Grok o Google Veo 3.1 renderiza el nuevo video publicitario — a elección, motor y calidad de renderizado, más rápido o más cinematográfico.
 - La foto del producto es obligatoria — sin ella el botón de generar no aparece
 - Botón «Generar video publicitario»
 - Si falla — «Generar de nuevo»
@@ -67,9 +67,9 @@ Una verificación aparte de artefactos propondrá un prompt corregido para una n
 - Botón «Abrir en Postprod» — el mismo video, junto con todos tus demás videos
 
 ### 10. Gestiónalo en Postprod
-Una pestaña aparte, «Postprod», con todos tus videos terminados, no solo el último. Cambia el texto y la voz — con un proveedor de síntesis explícito y una escucha previa honesta antes de pagar — sin un nuevo renderizado en Veo. Exporta a varias plataformas y publica con una página para compartir.
+Una pestaña aparte, «Postprod», con todos tus videos terminados, no solo el último. Cambia el texto y la voz — con un proveedor de síntesis explícito y una escucha previa honesta antes de pagar — sin un nuevo renderizado. Exporta a varias plataformas y publica con una página para compartir.
 (disponible desde el plan: Standard+)
-- Redoblaje sin nuevo renderizado en Veo — solo cambian el audio, los subtítulos y el texto (Standard+)
+- Redoblaje sin nuevo renderizado — solo cambian el audio, los subtítulos y el texto (Standard+)
 - Proveedor de síntesis de voz — ElevenLabs o Resemble de forma explícita, o «como está»
 - Escucha previa de la combinación exacta de texto, voz y proveedor — antes de pagar el redoblaje
 - Exportación a varias plataformas a la vez — sin pagar el renderizado otra vez (Standard+)
@@ -84,7 +84,7 @@ No. La sesión es anónima y se crea automáticamente en la primera visita — s
 MP4, MOV y AVI de hasta 100 MB, o simplemente un enlace a un video público de YouTube — en ese caso no hace falta descargar ni subir ningún archivo.
 
 **¿Cuánto tarda la generación del video?**
-Una vez aprobado el prompt, el video suele estar listo en 3 a 5 minutos — el tiempo depende del modo elegido (Fast o Standard) y de la carga actual de Veo 3.1.
+Una vez aprobado el prompt, el video suele estar listo en 3 a 5 minutos — el tiempo exacto depende del motor de generación elegido (Grok por defecto; también está disponible Google Veo 3.1 con los modos Fast/Standard) y de la carga actual.
 
 **¿Cuánto cuesta?**
 Por ahora, nada: los tres planes — Lite, Standard y Premium — son gratuitos y se cambian directamente desde la aplicación. Es un período de prueba; cuando se introduzcan los pagos, lo que ya hayas hecho seguirá siendo tuyo. Más adelante, Lite pasará a ser condicionalmente gratuito — a cambio de dar «me gusta» al canal de YouTube del proyecto y enviar algunos enlaces al servicio.

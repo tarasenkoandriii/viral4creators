@@ -1,10 +1,11 @@
 {
   "meta": {
     "title": "viral4creators — UGC ads from a single example",
-    "description": "Upload one successful UGC ad video — get a new one, for your product, in the same style. Video breakdown by Gemini, generation on Google Veo 3.1, free and with no sign-up.",
+    "description": "Upload one successful UGC ad video — get a new one, for your product, in the same style. Video breakdown by Gemini, generation on Grok or Google Veo 3.1, free and with no sign-up.",
     "keywords": [
       "UGC ads",
       "AI video generation",
+      "Grok",
       "Google Veo 3.1",
       "ad video",
       "video ad generator"
@@ -89,8 +90,8 @@
       },
       {
         "icon": "▶",
-        "title": "Google Veo 3.1, two render qualities",
-        "text": "Fast (Veo 3.1 Lite) — noticeably quicker; cinematic (full Veo 3.1) — better-looking and slower. The choice is made on every generation and isn't tied to your service plan."
+        "title": "Grok or Google Veo 3.1 — pick your engine",
+        "text": "Grok renders by default — it's cheaper and usually faster; for a more cinematic look you can switch to Google Veo 3.1 (fast Lite or full quality). The engine and quality are chosen on every generation, independent of your service plan."
       },
       {
         "icon": "⌕",
@@ -179,24 +180,24 @@
         ]
       },
       {
-        "title": "Choose the format and images for Veo",
+        "title": "Choose the format and reference images",
         "shortLabel": "Format & images",
         "text": "Aspect ratio — 16:9 and 9:16 on any plan, plus 3:4, 1:1 or a custom one from Standard up — and which three images the model will get as references: characters, your scenes, brand scenes, product photo. Everything else goes into the prompt as text.",
         "icon": "⧉",
         "badge": "standard",
-        "highlight": "Aspect ratio and up to three reference images for Veo — under your control",
+        "highlight": "Aspect ratio and up to three reference images for the model — under your control",
         "details": [
           "Render quality: \"Fast\" or \"Cinematic\" (Standard+)",
-          "Up to three reference images for Veo — your own scenes and photos (Standard+)",
+          "Up to three reference images for the generation engine — your own scenes and photos (Standard+)",
           "Aspect ratio: 16:9 and 9:16 on any plan, the rest from Standard up"
         ]
       },
       {
         "title": "Generate the video",
         "shortLabel": "Render",
-        "text": "Google Veo 3.1 renders the new ad video — pick fast or more cinematic render quality.",
+        "text": "Grok or Google Veo 3.1 renders the new ad video — pick the engine and render quality, faster or more cinematic.",
         "icon": "▣",
-        "highlight": "One required product photo — Veo takes it from there",
+        "highlight": "One required product photo — the generation engine takes it from there",
         "details": [
           "A product photo is required — the generate button stays hidden without it",
           "\"Generate the ad video\" button",
@@ -219,12 +220,12 @@
       {
         "title": "Manage it in Postprod",
         "shortLabel": "Postprod",
-        "text": "A separate Postprod tab with all your finished videos, not just the latest one. Change the script and the voice — with an explicit synthesis provider and an honest pre-listen before you pay — without a new Veo render. Export to several platforms and publish with a shareable page.",
+        "text": "A separate Postprod tab with all your finished videos, not just the latest one. Change the script and the voice — with an explicit synthesis provider and an honest pre-listen before you pay — without a new render. Export to several platforms and publish with a shareable page.",
         "icon": "⇉",
         "badge": "standard",
         "highlight": "Re-voice without a new render, explicit provider choice, and a pre-listen — before you pay",
         "details": [
-          "Re-voice without a new Veo render — only the audio, subtitles and script change (Standard+)",
+          "Re-voice without a new render — only the audio, subtitles and script change (Standard+)",
           "Voice synthesis provider — ElevenLabs or Resemble explicitly, or “as is”",
           "Pre-listen to the exact text, voice and provider combination — before paying for the re-voice",
           "Export to several platforms at once — no extra render charge (Standard+)",
@@ -257,7 +258,7 @@
           "AI reference breakdown with scenes, characters and extras",
           "Reference search on YouTube, a link, or your own file",
           "Prompt assembly and manual editing",
-          "16:9 or 9:16 generation — the formats Veo renders natively",
+          "16:9 or 9:16 generation — formats available without limits on any plan",
           "Download the finished file"
         ],
         "excluded": [
@@ -277,7 +278,7 @@
           "Reference-to-product relevance check",
           "Finished video artifact audit and a fixed prompt",
           "Brand manifest: style, voice, recurring characters and locations",
-          "Your own scenes and manual pick of three images for Veo",
+          "Your own scenes and manual pick of three images for the generation engine",
           "Photo character swap",
           "Any aspect ratio, including a custom one",
           "Publishing through the service"
@@ -318,7 +319,7 @@
       },
       {
         "title": "What the model sees as an image, and what as words",
-        "text": "Veo accepts no more than three reference images. The service shows exactly which three will be sent — characters, your scenes, brand scenes, product photo — and lets you assemble that set by hand. Anything that doesn't make the slots is described in the prompt as text instead of being lost."
+        "text": "The service limits the set of images sent to the generation model (Grok or Google Veo) to three reference images. It shows exactly which three will be sent — characters, your scenes, brand scenes, product photo — and lets you assemble that set by hand. Anything that doesn't make the slots is described in the prompt as text instead of being lost."
       },
       {
         "title": "The library of breakdowns and privacy",
@@ -355,10 +356,7 @@
         "title": "A video goes out into the world and spreads on its own",
         "outcome": "From \"uploaded a reference\" to \"published and shared\" — without leaving the product.",
         "items": [
-          "Upload to YouTube and TikTok straight from the moderation queue",
-          "A dedicated page for a finished video: watch it and make one just like it",
-          "Reposting a video to your own Telegram group or channel",
-          "Burned-in captions with brand styling and automatic timing"
+          "Reposting a video to your own Telegram group or channel"
         ]
       },
       {
@@ -366,7 +364,6 @@
         "outcome": "The service gets pricing plans, its own feed, and an API key for third-party apps.",
         "items": [
           "Pricing and payment: subscriptions, generation packs, Telegram Stars",
-          "An opt-in weekly digest of standout videos, sent via Telegram",
           "A feed with likes and reposts; paying subscribers can publish to it",
           "An external API by key for the Premium plan"
         ]
@@ -375,20 +372,13 @@
         "title": "A storefront and inbound search",
         "outcome": "Someone searching for ads in their niche finds the product on their own and lands in the wizard.",
         "items": [
-          "A blog: fresh videos in a category with a breakdown of the techniques used",
-          "An RSS feed of new ad videos rated highly by AI",
-          "A news sitemap and structured markup for the posts",
-          "A trend library by category, built into the product",
-          "A multilingual app and landing page interface (ru/uk/en/de/es)"
+          "A trend library by category, built into the product"
         ]
       },
       {
         "title": "From one video to a whole stream of them",
         "outcome": "A hundred-item catalog covers a month's content plan in one evening.",
         "items": [
-          "Batch generation: one reference applied to every product in a project",
-          "A/B variants of the hook and the call to action",
-          "Catalog import from a store instead of manual entry",
           "Scene templates to start without a reference at all",
           "Localizing one video into several languages",
           "A publishing scheduler and a check against each platform's rules"
@@ -399,9 +389,7 @@
         "outcome": "Viewers can't tell a video was generated, and a series reads as one consistent brand.",
         "items": [
           "Your actual product on screen, not something that merely resembles it",
-          "A recurring brand ambassador and a clone of their voice",
-          "Lip-sync to your own audio track",
-          "Videos longer than eight seconds"
+          "Lip-sync to your own audio track"
         ]
       },
       {
@@ -431,7 +419,7 @@
       },
       {
         "question": "How long does video generation take?",
-        "answer": "Once the prompt is approved, the video is usually ready in 3–5 minutes — the time depends on the chosen mode (Fast or Standard) and current load on Veo 3.1."
+        "answer": "Once the prompt is approved, the video is usually ready in 3–5 minutes — the exact time depends on the chosen generation engine (Grok by default, Google Veo 3.1 with Fast/Standard modes is also available) and current load."
       },
       {
         "question": "How much does it cost?",

@@ -1,10 +1,11 @@
 {
   "meta": {
     "title": "viral4creators — anuncios UGC a partir de un solo ejemplo",
-    "description": "Sube un video publicitario UGC exitoso y obtén uno nuevo, para tu producto, en el mismo estilo. Análisis del video con Gemini, generación con Google Veo 3.1, gratis y sin registro.",
+    "description": "Sube un video publicitario UGC exitoso y obtén uno nuevo, para tu producto, en el mismo estilo. Análisis del video con Gemini, generación con Grok o Google Veo 3.1, gratis y sin registro.",
     "keywords": [
       "publicidad UGC",
       "generación de video con IA",
+      "Grok",
       "Google Veo 3.1",
       "video publicitario",
       "generador de anuncios en video"
@@ -89,8 +90,8 @@
       },
       {
         "icon": "▶",
-        "title": "Google Veo 3.1, dos calidades de renderizado",
-        "text": "Rápida (Veo 3.1 Lite) — notablemente más veloz; cinematográfica (Veo 3.1 completo) — más cuidada y lenta. La elección se hace en cada generación y no depende del plan del servicio."
+        "title": "Grok o Google Veo 3.1 — elige el motor",
+        "text": "Por defecto renderiza Grok — más económico y normalmente más rápido; para un aspecto más cinematográfico puedes cambiar a Google Veo 3.1 (rápido Lite o calidad completa). El motor y la calidad se eligen en cada generación, sin depender del plan del servicio."
       },
       {
         "icon": "⌕",
@@ -179,24 +180,24 @@
         ]
       },
       {
-        "title": "Elige el formato y las imágenes para Veo",
+        "title": "Elige el formato y las imágenes de referencia",
         "shortLabel": "Formato e imágenes",
         "text": "Relación de aspecto — 16:9 y 9:16 en cualquier plan, además de 3:4, 1:1 o una personalizada desde Standard en adelante — y qué tres imágenes recibirá el modelo como referencia: personajes, tus escenas, escenas de marca, foto del producto. Todo lo demás se incluye como texto en el prompt.",
         "icon": "⧉",
         "badge": "standard",
-        "highlight": "Relación de aspecto y hasta tres imágenes de referencia para Veo — bajo tu control",
+        "highlight": "Relación de aspecto y hasta tres imágenes de referencia para el modelo — bajo tu control",
         "details": [
           "Calidad de renderizado: «Rápida» o «Cinematográfica» (Standard+)",
-          "Hasta tres imágenes de referencia para Veo — tus propias escenas y fotos (Standard+)",
+          "Hasta tres imágenes de referencia para el motor de generación — tus propias escenas y fotos (Standard+)",
           "Relación de aspecto: 16:9 y 9:16 en cualquier plan, el resto desde Standard"
         ]
       },
       {
         "title": "Genera el video",
         "shortLabel": "Renderizado",
-        "text": "Google Veo 3.1 renderiza el nuevo video publicitario — a elección, calidad rápida o más cinematográfica.",
+        "text": "Grok o Google Veo 3.1 renderiza el nuevo video publicitario — a elección, motor y calidad de renderizado, más rápido o más cinematográfico.",
         "icon": "▣",
-        "highlight": "Una foto del producto obligatoria — el resto lo hace Veo",
+        "highlight": "Una foto del producto obligatoria — el resto lo hace el motor de generación",
         "details": [
           "La foto del producto es obligatoria — sin ella el botón de generar no aparece",
           "Botón «Generar video publicitario»",
@@ -219,12 +220,12 @@
       {
         "title": "Gestiónalo en Postprod",
         "shortLabel": "Postprod",
-        "text": "Una pestaña aparte, «Postprod», con todos tus videos terminados, no solo el último. Cambia el texto y la voz — con un proveedor de síntesis explícito y una escucha previa honesta antes de pagar — sin un nuevo renderizado en Veo. Exporta a varias plataformas y publica con una página para compartir.",
+        "text": "Una pestaña aparte, «Postprod», con todos tus videos terminados, no solo el último. Cambia el texto y la voz — con un proveedor de síntesis explícito y una escucha previa honesta antes de pagar — sin un nuevo renderizado. Exporta a varias plataformas y publica con una página para compartir.",
         "icon": "⇉",
         "badge": "standard",
         "highlight": "Redoblaje sin nuevo renderizado, proveedor explícito y escucha previa — antes de pagar",
         "details": [
-          "Redoblaje sin nuevo renderizado en Veo — solo cambian el audio, los subtítulos y el texto (Standard+)",
+          "Redoblaje sin nuevo renderizado — solo cambian el audio, los subtítulos y el texto (Standard+)",
           "Proveedor de síntesis de voz — ElevenLabs o Resemble de forma explícita, o «como está»",
           "Escucha previa de la combinación exacta de texto, voz y proveedor — antes de pagar el redoblaje",
           "Exportación a varias plataformas a la vez — sin pagar el renderizado otra vez (Standard+)",
@@ -257,7 +258,7 @@
           "Análisis de la referencia con IA: escenas, personajes y extras",
           "Búsqueda de referencia en YouTube, por enlace o con tu propio archivo",
           "Armado del prompt y edición manual",
-          "Generación en 16:9 o 9:16 — los formatos que Veo renderiza de forma nativa",
+          "Generación en 16:9 o 9:16 — formatos disponibles sin límites en cualquier plan",
           "Descarga del archivo final"
         ],
         "excluded": [
@@ -277,7 +278,7 @@
           "Verificación de relevancia de la referencia para tu producto",
           "Auditoría de artefactos del video terminado y un prompt corregido",
           "Manifiesto de marca: estilo, voz, personajes y ubicaciones recurrentes",
-          "Escenas propias y selección manual de las tres imágenes para Veo",
+          "Escenas propias y selección manual de las tres imágenes para el motor de generación",
           "Reemplazo de personaje con tu propia foto",
           "Cualquier formato de encuadre, incluido uno personalizado",
           "Publicación a través del servicio"
@@ -318,7 +319,7 @@
       },
       {
         "title": "Qué ve el modelo como imagen y qué como palabras",
-        "text": "Veo acepta como máximo tres imágenes de referencia. El servicio muestra exactamente cuáles tres se enviarán — personajes, tus escenas, escenas de marca, foto del producto — y permite armar ese conjunto a mano. Todo lo que no entra en esos espacios se describe como texto en el prompt en lugar de perderse."
+        "text": "El servicio limita a tres imágenes de referencia el conjunto que se envía al modelo de generación (Grok o Google Veo). Muestra exactamente cuáles tres se enviarán — personajes, tus escenas, escenas de marca, foto del producto — y permite armar ese conjunto a mano. Todo lo que no entra en esos espacios se describe como texto en el prompt en lugar de perderse."
       },
       {
         "title": "La biblioteca de análisis y la privacidad",
@@ -355,10 +356,7 @@
         "title": "Un video sale al mundo y se difunde solo",
         "outcome": "Desde «subí una referencia» hasta «publicado y compartido» — sin salir del producto.",
         "items": [
-          "Publicación en YouTube y TikTok directamente desde la cola de moderación",
-          "Una página propia para cada video terminado: verlo y crear uno similar",
-          "Republicar el video en tu propio grupo o canal de Telegram",
-          "Subtítulos incrustados con el estilo de la marca y sincronización automática"
+          "Republicar el video en tu propio grupo o canal de Telegram"
         ]
       },
       {
@@ -366,7 +364,6 @@
         "outcome": "El servicio incorpora planes de precio, un feed propio y una clave para programas de terceros.",
         "items": [
           "Planes y pagos: suscripción, paquetes de generaciones, Telegram Stars",
-          "Una selección semanal opcional de los mejores videos, enviada por Telegram",
           "Un feed con «me gusta» y republicaciones; los suscriptores de pago pueden publicar en él",
           "Una API externa con clave para el plan Premium"
         ]
@@ -375,20 +372,13 @@
         "title": "Escaparate y búsqueda entrante",
         "outcome": "Alguien que busca anuncios en su nicho llega por su cuenta y termina en el asistente.",
         "items": [
-          "Un blog: videos recientes de una categoría con análisis de las técnicas usadas",
-          "Un feed RSS de nuevos videos publicitarios bien valorados por la IA",
-          "Un mapa del sitio de noticias y marcado estructurado de las publicaciones",
-          "Una biblioteca de tendencias por categoría, integrada en el producto",
-          "Una interfaz multilingüe para la app y la landing (ru/uk/en/de/es)"
+          "Una biblioteca de tendencias por categoría, integrada en el producto"
         ]
       },
       {
         "title": "De un video a un flujo continuo",
         "outcome": "Un catálogo de cien productos cubre el plan de contenido de un mes en una sola tarde.",
         "items": [
-          "Generación por lotes: una referencia aplicada a todos los productos de un proyecto",
-          "Variantes A/B del gancho inicial y la llamada a la acción",
-          "Importación del catálogo desde una tienda en lugar de carga manual",
           "Plantillas de escena para empezar sin ninguna referencia",
           "Localización de un mismo video en varios idiomas",
           "Un planificador de publicaciones con verificación de las reglas de cada plataforma"
@@ -399,9 +389,7 @@
         "outcome": "El espectador no reconoce el video como generado, y una serie se percibe como una sola marca coherente.",
         "items": [
           "Tu producto real en pantalla, no algo que solo se le parece",
-          "Un embajador de marca recurrente con un clon de su voz",
-          "Sincronización labial con tu propia pista de audio",
-          "Videos de más de ocho segundos"
+          "Sincronización labial con tu propia pista de audio"
         ]
       },
       {
@@ -431,7 +419,7 @@
       },
       {
         "question": "¿Cuánto tarda la generación del video?",
-        "answer": "Una vez aprobado el prompt, el video suele estar listo en 3 a 5 minutos — el tiempo depende del modo elegido (Fast o Standard) y de la carga actual de Veo 3.1."
+        "answer": "Una vez aprobado el prompt, el video suele estar listo en 3 a 5 minutos — el tiempo exacto depende del motor de generación elegido (Grok por defecto; también está disponible Google Veo 3.1 con los modos Fast/Standard) y de la carga actual."
       },
       {
         "question": "¿Cuánto cuesta?",

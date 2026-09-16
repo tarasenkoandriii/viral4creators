@@ -46,15 +46,15 @@ GPT-5 stellt einen Text-zu-Video-Prompt aus Analyse, Produkt, Markenmanifest, Sp
 - Der Prompt lässt sich vor dem Speichern von Hand anpassen
 - Ein eigenes Textfeld für die Vertonung — wenn eine eigene Stimme gewählt ist
 
-### 7. Format und Bilder für Veo wählen
+### 7. Format und Referenzbilder wählen
 Seitenverhältnis — 16:9 und 9:16 in jedem Tarif, 3:4, 1:1 oder ein eigenes ab Standard — sowie die drei Bilder, die das Modell als Referenz erhält: Charaktere, eigene Szenen, Markenszenen, Produktfoto. Alles Weitere fließt als Text in den Prompt.
 (verfügbar ab Tarif: Standard+)
 - Render-Qualität: „Schnell" oder „Kinematografisch" (Standard+)
-- Bis zu drei Referenzbilder für Veo — eigene Szenen und Fotos (Standard+)
+- Bis zu drei Referenzbilder für die Generierungs-Engine — eigene Szenen und Fotos (Standard+)
 - Seitenverhältnis: 16:9 und 9:16 in jedem Tarif, der Rest ab Standard
 
 ### 8. Video generieren
-Google Veo 3.1 rendert das neue Werbevideo — wahlweise in schneller oder kinematografischerer Render-Qualität.
+Grok oder Google Veo 3.1 rendert das neue Werbevideo — wahlweise Engine und Render-Qualität, schneller oder kinematografischer.
 - Ein Produktfoto ist Pflicht — ohne es erscheint der Generieren-Button nicht
 - Schaltfläche „Werbevideo generieren"
 - Bei Fehlschlag — „Erneut generieren"
@@ -67,9 +67,9 @@ Eine separate Artefaktprüfung schlägt einen korrigierten Prompt für eine erne
 - Schaltfläche „In Postprod öffnen“ — dasselbe Video, zusammen mit all Ihren anderen
 
 ### 10. In Postprod verwalten
-Ein eigener Tab „Postprod“ mit all Ihren fertigen Videos, nicht nur dem letzten. Ändern Sie Text und Stimme — mit expliziter Wahl des Synthese-Anbieters und einem ehrlichen Vorab-Anhören vor der Zahlung — ganz ohne neues Veo-Rendering. Exportieren Sie für mehrere Plattformen und veröffentlichen Sie mit einer Seite zum Teilen.
+Ein eigener Tab „Postprod“ mit all Ihren fertigen Videos, nicht nur dem letzten. Ändern Sie Text und Stimme — mit expliziter Wahl des Synthese-Anbieters und einem ehrlichen Vorab-Anhören vor der Zahlung — ganz ohne neues Rendering. Exportieren Sie für mehrere Plattformen und veröffentlichen Sie mit einer Seite zum Teilen.
 (verfügbar ab Tarif: Standard+)
-- Neu vertonen ohne neues Veo-Rendering — nur Ton, Untertitel und Text ändern sich (Standard+)
+- Neu vertonen ohne neues Rendering — nur Ton, Untertitel und Text ändern sich (Standard+)
 - Sprachsynthese-Anbieter — explizit ElevenLabs oder Resemble, oder „wie bisher“
 - Die genaue Kombination aus Text, Stimme und Anbieter vorab anhören — vor der Zahlung für die Neuvertonung
 - Export für mehrere Plattformen zugleich — ohne erneute Render-Gebühr (Standard+)
@@ -84,7 +84,7 @@ Nein. Die Sitzung ist anonym und wird beim ersten Besuch automatisch erstellt �
 MP4, MOV und AVI bis 100 MB, oder einfach ein Link zu einem öffentlichen YouTube-Video — dann muss überhaupt keine Datei heruntergeladen oder hochgeladen werden.
 
 **Wie lange dauert die Videogenerierung?**
-Sobald der Prompt bestätigt ist, ist das Video meist innerhalb von 3–5 Minuten fertig — die Dauer hängt vom gewählten Modus (Fast oder Standard) und der aktuellen Auslastung von Veo 3.1 ab.
+Sobald der Prompt bestätigt ist, ist das Video meist innerhalb von 3–5 Minuten fertig — die genaue Dauer hängt von der gewählten Generierungs-Engine ab (standardmäßig Grok, alternativ Google Veo 3.1 mit den Modi Fast/Standard) sowie der aktuellen Auslastung.
 
 **Was kostet das?**
 Derzeit nichts: Alle drei Tarife — Lite, Standard und Premium — sind kostenlos und lassen sich direkt in der App umschalten. Das ist eine Testphase; wenn eine Bezahlung eingeführt wird, bleibt bereits Erstelltes erhalten. Später soll Lite bedingt kostenlos werden — gegen ein Like des Projekt-YouTube-Kanals und einige an den Dienst gesendete Links.

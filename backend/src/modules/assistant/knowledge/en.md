@@ -46,15 +46,15 @@ GPT-5 assembles a text-to-video prompt from the breakdown, the product, the bran
 - The prompt can be edited by hand before saving
 - A separate voice-over script field — when a custom voice is selected
 
-### 7. Choose the format and images for Veo
+### 7. Choose the format and reference images
 Aspect ratio — 16:9 and 9:16 on any plan, plus 3:4, 1:1 or a custom one from Standard up — and which three images the model will get as references: characters, your scenes, brand scenes, product photo. Everything else goes into the prompt as text.
 (available from plan: Standard+)
 - Render quality: "Fast" or "Cinematic" (Standard+)
-- Up to three reference images for Veo — your own scenes and photos (Standard+)
+- Up to three reference images for the generation engine — your own scenes and photos (Standard+)
 - Aspect ratio: 16:9 and 9:16 on any plan, the rest from Standard up
 
 ### 8. Generate the video
-Google Veo 3.1 renders the new ad video — pick fast or more cinematic render quality.
+Grok or Google Veo 3.1 renders the new ad video — pick the engine and render quality, faster or more cinematic.
 - A product photo is required — the generate button stays hidden without it
 - "Generate the ad video" button
 - On failure — "Generate again"
@@ -67,9 +67,9 @@ A separate artifact check will propose a fixed prompt for a re-generation. For a
 - An “Open in Postprod” button — the same video, alongside all your other ones
 
 ### 10. Manage it in Postprod
-A separate Postprod tab with all your finished videos, not just the latest one. Change the script and the voice — with an explicit synthesis provider and an honest pre-listen before you pay — without a new Veo render. Export to several platforms and publish with a shareable page.
+A separate Postprod tab with all your finished videos, not just the latest one. Change the script and the voice — with an explicit synthesis provider and an honest pre-listen before you pay — without a new render. Export to several platforms and publish with a shareable page.
 (available from plan: Standard+)
-- Re-voice without a new Veo render — only the audio, subtitles and script change (Standard+)
+- Re-voice without a new render — only the audio, subtitles and script change (Standard+)
 - Voice synthesis provider — ElevenLabs or Resemble explicitly, or “as is”
 - Pre-listen to the exact text, voice and provider combination — before paying for the re-voice
 - Export to several platforms at once — no extra render charge (Standard+)
@@ -84,7 +84,7 @@ No. The session is anonymous and created automatically on your first visit — y
 MP4, MOV and AVI up to 100MB, or simply a link to a public YouTube video — in which case there's nothing to download or upload at all.
 
 **How long does video generation take?**
-Once the prompt is approved, the video is usually ready in 3–5 minutes — the time depends on the chosen mode (Fast or Standard) and current load on Veo 3.1.
+Once the prompt is approved, the video is usually ready in 3–5 minutes — the exact time depends on the chosen generation engine (Grok by default, Google Veo 3.1 with Fast/Standard modes is also available) and current load.
 
 **How much does it cost?**
 Right now, nothing: all three plans — Lite, Standard and Premium — are free and switch right inside the app. This is a rollout period; whatever you've already made stays yours once paid plans arrive. Later, Lite is planned to become conditionally free — in exchange for liking the project's YouTube channel and sending a few links to the service.

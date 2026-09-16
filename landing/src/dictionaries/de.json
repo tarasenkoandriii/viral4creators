@@ -1,10 +1,11 @@
 {
   "meta": {
     "title": "viral4creators — UGC-Werbung aus einem einzigen Beispiel",
-    "description": "Laden Sie ein erfolgreiches UGC-Werbevideo hoch — erhalten Sie ein neues, für Ihr Produkt, im selben Stil. Videoanalyse mit Gemini, Generierung mit Google Veo 3.1, kostenlos und ohne Registrierung.",
+    "description": "Laden Sie ein erfolgreiches UGC-Werbevideo hoch — erhalten Sie ein neues, für Ihr Produkt, im selben Stil. Videoanalyse mit Gemini, Generierung mit Grok oder Google Veo 3.1, kostenlos und ohne Registrierung.",
     "keywords": [
       "UGC-Werbung",
       "KI-Videogenerierung",
+      "Grok",
       "Google Veo 3.1",
       "Werbevideo",
       "Video-Ad-Generator"
@@ -89,8 +90,8 @@
       },
       {
         "icon": "▶",
-        "title": "Google Veo 3.1, zwei Render-Qualitäten",
-        "text": "Schnell (Veo 3.1 Lite) — spürbar zügiger; kinematografisch (volles Veo 3.1) — hochwertiger und langsamer. Die Wahl trifft man bei jeder Generierung neu, unabhängig vom gewählten Tarif."
+        "title": "Grok oder Google Veo 3.1 — Engine wählen",
+        "text": "Standardmäßig rendert Grok — günstiger und meist schneller; für ein filmischeres Ergebnis lässt sich auf Google Veo 3.1 umschalten (schnelles Lite oder volle Qualität). Engine und Qualität werden bei jeder Generierung neu gewählt, unabhängig vom Tarif."
       },
       {
         "icon": "⌕",
@@ -179,24 +180,24 @@
         ]
       },
       {
-        "title": "Format und Bilder für Veo wählen",
+        "title": "Format und Referenzbilder wählen",
         "shortLabel": "Format & Bilder",
         "text": "Seitenverhältnis — 16:9 und 9:16 in jedem Tarif, 3:4, 1:1 oder ein eigenes ab Standard — sowie die drei Bilder, die das Modell als Referenz erhält: Charaktere, eigene Szenen, Markenszenen, Produktfoto. Alles Weitere fließt als Text in den Prompt.",
         "icon": "⧉",
         "badge": "standard",
-        "highlight": "Seitenverhältnis und bis zu drei Referenzbilder für Veo — unter Ihrer Kontrolle",
+        "highlight": "Seitenverhältnis und bis zu drei Referenzbilder für das Modell — unter Ihrer Kontrolle",
         "details": [
           "Render-Qualität: „Schnell\" oder „Kinematografisch\" (Standard+)",
-          "Bis zu drei Referenzbilder für Veo — eigene Szenen und Fotos (Standard+)",
+          "Bis zu drei Referenzbilder für die Generierungs-Engine — eigene Szenen und Fotos (Standard+)",
           "Seitenverhältnis: 16:9 und 9:16 in jedem Tarif, der Rest ab Standard"
         ]
       },
       {
         "title": "Video generieren",
         "shortLabel": "Rendern",
-        "text": "Google Veo 3.1 rendert das neue Werbevideo — wahlweise in schneller oder kinematografischerer Render-Qualität.",
+        "text": "Grok oder Google Veo 3.1 rendert das neue Werbevideo — wahlweise Engine und Render-Qualität, schneller oder kinematografischer.",
         "icon": "▣",
-        "highlight": "Ein Pflichtfoto des Produkts — den Rest übernimmt Veo",
+        "highlight": "Ein Pflichtfoto des Produkts — den Rest übernimmt die Generierungs-Engine",
         "details": [
           "Ein Produktfoto ist Pflicht — ohne es erscheint der Generieren-Button nicht",
           "Schaltfläche „Werbevideo generieren\"",
@@ -219,12 +220,12 @@
       {
         "title": "In Postprod verwalten",
         "shortLabel": "Postprod",
-        "text": "Ein eigener Tab „Postprod“ mit all Ihren fertigen Videos, nicht nur dem letzten. Ändern Sie Text und Stimme — mit expliziter Wahl des Synthese-Anbieters und einem ehrlichen Vorab-Anhören vor der Zahlung — ganz ohne neues Veo-Rendering. Exportieren Sie für mehrere Plattformen und veröffentlichen Sie mit einer Seite zum Teilen.",
+        "text": "Ein eigener Tab „Postprod“ mit all Ihren fertigen Videos, nicht nur dem letzten. Ändern Sie Text und Stimme — mit expliziter Wahl des Synthese-Anbieters und einem ehrlichen Vorab-Anhören vor der Zahlung — ganz ohne neues Rendering. Exportieren Sie für mehrere Plattformen und veröffentlichen Sie mit einer Seite zum Teilen.",
         "icon": "⇉",
         "badge": "standard",
         "highlight": "Neu vertonen ohne neues Rendering, expliziter Anbieter und Vorab-Anhören — vor der Zahlung",
         "details": [
-          "Neu vertonen ohne neues Veo-Rendering — nur Ton, Untertitel und Text ändern sich (Standard+)",
+          "Neu vertonen ohne neues Rendering — nur Ton, Untertitel und Text ändern sich (Standard+)",
           "Sprachsynthese-Anbieter — explizit ElevenLabs oder Resemble, oder „wie bisher“",
           "Die genaue Kombination aus Text, Stimme und Anbieter vorab anhören — vor der Zahlung für die Neuvertonung",
           "Export für mehrere Plattformen zugleich — ohne erneute Render-Gebühr (Standard+)",
@@ -257,7 +258,7 @@
           "KI-Referenzanalyse mit Szenen, Charakteren und Statisten",
           "Referenzsuche auf YouTube, per Link oder eigener Datei",
           "Prompt-Erstellung und manuelle Bearbeitung",
-          "Generierung in 16:9 oder 9:16 — die Formate, die Veo nativ rendert",
+          "Generierung in 16:9 oder 9:16 — Formate, die in jedem Tarif ohne Einschränkung verfügbar sind",
           "Download der fertigen Datei"
         ],
         "excluded": [
@@ -277,7 +278,7 @@
           "Relevanzprüfung der Referenz für Ihr Produkt",
           "Artefakt-Audit des fertigen Videos und ein korrigierter Prompt",
           "Markenmanifest: Stil, Stimme, wiederkehrende Charaktere und Orte",
-          "Eigene Szenen und manuelle Auswahl der drei Bilder für Veo",
+          "Eigene Szenen und manuelle Auswahl der drei Bilder für die Generierungs-Engine",
           "Charakteraustausch per eigenem Foto",
           "Jedes Seitenverhältnis, auch benutzerdefiniert",
           "Veröffentlichung über den Dienst"
@@ -318,7 +319,7 @@
       },
       {
         "title": "Was das Modell als Bild sieht und was in Worten",
-        "text": "Veo akzeptiert höchstens drei Referenzbilder. Der Dienst zeigt genau, welche drei übermittelt werden — Charaktere, eigene Szenen, Markenszenen, Produktfoto — und erlaubt es, diese Auswahl von Hand zusammenzustellen. Alles, was keinen Platz findet, wird stattdessen als Text im Prompt beschrieben und geht nicht verloren."
+        "text": "Der Dienst begrenzt die Bilder, die an das Generierungsmodell (Grok oder Google Veo) gehen, auf drei Referenzbilder. Er zeigt genau, welche drei übermittelt werden — Charaktere, eigene Szenen, Markenszenen, Produktfoto — und erlaubt es, diese Auswahl von Hand zusammenzustellen. Alles, was keinen Platz findet, wird stattdessen als Text im Prompt beschrieben und geht nicht verloren."
       },
       {
         "title": "Die Bibliothek der Analysen und der Datenschutz",
@@ -355,10 +356,7 @@
         "title": "Ein Video geht in die Welt hinaus und verbreitet sich von selbst",
         "outcome": "Von „Referenz hochgeladen“ bis „veröffentlicht und geteilt“ — ohne das Produkt zu verlassen.",
         "items": [
-          "Upload zu YouTube und TikTok direkt aus der Moderationswarteschlange",
-          "Eine eigene Seite für ein fertiges Video: ansehen und ein ähnliches erstellen",
-          "Video-Repost in die eigene Telegram-Gruppe oder den eigenen Kanal",
-          "Eingebrannte Untertitel mit Markenstil und automatischem Timing"
+          "Video-Repost in die eigene Telegram-Gruppe oder den eigenen Kanal"
         ]
       },
       {
@@ -366,7 +364,6 @@
         "outcome": "Der Dienst erhält Tarife, einen eigenen Feed und einen Schlüssel für Drittanbieter-Programme.",
         "items": [
           "Tarife und Bezahlung: Abonnement, Generierungspakete, Telegram Stars",
-          "Eine optionale wöchentliche Auswahl der besten Videos per Telegram",
           "Ein Feed mit Likes und Reposts; zahlende Abonnenten können darin veröffentlichen",
           "Eine externe API per Schlüssel für den Premium-Tarif"
         ]
@@ -375,20 +372,13 @@
         "title": "Schaufenster und eingehende Suche",
         "outcome": "Wer in seiner Nische nach Werbung sucht, findet das Produkt von selbst und landet direkt im Assistenten.",
         "items": [
-          "Ein Blog: aktuelle Videos einer Kategorie mit Analyse der verwendeten Techniken",
-          "Ein RSS-Feed neuer, von der KI hoch bewerteter Werbevideos",
-          "Eine News-Sitemap und strukturierte Auszeichnung der Beiträge",
-          "Eine Trend-Bibliothek nach Kategorien, direkt im Produkt",
-          "Eine mehrsprachige Oberfläche für App und Landingpage (ru/uk/en/de/es)"
+          "Eine Trend-Bibliothek nach Kategorien, direkt im Produkt"
         ]
       },
       {
         "title": "Von einem Video zu einem ganzen Strom",
         "outcome": "Ein Katalog mit hundert Positionen deckt den Monatsplan für Inhalte an einem Abend ab.",
         "items": [
-          "Stapelgenerierung: eine Referenz für alle Produkte eines Projekts",
-          "A/B-Varianten von Hook und Call-to-Action",
-          "Katalogimport aus einem Shop statt manueller Anlage",
           "Szenenvorlagen für den Start ohne Referenz",
           "Lokalisierung eines Videos in mehrere Sprachen",
           "Ein Veröffentlichungsplaner mit Prüfung der Plattformregeln"
@@ -399,9 +389,7 @@
         "outcome": "Zuschauer erkennen ein Video nicht als generiert, und eine Serie wird als eine einheitliche Marke wahrgenommen.",
         "items": [
           "Ihr tatsächliches Produkt im Bild, nicht nur ein ähnliches",
-          "Ein wiederkehrender Markenbotschafter mit geklonter Stimme",
-          "Lippensynchronisation mit der eigenen Tonspur",
-          "Videos länger als acht Sekunden"
+          "Lippensynchronisation mit der eigenen Tonspur"
         ]
       },
       {
@@ -431,7 +419,7 @@
       },
       {
         "question": "Wie lange dauert die Videogenerierung?",
-        "answer": "Sobald der Prompt bestätigt ist, ist das Video meist innerhalb von 3–5 Minuten fertig — die Dauer hängt vom gewählten Modus (Fast oder Standard) und der aktuellen Auslastung von Veo 3.1 ab."
+        "answer": "Sobald der Prompt bestätigt ist, ist das Video meist innerhalb von 3–5 Minuten fertig — die genaue Dauer hängt von der gewählten Generierungs-Engine ab (standardmäßig Grok, alternativ Google Veo 3.1 mit den Modi Fast/Standard) sowie der aktuellen Auslastung."
       },
       {
         "question": "Was kostet das?",
