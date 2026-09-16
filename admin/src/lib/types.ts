@@ -110,6 +110,19 @@ export interface EnvSettingsResult {
   allOk: boolean;
 }
 
+// ── Фикстурный пользователь обучалки (backend/src/modules/tutorial-runner/fixture-seed*, этап 105) ──
+
+export interface FixtureSeedResult {
+  userId: string;
+  telegramId: string;
+  manifestId: string;
+  characterId: string;
+  projectId: string;
+  itemId: string;
+  sessionId: string;
+  log: string[];
+}
+
 // ── Озвучка по умолчанию (backend/src/modules/admin-panel/admin-voiceover-settings.service.ts) ──
 
 export type VoiceoverProviderKey = 'elevenlabs' | 'resemble' | 'veo';

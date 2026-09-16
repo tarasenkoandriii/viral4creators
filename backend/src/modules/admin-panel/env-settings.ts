@@ -828,18 +828,25 @@ export function getEnvSettings(
     // Не секрет: это просто идентификатор фикстурного пользователя
     // (telegramId), не даёт доступа сам по себе — доступ даёт
     // FIXTURE_USER_TOKEN выше. Видеть значение нужно, чтобы свериться с
-    // тем, что заведено в БД скриптом seed-fixture-user.ts.
+    // тем, что заведено в БД. В отличие от VOICE_ID/VOICE_MODEL выше,
+    // у этой переменной НЕТ кодового умолчания
+    // (`fixture-token.ts:fixtureTelegramIdFromHeader` fail-closed
+    // возвращает null без неё) — «fixture-tutorial-runner» в
+    // .env.example лишь рекомендованное значение, поэтому не заданная
+    // переменная здесь жёлтая, а не зелёная с мнимым умолчанием.
     const raw = env.FIXTURE_TELEGRAM_ID;
+    const set = Boolean(raw?.trim());
     results.push({
       key: 'FIXTURE_TELEGRAM_ID',
       group: 'Обучалка',
       required: false,
-      set: raw !== undefined,
-      ok: true,
-      severity: 'ok',
-      message:
-        'Telegram ID фикстурного пользователя. Сама по себе запись User с этим telegramId в базе не появляется — её создаёт разовый ручной запуск `npm run seed:fixture-user` (см. doc/DEPLOYMENT.md). Без неё раннеры скипаются с "фикстурный пользователь не заведён", даже если все три переменные этой группы заданы.',
-      value: raw ?? 'fixture-tutorial-runner (по умолчанию)',
+      set,
+      ok: set,
+      severity: set ? 'ok' : 'warning',
+      message: set
+        ? 'Telegram ID фикстурного пользователя. Саму запись User с этим telegramId в базе создаёт отдельная кнопка «Завести фикстурного пользователя» ниже (или разовый `npm run seed:fixture-user`) — без нее раннеры скипаются с "фикстурный пользователь не заведён", даже если все три переменные этой группы заданы.'
+        : 'Не задан — tutorial-scenario-run и ui-snapshot-run скипаются с "фикстурный вход не настроен", ещё до обращения к базе. Кодового умолчания нет; рекомендованное значение из .env.example — fixture-tutorial-runner.',
+      value: raw,
     });
   }
 

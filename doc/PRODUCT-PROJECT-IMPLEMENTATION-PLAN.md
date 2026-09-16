@@ -10146,6 +10146,88 @@ Prisma-модели), кнопка «Одобрить» с `window.confirm`, н�
 (новый), `admin/src/lib/endpoints.ts`, `admin/src/lib/types.ts`,
 `admin/src/components/AdminNav.tsx`, `doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`.
 
+## Сделано (этап 106 — кнопка «Завести фикстурного пользователя» в админке)
+
+Продолжение этапа 105: владелец продукта спросил, войдёт ли
+`npm run seed:fixture-user` в передеплой автоматически, и попросил, если
+нет, кнопку в UI. Ответ на первый вопрос — нет и не должен: это данные
+одной вымышленной учётной записи, а не схема (см. собственный
+доккомментарий скрипта), гонять их при каждом деплое незачем. Вместо
+этого сделана кнопка.
+
+**Извлечение общей логики.** Тело `scripts/seed-fixture-user.ts`
+(идемпотентная цепочка upsert'ов: пользователь → манифест бренда →
+персонаж → проект → товар → сессия с готовым роликом) переехало в новый
+`backend/src/modules/tutorial-runner/fixture-seed.ts` —
+`seedFixtureUser(prisma: PrismaClient, telegramId: string)`, принимает
+уже готовый Prisma-клиент, не создаёт своего подключения. У функции
+теперь два потребителя с одной и той же логикой (расхождение между
+«через CLI» и «через кнопку» структурно невозможно):
+- CLI-скрипт (`scripts/seed-fixture-user.ts`, оставлен рабочим для
+  случаев без доступа к работающему бэкенду) — создаёт свой
+  `PrismaClient` с адаптером, как раньше, просто тело цепочки теперь в
+  общем файле;
+- новый `POST /admin/tutorial-runner/seed-fixture-user`
+  (`FixtureSeedAdminController`, тот же модуль) — переиспользует уже
+  подключённый `PrismaService` работающего процесса, второй раз
+  DATABASE_URL указывать не нужно.
+
+`FIXTURE_TELEGRAM_ID` эндпоинт берёт из окружения бэкенда, НЕ из тела
+запроса — сознательно: это не «завести тестового пользователя с любым
+id по прихоти оператора», а «завести именно того фикстурного
+пользователя, которого ждут регресс-раннер и `fixture-token.ts`»; без
+переменной — 400, а не создание случайной записи.
+
+**Кнопка на «Настройки».** Карточка `FixtureSeedCard`
+(`admin/src/app/settings/page.tsx`) — рядом с остальными
+карточками-настройками в шапке страницы (Озвучка/Анализ/Видео/Grok/
+Консультант), НЕ внутри цикла групп проверок: при фильтре «только
+требуется внимание» группа «Обучалка» пропадает из списка, как только
+все три переменные настроены правильно, — а кнопка сидирования нужна
+именно тогда, когда переменные уже в порядке. Показывает журнал шагов
+(`FixtureSeedResult.log`) и `userId` после успешного запуска; безопасно
+нажимать повторно.
+
+**Попутная находка и правка.** При написании доккомментария для
+`FIXTURE_TELEGRAM_ID`-проверки на «Настройки» (добавлена этапом 105)
+обнаружилась неточность: строка показывала значение как
+`"fixture-tutorial-runner (по умолчанию)"`, когда переменная не задана,
+подразумевая, что у неё есть кодовое умолчание. На деле такого
+умолчания нет — `fixture-token.ts:fixtureTelegramIdFromHeader`
+fail-closed возвращает `null` без неё, значение из `.env.example` —
+только рекомендация, не код. Поправлено в рамках этого же этапа:
+не заданная `FIXTURE_TELEGRAM_ID` теперь жёлтая (`severity: 'warning'`),
+как и `FIXTURE_USER_TOKEN`, без мнимого «(по умолчанию)» в значении;
+`env-settings.spec.ts` обновлён под новое поведение (было 34 теста,
+стало 35 — один разбит на два: «не задан» и «задан», плюс проверка
+третьей переменной группы в общем тесте «все жёлтые»).
+
+Проверено: `npx tsc --noEmit -p tsconfig.json` в `admin/` — чисто;
+`npx next lint --max-warnings 0` в `admin/` — чисто; `npx tsc --noEmit -p
+tsconfig.json` в `backend/` — 551 ошибка, ВСЕ одного и того же класса
+(известное ограничение песочницы: не сгенерирован Prisma-клиент,
+`@prisma/client` не экспортирует `PrismaClient`/`ProjectType`/т.д.) —
+проверено, что это падение включает нетронутые этим этапом файлы вроде
+`src/prisma/prisma.service.ts` (сам класс `PrismaService`, ни разу не
+менявшийся в этом этапе), то есть не новый класс ошибок, а тот же самый
+предсуществующий; `npx eslint` на `src/modules/tutorial-runner/`,
+`scripts/seed-fixture-user.ts` (с `--fix` на форматирование) — чисто;
+`npx jest src/modules/admin-panel/env-settings.spec.ts` — 35/35 зелёных;
+`node scripts/check-docs.mjs` из корня — обновлены счётчики маршрутов/
+контроллеров в README.md (228/48 → 229/49, новый `POST
+/admin/tutorial-runner/seed-fixture-user`) и добавлена строка в
+`doc/API.md`, все проверки прошли.
+
+Файлы: `backend/src/modules/tutorial-runner/fixture-seed.ts` (новый),
+`backend/src/modules/tutorial-runner/fixture-seed-admin.controller.ts`
+(новый), `backend/src/modules/tutorial-runner/tutorial-runner.module.ts`,
+`backend/scripts/seed-fixture-user.ts` (тело переехало в
+`fixture-seed.ts`), `backend/src/modules/admin-panel/env-settings.ts`
+(правка `FIXTURE_TELEGRAM_ID`), `backend/src/modules/admin-panel/env-settings.spec.ts`,
+`admin/src/app/settings/page.tsx`, `admin/src/lib/endpoints.ts`,
+`admin/src/lib/types.ts`, `README.md`, `doc/API.md`,
+`doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`.
+
 ## Проверка на каждом этапе (сквозное)
 
 - `npx tsc --noEmit` в `backend/`, `frontend/` — без новых ошибок.

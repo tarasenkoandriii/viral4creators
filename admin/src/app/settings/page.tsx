@@ -13,6 +13,7 @@ import {
   setGrokTransport,
   getAssistantSettings,
   setAssistantSettings,
+  seedFixtureUser,
 } from '../../lib/endpoints';
 import type {
   EnvCheckResult,
@@ -26,6 +27,7 @@ import type {
   GrokTransportKey,
   GrokTransportSettingsView,
   AssistantAdminSettingsView,
+  FixtureSeedResult,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -610,6 +612,75 @@ function AssistantSettingsCard() {
   );
 }
 
+/**
+ * Кнопка «Завести фикстурного пользователя» (этап 105) — карточка среди
+ * остальных карточек-настроек в шапке страницы (не внутри
+ * `visibleGroups.map`, см. довод у места её рендера ниже): до этого
+ * этапа единственный способ создать пользователя с telegramId =
+ * FIXTURE_TELEGRAM_ID и весь набор данных для него (манифест бренда,
+ * персонаж, проект, товар, сессия с готовым роликом) был ручной
+ * CLI-запуск `npm run seed:fixture-user` с прод DATABASE_URL —
+ * недоступно оператору без доступа к серверу/CI. Делегирует в `POST
+ * /admin/tutorial-runner/seed-fixture-user`
+ * (`FixtureSeedAdminController`) — та же идемпотентная логика
+ * (`seedFixtureUser()`, `fixture-seed.ts`), что и у CLI-скрипта, так что
+ * повторное нажатие безопасно: обновляет те же записи, не плодит
+ * дубликаты.
+ */
+function FixtureSeedCard() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<FixtureSeedResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await seedFixtureUser();
+      setResult(r);
+    } catch (err) {
+      setError(
+        err instanceof ApiRequestError ? err.message : 'Не удалось завести фикстурного пользователя',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 4, marginBottom: 20 }}>
+      <h3 style={{ fontSize: 14, marginTop: 0, marginBottom: 4 }}>Фикстурный пользователь</h3>
+      <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+        Заводит/обновляет пользователя с telegramId = FIXTURE_TELEGRAM_ID (см. таблицу выше) и весь
+        набор данных, который ждут шаги сценариев (манифест бренда, персонаж, проект, товар, сессия с
+        готовым роликом). Без этого регресс-раннер обучалки скипается с «фикстурный пользователь не
+        заведён», даже если все три переменные выше заданы правильно. Безопасно нажимать повторно —
+        обновляет те же записи, не создаёт дубликаты.
+      </p>
+      <button type="button" disabled={busy} onClick={() => void run()}>
+        {busy ? 'Завожу…' : 'Завести фикстурного пользователя'}
+      </button>
+      {error && (
+        <p className="critical" style={{ marginTop: 12 }}>
+          {error}
+        </p>
+      )}
+      {result && (
+        <div style={{ marginTop: 12 }}>
+          <p style={{ marginBottom: 6 }}>
+            <span className="badge-status badge-status-ok">Готово</span> userId {result.userId}
+          </p>
+          <ul className="muted" style={{ fontSize: 12, margin: 0, paddingLeft: 18 }}>
+            {result.log.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [result, setResult] = useState<EnvSettingsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -674,6 +745,11 @@ export default function SettingsPage() {
       <VideoProviderCard />
       <GrokTransportCard />
       <AssistantSettingsCard />
+      {/* Не внутри цикла групп ниже намеренно: при фильтре «только
+          требуется внимание» группа «Обучалка» пропадает из списка, если
+          все три переменные уже настроены — а кнопка сидирования нужна
+          именно тогда, когда переменные уже в порядке (этап 105). */}
+      <FixtureSeedCard />
 
       <div className="card" style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
         <StatusBadge severity={result.allOk ? 'ok' : problems.some((p) => p.severity === 'critical') ? 'critical' : 'warning'} />

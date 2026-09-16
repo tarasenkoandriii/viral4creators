@@ -280,15 +280,27 @@ describe('getEnvSettings — обучалка (fixture-раннер, этап 10
     const results = getEnvSettings({});
     expect(find(results, 'FIXTURE_USER_TOKEN').ok).toBe(false);
     expect(find(results, 'FIXTURE_USER_TOKEN').message).toContain('скипаются');
+    expect(find(results, 'FIXTURE_TELEGRAM_ID').ok).toBe(false);
     const tmaRow = find(results, 'TMA_PUBLIC_URL');
     expect(tmaRow.ok).toBe(true); // не задан — не "неправильный формат", а просто не задан
     expect(tmaRow.severity).toBe('warning');
   });
 
-  it('FIXTURE_TELEGRAM_ID не задан — показывает умолчание из .env.example', () => {
+  it('FIXTURE_TELEGRAM_ID не задан — жёлтый, без мнимого умолчания (нет кодового фоллбека)', () => {
     const row = find(getEnvSettings({}), 'FIXTURE_TELEGRAM_ID');
+    expect(row.ok).toBe(false);
+    expect(row.severity).toBe('warning');
+    expect(row.value).toBeUndefined();
+    expect(row.message).toContain('fixture-tutorial-runner');
+  });
+
+  it('FIXTURE_TELEGRAM_ID задан — зелёный, упоминает кнопку сидирования', () => {
+    const row = find(
+      getEnvSettings({ FIXTURE_TELEGRAM_ID: 'fixture-tutorial-runner' }),
+      'FIXTURE_TELEGRAM_ID',
+    );
     expect(row.ok).toBe(true);
-    expect(row.value).toContain('fixture-tutorial-runner');
+    expect(row.value).toBe('fixture-tutorial-runner');
     expect(row.message).toContain('seed:fixture-user');
   });
 

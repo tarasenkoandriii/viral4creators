@@ -6,6 +6,7 @@ import { StorageModule } from '../storage/storage.module';
 import { TutorialScenarioRunnerService } from './tutorial-scenario-runner.service';
 import { TutorialVideoAdminController } from './tutorial-video-admin.controller';
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
+import { FixtureSeedAdminController } from './fixture-seed-admin.controller';
 
 /**
  * TutorialRunnerModule — исполнитель уже сгенерированных сценариев
@@ -37,6 +38,13 @@ import { TutorialVideoAdminService } from './tutorial-video-admin.service';
  * контроллера выше делегирует в `PublicationService.publishTutorialVideo`,
  * ту же очередь/воркер, что уже обслуживает рекламные ролики (не новый
  * модуль/воркер специально под обучающие видео).
+ *
+ * `FixtureSeedAdminController` (этап 105) — `POST
+ * admin/tutorial-runner/seed-fixture-user`, кнопка «Завести фикстурного
+ * пользователя» на «Настройки». Делегирует в `seedFixtureUser()`
+ * (`fixture-seed.ts`) — ту же идемпотентную логику, что и CLI-скрипт
+ * `scripts/seed-fixture-user.ts`, только с уже подключённым
+ * `PrismaService` этого процесса вместо второго отдельного подключения.
  */
 @Module({
   imports: [
@@ -45,7 +53,7 @@ import { TutorialVideoAdminService } from './tutorial-video-admin.service';
     AdminPanelModule,
     PublicationModule,
   ],
-  controllers: [TutorialVideoAdminController],
+  controllers: [TutorialVideoAdminController, FixtureSeedAdminController],
   providers: [TutorialScenarioRunnerService, TutorialVideoAdminService],
   exports: [TutorialScenarioRunnerService],
 })

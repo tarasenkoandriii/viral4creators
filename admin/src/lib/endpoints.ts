@@ -33,6 +33,7 @@ import type {
   TutorialVideoAssetRow,
   TutorialScenarioListResult,
   TutorialScenarioRow,
+  FixtureSeedResult,
   PublicationListResult,
   PublicationPlatform,
   PublicationPrivacy,
@@ -587,6 +588,17 @@ export function getTutorialScenarios(params: {
 
 export function approveTutorialScenario(id: string) {
   return apiPatch<TutorialScenarioRow>(`/admin/tutorial-scenarios/${id}/approve`);
+}
+
+/**
+ * Заводит/обновляет фикстурного пользователя для регресс-раннера
+ * обучалки (§3.3 ТЗ, этап 105) — то же самое, что раньше требовало
+ * ручного CLI-запуска `scripts/seed-fixture-user.ts` с прод
+ * DATABASE_URL. `telegramId` берёт из FIXTURE_TELEGRAM_ID окружения
+ * бэкенда сам, аргументов не принимает.
+ */
+export function seedFixtureUser() {
+  return apiPost<FixtureSeedResult>('/admin/tutorial-runner/seed-fixture-user');
 }
 
 // ── Обучающие видео — вкладки «Видео-контент»/«Состояние данных»
