@@ -10228,6 +10228,90 @@ tsconfig.json` в `backend/` — 551 ошибка, ВСЕ одного и тог
 `admin/src/lib/types.ts`, `README.md`, `doc/API.md`,
 `doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`.
 
+## Сделано (этап 107 — баг: сгенерированные сценарии обучалки 9/9 падали на первом шаге; кнопка «Удалить» для сломанных сценариев)
+
+Владелец продукта завёл фикстуру (этап 106) и запустил `tutorial-
+scenario-run` на проде по-настоящему — первый реальный прогон против
+живого headless-браузера с этой фикстурой в этом продукте вообще. Итог:
+`{"total":9,"failed":9,"passed":0,...}`, каждый outcome — `"шаг 1 (goto):
+маршрут \"wizard.step-N\": неизвестное имя маршрута"` (и одна
+"wizard.frame-composition"). 100% сценариев падали, не дойдя до второго
+шага.
+
+**Корневая причина.** `tutorial-scenario-prompt.ts` (промпт генератора,
+Gemini) прямо называл `"route"` в шаге `goto` плейсхолдером и приводил
+несуществующий пример ("wizard.generation") — расчёт был на то, что
+оператор сверит и поправит маршрут вручную перед первым исполнением
+(осознанное решение более раннего этапа). На практике этого шага
+никогда не было — ни в кроне, ни в новой странице одобрения (этап
+105, только просмотр + одобрение, без редактирования шагов), — так что
+каждый сгенерированный сценарий уходил в прод с придуманным именем
+маршрута, а `route-templates.ts` (резолвер) корректно, но безальтернативно
+отказывал: fail loudly, без попытки угадать похожее имя (осознанный
+принцип, см. его доккомментарий).
+
+**Fix — промпт вместо резолвера.** Не стал учить резолвер угадывать
+("wizard.step-8" не самоочевидно сопоставляется ни с одним реальным
+маршрутом — мастер создания ролика (`generate`) и экран товара (`item`)
+однастраничные, шаги внутри них — React-состояние, не отдельные URL;
+9 из 10 шагов обучалки описывают происходящее ВНУТРИ этих двух экранов).
+Вместо этого дал генератору реальный список: новый экспорт
+`ROUTE_DESCRIPTIONS` в `route-templates.ts` (человекочитаемое описание
+каждого из 14 поддерживаемых маршрутов) — тот же файл, что резолвит
+`route` при исполнении, так что промпт и резолвер физически не могут
+разойтись. `tutorial-scenario-prompt.ts` теперь передаёт этот список
+модели как закрытое перечисление ("выбери РОВНО ОДНО значение… скопировав
+буква в букву") и явно объясняет, что `generate`/`item` — однастраничные
+мастера, дальнейшее продвижение — `click`/`fill`/`waitFor`, не повторные
+`goto`. Старый вводящий в заблуждение пример убран целиком.
+
+**Побочный, но необходимый fix — «Удалить» сломанный сценарий.**
+`TutorialScenarioGeneratorService.run()` только `create()`, никогда
+`upsert()` — каждый прогон крона ДОБАВЛЯЕТ новые строки. А `Tutorial
+ScenarioRunnerService.run()` берёт ВСЕ подходящие (`costly:false OR
+approved:true`) по `createdAt asc`, без какого-либо пропуска уже
+провалившихся. Значит 9 уже сломанных сценариев в базе будут повторно
+падать и слать алерт в Telegram НА КАЖДОМ будущем прогоне крона
+бесконечно — даже после фикса промпта выше, который решает только
+НОВУЮ генерацию, а не уже существующие строки. Без прямого доступа к
+БД оператор не мог их убрать — добавлена кнопка «Удалить» на «Сценарии
+обучалки»: `DELETE /api/admin/tutorial-scenarios/:id`
+(`TutorialScenarioAdminService.remove`, `TutorialScenarioAdminController`)
++ кнопка в таблице рядом с «Одобрить». Рекомендация владельцу продукта:
+удалить 9 старых сломанных строк и перезапустить `tutorial-scenario-
+generate` — новые сценарии должны в норме проходить шаг `goto`.
+
+Проверено: `npx tsc --noEmit -p tsconfig.json` в `admin/` — чисто;
+`npx next lint --max-warnings 0` в `admin/` — чисто; `npx eslint` на
+всех изменённых backend-файлах (с `--fix` на форматирование) — чисто;
+`npx jest src/modules/tutorial-scenario/tutorial-scenario-prompt.spec.ts
+src/modules/tutorial-runner/route-templates.spec.ts
+src/modules/admin-panel/env-settings.spec.ts` — 53/53 зелёных (добавлены:
+тест промпта на реальный словарь маршрутов + отсутствие старого
+вводящего в заблуждение примера; тест-предохранитель в
+route-templates.spec.ts — каждый ключ `ROUTE_DESCRIPTIONS` реально
+резолвится с полным фикстурным контекстом, и ни один заведомо
+неподдержанный ключ туда не попал); `node scripts/check-docs.mjs` из
+корня — обновлены счётчики маршрутов в README.md (229/49 → 230/49,
+новый `DELETE /admin/tutorial-scenarios/:id`) и добавлена строка в
+`doc/API.md`, все проверки прошли. Сгенерировать реальный Gemini-ответ
+и проверить, что НОВЫЙ сценарий действительно проходит `goto`, в этой
+песочнице нельзя (нет `GEMINI_API_KEY`, нет сети до
+`generativelanguage.googleapis.com`) — эту часть подтвердит владелец
+продукта следующим реальным прогоном `tutorial-scenario-generate` на
+проде.
+
+Файлы: `backend/src/modules/tutorial-runner/route-templates.ts`
+(добавлен `ROUTE_DESCRIPTIONS`, обновлён доккомментарий),
+`backend/src/modules/tutorial-runner/route-templates.spec.ts`,
+`backend/src/modules/tutorial-scenario/tutorial-scenario-prompt.ts`,
+`backend/src/modules/tutorial-scenario/tutorial-scenario-prompt.spec.ts`,
+`backend/src/modules/tutorial-scenario/tutorial-scenario-admin.service.ts`
+(добавлен `remove()`), `backend/src/modules/tutorial-scenario/tutorial-scenario-admin.controller.ts`
+(добавлен `DELETE :id`), `admin/src/app/tutorial-scenarios/page.tsx`
+(кнопка «Удалить»), `admin/src/lib/endpoints.ts`, `README.md`,
+`doc/API.md`, `doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md`.
+
 ## Проверка на каждом этапе (сквозное)
 
 - `npx tsc --noEmit` в `backend/`, `frontend/` — без новых ошибок.

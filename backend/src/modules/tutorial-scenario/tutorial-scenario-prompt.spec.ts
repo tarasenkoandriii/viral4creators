@@ -27,6 +27,28 @@ describe('buildScenarioPrompt', () => {
     const prompt = buildScenarioPrompt('2', 'ru', { ...step, details: [] });
     expect(prompt).not.toContain('Детали:');
   });
+
+  it('перечисляет настоящие маршруты вместо приглашения придумать плейсхолдер (этап 106: 9/9 сценариев падали на "wizard.step-N")', () => {
+    const prompt = buildScenarioPrompt('1', 'ru', step);
+    // Реальные ключи из route-templates.ts — каждый должен быть виден
+    // модели буква в букву.
+    for (const key of [
+      'projects',
+      'item',
+      'generate',
+      'postprod',
+      'manifest',
+      'plan',
+    ]) {
+      expect(prompt).toContain(`"${key}"`);
+    }
+    // Старая формулировка приводила несуществующий маршрут КАК ПРИМЕР —
+    // именно она и породила "wizard.generation"/"wizard.step-N" в
+    // реальных сгенерированных сценариях; проверяем, что она ушла.
+    expect(prompt).not.toContain('wizard.generation');
+    expect(prompt).not.toContain('route" в шаге goto — это тоже плейсхолдер');
+    expect(prompt).toContain('НЕ плейсхолдер');
+  });
 });
 
 describe('parseScenarioResponse', () => {

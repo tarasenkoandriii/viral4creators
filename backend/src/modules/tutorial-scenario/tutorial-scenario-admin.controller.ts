@@ -8,10 +8,13 @@
  * Эндпоинты существовали и были покрыты тестами с этапа 94; страница
  * админки («Система» → «Сценарии обучалки»,
  * admin/src/app/tutorial-scenarios/page.tsx) подключена этапом 105.
+ * `DELETE :id` (этап 106) — чистка сломанных/устаревших сгенерированных
+ * сценариев, см. доккомментарий `TutorialScenarioAdminService.remove`.
  */
 import {
   BadRequestException,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -75,5 +78,17 @@ export class TutorialScenarioAdminController {
     await this.adminPanel.assertOperator(req.userId);
     if (!id) throw new BadRequestException('id обязателен');
     return this.scenarioAdmin.approve(id, req.userId);
+  }
+
+  /**
+   * DELETE, не PATCH с флагом — сценарий целиком лишний, не «отключён»
+   * (§4.10/этап 106: очистка сломанных/устаревших сгенерированных
+   * сценариев, см. доккомментарий `TutorialScenarioAdminService.remove`).
+   */
+  @Delete(':id')
+  async remove(@Req() req: AdminAuthenticatedRequest, @Param('id') id: string) {
+    await this.adminPanel.assertOperator(req.userId);
+    if (!id) throw new BadRequestException('id обязателен');
+    return this.scenarioAdmin.remove(id);
   }
 }

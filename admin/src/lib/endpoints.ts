@@ -591,6 +591,18 @@ export function approveTutorialScenario(id: string) {
 }
 
 /**
+ * Удаляет сгенерированный сценарий (этап 106) — нужно для сломанных/
+ * никогда не проходящих сценариев: `tutorial-scenario-generate` только
+ * добавляет строки (`create`, не `upsert`), а `tutorial-scenario-run`
+ * берёт их все по `createdAt asc` без пропуска уже провалившихся —
+ * без удаления сломанный сценарий будет падать и слать алерт на
+ * каждом прогоне крона бесконечно.
+ */
+export function deleteTutorialScenario(id: string) {
+  return apiDelete<{ id: string }>(`/admin/tutorial-scenarios/${id}`);
+}
+
+/**
  * Заводит/обновляет фикстурного пользователя для регресс-раннера
  * обучалки (§3.3 ТЗ, этап 105) — то же самое, что раньше требовало
  * ручного CLI-запуска `scripts/seed-fixture-user.ts` с прод

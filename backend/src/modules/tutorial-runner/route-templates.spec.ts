@@ -1,4 +1,18 @@
-import { resolveScenarioRoute } from './route-templates';
+import { resolveScenarioRoute, ROUTE_DESCRIPTIONS } from './route-templates';
+
+/** Заведомо неподдержанные (§4.10 ТЗ — не входят в фикстурные данные или
+ * не относятся к обучалке мастера) — не должны попадать в
+ * `ROUTE_DESCRIPTIONS`, иначе промпт предложит модели маршрут, который
+ * тут же откажет как "не поддержан исполнителем". */
+const KNOWN_UNSUPPORTED = [
+  'catalog-batch-start',
+  'catalog-batch',
+  'ab-test',
+  'feed-import-start',
+  'feed-import',
+  'legal',
+  'not-found',
+];
 
 describe('resolveScenarioRoute', () => {
   it('маршруты без параметров резолвятся без фикстурного контекста', () => {
@@ -74,6 +88,26 @@ describe('resolveScenarioRoute', () => {
       });
       expect(result.ok).toBe(false);
       expect((result as { reason: string }).reason).toContain('не поддержан');
+    }
+  });
+});
+
+describe('ROUTE_DESCRIPTIONS — единственный источник правды для промпта генератора (этап 106)', () => {
+  it('каждый описанный ключ реально резолвится (с полным фикстурным контекстом)', () => {
+    const fullCtx = {
+      projectId: 'p1',
+      itemId: 'i1',
+      manifestId: 'm1',
+      sessionId: 's1',
+    };
+    for (const key of Object.keys(ROUTE_DESCRIPTIONS)) {
+      expect(resolveScenarioRoute(key, fullCtx).ok).toBe(true);
+    }
+  });
+
+  it('не содержит ни одного заведомо неподдержанного ключа', () => {
+    for (const key of KNOWN_UNSUPPORTED) {
+      expect(ROUTE_DESCRIPTIONS[key]).toBeUndefined();
     }
   });
 });

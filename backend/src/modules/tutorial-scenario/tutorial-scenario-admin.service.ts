@@ -70,4 +70,27 @@ export class TutorialScenarioAdminService {
       data: { approved: true, approvedBy, approvedAt: new Date() },
     });
   }
+
+  /**
+   * Удаляет сгенерированный сценарий (этап 106). Нужен, потому что
+   * `TutorialScenarioGeneratorService.run()` только `create()`, никогда
+   * не `upsert()` — каждый прогон крона добавляет НОВЫЕ строки, а
+   * `TutorialScenarioRunnerService.run()` берёт ВСЕ подходящие
+   * (`costly:false OR approved:true`) по `createdAt asc`, без пропуска
+   * уже провалившихся: сломанный сценарий (например, с "route", который
+   * `route-templates.ts` не резолвит) будет повторно падать на КАЖДОМ
+   * прогоне крона вечно, слать алерт в Telegram каждый раз и занимать
+   * место в начале очереди перед новыми, потенциально исправными
+   * сценариями. Без ручной чистки это неотличимо от постоянно сломанной
+   * автоматизации — вот эта кнопка и даёт способ её разобрать без
+   * прямого доступа к БД.
+   */
+  async remove(id: string): Promise<{ id: string }> {
+    const row = await this.prisma.tutorialScenario.findUnique({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException('Сценарий не найден');
+    await this.prisma.tutorialScenario.delete({ where: { id } });
+    return { id };
+  }
 }

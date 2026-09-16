@@ -17,9 +17,21 @@
 // сценария при автоматическом регресс-прогоне), не про то, можно ли
 // показывать что-то посетителям — это отдельное поле `reviewed` у
 // TutorialVideoAsset на вкладке «ИИ-консультант» → «Видео-контент».
+//
+// «Удалить» (этап 106) — генератор только добавляет строки (`create`,
+// не `upsert`), а раннер берёт ВСЕ подходящие по `createdAt asc` без
+// пропуска уже провалившихся: сломанный сценарий (например, с route,
+// которого не существует — реальный случай, 9/9 сгенерированных
+// сценариев упали на этом при первом прогоне на проде) иначе будет
+// падать и слать алерт в Telegram на каждом прогоне крона бесконечно,
+// без способа его убрать кроме прямого доступа к БД.
 
 import { useCallback, useEffect, useState } from 'react';
-import { approveTutorialScenario, getTutorialScenarios } from '../../lib/endpoints';
+import {
+  approveTutorialScenario,
+  deleteTutorialScenario,
+  getTutorialScenarios,
+} from '../../lib/endpoints';
 import type { TutorialScenarioRow } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -87,6 +99,28 @@ export default function TutorialScenariosPage() {
       setError(null);
       try {
         await approveTutorialScenario(row.id);
+        load();
+      } catch (e) {
+        setError(errText(e));
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load],
+  );
+
+  const remove = useCallback(
+    async (row: TutorialScenarioRow) => {
+      const ok = window.confirm(
+        `Удалить сценарий «${row.subjectKey}» (${row.locale}) безвозвратно?\n\n` +
+          'Полезно для сломанных сценариев (например, с несуществующим route) — иначе ' +
+          'регресс-раннер будет повторно пытаться его исполнить и слать алерт на каждом прогоне крона.',
+      );
+      if (!ok) return;
+      setBusyId(row.id);
+      setError(null);
+      try {
+        await deleteTutorialScenario(row.id);
         load();
       } catch (e) {
         setError(errText(e));
@@ -258,6 +292,9 @@ export default function TutorialScenariosPage() {
                           {busyId === row.id ? '…' : 'Одобрить'}
                         </button>
                       )}
+                      <button type="button" disabled={busyId === row.id} onClick={() => void remove(row)}>
+                        {busyId === row.id ? '…' : 'Удалить'}
+                      </button>
                     </td>
                   </tr>
                 ))}
