@@ -61,6 +61,12 @@ import { isRecordNotFoundError } from '../../common/prisma-errors';
  * `CLEANUP_BATCH` в `session.service.ts`. */
 const PURGE_BATCH = 500;
 
+/** Домашний рынок продукта — страна проекта «сайт заказчика», когда
+ * подсказать её нечем (у пользователя ещё нет ни одного проекта). См.
+ * `resolveCountryCode` ниже: у этого типа проекта страна ничего не
+ * считает, и спрашивать её на входе дороже, чем угадать. */
+const DEFAULT_COUNTRY_CODE = 'UA';
+
 /**
  * Minimal structural types for what we read back from Prisma. Written
  * out by hand (instead of importing Prisma's generated types) so this
@@ -141,7 +147,7 @@ export class ProjectService {
     userId: string,
     dto: CreateProjectRequestDto,
   ): Promise<ProjectView> {
-    const countryCode = dto.countryCode.toUpperCase();
+    const countryCode = await this.resolveCountryCode(userId, dto);
     const currency = this.resolveCurrency(countryCode);
 
     if (dto.brandManifestId !== undefined) {
@@ -320,11 +326,23 @@ export class ProjectService {
             where: { projectId },
             select: { id: true, photoUrl: true },
           });
+        // Черновик обучалки по сайту заказчика уходит каскадом FK, а его
+        // кадры предпросмотра в Blob — нет: после удаления строки
+        // `draftId` взять больше неоткуда, и префикс осиротел бы
+        // навсегда (найдено аудитом этапа 116 — тот же класс, что уже
+        // решён для файлов товара парой строк ниже). Идентификатор
+        // читаем ДО удаления по той же причине.
+        const draft: { id: string } | null =
+          await this.prisma.clientSiteTutorialDraft.findUnique({
+            where: { projectId },
+            select: { id: true },
+          });
         await this.prisma.project.delete({ where: { id: projectId } });
         count += 1;
         for (const item of items) {
           await this.deleteItemFiles(projectId, item.id, item.photoUrl ?? null);
         }
+        if (draft) await this.deleteClientSiteFrames(draft.id);
       } catch (e) {
         // isRecordNotFoundError (P2025) — та же ситуация, что и в
         // purgeSoftDeletedItems: строка уже пропала (два параллельных
@@ -573,6 +591,65 @@ export class ProjectService {
   // трещина, в которую утекли голосовые записи.
 
   // ── Internals ─────────────────────────────────────────────────────────
+
+  /**
+   * Страна проекта: для `SINGLE`/`LINE` — как и раньше, обязательное
+   * поле запроса; для `CLIENT_SITE` — необязательное (§4.1
+   * doc/CLIENT-SITE-TUTORIAL-SPEC.md).
+   *
+   * Почему у «сайта заказчика» её можно не спрашивать: у такого проекта
+   * нет ни товара, ни цены — страна и валюта там ничего не считают.
+   * Колонка при этом остаётся `NOT NULL`, и это осознанно: делать её
+   * nullable значит добавить null-проверки во все места, которые уже
+   * читают `Project.countryCode`, ради поля, которое для одного типа
+   * проекта просто не используется. Поэтому страна не убирается, а
+   * УГАДЫВАЕТСЯ — по последнему проекту пользователя, а для самого
+   * первого берётся домашний рынок продукта. Цена ошибки нулевая,
+   * выигрыш — на один обязательный шаг меньше на входе в фичу.
+   */
+  private async resolveCountryCode(
+    userId: string,
+    dto: CreateProjectRequestDto,
+  ): Promise<string> {
+    if (dto.countryCode) return dto.countryCode.toUpperCase();
+    if (dto.type !== 'CLIENT_SITE') {
+      throw new BadRequestException(
+        'countryCode is required for SINGLE and LINE projects',
+      );
+    }
+    const previous = await this.prisma.project.findFirst({
+      where: { userId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: { countryCode: true },
+    });
+    return previous?.countryCode ?? DEFAULT_COUNTRY_CODE;
+  }
+
+  /**
+   * Кадры предпросмотра обучалки по сайту заказчика
+   * (`tutorial-video-frames/{draftId}/*`). Best-effort, как и уборка
+   * файлов товара: строка проекта уже удалена, и сбой хранилища не
+   * должен ронять партию крона.
+   */
+  private async deleteClientSiteFrames(draftId: string): Promise<void> {
+    const prefix = `tutorial-video-frames/${draftId}/`;
+    try {
+      let cursor: string | undefined;
+      do {
+        const page = await this.blob.listByPrefix(prefix, { cursor });
+        if (page.blobs.length > 0) {
+          await this.blob.deleteMany(page.blobs.map((b) => b.pathname));
+        }
+        cursor = page.cursor ?? undefined;
+      } while (cursor);
+    } catch (e) {
+      this.logger.warn(
+        `не удалось убрать кадры обучалки ${draftId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
 
   private resolveCurrency(countryCode: string): string {
     const currency = currencyForCountry(countryCode);

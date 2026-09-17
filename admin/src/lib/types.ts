@@ -927,6 +927,47 @@ export interface TutorialScenarioListResult {
   pageSize: number;
 }
 
+// ── Обучалки по сайту заказчика (doc/CLIENT-SITE-TUTORIAL-SPEC.md §5.2,
+// §8.3; backend/src/modules/client-site-tutorial, этап 113) — вкладка
+// «Обучалки по сайтам» ──
+
+export type ClientSiteDraftStatus =
+  | 'DRAFTING'
+  | 'PENDING_REVIEW'
+  | 'APPROVED'
+  | 'REJECTED';
+
+export interface ClientSiteDraftRow {
+  id: string;
+  projectId: string;
+  baseUrl: string;
+  title: string | null;
+  status: ClientSiteDraftStatus;
+  stepCount: number;
+  roundCount: number;
+  previewFrameCount: number | null;
+  requiresLiveLoginReplay: boolean;
+  rejectionReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClientSiteDraftDetails extends ClientSiteDraftRow {
+  /** Список шагов ScenarioStep — не исполняемый код. */
+  steps: unknown;
+  /** Прямые ссылки на кадры предпросмотра в Blob — та же серия, что
+   * видел пользователь. Без них одобрение шло бы вслепую. */
+  frameUrls: string[];
+  hasCredentials: boolean;
+}
+
+export interface ClientSiteDraftListResult {
+  items: ClientSiteDraftRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 // ── Обучающие видео (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md
 // §4.8/§4.9, backend/src/modules/tutorial-runner, этап 99) — вкладки
 // «Видео-контент»/«Состояние данных» ──

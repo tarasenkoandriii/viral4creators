@@ -33,6 +33,12 @@ const cases: Array<[string, unknown]> = [
     '#/projects/p1/ab-test/run1',
     { name: 'ab-test', projectId: 'p1', runId: 'run1' },
   ],
+  // Этап 115 (§11 doc/CLIENT-SITE-TUTORIAL-SPEC.md): визард обучалки по
+  // сайту заказчика — один маршрут на все три состояния. Третий
+  // сегмент — литерал, и рядом уже живут `items`/`feed-import`
+  // /`catalog-batch` того же проекта: проверяем, что он их не съедает.
+  ['#/projects/p1/site-tutorial', { name: 'site-tutorial', projectId: 'p1' }],
+  ['#/projects/p1/feed-import', { name: 'feed-import-start', projectId: 'p1' }],
   ['#/generate', { name: 'generate' }],
   // Этап 88: /postprod (список готовых роликов) и /postprod/:sessionId
   // (переозвучка/экспорт/публикация/шаринг одного ролика).

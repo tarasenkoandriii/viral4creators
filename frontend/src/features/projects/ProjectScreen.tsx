@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Circle,
   Clapperboard,
+  Globe,
   ImageOff,
   Palette,
   Plus,
@@ -342,7 +343,9 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
           <>
             {project.type === 'LINE'
               ? dict.projectScreen.typeLine
-              : dict.projectScreen.typeSingle}{' '}
+              : project.type === 'CLIENT_SITE'
+                ? dict.projectScreen.typeClientSite
+                : dict.projectScreen.typeSingle}{' '}
             · {project.countryCode} ·{' '}
             <span className="tabular">{project.currency}</span>
             {project.type === 'LINE' && (
@@ -378,7 +381,26 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
         </Alert>
       )}
 
-      {project.items.length === 0 ? (
+      {/*
+        У проекта «сайт заказчика» нет товаров вообще — вся его работа
+        живёт в визарде обучалки, и список позиций ниже для него не
+        имеет смысла (§4.1/§4.3).
+      */}
+      {project.type === 'CLIENT_SITE' ? (
+        <Card className="p-5 space-y-4">
+          <p className="text-sm text-[var(--muted)]">
+            {dict.projectScreen.clientSiteHint}
+          </p>
+          <Button
+            block
+            size="lg"
+            icon={<Globe size={16} />}
+            onClick={() => navigate(routes.siteTutorial(project.id))}
+          >
+            {dict.projectScreen.clientSiteCta}
+          </Button>
+        </Card>
+      ) : project.items.length === 0 ? (
         project.type === 'SINGLE' ? (
           <div className="flex justify-center py-12">
             <Spinner size={24} />

@@ -159,7 +159,10 @@ export async function getProject(projectId: string): Promise<ProjectView> {
 export async function createProject(input: {
   type: ProjectType;
   title: string;
-  countryCode: string;
+  /** Необязателен только для `CLIENT_SITE` (§4.1): у проекта «сайт
+   * заказчика» нет ни товара, ни цены, и страна там ничего не считает —
+   * сервер подставляет её сам, чтобы не ставить лишний шаг на входе. */
+  countryCode?: string;
   brandManifestId?: string;
 }): Promise<ProjectView> {
   return unwrap(await api.post<ProjectView>('/projects', input), 'project');

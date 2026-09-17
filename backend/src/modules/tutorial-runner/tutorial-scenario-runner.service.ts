@@ -628,6 +628,12 @@ export class TutorialScenarioRunnerService {
     scenarioId?: string | null;
     frameCount?: number | null;
   }): Promise<void> {
+    // Только строки ШТАТНОЙ обучалки: у них кадры транзитные — скачаны
+    // внешним ffmpeg-api и больше не нужны. У обучалки по сайту
+    // заказчика (`clientSiteDraftId`, этап 113) `scenarioId` пуст, и
+    // ранний выход ниже намеренный, а не случайный: там те же файлы —
+    // это ПРЕДПРОСМОТР, который видят пользователь и оператор, и живут
+    // они до удаления черновика (§5.2 `DELETE`), а не до сборки.
     const owner = asset.scenarioId;
     const count = asset.frameCount;
     if (!owner || !count) return;

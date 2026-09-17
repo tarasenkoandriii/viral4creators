@@ -75,6 +75,12 @@ function makePrisma() {
       delete: jest.fn(),
       findUnique: jest.fn().mockResolvedValue({ currency: 'UAH' }),
     },
+    // Этап 116: уборка мягко удалённого проекта читает черновик
+    // обучалки по сайту заказчика, чтобы узнать его id ДО каскадного
+    // удаления строки — иначе кадры в Blob осиротеют навсегда.
+    clientSiteTutorialDraft: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     productAnalog: {
       findMany: jest.fn().mockResolvedValue([
         { price: decimal('19.00'), currency: 'USD' },
@@ -619,6 +625,50 @@ describe('ProjectService', () => {
         'projects/p1/items/i1/photo.jpg',
       ]);
       expect(result).toEqual({ count: 1, hasMore: false });
+    });
+
+    it('кадры обучалки по сайту заказчика уносятся вместе с проектом', async () => {
+      // Черновик уходит каскадом FK, а файлы в Blob — нет: после
+      // удаления строки `draftId` взять больше неоткуда, и префикс
+      // осиротел бы навсегда (аудит этапа 116).
+      prisma.project.findMany.mockResolvedValue([{ id: 'p1' }]);
+      prisma.productItem.findMany.mockResolvedValue([]);
+      prisma.project.delete.mockResolvedValue({});
+      prisma.clientSiteTutorialDraft.findUnique.mockResolvedValue({
+        id: 'draft1',
+      });
+      blob.listByPrefix.mockResolvedValue({
+        blobs: [{ pathname: 'tutorial-video-frames/draft1/0.jpg' }],
+        cursor: null,
+      });
+
+      await service.purgeSoftDeletedProjects();
+
+      expect(blob.listByPrefix).toHaveBeenCalledWith(
+        'tutorial-video-frames/draft1/',
+        expect.anything(),
+      );
+      expect(blob.deleteMany).toHaveBeenCalledWith([
+        'tutorial-video-frames/draft1/0.jpg',
+      ]);
+    });
+
+    it('идентификатор черновика читается ДО удаления строки проекта', async () => {
+      prisma.project.findMany.mockResolvedValue([{ id: 'p1' }]);
+      prisma.productItem.findMany.mockResolvedValue([]);
+      const order: string[] = [];
+      prisma.clientSiteTutorialDraft.findUnique.mockImplementation(async () => {
+        order.push('read-draft');
+        return { id: 'draft1' };
+      });
+      prisma.project.delete.mockImplementation(async () => {
+        order.push('delete');
+        return {};
+      });
+
+      await service.purgeSoftDeletedProjects();
+
+      expect(order).toEqual(['read-draft', 'delete']);
     });
 
     it('purgeSoftDeletedItems уносит и фото, и голосовые записи товара, удалённого поодиночке', async () => {

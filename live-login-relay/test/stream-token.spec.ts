@@ -37,3 +37,23 @@ describe('stream-token', () => {
     expect(hashToken('abc')).toEqual(hashToken('abc'));
   });
 });
+
+/**
+ * Регрессия аудита этапа 108: сама примитива проверки токена не должна
+ * БРОСАТЬ на нестроковом входе. До фикса `createHash().update(undefined)`
+ * бросал `ERR_INVALID_ARG_TYPE` синхронно внутри обработчика
+ * `ws.on('message')` — то есть ронял весь процесс реле. Основную
+ * фильтрацию делает `parseClientMessage`, но проверка токена не должна
+ * зависеть от дисциплины вызывающего.
+ */
+describe('verifyStreamToken — нестроковый вход', () => {
+  it('возвращает false вместо исключения', () => {
+    const { hash } = generateStreamToken();
+    for (const bad of [undefined, null, 123, {}, []]) {
+      expect(() =>
+        verifyStreamToken(bad as unknown as string, hash),
+      ).not.toThrow();
+      expect(verifyStreamToken(bad as unknown as string, hash)).toBe(false);
+    }
+  });
+});

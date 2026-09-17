@@ -869,6 +869,89 @@ export function getEnvSettings(
     });
   }
 
+  // ── Обучалка по САЙТУ ЗАКАЗЧИКА (doc/CLIENT-SITE-TUTORIAL-SPEC.md,
+  //    этапы 111–114) — отдельная фича, не путать с группой выше ──
+  //
+  // Все четыре необязательны, но молчат по-разному, и оператору важно
+  // видеть чем: без ключа шифрования визард отвечает ошибкой на первом
+  // же раунде, а без адреса реле просто не показывается кнопка живого
+  // входа, и остальное работает.
+
+  {
+    const raw = env.SITE_TUTORIAL_TOKEN_KEY;
+    const set = Boolean(raw?.trim());
+    results.push({
+      key: 'SITE_TUTORIAL_TOKEN_KEY',
+      group: 'Обучалка по сайту заказчика',
+      required: false,
+      set,
+      ok: set,
+      severity: set ? 'ok' : 'warning',
+      message: set
+        ? 'Задан — cookie jar и тестовые учётные данные заказчика шифруются AES-256-GCM. Ключ СВОЙ, отдельно от CHANNEL_TOKEN_KEY/PAYMENT_TOKEN_KEY: разные секреты разной чувствительности не делят ключ.'
+        : 'Не задан — визард обучалки по сайту заказчика откажет на первом же раунде: складывать живые куки чужого сайта в базу открытым текстом нельзя. Сгенерировать: openssl rand -base64 32.',
+      // Значение не показываем — это ключ шифрования.
+    });
+  }
+
+  {
+    const raw = env.LIVE_LOGIN_RELAY_URL;
+    const ok = raw === undefined || /^https?:\/\//.test(raw.trim());
+    results.push({
+      key: 'LIVE_LOGIN_RELAY_URL',
+      group: 'Обучалка по сайту заказчика',
+      required: false,
+      set: raw !== undefined,
+      ok,
+      severity: ok ? (raw ? 'ok' : 'warning') : 'warning',
+      message: !ok
+        ? 'Задан, но не похож на URL — backend не сможет ни поднять живую сессию, ни забрать её результат.'
+        : raw
+          ? 'HTTP-адрес сервиса live-login-relay. Если LIVE_LOGIN_RELAY_WS_URL не задан, из него же склеивается wss-адрес для браузера — тогда этот адрес обязан быть публичным.'
+          : 'Не задан — кнопка живого входа (капча/2FA/SSO) не показывается вовсе, вход по тестовым учётным данным работает. Это штатная мягкая деградация, а не поломка.',
+      value: raw,
+    });
+  }
+
+  {
+    const raw = env.LIVE_LOGIN_RELAY_SECRET;
+    const set = Boolean(raw?.trim());
+    const relaySet = Boolean(env.LIVE_LOGIN_RELAY_URL?.trim());
+    results.push({
+      key: 'LIVE_LOGIN_RELAY_SECRET',
+      group: 'Обучалка по сайту заказчика',
+      required: false,
+      set,
+      ok: set || !relaySet,
+      severity: set ? 'ok' : relaySet ? 'warning' : 'ok',
+      message: set
+        ? 'Задан — уходит реле заголовком X-Relay-Secret. У реле он fail-closed: без совпадения оно отвечает 401 на всё.'
+        : relaySet
+          ? 'Адрес реле задан, а секрет — нет: реле ответит 401 на КАЖДЫЙ вызов, и живой вход будет падать вместо того, чтобы просто не показываться. Задайте оба или ни одного.'
+          : 'Не задан — как и адрес реле выше; живой вход выключен целиком, это штатное состояние.',
+      // Значение не показываем — секрет.
+    });
+  }
+
+  {
+    const raw = env.LIVE_LOGIN_RELAY_WS_URL;
+    const ok = raw === undefined || /^wss?:\/\//.test(raw.trim());
+    results.push({
+      key: 'LIVE_LOGIN_RELAY_WS_URL',
+      group: 'Обучалка по сайту заказчика',
+      required: false,
+      set: raw !== undefined,
+      ok,
+      severity: ok ? 'ok' : 'warning',
+      message: !ok
+        ? 'Ожидается адрес вида wss://… — именно он уезжает в браузер пользователя для видеопотока живой сессии.'
+        : raw
+          ? 'Публичный wss-адрес реле для браузера — нужен, когда backend ходит к реле по внутреннему адресу, а браузер по внешнему.'
+          : 'Не задан — wss-адрес склеивается из LIVE_LOGIN_RELAY_URL заменой схемы. Нормально, пока тот адрес публичный.',
+      value: raw,
+    });
+  }
+
   // ── Режимы и деньги (ТЗ §23, §26) ──
 
   {

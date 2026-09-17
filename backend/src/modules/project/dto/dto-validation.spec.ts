@@ -63,6 +63,32 @@ describe('CreateProjectRequestDto', () => {
       { type: 'LINE', title: 'x', countryCode: 'UA', currency: 'USD' },
       /currency should not exist/,
     ));
+  // Этап 115 (§4.1 doc/CLIENT-SITE-TUTORIAL-SPEC.md): третий тип
+  // проекта и необязательная для него страна.
+  it('accepts CLIENT_SITE without countryCode', async () => {
+    const dto = await run(CreateProjectRequestDto, {
+      type: 'CLIENT_SITE',
+      title: 'Кабинет заказчика',
+    });
+    expect(dto.countryCode).toBeUndefined();
+  });
+
+  it('accepts CLIENT_SITE with an explicit countryCode', async () => {
+    const dto = await run(CreateProjectRequestDto, {
+      type: 'CLIENT_SITE',
+      title: 'Кабинет заказчика',
+      countryCode: 'PL',
+    });
+    expect(dto.countryCode).toBe('PL');
+  });
+
+  it('still rejects a malformed countryCode when it IS provided', () =>
+    rejects(
+      CreateProjectRequestDto,
+      { type: 'CLIENT_SITE', title: 'x', countryCode: 'UKR' },
+      /countryCode/,
+    ));
+
   it('rejects a bad type', () =>
     rejects(
       CreateProjectRequestDto,

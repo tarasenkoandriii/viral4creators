@@ -117,12 +117,12 @@ Alle Tarife sind derzeit kostenlos und werden vom Nutzer selbst in der Mini-App 
 
 ### Standard
 Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.
-Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen
+Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Tutorial-Video für die Website des Kunden
 any aspect ratio
 
 ### Premium
 Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
-Bibliothek fertiger Analysen, Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Synchronisation (modelleigene Stimme vollständig ersetzt)
+Bibliothek fertiger Analysen, Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Synchronisation (modelleigene Stimme vollständig ersetzt), Tutorial-Video für die Website des Kunden
 any aspect ratio
 
 ## Pipeline-Regeln

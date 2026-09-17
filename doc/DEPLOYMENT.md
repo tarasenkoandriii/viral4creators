@@ -251,6 +251,46 @@ Telegram-логин, который их и породил.
      (проект/товар/манифест/сессия с роликом) заводит отдельный
      ops-скрипт `backend/scripts/seed-fixture-user.ts`, запускается
      вручную один раз, не частью деплоя.
+   - `SITE_TUTORIAL_TOKEN_KEY`, `SITE_TUTORIAL_ROUNDS_PER_DAY`,
+     `SITE_TUTORIAL_LIVE_SESSIONS_PER_DAY` (§8.3/§9
+     doc/CLIENT-SITE-TUTORIAL-SPEC.md, этап 111) — обучалка по САЙТУ
+     ЗАКАЗЧИКА (визард `/api/projects/:id/client-site-tutorial/*`).
+     - `SITE_TUTORIAL_TOKEN_KEY` — 32 байта base64, шифрует cookie jar
+       и учётные данные заказчика в `client_site_tutorial_drafts`
+       (`common/cookie-jar.ts`, AES-256-GCM; отдельный ключ от
+       `CHANNEL_TOKEN_KEY` и `PAYMENT_TOKEN_KEY` — компрометация одного
+       не должна открывать чужие секреты). Сгенерировать:
+       `openssl rand -base64 32`. Не задан — визард честно откажет
+       (мягкая деградация, как у остальных опциональных интеграций), но
+       остальной продукт работает.
+     - `SITE_TUTORIAL_ROUNDS_PER_DAY` и
+       `SITE_TUTORIAL_LIVE_SESSIONS_PER_DAY` — дневные лимиты НА
+       ПОЛЬЗОВАТЕЛЯ на число раундов визарда и на число live-сессий
+       входа. Не заданы — умолчания из кода (60 и 10); мусор в значении
+       (ноль, отрицательное, не число) тоже откатывается на умолчание,
+       чтобы опечатка в панели Vercel не закрыла фичу всем и не открыла
+       её без потолка.
+   - `LIVE_LOGIN_RELAY_URL`, `LIVE_LOGIN_RELAY_SECRET`,
+     `LIVE_LOGIN_RELAY_WS_URL` (§7.4 doc/CLIENT-SITE-TUTORIAL-SPEC.md и
+     §15 doc/LIVE-LOGIN-RELAY-SPEC.md, этап 114) — ЖИВОЙ ВХОД в
+     обучалке по сайту заказчика: отдельный постоянный сервис
+     `live-login-relay/` (деплоится НЕ на Vercel — ему нужен живой
+     Chromium на минуты, см. §7.4.9 и `live-login-relay/README.md`).
+     Все три необязательны: не заданы — кнопка живого входа не
+     показывается вовсе (`liveLoginAvailable: false` в ответе
+     `GET /api/projects/:id/site-tutorial`), вход по тестовым учётным
+     данным продолжает работать.
+     - `LIVE_LOGIN_RELAY_URL` — HTTP-адрес реле, которым ходит BACKEND
+       (`POST /sessions`, `GET /sessions/:id/result`, `DELETE`).
+     - `LIVE_LOGIN_RELAY_SECRET` — общий секрет, уходит заголовком
+       `X-Relay-Secret`; у реле он fail-closed (без него оно отвечает
+       401 на всё), генерируется так же, как `CRON_SECRET`.
+     - `LIVE_LOGIN_RELAY_WS_URL` — публичный `wss://`-адрес реле для
+       БРАУЗЕРА пользователя. Не задан — собирается из
+       `LIVE_LOGIN_RELAY_URL` заменой схемы (`https` → `wss`), и тогда
+       та переменная ОБЯЗАНА быть публичным адресом. Задавайте эту
+       отдельно, если backend ходит к реле по внутреннему адресу, а
+       браузер — по внешнему (обычная развязка на Dokploy).
    - `SERPAPI_API_KEY` (§6.1) и `SERPAPI_DAILY_LIMIT_PER_USER` — поиск
      аналогов товара. Не задан — экран аналогов честно откажет, но
      остальной сценарий работает.

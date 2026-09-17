@@ -13,7 +13,11 @@ import type {
   SubtitleTheme,
 } from './index';
 
-export type ProjectType = 'SINGLE' | 'LINE';
+/** `CLIENT_SITE` — обучалка по сайту заказчика (§4.1
+ * doc/CLIENT-SITE-TUTORIAL-SPEC.md, этап 115). У такого проекта нет
+ * товаров вообще: «товар» здесь — чужой сайт, а всё специфичное живёт
+ * в отдельном черновике, не в полях `Project`. */
+export type ProjectType = 'SINGLE' | 'LINE' | 'CLIENT_SITE';
 export type ProductPriceSource = 'MANUAL' | 'ANALOG';
 
 export interface ProductAnalogView {

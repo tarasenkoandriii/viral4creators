@@ -8,7 +8,10 @@
  * number precision), and `isComplete` is computed, not stored.
  */
 
-export type ProjectType = 'SINGLE' | 'LINE';
+/** `CLIENT_SITE` — обучалка по сайту заказчика (этап 111 завёл значение
+ * в БД, этап 115 — путь пользователя к нему). У такого проекта нет
+ * `ProductItem` вообще: «товар» здесь — чужой сайт. */
+export type ProjectType = 'SINGLE' | 'LINE' | 'CLIENT_SITE';
 
 export type ProductPriceSource = 'MANUAL' | 'ANALOG';
 

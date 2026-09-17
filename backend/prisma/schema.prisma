@@ -151,6 +151,7 @@ model User {
   brandManifests     BrandManifest[]
   serpApiUsage       SerpApiUsage[]
   youtubeSearchUsage YoutubeSearchUsage[]
+  clientSiteTutorialUsage ClientSiteTutorialUsage[]
   publications       PublicationRequest[]
   moderated          PublicationRequest[] @relation("PublicationModerator")
   libraryEntries     AnalysisLibraryEntry[]
@@ -364,6 +365,7 @@ model Project {
   catalogBatchRuns CatalogBatchRun[]
   abTestRuns   AbTestRun[]
   productFeedImportRuns ProductFeedImportRun[]
+  clientSiteTutorialDraft ClientSiteTutorialDraft?
 
   @@index([userId])
   @@index([brandManifestId])
@@ -376,6 +378,10 @@ model Project {
 enum ProjectType {
   SINGLE
   LINE
+  /// Проект-обучалка по сайту заказчика (doc/CLIENT-SITE-TUTORIAL-SPEC.md
+  /// §4.1, этап 111) — по-прежнему обычный `Project`, просто без
+  /// `ProductItem`: всё специфичное живёт в `ClientSiteTutorialDraft`.
+  CLIENT_SITE
 }
 
 // Одна позиция (SKU) внутри проекта — ТЗ §2. Лимит на линейку (§7.3, 20
@@ -2284,6 +2290,12 @@ model TutorialVideoAsset {
   assemblyJobId     String?
   assemblyStartedAt DateTime?
 
+  /// Мягкая ссылка (НЕ Prisma-связь, тот же журнальный приём, что
+  /// scenarioId выше) на ClientSiteTutorialDraft, из которого собран этот
+  /// ролик — NULL для штатной обучалки (обратная совместимость, без
+  /// миграции старых строк). §6.2 doc/CLIENT-SITE-TUTORIAL-SPEC.md.
+  clientSiteDraftId String?
+
   @@index([subjectKey, locale, createdAt])
   /// Горячий путь чтения консультанта (§4.8 ТЗ, будущий этап) — «какие
   /// subjectKey уже есть одобренными для этой локали».
@@ -2291,6 +2303,10 @@ model TutorialVideoAsset {
   /// Опрос незавершённых сборок на каждом тике — без индекса это полный
   /// скан таблицы на каждый прогон крона.
   @@index([assemblyStatus])
+  /// §6.2 предполагает фильтр `WHERE clientSiteDraftId IS NOT NULL` —
+  /// заводить поле под такой фильтр без индекса значит забыть
+  /// собственный аргумент через абзац (найдено аудитом ТЗ §14 п.9).
+  @@index([clientSiteDraftId])
   @@map("tutorial_video_assets")
 }
 
@@ -2341,4 +2357,140 @@ model UiSnapshot {
 
   @@index([routeKey, locale, theme, createdAt])
   @@map("ui_snapshots")
+}
+
+/// Черновик сценария обучающего видео по сайту заказчика — self-service
+/// (doc/CLIENT-SITE-TUTORIAL-SPEC.md §6.1, этап 111). В отличие от
+/// `TutorialScenario` (subjectKey/locale — про НАШ продукт, не привязан к
+/// пользователю), эта модель по определению принадлежит конкретному
+/// `Project` конкретного пользователя: сайт заказчика у каждого свой.
+model ClientSiteTutorialDraft {
+  id        String  @id @default(cuid())
+  projectId String  @unique
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  /// Origin, зафиксированный на первом успешном /explore — доменный замок
+  /// §8.1: каждый следующий goto проверяется против него на точное
+  /// совпадение схемы+хоста+порта. Сменить ссылку в процессе работы над
+  /// этим же черновиком нельзя — только удалить черновик и начать заново.
+  baseUrl String
+
+  /// ScenarioStep[] — тот же словарь и формат, что `TutorialScenario.steps`
+  /// (`modules/tutorial-scenario/scenario-steps.types.ts`). Растёт по
+  /// одному действию за раунд.
+  steps Json
+
+  /// Куда фактически привёл последний шаг — точка восстановления для
+  /// следующего раунда (§5.1). Не обязано совпадать с URL последнего
+  /// goto/click в steps буквально (редиректы на сайте заказчика).
+  lastUrl String?
+
+  /// Зашифрованный (`common/cookie-jar.ts` поверх `token-crypto.ts`)
+  /// cookie jar после последнего шага — оптимизация раунда (§5.1), НЕ
+  /// источник правды для финальной сборки видео (там логин проигрывается
+  /// заново буквальными шагами из `credentialsEnc`, §7.3). Исключение —
+  /// `requiresLiveLoginReplay`, см. ниже.
+  cookiesEnc String?
+
+  /// Зашифрованные (`token-crypto.ts`) тестовые креды, введённые через
+  /// /login (§5.2) — СПИСОК полей, не фиксированная пара логин/пароль
+  /// (§14 п.8: трёхпольные и многошаговые формы входа). Единственный
+  /// секрет, который переживает сам черновик и используется повторно при
+  /// каждой пересборке видео. NULL, если сценарий обошёлся без логина.
+  credentialsEnc String?
+
+  /// true, если хотя бы один раунд — маркер live-интерактивной сессии
+  /// входа (§7.4.5: капча/2FA/чужой SSO), а не буквальный fill/click. При
+  /// таком флаге финальная сборка (§7.4.7) обязана использовать
+  /// `cookiesEnc` напрямую и честно падать, если сессия заказчика к
+  /// моменту сборки уже истекла — детерминированно повторить то, что
+  /// нельзя повторить без человека, она не пытается.
+  requiresLiveLoginReplay Boolean @default(false)
+
+  /// Оптимистичная блокировка (§5.2, находка аудита §14 п.1) —
+  /// инкрементируется на каждой мутации. ПЕРВЫЙ прецедент поля-версии в
+  /// этом проекте: остальные конкурентные места обходятся «claim»-приёмом
+  /// `updateMany` со старым значением в `where`, но здесь гонка идёт за
+  /// одну и ту же строку из двух вкладок пользователя, и нужна именно
+  /// версия, а не сверка конкретного поля.
+  version Int @default(0)
+
+  /// Число ScenarioStep, добавленных КАЖДЫМ раундом (§15 п.3): «раунд»
+  /// (один HTTP-вызов, один новый кадр) и «шаг» (один элемент `steps[]`)
+  /// — РАЗНЫЕ единицы, один /step или /login может дописать несколько
+  /// ScenarioStep за раз. Это поле — единственный способ узнать, сколько
+  /// записей `steps[]` относится к последнему раунду: /undo снимает
+  /// `stepsPerRound.pop()` последних элементов `steps`, а не один.
+  /// Первый `Int[]` в схеме проекта (остальные массивы — `String[]`);
+  /// Postgres и Prisma это поддерживают штатно.
+  stepsPerRound Int[] @default([])
+
+  /// Скриншот КАЖДОГО раунда (§15 п.1) — длина массива один-в-один с
+  /// `stepsPerRound`, а НЕ со `steps`. Персистится в ту же строку, не в
+  /// Blob (§6.3): раньше эту историю копил только фронтенд в памяти, и
+  /// перезагрузка вкладки посреди визарда тихо теряла все кадры, кроме
+  /// текущего. Источник правды для /finish — сервер больше не доверяет
+  /// присланному клиентом списку кадров.
+  roundScreenshots Json
+
+  status ClientSiteTutorialDraftStatus @default(DRAFTING)
+
+  /// Заполняется на /finish — переносится в `TutorialVideoAsset.title`
+  /// при одобрении оператора (§5.2/§8.3).
+  title String?
+
+  /// Почему оператор отклонил (§14 п.10: раньше REJECTED был тупиком без
+  /// причины и без пути назад). NULL, пока отказа не было.
+  rejectionReason String?
+
+  /// Число уже отрисованных кадров предпросмотра, залитых в Blob под
+  /// `tutorial-video-frames/{id}/*.jpg` — тот же смысл, что
+  /// `TutorialVideoAsset.frameCount`, но раньше по времени. NULL, пока
+  /// черновик в DRAFTING.
+  previewFrameCount Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([status])
+  @@map("client_site_tutorial_drafts")
+}
+
+enum ClientSiteTutorialDraftStatus {
+  /// Пользователь ещё кликает по страницам.
+  DRAFTING
+  /// /finish вызван, ждёт одобрения оператора на первый прогон (§8.3).
+  PENDING_REVIEW
+  /// Оператор одобрил — поставлено в пост-продакшн.
+  APPROVED
+  /// Оператор отклонил (`rejectionReason` заполнен) — POST .../resume
+  /// возвращает в DRAFTING.
+  REJECTED
+}
+
+/// Счётчик раундов визарда обучалки по пользователю/суткам — §9 ТЗ прямо
+/// требует ОТДЕЛЬНУЮ метрику, а не растворять стоимость в плоском
+/// `PlanFeature`: «здесь нет вызова ИИ», значит `AiUsage`/`ai-pricing`
+/// не подходят по смыслу. Форма скопирована с `SerpApiUsage`/
+/// `YoutubeSearchUsage` — тот же ключ `userId+day` и то же атомарное
+/// резервирование через `INSERT ... ON CONFLICT DO UPDATE ... WHERE
+/// count < limit`, потому что дорог здесь не ИИ, а секунды владения
+/// контейнером с Chromium.
+model ClientSiteTutorialUsage {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// UTC-сутки в формате YYYY-MM-DD — строкой, чтобы ключ был точным, без
+  /// таймзонных сюрпризов DateTime (тот же приём, что у SerpApiUsage).
+  day    String
+  /// Раунды визарда (/explore + /step + /login + /undo) за эти сутки.
+  rounds Int    @default(0)
+  /// Live-сессии входа за эти сутки — отдельный, более дорогой ресурс
+  /// (§7.4.8: постоянный контейнер, плата за секунды владения).
+  liveSessions Int @default(0)
+
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([userId, day])
+  @@map("client_site_tutorial_usage")
 }

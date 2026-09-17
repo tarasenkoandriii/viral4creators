@@ -117,12 +117,12 @@ All plans are currently free and switched by the user themselves in the mini-app
 
 ### Standard
 Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.
-Reference relevance scoring, Audit of a finished video, Publishing through the service, Brand manifest, Your own scenes and reference slots, Photo character replacement, Any aspect ratio, Full Veo model, Clone your own voice
+Reference relevance scoring, Audit of a finished video, Publishing through the service, Brand manifest, Your own scenes and reference slots, Photo character replacement, Any aspect ratio, Full Veo model, Clone your own voice, Tutorial video for the client's website
 any aspect ratio
 
 ### Premium
 Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
-Library of ready-made breakdowns, Reference relevance scoring, Audit of a finished video, Publishing through the service, Brand manifest, Your own scenes and reference slots, Photo character replacement, Any aspect ratio, Full Veo model, Clone your own voice, Dub (full replacement of the model's voice)
+Library of ready-made breakdowns, Reference relevance scoring, Audit of a finished video, Publishing through the service, Brand manifest, Your own scenes and reference slots, Photo character replacement, Any aspect ratio, Full Veo model, Clone your own voice, Dub (full replacement of the model's voice), Tutorial video for the client's website
 any aspect ratio
 
 ## Pipeline rules

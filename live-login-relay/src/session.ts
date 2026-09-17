@@ -31,7 +31,14 @@ export interface RelayCdpSession {
 }
 
 export interface RelayPage {
-  goto(url: string): Promise<unknown>;
+  goto(url: string, options?: { timeout?: number }): Promise<unknown>;
+  setViewport?(viewport: {
+    width: number;
+    height: number;
+    isMobile?: boolean;
+    hasTouch?: boolean;
+    deviceScaleFactor?: number;
+  }): Promise<void>;
   url(): string;
   target(): { createCDPSession(): Promise<RelayCdpSession> };
   on(event: 'framenavigated', handler: (frame: RelayFrame) => void): void;
@@ -56,11 +63,52 @@ export interface WsChannel {
 
 export class SessionAlreadyClosedError extends Error {}
 
+/** Битовые флаги кнопок мыши CDP — те же значения, что у puppeteer
+ * (`cdp/Input.js:156-172`): страница читает их как `MouseEvent.buttons`. */
+const MOUSE_BUTTON_FLAGS: Record<string, number> = {
+  left: 1,
+  right: 2,
+  middle: 4,
+};
+
+/** Обратное преобразование маски в имя «главной» зажатой кнопки — тем
+ * же приоритетом, что `getButtonFromPressedButtons()` у puppeteer. */
+function buttonFromMask(mask: number): string {
+  if (mask & MOUSE_BUTTON_FLAGS.left) return 'left';
+  if (mask & MOUSE_BUTTON_FLAGS.right) return 'right';
+  if (mask & MOUSE_BUTTON_FLAGS.middle) return 'middle';
+  return 'none';
+}
+
+/**
+ * Стартовый вьюпорт сессии (этап 109). У puppeteer по умолчанию
+ * `DEFAULT_VIEWPORT = {width: 800, height: 600}` — десктопная форма, а
+ * потребитель этой фичи по построению телефон внутри Telegram (§7.4.3
+ * основного ТЗ прямо про это: «ТМА работает внутри Telegram, разные
+ * экраны»). До этапа 109 первые кадры уходили в 800×600 и, если клиент
+ * почему-либо не присылал `resize`, ВСЯ сессия оставалась десктопной:
+ * чужой сайт отдавал бы десктопную вёрстку формы входа человеку с
+ * телефона. 390×844 — то же значение, что уже принято в
+ * `backend/src/modules/ui-snapshot/ui-snapshot-runner.service.ts` для
+ * съёмки экранов ТМА, чтобы два места продукта не расходились. Клиент
+ * всё равно переопределяет размер первым же `resize` (§8.3).
+ */
+const DEFAULT_VIEWPORT = {
+  width: 390,
+  height: 844,
+  isMobile: true,
+  hasTouch: true,
+  deviceScaleFactor: 1,
+};
+
 export interface SessionCreateOptions {
   startUrl: string;
   allowedOrigin: string;
   browser: RelayBrowser;
   logger: Logger;
+  /** Потолок ожидания `page.goto(startUrl)` — см. доккомментарий
+   * `create()`. */
+  navTimeoutMs: number;
 }
 
 export class Session {
@@ -81,6 +129,12 @@ export class Session {
   private cachedResult: SessionResult | null = null;
   private closedAt: number | null = null;
   private finalizingPromise: Promise<SessionResult> | null = null;
+  /** Маска сейчас зажатых кнопок мыши (CDP `buttons`) — состояние живёт
+   * на сессии, потому что перетаскивание по определению растянуто между
+   * несколькими сообщениями клиента; см. dispatchMouse(). */
+  private pressedButtons = 0;
+  private idleWarningSent = false;
+  private wallWarningSent = false;
 
   private constructor(opts: {
     allowedOrigin: string;
@@ -95,9 +149,22 @@ export class Session {
     this.streamTokenHash = pair.hash;
   }
 
-  /** Открывает страницу и переходит на startUrl — не запускает скринкаст
+  /**
+   * Открывает страницу и переходит на startUrl — не запускает скринкаст
    * (это делает attachWs, §8.1: нет смысла слать кадры, пока никто не
-   * подключился). */
+   * подключился).
+   *
+   * Таймаут навигации ЯВНЫЙ (этап 109). Без него действует умолчание
+   * puppeteer — 30 секунд (`common/TimeoutSettings.js:9`), а `POST
+   * /sessions` всё это время держит HTTP-запрос backend'а. Типовой
+   * таймаут исходящего вызова в backend'е этого проекта — 15 секунд
+   * (`youtube-search.service.ts`), то есть backend успел бы сдаться
+   * РАНЬШЕ, чем реле ответит: пользователь увидел бы ошибку, а реле
+   * тем временем довело бы сессию до конца и держало живой браузер и
+   * место под `MAX_CONCURRENT_SESSIONS` все три минуты wall-таймаута —
+   * никому не нужную. 20 секунд по умолчанию — то же значение, что
+   * `ROUTE_TIMEOUT_MS` у `ui-snapshot-runner` в backend'е.
+   */
   static async create(opts: SessionCreateOptions): Promise<Session> {
     const session = new Session({
       allowedOrigin: opts.allowedOrigin,
@@ -105,7 +172,13 @@ export class Session {
       logger: opts.logger,
     });
     session.page = await opts.browser.newPage();
-    await session.page.goto(opts.startUrl);
+    // `setViewport` помечен необязательным в узком интерфейсе
+    // `RelayPage` — у настоящего puppeteer-овского Page он есть всегда,
+    // а тестовым мокам не нужно его реализовывать ради оркестрации.
+    if (session.page.setViewport) {
+      await session.page.setViewport(DEFAULT_VIEWPORT);
+    }
+    await session.page.goto(opts.startUrl, { timeout: opts.navTimeoutMs });
     return session;
   }
 
@@ -117,6 +190,50 @@ export class Session {
    * вызывается ws-handler'ом отдельно, не на каждое WS-сообщение. */
   markActivity(): void {
     this.lastActivityAt = Date.now();
+    // Человек вернулся — предупреждение об истечении снова актуально,
+    // когда он снова замрёт (этап 109).
+    this.idleWarningSent = false;
+  }
+
+  /** Предупредить клиента о близком автозакрытии — один раз на «замирание»
+   * (для идла флаг сбрасывается любой активностью, для wall — нет, там
+   * потолок непродлеваемый). */
+  warnExpiring(
+    reason: 'idle-timeout' | 'wall-timeout',
+    msRemaining: number,
+  ): void {
+    if (reason === 'idle-timeout') {
+      if (this.idleWarningSent) return;
+      this.idleWarningSent = true;
+    } else {
+      if (this.wallWarningSent) return;
+      this.wallWarningSent = true;
+    }
+    this.notify({ type: 'expiring', reason, msRemaining });
+  }
+
+  /**
+   * Уведомление клиента — ВСЕГДА best-effort (найдено вторым проходом
+   * аудита этапа 108). `ws.send` умеет бросать (сокет оборвался между
+   * проверкой `readyState` и самой отправкой), и раньше это исключение
+   * летело наверх прямо посреди `finalize()`/`close()`. Последствия
+   * были несоразмерны причине: в `finalize()` — куки УЖЕ собраны, они и
+   * есть весь смысл операции, но вызывающий получал 502 и терял их
+   * (повторный live-вход — это ещё одна минута живого времени
+   * человека); в `close()` по таймауту — исключение уходило в
+   * `void this.expire(...)` необработанным отклонением. Сообщить
+   * человеку, что сессия закрылась, приятно, но не ценой самого
+   * результата.
+   */
+  private notify(message: ServerMessage): void {
+    try {
+      this.wsChannel?.send(message);
+    } catch (err) {
+      this.logger.warn('не удалось уведомить клиента по WS', {
+        sessionId: this.id,
+        error: String(err),
+      });
+    }
   }
 
   /** WS подключился и прошёл auth. Если уже было активное соединение —
@@ -127,8 +244,25 @@ export class Session {
   async attachWs(channel: WsChannel): Promise<void> {
     if (this.wsChannel && this.wsChannel !== channel) {
       const old = this.wsChannel;
-      old.send({ type: 'closed', reason: 'superseded' });
-      old.close(4009, 'superseded by new connection');
+      // Вытеснение — best-effort с обоих концов: и уведомление, и само
+      // закрытие транспорта могут бросить на уже оборвавшемся сокете,
+      // а новое подключение из-за этого страдать не должно.
+      try {
+        old.send({ type: 'closed', reason: 'superseded' });
+      } catch (err) {
+        this.logger.warn('не удалось уведомить вытесняемое соединение', {
+          sessionId: this.id,
+          error: String(err),
+        });
+      }
+      try {
+        old.close(4009, 'superseded by new connection');
+      } catch (err) {
+        this.logger.warn('не удалось закрыть вытесняемое соединение', {
+          sessionId: this.id,
+          error: String(err),
+        });
+      }
     }
     this.wsChannel = channel;
     if (this.state === 'created') {
@@ -153,7 +287,7 @@ export class Session {
         metadata: FrameMetadata;
         sessionId: number;
       }) => {
-        this.wsChannel?.send({
+        this.notify({
           type: 'frame',
           data: params.data,
           metadata: params.metadata,
@@ -174,7 +308,7 @@ export class Session {
 
     this.page.on('framenavigated', (frame) => {
       if (frame !== this.page!.mainFrame()) return;
-      this.wsChannel?.send({ type: 'navigated', url: frame.url() });
+      this.notify({ type: 'navigated', url: frame.url() });
     });
   }
 
@@ -189,12 +323,50 @@ export class Session {
     deltaY?: number;
   }): Promise<void> {
     if (!this.cdp) return;
+    // Найдено аудитом этапа 108 — три отклонения от того, как те же
+    // события формирует сам puppeteer (`Mouse.down/up/move`,
+    // `puppeteer-core/lib/cjs/puppeteer/cdp/Input.js:265-330`), и все
+    // три бьют ровно по главному сценарию фичи — человек руками
+    // проходит форму входа и капчу:
+    //  - `clickCount` ставился ТОЛЬКО на `mousePressed`. Для CDP
+    //    `mouseReleased` с clickCount:0 — это отпускание без клика, и
+    //    страница может не получить событие `click` вовсе (Chromium
+    //    синтезирует его по паре press/release с одинаковым ненулевым
+    //    clickCount). Клик «в никуда» по кнопке «Войти» — худший из
+    //    возможных багов здесь.
+    //  - `button` подставлялся `'left'` ДАЖЕ для `mouseMoved`, то есть
+    //    любое движение курсора выглядело для страницы как движение с
+    //    зажатой левой кнопкой (выделение текста, drag'n'drop).
+    //  - Не передавался `buttons` — битовая маска СЕЙЧАС зажатых
+    //    кнопок. Именно по ней страница отличает «курсор просто
+    //    проехал» от «тащат». Без неё ползунковые/пазл-капчи (а это
+    //    ровно то, ради чего нужен живой человек) нерешаемы в принципе:
+    //    у `mousedown`/`mousemove` в обработчике страницы
+    //    `e.buttons === 0`.
+    // Поэтому маска пишется в состояние сессии по press/release, и
+    // `button` для движения выводится из неё — тем же способом, что
+    // `getButtonFromPressedButtons()` у puppeteer.
+    const flag = MOUSE_BUTTON_FLAGS[params.button ?? 'left'] ?? 0;
+    let button: string;
+    let clickCount = 0;
+    if (params.event === 'mousePressed') {
+      this.pressedButtons |= flag;
+      button = params.button ?? 'left';
+      clickCount = 1;
+    } else if (params.event === 'mouseReleased') {
+      this.pressedButtons &= ~flag;
+      button = params.button ?? 'left';
+      clickCount = 1;
+    } else {
+      button = buttonFromMask(this.pressedButtons);
+    }
     await this.cdp.send('Input.dispatchMouseEvent', {
       type: params.event,
       x: params.x,
       y: params.y,
-      button: params.button ?? 'left',
-      clickCount: params.event === 'mousePressed' ? 1 : undefined,
+      button,
+      buttons: this.pressedButtons,
+      clickCount,
       deltaX: params.deltaX,
       deltaY: params.deltaY,
     });
@@ -257,8 +429,40 @@ export class Session {
     }
   }
 
+  /**
+   * Всё тело — в `try/finally`, где `finally` гасит браузер и уводит
+   * сессию в `closed` (найдено вторым проходом аудита этапа 108).
+   * Раньше `closeBrowser()` стоял на прямом пути: любое исключение
+   * ВЫШЕ него — `page.url()` на уже упавшей странице, `ws.send()` в
+   * оборвавшееся соединение — оставляло сессию в состоянии
+   * `finalizing` с ЖИВЫМ процессом Chromium, а менеджер тем временем
+   * уже снял wall/idle-таймеры и через `resultCacheMs` просто удалял
+   * запись из `Map`. Браузер в этот момент терял последнюю ссылку на
+   * себя и оставался висеть в контейнере навсегда — ровно та утечка,
+   * что и при неудачном старте сессии, только с другого конца
+   * жизненного цикла.
+   */
   private async doFinalize(): Promise<SessionResult> {
     this.state = 'finalizing';
+    let result: SessionResult = { cookies: [], finalUrl: '' };
+    try {
+      result = await this.harvest();
+      this.notify({ type: 'closed', reason: 'finalized' });
+    } finally {
+      await this.closeBrowser();
+      this.state = 'closed';
+      this.closedAt = Date.now();
+    }
+    this.cachedResult = result;
+    return result;
+  }
+
+  /** Снятие cookie jar со ВСЕГО контекста (§7.4.5 основного ТЗ — не
+   * `page.cookies()`, который отдал бы только текущий домен и потерял бы
+   * куки SSO-провайдера) плюс текущий URL. Отдельный метод, потому что
+   * с этапа 109 он нужен ДВУМ путям: штатной финализации и истечению
+   * таймаута (см. `close()`). */
+  private async harvest(): Promise<SessionResult> {
     let cookies: CdpCookie[] = [];
     if (this.cdp) {
       try {
@@ -273,14 +477,7 @@ export class Session {
         });
       }
     }
-    const finalUrl = this.page?.url() ?? '';
-    this.wsChannel?.send({ type: 'closed', reason: 'finalized' });
-    await this.closeBrowser();
-    const result: SessionResult = { cookies, finalUrl };
-    this.cachedResult = result;
-    this.state = 'closed';
-    this.closedAt = Date.now();
-    return result;
+    return { cookies, finalUrl: this.page?.url() ?? '' };
   }
 
   /** Принудительное закрытие — таймауты/DELETE/shutdown, НЕ штатное
@@ -302,9 +499,39 @@ export class Session {
       await this.finalizingPromise.catch(() => undefined);
       return;
     }
+    const wasStreaming = this.state === 'streaming';
     this.state = 'closed';
     this.closedAt = Date.now();
-    this.wsChannel?.send({ type: 'closed', reason });
+    this.notify({ type: 'closed', reason });
+    // Куки снимаются ДАЖЕ при истечении таймаута (этап 109, находка
+    // аудита бизнес-процесса). Раньше wall/idle-таймаут просто гасил
+    // браузер, и `GET /result` после него отвечал 410 — то есть человек,
+    // который честно прошёл капчу и 2FA, но нажал «Готово, я вошёл»
+    // на секунду позже потолка, терял ВСЮ работу: куки, ради которых
+    // всё и затевалось, уже уничтожены вместе с браузером, а повторный
+    // live-вход — это ещё одна минута его живого времени (§7.2 спеки
+    // ровно про эту цену). Снимок стоит один CDP-вызов, а окно
+    // `RESULT_CACHE_MS` и так уже существует — backend, пришедший за
+    // результатом чуть позже, теперь получит его, а не пустой отказ.
+    //
+    // Только из `streaming`: в `created` (WS ещё не подключался)
+    // человека за рулём не было вовсе, снимать нечего. И только для
+    // таймаутов: `cancelled` — это явная отмена пользователем, а
+    // `server-shutdown` кэширует результат в память процесса, который
+    // прямо сейчас завершается.
+    if (
+      wasStreaming &&
+      (reason === 'wall-timeout' || reason === 'idle-timeout')
+    ) {
+      try {
+        this.cachedResult = await this.harvest();
+      } catch (err) {
+        this.logger.warn('снять куки при истечении таймаута не удалось', {
+          sessionId: this.id,
+          error: String(err),
+        });
+      }
+    }
     await this.closeBrowser();
   }
 

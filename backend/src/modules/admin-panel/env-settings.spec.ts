@@ -56,6 +56,11 @@ const SECRET_KEYS = [
   // Этап 73 (TODO п.32): секрет вебхука подтверждения клона голоса —
   // тот же класс, что TELEGRAM_WEBHOOK_SECRET выше.
   'RESEMBLE_WEBHOOK_SECRET',
+  // Этапы 111/114: ключ шифрования кук и кред чужого сайта и общий
+  // секрет реле живого входа — оба того же класса, что PAYMENT_TOKEN_KEY
+  // и CRON_SECRET выше.
+  'SITE_TUTORIAL_TOKEN_KEY',
+  'LIVE_LOGIN_RELAY_SECRET',
   // Этап 105 (аудит лендинга/обучалки, доп. заход): секретный токен
   // fixture-входа регресс-раннера обучалки — тот же класс, что
   // CRON_SECRET выше.
@@ -91,6 +96,10 @@ const PUBLIC_VALUE_KEYS = [
   'PRODUCT_FEED_IMPORT_CRON_BATCH',
   'PRODUCT_FEED_IMPORT_MAX_ATTEMPTS',
   'PRODUCT_FEED_IMPORT_MAX_BYTES',
+  // Этап 114: адреса реле живого входа — не секреты, а видеть их нужно,
+  // чтобы понять, куда backend вообще ходит.
+  'LIVE_LOGIN_RELAY_URL',
+  'LIVE_LOGIN_RELAY_WS_URL',
   'FFMPEG_API_BASE_URL',
   'VOICE_ID',
   'VOICE_MODEL',

@@ -784,7 +784,10 @@ export type PlanFeature =
   | 'voiceCloning'
   /** Дубляж (voiceMode: 'dub') — полная замена звука Veo своим голосом,
    * доп. запрос владельца продукта: премиальный уровень озвучки. */
-  | 'voiceDub';
+  | 'voiceDub'
+  /** Обучалка по сайту заказчика (этап 111) — пошаговый визард по чужому
+   * сайту, Standard и выше. */
+  | 'siteTutorial';
 
 export interface PlanDefinition {
   id: PlanId;

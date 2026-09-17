@@ -71,8 +71,16 @@ Veo-рендере, ручная правка баланса кредитов о
 не выполнение тестов; прогон заодно вскрыл те же 17 падающих тестов и 6
 не запускающихся наборов, что и на этапе 71 — долг предыдущих этапов,
 не новый дефект, см. туда же), eslint 0 ошибок,
-`prisma validate`; все 55
-миграций применяются подряд к чистому Postgres 16 (45 таблиц), включая
+`prisma validate`; все 58
+миграций применяются подряд к чистому Postgres 16 (47 таблиц), включая
+миграцию этапа 113
+(`20261118090000_tutorial_video_asset_client_site_draft` — колонка
+`clientSiteDraftId` на `tutorial_video_assets`, новых таблиц нет),
+две новые миграции этапа 111
+(`20261117090000_project_type_client_site` — значение `CLIENT_SITE` в
+enum `ProjectType`; `20261117090100_client_site_tutorial_drafts` — две
+новые таблицы, `client_site_tutorial_drafts` и
+`client_site_tutorial_usage`),
 новую миграцию этапа 101 (`20261116090000_publication_requests_tutorial_video_link`
 — `tutorialVideoAssetId` + nullable `sessionId`/`generatedVideoId` на
 `publication_requests`, ни одной новой таблицы), новую таблицу и
@@ -90,7 +98,7 @@ Veo-рендере, ручная правка баланса кредитов о
 накатаны и сверены на локальном кластере `postgresql-16` этой же
 песочницы, `docker` тут недоступен, зато нашёлся отдельно установленный
 `psql`/`pg_ctlcluster`); frontend —
-tsc, eslint 0 warnings, vite build, 15 unit-скриптов; admin и
+tsc, eslint 0 warnings, vite build, 16 unit-скриптов; admin и
 landing — tsc, `next lint`, `next build`; `npm audit` на высоких в каждой
 джобе (пока предупреждением); переменные окружения из кода сверены с
 `DEPLOYMENT.md` и `.env.docker.example`.

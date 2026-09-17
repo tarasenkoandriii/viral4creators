@@ -19,6 +19,11 @@ import type { Logger } from './logger';
  * тривиального злоупотребления телом произвольного размера. */
 const MAX_BODY_BYTES = 16 * 1024;
 
+/** Только веб-схемы: см. разбор в `parseCreateSessionBody` — у
+ * `file:`/`data:`/`javascript:` origin равен "null", и сверка
+ * origin'ов друг с другом их пропускала. */
+const ALLOWED_PROTOCOLS = ['http:', 'https:'];
+
 export interface RouteDeps {
   relaySecret: string;
   sessionManager: SessionManager;
@@ -115,7 +120,10 @@ async function handleCreateSession(
   }
 }
 
-function parseCreateSessionBody(
+/** Экспортируется ради тестов (этап 108 — до него у `http-routes.ts` не
+ * было ни одного теста, притом что именно здесь живёт проверка
+ * startUrl/allowedOrigin). */
+export function parseCreateSessionBody(
   body: unknown,
 ):
   | { ok: true; startUrl: string; allowedOrigin: string }
@@ -130,14 +138,38 @@ function parseCreateSessionBody(
       error: 'startUrl и allowedOrigin обязательны и должны быть строками',
     };
   }
-  let startOrigin: string;
-  let allowedOriginNormalized: string;
+  let startParsed: URL;
+  let allowedParsed: URL;
   try {
-    startOrigin = new URL(startUrl).origin;
-    allowedOriginNormalized = new URL(allowedOrigin).origin;
+    startParsed = new URL(startUrl);
+    allowedParsed = new URL(allowedOrigin);
   } catch {
     return { ok: false, error: 'startUrl/allowedOrigin — не валидные URL' };
   }
+  // Найдено аудитом этапа 108: одной сверки origin'ов недостаточно —
+  // у `file:`/`data:`/`javascript:` origin равен строке "null", то есть
+  // `new URL('file:///etc/passwd').origin === new
+  // URL('file:///что-угодно').origin` и проверка «origin совпал»
+  // проходит. Реле в этом случае честно открыло бы локальный файл
+  // контейнера и транслировало бы его человеку по WS. Спека (§7) сама
+  // называет эту проверку «дешёвой защитой от опечатки/бага
+  // вызывающего кода» — вот ровно этот класс опечатки она и не ловила.
+  // Настоящий SSRF-контроль по-прежнему на стороне backend (§8.2
+  // основного ТЗ), здесь — только схема.
+  if (!ALLOWED_PROTOCOLS.includes(startParsed.protocol)) {
+    return {
+      ok: false,
+      error: `startUrl должен быть http(s) — получено ${startParsed.protocol}`,
+    };
+  }
+  if (!ALLOWED_PROTOCOLS.includes(allowedParsed.protocol)) {
+    return {
+      ok: false,
+      error: `allowedOrigin должен быть http(s) — получено ${allowedParsed.protocol}`,
+    };
+  }
+  const startOrigin = startParsed.origin;
+  const allowedOriginNormalized = allowedParsed.origin;
   if (startOrigin !== allowedOriginNormalized) {
     return {
       ok: false,

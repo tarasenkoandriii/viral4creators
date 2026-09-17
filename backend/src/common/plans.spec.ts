@@ -106,6 +106,17 @@ describe('матрица режимов (ТЗ §23)', () => {
     expect(featureDeniedMessage('voiceDub')).toContain('Premium');
   });
 
+  it('siteTutorial (этап 111) — Standard и выше, как brandManifest', () => {
+    // Гейт строже обычного шага визарда не из-за ИИ (его в этой фиче
+    // нет), а из-за секунд владения контейнером с Chromium: раунд — это
+    // свежий запуск браузера, live-вход держит его минутами.
+    expect(planAllows('LITE', 'siteTutorial')).toBe(false);
+    expect(planAllows('STANDARD', 'siteTutorial')).toBe(true);
+    expect(planAllows('PREMIUM', 'siteTutorial')).toBe(true);
+    expect(minimalPlanFor('siteTutorial')).toBe('STANDARD');
+    expect(featureDeniedMessage('siteTutorial')).toContain('Standard');
+  });
+
   it('текст отказа называет нужный режим и говорит, что сейчас бесплатно', () => {
     const msg = featureDeniedMessage('library');
     expect(msg).toContain('Premium');

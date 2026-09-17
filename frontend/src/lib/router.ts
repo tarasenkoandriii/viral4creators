@@ -25,6 +25,7 @@ export type Route =
   | { name: 'ab-test'; projectId: string; runId: string }
   | { name: 'feed-import-start'; projectId: string }
   | { name: 'feed-import'; projectId: string; runId: string }
+  | { name: 'site-tutorial'; projectId: string }
   | { name: 'generate' }
   | { name: 'postprod' }
   | { name: 'postprod-video'; sessionId: string }
@@ -94,6 +95,13 @@ export function parseRoute(hash: string): Route {
         runId: parts[3],
       };
     }
+    // Этап 115 (§11 doc/CLIENT-SITE-TUTORIAL-SPEC.md): визард обучалки
+    // по сайту заказчика. Один маршрут на все три состояния — они
+    // строго последовательны, и адрес «второго экрана» без черновика
+    // ничего не значит.
+    if (parts[2] === 'site-tutorial') {
+      return { name: 'site-tutorial', projectId: parts[1] };
+    }
     if (parts[2] === 'feed-import') {
       return { name: 'feed-import-start', projectId: parts[1] };
     }
@@ -156,6 +164,7 @@ export const routes = {
   abTest: (projectId: string, runId: string) =>
     `/projects/${projectId}/ab-test/${runId}`,
   feedImportStart: (projectId: string) => `/projects/${projectId}/feed-import`,
+  siteTutorial: (projectId: string) => `/projects/${projectId}/site-tutorial`,
   feedImport: (projectId: string, runId: string) =>
     `/projects/${projectId}/feed-import/${runId}`,
   generate: () => '/generate',

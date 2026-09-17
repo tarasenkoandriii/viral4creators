@@ -1,0 +1,869 @@
+/**
+ * ClientSiteWizard — визард обучалки по САЙТУ ЗАКАЗЧИКА (§11
+ * doc/CLIENT-SITE-TUTORIAL-SPEC.md, этап 115).
+ *
+ * Три состояния одного экрана, а не три маршрута: между ними нельзя
+ * ходить свободно — они строго последовательны, и адрес, по которому
+ * можно «вернуться на экран 2», без черновика ничего не значит.
+ *
+ * ## Что здесь принципиально
+ *
+ * 1. **Кадр — не украшение, а единственный способ понять, что
+ *    происходит.** Пользователь не видит сайт заказчика напрямую:
+ *    браузер живёт на сервере. Поэтому `<img>` со скриншотом идёт
+ *    первым, а форма — под ним.
+ * 2. **Форма собирается из того, что РЕАЛЬНО нашлось на странице.**
+ *    Никаких «введите логин и пароль» вслепую: поля приходят с
+ *    сервера вместе со своими подписями и селекторами, и обратно
+ *    уезжают те же селекторы. Фронтенд их не строит и не разбирает.
+ * 3. **Раунд ≠ шаг.** Лента миниатюр зеркалит `stepsPerRound` (по
+ *    одному кадру на раунд), а не `steps`: форма из трёх полей и
+ *    кнопки — это один кадр, а не четыре (§15 п.3).
+ * 4. **Предупреждение про необратимое приходит ДО нажатия.** Стоп-лист
+ *    §8.3 помечает кнопки в `elements[].danger`, то есть раундом
+ *    раньше, — поэтому «вы уверены?» спрашивается в момент выбора, а
+ *    не после того, как заказ оформлен.
+ * 5. **Обычная форма НЕ шифруется.** Значения обычных полей уезжают в
+ *    сценарий как есть; шифруются только те, что прошли через вход.
+ *    Об этом сказано прямо под формой, а не в справке: для
+ *    self-service, где человек гоняет свой же чек-аут, вероятность
+ *    случайно ввести настоящие данные не нулевая (§14 п.3).
+ */
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Globe,
+  KeyRound,
+  Search,
+  Send,
+  Trash2,
+  Undo2,
+} from 'lucide-react';
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  Input,
+  Select,
+  Spinner,
+} from '../../components/ui';
+import {
+  completeLiveLogin,
+  deleteSiteTutorial,
+  exploreSite,
+  finishSiteTutorial,
+  getSiteTutorial,
+  loginSite,
+  refreshSiteTutorial,
+  resumeSiteTutorial,
+  startLiveLogin,
+  stepSite,
+  undoSiteRound,
+} from '../../services/client-site-tutorial-api';
+import { errorMessage } from '../../services/projects-api';
+import { navigate, routes } from '../../lib/router';
+import { useI18n } from '../../lib/i18n-context';
+import type {
+  ClientSiteDraftView,
+  ClientSiteRoundResult,
+  LiveLoginStart,
+  PageElement,
+  PageExploration,
+} from '../../types/client-site-tutorial';
+import { LiveLoginSession } from './LiveLoginSession';
+import { ScreenHeader } from './shared';
+import {
+  clickCandidates,
+  fieldLabel,
+  fillableFields,
+} from './client-site-elements';
+
+type Stage = 'loading' | 'url' | 'page' | 'review';
+
+export function ClientSiteWizard({ projectId }: { projectId: string }) {
+  const { dict } = useI18n();
+  const t = dict.clientSiteWizard;
+
+  const [stage, setStage] = useState<Stage>('loading');
+  const [draft, setDraft] = useState<ClientSiteDraftView | null>(null);
+  const [exploration, setExploration] = useState<PageExploration | null>(null);
+  const [url, setUrl] = useState('');
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [title, setTitle] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [zoomed, setZoomed] = useState<string | null>(null);
+  /** Открытая живая сессия: адрес потока, токен канала и квитанция —
+   * её, а не `sessionId`, сервер ждёт обратно (подставленный клиентом
+   * идентификатор указал бы на чужую сессию). */
+  const [live, setLive] = useState<LiveLoginStart | null>(null);
+
+  /**
+   * Лента кадров. Копится в памяти ради мгновенного показа на экране
+   * просмотра, но единственной копией НЕ является: сервер держит ту же
+   * историю в черновике, и после перезагрузки вкладки она приезжает
+   * оттуда (§15 п.1).
+   */
+  const frames = draft?.roundScreenshots ?? [];
+
+  const applyRound = useCallback((result: ClientSiteRoundResult) => {
+    setDraft(result.draft);
+    setExploration(result.exploration);
+    setValues({});
+    setStage('page');
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const existing = await getSiteTutorial(projectId);
+        if (cancelled) return;
+        if (!existing) {
+          setStage('url');
+          return;
+        }
+        setDraft(existing);
+        setTitle(existing.title ?? '');
+        // Свежего кадра у нас нет — он приходит только ответом на
+        // раунд, и отрисовать экран страницы без него нечем. Поэтому
+        // возвращаемся на экран просмотра: там лента кадров, которую
+        // сервер сохранил сам, и она полная (§15 п.1).
+        setStage('review');
+      } catch (err) {
+        if (cancelled) return;
+        setError(errorMessage(err));
+        // Иначе экран навсегда залипал в спиннере с красным алертом и
+        // без единой кнопки (аудит этапа 116). Экран ссылки — рабочее
+        // состояние: если черновик всё-таки есть, сервер ответит 409 и
+        // скажет об этом.
+        setStage('url');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  async function run<T>(fn: () => Promise<T>): Promise<T | undefined> {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      return await fn();
+    } catch (err) {
+      setError(errorMessage(err));
+      // Любая неудача могла случиться ПОСЛЕ того, как сервер уже
+      // записал раунд (оборвалась связь, клиентский таймаут короче
+      // серверного). Тогда наш `version` устарел, и все следующие
+      // вызовы получали бы 409 «обновите экран» — а обновить было
+      // нечем (аудит этапа 116). Перечитываем состояние сами.
+      try {
+        const fresh = await getSiteTutorial(projectId);
+        if (fresh) setDraft(fresh);
+      } catch {
+        // Сеть лежит целиком — сообщение об исходной ошибке важнее.
+      }
+      return undefined;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const explore = async () => {
+    const trimmed = url.trim();
+    // Клиентская проверка — только чтобы поймать явную опечатку. Она НЕ
+    // заменяет серверную: публичность адреса проверяет SSRF-guard.
+    try {
+      const parsed = new URL(trimmed);
+      if (!/^https?:$/.test(parsed.protocol)) throw new Error('scheme');
+    } catch {
+      setError(t.urlInvalid);
+      return;
+    }
+    const result = await run(() => exploreSite(projectId, trimmed));
+    if (result) applyRound(result);
+  };
+
+  const submitStep = async (clickSelector?: string) => {
+    if (!draft) return;
+    const fills = Object.entries(values)
+      .filter(([, v]) => v.length > 0)
+      .map(([selector, value]) => ({ selector, value }));
+    if (fills.length === 0 && !clickSelector) {
+      setError(t.nothingToDo);
+      return;
+    }
+    const result = await run(() =>
+      stepSite(projectId, {
+        expectedVersion: draft.version,
+        fills,
+        clickSelector,
+      })
+    );
+    if (result) applyRound(result);
+  };
+
+  const submitLogin = async (submitSelector: string) => {
+    if (!draft || !exploration) return;
+    const fields = fillableFields(exploration)
+      .map((el) => ({
+        selector: el.selector,
+        value: values[el.selector] ?? '',
+        // Пароль — всегда секретный; остальные поля формы входа тоже
+        // считаем секретными: это часть учётных данных, а не данные
+        // сценария.
+        sensitive: true,
+      }))
+      .filter((f) => f.value.length > 0);
+    if (fields.length === 0) {
+      setError(t.loginEmpty);
+      return;
+    }
+    const result = await run(() =>
+      loginSite(projectId, {
+        expectedVersion: draft.version,
+        submitSelector,
+        fields,
+      })
+    );
+    if (result) applyRound(result);
+  };
+
+  const undo = async () => {
+    if (!draft) return;
+    const result = await run(() => undoSiteRound(projectId, draft.version));
+    if (result) applyRound(result);
+  };
+
+  const liveLogin = async () => {
+    const started = await run(() => startLiveLogin(projectId));
+    if (!started) return;
+    // Пультом живой сессии служит НАШ экран (`LiveLoginSession`), а не
+    // отдельная вкладка: у реле нет HTML-страницы вовсе, `relayWsUrl` —
+    // точка апгрейда WS. Этап 115 открывал её через `window.open`, и
+    // живой вход не работал никогда — найдено аудитом этапа 116.
+    setLive(started);
+  };
+
+  const finishLive = async () => {
+    if (!live || !draft) return;
+    const result = await run(() =>
+      completeLiveLogin(projectId, live.ticket, draft.version)
+    );
+    if (result) {
+      setLive(null);
+      applyRound(result);
+    }
+  };
+
+  const finish = async () => {
+    if (!draft) return;
+    const updated = await run(() =>
+      finishSiteTutorial(projectId, {
+        expectedVersion: draft.version,
+        title: title.trim(),
+      })
+    );
+    if (updated) {
+      setDraft(updated);
+      setNotice(t.sentForReview);
+    }
+  };
+
+  /** Продолжить запись после перезагрузки вкладки: кадр приходит только
+   * ответом на раунд, поэтому его надо снять заново. */
+  const continueRecording = async () => {
+    const result = await run(() => refreshSiteTutorial(projectId));
+    if (result) applyRound(result);
+  };
+
+  const resume = async () => {
+    const updated = await run(() => resumeSiteTutorial(projectId));
+    if (updated) {
+      setDraft(updated);
+      setStage('review');
+    }
+  };
+
+  const discard = async () => {
+    const done = await run(async () => {
+      await deleteSiteTutorial(projectId);
+      return true;
+    });
+    if (done) navigate(routes.project(projectId), true);
+  };
+
+  const canUndo = useMemo(
+    () =>
+      Boolean(draft) &&
+      (draft?.stepsPerRound.length ?? 0) > 1 &&
+      !(draft?.requiresLiveLoginReplay ?? false),
+    [draft]
+  );
+
+  const editable = draft?.status === 'DRAFTING';
+
+  return (
+    <div className="animate-fadeIn">
+      <ScreenHeader
+        title={t.title}
+        back={routes.project(projectId)}
+        hint={t.hint}
+      />
+
+      {error && (
+        <Alert tone="error" className="mb-3">
+          {error}
+        </Alert>
+      )}
+      {notice && (
+        <Alert tone="success" className="mb-3">
+          {notice}
+        </Alert>
+      )}
+
+      {stage === 'loading' && (
+        <Card className="p-8 flex justify-center">
+          <Spinner />
+        </Card>
+      )}
+
+      {stage === 'url' && (
+        <Card className="p-5">
+          <div className="space-y-5">
+            <Field label={t.urlLabel} htmlFor="site-url" hint={t.urlHint}>
+              <Input
+                id="site-url"
+                type="url"
+                inputMode="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://cabinet.example.com"
+                disabled={busy}
+                autoFocus
+              />
+            </Field>
+            <Alert tone="info">{t.ownSiteOnly}</Alert>
+            <Button
+              block
+              size="lg"
+              icon={<Search size={16} />}
+              disabled={busy || url.trim().length === 0}
+              loading={busy}
+              onClick={() => void explore()}
+            >
+              {t.exploreButton}
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {stage === 'page' && exploration && (
+        <PageStage
+          t={t}
+          exploration={exploration}
+          values={values}
+          setValues={setValues}
+          busy={busy || !editable}
+          canUndo={canUndo && editable}
+          liveAvailable={(draft?.liveLoginAvailable ?? false) && editable}
+          live={live}
+          onStep={submitStep}
+          onLogin={submitLogin}
+          onUndo={undo}
+          onLive={liveLogin}
+          onFinishLive={finishLive}
+          onCancelLive={() => setLive(null)}
+          onReview={() => setStage('review')}
+        />
+      )}
+
+      {stage === 'review' && draft && (
+        <ReviewStage
+          t={t}
+          draft={draft}
+          frames={frames}
+          title={title}
+          setTitle={setTitle}
+          busy={busy}
+          editable={editable}
+          onZoom={setZoomed}
+          onBack={() => setStage('page')}
+          canContinue={editable}
+          hasExploration={Boolean(exploration)}
+          onContinue={continueRecording}
+          onFinish={finish}
+          onResume={resume}
+          onDiscard={discard}
+        />
+      )}
+
+      {zoomed && (
+        <button
+          type="button"
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setZoomed(null)}
+          aria-label={t.closePreview}
+        >
+          <img src={zoomed} alt="" className="max-h-full max-w-full" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+type Dict = ReturnType<typeof useI18n>['dict']['clientSiteWizard'];
+
+/**
+ * Поле формы страницы заказчика. `<select>` рисуется настоящим
+ * выпадающим списком: `fill` сопоставляет строку со ЗНАЧЕНИЕМ опции, а
+ * не с видимой надписью, — человек, вводящий «Москва» в текстовое поле,
+ * получал отказ «поле не заполняется» и не мог угадать, что нужно
+ * `msk` (найдено аудитом этапа 116, закрыто этапом 117).
+ */
+function PageField(props: {
+  id: string;
+  element: PageElement;
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+  type?: string;
+  placeholder: string;
+}) {
+  const { element } = props;
+  if (element.tag === 'select' && element.options?.length) {
+    return (
+      <Select
+        id={props.id}
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+        disabled={props.disabled}
+      >
+        <option value="">{props.placeholder}</option>
+        {element.options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </Select>
+    );
+  }
+  return (
+    <Input
+      id={props.id}
+      type={props.type}
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+      disabled={props.disabled}
+    />
+  );
+}
+
+function PageStage(props: {
+  t: Dict;
+  exploration: PageExploration;
+  values: Record<string, string>;
+  setValues: (v: Record<string, string>) => void;
+  busy: boolean;
+  canUndo: boolean;
+  liveAvailable: boolean;
+  live: LiveLoginStart | null;
+  onStep: (clickSelector?: string) => void;
+  onLogin: (submitSelector: string) => void;
+  onUndo: () => void;
+  onLive: () => void;
+  onFinishLive: () => void;
+  onCancelLive: () => void;
+  onReview: () => void;
+}) {
+  const {
+    t,
+    exploration,
+    values,
+    setValues,
+    busy,
+    canUndo,
+    liveAvailable,
+    live,
+  } = props;
+  const fields = fillableFields(exploration);
+  const candidates = clickCandidates(exploration);
+  const [confirming, setConfirming] = useState<PageElement | null>(null);
+  // Карточка «вы уверены?» не должна пережить смену страницы: селектор
+  // в ней относится к УЖЕ показанному кадру, а после раунда DOM другой
+  // (аудит этапа 116).
+  useEffect(() => {
+    setConfirming(null);
+    setLoginSubmit(null);
+  }, [exploration]);
+
+  const set = (selector: string, value: string) =>
+    setValues({ ...values, [selector]: value });
+
+  /**
+   * Кнопка отправки формы входа выбирается ЧЕЛОВЕКОМ, а не берётся
+   * первой попавшейся (аудит этапа 116). `candidates[0]` — это первый
+   * кликабельный элемент по DOM, то есть чаще всего ссылка из шапки
+   * («На главную»), а не «Войти»: креды при этом уже зашифрованы и
+   * сохранены, а вход не происходит.
+   */
+  const [loginSubmit, setLoginSubmit] = useState<string | null>(null);
+  const submitSelector = loginSubmit ?? candidates[0]?.selector;
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-3">
+        <img
+          src={exploration.screenshotDataUrl}
+          alt=""
+          className="w-full rounded border border-[var(--border)]"
+        />
+        <p className="mt-2 text-xs text-[var(--muted)] break-all">
+          {exploration.currentUrl}
+        </p>
+      </Card>
+
+      {exploration.dangerWarning && (
+        <Alert tone="warning">{exploration.dangerWarning}</Alert>
+      )}
+
+      {exploration.looksLikeLogin ? (
+        <Card className="p-5 space-y-4">
+          <h3 className="font-semibold flex items-center gap-2">
+            <KeyRound size={16} /> {t.loginTitle}
+          </h3>
+          <Alert tone="info">{t.loginNote}</Alert>
+          {fields.map((el, i) => (
+            <Field
+              key={el.selector}
+              label={fieldLabel(el, `${t.fieldFallback} ${i + 1}`)}
+              htmlFor={`f-${i}`}
+            >
+              <PageField
+                id={`f-${i}`}
+                element={el}
+                type={el.type === 'password' ? 'password' : 'text'}
+                value={values[el.selector] ?? ''}
+                onChange={(v) => set(el.selector, v)}
+                disabled={busy}
+                placeholder={t.selectPlaceholder}
+              />
+            </Field>
+          ))}
+          {candidates.length > 0 ? (
+            <>
+              <p className="text-sm text-[var(--muted)]">{t.loginPickButton}</p>
+              <div className="flex flex-wrap gap-2">
+                {candidates.map((el) => (
+                  <Button
+                    key={el.selector}
+                    size="sm"
+                    variant={
+                      el.selector === submitSelector ? 'solid' : 'outline'
+                    }
+                    disabled={busy}
+                    onClick={() => setLoginSubmit(el.selector)}
+                  >
+                    {el.visibleText}
+                  </Button>
+                ))}
+              </div>
+              <Button
+                block
+                disabled={busy || !submitSelector}
+                loading={busy}
+                onClick={() => submitSelector && props.onLogin(submitSelector)}
+              >
+                {t.loginButton}
+              </Button>
+            </>
+          ) : (
+            // Кнопка входа не распозналась (частый случай:
+            // `<input type="submit">` или кнопка из одной иконки).
+            // Честно говорим об этом, а не оставляем «Войти» вечно
+            // серой без объяснений.
+            <Alert tone="warning">{t.loginNoButton}</Alert>
+          )}
+
+          {liveAvailable && (
+            <div className="pt-3 border-t border-[var(--border)] space-y-2">
+              <p className="text-sm text-[var(--muted)]">{t.liveHint}</p>
+              {live ? (
+                <LiveLoginSession
+                  wsUrl={live.relayWsUrl}
+                  streamToken={live.streamToken}
+                  busy={busy}
+                  onDone={props.onFinishLive}
+                  // Сессия могла истечь (потолок реле — три минуты) или
+                  // закончиться не на том домене; без выхода отсюда
+                  // «Я вошёл» отвечала бы 409 вечно, а начать заново
+                  // было нечем (аудит этапа 116).
+                  onCancel={props.onCancelLive}
+                />
+              ) : (
+                <Button
+                  block
+                  variant="outline"
+                  icon={<Globe size={16} />}
+                  disabled={busy}
+                  onClick={props.onLive}
+                >
+                  {t.liveButton}
+                </Button>
+              )}
+            </div>
+          )}
+        </Card>
+      ) : (
+        fields.length > 0 && (
+          <Card className="p-5 space-y-4">
+            <h3 className="font-semibold">{t.formTitle}</h3>
+            {fields.map((el, i) => (
+              <Field
+                key={el.selector}
+                label={fieldLabel(el, `${t.fieldFallback} ${i + 1}`)}
+                htmlFor={`f-${i}`}
+              >
+                <PageField
+                  id={`f-${i}`}
+                  element={el}
+                  value={values[el.selector] ?? ''}
+                  onChange={(v) => set(el.selector, v)}
+                  disabled={busy}
+                  placeholder={t.selectPlaceholder}
+                />
+              </Field>
+            ))}
+            {/* §14 п.3: обычная форма уезжает в сценарий как есть. */}
+            <Alert tone="warning">{t.plainValuesWarning}</Alert>
+          </Card>
+        )
+      )}
+
+      {/*
+        На странице входа этот блок НЕ показывается (аудит этапа 116).
+        Он повторяет надписи с реальной страницы, среди которых и
+        настоящая «Войти» — нажав её здесь, человек отправлял бы
+        `/step`, а не `/login`, то есть пароль уезжал бы в сценарий
+        открытым текстом и попадал бы на экран оператора. Выбор кнопки
+        входа живёт в блоке входа выше.
+      */}
+      {!exploration.looksLikeLogin && candidates.length > 0 && (
+        <Card className="p-5 space-y-3">
+          <h3 className="font-semibold">{t.continueWith}</h3>
+          <div className="flex flex-wrap gap-2">
+            {candidates.map((el) => (
+              <Button
+                key={el.selector}
+                size="sm"
+                variant={el.danger ? 'danger' : 'outline'}
+                icon={el.danger ? <AlertTriangle size={14} /> : undefined}
+                disabled={busy}
+                onClick={() =>
+                  el.danger ? setConfirming(el) : props.onStep(el.selector)
+                }
+              >
+                {el.visibleText}
+              </Button>
+            ))}
+          </div>
+          <Button
+            block
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => props.onStep(undefined)}
+          >
+            {t.fillOnlyButton}
+          </Button>
+        </Card>
+      )}
+
+      {confirming && (
+        <Card className="p-5 space-y-3 border-[var(--danger)]">
+          <p className="text-sm">{confirming.danger}</p>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={busy}
+              onClick={() => {
+                const el = confirming;
+                setConfirming(null);
+                props.onStep(el.selector);
+              }}
+            >
+              {t.dangerConfirm}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => setConfirming(null)}
+            >
+              {t.dangerCancel}
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      <div className="flex gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Undo2 size={14} />}
+          disabled={busy || !canUndo}
+          onClick={props.onUndo}
+        >
+          {t.undoButton}
+        </Button>
+        <Button size="sm" onClick={props.onReview} disabled={busy}>
+          {t.doneButton}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ReviewStage(props: {
+  t: Dict;
+  draft: ClientSiteDraftView;
+  frames: string[];
+  title: string;
+  setTitle: (v: string) => void;
+  busy: boolean;
+  editable: boolean;
+  canContinue: boolean;
+  hasExploration: boolean;
+  onZoom: (src: string) => void;
+  onBack: () => void;
+  onContinue: () => void;
+  onFinish: () => void;
+  onResume: () => void;
+  onDiscard: () => void;
+}) {
+  const { t, draft, frames, busy, editable } = props;
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <h3 className="font-semibold mb-2">{t.previewTitle}</h3>
+        {frames.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">{t.previewEmpty}</p>
+        ) : (
+          <div className="flex gap-2 overflow-x-auto pb-2">
+            {frames.map((src, i) => (
+              <button
+                key={`${i}-${src.slice(-16)}`}
+                type="button"
+                onClick={() => props.onZoom(src)}
+                className="shrink-0"
+                aria-label={`${t.frameLabel} ${i + 1}`}
+              >
+                <img
+                  src={src}
+                  alt=""
+                  className="h-40 rounded border border-[var(--border)]"
+                />
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          {t.previewHint.replace('{count}', String(frames.length))}
+        </p>
+      </Card>
+
+      {draft.status === 'PENDING_REVIEW' && (
+        <Alert tone="info">{t.statusPending}</Alert>
+      )}
+      {draft.status === 'APPROVED' && (
+        <Alert tone="success">{t.statusApproved}</Alert>
+      )}
+      {draft.status === 'REJECTED' && (
+        <Alert tone="warning">
+          {t.statusRejected}
+          {draft.rejectionReason ? ` ${draft.rejectionReason}` : ''}
+        </Alert>
+      )}
+
+      {editable && (
+        <Card className="p-5 space-y-4">
+          <Field label={t.titleLabel} htmlFor="site-title" hint={t.titleHint}>
+            <Input
+              id="site-title"
+              value={props.title}
+              onChange={(e) => props.setTitle(e.target.value)}
+              disabled={busy}
+            />
+          </Field>
+          <Button
+            block
+            size="lg"
+            icon={<Send size={16} />}
+            disabled={busy || props.title.trim().length < 3}
+            loading={busy}
+            onClick={props.onFinish}
+          >
+            {t.submitButton}
+          </Button>
+        </Card>
+      )}
+
+      {draft.status === 'REJECTED' && (
+        <Button
+          block
+          variant="outline"
+          disabled={busy}
+          onClick={props.onResume}
+        >
+          {t.resumeButton}
+        </Button>
+      )}
+
+      <div className="flex gap-2">
+        {props.hasExploration ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ArrowLeft size={14} />}
+            disabled={busy}
+            onClick={props.onBack}
+          >
+            {t.backButton}
+          </Button>
+        ) : (
+          props.canContinue && (
+            // После перезагрузки вкладки свежего кадра нет — его надо
+            // снять заново, и это стоит раунда. Поэтому отдельная
+            // кнопка, а не молчаливый запрос при открытии экрана.
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<ArrowLeft size={14} />}
+              disabled={busy}
+              loading={busy}
+              onClick={props.onContinue}
+            >
+              {t.continueButton}
+            </Button>
+          )
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Trash2 size={14} />}
+          disabled={busy}
+          onClick={props.onDiscard}
+        >
+          {t.discardButton}
+        </Button>
+      </div>
+    </div>
+  );
+}

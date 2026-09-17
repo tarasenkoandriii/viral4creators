@@ -1,5 +1,9 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './admin-api';
 import type {
+  ClientSiteDraftDetails,
+  ClientSiteDraftListResult,
+  ClientSiteDraftRow,
+  ClientSiteDraftStatus,
   AdminLibraryEntry,
   AdminUserDetail,
   AdminUserListResult,
@@ -598,6 +602,43 @@ export function approveTutorialScenario(id: string) {
  * без удаления сломанный сценарий будет падать и слать алерт на
  * каждом прогоне крона бесконечно.
  */
+/**
+ * Очередь модерации обучалок по САЙТУ ЗАКАЗЧИКА (§5.2/§8.3
+ * doc/CLIENT-SITE-TUTORIAL-SPEC.md, этап 113). Отдельно от сценариев
+ * выше: там одобряется право потратить наши деньги на платный шаг, а
+ * здесь — право показать от имени продукта видео с ЧУЖИМ сайтом в
+ * кадре, где вдобавок мог остаться необратимый шаг («Оплатить»).
+ */
+export function getClientSiteDrafts(params: {
+  status?: ClientSiteDraftStatus;
+  page?: number;
+  pageSize?: number;
+}) {
+  return apiGet<ClientSiteDraftListResult>('/admin/site-tutorial-drafts', {
+    status: params.status,
+    page: params.page,
+    pageSize: params.pageSize,
+  });
+}
+
+export function getClientSiteDraft(id: string) {
+  return apiGet<ClientSiteDraftDetails>(`/admin/site-tutorial-drafts/${id}`);
+}
+
+/** Одобрение — ИМЕННО оно запускает платную сборку ролика (§8.3). */
+export function approveClientSiteDraft(id: string) {
+  return apiPatch<ClientSiteDraftRow>(
+    `/admin/site-tutorial-drafts/${id}/approve`,
+  );
+}
+
+export function rejectClientSiteDraft(id: string, reason: string) {
+  return apiPatch<ClientSiteDraftRow>(
+    `/admin/site-tutorial-drafts/${id}/reject`,
+    { reason },
+  );
+}
+
 export function deleteTutorialScenario(id: string) {
   return apiDelete<{ id: string }>(`/admin/tutorial-scenarios/${id}`);
 }

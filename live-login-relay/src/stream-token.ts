@@ -29,6 +29,18 @@ export function verifyStreamToken(
   presentedToken: string,
   expectedHash: string,
 ): boolean {
+  // Защита самой примитивы, а не только вызывающего (найдено аудитом
+  // этапа 108): `createHash().update(undefined)` бросает
+  // `ERR_INVALID_ARG_TYPE` — и, поскольку вызов происходит синхронно
+  // внутри обработчика `ws.on('message')`, это ронял ВЕСЬ процесс реле.
+  // Основную проверку делает `parseClientMessage` (client-message.ts),
+  // но функция проверки токена не должна зависеть от того, что её
+  // единственный сегодняшний вызывающий не забыл провалидировать вход:
+  // «не строка» — это просто «токен не совпал», а не аварийное
+  // завершение сервиса.
+  if (typeof presentedToken !== 'string' || presentedToken.length === 0) {
+    return false;
+  }
   const presentedHash = hashToken(presentedToken);
   const bufA = Buffer.from(presentedHash, 'hex');
   const bufB = Buffer.from(expectedHash, 'hex');

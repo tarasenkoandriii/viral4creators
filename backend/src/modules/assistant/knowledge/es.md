@@ -117,12 +117,12 @@ Todos los planes son gratuitos por ahora y el propio usuario los cambia en la mi
 
 ### Standard
 Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.
-Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz
+Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Vídeo tutorial del sitio del cliente
 any aspect ratio
 
 ### Premium
 Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
-Biblioteca de análisis listos, Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Doblaje (reemplazo completo de la voz del modelo)
+Biblioteca de análisis listos, Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Doblaje (reemplazo completo de la voz del modelo), Vídeo tutorial del sitio del cliente
 any aspect ratio
 
 ## Reglas del pipeline

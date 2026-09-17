@@ -17,6 +17,7 @@ export interface RelayConfig {
   sessionWallTimeoutMs: number;
   sessionIdleTimeoutMs: number;
   resultCacheMs: number;
+  navTimeoutMs: number;
   wsAuthTimeoutMs: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
@@ -50,15 +51,28 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
       180_000,
       'SESSION_WALL_TIMEOUT_MS',
     ),
+    // 120с, не 60 (этап 109, находка аудита бизнес-процесса): одна из
+    // трёх причин, ради которых фича существует, — ввод одноразового
+    // кода из SMS (§7.4.0 основного ТЗ, «код существует
+    // секунды-минуты»), а ожидание этой SMS по определению проходит без
+    // единого события мыши/клавиатуры. На 60 секундах реле закрывало
+    // сессию ровно тем людям, ради которых её и заводили. Плюс к
+    // потолку клиент теперь получает предупреждение `expiring` за 30с
+    // (§8.2) — и может продлить паузу любым действием.
     sessionIdleTimeoutMs: parsePositiveInt(
       env.SESSION_IDLE_TIMEOUT_MS,
-      60_000,
+      120_000,
       'SESSION_IDLE_TIMEOUT_MS',
     ),
     resultCacheMs: parsePositiveInt(
       env.RESULT_CACHE_MS,
       60_000,
       'RESULT_CACHE_MS',
+    ),
+    navTimeoutMs: parsePositiveInt(
+      env.SESSION_NAV_TIMEOUT_MS,
+      20_000,
+      'SESSION_NAV_TIMEOUT_MS',
     ),
     wsAuthTimeoutMs: parsePositiveInt(
       env.WS_AUTH_TIMEOUT_MS,

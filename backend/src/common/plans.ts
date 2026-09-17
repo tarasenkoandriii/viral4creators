@@ -83,7 +83,17 @@ export type PlanFeature =
    * получает: он и есть «обычная» озвучка, доступная всем, кому вообще
    * доступен манифест бренда.
    */
-  | 'voiceDub';
+  | 'voiceDub'
+  /**
+   * Обучалка по сайту заказчика (doc/CLIENT-SITE-TUTORIAL-SPEC.md §9,
+   * этап 111) — пошаговый визард, который водит headless-браузер по
+   * ЧУЖОМУ сайту и собирает из этого обучающее видео. Гейтится строже
+   * обычного шага визарда не из-за ИИ (его здесь нет вовсе), а из-за
+   * секунд владения контейнером с Chromium: каждый раунд — это свежий
+   * запуск браузера, а live-вход (§7.4) держит его минутами. Тот же
+   * тариф, что `brandManifest` — Standard и выше.
+   */
+  | 'siteTutorial';
 
 export interface PlanDefinition {
   id: PlanId;
@@ -118,6 +128,8 @@ const ALL: Record<PlanFeature, boolean> = {
   voiceCloning: true,
   // По умолчанию доступен (как library) — конкретные тарифы ниже сужают.
   voiceDub: true,
+  // Этап 111: Standard и выше, как brandManifest — LITE сужает ниже.
+  siteTutorial: true,
 };
 
 export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
@@ -139,6 +151,7 @@ export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
       fullQualityVideo: false,
       voiceCloning: false,
       voiceDub: false,
+      siteTutorial: false,
     },
     aspectRatios: NATIVE_ASPECT_RATIOS,
   },
@@ -265,6 +278,7 @@ export function featureDeniedMessage(feature: PlanFeature): string {
     avatarLipsync: 'Говорящий AI-аватар (пилот)',
     voiceCloning: 'Клонирование своего голоса',
     voiceDub: 'Дубляж (полная замена звука Veo своим голосом)',
+    siteTutorial: 'Обучающее видео по сайту заказчика',
   };
   return `${what[feature]} доступна в режиме ${need}. Сейчас все режимы бесплатны — переключитесь в настройках режима.`;
 }
