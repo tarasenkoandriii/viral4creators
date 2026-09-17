@@ -11,7 +11,7 @@
  * + aspect ratio (generation step), audit and publication (result step).
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Clapperboard,
   Download,
@@ -36,7 +36,10 @@ import { AnalysisInsights } from './AnalysisInsights';
 import { RelevancePanel } from './RelevancePanel';
 import { SceneCasting, type HighlightFocus } from './SceneCasting';
 import { TermsGate } from '../../components/TermsGate';
-import { BrandSnapshotEditor } from './BrandSnapshotEditor';
+import {
+  BrandSnapshotEditor,
+  type BrandSnapshotEditorHandle,
+} from './BrandSnapshotEditor';
 import { AuditPanel } from './AuditPanel';
 import { SoundCheckPanel } from './SoundCheckPanel';
 import { CatalogBatchPanel } from './CatalogBatchPanel';
@@ -154,6 +157,24 @@ export function GenerationWizard() {
     clearError,
     showError,
   } = useWorkflow();
+
+  // Уход с шага разбора размонтирует карточку бренда — несохранённый
+  // выбор голоса/режима раньше пропадал молча. Сохраняем его ДО смены
+  // шага; не вышло — остаёмся, причина видна в самой карточке.
+  const brandEditorRef = useRef<BrandSnapshotEditorHandle>(null);
+  const flushBrandEdits = async (): Promise<boolean> =>
+    (await brandEditorRef.current?.flush()) ?? true;
+  const leaveAnalysisStep = async (): Promise<void> => {
+    if (await flushBrandEdits()) proceedToProduct();
+  };
+  const saveAnalysisEdit = async (text: string): Promise<void> => {
+    if (await flushBrandEdits()) await updateAnalysis(text);
+  };
+  const selectStep = (index: number): void => {
+    void flushBrandEdits().then((ok) => {
+      if (ok) goToStep(index);
+    });
+  };
 
   // Доп. запрос владельца продукта (ТЗ §11.1/§20 — админская половина
   // решения о провайдере по умолчанию, найденная недостающей при
@@ -312,7 +333,7 @@ export function GenerationWizard() {
       <ProgressIndicator
         currentStep={getStepIndex()}
         steps={workflowSteps}
-        onSelect={goToStep}
+        onSelect={selectStep}
         selectable={selectableSteps}
       />
 
@@ -377,6 +398,7 @@ export function GenerationWizard() {
             sessionId &&
             brandManifest && (
               <BrandSnapshotEditor
+                ref={brandEditorRef}
                 sessionId={sessionId}
                 snapshot={brandManifest}
                 onSaved={setBrandManifest}
@@ -385,8 +407,8 @@ export function GenerationWizard() {
           <AnalysisDisplay
             analysisText={analysis?.sceneBreakdown || ''}
             isAnalyzing={isAnalyzing}
-            onEdit={updateAnalysis}
-            onSave={proceedToProduct}
+            onEdit={saveAnalysisEdit}
+            onSave={() => void leaveAnalysisStep()}
             fromLibrary={!!analysis?.fromLibrary}
             highlight={
               focus

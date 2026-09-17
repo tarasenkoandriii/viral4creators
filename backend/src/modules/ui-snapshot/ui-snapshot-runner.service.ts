@@ -180,6 +180,7 @@ export class UiSnapshotRunnerService {
     }
 
     const ctx = await this.resolveFixtureContext(user.id);
+    const wizardSessionId = await this.ensureWizardSession(user.id);
 
     const launched = await launchHeadlessBrowser();
     if ('error' in launched) {
@@ -217,6 +218,7 @@ export class UiSnapshotRunnerService {
           ctx,
           token,
           tmaBaseUrl,
+          wizardSessionId,
         );
         outcomes.push(outcome);
         if (outcome.error) {
@@ -249,6 +251,7 @@ export class UiSnapshotRunnerService {
     ctx: FixtureRouteContext,
     token: string,
     tmaBaseUrl: string,
+    wizardSessionId: string | undefined,
   ): Promise<UiSnapshotRouteOutcome> {
     let page: import('puppeteer-core').Page | undefined;
     try {
@@ -263,6 +266,22 @@ export class UiSnapshotRunnerService {
       // уходит со всеми запросами страницы (CDP `Network.setExtraHTTPHeaders`),
       // включая XHR/fetch самого SPA к API бэкенда.
       await page.setExtraHTTPHeaders({ 'X-Fixture-Token': token });
+      // Мастер (`useWorkflow`) при пустом `localStorage['sessionId']`
+      // создаёт НОВУЮ сессию на каждом монтировании. У свежего
+      // headless-браузера хранилище всегда пустое, поэтому каждый тик
+      // крона (раз в 2 минуты) оставлял у фикстурного пользователя
+      // пустую сессию `created` — в админке это выглядело как поток
+      // фейковых сессий. Подкладываем одну постоянную служебную сессию
+      // ДО загрузки SPA: мастер её восстанавливает и ничего не создаёт.
+      if (wizardSessionId) {
+        await page.evaluateOnNewDocument((id: string) => {
+          try {
+            window.localStorage.setItem('sessionId', id);
+          } catch {
+            // хранилище недоступно — мастер создаст сессию, как раньше
+          }
+        }, wizardSessionId);
+      }
 
       const base = tmaBaseUrl.replace(/\/+$/, '');
       const url = `${base}/#${resolved.path}`;
@@ -380,8 +399,11 @@ export class UiSnapshotRunnerService {
         where: { userId },
         orderBy: { createdAt: 'desc' },
       }),
+      // Экрану готового ролика нужен ГОТОВЫЙ ролик: «последняя сессия
+      // пользователя» раньше почти всегда оказывалась пустой, созданной
+      // этим же кроном, и снимок `postprod-video` был бессмысленным.
       this.prisma.session.findFirst({
-        where: { userId, deletedAt: null },
+        where: { userId, deletedAt: null, status: 'video_complete' },
         orderBy: { createdAt: 'desc' },
       }),
     ]);
@@ -391,6 +413,46 @@ export class UiSnapshotRunnerService {
       manifestId: manifest?.id,
       sessionId: session?.id,
     };
+  }
+
+  /**
+   * Одна постоянная служебная сессия для снимка мастера (см. комментарий в
+   * `captureOne`). Помечена `data.qaFixture`, чтобы переиспользоваться
+   * между тиками; если её удалит `cleanup-sessions` по TTL — заводится
+   * заново, то есть не чаще одной за срок жизни сессии, а не 720 в сутки.
+   * Сбой здесь не роняет прогон: без неё будет прежнее поведение.
+   */
+  private async ensureWizardSession(
+    userId: string,
+  ): Promise<string | undefined> {
+    try {
+      const existing = await this.prisma.session.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          data: { path: ['qaFixture'], equals: true },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+      if (existing) return existing.id;
+      const created = await this.prisma.session.create({
+        data: {
+          userId,
+          status: 'created',
+          data: { locale: MVP_LOCALE, qaFixture: true },
+        },
+        select: { id: true },
+      });
+      return created.id;
+    } catch (err) {
+      this.logger.warn(
+        `служебная сессия мастера не заведена: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return undefined;
+    }
   }
 
   private skip(reason: string): UiSnapshotRunResult {

@@ -507,6 +507,27 @@ describe('applySnapshotEdit', () => {
     expect(next.ttsProvider).toBe('resemble');
   });
 
+  it('смена голоса ставит voiceEditedAt, пересылка того же голоса — нет', () => {
+    const changed = applySnapshotEdit(
+      { ...base, ttsVoiceId: 'old' },
+      { ttsVoiceId: 'francesca' },
+      'resemble',
+      false,
+      now,
+    );
+    expect(changed.voiceEditedAt).toBe('2026-09-05T11:00:00.000Z');
+
+    const same = applySnapshotEdit(
+      { ...base, ttsVoiceId: 'old' },
+      { ttsVoiceId: 'old', styleNotes: 'новый стиль' },
+      'resemble',
+      false,
+      now,
+    );
+    expect(same.voiceEditedAt).toBeUndefined();
+    expect(same.editedAt).toBe('2026-09-05T11:00:00.000Z');
+  });
+
   it('ttsVoiceId очищен в снимке (null) — ttsProvider тоже очищается', () => {
     const next = applySnapshotEdit(
       { ...base, ttsVoiceId: 'old', ttsProvider: 'elevenlabs' },

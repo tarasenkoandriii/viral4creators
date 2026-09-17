@@ -740,8 +740,8 @@
       "dub": "Synchro (premium)"
     },
     "cameraMoveLabel": "Kamerabewegung",
-    "saveVoiceToBrandButton": "Stimme im Markenbuch speichern",
-    "voiceSavedToBrand": "Im Markenbuch gespeichert",
+    "saveVoiceToBrandButton": "Stimme für dieses Video und im Markenbuch speichern",
+    "voiceSavedToBrand": "Stimme für dieses Video und im Markenbuch gespeichert",
     "subtitlesModeLabel": "Untertitel für dieses Video",
     "subtitlesModeOptions": {
       "off": "Aus",
@@ -756,7 +756,9 @@
     "charactersNote": "{{count}} Marken-Charaktere — im Tab „Marke“ oben",
     "scenesSuffixOne": "; {{count}} Marken-Szene — in den Referenzen im Schritt „Generierung“",
     "scenesSuffixOther": "; {{count}} Marken-Szenen — in den Referenzen im Schritt „Generierung“",
-    "save": "Speichern"
+    "save": "Speichern",
+    "voiceSavedSessionOnly": "Stimme für dieses Video gespeichert, aber nicht im Markenbuch:",
+    "unsavedInvalid": "Es gibt ungespeicherte Änderungen mit einem Fehler – korrigiere sie, um fortzufahren."
   },
   "relevancePanel": {
     "verdicts": {

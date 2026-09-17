@@ -9,6 +9,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { GenerationService } from './generation.service';
+import { SnapshotVoiceSyncService } from './snapshot-voice-sync.service';
 import { GenerateVideoRequestDto } from './dto/generate-video-request.dto';
 import { GenerateVideoResponseDto } from './dto/generate-video-response.dto';
 import { GetVideoStatusResponseDto } from './dto/get-video-status-response.dto';
@@ -27,7 +28,10 @@ import { VideoQuality } from '../../common/types/generation.types';
  */
 @Controller('sessions/:sessionId')
 export class GenerationController {
-  constructor(private readonly generationService: GenerationService) {}
+  constructor(
+    private readonly generationService: GenerationService,
+    private readonly voiceSync: SnapshotVoiceSyncService,
+  ) {}
 
   /**
    * POST /sessions/:sessionId/generate
@@ -42,6 +46,8 @@ export class GenerationController {
     @Param('sessionId') sessionId: string,
     @Body() dto: GenerateVideoRequestDto,
   ): Promise<GenerateVideoResponseDto> {
+    // Голос, выбранный в брендбуке после создания сессии, — до рендера.
+    await this.voiceSync.syncBeforeRender(sessionId);
     const generatedVideo = await this.generationService.generateVideo(
       sessionId,
       dto.quality,

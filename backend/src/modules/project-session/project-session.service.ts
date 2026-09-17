@@ -327,6 +327,14 @@ export function applySnapshotEdit(
         }
       : {}),
     editedAt: now.toISOString(),
+    // Форма шлёт голос при каждом сохранении — отметка ставится только
+    // при реальной смене, иначе правка стиля «замораживала» бы голос.
+    ...((dto.ttsVoiceId !== undefined &&
+      (dto.ttsVoiceId ?? null) !== (current.ttsVoiceId ?? null)) ||
+    (dto.ttsModel !== undefined &&
+      (dto.ttsModel ?? null) !== (current.ttsModel ?? null))
+      ? { voiceEditedAt: now.toISOString() }
+      : {}),
   };
 }
 

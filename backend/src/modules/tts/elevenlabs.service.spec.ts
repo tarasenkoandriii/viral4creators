@@ -1,5 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
-import { ElevenLabsService } from './elevenlabs.service';
+import {
+  ElevenLabsService,
+  elevenLabsLanguageCode,
+} from './elevenlabs.service';
 
 const KEYS = ['VOICE_API_KEY', 'VOICE_ID', 'VOICE_MODEL'] as const;
 
@@ -249,5 +252,23 @@ describe('ElevenLabsService (ТЗ §15.3)', () => {
     const r = await svc.voices();
     expect(r.voices.map((v) => v.voiceId)).toEqual(['a', 'b']);
     expect(r.voices[0]).toMatchObject({ name: 'Аня', previewUrl: 'u1' });
+  });
+});
+
+describe('elevenLabsLanguageCode', () => {
+  it('нормализует код языка для моделей, которые его принимают', () => {
+    expect(elevenLabsLanguageCode('uk-UA', 'eleven_v3')).toBe('uk');
+    expect(elevenLabsLanguageCode('RU', 'eleven_flash_v2_5')).toBe('ru');
+  });
+
+  it('multilingual_v2 параметр игнорирует — не шлём', () => {
+    expect(
+      elevenLabsLanguageCode('uk', 'eleven_multilingual_v2'),
+    ).toBeUndefined();
+  });
+
+  it('пустой или непонятный язык — не шлём', () => {
+    expect(elevenLabsLanguageCode(null, 'eleven_v3')).toBeUndefined();
+    expect(elevenLabsLanguageCode('Ukrainian', 'eleven_v3')).toBeUndefined();
   });
 });

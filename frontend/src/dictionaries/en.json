@@ -740,8 +740,8 @@
       "dub": "Dub (premium)"
     },
     "cameraMoveLabel": "Camera move",
-    "saveVoiceToBrandButton": "Save voice to brand book",
-    "voiceSavedToBrand": "Saved to brand book",
+    "saveVoiceToBrandButton": "Save voice for this video and to brand book",
+    "voiceSavedToBrand": "Voice saved for this video and to the brand book",
     "subtitlesModeLabel": "Subtitles for this video",
     "subtitlesModeOptions": {
       "off": "Off",
@@ -756,7 +756,9 @@
     "charactersNote": "{{count}} brand characters — in the “Brand” tab above",
     "scenesSuffixOne": "; {{count}} brand scene — in the references on the “Generate” step",
     "scenesSuffixOther": "; {{count}} brand scenes — in the references on the “Generate” step",
-    "save": "Save"
+    "save": "Save",
+    "voiceSavedSessionOnly": "Voice saved for this video, but not to the brand book:",
+    "unsavedInvalid": "There are unsaved changes with an error — fix them to continue."
   },
   "relevancePanel": {
     "verdicts": {

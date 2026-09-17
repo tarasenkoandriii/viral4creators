@@ -748,8 +748,8 @@
       "dub": "Дубляж (premium)"
     },
     "cameraMoveLabel": "Рух камери",
-    "saveVoiceToBrandButton": "Зберегти голос у брендбук",
-    "voiceSavedToBrand": "Збережено в брендбук",
+    "saveVoiceToBrandButton": "Зберегти голос для ролика і в брендбук",
+    "voiceSavedToBrand": "Голос збережено для цього ролика і в брендбук",
     "subtitlesModeLabel": "Субтитри для цього ролика",
     "subtitlesModeOptions": {
       "off": "Вимкнені",
@@ -764,7 +764,9 @@
     "charactersNote": "{{count}} персонажів бренду — у вкладці «Бренд» вище",
     "scenesSuffixOne": "; {{count}} сцена бренду — у референсах на кроці «Генерація»",
     "scenesSuffixOther": "; {{count}} сцени бренду — у референсах на кроці «Генерація»",
-    "save": "Зберегти"
+    "save": "Зберегти",
+    "voiceSavedSessionOnly": "Голос збережено для цього ролика, але не в брендбук:",
+    "unsavedInvalid": "Є незбережені правки з помилкою — виправте їх, щоб продовжити."
   },
   "relevancePanel": {
     "verdicts": {

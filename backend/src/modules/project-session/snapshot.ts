@@ -224,3 +224,35 @@ export function brandManifestSnapshotFrom(
     editedAt: null,
   };
 }
+
+/** Поля голоса бренда, которые подтягиваются в сессию до первого рендера. */
+export interface ManifestVoiceSource {
+  ttsVoiceId: string | null;
+  ttsModel: string | null;
+  ttsProvider: string | null;
+}
+
+/**
+ * Подтянуть голос из бренда в снимок сессии перед первым рендером.
+ * `null` — менять нечего: голос в сессии выбран вручную
+ * (`voiceEditedAt`) или уже совпадает с брендом. Режим озвучки НЕ
+ * трогается: он входит в бриф промпта, и его смена после сборки
+ * промпта дала бы ролик, снятый под один режим и озвученный в другом.
+ */
+export function syncSnapshotVoice(
+  snapshot: BrandManifestSnapshot,
+  manifest: ManifestVoiceSource,
+): BrandManifestSnapshot | null {
+  if (snapshot.voiceEditedAt) return null;
+  const same =
+    (snapshot.ttsVoiceId ?? null) === manifest.ttsVoiceId &&
+    (snapshot.ttsModel ?? null) === manifest.ttsModel &&
+    (snapshot.ttsProvider ?? null) === manifest.ttsProvider;
+  if (same) return null;
+  return {
+    ...snapshot,
+    ttsVoiceId: manifest.ttsVoiceId,
+    ttsModel: manifest.ttsModel,
+    ttsProvider: manifest.ttsProvider,
+  };
+}

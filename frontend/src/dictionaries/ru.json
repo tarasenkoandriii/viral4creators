@@ -748,8 +748,8 @@
       "dub": "Свой вместо (premium)"
     },
     "cameraMoveLabel": "Движение камеры",
-    "saveVoiceToBrandButton": "Сохранить голос в брендбук",
-    "voiceSavedToBrand": "Сохранено в брендбук",
+    "saveVoiceToBrandButton": "Сохранить голос для ролика и в брендбук",
+    "voiceSavedToBrand": "Голос сохранён для этого ролика и в брендбук",
     "subtitlesModeLabel": "Субтитры для этого ролика",
     "subtitlesModeOptions": {
       "off": "Выключены",
@@ -764,7 +764,9 @@
     "charactersNote": "{{count}} перс. бренда — во вкладке «Бренд» выше",
     "scenesSuffixOne": "; {{count}} сцена бренда — в референсах на шаге «Генерация»",
     "scenesSuffixOther": "; {{count}} сцены бренда — в референсах на шаге «Генерация»",
-    "save": "Сохранить"
+    "save": "Сохранить",
+    "voiceSavedSessionOnly": "Голос сохранён для этого ролика, но не в брендбук:",
+    "unsavedInvalid": "Есть несохранённые правки с ошибкой — исправьте их, чтобы продолжить."
   },
   "relevancePanel": {
     "verdicts": {

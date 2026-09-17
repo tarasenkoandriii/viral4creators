@@ -98,6 +98,13 @@ export class ElevenLabsService implements TtsProvider {
       ? `/text-to-speech/${encodeURIComponent(voiceId)}/with-timestamps`
       : `/text-to-speech/${encodeURIComponent(voiceId)}`;
 
+    // Язык реплик — явно. Без него модель угадывает язык по тексту и
+    // нередко читает украинский с чужой просодией (ударения не на тех
+    // слогах). `eleven_multilingual_v2` параметр игнорирует (документация
+    // ElevenLabs) — для неё язык не шлём вовсе, чтобы не делать вид, что
+    // он на что-то влияет.
+    const languageCode = elevenLabsLanguageCode(request.language, model);
+
     try {
       const res = await fetch(`${this.base}${path}`, {
         method: 'POST',
@@ -107,6 +114,7 @@ export class ElevenLabsService implements TtsProvider {
           text: payloadText,
           model_id: model,
           output_format: 'mp3_44100_128',
+          ...(languageCode ? { language_code: languageCode } : {}),
         }),
       });
       if (!res.ok) {
@@ -279,4 +287,18 @@ export class ElevenLabsService implements TtsProvider {
       };
     }
   }
+}
+
+/**
+ * ISO 639-1 для `language_code` ElevenLabs: `uk-UA`/`UK` → `uk`.
+ * `undefined` — если языка нет, он не двухбуквенный или модель параметр
+ * не поддерживает (`eleven_multilingual_v2`).
+ */
+export function elevenLabsLanguageCode(
+  language: string | null | undefined,
+  model: string,
+): string | undefined {
+  if (model.startsWith('eleven_multilingual_v2')) return undefined;
+  const code = language?.trim().toLowerCase().split(/[-_]/)[0];
+  return code && /^[a-z]{2}$/.test(code) ? code : undefined;
 }

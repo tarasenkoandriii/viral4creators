@@ -4,6 +4,7 @@ import { GenerationPublicSettingsController } from './generation-public-settings
 import { AdminVideoProviderSettingsService } from '../admin-panel/admin-video-provider-settings.service';
 import { AdminGenerationRetryController } from './admin-generation-retry.controller';
 import { GenerationService } from './generation.service';
+import { SnapshotVoiceSyncService } from './snapshot-voice-sync.service';
 import { GrokVideoService } from './grok-video.service';
 import { GrokVideoBatchService } from './grok-video-batch.service';
 import { StorageModule } from '../storage/storage.module';
@@ -50,6 +51,7 @@ import { PromptModule } from '../prompt/prompt.module';
   ],
   providers: [
     GenerationService,
+    SnapshotVoiceSyncService,
     GrokVideoService,
     GrokVideoBatchService,
     AdminVideoProviderSettingsService,

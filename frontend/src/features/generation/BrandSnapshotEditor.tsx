@@ -8,7 +8,7 @@
  * tab; their list is not edited here.
  */
 
-import { useEffect, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import { Check, ChevronDown, ChevronUp, Lock, Palette } from 'lucide-react';
 import {
   Alert,
@@ -20,7 +20,11 @@ import {
   Textarea,
 } from '../../components/ui';
 import { JsonField } from '../brand/JsonField';
-import { errorMessage, updateBrandSnapshot, updateBrandManifest } from '../../services/projects-api';
+import {
+  errorMessage,
+  updateBrandSnapshot,
+  updateBrandManifest,
+} from '../../services/projects-api';
 import { cameraMoveHint, cameraMoveOptions } from '../../lib/camera-move';
 import {
   subtitleThemeHint,
@@ -39,15 +43,25 @@ import type { JsonObject } from '../../types/project';
 import { useI18n } from '../../lib/i18n-context';
 import { useFeature } from '../../lib/plan-context';
 
-export function BrandSnapshotEditor({
-  sessionId,
-  snapshot,
-  onSaved,
-}: {
-  sessionId: string;
-  snapshot: BrandManifestSnapshot;
-  onSaved: (s: BrandManifestSnapshot) => void;
-}) {
+/**
+ * Мастер зовёт `flush()` перед уходом с шага разбора: карточка при этом
+ * размонтируется, и несохранённый выбор голоса раньше пропадал молча —
+ * ролик озвучивался не тем голосом, который человек видел на экране.
+ * `false` — сохранить не удалось (ошибка сервера или невалидный JSON в
+ * фильтрах/эффектах), причина уже показана в карточке, шаг не меняем.
+ */
+export interface BrandSnapshotEditorHandle {
+  flush: () => Promise<boolean>;
+}
+
+export const BrandSnapshotEditor = forwardRef<
+  BrandSnapshotEditorHandle,
+  {
+    sessionId: string;
+    snapshot: BrandManifestSnapshot;
+    onSaved: (s: BrandManifestSnapshot) => void;
+  }
+>(function BrandSnapshotEditor({ sessionId, snapshot, onSaved }, ref) {
   const { dict } = useI18n();
   const dub = useFeature('voiceDub');
   const [styleNotes, setStyleNotes] = useState(snapshot.styleNotes ?? '');
@@ -85,9 +99,7 @@ export function BrandSnapshotEditor({
   // снимок этой сессии — чтобы не выбирать его заново в каждой новой
   // сессии того же бренда.
   const [savingVoiceToBrand, setSavingVoiceToBrand] = useState(false);
-  const [voiceToBrandNote, setVoiceToBrandNote] = useState<string | null>(
-    null,
-  );
+  const [voiceToBrandNote, setVoiceToBrandNote] = useState<string | null>(null);
 
   const dirty =
     (styleNotes.trim() || null) !== (snapshot.styleNotes ?? null) ||
@@ -107,8 +119,12 @@ export function BrandSnapshotEditor({
     return () => window.clearTimeout(t);
   }, [savedAt]);
 
-  const onSave = async () => {
-    if (!canSave) return;
+  const save = async (): Promise<boolean> => {
+    if (!dirty) return true;
+    if (!canSave) {
+      setError(dict.brandSnapshotEditor.unsavedInvalid);
+      return false;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -125,28 +141,52 @@ export function BrandSnapshotEditor({
       });
       onSaved(next);
       setSavedAt(Date.now());
+      return true;
     } catch (e) {
       setError(errorMessage(e));
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const onSave = () => {
+    void save();
+  };
+
+  useImperativeHandle(ref, () => ({ flush: save }));
 
   // Доп. запрос владельца продукта: сохранить выбранный голос в
   // брендбук постоянно. `snapshot.brandManifestId` может указывать на
   // манифест, который с тех пор удалили («for display only, may be
   // deleted later» — её же доккомментарий) — сервер ответит понятной
   // ошибкой, не крашем, `errorMessage()` её покажет как есть.
+  //
+  // Голос сохраняется сразу в ОБА места: в эту сессию и в брендбук.
+  // Раньше кнопка писала только в брендбук, ответ «Сохранено в брендбук»
+  // читался как «голос применён», а ролик озвучивался старым голосом
+  // из копии сессии.
   const saveVoiceToBrand = async () => {
     setSavingVoiceToBrand(true);
     setVoiceToBrandNote(null);
+    const voice = ttsVoiceId.trim() || null;
+    try {
+      const next = await updateBrandSnapshot(sessionId, { ttsVoiceId: voice });
+      onSaved(next);
+    } catch (e) {
+      setVoiceToBrandNote(errorMessage(e));
+      setSavingVoiceToBrand(false);
+      return;
+    }
     try {
       await updateBrandManifest(snapshot.brandManifestId, {
-        ttsVoiceId: ttsVoiceId.trim() || null,
+        ttsVoiceId: voice,
       });
       setVoiceToBrandNote(dict.brandSnapshotEditor.voiceSavedToBrand);
     } catch (e) {
-      setVoiceToBrandNote(errorMessage(e));
+      setVoiceToBrandNote(
+        `${dict.brandSnapshotEditor.voiceSavedSessionOnly} ${errorMessage(e)}`
+      );
     } finally {
       setSavingVoiceToBrand(false);
     }
@@ -379,4 +419,4 @@ export function BrandSnapshotEditor({
       </div>
     </Card>
   );
-}
+});

@@ -169,4 +169,12 @@ export interface BrandManifestSnapshot {
   snapshotAt: string;
   /** Set when the user edited the snapshot for this session (§12). */
   editedAt: string | null;
+  /**
+   * Когда пользователь сам поменял голос/модель озвучки ЭТОЙ сессии.
+   * Пока пусто — перед первым рендером голос подтягивается из бренда
+   * (`syncSnapshotVoice`): выбор голоса в брендбуке после создания
+   * сессии иначе не доходил до ролика. Отдельно от `editedAt`, потому
+   * что правка стиля не должна замораживать голос.
+   */
+  voiceEditedAt?: string | null;
 }

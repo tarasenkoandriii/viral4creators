@@ -54,6 +54,7 @@ function buildFakePage() {
   return {
     setViewport: jest.fn().mockResolvedValue(undefined),
     setExtraHTTPHeaders: jest.fn().mockResolvedValue(undefined),
+    evaluateOnNewDocument: jest.fn().mockResolvedValue(undefined),
     goto: jest.fn().mockResolvedValue(undefined),
     evaluate: jest.fn().mockResolvedValue(undefined),
     screenshot: jest.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
@@ -289,6 +290,64 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
           error: expect.stringContaining('таймаут'),
         }),
       }),
+    );
+  });
+
+  it('подкладывает служебную сессию в localStorage до загрузки SPA — мастер не создаёт новую на каждом тике', async () => {
+    const { service, prisma } = build();
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    prisma.session.findFirst.mockImplementation(async (args: any) =>
+      args?.where?.data ? { id: 'qa-session' } : { id: 'done-session' },
+    );
+
+    await service.run();
+
+    expect(page.evaluateOnNewDocument).toHaveBeenCalledWith(
+      expect.any(Function),
+      'qa-session',
+    );
+    // postprod-video смотрит готовый ролик, а не служебную пустую сессию
+    expect(page.goto).toHaveBeenCalledWith(
+      'https://app.example.com/#/postprod/done-session',
+      expect.anything(),
+    );
+    const contextCall = prisma.session.findFirst.mock.calls.find(
+      ([a]: any[]) => !a?.where?.data,
+    );
+    expect(contextCall[0].where.status).toBe('video_complete');
+  });
+
+  it('служебной сессии нет — заводит одну с пометкой qaFixture', async () => {
+    const { service, prisma } = build();
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    prisma.session.findFirst.mockImplementation(async (args: any) =>
+      args?.where?.data ? null : { id: 'done-session' },
+    );
+    (prisma.session as any).create = jest
+      .fn()
+      .mockResolvedValue({ id: 'new-qa' });
+
+    await service.run();
+
+    expect((prisma.session as any).create).toHaveBeenCalledTimes(1);
+    expect(
+      (prisma.session as any).create.mock.calls[0][0].data.data.qaFixture,
+    ).toBe(true);
+    expect(page.evaluateOnNewDocument).toHaveBeenCalledWith(
+      expect.any(Function),
+      'new-qa',
     );
   });
 });

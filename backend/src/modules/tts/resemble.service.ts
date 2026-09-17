@@ -66,6 +66,37 @@ interface ResembleVoicesResponse {
   voices?: Array<Record<string, unknown>>;
 }
 
+/** Язык реплик → локаль SSML Resemble. Только проверенные по списку
+ * локалей документации; незнакомый язык — без обёртки, как раньше. */
+const RESEMBLE_LOCALES: Record<string, string> = {
+  uk: 'uk-ua',
+  ru: 'ru-ru',
+  en: 'en-us',
+  de: 'de-de',
+  es: 'es-es',
+  fr: 'fr-fr',
+  it: 'it-it',
+  pl: 'pl-pl',
+};
+
+export function resembleLocale(
+  language: string | null | undefined,
+): string | undefined {
+  const code = language?.trim().toLowerCase().split(/[-_]/)[0];
+  return code ? RESEMBLE_LOCALES[code] : undefined;
+}
+
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+export function withLanguage(text: string, locale: string): string {
+  return `<speak><lang xml:lang="${locale}">${escapeXml(text)}</lang></speak>`;
+}
+
 /** М-6.5 седьмого аудита: таймаут внешних HTTP-вызовов. */
 const EXTERNAL_TIMEOUT_MS = 60_000;
 
@@ -117,7 +148,17 @@ export class ResembleService implements TtsProvider {
       };
     }
 
-    const payloadText = text.slice(0, MAX_CHARACTERS);
+    const locale = resembleLocale(request.language);
+    // Обёртка SSML и экранирование тоже считаются в лимит.
+    let payloadText = text.slice(0, MAX_CHARACTERS);
+    let requestText = locale ? withLanguage(payloadText, locale) : payloadText;
+    if (requestText.length > MAX_CHARACTERS) {
+      payloadText = payloadText.slice(
+        0,
+        payloadText.length - (requestText.length - MAX_CHARACTERS),
+      );
+      requestText = withLanguage(payloadText, locale!);
+    }
     if (payloadText.length < text.length) {
       this.logger.warn(
         `текст озвучки обрезан до ${MAX_CHARACTERS} символов (было ${text.length})`,
@@ -135,7 +176,11 @@ export class ResembleService implements TtsProvider {
         // Сознательно без project_uuid — см. доккомментарий файла.
         body: JSON.stringify({
           voice_uuid: voiceId,
-          data: payloadText,
+          // Язык реплик — явно, SSML `<lang>` (docs.resemble.ai, SSML
+          // Reference; `uk-ua` в списке локалей). Без него модель читает
+          // украинский текст с просодией языка голоса — ударения не на
+          // тех слогах даже в двусложных словах.
+          data: requestText,
           output_format: 'mp3',
         }),
       });

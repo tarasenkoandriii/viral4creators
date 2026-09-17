@@ -1,6 +1,6 @@
 # База знаний ИИ-консультанта viral4creators
 
-_Собрано автоматически 2026-09-16 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-17 из lending/frontend/backend; коммит — local._
 
 ## Разделы мини-аппа
 

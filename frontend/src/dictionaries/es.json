@@ -740,8 +740,8 @@
       "dub": "Doblaje (premium)"
     },
     "cameraMoveLabel": "Movimiento de cámara",
-    "saveVoiceToBrandButton": "Guardar voz en el manual de marca",
-    "voiceSavedToBrand": "Guardado en el manual de marca",
+    "saveVoiceToBrandButton": "Guardar voz para este vídeo y en el manual de marca",
+    "voiceSavedToBrand": "Voz guardada para este vídeo y en el manual de marca",
     "subtitlesModeLabel": "Subtítulos para este video",
     "subtitlesModeOptions": {
       "off": "Desactivados",
@@ -756,7 +756,9 @@
     "charactersNote": "{{count}} personajes de marca — en la pestaña «Marca» arriba",
     "scenesSuffixOne": "; {{count}} escena de marca — en las referencias del paso «Generación»",
     "scenesSuffixOther": "; {{count}} escenas de marca — en las referencias del paso «Generación»",
-    "save": "Guardar"
+    "save": "Guardar",
+    "voiceSavedSessionOnly": "Voz guardada para este vídeo, pero no en el manual de marca:",
+    "unsavedInvalid": "Hay cambios sin guardar con un error: corrígelos para continuar."
   },
   "relevancePanel": {
     "verdicts": {

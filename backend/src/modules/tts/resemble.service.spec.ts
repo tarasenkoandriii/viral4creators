@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
-import { ResembleService } from './resemble.service';
+import {
+  ResembleService,
+  resembleLocale,
+  withLanguage,
+} from './resemble.service';
 
 const KEYS = ['RESEMBLE_API_KEY', 'RESEMBLE_VOICE_ID'] as const;
 
@@ -85,6 +89,32 @@ describe('ResembleService (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md)', () => {
       data: 'Привіт, світ',
     });
     expect(body).not.toHaveProperty('project_uuid');
+  });
+
+  it('язык реплик уходит в SSML <lang>, лимит 3000 держится вместе с обёрткой', async () => {
+    const fetchMock = mockFetch(
+      jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          audio_content: Buffer.from([1]).toString('base64'),
+        }),
+      }),
+    );
+    const svc = withEnv({ RESEMBLE_API_KEY: 'k' });
+    await svc.synthesize({ text: 'Привіт', voiceId: 'v', language: 'uk' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).data).toBe(
+      '<speak><lang xml:lang="uk-ua">Привіт</lang></speak>',
+    );
+
+    await svc.synthesize({
+      text: '&'.repeat(4000),
+      voiceId: 'v',
+      language: 'uk',
+    });
+    const long = JSON.parse(fetchMock.mock.calls[1][1].body).data as string;
+    expect(long.length).toBeLessThanOrEqual(3000);
+    expect(long.endsWith('</lang></speak>')).toBe(true);
   });
 
   it('голос из RESEMBLE_VOICE_ID используется, когда бренд не задал свой', async () => {
@@ -493,5 +523,20 @@ describe('ResembleService (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md)', () => {
       const svc = withEnv({ RESEMBLE_API_KEY: 'k' });
       await expect(svc.deleteVoice('u1')).resolves.toBeUndefined();
     });
+  });
+});
+
+describe('язык реплик для Resemble', () => {
+  it('локаль по коду языка', () => {
+    expect(resembleLocale('uk')).toBe('uk-ua');
+    expect(resembleLocale('uk-UA')).toBe('uk-ua');
+    expect(resembleLocale('xx')).toBeUndefined();
+    expect(resembleLocale(null)).toBeUndefined();
+  });
+
+  it('оборачивает текст в SSML и экранирует XML', () => {
+    expect(withLanguage('Пиво & <сир>', 'uk-ua')).toBe(
+      '<speak><lang xml:lang="uk-ua">Пиво &amp; &lt;сир&gt;</lang></speak>',
+    );
   });
 });
