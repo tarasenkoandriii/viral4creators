@@ -125,6 +125,24 @@ export const POSTPROD_DEADLINE_MS = 15 * 60 * 1000;
  */
 const LEGACY_POSTPROD_DEADLINE_MS = 35 * 60 * 1000;
 
+/**
+ * Сколько старт постобработки (захват → синтез → отправка задачи) может
+ * идти без `postJobId`. Больше потолка функции Vercel (300 с) — дольше
+ * живого старта не бывает.
+ */
+export const POSTPROD_START_GRACE_MS = 5 * 60 * 1000;
+
+export function postProductionStarting(
+  video: Pick<GeneratedVideo, 'completedAt'>,
+  now: number = Date.now(),
+): boolean {
+  if (!video.completedAt) return false;
+  const completed = new Date(video.completedAt).getTime();
+  return (
+    Number.isFinite(completed) && now - completed < POSTPROD_START_GRACE_MS
+  );
+}
+
 export function postProductionExpired(
   video: Pick<GeneratedVideo, 'postStartedAt' | 'initiatedAt'>,
   now: number = Date.now(),
@@ -611,6 +629,12 @@ export class PostProductionService {
     if (video.postStatus !== 'pending') return video;
 
     if (!video.postJobId) {
+      // Захват ставит `pending` ДО синтеза голоса и отправки задачи — это
+      // секунды, а клиент опрашивает каждые четыре. Без этой паузы опрос
+      // закрывал ещё идущий старт сбоем «не запустилась», а старт затем
+      // перезаписывал сбой своим `pending` (или наоборот — в зависимости
+      // от того, чья запись легла последней).
+      if (postProductionStarting(video)) return video;
       // Захват состоялся, а до отправки задачи дело не дошло: процесс
       // умер между ними (на Vercel это обычное дело — таймаут функции).
       // Оставить как есть значит вечное «обрезаем…», которое никогда не

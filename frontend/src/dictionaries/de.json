@@ -830,7 +830,8 @@
     "severityLow": "geringfügig",
     "issueOne": "Problem",
     "issueFew": "Probleme",
-    "issueMany": "Probleme"
+    "issueMany": "Probleme",
+    "waitProcessing": "Das Video wird noch verarbeitet (Vertonung, Zuschnitt oder Untertitel) – die Prüfung ist verfügbar, sobald es fertig ist."
   },
   "soundCheckPanel": {
     "title": "Stimmen-Realismus-Prüfung",

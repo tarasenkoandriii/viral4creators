@@ -54,9 +54,16 @@ export function AuditPanel({
   sessionId,
   generatedVideoId,
   onFixApplied,
+  processing = false,
 }: {
   sessionId: string;
   generatedVideoId: string;
+  /**
+   * Постобработка ролика (озвучка/обрезка/субтитры) ещё идёт — сервер
+   * аудит отклонит («Ролик ещё обрабатывается»), поэтому кнопки
+   * неактивны до её конца, а не отвечают ошибкой на нажатие.
+   */
+  processing?: boolean;
   /** The fix is in the prompt draft — the wizard goes back to the prompt step. */
   onFixApplied: (prompt: GenerationPrompt, state: AuditState) => void;
 }) {
@@ -105,6 +112,12 @@ export function AuditPanel({
       alive = false;
     };
   }, [sessionId, reloadNonce]);
+
+  // Обработка закончилась — прежний отказ «ещё обрабатывается» больше
+  // не актуален.
+  useEffect(() => {
+    if (!processing) setError(null);
+  }, [processing]);
 
   const latest =
     state?.history.find((a) => a.generatedVideoId === generatedVideoId) ?? null;
@@ -188,7 +201,7 @@ export function AuditPanel({
             <Button
               icon={<ScanSearch size={14} />}
               onClick={() => void run()}
-              disabled={applying}
+              disabled={applying || processing}
             >
               {latest ? dict.auditPanel.runAgain : dict.auditPanel.runFirst}
             </Button>
@@ -196,12 +209,17 @@ export function AuditPanel({
               variant="outline"
               icon={<UserRound size={14} />}
               onClick={() => setManualOpen((v) => !v)}
-              disabled={applying}
+              disabled={applying || processing}
               active={manualOpen}
             >
               {dict.auditPanel.manualToggle}
             </Button>
           </div>
+          {processing && (
+            <p className="mt-2 text-xs text-silver-400">
+              {dict.auditPanel.waitProcessing}
+            </p>
+          )}
 
           {manualOpen && (
             <form
@@ -238,7 +256,7 @@ export function AuditPanel({
                   type="submit"
                   size="sm"
                   icon={<Wand2 size={14} />}
-                  disabled={issue.trim().length < 3}
+                  disabled={issue.trim().length < 3 || processing}
                 >
                   {dict.auditPanel.suggestFix}
                 </Button>

@@ -1063,6 +1063,7 @@ export function GenerationWizard() {
               sessionId={sessionId}
               generatedVideoId={generatedVideo.generatedVideoId}
               onFixApplied={(prompt) => startRevision(prompt)}
+              processing={generatedVideo.postStatus === 'pending'}
             />
           )}
           {sessionId && audit.allowed && (
@@ -1071,6 +1072,7 @@ export function GenerationWizard() {
             <SoundCheckPanel
               key={`sound-${generatedVideo.generatedVideoId}`}
               sessionId={sessionId}
+              processing={generatedVideo.postStatus === 'pending'}
             />
           )}
           {sessionId && !audit.allowed && !audit.loading && (

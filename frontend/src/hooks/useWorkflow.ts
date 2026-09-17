@@ -1,7 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { isRenderInFlight, stepFromSession } from '../lib/session-step';
-import { shouldKeepPolling } from '../lib/video-polling';
+import {
+  isPostProductionPending,
+  shouldKeepPolling,
+} from '../lib/video-polling';
 
 /** М-7.3: интервал опроса ролика, поданного через Batch API xAI. */
 const BATCH_POLL_INTERVAL_MS = 60_000;
@@ -392,7 +395,13 @@ export function useWorkflow() {
             // Рендер шёл, пока приложение было свёрнуто: без
             // возобновления опроса пользователь смотрит на спиннер,
             // который никогда не сменится (этап 39, А-2.7).
-            if (isRenderInFlight(seeded)) {
+            // Ролик готов, но озвучка/обрезка ещё идёт — тоже опрашиваем:
+            // иначе экран до перезагрузки считал ролик «обрабатывается», и
+            // проверка на артефакты оставалась недоступной.
+            if (
+              isRenderInFlight(seeded) ||
+              isPostProductionPending(seeded.generatedVideo)
+            ) {
               startVideoPolling(storedSessionId);
             }
             if (resumeAnalysis) {

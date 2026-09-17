@@ -33,7 +33,14 @@ import {
 import type { SoundCheck, SoundCheckState } from '../../types';
 import { useI18n } from '../../lib/i18n-context';
 
-export function SoundCheckPanel({ sessionId }: { sessionId: string }) {
+export function SoundCheckPanel({
+  sessionId,
+  processing = false,
+}: {
+  sessionId: string;
+  /** См. `AuditPanel.processing` — тот же отказ сервера, та же причина. */
+  processing?: boolean;
+}) {
   const { dict } = useI18n();
   const [state, setState] = useState<SoundCheckState | null>(null);
   const [running, setRunning] = useState(false);
@@ -48,6 +55,10 @@ export function SoundCheckPanel({ sessionId }: { sessionId: string }) {
       alive = false;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!processing) setError(null);
+  }, [processing]);
 
   const latest = state?.history[0] ?? null;
   const older = state?.history.slice(1) ?? [];
@@ -84,11 +95,22 @@ export function SoundCheckPanel({ sessionId }: { sessionId: string }) {
           hint={dict.soundCheckPanel.busyHint}
         />
       ) : (
-        <Button icon={<Volume2 size={14} />} onClick={() => void run()}>
-          {latest
-            ? dict.soundCheckPanel.runAgain
-            : dict.soundCheckPanel.runFirst}
-        </Button>
+        <>
+          <Button
+            icon={<Volume2 size={14} />}
+            onClick={() => void run()}
+            disabled={processing}
+          >
+            {latest
+              ? dict.soundCheckPanel.runAgain
+              : dict.soundCheckPanel.runFirst}
+          </Button>
+          {processing && (
+            <p className="mt-2 text-xs text-silver-400">
+              {dict.auditPanel.waitProcessing}
+            </p>
+          )}
+        </>
       )}
 
       {latest && !running && (

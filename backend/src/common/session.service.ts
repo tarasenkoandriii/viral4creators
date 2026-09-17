@@ -449,14 +449,22 @@ export class SessionService {
             WHEN ("liveData" || p.live) = "liveData" THEN "liveData"
             ELSE "liveData" || p.live
           END,
-          -- Статус рендера — из того места, где ролик лежит СЕЙЧАС: у
-          -- сессии со старой раскладкой это ещё общая колонка.
+          -- Статус рендера — из того места, где ролик лежит ПОСЛЕ этой
+          -- записи: сначала сама правка, затем старая копия в общей
+          -- колонке (она сильнее), затем liveData. Раньше первой
+          -- стояла ("data" || правка): в SET это СТАРОЕ значение
+          -- колонки, и на первой записи сессии со старой раскладкой
+          -- статус брался из уходящей копии, а не из нового ролика.
           -- Ошибиться здесь дороже всего: по этому полю суточная уборка
           -- решает, удалять ли готовый оплаченный ролик.
-          "generationStatus" = COALESCE(
-            ("data" || p.cold) -> 'generatedVideo' ->> 'status',
-            ("liveData" || p.live) -> 'generatedVideo' ->> 'status'
-          ),
+          "generationStatus" = CASE
+            WHEN p.live ? 'generatedVideo'
+              THEN p.live -> 'generatedVideo' ->> 'status'
+            ELSE COALESCE(
+              "data" -> 'generatedVideo' ->> 'status',
+              "liveData" -> 'generatedVideo' ->> 'status'
+            )
+          END,
           "status" = COALESCE(${status}, "sessions"."status"),
           "lastActivityAt" = NOW()
       FROM old, p

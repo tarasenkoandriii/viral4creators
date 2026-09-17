@@ -830,7 +830,8 @@
     "severityLow": "leve",
     "issueOne": "problema",
     "issueFew": "problemas",
-    "issueMany": "problemas"
+    "issueMany": "problemas",
+    "waitProcessing": "El vídeo aún se está procesando (voz, recorte o subtítulos): la revisión estará disponible en cuanto esté listo."
   },
   "soundCheckPanel": {
     "title": "Comprobación de realismo de voz",

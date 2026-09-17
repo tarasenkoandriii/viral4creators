@@ -293,14 +293,14 @@ describe('SessionService — круговорот полей сессии (Б-2.
       generatedVideo: { status: 'failed' } as any,
     });
     const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join('?');
-    // Статус берётся из той колонки, где ролик лежит СЕЙЧАС: у сессии
-    // со старой раскладкой это ещё общая колонка (этап 122).
-    expect(sql).toContain(
-      `("data" || p.cold) -> 'generatedVideo' ->> 'status'`,
-    );
-    expect(sql).toContain(
-      `("liveData" || p.live) -> 'generatedVideo' ->> 'status'`,
-    );
+    // Статус — сначала из самой правки (новый ролик), иначе из старой
+    // копии в общей колонке, иначе из liveData (этап 122). Проверено на
+    // PG 16: на первой записи сессии со старой раскладкой статус больше
+    // не берётся из уходящей копии.
+    expect(sql).toContain(`WHEN p.live ? 'generatedVideo'`);
+    expect(sql).toContain(`THEN p.live -> 'generatedVideo' ->> 'status'`);
+    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'status'`);
+    expect(sql).toContain(`"liveData" -> 'generatedVideo' ->> 'status'`);
   });
 
   it('горячий ключ пишется в liveData, а холодный — в data (этап 122, В-4.2)', async () => {

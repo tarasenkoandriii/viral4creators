@@ -851,6 +851,31 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       expect(r.downloadUrl).toBe(VIDEO.downloadUrl);
     });
 
+    it('старт ещё идёт (ролик готов меньше 5 минут назад) — не закрываем сбоем', async () => {
+      const { svc, api, sessions } = build();
+      const video = {
+        ...VIDEO,
+        postStatus: 'pending' as const,
+        postJobId: undefined,
+        completedAt: new Date(Date.now() - 10_000),
+      };
+      const r = await svc.poll('s1', video);
+      expect(api.status).not.toHaveBeenCalled();
+      expect(sessions.updateSession).not.toHaveBeenCalled();
+      expect(r.postStatus).toBe('pending');
+    });
+
+    it('старт без задачи дольше 5 минут — сбой, как раньше', async () => {
+      const { svc } = build();
+      const r = await svc.poll('s1', {
+        ...VIDEO,
+        postStatus: 'pending',
+        postJobId: undefined,
+        completedAt: new Date(Date.now() - 6 * 60_000),
+      });
+      expect(r.postStatus).toBe('failed');
+    });
+
     it('недоступный статус не меняет состояние — следующий опрос повторит', async () => {
       const { svc, api, sessions } = build();
       api.status.mockRejectedValue(new Error('ETIMEDOUT'));

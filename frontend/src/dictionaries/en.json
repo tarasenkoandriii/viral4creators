@@ -830,7 +830,8 @@
     "severityLow": "minor",
     "issueOne": "issue",
     "issueFew": "issues",
-    "issueMany": "issues"
+    "issueMany": "issues",
+    "waitProcessing": "The video is still being processed (voice, crop or subtitles) — the check will be available as soon as it's ready."
   },
   "soundCheckPanel": {
     "title": "Voice realism check",
