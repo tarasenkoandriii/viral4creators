@@ -29,7 +29,10 @@ import {
   uploadVoiceSample,
   type VoiceCatalogue,
 } from '../../services/projects-api';
+import { releaseMicrophone } from '../../lib/mic-recorder';
+import { revokeObjectUrl } from '../../lib/object-url';
 import { useI18n } from '../../lib/i18n-context';
+import type { Dictionary } from '../../lib/get-dictionary';
 import { useFeature } from '../../lib/plan-context';
 import { haptic } from '../../lib/telegram';
 import type { UserVoice } from '../../types';
@@ -42,6 +45,28 @@ import type { UserVoice } from '../../types';
  * Ненастроенный синтез здесь не ошибка, а состояние стенда, и сказано об
  * этом спокойно: ролик всё равно получится, просто со звуком модели.
  */
+/**
+ * Признак «каталог голосов не загрузился» (З-1, этап 123).
+ *
+ * Не текст: текст зависит от языка интерфейса, а язык человек может
+ * сменить, пока запрос ещё в полёте. Сообщение подставляется при
+ * отрисовке — тогда оно на том языке, который человек видит сейчас.
+ * Собственные сообщения сервера (`error` из ответа) при этом остаются
+ * текстом и проходят как есть.
+ */
+const CATALOG_FETCH_FAILED = '\u0000catalog-fetch-failed';
+
+/** Текст ошибки каталога на ТЕКУЩЕМ языке (З-1, этап 123). */
+function catalogueError(
+  error: string | null | undefined,
+  dict: Dictionary
+): string | undefined {
+  if (!error) return undefined;
+  return error === CATALOG_FETCH_FAILED
+    ? dict.voicePicker.catalogFetchError
+    : error;
+}
+
 export function VoicePicker({
   value,
   onChange,
@@ -89,7 +114,14 @@ export function VoicePicker({
   const { dict } = useI18n();
   const [state, setState] = useState<VoiceCatalogue | null>(null);
   const [loading, setLoading] = useState(true);
-  const [sample, setSample] = useState(dict.voicePicker.defaultSample);
+  // З-1 (этап 123), тот же класс: текст из словаря, замороженный в
+  // состоянии при монтировании. Здесь он ещё и уезжает в ПЛАТНУЮ пробу
+  // голоса — человек, сменивший язык, услышал бы фразу на прежнем.
+  // `null` означает «человек своего текста не вводил», и подставляется
+  // текущий язык; как только он что-то напечатал, его текст живёт сам.
+  const [sampleEdited, setSampleEdited] = useState<string | null>(null);
+  const sample = sampleEdited ?? dict.voicePicker.defaultSample;
+  const setSample = setSampleEdited;
   const [audio, setAudio] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
@@ -109,7 +141,12 @@ export function VoicePicker({
               // совпадёт ни с одним реальным ключом, так что предупреждение
               // о рассинхроне ниже корректно промолчит на этой ветке.
               provider: '',
-              error: dict.voicePicker.catalogFetchError,
+              // З-1: текст ошибки НЕ берём из словаря здесь. Запрос
+              // может быть ещё в полёте, когда человек переключает язык
+              // интерфейса, — и сообщение показалось бы на прежнем.
+              // Помечаем признаком, а текст подставляем при отрисовке,
+              // то есть уже на текущем языке.
+              error: CATALOG_FETCH_FAILED,
             })
           : null
       )
@@ -172,7 +209,7 @@ export function VoicePicker({
             ? dict.voicePicker.loadingHint
             : // Подсказка про умолчание уместна ровно тогда, когда голос не
               // выбран: висеть над выбранным голосом ей незачем.
-              (state?.error ??
+              (catalogueError(state?.error, dict) ??
               (value ? undefined : dict.voicePicker.defaultHint))
         }
       >
@@ -337,7 +374,9 @@ function MyVoicesSection({
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Recording / upload form state — сбрасывается при закрытии формы.
+  // Recording / upload form state — сбрасывается при закрытии формы
+  // (включая `recording`/`seconds`: до этапа 119 эти два не сбрасывались,
+  // и форма открывалась заново с чужим счётчиком).
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [sampleBlob, setSampleBlob] = useState<{
@@ -349,6 +388,10 @@ function MyVoicesSection({
   const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  // Сам поток микрофона, а не только запись (этап 119, В-5.17): до этого
+  // дотянуться до его дорожек можно было ровно из одного места —
+  // обработчика `onstop`, то есть только через кнопку «Стоп».
+  const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
   const micSupported =
@@ -400,23 +443,55 @@ function MyVoicesSection({
     };
   }, [training, voices]);
 
-  useEffect(() => () => stopTimer(), []);
+  // Уход с экрана (а этот компонент живёт на трёх разных) снимает форму,
+  // но микрофон принадлежит вкладке, а не форме: до этапа 119 запись
+  // продолжалась в никуда и индикатор микрофона горел до конца сессии.
+  useEffect(
+    () => () => {
+      stopTimer();
+      releaseMic();
+    },
+    []
+  );
   const stopTimer = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = null;
   };
 
+  /** Отпустить микрофон. Уже законченную запись — не трогать. */
+  const releaseMic = () => {
+    const interrupted = releaseMicrophone(
+      recorderRef.current,
+      streamRef.current
+    );
+    recorderRef.current = null;
+    streamRef.current = null;
+    // Куски выбрасываются ТОЛЬКО если запись прервали мы: после «Стоп»
+    // они ещё нужны собственному `onstop`, который соберёт из них образец.
+    if (interrupted) chunksRef.current = [];
+  };
+
   useEffect(
     () => () => {
-      if (sampleObjectUrl) URL.revokeObjectURL(sampleObjectUrl);
+      revokeObjectUrl(sampleObjectUrl);
     },
     [sampleObjectUrl]
   );
 
   const resetForm = () => {
+    // «Отмена» рисуется РЯДОМ с «Стоп», то есть нажимается прямо во
+    // время записи (этап 119, В-5.17). Без этих трёх строк форма
+    // закрывалась, микрофон оставался включён, счётчик продолжал тикать
+    // — и следующее открытие формы показывало «Стоп · 04:17» от записи,
+    // которую никто не ведёт, а вторая попытка записи открывала ВТОРОЙ
+    // поток микрофона поверх первого.
+    releaseMic();
+    stopTimer();
+    setRecording(false);
+    setSeconds(0);
     setAdding(false);
     setSampleBlob(null);
-    if (sampleObjectUrl) URL.revokeObjectURL(sampleObjectUrl);
+    revokeObjectUrl(sampleObjectUrl);
     setSampleObjectUrl(null);
     setLabel('');
     setConsent(false);
@@ -427,6 +502,7 @@ function MyVoicesSection({
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       const mime = pickRecorderMime();
       const rec = new MediaRecorder(stream, { mimeType: mime });
       chunksRef.current = [];
@@ -434,6 +510,7 @@ function MyVoicesSection({
         e.data.size > 0 && chunksRef.current.push(e.data);
       rec.onstop = () => {
         stream.getTracks().forEach((tr) => tr.stop());
+        streamRef.current = null;
         const blob = new Blob(chunksRef.current, { type: mime });
         if (blob.size === 0) {
           setError(t.emptyRecording);
@@ -452,6 +529,10 @@ function MyVoicesSection({
       );
       haptic();
     } catch (e) {
+      // Поток мог быть уже получен, а `new MediaRecorder` — упасть
+      // (Safari и неподдерживаемый контейнер). Тогда человек читает
+      // «микрофон недоступен», а индикатор микрофона горит: отпускаем.
+      releaseMic();
       setError(t.micUnavailable.replace('{{error}}', errorMessage(e)));
     }
   };

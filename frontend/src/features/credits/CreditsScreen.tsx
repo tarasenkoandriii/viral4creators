@@ -34,7 +34,7 @@ function wayforpayLabel(pack: CreditPackDefinition): string {
 
 export function CreditsScreen() {
   const { dict } = useI18n();
-  const { state, refresh } = usePlanContext();
+  const { state, error: planError, refresh } = usePlanContext();
   const { data, loading, error, reload } = useAsync(getBillingPrices, []);
   const [busy, setBusy] = useState<{
     packId: string;
@@ -100,8 +100,19 @@ export function CreditsScreen() {
           <span className="text-silver-400">
             {dict.creditsScreen.balanceLabel}:
           </span>
-          <span className="font-bold">{state?.credits.balance ?? 0}</span>
+          {/* Пока баланс не пришёл — многоточие, а не «0» (этап 119, тот
+              же В-5.6). Ноль здесь читается как факт: человек с
+              кредитами при упавшем `GET /me/plan` видел «0» и делал
+              вывод, что их списали. */}
+          <span className="font-bold">
+            {state ? state.credits.balance : '…'}
+          </span>
         </div>
+        {!state && Boolean(planError) && (
+          <div className="mt-3">
+            <LoadError error={planError} onRetry={refresh} />
+          </div>
+        )}
       </Card>
 
       {unauthorized && (

@@ -124,7 +124,7 @@ function buildWhere(
   if (q.userId) conditions.push(`s."userId" = ${bind(q.userId)}`);
   if (q.quality) {
     conditions.push(
-      `s."data" -> 'generatedVideo' ->> 'quality' = ${bind(q.quality)}`,
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'quality' = ${bind(q.quality)}`,
     );
   }
   if (q.voiceMode) {
@@ -151,14 +151,14 @@ const SELECT_FROM = `
   SELECT s."id", s."status", s."generationStatus", s."createdAt", s."lastActivityAt", s."userId",
          u."plan"::text AS "ownerPlan", u."username" AS "ownerUsername", u."firstName" AS "ownerFirstName",
          s."data" -> 'productInformation' ->> 'productName' AS "productName",
-         s."data" -> 'generatedVideo' ->> 'downloadUrl' AS "downloadUrl",
-         s."data" -> 'generatedVideo' ->> 'quality' AS "quality",
-         s."data" -> 'generatedVideo' ->> 'provider' AS "provider",
-         s."data" -> 'generatedVideo' ->> 'resolution' AS "resolution",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'downloadUrl' AS "downloadUrl",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'quality' AS "quality",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'provider' AS "provider",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'resolution' AS "resolution",
          s."data" -> 'brandManifestSnapshot' ->> 'voiceMode' AS "voiceMode",
-         s."data" -> 'generatedVideo' -> 'error' ->> 'code' AS "errorCode",
-         s."data" -> 'generatedVideo' -> 'error' ->> 'message' AS "errorMessage",
-         (s."data" -> 'generatedVideo' -> 'error' ->> 'retryable')::boolean AS "errorRetryable"
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') -> 'error' ->> 'code' AS "errorCode",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') -> 'error' ->> 'message' AS "errorMessage",
+         (COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') -> 'error' ->> 'retryable')::boolean AS "errorRetryable"
   FROM "sessions" s
   LEFT JOIN "users" u ON u."id" = s."userId"
 `;

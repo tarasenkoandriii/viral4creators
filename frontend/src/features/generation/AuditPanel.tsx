@@ -10,7 +10,7 @@
  * usable as before. The iteration cap (§11.1) is a warning, not a gate.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -30,8 +30,10 @@ import {
   Card,
   CardHeader,
   Field,
+  Spinner,
   Textarea,
 } from '../../components/ui';
+import { LoadError } from '../projects/shared';
 import {
   applyAuditFix,
   errorMessage,
@@ -66,20 +68,43 @@ export function AuditPanel({
   const [issue, setIssue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  /**
+   * Провал загрузки — отдельное состояние (этап 119, хвост
+   * В-5.18…В-5.23). Раньше `catch` подставлял ПРАВДОПОДОБНУЮ пустышку
+   * `{ history: [], appliedFixes: 0, limit: 3 }`, и отказ сервера
+   * выглядел как «аудита ещё не было»: кнопка предлагала «Провести
+   * первый аудит», уже применённая правка исчезала с экрана, а потолок
+   * правок брался с потолка — тройка была вписана здесь руками, хотя
+   * настоящий зависит от режима.
+   */
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  /** Уже показанные данные — читаются внутри эффекта, не в рендере. */
+  const hasStateRef = useRef(false);
+  hasStateRef.current = state !== null;
 
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
     getAudit(sessionId)
-      .then((s) => alive && setState(s))
-      .catch(
-        () =>
-          alive &&
-          setState({ history: [], appliedFixes: 0, limit: 3, overLimit: false })
-      );
+      .then((s) => {
+        if (!alive) return;
+        setState(s);
+        setLoadError(null);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        // Если на экране уже есть история, подменять её сообщением об
+        // ошибке хуже, чем сказать об ошибке рядом: данные верные,
+        // не доехало только обновление.
+        if (hasStateRef.current) setError(errorMessage(e));
+        else setLoadError(e);
+      });
     return () => {
       alive = false;
     };
-  }, [sessionId]);
+  }, [sessionId, reloadNonce]);
 
   const latest =
     state?.history.find((a) => a.generatedVideoId === generatedVideoId) ?? null;
@@ -137,7 +162,18 @@ export function AuditPanel({
         </Alert>
       )}
 
-      {running ? (
+      {/* Три разных экрана вместо двух: «не загрузилось» больше не
+          притворяется «ещё не было» (этап 119). */}
+      {!state && loadError ? (
+        <LoadError
+          error={loadError}
+          onRetry={() => setReloadNonce((n) => n + 1)}
+        />
+      ) : !state ? (
+        <div className="flex justify-center py-6">
+          <Spinner size={20} />
+        </div>
+      ) : running ? (
         <Busy
           title={
             running === 'auto'

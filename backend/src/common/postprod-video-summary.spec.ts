@@ -27,10 +27,18 @@ describe('selectPostprodVideoSummaries', () => {
       ...unknown[],
     ];
     expect(sql).toContain(`"data" -> 'productInformation' ->> 'productName'`);
-    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'downloadUrl'`);
-    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'renderedUrl'`);
-    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'postStatus'`);
-    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'voiceMode'`);
+    expect(sql).toContain(
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'downloadUrl'`,
+    );
+    expect(sql).toContain(
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'renderedUrl'`,
+    );
+    expect(sql).toContain(
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'postStatus'`,
+    );
+    expect(sql).toContain(
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'voiceMode'`,
+    );
     expect(sql).not.toMatch(/SELECT \*|,\s*s\."data"\s*,|s\."data"\s+FROM/);
     // userId — настоящий фильтр (не JSON-путь): только owner видит свой
     // список, никакого LEFT JOIN на users (это не админский экран).

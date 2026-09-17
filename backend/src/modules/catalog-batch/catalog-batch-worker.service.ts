@@ -70,6 +70,8 @@ import { GrokResolution } from '../generation/grok-video.service';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { estimateCost } from '../../common/ai-pricing';
+import { planRender } from '../../common/aspect-ratio';
+import { resolveTargetAspectRatio } from '../../common/plans';
 import { BlobService } from '../storage/blob.service';
 import { SessionStatus } from '../../common/types/session.types';
 import { v4 as uuidv4 } from 'uuid';
@@ -475,6 +477,24 @@ export class CatalogBatchWorkerService {
         select: { id: true, sessionId: true, productItemId: true },
       });
 
+      // Формат кадра партии — через ту же проверку режима, что и
+      // одиночная генерация (Б-2.4, этап 120). Этот путь идёт в xAI
+      // НАПРЯМУЮ, мимо `GenerationService.generateVideo()`, поэтому
+      // проверка сюда просто не доставала: партия наследует формат от
+      // сессии-образца, а та с этапа 120 может нести формат референса,
+      // в том числе закрытый для режима. Никто его в партии не
+      // выбирал — поэтому приведение, а не отказ, ровно как там.
+      const batchAccess = await this.plans.accessOf(run.userId);
+      const runTarget = resolveTargetAspectRatio(
+        batchAccess.plan,
+        undefined,
+        run.aspectRatio,
+      ).target;
+      // И тот же §16: xAI просим о родном кадре, обрезку помечаем
+      // должной — иначе сессия утверждала бы, что файл уже в целевом
+      // формате, а проверить это некому.
+      const runRender = planRender(runTarget);
+
       const requestItems: {
         batchRequestId: string;
         prompt: string;
@@ -509,7 +529,7 @@ export class CatalogBatchWorkerService {
           prompt: promptText,
           imageUrl,
           durationSeconds: VIDEO_DURATION_SECONDS,
-          aspectRatio: run.aspectRatio ?? '9:16',
+          aspectRatio: runRender.rendered,
           resolution: (run.resolution as GrokResolution | null) ?? '480p',
         });
       }
@@ -539,7 +559,7 @@ export class CatalogBatchWorkerService {
         { seconds: VIDEO_DURATION_SECONDS },
       ).costMicroUsd;
       const totalBatchMicroUsd = perItemMicroUsd * requestItems.length;
-      const access = await this.plans.accessOf(run.userId);
+      const access = batchAccess;
       // М-3.10 седьмого аудита: заблокированный после создания партии
       // пользователь не должен получить оплаченную подачу — та же
       // проверка, что у синхронного пути (`assertUserNotBlocked`).
@@ -645,7 +665,11 @@ export class CatalogBatchWorkerService {
 
       await this.prisma.catalogBatchRun.update({
         where: { id: run.id },
-        data: { xaiBatchId: result.xaiBatchId },
+        // Разрешённый режимом формат записывается ВМЕСТЕ с id пачки
+        // (этап 120): опрос результатов не знает ни владельца, ни его
+        // режима, и без этого достраивал бы ролик по исходному —
+        // возможно, закрытому — формату.
+        data: { xaiBatchId: result.xaiBatchId, aspectRatio: runTarget },
       });
       await this.prisma.catalogBatchItem.updateMany({
         where: { id: { in: requestItems.map((r) => r.batchRequestId) } },
@@ -790,6 +814,12 @@ export class CatalogBatchWorkerService {
    * batch строки никогда не было (сессия не проходила через
    * `generateVideo()` вовсе).
    */
+  /**
+   * @param aspectRatio ЦЕЛЕВОЙ формат партии — уже приведённый к
+   * разрешённому режимом при подаче пачки (этап 120). Отрендерен файл в
+   * ближайшем родном, поэтому обрезка отсюда помечается должной, как и
+   * на одиночном пути.
+   */
   private async finalizeGrokBatchItem(
     sessionId: string,
     videoUrl: string,
@@ -826,7 +856,16 @@ export class CatalogBatchWorkerService {
       downloadUrl: blobUrl,
       provider: 'grok',
       aspectRatio,
-      reframePending: false,
+      // Файл отрендерен в ближайшем родном кадре (этап 120) — если он
+      // не совпадает с целевым, обрезка ещё должна быть сделана.
+      // Раньше здесь стояло безусловное `false`, то есть партия
+      // утверждала, что файл уже в целевом формате.
+      ...(planRender(aspectRatio).reframe
+        ? {
+            renderedAspectRatio: planRender(aspectRatio).rendered,
+            reframePending: true,
+          }
+        : { reframePending: false }),
       references: [],
     };
 

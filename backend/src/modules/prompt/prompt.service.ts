@@ -70,9 +70,10 @@ export const PROMPT_IN_FLIGHT_MESSAGE =
  * Если `error.message` не JSON (сетевой сбой, таймаут, что угодно ещё
  * не в этой форме) — возвращает оба поля `undefined`, не бросает сама.
  */
-function parseGeminiApiError(
-  error: unknown,
-): { status?: number; upstream?: string } {
+function parseGeminiApiError(error: unknown): {
+  status?: number;
+  upstream?: string;
+} {
   if (!(error instanceof Error)) return {};
   try {
     const parsed = JSON.parse(error.message) as {
@@ -243,10 +244,10 @@ export class PromptService {
       // резкость и выдаёт себя дрожанием на краях. Амплитуда меньше,
       // когда формат неродной: там кадр ещё и обрежут по центру (§16.1),
       // и наезд сужает безопасную зону второй раз.
-      const cameraBrief = cameraBriefText(
-        normalizeCameraMove(session.brandManifestSnapshot?.cameraMove),
-        frame,
+      const cameraMove = normalizeCameraMove(
+        session.brandManifestSnapshot?.cameraMove,
       );
+      const cameraBrief = cameraBriefText(cameraMove, frame);
       const frameBrief = frame
         ? `PICTURE FORMAT: the reference is ${frame}${frame === '9:16' ? ' (vertical)' : frame === '16:9' ? ' (horizontal)' : ''}; compose the new video for the same orientation unless told otherwise at generation time.`
         : '';
@@ -308,7 +309,9 @@ Please respond with a valid JSON object only, with two keys:
       });
 
       if (!generatedText) {
-        this.logger.error(`Empty response from Gemini for session ${sessionId}`);
+        this.logger.error(
+          `Empty response from Gemini for session ${sessionId}`,
+        );
         throw new Error(
           'Gemini returned an empty response. This may be due to content filtering or API issues.',
         );
@@ -366,6 +369,11 @@ Please respond with a valid JSON object only, with two keys:
         voiceoverScript: parts.script ?? undefined,
         finalVoiceoverScript: parts.script ?? undefined,
         voiceoverScriptSource: parts.source,
+        // В-1.9 (этап 120): под что писался текст. Формат кадра выберут
+        // позже, и амплитуду наезда придётся поправлять — поправлять
+        // надо ОТ ЭТОГО, а не от того, что окажется в снимке манифеста
+        // к моменту генерации (его можно сменить между шагами).
+        cameraBriefFor: { aspectRatio: frame ?? null, move: cameraMove },
         // `null` (сбой) и `[]` (текста нет) равнозначны здесь — это
         // ПЕРВОЕ извлечение, прежних моментов, которые стоило бы
         // сохранить при сбое, ещё не существует (в отличие от
@@ -519,10 +527,10 @@ Please respond with a valid JSON object only, with two keys:
       );
       const voiceModeBrief = voiceModeBriefText(voiceMode);
       const frame = session.originalVideo?.frame?.aspectRatio;
-      const cameraBrief = cameraBriefText(
-        normalizeCameraMove(session.brandManifestSnapshot?.cameraMove),
-        frame,
+      const cameraMove = normalizeCameraMove(
+        session.brandManifestSnapshot?.cameraMove,
       );
+      const cameraBrief = cameraBriefText(cameraMove, frame);
       const sceneBrief = sceneBriefText(plan);
       const audienceBrief = relevanceBriefText(session.relevance);
       const scenesBrief = scenesBriefText(
@@ -659,6 +667,15 @@ Please respond with a valid JSON object only, with one key "variants": an array 
     sessionId: string,
     text: string,
     voiceoverScript?: string | null,
+    /**
+     * Под что писался ИСХОДНЫЙ текст (В-1.9, этап 120). Засеянная
+     * сессия своего референса не имеет вовсе, и без этого поправка
+     * амплитуды на шаге генерации считалась бы от `undefined` — то
+     * есть всегда «как для неродного формата», хотя родитель мог быть
+     * снят под родной. Экспорт яруса B — ровно тот случай, где формат
+     * выбирают ПОСЛЕ написания промпта, ради чего В-1.9 и заведена.
+     */
+    cameraBriefFor?: GenerationPrompt['cameraBriefFor'],
   ): Promise<GenerationPrompt> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
@@ -681,6 +698,7 @@ Please respond with a valid JSON object only, with one key "variants": an array 
       voiceoverScript: script,
       finalVoiceoverScript: script,
       voiceoverScriptSource: script ? 'field' : 'none',
+      ...(cameraBriefFor ? { cameraBriefFor } : {}),
     };
 
     await this.sessionService.updateSession(sessionId, {
@@ -886,20 +904,22 @@ Please respond with a valid JSON object only, with one key "variants": an array 
       const parsed = JSON.parse(raw) as { moments?: unknown };
       if (!Array.isArray(parsed.moments)) return [];
       const validRoles = new Set(['hook', 'callout', 'cta']);
-      return parsed.moments
-        .filter(
-          (m): m is OnScreenTextMoment =>
-            !!m &&
-            typeof m === 'object' &&
-            typeof (m as OnScreenTextMoment).text === 'string' &&
-            (m as OnScreenTextMoment).text.length > 0 &&
-            (m as OnScreenTextMoment).text.length <= 100 &&
-            validRoles.has((m as OnScreenTextMoment).role),
-        )
-        // Не больше одной карточки на роль (§20.4 п.1 предполагает
-        // ровно три возможных слота, не больше) — если модель вернула
-        // дубликаты роли, оставляем первую.
-        .filter((m, i, arr) => arr.findIndex((x) => x.role === m.role) === i);
+      return (
+        parsed.moments
+          .filter(
+            (m): m is OnScreenTextMoment =>
+              !!m &&
+              typeof m === 'object' &&
+              typeof (m as OnScreenTextMoment).text === 'string' &&
+              (m as OnScreenTextMoment).text.length > 0 &&
+              (m as OnScreenTextMoment).text.length <= 100 &&
+              validRoles.has((m as OnScreenTextMoment).role),
+          )
+          // Не больше одной карточки на роль (§20.4 п.1 предполагает
+          // ровно три возможных слота, не больше) — если модель вернула
+          // дубликаты роли, оставляем первую.
+          .filter((m, i, arr) => arr.findIndex((x) => x.role === m.role) === i)
+      );
     } catch (error) {
       // Найдено при повторном аудите §20 (правка `updatePrompt()`,
       // вызывающей этот метод повторно): `null`, не `[]` — сбой сети/

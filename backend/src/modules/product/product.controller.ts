@@ -4,6 +4,7 @@ import { SubmitProductInfoRequestDto } from './dto/submit-product-info-request.d
 import { SubmitProductInfoResponseDto } from './dto/submit-product-info-response.dto';
 import { UploadProductImageRequestDto } from './dto/upload-product-image-request.dto';
 import { UploadProductImageResponseDto } from './dto/upload-product-image-response.dto';
+import { ConfirmProductImageRequestDto } from './dto/confirm-product-image.dto';
 
 /**
  * ProductController handles product information endpoints
@@ -47,5 +48,21 @@ export class ProductController {
     @Body() dto: UploadProductImageRequestDto,
   ): Promise<UploadProductImageResponseDto> {
     return this.productService.generateProductImageUploadUrl(sessionId, dto);
+  }
+
+  /**
+   * Подтвердить загрузку фото товара (В-1.8, этап 123)
+   * POST /sessions/:sessionId/product/image/confirm
+   *
+   * Отдельный шаг, а не запись при выдаче ссылки: ссылку выдали — файл
+   * ещё не загружен, и сорвавшийся PUT оставлял сессию с путём, по
+   * которому ничего нет.
+   */
+  @Post('image/confirm')
+  async confirmProductImage(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: ConfirmProductImageRequestDto,
+  ): Promise<{ success: true; pathname: string }> {
+    return this.productService.confirmProductImage(sessionId, dto);
   }
 }

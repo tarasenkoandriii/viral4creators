@@ -417,7 +417,14 @@ export type PublicationPrivacy = 'PRIVATE' | 'UNLISTED' | 'PUBLIC';
 export interface PublicationRequest {
   id: string;
   sessionId: string;
-  generatedVideoId: string;
+  /**
+   * Может быть `null` (этап 121): так это поле и объявлено на сервере
+   * (`PublicationRequestView`), а заявки на обучающие видео пишут его
+   * пустым. На клиенте стояло `string`, из-за чего проверка «заявка от
+   * прежней версии ролика» выглядела для компилятора мёртвым кодом —
+   * то есть напрашивалась на удаление при первой же уборке.
+   */
+  generatedVideoId: string | null;
   platform: PublicationPlatform;
   status: PublicationStatus;
   videoUrl: string;

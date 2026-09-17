@@ -35,19 +35,27 @@ describe('selectSessionSummaries', () => {
     });
     const [sql] = prisma.$queryRawUnsafe.mock.calls[0] as [string];
     expect(sql).toContain(`"data" -> 'productInformation' ->> 'productName'`);
-    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'downloadUrl'`);
-    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'quality'`);
+    expect(sql).toContain(
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'downloadUrl'`,
+    );
+    expect(sql).toContain(
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'quality'`,
+    );
     // Этап 86: колонка «Качество» в админке раньше читала только
     // `quality` (только у Veo) — у Grok-роликов (своя ось, `resolution`,
     // никогда не `quality`) это всегда было прочерком. Оба поля должны
     // идти в выборку, иначе фронт не сможет отличить «нет данных» от
     // «не тот провайдер».
-    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'provider'`);
-    expect(sql).toContain(`"data" -> 'generatedVideo' ->> 'resolution'`);
+    expect(sql).toContain(
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'provider'`,
+    );
+    expect(sql).toContain(
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'resolution'`,
+    );
     expect(sql).toContain(`"data" -> 'brandManifestSnapshot' ->> 'voiceMode'`);
     expect(sql).toContain('LEFT JOIN "users" u');
-    expect(sql).toContain(`'generatedVideo' -> 'error' ->> 'message'`);
-    expect(sql).toContain(`'generatedVideo' -> 'error' ->> 'code'`);
+    expect(sql).toContain(`'generatedVideo') -> 'error' ->> 'message'`);
+    expect(sql).toContain(`'generatedVideo') -> 'error' ->> 'code'`);
     expect(sql).not.toMatch(/SELECT \*|,\s*s\."data"\s*,|s\."data"\s+FROM/);
   });
 
@@ -88,7 +96,9 @@ describe('selectSessionSummaries', () => {
       ...unknown[],
     ];
     expect(sql).toContain('s."status" = $1');
-    expect(sql).toContain(`s."data" -> 'generatedVideo' ->> 'quality' = $2`);
+    expect(sql).toContain(
+      `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'quality' = $2`,
+    );
     expect(sql).toContain(
       `s."data" -> 'brandManifestSnapshot' ->> 'voiceMode' = $3`,
     );

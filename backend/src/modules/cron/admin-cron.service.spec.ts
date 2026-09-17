@@ -100,6 +100,11 @@ function build() {
       failed: 1,
       outcomes: [],
     }),
+    runAiUsageRollup: jest.fn().mockResolvedValue({
+      months: ['2026-01'],
+      foldedRows: 12,
+      deletedRows: 3400,
+    }),
     runCleanupSessions: jest
       .fn()
       .mockResolvedValue({ deletedCount: 7, deletedBlobs: 3 }),
@@ -112,9 +117,20 @@ function build() {
 }
 
 describe('AdminCronService — реестр и неизвестный jobKey', () => {
-  it('реестр содержит все четырнадцать джобов', () => {
+  it('реестр содержит все пятнадцать джобов', () => {
     const { service } = build();
-    expect(service.getRegistry()).toHaveLength(14);
+    expect(service.getRegistry()).toHaveLength(15);
+  });
+
+  it('свёртка журнала расходов есть в реестре и диспетчеризуется (этап 118)', async () => {
+    // Джоб, которого нет в реестре, нельзя запустить из админки вовсе —
+    // а руками его никто не запустит: это фоновая уборка.
+    const { service, jobs } = build();
+    expect(service.getRegistry().map((j) => j.jobKey)).toContain(
+      'ai-usage-rollup',
+    );
+    await service.run('ai-usage-rollup', 'admin-1', false);
+    expect(jobs.runAiUsageRollup).toHaveBeenCalledTimes(1);
   });
 
   it('запуск неизвестного jobKey отклоняется до вызова CronJobsService', async () => {

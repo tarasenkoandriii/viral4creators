@@ -16,6 +16,7 @@ import {
   Camera,
   Check,
   ExternalLink,
+  History,
   Images,
   Mic,
   RefreshCw,
@@ -39,11 +40,17 @@ import {
 import {
   errorMessage,
   getProject,
+  listItemSessions,
   updateItem,
   uploadAndProcessPhoto,
   uploadAndTranscribeVoice,
 } from '../../services/projects-api';
+import { releaseMicrophone } from '../../lib/mic-recorder';
+import { revokeObjectUrl } from '../../lib/object-url';
 import { useAsync } from '../../lib/useAsync';
+import { runState, sortRuns } from '../../lib/item-runs';
+import type { RunState } from '../../lib/item-runs';
+import { formatRunTime } from '../../lib/intl-locale';
 import { navigate, routes } from '../../lib/router';
 import { haptic } from '../../lib/telegram';
 import { useI18n } from '../../lib/i18n-context';
@@ -147,6 +154,8 @@ export function ItemScreen({
         onSelect={(i) => go(STEPS[i])}
       />
 
+      <ItemRuns projectId={projectId} itemId={itemId} />
+
       {current === 'photo' && (
         <PhotoStep
           project={project}
@@ -194,6 +203,129 @@ export function ItemScreen({
   );
 }
 
+// ── Прогоны генерации товара (Б-2.9, этап 121) ──────────────────────────
+
+/**
+ * Единственное место в интерфейсе, где видно НЕЗАВЕРШЁННЫЙ прогон.
+ *
+ * Список готовых роликов (`/postprod`) отбирает только завершённые, а
+ * мастер держится за единственный `localStorage['sessionId']` — запуск
+ * следующего товара его затирал, и идущий рендер становился недостижим
+ * навсегда: через сутки TTL уносил и сессию, и уже оплаченный ролик.
+ * Маршрут `GET …/sessions` для этого и был написан — и не вызывался
+ * ничем с самого своего появления.
+ *
+ * Пустой ответ ничего не рисует: карточка «прогонов пока нет» на экране
+ * товара, который ещё заполняют, — это шум.
+ */
+function ItemRuns({
+  projectId,
+  itemId,
+}: {
+  projectId: string;
+  itemId: string;
+}) {
+  const { dict, locale } = useI18n();
+  const t = dict.projectScreen;
+  const { data, error, reload } = useAsync(
+    () => listItemSessions(projectId, itemId),
+    [projectId, itemId]
+  );
+
+  // Сбой этого списка не должен мешать заполнению товара — он
+  // вспомогательный, и карточка висит над формой на КАЖДОМ шаге. Но и
+  // молчать нельзя: «прогонов нет» и «не удалось посмотреть» — разные
+  // вещи (этап 119, тот же урок). Поэтому строка с повтором, а не
+  // блок с ошибкой во весь экран.
+  if (error) {
+    return (
+      <p className="mb-4 text-xs text-silver-400">
+        {t.runsLoadError}{' '}
+        <button
+          type="button"
+          className="text-accent underline"
+          onClick={reload}
+        >
+          {t.runsRetry}
+        </button>
+      </p>
+    );
+  }
+  // Пустые сессии (`fresh`) не показываем вовсе: в них ничего нет, а
+  // накапливаются они от случайных нажатий «Сделать ролик».
+  const runs = sortRuns((data ?? []).filter((r) => runState(r) !== 'fresh'));
+  if (runs.length === 0) return null;
+  const stateLabel: Record<RunState, string> = {
+    done: t.runStateDone,
+    running: t.runStateRunning,
+    stalled: t.runStateStalled,
+    failed: t.runStateFailed,
+    // Не рисуется (такие строки отфильтрованы выше) — ключ есть только
+    // ради полноты словаря состояний.
+    fresh: t.runStateStalled,
+  };
+  const tone: Record<RunState, 'success' | 'warning' | 'neutral' | 'danger'> = {
+    done: 'success',
+    running: 'warning',
+    stalled: 'neutral',
+    failed: 'danger',
+    fresh: 'neutral',
+  };
+
+  const resume = (sessionId: string) => {
+    // Та же ручка, которой мастер и жил всегда, — см. `ProjectScreen`.
+    localStorage.setItem('sessionId', sessionId);
+    navigate(routes.generate());
+  };
+
+  return (
+    <Card className="mb-4 p-4">
+      <div className="mb-1 flex items-center gap-2">
+        <History size={14} className="text-accent" />
+        <span className="text-sm font-semibold">{t.runsHeading}</span>
+      </div>
+      <p className="mb-3 text-xs text-silver-400">{t.runsHint}</p>
+      <ul className="space-y-2">
+        {runs.map((run) => {
+          const state = runState(run);
+          return (
+            <li
+              key={run.sessionId}
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-silver-200/70 p-2 text-xs dark:border-silver-800"
+            >
+              <Badge tone={tone[state]}>{stateLabel[state]}</Badge>
+              <span className="tabular text-silver-400">
+                {formatRunTime(run.lastActivityAt || run.createdAt, locale)}
+              </span>
+              <span className="ml-auto">
+                {state === 'done' ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      navigate(routes.postprodVideo(run.sessionId))
+                    }
+                  >
+                    {t.runOpen}
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => resume(run.sessionId)}
+                  >
+                    {t.runResume}
+                  </Button>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+
 // ── Экран 2 — Фото ──────────────────────────────────────────────────────
 
 function PhotoStep({
@@ -216,6 +348,11 @@ function PhotoStep({
   const [err, setErr] = useState<string | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
+
+  // Ссылка на снятое фото отзывается и при пересъёмке, и при уходе с
+  // шага (этап 119). Начальное значение — обычная ссылка на фото с
+  // сервера, поэтому отзыв через `revokeObjectUrl`, а не напрямую.
+  useEffect(() => () => revokeObjectUrl(preview), [preview]);
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -594,6 +731,10 @@ function VoiceStep({
     text: string;
   } | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  // Сам поток микрофона, а не только запись (этап 119, В-5.17): до этого
+  // `stream` жил локальной переменной внутри `start()`, и дотянуться до
+  // его дорожек можно было ровно из одного места — обработчика `onstop`.
+  const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
   const supported =
@@ -601,16 +742,42 @@ function VoiceStep({
     typeof MediaRecorder !== 'undefined' &&
     !!navigator.mediaDevices?.getUserMedia;
 
-  useEffect(() => () => stopTimer(), []);
+  // Уход с шага (шаг в «Степпере», ссылка «назад», вкладка внизу)
+  // снимает компонент, но микрофон принадлежит не компоненту, а
+  // вкладке: до этапа 119 запись продолжалась в никуда, индикатор
+  // микрофона горел до конца сессии, а `onstop` — если бы его кто-то
+  // вызвал — дописывал бы расшифровку в состояние уже снятого экрана.
+  useEffect(
+    () => () => {
+      stopTimer();
+      releaseMic();
+    },
+    []
+  );
   const stopTimer = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = null;
+  };
+
+  /** Отпустить микрофон. Уже законченную запись — не трогать. */
+  const releaseMic = () => {
+    const interrupted = releaseMicrophone(
+      recorderRef.current,
+      streamRef.current
+    );
+    recorderRef.current = null;
+    streamRef.current = null;
+    // Куски выбрасываются ТОЛЬКО если запись прервали мы. Если человек
+    // нажал «Стоп» и мы попали в окно до `onstop`, эти куски — его
+    // расшифровка, и она ещё доедет до сервера сама.
+    if (interrupted) chunksRef.current = [];
   };
 
   const start = async () => {
     setNote(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       const mime = pickRecorderMime();
       const rec = new MediaRecorder(stream, { mimeType: mime });
       chunksRef.current = [];
@@ -618,6 +785,7 @@ function VoiceStep({
         e.data.size > 0 && chunksRef.current.push(e.data);
       rec.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
         const blob = new Blob(chunksRef.current, { type: mime });
         await transcribe(blob, mime);
       };
@@ -631,6 +799,10 @@ function VoiceStep({
       );
       haptic();
     } catch (e) {
+      // Поток мог быть уже получен, а `new MediaRecorder` — упасть
+      // (Safari и неподдерживаемый контейнер). Тогда человек читает
+      // «микрофон недоступен», а индикатор микрофона горит: отпускаем.
+      releaseMic();
       setNote({
         tone: 'error',
         text: dict.itemScreen.voice.micUnavailable.replace(
@@ -644,6 +816,10 @@ function VoiceStep({
   const stop = () => {
     stopTimer();
     setRecording(false);
+    // `onstop` придёт асинхронно, и до него кнопка «Записать ещё» была
+    // доступна: нажатие в это окно обнуляло куски ещё не расшифрованной
+    // записи, и человек получал «пустая запись» вместо своего текста.
+    setTranscribing(true);
     recorderRef.current?.stop();
     haptic();
   };
@@ -651,6 +827,7 @@ function VoiceStep({
   const transcribe = async (blob: Blob, mime: string) => {
     if (blob.size === 0) {
       setNote({ tone: 'error', text: dict.itemScreen.voice.emptyRecording });
+      setTranscribing(false);
       return;
     }
     setTranscribing(true);

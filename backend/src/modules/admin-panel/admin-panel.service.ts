@@ -16,7 +16,7 @@ import {
 } from '@nestjs/common';
 import { Session as SessionRow, WorkflowKind } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { SessionService } from '../../common/session.service';
+import { sessionData, SessionService } from '../../common/session.service';
 import {
   SessionSummaryRow,
   selectSessionSummaries,
@@ -375,7 +375,9 @@ export class AdminPanelService {
     if (!row) {
       throw new NotFoundException(`Session ${id} not found`);
     }
-    return { ...this.toSummary(row), data: row.data };
+    // Этап 122: «Полные данные сессии» — обе колонки, иначе оператор
+    // не увидит ровно те ключи, ради которых эту страницу и открывают.
+    return { ...this.toSummary(row), data: sessionData(row) };
   }
 
   /**
@@ -721,6 +723,9 @@ export class AdminPanelService {
   }
 
   private toSummary(row: SessionRow): SessionSummary {
+    // Этап 122: горячие ключи сессии (`generatedVideo` и соседи) живут в
+    // отдельной колонке — читаем обе, иначе ролик пропал бы из админки.
+    const data = sessionData(row);
     return summaryFromSlim({
       id: row.id,
       status: row.status,
@@ -735,59 +740,32 @@ export class AdminPanelService {
       ownerUsername: null,
       ownerFirstName: null,
       productName:
-        (
-          (row.data as Record<string, unknown>)?.productInformation as
-            | { productName?: string }
-            | undefined
-        )?.productName ?? null,
+        (data.productInformation as { productName?: string } | undefined)
+          ?.productName ?? null,
       downloadUrl:
-        (
-          (row.data as Record<string, unknown>)?.generatedVideo as
-            | { downloadUrl?: string }
-            | undefined
-        )?.downloadUrl ?? null,
+        (data.generatedVideo as { downloadUrl?: string } | undefined)
+          ?.downloadUrl ?? null,
       quality:
-        (
-          (row.data as Record<string, unknown>)?.generatedVideo as
-            | { quality?: string }
-            | undefined
-        )?.quality ?? null,
+        (data.generatedVideo as { quality?: string } | undefined)?.quality ??
+        null,
       provider:
-        (
-          (row.data as Record<string, unknown>)?.generatedVideo as
-            | { provider?: string }
-            | undefined
-        )?.provider ?? null,
+        (data.generatedVideo as { provider?: string } | undefined)?.provider ??
+        null,
       resolution:
-        (
-          (row.data as Record<string, unknown>)?.generatedVideo as
-            | { resolution?: string }
-            | undefined
-        )?.resolution ?? null,
+        (data.generatedVideo as { resolution?: string } | undefined)
+          ?.resolution ?? null,
       voiceMode:
-        (
-          (row.data as Record<string, unknown>)?.brandManifestSnapshot as
-            | { voiceMode?: string }
-            | undefined
-        )?.voiceMode ?? null,
+        (data.brandManifestSnapshot as { voiceMode?: string } | undefined)
+          ?.voiceMode ?? null,
       errorCode:
-        (
-          (row.data as Record<string, unknown>)?.generatedVideo as
-            | { error?: { code?: string } }
-            | undefined
-        )?.error?.code ?? null,
+        (data.generatedVideo as { error?: { code?: string } } | undefined)
+          ?.error?.code ?? null,
       errorMessage:
-        (
-          (row.data as Record<string, unknown>)?.generatedVideo as
-            | { error?: { message?: string } }
-            | undefined
-        )?.error?.message ?? null,
+        (data.generatedVideo as { error?: { message?: string } } | undefined)
+          ?.error?.message ?? null,
       errorRetryable:
-        (
-          (row.data as Record<string, unknown>)?.generatedVideo as
-            | { error?: { retryable?: boolean } }
-            | undefined
-        )?.error?.retryable ?? null,
+        (data.generatedVideo as { error?: { retryable?: boolean } } | undefined)
+          ?.error?.retryable ?? null,
     });
   }
 }

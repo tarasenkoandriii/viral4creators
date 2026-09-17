@@ -37,12 +37,16 @@ import {
   chainCostMicroUsd,
 } from '../../common/video-extension-plan';
 import { pickVeoModel, usesVeo30 } from '../../common/veo-model-choice';
+import {
+  cameraBriefCorrection,
+  normalizeCameraMove,
+} from '../../common/camera-move';
 import { estimateCost } from '../../common/ai-pricing';
 import { DailySpendLimitExceededException } from '../../common/spend-limits';
 import {
-  allowsAspectRatio,
   featureDeniedMessage,
   planAllows,
+  resolveTargetAspectRatio,
 } from '../../common/plans';
 import { BlobService } from '../storage/blob.service';
 import {
@@ -273,8 +277,25 @@ export class GenerationService {
     // необратимая трата денег.
     await this.plans.assertUserNotBlocked(owner?.userId ?? null);
     const access = await this.plans.accessOf(owner?.userId ?? null);
-    if (aspectRatio && !allowsAspectRatio(access.plan, aspectRatio)) {
+    // Б-2.4 второго аудита (этап 120): проверять ПРИСЛАННЫЙ параметр
+    // мало — рендерится не он, а `выбор ?? формат референса ?? 9:16`.
+    // Пустое тело запроса («сгенерируй») проверку минувало целиком, и
+    // Lite с референсом 1080×1350 получал ролик 4:5 — формат, закрытый
+    // для его режима, — вместе с оплаченным проходом ffmpeg на обрезку.
+    // Замок держался только тем, что интерфейс туда не пускает.
+    const frameOfReference = owner?.originalVideo?.frame?.aspectRatio;
+    const resolvedTarget = resolveTargetAspectRatio(
+      access.plan,
+      aspectRatio,
+      frameOfReference,
+    );
+    if (resolvedTarget.denied) {
       throw new ForbiddenException(featureDeniedMessage('customAspectRatio'));
+    }
+    if (resolvedTarget.clamped) {
+      this.logger.log(
+        `сессия ${sessionId}: формат референса ${frameOfReference} закрыт для режима ${access.plan} — рендерим в ${resolvedTarget.target} (никто его не выбирал, отказывать не за что)`,
+      );
     }
     // Этап 47 (В-2.6): полная модель в 2,7 раза дороже Lite, а параметр
     // приходит телом запроса — проверяем, как и формат кадра. У Grok
@@ -320,7 +341,10 @@ export class GenerationService {
     // Доп. запрос владельца продукта (ТЗ §9.4, этап 4 плана §14) —
     // ролик длиннее 8 секунд через Scene Extension.
     let extensionPlan: ReturnType<typeof buildExtensionPlan> | undefined;
-    if (targetDurationSeconds && targetDurationSeconds > VIDEO_DURATION_SECONDS) {
+    if (
+      targetDurationSeconds &&
+      targetDurationSeconds > VIDEO_DURATION_SECONDS
+    ) {
       // Явный запрет для Lite — независимо от провайдера (§9.4 ТЗ):
       // не влезает НИ В ОДНУ комбинацию по деньгам (проверено в самом
       // ТЗ, §11.6/§9.4), поэтому явная подпись «недоступно», а не
@@ -432,7 +456,11 @@ export class GenerationService {
       return await this.startGeneration(
         fresh ?? session,
         quality,
-        aspectRatio,
+        // Ниже по стеку — уже РЕШЁННЫЙ формат, а не то, что прислал
+        // клиент: он прошёл проверку режима, и второй раз выводить его
+        // из референса (по-разному у Veo и у Grok, см. Б-2.4) больше
+        // негде и незачем.
+        resolvedTarget.target,
         provider,
         resolution,
         extensionPlan,
@@ -449,7 +477,8 @@ export class GenerationService {
   private async startGeneration(
     session: Session,
     quality: VideoQuality,
-    aspectRatio?: string,
+    /** Уже решённый и проверенный по режиму формат (Б-2.4, этап 120). */
+    target?: string,
     // Недостижимо на практике — `generateVideo()` всегда передаёт
     // `provider` явно. Оставлен 'veo' — см. её же доккомментарий выше
     // про то, почему смена этого дефолта не даёт пользы и рискованна.
@@ -520,7 +549,7 @@ export class GenerationService {
             generatedVideoId,
             pathname,
             resolution ?? '480p',
-            aspectRatio,
+            target,
             extensionPlan,
             avoidText,
           )
@@ -530,7 +559,7 @@ export class GenerationService {
             generatedVideoId,
             pathname,
             quality,
-            aspectRatio,
+            target,
             extensionPlan,
             avoidText,
           );
@@ -623,8 +652,11 @@ export class GenerationService {
       );
     }
 
-    // Spec §16: target format = explicit choice, else the reference's
-    // detected frame, else vertical. Non-native targets render in the
+    // Spec §16: the target format was resolved once by the caller —
+    // explicit choice, else the reference's detected frame, else
+    // vertical, приведённый к разрешённому для режима (Б-2.4, этап
+    // 120). Здесь только страховка на случай вызывающего, который
+    // придёт мимо `generateVideo`. Non-native targets render in the
     // nearest Veo frame with a composition note for the later crop.
     const target =
       normaliseAspectRatio(aspectRatio) ??
@@ -650,6 +682,26 @@ export class GenerationService {
       referenceMappingText(plan),
       `Output format: ${render.rendered} ${render.rendered === '9:16' ? 'vertical' : 'horizontal'} video.`,
       render.compositionNote ?? '',
+      // В-1.9 третьего аудита (этап 120): амплитуда движения камеры
+      // ушла в промпт по формату РЕФЕРЕНСА — другого значения в тот
+      // момент не было, формат выбирают позже, здесь. Если «неродность»
+      // формата с тех пор изменилась, амплитуда в тексте неверна: либо
+      // наезд второй раз съест безопасную зону будущей обрезки, либо
+      // движение напрасно урезано до дрожания. Поправка считается
+      // сейчас — тем же приёмом, что и карта референсов строкой выше.
+      cameraBriefCorrection(
+        // Движение и формат берутся из ЗАПИСИ промпта, а не из снимка
+        // манифеста и не из референса сессии: снимок можно сменить
+        // между шагами, а у засеянной сессии (экспорт яруса B, A/B)
+        // своего референса нет вовсе. Поправлять надо от того, что
+        // реально попало в текст. Старые промпты записи не имеют —
+        // для них прежний источник, как и раньше.
+        session.generationPrompt.cameraBriefFor?.move ??
+          normalizeCameraMove(session.brandManifestSnapshot?.cameraMove),
+        session.generationPrompt.cameraBriefFor?.aspectRatio ??
+          session.originalVideo?.frame?.aspectRatio,
+        target,
+      ),
       avoidText && !isVeo30 ? `Avoid: ${avoidText}` : '',
     ]
       .filter(Boolean)
@@ -895,13 +947,31 @@ export class GenerationService {
     }
 
     const target = normaliseAspectRatio(aspectRatio) ?? '9:16';
+    // §16 на пути Grok (этап 120). До этого здесь целевой формат был
+    // либо явным выбором, либо вертикалью — неродные форматы просто не
+    // доезжали. С этапа 120 сюда приезжает и формат референса (тот же
+    // `resolveTargetAspectRatio`, что у Veo), а значит и неродной: без
+    // этих трёх строк в xAI ушло бы `aspect_ratio: '4:5'`, чего он не
+    // обещает, подпись «horizontal» к вертикальному кадру (строка
+    // ниже сравнивала ровно с '9:16') и запись в сессию «файл 4:5»,
+    // которую никто не проверял. Поэтому — тот же приём, что у Veo:
+    // рендерим в ближайшем родном, обрезку помечаем как ещё должную.
+    const render = planRender(target);
     // «Чего избежать» на Grok — тот же best-effort приём, что у Veo 3.1
     // (§4.1 ТЗ): решённый открытый вопрос §9.4 — Grok не рассматривался
     // в §1–7, потому что писались до появления Grok в этом ТЗ; решено
     // не заводить отдельную логику, а переиспользовать тот же приём.
     const promptText = [
       sceneText,
-      `Output format: ${target === '9:16' ? 'vertical' : 'horizontal'} video.`,
+      `Output format: ${render.rendered === '9:16' ? 'vertical' : 'horizontal'} video.`,
+      render.compositionNote ?? '',
+      cameraBriefCorrection(
+        session.generationPrompt?.cameraBriefFor?.move ??
+          normalizeCameraMove(session.brandManifestSnapshot?.cameraMove),
+        session.generationPrompt?.cameraBriefFor?.aspectRatio ??
+          session.originalVideo?.frame?.aspectRatio,
+        target,
+      ),
       avoidText ? `Avoid: ${avoidText}` : '',
     ]
       .filter(Boolean)
@@ -935,7 +1005,7 @@ export class GenerationService {
               imageUrl,
               referenceImageUrls,
               durationSeconds: baseSegmentSeconds,
-              aspectRatio: target,
+              aspectRatio: render.rendered,
               resolution,
             },
           ],
@@ -951,7 +1021,7 @@ export class GenerationService {
           // длительность нативная (1–15 с), берём её из плана, а не из
           // константы Veo. Без плана (запрос ≤ 8 с) — прежние 8.
           durationSeconds: baseSegmentSeconds,
-          aspectRatio: target,
+          aspectRatio: render.rendered,
           resolution,
         }));
       }
@@ -1008,8 +1078,11 @@ export class GenerationService {
         ...(requestId ? { grokRequestId: requestId } : {}),
         ...(xaiBatchId ? { xaiBatchId, xaiBatchRequestId } : {}),
         aspectRatio: target,
-        renderedAspectRatio: undefined,
-        reframePending: false,
+        // Что реально отрендерено и осталась ли обрезка — как у Veo
+        // (этап 120): раньше здесь стояли `undefined`/`false`, то есть
+        // сессия утверждала, что файл уже в целевом формате.
+        renderedAspectRatio: render.reframe ? render.rendered : undefined,
+        reframePending: render.reframe,
         references: plan.images.map((i) => ({
           index: i.index,
           kind: i.kind,
@@ -1167,7 +1240,11 @@ export class GenerationService {
   ): Promise<string> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) return VEO_MODELS[quality];
-    return pickVeoModel(buildReferencePlan(session), quality, VEO_MODELS[quality]);
+    return pickVeoModel(
+      buildReferencePlan(session),
+      quality,
+      VEO_MODELS[quality],
+    );
   }
 
   /**
@@ -1718,9 +1795,24 @@ export class GenerationService {
       // механизм расширения и так подхватывает стиль/персонажей/сцену
       // с последнего кадра — эта строка только уточняет НАМЕРЕНИЕ
       // (продолжать, не повторять), не переписывает саму сцену заново.
+      // Целевой формат ролика — у первого сегмента, не здесь: `target`
+      // выше — это КАДР РЕНДЕРА (в нём продолжают цепочку), а обрезка
+      // считается по `current.aspectRatio`. Оба указания — про рамку
+      // будущей обрезки и про амплитуду наезда — до этапа 120
+      // доставались только первому сегменту: остальные шли с голым
+      // текстом промпта, и композиция в них расходилась с первым.
+      const chainRender = planRender(current.aspectRatio ?? target);
       const continuationPrompt = [
         session.generationPrompt!.finalText,
         'This is a continuation of the same shot — keep the action, characters, and setting continuous with the previous segment. Do not restart or repeat the described action from the beginning.',
+        chainRender.compositionNote ?? '',
+        cameraBriefCorrection(
+          session.generationPrompt?.cameraBriefFor?.move ??
+            normalizeCameraMove(session.brandManifestSnapshot?.cameraMove),
+          session.generationPrompt?.cameraBriefFor?.aspectRatio ??
+            session.originalVideo?.frame?.aspectRatio,
+          chainRender.target,
+        ),
         current.avoidText && !isVeo30 ? `Avoid: ${current.avoidText}` : '',
       ]
         .filter(Boolean)

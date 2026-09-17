@@ -518,6 +518,35 @@ export class CronJobsService {
    * этого не спасала — она не даёт ОДНОМУ прогону зависнуть, а не два
    * прогона друг друга обогнать.
    */
+  /**
+   * Свёртка журнала расходов (doc/TODO.md §I-Б.5, этап 118).
+   *
+   * Отдельный джоб, а не довесок к уборке сессий: та работает с файлами
+   * и строками пользователя, эта — с деньгами, и её обрыв на середине
+   * означал бы не «уберём в следующий раз», а расхождение в отчёте. Свой
+   * замок по той же причине: два параллельных прогона на одном месяце
+   * — это удвоенная свёртка.
+   */
+  async runAiUsageRollup(): Promise<{
+    months: string[];
+    foldedRows: number;
+    deletedRows: number;
+    skipped?: boolean;
+  }> {
+    const acquired = await tryAcquireJobLock(this.prisma, 'ai-usage-rollup');
+    if (!acquired) {
+      this.logger.warn(
+        'Свёртка журнала расходов: предыдущий прогон ещё держит замок — пропуск',
+      );
+      return { months: [], foldedRows: 0, deletedRows: 0, skipped: true };
+    }
+    try {
+      return await this.aiUsage.rollupOldMonths();
+    } finally {
+      await releaseJobLock(this.prisma, 'ai-usage-rollup', acquired);
+    }
+  }
+
   async runCleanupSessions(): Promise<CleanupSessionsResult> {
     const acquired = await tryAcquireJobLock(this.prisma, 'cleanup-sessions');
     if (!acquired) {

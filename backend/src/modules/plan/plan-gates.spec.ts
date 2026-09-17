@@ -259,9 +259,10 @@ describe('модули спрашивают разрешение режима (�
   });
 
   it('формат кадра сверх родного для Veo: генерация не запускается', async () => {
-    // Единственная проверка `customAspectRatio` во всём продукте стоит
-    // ровно перед самым дорогим вызовом сервиса — и живёт не в
-    // `assertUser`, а в паре `accessOf` + `allowsAspectRatio`. Если она
+    // Проверка `customAspectRatio` стоит ровно перед самым дорогим
+    // вызовом сервиса — и живёт не в `assertUser`, а в паре `accessOf`
+    // + `resolveTargetAspectRatio` (вторая такая же — в `modules/export`
+    // для автоэкспорта под площадки). Если она
     // перестанет срабатывать, Lite получит платный рендер в формате,
     // которого его пакет не даёт, и узнаем мы об этом по счёту.
     const plans = denying();
@@ -352,5 +353,67 @@ describe('модули спрашивают разрешение режима (�
         expect.objectContaining({ aspectRatio: ratio }),
       );
     }
+  });
+
+  it('формат референса, закрытый режимом, приводится к нативному, а не рендерится как есть (Б-2.4)', async () => {
+    // Дыра, ради которой этот тест написан: проверка смотрела на
+    // ПРИСЛАННЫЙ параметр, а рендерился `выбор ?? формат референса ??
+    // 9:16`. Пустое тело запроса («сгенерируй») проверку минувало
+    // целиком: Lite с референсом 1080×1350 получал ролик 4:5 — формат,
+    // закрытый для его режима, — и оплаченный проход ffmpeg на обрезку.
+    //
+    // Отказывать тут не за что (человек ничего не выбирал, он просто
+    // загрузил своё видео), поэтому не 403, а приведение к ближайшему
+    // нативному формату, доступному в любом режиме.
+    generateVideos.mockClear();
+    const plans = denying();
+    const sessions = {
+      getSession: jest.fn().mockResolvedValue({
+        sessionId: 's1',
+        userId: 'u1',
+        generationPrompt: { finalText: 'p', approvedAt: new Date() },
+        productInformation: {
+          productImagePathname: 'sessions/s1/product-image.jpg',
+        },
+        originalVideo: { frame: { aspectRatio: '4:5' } },
+      }),
+      updateSession: jest.fn(),
+      claimWork: jest.fn().mockResolvedValue(true),
+      releaseWork: jest.fn().mockResolvedValue(undefined),
+    };
+    const blob = {
+      downloadBuffer: jest.fn().mockResolvedValue(Buffer.from('img')),
+    };
+    const notify = { alert: jest.fn(), stat: jest.fn(), report: jest.fn() };
+    const creditLedger = {
+      reserveForGeneration: jest.fn().mockResolvedValue(false),
+      refundIfReserved: jest.fn().mockResolvedValue(undefined),
+    };
+    const svc = new GenerationService(
+      sessions as never,
+      blob as never,
+      plans as never,
+      usageMock() as never,
+      {} as never,
+      notify as never,
+      {} as never,
+      creditLedger as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { get: jest.fn().mockResolvedValue(null) } as never,
+    );
+
+    const video = await svc.generateVideo('s1', 'fast');
+
+    // Целевой формат ролика — родной, а не 4:5 из референса.
+    expect(video.aspectRatio).toBe('9:16');
+    // И обрезка больше не полагается: платить за неё было не за что.
+    expect(video.renderedAspectRatio ?? video.aspectRatio).toBe('9:16');
+    expect(generateVideos).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ aspectRatio: '9:16' }),
+      }),
+    );
   });
 });

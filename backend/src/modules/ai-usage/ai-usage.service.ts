@@ -17,6 +17,18 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import {
+  Buckets,
+  GroupedUsageRow,
+  Totals,
+  bucketsFromGrouped,
+  mergeBuckets,
+  mergeTotals,
+  microToNumber,
+  monthEnd,
+  monthStart,
+  monthsReadyToRoll,
+} from './ai-usage-rollup';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../common/session.service';
 import {
@@ -371,6 +383,11 @@ export class AiUsageService {
       return r._sum.costMicroUsd ?? 0;
     };
 
+    /**
+     * Разрез «за всё время» — из сырых строк И из свёртки (этап 118).
+     * Окна 1/7/30 дней складывать не нужно: они заведомо короче срока
+     * хранения сырых строк, свёртка туда не дотягивается.
+     */
     const bucket = async (field: 'provider' | 'operation' | 'model') => {
       // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297,
       // #6494) — см. тот же комментарий выше в этом файле; здесь ломает
@@ -386,12 +403,15 @@ export class AiUsageService {
           _count: { _all: number };
         }
       >;
-      return rows
-        .map((r) => ({
-          key: r[field],
-          costMicroUsd: r._sum.costMicroUsd ?? 0,
-          calls: r._count._all,
-        }))
+      const raw: Buckets = new Map(
+        rows.map((r) => [
+          r[field],
+          { costMicroUsd: r._sum.costMicroUsd ?? 0, calls: r._count._all },
+        ]),
+      );
+      const merged = mergeBuckets(raw, await this.rolledBuckets(field));
+      return [...merged]
+        .map(([key, totals]) => ({ key, ...totals }))
         .sort((a, b) => b.costMicroUsd - a.costMicroUsd);
     };
 
@@ -411,6 +431,11 @@ export class AiUsageService {
       usersTotalMicroUsd,
       distinctSessions,
       pricingRow,
+      rolledAll,
+      rolledAnonymous,
+      rolledUsers,
+      rolledUnpriced,
+      rolledTopCandidates,
     ] = await Promise.all([
       sum({}),
       this.prisma.aiUsage.count(),
@@ -448,10 +473,19 @@ export class AiUsageService {
       // Сколько всего пользователей с расходом и сколько они потратили —
       // два числа под таблицей; раньше они считались из той же полной
       // выборки, теперь из двух агрегатов.
+      //
+      // Объединение двух таблиц, а не максимум из двух чисел (этап 118):
+      // множества пересекаются частично, и `max` схлопнул бы
+      // непересекающиеся половины — тысяча «только сырых» и восемьсот
+      // «только свёрнутых» дали бы тысячу вместо тысячи восьмисот, а
+      // средним на человека делится ПОЛНАЯ сумма, включая свёрнутую.
+      // `UNION` (не `UNION ALL`) дедуплицирует сам.
       this.prisma.$queryRaw`
-        SELECT count(DISTINCT "userId")::int AS "count"
-        FROM "ai_usage"
-        WHERE "userId" IS NOT NULL
+        SELECT count(*)::int AS "count" FROM (
+          SELECT "userId" FROM "ai_usage" WHERE "userId" IS NOT NULL
+          UNION
+          SELECT "userId" FROM "ai_usage_monthly" WHERE "userId" IS NOT NULL
+        ) AS "both"
       ` as Promise<Array<{ count: number }>>,
       sum({ userId: { not: null } }),
       // `distinct` у Prisma 7 считается НЕ в SQL, а в JavaScript: клиент
@@ -468,6 +502,17 @@ export class AiUsageService {
         orderBy: { createdAt: 'desc' },
         select: { pricingVersion: true },
       }) as Promise<{ pricingVersion: string } | null>,
+      // Вторая половина всех «за всё время» чисел — свёрнутые месяцы
+      // (этап 118). Окна 1/7/30 дней сюда не входят: они короче срока
+      // хранения сырых строк.
+      this.rolledTotals(),
+      this.rolledTotals({ anonymous: true }),
+      this.rolledTotals({ userId: { not: null } }),
+      this.rolledTotals({ unpriced: true }),
+      // Кандидаты в топ со стороны свёртки — тоже ограниченной выборкой,
+      // а не «все пользователи за всю историю»: это ровно тот дефект
+      // (Б-1.7), из-за которого сырой топ считают в базе.
+      this.rolledTopUsers(topLimit),
     ]);
 
     // Prisma-клиент в песочнице не сгенерирован, поэтому тип у groupBy
@@ -479,13 +524,43 @@ export class AiUsageService {
       _count: { _all: number };
     }>;
 
-    // Порядок уже задан базой (`orderBy` + `take`), пересортировывать
-    // нечего — здесь только приведение формы.
-    const topRows = perUser.map((r) => ({
-      userId: r.userId,
-      costMicroUsd: r._sum.costMicroUsd ?? 0,
-      calls: r._count._all,
-    }));
+    // Топ пользователей складывается из двух источников (этап 118).
+    //
+    // Каждая сторона отсортирована и обрезана в базе (иначе это была бы
+    // выборка всех пользователей за всю историю — тот самый дефект
+    // Б-1.7), поэтому кандидаты берутся из ОБОИХ списков: человек,
+    // расход которого почти весь в свёрнутых месяцах, в сыром топе не
+    // виден вовсе. Но обрезанный сырой список знает только про своих
+    // десятерых — у кандидата со стороны свёртки его сырая половина в
+    // нём отсутствует, и без досчёта она просто пропала бы из суммы и
+    // из порядка. Поэтому по списку кандидатов делается ещё два точных
+    // запроса — оба по идентификаторам, то есть по индексу и с заведомо
+    // известным числом строк.
+    //
+    // Остаётся честная неточность: пользователь, не попавший ни в одну
+    // из двух десяток, но суммарно обошедший десятого, в топ не
+    // войдёт. Точный ответ стоил бы полного слияния двух таблиц на
+    // каждое открытие вкладки; цена ошибки — порядок строк в
+    // справочной таблице, а не деньги.
+    const candidateIds = [
+      ...new Set([
+        ...perUser.map((r) => r.userId),
+        ...rolledTopCandidates.keys(),
+      ]),
+    ].filter((id): id is string => Boolean(id));
+
+    const [rawForCandidates, rolledForCandidates] = candidateIds.length
+      ? await Promise.all([
+          this.rawBucketsForUsers(candidateIds),
+          this.rolledBuckets('userId', { userId: { in: candidateIds } }),
+        ])
+      : [new Map() as Buckets, new Map() as Buckets];
+
+    const topRows = [...mergeBuckets(rawForCandidates, rolledForCandidates)]
+      .filter(([userId]) => Boolean(userId))
+      .map(([userId, totals]) => ({ userId, ...totals }))
+      .sort((a, b) => b.costMicroUsd - a.costMicroUsd)
+      .slice(0, topLimit);
     const users = topRows.length
       ? ((await this.prisma.user.findMany({
           where: { id: { in: topRows.map((r) => r.userId) } },
@@ -505,31 +580,50 @@ export class AiUsageService {
         }>)
       : [];
 
+    // «Плативших» считает база по объединению обеих таблиц: человек,
+    // весь расход которого уже свёрнут, из сырых строк не виден вовсе,
+    // и среднее на него без этого завышалось бы.
     const payingUsers = payingUsersRow[0]?.count ?? 0;
-    const usersTotal = usersTotalMicroUsd;
+    const usersTotal = usersTotalMicroUsd + rolledUsers.costMicroUsd;
     // Postgres отдаёт count одной строкой; пустой результат невозможен,
     // но `?? 0` дешевле, чем предположение.
     const sessionsWithCost = distinctSessions[0]?.count ?? 0;
+
+    // Общая сумма и общее число вызовов — из обоих источников.
+    const totalAll = mergeTotals(
+      { costMicroUsd: totalMicroUsd, calls: totalCalls },
+      rolledAll,
+    );
 
     const result: CostReport = {
       // Версия берётся из последней записи, а не из константы: если прайс
       // правили, старые строки посчитаны по старым ставкам, и показывать
       // текущую версию над суммой, собранной из разных, — враньё.
       pricingVersion: pricingRow?.pricingVersion ?? 'нет данных',
-      totalMicroUsd,
-      totalCalls,
+      totalMicroUsd: totalAll.costMicroUsd,
+      totalCalls: totalAll.calls,
       last24hMicroUsd,
       last7dMicroUsd,
       last30dMicroUsd,
       byProvider,
       byOperation,
       byModel,
-      unpricedCalls,
+      // Вызовы без ставки — тоже из двух источников: ради этого числа
+      // `unpriced` и попал в ключ свёртки, иначе оно сползало бы к нулю
+      // по мере сворачивания месяцев.
+      unpricedCalls: unpricedCalls + rolledUnpriced.calls,
       payingUsers,
-      anonymousMicroUsd,
+      anonymousMicroUsd: anonymousMicroUsd + rolledAnonymous.costMicroUsd,
       avgPerUserMicroUsd: payingUsers
         ? Math.round(usersTotal / payingUsers)
         : 0,
+      // Числитель здесь СЫРОЙ, в отличие от остальных «за всё время»
+      // чисел (этап 118). `sessionId` в свёртку не входит (идентификатор
+      // сессии, которой давно нет), поэтому знаменатель считается только
+      // по сырым строкам — и общая сумма, растущая вечно, делённая на
+      // число сессий последних месяцев, расходилась бы без предела.
+      // Обе половины дроби взяты из одного источника; на экране это
+      // подписано как «за последние месяцы».
       avgPerSessionMicroUsd: sessionsWithCost
         ? Math.round(totalMicroUsd / sessionsWithCost)
         : 0,
@@ -579,6 +673,17 @@ export class AiUsageService {
         calls: r._count._all,
       };
     }
+    // Свёрнутые месяцы — вторая половина «за всё время» (этап 118).
+    // Забыть её здесь значит показать в карточке заниженный расход, и
+    // заметить это можно будет только сверкой с провайдером.
+    const rolled = await this.rolledBuckets('userId', {
+      userId: { in: userIds },
+    });
+    for (const [userId, totals] of rolled) {
+      if (!userId) continue;
+      const existing = out[userId];
+      out[userId] = existing ? mergeTotals(existing, totals) : { ...totals };
+    }
     return out;
   }
 
@@ -597,12 +702,251 @@ export class AiUsageService {
       _sum: { costMicroUsd: number | null };
       _count: { _all: number };
     }>;
-    return rows
-      .map((r) => ({
-        key: r.operation,
-        costMicroUsd: r._sum.costMicroUsd ?? 0,
-        calls: r._count._all,
-      }))
+    const raw: Buckets = new Map(
+      rows.map((r) => [
+        r.operation,
+        { costMicroUsd: r._sum.costMicroUsd ?? 0, calls: r._count._all },
+      ]),
+    );
+    const merged = mergeBuckets(
+      raw,
+      await this.rolledBuckets('operation', { userId }),
+    );
+    return [...merged]
+      .map(([key, totals]) => ({ key, ...totals }))
       .sort((a, b) => b.costMicroUsd - a.costMicroUsd);
+  }
+
+  // ── Свёртка журнала (doc/TODO.md §I-Б.5, этап 118) ─────────────────
+
+  /**
+   * Сворачивает завершившиеся месяцы старше срока хранения и удаляет их
+   * сырые строки.
+   *
+   * Месяц обрабатывается ЦЕЛИКОМ и в одной транзакции: снести прежнюю
+   * свёртку этого месяца → записать новую → удалить сырые строки. Такой
+   * порядок делает прогон идемпотентным без уникального индекса
+   * (`userId` nullable, а NULL-ы в Postgres различны — индекс не ловил
+   * бы повторы), и обрыв в любой точке оставляет месяц либо целиком
+   * свёрнутым, либо целиком сырым, но никогда не половинным: половина
+   * означала бы потерянные деньги в отчёте.
+   *
+   * За прогон — не больше `maxMonths` месяцев: первый запуск на
+   * накопленном журнале иначе пытался бы съесть годы за один тик
+   * serverless-функции.
+   */
+  async rollupOldMonths(
+    opts: { maxMonths?: number; now?: Date } = {},
+  ): Promise<{ months: string[]; foldedRows: number; deletedRows: number }> {
+    const now = opts.now ?? new Date();
+    const maxMonths = opts.maxMonths ?? 3;
+
+    // Какие месяцы вообще есть в сырых строках. `to_char` по индексу
+    // `createdAt` — одно сканирование вместо выборки строк в Node.
+    // `to_char` по самой колонке, БЕЗ `AT TIME ZONE 'UTC'`: колонка —
+    // `timestamp` без зоны и уже хранит UTC, а `AT TIME ZONE 'UTC'`
+    // превратил бы её в `timestamptz`, и `to_char` отрисовал бы месяц в
+    // ЗОНЕ СЕССИИ базы. На сервере не в UTC ключ месяца разъехался бы с
+    // границами `monthStart`/`monthEnd`, по которым потом идёт выборка,
+    // — то есть свёртка взялась бы за месяц, которого по её же
+    // границам нет.
+    const present = (await this.prisma.$queryRaw`
+      SELECT DISTINCT to_char("createdAt", 'YYYY-MM') AS month
+      FROM "ai_usage"
+    `) as Array<{ month: string }>;
+
+    const months = monthsReadyToRoll(
+      present.map((r) => r.month),
+      now,
+    ).slice(0, maxMonths);
+
+    let foldedRows = 0;
+    let deletedRows = 0;
+    for (const month of months) {
+      const result = await this.rollupMonth(month);
+      foldedRows += result.folded;
+      deletedRows += result.deleted;
+    }
+    if (months.length > 0) {
+      // Кэш отчёта считает «за всё время» — после свёртки источник
+      // изменился, и старый ответ стал бы врать до конца TTL.
+      this.reportCache = null;
+      this.logger.log(
+        `свёртка журнала расходов: месяцев ${months.length} (${months.join(', ')}), строк свёртки ${foldedRows}, удалено сырых ${deletedRows}`,
+      );
+    }
+    return { months, foldedRows, deletedRows };
+  }
+
+  private async rollupMonth(
+    month: string,
+  ): Promise<{ folded: number; deleted: number }> {
+    const from = monthStart(month);
+    const to = monthEnd(month);
+    const window = { createdAt: { gte: from, lt: to } };
+
+    // Группирует БАЗА. Тащить месяц журнала в Node ради сложения — это
+    // тот же дефект, который уже чинили в отчёте (А-1.1: 25 МБ в куче
+    // ради одного числа), только на порядок крупнее: месяц — это
+    // миллионы строк, и функция легла бы по памяти ещё до записи.
+    // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297,
+    // #6494) — см. тот же комментарий выше в этом файле.
+    const grouped = (await this.prisma.aiUsage.groupBy({
+      by: [
+        'userId',
+        'anonymous',
+        'provider',
+        'operation',
+        'model',
+        'unpriced',
+      ] as const,
+      where: window,
+      _sum: { costMicroUsd: true },
+      _count: { _all: true },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)) as GroupedUsageRow[];
+
+    const buckets = bucketsFromGrouped(month, grouped);
+
+    // Месяц без сырых строк не трогаем ВООБЩЕ. Иначе безобидный на вид
+    // повтор (два прогона внахлёст: реестр админки и настоящий крон —
+    // у каждого свой список месяцев, снятый до чужой транзакции)
+    // снёс бы уже записанную свёртку и записал вместо неё пустоту, а
+    // сырых строк, из которых её пересобрать, к тому моменту нет. Это
+    // единственный способ потерять здесь деньги безвозвратно.
+    if (buckets.length === 0) return { folded: 0, deleted: 0 };
+
+    // `createMany` кусками по 1000: строк свёртки за месяц может быть
+    // много (пользователи × операции × модели), а один гигантский
+    // INSERT упирается в предел параметров запроса. Куски едут в ТОЙ ЖЕ
+    // транзакции, поэтому атомарность «снести → записать → удалить»
+    // сохраняется: обрыв оставляет месяц либо целиком свёрнутым, либо
+    // целиком сырым.
+    const CHUNK = 1000;
+    const inserts = [];
+    for (let i = 0; i < buckets.length; i += CHUNK) {
+      inserts.push(
+        this.prisma.aiUsageMonthly.createMany({
+          data: buckets.slice(i, i + CHUNK),
+        }),
+      );
+    }
+
+    const results = (await this.prisma.$transaction([
+      this.prisma.aiUsageMonthly.deleteMany({ where: { month } }),
+      ...inserts,
+      this.prisma.aiUsage.deleteMany({ where: window }),
+    ])) as Array<{ count: number }>;
+
+    // Удалено — то, что сказала база, а не длина выборки: в лог и в
+    // ответ крона должно попасть реальное число.
+    const deleted = results[results.length - 1]?.count ?? 0;
+    return { folded: buckets.length, deleted };
+  }
+
+  /**
+   * Сырые суммы по конкретным пользователям — досчёт второй половины
+   * для кандидатов в топ (этап 118).
+   *
+   * Обрезанный в базе сырой топ знает только про своих десятерых:
+   * у кандидата, пришедшего со стороны свёртки, его сырая половина там
+   * отсутствует, и без этого запроса она пропала бы и из суммы, и из
+   * порядка. Запрос по списку идентификаторов — индекс и заведомо
+   * известное число строк.
+   */
+  private async rawBucketsForUsers(userIds: string[]): Promise<Buckets> {
+    // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297, #6494)
+    // — см. тот же комментарий выше в этом файле.
+    const rows = (await this.prisma.aiUsage.groupBy({
+      by: ['userId'] as const,
+      where: { userId: { in: userIds } },
+      _sum: { costMicroUsd: true },
+      _count: { _all: true },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)) as Array<{
+      userId: string | null;
+      _sum: { costMicroUsd: number | null };
+      _count: { _all: number };
+    }>;
+    const out: Buckets = new Map();
+    for (const row of rows) {
+      if (!row.userId) continue;
+      out.set(row.userId, {
+        costMicroUsd: row._sum.costMicroUsd ?? 0,
+        calls: row._count._all,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Кандидаты в топ со стороны свёртки — отсортированные и обрезанные
+   * базой, ровно как сырой топ. Без `orderBy`+`take` это была бы
+   * выборка всех пользователей за всю историю — тот самый дефект
+   * Б-1.7, из-за которого сырой топ и считают в базе.
+   */
+  private async rolledTopUsers(limit: number): Promise<Buckets> {
+    // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297, #6494)
+    // — см. тот же комментарий выше в этом файле.
+    const rows = (await this.prisma.aiUsageMonthly.groupBy({
+      by: ['userId'] as const,
+      where: { userId: { not: null } },
+      _sum: { costMicroUsd: true, calls: true },
+      orderBy: { _sum: { costMicroUsd: 'desc' } },
+      take: limit,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)) as Array<{
+      userId: string | null;
+      _sum: { costMicroUsd: bigint | null; calls: number | null };
+    }>;
+    const out: Buckets = new Map();
+    for (const row of rows) {
+      if (!row.userId) continue;
+      out.set(row.userId, {
+        costMicroUsd: microToNumber(row._sum.costMicroUsd),
+        calls: row._sum.calls ?? 0,
+      });
+    }
+    return out;
+  }
+
+  /** Итоги свёртки — вторая половина любого отчёта «за всё время». */
+  private async rolledTotals(
+    where: Record<string, unknown> = {},
+  ): Promise<Totals> {
+    const r = (await this.prisma.aiUsageMonthly.aggregate({
+      where,
+      _sum: { costMicroUsd: true, calls: true },
+    })) as { _sum: { costMicroUsd: bigint | null; calls: number | null } };
+    return {
+      costMicroUsd: microToNumber(r._sum.costMicroUsd),
+      calls: r._sum.calls ?? 0,
+    };
+  }
+
+  /** Разрез свёртки по одному измерению — вторая половина `bucket()`. */
+  private async rolledBuckets(
+    field: 'provider' | 'operation' | 'model' | 'userId',
+    where: Record<string, unknown> = {},
+  ): Promise<Buckets> {
+    const rows = (await this.prisma.aiUsageMonthly.groupBy({
+      by: [field] as const,
+      where,
+      _sum: { costMicroUsd: true, calls: true },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)) as Array<
+      Record<string, string | null> & {
+        _sum: { costMicroUsd: bigint | null; calls: number | null };
+      }
+    >;
+    const out: Buckets = new Map();
+    for (const row of rows) {
+      const key = (row[field] as string | null) ?? '';
+      out.set(key, {
+        costMicroUsd: microToNumber(row._sum.costMicroUsd),
+        calls: row._sum.calls ?? 0,
+      });
+    }
+    return out;
   }
 }

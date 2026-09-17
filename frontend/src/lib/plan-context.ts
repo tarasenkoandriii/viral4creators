@@ -19,14 +19,22 @@ import { allows, lockLabel } from './plan';
 import { useI18n } from './i18n-context';
 
 export interface PlanContextValue {
-  /** `null`, пока ответ не пришёл или если сервер недоступен. */
+  /** `null`, пока ответ не пришёл ИЛИ если запрос провалился. */
   state: PlanState | null;
-  /** Перечитать после смены режима. */
+  /**
+   * Чем именно кончился последний запрос, если он провалился (этап 119,
+   * В-5.6). Отличить «ещё грузится» от «не загрузилось» по одному
+   * `state === null` невозможно, и экран «Режимы», который целиком
+   * рисуется из этого ответа, крутил спиннер до перезапуска приложения.
+   */
+  error: unknown;
+  /** Перечитать после смены режима — и повторить после сбоя. */
   refresh: () => void;
 }
 
 export const PlanContext = createContext<PlanContextValue>({
   state: null,
+  error: null,
   refresh: () => {},
 });
 

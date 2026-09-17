@@ -15,7 +15,7 @@
 
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { SessionService } from '../../common/session.service';
+import { sessionData, SessionService } from '../../common/session.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { PlanService } from '../plan/plan.service';
 import { Session } from '../../common/types/session.types';
@@ -44,6 +44,9 @@ interface SessionListRow {
   createdAt: Date;
   lastActivityAt: Date;
   data: unknown;
+  /** Этап 122: вторая колонка сессии, см. `sessionData`. Обязательна —
+   * иначе выборка без неё компилируется молча, а ролики пропадают. */
+  liveData: unknown;
 }
 
 /** Row of GET /projects/:id/items/:itemId/sessions — history, not the full Session. */
@@ -327,7 +330,7 @@ export function applySnapshotEdit(
 }
 
 function toSummary(row: SessionListRow): ItemSessionSummary {
-  const data = (row.data as Record<string, unknown> | null) ?? {};
+  const data = sessionData(row);
   const video = data.generatedVideo as { downloadUrl?: string } | null;
   return {
     sessionId: row.id,

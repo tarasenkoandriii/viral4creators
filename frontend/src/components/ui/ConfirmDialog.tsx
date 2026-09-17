@@ -32,6 +32,7 @@ export function ConfirmDialog({
   cancelLabel,
   danger = true,
   busy = false,
+  secondaryAction,
   onConfirm,
   onCancel,
 }: {
@@ -43,6 +44,15 @@ export function ConfirmDialog({
   loadingBody?: boolean;
   confirmLabel?: string;
   cancelLabel?: string;
+  /**
+   * Третье действие рядом с «Отмена» (этап 121): бывает выбор из двух
+   * поступков, а не «сделать/не делать» — например, «вернуться к
+   * незавершённому прогону» против «начать новый». Рисуется в подвале, а
+   * НЕ в теле: начальный фокус уходит на первую кнопку диалога, и
+   * кнопка в теле забирала бы его себе — то есть Enter сразу запускал бы
+   * более дорогое из двух действий.
+   */
+  secondaryAction?: ReactNode;
   /** false — нейтральный акцент вместо красного (не всякое подтверждение — удаление). */
   danger?: boolean;
   /** Само удаление в полёте — блокирует обе кнопки, крутит спиннер на «Удалить». */
@@ -132,10 +142,11 @@ export function ConfirmDialog({
             </div>
           </div>
         </div>
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
             {cancelLabel ?? dict.common.cancel}
           </Button>
+          {secondaryAction}
           <Button
             variant={danger ? 'danger' : 'solid'}
             size="sm"

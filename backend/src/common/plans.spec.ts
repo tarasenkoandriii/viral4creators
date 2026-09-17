@@ -9,6 +9,7 @@ import {
   PLAN_IDS,
   PLANS,
   plansFor,
+  resolveTargetAspectRatio,
 } from './plans';
 
 describe('матрица режимов (ТЗ §23)', () => {
@@ -149,5 +150,76 @@ describe('матрица режимов (ТЗ §23)', () => {
     expect(ru.LITE.summary).toBe(PLANS.LITE.summary);
     // незнакомая локаль в рантайме (обход типов) — русский текст, не падение.
     expect(plansFor('xx' as never).LITE.summary).toBe(PLANS.LITE.summary);
+  });
+});
+
+describe('какой формат кадра будет отрендерен (Б-2.4)', () => {
+  it('выбранный явно формат сверх режима — отказ, а не тихая подмена', () => {
+    // Осознанное действие: человек выбрал 1:1 и должен узнать, что этот
+    // формат в его режиме закрыт. Подменить молча — значит отдать не то,
+    // что заказано, и не сказать об этом.
+    const r = resolveTargetAspectRatio('LITE', '1:1', '9:16');
+    expect(r.denied).toBe('1:1');
+    // `target` при этом всё равно разрешённый: вызывающий обязан
+    // смотреть на `denied`, но если однажды забудет — отрендерится
+    // доступный формат, а не закрытый.
+    expect(r.target).toBe('9:16');
+  });
+
+  it('приведение проверяется по списку режима, а не «нативный доступен всем»', () => {
+    // Списки форматов — данные, а не константа: режим «только
+    // вертикаль» вполне возможен, и тогда ландшафтный референс нельзя
+    // приводить к 16:9. Проверяем на выдуманном режиме через тот же
+    // канонический справочник.
+    const vertical = { ...PLANS.LITE, aspectRatios: ['9:16'] };
+    const original = PLANS.LITE;
+    (PLANS as Record<string, typeof original>).LITE = vertical;
+    try {
+      expect(resolveTargetAspectRatio('LITE', undefined, '4:3').target).toBe(
+        '9:16',
+      );
+    } finally {
+      (PLANS as Record<string, typeof original>).LITE = original;
+    }
+  });
+
+  it('формат из референса, закрытый режимом, приводится к нативному', () => {
+    // Человек ничего не выбирал — он загрузил своё видео. Отказывать не
+    // за что, но и рендерить в закрытом формате нельзя: до этапа 120
+    // Lite получал ролик 4:5 и оплаченную обрезку ffmpeg.
+    const r = resolveTargetAspectRatio('LITE', undefined, '4:5');
+    expect(r.target).toBe('9:16');
+    expect(r.clamped).toBe(true);
+    expect(r.denied).toBeNull();
+  });
+
+  it('ландшафтный референс приводится к ландшафтному нативному', () => {
+    // Приведение не должно разворачивать кадр: 4:3 — это горизонталь.
+    expect(resolveTargetAspectRatio('LITE', null, '4:3').target).toBe('16:9');
+  });
+
+  it('режим без ограничений оставляет формат референса как есть', () => {
+    const r = resolveTargetAspectRatio('PREMIUM', undefined, '4:5');
+    expect(r).toEqual({ target: '4:5', denied: null, clamped: false });
+  });
+
+  it('нет ни выбора, ни референса — вертикаль (§16)', () => {
+    expect(resolveTargetAspectRatio('LITE', null, null).target).toBe('9:16');
+  });
+
+  it('мусор вместо формата не проходит за «выбор»', () => {
+    // Иначе непарсимая строка притворилась бы явным выбором и получила
+    // бы 403 вместо честного разбора референса.
+    const r = resolveTargetAspectRatio('LITE', 'широкий', '9:16');
+    expect(r.denied).toBeNull();
+    expect(r.target).toBe('9:16');
+  });
+
+  it('размер в пикселях приводится к формату, а не считается чужим', () => {
+    // `normaliseAspectRatio` умеет сводить 1080:1350 к 4:5 — проверка
+    // режима обязана смотреть на результат, а не на исходную строку.
+    expect(resolveTargetAspectRatio('LITE', '1080:1350', null).denied).toBe(
+      '4:5',
+    );
   });
 });

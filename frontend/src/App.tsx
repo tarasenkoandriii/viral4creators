@@ -112,15 +112,36 @@ function App() {
    * не рисуются вовсе (лучше ничего, чем ложный замок у Premium).
    */
   const [planState, setPlanState] = useState<PlanState | null>(null);
+  /**
+   * Сбой загрузки режима отделён от «ещё не пришло» (этап 119, В-5.6).
+   * Раньше оба случая были одним `null`, и экран «Режимы» — который
+   * целиком рисуется ИЗ этого ответа — показывал спиннер навсегда: ни
+   * ошибки, ни повтора, а повтор был прямо за этим спиннером и потому
+   * недосягаем. Замки по-прежнему не рисуются при ошибке (лучше ничего,
+   * чем ложный замок у Premium) — здесь меняется только то, что об
+   * ошибке теперь можно СКАЗАТЬ.
+   */
+  const [planError, setPlanError] = useState<unknown>(null);
   const [planNonce, setPlanNonce] = useState(0);
   const refreshPlan = useCallback(() => setPlanNonce((n) => n + 1), []);
 
   useEffect(() => {
     let alive = true;
+    // Ошибка гасится ДО запроса, а не после ответа: иначе повтор с
+    // экрана «Режимы» ничего не менял на экране, пока сеть лежит, и
+    // кнопка «Повторить» читалась как мёртвая. Тот же порядок, что у
+    // `useAsync` (и у него это отдельным тестом).
+    setPlanError(null);
     getPlanState()
-      .then((s) => alive && setPlanState(s))
-      .catch(() => {
-        /* сервер молчит — работаем без замков, сервер всё равно проверит */
+      .then((s) => {
+        if (!alive) return;
+        setPlanState(s);
+        setPlanError(null);
+      })
+      .catch((e) => {
+        /* сервер молчит — замков не рисуем, сервер всё равно проверит;
+           но экран режимов теперь может предложить повтор */
+        if (alive) setPlanError(e);
       });
     return () => {
       alive = false;
@@ -128,8 +149,8 @@ function App() {
   }, [planNonce]);
 
   const planValue = useMemo(
-    () => ({ state: planState, refresh: refreshPlan }),
-    [planState, refreshPlan]
+    () => ({ state: planState, error: planError, refresh: refreshPlan }),
+    [planState, planError, refreshPlan]
   );
 
   /**

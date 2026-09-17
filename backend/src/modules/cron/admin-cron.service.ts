@@ -1,5 +1,5 @@
 /**
- * AdminCronService — реестр четырнадцати крон-задач + ручной запуск из
+ * AdminCronService — реестр пятнадцати крон-задач + ручной запуск из
  * админки с записью истории (этап 69, доп. ТЗ «Кроны в админке»,
  * аналогично Solar Shop). Инжектит `CronJobsService` напрямую (тот же
  * модуль `CronModule` — без кросс-модульного импорта, см.
@@ -112,6 +112,12 @@ const JOB_REGISTRY: CronJobInfo[] = [
     description:
       'Уборка истёкших сессий (и их файлов), admin/user-сессий, невостребованной библиотеки, а также ' +
       'мягко удалённых Project/ProductItem/Session (этап 89) старше грейс-периода.',
+  },
+  {
+    jobKey: 'ai-usage-rollup',
+    description:
+      'Свёртка журнала расходов: месяцы старше 90 дней схлопываются в агрегаты по провайдеру/операции/модели/пользователю, ' +
+      'сырые строки удаляются. Отчёты «за всё время» после этого собираются из двух источников — свёртки и свежих строк.',
   },
   {
     jobKey: 'sweep-orphans',
@@ -232,6 +238,8 @@ export class AdminCronService {
         return this.jobs.runTutorialScenarioRun();
       case 'ui-snapshot-run':
         return this.jobs.runUiSnapshotRun();
+      case 'ai-usage-rollup':
+        return this.jobs.runAiUsageRollup();
       case 'cleanup-sessions':
         return this.jobs.runCleanupSessions();
       case 'sweep-orphans':

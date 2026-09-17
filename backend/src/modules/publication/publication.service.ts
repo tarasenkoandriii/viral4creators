@@ -84,6 +84,13 @@ const STATUSES: ReadonlySet<string> = new Set([
   'FAILED',
 ]);
 
+/** Имя площадки для человека: в интерфейсе оно пишется так, а не
+ * значением enum — сообщение об отказе читает пользователь. */
+const PLATFORM_LABEL: Record<string, string> = {
+  YOUTUBE: 'YouTube',
+  TIKTOK: 'TikTok',
+};
+
 /** Pure: what gets copied into the request. Exported for tests. */
 export function snapshotFromSession(
   session: Session,
@@ -269,12 +276,32 @@ export class PublicationService {
           platform: dto.platform,
           status: { in: ['PENDING', 'APPROVED'] },
         },
-        select: { id: true, status: true },
+        // `generatedVideoId` читаем не ради условия (условие про сессию
+        // и площадку, см. выше), а ради ТЕКСТА отказа: сказать «этот
+        // ролик уже в очереди» про заявку на прежнюю версию — соврать
+        // ровно там, где человек и так запутался (Б-2.6, этап 121).
+        select: { id: true, status: true, generatedVideoId: true },
       });
       if (open) {
-        throw new ConflictException(
-          `This video is already in the ${dto.platform} queue (${open.status})`,
-        );
+        // Б-2.6 (этап 121): сообщение читает человек, и раньше оно
+        // говорило «этот ролик уже в очереди» — про заявку, которая
+        // могла относиться к ПРЕЖНЕЙ версии ролика и потому не была
+        // видна на экране. Экран теперь показывает такую заявку сам,
+        // но текст всё равно должен быть про то, что происходит на
+        // самом деле, и на языке интерфейса.
+        const label = PLATFORM_LABEL[dto.platform] ?? dto.platform;
+        const sameVideo =
+          !open.generatedVideoId ||
+          open.generatedVideoId === snap.generatedVideoId;
+        const pending = open.status === 'PENDING';
+        const message = sameVideo
+          ? pending
+            ? `Этот ролик уже в очереди на ${label} и ждёт решения оператора. Отзовите заявку, если хотите отправить другую.`
+            : `Заявку на этот ролик оператор уже одобрил — она вот-вот уйдёт на ${label}. Дождитесь публикации, после неё очередь освободится.`
+          : pending
+            ? `В очереди на ${label} уже есть заявка на ПРЕЖНЮЮ версию этого ролика — она ждёт решения оператора. Отзовите её, и можно будет отправить нынешнюю.`
+            : `Заявку на прежнюю версию этого ролика оператор уже одобрил — она вот-вот уйдёт на ${label}. Дождитесь публикации, после неё очередь освободится.`;
+        throw new ConflictException(message);
       }
 
       return (await tx.publicationRequest.create({

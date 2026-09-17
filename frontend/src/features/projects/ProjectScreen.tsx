@@ -37,13 +37,18 @@ import {
   getProjectDeletePreview,
   isNotFoundError,
   listBrandManifests,
+  listItemSessions,
   updateProject,
 } from '../../services/projects-api';
+
 import type {
   ItemDeletePreview,
   ProjectDeletePreview,
 } from '../../types/project';
 import { useAsync } from '../../lib/useAsync';
+import { resumableRun, runState } from '../../lib/item-runs';
+import type { ItemRun } from '../../lib/item-runs';
+import { formatRunTime } from '../../lib/intl-locale';
 import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import { LoadError, ScreenHeader } from './shared';
@@ -173,7 +178,26 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
    * wizard reuses the session id via the same localStorage key it has
    * always used, so no wizard bootstrap change is needed.
    */
-  const onStartSession = async (itemId: string) => {
+  /**
+   * Б-2.9 (этап 121): перед запуском НОВОГО прогона спрашиваем про
+   * незавершённый старый.
+   *
+   * Строка ниже (`localStorage.setItem`) — единственная ручка, которой
+   * мастер держится за сессию. Пока товар A рендерится, запуск товара B
+   * затирал её молча: идущий прогон A не показывал после этого ни один
+   * экран (список готовых роликов отбирает только завершённые), и через
+   * сутки TTL уносил его вместе с уже оплаченным роликом.
+   *
+   * Список прогонов — best-effort: если он не доедет, запуск идёт как
+   * раньше. Потерять возможность сгенерировать ролик из-за
+   * вспомогательного запроса было бы хуже самой проблемы.
+   */
+  const [resume, setResume] = useState<{
+    itemId: string;
+    run: ItemRun;
+  } | null>(null);
+
+  const startFreshSession = async (itemId: string) => {
     setBusy(`session:${itemId}`);
     setActionError(null);
     try {
@@ -184,6 +208,26 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       setActionError(errorMessage(e));
       setBusy(null);
     }
+  };
+
+  const onStartSession = async (itemId: string) => {
+    setBusy(`session:${itemId}`);
+    setActionError(null);
+    const runs = await listItemSessions(projectId, itemId).catch(() => null);
+    const unfinished = resumableRun(runs);
+    if (unfinished) {
+      setBusy(null);
+      setResume({ itemId, run: unfinished });
+      return;
+    }
+    await startFreshSession(itemId);
+  };
+
+  const resumeSession = () => {
+    if (!resume) return;
+    localStorage.setItem('sessionId', resume.run.sessionId);
+    setResume(null);
+    navigate(routes.generate());
   };
 
   const onManifestChange = async (value: string) => {
@@ -602,6 +646,48 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
           </div>
         </Card>
       )}
+
+      {/* Незавершённый прогон этого товара (Б-2.9, этап 121): не
+          «удалить?», а выбор из двух поступков, поэтому подтверждение
+          нейтральное, а второе действие — отдельной кнопкой в подвале
+          диалога (в теле оно забрало бы себе начальный фокус). */}
+      <ConfirmDialog
+        open={resume !== null}
+        danger={false}
+        title={dict.projectScreen.resumeTitle}
+        confirmLabel={dict.projectScreen.resumeConfirm}
+        cancelLabel={dict.common.cancel}
+        onConfirm={resumeSession}
+        onCancel={() => setResume(null)}
+        secondaryAction={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const itemId = resume?.itemId;
+              setResume(null);
+              if (itemId) void startFreshSession(itemId);
+            }}
+          >
+            {dict.projectScreen.resumeNew}
+          </Button>
+        }
+      >
+        <p>
+          {(resume && runState(resume.run) === 'running'
+            ? dict.projectScreen.resumeBodyRunning
+            : dict.projectScreen.resumeBodyStalled
+          ).replace(
+            '{{date}}',
+            resume
+              ? formatRunTime(
+                  resume.run.lastActivityAt || resume.run.createdAt,
+                  locale
+                )
+              : ''
+          )}
+        </p>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={pendingDelete !== null}

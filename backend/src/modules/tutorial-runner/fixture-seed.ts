@@ -156,8 +156,13 @@ export async function seedFixtureUser(
       title: item.title,
       description: item.description,
     },
-    generatedVideo,
   };
+  // Этап 122: готовый ролик живёт во второй колонке — так же, как его
+  // пишет `SessionService.updateSession`. Положить его в `data` значило
+  // бы завести фикстуру в раскладке, которой в проде не бывает: экраны
+  // постпрода и админки читают `liveData`, и регрессионный обход снимал
+  // бы пустой экран, ничего при этом не заметив.
+  const sessionLiveData = { generatedVideo };
 
   await prisma.session.upsert({
     where: { id: FIXTURE_IDS.session },
@@ -168,6 +173,7 @@ export async function seedFixtureUser(
       status: SessionStatus.VIDEO_COMPLETE,
       generationStatus: GenerationStatus.COMPLETE,
       data: sessionData,
+      liveData: sessionLiveData,
     },
     create: {
       id: FIXTURE_IDS.session,
@@ -177,6 +183,7 @@ export async function seedFixtureUser(
       status: SessionStatus.VIDEO_COMPLETE,
       generationStatus: GenerationStatus.COMPLETE,
       data: sessionData,
+      liveData: sessionLiveData,
     },
   });
   log.push(`Сессия с готовым роликом: ${FIXTURE_IDS.session}`);

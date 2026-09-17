@@ -45,6 +45,7 @@ import {
   uploadScene,
 } from '../../services/projects-api';
 import type { ReferenceCandidate, ReferenceSlots } from '../../types';
+import { revokeObjectUrl } from '../../lib/object-url';
 import { useI18n } from '../../lib/i18n-context';
 import type { Dictionary } from '../../lib/get-dictionary';
 
@@ -326,6 +327,12 @@ function SceneUploader({
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Ссылка на выбранный файл отзывается и при замене, и при закрытии
+  // формы (этап 119): зависимость эффекта — сам адрес, поэтому уборка
+  // срабатывает на оба случая. Форма открывается и закрывается часто, и
+  // каждая отменённая загрузка оставляла картинку в памяти вкладки.
+  useEffect(() => () => revokeObjectUrl(preview), [preview]);
 
   const pick = (f: File | undefined) => {
     if (!f) return;

@@ -49,18 +49,13 @@ import type {
 import { useI18n } from '../../lib/i18n-context';
 import type { Dictionary } from '../../lib/get-dictionary';
 import { navigate, routes } from '../../lib/router';
+import { queueState } from '../../lib/publication-queue';
+import { formatRunTime } from '../../lib/intl-locale';
+import { LoadError } from '../projects/shared';
 
 const PLATFORM_LABEL: Record<PublicationPlatform, string> = {
   YOUTUBE: 'YouTube',
   TIKTOK: 'TikTok',
-};
-
-const INTL_LOCALE: Record<string, string> = {
-  ru: 'ru-RU',
-  uk: 'uk-UA',
-  en: 'en-US',
-  de: 'de-DE',
-  es: 'es-ES',
 };
 
 function statusMeta(
@@ -107,19 +102,29 @@ export function PublishPanel({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const [loadNonce, setLoadNonce] = useState(0);
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
     listPublications(sessionId)
-      .then((r) => alive && setRequests(r))
-      .catch((e) => {
+      .then((r) => {
         if (!alive) return;
-        setRequests([]);
+        setRequests(r);
+        setLoadError(null);
+      })
+      .catch((e) => {
+        // НЕ пустой список (этап 121). Пустой означал бы «очередь
+        // свободна», кнопка звала бы отправлять — и человек получал бы
+        // ровно тот 409 про невидимую заявку, ради которого этот этап и
+        // делается, только теперь ещё и на пустом месте.
+        if (!alive) return;
+        setRequests(null);
         setLoadError(e);
       });
     return () => {
       alive = false;
     };
-  }, [sessionId]);
+  }, [sessionId, loadNonce]);
 
   useEffect(() => {
     let alive = true;
@@ -133,13 +138,18 @@ export function PublishPanel({
     };
   }, []);
 
-  const forThisVideo =
-    requests?.filter((r) => r.generatedVideoId === generatedVideoId) ?? [];
-  const openFor = (p: PublicationPlatform) =>
-    forThisVideo.find(
-      (r) =>
-        r.platform === p && (r.status === 'PENDING' || r.status === 'APPROVED')
-    );
+  // Б-2.6 (этап 121): занятость очереди — по СЕССИИ и площадке, ровно
+  // как на сервере. Экран считал её по текущему ролику, и после
+  // перегенерации заявка на прежнюю версию исчезала с глаз: кнопка
+  // звала, сервер отвечал 409 про заявку, которой на экране нет и
+  // которую поэтому нельзя отозвать.
+  //
+  // Показываем при этом ВСЕ заявки сессии, помечая относящиеся к другой
+  // версии: иначе «отзовите ту заявку» было бы советом про невидимое.
+  const all = requests ?? [];
+  const queueFor = (p: PublicationPlatform) =>
+    queueState(all, p, generatedVideoId);
+  const openFor = (p: PublicationPlatform) => queueFor(p).request;
   const hasActiveChannel = (p: PublicationPlatform) =>
     (channels ?? []).some((c) => c.platform === p && c.status === 'ACTIVE');
 
@@ -212,7 +222,7 @@ export function PublishPanel({
         hint={dict.publishPanel.hint}
       />
 
-      {!open && (
+      {!open && requests !== null && (
         <Button
           block
           className="mb-4"
@@ -229,6 +239,51 @@ export function PublishPanel({
           {error}
         </Alert>
       )}
+
+      {/* Список заявок не доехал — говорим об этом и даём повтор, а не
+          показываем пустую очередь (этап 121). */}
+      {loadError !== null && (
+        <div className="mb-3">
+          <LoadError
+            error={loadError}
+            onRetry={() => setLoadNonce((n) => n + 1)}
+          />
+        </div>
+      )}
+
+      {/* Очередь занята заявкой на ПРЕЖНЮЮ версию ролика (Б-2.6, этап
+          121). Раньше этот случай выглядел как «заявок нет»: человек
+          отправлял новую и получал 409 про невидимую. Теперь говорим
+          прямо и, если заявку ещё можно отозвать, даём это сделать
+          отсюда же. */}
+      {(['YOUTUBE', 'TIKTOK'] as const).map((p) => {
+        const state = queueFor(p);
+        if (state.kind !== 'blocked-by-other' || !state.request) return null;
+        return (
+          <Alert key={p} tone="warning" className="mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                {(state.withdrawable
+                  ? dict.publishPanel.olderVersionQueued
+                  : dict.publishPanel.olderVersionApproved
+                ).replace('{{platform}}', PLATFORM_LABEL[p])}
+              </span>
+              {state.withdrawable && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Trash2 size={12} />}
+                  loading={busy === state.request.id}
+                  disabled={busy !== null && busy !== state.request.id}
+                  onClick={() => void withdraw(state.request!)}
+                >
+                  {dict.publishPanel.withdraw}
+                </Button>
+              )}
+            </div>
+          </Alert>
+        );
+      })}
 
       {open && (
         <form
@@ -340,15 +395,15 @@ export function PublishPanel({
         </form>
       )}
 
-      {requests !== null && forThisVideo.length === 0 && !open && (
+      {requests !== null && all.length === 0 && !open && (
         <p className="text-xs text-silver-400">
           {dict.publishPanel.noRequestsYet}
         </p>
       )}
 
-      {forThisVideo.length > 0 && (
+      {all.length > 0 && (
         <ul className="space-y-2">
-          {forThisVideo.map((r) => {
+          {all.map((r) => {
             const st = STATUS[r.status];
             return (
               <li
@@ -370,17 +425,16 @@ export function PublishPanel({
                     {st.label}
                   </Badge>
                   <span className="ml-auto text-[11px] text-silver-400 tabular">
-                    {new Date(r.createdAt).toLocaleString(
-                      INTL_LOCALE[locale] ?? 'ru-RU',
-                      {
-                        day: '2-digit',
-                        month: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      }
-                    )}
+                    {formatRunTime(r.createdAt, locale)}
                   </span>
                 </div>
+                {r.generatedVideoId &&
+                  generatedVideoId &&
+                  r.generatedVideoId !== generatedVideoId && (
+                    <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                      {dict.publishPanel.olderVersionBadge}
+                    </p>
+                  )}
                 <p className="mt-1 truncate font-medium">{r.title}</p>
                 {r.tags.length > 0 && (
                   <p className="mt-0.5 truncate text-silver-400">
@@ -433,6 +487,7 @@ export function PublishPanel({
                       variant="ghost"
                       icon={<Trash2 size={12} />}
                       loading={busy === r.id}
+                      disabled={busy !== null && busy !== r.id}
                       onClick={() => void withdraw(r)}
                     >
                       {dict.publishPanel.withdraw}

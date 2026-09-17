@@ -342,6 +342,24 @@ export class CronController {
   }
 
   /**
+   * GET /api/cron/ai-usage-rollup
+   *
+   * Свёртка журнала расходов (doc/TODO.md §I-Б.5): месяцы старше срока
+   * хранения схлопываются в агрегаты, сырые строки удаляются. Без неё
+   * `ai_usage` растёт примерно на 4 ГБ в год и не чистится ничем.
+   */
+  @Get('ai-usage-rollup')
+  async aiUsageRollup(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'ai-usage-rollup',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runAiUsageRollup(),
+    );
+  }
+
+  /**
    * GET /api/cron/sweep-orphans?cursor=&limit=
    *
    * Метла по префиксу `sessions/` и ещё трём областям (doc/

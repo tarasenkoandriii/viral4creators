@@ -46,15 +46,15 @@ export interface PostprodVideoSummaryRow {
 const SELECT_FROM = `
   SELECT s."id" AS "sessionId", s."createdAt", s."lastActivityAt",
          s."data" -> 'productInformation' ->> 'productName' AS "productName",
-         s."data" -> 'generatedVideo' ->> 'generatedVideoId' AS "generatedVideoId",
-         s."data" -> 'generatedVideo' ->> 'downloadUrl' AS "downloadUrl",
-         s."data" -> 'generatedVideo' ->> 'renderedUrl' AS "renderedUrl",
-         s."data" -> 'generatedVideo' ->> 'postStatus' AS "postStatus",
-         s."data" -> 'generatedVideo' ->> 'voiceMode' AS "voiceMode",
-         s."data" -> 'generatedVideo' ->> 'aspectRatio' AS "aspectRatio",
-         s."data" -> 'generatedVideo' ->> 'quality' AS "quality",
-         s."data" -> 'generatedVideo' ->> 'provider' AS "provider",
-         s."data" -> 'generatedVideo' ->> 'resolution' AS "resolution"
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'generatedVideoId' AS "generatedVideoId",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'downloadUrl' AS "downloadUrl",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'renderedUrl' AS "renderedUrl",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'postStatus' AS "postStatus",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'voiceMode' AS "voiceMode",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'aspectRatio' AS "aspectRatio",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'quality' AS "quality",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'provider' AS "provider",
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'resolution' AS "resolution"
   FROM "sessions" s
   WHERE s."userId" = $1 AND s."generationStatus" = 'complete'
     AND s."deletedAt" IS NULL

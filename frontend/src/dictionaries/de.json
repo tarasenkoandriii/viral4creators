@@ -429,7 +429,22 @@
     "videoCopyHint": "Die Produktdaten{{extra}} werden in einen neuen Generierungslauf kopiert; als Nächstes — Referenzvideo, Analyse, Prompt.",
     "andBrandManifestSuffix": " und das Marken-Manifest",
     "videoButtonLine": "Video: {{item}}",
-    "videoButtonSingle": "Zur Videogenerierung"
+    "videoButtonSingle": "Zur Videogenerierung",
+    "resumeTitle": "Für diesen Artikel gibt es einen unfertigen Durchlauf",
+    "resumeConfirm": "Zum Durchlauf zurück",
+    "resumeNew": "Trotzdem neu starten",
+    "runsHeading": "Generierungs-Durchläufe",
+    "runsHint": "Alle Durchläufe dieses Artikels — auch die unfertigen, die in keiner anderen Liste auftauchen.",
+    "runOpen": "Video öffnen",
+    "runResume": "Zurück",
+    "runStateDone": "Video fertig",
+    "runStateRunning": "läuft",
+    "runStateStalled": "nicht beendet",
+    "runStateFailed": "Fehler",
+    "resumeBodyStalled": "Der Durchlauf vom {{date}} kam nie bis zum Video. Sie können dorthin zurückkehren — oder neu starten: das ist eine neue Generierung und neues Geld, und der alte Durchlauf bleibt unbeaufsichtigt und verfällt binnen eines Tages.",
+    "resumeBodyRunning": "Der Durchlauf vom {{date}} läuft gerade — das Video entsteht noch. Kehren Sie dorthin zurück, damit die begonnene Arbeit nicht verloren geht; ein neuer Durchlauf bedeutet eine zweite Generierung und zweite Kosten.",
+    "runsLoadError": "Die Durchläufe konnten nicht angezeigt werden",
+    "runsRetry": "Erneut versuchen"
   },
   "itemScreen": {
     "steps": {
@@ -850,7 +865,7 @@
     "tagsPlaceholder": "ugc, Rezension, Unboxing",
     "cancel": "Abbrechen",
     "submitToModeration": "Zur Moderation einreichen",
-    "noRequestsYet": "Für dieses Video liegen noch keine Anfragen vor.",
+    "noRequestsYet": "In dieser Sitzung gibt es noch keine Anfragen.",
     "titleRequired": "Titel eingeben",
     "withdrawConfirm": "Anfrage an {{platform}} zurückziehen?",
     "statusPending": "in Moderation",
@@ -863,7 +878,10 @@
     "approvedNote": "Genehmigt — der Upload erfolgt automatisch, meist innerhalb weniger Minuten.",
     "noChannelNote": "Noch kein Kanal verbunden — die Anfrage bleibt genehmigt, bis Sie einen verbinden.",
     "openPublication": "Veröffentlichung öffnen",
-    "withdraw": "Zurückziehen"
+    "withdraw": "Zurückziehen",
+    "olderVersionBadge": "Anfrage für eine frühere Version des Videos",
+    "olderVersionQueued": "Die {{platform}}-Warteschlange ist durch eine Anfrage für eine frühere Version dieses Videos belegt. Ziehen Sie sie zurück, um die aktuelle einzureichen.",
+    "olderVersionApproved": "Eine Anfrage für eine frühere Version dieses Videos wurde bereits freigegeben und geht in Kürze an {{platform}}. Nach der Veröffentlichung wird die Warteschlange frei."
   },
   "channelsScreen": {
     "title": "Kanäle",
@@ -1107,7 +1125,9 @@
     "postprodCtaButton": "In Postprod öffnen",
     "whatsNextTitle": "Wie geht es weiter?",
     "downloadCta": "Herunterladen",
-    "anotherVideoCta": "Noch ein Video"
+    "anotherVideoCta": "Noch ein Video",
+    "qualityLockedTitle": "Das volle Veo-Modell gibt es in höheren Modi",
+    "qualityLockedBody": "Im aktuellen Modus wird in schneller Qualität gerendert. Das volle Modell kostet das 2,7-Fache — deshalb ist es ab Standard verfügbar."
   },
   "catalogBatch": {
     "panelTitle": "Auf die ganze Produktlinie anwenden",
@@ -1172,7 +1192,8 @@
       "instagram-reels": "Instagram — Reels",
       "square": "Quadrat (Social Media)",
       "classic": "Klassisches Format"
-    }
+    },
+    "rerenderQualityLockedBody": "Dieses Video wurde mit dem vollen Veo-Modell gerendert, das Ihr aktueller Modus nicht enthält — ein zweiter Render in einem anderen Format ist gerade nicht möglich. Die Qualität still zu senken hieße, Ihnen ein anderes Video zu geben."
   },
   "revoicePanel": {
     "panelTitle": "Video neu vertonen",

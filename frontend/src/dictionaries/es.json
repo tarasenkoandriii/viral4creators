@@ -429,7 +429,22 @@
     "videoCopyHint": "Los datos del producto{{extra}} se copiarán en una nueva ejecución de generación; a continuación — vídeo de referencia, análisis, prompt.",
     "andBrandManifestSuffix": " y el manifiesto de marca",
     "videoButtonLine": "Vídeo: {{item}}",
-    "videoButtonSingle": "Ir a la generación del vídeo"
+    "videoButtonSingle": "Ir a la generación del vídeo",
+    "resumeTitle": "Este producto tiene una ejecución sin terminar",
+    "resumeConfirm": "Volver a la ejecución",
+    "resumeNew": "Empezar una nueva de todos modos",
+    "runsHeading": "Ejecuciones de generación",
+    "runsHint": "Todas las ejecuciones de este producto, incluidas las inacabadas, que no aparecen en ninguna otra lista.",
+    "runOpen": "Abrir el vídeo",
+    "runResume": "Volver",
+    "runStateDone": "vídeo listo",
+    "runStateRunning": "en curso",
+    "runStateStalled": "sin terminar",
+    "runStateFailed": "fallo",
+    "resumeBodyStalled": "La ejecución del {{date}} nunca llegó a un vídeo. Puedes volver a ella — o empezar una nueva: eso significa otra generación y más dinero, y la anterior queda sin atender y desaparece en un día.",
+    "resumeBodyRunning": "La ejecución del {{date}} está en marcha ahora mismo: el vídeo todavía se está haciendo. Vuelve a ella para no perder lo empezado; una nueva ejecución significa una segunda generación y un segundo cargo.",
+    "runsLoadError": "No se han podido mostrar las ejecuciones",
+    "runsRetry": "Reintentar"
   },
   "itemScreen": {
     "steps": {
@@ -850,7 +865,7 @@
     "tagsPlaceholder": "ugc, reseña, unboxing",
     "cancel": "Cancelar",
     "submitToModeration": "Enviar a moderación",
-    "noRequestsYet": "Aún no hay solicitudes para este video.",
+    "noRequestsYet": "Todavía no hay solicitudes en esta sesión.",
     "titleRequired": "Introduce un título",
     "withdrawConfirm": "¿Retirar la solicitud a {{platform}}?",
     "statusPending": "en moderación",
@@ -863,7 +878,10 @@
     "approvedNote": "Aprobado — la subida ocurre automáticamente, normalmente en pocos minutos.",
     "noChannelNote": "Aún no hay canal conectado — la solicitud queda aprobada hasta que conectes uno.",
     "openPublication": "Abrir publicación",
-    "withdraw": "Retirar"
+    "withdraw": "Retirar",
+    "olderVersionBadge": "solicitud de una versión anterior del vídeo",
+    "olderVersionQueued": "La cola de {{platform}} está ocupada por una solicitud de una versión anterior de este vídeo. Retírala para enviar la actual.",
+    "olderVersionApproved": "Una solicitud de una versión anterior de este vídeo ya fue aprobada y saldrá pronto a {{platform}}. Cuando se publique, la cola quedará libre."
   },
   "channelsScreen": {
     "title": "Canales",
@@ -1107,7 +1125,9 @@
     "postprodCtaButton": "Abrir en Postprod",
     "whatsNextTitle": "¿Qué sigue?",
     "downloadCta": "Descargar",
-    "anotherVideoCta": "Otro video"
+    "anotherVideoCta": "Otro video",
+    "qualityLockedTitle": "El modelo Veo completo está en los modos superiores",
+    "qualityLockedBody": "Tu modo actual renderiza en calidad rápida. El modelo completo cuesta 2,7 veces más, por eso se abre a partir de Standard."
   },
   "catalogBatch": {
     "panelTitle": "Aplicar a toda la línea",
@@ -1172,7 +1192,8 @@
       "instagram-reels": "Instagram — Reels",
       "square": "Cuadrado (redes sociales)",
       "classic": "Pantalla clásica"
-    }
+    },
+    "rerenderQualityLockedBody": "Este vídeo se renderizó con el modelo Veo completo, que tu modo actual no incluye: ahora mismo no se puede lanzar un segundo renderizado en otro formato. Bajar la calidad en silencio sería entregarte otro vídeo."
   },
   "revoicePanel": {
     "panelTitle": "Doblar de nuevo el vídeo",

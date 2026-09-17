@@ -1,5 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
+// `SessionService` тянет за собой сгенерированный клиент Prisma, которого в
+// песочнице нет (doc/CI.md). Нужен ровно один символ — тот же приём, что в
+// `brand-manifest.service.spec.ts`.
+jest.mock('@prisma/client', () => ({
+  Prisma: { DbNull: Symbol.for('Prisma.DbNull') },
+}));
 
 import { AiUsageService } from './ai-usage.service';
 
@@ -12,7 +18,20 @@ function build(over: { rawResult?: unknown } = {}) {
       groupBy: jest.fn().mockResolvedValue([]),
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn().mockResolvedValue({ pricingVersion: '2026-09-06' }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    // Свёртка журнала (этап 118): вторая половина всех отчётов «за всё
+    // время». По умолчанию пустая — как на стенде, где крон ещё не
+    // отработал ни разу.
+    aiUsageMonthly: {
+      aggregate: jest
+        .fn()
+        .mockResolvedValue({ _sum: { costMicroUsd: null, calls: null } }),
+      groupBy: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    $transaction: jest.fn().mockResolvedValue([]),
     user: { findMany: jest.fn().mockResolvedValue([]) },
     // Два сырых запроса-счётчика (этап 44): сначала уникальные
     // пользователи с расходом, затем уникальные сессии.
@@ -222,5 +241,357 @@ describe('AiUsageService.record (ТЗ §26)', () => {
     await expect(
       svc.record({ operation: 'prompt', model: 'gpt-5' }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('AiUsageService — свёртка журнала (doc/TODO.md §I-Б.5)', () => {
+  it('сворачивает только месяцы, отданные чистым правилом', async () => {
+    // Свежие месяцы держат окна 1/7/30 дней отчёта: тронуть их — значит
+    // молча урезать «за вчера».
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue([
+      { month: '2026-09' },
+      { month: '2026-08' },
+      { month: '2026-01' },
+    ]);
+    const result = await svc.rollupOldMonths({
+      now: new Date('2026-09-16T12:00:00Z'),
+    });
+    expect(result.months).toEqual(['2026-01']);
+  });
+
+  it('за прогон берёт не больше указанного числа месяцев', async () => {
+    // Первый запуск на накопленном журнале иначе пытался бы съесть годы
+    // за один тик serverless-функции.
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue(
+      ['2025-01', '2025-02', '2025-03', '2025-04'].map((month) => ({ month })),
+    );
+    const result = await svc.rollupOldMonths({
+      maxMonths: 2,
+      now: new Date('2026-09-16T12:00:00Z'),
+    });
+    // Старое первым: прерванный прогон продолжает, а не начинает заново.
+    expect(result.months).toEqual(['2025-01', '2025-02']);
+  });
+
+  it('месяц сворачивается одной транзакцией: снести → записать → удалить', async () => {
+    // Порядок и атомарность — единственное, что отделяет свёртку от
+    // потери денег: половинный месяц уже не пересчитать, сырых строк нет.
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue([{ month: '2026-01' }]);
+    // Группирует база: в Node приезжают уже сложенные строки.
+    prisma.aiUsage.groupBy.mockResolvedValue([
+      {
+        userId: 'u1',
+        anonymous: false,
+        provider: 'GEMINI',
+        operation: 'analysis',
+        model: 'gemini-2.5-flash',
+        unpriced: false,
+        _sum: { costMicroUsd: 150 },
+        _count: { _all: 2 },
+      },
+    ]);
+    prisma.$transaction.mockResolvedValue([
+      { count: 0 },
+      { count: 1 },
+      { count: 2 },
+    ]);
+    const result = await svc.rollupOldMonths({
+      now: new Date('2026-09-16T12:00:00Z'),
+    });
+
+    expect(result).toEqual({
+      months: ['2026-01'],
+      foldedRows: 1,
+      // Удалено — число из базы, а не длина выборки.
+      deletedRows: 2,
+    });
+    // Журнал целиком в Node не выезжает: сложение делает база.
+    expect(prisma.aiUsage.findMany).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    const ops = prisma.$transaction.mock.calls[0][0] as unknown[];
+    expect(ops).toHaveLength(3);
+    // Прежняя свёртка этого месяца сносится до записи новой — иначе
+    // повторный прогон удвоил бы деньги.
+    expect(prisma.aiUsageMonthly.deleteMany.mock.calls[0][0]).toEqual({
+      where: { month: '2026-01' },
+    });
+    expect(prisma.aiUsageMonthly.createMany.mock.calls[0][0].data).toEqual([
+      {
+        month: '2026-01',
+        userId: 'u1',
+        anonymous: false,
+        provider: 'GEMINI',
+        operation: 'analysis',
+        model: 'gemini-2.5-flash',
+        unpriced: false,
+        calls: 2,
+        costMicroUsd: 150n,
+      },
+    ]);
+    // Сырые строки удаляются ровно по границам месяца и строго `lt`.
+    expect(prisma.aiUsage.deleteMany.mock.calls[0][0].where.createdAt).toEqual({
+      gte: new Date('2026-01-01T00:00:00.000Z'),
+      lt: new Date('2026-02-01T00:00:00.000Z'),
+    });
+  });
+
+  it('месяц без сырых строк не трогается вовсе — иначе повтор внахлёст стёр бы уже записанную свёртку', async () => {
+    // Два прогона внахлёст (реестр админки и настоящий крон) снимают
+    // список месяцев каждый до чужой транзакции. Если второй дойдёт до
+    // уже свёрнутого месяца, сырых строк там нет — и безусловное
+    // «снести и записать» записало бы вместо свёртки пустоту, а
+    // пересобрать её было бы не из чего.
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue([{ month: '2026-01' }]);
+    prisma.aiUsage.groupBy.mockResolvedValue([]);
+    const result = await svc.rollupOldMonths({
+      now: new Date('2026-09-16T12:00:00Z'),
+    });
+    expect(result).toEqual({
+      months: ['2026-01'],
+      foldedRows: 0,
+      deletedRows: 0,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.aiUsageMonthly.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('ключ месяца берётся у базы без смены зоны — иначе он разъедется с границами выборки', async () => {
+    // `createdAt` — timestamp без зоны и уже в UTC. `AT TIME ZONE 'UTC'`
+    // сделал бы из него timestamptz, и `to_char` отрисовал бы месяц в
+    // зоне СЕССИИ базы: на сервере не в UTC свёртка бралась бы за
+    // месяц, которого по её же границам нет.
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue([]);
+    await svc.rollupOldMonths({ now: new Date('2026-09-16T12:00:00Z') });
+    const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join(' ');
+    expect(sql).toContain(`to_char("createdAt", 'YYYY-MM')`);
+    expect(sql).not.toContain('AT TIME ZONE');
+  });
+
+  it('повторный прогон по уже свёрнутому месяцу ничего не удваивает', async () => {
+    // После первого прогона сырых строк месяца нет: второй складывает
+    // пустую свёртку поверх пустой.
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue([]);
+    const result = await svc.rollupOldMonths({
+      now: new Date('2026-09-16T12:00:00Z'),
+    });
+    expect(result.months).toEqual([]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('свёртка сбрасывает кеш отчёта', async () => {
+    // Иначе админка до конца TTL показывала бы числа, посчитанные по
+    // источнику, которого уже нет.
+    const { svc, prisma } = build();
+    await svc.report();
+    prisma.$queryRaw.mockResolvedValue([{ month: '2026-01' }]);
+    await svc.rollupOldMonths({ now: new Date('2026-09-16T12:00:00Z') });
+    prisma.$queryRaw.mockResolvedValue([{ count: 42 }]);
+    prisma.$queryRaw.mockClear();
+    await svc.report();
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('AiUsageService — отчёт «за всё время» читает оба источника', () => {
+  it('общие деньги и вызовы складываются из сырых строк и свёртки', async () => {
+    // Забыть свёртку — значит показать заниженные деньги, причём тихо:
+    // числа останутся правдоподобными.
+    const { svc, prisma } = build();
+    prisma.aiUsageMonthly.aggregate.mockResolvedValue({
+      _sum: { costMicroUsd: 800n, calls: 5 },
+    });
+    const report = await svc.report();
+    // Сырые: 1200 микродолларов и 7 вызовов (моки `build`).
+    expect(report.totalMicroUsd).toBe(2000);
+    expect(report.totalCalls).toBe(12);
+  });
+
+  it('разрез по провайдерам складывается по ключу', async () => {
+    const { svc, prisma } = build();
+    prisma.aiUsage.groupBy.mockImplementation(
+      async (args: { by: readonly string[] }) =>
+        args.by[0] === 'provider'
+          ? [
+              {
+                provider: 'GEMINI',
+                _sum: { costMicroUsd: 10 },
+                _count: { _all: 1 },
+              },
+            ]
+          : [],
+    );
+    prisma.aiUsageMonthly.groupBy.mockImplementation(
+      async (args: { by: readonly string[] }) =>
+        args.by[0] === 'provider'
+          ? [
+              {
+                provider: 'GEMINI',
+                _sum: { costMicroUsd: 90n, calls: 9 },
+              },
+              {
+                provider: 'OPENAI',
+                _sum: { costMicroUsd: 3n, calls: 1 },
+              },
+            ]
+          : [],
+    );
+    const report = await svc.report();
+    expect(report.byProvider).toEqual([
+      { key: 'GEMINI', costMicroUsd: 100, calls: 10 },
+      { key: 'OPENAI', costMicroUsd: 3, calls: 1 },
+    ]);
+  });
+
+  it('в топ попадает человек, чей расход уже весь свёрнут', async () => {
+    // База отсортировала только сырую часть — без пересортировки такой
+    // пользователь не попал бы в топ вовсе.
+    const { svc, prisma } = build();
+    prisma.aiUsage.groupBy.mockImplementation(
+      async (args: { by: readonly string[] }) =>
+        args.by[0] === 'userId'
+          ? [
+              {
+                userId: 'свежий',
+                _sum: { costMicroUsd: 10 },
+                _count: { _all: 1 },
+              },
+            ]
+          : [],
+    );
+    prisma.aiUsageMonthly.groupBy.mockImplementation(
+      async (args: { by: readonly string[] }) =>
+        args.by[0] === 'userId'
+          ? [
+              {
+                userId: 'старожил',
+                _sum: { costMicroUsd: 500n, calls: 50 },
+              },
+            ]
+          : [],
+    );
+    prisma.user.findMany.mockResolvedValue([
+      {
+        id: 'старожил',
+        telegramId: '1',
+        username: null,
+        isBlocked: false,
+        plan: 'FREE',
+      },
+      {
+        id: 'свежий',
+        telegramId: '2',
+        username: null,
+        isBlocked: false,
+        plan: 'FREE',
+      },
+    ]);
+    const report = await svc.report(10);
+    expect(report.top.map((u) => u.userId)).toEqual(['старожил', 'свежий']);
+    expect(report.top[0].costMicroUsd).toBe(500);
+  });
+
+  it('вызовы без ставки считаются вместе со свёрнутыми', async () => {
+    // Ради этого числа `unpriced` и попал в ключ свёртки: иначе оно
+    // сползало бы к нулю по мере сворачивания месяцев — и «в прайсе нет
+    // ставки» перестало бы быть видно.
+    const { svc, prisma } = build();
+    prisma.aiUsage.count.mockResolvedValue(7);
+    prisma.aiUsageMonthly.aggregate.mockImplementation(
+      async (args: { where?: { unpriced?: boolean } }) =>
+        args.where?.unpriced
+          ? { _sum: { costMicroUsd: 0n, calls: 4 } }
+          : { _sum: { costMicroUsd: null, calls: null } },
+    );
+    const report = await svc.report();
+    expect(report.unpricedCalls).toBe(11);
+  });
+
+  it('«плативших» считает база по объединению обеих таблиц, а не максимумом', async () => {
+    // Множества пересекаются частично: максимум схлопнул бы
+    // непересекающиеся половины, а делится на это число ПОЛНАЯ сумма,
+    // включая свёрнутую, — среднее на человека завышалось бы.
+    const { svc, prisma } = build();
+    await svc.report();
+    const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join(' ');
+    expect(sql).toContain('"ai_usage_monthly"');
+    expect(sql).toContain('UNION');
+    expect(sql).not.toContain('UNION ALL');
+  });
+
+  it('среднее на сессию не смешивает источники', async () => {
+    // `sessionId` в свёртку не входит, поэтому знаменатель — только
+    // сырые сессии. Со свёрнутым числителем дробь росла бы без предела.
+    const { svc, prisma } = build({ rawResult: [{ count: 4 }] });
+    prisma.aiUsageMonthly.aggregate.mockResolvedValue({
+      _sum: { costMicroUsd: 800n, calls: 5 },
+    });
+    const report = await svc.report();
+    // Сырых 1200 на 4 сессии — 300; со свёрнутыми 2000 было бы 500.
+    expect(report.avgPerSessionMicroUsd).toBe(300);
+  });
+
+  it('сырая половина кандидата из свёртки не теряется в топе', async () => {
+    // Сырой топ обрезан базой десятью строками и про этого человека не
+    // знает. Если не досчитать его сырые деньги отдельно, они пропадут
+    // и из суммы в таблице, и из порядка строк.
+    const { svc, prisma } = build();
+    prisma.aiUsage.groupBy.mockImplementation(
+      async (args: {
+        by: readonly string[];
+        take?: number;
+        where?: { userId?: { in?: string[] } };
+      }) => {
+        if (args.by[0] !== 'userId') return [];
+        // Топ-N из базы: этого человека там нет.
+        if (args.take) return [];
+        // Досчёт по списку кандидатов.
+        return args.where?.userId?.in?.includes('старожил')
+          ? [
+              {
+                userId: 'старожил',
+                _sum: { costMicroUsd: 40 },
+                _count: { _all: 2 },
+              },
+            ]
+          : [];
+      },
+    );
+    prisma.aiUsageMonthly.groupBy.mockImplementation(
+      async (args: { by: readonly string[] }) =>
+        args.by[0] === 'userId'
+          ? [{ userId: 'старожил', _sum: { costMicroUsd: 500n, calls: 50 } }]
+          : [],
+    );
+    prisma.user.findMany.mockResolvedValue([
+      {
+        id: 'старожил',
+        telegramId: '1',
+        username: null,
+        isBlocked: false,
+        plan: 'FREE',
+      },
+    ]);
+    const report = await svc.report(10);
+    expect(report.top).toHaveLength(1);
+    expect(report.top[0].costMicroUsd).toBe(540);
+    expect(report.top[0].calls).toBe(52);
+  });
+
+  it('разбивка по операциям в карточке пользователя тоже из двух источников', async () => {
+    const { svc, prisma } = build();
+    prisma.aiUsage.groupBy.mockResolvedValue([
+      { operation: 'prompt', _sum: { costMicroUsd: 4 }, _count: { _all: 2 } },
+    ]);
+    prisma.aiUsageMonthly.groupBy.mockResolvedValue([
+      { operation: 'prompt', _sum: { costMicroUsd: 6n, calls: 3 } },
+    ]);
+    const rows = await svc.breakdownForUser('u1');
+    expect(rows).toEqual([{ key: 'prompt', costMicroUsd: 10, calls: 5 }]);
   });
 });

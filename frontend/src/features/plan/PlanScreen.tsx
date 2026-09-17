@@ -51,6 +51,7 @@ import {
   revokeMarketingConsent,
 } from '../../services/marketing-api';
 import { openStarsInvoice } from '../../lib/telegram';
+import { LoadError } from '../projects/shared';
 import { usePlanContext } from '../../lib/plan-context';
 import { PLAN_ORDER } from '../../lib/plan';
 import { useI18n } from '../../lib/i18n-context';
@@ -84,7 +85,7 @@ function formatDate(iso: string, locale: string): string {
 
 export function PlanScreen() {
   const { dict, locale } = useI18n();
-  const { state, refresh } = usePlanContext();
+  const { state, error: loadError, refresh } = usePlanContext();
   const [busy, setBusy] = useState<PlanId | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState<{
     plan: Extract<PlanId, 'STANDARD' | 'PREMIUM'>;
@@ -130,6 +131,18 @@ export function PlanScreen() {
   };
 
   if (!state) {
+    // Сбой загрузки и «ещё грузится» — разные экраны (этап 119, В-5.6).
+    // Раньше это был один спиннер без выхода: единственный повтор
+    // (`refresh`) находится ниже по коду, то есть ЗА этим самым
+    // возвратом, и добраться до него было нельзя — экран висел до
+    // перезапуска приложения.
+    if (loadError) {
+      return (
+        <div className="space-y-4 py-4">
+          <LoadError error={loadError} onRetry={refresh} />
+        </div>
+      );
+    }
     return (
       <div className="flex justify-center py-10">
         <Spinner size={24} />

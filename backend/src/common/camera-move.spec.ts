@@ -10,6 +10,7 @@
 import {
   CAMERA_MOVES,
   DEFAULT_CAMERA_MOVE,
+  cameraBriefCorrection,
   cameraBriefText,
   isNativeFrame,
   normalizeCameraMove,
@@ -94,5 +95,45 @@ describe('cameraBriefText', () => {
     const brief = cameraBriefText('push-in', '16:9');
     expect(brief).toContain('No handheld shake');
     expect(brief).toContain('continuous');
+  });
+});
+
+describe('поправка амплитуды под выбранный позже формат (В-1.9)', () => {
+  it('референс родной, генерация в неродной — амплитуду урезаем', () => {
+    // Ровно тот случай, ради которого параметр и различает форматы:
+    // в промпт ушло «10–15 %», а ролик обрежут по центру, и наезд съест
+    // безопасную зону второй раз.
+    const fix = cameraBriefCorrection('push-in', '9:16', '4:5');
+    expect(fix).toContain('SMALL');
+    expect(fix).toContain('4:5');
+    expect(fix).toContain('supersedes');
+  });
+
+  it('референс неродной, генерация родная — амплитуду возвращаем', () => {
+    // Обратная половина: иначе движение напрасно урезано до дрожания.
+    const fix = cameraBriefCorrection('push-in', '4:5', '16:9');
+    expect(fix).toContain('10–15%');
+    expect(fix).not.toContain('SMALL');
+  });
+
+  it('«неродность» не изменилась — поправлять нечего', () => {
+    // Молчание здесь важнее краткости: лишняя строка «поверх сказанного»
+    // в промпте заставляет модель искать противоречие там, где его нет.
+    expect(cameraBriefCorrection('push-in', '9:16', '16:9')).toBe('');
+    expect(cameraBriefCorrection('push-in', '4:5', '1:1')).toBe('');
+    expect(cameraBriefCorrection('push-in', '9:16', '9:16')).toBe('');
+  });
+
+  it('без движения камеры поправки нет вовсе', () => {
+    expect(cameraBriefCorrection('none', '9:16', '4:5')).toBe('');
+  });
+
+  it('формат референса неизвестен — считается неродным, как и в самом брифе', () => {
+    // Тот же перекос в безопасную сторону, что у `cameraBriefText`:
+    // неизвестное — скорее обрезка. Значит, при генерации в родном
+    // формате поправка нужна.
+    expect(cameraBriefCorrection('push-in', undefined, '9:16')).toContain(
+      '10–15%',
+    );
   });
 });

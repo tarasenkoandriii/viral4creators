@@ -77,3 +77,43 @@ export function cameraBriefText(
     'No handheld shake, no snap zoom, no orbit.',
   ].join(' ');
 }
+
+/**
+ * Поправка к амплитуде, когда формат ролика выбрали ПОСЛЕ написания
+ * промпта (В-1.9 третьего аудита, этап 120).
+ *
+ * Бриф выше уезжает в промпт вместе с форматом РЕФЕРЕНСА: другого
+ * значения в тот момент просто нет — целевой формат выбирают позже, на
+ * шаге генерации. Соседний `frameBrief` эту разницу знает и прямо
+ * оговаривает («unless told otherwise at generation time»), а у брифа
+ * камеры оговорки не было — при том, что вся его логика ровно про эту
+ * разницу и есть.
+ *
+ * Цена расхождения обе стороны имеет. Референс 9:16, генерация в 4:5 —
+ * в промпт ушло «10–15 %», а ролик обрежут по центру, и наезд съест
+ * безопасную зону второй раз: товар, помещавшийся в кадр, к концу
+ * упрётся в границу обрезки. Обратный случай — амплитуду напрасно
+ * урезали, и движение читается как дрожание вместо работы оператора.
+ *
+ * Возвращает пустую строку, когда поправлять нечего: движения нет или
+ * «неродность» формата не изменилась (амплитуда зависит только от неё).
+ */
+export function cameraBriefCorrection(
+  move: CameraMove,
+  promptedFor: string | null | undefined,
+  target: string | null | undefined,
+): string {
+  if (move !== 'push-in') return '';
+  if (isNativeFrame(promptedFor) === isNativeFrame(target)) return '';
+  const tight = !isNativeFrame(target);
+  // Один и тот же текст для неизвестного формата в обеих половинах:
+  // `tight` истинно и когда формата нет вовсе, и «обрежут до undefined»
+  // модель прочитает буквально.
+  const name = target ?? 'the final crop';
+  return [
+    `CAMERA MOVEMENT (final format is ${name}, this supersedes any camera amplitude stated above):`,
+    tight
+      ? `keep the push-in SMALL — about 5% of the frame — because the clip will be centre-cropped to ${name}, and a wider push would cut the product off.`
+      : 'a gentle 10–15% push is right — the clip is rendered in its native frame and will not be cropped.',
+  ].join(' ');
+}

@@ -54,6 +54,7 @@ import {
 } from '../postprod/postprod.service';
 import { PostProdError } from '../../common/postprod';
 import { aspectRatioFamily, presetByKey } from '../../common/aspect-ratio';
+import { normalizeCameraMove } from '../../common/camera-move';
 import {
   ExportVariant,
   GeneratedVideo,
@@ -262,6 +263,21 @@ export class ExportService {
         child.sessionId,
         prompt.finalText,
         prompt.finalVoiceoverScript ?? prompt.voiceoverScript ?? null,
+        // Текст едет от родителя целиком, вместе с амплитудой наезда,
+        // посчитанной под РОДИТЕЛЬСКИЙ формат (В-1.9, этап 120). У
+        // дочерней сессии своего референса нет, и без этой передачи
+        // поправка на шаге генерации считалась бы от `undefined` —
+        // всегда «как для неродного формата». А ярус B — это ровно
+        // «формат выбрали после написания промпта».
+        prompt.cameraBriefFor ??
+          (session.originalVideo?.frame?.aspectRatio
+            ? {
+                aspectRatio: session.originalVideo.frame.aspectRatio,
+                move: normalizeCameraMove(
+                  session.brandManifestSnapshot?.cameraMove,
+                ),
+              }
+            : undefined),
       );
       await this.prompt.approvePrompt(child.sessionId);
       // Бросает на отказе (гейт формата/режима, блокировка, суточный лимит)

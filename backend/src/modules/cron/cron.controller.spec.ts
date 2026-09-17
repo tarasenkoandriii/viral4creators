@@ -2,7 +2,7 @@
  * Этап 69: бизнес-логика кронов переехала в `CronJobsService` (см.
  * `cron-jobs.service.spec.ts`) — этот файл проверяет только то, что
  * реально осталось в `CronController`: секрет закрывает КАЖДЫЙ из
- * четырнадцати маршрутов, а при верном секрете контроллер честно
+ * пятнадцати маршрутов, а при верном секрете контроллер честно
  * делегирует в `CronJobsService` и возвращает результат как есть.
  *
  * Оба маршрута про удаление файлов из Blob (`cleanup-sessions`,
@@ -75,6 +75,9 @@ function build() {
       outcomes: [],
     }),
     runCleanupSessions: jest.fn().mockResolvedValue({ deletedCount: 2 }),
+    runAiUsageRollup: jest
+      .fn()
+      .mockResolvedValue({ months: [], foldedRows: 0, deletedRows: 0 }),
     runSweepOrphans: jest.fn().mockResolvedValue({ deleted: 0, dryRun: false }),
     // Пятый аудит, Д-4.3: контроллер больше не зовёт `runX()` напрямую —
     // каждый маршрут оборачивает его в `runAndLog`. Мок здесь просто
@@ -118,7 +121,7 @@ function devStand(): void {
   process.env.NODE_ENV = 'test';
 }
 
-describe('CronController — секрет закрывает каждый из четырнадцати маршрутов', () => {
+describe('CronController — секрет закрывает каждый из пятнадцати маршрутов', () => {
   const cases: Array<
     [
       string,
@@ -174,6 +177,11 @@ describe('CronController — секрет закрывает каждый из �
       'cleanup-sessions',
       (c) => c.cleanupSessions('Bearer подделка'),
       'runCleanupSessions',
+    ],
+    [
+      'ai-usage-rollup',
+      (c) => c.aiUsageRollup('Bearer подделка'),
+      'runAiUsageRollup',
     ],
     [
       'sweep-orphans',
@@ -283,6 +291,7 @@ describe('CronController — каждый маршрут оборачивает 
     ],
     ['ui-snapshot-run', (c) => c.uiSnapshotRunCron(), 'ui-snapshot-run'],
     ['cleanup-sessions', (c) => c.cleanupSessions(), 'cleanup-sessions'],
+    ['ai-usage-rollup', (c) => c.aiUsageRollup(), 'ai-usage-rollup'],
   ];
 
   it.each(cases)(

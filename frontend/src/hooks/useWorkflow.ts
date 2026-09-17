@@ -30,6 +30,7 @@ import type { BrandManifestSnapshot, Session, VoiceMode } from '../types';
 import type { YoutubeSearchDefaults } from '../components/YoutubeSearch';
 import { aspectRatioFromSize, readVideoSize } from '../lib/aspect-ratio';
 import { captureFrames, previewRequests } from '../lib/frame-capture';
+import { revokeObjectUrl } from '../lib/object-url';
 import {
   applyLibraryEntry,
   errorMessage,
@@ -254,6 +255,18 @@ export function useWorkflow() {
    */
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  /**
+   * Предпросмотр фото товара отзывается и при замене файла, и при
+   * восстановлении сессии (там он подменяется обычной ссылкой на Blob
+   * storage), и при уходе с мастера (этап 119). Зависимость эффекта —
+   * сам адрес, поэтому уборка покрывает все три случая; до этого фото
+   * до 10 МБ висело в памяти вкладки до её закрытия.
+   */
+  useEffect(() => {
+    const url = state.productImagePreview;
+    return () => revokeObjectUrl(url);
+  }, [state.productImagePreview]);
 
   const stopVideoPolling = useCallback(() => {
     if (videoPollingInterval.current) {

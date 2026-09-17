@@ -53,6 +53,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { sessionData } from '../../common/session.service';
 import {
   AdminSessionGuard,
   AdminAuthenticatedRequest,
@@ -81,10 +82,7 @@ export class AdminGenerationRetryController {
   ) {}
 
   @Post(':id/retry')
-  async retry(
-    @Req() req: AdminAuthenticatedRequest,
-    @Param('id') id: string,
-  ) {
+  async retry(@Req() req: AdminAuthenticatedRequest, @Param('id') id: string) {
     await this.adminPanel.assertOperator(req.userId);
 
     // `findFirst` + `deletedAt: null`, не `findUnique({ where: { id } })`
@@ -101,7 +99,7 @@ export class AdminGenerationRetryController {
     if (!row) {
       throw new NotFoundException(`Session ${id} not found`);
     }
-    const data = (row.data as Record<string, unknown>) ?? {};
+    const data = sessionData(row);
     const generatedVideo = data.generatedVideo as
       | {
           quality?: VideoQuality;
@@ -172,10 +170,7 @@ export class AdminGenerationRetryController {
    * автоматической проверки (не «пользователь сам описал баг»).
    */
   @Post(':id/audit')
-  async audit(
-    @Req() req: AdminAuthenticatedRequest,
-    @Param('id') id: string,
-  ) {
+  async audit(@Req() req: AdminAuthenticatedRequest, @Param('id') id: string) {
     await this.adminPanel.assertOperator(req.userId);
     return this.videoAudit.run(id, {});
   }
@@ -218,7 +213,7 @@ export class AdminGenerationRetryController {
     if (!row) {
       throw new NotFoundException(`Session ${id} not found`);
     }
-    const data = (row.data as Record<string, unknown>) ?? {};
+    const data = sessionData(row);
     const videoAuditState = data.videoAudit as
       | { history?: Array<{ auditId: string; promptFix?: unknown }> }
       | undefined;
@@ -279,7 +274,7 @@ export class AdminGenerationRetryController {
     if (!row) {
       throw new NotFoundException(`Session ${id} not found`);
     }
-    const data = (row.data as Record<string, unknown>) ?? {};
+    const data = sessionData(row);
     const current = data.generatedVideo as GeneratedVideo | undefined;
     const history = (data.videoHistory as GeneratedVideo[] | undefined) ?? [];
     const audits =

@@ -63,6 +63,16 @@ export function ExportPanel({
 }) {
   const { dict } = useI18n();
   const feature = useFeature('customAspectRatio');
+  // Ярус B — второй платный рендер ТЕМ ЖЕ качеством, что у исходного
+  // ролика (Ж-1, этап 123). Если режим с тех пор понизили, полная
+  // модель этому человеку уже закрыта, и сервер ответит 403 — а экран
+  // об этом не предупреждал ничем. Понижать качество молча нельзя: это
+  // другой ролик, а не тот, который человек заказывает.
+  const fullQuality = useFeature('fullQualityVideo');
+  const rerenderLocked =
+    video.quality === 'standard' &&
+    !fullQuality.loading &&
+    !fullQuality.allowed;
   const [variants, setVariants] = useState<ExportVariant[]>(
     video.exportVariants ?? []
   );
@@ -151,6 +161,7 @@ export function ExportPanel({
   };
 
   const onRerender = async (format: string, preset: string) => {
+    if (rerenderLocked) return;
     setRerenderBusy(format);
     setError(null);
     try {
@@ -274,6 +285,7 @@ export function ExportPanel({
                     size="sm"
                     icon={<Repeat size={14} />}
                     loading={rerenderBusy === row.format}
+                    disabled={rerenderLocked}
                     onClick={() => void onRerender(row.format, row.key)}
                   >
                     {dict.exportPanel.rerenderCta}
@@ -285,6 +297,17 @@ export function ExportPanel({
           <p className="mt-2 text-xs text-silver-400">
             {dict.exportPanel.tierBNote}
           </p>
+          {rerenderLocked && (
+            <div className="mt-2">
+              <LockedNote
+                title={dict.generationWizard.qualityLockedTitle}
+                lock={fullQuality.lock}
+                compact
+              >
+                {dict.exportPanel.rerenderQualityLockedBody}
+              </LockedNote>
+            </div>
+          )}
         </div>
       )}
     </Card>

@@ -222,6 +222,20 @@ export function GenerationWizard() {
   // уровень озвучки, сервер это тоже проверяет (updateSnapshot).
   const dub = useFeature('voiceDub');
   const referenceAssets = useFeature('referenceAssets');
+  // Ж-1: замок полной модели Veo существовал только на сервере. Человек
+  // выбирал «Кинематографичное», жал «Сгенерировать» — и получал 403
+  // после всех предыдущих шагов. Обучалка на лендинге честно рисовала
+  // тут бейдж «Standard+», то есть лендинг был точнее самого продукта.
+  const fullQuality = useFeature('fullQualityVideo');
+  // Матрица режимов приходит отдельным запросом, и до её ответа замка на
+  // пилюле нет (мигнуть им у Premium хуже, чем показать секундой позже).
+  // Значит, есть окно, в котором «Кинематографичное» можно успеть
+  // выбрать — и упереться в 403 уже на «Сгенерировать». Возвращаем
+  // выбор в доступное значение, когда ответ приходит.
+  useEffect(() => {
+    if (fullQuality.loading || fullQuality.allowed) return;
+    setVideoQuality((q) => (q === 'standard' ? 'fast' : q));
+  }, [fullQuality.loading, fullQuality.allowed]);
 
   const effectiveAspectRatio = aspectRatio ?? referenceAspectRatio ?? '9:16';
 
@@ -654,7 +668,10 @@ export function GenerationWizard() {
                               {dict.brandSnapshotEditor.voiceModeOptions.dub}
                             </span>
                           ),
-                          disabled: !dub.allowed,
+                          // Тот же принцип, что у качества (Ж-1, этап
+                          // 123): пока матрица режимов не пришла, замок
+                          // не рисуем — мигнуть им у Premium хуже.
+                          disabled: !dub.loading && !dub.allowed,
                         },
                       ]}
                     />
@@ -710,10 +727,30 @@ export function GenerationWizard() {
                           {
                             value: 'standard',
                             label: dict.generationWizard.qualityStandardLabel,
-                            sub: dict.generationWizard.qualityStandardSub,
+                            // Пока матрица режимов не пришла, замок не
+                            // рисуем вовсе: мигнуть замком у Premium
+                            // хуже, чем показать его на секунду позже
+                            // (тот же принцип, что у `useFeature`).
+                            sub:
+                              fullQuality.loading || fullQuality.allowed
+                                ? dict.generationWizard.qualityStandardSub
+                                : fullQuality.lock,
+                            disabled:
+                              !fullQuality.loading && !fullQuality.allowed,
                           },
                         ]}
                       />
+                      {!fullQuality.loading && !fullQuality.allowed && (
+                        <div className="mt-2">
+                          <LockedNote
+                            title={dict.generationWizard.qualityLockedTitle}
+                            lock={fullQuality.lock}
+                            compact
+                          >
+                            {dict.generationWizard.qualityLockedBody}
+                          </LockedNote>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <>

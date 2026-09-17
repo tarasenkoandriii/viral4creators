@@ -132,10 +132,12 @@ describe('SessionService.findSessionsWithPendingPostProduction (этап 84)', (
 });
 
 /**
- * Подмена базы, которая ведёт себя как Postgres на `"data" || $patch`:
- * сливает верхние ключи, а не переписывает колонку. Модульная область
- * видимости — переиспользуется и ниже, в describe про событие воронки
- * (этап 78), не только в «круговороте полей».
+ * Подмена базы, которая ведёт себя как Postgres на `колонка || $patch`:
+ * сливает верхние ключи, а не переписывает колонку. С этапа 122 колонок
+ * ДВЕ (`data` и `liveData`, В-4.2), и мок ведёт обе — иначе тесты
+ * круговорота не заметили бы, что горячий ключ уехал не туда.
+ * Модульная область видимости — переиспользуется и ниже, в describe про
+ * событие воронки (этап 78), не только в «круговороте полей».
  */
 function buildRoundTrip() {
   const row = {
@@ -144,6 +146,7 @@ function buildRoundTrip() {
     lastActivityAt: new Date(),
     status: 'analysis_complete',
     data: {} as Record<string, unknown>,
+    liveData: {} as Record<string, unknown>,
     userId: null,
     projectId: null,
     productItemId: null,
@@ -158,16 +161,28 @@ function buildRoundTrip() {
     $queryRaw: jest
       .fn()
       .mockImplementation(async (_sql: string[], ...params: unknown[]) => {
-        // Параметры тегированного шаблона по порядку появления `${...}`
-        // в SQL: sessionId (CTE `old`), правка (дважды — для data и для
-        // generationStatus), статус (или null), sessionId (WHERE).
+        // Параметры по порядку появления в запросе (этап 122): sessionId
+        // (CTE), холодная половина правки, горячая половина, список
+        // горячих ключей, статус, sessionId. Каждый ровно один раз —
+        // ради этого патчи и вынесены в CTE `p`.
         const previousStatus = row.status;
-        const patch = JSON.parse(params[1] as string) as Record<
-          string,
-          unknown
-        >;
-        row.data = { ...row.data, ...patch };
-        if (params[3]) row.status = params[3] as string;
+        const cold = JSON.parse(params[1] as string) as Record<string, unknown>;
+        const live = JSON.parse(params[2] as string) as Record<string, unknown>;
+        const hot = params[3] as string[];
+        const legacy = hot.filter((k) => k in row.data);
+        if (legacy.length > 0) {
+          // Та же логика, что в SQL: копия из общей колонки сильнее
+          // (её писал старый код) и переезжает в горячую, а из общей
+          // исчезает.
+          for (const k of legacy) {
+            row.liveData[k] = row.data[k];
+            delete row.data[k];
+          }
+        }
+        row.data = { ...row.data, ...cold };
+        row.liveData = { ...row.liveData, ...live };
+        const status = params[4];
+        if (status) row.status = status as string;
         return [{ ...row, previousStatus }];
       }),
   };
@@ -252,18 +267,21 @@ describe('SessionService — круговорот полей сессии (Б-2.
     const { svc, prisma } = buildRoundTrip();
     await svc.updateSession('s1', { relevance: undefined });
     const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join('?');
-    expect(sql).toContain('"data" || ?::jsonb');
+    expect(sql).toContain('"data" || p.cold');
+    expect(sql).toContain('"liveData" || p.live');
     // Чтения перед записью нет: читать-и-писать — это и есть гонка.
     expect(prisma.session.findFirst).not.toHaveBeenCalled();
   });
 
   it('статус пишется только когда передан', async () => {
     const { svc, prisma } = buildRoundTrip();
-    // Параметры: sessionId (CTE), правка (дважды — data/generationStatus), статус.
+    // Аргументы вызова: [0] — куски SQL, дальше значения по порядку
+    // появления (этап 122): sessionId (CTE), холодная половина правки,
+    // горячая половина, список горячих ключей, статус, sessionId.
     await svc.updateSession('s1', { relevance: undefined });
-    expect(prisma.$queryRaw.mock.calls[0][4]).toBeNull();
+    expect(prisma.$queryRaw.mock.calls[0][5]).toBeNull();
     await svc.updateSession('s1', { status: 'error' as any });
-    expect(prisma.$queryRaw.mock.calls[1][4]).toBe('error');
+    expect(prisma.$queryRaw.mock.calls[1][5]).toBe('error');
   });
 
   it('статус рендера ведётся тем же UPDATE (этап 51, В-4.1)', async () => {
@@ -275,9 +293,48 @@ describe('SessionService — круговорот полей сессии (Б-2.
       generatedVideo: { status: 'failed' } as any,
     });
     const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    // Статус берётся из той колонки, где ролик лежит СЕЙЧАС: у сессии
+    // со старой раскладкой это ещё общая колонка (этап 122).
     expect(sql).toContain(
-      `"generationStatus" = ("data" || ?::jsonb) -> 'generatedVideo' ->> 'status'`,
+      `("data" || p.cold) -> 'generatedVideo' ->> 'status'`,
     );
+    expect(sql).toContain(
+      `("liveData" || p.live) -> 'generatedVideo' ->> 'status'`,
+    );
+  });
+
+  it('горячий ключ пишется в liveData, а холодный — в data (этап 122, В-4.2)', async () => {
+    // Смысл разделения: правка статуса рендера не должна переписывать
+    // восьмикилобайтную колонку с разбором и промптом. Замерено на
+    // PG 16: 1000 таких записей — 8,4 МБ WAL по-старому против 0,16 МБ.
+    const { svc, row } = buildRoundTrip();
+    await svc.updateSession('s1', {
+      generatedVideo: { status: 'processing' } as any,
+      videoAnalysis: { status: 'complete' } as any,
+    });
+    expect(row.liveData).toEqual({ generatedVideo: { status: 'processing' } });
+    expect(row.data).toEqual({ videoAnalysis: { status: 'complete' } });
+    // И читается это обратно как одна сессия — снаружи разделения нет.
+    const back = await svc.getSession('s1');
+    expect(back?.generatedVideo).toEqual({ status: 'processing' });
+    expect(back?.videoAnalysis).toEqual({ status: 'complete' });
+  });
+
+  it('колонка не переписывается, когда в ней нечего менять (этап 122)', async () => {
+    // Условие `CASE WHEN (колонка || правка) = колонка` — единственное,
+    // что отделяет запись статуса от переписывания всей `data` вместе с
+    // TOAST. Без него вызовы, меняющие только `status`, стоили бы
+    // столько же, сколько запись разбора.
+    const { svc, prisma } = buildRoundTrip();
+    await svc.updateSession('s1', { status: 'error' as any });
+    const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(sql).toContain(`WHEN ("data" || p.cold) = "data" THEN "data"`);
+    expect(sql).toContain(
+      `WHEN ("liveData" || p.live) = "liveData" THEN "liveData"`,
+    );
+    // Обе половины правки пустые — колонкам в этом вызове менять нечего.
+    expect(prisma.$queryRaw.mock.calls[0][2]).toBe('{}');
+    expect(prisma.$queryRaw.mock.calls[0][3]).toBe('{}');
   });
 
   it('несуществующая сессия — undefined, а не исключение', async () => {

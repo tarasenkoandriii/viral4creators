@@ -94,6 +94,88 @@ export const DATA_KEYS = [
 ] as const;
 
 /**
+ * Ключи, которые живут в отдельной колонке `liveData` (этап 122, В-4.2
+ * третьего аудита).
+ *
+ * Набор — не «что помельче», а «что пишется чаще всего И весит мало»:
+ * `generatedVideo` (статус рендера и постобработки) двигается на каждом
+ * шаге ролика, `relevance` — небольшой отчёт, переписываемый по кнопке.
+ *
+ * `videoAudit` в набор НЕ входит, хотя аудит его и назвал: его
+ * `history` не ограничена и хранит по два полных текста промпта на
+ * замечание — несколько килобайт у сессии, которую проверяли трижды.
+ * В горячей колонке он съел бы ровно ту экономию, ради которой колонка
+ * заводится: каждая запись статуса переписывала бы и его.
+ *
+ * `workLocks` тоже остаётся в `data` и в этом этапе не трогается:
+ * замок обязан иметь ОДИН источник истины в каждый момент, а во время
+ * выкатки (миграции применяются на сборке, старый код ещё обслуживает
+ * запросы) две колонки означали бы два независимых замка — то есть
+ * двойной платный вызов, ровно та гонка, которую замок и закрывает.
+ *
+ * Снаружи разницы нет: `toSession` сливает обе колонки в одну `Session`.
+ */
+export const LIVE_KEYS = ['generatedVideo', 'relevance'] as const;
+
+const LIVE_KEY_SET: ReadonlySet<string> = new Set(LIVE_KEYS);
+
+/** Ключ пишется в `liveData`, а не в `data`. */
+export function isLiveKey(key: string): boolean {
+  return LIVE_KEY_SET.has(key);
+}
+
+/**
+ * Обе колонки сессии как один объект (этап 122).
+ *
+ * Снаружи сессия одна: разделение на `data` и `liveData` — про то, что
+ * дешевле писать, а не про то, что откуда читать. Каждый, кто берёт
+ * строку `sessions` напрямую (админка, повтор рендера оператором,
+ * список прогонов товара), обязан звать это, иначе `generatedVideo`
+ * просто исчезнет с его экрана — молча, потому что `undefined` в этих
+ * местах выглядит как «ролика ещё нет».
+ */
+export function sessionData(row: {
+  data: unknown;
+  liveData: unknown;
+}): Record<string, unknown> {
+  return {
+    // Порядок именно такой: `data` СИЛЬНЕЕ. Пока в ней лежит старая
+    // копия горячего ключа (сессия, пережившая выкатку и ещё не
+    // переписанная новым кодом), она же и есть последнее значение —
+    // писал его старый код, который про `liveData` ничего не знал.
+    // При первой записи `updateSession` убирает копию из `data`, и с
+    // этого момента источник один — `liveData`.
+    ...((row.liveData as Record<string, unknown> | null) ?? {}),
+    ...((row.data as Record<string, unknown> | null) ?? {}),
+  };
+}
+
+/**
+ * Разложить правку сессии по двум колонкам (чистая часть, этап 122).
+ *
+ * Отдельной функцией — потому что ошибиться здесь можно молча: ключ,
+ * попавший не в ту колонку, будет прочитан (обе сливаются при чтении),
+ * но потеряет смысл разделения, а ключ, попавший в ОБЕ, однажды
+ * разойдётся сам с собой.
+ */
+export function splitSessionPatch(
+  updates: Record<string, unknown>,
+  keys: readonly string[] = DATA_KEYS,
+): { data: Record<string, unknown>; live: Record<string, unknown> } {
+  const data: Record<string, unknown> = {};
+  const live: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (!(key in updates)) continue;
+    // `undefined` означает «стереть» и пишется как `null`: иначе
+    // `JSON.stringify` выбросил бы ключ и стирание не состоялось.
+    const value = updates[key] ?? null;
+    if (isLiveKey(key)) live[key] = value;
+    else data[key] = value;
+  }
+  return { data, live };
+}
+
+/**
  * Работы, которые занимаются замком на время платного вызова (этап 47).
  * Список закрытый: имя попадает в путь `jsonb_set`, и произвольной
  * строке там делать нечего.
@@ -300,10 +382,9 @@ export class SessionService {
     // Семантика прежняя: правка — это верхние ключи целиком; `undefined`
     // в правке означает «стереть» и пишется как `null`, потому что
     // `JSON.stringify` иначе выбросил бы ключ и стирание не состоялось.
-    const patch: Record<string, unknown> = {};
-    for (const key of DATA_KEYS) {
-      if (key in updates) patch[key] = updates[key] ?? null;
-    }
+    // Этап 122 (В-4.2): правка раскладывается по двум колонкам —
+    // горячие мелкие ключи в `liveData`, всё остальное в `data`.
+    const patch = splitSessionPatch(updates as Record<string, unknown>);
     const status = updates.status ?? null;
 
     // `generationStatus` (этап 51, В-4.1) ведётся тем же UPDATE, что пишет
@@ -319,17 +400,66 @@ export class SessionService {
     // вызовов `updateSession` статус не трогают вовсе (`status` в правке
     // отсутствует → `COALESCE` оставляет старое значение → `previousStatus
     // === status` → событие не пишется).
-    const json = JSON.stringify(patch);
+    const coldJson = JSON.stringify(patch.data);
+    const liveJson = JSON.stringify(patch.live);
+    // Список горячих ключей уезжает в запрос параметром, а не склейкой
+    // строк: он закрытый, но параметр дешевле правила «не забудь
+    // экранировать», которое однажды забудут.
+    const liveKeysArray = [...LIVE_KEYS];
+
+    // `CASE WHEN (колонка || правка) = колонка` — не микрооптимизация, а
+    // единственный способ НЕ переписывать восьмикилобайтную `data` там,
+    // где менять в ней нечего (этап 122). Postgres в этой ветке
+    // подставляет исходный датум колонки, то есть указатель на уже
+    // лежащий в TOAST объект: новой копии и новой записи в WAL не
+    // возникает. Замерено на PG 16, 1000 записей подряд: правка без
+    // изменений по-старому — 9,3 МБ WAL, так — 0,13 МБ.
+    //
+    // Пустая правка (`{}` — вызовы, меняющие только `status`) попадает
+    // в ту же ветку по построению: слияние с пустым объектом равно
+    // исходному значению. Отдельного условия для неё не нужно.
     const rows = await this.prisma.$queryRaw<
       Array<SessionRow & { previousStatus: string }>
     >`
-      WITH old AS (SELECT status FROM sessions WHERE id = ${sessionId})
+      WITH old AS (SELECT status FROM sessions WHERE id = ${sessionId}),
+           p AS (
+             SELECT ${coldJson}::jsonb AS cold,
+                    ${liveJson}::jsonb AS live,
+                    ${liveKeysArray}::text[] AS hot
+           )
       UPDATE "sessions"
-      SET "data" = "data" || ${json}::jsonb,
-          "generationStatus" = ("data" || ${json}::jsonb) -> 'generatedVideo' ->> 'status',
+      SET "data" = CASE
+            -- Сессия, пережившая выкатку со старой раскладкой: копию
+            -- горячего ключа убираем ровно один раз, при первой же
+            -- записи. Дальше ветка никогда не выполняется.
+            WHEN "data" ?| p.hot THEN ("data" - p.hot) || p.cold
+            WHEN ("data" || p.cold) = "data" THEN "data"
+            ELSE "data" || p.cold
+          END,
+          "liveData" = CASE
+            -- Старая копия, если она есть, СИЛЬНЕЕ: её писал старый код,
+            -- который про вторую колонку не знал, значит она и есть
+            -- последнее значение. Сначала подкладываем её, потом правку.
+            WHEN "data" ?| p.hot
+              THEN "liveData"
+                   || (SELECT COALESCE(jsonb_object_agg(k, v), '{}'::jsonb)
+                         FROM jsonb_each("data") AS e(k, v)
+                        WHERE k = ANY(p.hot))
+                   || p.live
+            WHEN ("liveData" || p.live) = "liveData" THEN "liveData"
+            ELSE "liveData" || p.live
+          END,
+          -- Статус рендера — из того места, где ролик лежит СЕЙЧАС: у
+          -- сессии со старой раскладкой это ещё общая колонка.
+          -- Ошибиться здесь дороже всего: по этому полю суточная уборка
+          -- решает, удалять ли готовый оплаченный ролик.
+          "generationStatus" = COALESCE(
+            ("data" || p.cold) -> 'generatedVideo' ->> 'status',
+            ("liveData" || p.live) -> 'generatedVideo' ->> 'status'
+          ),
           "status" = COALESCE(${status}, "sessions"."status"),
           "lastActivityAt" = NOW()
-      FROM old
+      FROM old, p
       WHERE "sessions"."id" = ${sessionId}
       RETURNING "sessions".*, old.status AS "previousStatus"
     `;
@@ -442,18 +572,27 @@ export class SessionService {
     // `jsonb_set(..., true)` создаёт ключ, если его ещё нет. Условие
     // `IS NULL` ловит и «ключа нет», и «ключ есть со значением null» —
     // оба означают «постобработку никто не брал».
+    //
+    // Пишем туда, где `generatedVideo` лежит СЕЙЧАС (этап 122): у
+    // сессии, пережившей выкатку и ещё не переписанной, это `data`.
+    // Записать «занято» в другую колонку значило бы не занять ничего —
+    // а это единственный механизм, который не даёт оплатить
+    // постобработку дважды.
     const affected = await this.prisma.$executeRaw`
       UPDATE "sessions"
-      SET "data" = jsonb_set(
-            "data",
-            '{generatedVideo,postStatus}',
-            '"pending"'::jsonb,
-            true
-          ),
+      SET "data" = CASE
+            WHEN "data" ? 'generatedVideo'
+              THEN jsonb_set("data", '{generatedVideo,postStatus}', '"pending"'::jsonb, true)
+            ELSE "data"
+          END,
+          "liveData" = CASE
+            WHEN "data" ? 'generatedVideo' THEN "liveData"
+            ELSE jsonb_set("liveData", '{generatedVideo,postStatus}', '"pending"'::jsonb, true)
+          END,
           "lastActivityAt" = NOW()
       WHERE "id" = ${sessionId}
-        AND "data" -> 'generatedVideo' IS NOT NULL
-        AND "data" -> 'generatedVideo' ->> 'postStatus' IS NULL
+        AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') IS NOT NULL
+        AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') ->> 'postStatus' IS NULL
     `;
     return affected > 0;
   }
@@ -480,7 +619,7 @@ export class SessionService {
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       SELECT "id" FROM "sessions"
       WHERE "generationStatus" = 'complete'
-        AND "data" -> 'generatedVideo' -> 'exportVariants'
+        AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') -> 'exportVariants'
             @> '[{"tier":"B","status":"pending"}]'::jsonb
       ORDER BY "lastActivityAt" ASC
       LIMIT ${limit}
@@ -502,7 +641,7 @@ export class SessionService {
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       SELECT "id" FROM "sessions"
       WHERE "generationStatus" = 'processing'
-        AND "data" -> 'generatedVideo' ->> 'xaiBatchId' IS NOT NULL
+        AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') ->> 'xaiBatchId' IS NOT NULL
       ORDER BY "lastActivityAt" ASC
       LIMIT ${limit}
     `;
@@ -531,7 +670,7 @@ export class SessionService {
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       SELECT "id" FROM "sessions"
       WHERE "generationStatus" = 'complete'
-        AND "data" -> 'generatedVideo' ->> 'postStatus' = 'pending'
+        AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') ->> 'postStatus' = 'pending'
       ORDER BY "lastActivityAt" ASC
       LIMIT ${limit}
     `;
@@ -713,7 +852,9 @@ export class SessionService {
 
   /** Postgres row -> the Session shape the rest of the app expects. */
   private toSession(row: SessionRow): Session {
-    const data = (row.data as Record<string, unknown>) ?? {};
+    // Две колонки, одна сессия (этап 122): горячие ключи лежат в
+    // `liveData`, остальное — в `data`; читателю разница не видна.
+    const data = sessionData(row);
 
     return {
       sessionId: row.id,

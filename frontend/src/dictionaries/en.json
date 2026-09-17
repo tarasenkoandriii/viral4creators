@@ -429,7 +429,22 @@
     "videoCopyHint": "Item data{{extra}} will be copied into a new generation run; next — reference video, analysis, prompt.",
     "andBrandManifestSuffix": " and the brand manifest",
     "videoButtonLine": "Video: {{item}}",
-    "videoButtonSingle": "Go to video generation"
+    "videoButtonSingle": "Go to video generation",
+    "resumeTitle": "This item has an unfinished run",
+    "resumeConfirm": "Go back to the run",
+    "resumeNew": "Start a new one anyway",
+    "runsHeading": "Generation runs",
+    "runsHint": "Every run of this item — including the unfinished ones, which no other list shows.",
+    "runOpen": "Open the video",
+    "runResume": "Go back",
+    "runStateDone": "video ready",
+    "runStateRunning": "in progress",
+    "runStateStalled": "unfinished",
+    "runStateFailed": "failed",
+    "resumeBodyStalled": "The run from {{date}} never reached a video. You can go back to it — or start a new one: that means a new generation and new money, and the old run is left unattended and gone within a day.",
+    "resumeBodyRunning": "The run from {{date}} is working right now — the video is still being made. Go back to it so the started work is not lost; a new run means a second generation and a second charge.",
+    "runsLoadError": "Could not show the runs",
+    "runsRetry": "Retry"
   },
   "itemScreen": {
     "steps": {
@@ -850,7 +865,7 @@
     "tagsPlaceholder": "ugc, review, unboxing",
     "cancel": "Cancel",
     "submitToModeration": "Send to moderation",
-    "noRequestsYet": "No requests for this video yet.",
+    "noRequestsYet": "No requests in this session yet.",
     "titleRequired": "Enter a title",
     "withdrawConfirm": "Withdraw the request to {{platform}}?",
     "statusPending": "in moderation",
@@ -863,7 +878,10 @@
     "approvedNote": "Approved — the upload happens automatically, usually within a few minutes.",
     "noChannelNote": "No channel connected yet — the request stays approved until you connect one.",
     "openPublication": "Open publication",
-    "withdraw": "Withdraw"
+    "withdraw": "Withdraw",
+    "olderVersionBadge": "request for an earlier version of the video",
+    "olderVersionQueued": "The {{platform}} queue is taken by a request for an earlier version of this video. Withdraw it to submit the current one.",
+    "olderVersionApproved": "A request for an earlier version of this video is already approved and about to go out to {{platform}}. Once it is published the queue frees up."
   },
   "channelsScreen": {
     "title": "Channels",
@@ -1107,7 +1125,9 @@
     "postprodCtaButton": "Open in Postprod",
     "whatsNextTitle": "What's next?",
     "downloadCta": "Download",
-    "anotherVideoCta": "Another video"
+    "anotherVideoCta": "Another video",
+    "qualityLockedTitle": "The full Veo model is on higher plans",
+    "qualityLockedBody": "Your current mode renders in fast quality. The full model costs 2.7× more, which is why it opens up from Standard."
   },
   "catalogBatch": {
     "panelTitle": "Apply to the whole line",
@@ -1172,7 +1192,8 @@
       "instagram-reels": "Instagram — Reels",
       "square": "Square (social)",
       "classic": "Classic screen"
-    }
+    },
+    "rerenderQualityLockedBody": "This video was rendered with the full Veo model, which your current mode does not include — a second render in another format is not available right now. Quietly dropping the quality would hand you a different video."
   },
   "revoicePanel": {
     "panelTitle": "Re-voice the video",

@@ -21,6 +21,7 @@
  */
 
 import { SupportedLocale } from './locale';
+import { normaliseAspectRatio, veoFrameFor } from './aspect-ratio';
 
 export type PlanId = 'LITE' | 'STANDARD' | 'PREMIUM';
 
@@ -260,6 +261,65 @@ export function minimalPlanFor(feature: PlanFeature): PlanId {
 export function allowsAspectRatio(plan: PlanId, ratio: string): boolean {
   const allowed = PLANS[plan].aspectRatios;
   return allowed.length === 0 || allowed.includes(ratio);
+}
+
+/**
+ * Какой формат кадра на самом деле будет отрендерен — с учётом режима
+ * (Б-2.4 второго аудита, этап 120).
+ *
+ * Тут две разные ситуации, и разводить их обязательно:
+ *
+ * - формат ВЫБРАН явно. Это осознанное действие, и если режим его не
+ *   позволяет, честный ответ — отказ (его и бросает вызывающий по
+ *   `denied`). Так это работало и раньше.
+ * - формат НЕ выбран и берётся из референса. Человек ничего не просил,
+ *   он просто загрузил своё видео — отказывать ему не за что. Но и
+ *   рендерить в закрытом для его режима формате нельзя: до этого этапа
+ *   Lite, загрузивший референс 1080×1350, получал ролик 4:5 и
+ *   оплаченную обрезку ffmpeg, то есть замок держался только тем, что
+ *   интерфейс туда не пускает. Теперь такой формат приводится к
+ *   ближайшему нативному (`veoFrameFor`) — он доступен в любом режиме.
+ *
+ * Возвращает и признак приведения: вызывающему есть что записать в лог
+ * и в сессию, а пользователю — что показать.
+ */
+export function resolveTargetAspectRatio(
+  plan: PlanId,
+  requested: string | null | undefined,
+  detected: string | null | undefined,
+): { target: string; denied: string | null; clamped: boolean } {
+  const explicit = normaliseAspectRatio(requested);
+  if (explicit) {
+    return allowsAspectRatio(plan, explicit)
+      ? { target: explicit, denied: null, clamped: false }
+      : // `target` — уже приведённый, а не запрошенный: вызывающий
+        // обязан смотреть на `denied` и отказывать, но если однажды
+        // забудет, отрендерится разрешённый формат, а не закрытый.
+        {
+          target: clampToAllowed(plan, explicit),
+          denied: explicit,
+          clamped: true,
+        };
+  }
+  const wanted = normaliseAspectRatio(detected) ?? '9:16';
+  if (allowsAspectRatio(plan, wanted)) {
+    return { target: wanted, denied: null, clamped: false };
+  }
+  return { target: clampToAllowed(plan, wanted), denied: null, clamped: true };
+}
+
+/**
+ * Ближайший РАЗРЕШЁННЫЙ формат. Обычно это нативный кадр Veo — он есть
+ * в списке любого режима, — но список режима это данные, а не
+ * константа: режим «только вертикаль» (`['9:16']`) вполне возможен, и
+ * тогда ландшафтный референс приводить к `16:9` нельзя. Проверяем, а не
+ * предполагаем: тихо отрендерить формат, закрытый режимом, — ровно тот
+ * дефект (Б-2.4), который этот код и закрывает.
+ */
+function clampToAllowed(plan: PlanId, wanted: string): string {
+  const native = veoFrameFor(wanted);
+  if (allowsAspectRatio(plan, native)) return native;
+  return PLANS[plan].aspectRatios[0] ?? native;
 }
 
 /** Человеческий текст отказа — его увидит пользователь, поэтому без жаргона. */

@@ -160,7 +160,12 @@ export default function CostsPage() {
         <div className="stat-tile">
           <div className="muted">В среднем на сессию</div>
           <div className="value">{usd(report.avgPerSessionMicroUsd)}</div>
-          <div className="muted">{report.sessionsWithCost} сессий</div>
+          {/* Единственная плитка не «за всё время»: идентификатор сессии
+              в свёртку журнала не входит (этап 118), поэтому и деньги, и
+              число сессий здесь — по несвёрнутым месяцам. */}
+          <div className="muted">
+            {report.sessionsWithCost} сессий за последние месяцы
+          </div>
         </div>
         <div className="stat-tile">
           <div className="muted">Анонимные сессии</div>
