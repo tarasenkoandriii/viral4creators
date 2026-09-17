@@ -162,6 +162,7 @@ export class ProjectSessionService {
         createdAt: true,
         lastActivityAt: true,
         data: true,
+        liveData: true,
       },
     });
     return rows.map(toSummary);

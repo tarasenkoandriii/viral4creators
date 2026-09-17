@@ -125,7 +125,11 @@ describe('чтение обеих колонок как одной сессии'
   });
 
   it('пустые и отсутствующие колонки не роняют чтение', () => {
-    expect(sessionData({})).toEqual({});
+    // Строка из старой выборки без обеих колонок — типом не пропускается,
+    // но в рантайме такое встречалось; чтение не должно падать.
+    expect(
+      sessionData({} as Parameters<typeof sessionData>[0]),
+    ).toEqual({});
     expect(sessionData({ data: null, liveData: null })).toEqual({});
   });
 });

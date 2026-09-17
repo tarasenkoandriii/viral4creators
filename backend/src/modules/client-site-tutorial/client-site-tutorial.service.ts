@@ -30,6 +30,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanService } from '../plan/plan.service';
 import {
@@ -942,7 +943,9 @@ export class ClientSiteTutorialService {
    * гонка отдавала generic 500 от Prisma вместо заготовленного 409 —
    * найдено аудитом этапа 116.
    */
-  private async createDraft(data: Record<string, unknown>): Promise<DraftRow> {
+  private async createDraft(
+    data: Prisma.ClientSiteTutorialDraftUncheckedCreateInput,
+  ): Promise<DraftRow> {
     try {
       return (await this.prisma.clientSiteTutorialDraft.create({
         data,
