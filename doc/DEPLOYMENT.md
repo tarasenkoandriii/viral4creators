@@ -67,7 +67,12 @@ Telegram-логин, который их и породил.
      статичное превью персонажа из текста (двойной клик по описанию в
      `CharacterCasting.tsx`, `common/gemini-image-model.ts`) — генерация
      картинки, а не текста, не взаимозаменяема с `GEMINI_MODEL`. По
-     умолчанию `gemini-2.5-flash-image`.
+     умолчанию `gemini-3.1-flash-image` (с 17.09.2026: прежняя
+     `gemini-2.5-flash-image` отключается 02.10.2026 — см. фазу −1
+     `doc/AI-SKETCH-SPEC.md`). Лимиты превью на пользователя —
+     `AI_SKETCH_DAY_LITE/STANDARD/PREMIUM` (по умолчанию 3/15/50 в сутки)
+     и `AI_SKETCH_MONTH_LITE/STANDARD/PREMIUM` (20/150/600 в месяц),
+     `common/image-generation-quota.ts`.
    - `LAOZHANG_API_KEY`, `LAOZHANG_API_BASE_URL` — прокси к OpenAI для
      сборки промпта. Альтернатива без прокси: `OPENAI_API_KEY` и
      `OPENAI_API_BASE_URL` (код берёт первое заданное). `OPENAI_GPT_MODEL`

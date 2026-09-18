@@ -1030,7 +1030,8 @@
       "main": "главный",
       "secondary": "второй план",
       "background": "фон"
-    }
+    },
+    "previewQuota": "Превью сегодня: осталось {{left}} из {{limit}}"
   },
   "generationWizard": {
     "steps": [

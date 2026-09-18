@@ -461,9 +461,7 @@ function ReplacementForm({
   // постоянным персонажем бренда — не повторять её вручную в каждой
   // новой сессии того же бренда.
   const [savingToBrand, setSavingToBrand] = useState(false);
-  const [savedToBrandNote, setSavedToBrandNote] = useState<string | null>(
-    null,
-  );
+  const [savedToBrandNote, setSavedToBrandNote] = useState<string | null>(null);
 
   const saveToBrand = async () => {
     if (!brandManifestId) return;
@@ -489,24 +487,28 @@ function ReplacementForm({
   // автоматически — только показать пользователю, как модель может
   // понять словесное описание.
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewPathname, setPreviewPathname] = useState<string | null>(
-    null,
-  );
+  const [previewPathname, setPreviewPathname] = useState<string | null>(null);
   const [generatingPreview, setGeneratingPreview] = useState(false);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
+  const [previewQuota, setPreviewQuota] = useState<string | null>(null);
   const [usingAsPhoto, setUsingAsPhoto] = useState(false);
 
   const generatePreview = async () => {
-    if (!text.trim() || generatingPreview) return;
+    // Превью существует ради «использовать как фото» — это замена
+    // персонажа, режим Standard+ (§6.8 doc/AI-SKETCH-SPEC.md). На младшем
+    // режиме двойной клик ничего не тратит и не шлёт запрос.
+    if (!text.trim() || generatingPreview || !photoFeature.allowed) return;
     setGeneratingPreview(true);
     setPreviewNote(null);
     setPreviewUrl(null);
     setPreviewPathname(null);
     try {
-      const { url, pathname } = await generateCharacterPreview(
-        sessionId,
-        character.id,
-        text.trim(),
+      const { url, pathname, dayUsed, dayLimit } =
+        await generateCharacterPreview(sessionId, character.id, text.trim());
+      setPreviewQuota(
+        dict.characterCasting.previewQuota
+          .replace('{{left}}', String(Math.max(0, dayLimit - dayUsed)))
+          .replace('{{limit}}', String(dayLimit))
       );
       if (url && pathname) {
         setPreviewUrl(url);
@@ -536,7 +538,7 @@ function ReplacementForm({
         sessionId,
         character.id,
         previewPathname,
-        text.trim() || null,
+        text.trim() || null
       );
       onUploaded(c);
       setPreviewUrl(null);
@@ -721,6 +723,9 @@ function ReplacementForm({
           )}
           {previewNote && (
             <p className="text-xs text-silver-400">{previewNote}</p>
+          )}
+          {previewQuota && (
+            <p className="text-xs text-silver-500">{previewQuota}</p>
           )}
           <Button
             size="sm"

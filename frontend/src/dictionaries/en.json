@@ -1022,7 +1022,8 @@
       "main": "main",
       "secondary": "secondary",
       "background": "background"
-    }
+    },
+    "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
     "steps": [

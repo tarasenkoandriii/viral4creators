@@ -18,6 +18,7 @@
 
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -221,6 +222,11 @@ export class CastingService {
     dto: CastPhotoConfirmRequestDto,
   ): Promise<CharacterCasting> {
     const session = await this.load(sessionId);
+    // §6.8 doc/AI-SKETCH-SPEC.md: тариф проверял только шаг upload-url,
+    // а «использовать превью как фото» шёл сразу сюда — в обход него.
+    // Проверка здесь закрывает оба пути сразу; для обычной загрузки
+    // ничего не меняется (upload-url уже требовал тот же признак).
+    await this.plans.assertUser(session.userId ?? null, 'characterReplacement');
     this.assertKnown(session, characterId);
     const expectedPrefix = `sessions/${sessionId}/characters/${characterId}/`;
     if (!dto.pathname.startsWith(expectedPrefix)) {
@@ -271,6 +277,42 @@ export class CastingService {
     };
     await this.sessions.updateSession(sessionId, { characterCasting: casting });
     return casting;
+  }
+
+  /**
+   * Всё, что нужно проверить ДО платного превью персонажа (§6.8
+   * doc/AI-SKETCH-SPEC.md): персонаж есть в разборе, тариф даёт замену
+   * персонажа (превью существует ради «использовать как фото»),
+   * пользователь не заблокирован и не выбрал суточный бюджет. Квоту на
+   * число картинок проверяет сам `CharacterPreviewService`. Возвращает
+   * владельца — без него квоту не посчитать, поэтому гость получает 403.
+   */
+  async assertPreviewAllowed(
+    sessionId: string,
+    characterId: string,
+  ): Promise<string> {
+    const session = await this.load(sessionId);
+    this.assertKnown(session, characterId);
+    const userId = session.userId ?? null;
+    await this.plans.assertUser(userId, 'characterReplacement');
+    if (!userId) {
+      throw new ForbiddenException(
+        'Превью персонажа доступно после входа через Telegram',
+      );
+    }
+    await this.plans.assertCanSpendUser(userId);
+    return userId;
+  }
+
+  /** Для «использовать превью как фото»: персонаж и тариф — без проверки
+   * бюджета (превью уже оплачено, копирование бесплатно). */
+  async assertCanReplaceCharacter(
+    sessionId: string,
+    characterId: string,
+  ): Promise<void> {
+    const session = await this.load(sessionId);
+    this.assertKnown(session, characterId);
+    await this.plans.assertUser(session.userId ?? null, 'characterReplacement');
   }
 
   private async load(sessionId: string): Promise<Session> {

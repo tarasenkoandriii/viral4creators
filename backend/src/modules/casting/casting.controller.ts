@@ -19,7 +19,10 @@ import {
   Put,
 } from '@nestjs/common';
 import { CastingService } from './casting.service';
-import { CharacterPreviewService } from './character-preview.service';
+import {
+  CharacterPreviewResult,
+  CharacterPreviewService,
+} from './character-preview.service';
 import { CharacterCasting } from '../../common/types/casting.types';
 import {
   CastPhotoConfirmRequestDto,
@@ -73,15 +76,22 @@ export class CastingController {
    * фото. Best-effort — `null`, если Gemini не смог, не 500.
    */
   @Post(':characterId/preview')
-  generatePreview(
+  async generatePreview(
     @Param('sessionId') sessionId: string,
     @Param('characterId') characterId: string,
     @Body() dto: CharacterPreviewRequestDto,
-  ): Promise<{ url: string | null; pathname: string | null }> {
+  ): Promise<CharacterPreviewResult> {
+    // §6.8 doc/AI-SKETCH-SPEC.md: тариф, бюджет и владелец — до вызова
+    // модели; квота на число картинок — внутри `generateFromText`.
+    const userId = await this.service.assertPreviewAllowed(
+      sessionId,
+      characterId,
+    );
     return this.preview.generateFromText(
       sessionId,
       characterId,
       dto.description,
+      userId,
     );
   }
 
@@ -99,6 +109,9 @@ export class CastingController {
     @Param('characterId') characterId: string,
     @Body() dto: UsePreviewAsPhotoRequestDto,
   ): Promise<CharacterCasting> {
+    // Тариф и персонаж — до копирования: иначе в хранилище оставался бы
+    // файл фото, которое `confirmPhoto` затем отклонит.
+    await this.service.assertCanReplaceCharacter(sessionId, characterId);
     const photoPathname = await this.preview.copyPreviewToPhotoPath(
       sessionId,
       characterId,

@@ -515,13 +515,24 @@ export async function addCharacterFromSessionCast(
  * `usePreviewAsPhoto()` ниже, если пользователь решит продвинуть
  * превью до настоящего фото.
  */
+/** Ответ превью: картинка (или `null`) и остаток квоты (§6.8
+ * doc/AI-SKETCH-SPEC.md). Лимит исчерпан — сервер отвечает 429 с текстом. */
+export interface CharacterPreviewResponse {
+  url: string | null;
+  pathname: string | null;
+  dayUsed: number;
+  dayLimit: number;
+  monthUsed: number;
+  monthLimit: number;
+}
+
 export async function generateCharacterPreview(
   sessionId: string,
   characterId: string,
   description: string
-): Promise<{ url: string | null; pathname: string | null }> {
+): Promise<CharacterPreviewResponse> {
   return unwrap(
-    await api.post<{ url: string | null; pathname: string | null }>(
+    await api.post<CharacterPreviewResponse>(
       `/sessions/${sessionId}/characters/${characterId}/preview`,
       { description }
     ),

@@ -1022,7 +1022,8 @@
       "main": "Hauptfigur",
       "secondary": "Nebenfigur",
       "background": "Hintergrund"
-    }
+    },
+    "previewQuota": "Vorschauen heute: noch {{left}} von {{limit}}"
   },
   "generationWizard": {
     "steps": [

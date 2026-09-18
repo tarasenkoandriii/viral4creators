@@ -5,7 +5,7 @@
  * источниках (landing/frontend dictionaries, common/plans.ts и соседние).
  */
 
-export const ASSISTANT_KNOWLEDGE_BUILT_AT = '2026-09-17T04:47:12.514Z';
+export const ASSISTANT_KNOWLEDGE_BUILT_AT = '2026-09-17T16:50:48.444Z';
 export const ASSISTANT_KNOWLEDGE_COMMIT = 'local';
 
 export interface ProactiveTips {

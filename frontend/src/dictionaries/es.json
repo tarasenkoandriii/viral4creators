@@ -1022,7 +1022,8 @@
       "main": "principal",
       "secondary": "secundario",
       "background": "fondo"
-    }
+    },
+    "previewQuota": "Vistas previas hoy: quedan {{left}} de {{limit}}"
   },
   "generationWizard": {
     "steps": [

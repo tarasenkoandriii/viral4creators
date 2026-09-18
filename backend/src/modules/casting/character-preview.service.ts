@@ -16,12 +16,72 @@
  * реальный Gemini API) — API-вызов сверен с официальной документацией
  * (`common/gemini-image-model.ts`), но не проверен вживую.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { createGeminiClient } from '../../common/gemini-client';
 import { GEMINI_IMAGE_MODEL } from '../../common/gemini-image-model';
 import { GoogleGenAI } from '@google/genai';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { BlobService } from '../storage/blob.service';
+import { PlanService } from '../plan/plan.service';
+import {
+  exhaustedQuota,
+  imageQuotaFor,
+  startOfMonthUtc,
+} from '../../common/image-generation-quota';
+
+/** Ответ `POST …/preview`: картинка (или `null` при сбое модели) и
+ * остаток квоты — чтобы экран показал «осталось N», не делая второй
+ * запрос. */
+export interface CharacterPreviewResult {
+  url: string | null;
+  pathname: string | null;
+  dayUsed: number;
+  dayLimit: number;
+  monthUsed: number;
+  monthLimit: number;
+}
+
+/** Путь превью — единственное, что `use-as-photo` согласен копировать
+ * (§6.8 doc/AI-SKETCH-SPEC.md): раньше клиентский `previewPathname`
+ * не сверялся ни с чем, и в слот фото можно было скопировать любой
+ * Blob хранилища, включая чужие файлы. */
+export function previewPathnameFor(
+  sessionId: string,
+  characterId: string,
+  ext: 'png' | 'jpg',
+): string {
+  return `sessions/${sessionId}/character-preview-${characterId}.${ext}`;
+}
+
+/** Описание пользователя для промпта: без управляющих символов и
+ * двойных кавычек (они закрыли бы цитату), не длиннее 2000 символов. */
+export function sanitizeDescription(description: string): string {
+  return (
+    description
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+      .replace(/"/g, "'")
+      .trim()
+      .slice(0, 2000)
+  );
+}
+
+export function isOwnPreviewPathname(
+  pathname: string,
+  sessionId: string,
+  characterId: string,
+): boolean {
+  return (
+    pathname === previewPathnameFor(sessionId, characterId, 'png') ||
+    pathname === previewPathnameFor(sessionId, characterId, 'jpg')
+  );
+}
 
 @Injectable()
 export class CharacterPreviewService {
@@ -31,6 +91,7 @@ export class CharacterPreviewService {
   constructor(
     private readonly aiUsage: AiUsageService,
     private readonly blob: BlobService,
+    private readonly plans: PlanService,
   ) {
     this.genai = createGeminiClient();
   }
@@ -48,13 +109,54 @@ export class CharacterPreviewService {
     sessionId: string,
     characterId: string,
     description: string,
-  ): Promise<{ url: string | null; pathname: string | null }> {
+    userId: string,
+  ): Promise<CharacterPreviewResult> {
+    // §6.8 doc/AI-SKETCH-SPEC.md: у маршрута не было ни лимита, ни
+    // `userId` в учёте расхода — квоту считать было не по чему. Тариф и
+    // бюджет проверяет вызывающий (`CastingService.assertPreviewAllowed`),
+    // здесь — квота на число картинок.
+    const quota = imageQuotaFor(await this.plans.planOfUser(userId));
+    const now = new Date();
+    const [dayUsed, monthUsed] = await Promise.all([
+      this.aiUsage.countToday(userId, 'character-preview', now),
+      this.aiUsage.countSince(
+        userId,
+        'character-preview',
+        startOfMonthUtc(now),
+      ),
+    ]);
+    const exhausted = exhaustedQuota({ dayUsed, monthUsed }, quota);
+    if (exhausted) {
+      throw new HttpException(
+        exhausted === 'day'
+          ? `Лимит превью на сегодня исчерпан (${quota.day} в сутки). Обновится в 00:00 UTC (03:00 по Киеву).`
+          : `Лимит превью в этом месяце исчерпан (${quota.month}). Больше — на старшем тарифе.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    const counters = {
+      dayLimit: quota.day,
+      monthLimit: quota.month,
+    };
+    // Сбой без ответа модели расход не пишет — и квоту не тратит (§8.2 ТЗ).
+    const failed = (): CharacterPreviewResult => ({
+      url: null,
+      pathname: null,
+      dayUsed,
+      monthUsed,
+      ...counters,
+    });
+    let recorded = false;
+
     try {
       const response = await this.genai.models.generateContent({
         model: GEMINI_IMAGE_MODEL,
         contents: [
           {
-            text: `Create a single clear, photorealistic photo of a person matching this description, for a UGC video ad casting reference: ${description}. Plain neutral background, well-lit, medium shot from the waist up, facing the camera, natural expression. No text, no watermark, no logo.`,
+            // Описание — данные, а не инструкция: в кавычках и без
+            // управляющих символов (§5.2 doc/AI-SKETCH-SPEC.md). Запреты
+            // на несовершеннолетних и реальных людей — §5.4 того же ТЗ.
+            text: `Create a single clear, photorealistic photo of a fictional adult person for a UGC video ad casting reference. The person is described (in quotes) as: "${sanitizeDescription(description)}". Plain neutral background, well-lit, medium shot from the waist up, facing the camera, natural expression. No text, no watermark, no logo. Do not depict minors. No nudity or sexual content. Do not depict any real, identifiable or famous person.`,
           },
         ],
         config: {
@@ -76,7 +178,10 @@ export class CharacterPreviewService {
         operation: 'character-preview',
         model: GEMINI_IMAGE_MODEL,
         sessionId,
+        userId,
       });
+      recorded = true;
+      const used = { dayUsed: dayUsed + 1, monthUsed: monthUsed + 1 };
 
       const parts = response?.candidates?.[0]?.content?.parts ?? [];
       const imagePart = parts.find((p) => p.inlineData?.data);
@@ -84,20 +189,30 @@ export class CharacterPreviewService {
         this.logger.warn(
           `CharacterPreviewService: ответ Gemini без изображения — сессия ${sessionId}, персонаж ${characterId}`,
         );
-        return { url: null, pathname: null };
+        return { url: null, pathname: null, ...used, ...counters };
       }
 
       const buffer = Buffer.from(imagePart.inlineData.data, 'base64');
       const mimeType = imagePart.inlineData.mimeType || 'image/png';
       const ext = mimeType === 'image/jpeg' ? 'jpg' : 'png';
-      const pathname = `sessions/${sessionId}/character-preview-${characterId}.${ext}`;
+      const pathname = previewPathnameFor(sessionId, characterId, ext);
       const { url } = await this.blob.uploadBuffer(pathname, buffer, mimeType);
-      return { url, pathname };
+      return { url, pathname, ...used, ...counters };
     } catch (error) {
       this.logger.warn(
         `CharacterPreviewService: вызов не удался (${error instanceof Error ? error.message : String(error)}) — сессия ${sessionId}, персонаж ${characterId}`,
       );
-      return { url: null, pathname: null };
+      // Ответ получен и оплачен, а упало что-то после (загрузка в Blob) —
+      // попытка уже засчитана в квоту.
+      return recorded
+        ? {
+            url: null,
+            pathname: null,
+            dayUsed: dayUsed + 1,
+            monthUsed: monthUsed + 1,
+            ...counters,
+          }
+        : failed();
     }
   }
 
@@ -120,10 +235,19 @@ export class CharacterPreviewService {
     characterId: string,
     previewPathname: string,
   ): Promise<string | null> {
+    if (!isOwnPreviewPathname(previewPathname, sessionId, characterId)) {
+      throw new BadRequestException(
+        'previewPathname не принадлежит этому персонажу — сгенерируйте превью заново',
+      );
+    }
     const ext = previewPathname.endsWith('.jpg') ? 'jpg' : 'png';
     const contentType = ext === 'jpg' ? 'image/jpeg' : 'image/png';
     const toPathname = `sessions/${sessionId}/characters/${characterId}/photo.${ext}`;
-    const url = await this.blob.copyBlob(previewPathname, toPathname, contentType);
+    const url = await this.blob.copyBlob(
+      previewPathname,
+      toPathname,
+      contentType,
+    );
     return url ? toPathname : null;
   }
 }

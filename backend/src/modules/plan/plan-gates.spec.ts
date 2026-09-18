@@ -225,6 +225,7 @@ describe('модули спрашивают разрешение режима (�
       {} as never,
       plans as never,
       {} as never,
+      {} as never,
     );
     await expect(
       svc.create('u1', { title: 'Мой бренд' } as never),

@@ -299,8 +299,22 @@ export class AiUsageService {
     operation: AiOperation,
     now: Date = new Date(),
   ): Promise<number> {
+    return this.countSince(userId, operation, startOfDayUtc(now));
+  }
+
+  /**
+   * То же, что `countToday`, с произвольной нижней границей — для месячных
+   * квот (doc/AI-SKETCH-SPEC.md §8.2). Сырые строки текущего месяца в
+   * `ai_usage` есть всегда: свёртка (`rollupOldMonths`) трогает только
+   * прошедшие месяцы.
+   */
+  async countSince(
+    userId: string | null,
+    operation: AiOperation,
+    since: Date,
+  ): Promise<number> {
     return this.prisma.aiUsage.count({
-      where: { userId, operation, createdAt: { gte: startOfDayUtc(now) } },
+      where: { userId, operation, createdAt: { gte: since } },
     });
   }
 

@@ -43,6 +43,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import { PlanService } from '../plan/plan.service';
+import { SessionService } from '../../common/session.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import {
   BrandCharacterView,
@@ -137,6 +138,20 @@ export function assetPhotoPathname(
   return `brand-manifests/${manifestId}/${kind}/${assetId}/photo.${ext}`;
 }
 
+/**
+ * Разбор пути фото замены персонажа сессии — ровно той формы, что
+ * выдаёт `castPhotoPathname` (casting.service.ts). Всё прочее — `null`.
+ */
+export function parseSessionCastPhotoPathname(
+  pathname: string,
+): { sessionId: string; characterId: string; ext: 'png' | 'jpg' } | null {
+  const m = /^sessions\/([^/]+)\/characters\/([^/]+)\/photo\.(png|jpg)$/.exec(
+    pathname,
+  );
+  if (!m || m[1] === '..' || m[2] === '..') return null;
+  return { sessionId: m[1], characterId: m[2], ext: m[3] as 'png' | 'jpg' };
+}
+
 /** Kept under its Stage-7 name — callers and tests use it. */
 export function characterPhotoPathname(
   manifestId: string,
@@ -161,6 +176,7 @@ export class BrandManifestService {
     private readonly blobService: BlobService,
     private readonly plans: PlanService,
     private readonly ttsResolver: TtsProviderResolverService,
+    private readonly sessions: SessionService,
   ) {}
 
   // ── Manifests ─────────────────────────────────────────────────────────
@@ -233,11 +249,7 @@ export class BrandManifestService {
     }
     const isResembleClone = await this.isOwnResembleVoice(userId, dto);
     const tts = await this.ttsResolver.resolve();
-    const data = manifestDataFromDto(
-      dto,
-      tts.providerKey,
-      isResembleClone,
-    );
+    const data = manifestDataFromDto(dto, tts.providerKey, isResembleClone);
     if (Object.keys(data).length === 0) return toManifestView(current);
     const row: ManifestRow = await this.prisma.brandManifest.update({
       where: { id: manifestId },
@@ -331,24 +343,80 @@ export class BrandManifestService {
     manifestId: string,
     dto: AddCharacterFromSessionCastDto,
   ): Promise<BrandCharacterView> {
+    // §6.8 doc/AI-SKETCH-SPEC.md: путь приходит от клиента, поэтому
+    // сверяем его с сессией ДО создания персонажа. Раньше копировался
+    // любой присланный Blob — в том числе чужой сессии — и всегда с типом
+    // `image/jpeg`, даже для PNG.
+    const source = dto.photoPathname
+      ? await this.resolveSessionCastPhoto(userId, dto.photoPathname)
+      : null;
+
     const created = await this.addCharacter(userId, manifestId, {
       label: dto.label,
       description: dto.description,
     });
 
-    if (!dto.photoPathname) return created;
+    if (!source) return created;
 
-    const toPathname = `brand-manifests/${manifestId}/characters/${created.id}/photo.jpg`;
+    const toPathname = assetPhotoPathname(
+      'characters',
+      manifestId,
+      created.id,
+      source.contentType,
+    );
     const url = await this.blobService.copyBlob(
-      dto.photoPathname,
+      source.pathname,
       toPathname,
-      'image/jpeg',
+      source.contentType,
     );
     if (!url) return created; // копирование не удалось — персонаж остаётся без фото, не падаем
 
-    return this.confirmAssetPhoto('characters', userId, manifestId, created.id, {
-      pathname: toPathname,
-    });
+    return this.confirmAssetPhoto(
+      'characters',
+      userId,
+      manifestId,
+      created.id,
+      {
+        pathname: toPathname,
+      },
+    );
+  }
+
+  /**
+   * Фото замены из сессии, которое можно перенести в бренд: путь той
+   * формы, что выдаёт `castPhotoPathname`, сессия принадлежит этому же
+   * пользователю, и в её кастинге у этого персонажа сейчас именно это
+   * фото. Чужая или несуществующая сессия — 404 (как везде: чужое не
+   * отличается от несуществующего).
+   */
+  private async resolveSessionCastPhoto(
+    userId: string,
+    pathname: string,
+  ): Promise<{ pathname: string; contentType: string }> {
+    const parsed = parseSessionCastPhotoPathname(pathname);
+    if (!parsed) {
+      throw new BadRequestException(
+        'photoPathname должен указывать на фото персонажа сессии',
+      );
+    }
+    const session = await this.sessions.getSession(parsed.sessionId);
+    if (!session || session.userId !== userId) {
+      throw new NotFoundException('Фото персонажа сессии не найдено');
+    }
+    const matches = (session.characterCasting?.casts ?? []).some(
+      (c) =>
+        c.characterId === parsed.characterId &&
+        c.replacement.photoPathname === pathname,
+    );
+    if (!matches) {
+      throw new BadRequestException(
+        'Это фото больше не выбрано для персонажа — обновите экран и попробуйте снова',
+      );
+    }
+    return {
+      pathname,
+      contentType: parsed.ext === 'png' ? 'image/png' : 'image/jpeg',
+    };
   }
 
   createCharacterPhotoUploadUrl(

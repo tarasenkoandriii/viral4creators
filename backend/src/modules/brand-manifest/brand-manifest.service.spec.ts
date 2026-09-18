@@ -7,8 +7,13 @@ jest.mock('@vercel/blob', () => ({ head: jest.fn() }));
 
 import { head } from '@vercel/blob';
 import { Prisma } from '@prisma/client';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  parseSessionCastPhotoPathname,
   BrandManifestService,
   characterPhotoPathname,
   manifestDataFromDto,
@@ -100,14 +105,22 @@ function build() {
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const plans = plansMock();
-  const tts = { resolve: jest.fn().mockResolvedValue({ providerKey: 'elevenlabs' }) };
+  const tts = {
+    resolve: jest.fn().mockResolvedValue({ providerKey: 'elevenlabs' }),
+  };
+  const sessions = { getSession: jest.fn().mockResolvedValue(undefined) };
+  const blobWithCopy = {
+    ...blob,
+    copyBlob: jest.fn().mockResolvedValue('https://blob/cdn/copied'),
+  };
   const svc = new BrandManifestService(
     prisma as any,
-    blob as any,
+    blobWithCopy as any,
     plans as any,
     tts as any,
+    sessions as any,
   );
-  return { svc, prisma, blob, plans, tts };
+  return { svc, prisma, blob: blobWithCopy, plans, tts, sessions };
 }
 
 describe('manifestDataFromDto', () => {
@@ -299,9 +312,9 @@ describe('manifests', () => {
         }
       },
     );
-    await expect(
-      svc.update(USER, 'bm1', { voiceMode: 'dub' }),
-    ).rejects.toThrow(/Premium/);
+    await expect(svc.update(USER, 'bm1', { voiceMode: 'dub' })).rejects.toThrow(
+      /Premium/,
+    );
     expect(prisma.brandManifest.update).not.toHaveBeenCalled();
   });
 
@@ -610,5 +623,104 @@ describe('удаление манифеста убирает фото за ка�
     prisma.brandScene.findMany.mockResolvedValue([]);
     await svc.remove(USER, 'bm1');
     expect(blob.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('перенос персонажа из сессии в бренд (§6.8 doc/AI-SKETCH-SPEC.md)', () => {
+  const PHOTO = 'sessions/s1/characters/c1/photo.png';
+  const ownSession = (pathname = PHOTO, userId = USER) => ({
+    userId,
+    characterCasting: {
+      casts: [
+        {
+          characterId: 'c1',
+          replacement: { kind: 'photo', photoPathname: pathname },
+        },
+      ],
+    },
+  });
+
+  beforeEach(() => {
+    mockedHead.mockReset();
+    mockedHead.mockResolvedValue({
+      url: 'https://blob/cdn/photo.png',
+    } as never);
+  });
+
+  it('разбирает только пути формы castPhotoPathname', () => {
+    expect(parseSessionCastPhotoPathname(PHOTO)).toEqual({
+      sessionId: 's1',
+      characterId: 'c1',
+      ext: 'png',
+    });
+    expect(
+      parseSessionCastPhotoPathname('brand-manifests/x/characters/y/photo.jpg'),
+    ).toBeNull();
+    expect(
+      parseSessionCastPhotoPathname('sessions/s1/characters/c1/photo.gif'),
+    ).toBeNull();
+    expect(
+      parseSessionCastPhotoPathname('sessions/../characters/c1/photo.jpg'),
+    ).toBeNull();
+    expect(
+      parseSessionCastPhotoPathname('sessions/s1/character-preview-c1.png'),
+    ).toBeNull();
+  });
+
+  it('копирует фото своей сессии с настоящим типом PNG', async () => {
+    const { svc, prisma, blob, sessions } = build();
+    prisma.brandManifest.findFirst.mockResolvedValue(manifestRow());
+    prisma.brandCharacter.create.mockResolvedValue(characterRow());
+    prisma.brandCharacter.findFirst.mockResolvedValue(characterRow());
+    prisma.brandCharacter.update.mockResolvedValue(
+      characterRow({ photoUrl: 'https://blob/cdn/photo.png' }),
+    );
+    sessions.getSession.mockResolvedValue(ownSession());
+
+    await svc.addCharacterFromSessionCast(USER, 'bm1', {
+      label: 'Аня',
+      photoPathname: PHOTO,
+    });
+
+    expect(sessions.getSession).toHaveBeenCalledWith('s1');
+    expect(blob.copyBlob).toHaveBeenCalledWith(
+      PHOTO,
+      'brand-manifests/bm1/characters/bc1/photo.png',
+      'image/png',
+    );
+  });
+
+  it('чужая сессия — 404, персонаж не создаётся и ничего не копируется', async () => {
+    const { svc, prisma, blob, sessions } = build();
+    sessions.getSession.mockResolvedValue(ownSession(PHOTO, 'someone-else'));
+    await expect(
+      svc.addCharacterFromSessionCast(USER, 'bm1', {
+        label: 'Аня',
+        photoPathname: PHOTO,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.brandCharacter.create).not.toHaveBeenCalled();
+    expect(blob.copyBlob).not.toHaveBeenCalled();
+  });
+
+  it('путь не из кастинга или произвольный Blob — 400 до создания персонажа', async () => {
+    const { svc, prisma, blob, sessions } = build();
+    sessions.getSession.mockResolvedValue(
+      ownSession('sessions/s1/characters/c1/photo.jpg'),
+    );
+    await expect(
+      svc.addCharacterFromSessionCast(USER, 'bm1', {
+        label: 'Аня',
+        photoPathname: PHOTO,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      svc.addCharacterFromSessionCast(USER, 'bm1', {
+        label: 'Аня',
+        photoPathname: 'brand-manifests/other/characters/x/photo.jpg',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.brandCharacter.create).not.toHaveBeenCalled();
+    expect(blob.copyBlob).not.toHaveBeenCalled();
   });
 });

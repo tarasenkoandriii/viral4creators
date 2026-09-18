@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   castPhotoPathname,
   CastingService,
@@ -391,5 +395,57 @@ describe('CastingService', () => {
         pathname: 'sessions/s1/characters/c1/photo.png',
       }),
     ).rejects.toThrow(/not found in storage/);
+  });
+
+  it('confirmPhoto проверяет тариф — «превью как фото» больше не обходит гейт (§6.8)', async () => {
+    const plans = plansMock();
+    plans.assertUser.mockRejectedValue(new ForbiddenException('Standard+'));
+    const service = new CastingService(
+      {
+        getSession: jest.fn().mockResolvedValue({ ...session, userId: 'u1' }),
+      } as never,
+      {} as never,
+      plans as never,
+    );
+    mockedHead.mockClear();
+    await expect(
+      service.confirmPhoto('s1', 'c1', {
+        pathname: 'sessions/s1/characters/c1/photo.png',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(plans.assertUser).toHaveBeenCalledWith('u1', 'characterReplacement');
+    expect(mockedHead).not.toHaveBeenCalled();
+  });
+
+  it('assertPreviewAllowed: персонаж из разбора, тариф, гость и бюджет', async () => {
+    const plans = plansMock();
+    const getSession = jest.fn();
+    const service = new CastingService(
+      { getSession } as never,
+      {} as never,
+      plans as never,
+    );
+
+    getSession.mockResolvedValue({ ...session, userId: 'u1' });
+    await expect(service.assertPreviewAllowed('s1', 'c1')).resolves.toBe('u1');
+    expect(plans.assertUser).toHaveBeenCalledWith('u1', 'characterReplacement');
+    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('u1');
+
+    await expect(
+      service.assertPreviewAllowed('s1', 'nope'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    getSession.mockResolvedValue({ ...session, userId: null });
+    await expect(
+      service.assertPreviewAllowed('s1', 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    plans.assertCanSpendUser.mockRejectedValue(
+      new ForbiddenException('budget'),
+    );
+    getSession.mockResolvedValue({ ...session, userId: 'u1' });
+    await expect(
+      service.assertPreviewAllowed('s1', 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
