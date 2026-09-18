@@ -1,6 +1,6 @@
 # Base de conocimiento del consultor de IA de viral4creators
 
-_Собрано автоматически 2026-09-17 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-18 из lending/frontend/backend; коммит — local._
 
 ## Secciones de la mini-app
 

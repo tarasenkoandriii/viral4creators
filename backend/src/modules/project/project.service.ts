@@ -416,7 +416,14 @@ export class ProjectService {
     const row: ItemRow = await this.prisma.productItem.update({
       where: { id: itemId },
       data: itemDataFromDto(dto),
-      include: { analogs: { orderBy: { relevanceRank: 'asc' } } },
+      include: {
+        analogs: { orderBy: { relevanceRank: 'asc' } },
+        // Без этого правка названия или цены возвращала бы товар «без
+        // скетча» (`activeSketch` просто не прочитан), и карточка на
+        // экране откатывалась бы к оригиналу — хотя в базе скетч на
+        // месте и именно он уйдёт в ролик.
+        activeSketch: true,
+      },
     });
     await this.touchProject(projectId);
     return toItemView(row);

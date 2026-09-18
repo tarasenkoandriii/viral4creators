@@ -73,6 +73,54 @@ export function slotView(slot: SketchSlot): SketchSlotView {
 /** Размер страницы при обходе сессий владельца (пропагация, §4 п.10). */
 const PROPAGATION_PAGE = 200;
 
+/**
+ * Строка ассета бренда в том объёме, в каком её читает этот модуль.
+ * Описана структурно, а не типом Prisma, по той же причине, что и
+ * остальные row-типы проекта: файл должен компилироваться без
+ * сгенерированного клиента.
+ */
+interface BrandAssetRow {
+  id: string;
+  photoUrl: string | null;
+  description: string | null;
+  activeSketchId: string | null;
+  originalDeletedAt: Date | null;
+  activeSketch: {
+    id: string;
+    url: string | null;
+    pathname: string | null;
+    mimeType: string | null;
+    style: string;
+    options: unknown;
+    appliedAt: Date | null;
+  } | null;
+}
+
+/**
+ * Минимальная форма делегата Prisma для ассетов бренда.
+ *
+ * Зачем она: `prisma.brandCharacter` и `prisma.brandScene` — два РАЗНЫХ
+ * генерик-типа, и тернарник между ними даёт union, вызвать который
+ * TypeScript отказывается («This expression is not callable. Each member
+ * of the union type … has signatures, but none of those signatures are
+ * compatible with each other»). Тот же приём уже применён в
+ * `brand-manifest.service.ts` (`AssetDelegate`): описать структурно
+ * ровно то, чем пользуемся, и привести через `unknown`.
+ *
+ * Локальный `tsc` эту ошибку не видит — там, где клиент Prisma не
+ * сгенерирован, делегаты имеют тип `any`, и падает только прод-сборка.
+ */
+interface BrandAssetDelegate {
+  findFirst(args: {
+    where: Record<string, unknown>;
+    include?: Record<string, unknown>;
+  }): Promise<BrandAssetRow | null>;
+  update(args: {
+    where: { id: string };
+    data: Record<string, unknown>;
+  }): Promise<unknown>;
+}
+
 export function sha256(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
 }
@@ -331,14 +379,23 @@ export class SketchTargetsService {
 
   // ── Бренд и товар проекта (Prisma) ────────────────────────────────
 
+  /** Единственное место приведения — см. комментарий у `BrandAssetDelegate`. */
+  private brandDelegate(
+    name: 'brandCharacter' | 'brandScene',
+  ): BrandAssetDelegate {
+    return (name === 'brandCharacter'
+      ? this.prisma.brandCharacter
+      : this.prisma.brandScene) as unknown as BrandAssetDelegate;
+  }
+
   private async loadBrandAsset(
     target: SketchTarget,
     userId: string,
   ): Promise<SketchSlot> {
     const isCharacter = target.type === 'brand-character';
-    const delegate = isCharacter
-      ? this.prisma.brandCharacter
-      : this.prisma.brandScene;
+    const delegate = this.brandDelegate(
+      isCharacter ? 'brandCharacter' : 'brandScene',
+    );
     const row = await delegate.findFirst({
       where: {
         id: target.subId ?? '',
@@ -389,10 +446,7 @@ export class SketchTargetsService {
     sketch: SketchRef | null,
     opts: { originalDeleted?: boolean },
   ): Promise<void> {
-    const delegate =
-      delegateName === 'brandCharacter'
-        ? this.prisma.brandCharacter
-        : this.prisma.brandScene;
+    const delegate = this.brandDelegate(delegateName);
     await delegate.update({
       where: { id: slot.target.subId ?? '' },
       data: {
