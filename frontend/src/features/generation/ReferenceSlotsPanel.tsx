@@ -45,6 +45,7 @@ import {
   uploadScene,
 } from '../../services/projects-api';
 import type { ReferenceCandidate, ReferenceSlots } from '../../types';
+import { SketchSlotActions } from '../sketch/SketchSlotActions';
 import { revokeObjectUrl } from '../../lib/object-url';
 import { useI18n } from '../../lib/i18n-context';
 import type { Dictionary } from '../../lib/get-dictionary';
@@ -226,6 +227,9 @@ export function ReferenceSlotsPanel({
                       <img
                         src={c.thumbnailUrl}
                         alt=""
+                        // Крон UI-снимков не должен считать подменённую
+                        // скетчем миниатюру регрессом вёрстки.
+                        data-qa-mask="reference-thumbnail"
                         className="h-full w-full object-cover"
                       />
                     ) : (
@@ -298,6 +302,29 @@ export function ReferenceSlotsPanel({
                   >
                     <Trash2 size={11} />
                   </button>
+                )}
+                {/* ИИ-скетч слота S3 (doc/AI-SKETCH-SPEC.md §7.2) — только
+                    у своих сцен сессии: сцена бренда живёт в манифесте, и
+                    её скетч делается там же (S5), иначе один и тот же
+                    оригинал подменялся бы из двух разных экранов.
+                    Кнопка стоит ПОД карточкой, а не внутри неё: карточка
+                    сама кнопка, а кнопку в кнопку вкладывать нельзя. */}
+                {c.kind === 'scene' && c.origin !== 'brand' && (
+                  <SketchSlotActions
+                    className="mt-1"
+                    target={{
+                      type: 'session-scene',
+                      id: sessionId,
+                      subId: c.id.replace(/^scene:/, ''),
+                    }}
+                    hasImage={!!c.thumbnailUrl}
+                    originalUrl={c.originalThumbnailUrl ?? c.thumbnailUrl}
+                    activeUrl={c.thumbnailUrl}
+                    variant={c.variant ?? 'original'}
+                    description={c.textFallback}
+                    disabled={saving}
+                    onSlot={() => void load()}
+                  />
                 )}
               </li>
             );

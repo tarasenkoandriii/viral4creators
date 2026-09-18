@@ -86,6 +86,7 @@ import type {
   SubtitleTheme,
 } from '../../types';
 import { LoadError, ScreenHeader } from '../projects/shared';
+import { SketchSlotActions } from '../sketch/SketchSlotActions';
 import { VoicePicker } from './VoicePicker';
 import { voiceModeHint } from '../../lib/voice-mode';
 import { JsonField } from './JsonField';
@@ -777,6 +778,7 @@ function AssetsBlock({
             <AssetRow
               key={c.id}
               copy={copy}
+              kind={kind}
               asset={c}
               manifestId={manifestId}
               isReferenceImage={
@@ -800,6 +802,7 @@ function AssetsBlock({
 
 function AssetRow({
   copy,
+  kind,
   asset: character,
   manifestId,
   isReferenceImage,
@@ -809,6 +812,8 @@ function AssetRow({
   onError,
 }: {
   copy: AssetCopy;
+  /** Слот S4 или S5 для «ИИ-скетча» (doc/AI-SKETCH-SPEC.md §2.1). */
+  kind: AssetKind;
   asset: BrandCharacterView;
   manifestId: string;
   isReferenceImage: boolean;
@@ -899,6 +904,9 @@ function AssetRow({
           <img
             src={character.photoUrl}
             alt=""
+            // Фото слота может смениться на ИИ-скетч (§7.2) — крон
+            // UI-снимков не должен считать это регрессом вёрстки.
+            data-qa-mask="brand-asset-photo"
             className="h-full w-full object-cover"
           />
         ) : (
@@ -936,6 +944,27 @@ function AssetRow({
         <p className="mt-0.5 text-xs text-silver-400 line-clamp-2">
           {character.description || copy.noDescription}
         </p>
+        {/* ИИ-скетч слотов S4/S5 (doc/AI-SKETCH-SPEC.md §7.2). Оригинал
+            бренда разделяемый (со снимками бренда в сессиях), поэтому
+            применение и удаление разбирает сервер — экрану достаточно
+            обновить свою строку из `slot.url`. */}
+        <SketchSlotActions
+          className="mt-1.5"
+          target={{
+            type: kind === 'character' ? 'brand-character' : 'brand-scene',
+            id: manifestId,
+            subId: character.id,
+          }}
+          hasImage={!!character.photoUrl}
+          originalUrl={character.originalPhotoUrl ?? character.photoUrl}
+          activeUrl={character.photoUrl}
+          variant={character.photoVariant ?? 'original'}
+          activeSketchId={character.activeSketchId ?? null}
+          originalDeleted={character.originalDeleted ?? false}
+          description={character.description ?? undefined}
+          disabled={busy !== null}
+          onSlot={(slot) => onUpdated({ ...character, photoUrl: slot.url })}
+        />
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5">

@@ -484,7 +484,13 @@ describe('character photo', () => {
     });
     expect(prisma.brandCharacter.update).toHaveBeenCalledWith({
       where: { id: 'bc1' },
-      data: { photoUrl: 'https://blob/cdn/photo.jpg' },
+      // Новое фото отвязывает прежний скетч (§3.3 ТЗ, аудит A-14).
+      data: {
+        photoUrl: 'https://blob/cdn/photo.jpg',
+        activeSketchId: null,
+        originalDeletedAt: null,
+      },
+      include: { activeSketch: true },
     });
     expect(v.photoUrl).toBe('https://blob/cdn/photo.jpg');
   });
@@ -574,7 +580,12 @@ describe('brand scenes (§17.1) — same flow as characters, other table', () =>
     });
     expect(prisma.brandScene.update).toHaveBeenCalledWith({
       where: { id: 'bs1' },
-      data: { photoUrl: 'https://blob/cdn/scene.png' },
+      data: {
+        photoUrl: 'https://blob/cdn/scene.png',
+        activeSketchId: null,
+        originalDeletedAt: null,
+      },
+      include: { activeSketch: true },
     });
     expect(v.photoUrl).toBe('https://blob/cdn/scene.png');
   });

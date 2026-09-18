@@ -72,6 +72,7 @@ import { PostProductionService } from '../postprod/postprod.service';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { SharedVideoService } from '../shared-video/shared-video.service';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
+import { activeProductImage } from '../../common/active-image';
 
 /**
  * Model IDs for each quality tier, on the Gemini Developer API (not
@@ -494,9 +495,11 @@ export class GenerationService {
       );
     }
 
-    const productImagePathname =
-      session.productInformation?.productImagePathname;
-    if (!productImagePathname) {
+    // Изображение товара — только через резолвер: при применённом
+    // скетче в Veo уходит скетч, а оригинал не читается вовсе
+    // (§4 п.1 doc/AI-SKETCH-SPEC.md).
+    const productImage = activeProductImage(session.productInformation);
+    if (!productImage?.pathname) {
       throw new BadRequestException(
         'Product image must be uploaded before generating video',
       );
@@ -600,9 +603,10 @@ export class GenerationService {
         'Prompt must be approved before generating video',
       );
     }
-    const productImagePathname =
-      session.productInformation?.productImagePathname;
-    if (!productImagePathname) {
+    // Тот же резолвер, что и в `generateVideo` выше: при скетче в Veo
+    // уходит он, а не оригинал (§4 п.1 doc/AI-SKETCH-SPEC.md).
+    const productImage = activeProductImage(session.productInformation);
+    if (!productImage?.pathname) {
       throw new BadRequestException(
         'Product image must be uploaded before generating video',
       );
@@ -621,12 +625,14 @@ export class GenerationService {
     let referenceImages: VideoGenerationReferenceImage[] | undefined;
     if (plan.legacyFirstFrame) {
       // Product image becomes Veo's first frame (unchanged behaviour).
-      const imageBuffer =
-        await this.blobService.downloadBuffer(productImagePathname);
+      // Скетч сюда попасть не может: `buildReferencePlan` при скетче
+      // товара всегда отдаёт режим референсов (§5.6 ТЗ скетча).
+      const imageBuffer = await this.blobService.downloadBuffer(
+        productImage.pathname,
+      );
       imageInput = {
         imageBytes: imageBuffer.toString('base64'),
-        mimeType:
-          session.productInformation?.productImageMimeType || 'image/png',
+        mimeType: productImage.mimeType || 'image/png',
       };
     } else {
       referenceImages = [];
@@ -913,7 +919,9 @@ export class GenerationService {
     let referenceImageUrls: string[] | undefined;
     let sceneText: string;
     if (plan.legacyFirstFrame) {
-      const productImageUrl = session.productInformation?.productImageUrl;
+      const productImageUrl = activeProductImage(
+        session.productInformation,
+      )?.url;
       if (!productImageUrl) {
         throw new BadRequestException(
           'Product image URL is required for Grok generation (productImageUrl missing on session)',

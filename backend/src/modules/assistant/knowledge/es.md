@@ -113,16 +113,17 @@ Todos los planes son gratuitos por ahora y el propio usuario los cambia en la mi
 
 ### Lite
 Разбор референса и генерация ролика в 16:9 или 9:16 — самый короткий путь от примера к результату.
+Boceto IA en lugar de la imagen
 16:9/9:16 only
 
 ### Standard
 Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.
-Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Vídeo tutorial del sitio del cliente
+Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Vídeo tutorial del sitio del cliente, Boceto IA en lugar de la imagen
 any aspect ratio
 
 ### Premium
 Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
-Biblioteca de análisis listos, Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Doblaje (reemplazo completo de la voz del modelo), Vídeo tutorial del sitio del cliente
+Biblioteca de análisis listos, Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Doblaje (reemplazo completo de la voz del modelo), Vídeo tutorial del sitio del cliente, Boceto IA en lugar de la imagen
 any aspect ratio
 
 ## Reglas del pipeline

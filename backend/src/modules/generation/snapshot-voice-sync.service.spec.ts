@@ -3,7 +3,10 @@ jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 jest.mock('../../common/session.service', () => ({ SessionService: class {} }));
 
 import { SnapshotVoiceSyncService } from './snapshot-voice-sync.service';
-import { syncSnapshotVoice } from '../project-session/snapshot';
+import {
+  syncSnapshotSketches,
+  syncSnapshotVoice,
+} from '../project-session/snapshot';
 import { BrandManifestSnapshot } from '../../common/types/brand-manifest.types';
 
 const snap = (over: Partial<BrandManifestSnapshot> = {}) =>
@@ -68,6 +71,74 @@ describe('syncSnapshotVoice', () => {
   });
 });
 
+describe('syncSnapshotSketches (§4 п.8 ТЗ скетча)', () => {
+  const sketchRow = {
+    id: 'sk1',
+    url: 'https://blob/sketches/u1/sk1.png',
+    pathname: 'sketches/u1/sk1.png',
+    mimeType: 'image/png',
+    style: 'pencil',
+    options: {},
+    appliedAt: new Date('2026-09-17T10:00:00.000Z'),
+  };
+
+  it('подтягивает скетч персонажа бренда, чужие слоты не трогает', () => {
+    const next = syncSnapshotSketches(
+      snap({
+        characters: [
+          {
+            sourceCharacterId: 'bc1',
+            label: 'Аня',
+            photoUrl: 'u',
+            description: null,
+          },
+          {
+            sourceCharacterId: 'bc2',
+            label: 'Лис',
+            photoUrl: 'u',
+            description: null,
+          },
+        ],
+      }),
+      {
+        characters: [
+          { id: 'bc1', activeSketch: sketchRow },
+          { id: 'bc2', activeSketch: null },
+        ],
+      },
+    );
+    expect(next?.characters[0].sketch?.sketchId).toBe('sk1');
+    expect(next?.characters[1].sketch).toBeUndefined();
+  });
+
+  it('свой скетч сессии сильнее бренда; без изменений — null', () => {
+    const own = {
+      sketchId: 'own',
+      url: 'u',
+      pathname: 'p',
+      mimeType: 'image/png',
+      style: 'flat' as const,
+      sketchRendering: 'realistic' as const,
+      appliedAt: '',
+    };
+    const next = syncSnapshotSketches(
+      snap({
+        characters: [
+          {
+            sourceCharacterId: 'bc1',
+            label: 'Аня',
+            photoUrl: 'u',
+            description: null,
+            sketch: own,
+          },
+        ],
+      }),
+      { characters: [{ id: 'bc1', activeSketch: sketchRow }] },
+    );
+    expect(next).toBeNull();
+  });
+});
+
 describe('SnapshotVoiceSyncService', () => {
   function build(session: any, manifest: any = francesca) {
     const sessions = {
@@ -76,6 +147,7 @@ describe('SnapshotVoiceSyncService', () => {
     };
     const prisma = {
       brandManifest: { findUnique: jest.fn().mockResolvedValue(manifest) },
+      productItem: { findUnique: jest.fn().mockResolvedValue(null) },
     };
     const service = new SnapshotVoiceSyncService(
       sessions as any,
@@ -118,5 +190,48 @@ describe('SnapshotVoiceSyncService', () => {
     const { service, sessions } = build({ brandManifestSnapshot: snap() });
     sessions.updateSession.mockRejectedValue(new Error('db down'));
     await expect(service.syncBeforeRender('s1')).resolves.toBeUndefined();
+  });
+
+  it('подтягивает применённый скетч товара проекта (§4 п.8 ТЗ скетча)', async () => {
+    const session = {
+      productItemId: 'item-1',
+      productInformation: { productName: 'Пиво', productDescription: '' },
+    };
+    const { service, sessions, prisma } = build(session as any, null);
+    prisma.productItem.findUnique.mockResolvedValue({
+      activeSketch: {
+        id: 'sk1',
+        url: 'https://blob/sketches/u1/sk1.png',
+        pathname: 'sketches/u1/sk1.png',
+        mimeType: 'image/png',
+        style: 'pencil',
+        options: { sketchRendering: 'realistic' },
+        appliedAt: new Date('2026-09-17T10:00:00.000Z'),
+      },
+    });
+
+    await service.syncBeforeRender('s1');
+
+    const call = sessions.updateSession.mock.calls.find(
+      (c: any) => c[1].productInformation,
+    );
+    expect(call[1].productInformation.sketch).toMatchObject({
+      sketchId: 'sk1',
+      pathname: 'sketches/u1/sk1.png',
+    });
+  });
+
+  it('ролик уже есть — скетчи не подтягиваются', async () => {
+    const { service, sessions, prisma } = build(
+      {
+        productItemId: 'item-1',
+        productInformation: { productName: 'x', productDescription: '' },
+        generatedVideo: { status: 'complete' },
+      } as any,
+      null,
+    );
+    await service.syncBeforeRender('s1');
+    expect(prisma.productItem.findUnique).not.toHaveBeenCalled();
+    expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 });

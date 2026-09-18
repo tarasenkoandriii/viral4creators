@@ -56,6 +56,7 @@ import {
   SOFT_DELETE_GRACE_MS,
 } from '../../common/soft-delete';
 import { isRecordNotFoundError } from '../../common/prisma-errors';
+import { activeRowPhotoUrl, SketchableRow } from '../../common/active-image';
 
 /** Батч на один прогон крона — тот же порядок величины, что
  * `CLEANUP_BATCH` в `session.service.ts`. */
@@ -124,7 +125,13 @@ const ITEMS_INCLUDE = {
   items: {
     where: { deletedAt: null },
     orderBy: { createdAt: 'asc' as const },
-    include: { analogs: { orderBy: { relevanceRank: 'asc' as const } } },
+    include: {
+      analogs: { orderBy: { relevanceRank: 'asc' as const } },
+      // Применённый ИИ-скетч: экран товара показывает АКТИВНОЕ
+      // изображение, иначе после перезагрузки он снова покажет
+      // оригинал, который пользователь уже подменил (ТЗ скетча §6.3).
+      activeSketch: true,
+    },
   },
 };
 
@@ -797,12 +804,17 @@ function toAnalogView(row: AnalogRow): ProductAnalogView {
   };
 }
 
-export function toItemView(row: ItemRow): ProductItemView {
+export function toItemView(row: ItemRow & SketchableRow): ProductItemView {
   return {
     id: row.id,
     projectId: row.projectId,
     title: row.title,
-    photoUrl: row.photoUrl,
+    // Активное изображение: скетч, если он применён (ТЗ скетча §6.3).
+    photoUrl: activeRowPhotoUrl(row) ?? row.photoUrl,
+    photoVariant: row.activeSketch ? 'sketch' : 'original',
+    originalPhotoUrl: row.photoUrl,
+    originalDeleted: !!row.originalDeletedAt,
+    activeSketchId: row.activeSketch?.id ?? null,
     description: row.description,
     category: row.category,
     audience: audienceOf(row.audience),

@@ -63,6 +63,8 @@ import { createGeminiClient } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { GeminiFilesService } from '../analysis/gemini-files.service';
 import { SoundCheck } from '../../common/types/audit.types';
+import { activeSnapshotCharacterImage } from '../../common/active-image';
+import { BrandCharacterSnapshot } from '../../common/types/brand-manifest.types';
 import {
   appendSoundCheck,
   parseSoundCheckResponse,
@@ -190,7 +192,10 @@ export class ActorsService {
         `В снимке манифеста бренда этой сессии нет персонажа с индексом ${characterIndex}`,
       );
     }
-    if (!character.photoUrl) {
+    // §4 п.1 ТЗ скетча: аватар собирается из активного изображения
+    // персонажа — при применённом скетче портрет берётся из него.
+    const characterImage = activeSnapshotCharacterImage(character);
+    if (!characterImage) {
       throw new BadRequestException(
         `У персонажа «${character.label}» нет фото — Hedra Character-3 требует портрет как start_image`,
       );
@@ -275,11 +280,9 @@ export class ActorsService {
   private async startAvatarGeneration(
     sessionId: string,
     characterIndex: number,
-    character: {
-      sourceCharacterId: string | null;
-      label: string;
-      photoUrl: string | null;
-    },
+    /** Снимок персонажа бренда целиком — вместе с применённым скетчем
+     * (§4 п.1 ТЗ скетча): портрет для Hedra берётся резолвером. */
+    character: BrandCharacterSnapshot,
     prompt: string,
     speech: string,
     voiceId: string | undefined,
@@ -371,7 +374,9 @@ export class ActorsService {
     try {
       const job = await this.hedra.submit({
         prompt,
-        startImage: character.photoUrl as string,
+        // Активное изображение персонажа: скетч, если он применён.
+        startImage: (activeSnapshotCharacterImage(character)?.url ??
+          character.photoUrl) as string,
         audioUrl,
         aspectRatio,
         resolution,

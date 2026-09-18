@@ -27,3 +27,11 @@ export const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image';
 
 export const GEMINI_IMAGE_MODEL =
   process.env.GEMINI_IMAGE_MODEL || DEFAULT_GEMINI_IMAGE_MODEL;
+
+/**
+ * Модель ИИ-скетча (doc/AI-SKETCH-SPEC.md §5.1). По умолчанию та же, что
+ * у превью персонажа: отдельная переменная нужна, чтобы скетч можно было
+ * перевести на другую модель, не трогая превью (и наоборот).
+ */
+export const GEMINI_SKETCH_MODEL =
+  process.env.GEMINI_SKETCH_MODEL || GEMINI_IMAGE_MODEL;

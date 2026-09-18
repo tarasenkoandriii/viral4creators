@@ -32,6 +32,15 @@ import {
   ReferenceCandidateView,
   ReferenceSlotsView,
 } from './types/reference.types';
+import {
+  activeCastImage,
+  activeProductImage,
+  activeSessionSceneImage,
+  activeSnapshotSceneImage,
+  ActiveImage,
+} from './active-image';
+import { SketchRendering } from './types/sketch.types';
+import { sketchReferenceNote } from './sketch-prompts';
 
 export const REFERENCE_IMAGE_CAP = 3;
 
@@ -47,6 +56,14 @@ export interface ReferenceImageSource {
   /** Public URL fallback (brand character photos). */
   url: string | null;
   mimeType: string;
+  /**
+   * `sketch` — изображение слота подменено ИИ-скетчем
+   * (doc/AI-SKETCH-SPEC.md). Нужно и генерации (в промпт уходит строка
+   * «это рисунок, рендерить реалистично», §5.5), и интерфейсу — чтобы в
+   * сводке перед оплатой было видно, что уйдёт в Veo/Grok.
+   */
+  variant?: 'original' | 'sketch';
+  sketchRendering?: SketchRendering | null;
   /** Только для `kind === 'text-card'` (ТЗ §20.2/§20.6) — какую роль
    * текста несёт эта карточка, нужно `generation.service.ts`, чтобы
    * процитировать её в правильном месте сцены промпта. */
@@ -105,13 +122,29 @@ type PlanSession = Pick<
   | 'generationPrompt'
 >;
 
-function mimeFromUrlOrPath(s: string | null, fallback = 'image/jpeg'): string {
-  if (!s) return fallback;
-  const ext = s.split('?')[0].split('.').pop()?.toLowerCase();
-  if (ext === 'png') return 'image/png';
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'webp') return 'image/webp';
-  return fallback;
+/**
+ * Исходный URL рядом со скетчем — только когда активен скетч: окну
+ * скетча нужна левая половина сравнения «до/после», а без этого поля
+ * оно сравнивало скетч сам с собой (аудит A-15).
+ */
+function originalOf(
+  image: ActiveImage,
+  originalUrl: string | null | undefined,
+): { originalThumbnailUrl?: string | null } {
+  return image.variant === 'sketch' && originalUrl
+    ? { originalThumbnailUrl: originalUrl }
+    : {};
+}
+
+/** Пометка варианта — только когда это скетч: у оригинала полей нет,
+ * и старые снимки/сессии остаются байт в байт прежними. */
+function variantOf(image: ActiveImage): {
+  variant?: 'sketch';
+  sketchRendering?: SketchRendering | null;
+} {
+  return image.variant === 'sketch'
+    ? { variant: 'sketch', sketchRendering: image.sketchRendering }
+    : {};
 }
 
 interface Candidate {
@@ -186,24 +219,32 @@ export function buildReferencePlan(
       referenceIndex: null,
       source: r.kind === 'none' ? 'gemini' : r.kind,
     });
-    if (r.photoUrl) {
+    // Изображение персонажа читается через резолвер: при применённом
+    // скетче оригинал не должен попасть в план вовсе (§4 п.1 ТЗ скетча).
+    const castImage = activeCastImage(
+      r,
+      session.brandManifestSnapshot?.characters,
+    );
+    if (castImage) {
       candidates.push({
         view: {
           id: `character:${ch.id}`,
           kind: 'character',
           label,
-          thumbnailUrl: r.photoUrl,
+          thumbnailUrl: castImage.url,
           textFallback: appearance,
           origin: r.kind === 'brand' ? 'brand' : 'session',
+          variant: castImage.variant,
         },
         source: {
           kind: 'character',
           candidateId: `character:${ch.id}`,
           characterId: ch.id,
           label,
-          pathname: r.photoPathname,
-          url: r.photoUrl,
-          mimeType: mimeFromUrlOrPath(r.photoPathname ?? r.photoUrl),
+          pathname: castImage.pathname,
+          url: castImage.url,
+          mimeType: castImage.mimeType,
+          ...variantOf(castImage),
         },
       });
     }
@@ -220,12 +261,11 @@ export function buildReferencePlan(
     hook: 1,
     callout: 2,
   };
-  const textCardMoments = (
-    session.generationPrompt?.onScreenTextMoments ?? []
-  )
+  const textCardMoments = (session.generationPrompt?.onScreenTextMoments ?? [])
     .filter((m) => !!m.cardUrl)
     .sort(
-      (a, b) => TEXT_CARD_ROLE_PRIORITY[a.role] - TEXT_CARD_ROLE_PRIORITY[b.role],
+      (a, b) =>
+        TEXT_CARD_ROLE_PRIORITY[a.role] - TEXT_CARD_ROLE_PRIORITY[b.role],
     );
   for (const moment of textCardMoments) {
     const id = `text-card:${moment.role}`;
@@ -254,6 +294,7 @@ export function buildReferencePlan(
   const sceneBriefs: SceneBrief[] = [];
   for (const sc of session.scenes ?? []) {
     const id = `scene:${sc.id}`;
+    const sceneImage = activeSessionSceneImage(sc);
     sceneBriefs.push({
       sceneId: id,
       label: sc.label,
@@ -261,23 +302,27 @@ export function buildReferencePlan(
       referenceIndex: null,
       origin: 'session',
     });
+    if (!sceneImage) continue;
     candidates.push({
       view: {
         id,
         kind: 'scene',
         label: sc.label,
-        thumbnailUrl: sc.photoUrl,
+        thumbnailUrl: sceneImage.url,
         textFallback: sc.description?.trim() || sc.label,
         origin: 'session',
+        variant: sceneImage.variant,
+        ...originalOf(sceneImage, sc.photoUrl),
       },
       source: {
         kind: 'scene',
         candidateId: id,
         characterId: null,
         label: sc.label,
-        pathname: sc.photoPathname,
-        url: sc.photoUrl,
-        mimeType: mimeFromUrlOrPath(sc.photoPathname),
+        pathname: sceneImage.pathname,
+        url: sceneImage.url,
+        mimeType: sceneImage.mimeType,
+        ...variantOf(sceneImage),
       },
     });
   }
@@ -294,51 +339,57 @@ export function buildReferencePlan(
       referenceIndex: null,
       origin: 'brand',
     });
-    if (!bs.photoUrl) return;
+    const brandSceneImage = activeSnapshotSceneImage(bs);
+    if (!brandSceneImage) return;
     candidates.push({
       view: {
         id,
         kind: 'scene',
         label: bs.label,
-        thumbnailUrl: bs.photoUrl,
+        thumbnailUrl: brandSceneImage.url,
         textFallback: bs.description?.trim() || bs.label,
         origin: 'brand',
+        variant: brandSceneImage.variant,
+        ...originalOf(brandSceneImage, bs.photoUrl),
       },
       source: {
         kind: 'scene',
         candidateId: id,
         characterId: null,
         label: bs.label,
-        pathname: null,
-        url: bs.photoUrl,
-        mimeType: mimeFromUrlOrPath(bs.photoUrl),
+        pathname: brandSceneImage.pathname,
+        url: brandSceneImage.url,
+        mimeType: brandSceneImage.mimeType,
+        ...variantOf(brandSceneImage),
       },
     });
   });
 
   const product = session.productInformation;
-  if (product?.productImagePathname) {
+  const productImage = activeProductImage(product);
+  if (productImage) {
     candidates.push({
       view: {
         id: 'product',
         kind: 'product',
-        label: product.productName || 'product',
-        thumbnailUrl: product.productImageUrl ?? null,
-        textFallback: [product.productName, product.productDescription]
+        label: product!.productName || 'product',
+        thumbnailUrl: productImage.url,
+        ...originalOf(productImage, product!.productImageUrl),
+        textFallback: [product!.productName, product!.productDescription]
           .filter(Boolean)
           .join(' — '),
         origin: 'session',
+        variant: productImage.variant,
       },
       source: {
         kind: 'product',
         candidateId: 'product',
         characterId: null,
-        label: product.productName || 'product',
-        pathname: product.productImagePathname,
-        url: product.productImageUrl ?? null,
-        mimeType:
-          product.productImageMimeType ??
-          mimeFromUrlOrPath(product.productImagePathname),
+        label: product!.productName || 'product',
+        pathname: productImage.pathname,
+        url: productImage.url,
+        mimeType: productImage.mimeType,
+        ...variantOf(productImage),
       },
     });
   }
@@ -349,9 +400,19 @@ export function buildReferencePlan(
     (id, i, arr) => byCandidateId.has(id) && arr.indexOf(id) === i,
   );
   const isDefaultSelection = !session.referenceSelection;
+  // §5.6 ТЗ скетча: скетч товара НИКОГДА не идёт первым кадром. Признак
+  // нужен обеим веткам выбора — аудит A-9.
+  const productIsSketchCandidate =
+    byCandidateId.get('product')?.view.variant === 'sketch';
   let slots: ReferenceCandidateId[];
   if (!isDefaultSelection) {
     slots = explicitSlots.slice(0, cap);
+    // Пустой ручной выбор + скетч товара = `legacyFirstFrame`, то есть
+    // рисунок первым кадром. Занимаем слот референса принудительно:
+    // ручной выбор уважается всюду, кроме этого одного случая.
+    if (slots.length === 0 && productIsSketchCandidate) {
+      slots = ['product'];
+    }
   } else {
     // Default: characters (activation order) → session scenes → brand
     // scenes → product, cap 3 (candidates are already in that order).
@@ -359,10 +420,14 @@ export function buildReferencePlan(
     // applies, so the product photo alone does NOT open reference mode.
     const nonProduct = candidates.filter((c) => c.view.kind !== 'product');
     slots = nonProduct.slice(0, cap).map((c) => c.view.id);
+    const productCandidate = byCandidateId.get('product');
+    // Есть скетч — товар занимает слот референса даже в одиночку, и
+    // `legacyFirstFrame` становится false.
+    const productIsSketch = productIsSketchCandidate;
     if (
-      slots.length > 0 &&
+      productCandidate &&
       slots.length < cap &&
-      byCandidateId.has('product')
+      (slots.length > 0 || productIsSketch)
     ) {
       slots.push('product');
     }
@@ -390,7 +455,10 @@ export function buildReferencePlan(
     omitted,
     scenes: sceneBriefs,
     productReferenceIndex,
-    legacyFirstFrame: images.length === 0,
+    // Второй замок того же инварианта (§5.6): даже если слот товару не
+    // достался, скетч не уйдёт первым кадром — в этом случае ролик
+    // просто снимается по словам.
+    legacyFirstFrame: images.length === 0 && !productIsSketchCandidate,
     candidates: candidates.map((c) => c.view),
     slots,
     isDefaultSelection,
@@ -475,9 +543,14 @@ export function referenceMappingText(plan: ReferencePlan): string {
       return `the exact on-screen text for this moment — copy it character-for-character from the image, do not alter, retype, or paraphrase it`;
     return `the actual product "${i.label}" — it must look exactly like this`;
   };
-  const lines = plan.images.map(
-    (i) => `Reference image ${i.index} shows ${what(i)}.`,
-  );
+  const lines = plan.images.flatMap((i) => [
+    `Reference image ${i.index} shows ${what(i)}.`,
+    // §5.5 ТЗ скетча: рисунок задаёт форму и позу, но ролик должен
+    // остаться реалистичным — иначе видео унаследует стиль карандаша.
+    ...(i.variant === 'sketch' && i.sketchRendering !== 'stylized'
+      ? [sketchReferenceNote(i.index)]
+      : []),
+  ]);
   const textOnly = [
     ...plan.characters
       .filter((c) => c.referenceIndex === null)
@@ -525,9 +598,17 @@ export function grokReferencePromptText(plan: ReferencePlan): string {
       return `the exact on-screen text for this moment — copy it character-for-character from the image, do not alter, retype, or paraphrase it`;
     return `the actual product "${i.label}" — it must look exactly like this`;
   };
-  const lines = plan.images.map(
-    (i) => `Reference <IMAGE_${i.index}> shows ${what(i)}.`,
-  );
+  const lines = plan.images.flatMap((i) => [
+    `Reference <IMAGE_${i.index}> shows ${what(i)}.`,
+    ...(i.variant === 'sketch' && i.sketchRendering !== 'stylized'
+      ? [
+          sketchReferenceNote(i.index).replace(
+            `Reference image ${i.index}`,
+            `Reference <IMAGE_${i.index}>`,
+          ),
+        ]
+      : []),
+  ]);
   const textOnly = [
     ...plan.characters
       .filter((c) => c.referenceIndex === null)

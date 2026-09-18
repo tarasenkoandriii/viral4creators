@@ -69,6 +69,13 @@ interface UseWorkflowState {
   isApprovingPrompt: boolean;
   productImage: File | null;
   productImagePreview: string | null;
+  /**
+   * Применённый к фото товара ИИ-скетч (§6.3 ТЗ скетча) — чтобы после
+   * перезагрузки мастер показывал то же изображение, что уйдёт в ролик
+   * (аудит A-8). `null` — активен оригинал.
+   */
+  productSketchUrl: string | null;
+  productOriginalPhotoUrl: string | null;
   isUploadingImage: boolean;
   imageUploadProgress: number;
   generatedVideo: GeneratedVideo | null;
@@ -177,6 +184,8 @@ function seedFromSession(session: Session | null): Partial<UseWorkflowState> {
           imageUploadProgress: 100,
         }
       : {}),
+    productSketchUrl: info.sketch?.url ?? null,
+    productOriginalPhotoUrl: info.productImageUrl ?? null,
   };
 }
 
@@ -223,6 +232,8 @@ export function useWorkflow() {
     isApprovingPrompt: false,
     productImage: null,
     productImagePreview: null,
+    productSketchUrl: null,
+    productOriginalPhotoUrl: null,
     isUploadingImage: false,
     imageUploadProgress: 0,
     generatedVideo: null,

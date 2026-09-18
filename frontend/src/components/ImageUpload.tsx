@@ -1,7 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ImagePlus } from 'lucide-react';
 import { Alert, Button } from './ui';
 import { useI18n } from '../lib/i18n-context';
+import { SketchSlotActions } from '../features/sketch/SketchSlotActions';
 
 interface ImageUploadProps {
   onImageSelect: (file: File) => void;
@@ -10,6 +11,21 @@ interface ImageUploadProps {
   previewUrl?: string | null;
   error?: string;
   disabled?: boolean;
+  /**
+   * Сессия, которой принадлежит фото товара — слот S2 из
+   * doc/AI-SKETCH-SPEC.md §2.1. Без неё компонент работает как раньше:
+   * кнопка «ИИ-скетч» просто не показывается (мастер вызывает его и до
+   * того, как сессия создана).
+   */
+  sessionId?: string | null;
+  /**
+   * Состояние слота из сессии (§6.3) — чтобы после перезагрузки экран
+   * показывал тот же вариант, что уйдёт в ролик, и меню бейджа было на
+   * месте (аудит A-8). Без них компонент ведёт себя как раньше.
+   */
+  originalUrl?: string | null;
+  sketchUrl?: string | null;
+  sketchVariant?: 'original' | 'sketch';
 }
 
 /**
@@ -22,11 +38,27 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   previewUrl,
   error,
   disabled = false,
+  sessionId = null,
+  originalUrl = null,
+  sketchUrl = null,
+  sketchVariant = 'original',
 }) => {
   const { dict } = useI18n();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * Активный вариант слота приходит ответом apply/revert (§7.2), и
+   * показать его надо здесь же: `previewUrl` принадлежит мастеру и знает
+   * только про загруженный файл. Новая загрузка отвязывает скетч (§3.3),
+   * поэтому подмена сбрасывается вместе со сменой `previewUrl`.
+   */
+  const [slotUrl, setSlotUrl] = useState<string | null>(null);
+  useEffect(() => setSlotUrl(null), [previewUrl]);
+  // Скетч из сессии — начальное состояние; локальный `slotUrl` его
+  // перекрывает после apply/revert в этом же сеансе.
+  const activeFromSession = sketchVariant === 'sketch' ? sketchUrl : null;
+  const shownPreview = slotUrl ?? activeFromSession ?? previewUrl;
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -66,16 +98,31 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   return (
     <div className="space-y-4">
       <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-silver-300 dark:border-silver-700 p-5">
-        {previewUrl ? (
+        {shownPreview ? (
           <div className="w-full space-y-2">
             <img
-              src={previewUrl}
+              src={shownPreview}
               alt={dict.imageUpload.previewAlt}
+              // Крон UI-снимков (этап 100) не должен считать сменившееся
+              // фото товара регрессом вёрстки.
+              data-qa-mask="product-photo"
               className="mx-auto max-h-64 max-w-full rounded-lg object-contain"
             />
             <p className="text-center text-xs text-silver-400 truncate">
               {selectedFile?.name}
             </p>
+            {sessionId && (
+              <SketchSlotActions
+                className="justify-center"
+                target={{ type: 'session-product', id: sessionId }}
+                hasImage
+                originalUrl={originalUrl ?? previewUrl}
+                activeUrl={slotUrl ?? activeFromSession ?? previewUrl}
+                variant={sketchVariant ?? 'original'}
+                disabled={disabled}
+                onSlot={(slot) => setSlotUrl(slot.url)}
+              />
+            )}
           </div>
         ) : (
           <div className="space-y-1 text-center">

@@ -246,6 +246,10 @@ model User {
   /// аккаунта, что и у сырых строк.
   aiUsageMonthly AiUsageMonthly[]
 
+  /// ИИ-скетчи пользователя (doc/AI-SKETCH-SPEC.md §6.1) — и журнал, и
+  /// сами картинки. Каскад: удаляем пользователя — уходит и журнал.
+  imageSketches ImageSketch[]
+
   /// Шестой аудит, Е-5.1: `users` — самая крупная и быстрее всего
   /// растущая таблица проекта, а индекса не имела ни одного, кроме
   /// unique на telegramId. `AdminUsersService.list()` — дефолтный вид
@@ -437,6 +441,13 @@ model ProductItem {
   price       Decimal?           @db.Decimal(12, 2) // в валюте проекта (project.currency)
   priceSource ProductPriceSource @default(MANUAL)
 
+
+  /// Применённый ИИ-скетч вместо фото товара (§6.1 ТЗ скетча).
+  activeSketchId    String?      @unique
+  activeSketch      ImageSketch? @relation("ActiveSketchProductItem", fields: [activeSketchId], references: [id], onDelete: SetNull)
+  /// Оригинал удалён, остался только скетч (§4 п.10 ТЗ скетча).
+  originalDeletedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
@@ -580,6 +591,13 @@ model BrandCharacter {
   photoUrl    String? // Vercel Blob; «скин» — уходит в Veo как referenceImage (§10.2, лимит 3 на запрос — §10.3)
   description String? // текстовое описание внешности — в промпт, когда фото нет или не поместилось в лимит
 
+
+  /// Применённый ИИ-скетч вместо фото (doc/AI-SKETCH-SPEC.md §6.1): всё, что уходит в генерацию, читает его через common/active-image.ts.
+  activeSketchId    String?      @unique
+  activeSketch      ImageSketch? @relation("ActiveSketchBrandCharacter", fields: [activeSketchId], references: [id], onDelete: SetNull)
+  /// Оригинал удалён, остался только скетч (§4 п.10 ТЗ скетча).
+  originalDeletedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
@@ -600,6 +618,13 @@ model BrandScene {
   label       String // «Шоурум», «Кухня студии»
   photoUrl    String? // Vercel Blob; в Veo как referenceImage (§17), лимит 3 на запрос
   description String? // словами — когда фото нет или не поместилось в слот
+
+
+  /// Применённый ИИ-скетч вместо фото сцены (§6.1 ТЗ скетча).
+  activeSketchId    String?      @unique
+  activeSketch      ImageSketch? @relation("ActiveSketchBrandScene", fields: [activeSketchId], references: [id], onDelete: SetNull)
+  /// Оригинал удалён, остался только скетч (§4 п.10 ТЗ скетча).
+  originalDeletedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -2562,4 +2587,63 @@ model ClientSiteTutorialUsage {
 
   @@unique([userId, day])
   @@map("client_site_tutorial_usage")
+}
+
+/// ИИ-скетч (doc/AI-SKETCH-SPEC.md §6.1) — одновременно кандидат для
+/// превью, применённое изображение слота и ЖУРНАЛ: кто, когда, от какого
+/// файла (`sourceHash`), какой моделью и каким промптом (`promptHash`)
+/// сделал скетч и когда применил. Записи переживают удаление слота —
+/// `targetId` намеренно без внешнего ключа, как `SharedVideoPage.sessionId`.
+model ImageSketch {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SketchTargetType: session-character | session-product | session-scene
+  /// | brand-character | brand-scene | project-item
+  targetType String
+  /// sessionId | brandManifestId | productItemId
+  targetId   String
+  /// characterId | sceneId; пусто у товара
+  targetSubId String?
+
+  /// from-image | from-text
+  mode  String
+  /// SketchStyle
+  style String
+  /// SketchOptions: anonymizeFace, removeLogos, keepColors, sketchRendering
+  options Json
+
+  /// sha256 оригинала на момент генерации — защита от применения скетча
+  /// к уже заменённому фото (409) и доказательство «от какого файла».
+  sourceHash     String?
+  sourcePathname String?
+  description    String?
+
+  modelName  String @map("model")
+  promptHash String
+
+  /// sketches/{userId}/{id}.png; пусто после уборки файла (§6.7)
+  pathname String?
+  url      String?
+  mimeType String?
+
+  /// pending | candidate | applied | superseded | expired | refused | failed
+  status String
+  /// Пакетный режим (§4.6) — применён автоматически, без превью.
+  auto   Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  appliedAt DateTime?
+  /// TTL кандидата: неприменённые превью подбирает крон sweep-orphans.
+  expiresAt DateTime?
+
+  activeForBrandCharacter BrandCharacter? @relation("ActiveSketchBrandCharacter")
+  activeForBrandScene     BrandScene?     @relation("ActiveSketchBrandScene")
+  activeForProductItem    ProductItem?    @relation("ActiveSketchProductItem")
+
+  @@index([targetType, targetId, targetSubId])
+  @@index([userId, createdAt])
+  @@index([status, expiresAt])
+  @@map("image_sketches")
 }

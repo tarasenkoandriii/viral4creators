@@ -19,6 +19,15 @@ export interface ImageQuota {
   month: number;
 }
 
+/**
+ * Операции, которые расходуют ЭТУ квоту. Превью персонажа и ИИ-скетч —
+ * два вызова одной модели за одни деньги, и лимит у них общий: пока
+ * каждая операция считалась отдельно, фактический потолок был вдвое
+ * выше обещанного в §8.2 (аудит A-10). Тип — `AiOperation`, но импорт
+ * сюда не тянем: модуль намеренно чистый.
+ */
+export const IMAGE_OPERATIONS = ['ai-sketch', 'character-preview'] as const;
+
 const DEFAULTS: Record<PlanId, ImageQuota> = {
   LITE: { day: 3, month: 20 },
   STANDARD: { day: 15, month: 150 },

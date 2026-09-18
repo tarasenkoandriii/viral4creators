@@ -42,6 +42,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
+import { activeRowImage, SketchableRow } from '../../common/active-image';
 import { PlanService } from '../plan/plan.service';
 import { SessionService } from '../../common/session.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
@@ -65,7 +66,7 @@ const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 // ── Structural row types (see file doc comment) ────────────────────────
 
 /** Shared row shape of brand_characters and brand_scenes. */
-interface AssetRow {
+interface AssetRow extends SketchableRow {
   id: string;
   brandManifestId: string;
   label: string;
@@ -82,13 +83,20 @@ export type AssetKind = 'characters' | 'scenes';
 
 /** Minimal Prisma-delegate surface the asset helpers need (structural, no generated client). */
 interface AssetDelegate {
-  create(args: { data: Record<string, unknown> }): Promise<AssetRow>;
+  create(args: {
+    data: Record<string, unknown>;
+    include?: Record<string, unknown>;
+  }): Promise<AssetRow>;
   update(args: {
     where: { id: string };
     data: Record<string, unknown>;
+    include?: Record<string, unknown>;
   }): Promise<AssetRow>;
   delete(args: { where: { id: string } }): Promise<unknown>;
-  findFirst(args: { where: Record<string, unknown> }): Promise<AssetRow | null>;
+  findFirst(args: {
+    where: Record<string, unknown>;
+    include?: Record<string, unknown>;
+  }): Promise<AssetRow | null>;
 }
 
 interface ManifestRow {
@@ -113,10 +121,22 @@ interface ManifestRow {
 }
 
 const FULL_INCLUDE = {
-  characters: { orderBy: { createdAt: 'asc' as const } },
-  scenes: { orderBy: { createdAt: 'asc' as const } },
+  // `activeSketch` — чтобы выдача показывала АКТИВНОЕ изображение, а не
+  // оригинал: иначе после перезагрузки на экране фото, а в ролик уходит
+  // скетч (аудит A-8).
+  characters: {
+    orderBy: { createdAt: 'asc' as const },
+    include: { activeSketch: true },
+  },
+  scenes: {
+    orderBy: { createdAt: 'asc' as const },
+    include: { activeSketch: true },
+  },
   _count: { select: { projects: true } },
 };
+
+/** Тот же `include` для одиночных чтений ассета. */
+export const ASSET_INCLUDE = { activeSketch: true };
 
 const SUMMARY_INCLUDE = {
   _count: { select: { projects: true, characters: true, scenes: true } },
@@ -522,6 +542,7 @@ export class BrandManifestService {
     }
     const row = await this.delegate(kind).create({
       data: { brandManifestId: manifestId, ...characterDataFromDto(dto) },
+      include: ASSET_INCLUDE,
     });
     await this.touch(manifestId);
     return toCharacterView(row);
@@ -538,6 +559,7 @@ export class BrandManifestService {
     const row = await this.delegate(kind).update({
       where: { id: assetId },
       data: characterDataFromDto(dto),
+      include: ASSET_INCLUDE,
     });
     await this.touch(manifestId);
     return toCharacterView(row);
@@ -619,7 +641,10 @@ export class BrandManifestService {
     }
     const row = await this.delegate(kind).update({
       where: { id: assetId },
-      data: { photoUrl: url },
+      // §3.3 ТЗ скетча: новое фото ассета отвязывает прежний скетч
+      // (аудит A-14) — иначе загрузка молча ничего не меняла бы.
+      data: { photoUrl: url, activeSketchId: null, originalDeletedAt: null },
+      include: ASSET_INCLUDE,
     });
     await this.touch(manifestId);
     return toCharacterView(row);
@@ -788,11 +813,17 @@ function asJsonObject(value: unknown): JsonObject | null {
 
 /** Same shape for characters and scenes (BrandSceneView is structurally identical). */
 export function toCharacterView(row: AssetRow): BrandCharacterView {
+  const active = activeRowImage(row);
   return {
     id: row.id,
     brandManifestId: row.brandManifestId,
     label: row.label,
-    photoUrl: row.photoUrl,
+    // Показываем то же изображение, что уйдёт в ролик (§6.3, аудит A-8).
+    photoUrl: active?.url ?? row.photoUrl,
+    photoVariant: active?.variant ?? 'original',
+    originalPhotoUrl: row.photoUrl,
+    originalDeleted: !!row.originalDeletedAt,
+    activeSketchId: active?.variant === 'sketch' ? row.activeSketch!.id : null,
     description: row.description,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

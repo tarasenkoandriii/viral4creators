@@ -93,12 +93,22 @@ export class ProjectSessionService {
           project: { userId, deletedAt: null },
         },
         include: {
+          // `activeSketch` — применённый ИИ-скетч слота: снимок должен
+          // заморозить именно его, иначе сессия увезёт оригинал, который
+          // пользователь уже подменил (§4 п.8 doc/AI-SKETCH-SPEC.md).
+          activeSketch: true,
           project: {
             include: {
               brandManifest: {
                 include: {
-                  characters: { orderBy: { createdAt: 'asc' as const } },
-                  scenes: { orderBy: { createdAt: 'asc' as const } },
+                  characters: {
+                    orderBy: { createdAt: 'asc' as const },
+                    include: { activeSketch: true },
+                  },
+                  scenes: {
+                    orderBy: { createdAt: 'asc' as const },
+                    include: { activeSketch: true },
+                  },
                 },
               },
             },
@@ -318,12 +328,32 @@ export function applySnapshotEdit(
     ...(dto.effects !== undefined ? { effects: dto.effects } : {}),
     ...(dto.characters !== undefined
       ? {
-          characters: dto.characters.map((c) => ({
-            sourceCharacterId: c.sourceCharacterId ?? null,
-            label: c.label,
-            photoUrl: c.photoUrl ?? null,
-            description: c.description ?? null,
-          })),
+          characters: dto.characters.map((c) => {
+            // Правка снимка редактирует ЧЕТЫРЕ поля формы; ИИ-скетч и
+            // признак удалённого оригинала формой не управляются и
+            // должны пережить сохранение — иначе активным снова
+            // становится оригинал (аудит A-11).
+            const kept = c.sourceCharacterId
+              ? current.characters.find(
+                  (p) => p.sourceCharacterId === c.sourceCharacterId,
+                )
+              : undefined;
+            // Форма показывает АКТИВНОЕ изображение: если это скетч и
+            // клиент вернул его URL, канонический URL оригинала терять
+            // нельзя — иначе «Вернуть оригинал» ведёт в никуда.
+            const echoedSketch =
+              !!kept?.sketch && c.photoUrl === kept.sketch.url;
+            return {
+              sourceCharacterId: c.sourceCharacterId ?? null,
+              label: c.label,
+              photoUrl: echoedSketch
+                ? (kept?.photoUrl ?? null)
+                : (c.photoUrl ?? null),
+              description: c.description ?? null,
+              ...(kept?.sketch ? { sketch: kept.sketch } : {}),
+              ...(kept?.originalDeleted ? { originalDeleted: true } : {}),
+            };
+          }),
         }
       : {}),
     editedAt: now.toISOString(),

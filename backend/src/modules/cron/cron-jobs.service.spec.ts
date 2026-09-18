@@ -276,6 +276,11 @@ function build() {
       outcomes: [],
     }),
   };
+  // Уборка ИИ-скетчей — отдельный шаг того же суточного прогона
+  // (§6.7 ТЗ скетча); в тестах уборки сессий она ничего не делает.
+  const imageSketch = {
+    runCleanupTick: jest.fn().mockResolvedValue({ expired: 0, purged: 0 }),
+  };
   const service = new CronJobsService(
     sessionService as never,
     projectService as never,
@@ -297,6 +302,7 @@ function build() {
     tutorialScenarioGenerator as never,
     tutorialScenarioRunner as never,
     uiSnapshotRunner as never,
+    imageSketch as never,
   );
   return {
     service,
@@ -789,6 +795,11 @@ describe('CronJobsService — метла идёт до конца курсора
       publicationRequest: { findMany: jest.fn().mockResolvedValue([]) },
       sharedVideoPage: { findMany: jest.fn().mockResolvedValue([]) },
     };
+    // Уборка ИИ-скетчей — отдельный шаг того же суточного прогона
+    // (§6.7 ТЗ скетча); в тестах уборки сессий она ничего не делает.
+    const imageSketch = {
+      runCleanupTick: jest.fn().mockResolvedValue({ expired: 0, purged: 0 }),
+    };
     const service = new CronJobsService(
       {} as never,
       {} as never,
@@ -817,6 +828,7 @@ describe('CronJobsService — метла идёт до конца курсора
       {} as never,
       {} as never,
       {} as never,
+      imageSketch as never,
     );
     return { service, blobService };
   }

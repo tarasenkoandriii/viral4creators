@@ -11,6 +11,8 @@ import {
   normalizeSubtitleTheme,
 } from '../../common/subtitles';
 import { ProductInformation } from '../../common/types/product.types';
+import { SketchableRow, sketchRefFromRow } from '../../common/active-image';
+import { SketchRef } from '../../common/types/sketch.types';
 import { AudienceProfile } from '../../common/types/audience.types';
 import { findCountry } from '../../common/data/countries';
 import {
@@ -114,11 +116,13 @@ export function imageMimeFromPathname(pathname: string): string {
  * one; the empty string keeps the existing prompt template valid.
  */
 export function productInformationFromItem(
-  item: SnapshotItemSource,
+  item: SnapshotItemSource & SketchableRow,
   project: SnapshotProjectSource,
   now: Date = new Date(),
 ): ProductInformation {
   const pathname = item.photoUrl ? blobPathnameFromUrl(item.photoUrl) : null;
+  // Товар со скетчем отдаёт в сессию скетч (§4 п.8 ТЗ скетча).
+  const sketch = item.activeSketch ? sketchRefFromRow(item.activeSketch) : null;
   return {
     productName: (item.title ?? '').trim() || project.title,
     productDescription: (item.description ?? '').trim(),
@@ -129,6 +133,8 @@ export function productInformationFromItem(
           productImageUrl: item.photoUrl as string,
         }
       : {}),
+    ...(sketch ? { sketch } : {}),
+    ...(item.originalDeletedAt ? { originalDeleted: true } : {}),
     category: item.category,
     audience: audienceOf(item.audience),
     price: item.price === null ? null : Number(item.price),
@@ -164,31 +170,43 @@ export function audienceOf(raw: unknown): AudienceProfile | null {
   };
 }
 
-export function characterSnapshot(c: {
-  id: string;
-  label: string;
-  photoUrl: string | null;
-  description: string | null;
-}): BrandCharacterSnapshot {
+export function characterSnapshot(
+  c: {
+    id: string;
+    label: string;
+    photoUrl: string | null;
+    description: string | null;
+  } & SketchableRow,
+): BrandCharacterSnapshot {
+  // Снимок замораживает АКТИВНЫЙ вариант (§4 п.8 ТЗ скетча): если у
+  // персонажа бренда применён скетч, в сессию едет он, а не фото.
+  const sketch = c.activeSketch ? sketchRefFromRow(c.activeSketch) : null;
   return {
     sourceCharacterId: c.id,
     label: c.label,
     photoUrl: c.photoUrl,
     description: c.description,
+    ...(sketch ? { sketch } : {}),
+    ...(c.originalDeletedAt ? { originalDeleted: true } : {}),
   };
 }
 
-export function sceneSnapshot(c: {
-  id: string;
-  label: string;
-  photoUrl: string | null;
-  description: string | null;
-}): BrandSceneSnapshot {
+export function sceneSnapshot(
+  c: {
+    id: string;
+    label: string;
+    photoUrl: string | null;
+    description: string | null;
+  } & SketchableRow,
+): BrandSceneSnapshot {
+  const sketch = c.activeSketch ? sketchRefFromRow(c.activeSketch) : null;
   return {
     sourceSceneId: c.id,
     label: c.label,
     photoUrl: c.photoUrl,
     description: c.description,
+    ...(sketch ? { sketch } : {}),
+    ...(c.originalDeletedAt ? { originalDeleted: true } : {}),
   };
 }
 
@@ -254,5 +272,80 @@ export function syncSnapshotVoice(
     ttsVoiceId: manifest.ttsVoiceId,
     ttsModel: manifest.ttsModel,
     ttsProvider: manifest.ttsProvider,
+  };
+}
+
+/** Форма манифеста, из которой берутся применённые скетчи ассетов. */
+export interface ManifestSketchSource {
+  characters: Array<{ id: string } & SketchableRow>;
+  scenes?: Array<{ id: string } & SketchableRow> | null;
+}
+
+/**
+ * Подтянуть в снимок сессии ИИ-скетчи, применённые в бренде ПОСЛЕ её
+ * создания (§4 п.8 doc/AI-SKETCH-SPEC.md). `null` — менять нечего.
+ *
+ * Слот, у которого в сессии уже есть свой скетч, не трогаем: это
+ * осознанный выбор пользователя для этого ролика, и он сильнее бренда
+ * — тот же принцип, что у голоса (`voiceEditedAt`). Файл такого скетча
+ * уборка не удалит: она считает ссылки (аудит A-5).
+ *
+ * А вот признак «оригинал удалён» подтягивается ВСЕГДА (аудит A-12):
+ * без него в сессии остаётся кнопка «Вернуть оригинал» на файл,
+ * которого уже нет.
+ */
+export function syncSnapshotSketches(
+  snapshot: BrandManifestSnapshot,
+  manifest: ManifestSketchSource,
+): BrandManifestSnapshot | null {
+  let changed = false;
+  const byCharacter = new Map(manifest.characters.map((c) => [c.id, c]));
+  const byScene = new Map((manifest.scenes ?? []).map((s) => [s.id, s]));
+
+  function converge<
+    T extends {
+      sketch?: SketchRef | null;
+      originalDeleted?: boolean;
+    },
+  >(entry: T, row: SketchableRow | undefined): T {
+    const fromBrand = row?.activeSketch
+      ? sketchRefFromRow(row.activeSketch)
+      : null;
+    // Свой скетч сессии сильнее бренда — берём скетч бренда, только
+    // если своего нет.
+    const sketch = entry.sketch ?? fromBrand;
+    if (!sketch) return entry;
+    const originalDeleted = entry.originalDeleted || !!row?.originalDeletedAt;
+    if (
+      entry.sketch?.sketchId === sketch.sketchId &&
+      (entry.originalDeleted ?? false) === originalDeleted
+    ) {
+      return entry;
+    }
+    changed = true;
+    return {
+      ...entry,
+      sketch,
+      ...(originalDeleted ? { originalDeleted: true } : {}),
+    };
+  }
+
+  const characters = snapshot.characters.map((entry) =>
+    entry.sourceCharacterId
+      ? converge(entry, byCharacter.get(entry.sourceCharacterId))
+      : entry,
+  );
+
+  const scenes = (snapshot.scenes ?? []).map((entry) =>
+    entry.sourceSceneId
+      ? converge(entry, byScene.get(entry.sourceSceneId))
+      : entry,
+  );
+
+  if (!changed) return null;
+  return {
+    ...snapshot,
+    characters,
+    ...(snapshot.scenes ? { scenes } : {}),
   };
 }

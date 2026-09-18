@@ -181,6 +181,9 @@ export function splitSessionPatch(
  * строке там делать нечего.
  */
 export const WORK_KINDS = [
+  // ИИ-скетч (doc/AI-SKETCH-SPEC.md §6.4): генерация картинки для слота
+  // сессии — платный вызов, двойное нажатие оплачивать дважды незачем.
+  'sketch',
   'generate',
   'analyze',
   'prompt',

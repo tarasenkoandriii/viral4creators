@@ -36,6 +36,7 @@ import { LegalModule } from './modules/legal/legal.module';
 import { HealthModule } from './modules/health/health.module';
 import { PlanModule } from './modules/plan/plan.module';
 import { AiUsageModule } from './modules/ai-usage/ai-usage.module';
+import { ImageSketchModule } from './modules/image-sketch/image-sketch.module';
 import { PostProductionModule } from './modules/postprod/postprod.module';
 import { TtsModule } from './modules/tts/tts.module';
 import { NotifyModule } from './modules/notify/notify.module';
@@ -94,6 +95,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     HealthModule,
     PlanModule,
     AiUsageModule,
+    ImageSketchModule,
     TtsModule,
     PostProductionModule,
     NotifyModule,

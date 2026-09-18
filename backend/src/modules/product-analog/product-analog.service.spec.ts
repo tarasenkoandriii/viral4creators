@@ -387,6 +387,9 @@ describe('processPhoto', () => {
       photoHash: hashPhoto(PHOTO),
       category: 'кроссовки',
       title: 'Nike Pegasus',
+      // Новое фото отвязывает прежний скетч (§3.3 ТЗ, аудит A-14).
+      activeSketchId: null,
+      originalDeletedAt: null,
     });
     expect(tx.project.update).toHaveBeenCalled();
     expect(r.analogsSource).toBe('serpapi');

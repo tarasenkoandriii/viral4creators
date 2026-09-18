@@ -36,6 +36,7 @@ import { PlanService } from '../plan/plan.service';
 import { SessionService } from '../../common/session.service';
 import { LibraryService } from '../library/library.service';
 import { BlobService } from '../storage/blob.service';
+import { activeProductImage } from '../../common/active-image';
 import { Session } from '../../common/types/session.types';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { normalizeLocale } from '../../common/locale';
@@ -323,12 +324,16 @@ export class SharedVideoService {
       data.videoPathname = videoPathname;
     }
     if (row.productImagePathname) {
-      const photoPathname = `shared-videos/${row.id}/photo.jpg`;
-      const photoUrl = await this.blob.copyBlob(
-        row.productImagePathname,
-        photoPathname,
-        'image/jpeg',
-      );
+      // Копируем АКТИВНОЕ изображение товара: при применённом скетче на
+      // публичную страницу уходит он, а не оригинал (§4 п.11 ТЗ скетча).
+      const session = await this.sessions.getSession(row.sessionId);
+      const active = activeProductImage(session?.productInformation);
+      const from = active?.pathname ?? row.productImagePathname;
+      const mime = active?.mimeType ?? 'image/jpeg';
+      const photoPathname = `shared-videos/${row.id}/photo.${
+        mime === 'image/png' ? 'png' : 'jpg'
+      }`;
+      const photoUrl = await this.blob.copyBlob(from, photoPathname, mime);
       if (photoUrl) {
         data.productImageUrl = photoUrl;
         data.productImagePathname = photoPathname;

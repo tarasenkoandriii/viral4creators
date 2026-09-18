@@ -388,6 +388,11 @@ export class ProductAnalogService {
     const itemData: Record<string, unknown> = {
       photoUrl: data.photoUrl,
       photoHash: data.photoHash,
+      // §3.3 ТЗ скетча: новое фото отвязывает прежний скетч — иначе он
+      // остался бы активным, и генерация продолжила бы брать рисунок со
+      // старого снимка (аудит A-14). Сам скетч остаётся в истории.
+      activeSketchId: null,
+      originalDeletedAt: null,
     };
     // Only overwrite a category we actually got — a failed recognition
     // must not wipe a previously detected one.

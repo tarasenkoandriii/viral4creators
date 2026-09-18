@@ -78,6 +78,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import { logWorkflowStage } from '../../common/workflow-stage-events';
+import { activeProductImage } from '../../common/active-image';
 import {
   DailySpendLimitExceededException,
   startOfDayUtc,
@@ -510,7 +511,8 @@ export class CatalogBatchWorkerService {
           ? await this.sessions.getSession(item.sessionId)
           : null;
         const promptText = session?.generationPrompt?.finalText;
-        const imageUrl = session?.productInformation?.productImageUrl;
+        // §4 п.1 ТЗ скетча: в пачку уходит активное изображение товара.
+        const imageUrl = activeProductImage(session?.productInformation)?.url;
         if (!promptText || !imageUrl) {
           // Тот же случай, что явно отклоняет `startGrokGeneration`
           // (§15 ТЗ — сессии с персонажами бренда пока не проходят

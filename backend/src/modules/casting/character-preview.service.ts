@@ -31,6 +31,7 @@ import { BlobService } from '../storage/blob.service';
 import { PlanService } from '../plan/plan.service';
 import {
   exhaustedQuota,
+  IMAGE_OPERATIONS,
   imageQuotaFor,
   startOfMonthUtc,
 } from '../../common/image-generation-quota';
@@ -117,13 +118,11 @@ export class CharacterPreviewService {
     // здесь — квота на число картинок.
     const quota = imageQuotaFor(await this.plans.planOfUser(userId));
     const now = new Date();
+    // Лимит общий с ИИ-скетчем: обе операции — картинки одной модели за
+    // одни деньги, и считаются в одну квоту §8.2 (аудит A-10).
     const [dayUsed, monthUsed] = await Promise.all([
-      this.aiUsage.countToday(userId, 'character-preview', now),
-      this.aiUsage.countSince(
-        userId,
-        'character-preview',
-        startOfMonthUtc(now),
-      ),
+      this.aiUsage.countToday(userId, IMAGE_OPERATIONS, now),
+      this.aiUsage.countSince(userId, IMAGE_OPERATIONS, startOfMonthUtc(now)),
     ]);
     const exhausted = exhaustedQuota({ dayUsed, monthUsed }, quota);
     if (exhausted) {

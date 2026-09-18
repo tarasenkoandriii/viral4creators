@@ -36,6 +36,14 @@ export interface ProductItemView {
   projectId: string;
   title: string | null;
   photoUrl: string | null;
+  /** Чем сейчас является `photoUrl` — оригиналом или ИИ-скетчем (§6.3). */
+  photoVariant?: 'original' | 'sketch';
+  /** Исходное фото: левая половина сравнения «до/после». */
+  originalPhotoUrl?: string | null;
+  /** Оригинал удалён (§4 п.10) — «Вернуть оригинал» больше не предлагаем. */
+  originalDeleted?: boolean;
+  /** Id применённого скетча — начальное состояние меню без доп. запроса. */
+  activeSketchId?: string | null;
   description: string | null;
   /** Auto-detected from the photo; never user-entered. */
   category: string | null;
@@ -136,6 +144,14 @@ export interface BrandCharacterView {
   brandManifestId: string;
   label: string;
   photoUrl: string | null;
+  /** Чем сейчас является `photoUrl` — оригиналом или ИИ-скетчем (§6.3). */
+  photoVariant?: 'original' | 'sketch';
+  /** Исходное фото: левая половина сравнения «до/после». */
+  originalPhotoUrl?: string | null;
+  /** Оригинал удалён (§4 п.10) — «Вернуть оригинал» больше не предлагаем. */
+  originalDeleted?: boolean;
+  /** Id применённого скетча — начальное состояние меню без доп. запроса. */
+  activeSketchId?: string | null;
   description: string | null;
   createdAt: string;
   updatedAt: string;

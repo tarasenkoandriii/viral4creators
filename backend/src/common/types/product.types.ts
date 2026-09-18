@@ -5,6 +5,7 @@
  */
 
 import type { AudienceProfile } from './audience.types';
+import { SketchRef } from './sketch.types';
 
 /**
  * ProductInformation represents user's product details for the advertisement
@@ -31,6 +32,9 @@ export interface ProductInformation {
 
   /** Public Blob URL of the item photo (same object as productImagePathname). */
   productImageUrl?: string;
+  /** ИИ-скетч вместо фото товара (doc/AI-SKETCH-SPEC.md §6.1). */
+  sketch?: SketchRef | null;
+  originalDeleted?: boolean;
   /** Auto-detected category (§9.4) — later used to tag the published video. */
   category?: string | null;
   /** Price in the project's currency, frozen at snapshot time. */

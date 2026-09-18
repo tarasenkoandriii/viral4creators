@@ -34,6 +34,7 @@ import {
   ProductFeedImportWorkerService,
 } from '../product-feed-import/product-feed-import-worker.service';
 import { ExportService } from '../export/export.service';
+import { ImageSketchService } from '../image-sketch/image-sketch.service';
 import {
   TutorialScenarioGenerateResult,
   TutorialScenarioGeneratorService,
@@ -181,6 +182,7 @@ export class CronJobsService {
     private readonly tutorialScenarioGenerator: TutorialScenarioGeneratorService,
     private readonly tutorialScenarioRunner: TutorialScenarioRunnerService,
     private readonly uiSnapshotRunner: UiSnapshotRunnerService,
+    private readonly imageSketch: ImageSketchService,
   ) {}
 
   /**
@@ -580,6 +582,24 @@ export class CronJobsService {
    * существующей логики партий (см. её доккомментарий). */
   private async runCleanupSessionsLocked(): Promise<CleanupSessionsResult> {
     const started = Date.now();
+    // Уборка ИИ-скетчей (§6.7 ТЗ скетча) — тем же суточным прогоном:
+    // отдельная запись в `vercel.json` ради двух запросов не нужна.
+    // Best-effort: сбой уборки картинок не должен ронять уборку сессий.
+    try {
+      const sketches = await this.imageSketch.runCleanupTick();
+      if (sketches.expired > 0 || sketches.purged > 0) {
+        this.logger.log(
+          `уборка ИИ-скетчей: просрочено кандидатов ${sketches.expired}, ` +
+            `убрано файлов вытесненных ${sketches.purged}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `уборка ИИ-скетчей не выполнена: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
     let expired = await this.sessionService.cleanupExpiredSessions();
     let passes = 1;
     const collected = [...expired.blobPathnames];

@@ -32,7 +32,16 @@ export interface ProductItemView {
   id: string;
   projectId: string;
   title: string | null;
+  /** АКТИВНОЕ изображение товара: скетч, если он применён (ТЗ скетча §6.3). */
   photoUrl: string | null;
+  /** Чем сейчас является `photoUrl` — оригиналом или ИИ-скетчем. */
+  photoVariant?: 'original' | 'sketch';
+  /** Исходное фото — для сравнения «до/после» в окне скетча. */
+  originalPhotoUrl?: string | null;
+  /** Оригинал удалён (§4 п.10): «Вернуть оригинал» больше не предлагаем. */
+  originalDeleted?: boolean;
+  /** Id применённого скетча — начальное состояние меню без доп. запроса. */
+  activeSketchId?: string | null;
   description: string | null;
   /** Auto-detected from the photo (spec §6.1/§9.4); never user-entered. */
   category: string | null;

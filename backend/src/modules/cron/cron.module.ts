@@ -20,6 +20,7 @@ import { ProjectModule } from '../project/project.module';
 import { TutorialScenarioModule } from '../tutorial-scenario/tutorial-scenario.module';
 import { TutorialRunnerModule } from '../tutorial-runner/tutorial-runner.module';
 import { UiSnapshotModule } from '../ui-snapshot/ui-snapshot.module';
+import { ImageSketchModule } from '../image-sketch/image-sketch.module';
 
 /**
  * CronModule
@@ -66,6 +67,7 @@ import { UiSnapshotModule } from '../ui-snapshot/ui-snapshot.module';
   // (тогда AdminPanelModule → CronModule → AdminPanelModule) — см.
   // doc/PRODUCT-PROJECT-SPEC.md §69.
   imports: [
+    ImageSketchModule,
     StorageModule,
     AiUsageModule,
     AdminPanelModule,

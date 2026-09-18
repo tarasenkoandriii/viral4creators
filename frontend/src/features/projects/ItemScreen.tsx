@@ -55,6 +55,7 @@ import { navigate, routes } from '../../lib/router';
 import { haptic } from '../../lib/telegram';
 import { useI18n } from '../../lib/i18n-context';
 import { LoadError, ScreenHeader } from './shared';
+import { SketchSlotActions } from '../sketch/SketchSlotActions';
 import { AudienceCard } from '../../components/AudienceCard';
 import { formatPrice, itemLabel } from './format';
 import type {
@@ -401,6 +402,9 @@ function PhotoStep({
           <img
             src={preview}
             alt=""
+            // Фото товара может смениться на ИИ-скетч (§7.2) — крон
+            // UI-снимков не должен считать это регрессом вёрстки.
+            data-qa-mask="item-photo"
             className="max-h-72 w-full object-contain"
           />
         ) : (
@@ -465,6 +469,32 @@ function PhotoStep({
         className="hidden"
         onChange={(e) => void onFile(e.target.files?.[0])}
       />
+
+      {/* ИИ-скетч слота S6 (doc/AI-SKETCH-SPEC.md §7.2). Оригинал товара
+          разделяемый: на него ссылаются сессии, созданные из этого
+          товара, — перевод этих ссылок на скетч делает сервер, экрану
+          достаточно показать новый активный вариант из `slot.url`. */}
+      {item.photoUrl && (
+        <SketchSlotActions
+          className="mb-3"
+          target={{ type: 'project-item', id: item.id }}
+          hasImage
+          // ИСХОДНОЕ фото, а не то, что на экране: после перезагрузки
+          // `photoUrl` — это уже скетч, и сравнение «до/после»
+          // показывало бы одно и то же (аудит A-15).
+          originalUrl={item.originalPhotoUrl ?? item.photoUrl}
+          activeUrl={item.photoUrl}
+          variant={item.photoVariant ?? 'original'}
+          activeSketchId={item.activeSketchId ?? null}
+          originalDeleted={item.originalDeleted ?? false}
+          description={
+            [item.title, item.description].filter(Boolean).join('. ') ||
+            undefined
+          }
+          disabled={busy}
+          onSlot={(slot) => setPreview(slot.url)}
+        />
+      )}
 
       <div className="grid grid-cols-2 gap-2">
         <Button

@@ -201,6 +201,12 @@ export class ProductService {
         ...session.productInformation,
         productImagePathname: dto.pathname,
         productImageMimeType: mimeType,
+        // §3.3 ТЗ скетча: НОВОЕ фото отвязывает прежний скетч — иначе
+        // загрузка молча ничего не меняла бы, генерация продолжала бы
+        // брать рисунок со старого снимка (аудит A-14). Сам скетч
+        // остаётся в истории и применяется повторно одним нажатием.
+        sketch: null,
+        originalDeleted: false,
       },
     });
     // Сессию могли удалить между чтением и записью. Ответить «сохранено»

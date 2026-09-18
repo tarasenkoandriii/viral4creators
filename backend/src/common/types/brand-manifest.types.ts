@@ -11,6 +11,7 @@
 import { VoiceMode } from '../voice-mode';
 import { CameraMove } from '../camera-move';
 import { SubtitlesMode, SubtitleTheme } from '../subtitles';
+import { SketchRef } from './sketch.types';
 
 export type JsonObject = Record<string, unknown>;
 
@@ -19,8 +20,20 @@ export interface BrandCharacterView {
   brandManifestId: string;
   /** UI label, e.g. "Модель 1". */
   label: string;
-  /** Vercel Blob URL — goes to Veo as a referenceImage (§10.2). */
+  /**
+   * АКТИВНОЕ изображение: ИИ-скетч, если он применён, иначе фото
+   * (§6.3 ТЗ скетча). Именно оно уходит в Veo как referenceImage
+   * (§10.2) — и именно его показывает интерфейс (аудит A-8).
+   */
   photoUrl: string | null;
+  /** Чем сейчас является `photoUrl`. */
+  photoVariant?: 'original' | 'sketch';
+  /** Исходное фото — для сравнения «до/после» в окне скетча. */
+  originalPhotoUrl?: string | null;
+  /** Оригинал удалён (§4 п.10): «Вернуть оригинал» больше не предлагаем. */
+  originalDeleted?: boolean;
+  /** Id применённого скетча — начальное состояние меню без доп. запроса. */
+  activeSketchId?: string | null;
   /** Appearance in words — used when there is no photo or it didn't fit the 3-image cap (§10.3). */
   description: string | null;
   createdAt: string;
@@ -106,6 +119,9 @@ export interface BrandCharacterSnapshot {
   label: string;
   photoUrl: string | null;
   description: string | null;
+  /** ИИ-скетч, замороженный вместе с остальным брендом (§6.1 ТЗ скетча). */
+  sketch?: SketchRef | null;
+  originalDeleted?: boolean;
 }
 
 /**
@@ -121,6 +137,8 @@ export interface BrandSceneSnapshot {
   label: string;
   photoUrl: string | null;
   description: string | null;
+  sketch?: SketchRef | null;
+  originalDeleted?: boolean;
 }
 
 export interface BrandManifestSnapshot {

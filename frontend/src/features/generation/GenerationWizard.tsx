@@ -118,6 +118,8 @@ export function GenerationWizard() {
     isUpdatingPrompt,
     isApprovingPrompt,
     productImagePreview,
+    productSketchUrl,
+    productOriginalPhotoUrl,
     isUploadingImage,
     imageUploadProgress,
     generatedVideo,
@@ -614,6 +616,14 @@ export function GenerationWizard() {
               onUpload={uploadProductImage}
               uploadProgress={imageUploadProgress}
               previewUrl={productImagePreview}
+              // Слот S2 для «ИИ-скетча» (doc/AI-SKETCH-SPEC.md §7.2):
+              // сам компонент сессии не знает, а скетч привязан к ней.
+              // Состояние слота — из сессии, чтобы после перезагрузки на
+              // экране был тот же вариант, что уйдёт в ролик (аудит A-8).
+              sessionId={sessionId}
+              originalUrl={productOriginalPhotoUrl ?? productImagePreview}
+              sketchUrl={productSketchUrl}
+              sketchVariant={productSketchUrl ? 'sketch' : 'original'}
               error={
                 error?.includes('image') || error?.includes('Image')
                   ? error

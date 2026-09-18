@@ -296,7 +296,7 @@ export class AiUsageService {
    */
   async countToday(
     userId: string | null,
-    operation: AiOperation,
+    operation: AiOperation | readonly AiOperation[],
     now: Date = new Date(),
   ): Promise<number> {
     return this.countSince(userId, operation, startOfDayUtc(now));
@@ -310,11 +310,20 @@ export class AiUsageService {
    */
   async countSince(
     userId: string | null,
-    operation: AiOperation,
+    operation: AiOperation | readonly AiOperation[],
     since: Date,
   ): Promise<number> {
     return this.prisma.aiUsage.count({
-      where: { userId, operation, createdAt: { gte: since } },
+      where: {
+        userId,
+        // Несколько операций против ОДНОГО лимита: превью персонажа и
+        // ИИ-скетч — обе генерации картинки и обе считаются в одну
+        // квоту §8.2, иначе её фактический потолок вдвое выше (A-10).
+        operation: Array.isArray(operation)
+          ? { in: operation as AiOperation[] }
+          : (operation as AiOperation),
+        createdAt: { gte: since },
+      },
     });
   }
 

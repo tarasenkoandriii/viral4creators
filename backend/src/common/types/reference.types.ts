@@ -8,6 +8,8 @@
  * 3 ride as images; everything not chosen is described in the prompt text.
  */
 
+import { SketchRef } from './sketch.types';
+
 /** A location / set / background the user wants the ad shot in. */
 export interface SceneAsset {
   id: string;
@@ -17,6 +19,9 @@ export interface SceneAsset {
   photoUrl: string;
   photoPathname: string;
   createdAt: string;
+  /** ИИ-скетч вместо фото сцены (doc/AI-SKETCH-SPEC.md §6.1). */
+  sketch?: SketchRef | null;
+  originalDeleted?: boolean;
 }
 
 /** Stable ids of slot candidates: "character:c1", "scene:<id>", "brand-scene:<id>", "product". */
@@ -28,14 +33,25 @@ export interface ReferenceSelection {
   updatedAt: string;
 }
 
-export type ReferenceCandidateKind = 'character' | 'scene' | 'product' | 'text-card';
+export type ReferenceCandidateKind =
+  | 'character'
+  | 'scene'
+  | 'product'
+  | 'text-card';
 
 /** What the UI shows in the chooser. */
 export interface ReferenceCandidateView {
+  /** `sketch` — вместо оригинала применён ИИ-скетч (§3.4 ТЗ скетча). */
+  variant?: 'original' | 'sketch';
   id: ReferenceCandidateId;
   kind: ReferenceCandidateKind;
   label: string;
   thumbnailUrl: string | null;
+  /**
+   * Исходное фото, когда активен скетч — левая половина сравнения
+   * «до/после» в окне скетча (аудит A-15). У оригинала поля нет.
+   */
+  originalThumbnailUrl?: string | null;
   /** The text that will go into the prompt if this candidate is NOT in a slot. */
   textFallback: string;
   /**

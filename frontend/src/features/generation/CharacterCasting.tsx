@@ -61,6 +61,7 @@ import type {
   CharacterCasting as Casting,
 } from '../../types';
 import type { HighlightFocus } from './SceneCasting';
+import { SketchSlotActions } from '../sketch/SketchSlotActions';
 import {
   characterColor,
   defaultCasting,
@@ -807,6 +808,45 @@ function ReplacementForm({
             {dict.characterCasting.brandPhotoNote}
           </li>
         </ul>
+      )}
+
+      {/* ИИ-скетч слота S1 (doc/AI-SKETCH-SPEC.md §7.2) — на всех трёх
+          вкладках замены, но не на «как есть»: там нет ни своего фото,
+          ни своего описания, и подменять нечего. У вкладки «Описание»
+          фото нет вовсе, поэтому окно открывается сразу в режиме «по
+          описанию» и предзаполняется тем же текстом, что редактируется
+          выше. После применения перечитываем кастинг целиком: сервер мог
+          заодно сбросить одобрение промпта (§4, п. 9). */}
+      {tab !== 'none' && (
+        <SketchSlotActions
+          className="mt-2"
+          target={{
+            type: 'session-character',
+            id: sessionId,
+            subId: character.id,
+          }}
+          hasImage={
+            tab !== 'text' &&
+            !!(cast.replacement.photoUrl || cast.replacement.sketch)
+          }
+          originalUrl={tab === 'text' ? null : cast.replacement.photoUrl}
+          activeUrl={
+            cast.replacement.sketch?.url ?? cast.replacement.photoUrl ?? null
+          }
+          variant={cast.replacement.sketch ? 'sketch' : 'original'}
+          activeSketchId={cast.replacement.sketch?.sketchId ?? null}
+          originalDeleted={cast.replacement.originalDeleted ?? false}
+          description={
+            tab === 'text' ? text : (cast.replacement.description ?? undefined)
+          }
+          disabled={saving || uploading}
+          onSlot={() => {
+            getCasting(sessionId)
+              .then(onUploaded)
+              // Со словарём: иначе русский текст на всех локалях.
+              .catch((e) => onError(errorMessage(e, undefined, dict.errors)));
+          }}
+        />
       )}
 
       {/* Доп. запрос владельца продукта: сохранить эту замену

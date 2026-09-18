@@ -33,6 +33,7 @@ import {
   CharacterCasting,
   NO_REPLACEMENT,
 } from '../../common/types/casting.types';
+import { BrandCharacterSnapshot } from '../../common/types/brand-manifest.types';
 import {
   CastPhotoConfirmRequestDto,
   CastPhotoUploadUrlRequestDto,
@@ -70,9 +71,13 @@ export function normaliseCasting(
       'The analysis found no characters to cast (or the analysis is not complete yet)',
     );
   }
-  const brandPhotos = new Map<string, string>(); // photoUrl → label
+  // URL → персонаж снимка. Принимаются ОБА варианта изображения:
+  // оригинал и применённый ИИ-скетч — интерфейс после аудита A-8
+  // показывает активный вариант и пришлёт именно его (аудит A-1).
+  const brandPhotos = new Map<string, BrandCharacterSnapshot>();
   for (const c of session.brandManifestSnapshot?.characters ?? []) {
-    if (c.photoUrl) brandPhotos.set(c.photoUrl, c.label);
+    if (c.photoUrl) brandPhotos.set(c.photoUrl, c);
+    if (c.sketch?.url) brandPhotos.set(c.sketch.url, c);
   }
   const previous = new Map(
     (existing?.casts ?? []).map((c) => [c.characterId, c] as const),
@@ -112,7 +117,7 @@ export function normaliseCasting(
 function replacementFrom(
   d: CharacterCastDto,
   prev: CharacterCast | undefined,
-  brandPhotos: Map<string, string>,
+  brandPhotos: Map<string, BrandCharacterSnapshot>,
 ): CastReplacement {
   const r = d.replacement;
   switch (r.kind) {
@@ -153,15 +158,23 @@ function replacementFrom(
           `Brand replacement for "${d.characterId}" needs a photo or a description`,
         );
       }
+      const snap = r.photoUrl ? (brandPhotos.get(r.photoUrl) ?? null) : null;
       return {
         kind: 'brand',
-        photoUrl: r.photoUrl ?? null,
+        // Храним КАНОНИЧЕСКИЙ URL персонажа снимка (оригинал), даже если
+        // клиент прислал URL скетча: активный вариант всё равно
+        // резолвится через снимок (`activeCastImage`), а канонический
+        // URL переживает и смену скетча, и его откат — аудит A-1.
+        photoUrl: snap
+          ? (snap.photoUrl ?? r.photoUrl ?? null)
+          : (r.photoUrl ?? null),
         photoPathname: null,
         description: r.description?.trim() || null,
-        brandCharacterId: r.brandCharacterId ?? null,
-        label:
-          r.label?.trim() ||
-          (r.photoUrl ? (brandPhotos.get(r.photoUrl) ?? null) : null),
+        // Без id замена цепляется к снимку только по URL — а он меняется
+        // при удалении оригинала. Подставляем id снимка, когда он
+        // известен: так связь переживает любые правки картинки.
+        brandCharacterId: r.brandCharacterId ?? snap?.sourceCharacterId ?? null,
+        label: r.label?.trim() || snap?.label || null,
       };
     }
   }

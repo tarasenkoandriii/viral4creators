@@ -94,7 +94,14 @@ export type PlanFeature =
    * запуск браузера, а live-вход (§7.4) держит его минутами. Тот же
    * тариф, что `brandManifest` — Standard и выше.
    */
-  | 'siteTutorial';
+  | 'siteTutorial'
+  /**
+   * ИИ-скетч вместо изображения (doc/AI-SKETCH-SPEC.md §8.1). Доступен
+   * на ВСЕХ тарифах: это юридическая защита, и нужна она прежде всего
+   * массовому бесплатному пользователю. Тарифы различаются квотой
+   * (`common/image-generation-quota.ts`), а не самой возможностью.
+   */
+  | 'aiSketch';
 
 export interface PlanDefinition {
   id: PlanId;
@@ -131,6 +138,8 @@ const ALL: Record<PlanFeature, boolean> = {
   voiceDub: true,
   // Этап 111: Standard и выше, как brandManifest — LITE сужает ниже.
   siteTutorial: true,
+  // §8.1 ТЗ скетча: признак есть у всех тарифов, различается только квота.
+  aiSketch: true,
 };
 
 export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
@@ -339,6 +348,7 @@ export function featureDeniedMessage(feature: PlanFeature): string {
     voiceCloning: 'Клонирование своего голоса',
     voiceDub: 'Дубляж (полная замена звука Veo своим голосом)',
     siteTutorial: 'Обучающее видео по сайту заказчика',
+    aiSketch: 'ИИ-скетч вместо изображения',
   };
   return `${what[feature]} доступна в режиме ${need}. Сейчас все режимы бесплатны — переключитесь в настройках режима.`;
 }

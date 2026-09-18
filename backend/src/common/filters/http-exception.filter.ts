@@ -31,11 +31,36 @@ import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { localeFromRequest, SupportedLocale } from '../locale';
 
+/**
+ * Поля, которые исключение может передать клиенту ПОМИМО текста. Раньше
+ * фильтр оставлял из объекта только `message`, и структурный ответ (429
+ * скетча с `quota`/`upgrade`) терялся по дороге — аудит A-2. Пробрасываем
+ * не всё подряд, а явный список: остальное могло бы утечь наружу.
+ */
+const PASSTHROUGH_KEYS = [
+  'quota',
+  'upgrade',
+  'reason',
+  'retryAfterMs',
+] as const;
+
+function detailsOf(
+  responseObj: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const details: Record<string, unknown> = {};
+  for (const key of PASSTHROUGH_KEYS) {
+    if (responseObj[key] !== undefined) details[key] = responseObj[key];
+  }
+  return Object.keys(details).length > 0 ? details : null;
+}
+
 interface ErrorResponse {
   success: false;
   error: {
     code: string;
     message: string;
+    /** Машиночитаемые подробности ответа (см. `PASSTHROUGH_KEYS`). */
+    details?: Record<string, unknown>;
   };
   meta: {
     timestamp: string;
@@ -94,6 +119,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let errorCode = 'INTERNAL_SERVER_ERROR';
     let errorMessage = internalErrorMessage(locale);
+    let errorDetails: Record<string, unknown> | null = null;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -106,6 +132,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         errorMessage = messageOf(responseObj.message) || errorMessage;
         errorCode =
           (responseObj.error as string) || this.getErrorCodeFromStatus(status);
+        errorDetails = detailsOf(responseObj);
       }
       // 4xx — ожидаемые ответы, им хватает warn; 5xx, брошенные нами
       // намеренно, — всё равно авария.
@@ -129,6 +156,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       error: {
         code: errorCode,
         message: errorMessage,
+        ...(errorDetails ? { details: errorDetails } : {}),
       },
       meta: {
         timestamp: new Date().toISOString(),

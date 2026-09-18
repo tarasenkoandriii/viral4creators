@@ -129,6 +129,10 @@ export type AiOperation =
   // (`common/gemini-image-model.ts`), должна быть видна в отчёте
   // расходов отдельной строкой.
   | 'character-preview'
+  // ИИ-скетч вместо изображения (doc/AI-SKETCH-SPEC.md) — та же модель
+  // Gemini, что у превью персонажа, но отдельная операция: по ней
+  // считается квота пользователя и она видна в отчёте отдельной строкой.
+  | 'ai-sketch'
   // ИИ-консультант на лендинге (doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md
   // §5.2/§7.2) — единственная операция, у которой нет ни `sessionId`, ни
   // `userId` вовсе (анонимный посетитель до входа в мини-апп): суточный
@@ -170,6 +174,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'text-extraction': 'Извлечение текста на экране',
   'original-dialogue-extraction':
     'Извлечение реплик оригинала для пробы голоса',
+  'ai-sketch': 'ИИ-скетч',
   'character-preview': 'Превью персонажа из текста',
   assistant: 'ИИ-консультант на лендинге',
   'tutorial-scenario-generate': 'Генерация сценария обучающего видео',

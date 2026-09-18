@@ -4,6 +4,8 @@
  * Type definitions matching backend API structures.
  */
 
+import type { SketchRef } from './sketch';
+
 // Session types
 export enum SessionStatus {
   CREATED = 'created',
@@ -271,6 +273,9 @@ export interface ProductInformation {
   /** Voice-over language chosen on the product step (spec §13). */
   dialogueLanguage?: string | null;
   sourceProductItemId?: string;
+  /** Применённый ИИ-скетч фото товара (§6.3 ТЗ скетча). */
+  sketch?: SketchRef | null;
+  originalDeleted?: boolean;
 }
 
 // ── Character casting (spec §10) — mirrors backend casting.types.ts ──────
@@ -279,11 +284,18 @@ export type CastReplacementKind = 'none' | 'photo' | 'text' | 'brand';
 
 export interface CastReplacement {
   kind: CastReplacementKind;
+  /** Исходное фото замены; при применённом скетче остаётся оригиналом. */
   photoUrl: string | null;
   photoPathname: string | null;
   description: string | null;
   brandCharacterId: string | null;
   label: string | null;
+  /**
+   * Применённый ИИ-скетч (doc/AI-SKETCH-SPEC.md §6.3): именно он уходит
+   * в Veo/Grok и именно его показывает карточка (аудит A-8).
+   */
+  sketch?: SketchRef | null;
+  originalDeleted?: boolean;
 }
 
 export interface CharacterCast {
@@ -388,7 +400,12 @@ export interface ReferenceCandidate {
   id: string;
   kind: ReferenceCandidateKind;
   label: string;
+  /** АКТИВНОЕ изображение кандидата: при применённом скетче — скетч. */
   thumbnailUrl: string | null;
+  /** Чем является `thumbnailUrl` (§6.3 ТЗ скетча). */
+  variant?: 'original' | 'sketch';
+  /** Исходное фото — для сравнения «до/после» (аудит A-15). */
+  originalThumbnailUrl?: string | null;
   textFallback: string;
   /** 'session' — uploaded here (deletable in the chooser); 'brand' — from the manifest (§17.1). */
   origin: 'session' | 'brand';
@@ -794,7 +811,14 @@ export type PlanFeature =
   | 'voiceDub'
   /** Обучалка по сайту заказчика (этап 111) — пошаговый визард по чужому
    * сайту, Standard и выше. */
-  | 'siteTutorial';
+  | 'siteTutorial'
+  /**
+   * ИИ-скетч вместо изображения (doc/AI-SKETCH-SPEC.md §8.1). Признак
+   * есть на всех режимах — различаются только квоты (§8.2), — но он всё
+   * равно нужен отдельным флагом: юридическую функцию нужно уметь
+   * выключить с сервера, не выкатывая фронтенд.
+   */
+  | 'aiSketch';
 
 export interface PlanDefinition {
   id: PlanId;

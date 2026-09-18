@@ -466,10 +466,19 @@ describe('brand scenes from the manifest snapshot (§17.1, Stage 22)', () => {
 
     it('момент с cardUrl становится кандидатом сразу после персонажей, до сцен/товара', () => {
       const plan = buildReferencePlan({
-        ...session([cast('c1', 1, { kind: 'photo', photoUrl: 'https://blob.test/c1.png' })]),
+        ...session([
+          cast('c1', 1, {
+            kind: 'photo',
+            photoUrl: 'https://blob.test/c1.png',
+          }),
+        ]),
         generationPrompt: {
           onScreenTextMoments: [
-            { text: 'Купи сейчас', role: 'cta', cardUrl: 'https://blob.test/cta.png' },
+            {
+              text: 'Купи сейчас',
+              role: 'cta',
+              cardUrl: 'https://blob.test/cta.png',
+            },
           ],
         } as never,
       });
@@ -482,9 +491,21 @@ describe('brand scenes from the manifest snapshot (§17.1, Stage 22)', () => {
         ...session(undefined),
         generationPrompt: {
           onScreenTextMoments: [
-            { text: 'Скидка 20%', role: 'callout', cardUrl: 'https://blob.test/callout.png' },
-            { text: 'Смотри сюда', role: 'hook', cardUrl: 'https://blob.test/hook.png' },
-            { text: 'Купи сейчас', role: 'cta', cardUrl: 'https://blob.test/cta.png' },
+            {
+              text: 'Скидка 20%',
+              role: 'callout',
+              cardUrl: 'https://blob.test/callout.png',
+            },
+            {
+              text: 'Смотри сюда',
+              role: 'hook',
+              cardUrl: 'https://blob.test/hook.png',
+            },
+            {
+              text: 'Купи сейчас',
+              role: 'cta',
+              cardUrl: 'https://blob.test/cta.png',
+            },
           ],
         } as never,
       });
@@ -501,7 +522,11 @@ describe('brand scenes from the manifest snapshot (§17.1, Stage 22)', () => {
         ...session(undefined),
         generationPrompt: {
           onScreenTextMoments: [
-            { text: 'Купи сейчас', role: 'cta', cardUrl: 'https://blob.test/cta.png' },
+            {
+              text: 'Купи сейчас',
+              role: 'cta',
+              cardUrl: 'https://blob.test/cta.png',
+            },
           ],
         } as never,
       });
@@ -514,12 +539,96 @@ describe('brand scenes from the manifest snapshot (§17.1, Stage 22)', () => {
         ...session(undefined),
         generationPrompt: {
           onScreenTextMoments: [
-            { text: 'Купи сейчас', role: 'cta', cardUrl: 'https://blob.test/cta.png' },
+            {
+              text: 'Купи сейчас',
+              role: 'cta',
+              cardUrl: 'https://blob.test/cta.png',
+            },
           ],
         } as never,
       });
       expect(referenceMappingText(plan)).toContain('character-for-character');
-      expect(grokReferencePromptText(plan)).toContain('character-for-character');
+      expect(grokReferencePromptText(plan)).toContain(
+        'character-for-character',
+      );
     });
+  });
+});
+
+describe('ИИ-скетч в плане референсов (doc/AI-SKETCH-SPEC.md)', () => {
+  const SKETCH = {
+    sketchId: 'sk1',
+    url: 'https://blob.test/sketches/u1/sk1.png',
+    pathname: 'sketches/u1/sk1.png',
+    mimeType: 'image/png',
+    style: 'pencil' as const,
+    sketchRendering: 'realistic' as const,
+    appliedAt: '2026-09-17T10:00:00.000Z',
+  };
+
+  it('скетч товара уводит его в референсы: первого кадра больше нет (§5.6)', () => {
+    const plain = buildReferencePlan(session(undefined) as never);
+    expect(plain.legacyFirstFrame).toBe(true);
+
+    const withSketch = buildReferencePlan({
+      ...session(undefined),
+      productInformation: { ...product, sketch: SKETCH },
+    } as never);
+    expect(withSketch.legacyFirstFrame).toBe(false);
+    expect(withSketch.images).toHaveLength(1);
+    expect(withSketch.images[0]).toMatchObject({
+      kind: 'product',
+      pathname: 'sketches/u1/sk1.png',
+      variant: 'sketch',
+    });
+  });
+
+  it('оригинал персонажа не попадает в план, когда применён скетч', () => {
+    const plan = buildReferencePlan(
+      session([
+        cast('c1', 1, {
+          kind: 'photo',
+          photoUrl: 'https://blob.test/sessions/s/characters/c1/photo.jpg',
+          photoPathname: 'sessions/s/characters/c1/photo.jpg',
+          sketch: SKETCH,
+        }),
+      ]) as never,
+    );
+    const paths = plan.images.map((i) => i.pathname);
+    expect(paths).toContain('sketches/u1/sk1.png');
+    expect(paths).not.toContain('sessions/s/characters/c1/photo.jpg');
+    expect(plan.candidates.find((c) => c.kind === 'character')?.variant).toBe(
+      'sketch',
+    );
+  });
+
+  it('в промпт уходит пояснение «это рисунок» — и у Veo, и у Grok', () => {
+    const plan = buildReferencePlan(
+      session([
+        cast('c1', 1, {
+          kind: 'photo',
+          photoUrl: 'https://blob.test/sessions/s/characters/c1/photo.jpg',
+          photoPathname: 'sessions/s/characters/c1/photo.jpg',
+          sketch: SKETCH,
+        }),
+      ]) as never,
+    );
+    expect(referenceMappingText(plan)).toContain('stylized drawing');
+    expect(grokReferencePromptText(plan)).toContain('Reference <IMAGE_1>');
+    expect(grokReferencePromptText(plan)).toContain('stylized drawing');
+  });
+
+  it('режим «в стиле скетча» пояснения не добавляет', () => {
+    const plan = buildReferencePlan(
+      session([
+        cast('c1', 1, {
+          kind: 'photo',
+          photoUrl: 'https://blob.test/sessions/s/characters/c1/photo.jpg',
+          photoPathname: 'sessions/s/characters/c1/photo.jpg',
+          sketch: { ...SKETCH, sketchRendering: 'stylized' as const },
+        }),
+      ]) as never,
+    );
+    expect(referenceMappingText(plan)).not.toContain('stylized drawing');
   });
 });

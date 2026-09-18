@@ -11,6 +11,8 @@
  * referenceImages, the first three by `order` (§10.3).
  */
 
+import { SketchRef } from './sketch.types';
+
 export type CastReplacementKind = 'none' | 'photo' | 'text' | 'brand';
 
 export interface CastReplacement {
@@ -25,6 +27,10 @@ export interface CastReplacement {
   brandCharacterId: string | null;
   /** brand: its label, so the UI can show "Аня" without re-fetching the manifest. */
   label: string | null;
+  /** ИИ-скетч, применённый вместо фото (doc/AI-SKETCH-SPEC.md §6.1). */
+  sketch?: SketchRef | null;
+  /** Оригинал удалён — остался только скетч (§4 п.10 того же ТЗ). */
+  originalDeleted?: boolean;
 }
 
 export interface CharacterCast {
