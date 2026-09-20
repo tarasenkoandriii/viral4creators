@@ -5,7 +5,7 @@
  * заявок. Требует Telegram-идентичность — анонимно бриф не создать.
  */
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, createInquiry } from '../../../lib/client-api';
 import { useDictionary } from '../../../lib/dictionary-context';
@@ -22,7 +22,21 @@ const FORMAT_ADVICE_PREVIEW: Record<TargetPlatform, { aspectRatio: string; quali
   other: { aspectRatio: '16:9', quality: 'fast' },
 };
 
+/**
+ * Аудит-фикс: useSearchParams() требует границы Suspense при статической
+ * генерации (Next.js App Router) — без неё сборка падает на пререндере
+ * этой страницы для всех 5 локалей сразу. Логика формы вынесена в
+ * BriefForm, а сам default export — только обёртка с Suspense.
+ */
 export default function BriefPage({ params }: { params: { locale: Locale } }) {
+  return (
+    <Suspense fallback={null}>
+      <BriefForm params={params} />
+    </Suspense>
+  );
+}
+
+function BriefForm({ params }: { params: { locale: Locale } }) {
   const { dict } = useDictionary();
   const router = useRouter();
   const searchParams = useSearchParams();
