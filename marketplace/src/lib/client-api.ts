@@ -300,11 +300,11 @@ export function addBrandScene(
 
 /** Best-effort, намеренно проглатывает ошибки — счётчик не должен ронять страницу. */
 export function recordCreatorView(id: string): Promise<void> {
-  return request(`/creators/${id}/view`, { method: 'POST' }).catch(() => undefined);
+  return request<void>(`/creators/${id}/view`, { method: 'POST' }).catch(() => undefined);
 }
 
 export function recordPortfolioView(id: string): Promise<void> {
-  return request(`/portfolio-items/${id}/view`, { method: 'POST' }).catch(() => undefined);
+  return request<void>(`/portfolio-items/${id}/view`, { method: 'POST' }).catch(() => undefined);
 }
 
 export interface CreatorStatsView {
