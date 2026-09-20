@@ -17,6 +17,9 @@ export function EmbedSnippet({ creatorId }: { creatorId: string }) {
 
   const copy = async () => {
     try {
+      if (typeof navigator === 'undefined' || !navigator.clipboard) {
+        return;
+      }
       await navigator.clipboard.writeText(snippet);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);

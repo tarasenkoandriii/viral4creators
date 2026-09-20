@@ -16,9 +16,11 @@ export function CrossPostPanel({ videoUrl, title }: { videoUrl: string; title: s
 
   const copyAndOpen = async (platform: string, openUrl: string) => {
     try {
-      await navigator.clipboard.writeText(caption);
-      setCopiedFor(platform);
-      setTimeout(() => setCopiedFor(null), 2500);
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(caption);
+        setCopiedFor(platform);
+        setTimeout(() => setCopiedFor(null), 2500);
+      }
     } catch {
       // буфер обмена недоступен — всё равно открываем площадку
     }

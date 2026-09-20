@@ -14,8 +14,20 @@ export function ShareButtons({ url, title }: { url: string; title: string }) {
 
   const share = async () => {
     try {
-      if (typeof navigator !== 'undefined' && 'share' in navigator) {
-        await navigator.share({ title, url });
+      // Аудит-фикс: Web Share API (navigator.share) не объявлен в типе
+      // Navigator этой версии lib.dom.d.ts. Раньше здесь стояло
+      // `'share' in navigator` — сочетание `in`-проверки свойства,
+      // отсутствующего в типе, с безусловным return внутри if сузило тип
+      // navigator в остальном коде до never (реальная причина падения
+      // сборки — "Property 'clipboard' does not exist on type 'never'").
+      // Проверяем через приведение типа локальной переменной, не трогая
+      // тип глобального navigator.
+      const nav = navigator as Navigator & { share?: (data: { title?: string; url?: string }) => Promise<void> };
+      if (nav.share) {
+        await nav.share({ title, url });
+        return;
+      }
+      if (!navigator.clipboard) {
         return;
       }
       await navigator.clipboard.writeText(url);
