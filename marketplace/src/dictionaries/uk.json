@@ -1,0 +1,263 @@
+{
+  "meta": {
+    "title": "Вітрина виконавців — viral4creators",
+    "description": "Каталог creators і agencies, портфоліо UGC-роликів і бриф на рекламу товару без тендеру — Етап 0 маркетплейсу viral4creators."
+  },
+  "header": {
+    "logo": "viral4creators · маркетплейс",
+    "collections": "Добірки",
+    "stats": "Моя статистика",
+    "becomeCreator": "Стати виконавцем",
+    "brandBook": "Брендбук",
+    "postBrief": "Розмістити бриф"
+  },
+  "login": {
+    "loginFailed": "Не вдалося увійти через Telegram — спробуйте ще раз.",
+    "devLoginFailed": "Dev-вхід не вдався.",
+    "devLoginAs": "Dev-вхід як {{id}}",
+    "logout": "Вийти",
+    "notConfigured": "Вхід через Telegram не налаштовано (NEXT_PUBLIC_TELEGRAM_BOT_USERNAME)."
+  },
+  "localeSwitcher": {
+    "label": "Мова"
+  },
+  "catalog": {
+    "title": "Знайдіть виконавця для UGC-відео",
+    "hintPrefix": "Портфоліо реальних робіт, без тендеру та передоплати на платформі — зв'яжіться з виконавцем напряму. Не знайшли підходящого?",
+    "hintLink": "Опишіть завдання — підберемо варіанти",
+    "nichePlaceholder": "Ніша (наприклад beauty)",
+    "budgetPlaceholder": "Бюджет до",
+    "searchButton": "Знайти",
+    "emptyState": "Поки що ніхто не приймає замовлення за цим фільтром — спробуйте прибрати фільтри або зайдіть пізніше.",
+    "priceFrom": "від",
+    "priceTo": "до",
+    "showMore": "Показати ще",
+    "noName": "Без імені"
+  },
+  "profile": {
+    "viewsSuffix": "переглядів профілю",
+    "priceRangeLabel": "Ціновий діапазон",
+    "contactButton": "Зв'язатися",
+    "botDeepLinkButton": "Відкрити візитку в боті",
+    "notAcceptingOrders": "Зараз не приймає нові замовлення — портфоліо доступне для перегляду.",
+    "qrEmbedSummary": "QR-код і вбудовування на сайт",
+    "portfolioHeading": "Портфоліо",
+    "emptyPortfolio": "Поки немає опублікованих робіт.",
+    "similarHeading": "Схожі виконавці",
+    "printLink": "Друкована версія профілю (зберегти як PDF)",
+    "featuredBadge": "★ Featured"
+  },
+  "item": {
+    "shareHeading": "Поділитися",
+    "crossPostHeading": "Опублікувати в соцмережах",
+    "similarHeading": "Схожі роботи",
+    "viewsSuffix": "переглядів",
+    "downloadStory": "Завантажити картинку для Stories"
+  },
+  "share": {
+    "shareOrCopy": "🔗 Поділитися / скопіювати посилання",
+    "linkCopied": "Посилання скопійовано ✓",
+    "telegram": "Telegram",
+    "whatsapp": "WhatsApp",
+    "loginToLike": "Увійдіть через Telegram, щоб лайкнути"
+  },
+  "crossPost": {
+    "x": "Опублікувати в X",
+    "instagram": "Скопіювати підпис → Instagram",
+    "tiktok": "Скопіювати підпис → TikTok",
+    "copied": "Підпис скопійовано ✓",
+    "hint": "X публікується в один клік. У Instagram і TikTok немає публічного веб-інтенту для готового посту — підпис копіюється, саме відео потрібно прикріпити вручну на їхньому боці."
+  },
+  "qr": {
+    "alt": "QR-код посилання на профіль"
+  },
+  "embedSnippet": {
+    "copyButton": "Скопіювати код для сайту",
+    "copied": "Скопійовано ✓"
+  },
+  "print": {
+    "button": "Зберегти як PDF (друк браузера)"
+  },
+  "brief": {
+    "heading": "Опишіть завдання",
+    "hint": "Без тендеру та передоплати: ми підберемо відповідних виконавців з каталогу, а зв'язуєтесь і домовляєтесь ви напряму.",
+    "brandAttached": "Брендбук прикріплено — виконавець одразу побачить фірмовий стиль разом з описом товару.",
+    "productLabel": "Товар і завдання",
+    "productPlaceholder": "Наприклад: крем для рук ручної роботи, хочемо вірусне відео з розпакуванням…",
+    "isLineLabel": "Це лінійка товарів, а не один продукт",
+    "goalLabel": "Мета (необов'язково)",
+    "goalPlaceholder": "Охоплення / продажі / впізнаваність",
+    "platformLabel": "Де публікуватимете",
+    "platforms": {
+      "instagram_reels": "Instagram Reels",
+      "tiktok": "TikTok",
+      "youtube_shorts": "YouTube Shorts",
+      "youtube_long": "YouTube (звичайний ролик)",
+      "other": "Інше"
+    },
+    "advicePrefix": "Порада щодо формату:",
+    "adviceQualityLabel": "якість",
+    "adviceFast": "швидка",
+    "adviceStandard": "підвищена",
+    "budgetLabel": "Орієнтовний бюджет (необов'язково)",
+    "budgetPlaceholder": "Тільки для підбору за ціною — це не платіж",
+    "submit": "Підібрати виконавців",
+    "submitting": "Надсилаємо…",
+    "errorTooShort": "Опишіть товар докладніше (хоча б пару речень).",
+    "errorSubmit": "Не вдалося створити бриф — увійдіть через Telegram (кнопка в шапці) і спробуйте знову."
+  },
+  "formatAdvice": {
+    "instagram_reels": "Вертикальний формат 9:16, швидкої якості достатньо для Reels.",
+    "tiktok": "Вертикальний формат 9:16, швидкої якості достатньо для TikTok.",
+    "youtube_shorts": "Вертикальний формат 9:16, швидкої якості достатньо для Shorts.",
+    "youtube_long": "Горизонтальний 16:9 і підвищена (standard) якість — прерол дивляться довше, ніж шортс.",
+    "other": "Майданчик не розпізнано — 16:9 як безпечний дефолт; уточніть у виконавця перед зйомкою."
+  },
+  "matches": {
+    "heading": "Відповідні виконавці",
+    "adviceIntro": "Формат для зйомки:",
+    "adviceSuffix": "це саме технічне завдання можна передати виконавцю.",
+    "loading": "Підбираємо варіанти…",
+    "emptyPrefix": "Поки що ніхто з каталогу не підійшов за нішею/бюджетом. Загляньте в",
+    "emptyLink": "загальний каталог",
+    "emptySuffix": "— там можна зв'язатися напряму без брифа.",
+    "portfolioButton": "Портфоліо",
+    "contactButton": "Зв'язатися",
+    "contactedButton": "Позначено ✓",
+    "errorLoad": "Не вдалося завантажити підбір — спробуйте оновити сторінку.",
+    "noName": "Без імені"
+  },
+  "becomeCreator": {
+    "heading": "Хочете приймати замовлення?",
+    "hint": "Ваш акаунт залишається тим самим — можна одночасно бути й замовником в інших проєктах. Рішення оборотне в будь-який момент.",
+    "nichesLabel": "Ніші (через кому)",
+    "nichesPlaceholder": "beauty, food, fitness",
+    "bioLabel": "Про себе (необов'язково)",
+    "platformLabel": "Публічна соцмережа",
+    "urlLabel": "Посилання",
+    "urlPlaceholder": "https://instagram.com/...",
+    "contactLabel": "Дод. контакт (необов'язково)",
+    "contactPlaceholder": "За замовчуванням — ваш акаунт Telegram",
+    "consentLabel": "Погоджуюсь на публічний профіль на вітрині",
+    "submit": "Стати виконавцем",
+    "submitting": "Створюємо…",
+    "errorConsent": "Потрібна явна згода на публічний профіль.",
+    "errorNoSocial": "Вкажіть хоча б одне публічне посилання на соцмережу.",
+    "errorSubmit": "Не вдалося створити профіль — увійдіть через Telegram (кнопка в шапці) і спробуйте знову."
+  },
+  "brandBook": {
+    "steps": [
+      "Назва",
+      "Стиль",
+      "Голос",
+      "Персонажі",
+      "Локації"
+    ],
+    "heading": "Майстер брендбука",
+    "stepPrefix": "Крок",
+    "stepOf": "з",
+    "titleLabel": "Назва бренду",
+    "styleLabel": "Стиль, тон і кольори (вільним текстом)",
+    "stylePlaceholder": "Наприклад: мінімалізм, пастельні тони, спокійний впевнений тон подачі…",
+    "voiceModeLabel": "Озвучення",
+    "voiceModes": {
+      "veo": "Рідне озвучення Veo",
+      "voiceover": "Закадровий голос",
+      "dub": "Дубляж"
+    },
+    "voiceNotesLabel": "Голос і тон (стать/вік голосу, темп, манера, заборони)",
+    "charactersHeading": "Персонажі бренду (опційно)",
+    "charactersLabelPlaceholder": "Ім'я персонажа",
+    "charactersDescPlaceholder": "Зовнішність, характер, роль у ролику",
+    "scenesHeading": "Фірмові локації (опційно)",
+    "scenesLabelPlaceholder": "Назва локації",
+    "scenesDescPlaceholder": "Опис — наприклад, «шоурум з бетонними стінами і неоновою вивіскою»",
+    "addMore": "+ Додати ще",
+    "back": "Назад",
+    "next": "Далі",
+    "save": "Зберегти брендбук",
+    "saving": "Зберігаємо…",
+    "errorSubmit": "Не вдалося створити брендбук — увійдіть через Telegram (кнопка в шапці) і спробуйте знову.",
+    "doneHeading": "Брендбук готовий",
+    "doneHint": "Тепер його можна прикріпити до брифа — виконавець одразу побачить фірмовий стиль.",
+    "createBriefButton": "Створити бриф із цим брендбуком"
+  },
+  "collections": {
+    "heading": "Тематичні добірки",
+    "empty": "Добірок поки немає — вони з'являються, щойно виконавці позначають свої роботи тегом.",
+    "itemsSuffix": "робіт",
+    "backLink": "← Усі добірки",
+    "emptyCollection": "У цій добірці поки немає опублікованих робіт."
+  },
+  "dashboard": {
+    "heading": "Ваша статистика",
+    "errorPrefix": "Не вдалося завантажити статистику — увійдіть через Telegram і переконайтесь, що пройшли квіз виконавця.",
+    "takeQuiz": "Пройти квіз",
+    "loading": "Завантажуємо…",
+    "profileViews": "Переглядів профілю",
+    "portfolioViews": "Сумарних переглядів робіт",
+    "likes": "Сумарних лайків",
+    "itemCount": "Робіт у портфоліо"
+  },
+  "og": {
+    "itemTag": "маркетплейс · портфоліо",
+    "itemFallback": "Робота виконавця",
+    "profileTag": "маркетплейс · виконавець",
+    "profileFallback": "Портфоліо виконавця"
+  },
+  "myPortfolio": {
+    "heading": "Моє портфоліо",
+    "addHeading": "Додати роботу",
+    "videoUrlLabel": "Посилання на відео",
+    "videoUrlPlaceholder": "https://...",
+    "titleLabel": "Назва",
+    "thumbnailLabel": "Прев'ю (необов'язково, посилання на картинку)",
+    "collectionLabel": "Тематична добірка (необов'язково)",
+    "collectionPlaceholder": "наприклад, fitness",
+    "submit": "Додати в портфоліо",
+    "submitting": "Додаємо…",
+    "errorSubmit": "Не вдалося додати роботу.",
+    "empty": "Поки немає жодної роботи.",
+    "statusPending": "На модерації",
+    "statusPublished": "Опубліковано",
+    "statusRejected": "Відхилено",
+    "rejectionReasonPrefix": "Причина:",
+    "withdraw": "Видалити",
+    "withdrawConfirm": "Видалити цю роботу без можливості відновити?",
+    "addTagButton": "Додати до добірки",
+    "cancel": "Скасувати",
+    "errorGeneric": "Не вдалося зберегти."
+  },
+  "settings": {
+    "heading": "Налаштування профілю",
+    "acceptingOrdersLabel": "Приймаю нові замовлення",
+    "slugLabel": "Vanity-посилання (необов'язково)",
+    "slugPlaceholder": "moya-marka",
+    "nichesLabel": "Ніші (через кому)",
+    "bioLabel": "Про себе",
+    "priceMinLabel": "Ціна від",
+    "priceMaxLabel": "Ціна до",
+    "contactLabel": "Дод. контакт",
+    "save": "Зберегти",
+    "saving": "Зберігаємо…",
+    "saved": "Збережено ✓",
+    "errorSave": "Не вдалося зберегти — спробуйте ще раз.",
+    "errorSlugTaken": "Це vanity-посилання вже зайняте — оберіть інше.",
+    "myPortfolioLink": "Керувати портфоліо"
+  },
+  "briefsList": {
+    "heading": "Мої брифи",
+    "empty": "Ви ще не створювали брифів.",
+    "newButton": "Новий бриф",
+    "statusSent": "Надіслано",
+    "statusContacted": "Зв'язались",
+    "statusDraft": "Чернетка",
+    "openMatches": "Дивитись підбір"
+  },
+  "errors": {
+    "notLoggedIn": "Спочатку увійдіть через Telegram (кнопка в шапці).",
+    "conflict": "Такий профіль вже існує.",
+    "generic": "Щось пішло не так — спробуйте ще раз.",
+    "needsCreatorProfile": "Спочатку пройдіть квіз виконавця — без нього не можна додавати роботи в портфоліо."
+  }
+}

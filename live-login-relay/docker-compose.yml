@@ -2,7 +2,7 @@
 # docker-compose.yml/docker-compose.dev.yml корня монорепо — у сервиса
 # нет ни Postgres, ни зависимостей от остальных сервисов проекта.
 # Импортируется в Dokploy как есть (doc/CLIENT-SITE-TUTORIAL-SPEC.md
-# §7.4.9).
+# §7.4.9). Пошаговая установка площадки — doc/HETZNER-DOKPLOY-SETUP.md.
 
 services:
   live-login-relay:
@@ -12,14 +12,42 @@ services:
     environment:
       - PORT=8088
       - LIVE_LOGIN_RELAY_SECRET=${LIVE_LOGIN_RELAY_SECRET}
-      - MAX_CONCURRENT_SESSIONS=${MAX_CONCURRENT_SESSIONS:-10}
+      # Дефолт кода — 10, но столько headless-Chromium'ов не помещается
+      # в 4 ГБ прод-машины вместе с самой площадкой: каждая сессия это
+      # отдельный браузер на 250–400 МБ под реальным сайтом. Переполнение
+      # убивает СЛУЧАЙНЫЙ контейнер, а не виновника, поэтому потолок
+      # задаётся здесь, а не оставляется на дефолт.
+      # Поднимать это число можно только вместе с памятью машины.
+      - MAX_CONCURRENT_SESSIONS=${MAX_CONCURRENT_SESSIONS:-3}
       - SESSION_WALL_TIMEOUT_MS=${SESSION_WALL_TIMEOUT_MS:-180000}
-      - SESSION_IDLE_TIMEOUT_MS=${SESSION_IDLE_TIMEOUT_MS:-60000}
+      # 120000, а не 60000: подстановка по умолчанию ОБЯЗАНА совпадать с
+      # .env.example и README. Расхождение стоило бы дорого молча —
+      # минута простоя закрывает сессию ровно в тот момент, когда человек
+      # ждёт SMS-код, то есть ломает один из трёх сценариев, ради которых
+      # сервис существует (§4 спеки).
+      - SESSION_IDLE_TIMEOUT_MS=${SESSION_IDLE_TIMEOUT_MS:-120000}
+      # Потолок page.goto(startUrl). Должен оставаться заметно меньше
+      # таймаута вызова POST /sessions на стороне backend (35 с), иначе
+      # backend сдастся раньше ответа — см. START_TIMEOUT_MS в
+      # backend/src/modules/client-site-tutorial/live-login-relay.client.ts.
+      - SESSION_NAV_TIMEOUT_MS=${SESSION_NAV_TIMEOUT_MS:-20000}
       - RESULT_CACHE_MS=${RESULT_CACHE_MS:-60000}
       - WS_AUTH_TIMEOUT_MS=${WS_AUTH_TIMEOUT_MS:-5000}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-    ports:
-      - '8088:8088'
+      - NODE_ENV=${NODE_ENV:-production}
+    # Порт виден только внутри сети Docker: наружу сервис публикует
+    # Traefik площадки по домену с сертификатом. `ports:` здесь означал бы
+    # 8088, открытый на публичном IP хоста в обход reverse-proxy.
+    expose:
+      - '8088'
+    # Для ЛОКАЛЬНОГО запуска (`docker compose up` без Dokploy) вернуть
+    # публикацию на хост — иначе сервис не будет виден с машины:
+    # ports:
+    #   - '8088:8088'
+    # Chromium в Docker упирается в дефолтные 64 МБ /dev/shm и роняет
+    # вкладки уже на втором-третьем параллельном браузере. Это не «при
+    # необходимости», а условие работы при MAX_CONCURRENT_SESSIONS > 1.
+    shm_size: '512mb'
     healthcheck:
       test:
         [
@@ -32,8 +60,16 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
-    # Headless Chromium под --no-sandbox обходится дефолтным /dev/shm
-    # маленького контейнера не всегда гладко при заметном числе
-    # одновременных сессий (типовая проблема Chromium в Docker) — при
-    # необходимости раскомментировать:
-    # shm_size: '512mb'
+    # Сеть Traefik'а площадки — без неё домен, заведённый в Dokploy, не
+    # доходит до контейнера. Если в Dokploy включён режим «Isolated
+    # Deployments», он подключает сервис сам, и этот блок вместе с
+    # секцией `networks` ниже нужно убрать.
+    #
+    # При локальном запуске такой сети нет — закомментируйте обе части
+    # (здесь и внизу файла) вместе с возвратом `ports:` выше.
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true

@@ -23,6 +23,8 @@ const NAV: NavEntry[] = [
     links: [
       ['/publications', 'Модерация'],
       ['/shared-videos', 'Публичные страницы'],
+      ['/creator-profiles', 'Маркетплейс: исполнители'],
+      ['/portfolio-items', 'Маркетплейс: модерация портфолио'],
       ['/library', 'Библиотека'],
       ['/blog', 'Блог'],
     ],

@@ -280,7 +280,8 @@ Telegram-логин, который их и породил.
      §15 doc/LIVE-LOGIN-RELAY-SPEC.md, этап 114) — ЖИВОЙ ВХОД в
      обучалке по сайту заказчика: отдельный постоянный сервис
      `live-login-relay/` (деплоится НЕ на Vercel — ему нужен живой
-     Chromium на минуты, см. §7.4.9 и `live-login-relay/README.md`).
+     Chromium на минуты, см. §7.4.9 и `live-login-relay/README.md`;
+     установка площадки с нуля — `doc/HETZNER-DOKPLOY-SETUP.md`).
      Все три необязательны: не заданы — кнопка живого входа не
      показывается вовсе (`liveLoginAvailable: false` в ответе
      `GET /api/projects/:id/site-tutorial`), вход по тестовым учётным

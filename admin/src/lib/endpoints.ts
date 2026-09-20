@@ -1,5 +1,9 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './admin-api';
 import type {
+  AdminCreatorProfile,
+  AdminCreatorProfileListResult,
+  AdminPortfolioItem,
+  AdminPortfolioListResult,
   ClientSiteDraftDetails,
   ClientSiteDraftListResult,
   ClientSiteDraftRow,
@@ -704,4 +708,44 @@ export function publishTutorialVideo(
   },
 ) {
   return apiPost<PublicationRequest>(`/admin/tutorial-video-assets/${id}/publish`, opts);
+}
+
+// ── Маркетплейс исполнителей — Этап 0 (backend/src/modules/creator-profile, ТЗ §20 №19) ──
+
+export function listCreatorProfiles(
+  params: { isFeatured?: boolean; page?: number; pageSize?: number } = {},
+) {
+  return apiGet<AdminCreatorProfileListResult>('/admin/creator-profiles', {
+    isFeatured: params.isFeatured === undefined ? undefined : String(params.isFeatured),
+    page: params.page,
+    pageSize: params.pageSize,
+  });
+}
+
+export function setCreatorProfileFeatured(id: string, isFeatured: boolean) {
+  return apiPatch<AdminCreatorProfile>(`/admin/creator-profiles/${id}/featured`, { isFeatured });
+}
+
+// Портфолио — модерация (аудит-фикс: бэкенд был готов, экрана не было).
+
+export function listPortfolioItems(
+  params: { status?: string; page?: number; pageSize?: number } = {},
+) {
+  return apiGet<AdminPortfolioListResult>('/admin/portfolio-items', {
+    status: params.status || undefined,
+    page: params.page,
+    pageSize: params.pageSize,
+  });
+}
+
+export function approvePortfolioItem(id: string) {
+  return apiPost<AdminPortfolioItem>(`/admin/portfolio-items/${id}/approve`, {});
+}
+
+export function rejectPortfolioItem(id: string, reason: string) {
+  return apiPost<AdminPortfolioItem>(`/admin/portfolio-items/${id}/reject`, { reason });
+}
+
+export function broadcastTopOfWeek() {
+  return apiPost<{ sent: boolean; count: number }>('/admin/portfolio-items/broadcast-top-of-week', {});
 }

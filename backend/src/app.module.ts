@@ -58,6 +58,12 @@ import { UserVoicesModule } from './modules/user-voices/user-voices.module';
 import { AssistantModule } from './modules/assistant/assistant.module';
 import { TutorialScenarioModule } from './modules/tutorial-scenario/tutorial-scenario.module';
 import { ClientSiteTutorialModule } from './modules/client-site-tutorial/client-site-tutorial.module';
+// Маркетплейс исполнителей — Этап 0 / Фаза 1 (ТЗ на маркетплейс §19–§21,
+// ТЗ на бэкенд §6). Tender/Contract/Escrow сознательно не подключены —
+// они не существуют в коде, пока не появится сигнал спроса (§19.4).
+import { CreatorProfileModule } from './modules/creator-profile/creator-profile.module';
+import { PortfolioModule } from './modules/portfolio/portfolio.module';
+import { CreatorInquiryModule } from './modules/creator-inquiry/creator-inquiry.module';
 import { SessionService } from './common/session.service';
 import { APP_GUARD } from '@nestjs/core';
 import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
@@ -117,6 +123,9 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     AssistantModule,
     TutorialScenarioModule,
     ClientSiteTutorialModule,
+    CreatorProfileModule,
+    PortfolioModule,
+    CreatorInquiryModule,
   ],
   providers: [
     SessionService,

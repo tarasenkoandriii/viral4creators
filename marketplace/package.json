@@ -1,0 +1,26 @@
+{
+  "name": "@viral4creators/marketplace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "viral4creators — публичная витрина маркетплейса исполнителей (ТЗ на маркетплейс §19–§21, Этап 0 / Фаза 1). Next.js 14 App Router, тот же стек и дизайн-токены, что у landing/ — отдельное приложение, а не раздел внутри лендинга, чтобы держать зоны продукта разделёнными (§17.2 ТЗ).",
+  "scripts": {
+    "dev": "next dev -p 3004",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "next lint --max-warnings 0"
+  },
+  "dependencies": {
+    "next": "^14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.0",
+    "typescript": "^5.0.0"
+  }
+}

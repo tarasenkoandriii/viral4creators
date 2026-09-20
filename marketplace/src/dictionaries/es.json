@@ -1,0 +1,263 @@
+{
+  "meta": {
+    "title": "Vitrina de creadores — viral4creators",
+    "description": "Catálogo de creators y agencias, portafolios de vídeos UGC y un brief de producto sin concurso — Etapa 0 del marketplace de viral4creators."
+  },
+  "header": {
+    "logo": "viral4creators · marketplace",
+    "collections": "Colecciones",
+    "stats": "Mis estadísticas",
+    "becomeCreator": "Convertirme en creator",
+    "brandBook": "Manual de marca",
+    "postBrief": "Publicar un brief"
+  },
+  "login": {
+    "loginFailed": "No se pudo iniciar sesión con Telegram — inténtalo de nuevo.",
+    "devLoginFailed": "El inicio de sesión de desarrollo falló.",
+    "devLoginAs": "Inicio de sesión de desarrollo como {{id}}",
+    "logout": "Cerrar sesión",
+    "notConfigured": "El inicio de sesión con Telegram no está configurado (NEXT_PUBLIC_TELEGRAM_BOT_USERNAME)."
+  },
+  "localeSwitcher": {
+    "label": "Idioma"
+  },
+  "catalog": {
+    "title": "Encuentra un creator para tu vídeo UGC",
+    "hintPrefix": "Portafolios de trabajos reales, sin concurso ni pago por adelantado en la plataforma — contacta al creator directamente. ¿No encuentras uno adecuado?",
+    "hintLink": "Describe la tarea y te sugerimos opciones",
+    "nichePlaceholder": "Nicho (por ejemplo, beauty)",
+    "budgetPlaceholder": "Presupuesto hasta",
+    "searchButton": "Buscar",
+    "emptyState": "Ahora mismo nadie acepta encargos con este filtro — prueba a quitar los filtros o vuelve más tarde.",
+    "priceFrom": "desde",
+    "priceTo": "hasta",
+    "showMore": "Ver más",
+    "noName": "Sin nombre"
+  },
+  "profile": {
+    "viewsSuffix": "visitas al perfil",
+    "priceRangeLabel": "Rango de precios",
+    "contactButton": "Contactar",
+    "botDeepLinkButton": "Abrir tarjeta en el bot",
+    "notAcceptingOrders": "Ahora mismo no acepta nuevos encargos — el portafolio sigue disponible para ver.",
+    "qrEmbedSummary": "Código QR e incrustación en tu web",
+    "portfolioHeading": "Portafolio",
+    "emptyPortfolio": "Todavía no hay trabajos publicados.",
+    "similarHeading": "Creators similares",
+    "printLink": "Versión imprimible del perfil (guardar como PDF)",
+    "featuredBadge": "★ Featured"
+  },
+  "item": {
+    "shareHeading": "Compartir",
+    "crossPostHeading": "Publicar en redes sociales",
+    "similarHeading": "Trabajos similares",
+    "viewsSuffix": "visitas",
+    "downloadStory": "Descargar imagen para Stories"
+  },
+  "share": {
+    "shareOrCopy": "🔗 Compartir / copiar enlace",
+    "linkCopied": "Enlace copiado ✓",
+    "telegram": "Telegram",
+    "whatsapp": "WhatsApp",
+    "loginToLike": "Inicia sesión con Telegram para dar me gusta"
+  },
+  "crossPost": {
+    "x": "Publicar en X",
+    "instagram": "Copiar texto → Instagram",
+    "tiktok": "Copiar texto → TikTok",
+    "copied": "Texto copiado ✓",
+    "hint": "X se publica con un clic. Instagram y TikTok no ofrecen un intent web público para una publicación ya lista — se copia el texto y el propio vídeo hay que adjuntarlo manualmente en cada plataforma."
+  },
+  "qr": {
+    "alt": "Código QR con el enlace al perfil"
+  },
+  "embedSnippet": {
+    "copyButton": "Copiar código para tu web",
+    "copied": "Copiado ✓"
+  },
+  "print": {
+    "button": "Guardar como PDF (impresión del navegador)"
+  },
+  "brief": {
+    "heading": "Describe la tarea",
+    "hint": "Sin concurso ni pago por adelantado: te sugerimos creators adecuados del catálogo, y el contacto y el acuerdo son directos entre vosotros.",
+    "brandAttached": "Manual de marca adjunto — el creator verá el estilo de marca junto con la descripción del producto.",
+    "productLabel": "Producto y tarea",
+    "productPlaceholder": "Por ejemplo: crema de manos artesanal, queremos un vídeo viral de unboxing…",
+    "isLineLabel": "Es una línea de productos, no un solo producto",
+    "goalLabel": "Objetivo (opcional)",
+    "goalPlaceholder": "Alcance / ventas / reconocimiento",
+    "platformLabel": "Dónde vas a publicarlo",
+    "platforms": {
+      "instagram_reels": "Instagram Reels",
+      "tiktok": "TikTok",
+      "youtube_shorts": "YouTube Shorts",
+      "youtube_long": "YouTube (vídeo normal)",
+      "other": "Otra"
+    },
+    "advicePrefix": "Recomendación de formato:",
+    "adviceQualityLabel": "calidad",
+    "adviceFast": "rápida",
+    "adviceStandard": "estándar",
+    "budgetLabel": "Presupuesto aproximado (opcional)",
+    "budgetPlaceholder": "Solo para filtrar por precio — no es un pago",
+    "submit": "Buscar creators",
+    "submitting": "Enviando…",
+    "errorTooShort": "Describe el producto con más detalle (al menos un par de frases).",
+    "errorSubmit": "No se pudo crear el brief — inicia sesión con Telegram (botón en la cabecera) e inténtalo de nuevo."
+  },
+  "formatAdvice": {
+    "instagram_reels": "Formato vertical 9:16, con calidad rápida es suficiente para Reels.",
+    "tiktok": "Formato vertical 9:16, con calidad rápida es suficiente para TikTok.",
+    "youtube_shorts": "Formato vertical 9:16, con calidad rápida es suficiente para Shorts.",
+    "youtube_long": "Formato horizontal 16:9 y calidad estándar — los preroll se ven más tiempo que los shorts.",
+    "other": "Plataforma no reconocida — 16:9 como opción segura por defecto; consúltalo con el creator antes de grabar."
+  },
+  "matches": {
+    "heading": "Creators que coinciden",
+    "adviceIntro": "Formato de grabación:",
+    "adviceSuffix": "puedes pasarle esta misma ficha técnica al creator.",
+    "loading": "Buscando opciones…",
+    "emptyPrefix": "Todavía nadie del catálogo coincide con este nicho/presupuesto. Echa un vistazo al",
+    "emptyLink": "catálogo completo",
+    "emptySuffix": "— ahí puedes contactar directamente sin un brief.",
+    "portfolioButton": "Portafolio",
+    "contactButton": "Contactar",
+    "contactedButton": "Marcado ✓",
+    "errorLoad": "No se pudieron cargar las opciones — intenta actualizar la página.",
+    "noName": "Sin nombre"
+  },
+  "becomeCreator": {
+    "heading": "¿Quieres aceptar encargos?",
+    "hint": "Tu cuenta sigue siendo la misma — también puedes ser cliente en otros proyectos al mismo tiempo. Es reversible en cualquier momento.",
+    "nichesLabel": "Nichos (separados por comas)",
+    "nichesPlaceholder": "beauty, food, fitness",
+    "bioLabel": "Sobre ti (opcional)",
+    "platformLabel": "Red social pública",
+    "urlLabel": "Enlace",
+    "urlPlaceholder": "https://instagram.com/...",
+    "contactLabel": "Contacto adicional (opcional)",
+    "contactPlaceholder": "Por defecto, tu cuenta de Telegram",
+    "consentLabel": "Acepto tener un perfil público en la vitrina",
+    "submit": "Convertirme en creator",
+    "submitting": "Creando…",
+    "errorConsent": "Se requiere consentimiento explícito para el perfil público.",
+    "errorNoSocial": "Añade al menos un enlace público a una red social.",
+    "errorSubmit": "No se pudo crear el perfil — inicia sesión con Telegram (botón en la cabecera) e inténtalo de nuevo."
+  },
+  "brandBook": {
+    "steps": [
+      "Nombre",
+      "Estilo",
+      "Voz",
+      "Personajes",
+      "Localizaciones"
+    ],
+    "heading": "Asistente de manual de marca",
+    "stepPrefix": "Paso",
+    "stepOf": "de",
+    "titleLabel": "Nombre de la marca",
+    "styleLabel": "Estilo, tono y colores (texto libre)",
+    "stylePlaceholder": "Por ejemplo: minimalismo, tonos pastel, tono de voz tranquilo y seguro…",
+    "voiceModeLabel": "Locución",
+    "voiceModes": {
+      "veo": "Voz nativa de Veo",
+      "voiceover": "Narración en off",
+      "dub": "Doblaje"
+    },
+    "voiceNotesLabel": "Voz y tono (género/edad de la voz, ritmo, estilo, restricciones)",
+    "charactersHeading": "Personajes de marca (opcional)",
+    "charactersLabelPlaceholder": "Nombre del personaje",
+    "charactersDescPlaceholder": "Aspecto, personalidad, papel en el vídeo",
+    "scenesHeading": "Localizaciones de marca (opcional)",
+    "scenesLabelPlaceholder": "Nombre de la localización",
+    "scenesDescPlaceholder": "Descripción — por ejemplo, «showroom con paredes de hormigón y letrero de neón»",
+    "addMore": "+ Añadir otro",
+    "back": "Atrás",
+    "next": "Siguiente",
+    "save": "Guardar manual de marca",
+    "saving": "Guardando…",
+    "errorSubmit": "No se pudo crear el manual de marca — inicia sesión con Telegram (botón en la cabecera) e inténtalo de nuevo.",
+    "doneHeading": "Manual de marca listo",
+    "doneHint": "Ahora puedes adjuntarlo a un brief — el creator verá el estilo de marca de inmediato.",
+    "createBriefButton": "Crear un brief con este manual de marca"
+  },
+  "collections": {
+    "heading": "Colecciones temáticas",
+    "empty": "Todavía no hay colecciones — aparecen en cuanto los creators etiquetan sus trabajos.",
+    "itemsSuffix": "trabajos",
+    "backLink": "← Todas las colecciones",
+    "emptyCollection": "Esta colección todavía no tiene trabajos publicados."
+  },
+  "dashboard": {
+    "heading": "Tus estadísticas",
+    "errorPrefix": "No se pudieron cargar las estadísticas — inicia sesión con Telegram y comprueba que has completado el cuestionario de creator.",
+    "takeQuiz": "Hacer el cuestionario",
+    "loading": "Cargando…",
+    "profileViews": "Visitas al perfil",
+    "portfolioViews": "Visitas totales a los trabajos",
+    "likes": "Total de me gusta",
+    "itemCount": "Trabajos en el portafolio"
+  },
+  "og": {
+    "itemTag": "marketplace · portafolio",
+    "itemFallback": "Trabajo del creator",
+    "profileTag": "marketplace · creator",
+    "profileFallback": "Portafolio del creator"
+  },
+  "myPortfolio": {
+    "heading": "Mi portafolio",
+    "addHeading": "Añadir trabajo",
+    "videoUrlLabel": "Enlace del vídeo",
+    "videoUrlPlaceholder": "https://...",
+    "titleLabel": "Título",
+    "thumbnailLabel": "Miniatura (opcional, enlace a imagen)",
+    "collectionLabel": "Colección temática (opcional)",
+    "collectionPlaceholder": "por ejemplo, fitness",
+    "submit": "Añadir al portafolio",
+    "submitting": "Añadiendo…",
+    "errorSubmit": "No se pudo añadir el trabajo.",
+    "empty": "Todavía no hay ningún trabajo.",
+    "statusPending": "En revisión",
+    "statusPublished": "Publicado",
+    "statusRejected": "Rechazado",
+    "rejectionReasonPrefix": "Motivo:",
+    "withdraw": "Eliminar",
+    "withdrawConfirm": "¿Eliminar este trabajo de forma permanente?",
+    "addTagButton": "Añadir a una colección",
+    "cancel": "Cancelar",
+    "errorGeneric": "No se pudo guardar."
+  },
+  "settings": {
+    "heading": "Ajustes del perfil",
+    "acceptingOrdersLabel": "Acepto nuevos encargos",
+    "slugLabel": "Enlace personalizado (opcional)",
+    "slugPlaceholder": "mi-marca",
+    "nichesLabel": "Nichos (separados por comas)",
+    "bioLabel": "Sobre ti",
+    "priceMinLabel": "Precio desde",
+    "priceMaxLabel": "Precio hasta",
+    "contactLabel": "Contacto adicional",
+    "save": "Guardar",
+    "saving": "Guardando…",
+    "saved": "Guardado ✓",
+    "errorSave": "No se pudo guardar — inténtalo de nuevo.",
+    "errorSlugTaken": "Ese enlace personalizado ya está en uso — elige otro.",
+    "myPortfolioLink": "Gestionar portafolio"
+  },
+  "briefsList": {
+    "heading": "Mis briefs",
+    "empty": "Todavía no has creado ningún brief.",
+    "newButton": "Nuevo brief",
+    "statusSent": "Enviado",
+    "statusContacted": "Contactado",
+    "statusDraft": "Borrador",
+    "openMatches": "Ver coincidencias"
+  },
+  "errors": {
+    "notLoggedIn": "Primero inicia sesión con Telegram (botón en la cabecera).",
+    "conflict": "Ese perfil ya existe.",
+    "generic": "Algo salió mal — inténtalo de nuevo.",
+    "needsCreatorProfile": "Primero completa el cuestionario de creator — sin él no puedes añadir trabajos al portafolio."
+  }
+}

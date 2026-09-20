@@ -250,6 +250,18 @@ model User {
   /// сами картинки. Каскад: удаляем пользователя — уходит и журнал.
   imageSketches ImageSketch[]
 
+  /// Маркетплейс исполнителей — Этап 0 / Фаза 1 (ТЗ на маркетплейс §19–§21,
+  /// ТЗ на бэкенд §2). Добавлено сразу, не отложено до Фазы 2: единственным
+  /// сигналом «это Creator» иначе временно оставался бы факт существования
+  /// CreatorProfile, а при переходе к Фазе 2 пришлось бы мигрировать уже
+  /// накопленных исполнителей и какое-то время держать два параллельных
+  /// способа определить роль — см. правку в ТЗ на бэкенд §2/§10.
+  roles              UserRole[]       @default([])
+  creatorProfile     CreatorProfile?
+  portfolioLikes     PortfolioLike[]
+  moderatedPortfolio PortfolioItem[]  @relation("PortfolioModerator")
+  creatorInquiries   CreatorInquiry[]
+
   /// Шестой аудит, Е-5.1: `users` — самая крупная и быстрее всего
   /// растущая таблица проекта, а индекса не имела ни одного, кроме
   /// unique на telegramId. `AdminUsersService.list()` — дефолтный вид
@@ -2646,4 +2658,194 @@ model ImageSketch {
   @@index([userId, createdAt])
   @@index([status, expiresAt])
   @@map("image_sketches")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Маркетплейс исполнителей — Этап 0 / Фаза 1 (ТЗ на маркетплейс §19–§21,
+// ТЗ на бэкенд §2–§3, §10). Только витрина: публичные профили Creator,
+// портфолио, лайки и лёгкий бриф заказчика (CreatorInquiry). Tender,
+// Contract и Escrow сознательно НЕ строятся — отложены до Фазы 2 по
+// измеримому сигналу спроса (§19.4). Ни одна из моделей ниже не трогает
+// существующие таблицы, кроме добавленных выше полей User.
+
+enum UserRole {
+  CUSTOMER
+  CREATOR
+  /// Объявлен сразу для полноты типа, но не используется, пока не
+  /// появится сама сущность Agency (Фаза 2, ТЗ на бэкенд §10).
+  AGENCY_OWNER
+}
+
+model CreatorProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Ваниti-ссылка профиля (ТЗ §20 №1) — необязательна: без неё каталог и
+  /// прямые ссылки продолжают работать по id, как раньше.
+  slug String? @unique
+
+  /// Публичный счётчик просмотров (§20 №13) — best-effort инкремент,
+  /// тот же принцип, что у SharedVideoPage.viewCount.
+  viewCount Int @default(0)
+
+  /// Редакционный бейдж «Featured» (§20 №19) — выставляется только
+  /// оператором из admin-panel, без денег на платформе.
+  isFeatured Boolean @default(false)
+
+  niches        String[]
+  priceRangeMin Float?
+  priceRangeMax Float?
+  bio           String? @db.Text
+
+  /// Обратимый переключатель (ТЗ §21.8) — выключение сразу прячет профиль
+  /// из каталога и подбора (§21.3), но не удаляет лайки/портфолио.
+  isAcceptingOrders Boolean @default(true)
+  /// Явное согласие из квиза исполнителя (ТЗ §21.8) — момент согласия
+  /// фиксируется отдельно, а не булевым флагом, ради аудита.
+  consentGivenAt DateTime
+  /// Доп. контакт, если Telegram-аккаунта по умолчанию недостаточно.
+  contactHandle String?
+
+  socialLinks    CreatorSocialLink[]
+  portfolioItems PortfolioItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isAcceptingOrders])
+  @@map("creator_profiles")
+}
+
+model CreatorSocialLink {
+  id               String         @id @default(cuid())
+  creatorProfileId String
+  creatorProfile   CreatorProfile @relation(fields: [creatorProfileId], references: [id], onDelete: Cascade)
+
+  /// instagram / tiktok / youtube / other — свободная строка, не enum:
+  /// список площадок меняется чаще, чем стоит того миграция.
+  platform String
+  url      String
+
+  @@index([creatorProfileId])
+  @@map("creator_social_links")
+}
+
+enum PortfolioSourceType {
+  /// Этап 0 — Creator публикует свою работу напрямую, без сделки на
+  /// платформе (единственный источник, реально используемый сейчас).
+  SELF_UPLOAD
+  /// Фаза 2 — публикация из завершённой сделки (Contract). Пока ни одна
+  /// запись с этим значением создаваться не может — Contract не существует.
+  CONTRACT
+}
+
+enum PortfolioStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+}
+
+model PortfolioItem {
+  id String @id @default(cuid())
+
+  creatorProfileId String
+  creatorProfile   CreatorProfile @relation(fields: [creatorProfileId], references: [id], onDelete: Cascade)
+
+  sourceType PortfolioSourceType @default(SELF_UPLOAD)
+  /// Обязателен только при sourceType = CONTRACT (Фаза 2, ещё не строится).
+  contractId String?
+  /// Заполняется, если публикация выросла из брифа CreatorInquiry (§21).
+  inquiryId String?
+
+  videoUrl     String
+  title        String
+  thumbnailUrl String?
+
+  status PortfolioStatus @default(PENDING)
+
+  /// Согласие Creator обязательно всегда; согласие заказчика актуально
+  /// только для sourceType = CONTRACT, где ролик показывает чужой бренд
+  /// (ТЗ §10 — на Этапе 0 действует более простой self-upload флоу).
+  creatorConsent  Boolean @default(true)
+  customerConsent Boolean @default(false)
+  anonymized      Boolean @default(false)
+
+  likeCount Int @default(0)
+  /// Публичный счётчик просмотров (§20 №13) — best-effort инкремент.
+  viewCount Int @default(0)
+  /// Тематическая подборка (§20 №20) — свободная строка, не enum: список
+  /// подборок задаёт оператор по ходу дела, заводить миграцию под каждую
+  /// новую тему не хочется.
+  collectionTag String?
+
+  moderatedById   String?
+  moderatedBy     User?   @relation("PortfolioModerator", fields: [moderatedById], references: [id])
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  likes PortfolioLike[]
+
+  @@index([creatorProfileId, status])
+  @@index([status, createdAt])
+  @@map("portfolio_items")
+}
+
+model PortfolioLike {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portfolioItemId String
+  portfolioItem   PortfolioItem @relation(fields: [portfolioItemId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+
+  /// Пара (userId, portfolioItemId) уникальна — повторный лайк того же
+  /// пользователя переключает состояние (like/unlike), не копится.
+  @@unique([userId, portfolioItemId])
+  @@index([portfolioItemId])
+  @@map("portfolio_likes")
+}
+
+enum InquiryStatus {
+  DRAFT
+  SENT
+  CONTACTED
+}
+
+model CreatorInquiry {
+  id         String @id @default(cuid())
+  customerId String
+  customer   User   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  /// Существующий Project/ProductItem, если бриф собран поверх карточки
+  /// товара (ТЗ §21.2) — необязателен, задачу можно описать текстом.
+  projectId String?
+
+  productDescription String  @db.Text
+  isProductLine      Boolean @default(false)
+  goal               String?
+  /// instagram_reels / tiktok / youtube_shorts / youtube_long / other —
+  /// от значения зависит совет по формату генерации, §21.4.
+  targetPlatform String
+  budgetHint     Float?
+  /// Прикреплённый брендбук (ТЗ §21.7) — существующий BrandManifest,
+  /// не новая связь Prisma: brand-manifest уже независим от Project
+  /// (userId на User), здесь просто храним ссылку строкой, без
+  /// @relation, чтобы не тянуть модуль brand-manifest в зависимости
+  /// creator-inquiry ради одного nullable-поля.
+  brandManifestId String?
+
+  status InquiryStatus @default(DRAFT)
+
+  contactedCreatorId String?
+  contactedAgencyId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@map("creator_inquiries")
 }

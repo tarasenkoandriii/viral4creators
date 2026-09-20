@@ -1021,3 +1021,54 @@ export interface TutorialVideoDataStatus {
   videoCoverage: TutorialVideoCoverageCell[];
   lastRuns: TutorialVideoLastRun[];
 }
+
+// ── Маркетплейс исполнителей — Этап 0 (backend/src/modules/creator-profile, ТЗ §20 №19) ──
+
+export interface AdminCreatorProfile {
+  id: string;
+  userId: string;
+  displayName: string | null;
+  slug: string | null;
+  niches: string[];
+  priceRangeMin: number | null;
+  priceRangeMax: number | null;
+  bio: string | null;
+  isAcceptingOrders: boolean;
+  contactHandle: string | null;
+  socialLinks: { id: string; platform: string; url: string }[];
+  isFeatured: boolean;
+  viewCount: number;
+  portfolioItemCount: number;
+  createdAt: string;
+}
+
+export interface AdminCreatorProfileListResult {
+  items: AdminCreatorProfile[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export type AdminPortfolioItemStatus = 'PENDING' | 'PUBLISHED' | 'REJECTED';
+
+export interface AdminPortfolioItem {
+  id: string;
+  creatorProfileId: string;
+  sourceType: string;
+  videoUrl: string;
+  title: string;
+  thumbnailUrl: string | null;
+  status: AdminPortfolioItemStatus;
+  likeCount: number;
+  viewCount: number;
+  collectionTag: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+}
+
+export interface AdminPortfolioListResult {
+  items: AdminPortfolioItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
