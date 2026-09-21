@@ -3371,6 +3371,13 @@ model VirtualStudioVariant {
   /// если оператор правил перед повторной генерацией).
   prompt String
 
+  /// Обратная сторона VirtualStudioFragment.variant — VIDEO-фрагменты,
+  /// анимированные с этого варианта (image-to-video). Prisma требует
+  /// обе стороны связи: без этого поля `prisma generate` падает с P1012
+  /// ещё до сборки. Колонки не добавляет — внешний ключ `variantId` и
+  /// так живёт на стороне фрагмента (миграция 20261204090000).
+  fragments VirtualStudioFragment[]
+
   createdAt DateTime @default(now())
 
   @@index([studioId])
