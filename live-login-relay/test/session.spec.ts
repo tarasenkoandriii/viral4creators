@@ -341,3 +341,300 @@ describe('Session.create — вьюпорт и таймаут навигации
     ).resolves.toBeInstanceOf(Session);
   });
 });
+
+/**
+ * Попапы (Telegram Login Widget, «Sign in with Google», Apple ID).
+ *
+ * До этой правки реле водило ровно одну вкладку: `browser.newPage()`,
+ * скринкаст привязан к её CDP-сессии, обработчиков `popup`/
+ * `targetcreated` не было вовсе. Попап открывался внутри серверного
+ * Chromium отдельным таргетом, который никуда не транслировался и
+ * никуда не принимал ввод — снаружи это выглядело как «кнопка входа не
+ * работает». Логин через попап не мог пройти в принципе.
+ */
+
+interface FakePage {
+  page: RelayPage;
+  cdp: RelayCdpSession;
+  sent: { method: string; params?: Record<string, unknown> }[];
+  handlerCount(event: string): number;
+  emit(event: string, arg?: unknown): void;
+  emitFrame(data: string, frameSessionId: number): void;
+  navigate(to: string): void;
+}
+
+function makeFakePage(initialUrl: string): FakePage {
+  const handlers = new Map<string, ((arg: unknown) => void)[]>();
+  const sent: { method: string; params?: Record<string, unknown> }[] = [];
+  let frameHandler: ((p: unknown) => void) | null = null;
+  let current = initialUrl;
+
+  const cdp: RelayCdpSession = {
+    send: jest.fn(async (method: string, params?: Record<string, unknown>) => {
+      sent.push({ method, params });
+      if (method === 'Network.getAllCookies') return { cookies: [] };
+      return undefined;
+    }),
+    on: (event: string, handler: (p: unknown) => void) => {
+      if (event === 'Page.screencastFrame') frameHandler = handler;
+    },
+  };
+
+  const frame: RelayFrame = { url: () => current };
+  const page = {
+    goto: jest.fn().mockResolvedValue(undefined),
+    setViewport: jest.fn().mockResolvedValue(undefined),
+    url: () => current,
+    target: () => ({ createCDPSession: () => Promise.resolve(cdp) }),
+    on: (event: string, handler: (arg: unknown) => void) => {
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+    },
+    mainFrame: () => frame,
+    close: jest.fn().mockResolvedValue(undefined),
+  } as unknown as RelayPage;
+
+  return {
+    page,
+    cdp,
+    sent,
+    handlerCount: (event) => (handlers.get(event) ?? []).length,
+    emit: (event, arg) =>
+      [...(handlers.get(event) ?? [])].forEach((h) => h(arg)),
+    emitFrame: (data, frameSessionId) =>
+      frameHandler?.({ data, metadata: {}, sessionId: frameSessionId }),
+    navigate: (to) => {
+      current = to;
+    },
+  };
+}
+
+/** Переключение на попап идёт через `void this.streamFrom(...)` внутри
+ * синхронного обработчика события — дождаться его можно только сменой
+ * макрозадачи, микротасков там несколько. */
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+const MAIN_URL = 'https://shop.example.com/login';
+const POPUP_URL = 'https://oauth.telegram.org/auth?bot_id=1';
+
+async function makePopupSession(): Promise<{
+  session: Session;
+  main: FakePage;
+  channel: WsChannel;
+  sentMessages(): { type: string; [k: string]: unknown }[];
+}> {
+  const main = makeFakePage(MAIN_URL);
+  const browser: RelayBrowser = {
+    newPage: jest.fn().mockResolvedValue(main.page),
+    close: jest.fn().mockResolvedValue(undefined),
+  };
+  const session = await Session.create({
+    startUrl: MAIN_URL,
+    allowedOrigin: 'https://shop.example.com',
+    browser,
+    logger,
+    navTimeoutMs: 20_000,
+  });
+  const channel = makeChannel();
+  await session.attachWs(channel);
+  const sentMessages = () =>
+    (channel.send as jest.Mock).mock.calls.map(
+      (c) => c[0] as { type: string; [k: string]: unknown },
+    );
+  return { session, main, channel, sentMessages };
+}
+
+describe('Session — попапы SSO', () => {
+  it('попап становится активным: стрим переезжает на него', async () => {
+    const { session, main, sentMessages } = await makePopupSession();
+    const popup = makeFakePage(POPUP_URL);
+
+    main.emit('popup', popup.page);
+    await settle();
+
+    expect(main.sent.map((c) => c.method)).toContain('Page.stopScreencast');
+    expect(popup.sent.map((c) => c.method)).toContain('Page.startScreencast');
+    expect(sentMessages()).toContainEqual({
+      type: 'navigated',
+      url: POPUP_URL,
+    });
+    await session.close('cancelled');
+  });
+
+  it('ввод после переключения уходит в попап, а не в главную', async () => {
+    const { session, main } = await makePopupSession();
+    const popup = makeFakePage(POPUP_URL);
+    main.emit('popup', popup.page);
+    await settle();
+
+    const mainBefore = main.sent.length;
+    await session.dispatchKey({
+      event: 'keyDown',
+      key: 'a',
+      code: 'KeyA',
+      text: 'a',
+    });
+
+    expect(popup.sent.map((c) => c.method)).toContain('Input.dispatchKeyEvent');
+    expect(main.sent.length).toBe(mainBefore);
+    await session.close('cancelled');
+  });
+
+  it('finalUrl остаётся у ГЛАВНОЙ страницы, пока активен попап', async () => {
+    // Смысл всей развязки page/activePage. Бэкенд в completeLiveLogin
+    // делает assertSameOrigin(draft.baseUrl, result.finalUrl) — если
+    // пустить finalUrl за попапом, каждый вход через Telegram
+    // заканчивался бы на oauth.telegram.org и отвергался бы с «вход не
+    // завершён», то есть человек прошёл бы логин и получил отказ.
+    const { session, main } = await makePopupSession();
+    const popup = makeFakePage(POPUP_URL);
+    main.emit('popup', popup.page);
+    await settle();
+
+    const result = await session.finalize();
+
+    expect(result.finalUrl).toBe(MAIN_URL);
+    expect(result.finalUrl).not.toContain('oauth.telegram.org');
+  });
+
+  it('закрытие попапа возвращает стрим на главную', async () => {
+    const { session, main, sentMessages } = await makePopupSession();
+    const popup = makeFakePage(POPUP_URL);
+    main.emit('popup', popup.page);
+    await settle();
+
+    const mainStartsBefore = main.sent.filter(
+      (c) => c.method === 'Page.startScreencast',
+    ).length;
+    popup.emit('close');
+    await settle();
+
+    expect(
+      main.sent.filter((c) => c.method === 'Page.startScreencast').length,
+    ).toBe(mainStartsBefore + 1);
+    expect(popup.sent.map((c) => c.method)).toContain('Page.stopScreencast');
+    expect(sentMessages().filter((m) => m.type === 'navigated')).toContainEqual(
+      { type: 'navigated', url: MAIN_URL },
+    );
+    await session.close('cancelled');
+  });
+
+  it('кадр неактивной страницы не уходит клиенту, но подтверждается', async () => {
+    // Без ack Chromium перестаёт слать следующие кадры — страница, на
+    // которую мы потом вернёмся, замерла бы навсегда.
+    const { session, main, sentMessages } = await makePopupSession();
+    const popup = makeFakePage(POPUP_URL);
+    main.emit('popup', popup.page);
+    await settle();
+
+    const framesBefore = sentMessages().filter(
+      (m) => m.type === 'frame',
+    ).length;
+    main.emitFrame('опоздавший-кадр', 77);
+    await settle();
+
+    expect(sentMessages().filter((m) => m.type === 'frame').length).toBe(
+      framesBefore,
+    );
+    expect(main.sent).toContainEqual({
+      method: 'Page.screencastFrameAck',
+      params: { sessionId: 77 },
+    });
+    await session.close('cancelled');
+  });
+
+  it('кадр активного попапа доезжает до клиента', async () => {
+    const { session, main, sentMessages } = await makePopupSession();
+    const popup = makeFakePage(POPUP_URL);
+    main.emit('popup', popup.page);
+    await settle();
+
+    popup.emitFrame('кадр-попапа', 5);
+
+    expect(sentMessages()).toContainEqual(
+      expect.objectContaining({ type: 'frame', data: 'кадр-попапа' }),
+    );
+    await session.close('cancelled');
+  });
+
+  it('размер из resize переносится на попап', async () => {
+    // puppeteer даёт попапу ДЕФОЛТНЫЙ вьюпорт браузера, а не
+    // родительский: без переноса человек с телефона увидел бы в окне
+    // входа десктопную вёрстку.
+    const { session, main } = await makePopupSession();
+    await session.resize(360, 640);
+    const popup = makeFakePage(POPUP_URL);
+    main.emit('popup', popup.page);
+    await settle();
+
+    expect(popup.sent).toContainEqual({
+      method: 'Emulation.setDeviceMetricsOverride',
+      params: { width: 360, height: 640, deviceScaleFactor: 1, mobile: false },
+    });
+    await session.close('cancelled');
+  });
+
+  it('попап после закрытия сессии игнорируется', async () => {
+    // Скринкаст на умирающем браузере — CDP ответит «Session closed», а
+    // отклонение улетело бы необработанным.
+    const { session, main } = await makePopupSession();
+    await session.close('cancelled');
+
+    const popup = makeFakePage(POPUP_URL);
+    main.emit('popup', popup.page);
+    await settle();
+
+    expect(popup.sent).toEqual([]);
+  });
+
+  it('попап, открытый из попапа, тоже подхватывается', async () => {
+    const { session, main } = await makePopupSession();
+    const first = makeFakePage(POPUP_URL);
+    main.emit('popup', first.page);
+    await settle();
+
+    const second = makeFakePage('https://accounts.google.com/');
+    first.emit('popup', second.page);
+    await settle();
+
+    expect(second.sent.map((c) => c.method)).toContain('Page.startScreencast');
+    await session.close('cancelled');
+  });
+
+  it('возврат на главную не подписывается на неё второй раз', async () => {
+    // Иначе каждый цикл «попап открылся — закрылся» добавлял бы ещё
+    // один обработчик framenavigated, и адрес уезжал бы клиенту N раз.
+    const { session, main, sentMessages } = await makePopupSession();
+    const popup = makeFakePage(POPUP_URL);
+    main.emit('popup', popup.page);
+    await settle();
+    popup.emit('close');
+    await settle();
+
+    expect(main.handlerCount('framenavigated')).toBe(1);
+
+    const before = sentMessages().filter((m) => m.type === 'navigated').length;
+    main.emit('framenavigated', main.page.mainFrame());
+    expect(sentMessages().filter((m) => m.type === 'navigated').length).toBe(
+      before + 1,
+    );
+    await session.close('cancelled');
+  });
+
+  it('навигация НЕактивной страницы клиенту не уходит', async () => {
+    const { session, main, sentMessages } = await makePopupSession();
+    const popup = makeFakePage(POPUP_URL);
+    main.emit('popup', popup.page);
+    await settle();
+
+    const before = sentMessages().filter((m) => m.type === 'navigated').length;
+    main.navigate('https://shop.example.com/cabinet');
+    main.emit('framenavigated', main.page.mainFrame());
+
+    expect(sentMessages().filter((m) => m.type === 'navigated').length).toBe(
+      before,
+    );
+    await session.close('cancelled');
+  });
+});

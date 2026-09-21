@@ -1,7 +1,10 @@
 /**
- * Одна live-сессия входа — один выделенный браузер, один Page, одна CDP-
- * сессия. Модель ресурса и протокол — doc/LIVE-LOGIN-RELAY-SPEC.md §5,
- * §8.
+ * Одна live-сессия входа — один выделенный браузер. Страниц может быть
+ * больше одной: поверх главной открываются попапы SSO (Telegram Login
+ * Widget, «Sign in with Google», Apple ID), и стрим с вводом
+ * переключаются на них, см. §9.1 спеки. Стримится и принимает ввод
+ * всегда ровно одна — `activePage`, со своей CDP-сессией. Модель
+ * ресурса и протокол — doc/LIVE-LOGIN-RELAY-SPEC.md §5, §8, §9.1.
  *
  * Узкие интерфейсы `Relay*` ниже — НЕ полный `puppeteer-core`, а только
  * те методы, которые `Session` реально вызывает. Настоящий
@@ -30,6 +33,17 @@ export interface RelayCdpSession {
   on(event: string, handler: (params: any) => void): void; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
+/** События страницы, на которые подписывается реле. `popup` — это
+ * `window.open`/`target=_blank`: ровно так входят Telegram Login
+ * Widget, «Sign in with Google» и Apple ID, то есть три из четырёх
+ * сценариев, ради которых живой вход и существует. Аргумент обнуляем —
+ * попап мог и не открыться. */
+export interface RelayPageEvents {
+  framenavigated: RelayFrame;
+  popup: RelayPage | null;
+  close: undefined;
+}
+
 export interface RelayPage {
   goto(url: string, options?: { timeout?: number }): Promise<unknown>;
   setViewport?(viewport: {
@@ -41,7 +55,17 @@ export interface RelayPage {
   }): Promise<void>;
   url(): string;
   target(): { createCDPSession(): Promise<RelayCdpSession> };
-  on(event: 'framenavigated', handler: (frame: RelayFrame) => void): void;
+  /**
+   * Одна сигнатура с картой событий, а НЕ набор перегрузок: у
+   * puppeteer `on` объявлен как generic по своей карте `PageEvents`, и
+   * перегруженный вариант перестаёт быть ему структурно совместим —
+   * `tsc` не может вывести `Key` и подставляет `unknown` (проверено:
+   * TS2322 на `launchBrowser()` в main.ts).
+   */
+  on<K extends keyof RelayPageEvents>(
+    event: K,
+    handler: (arg: RelayPageEvents[K]) => void,
+  ): void;
   mainFrame(): RelayFrame;
   close(): Promise<void>;
 }
@@ -123,8 +147,43 @@ export class Session {
 
   private readonly browser: RelayBrowser;
   private readonly logger: Logger;
+  /**
+   * ГЛАВНАЯ страница — та, что открыта на сайте заказчика. Она же и
+   * только она даёт `finalUrl` в `harvest()`, и это не деталь: бэкенд
+   * в `completeLiveLogin` делает
+   * `assertSameOrigin(draft.baseUrl, result.finalUrl)` и при
+   * несовпадении отвечает «похоже, вход не завершён: сессия
+   * закончилась на стороннем сайте». Если пустить `page` следом за
+   * попапом, каждый вход через Telegram/Google заканчивался бы на
+   * `oauth.telegram.org` и отвергался бы — человек прошёл бы вход
+   * целиком и получил отказ. Поэтому попап живёт в `activePage`, а
+   * `page` не меняется никогда.
+   */
   private page: RelayPage | null = null;
+  /** Страница, которая СЕЙЧАС стримится и принимает ввод: главная либо
+   * открытый поверх неё попап. */
+  private activePage: RelayPage | null = null;
+  /** CDP-сессия `activePage`. Имя оставлено прежним намеренно:
+   * `dispatchMouse`/`dispatchKey`/`resize`/`harvest` работают с ней и
+   * про переключение страниц знать не обязаны — поэтому ws-handler
+   * правок не потребовал вовсе. */
   private cdp: RelayCdpSession | null = null;
+  /** Одна CDP-сессия на страницу. Без кеша каждое переключение
+   * туда-обратно создавало бы новую сессию к тому же таргету и вешало
+   * бы ещё один обработчик кадров. */
+  private readonly cdpByPage = new Map<RelayPage, RelayCdpSession>();
+  /** Страницы, на которые уже повешены framenavigated/popup — чтобы
+   * возврат на главную не подписывался на неё второй раз и не слал
+   * `navigated` дважды. */
+  private readonly wiredPages = new Set<RelayPage>();
+  /** Последний размер, присланный клиентом (`resize`, §8.3). Хранится
+   * ради попапа: puppeteer даёт новой странице ДЕФОЛТНЫЙ вьюпорт
+   * браузера, а не родительский, и без переноса человек с телефона
+   * увидел бы в попапе десктопную вёрстку формы входа. */
+  private viewport = {
+    width: DEFAULT_VIEWPORT.width,
+    height: DEFAULT_VIEWPORT.height,
+  };
   private wsChannel: WsChannel | null = null;
   private cachedResult: SessionResult | null = null;
   private closedAt: number | null = null;
@@ -266,7 +325,8 @@ export class Session {
     }
     this.wsChannel = channel;
     if (this.state === 'created') {
-      await this.startScreencast();
+      if (!this.page) throw new Error('сессия не инициализирована');
+      await this.streamFrom(this.page);
       this.state = 'streaming';
     }
   }
@@ -275,10 +335,16 @@ export class Session {
     if (this.wsChannel === channel) this.wsChannel = null;
   }
 
-  private async startScreencast(): Promise<void> {
-    if (!this.page) throw new Error('сессия не инициализирована');
-    const cdp = await this.page.target().createCDPSession();
-    this.cdp = cdp;
+  /** CDP-сессия страницы, одна на страницу. Обработчик кадров вешается
+   * здесь же — ровно один раз, и он сам проверяет, что страница всё ещё
+   * активна: кадр, отправленный до того, как долетел `stopScreencast`,
+   * иначе уехал бы в канвас поверх уже переключённой картинки. */
+  private async cdpFor(page: RelayPage): Promise<RelayCdpSession> {
+    const existing = this.cdpByPage.get(page);
+    if (existing) return existing;
+
+    const cdp = await page.target().createCDPSession();
+    this.cdpByPage.set(page, cdp);
 
     cdp.on(
       'Page.screencastFrame',
@@ -287,29 +353,142 @@ export class Session {
         metadata: FrameMetadata;
         sessionId: number;
       }) => {
+        // Подтверждать нужно ЛЮБОЙ кадр, даже отброшенный: без ack
+        // Chromium перестаёт слать следующие, и страница, на которую
+        // мы потом вернёмся, замерла бы навсегда.
+        const ack = () =>
+          cdp
+            .send('Page.screencastFrameAck', { sessionId: params.sessionId })
+            .catch((err) => {
+              this.logger.warn('screencastFrameAck failed', {
+                sessionId: this.id,
+                error: String(err),
+              });
+            });
+        if (this.cdp !== cdp) {
+          ack();
+          return;
+        }
         this.notify({
           type: 'frame',
           data: params.data,
           metadata: params.metadata,
           frameAckId: params.sessionId,
         });
-        cdp
-          .send('Page.screencastFrameAck', { sessionId: params.sessionId })
-          .catch((err) => {
-            this.logger.warn('screencastFrameAck failed', {
-              sessionId: this.id,
-              error: String(err),
-            });
-          });
+        ack();
       },
     );
 
-    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 60 });
+    return cdp;
+  }
 
-    this.page.on('framenavigated', (frame) => {
-      if (frame !== this.page!.mainFrame()) return;
+  /** Подписки на страницу — ровно один раз на страницу (см. `wiredPages`). */
+  private wirePage(page: RelayPage): void {
+    if (this.wiredPages.has(page)) return;
+    this.wiredPages.add(page);
+
+    page.on('framenavigated', (frame) => {
+      // Навигация неактивной страницы клиента не касается: он смотрит
+      // не на неё, и `navigated` сбил бы ему показанный адрес.
+      if (this.activePage !== page) return;
+      if (frame !== page.mainFrame()) return;
       this.notify({ type: 'navigated', url: frame.url() });
     });
+
+    page.on('popup', (popup) => {
+      if (!popup) return;
+      this.handlePopup(popup);
+    });
+  }
+
+  /**
+   * Попап открылся — показать его человеку и отдать ему ввод.
+   *
+   * §9 основного ТЗ остаётся в силе: реле не запрещает чужой домен, а
+   * показывает его. Клиент узнаёт об этом обычным `navigated` — новых
+   * сообщений протокола не понадобилось, а фронтенд уже показывает
+   * адрес, чтобы человек видел, на каком он сайте.
+   */
+  private handlePopup(popup: RelayPage): void {
+    // Попап мог открыться в момент финализации или принудительного
+    // закрытия: стартовать скринкаст на умирающем браузере нельзя —
+    // CDP ответит «Session closed», и отклонение улетело бы в никуда.
+    if (this.state !== 'streaming') return;
+
+    popup.on('close', () => {
+      // Возвращаемся, только если смотрели именно на него: попап мог
+      // закрыться уже после того, как поверх открылся следующий.
+      if (this.activePage !== popup) return;
+      if (this.state !== 'streaming') return;
+      const main = this.page;
+      if (!main) return;
+      void this.streamFrom(main).catch((err) => {
+        this.logger.warn('возврат на главную страницу не удался', {
+          sessionId: this.id,
+          error: String(err),
+        });
+      });
+    });
+
+    void this.streamFrom(popup).catch((err) => {
+      this.logger.warn('переключение на попап не удалось', {
+        sessionId: this.id,
+        error: String(err),
+      });
+    });
+  }
+
+  /**
+   * Сделать страницу активной: стрим и ввод уходят на неё.
+   *
+   * Скринкаст всегда ровно один. Две одновременно стримящие страницы
+   * слали бы кадры вперемешку в один и тот же `<canvas>` на клиенте —
+   * картинка мигала бы между сайтом заказчика и окном входа.
+   */
+  private async streamFrom(page: RelayPage): Promise<void> {
+    // Подписки ставятся здесь, а не у вызывающих: так нельзя сделать
+    // страницу активной, забыв её подписать. Повторный вызов безвреден
+    // — `wirePage` идемпотентен, и это не украшение: возврат с попапа
+    // на главную приходит сюда ВТОРОЙ раз для той же страницы, и без
+    // защиты на ней оказалось бы два обработчика `framenavigated`, то
+    // есть каждый переход уезжал бы клиенту дважды.
+    this.wirePage(page);
+    const previous = this.cdp;
+    const cdp = await this.cdpFor(page);
+
+    // Переключаем указатель ДО остановки предыдущего скринкаста:
+    // обработчик кадров сверяется именно с ним, и кадры, уже летящие
+    // от старой страницы, будут отброшены, а не нарисованы поверх.
+    this.activePage = page;
+    this.cdp = cdp;
+
+    if (previous && previous !== cdp) {
+      await previous.send('Page.stopScreencast').catch((err) => {
+        this.logger.warn('stopScreencast failed', {
+          sessionId: this.id,
+          error: String(err),
+        });
+      });
+    }
+
+    // Тот же вызов и те же флаги, что в `resize()` — намеренно: размер
+    // попапа обязан совпадать с тем, под который клиент рисует канвас.
+    // (Расхождение `mobile:false` здесь и `isMobile:true` в стартовом
+    // вьюпорте — пререквизит, существовавший до этой правки; трогать
+    // его в этой задаче не стал.)
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: this.viewport.width,
+      height: this.viewport.height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 60 });
+
+    // Адрес новой страницы — сразу, не дожидаясь её навигации: попап
+    // открывается уже на нужном URL, и `framenavigated` по нему может
+    // не прийти вовсе.
+    this.notify({ type: 'navigated', url: page.url() });
   }
 
   /** §9 основного ТЗ — реле НЕ блокирует/откатывает навигацию, только
@@ -388,6 +567,9 @@ export class Session {
   }
 
   async resize(width: number, height: number): Promise<void> {
+    // Запоминаем ВСЕГДА, даже если применить некуда: значение нужно
+    // попапу, который откроется позже (см. `streamFrom`).
+    this.viewport = { width, height };
     if (!this.cdp) return;
     await this.cdp.send('Emulation.setDeviceMetricsOverride', {
       width,
