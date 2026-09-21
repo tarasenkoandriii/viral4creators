@@ -1049,7 +1049,10 @@ export interface AdminCreatorProfileListResult {
   pageSize: number;
 }
 
-export type AdminPortfolioItemStatus = 'PENDING' | 'PUBLISHED' | 'REJECTED';
+// Аудит-фикс: не включало SOLD (та же неточность, третий раз подряд —
+// уже чинилась в backend/common/types/marketplace.types.ts и
+// marketplace/lib/client-api.ts; SOLD есть с самого Этапа 1 аукциона).
+export type AdminPortfolioItemStatus = 'PENDING' | 'PUBLISHED' | 'REJECTED' | 'SOLD';
 
 export interface AdminPortfolioItem {
   id: string;
@@ -1064,6 +1067,8 @@ export interface AdminPortfolioItem {
   collectionTag: string | null;
   rejectionReason: string | null;
   createdAt: string;
+  /** Водяной знак на публичном превью (§9/§22, защита от пиратства) — статус обработки виден оператору. */
+  watermarkStatus: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'SKIPPED';
 }
 
 export interface AdminPortfolioListResult {
@@ -1071,4 +1076,130 @@ export interface AdminPortfolioListResult {
   total: number;
   page: number;
   pageSize: number;
+}
+
+// ── Аукцион готовых видео (ТЗ на маркетплейс §22) — модерация оператором ──
+// Реальный пробел, закрытый этим фиксом: бэкенд (AdminAuctionController —
+// список/approve/reject/confirm-payment) существовал с Этапа 2, но ни
+// одной страницы под него не было — оператору было физически нечем
+// одобрить или отклонить заявку, кроме прямых запросов к API.
+
+export type AdminAuctionListingStatus =
+  | 'PENDING_MODERATION'
+  | 'QUEUED'
+  | 'ACTIVE'
+  | 'WON'
+  | 'EXPIRED'
+  | 'REJECTED'
+  | 'WITHDRAWN';
+
+export interface AdminAuctionListing {
+  id: string;
+  creatorProfileId: string;
+  creatorDisplayName: string | null;
+  portfolioItemId: string;
+  portfolioItemTitle: string;
+  portfolioItemVideoUrl: string;
+  brandManifestId: string | null;
+  includeBrandManifest: boolean;
+  auctionType: 'BLITZ' | 'STANDARD';
+  payoutCurrency: 'UAH' | 'USD' | 'EUR';
+  rightsConfirmedAt: string;
+  expiresAt: string | null;
+  /** ИИ-оценка видео/брендбука (§22, Этап 3) — сводка для оператора, не автоматическое решение. */
+  aiAssessment: string | null;
+  brandManifestAiAudit: string | null;
+  startingPrice: number;
+  reservePrice: number | null;
+  buyNowPrice: number | null;
+  status: AdminAuctionListingStatus;
+  rejectionReason?: string | null;
+  highestBidAmount: number | null;
+  bidCount: number;
+  createdAt: string;
+  /**
+   * Информационная UAH-оценка текущей цены (highestBidAmount либо
+   * startingPrice) через статичный курс backend/src/common/fx-rates.ts —
+   * только чтобы на глаз сравнивать лоты в разных валютах в очереди.
+   * null, если payoutCurrency уже UAH. НЕ авторитетная сумма сделки.
+   */
+  currentPriceUahEquivalent: number | null;
+  /** Антиснайпер (ТЗ на живой аукцион §7.3) — чекбокс продавца при подаче заявки. */
+  antiSnipeEnabled: boolean;
+  /** Сколько раз реально продлился expiresAt антиснайпером. */
+  extensions: number;
+  /**
+   * Живой аукцион (§7.8, ПРАВКА 1.4) — согласие продавца на живую
+   * трансляцию лота, тот же приём, что antiSnipeEnabled. Без него
+   * назначить студию нельзя, даже для BLITZ.
+   */
+  liveStreamOptIn: boolean;
+  /** Живой аукцион (§7.8) — какая студия назначена лоту, null — ещё не назначена. */
+  virtualStudioId: string | null;
+  /** Живой аукцион (§7.5) — идёт ли сейчас трансляция прямо сейчас. */
+  liveStreamActive: boolean;
+}
+
+export interface AdminAuctionListResult {
+  items: AdminAuctionListing[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+// ── Виртуальная студия (backend/src/modules/virtual-studio, Этап 1-3
+// docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md) — admin-only. ──
+
+export type VirtualStudioStatusValue = 'DRAFT' | 'READY' | 'ARCHIVED';
+
+export interface VirtualStudioVariant {
+  id: string;
+  studioId: string;
+  imageUrl: string;
+  prompt: string;
+  createdAt: string;
+}
+
+export interface VirtualStudio {
+  id: string;
+  name: string;
+  refPrompt: string;
+  selectedVariantId: string | null;
+  status: VirtualStudioStatusValue;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  variants?: VirtualStudioVariant[];
+}
+
+export type VirtualStudioFragmentKind = 'VIDEO' | 'VOICE' | 'ANALYSIS';
+/** Тот же словарь, что GenerationStatus на бэкенде (common/types/generation.types.ts). */
+export type VirtualStudioFragmentStatus = 'pending' | 'processing' | 'complete' | 'failed';
+
+export interface VirtualStudioFragment {
+  id: string;
+  studioId: string;
+  variantId: string | null;
+  kind: VirtualStudioFragmentKind;
+  status: VirtualStudioFragmentStatus;
+  provider: string;
+  voiceId: string | null;
+  text: string | null;
+  sourceVideoUrl: string | null;
+  brandManifestId: string | null;
+  resultUrl: string | null;
+  resultText: string | null;
+  providerJobId: string | null;
+  durationSec: number | null;
+  errorMessage: string | null;
+  createdAt: string;
+  readyAt: string | null;
+}
+
+export interface VirtualStudioVoiceOption {
+  voiceId: string;
+  name: string;
+  previewUrl: string | null;
+  accent: string | null;
 }

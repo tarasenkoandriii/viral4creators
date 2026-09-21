@@ -261,9 +261,19 @@ describe('CatalogBatchService.create', () => {
       productItemIds: ['pi-source', 'pi1', 'pi2'],
     });
     expect(result.itemCount).toBe(2);
+    // `where` сравнивается по вхождению, а не целиком: запрос с тех пор
+    // обзавёлся `select` и фильтром мягкого удаления, и точное сравнение
+    // ломалось на них, хотя проверяемое здесь — исключение источника —
+    // не менялось.
     expect(prisma.productItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: { in: ['pi1', 'pi2'] }, projectId: 'proj1' },
+        where: expect.objectContaining({
+          id: { in: ['pi1', 'pi2'] },
+          projectId: 'proj1',
+          // Этап 89: без этого фильтра мягко удалённый товар молча
+          // проходил бы в партию как обычный, а не как «отсутствует».
+          deletedAt: null,
+        }),
       }),
     );
   });

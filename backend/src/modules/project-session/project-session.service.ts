@@ -22,7 +22,9 @@ import { Session } from '../../common/types/session.types';
 import { BrandManifestSnapshot } from '../../common/types/brand-manifest.types';
 import {
   brandManifestSnapshotFrom,
+  greetingBriefSnapshotFrom,
   productInformationFromItem,
+  SnapshotGreetingBriefSource,
   SnapshotItemSource,
   SnapshotManifestSource,
   SnapshotProjectSource,
@@ -36,6 +38,21 @@ interface ItemWithProjectRow extends SnapshotItemSource {
     id: string;
     brandManifest: SnapshotManifestSource | null;
   };
+}
+
+/** Structural row for a GREETING_VIDEO project's brief + its own project. */
+interface GreetingBriefWithProjectRow extends SnapshotGreetingBriefSource {
+  project: SnapshotProjectSource & {
+    id: string;
+    type: string;
+    deletedAt: Date | null;
+  };
+  /** GreetingBrief's OWN brand manifest (§5.4 — CORPORATE branding),
+   * distinct from `Project.brandManifestId`: a greeting can carry a
+   * sender's company brand without the project itself being tagged with
+   * one. See `CreateGreetingBriefDto.brandManifestId` vs
+   * `CreateProjectRequestDto.brandManifestId`. */
+  brandManifest: SnapshotManifestSource | null;
 }
 
 interface SessionListRow {
@@ -137,6 +154,74 @@ export class ProjectSessionService {
     );
   }
 
+  /**
+   * POST /projects/:projectId/greeting-brief/sessions (ТЗ
+   * TZ-Greeting-Video-Project-Type.md §4.3) — the GREETING_VIDEO
+   * counterpart of `createFromItem` above: no ProductItem exists for this
+   * project type, so the Session is seeded from its `GreetingBrief`
+   * instead.
+   *
+   * Not literally the route the ТЗ's §8 table lists (it lists only the
+   * two brief CRUD routes and says "everything else — existing routes,
+   * unchanged") — but no existing route creates a Session without a
+   * ProductItem in this codebase; `CLIENT_SITE` doesn't go through
+   * ProjectSessionService at all (it has its own tutorial-runner
+   * pipeline). This route is this ТЗ's necessary, if implicit, addition.
+   */
+  async createFromGreetingBrief(
+    userId: string,
+    projectId: string,
+    locale?: string,
+  ): Promise<Session> {
+    const brief: GreetingBriefWithProjectRow | null =
+      await this.prisma.greetingBrief.findFirst({
+        where: { projectId, project: { userId, deletedAt: null } },
+        include: {
+          project: { select: { id: true, type: true, deletedAt: true, title: true, currency: true, countryCode: true } },
+          brandManifest: {
+            include: {
+              characters: {
+                orderBy: { createdAt: 'asc' as const },
+                include: { activeSketch: true },
+              },
+              scenes: {
+                orderBy: { createdAt: 'asc' as const },
+                include: { activeSketch: true },
+              },
+            },
+          },
+        },
+      });
+    if (!brief) {
+      throw new NotFoundException(
+        `Greeting brief not found for project ${projectId}`,
+      );
+    }
+    // Не должно случиться при обычном флоу (бриф создаётся только вместе
+    // с GREETING_VIDEO-проектом, §4.1), но проект тип мог сменить PATCH
+    // /projects/:id (ProjectService.updateProject допускает смену type) —
+    // защита от рассинхрона, а не догадка.
+    if (brief.project.type !== 'GREETING_VIDEO') {
+      throw new NotFoundException(
+        `Project ${projectId} is not a GREETING_VIDEO project`,
+      );
+    }
+
+    const now = new Date();
+    const manifest = brief.brandManifest;
+    return this.sessions.createSession(
+      userId,
+      {
+        projectId: brief.project.id,
+        greetingBriefSnapshot: greetingBriefSnapshotFrom(brief, now),
+        ...(manifest
+          ? { brandManifestSnapshot: brandManifestSnapshotFrom(manifest, now) }
+          : {}),
+      },
+      locale,
+    );
+  }
+
   /** GET /projects/:projectId/items/:itemId/sessions — newest first. */
   async listForItem(
     userId: string,
@@ -165,6 +250,40 @@ export class ProjectSessionService {
     // у всех фильтр есть.
     const rows: SessionListRow[] = await this.prisma.session.findMany({
       where: { productItemId: itemId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        lastActivityAt: true,
+        data: true,
+        liveData: true,
+      },
+    });
+    return rows.map(toSummary);
+  }
+
+  /**
+   * GET /projects/:projectId/greeting-brief/sessions — newest first.
+   * §8 ТЗ doesn't list this route either (see `createFromGreetingBrief`'s
+   * doc-comment on the same gap for POST); without it a returning creator
+   * has no way to resume a GREETING_VIDEO session they already started —
+   * every other project type has an equivalent list route, and this one
+   * would be the only one silently missing it.
+   */
+  async listForGreetingBrief(
+    userId: string,
+    projectId: string,
+  ): Promise<ItemSessionSummary[]> {
+    const owned = await this.prisma.project.findFirst({
+      where: { id: projectId, userId, deletedAt: null, type: 'GREETING_VIDEO' },
+      select: { id: true },
+    });
+    if (!owned) {
+      throw new NotFoundException(`Project ${projectId} not found`);
+    }
+    const rows: SessionListRow[] = await this.prisma.session.findMany({
+      where: { projectId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,

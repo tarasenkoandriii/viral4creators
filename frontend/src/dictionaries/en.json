@@ -333,7 +333,8 @@
       "voiceCloning": "Clone your own voice",
       "voiceDub": "Dub (full replacement of the model's voice)",
       "siteTutorial": "Tutorial video for the client's website",
-      "aiSketch": "AI sketch instead of the image"
+      "aiSketch": "AI sketch instead of the image",
+      "greetingVideo": "Greeting video"
     },
     "legalNotePrefix": "Before paying, review the"
   },
@@ -392,7 +393,9 @@
     "manifestHintEmptySuffix": " or link it later from the project.",
     "manifestHintDefault": "Optional — a consistent style and characters across all of the brand's projects",
     "noManifestOption": "No manifest",
-    "submitButton": "Create project"
+    "submitButton": "Create project",
+    "greetingVideoLabel": "Greeting video",
+    "greetingVideoSub": "A personal video greeting with a presenter — available on every plan."
   },
   "projectsShared": {
     "backLabel": "Back",
@@ -1403,6 +1406,78 @@
     "catalogBatchItems": {
       "one": "{{n}} batch generation item",
       "other": "{{n}} batch generation items"
+    }
+  },
+  "greetingVideoWizard": {
+    "title": "Greeting video",
+    "hint": "A personal video greeting: occasion, recipient, tone — the script does the rest.",
+    "occasionLabel": "Occasion",
+    "customOccasionLabel": "What's the occasion",
+    "customOccasionPlaceholder": "e.g. housewarming",
+    "recipientNameLabel": "Recipient",
+    "recipientNamePlaceholder": "Recipient's name",
+    "senderNameLabel": "From (optional)",
+    "senderNamePlaceholder": "Your name",
+    "toneLabel": "Tone",
+    "personalMessageLabel": "Greeting text (optional)",
+    "personalMessageHint": "Leave blank and the script will write a text for you, based on the occasion and tone.",
+    "personalMessagePlaceholder": "Your greeting text...",
+    "presenterProviderLabel": "Presenter",
+    "providerGrok": "Video without an on-screen presenter (Grok)",
+    "providerHedra": "Talking avatar (Hedra)",
+    "providerHedraPremiumOnly": "Available on the PREMIUM plan only",
+    "providerHedraPilotNotice": "Not available yet, even on PREMIUM — the talking-avatar pilot isn't open to everyone yet.",
+    "resolutionLabel": "Quality",
+    "occasionDateLabel": "Event date (optional)",
+    "manifestLabel": "Brand manifest (optional)",
+    "noManifestOption": "No manifest",
+    "submitButton": "Create project",
+    "editSubmitButton": "Save",
+    "occasionOtherRequired": "Please describe the occasion — this field can't be empty",
+    "recipientRequired": "Please say who the greeting is for",
+    "referencesHeading": "Reference images",
+    "referencesHint": "Up to 7 images — Grok uses them as visual references when generating the video.",
+    "referencesEmpty": "No reference images yet — the video will be generated from text alone.",
+    "referencesMax": "Limit reached: at most {{max}} images",
+    "addReference": "Add image",
+    "referenceLabelLabel": "Label",
+    "referenceLabelPlaceholder": "e.g. recipient, location, gift",
+    "referenceDescLabel": "Description (optional)",
+    "referenceDescPlaceholder": "What's in the image and how it should be used in the video",
+    "referencePngJpegOnly": "PNG or JPEG only",
+    "fileTooLarge": "File is larger than 10 MB",
+    "deleteReferenceAria": "Delete image",
+    "deleteReferenceConfirm": "Delete \"{{label}}\"?",
+    "editReferenceAria": "Edit label and description",
+    "saveReferenceButton": "Save",
+    "cancel": "Cancel",
+    "startSessionButton": "Start building the video",
+    "generateScriptButton": "Generate script",
+    "regenerateScriptButton": "Regenerate script",
+    "scriptHeading": "Script",
+    "scriptEmpty": "No script generated yet.",
+    "generateVideoButton": "Generate video",
+    "videoHeading": "Video",
+    "videoPending": "Starting the render…",
+    "videoProcessing": "The video is being generated — this usually takes a few minutes.",
+    "videoFailed": "Video generation failed",
+    "videoReady": "Video is ready",
+    "downloadButton": "Download",
+    "retryButton": "Retry",
+    "backToProject": "Back to project",
+    "occasion": {
+      "BIRTHDAY": "Birthday",
+      "WEDDING": "Wedding",
+      "ANNIVERSARY": "Anniversary",
+      "NEW_YEAR": "New Year",
+      "GRADUATION": "Graduation",
+      "CORPORATE": "Corporate greeting",
+      "OTHER": "Other occasion"
+    },
+    "tone": {
+      "WARM": "Warm, heartfelt",
+      "FUNNY": "Playful",
+      "FORMAL": "Formal"
     }
   }
 }

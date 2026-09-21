@@ -50,7 +50,7 @@ import {
   heuristicCueTimings,
   speakableText,
 } from '../../common/voiceover-script';
-import { resolveVoiceoverLanguage } from '../../common/voiceover';
+import { detectLanguage, resolveVoiceoverLanguage } from '../../common/voiceover';
 import {
   buildSrt,
   normalizeSubtitlesMode,
@@ -1076,9 +1076,19 @@ export class PostProductionService {
       voiceId: brand?.ttsVoiceId ?? null,
       ttsModel: brand?.ttsModel ?? null,
       ttsProvider: brand?.ttsProvider ?? null,
+      // Найдено при аудите пайплайна GREETING_VIDEO: раньше здесь стоял
+      // голый `null` для любой сессии без `productInformation` — не
+      // "нейтральное" значение, а обход собственного дефолта
+      // `resolveVoiceoverLanguage` ('en', см. её doc-comment), который
+      // для товарных сессий как раз что-то значит только благодаря
+      // описанию товара. У GREETING_VIDEO вместо товарного описания есть
+      // сам текст поздравления (`speech`, уже посчитан выше) — гораздо
+      // более прямой сигнал языка озвучки, чем что-либо из товара, и
+      // ровно тот же эвристический детектор (`detectLanguage`), который
+      // `resolveVoiceoverLanguage` сама использует как один из шагов.
       language: session?.productInformation
         ? resolveVoiceoverLanguage(session.productInformation).language
-        : null,
+        : (detectLanguage(speech) ?? 'en'),
     };
   }
 

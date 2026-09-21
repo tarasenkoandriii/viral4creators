@@ -837,6 +837,21 @@ Please respond with a valid JSON object only, with one key "variants": an array 
   }
 
   /**
+   * Публичная обёртка над `moderateContent` — единственная причина её
+   * существования: `GreetingPromptService` (GREETING_VIDEO, ТЗ
+   * TZ-Greeting-Video-Project-Type.md) собирает промпт своим отдельным
+   * конвейером (нет `ProductInformation`/`videoAnalysis`, см. её
+   * doc-comment), но текст, который реально уходит в рендер, обязан
+   * проходить ту же проверку, что и у SINGLE/LINE — не отдельную свою и
+   * не отсутствующую вовсе (найдено при аудите пайплайна GREETING_VIDEO,
+   * находка №2: до этой правки `moderationStatus` там был жёстко
+   * `APPROVED` без единого вызова модерации).
+   */
+  moderateText(text: string): { status: ModerationStatus; flags: string[] } {
+    return this.moderateContent(text);
+  }
+
+  /**
    * Basic content moderation using keyword matching
    * This is a simple POC implementation - production would use a proper moderation API
    *

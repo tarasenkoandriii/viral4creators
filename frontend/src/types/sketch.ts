@@ -21,7 +21,9 @@ export type SketchTargetType =
   | 'session-scene'
   | 'brand-character'
   | 'brand-scene'
-  | 'project-item';
+  | 'project-item'
+  /** GREETING_VIDEO — референс-изображение Grok reference-to-video. */
+  | 'session-greeting-reference';
 
 export interface SketchTarget {
   type: SketchTargetType;

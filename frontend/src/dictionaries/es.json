@@ -333,7 +333,8 @@
       "voiceCloning": "Clonar tu propia voz",
       "voiceDub": "Doblaje (reemplazo completo de la voz del modelo)",
       "siteTutorial": "Vídeo tutorial del sitio del cliente",
-      "aiSketch": "Boceto IA en lugar de la imagen"
+      "aiSketch": "Boceto IA en lugar de la imagen",
+      "greetingVideo": "Vídeo de felicitación"
     },
     "legalNotePrefix": "Antes de pagar, revisa:"
   },
@@ -392,7 +393,9 @@
     "manifestHintEmptySuffix": " o vincularlo más tarde desde el proyecto.",
     "manifestHintDefault": "Opcional: un estilo y personajes coherentes para todos los proyectos de la marca",
     "noManifestOption": "Sin manifiesto",
-    "submitButton": "Crear proyecto"
+    "submitButton": "Crear proyecto",
+    "greetingVideoLabel": "Vídeo de felicitación",
+    "greetingVideoSub": "Un vídeo de felicitación personal con presentador, disponible en todos los planes."
   },
   "projectsShared": {
     "backLabel": "Atrás",
@@ -1403,6 +1406,78 @@
     "catalogBatchItems": {
       "one": "{{n}} elemento de generación por lotes",
       "other": "{{n}} elementos de generación por lotes"
+    }
+  },
+  "greetingVideoWizard": {
+    "title": "Vídeo de felicitación",
+    "hint": "Un vídeo de felicitación personal: ocasión, destinatario, tono — el guion se encarga del resto.",
+    "occasionLabel": "Ocasión",
+    "customOccasionLabel": "¿Cuál es la ocasión?",
+    "customOccasionPlaceholder": "p. ej. estreno de casa",
+    "recipientNameLabel": "Destinatario",
+    "recipientNamePlaceholder": "Nombre del destinatario",
+    "senderNameLabel": "De parte de (opcional)",
+    "senderNamePlaceholder": "Su nombre",
+    "toneLabel": "Tono",
+    "personalMessageLabel": "Texto de felicitación (opcional)",
+    "personalMessageHint": "Déjelo en blanco y el guion escribirá un texto según la ocasión y el tono.",
+    "personalMessagePlaceholder": "Su texto de felicitación...",
+    "presenterProviderLabel": "Presentador",
+    "providerGrok": "Vídeo sin presentador en pantalla (Grok)",
+    "providerHedra": "Avatar parlante (Hedra)",
+    "providerHedraPremiumOnly": "Disponible solo en el plan PREMIUM",
+    "providerHedraPilotNotice": "Aún no disponible, ni en PREMIUM — el piloto de avatar parlante todavía no está abierto a todos.",
+    "resolutionLabel": "Calidad",
+    "occasionDateLabel": "Fecha del evento (opcional)",
+    "manifestLabel": "Manifiesto de marca (opcional)",
+    "noManifestOption": "Sin manifiesto",
+    "submitButton": "Crear proyecto",
+    "editSubmitButton": "Guardar",
+    "occasionOtherRequired": "Indique la ocasión — este campo no puede estar vacío",
+    "recipientRequired": "Indique para quién es la felicitación",
+    "referencesHeading": "Imágenes de referencia",
+    "referencesHint": "Hasta 7 imágenes — Grok las usa como referencias visuales al generar el vídeo.",
+    "referencesEmpty": "Aún no hay imágenes de referencia — el vídeo se generará solo a partir del texto.",
+    "referencesMax": "Límite alcanzado: como máximo {{max}} imágenes",
+    "addReference": "Añadir imagen",
+    "referenceLabelLabel": "Etiqueta",
+    "referenceLabelPlaceholder": "p. ej. destinatario, lugar, regalo",
+    "referenceDescLabel": "Descripción (opcional)",
+    "referenceDescPlaceholder": "Qué hay en la imagen y cómo debe usarse en el vídeo",
+    "referencePngJpegOnly": "Solo PNG o JPEG",
+    "fileTooLarge": "El archivo supera los 10 MB",
+    "deleteReferenceAria": "Eliminar imagen",
+    "deleteReferenceConfirm": "¿Eliminar «{{label}}»?",
+    "editReferenceAria": "Editar etiqueta y descripción",
+    "saveReferenceButton": "Guardar",
+    "cancel": "Cancelar",
+    "startSessionButton": "Empezar a crear el vídeo",
+    "generateScriptButton": "Generar guion",
+    "regenerateScriptButton": "Regenerar guion",
+    "scriptHeading": "Guion",
+    "scriptEmpty": "Aún no se ha generado ningún guion.",
+    "generateVideoButton": "Generar vídeo",
+    "videoHeading": "Vídeo",
+    "videoPending": "Iniciando el renderizado…",
+    "videoProcessing": "El vídeo se está generando — normalmente tarda unos minutos.",
+    "videoFailed": "No se pudo generar el vídeo",
+    "videoReady": "El vídeo está listo",
+    "downloadButton": "Descargar",
+    "retryButton": "Reintentar",
+    "backToProject": "Volver al proyecto",
+    "occasion": {
+      "BIRTHDAY": "Cumpleaños",
+      "WEDDING": "Boda",
+      "ANNIVERSARY": "Aniversario",
+      "NEW_YEAR": "Año Nuevo",
+      "GRADUATION": "Graduación",
+      "CORPORATE": "Felicitación corporativa",
+      "OTHER": "Otra ocasión"
+    },
+    "tone": {
+      "WARM": "Cálido, sincero",
+      "FUNNY": "Divertido",
+      "FORMAL": "Formal"
     }
   }
 }

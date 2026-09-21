@@ -61,6 +61,7 @@ export const DATA_KEYS = [
   'videoAudit',
   'scenes',
   'referenceSelection',
+  'greetingReferenceImages',
   'relevance',
   'analysisSelection',
   // Б-2.2: ключ записи библиотеки, к которой относится этот разбор.
@@ -91,6 +92,14 @@ export const DATA_KEYS = [
   // что перезаписывает 'generatedVideo' новой попыткой
   // (generation.service.ts, startGeneration()).
   'videoHistory',
+  // ТЗ TZ-Greeting-Video-Project-Type.md §3.2/§4.3 — снимок брифа
+  // GREETING_VIDEO, пишется один раз при создании сессии
+  // (ProjectSessionService.createFromGreetingBrief), как и
+  // 'productInformation'. Забыть добавить сюда — тот же класс дефекта,
+  // что уже был найден и исправлен для 'locale'/'videoHistory' выше
+  // (Б-2.2 style gap): поле пишется в Session, но молча пропадает при
+  // сборке JSON-колонки, потому что сборка идёт строго по этому списку.
+  'greetingBriefSnapshot',
 ] as const;
 
 /**
@@ -257,9 +266,21 @@ export type WorkKind = (typeof WORK_KINDS)[number];
  */
 export interface SessionSeed {
   projectId: string;
-  productItemId: string;
-  productInformation: Session['productInformation'];
+  /**
+   * Опционально с ТЗ TZ-Greeting-Video-Project-Type.md §4.3:
+   * GREETING_VIDEO-сессии создаются от `GreetingBrief`, не от
+   * `ProductItem`, — тем же путём, что и `productInformation` ниже,
+   * которое уже было опциональным по факту использования (см.
+   * `createSession`), но не по типу. Ровно один из
+   * `productItemId`+`productInformation` ИЛИ `greetingBriefSnapshot`
+   * задан на практике — второе не проверяется типами, это
+   * ответственность вызывающего (ProjectSessionService).
+   */
+  productItemId?: string;
+  productInformation?: Session['productInformation'];
   brandManifestSnapshot?: Session['brandManifestSnapshot'];
+  /** GREETING_VIDEO бриф — см. доккомментарий `Session.greetingBriefSnapshot`. */
+  greetingBriefSnapshot?: Session['greetingBriefSnapshot'];
 }
 
 @Injectable()
@@ -299,7 +320,20 @@ export class SessionService {
     const seeded: Record<string, unknown> = {
       ...(seed
         ? {
-            productInformation: seed.productInformation ?? null,
+            // ТЗ TZ-Greeting-Video-Project-Type.md §4.3: у GREETING_VIDEO
+            // нет ProductItem, поэтому `productInformation` не пишется
+            // вовсе для такой сессии (остаётся отсутствующим, а не
+            // записанным как `null`, — тот же случай, что уже есть у
+            // CLIENT_SITE, который вообще не проходит через createSession
+            // с seed). `??` вместо явного `null` здесь означало бы
+            // перезаписать ключ пустым значением для брифа-сессий, где
+            // его вообще не передали.
+            ...(seed.productInformation !== undefined
+              ? { productInformation: seed.productInformation }
+              : {}),
+            ...(seed.greetingBriefSnapshot !== undefined
+              ? { greetingBriefSnapshot: seed.greetingBriefSnapshot }
+              : {}),
             brandManifestSnapshot: seed.brandManifestSnapshot ?? null,
           }
         : {}),
@@ -316,7 +350,14 @@ export class SessionService {
         data: seeded as Prisma.InputJsonValue,
         ...(userId ? { userId } : {}),
         ...(seed
-          ? { projectId: seed.projectId, productItemId: seed.productItemId }
+          ? {
+              projectId: seed.projectId,
+              // Nullable column (schema.prisma) — GREETING_VIDEO sessions
+              // have no ProductItem at all (§4.3), same as CLIENT_SITE.
+              ...(seed.productItemId
+                ? { productItemId: seed.productItemId }
+                : {}),
+            }
           : {}),
       },
     });
@@ -876,6 +917,8 @@ export class SessionService {
       videoAnalysis: data.videoAnalysis as Session['videoAnalysis'],
       productInformation:
         data.productInformation as Session['productInformation'],
+      greetingBriefSnapshot: (data.greetingBriefSnapshot ??
+        undefined) as Session['greetingBriefSnapshot'],
       generationPrompt: data.generationPrompt as Session['generationPrompt'],
       generatedVideo: data.generatedVideo as Session['generatedVideo'],
       brandManifestSnapshot: (data.brandManifestSnapshot ??
@@ -884,6 +927,8 @@ export class SessionService {
         undefined) as Session['characterCasting'],
       videoAudit: (data.videoAudit ?? undefined) as Session['videoAudit'],
       scenes: (data.scenes ?? undefined) as Session['scenes'],
+      greetingReferenceImages: (data.greetingReferenceImages ??
+        undefined) as Session['greetingReferenceImages'],
       referenceSelection: (data.referenceSelection ??
         undefined) as Session['referenceSelection'],
       relevance: (data.relevance ?? undefined) as Session['relevance'],

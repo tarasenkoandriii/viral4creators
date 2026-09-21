@@ -21,6 +21,13 @@ import {
   BrandSceneSnapshot,
   JsonObject,
 } from '../../common/types/brand-manifest.types';
+import {
+  GreetingBriefSnapshot,
+  GreetingOccasion,
+  GreetingPresenterProvider,
+  GreetingResolution,
+  GreetingTone,
+} from '../../common/types/greeting.types';
 
 type DecimalLike = { toString(): string } | number | string;
 
@@ -240,6 +247,58 @@ export function brandManifestSnapshotFrom(
     scenes: (manifest.scenes ?? []).map(sceneSnapshot),
     snapshotAt: now.toISOString(),
     editedAt: null,
+  };
+}
+
+/** What we need from a GreetingBrief row (structural — ТЗ TZ-Greeting-Video-Project-Type.md §3.2). */
+export interface SnapshotGreetingBriefSource {
+  id: string;
+  occasion: GreetingOccasion;
+  customOccasionText: string | null;
+  recipientName: string;
+  senderName: string | null;
+  tone: GreetingTone;
+  personalMessage: string | null;
+  presenterProvider: string;
+  resolution: string;
+  brandManifestId: string | null;
+  occasionDate: Date | null;
+}
+
+/**
+ * GreetingBrief → Session.greetingBriefSnapshot (§3.2/§4.3 — «копия, не
+ * ссылка», тот же принцип, что `productInformationFromItem` выше).
+ *
+ * `requestedPresenterProvider`/`requestedResolution` — то, что лежит в
+ * БД брифа (уже прошло `resolveGreetingConfig` при создании/правке
+ * брифа, §7); `resolved*` дублирует те же значения здесь для симметрии
+ * с DTO/сервисным слоем (§3.2 doc-comment `GreetingBriefSnapshot`) —
+ * пайплайн генерации обязан читать `resolved*`, а не пересчитывать
+ * тариф заново на каждом рендере: тариф пользователя мог с тех пор
+ * измениться, а уже созданная сессия должна остаться при том качестве,
+ * на которое согласился пользователь в момент создания брифа.
+ */
+export function greetingBriefSnapshotFrom(
+  brief: SnapshotGreetingBriefSource,
+  now: Date = new Date(),
+): GreetingBriefSnapshot {
+  const presenterProvider = brief.presenterProvider as GreetingPresenterProvider;
+  const resolution = brief.resolution as GreetingResolution;
+  return {
+    sourceGreetingBriefId: brief.id,
+    occasion: brief.occasion,
+    customOccasionText: brief.customOccasionText,
+    recipientName: brief.recipientName,
+    senderName: brief.senderName,
+    tone: brief.tone,
+    personalMessage: brief.personalMessage,
+    requestedPresenterProvider: presenterProvider,
+    resolvedPresenterProvider: presenterProvider,
+    requestedResolution: resolution,
+    resolvedResolution: resolution,
+    brandManifestId: brief.brandManifestId,
+    occasionDate: brief.occasionDate ? brief.occasionDate.toISOString() : null,
+    addedAt: now.toISOString(),
   };
 }
 

@@ -22,9 +22,10 @@ import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { WayForPayService } from './wayforpay.service';
 import { LegalModule } from '../legal/legal.module';
+import { AuctionPaymentModule } from '../auction/auction-payment.module';
 
 @Module({
-  imports: [LegalModule],
+  imports: [LegalModule, AuctionPaymentModule],
   controllers: [BillingController],
   providers: [BillingService, WayForPayService],
   exports: [BillingService, WayForPayService],

@@ -4,6 +4,8 @@ import type {
   AdminCreatorProfileListResult,
   AdminPortfolioItem,
   AdminPortfolioListResult,
+  AdminAuctionListing,
+  AdminAuctionListResult,
   ClientSiteDraftDetails,
   ClientSiteDraftListResult,
   ClientSiteDraftRow,
@@ -63,6 +65,10 @@ import type {
   WorkflowWindow,
   WorkflowFunnelResult,
   WorkflowCohortConversionResult,
+  VirtualStudio,
+  VirtualStudioVariant,
+  VirtualStudioFragment,
+  VirtualStudioVoiceOption,
 } from './types';
 
 // ── Аутентификация (backend/src/modules/admin-auth) ──
@@ -748,4 +754,129 @@ export function rejectPortfolioItem(id: string, reason: string) {
 
 export function broadcastTopOfWeek() {
   return apiPost<{ sent: boolean; count: number }>('/admin/portfolio-items/broadcast-top-of-week', {});
+}
+
+// ── Аукцион готовых видео (ТЗ на маркетплейс §22) — модерация оператором ──
+
+export function listAuctionListings(
+  params: { status?: string; page?: number; pageSize?: number } = {},
+) {
+  return apiGet<AdminAuctionListResult>('/admin/auctions', {
+    status: params.status || undefined,
+    page: params.page,
+    pageSize: params.pageSize,
+  });
+}
+
+export function approveAuctionListing(id: string) {
+  return apiPost<AdminAuctionListing>(`/admin/auctions/${id}/approve`, {});
+}
+
+export function rejectAuctionListing(id: string, reason: string) {
+  return apiPost<AdminAuctionListing>(`/admin/auctions/${id}/reject`, { reason });
+}
+
+/** Запасной ручной путь — основной: покупатель сам платит через self-serve чек-аут, вебхук WayForPay применяет оплату сам (см. auction.service.ts). */
+export function confirmAuctionPayment(id: string) {
+  return apiPost<AdminAuctionListing>(`/admin/auctions/${id}/confirm-payment`, {});
+}
+
+/**
+ * Живой аукцион (§7.8, ПРАВКА 1.4) — назначить студию эфира лоту.
+ * `videoFragmentId` не передаём из UI намеренно (см. доккомментарий
+ * AuctionService.assignVirtualStudio) — бэкенд сам берёт самый свежий
+ * готовый VIDEO-фрагмент выбранной студии; отдельный пикер фрагмента
+ * можно добавить позже, если понадобится более тонкий контроль.
+ * Backend сам отклонит вызов (BadRequestException), если лот не BLITZ
+ * или продавец не давал согласия (liveStreamOptIn) — UI это тоже
+ * проверяет заранее (см. page.tsx), чтобы не показывать кнопку там, где
+ * она гарантированно откажет, но сама валидация — на сервере.
+ */
+export function assignAuctionVirtualStudio(id: string, virtualStudioId: string) {
+  return apiPost<AdminAuctionListing>(`/admin/auctions/${id}/studio`, { virtualStudioId });
+}
+
+// ── Виртуальная студия (backend/src/modules/virtual-studio, Этап 1-3
+// docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md) — admin-only. ──
+
+export function listVirtualStudios() {
+  return apiGet<VirtualStudio[]>('/admin/virtual-studio');
+}
+
+export function createVirtualStudio(name: string, refPrompt: string) {
+  return apiPost<VirtualStudio>('/admin/virtual-studio', { name, refPrompt });
+}
+
+export function deleteVirtualStudio(id: string) {
+  return apiDelete<{ ok: true }>(`/admin/virtual-studio/${id}`);
+}
+
+export function listVirtualStudioVariants(studioId: string) {
+  return apiGet<VirtualStudioVariant[]>(`/admin/virtual-studio/${studioId}/variants`);
+}
+
+export function generateVirtualStudioVariant(studioId: string, prompt?: string) {
+  return apiPost<VirtualStudioVariant>(`/admin/virtual-studio/${studioId}/variants`, { prompt });
+}
+
+export function selectVirtualStudioVariant(studioId: string, variantId: string) {
+  return apiPost<VirtualStudio>(`/admin/virtual-studio/${studioId}/variants/${variantId}/select`, {});
+}
+
+export function deleteVirtualStudioVariant(studioId: string, variantId: string) {
+  return apiDelete<{ ok: true }>(`/admin/virtual-studio/${studioId}/variants/${variantId}`);
+}
+
+export function listVirtualStudioFragments(studioId: string) {
+  return apiGet<VirtualStudioFragment[]>(`/admin/virtual-studio/${studioId}/fragments`);
+}
+
+export function createVirtualStudioVideoFragment(
+  studioId: string,
+  body: {
+    provider: 'grok' | 'hedra';
+    prompt: string;
+    durationSec?: number;
+    aspectRatio?: string;
+    resolution?: string;
+    voiceFragmentId?: string;
+  },
+) {
+  return apiPost<VirtualStudioFragment>(`/admin/virtual-studio/${studioId}/fragments/video`, body);
+}
+
+export function createVirtualStudioVoiceFragment(
+  studioId: string,
+  body: { provider: 'resemble' | 'elevenlabs'; voiceId: string; text: string; language?: string },
+) {
+  return apiPost<VirtualStudioFragment>(`/admin/virtual-studio/${studioId}/fragments/voice`, body);
+}
+
+export function createVirtualStudioAnalysisFragment(
+  studioId: string,
+  body: { sourceVideoUrl: string; brandManifestId?: string },
+) {
+  return apiPost<VirtualStudioFragment>(`/admin/virtual-studio/${studioId}/fragments/analysis`, body);
+}
+
+export function getVirtualStudioFragmentStatus(studioId: string, fragmentId: string) {
+  return apiGet<VirtualStudioFragment>(`/admin/virtual-studio/${studioId}/fragments/${fragmentId}/status`);
+}
+
+export function deleteVirtualStudioFragment(studioId: string, fragmentId: string) {
+  return apiDelete<{ ok: true }>(`/admin/virtual-studio/${studioId}/fragments/${fragmentId}`);
+}
+
+export function listVirtualStudioVoices(provider: 'resemble' | 'elevenlabs') {
+  return apiGet<{ voices: VirtualStudioVoiceOption[]; error?: string }>('/admin/virtual-studio/voices', {
+    provider,
+  });
+}
+
+export function getVirtualStudioHedraEnabled() {
+  return apiGet<{ enabled: boolean }>('/admin/virtual-studio/settings/hedra-enabled');
+}
+
+export function setVirtualStudioHedraEnabled(enabled: boolean) {
+  return apiPost<{ enabled: boolean }>('/admin/virtual-studio/settings/hedra-enabled', { enabled });
 }

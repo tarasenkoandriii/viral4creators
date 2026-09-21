@@ -19,7 +19,11 @@ jest.mock('@prisma/client', () => ({
   Prisma: { DbNull: Symbol.for('Prisma.DbNull') },
 }));
 
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   ProjectService,
   isItemComplete,
@@ -104,26 +108,50 @@ function makePrisma() {
     abTestRun: { count: jest.fn().mockResolvedValue(0) },
     productFeedImportRun: { count: jest.fn().mockResolvedValue(0) },
     brandManifest: { findFirst: jest.fn() },
+    // ТЗ TZ-Greeting-Video-Project-Type.md §4.1/§4.3 — project + brief
+    // created together in one transaction. `$transaction`'s callback
+    // receives `tx` — here it's just this same mock object again (no real
+    // isolation needed in a unit test, only call-shape: `tx.project.create`/
+    // `tx.greetingBrief.create` must be spies the test can assert on).
+    greetingBrief: { create: jest.fn().mockResolvedValue({ id: 'gb1' }) },
+  };
+}
+
+/** `PlanService` surface `ProjectService` actually calls — see its constructor. */
+function makePlans(plan: 'LITE' | 'STANDARD' | 'PREMIUM' = 'STANDARD') {
+  return {
+    assertUser: jest.fn().mockResolvedValue(undefined),
+    planOfUser: jest.fn().mockResolvedValue(plan),
   };
 }
 
 describe('ProjectService', () => {
-  let prisma: ReturnType<typeof makePrisma>;
+  let prisma: ReturnType<typeof makePrisma> & {
+    $transaction: jest.Mock;
+  };
   let blob: { deleteMany: jest.Mock; listByPrefix: jest.Mock };
+  let plans: ReturnType<typeof makePlans>;
   let service: ProjectService;
 
   beforeEach(() => {
     delete process.env.PROJECT_LINE_ITEM_LIMIT;
     process.env.GEMINI_API_KEY = 'x';
-    prisma = makePrisma();
+    prisma = makePrisma() as ReturnType<typeof makePrisma> & {
+      $transaction: jest.Mock;
+    };
+    // See `greetingBrief` mock's doc-comment above.
+    prisma.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) =>
+      fn(prisma),
+    );
     blob = {
       deleteMany: jest.fn().mockResolvedValue(0),
       // Уборка товара идёт по префиксу: голосовые записи описания
       // названы отметкой времени и в базе не хранятся (этап 39, А-2.14).
       listByPrefix: jest.fn().mockResolvedValue({ blobs: [], cursor: null }),
     };
+    plans = makePlans();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    service = new ProjectService(prisma as any, blob as any);
+    service = new ProjectService(prisma as any, blob as any, plans as any);
   });
 
   describe('createProject — §7.1/§7.2 currency from country', () => {
@@ -196,6 +224,147 @@ describe('ProjectService', () => {
         brandManifestId: 'bm1',
       });
       expect(view.brandManifestId).toBe('bm1');
+    });
+  });
+
+  describe('createProject — GREETING_VIDEO (ТЗ TZ-Greeting-Video-Project-Type.md)', () => {
+    it('rejects GREETING_VIDEO without a greetingBrief', async () => {
+      await expect(
+        service.createProject(USER, {
+          type: 'GREETING_VIDEO',
+          title: 'Поздравление',
+          countryCode: 'UA',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.project.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects occasion OTHER without customOccasionText', async () => {
+      await expect(
+        service.createProject(USER, {
+          type: 'GREETING_VIDEO',
+          title: 'Поздравление',
+          countryCode: 'UA',
+          greetingBrief: { occasion: 'OTHER', recipientName: 'Аня' },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(plans.assertUser).not.toHaveBeenCalled();
+    });
+
+    it('§7: STANDARD keeps a request that is within its cap', async () => {
+      prisma.project.create.mockResolvedValue(
+        projectRow({ type: 'GREETING_VIDEO' }),
+      );
+      await service.createProject(USER, {
+        type: 'GREETING_VIDEO',
+        title: 'Поздравление',
+        countryCode: 'UA',
+        greetingBrief: {
+          occasion: 'BIRTHDAY',
+          recipientName: 'Аня',
+          presenterProvider: 'grok',
+          resolution: '720p',
+        },
+      });
+      expect(plans.assertUser).toHaveBeenCalledWith(USER, 'greetingVideo');
+      const briefCall = prisma.greetingBrief.create.mock.calls[0][0];
+      expect(briefCall.data).toMatchObject({
+        presenterProvider: 'grok',
+        resolution: '720p',
+      });
+    });
+
+    // Was: "STANDARD is forced to grok/720p regardless of what was
+    // requested", asserting that a 1080p request is quietly written back as
+    // 720p. resolveGreetingConfig refuses instead, deliberately (see its
+    // file doc-comment, §5.3/§7) — and the hedra test right below always
+    // asserted that same principle for the provider.
+    it('§7: rejects a too-high resolution on STANDARD with 403, does not silently downgrade', async () => {
+      await expect(
+        service.createProject(USER, {
+          type: 'GREETING_VIDEO',
+          title: 'Поздравление',
+          countryCode: 'UA',
+          greetingBrief: {
+            occasion: 'BIRTHDAY',
+            recipientName: 'Аня',
+            presenterProvider: 'grok',
+            resolution: '1080p',
+          },
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      // Nothing is persisted: the refusal happens before the project row.
+      expect(prisma.project.create).not.toHaveBeenCalled();
+      expect(prisma.greetingBrief.create).not.toHaveBeenCalled();
+    });
+
+    it('§7: rejects hedra on STANDARD with 403, does not silently downgrade to grok', async () => {
+      await expect(
+        service.createProject(USER, {
+          type: 'GREETING_VIDEO',
+          title: 'Поздравление',
+          countryCode: 'UA',
+          greetingBrief: {
+            occasion: 'BIRTHDAY',
+            recipientName: 'Аня',
+            presenterProvider: 'hedra',
+          },
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.project.create).not.toHaveBeenCalled();
+      expect(prisma.greetingBrief.create).not.toHaveBeenCalled();
+    });
+
+    it('§7: PREMIUM may choose hedra/1080p', async () => {
+      plans = makePlans('PREMIUM');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      service = new ProjectService(prisma as any, blob as any, plans as any);
+      prisma.project.create.mockResolvedValue(
+        projectRow({ type: 'GREETING_VIDEO' }),
+      );
+      await service.createProject(USER, {
+        type: 'GREETING_VIDEO',
+        title: 'Поздравление',
+        countryCode: 'UA',
+        greetingBrief: {
+          occasion: 'BIRTHDAY',
+          recipientName: 'Аня',
+          presenterProvider: 'hedra',
+          resolution: '1080p',
+        },
+      });
+      const briefCall = prisma.greetingBrief.create.mock.calls[0][0];
+      expect(briefCall.data).toMatchObject({
+        presenterProvider: 'hedra',
+        resolution: '1080p',
+      });
+    });
+
+    it('creates the project and its brief in one transaction', async () => {
+      prisma.project.create.mockResolvedValue(
+        projectRow({ id: 'p-greeting', type: 'GREETING_VIDEO' }),
+      );
+      await service.createProject(USER, {
+        type: 'GREETING_VIDEO',
+        title: 'С Днём Рождения',
+        countryCode: 'UA',
+        greetingBrief: {
+          occasion: 'BIRTHDAY',
+          recipientName: 'Аня',
+          senderName: 'Игорь',
+          tone: 'FUNNY',
+          personalMessage: 'С днём рождения!',
+        },
+      });
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.greetingBrief.create.mock.calls[0][0].data).toMatchObject({
+        projectId: 'p-greeting',
+        occasion: 'BIRTHDAY',
+        recipientName: 'Аня',
+        senderName: 'Игорь',
+        tone: 'FUNNY',
+        personalMessage: 'С днём рождения!',
+      });
     });
   });
 
@@ -294,7 +463,11 @@ describe('ProjectService', () => {
     it('honours PROJECT_LINE_ITEM_LIMIT from the environment', async () => {
       process.env.PROJECT_LINE_ITEM_LIMIT = '2';
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const small = new ProjectService(prisma as any, blob as any);
+      const small = new ProjectService(
+        prisma as any,
+        blob as any,
+        plans as any,
+      );
       prisma.project.findFirst.mockResolvedValue(
         projectRow({ items: items(2) }),
       );

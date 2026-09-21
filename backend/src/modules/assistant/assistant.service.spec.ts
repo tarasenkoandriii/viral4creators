@@ -16,6 +16,16 @@ afterAll(() => {
   else process.env.GEMINI_API_KEY = keyBefore;
 });
 
+// Мок модуля `@google/genai` создаётся ОДИН раз на файл, а `mock.calls`
+// накапливаются между тестами. Без очистки `mock.calls[0]` — это первый
+// вызов во всём файле, а не вызов текущего теста: проверки системного
+// промпта читали чужой запрос. На части из них это не проявлялось лишь
+// потому, что искомая подстрока («Выберите референс») встречается ещё и
+// в базе знаний, то есть в ЛЮБОМ промпте.
+beforeEach(() => {
+  generateContentStream.mockClear();
+});
+
 import { AssistantService } from './assistant.service';
 import { AssistantChatRequest } from './assistant.types';
 
@@ -217,7 +227,24 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
     const { svc } = build();
     await drain(svc.streamChat({ ...baseRequest, stepId: 2 }, '1.2.3.4'));
     const callArgs = generateContentStream.mock.calls[0][0];
+    // Сверяемся с ЗАГОЛОВКОМ блока, а не с названием шага: «Выберите
+    // референс» встречается ещё и в базе знаний (раздел «Шаги
+    // обучалки»), то есть в любом промпте — проверка на него одна
+    // проходила бы, даже если карточку шага перестать подставлять вовсе.
+    expect(callArgs.config.systemInstruction).toContain(
+      '## Контекст: посетитель спрашивает про шаг обучалки',
+    );
     expect(callArgs.config.systemInstruction).toContain('Выберите референс');
+  });
+
+  it('без stepId карточка шага не подставляется', async () => {
+    generateContentStream.mockResolvedValue(fakeStream([{ text: 'ок' }]));
+    const { svc } = build();
+    await drain(svc.streamChat(baseRequest, '1.2.3.4'));
+    const callArgs = generateContentStream.mock.calls[0][0];
+    expect(callArgs.config.systemInstruction).not.toContain(
+      '## Контекст: посетитель спрашивает про шаг обучалки',
+    );
   });
 
   describe('видео-действие (этап 99, §4.8)', () => {
@@ -228,6 +255,9 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
       });
       await drain(svc.streamChat(baseRequest, '1.2.3.4'));
       const callArgs = generateContentStream.mock.calls[0][0];
+      expect(callArgs.config.systemInstruction).toContain(
+        '## Доступные обучающие видео',
+      );
       expect(callArgs.config.systemInstruction).toContain('plan-upgrade');
       expect(callArgs.config.systemInstruction).toContain('export-video');
       expect(prisma.tutorialVideoAsset.findMany).toHaveBeenCalledWith(
@@ -242,8 +272,13 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
       const { svc } = build({ videoSubjectKeys: [] });
       await drain(svc.streamChat(baseRequest, '1.2.3.4'));
       const callArgs = generateContentStream.mock.calls[0][0];
+      // Сверяемся именно с ЗАГОЛОВКОМ блока: саму формулировку
+      // «Доступные обучающие видео» правило 10 базового промпта
+      // упоминает всегда — она есть в любом запросе, и проверка на
+      // голую подстроку не может отличить «блок добавлен» от «блока
+      // нет».
       expect(callArgs.config.systemInstruction).not.toContain(
-        'Доступные обучающие видео',
+        '## Доступные обучающие видео',
       );
     });
 

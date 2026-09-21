@@ -20,11 +20,13 @@ const STATUS_LABEL: Record<AdminPortfolioItemStatus, string> = {
   PENDING: 'ждёт решения',
   PUBLISHED: 'опубликовано',
   REJECTED: 'отклонено',
+  SOLD: 'продано на аукционе',
 };
 const STATUS_TONE: Record<AdminPortfolioItemStatus, 'ok' | 'warning' | 'critical'> = {
   PENDING: 'warning',
   PUBLISHED: 'ok',
   REJECTED: 'critical',
+  SOLD: 'ok',
 };
 
 const MARKETPLACE_URL = process.env.NEXT_PUBLIC_MARKETPLACE_URL ?? 'http://localhost:3004';
@@ -203,6 +205,20 @@ export default function PortfolioItemsPage() {
                               скачать
                             </a>
                           </div>
+                          {(item.watermarkStatus === 'FAILED' || item.watermarkStatus === 'PROCESSING') && (
+                            <div
+                              className="muted"
+                              style={{
+                                fontSize: 12,
+                                marginTop: 4,
+                                color: item.watermarkStatus === 'FAILED' ? 'var(--signal-critical)' : undefined,
+                              }}
+                            >
+                              {item.watermarkStatus === 'FAILED'
+                                ? 'Водяной знак не удалось нанести — на витрине показан оригинал'
+                                : 'Водяной знак ещё наносится'}
+                            </div>
+                          )}
                           {item.status === 'PUBLISHED' && (
                             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                               <a href={`${MARKETPLACE_URL}/item/${item.id}`} target="_blank" rel="noreferrer">

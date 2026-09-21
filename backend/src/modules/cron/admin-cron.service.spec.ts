@@ -111,15 +111,74 @@ function build() {
     runSweepOrphans: jest
       .fn()
       .mockResolvedValue({ deleted: 0, dryRun: false, byKind: {} }),
+    // Джобы маркетплейса и живого эфира. Их не было в этом моке, хотя в
+    // реестре они уже стояли: именно поэтому проверка ниже считала
+    // пятнадцать джобов вместо двадцати.
+    runAuctionClose: jest.fn().mockResolvedValue({ closed: 2 }),
+    runAuctionAssess: jest.fn().mockResolvedValue({ assessed: 1 }),
+    runAuctionGoogleAdsSync: jest
+      .fn()
+      .mockResolvedValue({ paused: 1, stillStuck: 0 }),
+    runPortfolioWatermark: jest
+      .fn()
+      .mockResolvedValue({ processed: 3, failed: 0 }),
+    runLiveAuctionTick: jest.fn().mockResolvedValue({ ticked: 4 }),
   };
   const service = new AdminCronService(jobs as never, prisma as never);
   return { service, jobs, prisma };
 }
 
 describe('AdminCronService — реестр и неизвестный jobKey', () => {
-  it('реестр содержит все пятнадцать джобов', () => {
+  // Было: `toHaveLength(15)`. Такая проверка ломается при каждом новом
+  // джобе и при этом ничего не гарантирует — реестр из пятнадцати
+  // неработающих ключей её бы прошёл. Проверяем то, ради чего реестр
+  // существует: КАЖДЫЙ объявленный в нём ключ действительно доходит до
+  // CronJobsService. Джоб, добавленный в реестр и забытый в switch
+  // `dispatch()`, попадёт в ветку default и упадёт 400-й — оператор
+  // увидит кнопку, которая не работает.
+  it('каждый джоб реестра реально диспетчеризуется, а не падает в default', async () => {
+    const { service, jobs } = build();
+    const registry = service.getRegistry();
+    expect(registry.length).toBeGreaterThan(0);
+
+    for (const { jobKey } of registry) {
+      const row = await service.run(jobKey, 'admin-1', false);
+      expect(row.status).toBe('SUCCESS');
+    }
+
+    // И наоборот: у каждого вызванного джоба сработал ровно один метод
+    // сервиса — то есть ни один ключ не «проглочен» чужой веткой.
+    const called = Object.values(jobs).filter(
+      (fn) => (fn as jest.Mock).mock.calls.length > 0,
+    );
+    expect(called).toHaveLength(registry.length);
+  });
+
+  it('ключи реестра уникальны и у каждого есть описание для админки', () => {
     const { service } = build();
-    expect(service.getRegistry()).toHaveLength(15);
+    const registry = service.getRegistry();
+    const keys = registry.map((j) => j.jobKey);
+
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const job of registry) {
+      expect(job.description.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('джобы аукциона и живого эфира есть в реестре', () => {
+    // Якорь на конкретные ключи вместо счётчика: их отсутствие означает,
+    // что лоты не закрываются по дедлайну, а эфир не тикает.
+    const { service } = build();
+    const keys = service.getRegistry().map((j) => j.jobKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        'auction-close',
+        'auction-assess',
+        'auction-google-ads-sync',
+        'live-auction-tick',
+        'portfolio-watermark',
+      ]),
+    );
   });
 
   it('свёртка журнала расходов есть в реестре и диспетчеризуется (этап 118)', async () => {

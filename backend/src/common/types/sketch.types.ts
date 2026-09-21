@@ -72,6 +72,11 @@ export const SKETCH_TARGET_TYPES = [
   'brand-character',
   'brand-scene',
   'project-item',
+  // GREETING_VIDEO — референсы Grok reference-to-video (см. доккомментарий
+  // `Session.greetingReferenceImages`), седьмой слот, а не разновидность
+  // 'session-scene': разный массив сессии, разный (отсутствующий) гейт
+  // тарифа.
+  'session-greeting-reference',
 ] as const;
 export type SketchTargetType = (typeof SKETCH_TARGET_TYPES)[number];
 

@@ -282,7 +282,25 @@ function setup(
   // существующие тесты (не про Grok-подачу вовсе) не видят разницы;
   // тесты на саму находку переопределяют `aiUsageBudget` явно.
   const plans = {
-    accessOf: jest.fn().mockResolvedValue({ spendPlan: 'PREMIUM' }),
+    // Полная форма UserAccess, а не один `spendPlan`: воркер читает
+    // отсюда ещё и `plan` — для `resolveTargetAspectRatio`, где решает
+    // не потолок расхода, а доступность формата кадра по тарифу
+    // (`plan` — функции, `spendPlan` — деньги, см. доккомментарий
+    // UserAccess). Пока здесь лежал только `spendPlan`, `PLANS[undefined]`
+    // ронял подачу Grok-пачек с TypeError.
+    // Полная форма UserAccess, а не один `spendPlan`: воркер читает
+    // отсюда ОБА поля, и они означают разное — `plan` решает доступность
+    // формата кадра (`resolveTargetAspectRatio`), `spendPlan` — суточный
+    // потолок расхода (см. доккомментарий UserAccess). Значения
+    // намеренно РАЗНЫЕ, чтобы подмена одного другим не прошла молча.
+    // Пока здесь лежал только `spendPlan`, `PLANS[undefined]` ронял
+    // подачу Grok-пачек с TypeError.
+    accessOf: jest.fn().mockResolvedValue({
+      plan: 'PREMIUM',
+      spendPlan: 'LITE',
+      isBlocked: false,
+      blockedReason: null,
+    }),
     // М-3.10: блокировка владельца проверяется перед подачей пачки.
     assertUserNotBlocked: jest.fn().mockResolvedValue(undefined),
   };
@@ -976,9 +994,13 @@ describe('CatalogBatchWorkerService', () => {
             }),
           ],
         );
+        // Вместе с id пачки теперь записывается и разрешённый режимом
+        // формат кадра (этап 120): опрос результатов не знает ни
+        // владельца, ни его режима, и без этого достраивал бы ролик по
+        // исходному — возможно, закрытому для тарифа — формату.
         expect(prisma.catalogBatchRun.update).toHaveBeenCalledWith({
           where: { id: 'run1' },
-          data: { xaiBatchId: 'batch_xai_1' },
+          data: { xaiBatchId: 'batch_xai_1', aspectRatio: '9:16' },
         });
         expect(prisma.catalogBatchItem.updateMany).toHaveBeenCalledWith({
           where: { id: { in: ['item1'] } },
@@ -992,6 +1014,38 @@ describe('CatalogBatchWorkerService', () => {
       // для всех остальных путей проекта живёт и проверка бюджета, и
       // запись расхода — реальные деньги, потраченные у xAI, были бы
       // невидимы для отчёта о расходах.
+      it('бюджет считается по spendPlan, формат кадра — по plan: поля не путаются местами', async () => {
+        // Они разные по смыслу (функции против денег) и в моке специально
+        // разные по значению. Раньше в этом моке лежал только `spendPlan`,
+        // и чтение `plan` давало undefined — подача падала с TypeError.
+        // Формат 1:1 разрешён на PREMIUM (`plan`) и закрыт на LITE
+        // (`spendPlan`) — перепутанные поля дали бы здесь приведение к
+        // родному формату вместо сохранения запрошенного.
+        const { service, aiUsage, prisma } = setup({
+          grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '1:1' }],
+          grokQueuedCount: 1,
+          grokNotReadyCount: 0,
+          grokQueuedItems: [
+            { id: 'item1', sessionId: 'sess1', productItemId: 'pi1' },
+          ],
+          sessionState: {
+            generationPrompt: { finalText: 'a cat on a table' },
+            productInformation: { productImageUrl: 'https://blob.test/p.png' },
+          },
+          grokSubmitResult: { xaiBatchId: 'batch_xai_1' },
+        });
+
+        await service.runBatch();
+
+        // Потолок расхода — по spendPlan (второй аргумент budget()).
+        expect(aiUsage.budget.mock.calls[0][1]).toBe('LITE');
+        // Формат кадра — по plan.
+        expect(prisma.catalogBatchRun.update).toHaveBeenCalledWith({
+          where: { id: 'run1' },
+          data: { xaiBatchId: 'batch_xai_1', aspectRatio: '1:1' },
+        });
+      });
+
       it('успешная подача — расход записывается на всю партию одной записью', async () => {
         const { service, aiUsage } = setup({
           grokRuns: [{ id: 'run1', resolution: '480p', aspectRatio: '9:16' }],

@@ -333,7 +333,8 @@
       "voiceCloning": "Eigene Stimme klonen",
       "voiceDub": "Synchronisation (modelleigene Stimme vollständig ersetzt)",
       "siteTutorial": "Tutorial-Video für die Website des Kunden",
-      "aiSketch": "KI-Skizze statt des Bildes"
+      "aiSketch": "KI-Skizze statt des Bildes",
+      "greetingVideo": "Grußvideo"
     },
     "legalNotePrefix": "Vor der Zahlung gelten:"
   },
@@ -392,7 +393,9 @@
     "manifestHintEmptySuffix": " oder später aus dem Projekt heraus verknüpfen.",
     "manifestHintDefault": "Optional – einheitlicher Stil und Charaktere für alle Projekte der Marke",
     "noManifestOption": "Ohne Manifest",
-    "submitButton": "Projekt erstellen"
+    "submitButton": "Projekt erstellen",
+    "greetingVideoLabel": "Grußvideo",
+    "greetingVideoSub": "Ein persönliches Video-Grußwort mit Moderator — auf jedem Tarif verfügbar."
   },
   "projectsShared": {
     "backLabel": "Zurück",
@@ -1403,6 +1406,78 @@
     "catalogBatchItems": {
       "one": "{{n}} Stapelgenerierungs-Position",
       "other": "{{n}} Stapelgenerierungs-Positionen"
+    }
+  },
+  "greetingVideoWizard": {
+    "title": "Grußvideo",
+    "hint": "Ein persönliches Video-Grußwort: Anlass, Empfänger, Ton — den Rest übernimmt das Skript.",
+    "occasionLabel": "Anlass",
+    "customOccasionLabel": "Welcher Anlass genau",
+    "customOccasionPlaceholder": "z. B. Einweihungsfeier",
+    "recipientNameLabel": "Empfänger",
+    "recipientNamePlaceholder": "Name des Empfängers",
+    "senderNameLabel": "Von (optional)",
+    "senderNamePlaceholder": "Ihr Name",
+    "toneLabel": "Ton",
+    "personalMessageLabel": "Grußtext (optional)",
+    "personalMessageHint": "Leer lassen, und das Skript schreibt selbst einen Text passend zu Anlass und Ton.",
+    "personalMessagePlaceholder": "Ihr Grußtext...",
+    "presenterProviderLabel": "Moderator",
+    "providerGrok": "Video ohne Moderator im Bild (Grok)",
+    "providerHedra": "Sprechender Avatar (Hedra)",
+    "providerHedraPremiumOnly": "Nur im PREMIUM-Tarif verfügbar",
+    "providerHedraPilotNotice": "Derzeit auch bei PREMIUM nicht verfügbar — das Avatar-Pilotprojekt ist noch nicht für alle geöffnet.",
+    "resolutionLabel": "Qualität",
+    "occasionDateLabel": "Datum des Ereignisses (optional)",
+    "manifestLabel": "Markenmanifest (optional)",
+    "noManifestOption": "Ohne Manifest",
+    "submitButton": "Projekt erstellen",
+    "editSubmitButton": "Speichern",
+    "occasionOtherRequired": "Bitte den Anlass angeben — dieses Feld darf nicht leer sein",
+    "recipientRequired": "Bitte angeben, an wen der Gruß gerichtet ist",
+    "referencesHeading": "Referenzbilder",
+    "referencesHint": "Bis zu 7 Bilder — Grok nutzt sie als visuelle Referenzen bei der Videoerstellung.",
+    "referencesEmpty": "Noch keine Referenzbilder — das Video wird nur aus dem Text erstellt.",
+    "referencesMax": "Limit erreicht: höchstens {{max}} Bilder",
+    "addReference": "Bild hinzufügen",
+    "referenceLabelLabel": "Beschriftung",
+    "referenceLabelPlaceholder": "z. B. Empfänger, Ort, Geschenk",
+    "referenceDescLabel": "Beschreibung (optional)",
+    "referenceDescPlaceholder": "Was ist auf dem Bild und wie soll es im Video verwendet werden",
+    "referencePngJpegOnly": "Nur PNG oder JPEG",
+    "fileTooLarge": "Datei ist größer als 10 MB",
+    "deleteReferenceAria": "Bild löschen",
+    "deleteReferenceConfirm": "„{{label}}“ löschen?",
+    "editReferenceAria": "Bezeichnung und Beschreibung bearbeiten",
+    "saveReferenceButton": "Speichern",
+    "cancel": "Abbrechen",
+    "startSessionButton": "Video-Erstellung starten",
+    "generateScriptButton": "Skript generieren",
+    "regenerateScriptButton": "Skript neu generieren",
+    "scriptHeading": "Skript",
+    "scriptEmpty": "Noch kein Skript generiert.",
+    "generateVideoButton": "Video generieren",
+    "videoHeading": "Video",
+    "videoPending": "Render wird gestartet…",
+    "videoProcessing": "Das Video wird generiert — das dauert normalerweise ein paar Minuten.",
+    "videoFailed": "Videogenerierung fehlgeschlagen",
+    "videoReady": "Video ist fertig",
+    "downloadButton": "Herunterladen",
+    "retryButton": "Erneut versuchen",
+    "backToProject": "Zurück zum Projekt",
+    "occasion": {
+      "BIRTHDAY": "Geburtstag",
+      "WEDDING": "Hochzeit",
+      "ANNIVERSARY": "Jahrestag",
+      "NEW_YEAR": "Neujahr",
+      "GRADUATION": "Abschluss",
+      "CORPORATE": "Firmengruß",
+      "OTHER": "Anderer Anlass"
+    },
+    "tone": {
+      "WARM": "Warm, herzlich",
+      "FUNNY": "Verspielt",
+      "FORMAL": "Formell"
     }
   }
 }

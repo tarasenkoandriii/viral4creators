@@ -4,7 +4,7 @@
  */
 
 import { useState } from 'react';
-import { Globe, Layers, Package, Search } from 'lucide-react';
+import { Gift, Globe, Layers, Package, Search } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -13,6 +13,7 @@ import {
   Input,
   Pills,
   Select,
+  Textarea,
 } from '../../components/ui';
 import {
   createProject,
@@ -25,7 +26,12 @@ import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import { CountryPicker } from './CountryPicker';
 import { LoadError, ScreenHeader } from './shared';
-import type { ProjectType } from '../../types/project';
+import type {
+  GreetingOccasion,
+  GreetingTone,
+  ProjectType,
+} from '../../types/project';
+import { GREETING_OCCASIONS, GREETING_TONES } from '../../types/project';
 import { exploreSite } from '../../services/client-site-tutorial-api';
 import { deleteProject } from '../../services/projects-api';
 
@@ -47,6 +53,61 @@ export function ProjectCreateScreen() {
   const canSubmit = title.trim().length > 0 && !!countryCode && !submitting;
 
   const [siteUrl, setSiteUrl] = useState('');
+
+  // GREETING_VIDEO (ТЗ TZ-Greeting-Video-Project-Type.md) — только то,
+  // что нужно для создания бесполезного пустым брифа не бывает: повод и
+  // получатель. Ведущий/качество/референсы/текст поздравления — на
+  // следующем экране (GreetingVideoWizard), тем же приёмом, что
+  // CLIENT_SITE спрашивает название только в конце своего визарда.
+  const [occasion, setOccasion] = useState<GreetingOccasion>('BIRTHDAY');
+  const [customOccasionText, setCustomOccasionText] = useState('');
+  const [recipientName, setRecipientName] = useState('');
+  const [senderName, setSenderName] = useState('');
+  const [tone, setTone] = useState<GreetingTone>('WARM');
+  const [personalMessage, setPersonalMessage] = useState('');
+
+  const canSubmitGreeting =
+    recipientName.trim().length > 0 &&
+    (occasion !== 'OTHER' || customOccasionText.trim().length > 0) &&
+    !!countryCode &&
+    !submitting;
+
+  const submitGreeting = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmitGreeting || !countryCode) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const project = await createProject({
+        type: 'GREETING_VIDEO',
+        // §7.2: страна нужна для локализации TTS/сценария, как у
+        // SINGLE/LINE — GREETING_VIDEO не выведен из этого правила
+        // (backend `resolveCountryCode` требует её явно для этого типа).
+        title: `${dict.greetingVideoWizard.occasion[occasion]} — ${recipientName.trim()}`.slice(
+          0,
+          120
+        ),
+        countryCode,
+        ...(brandManifestId ? { brandManifestId } : {}),
+        greetingBrief: {
+          occasion,
+          ...(occasion === 'OTHER'
+            ? { customOccasionText: customOccasionText.trim() }
+            : {}),
+          recipientName: recipientName.trim(),
+          ...(senderName.trim() ? { senderName: senderName.trim() } : {}),
+          tone,
+          ...(personalMessage.trim()
+            ? { personalMessage: personalMessage.trim() }
+            : {}),
+        },
+      });
+      navigate(routes.greetingVideo(project.id), true);
+    } catch (err) {
+      setError(errorMessage(err));
+      setSubmitting(false);
+    }
+  };
 
   /**
    * Проект «сайт заказчика» заводится ровно в тот момент, когда первое
@@ -169,6 +230,16 @@ export function ProjectCreateScreen() {
                     ),
                     sub: dict.projectCreateScreen.clientSiteSub,
                   },
+                  {
+                    value: 'GREETING_VIDEO',
+                    label: (
+                      <span className="inline-flex items-center gap-1">
+                        <Gift size={12} />{' '}
+                        {dict.projectCreateScreen.greetingVideoLabel}
+                      </span>
+                    ),
+                    sub: dict.projectCreateScreen.greetingVideoSub,
+                  },
                 ]}
               />
             </div>
@@ -213,7 +284,180 @@ export function ProjectCreateScreen() {
               </div>
             )}
 
-            {type !== 'CLIENT_SITE' && (
+            {/*
+              GREETING_VIDEO — своя форма, не третий/четвёртый вариант в
+              общей: название собирается автоматически из повода и
+              получателя (в отличие от SINGLE/LINE, спрашивать его тут
+              незачем), а ведущий/качество/референсы/готовый текст
+              поздравления — на следующем экране (GreetingVideoWizard),
+              тем же приёмом, что у CLIENT_SITE.
+            */}
+            {type === 'GREETING_VIDEO' && (
+              <div className="space-y-5">
+                <Field label={dict.greetingVideoWizard.occasionLabel}>
+                  <Select
+                    value={occasion}
+                    onChange={(e) =>
+                      setOccasion(e.target.value as GreetingOccasion)
+                    }
+                    disabled={submitting}
+                  >
+                    {GREETING_OCCASIONS.map((o) => (
+                      <option key={o} value={o}>
+                        {dict.greetingVideoWizard.occasion[o]}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+
+                {occasion === 'OTHER' && (
+                  <Field
+                    label={dict.greetingVideoWizard.customOccasionLabel}
+                    htmlFor="greeting-custom-occasion"
+                  >
+                    <Input
+                      id="greeting-custom-occasion"
+                      value={customOccasionText}
+                      onChange={(e) =>
+                        setCustomOccasionText(e.target.value.slice(0, 120))
+                      }
+                      placeholder={
+                        dict.greetingVideoWizard.customOccasionPlaceholder
+                      }
+                      disabled={submitting}
+                    />
+                  </Field>
+                )}
+
+                <Field
+                  label={dict.greetingVideoWizard.recipientNameLabel}
+                  htmlFor="greeting-recipient"
+                >
+                  <Input
+                    id="greeting-recipient"
+                    value={recipientName}
+                    onChange={(e) =>
+                      setRecipientName(e.target.value.slice(0, 120))
+                    }
+                    placeholder={
+                      dict.greetingVideoWizard.recipientNamePlaceholder
+                    }
+                    disabled={submitting}
+                    autoFocus
+                  />
+                </Field>
+
+                <Field
+                  label={dict.greetingVideoWizard.senderNameLabel}
+                  htmlFor="greeting-sender"
+                >
+                  <Input
+                    id="greeting-sender"
+                    value={senderName}
+                    onChange={(e) =>
+                      setSenderName(e.target.value.slice(0, 120))
+                    }
+                    placeholder={dict.greetingVideoWizard.senderNamePlaceholder}
+                    disabled={submitting}
+                  />
+                </Field>
+
+                <div>
+                  <span className="label">
+                    {dict.greetingVideoWizard.toneLabel}
+                  </span>
+                  <Pills
+                    value={tone}
+                    onChange={setTone}
+                    disabled={submitting}
+                    options={GREETING_TONES.map((t) => ({
+                      value: t,
+                      label: dict.greetingVideoWizard.tone[t],
+                    }))}
+                  />
+                </div>
+
+                <Field
+                  label={dict.greetingVideoWizard.personalMessageLabel}
+                  htmlFor="greeting-message"
+                  hint={dict.greetingVideoWizard.personalMessageHint}
+                  counter={`${personalMessage.length}/2000`}
+                >
+                  <Textarea
+                    id="greeting-message"
+                    rows={3}
+                    value={personalMessage}
+                    onChange={(e) =>
+                      setPersonalMessage(e.target.value.slice(0, 2000))
+                    }
+                    placeholder={
+                      dict.greetingVideoWizard.personalMessagePlaceholder
+                    }
+                    disabled={submitting}
+                  />
+                </Field>
+
+                <Field
+                  label={dict.projectCreateScreen.countryLabel}
+                  hint={
+                    selectedCountry
+                      ? dict.projectCreateScreen.countryHintSelected.replace(
+                          '{{currency}}',
+                          selectedCountry.currency
+                        )
+                      : undefined
+                  }
+                >
+                  <CountryPicker
+                    countries={countries.data ?? []}
+                    value={countryCode}
+                    onChange={setCountryCode}
+                    disabled={submitting || countries.loading}
+                  />
+                </Field>
+
+                <Field
+                  label={dict.greetingVideoWizard.manifestLabel}
+                  htmlFor="greeting-manifest"
+                >
+                  <Select
+                    id="greeting-manifest"
+                    value={brandManifestId}
+                    onChange={(e) => setBrandManifestId(e.target.value)}
+                    disabled={
+                      submitting ||
+                      !manifests.data ||
+                      manifests.data.length === 0
+                    }
+                  >
+                    <option value="">
+                      {dict.greetingVideoWizard.noManifestOption}
+                    </option>
+                    {manifests.data?.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.title}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+
+                {error && <Alert tone="error">{error}</Alert>}
+
+                <Button
+                  block
+                  size="lg"
+                  type="button"
+                  icon={<Gift size={16} />}
+                  disabled={!canSubmitGreeting}
+                  loading={submitting}
+                  onClick={(e) => void submitGreeting(e)}
+                >
+                  {dict.greetingVideoWizard.submitButton}
+                </Button>
+              </div>
+            )}
+
+            {type !== 'CLIENT_SITE' && type !== 'GREETING_VIDEO' && (
               <>
                 <Field
                   label={dict.projectCreateScreen.titleLabel}

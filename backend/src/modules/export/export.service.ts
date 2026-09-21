@@ -180,6 +180,31 @@ export class ExportService {
     await this.plans.assertSession(sessionId, 'customAspectRatio');
     const { session, video } = await this.ownSessionWithVideo(sessionId);
 
+    // Найдено при аудите пайплайна GREETING_VIDEO (находка №1): ниже этот
+    // метод безусловно уходит в `GenerationService.generateVideo()`,
+    // которая жёстко требует `activeProductImage(session.productInformation)`
+    // — у GREETING_VIDEO-сессии его нет и не будет (она собрана из
+    // `GreetingBrief`, не из `ProductItem`). Без этой проверки запрос
+    // гарантированно падал 400 с сообщением про товарное фото — верным
+    // техническим фактом, но бессмысленным и вводящим в заблуждение для
+    // ролика-поздравления. `GreetingVideoService` намеренно не проведён
+    // через `GenerationService` (см. её собственный doc-comment) именно
+    // чтобы не тащить сюда чужую инфраструктуру — но и обратного пути
+    // (перерендер в другое соотношение сторон) под неё пока не написано;
+    // это отдельная, самостоятельная задача, а не одна правка. Пока её
+    // нет — честный отказ с понятным сообщением лучше, чем нерабочая
+    // кнопка с обманчивой причиной отказа. Дешёвый tier A (`POST
+    // /sessions/:id/export`, кроп уже отрендеренного файла без нового
+    // рендера) этого ограничения не имеет и продолжает работать.
+    if (session.greetingBriefSnapshot) {
+      throw new BadRequestException(
+        'Перерендер в другое соотношение сторон (tier B) для ' +
+          'роликов-поздравлений пока не поддерживается — используйте ' +
+          'дешёвый экспорт (POST /export) для кропа в другой формат той ' +
+          'же ориентации.',
+      );
+    }
+
     const target = targetAspectRatio.trim();
     const sourceFamily = aspectRatioFamily(
       video.renderedAspectRatio ?? video.aspectRatio ?? '9:16',

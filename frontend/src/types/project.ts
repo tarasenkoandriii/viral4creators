@@ -17,8 +17,116 @@ import type {
  * doc/CLIENT-SITE-TUTORIAL-SPEC.md, этап 115). У такого проекта нет
  * товаров вообще: «товар» здесь — чужой сайт, а всё специфичное живёт
  * в отдельном черновике, не в полях `Project`. */
-export type ProjectType = 'SINGLE' | 'LINE' | 'CLIENT_SITE';
+/** `GREETING_VIDEO` — ролик-поздравление (ТЗ TZ-Greeting-Video-Project-Type.md),
+ * четвёртый тип проекта: доступен на всех тарифах, различаются только
+ * presenterProvider/resolution внутри (см. `GreetingBriefView`). */
+export type ProjectType = 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO';
 export type ProductPriceSource = 'MANUAL' | 'ANALOG';
+
+// ── GREETING_VIDEO (mirrors backend common/types/greeting.types.ts) ────
+
+export type GreetingOccasion =
+  | 'BIRTHDAY'
+  | 'WEDDING'
+  | 'ANNIVERSARY'
+  | 'NEW_YEAR'
+  | 'GRADUATION'
+  | 'CORPORATE'
+  | 'OTHER';
+
+export const GREETING_OCCASIONS: readonly GreetingOccasion[] = [
+  'BIRTHDAY',
+  'WEDDING',
+  'ANNIVERSARY',
+  'NEW_YEAR',
+  'GRADUATION',
+  'CORPORATE',
+  'OTHER',
+];
+
+export type GreetingTone = 'WARM' | 'FUNNY' | 'FORMAL';
+
+export const GREETING_TONES: readonly GreetingTone[] = ['WARM', 'FUNNY', 'FORMAL'];
+
+/** 'grok' — референс(ы) + видео без лип-синка, голос закадровый;
+ * 'hedra' — говорящий аватар, только PREMIUM (§7 ТЗ) — и сегодня
+ * недоступен по факту, см. аудит (пилот открыт только оператору). */
+export type GreetingPresenterProvider = 'grok' | 'hedra';
+
+export const GREETING_PRESENTER_PROVIDERS: readonly GreetingPresenterProvider[] =
+  ['grok', 'hedra'];
+
+export type GreetingResolution = '480p' | '720p' | '1080p';
+
+export const GREETING_RESOLUTIONS: readonly GreetingResolution[] = [
+  '480p',
+  '720p',
+  '1080p',
+];
+
+/** GET/PATCH /projects/:id/greeting-brief (§8 ТЗ). */
+export interface GreetingBriefView {
+  id: string;
+  projectId: string;
+  occasion: GreetingOccasion;
+  customOccasionText: string | null;
+  recipientName: string;
+  senderName: string | null;
+  tone: GreetingTone;
+  personalMessage: string | null;
+  presenterProvider: GreetingPresenterProvider;
+  resolution: GreetingResolution;
+  brandManifestId: string | null;
+  occasionDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Тело для создания брифа вместе с проектом (`createProject`). */
+export interface CreateGreetingBriefInput {
+  occasion: GreetingOccasion;
+  customOccasionText?: string;
+  recipientName: string;
+  senderName?: string;
+  tone?: GreetingTone;
+  personalMessage?: string;
+  presenterProvider?: GreetingPresenterProvider;
+  resolution?: GreetingResolution;
+  brandManifestId?: string;
+  occasionDate?: string;
+}
+
+/** PATCH /projects/:id/greeting-brief — partial, and nullable fields can
+ * be explicitly cleared with `null` (mirrors backend UpdateGreetingBriefDto). */
+export interface UpdateGreetingBriefInput {
+  occasion?: GreetingOccasion;
+  customOccasionText?: string | null;
+  recipientName?: string;
+  senderName?: string | null;
+  tone?: GreetingTone;
+  personalMessage?: string | null;
+  presenterProvider?: GreetingPresenterProvider;
+  resolution?: GreetingResolution;
+  brandManifestId?: string | null;
+  occasionDate?: string | null;
+}
+
+/**
+ * Референс-изображение Grok reference-to-video (доп. запрос к ТЗ: «до 7
+ * изображений, скетч как у остальных изображений проекта») — GET
+ * /sessions/:id/greeting-references. Активное изображение уже разрешено
+ * сервером (оригинал/скетч), см. backend `GreetingReferenceService.toView`.
+ */
+export interface GreetingReferenceImageView {
+  id: string;
+  label: string;
+  description: string | null;
+  photoUrl: string;
+  variant: 'original' | 'sketch';
+  originalPhotoUrl: string | null;
+  originalDeleted: boolean;
+  createdAt: string;
+}
 
 export interface ProductAnalogView {
   id: string;

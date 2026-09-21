@@ -17,6 +17,8 @@ import {
   getMyPortfolioItems,
   PortfolioItemView,
   updatePortfolioItem,
+  WatermarkIntensityValue,
+  WatermarkModeValue,
   withdrawPortfolioItem,
 } from '../../../lib/client-api';
 import { useDictionary } from '../../../lib/dictionary-context';
@@ -32,6 +34,11 @@ export default function MyPortfolioPage({ params }: { params: { locale: Locale }
   const [title, setTitle] = useState('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [collectionTag, setCollectionTag] = useState('');
+  // Водяной знак на превью (§9/§22, защита от пиратства) — по
+  // умолчанию имя площадки, экономная перекодировка фоновым кроном.
+  const [watermarkMode, setWatermarkMode] = useState<WatermarkModeValue>('SITE_NAME');
+  const [watermarkText, setWatermarkText] = useState('');
+  const [watermarkIntensity, setWatermarkIntensity] = useState<WatermarkIntensityValue>('STANDARD');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,11 +78,17 @@ export default function MyPortfolioPage({ params }: { params: { locale: Locale }
         title,
         thumbnailUrl: thumbnailUrl || undefined,
         collectionTag: collectionTag || undefined,
+        watermarkMode,
+        watermarkText: watermarkMode === 'CUSTOM' ? watermarkText : undefined,
+        watermarkIntensity,
       });
       setVideoUrl('');
       setTitle('');
       setThumbnailUrl('');
       setCollectionTag('');
+      setWatermarkMode('SITE_NAME');
+      setWatermarkText('');
+      setWatermarkIntensity('STANDARD');
       load();
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) setError(dict.errors.notLoggedIn);
@@ -112,12 +125,29 @@ export default function MyPortfolioPage({ params }: { params: { locale: Locale }
     }
   };
 
-  const statusLabel = (status: PortfolioItemView['status']) =>
-    status === 'PENDING'
-      ? dict.myPortfolio.statusPending
-      : status === 'PUBLISHED'
-        ? dict.myPortfolio.statusPublished
-        : dict.myPortfolio.statusRejected;
+  // Аудит-фикс: раньше эта функция не покрывала SOLD вообще — молча
+  // попадала бы в ветку REJECTED и подписывала проданную работу как
+  // «Отклонено» (SOLD появился ещё в Этапе 1 аукциона, эта страница с
+  // тех пор не обновлялась).
+  const statusLabel = (status: PortfolioItemView['status']) => {
+    switch (status) {
+      case 'PENDING':
+        return dict.myPortfolio.statusPending;
+      case 'PUBLISHED':
+        return dict.myPortfolio.statusPublished;
+      case 'SOLD':
+        return dict.myPortfolio.statusSold;
+      case 'REJECTED':
+      default:
+        return dict.myPortfolio.statusRejected;
+    }
+  };
+
+  const watermarkStatusHint = (item: PortfolioItemView) => {
+    if (item.watermarkStatus === 'PROCESSING') return dict.myPortfolio.watermarkStatusProcessing;
+    if (item.watermarkStatus === 'FAILED') return dict.myPortfolio.watermarkStatusFailed;
+    return null;
+  };
 
   if (needsQuiz) {
     return (
@@ -158,6 +188,41 @@ export default function MyPortfolioPage({ params }: { params: { locale: Locale }
             placeholder={dict.myPortfolio.collectionPlaceholder}
           />
         </div>
+        <div className="mp-field">
+          <label htmlFor="watermarkMode">{dict.myPortfolio.watermarkModeLabel}</label>
+          <select id="watermarkMode" value={watermarkMode} onChange={(e) => setWatermarkMode(e.target.value as WatermarkModeValue)}>
+            <option value="SITE_NAME">{dict.myPortfolio.watermarkSiteName}</option>
+            <option value="CUSTOM">{dict.myPortfolio.watermarkCustom}</option>
+            <option value="NONE">{dict.myPortfolio.watermarkNone}</option>
+          </select>
+        </div>
+        {watermarkMode === 'CUSTOM' && (
+          <div className="mp-field">
+            <label htmlFor="watermarkText">{dict.myPortfolio.watermarkTextLabel}</label>
+            <input
+              id="watermarkText"
+              type="text"
+              value={watermarkText}
+              onChange={(e) => setWatermarkText(e.target.value)}
+              placeholder={dict.myPortfolio.watermarkTextPlaceholder}
+              required
+            />
+          </div>
+        )}
+        {watermarkMode !== 'NONE' && (
+          <div className="mp-field">
+            <label htmlFor="watermarkIntensity">{dict.myPortfolio.watermarkIntensityLabel}</label>
+            <select
+              id="watermarkIntensity"
+              value={watermarkIntensity}
+              onChange={(e) => setWatermarkIntensity(e.target.value as WatermarkIntensityValue)}
+            >
+              <option value="SLIGHT">{dict.myPortfolio.intensitySlight}</option>
+              <option value="STANDARD">{dict.myPortfolio.intensityStandard}</option>
+              <option value="STRONG">{dict.myPortfolio.intensityStrong}</option>
+            </select>
+          </div>
+        )}
         {error && <p style={{ color: '#e05252' }}>{error}</p>}
         <button className="mp-cta" type="submit" disabled={submitting}>
           {submitting ? dict.myPortfolio.submitting : dict.myPortfolio.submit}
@@ -170,53 +235,79 @@ export default function MyPortfolioPage({ params }: { params: { locale: Locale }
       {items && items.length === 0 && <p className="mp-empty">{dict.myPortfolio.empty}</p>}
       {items && items.length > 0 && (
         <div className="mp-portfolio-grid">
-          {items.map((item) => (
-            <div key={item.id} className="mp-portfolio-item">
-              {/* eslint-disable-next-line jsx-a11y/media-has-caption -- собственный черновик работы, без озвучки на этом этапе */}
-              <video src={item.videoUrl} controls playsInline poster={item.thumbnailUrl ?? undefined} />
-              <div className="mp-portfolio-item-footer" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                <strong>{item.title}</strong>
-                <span className="mp-pill">{statusLabel(item.status)}</span>
-                {item.status === 'REJECTED' && item.rejectionReason && (
-                  <span className="mp-hint">
-                    {dict.myPortfolio.rejectionReasonPrefix} {item.rejectionReason}
-                  </span>
-                )}
-                {editingTagFor === item.id ? (
-                  <div style={{ display: 'flex', gap: 6, width: '100%' }}>
-                    <input
-                      type="text"
-                      value={tagDraft}
-                      onChange={(e) => setTagDraft(e.target.value)}
-                      placeholder={dict.myPortfolio.collectionPlaceholder}
-                      style={{ flex: 1 }}
-                    />
-                    <button type="button" className="mp-cta-secondary" onClick={() => void handleSaveTag(item.id)}>
-                      {dict.settings.save}
-                    </button>
-                    <button type="button" className="mp-cta-secondary" onClick={() => setEditingTagFor(null)}>
-                      {dict.myPortfolio.cancel}
-                    </button>
-                  </div>
+          {items.map((item) =>
+            item.status === 'SOLD' ? (
+              // Аудит-фикс: карточка «Продано» была обещана комментарием
+              // на бэкенде с самого Этапа 1 аукциона («превью без плеера,
+              // без публикации/редактирования»), но эта страница никогда
+              // её не рисовала — SOLD просто утекал в статус «Отклонено».
+              <div key={item.id} className="mp-portfolio-item">
+                {item.thumbnailUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- статичное превью проданной работы, не публичная витрина
+                  <img src={item.thumbnailUrl} alt={item.title} style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }} />
                 ) : (
-                  <button
-                    type="button"
-                    className="mp-cta-secondary"
-                    onClick={() => {
-                      setEditingTagFor(item.id);
-                      setTagDraft(item.collectionTag ?? '');
-                      setRowError(null);
-                    }}
-                  >
-                    {item.collectionTag ? `#${item.collectionTag}` : dict.myPortfolio.addTagButton}
-                  </button>
+                  <div style={{ width: '100%', aspectRatio: '16/9', background: 'var(--mp-border)' }} />
                 )}
-                <button type="button" className="mp-cta-secondary" onClick={() => void handleWithdraw(item.id)}>
-                  {dict.myPortfolio.withdraw}
-                </button>
+                <div className="mp-portfolio-item-footer" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                  <strong>{item.title}</strong>
+                  <span className="mp-pill">{statusLabel(item.status)}</span>
+                  {item.soldPrice != null && (
+                    <span className="mp-hint">
+                      {dict.myPortfolio.soldInfoPrefix} {item.soldPrice}
+                      {item.soldAt ? ` · ${new Date(item.soldAt).toLocaleDateString(params.locale)}` : ''}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ) : (
+              <div key={item.id} className="mp-portfolio-item">
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption -- собственный черновик работы, без озвучки на этом этапе */}
+                <video src={item.videoUrl} controls playsInline poster={item.thumbnailUrl ?? undefined} />
+                <div className="mp-portfolio-item-footer" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                  <strong>{item.title}</strong>
+                  <span className="mp-pill">{statusLabel(item.status)}</span>
+                  {item.status === 'REJECTED' && item.rejectionReason && (
+                    <span className="mp-hint">
+                      {dict.myPortfolio.rejectionReasonPrefix} {item.rejectionReason}
+                    </span>
+                  )}
+                  {watermarkStatusHint(item) && <span className="mp-hint">{watermarkStatusHint(item)}</span>}
+                  {editingTagFor === item.id ? (
+                    <div style={{ display: 'flex', gap: 6, width: '100%' }}>
+                      <input
+                        type="text"
+                        value={tagDraft}
+                        onChange={(e) => setTagDraft(e.target.value)}
+                        placeholder={dict.myPortfolio.collectionPlaceholder}
+                        style={{ flex: 1 }}
+                      />
+                      <button type="button" className="mp-cta-secondary" onClick={() => void handleSaveTag(item.id)}>
+                        {dict.settings.save}
+                      </button>
+                      <button type="button" className="mp-cta-secondary" onClick={() => setEditingTagFor(null)}>
+                        {dict.myPortfolio.cancel}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="mp-cta-secondary"
+                      onClick={() => {
+                        setEditingTagFor(item.id);
+                        setTagDraft(item.collectionTag ?? '');
+                        setRowError(null);
+                      }}
+                    >
+                      {item.collectionTag ? `#${item.collectionTag}` : dict.myPortfolio.addTagButton}
+                    </button>
+                  )}
+                  <button type="button" className="mp-cta-secondary" onClick={() => void handleWithdraw(item.id)}>
+                    {dict.myPortfolio.withdraw}
+                  </button>
+                </div>
+              </div>
+            ),
+          )}
         </div>
       )}
     </>

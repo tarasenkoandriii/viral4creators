@@ -5,6 +5,7 @@ import { getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, OG_LOCALES, type Locale } from '../../lib/i18n';
 import { DictionaryProvider } from '../../lib/dictionary-context';
 import { SetHtmlLang } from '../../components/SetHtmlLang';
+import { TelegramInit } from '../../components/TelegramInit';
 import { LocaleSwitcher } from '../../components/LocaleSwitcher';
 import { TelegramLoginButton } from '../../components/TelegramLoginButton';
 
@@ -43,6 +44,7 @@ export default function LocaleSiteLayout({
           он физически рендерится) — SetHtmlLang правит его маленьким
           клиентским эффектом, тот же обход, что у landing. */}
       <SetHtmlLang locale={locale} />
+      <TelegramInit />
       <header className="mp-header">
         <Link href={`/${locale}`} className="mp-header-logo">
           {dict.header.logo}
@@ -50,6 +52,9 @@ export default function LocaleSiteLayout({
         <nav className="mp-header-nav">
           <Link href={`/${locale}/collections`} className="mp-cta-secondary">
             {dict.header.collections}
+          </Link>
+          <Link href={`/${locale}/auctions`} className="mp-cta-secondary">
+            {dict.auctions.heading}
           </Link>
           <Link href={`/${locale}/dashboard`} className="mp-cta-secondary">
             {dict.header.stats}

@@ -1,6 +1,6 @@
 # viral4creators AI consultant knowledge base
 
-_Собрано автоматически 2026-09-18 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-21 из lending/frontend/backend; коммит — local._
 
 ## Mini-app sections
 
@@ -113,17 +113,17 @@ All plans are currently free and switched by the user themselves in the mini-app
 
 ### Lite
 Разбор референса и генерация ролика в 16:9 или 9:16 — самый короткий путь от примера к результату.
-AI sketch instead of the image
+AI sketch instead of the image, Greeting video
 16:9/9:16 only
 
 ### Standard
 Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.
-Reference relevance scoring, Audit of a finished video, Publishing through the service, Brand manifest, Your own scenes and reference slots, Photo character replacement, Any aspect ratio, Full Veo model, Clone your own voice, Tutorial video for the client's website, AI sketch instead of the image
+Reference relevance scoring, Audit of a finished video, Publishing through the service, Brand manifest, Your own scenes and reference slots, Photo character replacement, Any aspect ratio, Full Veo model, Clone your own voice, Tutorial video for the client's website, AI sketch instead of the image, Greeting video
 any aspect ratio
 
 ### Premium
 Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
-Library of ready-made breakdowns, Reference relevance scoring, Audit of a finished video, Publishing through the service, Brand manifest, Your own scenes and reference slots, Photo character replacement, Any aspect ratio, Full Veo model, Clone your own voice, Dub (full replacement of the model's voice), Tutorial video for the client's website, AI sketch instead of the image
+Library of ready-made breakdowns, Reference relevance scoring, Audit of a finished video, Publishing through the service, Brand manifest, Your own scenes and reference slots, Photo character replacement, Any aspect ratio, Full Veo model, Clone your own voice, Dub (full replacement of the model's voice), Tutorial video for the client's website, AI sketch instead of the image, Greeting video
 any aspect ratio
 
 ## Pipeline rules

@@ -40,6 +40,9 @@ export const OPERATION_LABEL: Record<string, string> = {
   'analog-search': 'Поиск аналогов',
   'video-search': 'Поиск на YouTube',
   'analysis-translate': 'Перевод разбора видео',
+  // GREETING_VIDEO (ТЗ TZ-Greeting-Video-Project-Type.md) — зеркало
+  // AI_OPERATION_LABEL['greeting-prompt'] на бэкенде (common/ai-pricing.ts).
+  'greeting-prompt': 'Сценарий ролика-поздравления',
 };
 
 export function operationLabel(key: string): string {

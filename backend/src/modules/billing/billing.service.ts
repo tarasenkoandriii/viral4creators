@@ -43,11 +43,14 @@ import {
 } from '../../common/billing-pricing';
 import { loadConfiguration } from '../../config/configuration';
 import { encryptToken } from '../../common/token-crypto';
+import { toUahMinorUnits } from '../../common/fx-rates';
+import type { AuctionCurrencyValue } from '../../common/types/marketplace.types';
 import { PlanId } from '../../common/plans';
 import { sanitizeWayForPayRawPayload } from '../../common/wayforpay-sanitize';
 import { CheckoutResult, PaymentMethodValue } from './billing.types';
 import { DEFAULT_LOCALE, SupportedLocale } from '../../common/locale';
 import { LegalService } from '../legal/legal.service';
+import { AuctionPaymentService } from '../auction/auction-payment.service';
 
 const SUBSCRIPTION_PERIOD_DAYS = 30;
 
@@ -108,6 +111,7 @@ export class BillingService {
     private readonly wayforpay: WayForPayService,
     private readonly notify: TelegramNotifyService,
     private readonly legal: LegalService,
+    private readonly auctionPayment: AuctionPaymentService,
   ) {}
 
   private cfg() {
@@ -322,6 +326,74 @@ export class BillingService {
       serviceUrl: this.serviceUrl(),
     });
     return { wayforpayFormUrl: form.url, wayforpayFields: form.fields };
+  }
+
+  /**
+   * Аукцион (ТЗ на маркетплейс §22, Этап 2 + валюта продавца) — self-
+   * serve чек-аут только через WayForPay: единственный здесь провайдер
+   * с произвольной суммой в основных единицах валюты, и единственный,
+   * который явно назван протестированным для этого прохода. Stars
+   * намеренно не подключён — его чек-аут держится на подписанном
+   * payload с ФИКСИРОВАННЫМ target из каталога (тариф/пакет кредитов,
+   * см. signStarsInvoicePayload), а не на сумме, которую называет
+   * продавец на конкретном лоте; сумму ставки пришлось бы округлять до
+   * целых XTR по курсу — самостоятельный кусок работы, не расширение
+   * этого метода.
+   *
+   * currency — валюта, которую выбрал ПРОДАВЕЦ (AuctionListing.
+   * payoutCurrency), не привязана к UAH молча: честная оговорка —
+   * реальная возможность WayForPay-мерчанта рассчитываться не в UAH
+   * зависит от настроек самого мерчант-аккаунта, это код проверить не
+   * может, только передать выбранную валюту дальше.
+   *
+   * amountMajor — уже переведённая в major-единицы сумма выигравшей
+   * ставки (Payment.amount в БД — минорные единицы ИМЕННО ЭТОЙ валюты,
+   * не всегда копейки UAH). estimateAmountMicroUsd('WAYFORPAY', ...)
+   * жёстко предполагает копейки UAH (common/billing-pricing.ts,
+   * используется ещё и подписками/кредитами, которые всегда в UAH) —
+   * трогать её сигнатуру ради одного нового потребителя рискованно для
+   * остальных, поэтому для ОЦЕНКИ расхода (не для реального платежа)
+   * сумма сперва переводится в UAH-эквивалент через отдельную лёгкую
+   * таблицу курсов (common/fx-rates.ts), не через эту функцию напрямую.
+   */
+  async startAuctionCheckout(
+    userId: string,
+    auctionPaymentId: string,
+    amountMajor: number,
+    currency: AuctionCurrencyValue,
+    productName: string,
+  ): Promise<{ paymentId: string; checkout: CheckoutResult }> {
+    this.assertWayForPayConfigured();
+    const providerRef = randomUUID();
+    const amountMinor = Math.round(amountMajor * 100);
+    const payment = await this.prisma.payment.create({
+      data: {
+        userId,
+        method: 'WAYFORPAY',
+        purpose: 'AUCTION',
+        status: 'PENDING',
+        currency,
+        amount: amountMinor,
+        // Оценка в USD для отчёта расходов — не реальный платёж, поэтому
+        // сумму сперва переводим в UAH-эквивалент (toUahMinorUnits), а
+        // не передаём amountMinor как есть: estimateAmountMicroUsd
+        // всегда трактует вход как копейки UAH.
+        amountMicroUsd: estimateAmountMicroUsd('WAYFORPAY', toUahMinorUnits(amountMajor, currency)),
+        providerRef,
+      },
+    });
+    const form = this.wayforpay.buildPurchaseForm({
+      orderReference: providerRef,
+      amount: amountMajor,
+      currency,
+      productName,
+      returnUrl: this.returnUrl(),
+      serviceUrl: this.serviceUrl(),
+    });
+    return {
+      paymentId: payment.id,
+      checkout: { wayforpayFormUrl: form.url, wayforpayFields: form.fields },
+    };
   }
 
   // ── Telegram: pre_checkout_query / successful_payment ───────────────
@@ -541,7 +613,7 @@ export class BillingService {
       return this.applySuccessfulPayment(
         tx,
         updated,
-        payment.purpose as 'SUBSCRIPTION' | 'CREDIT_PACK',
+        payment.purpose as 'SUBSCRIPTION' | 'CREDIT_PACK' | 'AUCTION',
         (payment.plan as string | null) ?? '',
         recTokenEnc,
       );
@@ -578,13 +650,30 @@ export class BillingService {
       method: PaymentMethodValue;
       creditsGranted?: number | null;
     },
-    purpose: 'SUBSCRIPTION' | 'CREDIT_PACK',
+    purpose: 'SUBSCRIPTION' | 'CREDIT_PACK' | 'AUCTION',
     planOrPackId: string,
     recTokenEnc: string | null,
     /** Stars: `successful_payment.is_recurring` — автопродление, а не
      * новая покупка (М-1.1 седьмого аудита). */
     isRecurring = false,
   ): Promise<PlanId | null> {
+    if (purpose === 'AUCTION') {
+      // Единственная точка входа для завершения оплаты аукциона — см.
+      // доккомментарий AuctionPaymentService. Тот же tx, что уже несёт
+      // статус Payment: SOLD/isLocked/комиссия коммитятся вместе с ним,
+      // не отдельным шагом (тот же принцип, что у CREDIT_PACK ниже).
+      const auctionPayment = await tx.auctionPayment.findUnique({
+        where: { paymentId: payment.id },
+      });
+      if (!auctionPayment) {
+        this.logger.error(
+          `Оплаченный аукционный платёж без связанной AuctionPayment: payment=${payment.id}`,
+        );
+        return null;
+      }
+      await this.auctionPayment.applySuccess(tx, auctionPayment.id);
+      return null;
+    }
     if (purpose === 'CREDIT_PACK') {
       // Число кредитов резолвится по каталогу и записывается на саму
       // строку `Payment` ещё в момент старта чекаута (и у Stars — в

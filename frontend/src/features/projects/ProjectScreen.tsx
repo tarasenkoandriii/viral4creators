@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Circle,
   Clapperboard,
+  Gift,
   Globe,
   ImageOff,
   Palette,
@@ -389,7 +390,9 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
               ? dict.projectScreen.typeLine
               : project.type === 'CLIENT_SITE'
                 ? dict.projectScreen.typeClientSite
-                : dict.projectScreen.typeSingle}{' '}
+                : project.type === 'GREETING_VIDEO'
+                  ? dict.projectCreateScreen.greetingVideoLabel
+                  : dict.projectScreen.typeSingle}{' '}
             · {project.countryCode} ·{' '}
             <span className="tabular">{project.currency}</span>
             {project.type === 'LINE' && (
@@ -442,6 +445,23 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
             onClick={() => navigate(routes.siteTutorial(project.id))}
           >
             {dict.projectScreen.clientSiteCta}
+          </Button>
+        </Card>
+      ) : project.type === 'GREETING_VIDEO' ? (
+        // У ролика-поздравления тоже нет товаров (ТЗ
+        // TZ-Greeting-Video-Project-Type.md §4.1/§4.3) — тот же приём,
+        // что у CLIENT_SITE: вся работа живёт в своём визарде.
+        <Card className="p-5 space-y-4">
+          <p className="text-sm text-[var(--muted)]">
+            {dict.greetingVideoWizard.hint}
+          </p>
+          <Button
+            block
+            size="lg"
+            icon={<Gift size={16} />}
+            onClick={() => navigate(routes.greetingVideo(project.id))}
+          >
+            {dict.greetingVideoWizard.startSessionButton}
           </Button>
         </Card>
       ) : project.items.length === 0 ? (

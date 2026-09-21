@@ -16,6 +16,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { publicVideoUrl } from '../../common/watermark';
 import { UserRole } from '@prisma/client';
 import {
   AdminCreatorProfileListResult,
@@ -245,7 +246,13 @@ export class CreatorProfileService {
       portfolioPreview: p.portfolioItems.map((i) => ({
         id: i.id,
         thumbnailUrl: i.thumbnailUrl,
-        videoUrl: i.videoUrl,
+        // Аудит-фикс (§9/§22, защита от пиратства): главная страница
+        // каталога строит превью портфолио независимо от
+        // PortfolioService/AuctionService и была пропущена при первом
+        // проходе — показывала настоящий оригинал вместо защищённой
+        // версии. Та же резолвинг-логика, что у остальных публичных
+        // поверхностей.
+        videoUrl: publicVideoUrl(i),
       })),
     }));
 

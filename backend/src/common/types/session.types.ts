@@ -15,6 +15,7 @@ import { SoundCheckState, VideoAuditState } from './audit.types';
 import { ReferenceSelection, SceneAsset } from './reference.types';
 import { RelevanceState } from './relevance.types';
 import { AvatarVideo } from './actors.types';
+import { GreetingBriefSnapshot } from './greeting.types';
 
 /**
  * Session status enum representing workflow progression
@@ -84,6 +85,16 @@ export interface Session {
   /** User's product details (optional until submitted) */
   productInformation?: ProductInformation;
 
+  /**
+   * GREETING_VIDEO бриф, скопированный из проекта при создании сессии
+   * (ТЗ TZ-Greeting-Video-Project-Type.md §3.2, §4.3) — тот же принцип
+   * «копия, не ссылка», что у `productInformation`/`brandManifestSnapshot`.
+   * Взаимоисключающе с `productInformation`: сессия либо от товара, либо
+   * от брифа поздравления, никогда от обоих сразу. `undefined` для всех
+   * сессий SINGLE/LINE/CLIENT_SITE и для сессий, созданных до этого поля.
+   */
+  greetingBriefSnapshot?: GreetingBriefSnapshot;
+
   /** Text-to-video prompt (optional until generated) */
   generationPrompt?: GenerationPrompt;
 
@@ -136,6 +147,27 @@ export interface Session {
   scenes?: SceneAsset[];
   /** Explicit choice of the ≤3 Veo referenceImage slots (spec §17). */
   referenceSelection?: ReferenceSelection;
+
+  /**
+   * GREETING_VIDEO — референс-изображения для Grok reference-to-video
+   * (ТЗ TZ-Greeting-Video-Project-Type.md, доп. запрос: «загрузить
+   * референс-кадр и ещё несколько изображений, до 7 — предел Grok»).
+   *
+   * Переиспользует форму `SceneAsset` (тот же набор полей: фото + скетч
+   * + originalDeleted) — не отдельный тип: `activeSessionSceneImage()`
+   * из `common/active-image.ts` уже умеет выбирать между оригиналом и
+   * применённым скетчем ровно по этой форме, и заводить для нового поля
+   * копию той же функции не нужно.
+   *
+   * НЕ то же самое, что `scenes` выше: `scenes` — слоты Veo (≤3 из
+   * `REFERENCE_IMAGE_CAP`, доступны от Standard, `PlanFeature
+   * 'referenceAssets'`); эти — слоты Grok `reference_images` (≤7,
+   * доступны на ВСЕХ тарифах, как и весь GREETING_VIDEO, §7 ТЗ). Общий
+   * тип, разные массивы, разный гейт — смешивать их в одном поле значило
+   * бы протащить ограничение LITE-тарифа туда, где ТЗ его прямо не
+   * ставит.
+   */
+  greetingReferenceImages?: SceneAsset[];
 
   /** Reference ↔ product audience match (spec §18.3, Stage 23). */
   relevance?: RelevanceState;

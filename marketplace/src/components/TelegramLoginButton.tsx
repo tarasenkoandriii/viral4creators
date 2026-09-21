@@ -1,9 +1,11 @@
 'use client';
 
 /**
- * «Войти через Telegram» — единственный путь идентификации в маркетплейсе
- * (в отличие от frontend/, здесь нет initData). Строки — из словаря
- * (ТЗ §20 №15), сам виджет-инжект не менялся.
+ * «Войти через Telegram» — видна только вне Telegram (внутри Telegram
+ * идентификация уже автоматическая через initData, см. lib/telegram.ts
+ * — тот же приём и та же формулировка, что уже отработаны в
+ * frontend/src/components/TelegramLoginButton.tsx). Строки — из словаря
+ * (ТЗ §20 №15), сам виджет-инжект вне Telegram не менялся.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -14,6 +16,7 @@ import {
   telegramLoginCallback,
   TelegramLoginWidgetPayload,
 } from '../lib/telegram-login';
+import { isTelegramWebAppAvailable } from '../lib/telegram';
 import { useDictionary } from '../lib/dictionary-context';
 
 const BOT_USERNAME = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
@@ -37,6 +40,17 @@ export function TelegramLoginButton({ onLoggedIn }: { onLoggedIn?: () => void })
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Аудит-фикс: useState(isTelegramWebAppAvailable) как ленивый
+  // инициализатор рассинхронизировал бы гидратацию Next.js — на сервере
+  // window всегда undefined (false), а внутри настоящего Telegram клиент
+  // при гидратации увидел бы true и получил бы несовпадающую с SSR
+  // разметку. Начинаем с false (совпадает с сервером), поправляем в
+  // useEffect — то же самое обходное решение, что уже применено в
+  // SetHtmlLang/TelegramInit.
+  const [insideTelegram, setInsideTelegram] = useState(false);
+  useEffect(() => {
+    setInsideTelegram(isTelegramWebAppAvailable());
+  }, []);
 
   const refetchMe = async () => {
     const result = await fetchTelegramLoginMe();
@@ -50,11 +64,23 @@ export function TelegramLoginButton({ onLoggedIn }: { onLoggedIn?: () => void })
   };
 
   useEffect(() => {
+    if (isTelegramWebAppAvailable()) {
+      // Внутри Telegram идентичность уже есть через initData — сам вызов
+      // onLoggedIn() здесь не нужен: бэкенд видит X-Telegram-Init-Data
+      // на каждом запросе независимо от этого колбэка (см. lib/telegram.ts,
+      // lib/client-api.ts). Живой вызов, не состояние insideTelegram —
+      // оно на первом тике ещё false (см. комментарий у setInsideTelegram
+      // выше), а этот эффект не должен успеть дёрнуть /telegram-login/me
+      // прежде самокоррекции.
+      setLoading(false);
+      return;
+    }
     void refetchMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    if (isTelegramWebAppAvailable()) return;
     window.onTelegramAuth = async (payload) => {
       setSubmitting(true);
       setError(null);
@@ -74,7 +100,7 @@ export function TelegramLoginButton({ onLoggedIn }: { onLoggedIn?: () => void })
   }, [dict.login.loginFailed]);
 
   useEffect(() => {
-    if (me || !BOT_USERNAME || !containerRef.current) return;
+    if (isTelegramWebAppAvailable() || me || !BOT_USERNAME || !containerRef.current) return;
     const container = containerRef.current;
     const script = document.createElement('script');
     script.async = true;
@@ -87,7 +113,7 @@ export function TelegramLoginButton({ onLoggedIn }: { onLoggedIn?: () => void })
     return () => {
       container.innerHTML = '';
     };
-  }, [me]);
+  }, [insideTelegram, me]);
 
   const handleDevLogin = async () => {
     setSubmitting(true);
@@ -112,6 +138,7 @@ export function TelegramLoginButton({ onLoggedIn }: { onLoggedIn?: () => void })
     }
   };
 
+  if (insideTelegram) return null;
   if (loading) return null;
 
   if (!me && !BOT_USERNAME && !ALLOW_DEV_AUTH) {

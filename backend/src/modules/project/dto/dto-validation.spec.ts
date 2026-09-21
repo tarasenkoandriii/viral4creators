@@ -107,6 +107,78 @@ describe('CreateProjectRequestDto', () => {
       { type: 'LINE', title: '', countryCode: 'UA' },
       /title must be between/,
     ));
+
+  it('accepts GREETING_VIDEO with a minimal nested greetingBrief', async () => {
+    const dto = await run(CreateProjectRequestDto, {
+      type: 'GREETING_VIDEO',
+      title: 'Поздравление для Ани',
+      countryCode: 'UA',
+      greetingBrief: { occasion: 'BIRTHDAY', recipientName: 'Аня' },
+    });
+    expect(dto).toBeInstanceOf(CreateProjectRequestDto);
+    expect(dto.greetingBrief).toMatchObject({
+      occasion: 'BIRTHDAY',
+      recipientName: 'Аня',
+    });
+  });
+
+  it('rejects an unknown field inside the nested greetingBrief (whitelist applies recursively)', () =>
+    rejects(
+      CreateProjectRequestDto,
+      {
+        type: 'GREETING_VIDEO',
+        title: 'x',
+        countryCode: 'UA',
+        greetingBrief: {
+          occasion: 'BIRTHDAY',
+          recipientName: 'Аня',
+          // ProductItemRequestDto/greeting fields never mix — a stray
+          // товар-only field here must be rejected, not silently dropped.
+          price: 10,
+        },
+      },
+      /property price should not exist/,
+    ));
+
+  it('rejects greetingBrief.occasion outside the enum', () =>
+    rejects(
+      CreateProjectRequestDto,
+      {
+        type: 'GREETING_VIDEO',
+        title: 'x',
+        countryCode: 'UA',
+        greetingBrief: { occasion: 'HALLOWEEN', recipientName: 'Аня' },
+      },
+      /occasion/,
+    ));
+
+  it('rejects greetingBrief without recipientName', () =>
+    rejects(
+      CreateProjectRequestDto,
+      {
+        type: 'GREETING_VIDEO',
+        title: 'x',
+        countryCode: 'UA',
+        greetingBrief: { occasion: 'BIRTHDAY' },
+      },
+      /recipientName/,
+    ));
+
+  it('rejects presenterProvider outside grok/hedra', () =>
+    rejects(
+      CreateProjectRequestDto,
+      {
+        type: 'GREETING_VIDEO',
+        title: 'x',
+        countryCode: 'UA',
+        greetingBrief: {
+          occasion: 'BIRTHDAY',
+          recipientName: 'Аня',
+          presenterProvider: 'sora',
+        },
+      },
+      /presenterProvider/,
+    ));
 });
 
 describe('UpdateProjectRequestDto', () => {

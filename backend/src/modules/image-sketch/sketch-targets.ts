@@ -146,6 +146,8 @@ export class SketchTargetsService {
         return this.loadSessionProduct(target, userId);
       case 'session-scene':
         return this.loadSessionScene(target, userId);
+      case 'session-greeting-reference':
+        return this.loadSessionGreetingReference(target, userId);
       case 'brand-character':
       case 'brand-scene':
         return this.loadBrandAsset(target, userId);
@@ -188,6 +190,9 @@ export class SketchTargetsService {
         break;
       case 'session-scene':
         await this.writeSessionScene(slot, sketch, opts);
+        break;
+      case 'session-greeting-reference':
+        await this.writeSessionGreetingReference(slot, sketch, opts);
         break;
       case 'brand-character':
         await this.writeBrandAsset('brandCharacter', slot, sketch, opts);
@@ -375,6 +380,64 @@ export class SketchTargetsService {
         : s,
     );
     await this.sessions.updateSession(slot.target.id, { scenes });
+  }
+
+  /**
+   * GREETING_VIDEO — референс-изображение Grok (§ доккомментарий
+   * `Session.greetingReferenceImages`). Тот же паттерн, что
+   * `loadSessionScene`, только `feature: null`: §7 ТЗ прямо требует
+   * GREETING_VIDEO доступным на всех тарифах, а `session-scene` гейтит
+   * себя `referenceAssets` (Standard+) — сюда этот гейт протаскивать
+   * нельзя.
+   */
+  private async loadSessionGreetingReference(
+    target: SketchTarget,
+    userId: string,
+  ): Promise<SketchSlot> {
+    const session = await this.loadSession(target.id, userId);
+    const image = (session.greetingReferenceImages ?? []).find(
+      (s) => s.id === target.subId,
+    );
+    if (!image) {
+      throw new NotFoundException(
+        `Референс-изображение ${target.subId} не найдено в сессии`,
+      );
+    }
+    return {
+      target,
+      kind: 'scene',
+      userId,
+      feature: null,
+      originalPathname: image.photoPathname,
+      originalUrl: image.photoUrl,
+      ownsOriginalFile: isSessionOwnedPathname(image.photoPathname, target.id),
+      sketch: image.sketch ?? null,
+      originalDeleted: image.originalDeleted === true,
+      description: image.description ?? image.label,
+      name: null,
+      session,
+    };
+  }
+
+  private async writeSessionGreetingReference(
+    slot: SketchSlot,
+    sketch: SketchRef | null,
+    opts: { originalDeleted?: boolean },
+  ): Promise<void> {
+    const session =
+      slot.session ?? (await this.loadSession(slot.target.id, slot.userId));
+    const images = (session.greetingReferenceImages ?? []).map((s) =>
+      s.id === slot.target.subId
+        ? {
+            ...s,
+            sketch,
+            originalDeleted: opts.originalDeleted ?? s.originalDeleted ?? false,
+          }
+        : s,
+    );
+    await this.sessions.updateSession(slot.target.id, {
+      greetingReferenceImages: images,
+    });
   }
 
   // ── Бренд и товар проекта (Prisma) ────────────────────────────────

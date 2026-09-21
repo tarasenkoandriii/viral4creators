@@ -14,6 +14,8 @@ import {
   getAssistantSettings,
   setAssistantSettings,
   seedFixtureUser,
+  getVirtualStudioHedraEnabled,
+  setVirtualStudioHedraEnabled,
 } from '../../lib/endpoints';
 import type {
   EnvCheckResult,
@@ -681,6 +683,64 @@ function FixtureSeedCard() {
   );
 }
 
+/**
+ * Флаг Hedra для видео-фрагментов виртуальной студии
+ * (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §3.5) — выключен по
+ * умолчанию: юридический периметр (нет инфраструктуры маркировки
+ * ИИ-контента/согласия, doc/AI-ACTORS-NO-REFERENCE-SPEC.md §0)
+ * применяется к Hedra-ветке студии так же, как и к пилоту аватара.
+ * Пока выключено — в форме видео-фрагмента на /virtual-studio виден
+ * только Grok, пункт Hedra скрыт.
+ */
+function VirtualStudioHedraCard() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setError(null);
+    getVirtualStudioHedraEnabled()
+      .then((r) => setEnabled(r.enabled))
+      .catch((err) => setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку'));
+  };
+
+  useEffect(load, []);
+
+  const handleToggle = async () => {
+    if (enabled === null) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await setVirtualStudioHedraEnabled(!enabled);
+      setEnabled(result.enabled);
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить настройку');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Виртуальная студия: Hedra для видео-фрагментов</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Пока выключено, в форме видео-фрагмента (/virtual-studio) виден только Grok Imagine. Hedra даёт говорящую
+        голову с честным лип-синком, но юридический периметр (нет маркировки ИИ-контента/согласия) требует явного
+        включения оператором.
+      </p>
+      {error && <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>{error}</p>}
+      {enabled === null && !error && <p className="muted">Загрузка…</p>}
+      {enabled !== null && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={enabled} disabled={saving} onChange={() => void handleToggle()} />
+          Включить Hedra для видео-фрагментов студии
+          {saving && <span className="muted">Сохраняю…</span>}
+        </label>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [result, setResult] = useState<EnvSettingsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -744,6 +804,7 @@ export default function SettingsPage() {
       <AnalysisProviderCard />
       <VideoProviderCard />
       <GrokTransportCard />
+      <VirtualStudioHedraCard />
       <AssistantSettingsCard />
       {/* Не внутри цикла групп ниже намеренно: при фильтре «только
           требуется внимание» группа «Обучалка» пропадает из списка, если

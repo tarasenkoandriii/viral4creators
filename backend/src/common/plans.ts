@@ -101,7 +101,19 @@ export type PlanFeature =
    * массовому бесплатному пользователю. Тарифы различаются квотой
    * (`common/image-generation-quota.ts`), а не самой возможностью.
    */
-  | 'aiSketch';
+  | 'aiSketch'
+  /**
+   * Четвёртый тип проекта — ролик-поздравление (ТЗ
+   * TZ-Greeting-Video-Project-Type.md §7). Доступен на ВСЕХ тарифах
+   * (§7: «не выключен для LITE полностью — LITE получает самый дешёвый
+   * вариант, а не отказ»); тарифы различают не сам доступ к типу
+   * проекта, а `presenterProvider`/`resolution` внутри него — см.
+   * `resolveGreetingConfig` в `modules/project/greeting-config.ts`, не в
+   * этом файле (тот же осознанный выбор для MVP, что описан в §7 ТЗ:
+   * «cap параметра по тарифу» — новый локальный механизм, не расширение
+   * `PlanService`).
+   */
+  | 'greetingVideo';
 
 export interface PlanDefinition {
   id: PlanId;
@@ -140,6 +152,10 @@ const ALL: Record<PlanFeature, boolean> = {
   siteTutorial: true,
   // §8.1 ТЗ скетча: признак есть у всех тарифов, различается только квота.
   aiSketch: true,
+  // §7 ТЗ поздравлений: доступен на всех тарифах, различаются только
+  // presenterProvider/resolution внутри — не сужается ни для одного PLAN
+  // ниже (в отличие от siteTutorial/brandManifest и т.п.).
+  greetingVideo: true,
 };
 
 export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
@@ -349,6 +365,7 @@ export function featureDeniedMessage(feature: PlanFeature): string {
     voiceDub: 'Дубляж (полная замена звука Veo своим голосом)',
     siteTutorial: 'Обучающее видео по сайту заказчика',
     aiSketch: 'ИИ-скетч вместо изображения',
+    greetingVideo: 'Ролик-поздравление',
   };
   return `${what[feature]} доступна в режиме ${need}. Сейчас все режимы бесплатны — переключитесь в настройках режима.`;
 }

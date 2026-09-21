@@ -13,12 +13,15 @@
  */
 
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LIVE_AUCTION_LISTING_STATUSES } from '../../common/auction-status';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
+import { publicVideoUrl } from '../../common/watermark';
 import {
   AdminPortfolioListResult,
   PortfolioCollectionSummaryView,
@@ -56,6 +59,9 @@ export class PortfolioService {
 
   async create(userId: string, dto: CreatePortfolioItemDto): Promise<PortfolioItemView> {
     const profile = await this.ownCreatorProfileOrThrow(userId);
+    if (dto.watermarkMode === 'CUSTOM' && !dto.watermarkText) {
+      throw new ConflictException('watermarkText is required when watermarkMode is CUSTOM');
+    }
     const item = await this.prisma.portfolioItem.create({
       data: {
         creatorProfileId: profile.id,
@@ -67,9 +73,13 @@ export class PortfolioService {
         creatorConsent: true,
         // customerConsent остаётся false намеренно — на Этапе 0 нет
         // стороннего заказчика, поле актуально только для sourceType=CONTRACT.
+        watermarkMode: dto.watermarkMode ?? 'SITE_NAME',
+        watermarkText: dto.watermarkMode === 'CUSTOM' ? dto.watermarkText : null,
+        watermarkIntensity: dto.watermarkIntensity ?? 'STANDARD',
+        // watermarkStatus остаётся PENDING по умолчанию схемы — подхватит PortfolioWatermarkService.runTick.
       },
     });
-    return this.toView(item, false);
+    return this.toView(item, false, false);
   }
 
   async listMine(userId: string): Promise<PortfolioItemView[]> {
@@ -78,10 +88,10 @@ export class PortfolioService {
       where: { creatorProfileId: profile.id },
       orderBy: { createdAt: 'desc' },
     });
-    return items.map((i) => this.toView(i, false));
+    return items.map((i) => this.toView(i, false, false));
   }
 
-  /** PATCH /portfolio-items/:id — сейчас только сама подборка (§20 №20), не статус/видео. */
+  /** PATCH /portfolio-items/:id — подборка (§20 №20) и настройки водяного знака (§9/§22). */
   async updateOwn(
     userId: string,
     id: string,
@@ -92,11 +102,48 @@ export class PortfolioService {
     if (!item || item.creatorProfileId !== profile.id) {
       throw new NotFoundException('portfolio item not found');
     }
+    if (dto.watermarkMode === 'CUSTOM' && dto.watermarkText === undefined && !item.watermarkText) {
+      throw new ConflictException('watermarkText is required when watermarkMode is CUSTOM');
+    }
+
+    const nextMode = dto.watermarkMode ?? item.watermarkMode;
+    const nextText = dto.watermarkText !== undefined ? dto.watermarkText : item.watermarkText;
+    const nextIntensity = dto.watermarkIntensity ?? item.watermarkIntensity;
+    // Аудит-фикс: правка настроек знака должна перезапустить обработку
+    // — иначе старое превью (снятое по прежним настройкам) осталось бы
+    // висеть навсегда, а PortfolioWatermarkService.runTick никогда не
+    // подхватил бы уже READY/FAILED запись повторно. Сравниваем только
+    // то, что реально влияет на результат ffmpeg — не сам факт вызова.
+    const settingsChanged =
+      nextMode !== item.watermarkMode || nextText !== item.watermarkText || nextIntensity !== item.watermarkIntensity;
+
     const updated = await this.prisma.portfolioItem.update({
       where: { id },
-      data: { collectionTag: dto.collectionTag },
+      data: {
+        collectionTag: dto.collectionTag,
+        watermarkMode: nextMode,
+        watermarkText: nextMode === 'CUSTOM' ? nextText : null,
+        watermarkIntensity: nextIntensity,
+        // Найдено при аудите watermark-пайплайна: раньше `settingsChanged`
+        // заодно обнулял уже существующий `watermarkedVideoUrl` — если
+        // элемент к этому моменту уже PUBLISHED, `publicVideoUrl()`
+        // (common/watermark.ts) немедленно откатывался на настоящий
+        // оригинал `videoUrl` на всё время перегенерации (следующие
+        // несколько тиков крона `portfolio-watermark`, */2 мин) —
+        // самопричинённая брешь ровно в той защите, ради которой этот
+        // пайплайн существует. `watermarkedVideoUrl` больше НЕ обнуляется
+        // здесь: старая (пусть и «по прежним настройкам») защищённая
+        // копия продолжает отдаваться публично, пока `PortfolioWatermark-
+        // Service.pollJob` не перезапишет её результатом новой обработки
+        // (см. её же `uploadBuffer` с `allowOverwrite: true` на тот же
+        // `pathname` — перезапись, не рост числа файлов). `watermarkJobId`
+        // по-прежнему сбрасывается — старая (если была) задача ffmpeg
+        // относится к уже неактуальным настройкам, ждать её результата
+        // незачем.
+        ...(settingsChanged ? { watermarkStatus: 'PENDING', watermarkJobId: null } : {}),
+      },
     });
-    return this.toView(updated, false);
+    return this.toView(updated, false, false);
   }
 
   /** DELETE /portfolio-items/:id — отзыв в любом статусе, только владельцем. */
@@ -106,7 +153,29 @@ export class PortfolioService {
     if (!item || item.creatorProfileId !== profile.id) {
       throw new NotFoundException('portfolio item not found');
     }
-    await this.prisma.portfolioItem.delete({ where: { id } });
+    // Аудит-фикс: AuctionListing.portfolioItem — onDelete: Restrict
+    // (ТЗ на маркетплейс §22.5, намеренно — WON-лот несёт финансовую
+    // запись). Без этой проверки Prisma бросала бы сырую ошибку
+    // нарушения внешнего ключа прямо здесь, как только у работы
+    // когда-либо была заявка на аукцион — даже отклонённая или отозванная
+    // много раньше. «Живые» заявки блокируют отзыв явно; безобидные
+    // терминальные (REJECTED/WITHDRAWN/EXPIRED, без денег) удаляются
+    // вместе с самой работой — они не несут ничего, что стоило бы хранить
+    // отдельно от неё.
+    const listings = await this.prisma.auctionListing.findMany({
+      where: { portfolioItemId: id },
+      select: { id: true, status: true },
+    });
+    const liveStatuses: readonly string[] = LIVE_AUCTION_LISTING_STATUSES;
+    if (listings.some((l) => liveStatuses.includes(l.status))) {
+      throw new ConflictException(
+        'this work has an active or won auction listing — withdraw it from the auction first',
+      );
+    }
+    await this.prisma.$transaction([
+      this.prisma.auctionListing.deleteMany({ where: { portfolioItemId: id } }),
+      this.prisma.portfolioItem.delete({ where: { id } }),
+    ]);
   }
 
   /** GET /creators/:creatorProfileId/portfolio — публичный грид (§9). */
@@ -121,7 +190,7 @@ export class PortfolioService {
         ? { likes: { where: { userId: viewerUserId }, select: { id: true } } }
         : undefined,
     });
-    return items.map((i) => this.toView(i, viewerUserId ? (i as any).likes.length > 0 : false));
+    return items.map((i) => this.toView(i, viewerUserId ? (i as any).likes.length > 0 : false, true));
   }
 
   async getPublic(id: string, viewerUserId: string | null): Promise<PortfolioItemView> {
@@ -134,7 +203,7 @@ export class PortfolioService {
     if (!item || item.status !== 'PUBLISHED') {
       throw new NotFoundException('portfolio item not found');
     }
-    return this.toView(item, viewerUserId ? (item as any).likes.length > 0 : false);
+    return this.toView(item, viewerUserId ? (item as any).likes.length > 0 : false, true);
   }
 
   /** POST /portfolio-items/:id/view — best-effort счётчик (§20 №13), тот же приём, что у SharedVideoPage. */
@@ -188,7 +257,8 @@ export class PortfolioService {
         i.creatorProfile.user.firstName ??
         (i.creatorProfile.user.username ? `@${i.creatorProfile.user.username}` : null),
       title: i.title,
-      videoUrl: i.videoUrl,
+      // Публичная лента (§9/§22, защита от пиратства) — та же резолвинг-логика, что у toView().
+      videoUrl: publicVideoUrl(i),
       thumbnailUrl: i.thumbnailUrl,
       niches: i.creatorProfile.niches,
       createdAt: i.createdAt.toISOString(),
@@ -213,7 +283,7 @@ export class PortfolioService {
       where: { status: 'PUBLISHED', collectionTag: tag },
       orderBy: { createdAt: 'desc' },
     });
-    return items.map((i) => this.toView(i, false));
+    return items.map((i) => this.toView(i, false, true));
   }
 
   /**
@@ -339,7 +409,7 @@ export class PortfolioService {
       this.prisma.portfolioItem.count({ where }),
     ]);
     return {
-      items: items.map((i) => this.toView(i, false)),
+      items: items.map((i) => this.toView(i, false, false)),
       total,
       page: params.page,
       pageSize: params.pageSize,
@@ -351,7 +421,7 @@ export class PortfolioService {
       where: { id },
       data: { status: 'PUBLISHED', moderatedById: moderatorId, rejectionReason: null },
     });
-    return this.toView(item, false);
+    return this.toView(item, false, false);
   }
 
   async adminReject(
@@ -363,7 +433,7 @@ export class PortfolioService {
       where: { id },
       data: { status: 'REJECTED', moderatedById: moderatorId, rejectionReason: dto.reason },
     });
-    return this.toView(item, false);
+    return this.toView(item, false, false);
   }
 
   private toSimilarView(item: {
@@ -372,13 +442,16 @@ export class PortfolioService {
     title: string;
     thumbnailUrl: string | null;
     videoUrl: string;
+    watermarkedVideoUrl: string | null;
+    watermarkStatus: string;
   }): SimilarPortfolioItemView {
     return {
       id: item.id,
       creatorProfileId: item.creatorProfileId,
       title: item.title,
       thumbnailUrl: item.thumbnailUrl,
-      videoUrl: item.videoUrl,
+      // Публичный раздел (§9/§22, защита от пиратства) — та же резолвинг-логика, что у toView().
+      videoUrl: publicVideoUrl(item),
     };
   }
 
@@ -396,14 +469,25 @@ export class PortfolioService {
       collectionTag: string | null;
       rejectionReason?: string | null;
       createdAt: Date;
+      watermarkMode: string;
+      watermarkText: string | null;
+      watermarkIntensity: string;
+      watermarkStatus: string;
+      watermarkedVideoUrl: string | null;
+      soldAt: Date | null;
+      soldPrice: number | null;
     },
     likedByViewer: boolean,
+    resolveForPublic: boolean,
   ): PortfolioItemView {
     return {
       id: item.id,
       creatorProfileId: item.creatorProfileId,
       sourceType: item.sourceType as PortfolioItemView['sourceType'],
-      videoUrl: item.videoUrl,
+      // Аудит-фикс (§9/§22, защита от пиратства): владелец/оператор
+      // видят настоящий оригинал (для проверки/редактирования),
+      // публичные маршруты — резолвленную версию через publicVideoUrl.
+      videoUrl: resolveForPublic ? publicVideoUrl(item) : item.videoUrl,
       title: item.title,
       thumbnailUrl: item.thumbnailUrl,
       status: item.status as PortfolioItemView['status'],
@@ -411,6 +495,12 @@ export class PortfolioService {
       viewCount: item.viewCount,
       collectionTag: item.collectionTag,
       rejectionReason: item.rejectionReason ?? null,
+      watermarkMode: item.watermarkMode as PortfolioItemView['watermarkMode'],
+      watermarkText: item.watermarkText,
+      watermarkIntensity: item.watermarkIntensity as PortfolioItemView['watermarkIntensity'],
+      watermarkStatus: item.watermarkStatus as PortfolioItemView['watermarkStatus'],
+      soldAt: item.soldAt ? item.soldAt.toISOString() : null,
+      soldPrice: item.soldPrice,
       likedByViewer,
       createdAt: item.createdAt.toISOString(),
     };

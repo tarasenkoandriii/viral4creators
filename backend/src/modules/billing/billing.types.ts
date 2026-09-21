@@ -4,7 +4,7 @@
  * новых моделей, а типы нужны уже сейчас (билд-неблокирующая заглушка,
  * не расходится с `schema.prisma`, где источник истины). */
 export type PaymentMethodValue = 'STARS' | 'WAYFORPAY';
-export type PaymentPurposeValue = 'SUBSCRIPTION' | 'CREDIT_PACK';
+export type PaymentPurposeValue = 'SUBSCRIPTION' | 'CREDIT_PACK' | 'AUCTION';
 
 /** Ответ обоих `checkout`-маршрутов — ровно одно из двух полей заполнено,
  * в зависимости от `method` в запросе. */

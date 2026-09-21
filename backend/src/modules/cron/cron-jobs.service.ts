@@ -35,6 +35,10 @@ import {
 } from '../product-feed-import/product-feed-import-worker.service';
 import { ExportService } from '../export/export.service';
 import { ImageSketchService } from '../image-sketch/image-sketch.service';
+import { AuctionService } from '../auction/auction.service';
+import { AuctionAiAssessmentService } from '../auction/auction-ai-assessment.service';
+import { LiveAuctionOrchestratorService } from '../auction/live-auction-orchestrator.service';
+import { PortfolioWatermarkService } from '../portfolio/portfolio-watermark.service';
 import {
   TutorialScenarioGenerateResult,
   TutorialScenarioGeneratorService,
@@ -183,6 +187,10 @@ export class CronJobsService {
     private readonly tutorialScenarioRunner: TutorialScenarioRunnerService,
     private readonly uiSnapshotRunner: UiSnapshotRunnerService,
     private readonly imageSketch: ImageSketchService,
+    private readonly auctionService: AuctionService,
+    private readonly auctionAiAssessment: AuctionAiAssessmentService,
+    private readonly liveAuctionOrchestrator: LiveAuctionOrchestratorService,
+    private readonly portfolioWatermark: PortfolioWatermarkService,
   ) {}
 
   /**
@@ -369,6 +377,81 @@ export class CronJobsService {
   /** Импорт товарного фида по ссылке (этап 68). */
   async runFeedImportRun(): Promise<FeedImportTickResult> {
     return this.feedImportWorker.runTick();
+  }
+
+  /**
+   * Закрытие аукционных лотов по дедлайну (ТЗ на маркетплейс §22, Этап
+   * 2) — WON/EXPIRED и продвижение следующего из очереди на освободившееся
+   * место. См. доккомментарий `AuctionService.closeExpiredListings`.
+   */
+  async runAuctionClose(): Promise<{ closed: number }> {
+    return this.auctionService.closeExpiredListings();
+  }
+
+  /**
+   * ИИ-оценка видео/брендбука для аукциона (ТЗ на маркетплейс §22,
+   * Этап 3) — одна заявка за тик, см. доккомментарий
+   * AuctionAiAssessmentService.runTick про то, почему фоново, а не
+   * синхронно при подаче.
+   */
+  async runAuctionAssess(): Promise<{ assessed: boolean }> {
+    return this.auctionAiAssessment.runTick();
+  }
+
+  /**
+   * Подстраховка паузы Google Ads-кампаний блиц-лотов (ТЗ на маркетплейс
+   * §22, аудит-фикс GoogleAdsService/AuctionService) — см. доккомментарий
+   * AuctionService.reconcileGoogleAdsCampaigns про то, почему
+   * fire-and-forget вызов паузы из пользовательского запроса
+   * (withdraw/placeBid) в serverless может не долететь, и почему это
+   * не симметрично для создания кампании (риск дублей).
+   */
+  async runAuctionGoogleAdsSync(): Promise<{ paused: number; stillStuck: number }> {
+    return this.auctionService.reconcileGoogleAdsCampaigns();
+  }
+
+  /**
+   * Живой аукцион (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §7.5,
+   * Этап 5) — авто-сворачивание трансляций без ставок за
+   * `LIVE_NO_BID_COLLAPSE_MIN` минут (см. LiveAuctionOrchestratorService).
+   * Заодно подчищает подсказки, зависшие в 'pending' (аудит, сверка с
+   * SilverFinance — см. доккомментарий STALE_PENDING_CUE_MS там же).
+   * Сам аукцион продолжается — сворачивается только эфир, не торги.
+   * Тот же тик раз в 2 минуты, что у остальных тик-воркеров этого списка.
+   */
+  async runLiveAuctionTick(): Promise<{ collapsed: number; reapedStalePendingCues: number }> {
+    return this.liveAuctionOrchestrator.collapseInactiveStreams();
+  }
+
+  /**
+   * Водяной знак на превью портфолио/аукциона (ТЗ на маркетплейс
+   * §9/§22, защита от пиратства) — одно действие (отправка или опрос)
+   * за тик, см. доккомментарий PortfolioWatermarkService.runTick.
+   *
+   * Аудит-фикс: раньше здесь не было джоб-уровневого замка — единственный
+   * тик-воркер в этом файле без него. `runTick()` делает `findFirst` +
+   * безусловный `update` (не `updateMany` с условием, как у построчных
+   * claim'ов в export-sync-run/ui-snapshot-run) — два перекрывающихся
+   * прогона (тик крона раз в 2 минуты + ручной запуск оператором той же
+   * `jobKey` в админке, тот самый путь, из-за которого джоб-лок вообще
+   * появился в проекте — см. доккомментарий cron-job-lock.ts) могли
+   * оба забрать ОДИН И ТОТ ЖЕ PENDING-элемент, оба вызвать платный
+   * `ffmpeg.submit()` и затем оба перезаписать `watermarkJobId` — job id
+   * проигравшего теряется без единой записи о себе (тот же класс ошибки,
+   * что и premature-nulling до FAILED-фикса, см. AUDIT-Portfolio-
+   * Watermark.md, только через гонку, а не через порядок операций), и
+   * задваивается платный вызов. То же для `pollJob()` — двойная запись в
+   * AiUsageService при завершённом джобе задваивала бы расход в отчёте
+   * (§26). Тот же приём, что у остальных тик-воркеров этого файла.
+   */
+  async runPortfolioWatermark(): Promise<{ action: string }> {
+    const acquired = await tryAcquireJobLock(this.prisma, 'portfolio-watermark');
+    if (!acquired) return { action: 'skipped-locked' };
+    try {
+      return await this.portfolioWatermark.runTick();
+    } finally {
+      await releaseJobLock(this.prisma, 'portfolio-watermark', acquired);
+    }
   }
 
   /**

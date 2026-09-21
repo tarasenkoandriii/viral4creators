@@ -57,6 +57,9 @@ import {
 } from '../../common/soft-delete';
 import { isRecordNotFoundError } from '../../common/prisma-errors';
 import { activeRowPhotoUrl, SketchableRow } from '../../common/active-image';
+import { PlanService } from '../plan/plan.service';
+import { resolveGreetingConfig } from './greeting-config';
+import { CreateGreetingBriefDto } from './dto/create-project-request.dto';
 
 /** Батч на один прогон крона — тот же порядок величины, что
  * `CLEANUP_BATCH` в `session.service.ts`. */
@@ -144,6 +147,11 @@ export class ProjectService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly blob: BlobService,
+    // ТЗ TZ-Greeting-Video-Project-Type.md §7: гейт самого типа проекта
+    // ('greetingVideo') и разрешённые presenterProvider/resolution
+    // (resolveGreetingConfig) требуют знать тариф вызывающего. PlanModule
+    // — @Global(), поэтому импортировать его в ProjectModule не нужно.
+    private readonly plans: PlanService,
   ) {
     this.lineItemLimit = loadConfiguration().project.lineItemLimit;
   }
@@ -161,6 +169,27 @@ export class ProjectService {
       await this.assertOwnBrandManifest(userId, dto.brandManifestId);
     }
 
+    // ТЗ TZ-Greeting-Video-Project-Type.md §4.1/§4.3: бриф обязателен для
+    // GREETING_VIDEO и создаётся в ОДНОЙ транзакции с проектом — без
+    // этого возможен проект типа GREETING_VIDEO без брифа (например, если
+    // запрос прервётся между двумя отдельными insert'ами), а весь
+    // остальной код (снимок сессии, §5) предполагает, что у такого
+    // проекта бриф есть всегда.
+    if (dto.type === 'GREETING_VIDEO') {
+      if (!dto.greetingBrief) {
+        throw new BadRequestException(
+          'greetingBrief is required for type GREETING_VIDEO',
+        );
+      }
+      return this.createGreetingVideoProject(
+        userId,
+        dto,
+        dto.greetingBrief,
+        countryCode,
+        currency,
+      );
+    }
+
     const row: ProjectRow = await this.prisma.project.create({
       data: {
         userId,
@@ -171,6 +200,72 @@ export class ProjectService {
         brandManifestId: dto.brandManifestId ?? null,
       },
       include: ITEMS_INCLUDE,
+    });
+    return toProjectView(row);
+  }
+
+  /**
+   * Отдельный путь для GREETING_VIDEO (§4.1, §4.3, §7) — вынесено из
+   * `createProject`, чтобы основной путь (SINGLE/LINE/CLIENT_SITE) не
+   * усложнялся веткой, которая его не касается (§9 ТЗ: пайплайн почти не
+   * завязан на `Project.type`, и это то самое исключение — создание
+   * проекта — где ветвление всё же есть, осознанно).
+   */
+  private async createGreetingVideoProject(
+    userId: string,
+    dto: CreateProjectRequestDto,
+    brief: CreateGreetingBriefDto,
+    countryCode: string,
+    currency: string,
+  ): Promise<ProjectView> {
+    if (brief.occasion === 'OTHER' && !brief.customOccasionText?.trim()) {
+      throw new BadRequestException(
+        'customOccasionText is required when occasion is OTHER',
+      );
+    }
+    if (brief.brandManifestId) {
+      await this.assertOwnBrandManifest(userId, brief.brandManifestId);
+    }
+
+    // §7/§9: доступ к самому типу проекта — тот же приём, что уже
+    // используется для 'voiceDub' (project-session.service.ts:212).
+    await this.plans.assertUser(userId, 'greetingVideo');
+    const plan = await this.plans.planOfUser(userId);
+    const resolved = resolveGreetingConfig(plan, {
+      presenterProvider: brief.presenterProvider,
+      resolution: brief.resolution,
+    });
+
+    const row: ProjectRow = await this.prisma.$transaction(async (tx) => {
+      const project = await tx.project.create({
+        data: {
+          userId,
+          type: dto.type,
+          title: dto.title.trim(),
+          countryCode,
+          currency,
+          brandManifestId: dto.brandManifestId ?? null,
+        },
+        include: ITEMS_INCLUDE,
+      });
+      await tx.greetingBrief.create({
+        data: {
+          projectId: project.id,
+          occasion: brief.occasion,
+          customOccasionText: brief.customOccasionText?.trim() || null,
+          recipientName: brief.recipientName.trim(),
+          senderName: brief.senderName?.trim() || null,
+          tone: brief.tone ?? 'WARM',
+          personalMessage: brief.personalMessage?.trim() || null,
+          presenterProvider: resolved.presenterProvider,
+          resolution: resolved.resolution,
+          brandManifestId: brief.brandManifestId ?? null,
+          occasionDate: brief.occasionDate
+            ? new Date(brief.occasionDate)
+            : null,
+        },
+      });
+      return project;
     });
     return toProjectView(row);
   }
@@ -219,6 +314,24 @@ export class ProjectService {
       if (dto.type === 'SINGLE' && items.length > 1) {
         throw new BadRequestException(
           `Cannot change to SINGLE: project has ${items.length} items, a SINGLE project holds exactly one. Remove the extra items first.`,
+        );
+      }
+      // ТЗ TZ-Greeting-Video-Project-Type.md §4.1/§4.3: a GREETING_VIDEO
+      // project always has a GreetingBrief, created together with it in
+      // one transaction (ProjectService.createGreetingVideoProject) —
+      // there is no separate "attach a brief" call this PATCH could
+      // trigger. Allowing PATCH to switch an existing project's type TO
+      // GREETING_VIDEO would produce exactly the inconsistent state that
+      // transaction exists to prevent (a GREETING_VIDEO project with no
+      // brief — GET/PATCH .../greeting-brief would 404 forever, and
+      // ProjectSessionService.createFromGreetingBrief could never start a
+      // session for it). Switching AWAY from GREETING_VIDEO is allowed —
+      // it just orphans the brief row (harmless: it stays reachable by
+      // id, matches how CLIENT_SITE already treats a project switched
+      // away from it while a ClientSiteTutorialDraft still exists).
+      if (dto.type === 'GREETING_VIDEO') {
+        throw new BadRequestException(
+          'Cannot change project type to GREETING_VIDEO via PATCH — create a new project of that type instead (POST /projects with a greetingBrief).',
         );
       }
       data.type = dto.type;

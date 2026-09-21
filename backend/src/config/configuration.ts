@@ -129,6 +129,16 @@ export interface Configuration {
      * Extension) стоит `grok-imagine-video` — оно и по умолчанию.
      */
     videoExtendModel: string;
+    /**
+     * Виртуальная студия (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md
+     * §4.1/§6, Этап 1) — модель `POST /v1/images/generations` (текст →
+     * картинка референс-кадра), отдельный эндпоинт xAI от video-моделей
+     * выше. Официальное имя по `docs.x.ai/developers/pricing`
+     * (2026-09-21) — `grok-imagine-image` — ПРОВЕРИТЬ на `console.x.ai`
+     * перед первым реальным запуском, тем же приёмом, что и остальные
+     * модели в этом файле.
+     */
+    imageModel: string;
   };
 
   // Блог (doc/TODO.md §II.3–II.4, ТЗ §36, этап 57). Конфиг заведён вместе
@@ -376,6 +386,7 @@ export const loadConfiguration = (): Configuration => {
       videoModel: process.env.GROK_VIDEO_MODEL || 'grok-imagine-video-1.5',
       videoExtendModel:
         process.env.GROK_VIDEO_EXTEND_MODEL || 'grok-imagine-video',
+      imageModel: process.env.GROK_IMAGE_MODEL || 'grok-imagine-image',
     },
 
     blog: {

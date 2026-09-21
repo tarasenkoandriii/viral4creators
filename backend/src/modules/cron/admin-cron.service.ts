@@ -88,6 +88,31 @@ const JOB_REGISTRY: CronJobInfo[] = [
       'Импорт товарного фида по ссылке (YML/CSV) — скачивание и заведение позиций.',
   },
   {
+    jobKey: 'auction-close',
+    description:
+      'Закрытие аукционных лотов по дедлайну (ТЗ на маркетплейс §22) — WON/EXPIRED и продвижение очереди на освободившееся место.',
+  },
+  {
+    jobKey: 'auction-assess',
+    description:
+      'ИИ-оценка видео/брендбука одной заявки на аукцион (ТЗ на маркетплейс §22, Этап 3) — платный вызов Gemini, одна заявка за тик.',
+  },
+  {
+    jobKey: 'auction-google-ads-sync',
+    description:
+      'Подстраховка паузы Google Ads-кампаний блиц-лотов (аудит-фикс, §22) — повтор для лотов, ушедших из ACTIVE без подтверждённой паузы.',
+  },
+  {
+    jobKey: 'portfolio-watermark',
+    description:
+      'Водяной знак на превью портфолио/аукциона (ТЗ на маркетплейс §9/§22, защита от пиратства) — одно действие (отправка/опрос ffmpeg) за тик.',
+  },
+  {
+    jobKey: 'live-auction-tick',
+    description:
+      'Авто-сворачивание живых трансляций аукциона без ставок за 15 минут (ТЗ на живой аукцион §7.5, Этап 5) — сам аукцион продолжается, сворачивается только эфир.',
+  },
+  {
     jobKey: 'export-sync-run',
     description:
       'Досмотр статуса дочерних рендеров автоэкспорта яруса B независимо от открытого экрана прогресса.',
@@ -230,6 +255,16 @@ export class AdminCronService {
         return this.jobs.runAbTestRun();
       case 'feed-import-run':
         return this.jobs.runFeedImportRun();
+      case 'auction-close':
+        return this.jobs.runAuctionClose();
+      case 'auction-assess':
+        return this.jobs.runAuctionAssess();
+      case 'auction-google-ads-sync':
+        return this.jobs.runAuctionGoogleAdsSync();
+      case 'portfolio-watermark':
+        return this.jobs.runPortfolioWatermark();
+      case 'live-auction-tick':
+        return this.jobs.runLiveAuctionTick();
       case 'export-sync-run':
         return this.jobs.runExportSyncRun();
       case 'tutorial-scenario-generate':

@@ -42,6 +42,26 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/cron/auction-close",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/auction-assess",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/auction-google-ads-sync",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/portfolio-watermark",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/live-auction-tick",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/cron/export-sync-run",
       "schedule": "*/2 * * * *"
     },

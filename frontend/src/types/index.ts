@@ -39,6 +39,13 @@ export interface Session {
   analysisSelection?: AnalysisSelection;
   projectId?: string | null;
   productItemId?: string | null;
+  /** GREETING_VIDEO — копия брифа, скопированная в сессию при создании
+   * (ТЗ TZ-Greeting-Video-Project-Type.md §4.3). Взаимоисключающе с
+   * `productInformation`. Зеркалит `GreetingBriefSnapshot` на бэкенде,
+   * но здесь не типизируется полностью — фронтенд использует брифа
+   * только через `GreetingBriefView` (см. types/project.ts), а из
+   * снимка сессии — только сам факт наличия. */
+  greetingBriefSnapshot?: unknown;
 }
 
 // ── Relevance (spec §18.3) — mirrors backend relevance.types.ts ──────────

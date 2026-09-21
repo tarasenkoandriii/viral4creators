@@ -37,7 +37,12 @@ export function sketchSubject(type: SketchTargetType): SketchSubject {
   if (type === 'session-character' || type === 'brand-character') {
     return 'character';
   }
-  if (type === 'session-scene' || type === 'brand-scene') return 'scene';
+  if (
+    type === 'session-scene' ||
+    type === 'brand-scene' ||
+    type === 'session-greeting-reference'
+  )
+    return 'scene';
   return 'product';
 }
 

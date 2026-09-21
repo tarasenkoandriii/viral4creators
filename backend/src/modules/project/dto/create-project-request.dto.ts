@@ -1,5 +1,75 @@
-import { IsIn, IsOptional, IsString, Length, Matches } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsDateString,
+  IsIn,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  ValidateIf,
+  ValidateNested,
+} from 'class-validator';
 import type { ProjectType } from '../../../common/types/project.types';
+import type {
+  GreetingOccasion,
+  GreetingPresenterProvider,
+  GreetingResolution,
+  GreetingTone,
+} from '../../../common/types/greeting.types';
+
+/**
+ * POST /projects/:id/greeting-brief и вложенный `greetingBrief` в
+ * CreateProjectRequestDto (ТЗ TZ-Greeting-Video-Project-Type.md §4.1).
+ *
+ * `presenterProvider`/`resolution` здесь — то, что ПОПРОСИЛ пользователь;
+ * сервис перепроверяет их против тарифа (`resolveGreetingConfig`, §7) —
+ * DTO не гарантирует итоговое значение.
+ */
+export class CreateGreetingBriefDto {
+  @IsIn(['BIRTHDAY', 'WEDDING', 'ANNIVERSARY', 'NEW_YEAR', 'GRADUATION', 'CORPORATE', 'OTHER'])
+  occasion!: GreetingOccasion;
+
+  @ValidateIf((o: CreateGreetingBriefDto) => o.occasion === 'OTHER')
+  @IsString()
+  @Length(1, 200)
+  customOccasionText?: string;
+
+  @IsString()
+  @Length(1, 120, {
+    message: 'recipientName must be between 1 and 120 characters',
+  })
+  recipientName!: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 120)
+  senderName?: string;
+
+  @IsOptional()
+  @IsIn(['WARM', 'FUNNY', 'FORMAL'])
+  tone?: GreetingTone;
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 2000)
+  personalMessage?: string;
+
+  @IsOptional()
+  @IsIn(['grok', 'hedra'])
+  presenterProvider?: GreetingPresenterProvider;
+
+  @IsOptional()
+  @IsIn(['480p', '720p', '1080p'])
+  resolution?: GreetingResolution;
+
+  @IsOptional()
+  @IsString()
+  brandManifestId?: string;
+
+  @IsOptional()
+  @IsDateString()
+  occasionDate?: string;
+}
 
 /**
  * POST /projects — spec §4 Экран 1.
@@ -9,9 +79,9 @@ import type { ProjectType } from '../../../common/types/project.types';
  * rejected by the global ValidationPipe's forbidNonWhitelisted.
  */
 export class CreateProjectRequestDto {
-  @IsIn(['SINGLE', 'LINE', 'CLIENT_SITE'], {
+  @IsIn(['SINGLE', 'LINE', 'CLIENT_SITE', 'GREETING_VIDEO'], {
     message:
-      'type must be SINGLE (один товар), LINE (линейка) or CLIENT_SITE (сайт заказчика)',
+      'type must be SINGLE (один товар), LINE (линейка), CLIENT_SITE (сайт заказчика) or GREETING_VIDEO (ролик-поздравление)',
   })
   type!: ProjectType;
 
@@ -28,9 +98,10 @@ export class CreateProjectRequestDto {
    * поставить лишний шаг перед тем, ради чего человек пришёл. Колонка в
    * БД остаётся NOT NULL: сервер подставляет страну последнего проекта
    * пользователя, а для первого — платформенный дефолт. Для
-   * `SINGLE`/`LINE` поле по-прежнему обязательно, и это проверяет
-   * сервис, а не декоратор: на уровне DTO выразить «обязателен, если
-   * тип такой-то» ценой одной строки нельзя.
+   * `SINGLE`/`LINE`/`GREETING_VIDEO` (§4.2 ТЗ поздравлений: оплата за
+   * генерацию всё равно происходит) поле по-прежнему обязательно, и это
+   * проверяет сервис, а не декоратор: на уровне DTO выразить «обязателен,
+   * если тип такой-то» ценой одной строки нельзя.
    */
   @IsOptional()
   @IsString()
@@ -43,4 +114,14 @@ export class CreateProjectRequestDto {
   @IsOptional()
   @IsString()
   brandManifestId?: string;
+
+  /**
+   * Обязателен, если type === 'GREETING_VIDEO' — проверка в сервисе, а
+   * не декоратором (§4.1 ТЗ поздравлений, тот же приём, что countryCode
+   * выше). Игнорируется для остальных трёх типов.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateGreetingBriefDto)
+  greetingBrief?: CreateGreetingBriefDto;
 }

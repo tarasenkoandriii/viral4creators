@@ -149,7 +149,45 @@ export type AiOperation =
   // путать с платными операциями, которые СГЕНЕРИРОВАННЫЙ сценарий
   // может упоминать внутри себя (§4.11) — те не вызываются здесь,
   // только описываются как план на будущее исполнение.
-  | 'tutorial-scenario-generate';
+  | 'tutorial-scenario-generate'
+  // ИИ-оценка видео и (опционально) брендбука для аукциона (ТЗ на
+  // маркетплейс §22, Этап 3) — отдельно от 'audit'/'analysis': та
+  // операция разбирает СЕССИЮ генерации по sessionId, эта — уже готовое
+  // видео исполнителя, привязанное к CreatorProfile, а не к сессии, и
+  // относится к маркетплейсу, а не к продукту генерации — в отчёте
+  // расходов должна быть видна отдельной строкой, не смешанной с
+  // остальным Gemini-трафиком продукта.
+  | 'auction-assessment'
+  /** Сборка сценария/текста поздравления для GREETING_VIDEO (ТЗ
+   * TZ-Greeting-Video-Project-Type.md §5.2) — отдельная от 'prompt'
+   * операция: другой источник данных (GreetingBrief, не
+   * ProductInformation+VideoAnalysis), другая ветка кода
+   * (GreetingPromptService, не PromptService.generatePrompt). */
+  | 'greeting-prompt'
+  // Вплавление водяного знака в превью портфолио/аукциона (ТЗ на
+  // маркетплейс §9/§22, защита от пиратства) — отдельно от 'reframe',
+  // хотя оба используют ffmpeg-api: та операция — обрезка кадра под
+  // формат, тарифицируется и обосновывается по-своему (§16.1), эта —
+  // отдельная, добровольная (WatermarkMode.NONE её вообще не вызывает)
+  // защитная мера маркетплейса, не должна смешиваться с расходами
+  // продукта генерации в отчёте.
+  | 'watermark'
+  // Виртуальная студия (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md
+  // §2-§6, Этап 1-3) — четыре отдельные операции admin-only инструмента,
+  // ни одна не переиспользует чужую: референс-кадр — новый Grok
+  // image-эндпоинт, не 'generation' (та — видео, другой провайдер и
+  // счётчик); видео-фрагмент — по секундам ролика, как и
+  // 'avatar-generation', но отдельная строка (студия не привязана к
+  // Session, `avatar-generation` — привязана); голосовой фрагмент —
+  // тот же TtsProviderResolverService, что и 'voiceover', но опять же
+  // без Session, отдельной строкой, чтобы не путать расход инструмента
+  // с расходом обычного ролика; ИИ-анализ — по образцу
+  // 'auction-assessment', но свой источник (студийный фрагмент/
+  // произвольное видео из портфолио, не заявка на аукцион).
+  | 'virtual-studio-image'
+  | 'virtual-studio-video'
+  | 'virtual-studio-voice'
+  | 'virtual-studio-analysis';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -178,6 +216,13 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'character-preview': 'Превью персонажа из текста',
   assistant: 'ИИ-консультант на лендинге',
   'tutorial-scenario-generate': 'Генерация сценария обучающего видео',
+  'auction-assessment': 'ИИ-оценка лота аукциона',
+  watermark: 'Водяной знак на превью',
+  'greeting-prompt': 'Сценарий ролика-поздравления',
+  'virtual-studio-image': 'Виртуальная студия: референс-кадр',
+  'virtual-studio-video': 'Виртуальная студия: видео-фрагмент',
+  'virtual-studio-voice': 'Виртуальная студия: озвучка',
+  'virtual-studio-analysis': 'Виртуальная студия: ИИ-анализ',
 };
 
 export interface ModelRate {
@@ -360,6 +405,19 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
     provider: 'GROK',
     perSecond: 0.14 * USD,
     note: 'как у grok-imagine-video-1.5, отдельной строки в прайсе не найдено — ПРОВЕРИТЬ',
+  },
+  // Виртуальная студия (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md
+  // §4.1/§6, Этап 1) — референс-кадр (`/v1/images/generations`, НЕ
+  // `/v1/videos/generations`, отдельный эндпоинт xAI). `docs.x.ai/
+  // developers/pricing` (2026-09-21) перечисляет три модели генерации
+  // изображений: `grok-imagine-image` — $0.02/img (1K), `grok-imagine-
+  // image-2.0` — $0.04/img (1K, Low quality), `grok-imagine-image-
+  // quality` — $0.05/img (1K). Для одного неподвижного референс-кадра,
+  // не требующего максимального качества, взята базовая модель.
+  'grok-imagine-image': {
+    provider: 'GROK',
+    perCall: 0.02 * USD,
+    note: 'docs.x.ai/developers/pricing, сверено 2026-09-21, 1K resolution — ПРОВЕРИТЬ перед стройкой',
   },
   'gpt-5': {
     provider: 'OPENAI',

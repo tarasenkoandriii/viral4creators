@@ -21,6 +21,8 @@ import { TutorialScenarioModule } from '../tutorial-scenario/tutorial-scenario.m
 import { TutorialRunnerModule } from '../tutorial-runner/tutorial-runner.module';
 import { UiSnapshotModule } from '../ui-snapshot/ui-snapshot.module';
 import { ImageSketchModule } from '../image-sketch/image-sketch.module';
+import { AuctionModule } from '../auction/auction.module';
+import { PortfolioModule } from '../portfolio/portfolio.module';
 
 /**
  * CronModule
@@ -60,6 +62,13 @@ import { ImageSketchModule } from '../image-sketch/image-sketch.module';
   // ТЗ, «Фаза 1») — крон-обход интерфейса TMA и слежение за внешним
   // видом, отдельный крон-слот и от генерации сценариев, и от
   // исполнения (см. доккомментарий UiSnapshotModule).
+  // AuctionModule — за AuctionService.closeExpiredListings и
+  // AuctionAiAssessmentService.runTick (ТЗ на маркетплейс §22, Этапы
+  // 2–3) — закрытие лотов по дедлайну и ИИ-оценка заявок, тот же
+  // тик-приём, что у остальных /cron/*-run воркеров этого списка.
+  // Также LiveAuctionOrchestratorService.collapseInactiveStreams (ТЗ на
+  // живой аукцион §7.5, Этап 5) — авто-сворачивание трансляций без
+  // ставок, тот же тик-приём.
   // AdminAuthModule — за AdminSessionGuard для нового AdminCronController
   // (этап 69, ручной запуск кронов из админки). Лист графа модулей (сам
   // ничего не импортирует) — довесить его сюда не создаёт цикла, в
@@ -85,6 +94,8 @@ import { ImageSketchModule } from '../image-sketch/image-sketch.module';
     TutorialScenarioModule,
     TutorialRunnerModule,
     UiSnapshotModule,
+    AuctionModule,
+    PortfolioModule,
   ],
   controllers: [CronController, AdminCronController],
   providers: [CronJobsService, AdminCronService],

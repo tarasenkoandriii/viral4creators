@@ -261,6 +261,10 @@ model User {
   portfolioLikes     PortfolioLike[]
   moderatedPortfolio PortfolioItem[]  @relation("PortfolioModerator")
   creatorInquiries   CreatorInquiry[]
+  /// Аукцион (ТЗ на маркетплейс §22.1) — ставки, сделанные этим
+  /// пользователем как покупателем. Не связано с ролями Creator/Customer:
+  /// ставку может сделать любой залогиненный пользователь.
+  auctionBids        Bid[]
 
   /// Шестой аудит, Е-5.1: `users` — самая крупная и быстрее всего
   /// растущая таблица проекта, а индекса не имела ни одного, кроме
@@ -403,6 +407,10 @@ model Project {
   abTestRuns   AbTestRun[]
   productFeedImportRuns ProductFeedImportRun[]
   clientSiteTutorialDraft ClientSiteTutorialDraft?
+  /// Бриф ролика-поздравления (ТЗ TZ-Greeting-Video-Project-Type.md §3.2)
+  /// — только для `type = GREETING_VIDEO`, по тому же образцу, что
+  /// `clientSiteTutorialDraft` у `CLIENT_SITE`.
+  greetingBrief GreetingBrief?
 
   @@index([userId])
   @@index([brandManifestId])
@@ -419,6 +427,14 @@ enum ProjectType {
   /// §4.1, этап 111) — по-прежнему обычный `Project`, просто без
   /// `ProductItem`: всё специфичное живёт в `ClientSiteTutorialDraft`.
   CLIENT_SITE
+  /// Персонализированный ролик-поздравление (ТЗ
+  /// TZ-Greeting-Video-Project-Type.md §1) — по-прежнему обычный
+  /// `Project`, без `ProductItem`: бриф получателя живёт в
+  /// `GreetingBrief` (§3.2). Добавлено ОТДЕЛЬНОЙ миграцией
+  /// (20261130090000_project_type_greeting_video) — см. её доккомментарий
+  /// про запрет использовать новое значение enum в той же транзакции, где
+  /// оно добавлено (тот же приём, что уже применён для `CLIENT_SITE`).
+  GREETING_VIDEO
 }
 
 // Одна позиция (SKU) внутри проекта — ТЗ §2. Лимит на линейку (§7.3, 20
@@ -486,6 +502,79 @@ model ProductItem {
 enum ProductPriceSource {
   MANUAL // введена руками
   ANALOG // принята из цены одного из найденных аналогов
+}
+
+// ── GREETING_VIDEO ───────────────────────────────────────────────────────
+// ТЗ TZ-Greeting-Video-Project-Type.md §3.2.
+
+enum GreetingOccasion {
+  BIRTHDAY
+  WEDDING
+  ANNIVERSARY
+  NEW_YEAR
+  GRADUATION
+  CORPORATE // поздравление от компании (коллеге, клиенту, партнёру)
+  OTHER // повод не из списка — уточняется в customOccasionText
+}
+
+enum GreetingTone {
+  WARM // тёплый, душевный
+  FUNNY // с юмором
+  FORMAL // официальный (в основном для CORPORATE)
+}
+
+/// Бриф поздравительного ролика — аналог ProductItem для GREETING_VIDEO-
+/// проектов, но 1:1 к Project (не список карточек, как ProductItem у
+/// LINE): один проект-поздравление = одно поздравление одному получателю
+/// (§3.2, §3.3 — почему это не ProductItem с подменённым смыслом полей).
+model GreetingBrief {
+  id        String  @id @default(cuid())
+  projectId String  @unique
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  occasion           GreetingOccasion
+  customOccasionText String? // обязателен, если occasion = OTHER (валидация в DTO/сервисе, не в БД)
+
+  recipientName String // «Кому» — подставляется в промпт и в текст реплики
+  senderName    String? // «От кого» — озвучивается в конце, если задано
+  tone          GreetingTone @default(WARM)
+
+  /// Свободный текст поздравления, ЗАДАННЫЙ ПОЛЬЗОВАТЕЛЕМ. Если пусто —
+  /// сценарий генерируется автоматически по (occasion, recipientName,
+  /// tone) через prompt-модуль (§5.2), пользователь может отредактировать
+  /// черновик.
+  personalMessage String? @db.Text
+
+  /// Кто в кадре: 'grok' (референс-кадр + image-to-video, без говорящего
+  /// лип-синка, голос закадровый) или 'hedra' (говорящий аватар с
+  /// лип-синком под personalMessage). 'hedra' доступен ТОЛЬКО на тарифе
+  /// PREMIUM (§7) — сервис проверяет план пользователя при
+  /// создании/правке брифа и отклоняет 'hedra' на STANDARD/LITE (403), а
+  /// не подставляет тихую замену на grok.
+  presenterProvider String @default("grok")
+
+  /// Максимальное разрешение видео — тоже ограничено тарифом (§7):
+  /// STANDARD/LITE не выше '720p', PREMIUM — до '1080p'. Значения те же,
+  /// что уже принимает GrokVideoService.startGeneration({ resolution }) и
+  /// HedraClientService — не новый словарь (§11.3).
+  resolution String @default("720p")
+
+  /// Опционально — фирменный логотип/цветовая тема компании для
+  /// CORPORATE, переиспользует уже существующий BrandManifest (нет нового
+  /// понятия «бренда для поздравлений»).
+  brandManifestId String?
+  brandManifest   BrandManifest? @relation(fields: [brandManifestId], references: [id], onDelete: SetNull)
+
+  /// Опциональная дата события — НЕ дедлайн генерации (генерация всегда
+  /// сразу), а метаданные для будущей фичи «отложенная отправка
+  /// получателю» (§6.3, вне объёма этого ТЗ).
+  occasionDate DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([brandManifestId])
+  @@map("greeting_briefs")
 }
 
 // Результат поиска по фото (SerpApi Google Lens `visual_matches`, §6.1).
@@ -581,9 +670,26 @@ model BrandManifest {
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
-  projects   Project[]
-  characters BrandCharacter[]
-  scenes     BrandScene[]
+  /// Аукцион (ТЗ на маркетплейс §22.1, §22.6) — true после продажи связки
+  /// видео+брендбук на аукционе: исполнитель больше не может использовать
+  /// именно этот брендбук в новых работах. Выставляется только сервисом
+  /// при подтверждённой AuctionPayment, никогда напрямую пользователем.
+  isLocked Boolean @default(false)
+
+  projects        Project[]
+  characters      BrandCharacter[]
+  scenes          BrandScene[]
+  auctionListings AuctionListing[]
+  /// GREETING_VIDEO CORPORATE-поздравления, использующие этот манифест
+  /// (ТЗ TZ-Greeting-Video-Project-Type.md §5.4) — без этого поля
+  /// `prisma validate` отклонил бы схему (обратная сторона `brandManifest`
+  /// на `GreetingBrief` выше).
+  greetingBriefs  GreetingBrief[]
+  /// Виртуальная студия (ТЗ TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §2,
+  /// Этап 3) — ANALYSIS-фрагменты, аудитующие этот брендбук рядом с
+  /// видео. Без этого поля `prisma validate` отклонил бы схему (та же
+  /// причина, что у `auctionListings`/`greetingBriefs` выше).
+  virtualStudioFragments VirtualStudioFragment[]
 
   @@index([userId])
   @@index([youtubeChannelId])
@@ -1518,11 +1624,15 @@ enum PaymentMethod {
   WAYFORPAY
 }
 
-/// Что покупали — месячная подписка (меняет User.plan) или разовый пакет
-/// кредитов на генерацию (пополняет CreditLedger, plan не трогает).
+/// Что покупали — месячная подписка (меняет User.plan), разовый пакет
+/// кредитов на генерацию (пополняет CreditLedger, plan не трогает), или
+/// оплата выигранного лота на аукционе (ТЗ на маркетплейс §22, Этап 2 —
+/// см. AuctionPaymentService.applySuccess, единственная точка, где это
+/// применяется, чтобы не размазывать бизнес-логику по BillingService).
 enum PaymentPurpose {
   SUBSCRIPTION
   CREDIT_PACK
+  AUCTION
 }
 
 enum PaymentStatus {
@@ -1612,6 +1722,9 @@ model Payment {
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
 
   creditLedger CreditLedger[]
+  /// Аукцион (ТЗ на маркетплейс §22, Этап 2) — заполнена только для
+  /// purpose=AUCTION, обратная сторона AuctionPayment.paymentId.
+  auctionPayment AuctionPayment?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -2707,8 +2820,9 @@ model CreatorProfile {
   /// Доп. контакт, если Telegram-аккаунта по умолчанию недостаточно.
   contactHandle String?
 
-  socialLinks    CreatorSocialLink[]
-  portfolioItems PortfolioItem[]
+  socialLinks     CreatorSocialLink[]
+  portfolioItems  PortfolioItem[]
+  auctionListings AuctionListing[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2744,6 +2858,45 @@ enum PortfolioStatus {
   PENDING
   PUBLISHED
   REJECTED
+  /// Аукцион (ТЗ на маркетплейс §22.1) — победивший лот снимается с
+  /// публичной витрины после ПОДТВЕРЖДЁННОЙ оплаты (AuctionPayment), не
+  /// в момент выигрыша ставки. Публичные маршруты (§20) уже фильтруют
+  /// по PUBLISHED, поэтому SOLD автоматически исключается отовсюду
+  /// без отдельных правок в существующих запросах.
+  SOLD
+}
+
+/// Водяной знак на публичном превью (защита от пиратства, §9/§22) —
+/// вплавляется в пиксели через ffmpeg (common/watermark.ts), не
+/// накладывается в плеере: иначе достаточно взять videoUrl напрямую.
+enum WatermarkMode {
+  /// По умолчанию — имя площадки.
+  SITE_NAME
+  /// Свой текст исполнителя — см. PortfolioItem.watermarkText.
+  CUSTOM
+  /// Совсем без знака — единственный режим, который вообще не доходит
+  /// до ffmpeg-сервиса (PortfolioWatermarkService.runTick), платного
+  /// вызова просто не происходит.
+  NONE
+}
+
+enum WatermarkIntensity {
+  SLIGHT
+  STANDARD
+  STRONG
+}
+
+enum WatermarkStatus {
+  /// Ждёт своей очереди на крон-тик (PortfolioWatermarkService).
+  PENDING
+  /// Задача отправлена в ffmpeg-api, ждём готовности (jobId).
+  PROCESSING
+  READY
+  /// Публичные маршруты в этом случае отдают оригинал videoUrl — лучше
+  /// показать неотмеченное видео, чем оставить лот без превью вовсе.
+  FAILED
+  /// WatermarkMode.NONE — терминальный статус без единого вызова ffmpeg.
+  SKIPPED
 }
 
 model PortfolioItem {
@@ -2783,10 +2936,45 @@ model PortfolioItem {
   moderatedBy     User?   @relation("PortfolioModerator", fields: [moderatedById], references: [id])
   rejectionReason String?
 
+  /// Аукцион (ТЗ на маркетплейс §22.1) — заполняются только после
+  /// подтверждённой AuctionPayment, вместе с переходом status → SOLD.
+  /// Это те же данные, что показываются владельцу карточкой «Продано»
+  /// на /my-portfolio — превью без плеера, без публикации/редактирования.
+  soldAt    DateTime?
+  soldPrice Float?
+
+  /// Водяной знак на публичном превью — см. common/watermark.ts и
+  /// enum-и выше. Применяется одинаково и к обычной витрине, и к
+  /// аукциону (§22): AuctionListing ссылается на тот же PortfolioItem,
+  /// отдельных полей под аукцион заводить не нужно.
+  watermarkMode       WatermarkMode      @default(SITE_NAME)
+  /// Только когда watermarkMode = CUSTOM; иначе игнорируется.
+  watermarkText       String?
+  watermarkIntensity  WatermarkIntensity @default(STANDARD)
+  watermarkStatus     WatermarkStatus    @default(PENDING)
+  /// Готовый результат — публичные маршруты показывают его вместо
+  /// videoUrl, когда watermarkStatus = READY (см. PortfolioService/
+  /// AuctionService, публичные проекции).
+  watermarkedVideoUrl String?
+  /// jobId активной задачи ffmpeg-api, пока watermarkStatus = PROCESSING.
+  watermarkJobId      String?
+  /// Найдено при аудите watermark-пайплайна: раньше FAILED был
+  /// терминальным состоянием без единого пути назад — PortfolioWatermark-
+  /// Service.runTick() опрашивал только PENDING/PROCESSING, поэтому
+  /// временный сбой (сетевой сбой ffmpeg-api, разовая ошибка рендера)
+  /// оставлял ролик БЕЗ ЗНАКА на публичной витрине НАВСЕГДА — ровно то,
+  /// от чего вся эта система должна защищать (см. common/watermark.ts).
+  /// Счётчик попыток — то, чего не хватало, чтобы дать FAILED-записям
+  /// ограниченное число повторов с задержкой (см. PortfolioWatermark-
+  /// Service), не полагаясь на то, что исполнитель случайно заметит
+  /// подсказку в интерфейсе и вручную поменяет настройки знака.
+  watermarkAttempts   Int                @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  likes PortfolioLike[]
+  likes           PortfolioLike[]
+  auctionListings AuctionListing[]
 
   @@index([creatorProfileId, status])
   @@index([status, createdAt])
@@ -2806,6 +2994,271 @@ model PortfolioLike {
   @@unique([userId, portfolioItemId])
   @@index([portfolioItemId])
   @@map("portfolio_likes")
+}
+
+// ── Аукцион готовых видео (ТЗ на маркетплейс §22) ─────────────────────
+// Можно начинать независимо от Тендера (Фаза 2, остаётся отложен до
+// сигнала §19.4, отдельное ТЗ на бэкенд §2–§11) — свой лёгкий контур
+// оплаты (AuctionPayment), без Contract/Escrow «Сейф 5%». Постоянный
+// раздел витрины, не разовое событие: инициатор — Creator, не заказчик
+// (§22.1). Этап 1 (эта миграция) — только данные; очередь модерации,
+// ИИ-оценка, торги, платёж и Google Ads — отдельные последующие этапы.
+
+enum AuctionType {
+  /// До 48 часов, бейдж «🔥 Горящая цена» на витрине, комиссия 30% —
+  /// разница с STANDARD финансирует платное продвижение лота в Google
+  /// Ads (§22, раздел «Google Ads для блиц-лотов»).
+  BLITZ
+  /// 3–7 дней, комиссия 20%.
+  STANDARD
+}
+
+/// Валюта, в которой продавец хочет получить оплату (§22) — задаёт
+/// продавец при подаче заявки, все цены лота (startingPrice/
+/// reservePrice/buyNowPrice/Bid.amount) в ней же, без конвертации между
+/// участниками торгов: сравнение ставок должно быть однозначным, а не
+/// плавать по курсу. Зритель из другой страны видит информационную
+/// оценку в своей валюте (common/fx-rates.ts) — не более того; сам
+/// платёж всегда идёт в этой валюте через WayForPay.
+enum AuctionCurrency {
+  UAH
+  USD
+  EUR
+}
+
+enum AuctionListingStatus {
+  /// ИИ-оценка видео (и брендбука, если включён) + очередь оператора.
+  /// BLITZ — приоритет в очереди перед STANDARD (иначе модерационная
+  /// задержка съедала бы заметную часть 48-часового окна).
+  PENDING_MODERATION
+  /// Одобрен, но все 5 (или все 3 брендбук-эксклюзивных) мест на
+  /// витрине заняты — ждёт своей очереди на свободное место.
+  QUEUED
+  /// Получил свободное место: виден на /auctions, в sitemap.xml
+  /// (и sitemap-news.xml для BLITZ), принимает ставки.
+  ACTIVE
+  /// Наибольшая ставка (или Bid на buyNowPrice) удовлетворила
+  /// reservePrice — победитель определён, ждёт AuctionPayment.
+  WON
+  /// expiresAt прошёл без ставок, удовлетворяющих reservePrice —
+  /// включая случай, когда ставок не было вообще. Только для ACTIVE.
+  EXPIRED
+  /// Отклонён оператором на этапе модерации.
+  REJECTED
+  /// Исполнитель сам снял лот — в любой момент до WON.
+  WITHDRAWN
+}
+
+model AuctionListing {
+  id String @id @default(cuid())
+
+  creatorProfileId String
+  creatorProfile   CreatorProfile @relation(fields: [creatorProfileId], references: [id], onDelete: Cascade)
+
+  portfolioItemId String
+  /// Restrict, не Cascade/SetNull намеренно: удаление PortfolioItem,
+  /// на который ссылается WON-лот с AuctionPayment, стёрло бы финансовую
+  /// запись. Следующему этапу (сервисный слой) нужно самому решать,
+  /// когда withdrawPortfolioItem() блокировать — а не полагаться на то,
+  /// что схема просто разрешит/запретит удаление молча.
+  portfolioItem PortfolioItem @relation(fields: [portfolioItemId], references: [id], onDelete: Restrict)
+
+  /// Тот брендбук, по которому снято видео, если был — необязателен
+  /// независимо от includeBrandManifest ниже (можно указать «снято по
+  /// этому брендбуку» и не выставлять его на продажу).
+  brandManifestId String?
+  brandManifest   BrandManifest? @relation(fields: [brandManifestId], references: [id], onDelete: SetNull)
+
+  /// Явная галочка продавца — включать ли brandManifestId в сделку.
+  /// true ⇒ бейдж «Эксклюзив» на витрине, BrandManifest.isLocked → true
+  /// после AuctionPayment (§22.1).
+  includeBrandManifest Boolean @default(false)
+
+  /// Ещё одна галочка продавца, независимая от includeBrandManifest.
+  auctionType AuctionType @default(STANDARD)
+  /// Вычисляется из auctionType в момент перехода в ACTIVE: created +
+  /// 48ч (BLITZ) либо + 3..7 дней, выбранных продавцом (STANDARD).
+  /// null, пока заявка не покинула очередь (PENDING_MODERATION/QUEUED).
+  expiresAt DateTime?
+
+  /// Антиснайпер (ТЗ на живой аукцион §7.3) — явный чекбокс продавца при
+  /// подаче заявки, НЕ поведение по умолчанию для всех лотов (осознанное
+  /// отклонение от исходного ТЗ, где антиснайпер применялся ко всем
+  /// BLITZ-лотам безусловно): продавец сам решает, продлевать ли торги
+  /// на позднюю ставку. false по умолчанию — старое поведение (без
+  /// продления) для всех, кто явно не включил галочку.
+  antiSnipeEnabled Boolean @default(false)
+  /// Сколько раз реально продлился expiresAt антиснайпером — счётчик,
+  /// не сам факт включения (см. antiSnipeEnabled выше). Растёт только
+  /// при фактическом продлении в placeBid(), не на каждую позднюю
+  /// ставку (см. формулу там же).
+  extensions Int @default(0)
+
+  /// Живой аукцион (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §7,
+  /// Этап 5/ПРАВКА 1.4) — явное согласие ПРОДАВЦА при подаче заявки на
+  /// то, что лот МОЖЕТ быть выбран оператором для живой трансляции с
+  /// ИИ-ведущей (§7.4: голосовые подсказки озвучивают данные лота и ход
+  /// торгов — то есть чужой синтезированный голос комментирует именно
+  /// эту сделку продавца). Тот же приём, что antiSnipeEnabled выше —
+  /// явный чекбокс, не поведение по умолчанию. Без него
+  /// AuctionService.assignVirtualStudio отклоняет назначение студии,
+  /// даже если auctionType уже BLITZ. false по умолчанию.
+  liveStreamOptIn Boolean @default(false)
+
+  /// Живой аукцион (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §7,
+  /// Этап 5) — какая студия обслуживает эфир этого лота. Назначает
+  /// ОПЕРАТОР (админ) через POST /admin/auctions/:id/studio, а не сам
+  /// продавец: VirtualStudio — admin-only ресурс (§3), у продавца нет
+  /// доступа ни к его созданию, ни к выбору. Только из студий в статусе
+  /// READY с выбранным вариантом. Плюс два дополнительных условия
+  /// (ПРАВКА 1.4, §7.3 — открытый вопрос "BLITZ ли только" версии 1.2
+  /// теперь решён): auctionType лота обязан быть 'BLITZ', и
+  /// liveStreamOptIn выше обязан быть true — оба проверяются в сервисе,
+  /// не форсируются схемой.
+  virtualStudioId String?
+  virtualStudio   VirtualStudio? @relation(fields: [virtualStudioId], references: [id], onDelete: SetNull)
+
+  liveStreamActive    Boolean   @default(false)
+  liveStreamStartedAt DateTime?
+  liveStreamEndedAt   DateTime?
+
+  /// Только для BLITZ — заполняется при переходе в ACTIVE, обнуляется
+  /// при WON/EXPIRED/REJECTED/WITHDRAWN (§22, «Google Ads для
+  /// блиц-лотов»).
+  googleAdsCampaignId String?
+
+  /// ИИ-оценка видео от Gemini-пайплайна (§16, по образцу video-audit)
+  /// — сводка для оператора, не автоматическое решение.
+  aiAssessment String? @db.Text
+  /// Отдельный аудит брендбука, только если includeBrandManifest: true
+  /// — необратимость продажи брендбука требует отдельной проверки.
+  /// Оба поля выше видны не только оператору в очереди модерации, но и
+  /// самому исполнителю в его заявке (та же прозрачность, что уже есть
+  /// у rejectionReason на /my-portfolio, §9).
+  brandManifestAiAudit String? @db.Text
+
+  /// Валюта, в которой продавец хочет получить оплату — задаёт смысл
+  /// всех цен ниже (§22, защита от «плавающего» сравнения ставок).
+  payoutCurrency AuctionCurrency @default(UAH)
+
+  /// §22.6 — самозаявление исполнителя, что он имеет право продать это
+  /// видео эксклюзивно (не работа по заказу с неясными правами на
+  /// перепродажу и т.п.). Не проверка платформой — сама платформа
+  /// технически не может проверить владение правами; это лишь бумажный
+  /// след «когда исполнитель подтвердил». Открытый вопрос §22.6
+  /// (ответственность при вскрывшемся обмане) этим полем не закрывается,
+  /// только даёт что предъявить в споре. Устанавливается ровно один раз,
+  /// в момент подачи заявки — сервис отклоняет заявку без этого флага.
+  rightsConfirmedAt DateTime
+
+  /// Без верхнего предела — исполнитель сам оценивает шедевр (§22.4).
+  /// С неё стартуют торги. Int в МИНОРНЫХ единицах (копейки/центы) —
+  /// аудит-фикс: Float накапливал бы ошибку округления на денежном поле
+  /// (см. AUDIT-Auction-Money-Currency.md); совпадает с конвенцией
+  /// Payment.amount (BillingService/WayForPay), а не с Decimal(12,2),
+  /// который в этой схеме используется только для полей бюджета
+  /// проекта, не для реальных платежей. DTO/API остаются в МАЖОРНЫХ
+  /// единицах — конвертация только на границе Prisma (сервисный слой).
+  startingPrice Int
+  /// null = равен startingPrice; ставки ниже не приводят к продаже,
+  /// лот уходит в EXPIRED, даже если ставки были. Минорные единицы, см. startingPrice.
+  reservePrice Int?
+  /// Ставка на эту сумму сразу завершает торги (WON), минуя expiresAt.
+  /// Валидируется в сервисе: должна быть >= reservePrice. Минорные единицы, см. startingPrice.
+  buyNowPrice Int?
+
+  status AuctionListingStatus @default(PENDING_MODERATION)
+  /// Видна исполнителю (та же прозрачность, что у PortfolioItem.rejectionReason, §9).
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bids    Bid[]
+  payment AuctionPayment?
+
+  /// Живой аукцион (§7, Этап 5) — постоянный видео-фрагмент(ы), когда-либо
+  /// назначенные этому лоту (см. VirtualStudioFragment.liveAuctionListingId
+  /// ниже — одиночная ссылка, переназначаемая между лотами, не список
+  /// "нескольких видео сразу"), и подсказки озвучки эфира.
+  virtualStudioFragments VirtualStudioFragment[]
+  voiceCues              AuctionLiveVoiceCue[]
+
+  /// Бизнес-правило, не ограничение схемы: не более 5 одновременно
+  /// ACTIVE записей на весь сайт (не на исполнителя!), из них не более
+  /// 3 с includeBrandManifest: true — проверяется в сервисе при
+  /// переводе заявки в ACTIVE (из QUEUED в порядке очереди, BLITZ
+  /// первыми). Число временное — держит витрину насыщенной при
+  /// нынешнем малом спросе, не архитектурный потолок (§22.1).
+  @@index([status])
+  @@index([creatorProfileId])
+  @@index([portfolioItemId])
+  @@map("auction_listings")
+}
+
+/// Настоящие торги — покупатели соревнуются ставками за лот
+/// исполнителя, а не заказчик выбирает среди нескольких исполнителей
+/// (старая, отброшенная версия модели, §22.1). Победитель — по amount
+/// (или мгновенно при ставке на buyNowPrice), см. AuctionPayment ниже.
+model Bid {
+  id String @id @default(cuid())
+
+  listingId String
+  listing   AuctionListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  buyerId String
+  buyer   User   @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+
+  /// Минорные единицы (копейки/центы) — см. AuctionListing.startingPrice.
+  amount    Int
+  createdAt DateTime @default(now())
+
+  wonPayment AuctionPayment?
+  /// Живой аукцион (§7, Этап 5) — подсказка озвучки, спровоцированная этой ставкой (BID_STATS).
+  voiceCue AuctionLiveVoiceCue?
+
+  @@index([listingId])
+  @@index([buyerId])
+  @@map("auction_bids")
+}
+
+/// Развязка от тендера: НЕ Contract/Escrow из отдельного ТЗ на бэкенд
+/// §11.3 (тендерного «Сейф 5%», который остаётся отложен до сигнала
+/// §19.4) — свой минимальный контур. Одношаговый платёж через
+/// существующий транспорт billing (Telegram Stars/WayForPay), без
+/// депозита: риска недопоставки нет, товар уже готов и просмотрен.
+model AuctionPayment {
+  id String @id @default(cuid())
+
+  listingId String         @unique
+  /// Explicit Restrict (не default) — платёж не должен исчезнуть при
+  /// удалении лота, а лот не должен быть удаляемым, пока по нему есть
+  /// подтверждённый платёж. Совпадает буквально с migration.sql, чтобы
+  /// повторная генерация схемой не разошлась с уже применённой миграцией.
+  listing AuctionListing @relation(fields: [listingId], references: [id], onDelete: Restrict)
+
+  winningBidId String @unique
+  winningBid   Bid    @relation(fields: [winningBidId], references: [id], onDelete: Restrict)
+
+  /// Минорные единицы (копейки/центы) — см. AuctionListing.startingPrice. = выигравшая Bid.amount
+  amount Int
+  /// 30% для BLITZ, 20% для STANDARD, от AuctionListing.auctionType —
+  /// не Escrow.commission тендера (см. развязку выше). Минорные единицы.
+  commission Int
+  /// Ссылка на реальный Payment из billing (Этап 2 self-serve чек-аут,
+  /// WayForPay — см. BillingService.startAuctionCheckout). null, пока
+  /// покупатель не начал оплату; уникален — на один платёж один лот.
+  paymentId String?  @unique
+  /// Explicit SetNull (не default) — Payment "НЕ удаляется никогда"
+  /// (см. его собственный доккомментарий), но явно на случай если это
+  /// когда-то изменится: обнулить ссылку безопаснее, чем унести с собой
+  /// финансовую запись аукциона.
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  paidAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@map("auction_payments")
 }
 
 enum InquiryStatus {
@@ -2848,4 +3301,226 @@ model CreatorInquiry {
   @@index([customerId])
   @@index([status])
   @@map("creator_inquiries")
+}
+
+// Виртуальная студия (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §2,
+// Этап 1–3) — переиспользуемый набор «постоянный видеоряд + сменная
+// озвучка» для админского инструмента подготовки ИИ-ведущей. Привязка
+// к живому аукциону (virtualStudioId/liveStreamActive на AuctionListing,
+// AuctionLiveVoiceCue, §7 того же ТЗ, Этап 5) — см. блок ниже, после
+// VirtualStudioFragment.
+
+enum VirtualStudioFragmentKind {
+  VIDEO // image-to-video от референс-кадра (Grok или, если включено в настройках, Hedra)
+  VOICE // TTS-дорожка под текст реплики (Resemble по умолчанию, ElevenLabs)
+  ANALYSIS // текстовый результат Gemini-анализа видео/брендбука
+}
+
+enum VirtualStudioStatus {
+  DRAFT // ещё нет выбранного варианта
+  READY // вариант выбран, можно готовить фрагменты
+  ARCHIVED // скрыта из списка активных, но не удалена (история фрагментов сохраняется)
+}
+
+/// Переиспользуемая студия — аналог пары studioRefUrl/studioVariants из
+/// референсного проекта SilverFinance (liveStream.ts), но как отдельная
+/// сущность, а не колонки на другой модели — в viral4creators нет ещё
+/// другой сущности, к которой её стоило бы привязывать напрямую.
+model VirtualStudio {
+  id   String @id @default(cuid())
+  name String
+
+  /// Промпт референс-кадра по умолчанию — редактируется в админке перед
+  /// генерацией первого варианта.
+  refPrompt String
+
+  /// Выбранный вариант референс-кадра — денормализованная ссылка на
+  /// VirtualStudioVariant.id, чтобы удаление выбранного варианта было
+  /// видно через FK, а не проверкой JSON-списка.
+  selectedVariantId String?
+
+  status VirtualStudioStatus @default(DRAFT)
+
+  createdBy String // id оператора (admin user)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  variants  VirtualStudioVariant[]
+  fragments VirtualStudioFragment[]
+
+  /// Живой аукцион (§7, Этап 5) — лоты, которым назначена эта студия
+  /// (POST /admin/auctions/:id/studio). Обратная связь на
+  /// AuctionListing.virtualStudioId выше.
+  auctionListings AuctionListing[]
+
+  @@index([deletedAt])
+  @@map("virtual_studios")
+}
+
+/// Один сгенерированный вариант референс-кадра. Своя таблица (не
+/// JSON-колонка) — чтобы в админке можно было удалить конкретный
+/// вариант одним DELETE, а не перезаписывать весь блоб.
+model VirtualStudioVariant {
+  id       String        @id @default(cuid())
+  studioId String
+  studio   VirtualStudio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  imageUrl String
+  /// Фактически использованный промпт (мог отличаться от studio.refPrompt,
+  /// если оператор правил перед повторной генерацией).
+  prompt String
+
+  createdAt DateTime @default(now())
+
+  @@index([studioId])
+  @@map("virtual_studio_variants")
+}
+
+/// Один готовый (или готовящийся) фрагмент студии — один из трёх типов
+/// VirtualStudioFragmentKind.
+model VirtualStudioFragment {
+  id       String        @id @default(cuid())
+  studioId String
+  studio   VirtualStudio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  /// Для VIDEO — с какого варианта анимирован (image-to-video); для
+  /// VOICE/ANALYSIS обычно null.
+  variantId String?
+  variant   VirtualStudioVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  kind VirtualStudioFragmentKind
+
+  /// Тот же приём, что у Session.status: String-колонка, валидируемая на
+  /// уровне приложения уже существующим TS-энумом GenerationStatus
+  /// (common/types/generation.types.ts: PENDING/PROCESSING/COMPLETE/FAILED) —
+  /// не заводим отдельный Prisma-энум ради того же самого словаря.
+  status String @default("pending")
+
+  /// Провайдер: VIDEO → 'grok' | 'hedra'; VOICE → 'resemble' | 'elevenlabs'
+  /// (те же ключи, что VoiceoverProviderKey в tts/default-tts-provider.ts);
+  /// ANALYSIS → 'gemini'.
+  provider String
+
+  /// Только для VOICE с provider='resemble'|'elevenlabs' — voiceId из
+  /// каталога TtsProvider.voices().
+  voiceId String?
+
+  /// Текст реплики (VOICE) или видео-промпт (VIDEO); для ANALYSIS — входной
+  /// вопрос/инструкция анализа.
+  text String? @db.Text
+
+  /// Для ANALYSIS — что анализируем: URL видео (свой фрагмент или
+  /// произвольный ролик из портфолио), и опционально brandManifestId.
+  sourceVideoUrl  String?
+  brandManifestId String?
+  /// Обратная связь на BrandManifest.virtualStudioFragments — без неё
+  /// `prisma validate` отказал бы этот relation (та же причина, что у
+  /// BrandManifest.auctionListings).
+  brandManifest BrandManifest? @relation(fields: [brandManifestId], references: [id], onDelete: SetNull)
+
+  /// Результат: VIDEO → resultUrl (mp4), VOICE → resultUrl (mp3),
+  /// ANALYSIS → resultText (сводка + черновик сценария).
+  resultUrl  String?
+  resultText String? @db.Text
+
+  /// Найдено при реализации: ни ТЗ §2, ни SilverFinance (там опрос идёт
+  /// по колонке самой Auction/студии, не по отдельной таблице
+  /// фрагментов) не заводят место для id асинхронной задачи у
+  /// провайдера — а поллинг статуса (Grok `request_id`, Hedra `job_id`,
+  /// тот же приём, что `AvatarVideo.providerJobId` в
+  /// `common/types/actors.types.ts`) без него невозможен. Только для
+  /// VIDEO (Grok/Hedra) — VOICE/ANALYSIS синхронны и заполняют
+  /// resultUrl/resultText сразу, статус им не опрашивается.
+  providerJobId String?
+
+  durationSec  Int?
+  errorMessage String?
+
+  createdAt DateTime  @default(now())
+  readyAt   DateTime?
+
+  /// Живой аукцион (§7, Этап 5) — какой лот СЕЙЧАС использует этот
+  /// VIDEO-фрагмент как постоянный видеоряд эфира (§7.1: видео одно и
+  /// постоянно на всё время эфира, меняется только озвучка поверх).
+  /// Одиночная nullable-ссылка, не список: в любой момент времени
+  /// фрагмент обслуживает не более одного живого эфира — "переиспользование
+  /// разными лотами" означает переназначение этого поля оператором
+  /// (POST /admin/auctions/:id/studio), а не одновременную привязку
+  /// к нескольким лотам сразу. Применимо только к kind=VIDEO записям
+  /// (для VOICE/ANALYSIS всегда null), но схема этого не форсирует —
+  /// проверяется в сервисе (AuctionService.assignVirtualStudio).
+  liveAuctionListingId String?
+  liveAuctionListing   AuctionListing? @relation(fields: [liveAuctionListingId], references: [id], onDelete: SetNull)
+
+  /// Обратная связь на AuctionLiveVoiceCue.voiceFragment (§7.2) — на
+  /// практике почти всегда 0 или 1 запись (каждая подсказка синтезирует
+  /// свой собственный VOICE-фрагмент, см. LiveAuctionOrchestratorService),
+  /// но связь объявлена как в схеме Prisma положено для @relation без
+  /// @unique на другой стороне — списком, не единичной ссылкой.
+  liveVoiceCues AuctionLiveVoiceCue[]
+
+  @@index([studioId])
+  @@index([kind, status])
+  @@index([liveAuctionListingId])
+  @@map("virtual_studio_fragments")
+}
+
+/// Живой аукцион (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §7,
+/// Этап 5) — превращает статичную карточку BLITZ-лота в трансляцию:
+/// постоянное видео (VirtualStudioFragment kind=VIDEO, назначенное лоту
+/// через liveAuctionListingId выше) + меняющаяся озвучка поверх (§7.1).
+/// Ничего из этого не переиспользует старую механику ставок §22 —
+/// AuctionService.placeBid()/promoteNextQueued() уже существуют и
+/// дополнены хуками на LiveAuctionOrchestratorService, не переписаны.
+
+enum VoiceCueKind {
+  LOT_DESC // описание лота (автор, категория, цена) — pregen
+  INVITE // приглашение ставить — pregen
+  PRAISE // имиджевый клип про viral4creators — pregen
+  BID_STATS // число участников со ставками + сумма последней ставки — событие (на каждую ставку)
+}
+
+enum VoiceCueTrigger {
+  PREGEN
+  BID
+}
+
+/// Одна запись — один момент эфира, когда поверх постоянного видео (§7.1)
+/// звучит одна реплика. Видео не хранится здесь отдельным полем — оно
+/// одно и постоянно на весь эфир (см. VirtualStudioFragment.liveAuctionListingId),
+/// меняется только voiceFragment.
+model AuctionLiveVoiceCue {
+  id        String @id @default(cuid())
+  listingId String
+  listing   AuctionListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  seq         Int             // порядок в подсказках этого лота — назначается сериализованно (pg_advisory_xact_lock), см. LiveAuctionOrchestratorService.reserveSeq
+  kind        VoiceCueKind
+  triggeredBy VoiceCueTrigger @default(PREGEN)
+
+  /// Ставка, спровоцировавшая подсказку — только для BID_STATS.
+  /// @unique — Bid.voiceCue объявлен единичной ссылкой (не списком), а
+  /// не массивом: одна ставка провоцирует не более одной BID_STATS-
+  /// подсказки, так что связь честно 1:1, не 1:many.
+  bidId String? @unique
+  bid   Bid?    @relation(fields: [bidId], references: [id], onDelete: SetNull)
+
+  /// Сама аудиодорожка — переиспользует VirtualStudioFragment kind=VOICE,
+  /// не свою колонку, чтобы озвучка шла через тот же пайплайн синтеза,
+  /// что и голосовые фрагменты в админке (§4.3, TtsProviderResolverService).
+  /// null, пока синтез не завершился (status='pending') или если он
+  /// провалился (status='failed').
+  voiceFragmentId String?
+  voiceFragment   VirtualStudioFragment? @relation(fields: [voiceFragmentId], references: [id], onDelete: SetNull)
+
+  /// Та же строка GenerationStatus, что у VirtualStudioFragment.status.
+  status String @default("pending")
+
+  createdAt DateTime @default(now())
+  readyAt   DateTime?
+
+  @@unique([listingId, seq])
+  @@index([listingId])
+  @@map("auction_live_voice_cues")
 }

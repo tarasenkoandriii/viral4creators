@@ -104,6 +104,53 @@ export interface PortfolioCollectionSummary {
   itemCount: number;
 }
 
+/**
+ * Аукцион готовых видео (ТЗ на маркетплейс §22) — постоянный раздел
+ * витрины, не разовое событие (см. §22.1). Публичные маршруты отдают
+ * только ACTIVE-лоты; резерв не показывается буквально (только факт
+ * «резерв не достигнут» постфактум для WON/EXPIRED, которые сюда не
+ * попадают вовсе — §22, «Три разные цены»).
+ */
+export interface PublicAuctionListing {
+  id: string;
+  creatorProfileId: string;
+  creatorDisplayName: string | null;
+  portfolioItemId: string;
+  title: string;
+  videoUrl: string;
+  thumbnailUrl: string | null;
+  isExclusiveBundle: boolean;
+  auctionType: 'BLITZ' | 'STANDARD';
+  payoutCurrency: 'UAH' | 'USD' | 'EUR';
+  startingPrice: number;
+  buyNowPrice: number | null;
+  highestBidAmount: number | null;
+  bidCount: number;
+  expiresAt: string;
+  /** Антиснайпер (§7.3) — включён продавцом явным чекбоксом при подаче заявки, не по умолчанию. */
+  antiSnipeEnabled: boolean;
+  /** Сколько раз уже продлевались торги — сигнал активности лота. */
+  extensions: number;
+}
+
+/**
+ * Живой аукцион (Этап 5/6, ТЗ §7/§7.8) — снимок эфира для JSON-LD
+ * `BroadcastEvent` и (в будущем) для плеера трансляции. `videoUrl`
+ * здесь — постоянный видео-фрагмент студии, НЕ `PublicAuctionListing.
+ * videoUrl` (это ролик самого лота из портфолио) — разные вещи.
+ */
+export interface PublicAuctionLiveState {
+  listingId: string;
+  status: string;
+  liveStreamActive: boolean;
+  liveStreamStartedAt: string | null;
+  expiresAt: string | null;
+  highestBidAmount: number | null;
+  bidCount: number;
+  videoUrl: string | null;
+  cues: Array<{ id: string; seq: number; kind: string; audioUrl: string; createdAt: string }>;
+}
+
 /** Единый конверт { success, data } у всего API — тот же приём, что в landing. */
 async function fetchJson<T>(path: string, revalidate: number): Promise<T | null> {
   try {
@@ -186,4 +233,42 @@ export async function getCollectionItems(tag: string): Promise<PublicPortfolioIt
     PROFILE_REVALIDATE_SECONDS,
   );
   return data ?? [];
+}
+
+/**
+ * Короткое окно ревалидации (как у sitemap — ТЗ §22): ставки и статус
+ * лота должны отражаться быстро, не за 5 минут общего каталога.
+ */
+export async function getAuctionListings(): Promise<PublicAuctionListing[]> {
+  const data = await fetchJson<PublicAuctionListing[]>('/auctions', PROFILE_REVALIDATE_SECONDS);
+  return data ?? [];
+}
+
+/** §22 «не должна оставлять мёртвые публичные ссылки» — не-ACTIVE лот отдаёт 404 на бэкенде, здесь просто null. */
+export async function getAuctionListing(id: string): Promise<PublicAuctionListing | null> {
+  return fetchJson<PublicAuctionListing>(`/auctions/${id}`, PROFILE_REVALIDATE_SECONDS);
+}
+
+/**
+ * Живой аукцион (Этап 6, ТЗ §7.8) — короткое окно ревалидации: JSON-LD
+ * `BroadcastEvent.isLiveBroadcast` должен переключаться на `false`
+ * вскоре после реального конца эфира, а не через PROFILE_REVALIDATE_
+ * SECONDS (60с — тоже приемлемо для этой цели, но здесь важнее не
+ * отставать от `getAuctionListing`, у которой то же окно, чем экономить
+ * запрос). Не критично, если бэкенд недоступен на билде/ревалидации —
+ * `fetchJson` уже это отражает как `null`, страница лота просто не
+ * получит разметку эфира в этот раз (не 500).
+ */
+export async function getAuctionLiveState(id: string): Promise<PublicAuctionLiveState | null> {
+  // Аудит L-5: раньше здесь стоял PROFILE_REVALIDATE_SECONDS (60 с) —
+  // константа, выбранная для профилей и портфолио, где минута свежести
+  // разумна. Состояние ЖИВОГО эфира унаследовало её по соседству, и из
+  // этого же ответа строится JSON-LD BroadcastEvent на странице лота:
+  // до минуты после сворачивания эфира поисковик продолжал получать
+  // `isLiveBroadcast: true`, а `endDate` — значение минутной давности,
+  // хотя его двигает антиснайпер (§7.3). Ровно ради своевременности
+  // этой разметки заведён Indexing API, так что кеш тут обесценивал
+  // соседнюю работу. Зрителю это было незаметно (клиентский опрос
+  // поправляет картинку за 4 с) — ошибку видел только Google.
+  return fetchJson<PublicAuctionLiveState>(`/auctions/${id}/state`, 0);
 }

@@ -26,6 +26,7 @@ export type Route =
   | { name: 'feed-import-start'; projectId: string }
   | { name: 'feed-import'; projectId: string; runId: string }
   | { name: 'site-tutorial'; projectId: string }
+  | { name: 'greeting-video'; projectId: string }
   | { name: 'generate' }
   | { name: 'postprod' }
   | { name: 'postprod-video'; sessionId: string }
@@ -102,6 +103,13 @@ export function parseRoute(hash: string): Route {
     if (parts[2] === 'site-tutorial') {
       return { name: 'site-tutorial', projectId: parts[1] };
     }
+    // GREETING_VIDEO (ТЗ TZ-Greeting-Video-Project-Type.md) — тот же
+    // приём, что site-tutorial: один маршрут/визард на весь путь
+    // (бриф → референсы → сценарий → видео), состояния определяются
+    // тем, что уже есть у проекта/сессии, а не сегментами адреса.
+    if (parts[2] === 'greeting-video') {
+      return { name: 'greeting-video', projectId: parts[1] };
+    }
     if (parts[2] === 'feed-import') {
       return { name: 'feed-import-start', projectId: parts[1] };
     }
@@ -165,6 +173,8 @@ export const routes = {
     `/projects/${projectId}/ab-test/${runId}`,
   feedImportStart: (projectId: string) => `/projects/${projectId}/feed-import`,
   siteTutorial: (projectId: string) => `/projects/${projectId}/site-tutorial`,
+  greetingVideo: (projectId: string) =>
+    `/projects/${projectId}/greeting-video`,
   feedImport: (projectId: string, runId: string) =>
     `/projects/${projectId}/feed-import/${runId}`,
   generate: () => '/generate',

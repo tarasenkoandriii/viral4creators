@@ -10,8 +10,19 @@
 
 /** `CLIENT_SITE` — обучалка по сайту заказчика (этап 111 завёл значение
  * в БД, этап 115 — путь пользователя к нему). У такого проекта нет
- * `ProductItem` вообще: «товар» здесь — чужой сайт. */
-export type ProjectType = 'SINGLE' | 'LINE' | 'CLIENT_SITE';
+ * `ProductItem` вообще: «товар» здесь — чужой сайт.
+ *
+ * `GREETING_VIDEO` — персонализированный ролик-поздравление (ТЗ
+ * TZ-Greeting-Video-Project-Type.md §1). Тоже без `ProductItem` — бриф
+ * получателя живёт в `GreetingBrief` (common/types/greeting.types.ts).
+ *
+ * ВНИМАНИЕ (§3.1/§9 ТЗ, риск §11.1): это значение продублировано ЗДЕСЬ и
+ * в `prisma/schema.prisma`'s `enum ProjectType` — два независимых
+ * источника истины для одного набора значений. Новое значение enum
+ * обязано попасть в оба файла одним PR, иначе Prisma примет из БД
+ * значение, которого нет в этом узком union-типе.
+ */
+export type ProjectType = 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO';
 
 export type ProductPriceSource = 'MANUAL' | 'ANALOG';
 

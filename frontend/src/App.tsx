@@ -39,6 +39,7 @@ import { CatalogBatchProgressScreen } from './features/projects/CatalogBatchProg
 import { AbTestProgressScreen } from './features/projects/AbTestProgressScreen';
 import { FeedImportStartScreen } from './features/projects/FeedImportStartScreen';
 import { ClientSiteWizard } from './features/projects/ClientSiteWizard';
+import { GreetingVideoWizard } from './features/projects/GreetingVideoWizard';
 import { FeedImportProgressScreen } from './features/projects/FeedImportProgressScreen';
 import { ManifestsListScreen } from './features/brand/ManifestsListScreen';
 import { ManifestScreen } from './features/brand/ManifestScreen';
@@ -346,6 +347,12 @@ function App() {
           )}
           {route.name === 'site-tutorial' && (
             <ClientSiteWizard projectId={route.projectId} />
+          )}
+          {route.name === 'greeting-video' && (
+            <GreetingVideoWizard
+              key={route.projectId}
+              projectId={route.projectId}
+            />
           )}
           {route.name === 'feed-import-start' && (
             <FeedImportStartScreen

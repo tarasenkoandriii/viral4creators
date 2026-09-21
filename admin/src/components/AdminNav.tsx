@@ -25,6 +25,7 @@ const NAV: NavEntry[] = [
       ['/shared-videos', 'Публичные страницы'],
       ['/creator-profiles', 'Маркетплейс: исполнители'],
       ['/portfolio-items', 'Маркетплейс: модерация портфолио'],
+      ['/auctions', 'Маркетплейс: модерация аукциона'],
       ['/library', 'Библиотека'],
       ['/blog', 'Блог'],
     ],
@@ -47,6 +48,7 @@ const NAV: NavEntry[] = [
       ['/ab-tests', 'A/B-варианты'],
       ['/feed-imports', 'Импорт фида'],
       ['/actors', 'AI-аватар (пилот)'],
+      ['/virtual-studio', 'Виртуальная студия'],
     ],
   },
   {

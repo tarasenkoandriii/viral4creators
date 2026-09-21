@@ -216,6 +216,101 @@ export class CronController {
   }
 
   /**
+   * GET /api/cron/auction-close — закрытие аукционных лотов по дедлайну
+   * (ТЗ на маркетплейс §22, Этап 2). Каждые 1-2 минуты
+   * (`backend/vercel.json`) — тот же непроверенный в этой песочнице лимит
+   * числа кронов, что у `/cron/feed-import-run` и соседних тик-воркеров.
+   *
+   * Частота — компромисс: BLITZ-лот (48ч) не обязан закрываться секунда
+   * в секунду, но и раз в сутки для него было бы грубо; тот же тик, что
+   * у остальных воркеров, тикающих раз в 2 минуты, а не отдельная более
+   * редкая частота ради одного нового маршрута.
+   */
+  @Get('auction-close')
+  async auctionCloseCron(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'auction-close',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runAuctionClose(),
+    );
+  }
+
+  /**
+   * GET /api/cron/auction-assess — ИИ-оценка одной заявки за тик (ТЗ на
+   * маркетплейс §22, Этап 3). Тот же тик раз в 2 минуты, что у остальных
+   * тик-воркеров этого списка (catalog-batch-run/ui-snapshot-run тоже
+   * платные внешние вызовы на каждый тик — этот не исключение из
+   * уже принятого в проекте компромисса) — не пустой тик, если
+   * очередь пуста (см. runTick), лишнего расхода при простое нет.
+   */
+  @Get('auction-assess')
+  async auctionAssessCron(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'auction-assess',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runAuctionAssess(),
+    );
+  }
+
+  /**
+   * GET /api/cron/auction-google-ads-sync — подстраховка паузы Google
+   * Ads-кампаний блиц-лотов (аудит-фикс GoogleAdsService/AuctionService,
+   * §22). Тот же тик раз в 2 минуты, что у остальных тик-воркеров этого списка —
+   * пустой тик (нет терминальных лотов с незакрытой кампанией) ничего
+   * не стоит, см. AuctionService.reconcileGoogleAdsCampaigns.
+   */
+  @Get('auction-google-ads-sync')
+  async auctionGoogleAdsSyncCron(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'auction-google-ads-sync',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runAuctionGoogleAdsSync(),
+    );
+  }
+
+  /**
+   * GET /api/cron/live-auction-tick — авто-сворачивание живых трансляций
+   * аукциона без ставок (ТЗ на живой аукцион §7.5, Этап 5). Тот же тик
+   * раз в 2 минуты, что у остальных тик-воркеров этого списка —
+   * пустой тик (нет трансляций без активности) ничего не стоит, см.
+   * LiveAuctionOrchestratorService.collapseInactiveStreams.
+   */
+  @Get('live-auction-tick')
+  async liveAuctionTickCron(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'live-auction-tick',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runLiveAuctionTick(),
+    );
+  }
+
+  /**
+   * GET /api/cron/portfolio-watermark — вплавление водяного знака в
+   * превью портфолио/аукциона (ТЗ на маркетплейс §9/§22, защита от
+   * пиратства). Тот же тик раз в 2 минуты, что у остальных тик-воркеров этого
+   * списка — WatermarkMode.NONE ничего не стоит на пустых тиках (см.
+   * доккомментарий PortfolioWatermarkService).
+   */
+  @Get('portfolio-watermark')
+  async portfolioWatermarkCron(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'portfolio-watermark',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runPortfolioWatermark(),
+    );
+  }
+
+  /**
    * GET /api/cron/export-sync-run — крон-аналог `advanceGenerating()` для
    * автоэкспорта яруса B (этап 76, Е-2.3 шестого аудита). Каждые 1-2
    * минуты (`backend/vercel.json`) — одиннадцатый крон-слот подряд, тот

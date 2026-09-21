@@ -48,6 +48,7 @@ import type {
   BrandManifestSummaryView,
   BrandManifestView,
   CountryOption,
+  CreateGreetingBriefInput,
   ItemDeletePreview,
   JsonObject,
   ProcessPhotoResult,
@@ -161,9 +162,15 @@ export async function createProject(input: {
   title: string;
   /** Необязателен только для `CLIENT_SITE` (§4.1): у проекта «сайт
    * заказчика» нет ни товара, ни цены, и страна там ничего не считает —
-   * сервер подставляет её сам, чтобы не ставить лишний шаг на входе. */
+   * сервер подставляет её сам, чтобы не ставить лишний шаг на входе.
+   * Для GREETING_VIDEO страна ОБЯЗАТЕЛЬНА (как у SINGLE/LINE) — сервер
+   * (`resolveCountryCode`) отклонит запрос без неё. */
   countryCode?: string;
   brandManifestId?: string;
+  /** Обязателен, когда `type === 'GREETING_VIDEO'` (ТЗ
+   * TZ-Greeting-Video-Project-Type.md §4.1/§8); игнорируется остальными
+   * тремя типами. */
+  greetingBrief?: CreateGreetingBriefInput;
 }): Promise<ProjectView> {
   return unwrap(await api.post<ProjectView>('/projects', input), 'project');
 }

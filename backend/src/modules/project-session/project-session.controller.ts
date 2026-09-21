@@ -68,6 +68,41 @@ export class ProjectSessionController {
   }
 }
 
+/**
+ * GREETING_VIDEO counterpart of ProjectSessionController above — no
+ * ProductItem for this project type, so the Session starts from the
+ * project's GreetingBrief instead (ТЗ TZ-Greeting-Video-Project-Type.md
+ * §4.3, see ProjectSessionService.createFromGreetingBrief doc-comment for
+ * why this route exists even though §8's endpoint table doesn't list it).
+ */
+@Controller('projects/:projectId/greeting-brief/sessions')
+@UseGuards(TelegramIdentityGuard)
+export class GreetingBriefSessionController {
+  constructor(private readonly service: ProjectSessionService) {}
+
+  @Post()
+  async create(
+    @Req() req: IdentifiedRequest,
+    @Param('projectId') projectId: string,
+    @Body() dto: CreateSessionFromItemRequestDto,
+  ): Promise<{ sessionId: string; session: Session }> {
+    const session = await this.service.createFromGreetingBrief(
+      req.telegramUserId,
+      projectId,
+      dto?.locale,
+    );
+    return { sessionId: session.sessionId, session };
+  }
+
+  @Get()
+  list(
+    @Req() req: IdentifiedRequest,
+    @Param('projectId') projectId: string,
+  ): Promise<ItemSessionSummary[]> {
+    return this.service.listForGreetingBrief(req.telegramUserId, projectId);
+  }
+}
+
 @Controller('sessions/:sessionId/brand-manifest')
 export class SessionBrandManifestController {
   constructor(private readonly service: ProjectSessionService) {}

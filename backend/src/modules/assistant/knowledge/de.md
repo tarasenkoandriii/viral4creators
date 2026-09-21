@@ -1,6 +1,6 @@
 # Wissensdatenbank des viral4creators-KI-Beraters
 
-_Собрано автоматически 2026-09-18 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-21 из lending/frontend/backend; коммит — local._
 
 ## Bereiche der Mini-App
 
@@ -113,17 +113,17 @@ Alle Tarife sind derzeit kostenlos und werden vom Nutzer selbst in der Mini-App 
 
 ### Lite
 Разбор референса и генерация ролика в 16:9 или 9:16 — самый короткий путь от примера к результату.
-KI-Skizze statt des Bildes
+KI-Skizze statt des Bildes, Grußvideo
 16:9/9:16 only
 
 ### Standard
 Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.
-Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes
+Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes, Grußvideo
 any aspect ratio
 
 ### Premium
 Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
-Bibliothek fertiger Analysen, Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Synchronisation (modelleigene Stimme vollständig ersetzt), Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes
+Bibliothek fertiger Analysen, Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Synchronisation (modelleigene Stimme vollständig ersetzt), Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes, Grußvideo
 any aspect ratio
 
 ## Pipeline-Regeln
