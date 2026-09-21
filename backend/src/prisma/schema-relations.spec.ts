@@ -11,15 +11,22 @@
  * упала с P1012 на `prisma generate`, и до этого момента ни один тест
  * ничего не заметил.
  *
- * Проверяются две вещи, обе — ошибки уровня «generate не пройдёт»:
+ * Проверяется три вещи:
  *
  *  1. у каждой связи есть обе стороны (P1012, «missing an opposite
  *     relation field»);
  *  2. `@relation(fields: [...])` ссылается на реально существующие
- *     скалярные поля той же модели.
+ *     скалярные поля той же модели;
+ *  3. ручные зеркала enum-ов в `admin/src/lib/types.ts` совпадают со
+ *     схемой. Админка держит их синхронными РУКАМИ (так и написано в
+ *     самом файле), связи между ними никакой нет, и расхождение
+ *     обнаруживается либо отказом сборки, либо сырым значением enum-а
+ *     на экране оператора. Оба случая уже случались: `PaymentPurpose`
+ *     обзавёлся `AUCTION` и уронил `vercel build`, а `SubscriptionStatus`
+ *     тихо потерял `RENEWING` и показывал оператору необработанное слово.
  *
  * Это НЕ замена `prisma validate` — правил в схеме кратно больше. Это
- * дешёвый заслон от того класса ошибок, который уже один раз доехал до
+ * дешёвый заслон от того класса ошибок, который уже дважды доехал до
  * прода.
  */
 
@@ -134,5 +141,65 @@ describe('prisma/schema.prisma — связи', () => {
       }
     }
     expect(dangling).toEqual([]);
+  });
+});
+
+describe('ручные зеркала enum-ов в админке', () => {
+  const ADMIN_TYPES_PATH = join(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    'admin',
+    'src',
+    'lib',
+    'types.ts',
+  );
+
+  /** Перечисления схемы: имя → значения. */
+  function schemaEnums(source: string): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const m of source.matchAll(/^enum\s+(\w+)\s*\{([\s\S]*?)^\}/gm)) {
+      out.set(
+        m[1],
+        m[2]
+          .split('\n')
+          .map((l) => l.replace(/\/\/.*/, '').trim())
+          .filter(Boolean),
+      );
+    }
+    return out;
+  }
+
+  /**
+   * Зеркала: только те псевдонимы админки, ИМЯ которых совпадает с
+   * именем перечисления схемы. Списка вручную нет намеренно — иначе он
+   * сам станет ещё одним местом, которое надо синхронизировать.
+   */
+  function adminMirrors(source: string): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const m of source.matchAll(
+      /^export type (\w+) =\s*((?:\s*\|?\s*'[^']*')+);/gm,
+    )) {
+      out.set(
+        m[1],
+        [...m[2].matchAll(/'([^']*)'/g)].map((x) => x[1]),
+      );
+    }
+    return out;
+  }
+
+  const enums = schemaEnums(readFileSync(SCHEMA_PATH, 'utf8'));
+  const mirrors = adminMirrors(readFileSync(ADMIN_TYPES_PATH, 'utf8'));
+  const mirrored = [...mirrors.keys()].filter((name) => enums.has(name));
+
+  it('зеркала вообще нашлись — иначе проверка ниже пуста', () => {
+    expect(mirrored.length).toBeGreaterThan(5);
+  });
+
+  it.each(mirrored)('%s совпадает со схемой', (name) => {
+    expect([...(mirrors.get(name) as string[])].sort()).toEqual(
+      [...(enums.get(name) as string[])].sort(),
+    );
   });
 });

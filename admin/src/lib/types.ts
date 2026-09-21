@@ -460,7 +460,7 @@ export interface AdminUserDetail extends AdminUserSummary {
 // в карточке пользователя) — держать в синхроне вручную.
 
 export type PaymentMethod = 'STARS' | 'WAYFORPAY';
-export type PaymentPurpose = 'SUBSCRIPTION' | 'CREDIT_PACK';
+export type PaymentPurpose = 'SUBSCRIPTION' | 'CREDIT_PACK' | 'AUCTION';
 export type PaymentStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED' | 'REFUNDED';
 
 export interface AdminPaymentRow {
@@ -509,7 +509,11 @@ export interface AdminBroadcastListResult {
   activeSubscribers: number;
 }
 
-export type SubscriptionStatus = 'ACTIVE' | 'PAST_DUE' | 'CANCELED';
+export type SubscriptionStatus =
+  | 'ACTIVE'
+  | 'PAST_DUE'
+  | 'CANCELED'
+  | 'RENEWING';
 
 // ── Пакетная генерация по каталогу (ТЗ §44, этап 65) ───────────────────
 // Модель backend/src/modules/admin-panel/admin-catalog-batch.service.ts —

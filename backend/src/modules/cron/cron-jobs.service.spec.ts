@@ -281,6 +281,27 @@ function build() {
   const imageSketch = {
     runCleanupTick: jest.fn().mockResolvedValue({ expired: 0, purged: 0 }),
   };
+  // Джобы маркетплейса и живого эфира (auction-close/assess/
+  // google-ads-sync, live-auction-tick, portfolio-watermark) — их не
+  // было в этом моке, хотя в сервисе они уже объявлены.
+  const auctionService = {
+    closeExpiredListings: jest.fn().mockResolvedValue({ closed: 0 }),
+    reconcileGoogleAdsCampaigns: jest
+      .fn()
+      .mockResolvedValue({ paused: 0, stillStuck: 0 }),
+  };
+  const auctionAiAssessment = {
+    runTick: jest.fn().mockResolvedValue({ assessed: false }),
+  };
+  const liveAuctionOrchestrator = {
+    collapseInactiveStreams: jest
+      .fn()
+      .mockResolvedValue({ collapsed: 0, reapedStalePendingCues: 0 }),
+  };
+  const portfolioWatermark = {
+    runTick: jest.fn().mockResolvedValue({ processed: 0, failed: 0 }),
+  };
+
   const service = new CronJobsService(
     sessionService as never,
     projectService as never,
@@ -303,11 +324,19 @@ function build() {
     tutorialScenarioRunner as never,
     uiSnapshotRunner as never,
     imageSketch as never,
+    auctionService as never,
+    auctionAiAssessment as never,
+    liveAuctionOrchestrator as never,
+    portfolioWatermark as never,
   );
   return {
     service,
     library,
     sessionService,
+    auctionService,
+    auctionAiAssessment,
+    liveAuctionOrchestrator,
+    portfolioWatermark,
     projectService,
     prisma,
     blobService,
@@ -829,6 +858,10 @@ describe('CronJobsService — метла идёт до конца курсора
       {} as never,
       {} as never,
       imageSketch as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
     return { service, blobService };
   }

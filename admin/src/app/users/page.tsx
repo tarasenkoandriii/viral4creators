@@ -40,6 +40,7 @@ const SUBSCRIPTION_STATUS_LABEL: Record<string, string> = {
   ACTIVE: 'активна',
   PAST_DUE: 'просрочена',
   CANCELED: 'отменена',
+  RENEWING: 'продлевается',
 };
 
 function errText(e: unknown): string {

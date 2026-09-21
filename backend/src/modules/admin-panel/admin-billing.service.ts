@@ -31,7 +31,7 @@ export interface AdminPaymentRow {
   userId: string;
   telegramId: string;
   method: 'STARS' | 'WAYFORPAY';
-  purpose: 'SUBSCRIPTION' | 'CREDIT_PACK';
+  purpose: 'SUBSCRIPTION' | 'CREDIT_PACK' | 'AUCTION';
   plan: string | null;
   creditsGranted: number | null;
   status: 'PENDING' | 'SUCCEEDED' | 'FAILED' | 'REFUNDED';
@@ -91,7 +91,7 @@ export class AdminBillingService {
           userId: string;
           user: { telegramId: string };
           method: 'STARS' | 'WAYFORPAY';
-          purpose: 'SUBSCRIPTION' | 'CREDIT_PACK';
+          purpose: 'SUBSCRIPTION' | 'CREDIT_PACK' | 'AUCTION';
           plan: string | null;
           creditsGranted: number | null;
           status: 'PENDING' | 'SUCCEEDED' | 'FAILED' | 'REFUNDED';
@@ -180,6 +180,10 @@ export class AdminBillingService {
           if (!isUniqueConstraintViolation(error)) throw error; // уже сторнировано
         }
       }
+      // AUCTION сюда намеренно не попадает: откатывать продажу лота
+      // (PortfolioItem → SOLD, заблокированный брендбук, AuctionPayment.
+      // paidAt) возврат денег не умеет, и делать это молча нельзя. См.
+      // предупреждение ниже — решение продуктовое, не техническое.
       if (payment.purpose === 'SUBSCRIPTION') {
         // Доступ до конца оплаченного периода не отбираем (деньги
         // возвращены за него, но резать сессию посреди рендера — хуже),
@@ -192,6 +196,15 @@ export class AdminBillingService {
       }
       return row;
     });
+    if (payment.purpose === 'AUCTION') {
+      // Деньги возвращены, а лот остался проданным: работа в статусе
+      // SOLD, брендбук заблокирован, AuctionPayment помечен оплаченным.
+      // Оператор обязан знать, что вторую половину придётся доделать
+      // руками, — молчаливое расхождение здесь хуже отказа.
+      this.logger.warn(
+        `operator ${actorId}: возврат аукционного платежа ${id} НЕ откатывает продажу лота — статус работы, блокировку брендбука и AuctionPayment нужно поправить вручную`,
+      );
+    }
     if (payment.purpose === 'SUBSCRIPTION' && payment.method === 'STARS') {
       // Telegram продолжил бы списывать Stars по своей подписке — та же
       // нотификация, что у отмены оператором (Г-2.2).
@@ -213,7 +226,7 @@ export class AdminBillingService {
     userId: string;
     user: { telegramId: string };
     method: 'STARS' | 'WAYFORPAY';
-    purpose: 'SUBSCRIPTION' | 'CREDIT_PACK';
+    purpose: 'SUBSCRIPTION' | 'CREDIT_PACK' | 'AUCTION';
     plan: string | null;
     creditsGranted: number | null;
     status: 'PENDING' | 'SUCCEEDED' | 'FAILED' | 'REFUNDED';

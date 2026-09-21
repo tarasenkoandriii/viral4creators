@@ -72,6 +72,14 @@ function build() {
   // умолчанию мок отдаёт "принято", чтобы существующие тесты чекаута не
   // трогали эту ось; тест самого гварда переопределяет мок отдельно.
   const legal = { assertAccepted: jest.fn().mockResolvedValue(undefined) };
+  // Оплата аукционного лота применяется через общий
+  // AuctionPaymentService — тот же метод зовёт и ручное подтверждение
+  // оператором, поэтому логика не продублирована здесь (см.
+  // доккомментарий AuctionPaymentModule про развязку циклической
+  // зависимости).
+  const auctionPayment = {
+    applySuccess: jest.fn().mockResolvedValue(undefined),
+  };
   const svc = new BillingService(
     prisma as any,
     plans as any,
@@ -80,8 +88,19 @@ function build() {
     wayforpay as any,
     notify as any,
     legal as any,
+    auctionPayment as any,
   );
-  return { svc, prisma, plans, creditLedger, stars, wayforpay, notify, legal };
+  return {
+    svc,
+    prisma,
+    plans,
+    creditLedger,
+    stars,
+    wayforpay,
+    notify,
+    legal,
+    auctionPayment,
+  };
 }
 
 const envBefore = { ...process.env };
