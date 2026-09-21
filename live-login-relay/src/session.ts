@@ -184,6 +184,14 @@ export class Session {
     width: DEFAULT_VIEWPORT.width,
     height: DEFAULT_VIEWPORT.height,
   };
+  /**
+   * Сколько чего доехало от человека за сессию. Пишется одной строкой
+   * при закрытии — дёшево, и это ровно тот факт, которого не хватило
+   * при разборе «прокрутка не работает»: по логам было не отличить
+   * «клиент не шлёт колесо» от «шлёт, а страница не реагирует». Без
+   * этого каждая такая жалоба — гадание сразу на две стороны.
+   */
+  private readonly inputCounts = { mouse: 0, wheel: 0, key: 0 };
   private wsChannel: WsChannel | null = null;
   private cachedResult: SessionResult | null = null;
   private closedAt: number | null = null;
@@ -502,6 +510,8 @@ export class Session {
     deltaY?: number;
   }): Promise<void> {
     if (!this.cdp) return;
+    if (params.event === 'mouseWheel') this.inputCounts.wheel += 1;
+    else this.inputCounts.mouse += 1;
     // Найдено аудитом этапа 108 — три отклонения от того, как те же
     // события формирует сам puppeteer (`Mouse.down/up/move`,
     // `puppeteer-core/lib/cjs/puppeteer/cdp/Input.js:265-330`), и все
@@ -559,6 +569,7 @@ export class Session {
     keyCode?: number;
   }): Promise<void> {
     if (!this.cdp) return;
+    this.inputCounts.key += 1;
     await this.cdp.send('Input.dispatchKeyEvent', {
       type: params.event,
       key: params.key,
@@ -729,6 +740,14 @@ export class Session {
   }
 
   private async closeBrowser(): Promise<void> {
+    // Итог по вводу — здесь, а не в `close()`/`doFinalize()` по
+    // отдельности: `closeBrowser()` зовут оба пути и ровно один раз.
+    this.logger.info('итог ввода за сессию', {
+      sessionId: this.id,
+      mouse: this.inputCounts.mouse,
+      wheel: this.inputCounts.wheel,
+      key: this.inputCounts.key,
+    });
     try {
       await this.page?.close();
     } catch {

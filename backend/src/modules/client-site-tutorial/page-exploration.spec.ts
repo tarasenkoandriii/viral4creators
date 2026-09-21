@@ -32,22 +32,39 @@ interface FakeElementInit {
 class FakeElement {
   readonly tagName: string;
   readonly attrs: Record<string, string>;
-  readonly textContent: string;
-  readonly innerText: string;
   parentElement: FakeElement | null = null;
   children: FakeElement[] = [];
   offsetParent: unknown;
 
+  /** Собственный текст узла, без потомков. */
+  readonly ownText: string;
+
   constructor(init: FakeElementInit) {
     this.tagName = init.tag.toUpperCase();
     this.attrs = init.attrs ?? {};
-    this.textContent = init.text ?? '';
-    this.innerText = init.text ?? '';
+    this.ownText = init.text ?? '';
     this.offsetParent = (init.visible ?? true) ? {} : null;
     for (const child of init.children ?? []) {
       child.parentElement = this;
       this.children.push(child);
     }
+  }
+
+  /** Как в настоящем DOM — СО всеми потомками. Поддельный DOM раньше
+   * отдавал только собственный текст, и из-за этого мимо тестов
+   * проходил целый класс ошибок: подпись, склеенная с содержимым
+   * поля, в Node выглядела чистой. */
+  get textContent(): string {
+    return this.ownText + this.children.map((c) => c.textContent).join('');
+  }
+
+  get innerText(): string {
+    return this.textContent;
+  }
+
+  /** Текстовый узел идёт первым, как в разметке `<label>Текст <select>`. */
+  get childNodes(): unknown[] {
+    return [{ nodeType: 3, nodeValue: this.ownText }, ...this.children];
   }
 
   get nodeType(): number {
@@ -348,6 +365,80 @@ describe('подпись поля (§5.4: label → aria-label → placeholder)'
       }),
     );
     expect(collectPageExploration(ORIGIN).elements[0].label).toBe('Телефон');
+  });
+
+  it('подпись обёртки не тащит за собой содержимое поля', () => {
+    // Найдено на боевом прогоне: у `<select>` в `textContent` обёртки
+    // оказываются ВСЕ его `<option>`, и подпись приезжала на экран
+    // склейкой «Статус: всеждут проверкизаписываютсяодобренныеотклонённые».
+    installDocument(
+      el({
+        tag: 'label',
+        text: 'Статус: ',
+        children: [
+          el({
+            tag: 'select',
+            attrs: { name: 'status' },
+            children: [
+              el({ tag: 'option', attrs: { value: '' }, text: 'все' }),
+              el({
+                tag: 'option',
+                attrs: { value: 'p' },
+                text: 'ждут проверки',
+              }),
+              el({
+                tag: 'option',
+                attrs: { value: 'd' },
+                text: 'записываются',
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+    expect(collectPageExploration(ORIGIN).elements[0].label).toBe('Статус:');
+  });
+
+  it('текст рядом с полем во вложенной обёртке не теряется', () => {
+    // Спускаемся в не-поля рекурсивно, иначе `<span>` с подписью
+    // выпал бы вместе с содержимым `<select>`.
+    installDocument(
+      el({
+        tag: 'label',
+        children: [
+          el({ tag: 'span', text: 'Город' }),
+          el({
+            tag: 'select',
+            attrs: { name: 'city' },
+            children: [el({ tag: 'option', text: 'Киев' })],
+          }),
+        ],
+      }),
+    );
+    expect(collectPageExploration(ORIGIN).elements[0].label).toBe('Город');
+  });
+
+  it('то же правило у label[for], если он оборачивает поле', () => {
+    installDocument(
+      el({
+        tag: 'form',
+        children: [
+          el({
+            tag: 'label',
+            attrs: { for: 'st' },
+            text: 'Статус ',
+            children: [
+              el({
+                tag: 'select',
+                attrs: { id: 'st', name: 'status' },
+                children: [el({ tag: 'option', text: 'все' })],
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+    expect(collectPageExploration(ORIGIN).elements[0].label).toBe('Статус');
   });
 
   it('без label берётся aria-label, без него — placeholder', () => {

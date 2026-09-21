@@ -150,12 +150,60 @@ export function collectPageExploration(allowedOrigin: string): CollectedPage {
     return cssPath(el);
   }
 
+  /**
+   * Текст подписи БЕЗ текста самого поля.
+   *
+   * Найдено на боевом прогоне. Большинство форм размечает подпись
+   * ОБЁРТКОЙ — `<label>Статус: <select>…</select></label>`, — а
+   * `textContent` у обёртки включает и содержимое поля. У `<select>`
+   * это все его `<option>`, и подпись приезжала на экран визарда
+   * склейкой «Статус: всеждут проверкизаписываютсяодобренныеотклонённые».
+   * Человек видел мусор ровно там, где ему нужно понять, что за поле
+   * перед ним.
+   *
+   * Идём по узлам сами, а не `cloneNode`+удаление: клон пришлось бы
+   * сопоставлять с оригиналом, чтобы понять, какой из потомков —
+   * нужное поле. Текст рядом с полем внутри вложенной обёртки
+   * (`<label><span>Статус:</span><select>…</select></label>`) при этом
+   * не теряется — в не-поля спускаемся рекурсивно.
+   */
+  function labelOwnText(label: Element): string {
+    const kids = label.childNodes;
+    if (!kids) return label.textContent ?? '';
+    let out = '';
+    for (let i = 0; i < kids.length; i++) {
+      const node = kids[i];
+      // 3 — текстовый узел, 1 — элемент. Числами, а не `Node.TEXT_NODE`:
+      // функция уезжает в браузер строкой, и чем меньше она опирается
+      // на окружение, тем лучше (см. шапку файла).
+      if (node.nodeType === 3) {
+        out += node.nodeValue ?? '';
+        continue;
+      }
+      if (node.nodeType !== 1) continue;
+      const child = node as Element;
+      const tag = child.tagName.toLowerCase();
+      if (
+        tag === 'input' ||
+        tag === 'select' ||
+        tag === 'textarea' ||
+        tag === 'button'
+      ) {
+        continue;
+      }
+      out += labelOwnText(child);
+    }
+    return out;
+  }
+
   function labelFor(el: Element): string | undefined {
     const id = el.getAttribute('id');
     if (id) {
       try {
         const bound = doc.querySelector(`label[for="${quote(id)}"]`);
-        const text = clean(bound ? bound.textContent : null);
+        // `label[for]` обычно поле не оборачивает, но ничто не мешает:
+        // правило одно и то же для обоих случаев.
+        const text = clean(bound ? labelOwnText(bound) : null);
         if (text) return text;
       } catch {
         /* некорректный селектор из чужого id — идём дальше */
@@ -164,7 +212,7 @@ export function collectPageExploration(allowedOrigin: string): CollectedPage {
     if (typeof el.closest === 'function') {
       const wrapping = el.closest('label');
       if (wrapping && wrapping !== el) {
-        const text = clean(wrapping.textContent);
+        const text = clean(labelOwnText(wrapping));
         if (text) return text;
       }
     }

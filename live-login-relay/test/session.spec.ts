@@ -445,6 +445,56 @@ async function makePopupSession(): Promise<{
   return { session, main, channel, sentMessages };
 }
 
+describe('Session — итог ввода в логе', () => {
+  it('считает колесо отдельно от обычной мыши и пишет итог при закрытии', async () => {
+    // Ровно тот факт, которого не хватило при разборе «прокрутка не
+    // работает»: по логам было не отличить «клиент не шлёт колесо» от
+    // «шлёт, а страница не реагирует».
+    const lines: { msg: string; extra?: Record<string, unknown> }[] = [];
+    const spy = jest.spyOn(logger, 'info').mockImplementation((msg, extra) => {
+      lines.push({ msg, extra });
+    });
+    try {
+      const { session } = await makePopupSession();
+      await session.dispatchMouse({ event: 'mousePressed', x: 1, y: 1 });
+      await session.dispatchMouse({
+        event: 'mouseWheel',
+        x: 1,
+        y: 1,
+        deltaY: 40,
+      });
+      await session.dispatchMouse({
+        event: 'mouseWheel',
+        x: 1,
+        y: 1,
+        deltaY: 40,
+      });
+      await session.dispatchKey({ event: 'keyDown', key: 'a', code: 'KeyA' });
+      await session.close('cancelled');
+
+      const summary = lines.find((l) => l.msg === 'итог ввода за сессию');
+      expect(summary?.extra).toMatchObject({ mouse: 1, wheel: 2, key: 1 });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('итог пишется ровно один раз, даже если close() звали дважды', async () => {
+    const lines: string[] = [];
+    const spy = jest.spyOn(logger, 'info').mockImplementation((msg) => {
+      lines.push(msg);
+    });
+    try {
+      const { session } = await makePopupSession();
+      await session.close('cancelled');
+      await session.close('cancelled');
+      expect(lines.filter((m) => m === 'итог ввода за сессию')).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe('Session — keyCode в CDP', () => {
   it('keyCode уезжает обоими полями виртуального кода', () => {
     // Chromium выводит `event.keyCode` именно из
