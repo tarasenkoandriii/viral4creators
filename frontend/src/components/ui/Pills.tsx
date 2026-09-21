@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { haptic } from '../../lib/telegram';
+import { pillColumns } from './pill-columns';
 
 /**
  * Segmented control — SilverFinance's "metal pills" from the TMA page
@@ -41,7 +42,7 @@ export function Pills<T extends string>({
       aria-label={ariaLabel}
       className="grid gap-2"
       style={{
-        gridTemplateColumns: `repeat(${columns ?? options.length}, minmax(0, 1fr))`,
+        gridTemplateColumns: `repeat(${pillColumns(options, columns)}, minmax(0, 1fr))`,
       }}
     >
       {options.map((o) => {
@@ -60,7 +61,10 @@ export function Pills<T extends string>({
             // min-h-44: палец не попадает в 32 пиксела (этап 44 задал этот
             // минимум кнопкам, но пилюли остались короткими — с одной
             // строкой текста они складывались ровно в 32).
-            className={`flex min-h-[44px] flex-col justify-center rounded-xl px-2 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
+            // `break-words` — вторая половина той же починки: колонка
+            // с `minmax(0, 1fr)` не растягивается, но содержимое без
+            // разрыва длинных слов всё равно вылезает за фон кнопки.
+            className={`flex min-h-[44px] flex-col justify-center break-words rounded-xl px-2 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
               active
                 ? 'bg-accent text-accent-on'
                 : 'bg-silver-200/60 dark:bg-silver-800/60 text-silver-500 hover:text-silver-700 dark:hover:text-silver-300'
