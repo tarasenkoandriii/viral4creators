@@ -43,3 +43,69 @@ export function wheelToPixels(
         : 1;
   return { deltaX: event.deltaX * factor, deltaY: event.deltaY * factor };
 }
+
+/** Ровно то, что нужно от события клавиатуры, без React и DOM. */
+export interface KeyLike {
+  key: string;
+  code: string;
+  keyCode: number;
+}
+
+export interface KeyMessage {
+  type: 'key';
+  event: 'keyDown' | 'keyUp';
+  key: string;
+  code: string;
+  keyCode: number;
+  text?: string;
+}
+
+/**
+ * Текст, который CDP вставит в страницу по этому нажатию.
+ *
+ * Обычный символ — он сам. `Enter` отдельно: `key` у него длиной
+ * пять, под правило «одиночный символ» не попадает, а без `text`
+ * страница не получает перевод строки — то есть форму входа нельзя
+ * отправить с клавиатуры. puppeteer шлёт ровно `\r` (`cdp/Input.js`).
+ */
+function textOf(key: string): string | undefined {
+  if (key.length === 1) return key;
+  if (key === 'Enter') return '\r';
+  return undefined;
+}
+
+/**
+ * Пара сообщений на одно нажатие: `keyDown` и `keyUp`.
+ *
+ * Общая для канваса и для поля под ним — раньше эта сборка жила прямо
+ * в обработчике `<input>`, и второй вход (с канваса) неизбежно
+ * разъехался бы с первым.
+ */
+export function keyMessages(event: KeyLike): KeyMessage[] {
+  const base = {
+    type: 'key' as const,
+    key: event.key,
+    code: event.code,
+    keyCode: event.keyCode,
+  };
+  const text = textOf(event.key);
+  return [
+    text === undefined
+      ? { ...base, event: 'keyDown' }
+      : { ...base, event: 'keyDown', text },
+    { ...base, event: 'keyUp' },
+  ];
+}
+
+/**
+ * Перехватывать ли нажатие, когда фокус на канвасе.
+ *
+ * Перехватывается всё, кроме двух клавиш выхода. Без них человек
+ * оказался бы заперт в кадре: `Tab` — единственный способ уйти с
+ * канваса с клавиатуры, `Escape` возвращает управление экрану визарда.
+ * Цена — эти две клавиши не доедут до чужой страницы; там они нужны
+ * несопоставимо реже, чем возможность выбраться.
+ */
+export function shouldCaptureKey(key: string): boolean {
+  return key !== 'Tab' && key !== 'Escape';
+}

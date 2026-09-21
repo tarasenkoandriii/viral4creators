@@ -36,7 +36,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Spinner } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
-import { wheelToPixels } from './live-input';
+import { keyMessages, shouldCaptureKey, wheelToPixels } from './live-input';
 
 interface FrameMetadata {
   offsetTop: number;
@@ -238,12 +238,40 @@ export function LiveLoginSession(props: {
       {error && <Alert tone="error">{error}</Alert>}
       {status === 'closed' && <Alert tone="warning">{t.liveClosed}</Alert>}
 
+      {/*
+        `tabIndex` — не мелочь доступности, а починка. Ретрансляция
+        клавиатуры жила ТОЛЬКО в поле под кадром, а человек делает
+        естественное: щёлкает по странице в кадре и печатает. Фокус при
+        этом оставался где угодно, только не в том поле, и до реле не
+        уходило ни одного события — в счётчиках сессии стояло `key=0`
+        при живой мыши. Теперь канвас сам принимает фокус по щелчку и
+        сам ретранслирует нажатия; поле ниже остаётся ради телефона,
+        где экранную клавиатуру поднимает только сфокусированный
+        `<input>`.
+      */}
       <canvas
         ref={canvasRef}
-        className="w-full touch-none rounded border border-[var(--border)] bg-black"
+        tabIndex={0}
+        className="w-full touch-none rounded border border-[var(--border)] bg-black outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         onPointerDown={(e) => {
+          // Фокус — раньше захвата указателя: `setPointerCapture`
+          // перенаправляет последующие события, но фокус сам по себе
+          // не ставит.
+          e.currentTarget.focus();
           e.currentTarget.setPointerCapture(e.pointerId);
           onPointer(e, 'mousePressed');
+        }}
+        onKeyDown={(e) => {
+          if (!live) return;
+          if (!shouldCaptureKey(e.key)) {
+            // `Escape` — выход из кадра, а не сообщение странице.
+            if (e.key === 'Escape') e.currentTarget.blur();
+            return;
+          }
+          keyMessages(e).forEach(send);
+          // Иначе пробел прокрутит экран визарда, а стрелки уведут
+          // фокус — всё это вместо ввода в чужую форму.
+          e.preventDefault();
         }}
         onPointerUp={(e) => onPointer(e, 'mouseReleased')}
         onPointerMove={(e) => {
@@ -266,27 +294,7 @@ export function LiveLoginSession(props: {
         disabled={!live}
         onKeyDown={(e) => {
           if (!live) return;
-          // `keyCode` берётся у настоящего события браузера, а не
-          // угадывается по `key`: без него страница получает
-          // `event.keyCode === 0`, и код, читающий устаревшее
-          // свойство (например виджет входа Telegram), клавиатуру
-          // просто не видит.
-          const keyCode = e.keyCode;
-          send({
-            type: 'key',
-            event: 'keyDown',
-            key: e.key,
-            code: e.code,
-            keyCode,
-            ...(e.key.length === 1 ? { text: e.key } : {}),
-          });
-          send({
-            type: 'key',
-            event: 'keyUp',
-            key: e.key,
-            code: e.code,
-            keyCode,
-          });
+          keyMessages(e).forEach(send);
           e.preventDefault();
         }}
         onChange={() => undefined}
