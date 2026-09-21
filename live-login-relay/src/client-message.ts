@@ -118,12 +118,14 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         return null;
       }
       if (json.text !== undefined && typeof json.text !== 'string') return null;
+      if (!optionalFiniteNumber(json.keyCode)) return null;
       return {
         type: 'key',
         event: json.event as KeyEventType,
         key: json.key,
         code: json.code,
         text: json.text,
+        keyCode: json.keyCode as number | undefined,
       };
     }
 

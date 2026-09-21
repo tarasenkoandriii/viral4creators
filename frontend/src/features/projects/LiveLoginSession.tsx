@@ -36,6 +36,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Spinner } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
+import { wheelToPixels } from './live-input';
 
 interface FrameMetadata {
   offsetTop: number;
@@ -178,6 +179,38 @@ export function LiveLoginSession(props: {
 
   const live = status === 'live';
 
+  /*
+    Колесо вешается нативно, а не через `onWheel`: React ставит
+    wheel-слушатели на корень документа ПАССИВНЫМИ, и
+    `event.preventDefault()` в них не работает — страница визарда
+    уезжала бы вниз вместе с прокруткой чужого сайта.
+  */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (status !== 'live') return;
+      const point = toPagePoint(event.clientX, event.clientY);
+      if (!point) return;
+      const { deltaX, deltaY } = wheelToPixels(
+        event,
+        canvas.getBoundingClientRect().height
+      );
+      send({
+        type: 'mouse',
+        event: 'mouseWheel',
+        x: point.x,
+        y: point.y,
+        button: 'none',
+        deltaX,
+        deltaY,
+      });
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [send, status, toPagePoint]);
+
   const onPointer = (
     event: React.PointerEvent<HTMLCanvasElement>,
     kind: 'mousePressed' | 'mouseReleased' | 'mouseMoved'
@@ -233,14 +266,27 @@ export function LiveLoginSession(props: {
         disabled={!live}
         onKeyDown={(e) => {
           if (!live) return;
+          // `keyCode` берётся у настоящего события браузера, а не
+          // угадывается по `key`: без него страница получает
+          // `event.keyCode === 0`, и код, читающий устаревшее
+          // свойство (например виджет входа Telegram), клавиатуру
+          // просто не видит.
+          const keyCode = e.keyCode;
           send({
             type: 'key',
             event: 'keyDown',
             key: e.key,
             code: e.code,
+            keyCode,
             ...(e.key.length === 1 ? { text: e.key } : {}),
           });
-          send({ type: 'key', event: 'keyUp', key: e.key, code: e.code });
+          send({
+            type: 'key',
+            event: 'keyUp',
+            key: e.key,
+            code: e.code,
+            keyCode,
+          });
           e.preventDefault();
         }}
         onChange={() => undefined}

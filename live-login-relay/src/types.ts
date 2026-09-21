@@ -88,6 +88,12 @@ export type ClientMessage =
       key: string;
       code: string;
       text?: string;
+      /** Устаревший `KeyboardEvent.keyCode`, как его видел браузер
+       * человека. Chromium выводит его из `windowsVirtualKeyCode`, и
+       * без этого поля страница получает `event.keyCode === 0`. Старые
+       * скрипты (в частности виджет входа Telegram) читают именно его,
+       * а не `key`/`code`, — для них клавиатура просто не работала. */
+      keyCode?: number;
     }
   | { type: 'resize'; width: number; height: number }
   | { type: 'ping' };

@@ -445,6 +445,35 @@ async function makePopupSession(): Promise<{
   return { session, main, channel, sentMessages };
 }
 
+describe('Session — keyCode в CDP', () => {
+  it('keyCode уезжает обоими полями виртуального кода', () => {
+    // Chromium выводит `event.keyCode` именно из
+    // `windowsVirtualKeyCode`; без него страница видит ноль.
+    return (async () => {
+      const { session, main } = await makePopupSession();
+      await session.dispatchKey({
+        event: 'keyDown',
+        key: 'u',
+        code: 'KeyU',
+        text: 'u',
+        keyCode: 85,
+      });
+      expect(main.sent).toContainEqual({
+        method: 'Input.dispatchKeyEvent',
+        params: {
+          type: 'keyDown',
+          key: 'u',
+          code: 'KeyU',
+          text: 'u',
+          windowsVirtualKeyCode: 85,
+          nativeVirtualKeyCode: 85,
+        },
+      });
+      await session.close('cancelled');
+    })();
+  });
+});
+
 describe('Session — попапы SSO', () => {
   it('попап становится активным: стрим переезжает на него', async () => {
     const { session, main, sentMessages } = await makePopupSession();

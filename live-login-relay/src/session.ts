@@ -556,6 +556,7 @@ export class Session {
     key: string;
     code: string;
     text?: string;
+    keyCode?: number;
   }): Promise<void> {
     if (!this.cdp) return;
     await this.cdp.send('Input.dispatchKeyEvent', {
@@ -563,6 +564,16 @@ export class Session {
       key: params.key,
       code: params.code,
       text: params.text,
+      // Без этих двух полей Chromium отдаёт странице
+      // `event.keyCode === 0`. `key`/`code` — современные свойства, но
+      // масса живого кода на чужих сайтах (включая виджет входа
+      // Telegram) до сих пор читает устаревший `keyCode`, и для неё
+      // клавиатура выглядела мёртвой: события приходят, а значение
+      // нулевое. puppeteer подставляет их всегда (`cdp/Input.js`), и
+      // здесь ровно тот же приём. Значение берётся с клавиатуры
+      // человека, а не угадывается по `key`.
+      windowsVirtualKeyCode: params.keyCode,
+      nativeVirtualKeyCode: params.keyCode,
     });
   }
 

@@ -96,6 +96,31 @@ describe('parseClientMessage — key/resize/ping', () => {
     });
   });
 
+  it('принимает keyCode и доносит его без изменений', () => {
+    // Без `keyCode` страница получает `event.keyCode === 0`, и код,
+    // читающий устаревшее свойство (виджет входа Telegram — как раз
+    // такой), клавиатуру не видит вовсе.
+    expect(
+      parseClientMessage(
+        '{"type":"key","event":"keyDown","key":"u","code":"KeyU","keyCode":85}',
+      ),
+    ).toEqual({
+      type: 'key',
+      event: 'keyDown',
+      key: 'u',
+      code: 'KeyU',
+      keyCode: 85,
+    });
+  });
+
+  it('отклоняет нечисловой keyCode, а не отправляет его в CDP', () => {
+    expect(
+      parseClientMessage(
+        '{"type":"key","event":"keyDown","key":"u","code":"KeyU","keyCode":"85"}',
+      ),
+    ).toBeNull();
+  });
+
   it('отклоняет key без обязательных строковых полей', () => {
     expect(parseClientMessage('{"type":"key","event":"keyDown"}')).toBeNull();
     expect(
