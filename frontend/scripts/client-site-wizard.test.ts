@@ -9,10 +9,12 @@
  * увидишь только на живом сайте заказчика.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   clickCandidates,
   fieldLabel,
   fillableFields,
+  liveLoginVisible,
 } from '../src/features/projects/client-site-elements';
 import type { PageExploration } from '../src/types/client-site-tutorial';
 
@@ -113,6 +115,100 @@ it('подпись поля: label → name → запасной вариант'
 it('пустая страница не роняет ни один из отборов', () => {
   assert.deepEqual(fillableFields(page([])), []);
   assert.deepEqual(clickCandidates(page([])), []);
+});
+
+/**
+ * Живой вход на логинах без пароля.
+ *
+ * Дефект, который эти проверки закрывают: блок живого входа стоял
+ * внутри ветки `exploration.looksLikeLogin`, а тот флаг на бэкенде
+ * выставляется ровно одним признаком — видимым `<input
+ * type="password">`. Значит на первом экране Google SSO, на Telegram
+ * Login Widget (кроссдоменный iframe, в DOM верхнего фрейма его нет
+ * вовсе) и на входе по magic link кнопка не появлялась НИКОГДА — то
+ * есть ровно там, ради чего живой вход и сделан.
+ */
+
+const ssoPage = page([
+  { selector: '#go', tag: 'button', visibleText: 'Continue with Google' },
+]);
+const passwordPage: PageExploration = {
+  ...page([
+    { selector: '#u', tag: 'input', type: 'text', name: 'login' },
+    { selector: '#p', tag: 'input', type: 'password', name: 'password' },
+  ]),
+  looksLikeLogin: true,
+};
+
+it('живой вход виден на странице входа БЕЗ поля пароля', () => {
+  assert.equal(ssoPage.looksLikeLogin, false);
+  assert.equal(
+    liveLoginVisible(ssoPage, { relayConfigured: true, editable: true }),
+    true
+  );
+});
+
+it('видимость живого входа не зависит от looksLikeLogin', () => {
+  // Инвариант, а не совпадение: именно эта зависимость и была дефектом.
+  const opts = { relayConfigured: true, editable: true };
+  assert.equal(
+    liveLoginVisible(ssoPage, opts),
+    liveLoginVisible(passwordPage, opts)
+  );
+});
+
+it('без настроенного реле живого входа нет нигде', () => {
+  for (const p of [ssoPage, passwordPage]) {
+    assert.equal(
+      liveLoginVisible(p, { relayConfigured: false, editable: true }),
+      false
+    );
+  }
+});
+
+it('черновик на проверке у оператора — живого входа нет', () => {
+  // `editable === false` это статус не DRAFTING: редактировать нечего,
+  // и живая сессия сожгла бы слот суточного лимита впустую.
+  assert.equal(
+    liveLoginVisible(passwordPage, { relayConfigured: true, editable: false }),
+    false
+  );
+});
+
+it('в разметке блок живого входа лежит ВНЕ ветки looksLikeLogin', () => {
+  // Проверка по исходнику, потому что перенести блок обратно внутрь
+  // ветки можно правкой JSX, не трогая `liveLoginVisible` — тогда все
+  // проверки выше остались бы зелёными, а кнопка снова исчезла бы с
+  // SSO-логинов. Тот же приём, что в backend/src/prisma/
+  // schema-relations.spec.ts: читаем файл как текст, без React.
+  //
+  // Чего проверка НЕ гарантирует: что блок вообще отрисуется — этого
+  // без рендер-раннера не увидеть.
+  const src = readFileSync(
+    new URL('../src/features/projects/ClientSiteWizard.tsx', import.meta.url),
+    'utf8'
+  );
+  const ternaryStart = src.indexOf('{exploration.looksLikeLogin ? (');
+  assert.ok(ternaryStart > 0, 'ветка looksLikeLogin не найдена');
+
+  // Хвост else-ветки тернарника — обычная форма; следующий за ним
+  // `)}` на отступе экрана и закрывает сам тернарник.
+  const elseTail = src.indexOf('{t.plainValuesWarning}', ternaryStart);
+  assert.ok(elseTail > ternaryStart, 'хвост else-ветки не найден');
+  const ternaryEnd = src.indexOf('\n      )}', elseTail);
+  assert.ok(ternaryEnd > elseTail, 'закрытие тернарника не найдено');
+
+  const liveBlock = src.indexOf('{liveAvailable && (');
+  assert.ok(liveBlock > 0, 'блок живого входа не найден');
+  assert.ok(
+    liveBlock > ternaryEnd,
+    'блок живого входа снова внутри ветки looksLikeLogin — на SSO-логинах кнопка исчезнет'
+  );
+  assert.equal(
+    src.split('{liveAvailable && (').length - 1,
+    1,
+    'блок живого входа должен быть один'
+  );
 });
 
 console.log(`client-site wizard: ${passed} проверок пройдено`);

@@ -79,6 +79,7 @@ import {
   clickCandidates,
   fieldLabel,
   fillableFields,
+  liveLoginVisible,
 } from './client-site-elements';
 
 type Stage = 'loading' | 'url' | 'page' | 'review';
@@ -371,7 +372,10 @@ export function ClientSiteWizard({ projectId }: { projectId: string }) {
           setValues={setValues}
           busy={busy || !editable}
           canUndo={canUndo && editable}
-          liveAvailable={(draft?.liveLoginAvailable ?? false) && editable}
+          liveAvailable={liveLoginVisible(exploration, {
+            relayConfigured: draft?.liveLoginAvailable ?? false,
+            editable,
+          })}
           live={live}
           onStep={submitStep}
           onLogin={submitLogin}
@@ -589,35 +593,6 @@ function PageStage(props: {
             // серой без объяснений.
             <Alert tone="warning">{t.loginNoButton}</Alert>
           )}
-
-          {liveAvailable && (
-            <div className="pt-3 border-t border-[var(--border)] space-y-2">
-              <p className="text-sm text-[var(--muted)]">{t.liveHint}</p>
-              {live ? (
-                <LiveLoginSession
-                  wsUrl={live.relayWsUrl}
-                  streamToken={live.streamToken}
-                  busy={busy}
-                  onDone={props.onFinishLive}
-                  // Сессия могла истечь (потолок реле — три минуты) или
-                  // закончиться не на том домене; без выхода отсюда
-                  // «Я вошёл» отвечала бы 409 вечно, а начать заново
-                  // было нечем (аудит этапа 116).
-                  onCancel={props.onCancelLive}
-                />
-              ) : (
-                <Button
-                  block
-                  variant="outline"
-                  icon={<Globe size={16} />}
-                  disabled={busy}
-                  onClick={props.onLive}
-                >
-                  {t.liveButton}
-                </Button>
-              )}
-            </div>
-          )}
         </Card>
       ) : (
         fields.length > 0 && (
@@ -643,6 +618,59 @@ function PageStage(props: {
             <Alert tone="warning">{t.plainValuesWarning}</Alert>
           </Card>
         )
+      )}
+
+      {/*
+        Живой вход НЕ спрятан под `exploration.looksLikeLogin` — и это
+        осознанно. Тот флаг выставляется ровно одним признаком: видимым
+        `<input type="password">` (см. `page-exploration.ts`). А живой
+        вход существует именно ради логинов, где пароля на странице нет:
+        первый экран Google SSO — это кнопка «Continue with Google»,
+        Telegram Login Widget живёт в кроссдоменном iframe и в DOM
+        верхнего фрейма не виден вовсе, magic link по почте поля пароля
+        не имеет никогда. То есть под старым условием кнопка не
+        появлялась ровно в тех случаях, ради которых фича и сделана.
+
+        Расширять сам `looksLikeLogin` эвристиками («есть кнопка Войти»,
+        «URL вида /login») здесь нельзя: он переключает ВЕТКУ выше —
+        форму учётных данных вместо списка шагов. На SSO-странице полей
+        нет, и такая ветка показала бы пустую форму с предупреждением
+        «кнопка входа не распозналась» вместо рабочего списка шагов,
+        то есть сделала бы хуже.
+
+        Цена ложного показа: одна живая сессия из суточного лимита
+        (`reserveLiveSession`, §15.7), и только если человек СПЕЦИАЛЬНО
+        нажмёт кнопку. Цена пропуска — неработающая фича. Поэтому блок
+        живёт отдельной карточкой и зависит только от того, настроено
+        ли реле.
+      */}
+      {liveAvailable && (
+        <Card className="p-5 space-y-2">
+          <p className="text-sm text-[var(--muted)]">{t.liveHint}</p>
+          {live ? (
+            <LiveLoginSession
+              wsUrl={live.relayWsUrl}
+              streamToken={live.streamToken}
+              busy={busy}
+              onDone={props.onFinishLive}
+              // Сессия могла истечь (потолок реле — три минуты) или
+              // закончиться не на том домене; без выхода отсюда
+              // «Я вошёл» отвечала бы 409 вечно, а начать заново
+              // было нечем (аудит этапа 116).
+              onCancel={props.onCancelLive}
+            />
+          ) : (
+            <Button
+              block
+              variant="outline"
+              icon={<Globe size={16} />}
+              disabled={busy}
+              onClick={props.onLive}
+            >
+              {t.liveButton}
+            </Button>
+          )}
+        </Card>
       )}
 
       {/*
