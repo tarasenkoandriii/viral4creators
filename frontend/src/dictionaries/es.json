@@ -1293,6 +1293,8 @@
     "liveClosed": "La sesión en vivo está cerrada. Si logró entrar, pulse «Ya entré»; si no, empiece de nuevo.",
     "liveExpiring": "La sesión se cierra en {seconds} s: termine de entrar.",
     "liveKeyboardHint": "Toque aquí y escriba: la entrada va a la página",
+    "liveScrollUp": "Desplazar hacia arriba",
+    "liveScrollDown": "Desplazar hacia abajo",
     "liveRestartButton": "Reiniciar el acceso en vivo",
     "dangerConfirm": "Sí, hacerlo",
     "dangerCancel": "Cancelar",

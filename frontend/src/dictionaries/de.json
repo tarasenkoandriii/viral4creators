@@ -1293,6 +1293,8 @@
     "liveClosed": "Die Live-Sitzung ist geschlossen. Wenn Sie sich anmelden konnten, drücken Sie „Ich bin drin“; sonst beginnen Sie neu.",
     "liveExpiring": "Die Sitzung schließt in {seconds}s — schließen Sie die Anmeldung ab.",
     "liveKeyboardHint": "Hier tippen und schreiben — die Eingabe geht an die Seite",
+    "liveScrollUp": "Nach oben scrollen",
+    "liveScrollDown": "Nach unten scrollen",
     "liveRestartButton": "Live-Anmeldung neu starten",
     "dangerConfirm": "Ja, ausführen",
     "dangerCancel": "Abbrechen",

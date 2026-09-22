@@ -1293,6 +1293,8 @@
     "liveClosed": "The live session is closed. If you managed to sign in, press “I'm in”; otherwise start over.",
     "liveExpiring": "The session closes in {seconds}s — finish signing in.",
     "liveKeyboardHint": "Tap here and type — input goes to the page",
+    "liveScrollUp": "Scroll up",
+    "liveScrollDown": "Scroll down",
     "liveRestartButton": "Start live sign-in over",
     "dangerConfirm": "Yes, do it",
     "dangerCancel": "Cancel",

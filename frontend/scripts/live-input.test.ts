@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   keyMessages,
+  scrollStepPixels,
   shouldCaptureKey,
   wheelToPixels,
 } from '../src/features/projects/live-input';
@@ -119,8 +120,15 @@ it('канвас перехватывает обычные клавиши', () =
   }
 });
 
-it('Tab и Escape не перехватываются — иначе из кадра не выбраться', () => {
-  assert.equal(shouldCaptureKey('Tab'), false);
+it('Tab уходит странице — на форме входа это переход к паролю', () => {
+  // Сначала Tab был исключён вместе с Escape, «чтобы было чем выйти».
+  // Ошибка: на форме входа Tab — основной способ перейти от логина к
+  // паролю, то есть исключение выбивало его ровно там, где он нужен
+  // постоянно.
+  assert.equal(shouldCaptureKey('Tab'), true);
+});
+
+it('Escape не перехватывается — это выход из кадра', () => {
   assert.equal(shouldCaptureKey('Escape'), false);
 });
 
@@ -151,6 +159,63 @@ it('канвас в разметке действительно принимае
   assert.ok(
     canvas.includes('.focus()'),
     'щелчок не отдаёт канвасу фокус — печатать после клика будет некуда'
+  );
+});
+
+console.log('live-input: экранная прокрутка');
+
+it('шаг прокрутки — доля высоты кадра', () => {
+  assert.equal(scrollStepPixels(800), 640);
+});
+
+it('на неизмеренном кадре шаг всё равно ненулевой', () => {
+  // Высота нулевая, пока не пришёл первый кадр. Без нижнего предела
+  // нажатие кнопки не делало бы ничего.
+  assert.equal(scrollStepPixels(0), 120);
+  assert.equal(scrollStepPixels(50), 120);
+});
+
+it('на высоком кадре шаг растёт вместе с ним', () => {
+  assert.ok(scrollStepPixels(1600) > scrollStepPixels(800));
+});
+
+it('скрытое поле ввода осталось и спрятано правильно', () => {
+  // Убрать его совсем нельзя: на телефоне экранную клавиатуру
+  // поднимает только сфокусированный <input>, канвас её не вызывает.
+  // А `display:none`/`hidden` не подошли бы — такой элемент не
+  // фокусируется вовсе, то есть клавиатуры не будет.
+  const src = readFileSync(
+    new URL('../src/features/projects/LiveLoginSession.tsx', import.meta.url),
+    'utf8'
+  );
+  const at = src.indexOf('ref={keyboardRef}');
+  assert.ok(at > 0, 'скрытого поля нет');
+  // Смотрим только сам элемент: в комментариях рядом `display:none`
+  // упоминается как раз как способ, которым делать НЕЛЬЗЯ.
+  const field = src.slice(src.lastIndexOf('<input', at), src.indexOf('/>', at));
+  assert.ok(
+    !field.includes('display') && !field.includes('hidden={'),
+    'поле скрыто способом, при котором фокус невозможен'
+  );
+  assert.ok(field.includes('opacity-0'), 'поле скрыто не прозрачностью');
+  assert.ok(field.includes('fontSize: 16'), 'iOS будет зумить при фокусе');
+  assert.ok(
+    src.includes('keyboardRef.current ?? e.currentTarget).focus()'),
+    'касание кадра не уводит фокус в поле — клавиатуры на телефоне не будет'
+  );
+});
+
+it('кнопки прокрутки есть и подписаны для скринридера', () => {
+  const src = readFileSync(
+    new URL('../src/features/projects/LiveLoginSession.tsx', import.meta.url),
+    'utf8'
+  );
+  assert.ok(src.includes('scrollPage(-1)'), 'нет кнопки вверх');
+  assert.ok(src.includes('scrollPage(1)'), 'нет кнопки вниз');
+  assert.ok(src.includes('aria-label={t.liveScrollUp}'), 'кнопка без подписи');
+  assert.ok(
+    src.includes('aria-label={t.liveScrollDown}'),
+    'кнопка без подписи'
   );
 });
 
