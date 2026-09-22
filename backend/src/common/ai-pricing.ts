@@ -187,7 +187,14 @@ export type AiOperation =
   | 'virtual-studio-image'
   | 'virtual-studio-video'
   | 'virtual-studio-voice'
-  | 'virtual-studio-analysis';
+  | 'virtual-studio-analysis'
+  // Референс-кадр поздравления (фича №6 компаньон-ТЗ) — та же модель
+  // Gemini, что у скетча и превью персонажа, но отдельная строка в
+  // отчёте по той же причине, по которой отдельны они: это расход,
+  // который несёт КАЖДЫЙ ролик-поздравление grok-пути, и растворять его
+  // в общей строке «ИИ-скетч» значило бы спрятать себестоимость целого
+  // типа проекта.
+  | 'greeting-frame';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -223,6 +230,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'virtual-studio-video': 'Виртуальная студия: видео-фрагмент',
   'virtual-studio-voice': 'Виртуальная студия: озвучка',
   'virtual-studio-analysis': 'Виртуальная студия: ИИ-анализ',
+  'greeting-frame': 'Референс-кадр поздравления',
 };
 
 export interface ModelRate {

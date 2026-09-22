@@ -1463,6 +1463,7 @@
     "referencesEmpty": "Aún no hay imágenes de referencia — el vídeo se generará solo a partir del texto.",
     "referencesMax": "Límite alcanzado: como máximo {{max}} imágenes",
     "addReference": "Añadir imagen",
+    "generateReference": "Generar un fotograma",
     "referenceLabelLabel": "Etiqueta",
     "referenceLabelPlaceholder": "p. ej. destinatario, lugar, regalo",
     "referenceDescLabel": "Descripción (opcional)",

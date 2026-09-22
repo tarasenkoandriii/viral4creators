@@ -27,6 +27,7 @@ import {
   ImageIcon,
   Pencil,
   RefreshCw,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import {
@@ -54,6 +55,7 @@ import {
   createGreetingSession,
   deleteGreetingReference,
   generateGreetingPrompt,
+  generateGreetingReferenceFrame,
   getGreetingBrief,
   getGreetingVideoStatus,
   listGreetingReferences,
@@ -538,14 +540,33 @@ function ReferencesStep({
           !disabled &&
           images &&
           images.length < MAX_GREETING_REFERENCE_IMAGES && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setAdding((v) => !v)}
-              active={adding}
-            >
-              {w.addReference}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {/* Фича №6: нарисовать кадр по брифу. Рядом с загрузкой, а
+                  не вместо неё — своё фото остаётся более точным
+                  вариантом, а кадр нужен тем, у кого фото нет вовсе:
+                  именно у них grok-путь уходил в text-to-video вслепую
+                  и показывал результат только после дорогого рендера. */}
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<Sparkles size={14} />}
+                loading={saving}
+                disabled={saving}
+                onClick={() =>
+                  void apply(() => generateGreetingReferenceFrame(sessionId))
+                }
+              >
+                {w.generateReference}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAdding((v) => !v)}
+                active={adding}
+              >
+                {w.addReference}
+              </Button>
+            </div>
           )
         }
       />

@@ -37,6 +37,10 @@ import { PromptService } from '../prompt/prompt.service';
 import { GenerationPrompt, ModerationStatus } from '../../common/types/prompt.types';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 import {
+  celebrityLikenessMessage,
+  findCelebrityLikeness,
+} from '../../common/celebrity-likeness';
+import {
   GREETING_OCCASION_SPECS,
   GREETING_TONE_LABELS,
   fallbackMessage,
@@ -123,6 +127,25 @@ export class GreetingPromptService {
       throw new BadRequestException(
         'This session has no greeting brief — it was not created from a GREETING_VIDEO project.',
       );
+    }
+
+    // Фича №35: просьба сделать ролик похожим на конкретного реального
+    // человека отклоняется ДО первого платного вызова — и отдельным,
+    // понятным текстом, а не общим флагом модерации. Причина разделения:
+    // `moderateText` ниже — список ключевых слов про насилие и
+    // непристойности, он про другое и отвечает пользователю молчаливым
+    // отказом рендера. Здесь же человек чаще всего не задумывался о
+    // правах на образ и хотел просто смешно — ему нужно сказать, что
+    // именно убрать.
+    //
+    // Проверяется ТО, ЧТО НАПИСАЛ ЧЕЛОВЕК, а не сгенерированный текст:
+    // сценарий пишет Gemini по этому же брифу, и ловить чужой образ
+    // после генерации значило бы заплатить за вызов, чтобы отказать.
+    const likeness =
+      findCelebrityLikeness(brief.personalMessage) ??
+      findCelebrityLikeness(brief.customOccasionText);
+    if (likeness) {
+      throw new BadRequestException(celebrityLikenessMessage(likeness));
     }
 
     // Тот же замок, что уже используют другие платные сборки промпта

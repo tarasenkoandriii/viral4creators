@@ -2,6 +2,7 @@
  *   GET    /sessions/:id/greeting-references             uploaded reference images
  *   POST   /sessions/:id/greeting-references/upload-url  presigned PUT (mints imageId)
  *   POST   /sessions/:id/greeting-references/confirm     { pathname, label, description? }
+ *   POST   /sessions/:id/greeting-references/generate    нарисовать кадр по брифу (фича №6)
  *   PATCH  /sessions/:id/greeting-references/:imageId    label / description
  *   DELETE /sessions/:id/greeting-references/:imageId
  *
@@ -17,7 +18,9 @@ import {
   Param,
   Patch,
   Post,
+  Req,
 } from '@nestjs/common';
+import { TelegramIdentifiedRequest } from '../telegram-auth/telegram-identity.middleware';
 import { GreetingReferenceService } from './greeting-reference.service';
 import {
   GreetingReferenceConfirmRequestDto,
@@ -35,6 +38,23 @@ export class GreetingReferenceController {
     @Param('sessionId') sessionId: string,
   ): Promise<GreetingReferenceImageView[]> {
     return this.service.list(sessionId);
+  }
+
+  /**
+   * Референс-кадр по брифу сессии (фича №6).
+   *
+   * Без гарда, как и соседи: у этого контроллера предъявитель — сам
+   * UUID сессии, и `GREETING_VIDEO` доступен на каждом тарифе (см.
+   * доккомментарий сервиса). `telegramUserId` берётся из глобального
+   * middleware и может быть пустым — он нужен только чтобы приписать
+   * расход пользователю в отчёте, а не чтобы разрешить вызов.
+   */
+  @Post('generate')
+  generate(
+    @Req() req: TelegramIdentifiedRequest,
+    @Param('sessionId') sessionId: string,
+  ): Promise<GreetingReferenceImageView[]> {
+    return this.service.generateFrame(sessionId, req.telegramUserId ?? null);
   }
 
   @Post('upload-url')

@@ -50,6 +50,18 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
         ],
       },
       scenes: [{ photoPathname: 'sessions/s1/scenes/sc_a/photo.png' }],
+      // Референс-кадры поздравления: и загруженный, и нарисованный
+      // фичей №6 — оба в префиксе сессии, оба обязаны удалиться вместе
+      // с ней. До правки этого прохода они здесь не перечислялись
+      // вовсе и оставались в хранилище до суточной метлы.
+      greetingReferenceImages: [
+        { photoPathname: 'sessions/s1/greeting-refs/gr_a/photo.jpg' },
+        {
+          photoPathname: 'sessions/s1/greeting-refs/gr_b/photo.png',
+          // Скетч живёт в своём префиксе и в список сессии не попадает.
+          sketch: { pathname: 'sketches/u1/sk_1.png' },
+        },
+      ],
     } as unknown as Session;
 
     expect(sessionBlobPathnames(session).sort()).toEqual(
@@ -61,6 +73,8 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
         'sessions/s1/previews/extra-e1.jpg',
         'sessions/s1/previews/scene-s1.jpg',
         'sessions/s1/scenes/sc_a/photo.png',
+        'sessions/s1/greeting-refs/gr_a/photo.jpg',
+        'sessions/s1/greeting-refs/gr_b/photo.png',
       ].sort(),
     );
   });

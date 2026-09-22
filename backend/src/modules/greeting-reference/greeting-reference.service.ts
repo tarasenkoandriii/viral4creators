@@ -25,6 +25,8 @@
 
 import {
   BadRequestException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -41,6 +43,13 @@ import {
   GreetingReferenceUpdateRequestDto,
   GreetingReferenceUploadUrlRequestDto,
 } from './dto/greeting-reference.dto';
+import { SketchGeneratorService } from '../image-sketch/sketch-generator.service';
+import { AiUsageService } from '../ai-usage/ai-usage.service';
+import { buildGreetingFramePrompt } from './greeting-frame-prompt';
+import {
+  celebrityLikenessMessage,
+  findCelebrityLikeness,
+} from '../../common/celebrity-likeness';
 
 /**
  * Тот же приём, что `ReferenceSlotsPanel` получает от `ReferenceCandidate`
@@ -67,6 +76,10 @@ const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 /** docs.x.ai reference-to-video: до 7 `reference_images` за один запрос. */
 export const MAX_GREETING_REFERENCE_IMAGES = 7;
 
+/** Подпись сгенерированного кадра — по ней он отличим от загруженного
+ * и в списке, и в поддержке, когда человек спросит «откуда это». */
+export const GENERATED_FRAME_LABEL = 'Сгенерированный кадр';
+
 export function newGreetingReferenceId(): string {
   return `gr_${randomBytes(6).toString('hex')}`;
 }
@@ -86,6 +99,8 @@ export class GreetingReferenceService {
   constructor(
     private readonly sessions: SessionService,
     private readonly blob: BlobService,
+    private readonly frames: SketchGeneratorService,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   async list(sessionId: string): Promise<GreetingReferenceImageView[]> {
@@ -154,6 +169,111 @@ export class GreetingReferenceService {
       description: dto.description?.trim() || null,
       photoUrl: url,
       photoPathname: dto.pathname,
+      createdAt: new Date().toISOString(),
+    };
+    const next = [...images, image];
+    await this.sessions.updateSession(sessionId, {
+      greetingReferenceImages: next,
+    });
+    return next.map(toView);
+  }
+
+  /**
+   * Нарисовать референс-кадр по брифу сессии — фича №6 компаньон-ТЗ.
+   *
+   * Кадр ложится в тот же список, что и загруженные человеком, и дальше
+   * идёт в Grok как родной `reference_images` — `GreetingVideoService`
+   * об этой фиче не знает вовсе и правок не потребовал.
+   *
+   * Потолок — тот же `MAX_GREETING_REFERENCE_IMAGES` (предел Grok), и
+   * отдельной квоты у фичи нет НАМЕРЕННО. Семь картинок на сессию —
+   * это уже потолок расхода, а заводить второй счётчик поверх
+   * существующего значило бы городить ограничение, которое ничего не
+   * ограничивает сверх первого. Зато расход пишется в `AiUsage`
+   * отдельной операцией (`greeting-frame`): себестоимость целого типа
+   * проекта должна быть видна в отчёте строкой, а не растворяться в
+   * «ИИ-скетче».
+   *
+   * Три исхода модели различаются так же, как у скетча, и по той же
+   * причине: `failed` — вызов не оплачен, расход не пишем; `refused` —
+   * оплачен, пишем, и говорим человеку понятным текстом, что модель
+   * отказалась рисовать, а не «ошибка 500».
+   */
+  async generateFrame(
+    sessionId: string,
+    userId: string | null,
+  ): Promise<GreetingReferenceImageView[]> {
+    const session = await this.load(sessionId);
+    const brief = session.greetingBriefSnapshot;
+    if (!brief) {
+      throw new BadRequestException(
+        'Session has no greeting brief — reference frame generation is only for GREETING_VIDEO sessions',
+      );
+    }
+    const images = session.greetingReferenceImages ?? [];
+    if (images.length >= MAX_GREETING_REFERENCE_IMAGES) {
+      throw new BadRequestException(
+        `At most ${MAX_GREETING_REFERENCE_IMAGES} reference images per session — delete one first`,
+      );
+    }
+
+    // Фича №35 и здесь, а не только на сборке сценария: свой повод
+    // (`customOccasionText`) — единственный пользовательский текст,
+    // который доходит до МОДЕЛИ ИЗОБРАЖЕНИЙ, и «в образе Пугачёвой» в
+    // нём уехало бы в картинку в обход гейта на сценарии.
+    const likeness = findCelebrityLikeness(brief.customOccasionText);
+    if (likeness) {
+      throw new BadRequestException(celebrityLikenessMessage(likeness));
+    }
+
+    const prompt = buildGreetingFramePrompt({
+      occasion: brief.occasion,
+      customOccasionText: brief.customOccasionText,
+      tone: brief.tone,
+      presenter: brief.resolvedPresenterProvider,
+    });
+    const outcome = await this.frames.generate({ prompt, source: null });
+
+    if (outcome.status === 'failed') {
+      throw new HttpException(
+        `Не удалось нарисовать кадр: ${outcome.reason}`,
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+    await this.aiUsage.recordGemini(outcome.raw, {
+      operation: 'greeting-frame',
+      model: outcome.model,
+      sessionId,
+      ...(userId ? { userId } : {}),
+    });
+    if (outcome.status === 'refused') {
+      throw new HttpException(
+        'Модель отказалась рисовать этот кадр. Попробуйте ещё раз или загрузите своё изображение.',
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+
+    // Те же помощники, что у загрузки: формат идентификатора и путь в
+    // хранилище обязаны совпадать, иначе уборка блобов
+    // (`sessionBlobPathnames`) и разбор пути в `confirm` начнут видеть
+    // два разных соглашения.
+    const imageId = newGreetingReferenceId();
+    const pathname = greetingReferencePathname(
+      sessionId,
+      imageId,
+      outcome.mimeType,
+    );
+    const { url } = await this.blob.uploadBuffer(
+      pathname,
+      outcome.bytes,
+      outcome.mimeType,
+    );
+    const image: SceneAsset = {
+      id: imageId,
+      label: GENERATED_FRAME_LABEL,
+      description: null,
+      photoUrl: url,
+      photoPathname: pathname,
       createdAt: new Date().toISOString(),
     };
     const next = [...images, image];

@@ -1463,6 +1463,7 @@
     "referencesEmpty": "No reference images yet — the video will be generated from text alone.",
     "referencesMax": "Limit reached: at most {{max}} images",
     "addReference": "Add image",
+    "generateReference": "Generate a frame",
     "referenceLabelLabel": "Label",
     "referenceLabelPlaceholder": "e.g. recipient, location, gift",
     "referenceDescLabel": "Description (optional)",

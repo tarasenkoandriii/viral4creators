@@ -75,7 +75,9 @@ export async function updateGreetingBrief(
 /** POST /projects/:id/greeting-brief/sessions — необходимое дополнение к
  * §8 ТЗ: ни один существующий маршрут не создаёт Session без ProductItem
  * (см. аудит §11 «Соответствие §8 ТЗ»). */
-export async function createGreetingSession(projectId: string): Promise<Session> {
+export async function createGreetingSession(
+  projectId: string
+): Promise<Session> {
   const res = unwrap(
     await api.post<{ sessionId: string; session: Session }>(
       `/projects/${projectId}/greeting-brief/sessions`,
@@ -108,6 +110,25 @@ export async function listGreetingReferences(
   return unwrap(
     await api.get<GreetingReferenceImageView[]>(
       `/sessions/${sessionId}/greeting-references`
+    ),
+    'greeting-references'
+  );
+}
+
+/**
+ * Нарисовать референс-кадр по брифу сессии — фича №6 компаньон-ТЗ.
+ *
+ * Возвращает ВЕСЬ список, как и остальные методы этого раздела: кадр
+ * ложится в те же `greetingReferenceImages`, что и загруженные вручную,
+ * и дальше живёт наравне с ними (удаление, подпись, скетч).
+ */
+export async function generateGreetingReferenceFrame(
+  sessionId: string
+): Promise<GreetingReferenceImageView[]> {
+  return unwrap(
+    await api.post<GreetingReferenceImageView[]>(
+      `/sessions/${sessionId}/greeting-references/generate`,
+      {}
     ),
     'greeting-references'
   );

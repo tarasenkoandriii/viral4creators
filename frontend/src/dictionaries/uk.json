@@ -1483,6 +1483,7 @@
     "referencesEmpty": "Поки немає жодного референс-зображення — відео буде згенеровано лише за текстом.",
     "referencesMax": "Досягнуто ліміту: не більше {{max}} зображень",
     "addReference": "Додати зображення",
+    "generateReference": "Намалювати кадр",
     "referenceLabelLabel": "Підпис",
     "referenceLabelPlaceholder": "Наприклад: отримувач, локація, подарунок",
     "referenceDescLabel": "Опис (необов'язково)",

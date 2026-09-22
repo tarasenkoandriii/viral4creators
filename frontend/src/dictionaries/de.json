@@ -1463,6 +1463,7 @@
     "referencesEmpty": "Noch keine Referenzbilder — das Video wird nur aus dem Text erstellt.",
     "referencesMax": "Limit erreicht: höchstens {{max}} Bilder",
     "addReference": "Bild hinzufügen",
+    "generateReference": "Bild erzeugen",
     "referenceLabelLabel": "Beschriftung",
     "referenceLabelPlaceholder": "z. B. Empfänger, Ort, Geschenk",
     "referenceDescLabel": "Beschreibung (optional)",

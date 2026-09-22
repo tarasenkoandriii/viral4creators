@@ -1483,6 +1483,7 @@
     "referencesEmpty": "Пока нет ни одного референс-изображения — видео будет сгенерировано только по тексту.",
     "referencesMax": "Достигнут предел: не более {{max}} изображений",
     "addReference": "Добавить изображение",
+    "generateReference": "Нарисовать кадр",
     "referenceLabelLabel": "Подпись",
     "referenceLabelPlaceholder": "Например: получатель, локация, подарок",
     "referenceDescLabel": "Описание (необязательно)",
