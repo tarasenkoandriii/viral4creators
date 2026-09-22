@@ -43,6 +43,25 @@ export const config = {
   ],
 };
 
+/**
+ * Годится ли значение как адрес, на который можно увести посетителя.
+ *
+ * Появилось после боевой проверки этапа 3: `SITE_URL` на проде не задан,
+ * и дефолт `http://localhost:3003` из `content.ts` превращал редирект в
+ * ссылку на машину самого посетителя. Отдельная функция, а не `!==`
+ * с одной строкой: дефолт может смениться, а признак «это локальный
+ * адрес» — нет.
+ */
+function isReachableOrigin(raw: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(raw);
+    if (protocol !== 'https:' && protocol !== 'http:') return false;
+    return hostname !== 'localhost' && hostname !== '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const greetingHost = isGreetingHost(request.headers.get('host'));
@@ -75,7 +94,15 @@ export function middleware(request: NextRequest) {
     // Всё остальное на поддомене — чужие страницы главного сайта (блог,
     // «как это работает»). Отдавать их здесь значило бы завести второй
     // адрес каждой из них; уводим на главный домен.
-    if (pathnameHasLocale) {
+    //
+    // Но только если адрес главного домена ВООБЩЕ задан. `SITE_URL`
+    // имеет дефолт `http://localhost:3003` «для dev-стенда», и на
+    // первом же боевом запросе выяснилось, что в проде он не задан
+    // вовсе: редирект уводил посетителя на localhost, то есть в никуда.
+    // Отдать страницу на поддомене — это дубль, неприятно; увести
+    // человека на мёртвый адрес — это сломанный сайт. Из двух зол
+    // выбираем обратимое.
+    if (pathnameHasLocale && isReachableOrigin(SITE_URL)) {
       return NextResponse.redirect(
         new URL(`${SITE_URL}${pathname}${request.nextUrl.search}`),
         308,
