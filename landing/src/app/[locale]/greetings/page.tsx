@@ -4,8 +4,11 @@ import { GreetingOccasionGrid } from '../../../components/GreetingOccasionGrid';
 import { GreetingSampleGallery } from '../../../components/GreetingSampleGallery';
 import { IllustrationIcon } from '../../../components/IllustrationIcon';
 import { getDictionary } from '../../../lib/get-dictionary';
-import { OG_LOCALES, isLocale, locales, type Locale } from '../../../lib/i18n';
-import { greetingPageUrl } from '../../../lib/greeting-host';
+import { isLocale, locales, type Locale } from '../../../lib/i18n';
+import { GREETING_SITE_URL, greetingPageUrl } from '../../../lib/greeting-host';
+import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
+import { localeAlternates } from '../../../lib/alternates';
+import { SubdomainHeader } from '../../../components/SubdomainHeader';
 import { SITE_URL, TMA_URL } from '../../../lib/content';
 
 /**
@@ -58,14 +61,19 @@ export function generateMetadata({
     // Canonical — адрес на ПОДДОМЕНЕ, а не тот путь, по которому этот
     // файл лежит в приложении: путь `/<locale>/greetings` на обоих
     // хостах отвечает редиректом и самостоятельным адресом не является.
-    alternates: { canonical: greetingPageUrl(locale) },
-    openGraph: {
+    // `languages` — находка Ф-1 аудита живого лендинга: `alternates`
+    // замещает унаследованный от layout объект целиком, и страница с
+    // одним `canonical` оставляла пять локалей без hreflang.
+    alternates: localeAlternates(greetingPageUrl, (l) => `/${l}`, locale),
+    // См. Ф-7 в lib/social-meta.ts: без явного `twitter` страница
+    // наследовала заголовок и описание главной.
+    ...socialMeta({
       title: g.meta.title,
       description: g.meta.description,
       url: greetingPageUrl(locale),
-      locale: OG_LOCALES[locale],
-      type: 'website',
-    },
+      locale,
+      image: ogImageUrl(GREETING_SITE_URL, 'greetings', locale),
+    }),
     robots: { index: true, follow: true },
   };
 }
@@ -84,6 +92,10 @@ export default function GreetingsLandingPage({
 
   return (
     <>
+      {/* Шапка добавлена по находке Ф-2 того же аудита: переключателя
+          языка на поддомене не было вовсе, и пять локалей существовали
+          только для того, кто угадает адрес. */}
+      <SubdomainHeader dict={dict} locale={locale} ctaHref={ctaHref} />
       <main id="top">
         <section className="hero">
           <div className="wrap">

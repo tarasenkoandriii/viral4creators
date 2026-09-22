@@ -2,8 +2,11 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Header } from '../../../components/Header';
 import { getDictionary } from '../../../lib/get-dictionary';
-import { isLocale, locales, OG_LOCALES, type Locale } from '../../../lib/i18n';
+import { isLocale, locales, type Locale } from '../../../lib/i18n';
 import { listBlogPosts, BLOG_REVALIDATE_SECONDS } from '../../../lib/blog-api';
+import { localeAlternates } from '../../../lib/alternates';
+import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
+import { SITE_URL } from '../../../lib/content';
 
 /**
  * Витрина блога (этап 58, TODO §II.3) — статическая генерация +
@@ -22,17 +25,21 @@ export function generateStaticParams() {
 export function generateMetadata({ params }: { params: { locale: string } }): Metadata {
   if (!isLocale(params.locale)) return {};
   const dict = getDictionary(params.locale);
-  const languages = Object.fromEntries(locales.map((l) => [l, `/${l}/blog`]));
   return {
     title: `${dict.blog.listTitle}${dict.blog.metaTitleSuffix}`,
     description: dict.blog.listLead,
-    alternates: { languages: { ...languages, 'x-default': '/ru/blog' } },
-    openGraph: {
+    alternates: localeAlternates(
+      (l) => `${SITE_URL}/${l}/blog`,
+      (l) => `/${l}/blog`,
+      params.locale,
+    ),
+    ...socialMeta({
       title: `${dict.blog.listTitle}${dict.blog.metaTitleSuffix}`,
       description: dict.blog.listLead,
-      type: 'website',
-      locale: OG_LOCALES[params.locale],
-    },
+      url: `${SITE_URL}/${params.locale}/blog`,
+      locale: params.locale,
+      image: ogImageUrl(SITE_URL, 'main', params.locale),
+    }),
     robots: { index: true, follow: true },
   };
 }

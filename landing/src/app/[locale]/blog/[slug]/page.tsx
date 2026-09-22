@@ -10,6 +10,8 @@ import {
   BLOG_REVALIDATE_SECONDS,
 } from '../../../../lib/blog-api';
 import { TMA_URL, SITE_URL, SITE_NAME } from '../../../../lib/content';
+import { localeAlternates } from '../../../../lib/alternates';
+import { ogImageUrl } from '../../../../lib/social-meta';
 import { jsonLdScript } from '../../../../lib/json-ld';
 import { sanitizeBlogHtml } from '../../../../lib/sanitize-blog-html';
 
@@ -51,20 +53,27 @@ export async function generateMetadata({
   return {
     title: `${post.title}${dict.blog.metaTitleSuffix}`,
     description,
-    alternates: { languages: { ...languages, 'x-default': `/ru/blog/${params.slug}` } },
+    alternates: localeAlternates(
+      (l) => `${SITE_URL}/${l}/blog/${params.slug}`,
+      (l) => `/${l}/blog/${params.slug}`,
+      params.locale,
+    ),
+    // Своя картинка записи важнее общей — но если её нет, ссылка
+    // раньше разворачивалась вовсе без изображения (находка Ф-3).
     openGraph: {
       title: post.title,
       description,
       type: 'article',
+      url: `${SITE_URL}/${params.locale}/blog/${params.slug}`,
       locale: OG_LOCALES[params.locale],
-      images: post.thumbnailUrl ? [post.thumbnailUrl] : undefined,
+      images: [post.thumbnailUrl ?? ogImageUrl(SITE_URL, 'main', params.locale)],
       publishedTime: post.publishedAt ?? undefined,
     },
     twitter: {
-      card: post.thumbnailUrl ? 'summary_large_image' : 'summary',
+      card: 'summary_large_image',
       title: post.title,
       description,
-      images: post.thumbnailUrl ? [post.thumbnailUrl] : undefined,
+      images: [post.thumbnailUrl ?? ogImageUrl(SITE_URL, 'main', params.locale)],
     },
     robots: { index: post.isRequestedLocale, follow: true },
   };

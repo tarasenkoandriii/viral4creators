@@ -3,6 +3,7 @@ import { defaultLocale, locales, LOCALE_COOKIE } from './lib/i18n';
 import { GREETING_SITE_URL, isGreetingHost } from './lib/greeting-host';
 import { TUTORIAL_SITE_URL, isTutorialHost } from './lib/tutorial-host';
 import { SITE_URL } from './lib/content';
+import { isReachableOrigin } from './lib/site-origin';
 
 /**
  * Локаль-редирект (этап 55) — паттерн перенесён из архитектуры блога
@@ -43,25 +44,6 @@ export const config = {
     '/((?!_next|legal|feed|video|icon|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)',
   ],
 };
-
-/**
- * Годится ли значение как адрес, на который можно увести посетителя.
- *
- * Появилось после боевой проверки этапа 3: `SITE_URL` на проде не задан,
- * и дефолт `http://localhost:3003` из `content.ts` превращал редирект в
- * ссылку на машину самого посетителя. Отдельная функция, а не `!==`
- * с одной строкой: дефолт может смениться, а признак «это локальный
- * адрес» — нет.
- */
-function isReachableOrigin(raw: string): boolean {
-  try {
-    const { protocol, hostname } = new URL(raw);
-    if (protocol !== 'https:' && protocol !== 'http:') return false;
-    return hostname !== 'localhost' && hostname !== '127.0.0.1';
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Мини-лендинги на собственных поддоменах.

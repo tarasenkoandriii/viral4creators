@@ -4,7 +4,10 @@ import { HowItWorks } from '../../../components/HowItWorks';
 import { AssistantWidget } from '../../../components/AssistantWidget';
 import { Footer } from '../../../components/Footer';
 import { getDictionary } from '../../../lib/get-dictionary';
-import { isLocale, locales, OG_LOCALES, type Locale } from '../../../lib/i18n';
+import { isLocale, locales, type Locale } from '../../../lib/i18n';
+import { localeAlternates } from '../../../lib/alternates';
+import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
+import { SITE_URL } from '../../../lib/content';
 
 /**
  * Выделенная страница «Как это работает» — этап 79
@@ -24,17 +27,21 @@ export function generateMetadata({ params }: { params: { locale: string } }): Me
   if (!isLocale(params.locale)) return {};
   const dict = getDictionary(params.locale);
   const { metaTitle, metaDescription } = dict.steps.page;
-  const languages = Object.fromEntries(locales.map((l) => [l, `/${l}/how-it-works`]));
   return {
     title: metaTitle,
     description: metaDescription,
-    alternates: { languages: { ...languages, 'x-default': '/ru/how-it-works' } },
-    openGraph: {
+    alternates: localeAlternates(
+      (l) => `${SITE_URL}/${l}/how-it-works`,
+      (l) => `/${l}/how-it-works`,
+      params.locale,
+    ),
+    ...socialMeta({
       title: metaTitle,
       description: metaDescription,
-      type: 'website',
-      locale: OG_LOCALES[params.locale],
-    },
+      url: `${SITE_URL}/${params.locale}/how-it-works`,
+      locale: params.locale,
+      image: ogImageUrl(SITE_URL, 'main', params.locale),
+    }),
     robots: { index: true, follow: true },
   };
 }

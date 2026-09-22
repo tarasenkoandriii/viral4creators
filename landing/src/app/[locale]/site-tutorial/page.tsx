@@ -3,8 +3,11 @@ import Image from 'next/image';
 import { Faq } from '../../../components/Faq';
 import { CompetitorComparisonTable } from '../../../components/CompetitorComparisonTable';
 import { getDictionary } from '../../../lib/get-dictionary';
-import { OG_LOCALES, isLocale, locales, type Locale } from '../../../lib/i18n';
-import { tutorialPageUrl } from '../../../lib/tutorial-host';
+import { isLocale, locales, type Locale } from '../../../lib/i18n';
+import { TUTORIAL_SITE_URL, tutorialPageUrl } from '../../../lib/tutorial-host';
+import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
+import { localeAlternates } from '../../../lib/alternates';
+import { SubdomainHeader } from '../../../components/SubdomainHeader';
 import { SITE_URL, TMA_URL } from '../../../lib/content';
 
 /**
@@ -70,14 +73,27 @@ export function generateMetadata({
     // Canonical — адрес на ПОДДОМЕНЕ, а не путь, по которому этот файл
     // лежит в приложении: `/<locale>/site-tutorial` на обоих хостах
     // отвечает редиректом и самостоятельным адресом не является.
-    alternates: { canonical: tutorialPageUrl(locale) },
-    openGraph: {
+    //
+    // `languages` здесь обязательны (находка Ф-1 аудита): объект
+    // `alternates` ЗАМЕЩАЕТ унаследованный от layout, а не дополняет
+    // его, — и страница с одним только `canonical` стирала hreflang
+    // всех пяти локалей.
+    alternates: localeAlternates(
+      tutorialPageUrl,
+      (l) => `/${l}`,
+      locale,
+    ),
+    // `twitter` задаётся здесь ЯВНО, хотя страница его раньше не
+    // трогала: не заданный, он наследуется от `[locale]/layout.tsx`
+    // вместе с заголовком и описанием ГЛАВНОЙ страницы — и ссылка
+    // сюда разворачивалась чужим текстом (находка Ф-7 аудита).
+    ...socialMeta({
       title: t.meta.title,
       description: t.meta.description,
       url: tutorialPageUrl(locale),
-      locale: OG_LOCALES[locale],
-      type: 'website',
-    },
+      locale,
+      image: ogImageUrl(TUTORIAL_SITE_URL, 'tutorial', locale),
+    }),
     robots: { index: true, follow: true },
   };
 }
@@ -101,6 +117,7 @@ export default function SiteTutorialLandingPage({
 
   return (
     <>
+      <SubdomainHeader dict={dict} locale={locale} ctaHref={ctaHref} />
       <main id="top">
         <section className="hero">
           <div className="wrap">
@@ -159,6 +176,7 @@ export default function SiteTutorialLandingPage({
             <h2>{t.compare.title}</h2>
             <p className="section-lead">{t.compare.lead}</p>
             <CompetitorComparisonTable
+              caption={t.compare.title}
               ourColumn={t.compare.ourColumn}
               theirColumn={t.compare.theirColumn}
               rows={t.compare.rows}

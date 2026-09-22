@@ -29,16 +29,24 @@ interface ComparisonRow {
 }
 
 export function CompetitorComparisonTable({
+  caption,
   ourColumn,
   theirColumn,
   rows,
 }: {
+  caption: string;
   ourColumn: string;
   theirColumn: string;
   rows: readonly ComparisonRow[];
 }) {
   return (
     <table className="compare-table">
+      {/* `<caption>` визуально скрыт (тот же `.sr-only`, что у подписи
+          переключателя языка): заголовок раздела над таблицей человек
+          и так видит, а скринридер объявляет таблицу отдельно от него и
+          без подписи читает «таблица, 3 колонки» без единого слова о
+          том, что в ней (находка Ф-6 аудита). */}
+      <caption className="sr-only">{caption}</caption>
       <thead>
         <tr>
           <td />

@@ -1,7 +1,10 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getDictionary } from '../../lib/get-dictionary';
-import { isLocale, locales, OG_LOCALES, type Locale } from '../../lib/i18n';
+import { isLocale, locales, type Locale } from '../../lib/i18n';
+import { localeAlternates } from '../../lib/alternates';
+import { ogImageUrl, socialMeta } from '../../lib/social-meta';
+import { SITE_URL } from '../../lib/content';
 import { DictionaryProvider } from '../../lib/dictionary-context';
 import { SetHtmlLang } from '../../components/SetHtmlLang';
 
@@ -13,27 +16,26 @@ export function generateStaticParams() {
 export function generateMetadata({ params }: { params: { locale: string } }): Metadata {
   if (!isLocale(params.locale)) return {};
   const dict = getDictionary(params.locale);
-  const languages = Object.fromEntries(locales.map((l) => [l, `/${l}`]));
   return {
     title: dict.meta.title,
     description: dict.meta.description,
     keywords: dict.meta.keywords,
-    alternates: {
-      // hreflang для поисковика — на каждой языковой версии страницы
-      // указаны все остальные, плюс x-default на дефолтную локаль (ru).
-      languages: { ...languages, 'x-default': '/' },
-    },
-    openGraph: {
+    // hreflang + canonical одной функцией (см. lib/alternates.ts): на
+    // каждой языковой версии указаны все остальные, абсолютными
+    // адресами, и x-default ведёт на реальную страницу локали по
+    // умолчанию, а не на корень, отвечающий редиректом.
+    alternates: localeAlternates(
+      (l) => `${SITE_URL}/${l}`,
+      (l) => `/${l}`,
+      params.locale,
+    ),
+    ...socialMeta({
       title: dict.meta.title,
       description: dict.meta.description,
-      type: 'website',
-      locale: OG_LOCALES[params.locale],
-    },
-    twitter: {
-      card: 'summary',
-      title: dict.meta.title,
-      description: dict.meta.description,
-    },
+      url: `${SITE_URL}/${params.locale}`,
+      locale: params.locale,
+      image: ogImageUrl(SITE_URL, 'main', params.locale),
+    }),
     robots: { index: true, follow: true },
   };
 }
