@@ -1,6 +1,6 @@
 # Base de conocimiento del consultor de IA de viral4creators
 
-_Собрано автоматически 2026-09-21 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-22 из lending/frontend/backend; коммит — local._
 
 ## Secciones de la mini-app
 
@@ -90,7 +90,7 @@ Una vez aprobado el prompt, el video suele estar listo en 3 a 5 minutos — el t
 Por ahora, nada: los tres planes — Lite, Standard y Premium — son gratuitos y se cambian directamente desde la aplicación. Es un período de prueba; cuando se introduzcan los pagos, lo que ya hayas hecho seguirá siendo tuyo. Más adelante, Lite pasará a ser condicionalmente gratuito — a cambio de dar «me gusta» al canal de YouTube del proyecto y enviar algunos enlaces al servicio.
 
 **¿En qué se diferencian los planes entre sí?**
-Lite es el camino mínimo: análisis de la referencia y generación del video en 16:9 o 9:16. Standard añade verificación de relevancia, auditoría del video, manifiesto de marca, escenas propias, reemplazo de personajes por foto, cualquier formato de encuadre y publicación. Premium es Standard más la biblioteca de análisis ya listos. El plan se puede cambiar en cualquier momento sin afectar los proyectos, videos o análisis ya creados.
+Lite es el camino mínimo: análisis de la referencia y generación del video en 16:9 o 9:16; el video de felicitación y el boceto de producto con IA están disponibles en cualquier plan. Standard añade la verificación de relevancia, la auditoría del video, el manifiesto de marca, escenas propias, reemplazo de personajes por foto, cualquier formato de encuadre, clonación de voz, el tutorial sobre el sitio del cliente, la publicación y el feed. Premium es Standard más la biblioteca de análisis listos y el doblaje: el audio de Veo se reemplaza por tu voz por completo. El plan se cambia en cualquier momento y no toca los proyectos, videos ni análisis ya creados.
 
 **¿Dónde se guardan mis archivos y cuándo se eliminan?**
 En Vercel Blob — la referencia, la foto del producto y el video terminado se guardan en el mismo almacenamiento. Cada archivo tiene un propietario en la base de datos: una sesión vencida se lleva sus archivos, un producto eliminado se lleva su foto, un manifiesto eliminado se lleva las fotos de personajes y escenas. La limpieza se ejecuta a diario, y un proceso aparte recoge los archivos huérfanos.
@@ -106,6 +106,15 @@ Sí, en ambos pasos: después del análisis automático de la referencia y despu
 
 **¿Es un proyecto de código abierto?**
 Sí — el código fuente está disponible en GitHub, y el desarrollo siguió la metodología GitHub Spec Kit.
+
+**¿Qué es el marketplace y en qué se diferencia del generador?**
+Es una segunda plataforma junto al generador, con dirección propia y el mismo acceso con Telegram. En el generador el video lo hace la IA a partir de tu referencia; en el marketplace lo hace un creador real: lo encuentras en el catálogo por portafolio y nicho, o publicas un brief y la plataforma selecciona a los adecuados. El contacto y el pago son directos: por ahora no hay licitación ni pago por adelantado a través de la plataforma.
+
+**¿Cómo funciona la subasta de videos?**
+Un creador pone en subasta un video ya terminado: precio inicial, pujas abiertas y, si así lo decidió, un botón «comprar ahora». Hay lotes exclusivos y precios flash. Una puja en el último segundo no permite arrebatar el lote: el tiempo se extiende automáticamente. Algunos lotes flash tienen transmisión en vivo con presentadora de IA, y solo con el consentimiento explícito del vendedor.
+
+**¿Se puede hacer algo que no sea publicidad?**
+Sí, hay dos tipos de proyecto más. Video de felicitación: motivo, nombre del destinatario, nombre del remitente y tono; la salida es un video personal, disponible en cualquier plan. Tutorial sobre el sitio del cliente: el asistente recorre el sitio con un navegador y arma un video tutorial con lo que ocurrió en pantalla, incluso con inicio de sesión en vivo en el área personal — desde Standard.
 
 ## Planes y funciones
 

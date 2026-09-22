@@ -67,6 +67,13 @@ export interface RelayPage {
     handler: (arg: RelayPageEvents[K]) => void,
   ): void;
   mainFrame(): RelayFrame;
+  /** Аутентификация на прокси. Необязательна в узком интерфейсе: нужна
+   * только когда прокси задан с логином, и тестовым мокам её знать
+   * незачем. */
+  authenticate?(credentials: {
+    username: string;
+    password: string;
+  }): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -133,6 +140,10 @@ export interface SessionCreateOptions {
   /** Потолок ожидания `page.goto(startUrl)` — см. доккомментарий
    * `create()`. */
   navTimeoutMs: number;
+  /** Учётные данные прокси, если он задан с логином. Сам адрес прокси
+   * браузер уже получил флагом при запуске (`launch-browser.ts`) —
+   * сюда приходит только то, что Chromium из флага не берёт. */
+  proxyAuth?: { username: string; password: string };
 }
 
 export class Session {
@@ -239,6 +250,12 @@ export class Session {
       logger: opts.logger,
     });
     session.page = await opts.browser.newPage();
+    // ДО первой навигации: иначе `goto` уйдёт без ответа на запрос
+    // авторизации прокси и упадёт с ERR_TUNNEL_CONNECTION_FAILED —
+    // снаружи это выглядит как «чужой сайт недоступен».
+    if (opts.proxyAuth && session.page.authenticate) {
+      await session.page.authenticate(opts.proxyAuth);
+    }
     // `setViewport` помечен необязательным в узком интерфейсе
     // `RelayPage` — у настоящего puppeteer-овского Page он есть всегда,
     // а тестовым мокам не нужно его реализовывать ради оркестрации.

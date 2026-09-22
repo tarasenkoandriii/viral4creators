@@ -10,6 +10,7 @@ import {
   DEMO_YOUTUBE_EMBED_URL,
   DEMO_YOUTUBE_URL,
   GITHUB_REPO_URL,
+  MARKETPLACE_URL,
   SPEC_KIT_URL,
   TMA_URL,
 } from '../../lib/content';
@@ -87,6 +88,40 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+
+        {/* Аудит лендинга 2026-09-22: маркетплейс (`marketplace/`, миграции
+            `20261122090000_marketplace_stage0` … `20261206090000_live_auction_opt_in`)
+            — вторая пользовательская поверхность продукта, и до этой секции
+            лендинг не упоминал её ни словом, ни ссылкой. Намеренно ПОСЛЕ
+            #features и ДО #how: «как это работает» — это пайплайн генератора,
+            и врезать рассказ о другой площадке между его заголовком и его же
+            шагами значило бы порвать основной сценарий страницы.
+
+            Карточки переиспользуют .details-grid/.detail — ту же сетку и ту
+            же карточку, что «Подробнее о проекте»: заводить вторую копию тех
+            же правил ради другого id незачем. */}
+        <section className="marketplace" id="marketplace">
+          <div className="wrap">
+            <h2>{dict.marketplace.title}</h2>
+            <p className="section-lead">{dict.marketplace.lead}</p>
+            <div className="details-grid">
+              {dict.marketplace.items.map((block) => (
+                <article className="detail" key={block.title}>
+                  <h3>{block.title}</h3>
+                  <p>{block.text}</p>
+                </article>
+              ))}
+            </div>
+            <p className="marketplace-note">{dict.marketplace.liveNote}</p>
+            <p className="marketplace-actions">
+              {/* Отдельное приложение на своём поддомене — обычная внешняя
+                  ссылка, не next/link: префетчить чужой домен нечего. */}
+              <a className="cta cta-ghost" href={MARKETPLACE_URL}>
+                {dict.marketplace.cta}
+              </a>
+            </p>
           </div>
         </section>
 
@@ -219,6 +254,7 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
             <a href={DEMO_YOUTUBE_URL} target="_blank" rel="noreferrer">
               {dict.footer.demo}
             </a>
+            <a href={MARKETPLACE_URL}>{dict.footer.marketplace}</a>
             <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
               {dict.footer.github}
             </a>

@@ -1,14 +1,16 @@
 {
   "meta": {
     "title": "viral4creators — anuncios UGC a partir de un solo ejemplo",
-    "description": "Sube un video publicitario UGC exitoso y obtén uno nuevo, para tu producto, en el mismo estilo. Análisis del video con Gemini, generación con Grok o Google Veo 3.1, gratis y sin registro.",
+    "description": "Sube un video publicitario UGC exitoso y obtén uno nuevo para tu producto en el mismo estilo. Gemini analiza el video, Grok o Google Veo 3.1 lo genera: gratis y sin registro. Al lado: un marketplace de creadores y una subasta de videos terminados.",
     "keywords": [
       "publicidad UGC",
       "generación de video con IA",
       "Grok",
       "Google Veo 3.1",
       "video publicitario",
-      "generador de anuncios en video"
+      "generador de anuncios en video",
+      "marketplace UGC",
+      "subasta de videos"
     ]
   },
   "header": {
@@ -20,6 +22,10 @@
       {
         "href": "#features",
         "label": "Funciones"
+      },
+      {
+        "href": "#marketplace",
+        "label": "Marketplace"
       },
       {
         "href": "#plans",
@@ -102,8 +108,57 @@
         "icon": "⧉",
         "title": "Navegador y Telegram — un solo producto",
         "text": "Funciona a la vez como sitio web normal y como Telegram Mini App, sin ninguna diferencia funcional — empieza en el navegador y continúa en Telegram."
+      },
+      {
+        "icon": "✐",
+        "title": "Boceto con IA en lugar de foto del producto",
+        "text": "Si no hay con qué fotografiar el producto o no se puede mostrar el empaque de un tercero, el servicio lo dibuja como boceto y lo coloca en el encuadre. Disponible en todos los planes: solo cambia la cuota diaria."
+      },
+      {
+        "icon": "❀",
+        "title": "Video de felicitación",
+        "text": "Un tipo de proyecto propio: motivo, nombre del destinatario, nombre del remitente y tono; la salida es un video de felicitación personal, no un anuncio. Disponible en todos los planes; el plan solo afecta la calidad y la presentación."
+      },
+      {
+        "icon": "⌘",
+        "title": "Tutorial sobre el sitio del cliente",
+        "text": "Un asistente paso a paso recorre con un navegador el sitio de tu cliente y arma con eso un video tutorial, incluso con inicio de sesión en vivo en el área personal si el paso lo requiere. Standard en adelante."
+      },
+      {
+        "icon": "♪",
+        "title": "Tu propia voz: clon, doblaje, proveedor",
+        "text": "La voz se clona a partir de tu grabación, y la locución se superpone al audio de Veo o lo reemplaza por completo como doblaje. El proveedor de síntesis se elige explícitamente —ElevenLabs o Resemble— y se escucha antes de pagar."
+      },
+      {
+        "icon": "♡",
+        "title": "Feed, me gusta y republicaciones",
+        "text": "Los videos aprobados entran al feed común del producto: me gusta, republicaciones y una página pública por video con el botón «hacer uno igual». Publicar está disponible desde Standard."
       }
     ]
+  },
+  "marketplace": {
+    "title": "Marketplace y subastas",
+    "lead": "Junto al generador funciona una segunda plataforma: un directorio de creadores reales y pujas abiertas por videos terminados. Dirección aparte, el mismo acceso con Telegram.",
+    "items": [
+      {
+        "title": "Directorio de creadores",
+        "text": "Un catálogo de creadores y agencias con portafolios de trabajos reales, nichos y rango de precios. Sin licitación ni pago por adelantado en la plataforma: se contactan y acuerdan directamente."
+      },
+      {
+        "title": "Brief con selección",
+        "text": "Describe el producto y la tarea: la plataforma selecciona creadores adecuados del catálogo y, por separado, sugiere qué formato y calidad de render convienen a la plataforma de publicación elegida."
+      },
+      {
+        "title": "Subasta de videos terminados",
+        "text": "Los creadores ponen videos terminados en puja abierta: precio inicial, pujas, «comprar ahora», lotes exclusivos y precios flash. El lote está protegido frente a una puja en el último segundo."
+      },
+      {
+        "title": "Brand book y colecciones",
+        "text": "Un asistente de brand book de cinco pasos —nombre, estilo, voz, personajes, ubicaciones— se adjunta al brief para que el creador vea tu identidad visual de inmediato. Los trabajos se agrupan en colecciones temáticas por etiqueta."
+      }
+    ],
+    "liveNote": "Algunos lotes flash tienen transmisión en vivo con presentadora de IA, solo si el vendedor aceptó explícitamente transmitir su lote.",
+    "cta": "Abrir el marketplace"
   },
   "steps": {
     "title": "Cómo funciona",
@@ -259,20 +314,24 @@
           "Búsqueda de referencia en YouTube, por enlace o con tu propio archivo",
           "Armado del prompt y edición manual",
           "Generación en 16:9 o 9:16 — formatos disponibles sin límites en cualquier plan",
-          "Descarga del archivo final"
+          "Descarga del archivo final",
+          "Video de felicitación y boceto de producto con IA — en cualquier plan"
         ],
         "excluded": [
           "Biblioteca de análisis ya listos",
           "Verificación de relevancia y auditoría del video",
           "Manifiesto de marca, escenas propias, reemplazo de personajes por foto",
-          "Formatos de encuadre además de los dos nativos"
+          "Formatos de encuadre además de los dos nativos",
+          "Clonación de voz y doblaje",
+          "Tutorial sobre el sitio del cliente",
+          "Publicación, feed y página para compartir"
         ],
         "note": "El plan predeterminado — el trabajo empieza con él sin ninguna configuración."
       },
       {
         "id": "standard",
         "title": "Standard",
-        "summary": "Todas las funciones del servicio, excepto la biblioteca de análisis ya listos.",
+        "summary": "Todas las funciones del servicio, excepto la biblioteca de análisis ya listos y el doblaje.",
         "included": [
           "Todo lo de Lite",
           "Verificación de relevancia de la referencia para tu producto",
@@ -281,19 +340,26 @@
           "Escenas propias y selección manual de las tres imágenes para el motor de generación",
           "Reemplazo de personaje con tu propia foto",
           "Cualquier formato de encuadre, incluido uno personalizado",
-          "Publicación a través del servicio"
+          "Publicación a través del servicio",
+          "Clonación de voz y locución sobre el audio de Veo",
+          "Tutorial sobre el sitio del cliente",
+          "Feed, me gusta y página pública por video"
         ],
-        "excluded": ["Biblioteca de análisis ya listos"],
+        "excluded": [
+          "Biblioteca de análisis ya listos",
+          "Doblaje: reemplazo completo del audio de Veo por tu voz"
+        ],
         "note": null
       },
       {
         "id": "premium",
         "title": "Premium",
-        "summary": "Todo junto con la biblioteca: guiones listos ajustados a la audiencia de tu producto y análisis instantáneo de videos ya vistos.",
+        "summary": "Todo junto con la biblioteca y el doblaje: guiones listos ajustados a la audiencia de tu producto y reemplazo completo del audio de Veo por tu propia voz.",
         "included": [
           "Todo lo de Standard",
           "Biblioteca de análisis con selección por categoría y audiencia del producto",
-          "Inicio instantáneo a partir de un análisis existente — sin una nueva llamada a la IA"
+          "Inicio instantáneo a partir de un análisis existente — sin una nueva llamada a la IA",
+          "Doblaje: el audio de Veo se reemplaza por tu voz por completo, no se mezcla con ella"
         ],
         "excluded": [],
         "note": null,
@@ -344,63 +410,64 @@
     "lead": "Lo que ya funciona está más arriba en esta página. Aquí se muestra hacia dónde va el producto a continuación. Horizontes, no fechas: los plazos en un producto que depende de modelos de terceros solo duran hasta el próximo lanzamiento de esos modelos.",
     "items": [
       {
-        "title": "Funciona de forma confiable",
-        "outcome": "La lista de verificación de aceptación se completa por entero, sin «esto todavía no funciona».",
+        "title": "Funciona con fiabilidad",
+        "outcome": "La lista de aceptación se recorre entera, sin «esto todavía no funciona».",
         "items": [
-          "Deuda técnica tras una auditoría integral de código, base de datos, maquetación y documentos",
-          "Un toque cinematográfico: un suave acercamiento de cámara",
-          "Pruebas para las pasarelas de pago, la limpieza de archivos y las verificaciones de acceso"
+          "La deuda que dejaron las auditorías transversales de código, base de datos, maquetación y documentos",
+          "Pruebas de las compuertas de dinero, la limpieza de archivos y las verificaciones de acceso"
         ]
       },
       {
-        "title": "Un video sale al mundo y se difunde solo",
-        "outcome": "Desde «subí una referencia» hasta «publicado y compartido» — sin salir del producto.",
+        "title": "Audiencia y dinero",
+        "outcome": "El servicio obtiene planes de pago y una clave para programas ajenos.",
         "items": [
-          "Republicar el video en tu propio grupo o canal de Telegram"
-        ]
-      },
-      {
-        "title": "Audiencia e ingresos",
-        "outcome": "El servicio incorpora planes de precio, un feed propio y una clave para programas de terceros.",
-        "items": [
-          "Planes y pagos: suscripción, paquetes de generaciones, Telegram Stars",
-          "Un feed con «me gusta» y republicaciones; los suscriptores de pago pueden publicar en él",
-          "Una API externa con clave para el plan Premium"
+          "Activar los pagos: suscripciones, paquetes de generaciones, Telegram Stars y tarjetas — la mecánica está lista, las tarifas aún no están activas",
+          "Una API externa por clave para el plan Premium"
         ]
       },
       {
         "title": "Escaparate y búsqueda entrante",
-        "outcome": "Alguien que busca anuncios en su nicho llega por su cuenta y termina en el asistente.",
+        "outcome": "Quien busca publicidad en su nicho llega por su cuenta y cae en el asistente.",
         "items": [
-          "Una biblioteca de tendencias por categoría, integrada en el producto"
+          "Una biblioteca de tendencias por categorías dentro del producto",
+          "Un escaparate curado de videos ajenos exitosos, con la etiqueta de qué funcionó"
         ]
       },
       {
-        "title": "De un video a un flujo continuo",
-        "outcome": "Un catálogo de cien productos cubre el plan de contenido de un mes en una sola tarde.",
+        "title": "De un video a un flujo",
+        "outcome": "Un catálogo de cien posiciones cubre el plan mensual de contenido en una tarde.",
         "items": [
-          "Plantillas de escena para empezar sin ninguna referencia",
-          "Localización de un mismo video en varios idiomas",
-          "Un planificador de publicaciones con verificación de las reglas de cada plataforma"
+          "Plantillas de escenas para empezar sin referencia",
+          "Localización de un video a varios idiomas",
+          "Un planificador de publicaciones y verificación de las reglas de las plataformas"
         ]
       },
       {
-        "title": "Indistinguible de una grabación real",
-        "outcome": "El espectador no reconoce el video como generado, y una serie se percibe como una sola marca coherente.",
+        "title": "Indistinguible de lo filmado",
+        "outcome": "El espectador no reconoce el video como generado, y una serie se lee como una sola marca.",
         "items": [
-          "Tu producto real en pantalla, no algo que solo se le parece",
-          "Sincronización labial con tu propia pista de audio"
+          "Tu producto exacto en el encuadre, no algo parecido",
+          "Sincronización labial con tu propia pista de audio: hoy es un piloto cerrado, no un botón para el usuario"
+        ]
+      },
+      {
+        "title": "Marketplace: del escaparate al trato",
+        "outcome": "Cliente y creador no solo se encuentran, también liquidan dentro de la plataforma.",
+        "items": [
+          "Licitación: un brief con propuestas de creadores y elección del ganador",
+          "El depósito en garantía «Caja 5%» y pagos con retención de comisión",
+          "Reseñas bidireccionales, calificación y disputas resueltas por el operador"
         ]
       },
       {
         "title": "Resultados e infraestructura",
-        "outcome": "El servicio puede responder «qué video grabar a continuación» — y se integra con productos de terceros.",
+        "outcome": "El servicio responde a «qué video grabar después» y funciona a través de productos ajenos.",
         "items": [
           "Estadísticas de las plataformas de vuelta al producto",
-          "Selección de referencias según lo que realmente funcionó para ti",
-          "Una puntuación de viralidad antes de generar",
-          "Economía del video: costo, visualizaciones, retorno",
-          "Un modo agencia, marca blanca e informes para clientes",
+          "Selección de referencias según lo que funcionó precisamente en tu caso",
+          "Estimación de viralidad antes de generar",
+          "Economía del video: gasto, impresiones, retorno",
+          "Modo agencia, marca blanca, informes por cliente",
           "Trabajo en equipo y webhooks para sistemas externos"
         ]
       }
@@ -427,7 +494,7 @@
       },
       {
         "question": "¿En qué se diferencian los planes entre sí?",
-        "answer": "Lite es el camino mínimo: análisis de la referencia y generación del video en 16:9 o 9:16. Standard añade verificación de relevancia, auditoría del video, manifiesto de marca, escenas propias, reemplazo de personajes por foto, cualquier formato de encuadre y publicación. Premium es Standard más la biblioteca de análisis ya listos. El plan se puede cambiar en cualquier momento sin afectar los proyectos, videos o análisis ya creados."
+        "answer": "Lite es el camino mínimo: análisis de la referencia y generación del video en 16:9 o 9:16; el video de felicitación y el boceto de producto con IA están disponibles en cualquier plan. Standard añade la verificación de relevancia, la auditoría del video, el manifiesto de marca, escenas propias, reemplazo de personajes por foto, cualquier formato de encuadre, clonación de voz, el tutorial sobre el sitio del cliente, la publicación y el feed. Premium es Standard más la biblioteca de análisis listos y el doblaje: el audio de Veo se reemplaza por tu voz por completo. El plan se cambia en cualquier momento y no toca los proyectos, videos ni análisis ya creados."
       },
       {
         "question": "¿Dónde se guardan mis archivos y cuándo se eliminan?",
@@ -448,6 +515,18 @@
       {
         "question": "¿Es un proyecto de código abierto?",
         "answer": "Sí — el código fuente está disponible en GitHub, y el desarrollo siguió la metodología GitHub Spec Kit."
+      },
+      {
+        "question": "¿Qué es el marketplace y en qué se diferencia del generador?",
+        "answer": "Es una segunda plataforma junto al generador, con dirección propia y el mismo acceso con Telegram. En el generador el video lo hace la IA a partir de tu referencia; en el marketplace lo hace un creador real: lo encuentras en el catálogo por portafolio y nicho, o publicas un brief y la plataforma selecciona a los adecuados. El contacto y el pago son directos: por ahora no hay licitación ni pago por adelantado a través de la plataforma."
+      },
+      {
+        "question": "¿Cómo funciona la subasta de videos?",
+        "answer": "Un creador pone en subasta un video ya terminado: precio inicial, pujas abiertas y, si así lo decidió, un botón «comprar ahora». Hay lotes exclusivos y precios flash. Una puja en el último segundo no permite arrebatar el lote: el tiempo se extiende automáticamente. Algunos lotes flash tienen transmisión en vivo con presentadora de IA, y solo con el consentimiento explícito del vendedor."
+      },
+      {
+        "question": "¿Se puede hacer algo que no sea publicidad?",
+        "answer": "Sí, hay dos tipos de proyecto más. Video de felicitación: motivo, nombre del destinatario, nombre del remitente y tono; la salida es un video personal, disponible en cualquier plan. Tutorial sobre el sitio del cliente: el asistente recorre el sitio con un navegador y arma un video tutorial con lo que ocurrió en pantalla, incluso con inicio de sesión en vivo en el área personal — desde Standard."
       }
     ]
   },
@@ -463,7 +542,8 @@
     "terms": "Términos de uso",
     "builtWith": "Built with GitHub Spec Kit",
     "legalNoticeOtherLocale": "La oferta pública y los términos de uso solo están disponibles en ruso por el momento.",
-    "madeWithClaude": "Hecho con Claude — semana gratis"
+    "madeWithClaude": "Hecho con Claude — semana gratis",
+    "marketplace": "Marketplace"
   },
   "notFound": {
     "title": "Página no encontrada",

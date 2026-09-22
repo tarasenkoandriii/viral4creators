@@ -445,6 +445,68 @@ async function makePopupSession(): Promise<{
   return { session, main, channel, sentMessages };
 }
 
+describe('Session — аутентификация на прокси', () => {
+  it('учётные данные отдаются странице ДО первой навигации', async () => {
+    // Иначе `goto` уходит без ответа на запрос авторизации прокси и
+    // падает с ERR_TUNNEL_CONNECTION_FAILED — снаружи это выглядит как
+    // «чужой сайт недоступен», то есть диагноз уводит в другую сторону.
+    const order: string[] = [];
+    const main = makeFakePage(MAIN_URL);
+    const page = main.page as RelayPage & {
+      authenticate?: (c: {
+        username: string;
+        password: string;
+      }) => Promise<void>;
+    };
+    page.authenticate = jest.fn(async () => {
+      order.push('authenticate');
+    });
+    const goto = page.goto as jest.Mock;
+    goto.mockImplementation(async () => {
+      order.push('goto');
+    });
+
+    const session = await Session.create({
+      startUrl: MAIN_URL,
+      allowedOrigin: 'https://shop.example.com',
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+      logger,
+      navTimeoutMs: 20_000,
+      proxyAuth: { username: 'user', password: 's3cret' },
+    });
+
+    expect(page.authenticate).toHaveBeenCalledWith({
+      username: 'user',
+      password: 's3cret',
+    });
+    expect(order).toEqual(['authenticate', 'goto']);
+    await session.close('cancelled');
+  });
+
+  it('без прокси страницу не трогаем', async () => {
+    const main = makeFakePage(MAIN_URL);
+    const page = main.page as RelayPage & { authenticate?: jest.Mock };
+    page.authenticate = jest.fn();
+
+    const session = await Session.create({
+      startUrl: MAIN_URL,
+      allowedOrigin: 'https://shop.example.com',
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+      logger,
+      navTimeoutMs: 20_000,
+    });
+
+    expect(page.authenticate).not.toHaveBeenCalled();
+    await session.close('cancelled');
+  });
+});
+
 describe('Session — итог ввода в логе', () => {
   it('считает колесо отдельно от обычной мыши и пишет итог при закрытии', async () => {
     // Ровно тот факт, которого не хватило при разборе «прокрутка не

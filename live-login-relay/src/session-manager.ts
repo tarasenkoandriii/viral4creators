@@ -25,6 +25,9 @@ export interface SessionManagerOptions {
   navTimeoutMs: number;
   logger: Logger;
   launchBrowser: () => Promise<RelayBrowser>;
+  /** Прокидывается в `Session.create` — см. там же, зачем отдельно от
+   * адреса прокси. */
+  proxyAuth?: { username: string; password: string };
 }
 
 interface SessionTimers {
@@ -116,6 +119,7 @@ export class SessionManager {
         browser,
         logger: this.opts.logger,
         navTimeoutMs: this.opts.navTimeoutMs,
+        proxyAuth: this.opts.proxyAuth,
       });
     } catch (err) {
       await browser.close().catch(() => undefined);

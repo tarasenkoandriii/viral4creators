@@ -40,7 +40,15 @@ function main(): void {
     resultCacheMs: config.resultCacheMs,
     navTimeoutMs: config.navTimeoutMs,
     logger,
-    launchBrowser: () => launchRelayBrowser(config.puppeteerExecutablePath),
+    launchBrowser: () =>
+      launchRelayBrowser(config.puppeteerExecutablePath, config.browserProxy),
+    proxyAuth:
+      config.browserProxy?.username && config.browserProxy.password
+        ? {
+            username: config.browserProxy.username,
+            password: config.browserProxy.password,
+          }
+        : undefined,
   });
 
   let shuttingDown = false;
@@ -71,7 +79,13 @@ function main(): void {
   );
 
   server.listen(config.port, () => {
-    logger.info('live-login-relay listening', { port: config.port });
+    logger.info('live-login-relay listening', {
+      port: config.port,
+      // Только адрес, без учётных данных. Строка в логе нужна ровно
+      // затем, чтобы «прокси точно включён?» проверялось фактом, а не
+      // пересказом содержимого переменных окружения.
+      browserProxy: config.browserProxy?.server ?? null,
+    });
   });
 
   const shutdown = async (signal: string): Promise<void> => {

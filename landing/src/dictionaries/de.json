@@ -1,14 +1,16 @@
 {
   "meta": {
     "title": "viral4creators — UGC-Werbung aus einem einzigen Beispiel",
-    "description": "Laden Sie ein erfolgreiches UGC-Werbevideo hoch — erhalten Sie ein neues, für Ihr Produkt, im selben Stil. Videoanalyse mit Gemini, Generierung mit Grok oder Google Veo 3.1, kostenlos und ohne Registrierung.",
+    "description": "Laden Sie ein erfolgreiches UGC-Werbevideo hoch und erhalten Sie ein neues für Ihr Produkt im selben Stil. Gemini analysiert das Video, Grok oder Google Veo 3.1 generiert — kostenlos, ohne Registrierung. Daneben: ein Creator-Marktplatz und eine Auktion fertiger Videos.",
     "keywords": [
       "UGC-Werbung",
       "KI-Videogenerierung",
       "Grok",
       "Google Veo 3.1",
       "Werbevideo",
-      "Video-Ad-Generator"
+      "Video-Ad-Generator",
+      "UGC-Marktplatz",
+      "Videoauktion"
     ]
   },
   "header": {
@@ -20,6 +22,10 @@
       {
         "href": "#features",
         "label": "Funktionen"
+      },
+      {
+        "href": "#marketplace",
+        "label": "Marktplatz"
       },
       {
         "href": "#plans",
@@ -102,8 +108,57 @@
         "icon": "⧉",
         "title": "Browser und Telegram — ein Produkt",
         "text": "Funktioniert gleichzeitig als gewöhnliche Website und als Telegram Mini App, ohne Unterschied im Funktionsumfang — im Browser starten, in Telegram fortsetzen."
+      },
+      {
+        "icon": "✐",
+        "title": "KI-Skizze statt Produktfoto",
+        "text": "Wenn es nichts gibt, womit sich das Produkt fotografieren lässt, oder fremde Verpackung nicht gezeigt werden darf, zeichnet der Dienst es als Skizze und setzt es ins Bild. In jedem Tarif verfügbar — nur das Tageskontingent unterscheidet sich."
+      },
+      {
+        "icon": "❀",
+        "title": "Grußvideo",
+        "text": "Ein eigener Projekttyp: Anlass, Name des Empfängers, Name des Absenders und Tonfall — heraus kommt ein persönliches Grußvideo, keine Werbung. In jedem Tarif verfügbar; der Tarif bestimmt nur Qualität und Darbietung."
+      },
+      {
+        "icon": "⌘",
+        "title": "Tutorial über die Website des Kunden",
+        "text": "Ein Schritt-für-Schritt-Assistent führt einen Browser durch die Website Ihres Kunden und baut daraus ein Lernvideo — bis hin zur Live-Anmeldung im Kundenkonto, wenn ein Schritt eine Authentifizierung verlangt. Standard und höher."
+      },
+      {
+        "icon": "♪",
+        "title": "Eigene Stimme: Klon, Dub, Anbieter",
+        "text": "Die Stimme wird aus Ihrer Aufnahme geklont, und die Vertonung liegt entweder über dem Veo-Ton oder ersetzt ihn vollständig als Dub. Der Synthese-Anbieter wird ausdrücklich gewählt — ElevenLabs oder Resemble — und vor der Bezahlung vorgehört."
+      },
+      {
+        "icon": "♡",
+        "title": "Feed, Likes und Reposts",
+        "text": "Freigegebene Videos landen im gemeinsamen Feed des Produkts: Likes, Reposts und eine öffentliche Seite pro Video mit der Schaltfläche „So eines machen“. Veröffentlichen ab Standard."
       }
     ]
+  },
+  "marketplace": {
+    "title": "Marktplatz und Auktionen",
+    "lead": "Neben dem Generator läuft eine zweite Plattform: ein Verzeichnis echter Creator und offene Gebote auf fertige Videos. Eigene Adresse, derselbe Telegram-Login.",
+    "items": [
+      {
+        "title": "Creator-Verzeichnis",
+        "text": "Ein Katalog von Creators und Agenturen mit Portfolios echter Arbeiten, Nischen und Preisspanne. Ohne Ausschreibung und ohne Vorauszahlung über die Plattform — Sie nehmen direkt Kontakt auf und einigen sich direkt."
+      },
+      {
+        "title": "Briefing mit Vorauswahl",
+        "text": "Beschreiben Sie Produkt und Aufgabe — die Plattform wählt passende Creator aus dem Katalog aus und rät separat, welches Format und welche Renderqualität zur gewählten Veröffentlichungsplattform passen."
+      },
+      {
+        "title": "Auktion fertiger Videos",
+        "text": "Creator stellen fertige Videos in eine offene Auktion: Startpreis, Gebote, „Sofort kaufen“, exklusive Lose und Blitzpreise. Ein Los ist gegen ein Gebot in der letzten Sekunde geschützt."
+      },
+      {
+        "title": "Brand Book und Kollektionen",
+        "text": "Ein fünfstufiger Brand-Book-Assistent — Name, Stil, Stimme, Charaktere, Orte — wird an das Briefing angehängt, damit der Creator Ihre Markenidentität sofort sieht. Arbeiten werden per Tag zu thematischen Kollektionen gebündelt."
+      }
+    ],
+    "liveNote": "Einige Blitz-Lose bekommen eine Live-Übertragung mit KI-Moderatorin — nur wenn der Verkäufer der Übertragung seines Loses ausdrücklich zugestimmt hat.",
+    "cta": "Marktplatz öffnen"
   },
   "steps": {
     "title": "So funktioniert's",
@@ -259,20 +314,24 @@
           "Referenzsuche auf YouTube, per Link oder eigener Datei",
           "Prompt-Erstellung und manuelle Bearbeitung",
           "Generierung in 16:9 oder 9:16 — Formate, die in jedem Tarif ohne Einschränkung verfügbar sind",
-          "Download der fertigen Datei"
+          "Download der fertigen Datei",
+          "Grußvideo und KI-Produktskizze — in jedem Tarif"
         ],
         "excluded": [
           "Bibliothek fertiger Analysen",
           "Relevanzprüfung und Video-Artefakt-Audit",
           "Markenmanifest, eigene Szenen, Charakteraustausch per Foto",
-          "Seitenverhältnisse über die beiden nativen hinaus"
+          "Seitenverhältnisse über die beiden nativen hinaus",
+          "Stimmklon und Dub",
+          "Tutorial über die Website des Kunden",
+          "Veröffentlichung, Feed und Share-Seite"
         ],
         "note": "Der Standardtarif — die Arbeit beginnt darauf ohne jede Einrichtung."
       },
       {
         "id": "standard",
         "title": "Standard",
-        "summary": "Der volle Funktionsumfang des Dienstes, mit Ausnahme der Bibliothek fertiger Analysen.",
+        "summary": "Der volle Funktionsumfang des Dienstes, mit Ausnahme der Bibliothek fertiger Analysen und des Dubs.",
         "included": [
           "Alles aus Lite",
           "Relevanzprüfung der Referenz für Ihr Produkt",
@@ -281,19 +340,26 @@
           "Eigene Szenen und manuelle Auswahl der drei Bilder für die Generierungs-Engine",
           "Charakteraustausch per eigenem Foto",
           "Jedes Seitenverhältnis, auch benutzerdefiniert",
-          "Veröffentlichung über den Dienst"
+          "Veröffentlichung über den Dienst",
+          "Stimmklon und Vertonung über dem Veo-Ton",
+          "Tutorial über die Website des Kunden",
+          "Feed, Likes und eine öffentliche Seite pro Video"
         ],
-        "excluded": ["Bibliothek fertiger Analysen"],
+        "excluded": [
+          "Bibliothek fertiger Analysen",
+          "Dub — der Veo-Ton wird vollständig durch Ihre Stimme ersetzt"
+        ],
         "note": null
       },
       {
         "id": "premium",
         "title": "Premium",
-        "summary": "Alles zusammen mit der Bibliothek: fertige Szenarien passend zur Zielgruppe Ihres Produkts und eine sofortige Analyse bereits gesehener Videos.",
+        "summary": "Alles zusammen mit Bibliothek und Dub: fertige Szenarien passend zur Zielgruppe Ihres Produkts und ein vollständiger Ersatz des Veo-Tons durch Ihre eigene Stimme.",
         "included": [
           "Alles aus Standard",
           "Bibliothek von Analysen, passend zu Kategorie und Zielgruppe des Produkts",
-          "Sofortstart mit einer vorhandenen Analyse — ohne neuen KI-Aufruf"
+          "Sofortstart mit einer vorhandenen Analyse — ohne neuen KI-Aufruf",
+          "Dub: Der Veo-Ton wird vollständig durch Ihre Stimme ersetzt, nicht mit ihr gemischt"
         ],
         "excluded": [],
         "note": null,
@@ -344,63 +410,64 @@
     "lead": "Was schon funktioniert, steht weiter oben auf dieser Seite. Hier geht es darum, wohin sich das Produkt als Nächstes entwickelt. Horizonte statt Termine: Fristen in einem Produkt, das auf fremden Modellen aufbaut, gelten nur bis zu deren nächstem Release.",
     "items": [
       {
-        "title": "Zuverlässig im Betrieb",
-        "outcome": "Die Abnahme-Checkliste wird vollständig durchlaufen, ohne „funktioniert hier noch nicht“.",
+        "title": "Läuft zuverlässig",
+        "outcome": "Die Abnahme-Checkliste läuft vollständig durch, ohne „das geht hier noch nicht“.",
         "items": [
-          "Nacharbeiten aus einem durchgängigen Audit von Code, Datenbank, Layout und Dokumentation",
-          "Ein kinematografischer Effekt — ein sanfter Kamera-Push-in",
-          "Tests für Zahlungs-Gateways, Dateibereinigung und Zugriffsprüfungen"
+          "Schulden aus den durchgehenden Audits von Code, Datenbank, Layout und Dokumenten",
+          "Tests für Geld-Gates, Dateiaufräumung und Zugriffsprüfungen"
         ]
       },
       {
-        "title": "Ein Video geht in die Welt hinaus und verbreitet sich von selbst",
-        "outcome": "Von „Referenz hochgeladen“ bis „veröffentlicht und geteilt“ — ohne das Produkt zu verlassen.",
+        "title": "Publikum und Geld",
+        "outcome": "Der Dienst bekommt Tarife und einen Schlüssel für fremde Programme.",
         "items": [
-          "Video-Repost in die eigene Telegram-Gruppe oder den eigenen Kanal"
-        ]
-      },
-      {
-        "title": "Zielgruppe und Umsatz",
-        "outcome": "Der Dienst erhält Tarife, einen eigenen Feed und einen Schlüssel für Drittanbieter-Programme.",
-        "items": [
-          "Tarife und Bezahlung: Abonnement, Generierungspakete, Telegram Stars",
-          "Ein Feed mit Likes und Reposts; zahlende Abonnenten können darin veröffentlichen",
+          "Zahlungen einschalten: Abos, Generierungspakete, Telegram Stars und Karten — die Mechanik ist fertig, die Tarife sind noch nicht aktiv",
           "Eine externe API per Schlüssel für den Premium-Tarif"
         ]
       },
       {
         "title": "Schaufenster und eingehende Suche",
-        "outcome": "Wer in seiner Nische nach Werbung sucht, findet das Produkt von selbst und landet direkt im Assistenten.",
+        "outcome": "Wer Werbung in seiner Nische sucht, kommt von selbst und landet im Assistenten.",
         "items": [
-          "Eine Trend-Bibliothek nach Kategorien, direkt im Produkt"
+          "Eine Trendbibliothek nach Kategorien im Produkt",
+          "Ein kuratiertes Schaufenster fremder erfolgreicher Videos mit der Markierung „was funktioniert hat“"
         ]
       },
       {
-        "title": "Von einem Video zu einem ganzen Strom",
-        "outcome": "Ein Katalog mit hundert Positionen deckt den Monatsplan für Inhalte an einem Abend ab.",
+        "title": "Vom Video zum Strom",
+        "outcome": "Ein Katalog mit hundert Positionen deckt den Monatsplan an Content an einem Abend.",
         "items": [
           "Szenenvorlagen für den Start ohne Referenz",
           "Lokalisierung eines Videos in mehrere Sprachen",
-          "Ein Veröffentlichungsplaner mit Prüfung der Plattformregeln"
+          "Ein Veröffentlichungsplaner und Prüfung der Plattformregeln"
         ]
       },
       {
-        "title": "Nicht von echten Aufnahmen zu unterscheiden",
-        "outcome": "Zuschauer erkennen ein Video nicht als generiert, und eine Serie wird als eine einheitliche Marke wahrgenommen.",
+        "title": "Nicht von gedreht zu unterscheiden",
+        "outcome": "Der Zuschauer erkennt das Video nicht als generiert, und eine Serie liest sich als eine Marke.",
         "items": [
-          "Ihr tatsächliches Produkt im Bild, nicht nur ein ähnliches",
-          "Lippensynchronisation mit der eigenen Tonspur"
+          "Ihr Produkt im Bild, nicht etwas Ähnliches",
+          "Lippensynchronität zur eigenen Tonspur — derzeit ein geschlossener Pilot, keine Nutzer-Schaltfläche"
+        ]
+      },
+      {
+        "title": "Marktplatz: vom Verzeichnis zum Geschäft",
+        "outcome": "Auftraggeber und Creator finden einander nicht nur, sondern rechnen auch innerhalb der Plattform ab.",
+        "items": [
+          "Ausschreibung: ein Briefing mit Einreichungen und Auswahl des Gewinners",
+          "Der Treuhand-Mechanismus „Safe 5%“ und Auszahlungen abzüglich Provision",
+          "Beidseitige Bewertungen, Rating und Streitfälle beim Operator"
         ]
       },
       {
         "title": "Ergebnisse und Infrastruktur",
-        "outcome": "Der Dienst beantwortet die Frage „welches Video als Nächstes drehen“ — und lässt sich in fremde Produkte einbinden.",
+        "outcome": "Der Dienst beantwortet die Frage „welches Video als Nächstes“ — und arbeitet über fremde Produkte.",
         "items": [
-          "Plattform-Statistiken zurück ins Produkt",
-          "Referenzauswahl basierend darauf, was bei Ihnen tatsächlich funktioniert hat",
-          "Eine Viralitätsbewertung vor der Generierung",
-          "Video-Ökonomie: Kosten, Aufrufe, Amortisation",
-          "Ein Agenturmodus, White-Label und Kundenberichte",
+          "Plattformstatistiken zurück ins Produkt",
+          "Referenzauswahl danach, was gerade bei Ihnen funktioniert hat",
+          "Viralitätsschätzung vor der Generierung",
+          "Video-Ökonomie: Ausgaben, Impressionen, Amortisation",
+          "Agenturmodus, White Label, Berichte je Kunde",
           "Teamarbeit und Webhooks für externe Systeme"
         ]
       }
@@ -427,7 +494,7 @@
       },
       {
         "question": "Worin unterscheiden sich die Tarife?",
-        "answer": "Lite ist der minimale Weg: Referenzanalyse und Videogenerierung in 16:9 oder 9:16. Standard ergänzt eine Relevanzprüfung, einen Video-Audit, ein Markenmanifest, eigene Szenen, Charakteraustausch per Foto, beliebige Seitenverhältnisse und die Veröffentlichung. Premium ist Standard plus die Bibliothek fertiger Analysen. Der Tarif lässt sich jederzeit wechseln, ohne bereits erstellte Projekte, Videos oder Analysen zu beeinträchtigen."
+        "answer": "Lite ist der minimale Weg: Referenzanalyse und ein Video in 16:9 oder 9:16; Grußvideo und KI-Produktskizze sind in jedem Tarif verfügbar. Standard ergänzt Relevanzprüfung, Video-Audit, Markenmanifest, eigene Szenen, Charakteraustausch per Foto, beliebige Seitenverhältnisse, Stimmklon, das Tutorial über die Website des Kunden, Veröffentlichung und Feed. Premium ist Standard plus Bibliothek fertiger Analysen und Dub: Der Veo-Ton wird vollständig durch Ihre Stimme ersetzt. Der Tarif lässt sich jederzeit wechseln und berührt bereits erstellte Projekte, Videos und Analysen nicht."
       },
       {
         "question": "Wo werden meine Dateien gespeichert und wann werden sie gelöscht?",
@@ -448,6 +515,18 @@
       {
         "question": "Ist das ein Open-Source-Projekt?",
         "answer": "Ja — der Quellcode ist auf GitHub verfügbar, die Entwicklung folgte der GitHub-Spec-Kit-Methodik."
+      },
+      {
+        "question": "Was ist der Marktplatz und worin unterscheidet er sich vom Generator?",
+        "answer": "Es ist eine zweite Plattform neben dem Generator, unter eigener Adresse und mit demselben Telegram-Login. Im Generator erstellt die KI das Video aus Ihrer Referenz; auf dem Marktplatz erstellt es ein echter Creator — Sie finden ihn im Katalog nach Portfolio und Nische oder veröffentlichen ein Briefing, und die Plattform schlägt passende vor. Kontakt und Abrechnung laufen direkt: Ausschreibung und Vorauszahlung über die Plattform gibt es derzeit nicht."
+      },
+      {
+        "question": "Wie funktioniert die Video-Auktion?",
+        "answer": "Ein Creator stellt ein bereits fertiges Video als Los ein: Startpreis, offene Gebote und, wenn er das so wollte, eine Schaltfläche „Sofort kaufen“. Es gibt exklusive Lose und Blitzpreise. Ein Gebot in der letzten Sekunde kann ein Los nicht abfangen — die Zeit verlängert sich automatisch. Einige Blitz-Lose haben eine Live-Übertragung mit KI-Moderatorin, und nur mit ausdrücklicher Zustimmung des Verkäufers."
+      },
+      {
+        "question": "Kann man auch etwas anderes als Werbung machen?",
+        "answer": "Ja, es gibt zwei weitere Projekttypen. Ein Grußvideo: Anlass, Name des Empfängers, Name des Absenders und Tonfall — heraus kommt ein persönliches Video, in jedem Tarif verfügbar. Ein Tutorial über die Website des Kunden: Der Assistent führt einen Browser durch die Website und baut aus dem, was auf dem Bildschirm passiert ist, ein Lernvideo — bis hin zur Live-Anmeldung im Kundenkonto — ab Standard."
       }
     ]
   },
@@ -463,7 +542,8 @@
     "terms": "Nutzungsbedingungen",
     "builtWith": "Built with GitHub Spec Kit",
     "legalNoticeOtherLocale": "Vertragsangebot und Nutzungsbedingungen sind derzeit nur auf Russisch verfügbar.",
-    "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis"
+    "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis",
+    "marketplace": "Marktplatz"
   },
   "notFound": {
     "title": "Seite nicht gefunden",

@@ -13,6 +13,7 @@
  */
 
 import puppeteer, { type Browser } from 'puppeteer-core';
+import type { BrowserProxy } from './config';
 
 // Скопировано построчно из
 // backend/src/common/headless-chromium.ts:31-41 — если список
@@ -30,12 +31,26 @@ export const DOCKER_CHROMIUM_ARGS = [
   '--js-flags=--max-old-space-size=256',
 ];
 
+/**
+ * Прокси добавляется ОДНИМ флагом и только браузеру.
+ *
+ * Учётные данные сюда не кладутся сознательно: Chromium их в
+ * `--proxy-server` игнорирует, а положить их туда значило бы засветить
+ * пароль в списке аргументов процесса — его видно и в `ps`, и в
+ * `cmdline` внутри procfs — без всякой пользы. Аутентификацию делает страница —
+ * `page.authenticate()` в `Session.create`.
+ */
+export function proxyArgs(proxy: BrowserProxy | null): string[] {
+  return proxy ? [`--proxy-server=${proxy.server}`] : [];
+}
+
 export async function launchRelayBrowser(
   executablePath: string,
+  proxy: BrowserProxy | null = null,
 ): Promise<Browser> {
   return puppeteer.launch({
     executablePath,
     headless: true,
-    args: DOCKER_CHROMIUM_ARGS,
+    args: [...DOCKER_CHROMIUM_ARGS, ...proxyArgs(proxy)],
   });
 }

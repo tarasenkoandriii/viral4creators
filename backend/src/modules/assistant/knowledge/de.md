@@ -1,6 +1,6 @@
 # Wissensdatenbank des viral4creators-KI-Beraters
 
-_Собрано автоматически 2026-09-21 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-22 из lending/frontend/backend; коммит — local._
 
 ## Bereiche der Mini-App
 
@@ -90,7 +90,7 @@ Sobald der Prompt bestätigt ist, ist das Video meist innerhalb von 3–5 Minute
 Derzeit nichts: Alle drei Tarife — Lite, Standard und Premium — sind kostenlos und lassen sich direkt in der App umschalten. Das ist eine Testphase; wenn eine Bezahlung eingeführt wird, bleibt bereits Erstelltes erhalten. Später soll Lite bedingt kostenlos werden — gegen ein Like des Projekt-YouTube-Kanals und einige an den Dienst gesendete Links.
 
 **Worin unterscheiden sich die Tarife?**
-Lite ist der minimale Weg: Referenzanalyse und Videogenerierung in 16:9 oder 9:16. Standard ergänzt eine Relevanzprüfung, einen Video-Audit, ein Markenmanifest, eigene Szenen, Charakteraustausch per Foto, beliebige Seitenverhältnisse und die Veröffentlichung. Premium ist Standard plus die Bibliothek fertiger Analysen. Der Tarif lässt sich jederzeit wechseln, ohne bereits erstellte Projekte, Videos oder Analysen zu beeinträchtigen.
+Lite ist der minimale Weg: Referenzanalyse und ein Video in 16:9 oder 9:16; Grußvideo und KI-Produktskizze sind in jedem Tarif verfügbar. Standard ergänzt Relevanzprüfung, Video-Audit, Markenmanifest, eigene Szenen, Charakteraustausch per Foto, beliebige Seitenverhältnisse, Stimmklon, das Tutorial über die Website des Kunden, Veröffentlichung und Feed. Premium ist Standard plus Bibliothek fertiger Analysen und Dub: Der Veo-Ton wird vollständig durch Ihre Stimme ersetzt. Der Tarif lässt sich jederzeit wechseln und berührt bereits erstellte Projekte, Videos und Analysen nicht.
 
 **Wo werden meine Dateien gespeichert und wann werden sie gelöscht?**
 In Vercel Blob — Referenz, Produktfoto und fertiges Video liegen im selben Speicher. Jede Datei hat einen Besitzer in der Datenbank: Eine abgelaufene Sitzung nimmt ihre Dateien mit, ein gelöschtes Produkt sein Foto, ein gelöschtes Manifest die Fotos von Charakteren und Szenen. Die Bereinigung läuft täglich, verwaiste Dateien erfasst ein separater Durchlauf.
@@ -106,6 +106,15 @@ Ja, an beiden Stellen: nach der automatischen Analyse der Referenz und nach der 
 
 **Ist das ein Open-Source-Projekt?**
 Ja — der Quellcode ist auf GitHub verfügbar, die Entwicklung folgte der GitHub-Spec-Kit-Methodik.
+
+**Was ist der Marktplatz und worin unterscheidet er sich vom Generator?**
+Es ist eine zweite Plattform neben dem Generator, unter eigener Adresse und mit demselben Telegram-Login. Im Generator erstellt die KI das Video aus Ihrer Referenz; auf dem Marktplatz erstellt es ein echter Creator — Sie finden ihn im Katalog nach Portfolio und Nische oder veröffentlichen ein Briefing, und die Plattform schlägt passende vor. Kontakt und Abrechnung laufen direkt: Ausschreibung und Vorauszahlung über die Plattform gibt es derzeit nicht.
+
+**Wie funktioniert die Video-Auktion?**
+Ein Creator stellt ein bereits fertiges Video als Los ein: Startpreis, offene Gebote und, wenn er das so wollte, eine Schaltfläche „Sofort kaufen“. Es gibt exklusive Lose und Blitzpreise. Ein Gebot in der letzten Sekunde kann ein Los nicht abfangen — die Zeit verlängert sich automatisch. Einige Blitz-Lose haben eine Live-Übertragung mit KI-Moderatorin, und nur mit ausdrücklicher Zustimmung des Verkäufers.
+
+**Kann man auch etwas anderes als Werbung machen?**
+Ja, es gibt zwei weitere Projekttypen. Ein Grußvideo: Anlass, Name des Empfängers, Name des Absenders und Tonfall — heraus kommt ein persönliches Video, in jedem Tarif verfügbar. Ein Tutorial über die Website des Kunden: Der Assistent führt einen Browser durch die Website und baut aus dem, was auf dem Bildschirm passiert ist, ein Lernvideo — bis hin zur Live-Anmeldung im Kundenkonto — ab Standard.
 
 ## Tarife und Funktionen
 

@@ -1,6 +1,6 @@
 # viral4creators AI consultant knowledge base
 
-_Собрано автоматически 2026-09-21 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-22 из lending/frontend/backend; коммит — local._
 
 ## Mini-app sections
 
@@ -90,7 +90,7 @@ Once the prompt is approved, the video is usually ready in 3–5 minutes — the
 Right now, nothing: all three plans — Lite, Standard and Premium — are free and switch right inside the app. This is a rollout period; whatever you've already made stays yours once paid plans arrive. Later, Lite is planned to become conditionally free — in exchange for liking the project's YouTube channel and sending a few links to the service.
 
 **What's the difference between the plans?**
-Lite is the minimal path: reference breakdown and video generation in 16:9 or 9:16. Standard adds a relevance check, a video artifact audit, a brand manifest, your own scenes, photo character swap, any aspect ratio, and publishing. Premium is Standard plus the library of ready-made breakdowns. You can switch plans at any time without affecting projects, videos or breakdowns you've already made.
+Lite is the minimal path: a reference breakdown and a 16:9 or 9:16 video; the greeting video and the AI product sketch are available on any plan. Standard adds the relevance check, the video audit, the brand manifest, your own scenes, photo character swaps, any aspect ratio, voice cloning, the tutorial from a client's website, publishing and the feed. Premium is Standard plus the library of ready-made breakdowns and dubbing: Veo's audio is replaced by your voice entirely. The plan can be changed at any time and does not touch projects, videos or breakdowns you have already made.
 
 **Where are my files stored, and when are they deleted?**
 In Vercel Blob — the reference, product photos and the finished video all live in the same storage. Every file has an owner in the database: an expired session takes its files with it, a deleted product takes its photo, a deleted manifest takes its character and scene photos. Cleanup runs daily, and a separate pass picks up orphaned files.
@@ -106,6 +106,15 @@ Yes, at both steps: after the automatic reference analysis and after the automat
 
 **Is this an open-source project?**
 Yes — the source code is available on GitHub, and development followed the GitHub Spec Kit methodology.
+
+**What is the marketplace and how is it different from the generator?**
+It is a second venue alongside the generator, at its own address and with the same Telegram login. In the generator the AI makes the video from your reference; on the marketplace a real creator makes it — you find them in the catalog by portfolio and niche, or post a brief and the venue picks matching ones. You get in touch and settle up directly: there is no tender and no prepayment through the platform right now.
+
+**How does the video auction work?**
+A creator puts an already finished video up as a lot: a starting price, open bids and, if they chose so, a “buy now” button. There are exclusive lots and flash prices. A last-second bid cannot snatch a lot — the time is extended automatically. Some flash lots have a live broadcast with an AI host, and only with the seller's explicit consent.
+
+**Can I make something other than an ad?**
+Yes, there are two more project types. A greeting video: occasion, recipient's name, sender's name and tone — the output is a personal video, available on any plan. A tutorial from a client's website: the wizard drives a browser through the site and builds a tutorial video out of what happened on screen, up to a live sign-in to a personal account — Standard and above.
 
 ## Plans and features
 

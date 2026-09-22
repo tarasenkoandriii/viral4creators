@@ -1,14 +1,16 @@
 {
   "meta": {
     "title": "viral4creators — UGC ads from a single example",
-    "description": "Upload one successful UGC ad video — get a new one, for your product, in the same style. Video breakdown by Gemini, generation on Grok or Google Veo 3.1, free and with no sign-up.",
+    "description": "Upload one winning UGC ad video and get a new one for your product in the same style. Gemini breaks the video down, Grok or Google Veo 3.1 generates — free, no sign-up. Alongside it: a creator marketplace and an auction of finished videos.",
     "keywords": [
       "UGC ads",
       "AI video generation",
       "Grok",
       "Google Veo 3.1",
       "ad video",
-      "video ad generator"
+      "video ad generator",
+      "UGC marketplace",
+      "video auction"
     ]
   },
   "header": {
@@ -20,6 +22,10 @@
       {
         "href": "#features",
         "label": "Features"
+      },
+      {
+        "href": "#marketplace",
+        "label": "Marketplace"
       },
       {
         "href": "#plans",
@@ -102,8 +108,57 @@
         "icon": "⧉",
         "title": "Browser and Telegram — one product",
         "text": "Works as a regular website and as a Telegram Mini App at the same time, with no difference in functionality — start in the browser, continue in Telegram."
+      },
+      {
+        "icon": "✐",
+        "title": "AI sketch instead of a product photo",
+        "text": "If there is nothing to shoot the product with, or someone else's packaging must not be shown, the service draws it as a sketch and puts it in the frame. Available on every plan — only the daily quota differs."
+      },
+      {
+        "icon": "❀",
+        "title": "Greeting video",
+        "text": "A project type of its own: occasion, recipient's name, sender's name and tone — the output is a personal greeting video, not an ad. Available on every plan; the plan only affects quality and delivery."
+      },
+      {
+        "icon": "⌘",
+        "title": "Tutorial from a client's website",
+        "text": "A step-by-step wizard drives a browser through your client's website and builds a tutorial video out of it — up to a live sign-in to a personal account when a step needs authorisation. Standard and above."
+      },
+      {
+        "icon": "♪",
+        "title": "Your own voice: clone, dub, provider",
+        "text": "The voice is cloned from your recording, and the voice-over either sits on top of Veo's audio or replaces it entirely as a dub. The synthesis provider is chosen explicitly — ElevenLabs or Resemble — and previewed before you pay."
+      },
+      {
+        "icon": "♡",
+        "title": "Feed, likes and reposts",
+        "text": "Approved videos land in the product's shared feed: likes, reposts and a public page per video with a “make one like this” button. Publishing is Standard and above."
       }
     ]
+  },
+  "marketplace": {
+    "title": "Marketplace and auctions",
+    "lead": "A second venue runs alongside the generator: a directory of real creators and open bidding on finished videos. Separate address, the same Telegram login.",
+    "items": [
+      {
+        "title": "Creator directory",
+        "text": "A catalog of creators and agencies with portfolios of real work, niches and a price range. No tender and no prepayment on the platform — you get in touch and agree directly."
+      },
+      {
+        "title": "Brief with matching",
+        "text": "Describe the product and the task — the venue picks matching creators from the catalog and separately advises which format and render quality suit the platform you publish on."
+      },
+      {
+        "title": "Auction of finished videos",
+        "text": "Creators put finished videos up for open bidding: starting price, bids, “buy now”, exclusive lots and flash prices. A lot is protected against a last-second bid."
+      },
+      {
+        "title": "Brand book and collections",
+        "text": "A five-step brand-book wizard — name, style, voice, characters, locations — attaches to the brief so the creator sees your visual identity right away. Work is grouped into themed collections by tag."
+      }
+    ],
+    "liveNote": "Some flash lots get a live broadcast with an AI host — only if the seller has explicitly agreed to stream their lot.",
+    "cta": "Open the marketplace"
   },
   "steps": {
     "title": "How it works",
@@ -259,20 +314,24 @@
           "Reference search on YouTube, a link, or your own file",
           "Prompt assembly and manual editing",
           "16:9 or 9:16 generation — formats available without limits on any plan",
-          "Download the finished file"
+          "Download the finished file",
+          "Greeting video and AI product sketch — on any plan"
         ],
         "excluded": [
           "Library of ready-made breakdowns",
           "Relevance check and video artifact audit",
           "Brand manifest, your own scenes, photo character swap",
-          "Aspect ratios beyond the two native ones"
+          "Aspect ratios beyond the two native ones",
+          "Voice cloning and dubbing",
+          "Tutorial from a client's website",
+          "Publishing, the feed and a share page"
         ],
         "note": "The default plan — work starts on it with no setup at all."
       },
       {
         "id": "standard",
         "title": "Standard",
-        "summary": "The full feature set of the service, except the library of ready-made breakdowns.",
+        "summary": "The full feature set of the service, except the library of ready-made breakdowns and dubbing.",
         "included": [
           "Everything in Lite",
           "Reference-to-product relevance check",
@@ -281,19 +340,26 @@
           "Your own scenes and manual pick of three images for the generation engine",
           "Photo character swap",
           "Any aspect ratio, including a custom one",
-          "Publishing through the service"
+          "Publishing through the service",
+          "Voice cloning and a voice-over on top of Veo's audio",
+          "Tutorial from a client's website",
+          "Feed, likes and a public page per video"
         ],
-        "excluded": ["Library of ready-made breakdowns"],
+        "excluded": [
+          "Library of ready-made breakdowns",
+          "Dubbing — replacing Veo's audio with your voice entirely"
+        ],
         "note": null
       },
       {
         "id": "premium",
         "title": "Premium",
-        "summary": "Everything, plus the library: ready-made scenarios matched to your product's audience and an instant breakdown of videos already seen.",
+        "summary": "Everything, plus the library and dubbing: ready-made scenarios matched to your product's audience and a full replacement of Veo's audio with your own voice.",
         "included": [
           "Everything in Standard",
           "Library of breakdowns matched by product category and audience",
-          "Instant start from an existing breakdown — no new AI call"
+          "Instant start from an existing breakdown — no new AI call",
+          "Dubbing: Veo's audio is replaced by your voice entirely, not mixed with it"
         ],
         "excluded": [],
         "note": null,
@@ -344,64 +410,65 @@
     "lead": "What already works is above, on this page. This is where the product is headed next. Horizons, not dates: deadlines in a product built on someone else's models live only until that model's next release.",
     "items": [
       {
-        "title": "Rock-solid basics",
-        "outcome": "The acceptance checklist passes end to end, with no \"doesn't work yet here\".",
+        "title": "Works reliably",
+        "outcome": "The acceptance checklist passes end to end, with no “this part doesn't work yet”.",
         "items": [
-          "Debt from an end-to-end audit of code, database, layout and docs",
-          "A cinematic touch — a smooth camera push-in",
-          "Tests for money gateways, file cleanup and access checks"
+          "Debt left by the end-to-end audits of code, database, layout and documents",
+          "Tests for money gates, file cleanup and access checks"
         ]
       },
       {
-        "title": "A video goes out into the world and spreads on its own",
-        "outcome": "From \"uploaded a reference\" to \"published and shared\" — without leaving the product.",
+        "title": "Audience and money",
+        "outcome": "The service gets paid plans and a key for other people's programs.",
         "items": [
-          "Reposting a video to your own Telegram group or channel"
-        ]
-      },
-      {
-        "title": "Audience and revenue",
-        "outcome": "The service gets pricing plans, its own feed, and an API key for third-party apps.",
-        "items": [
-          "Pricing and payment: subscriptions, generation packs, Telegram Stars",
-          "A feed with likes and reposts; paying subscribers can publish to it",
+          "Turning payments on: subscriptions, generation packs, Telegram Stars and cards — the mechanics are ready, the prices are not switched on yet",
           "An external API by key for the Premium plan"
         ]
       },
       {
-        "title": "A storefront and inbound search",
-        "outcome": "Someone searching for ads in their niche finds the product on their own and lands in the wizard.",
+        "title": "Showcase and inbound search",
+        "outcome": "Someone searching for ads in their niche arrives on their own and lands in the wizard.",
         "items": [
-          "A trend library by category, built into the product"
+          "A trend library by category inside the product",
+          "A curated showcase of other people's winning videos, labelled by what worked"
         ]
       },
       {
-        "title": "From one video to a whole stream of them",
-        "outcome": "A hundred-item catalog covers a month's content plan in one evening.",
+        "title": "From one video to a stream",
+        "outcome": "A hundred-item catalog covers a month of content in one evening.",
         "items": [
-          "Scene templates to start without a reference at all",
-          "Localizing one video into several languages",
-          "A publishing scheduler and a check against each platform's rules"
+          "Scene templates for starting without a reference",
+          "Localising one video into several languages",
+          "A publishing scheduler and platform-policy checks"
         ]
       },
       {
-        "title": "Indistinguishable from footage that was actually shot",
-        "outcome": "Viewers can't tell a video was generated, and a series reads as one consistent brand.",
+        "title": "Indistinguishable from filmed",
+        "outcome": "A viewer does not spot the video as generated, and a series reads as one brand.",
         "items": [
-          "Your actual product on screen, not something that merely resembles it",
-          "Lip-sync to your own audio track"
+          "Your exact product in frame, not something that looks like it",
+          "Lip sync to your own audio track — currently a closed pilot, not a user-facing button"
+        ]
+      },
+      {
+        "title": "Marketplace: from directory to deal",
+        "outcome": "Customer and creator not only find each other but settle up inside the venue.",
+        "items": [
+          "Tender: a brief with creator submissions and a winner",
+          "The “Safe 5%” escrow and payouts with the commission withheld",
+          "Two-way reviews, ratings and operator-handled disputes"
         ]
       },
       {
         "title": "Results and infrastructure",
-        "outcome": "The service can answer \"what video should we shoot next\" — and plugs into other products.",
+        "outcome": "The service answers “which video to shoot next” — and works through other people's products.",
         "items": [
-          "Platform performance stats fed back into the product",
-          "Reference picks based on what actually worked for you",
-          "A virality score before generation",
-          "Video economics: cost, views, payback",
-          "An agency mode, white-labeling, and client reporting",
-          "Team collaboration and webhooks for external systems"
+          "Platform statistics fed back into the product",
+          "Reference picking based on what worked for you specifically",
+          "A virality estimate before generation",
+          "Video economics: spend, impressions, payback",
+          "Agency mode, white label, per-client reporting",
+          "Team work and webhooks for external systems"
         ]
       }
     ]
@@ -427,7 +494,7 @@
       },
       {
         "question": "What's the difference between the plans?",
-        "answer": "Lite is the minimal path: reference breakdown and video generation in 16:9 or 9:16. Standard adds a relevance check, a video artifact audit, a brand manifest, your own scenes, photo character swap, any aspect ratio, and publishing. Premium is Standard plus the library of ready-made breakdowns. You can switch plans at any time without affecting projects, videos or breakdowns you've already made."
+        "answer": "Lite is the minimal path: a reference breakdown and a 16:9 or 9:16 video; the greeting video and the AI product sketch are available on any plan. Standard adds the relevance check, the video audit, the brand manifest, your own scenes, photo character swaps, any aspect ratio, voice cloning, the tutorial from a client's website, publishing and the feed. Premium is Standard plus the library of ready-made breakdowns and dubbing: Veo's audio is replaced by your voice entirely. The plan can be changed at any time and does not touch projects, videos or breakdowns you have already made."
       },
       {
         "question": "Where are my files stored, and when are they deleted?",
@@ -448,6 +515,18 @@
       {
         "question": "Is this an open-source project?",
         "answer": "Yes — the source code is available on GitHub, and development followed the GitHub Spec Kit methodology."
+      },
+      {
+        "question": "What is the marketplace and how is it different from the generator?",
+        "answer": "It is a second venue alongside the generator, at its own address and with the same Telegram login. In the generator the AI makes the video from your reference; on the marketplace a real creator makes it — you find them in the catalog by portfolio and niche, or post a brief and the venue picks matching ones. You get in touch and settle up directly: there is no tender and no prepayment through the platform right now."
+      },
+      {
+        "question": "How does the video auction work?",
+        "answer": "A creator puts an already finished video up as a lot: a starting price, open bids and, if they chose so, a “buy now” button. There are exclusive lots and flash prices. A last-second bid cannot snatch a lot — the time is extended automatically. Some flash lots have a live broadcast with an AI host, and only with the seller's explicit consent."
+      },
+      {
+        "question": "Can I make something other than an ad?",
+        "answer": "Yes, there are two more project types. A greeting video: occasion, recipient's name, sender's name and tone — the output is a personal video, available on any plan. A tutorial from a client's website: the wizard drives a browser through the site and builds a tutorial video out of what happened on screen, up to a live sign-in to a personal account — Standard and above."
       }
     ]
   },
@@ -463,7 +542,8 @@
     "terms": "Terms of Use",
     "builtWith": "Built with GitHub Spec Kit",
     "legalNoticeOtherLocale": "The public offer and terms of use are currently available in Russian only.",
-    "madeWithClaude": "Made with Claude — 1 week free"
+    "madeWithClaude": "Made with Claude — 1 week free",
+    "marketplace": "Marketplace"
   },
   "notFound": {
     "title": "Page not found",

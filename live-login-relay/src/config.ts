@@ -9,6 +9,26 @@
 
 export class ConfigError extends Error {}
 
+/**
+ * Прокси для ПОДКОНТРОЛЬНОГО БРАУЗЕРА — не для самого реле.
+ *
+ * Chromium ходит через него флагом `--proxy-server`, а HTTP-сервер
+ * реле, healthcheck и Traefik остаются на прямом подключении. Поэтому
+ * не VPN контейнера: WireGuard потребовал бы `NET_ADMIN` и tun, а в
+ * Swarm ещё и конфликтует с `dokploy-network` — сервис перестал бы
+ * быть доступен по домену.
+ *
+ * `username`/`password` отдельными полями НЕ для красоты: Chromium
+ * игнорирует учётные данные внутри `--proxy-server`, их приходится
+ * отдавать страницей через `page.authenticate()` (см. `Session.create`).
+ */
+export interface BrowserProxy {
+  /** `схема://host:port` — без учётных данных, их Chromium тут не примет. */
+  server: string;
+  username?: string;
+  password?: string;
+}
+
 export interface RelayConfig {
   port: number;
   puppeteerExecutablePath: string;
@@ -20,6 +40,67 @@ export interface RelayConfig {
   navTimeoutMs: number;
   wsAuthTimeoutMs: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  /** `null` — ходим напрямую. По умолчанию именно так. */
+  browserProxy: BrowserProxy | null;
+}
+
+/** Схемы, которые понимает `--proxy-server` Chromium. */
+const PROXY_SCHEMES = ['http:', 'https:', 'socks5:', 'socks4:'];
+
+/**
+ * Разбор `LIVE_LOGIN_BROWSER_PROXY_URL`.
+ *
+ * Fail-fast, как и всё в этом файле: кривое значение роняет старт, а не
+ * тихо пускает трафик напрямую. Тихий откат здесь — худший вариант:
+ * прокси ставят, когда прямой выход НЕ подходит, и «молча пошли
+ * напрямую» означает, что человек узнает об этом от чужого антифрода,
+ * а не от логов.
+ */
+export function parseBrowserProxy(
+  raw: string | undefined,
+): BrowserProxy | null {
+  const value = raw?.trim();
+  if (!value) return null;
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ConfigError(
+      'LIVE_LOGIN_BROWSER_PROXY_URL не разбирается как URL — ожидается http://user:pass@host:port',
+    );
+  }
+  if (!PROXY_SCHEMES.includes(url.protocol)) {
+    throw new ConfigError(
+      `LIVE_LOGIN_BROWSER_PROXY_URL: схема ${url.protocol} не поддерживается Chromium — допустимы ${PROXY_SCHEMES.join(', ')}`,
+    );
+  }
+  if (!url.hostname) {
+    throw new ConfigError('LIVE_LOGIN_BROWSER_PROXY_URL: не указан хост');
+  }
+
+  // Порт восстанавливается явно: `URL.host` выбрасывает порт, если он
+  // совпадает с дефолтным для схемы, и `http://p.example.com:80`
+  // превратился бы в `http://p.example.com`. Chromium такой адрес
+  // примет, но в логе и в `ps` он выглядел бы иначе, чем задано в
+  // переменной, — а это ровно то место, где потом сверяют глазами.
+  const port =
+    url.port ||
+    (url.protocol === 'http:' ? '80' : url.protocol === 'https:' ? '443' : '');
+  if (!port) {
+    throw new ConfigError(
+      `LIVE_LOGIN_BROWSER_PROXY_URL: для схемы ${url.protocol} порт нужно указать явно`,
+    );
+  }
+  const server = `${url.protocol}//${url.hostname}:${port}`;
+  const username = decodeURIComponent(url.username);
+  const password = decodeURIComponent(url.password);
+  if (username && !password) {
+    throw new ConfigError(
+      'LIVE_LOGIN_BROWSER_PROXY_URL: задано имя пользователя без пароля',
+    );
+  }
+  return username ? { server, username, password } : { server };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
@@ -80,6 +161,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
       'WS_AUTH_TIMEOUT_MS',
     ),
     logLevel: parseLogLevel(env.LOG_LEVEL),
+    browserProxy: parseBrowserProxy(env.LIVE_LOGIN_BROWSER_PROXY_URL),
   };
 }
 
