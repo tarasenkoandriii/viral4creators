@@ -5,6 +5,7 @@ import { IllustrationIcon } from '../../components/IllustrationIcon';
 import { AssistantWidget } from '../../components/AssistantWidget';
 import { getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../lib/i18n';
+import { GREETING_SITE_URL } from '../../lib/greeting-host';
 import {
   CLAUDE_REFERRAL_URL,
   DEMO_YOUTUBE_EMBED_URL,
@@ -88,6 +89,15 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
                 </div>
               ))}
             </div>
+            {/* §6 ТЗ поздравлений: без единой входящей ссылки с
+                остального сайта новая страница ранжируется слабее
+                независимо от качества её содержимого. Контекстная —
+                прямо под карточкой «Ролик-поздравление». */}
+            <p className="features-more">
+              <a href={`${GREETING_SITE_URL}/${locale}`}>
+                {dict.features.greetingsLink}
+              </a>
+            </p>
           </div>
         </section>
 
@@ -254,6 +264,7 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
             <a href={DEMO_YOUTUBE_URL} target="_blank" rel="noreferrer">
               {dict.footer.demo}
             </a>
+            <a href={`${GREETING_SITE_URL}/${locale}`}>{dict.footer.greetings}</a>
             <a href={MARKETPLACE_URL}>{dict.footer.marketplace}</a>
             <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
               {dict.footer.github}

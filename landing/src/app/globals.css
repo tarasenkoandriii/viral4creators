@@ -696,6 +696,92 @@ section h2 {
   color: var(--muted);
 }
 
+.features-more {
+  margin: 20px 0 0;
+  font-size: 14px;
+}
+
+/* ---------- Поздравления (поддомен greeting.*) ---------- */
+
+.occasion-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.occasion-tile {
+  display: inline-block;
+  padding: 9px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 14px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.occasion-tile:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.occasion-note {
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sample-grid {
+  display: grid;
+  /* min() — та же защита от горизонтальной прокрутки на 320px, что и у
+     .details-grid: голый minmax(260px) даёт колонку шире вьюпорта. */
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sample-card {
+  display: block;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+}
+
+.sample-card:hover {
+  border-color: var(--accent);
+}
+
+.sample-card video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  object-fit: cover;
+  background: #000;
+}
+
+.sample-card-title {
+  display: block;
+  padding: 12px 14px 0;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.sample-card-occasion {
+  display: block;
+  padding: 4px 14px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* ---------- Маркетплейс ---------- */
 
 /* Сетка и карточки — общие с #details (см. комментарий в page.tsx).

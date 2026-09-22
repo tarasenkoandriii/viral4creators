@@ -134,7 +134,8 @@
         "title": "Feed, me gusta y republicaciones",
         "text": "Los videos aprobados entran al feed común del producto: me gusta, republicaciones y una página pública por video con el botón «hacer uno igual». Publicar está disponible desde Standard."
       }
-    ]
+    ],
+    "greetingsLink": "¿Haces un video de felicitación? Tiene su propia página →"
   },
   "marketplace": {
     "title": "Marketplace y subastas",
@@ -159,6 +160,97 @@
     ],
     "liveNote": "Algunos lotes flash tienen transmisión en vivo con presentadora de IA, solo si el vendedor aceptó explícitamente transmitir su lote.",
     "cta": "Abrir el marketplace"
+  },
+  "greetingsLanding": {
+    "meta": {
+      "title": "Video de felicitación online en cinco minutos — viral4creators",
+      "description": "Elige la ocasión, nombra al destinatario y el servicio arma un video de felicitación personal. Cumpleaños, boda, aniversario, graduación, estreno de casa y diecinueve ocasiones más. Gratis, sin registro.",
+      "keywords": [
+        "video de felicitación",
+        "video de cumpleaños",
+        "tarjeta en video",
+        "felicitación online",
+        "video de aniversario",
+        "felicitación con IA"
+      ]
+    },
+    "hero": {
+      "badge": "Gratis · Sin registro",
+      "title": "Un video de felicitación personal en cinco minutos",
+      "subtitle": "Cumpleaños, boda, aniversario, graduación, estreno de casa: elige la ocasión, nombra al destinatario y el servicio arma un video con palabras pensadas para él.",
+      "cta": "Crear felicitación",
+      "note": "Funciona en el navegador y como Telegram Mini App: no hay nada que instalar."
+    },
+    "samples": {
+      "title": "Cómo se ve",
+      "lead": "Videos que sus autores publicaron por su cuenta y permitieron mostrar aquí."
+    },
+    "occasions": {
+      "title": "Veinticuatro ocasiones",
+      "lead": "Elige la tuya: de ella depende no solo la etiqueta, sino lo que el servicio escribe realmente.",
+      "sensitiveNote": "Tres de ellas —disculpa, palabras de apoyo y pésame— el servicio las trata de otra manera: no ofrece tono humorístico y el texto no felicita."
+    },
+    "steps": {
+      "title": "Cuatro pasos",
+      "lead": "De la ocasión al archivo final.",
+      "items": [
+        {
+          "title": "Cuenta la ocasión",
+          "text": "Ocasión, nombre del destinatario, de parte de quién y el tono. Puedes escribir tu propio texto de una vez: entonces la IA no lo toca."
+        },
+        {
+          "title": "Añade fotos",
+          "text": "Hasta siete imágenes: el destinatario, un lugar, lo que quieras. El paso es opcional: el video también se arma sin ellas."
+        },
+        {
+          "title": "Revisa el guion",
+          "text": "El servicio escribe un texto corto según la ocasión y el tono. Se ve entero y se puede editar a mano antes de generar."
+        },
+        {
+          "title": "Recibe el video",
+          "text": "El video final se puede descargar, enviar por enlace o publicar como página propia."
+        }
+      ]
+    },
+    "price": {
+      "title": "Cuánto cuesta",
+      "text": "Por ahora nada: los tres planes son gratuitos y se cambian dentro de la aplicación. El plan define la resolución: 480p, 720p o 1080p."
+    },
+    "faq": {
+      "title": "Preguntas frecuentes",
+      "items": [
+        {
+          "question": "¿Cuánto tarda el video?",
+          "answer": "Normalmente unos minutos. El tiempo exacto depende de la carga del momento: puedes cerrar la página mientras se genera y volver más tarde."
+        },
+        {
+          "question": "¿En qué idioma será la felicitación?",
+          "answer": "El texto lo escribe el servicio en ruso. La interfaz está en cinco idiomas, pero el guion de la felicitación se genera por ahora solo en ruso: si necesitas otro idioma, escribe tu propio texto en el paso del guion y pasará al video tal cual."
+        },
+        {
+          "question": "¿Qué pasa con las fotos y el nombre del destinatario?",
+          "answer": "Se usan solo para tu video. El nombre del destinatario nunca aparece por sí solo en un título público: si publicas el video como página, el título lleva la ocasión, y el nombre solo si tú lo escribes ahí. Los detalles están en las condiciones de uso."
+        },
+        {
+          "question": "¿Puedo mantenerlo en secreto?",
+          "answer": "Sí. El resultado es un archivo normal y un enlace normal: cuándo y cómo enviarlo lo decides tú. La entrega programada que «se abre el día señalado» todavía no existe."
+        },
+        {
+          "question": "¿Y si no me gusta el resultado?",
+          "answer": "Puedes editar el guion antes de generar y volver a generar el video. Ahora mismo todos los planes son gratuitos, así que volver a generar no cuesta nada."
+        },
+        {
+          "question": "¿Puedo grabar algo que no sea una felicitación?",
+          "answer": "Sí. Además de las fiestas hay una disculpa, palabras de apoyo para alguien enfermo y un pésame. Para esos el servicio escribe de otra forma, no felicita y no ofrece tono humorístico."
+        }
+      ]
+    },
+    "finalCta": {
+      "title": "¿A quién felicitamos?",
+      "text": "Elige la ocasión y el nombre: el resto lo hace el servicio.",
+      "cta": "Crear felicitación"
+    },
+    "backToMain": "Sobre el servicio y otros tipos de video →"
   },
   "steps": {
     "title": "Cómo funciona",
@@ -543,7 +635,8 @@
     "builtWith": "Built with GitHub Spec Kit",
     "legalNoticeOtherLocale": "La oferta pública y los términos de uso solo están disponibles en ruso por el momento.",
     "madeWithClaude": "Hecho con Claude — semana gratis",
-    "marketplace": "Marketplace"
+    "marketplace": "Marketplace",
+    "greetings": "Felicitaciones"
   },
   "notFound": {
     "title": "Página no encontrada",

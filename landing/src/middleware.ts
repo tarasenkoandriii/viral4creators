@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { defaultLocale, locales, LOCALE_COOKIE } from './lib/i18n';
+import { GREETING_SITE_URL, isGreetingHost } from './lib/greeting-host';
+import { SITE_URL } from './lib/content';
 
 /**
  * Локаль-редирект (этап 55) — паттерн перенесён из архитектуры блога
@@ -22,6 +24,12 @@ import { defaultLocale, locales, LOCALE_COOKIE } from './lib/i18n';
  * `sitemap.xml`/`robots.txt` ниже, которые тем не менее оставлены
  * явно — для читаемости).
  *
+ * Этап 3 поздравлений: сюда же добавилось ветвление по ХОСТУ — до
+ * локали, а не после. Порядок здесь не стилистический: если сперва
+ * дописать `/ru`, а потом смотреть на хост, то на поддомене придётся
+ * разбирать уже переписанный путь, и обе логики начнут спорить за одну
+ * строку. Сначала решаем, какой это сайт, потом — на каком он языке.
+ *
  * Этап 60 (ТЗ §40): `/video` (публичная страница ролика,
  * `app/video/[id]/page.tsx`) — по той же причине, что и `/legal`, но
  * не про юридический риск, а про то, что переводить тут нечего: снимок
@@ -37,11 +45,59 @@ export const config = {
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const greetingHost = isGreetingHost(request.headers.get('host'));
 
   const pathnameHasLocale = locales.some(
     (locale) => pathname.startsWith(`/${locale}/`) || pathname === `/${locale}`,
   );
-  if (pathnameHasLocale) return NextResponse.next();
+
+  if (greetingHost) {
+    // На поддомене каноническое место страницы — `/<locale>`, и только
+    // оно. Явный `/<locale>/greetings` схлопывается в него редиректом,
+    // чтобы не оставалось двух живых адресов одной страницы.
+    const explicit = locales.find(
+      (locale) => pathname === `/${locale}/greetings`,
+    );
+    if (explicit) {
+      const url = request.nextUrl.clone();
+      url.pathname = `/${explicit}`;
+      return NextResponse.redirect(url, 308);
+    }
+    // `/<locale>` показывает страницу поздравлений — rewrite, не
+    // redirect: адрес в строке браузера должен остаться коротким, это и
+    // есть canonical.
+    const locale = locales.find((l) => pathname === `/${l}`);
+    if (locale) {
+      const url = request.nextUrl.clone();
+      url.pathname = `/${locale}/greetings`;
+      return NextResponse.rewrite(url);
+    }
+    // Всё остальное на поддомене — чужие страницы главного сайта (блог,
+    // «как это работает»). Отдавать их здесь значило бы завести второй
+    // адрес каждой из них; уводим на главный домен.
+    if (pathnameHasLocale) {
+      return NextResponse.redirect(
+        new URL(`${SITE_URL}${pathname}${request.nextUrl.search}`),
+        308,
+      );
+    }
+  }
+
+  if (pathnameHasLocale) {
+    // На ГЛАВНОМ домене `/<locale>/greetings` — не отдельная страница, а
+    // второй адрес той же самой. Канон живёт на поддомене, сюда же
+    // ведут внутренние ссылки, поэтому редирект постоянный.
+    const greetingsOnMainHost = locales.find(
+      (locale) => pathname === `/${locale}/greetings`,
+    );
+    if (greetingsOnMainHost) {
+      return NextResponse.redirect(
+        new URL(`${GREETING_SITE_URL}/${greetingsOnMainHost}`),
+        308,
+      );
+    }
+    return NextResponse.next();
+  }
 
   // Единственный источник, который считается ЯВНЫМ выбором человека, —
   // cookie, выставленная переключателем языка. Без неё — всегда

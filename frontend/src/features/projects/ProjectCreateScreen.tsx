@@ -39,13 +39,45 @@ import {
 import { exploreSite } from '../../services/client-site-tutorial-api';
 import { deleteProject } from '../../services/projects-api';
 
+/**
+ * Повод, предвыбранный ссылкой с лендинга поздравлений (§4 п.3
+ * docs-tz/TZ-Greeting-Video-Landing.md).
+ *
+ * Плитка повода на `greeting.viral4creators.app` ведёт сюда с
+ * `?occasion=WEDDING`. Без этого чтения плитка «Свадьба» открывала бы
+ * форму с выбранным «День рождения» — мелкая, но настоящая ложь
+ * интерфейса, а вместе с ней и вся идея плитки.
+ *
+ * Читается ОДИН раз, при первом рендере, и только как начальное
+ * значение: дальше повод принадлежит человеку, и повторное чтение
+ * адреса перетирало бы его выбор.
+ *
+ * Неизвестный код в параметре игнорируется — остаётся обычное
+ * умолчание: адрес приходит снаружи, и падать из-за опечатки в нём
+ * форма не должна.
+ */
+function occasionFromQuery(): GreetingOccasion | null {
+  if (typeof window === 'undefined') return null;
+  const raw = new URLSearchParams(window.location.search).get('occasion');
+  if (!raw) return null;
+  return (GREETING_OCCASIONS as readonly string[]).includes(raw)
+    ? (raw as GreetingOccasion)
+    : null;
+}
+
 export function ProjectCreateScreen() {
   const { dict } = useI18n();
   const countries = useAsync(getCountries, []);
   // Brand manifests are optional — a failure here must not block Экран 1.
   const manifests = useAsync(() => listBrandManifests().catch(() => []), []);
 
-  const [type, setType] = useState<ProjectType>('SINGLE');
+  // Пришли по ссылке с лендинга поздравлений — открываем сразу нужный
+  // тип проекта. Без этого плитка повода вела бы на форму товарного
+  // ролика, где поля поздравления даже не показываются, и предвыбранный
+  // повод не был бы виден вообще.
+  const [type, setType] = useState<ProjectType>(
+    occasionFromQuery() ? 'GREETING_VIDEO' : 'SINGLE'
+  );
   const [title, setTitle] = useState('');
   const [countryCode, setCountryCode] = useState<string | null>(null);
   const [brandManifestId, setBrandManifestId] = useState<string>('');
@@ -63,11 +95,15 @@ export function ProjectCreateScreen() {
   // получатель. Ведущий/качество/референсы/текст поздравления — на
   // следующем экране (GreetingVideoWizard), тем же приёмом, что
   // CLIENT_SITE спрашивает название только в конце своего визарда.
-  const [occasion, setOccasion] = useState<GreetingOccasion>('BIRTHDAY');
+  const [occasion, setOccasion] = useState<GreetingOccasion>(
+    occasionFromQuery() ?? 'BIRTHDAY'
+  );
   const [customOccasionText, setCustomOccasionText] = useState('');
   const [recipientName, setRecipientName] = useState('');
   const [senderName, setSenderName] = useState('');
-  const [tone, setTone] = useState<GreetingTone>('WARM');
+  const [tone, setTone] = useState<GreetingTone>(
+    defaultToneFor(occasionFromQuery() ?? 'BIRTHDAY')
+  );
 
   /**
    * Этап 2, фича №3: у чувствительных поводов свой набор тонов, и смена

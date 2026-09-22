@@ -134,7 +134,8 @@
         "title": "Feed, Likes und Reposts",
         "text": "Freigegebene Videos landen im gemeinsamen Feed des Produkts: Likes, Reposts und eine öffentliche Seite pro Video mit der Schaltfläche „So eines machen“. Veröffentlichen ab Standard."
       }
-    ]
+    ],
+    "greetingsLink": "Sie machen ein Grußvideo? Dafür gibt es eine eigene Seite →"
   },
   "marketplace": {
     "title": "Marktplatz und Auktionen",
@@ -159,6 +160,97 @@
     ],
     "liveNote": "Einige Blitz-Lose bekommen eine Live-Übertragung mit KI-Moderatorin — nur wenn der Verkäufer der Übertragung seines Loses ausdrücklich zugestimmt hat.",
     "cta": "Marktplatz öffnen"
+  },
+  "greetingsLanding": {
+    "meta": {
+      "title": "Grußvideo online in fünf Minuten erstellen — viral4creators",
+      "description": "Anlass wählen, Empfänger nennen — der Dienst erstellt ein persönliches Grußvideo. Geburtstag, Hochzeit, Jahrestag, Abschluss, Einweihungsfeier und neunzehn weitere Anlässe. Kostenlos, ohne Registrierung.",
+      "keywords": [
+        "Grußvideo",
+        "Geburtstagsvideo",
+        "Videokarte",
+        "Grußvideo erstellen",
+        "Jahrestag Video",
+        "KI Grußvideo"
+      ]
+    },
+    "hero": {
+      "badge": "Kostenlos · Ohne Registrierung",
+      "title": "Ein persönliches Grußvideo in fünf Minuten",
+      "subtitle": "Geburtstag, Hochzeit, Jahrestag, Abschluss, Einweihungsfeier — wählen Sie den Anlass, nennen Sie den Empfänger, und der Dienst baut ein Video mit Worten genau für ihn.",
+      "cta": "Grußvideo erstellen",
+      "note": "Läuft im Browser und als Telegram Mini App — nichts zu installieren."
+    },
+    "samples": {
+      "title": "So sieht es aus",
+      "lead": "Videos, die ihre Urheber selbst veröffentlicht und zur Anzeige hier freigegeben haben."
+    },
+    "occasions": {
+      "title": "Vierundzwanzig Anlässe",
+      "lead": "Wählen Sie Ihren — er bestimmt nicht nur die Bezeichnung, sondern auch, was der Dienst tatsächlich schreibt.",
+      "sensitiveNote": "Drei davon — Entschuldigung, Worte der Unterstützung und Beileid — behandelt der Dienst anders: ein scherzhafter Ton wird nicht angeboten, und der Text gratuliert nicht."
+    },
+    "steps": {
+      "title": "Vier Schritte",
+      "lead": "Vom Anlass zur fertigen Datei.",
+      "items": [
+        {
+          "title": "Den Anlass beschreiben",
+          "text": "Anlass, Name des Empfängers, von wem der Gruß kommt, und der Ton. Sie können den Text auch gleich selbst schreiben — dann rührt die KI ihn nicht an."
+        },
+        {
+          "title": "Fotos hinzufügen",
+          "text": "Bis zu sieben Bilder — der Empfänger, ein Ort, was immer Sie möchten. Dieser Schritt ist optional: Das Video entsteht auch ohne."
+        },
+        {
+          "title": "Das Skript prüfen",
+          "text": "Der Dienst schreibt einen kurzen Text passend zu Anlass und Ton. Er ist vollständig sichtbar und lässt sich vor dem Rendern von Hand ändern."
+        },
+        {
+          "title": "Das Video erhalten",
+          "text": "Das fertige Video können Sie herunterladen, als Link verschicken oder als eigene Seite veröffentlichen."
+        }
+      ]
+    },
+    "price": {
+      "title": "Was es kostet",
+      "text": "Derzeit nichts: Alle drei Tarife sind kostenlos und lassen sich direkt in der App umschalten. Der Tarif bestimmt die Auflösung — 480p, 720p oder 1080p."
+    },
+    "faq": {
+      "title": "Häufige Fragen",
+      "items": [
+        {
+          "question": "Wie lange dauert ein Video?",
+          "answer": "Meist einige Minuten. Die genaue Zeit hängt von der aktuellen Auslastung ab — Sie können die Seite während des Renderns schließen und später zurückkommen."
+        },
+        {
+          "question": "In welcher Sprache ist der Gruß?",
+          "answer": "Den Text schreibt der Dienst auf Russisch. Die Oberfläche gibt es in fünf Sprachen, das Grußskript selbst wird derzeit aber nur auf Russisch erzeugt — brauchen Sie eine andere Sprache, tragen Sie Ihren eigenen Text im Skript-Schritt ein, er geht unverändert ins Video."
+        },
+        {
+          "question": "Was passiert mit den Fotos und dem Namen des Empfängers?",
+          "answer": "Sie werden nur für Ihr Video verwendet. Der Name des Empfängers landet nie von selbst in einem öffentlichen Titel: Veröffentlichen Sie das Video als Seite, steht dort der Anlass — der Name nur, wenn Sie ihn selbst eintragen. Einzelheiten in den Nutzungsbedingungen."
+        },
+        {
+          "question": "Kann es eine Überraschung bleiben?",
+          "answer": "Ja. Das Ergebnis ist eine gewöhnliche Datei und ein gewöhnlicher Link — wann und wie Sie ihn verschicken, entscheiden Sie. Eine geplante Zustellung „öffnet sich am Tag X“ gibt es noch nicht."
+        },
+        {
+          "question": "Und wenn mir das Ergebnis nicht gefällt?",
+          "answer": "Das Skript lässt sich vor dem Rendern ändern und das Video erneut erzeugen. Alle Tarife sind derzeit kostenlos, ein erneutes Rendern kostet also nichts."
+        },
+        {
+          "question": "Kann ich etwas anderes als einen Gruß aufnehmen?",
+          "answer": "Ja. Neben den Feiertagen gibt es eine Entschuldigung, Worte der Unterstützung für jemanden, der krank ist, und ein Beileid. Dafür schreibt der Dienst anders, gratuliert nicht und bietet keinen scherzhaften Ton an."
+        }
+      ]
+    },
+    "finalCta": {
+      "title": "Wen begrüßen wir?",
+      "text": "Anlass und Name wählen — den Rest übernimmt der Dienst.",
+      "cta": "Grußvideo erstellen"
+    },
+    "backToMain": "Über den Dienst und andere Videoarten →"
   },
   "steps": {
     "title": "So funktioniert's",
@@ -543,7 +635,8 @@
     "builtWith": "Built with GitHub Spec Kit",
     "legalNoticeOtherLocale": "Vertragsangebot und Nutzungsbedingungen sind derzeit nur auf Russisch verfügbar.",
     "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis",
-    "marketplace": "Marktplatz"
+    "marketplace": "Marktplatz",
+    "greetings": "Grußvideos"
   },
   "notFound": {
     "title": "Seite nicht gefunden",

@@ -10,6 +10,8 @@ import {
   GREETING_TONES,
   GreetingOccasion,
 } from './types/greeting.types';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   GREETING_OCCASION_SPECS,
   GREETING_TONE_LABELS,
@@ -144,5 +146,50 @@ describe('fallbackMessage — когда модель не ответила', ()
     const text = fallbackMessage('BIRTHDAY', 'Марина', 'день рождения');
     expect(text).toMatch(/поздравля/i);
     expect(text).toContain('Марина');
+  });
+});
+
+/**
+ * Подписи поводов живут в трёх местах разом: словари мини-аппа
+ * (`frontend/src/dictionaries`), словари лендинга
+ * (`landing/src/dictionaries`, оттуда же их берёт плитка поводов на
+ * `greeting.viral4creators.app`) и enum здесь. TypeScript сверяет
+ * словари между собой — `getDictionary` строит тип по русскому файлу, —
+ * но не сверяет ни один из них с ЭТИМ списком.
+ *
+ * Значит расхождение возможно ровно в ту сторону, которая больнее
+ * всего: добавили повод в enum, забыли подпись — и в интерфейсе вместо
+ * названия появляется `FAREWELL_COLLEAGUE`; убрали из enum, оставили в
+ * словаре — и плитка на лендинге ведёт в мастер с поводом, которого
+ * сервер не принимает.
+ *
+ * Тест читает файлы напрямую — тем же приёмом, что уже применяет
+ * `scripts/build-assistant-knowledge.ts`, который собирает базу знаний
+ * из словарей обоих соседних пакетов.
+ */
+describe('подписи поводов во всех пакетах', () => {
+  const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+  const read = (rel: string) =>
+    JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
+
+  it('словарь мини-аппа покрывает ровно тот же набор поводов', () => {
+    const dict = read('frontend/src/dictionaries/ru.json');
+    expect(Object.keys(dict.greetingVideoWizard.occasion).sort()).toEqual(
+      [...GREETING_OCCASIONS].sort(),
+    );
+  });
+
+  it('словарь лендинга покрывает ровно тот же набор поводов', () => {
+    const dict = read('landing/src/dictionaries/ru.json');
+    expect(Object.keys(dict.sharedVideo.occasion).sort()).toEqual(
+      [...GREETING_OCCASIONS].sort(),
+    );
+  });
+
+  it('словарь мини-аппа покрывает все тоны', () => {
+    const dict = read('frontend/src/dictionaries/ru.json');
+    expect(Object.keys(dict.greetingVideoWizard.tone).sort()).toEqual(
+      [...GREETING_TONES].sort(),
+    );
   });
 });

@@ -134,7 +134,8 @@
         "title": "Feed, likes and reposts",
         "text": "Approved videos land in the product's shared feed: likes, reposts and a public page per video with a “make one like this” button. Publishing is Standard and above."
       }
-    ]
+    ],
+    "greetingsLink": "Making a greeting video? It has a page of its own →"
   },
   "marketplace": {
     "title": "Marketplace and auctions",
@@ -159,6 +160,97 @@
     ],
     "liveNote": "Some flash lots get a live broadcast with an AI host — only if the seller has explicitly agreed to stream their lot.",
     "cta": "Open the marketplace"
+  },
+  "greetingsLanding": {
+    "meta": {
+      "title": "Make a greeting video online in five minutes — viral4creators",
+      "description": "Pick an occasion, name the recipient — the service builds a personal greeting video. Birthday, wedding, anniversary, graduation, housewarming and nineteen more occasions. Free, no sign-up.",
+      "keywords": [
+        "greeting video",
+        "birthday video message",
+        "video card",
+        "greeting video maker",
+        "anniversary video",
+        "AI greeting"
+      ]
+    },
+    "hero": {
+      "badge": "Free · No sign-up",
+      "title": "A personal greeting video in five minutes",
+      "subtitle": "Birthday, wedding, anniversary, graduation, housewarming — pick the occasion, name the recipient, and the service builds a video with words meant for them.",
+      "cta": "Make a greeting",
+      "note": "Runs in the browser and as a Telegram Mini App — nothing to install."
+    },
+    "samples": {
+      "title": "What it looks like",
+      "lead": "Videos their authors published themselves and allowed to be shown here."
+    },
+    "occasions": {
+      "title": "Twenty-four occasions",
+      "lead": "Pick yours — it decides not only the label but what the service actually writes.",
+      "sensitiveNote": "Three of them — an apology, words of support and a condolence — are handled differently: a playful tone is not offered, and the text does not congratulate."
+    },
+    "steps": {
+      "title": "Four steps",
+      "lead": "From the occasion to a finished file.",
+      "items": [
+        {
+          "title": "Describe the occasion",
+          "text": "Occasion, recipient's name, who it is from, and the tone. You can write your own text right away — then the AI leaves it alone."
+        },
+        {
+          "title": "Add photos",
+          "text": "Up to seven images — the recipient, a place, anything. This step is optional: the video works without them too."
+        },
+        {
+          "title": "Check the script",
+          "text": "The service writes a short text for the occasion and tone. You see all of it and can edit it before rendering."
+        },
+        {
+          "title": "Get the video",
+          "text": "Download the finished video, send it as a link, or publish it as its own page."
+        }
+      ]
+    },
+    "price": {
+      "title": "What it costs",
+      "text": "Nothing right now: all three plans are free and switch inside the app. The plan decides the resolution — 480p, 720p or 1080p."
+    },
+    "faq": {
+      "title": "Frequently asked",
+      "items": [
+        {
+          "question": "How long does a video take?",
+          "answer": "Usually a few minutes. The exact time depends on current load — you can close the page while it renders and come back later."
+        },
+        {
+          "question": "What language will the greeting be in?",
+          "answer": "The service writes the text in Russian. The interface is available in five languages, but the greeting script itself is currently generated in Russian only — if you need another language, type your own text at the script step and it goes into the video as is."
+        },
+        {
+          "question": "What happens to the photos and the recipient's name?",
+          "answer": "They are used for your video only. The recipient's name never lands in a public title on its own: if you publish the video as a page, the title carries the occasion, and the name only if you put it there yourself. Details are in the terms of use."
+        },
+        {
+          "question": "Can I keep it a surprise?",
+          "answer": "Yes. The result is an ordinary file and an ordinary link — when and how to send it is up to you. Scheduled “unlocks on the day” delivery does not exist yet."
+        },
+        {
+          "question": "What if I don't like the result?",
+          "answer": "You can edit the script before rendering and render the video again. All plans are free right now, so re-rendering costs nothing."
+        },
+        {
+          "question": "Can I record something other than a greeting?",
+          "answer": "Yes. Besides holidays there is an apology, words of support for someone who is ill, and a condolence. For those the service writes differently, does not congratulate, and does not offer a playful tone."
+        }
+      ]
+    },
+    "finalCta": {
+      "title": "Who are we greeting?",
+      "text": "Pick the occasion and the name — the service does the rest.",
+      "cta": "Make a greeting"
+    },
+    "backToMain": "About the service and other video types →"
   },
   "steps": {
     "title": "How it works",
@@ -543,7 +635,8 @@
     "builtWith": "Built with GitHub Spec Kit",
     "legalNoticeOtherLocale": "The public offer and terms of use are currently available in Russian only.",
     "madeWithClaude": "Made with Claude — 1 week free",
-    "marketplace": "Marketplace"
+    "marketplace": "Marketplace",
+    "greetings": "Greetings"
   },
   "notFound": {
     "title": "Page not found",

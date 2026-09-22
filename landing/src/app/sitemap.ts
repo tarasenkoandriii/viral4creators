@@ -1,5 +1,7 @@
 import type { MetadataRoute } from 'next';
+import { headers } from 'next/headers';
 import { locales } from '../lib/i18n';
+import { GREETING_SITE_URL, isGreetingHost } from '../lib/greeting-host';
 import { BLOG_REVALIDATE_SECONDS, listAllBlogPosts } from '../lib/blog-api';
 import { SITE_URL } from '../lib/content';
 
@@ -36,6 +38,24 @@ import { SITE_URL } from '../lib/content';
 export const revalidate = BLOG_REVALIDATE_SECONDS;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  /**
+   * Этап 3 поздравлений: у поддомена своя карта сайта из одной страницы
+   * на локаль.
+   *
+   * Перечислять здесь адреса главного домена было бы не просто
+   * бесполезно — карта сайта с чужими хостами игнорируется целиком, и
+   * поддомен остался бы без карты. А перечислять `/<locale>/greetings`
+   * в карте ГЛАВНОГО домена нельзя по обратной причине: там этот путь
+   * отвечает 308-м редиректом на поддомен (см. middleware.ts), и
+   * страница-редирект в карте сайта — прямая ошибка, о которой Search
+   * Console сообщает отдельной строкой.
+   */
+  if (isGreetingHost(headers().get('host'))) {
+    return locales.map((locale) => ({
+      url: `${GREETING_SITE_URL}/${locale}`,
+    }));
+  }
+
   const entries: MetadataRoute.Sitemap = [];
 
   for (const locale of locales) {
