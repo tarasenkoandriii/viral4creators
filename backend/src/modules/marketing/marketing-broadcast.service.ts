@@ -42,7 +42,9 @@ const SEND_PAUSE_MS = 40;
 interface FeaturedPage {
   id: string;
   title: string;
-  productName: string;
+  /** NULL у поздравлений — см. выборку ниже, почему они сюда не попадают,
+   * и `buildMessage`, почему подпись всё равно переживает null. */
+  productName: string | null;
 }
 
 interface DeliverableRow {
@@ -117,8 +119,36 @@ export class MarketingBroadcastService {
       }
     }
 
+    /**
+     * Поздравления в рекламную рассылку не попадают.
+     *
+     * До этапа 1 витрины (миграция 20261207090000) вопрос не стоял:
+     * поздравление нельзя было опубликовать публичной страницей вовсе,
+     * и выборка физически не могла его достать. Теперь может — поэтому
+     * прежнее поведение приходится выражать явно, иначе оно поменялось
+     * бы само собой, без чьего-либо решения.
+     *
+     * Почему именно так, а не «раз опубликовано, значит можно»: этот
+     * выпуск озаглавлен «подборка удачных РЕКЛАМНЫХ роликов недели» и
+     * уходит всем подписчикам канала. Личное поздравление конкретному
+     * человеку — не реклама, и автор, нажимая «опубликовать», соглашался
+     * на публичную страницу по ссылке, а не на попадание в рассылку.
+     * Захотим показывать их там — это отдельное продуктовое решение, а
+     * не побочный эффект правки типов.
+     *
+     * `OR` вместо `{ not: 'GREETING_VIDEO' }`: колонка nullable, и
+     * отрицание в SQL отбросило бы заодно все строки с NULL — то есть
+     * ровно те товарные ролики, ради которых рассылка и существует.
+     */
     const pages: FeaturedPage[] = await this.prisma.sharedVideoPage.findMany({
-      where: { status: 'PUBLISHED', featuredInBroadcastAt: null },
+      where: {
+        status: 'PUBLISHED',
+        featuredInBroadcastAt: null,
+        OR: [
+          { projectType: null },
+          { projectType: { notIn: ['GREETING_VIDEO'] } },
+        ],
+      },
       orderBy: { createdAt: 'desc' },
       take: this.cfg().pageCount,
       select: { id: true, title: true, productName: true },
@@ -320,12 +350,15 @@ export class MarketingBroadcastService {
 
 /** Pure — экспортирован для теста. */
 export function buildMessage(
-  pages: Array<{ id: string; title: string; productName: string }>,
+  pages: Array<{ id: string; title: string; productName: string | null }>,
   landingUrl: string,
 ): string {
   const lines = pages.map((p) => {
     const link = landingUrl ? `${landingUrl}/video/${p.id}` : null;
-    const label = `${p.title} (${p.productName})`;
+    // Подстраховка второго уровня: выборка выше поздравления не берёт, но
+    // если запись без товара когда-нибудь сюда всё же дойдёт, подписью
+    // станет один заголовок, а не «Заголовок (null)».
+    const label = p.productName ? `${p.title} (${p.productName})` : p.title;
     return link ? `• ${label}\n  ${link}` : `• ${label}`;
   });
   return [

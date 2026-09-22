@@ -346,3 +346,41 @@ describe('buildMessage', () => {
     expect(text).not.toContain('/video/');
   });
 });
+
+/**
+ * Этап 1 витрины (миграция 20261207090000): поздравления стало возможно
+ * публиковать публичной страницей, и без явного фильтра они начали бы
+ * попадать в рекламную рассылку сами собой — «подборка удачных
+ * РЕКЛАМНЫХ роликов недели» всем подписчикам канала. Прежнее поведение
+ * (их там нет) закреплено тестом, чтобы оно не изменилось молча.
+ */
+describe('MarketingBroadcastService — поздравления вне рассылки', () => {
+  it('выборка выпуска исключает GREETING_VIDEO, не теряя товарные ролики', async () => {
+    // Через публичный runDaily(), а не приватный composeIfDue: тест
+    // проверяет поведение сервиса, а не его внутреннее устройство.
+    const { service, prisma } = build({ pages: [] });
+    await service.runDaily();
+    const where = prisma.sharedVideoPage.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('PUBLISHED');
+    expect(where.featuredInBroadcastAt).toBeNull();
+    // NULL в projectType — это товарный ролик, и он обязан остаться в
+    // выборке: простое отрицание в SQL отбросило бы его вместе с
+    // поздравлениями.
+    expect(where.OR).toEqual([
+      { projectType: null },
+      { projectType: { notIn: ['GREETING_VIDEO'] } },
+    ]);
+  });
+});
+
+describe('buildMessage — запись без товара', () => {
+  it('подписью становится один заголовок, а не «Заголовок (null)»', () => {
+    const text = buildMessage(
+      [{ id: 'sv9', title: 'С днём рождения', productName: null }],
+      'https://welcome.viral4creators.app',
+    );
+    expect(text).toContain('• С днём рождения');
+    expect(text).not.toContain('(');
+    expect(text).not.toContain('null');
+  });
+});

@@ -96,6 +96,39 @@ const STATUSES: ReadonlySet<string> = new Set([
   'REJECTED',
 ]);
 
+/**
+ * Фильтры витрины приходят строками из query — Prisma ждёт члены enum,
+ * и именно на этом упала сборка: `string` туда не подходит.
+ *
+ * Обычные type guard'ы, без символов-сентинелов: сужение через
+ * `raw is T` предсказуемо читается и компилятором, и человеком, а
+ * «невалидное значение» выражается тем, что сузить не удалось.
+ */
+const PROJECT_TYPES = [
+  'SINGLE',
+  'LINE',
+  'CLIENT_SITE',
+  'GREETING_VIDEO',
+] as const;
+
+const OCCASIONS = [
+  'BIRTHDAY',
+  'WEDDING',
+  'ANNIVERSARY',
+  'NEW_YEAR',
+  'GRADUATION',
+  'CORPORATE',
+  'OTHER',
+] as const;
+
+function isProjectType(raw: string): raw is (typeof PROJECT_TYPES)[number] {
+  return (PROJECT_TYPES as readonly string[]).includes(raw);
+}
+
+function isOccasion(raw: string): raw is GreetingOccasion {
+  return (OCCASIONS as readonly string[]).includes(raw);
+}
+
 /** Тип проекта в снимке — только то, что витрине нужно различать. */
 type SnapshotProjectType = 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO';
 type ProjectType = SnapshotProjectType;
@@ -641,12 +674,25 @@ export class SharedVideoService {
     cursor?: string | null;
     pageSize: number;
   }): Promise<SharedVideoShowcaseResult> {
+    // Маршрут публичный, значения приходят из query-строки. Непустое, но
+    // не принадлежащее enum значение — это НЕ «фильтра нет»: молча его
+    // отбросить значило бы отдать наружу всю витрину целиком в ответ на
+    // опечатку в параметре. Пустая выдача — правильная сторона ошибки.
+    const rawType = opts.projectType?.trim() || undefined;
+    const rawOccasion = opts.occasion?.trim() || undefined;
+    const projectType =
+      rawType && isProjectType(rawType) ? rawType : undefined;
+    const occasion =
+      rawOccasion && isOccasion(rawOccasion) ? rawOccasion : undefined;
+    if ((rawType && !projectType) || (rawOccasion && !occasion)) {
+      return { items: [], nextCursor: null };
+    }
     const rows: SharedVideoRow[] = await this.prisma.sharedVideoPage.findMany({
       where: {
         status: 'PUBLISHED',
         showcasedAt: { not: null },
-        ...(opts.projectType ? { projectType: opts.projectType } : {}),
-        ...(opts.occasion ? { occasion: opts.occasion } : {}),
+        ...(projectType ? { projectType } : {}),
+        ...(occasion ? { occasion } : {}),
       },
       orderBy: [{ showcasedAt: 'desc' }, { id: 'desc' }],
       take: opts.pageSize + 1,

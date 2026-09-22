@@ -761,6 +761,27 @@ describe('SharedVideoService.listShowcase', () => {
     expect(where.projectType).toBe('GREETING_VIDEO');
   });
 
+  /**
+   * Маршрут публичный, значения приходят строкой из query. Опечатка в
+   * параметре не должна отдавать витрину целиком — это та ошибка, из-за
+   * которой сборка Vercel и упала: Prisma ждёт член enum, а не строку.
+   */
+  it('unknown filter value yields nothing and never reaches the database', async () => {
+    const { service, prisma } = build({ rows: [row()] });
+    const res = await service.listShowcase({
+      projectType: 'NOT_A_TYPE',
+      pageSize: 9,
+    });
+    expect(res).toEqual({ items: [], nextCursor: null });
+    expect(prisma.sharedVideoPage.findMany).not.toHaveBeenCalled();
+
+    const second = build({ rows: [row()] });
+    expect(
+      await second.service.listShowcase({ occasion: 'НЕ_ПОВОД', pageSize: 9 }),
+    ).toEqual({ items: [], nextCursor: null });
+    expect(second.prisma.sharedVideoPage.findMany).not.toHaveBeenCalled();
+  });
+
   it('omits empty filters instead of matching them literally', async () => {
     const { service, prisma } = build({ rows: [] });
     await service.listShowcase({
