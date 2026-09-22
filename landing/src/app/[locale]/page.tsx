@@ -3,16 +3,14 @@ import { Faq } from '../../components/Faq';
 import { HowItWorks } from '../../components/HowItWorks';
 import { IllustrationIcon } from '../../components/IllustrationIcon';
 import { AssistantWidget } from '../../components/AssistantWidget';
+import { Footer } from '../../components/Footer';
 import { getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../lib/i18n';
 import { GREETING_SITE_URL } from '../../lib/greeting-host';
 import {
-  CLAUDE_REFERRAL_URL,
   DEMO_YOUTUBE_EMBED_URL,
   DEMO_YOUTUBE_URL,
-  GITHUB_REPO_URL,
   MARKETPLACE_URL,
-  SPEC_KIT_URL,
   TMA_URL,
 } from '../../lib/content';
 
@@ -25,7 +23,6 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
   // там же) — здесь просто безопасно сужаем тип для getDictionary().
   const locale: Locale = isLocale(params.locale) ? params.locale : 'ru';
   const dict = getDictionary(locale);
-  const year = new Date().getFullYear();
 
   return (
     <>
@@ -257,36 +254,7 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
         </section>
       </main>
 
-      <footer>
-        <div className="wrap footer-inner">
-          <span>© {year} viral4creators</span>
-          <nav className="footer-links">
-            <a href={DEMO_YOUTUBE_URL} target="_blank" rel="noreferrer">
-              {dict.footer.demo}
-            </a>
-            <a href={`${GREETING_SITE_URL}/${locale}`}>{dict.footer.greetings}</a>
-            <a href={MARKETPLACE_URL}>{dict.footer.marketplace}</a>
-            <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
-              {dict.footer.github}
-            </a>
-            <a href="/legal/offer">{dict.footer.offer}</a>
-            <a href="/legal/terms-of-use">{dict.footer.terms}</a>
-            <a href={SPEC_KIT_URL} target="_blank" rel="noreferrer">
-              {dict.footer.builtWith}
-            </a>
-            {/* Доп. запрос владельца продукта: та же реферальная ссылка
-                Claude, что уже в футере TMA (frontend/src/App.tsx) — тот
-                же текст словаря переиспользован, а не переведён заново. */}
-            <a href={CLAUDE_REFERRAL_URL} target="_blank" rel="noreferrer">
-              {dict.footer.madeWithClaude}
-            </a>
-          </nav>
-          {/* Юридические документы намеренно одноязычные (см. middleware.ts,
-              lib/i18n.ts) — на неродной для них локали честно об этом
-              предупреждаем прямо у ссылок, а не молчим. */}
-          {locale !== 'ru' && <p className="legal-notice">{dict.footer.legalNoticeOtherLocale}</p>}
-        </div>
-      </footer>
+      <Footer dict={dict} locale={locale} />
 
       {/* Плавающая кнопка + панель ИИ-консультанта (§4.1, §6 ТЗ) — вне
           <main>, фиксированное позиционирование через CSS. */}

@@ -161,6 +161,155 @@
     "liveNote": "Einige Blitz-Lose bekommen eine Live-Übertragung mit KI-Moderatorin — nur wenn der Verkäufer der Übertragung seines Loses ausdrücklich zugestimmt hat.",
     "cta": "Marktplatz öffnen"
   },
+"siteTutorialLanding": {
+  "meta": {
+    "title": "Erklärvideo zu Ihrer eigenen Website — ohne Erweiterungen | viral4creators",
+    "description": "Nehmen Sie eine Anleitung zu Ihrer Website oder Ihrem Kundenbereich direkt aus Telegram auf: Link einfügen, durch echte Bildschirme klicken, fertiges Video erhalten. Auf dem Arbeitsrechner muss nichts installiert werden."
+  },
+  "hero": {
+    "badge": "Ohne Browser-Erweiterung",
+    "title": "Erklärvideo zu Ihrer Website — direkt aus Telegram",
+    "subtitle": "Keine Erweiterung im Browser, kein fremdes Programm mit Zugriff auf Ihren Arbeitsrechner. Der Browser läuft auf unserem Server: Sie fügen einen Link ein und gehen die echten Bildschirme Ihrer Website durch, wir zeichnen jeden Schritt auf.",
+    "cta": "Anleitung aufnehmen",
+    "note": "Funktioniert im Browser und als Telegram Mini App."
+  },
+  "how": {
+    "title": "So sieht das aus",
+    "lead": "Vier Bildschirme, der ganze Ablauf. Unten sind Schemazeichnungen der Oberfläche, nicht die Oberfläche selbst: ein echtes Bild zeigt Ihre Website, und die gibt es hier nicht.",
+    "items": [
+      {
+        "title": "Link eingefügt",
+        "text": "Die Adresse Ihrer Website oder Ihres Kundenbereichs. Dort beginnt das Drehbuch, und darüber hinaus geht die Aufnahme nicht."
+      },
+      {
+        "title": "Echten Bildschirm gesehen",
+        "text": "Der Server hat die Seite im Browser geöffnet und ein Bild geschickt — zusammen mit den Feldern und Schaltflächen, die dort tatsächlich vorhanden sind."
+      },
+      {
+        "title": "Ausgefüllt und geklickt",
+        "text": "Sie tragen Ihre Werte ein und wählen eine Schaltfläche. Die Aktion läuft wirklich auf der Live-Website — und der nächste Bildschirm kommt zurück."
+      },
+      {
+        "title": "Video erhalten",
+        "text": "Sie drücken «Fertig», ein Operator prüft die Aufnahme, aus den Bildern entsteht ein Video, und der Link dazu erscheint direkt im Assistenten."
+      }
+    ]
+  },
+  "compare": {
+    "title": "Was das von den üblichen Werkzeugen unterscheidet",
+    "lead": "Ehrlich in beide Richtungen: wo wir verlieren, steht es auch so da.",
+    "ourColumn": "Bei uns",
+    "theirColumn": "Typisches Werkzeug dieser Kategorie",
+    "rows": [
+      {
+        "feature": "Browser-Erweiterung nötig",
+        "us": "Nein",
+        "them": "Meist ja"
+      },
+      {
+        "feature": "Echte Aktionen auf der Live-Website statt einer Kopie der Seite",
+        "us": "Ja",
+        "them": "Häufiger ein Abbild des Markups"
+      },
+      {
+        "feature": "Fertiges Video als Ergebnis",
+        "us": "Ja",
+        "them": "Häufiger eine interaktive Demo"
+      },
+      {
+        "feature": "Mehrere Kundenwebsites aus einem Konto",
+        "us": "Ja, ohne Obergrenze für die Zahl der Projekte",
+        "them": "Meist auf das eigene Produkt zugeschnitten"
+      },
+      {
+        "feature": "Auswertung: wer zu Ende geschaut und wo abgebrochen hat",
+        "us": "Nein",
+        "them": "Ja — bei Demo-Plattformen die Kernfunktion"
+      },
+      {
+        "feature": "Einbettbares interaktives Widget für die Website",
+        "us": "Nein, bei uns eine Videodatei",
+        "them": "Ja"
+      }
+    ],
+    "note": "Die rechte Spalte verallgemeinert die Kategorie und nennt kein einzelnes Produkt: die Werkzeuge unterscheiden sich, und allen dasselbe zuzuschreiben wäre nicht wahr."
+  },
+  "audience": {
+    "title": "Für wen das ist",
+    "items": [
+      {
+        "title": "Produkt und Marketing",
+        "text": "Onboarding-Video zum eigenen Produkt: Anmeldung, erster Ablauf, der entscheidende Bildschirm — gezeigt an echten Bildschirmen statt beschrieben."
+      },
+      {
+        "title": "Agenturen und Freelancer",
+        "text": "Anleitungen für Kundenwebsites, zu denen Sie Zugang haben, aus einem Konto. Die Zahl solcher Projekte begrenzen wir nicht."
+      },
+      {
+        "title": "Support-Teams",
+        "text": "Die Antwort auf «wie mache ich X» als Video statt als Artikel: einmal aufgenommen, danach nur noch den Link schicken."
+      }
+    ]
+  },
+  "login": {
+    "title": "Und wenn die Website eine Anmeldung hat?",
+    "lead": "Das ist fast immer die erste Frage, deshalb hier die vollständige Antwort.",
+    "items": [
+      {
+        "title": "Gewöhnliche Anmeldung",
+        "text": "Legen Sie einen Testbenutzer an und tragen Sie dessen Daten in den separaten Anmeldeblock ein. Sie werden verschlüsselt und bei jedem Neuaufbau des Videos erneut abgespielt — in das Drehbuch und in das Video gelangen sie nicht."
+      },
+      {
+        "title": "Captcha, Einmalcode, Anmeldung über Google",
+        "text": "So etwas lässt sich nicht im Voraus aufzeichnen. Es öffnet sich ein Live-Fenster, Sie melden sich selbst an, danach läuft die Aufnahme wie gewohnt weiter. Das hat einen Preis: ein solches Drehbuch lässt sich später nicht vollautomatisch neu aufbauen."
+      },
+      {
+        "title": "Wohin die Aufnahme nicht geht",
+        "text": "Das Drehbuch verlässt Ihre Website nicht: Subdomains derselben Adresse sind erlaubt — die Anmeldung liegt oft auf einer eigenen —, eine fremde Domain nicht, auch wenn eine Weiterleitung dorthin führt."
+      }
+    ],
+    "warning": "Werte gewöhnlicher Formularfelder werden unverschlüsselt im Drehbuch gespeichert. Echte Passwörter und Zahlungsdaten gehören ausschließlich in den Anmeldeblock — dort wird verschlüsselt."
+  },
+  "price": {
+    "title": "Was das kostet",
+    "text": "Solange die Abrechnung aus ist: nichts — die Modi lassen sich direkt im Produkt umschalten. Die Funktion selbst gehört zu Standard und höher. Bis zu 30 Schritte je Drehbuch, standardmäßig bis zu 60 Runden und bis zu 10 Live-Anmeldungen pro Tag."
+  },
+  "faq": {
+    "title": "Häufige Fragen",
+    "items": [
+      {
+        "question": "Ist das sicher — melden Sie sich wirklich auf meiner Website an?",
+        "answer": "Ja, wirklich, mit einem Browser auf unserem Server. Die im Anmeldeblock eingetragenen Daten des Testbenutzers werden verschlüsselt und bei jedem Neuaufbau des Videos erneut abgespielt; in das Drehbuch, in die Einzelbilder und in das Video gelangen sie nicht. Die Werte der übrigen Formularfelder werden unverändert gespeichert — echte Passwörter und Zahlungsdaten gehören deshalb nur in den Anmeldeblock."
+      },
+      {
+        "question": "Was, wenn die Website ein Captcha oder Zwei-Faktor-Anmeldung hat?",
+        "answer": "Es öffnet sich ein Live-Fenster, und Sie melden sich selbst an. Danach läuft die Aufnahme wie gewohnt. Eine Einschränkung: ein solcher Schritt lässt sich nicht automatisch wiederholen, das Video kann später also nicht ohne Sie neu aufgebaut werden."
+      },
+      {
+        "question": "Wie viele Schritte kann ich aufnehmen?",
+        "answer": "Bis zu 30 je Drehbuch — dieselbe Grenze wie bei einem gewöhnlichen Drehbuch unseres Produkts. Runden und Live-Anmeldungen liegen standardmäßig bei 60 und 10 pro Tag."
+      },
+      {
+        "question": "Was bekomme ich am Ende?",
+        "answer": "Eine fertige Videodatei. Nach «Fertig» prüft ein Operator die Aufnahme — ein Pflichtschritt, denn im Bild ist eine fremde Website, und einer der Schritte könnte unumkehrbar gewesen sein. Nach der Freigabe wird das Video zusammengesetzt, und der Link erscheint im Assistenten."
+      },
+      {
+        "question": "Sieht jemand mein Passwort?",
+        "answer": "Das Passwort des Testbenutzers wird verschlüsselt gespeichert und nur im Moment der Anmeldung eingesetzt. Weder in den Schritten des Drehbuchs noch in den Einzelbildern noch im fertigen Video ist es enthalten. Zusätzlich: Wählen Sie eine Schaltfläche, die nach einer unumkehrbaren Aktion aussieht — «Bezahlen», «Löschen» —, fragt der Assistent VOR dem Klick nach."
+      },
+      {
+        "question": "Wessen Website darf ich angeben?",
+        "answer": "Ihre eigene oder eine, zu der Sie Zugang haben — etwa die eines Kunden, den Sie betreuen. Jeder Schritt läuft wirklich auf der echten Seite, es gibt also keinen Grund, eine fremde Website nur zum Anschauen anzugeben."
+      }
+    ]
+  },
+  "finalCta": {
+    "title": "Zeigen Sie Ihre Website so, wie sie wirklich funktioniert",
+    "text": "Link einfügen — danach nur noch klicken.",
+    "cta": "Anleitung aufnehmen"
+  },
+  "backToMain": "Über den Dienst und andere Videotypen →"
+},
   "greetingsLanding": {
     "meta": {
       "title": "Grußvideo online in fünf Minuten erstellen — viral4creators",
@@ -636,7 +785,8 @@
     "legalNoticeOtherLocale": "Vertragsangebot und Nutzungsbedingungen sind derzeit nur auf Russisch verfügbar.",
     "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis",
     "marketplace": "Marktplatz",
-    "greetings": "Grußvideos"
+    "greetings": "Grußvideos",
+    "siteTutorial": "Website-Anleitungen"
   },
   "notFound": {
     "title": "Seite nicht gefunden",

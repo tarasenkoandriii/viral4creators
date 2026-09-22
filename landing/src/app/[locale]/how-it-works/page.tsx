@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Header } from '../../../components/Header';
 import { HowItWorks } from '../../../components/HowItWorks';
 import { AssistantWidget } from '../../../components/AssistantWidget';
+import { Footer } from '../../../components/Footer';
 import { getDictionary } from '../../../lib/get-dictionary';
 import { isLocale, locales, OG_LOCALES, type Locale } from '../../../lib/i18n';
 
@@ -60,6 +61,10 @@ export default function HowItWorksPage({ params }: { params: { locale: string } 
           </aside>
         </div>
       </main>
+      {/* Находка С-3 аудита: с этапа 79 у этой страницы не было футера
+          вовсе — ни копирайта, ни ссылок на оферту и условия
+          использования. С общим компонентом это чинится само. */}
+      <Footer dict={dict} locale={locale} />
     </>
   );
 }

@@ -53,7 +53,7 @@ import {
   appendRound,
   assertEditable,
   assertRoundsConsistent,
-  assertSameOrigin,
+  assertSameSite,
   replaceLastScreenshot,
   undoLastRound,
 } from './draft-rounds';
@@ -95,6 +95,40 @@ function tutorialSecretKey(): string | undefined {
   return process.env.SITE_TUTORIAL_TOKEN_KEY;
 }
 
+/**
+ * Готовый ролик обучалки — глазами ЕГО ВЛАДЕЛЬЦА.
+ *
+ * Появилось по находке Б-4 аудита
+ * `docs-tz/AUDIT-Client-Site-Tutorial-Landing.md`: собранное видео
+ * лежало в `TutorialVideoAsset`, а наружу этот тип отдавал только
+ * админский контроллер (`admin/tutorial-video-assets`). Для
+ * пользователя конечным состоянием визарда была строка «Одобрено —
+ * ролик собирается», после которой не появлялось ничего: ни ссылки,
+ * ни файла. То есть у целого вида проекта не было артефакта — человек
+ * проходил сценарий по своему сайту и не получал на руки ничего.
+ *
+ * Почему гейтом служит `assemblyStatus`, а НЕ `reviewed`. `reviewed` —
+ * это разрешение оператора ПОКАЗЫВАТЬ ролик посетителям (§4.6 TMA-
+ * спеки), и для публичной витрины оно остаётся обязательным. Но
+ * владелец проекта — не посетитель: это человек, чей сайт в кадре и
+ * чей сценарий записан, а черновик к этому моменту УЖЕ прошёл
+ * одобрение оператором (`APPROVED`, §8.3 — иначе сборка вообще не
+ * запускается). Держать от него готовый файл за вторым одобрением
+ * означало бы охранять его собственную запись от него самого.
+ *
+ * Текста ошибки сборки здесь нет намеренно: `assemblyError` — это
+ * сообщение внешнего ffmpeg-api, адресованное оператору. Пользователю
+ * оно ничего не объясняет и может содержать внутренние детали, так что
+ * наружу идёт только сам факт неудачи.
+ */
+export interface TutorialVideoView {
+  /** 'pending' — сборка идёт, 'complete' — есть `url`, 'failed' —
+   * оператор увидит причину в админке. */
+  status: 'pending' | 'complete' | 'failed';
+  url: string | null;
+  durationMs: number | null;
+}
+
 export interface DraftView {
   id: string;
   projectId: string;
@@ -114,6 +148,9 @@ export interface DraftView {
    * Фронтенд прячет кнопку живого входа по этому признаку, а не
    * догадывается по тексту ошибки после нажатия. */
   liveLoginAvailable: boolean;
+  /** Заполняется только у одобренного черновика — до одобрения
+   * собирать нечего, и строки `TutorialVideoAsset` ещё не существует. */
+  video: TutorialVideoView | null;
 }
 
 export interface LiveLoginStart {
@@ -206,7 +243,7 @@ export class ClientSiteTutorialService {
       await this.usage.releaseRound(userId);
       throw err;
     }
-    this.assertStillInside(origin, round.exploration.currentUrl);
+    await this.assertStillInside(origin, round.exploration.currentUrl);
 
     const state = appendRound(
       {
@@ -426,7 +463,7 @@ export class ClientSiteTutorialService {
       await this.usage.releaseRound(userId);
       throw err;
     }
-    this.assertStillInside(draft.baseUrl, replayed.exploration.currentUrl);
+    await this.assertStillInside(draft.baseUrl, replayed.exploration.currentUrl);
 
     const next = replaceLastScreenshot(
       undone.next,
@@ -557,7 +594,7 @@ export class ClientSiteTutorialService {
 
     const startUrl = draft.lastUrl ?? draft.baseUrl;
     await this.assertSafeUrl(startUrl);
-    assertSameOrigin(draft.baseUrl, startUrl);
+    assertSameSite(draft.baseUrl, startUrl);
     // Квитанцию выдаём этим же ключом уже ПОСЛЕ того, как реле подняло
     // браузер, — значит отсутствие ключа обязано выясниться здесь
     // (аудит этапа 116): иначе слот живого входа списан, сессия на реле
@@ -643,7 +680,7 @@ export class ClientSiteTutorialService {
     // обязана закончиться ТАМ, откуда начиналась. Временный визит на
     // чужой SSO-домен внутри сессии законен, выход с него — нет.
     try {
-      assertSameOrigin(draft.baseUrl, result.finalUrl);
+      assertSameSite(draft.baseUrl, result.finalUrl);
     } catch {
       await this.relay.cancelQuietly(sessionId);
       throw new BadRequestException(
@@ -674,7 +711,7 @@ export class ClientSiteTutorialService {
       await this.usage.releaseRound(userId);
       throw err;
     }
-    this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
+    await this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
 
     // Маркерный шаг вместо буквальной последовательности: интерактивно
     // пройденную капчу или 2FA воспроизвести нельзя в принципе (§7.4.5),
@@ -731,7 +768,7 @@ export class ClientSiteTutorialService {
   async getState(userId: string, projectId: string): Promise<DraftView | null> {
     await this.assertOwnProject(userId, projectId);
     const draft = await this.findDraft(projectId);
-    return draft ? this.toView(draft) : null;
+    return draft ? this.attachVideo(this.toView(draft)) : null;
   }
 
   /**
@@ -755,7 +792,7 @@ export class ClientSiteTutorialService {
     const { draft } = await this.loadEditableDraft(userId, projectId);
     const url = draft.lastUrl ?? draft.baseUrl;
     await this.assertSafeUrl(url);
-    assertSameOrigin(draft.baseUrl, url);
+    assertSameSite(draft.baseUrl, url);
 
     await this.reserveRound(userId);
     let round;
@@ -770,7 +807,7 @@ export class ClientSiteTutorialService {
       await this.usage.releaseRound(userId);
       throw err;
     }
-    this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
+    await this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
 
     return { draft: this.toView(draft), exploration: round.exploration };
   }
@@ -836,7 +873,7 @@ export class ClientSiteTutorialService {
 
     const url = draft.lastUrl ?? draft.baseUrl;
     await this.assertSafeUrl(url);
-    assertSameOrigin(draft.baseUrl, url);
+    assertSameSite(draft.baseUrl, url);
 
     // Версия занимается ДО браузера — см. `claimRound`. Повтор того же
     // запроса (оборвалась связь, клиент сдался по таймауту) иначе
@@ -856,7 +893,7 @@ export class ClientSiteTutorialService {
       await this.usage.releaseRound(userId);
       throw err;
     }
-    this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
+    await this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
 
     let next: DraftRoundsState;
     try {
@@ -1017,16 +1054,41 @@ export class ClientSiteTutorialService {
     }
   }
 
-  /** §8.1/§8.2: проверка ПОСЛЕ перехода — редирект мог увести за
-   * пределы сайта заказчика. */
-  private assertStillInside(baseUrl: string, currentUrl: string): void {
+  /**
+   * §8.1/§8.2: проверка ПОСЛЕ перехода — редирект мог увести за
+   * пределы сайта заказчика.
+   *
+   * Вторая половина проверки появилась вместе с расширением замка до
+   * регистрируемого домена (находка Т-4 аудита) и без неё расширение
+   * было бы дырой, а не улучшением.
+   *
+   * Пока замок сравнивал origin точно, ЛЮБОЙ редирект на другой хост
+   * отклонялся — и адрес, на который он вёл, до браузера как цель
+   * раунда не доходил. Теперь редирект на соседний поддомен того же
+   * сайта разрешён, а проверка «этот адрес вообще можно открывать с
+   * нашего сервера» (§8.2, резолв DNS) делалась только для АДРЕСА,
+   * который мы запрашивали сами. То есть владелец домена мог завести
+   * `internal.example.com` → 10.0.0.5, увести туда редиректом и
+   * получить раунд против нашей внутренней сети.
+   *
+   * Поэтому: сменился хост — адрес проверяется заново, как если бы его
+   * ввели руками. Для обычного пути (`shop.` → `checkout.`) это один
+   * лишний резолв на раунд, где и так поднимается Chromium.
+   */
+  private async assertStillInside(
+    baseUrl: string,
+    currentUrl: string,
+  ): Promise<void> {
     try {
-      assertSameOrigin(baseUrl, currentUrl);
+      assertSameSite(baseUrl, currentUrl);
     } catch (err) {
       if (err instanceof DomainLockError) {
         throw new BadRequestException(err.message);
       }
       throw err;
+    }
+    if (new URL(baseUrl).hostname !== new URL(currentUrl).hostname) {
+      await this.assertSafeUrl(currentUrl);
     }
   }
 
@@ -1198,6 +1260,61 @@ export class ClientSiteTutorialService {
       version: draft.version,
       hasCredentials: draft.credentialsEnc !== null,
       liveLoginAvailable: this.relay.configured(),
+      // Дешёвое чтение состояния остаётся дешёвым: строку ролика
+      // подбирает `attachVideo` и только там, где её реально покажут
+      // (`GET`), — раунды визарда о готовом видео ничего не знают и
+      // знать не могут, они работают с ещё не одобренным черновиком.
+      video: null,
+    };
+  }
+
+  /**
+   * Подклеить к состоянию готовый ролик, если он уже есть.
+   *
+   * Отдельным запросом, а не `include`: связь `clientSiteDraftId` —
+   * мягкая, не Prisma-связь (§6.2), и это осознанное решение спеки, а
+   * не недоработка. Индекс под этот запрос заведён там же.
+   *
+   * `findFirst` + сортировка по убыванию даты, а не `findUnique`:
+   * отклонённый черновик можно вернуть в работу и отправить на
+   * одобрение заново (`/resume` → `/finish` → `approve`), и тогда строк
+   * с одним `clientSiteDraftId` станет больше одной. Актуальна
+   * последняя — она собрана из последней версии кадров.
+   */
+  private async attachVideo(view: DraftView): Promise<DraftView> {
+    if (view.status !== 'APPROVED') return view;
+    const asset = (await this.prisma.tutorialVideoAsset.findFirst({
+      where: { clientSiteDraftId: view.id },
+      orderBy: { createdAt: 'desc' },
+      select: { assemblyStatus: true, blobUrl: true, durationMs: true },
+    })) as {
+      assemblyStatus: string;
+      blobUrl: string | null;
+      durationMs: number | null;
+    } | null;
+    if (!asset) return view;
+    // `assemblyStatus` в схеме — свободная строка (тот же приём, что
+    // `jobKey` у CronRunLog), поэтому неизвестное значение трактуется
+    // как «ещё идёт», а не роняет ответ: пользователю «собирается»
+    // безвреднее, чем ошибка на экране состояния.
+    const status: TutorialVideoView['status'] =
+      asset.assemblyStatus === 'complete' && asset.blobUrl
+        ? 'complete'
+        : asset.assemblyStatus === 'failed'
+          ? 'failed'
+          : 'pending';
+    return {
+      ...view,
+      video: {
+        status,
+        // Ссылка отдаётся ТОЛЬКО в завершённом состоянии: у
+        // `assemblyStatus='pending'` поле `blobUrl` пусто, а у
+        // 'failed' может содержать частичный результат прошлой
+        // попытки — отдать такую ссылку значит показать человеку
+        // битый файл как готовый.
+        url: status === 'complete' ? asset.blobUrl : null,
+        durationMs: status === 'complete' ? asset.durationMs : null,
+      },
     };
   }
 }

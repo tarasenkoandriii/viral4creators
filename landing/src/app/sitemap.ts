@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next';
 import { headers } from 'next/headers';
 import { locales } from '../lib/i18n';
 import { GREETING_SITE_URL, isGreetingHost } from '../lib/greeting-host';
+import { TUTORIAL_SITE_URL, isTutorialHost } from '../lib/tutorial-host';
 import { BLOG_REVALIDATE_SECONDS, listAllBlogPosts } from '../lib/blog-api';
 import { SITE_URL } from '../lib/content';
 
@@ -50,9 +51,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    * страница-редирект в карте сайта — прямая ошибка, о которой Search
    * Console сообщает отдельной строкой.
    */
-  if (isGreetingHost(headers().get('host'))) {
+  const host = headers().get('host');
+  if (isGreetingHost(host)) {
     return locales.map((locale) => ({
       url: `${GREETING_SITE_URL}/${locale}`,
+    }));
+  }
+  // Второй поддомен — та же логика слово в слово, и по той же причине.
+  if (isTutorialHost(host)) {
+    return locales.map((locale) => ({
+      url: `${TUTORIAL_SITE_URL}/${locale}`,
     }));
   }
 

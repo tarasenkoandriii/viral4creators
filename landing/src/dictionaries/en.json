@@ -161,6 +161,155 @@
     "liveNote": "Some flash lots get a live broadcast with an AI host — only if the seller has explicitly agreed to stream their lot.",
     "cta": "Open the marketplace"
   },
+"siteTutorialLanding": {
+  "meta": {
+    "title": "A tutorial video of your own site — no extensions | viral4creators",
+    "description": "Record a walkthrough of your site or dashboard straight from Telegram: paste a link, click through real screens, get a finished video. Nothing to install on your work machine."
+  },
+  "hero": {
+    "badge": "No browser extension",
+    "title": "A tutorial video of your own site, straight from Telegram",
+    "subtitle": "No extension to install, no third-party software with access to your work computer. The browser runs on our server: you paste a link and walk through your own site's real screens while we record every step.",
+    "cta": "Record a walkthrough",
+    "note": "Works in the browser and as a Telegram Mini App."
+  },
+  "how": {
+    "title": "What it looks like",
+    "lead": "Four screens, the whole loop. Below are interface schematics, not the interface itself — a real frame shows your site, and there is nowhere to get one here.",
+    "items": [
+      {
+        "title": "Paste a link",
+        "text": "The address of your site or dashboard. The script starts there, and the recording never leaves it."
+      },
+      {
+        "title": "See the real screen",
+        "text": "The server opened the page in a browser and sent back a frame together with the fields and buttons that are actually on it."
+      },
+      {
+        "title": "Fill in and click",
+        "text": "You enter your own values and pick a button. The action really runs against the live site — and the next screen comes back."
+      },
+      {
+        "title": "Get the video",
+        "text": "You press Done, an operator reviews the recording, the frames are assembled into a video, and the link to it appears right in the wizard."
+      }
+    ]
+  },
+  "compare": {
+    "title": "How this differs from the usual tools",
+    "lead": "Honest both ways: where we lose, it says so.",
+    "ourColumn": "Us",
+    "theirColumn": "A typical tool in this category",
+    "rows": [
+      {
+        "feature": "Needs a browser extension",
+        "us": "No",
+        "them": "Usually yes"
+      },
+      {
+        "feature": "Real actions on the live site, not a copy of the page",
+        "us": "Yes",
+        "them": "More often a snapshot of the markup"
+      },
+      {
+        "feature": "A finished video as the output",
+        "us": "Yes",
+        "them": "More often an interactive demo"
+      },
+      {
+        "feature": "Several client sites from one account",
+        "us": "Yes, with no cap on the number of projects",
+        "them": "Usually built around your own product"
+      },
+      {
+        "feature": "Analytics: who watched to the end and where they dropped off",
+        "us": "No",
+        "them": "Yes — for demo platforms it is the core feature"
+      },
+      {
+        "feature": "An embeddable interactive widget for your site",
+        "us": "No, we produce a video file",
+        "them": "Yes"
+      }
+    ],
+    "note": "The right-hand column generalises the category rather than naming a product: these tools differ, and attributing the same thing to all of them would not be true."
+  },
+  "audience": {
+    "title": "Who this is for",
+    "items": [
+      {
+        "title": "Product and marketing",
+        "text": "Onboarding video for your own product: the sign-in, the first flow, the screen that matters — shown on real screens rather than described."
+      },
+      {
+        "title": "Agencies and freelancers",
+        "text": "Walkthroughs for client sites you have access to, all from one account. We do not cap how many such projects you keep."
+      },
+      {
+        "title": "Support teams",
+        "text": "Answer \"how do I do X\" with a video instead of an article: record it once, then send the link."
+      }
+    ]
+  },
+  "login": {
+    "title": "What if the site needs a login?",
+    "lead": "This is almost everyone's first question, so here is the full answer.",
+    "items": [
+      {
+        "title": "An ordinary login",
+        "text": "Create a test user and enter its details in the separate sign-in block. They are encrypted and replayed each time the video is rebuilt — they never reach the script or the video itself."
+      },
+      {
+        "title": "Captcha, one-time codes, sign-in with Google",
+        "text": "None of that can be recorded in advance. A live window opens, you sign in yourself, and the recording continues as usual. There is a cost: a script like that cannot later be rebuilt fully automatically."
+      },
+      {
+        "title": "Where the recording will not go",
+        "text": "The script never leaves your site: subdomains of the same address are fine — sign-in often lives on its own — but another domain is not, even if a redirect led there."
+      }
+    ],
+    "warning": "Values of ordinary form fields are stored in the script as they are, unencrypted. Put real passwords and payment details only in the sign-in block, where encryption applies."
+  },
+  "price": {
+    "title": "What it costs",
+    "text": "Nothing while billing is off: plans switch right inside the product. The feature itself is part of Standard and above. Up to 30 steps in one script; by default up to 60 rounds and up to 10 live sign-ins per day."
+  },
+  "faq": {
+    "title": "Frequently asked",
+    "items": [
+      {
+        "question": "Is this safe — do you really sign in to my site?",
+        "answer": "Yes, for real, with a browser on our server. The test user's details entered in the sign-in block are encrypted and replayed each time the video is rebuilt; they never reach the script, the frames or the video. Values of the other form fields are stored as they are — so put real passwords and payment details only in the sign-in block."
+      },
+      {
+        "question": "What if the site has a captcha or two-factor auth?",
+        "answer": "A live window opens and you sign in yourself. After that the recording continues as usual. One caveat: such a step cannot be replayed automatically, so the video cannot later be rebuilt without you."
+      },
+      {
+        "question": "How many steps can I record?",
+        "answer": "Up to 30 in one script — the same ceiling as an ordinary script in our product. Rounds and live sign-ins default to 60 and 10 per day."
+      },
+      {
+        "question": "What do I get at the end?",
+        "answer": "A finished video file. After you press Done an operator reviews the recording — a required step, because someone else's site is on screen and one of the steps could have been irreversible. Once it is approved the video is assembled and the link appears in the wizard."
+      },
+      {
+        "question": "Can anyone see my password?",
+        "answer": "The test user's password is stored encrypted and is only filled in at the moment of signing in. It is not in the script steps, not in the frames and not in the finished video. On top of that: when you pick a button that looks like an irreversible action — Pay, Delete — the wizard asks for confirmation BEFORE it is pressed."
+      },
+      {
+        "question": "Whose site may I point this at?",
+        "answer": "Your own, or one you have access to — a client's site you look after, for instance. Every step really runs on the real page, so there is no reason to point it at someone else's site just to look around."
+      }
+    ]
+  },
+  "finalCta": {
+    "title": "Show your site the way it actually works",
+    "text": "Paste a link — from there it is just clicking.",
+    "cta": "Record a walkthrough"
+  },
+  "backToMain": "About the service and other video types →"
+},
   "greetingsLanding": {
     "meta": {
       "title": "Make a greeting video online in five minutes — viral4creators",
@@ -636,7 +785,8 @@
     "legalNoticeOtherLocale": "The public offer and terms of use are currently available in Russian only.",
     "madeWithClaude": "Made with Claude — 1 week free",
     "marketplace": "Marketplace",
-    "greetings": "Greetings"
+    "greetings": "Greetings",
+    "siteTutorial": "Site walkthroughs"
   },
   "notFound": {
     "title": "Page not found",

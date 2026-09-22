@@ -9,7 +9,7 @@ import {
   appendRound,
   assertEditable,
   assertRoundsConsistent,
-  assertSameOrigin,
+  assertSameSite,
   replaceLastScreenshot,
   undoLastRound,
 } from './draft-rounds';
@@ -202,29 +202,97 @@ describe('assertRoundsConsistent', () => {
   });
 });
 
-describe('assertSameOrigin — доменный замок §8.1', () => {
+describe('assertSameSite — доменный замок §8.1', () => {
   const base = 'https://shop.example.com';
 
-  it('пускает переходы внутри того же origin', () => {
+  it('пускает переходы внутри того же адреса', () => {
     expect(() =>
-      assertSameOrigin(base, 'https://shop.example.com/cabinet?tab=1'),
+      assertSameSite(base, 'https://shop.example.com/cabinet?tab=1'),
     ).not.toThrow();
   });
 
-  it('другой хост, поддомен, схема и порт — всё за пределами замка', () => {
-    for (const bad of [
-      'https://evil.example.net/login',
+  /**
+   * Находка Т-4 аудита лендинга обучалки: до неё замок сравнивал origin
+   * точно, и обычный клиентский путь `shop.` → `checkout.` →
+   * `accounts.` обрывался посреди записи. У SaaS вход почти всегда на
+   * отдельном поддомене, то есть самая частая обучалка — «как войти и
+   * сделать X» — упиралась в отказ на втором шаге.
+   */
+  it('пускает поддомены того же бизнеса — ради них правка и делалась', () => {
+    for (const ok of [
       'https://www.shop.example.com/',
-      'http://shop.example.com/',
-      'https://shop.example.com:8443/',
+      'https://checkout.example.com/cart',
+      'https://accounts.example.com/login',
+      'https://example.com/',
     ]) {
-      expect(() => assertSameOrigin(base, bad)).toThrow(DomainLockError);
+      expect(() => assertSameSite(base, ok)).not.toThrow();
     }
   });
 
+  it('домен, лишь ПОХОЖИЙ на сайт заказчика, не проходит', () => {
+    // Ровно та ошибка, от которой §8.1 предостерегает отдельной
+    // фразой: сравнение хвостом строки пустило бы всё это.
+    for (const bad of [
+      'https://evil-example.com/login',
+      'https://example.com.evil.net/login',
+      'https://shopexample.com/',
+      'https://evil.example.net/login',
+    ]) {
+      expect(() => assertSameSite(base, bad)).toThrow(DomainLockError);
+    }
+  });
+
+  it('соседи по платформе — разные сайты, а не один', () => {
+    // Здесь и проявляется `allowPrivateDomains`: без него у двух
+    // страниц GitHub Pages один регистрируемый домен `github.io`, и
+    // запись с сайта одного человека уезжала бы на сайт другого.
+    expect(() =>
+      assertSameSite('https://alice.github.io', 'https://bob.github.io/'),
+    ).toThrow(DomainLockError);
+    expect(() =>
+      assertSameSite('https://shop-a.myshopify.com', 'https://shop-b.myshopify.com/'),
+    ).toThrow(DomainLockError);
+    // А свой собственный поддомен внутри того же сайта — можно.
+    expect(() =>
+      assertSameSite('https://alice.github.io', 'https://alice.github.io/blog'),
+    ).not.toThrow();
+  });
+
+  it('схема и порт по-прежнему обязаны совпадать', () => {
+    for (const bad of [
+      'http://shop.example.com/',
+      'https://shop.example.com:8443/',
+      'http://accounts.example.com/',
+    ]) {
+      expect(() => assertSameSite(base, bad)).toThrow(DomainLockError);
+    }
+  });
+
+  it('многосоставный суффикс разбирается по списку, а не по числу точек', () => {
+    expect(() =>
+      assertSameSite('https://shop.example.co.uk', 'https://accounts.example.co.uk/'),
+    ).not.toThrow();
+    // `other.co.uk` — другой владелец, хотя совпадают последние две
+    // части имени.
+    expect(() =>
+      assertSameSite('https://shop.example.co.uk', 'https://other.co.uk/'),
+    ).toThrow(DomainLockError);
+  });
+
+  it('хост без регистрируемого домена сравнивается точно, как раньше', () => {
+    // До сюда такие адреса доходить не должны (их отсекает §8.2), но
+    // замок не вправе на это полагаться.
+    expect(() =>
+      assertSameSite('http://127.0.0.1:3000', 'http://127.0.0.1:3000/x'),
+    ).not.toThrow();
+    expect(() =>
+      assertSameSite('http://127.0.0.1:3000', 'http://127.0.0.2:3000/x'),
+    ).toThrow(DomainLockError);
+  });
+
   it('некорректные URL не проходят молча', () => {
-    expect(() => assertSameOrigin(base, 'не url')).toThrow(DomainLockError);
-    expect(() => assertSameOrigin('не url', base)).toThrow(DomainLockError);
+    expect(() => assertSameSite(base, 'не url')).toThrow(DomainLockError);
+    expect(() => assertSameSite('не url', base)).toThrow(DomainLockError);
   });
 });
 

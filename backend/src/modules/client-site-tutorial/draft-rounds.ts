@@ -22,6 +22,7 @@
  * осиротевшие `fill` без пары.
  */
 
+import { getDomain } from 'tldts';
 import {
   MAX_SCENARIO_STEPS,
   ScenarioStep,
@@ -184,11 +185,54 @@ export function assertRoundsConsistent(state: DraftRoundsState): void {
 export class DomainLockError extends Error {}
 
 /**
+ * Регистрируемый домен (eTLD+1) хоста, или `null`, если такого понятия
+ * у него нет — IP-адрес, `localhost`, внутреннее имя без точки.
+ *
+ * `allowPrivateDomains: true` — не формальность, а суть замка. С
+ * умолчанием (только ICANN-часть списка) `alice.github.io` и
+ * `bob.github.io` имеют ОДИН регистрируемый домен `github.io`, то есть
+ * замок пускал бы запись с сайта одного человека на сайт другого. С
+ * приватной частью списка каждый из них — свой домен. То же самое для
+ * `*.myshopify.com`, `*.vercel.app` и остальных платформ, где у каждого
+ * клиента свой поддомен: именно такие адреса и бывают «сайтом
+ * заказчика».
+ */
+function registrableDomain(hostname: string): string | null {
+  return getDomain(hostname, { allowPrivateDomains: true });
+}
+
+/**
  * Доменный замок §8.1: КАЖДЫЙ переход внутри черновика обязан остаться
- * на том же origin, что зафиксирован первым `/explore`. Сравнение —
- * точное по схеме+хосту+порту; расширение до eTLD+1 (чтобы пускать
- * `www.` и поддомены) ТЗ осознанно отложило за пределы MVP, поэтому
- * здесь именно строгое равенство, а не «похожий домен».
+ * на сайте заказчика — том, что зафиксирован первым `/explore`.
+ *
+ * Что считается «тем же сайтом» — и почему это изменилось. До находки
+ * Т-4 аудита `docs-tz/AUDIT-Client-Site-Tutorial-Landing.md` сравнение
+ * было точным по origin (схема+хост+порт). §8.1 спеки прямо называло
+ * это временным решением MVP и предупреждало, чем оно обернётся:
+ * реальный путь клиента почти всегда пересекает поддомены одного
+ * бизнеса — `shop.` → `checkout.` → `accounts.`, — и запись обрывалась
+ * посреди обычного сценария. Для SaaS это не краевой случай, а норма:
+ * вход обычно и живёт на отдельном поддомене. То есть самая частая
+ * обучалка — «как войти и сделать X» — упиралась в отказ на втором
+ * шаге.
+ *
+ * Теперь сравнивается регистрируемый домен, и строго по списку
+ * публичных суффиксов, а не по хвосту строки. Наивное сравнение
+ * хвостом — это ровно та ошибка, от которой §8.1 предостерегало
+ * отдельной фразой: `evil-example.com` заканчивается на `example.com`,
+ * и «похожий домен» пустил бы запись на чужой сайт.
+ *
+ * Схема и порт по-прежнему обязаны совпадать. Регистрируемый домен —
+ * это про «чей это сайт», а не про «как мы к нему идём»: переход
+ * `https://` → `http://` на том же домене остаётся понижением
+ * защищённости и в обычном клиентском пути не встречается, а другой
+ * порт — это, как правило, вообще другой сервис на той же машине.
+ *
+ * Хост без регистрируемого домена (IP, `localhost`, имя без точки)
+ * сравнивается точно, как раньше. Такие адреса до сюда доходить не
+ * должны вовсе — их отсекает SSRF-проверка (§8.2), — но замок не
+ * вправе на это полагаться: две проверки отвечают на разные вопросы и
+ * обязаны быть верны каждая сама по себе.
  *
  * Это НЕ то же самое, что SSRF-проверка (`assertPubliclyRoutableUrl`,
  * §8.2): та отвечает на вопрос «этот адрес вообще можно открывать с
@@ -196,22 +240,38 @@ export class DomainLockError extends Error {}
  * обязательны и обе вызываются после КАЖДОГО перехода, потому что
  * страница могла увести редиректом.
  */
-export function assertSameOrigin(baseUrl: string, candidate: string): void {
-  let base: string;
-  let target: string;
+export function assertSameSite(baseUrl: string, candidate: string): void {
+  let base: URL;
+  let target: URL;
   try {
-    base = new URL(baseUrl).origin;
+    base = new URL(baseUrl);
   } catch {
     throw new DomainLockError(`некорректный baseUrl черновика: ${baseUrl}`);
   }
   try {
-    target = new URL(candidate).origin;
+    target = new URL(candidate);
   } catch {
     throw new DomainLockError(`некорректный адрес перехода: ${candidate}`);
   }
-  if (base !== target) {
+
+  if (base.protocol !== target.protocol || base.port !== target.port) {
     throw new DomainLockError(
-      `переход за пределы сайта заказчика запрещён: ожидался ${base}, получен ${target}`,
+      `переход за пределы сайта заказчика запрещён: ожидался ${base.origin}, получен ${target.origin}`,
+    );
+  }
+
+  const baseDomain = registrableDomain(base.hostname);
+  const targetDomain = registrableDomain(target.hostname);
+  const same =
+    baseDomain === null || targetDomain === null
+      ? base.hostname === target.hostname
+      : baseDomain === targetDomain;
+
+  if (!same) {
+    throw new DomainLockError(
+      `переход за пределы сайта заказчика запрещён: ожидался ${
+        baseDomain ?? base.hostname
+      }, получен ${targetDomain ?? target.hostname}`,
     );
   }
 }

@@ -161,6 +161,155 @@
     "liveNote": "Algunos lotes flash tienen transmisión en vivo con presentadora de IA, solo si el vendedor aceptó explícitamente transmitir su lote.",
     "cta": "Abrir el marketplace"
   },
+"siteTutorialLanding": {
+  "meta": {
+    "title": "Vídeo tutorial de tu propia web — sin extensiones | viral4creators",
+    "description": "Graba un tutorial de tu web o tu panel directamente desde Telegram: pegas un enlace, recorres pantallas reales y obtienes un vídeo terminado. No hay que instalar nada en el ordenador de trabajo."
+  },
+  "hero": {
+    "badge": "Sin extensión de navegador",
+    "title": "Vídeo tutorial de tu web, directamente desde Telegram",
+    "subtitle": "Sin extensiones que instalar y sin dar a un programa ajeno acceso a tu ordenador de trabajo. El navegador se ejecuta en nuestro servidor: pegas un enlace y recorres las pantallas reales de tu web mientras nosotros grabamos cada paso.",
+    "cta": "Grabar un tutorial",
+    "note": "Funciona en el navegador y como Telegram Mini App."
+  },
+  "how": {
+    "title": "Qué aspecto tiene",
+    "lead": "Cuatro pantallas, el ciclo completo. Abajo hay esquemas de la interfaz, no la interfaz en sí: un fotograma real muestra tu web, y aquí no hay de dónde sacarlo.",
+    "items": [
+      {
+        "title": "Pegas un enlace",
+        "text": "La dirección de tu web o de tu panel. Ahí empieza el guion, y la grabación no sale de ahí."
+      },
+      {
+        "title": "Ves la pantalla real",
+        "text": "El servidor abrió la página en un navegador y devolvió un fotograma junto con los campos y botones que realmente hay en ella."
+      },
+      {
+        "title": "Rellenas y pulsas",
+        "text": "Introduces tus valores y eliges un botón. La acción se ejecuta de verdad en la web en vivo, y llega la pantalla siguiente."
+      },
+      {
+        "title": "Recibes el vídeo",
+        "text": "Pulsas «Listo», un operador revisa la grabación, los fotogramas se montan en un vídeo y el enlace aparece en el propio asistente."
+      }
+    ]
+  },
+  "compare": {
+    "title": "En qué se diferencia de las herramientas habituales",
+    "lead": "Honesto en ambos sentidos: donde perdemos, así está escrito.",
+    "ourColumn": "Nosotros",
+    "theirColumn": "Herramienta típica de la categoría",
+    "rows": [
+      {
+        "feature": "Hace falta una extensión de navegador",
+        "us": "No",
+        "them": "Normalmente sí"
+      },
+      {
+        "feature": "Acciones reales sobre la web en vivo, no una copia de la página",
+        "us": "Sí",
+        "them": "Más a menudo una copia del maquetado"
+      },
+      {
+        "feature": "Un vídeo terminado como resultado",
+        "us": "Sí",
+        "them": "Más a menudo una demo interactiva"
+      },
+      {
+        "feature": "Varias webs de clientes desde una sola cuenta",
+        "us": "Sí, sin límite de proyectos",
+        "them": "Normalmente pensada para tu propio producto"
+      },
+      {
+        "feature": "Analítica: quién terminó de ver y dónde abandonó",
+        "us": "No",
+        "them": "Sí, en las plataformas de demo es la función principal"
+      },
+      {
+        "feature": "Widget interactivo incrustable para la web",
+        "us": "No, lo nuestro es un archivo de vídeo",
+        "them": "Sí"
+      }
+    ],
+    "note": "La columna de la derecha generaliza la categoría en lugar de nombrar un producto: las herramientas son distintas, y atribuirles lo mismo a todas no sería cierto."
+  },
+  "audience": {
+    "title": "Para quién es",
+    "items": [
+      {
+        "title": "Producto y marketing",
+        "text": "Vídeo de onboarding de tu propio producto: el acceso, el primer flujo, la pantalla que importa, mostrados en pantallas reales en vez de contados."
+      },
+      {
+        "title": "Agencias y freelancers",
+        "text": "Tutoriales de webs de clientes a las que tienes acceso, desde una sola cuenta. No limitamos cuántos de esos proyectos tengas."
+      },
+      {
+        "title": "Equipos de soporte",
+        "text": "Responde a «cómo hago X» con un vídeo en lugar de un artículo: se graba una vez y después solo se envía el enlace."
+      }
+    ]
+  },
+  "login": {
+    "title": "¿Y si la web tiene inicio de sesión?",
+    "lead": "Es la primera pregunta de casi todo el mundo, así que aquí va la respuesta completa.",
+    "items": [
+      {
+        "title": "Un inicio de sesión normal",
+        "text": "Crea un usuario de prueba e introduce sus datos en el bloque de acceso aparte. Se cifran y se reproducen de nuevo cada vez que se vuelve a montar el vídeo: no llegan ni al guion ni al vídeo."
+      },
+      {
+        "title": "Captcha, código de un solo uso, acceso con Google",
+        "text": "Eso no se puede grabar de antemano. Se abre una ventana en vivo, entras tú mismo y la grabación continúa como siempre. Tiene un precio: un guion así no se puede volver a montar del todo automáticamente."
+      },
+      {
+        "title": "Hasta dónde llega la grabación",
+        "text": "El guion no sale de tu web: los subdominios de la misma dirección sí valen —el acceso suele vivir en uno propio—, pero otro dominio no, aunque una redirección lleve allí."
+      }
+    ],
+    "warning": "Los valores de los campos normales del formulario se guardan en el guion tal cual, sin cifrar. Las contraseñas reales y los datos de pago van solo en el bloque de acceso, que sí se cifra."
+  },
+  "price": {
+    "title": "Cuánto cuesta",
+    "text": "Mientras el cobro esté desactivado, nada: los modos se cambian dentro del propio producto. La función forma parte de Standard y superiores. Hasta 30 pasos por guion; por defecto, hasta 60 rondas y hasta 10 accesos en vivo al día."
+  },
+  "faq": {
+    "title": "Preguntas frecuentes",
+    "items": [
+      {
+        "question": "¿Es seguro? ¿De verdad entráis en mi web?",
+        "answer": "Sí, de verdad, con un navegador en nuestro servidor. Los datos del usuario de prueba introducidos en el bloque de acceso se cifran y se reproducen cada vez que se vuelve a montar el vídeo; no llegan al guion, ni a los fotogramas, ni al vídeo. Los valores de los demás campos se guardan tal cual, así que las contraseñas reales y los datos de pago van solo en el bloque de acceso."
+      },
+      {
+        "question": "¿Y si la web tiene captcha o doble factor?",
+        "answer": "Se abre una ventana en vivo y entras tú. Después la grabación sigue como siempre. Un matiz: ese paso no se puede repetir automáticamente, así que el vídeo no se podrá volver a montar más adelante sin ti."
+      },
+      {
+        "question": "¿Cuántos pasos puedo grabar?",
+        "answer": "Hasta 30 por guion, el mismo tope que un guion normal de nuestro producto. Las rondas y los accesos en vivo son, por defecto, 60 y 10 al día."
+      },
+      {
+        "question": "¿Qué obtengo al final?",
+        "answer": "Un archivo de vídeo terminado. Tras pulsar «Listo», un operador revisa la grabación: es un paso obligatorio, porque en pantalla sale la web de otra persona y alguno de los pasos pudo ser irreversible. Una vez aprobada, el vídeo se monta y el enlace aparece en el asistente."
+      },
+      {
+        "question": "¿Alguien ve mi contraseña?",
+        "answer": "La contraseña del usuario de prueba se guarda cifrada y solo se introduce en el momento del acceso. No está ni en los pasos del guion, ni en los fotogramas, ni en el vídeo final. Además: si eliges un botón que parece una acción irreversible —«Pagar», «Eliminar»—, el asistente pide confirmación ANTES de pulsarlo."
+      },
+      {
+        "question": "¿De quién puede ser la web que indique?",
+        "answer": "Tuya o una a la que tengas acceso, por ejemplo la de un cliente que gestionas. Cada paso se ejecuta de verdad en la página real, así que no tiene sentido apuntar a una web ajena solo para curiosear."
+      }
+    ]
+  },
+  "finalCta": {
+    "title": "Enseña tu web tal y como funciona",
+    "text": "Pega un enlace; a partir de ahí, solo hay que hacer clic.",
+    "cta": "Grabar un tutorial"
+  },
+  "backToMain": "Sobre el servicio y otros tipos de vídeo →"
+},
   "greetingsLanding": {
     "meta": {
       "title": "Video de felicitación online en cinco minutos — viral4creators",
@@ -636,7 +785,8 @@
     "legalNoticeOtherLocale": "La oferta pública y los términos de uso solo están disponibles en ruso por el momento.",
     "madeWithClaude": "Hecho con Claude — semana gratis",
     "marketplace": "Marketplace",
-    "greetings": "Felicitaciones"
+    "greetings": "Felicitaciones",
+    "siteTutorial": "Tutoriales de webs"
   },
   "notFound": {
     "title": "Página no encontrada",

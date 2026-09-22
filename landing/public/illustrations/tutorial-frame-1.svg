@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 360" role="img" aria-hidden="true">
+  <rect width="560" height="360" rx="16" fill="#151517" stroke="#2a2a2e"/>
+  <rect x="32" y="40" width="150" height="10" rx="5" fill="#9a9a9a" opacity=".55"/>
+  <rect x="32" y="76" width="496" height="56" rx="10" fill="#0b0b0d" stroke="#2a2a2e"/>
+  <text x="52" y="111" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#ececec">https://shop.example.com</text>
+  <rect x="32" y="150" width="330" height="8" rx="4" fill="#9a9a9a" opacity=".3"/>
+  <rect x="32" y="168" width="250" height="8" rx="4" fill="#9a9a9a" opacity=".3"/>
+  <rect x="32" y="210" width="496" height="48" rx="10" fill="#6c8cff"/>
+  <circle cx="252" cy="234" r="8" fill="none" stroke="#06060a" stroke-width="2.2"/>
+  <path d="M258 240l10 10" stroke="#06060a" stroke-width="2.2" stroke-linecap="round"/>
+  <rect x="282" y="229" width="60" height="10" rx="5" fill="#06060a" opacity=".85"/>
+  <rect x="32" y="286" width="496" height="42" rx="10" fill="#0b0b0d" stroke="#2a2a2e"/>
+  <circle cx="54" cy="307" r="7" fill="none" stroke="#6c8cff" stroke-width="1.8"/>
+  <path d="M54 303v5M54 311v.5" stroke="#6c8cff" stroke-width="1.8" stroke-linecap="round"/>
+  <rect x="72" y="302" width="300" height="8" rx="4" fill="#9a9a9a" opacity=".45"/>
+</svg>

@@ -48,7 +48,7 @@ import {
   launchHeadlessBrowser,
   withTimeout,
 } from '../../common/headless-chromium';
-import { DomainLockError, assertSameOrigin } from './draft-rounds';
+import { DomainLockError, assertSameSite } from './draft-rounds';
 import { dangerWarningFor } from './danger-words';
 import { CollectedPage, collectPageExploration } from './page-exploration';
 import { PageElement, PageExploration } from './page-exploration.types';
@@ -461,7 +461,7 @@ export class ChromiumPageExplorer implements PageExplorer {
    * увидит внятную причину, а сервис вернёт слот суточного лимита. */
   private assertInside(allowedOrigin: string, currentUrl: string): void {
     try {
-      assertSameOrigin(allowedOrigin, currentUrl);
+      assertSameSite(allowedOrigin, currentUrl);
     } catch (err) {
       if (err instanceof DomainLockError) {
         throw new BadRequestException(err.message);

@@ -177,6 +177,13 @@ export default function GreetingsLandingPage({
         </section>
       </main>
 
+      {/* Свой футер, а НЕ общий `components/Footer.tsx` (С-3 аудита
+          обучалки): эта страница живёт на поддомене, и ссылки в общем
+          футере относительные — `/legal/offer` увёл бы на несуществующий
+          адрес поддомена, а ссылка «поздравления» вела бы сама на себя.
+          Общий компонент правильный для главного хоста, этот — для
+          поддомена; сводить их в один с флагом значит завести в нём
+          ветку «на каком мы сайте», которая уже есть в middleware. */}
       <footer>
         <div className="wrap footer-inner">
           <span>© {new Date().getFullYear()} viral4creators</span>

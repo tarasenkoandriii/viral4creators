@@ -4,7 +4,7 @@
  */
 
 import { useState } from 'react';
-import { Gift, Globe, Layers, Package, Search } from 'lucide-react';
+import { Gift, Globe, Layers, Lock, Package, Search } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -38,45 +38,54 @@ import {
 } from '../../types/project';
 import { exploreSite } from '../../services/client-site-tutorial-api';
 import { deleteProject } from '../../services/projects-api';
+import { usePlanState } from '../../lib/plan-context';
+import { allows, lockLabel } from '../../lib/plan';
+import {
+  currentSearch,
+  occasionFromSearch,
+  projectTypeFromSearch,
+  siteUrlFromSearch,
+} from './landing-entry';
 
 /**
- * Повод, предвыбранный ссылкой с лендинга поздравлений (§4 п.3
- * docs-tz/TZ-Greeting-Video-Landing.md).
- *
- * Плитка повода на `greeting.viral4creators.app` ведёт сюда с
- * `?occasion=WEDDING`. Без этого чтения плитка «Свадьба» открывала бы
- * форму с выбранным «День рождения» — мелкая, но настоящая ложь
- * интерфейса, а вместе с ней и вся идея плитки.
+ * Разбор ссылки с лендинга. Сама логика — в `landing-entry.ts`
+ * (чистая и покрытая тестом); здесь только чтение адреса текущей
+ * страницы.
  *
  * Читается ОДИН раз, при первом рендере, и только как начальное
- * значение: дальше повод принадлежит человеку, и повторное чтение
- * адреса перетирало бы его выбор.
- *
- * Неизвестный код в параметре игнорируется — остаётся обычное
- * умолчание: адрес приходит снаружи, и падать из-за опечатки в нём
- * форма не должна.
+ * значение: дальше выбор принадлежит человеку, и повторное чтение
+ * адреса перетирало бы его.
  */
-function occasionFromQuery(): GreetingOccasion | null {
-  if (typeof window === 'undefined') return null;
-  const raw = new URLSearchParams(window.location.search).get('occasion');
-  if (!raw) return null;
-  return (GREETING_OCCASIONS as readonly string[]).includes(raw)
-    ? (raw as GreetingOccasion)
-    : null;
+function occasionFromQuery() {
+  return occasionFromSearch(currentSearch());
 }
 
 export function ProjectCreateScreen() {
   const { dict } = useI18n();
   const countries = useAsync(getCountries, []);
+  /**
+   * Находка Б-2 аудита: признак `siteTutorial` выключен у LITE, с
+   * которого начинает КАЖДЫЙ новый пользователь, а проверялся он
+   * только на сервере — первым раундом. Человек с лендинга успевал
+   * создать проект, открыть визард, ввести адрес своего сайта и лишь
+   * потом получить отказ. Замок на плитке стоит там же, где у
+   * остальных закрытых возможностей продукта (см. AspectRatioPicker).
+   *
+   * Пока состояние тарифа не пришло, замок НЕ рисуется: мигнуть
+   * «недоступно» и тут же убрать — хуже, чем показать на полсекунды
+   * позже.
+   */
+  const planState = usePlanState();
+  const siteTutorialAllowed = !planState || allows(planState, 'siteTutorial');
   // Brand manifests are optional — a failure here must not block Экран 1.
   const manifests = useAsync(() => listBrandManifests().catch(() => []), []);
 
-  // Пришли по ссылке с лендинга поздравлений — открываем сразу нужный
-  // тип проекта. Без этого плитка повода вела бы на форму товарного
-  // ролика, где поля поздравления даже не показываются, и предвыбранный
-  // повод не был бы виден вообще.
+  // Пришли по ссылке с лендинга — открываем сразу нужный тип проекта.
+  // Без этого плитка повода вела бы на форму товарного ролика, где поля
+  // поздравления даже не показываются, а ссылка лендинга обучалки — на
+  // форму товара вместо поля адреса сайта (находка Б-1 аудита).
   const [type, setType] = useState<ProjectType>(
-    occasionFromQuery() ? 'GREETING_VIDEO' : 'SINGLE'
+    projectTypeFromSearch(currentSearch()) ?? 'SINGLE'
   );
   const [title, setTitle] = useState('');
   const [countryCode, setCountryCode] = useState<string | null>(null);
@@ -88,7 +97,11 @@ export function ProjectCreateScreen() {
     countries.data?.find((c) => c.code === countryCode) ?? null;
   const canSubmit = title.trim().length > 0 && !!countryCode && !submitting;
 
-  const [siteUrl, setSiteUrl] = useState('');
+  // `?site=` — необязательный: лендинг обучалки может довести человека
+  // до первого раунда одним кликом, но ссылка без него тоже рабочая.
+  const [siteUrl, setSiteUrl] = useState(
+    siteUrlFromSearch(currentSearch()) ?? ''
+  );
 
   // GREETING_VIDEO (ТЗ TZ-Greeting-Video-Project-Type.md) — только то,
   // что нужно для создания бесполезного пустым брифа не бывает: повод и
@@ -284,11 +297,21 @@ export function ProjectCreateScreen() {
                     value: 'CLIENT_SITE',
                     label: (
                       <span className="inline-flex items-center gap-1">
-                        <Globe size={12} />{' '}
+                        {siteTutorialAllowed ? (
+                          <Globe size={12} />
+                        ) : (
+                          <Lock size={9} />
+                        )}{' '}
                         {dict.projectCreateScreen.clientSiteLabel}
                       </span>
                     ),
-                    sub: dict.projectCreateScreen.clientSiteSub,
+                    // Плитка остаётся НАЖИМАЕМОЙ и с замком: человек
+                    // вправе посмотреть, что за ней, — а форма ниже
+                    // сама скажет, чего не хватает, и предложит
+                    // сравнить режимы.
+                    sub: siteTutorialAllowed
+                      ? dict.projectCreateScreen.clientSiteSub
+                      : lockLabel(planState, 'siteTutorial', dict.common),
                   },
                   {
                     value: 'GREETING_VIDEO',
@@ -330,17 +353,38 @@ export function ProjectCreateScreen() {
                 </Field>
                 <Alert tone="info">{dict.clientSiteWizard.ownSiteOnly}</Alert>
                 {error && <Alert tone="error">{error}</Alert>}
-                <Button
-                  block
-                  size="lg"
-                  type="button"
-                  icon={<Search size={16} />}
-                  disabled={submitting || siteUrl.trim().length === 0}
-                  loading={submitting}
-                  onClick={(e) => void submitSite(e)}
-                >
-                  {dict.clientSiteWizard.exploreButton}
-                </Button>
+                {siteTutorialAllowed ? (
+                  <Button
+                    block
+                    size="lg"
+                    type="button"
+                    icon={<Search size={16} />}
+                    disabled={submitting || siteUrl.trim().length === 0}
+                    loading={submitting}
+                    onClick={(e) => void submitSite(e)}
+                  >
+                    {dict.clientSiteWizard.exploreButton}
+                  </Button>
+                ) : (
+                  <>
+                    {/* Отказ приходит ДО того, как человек что-то
+                        сделал, и сразу с выходом: раньше на его месте
+                        была рабочая кнопка, а 403 прилетал после
+                        создания проекта и первого раунда. */}
+                    <Alert tone="warning">
+                      {lockLabel(planState, 'siteTutorial', dict.common)}
+                    </Alert>
+                    <Button
+                      block
+                      size="lg"
+                      type="button"
+                      variant="outline"
+                      onClick={() => navigate(routes.plan())}
+                    >
+                      {dict.common.comparePlans}
+                    </Button>
+                  </>
+                )}
               </div>
             )}
 

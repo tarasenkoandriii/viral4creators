@@ -6,32 +6,28 @@
  * умолчания. Сам React-экран тут не поднимается — в проекте нет
  * DOM-тестов, и заводить их ради трёх строк логики было бы дороже, чем
  * польза; зато логика вынесена так, что её видно.
+ *
+ * Правка по аудиту лендинга обучалки: раньше в этом файле лежала КОПИЯ
+ * разбора, переписанная от руки, — такой тест остаётся зелёным и после
+ * того, как оригинал уехал, потому что проверяет копию, а не код.
+ * Теперь зовётся та же функция, что и экран (`landing-entry.ts`).
  */
 import assert from 'node:assert/strict';
 import {
   GREETING_OCCASIONS,
   allowedTonesFor,
   defaultToneFor,
-  type GreetingOccasion,
 } from '../src/types/project';
+import { occasionFromSearch } from '../src/features/projects/landing-entry';
 
-/** Копия разбора из ProjectCreateScreen.occasionFromQuery. */
-function parse(search: string): GreetingOccasion | null {
-  const raw = new URLSearchParams(search).get('occasion');
-  if (!raw) return null;
-  return (GREETING_OCCASIONS as readonly string[]).includes(raw)
-    ? (raw as GreetingOccasion)
-    : null;
-}
-
-assert.equal(parse('?entry=greetings&occasion=WEDDING'), 'WEDDING');
-assert.equal(parse('?entry=greetings'), null, 'без повода — умолчание');
-assert.equal(parse('?occasion=NOPE'), null, 'неизвестный код игнорируется');
+assert.equal(occasionFromSearch('?entry=greetings&occasion=WEDDING'), 'WEDDING');
+assert.equal(occasionFromSearch('?entry=greetings'), null, 'без повода — умолчание');
+assert.equal(occasionFromSearch('?occasion=NOPE'), null, 'неизвестный код игнорируется');
 
 // Каждая плитка лендинга ведёт кодом из этого же списка — значит любой
 // из них обязан разбираться, а не только те, что попались на глаза.
 for (const occasion of GREETING_OCCASIONS) {
-  assert.equal(parse(`?occasion=${occasion}`), occasion);
+  assert.equal(occasionFromSearch(`?occasion=${occasion}`), occasion);
   // И умолчание тона для него обязано быть допустимым: иначе переход по
   // плитке «Соболезнование» открыл бы форму с тоном, который сервер
   // сразу отвергнет.

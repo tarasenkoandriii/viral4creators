@@ -64,6 +64,20 @@ export interface ClientSiteDraftView {
   /** §15.8 контракта реле: кнопка живого входа прячется по ЭТОМУ
    * признаку, а не по тексту ошибки после нажатия. */
   liveLoginAvailable: boolean;
+  /** Собранный ролик — только у одобренного черновика (находка Б-4
+   * аудита `docs-tz/AUDIT-Client-Site-Tutorial-Landing.md`). До этого
+   * визард заканчивался строкой «ролик собирается», после которой не
+   * появлялось ничего. */
+  video: ClientSiteTutorialVideo | null;
+}
+
+export interface ClientSiteTutorialVideo {
+  status: 'pending' | 'complete' | 'failed';
+  /** Заполнена только при `status === 'complete'` — сервер намеренно не
+   * отдаёт ссылку у провалившейся сборки, где она может указывать на
+   * обрывок прошлой попытки. */
+  url: string | null;
+  durationMs: number | null;
 }
 
 export interface ClientSiteRoundResult {

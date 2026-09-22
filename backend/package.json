@@ -54,6 +54,7 @@
     "rxjs": "^7.8.1",
     "sanitize-html": "2.17.1",
     "satori": "^0.33.4",
+    "tldts": "^6.1.86",
     "uuid": "^9.0.0"
   },
   "devDependencies": {

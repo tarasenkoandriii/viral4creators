@@ -34,6 +34,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
+  Download,
   Globe,
   KeyRound,
   Search,
@@ -83,6 +84,14 @@ import {
 } from './client-site-elements';
 
 type Stage = 'loading' | 'url' | 'page' | 'review';
+
+/** Пауза между опросами готовности ролика (Б-4). Пятнадцать секунд —
+ * сборка слайд-шоу занимает минуты, а не секунды, и чаще спрашивать
+ * значит только греть сеть. */
+const VIDEO_POLL_INTERVAL_MS = 15_000;
+/** Сорок попыток по пятнадцать секунд — десять минут. Дальше опрос
+ * прекращается: застрявшую сборку фоновый цикл всё равно не оживит. */
+const VIDEO_POLL_MAX_ATTEMPTS = 40;
 
 export function ClientSiteWizard({ projectId }: { projectId: string }) {
   const { dict } = useI18n();
@@ -149,6 +158,53 @@ export function ClientSiteWizard({ projectId }: { projectId: string }) {
       cancelled = true;
     };
   }, [projectId]);
+
+  /**
+   * Сборка ролика идёт во внешнем ffmpeg-api и подхватывается кроном —
+   * то есть заканчивается через минуты после одобрения, когда экран уже
+   * открыт. Без опроса человек видел бы «собирается» до тех пор, пока
+   * сам не догадается перезайти, — а догадываться не обязан.
+   *
+   * Зависимость — БУЛЕВО `awaitingVideo`, а не сам черновик: иначе
+   * каждый успешный опрос менял бы `draft`, перезапускал эффект и
+   * заводил новый таймер поверх старого.
+   *
+   * Потолок попыток есть намеренно. Застрявшая сборка (внешний сервис
+   * не ответил, задача потерялась) иначе опрашивалась бы вечно на
+   * открытой вкладке. Десять минут — заметно больше типичной сборки
+   * слайд-шоу из кадров; дальше честнее, чтобы человек вернулся сам,
+   * чем чтобы фоновый цикл работал впустую.
+   */
+  const awaitingVideo =
+    draft?.status === 'APPROVED' &&
+    (draft.video === null || draft.video.status === 'pending');
+
+  useEffect(() => {
+    if (!awaitingVideo) return;
+    let cancelled = false;
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      if (attempts > VIDEO_POLL_MAX_ATTEMPTS) {
+        window.clearInterval(timer);
+        return;
+      }
+      void (async () => {
+        try {
+          const fresh = await getSiteTutorial(projectId);
+          if (!cancelled && fresh) setDraft(fresh);
+        } catch {
+          // Опрос фоновый: разовая сетевая неудача не должна рисовать
+          // красный алерт поверх экрана, на котором человек ничего не
+          // делал. Следующий тик попробует снова.
+        }
+      })();
+    }, VIDEO_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [awaitingVideo, projectId]);
 
   async function run<T>(fn: () => Promise<T>): Promise<T | undefined> {
     setBusy(true);
@@ -776,6 +832,9 @@ function ReviewStage(props: {
   onDiscard: () => void;
 }) {
   const { t, draft, frames, busy, editable } = props;
+  /** Ролик показывается только у одобренного черновика — у остальных
+   * статусов его не существует, и сервер отдаёт `null` (Б-4). */
+  const ready = draft.video;
 
   return (
     <div className="space-y-4">
@@ -810,7 +869,41 @@ function ReviewStage(props: {
       {draft.status === 'PENDING_REVIEW' && (
         <Alert tone="info">{t.statusPending}</Alert>
       )}
-      {draft.status === 'APPROVED' && (
+      {/* Находка Б-4 аудита лендинга: раньше здесь заканчивалось всё —
+          «ролик собирается» и больше ничего, никогда. Теперь у
+          одобренного черновика три исхода, и у каждого свой экран. */}
+      {draft.status === 'APPROVED' && ready?.status === 'complete' && ready.url && (
+        <Card className="p-5 space-y-3">
+          <div>
+            <strong className="block">{t.videoReadyTitle}</strong>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              {t.videoReadyHint}
+              {ready.durationMs
+                ? ` ${t.videoDuration.replace(
+                    '{seconds}',
+                    String(Math.round(ready.durationMs / 1000)),
+                  )}`
+                : ''}
+            </p>
+          </div>
+          {/* Тот же приём, что у готового рекламного ролика
+              (`GenerationWizard`, «Скачать»): `window.open`, а не
+              `<a download>`. Файл лежит в Blob на чужом origin, где
+              атрибут `download` браузером игнорируется, — кнопка,
+              обещающая скачивание и открывающая вкладку, хуже честной. */}
+          <Button
+            variant="outline"
+            icon={<Download size={14} />}
+            onClick={() => window.open(ready.url ?? '', '_blank')}
+          >
+            {t.videoOpen}
+          </Button>
+        </Card>
+      )}
+      {draft.status === 'APPROVED' && ready?.status === 'failed' && (
+        <Alert tone="warning">{t.videoFailed}</Alert>
+      )}
+      {draft.status === 'APPROVED' && ready?.status !== 'complete' && ready?.status !== 'failed' && (
         <Alert tone="success">{t.statusApproved}</Alert>
       )}
       {draft.status === 'REJECTED' && (

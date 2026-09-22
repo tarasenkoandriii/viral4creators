@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { defaultLocale, locales, LOCALE_COOKIE } from './lib/i18n';
 import { GREETING_SITE_URL, isGreetingHost } from './lib/greeting-host';
+import { TUTORIAL_SITE_URL, isTutorialHost } from './lib/tutorial-host';
 import { SITE_URL } from './lib/content';
 
 /**
@@ -62,38 +63,58 @@ function isReachableOrigin(raw: string): boolean {
   }
 }
 
+/**
+ * Мини-лендинги на собственных поддоменах.
+ *
+ * Таблица, а не две одинаковые ветки: поддоменов стало два
+ * (поздравления и обучалки по сайту заказчика), правило для них ОДНО, и
+ * записанное дважды оно разъезжается на третьем. `slug` — путь той же
+ * страницы на главном домене; именно он схлопывается в корень
+ * поддомена и с него же уводит редирект в обратную сторону.
+ */
+const SUBDOMAIN_SITES: ReadonlyArray<{
+  matches: (host: string | null) => boolean;
+  siteUrl: string;
+  slug: string;
+}> = [
+  { matches: isGreetingHost, siteUrl: GREETING_SITE_URL, slug: 'greetings' },
+  { matches: isTutorialHost, siteUrl: TUTORIAL_SITE_URL, slug: 'site-tutorial' },
+];
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const greetingHost = isGreetingHost(request.headers.get('host'));
+  const host = request.headers.get('host');
+  const site = SUBDOMAIN_SITES.find((candidate) => candidate.matches(host));
 
   const pathnameHasLocale = locales.some(
     (locale) => pathname.startsWith(`/${locale}/`) || pathname === `/${locale}`,
   );
 
-  if (greetingHost) {
+  if (site) {
     // На поддомене каноническое место страницы — `/<locale>`, и только
-    // оно. Явный `/<locale>/greetings` схлопывается в него редиректом,
+    // оно. Явный `/<locale>/<slug>` схлопывается в него редиректом,
     // чтобы не оставалось двух живых адресов одной страницы.
     const explicit = locales.find(
-      (locale) => pathname === `/${locale}/greetings`,
+      (locale) => pathname === `/${locale}/${site.slug}`,
     );
     if (explicit) {
       const url = request.nextUrl.clone();
       url.pathname = `/${explicit}`;
       return NextResponse.redirect(url, 308);
     }
-    // `/<locale>` показывает страницу поздравлений — rewrite, не
+    // `/<locale>` показывает страницу этого поддомена — rewrite, не
     // redirect: адрес в строке браузера должен остаться коротким, это и
     // есть canonical.
     const locale = locales.find((l) => pathname === `/${l}`);
     if (locale) {
       const url = request.nextUrl.clone();
-      url.pathname = `/${locale}/greetings`;
+      url.pathname = `/${locale}/${site.slug}`;
       return NextResponse.rewrite(url);
     }
     // Всё остальное на поддомене — чужие страницы главного сайта (блог,
-    // «как это работает»). Отдавать их здесь значило бы завести второй
-    // адрес каждой из них; уводим на главный домен.
+    // «как это работает») и страница СОСЕДНЕГО поддомена. Отдавать их
+    // здесь значило бы завести второй адрес каждой из них; уводим на
+    // главный домен, а он уже уведёт дальше, если надо.
     //
     // Но только если адрес главного домена ВООБЩЕ задан. `SITE_URL`
     // имеет дефолт `http://localhost:3003` «для dev-стенда», и на
@@ -111,17 +132,19 @@ export function middleware(request: NextRequest) {
   }
 
   if (pathnameHasLocale) {
-    // На ГЛАВНОМ домене `/<locale>/greetings` — не отдельная страница, а
+    // На ГЛАВНОМ домене `/<locale>/<slug>` — не отдельная страница, а
     // второй адрес той же самой. Канон живёт на поддомене, сюда же
     // ведут внутренние ссылки, поэтому редирект постоянный.
-    const greetingsOnMainHost = locales.find(
-      (locale) => pathname === `/${locale}/greetings`,
-    );
-    if (greetingsOnMainHost) {
-      return NextResponse.redirect(
-        new URL(`${GREETING_SITE_URL}/${greetingsOnMainHost}`),
-        308,
+    for (const candidate of SUBDOMAIN_SITES) {
+      const locale = locales.find(
+        (l) => pathname === `/${l}/${candidate.slug}`,
       );
+      if (locale) {
+        return NextResponse.redirect(
+          new URL(`${candidate.siteUrl}/${locale}`),
+          308,
+        );
+      }
     }
     return NextResponse.next();
   }

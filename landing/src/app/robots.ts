@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next';
 import { headers } from 'next/headers';
 import { SITE_URL } from '../lib/content';
 import { GREETING_SITE_URL, isGreetingHost } from '../lib/greeting-host';
+import { TUTORIAL_SITE_URL, isTutorialHost } from '../lib/tutorial-host';
 
 /**
  * `robots.txt` (TODO §II.5) — ссылки на карты сайта. Конвенция Next App
@@ -26,6 +27,12 @@ export default function robots(): MetadataRoute.Robots {
     return {
       rules: { userAgent: '*', allow: '/' },
       sitemap: [`${GREETING_SITE_URL}/sitemap.xml`],
+    };
+  }
+  if (isTutorialHost(host)) {
+    return {
+      rules: { userAgent: '*', allow: '/' },
+      sitemap: [`${TUTORIAL_SITE_URL}/sitemap.xml`],
     };
   }
   return {

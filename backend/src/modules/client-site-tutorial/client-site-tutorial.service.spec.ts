@@ -13,18 +13,32 @@ jest.mock('@prisma/client', () => ({
 // чтобы проверялось именно то преобразование в 400, которое делает
 // сервис); сама логика диапазонов адресов покрыта отдельно в
 // `external-url-guard.spec.ts`.
+/**
+ * Поведение по умолчанию вынесено в переменную (имя с префикса `mock` —
+ * единственное, что jest разрешает использовать внутри фабрики мока),
+ * чтобы его можно было ВЕРНУТЬ в `beforeEach`.
+ *
+ * Без этого возврата тест, добавивший `mockImplementationOnce`, но не
+ * израсходовавший очередь, отравлял следующий: заготовка срабатывала уже
+ * в чужом тесте. Ровно это и случилось при мутационной проверке — одна
+ * поломка кода уронила две проверки, из которых вторая к ней отношения
+ * не имела.
+ */
+const mockRoutableDefault = async (raw: string): Promise<void> => {
+  const actual = jest.requireActual('../../common/external-url-guard');
+  const host = new URL(raw).hostname;
+  if (/^(localhost|127\.|10\.|192\.168\.|\[?::1)/.test(host)) {
+    throw new actual.UnsafeExternalUrlError(
+      `адрес ${host} не является публично маршрутизируемым`,
+    );
+  }
+};
+
 jest.mock('../../common/external-url-guard', () => {
   const actual = jest.requireActual('../../common/external-url-guard');
   return {
     ...actual,
-    assertPubliclyRoutableUrl: jest.fn(async (raw: string) => {
-      const host = new URL(raw).hostname;
-      if (/^(localhost|127\.|10\.|192\.168\.|\[?::1)/.test(host)) {
-        throw new actual.UnsafeExternalUrlError(
-          `адрес ${host} не является публично маршрутизируемым`,
-        );
-      }
-    }),
+    assertPubliclyRoutableUrl: jest.fn(mockRoutableDefault),
   };
 });
 
@@ -97,6 +111,10 @@ function setup(
     relayConfigured?: boolean;
     relay?: Record<string, unknown>;
     usageLiveOk?: boolean;
+    /** Строка `TutorialVideoAsset`, которую вернёт поиск по
+     * `clientSiteDraftId` (находка Б-4 аудита лендинга). `null` —
+     * ролика ещё нет. */
+    videoAsset?: unknown;
   } = {},
 ) {
   const draftRow = opts.draft === undefined ? makeDraftRow() : opts.draft;
@@ -121,6 +139,9 @@ function setup(
         ),
     },
     clientSiteTutorialDraft,
+    tutorialVideoAsset: {
+      findFirst: jest.fn().mockResolvedValue(opts.videoAsset ?? null),
+    },
   } as unknown as PrismaService;
 
   const plans = {
@@ -198,8 +219,22 @@ function setup(
   };
 }
 
+/** Мок SSRF-проверки, каким его видят тесты. */
+function routableGuard(): {
+  assertPubliclyRoutableUrl: jest.Mock;
+  UnsafeExternalUrlError: new (m: string) => Error;
+} {
+  return jest.requireMock('../../common/external-url-guard');
+}
+
 beforeEach(() => {
   process.env.SITE_TUTORIAL_TOKEN_KEY = KEY;
+  // Счётчик и очередь заготовок — общие на весь файл; сбрасываем, чтобы
+  // тесты не зависели от порядка (см. комментарий у mockRoutableDefault).
+  routableGuard().assertPubliclyRoutableUrl.mockReset();
+  routableGuard().assertPubliclyRoutableUrl.mockImplementation(
+    mockRoutableDefault,
+  );
 });
 
 describe('владение проектом и тип проекта', () => {
@@ -256,6 +291,66 @@ describe('/explore', () => {
       service.explore('user1', 'proj1', 'http://127.0.0.1:8080/admin'),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(explorer.runRound).not.toHaveBeenCalled();
+  });
+
+  it('редирект на поддомен того же сайта — РАЗРЕШЁН (Т-4: shop. → accounts.)', async () => {
+    const { service } = setup({
+      draft: null,
+      explorer: {
+        runRound: jest.fn().mockResolvedValue({
+          exploration: {
+            ...EXPLORATION,
+            currentUrl: 'https://accounts.example.com/login',
+          },
+          cookies: [],
+        }),
+      },
+    });
+    await expect(
+      service.explore('user1', 'proj1', 'https://shop.example.com'),
+    ).resolves.toBeDefined();
+  });
+
+  it('редирект на СОСЕДНИЙ поддомен проверяется на публичность заново (§8.2 после Т-4)', async () => {
+    // Пока замок сравнивал origin точно, такой редирект отклонялся сам
+    // собой и адрес до проверки §8.2 не доходил. Расширение замка
+    // открыло бы путь `internal.example.com` → 10.0.0.5, если бы
+    // проверка не повторялась для нового хоста.
+    const { service, explorer } = setup({
+      draft: null,
+      explorer: {
+        runRound: jest.fn().mockResolvedValue({
+          exploration: {
+            ...EXPLORATION,
+            currentUrl: 'https://internal.example.com/admin',
+          },
+          cookies: [],
+        }),
+      },
+    });
+    const guard = routableGuard();
+    guard.assertPubliclyRoutableUrl.mockImplementationOnce(async () => {
+      // первый вызов — сам `https://shop.example.com`, он публичен
+    });
+    guard.assertPubliclyRoutableUrl.mockImplementationOnce(async () => {
+      throw new guard.UnsafeExternalUrlError('10.0.0.5 не публичен');
+    });
+
+    await expect(
+      service.explore('user1', 'proj1', 'https://shop.example.com'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(explorer.runRound).toHaveBeenCalled();
+  });
+
+  it('тот же хост после перехода — повторной проверки §8.2 не делаем', async () => {
+    // Обычный случай: один лишний резолв DNS на КАЖДЫЙ раунд — это
+    // плата, которой быть не должно, когда хост не менялся.
+    const { service } = setup({ draft: null });
+    const guard = routableGuard();
+
+    await service.explore('user1', 'proj1', 'https://shop.example.com');
+
+    expect(guard.assertPubliclyRoutableUrl).toHaveBeenCalledTimes(1);
   });
 
   it('редирект за пределы сайта заказчика — отказ (§8.1, проверка ПОСЛЕ перехода)', async () => {
@@ -1049,5 +1144,102 @@ describe('повтор раунда не повторяет действие н�
     const calls = clientSiteTutorialDraft.updateMany.mock.calls;
     expect(calls[0][0].where.version).toBe(3);
     expect(calls.at(-1)[0].where.version).toBe(4);
+  });
+});
+
+/**
+ * Находка Б-4 аудита `docs-tz/AUDIT-Client-Site-Tutorial-Landing.md`:
+ * собранный ролик был виден только оператору, и у целого вида проекта
+ * не оставалось артефакта для того, кто его записал.
+ *
+ * Проверяется не «поле появилось», а три границы, каждая из которых
+ * отдаёт человеку неверный файл, если её сдвинуть.
+ */
+describe('готовый ролик у владельца проекта (Б-4)', () => {
+  const COMPLETE = {
+    assemblyStatus: 'complete',
+    blobUrl: 'https://blob.example/tutorial-videos/v1.mp4',
+    durationMs: 21000,
+  };
+
+  it('одобренный черновик с готовой сборкой отдаёт ссылку и длительность', async () => {
+    const { service } = setup({
+      draft: makeDraftRow({ status: 'APPROVED' }),
+      videoAsset: COMPLETE,
+    });
+
+    const view = await service.getState('user1', 'proj1');
+
+    expect(view?.video).toEqual({
+      status: 'complete',
+      url: 'https://blob.example/tutorial-videos/v1.mp4',
+      durationMs: 21000,
+    });
+  });
+
+  it('сборка ещё идёт — ссылки нет, а не пустая строка вместо неё', async () => {
+    const { service } = setup({
+      draft: makeDraftRow({ status: 'APPROVED' }),
+      videoAsset: { assemblyStatus: 'pending', blobUrl: null, durationMs: null },
+    });
+
+    const view = await service.getState('user1', 'proj1');
+
+    expect(view?.video).toEqual({ status: 'pending', url: null, durationMs: null });
+  });
+
+  it('провалившаяся сборка НЕ отдаёт ссылку, даже если в строке что-то лежит', async () => {
+    // Самая важная из трёх: `blobUrl` у 'failed' может остаться от
+    // прошлой попытки, и отдать его значит показать человеку битый
+    // файл как готовый ролик.
+    const { service } = setup({
+      draft: makeDraftRow({ status: 'APPROVED' }),
+      videoAsset: {
+        assemblyStatus: 'failed',
+        blobUrl: 'https://blob.example/tutorial-videos/половина.mp4',
+        durationMs: 3000,
+      },
+    });
+
+    const view = await service.getState('user1', 'proj1');
+
+    expect(view?.video).toEqual({ status: 'failed', url: null, durationMs: null });
+  });
+
+  it('неизвестный assemblyStatus трактуется как «собирается», а не роняет экран состояния', async () => {
+    // `assemblyStatus` в схеме — свободная строка; экран состояния
+    // зовётся на каждом открытии визарда, и падать он не должен ни от
+    // какого её значения.
+    const { service } = setup({
+      draft: makeDraftRow({ status: 'APPROVED' }),
+      videoAsset: { assemblyStatus: 'подождите', blobUrl: null, durationMs: null },
+    });
+
+    const view = await service.getState('user1', 'proj1');
+
+    expect(view?.video?.status).toBe('pending');
+  });
+
+  it('у черновика в работе за роликом вообще не ходим — лишний запрос на каждом открытии экрана', async () => {
+    const { service, prisma } = setup({ draft: makeDraftRow({ status: 'DRAFTING' }) });
+
+    const view = await service.getState('user1', 'proj1');
+
+    expect(view?.video).toBeNull();
+    expect(
+      (prisma as unknown as { tutorialVideoAsset: { findFirst: jest.Mock } })
+        .tutorialVideoAsset.findFirst,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('одобрен, но строки ролика ещё нет — video остаётся пустым, а не выдуманным', async () => {
+    const { service } = setup({
+      draft: makeDraftRow({ status: 'APPROVED' }),
+      videoAsset: null,
+    });
+
+    const view = await service.getState('user1', 'proj1');
+
+    expect(view?.video).toBeNull();
   });
 });
