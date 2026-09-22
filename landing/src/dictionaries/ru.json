@@ -824,6 +824,9 @@
     "poweredBy": "Этот ролик создан в viral4creators — по чужому примеру, за пару минут и бесплатно.",
     "greetingLabel": "Видео-поздравление",
     "greetingMakeSameCta": "Сделать своё поздравление",
+    "revealTitle": "Вам поздравление",
+    "revealHint": "Нажмите, чтобы открыть",
+    "revealButton": "Открыть",
     "greetingMetaDescription": "Персональное видео-поздравление, сделанное в viral4creators.",
     "occasion": {
       "BIRTHDAY": "День рождения",

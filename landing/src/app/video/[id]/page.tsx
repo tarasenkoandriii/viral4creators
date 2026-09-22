@@ -137,6 +137,46 @@ export default async function SharedVideoPage({
           <Link href="/">{dict.sharedVideo.backToHome}</Link>
         </p>
 
+        {/* Фича №20 — «магическая ссылка» с раскрытием: у поздравления
+            перед плеером стоит заставка, а не голое видео. Момент
+            вручения — половина подарка, и открыть его должен сам
+            получатель.
+
+            Сделано БЕЗ единой строки JavaScript: скрытый чекбокс и
+            `<label>` поверх него. Причина не в экономии — страница
+            приходит по ссылке из мессенджера, и открывают её во
+            встроенных webview, где скрипт может не выполниться или
+            выполниться позже картинки. Пустая тёмная плашка вместо
+            подарка — худший из возможных первых кадров. Здесь же без
+            JS просто сразу виден плеер: заставка не «сломалась», её
+            нет.
+
+            Текст заставки общий («Вам поздравление» + повод): имени
+            отправителя в снимке страницы нет и не будет — публичная
+            страница намеренно не выносит наружу персональные данные
+            брифа (см. snapshotFromSession). */}
+        {isGreeting && (
+          <input
+            type="checkbox"
+            id="greeting-reveal"
+            className="sr-only greeting-reveal-toggle"
+          />
+        )}
+        {isGreeting && (
+          <div className="greeting-reveal-cover">
+            <span className="greeting-reveal-title">
+              {dict.sharedVideo.revealTitle}
+              {page.occasion && ` · ${dict.sharedVideo.occasion[page.occasion]}`}
+            </span>
+            <label className="cta" htmlFor="greeting-reveal">
+              {dict.sharedVideo.revealButton}
+            </label>
+            <span className="greeting-reveal-hint">
+              {dict.sharedVideo.revealHint}
+            </span>
+          </div>
+        )}
+
         <div
           className="shared-video-player"
           style={{ aspectRatio: cssAspectRatio(page.aspectRatio) }}
@@ -205,7 +245,15 @@ export default async function SharedVideoPage({
             className="cta"
             href={
               isGreeting
-                ? `${TMA_URL}#/projects/new`
+                ? // Фича №29: петля обязана приводить в ТУ ЖЕ форму, а
+                  // не в общий мастер. `entry` теперь читается
+                  // (`landing-entry.ts` во frontend), а известный повод
+                  // открывает форму сразу с ним — зритель, которому
+                  // понравилось поздравление с днём рождения, попадает
+                  // на форму дня рождения, а не на товарный ролик.
+                  `${TMA_URL}?entry=greetings${
+                    page.occasion ? `&occasion=${page.occasion}` : ''
+                  }#/projects/new`
                 : `${TMA_URL}?fromShared=${page.id}`
             }
           >

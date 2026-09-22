@@ -1258,6 +1258,28 @@
     "rowSkipped": "Omitido",
     "problemsMore": "Y {{count}} más"
   },
+"greetingDelivery": {
+  "title": "Entregar la felicitación",
+  "hint": "Envía el enlace a quien lo recibe directamente desde aquí; no hace falta descargar el archivo.",
+  "messageTemplate": "{recipient}, esto es para ti ({sender})",
+  "mailSubject": "Una felicitación para ti",
+  "telegram": "Por Telegram",
+  "whatsapp": "Por WhatsApp",
+  "email": "Por correo",
+  "systemShare": "Compartir",
+  "copyLink": "Copiar enlace",
+  "copied": "Copiado",
+  "publicWarning": "El enlace se abre sin iniciar sesión: podrá verlo cualquiera que lo reciba. Si en la felicitación se dice el nombre de quien la recibe, no lo reenvíes a chats de grupo.",
+  "remindButton": "Recordármelo en un año",
+  "remindHint": "Se descargará un archivo de calendario para el {date} con un aviso una semana antes. La fecha es un año desde hoy: el servicio no conoce la fecha real de la ocasión, ajústala en tu calendario si hace falta.",
+  "remindSummary": "Felicitar a: {recipient}",
+  "remindDescription": "Crear un vídeo de felicitación en viral4creators.",
+  "qrButton": "Código QR",
+  "qrAlt": "Código QR con el enlace a la felicitación",
+  "qrHint": "Apunta la cámara y se abrirá el vídeo. Sirve para una tarjeta o una caja.",
+  "qrLoading": "Dibujando el código…",
+  "qrFailed": "No se pudo dibujar el código. El enlace de al lado sigue funcionando."
+},
   "clientSiteWizard": {
     "title": "Tutorial del sitio del cliente",
     "hint": "Recorra un escenario en su propio sitio: grabamos cada paso y montamos un vídeo tutorial con los fotogramas.",

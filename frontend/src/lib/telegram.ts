@@ -60,6 +60,14 @@ export interface TelegramWebApp {
    * Android-WebView Telegram.
    */
   openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
+  /**
+   * Открыть ссылку внутри самого Telegram (фича №26, вручение
+   * поздравления). Нужен именно он, а не `openLink`: адрес шаринга
+   * `t.me/share/url` через обычное открытие ссылки попадает во
+   * ВНУТРЕННИЙ webview поверх нашего же Mini App — человек видит
+   * веб-версию телеграма в окне приложения вместо родного выбора чата.
+   */
+  openTelegramLink?: (url: string) => void;
 }
 
 declare global {

@@ -824,6 +824,9 @@
     "poweredBy": "Este video se hizo con viral4creators — a partir del ejemplo de otra persona, en un par de minutos y gratis.",
     "greetingLabel": "Video de felicitación",
     "greetingMakeSameCta": "Crear mi propia felicitación",
+    "revealTitle": "Una felicitación para ti",
+    "revealHint": "Toca para abrirla",
+    "revealButton": "Abrir",
     "greetingMetaDescription": "Un video de felicitación personal hecho con viral4creators.",
     "occasion": {
       "BIRTHDAY": "Cumpleaños",

@@ -1968,3 +1968,76 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
     display: none;
   }
 }
+
+/* ── Раскрытие поздравления (фича №20) ────────────────────────────────
+   Чекбокс + `<label>`, без JavaScript. Страница открывается по ссылке
+   из мессенджера, во встроенном webview, где скрипт может не
+   выполниться или выполниться позже разметки, — а пустая плашка вместо
+   подарка это худший первый кадр из возможных. Без JS заставки просто
+   нет, и виден плеер: не сломано, а отсутствует.
+
+   Порядок в разметке (`toggle` → `cover` → `player`) обязателен:
+   селектор `~` смотрит только ВПЕРЁД по соседям. */
+
+.greeting-reveal-cover {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 48px 24px;
+  margin-bottom: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(108, 140, 255, 0.16), transparent 62%),
+    var(--card);
+}
+
+.greeting-reveal-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.greeting-reveal-hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* До открытия плеер скрыт, после — скрыта заставка. Ровно один из двух
+   блоков виден в каждый момент. */
+.greeting-reveal-toggle:not(:checked) ~ .shared-video-player {
+  display: none;
+}
+
+.greeting-reveal-toggle:checked ~ .greeting-reveal-cover {
+  display: none;
+}
+
+/* Появление плеера — короткое и одно. Общий блок
+   `prefers-reduced-motion` в начале файла гасит и его: там анимации
+   выключены глобально, отдельной оговорки здесь не требуется. */
+.greeting-reveal-toggle:checked ~ .shared-video-player {
+  animation: greeting-reveal 260ms ease-out;
+}
+
+@keyframes greeting-reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Клавиатура: `<label>` сам по себе не фокусируется, поэтому видимое
+   кольцо рисуется по фокусу СКРЫТОГО чекбокса — иначе кнопку «Открыть»
+   нельзя было бы найти без мыши. */
+.greeting-reveal-toggle:focus-visible ~ .greeting-reveal-cover .cta {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}

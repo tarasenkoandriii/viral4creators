@@ -824,6 +824,9 @@
     "poweredBy": "Цей ролик створено у viral4creators — за чужим прикладом, за пару хвилин і безкоштовно.",
     "greetingLabel": "Відеопривітання",
     "greetingMakeSameCta": "Зробити своє привітання",
+    "revealTitle": "Вам привітання",
+    "revealHint": "Натисніть, щоб відкрити",
+    "revealButton": "Відкрити",
     "greetingMetaDescription": "Персональне відеопривітання, зроблене у viral4creators.",
     "occasion": {
       "BIRTHDAY": "День народження",

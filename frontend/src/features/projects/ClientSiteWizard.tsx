@@ -872,40 +872,44 @@ function ReviewStage(props: {
       {/* Находка Б-4 аудита лендинга: раньше здесь заканчивалось всё —
           «ролик собирается» и больше ничего, никогда. Теперь у
           одобренного черновика три исхода, и у каждого свой экран. */}
-      {draft.status === 'APPROVED' && ready?.status === 'complete' && ready.url && (
-        <Card className="p-5 space-y-3">
-          <div>
-            <strong className="block">{t.videoReadyTitle}</strong>
-            <p className="mt-1 text-xs text-[var(--muted)]">
-              {t.videoReadyHint}
-              {ready.durationMs
-                ? ` ${t.videoDuration.replace(
-                    '{seconds}',
-                    String(Math.round(ready.durationMs / 1000)),
-                  )}`
-                : ''}
-            </p>
-          </div>
-          {/* Тот же приём, что у готового рекламного ролика
+      {draft.status === 'APPROVED' &&
+        ready?.status === 'complete' &&
+        ready.url && (
+          <Card className="p-5 space-y-3">
+            <div>
+              <strong className="block">{t.videoReadyTitle}</strong>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                {t.videoReadyHint}
+                {ready.durationMs
+                  ? ` ${t.videoDuration.replace(
+                      '{seconds}',
+                      String(Math.round(ready.durationMs / 1000))
+                    )}`
+                  : ''}
+              </p>
+            </div>
+            {/* Тот же приём, что у готового рекламного ролика
               (`GenerationWizard`, «Скачать»): `window.open`, а не
               `<a download>`. Файл лежит в Blob на чужом origin, где
               атрибут `download` браузером игнорируется, — кнопка,
               обещающая скачивание и открывающая вкладку, хуже честной. */}
-          <Button
-            variant="outline"
-            icon={<Download size={14} />}
-            onClick={() => window.open(ready.url ?? '', '_blank')}
-          >
-            {t.videoOpen}
-          </Button>
-        </Card>
-      )}
+            <Button
+              variant="outline"
+              icon={<Download size={14} />}
+              onClick={() => window.open(ready.url ?? '', '_blank')}
+            >
+              {t.videoOpen}
+            </Button>
+          </Card>
+        )}
       {draft.status === 'APPROVED' && ready?.status === 'failed' && (
         <Alert tone="warning">{t.videoFailed}</Alert>
       )}
-      {draft.status === 'APPROVED' && ready?.status !== 'complete' && ready?.status !== 'failed' && (
-        <Alert tone="success">{t.statusApproved}</Alert>
-      )}
+      {draft.status === 'APPROVED' &&
+        ready?.status !== 'complete' &&
+        ready?.status !== 'failed' && (
+          <Alert tone="success">{t.statusApproved}</Alert>
+        )}
       {draft.status === 'REJECTED' && (
         <Alert tone="warning">
           {t.statusRejected}

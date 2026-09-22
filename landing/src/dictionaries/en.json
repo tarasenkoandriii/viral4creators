@@ -824,6 +824,9 @@
     "poweredBy": "This video was made with viral4creators — from someone else's example, in a couple of minutes, for free.",
     "greetingLabel": "Greeting video",
     "greetingMakeSameCta": "Make your own greeting",
+    "revealTitle": "A greeting for you",
+    "revealHint": "Tap to open it",
+    "revealButton": "Open",
     "greetingMetaDescription": "A personal greeting video made with viral4creators.",
     "occasion": {
       "BIRTHDAY": "Birthday",

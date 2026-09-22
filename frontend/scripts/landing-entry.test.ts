@@ -43,7 +43,7 @@ it('повод сильнее метки источника — плитка к�
   // снаружи, и приоритет должен быть определён, а не случаен.
   assert.equal(
     projectTypeFromSearch('?entry=site-tutorial&occasion=WEDDING'),
-    'GREETING_VIDEO',
+    'GREETING_VIDEO'
   );
 });
 
@@ -68,9 +68,12 @@ it('каждая метка в таблице ведёт на существую
 it('?site= пропускает только абсолютный http(s)-адрес', () => {
   assert.equal(
     siteUrlFromSearch('?site=https://shop.example.com/cabinet'),
-    'https://shop.example.com/cabinet',
+    'https://shop.example.com/cabinet'
   );
-  assert.equal(siteUrlFromSearch('?site=http://example.com/'), 'http://example.com/');
+  assert.equal(
+    siteUrlFromSearch('?site=http://example.com/'),
+    'http://example.com/'
+  );
 });
 
 it('?site= с чужой схемой не попадает в поле ввода', () => {
@@ -78,8 +81,16 @@ it('?site= с чужой схемой не попадает в поле ввод
   // что человек получил бы непонятный отказ из-за чужой ссылки.
   assert.equal(siteUrlFromSearch('?site=javascript:alert(1)'), null);
   assert.equal(siteUrlFromSearch('?site=file:///etc/passwd'), null);
-  assert.equal(siteUrlFromSearch('?site=shop.example.com'), null, 'без схемы — не адрес');
-  assert.equal(siteUrlFromSearch('?entry=site-tutorial'), null, 'параметра нет вовсе');
+  assert.equal(
+    siteUrlFromSearch('?site=shop.example.com'),
+    null,
+    'без схемы — не адрес'
+  );
+  assert.equal(
+    siteUrlFromSearch('?entry=site-tutorial'),
+    null,
+    'параметра нет вовсе'
+  );
 });
 
 console.log(`\n${passed} проверок пройдено`);

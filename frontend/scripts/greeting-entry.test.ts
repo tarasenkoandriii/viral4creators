@@ -20,9 +20,20 @@ import {
 } from '../src/types/project';
 import { occasionFromSearch } from '../src/features/projects/landing-entry';
 
-assert.equal(occasionFromSearch('?entry=greetings&occasion=WEDDING'), 'WEDDING');
-assert.equal(occasionFromSearch('?entry=greetings'), null, 'без повода — умолчание');
-assert.equal(occasionFromSearch('?occasion=NOPE'), null, 'неизвестный код игнорируется');
+assert.equal(
+  occasionFromSearch('?entry=greetings&occasion=WEDDING'),
+  'WEDDING'
+);
+assert.equal(
+  occasionFromSearch('?entry=greetings'),
+  null,
+  'без повода — умолчание'
+);
+assert.equal(
+  occasionFromSearch('?occasion=NOPE'),
+  null,
+  'неизвестный код игнорируется'
+);
 
 // Каждая плитка лендинга ведёт кодом из этого же списка — значит любой
 // из них обязан разбираться, а не только те, что попались на глаза.
@@ -33,7 +44,7 @@ for (const occasion of GREETING_OCCASIONS) {
   // сразу отвергнет.
   assert.ok(
     allowedTonesFor(occasion).includes(defaultToneFor(occasion)),
-    `умолчание тона недопустимо для ${occasion}`,
+    `умолчание тона недопустимо для ${occasion}`
   );
 }
 

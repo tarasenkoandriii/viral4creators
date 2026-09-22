@@ -67,6 +67,7 @@ import {
 import { SketchSlotActions } from '../sketch/SketchSlotActions';
 import { revokeObjectUrl } from '../../lib/object-url';
 import { LoadError, ScreenHeader } from './shared';
+import { GreetingDeliveryPanel } from './GreetingDeliveryPanel';
 import {
   GREETING_OCCASIONS,
   GREETING_RESOLUTIONS,
@@ -201,7 +202,13 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
       )}
 
       {sessionId && prompt && (
-        <VideoStep sessionId={sessionId} video={video} onVideo={setVideo} />
+        <VideoStep
+          sessionId={sessionId}
+          video={video}
+          onVideo={setVideo}
+          recipientName={brief.recipientName}
+          senderName={brief.senderName}
+        />
       )}
     </div>
   );
@@ -979,10 +986,15 @@ function VideoStep({
   sessionId,
   video,
   onVideo,
+  recipientName,
+  senderName,
 }: {
   sessionId: string;
   video: GeneratedVideo | undefined;
   onVideo: (v: GeneratedVideo | undefined) => void;
+  /** Имена из брифа — только для текста сообщения при вручении (№26). */
+  recipientName: string;
+  senderName?: string | null;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -1094,6 +1106,20 @@ function VideoStep({
           </div>
         )}
       </Card>
+
+      {/* Фича №26 — вручение. Отдельной карточкой под роликом, а не
+          кнопкой в ряду со «Скачать»: скачивание — про файл у себя,
+          вручение — про другого человека, и путать их не стоит. */}
+      {video &&
+        video.status === GenerationStatus.COMPLETE &&
+        video.downloadUrl && (
+          <GreetingDeliveryPanel
+            dict={dict}
+            videoUrl={video.downloadUrl}
+            recipientName={recipientName}
+            senderName={senderName}
+          />
+        )}
 
       {/* Переозвучка/экспорт/публикация — общий постпродакшен-пайплайн,
         тот же, что у SINGLE/LINE (`GenerationWizard.tsx`): отдельная

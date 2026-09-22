@@ -1258,6 +1258,28 @@
     "rowSkipped": "Skipped",
     "problemsMore": "And {{count}} more"
   },
+"greetingDelivery": {
+  "title": "Hand over the greeting",
+  "hint": "Send the link to the recipient right from here — no need to download the file.",
+  "messageTemplate": "{recipient}, this one is for you ({sender})",
+  "mailSubject": "A greeting for you",
+  "telegram": "Telegram",
+  "whatsapp": "WhatsApp",
+  "email": "Email",
+  "systemShare": "Share",
+  "copyLink": "Copy link",
+  "copied": "Copied",
+  "publicWarning": "The link opens without signing in: anyone who gets it can watch. If the greeting says the recipient's name out loud, don't forward it to group chats.",
+  "remindButton": "Remind me in a year",
+  "remindHint": "Downloads a calendar file for {date} with a reminder a week ahead. The date is a year from today — the service doesn't know the real date of the occasion, so adjust it in your calendar if needed.",
+  "remindSummary": "Greet: {recipient}",
+  "remindDescription": "Make a greeting video at viral4creators.",
+  "qrButton": "QR code",
+  "qrAlt": "QR code with a link to the greeting",
+  "qrHint": "Point a camera at it and the video opens. Works on a card or a box.",
+  "qrLoading": "Drawing the code…",
+  "qrFailed": "The code could not be drawn. The link next to it still works."
+},
   "clientSiteWizard": {
     "title": "Tutorial for the client's website",
     "hint": "Walk through a scenario on your own site — we record every step and turn the frames into a tutorial video.",

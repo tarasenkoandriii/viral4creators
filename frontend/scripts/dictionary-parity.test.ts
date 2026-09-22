@@ -42,7 +42,14 @@ function it(name: string, fn: () => void): void {
   console.log('  ✓', name);
 }
 
-const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other']);
+const PLURAL_CATEGORIES = new Set([
+  'zero',
+  'one',
+  'two',
+  'few',
+  'many',
+  'other',
+]);
 
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
 
@@ -80,7 +87,10 @@ const others: Array<[string, Json]> = [
 console.log('dictionary-parity');
 
 it('ru не пуст и разбирается — иначе тест ниже проверял бы пустоту', () => {
-  assert.ok(reference.length > 500, `ожидались сотни ключей, найдено ${reference.length}`);
+  assert.ok(
+    reference.length > 500,
+    `ожидались сотни ключей, найдено ${reference.length}`
+  );
 });
 
 for (const [locale, dict] of others) {
@@ -92,7 +102,7 @@ for (const [locale, dict] of others) {
       [],
       `в ${locale}.json нет ключей: ${missing.slice(0, 10).join(', ')}${
         missing.length > 10 ? ` … и ещё ${missing.length - 10}` : ''
-      }`,
+      }`
     );
   });
 
@@ -102,7 +112,7 @@ for (const [locale, dict] of others) {
     assert.deepEqual(
       extra,
       [],
-      `в ${locale}.json лишние ключи: ${extra.slice(0, 10).join(', ')}`,
+      `в ${locale}.json лишние ключи: ${extra.slice(0, 10).join(', ')}`
     );
   });
 }
