@@ -86,7 +86,10 @@ import {
   GrokVideoService,
 } from '../generation/grok-video.service';
 import { renderExpired } from '../generation/generation.service';
-import { GenerationStatus, GeneratedVideo } from '../../common/types/generation.types';
+import {
+  GenerationStatus,
+  GeneratedVideo,
+} from '../../common/types/generation.types';
 import { ModerationStatus } from '../../common/types/prompt.types';
 import { featureDeniedMessage, planAllows } from '../../common/plans';
 import { v4 as uuidv4 } from 'uuid';
@@ -94,6 +97,7 @@ import { BlobService } from '../storage/blob.service';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 import { SceneAsset } from '../../common/types/reference.types';
 import { activeSessionSceneImage } from '../../common/active-image';
+import { normalizeVoiceMode, usesOwnVoice } from '../../common/voice-mode';
 import { MAX_GREETING_REFERENCE_IMAGES } from '../greeting-reference/greeting-reference.service';
 
 const GREETING_VIDEO_CLAIM_TTL_MS = 5 * 60 * 1000;
@@ -174,6 +178,13 @@ export class GreetingVideoService {
       brief,
       session.generationPrompt.finalText,
       session.greetingReferenceImages ?? [],
+      // Участвует ли НАШ синтез. Режим читается ровно так же, как его
+      // прочитает постобработка (`PostProductionService.planWork`):
+      // снимка бренда у бытового поздравления обычно нет, а
+      // `normalizeVoiceMode` читает его отсутствие как 'voiceover'.
+      usesOwnVoice(
+        normalizeVoiceMode(session.brandManifestSnapshot?.voiceMode),
+      ),
     );
   }
 
@@ -190,7 +201,14 @@ export class GreetingVideoService {
   }
 
   private async startHedraVideo(
+    // Оба параметра сегодня не используются: метод гарантированно
+    // отказывает до того, как дойдёт до них (см. ниже). Сигнатура
+    // оставлена целиком, чтобы открытие пилота Hedra не потребовало
+    // править вызывающего, — поэтому глушим правило здесь, а не
+    // выбрасываем аргументы.
+    /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
     sessionId: string,
+    /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
     brief: GreetingBriefSnapshot,
   ): Promise<GeneratedVideo> {
     // §7 ТЗ гейтит 'hedra' по тарифу PREMIUM в GreetingBrief; но сама
@@ -218,6 +236,31 @@ export class GreetingVideoService {
     brief: GreetingBriefSnapshot,
     scenePrompt: string,
     referenceImages: SceneAsset[],
+    /**
+     * Участвует ли наш синтез (`voiceover`/`dub` в снимке бренда).
+     *
+     * Сам по себе это ещё не значит «просить немой ролик»: пресетный
+     * голос xAI в брифе перебивает режим — там реплику произносит
+     * модель, и дорожка нужна. Решение принимается ниже, одной
+     * строкой, чтобы оба условия читались вместе.
+     *
+     * Ради чего: до 22.09.2026 модель всегда отдавала дорожку, в
+     * которой ведущий проговаривает то же поздравление, а
+     * постобработка в режиме по умолчанию (`voiceover`) клала нашу
+     * речь ПОВЕРХ приглушённой — слышны были обе, с небольшим
+     * сдвигом. Промпт теперь просит не произносить реплику вслух
+     * (`buildSceneDescription`), но просьба — не гарантия; флаг
+     * закрывает тот же вопрос на уровне протокола.
+     *
+     * На цену это не влияет: у xAI тариф считается по секундам и
+     * разрешению, отдельной ставки за звук в прайсе нет (проверено
+     * 22.09.2026, docs.x.ai/developers/pricing).
+     *
+     * Платой за флаг остаётся атмосфера и музыка модели — их тоже не
+     * будет. Для поздравления это приемлемо: фон там декоративный, а
+     * вторая речь поверх своей — брак.
+     */
+    ownVoice: boolean,
   ): Promise<GeneratedVideo> {
     if (!this.grokVideo.isConfigured()) {
       throw new BadRequestException(
@@ -259,15 +302,22 @@ export class GreetingVideoService {
       references: referenceImageUrls.length > 0,
     });
 
+    // Пресетный голос xAI — реплику произносит модель (`<AUDIO_0>` в
+    // промпте уже расставлен `buildSceneDescription`). Один голос, не
+    // три: в поздравлении говорящий один, а лишние записи в
+    // `reference_audios` модель попробует куда-нибудь пристроить.
+    const presetVoiceId = brief.presetVoiceId?.trim() || null;
+    const silent = ownVoice && !presetVoiceId;
+
     try {
       const { requestId } = await this.grokVideo.startGeneration({
         prompt: scenePrompt,
-        ...(referenceImageUrls.length
-          ? { referenceImageUrls }
-          : {}),
+        ...(referenceImageUrls.length ? { referenceImageUrls } : {}),
         durationSeconds: GREETING_VIDEO_DURATION_SECONDS,
         aspectRatio,
         resolution: requestedResolution,
+        generateAudio: !silent,
+        ...(presetVoiceId ? { referenceAudioVoiceIds: [presetVoiceId] } : {}),
       });
 
       const video: GeneratedVideo = {
@@ -281,6 +331,9 @@ export class GreetingVideoService {
         grokRequestId: requestId,
         aspectRatio,
         initiatedAt: new Date(),
+        // Постобработке знать обязательно: на файле без потока `0:a`
+        // фильтр режима `voiceover` падает, а не пропускается молча.
+        ...(silent ? { silentSource: true } : {}),
       };
       const updated = await this.sessions.updateSession(sessionId, {
         generatedVideo: video,

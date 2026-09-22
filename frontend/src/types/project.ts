@@ -219,6 +219,52 @@ export interface GreetingSenderVoice {
   label: string;
 }
 
+/**
+ * Весь выбор голоса поздравления разом. Занято может быть только одно
+ * из двух: либо реплику произносит модель в кадре (`presetVoiceId`,
+ * настоящий липсинк), либо мы кладём поверх свою дорожку
+ * (`senderVoice`). Сервер сам гасит противоположное поле.
+ */
+export interface GreetingVoiceView {
+  senderVoice: GreetingSenderVoice | null;
+  presetVoiceId: string | null;
+}
+
+/**
+ * Музыкальная подложка (фича №4). Каталог ведёт владелец продукта
+ * настройкой платформы, поэтому пустой список — рабочее состояние:
+ * секция просто не показывается.
+ */
+export interface GreetingMusicTheme {
+  id: string;
+  title: string;
+  url: string;
+  occasions: string[] | null;
+}
+
+export interface GreetingMusicSelection {
+  id: string;
+  title: string;
+  url: string;
+  /** `catalog` — тема платформы, `upload` — свой файл. Старые записи
+   * поля не имеют и читаются как каталожные. */
+  source?: 'catalog' | 'upload';
+  pathname?: string;
+  rightsConfirmedAt?: string;
+}
+
+export interface GreetingMusicView {
+  themes: GreetingMusicTheme[];
+  selected: GreetingMusicSelection | null;
+}
+
+/** Пресетный голос xAI из роестра `GET /v1/tts/voices`. */
+export interface GrokPresetVoice {
+  voiceId: string;
+  name: string;
+  language: string | null;
+}
+
 export interface ProductAnalogView {
   id: string;
   title: string;

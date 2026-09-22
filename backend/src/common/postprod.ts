@@ -59,6 +59,7 @@
 import { cropExpression } from './reframe';
 import { ASPECT_RATIO_PATTERN, ratioValue } from './aspect-ratio';
 import { NATIVE } from './reframe';
+import { DEFAULT_MUSIC_VOLUME } from './greeting-music';
 
 export class PostProdError extends Error {}
 
@@ -94,6 +95,41 @@ export interface PostProdOptions {
   voiceDelayMs?: number;
   /** Во сколько раз приглушить исходную дорожку в режиме `voiceover`. */
   duck?: number;
+  /**
+   * У исходного ролика НЕТ звуковой дорожки — так приходят ролики,
+   * заказанные у Grok с `generate_audio: false`
+   * (`GeneratedVideo.silentSource`).
+   *
+   * Тогда подмешивать нечего, и `voiceover` физически невозможен:
+   * `[0:a]` в фильтре ссылается на несуществующий поток, и ffmpeg
+   * падает («Stream specifier matches no streams»), а не пропускает
+   * фильтр молча. Команда в этом случае собирается ровно так же, как
+   * для `dub`.
+   *
+   * Это НЕ выдача платного дубляжа мимо тарифа: дубляж — это «заменить
+   * звук модели своим», а здесь звука модели не существует, и
+   * слышимый результат тот же самый при любом значении `voiceMode`.
+   */
+  sourceHasNoAudio?: boolean;
+  /**
+   * Ключ входного аудиофайла музыкальной подложки (фича №4). Пусто —
+   * подложки нет, всё как раньше.
+   */
+  musicInputKey?: string | null;
+  /** Громкость подложки; по умолчанию `DEFAULT_MUSIC_VOLUME`. */
+  musicVolume?: number;
+  /**
+   * Длина ролика в секундах — подложка приводится РОВНО к ней
+   * (`atrim` + `apad`).
+   *
+   * Зачем: трек не обязан совпадать с роликом по длине. Длинный,
+   * обрезанный микшером «по самому короткому», оборвал бы звук на
+   * полуслове ещё до конца картинки; короткий, наоборот, заставил бы
+   * микшер тянуть общую длину за собой. Приведённая к точной длине
+   * подложка делает первый вход микшера эталоном длительности — на
+   * этом держится `duration=first` ниже.
+   */
+  totalDurationSeconds?: number;
   /** CRF: меньше — лучше и тяжелее. 18 — визуально без потерь. */
   crf?: number;
   /**
@@ -144,10 +180,22 @@ function resolveCrop(
   return { target: value, ratio };
 }
 
+/**
+ * Участвует ли в миксе дорожка самого ролика.
+ *
+ * `dub` заменяет её целиком; немой исходник приходит сюда уже как
+ * `dub` (см. `sourceHasNoAudio`). Отдельная функция, а не `mode !==
+ * 'dub'` по месту: теперь этот вопрос задаётся из трёх мест.
+ */
+function usesSourceAudio(mode: 'voiceover' | 'dub'): boolean {
+  return mode !== 'dub';
+}
+
 export function planPostProduction(opts: PostProdOptions): PostProdPlan {
   const crop = resolveCrop(opts.targetAspectRatio);
   const voiceKey = opts.voiceInputKey?.trim() || null;
-  const mode = opts.voiceMode ?? 'voiceover';
+  const musicKey = opts.musicInputKey?.trim() || null;
+  const mode = opts.sourceHasNoAudio ? 'dub' : (opts.voiceMode ?? 'voiceover');
   const delayMs = Math.max(0, Math.round(opts.voiceDelayMs ?? 0));
   const duck = opts.duck ?? DEFAULT_DUCK;
   const crf = opts.crf ?? 18;
@@ -156,7 +204,7 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
   const subtitlesKey = opts.subtitlesInputKey?.trim() || null;
   const subtitleForceStyle = opts.subtitleForceStyle?.trim() || '';
 
-  if (!crop && !voiceKey && !subtitlesKey) {
+  if (!crop && !voiceKey && !subtitlesKey && !musicKey) {
     // Отправлять такую задачу значит заплатить за перекодирование ради
     // того же файла.
     throw new PostProdError(
@@ -164,7 +212,18 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
     );
   }
 
-  const inputKeys = voiceKey ? [inputKey, voiceKey] : [inputKey];
+  // Порядок входов задаёт номера потоков в фильтре, поэтому считаем
+  // их здесь один раз, а не пишем `[1:a]`/`[2:a]` руками: с
+  // появлением подложки «второй вход» перестал означать «голос».
+  const inputKeys = [
+    inputKey,
+    ...(voiceKey ? [voiceKey] : []),
+    ...(musicKey ? [musicKey] : []),
+  ];
+  const voiceIndex = voiceKey ? 1 : -1;
+  const musicIndex = musicKey ? (voiceKey ? 2 : 1) : -1;
+  const musicVolume = opts.musicVolume ?? DEFAULT_MUSIC_VOLUME;
+  const totalSeconds = opts.totalDurationSeconds;
   const parts: string[] = inputKeys.map((k) => `-i {{${k}}}`);
 
   // Субтитры — фильтр над видеопотоком, не отдельный `-i`: хостед-сервис
@@ -188,21 +247,59 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
       `[0:v]subtitles={{${subtitlesKey}}}:force_style='${subtitleForceStyle}'[v]`,
     );
   }
-  if (voiceKey) {
-    // `all=1` обязателен: без него adelay сдвигает только первый канал, и
-    // стереоголос разъезжается по времени между левым и правым.
-    const voice =
-      delayMs > 0 ? `[1:a]adelay=${delayMs}:all=1[vo]` : `[1:a]anull[vo]`;
-    filters.push(voice);
-    if (mode === 'dub') {
-      // Дубляж: звук Veo не участвует вовсе — исходная дорожка не
-      // приглушается, а заменяется.
-      filters.push(`[vo]loudnorm=I=-16:TP=-1.5:LRA=11[a]`);
+  if (voiceKey || musicKey) {
+    // Слагаемые звука в порядке, в котором они уйдут в `amix`. Первым
+    // обязан стоять вход ТОЧНО той же длины, что ролик: на нём держится
+    // `duration=first`, то есть обещание «длина ролика не изменится».
+    const mixed: string[] = [];
+
+    if (musicKey) {
+      // `atrim` режет длинный трек, `apad` дотягивает короткий тишиной
+      // — вместе они дают подложку ровно в длину ролика. Без известной
+      // длины (старый вызывающий) оставляем трек как есть: тогда
+      // эталоном длины будет исходная дорожка или голос, как и раньше.
+      const fit = totalSeconds
+        ? `atrim=0:${totalSeconds},apad=whole_dur=${totalSeconds},`
+        : '';
+      filters.push(`[${musicIndex}:a]${fit}volume=${musicVolume}[mus]`);
+    }
+
+    if (!usesSourceAudio(mode)) {
+      // Дубляж или немой исходник: дорожки ролика в миксе нет вовсе.
+      // Тогда эталон длины — приведённая подложка, если она есть.
+      if (musicKey && totalSeconds) mixed.push('[mus]');
     } else {
-      filters.push(`[0:a]volume=${duck}[bg]`);
+      // Приглушаем исходную дорожку только под НАШ голос: это и есть
+      // смысл `duck`. Под одной лишь подложкой глушить нечего — там
+      // тише становится сама подложка, а не ролик, иначе музыка
+      // «съедала» бы звук, ради которого её и добавляют.
+      filters.push(`[0:a]volume=${voiceKey ? duck : 1}[bg]`);
+      mixed.push('[bg]');
+    }
+
+    if (voiceKey) {
+      // `all=1` обязателен: без него adelay сдвигает только первый канал, и
+      // стереоголос разъезжается по времени между левым и правым.
       filters.push(
-        `[bg][vo]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,` +
-          `loudnorm=I=-16:TP=-1.5:LRA=11[a]`,
+        delayMs > 0
+          ? `[${voiceIndex}:a]adelay=${delayMs}:all=1[vo]`
+          : `[${voiceIndex}:a]anull[vo]`,
+      );
+      mixed.push('[vo]');
+    }
+
+    // Подложка, если она ещё не встала первой.
+    if (musicKey && !mixed.includes('[mus]')) mixed.push('[mus]');
+
+    const normalize = `loudnorm=I=-16:TP=-1.5:LRA=11[a]`;
+    if (mixed.length === 1) {
+      // Микшировать нечего — один источник просто выравнивается по
+      // громкости. Тот же случай, что дубляж без подложки до этой фичи.
+      filters.push(`${mixed[0]}${normalize}`);
+    } else {
+      filters.push(
+        `${mixed.join('')}amix=inputs=${mixed.length}:duration=first:` +
+          `dropout_transition=0:normalize=0,${normalize}`,
       );
     }
   }
@@ -215,7 +312,7 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
   // и молчаливо потерянная дорожка — самый частый способ получить ролик
   // без звука.
   parts.push(needsVideoFilter ? '-map "[v]"' : `-map 0:v`);
-  parts.push(voiceKey ? '-map "[a]"' : `-map 0:a?`);
+  parts.push(voiceKey || musicKey ? '-map "[a]"' : `-map 0:a?`);
 
   if (needsVideoFilter) {
     // Кроп ИЛИ субтитры — оба требуют перекодирования: субтитры такой
@@ -227,7 +324,11 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
     // значит потерять качество на ровном месте и заплатить за рендер.
     parts.push('-c:v copy');
   }
-  parts.push(voiceKey ? '-c:a aac -b:a 192k' : '-c:a copy');
+  // Звук перекодируется, как только к нему применён фильтр — и голос,
+  // и подложка одинаково это делают. `-c:a copy` рядом с
+  // `filter_complex`, который строит `[a]`, — не оптимизация, а
+  // противоречие: ffmpeg такую команду не выполнит.
+  parts.push(voiceKey || musicKey ? '-c:a aac -b:a 192k' : '-c:a copy');
   parts.push(`-movflags +faststart {{${outputName}}}`);
 
   return {

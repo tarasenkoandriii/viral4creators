@@ -18,8 +18,10 @@ import { readStoredLocale, defaultLocale } from '../lib/i18n';
 import type { GeneratedVideo, GenerationPrompt, Session } from '../types';
 import type {
   GreetingBriefView,
+  GreetingMusicView,
   GreetingReferenceImageView,
-  GreetingSenderVoice,
+  GreetingVoiceView,
+  GrokPresetVoice,
   UpdateGreetingBriefInput,
 } from '../types/project';
 import type { ItemSessionSummary } from './projects-api';
@@ -224,13 +226,11 @@ export const MAX_GREETING_REFERENCE_IMAGES = 7;
  * (озвучит голос по умолчанию). Само клонирование идёт прежними
  * ручками `/voices/*` (`projects-api.ts`), здесь только выбор.
  */
-export async function getGreetingSenderVoice(
+export async function getGreetingVoice(
   sessionId: string
-): Promise<GreetingSenderVoice | null> {
+): Promise<GreetingVoiceView> {
   return unwrap(
-    await api.get<GreetingSenderVoice | null>(
-      `/sessions/${sessionId}/greeting-voice`
-    ),
+    await api.get<GreetingVoiceView>(`/sessions/${sessionId}/greeting-voice`),
     'greeting-voice'
   );
 }
@@ -238,13 +238,131 @@ export async function getGreetingSenderVoice(
 export async function selectGreetingSenderVoice(
   sessionId: string,
   resembleVoiceId: string | null
-): Promise<GreetingSenderVoice | null> {
+): Promise<GreetingVoiceView> {
   return unwrap(
-    await api.patch<GreetingSenderVoice | null>(
+    await api.patch<GreetingVoiceView>(
       `/sessions/${sessionId}/greeting-voice`,
       { resembleVoiceId }
     ),
     'greeting-voice'
+  );
+}
+
+/**
+ * Пресетный голос xAI — реплику произносит сама модель, с настоящим
+ * липсинком. Взаимоисключающе со своим клоном: сервер гасит его сам,
+ * поэтому ответ читается целиком, а не подставляется локально.
+ */
+export async function selectGreetingPresetVoice(
+  sessionId: string,
+  presetVoiceId: string | null
+): Promise<GreetingVoiceView> {
+  return unwrap(
+    await api.patch<GreetingVoiceView>(
+      `/sessions/${sessionId}/greeting-voice`,
+      { presetVoiceId }
+    ),
+    'greeting-voice'
+  );
+}
+
+// ── Музыкальная подложка (фича №4) ─────────────────────────────────────
+
+/**
+ * Темы, подходящие поводу сессии, плюс выбранная. Пустой список тем —
+ * рабочее состояние: каталог ведёт владелец продукта, и до первой
+ * загруженной темы секция просто не показывается.
+ */
+export async function getGreetingMusic(
+  sessionId: string
+): Promise<GreetingMusicView> {
+  return unwrap(
+    await api.get<GreetingMusicView>(`/sessions/${sessionId}/greeting-music`),
+    'greeting-music'
+  );
+}
+
+export async function selectGreetingMusic(
+  sessionId: string,
+  themeId: string | null
+): Promise<GreetingMusicView> {
+  return unwrap(
+    await api.patch<GreetingMusicView>(
+      `/sessions/${sessionId}/greeting-music`,
+      { themeId }
+    ),
+    'greeting-music'
+  );
+}
+
+/**
+ * Своя музыка: presigned PUT → подтверждение. Тот же приём, что у
+ * референс-изображений выше, плюс подтверждение прав — ролик человек
+ * отправляет другому человеку, и чужая фонограмма в нём это
+ * распространение.
+ */
+export async function uploadGreetingMusic(
+  sessionId: string,
+  file: File,
+  title: string,
+  rightsConfirmed: boolean,
+  onProgress?: (p: number) => void
+): Promise<GreetingMusicView> {
+  const target = unwrap(
+    await api.post<PresignedUpload & { trackId: string }>(
+      `/sessions/${sessionId}/greeting-music/upload-url`,
+      {
+        fileName: file.name || 'music.mp3',
+        fileSize: file.size,
+        mimeType: file.type,
+      }
+    ),
+    'music-upload-url'
+  );
+  await putToBlob(target, file, file.type, onProgress);
+  return unwrap(
+    await api.post<GreetingMusicView>(
+      `/sessions/${sessionId}/greeting-music/confirm`,
+      { pathname: target.pathname, title, rightsConfirmed }
+    ),
+    'greeting-music'
+  );
+}
+
+/**
+ * Ссылка на трек вместо загрузки: файл остаётся у владельца, мы храним
+ * только адрес. Взамен не управляем его временем жизни — если трек
+ * исчезнет, постобработка ролика честно провалится.
+ */
+export async function linkGreetingMusic(
+  sessionId: string,
+  url: string,
+  title: string,
+  rightsConfirmed: boolean
+): Promise<GreetingMusicView> {
+  return unwrap(
+    await api.post<GreetingMusicView>(
+      `/sessions/${sessionId}/greeting-music/link`,
+      { url, title, rightsConfirmed }
+    ),
+    'greeting-music'
+  );
+}
+
+/** Типы, которые примет бэкенд (`MUSIC_MIME_TYPES`). */
+export const GREETING_MUSIC_ACCEPT =
+  'audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/x-wav,audio/ogg,audio/webm';
+export const MAX_GREETING_MUSIC_BYTES = 20 * 1024 * 1024;
+
+/** Роестр пресетных голосов. Бесплатный читающий вызов, отсюда GET. */
+export async function listGreetingPresetVoices(
+  sessionId: string
+): Promise<GrokPresetVoice[]> {
+  return unwrap(
+    await api.get<GrokPresetVoice[]>(
+      `/sessions/${sessionId}/greeting-voice/presets`
+    ),
+    'greeting-voice-presets'
   );
 }
 

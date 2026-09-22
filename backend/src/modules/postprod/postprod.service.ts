@@ -78,6 +78,17 @@ interface Work {
   crop: string | null;
   /** Режим озвучки, как он записан в снимке бренда. */
   voiceMode: VoiceMode;
+  /**
+   * У исходного ролика нет звуковой дорожки вовсе (заказан у Grok с
+   * `generate_audio: false`, см. `GeneratedVideo.silentSource`).
+   * Подмешивать тогда не к чему — см. `PostProdOptions.sourceHasNoAudio`.
+   */
+  sourceHasNoAudio: boolean;
+  /**
+   * URL музыкальной подложки (фича №4) — копия из снимка брифа, не
+   * ссылка на каталог: см. `GreetingBriefSnapshot.musicTheme`.
+   */
+  musicUrl: string | null;
   /** Субтитры (этап 67), как они записаны в снимке бренда. */
   subtitlesMode: SubtitlesMode;
   subtitleTheme: SubtitleTheme;
@@ -239,7 +250,12 @@ export class PostProductionService {
     const work = this.planWork(session, video);
     const wantsSubtitles = work.subtitlesMode === 'on';
 
-    if (!work.crop && !usesOwnVoice(work.voiceMode) && !wantsSubtitles) {
+    if (
+      !work.crop &&
+      !usesOwnVoice(work.voiceMode) &&
+      !wantsSubtitles &&
+      !work.musicUrl
+    ) {
       // Кадр родной, озвучка не заказана, субтитры выключены — делать
       // нечего, и это норма.
       return this.save(sessionId, video, {
@@ -339,6 +355,9 @@ export class PostProductionService {
         targetAspectRatio: work.crop,
         voiceInputKey: voiceUrl ? 'voice' : null,
         voiceMode: work.voiceMode === 'dub' ? 'dub' : 'voiceover',
+        sourceHasNoAudio: work.sourceHasNoAudio,
+        musicInputKey: work.musicUrl ? 'music' : null,
+        totalDurationSeconds: work.totalDurationSeconds,
         voiceDelayMs: Math.round(work.speechStartSeconds * 1000),
         subtitlesInputKey: subsUrl ? 'subs' : null,
         subtitleForceStyle: subsUrl
@@ -360,6 +379,7 @@ export class PostProductionService {
 
     const inputs: Record<string, string> = { source };
     if (voiceUrl) inputs.voice = voiceUrl;
+    if (work.musicUrl) inputs.music = work.musicUrl;
     if (subsUrl) inputs.subs = subsUrl;
 
     try {
@@ -567,6 +587,9 @@ export class PostProductionService {
           targetAspectRatio: crop,
           voiceInputKey: 'voice',
           voiceMode: work.voiceMode === 'dub' ? 'dub' : 'voiceover',
+          sourceHasNoAudio: work.sourceHasNoAudio,
+          musicInputKey: work.musicUrl ? 'music' : null,
+          totalDurationSeconds: work.totalDurationSeconds,
           voiceDelayMs: Math.round(work.speechStartSeconds * 1000),
           subtitlesInputKey: subsUrl ? 'subs' : null,
           subtitleForceStyle: subsUrl
@@ -579,6 +602,7 @@ export class PostProductionService {
       }
 
       const inputs: Record<string, string> = { source, voice: voice.url };
+      if (work.musicUrl) inputs.music = work.musicUrl;
       if (subsUrl) inputs.subs = subsUrl;
 
       const job = await this.api.submit({
@@ -1042,7 +1066,21 @@ export class PostProductionService {
   ): Work {
     const brand = session?.brandManifestSnapshot;
     const senderVoice = session?.greetingBriefSnapshot?.senderVoice ?? null;
-    const voiceMode = normalizeVoiceMode(brand?.voiceMode);
+    // Пресетный голос xAI: реплику произнесла сама модель, в кадре и с
+    // липсинком (`reference_audios`). Синтезировать её второй раз
+    // значит получить то же двоение, ради устранения которого ролик
+    // вообще заказывается немым — поэтому режим читается как 'veo'
+    // («свой голос не участвует»), а не как 'voiceover'.
+    //
+    // Субтитры при этом остаются: `planWork` считает `speech` и для
+    // них тоже, а выравнивание в этом режиме и так было эвристикой —
+    // пословных таймкодов от провайдера здесь нет ни при каком
+    // раскладе.
+    const presetVoiceId =
+      session?.greetingBriefSnapshot?.presetVoiceId?.trim() || null;
+    const voiceMode = presetVoiceId
+      ? 'veo'
+      : normalizeVoiceMode(brand?.voiceMode);
     const subtitlesMode = normalizeSubtitlesMode(brand?.subtitlesMode);
     const subtitleTheme = normalizeSubtitleTheme(brand?.subtitleTheme);
     // Родной для Veo формат — это «резать нечего», а не «резать в тот же
@@ -1071,6 +1109,8 @@ export class PostProductionService {
     return {
       crop,
       voiceMode,
+      sourceHasNoAudio: video.silentSource === true,
+      musicUrl: session?.greetingBriefSnapshot?.musicTheme?.url ?? null,
       subtitlesMode,
       subtitleTheme,
       speech,

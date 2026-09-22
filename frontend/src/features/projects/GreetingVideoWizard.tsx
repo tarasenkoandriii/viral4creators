@@ -28,8 +28,10 @@ import {
   Pencil,
   RefreshCw,
   Mic,
+  Music,
   Sparkles,
   Trash2,
+  Upload,
   Wand2,
 } from 'lucide-react';
 import {
@@ -58,7 +60,15 @@ import {
   deleteGreetingReference,
   generateGreetingPrompt,
   generateGreetingReferenceFrame,
-  getGreetingSenderVoice,
+  GREETING_MUSIC_ACCEPT,
+  MAX_GREETING_MUSIC_BYTES,
+  getGreetingMusic,
+  getGreetingVoice,
+  listGreetingPresetVoices,
+  linkGreetingMusic,
+  selectGreetingMusic,
+  uploadGreetingMusic,
+  selectGreetingPresetVoice,
   selectGreetingSenderVoice,
   suggestGreetingSceneSettings,
   getGreetingBrief,
@@ -88,9 +98,11 @@ import type {
   GreetingOccasion,
   GreetingPresenterProvider,
   GreetingReferenceImageView,
+  GreetingMusicView,
   GreetingResolution,
-  GreetingSenderVoice,
   GreetingTone,
+  GreetingVoiceView,
+  GrokPresetVoice,
 } from '../../types/project';
 import type { GeneratedVideo, GenerationPrompt, PlanId } from '../../types';
 import { GenerationStatus } from '../../types';
@@ -211,6 +223,8 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
       )}
 
       {sessionId && prompt && <SenderVoiceStep sessionId={sessionId} />}
+
+      {sessionId && prompt && <MusicThemeStep sessionId={sessionId} />}
 
       {sessionId && prompt && (
         <VideoStep
@@ -1084,31 +1098,48 @@ function ScriptStep({
 function SenderVoiceStep({ sessionId }: { sessionId: string }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
-  const [picked, setPicked] = useState<GreetingSenderVoice | null>(null);
+  const [voice, setVoice] = useState<GreetingVoiceView>({
+    senderVoice: null,
+    presetVoiceId: null,
+  });
+  const [presets, setPresets] = useState<GrokPresetVoice[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    getGreetingSenderVoice(sessionId)
-      .then((v) => alive && setPicked(v))
-      .catch(() => alive && setPicked(null));
+    // Роестр грузится вместе с выбором: он не стоит денег (обычный
+    // GET у провайдера) и нужен сразу — без него второй вариант
+    // выглядел бы пустым местом.
+    void Promise.all([
+      getGreetingVoice(sessionId).catch(() => null),
+      listGreetingPresetVoices(sessionId).catch(() => [] as GrokPresetVoice[]),
+    ]).then(([v, list]) => {
+      if (!alive) return;
+      if (v) setVoice(v);
+      setPresets(list);
+    });
     return () => {
       alive = false;
     };
   }, [sessionId]);
 
-  const choose = async (resembleVoiceId: string | null) => {
+  const apply = async (fn: () => Promise<GreetingVoiceView>) => {
     setBusy(true);
     setError(null);
     try {
-      setPicked(await selectGreetingSenderVoice(sessionId, resembleVoiceId));
+      setVoice(await fn());
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
   };
+
+  const chosen = voice.senderVoice || voice.presetVoiceId;
+  const presetName =
+    presets?.find((p) => p.voiceId === voice.presetVoiceId)?.name ??
+    voice.presetVoiceId;
 
   return (
     <Card className="p-5">
@@ -1117,12 +1148,18 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
         title={w.senderVoiceHeading}
         hint={w.senderVoiceHint}
         action={
-          picked && (
+          chosen && (
             <Button
               size="sm"
               variant="ghost"
               loading={busy}
-              onClick={() => void choose(null)}
+              onClick={() =>
+                void apply(() =>
+                  voice.presetVoiceId
+                    ? selectGreetingPresetVoice(sessionId, null)
+                    : selectGreetingSenderVoice(sessionId, null)
+                )
+              }
             >
               {w.senderVoiceClear}
             </Button>
@@ -1137,19 +1174,334 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
       )}
 
       <p className="text-xs text-silver-400">
-        {picked
-          ? w.senderVoicePicked.replace('{label}', picked.label)
-          : w.senderVoiceDefault}
+        {voice.senderVoice
+          ? w.senderVoicePicked.replace('{label}', voice.senderVoice.label)
+          : voice.presetVoiceId
+            ? w.presetVoicePicked.replace('{label}', presetName ?? '')
+            : w.senderVoiceDefault}
       </p>
 
       <div className="mt-3">
         <MyVoicesSection
-          onPick={(voiceId) => void choose(voiceId)}
+          onPick={(voiceId) =>
+            void apply(() => selectGreetingSenderVoice(sessionId, voiceId))
+          }
           disabled={busy}
-          pickedVoiceId={picked?.resembleVoiceId ?? null}
+          pickedVoiceId={voice.senderVoice?.resembleVoiceId ?? null}
         />
       </div>
+
+      {/* Второй путь: реплику произносит сама модель. Ниже своих
+          голосов, а не выше, потому что клон отправителя — то, ради
+          чего эту карточку и открывают; пресет нужен тем, у кого
+          клона нет. */}
+      {presets !== null && presets.length > 0 && (
+        <div className="mt-4 border-t border-silver-200/60 pt-3 dark:border-silver-800">
+          <p className="text-sm font-medium">{w.presetVoiceHeading}</p>
+          <p className="mt-0.5 text-xs text-silver-400">{w.presetVoiceHint}</p>
+          {/* Оговорка про язык — не мелкий шрифт ради приличия:
+              украинского нет в списке поддерживаемых языков xAI, а
+              для этого продукта это основной язык половины
+              аудитории. */}
+          <p className="mt-1 text-xs text-silver-400">
+            {w.presetVoiceLanguageNote}
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {presets.map((preset) => (
+              <li key={preset.voiceId}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  active={voice.presetVoiceId === preset.voiceId}
+                  onClick={() =>
+                    void apply(() =>
+                      selectGreetingPresetVoice(sessionId, preset.voiceId)
+                    )
+                  }
+                >
+                  {preset.name}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </Card>
+  );
+}
+
+// ── Музыкальная подложка (фича №4) ───────────────────────────────────────
+
+/**
+ * Музыка под поздравление.
+ *
+ * Секции нет вовсе, пока каталог пуст: темы — лицензированные файлы,
+ * их загружает владелец продукта, и до первой загруженной темы
+ * показывать тут нечего. Это же и путь выката — код уезжает в прод
+ * тёмным.
+ *
+ * Список тем приходит уже отфильтрованным по поводу сессии: у
+ * соболезнования и дня рождения общей подложки не бывает ни при каком
+ * тоне.
+ */
+function MusicThemeStep({ sessionId }: { sessionId: string }) {
+  const { dict } = useI18n();
+  const w = dict.greetingVideoWizard;
+  const [music, setMusic] = useState<GreetingMusicView | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getGreetingMusic(sessionId)
+      .then((m) => alive && setMusic(m))
+      .catch(() => alive && setMusic({ themes: [], selected: null }));
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
+
+  const choose = async (themeId: string | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setMusic(await selectGreetingMusic(sessionId, themeId));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Раньше секции не было вовсе, пока каталог пуст. Со своей музыкой
+  // это перестало быть верным: загрузить трек можно и без каталога —
+  // ждём только первой загрузки состояния.
+  if (!music) return null;
+
+  return (
+    <Card className="p-5">
+      <CardHeader
+        icon={<Music size={18} />}
+        title={w.musicHeading}
+        hint={w.musicHint}
+        action={
+          music.selected && (
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={busy}
+              onClick={() => void choose(null)}
+            >
+              {w.musicClear}
+            </Button>
+          )
+        }
+      />
+
+      {error && (
+        <Alert tone="error" onDismiss={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      <p className="text-xs text-silver-400">
+        {music.selected
+          ? w.musicPicked.replace('{title}', music.selected.title)
+          : w.musicEmpty}
+      </p>
+
+      {music.themes.length > 0 && (
+        <ul className="mt-3 flex flex-wrap gap-2">
+          {music.themes.map((theme) => (
+            <li key={theme.id}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                active={
+                  music.selected?.source !== 'upload' &&
+                  music.selected?.id === theme.id
+                }
+                onClick={() => void choose(theme.id)}
+              >
+                {theme.title}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-3 border-t border-silver-200/60 pt-3 dark:border-silver-800">
+        {adding ? (
+          <MusicUploader
+            sessionId={sessionId}
+            onDone={(next) => {
+              setAdding(false);
+              setMusic(next);
+            }}
+            onCancel={() => setAdding(false)}
+            onError={setError}
+          />
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            icon={<Upload size={14} />}
+            disabled={busy}
+            onClick={() => setAdding(true)}
+          >
+            {w.musicUploadButton}
+          </Button>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Загрузка своей музыки.
+ *
+ * Подтверждение прав — не формальность: готовый ролик человек
+ * отправляет другому человеку, и чужая фонограмма в нём это
+ * распространение, а не личное прослушивание. Тот же гейт и та же
+ * форма, что у согласия на клонирование голоса.
+ */
+function MusicUploader({
+  sessionId,
+  onDone,
+  onCancel,
+  onError,
+}: {
+  sessionId: string;
+  onDone: (music: GreetingMusicView) => void;
+  onCancel: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const { dict } = useI18n();
+  const w = dict.greetingVideoWizard;
+  const [file, setFile] = useState<File | null>(null);
+  const [url, setUrl] = useState('');
+  const [title, setTitle] = useState('');
+  const [rights, setRights] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const pick = (f: File | undefined) => {
+    if (!f) return;
+    if (!GREETING_MUSIC_ACCEPT.split(',').includes(f.type)) {
+      onError(w.musicFormatOnly);
+      return;
+    }
+    if (f.size > MAX_GREETING_MUSIC_BYTES) {
+      onError(w.fileTooLarge);
+      return;
+    }
+    onError(null);
+    setFile(f);
+    if (!title) setTitle(f.name.replace(/\.[^.]+$/, '').slice(0, 80));
+  };
+
+  // Два способа дать трек — файл или ссылка. Оба ведут в одно и то же
+  // место и оба требуют подтверждения прав: разница только в том, у
+  // кого лежит файл.
+  const ready = (file || url.trim()) && rights;
+
+  const submit = async () => {
+    if (!ready) return;
+    setUploading(true);
+    setProgress(0);
+    onError(null);
+    try {
+      onDone(
+        file
+          ? await uploadGreetingMusic(
+              sessionId,
+              file,
+              title.trim(),
+              rights,
+              setProgress
+            )
+          : await linkGreetingMusic(sessionId, url.trim(), title.trim(), rights)
+      );
+    } catch (e) {
+      onError(errorMessage(e));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <input
+        ref={fileRef}
+        type="file"
+        accept={GREETING_MUSIC_ACCEPT}
+        className="hidden"
+        onChange={(e) => pick(e.target.files?.[0])}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={uploading || !!url.trim()}
+          onClick={() => fileRef.current?.click()}
+        >
+          {file ? file.name : w.musicPickFile}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={uploading}
+          onClick={onCancel}
+        >
+          {w.cancelButton}
+        </Button>
+      </div>
+
+      {!file && (
+        <Field label={w.musicLinkLabel} hint={w.musicLinkHint}>
+          <Input
+            value={url}
+            onChange={(e) => setUrl(e.target.value.trim())}
+            placeholder="https://…"
+            disabled={uploading}
+          />
+        </Field>
+      )}
+
+      {(file || url.trim()) && (
+        <>
+          <Field label={w.musicTitleLabel}>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value.slice(0, 80))}
+              disabled={uploading}
+            />
+          </Field>
+          <label className="flex cursor-pointer gap-2 text-xs leading-relaxed">
+            <input
+              type="checkbox"
+              checked={rights}
+              onChange={(e) => setRights(e.target.checked)}
+              disabled={uploading}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-sky-400"
+            />
+            <span>{w.musicRightsLabel}</span>
+          </label>
+          <Button
+            size="sm"
+            loading={uploading}
+            disabled={!ready || uploading}
+            onClick={() => void submit()}
+          >
+            {uploading && file ? `${progress}%` : w.musicUploadSubmit}
+          </Button>
+        </>
+      )}
+    </div>
   );
 }
 

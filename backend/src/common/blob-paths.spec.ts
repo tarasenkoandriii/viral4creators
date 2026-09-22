@@ -79,6 +79,55 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
     );
   });
 
+  it('своя музыка удаляется вместе с сессией, а каталожная тема — нет', () => {
+    // Загруженный файл живёт под префиксом сессии и принадлежит ей.
+    // Тема из каталога платформы общая, одна на всех: удаление одной
+    // сессии не вправе её тронуть. Отличает их `source`.
+    const uploaded = {
+      sessionId: 's1',
+      greetingBriefSnapshot: {
+        musicTheme: {
+          id: 'mt_a',
+          title: 'Своя',
+          url: 'https://blob.test/mt_a.mp3',
+          source: 'upload',
+          pathname: 'sessions/s1/music/mt_a.mp3',
+        },
+      },
+    } as unknown as Session;
+    expect(sessionBlobPathnames(uploaded)).toEqual([
+      'sessions/s1/music/mt_a.mp3',
+    ]);
+
+    const fromCatalog = {
+      sessionId: 's1',
+      greetingBriefSnapshot: {
+        musicTheme: {
+          id: 'party',
+          title: 'Праздничная',
+          url: 'https://blob.test/party.mp3',
+          source: 'catalog',
+        },
+      },
+    } as unknown as Session;
+    expect(sessionBlobPathnames(fromCatalog)).toEqual([]);
+  });
+
+  it('старая запись без source каталожной темой и остаётся — не удаляем по догадке', () => {
+    const legacy = {
+      sessionId: 's1',
+      greetingBriefSnapshot: {
+        musicTheme: {
+          id: 'x',
+          title: 'X',
+          url: 'https://blob.test/x.mp3',
+          pathname: 'sessions/s1/music/x.mp3',
+        },
+      },
+    } as unknown as Session;
+    expect(sessionBlobPathnames(legacy)).toEqual([]);
+  });
+
   it('не трогает чужие файлы: ссылку на YouTube, фото персонажа бренда, путь вне префикса', () => {
     const session = {
       ...base,

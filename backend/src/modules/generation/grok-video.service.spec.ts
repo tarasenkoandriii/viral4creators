@@ -124,6 +124,102 @@ describe('GrokVideoService.startGeneration / extendVideo (длительност
     );
   });
 
+  it('generate_audio: false уходит в тело, когда просим немой ролик', async () => {
+    // docs.x.ai, Video Generation: «Generated videos include an audio
+    // track by default. Pass `generate_audio=False` to request a silent
+    // video». Нужно поздравлению: реплику озвучиваем мы, и дорожка
+    // модели с той же репликой легла бы второй речью поверх нашей.
+    mockedAxios.post.mockResolvedValue({
+      status: 200,
+      data: { request_id: 'r1' },
+    });
+    const svc = new GrokVideoService();
+    await svc.startGeneration({
+      prompt: 'p',
+      durationSeconds: 8,
+      aspectRatio: '9:16',
+      resolution: '480p',
+      generateAudio: false,
+    });
+    const body = mockedAxios.post.mock.calls[0][1] as Record<string, unknown>;
+    expect(body.generate_audio).toBe(false);
+  });
+
+  it('звук нужен — поле не шлётся вовсе, чужое умолчание у себя не фиксируем', async () => {
+    mockedAxios.post.mockResolvedValue({
+      status: 200,
+      data: { request_id: 'r1' },
+    });
+    const svc = new GrokVideoService();
+    for (const generateAudio of [true, undefined]) {
+      mockedAxios.post.mockClear();
+      await svc.startGeneration({
+        prompt: 'p',
+        durationSeconds: 8,
+        aspectRatio: '9:16',
+        resolution: '480p',
+        ...(generateAudio === undefined ? {} : { generateAudio }),
+      });
+      const body = mockedAxios.post.mock.calls[0][1] as Record<string, unknown>;
+      expect(body).not.toHaveProperty('generate_audio');
+    }
+  });
+
+  it('пресетный голос уходит как reference_audios: [{ voice_id }]', async () => {
+    // docs.x.ai, Reference-to-Video: «give your subject a voice by
+    // passing up to 3 preset voices with reference_audios»; каждая
+    // запись — объект с `voice_id`, а не голая строка (тот же приём,
+    // что у `reference_images` с `{ url }`).
+    mockedAxios.post.mockResolvedValue({
+      status: 200,
+      data: { request_id: 'r1' },
+    });
+    const svc = new GrokVideoService();
+    await svc.startGeneration({
+      prompt: 'p <AUDIO_0>',
+      durationSeconds: 8,
+      aspectRatio: '9:16',
+      resolution: '480p',
+      referenceAudioVoiceIds: ['eve'],
+    });
+    const body = mockedAxios.post.mock.calls[0][1] as Record<string, unknown>;
+    expect(body.reference_audios).toEqual([{ voice_id: 'eve' }]);
+  });
+
+  it('голосов не передали — поля нет вовсе', async () => {
+    mockedAxios.post.mockResolvedValue({
+      status: 200,
+      data: { request_id: 'r1' },
+    });
+    const svc = new GrokVideoService();
+    await svc.startGeneration({
+      prompt: 'p',
+      durationSeconds: 8,
+      aspectRatio: '9:16',
+      resolution: '480p',
+      referenceAudioVoiceIds: [],
+    });
+    const body = mockedAxios.post.mock.calls[0][1] as Record<string, unknown>;
+    expect(body).not.toHaveProperty('reference_audios');
+  });
+
+  it('больше трёх голосов — отказ до сетевого вызова', async () => {
+    // «Max 3 voices per request» (docs.x.ai). Платить за заведомо
+    // отклонённый запрос незачем.
+    const svc = new GrokVideoService();
+    mockedAxios.post.mockClear();
+    await expect(
+      svc.startGeneration({
+        prompt: 'p',
+        durationSeconds: 8,
+        aspectRatio: '9:16',
+        resolution: '480p',
+        referenceAudioVoiceIds: ['eve', 'leo', 'ara', 'rex'],
+      }),
+    ).rejects.toThrow(/reference_audios/);
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
   it('image-to-video: картинка уходит как image: { url }, а не image_url (М-6.1 седьмого аудита)', async () => {
     mockedAxios.post.mockResolvedValue({
       status: 200,
@@ -201,5 +297,62 @@ describe('GrokVideoService.startGeneration / extendVideo (длительност
       }),
     ).rejects.toThrow(/2–10/);
     expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+});
+
+describe('GrokVideoService.listPresetVoices', () => {
+  beforeEach(() => {
+    mockedAxios.get.mockReset();
+  });
+
+  it('читает роестр у провайдера, а не держит копию у себя', async () => {
+    // Роестр пополняется без нас: на 22.09.2026 там 28 голосов.
+    mockedAxios.get.mockResolvedValue({
+      status: 200,
+      data: {
+        voices: [
+          { voice_id: 'ara', name: 'Ara', language: 'multilingual' },
+          { voice_id: 'eve', name: 'Eve', language: 'multilingual' },
+        ],
+      },
+    });
+    const svc = new GrokVideoService();
+    await expect(svc.listPresetVoices()).resolves.toEqual([
+      { voiceId: 'ara', name: 'Ara', language: 'multilingual' },
+      { voiceId: 'eve', name: 'Eve', language: 'multilingual' },
+    ]);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://api.x.ai/v1/tts/voices',
+      expect.anything(),
+    );
+  });
+
+  it('запись без voice_id пропускается — сослаться на неё в промпте нечем', async () => {
+    mockedAxios.get.mockResolvedValue({
+      status: 200,
+      data: { voices: [{ name: 'Безымянный' }, { voice_id: 'leo' }] },
+    });
+    const svc = new GrokVideoService();
+    const voices = await svc.listPresetVoices();
+    expect(voices).toEqual([{ voiceId: 'leo', name: 'leo', language: null }]);
+  });
+
+  it('провайдер ответил ошибкой — пустой список, а не исключение', async () => {
+    // Без роестра экран покажет пустой выбор и предложит обычную
+    // озвучку. Это хуже, но собрать ролик не мешает.
+    mockedAxios.get.mockResolvedValue({ status: 500, data: {} });
+    const svc = new GrokVideoService();
+    await expect(svc.listPresetVoices()).resolves.toEqual([]);
+  });
+
+  it('голый массив вместо { voices } тоже читается', async () => {
+    mockedAxios.get.mockResolvedValue({
+      status: 200,
+      data: [{ voice_id: 'rex', name: 'Rex' }],
+    });
+    const svc = new GrokVideoService();
+    await expect(svc.listPresetVoices()).resolves.toEqual([
+      { voiceId: 'rex', name: 'Rex', language: null },
+    ]);
   });
 });

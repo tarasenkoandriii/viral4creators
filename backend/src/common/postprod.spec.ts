@@ -110,6 +110,175 @@ describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () =>
     });
   });
 
+  describe('исходник без звуковой дорожки (generate_audio: false у Grok)', () => {
+    // Ролик поздравления заказывается немым, когда реплику озвучиваем
+    // мы. Подмешивать тогда не к чему, а `[0:a]` в фильтре ссылается на
+    // несуществующий поток — ffmpeg на этом падает («Stream specifier
+    // matches no streams»), а не пропускает фильтр молча.
+    const plan = planPostProduction({
+      voiceInputKey: 'voice',
+      voiceMode: 'voiceover',
+      sourceHasNoAudio: true,
+      targetAspectRatio: '1:1',
+      voiceDelayMs: 300,
+    });
+
+    it('к несуществующей дорожке не обращаемся', () => {
+      expect(plan.command).not.toContain('[0:a]');
+      expect(plan.command).not.toContain('amix');
+    });
+
+    it('команда собирается как дубляж — слышимый результат тот же', () => {
+      // Это не выдача платного дубляжа мимо тарифа: дубляж означает
+      // «заменить звук модели своим», а здесь звука модели нет вовсе.
+      expect(plan.audio).toEqual({ mode: 'dub', delayMs: 300 });
+      expect(plan.command).toContain('loudnorm');
+      expect(plan.command).toContain('adelay=300:all=1');
+    });
+
+    it('флаг не задан — прежнее поведение, дорожка приглушается и подмешивается', () => {
+      const normal = planPostProduction({
+        voiceInputKey: 'voice',
+        voiceMode: 'voiceover',
+        targetAspectRatio: '1:1',
+        voiceDelayMs: 300,
+      });
+      expect(normal.command).toContain(`[0:a]volume=${DEFAULT_DUCK}[bg]`);
+      expect(normal.command).toContain('amix=inputs=2');
+    });
+
+    it('немой исходник без нашей дорожки — звук маппится опционально, задача не падает', () => {
+      // Только обрезка: `-map 0:a?` со знаком вопроса, иначе ffmpeg
+      // отказался бы маппить несуществующий поток.
+      const cropOnly = planPostProduction({
+        targetAspectRatio: '1:1',
+        sourceHasNoAudio: true,
+      });
+      expect(cropOnly.command).toContain('-map 0:a?');
+    });
+  });
+
+  describe('музыкальная подложка (фича №4)', () => {
+    it('подложка приводится РОВНО к длине ролика и становится эталоном', () => {
+      // `atrim` режет длинный трек, `apad` дотягивает короткий тишиной.
+      // На этом держится `duration=first`: без исходной дорожки
+      // эталоном длины больше быть нечему.
+      const plan = planPostProduction({
+        voiceInputKey: 'voice',
+        musicInputKey: 'music',
+        sourceHasNoAudio: true,
+        totalDurationSeconds: 15,
+        targetAspectRatio: '1:1',
+      });
+      expect(plan.command).toContain('atrim=0:15,apad=whole_dur=15');
+      expect(plan.command).toContain('[mus][vo]amix=inputs=2:duration=first');
+    });
+
+    it('звук ролика есть — эталоном остаётся он, подложка идёт последней', () => {
+      const plan = planPostProduction({
+        voiceInputKey: 'voice',
+        musicInputKey: 'music',
+        totalDurationSeconds: 15,
+        targetAspectRatio: '1:1',
+      });
+      expect(plan.command).toContain(
+        '[bg][vo][mus]amix=inputs=3:duration=first',
+      );
+    });
+
+    it('входы объявлены в том порядке, в котором фильтр их нумерует', () => {
+      // Именно поэтому номера потоков считаются, а не пишутся руками:
+      // с появлением подложки «второй вход» перестал означать «голос».
+      const plan = planPostProduction({
+        voiceInputKey: 'voice',
+        musicInputKey: 'music',
+        totalDurationSeconds: 15,
+        targetAspectRatio: '1:1',
+      });
+      expect(plan.inputKeys).toEqual(['source', 'voice', 'music']);
+      expect(plan.command).toContain('[1:a]');
+      expect(plan.command).toContain('[2:a]');
+    });
+
+    it('подложка без нашего голоса — номер потока сдвигается на её место', () => {
+      // Так выглядит поздравление с пресетным голосом xAI: говорит
+      // модель, мы только подкладываем музыку.
+      const plan = planPostProduction({
+        musicInputKey: 'music',
+        totalDurationSeconds: 15,
+        targetAspectRatio: '16:9',
+      });
+      expect(plan.inputKeys).toEqual(['source', 'music']);
+      expect(plan.command).toContain('[1:a]atrim=0:15');
+      expect(plan.command).not.toContain('[2:a]');
+    });
+
+    it('без нашего голоса исходная дорожка НЕ приглушается', () => {
+      // Приглушение — это уступка нашей речи. Под одной лишь музыкой
+      // глушить нечего, иначе подложка съедала бы звук, ради которого
+      // её и добавляют.
+      const plan = planPostProduction({
+        musicInputKey: 'music',
+        totalDurationSeconds: 15,
+        targetAspectRatio: '16:9',
+      });
+      expect(plan.command).toContain('[0:a]volume=1[bg]');
+      expect(plan.command).not.toContain(`volume=${DEFAULT_DUCK}`);
+    });
+
+    it('звук перекодируется — copy рядом с фильтром ffmpeg не выполнит', () => {
+      const plan = planPostProduction({
+        musicInputKey: 'music',
+        totalDurationSeconds: 15,
+        targetAspectRatio: '16:9',
+      });
+      expect(plan.command).toContain('-c:a aac');
+      expect(plan.command).not.toContain('-c:a copy');
+    });
+
+    it('подложка тише голоса', () => {
+      const plan = planPostProduction({
+        voiceInputKey: 'voice',
+        musicInputKey: 'music',
+        musicVolume: 0.2,
+        totalDurationSeconds: 15,
+        targetAspectRatio: '1:1',
+      });
+      expect(plan.command).toContain('volume=0.2[mus]');
+    });
+
+    it('одна подложка без голоса и без звука ролика — просто выравнивается', () => {
+      const plan = planPostProduction({
+        musicInputKey: 'music',
+        sourceHasNoAudio: true,
+        totalDurationSeconds: 15,
+        targetAspectRatio: '1:1',
+      });
+      expect(plan.command).not.toContain('amix');
+      expect(plan.command).toContain('[mus]loudnorm');
+    });
+
+    it('подложки нет — команда прежняя, без лишних входов', () => {
+      const plan = planPostProduction({
+        voiceInputKey: 'voice',
+        targetAspectRatio: '1:1',
+      });
+      expect(plan.inputKeys).toEqual(['source', 'voice']);
+      expect(plan.command).not.toContain('[mus]');
+      expect(plan.command).not.toContain('apad');
+    });
+
+    it('только подложка и ничего больше — задача всё равно нужна', () => {
+      // До фичи такой набор считался «делать нечего» и отвергался.
+      expect(() =>
+        planPostProduction({
+          musicInputKey: 'music',
+          totalDurationSeconds: 15,
+        }),
+      ).not.toThrow();
+    });
+  });
+
   describe('обрезка и озвучка вместе — ради этого всё и затевалось', () => {
     const plan = planPostProduction({
       targetAspectRatio: '4:5',

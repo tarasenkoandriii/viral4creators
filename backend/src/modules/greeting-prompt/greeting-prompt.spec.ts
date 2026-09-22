@@ -189,3 +189,76 @@ describe('buildSceneDescription — кто произносит реплику',
     }
   });
 });
+
+describe('buildSceneDescription — пресетный голос xAI', () => {
+  const speech = 'Марина, с днём рождения!';
+  const withPreset = brief({ presetVoiceId: 'eve' } as never);
+
+  it('ведущий произносит реплику голосом из <AUDIO_0>', () => {
+    // Метка обязана стоять В ТЕКСТЕ промпта рядом с упоминанием — так
+    // же, как <IMAGE_n> у картинок (docs.x.ai, Reference-to-Video).
+    const scene = buildSceneDescription(
+      withPreset,
+      'день рождения',
+      speech,
+      [],
+      'voiceover',
+    );
+    expect(scene).toContain('<AUDIO_0>');
+    expect(scene).toMatch(/speaks directly to the viewer with the voice from/);
+  });
+
+  it('пресет перебивает молчаливую формулировку, даже когда режим voiceover', () => {
+    // Иначе промпт просил бы молчать, а мы бы ждали от модели речь.
+    const scene = buildSceneDescription(
+      withPreset,
+      'день рождения',
+      speech,
+      [],
+      'voiceover',
+    );
+    expect(scene).not.toMatch(/does NOT say the line out loud/);
+    expect(scene).not.toMatch(/Audio: ambience and music only/);
+  });
+
+  it('реплика помечена как произносимая вслух, но не экранным текстом', () => {
+    const scene = buildSceneDescription(
+      withPreset,
+      'день рождения',
+      speech,
+      [],
+      'voiceover',
+    );
+    expect(scene).toMatch(/to be said aloud by the presenter/);
+    expect(scene).toContain('never rendered as on-screen text');
+    expect(scene).toContain(speech);
+  });
+
+  it('пресета нет — метки <AUDIO_0> в промпте не появляется', () => {
+    for (const mode of ['veo', 'voiceover', 'dub'] as const) {
+      const scene = buildSceneDescription(
+        brief(),
+        'день рождения',
+        speech,
+        [],
+        mode,
+      );
+      expect(scene).not.toContain('<AUDIO_0>');
+    }
+  });
+
+  it('голос и картинки-референсы уживаются в одном промпте', () => {
+    // docs.x.ai: «You can use a voice alongside reference images or on
+    // its own» — обе разметки должны остаться.
+    const images = [{ id: 'a', label: 'Марина', description: null }] as never;
+    const scene = buildSceneDescription(
+      withPreset,
+      'день рождения',
+      speech,
+      images,
+      'voiceover',
+    );
+    expect(scene).toContain('<AUDIO_0>');
+    expect(scene).toContain('<IMAGE_1> — Марина');
+  });
+});

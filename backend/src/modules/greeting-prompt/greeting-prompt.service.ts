@@ -308,6 +308,12 @@ export function buildSceneDescription(
   referenceImages: SceneAsset[],
   voiceMode: VoiceMode,
 ): string {
+  // Пресетный голос xAI: реплику произносит сама модель, своим
+  // липсинком (`reference_audios`, метка `<AUDIO_0>` — так же, как
+  // `<IMAGE_n>` у картинок). Тогда наш синтез для этой сессии
+  // выключен (`PostProductionService.planWork`), и молчаливая
+  // формулировка ниже была бы прямо противоположна тому, что нужно.
+  const presetVoiceId = brief.presetVoiceId?.trim() || null;
   const toneText = TONE_LABEL[brief.tone];
   const referenceLines = referenceImages.map((img, i) => {
     const tag = `<IMAGE_${i + 1}>`;
@@ -342,13 +348,15 @@ export function buildSceneDescription(
   // а у поздравления ведущий в кадре и есть весь смысл, и экранный
   // текст запрещён соседней строкой этого же промпта. Поэтому
   // формулировка своя: ведущий в кадре остаётся, произнесение — нет.
-  const silent = usesOwnVoice(voiceMode);
+  const silent = !presetVoiceId && usesOwnVoice(voiceMode);
   return [
     // `message`, не `greeting`: см. тот же довод в draftPersonalMessage.
     `A short vertical video message for ${occasionText} addressed to ${brief.recipientName}.`,
     silent
       ? `A camera-facing presenter looks straight at the viewer with a ${mood} mood, smiling, gesturing and reacting — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.`
-      : `A camera-facing presenter speaks directly to the viewer, natural expression, ${mood} mood.`,
+      : presetVoiceId
+        ? `A camera-facing presenter speaks directly to the viewer with the voice from <AUDIO_0>, natural expression, ${mood} mood.`
+        : `A camera-facing presenter speaks directly to the viewer, natural expression, ${mood} mood.`,
     // Декорации приходят от повода, а не от тона: у соболезнования
     // нет праздничного варианта ни при каком тоне.
     `${spec.sceneMood}; no on-screen text.`,
@@ -358,7 +366,9 @@ export function buildSceneDescription(
     referenceLines.length
       ? `Use these visual references where they naturally fit the scene: ${referenceLines.join('; ')}.`
       : '',
-    `Spoken line (for reference, not to be rendered as on-screen text): "${speech.replace(/"/g, "'")}"`,
+    presetVoiceId
+      ? `Spoken line, to be said aloud by the presenter (never rendered as on-screen text): "${speech.replace(/"/g, "'")}"`
+      : `Spoken line (for reference, not to be rendered as on-screen text): "${speech.replace(/"/g, "'")}"`,
   ]
     .filter(Boolean)
     .join(' ');

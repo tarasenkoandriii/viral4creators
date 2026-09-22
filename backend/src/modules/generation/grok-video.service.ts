@@ -83,6 +83,9 @@ import axios from 'axios';
 import { loadConfiguration } from '../../config/configuration';
 
 const XAI_BASE_URL = 'https://api.x.ai/v1';
+
+/** docs.x.ai, Reference-to-Video: «Max 3 voices per request». */
+export const MAX_REFERENCE_AUDIOS = 3;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /** Нативная длительность генерации, docs.x.ai (Video Generation): 1–15 с. */
@@ -112,6 +115,14 @@ export function effectiveGrokResolution(
     return '720p';
   }
   return requested;
+}
+
+/** Пресетный голос xAI — то, что нужно и экрану, и `reference_audios`. */
+export interface GrokPresetVoice {
+  voiceId: string;
+  name: string;
+  /** `multilingual` у всех текущих голосов; `null` — провайдер не сказал. */
+  language: string | null;
 }
 
 export interface GrokVideoStatusResult {
@@ -194,6 +205,36 @@ export class GrokVideoService {
     durationSeconds: number;
     aspectRatio: string;
     resolution: GrokResolution;
+    /**
+     * Просить у модели звуковую дорожку или немой ролик
+     * (`generate_audio`, docs.x.ai Video Generation: «Generated videos
+     * include an audio track by default. Pass `generate_audio=False` to
+     * request a silent video»). Не передано — поведение прежнее, со
+     * звуком.
+     *
+     * На цену НЕ влияет: тариф считается по секундам и разрешению
+     * («both duration and resolution affect the total cost»), отдельной
+     * ставки за звук в прайсе нет — проверено 22.09.2026. Смысл флага
+     * чисто инженерный: если реплику озвучиваем мы, дорожка модели с
+     * той же репликой — не бонус, а вторая речь поверх нашей.
+     */
+    generateAudio?: boolean;
+    /**
+     * Пресетные голоса xAI для реплик В КАДРЕ (`reference_audios`,
+     * docs.x.ai Reference-to-Video: «give your subject a voice by
+     * passing up to 3 preset voices»; в промпте на них ссылаются
+     * метками `<AUDIO_0>`, `<AUDIO_1>`, `<AUDIO_2>` — так же, как на
+     * `reference_images` метками `<IMAGE_n>`).
+     *
+     * Это НЕ фон и НЕ музыка: роестр тот же, что у xAI Text to Speech,
+     * и параметр управляет только тем, чьим голосом говорит персонаж.
+     * Свои аудиофайлы вместо пресетов доступны «trusted partners on
+     * request» — то есть не нам.
+     *
+     * Только `grok-imagine-video-1.5`: у прежней модели
+     * reference-to-video со звуком нет.
+     */
+    referenceAudioVoiceIds?: string[];
   }): Promise<GrokVideoStartResult> {
     if (!this.apiKey) {
       throw new Error('GROK_API_KEY не задан');
@@ -211,6 +252,12 @@ export class GrokVideoService {
     ) {
       throw new Error(
         `GrokVideoService.startGeneration: duration ${params.durationSeconds} вне 1–${GROK_MAX_DURATION_SECONDS} с (docs.x.ai)`,
+      );
+    }
+    if ((params.referenceAudioVoiceIds?.length ?? 0) > MAX_REFERENCE_AUDIOS) {
+      // Программная ошибка вызывающего, не ввод пользователя.
+      throw new Error(
+        `GrokVideoService.startGeneration: reference_audios больше ${MAX_REFERENCE_AUDIOS} (docs.x.ai)`,
       );
     }
     const resolution = effectiveGrokResolution(params.resolution, {
@@ -239,8 +286,23 @@ export class GrokVideoService {
         duration: params.durationSeconds,
         aspect_ratio: params.aspectRatio,
         resolution,
+        // Шлём поле только когда просим тишину: значение по умолчанию у
+        // xAI — `true`, и посылать его явно значило бы фиксировать у
+        // себя чужое умолчание.
+        ...(params.generateAudio === false ? { generate_audio: false } : {}),
+        ...(params.referenceAudioVoiceIds?.length
+          ? {
+              reference_audios: params.referenceAudioVoiceIds.map(
+                (voice_id) => ({ voice_id }),
+              ),
+            }
+          : {}),
       },
-      { headers: this.headers(), timeout: REQUEST_TIMEOUT_MS, validateStatus: () => true },
+      {
+        headers: this.headers(),
+        timeout: REQUEST_TIMEOUT_MS,
+        validateStatus: () => true,
+      },
     );
 
     return this.readRequestId(res, 'Grok video start');
@@ -295,7 +357,11 @@ export class GrokVideoService {
         duration: params.durationSeconds,
         video: { url: params.videoUrl },
       },
-      { headers: this.headers(), timeout: REQUEST_TIMEOUT_MS, validateStatus: () => true },
+      {
+        headers: this.headers(),
+        timeout: REQUEST_TIMEOUT_MS,
+        validateStatus: () => true,
+      },
     );
 
     return this.readRequestId(res, 'Grok video extend');
@@ -315,8 +381,7 @@ export class GrokVideoService {
 
     // Не подтверждено буквально (см. доккомментарий класса, п.1) —
     // проверяем оба разумных варианта расположения поля.
-    const requestId: string | undefined =
-      res.data?.request_id ?? res.data?.id;
+    const requestId: string | undefined = res.data?.request_id ?? res.data?.id;
     if (!requestId) {
       this.logger.error(
         `${what}: ответ без request_id — ${JSON.stringify(res.data)}`,
@@ -325,6 +390,56 @@ export class GrokVideoService {
     }
 
     return { requestId };
+  }
+
+  /**
+   * Роестр пресетных голосов xAI — тот самый, из которого берутся
+   * `voice_id` для `reference_audios`
+   * (`GET /v1/tts/voices`, docs.x.ai Text to Speech: «You can also
+   * list voices programmatically»).
+   *
+   * Читаем у провайдера, а не держим список у себя: на 22.09.2026 в
+   * роестре 28 голосов, и он пополняется — захардкоженная копия
+   * устареет в первый же день. Тот же довод, что у каталога голосов
+   * TTS-провайдера (`TtsController.voices()`).
+   *
+   * Наш синтез это НЕ затрагивает: xAI как TTS-провайдер в продукте не
+   * подключён, голоса отсюда умеет произносить только сама
+   * видеомодель, в кадре.
+   *
+   * Сбой не бросаем наружу: без списка экран покажет пустой выбор и
+   * предложит обычную озвучку — это хуже, но не мешает собрать ролик.
+   */
+  async listPresetVoices(): Promise<GrokPresetVoice[]> {
+    if (!this.apiKey) return [];
+    const res = await axios.get(`${XAI_BASE_URL}/tts/voices`, {
+      headers: this.headers(),
+      timeout: REQUEST_TIMEOUT_MS,
+      validateStatus: () => true,
+    });
+    if (res.status < 200 || res.status >= 300) {
+      this.logger.warn(
+        `не удалось прочитать роестр голосов xAI: HTTP ${res.status}`,
+      );
+      return [];
+    }
+    // Форма ответа — `{ voices: [{ voice_id, name, language }] }`
+    // (docs.x.ai, REST API reference). Читаем защитно: голый массив
+    // тоже принимаем, а запись без `voice_id` пропускаем — она всё
+    // равно нечем сослаться в промпте.
+    const raw: unknown = (res.data as { voices?: unknown })?.voices ?? res.data;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((v) => v as { voice_id?: string; name?: string; language?: string })
+      .filter(
+        (v): v is { voice_id: string; name?: string; language?: string } =>
+          typeof v.voice_id === 'string' && v.voice_id.length > 0,
+      )
+      .map((v) => ({
+        voiceId: v.voice_id,
+        name: v.name?.trim() || v.voice_id,
+        language: v.language?.trim() || null,
+      }));
   }
 
   /**
@@ -345,10 +460,11 @@ export class GrokVideoService {
     // `/v1/videos/generations/{request_id}`, как было здесь раньше
     // (путаница с POST-эндпоинтом создания — `/v1/videos/generations`,
     // у него этот сегмент действительно есть, но у GET-статуса нет).
-    const res = await axios.get(
-      `${XAI_BASE_URL}/videos/${requestId}`,
-      { headers: this.headers(), timeout: REQUEST_TIMEOUT_MS, validateStatus: () => true },
-    );
+    const res = await axios.get(`${XAI_BASE_URL}/videos/${requestId}`, {
+      headers: this.headers(),
+      timeout: REQUEST_TIMEOUT_MS,
+      validateStatus: () => true,
+    });
 
     if (res.status >= 400) {
       this.logger.error(
@@ -358,7 +474,10 @@ export class GrokVideoService {
       // удалён, это постоянная ошибка, а не «ещё идёт» — иначе опрос
       // крутится до дедлайна с вводящим в заблуждение таймаутом.
       if (res.status === 404 || res.status === 410) {
-        return { done: true, error: `xAI: запрос не найден (HTTP ${res.status})` };
+        return {
+          done: true,
+          error: `xAI: запрос не найден (HTTP ${res.status})`,
+        };
       }
       return { done: false, error: `HTTP ${res.status}` };
     }
@@ -392,7 +511,10 @@ export class GrokVideoService {
     // форма реального ответа, не догадка.
     const videoUrl: string | undefined = res.data?.video?.url;
     if (!videoUrl) {
-      return { done: true, error: 'Grok video generation: ответ без video.url' };
+      return {
+        done: true,
+        error: 'Grok video generation: ответ без video.url',
+      };
     }
 
     return { done: true, videoUrl };

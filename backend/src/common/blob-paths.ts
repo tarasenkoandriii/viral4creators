@@ -150,6 +150,15 @@ export function sessionBlobPathnames(session: Session): string[] {
     if (ref.photoPathname) paths.add(ref.photoPathname);
   }
 
+  // Музыкальная подложка, загруженная пользователем
+  // (`sessions/<id>/music/…`, фича №4). Тема из каталога платформы
+  // сюда не попадает и не должна: она общая, одна на всех, и удаление
+  // одной сессии не вправе её тронуть — отличает их `source`.
+  const music = session.greetingBriefSnapshot?.musicTheme;
+  if (music?.source === 'upload' && music.pathname) {
+    paths.add(music.pathname);
+  }
+
   // Защита от чужих путей: сессия не вправе удалить файл вне своего
   // префикса, даже если он как-то попал в её данные.
   return [...paths].filter((p) => p.startsWith(prefix));

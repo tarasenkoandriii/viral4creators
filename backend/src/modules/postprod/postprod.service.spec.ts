@@ -332,6 +332,150 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       });
     });
 
+    it('немой исходник доезжает до команды ffmpeg, а не теряется в плане работ', async () => {
+      // Сторож связки: `GeneratedVideo.silentSource` → `Work` →
+      // `planPostProduction`. Без неё ролик, заказанный у Grok без
+      // звука, уходил бы в фильтр с `[0:a]` и падал бы у провайдера.
+      const { svc, api } = build({
+        session: session({ brandManifestSnapshot: { voiceMode: 'voiceover' } }),
+      });
+      await svc.start('s1', { ...VIDEO, silentSource: true });
+      const command = (api.submit.mock.calls[0][0] as { commands: string[] })
+        .commands[0];
+      expect(command).not.toContain('[0:a]');
+      expect(command).not.toContain('amix');
+    });
+
+    it('обычный ролик по-прежнему микшируется', async () => {
+      const { svc, api } = build({
+        session: session({ brandManifestSnapshot: { voiceMode: 'voiceover' } }),
+      });
+      await svc.start('s1', VIDEO);
+      const command = (api.submit.mock.calls[0][0] as { commands: string[] })
+        .commands[0];
+      expect(command).toContain('[0:a]');
+      expect(command).toContain('amix');
+    });
+
+    describe('музыкальная подложка — фича №4', () => {
+      const withMusic = {
+        musicTheme: {
+          id: 'party',
+          title: 'Праздничная',
+          url: 'https://blob.test/party.mp3',
+        },
+      };
+
+      it('трек доезжает до задачи отдельным входом', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: withMusic,
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+          commands: string[];
+        };
+        expect(job.inputs.music).toBe('https://blob.test/party.mp3');
+        expect(job.commands[0]).toContain('[mus]');
+      });
+
+      it('подложки нет — лишнего входа тоже нет', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+        };
+        expect(job.inputs).not.toHaveProperty('music');
+      });
+
+      it('одна подложка без кропа и озвучки — задача всё равно создаётся', async () => {
+        // До фичи такой набор считался «делать нечего»: ролик уходил в
+        // 'skipped', и музыка терялась бы молча.
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'veo' },
+            greetingBriefSnapshot: withMusic,
+          }),
+        });
+        const r = await svc.start('s1', {
+          ...VIDEO,
+          aspectRatio: '9:16',
+          reframePending: false,
+        });
+        expect(api.submit).toHaveBeenCalled();
+        expect(r.postStatus).not.toBe('skipped');
+      });
+
+      it('подложка звучит и под пресетным голосом xAI — синтеза нет, музыка есть', async () => {
+        const { svc, api, tts } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: { ...withMusic, presetVoiceId: 'eve' },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(tts.synthesize).not.toHaveBeenCalled();
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+        };
+        expect(job.inputs.music).toBe('https://blob.test/party.mp3');
+      });
+    });
+
+    describe('пресетный голос xAI — говорит модель, мы молчим', () => {
+      it('наш синтез не зовётся вовсе', async () => {
+        // Реплика уже произнесена в кадре, с липсинком. Синтезировать
+        // её второй раз значит вернуть то самое двоение.
+        const { svc, tts } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: { presetVoiceId: 'eve' },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(tts.synthesize).not.toHaveBeenCalled();
+      });
+
+      it('пресет перебивает даже выбранный клон отправителя', async () => {
+        // В брифе они взаимоисключающи (`GreetingVoiceService`), но
+        // старая запись могла успеть накопить оба — побеждает тот, чей
+        // голос уже звучит в файле.
+        const { svc, tts } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: {
+              presetVoiceId: 'eve',
+              senderVoice: {
+                userVoiceId: 'uv1',
+                resembleVoiceId: 'clone-42',
+                label: 'Мой голос',
+              },
+            },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(tts.synthesize).not.toHaveBeenCalled();
+      });
+
+      it('пустая строка пресетом не считается — синтез идёт как обычно', async () => {
+        const { svc, tts } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: { presetVoiceId: '  ' },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(tts.synthesize).toHaveBeenCalled();
+      });
+    });
+
     describe('голос отправителя — фича №34', () => {
       const senderVoice = {
         userVoiceId: 'uv1',
