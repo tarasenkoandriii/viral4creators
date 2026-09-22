@@ -1162,6 +1162,19 @@ footer {
   margin: 0 0 20px;
 }
 
+/* Поздравление вместо товарной рамки — одна строка «повод», а не
+   пустая карточка товара (этап 1 витрины, находка 1.1 аудита). */
+.shared-video-greeting-occasion {
+  display: inline-block;
+  padding: 6px 12px;
+  margin: 0 0 24px;
+  font-size: 14px;
+  color: var(--muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
 .shared-video-product {
   display: flex;
   gap: 14px;

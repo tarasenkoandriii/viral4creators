@@ -11,8 +11,18 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { approveSharedVideo, listSharedVideos, rejectSharedVideo } from '../../lib/endpoints';
-import type { SharedVideoListResult, SharedVideoPage, SharedVideoStatus } from '../../lib/types';
+import {
+  approveSharedVideo,
+  listSharedVideos,
+  rejectSharedVideo,
+  setSharedVideoShowcase,
+} from '../../lib/endpoints';
+import type {
+  GreetingOccasion,
+  SharedVideoListResult,
+  SharedVideoPage,
+  SharedVideoStatus,
+} from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
 const STATUS_LABEL: Record<SharedVideoStatus, string> = {
@@ -24,6 +34,19 @@ const STATUS_TONE: Record<SharedVideoStatus, 'ok' | 'warning' | 'critical'> = {
   PENDING: 'warning',
   PUBLISHED: 'ok',
   REJECTED: 'critical',
+};
+
+/** Подписи поводов — только для этой таблицы: оператор читает по-русски,
+ * а enum приходит кодом. Зеркало GreetingOccasion, как и остальные типы
+ * админки (отдельного codegen в проекте нет). */
+const OCCASION_LABEL: Record<GreetingOccasion, string> = {
+  BIRTHDAY: 'день рождения',
+  WEDDING: 'свадьба',
+  ANNIVERSARY: 'годовщина',
+  NEW_YEAR: 'Новый год',
+  GRADUATION: 'выпускной',
+  CORPORATE: 'корпоративное',
+  OTHER: 'другой повод',
 };
 
 const LANDING_URL = process.env.NEXT_PUBLIC_LANDING_URL ?? 'http://localhost:3003';
@@ -69,6 +92,26 @@ export default function SharedVideosPage() {
       const updated = await approveSharedVideo(item.id);
       replace(updated);
       load();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * Чек-бокс «в витрине» (§5 docs-tz/TZ-Greeting-Video-Landing.md).
+   * Подтверждения нет намеренно, в отличие от «Одобрить»: добавление на
+   * витрину обратимо одним повторным кликом и ничего не публикует —
+   * страница к этому моменту уже публична. Лишний confirm на обратимом
+   * действии приучает жать «да» не читая, и тогда он не сработает там,
+   * где действительно нужен.
+   */
+  async function handleShowcase(item: SharedVideoPage, next: boolean) {
+    setBusy(item.id);
+    setError(null);
+    try {
+      replace(await setSharedVideoShowcase(item.id, next));
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -201,7 +244,20 @@ export default function SharedVideosPage() {
                       </div>
                     </td>
                     <td style={{ maxWidth: 200 }}>
-                      <div>{item.productName}</div>
+                      {/* Этап 1 витрины: у поздравления товара нет —
+                          вместо пустой ячейки показываем повод, то
+                          единственное, что о нём вообще можно сказать в
+                          этой колонке. */}
+                      {item.projectType === 'GREETING_VIDEO' ? (
+                        <div>
+                          Поздравление
+                          {item.occasion && (
+                            <span className="muted"> · {OCCASION_LABEL[item.occasion] ?? item.occasion}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <div>{item.productName ?? <span className="muted">—</span>}</div>
+                      )}
                       {item.price != null && (
                         <div className="muted" style={{ fontSize: 12 }}>
                           {item.price} {item.currency ?? ''}
@@ -226,6 +282,24 @@ export default function SharedVideosPage() {
                         <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
                           {new Date(item.moderatedAt).toLocaleString('ru-RU')}
                         </div>
+                      )}
+                      {/* На витрину можно поставить только уже
+                          опубликованную страницу — бэкенд отвечает 409 на
+                          попытку отметить черновик, и показывать здесь
+                          чек-бокс, который заведомо получит отказ, значило
+                          бы предлагать оператору неработающее действие. */}
+                      {item.status === 'PUBLISHED' && (
+                        <label
+                          style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 6 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={item.featured}
+                            disabled={busy !== null}
+                            onChange={(e) => void handleShowcase(item, e.target.checked)}
+                          />
+                          в витрине
+                        </label>
                       )}
                     </td>
                     <td className="muted" style={{ whiteSpace: 'nowrap' }}>

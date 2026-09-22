@@ -172,11 +172,18 @@ export function FeedScreen() {
               />
               <div className="p-3">
                 <p className="truncate text-sm font-semibold">{item.title}</p>
-                <p className="truncate text-xs text-silver-400">
-                  {item.productName}
-                  {item.price !== null &&
-                    ` · ${formatPrice(item.price, item.currency, locale)}`}
-                </p>
+                {/* Этап 1 витрины: у поздравления товара нет, и
+                    `productName`/`price` теперь null. Строка целиком не
+                    рендерится, вместо того чтобы показывать пустоту или
+                    «null» — у поздравления второй строкой сказать
+                    нечего, заголовок уже всё сказал. */}
+                {item.productName !== null && (
+                  <p className="truncate text-xs text-silver-400">
+                    {item.productName}
+                    {item.price !== null &&
+                      ` · ${formatPrice(item.price, item.currency, locale)}`}
+                  </p>
+                )}
                 <div className="mt-2 flex items-center gap-2">
                   <Button
                     size="sm"

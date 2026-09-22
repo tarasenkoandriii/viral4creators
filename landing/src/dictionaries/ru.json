@@ -576,7 +576,19 @@
     "makeSameCta": "Сделать такой же",
     "shareCta": "Поделиться",
     "linkCopied": "Ссылка скопирована",
-    "poweredBy": "Этот ролик создан в viral4creators — по чужому примеру, за пару минут и бесплатно."
+    "poweredBy": "Этот ролик создан в viral4creators — по чужому примеру, за пару минут и бесплатно.",
+    "greetingLabel": "Видео-поздравление",
+    "greetingMakeSameCta": "Сделать своё поздравление",
+    "greetingMetaDescription": "Персональное видео-поздравление, сделанное в viral4creators.",
+    "occasion": {
+      "BIRTHDAY": "День рождения",
+      "WEDDING": "Свадьба",
+      "ANNIVERSARY": "Годовщина",
+      "NEW_YEAR": "Новый год",
+      "GRADUATION": "Выпускной",
+      "CORPORATE": "Корпоративное поздравление",
+      "OTHER": "Особый повод"
+    }
   },
   "assistant": {
     "floatingLabel": "Есть вопрос?",

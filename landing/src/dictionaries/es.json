@@ -578,7 +578,19 @@
     "makeSameCta": "Hacer uno igual",
     "shareCta": "Compartir",
     "linkCopied": "Enlace copiado",
-    "poweredBy": "Este video se hizo con viral4creators — a partir del ejemplo de otra persona, en un par de minutos y gratis."
+    "poweredBy": "Este video se hizo con viral4creators — a partir del ejemplo de otra persona, en un par de minutos y gratis.",
+    "greetingLabel": "Video de felicitación",
+    "greetingMakeSameCta": "Crear mi propia felicitación",
+    "greetingMetaDescription": "Un video de felicitación personal hecho con viral4creators.",
+    "occasion": {
+      "BIRTHDAY": "Cumpleaños",
+      "WEDDING": "Boda",
+      "ANNIVERSARY": "Aniversario",
+      "NEW_YEAR": "Año Nuevo",
+      "GRADUATION": "Graduación",
+      "CORPORATE": "Felicitación corporativa",
+      "OTHER": "Ocasión especial"
+    }
   },
   "assistant": {
     "floatingLabel": "¿Tienes una pregunta?",

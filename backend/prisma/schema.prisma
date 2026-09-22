@@ -985,11 +985,54 @@ model SharedVideoPage {
   /**
    * Снимок на момент публикации.
    */
-  videoUrl             String
-  videoPathname        String
-  aspectRatio          String?
-  title                String
-  productName          String
+  videoUrl      String
+  videoPathname String
+  aspectRatio   String?
+  title         String
+
+  /**
+   * Тип проекта, из которого сделан ролик — нужен витрине поздравлений
+   * (docs-tz/TZ-Greeting-Video-Landing.md §5), чтобы не смешивать в
+   * одной выдаче товарные ролики и поздравления.
+   *
+   * NULL — товарный ролик (SINGLE/LINE): сессия не знает, какой именно
+   * из двух, и витрине это не нужно. Отбор поздравлений идёт ТОЛЬКО по
+   * явному равенству `GREETING_VIDEO`, никогда по «не NULL» — поэтому
+   * строки, созданные до этой миграции, в витрину поздравлений не
+   * попадут. Это не допущение, а доказуемый факт: до неё
+   * `SharedVideoService.snapshotFromSession` бросал 400 на любую сессию
+   * без `productInformation`, то есть ни одного поздравления среди
+   * старых строк физически нет.
+   */
+  projectType ProjectType?
+
+  /** Повод из `Session.greetingBriefSnapshot` — фильтр витрины по поводу
+   * (§5 ТЗ лендинга). NULL для всего, что не поздравление. */
+  occasion GreetingOccasion?
+
+  /**
+   * Кураторский отбор оператора: страница показана в публичной витрине
+   * (§5 ТЗ лендинга — «витрина показывает только featured, не любой
+   * публично расшаренный ролик подряд»). NULL — не в витрине.
+   *
+   * Отметка времени, а не булево, по тем же двум причинам, что у
+   * `featuredInBroadcastAt` ниже: даёт порядок для выдачи и сохраняет,
+   * когда оператор это сделал. Публичная проекция отдаёт наружу
+   * производное `featured: boolean` — контракт, который просит ТЗ.
+   *
+   * Отдельное поле, а НЕ переиспользование `featuredInBroadcastAt`:
+   * то — «уже показана в выпуске рассылки, не повторять», это —
+   * «показывать постоянно». Смыслы противоположны.
+   */
+  showcasedAt DateTime?
+
+  /**
+   * Товарные поля — NULL у поздравлений (ТЗ TZ-Greeting-Video-Project-
+   * Type.md: у GREETING_VIDEO нет `ProductInformation` в принципе).
+   * `productName` стал nullable этой же миграцией; до неё публикация
+   * поздравления была невозможна вовсе.
+   */
+  productName          String?
   productDescription   String?
   price                Float?
   currency             String?
@@ -1042,6 +1085,9 @@ model SharedVideoPage {
   @@index([sessionId])
   @@index([moderatorId])
   @@index([status, featuredInBroadcastAt])
+  /** Выдача витрины: `status/projectType/occasion` фильтруют, `showcasedAt`
+   * и сортирует, и отсекает некурированные (IS NOT NULL). */
+  @@index([status, projectType, showcasedAt])
   @@map("shared_video_pages")
 }
 

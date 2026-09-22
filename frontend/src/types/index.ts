@@ -5,6 +5,7 @@
  */
 
 import type { SketchRef } from './sketch';
+import type { GreetingOccasion } from './project';
 
 // Session types
 export enum SessionStatus {
@@ -497,7 +498,14 @@ export interface SharedVideoPage {
   videoUrl: string;
   aspectRatio: string | null;
   title: string;
-  productName: string;
+  /** Витрина (этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md)
+   * — зеркало backend/src/common/types/shared-video.types.ts. NULL у
+   * `projectType` означает товарный ролик. */
+  projectType: 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO' | null;
+  occasion: GreetingOccasion | null;
+  featured: boolean;
+  /** NULL у поздравлений — у них нет товара. */
+  productName: string | null;
   productDescription: string | null;
   price: number | null;
   currency: string | null;
@@ -523,7 +531,14 @@ export interface SharedVideoFeedItem {
   videoUrl: string;
   aspectRatio: string | null;
   title: string;
-  productName: string;
+  /** Витрина (этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md)
+   * — зеркало backend/src/common/types/shared-video.types.ts. NULL у
+   * `projectType` означает товарный ролик. */
+  projectType: 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO' | null;
+  occasion: GreetingOccasion | null;
+  featured: boolean;
+  /** NULL у поздравлений — у них нет товара. */
+  productName: string | null;
   productDescription: string | null;
   price: number | null;
   currency: string | null;

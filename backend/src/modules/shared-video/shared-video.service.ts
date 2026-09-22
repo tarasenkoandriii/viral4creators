@@ -40,12 +40,14 @@ import { activeProductImage } from '../../common/active-image';
 import { Session } from '../../common/types/session.types';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { normalizeLocale } from '../../common/locale';
+import { GreetingOccasion } from '../../common/types/greeting.types';
 import {
   SharedVideoFeedItemView,
   SharedVideoFeedResult,
   SharedVideoListResult,
   SharedVideoPageView,
   SharedVideoPublicView,
+  SharedVideoShowcaseResult,
   SharedVideoStatus,
 } from '../../common/types/shared-video.types';
 import {
@@ -65,7 +67,10 @@ interface SharedVideoRow {
   videoPathname: string;
   aspectRatio: string | null;
   title: string;
-  productName: string;
+  projectType: ProjectType | null;
+  occasion: GreetingOccasion | null;
+  showcasedAt: Date | null;
+  productName: string | null;
   productDescription: string | null;
   price: number | null;
   currency: string | null;
@@ -91,17 +96,19 @@ const STATUSES: ReadonlySet<string> = new Set([
   'REJECTED',
 ]);
 
-/** Pure: что копируется в снимок страницы. Exported for tests. */
-export function snapshotFromSession(
-  session: Session,
-  dto: CreateSharedVideoRequestDto,
-): {
+/** Тип проекта в снимке — только то, что витрине нужно различать. */
+type SnapshotProjectType = 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO';
+type ProjectType = SnapshotProjectType;
+
+export interface SharedVideoSnapshot {
   videoUrl: string;
   videoPathname: string;
   generatedVideoId: string;
   aspectRatio: string | null;
   title: string;
-  productName: string;
+  projectType: ProjectType | null;
+  occasion: GreetingOccasion | null;
+  productName: string | null;
   productDescription: string | null;
   price: number | null;
   currency: string | null;
@@ -109,7 +116,33 @@ export function snapshotFromSession(
   productImageUrl: string | null;
   productImagePathname: string | null;
   locale: string;
-} {
+}
+
+/**
+ * Pure: что копируется в снимок страницы. Exported for tests.
+ *
+ * Этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md,
+ * находка 1.1. До этой правки функция начиналась с проверки
+ * `if (!product?.productName) throw` — и поэтому НИ ОДНО поздравление
+ * нельзя было опубликовать публичной страницей: у GREETING_VIDEO нет
+ * `productInformation` по определению типа проекта. От этой страницы
+ * зависят витрина лендинга (§5 ТЗ лендинга) и фичи №20/№21/№29
+ * компаньон-ТЗ — то есть отказ здесь блокировал четыре фичи и весь
+ * лендинг сразу.
+ *
+ * Разделение ветвей идёт по `greetingBriefSnapshot`, а не по какому-либо
+ * полю «тип проекта» на сессии: такого поля у `Session` нет, а снимок
+ * брифа есть ровно у поздравлений — тот же дискриминатор, которым уже
+ * пользуется `PostProductionService.planWork()` (там — наличие
+ * `productInformation`).
+ *
+ * Общая часть обеих ветвей — готовое видео: его отсутствие по-прежнему
+ * 400, и это единственная причина отказа, оставшаяся для поздравления.
+ */
+export function snapshotFromSession(
+  session: Session,
+  dto: CreateSharedVideoRequestDto,
+): SharedVideoSnapshot {
   const video = session.generatedVideo;
   if (
     !video ||
@@ -120,6 +153,61 @@ export function snapshotFromSession(
       'No completed video in this session — generate the video first',
     );
   }
+
+  const common = {
+    // Тот же файл, что видит пользователь — не исходник Veo, если есть
+    // постобработка (см. аналогичный комментарий в publication.service.ts).
+    videoUrl: video.downloadUrl,
+    videoPathname: video.postPathname ?? video.pathname,
+    generatedVideoId: video.generatedVideoId,
+    aspectRatio: video.renderedAspectRatio ?? video.aspectRatio ?? null,
+    // Открытая страница — одна зафиксированная локаль (та, что была у
+    // автора на момент публикации); переводов не запрашивалось (решение 5
+    // плана этапа 60).
+    locale: normalizeLocale(session.locale),
+  };
+
+  const greeting = session.greetingBriefSnapshot;
+  if (greeting) {
+    /**
+     * Заголовок поздравления НЕ подставляется из имени получателя, даже
+     * когда оно есть в брифе, и это не забывчивость.
+     *
+     * Имя получателя — персональные данные ТРЕТЬЕГО лица: человек,
+     * которого поздравляют, страницу не публиковал, согласия не давал и
+     * о витрине не знает. Автоматически вынести «С днём рождения,
+     * Марина!» в публичный заголовок, в `og:title` и в выдачу Google
+     * значило бы опубликовать его за него. Поэтому по умолчанию в
+     * заголовок идёт только повод, а имя может появиться там лишь одним
+     * путём — если автор САМ впишет его в `dto.title`.
+     *
+     * Та же логика, что уже требует §4.7 ТЗ лендинга от ответа в FAQ про
+     * хранение данных получателя, просто применённая на шаг раньше — не
+     * в тексте ответа, а в коде, который решает, что публиковать.
+     */
+    const fallback = greeting.customOccasionText?.trim() || greeting.occasion;
+    const title = (dto.title ?? fallback).trim().slice(0, 100);
+    if (!title) {
+      throw new BadRequestException('title is required');
+    }
+    return {
+      ...common,
+      title,
+      projectType: 'GREETING_VIDEO',
+      occasion: greeting.occasion,
+      // Товара у поздравления нет — все товарные поля пусты, и это
+      // ровно то, ради чего `productName` стал nullable миграцией
+      // 20261207090000.
+      productName: null,
+      productDescription: null,
+      price: null,
+      currency: null,
+      category: null,
+      productImageUrl: null,
+      productImagePathname: null,
+    };
+  }
+
   const product = session.productInformation;
   if (!product?.productName) {
     throw new BadRequestException(
@@ -133,13 +221,13 @@ export function snapshotFromSession(
     );
   }
   return {
-    // Тот же файл, что видит пользователь — не исходник Veo, если есть
-    // постобработка (см. аналогичный комментарий в publication.service.ts).
-    videoUrl: video.downloadUrl,
-    videoPathname: video.postPathname ?? video.pathname,
-    generatedVideoId: video.generatedVideoId,
-    aspectRatio: video.renderedAspectRatio ?? video.aspectRatio ?? null,
+    ...common,
     title,
+    // NULL, а не 'SINGLE': сессия не знает, из проекта какого вида
+    // (SINGLE или LINE) она вышла, а витрине это различие не нужно —
+    // она отбирает по явному равенству 'GREETING_VIDEO'.
+    projectType: null,
+    occasion: null,
     productName: product.productName,
     productDescription: product.productDescription?.trim() || null,
     price: product.price ?? null,
@@ -147,10 +235,6 @@ export function snapshotFromSession(
     category: product.category?.trim() || null,
     productImageUrl: product.productImageUrl ?? null,
     productImagePathname: product.productImagePathname ?? null,
-    // Открытая страница — одна зафиксированная локаль (та, что была у
-    // автора на момент публикации); переводов не запрашивалось (решение 5
-    // плана этапа 60).
-    locale: normalizeLocale(session.locale),
   };
 }
 
@@ -164,6 +248,9 @@ export function toView(row: SharedVideoRow): SharedVideoPageView {
     videoUrl: row.videoUrl,
     aspectRatio: row.aspectRatio,
     title: row.title,
+    projectType: row.projectType,
+    occasion: row.occasion,
+    featured: row.showcasedAt !== null,
     productName: row.productName,
     productDescription: row.productDescription,
     price: row.price,
@@ -189,6 +276,9 @@ export function toPublicView(row: SharedVideoRow): SharedVideoPublicView {
     videoUrl: row.videoUrl,
     aspectRatio: row.aspectRatio,
     title: row.title,
+    projectType: row.projectType,
+    occasion: row.occasion,
+    featured: row.showcasedAt !== null,
     productName: row.productName,
     productDescription: row.productDescription,
     price: row.price,
@@ -524,6 +614,77 @@ export class SharedVideoService {
       items: page.map((row) => toFeedItemView(row, likedIds.has(row.id))),
       nextCursor: hasMore ? page[page.length - 1].id : null,
     };
+  }
+
+  // ── Витрина (этап 1, docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md) ──
+
+  /**
+   * GET /shared-video/showcase — кураторская витрина для лендинга
+   * (§5 docs-tz/TZ-Greeting-Video-Landing.md).
+   *
+   * Отдельный метод, а не параметры к `listFeed`, при том что запрос к
+   * базе похож. Причина не в SQL, а в правиле отбора: лента показывает
+   * ВСЁ опубликованное, витрина — только то, что оператор отметил
+   * руками. Склеить их в одну функцию с флагом значило бы поставить
+   * снятие кураторского фильтра на расстояние одного неверного
+   * аргумента от чужого вызова; §5 ТЗ требует ровно обратного —
+   * «не любой публично расшаренный ролик подряд», чтобы у человека,
+   * опубликовавшего личное поздравление, оно не оказалось на витрине
+   * без отдельного явного решения.
+   *
+   * `showcasedAt: { not: null }` и сортировка по нему же: оператор
+   * управляет и составом, и порядком одним действием.
+   */
+  async listShowcase(opts: {
+    projectType?: string | null;
+    occasion?: string | null;
+    cursor?: string | null;
+    pageSize: number;
+  }): Promise<SharedVideoShowcaseResult> {
+    const rows: SharedVideoRow[] = await this.prisma.sharedVideoPage.findMany({
+      where: {
+        status: 'PUBLISHED',
+        showcasedAt: { not: null },
+        ...(opts.projectType ? { projectType: opts.projectType } : {}),
+        ...(opts.occasion ? { occasion: opts.occasion } : {}),
+      },
+      orderBy: [{ showcasedAt: 'desc' }, { id: 'desc' }],
+      take: opts.pageSize + 1,
+      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    });
+    const hasMore = rows.length > opts.pageSize;
+    const page = hasMore ? rows.slice(0, opts.pageSize) : rows;
+    return {
+      items: page.map(toPublicView),
+      nextCursor: hasMore ? page[page.length - 1].id : null,
+    };
+  }
+
+  /**
+   * POST /admin/shared-videos/:id/showcase — оператор добавляет страницу
+   * в витрину или снимает её оттуда (раздел 7 компаньон-ТЗ, «чек-бокс
+   * показать в витрине»).
+   *
+   * Добавить можно только PUBLISHED-страницу: витрина — подмножество
+   * опубликованного, и отметить черновик значило бы завести второй,
+   * необязательный путь публикации в обход модерации. СНЯТЬ можно в
+   * любом статусе — снятие всегда безопасно, и запрет на него означал
+   * бы, что отклонённая страница не убирается с витрины.
+   */
+  async setShowcase(id: string, showcase: boolean): Promise<SharedVideoPageView> {
+    const row: SharedVideoRow | null =
+      await this.prisma.sharedVideoPage.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException(`Shared video page ${id} not found`);
+    if (showcase && row.status !== 'PUBLISHED') {
+      throw new ConflictException(
+        'Only a published page can be added to the showcase',
+      );
+    }
+    const updated = (await this.prisma.sharedVideoPage.update({
+      where: { id },
+      data: { showcasedAt: showcase ? new Date() : null },
+    })) as SharedVideoRow;
+    return toView(updated);
   }
 
   /**

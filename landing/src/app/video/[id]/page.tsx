@@ -54,7 +54,18 @@ export async function generateMetadata({
   if (!page) return {};
   const locale = localeOf(page.locale);
   const dict = getDictionary(locale);
-  const description = (page.productDescription ?? page.productName).slice(0, 200);
+  // Этап 1 витрины (находка 1.1 аудита): у поздравления `productName` и
+  // `productDescription` — NULL, и прежняя строка выдавала бы пустое
+  // описание в <meta>, og и Twitter-карточке. Для поздравления описание
+  // берётся из словаря: имя получателя в него не попадает НИКОГДА (см.
+  // snapshotFromSession на бэкенде — это персональные данные третьего
+  // лица, которое страницу не публиковало).
+  const isGreeting = page.projectType === 'GREETING_VIDEO';
+  const description = (
+    page.productDescription ??
+    page.productName ??
+    (isGreeting ? dict.sharedVideo.greetingMetaDescription : page.title)
+  ).slice(0, 200);
   const images = page.productImageUrl ? [page.productImageUrl] : undefined;
   return {
     title: `${page.title}${dict.sharedVideo.metaTitleSuffix}`,
@@ -90,6 +101,7 @@ export default async function SharedVideoPage({
 
   const locale = localeOf(page.locale);
   const dict = getDictionary(locale);
+  const isGreeting = page.projectType === 'GREETING_VIDEO';
   const pageUrl = `${SITE_URL}/video/${page.id}`;
   const priceText =
     page.price != null
@@ -107,7 +119,10 @@ export default async function SharedVideoPage({
     '@context': 'https://schema.org',
     '@type': 'VideoObject',
     name: page.title,
-    description: page.productDescription ?? page.productName,
+    description:
+      page.productDescription ??
+      page.productName ??
+      (isGreeting ? dict.sharedVideo.greetingMetaDescription : page.title),
     thumbnailUrl: page.productImageUrl ?? undefined,
     uploadDate: page.createdAt,
     contentUrl: page.videoUrl,
@@ -137,6 +152,17 @@ export default async function SharedVideoPage({
 
         <h1 className="shared-video-title">{page.title}</h1>
 
+        {/* Товарная рамка — только у товарного ролика. У поздравления
+            её нет ни в каком виде: ни названия, ни цены, ни фото
+            (находка 1.1 аудита — до этой правки страница рендерила бы
+            пустой блок с пустым названием). Вместо неё — повод, если он
+            известен. */}
+        {isGreeting ? (
+          <p className="shared-video-greeting-occasion">
+            {dict.sharedVideo.greetingLabel}
+            {page.occasion && ` · ${dict.sharedVideo.occasion[page.occasion]}`}
+          </p>
+        ) : (
         <div className="shared-video-product">
           {page.productImageUrl && (
             // Своя копия в Blob (SharedVideoService.keepOwnCopy), не
@@ -148,7 +174,7 @@ export default async function SharedVideoPage({
             <img
               className="shared-video-product-photo"
               src={page.productImageUrl}
-              alt={page.productName}
+              alt={page.productName ?? page.title}
             />
           )}
           <div className="shared-video-product-body">
@@ -165,10 +191,27 @@ export default async function SharedVideoPage({
             )}
           </div>
         </div>
+        )}
 
         <div className="shared-video-actions">
-          <a className="cta" href={`${TMA_URL}?fromShared=${page.id}`}>
-            {dict.sharedVideo.makeSameCta}
+          {/* «Сделать такой же» для ТОВАРНОГО ролика форкает разбор
+              референса (`?fromShared=` → App.tsx → GenerationWizard). У
+              поздравления форкать нечего: разбора у него нет
+              (`libraryEntryId` пуст), и тот же параметр привёл бы
+              человека, пришедшего за поздравлением, в товарный визард.
+              Поэтому у него своя ссылка — прямо на создание проекта, где
+              поздравление и есть один из типов. */}
+          <a
+            className="cta"
+            href={
+              isGreeting
+                ? `${TMA_URL}#/projects/new`
+                : `${TMA_URL}?fromShared=${page.id}`
+            }
+          >
+            {isGreeting
+              ? dict.sharedVideo.greetingMakeSameCta
+              : dict.sharedVideo.makeSameCta}
           </a>
           <ShareButtons
             url={pageUrl}

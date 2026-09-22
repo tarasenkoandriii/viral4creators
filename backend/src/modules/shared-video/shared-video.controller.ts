@@ -6,6 +6,7 @@
  *
  * Public side (no guard — landing + «Сделать такой же», этап 60):
  *   GET  /shared-video/feed          feed of PUBLISHED pages (этап 80, TODO §III.9)
+ *   GET  /shared-video/showcase      curated showcase for the landing (этап 1 витрины)
  *   GET  /shared-video/:id           published page (bumps viewCount)
  *   POST /shared-video/:id/fork      new anonymous session, forks the analysis
  *   POST /shared-video/:id/share     best-effort +1 to shareCount (этап 80)
@@ -20,6 +21,7 @@
  *   GET  /admin/shared-videos/:id
  *   POST /admin/shared-videos/:id/approve
  *   POST /admin/shared-videos/:id/reject   { reason }
+ *   POST /admin/shared-videos/:id/showcase { showcase }
  */
 
 import {
@@ -50,12 +52,14 @@ import {
   CreateSharedVideoRequestDto,
   ForkSharedVideoRequestDto,
   RejectSharedVideoRequestDto,
+  SetShowcaseRequestDto,
 } from './dto/shared-video.dto';
 import {
   SharedVideoFeedResult,
   SharedVideoListResult,
   SharedVideoPageView,
   SharedVideoPublicView,
+  SharedVideoShowcaseResult,
 } from '../../common/types/shared-video.types';
 
 @Controller('sessions/:sessionId/shared-video')
@@ -119,6 +123,33 @@ export class PublicSharedVideoController {
       cursor: cursor || null,
       pageSize: Math.min(Math.max(parseInt(pageSize ?? '20', 10) || 20, 1), 50),
       viewerUserId: req.telegramUserId ?? null,
+    });
+  }
+
+  /**
+   * GET /shared-video/showcase — как и `feed` выше, объявлен ДО `:id`:
+   * иначе Nest примет слово `showcase` за значение параметра. Читает
+   * лендинг (§5 docs-tz/TZ-Greeting-Video-Landing.md), поэтому без
+   * гварда и без зрителя — ни лайков, ни `likedByViewer` витрине не
+   * нужно.
+   *
+   * `projectType`/`occasion` передаются в сервис как есть и там уходят
+   * в `where` только непустыми: неизвестное значение даст пустую
+   * выдачу, а не выборку «всё подряд» — для публичного маршрута это
+   * правильная сторона ошибки.
+   */
+  @Get('showcase')
+  showcase(
+    @Query('projectType') projectType?: string,
+    @Query('occasion') occasion?: string,
+    @Query('cursor') cursor?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<SharedVideoShowcaseResult> {
+    return this.service.listShowcase({
+      projectType: projectType || null,
+      occasion: occasion || null,
+      cursor: cursor || null,
+      pageSize: Math.min(Math.max(parseInt(pageSize ?? '9', 10) || 9, 1), 24),
     });
   }
 
@@ -234,5 +265,21 @@ export class AdminSharedVideoController {
   ): Promise<SharedVideoPageView> {
     await this.adminPanel.assertOperator(req.userId);
     return this.service.reject(id, req.userId, dto);
+  }
+
+  /**
+   * POST /admin/shared-videos/:id/showcase — кураторский отбор в
+   * публичную витрину (раздел 7 компаньон-ТЗ). Отдельный маршрут, а не
+   * поле в `approve`: одобрение и попадание на витрину — разные решения
+   * оператора, и второе обратимо без отзыва первого.
+   */
+  @Post(':id/showcase')
+  async showcase(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: SetShowcaseRequestDto,
+  ): Promise<SharedVideoPageView> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.service.setShowcase(id, dto.showcase);
   }
 }

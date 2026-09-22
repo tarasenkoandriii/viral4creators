@@ -81,6 +81,9 @@ const row = (over: Record<string, unknown> = {}) => ({
   productImageUrl: 'https://blob.test/photo.jpg',
   productImagePathname: 'sessions/s1/product-image.jpg',
   locale: 'ru',
+  projectType: null,
+  occasion: null,
+  showcasedAt: null,
   libraryEntryId: null,
   moderatorId: null,
   moderatedAt: null,
@@ -103,6 +106,8 @@ describe('snapshotFromSession', () => {
       generatedVideoId: 'v1',
       aspectRatio: '9:16',
       title: 'Кружка Steel 500',
+      projectType: null,
+      occasion: null,
       productName: 'Кружка Steel 500',
       productDescription: 'Стальная термокружка',
       price: 1990,
@@ -135,6 +140,117 @@ describe('snapshotFromSession', () => {
   });
 });
 
+/**
+ * Этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md,
+ * находка 1.1: до него публикация поздравления была невозможна в
+ * принципе — `snapshotFromSession` требовал `productInformation`,
+ * которого у GREETING_VIDEO нет по определению.
+ */
+const greetingSession = {
+  sessionId: 's2',
+  locale: 'ru',
+  greetingBriefSnapshot: {
+    sourceGreetingBriefId: 'gb1',
+    occasion: 'BIRTHDAY',
+    customOccasionText: null,
+    recipientName: 'Марина',
+    senderName: 'Андрей',
+    tone: 'WARM',
+    personalMessage: null,
+    requestedPresenterProvider: 'grok',
+    resolvedPresenterProvider: 'grok',
+    requestedResolution: '720p',
+    resolvedResolution: '720p',
+    brandManifestId: null,
+    occasionDate: null,
+    addedAt: '2026-09-22T10:00:00.000Z',
+  },
+  generatedVideo: {
+    generatedVideoId: 'v2',
+    pathname: 'sessions/s2/generated.mp4',
+    status: 'complete',
+    downloadUrl: 'https://blob.test/sessions/s2/generated.mp4',
+    renderedAspectRatio: '9:16',
+  },
+} as unknown as Session;
+
+describe('snapshotFromSession — GREETING_VIDEO', () => {
+  it('publishes a greeting without any product fields', () => {
+    const snap = snapshotFromSession(greetingSession, {});
+    expect(snap.projectType).toBe('GREETING_VIDEO');
+    expect(snap.occasion).toBe('BIRTHDAY');
+    expect(snap.productName).toBeNull();
+    expect(snap.productDescription).toBeNull();
+    expect(snap.price).toBeNull();
+    expect(snap.currency).toBeNull();
+    expect(snap.category).toBeNull();
+    expect(snap.productImageUrl).toBeNull();
+    expect(snap.productImagePathname).toBeNull();
+  });
+
+  /**
+   * Приватность третьего лица. Имя получателя есть в брифе, но человек,
+   * которого поздравляют, страницу не публиковал и о витрине не знает —
+   * автоматически вынести его имя в публичный заголовок и в og:title
+   * значило бы опубликовать его персональные данные за него.
+   */
+  it('never leaks the recipient name into the public title', () => {
+    const snap = snapshotFromSession(greetingSession, {});
+    expect(snap.title).not.toContain('Марина');
+    expect(snap.title).toBe('BIRTHDAY');
+
+    // Единственный путь имени в заголовок — автор вписал его сам.
+    expect(snapshotFromSession(greetingSession, { title: 'Марине 30!' }).title).toBe(
+      'Марине 30!',
+    );
+  });
+
+  it('uses the custom occasion text when the occasion is OTHER', () => {
+    const snap = snapshotFromSession(
+      {
+        ...greetingSession,
+        greetingBriefSnapshot: {
+          ...greetingSession.greetingBriefSnapshot!,
+          occasion: 'OTHER',
+          customOccasionText: '  Новоселье  ',
+        },
+      } as never,
+      {},
+    );
+    expect(snap.title).toBe('Новоселье');
+    expect(snap.occasion).toBe('OTHER');
+  });
+
+  it('still refuses a greeting without a completed video', () => {
+    expect(() =>
+      snapshotFromSession(
+        {
+          ...greetingSession,
+          generatedVideo: {
+            ...greetingSession.generatedVideo!,
+            status: 'processing',
+          },
+        } as never,
+        {},
+      ),
+    ).toThrow(BadRequestException);
+  });
+
+  /**
+   * Дискриминатор — наличие снимка брифа, а НЕ отсутствие товара:
+   * сессия без того и другого по-прежнему получает прежний отказ, а не
+   * молча публикуется как поздравление без повода.
+   */
+  it('a session with neither a brief nor a product is still refused', () => {
+    expect(() =>
+      snapshotFromSession(
+        { ...greetingSession, greetingBriefSnapshot: undefined } as never,
+        {},
+      ),
+    ).toThrow(/No product information/);
+  });
+});
+
 describe('toView / toPublicView', () => {
   it('serialises dates, keeps nulls; public view hides internal ids', () => {
     const v = toView(row({ moderatedAt: now }) as never);
@@ -142,7 +258,13 @@ describe('toView / toPublicView', () => {
     expect(v.moderatedAt).toBe('2026-09-08T12:00:00.000Z');
     expect(v.userId).toBe('u1');
 
+    // Наружу уходит булево `featured`, а не время отбора.
+    expect(toView(row({ showcasedAt: now }) as never).featured).toBe(true);
+    expect(toView(row() as never).featured).toBe(false);
+
     const pub = toPublicView(row() as never);
+    expect(pub).not.toHaveProperty('showcasedAt');
+    expect(pub.featured).toBe(false);
     expect(pub).not.toHaveProperty('userId');
     expect(pub).not.toHaveProperty('sessionId');
     expect(pub).not.toHaveProperty('status');
@@ -619,5 +741,83 @@ describe('SharedVideoService — operator', () => {
       row({ status: 'REJECTED' }),
     );
     await expect(service.approve('sv1', 'op1')).rejects.toThrow(/only PENDING/);
+  });
+});
+
+/**
+ * Витрина (этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md,
+ * §5 docs-tz/TZ-Greeting-Video-Landing.md).
+ */
+describe('SharedVideoService.listShowcase', () => {
+  it('shows only curated published pages, never everything published', async () => {
+    const { service, prisma } = build({ rows: [] });
+    await service.listShowcase({ projectType: 'GREETING_VIDEO', pageSize: 9 });
+    const where = prisma.sharedVideoPage.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('PUBLISHED');
+    // Без этого условия витрина показывала бы ЛЮБОЕ опубликованное
+    // поздравление, включая чужое личное — ровно то, что §5 ТЗ
+    // лендинга запрещает.
+    expect(where.showcasedAt).toEqual({ not: null });
+    expect(where.projectType).toBe('GREETING_VIDEO');
+  });
+
+  it('omits empty filters instead of matching them literally', async () => {
+    const { service, prisma } = build({ rows: [] });
+    await service.listShowcase({
+      projectType: null,
+      occasion: null,
+      pageSize: 9,
+    });
+    const where = prisma.sharedVideoPage.findMany.mock.calls[0][0].where;
+    expect('projectType' in where).toBe(false);
+    expect('occasion' in where).toBe(false);
+  });
+
+  it('paginates by cursor and reports the next one only when there is more', async () => {
+    const many = [row({ id: 'a' }), row({ id: 'b' }), row({ id: 'c' })];
+    const { service } = build({ rows: many });
+    const res = await service.listShowcase({ pageSize: 2 });
+    expect(res.items).toHaveLength(2);
+    expect(res.nextCursor).toBe('b');
+
+    const short = build({ rows: [row({ id: 'a' })] });
+    expect((await short.service.listShowcase({ pageSize: 2 })).nextCursor).toBe(
+      null,
+    );
+  });
+});
+
+describe('SharedVideoService.setShowcase', () => {
+  it('adds only a published page to the showcase', async () => {
+    const { service, prisma } = build({ found: row({ status: 'PUBLISHED' }) });
+    const view = await service.setShowcase('sv1', true);
+    expect(prisma.sharedVideoPage.update.mock.calls[0][0].data.showcasedAt).toBeInstanceOf(
+      Date,
+    );
+    expect(view.featured).toBe(true);
+  });
+
+  it('refuses to showcase a page that is not published', async () => {
+    const { service } = build({ found: row({ status: 'PENDING' }) });
+    await expect(service.setShowcase('sv1', true)).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  /**
+   * Снятие разрешено в любом статусе: запрет означал бы, что
+   * отклонённую страницу нельзя убрать с витрины.
+   */
+  it('allows removal from the showcase in any status', async () => {
+    const { service, prisma } = build({ found: row({ status: 'REJECTED' }) });
+    await service.setShowcase('sv1', false);
+    expect(prisma.sharedVideoPage.update.mock.calls[0][0].data.showcasedAt).toBeNull();
+  });
+
+  it('404 on an unknown page', async () => {
+    const { service } = build({ found: null });
+    await expect(service.setShowcase('nope', true)).rejects.toThrow(
+      NotFoundException,
+    );
   });
 });

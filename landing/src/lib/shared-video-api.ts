@@ -21,12 +21,33 @@ const API_BASE_URL = process.env.API_BASE_URL ?? 'http://localhost:3000/api';
  */
 export const SHARED_VIDEO_REVALIDATE_SECONDS = 300;
 
+/** Зеркало enum GreetingOccasion из backend/prisma/schema.prisma. */
+export type GreetingOccasion =
+  | 'BIRTHDAY'
+  | 'WEDDING'
+  | 'ANNIVERSARY'
+  | 'NEW_YEAR'
+  | 'GRADUATION'
+  | 'CORPORATE'
+  | 'OTHER';
+
 export interface PublicSharedVideoPage {
   id: string;
   videoUrl: string;
   aspectRatio: string | null;
   title: string;
-  productName: string;
+  /**
+   * Витрина (этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md).
+   * `projectType === 'GREETING_VIDEO'` — единственный признак, по которому
+   * страница переключается в вариант поздравления; NULL означает товарный
+   * ролик (почему это доказуемо — см. доккомментарий колонки в
+   * schema.prisma).
+   */
+  projectType: 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO' | null;
+  occasion: GreetingOccasion | null;
+  featured: boolean;
+  /** NULL у поздравлений — товара у них нет. */
+  productName: string | null;
   productDescription: string | null;
   price: number | null;
   currency: string | null;
@@ -56,5 +77,40 @@ export async function getSharedVideo(
   } catch {
     // Сеть недоступна на сборке/ревалидации — не роняем страницу целиком.
     return null;
+  }
+}
+
+/**
+ * Кураторская витрина поздравлений — GET /shared-video/showcase
+ * (§5 docs-tz/TZ-Greeting-Video-Landing.md). Как и `getSharedVideo`
+ * выше: только с сервера, кеш Next по `revalidate`, сбой сети не роняет
+ * страницу — витрина тогда просто не рендерится (§5 ТЗ прямо требует
+ * этого вместо плейсхолдеров).
+ */
+export interface SharedVideoShowcaseResult {
+  items: PublicSharedVideoPage[];
+  nextCursor: string | null;
+}
+
+export async function listGreetingShowcase(opts: {
+  occasion?: string | null;
+  pageSize?: number;
+} = {}): Promise<PublicSharedVideoPage[]> {
+  const params = new URLSearchParams({
+    projectType: 'GREETING_VIDEO',
+    pageSize: String(opts.pageSize ?? 9),
+  });
+  if (opts.occasion) params.set('occasion', opts.occasion);
+  try {
+    const res = await fetch(`${API_BASE_URL}/shared-video/showcase?${params}`, {
+      next: { revalidate: SHARED_VIDEO_REVALIDATE_SECONDS },
+    });
+    if (!res.ok) return [];
+    const body = await res.json();
+    return body?.success
+      ? (body.data as SharedVideoShowcaseResult).items
+      : [];
+  } catch {
+    return [];
   }
 }

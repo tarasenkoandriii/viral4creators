@@ -9,10 +9,27 @@
  * держит FK на `Session`.
  */
 
+import { GreetingOccasion } from './greeting.types';
+
 export type SharedVideoStatus = 'PENDING' | 'PUBLISHED' | 'REJECTED';
 
+/**
+ * Витрина (этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md).
+ * `projectType`/`occasion` — снимок того, ИЗ ЧЕГО сделан ролик; NULL у
+ * `projectType` означает товарный ролик (см. доккомментарий колонки в
+ * schema.prisma — почему это доказуемо, а не предположительно).
+ */
+export interface SharedVideoOriginFields {
+  projectType: 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO' | null;
+  occasion: GreetingOccasion | null;
+  /** Производное от `showcasedAt`: страница отобрана оператором в
+   * публичную витрину. Наружу отдаётся булево — ровно тот контракт, что
+   * просит §5 ТЗ лендинга; время отбора остаётся внутри. */
+  featured: boolean;
+}
+
 /** Полная проекция — владельцу страницы и оператору модерации. */
-export interface SharedVideoPageView {
+export interface SharedVideoPageView extends SharedVideoOriginFields {
   id: string;
   userId: string;
   sessionId: string;
@@ -21,7 +38,8 @@ export interface SharedVideoPageView {
   videoUrl: string;
   aspectRatio: string | null;
   title: string;
-  productName: string;
+  /** NULL у поздравлений — у них нет товара (находка 1.1 аудита). */
+  productName: string | null;
   productDescription: string | null;
   price: number | null;
   currency: string | null;
@@ -54,12 +72,13 @@ export interface SharedVideoListResult {
  * плеер). Без внутренних id (userId/sessionId/generatedVideoId) и без
  * состояния модерации: посетителю страницы это знать незачем.
  */
-export interface SharedVideoPublicView {
+export interface SharedVideoPublicView extends SharedVideoOriginFields {
   id: string;
   videoUrl: string;
   aspectRatio: string | null;
   title: string;
-  productName: string;
+  /** NULL у поздравлений — у них нет товара (находка 1.1 аудита). */
+  productName: string | null;
   productDescription: string | null;
   price: number | null;
   currency: string | null;
@@ -86,5 +105,17 @@ export interface SharedVideoFeedResult {
   items: SharedVideoFeedItemView[];
   /** id последней страницы страницы — передать назад в `cursor` за
    * следующей порцией; null — дальше ленты нет. */
+  nextCursor: string | null;
+}
+
+/**
+ * Витрина поздравлений на лендинге — GET /shared-video/showcase
+ * (§5 ТЗ лендинга). Отдельно от ленты (`SharedVideoFeedResult`): у
+ * витрины нет ни зрителя, ни лайков, зато есть фильтры по типу проекта
+ * и поводу, а отбор идёт по кураторской отметке оператора, а не по
+ * одному лишь статусу PUBLISHED.
+ */
+export interface SharedVideoShowcaseResult {
+  items: SharedVideoPublicView[];
   nextCursor: string | null;
 }

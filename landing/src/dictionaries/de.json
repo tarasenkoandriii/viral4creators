@@ -578,7 +578,19 @@
     "makeSameCta": "So eins machen",
     "shareCta": "Teilen",
     "linkCopied": "Link kopiert",
-    "poweredBy": "Dieses Video wurde mit viral4creators erstellt — nach einem fremden Beispiel, in wenigen Minuten und kostenlos."
+    "poweredBy": "Dieses Video wurde mit viral4creators erstellt — nach einem fremden Beispiel, in wenigen Minuten und kostenlos.",
+    "greetingLabel": "Grußvideo",
+    "greetingMakeSameCta": "Eigenes Grußvideo erstellen",
+    "greetingMetaDescription": "Ein persönliches Grußvideo, erstellt mit viral4creators.",
+    "occasion": {
+      "BIRTHDAY": "Geburtstag",
+      "WEDDING": "Hochzeit",
+      "ANNIVERSARY": "Jahrestag",
+      "NEW_YEAR": "Neujahr",
+      "GRADUATION": "Abschluss",
+      "CORPORATE": "Firmengruß",
+      "OTHER": "Besonderer Anlass"
+    }
   },
   "assistant": {
     "floatingLabel": "Eine Frage?",

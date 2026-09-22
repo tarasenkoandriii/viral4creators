@@ -30,6 +30,9 @@ import type { IdentifiedRequest } from '../telegram-auth/telegram-identity.guard
 function buildService() {
   return {
     listFeed: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    listShowcase: jest
+      .fn()
+      .mockResolvedValue({ items: [], nextCursor: null }),
     getPublic: jest.fn(),
     fork: jest.fn(),
     recordShare: jest.fn().mockResolvedValue(undefined),
@@ -108,5 +111,55 @@ describe('SharedVideoLikeController', () => {
       likedByViewer: false,
     });
     expect(service.unlike).toHaveBeenCalledWith('u1', 'sv1');
+  });
+});
+
+/**
+ * Витрина (этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md).
+ */
+describe('PublicSharedVideoController.showcase', () => {
+  it('дефолт — 9 карточек, пустые фильтры уходят как null', async () => {
+    const service = buildService();
+    const controller = new PublicSharedVideoController(service as never);
+    await controller.showcase();
+    expect(service.listShowcase).toHaveBeenCalledWith({
+      projectType: null,
+      occasion: null,
+      cursor: null,
+      pageSize: 9,
+    });
+  });
+
+  it('прокидывает фильтры и клампит pageSize в [1, 24]', async () => {
+    const service = buildService();
+    const controller = new PublicSharedVideoController(service as never);
+    await controller.showcase('GREETING_VIDEO', 'WEDDING', 'cur1', '500');
+    expect(service.listShowcase).toHaveBeenCalledWith({
+      projectType: 'GREETING_VIDEO',
+      occasion: 'WEDDING',
+      cursor: 'cur1',
+      pageSize: 24,
+    });
+
+    await controller.showcase(undefined, undefined, undefined, '0');
+    // Тот же `|| дефолт`, что и у feed: 0 и мусор дают дефолт, не ноль
+    // карточек и не отрицательный take.
+    expect(service.listShowcase).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pageSize: 9 }),
+    );
+  });
+
+  /**
+   * Маршрут `showcase` обязан стоять ДО `:id` — иначе Nest примет слово
+   * за значение параметра и витрина вернёт 404. Порядок объявления
+   * методов в классе и есть порядок маршрутов, поэтому проверяем именно
+   * его, а не поведение через HTTP.
+   */
+  it('объявлен раньше параметрического :id', () => {
+    const order = Object.getOwnPropertyNames(
+      PublicSharedVideoController.prototype,
+    );
+    expect(order.indexOf('showcase')).toBeLessThan(order.indexOf('get'));
+    expect(order.indexOf('feed')).toBeLessThan(order.indexOf('get'));
   });
 });

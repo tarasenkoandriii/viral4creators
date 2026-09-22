@@ -301,6 +301,11 @@ export function rejectSharedVideo(id: string, reason: string) {
   return apiPost<SharedVideoPage>(`/admin/shared-videos/${id}/reject`, { reason });
 }
 
+/** Кураторский отбор в публичную витрину (§5 docs-tz/TZ-Greeting-Video-Landing.md). */
+export function setSharedVideoShowcase(id: string, showcase: boolean) {
+  return apiPost<SharedVideoPage>(`/admin/shared-videos/${id}/showcase`, { showcase });
+}
+
 // ── Библиотека разборов (§21.1) ────────────────────────────────────────
 
 export async function listLibrary(params: {

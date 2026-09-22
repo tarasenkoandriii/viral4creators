@@ -578,7 +578,19 @@
     "makeSameCta": "Зробити такий самий",
     "shareCta": "Поділитися",
     "linkCopied": "Посилання скопійовано",
-    "poweredBy": "Цей ролик створено у viral4creators — за чужим прикладом, за пару хвилин і безкоштовно."
+    "poweredBy": "Цей ролик створено у viral4creators — за чужим прикладом, за пару хвилин і безкоштовно.",
+    "greetingLabel": "Відеопривітання",
+    "greetingMakeSameCta": "Зробити своє привітання",
+    "greetingMetaDescription": "Персональне відеопривітання, зроблене у viral4creators.",
+    "occasion": {
+      "BIRTHDAY": "День народження",
+      "WEDDING": "Весілля",
+      "ANNIVERSARY": "Річниця",
+      "NEW_YEAR": "Новий рік",
+      "GRADUATION": "Випускний",
+      "CORPORATE": "Корпоративне привітання",
+      "OTHER": "Особлива подія"
+    }
   },
   "assistant": {
     "floatingLabel": "Є запитання?",

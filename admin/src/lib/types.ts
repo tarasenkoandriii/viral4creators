@@ -252,6 +252,17 @@ export interface PublicationListResult {
 
 // ── Публичная страница ролика (backend/src/modules/shared-video, этап 60, ТЗ §40) ──
 
+/** Зеркало enum GreetingOccasion из backend/prisma/schema.prisma —
+ * отдельного codegen в проекте нет, как и у остальных типов этого файла. */
+export type GreetingOccasion =
+  | 'BIRTHDAY'
+  | 'WEDDING'
+  | 'ANNIVERSARY'
+  | 'NEW_YEAR'
+  | 'GRADUATION'
+  | 'CORPORATE'
+  | 'OTHER';
+
 export type SharedVideoStatus = 'PENDING' | 'PUBLISHED' | 'REJECTED';
 
 export interface SharedVideoPage {
@@ -263,7 +274,14 @@ export interface SharedVideoPage {
   videoUrl: string;
   aspectRatio: string | null;
   title: string;
-  productName: string;
+  /** Витрина (этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md)
+   * — зеркало backend/src/common/types/shared-video.types.ts. NULL у
+   * `projectType` означает товарный ролик. */
+  projectType: 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO' | null;
+  occasion: GreetingOccasion | null;
+  featured: boolean;
+  /** NULL у поздравлений — у них нет товара. */
+  productName: string | null;
   productDescription: string | null;
   price: number | null;
   currency: string | null;
