@@ -81,6 +81,38 @@ describe('parseClientMessage — mouse', () => {
   });
 });
 
+describe('parseClientMessage — прокрутка (найдено боевым прогоном)', () => {
+  it('принимает mouseWheel с button:"none"', () => {
+    // Дефект, из-за которого прокрутка не работала НИ РАЗУ: `'none'`
+    // не входил в список допустимых кнопок, сообщение не проходило
+    // проверку, ws-handler молча его игнорировал, и до dispatchMouse
+    // оно не доходило. В счётчиках сессии стоял ровный wheel=0 при
+    // живой мыши и клавиатуре — данные указывали на клиент, хотя
+    // виноват был приёмник.
+    expect(
+      parseClientMessage(
+        '{"type":"mouse","event":"mouseWheel","x":10,"y":20,"button":"none","deltaX":0,"deltaY":120}',
+      ),
+    ).toEqual({
+      type: 'mouse',
+      event: 'mouseWheel',
+      x: 10,
+      y: 20,
+      button: 'none',
+      deltaX: 0,
+      deltaY: 120,
+    });
+  });
+
+  it('выдуманная кнопка по-прежнему отклоняется', () => {
+    expect(
+      parseClientMessage(
+        '{"type":"mouse","event":"mouseWheel","x":1,"y":1,"button":"wheel"}',
+      ),
+    ).toBeNull();
+  });
+});
+
 describe('parseClientMessage — key/resize/ping', () => {
   it('принимает корректное событие клавиатуры', () => {
     expect(

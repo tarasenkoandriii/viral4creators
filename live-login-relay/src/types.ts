@@ -67,7 +67,12 @@ export type ServerMessage =
 
 export type MouseEventType =
   'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel';
-export type MouseButton = 'left' | 'right' | 'middle';
+/** `'none'` — состояние «кнопка не зажата», и оно не декоративное: у
+ * `mouseWheel` зажатой кнопки нет, клиент шлёт именно его, а
+ * `buttonFromMask()` в session.ts сама возвращает `'none'`, когда маска
+ * пуста. Пока этого варианта здесь не было, валидатор отбрасывал все
+ * события прокрутки. */
+export type MouseButton = 'left' | 'right' | 'middle' | 'none';
 export type KeyEventType = 'keyDown' | 'keyUp' | 'char';
 
 /** §8.3 — клиент → сервер. */
