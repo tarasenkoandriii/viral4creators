@@ -18,6 +18,10 @@ import { PlanService } from '../plan/plan.service';
 import { resolveGreetingConfig } from '../project/greeting-config';
 import { UpdateGreetingBriefDto } from '../project/dto/update-greeting-brief.dto';
 import {
+  allowedTonesFor,
+  toneAllowedFor,
+} from '../../common/greeting-occasions';
+import {
   GreetingBriefView,
   GreetingOccasion,
   GreetingPresenterProvider,
@@ -80,6 +84,31 @@ export class GreetingBriefService {
       );
     }
 
+    /**
+     * Этап 2, фича №3 компаньон-ТЗ: тон проверяется на СЕРВЕРЕ, а не
+     * прячется в интерфейсе. §3 ТЗ требует именно этого — и не зря:
+     * визард можно обойти прямым запросом к API, а шутливое
+     * соболезнование обойти нечем.
+     *
+     * Проверяется ПАРА (повод, тон), а не каждое поле по отдельности,
+     * потому что сломать её можно с двух сторон: поставить FUNNY при
+     * уже выбранном CONDOLENCE — и сменить повод на CONDOLENCE, когда
+     * FUNNY стоял там с прошлой правки. Второй путь незаметнее, и без
+     * этой проверки он молча прошёл бы.
+     *
+     * Отказ, а не тихая подмена тона на допустимый, — принцип 4 раздела
+     * 3 компаньон-ТЗ, тот же, по которому `resolveGreetingConfig`
+     * отвечает 403 вместо подмены hedra на grok.
+     */
+    const tone = dto.tone ?? current.tone;
+    if (!toneAllowedFor(occasion, tone)) {
+      throw new BadRequestException(
+        `Тон ${tone} недопустим для повода ${occasion}. Допустимые: ${allowedTonesFor(
+          occasion,
+        ).join(', ')}.`,
+      );
+    }
+
     if (dto.brandManifestId) {
       await this.assertOwnBrandManifest(userId, dto.brandManifestId);
     }
@@ -111,7 +140,9 @@ export class GreetingBriefService {
         ...(dto.senderName !== undefined
           ? { senderName: dto.senderName?.trim() || null }
           : {}),
-        ...(dto.tone !== undefined ? { tone: dto.tone } : {}),
+        // `tone`, а не `dto.tone`: в базу уходит ровно то значение,
+        // которое прошло проверку пары выше.
+        tone,
         ...(dto.personalMessage !== undefined
           ? { personalMessage: dto.personalMessage?.trim() || null }
           : {}),

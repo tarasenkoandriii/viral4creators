@@ -1030,13 +1030,7 @@
     "previewQuota": "Vorschauen heute: noch {{left}} von {{limit}}"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analyse",
-      "Produkt",
-      "Prompt",
-      "Generierung"
-    ],
+    "steps": ["Video", "Analyse", "Produkt", "Prompt", "Generierung"],
     "errorTitle": "Fehler",
     "prefilledAlert": "Die Produktdaten wurden aus dem Projekt übernommen — das ist eine Kopie zum Startzeitpunkt; Änderungen hier ändern nicht das Produkt selbst.",
     "openProjectCta": "Projekt öffnen",
@@ -1472,14 +1466,33 @@
       "WEDDING": "Hochzeit",
       "ANNIVERSARY": "Jahrestag",
       "NEW_YEAR": "Neujahr",
+      "CHRISTMAS": "Weihnachten",
       "GRADUATION": "Abschluss",
+      "VALENTINES_DAY": "Valentinstag",
+      "WOMENS_DAY": "Frauentag",
+      "MOTHERS_DAY": "Muttertag",
+      "FATHERS_DAY": "Vatertag",
+      "DEFENDERS_DAY": "Tag der Verteidiger",
+      "TEACHERS_DAY": "Lehrertag",
+      "FIRST_SCHOOL_DAY": "Erster Schultag",
+      "NEW_BABY": "Geburt eines Kindes",
+      "BAPTISM": "Taufe",
+      "HOUSEWARMING": "Einweihungsfeier",
+      "PROMOTION": "Beförderung oder neuer Job",
+      "RETIREMENT": "Ruhestand",
+      "FAREWELL_COLLEAGUE": "Abschied von einer Kollegin oder einem Kollegen",
       "CORPORATE": "Firmengruß",
+      "APOLOGY": "Entschuldigung",
+      "GET_WELL": "Gute Besserung",
+      "CONDOLENCE": "Beileid",
       "OTHER": "Anderer Anlass"
     },
     "tone": {
       "WARM": "Warm, herzlich",
       "FUNNY": "Verspielt",
-      "FORMAL": "Formell"
+      "FORMAL": "Formell",
+      "SUPPORTIVE": "Unterstützend",
+      "RESPECTFUL": "Respektvoll, zurückhaltend"
     }
   }
 }

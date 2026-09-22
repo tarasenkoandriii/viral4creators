@@ -31,7 +31,11 @@ import type {
   GreetingTone,
   ProjectType,
 } from '../../types/project';
-import { GREETING_OCCASIONS, GREETING_TONES } from '../../types/project';
+import {
+  GREETING_OCCASIONS,
+  allowedTonesFor,
+  defaultToneFor,
+} from '../../types/project';
 import { exploreSite } from '../../services/client-site-tutorial-api';
 import { deleteProject } from '../../services/projects-api';
 
@@ -64,6 +68,25 @@ export function ProjectCreateScreen() {
   const [recipientName, setRecipientName] = useState('');
   const [senderName, setSenderName] = useState('');
   const [tone, setTone] = useState<GreetingTone>('WARM');
+
+  /**
+   * Этап 2, фича №3: у чувствительных поводов свой набор тонов, и смена
+   * повода может обессмыслить уже выбранный — «С юмором» для
+   * соболезнования сервер отвергнет с 400.
+   *
+   * Переключаем тон на умолчание нового повода ровно тогда, когда
+   * прежний стал недопустим, и не трогаем его в остальных случаях: у
+   * поводов с обычным набором человек выбрал тон осознанно, и сбрасывать
+   * его при каждом переключении повода было бы навязчиво.
+   *
+   * Это подсказка интерфейса, а не проверка: настоящая живёт на сервере
+   * (`GreetingBriefService`/`ProjectService`), потому что визард
+   * обходится прямым запросом к API, а она — нет.
+   */
+  function handleOccasionChange(next: GreetingOccasion) {
+    setOccasion(next);
+    if (!allowedTonesFor(next).includes(tone)) setTone(defaultToneFor(next));
+  }
   const [personalMessage, setPersonalMessage] = useState('');
 
   const canSubmitGreeting =
@@ -83,10 +106,11 @@ export function ProjectCreateScreen() {
         // §7.2: страна нужна для локализации TTS/сценария, как у
         // SINGLE/LINE — GREETING_VIDEO не выведен из этого правила
         // (backend `resolveCountryCode` требует её явно для этого типа).
-        title: `${dict.greetingVideoWizard.occasion[occasion]} — ${recipientName.trim()}`.slice(
-          0,
-          120
-        ),
+        title:
+          `${dict.greetingVideoWizard.occasion[occasion]} — ${recipientName.trim()}`.slice(
+            0,
+            120
+          ),
         countryCode,
         ...(brandManifestId ? { brandManifestId } : {}),
         greetingBrief: {
@@ -298,7 +322,7 @@ export function ProjectCreateScreen() {
                   <Select
                     value={occasion}
                     onChange={(e) =>
-                      setOccasion(e.target.value as GreetingOccasion)
+                      handleOccasionChange(e.target.value as GreetingOccasion)
                     }
                     disabled={submitting}
                   >
@@ -370,7 +394,7 @@ export function ProjectCreateScreen() {
                     value={tone}
                     onChange={setTone}
                     disabled={submitting}
-                    options={GREETING_TONES.map((t) => ({
+                    options={allowedTonesFor(occasion).map((t) => ({
                       value: t,
                       label: dict.greetingVideoWizard.tone[t],
                     }))}

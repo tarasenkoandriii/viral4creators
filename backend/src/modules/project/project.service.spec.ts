@@ -251,6 +251,63 @@ describe('ProjectService', () => {
       expect(plans.assertUser).not.toHaveBeenCalled();
     });
 
+    /**
+     * Этап 2, фича №3 компаньон-ТЗ: пара (повод, тон) проверяется и при
+     * создании, а не только при правке брифа. Дверь, закрытая с одной
+     * стороны, не закрыта: шутливое соболезнование нельзя было бы
+     * получить правкой, но можно было бы завести сразу.
+     */
+    it('rejects a funny tone for a sensitive occasion', async () => {
+      await expect(
+        service.createProject(USER, {
+          type: 'GREETING_VIDEO',
+          title: 'Соболезнование',
+          countryCode: 'UA',
+          greetingBrief: {
+            occasion: 'CONDOLENCE',
+            recipientName: 'Аня',
+            tone: 'FUNNY',
+          },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.greetingBrief.create).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Умолчание тоже зависит от повода: жёсткое 'WARM', стоявшее здесь до
+     * этапа 2, для соболезнования недопустимо — бриф падал бы на
+     * собственной валидации при первой же правке.
+     */
+    it('picks a tone the occasion actually allows when none was given', async () => {
+      prisma.project.create.mockResolvedValue(
+        projectRow({ type: 'GREETING_VIDEO' }),
+      );
+      await service.createProject(USER, {
+        type: 'GREETING_VIDEO',
+        title: 'Соболезнование',
+        countryCode: 'UA',
+        greetingBrief: { occasion: 'CONDOLENCE', recipientName: 'Аня' },
+      });
+      const briefCall = prisma.greetingBrief.create.mock.calls[0][0];
+      expect(briefCall.data.tone).not.toBe('WARM');
+      expect(['RESPECTFUL', 'SUPPORTIVE']).toContain(briefCall.data.tone);
+    });
+
+    it('a new occasion from stage 2 is accepted end to end', async () => {
+      prisma.project.create.mockResolvedValue(
+        projectRow({ type: 'GREETING_VIDEO' }),
+      );
+      await service.createProject(USER, {
+        type: 'GREETING_VIDEO',
+        title: 'Новоселье',
+        countryCode: 'UA',
+        greetingBrief: { occasion: 'HOUSEWARMING', recipientName: 'Аня' },
+      });
+      expect(prisma.greetingBrief.create.mock.calls[0][0].data.occasion).toBe(
+        'HOUSEWARMING',
+      );
+    });
+
     it('§7: STANDARD keeps a request that is within its cap', async () => {
       prisma.project.create.mockResolvedValue(
         projectRow({ type: 'GREETING_VIDEO' }),

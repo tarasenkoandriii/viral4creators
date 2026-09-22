@@ -1030,13 +1030,7 @@
     "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analysis",
-      "Product",
-      "Prompt",
-      "Generation"
-    ],
+    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
     "openProjectCta": "Open project",
@@ -1472,14 +1466,33 @@
       "WEDDING": "Wedding",
       "ANNIVERSARY": "Anniversary",
       "NEW_YEAR": "New Year",
+      "CHRISTMAS": "Christmas",
       "GRADUATION": "Graduation",
+      "VALENTINES_DAY": "Valentine's Day",
+      "WOMENS_DAY": "Women's Day",
+      "MOTHERS_DAY": "Mother's Day",
+      "FATHERS_DAY": "Father's Day",
+      "DEFENDERS_DAY": "Defenders Day",
+      "TEACHERS_DAY": "Teacher's Day",
+      "FIRST_SCHOOL_DAY": "First day of school",
+      "NEW_BABY": "New baby",
+      "BAPTISM": "Christening",
+      "HOUSEWARMING": "Housewarming",
+      "PROMOTION": "Promotion or new job",
+      "RETIREMENT": "Retirement",
+      "FAREWELL_COLLEAGUE": "Farewell to a colleague",
       "CORPORATE": "Corporate greeting",
+      "APOLOGY": "Apology",
+      "GET_WELL": "Get well soon",
+      "CONDOLENCE": "Condolence",
       "OTHER": "Other occasion"
     },
     "tone": {
       "WARM": "Warm, heartfelt",
       "FUNNY": "Playful",
-      "FORMAL": "Formal"
+      "FORMAL": "Formal",
+      "SUPPORTIVE": "Supportive",
+      "RESPECTFUL": "Respectful, restrained"
     }
   }
 }

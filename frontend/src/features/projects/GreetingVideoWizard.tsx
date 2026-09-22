@@ -70,7 +70,8 @@ import { LoadError, ScreenHeader } from './shared';
 import {
   GREETING_OCCASIONS,
   GREETING_RESOLUTIONS,
-  GREETING_TONES,
+  allowedTonesFor,
+  defaultToneFor,
 } from '../../types/project';
 import type {
   BrandManifestSummaryView,
@@ -200,11 +201,7 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
       )}
 
       {sessionId && prompt && (
-        <VideoStep
-          sessionId={sessionId}
-          video={video}
-          onVideo={setVideo}
-        />
+        <VideoStep sessionId={sessionId} video={video} onVideo={setVideo} />
       )}
     </div>
   );
@@ -311,7 +308,17 @@ function BriefStep({
         <Field label={w.occasionLabel}>
           <Select
             value={occasion}
-            onChange={(e) => setOccasion(e.target.value as GreetingOccasion)}
+            onChange={(e) => {
+              // Тот же сброс тона при смене повода, что и в
+              // ProjectCreateScreen: иначе «С юмором», выбранный для дня
+              // рождения, поедет в соболезнование и получит 400 уже
+              // после заполнения всей формы.
+              const next = e.target.value as GreetingOccasion;
+              setOccasion(next);
+              if (!allowedTonesFor(next).includes(tone)) {
+                setTone(defaultToneFor(next));
+              }
+            }}
             disabled={hasSession}
           >
             {GREETING_OCCASIONS.map((o) => (
@@ -357,7 +364,9 @@ function BriefStep({
           <Pills
             value={tone}
             onChange={setTone}
-            options={GREETING_TONES.map((t) => ({
+            // Этап 2, фича №3: набор тонов зависит от повода — см.
+            // тот же приём и то же обоснование в ProjectCreateScreen.
+            options={allowedTonesFor(occasion).map((t) => ({
               value: t,
               label: w.tone[t],
             }))}
@@ -372,9 +381,7 @@ function BriefStep({
           <Textarea
             rows={3}
             value={personalMessage}
-            onChange={(e) =>
-              setPersonalMessage(e.target.value.slice(0, 2000))
-            }
+            onChange={(e) => setPersonalMessage(e.target.value.slice(0, 2000))}
             placeholder={w.personalMessagePlaceholder}
           />
         </Field>
@@ -390,7 +397,8 @@ function BriefStep({
               {
                 value: 'hedra',
                 label: w.providerHedra,
-                sub: plan === 'PREMIUM' ? undefined : w.providerHedraPremiumOnly,
+                sub:
+                  plan === 'PREMIUM' ? undefined : w.providerHedraPremiumOnly,
               },
             ]}
           />
@@ -861,7 +869,10 @@ function ReferenceEditor({
           autoFocus
         />
       </Field>
-      <Field label={w.referenceDescLabel} counter={`${description.length}/2000`}>
+      <Field
+        label={w.referenceDescLabel}
+        counter={`${description.length}/2000`}
+      >
         <Textarea
           rows={2}
           value={description}
@@ -1028,84 +1039,89 @@ function VideoStep({
 
   return (
     <>
-    <Card className="p-5">
-      <CardHeader title={w.videoHeading} />
-      {error && <Alert tone="error">{error}</Alert>}
+      <Card className="p-5">
+        <CardHeader title={w.videoHeading} />
+        {error && <Alert tone="error">{error}</Alert>}
 
-      {!video && (
-        <Button loading={starting} onClick={() => void start()}>
-          {w.generateVideoButton}
-        </Button>
-      )}
-
-      {video && video.status === GenerationStatus.PENDING && (
-        <Alert tone="info">
-          <Spinner size={14} className="inline mr-2" />
-          {w.videoPending}
-        </Alert>
-      )}
-      {video && video.status === GenerationStatus.PROCESSING && (
-        <Alert tone="info">
-          <Spinner size={14} className="inline mr-2" />
-          {w.videoProcessing}
-        </Alert>
-      )}
-      {video && video.status === GenerationStatus.FAILED && (
-        <div className="space-y-2">
-          <Alert tone="error">
-            {video.error?.message ?? w.videoFailed}
-          </Alert>
+        {!video && (
           <Button loading={starting} onClick={() => void start()}>
-            {w.retryButton}
+            {w.generateVideoButton}
           </Button>
-        </div>
-      )}
-      {video && video.status === GenerationStatus.COMPLETE && (
-        <div className="space-y-3">
-          <Badge tone="success">{w.videoReady}</Badge>
-          {video.downloadUrl && (
-            <video
-              src={video.downloadUrl}
-              controls
-              className="w-full rounded-xl border border-silver-200/70 dark:border-silver-800"
-            />
-          )}
-          {video.downloadUrl && (
-            <a href={video.downloadUrl} download target="_blank" rel="noreferrer">
-              <Button icon={<Download size={14} />}>{w.downloadButton}</Button>
-            </a>
-          )}
-        </div>
-      )}
-    </Card>
+        )}
 
-    {/* Переозвучка/экспорт/публикация — общий постпродакшен-пайплайн,
+        {video && video.status === GenerationStatus.PENDING && (
+          <Alert tone="info">
+            <Spinner size={14} className="inline mr-2" />
+            {w.videoPending}
+          </Alert>
+        )}
+        {video && video.status === GenerationStatus.PROCESSING && (
+          <Alert tone="info">
+            <Spinner size={14} className="inline mr-2" />
+            {w.videoProcessing}
+          </Alert>
+        )}
+        {video && video.status === GenerationStatus.FAILED && (
+          <div className="space-y-2">
+            <Alert tone="error">{video.error?.message ?? w.videoFailed}</Alert>
+            <Button loading={starting} onClick={() => void start()}>
+              {w.retryButton}
+            </Button>
+          </div>
+        )}
+        {video && video.status === GenerationStatus.COMPLETE && (
+          <div className="space-y-3">
+            <Badge tone="success">{w.videoReady}</Badge>
+            {video.downloadUrl && (
+              <video
+                src={video.downloadUrl}
+                controls
+                className="w-full rounded-xl border border-silver-200/70 dark:border-silver-800"
+              />
+            )}
+            {video.downloadUrl && (
+              <a
+                href={video.downloadUrl}
+                download
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Button icon={<Download size={14} />}>
+                  {w.downloadButton}
+                </Button>
+              </a>
+            )}
+          </div>
+        )}
+      </Card>
+
+      {/* Переозвучка/экспорт/публикация — общий постпродакшен-пайплайн,
         тот же, что у SINGLE/LINE (`GenerationWizard.tsx`): отдельная
         сессия сама по себе достаточна для `/postprod/:sessionId` —
         `PostprodVideoScreen`/`PublishPanel`/`ExportPanel` уже
         product-агностичны (`session.productInformation` читается только
         как необязательный fallback для названия/описания при публикации,
         см. `publication.service.ts`) и не требуют `ProductItem`. */}
-    {video && video.status === GenerationStatus.COMPLETE && (
-      <Card className="p-5">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold">
-              {dict.generationWizard.postprodCtaTitle}
-            </h3>
-            <p className="mt-0.5 text-xs text-silver-400">
-              {dict.generationWizard.postprodCtaHint}
-            </p>
+      {video && video.status === GenerationStatus.COMPLETE && (
+        <Card className="p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold">
+                {dict.generationWizard.postprodCtaTitle}
+              </h3>
+              <p className="mt-0.5 text-xs text-silver-400">
+                {dict.generationWizard.postprodCtaHint}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => navigate(routes.postprodVideo(sessionId))}
+            >
+              {dict.generationWizard.postprodCtaButton}
+            </Button>
           </div>
-          <Button
-            variant="outline"
-            onClick={() => navigate(routes.postprodVideo(sessionId))}
-          >
-            {dict.generationWizard.postprodCtaButton}
-          </Button>
-        </div>
-      </Card>
-    )}
+        </Card>
+      )}
     </>
   );
 }

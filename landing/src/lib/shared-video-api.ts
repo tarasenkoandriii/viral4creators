@@ -12,7 +12,7 @@
  * а не URL-сегментом.
  */
 
-const API_BASE_URL = process.env.API_BASE_URL ?? 'http://localhost:3000/api';
+const API_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:3000/api";
 
 /**
  * Раз в 5 минут, а не 15, как у блога: `viewCount` бампается прямо этим
@@ -23,13 +23,30 @@ export const SHARED_VIDEO_REVALIDATE_SECONDS = 300;
 
 /** Зеркало enum GreetingOccasion из backend/prisma/schema.prisma. */
 export type GreetingOccasion =
-  | 'BIRTHDAY'
-  | 'WEDDING'
-  | 'ANNIVERSARY'
-  | 'NEW_YEAR'
-  | 'GRADUATION'
-  | 'CORPORATE'
-  | 'OTHER';
+  | "BIRTHDAY"
+  | "WEDDING"
+  | "ANNIVERSARY"
+  | "NEW_YEAR"
+  | "CHRISTMAS"
+  | "GRADUATION"
+  | "VALENTINES_DAY"
+  | "WOMENS_DAY"
+  | "MOTHERS_DAY"
+  | "FATHERS_DAY"
+  | "DEFENDERS_DAY"
+  | "TEACHERS_DAY"
+  | "FIRST_SCHOOL_DAY"
+  | "NEW_BABY"
+  | "BAPTISM"
+  | "HOUSEWARMING"
+  | "PROMOTION"
+  | "RETIREMENT"
+  | "FAREWELL_COLLEAGUE"
+  | "CORPORATE"
+  | "APOLOGY"
+  | "GET_WELL"
+  | "CONDOLENCE"
+  | "OTHER";
 
 export interface PublicSharedVideoPage {
   id: string;
@@ -43,7 +60,7 @@ export interface PublicSharedVideoPage {
    * ролик (почему это доказуемо — см. доккомментарий колонки в
    * schema.prisma).
    */
-  projectType: 'SINGLE' | 'LINE' | 'CLIENT_SITE' | 'GREETING_VIDEO' | null;
+  projectType: "SINGLE" | "LINE" | "CLIENT_SITE" | "GREETING_VIDEO" | null;
   occasion: GreetingOccasion | null;
   featured: boolean;
   /** NULL у поздравлений — товара у них нет. */
@@ -92,24 +109,24 @@ export interface SharedVideoShowcaseResult {
   nextCursor: string | null;
 }
 
-export async function listGreetingShowcase(opts: {
-  occasion?: string | null;
-  pageSize?: number;
-} = {}): Promise<PublicSharedVideoPage[]> {
+export async function listGreetingShowcase(
+  opts: {
+    occasion?: string | null;
+    pageSize?: number;
+  } = {},
+): Promise<PublicSharedVideoPage[]> {
   const params = new URLSearchParams({
-    projectType: 'GREETING_VIDEO',
+    projectType: "GREETING_VIDEO",
     pageSize: String(opts.pageSize ?? 9),
   });
-  if (opts.occasion) params.set('occasion', opts.occasion);
+  if (opts.occasion) params.set("occasion", opts.occasion);
   try {
     const res = await fetch(`${API_BASE_URL}/shared-video/showcase?${params}`, {
       next: { revalidate: SHARED_VIDEO_REVALIDATE_SECONDS },
     });
     if (!res.ok) return [];
     const body = await res.json();
-    return body?.success
-      ? (body.data as SharedVideoShowcaseResult).items
-      : [];
+    return body?.success ? (body.data as SharedVideoShowcaseResult).items : [];
   } catch {
     return [];
   }

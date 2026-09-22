@@ -12,6 +12,10 @@ import type {
   GreetingResolution,
   GreetingTone,
 } from '../../../common/types/greeting.types';
+import {
+  GREETING_OCCASIONS,
+  GREETING_TONES,
+} from '../../../common/types/greeting.types';
 
 /**
  * PATCH /projects/:id/greeting-brief (ТЗ TZ-Greeting-Video-Project-Type.md
@@ -27,7 +31,13 @@ import type {
  */
 export class UpdateGreetingBriefDto {
   @IsOptional()
-  @IsIn(['BIRTHDAY', 'WEDDING', 'ANNIVERSARY', 'NEW_YEAR', 'GRADUATION', 'CORPORATE', 'OTHER'])
+  /**
+   * Список берётся из `GREETING_OCCASIONS`, а не переписывается строками:
+   * до этапа 2 здесь лежала своя копия семи значений, и расширение enum
+   * до 24 поводов молча отвергало бы 17 новых на уровне валидации DTO —
+   * фича выглядела бы сломанной, хотя база и сервис её уже понимают.
+   */
+  @IsIn([...GREETING_OCCASIONS])
   occasion?: GreetingOccasion;
 
   @IsOptional()
@@ -50,7 +60,7 @@ export class UpdateGreetingBriefDto {
   senderName?: string | null;
 
   @IsOptional()
-  @IsIn(['WARM', 'FUNNY', 'FORMAL'])
+  @IsIn([...GREETING_TONES])
   tone?: GreetingTone;
 
   @IsOptional()

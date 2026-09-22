@@ -507,13 +507,35 @@ enum ProductPriceSource {
 // ── GREETING_VIDEO ───────────────────────────────────────────────────────
 // ТЗ TZ-Greeting-Video-Project-Type.md §3.2.
 
+/// Этап 2 (фича №1 компаньон-ТЗ). Что каждый повод означает для промпта
+/// и какие тоны у него допустимы — backend/src/common/greeting-occasions.ts.
 enum GreetingOccasion {
   BIRTHDAY
   WEDDING
   ANNIVERSARY
   NEW_YEAR
+  CHRISTMAS
   GRADUATION
+  VALENTINES_DAY
+  WOMENS_DAY
+  MOTHERS_DAY
+  FATHERS_DAY
+  /// Намеренно без даты в коде: в разных локалях это разные дни.
+  DEFENDERS_DAY
+  TEACHERS_DAY
+  FIRST_SCHOOL_DAY
+  NEW_BABY
+  BAPTISM
+  HOUSEWARMING
+  PROMOTION
+  RETIREMENT
+  FAREWELL_COLLEAGUE
   CORPORATE // поздравление от компании (коллеге, клиенту, партнёру)
+  /// Чувствительные поводы (фича №3): FUNNY для них запрещён серверной
+  /// проверкой, а не спрятан в интерфейсе.
+  APOLOGY
+  GET_WELL
+  CONDOLENCE
   OTHER // повод не из списка — уточняется в customOccasionText
 }
 
@@ -521,6 +543,8 @@ enum GreetingTone {
   WARM // тёплый, душевный
   FUNNY // с юмором
   FORMAL // официальный (в основном для CORPORATE)
+  SUPPORTIVE // поддерживающий — для GET_WELL/CONDOLENCE
+  RESPECTFUL // уважительный, без праздничности — для CONDOLENCE/APOLOGY
 }
 
 /// Бриф поздравительного ролика — аналог ProductItem для GREETING_VIDEO-

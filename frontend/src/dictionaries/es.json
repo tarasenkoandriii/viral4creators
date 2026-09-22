@@ -1030,13 +1030,7 @@
     "previewQuota": "Vistas previas hoy: quedan {{left}} de {{limit}}"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Análisis",
-      "Producto",
-      "Prompt",
-      "Generación"
-    ],
+    "steps": ["Video", "Análisis", "Producto", "Prompt", "Generación"],
     "errorTitle": "Error",
     "prefilledAlert": "Los datos del producto se tomaron del proyecto — es una copia del momento de inicio; los cambios aquí no modifican el producto en sí.",
     "openProjectCta": "Abrir proyecto",
@@ -1472,14 +1466,33 @@
       "WEDDING": "Boda",
       "ANNIVERSARY": "Aniversario",
       "NEW_YEAR": "Año Nuevo",
+      "CHRISTMAS": "Navidad",
       "GRADUATION": "Graduación",
+      "VALENTINES_DAY": "San Valentín",
+      "WOMENS_DAY": "Día de la Mujer",
+      "MOTHERS_DAY": "Día de la Madre",
+      "FATHERS_DAY": "Día del Padre",
+      "DEFENDERS_DAY": "Día de los Defensores",
+      "TEACHERS_DAY": "Día del Maestro",
+      "FIRST_SCHOOL_DAY": "Primer día de escuela",
+      "NEW_BABY": "Nacimiento de un bebé",
+      "BAPTISM": "Bautizo",
+      "HOUSEWARMING": "Estreno de casa",
+      "PROMOTION": "Ascenso o nuevo trabajo",
+      "RETIREMENT": "Jubilación",
+      "FAREWELL_COLLEAGUE": "Despedida de un colega",
       "CORPORATE": "Felicitación corporativa",
+      "APOLOGY": "Disculpa",
+      "GET_WELL": "Que te mejores",
+      "CONDOLENCE": "Pésame",
       "OTHER": "Otra ocasión"
     },
     "tone": {
       "WARM": "Cálido, sincero",
       "FUNNY": "Divertido",
-      "FORMAL": "Formal"
+      "FORMAL": "Formal",
+      "SUPPORTIVE": "De apoyo",
+      "RESPECTFUL": "Respetuoso, contenido"
     }
   }
 }

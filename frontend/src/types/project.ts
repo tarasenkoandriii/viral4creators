@@ -30,8 +30,25 @@ export type GreetingOccasion =
   | 'WEDDING'
   | 'ANNIVERSARY'
   | 'NEW_YEAR'
+  | 'CHRISTMAS'
   | 'GRADUATION'
+  | 'VALENTINES_DAY'
+  | 'WOMENS_DAY'
+  | 'MOTHERS_DAY'
+  | 'FATHERS_DAY'
+  | 'DEFENDERS_DAY'
+  | 'TEACHERS_DAY'
+  | 'FIRST_SCHOOL_DAY'
+  | 'NEW_BABY'
+  | 'BAPTISM'
+  | 'HOUSEWARMING'
+  | 'PROMOTION'
+  | 'RETIREMENT'
+  | 'FAREWELL_COLLEAGUE'
   | 'CORPORATE'
+  | 'APOLOGY'
+  | 'GET_WELL'
+  | 'CONDOLENCE'
   | 'OTHER';
 
 export const GREETING_OCCASIONS: readonly GreetingOccasion[] = [
@@ -39,14 +56,76 @@ export const GREETING_OCCASIONS: readonly GreetingOccasion[] = [
   'WEDDING',
   'ANNIVERSARY',
   'NEW_YEAR',
+  'CHRISTMAS',
   'GRADUATION',
+  'VALENTINES_DAY',
+  'WOMENS_DAY',
+  'MOTHERS_DAY',
+  'FATHERS_DAY',
+  'DEFENDERS_DAY',
+  'TEACHERS_DAY',
+  'FIRST_SCHOOL_DAY',
+  'NEW_BABY',
+  'BAPTISM',
+  'HOUSEWARMING',
+  'PROMOTION',
+  'RETIREMENT',
+  'FAREWELL_COLLEAGUE',
   'CORPORATE',
+  'APOLOGY',
+  'GET_WELL',
+  'CONDOLENCE',
   'OTHER',
 ];
 
-export type GreetingTone = 'WARM' | 'FUNNY' | 'FORMAL';
+export type GreetingTone =
+  | 'WARM'
+  | 'FUNNY'
+  | 'FORMAL'
+  | 'SUPPORTIVE'
+  | 'RESPECTFUL';
 
-export const GREETING_TONES: readonly GreetingTone[] = ['WARM', 'FUNNY', 'FORMAL'];
+export const GREETING_TONES: readonly GreetingTone[] = [
+  'WARM',
+  'FUNNY',
+  'FORMAL',
+  'SUPPORTIVE',
+  'RESPECTFUL',
+];
+
+const EVERYDAY_TONES: readonly GreetingTone[] = ['WARM', 'FUNNY', 'FORMAL'];
+
+/**
+ * Какие тоны показывать для повода — зеркало
+ * `backend/src/common/greeting-occasions.ts`.
+ *
+ * Это ПОДСКАЗКА интерфейсу, а не защита: настоящая проверка живёт на
+ * сервере и отвечает 400 (§3 компаньон-ТЗ — «валидироваться серверно,
+ * не просто скрываться в UI»). Здесь копия нужна затем, чтобы человек
+ * не выбирал шутливый тон для соболезнования и не получал отказ уже
+ * после заполнения всей формы. Перечислены только поводы, у которых
+ * набор отличается от обычного, — так расхождение с сервером заметнее,
+ * чем в полной таблице из 24 строк.
+ */
+const GREETING_TONE_OVERRIDES: Partial<
+  Record<GreetingOccasion, readonly GreetingTone[]>
+> = {
+  DEFENDERS_DAY: ['WARM', 'FORMAL', 'RESPECTFUL'],
+  BAPTISM: ['WARM', 'FORMAL', 'RESPECTFUL'],
+  APOLOGY: ['WARM', 'RESPECTFUL'],
+  GET_WELL: ['WARM', 'SUPPORTIVE'],
+  CONDOLENCE: ['RESPECTFUL', 'SUPPORTIVE'],
+};
+
+export function allowedTonesFor(
+  occasion: GreetingOccasion
+): readonly GreetingTone[] {
+  return GREETING_TONE_OVERRIDES[occasion] ?? EVERYDAY_TONES;
+}
+
+export function defaultToneFor(occasion: GreetingOccasion): GreetingTone {
+  return allowedTonesFor(occasion)[0];
+}
 
 /** 'grok' — референс(ы) + видео без лип-синка, голос закадровый;
  * 'hedra' — говорящий аватар, только PREMIUM (§7 ТЗ) — и сегодня

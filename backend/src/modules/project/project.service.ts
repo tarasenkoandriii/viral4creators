@@ -59,6 +59,11 @@ import { isRecordNotFoundError } from '../../common/prisma-errors';
 import { activeRowPhotoUrl, SketchableRow } from '../../common/active-image';
 import { PlanService } from '../plan/plan.service';
 import { resolveGreetingConfig } from './greeting-config';
+import {
+  allowedTonesFor,
+  defaultToneFor,
+  toneAllowedFor,
+} from '../../common/greeting-occasions';
 import { CreateGreetingBriefDto } from './dto/create-project-request.dto';
 
 /** Батч на один прогон крона — тот же порядок величины, что
@@ -223,6 +228,25 @@ export class ProjectService {
         'customOccasionText is required when occasion is OTHER',
       );
     }
+
+    /**
+     * Этап 2, фича №3: пара (повод, тон) проверяется и при СОЗДАНИИ, не
+     * только при правке брифа. Иначе шутливое соболезнование нельзя было
+     * бы получить правкой, но можно было бы завести сразу — дверь,
+     * закрытая с одной стороны, не закрыта.
+     *
+     * Умолчание тоже зависит от повода: жёсткое `'WARM'`, стоявшее здесь
+     * раньше, для CONDOLENCE недопустимо, и бриф-соболезнование без
+     * явного тона падал бы на первой же собственной правке.
+     */
+    const tone = brief.tone ?? defaultToneFor(brief.occasion);
+    if (!toneAllowedFor(brief.occasion, tone)) {
+      throw new BadRequestException(
+        `Тон ${tone} недопустим для повода ${brief.occasion}. Допустимые: ${allowedTonesFor(
+          brief.occasion,
+        ).join(', ')}.`,
+      );
+    }
     if (brief.brandManifestId) {
       await this.assertOwnBrandManifest(userId, brief.brandManifestId);
     }
@@ -255,7 +279,7 @@ export class ProjectService {
           customOccasionText: brief.customOccasionText?.trim() || null,
           recipientName: brief.recipientName.trim(),
           senderName: brief.senderName?.trim() || null,
-          tone: brief.tone ?? 'WARM',
+          tone,
           personalMessage: brief.personalMessage?.trim() || null,
           presenterProvider: resolved.presenterProvider,
           resolution: resolved.resolution,

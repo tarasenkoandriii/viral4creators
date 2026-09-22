@@ -9,13 +9,40 @@
  * `ProjectType` above for the risk of these two sources of truth diverging.
  */
 
+/**
+ * Этап 2 (фича №1 компаньон-ТЗ): семь поводов стали двадцатью четырьмя.
+ * Порядок в `GREETING_OCCASIONS` — это порядок выпадающего списка в
+ * визарде: сперва частые праздничные, затем семейные и рабочие, в конце
+ * чувствительные и «другой повод». Алфавит здесь был бы хуже: он
+ * поставил бы соболезнование между свадьбой и новосельем.
+ *
+ * Что каждый повод означает для промпта и какие тоны у него допустимы —
+ * в `common/greeting-occasions.ts`, единственном источнике правды.
+ */
 export type GreetingOccasion =
   | 'BIRTHDAY'
   | 'WEDDING'
   | 'ANNIVERSARY'
   | 'NEW_YEAR'
+  | 'CHRISTMAS'
   | 'GRADUATION'
+  | 'VALENTINES_DAY'
+  | 'WOMENS_DAY'
+  | 'MOTHERS_DAY'
+  | 'FATHERS_DAY'
+  | 'DEFENDERS_DAY'
+  | 'TEACHERS_DAY'
+  | 'FIRST_SCHOOL_DAY'
+  | 'NEW_BABY'
+  | 'BAPTISM'
+  | 'HOUSEWARMING'
+  | 'PROMOTION'
+  | 'RETIREMENT'
+  | 'FAREWELL_COLLEAGUE'
   | 'CORPORATE'
+  | 'APOLOGY'
+  | 'GET_WELL'
+  | 'CONDOLENCE'
   | 'OTHER';
 
 export const GREETING_OCCASIONS: readonly GreetingOccasion[] = [
@@ -23,17 +50,47 @@ export const GREETING_OCCASIONS: readonly GreetingOccasion[] = [
   'WEDDING',
   'ANNIVERSARY',
   'NEW_YEAR',
+  'CHRISTMAS',
   'GRADUATION',
+  'VALENTINES_DAY',
+  'WOMENS_DAY',
+  'MOTHERS_DAY',
+  'FATHERS_DAY',
+  'DEFENDERS_DAY',
+  'TEACHERS_DAY',
+  'FIRST_SCHOOL_DAY',
+  'NEW_BABY',
+  'BAPTISM',
+  'HOUSEWARMING',
+  'PROMOTION',
+  'RETIREMENT',
+  'FAREWELL_COLLEAGUE',
   'CORPORATE',
+  'APOLOGY',
+  'GET_WELL',
+  'CONDOLENCE',
   'OTHER',
 ];
 
-export type GreetingTone = 'WARM' | 'FUNNY' | 'FORMAL';
+/**
+ * Этап 2 (фича №3): два новых тона для чувствительных поводов. Не
+ * «ещё два варианта на выбор»: `SUPPORTIVE`/`RESPECTFUL` доступны
+ * только там, где их разрешает `greeting-occasions.ts`, а `FUNNY` там
+ * наоборот запрещён — и проверяется это на сервере, не в интерфейсе.
+ */
+export type GreetingTone =
+  | 'WARM'
+  | 'FUNNY'
+  | 'FORMAL'
+  | 'SUPPORTIVE'
+  | 'RESPECTFUL';
 
 export const GREETING_TONES: readonly GreetingTone[] = [
   'WARM',
   'FUNNY',
   'FORMAL',
+  'SUPPORTIVE',
+  'RESPECTFUL',
 ];
 
 /**

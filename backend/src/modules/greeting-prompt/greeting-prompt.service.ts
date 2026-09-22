@@ -36,6 +36,11 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PromptService } from '../prompt/prompt.service';
 import { GenerationPrompt, ModerationStatus } from '../../common/types/prompt.types';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
+import {
+  GREETING_OCCASION_SPECS,
+  GREETING_TONE_LABELS,
+  fallbackMessage,
+} from '../../common/greeting-occasions';
 import { SceneAsset } from '../../common/types/reference.types';
 
 const GREETING_PROMPT_CLAIM_TTL_MS = 3 * 60 * 1000;
@@ -43,21 +48,54 @@ const GREETING_PROMPT_CLAIM_TTL_MS = 3 * 60 * 1000;
 export const GREETING_PROMPT_IN_FLIGHT_MESSAGE =
   'Сценарий уже собирается — дождитесь ответа первого запроса.';
 
-const OCCASION_LABEL: Record<GreetingBriefSnapshot['occasion'], string> = {
-  BIRTHDAY: 'день рождения',
-  WEDDING: 'свадьба',
-  ANNIVERSARY: 'годовщина',
-  NEW_YEAR: 'Новый год',
-  GRADUATION: 'выпускной',
-  CORPORATE: 'корпоративное поздравление',
-  OTHER: 'особый повод',
-};
+/**
+ * Этап 2: подписи поводов и тонов больше не живут здесь двумя
+ * локальными map'ами. Повод теперь несёт не только название, но и
+ * замысел сообщения и настроение сцены, и всё это нужно ещё и админке,
+ * и визарду — поэтому единственный источник правды вынесен в
+ * `common/greeting-occasions.ts`.
+ */
+const OCCASION_LABEL = Object.fromEntries(
+  Object.entries(GREETING_OCCASION_SPECS).map(([k, v]) => [k, v.label]),
+) as Record<GreetingBriefSnapshot['occasion'], string>;
 
-const TONE_LABEL: Record<GreetingBriefSnapshot['tone'], string> = {
-  WARM: 'тёплый, душевный',
-  FUNNY: 'с юмором, но уважительно',
-  FORMAL: 'официальный, сдержанный',
-};
+const TONE_LABEL = GREETING_TONE_LABELS;
+
+/**
+ * Сборка запроса к Gemini на текст сообщения — чистая функция,
+ * экспортированная ради теста (тот же приём, что у
+ * `snapshotFromSession` в SharedVideoService: поведение, которое стоит
+ * закрепить, не должно требовать мока внешнего API).
+ *
+ * Мутационная проверка этапа 2 показала, почему это понадобилось:
+ * мутант, выбрасывающий `spec.intent` из запроса, не уронил ни одного
+ * теста — то есть главная идея фичи №1 («повод — не метка, а
+ * инструкция модели») не была закреплена ничем.
+ */
+export function buildScriptPrompt(
+  brief: GreetingBriefSnapshot,
+  occasionText: string,
+): string {
+  const spec = GREETING_OCCASION_SPECS[brief.occasion];
+  return [
+    // «Сообщение», а не «поздравление»: соболезнование и извинение —
+    // тоже сообщения этого типа проекта, и просить у модели
+    // «поздравление на повод «соболезнование»» значило бы толкать её
+    // ровно к той ошибке, которую мы предотвращаем.
+    `Напиши короткий текст для видео-сообщения на русском языке (2–4 предложения, не длиннее 45 секунд озвучки).`,
+    `Повод: ${occasionText}.`,
+    // Та самая промптовая ветка на каждый повод (находка 1.8 аудита):
+    // без неё «Соболезнование» отличалось бы от «Дня рождения» только
+    // подставленным словом.
+    spec.intent,
+    `Получатель: ${brief.recipientName}.`,
+    brief.senderName ? `От кого: ${brief.senderName}.` : '',
+    `Тон: ${GREETING_TONE_LABELS[brief.tone]}.`,
+    `Обращайся к получателю по имени, без вступлений вида "вот твой текст" — выдай ТОЛЬКО сам текст сообщения, без кавычек и пояснений.`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
 
 @Injectable()
 export class GreetingPromptService {
@@ -179,17 +217,7 @@ export class GreetingPromptService {
     brief: GreetingBriefSnapshot,
     occasionText: string,
   ): Promise<string> {
-    const toneText = TONE_LABEL[brief.tone];
-    const prompt = [
-      `Напиши короткий текст видео-поздравления на русском языке (2–4 предложения, не длиннее 45 секунд озвучки).`,
-      `Повод: ${occasionText}.`,
-      `Получатель: ${brief.recipientName}.`,
-      brief.senderName ? `От кого: ${brief.senderName}.` : '',
-      `Тон: ${toneText}.`,
-      `Обращайся к получателю по имени, без вступлений вида "вот твой текст" — выдай ТОЛЬКО сам текст поздравления, без кавычек и пояснений.`,
-    ]
-      .filter(Boolean)
-      .join('\n');
+    const prompt = buildScriptPrompt(brief, occasionText);
 
     const response = await this.genai.models.generateContent({
       model: GEMINI_MODEL,
@@ -209,7 +237,7 @@ export class GreetingPromptService {
       this.logger.warn(
         `сессия ${sessionId}: Gemini не вернул текст поздравления, использую нейтральный шаблон`,
       );
-      return `${brief.recipientName}, поздравляем с ${occasionText === 'особый повод' ? 'этим особым днём' : occasionText}! Пусть всё будет хорошо.`;
+      return fallbackMessage(brief.occasion, brief.recipientName, occasionText);
     }
     return text;
   }
@@ -243,10 +271,14 @@ export class GreetingPromptService {
       const caption = (img.description || img.label).trim();
       return `${tag} — ${caption}`;
     });
+    const spec = GREETING_OCCASION_SPECS[brief.occasion];
     return [
-      `A short vertical video greeting for ${occasionText} addressed to ${brief.recipientName}.`,
-      `A warm, camera-facing presenter speaks directly to the viewer, natural expression, ${toneText === TONE_LABEL.FUNNY ? 'playful and lighthearted' : toneText === TONE_LABEL.FORMAL ? 'composed and professional' : 'warm and sincere'} mood.`,
-      `Soft, well-lit setting appropriate for a personal video message; no on-screen text.`,
+      // `message`, не `greeting`: см. тот же довод в draftPersonalMessage.
+      `A short vertical video message for ${occasionText} addressed to ${brief.recipientName}.`,
+      `A camera-facing presenter speaks directly to the viewer, natural expression, ${toneText === TONE_LABEL.FUNNY ? 'playful and lighthearted' : toneText === TONE_LABEL.FORMAL ? 'composed and professional' : toneText === TONE_LABEL.RESPECTFUL ? 'quiet and respectful' : toneText === TONE_LABEL.SUPPORTIVE ? 'gentle and reassuring' : 'warm and sincere'} mood.`,
+      // Декорации приходят от повода, а не от тона: у соболезнования
+      // нет праздничного варианта ни при каком тоне.
+      `${spec.sceneMood}; no on-screen text.`,
       referenceLines.length
         ? `Use these visual references where they naturally fit the scene: ${referenceLines.join('; ')}.`
         : '',
