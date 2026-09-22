@@ -194,7 +194,12 @@ export type AiOperation =
   // который несёт КАЖДЫЙ ролик-поздравление grok-пути, и растворять его
   // в общей строке «ИИ-скетч» значило бы спрятать себестоимость целого
   // типа проекта.
-  | 'greeting-frame';
+  | 'greeting-frame'
+  // Три варианта сеттинга перед кадром (фича №36) — дешёвый ТЕКСТОВЫЙ
+  // вызов, в отличие от 'greeting-frame' рядом. Отдельно именно
+  // поэтому: смешав их в одной строке, нельзя ответить на вопрос
+  // «сколько стоит кадр», ради которого обе строки и заведены.
+  | 'greeting-setting';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -231,6 +236,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'virtual-studio-voice': 'Виртуальная студия: озвучка',
   'virtual-studio-analysis': 'Виртуальная студия: ИИ-анализ',
   'greeting-frame': 'Референс-кадр поздравления',
+  'greeting-setting': 'Варианты сеттинга для кадра',
 };
 
 export interface ModelRate {

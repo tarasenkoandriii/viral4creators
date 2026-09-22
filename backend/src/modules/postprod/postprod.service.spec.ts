@@ -1,5 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
+// Тот же приём, что в `product-analog.service.spec.ts`/
+// `greeting-reference.generate.spec.ts`: `postprod.service.ts` тянет
+// `SessionService`, а та РАНТАЙМОМ импортирует `Prisma`/`WorkflowKind`
+// из `@prisma/client`. Сгенерированного клиента на стенде без
+// `prisma generate` нет, и весь набор падал на загрузке модуля, так и
+// не дойдя ни до одной проверки. Здесь `Prisma` не используется вовсе —
+// подменяем минимумом, а не тащим генерацию клиента в юнит-тесты.
+jest.mock('@prisma/client', () => ({
+  Prisma: { DbNull: Symbol.for('Prisma.DbNull') },
+  WorkflowKind: { SINGLE: 'SINGLE', LINE: 'LINE' },
+}));
 
 import {
   POSTPROD_DEADLINE_MS,
@@ -318,6 +329,76 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
         expect(ttsResolver.resolveByKey).not.toHaveBeenCalled();
         expect(tts.synthesize).toHaveBeenCalled();
         expect(r.voiceStatus).toBe('synthesized');
+      });
+    });
+
+    describe('голос отправителя — фича №34', () => {
+      const senderVoice = {
+        userVoiceId: 'uv1',
+        resembleVoiceId: 'clone-42',
+        label: 'Мой голос',
+      };
+
+      it('выбранный клон перебивает голос из манифеста и тянет за собой Resemble', async () => {
+        const { svc, tts, ttsResolver } = build({
+          session: session({
+            brandManifestSnapshot: {
+              voiceMode: 'voiceover',
+              ttsVoiceId: 'brand-1',
+              ttsProvider: 'elevenlabs',
+              ttsModel: 'eleven_multilingual_v2',
+            },
+            greetingBriefSnapshot: { senderVoice },
+          }),
+          ttsProviderKey: 'elevenlabs',
+        });
+        await svc.start('s1', VIDEO);
+        expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('resemble');
+        expect(tts.synthesize).toHaveBeenCalledWith(
+          expect.objectContaining({ voiceId: 'clone-42', model: null }),
+        );
+      });
+
+      it('манифеста нет вовсе — бытовое поздравление всё равно озвучивается своим голосом', async () => {
+        // Ровно тот случай, ради которого фича и делалась: манифест
+        // приходит только с CORPORATE-брифом (§5.4), а голос нужен
+        // тем, у кого бренда нет.
+        const { svc, tts, ttsResolver } = build({
+          session: session({
+            brandManifestSnapshot: undefined,
+            greetingBriefSnapshot: { senderVoice },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('resemble');
+        expect(tts.synthesize).toHaveBeenCalledWith(
+          expect.objectContaining({ voiceId: 'clone-42' }),
+        );
+      });
+
+      it('голос не выбран — снимок бренда читается ровно как раньше', async () => {
+        // Сторож регрессии: ветка №34 не должна ничего менять для
+        // сессий без выбранного голоса, включая товарные (у них
+        // greetingBriefSnapshot нет вовсе).
+        const { svc, tts, ttsResolver } = build({
+          session: session({
+            brandManifestSnapshot: {
+              voiceMode: 'voiceover',
+              ttsVoiceId: 'brand-1',
+              ttsProvider: 'elevenlabs',
+              ttsModel: 'eleven_multilingual_v2',
+            },
+            greetingBriefSnapshot: { senderVoice: null },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('elevenlabs');
+        expect(tts.synthesize).toHaveBeenCalledWith(
+          expect.objectContaining({
+            voiceId: 'brand-1',
+            model: 'eleven_multilingual_v2',
+          }),
+        );
       });
     });
 

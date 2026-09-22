@@ -68,3 +68,15 @@ export class GreetingReferenceUpdateRequestDto {
   @Length(1, 2000)
   description?: string | null;
 }
+
+/**
+ * Рисование кадра (фича №6) с необязательным выбранным сеттингом
+ * (фича №36). Пустое тело — кадр по сцене из каталога поводов, то есть
+ * поведение до №36.
+ */
+export class GreetingFrameRequestDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  setting?: string;
+}

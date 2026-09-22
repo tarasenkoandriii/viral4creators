@@ -207,6 +207,18 @@ export interface GreetingReferenceImageView {
   createdAt: string;
 }
 
+/**
+ * Голос отправителя, выбранный для поздравления (фича №34) —
+ * GET/PATCH /sessions/:id/greeting-voice. Зеркалит backend
+ * `GreetingSenderVoice`: `resembleVoiceId` нужен для сверки с
+ * собственным списком клонов, `label` — чтобы показать выбор.
+ */
+export interface GreetingSenderVoice {
+  userVoiceId: string;
+  resembleVoiceId: string;
+  label: string;
+}
+
 export interface ProductAnalogView {
   id: string;
   title: string;

@@ -34,7 +34,10 @@ import { SessionService } from '../../common/session.service';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PromptService } from '../prompt/prompt.service';
-import { GenerationPrompt, ModerationStatus } from '../../common/types/prompt.types';
+import {
+  GenerationPrompt,
+  ModerationStatus,
+} from '../../common/types/prompt.types';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 import {
   celebrityLikenessMessage,
@@ -46,6 +49,11 @@ import {
   fallbackMessage,
 } from '../../common/greeting-occasions';
 import { SceneAsset } from '../../common/types/reference.types';
+import {
+  VoiceMode,
+  normalizeVoiceMode,
+  usesOwnVoice,
+} from '../../common/voice-mode';
 
 const GREETING_PROMPT_CLAIM_TTL_MS = 3 * 60 * 1000;
 
@@ -177,11 +185,19 @@ export class GreetingPromptService {
         ? brief.personalMessage.trim()
         : await this.draftPersonalMessage(sessionId, brief, occasionText);
 
-      const sceneDescription = this.buildSceneDescription(
+      // Режим озвучки — тот же, что прочитает постобработка
+      // (`PostProductionService.planWork`): у поздравления снимка
+      // бренда чаще всего нет вовсе, и `normalizeVoiceMode`
+      // читает отсутствие как 'voiceover' — то есть реплику
+      // ПРОИЗНЕСЁМ МЫ. Сцена обязана знать об этом, иначе модель
+      // проговорит ту же реплику своим голосом, а наша дорожка ляжет
+      // поверх (см. `buildSceneDescription`).
+      const sceneDescription = buildSceneDescription(
         brief,
         occasionText,
         speech,
         session.greetingReferenceImages ?? [],
+        normalizeVoiceMode(session.brandManifestSnapshot?.voiceMode),
       );
 
       // Найдено при аудите пайплайна GREETING_VIDEO (находка №2): раньше
@@ -206,7 +222,9 @@ export class GreetingPromptService {
         moderationStatus: flagged
           ? ModerationStatus.FLAGGED
           : ModerationStatus.APPROVED,
-        ...(moderation.flags.length ? { moderationFlags: moderation.flags } : {}),
+        ...(moderation.flags.length
+          ? { moderationFlags: moderation.flags }
+          : {}),
         // GREETING_VIDEO не проходит через отдельный экран одобрения
         // промпта (`PromptService.approvePrompt`, SINGLE/LINE) — чистый
         // текст (без флагов) считается одобренным сразу, поэтому
@@ -264,50 +282,84 @@ export class GreetingPromptService {
     }
     return text;
   }
+}
 
-  /**
-   * Описание сцены для видео-генерации (§5.3): для 'grok' это `prompt`
-   * text-to-video или reference-to-video (нет сгенерированного
-   * референсного кадра — см. аудит и GreetingVideoService doc-comment;
-   * вместо него — загруженные пользователем `referenceImages`, доп.
-   * запрос к ТЗ); для 'hedra' это `promptOverride` мимики говорящего
-   * аватара.
-   *
-   * `referenceImages` присутствуют → каждому вставляется метка
-   * `<IMAGE_n>` РЯДОМ С УПОМИНАНИЕМ в тексте, как того требует Grok
-   * reference-to-video (docs.x.ai, `GrokVideoService`'s doc-comment:
-   * «модель ожидает метки <IMAGE_1>, <IMAGE_2> … прямо в тексте
-   * промпта», а не отдельным списком-приложением, как у Veo). Честно
-   * говоря — приближение, не точное следование: подпись берётся из
-   * `label`/`description`, заданных пользователем при загрузке, не
-   * из анализа самого изображения.
-   */
-  private buildSceneDescription(
-    brief: GreetingBriefSnapshot,
-    occasionText: string,
-    speech: string,
-    referenceImages: SceneAsset[],
-  ): string {
-    const toneText = TONE_LABEL[brief.tone];
-    const referenceLines = referenceImages.map((img, i) => {
-      const tag = `<IMAGE_${i + 1}>`;
-      const caption = (img.description || img.label).trim();
-      return `${tag} — ${caption}`;
-    });
-    const spec = GREETING_OCCASION_SPECS[brief.occasion];
-    return [
-      // `message`, не `greeting`: см. тот же довод в draftPersonalMessage.
-      `A short vertical video message for ${occasionText} addressed to ${brief.recipientName}.`,
-      `A camera-facing presenter speaks directly to the viewer, natural expression, ${toneText === TONE_LABEL.FUNNY ? 'playful and lighthearted' : toneText === TONE_LABEL.FORMAL ? 'composed and professional' : toneText === TONE_LABEL.RESPECTFUL ? 'quiet and respectful' : toneText === TONE_LABEL.SUPPORTIVE ? 'gentle and reassuring' : 'warm and sincere'} mood.`,
-      // Декорации приходят от повода, а не от тона: у соболезнования
-      // нет праздничного варианта ни при каком тоне.
-      `${spec.sceneMood}; no on-screen text.`,
-      referenceLines.length
-        ? `Use these visual references where they naturally fit the scene: ${referenceLines.join('; ')}.`
-        : '',
-      `Spoken line (for reference, not to be rendered as on-screen text): "${speech.replace(/"/g, "'")}"`,
-    ]
-      .filter(Boolean)
-      .join(' ');
-  }
+/**
+ * Описание сцены для видео-генерации (§5.3): для 'grok' это `prompt`
+ * text-to-video или reference-to-video (нет сгенерированного
+ * референсного кадра — см. аудит и GreetingVideoService doc-comment;
+ * вместо него — загруженные пользователем `referenceImages`, доп.
+ * запрос к ТЗ); для 'hedra' это `promptOverride` мимики говорящего
+ * аватара.
+ *
+ * `referenceImages` присутствуют → каждому вставляется метка
+ * `<IMAGE_n>` РЯДОМ С УПОМИНАНИЕМ в тексте, как того требует Grok
+ * reference-to-video (docs.x.ai, `GrokVideoService`'s doc-comment:
+ * «модель ожидает метки <IMAGE_1>, <IMAGE_2> … прямо в тексте
+ * промпта», а не отдельным списком-приложением, как у Veo). Честно
+ * говоря — приближение, не точное следование: подпись берётся из
+ * `label`/`description`, заданных пользователем при загрузке, не
+ * из анализа самого изображения.
+ */
+export function buildSceneDescription(
+  brief: GreetingBriefSnapshot,
+  occasionText: string,
+  speech: string,
+  referenceImages: SceneAsset[],
+  voiceMode: VoiceMode,
+): string {
+  const toneText = TONE_LABEL[brief.tone];
+  const referenceLines = referenceImages.map((img, i) => {
+    const tag = `<IMAGE_${i + 1}>`;
+    const caption = (img.description || img.label).trim();
+    return `${tag} — ${caption}`;
+  });
+  const spec = GREETING_OCCASION_SPECS[brief.occasion];
+  const mood =
+    toneText === TONE_LABEL.FUNNY
+      ? 'playful and lighthearted'
+      : toneText === TONE_LABEL.FORMAL
+        ? 'composed and professional'
+        : toneText === TONE_LABEL.RESPECTFUL
+          ? 'quiet and respectful'
+          : toneText === TONE_LABEL.SUPPORTIVE
+            ? 'gentle and reassuring'
+            : 'warm and sincere';
+  // Реплику озвучиваем мы — значит на экране её НЕ произносят.
+  //
+  // До этой правки сцена всегда просила «presenter speaks directly to
+  // the viewer», а постобработка всегда (режим по умолчанию —
+  // 'voiceover') подмешивала СВОЮ дорожку с тем же текстом поверх
+  // приглушённого оригинала (`common/postprod.ts`, `amix`). Слышно было
+  // обе: модель читала поздравление своим голосом, мы — своим, с
+  // небольшим сдвигом. Товарные ролики от этого избавлены давно — там
+  // ту же мысль в бриф кладёт `voiceModeBriefText`
+  // (`PromptService.generatePrompt`), а `GreetingPromptService` её
+  // просто не звала.
+  //
+  // Дословно `voiceModeBriefText` здесь не подходит: она запрещает
+  // говорящие головы вообще и предлагает нести смысл экранным текстом —
+  // а у поздравления ведущий в кадре и есть весь смысл, и экранный
+  // текст запрещён соседней строкой этого же промпта. Поэтому
+  // формулировка своя: ведущий в кадре остаётся, произнесение — нет.
+  const silent = usesOwnVoice(voiceMode);
+  return [
+    // `message`, не `greeting`: см. тот же довод в draftPersonalMessage.
+    `A short vertical video message for ${occasionText} addressed to ${brief.recipientName}.`,
+    silent
+      ? `A camera-facing presenter looks straight at the viewer with a ${mood} mood, smiling, gesturing and reacting — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.`
+      : `A camera-facing presenter speaks directly to the viewer, natural expression, ${mood} mood.`,
+    // Декорации приходят от повода, а не от тона: у соболезнования
+    // нет праздничного варианта ни при каком тоне.
+    `${spec.sceneMood}; no on-screen text.`,
+    silent
+      ? 'Audio: ambience and music only — the greeting itself is carried by a separate voice track added afterwards.'
+      : '',
+    referenceLines.length
+      ? `Use these visual references where they naturally fit the scene: ${referenceLines.join('; ')}.`
+      : '',
+    `Spoken line (for reference, not to be rendered as on-screen text): "${speech.replace(/"/g, "'")}"`,
+  ]
+    .filter(Boolean)
+    .join(' ');
 }

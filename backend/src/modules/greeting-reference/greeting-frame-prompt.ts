@@ -50,6 +50,8 @@ export function buildGreetingFramePrompt(input: {
   customOccasionText: string | null;
   tone: GreetingTone;
   presenter: GreetingPresenterProvider;
+  /** Выбранный сеттинг (фича №36). Пусто — сцена из каталога поводов. */
+  setting?: string | null;
 }): string {
   const spec = GREETING_OCCASION_SPECS[input.occasion];
   const occasionText =
@@ -61,7 +63,11 @@ export function buildGreetingFramePrompt(input: {
     'Generate a single photorealistic still frame that will be used as the',
     'opening reference frame of a short greeting video.',
     `Occasion: ${occasionText}.`,
-    `Scene: ${spec.sceneMood}.`,
+    // Выбранный человеком сеттинг ЗАМЕЩАЕТ общую сцену повода, а не
+    // дописывается к ней (фича №36): две сцены в одном промпте —
+    // «bright festive decor» и «snowy balcony at night» — модель
+    // сводит в кашу, а не выбирает лучшую.
+    `Scene: ${input.setting?.trim() || spec.sceneMood}.`,
     `Mood of the person on camera: ${TONE_LOOK[input.tone]}.`,
     PRESENTER_LOOK[input.presenter],
     'Vertical or horizontal framing is acceptable; keep the subject centred',

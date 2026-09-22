@@ -27,8 +27,10 @@ import {
   ImageIcon,
   Pencil,
   RefreshCw,
+  Mic,
   Sparkles,
   Trash2,
+  Wand2,
 } from 'lucide-react';
 import {
   Alert,
@@ -56,6 +58,9 @@ import {
   deleteGreetingReference,
   generateGreetingPrompt,
   generateGreetingReferenceFrame,
+  getGreetingSenderVoice,
+  selectGreetingSenderVoice,
+  suggestGreetingSceneSettings,
   getGreetingBrief,
   getGreetingVideoStatus,
   listGreetingReferences,
@@ -70,6 +75,7 @@ import { SketchSlotActions } from '../sketch/SketchSlotActions';
 import { revokeObjectUrl } from '../../lib/object-url';
 import { LoadError, ScreenHeader } from './shared';
 import { GreetingDeliveryPanel } from './GreetingDeliveryPanel';
+import { MyVoicesSection } from '../brand/VoicePicker';
 import {
   GREETING_OCCASIONS,
   GREETING_RESOLUTIONS,
@@ -83,6 +89,7 @@ import type {
   GreetingPresenterProvider,
   GreetingReferenceImageView,
   GreetingResolution,
+  GreetingSenderVoice,
   GreetingTone,
 } from '../../types/project';
 import type { GeneratedVideo, GenerationPrompt, PlanId } from '../../types';
@@ -202,6 +209,8 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
           onGenerated={setPrompt}
         />
       )}
+
+      {sessionId && prompt && <SenderVoiceStep sessionId={sessionId} />}
 
       {sessionId && prompt && (
         <VideoStep
@@ -507,6 +516,12 @@ function ReferencesStep({
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  /* Фича №36: три варианта сеттинга. `null` — ещё не спрашивали,
+     `[]` — спросили, но модель не дала ничего (бэкенд глотает свои
+     ошибки и отдаёт пустой список); во втором случае показываем
+     подсказку, а не ошибку: кадр рисуется и без сеттинга. */
+  const [settings, setSettings] = useState<string[] | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState(false);
 
   const load = useCallback(() => {
     listGreetingReferences(sessionId)
@@ -530,6 +545,23 @@ function ReferencesStep({
     }
   };
 
+  const suggest = async () => {
+    setSettingsBusy(true);
+    setError(null);
+    try {
+      setSettings(await suggestGreetingSceneSettings(sessionId));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  const canDraw =
+    !disabled &&
+    images !== null &&
+    images.length < MAX_GREETING_REFERENCE_IMAGES;
+
   return (
     <Card className="p-5">
       <CardHeader
@@ -537,9 +569,7 @@ function ReferencesStep({
         title={w.referencesHeading}
         hint={w.referencesHint}
         action={
-          !disabled &&
-          images &&
-          images.length < MAX_GREETING_REFERENCE_IMAGES && (
+          canDraw && (
             <div className="flex flex-wrap gap-2">
               {/* Фича №6: нарисовать кадр по брифу. Рядом с загрузкой, а
                   не вместо неё — своё фото остаётся более точным
@@ -557,6 +587,20 @@ function ReferencesStep({
                 }
               >
                 {w.generateReference}
+              </Button>
+              {/* Фича №36: дешёвый текстовый вызов перед дорогим
+                  рисованием. Отдельной кнопкой, а не автоматически при
+                  открытии шага, — иначе платный вызов уходил бы у
+                  каждого, кто просто пролистал шаг. */}
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<Wand2 size={14} />}
+                loading={settingsBusy}
+                disabled={saving || settingsBusy}
+                onClick={() => void suggest()}
+              >
+                {w.suggestSettings}
               </Button>
               <Button
                 size="sm"
@@ -583,6 +627,36 @@ function ReferencesStep({
         </div>
       ) : (
         <>
+          {settings !== null && canDraw && (
+            <div className="mt-3 rounded-xl border border-silver-200/70 p-3 dark:border-silver-800">
+              <p className="text-xs text-silver-400">{w.settingsHint}</p>
+              {settings.length === 0 ? (
+                <p className="mt-2 text-xs text-silver-400">
+                  {w.settingsEmpty}
+                </p>
+              ) : (
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {settings.map((setting) => (
+                    <li key={setting}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={saving || settingsBusy}
+                        onClick={() =>
+                          void apply(() =>
+                            generateGreetingReferenceFrame(sessionId, setting)
+                          )
+                        }
+                      >
+                        {setting}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {adding && !disabled && (
             <ReferenceUploader
               sessionId={sessionId}
@@ -989,6 +1063,92 @@ function ScriptStep({
           </Button>
         </div>
       )}
+    </Card>
+  );
+}
+
+// ── Голос отправителя (фича №34) ─────────────────────────────────────────
+
+/**
+ * Чьим голосом прочитать уже написанный текст.
+ *
+ * Стоит после сценария и до рендера, потому что смысл у него ровно
+ * такой: текст есть — осталось решить, чей это голос. Отдельной
+ * ступенью в шагомере не становится: шаг можно пропустить целиком, и
+ * ролик получится, просто с голосом по умолчанию.
+ *
+ * Список клонов, запись образца, согласие и лимит — `MyVoicesSection`
+ * из редактора бренда: второй реализации у этой механики быть не
+ * должно.
+ */
+function SenderVoiceStep({ sessionId }: { sessionId: string }) {
+  const { dict } = useI18n();
+  const w = dict.greetingVideoWizard;
+  const [picked, setPicked] = useState<GreetingSenderVoice | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getGreetingSenderVoice(sessionId)
+      .then((v) => alive && setPicked(v))
+      .catch(() => alive && setPicked(null));
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
+
+  const choose = async (resembleVoiceId: string | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setPicked(await selectGreetingSenderVoice(sessionId, resembleVoiceId));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="p-5">
+      <CardHeader
+        icon={<Mic size={18} />}
+        title={w.senderVoiceHeading}
+        hint={w.senderVoiceHint}
+        action={
+          picked && (
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={busy}
+              onClick={() => void choose(null)}
+            >
+              {w.senderVoiceClear}
+            </Button>
+          )
+        }
+      />
+
+      {error && (
+        <Alert tone="error" onDismiss={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      <p className="text-xs text-silver-400">
+        {picked
+          ? w.senderVoicePicked.replace('{label}', picked.label)
+          : w.senderVoiceDefault}
+      </p>
+
+      <div className="mt-3">
+        <MyVoicesSection
+          onPick={(voiceId) => void choose(voiceId)}
+          disabled={busy}
+          pickedVoiceId={picked?.resembleVoiceId ?? null}
+        />
+      </div>
     </Card>
   );
 }

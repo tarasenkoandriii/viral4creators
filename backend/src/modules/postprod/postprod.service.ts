@@ -50,7 +50,10 @@ import {
   heuristicCueTimings,
   speakableText,
 } from '../../common/voiceover-script';
-import { detectLanguage, resolveVoiceoverLanguage } from '../../common/voiceover';
+import {
+  detectLanguage,
+  resolveVoiceoverLanguage,
+} from '../../common/voiceover';
 import {
   buildSrt,
   normalizeSubtitlesMode,
@@ -1038,6 +1041,7 @@ export class PostProductionService {
     video: GeneratedVideo,
   ): Work {
     const brand = session?.brandManifestSnapshot;
+    const senderVoice = session?.greetingBriefSnapshot?.senderVoice ?? null;
     const voiceMode = normalizeVoiceMode(brand?.voiceMode);
     const subtitlesMode = normalizeSubtitlesMode(brand?.subtitlesMode);
     const subtitleTheme = normalizeSubtitleTheme(brand?.subtitleTheme);
@@ -1073,9 +1077,28 @@ export class PostProductionService {
       speechStartSeconds: speech ? firstCueSeconds(script) : 0,
       totalDurationSeconds:
         video.chainTargetDurationSeconds ?? VIDEO_DURATION_SECONDS,
-      voiceId: brand?.ttsVoiceId ?? null,
-      ttsModel: brand?.ttsModel ?? null,
-      ttsProvider: brand?.ttsProvider ?? null,
+      // Фича №34: голос отправителя, выбранный для ЭТОЙ сессии
+      // (`GreetingVoiceService`), перебивает голос из манифеста.
+      //
+      // Второе — и единственное второе — место в этом файле, где план
+      // работ смотрит на тип сессии; первое (язык озвучки, ниже)
+      // заведено по тем же причинам. Ветка здесь, а не в снимке
+      // бренда, потому что бренд — стиль СЕРИИ и заморожен ради того,
+      // чтобы задним числом не менять уже отснятое, а у бытового
+      // поздравления манифеста нет вовсе (см. доккомментарий
+      // `GreetingBriefSnapshot.senderVoice`). Товарная сессия
+      // `greetingBriefSnapshot` не имеет — для неё всё читается ровно
+      // как раньше.
+      //
+      // Клон всегда выпущен Resemble, каким бы провайдером ни был
+      // активен стенд, — ту же безусловную пометку делает
+      // `applySnapshotEdit` (шестой аудит, Е-4.1), и по ней
+      // `synthesize` зовёт именно Resemble (`resolveByKey`).
+      // `ttsModel` у клона своего не бывает — модель выбирает
+      // провайдер.
+      voiceId: senderVoice?.resembleVoiceId ?? brand?.ttsVoiceId ?? null,
+      ttsModel: senderVoice ? null : (brand?.ttsModel ?? null),
+      ttsProvider: senderVoice ? 'resemble' : (brand?.ttsProvider ?? null),
       // Найдено при аудите пайплайна GREETING_VIDEO: раньше здесь стоял
       // голый `null` для любой сессии без `productInformation` — не
       // "нейтральное" значение, а обход собственного дефолта

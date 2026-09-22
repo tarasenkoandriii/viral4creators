@@ -19,6 +19,7 @@ import type { GeneratedVideo, GenerationPrompt, Session } from '../types';
 import type {
   GreetingBriefView,
   GreetingReferenceImageView,
+  GreetingSenderVoice,
   UpdateGreetingBriefInput,
 } from '../types/project';
 import type { ItemSessionSummary } from './projects-api';
@@ -123,14 +124,35 @@ export async function listGreetingReferences(
  * и дальше живёт наравне с ними (удаление, подпись, скетч).
  */
 export async function generateGreetingReferenceFrame(
-  sessionId: string
+  sessionId: string,
+  setting?: string | null
 ): Promise<GreetingReferenceImageView[]> {
   return unwrap(
     await api.post<GreetingReferenceImageView[]>(
       `/sessions/${sessionId}/greeting-references/generate`,
-      {}
+      setting ? { setting } : {}
     ),
     'greeting-references'
+  );
+}
+
+/**
+ * Три варианта сеттинга под повод сессии — фича №36.
+ *
+ * POST, а не GET: вызов платный (см. доккомментарий роута на бэкенде).
+ * Бэкенд возвращает `[]` при любой ошибке модели, поэтому пустой ответ
+ * здесь — норма, а не повод показывать ошибку: кадр рисуется и без
+ * сеттинга.
+ */
+export async function suggestGreetingSceneSettings(
+  sessionId: string
+): Promise<string[]> {
+  return unwrap(
+    await api.post<string[]>(
+      `/sessions/${sessionId}/greeting-references/settings`,
+      {}
+    ),
+    'greeting-reference-settings'
   );
 }
 
@@ -194,6 +216,37 @@ export async function deleteGreetingReference(
 }
 
 export const MAX_GREETING_REFERENCE_IMAGES = 7;
+
+// ── Голос отправителя (фича №34) ───────────────────────────────────────
+
+/**
+ * Выбранный для ЭТОЙ сессии клон отправителя — `null`, если не выбран
+ * (озвучит голос по умолчанию). Само клонирование идёт прежними
+ * ручками `/voices/*` (`projects-api.ts`), здесь только выбор.
+ */
+export async function getGreetingSenderVoice(
+  sessionId: string
+): Promise<GreetingSenderVoice | null> {
+  return unwrap(
+    await api.get<GreetingSenderVoice | null>(
+      `/sessions/${sessionId}/greeting-voice`
+    ),
+    'greeting-voice'
+  );
+}
+
+export async function selectGreetingSenderVoice(
+  sessionId: string,
+  resembleVoiceId: string | null
+): Promise<GreetingSenderVoice | null> {
+  return unwrap(
+    await api.patch<GreetingSenderVoice | null>(
+      `/sessions/${sessionId}/greeting-voice`,
+      { resembleVoiceId }
+    ),
+    'greeting-voice'
+  );
+}
 
 // ── Сценарий + видео (§5.1–§5.3 ТЗ) ─────────────────────────────────────
 

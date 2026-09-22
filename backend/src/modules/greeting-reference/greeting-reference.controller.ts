@@ -2,6 +2,7 @@
  *   GET    /sessions/:id/greeting-references             uploaded reference images
  *   POST   /sessions/:id/greeting-references/upload-url  presigned PUT (mints imageId)
  *   POST   /sessions/:id/greeting-references/confirm     { pathname, label, description? }
+ *   POST   /sessions/:id/greeting-references/settings    три варианта сеттинга (фича №36)
  *   POST   /sessions/:id/greeting-references/generate    нарисовать кадр по брифу (фича №6)
  *   PATCH  /sessions/:id/greeting-references/:imageId    label / description
  *   DELETE /sessions/:id/greeting-references/:imageId
@@ -23,6 +24,7 @@ import {
 import { TelegramIdentifiedRequest } from '../telegram-auth/telegram-identity.middleware';
 import { GreetingReferenceService } from './greeting-reference.service';
 import {
+  GreetingFrameRequestDto,
   GreetingReferenceConfirmRequestDto,
   GreetingReferenceUpdateRequestDto,
   GreetingReferenceUploadUrlRequestDto,
@@ -53,8 +55,29 @@ export class GreetingReferenceController {
   generate(
     @Req() req: TelegramIdentifiedRequest,
     @Param('sessionId') sessionId: string,
+    @Body() dto: GreetingFrameRequestDto,
   ): Promise<GreetingReferenceImageView[]> {
-    return this.service.generateFrame(sessionId, req.telegramUserId ?? null);
+    return this.service.generateFrame(
+      sessionId,
+      req.telegramUserId ?? null,
+      dto.setting ?? null,
+    );
+  }
+
+  /**
+   * Три варианта сеттинга под повод (фича №36) — дешёвый текстовый
+   * вызов перед дорогим рисованием.
+   *
+   * POST, а не GET, хотя ничего не меняет: вызов платный и
+   * неидемпотентный по расходу. GET здесь означал бы, что его можно
+   * кешировать и дёргать повторно бесплатно, — а нельзя.
+   */
+  @Post('settings')
+  settings(
+    @Req() req: TelegramIdentifiedRequest,
+    @Param('sessionId') sessionId: string,
+  ): Promise<string[]> {
+    return this.service.suggestSettings(sessionId, req.telegramUserId ?? null);
   }
 
   @Post('upload-url')

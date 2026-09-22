@@ -19,7 +19,10 @@ jest.mock('../ai-usage/ai-usage.service', () => ({ AiUsageService: class {} }));
 jest.mock('../prompt/prompt.service', () => ({ PromptService: class {} }));
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
-import { buildScriptPrompt } from './greeting-prompt.service';
+import {
+  buildSceneDescription,
+  buildScriptPrompt,
+} from './greeting-prompt.service';
 import { GREETING_OCCASIONS } from '../../common/types/greeting.types';
 import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
 import type { GreetingBriefSnapshot } from '../../common/types/greeting.types';
@@ -90,5 +93,99 @@ describe('buildScriptPrompt', () => {
   it('без отправителя строка «От кого» не появляется пустой', () => {
     const prompt = buildScriptPrompt(brief({ senderName: null }), 'повод');
     expect(prompt).not.toContain('От кого');
+  });
+});
+
+describe('buildSceneDescription — кто произносит реплику', () => {
+  const speech = 'Марина, с днём рождения!';
+
+  it('озвучиваем мы — сцена прямо запрещает произносить реплику в кадре', () => {
+    // Иначе модель прочитает поздравление своим голосом, а наша
+    // дорожка ляжет поверх приглушённого оригинала (`amix` в
+    // `common/postprod.ts`) — слышно будет обе.
+    const scene = buildSceneDescription(
+      brief(),
+      'день рождения',
+      speech,
+      [],
+      'voiceover',
+    );
+    expect(scene).toMatch(/does NOT say the line out loud/);
+    expect(scene).toMatch(/no audible speech/);
+    // И звуковая дорожка модели должна остаться атмосферой, а не речью:
+    // без этой строки Grok охотно добавляет реплику «за кадром».
+    expect(scene).toMatch(/Audio: ambience and music only/);
+    expect(scene).not.toMatch(/presenter speaks directly/);
+  });
+
+  it('дубляж — то же самое: звук всё равно наш', () => {
+    const scene = buildSceneDescription(
+      brief(),
+      'день рождения',
+      speech,
+      [],
+      'dub',
+    );
+    expect(scene).toMatch(/does NOT say the line out loud/);
+  });
+
+  it('говорит модель (режим veo) — прежняя формулировка сохранена', () => {
+    const scene = buildSceneDescription(
+      brief(),
+      'день рождения',
+      speech,
+      [],
+      'veo',
+    );
+    expect(scene).toMatch(/presenter speaks directly to the viewer/);
+    expect(scene).not.toMatch(/does NOT say the line out loud/);
+    expect(scene).not.toMatch(/Audio: ambience and music only/);
+  });
+
+  it('ведущий остаётся в кадре и в молчаливом режиме — это не закадровый ролик', () => {
+    // `voiceModeBriefText` для товарных роликов запрещает говорящие
+    // головы вообще; у поздравления ведущий в кадре и есть продукт.
+    const scene = buildSceneDescription(
+      brief(),
+      'день рождения',
+      speech,
+      [],
+      'voiceover',
+    );
+    expect(scene).toMatch(/camera-facing presenter/);
+    expect(scene).toMatch(/gesturing and reacting/);
+  });
+
+  it('тон и декорации повода не зависят от режима озвучки', () => {
+    for (const mode of ['veo', 'voiceover', 'dub'] as const) {
+      const scene = buildSceneDescription(
+        brief({ tone: 'FUNNY' }),
+        'день рождения',
+        speech,
+        [],
+        mode,
+      );
+      expect(scene).toContain('playful and lighthearted');
+      expect(scene).toContain(GREETING_OCCASION_SPECS.BIRTHDAY.sceneMood);
+      expect(scene).toContain('no on-screen text');
+    }
+  });
+
+  it('референсы размечаются метками <IMAGE_n> в обоих режимах', () => {
+    const images = [
+      { id: 'a', label: 'Марина', description: null },
+      { id: 'b', label: 'дача', description: 'веранда летом' },
+    ] as never;
+    for (const mode of ['veo', 'voiceover'] as const) {
+      const scene = buildSceneDescription(
+        brief(),
+        'день рождения',
+        speech,
+        images,
+        mode,
+      );
+      expect(scene).toContain('<IMAGE_1> — Марина');
+      expect(scene).toContain('<IMAGE_2> — веранда летом');
+    }
   });
 });

@@ -358,12 +358,27 @@ function statusTone(
   return 'neutral';
 }
 
-function MyVoicesSection({
+/**
+ * Экспортируется ради мастера поздравления (фича №34): там нужен ровно
+ * этот блок — список своих клонов плюс запись/загрузка нового, — а
+ * каталог голосов провайдера и режим озвучки не нужны вовсе. Копия
+ * блока рядом означала бы вторую реализацию согласия, лимита и
+ * опроса статуса обучения.
+ *
+ * `onPick` отдаёт `resembleVoiceId` (не id записи): именно он нужен
+ * обоим вызывающим — снимку бренда и снимку брифа поздравления.
+ */
+export function MyVoicesSection({
   onPick,
   disabled,
+  pickedVoiceId,
 }: {
   onPick: (voiceId: string) => void;
   disabled?: boolean;
+  /** Подсветить уже выбранный клон — мастеру поздравления нужно
+   * показать, чей голос сейчас стоит; манифест бренда показывает это
+   * своим селектом выше и параметр не передаёт. */
+  pickedVoiceId?: string | null;
 }) {
   const { dict } = useI18n();
   const t = dict.myVoices;
@@ -671,9 +686,14 @@ function MyVoicesSection({
                     // ничего больше не защищает — держать её означало бы
                     // запрещать рабочий выбор.
                     disabled={disabled}
+                    active={
+                      !!pickedVoiceId && pickedVoiceId === v.resembleVoiceId
+                    }
                     onClick={() => onPick(v.resembleVoiceId!)}
                   >
-                    {t.pickButton}
+                    {pickedVoiceId && pickedVoiceId === v.resembleVoiceId
+                      ? t.pickedButton
+                      : t.pickButton}
                   </Button>
                 )}
                 <Button

@@ -28,6 +28,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { head } from '@vercel/blob';
@@ -46,6 +47,14 @@ import {
 import { SketchGeneratorService } from '../image-sketch/sketch-generator.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { buildGreetingFramePrompt } from './greeting-frame-prompt';
+import {
+  MAX_SETTING_LENGTH,
+  buildSettingsPrompt,
+  parseSettings,
+} from './greeting-scene-settings';
+import { createGeminiClient } from '../../common/gemini-client';
+import { GEMINI_MODEL } from '../../common/gemini-model';
+import { GoogleGenAI } from '@google/genai';
 import {
   celebrityLikenessMessage,
   findCelebrityLikeness,
@@ -96,6 +105,25 @@ export function greetingReferencePathname(
 
 @Injectable()
 export class GreetingReferenceService {
+  private readonly logger = new Logger(GreetingReferenceService.name);
+  /**
+   * Текстовая модель — только для вариантов сеттинга (№36); картинку
+   * рисует `SketchGeneratorService`, у него своя.
+   *
+   * Создаётся ЛЕНИВО, а не в конструкторе: `createGeminiClient()`
+   * бросает при отсутствии ключа, и в конструкторе это привязало бы
+   * загрузку списка референсов и выдачу ссылки на загрузку к наличию
+   * ключа текстовой модели, которая им не нужна. Поймано собственным
+   * тестом: юнит-тесты сервиса падали на конструкторе, не дойдя ни до
+   * одной проверки.
+   */
+  private geminiClient: GoogleGenAI | null = null;
+
+  private get genai(): GoogleGenAI {
+    this.geminiClient ??= createGeminiClient();
+    return this.geminiClient;
+  }
+
   constructor(
     private readonly sessions: SessionService,
     private readonly blob: BlobService,
@@ -202,6 +230,8 @@ export class GreetingReferenceService {
   async generateFrame(
     sessionId: string,
     userId: string | null,
+    /** Выбранный человеком сеттинг (фича №36); пусто — сцена из каталога. */
+    setting?: string | null,
   ): Promise<GreetingReferenceImageView[]> {
     const session = await this.load(sessionId);
     const brief = session.greetingBriefSnapshot;
@@ -226,11 +256,26 @@ export class GreetingReferenceService {
       throw new BadRequestException(celebrityLikenessMessage(likeness));
     }
 
+    // Сеттинг приходит из нашей же модели (фича №36), но обрезается и
+    // проверяется здесь наравне с пользовательским текстом: путь от
+    // фронтенда открыт, и доверять содержимому поля только потому, что
+    // мы его когда-то предложили, — это доверять клиенту.
+    const chosenSetting = (setting ?? '').trim().slice(0, MAX_SETTING_LENGTH);
+    if (chosenSetting) {
+      const settingLikeness = findCelebrityLikeness(chosenSetting);
+      if (settingLikeness) {
+        throw new BadRequestException(
+          celebrityLikenessMessage(settingLikeness),
+        );
+      }
+    }
+
     const prompt = buildGreetingFramePrompt({
       occasion: brief.occasion,
       customOccasionText: brief.customOccasionText,
       tone: brief.tone,
       presenter: brief.resolvedPresenterProvider,
+      setting: chosenSetting || null,
     });
     const outcome = await this.frames.generate({ prompt, source: null });
 
@@ -281,6 +326,58 @@ export class GreetingReferenceService {
       greetingReferenceImages: next,
     });
     return next.map(toView);
+  }
+
+  /**
+   * Три варианта визуального сеттинга под повод — фича №36.
+   *
+   * Отдельный дешёвый текстовый вызов ПЕРЕД дорогим рисованием: до этой
+   * фичи сцена бралась из каталога поводов, где значений всего два —
+   * праздничное и сдержанное, — и двадцать разных поводов давали одну и
+   * ту же картинку.
+   *
+   * Пустой список — нормальный исход, а не ошибка: если модель не
+   * ответила или ответила мусором, фронтенд просто рисует кадр по
+   * каталогу, как раньше. Ронять здесь исключение значило бы ломать
+   * работающий путь ради необязательного улучшения.
+   */
+  async suggestSettings(
+    sessionId: string,
+    userId: string | null,
+  ): Promise<string[]> {
+    const session = await this.load(sessionId);
+    const brief = session.greetingBriefSnapshot;
+    if (!brief) {
+      throw new BadRequestException(
+        'Session has no greeting brief — scene settings are only for GREETING_VIDEO sessions',
+      );
+    }
+    const prompt = buildSettingsPrompt(
+      brief.occasion,
+      brief.customOccasionText,
+      brief.tone,
+    );
+    try {
+      const response = await this.genai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [{ text: prompt }],
+        config: { temperature: 1, maxOutputTokens: 300 },
+      });
+      await this.aiUsage.recordGemini(response, {
+        operation: 'greeting-setting',
+        model: GEMINI_MODEL,
+        sessionId,
+        ...(userId ? { userId } : {}),
+      });
+      return parseSettings(response.text);
+    } catch (e) {
+      this.logger.warn(
+        `сессия ${sessionId}: варианты сеттинга не получены — ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return [];
+    }
   }
 
   async update(
