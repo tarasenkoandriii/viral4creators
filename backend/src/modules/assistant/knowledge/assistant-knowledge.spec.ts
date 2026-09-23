@@ -15,6 +15,25 @@ import {
 import { PLANS, PLAN_IDS } from '../../../common/plans';
 import { ASSISTANT_KNOWLEDGE, ASSISTANT_STEPS } from './generated';
 
+/**
+ * Шапка базы знаний несёт дату сборки и коммит — величины, которые
+ * меняются САМИ, без единой правки исходников. Из-за даты сверка
+ * «закоммиченное совпадает с пересобранным» была красной каждый день,
+ * следующий за регенерацией: 22-го файл собрали, 23-го тест уже падал,
+ * хотя не изменилось ничего. Проверка задумана про другое — «словарь
+ * поправили, а базу пересобрать забыли», — поэтому штамп приводится к
+ * постоянному виду С ОБЕИХ сторон.
+ *
+ * Заменяются ровно два значения, и только первое вхождение даты (это
+ * шапка): формулировка самой строки по-прежнему сверяется, так что
+ * изменение шапки без пересборки остаётся красным.
+ */
+function normalizeStamp(md: string): string {
+  return md
+    .replace(/\d{4}-\d{2}-\d{2}/, '<дата сборки>')
+    .replace(/(коммит — )[^.]*\./, '$1<коммит>.');
+}
+
 const SECRET_LIKE = [
   /sk-[A-Za-z0-9]{10,}/,
   /AIza[A-Za-z0-9_-]{10,}/,
@@ -61,7 +80,9 @@ describe('assistant knowledge base', () => {
   it('generated.ts committed alongside the source matches the build script output (CI parity check)', () => {
     const fresh = buildAll();
     for (const locale of LOCALES) {
-      expect(ASSISTANT_KNOWLEDGE[locale]).toBe(fresh[locale]);
+      expect(normalizeStamp(ASSISTANT_KNOWLEDGE[locale])).toBe(
+        normalizeStamp(fresh[locale]),
+      );
     }
   });
 

@@ -26,11 +26,6 @@ function build(sessionOver: Record<string, unknown> = {}) {
   const startGeneration = jest
     .fn()
     .mockImplementation(() => Promise.resolve({ requestId: `r${++n}` }));
-  const ffmpeg = {
-    configured: jest.fn().mockReturnValue(true),
-    submit: jest.fn().mockResolvedValue({ jobId: 'job-1', status: 'queued' }),
-    status: jest.fn().mockResolvedValue({ status: 'pending' }),
-  };
   const getStatus = jest.fn().mockResolvedValue({ done: false });
   const uploadBuffer = jest
     .fn()
@@ -73,13 +68,11 @@ function build(sessionOver: Record<string, unknown> = {}) {
       getStatus,
     } as any,
     { uploadBuffer } as any,
-    ffmpeg as any,
   );
   return {
     svc,
     startGeneration,
     updateSession,
-    ffmpeg,
     getStatus,
     uploadBuffer,
     postprodStart,
