@@ -424,25 +424,56 @@ function idsFrom(source, pattern) {
 function checkGuideSeams() {
   const problems = [];
 
-  // 1. Шаги обучалки: степпер (frontend) ↔ карточки советника (backend).
-  const stepperIds = idsFrom(
-    read('frontend/src/lib/client-site-steps.ts'),
-    /CLIENT_SITE_STEP_IDS = \[([^\]]+)\]/g,
-  )[0];
-  const stepper = stepperIds
-    ? [...stepperIds.matchAll(/'([a-zA-Z0-9_-]+)'/g)].map((m) => m[1])
-    : [];
-  const cards = idsFrom(
-    read('backend/src/modules/wizard-guide/hint-scenarios.ts'),
-    /stepId: '([a-zA-Z0-9_-]+)'/g,
-  );
-  if (stepper.length === 0) {
-    problems.push('не нашли CLIENT_SITE_STEP_IDS во frontend/src/lib/client-site-steps.ts');
-  } else if (stepper.join(',') !== cards.join(',')) {
-    problems.push(
-      `шаги обучалки разошлись: степпер «${stepper.join(', ')}», ` +
-        `карточки советника «${cards.join(', ')}»`,
-    );
+  // 1. Шаги мастеров: степпер (frontend) ↔ карточки советника (backend).
+  //    По одному сравнению на сценарий — общий список ловил бы
+  //    расхождение только случайно.
+  const cardsSource = read('backend/src/modules/wizard-guide/hint-scenarios.ts');
+  const SCENARIOS = [
+    {
+      scenario: 'CLIENT_SITE',
+      file: 'frontend/src/lib/client-site-steps.ts',
+      constant: 'CLIENT_SITE_STEP_IDS',
+    },
+    {
+      scenario: 'GREETING_VIDEO',
+      file: 'frontend/src/lib/greeting-steps.ts',
+      constant: 'GREETING_STEP_IDS',
+    },
+    {
+      scenario: 'PRODUCT_VIDEO',
+      file: 'frontend/src/lib/session-step.ts',
+      constant: 'STEPPER_IDS',
+    },
+  ];
+  let stepperSummary = [];
+  for (const { scenario, file, constant } of SCENARIOS) {
+    const block = new RegExp(
+      `const ${scenario}: ScenarioHints = \\{([\\s\\S]*?)\\n\\};`,
+    ).exec(cardsSource);
+    const cards = block
+      ? [...block[1].matchAll(/stepId: '([a-zA-Z0-9_-]+)'/g)].map((m) => m[1])
+      : [];
+    const listMatch = new RegExp(
+      `${constant}(?::[^=]*)? = \\[([^\\]]+)\\]`,
+    ).exec(read(file));
+    const stepper = listMatch
+      ? [...listMatch[1].matchAll(/'([a-zA-Z0-9_-]+)'/g)].map((m) => m[1])
+      : [];
+    if (stepper.length === 0) {
+      problems.push(`не нашли ${constant} в ${file}`);
+      continue;
+    }
+    if (cards.length === 0) {
+      problems.push(`не нашли карточки сценария ${scenario} в hint-scenarios.ts`);
+      continue;
+    }
+    if (stepper.join(',') !== cards.join(',')) {
+      problems.push(
+        `шаги ${scenario} разошлись: степпер «${stepper.join(', ')}», ` +
+          `карточки советника «${cards.join(', ')}»`,
+      );
+    }
+    stepperSummary.push(`${scenario}: ${stepper.length}`);
   }
 
   // 2. Пункты готовности: сервер отдаёт key, словарь даёт подпись.
@@ -495,8 +526,9 @@ function checkGuideSeams() {
     for (const p of problems) console.log(`  - ${p}`);
   } else {
     console.log(
-      `ok   швы советника: шаги (${stepper.join('/')}), пункты готовности ` +
-        `(${readinessKeys.length}) и слаги документов (${server.length}) сходятся`,
+      `ok   швы советника: шаги (${stepperSummary.join(', ')}), пункты ` +
+        `готовности (${readinessKeys.length}) и слаги документов ` +
+        `(${server.length}) сходятся`,
     );
   }
 }

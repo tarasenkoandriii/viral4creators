@@ -10,6 +10,7 @@ dotenv.config();
 
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { VALIDATION_PIPE_OPTIONS } from './common/validation-pipe';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -92,14 +93,10 @@ async function bootstrap() {
   // строкой И сделать `withCredentials` условным на фронте (только когда
   // есть cookie-логин), либо оставить как есть; см. отчёт аудита.
 
-  // Global validation pipe
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
-  );
+  // Global validation pipe. Настройки — в `common/validation-pipe.ts`:
+  // их же берут контрактные тесты маршрутов, иначе они проверяли бы
+  // свою копию валидации, а не эту.
+  app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
 
   // Global exception filter
   app.useGlobalFilters(new HttpExceptionFilter());

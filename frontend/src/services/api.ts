@@ -11,6 +11,7 @@ import type {
   Session as FullSession,
   VideoAnalysis as FullVideoAnalysis,
   ExportVariant,
+  Readiness,
 } from '../types';
 import { getAuthHeaders, getTelegramWebApp } from '../lib/telegram';
 import { initialLocale } from '../lib/i18n';
@@ -280,6 +281,26 @@ export async function forkSharedVideo(
       ? (response.data.data as { sessionId: string })
       : response.data;
   return data;
+}
+
+/**
+ * Готовность прогона — «Тонкая красная линия» §7 (волна D).
+ *
+ * Считает СЕРВЕР той же функцией, которой проверяет барьеры генерации:
+ * два независимых списка условий расходятся, и человек начинает видеть
+ * «всё готово» там, где сервер откажет.
+ */
+export async function getSessionReadiness(
+  sessionId: string
+): Promise<Readiness | null> {
+  try {
+    const res = await api.get<Readiness>(`/sessions/${sessionId}/readiness`);
+    return res.data ?? null;
+  } catch {
+    // Строка «до готового ролика» — помощь, а не сам путь: её отказ не
+    // должен мешать работать.
+    return null;
+  }
 }
 
 /**

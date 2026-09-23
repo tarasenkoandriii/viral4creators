@@ -191,7 +191,7 @@ export function ClientSiteWizard({
     // Без этой фразы правило превращается в ловушку: человек снимет
     // галочку «посмотреть, как без неё» и потеряет советы до конца
     // работы (§3.2).
-    if (!next && !window.confirm(t.guideDisableConfirm)) return;
+    if (!next && !window.confirm(dict.wizardGuide.disableConfirm)) return;
     const updated = await run(() => setWizardGuide(projectId, next));
     if (updated) setGuide(updated);
   };
@@ -623,9 +623,11 @@ export function ClientSiteWizard({
               onChange={(e) => void toggleGuide(e.target.checked)}
             />
             <span>
-              <span className="font-medium">{t.guideLabel}</span>
+              <span className="font-medium">
+                {dict.wizardGuide.checkboxLabel}
+              </span>
               <span className="block text-sm text-[var(--muted)]">
-                {t.guideHint}
+                {dict.wizardGuide.checkboxHint}
               </span>
             </span>
           </label>
@@ -645,7 +647,7 @@ export function ClientSiteWizard({
               disabled={busy}
               onClick={() => void toggleGuide(false)}
             >
-              {t.guideDisable}
+              {dict.wizardGuide.disableButton}
             </Button>
           </div>
         )}

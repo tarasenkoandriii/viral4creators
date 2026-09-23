@@ -98,6 +98,23 @@ import {
 import { SketchSlotActions } from '../sketch/SketchSlotActions';
 import { revokeObjectUrl } from '../../lib/object-url';
 import { LoadError, ScreenHeader } from './shared';
+import { ReadinessPanel } from '../../components/ReadinessPanel';
+import { HintLine } from '../../components/HintLine';
+import { useWizardEvents } from '../../lib/useWizardEvents';
+import { toStepsView } from '../../lib/wizard-steps';
+import {
+  greetingAnchorId,
+  greetingFactsOf,
+  greetingStepOf,
+  greetingSteps,
+  type GreetingStepId,
+} from '../../lib/greeting-steps';
+import {
+  getWizardGuide,
+  setWizardGuide,
+} from '../../services/wizard-guide-api';
+import { getSession, getSessionReadiness } from '../../services/api';
+import type { Readiness, WizardGuideState } from '../../types';
 import { GreetingDeliveryPanel } from './GreetingDeliveryPanel';
 import { MyVoicesSection } from '../brand/VoicePicker';
 import {
@@ -129,17 +146,6 @@ const REFERENCE_PHOTO_MIME = ['image/png', 'image/jpeg'];
 const REFERENCE_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
 const POLL_INTERVAL_MS = 4000;
 
-function stepIndexOf(
-  hasSession: boolean,
-  prompt: GenerationPrompt | undefined,
-  hasVideo: boolean
-): number {
-  if (!hasSession) return 0;
-  if (hasVideo) return 3;
-  if (prompt) return 2;
-  return 1;
-}
-
 export function GreetingVideoWizard({ projectId }: { projectId: string }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -152,6 +158,10 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<GenerationPrompt | undefined>();
   const [video, setVideo] = useState<GeneratedVideo | undefined>();
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  /** Чекбокс «использовать ИИ» (§3). `null` — ещё не спросили. */
+  const [guide, setGuide] = useState<WizardGuideState | null>(null);
+  const track = useWizardEvents(projectId);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -169,6 +179,18 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
       const latest = sessions[0];
       if (latest) {
         setSessionId(latest.sessionId);
+        // Блокер §4.5: сводка сессий несёт только `sessionId` — ни
+        // промпта, ни ролика в `ItemSessionSummary` нет. Без этого
+        // дочитывания после перезагрузки вкладки степпер показывал
+        // первый шаг даже у готового ролика, а кликабельный степпер
+        // поверх вранья хуже некликабельного.
+        const full = await getSession(latest.sessionId).catch(() => null);
+        if (full) {
+          setPrompt(full.generationPrompt);
+          setVideo(full.generatedVideo);
+        }
+        const ready = await getSessionReadiness(latest.sessionId);
+        setReadiness(ready);
       }
     } catch (e) {
       setLoadError(e);
@@ -180,6 +202,37 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * Шаг вычисляется ДО ранних выходов, и эффект телеметрии стоит здесь
+   * же: хуки обязаны вызываться в одном и том же порядке на каждом
+   * рендере, а ниже по файлу уже есть выходы по загрузке и ошибке.
+   *
+   * «Вошёл на шаг» и «ушёл с шага» считаются по СТЕППЕРУ, а не по
+   * прокрутке (§8): экран один, и считать шагом то, что в этот момент в
+   * середине экрана, значило бы мерить случайность.
+   */
+  const facts = greetingFactsOf(sessionId, prompt, video);
+  const currentStepId = greetingStepOf(facts);
+
+  useEffect(() => {
+    track('enter', currentStepId);
+    return () => track('leave', currentStepId);
+  }, [currentStepId, track]);
+
+  // Чекбокс советника — отдельным запросом и молча: его недоступность
+  // не должна мешать открыть мастер (§3.4).
+  useEffect(() => {
+    let cancelled = false;
+    void getWizardGuide(projectId)
+      .then((g) => {
+        if (!cancelled) setGuide(g);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   if (loading) {
     return (
@@ -197,7 +250,44 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
     );
   }
 
-  const step = stepIndexOf(!!sessionId, prompt, !!video);
+  const toggleGuide = async (next: boolean): Promise<void> => {
+    if (!next && !window.confirm(dict.wizardGuide.disableConfirm)) return;
+    const updated = await setWizardGuide(projectId, next).catch(() => null);
+    if (updated) setGuide(updated);
+  };
+
+  const stepsView = toStepsView(
+    greetingSteps(facts, {
+      brief: w.occasionLabel,
+      references: w.referencesHeading,
+      script: w.scriptHeading,
+      video: w.videoHeading,
+    }),
+    currentStepId
+  );
+
+  /**
+   * Клик по шагу — ПРОКРУТКА к секции, а не переключение экрана (§4.5).
+   * Лента здесь осмысленна: человек листает уже готовое.
+   */
+  const goToStep = (id: GreetingStepId): void => {
+    document
+      .getElementById(greetingAnchorId(id))
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // Куда сейчас можно — один список на строку готовности и на кнопки
+  // советника; текущий шаг исключён: вести туда, где человек и так
+  // стоит, незачем.
+  const reachable = new Map<string, string>();
+  stepsView.targets.forEach((target, i) => {
+    if (target && i !== stepsView.current)
+      reachable.set(target, stepsView.steps[i]);
+  });
+  const goToTarget = (id: string): void => {
+    const target = stepsView.targets.find((x) => x === id);
+    if (target) goToStep(target);
+  };
 
   return (
     <div className="animate-fadeIn space-y-4">
@@ -207,37 +297,109 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
         hint={w.hint}
       />
       <Stepper
-        steps={[
-          w.occasionLabel,
-          w.referencesHeading,
-          w.scriptHeading,
-          w.videoHeading,
-        ]}
-        current={step}
-      />
-
-      <BriefStep
-        brief={brief}
-        manifests={manifests}
-        plan={plan}
-        hasSession={!!sessionId}
-        onSaved={setBrief}
-        onStartSession={async () => {
-          const session = await createGreetingSession(projectId);
-          setSessionId(session.sessionId);
+        steps={stepsView.steps}
+        current={stepsView.current}
+        selectable={stepsView.selectable}
+        done={stepsView.done}
+        onSelect={(i) => {
+          const target = stepsView.targets[i];
+          if (target) goToStep(target);
         }}
       />
 
+      {readiness && (
+        <ReadinessPanel
+          readiness={readiness}
+          canGoToStep={(stepId) => reachable.has(stepId)}
+          onGoToStep={goToTarget}
+        />
+      )}
+
+      <HintLine
+        projectId={projectId}
+        stepId={currentStepId}
+        enabled={!!guide?.available && !!guide?.enabled}
+        stepLabels={Object.fromEntries(reachable)}
+        onGoToStep={goToTarget}
+        onEvent={(kind, detail) => track(kind, currentStepId, detail)}
+      />
+
+      {/* Чекбокс живёт на первом шаге и только там: включить советы
+          можно ТОЛЬКО в начале сценария (§3.2). У поздравления первый
+          шаг — бриф, то есть всё время до создания сессии. */}
+      {guide?.available && guide.canEnable && (
+        <Card className="p-4">
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={guide.enabled}
+              onChange={(e) => void toggleGuide(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">
+                {dict.wizardGuide.checkboxLabel}
+              </span>
+              <span className="block text-sm text-[var(--muted)]">
+                {dict.wizardGuide.checkboxHint}
+              </span>
+            </span>
+          </label>
+        </Card>
+      )}
+      {!guide?.canEnable && guide?.available && guide.enabled && (
+        <div className="text-right">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void toggleGuide(false)}
+          >
+            {dict.wizardGuide.disableButton}
+          </Button>
+        </div>
+      )}
+
+      <div id={greetingAnchorId('brief')}>
+        <BriefStep
+          brief={brief}
+          manifests={manifests}
+          plan={plan}
+          hasSession={!!sessionId}
+          onSaved={setBrief}
+          onStartSession={async () => {
+            const session = await createGreetingSession(projectId);
+            setSessionId(session.sessionId);
+            setReadiness(await getSessionReadiness(session.sessionId));
+          }}
+        />
+      </div>
+
       {sessionId && (
-        <ReferencesStep sessionId={sessionId} disabled={!!prompt} />
+        <div id={greetingAnchorId('references')}>
+          {/* Клик по шагу «Фото» после сборки сценария приводит на
+              серый экран: референсы после генерации не меняют. Это
+              правда, но кликабельность и редактируемость здесь
+              расходятся, и интерфейс обязан сказать почему (§4.5). */}
+          {prompt && (
+            <Alert tone="info" className="mb-2">
+              {w.referencesLockedHint}
+            </Alert>
+          )}
+          <ReferencesStep sessionId={sessionId} disabled={!!prompt} />
+        </div>
       )}
 
       {sessionId && (
-        <ScriptStep
-          sessionId={sessionId}
-          prompt={prompt}
-          onGenerated={setPrompt}
-        />
+        <div id={greetingAnchorId('script')}>
+          <ScriptStep
+            sessionId={sessionId}
+            prompt={prompt}
+            onGenerated={(p) => {
+              setPrompt(p);
+              void getSessionReadiness(sessionId).then(setReadiness);
+            }}
+          />
+        </div>
       )}
 
       {sessionId && prompt && <SenderVoiceStep sessionId={sessionId} />}
@@ -251,13 +413,18 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
       {sessionId && prompt && <ScenesStep sessionId={sessionId} />}
 
       {sessionId && prompt && (
-        <VideoStep
-          sessionId={sessionId}
-          video={video}
-          onVideo={setVideo}
-          recipientName={brief.recipientName}
-          senderName={brief.senderName}
-        />
+        <div id={greetingAnchorId('video')}>
+          <VideoStep
+            sessionId={sessionId}
+            video={video}
+            onVideo={(v) => {
+              setVideo(v);
+              void getSessionReadiness(sessionId).then(setReadiness);
+            }}
+            recipientName={brief.recipientName}
+            senderName={brief.senderName}
+          />
+        </div>
       )}
     </div>
   );

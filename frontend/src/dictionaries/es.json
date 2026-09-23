@@ -1352,11 +1352,7 @@
     "stepUrl": "Enlace",
     "stepRecord": "Grabación",
     "stepReview": "Revisión",
-    "discardConfirm": "¿Eliminar el borrador del tutorial? Los pasos grabados, los fotogramas y los datos de acceso guardados se perderán definitivamente. Es la única forma de empezar con otro enlace.",
-    "guideLabel": "Consejos de IA durante el asistente",
-    "guideHint": "En cada paso indica qué importa aquí y con qué tropieza la gente. Solo se puede activar ahora, al principio: más adelante el asesor no habría visto los pasos ya recorridos.",
-    "guideDisable": "Desactivar consejos",
-    "guideDisableConfirm": "¿Desactivar los consejos de la IA? Podrás volver a activarlos solo mientras no hayas empezado la grabación: después el asesor ya no habrá visto los pasos recorridos."
+    "discardConfirm": "¿Eliminar el borrador del tutorial? Los pasos grabados, los fotogramas y los datos de acceso guardados se perderán definitivamente. Es la única forma de empezar con otro enlace."
   },
   "sketch": {
     "button": "Boceto IA",
@@ -1601,7 +1597,8 @@
       "FORMAL": "Formal",
       "SUPPORTIVE": "De apoyo",
       "RESPECTFUL": "Respetuoso, contenido"
-    }
+    },
+    "referencesLockedHint": "El guion ya está montado, así que las fotos ya no influyen en él. Para cambiarlas, vuelve a montar el guion."
   },
   "wizardGuide": {
     "title": "Consejo de la IA",
@@ -1616,7 +1613,11 @@
     "hintUseless": "Esto no se entiende",
     "complaintHint": "¿Qué es lo que no se entiende? Es opcional, pero así lo vemos antes.",
     "complaintSend": "Enviar",
-    "complaintThanks": "Gracias, lo revisaremos."
+    "complaintThanks": "Gracias, lo revisaremos.",
+    "checkboxLabel": "Consejos de IA durante el asistente",
+    "checkboxHint": "En cada paso indica qué importa aquí y con qué tropieza la gente. Solo se puede activar ahora, al principio: más adelante el asesor no habría visto los pasos ya recorridos.",
+    "disableButton": "Desactivar consejos",
+    "disableConfirm": "¿Desactivar los consejos de la IA? Podrás volver a activarlos solo mientras no hayas empezado la grabación: después el asesor ya no habrá visto los pasos recorridos."
   },
   "wizardReadiness": {
     "title": "Hasta el vídeo terminado",
@@ -1630,7 +1631,19 @@
       "draft": "Indicar el enlace del sitio",
       "frames": "Grabar al menos un paso",
       "title": "Poner nombre al tutorial",
-      "editable": "El borrador está abierto para editar"
+      "editable": "El borrador está abierto para editar",
+      "recipient": "Indicar el destinatario",
+      "occasionText": "Describir tu propio motivo",
+      "face": "Añadir una foto de la cara para el presentador",
+      "script": "Montar el guion",
+      "scriptClean": "El guion pasó la revisión de contenido",
+      "sender": "Firmar: de quién es la felicitación",
+      "photos": "Añadir fotos: cambian el resultado de forma visible",
+      "analysis": "Esperar el análisis de la referencia",
+      "product": "Describir el producto",
+      "photo": "Subir la foto del producto",
+      "prompt": "Aprobar el guion",
+      "brandManifest": "Conectar el manifiesto de marca: el vídeo mantendrá tu estilo"
     }
   }
 }

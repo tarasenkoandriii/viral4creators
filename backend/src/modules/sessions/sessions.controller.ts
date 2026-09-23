@@ -21,6 +21,8 @@ import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import { TelegramIdentifiedRequest } from '../telegram-auth/telegram-identity.middleware';
 import { CreateSessionRequestDto } from './dto/create-session.dto';
+import { readinessOfSession } from '../../common/wizard-readiness.session';
+import { Readiness } from '../../common/wizard-readiness';
 
 @Controller('sessions')
 export class SessionsController {
@@ -66,6 +68,27 @@ export class SessionsController {
   ): Promise<Session | null> {
     const session = await this.sessionService.getSession(sessionId);
     return session || null;
+  }
+
+  /**
+   * Готовность прогона — «Тонкая красная линия» §7 (волна D).
+   *
+   * GET /sessions/:sessionId/readiness
+   *
+   * Один маршрут на два сценария: greeting и товарка отличаются
+   * снимком брифа, и решать это вызывающему незачем — он уже решил,
+   * когда создавал сессию. Владение проверяет глобальный
+   * `SessionOwnerGuard`, как у остальных `/sessions/*`.
+   *
+   * Отдельным маршрутом, а не полем в теле сессии: сессия читается на
+   * каждом опросе рендера, а готовность нужна экрану — платить за неё
+   * в каждом опросе незачем.
+   */
+  @Get(':sessionId/readiness')
+  async readiness(@Param('sessionId') sessionId: string): Promise<Readiness> {
+    const session = await this.sessionService.getSession(sessionId);
+    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    return readinessOfSession(session);
   }
 
   /**

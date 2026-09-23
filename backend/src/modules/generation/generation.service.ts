@@ -73,6 +73,7 @@ import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { SharedVideoService } from '../shared-video/shared-video.service';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { activeProductImage } from '../../common/active-image';
+import { readinessOfSession } from '../../common/wizard-readiness.session';
 
 /**
  * Model IDs for each quality tier, on the Gemini Developer API (not
@@ -489,7 +490,14 @@ export class GenerationService {
     avoidText?: string,
   ): Promise<GeneratedVideo> {
     const sessionId = session.sessionId;
-    if (!session.generationPrompt || !session.generationPrompt.approvedAt) {
+    // Тот же список, что рисует строку «до готового ролика» (§7.2 п.3):
+    // два независимых списка условий расходятся — это не гипотеза, а то,
+    // как ведут себя любые два списка.
+    const ready = readinessOfSession(session);
+    const done = (key: string) =>
+      ready.items.find((i) => i.key === key)?.done === true;
+
+    if (!done('prompt')) {
       throw new BadRequestException(
         'Prompt must be approved before generating video',
       );
@@ -497,9 +505,10 @@ export class GenerationService {
 
     // Изображение товара — только через резолвер: при применённом
     // скетче в Veo уходит скетч, а оригинал не читается вовсе
-    // (§4 п.1 doc/AI-SKETCH-SPEC.md).
-    const productImage = activeProductImage(session.productInformation);
-    if (!productImage?.pathname) {
+    // (§4 п.1 doc/AI-SKETCH-SPEC.md). Готовность смотрит туда же — тем
+    // же `activeProductImage`, поэтому отдельного чтения здесь больше
+    // нет.
+    if (!done('photo')) {
       throw new BadRequestException(
         'Product image must be uploaded before generating video',
       );

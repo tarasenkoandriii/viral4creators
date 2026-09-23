@@ -1352,11 +1352,7 @@
     "stepUrl": "Link",
     "stepRecord": "Recording",
     "stepReview": "Review",
-    "discardConfirm": "Delete the tutorial draft? Recorded steps, frames and saved sign-in data will be gone for good. This is the only way to start from a different link.",
-    "guideLabel": "AI tips along the way",
-    "guideHint": "On every step it says what matters here and what people trip over. You can only turn this on now, at the start — later the guide would not have seen the steps you passed.",
-    "guideDisable": "Turn tips off",
-    "guideDisableConfirm": "Turn AI tips off? You can turn them back on only before you start recording — after that the advisor will not have seen the steps you passed."
+    "discardConfirm": "Delete the tutorial draft? Recorded steps, frames and saved sign-in data will be gone for good. This is the only way to start from a different link."
   },
   "sketch": {
     "button": "AI sketch",
@@ -1601,7 +1597,8 @@
       "FORMAL": "Formal",
       "SUPPORTIVE": "Supportive",
       "RESPECTFUL": "Respectful, restrained"
-    }
+    },
+    "referencesLockedHint": "The script is already built, so photos no longer affect it. To change them, build the script again."
   },
   "wizardGuide": {
     "title": "AI tip",
@@ -1616,7 +1613,11 @@
     "hintUseless": "This is unclear",
     "complaintHint": "What exactly is unclear? Optional, but it helps us get there faster.",
     "complaintSend": "Send",
-    "complaintThanks": "Thanks — we will look into it."
+    "complaintThanks": "Thanks — we will look into it.",
+    "checkboxLabel": "AI tips along the way",
+    "checkboxHint": "On every step it says what matters here and what people trip over. You can only turn this on now, at the start — later the guide would not have seen the steps you passed.",
+    "disableButton": "Turn tips off",
+    "disableConfirm": "Turn AI tips off? You can turn them back on only before you start recording — after that the advisor will not have seen the steps you passed."
   },
   "wizardReadiness": {
     "title": "To a finished video",
@@ -1630,7 +1631,19 @@
       "draft": "Enter the site link",
       "frames": "Record at least one step",
       "title": "Name the tutorial",
-      "editable": "Draft is open for edits"
+      "editable": "Draft is open for edits",
+      "recipient": "Name the recipient",
+      "occasionText": "Describe your own occasion",
+      "face": "Add a face photo for the presenter",
+      "script": "Build the script",
+      "scriptClean": "Script passed the content check",
+      "sender": "Sign it: who the greeting is from",
+      "photos": "Add photos — they visibly change the result",
+      "analysis": "Wait for the reference breakdown",
+      "product": "Describe the product",
+      "photo": "Upload a product photo",
+      "prompt": "Approve the script",
+      "brandManifest": "Attach a brand manifest — the video will match your style"
     }
   }
 }

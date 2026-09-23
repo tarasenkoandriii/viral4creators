@@ -1352,11 +1352,7 @@
     "stepUrl": "Link",
     "stepRecord": "Aufnahme",
     "stepReview": "Überprüfung",
-    "discardConfirm": "Tutorial-Entwurf löschen? Aufgezeichnete Schritte, Bilder und gespeicherte Anmeldedaten gehen unwiderruflich verloren. Nur so lässt sich mit einem anderen Link neu beginnen.",
-    "guideLabel": "KI-Tipps während des Assistenten",
-    "guideHint": "Sagt bei jedem Schritt, worauf es ankommt und woran andere scheitern. Einschalten geht nur jetzt, am Anfang — später hätte der Berater die zurückgelegten Schritte nicht gesehen.",
-    "guideDisable": "Tipps ausschalten",
-    "guideDisableConfirm": "KI-Tipps ausschalten? Wieder einschalten lässt sich nur, solange die Aufnahme nicht begonnen hat — danach hat der Berater die bereits gegangenen Schritte nicht gesehen."
+    "discardConfirm": "Tutorial-Entwurf löschen? Aufgezeichnete Schritte, Bilder und gespeicherte Anmeldedaten gehen unwiderruflich verloren. Nur so lässt sich mit einem anderen Link neu beginnen."
   },
   "sketch": {
     "button": "KI-Skizze",
@@ -1601,7 +1597,8 @@
       "FORMAL": "Formell",
       "SUPPORTIVE": "Unterstützend",
       "RESPECTFUL": "Respektvoll, zurückhaltend"
-    }
+    },
+    "referencesLockedHint": "Das Skript steht bereits, Fotos wirken sich nicht mehr darauf aus. Zum Ändern das Skript neu erstellen."
   },
   "wizardGuide": {
     "title": "KI-Tipp",
@@ -1616,7 +1613,11 @@
     "hintUseless": "Das ist unklar",
     "complaintHint": "Was genau ist unklar? Optional, hilft uns aber schneller weiter.",
     "complaintSend": "Senden",
-    "complaintThanks": "Danke — wir schauen es uns an."
+    "complaintThanks": "Danke — wir schauen es uns an.",
+    "checkboxLabel": "KI-Tipps während des Assistenten",
+    "checkboxHint": "Sagt bei jedem Schritt, worauf es ankommt und woran andere scheitern. Einschalten geht nur jetzt, am Anfang — später hätte der Berater die zurückgelegten Schritte nicht gesehen.",
+    "disableButton": "Tipps ausschalten",
+    "disableConfirm": "KI-Tipps ausschalten? Wieder einschalten lässt sich nur, solange die Aufnahme nicht begonnen hat — danach hat der Berater die bereits gegangenen Schritte nicht gesehen."
   },
   "wizardReadiness": {
     "title": "Bis zum fertigen Video",
@@ -1630,7 +1631,19 @@
       "draft": "Link zur Website angeben",
       "frames": "Mindestens einen Schritt aufzeichnen",
       "title": "Tutorial benennen",
-      "editable": "Entwurf ist zum Bearbeiten offen"
+      "editable": "Entwurf ist zum Bearbeiten offen",
+      "recipient": "Empfänger nennen",
+      "occasionText": "Eigenen Anlass beschreiben",
+      "face": "Gesichtsfoto für den Moderator hinzufügen",
+      "script": "Skript erstellen",
+      "scriptClean": "Skript hat die Inhaltsprüfung bestanden",
+      "sender": "Unterschreiben: von wem der Gruß ist",
+      "photos": "Fotos hinzufügen — sie verändern das Ergebnis sichtbar",
+      "analysis": "Auf die Referenz-Analyse warten",
+      "product": "Produkt beschreiben",
+      "photo": "Produktfoto hochladen",
+      "prompt": "Skript freigeben",
+      "brandManifest": "Brand-Manifest verbinden — das Video bleibt im Markenstil"
     }
   }
 }

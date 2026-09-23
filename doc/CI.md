@@ -1,7 +1,7 @@
 # CI — что проверяется автоматически и почему именно это
 
 `.github/workflows/ci.yml`, появился на этапе 33. До него все проверки
-прогонялись руками на каждом этапе: тогда 442 теста (сейчас 4098), 17
+прогонялись руками на каждом этапе: тогда 442 теста (сейчас 4137), 17
 написанных вручную (сейчас 86)
 миграций и `sync-legal --check`, специально сделанный «для CI»,
 существовали — но запускал их только человек и только когда вспоминал.
@@ -18,7 +18,7 @@
 | Джоба | Что делает |
 | --- | --- |
 | `backend` | `npm ci` (генерирует Prisma-клиент), `prisma validate`, `migrate deploy` на Postgres 16, **`migrate diff --exit-code`**, `tsc`, eslint, jest с **пофайловыми порогами покрытия** (этап 40: `blob-paths`, `ai-pricing`, `spend-limits`, `plan.service`, `plan.controller`; этап 49: `serpapi-usage`, `youtube-search-usage`, `telegram-notify`), сверка чисел в документах |
-| `frontend` | `tsc`, eslint, 32 unit-скрипта `npx tsx frontend/scripts/*.test.ts`, `vite build` |
+| `frontend` | `tsc`, eslint, 33 unit-скрипта `npx tsx frontend/scripts/*.test.ts`, `vite build` |
 | `next-apps` | матрица `admin` / `landing`: `tsc`, `next lint --max-warnings 0` (этап 53), `next build` |
 | `repo` | `sync-legal --check` — юридические тексты и их версия |
 

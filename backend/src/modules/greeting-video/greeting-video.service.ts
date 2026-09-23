@@ -90,11 +90,11 @@ import {
   GenerationStatus,
   GeneratedVideo,
 } from '../../common/types/generation.types';
-import { ModerationStatus } from '../../common/types/prompt.types';
 import { v4 as uuidv4 } from 'uuid';
 import { BlobService } from '../storage/blob.service';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 import { SceneAsset } from '../../common/types/reference.types';
+import { readinessOfSession } from '../../common/wizard-readiness.session';
 import { activeSessionSceneImage } from '../../common/active-image';
 import {
   normalizeSceneCount,
@@ -167,7 +167,14 @@ export class GreetingVideoService {
         'This session has no greeting brief — it was not created from a GREETING_VIDEO project.',
       );
     }
-    if (!session.generationPrompt) {
+    // Тот же список, что рисует строку «до готового ролика» на экране
+    // (§7.2 п.3): человек должен видеть условия по дороге, а не узнавать
+    // о них, нажав кнопку. Тексты отказов прежние.
+    const ready = readinessOfSession(session);
+    const done = (key: string) =>
+      ready.items.find((i) => i.key === key)?.done === true;
+
+    if (!session.generationPrompt || !done('script')) {
       throw new BadRequestException(
         'No prompt yet — call POST /sessions/:id/greeting-prompt first.',
       );
@@ -182,9 +189,7 @@ export class GreetingVideoService {
     // сгенерировалось. Пользователь сам решает, что делать дальше:
     // отредактировать текст поздравления (`personalMessage`/
     // `customOccasionText`) на шаге брифа и заново собрать сценарий.
-    if (
-      session.generationPrompt.moderationStatus === ModerationStatus.FLAGGED
-    ) {
+    if (!done('scriptClean')) {
       throw new BadRequestException(
         'Текст сценария не прошёл автоматическую проверку контента ' +
           `(${(session.generationPrompt.moderationFlags ?? []).join(', ') || 'без деталей'}). ` +

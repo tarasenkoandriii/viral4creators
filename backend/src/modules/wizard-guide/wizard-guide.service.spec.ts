@@ -106,4 +106,40 @@ describe('WizardGuideService — чекбокс ИИ (§3)', () => {
     expect(prisma.clientSiteTutorialDraft.findUnique).toHaveBeenCalled();
     expect(prisma.session.count).not.toHaveBeenCalled();
   });
+
+  // ── Найдено аудитом ТЗ перед волной D ────────────────────────────
+
+  it('в товарке чекбокс доступен на первом шаге, хотя сессия уже есть', async () => {
+    // Сессию товарки создаёт та же кнопка, которая ОТКРЫВАЕТ мастер.
+    // С общим признаком «есть сессия» чекбокс был бы недоступен уже на
+    // первом кадре — то есть советы в товарке нельзя было бы включить
+    // никогда. ТЗ §3.2 всё это время говорило «пока не начат разбор».
+    const { svc, prisma } = build({
+      type: 'SINGLE',
+      aiGuideEnabled: false,
+    });
+    // Двойник считает сессии с ещё не начатым разбором: их ноль.
+    prisma.session.count.mockResolvedValue(0);
+    expect((await svc.stateOf('u1', 'p1')).canEnable).toBe(true);
+    const where = prisma.session.count.mock.calls[0][0].where;
+    expect(where.status).toBeDefined();
+    expect(where.status.notIn).toContain('created');
+  });
+
+  it('в товарке начатый разбор закрывает чекбокс', async () => {
+    const { svc, prisma } = build({ type: 'LINE', aiGuideEnabled: false });
+    prisma.session.count.mockResolvedValue(1);
+    expect((await svc.stateOf('u1', 'p1')).canEnable).toBe(false);
+  });
+
+  it('в greeting признак прежний — сессии ещё нет', async () => {
+    // Там сессия создаётся кнопкой ПОСЛЕ брифа, то есть весь первый шаг
+    // её не существует, и статусы спрашивать незачем.
+    const { svc, prisma } = build({
+      type: 'GREETING_VIDEO',
+      aiGuideEnabled: false,
+    });
+    await svc.stateOf('u1', 'p1');
+    expect(prisma.session.count.mock.calls[0][0].where.status).toBeUndefined();
+  });
 });

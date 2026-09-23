@@ -51,6 +51,7 @@ import { cameraBriefText, normalizeCameraMove } from '../../common/camera-move';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { AiOperation } from '../../common/ai-pricing';
 import { PlanService } from '../plan/plan.service';
+import { readinessOfSession } from '../../common/wizard-readiness.session';
 
 /**
  * Замок сборки промпта (этап 47, В-2.3): клиентский таймаут вызова —
@@ -168,19 +169,28 @@ export class PromptService {
       throw new BadRequestException('Session not found');
     }
 
+    // Условия читаются ТЕМ ЖЕ списком, что рисует строку «до готового
+    // ролика» на экране («Тонкая красная линия» §7.2 п.3). Раньше они
+    // жили здесь и только здесь — человек узнавал о них, НАЖАВ кнопку,
+    // то есть в конце пути. Тексты отказов остаются прежними: их
+    // читают и тесты, и люди.
+    const ready = readinessOfSession(session);
+    const done = (key: string) =>
+      ready.items.find((i) => i.key === key)?.done === true;
+
     if (!session.videoAnalysis) {
       throw new BadRequestException(
         'Video analysis not complete. Please analyze video first.',
       );
     }
 
-    if (!session.productInformation) {
+    if (!session.productInformation || !done('product')) {
       throw new BadRequestException(
         'Product information not provided. Please submit product details first.',
       );
     }
 
-    if (session.videoAnalysis.status !== 'complete') {
+    if (!done('analysis')) {
       throw new BadRequestException(
         'Video analysis is not complete. Please wait for analysis to finish.',
       );

@@ -71,6 +71,20 @@ export const WIZARD_UI_KEYS: readonly string[] = [
   'clientSiteWizard.continueButton',
   'clientSiteWizard.discardButton',
   'wizardGuide.hintUseless',
+
+  // Поздравление (волна D, этап 12).
+  'greetingVideoWizard.startSessionButton',
+  'greetingVideoWizard.generateScriptButton',
+  'greetingVideoWizard.generateVideoButton',
+  'greetingVideoWizard.referencesHeading',
+  'greetingVideoWizard.scriptHeading',
+  'greetingVideoWizard.videoHeading',
+  'greetingVideoWizard.submitButton',
+
+  // Товарка (волна D, этап 13). Подписи шагов у неё массивом, и
+  // сослаться на элемент массива ключом нельзя — поэтому здесь только
+  // то, на что человек жмёт.
+  'generationWizard.postprodCtaButton',
 ];
 
 function readDict(locale: Locale): Record<string, unknown> {

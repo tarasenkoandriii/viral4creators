@@ -24,6 +24,15 @@ import {
 } from 'lucide-react';
 import { useWorkflow } from '../../hooks/useWorkflow';
 import { toStepsView } from '../../lib/wizard-steps';
+import { ReadinessPanel } from '../../components/ReadinessPanel';
+import { HintLine } from '../../components/HintLine';
+import { useWizardEvents } from '../../lib/useWizardEvents';
+import { getSessionReadiness } from '../../services/api';
+import {
+  getWizardGuide,
+  setWizardGuide,
+} from '../../services/wizard-guide-api';
+import type { Readiness, WizardGuideState } from '../../types';
 import { STEPPER_IDS, stepperIdOf } from '../../lib/session-step';
 import { VideoUpload } from '../../components/VideoUpload';
 import { AnalysisDisplay } from '../../components/AnalysisDisplay';
@@ -298,6 +307,57 @@ export function GenerationWizard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prompt?.promptId]);
 
+  /**
+   * Готовность и советник — «Тонкая красная линия», волна D, этап 13.
+   *
+   * Готовность считает СЕРВЕР той же функцией, которой проверяет
+   * барьеры генерации: два независимых списка условий расходятся, и
+   * человек начинает видеть «всё готово» там, где сервер откажет.
+   */
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  const [guide, setGuide] = useState<WizardGuideState | null>(null);
+  const track = useWizardEvents(projectId ?? '');
+  const stepId = stepperIdOf(currentStep);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    void getSessionReadiness(sessionId).then((r) => {
+      if (!cancelled) setReadiness(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Перечитываем на КАЖДОЙ смене шага: между ними меняется ровно то,
+    // из чего готовность и собрана.
+  }, [sessionId, currentStep]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    void getWizardGuide(projectId)
+      .then((g) => {
+        if (!cancelled) setGuide(g);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!stepId || !projectId) return;
+    track('enter', stepId);
+    return () => track('leave', stepId);
+  }, [stepId, projectId, track]);
+
+  const toggleGuide = async (next: boolean): Promise<void> => {
+    if (!projectId) return;
+    if (!next && !window.confirm(dict.wizardGuide.disableConfirm)) return;
+    const updated = await setWizardGuide(projectId, next).catch(() => null);
+    if (updated) setGuide(updated);
+  };
+
   const workflowSteps = dict.generationWizard.steps;
   const stepsView = toStepsView(
     STEPPER_IDS.map((id, i) => ({
@@ -309,6 +369,21 @@ export function GenerationWizard() {
     })),
     stepperIdOf(currentStep)
   );
+
+  /**
+   * Куда сейчас можно — один список на строку готовности и на кнопки
+   * советника. Кнопка на недостижимый шаг хуже её отсутствия: человек
+   * жмёт, ничего не происходит, и виноват в этом продукт (§5.7).
+   */
+  const reachable = new Map<string, string>();
+  stepsView.targets.forEach((target, i) => {
+    if (target && i !== stepsView.current)
+      reachable.set(target, stepsView.steps[i]);
+  });
+  const goToReadinessStep = (id: string): void => {
+    const index = stepsView.targets.findIndex((x) => x === id);
+    if (index >= 0) selectStep(index);
+  };
 
   return (
     <div className="space-y-4">
@@ -329,6 +404,67 @@ export function GenerationWizard() {
         onSelect={selectStep}
         selectable={stepsView.selectable}
       />
+
+      {/* Строка «до готового ролика» и совет на шаге — волна D, этап 13.
+          Оба живут под степпером и на любом шаге: человек должен видеть
+          остаток пути всё время, а не узнавать о нём, нажав кнопку. */}
+      {readiness && (
+        <ReadinessPanel
+          readiness={readiness}
+          canGoToStep={(id) => reachable.has(id)}
+          onGoToStep={goToReadinessStep}
+        />
+      )}
+
+      {projectId && stepId && (
+        <HintLine
+          projectId={projectId}
+          stepId={stepId}
+          enabled={!!guide?.available && !!guide?.enabled}
+          stepLabels={Object.fromEntries(reachable)}
+          onGoToStep={goToReadinessStep}
+          onEvent={(kind, detail) => track(kind, stepId, detail)}
+        />
+      )}
+
+      {/* Чекбокс — только на первом шаге: включить советы можно ТОЛЬКО
+          в начале сценария (§3.2). У товарки сессия создаётся кнопкой,
+          которая открывает мастер, поэтому «начало» здесь — пока не
+          начат разбор референса. */}
+      {projectId && guide?.available && guide.canEnable && (
+        <label className="flex items-start gap-2 rounded-lg border border-[var(--border)] p-3">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={guide.enabled}
+            onChange={(e) => void toggleGuide(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">
+              {dict.wizardGuide.checkboxLabel}
+            </span>
+            <span className="block text-sm text-[var(--muted)]">
+              {dict.wizardGuide.checkboxHint}
+            </span>
+          </span>
+        </label>
+      )}
+
+      {/* Выключить советы можно в ЛЮБОЙ момент (§3.2) — асимметрия
+          правила: включение только в начале, выключение когда угодно.
+          Без этой кнопки человек, включивший советы на первом шаге,
+          остался бы с ними до конца прогона. */}
+      {projectId && guide?.available && guide.enabled && !guide.canEnable && (
+        <div className="text-right">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void toggleGuide(false)}
+          >
+            {dict.wizardGuide.disableButton}
+          </Button>
+        </div>
+      )}
 
       {/* Step 1: Upload Video — за согласием с офертой (§20) */}
       {currentStep === 'upload' && !isUploading && !termsAccepted && (

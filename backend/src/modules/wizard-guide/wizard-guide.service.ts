@@ -23,6 +23,19 @@ import {
 } from '../../common/wizard-guide-access';
 import { scenarioOfProjectType } from '../../common/test-user-scenarios';
 import { AI_GUIDE_ENABLED_KEY } from './guide-settings';
+import { SessionStatus } from '../../common/types/session.types';
+
+/**
+ * Статусы сессии товарки, при которых мастер ещё на первом шаге.
+ *
+ * `created` — сессию только что завели кнопкой на экране товара;
+ * `video_uploaded` — референс выбран, но разбор не запущен. Всё
+ * остальное означает, что путь пошёл.
+ */
+const UNSTARTED_PRODUCT_STATUSES: string[] = [
+  SessionStatus.CREATED,
+  SessionStatus.VIDEO_UPLOADED,
+];
 
 /**
  * Глобальный рубильник фичи — правится оператором без деплоя. Ключ
@@ -141,7 +154,8 @@ export class WizardGuideService {
     projectId: string,
     type: string,
   ): Promise<ScenarioProgress> {
-    if (scenarioOfProjectType(type) === 'CLIENT_SITE') {
+    const scenario = scenarioOfProjectType(type);
+    if (scenario === 'CLIENT_SITE') {
       const draft: { stepsPerRound: number[] } | null =
         await this.prisma.clientSiteTutorialDraft.findUnique({
           where: { projectId },
@@ -149,6 +163,26 @@ export class WizardGuideService {
         });
       return { clientSiteFrames: draft?.stepsPerRound.length ?? 0 };
     }
+
+    if (scenario === 'PRODUCT_VIDEO') {
+      // У товарки сессия создаётся той же кнопкой, которая ОТКРЫВАЕТ
+      // мастер (`createSessionFromItem` на экране товара). Считать её
+      // признаком «сценарий пошёл» значит не дать включить советы
+      // никогда — чекбокс был бы недоступен уже на первом кадре.
+      // Первый шаг товарки — выбор референса, и он длится, пока не
+      // начался разбор (ТЗ §3.2).
+      const started = await this.prisma.session.count({
+        where: {
+          projectId,
+          deletedAt: null,
+          status: { notIn: UNSTARTED_PRODUCT_STATUSES },
+        },
+      });
+      return { hasAnalysis: started > 0 };
+    }
+
+    // Greeting: сессия создаётся кнопкой ПОСЛЕ брифа, то есть весь
+    // первый шаг она ещё не существует.
     const sessions = await this.prisma.session.count({
       where: { projectId, deletedAt: null },
     });

@@ -1,4 +1,6 @@
 import {
+  greetingReadiness,
+  productReadiness,
   clientSiteReadiness,
   readinessOf,
   type ReadinessItem,
@@ -91,5 +93,139 @@ describe('готовность обучалки (§7.3)', () => {
     const r = draft({ frames: 7 });
     expect(r.items.every((i) => typeof i.done === 'boolean')).toBe(true);
     expect(JSON.stringify(r)).not.toMatch(/\b7\b/);
+  });
+});
+
+describe('готовность поздравления (§7.3, этап 12)', () => {
+  const base = {
+    occasion: 'BIRTHDAY',
+    customOccasionText: null,
+    recipientName: 'Марина',
+    senderName: 'Андрей',
+    usesAvatar: false,
+    referenceImages: 1,
+    hasPrompt: true,
+    promptFlagged: false,
+  };
+
+  it('всё заполнено — можно генерировать', () => {
+    expect(greetingReadiness(base).canGenerate).toBe(true);
+  });
+
+  it('без сценария генерировать нечего', () => {
+    const r = greetingReadiness({ ...base, hasPrompt: false });
+    expect(r.canGenerate).toBe(false);
+    expect(r.items.find((i) => i.key === 'script')?.done).toBe(false);
+  });
+
+  it('пункт «сценарий прошёл проверку» появляется только со сценарием', () => {
+    // До сценария это не задача, а шум: человек увидел бы «осталось 2»
+    // там, где дела ровно одно.
+    const before = greetingReadiness({ ...base, hasPrompt: false });
+    expect(before.items.some((i) => i.key === 'scriptClean')).toBe(false);
+    expect(before.missingRequired).toBe(1);
+
+    const flagged = greetingReadiness({ ...base, promptFlagged: true });
+    expect(flagged.items.find((i) => i.key === 'scriptClean')?.done).toBe(
+      false,
+    );
+    expect(flagged.canGenerate).toBe(false);
+  });
+
+  it('текст повода спрашивается только у повода «другое»', () => {
+    expect(base.occasion).not.toBe('OTHER');
+    expect(
+      greetingReadiness(base).items.some((i) => i.key === 'occasionText'),
+    ).toBe(false);
+    const other = greetingReadiness({
+      ...base,
+      occasion: 'OTHER',
+      customOccasionText: null,
+    });
+    expect(other.items.find((i) => i.key === 'occasionText')?.required).toBe(
+      true,
+    );
+    expect(other.canGenerate).toBe(false);
+  });
+
+  it('лицо обязательно только говорящему аватару', () => {
+    // Сервер отказывает в рендере аватара без портрета; у обычного
+    // ведущего фото — дело вкуса.
+    const avatar = greetingReadiness({
+      ...base,
+      usesAvatar: true,
+      referenceImages: 0,
+    });
+    expect(avatar.items.find((i) => i.key === 'face')?.required).toBe(true);
+    expect(avatar.canGenerate).toBe(false);
+
+    const plain = greetingReadiness({ ...base, referenceImages: 0 });
+    expect(plain.items.some((i) => i.key === 'face')).toBe(false);
+    expect(plain.canGenerate).toBe(true);
+  });
+
+  it('фото у аватара не дублируется необязательным пунктом', () => {
+    const avatar = greetingReadiness({ ...base, usesAvatar: true });
+    expect(avatar.items.filter((i) => i.stepId === 'references')).toHaveLength(
+      1,
+    );
+  });
+
+  it('отправитель влияет, но не блокирует', () => {
+    const r = greetingReadiness({ ...base, senderName: null });
+    expect(r.items.find((i) => i.key === 'sender')?.required).toBe(false);
+    expect(r.canGenerate).toBe(true);
+  });
+});
+
+describe('готовность товарки (§7.3, этап 13)', () => {
+  const base = {
+    analysisComplete: true,
+    hasProductInfo: true,
+    hasProductImage: true,
+    promptApproved: true,
+    hasBrandManifest: true,
+  };
+
+  it('всё готово — можно генерировать', () => {
+    expect(productReadiness(base).canGenerate).toBe(true);
+  });
+
+  it('каждое из четырёх условий блокирует по отдельности', () => {
+    // Ровно те четыре, которые бросают сервисы: два в `PromptService`,
+    // два в `GenerationService`.
+    for (const key of [
+      'analysisComplete',
+      'hasProductInfo',
+      'hasProductImage',
+      'promptApproved',
+    ] as const) {
+      const r = productReadiness({ ...base, [key]: false });
+      expect(r.canGenerate).toBe(false);
+      expect(r.missingRequired).toBe(1);
+    }
+  });
+
+  it('бренд-манифест влияет, но не блокирует', () => {
+    const r = productReadiness({ ...base, hasBrandManifest: false });
+    expect(r.canGenerate).toBe(true);
+    expect(r.items.find((i) => i.key === 'brandManifest')?.required).toBe(
+      false,
+    );
+  });
+
+  it('пункты ведут на свои шаги степпера', () => {
+    // Строка готовности кликается, и вести она должна туда, где это
+    // заполняют, — иначе «не хватает фото» это сообщение, а не путь.
+    const byKey = Object.fromEntries(
+      productReadiness(base).items.map((i) => [i.key, i.stepId]),
+    );
+    expect(byKey).toEqual({
+      analysis: 'analysis',
+      product: 'product',
+      photo: 'product',
+      prompt: 'prompt',
+      brandManifest: 'product',
+    });
   });
 });

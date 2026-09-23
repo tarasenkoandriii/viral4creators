@@ -56,6 +56,30 @@ import {
   type GuideAction,
 } from './hint-actions';
 import { SCENARIO_HINTS, knowledgeStamp, stepIdsOf } from './hint-scenarios';
+import { factsOfScenario } from './hint-facts';
+import { activeProductImage } from '../../common/active-image';
+import { AVATAR_PRESENTER } from '../../common/wizard-readiness.session';
+
+/** Ровно те поля сессии, которые читают факты состояния. */
+interface SessionShape {
+  status?: string;
+  greetingBriefSnapshot?: {
+    occasion?: string;
+    customOccasionText?: string | null;
+    recipientName?: string;
+    senderName?: string | null;
+    presenterProvider?: string;
+    resolvedPresenterProvider?: string;
+  } | null;
+  greetingReferenceImages?: unknown[] | null;
+  generationPrompt?: {
+    approvedAt?: string | null;
+    moderationStatus?: string | null;
+  } | null;
+  generatedVideo?: { status?: string } | null;
+  videoAnalysis?: { status?: string } | null;
+  productInformation?: unknown;
+}
 import { guideSpentToday } from './guide-budget';
 import {
   AI_GUIDE_BUDGET_KEY,
@@ -330,47 +354,104 @@ export class WizardHintService {
   /**
    * Факты состояния словами.
    *
-   * И положительные, и отрицательные: без «-title» ситуации «заголовка
-   * нет» и «поле ещё не читали» дали бы один дайджест, а это разные
-   * ситуации и разные советы.
+   * Сами формулировки — в `hint-facts.ts`, рядом с карточками знаний:
+   * добавить сценарий в один файл и забыть про другой значит получить
+   * ПОСТОЯННЫЙ дайджест, то есть один кеш на всех (см. шапку того
+   * файла). Здесь остаётся только чтение из базы.
    */
   private async factsOf(
     scenario: FreeScenario,
     projectId: string,
   ): Promise<string[]> {
-    if (scenario !== 'CLIENT_SITE') return [];
-    const draft: {
-      stepsPerRound: number[];
-      title: string | null;
-      status: string;
-      requiresLiveLoginReplay: boolean;
-      hasCredentials?: boolean;
-      credentialsEnc: string | null;
-    } | null = await this.prisma.clientSiteTutorialDraft.findUnique({
-      where: { projectId },
-      select: {
-        stepsPerRound: true,
-        title: true,
-        status: true,
-        requiresLiveLoginReplay: true,
-        credentialsEnc: true,
-      },
+    if (scenario === 'CLIENT_SITE') {
+      const draft: {
+        stepsPerRound: number[];
+        title: string | null;
+        status: string;
+        requiresLiveLoginReplay: boolean;
+        credentialsEnc: string | null;
+      } | null = await this.prisma.clientSiteTutorialDraft.findUnique({
+        where: { projectId },
+        select: {
+          stepsPerRound: true,
+          title: true,
+          status: true,
+          requiresLiveLoginReplay: true,
+          credentialsEnc: true,
+        },
+      });
+      return factsOfScenario({
+        scenario,
+        state: draft
+          ? {
+              rounds: draft.stepsPerRound.length,
+              title: draft.title,
+              status: draft.status,
+              hasCredentials: !!draft.credentialsEnc,
+              requiresLiveLoginReplay: draft.requiresLiveLoginReplay,
+            }
+          : null,
+      });
+    }
+
+    // Greeting и товарка живут в сессии. Берём последнюю: мастер
+    // работает с ней же, а прошлые прогоны к текущему шагу отношения
+    // не имеют.
+    const row: { status: string; data: unknown; liveData: unknown } | null =
+      await this.prisma.session.findFirst({
+        where: { projectId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { status: true, data: true, liveData: true },
+      });
+    const session = row
+      ? ({
+          ...(row.data as Record<string, unknown>),
+          ...(row.liveData as Record<string, unknown>),
+          status: row.status,
+        } as SessionShape)
+      : null;
+
+    if (scenario === 'GREETING_VIDEO') {
+      const brief = session?.greetingBriefSnapshot;
+      return factsOfScenario({
+        scenario,
+        state: session
+          ? {
+              occasion: brief?.occasion ?? null,
+              customOccasionText: brief?.customOccasionText ?? null,
+              recipientName: brief?.recipientName ?? null,
+              senderName: brief?.senderName ?? null,
+              usesAvatar:
+                (brief?.resolvedPresenterProvider ??
+                  brief?.presenterProvider) === AVATAR_PRESENTER,
+              referenceImages: session.greetingReferenceImages?.length ?? 0,
+              hasPrompt: !!session.generationPrompt,
+              promptFlagged:
+                session.generationPrompt?.moderationStatus === 'flagged',
+              hasVideo: !!session.generatedVideo,
+            }
+          : null,
+      });
+    }
+
+    return factsOfScenario({
+      scenario,
+      state: session
+        ? {
+            hasReference: !!session.videoAnalysis,
+            analysisComplete: session.videoAnalysis?.status === 'complete',
+            hasProductInfo: !!session.productInformation,
+            hasProductImage: !!activeProductImage(
+              session.productInformation as never,
+            )?.pathname,
+            promptApproved: !!session.generationPrompt?.approvedAt,
+            renderInFlight:
+              session.generatedVideo?.status === 'pending' ||
+              session.generatedVideo?.status === 'processing',
+            hasVideo: session.generatedVideo?.status === 'completed',
+          }
+        : null,
     });
-    if (!draft) return ['черновика ещё нет'];
-    const rounds = draft.stepsPerRound.length;
-    return [
-      rounds > 0 ? `записано шагов: ${rounds}` : 'не записано ни одного шага',
-      draft.title?.trim() ? 'название задано' : 'название не задано',
-      draft.status === 'DRAFTING'
-        ? 'черновик редактируется'
-        : `черновик в статусе ${draft.status}`,
-      draft.credentialsEnc
-        ? 'вход на сайт уже пройден'
-        : 'вход на сайт ещё не проходили',
-      draft.requiresLiveLoginReplay
-        ? 'вход придётся повторить живой сессией'
-        : 'повтор входа не требуется',
-    ];
   }
 
   private async fromCache(key: string): Promise<HintResult | null> {
