@@ -10,6 +10,7 @@ import {
 import { SITE_URL, SITE_NAME, TMA_URL } from '../../../lib/content';
 import { ShareButtons } from '../../../components/ShareButtons';
 import { jsonLdScript } from '../../../lib/json-ld';
+import { headingOf } from '../../../lib/shared-video-heading';
 
 /**
  * Публичная страница готового ролика и петля шеринга (ТЗ §40, этап 60).
@@ -67,12 +68,13 @@ export async function generateMetadata({
     (isGreeting ? dict.sharedVideo.greetingMetaDescription : page.title)
   ).slice(0, 200);
   const images = page.productImageUrl ? [page.productImageUrl] : undefined;
+  const heading = headingOf(page, dict);
   return {
-    title: `${page.title}${dict.sharedVideo.metaTitleSuffix}`,
+    title: `${heading}${dict.sharedVideo.metaTitleSuffix}`,
     description,
     alternates: { canonical: `${SITE_URL}/video/${page.id}` },
     openGraph: {
-      title: page.title,
+      title: heading,
       description,
       type: 'video.other',
       locale: OG_LOCALES[locale],
@@ -81,7 +83,7 @@ export async function generateMetadata({
     },
     twitter: {
       card: images ? 'summary_large_image' : 'summary',
-      title: page.title,
+      title: heading,
       description,
       images,
     },
@@ -115,10 +117,11 @@ export default async function SharedVideoPage({
   // Schema.org VideoObject — то же обоснование, что у JSON-LD блога
   // (app/[locale]/blog/[slug]/page.tsx): абсолютные URL, машиночитаемая
   // разметка для шаринга/поисковика, а не переизобретение вручную в JSX.
+  const heading = headingOf(page, dict);
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'VideoObject',
-    name: page.title,
+    name: heading,
     description:
       page.productDescription ??
       page.productName ??
@@ -190,7 +193,7 @@ export default async function SharedVideoPage({
           />
         </div>
 
-        <h1 className="shared-video-title">{page.title}</h1>
+        <h1 className="shared-video-title">{heading}</h1>
 
         {/* Товарная рамка — только у товарного ролика. У поздравления
             её нет ни в каком виде: ни названия, ни цены, ни фото

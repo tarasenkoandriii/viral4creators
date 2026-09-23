@@ -179,12 +179,25 @@ describe('подписи поводов во всех пакетах', () => {
     );
   });
 
-  it('словарь лендинга покрывает ровно тот же набор поводов', () => {
-    const dict = read('landing/src/dictionaries/ru.json');
-    expect(Object.keys(dict.sharedVideo.occasion).sort()).toEqual(
-      [...GREETING_OCCASIONS].sort(),
-    );
-  });
+  /**
+   * Все пять локалей, а не только русская.
+   *
+   * Раньше сверялся один `ru.json`, а остальные держала типизация
+   * лендинга (`Record<Locale, typeof ru>` в `get-dictionary.ts`). Она
+   * ловит ПРОПУЩЕННЫЙ ключ, но не лишний: повод, убранный из enum и
+   * забытый в немецком словаре, не покраснел бы нигде — а плитка на
+   * немецкой странице вела бы в мастер с поводом, которого сервер уже
+   * не принимает. Здесь сверяется РАВЕНСТВО наборов, в обе стороны.
+   */
+  it.each(['ru', 'uk', 'en', 'de', 'es'])(
+    'словарь лендинга (%s) покрывает ровно тот же набор поводов',
+    (locale) => {
+      const dict = read(`landing/src/dictionaries/${locale}.json`);
+      expect(Object.keys(dict.sharedVideo.occasion).sort()).toEqual(
+        [...GREETING_OCCASIONS].sort(),
+      );
+    },
+  );
 
   it('словарь мини-аппа покрывает все тоны', () => {
     const dict = read('frontend/src/dictionaries/ru.json');
