@@ -17,5 +17,11 @@
 -- и у видео с фото товара: по нему блоб удаляется вместе со страницей
 -- (`SharedVideoService.withdraw`), иначе картинка пережила бы отзыв.
 
-ALTER TABLE "SharedVideoPage" ADD COLUMN "posterUrl" TEXT;
-ALTER TABLE "SharedVideoPage" ADD COLUMN "posterPathname" TEXT;
+-- Имя таблицы — из `@@map`, а не имя модели: в схеме модель
+-- называется SharedVideoPage, а таблица в базе — shared_video_pages.
+-- Ровно на этом миграция и упала при первом выкате (42P01, relation
+-- does not exist); проверку, которая ловит это без движка Prisma,
+-- держит `prisma/migration-table-names.spec.ts`.
+
+ALTER TABLE "shared_video_pages" ADD COLUMN "posterUrl" TEXT;
+ALTER TABLE "shared_video_pages" ADD COLUMN "posterPathname" TEXT;
