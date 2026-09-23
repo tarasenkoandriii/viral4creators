@@ -22,7 +22,7 @@
  *    идентификатор здесь просто не рисуется, молча.
  */
 
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { ChevronRight, Lightbulb } from 'lucide-react';
 import { Spinner } from './ui';
 import { useI18n } from '../lib/i18n-context';
@@ -34,7 +34,10 @@ import {
   isVisible,
   waitsForIdle,
 } from '../lib/hint-line';
-import { requestWizardHint } from '../services/wizard-guide-api';
+import {
+  requestWizardHint,
+  sendWizardComplaint,
+} from '../services/wizard-guide-api';
 import type { GuideAction } from '../types';
 
 /**
@@ -61,6 +64,7 @@ export function HintLine({
   enabled,
   stepLabels,
   onGoToStep,
+  onEvent,
 }: {
   projectId: string;
   /** Текущий шаг мастера — он же часть ключа кеша на сервере. */
@@ -76,6 +80,13 @@ export function HintLine({
    */
   stepLabels: Record<string, string>;
   onGoToStep: (stepId: string) => void;
+  /**
+   * Телеметрия шагов (§8): раскрытие совета.
+   *
+   * «Тут непонятно» сюда НЕ идёт: его пишет сервер тем же запросом, что
+   * принимает жалобу.
+   */
+  onEvent?: (kind: 'hint_open', detail?: string) => void;
 }) {
   const { dict, locale } = useI18n();
   const t = dict.wizardGuide;
@@ -83,6 +94,20 @@ export function HintLine({
     hintReducer,
     initialHintState(enabled, stepId)
   );
+  /**
+   * Жалоба: `null` — кнопка не нажата, строка — открытое поле,
+   * `'sent'` — поблагодарили.
+   *
+   * Отдельным состоянием, а не в машине §5.11: жалоба живёт поверх
+   * совета и не меняет ни одного его перехода, а всякое лишнее
+   * состояние в той машине пришлось бы проверять в паре с каждым
+   * другим.
+   */
+  const [complaint, setComplaint] = useState<string | null | 'sent'>(null);
+
+  // Новый шаг — новая жалоба: «спасибо» на следующем шаге относилось бы
+  // к предыдущему.
+  useEffect(() => setComplaint(null), [stepId]);
 
   useEffect(() => {
     dispatch(enabled ? { type: 'enabled' } : { type: 'disabled' });
@@ -167,7 +192,13 @@ export function HintLine({
           className="w-full text-left"
           aria-busy={busy}
           aria-label={busy ? t.loading : t.title}
-          onClick={() => dispatch({ type: 'open' })}
+          onClick={() => {
+            // Считается именно КЛИК: показ по таймеру простоя — это не
+            // внимание человека, а наша догадка о нём, и мешать их в
+            // одной частоте значит потерять смысл обеих.
+            onEvent?.('hint_open');
+            dispatch({ type: 'open' });
+          }}
         >
           {header}
         </button>
@@ -189,6 +220,58 @@ export function HintLine({
             openTemplate={t.openDoc}
             onGoToStep={onGoToStep}
           />
+
+          {/* «Тут непонятно» (§6.3). Кнопка живёт под СОВЕТОМ, а не под
+              шагом: жалуются на совет, и по ней же потом заводится
+              запись опыта именно для этого шага. */}
+          {state.hint && complaint === 'sent' && (
+            <p className="text-xs text-[var(--muted)]">{t.complaintThanks}</p>
+          )}
+          {state.hint && complaint === null && (
+            <button
+              type="button"
+              className="text-xs text-[var(--muted)] underline decoration-dotted underline-offset-2"
+              onClick={() => setComplaint('')}
+            >
+              {t.hintUseless}
+            </button>
+          )}
+          {state.hint &&
+            typeof complaint === 'string' &&
+            complaint !== 'sent' && (
+              <div className="space-y-2">
+                <textarea
+                  className="w-full rounded-lg border border-[var(--border)] bg-transparent p-2 text-sm"
+                  rows={2}
+                  autoFocus
+                  value={complaint}
+                  placeholder={t.complaintHint}
+                  onChange={(e) => setComplaint(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="rounded-full border border-[var(--border)] px-3 py-1 text-xs"
+                  onClick={() => {
+                    // Событие телеметрии пишет СЕРВЕР, тем же запросом,
+                    // и в любом случае — в том числе с пустым полем: «на
+                    // этом шаге непонятно» само по себе частота, ради
+                    // которой §8 и заведён. Слать его ещё и отсюда
+                    // значило бы посчитать каждую жалобу дважды.
+                    // Кандидата без слов сервер не создаёт — оператору
+                    // нечего было бы дать.
+                    const text = complaint.trim();
+                    void sendWizardComplaint(projectId, {
+                      stepId,
+                      locale,
+                      text: text || undefined,
+                    });
+                    setComplaint('sent');
+                  }}
+                >
+                  {t.complaintSend}
+                </button>
+              </div>
+            )}
         </div>
       )}
     </div>

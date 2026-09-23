@@ -43,3 +43,36 @@ export function numberSettingValue(
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
+
+// ── Пороги сведения дублей (§6.4, этап 10) ──────────────────────────
+
+export const SIBLING_AUTO_KEY = 'ai_guide_sibling_auto';
+export const SIBLING_SUGGEST_KEY = 'ai_guide_sibling_suggest';
+
+/**
+ * Выше этого — сводим сами; выше нижнего — показываем оператору с
+ * процентом; ниже — заводим новую ситуацию.
+ *
+ * Умолчания взяты из §6.4 и заведомо не окончательны: выставить их
+ * правильно заранее нельзя, а данные копятся сами — `matchScore`
+ * хранится у КАЖДОГО кандидата, включая отвергнутых и сведённых руками.
+ * Поэтому оба порога — настройки, а не константы.
+ */
+export const DEFAULT_SIBLING_AUTO = 0.85;
+export const DEFAULT_SIBLING_SUGGEST = 0.5;
+
+/**
+ * Разбор порога.
+ *
+ * Отдельно от `numberSettingValue`, потому что здесь другая область
+ * допустимого: доля от нуля до единицы. Единица означает «никогда не
+ * сводить автоматически» — законная настройка, а не ошибка.
+ */
+export function thresholdValue(
+  raw: string | null | undefined,
+  fallback: number,
+): number {
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback;
+}

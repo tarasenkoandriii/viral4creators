@@ -16,6 +16,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 import {
   AI_GUIDE_BUDGET_KEY,
@@ -42,7 +43,56 @@ export interface SetAiGuideSettingsInput {
 
 @Injectable()
 export class AdminWizardGuideService {
-  constructor(private readonly settings: PlatformSettingsService) {}
+  constructor(
+    private readonly settings: PlatformSettingsService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  /**
+   * Первое число на экране (§10) — доля попаданий в кеш.
+   *
+   * По нему видно, разорит фича или нет, и оно же ловит поломку
+   * дайджеста: слишком подробное состояние делает ключ уникальным на
+   * каждого человека, и кеш перестаёт быть кешем, не подавая никаких
+   * других признаков. ТЗ прямо называет порог: ниже примерно половины
+   * через сутки после запуска — чинить классификатор, а не бюджет.
+   */
+  async stats(): Promise<{
+    cache: { rows: number; hits: number; hitRate: number };
+    hints: { total: number; flagged: number; bySource: Record<string, number> };
+  }> {
+    const [rows, hitsAgg, total, flagged, bySource] = await Promise.all([
+      this.prisma.wizardHintCache.count(),
+      this.prisma.wizardHintCache.aggregate({ _sum: { hits: true } }),
+      this.prisma.wizardHint.count(),
+      this.prisma.wizardHint.count({ where: { flagged: true } }),
+      this.prisma.wizardHint.groupBy({
+        by: ['source'],
+        _count: { _all: true },
+      }),
+    ]);
+    const hits = (hitsAgg as { _sum: { hits: number | null } })._sum.hits ?? 0;
+    // Знаменатель — попадания ПЛЮС промахи, а промах — это ровно одна
+    // записанная строка кеша: она появляется тогда и только тогда,
+    // когда ответа в кеше не было.
+    const denominator = hits + rows;
+    return {
+      cache: {
+        rows,
+        hits,
+        hitRate: denominator ? hits / denominator : 0,
+      },
+      hints: {
+        total,
+        flagged,
+        bySource: Object.fromEntries(
+          (bySource as Array<{ source: string; _count: { _all: number } }>).map(
+            (r) => [r.source, r._count._all],
+          ),
+        ),
+      },
+    };
+  }
 
   async get(): Promise<AiGuideSettingsView> {
     const [enabledRaw, budgetRaw, limitRaw] = await Promise.all([
@@ -67,6 +117,51 @@ export class AdminWizardGuideService {
    * сохранение бюджета не должно втихую переписывать рубильник тем
    * значением, которое лежало на экране в момент загрузки.
    */
+  /**
+   * Лента выданных подсказок (§10) — «почему модель посоветовала это».
+   *
+   * В журнале лежат ответы МОДЕЛИ (и статические, когда они появятся),
+   * но не попадания в кеш: попадание не порождает нового текста, а
+   * считается счётчиком `hits` на самой записи кеша. Писать строку
+   * журнала на каждое попадание значило бы удвоить таблицу ради числа,
+   * которое уже есть.
+   */
+  async hints(filter: {
+    scenario?: string;
+    stepId?: string;
+    locale?: string;
+    source?: string;
+    flagged?: boolean;
+    limit?: number;
+  }): Promise<
+    Array<{
+      id: string;
+      createdAt: Date;
+      scenario: string;
+      stepId: string;
+      locale: string;
+      source: string;
+      hint: string;
+      inTokens: number;
+      outTokens: number;
+      costMicroUsd: number;
+      latencyMs: number;
+      flagged: boolean;
+    }>
+  > {
+    return this.prisma.wizardHint.findMany({
+      where: {
+        ...(filter.scenario ? { scenario: filter.scenario } : {}),
+        ...(filter.stepId ? { stepId: filter.stepId } : {}),
+        ...(filter.locale ? { locale: filter.locale } : {}),
+        ...(filter.source ? { source: filter.source } : {}),
+        ...(filter.flagged === undefined ? {} : { flagged: filter.flagged }),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(filter.limit ?? 100, 200),
+    });
+  }
+
   async set(
     input: SetAiGuideSettingsInput,
     updatedBy?: string,

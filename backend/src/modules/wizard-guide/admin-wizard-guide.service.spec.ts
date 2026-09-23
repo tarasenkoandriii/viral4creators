@@ -23,10 +23,24 @@ function build(initial: Record<string, string> = {}) {
       store.set(key, value);
     }),
   };
+  const prisma = {
+    wizardHintCache: {
+      count: jest.fn().mockResolvedValue(4),
+      aggregate: jest.fn().mockResolvedValue({ _sum: { hits: 12 } }),
+    },
+    wizardHint: {
+      count: jest.fn().mockResolvedValue(9),
+      groupBy: jest.fn().mockResolvedValue([
+        { source: 'model', _count: { _all: 4 } },
+        { source: 'cache', _count: { _all: 5 } },
+      ]),
+    },
+  };
   return {
-    svc: new AdminWizardGuideService(settings as never),
+    svc: new AdminWizardGuideService(settings as never, prisma as never),
     settings,
     store,
+    prisma,
   };
 }
 
@@ -85,5 +99,23 @@ describe('AdminWizardGuideService', () => {
     const { svc, store } = build();
     await svc.set({ personalLimit: -3 });
     expect(store.get(AI_GUIDE_PERSONAL_LIMIT_KEY)).toBe('0');
+  });
+
+  it('доля попаданий считается от попаданий и промахов', async () => {
+    // Промах — это ровно одна записанная строка кеша: она появляется
+    // тогда и только тогда, когда ответа в кеше не было. 12 попаданий
+    // при 4 строках — это 12 из 16.
+    const { svc } = build();
+    const stats = await svc.stats();
+    expect(stats.cache.hitRate).toBeCloseTo(0.75);
+  });
+
+  it('пустой кеш не делит на ноль', async () => {
+    const { svc, prisma } = build();
+    prisma.wizardHintCache.count.mockResolvedValue(0);
+    prisma.wizardHintCache.aggregate.mockResolvedValue({
+      _sum: { hits: null },
+    });
+    expect((await svc.stats()).cache.hitRate).toBe(0);
   });
 });

@@ -128,6 +128,25 @@ export function errorMessage(
   return err instanceof Error ? err.message : t.generic;
 }
 
+/**
+ * Машинный код отказа — для телеметрии шагов («Тонкая красная линия»
+ * §8), не для человека.
+ *
+ * Рядом с `errorMessage`, а не вместо него, и это главное: в таблицу
+ * частот уезжает КОД, потому что текст отказа сервер сочиняет по-русски
+ * (или отдаёт сообщение с пользовательскими данными внутри), а
+ * группировать надо одинаковые отказы. `http-500` и «Что-то пошло не
+ * так» — это одна причина и пять разных строк.
+ */
+export function errorCode(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const status = err.response?.status;
+    if (!status) return 'network';
+    return `http-${status}`;
+  }
+  return 'client';
+}
+
 function unwrap<T>(res: { data?: T }, what: string): T {
   if (res.data === undefined) throw new Error(`Пустой ответ: ${what}`);
   return res.data;

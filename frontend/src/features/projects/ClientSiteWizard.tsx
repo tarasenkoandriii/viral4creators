@@ -64,7 +64,7 @@ import {
   stepSite,
   undoSiteRound,
 } from '../../services/client-site-tutorial-api';
-import { errorMessage } from '../../services/projects-api';
+import { errorCode, errorMessage } from '../../services/projects-api';
 import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import type {
@@ -79,6 +79,7 @@ import { ScreenHeader } from './shared';
 import { Stepper } from '../../components/ui';
 import { ReadinessPanel } from '../../components/ReadinessPanel';
 import { HintLine } from '../../components/HintLine';
+import { useWizardEvents } from '../../lib/useWizardEvents';
 import {
   getWizardGuide,
   setWizardGuide,
@@ -124,6 +125,8 @@ export function ClientSiteWizard({
 }) {
   const { dict } = useI18n();
   const t = dict.clientSiteWizard;
+  const track = useWizardEvents(projectId);
+  const currentStepRef = useRef<string>('url');
 
   const [stage, setStage] = useState<Stage>('loading');
   const [draft, setDraft] = useState<ClientSiteDraftView | null>(null);
@@ -288,6 +291,10 @@ export function ClientSiteWizard({
       return await fn();
     } catch (err) {
       setError(errorMessage(err));
+      // Частота отказов по шагам (§8) — один из источников кандидатов
+      // опыта (§6.3). В телеметрию едет КОД, а не текст: текста
+      // пользователя в этой таблице не бывает по построению.
+      track('error', currentStepRef.current, errorCode(err));
       // Любая неудача могла случиться ПОСЛЕ того, как сервер уже
       // записал раунд (оборвалась связь, клиентский таймаут короче
       // серверного). Тогда наш `version` устарел, и все следующие
@@ -367,6 +374,9 @@ export function ClientSiteWizard({
 
   const undo = async () => {
     if (!draft) return;
+    // Откат — сигнал «на этом шаге что-то пошло не так» (§6.3). До
+    // этого он вызывался и нигде не считался.
+    track('undo', currentStepRef.current);
     const result = await run(() => undoSiteRound(projectId, draft.version));
     if (result) applyRound(result);
   };
@@ -445,6 +455,35 @@ export function ClientSiteWizard({
 
   const facts = clientSiteFactsOf(draft);
   const currentStepId = clientSiteStepOfStage(stage);
+
+  /**
+   * Текущий шаг для телеметрии (§8).
+   *
+   * В ссылке, а не в замыкании: `run()` и `undo()` объявлены выше и
+   * живут дольше одного рендера — замкнув шаг, они приписывали бы
+   * отказы тому шагу, на котором были заведены.
+   *
+   * Присваивание в ЭФФЕКТЕ, а не в теле рендера: рендер в React 18
+   * может быть отменён, и запись из отменённого рендера оставила бы в
+   * ссылке шаг, которого человек не видел.
+   */
+  useEffect(() => {
+    if (currentStepId !== 'loading') currentStepRef.current = currentStepId;
+  }, [currentStepId]);
+
+  // «Вошёл на шаг» и «ушёл с шага»: из них считаются частоты, по
+  // которым оператор решает, где заводить запись опыта (§6.3).
+  useEffect(() => {
+    if (currentStepId === 'loading') return;
+    track('enter', currentStepId);
+    return () => {
+      track('leave', currentStepId);
+      // Явная отправка: на размонтаже хук уже сбросил очередь (эффекты
+      // чистятся в порядке объявления), и это событие иначе висело бы
+      // на таймере, который переживает экран только по случайности.
+      track.flush();
+    };
+  }, [currentStepId, track]);
 
   /**
    * Адрес следует за состоянием, а не наоборот.
@@ -549,6 +588,7 @@ export function ClientSiteWizard({
           enabled={!!guide?.available && !!guide?.enabled}
           stepLabels={Object.fromEntries(reachable)}
           onGoToStep={goToTarget}
+          onEvent={(kind, detail) => track(kind, currentStepId, detail)}
         />
       )}
 

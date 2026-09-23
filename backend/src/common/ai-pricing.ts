@@ -149,6 +149,8 @@ export type AiOperation =
    * вопрос «сколько стоит вот это».
    */
   | 'wizard-hint'
+  | 'wizard-sibling'
+  | 'wizard-translate'
   // Генерация сценария обучающего видео по крону `tutorial-scenario-
   // generate` (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.10,
   // этап 94) — второй случай без `sessionId`/`userId` вовсе (тот же
@@ -236,6 +238,8 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'character-preview': 'Превью персонажа из текста',
   assistant: 'ИИ-консультант на лендинге',
   'wizard-hint': 'Подсказка на шаге мастера',
+  'wizard-sibling': 'Сведение дублей в корпусе опыта',
+  'wizard-translate': 'Перевод записи опыта на другой язык',
   'tutorial-scenario-generate': 'Генерация сценария обучающего видео',
   'auction-assessment': 'ИИ-оценка лота аукциона',
   watermark: 'Водяной знак на превью',

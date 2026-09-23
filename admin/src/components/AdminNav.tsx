@@ -60,6 +60,7 @@ const NAV: NavEntry[] = [
       ['/telemetry', 'Телеметрия'],
       ['/funnel', 'Воронка'],
       ['/assistant', 'ИИ-консультант'],
+      ['/wizard-guide', 'Советник в мастере'],
       ['/tutorial-scenarios', 'Сценарии обучалки'],
       ['/site-tutorial-drafts', 'Обучалки по сайтам'],
       ['/settings', 'Настройки'],

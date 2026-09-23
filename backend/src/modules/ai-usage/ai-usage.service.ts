@@ -320,11 +320,23 @@ export class AiUsageService {
    * вызывающие стороны ради вызова, которого им не нужно.
    */
   async spentTodayForOperation(
-    operation: AiOperation,
+    /**
+     * Одна операция или несколько против ОДНОГО потолка — так же, как
+     * у `countToday`. Несколько нужны там, где фича платит за разные
+     * вызовы, а бюджет у неё общий: советник тратит на подсказку,
+     * сведение дублей и перевод, и три отдельных запроса к одной
+     * таблице ради одной суммы — это три поездки вместо одной.
+     */
+    operation: AiOperation | readonly AiOperation[],
     now: Date = new Date(),
   ): Promise<number> {
     const r = (await this.prisma.aiUsage.aggregate({
-      where: { operation, createdAt: { gte: startOfDayUtc(now) } },
+      where: {
+        operation: Array.isArray(operation)
+          ? { in: operation as AiOperation[] }
+          : (operation as AiOperation),
+        createdAt: { gte: startOfDayUtc(now) },
+      },
       _sum: { costMicroUsd: true },
     })) as { _sum: { costMicroUsd: number | null } };
     return r._sum.costMicroUsd ?? 0;

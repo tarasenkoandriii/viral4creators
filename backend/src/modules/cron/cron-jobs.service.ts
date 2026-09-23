@@ -61,6 +61,12 @@ import {
 } from '../../common/orphan-sweep';
 import { pruneRateLimits } from '../../common/rate-limit';
 import {
+  pruneWizardCandidates,
+  pruneWizardHintCache,
+  pruneWizardHints,
+  pruneWizardStepEvents,
+} from '../wizard-guide/wizard-telemetry';
+import {
   pruneAssistantExchanges,
   pruneAssistantEvents,
 } from '../assistant/assistant-prune';
@@ -827,6 +833,36 @@ export class CronJobsService {
         pruneAssistantEvents(this.prisma, now).catch((error: unknown) => {
           this.logger.warn(
             `не удалось убрать события ИИ-консультанта: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return 0;
+        }),
+        // Советник в мастере («Тонкая красная линия» §8): та же
+        // ретенция 30 дней у телеметрии шагов и журнала подсказок — и
+        // отдельный суточный TTL у кеша, записи которого старше суток
+        // не отдаются никогда и только портят долю попаданий.
+        pruneWizardStepEvents(this.prisma, now).catch((error: unknown) => {
+          this.logger.warn(
+            `не удалось убрать телеметрию шагов: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return 0;
+        }),
+        pruneWizardHints(this.prisma, now).catch((error: unknown) => {
+          this.logger.warn(
+            `не удалось убрать журнал подсказок: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return 0;
+        }),
+        pruneWizardHintCache(this.prisma, now).catch((error: unknown) => {
+          this.logger.warn(
+            `не удалось убрать кеш подсказок: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return 0;
+        }),
+        // Разобранные сигналы корпуса опыта — 90 дней. Неразобранные не
+        // трогаются: это рабочая очередь оператора, а не журнал.
+        pruneWizardCandidates(this.prisma, now).catch((error: unknown) => {
+          this.logger.warn(
+            `не удалось убрать разобранных кандидатов: ${error instanceof Error ? error.message : String(error)}`,
           );
           return 0;
         }),

@@ -102,6 +102,18 @@ export class WizardGuideService {
     return this.stateOf(userId, projectId);
   }
 
+  /**
+   * Сценарий проекта — для телеметрии (§8).
+   *
+   * Заодно это и проверка владения: чужой `projectId` бросает 404, и
+   * приписать событие чужому сценарию нельзя. `null` — проект есть, но
+   * его тип советнику неизвестен (сценарии добавляются волнами).
+   */
+  async scenarioOf(userId: string, projectId: string): Promise<string | null> {
+    const project = await this.ownProject(userId, projectId);
+    return scenarioOfProjectType(project.type);
+  }
+
   private async ownProject(
     userId: string,
     projectId: string,

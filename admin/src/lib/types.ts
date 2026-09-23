@@ -1340,3 +1340,89 @@ export interface ProviderBalanceChanges {
   /** `false` — журнал пришёл неполным, разбивка справочная. */
   matchesTotal: boolean;
 }
+
+// ── Советник в мастере («Тонкая красная линия» §10) ────────────────
+
+export interface WizardStatsView {
+  cache: { rows: number; hits: number; hitRate: number };
+  hints: { total: number; flagged: number; bySource: Record<string, number> };
+}
+
+export interface WizardStepFrequency {
+  scenario: string;
+  stepId: string;
+  counts: Record<string, number>;
+  total: number;
+}
+
+export interface WizardExperienceText {
+  id: string;
+  locale: string;
+  symptom: string;
+  cause: string | null;
+  advice: string;
+  source: string;
+  reviewed: boolean;
+  updatedAt: string;
+}
+
+export interface WizardExperienceRow {
+  id: string;
+  scenario: string;
+  stepId: string;
+  status: string;
+  occurrences: number;
+  createdAt: string;
+  updatedAt: string;
+  texts: WizardExperienceText[];
+  /** Ключи словаря, которых больше нет, — запись не идёт в подсказку. */
+  brokenKeys: string[];
+  publishable: boolean;
+}
+
+export interface WizardCandidateRow {
+  id: string;
+  scenario: string;
+  stepId: string;
+  locale: string;
+  rawText: string;
+  origin: string;
+  status: string;
+  matchedId: string | null;
+  matchScore: number | null;
+  decision: string | null;
+  why: string | null;
+  createdAt: string;
+  matched?: WizardExperienceRow | null;
+}
+
+export interface WizardSiblingStats {
+  auto: number;
+  suggest: number;
+  histogram: {
+    buckets: Array<{ from: number; count: number }>;
+    decisions: Record<string, number>;
+    total: number;
+  };
+}
+
+export interface WizardTextInput {
+  symptom: string;
+  cause?: string;
+  advice: string;
+}
+
+export interface WizardHintRow {
+  id: string;
+  createdAt: string;
+  scenario: string;
+  stepId: string;
+  locale: string;
+  source: string;
+  hint: string;
+  inTokens: number;
+  outTokens: number;
+  costMicroUsd: number;
+  latencyMs: number;
+  flagged: boolean;
+}

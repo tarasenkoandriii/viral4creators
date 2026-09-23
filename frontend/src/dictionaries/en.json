@@ -1612,7 +1612,11 @@
     "docs": {
       "offer": "Public offer",
       "termsOfUse": "Terms of use"
-    }
+    },
+    "hintUseless": "This is unclear",
+    "complaintHint": "What exactly is unclear? Optional, but it helps us get there faster.",
+    "complaintSend": "Send",
+    "complaintThanks": "Thanks — we will look into it."
   },
   "wizardReadiness": {
     "title": "To a finished video",

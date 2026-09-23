@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiDelete } from './admin-api';
+import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './admin-api';
 import type {
   AdminCreatorProfile,
   AdminCreatorProfileListResult,
@@ -32,6 +32,13 @@ import type {
   MusicCatalogView,
   AiGuideSettingsView,
   SetAiGuideSettingsInput,
+  WizardCandidateRow,
+  WizardExperienceRow,
+  WizardHintRow,
+  WizardSiblingStats,
+  WizardStatsView,
+  WizardStepFrequency,
+  WizardTextInput,
   ProviderBalance,
   AnalysisProviderKey,
   AnalysisProviderSettingsView,
@@ -936,4 +943,129 @@ export function getVirtualStudioHedraEnabled() {
 
 export function setVirtualStudioHedraEnabled(enabled: boolean) {
   return apiPost<{ enabled: boolean }>('/admin/virtual-studio/settings/hedra-enabled', { enabled });
+}
+
+// ── Советник в мастере («Тонкая красная линия» §10) ────────────────
+
+export function getWizardStats() {
+  return apiGet<WizardStatsView>('/admin/wizard-guide/stats');
+}
+
+export function getWizardSteps(days = 7) {
+  return apiGet<WizardStepFrequency[]>(`/admin/wizard-guide/steps?days=${days}`);
+}
+
+export function getWizardExperience(params: {
+  status?: string;
+  unreviewedLocale?: string;
+} = {}) {
+  const q = new URLSearchParams();
+  if (params.status) q.set('status', params.status);
+  if (params.unreviewedLocale)
+    q.set('unreviewedLocale', params.unreviewedLocale);
+  const suffix = q.toString() ? `?${q}` : '';
+  return apiGet<WizardExperienceRow[]>(
+    `/admin/wizard-guide/experience${suffix}`,
+  );
+}
+
+export function saveWizardText(
+  id: string,
+  locale: string,
+  body: WizardTextInput,
+) {
+  return apiPut<WizardExperienceRow>(
+    `/admin/wizard-guide/experience/${id}/texts/${locale}`,
+    body,
+  );
+}
+
+export function markWizardTextReviewed(id: string, locale: string) {
+  return apiPost<WizardExperienceRow>(
+    `/admin/wizard-guide/experience/${id}/texts/${locale}/reviewed`,
+    {},
+  );
+}
+
+export function publishWizardExperience(id: string) {
+  return apiPost<WizardExperienceRow>(
+    `/admin/wizard-guide/experience/${id}/publish`,
+    {},
+  );
+}
+
+export function setWizardExperienceStatus(id: string, status: string) {
+  return apiPatch<WizardExperienceRow>(`/admin/wizard-guide/experience/${id}`, {
+    status,
+  });
+}
+
+export function getWizardCandidates(params: {
+  status?: string;
+  decision?: string;
+} = {}) {
+  const q = new URLSearchParams();
+  if (params.status) q.set('status', params.status);
+  if (params.decision) q.set('decision', params.decision);
+  const suffix = q.toString() ? `?${q}` : '';
+  return apiGet<WizardCandidateRow[]>(
+    `/admin/wizard-guide/candidates${suffix}`,
+  );
+}
+
+export function promoteWizardCandidate(id: string, body: WizardTextInput) {
+  return apiPost<WizardExperienceRow>(
+    `/admin/wizard-guide/candidates/${id}/promote`,
+    body,
+  );
+}
+
+export function mergeWizardCandidate(id: string, experienceId: string) {
+  return apiPost<{ ok: true }>(`/admin/wizard-guide/candidates/${id}/merge`, {
+    experienceId,
+  });
+}
+
+/** «Это другое» — вернуть кандидата в очередь и откатить счётчик. */
+export function unmergeWizardCandidate(id: string) {
+  return apiPost<{ ok: true }>(`/admin/wizard-guide/candidates/${id}/unmerge`, {});
+}
+
+export function attachWizardCandidate(
+  id: string,
+  experienceId: string,
+  body: WizardTextInput,
+) {
+  return apiPost<WizardExperienceRow>(
+    `/admin/wizard-guide/candidates/${id}/attach`,
+    { ...body, experienceId },
+  );
+}
+
+export function rejectWizardCandidate(id: string) {
+  return apiPost<{ ok: true }>(`/admin/wizard-guide/candidates/${id}/reject`, {});
+}
+
+export function getWizardSiblings() {
+  return apiGet<WizardSiblingStats>('/admin/wizard-guide/siblings');
+}
+
+export function setWizardSiblings(body: { auto?: number; suggest?: number }) {
+  return apiPatch<{ auto: number; suggest: number }>(
+    '/admin/wizard-guide/siblings',
+    body,
+  );
+}
+
+export function getWizardHints(params: {
+  source?: string;
+  locale?: string;
+  flagged?: boolean;
+} = {}) {
+  const q = new URLSearchParams();
+  if (params.source) q.set('source', params.source);
+  if (params.locale) q.set('locale', params.locale);
+  if (params.flagged !== undefined) q.set('flagged', String(params.flagged));
+  const suffix = q.toString() ? `?${q}` : '';
+  return apiGet<WizardHintRow[]>(`/admin/wizard-guide/hints${suffix}`);
 }

@@ -2472,6 +2472,117 @@ model WizardHintCache {
   @@map("wizard_hint_cache")
 }
 
+/// Ситуация: что случается на конкретном шаге конкретного сценария
+/// («Тонкая красная линия» §6.2, этап 9).
+///
+/// Живёт одна на все языки; тексты — в `wizard_experience_texts`.
+/// `status` — обычная строка с проверкой в коде, а не enum: добавление
+/// значения в enum и его использование в одной транзакции уже ломало
+/// деплой (см. доккомментарий `ProjectType.GREETING_VIDEO`).
+model WizardExperience {
+  id          String   @id @default(cuid())
+  /// FreeScenario
+  scenario    String
+  stepId      String
+  /// DRAFT | PUBLISHED | REJECTED
+  status      String   @default("DRAFT")
+  createdBy   String?
+  publishedBy String?
+  /// Сколько раз ситуация встретилась: 1 + число сведённых кандидатов
+  /// (§6.4). По нему сортируется отбор в промпт (§5.6).
+  occurrences Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  texts      WizardExperienceText[]
+  candidates WizardExperienceCandidate[]
+
+  @@index([scenario, stepId, status])
+  @@map("wizard_experience")
+}
+
+/// Совет на одном языке — ЕДИНСТВЕННОЕ, что уходит в подсказку (§6.2).
+model WizardExperienceText {
+  id           String           @id @default(cuid())
+  experienceId String
+  experience   WizardExperience @relation(fields: [experienceId], references: [id], onDelete: Cascade)
+  locale       String
+  /// Симптом — как это выглядит для человека.
+  symptom      String
+  /// Причина. Может быть пустой: «мы знаем, что так бывает» — тоже знание.
+  cause        String?
+  /// Что делать.
+  advice       String
+  /// ADMIN — написал оператор; MODEL — перевод с проверенного текста.
+  /// Сырого пользовательского текста здесь не бывает по построению.
+  source       String
+  /// Прочитан человеком. У MODEL-перевода изначально false.
+  reviewed     Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @default(now()) @updatedAt
+
+  /// На язык ровно один совет: второй испанский вариант той же ситуации
+  /// — это не «ещё один перевод», а рассинхрон, который потом никто не
+  /// разведёт.
+  @@unique([experienceId, locale])
+  @@map("wizard_experience_texts")
+}
+
+/// Сигнал с поля: жалоба, ошибка, откат (§6.2). Пользователю не
+/// показывается НИКОГДА — его никто не проверял.
+model WizardExperienceCandidate {
+  id         String            @id @default(cuid())
+  scenario   String
+  stepId     String
+  locale     String
+  /// Слова человека или код ошибки. Маскируется перед сохранением (§9).
+  rawText    String
+  /// COMPLAINT | UNDO | ERRORS | ADMIN
+  origin     String
+  /// NEW — ждёт оператора; MERGED — сведён с ситуацией; PROMOTED — из
+  /// него завели новую ситуацию; REJECTED — шум.
+  status     String            @default("NEW")
+  matchedId  String?
+  matched    WizardExperience? @relation(fields: [matchedId], references: [id], onDelete: SetNull)
+  /// Процент совпадения, как его оценил siblings (§6.4). Хранится
+  /// ВСЕГДА, включая отвергнутых и ручные решения — по нему двигают
+  /// порог.
+  matchScore Float?
+  /// AUTO — свёл siblings; OPERATOR — человек; NONE — совпадений нет.
+  decision   String?
+  /// Объяснение siblings, для очереди оператора.
+  why        String?
+  decidedBy  String?
+  createdAt  DateTime          @default(now())
+
+  @@index([scenario, stepId, status])
+  @@index([matchedId])
+  @@index([createdAt])
+  @@map("wizard_experience_candidates")
+}
+
+/// Телеметрия шагов мастера («Тонкая красная линия» §8, этап 8).
+///
+/// Ни `userId`, ни `sessionId`, ни адреса — как в `assistant_events`.
+/// Считаются частоты по шагам, а не люди; таблица без идентификаторов не
+/// может утечь тем, чего в ней нет. Ретенция — 30 дней тем же суточным
+/// проходом, что чистит журналы консультанта.
+model WizardStepEvent {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  scenario  String
+  stepId    String
+  /// enter | leave | hint_open | hint_useless | undo | error
+  kind      String
+  /// Код ошибки или иной машинный признак. Пользовательского текста
+  /// здесь не бывает: он живёт в кандидатах опыта и маскируется (§9).
+  detail    String?
+
+  @@index([scenario, stepId, kind, createdAt])
+  @@index([createdAt])
+  @@map("wizard_step_events")
+}
+
 /// Журнал выданных подсказок («Тонкая красная линия» §8).
 ///
 /// Идентификатора пользователя здесь нет намеренно: разбирают ОТВЕТ, а

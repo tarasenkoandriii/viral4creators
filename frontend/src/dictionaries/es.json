@@ -1612,7 +1612,11 @@
     "docs": {
       "offer": "Contrato de oferta",
       "termsOfUse": "Condiciones de uso"
-    }
+    },
+    "hintUseless": "Esto no se entiende",
+    "complaintHint": "¿Qué es lo que no se entiende? Es opcional, pero así lo vemos antes.",
+    "complaintSend": "Enviar",
+    "complaintThanks": "Gracias, lo revisaremos."
   },
   "wizardReadiness": {
     "title": "Hasta el vídeo terminado",

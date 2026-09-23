@@ -32,6 +32,12 @@ function build(
     throws?: boolean;
     /** Общие правила расхода: блокировка и суточный потолок (§5.8). */
     canSpend?: boolean;
+    /** Срез корпуса опыта (§6) — на этапе 9 он появился в промпте. */
+    experience?: {
+      lines: string[];
+      stamp: string;
+      needTranslation?: Array<{ id: string; from: Record<string, unknown> }>;
+    };
   } = {},
 ) {
   const prisma = {
@@ -63,6 +69,14 @@ function build(
   const guide = {
     available: jest.fn().mockResolvedValue(over.globalOn ?? true),
   };
+  const experience = {
+    sliceFor: jest.fn(async () => ({
+      lines: over.experience?.lines ?? [],
+      needTranslation: over.experience?.needTranslation ?? [],
+      stamp: over.experience?.stamp ?? 'e0',
+    })),
+  };
+  const translation = { translate: jest.fn().mockResolvedValue(true) };
   const plan = {
     assertCanSpendUser: jest.fn(async () => {
       if (over.canSpend === false) throw new Error('аккаунт заблокирован');
@@ -74,6 +88,8 @@ function build(
     aiUsage as any,
     guide as any,
     plan as any,
+    experience as any,
+    translation as any,
   );
   // Параметр объявлен, хотя мок его не читает: без него `mock.calls[0][0]`
   // — элемент пустого кортежа, и шаг «типы» в CI (корневой tsconfig
@@ -92,7 +108,17 @@ function build(
     };
   });
   (svc as any).genai = { models: { generateContent } };
-  return { svc, prisma, aiUsage, guide, generateContent, settings, plan };
+  return {
+    svc,
+    prisma,
+    aiUsage,
+    guide,
+    generateContent,
+    settings,
+    plan,
+    experience,
+    translation,
+  };
 }
 
 describe('WizardHintService (§5)', () => {
@@ -389,5 +415,112 @@ describe('WizardHintService (§5)', () => {
     const row = prisma.wizardHint.create.mock.calls[0][0].data;
     expect(row.inTokens).toBe(1000);
     expect(row.outTokens).toBe(130);
+  });
+
+  // ── Этап 9: корпус опыта ─────────────────────────────────────────
+
+  it('записи опыта едут в промпт', async () => {
+    const { svc, generateContent } = build({
+      experience: {
+        lines: ['код не приходит; что делать: смотрите в Telegram'],
+        stamp: 'e1.3.abc',
+      },
+    });
+    await svc.hint('u1', 'p1', 'record');
+    const instruction =
+      generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(instruction).toContain('смотрите в Telegram');
+  });
+
+  it('публикация записи меняет ключ кеша, а не ждёт суток', async () => {
+    // Без отпечатка корпуса в ключе новая запись доехала бы до людей
+    // только после истечения суточного TTL — то есть модерация
+    // работала бы с задержкой в день, и никто бы не понял почему.
+    const a = build({ experience: { lines: [], stamp: 'e1.1.aaa' } });
+    await a.svc.hint('u1', 'p1', 'record');
+    const keyA = a.prisma.wizardHintCache.findUnique.mock.calls[0][0].where.key;
+
+    const b = build({ experience: { lines: [], stamp: 'e2.5.bbb' } });
+    await b.svc.hint('u1', 'p1', 'record');
+    const keyB = b.prisma.wizardHintCache.findUnique.mock.calls[0][0].where.key;
+
+    expect(keyA).not.toBe(keyB);
+  });
+
+  it('срез просят на локали запроса', async () => {
+    const { svc, experience } = build();
+    await svc.hint('u1', 'p1', 'record', 'de');
+    expect(experience.sliceFor).toHaveBeenCalledWith(
+      'CLIENT_SITE',
+      'record',
+      'de',
+    );
+  });
+
+  // ── Этап 11: накопление локалей ──────────────────────────────────
+
+  it('запись без текста на локали переводится после ответа', async () => {
+    const { svc, translation } = build({
+      experience: {
+        lines: [],
+        stamp: 'e1',
+        needTranslation: [
+          { id: 'x1', from: { locale: 'ru', symptom: 'с', advice: 'a' } },
+        ],
+      },
+    });
+    await svc.hint('u1', 'p1', 'record', 'de');
+    expect(translation.translate).toHaveBeenCalledWith(
+      'x1',
+      'de',
+      expect.objectContaining({ locale: 'ru' }),
+    );
+  });
+
+  it('за один показ переводится одна запись, а не пять', async () => {
+    // Иначе подсказка человека тянет за собой пять вызовов модели.
+    // Ситуации повторяются — локаль заполнится за несколько показов.
+    const { svc, translation } = build({
+      experience: {
+        lines: [],
+        stamp: 'e1',
+        needTranslation: [
+          { id: 'x1', from: { locale: 'ru', symptom: 'с', advice: 'a' } },
+          { id: 'x2', from: { locale: 'ru', symptom: 'с', advice: 'a' } },
+          { id: 'x3', from: { locale: 'ru', symptom: 'с', advice: 'a' } },
+        ],
+      },
+    });
+    await svc.hint('u1', 'p1', 'record', 'de');
+    expect(translation.translate).toHaveBeenCalledTimes(1);
+  });
+
+  it('упавший перевод не роняет подсказку', async () => {
+    const { svc, translation } = build({
+      experience: {
+        lines: [],
+        stamp: 'e1',
+        needTranslation: [
+          { id: 'x1', from: { locale: 'ru', symptom: 'с', advice: 'a' } },
+        ],
+      },
+    });
+    translation.translate.mockRejectedValue(new Error('модель лёгла'));
+    expect((await svc.hint('u1', 'p1', 'record', 'de')).hint).toBeTruthy();
+  });
+
+  it('кеш отдаётся без перевода — платить дважды не за что', async () => {
+    const { svc, translation } = build({
+      cached: { hint: 'из кеша', actions: [], createdAt: new Date() },
+      experience: {
+        lines: [],
+        stamp: 'e1',
+        needTranslation: [
+          { id: 'x1', from: { locale: 'ru', symptom: 'с', advice: 'a' } },
+        ],
+      },
+    });
+    await svc.hint('u1', 'p1', 'record', 'de');
+    expect(translation.translate).not.toHaveBeenCalled();
   });
 });

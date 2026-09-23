@@ -51,3 +51,23 @@ export async function requestWizardHint(
     'hint'
   );
 }
+
+/**
+ * «Тут непонятно» — самый дешёвый и самый честный сигнал (§6.3).
+ *
+ * Текст необязателен: без него остаётся только событие телеметрии, и
+ * этого достаточно, чтобы увидеть шаг, на котором людям неясно. Со
+ * словами заводится кандидат для оператора — на языке человека, как он
+ * написал (§6.7).
+ */
+export async function sendWizardComplaint(
+  projectId: string,
+  body: { stepId: string; locale: string; text?: string }
+): Promise<void> {
+  try {
+    await api.post(`${base(projectId)}/complaint`, body);
+  } catch {
+    // Жалоба на подсказку не имеет права превратиться в ошибку поверх
+    // мастера: человек и так уже сказал, что ему тут непонятно.
+  }
+}

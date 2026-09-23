@@ -98,6 +98,11 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return handle<T>(await apiReq(path, { method: 'POST', body }));
 }
 
+/** PUT — «положить целиком»: тексты советов правятся заменой (§6.2). */
+export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  return handle<T>(await apiReq(path, { method: 'PUT', body }));
+}
+
 export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
   return handle<T>(await apiReq(path, { method: 'PATCH', body }));
 }

@@ -56,6 +56,7 @@ import {
   type GuideAction,
 } from './hint-actions';
 import { SCENARIO_HINTS, knowledgeStamp, stepIdsOf } from './hint-scenarios';
+import { guideSpentToday } from './guide-budget';
 import {
   AI_GUIDE_BUDGET_KEY,
   AI_GUIDE_PERSONAL_LIMIT_KEY,
@@ -64,6 +65,9 @@ import {
   numberSettingValue,
 } from './guide-settings';
 import { WizardGuideService } from './wizard-guide.service';
+import { ExperienceService } from './experience.service';
+import type { ExperienceText } from './experience';
+import { TranslationService } from './translation.service';
 
 /** Сколько ждём модель. Короткая реплика — короткое ожидание. */
 const HINT_TIMEOUT_MS = 20_000;
@@ -129,6 +133,8 @@ export class WizardHintService {
     private readonly aiUsage: AiUsageService,
     private readonly guide: WizardGuideService,
     private readonly plan: PlanService,
+    private readonly experience: ExperienceService,
+    private readonly translation: TranslationService,
   ) {
     // Нет ключа — не падаем при старте: фича выключается сама, как у
     // ассистента, и остальной мастер продолжает работать.
@@ -155,11 +161,16 @@ export class WizardHintService {
     if (!scenario || !hints || !card) return NOTHING;
 
     const facts = await this.factsOf(scenario, projectId);
+    // Срез корпуса опыта (§6) читается ДО кеша: его отпечаток входит в
+    // ключ, иначе опубликованная запись ждала бы суточного TTL — то
+    // есть модерация работала бы с задержкой в день, и никто бы не
+    // понял почему.
+    const slice = await this.experience.sliceFor(scenario, stepId, locale);
     const key = hintCacheKey({
       scenario,
       stepId,
       locale,
-      knowledgeStamp: knowledgeStamp(),
+      knowledgeStamp: `${knowledgeStamp()}.${slice.stamp}`,
       digest: digestOfFacts(facts),
     });
 
@@ -188,6 +199,7 @@ export class WizardHintService {
       scenarioGoal: hints.goal,
       card,
       facts,
+      experience: slice.lines,
       // Тот же список, по которому потом проверяются действия: второй
       // список разошёлся бы, и кнопки начали бы вести в никуда ровно
       // на тех шагах, которые переименовали.
@@ -265,6 +277,11 @@ export class WizardHintService {
         flagged,
         usage,
       });
+      // Накопление локалей (§6.7, этап 11) — ПОСЛЕ того, как подсказка
+      // собрана: перевод нужен следующему показу, а не этому, и ждать
+      // его, чтобы показать совет, значило бы добавить второй вызов
+      // модели в путь, который и так небыстрый.
+      await this.fillLocale(slice.needTranslation, locale);
       return { hint: masked, actions, source: 'model' };
     } catch (e) {
       // Таймаут, отмена, отказ провайдера — всё это «строка свернулась
@@ -274,6 +291,25 @@ export class WizardHintService {
       );
       return NOTHING;
     }
+  }
+
+  /**
+   * Перевести ОДНУ запись за вызов.
+   *
+   * Одну, а не все: подсказке нужны пять записей, и переводить их разом
+   * значило бы пять вызовов модели в одном запросе человека. Ситуации
+   * повторяются — за несколько показов локаль заполнится сама, и это
+   * ровно тот механизм накопления, ради которого §6.7 и написан.
+   */
+  private async fillLocale(
+    pending: Array<{ id: string; from: ExperienceText }>,
+    locale: SupportedLocale,
+  ): Promise<void> {
+    const next = pending[0];
+    if (!next) return;
+    await this.translation
+      .translate(next.id, locale, next.from)
+      .catch(() => false);
   }
 
   // ── Внутреннее ───────────────────────────────────────────────────
@@ -458,7 +494,10 @@ export class WizardHintService {
       AI_GUIDE_BUDGET_KEY,
       DEFAULT_DAILY_BUDGET_MICRO_USD,
     );
-    const spent = await this.aiUsage.spentTodayForOperation('wizard-hint');
+    // Сумма по ВСЕМ операциям советника, а не только по подсказкам:
+    // иначе «$2 в сутки» перестаёт быть потолком фичи, как только у неё
+    // появляется вторая платная операция (аудит волны C).
+    const spent = await guideSpentToday(this.aiUsage);
     if (spent < budget) return true;
     this.logger.warn(
       `дневной бюджет советника исчерпан: ${spent} мкд при потолке ${budget}`,

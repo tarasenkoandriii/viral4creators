@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -16,6 +17,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -38,6 +40,10 @@ import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.servic
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { ProviderBalancesService } from './provider-balances.service';
 import { AdminWizardGuideService } from '../wizard-guide/admin-wizard-guide.service';
+import { WizardTelemetryService } from '../wizard-guide/wizard-telemetry.service';
+import { AdminExperienceService } from '../wizard-guide/admin-experience.service';
+import { SiblingsService } from '../wizard-guide/siblings.service';
+import { SUPPORTED_LOCALES } from '../../common/locale';
 import { VOICEOVER_PROVIDER_KEYS } from '../tts/default-tts-provider';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { ANALYSIS_PROVIDER_KEYS } from '../analysis/default-analysis-provider';
@@ -128,6 +134,72 @@ export class SetAiGuideDto {
   personalLimit?: number;
 }
 
+/** Текст совета на одном языке («Тонкая красная линия» §6.2). */
+export class ExperienceTextDto {
+  @IsString()
+  @MaxLength(400)
+  symptom!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  cause?: string;
+
+  @IsString()
+  @MaxLength(600)
+  advice!: string;
+}
+
+export class PromoteCandidateDto extends ExperienceTextDto {}
+
+export class AttachCandidateDto extends ExperienceTextDto {
+  @IsString()
+  experienceId!: string;
+}
+
+export class MergeCandidateDto {
+  @IsString()
+  experienceId!: string;
+}
+
+/** Пороги сведения дублей (§6.4). Доли, а не проценты. */
+export class SiblingThresholdsDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  auto?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  suggest?: number;
+}
+
+export class ExperienceStatusDto {
+  @IsIn(['DRAFT', 'REJECTED'])
+  status!: string;
+}
+
+/** Запись оператора без всякого сигнала — основной источник на старте. */
+export class AdminCandidateDto {
+  @IsString()
+  @MaxLength(40)
+  scenario!: string;
+
+  @IsString()
+  @MaxLength(40)
+  stepId!: string;
+
+  @IsIn(SUPPORTED_LOCALES as unknown as string[])
+  locale!: string;
+
+  @IsString()
+  @MaxLength(1000)
+  rawText!: string;
+}
+
 /** Е-1.5 шестого аудита — ручная правка баланса кредитов. Целое, не
  * ноль: положительное — компенсация, отрицательное — списание/исправление
  * ошибочного начисления. */
@@ -214,6 +286,9 @@ export class AdminPanelController {
     private readonly musicCatalog: AdminMusicCatalogService,
     private readonly balances: ProviderBalancesService,
     private readonly aiGuide: AdminWizardGuideService,
+    private readonly wizardTelemetry: WizardTelemetryService,
+    private readonly wizardExperience: AdminExperienceService,
+    private readonly siblings: SiblingsService,
     private readonly analysisSettings: AdminAnalysisSettingsService,
     private readonly videoProviderSettings: AdminVideoProviderSettingsService,
     private readonly grokTransportSettings: AdminGrokTransportSettingsService,
@@ -488,6 +563,229 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.aiGuide.set(dto, req.userId);
+  }
+
+  /**
+   * Частоты по шагам мастера (§10): где чаще открывают совет, где жмут
+   * «тут непонятно», где откатывают. Это и есть источник кандидатов
+   * `ERRORS`/`UNDO` для §6.3 — оператор смотрит сюда, прежде чем
+   * заводить запись опыта.
+   */
+  /** Доля попаданий в кеш и сводка по журналу подсказок (§10). */
+  @Get('wizard-guide/stats')
+  async wizardStats(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.aiGuide.stats();
+  }
+
+  /** Лента подсказок с фильтрами (§10) — разбор «почему так». */
+  @Get('wizard-guide/hints')
+  async wizardHints(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('scenario') scenario?: string,
+    @Query('stepId') stepId?: string,
+    @Query('locale') locale?: string,
+    @Query('source') source?: string,
+    @Query('flagged') flagged?: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.aiGuide.hints({
+      scenario,
+      stepId,
+      locale,
+      source,
+      flagged: flagged === undefined ? undefined : flagged === 'true',
+    });
+  }
+
+  @Get('wizard-guide/steps')
+  async wizardSteps(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('days') days?: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    const parsed = Number(days);
+    return this.wizardTelemetry.frequencies(
+      Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 90) : 7,
+    );
+  }
+
+  // ── Корпус опыта советника («Тонкая красная линия» §6, §10) ──────
+
+  @Get('wizard-guide/experience')
+  async listExperience(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('scenario') scenario?: string,
+    @Query('stepId') stepId?: string,
+    @Query('status') status?: string,
+    @Query('unreviewedLocale') unreviewedLocale?: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.list({
+      scenario,
+      stepId,
+      status,
+      unreviewedLocale,
+    });
+  }
+
+  @Put('wizard-guide/experience/:id/texts/:locale')
+  async saveExperienceText(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('locale') locale: string,
+    @Body() dto: ExperienceTextDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.saveText(id, locale, dto);
+  }
+
+  @Post('wizard-guide/experience/:id/texts/:locale/reviewed')
+  async markExperienceTextReviewed(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('locale') locale: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.markReviewed(id, locale);
+  }
+
+  /** Публикация — единственное место, где запись становится видимой. */
+  @Post('wizard-guide/experience/:id/publish')
+  async publishExperience(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.publish(id, req.userId);
+  }
+
+  @Patch('wizard-guide/experience/:id')
+  async setExperienceStatus(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ExperienceStatusDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.setStatus(id, dto.status);
+  }
+
+  @Get('wizard-guide/candidates')
+  async listCandidates(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('status') status?: string,
+    @Query('scenario') scenario?: string,
+    @Query('stepId') stepId?: string,
+    @Query('decision') decision?: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.candidates({
+      status,
+      scenario,
+      stepId,
+      decision,
+    });
+  }
+
+  @Post('wizard-guide/candidates')
+  async addCandidate(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: AdminCandidateDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    const row = await this.wizardExperience.addCandidate(dto);
+    await this.siblings.classify(row.id).catch(() => undefined);
+    return row;
+  }
+
+  /**
+   * Пороги сведения дублей и гистограмма последних решений (§10).
+   *
+   * Гистограмма рядом с порогами не для красоты: модель меняется, и
+   * только по распределению видно, что 0.85 перестал значить то же,
+   * что месяц назад.
+   */
+  @Get('wizard-guide/siblings')
+  async siblingStats(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    const [thresholds, histogram] = await Promise.all([
+      this.siblings.thresholds(),
+      this.siblings.histogram(),
+    ]);
+    return { ...thresholds, histogram };
+  }
+
+  @Patch('wizard-guide/siblings')
+  async setSiblingThresholds(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SiblingThresholdsDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.siblings.setThresholds(dto, req.userId);
+  }
+
+  /** Пересравнить кандидата — после правки порогов или новых ситуаций. */
+  @Post('wizard-guide/candidates/:id/classify')
+  async classifyCandidate(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return (await this.siblings.classify(id)) ?? { decision: 'NONE' };
+  }
+
+  @Post('wizard-guide/candidates/:id/promote')
+  async promoteCandidate(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: PromoteCandidateDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.promote(id, dto, req.userId);
+  }
+
+  @Post('wizard-guide/candidates/:id/merge')
+  async mergeCandidate(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: MergeCandidateDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.merge(id, dto.experienceId, req.userId);
+  }
+
+  /** «Это другое» — страховка от утонувшей в дублях новой проблемы. */
+  @Post('wizard-guide/candidates/:id/unmerge')
+  async unmergeCandidate(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.unmerge(id, req.userId);
+  }
+
+  @Post('wizard-guide/candidates/:id/attach')
+  async attachCandidate(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: AttachCandidateDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.attachText(
+      id,
+      dto.experienceId,
+      dto,
+      req.userId,
+    );
+  }
+
+  @Post('wizard-guide/candidates/:id/reject')
+  async rejectCandidate(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.wizardExperience.reject(id, req.userId);
   }
 
   @Get('users/:id')

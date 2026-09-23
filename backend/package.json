@@ -10,9 +10,10 @@
   },
   "scripts": {
     "postinstall": "prisma generate",
-    "prebuild": "ts-node --transpile-only scripts/build-assistant-knowledge.ts",
+    "prebuild": "ts-node --transpile-only scripts/build-assistant-knowledge.ts && ts-node --transpile-only scripts/build-wizard-ui-strings.ts",
     "build": "prisma generate && prisma migrate deploy && nest build",
     "build:assistant-knowledge": "ts-node --transpile-only scripts/build-assistant-knowledge.ts",
+    "build:wizard-ui-strings": "ts-node --transpile-only scripts/build-wizard-ui-strings.ts",
     "seed:fixture-user": "ts-node --transpile-only scripts/seed-fixture-user.ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "nest start",
