@@ -884,7 +884,9 @@ export interface OnScreenTextMoment {
  * («4:5» и т.п.), эта функция сводит любое к ближайшему из трёх
  * поддерживаемых пресетов карточки, а не отклоняет незнакомые.
  */
-function normalizeCardAspect(raw: string | null | undefined): '9:16' | '16:9' | '1:1' {
+function normalizeCardAspect(
+  raw: string | null | undefined
+): '9:16' | '16:9' | '1:1' {
   const match = raw?.match(/^(\d+):(\d+)$/);
   if (!match) return '9:16';
   const w = Number(match[1]);

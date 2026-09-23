@@ -386,7 +386,11 @@ export interface SceneAsset {
 // 'text-card' добавлен следом за backend'ом (common/reference-plan.ts) —
 // та же дублирующая копия типа, что уже несколько раз всплывала между
 // фронтендом и бекендом в этом проекте.
-export type ReferenceCandidateKind = 'character' | 'scene' | 'product' | 'text-card';
+export type ReferenceCandidateKind =
+  | 'character'
+  | 'scene'
+  | 'product'
+  | 'text-card';
 
 export interface ReferenceCandidate {
   id: string;

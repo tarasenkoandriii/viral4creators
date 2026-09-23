@@ -64,6 +64,19 @@ const DEFAULTS: Record<PlanId, number> = {
 /** Общий потолок на ВСЕХ анонимных за сутки. */
 const DEFAULT_ANONYMOUS = 5 * USD;
 
+/**
+ * Потолок тестового аккаунта на отмеченных сценариях (TODO §III п.37).
+ *
+ * Именно потолок, а не «без ограничений». Бесплатный проход снимает
+ * стоимость С ПОЛЬЗОВАТЕЛЯ, но не с нас: провайдеру платим в любом
+ * случае. Аккаунт без потолка — это один забытый цикл повторов и
+ * выбранный за ночь бюджет, причём на счёте, который специально сделали
+ * безнаказанным. Значение подобрано так, чтобы полный проход сценария с
+ * генерацией и аватаром (порядка $1–2) повторялся много раз за день и
+ * всё же упирался в край.
+ */
+const DEFAULT_TEST_USER = 20 * USD;
+
 export const PLAN_LIMIT_ENV: Record<PlanId, string> = {
   LITE: 'DAILY_SPEND_LIMIT_USD_LITE',
   STANDARD: 'DAILY_SPEND_LIMIT_USD_STANDARD',
@@ -71,6 +84,8 @@ export const PLAN_LIMIT_ENV: Record<PlanId, string> = {
 };
 
 export const ANONYMOUS_LIMIT_ENV = 'DAILY_SPEND_LIMIT_USD_ANONYMOUS';
+
+export const TEST_USER_LIMIT_ENV = 'DAILY_SPEND_LIMIT_USD_TEST_USER';
 
 /**
  * Значение переменной окружения в микродолларах. Задаётся в ДОЛЛАРАХ —
@@ -106,14 +121,25 @@ export function dailyLimitForAnonymous(
   return limitFrom(env, ANONYMOUS_LIMIT_ENV, DEFAULT_ANONYMOUS);
 }
 
+export function dailyLimitForTestUser(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return limitFrom(env, TEST_USER_LIMIT_ENV, DEFAULT_TEST_USER);
+}
+
 /** Все потолки разом — для вкладки «Расходы» и проверки настроек. */
 export function allDailyLimits(env: NodeJS.ProcessEnv = process.env): {
   byPlan: Record<PlanId, number>;
   anonymous: number;
+  testUser: number;
 } {
   const byPlan = {} as Record<PlanId, number>;
   for (const id of PLAN_IDS) byPlan[id] = dailyLimitForPlan(id, env);
-  return { byPlan, anonymous: dailyLimitForAnonymous(env) };
+  return {
+    byPlan,
+    anonymous: dailyLimitForAnonymous(env),
+    testUser: dailyLimitForTestUser(env),
+  };
 }
 
 export interface BudgetVerdict {
@@ -147,6 +173,18 @@ export function checkBudget(
  * Текст отказа. Без долларов и без слова «лимит бюджета»: пользователю
  * важно, что делать дальше, а не как устроен наш учёт.
  */
+/**
+ * Отказ тестовому аккаунту.
+ *
+ * Отдельный текст обязателен: общая фраза «дневной лимит генераций
+ * исчерпан» у тестировщика читается как «бесплатный доступ сломался», и
+ * дальше он идёт чинить не то. Здесь надо сказать, что доступ работает,
+ * а упёрлись в его собственный потолок.
+ */
+export function testBudgetDeniedMessage(): string {
+  return 'Дневной потолок тестового доступа исчерпан. Бесплатный проход сценариев работает, но не безлимитен: потолок обновится завтра.';
+}
+
 export function budgetDeniedMessage(anonymous: boolean): string {
   return anonymous
     ? 'Дневной лимит бесплатных генераций для гостей исчерпан. Войдите через Telegram — у вошедших свой, больший лимит, — или попробуйте завтра.'

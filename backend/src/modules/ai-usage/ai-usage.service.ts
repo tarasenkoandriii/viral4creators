@@ -117,8 +117,29 @@ export interface CostReport {
   avgPerUserMicroUsd: number;
   avgPerSessionMicroUsd: number;
   sessionsWithCost: number;
+  /**
+   * Тестовые аккаунты (TODO §III п.37) — ОТДЕЛЬНЫМ блоком, потому что
+   * во все остальные числа этого отчёта они не входят.
+   *
+   * Провайдеру за них заплачено, и молча выкинуть их расход значило бы
+   * занизить реальные траты. Но и смешивать нельзя: прогон сценария
+   * ради проверки — это не экономика продукта, а её проверка, и
+   * средний чек, посчитанный вместе с ней, отвечает не на тот вопрос.
+   */
+  testUsers: {
+    /** Сколько аккаунтов помечено тестовыми (не «сколько тратили»). */
+    accounts: number;
+    costMicroUsd: number;
+    calls: number;
+    spentTodayMicroUsd: number;
+  };
   /** Потолки (§26.4) и то, сколько анонимные уже выбрали сегодня. */
-  limits: { byPlan: Record<string, number>; anonymous: number };
+  limits: {
+    byPlan: Record<string, number>;
+    anonymous: number;
+    /** Потолок тестовых аккаунтов на их сценариях (TODO §III п.37). */
+    testUser: number;
+  };
   anonymousSpentTodayMicroUsd: number;
   top: Array<{
     userId: string;
@@ -357,8 +378,17 @@ export class AiUsageService {
     userId: string | null,
     plan: PlanId,
     now: Date = new Date(),
+    /**
+     * Потолок, отличный от тарифного, — сегодня это тестовый доступ
+     * (TODO §III п.37). Передаётся именно потолок, а не признак «он
+     * тестовый»: решение, КОМУ он положен, принимает `PlanService`, а
+     * здесь остаётся один вопрос — уложились или нет.
+     */
+    limitOverride?: number,
   ): Promise<BudgetVerdict> {
-    const limit = userId ? dailyLimitForPlan(plan) : dailyLimitForAnonymous();
+    const limit =
+      limitOverride ??
+      (userId ? dailyLimitForPlan(plan) : dailyLimitForAnonymous());
     return checkBudget(await this.spentToday(userId, now), limit);
   }
 
@@ -419,6 +449,14 @@ export class AiUsageService {
     const now = Date.now();
     const since = (days: number) => new Date(now - days * 24 * 60 * 60 * 1000);
 
+    /**
+     * Тестовые аккаунты исключаются из ВСЕХ чисел ниже и показываются
+     * отдельным блоком (TODO §III п.37). Один список на весь отчёт —
+     * иначе два десятка запросов читали бы одно и то же.
+     */
+    const testIds = await this.testUserIds();
+    const notTest = this.notTestUsers(testIds);
+
     const sum = async (where: Record<string, unknown>) => {
       const r = (await this.prisma.aiUsage.aggregate({
         where,
@@ -438,6 +476,7 @@ export class AiUsageService {
       // не `where`, а сочетание `_sum` и `_count` сразу.
       const rows = (await this.prisma.aiUsage.groupBy({
         by: [field] as const,
+        where: notTest,
         _sum: { costMicroUsd: true },
         _count: { _all: true },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -453,7 +492,10 @@ export class AiUsageService {
           { costMicroUsd: r._sum.costMicroUsd ?? 0, calls: r._count._all },
         ]),
       );
-      const merged = mergeBuckets(raw, await this.rolledBuckets(field));
+      const merged = mergeBuckets(
+        raw,
+        await this.rolledBuckets(field, notTest),
+      );
       return [...merged]
         .map(([key, totals]) => ({ key, ...totals }))
         .sort((a, b) => b.costMicroUsd - a.costMicroUsd);
@@ -481,15 +523,15 @@ export class AiUsageService {
       rolledUnpriced,
       rolledTopCandidates,
     ] = await Promise.all([
-      sum({}),
-      this.prisma.aiUsage.count(),
-      sum({ createdAt: { gte: since(1) } }),
-      sum({ createdAt: { gte: since(7) } }),
-      sum({ createdAt: { gte: since(30) } }),
+      sum(notTest),
+      this.prisma.aiUsage.count({ where: notTest }),
+      sum({ ...notTest, createdAt: { gte: since(1) } }),
+      sum({ ...notTest, createdAt: { gte: since(7) } }),
+      sum({ ...notTest, createdAt: { gte: since(30) } }),
       bucket('provider'),
       bucket('operation'),
       bucket('model'),
-      this.prisma.aiUsage.count({ where: { unpriced: true } }),
+      this.prisma.aiUsage.count({ where: { unpriced: true, ...notTest } }),
       // Тот же флаг, что и в потолке: «анонимный расход» и «расход
       // удалённого пользователя» — разные вещи (этап 40, А-1.10).
       sum({ anonymous: true }),
@@ -501,7 +543,7 @@ export class AiUsageService {
       // пути в issues), и всё равно не резолвится: `as any` на аргументе.
       this.prisma.aiUsage.groupBy({
         by: ['userId'] as const,
-        where: { userId: { not: null } },
+        where: { userId: { not: null }, ...notTest },
         _sum: { costMicroUsd: true },
         _count: { _all: true },
         orderBy: { _sum: { costMicroUsd: 'desc' } },
@@ -524,39 +566,49 @@ export class AiUsageService {
       // «только свёрнутых» дали бы тысячу вместо тысячи восьмисот, а
       // средним на человека делится ПОЛНАЯ сумма, включая свёрнутую.
       // `UNION` (не `UNION ALL`) дедуплицирует сам.
+      // Тестовые исключаются связью с `users`, а не списком
+      // идентификаторов в параметре: запрос остаётся статическим, без
+      // массива в плейсхолдере, и читается так же, как раньше.
       this.prisma.$queryRaw`
         SELECT count(*)::int AS "count" FROM (
-          SELECT "userId" FROM "ai_usage" WHERE "userId" IS NOT NULL
+          SELECT a."userId" FROM "ai_usage" a
+            JOIN "users" u ON u."id" = a."userId"
+            WHERE u."isTestUser" = false
           UNION
-          SELECT "userId" FROM "ai_usage_monthly" WHERE "userId" IS NOT NULL
+          SELECT m."userId" FROM "ai_usage_monthly" m
+            JOIN "users" u ON u."id" = m."userId"
+            WHERE u."isTestUser" = false
         ) AS "both"
       ` as Promise<Array<{ count: number }>>,
-      sum({ userId: { not: null } }),
+      sum({ userId: { not: null }, ...notTest }),
       // `distinct` у Prisma 7 считается НЕ в SQL, а в JavaScript: клиент
       // выбирает все строки и дедуплицирует их в памяти. На журнале в
       // 800 тыс. строк это ~25 МБ в куче функции ради ОДНОГО числа, и с
       // ростом журнала кончается падением по памяти (этап 37, А-1.1).
       // Сырой запрос считает то же самое одним числом в базе.
       this.prisma.$queryRaw`
-        SELECT count(DISTINCT "sessionId")::int AS "count"
-        FROM "ai_usage"
-        WHERE "sessionId" IS NOT NULL
+        SELECT count(DISTINCT a."sessionId")::int AS "count"
+        FROM "ai_usage" a
+        LEFT JOIN "users" u ON u."id" = a."userId"
+        WHERE a."sessionId" IS NOT NULL
+          AND COALESCE(u."isTestUser", false) = false
       ` as Promise<Array<{ count: number }>>,
       this.prisma.aiUsage.findFirst({
+        where: notTest,
         orderBy: { createdAt: 'desc' },
         select: { pricingVersion: true },
       }) as Promise<{ pricingVersion: string } | null>,
       // Вторая половина всех «за всё время» чисел — свёрнутые месяцы
       // (этап 118). Окна 1/7/30 дней сюда не входят: они короче срока
       // хранения сырых строк.
-      this.rolledTotals(),
+      this.rolledTotals(notTest),
       this.rolledTotals({ anonymous: true }),
-      this.rolledTotals({ userId: { not: null } }),
-      this.rolledTotals({ unpriced: true }),
+      this.rolledTotals({ userId: { not: null }, ...notTest }),
+      this.rolledTotals({ unpriced: true, ...notTest }),
       // Кандидаты в топ со стороны свёртки — тоже ограниченной выборкой,
       // а не «все пользователи за всю историю»: это ровно тот дефект
       // (Б-1.7), из-за которого сырой топ считают в базе.
-      this.rolledTopUsers(topLimit),
+      this.rolledTopUsers(topLimit, notTest),
     ]);
 
     // Prisma-клиент в песочнице не сгенерирован, поэтому тип у groupBy
@@ -639,6 +691,29 @@ export class AiUsageService {
       rolledAll,
     );
 
+    /**
+     * Отдельный блок тестовых. Считается только когда такие аккаунты
+     * есть: на проекте без них это три лишних запроса на каждое
+     * открытие вкладки ради трёх нулей.
+     */
+    const testUsers = testIds.length
+      ? await (async () => {
+          const where = { userId: { in: testIds } };
+          const [cost, calls, rolled, today] = await Promise.all([
+            sum(where),
+            this.prisma.aiUsage.count({ where }),
+            this.rolledTotals(where),
+            sum({ ...where, createdAt: { gte: startOfDayUtc(new Date(now)) } }),
+          ]);
+          return {
+            accounts: testIds.length,
+            costMicroUsd: cost + rolled.costMicroUsd,
+            calls: calls + rolled.calls,
+            spentTodayMicroUsd: today,
+          };
+        })()
+      : { accounts: 0, costMicroUsd: 0, calls: 0, spentTodayMicroUsd: 0 };
+
     const result: CostReport = {
       // Версия берётся из последней записи, а не из константы: если прайс
       // правили, старые строки посчитаны по старым ставкам, и показывать
@@ -672,6 +747,7 @@ export class AiUsageService {
         ? Math.round(totalMicroUsd / sessionsWithCost)
         : 0,
       sessionsWithCost,
+      testUsers,
       limits: allDailyLimits(),
       anonymousSpentTodayMicroUsd: await this.spentToday(null),
       top: topRows.map((r) => {
@@ -929,12 +1005,15 @@ export class AiUsageService {
    * выборка всех пользователей за всю историю — тот самый дефект
    * Б-1.7, из-за которого сырой топ и считают в базе.
    */
-  private async rolledTopUsers(limit: number): Promise<Buckets> {
+  private async rolledTopUsers(
+    limit: number,
+    exclude: Record<string, unknown> = {},
+  ): Promise<Buckets> {
     // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297, #6494)
     // — см. тот же комментарий выше в этом файле.
     const rows = (await this.prisma.aiUsageMonthly.groupBy({
       by: ['userId'] as const,
-      where: { userId: { not: null } },
+      where: { userId: { not: null }, ...exclude },
       _sum: { costMicroUsd: true, calls: true },
       orderBy: { _sum: { costMicroUsd: 'desc' } },
       take: limit,
@@ -952,6 +1031,34 @@ export class AiUsageService {
       });
     }
     return out;
+  }
+
+  /**
+   * Идентификаторы тестовых аккаунтов (TODO §III п.37).
+   *
+   * Список, а не join в каждом запросе: таких аккаунтов единицы, а
+   * запросов в отчёте два десятка, и одинаковое условие во всех них
+   * проще держать одним значением, чем повторённой связью.
+   */
+  private async testUserIds(): Promise<string[]> {
+    const rows = (await this.prisma.user.findMany({
+      where: { isTestUser: true },
+      select: { id: true },
+    })) as Array<{ id: string }>;
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * Условие «строка НЕ тестового аккаунта».
+   *
+   * Анонимные сюда входят. Написать просто `userId: { notIn: ids }`
+   * было бы короче и неверно: в SQL `userId NOT IN (...)` для NULL даёт
+   * NULL, то есть анонимный расход выпал бы из отчёта целиком — а к
+   * тестовым аккаунтам он отношения не имеет.
+   */
+  private notTestUsers(ids: string[]): Record<string, unknown> {
+    if (!ids.length) return {};
+    return { OR: [{ userId: null }, { userId: { notIn: ids } }] };
   }
 
   /** Итоги свёртки — вторая половина любого отчёта «за всё время». */

@@ -16,7 +16,14 @@
 
 import { useMemo, useState } from 'react';
 import { Layers } from 'lucide-react';
-import { Alert, Button, Card, EmptyState, Pills, Spinner } from '../../components/ui';
+import {
+  Alert,
+  Button,
+  Card,
+  EmptyState,
+  Pills,
+  Spinner,
+} from '../../components/ui';
 import { getProject, errorMessage } from '../../services/projects-api';
 import { getSession } from '../../services/api';
 import { startCatalogBatch } from '../../services/catalog-batch-api';

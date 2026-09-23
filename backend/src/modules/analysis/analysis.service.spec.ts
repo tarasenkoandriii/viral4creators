@@ -418,7 +418,9 @@ describe('AnalysisService — деньги и согласие проверяю�
     // Маршрут открыт и предъявителем считает UUID сессии (§7.8).
     const { svc, plans, legal } = build({ userId: 'владелец' });
     await svc.analyzeVideo('s1');
-    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('владелец');
+    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('владелец', {
+      projectId: null,
+    });
     expect(legal.assertAccepted).toHaveBeenCalledWith('владелец');
   });
 

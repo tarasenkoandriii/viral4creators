@@ -173,8 +173,7 @@ export const routes = {
     `/projects/${projectId}/ab-test/${runId}`,
   feedImportStart: (projectId: string) => `/projects/${projectId}/feed-import`,
   siteTutorial: (projectId: string) => `/projects/${projectId}/site-tutorial`,
-  greetingVideo: (projectId: string) =>
-    `/projects/${projectId}/greeting-video`,
+  greetingVideo: (projectId: string) => `/projects/${projectId}/greeting-video`,
   feedImport: (projectId: string, runId: string) =>
     `/projects/${projectId}/feed-import/${runId}`,
   generate: () => '/generate',

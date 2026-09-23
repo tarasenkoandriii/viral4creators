@@ -28,11 +28,29 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
   ProviderBalance,
   XAI_MANAGEMENT_BASE,
+  XaiChangesSummary,
   parseXaiBalance,
   previewBody,
   xaiBalancePath,
   xaiFailureReason,
 } from '../../common/xai-balance';
+
+/**
+ * Подпись под суммой.
+ *
+ * Разбивка по журналу полезна («пополнено столько, списано столько»),
+ * но ровно до тех пор, пока журнал полон. Провайдер отдаёт его с
+ * ограничением, и молча показанная неполная разбивка — это цифры,
+ * которые не сходятся с остатком, без объяснения почему.
+ */
+export function balanceNote(changes?: XaiChangesSummary): string | undefined {
+  if (!changes) return undefined;
+  if (!changes.matchesTotal) {
+    return `журнал пришёл неполным (${changes.entries} записей) — разбивка по нему справочная, остаток берётся из total`;
+  }
+  const money = (micro: number) => `$${(micro / 1_000_000).toFixed(2)}`;
+  return `пополнено ${money(changes.purchasedMicroUsd)}, списано ${money(changes.spentMicroUsd)} за ${changes.entries} записей`;
+}
 
 /** Сколько держать ответ, прежде чем спрашивать снова. */
 export const BALANCE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -128,12 +146,10 @@ export class ProviderBalancesService {
       }
       const body: unknown = await res.json();
       const parsed = parseXaiBalance(body);
-      // Сырой ответ показывается ПОКА ЧТО всегда, а не только при
-      // отказе: первый живой вызов дал `total.val = -1827` при остатке
-      // $5.77 в консоли, и до выяснения, какое поле означает остаток
-      // человека, экран обязан показывать то, что реально пришло.
-      const rawBody = previewBody(body);
       if (parsed.amountMicroUsd === undefined) {
+        // Сырой ответ прикладывается только здесь: разобрать не вышло,
+        // и без тела следующий заход начнётся с того же места, что и
+        // прошлый, — с догадок.
         return {
           provider: 'GROK',
           state: 'error',
@@ -141,7 +157,7 @@ export class ProviderBalancesService {
             'ответ получен, но остатка в нём нет — вероятно, аккаунт на постоплате: ' +
             'предоплаченных кредитов у него не бывает',
           raw: parsed.raw,
-          rawBody,
+          rawBody: previewBody(body),
           checkedAt,
         };
       }
@@ -150,7 +166,8 @@ export class ProviderBalancesService {
         state: 'ok',
         amountMicroUsd: parsed.amountMicroUsd,
         raw: parsed.raw,
-        rawBody,
+        changes: parsed.changes,
+        detail: balanceNote(parsed.changes),
         checkedAt,
       };
     } catch (e) {

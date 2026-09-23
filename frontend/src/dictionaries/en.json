@@ -117,7 +117,18 @@
     "blockedBody": "Analyzing new videos and generation are unavailable. Projects, products, and finished videos still open and download as usual.",
     "exhaustedTitle": "Daily limit reached",
     "exhaustedBody": "New analyses and generations will be available tomorrow. Everything already created stays right where it is.",
-    "nearlyExhaustedBody": "Your daily limit is almost used up — there may not be enough left for another video today. We're letting you know in advance so you don't start a long process for nothing."
+    "nearlyExhaustedBody": "Your daily limit is almost used up — there may not be enough left for another video today. We're letting you know in advance so you don't start a long process for nothing.",
+    "testAccess": {
+      "title": "Thank you for helping us get better",
+      "body": "Your account is marked as a test account: everything listed below is free for you — the platform covers the cost.",
+      "scenariosLabel": "Free for you",
+      "capNote": "Test access has its own daily cap — it still exists, and it resets every day.",
+      "scenarios": {
+        "PRODUCT_VIDEO": "Product video ads",
+        "CLIENT_SITE": "Client-site walkthrough",
+        "GREETING_VIDEO": "Greeting video"
+      }
+    }
   },
   "videoPlayer": {
     "download": "Download"
@@ -1031,7 +1042,13 @@
     "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
-    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
+    "steps": [
+      "Video",
+      "Analysis",
+      "Product",
+      "Prompt",
+      "Generation"
+    ],
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
     "openProjectCta": "Open project",
@@ -1488,7 +1505,7 @@
     "cardsTitleHint": "Careful with surprises: the recipient's name in the first second gives the video away before it begins.",
     "cardsClosingLabel": "At the end",
     "cardsClosingHint": "Usually who it is from.",
-    "cardsUseSuggestion": "Use \u201c{text}\u201d",
+    "cardsUseSuggestion": "Use “{text}”",
     "cardsSave": "Save",
     "cardsSaved": "Saved",
     "stickerHeading": "Sticker",

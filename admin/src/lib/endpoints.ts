@@ -438,6 +438,9 @@ export function patchUser(
     isOperator?: boolean;
     isBlocked?: boolean;
     blockedReason?: string;
+    isTestUser?: boolean;
+    /** Полный набор галочек, а не добавка: иначе снять одну нечем. */
+    freeScenarios?: string[];
   }
 ) {
   return apiPatch<AdminUserDetail>(`/admin/users/${id}`, patch);

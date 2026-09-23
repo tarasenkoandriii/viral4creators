@@ -117,7 +117,18 @@
     "blockedBody": "El análisis de nuevos vídeos y la generación no están disponibles. Los proyectos, productos y vídeos ya terminados se abren y descargan con normalidad.",
     "exhaustedTitle": "Límite diario alcanzado",
     "exhaustedBody": "Los nuevos análisis y generaciones estarán disponibles mañana. Todo lo ya creado permanece intacto.",
-    "nearlyExhaustedBody": "Tu límite diario está casi agotado: puede que hoy no alcance para otro vídeo. Te avisamos con antelación para que no empieces un proceso largo en vano."
+    "nearlyExhaustedBody": "Tu límite diario está casi agotado: puede que hoy no alcance para otro vídeo. Te avisamos con antelación para que no empieces un proceso largo en vano.",
+    "testAccess": {
+      "title": "Gracias por ayudarnos a mejorar",
+      "body": "Su cuenta está marcada como de prueba: todo lo indicado abajo es gratuito para usted — la plataforma asume el coste.",
+      "scenariosLabel": "Gratis para usted",
+      "capNote": "El acceso de prueba tiene su propio límite diario — sigue existiendo y se renueva cada día.",
+      "scenarios": {
+        "PRODUCT_VIDEO": "Anuncios de vídeo de producto",
+        "CLIENT_SITE": "Tutorial del sitio del cliente",
+        "GREETING_VIDEO": "Vídeo de felicitación"
+      }
+    }
   },
   "videoPlayer": {
     "download": "Descargar"
@@ -1031,7 +1042,13 @@
     "previewQuota": "Vistas previas hoy: quedan {{left}} de {{limit}}"
   },
   "generationWizard": {
-    "steps": ["Video", "Análisis", "Producto", "Prompt", "Generación"],
+    "steps": [
+      "Video",
+      "Análisis",
+      "Producto",
+      "Prompt",
+      "Generación"
+    ],
     "errorTitle": "Error",
     "prefilledAlert": "Los datos del producto se tomaron del proyecto — es una copia del momento de inicio; los cambios aquí no modifican el producto en sí.",
     "openProjectCta": "Abrir proyecto",
@@ -1488,7 +1505,7 @@
     "cardsTitleHint": "Cuidado con la sorpresa: el nombre en el primer segundo delata el vídeo antes de empezar.",
     "cardsClosingLabel": "Al final",
     "cardsClosingHint": "Normalmente, de parte de quién.",
-    "cardsUseSuggestion": "Usar \u00ab{text}\u00bb",
+    "cardsUseSuggestion": "Usar «{text}»",
     "cardsSave": "Guardar",
     "cardsSaved": "Guardado",
     "stickerHeading": "Pegatina",

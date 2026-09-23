@@ -532,7 +532,12 @@ export class GenerationService {
       generatedVideoId,
     );
     if (!usedCredit) {
-      await this.plans.assertCanSpendUser(session.userId ?? null);
+      // Проект передаётся ради тестового доступа (TODO §III п.37): без
+      // него самая дорогая операция продукта осталась бы под потолком
+      // даже у тестировщика, ради которого доступ и выдавали.
+      await this.plans.assertCanSpendUser(session.userId ?? null, {
+        projectId: session.projectId ?? null,
+      });
     }
 
     // Г-2.3 (аудит round4, этап 64): кредит списан ВЫШЕ, до того, как Veo

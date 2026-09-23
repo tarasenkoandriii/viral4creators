@@ -1,5 +1,8 @@
 import {
   allDailyLimits,
+  dailyLimitForTestUser,
+  TEST_USER_LIMIT_ENV,
+  testBudgetDeniedMessage,
   ANONYMOUS_LIMIT_ENV,
   budgetDeniedMessage,
   checkBudget,
@@ -75,7 +78,7 @@ describe('spend-limits (ТЗ §26.4)', () => {
     expect(d.toISOString()).toBe('2026-09-06T00:00:00.000Z');
   });
 
-  it('сводка потолков покрывает все режимы и анонимных', () => {
+  it('сводка потолков покрывает все режимы, анонимных и тестовых', () => {
     const all = allDailyLimits({});
     expect(Object.keys(all.byPlan).sort()).toEqual([
       'LITE',
@@ -83,5 +86,31 @@ describe('spend-limits (ТЗ §26.4)', () => {
       'STANDARD',
     ]);
     expect(all.anonymous).toBeGreaterThan(0);
+    expect(all.testUser).toBeGreaterThan(0);
+  });
+
+  it('тестовый потолок настраивается переменной и переживает мусор', () => {
+    expect(dailyLimitForTestUser({ [TEST_USER_LIMIT_ENV]: '3' })).toBe(
+      3_000_000,
+    );
+    // Ноль — законное значение: «приостановить траты тестовых».
+    expect(dailyLimitForTestUser({ [TEST_USER_LIMIT_ENV]: '0' })).toBe(0);
+    // Мусор не должен молча остановить тестирование.
+    expect(
+      dailyLimitForTestUser({ [TEST_USER_LIMIT_ENV]: 'много' }),
+    ).toBeGreaterThan(0);
+  });
+
+  it('тестовый потолок заметно выше тарифного у Lite — иначе он бессмыслен', () => {
+    // Полный проход сценария с генерацией и аватаром стоит около
+    // доллара-двух; потолок должен позволять повторить его много раз.
+    const all = allDailyLimits({});
+    expect(all.testUser).toBeGreaterThan(all.byPlan.LITE * 5);
+  });
+
+  it('отказ тестовому говорит, что доступ работает, а не сломался', () => {
+    const text = testBudgetDeniedMessage();
+    expect(text).toMatch(/тестового доступа/);
+    expect(text).not.toMatch(/Войдите через Telegram/);
   });
 });

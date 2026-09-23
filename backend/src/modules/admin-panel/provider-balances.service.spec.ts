@@ -45,7 +45,7 @@ describe('ProviderBalancesService', () => {
     restore = withEnv({ XAI_MANAGEMENT_KEY: 'mk', XAI_TEAM_ID: 't1' });
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ total: { val: '12.5' } }),
+      json: async () => ({ total: { val: '-1250' } }),
     });
     (globalThis as any).fetch = fetchMock;
     await new ProviderBalancesService().list(true);
@@ -56,19 +56,90 @@ describe('ProviderBalancesService', () => {
     expect(init.headers.Authorization).toBe('Bearer mk');
   });
 
-  it('остаток разобран, и сырое значение сохранено рядом', async () => {
-    // Единица в документации не объявлена. Сырое значение на экране —
-    // способ узнать правду с первого живого ответа, а не показывать
-    // остаток в сто раз неверным и не заметить.
+  it('журнальное сальдо превращается в остаток: центы и обратный знак', async () => {
+    // Та самая строка, из-за которой экран показывал «$−1 827» при
+    // остатке $18.27: `total.val` — центы предоплатного журнала, где
+    // пополнение записано минусом. Сырое значение остаётся рядом,
+    // чтобы расхождение с консолью читалось как расхождение, а не как
+    // поломка разбора.
     restore = withEnv({ XAI_MANAGEMENT_KEY: 'mk', XAI_TEAM_ID: 't1' });
     (globalThis as any).fetch = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ total: { val: '12.5' } }),
+      json: async () => ({ total: { val: '-1827' } }),
     });
     const row = grok(await new ProviderBalancesService().list(true));
     expect(row.state).toBe('ok');
-    expect(row.amountMicroUsd).toBe(12_500_000);
-    expect(row.raw).toBe('12.5');
+    expect(row.amountMicroUsd).toBe(18_270_000);
+    expect(row.raw).toBe('-1827');
+  });
+
+  it('перерасход показывается отрицательным, а не прячется по модулю', async () => {
+    // Положительное сальдо журнала — это долг. Взять модуль было бы
+    // удобно и неверно: экран сказал бы «деньги есть».
+    restore = withEnv({ XAI_MANAGEMENT_KEY: 'mk', XAI_TEAM_ID: 't1' });
+    (globalThis as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ total: { val: '340' } }),
+    });
+    const row = grok(await new ProviderBalancesService().list(true));
+    expect(row.amountMicroUsd).toBe(-3_400_000);
+  });
+
+  it('разбивка по журналу считается и подписывается под суммой', async () => {
+    restore = withEnv({ XAI_MANAGEMENT_KEY: 'mk', XAI_TEAM_ID: 't1' });
+    (globalThis as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        total: { val: '-1827' },
+        changes: [
+          { changeOrigin: 'PURCHASE', amount: { val: '-2000' } },
+          { changeOrigin: 'SPEND', amount: { val: '173' } },
+        ],
+      }),
+    });
+    const row = grok(await new ProviderBalancesService().list(true));
+    expect(row.changes.purchasedMicroUsd).toBe(20_000_000);
+    expect(row.changes.spentMicroUsd).toBe(1_730_000);
+    expect(row.changes.matchesTotal).toBe(true);
+    expect(row.detail).toContain('$20.00');
+    expect(row.detail).toContain('$1.73');
+  });
+
+  it('неполный журнал назван неполным, а не выдан за отчёт', async () => {
+    // Провайдер ограничивает выдачу записей. Разбивка, которая не
+    // сходится с остатком, без пояснения выглядит как наша ошибка в
+    // арифметике — и её пойдут искать у нас.
+    restore = withEnv({ XAI_MANAGEMENT_KEY: 'mk', XAI_TEAM_ID: 't1' });
+    (globalThis as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        total: { val: '-1827' },
+        changes: [{ changeOrigin: 'PURCHASE', amount: { val: '-1000' } }],
+      }),
+    });
+    const row = grok(await new ProviderBalancesService().list(true));
+    expect(row.changes.matchesTotal).toBe(false);
+    expect(row.detail).toMatch(/неполн/);
+  });
+
+  it('разобранный остаток не тащит на экран сырой ответ со счетами', async () => {
+    // В `changes` лежат номера счетов. Пока поле не было опознано,
+    // тело показывалось всегда — это и был способ его опознать; теперь
+    // повод исчерпан.
+    restore = withEnv({ XAI_MANAGEMENT_KEY: 'mk', XAI_TEAM_ID: 't1' });
+    (globalThis as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        total: { val: '-1827' },
+        changes: [
+          { amount: { val: '-1827' }, invoiceNumber: '062-446-653-166' },
+        ],
+      }),
+    });
+    const row = grok(await new ProviderBalancesService().list(true));
+    expect(row.state).toBe('ok');
+    expect(row.rawBody).toBeUndefined();
+    expect(JSON.stringify(row)).not.toContain('062-446-653-166');
   });
 
   it.each([
@@ -114,7 +185,7 @@ describe('ProviderBalancesService', () => {
     restore = withEnv({ XAI_MANAGEMENT_KEY: 'mk', XAI_TEAM_ID: 't1' });
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ total: { val: '1' } }),
+      json: async () => ({ total: { val: '-100' } }),
     });
     (globalThis as any).fetch = fetchMock;
     const svc = new ProviderBalancesService();
@@ -124,20 +195,18 @@ describe('ProviderBalancesService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('сырой ответ провайдера доезжает до экрана целиком', async () => {
-    // Ровно то, ради чего он там: первый живой вызов вернул
-    // `total.val = -1827` при остатке $5.77 в консоли. Разобранное
-    // число оказалось не тем, и без остального ответа понять, какое
-    // поле означает остаток человека, было нельзя.
+  it('неразобранный ответ доезжает до экрана целиком', async () => {
+    // Единственный оставшийся повод показывать тело: разобрать не
+    // вышло. Без него следующий заход начнётся с догадок — как этот.
     restore = withEnv({ XAI_MANAGEMENT_KEY: 'mk', XAI_TEAM_ID: 't1' });
     (globalThis as any).fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        total: { val: '-1827' },
-        changes: [{ changeOrigin: 'usage', amount: { val: '-13' } }],
+        changes: [{ changeOrigin: 'SPEND', amount: { val: '13' } }],
       }),
     });
     const row = grok(await new ProviderBalancesService().list(true));
+    expect(row.state).toBe('error');
     expect(row.rawBody).toContain('changes');
     expect(row.rawBody).toContain('changeOrigin');
   });
@@ -147,7 +216,6 @@ describe('ProviderBalancesService', () => {
     (globalThis as any).fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        total: { val: '1' },
         changes: Array.from({ length: 2000 }, (_, i) => ({ i })),
       }),
     });

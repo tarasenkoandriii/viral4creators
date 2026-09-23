@@ -3,6 +3,8 @@
 // AdminPanelService/AdminAuthService на бэкенде вручную, отдельного
 // codegen в проекте нет.
 
+import type { FreeScenario } from './free-scenarios';
+
 export interface AdminMe {
   userId: string;
   isOperator: boolean;
@@ -444,6 +446,14 @@ export interface AdminUserSummary {
   /** Режим выбран самим пользователем: функции — режима, потолок расхода —
    * как у Lite (этап 54, Б-3.8). Назначение из админки снимает флаг. */
   planSelfService: boolean;
+  /**
+   * Тестовый аккаунт (TODO §III п.37): на отмеченных сценариях суточный
+   * потолок расхода не применяется. Тариф при этом остаётся своим —
+   * тестировщик видит тот же набор функций, что и пользователь.
+   */
+  isTestUser: boolean;
+  /** Сценарии с бесплатным использованием; действуют только с флагом. */
+  freeScenarios: FreeScenario[];
   termsVersion: string | null;
   termsAcceptedAt: string | null;
   createdAt: string;
@@ -680,7 +690,22 @@ export interface CostReport {
   avgPerSessionMicroUsd: number;
   sessionsWithCost: number;
   /** Суточные потолки (§26.4) и то, сколько анонимные выбрали сегодня. */
-  limits: { byPlan: Record<string, number>; anonymous: number };
+  /**
+   * Тестовые аккаунты (TODO §III п.37) — отдельным блоком: во все
+   * остальные числа отчёта они НЕ входят.
+   */
+  testUsers: {
+    accounts: number;
+    costMicroUsd: number;
+    calls: number;
+    spentTodayMicroUsd: number;
+  };
+  limits: {
+    byPlan: Record<string, number>;
+    anonymous: number;
+    /** Потолок тестовых аккаунтов на их сценариях (TODO §III п.37). */
+    testUser: number;
+  };
   anonymousSpentTodayMicroUsd: number;
   top: Array<{
     userId: string;
@@ -1278,10 +1303,24 @@ export interface ProviderBalance {
   state: ProviderBalanceState;
   /** Микродоллары — тот же масштаб, что у расходов. */
   amountMicroUsd?: number;
-  /** Сырое значение провайдера: единица в его документации не объявлена. */
+  /**
+   * Сырое значение провайдера. У xAI это сальдо предоплатного журнала
+   * в центах с обратным знаком: «−1827» и показанные «$18.27» — одно
+   * и то же, и сверяющему с консолью надо видеть оба.
+   */
   raw?: string;
   detail?: string;
-  /** Сырой ответ провайдера — пока мы не знаем, какое поле означает остаток. */
+  /** Разбивка журнала пополнений и списаний, если провайдер её отдал. */
+  changes?: ProviderBalanceChanges;
+  /** Сырой ответ — только когда остаток разобрать не удалось. */
   rawBody?: string;
   checkedAt: string;
+}
+
+export interface ProviderBalanceChanges {
+  purchasedMicroUsd: number;
+  spentMicroUsd: number;
+  entries: number;
+  /** `false` — журнал пришёл неполным, разбивка справочная. */
+  matchesTotal: boolean;
 }

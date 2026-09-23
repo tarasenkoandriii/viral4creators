@@ -15,8 +15,14 @@
 // манифесты и заявки, а разборы библиотеки оставляет без автора — такое
 // не делают в один клик из списка.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { adjustCredit, cancelSubscription, getUser, listUsers, patchUser } from '../../lib/endpoints';
+import {
+  FREE_SCENARIOS,
+  FREE_SCENARIO_HINTS,
+  FREE_SCENARIO_LABELS,
+  type FreeScenario,
+} from '../../lib/free-scenarios';
 import type {
   AdminUserDetail,
   AdminUserListResult,
@@ -80,6 +86,8 @@ export default function UsersPage() {
   const [detail, setDetail] = useState<AdminUserDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Чей блок тестового доступа раскрыт: он нужен единицам строк. */
+  const [testPanel, setTestPanel] = useState<string | null>(null);
 
   // Этап 50 (В-5.10, В-5.12, В-5.13): поколение запроса — устаревший
   // ответ (страница 2 пришла позже страницы 3) не затирает свежий; ошибка
@@ -116,6 +124,8 @@ export default function UsersPage() {
       isOperator?: boolean;
       isBlocked?: boolean;
       blockedReason?: string;
+      isTestUser?: boolean;
+      freeScenarios?: string[];
     }
   ) => {
     setBusy(id);
@@ -157,6 +167,36 @@ export default function UsersPage() {
       return;
     }
     void apply(u.id, { isOperator: next });
+  };
+
+  /**
+   * Тестовый доступ (TODO §III п.37).
+   *
+   * Включение спрашивает подтверждение, выключение — нет: включение
+   * раздаёт бесплатный расход, выключение его забирает. Ошибиться
+   * опасно только в одну сторону.
+   */
+  const toggleTestUser = (u: AdminUserSummary) => {
+    const next = !u.isTestUser;
+    if (
+      next &&
+      !window.confirm(
+        `Сделать ${displayName(u)} тестовым аккаунтом? На отмеченных ниже сценариях к нему перестанет применяться суточный потолок расхода — он сможет тратить деньги сервиса без ограничения. Тариф и набор функций не изменятся.`
+      )
+    ) {
+      return;
+    }
+    // Галочки при выключении чистит бэкенд: оставленный набор у
+    // обычного пользователя сработал бы молча при повторном включении.
+    void apply(u.id, { isTestUser: next });
+  };
+
+  const toggleScenario = (u: AdminUserSummary, scenario: FreeScenario) => {
+    const next = u.freeScenarios.includes(scenario)
+      ? u.freeScenarios.filter((s) => s !== scenario)
+      : [...u.freeScenarios, scenario];
+    // Шлём набор целиком — так же, как его понимает бэкенд.
+    void apply(u.id, { freeScenarios: next });
   };
 
   /** Отмена подписки — саппорт-действие (ТЗ §41): доступ остаётся до
@@ -315,7 +355,8 @@ export default function UsersPage() {
               </thead>
               <tbody>
                 {result.items.map((u) => (
-                  <tr key={u.id} style={{ borderTop: '1px solid #333' }}>
+                  <Fragment key={u.id}>
+                  <tr style={{ borderTop: '1px solid #333' }}>
                     <td style={{ padding: '8px 0' }}>
                       <strong>{displayName(u)}</strong>
                       {u.isOperator && (
@@ -329,6 +370,18 @@ export default function UsersPage() {
                           style={{ marginLeft: 8 }}
                         >
                           заблокирован
+                        </span>
+                      )}
+                      {/* Пометка в списке не косметика: без неё строка
+                          расхода тестировщика в отчёте выглядит как
+                          подозрительно активный живой пользователь. */}
+                      {u.isTestUser && (
+                        <span
+                          className="badge-status badge-status-warning"
+                          style={{ marginLeft: 8 }}
+                          title="Тестовый аккаунт: на отмеченных сценариях суточный потолок расхода не применяется"
+                        >
+                          тестовый
                         </span>
                       )}
                       {me?.userId === u.id && (
@@ -486,9 +539,85 @@ export default function UsersPage() {
                         >
                           Отменить подписку
                         </button>
-                      )}
+                      )}{' '}
+                      <button
+                        type="button"
+                        aria-expanded={testPanel === u.id}
+                        onClick={() =>
+                          setTestPanel((id) => (id === u.id ? null : u.id))
+                        }
+                      >
+                        {testPanel === u.id ? 'Скрыть тестовый доступ' : 'Тестовый доступ'}
+                      </button>
                     </td>
                   </tr>
+                  {/* Отдельной колонкой это не сделать: галочек три, и в
+                      строке они не помещаются, а нужны единицам
+                      пользователей. Раскрывается по кнопке. */}
+                  {testPanel === u.id && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: '4px 0 16px' }}>
+                        <div
+                          style={{
+                            background: 'var(--card)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 8,
+                            padding: 12,
+                          }}
+                        >
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input
+                              type="checkbox"
+                              checked={u.isTestUser}
+                              disabled={busy === u.id}
+                              onChange={() => toggleTestUser(u)}
+                            />
+                            <strong>Тестовый аккаунт</strong>
+                          </label>
+                          <p className="muted" style={{ fontSize: 12, margin: '6px 0 12px' }}>
+                            Снимает СУТОЧНЫЙ ПОТОЛОК РАСХОДА на отмеченных
+                            сценариях и больше ничего не меняет: тариф
+                            остаётся прежним, поэтому тестировщик видит тот
+                            же набор функций, что и пользователь.
+                            Блокировка сильнее тестового доступа.
+                          </p>
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            {FREE_SCENARIOS.map((scenario) => (
+                              <label
+                                key={scenario}
+                                style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={u.freeScenarios.includes(scenario)}
+                                  disabled={busy === u.id || !u.isTestUser}
+                                  onChange={() => toggleScenario(u, scenario)}
+                                />
+                                <span>
+                                  {FREE_SCENARIO_LABELS[scenario]}
+                                  <span
+                                    className="muted"
+                                    style={{ display: 'block', fontSize: 12 }}
+                                  >
+                                    {FREE_SCENARIO_HINTS[scenario]}
+                                  </span>
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                          <p className="muted" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>
+                            Операции вне проекта — клонирование голоса,
+                            озвучка, ИИ-скетч, поиск референсов на YouTube —
+                            к сценарию не относятся, поэтому бесплатны
+                            только когда отмечены все три. Предупреждение
+                            «дневной лимит на исходе» в интерфейсе
+                            пользователя пропадает по тому же правилу.
+                          </p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

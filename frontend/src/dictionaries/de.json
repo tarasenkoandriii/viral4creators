@@ -117,7 +117,18 @@
     "blockedBody": "Die Analyse neuer Videos und die Generierung sind nicht verfügbar. Projekte, Produkte und bereits fertige Videos öffnen und laden wie gewohnt herunter.",
     "exhaustedTitle": "Tageslimit erreicht",
     "exhaustedBody": "Neue Analysen und Generierungen sind morgen wieder verfügbar. Alles bereits Erstellte bleibt erhalten.",
-    "nearlyExhaustedBody": "Ihr Tageslimit ist fast aufgebraucht — für ein weiteres Video reicht es heute vielleicht nicht mehr. Wir sagen es Ihnen vorab, damit Sie keinen langen Weg umsonst gehen."
+    "nearlyExhaustedBody": "Ihr Tageslimit ist fast aufgebraucht — für ein weiteres Video reicht es heute vielleicht nicht mehr. Wir sagen es Ihnen vorab, damit Sie keinen langen Weg umsonst gehen.",
+    "testAccess": {
+      "title": "Danke, dass Sie uns helfen, besser zu werden",
+      "body": "Ihr Konto ist als Testkonto markiert: Alles unten Aufgeführte ist für Sie kostenlos — die Kosten übernimmt die Plattform.",
+      "scenariosLabel": "Kostenlos freigeschaltet",
+      "capNote": "Der Testzugang hat ein eigenes Tageslimit — es existiert weiterhin und wird täglich zurückgesetzt.",
+      "scenarios": {
+        "PRODUCT_VIDEO": "Produktvideo-Werbung",
+        "CLIENT_SITE": "Website-Tutorial für Kunden",
+        "GREETING_VIDEO": "Grussvideo"
+      }
+    }
   },
   "videoPlayer": {
     "download": "Herunterladen"
@@ -1031,7 +1042,13 @@
     "previewQuota": "Vorschauen heute: noch {{left}} von {{limit}}"
   },
   "generationWizard": {
-    "steps": ["Video", "Analyse", "Produkt", "Prompt", "Generierung"],
+    "steps": [
+      "Video",
+      "Analyse",
+      "Produkt",
+      "Prompt",
+      "Generierung"
+    ],
     "errorTitle": "Fehler",
     "prefilledAlert": "Die Produktdaten wurden aus dem Projekt übernommen — das ist eine Kopie zum Startzeitpunkt; Änderungen hier ändern nicht das Produkt selbst.",
     "openProjectCta": "Projekt öffnen",
@@ -1488,7 +1505,7 @@
     "cardsTitleHint": "Vorsicht bei Überraschungen: der Name in der ersten Sekunde verrät das Video, bevor es beginnt.",
     "cardsClosingLabel": "Am Ende",
     "cardsClosingHint": "Meist von wem.",
-    "cardsUseSuggestion": "\u201e{text}\u201c einsetzen",
+    "cardsUseSuggestion": "„{text}“ einsetzen",
     "cardsSave": "Speichern",
     "cardsSaved": "Gespeichert",
     "stickerHeading": "Sticker",

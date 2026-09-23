@@ -102,9 +102,7 @@ export async function revertSketch(
  * объяснить пользователю последствия удаления разделяемого оригинала,
  * когда до этого дойдут руки (§3.3).
  */
-export async function deleteSketchOriginal(
-  target: SketchTarget
-): Promise<{
+export async function deleteSketchOriginal(target: SketchTarget): Promise<{
   slot: SketchSlotView;
   updatedRefs: number;
   /** `false` — файл был общим (фото товара проекта) и остался у владельца. */

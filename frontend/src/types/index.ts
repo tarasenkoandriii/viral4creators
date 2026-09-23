@@ -863,6 +863,11 @@ export interface PlanState {
    * важно «можно ли сейчас работать», а не наша бухгалтерия.
    */
   budget: { exhausted: boolean; nearlyExhausted: boolean };
+  /**
+   * Тестовый доступ (TODO §III п.37). Коды сценариев, а не подписи:
+   * называть их — дело интерфейса, у которого есть языки.
+   */
+  testAccess: { isTestUser: boolean; freeScenarios: string[] };
   /** Этап 62 (ТЗ §41.4): активная подписка, если есть. null — Lite или
    * без покупок; у анонимного пути — всегда null. */
   subscription: PlanSubscriptionView | null;

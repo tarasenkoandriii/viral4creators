@@ -25,6 +25,8 @@ function row(over: Record<string, unknown> = {}) {
     plan: 'LITE',
     planSince: null,
     planSelfService: false,
+    isTestUser: false,
+    freeScenarios: [] as string[],
     termsVersion: '2026-09-06',
     termsAcceptedAt: new Date('2026-09-01'),
     createdAt: new Date('2026-08-01'),
@@ -389,5 +391,73 @@ describe('AdminUsersService — кредиты и подписка (этап 62,
       await expect(svc.adjustCredit('op1', 'missing', 5)).rejects.toThrow();
       expect(creditLedger.adminAdjust).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('AdminUsersService — тестовый доступ (TODO §III п.37)', () => {
+  const patched = (prisma: any) => prisma.user.update.mock.calls[0][0].data;
+
+  it('галочки сохраняются набором целиком, а не добавкой', async () => {
+    // Форма шлёт полный набор: иначе снять галочку было бы нечем.
+    const { svc, prisma } = build(
+      row({ isTestUser: true, freeScenarios: ['PRODUCT_VIDEO'] }),
+    );
+    await svc.patch('op', 'u1', { freeScenarios: ['GREETING_VIDEO'] });
+    expect(patched(prisma).freeScenarios).toEqual(['GREETING_VIDEO']);
+  });
+
+  it('снятие флага чистит галочки', async () => {
+    // Оставленный набор у обычного пользователя — мусор, который читают
+    // как действующее разрешение, а при повторном включении флага он ещё
+    // и сработает молча.
+    const { svc, prisma } = build(
+      row({ isTestUser: true, freeScenarios: ['PRODUCT_VIDEO'] }),
+    );
+    await svc.patch('op', 'u1', { isTestUser: false });
+    expect(patched(prisma)).toMatchObject({
+      isTestUser: false,
+      freeScenarios: [],
+    });
+  });
+
+  it('незнакомый сценарий — отказ, а не молчаливое отбрасывание', async () => {
+    // Молча отбросить значило бы показать оператору сохранённую форму
+    // без той галочки, которую он ставил, и без объяснения.
+    const { svc, prisma } = build(row({ isTestUser: true }));
+    await expect(
+      svc.patch('op', 'u1', { freeScenarios: ['PRODUCT_VIDEO', 'VIDEO'] }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('тот же набор в другом порядке не считается изменением', async () => {
+    const { svc, prisma } = build(
+      row({
+        isTestUser: true,
+        freeScenarios: ['PRODUCT_VIDEO', 'GREETING_VIDEO'],
+      }),
+    );
+    await svc.patch('op', 'u1', {
+      freeScenarios: ['GREETING_VIDEO', 'PRODUCT_VIDEO'],
+    });
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('флаг и набор доезжают до карточки', async () => {
+    const { svc } = build(
+      row({ isTestUser: true, freeScenarios: ['CLIENT_SITE'] }),
+    );
+    const detail = await svc.get('u1');
+    expect(detail.isTestUser).toBe(true);
+    expect(detail.freeScenarios).toEqual(['CLIENT_SITE']);
+  });
+
+  it('мусор из колонки не доезжает до карточки', async () => {
+    // Та же причина, что и у planOf рядом: в колонке может лежать
+    // значение, которого код уже не знает.
+    const { svc } = build(
+      row({ isTestUser: true, freeScenarios: ['CLIENT_SITE', 'nonsense'] }),
+    );
+    expect((await svc.get('u1')).freeScenarios).toEqual(['CLIENT_SITE']);
   });
 });

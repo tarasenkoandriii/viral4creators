@@ -61,10 +61,15 @@ describe('AiUsageService.report (ТЗ §26)', () => {
     const { svc, prisma } = build();
     await svc.report();
     const sql = (prisma.$queryRaw.mock.calls[1][0] as string[]).join(' ');
-    expect(sql).toContain('count(DISTINCT "sessionId")');
+    expect(sql).toContain('count(DISTINCT a."sessionId")');
     // Без этого условия анонимные вызовы без сессии считались бы одной
     // «сессией» и завышали бы знаменатель среднего.
-    expect(sql).toContain('"sessionId" IS NOT NULL');
+    expect(sql).toContain('a."sessionId" IS NOT NULL');
+    // TODO §III п.37: сессии тестовых аккаунтов в знаменатель среднего
+    // не идут — иначе средний чек считается вместе с его проверкой.
+    // COALESCE, а не просто `= false`: у анонимной строки связи с
+    // пользователем нет, и без него она выпала бы из счёта.
+    expect(sql).toContain('COALESCE(u."isTestUser", false) = false');
   });
 
   it('пустой ответ базы не роняет отчёт', async () => {
@@ -106,6 +111,23 @@ describe('AiUsageService.report (ТЗ §26)', () => {
     await svc.report(10);
     await svc.report(25);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(4);
+  });
+
+  it('нет тестовых аккаунтов — нет и лишних условий с запросами', async () => {
+    // На проекте без тестовых блок стоит трёх нулей, а не трёх запросов
+    // на каждое открытие вкладки.
+    const { svc, prisma } = build();
+    const report = await svc.report();
+    expect(report.testUsers).toEqual({
+      accounts: 0,
+      costMicroUsd: 0,
+      calls: 0,
+      spentTodayMicroUsd: 0,
+    });
+    const wheres = prisma.aiUsage.aggregate.mock.calls.map(
+      (c: any) => c[0].where,
+    );
+    expect(wheres.some((w: any) => w?.OR)).toBe(false);
   });
 
   it('среднее на сессию считается от числа из базы', async () => {
@@ -593,5 +615,98 @@ describe('AiUsageService — отчёт «за всё время» читает 
     ]);
     const rows = await svc.breakdownForUser('u1');
     expect(rows).toEqual([{ key: 'prompt', costMicroUsd: 10, calls: 5 }]);
+  });
+});
+
+describe('AiUsageService.report — тестовые аккаунты (TODO §III п.37)', () => {
+  const withTestUsers = () => {
+    const { svc, prisma } = build();
+    prisma.user.findMany.mockResolvedValue([{ id: 't1' }, { id: 't2' }]);
+    return { svc, prisma };
+  };
+
+  const aggregateWheres = (prisma: any) =>
+    prisma.aiUsage.aggregate.mock.calls.map((c: any) => c[0].where);
+
+  it('расход тестовых вынесен в свой блок, а не растворён в общем', async () => {
+    const { svc } = withTestUsers();
+    const report = await svc.report();
+    expect(report.testUsers.accounts).toBe(2);
+    // aggregate-двойник отдаёт 1200 на любой запрос; важно, что блок
+    // считается и не остаётся нулевым при наличии таких аккаунтов.
+    expect(report.testUsers.costMicroUsd).toBe(1200);
+  });
+
+  it('тестовые исключены из всех денежных срезов', async () => {
+    const { svc, prisma } = withTestUsers();
+    await svc.report();
+    const excluded = aggregateWheres(prisma).filter((w: any) =>
+      w?.OR?.some((b: any) => b.userId?.notIn),
+    );
+    // Всего время, три окна и сумма по вошедшим — пять срезов.
+    expect(excluded.length).toBeGreaterThanOrEqual(5);
+    for (const w of excluded) {
+      expect(w.OR).toEqual([
+        { userId: null },
+        { userId: { notIn: ['t1', 't2'] } },
+      ]);
+    }
+  });
+
+  it('исключение НЕ выбрасывает анонимный расход', async () => {
+    // `userId NOT IN (...)` для NULL даёт NULL, то есть анонимные
+    // выпали бы из отчёта целиком — а к тестовым аккаунтам они
+    // отношения не имеют. Ветка `userId: null` в OR и есть страховка.
+    const { svc, prisma } = withTestUsers();
+    await svc.report();
+    for (const w of aggregateWheres(prisma)) {
+      if (!w?.OR) continue;
+      expect(w.OR).toContainEqual({ userId: null });
+    }
+  });
+
+  it('срез анонимных не трогается исключением вовсе', async () => {
+    // У анонимной строки владельца нет, фильтровать её по тестовым
+    // нечем и незачем.
+    const { svc, prisma } = withTestUsers();
+    await svc.report();
+    const anon = aggregateWheres(prisma).find((w: any) => w?.anonymous);
+    expect(anon).toEqual({ anonymous: true });
+  });
+
+  it('топ пользователей тоже без тестовых', async () => {
+    // Иначе тестировщик стабильно занимает первую строку таблицы «кто
+    // больше всех тратит», и смотреть её становится незачем.
+    const { svc, prisma } = withTestUsers();
+    await svc.report(10);
+    const top = prisma.aiUsage.groupBy.mock.calls
+      .map((c: any) => c[0])
+      .find((a: any) => Array.isArray(a.by) && a.by[0] === 'userId');
+    expect(top.where.OR).toEqual([
+      { userId: null },
+      { userId: { notIn: ['t1', 't2'] } },
+    ]);
+  });
+
+  it('разрезы по провайдеру и операции считаются по тому же условию', async () => {
+    const { svc, prisma } = withTestUsers();
+    await svc.report();
+    const buckets = prisma.aiUsage.groupBy.mock.calls
+      .map((c: any) => c[0])
+      .filter((a: any) => Array.isArray(a.by) && a.by[0] !== 'userId');
+    expect(buckets.length).toBeGreaterThan(0);
+    for (const b of buckets) {
+      expect(b.where.OR).toContainEqual({ userId: { notIn: ['t1', 't2'] } });
+    }
+  });
+
+  it('число плативших считает база связью с users, без массива в параметре', async () => {
+    // Статический SQL: массив идентификаторов в плейсхолдере — лишний
+    // способ ошибиться там, где ошибка ломает вкладку расходов целиком.
+    const { svc, prisma } = withTestUsers();
+    await svc.report();
+    const sql = (prisma.$queryRaw.mock.calls[0][0] as string[]).join(' ');
+    expect(sql).toContain('JOIN "users"');
+    expect(sql).toContain('u."isTestUser" = false');
   });
 });

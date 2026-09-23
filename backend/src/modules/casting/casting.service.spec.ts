@@ -429,7 +429,9 @@ describe('CastingService', () => {
     getSession.mockResolvedValue({ ...session, userId: 'u1' });
     await expect(service.assertPreviewAllowed('s1', 'c1')).resolves.toBe('u1');
     expect(plans.assertUser).toHaveBeenCalledWith('u1', 'characterReplacement');
-    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('u1');
+    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('u1', {
+      projectId: null,
+    });
 
     await expect(
       service.assertPreviewAllowed('s1', 'nope'),

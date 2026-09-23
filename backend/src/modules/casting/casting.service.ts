@@ -313,7 +313,9 @@ export class CastingService {
         'Превью персонажа доступно после входа через Telegram',
       );
     }
-    await this.plans.assertCanSpendUser(userId);
+    await this.plans.assertCanSpendUser(userId, {
+      projectId: session.projectId ?? null,
+    });
     return userId;
   }
 

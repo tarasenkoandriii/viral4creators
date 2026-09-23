@@ -31,6 +31,11 @@ import { PlanId, planOf, PLAN_IDS, spendPlanOf } from '../../common/plans';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { dailyLimitForPlan } from '../../common/spend-limits';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
+import {
+  FreeScenario,
+  normalizeFreeScenarios,
+  unknownScenarios,
+} from '../../common/test-user-scenarios';
 import { TelegramStarsService } from '../billing/telegram-stars.service';
 
 export interface AdminUserSummary {
@@ -46,6 +51,14 @@ export interface AdminUserSummary {
   planSince: Date | null;
   /** Режим выбран самим пользователем (потолок расхода — как у Lite). */
   planSelfService: boolean;
+  /**
+   * Тестовый аккаунт (TODO §III п.37). Показывается в списке, потому что
+   * без пометки строка расхода тестировщика в отчёте выглядит как
+   * подозрительно активный живой пользователь.
+   */
+  isTestUser: boolean;
+  /** Сценарии с бесплатным использованием; действуют только с флагом. */
+  freeScenarios: FreeScenario[];
   termsVersion: string | null;
   termsAcceptedAt: Date | null;
   createdAt: Date;
@@ -106,6 +119,10 @@ export interface AdminUserPatch {
   isBlocked?: boolean;
   /** Причина блокировки — попадает в текст отказа пользователю. */
   blockedReason?: string | null;
+  /** Тестовый аккаунт: снимает суточный потолок на отмеченных сценариях. */
+  isTestUser?: boolean;
+  /** Полный новый набор галочек — не добавка к прежнему. */
+  freeScenarios?: string[];
 }
 
 const USER_SELECT = {
@@ -120,6 +137,8 @@ const USER_SELECT = {
   plan: true,
   planSince: true,
   planSelfService: true,
+  isTestUser: true,
+  freeScenarios: true,
   termsVersion: true,
   termsAcceptedAt: true,
   createdAt: true,
@@ -146,6 +165,8 @@ interface UserRowWithCounts {
   plan: string;
   planSince: Date | null;
   planSelfService: boolean;
+  isTestUser: boolean;
+  freeScenarios: string[];
   termsVersion: string | null;
   termsAcceptedAt: Date | null;
   createdAt: Date;
@@ -330,6 +351,8 @@ export class AdminUsersService {
         isBlocked: true,
         plan: true,
         planSelfService: true,
+        isTestUser: true,
+        freeScenarios: true,
       },
     });
     if (!target) throw new NotFoundException(`User ${id} not found`);
@@ -391,6 +414,37 @@ export class AdminUsersService {
       data.blockedReason = patch.blockedReason?.trim() || null;
     }
 
+    /**
+     * Тестовый доступ (TODO §III п.37).
+     *
+     * Снятие флага ЧИСТИТ галочки — по той же причине, по которой
+     * разблокировка чистит причину блокировки: оставленный набор
+     * сценариев у обычного пользователя это мусор, который читают как
+     * действующее разрешение, а при повторном включении флага он ещё и
+     * сработает молча.
+     */
+    if (patch.isTestUser !== undefined) {
+      if (patch.isTestUser !== target.isTestUser) {
+        data.isTestUser = patch.isTestUser;
+        if (!patch.isTestUser) data.freeScenarios = [];
+      }
+    }
+
+    if (patch.freeScenarios !== undefined && data.freeScenarios === undefined) {
+      const unknown = unknownScenarios(patch.freeScenarios);
+      if (unknown.length) {
+        // Молча отбросить незнакомое значение значило бы показать
+        // оператору сохранённую форму без той галочки, которую он
+        // ставил, и без объяснения.
+        throw new BadRequestException(
+          `Неизвестные сценарии: ${unknown.join(', ')}`,
+        );
+      }
+      const next = normalizeFreeScenarios(patch.freeScenarios);
+      const current = normalizeFreeScenarios(target.freeScenarios);
+      if (next.join(',') !== current.join(',')) data.freeScenarios = next;
+    }
+
     if (Object.keys(data).length === 0) return this.get(id);
 
     await this.prisma.user.update({ where: { id }, data });
@@ -405,6 +459,17 @@ export class AdminUsersService {
         `operator ${actorId} ${data.isBlocked ? 'BLOCKED' : 'UNBLOCKED'} ${target.telegramId}${
           data.blockedReason ? ` (${String(data.blockedReason)})` : ''
         }`,
+      );
+    }
+    if (data.isTestUser !== undefined || data.freeScenarios !== undefined) {
+      // В лог, как и повышение прав: это раздача бесплатного расхода, и
+      // спрашивать «кто это включил» будут так же.
+      const scenarios = (data.freeScenarios ??
+        normalizeFreeScenarios(target.freeScenarios)) as string[];
+      this.logger.warn(
+        `operator ${actorId} set test access of ${target.telegramId}: ${
+          (data.isTestUser ?? target.isTestUser) ? 'ON' : 'OFF'
+        } [${scenarios.join(', ') || 'нет сценариев'}]`,
       );
     }
     if (data.isOperator !== undefined) {
@@ -605,6 +670,10 @@ export class AdminUsersService {
       plan: planOf(row.plan),
       planSince: row.planSince,
       planSelfService: row.planSelfService,
+      isTestUser: row.isTestUser,
+      // Через normalize, по той же причине, что и planOf рядом: в
+      // колонке может лежать значение, которого код уже не знает.
+      freeScenarios: normalizeFreeScenarios(row.freeScenarios),
       termsVersion: row.termsVersion,
       termsAcceptedAt: row.termsAcceptedAt,
       createdAt: row.createdAt,

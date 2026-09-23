@@ -11,6 +11,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -76,6 +78,22 @@ export class PatchAdminUserDto {
   @IsString()
   @MaxLength(300)
   blockedReason?: string;
+
+  /** Тестовый аккаунт (TODO §III п.37). */
+  @IsOptional()
+  @IsBoolean()
+  isTestUser?: boolean;
+
+  /**
+   * Полный набор сценариев с бесплатным использованием — форма шлёт
+   * его целиком, а не добавку: иначе снять галочку было бы нечем.
+   * Значения проверяются в сервисе, где живёт их список.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(16)
+  freeScenarios?: string[];
 }
 
 /** Е-1.5 шестого аудита — ручная правка баланса кредитов. Целое, не

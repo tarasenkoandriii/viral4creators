@@ -183,7 +183,7 @@ export class ProductAnalogService {
     dto: ProcessPhotoRequestDto,
   ): Promise<ProcessPhotoResult> {
     // ТЗ §25.3: заблокированному платные вызовы запрещены.
-    await this.plans.assertCanSpendUser(userId);
+    await this.plans.assertCanSpendUser(userId, { projectId });
 
     const item = await this.findOwnedItem(userId, projectId, itemId);
 

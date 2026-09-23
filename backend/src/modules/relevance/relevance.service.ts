@@ -53,7 +53,9 @@ export class RelevanceService {
   async run(sessionId: string): Promise<RelevanceState> {
     const session = await this.load(sessionId);
     // §23: проверка релевантности — от Standard и выше.
-    await this.plans.assertCanSpendUser(session.userId ?? null); // §25.3, §26.4
+    await this.plans.assertCanSpendUser(session.userId ?? null, {
+      projectId: session.projectId ?? null,
+    }); // §25.3, §26.4
     await this.plans.assertUser(session.userId ?? null, 'relevance');
     const analysis = session.videoAnalysis;
     if (!analysis || analysis.status !== AnalysisStatus.COMPLETE) {

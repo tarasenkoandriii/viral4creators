@@ -131,6 +131,15 @@ export default function CostsPage() {
         <code> backend/src/common/ai-pricing.ts</code>; любую ставку можно
         переопределить переменной окружения.
       </p>
+      {/* Сказать про исключение НАД цифрами, а не под ними: человек,
+          который сверяет счёт провайдера с этой страницей, должен
+          узнать про недостающую часть до того, как не сойдётся. */}
+      <p className="muted" style={{ fontSize: 13 }}>
+        Расход тестовых аккаунтов в эти числа не входит — он вынесен
+        отдельной плиткой. Провайдеру за него заплачено, поэтому при
+        сверке со счётом его надо прибавить; в экономике продукта ему
+        места нет: это её проверка, а не она сама.
+      </p>
 
       <div className="stat-grid">
         <div className="stat-tile">
@@ -181,6 +190,24 @@ export default function CostsPage() {
             {usd(report.limits.anonymous)}
           </div>
         </div>
+        {/* Тестовые аккаунты (TODO §III п.37). Плитка появляется только
+            когда такие аккаунты есть: пустая строка «$0.00 у 0
+            аккаунтов» ничего не сообщает, а место занимает. Важно
+            сказать прямо, что остальные числа их НЕ включают, — иначе
+            складывать их начнут дважды. */}
+        {report.testUsers.accounts > 0 && (
+          <div className="stat-tile">
+            <div className="muted">Тестовые аккаунты</div>
+            <div className="value">{usd(report.testUsers.costMicroUsd)}</div>
+            <div className="muted">
+              {report.testUsers.accounts} акк. · {report.testUsers.calls} выз. ·
+              сегодня {usd(report.testUsers.spentTodayMicroUsd)}
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              не входят в остальные числа этой страницы
+            </div>
+          </div>
+        )}
         <div className="stat-tile">
           <div className="muted">Прайс</div>
           <div className="value" style={{ fontSize: 18 }}>
@@ -286,6 +313,21 @@ export default function CostsPage() {
                 </td>
                 <td style={{ textAlign: 'right' }}>
                   {usd(report.limits.anonymous)} / сутки
+                </td>
+              </tr>
+              {/* Тестовые аккаунты (TODO §III п.37): потолок у них свой,
+                  и в таблице потолков он должен стоять рядом с
+                  остальными — иначе «почему этот тратит больше Lite»
+                  ищут в тарифах. */}
+              <tr style={{ borderTop: '1px solid #333' }}>
+                <td style={{ padding: '6px 0' }}>
+                  Тестовые аккаунты
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    на отмеченных им сценариях, вместо тарифного
+                  </div>
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  {usd(report.limits.testUser)} / сутки
                 </td>
               </tr>
             </tbody>

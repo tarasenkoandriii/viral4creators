@@ -40,6 +40,8 @@
 import {
   ANONYMOUS_LIMIT_ENV,
   PLAN_LIMIT_ENV,
+  TEST_USER_LIMIT_ENV,
+  dailyLimitForTestUser,
   dailyLimitForAnonymous,
   dailyLimitForPlan,
 } from '../../common/spend-limits';
@@ -998,6 +1000,17 @@ export function getEnvSettings(
       ANONYMOUS_LIMIT_ENV,
       dailyLimitForAnonymous(env),
       'ANONYMOUS',
+    ),
+  );
+  // Потолок тестовых аккаунтов (TODO §III п.37) — здесь по той же
+  // причине, что и остальные: его задают в окружении, и «сколько на
+  // самом деле» должно быть видно в одном месте с прочими потолками.
+  results.push(
+    spendLimitCheck(
+      env,
+      TEST_USER_LIMIT_ENV,
+      dailyLimitForTestUser(env),
+      'TEST_USER',
     ),
   );
 

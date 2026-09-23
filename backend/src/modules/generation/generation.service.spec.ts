@@ -168,7 +168,21 @@ describe('GenerationService.generateVideo — деньги проверяютс�
     // терял свой пакет на каждом открытом маршруте.
     const { svc, plans } = build();
     await svc.generateVideo('s1');
-    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('u1');
+    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('u1', {
+      projectId: null,
+    });
+  });
+
+  it('проект сессии доезжает до проверки лимита (TODO §III п.37)', async () => {
+    // Без него самая дорогая операция продукта осталась бы под потолком
+    // даже у тестового аккаунта, ради которого бесплатный доступ и
+    // выдавали: сценарий определяется по типу ПРОЕКТА.
+    const session = readySession('u1');
+    const { svc, plans } = build({ ...session, projectId: 'p1' });
+    await svc.generateVideo('s1');
+    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('u1', {
+      projectId: 'p1',
+    });
   });
 
   it('анонимная сессия тоже проходит через проверку — под общим лимитом', async () => {
@@ -176,7 +190,9 @@ describe('GenerationService.generateVideo — деньги проверяютс�
     // проверки значило бы отдать самый дорогой вызов сервиса без счёта.
     const { svc, plans } = build(readySession(null));
     await svc.generateVideo('s1');
-    expect(plans.assertCanSpendUser).toHaveBeenCalledWith(null);
+    expect(plans.assertCanSpendUser).toHaveBeenCalledWith(null, {
+      projectId: null,
+    });
   });
 
   it('проверка стоит РАНЬШЕ вызова Veo, а не рядом с ним', async () => {
@@ -274,7 +290,9 @@ describe('GenerationService.generateVideo — кредитный пакет', ()
     const { svc, plans, creditLedger } = build();
     creditLedger.reserveForGeneration.mockResolvedValue(false);
     await svc.generateVideo('s1');
-    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('u1');
+    expect(plans.assertCanSpendUser).toHaveBeenCalledWith('u1', {
+      projectId: null,
+    });
   });
 
   it('резерв кредита — по стабильному generatedVideoId, а не по сессии', async () => {

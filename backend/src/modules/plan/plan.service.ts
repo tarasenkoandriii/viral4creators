@@ -33,8 +33,16 @@ import {
 import { DEFAULT_LOCALE, SupportedLocale } from '../../common/locale';
 import {
   budgetDeniedMessage,
+  dailyLimitForTestUser,
   DailySpendLimitExceededException,
+  testBudgetDeniedMessage,
 } from '../../common/spend-limits';
+import {
+  FreeScenario,
+  isSpendFree,
+  normalizeFreeScenarios,
+  scenarioOfProjectType,
+} from '../../common/test-user-scenarios';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
 import { TelegramStarsService } from '../billing/telegram-stars.service';
@@ -53,6 +61,14 @@ export interface UserAccess {
   spendPlan: PlanId;
   isBlocked: boolean;
   blockedReason: string | null;
+  /**
+   * Тестовый аккаунт (TODO §III п.37). Влияет РОВНО на одно — суточный
+   * потолок расхода на отмеченных сценариях; ни тариф, ни блокировка от
+   * него не зависят.
+   */
+  isTestUser: boolean;
+  /** Сценарии с бесплатным использованием; пусто — как у всех. */
+  freeScenarios: FreeScenario[];
 }
 
 @Injectable()
@@ -79,6 +95,10 @@ export class PlanService {
         spendPlan: DEFAULT_PLAN,
         isBlocked: false,
         blockedReason: null,
+        // У анонимного пути пользователя нет, значит и тестовым он быть
+        // не может: иначе бесплатный доступ раздавался бы всем разом.
+        isTestUser: false,
+        freeScenarios: [],
       };
     }
     const row: {
@@ -86,6 +106,8 @@ export class PlanService {
       planSelfService: boolean;
       isBlocked: boolean;
       blockedReason: string | null;
+      isTestUser: boolean;
+      freeScenarios: string[];
     } | null = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -93,6 +115,8 @@ export class PlanService {
         planSelfService: true,
         isBlocked: true,
         blockedReason: true,
+        isTestUser: true,
+        freeScenarios: true,
       },
     });
     const plan = planOf(row?.plan);
@@ -101,6 +125,8 @@ export class PlanService {
       spendPlan: spendPlanOf(plan, row?.planSelfService ?? false),
       isBlocked: row?.isBlocked ?? false,
       blockedReason: row?.blockedReason ?? null,
+      isTestUser: row?.isTestUser ?? false,
+      freeScenarios: normalizeFreeScenarios(row?.freeScenarios),
     };
   }
 
@@ -148,27 +174,103 @@ export class PlanService {
    * Порядок важен: сначала блокировка (решение оператора, объясняет себя
    * причиной), потом лимит (временный и снимется завтра).
    */
-  async assertCanSpendUser(userId: string | null | undefined): Promise<void> {
+  async assertCanSpendUser(
+    userId: string | null | undefined,
+    /**
+     * Проект, ради которого тратим, — по нему определяется сценарий
+     * тестового доступа (TODO §III п.37). Передаётся там, где проект
+     * УЖЕ в руках; вызовы вне проекта (клон голоса, озвучка, скетч,
+     * поиск на YouTube) его не имеют, и для них действует строгое
+     * правило `isSpendFree` — бесплатно только при всех галочках.
+     */
+    opts: { projectId?: string | null } = {},
+  ): Promise<void> {
     const access = await this.accessOf(userId);
-    this.assertNotBlocked(access);
-
-    const verdict = await this.aiUsage.budget(userId ?? null, access.spendPlan);
-    if (!verdict.allowed) {
-      this.logger.warn(
-        `дневной лимит расхода исчерпан: ${
-          userId ?? 'анонимные'
-        } потратил(и) ${verdict.spentMicroUsd} мкд при потолке ${verdict.limitMicroUsd}`,
-      );
-      // Е-1.2 шестого аудита: отдельный класс, не общий ForbiddenException —
-      // это временное состояние (см. doc-comment DailySpendLimitExceededException).
-      throw new DailySpendLimitExceededException(budgetDeniedMessage(!userId));
-    }
+    await this.assertSpend(access, userId ?? null, opts.projectId ?? null);
   }
 
   /** То же для открытых маршрутов — по владельцу сессии. */
   async assertCanSpendSession(sessionId: string): Promise<void> {
     const session = await this.sessions.getSession(sessionId);
-    await this.assertCanSpendUser(session?.userId ?? null);
+    const access = await this.accessOf(session?.userId ?? null);
+    await this.assertSpend(
+      access,
+      session?.userId ?? null,
+      session?.projectId ?? null,
+    );
+  }
+
+  /**
+   * Общая часть обеих проверок.
+   *
+   * Порядок важен и не изменился: сначала блокировка — решение
+   * оператора, которое тестовый флаг НЕ отменяет, иначе заблокировать
+   * тестировщика было бы нечем. Потом потолок.
+   *
+   * Тестовый доступ МЕНЯЕТ потолок, а не отменяет его. «Бесплатно»
+   * здесь про пользователя, а не про нас: провайдеру платим в любом
+   * случае, и аккаунт, которому специально разрешили не считать деньги,
+   * — последнее место, где стоит убирать край (TODO §III п.37, пункт
+   * «Лимиты»).
+   */
+  private async assertSpend(
+    access: UserAccess,
+    userId: string | null,
+    projectId: string | null,
+  ): Promise<void> {
+    this.assertNotBlocked(access);
+
+    const free = await this.spendIsFree(access, projectId);
+    const verdict = await this.aiUsage.budget(
+      userId ?? null,
+      access.spendPlan,
+      new Date(),
+      free ? dailyLimitForTestUser() : undefined,
+    );
+    if (!verdict.allowed) {
+      this.logger.warn(
+        `дневной лимит расхода исчерпан: ${
+          userId ?? 'анонимные'
+        }${free ? ' (тестовый доступ)' : ''} потратил(и) ${verdict.spentMicroUsd} мкд при потолке ${verdict.limitMicroUsd}`,
+      );
+      // Е-1.2 шестого аудита: отдельный класс, не общий ForbiddenException —
+      // это временное состояние (см. doc-comment DailySpendLimitExceededException).
+      throw new DailySpendLimitExceededException(
+        free ? testBudgetDeniedMessage() : budgetDeniedMessage(!userId),
+      );
+    }
+  }
+
+  /**
+   * Тип проекта читается ТОЛЬКО когда он может что-то изменить.
+   *
+   * Тестовых аккаунтов единицы, а через эту проверку проходит каждый
+   * платный вызов продукта: лишняя поездка в базу на всех ради
+   * нескольких — плохой обмен.
+   */
+  private async spendIsFree(
+    access: UserAccess,
+    projectId: string | null,
+  ): Promise<boolean> {
+    if (!access.isTestUser || !access.freeScenarios.length) return false;
+    const scenario = projectId
+      ? scenarioOfProjectType(await this.projectTypeOf(projectId))
+      : null;
+    const free = isSpendFree(access, scenario);
+    if (free) {
+      this.logger.log(
+        `тестовый доступ: потолок не применён (сценарий ${scenario ?? 'вне проекта'})`,
+      );
+    }
+    return free;
+  }
+
+  private async projectTypeOf(projectId: string): Promise<string | null> {
+    const row: { type: string } | null = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { type: true },
+    });
+    return row?.type ?? null;
   }
 
   /**
@@ -196,6 +298,16 @@ export class PlanService {
     billingEnabled: boolean;
     blocked: { isBlocked: boolean; reason: string | null };
     budget: { exhausted: boolean; nearlyExhausted: boolean };
+    /**
+     * Тестовый доступ (TODO §III п.37).
+     *
+     * Наружу уходит, потому что молчаливая отметка — половина фичи:
+     * тестировщик, которому не сказали, что он на тестовом доступе, не
+     * отличит бесплатный проход от сломанного биллинга и придёт с
+     * вопросом «почему с меня не списывают». Сценарии передаются
+     * кодами: как их называть, решает интерфейс, у которого есть языки.
+     */
+    testAccess: { isTestUser: boolean; freeScenarios: FreeScenario[] };
     subscription: {
       plan: PlanId;
       status: string;
@@ -205,7 +317,21 @@ export class PlanService {
     credits: { balance: number };
   }> {
     const access = await this.accessOf(userId);
-    const verdict = await this.aiUsage.budget(userId, access.spendPlan);
+    /**
+     * Потолок тестового аккаунта.
+     *
+     * Ответ общий на весь интерфейс, проекта в нём нет, поэтому
+     * действует то же строгое правило, что и для операций вне сценария:
+     * тестовый потолок показываем, только когда бесплатны ВСЕ
+     * сценарии. Тестировщик с одной галочкой видит свой тарифный
+     * потолок — и это правда: на остальных сценариях действует он.
+     */
+    const verdict = await this.aiUsage.budget(
+      userId,
+      access.spendPlan,
+      new Date(),
+      isSpendFree(access, null) ? dailyLimitForTestUser() : undefined,
+    );
     const [subscriptionRow, creditsBalance] = userId
       ? await Promise.all([
           this.prisma.subscription.findUnique({
@@ -236,6 +362,12 @@ export class PlanService {
           verdict.allowed &&
           verdict.limitMicroUsd > 0 &&
           verdict.remainingMicroUsd / verdict.limitMicroUsd < 0.2,
+      },
+      testAccess: {
+        isTestUser: access.isTestUser,
+        // Галочки без флага не действуют — и показывать их не надо:
+        // иначе на экране появится обещание, которого нет в проверке.
+        freeScenarios: access.isTestUser ? access.freeScenarios : [],
       },
       subscription: subscriptionRow
         ? {

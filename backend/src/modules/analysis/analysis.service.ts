@@ -193,7 +193,9 @@ export class AnalysisService {
     }
 
     // ТЗ §25.3: заблокированному платные вызовы запрещены.
-    await this.plans.assertCanSpendUser(session.userId ?? null);
+    await this.plans.assertCanSpendUser(session.userId ?? null, {
+      projectId: session.projectId ?? null,
+    });
     // ТЗ §20 (этап 38): на согласии стоят права сервиса на Разбор и
     // легитимность общей Библиотеки — проверка не может жить только в
     // интерфейсе.

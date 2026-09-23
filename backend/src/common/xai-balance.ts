@@ -49,26 +49,28 @@ export interface ProviderBalance {
    */
   amountMicroUsd?: number;
   /**
-   * Сырое значение, как его прислал провайдер.
+   * Сырое значение `total.val`, как его прислал провайдер.
    *
-   * Показывается рядом с разобранной суммой НАМЕРЕННО. Документация
-   * xAI описывает `total.val` строкой и не называет единицу; ошибиться
-   * здесь в сто раз — значит показать владельцу неверный остаток и не
-   * узнать об этом. Первый же живой ответ снимает вопрос, если сырое
-   * значение видно.
+   * Остаётся на экране рядом с разобранной суммой НАМЕРЕННО, хотя
+   * единица и знак уже выяснены. Это журнальное сальдо в центах с
+   * обратным знаком: показанные «$18.27» и пришедшие «−1827» — одно и
+   * то же число, и человеку, который сверяет экран с консолью xAI,
+   * надо видеть оба, иначе расхождение выглядит как поломка разбора.
    */
   raw?: string;
+  /** Разбивка журнала: сколько пополнено и сколько списано. */
+  changes?: XaiChangesSummary;
   /** Человеческое пояснение: что не так и что с этим делать. */
   detail?: string;
   /**
    * Сырой ответ провайдера целиком, обрезанный по длине.
    *
-   * Появился по конкретному поводу: первый живой вызов вернул
-   * `total.val = -1827`, тогда как консоль xAI показывает остаток
-   * $5.77. То есть `total` — НЕ тот остаток, который видит человек, и
-   * без остального ответа (в нём есть ещё `changes`) понять, что это
-   * за число, нельзя. Показывается только оператору и только на этом
-   * экране; ключ сюда не попадает никогда — это тело ответа, не запрос.
+   * Диагностика, а не витрина: заполняется ТОЛЬКО когда разобрать
+   * остаток не вышло. Пока поле не было опознано, ответ показывался
+   * всегда — тогда это и был способ его опознать. Теперь единица и
+   * знак известны, а в `changes` лежат номера счетов, и держать их на
+   * экране в обычном случае незачем. Ключ сюда не попадает никогда —
+   * это тело ответа, не запрос.
    */
   rawBody?: string;
   checkedAt: string;
@@ -108,13 +110,102 @@ export function xaiFailureReason(status: number): string {
 }
 
 /**
- * Разбор тела ответа.
+ * ## Единица и знак: разобрано, а не угадано
  *
- * `total.val` — строка без объявленной единицы. Считаем доллары (как
- * выглядит в консоли) и сохраняем сырое значение рядом; если первый
- * живой ответ покажет центы, правка здесь будет одной строкой, а
- * ошибку будет видно сразу, а не через месяц в отчёте.
+ * Первый живой вызов вернул `total.val = -1827`, и экран показал
+ * «$−1 827». Оба слагаемых ошибки — в одной строке разбора:
+ *
+ *  - **Это центы, а не доллары.** В примере официальной документации
+ *    пополнение на $10 выглядит как `"val": "-1000"`.
+ *  - **Знак перевёрнут.** Это не «остаток», а сальдо предоплатного
+ *    журнала: пополнение записывается со знаком минус, списание — с
+ *    плюсом. Остаток человека равен `total.val` со сменённым знаком.
+ *
+ * То есть `-1827` — это $18.27 на счёте. Помимо примера в официальной
+ * документации
+ * (https://docs.x.ai/developers/rest-api-reference/management/billing)
+ * единицу и знак подтверждают два независимых источника:
+ * https://github.com/brian-bell/swift-usage-bar/pull/53 — читает
+ * `total.val`, трактует как центы, знак инвертирует; и
+ * https://github.com/robinebers/openusage/issues/391 — там же названы
+ * значения `changeOrigin`: `PURCHASE` со знаком минус, `SPEND` с
+ * плюсом. Эндпоинт в документации описан, но поведение сальдо в ней не
+ * оговорено, поэтому сверка со сторонними реализациями здесь не
+ * перестраховка.
+ *
+ * Почему число всё равно может не совпасть с консолью до цента:
+ * консоль показывает остаток на момент своего запроса, а списания
+ * доезжают в журнал с задержкой, и на счёте владельца включено
+ * автопополнение — между двумя взглядами баланс успевает вырасти
+ * скачком. Поэтому рядом с суммой считается разбивка по `changes`, и
+ * если она не сходится с `total`, экран говорит об этом прямо, а не
+ * делает вид, что журнал полон.
  */
+
+/** Центы биллингового журнала → микродоллары (масштаб `AiUsage`). */
+export function centsToMicroUsd(cents: number): number {
+  return Math.round(cents * 10_000);
+}
+
+export interface XaiChangesSummary {
+  /** Сколько всего пополнено за возвращённые записи, микродоллары. */
+  purchasedMicroUsd: number;
+  /** Сколько списано за них же, микродоллары. */
+  spentMicroUsd: number;
+  /** Сколько записей отдал провайдер. */
+  entries: number;
+  /**
+   * Сходится ли «пополнено − списано» с `total`.
+   *
+   * `false` означает ровно одно: журнал пришёл неполным (провайдер
+   * ограничивает выдачу). Тогда разбивка — справка, а не отчёт, и
+   * выдавать её за полную нельзя.
+   */
+  matchesTotal: boolean;
+}
+
+function changeAmounts(body: unknown): number[] {
+  const changes = (body as { changes?: unknown } | null)?.changes;
+  if (!Array.isArray(changes)) return [];
+  const out: number[] = [];
+  for (const change of changes) {
+    const val = (change as { amount?: { val?: unknown } } | null)?.amount?.val;
+    if (val === undefined || val === null) continue;
+    const n = Number(val);
+    if (Number.isFinite(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * Разбивка журнала пополнений и списаний.
+ *
+ * Знак берётся из самих записей, а не из `changeOrigin`: названий
+ * источника в документации перечислено не всё, а знак суммы определён
+ * однозначно тем же правилом, что и `total`.
+ */
+export function summarizeXaiChanges(
+  body: unknown,
+  totalCents?: number,
+): XaiChangesSummary | undefined {
+  const amounts = changeAmounts(body);
+  if (!amounts.length) return undefined;
+  let purchasedCents = 0;
+  let spentCents = 0;
+  for (const n of amounts) {
+    if (n < 0) purchasedCents += -n;
+    else spentCents += n;
+  }
+  const sumCents = spentCents - purchasedCents;
+  return {
+    purchasedMicroUsd: centsToMicroUsd(purchasedCents),
+    spentMicroUsd: centsToMicroUsd(spentCents),
+    entries: amounts.length,
+    matchesTotal:
+      totalCents !== undefined && Math.abs(sumCents - totalCents) < 0.5,
+  };
+}
+
 /** Сколько сырого ответа показываем: хватает, чтобы увидеть форму. */
 export const RAW_BODY_LIMIT = 4000;
 
@@ -132,11 +223,18 @@ export function previewBody(body: unknown): string {
 export function parseXaiBalance(body: unknown): {
   amountMicroUsd?: number;
   raw?: string;
+  changes?: XaiChangesSummary;
 } {
   const total = (body as { total?: { val?: unknown } } | null)?.total?.val;
   if (total === undefined || total === null) return {};
   const raw = String(total);
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return { raw };
-  return { amountMicroUsd: Math.round(n * 1_000_000), raw };
+  const cents = Number(raw);
+  if (!Number.isFinite(cents)) return { raw };
+  return {
+    // Знак меняется здесь, и только здесь: журнальное сальдо
+    // превращается в остаток, который видит человек.
+    amountMicroUsd: centsToMicroUsd(-cents),
+    raw,
+    changes: summarizeXaiChanges(body, cents),
+  };
 }

@@ -151,7 +151,9 @@ export class VideoAuditService {
   ): Promise<AuditStateView> {
     const session = await this.load(sessionId);
     // §23: аудит ролика — от Standard и выше.
-    await this.plans.assertCanSpendUser(session.userId ?? null); // §25.3, §26.4
+    await this.plans.assertCanSpendUser(session.userId ?? null, {
+      projectId: session.projectId ?? null,
+    }); // §25.3, §26.4
     await this.plans.assertUser(session.userId ?? null, 'audit');
     const video = session.generatedVideo;
     if (!video || video.status !== GenerationStatus.COMPLETE) {
@@ -270,7 +272,9 @@ export class VideoAuditService {
     sessionId: string,
   ): Promise<{ history: SoundCheck[] }> {
     const session = await this.load(sessionId);
-    await this.plans.assertCanSpendUser(session.userId ?? null);
+    await this.plans.assertCanSpendUser(session.userId ?? null, {
+      projectId: session.projectId ?? null,
+    });
     await this.plans.assertUser(session.userId ?? null, 'audit');
     const video = session.generatedVideo;
     if (!video || video.status !== GenerationStatus.COMPLETE) {
