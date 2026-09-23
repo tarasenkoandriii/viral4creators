@@ -4,5 +4,6 @@
     "noEmit": true,
     "incremental": false
   },
+  "files": ["test/types/prisma-client-ambient.d.ts"],
   "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
 }

@@ -18,5 +18,14 @@
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "strict": true
-  }
+  },
+  // `test/types` — объявление `@prisma/client` как `any` ТОЛЬКО для
+  // `tsconfig.typecheck.json` (песочница без `prisma generate`). Без
+  // этого исключения его подхватывал любой конфиг, собирающий файлы
+  // маской, — и настоящий клиент становился `any` везде: и в шаге
+  // `типы` в CI, и в компиляторе Vercel для serverless-точки входа,
+  // который собирал по этому конфигу и падал на 11 ошибках. Конфиг
+  // проверки подключает файл явным `files`, а `exclude` на `files` не
+  // распространяется.
+  "exclude": ["node_modules", "dist", "test/types"]
 }
