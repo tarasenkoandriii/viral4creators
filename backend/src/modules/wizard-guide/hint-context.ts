@@ -123,12 +123,15 @@ ${kinds.map((k) => `- ${k}`).join('\n')}
 }
 
 /**
- * Системная инструкция. Четыре блока §5.10, и ни одного лишнего слова
- * сверх них: каждый лишний абзац здесь умножается на число шагов.
+ * Преамбула правил.
+ *
+ * Вынесена из `buildHintInstruction` затем, чтобы её можно было
+ * ХЕШИРОВАТЬ: штамп корпуса (`knowledgeStamp`) обязан меняться не
+ * только от правки карточек, но и от правки самих правил — иначе сутки
+ * после деплоя раздаётся то, что сгенерировано по прошлым.
  */
-export function buildHintInstruction(input: HintContextInput): string {
-  const language = languageNameForLocale(input.locale);
-  const head = `Ты — помощник внутри мастера сервиса Viral4Creators. Человек уже вошёл и делает свой ролик.
+export function hintRules(language: string, scenarioGoal: string): string {
+  return `Ты — помощник внутри мастера сервиса Viral4Creators. Человек уже вошёл и делает свой ролик.
 
 Правила:
 1. Отвечай про ТЕКУЩИЙ шаг: что здесь важно и обо что на нём спотыкаются. Ни приветствий, ни пересказа того, что человек и так видит.
@@ -138,7 +141,18 @@ export function buildHintInstruction(input: HintContextInput): string {
 5. Текст в «ёлочках» — это надписи на экране. Переноси их дословно, не переводи и не переписывай.
 6. Язык ответа — ${language}.
 
-Цель сценария: ${input.scenarioGoal}`;
+Цель сценария: ${scenarioGoal}`;
+}
+
+/**
+ * Системная инструкция. Четыре блока §5.10, и ни одного лишнего слова
+ * сверх них: каждый лишний абзац здесь умножается на число шагов.
+ */
+export function buildHintInstruction(input: HintContextInput): string {
+  const head = hintRules(
+    languageNameForLocale(input.locale),
+    input.scenarioGoal,
+  );
 
   const parts = [
     head,
@@ -164,14 +178,35 @@ export function buildHintInstruction(input: HintContextInput): string {
     : text;
 }
 
-/** Ответ модели → текст подсказки. Пустая строка означает «нечего сказать». */
+/**
+ * Ответ модели → текст подсказки. Пустая строка означает «нечего
+ * сказать».
+ *
+ * Снимается ровно две вещи: маркер списка в начале и кавычки, в которые
+ * модель обернула ВЕСЬ ответ (на одной реплике это выглядит как цитата
+ * чужого текста).
+ *
+ * Кавычка снимается только ПАРНАЯ. Односторонняя обрезка ломала
+ * подсказку, начинающуюся с надписи на экране, — а начинать с «ёлочки»
+ * ей прямо велит правило 5 преамбулы: из «Готово» — это… уезжала первая
+ * ёлочка, оставляя осиротевшую закрывающую.
+ */
 export function cleanHint(raw: string | undefined | null): string {
-  const text = (raw ?? '').trim();
+  let text = (raw ?? '').trim();
   if (!text) return '';
-  // Модель иногда оформляет короткий ответ кавычками или маркером
-  // списка — на одной реплике это выглядит как цитата чужого текста.
-  return text
-    .replace(/^[-*"'«]\s*/, '')
-    .replace(/["'»]$/, '')
-    .trim();
+  text = text.replace(/^[-*]\s+/, '').trim();
+  const PAIRS: ReadonlyArray<[string, string]> = [
+    ['"', '"'],
+    ["'", "'"],
+    ['«', '»'],
+  ];
+  for (const [open, close] of PAIRS) {
+    if (text.length > 1 && text.startsWith(open) && text.endsWith(close)) {
+      const inner = text.slice(open.length, text.length - close.length);
+      // Только если внутри нет второй такой же закрывающей: «А» и «Б» —
+      // это два ярлыка, а не одна кавычка вокруг всего ответа.
+      if (!inner.includes(close)) return inner.trim();
+    }
+  }
+  return text;
 }

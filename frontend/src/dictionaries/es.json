@@ -1356,7 +1356,7 @@
     "guideLabel": "Consejos de IA durante el asistente",
     "guideHint": "En cada paso indica qué importa aquí y con qué tropieza la gente. Solo se puede activar ahora, al principio: más adelante el asesor no habría visto los pasos ya recorridos.",
     "guideDisable": "Desactivar consejos",
-    "guideDisableConfirm": "¿Desactivar los consejos de IA? No podrás volver a activarlos hasta un nuevo recorrido de este escenario."
+    "guideDisableConfirm": "¿Desactivar los consejos de la IA? Podrás volver a activarlos solo mientras no hayas empezado la grabación: después el asesor ya no habrá visto los pasos recorridos."
   },
   "sketch": {
     "button": "Boceto IA",
@@ -1606,6 +1606,7 @@
   "wizardGuide": {
     "title": "Consejo de la IA",
     "loading": "Veo qué importa aquí…",
+    "personalLimit": "Se acabaron los consejos por hoy: vuelven mañana.",
     "gotoStep": "Ir a: {{step}}",
     "openDoc": "Abrir: {{doc}}",
     "docs": {
@@ -1625,7 +1626,7 @@
       "draft": "Indicar el enlace del sitio",
       "frames": "Grabar al menos un paso",
       "title": "Poner nombre al tutorial",
-      "editable": "El borrador ya está en revisión — no se puede editar"
+      "editable": "El borrador está abierto para editar"
     }
   }
 }

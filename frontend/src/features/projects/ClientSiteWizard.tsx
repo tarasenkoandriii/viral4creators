@@ -482,6 +482,26 @@ export function ClientSiteWizard({
     currentStepId === 'loading' ? 'url' : currentStepId
   );
 
+  /**
+   * Куда СЕЙЧАС можно перейти — один список на всех, кто предлагает
+   * переход: строку готовности и кнопки советника.
+   *
+   * Достижимость знает только мастер: сервер проверяет, что шаг есть в
+   * сценарии, но не то, открыт ли он на этом экране. Без этого списка
+   * и пункт «Назвать обучалку», и кнопка советника рисовались бы
+   * кликабельными на шаге, куда ещё нельзя, — человек жмёт, ничего не
+   * происходит, и виноват в этом продукт.
+   */
+  const reachable = new Map<string, string>();
+  stepsView.targets.forEach((target, i) => {
+    if (target && i !== stepsView.current)
+      reachable.set(target, stepsView.steps[i]);
+  });
+  const goToTarget = (id: string): void => {
+    const target = stepsView.targets.find((x) => x === id);
+    if (target) goToStep(target);
+  };
+
   return (
     <div className="animate-fadeIn">
       <ScreenHeader
@@ -513,10 +533,8 @@ export function ClientSiteWizard({
       {stage !== 'loading' && draft && (
         <ReadinessPanel
           readiness={draft.readiness}
-          onGoToStep={(stepId) => {
-            const target = stepsView.targets.find((x) => x === stepId);
-            if (target) goToStep(target);
-          }}
+          canGoToStep={(stepId) => reachable.has(stepId)}
+          onGoToStep={goToTarget}
         />
       )}
 
@@ -529,11 +547,8 @@ export function ClientSiteWizard({
           projectId={projectId}
           stepId={currentStepId}
           enabled={!!guide?.available && !!guide?.enabled}
-          stepLabels={stepLabels}
-          onGoToStep={(id) => {
-            const target = stepsView.targets.find((x) => x === id);
-            if (target) goToStep(target);
-          }}
+          stepLabels={Object.fromEntries(reachable)}
+          onGoToStep={goToTarget}
         />
       )}
 

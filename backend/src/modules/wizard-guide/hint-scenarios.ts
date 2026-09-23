@@ -11,8 +11,9 @@
  * разошёлся бы с тем, который рисует степпер.
  */
 
+import { createHash } from 'crypto';
 import type { FreeScenario } from '../../common/test-user-scenarios';
-import type { HintStepCard } from './hint-context';
+import { hintRules, type HintStepCard } from './hint-context';
 
 export interface ScenarioHints {
   /** Цель сценария одной фразой — первый блок промпта. */
@@ -65,4 +66,26 @@ export const SCENARIO_HINTS: Partial<Record<FreeScenario, ScenarioHints>> = {
 /** Шаги сценария — тот же список, что рисует степпер (§5.7). */
 export function stepIdsOf(scenario: FreeScenario): string[] {
   return Object.keys(SCENARIO_HINTS[scenario]?.cards ?? {});
+}
+
+/**
+ * Штамп корпуса — часть ключа кеша (§5.5).
+ *
+ * СЧИТАЕТСЯ, а не пишется руками. Раньше здесь лежала строка вида
+ * `'cards-1'`, и правка карточки без правки строки означала сутки
+ * старых советов на новом тексте — ошибка, которую невозможно заметить
+ * глазами и легко сделать. Хеш снимает вопрос: поменялась цель
+ * сценария, карточка шага или сама преамбула правил — сменился штамп,
+ * и весь кеш инвалидирован бесплатно и полностью.
+ *
+ * Язык и цель в `hintRules` подставляются фиктивные: меняется от них
+ * подставленное значение, а не сам шаблон, и локаль в ключе кеша уже
+ * есть отдельным полем.
+ */
+export function knowledgeStamp(): string {
+  return createHash('sha256')
+    .update(JSON.stringify(SCENARIO_HINTS))
+    .update(hintRules('%LANG%', '%GOAL%'))
+    .digest('hex')
+    .slice(0, 12);
 }

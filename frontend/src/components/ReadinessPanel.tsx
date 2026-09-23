@@ -29,10 +29,21 @@ import { pluralForm } from '../features/projects/format';
 export function ReadinessPanel({
   readiness,
   onGoToStep,
+  canGoToStep,
 }: {
   readiness: Readiness;
   /** Не задан — пункты не кликаются (шага, куда вести, нет). */
   onGoToStep?: (stepId: string) => void;
+  /**
+   * Открыт ли шаг ПРЯМО СЕЙЧАС. Не задан — считаем, что открыт любой.
+   *
+   * Готовность перечисляет всё, чего не хватает, включая то, что
+   * заполняется на шаге, куда с текущего места ещё нельзя: у обучалки
+   * название просят на просмотре, а просмотр недостижим, пока не
+   * записан ни один кадр. Строка без этой проверки оставалась
+   * кликабельной и молча ничего не делала.
+   */
+  canGoToStep?: (stepId: string) => boolean;
 }) {
   const { dict, locale } = useI18n();
   const t = dict.wizardReadiness;
@@ -48,7 +59,8 @@ export function ReadinessPanel({
 
   const row = (item: Readiness['items'][number]) => {
     const name = t.items[item.key as keyof typeof t.items] ?? item.key;
-    const clickable = !item.done && !!onGoToStep;
+    const clickable =
+      !item.done && !!onGoToStep && (canGoToStep?.(item.stepId) ?? true);
     return (
       <li key={item.key} className="flex items-start gap-2 text-sm">
         <span

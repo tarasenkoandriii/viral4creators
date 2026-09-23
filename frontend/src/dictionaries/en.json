@@ -1356,7 +1356,7 @@
     "guideLabel": "AI tips along the way",
     "guideHint": "On every step it says what matters here and what people trip over. You can only turn this on now, at the start — later the guide would not have seen the steps you passed.",
     "guideDisable": "Turn tips off",
-    "guideDisableConfirm": "Turn AI tips off? You will not be able to turn them back on until a new run of this scenario."
+    "guideDisableConfirm": "Turn AI tips off? You can turn them back on only before you start recording — after that the advisor will not have seen the steps you passed."
   },
   "sketch": {
     "button": "AI sketch",
@@ -1606,6 +1606,7 @@
   "wizardGuide": {
     "title": "AI tip",
     "loading": "Looking at what matters here…",
+    "personalLimit": "You are out of tips for today — they come back tomorrow.",
     "gotoStep": "Go to: {{step}}",
     "openDoc": "Open: {{doc}}",
     "docs": {
@@ -1625,7 +1626,7 @@
       "draft": "Enter the site link",
       "frames": "Record at least one step",
       "title": "Name the tutorial",
-      "editable": "The draft is already under review — editing is off"
+      "editable": "Draft is open for edits"
     }
   }
 }

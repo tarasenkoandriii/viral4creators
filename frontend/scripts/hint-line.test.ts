@@ -9,6 +9,7 @@ import {
   initialHintState,
   isVisible,
   shouldRequest,
+  waitsForIdle,
   type HintEvent,
   type HintState,
 } from '../src/lib/hint-line';
@@ -199,8 +200,42 @@ check('запрос уходит ровно в одном состоянии', (
   );
 });
 
+// ── Найдено аудитом волн A+B ───────────────────────────────────────
+
+check('таймер простоя срабатывает один раз на шаг', () => {
+  // Ошибка возвращает строку в `collapsed`, а `collapsed` снова заводит
+  // восьмисекундный таймер. Без ограничения лежащий провайдер или 429
+  // превращались в семь платных попыток в минуту с каждого открытого
+  // мастера.
+  const afterError = run(on(), { type: 'idle' }, { type: 'failed' });
+  eq(afterError.phase, 'collapsed');
+  eq(run(afterError, { type: 'idle' }).phase, 'collapsed');
+  eq(waitsForIdle(afterError), false);
+});
+
+check('клик после ошибки по-прежнему работает', () => {
+  // Человек видел, что ответа нет, и просит сам — это не автоповтор.
+  const afterError = run(on(), { type: 'idle' }, { type: 'failed' });
+  eq(run(afterError, { type: 'open' }).phase, 'loading');
+});
+
+check('на новом шаге таймер снова заряжен', () => {
+  const next = run(
+    on(),
+    { type: 'idle' },
+    { type: 'failed' },
+    { type: 'step', stepId: 'record' }
+  );
+  eq(waitsForIdle(next), true);
+  eq(run(next, { type: 'idle' }).phase, 'loading');
+});
+
+check('выключённый советник таймера не ждёт', () => {
+  eq(waitsForIdle(off()), false);
+});
+
 if (failed) {
   console.error(`\n${failed} проверок упало`);
   process.exit(1);
 }
-console.log('\n16 проверок пройдено');
+console.log('\n20 проверок пройдено');

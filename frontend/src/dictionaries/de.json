@@ -1356,7 +1356,7 @@
     "guideLabel": "KI-Tipps während des Assistenten",
     "guideHint": "Sagt bei jedem Schritt, worauf es ankommt und woran andere scheitern. Einschalten geht nur jetzt, am Anfang — später hätte der Berater die zurückgelegten Schritte nicht gesehen.",
     "guideDisable": "Tipps ausschalten",
-    "guideDisableConfirm": "KI-Tipps ausschalten? Bis zum Ende dieses Durchlaufs lassen sie sich nicht wieder einschalten — nur in einem neuen."
+    "guideDisableConfirm": "KI-Tipps ausschalten? Wieder einschalten lässt sich nur, solange die Aufnahme nicht begonnen hat — danach hat der Berater die bereits gegangenen Schritte nicht gesehen."
   },
   "sketch": {
     "button": "KI-Skizze",
@@ -1606,6 +1606,7 @@
   "wizardGuide": {
     "title": "KI-Tipp",
     "loading": "Ich schaue, worauf es hier ankommt…",
+    "personalLimit": "Für heute sind die Tipps aufgebraucht — morgen sind sie wieder da.",
     "gotoStep": "Zu: {{step}}",
     "openDoc": "Öffnen: {{doc}}",
     "docs": {
@@ -1625,7 +1626,7 @@
       "draft": "Link zur Website angeben",
       "frames": "Mindestens einen Schritt aufzeichnen",
       "title": "Tutorial benennen",
-      "editable": "Der Entwurf ist bereits in Prüfung — Bearbeiten ist aus"
+      "editable": "Entwurf ist zum Bearbeiten offen"
     }
   }
 }

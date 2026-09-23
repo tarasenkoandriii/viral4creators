@@ -34,6 +34,11 @@
  *    Разница смысловая: после ошибки повтор имеет смысл, после «нечего
  *    сказать» — нет, и повторять его значило бы платить за тот же
  *    пустой ответ на каждом простое.
+ * 3. **Сам по себе запрос уходит один раз на шаг.** Таймер простоя
+ *    срабатывает однократно (`autoTried`), дальше — только по клику.
+ *    Без этого лежащий провайдер или 429 превращались в семь запросов в
+ *    минуту с каждого открытого мастера: ошибка возвращает в
+ *    `collapsed`, а `collapsed` снова заводит восьмисекундный таймер.
  */
 
 import type { GuideAction } from '../types';
@@ -58,8 +63,13 @@ export interface HintState {
   stepId: string | null;
   hint: string | null;
   actions: GuideAction[];
-  /** Личный лимит — единственное, о чём говорят вслух (§5.9). */
+  /**
+   * Код уведомления от сервера — сейчас только `'personal-limit'`.
+   * Именно код, а не фраза: подпись даёт словарь, у которого есть языки.
+   */
   notice?: string;
+  /** Таймер простоя на этом шаге уже срабатывал. */
+  autoTried: boolean;
 }
 
 export type HintEvent =
@@ -98,6 +108,7 @@ export function initialHintState(
     stepId,
     hint: null,
     actions: [],
+    autoTried: false,
   };
 }
 
@@ -125,12 +136,18 @@ export function hintReducer(state: HintState, event: HintEvent): HintState {
       };
 
     case 'open':
-    case 'idle':
       // Только из `collapsed`. Отсюда же берётся «один вызов на шаг»:
       // из `loading` и `shown` это событие ничего не меняет, и второй
       // запрос не уходит ни по клику, ни по таймеру.
       if (!state.enabled || state.phase !== 'collapsed') return state;
       return { ...state, phase: 'loading' };
+
+    case 'idle':
+      // Таймер — ОДИН раз на шаг. Клик человека — сколько угодно: он
+      // видел, что ответа нет, и просит ещё раз сам.
+      if (!state.enabled || state.phase !== 'collapsed' || state.autoTried)
+        return state;
+      return { ...state, phase: 'loading', autoTried: true };
 
     case 'result': {
       // Ответ, приехавший не в `loading`, — это ответ на шаг, с
@@ -164,9 +181,15 @@ export function hintReducer(state: HintState, event: HintEvent): HintState {
         stepId: event.stepId,
         hint: null,
         actions: [],
+        autoTried: false,
       };
     }
   }
+}
+
+/** Ждать ли срабатывания таймера простоя на этом шаге. */
+export function waitsForIdle(state: HintState): boolean {
+  return state.enabled && state.phase === 'collapsed' && !state.autoTried;
 }
 
 /** Нужно ли прямо сейчас идти на сервер. */

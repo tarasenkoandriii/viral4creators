@@ -32,9 +32,22 @@ import {
   hintReducer,
   initialHintState,
   isVisible,
+  waitsForIdle,
 } from '../lib/hint-line';
 import { requestWizardHint } from '../services/wizard-guide-api';
 import type { GuideAction } from '../types';
+
+/**
+ * Код уведомления → фраза. Сервер присылает КОД (`'personal-limit'`), а
+ * не текст: мини-апп живёт на пяти языках, и русская строка с сервера
+ * доезжала бы до немецкого интерфейса как есть.
+ *
+ * Незнакомый код молча ничего не показывает: сервер может уехать
+ * вперёд на деплой, и сырой машинный код на экране хуже его отсутствия.
+ */
+function noticeText(code: string, t: { personalLimit: string }): string | null {
+  return code === 'personal-limit' ? t.personalLimit : null;
+}
 
 /** Слаг документа → ключ словаря. Список закрыт на сервере (§5.7). */
 const DOC_KEYS: Record<string, 'offer' | 'termsOfUse'> = {
@@ -54,7 +67,13 @@ export function HintLine({
   stepId: string;
   /** Галочка стоит И фича включена оператором. */
   enabled: boolean;
-  /** Подписи шагов — те же, что в степпере; из них собираются кнопки. */
+  /**
+   * Подписи шагов, на которые СЕЙЧАС можно перейти, — из них собираются
+   * кнопки. Именно достижимых, а не всех: сервер проверяет, что шаг
+   * существует в сценарии, но о том, открыт ли он на этом экране, знает
+   * только мастер. Кнопка, по которой ничего не происходит, — ровно то,
+   * что §5.7 называет «хуже отсутствия кнопки».
+   */
   stepLabels: Record<string, string>;
   onGoToStep: (stepId: string) => void;
 }) {
@@ -73,20 +92,33 @@ export function HintLine({
     dispatch({ type: 'step', stepId });
   }, [stepId]);
 
-  // Простой на шаге. Таймер живёт только в свёрнутом состоянии: из
-  // остальных событие всё равно ничего не меняет, а лишний таймер
-  // пришлось бы помнить и гасить.
+  // Простой на шаге. Таймер заводится, только пока его ждут: в
+  // остальных состояниях событие ничего не меняет, а после ошибки не
+  // должно менять и подавно — иначе лежащий провайдер превращается в
+  // семь платных попыток в минуту.
+  //
+  // В зависимостях всё состояние целиком, и это безопасно: редьюсер
+  // возвращает ТОТ ЖЕ объект, когда событие ничего не изменило, — иначе
+  // каждый рендер перезаряжал бы отсчёт и восьми секунд не наступало бы
+  // никогда.
   useEffect(() => {
-    if (state.phase !== 'collapsed') return;
+    if (!waitsForIdle(state)) return;
     const id = setTimeout(() => dispatch({ type: 'idle' }), HINT_IDLE_MS);
     return () => clearTimeout(id);
-  }, [state.phase, state.stepId]);
+  }, [state]);
 
+  // Шаг берётся ИЗ СОСТОЯНИЯ, а не из пропа, и проп в зависимостях не
+  // участвует. Иначе уход с шага во время загрузки давал лишний
+  // ПЛАТНЫЙ вызов: проп менялся на один рендер раньше, чем машина
+  // состояний успевала обработать `step`, эффект перезапускался с новым
+  // шагом и тут же отменялся — но сервер к этому моменту уже считал
+  // подсказку, а разрыв соединения его не останавливает.
+  const loadingStep = state.phase === 'loading' ? state.stepId : null;
   useEffect(() => {
-    if (state.phase !== 'loading') return;
+    if (!loadingStep) return;
     const ctl = new AbortController();
     let alive = true;
-    requestWizardHint(projectId, { stepId, locale }, ctl.signal)
+    requestWizardHint(projectId, { stepId: loadingStep, locale }, ctl.signal)
       .then((res) => {
         if (!alive) return;
         dispatch({
@@ -105,7 +137,7 @@ export function HintLine({
       alive = false;
       ctl.abort();
     };
-  }, [state.phase, state.stepId, projectId, stepId, locale]);
+  }, [loadingStep, projectId, locale]);
 
   if (!isVisible(state)) return null;
 
@@ -145,7 +177,9 @@ export function HintLine({
         <div className="mt-2 space-y-2">
           {state.hint && <p className="text-sm">{state.hint}</p>}
           {state.notice && (
-            <p className="text-sm text-[var(--muted)]">{state.notice}</p>
+            <p className="text-sm text-[var(--muted)]">
+              {noticeText(state.notice, t)}
+            </p>
           )}
           <HintActions
             actions={state.actions}
@@ -208,7 +242,9 @@ function HintActions({
         return (
           <a
             key={`d${i}`}
-            href={routes.legal(a.slug)}
+            // `#` обязателен: роутер мини-аппа хешевый, и «голый» путь
+            // увёл бы человека со страницы, потеряв состояние мастера.
+            href={`#${routes.legal(a.slug)}`}
             className="rounded-full border border-[var(--border)] px-3 py-1 text-xs"
           >
             {openTemplate.replace('{{doc}}', docLabels[key])}

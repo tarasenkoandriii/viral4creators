@@ -28,10 +28,12 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PlanService } from '../plan/plan.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import { estimateCost } from '../../common/ai-pricing';
 import {
   maskSensitiveEcho,
   containsForbiddenPromise,
@@ -53,7 +55,7 @@ import {
   splitHintActions,
   type GuideAction,
 } from './hint-actions';
-import { SCENARIO_HINTS, stepIdsOf } from './hint-scenarios';
+import { SCENARIO_HINTS, knowledgeStamp, stepIdsOf } from './hint-scenarios';
 import {
   AI_GUIDE_BUDGET_KEY,
   AI_GUIDE_PERSONAL_LIMIT_KEY,
@@ -88,6 +90,34 @@ export interface HintResult {
 
 const NOTHING: HintResult = { hint: null, actions: [], source: null };
 
+/**
+ * Код, а не текст.
+ *
+ * Единственная фраза, которую советник говорит вслух, — и мини-апп
+ * живёт на пяти языках. Русская строка отсюда доезжала бы до немецкого
+ * интерфейса как есть; подпись даёт словарь (`wizardGuide.personalLimit`),
+ * у которого языки есть.
+ */
+export const PERSONAL_LIMIT_NOTICE = 'personal-limit';
+
+/** Токены ответа модели — те же поля, по которым считается расход. */
+function usageOf(response: unknown): { inTokens: number; outTokens: number } {
+  const meta = (
+    response as {
+      usageMetadata?: {
+        promptTokenCount?: number;
+        candidatesTokenCount?: number;
+        thoughtsTokenCount?: number;
+      };
+    }
+  )?.usageMetadata;
+  return {
+    inTokens: meta?.promptTokenCount ?? 0,
+    outTokens:
+      (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0),
+  };
+}
+
 @Injectable()
 export class WizardHintService {
   private readonly logger = new Logger(WizardHintService.name);
@@ -98,6 +128,7 @@ export class WizardHintService {
     private readonly settings: PlatformSettingsService,
     private readonly aiUsage: AiUsageService,
     private readonly guide: WizardGuideService,
+    private readonly plan: PlanService,
   ) {
     // Нет ключа — не падаем при старте: фича выключается сама, как у
     // ассистента, и остальной мастер продолжает работать.
@@ -128,21 +159,28 @@ export class WizardHintService {
       scenario,
       stepId,
       locale,
-      knowledgeStamp: this.knowledgeStamp(),
+      knowledgeStamp: knowledgeStamp(),
       digest: digestOfFacts(facts),
     });
 
     const cached = await this.fromCache(key);
     if (cached) return cached;
 
-    const personal = await this.personalLeft(userId);
-    if (personal <= 0) {
-      return {
-        ...NOTHING,
-        notice: 'На сегодня советы закончились — они вернутся завтра.',
-      };
-    }
+    // Личный лимит. Ноль — это НЕ «у вас кончилось»: ноль ставит
+    // оператор, когда приостанавливает фичу, и говорить человеку про
+    // его лимит там, где лимита нет ни у кого, — вводить в заблуждение.
+    const { left, limit } = await this.personalLeft(userId);
+    if (limit <= 0) return NOTHING;
+    if (left <= 0) return { ...NOTHING, notice: PERSONAL_LIMIT_NOTICE };
+
     if (!(await this.budgetLeft())) return NOTHING;
+    // Блокировка оператора и суточный потолок самого человека — общие
+    // для всех платных вызовов, и подсказка не исключение. Своего
+    // бюджета фичи для этого мало: он про НАШИ деньги, а блокировка —
+    // про решение оператора, и заблокированный аккаунт не должен
+    // продолжать тратить. Отказ здесь молчит, как и всё остальное:
+    // человек уже видит блокировку там, где она что-то решает.
+    if (!(await this.canSpend(userId, projectId))) return NOTHING;
     if (!this.genai) return NOTHING;
 
     const instruction = buildHintInstruction({
@@ -165,7 +203,11 @@ export class WizardHintService {
         config: {
           systemInstruction: instruction,
           maxOutputTokens: 400,
-          abortSignal: signal ?? AbortSignal.timeout(HINT_TIMEOUT_MS),
+          // `any`, а не `??`: переданный сигнал раньше ЗАМЕНЯЛ таймаут,
+          // то есть вызов с отменой оставался без потолка ожидания.
+          abortSignal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(HINT_TIMEOUT_MS)])
+            : AbortSignal.timeout(HINT_TIMEOUT_MS),
         },
       });
       await this.aiUsage.recordGemini(response, {
@@ -173,16 +215,39 @@ export class WizardHintService {
         model: GEMINI_MODEL,
         userId,
       });
+      const usage = usageOf(response);
 
       const split = splitHintActions(response?.text ?? '');
       const text = cleanHint(split.text);
       if (!text) return NOTHING;
 
-      // Пост-фильтр обязателен: модель пересказывает то, что ей дали, и
-      // однажды перескажет не то. Маскируем, а не отбрасываем —
-      // подсказка при этом остаётся полезной.
+      // Пост-фильтр. Контакты и ключи МАСКИРУЮТСЯ — подсказка при этом
+      // остаётся полезной; запрещённое обещание ОТБРАСЫВАЕТСЯ целиком.
+      //
+      // Ассистент на лендинге так не делает и не может: он стримит, и
+      // к моменту проверки текст уже у посетителя (его §5.5 называет
+      // это осознанным компромиссом). Советник не стримит — ровно
+      // затем, чтобы этим компромиссом не пользоваться. Отбрасывать
+      // важно вдвойне: кеш здесь ОБЩИЙ, и одно обещание «безлимита»
+      // иначе выдавалось бы всем на этом шаге сутки.
       const masked = maskSensitiveEcho(text);
-      const flagged = masked !== text || containsForbiddenPromise(masked);
+      const promise = containsForbiddenPromise(masked);
+      const flagged = masked !== text || promise;
+
+      if (promise) {
+        await this.journal({
+          scenario,
+          stepId,
+          locale,
+          source: 'model',
+          hint: masked,
+          latencyMs: Date.now() - started,
+          flagged: true,
+          usage,
+        });
+        return NOTHING;
+      }
+
       const actions = parseHintActions(
         split.actionsJson,
         stepIdsOf(scenario),
@@ -198,6 +263,7 @@ export class WizardHintService {
         hint: masked,
         latencyMs: Date.now() - started,
         flagged,
+        usage,
       });
       return { hint: masked, actions, source: 'model' };
     } catch (e) {
@@ -271,16 +337,6 @@ export class WizardHintService {
     ];
   }
 
-  /**
-   * Штамп корпуса. Пока корпус состоит из карточек в коде, штампом
-   * служит версия этого модуля: поменяли формулировки — сменили строку,
-   * и кеш обновился целиком. Когда появится генератор (этап 9), сюда
-   * приедет его дата сборки.
-   */
-  private knowledgeStamp(): string {
-    return 'cards-1';
-  }
-
   private async fromCache(key: string): Promise<HintResult | null> {
     const row: { hint: string; actions: unknown; createdAt: Date } | null =
       await this.prisma.wizardHintCache.findUnique({ where: { key } });
@@ -308,13 +364,30 @@ export class WizardHintService {
       .upsert({
         where: { key },
         create: { key, hint, actions: actions as unknown as object },
-        update: { hint, actions: actions as unknown as object, hits: 0 },
+        update: {
+          hint,
+          actions: actions as unknown as object,
+          hits: 0,
+          // Возраст записи обязан обновиться вместе с ответом. Без этой
+          // строки протухший ключ переписывался свежим текстом, но со
+          // старой датой — и `fromCache` считал его протухшим СНОВА, то
+          // есть после первых суток кеш по этому ключу умирал навсегда
+          // и модель звалась на каждый запрос.
+          createdAt: new Date(),
+        },
       })
       .catch((e: unknown) =>
         this.logger.warn(`кеш подсказки не записан: ${String(e)}`),
       );
   }
 
+  /**
+   * Журнал выданных подсказок.
+   *
+   * Токены и цена заполняются из того же ответа модели, по которому
+   * считается расход: пустые колонки, которые ВЫГЛЯДЯТ как данные, —
+   * ловушка для следующего экрана админки, который на них обопрётся.
+   */
   private async journal(row: {
     scenario: string;
     stepId: string;
@@ -323,22 +396,60 @@ export class WizardHintService {
     hint: string;
     latencyMs: number;
     flagged: boolean;
+    usage?: { inTokens: number; outTokens: number };
   }): Promise<void> {
+    const { usage, ...rest } = row;
+    const cost = usage
+      ? estimateCost(GEMINI_MODEL, {
+          inputTokens: usage.inTokens,
+          outputTokens: usage.outTokens,
+        }).costMicroUsd
+      : 0;
     await this.prisma.wizardHint
-      .create({ data: row })
+      .create({
+        data: {
+          ...rest,
+          inTokens: usage?.inTokens ?? 0,
+          outTokens: usage?.outTokens ?? 0,
+          costMicroUsd: cost,
+        },
+      })
       .catch((e: unknown) =>
         this.logger.warn(`журнал подсказок не записан: ${String(e)}`),
       );
   }
 
-  /** Сколько подсказок человеку ещё положено сегодня. */
-  private async personalLeft(userId: string): Promise<number> {
+  /**
+   * Сколько подсказок человеку ещё положено сегодня — и каков сам
+   * лимит. Второе значение нужно вызывающему, чтобы отличить «у ВАС
+   * кончилось» (говорим) от «лимит нулевой у всех» (молчим).
+   */
+  private async personalLeft(
+    userId: string,
+  ): Promise<{ left: number; limit: number }> {
     const limit = await this.numberSetting(
       AI_GUIDE_PERSONAL_LIMIT_KEY,
       DEFAULT_PERSONAL_LIMIT,
     );
     const used = await this.aiUsage.countToday(userId, 'wizard-hint');
-    return limit - used;
+    return { left: limit - used, limit };
+  }
+
+  /**
+   * Общие правила расхода: блокировка оператора и суточный потолок
+   * пользователя (а для тестовых аккаунтов — их собственный потолок по
+   * сценарию проекта). Отказ — не ошибка маршрута, а причина промолчать.
+   */
+  private async canSpend(userId: string, projectId: string): Promise<boolean> {
+    try {
+      await this.plan.assertCanSpendUser(userId, { projectId });
+      return true;
+    } catch (e) {
+      this.logger.log(
+        `подсказка не выдана: расход не разрешён (${e instanceof Error ? e.message : String(e)})`,
+      );
+      return false;
+    }
   }
 
   /** Общий дневной бюджет фичи. Исчерпан — молчим, оператору алерт. */
