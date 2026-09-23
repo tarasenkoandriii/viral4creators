@@ -155,9 +155,22 @@ export function sessionBlobPathnames(session: Session): string[] {
   // сюда не попадает и не должна: она общая, одна на всех, и удаление
   // одной сессии не вправе её тронуть — отличает их `source`.
   const music = session.greetingBriefSnapshot?.musicTheme;
-  if (music?.source === 'upload' && music.pathname) {
+  // `upload` — файл человека, `library` — трек, скачанный нами из
+  // библиотеки со свободной лицензией: оба лежат под префиксом сессии
+  // и принадлежат ей. `catalog` и `link` — чужие: первый общий для
+  // всех, второй вообще не у нас.
+  if (
+    (music?.source === 'upload' || music?.source === 'library') &&
+    music.pathname
+  ) {
     paths.add(music.pathname);
   }
+
+  // Наклейка (фича №8) всегда наша копия: условия Pixabay запрещают
+  // постоянный хотлинк, поэтому файл скачивается к нам и живёт под
+  // префиксом сессии — значит и удаляется вместе с ней.
+  const sticker = session.greetingBriefSnapshot?.sticker;
+  if (sticker?.pathname) paths.add(sticker.pathname);
 
   // Защита от чужих путей: сессия не вправе удалить файл вне своего
   // префикса, даже если он как-то попал в её данные.

@@ -1,16 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
-// Тот же приём, что в `product-analog.service.spec.ts`/
-// `greeting-reference.generate.spec.ts`: `postprod.service.ts` тянет
-// `SessionService`, а та РАНТАЙМОМ импортирует `Prisma`/`WorkflowKind`
-// из `@prisma/client`. Сгенерированного клиента на стенде без
-// `prisma generate` нет, и весь набор падал на загрузке модуля, так и
-// не дойдя ни до одной проверки. Здесь `Prisma` не используется вовсе —
-// подменяем минимумом, а не тащим генерацию клиента в юнит-тесты.
-jest.mock('@prisma/client', () => ({
-  Prisma: { DbNull: Symbol.for('Prisma.DbNull') },
-  WorkflowKind: { SINGLE: 'SINGLE', LINE: 'LINE' },
-}));
 
 import {
   POSTPROD_DEADLINE_MS,
@@ -355,6 +344,213 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
         .commands[0];
       expect(command).toContain('[0:a]');
       expect(command).toContain('amix');
+    });
+
+    describe('наклейка — фича №8', () => {
+      const withSticker = {
+        sticker: {
+          id: 'st_1',
+          url: 'https://blob.test/st_1.png',
+          pathname: 'sessions/s1/stickers/st_1.png',
+          sourceUrl: 'https://pixabay.com/x',
+          source: 'pixabay',
+          placement: 'top-left',
+        },
+      };
+
+      it('наш блоб уходит отдельным входом, а не ссылка Pixabay', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: withSticker,
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+          commands: string[];
+        };
+        expect(job.inputs.sticker).toBe('https://blob.test/st_1.png');
+        expect(job.commands[0]).toContain('overlay=');
+      });
+
+      it('положение из снимка доезжает до команды', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: withSticker,
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const command = (api.submit.mock.calls[0][0] as { commands: string[] })
+          .commands[0];
+        // top-left: отступы числами, без W/H.
+        expect(command).toMatch(/overlay=\d+:\d+/);
+      });
+
+      it('наклейки нет — лишнего входа тоже нет', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+        };
+        expect(job.inputs).not.toHaveProperty('sticker');
+      });
+
+      it('одна наклейка без кропа и озвучки — задача всё равно создаётся', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'veo' },
+            greetingBriefSnapshot: withSticker,
+          }),
+        });
+        const r = await svc.start('s1', {
+          ...VIDEO,
+          aspectRatio: '9:16',
+          reframePending: false,
+        });
+        expect(api.submit).toHaveBeenCalled();
+        expect(r.postStatus).not.toBe('skipped');
+      });
+    });
+
+    describe('карточки — фичи №38/№39', () => {
+      const withCards = { cards: { title: 'Марине', closing: 'От Андрея' } };
+
+      it('файл карточек уходит отдельным входом и рисуется ПОСЛЕ субтитров', async () => {
+        // Карточка — отдельный кадр повествования, а не подпись: если
+        // они попали в одни секунды, сверху должна быть карточка.
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: {
+              voiceMode: 'voiceover',
+              subtitlesMode: 'on',
+            },
+            greetingBriefSnapshot: withCards,
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+          commands: string[];
+        };
+        expect(job.inputs.cards).toBeTruthy();
+        const command = job.commands[0];
+        expect(command.indexOf('{{subs}}')).toBeLessThan(
+          command.indexOf('{{cards}}'),
+        );
+      });
+
+      it('упоминание автора музыки создаёт карточки само по себе', async () => {
+        // Это обязательство по лицензии трека, а не подпись
+        // отправителя: даже если своих подписей нет, кредит обязан
+        // уехать вместе с файлом.
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: {
+              musicTheme: {
+                id: 'ml_1',
+                title: 'Тёплое утро',
+                url: 'https://blob.test/ml_1.mp3',
+                source: 'library',
+                attribution: '«Тёплое утро» — Аноним (CC-BY-4.0), Freesound',
+              },
+            },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+        };
+        expect(job.inputs.cards).toBeTruthy();
+      });
+
+      it('у трека без обязательства кредита нет — карточки не появляются', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: {
+              musicTheme: {
+                id: 'ml_1',
+                title: 'CC0',
+                url: 'https://blob.test/ml_1.mp3',
+                source: 'library',
+              },
+            },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+        };
+        expect(job.inputs).not.toHaveProperty('cards');
+      });
+
+      it('карточек нет — лишнего входа и фильтра тоже нет', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+        };
+        expect(job.inputs).not.toHaveProperty('cards');
+      });
+
+      it('пустой текст карточкой не считается', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: { cards: { title: '  ', closing: null } },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        const job = api.submit.mock.calls[0][0] as {
+          inputs: Record<string, string>;
+        };
+        expect(job.inputs).not.toHaveProperty('cards');
+      });
+
+      it('карточка из одних пробелов не создаёт задачу на пустом месте', async () => {
+        // Иначе ролик без кропа, озвучки и субтитров всё равно уехал бы
+        // в перекодирование ради двух пробелов.
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'veo' },
+            greetingBriefSnapshot: { cards: { title: '   ', closing: '' } },
+          }),
+        });
+        const r = await svc.start('s1', {
+          ...VIDEO,
+          aspectRatio: '9:16',
+          reframePending: false,
+        });
+        expect(api.submit).not.toHaveBeenCalled();
+        expect(r.postStatus).toBe('skipped');
+      });
+
+      it('одни карточки без кропа и озвучки — задача всё равно создаётся', async () => {
+        const { svc, api } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'veo' },
+            greetingBriefSnapshot: withCards,
+          }),
+        });
+        const r = await svc.start('s1', {
+          ...VIDEO,
+          aspectRatio: '9:16',
+          reframePending: false,
+        });
+        expect(api.submit).toHaveBeenCalled();
+        expect(r.postStatus).not.toBe('skipped');
+      });
     });
 
     describe('музыкальная подложка — фича №4', () => {

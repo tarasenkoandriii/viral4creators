@@ -1,17 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
-jest.mock('@prisma/client', () => ({
-  Prisma: { DbNull: Symbol.for('Prisma.DbNull') },
-  WorkflowKind: { SINGLE: 'SINGLE', LINE: 'LINE' },
-}));
 jest.mock('@vercel/blob', () => ({ head: jest.fn() }));
+jest.mock('axios');
 
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { head } from '@vercel/blob';
+import axios from 'axios';
 import { GreetingMusicService } from './greeting-music.service';
 import type { PlatformSettingsService } from '../../common/platform-settings.service';
 import type { SessionService } from '../../common/session.service';
 import type { BlobService } from '../storage/blob.service';
+import type { AudioService } from '../audio/audio.service';
 
 const CATALOG = JSON.stringify([
   { id: 'common', title: 'Общая', url: 'https://blob.test/common.mp3' },
@@ -24,7 +23,12 @@ const CATALOG = JSON.stringify([
 ]);
 
 function build(
-  over: { raw?: string | null; snapshot?: Record<string, unknown> } = {},
+  over: {
+    raw?: string | null;
+    snapshot?: Record<string, unknown>;
+    tracks?: unknown[];
+    audioEnabled?: boolean;
+  } = {},
 ) {
   const get = jest
     .fn()
@@ -44,12 +48,22 @@ function build(
   const createUploadUrl = jest
     .fn()
     .mockResolvedValue({ uploadUrl: 'https://blob.test/put' });
+  const uploadBuffer = jest
+    .fn()
+    .mockResolvedValue({ url: 'https://blob.test/library.mp3' });
+  const candidates = jest.fn().mockResolvedValue(over.tracks ?? []);
+  const audio = {
+    enabled: over.audioEnabled ?? true,
+    candidates,
+    downloadUrl: jest.fn((t: any) => Promise.resolve(t.audioUrl)),
+  };
   const svc = new GreetingMusicService(
     { get } as unknown as PlatformSettingsService,
     sessions as unknown as SessionService,
-    { createUploadUrl } as unknown as BlobService,
+    { createUploadUrl, uploadBuffer } as unknown as BlobService,
+    audio as unknown as AudioService,
   );
-  return { svc, updateSession, get, createUploadUrl };
+  return { svc, updateSession, get, createUploadUrl, uploadBuffer, candidates };
 }
 
 describe('GreetingMusicService (фича №4)', () => {
@@ -129,6 +143,7 @@ describe('GreetingMusicService (фича №4)', () => {
         getSession: jest.fn().mockResolvedValue({ sessionId: 's1' }),
       } as unknown as SessionService,
       {} as unknown as BlobService,
+      {} as unknown as AudioService,
     );
     void svc;
     await expect(broken.get('s1')).rejects.toBeInstanceOf(NotFoundException);
@@ -303,5 +318,122 @@ describe('GreetingMusicService — ссылка на трек', () => {
         rightsConfirmed: false,
       }),
     ).rejects.toThrow(/вправе использовать/);
+  });
+});
+
+describe('GreetingMusicService — библиотека со свободной лицензией', () => {
+  beforeEach(() => {
+    (axios.get as unknown as jest.Mock).mockReset();
+    (axios.get as unknown as jest.Mock).mockResolvedValue({
+      status: 200,
+      data: Buffer.from([1, 2, 3]),
+    });
+  });
+
+  const cc0 = {
+    provider: 'freesound',
+    providerTrackId: '7',
+    kind: 'music',
+    title: 'Тёплое утро',
+    artist: 'Аноним',
+    durationSec: 40,
+    mood: [],
+    genre: [],
+    tags: [],
+    previewUrl: 'https://freesound.test/p.mp3',
+    audioUrl: 'https://freesound.test/p.mp3',
+    license: {
+      type: 'CC0-1.0',
+      commercialUse: true,
+      attributionRequired: false,
+    },
+  };
+  const ccBy = {
+    ...cc0,
+    providerTrackId: '8',
+    license: {
+      type: 'CC-BY-4.0',
+      commercialUse: true,
+      attributionRequired: true,
+      licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
+    },
+  };
+
+  it('пустой запрос до провайдеров не доходит', async () => {
+    const { svc, candidates } = build({ tracks: [cc0] });
+    const view = await svc.searchLibrary('s1', '   ');
+    expect(view.library).toEqual([]);
+    expect(candidates).not.toHaveBeenCalled();
+  });
+
+  it('библиотека не настроена — экран об этом знает', async () => {
+    const { svc } = build({ audioEnabled: false });
+    const view = await svc.searchLibrary('s1', 'тёплое');
+    expect(view.libraryEnabled).toBe(false);
+    expect(view.library).toEqual([]);
+  });
+
+  it('запрос требует коммерческой лицензии и отвергает платные', async () => {
+    // Поздравление делается в платном продукте и уходит другому
+    // человеку: некоммерческая лицензия этого не покрывает, а трек
+    // «можно после покупки» без покупки использовать нельзя.
+    const { svc, candidates } = build({ tracks: [cc0] });
+    await svc.searchLibrary('s1', 'тёплое');
+    expect(candidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commercialUseRequired: true,
+        allowPaidLicense: false,
+        allowAttribution: true,
+      }),
+    );
+  });
+
+  it('в выдачу уходит лицензия и строка упоминания', async () => {
+    const { svc } = build({ tracks: [ccBy] });
+    const view = await svc.searchLibrary('s1', 'тёплое');
+    expect(view.library?.[0].licenseType).toBe('CC-BY-4.0');
+    expect(view.library?.[0].attribution).toContain('Тёплое утро');
+  });
+
+  it('у CC0 строки упоминания нет — она и не нужна', async () => {
+    const { svc } = build({ tracks: [cc0] });
+    const view = await svc.searchLibrary('s1', 'тёплое');
+    expect(view.library?.[0].attribution).toBeNull();
+  });
+
+  it('выбранный трек скачивается К НАМ и несёт лицензию в снимок', async () => {
+    // Ссылка провайдера живёт своей жизнью, превью Freesound отдаётся
+    // по токену, а копия у себя — то, что можно предъявить.
+    const { svc, uploadBuffer, updateSession } = build({ tracks: [ccBy] });
+    const view = await svc.selectFromLibrary('s1', 'тёплое', 'freesound', '8');
+    expect(uploadBuffer).toHaveBeenCalledWith(
+      expect.stringMatching(/^sessions\/s1\/music\/ml_[0-9a-f]+\.mp3$/),
+      expect.any(Buffer),
+      'audio/mpeg',
+    );
+    expect(view.selected).toEqual(
+      expect.objectContaining({
+        source: 'library',
+        url: 'https://blob.test/library.mp3',
+        licenseType: 'CC-BY-4.0',
+      }),
+    );
+    expect(view.selected?.attribution).toContain('Тёплое утро');
+    expect(updateSession).toHaveBeenCalled();
+  });
+
+  it('трек не из выдачи не скачивается', async () => {
+    const { svc, uploadBuffer } = build({ tracks: [cc0] });
+    await expect(
+      svc.selectFromLibrary('s1', 'тёплое', 'freesound', 'чужой'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(uploadBuffer).not.toHaveBeenCalled();
+  });
+
+  it('библиотека не настроена — выбрать нечего, честный отказ', async () => {
+    const { svc } = build({ audioEnabled: false });
+    await expect(
+      svc.selectFromLibrary('s1', 'тёплое', 'freesound', '7'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

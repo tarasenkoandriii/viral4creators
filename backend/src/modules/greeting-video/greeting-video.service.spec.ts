@@ -1,12 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
-// Цепочка импортов сервиса задевает `@prisma/client` рантаймом (через
-// `SessionService`) — в песочнице клиент не сгенерирован, и модуль упал
-// бы при ЗАГРУЗКЕ. Тот же приём, что в соседних наборах.
-jest.mock('@prisma/client', () => ({
-  Prisma: { DbNull: Symbol.for('Prisma.DbNull') },
-  WorkflowKind: { SINGLE: 'SINGLE', LINE: 'LINE' },
-}));
 
 import { GreetingVideoService } from './greeting-video.service';
 import { GenerationStatus } from '../../common/types/generation.types';
@@ -29,7 +22,24 @@ const BRIEF = {
 };
 
 function build(sessionOver: Record<string, unknown> = {}) {
-  const startGeneration = jest.fn().mockResolvedValue({ requestId: 'r1' });
+  let n = 0;
+  const startGeneration = jest
+    .fn()
+    .mockImplementation(() => Promise.resolve({ requestId: `r${++n}` }));
+  const ffmpeg = {
+    configured: jest.fn().mockReturnValue(true),
+    submit: jest.fn().mockResolvedValue({ jobId: 'job-1', status: 'queued' }),
+    status: jest.fn().mockResolvedValue({ status: 'pending' }),
+  };
+  const getStatus = jest.fn().mockResolvedValue({ done: false });
+  const uploadBuffer = jest
+    .fn()
+    .mockImplementation((pathname: string) =>
+      Promise.resolve({ url: `https://blob.test/${pathname}` }),
+    );
+  const postprodStart = jest
+    .fn()
+    .mockImplementation((_id: string, v: unknown) => Promise.resolve(v));
   const updateSession = jest
     .fn()
     .mockImplementation((_id: string, patch: Record<string, unknown>) =>
@@ -55,15 +65,25 @@ function build(sessionOver: Record<string, unknown> = {}) {
     sessions as any,
     { assertCanSpendSession: jest.fn().mockResolvedValue(undefined) } as any,
     { record: jest.fn().mockResolvedValue(undefined) } as any,
-    {} as any,
+    { start: postprodStart } as any,
     {
       isConfigured: () => true,
       modelName: 'grok-imagine-video-1.5',
       startGeneration,
+      getStatus,
     } as any,
-    {} as any,
+    { uploadBuffer } as any,
+    ffmpeg as any,
   );
-  return { svc, startGeneration, updateSession };
+  return {
+    svc,
+    startGeneration,
+    updateSession,
+    ffmpeg,
+    getStatus,
+    uploadBuffer,
+    postprodStart,
+  };
 }
 
 describe('GreetingVideoService — пресетный голос xAI', () => {
@@ -147,5 +167,58 @@ describe('GreetingVideoService — звук ролика заказываетс�
     );
     expect(video.silentSource).toBeUndefined();
     expect(video.status).toBe(GenerationStatus.PROCESSING);
+  });
+});
+
+describe('GreetingVideoService — мультисценовый ролик (фича №7)', () => {
+  const multi = { ...BRIEF, sceneCount: 3 };
+
+  it('сцены уходят раскадровкой в ОДНОМ вызове, а не несколькими', async () => {
+    // Ровно так уже работает товарная ветка: один промпт описывает
+    // сцены по порядку, модель рендерит их одним клипом. Склейка в
+    // конвейере не нужна вовсе.
+    const { svc, startGeneration } = build({ greetingBriefSnapshot: multi });
+    await svc.startVideo('s1');
+    expect(startGeneration).toHaveBeenCalledTimes(1);
+    const prompt = (startGeneration.mock.calls[0][0] as { prompt: string })
+      .prompt;
+    expect(prompt).toContain('сцена');
+    expect(prompt).toContain('3 consecutive shots');
+    expect(prompt).toContain('Shot 3');
+  });
+
+  it('длина ролика не меняется — сцены делят те же пятнадцать секунд', async () => {
+    const { svc, startGeneration } = build({ greetingBriefSnapshot: multi });
+    await svc.startVideo('s1');
+    const args = startGeneration.mock.calls[0][0] as {
+      durationSeconds: number;
+    };
+    expect(args.durationSeconds).toBe(15);
+  });
+
+  it('одна сцена — промпт ровно тот же, что и до фичи', async () => {
+    // Молча изменить промпт всех существующих роликов фича не вправе.
+    const { svc, startGeneration } = build({
+      greetingBriefSnapshot: { ...BRIEF, sceneCount: 1 },
+    });
+    await svc.startVideo('s1');
+    const prompt = (startGeneration.mock.calls[0][0] as { prompt: string })
+      .prompt;
+    expect(prompt).toBe('сцена');
+  });
+
+  it('пресетный голос мультисцене не мешает — он звучит один раз на ролик', async () => {
+    const { svc, startGeneration } = build({
+      greetingBriefSnapshot: { ...multi, presetVoiceId: 'eve' },
+    });
+    await svc.startVideo('s1');
+    const args = startGeneration.mock.calls[0][0] as {
+      prompt: string;
+      referenceAudioVoiceIds: string[];
+      generateAudio: boolean;
+    };
+    expect(args.referenceAudioVoiceIds).toEqual(['eve']);
+    expect(args.generateAudio).toBe(true);
+    expect(args.prompt).toContain('Shot 2');
   });
 });

@@ -63,6 +63,10 @@ function build() {
     get: jest.fn(),
     setDefault: jest.fn(),
   };
+  const musicCatalog = {
+    get: jest.fn(),
+    save: jest.fn(),
+  };
   const controller = new AdminPanelController(
     adminPanel as any,
     undefined as any,
@@ -73,12 +77,13 @@ function build() {
     undefined as any,
     undefined as any,
     voiceoverSettings as any,
+    musicCatalog as any,
     undefined as any,
     undefined as any,
     undefined as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
-  return { controller, adminPanel, voiceoverSettings, req };
+  return { controller, adminPanel, voiceoverSettings, musicCatalog, req };
 }
 
 describe('AdminPanelController — /admin/workflow-funnel*', () => {
@@ -275,5 +280,46 @@ describe('AdminPanelController — GET /admin/sessions (доп. запрос в�
     expect(adminPanel.listSessions).toHaveBeenCalledWith(
       expect.objectContaining({ page: 1, pageSize: 100 }),
     );
+  });
+});
+
+describe('AdminPanelController — /admin/settings/music-catalog', () => {
+  it('GET: оператор проверяется до обращения к настройке', async () => {
+    const { controller, adminPanel, musicCatalog, req } = build();
+    const order: string[] = [];
+    adminPanel.assertOperator.mockImplementation(async () => {
+      order.push('assertOperator');
+    });
+    musicCatalog.get.mockImplementation(async () => {
+      order.push('get');
+      return { raw: '', themes: [] };
+    });
+    await controller.getMusicCatalog(req);
+    expect(order).toEqual(['assertOperator', 'get']);
+  });
+
+  it('PATCH: оператор проверяется до записи, и записывается ОН', async () => {
+    // `updatedBy` — админский аудит: кто менял каталог.
+    const { controller, adminPanel, musicCatalog, req } = build();
+    const order: string[] = [];
+    adminPanel.assertOperator.mockImplementation(async () => {
+      order.push('assertOperator');
+    });
+    musicCatalog.save.mockImplementation(async () => {
+      order.push('save');
+      return { raw: '[]', themes: [] };
+    });
+    await controller.setMusicCatalog(req, { raw: '[]' });
+    expect(order).toEqual(['assertOperator', 'save']);
+    expect(musicCatalog.save).toHaveBeenCalledWith('[]', 'op-1');
+  });
+
+  it('не оператор — до настройки дело не доходит', async () => {
+    const { controller, adminPanel, musicCatalog, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+    await expect(
+      controller.setMusicCatalog(req, { raw: '[]' }),
+    ).rejects.toThrow();
+    expect(musicCatalog.save).not.toHaveBeenCalled();
   });
 });

@@ -246,16 +246,93 @@ export interface GreetingMusicSelection {
   id: string;
   title: string;
   url: string;
-  /** `catalog` — тема платформы, `upload` — свой файл. Старые записи
+  /** `catalog` — тема платформы, `upload` — свой файл, `link` — своя
+   * ссылка, `library` — находка со свободной лицензией. Старые записи
    * поля не имеют и читаются как каталожные. */
-  source?: 'catalog' | 'upload';
+  source?: 'catalog' | 'upload' | 'link' | 'library';
   pathname?: string;
   rightsConfirmedAt?: string;
+  /** Обязательное упоминание автора; пусто — не требуется. */
+  attribution?: string;
+  licenseType?: string;
+  sourceUrl?: string;
 }
+
+/** Находка в библиотеке со свободной лицензией. */
+export interface GreetingMusicCandidate {
+  provider: string;
+  providerTrackId: string;
+  title: string;
+  artist: string | null;
+  durationSec: number;
+  previewUrl: string | null;
+  licenseType: string;
+  attribution: string | null;
+}
+
+/**
+ * Титульная карточка и закрывающая подпись (фичи №38/№39).
+ * `suggested` — заготовки из брифа; значениями они не становятся, пока
+ * человек не подставит их сам.
+ */
+export interface GreetingCards {
+  title: string | null;
+  closing: string | null;
+}
+
+export interface GreetingCardsView {
+  cards: GreetingCards;
+  suggested: GreetingCards;
+}
+
+/**
+ * Наклейка поверх кадра (фича №8). `url` всегда указывает в наше
+ * хранилище: условия Pixabay запрещают постоянный хотлинк. `sourceUrl`
+ * обязателен к показу — этого требуют те же условия.
+ */
+export interface GreetingStickerSelection {
+  id: string;
+  url: string;
+  pathname: string;
+  sourceUrl: string;
+  source: 'pixabay';
+  placement: string;
+}
+
+/** Выбор числа сцен (фича №7). */
+export interface GreetingScenesView {
+  sceneCount: number;
+  maxScenes: number;
+  /** По скольку секунд выйдут сцены при текущем выборе. */
+  durations: number[];
+}
+
+export interface GreetingStickerView {
+  results: Array<{
+    id: string;
+    previewUrl: string;
+    sourceUrl: string;
+    tags: string;
+  }>;
+  selected: GreetingStickerSelection | null;
+  /** Поиск не настроен на стенде — секция говорит об этом честно. */
+  configured: boolean;
+}
+
+export const STICKER_PLACEMENTS = [
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+  'center',
+  'full',
+] as const;
 
 export interface GreetingMusicView {
   themes: GreetingMusicTheme[];
   selected: GreetingMusicSelection | null;
+  library?: GreetingMusicCandidate[];
+  libraryEnabled?: boolean;
 }
 
 /** Пресетный голос xAI из роестра `GET /v1/tts/voices`. */

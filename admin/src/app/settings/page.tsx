@@ -16,6 +16,8 @@ import {
   seedFixtureUser,
   getVirtualStudioHedraEnabled,
   setVirtualStudioHedraEnabled,
+  getMusicCatalog,
+  setMusicCatalog,
 } from '../../lib/endpoints';
 import type {
   EnvCheckResult,
@@ -30,6 +32,7 @@ import type {
   GrokTransportSettingsView,
   AssistantAdminSettingsView,
   FixtureSeedResult,
+  MusicCatalogView,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -741,6 +744,142 @@ function VirtualStudioHedraCard() {
   );
 }
 
+/**
+ * «Каталог музыки для поздравлений» (фича №4).
+ *
+ * Соседние карточки на этой странице — селекторы: одно значение из
+ * списка, показывать после сохранения нечего. Здесь оператор вставляет
+ * JSON, разбор на бэкенде терпимый (негодная запись пропускается
+ * молча), и главный вопрос у оператора ровно один: «а что из этого
+ * приняли?». Поэтому карточка после каждой загрузки и сохранения
+ * показывает РАЗОБРАННЫЕ темы и число отброшенных записей — иначе
+ * опечатка в одной ссылке выглядела бы как «сохранилось, но темы не
+ * появилось».
+ *
+ * Пустое поле — осмысленное значение, а не «не настроено»: это
+ * «выключить музыку», и секция музыки в мастере поздравления пропадёт.
+ * Кнопка сохранения поэтому активна и для пустого поля.
+ */
+function MusicCatalogCard() {
+  const [state, setState] = useState<MusicCatalogView | null>(null);
+  const [draft, setDraft] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const load = () => {
+    setError(null);
+    getMusicCatalog()
+      .then((s) => {
+        setState(s);
+        setDraft(s.raw);
+      })
+      .catch((err) =>
+        setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить каталог музыки'),
+      );
+  };
+
+  useEffect(load, []);
+
+  const dirty = !!state && draft !== state.raw;
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await setMusicCatalog(draft);
+      setState(updated);
+      setDraft(updated.raw);
+      setSavedAt(Date.now());
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить каталог музыки');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Каталог музыки для поздравлений</h2>
+      <p className="muted" style={{ marginBottom: 12 }}>
+        JSON-массив тем: <code>{'{ "id", "title", "url", "occasions" }'}</code>. <code>url</code> — только
+        https-ссылка на файл, который мы вправе подкладывать в чужие ролики. <code>occasions</code> —
+        список поводов (<code>null</code> = подходит любому); именно им соболезнование отделяется от дня
+        рождения. Максимум тем: {state?.maxThemes ?? '—'}. Пустое поле выключает секцию музыки в мастере.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {!state && (
+            <>
+              {' '}
+              <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+                Повторить
+              </button>
+            </>
+          )}
+        </p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && (
+        <>
+          <textarea
+            aria-label="Каталог музыки, JSON"
+            value={draft}
+            disabled={saving}
+            spellCheck={false}
+            rows={10}
+            style={{ width: '100%', fontFamily: 'monospace', fontSize: 13, marginBottom: 12 }}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <button type="button" disabled={saving || !dirty} onClick={() => void handleSave()}>
+              {saving ? 'Сохраняю…' : 'Сохранить'}
+            </button>
+            {!dirty && savedAt && <span className="muted">Сохранено.</span>}
+          </div>
+
+          {/* Витрина разбора: что приняли и что молча отбросили. */}
+          {state.themes.length === 0 ? (
+            <p className="muted" style={{ fontSize: 13 }}>
+              Принятых тем нет — в мастере поздравления секции музыки не будет.
+              {!!state.rejected && ` Отброшено записей: ${state.rejected}.`}
+            </p>
+          ) : (
+            <>
+              <p className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
+                Принято тем: {state.themes.length}
+                {state.submitted !== null && ` из ${state.submitted}`}
+                {!!state.rejected && ` — отброшено ${state.rejected} (проверьте id и https-ссылки)`}.
+              </p>
+              <ul style={{ fontSize: 13, paddingLeft: 18, margin: 0 }}>
+                {state.themes.map((t) => (
+                  <li key={t.id} style={{ marginBottom: 4 }}>
+                    <b>{t.title}</b> <span className="muted">({t.id})</span>{' '}
+                    <span className="muted">
+                      — {t.occasions === null ? 'любой повод' : t.occasions.join(', ')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {state.submitted === null && (
+            <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+              Верхний уровень — не массив и не <code>{'{ themes: [...] }'}</code>: разобрать, сколько записей
+              вы прислали, не удалось.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [result, setResult] = useState<EnvSettingsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -806,6 +945,7 @@ export default function SettingsPage() {
       <GrokTransportCard />
       <VirtualStudioHedraCard />
       <AssistantSettingsCard />
+      <MusicCatalogCard />
       {/* Не внутри цикла групп ниже намеренно: при фильтре «только
           требуется внимание» группа «Обучалка» пропадает из списка, если
           все три переменные уже настроены — а кнопка сидирования нужна

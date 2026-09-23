@@ -130,6 +130,32 @@ export interface PostProdOptions {
    * этом держится `duration=first` ниже.
    */
   totalDurationSeconds?: number;
+  /**
+   * Ключ входного `.ass`-файла с карточками — титульной и закрывающей
+   * (фичи №38/№39). Пусто — карточек нет.
+   *
+   * Отдельным файлом, а не вторым набором реплик в субтитрах: у
+   * карточек своя вёрстка и свой стиль, а субтитры живут по теме
+   * бренда и могут быть выключены вовсе. Фильтр тот же `subtitles=`,
+   * что и у субтитров, и это не совпадение — libass в этом конвейере
+   * уже работает и уже умеет кириллицу, а `drawtext` потребовал бы
+   * своего шрифта на стороне ffmpeg-сервиса, о котором мы ничего не
+   * знаем.
+   */
+  cardsInputKey?: string | null;
+  /**
+   * Наклейка поверх кадра (фича №8): ключ входного PNG плюс уже
+   * посчитанная геометрия (`common/sticker-overlay.ts`).
+   *
+   * Это ВТОРОЙ видеовход задачи — в отличие от субтитров и карточек,
+   * которые фильтр читает файлом. Отсюда и порядок входов ниже:
+   * наклейка встаёт последней, чтобы номера звуковых потоков не
+   * поехали.
+   */
+  stickerInputKey?: string | null;
+  stickerScale?: string | null;
+  stickerX?: string | null;
+  stickerY?: string | null;
   /** CRF: меньше — лучше и тяжелее. 18 — визуально без потерь. */
   crf?: number;
   /**
@@ -203,8 +229,17 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
   const outputName = opts.outputName ?? 'final.mp4';
   const subtitlesKey = opts.subtitlesInputKey?.trim() || null;
   const subtitleForceStyle = opts.subtitleForceStyle?.trim() || '';
+  const cardsKey = opts.cardsInputKey?.trim() || null;
+  const stickerKey = opts.stickerInputKey?.trim() || null;
 
-  if (!crop && !voiceKey && !subtitlesKey && !musicKey) {
+  if (
+    !crop &&
+    !voiceKey &&
+    !subtitlesKey &&
+    !musicKey &&
+    !cardsKey &&
+    !stickerKey
+  ) {
     // Отправлять такую задачу значит заплатить за перекодирование ради
     // того же файла.
     throw new PostProdError(
@@ -219,9 +254,13 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
     inputKey,
     ...(voiceKey ? [voiceKey] : []),
     ...(musicKey ? [musicKey] : []),
+    ...(stickerKey ? [stickerKey] : []),
   ];
   const voiceIndex = voiceKey ? 1 : -1;
   const musicIndex = musicKey ? (voiceKey ? 2 : 1) : -1;
+  // Наклейка последняя намеренно: её появление не должно сдвигать
+  // номера звуковых потоков, иначе голос внезапно окажется музыкой.
+  const stickerIndex = stickerKey ? inputKeys.length - 1 : -1;
   const musicVolume = opts.musicVolume ?? DEFAULT_MUSIC_VOLUME;
   const totalSeconds = opts.totalDurationSeconds;
   const parts: string[] = inputKeys.map((k) => `-i {{${k}}}`);
@@ -230,22 +269,42 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
   // подставляет `{{ключ}}` ВЕЗДЕ в строке команды, а не только после
   // `-i` (`ffmpeg-api.service.ts`), и `subtitles=` читает файл по пути,
   // а не по номеру потока.
-  const subtitlesFilterSuffix = subtitlesKey
-    ? `,subtitles={{${subtitlesKey}}}:force_style='${subtitleForceStyle}'`
-    : '';
-  const needsVideoFilter = !!crop || !!subtitlesKey;
+  //
+  // Шаги накладываются по порядку: сначала кадр, потом субтитры, потом
+  // карточки. Карточки последними намеренно — они рисуются поверх
+  // всего, в том числе поверх субтитров, если те попали в те же
+  // секунды: карточка это отдельный кадр повествования, а не подпись.
+  const videoSteps: string[] = [];
+  if (crop) videoSteps.push(`${cropExpression(crop.ratio)},setsar=1`);
+  if (subtitlesKey) {
+    videoSteps.push(
+      `subtitles={{${subtitlesKey}}}:force_style='${subtitleForceStyle}'`,
+    );
+  }
+  // Свой `force_style` карточкам не нужен: стили лежат внутри
+  // `.ass`-файла, там же, где и текст (см. `common/greeting-cards.ts`).
+  if (cardsKey) videoSteps.push(`subtitles={{${cardsKey}}}`);
+  const needsVideoFilter = videoSteps.length > 0 || !!stickerKey;
 
   const filters: string[] = [];
-  if (crop) {
+  if (stickerKey) {
+    // Наклейка — отдельный поток, а не шаг цепочки: `overlay` берёт два
+    // входа. Поэтому сначала доводим кадр до `[vbase]`, потом кладём
+    // поверх.
+    const base = videoSteps.length ? '[vbase]' : '[0:v]';
+    if (videoSteps.length) {
+      filters.push(`[0:v]${videoSteps.join(',')}[vbase]`);
+    }
     filters.push(
-      `[0:v]${cropExpression(crop.ratio)},setsar=1${subtitlesFilterSuffix}[v]`,
+      `[${stickerIndex}:v]${opts.stickerScale?.trim() || 'null'}[stk]`,
     );
-  } else if (subtitlesKey) {
-    // Кадр не трогаем, но субтитры всё равно требуют перекодирования —
-    // фильтр применяется прямо к исходному потоку.
     filters.push(
-      `[0:v]subtitles={{${subtitlesKey}}}:force_style='${subtitleForceStyle}'[v]`,
+      `${base}[stk]overlay=${opts.stickerX?.trim() || '0'}:${
+        opts.stickerY?.trim() || '0'
+      }[v]`,
     );
+  } else if (videoSteps.length) {
+    filters.push(`[0:v]${videoSteps.join(',')}[v]`);
   }
   if (voiceKey || musicKey) {
     // Слагаемые звука в порядке, в котором они уйдут в `amix`. Первым

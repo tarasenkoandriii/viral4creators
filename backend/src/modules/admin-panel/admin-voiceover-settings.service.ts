@@ -74,9 +74,7 @@ export class AdminVoiceoverSettingsService {
     updatedBy: string,
   ): Promise<VoiceoverProviderSettingsView> {
     if (!isVoiceoverProviderKey(key)) {
-      throw new BadRequestException(
-        `Неизвестный провайдер озвучки: ${key}`,
-      );
+      throw new BadRequestException(`Неизвестный провайдер озвучки: ${key}`);
     }
     await this.settings.set(
       DEFAULT_VOICEOVER_PROVIDER_SETTING_KEY,

@@ -201,7 +201,53 @@ export interface GreetingBriefSnapshot {
    */
   musicTheme?: GreetingMusicSelection | null;
 
+  /**
+   * Титульная карточка и закрывающая подпись (фичи №38/№39) — текст,
+   * который отправитель написал сам.
+   *
+   * По умолчанию пусто, и титульная карточка особенно: она называет
+   * получателя в первую же секунду, а это ровно то, чего нельзя
+   * делать для сюрприза (см. «сюрприз без спойлера» на лендинге).
+   * Включает её отправитель осознанно.
+   */
+  cards?: GreetingCards | null;
+
+  /**
+   * Наклейка поверх кадра (фича №8) — копия выбранного стикера.
+   *
+   * `url` указывает в НАШЕ хранилище, не на Pixabay: их условия
+   * прямо запрещают постоянный хотлинк («permanent hotlinking of
+   * images is not allowed… please download them to your server
+   * first»). `sourceUrl` при этом сохраняется — он нужен, чтобы
+   * показать человеку, откуда картинка.
+   */
+  sticker?: GreetingStickerSelection | null;
+
+  /**
+   * Сколько сцен снимать (фича №7). Нет поля или `1` — как раньше,
+   * один непрерывный кадр.
+   *
+   * Сцены описываются раскадровкой в промпте и рендерятся ОДНИМ
+   * вызовом, поэтому ни с чем не конфликтуют: пресетный голос
+   * произносит реплику один раз на весь ролик, сколько бы в нём ни
+   * было склеек.
+   */
+  sceneCount?: number;
+
   addedAt: string;
+}
+
+/** Выбранная наклейка — то, что нужно и постобработке, и экрану. */
+export interface GreetingStickerSelection {
+  id: string;
+  /** Наш блоб. Именно он уходит в задачу ffmpeg. */
+  url: string;
+  /** Путь в хранилище — для уборки вместе с сессией. */
+  pathname: string;
+  /** Страница источника: показывается рядом с выбором. */
+  sourceUrl: string;
+  source: 'pixabay';
+  placement: string;
 }
 
 /**
@@ -247,7 +293,9 @@ export interface GreetingMusicSelection {
   /**
    * Откуда трек: `catalog` — тема из каталога платформы, `upload` —
    * файл, который загрузил сам пользователь, `link` — его же ссылка
-   * на чужой хост (файла у нас нет, удалять нечего).
+   * на чужой хост (файла у нас нет, удалять нечего), `library` —
+   * найденный в библиотеке со свободной лицензией (Freesound, Jamendo,
+   * Mubert) и скачанный к нам.
    *
    * Отличать важно по двум причинам. Первая: за свой файл права
    * подтвердил пользователь (`rightsConfirmedAt`), за каталог —
@@ -258,11 +306,65 @@ export interface GreetingMusicSelection {
    * Отсутствие поля читается как `catalog`: так выглядят записи до
    * появления загрузки.
    */
-  source?: 'catalog' | 'upload' | 'link';
+  source?: 'catalog' | 'upload' | 'link' | 'library';
   /** Путь в хранилище — только у загруженных, для уборки. */
   pathname?: string;
   /** Когда пользователь подтвердил права на этот файл. */
   rightsConfirmedAt?: string;
+  /**
+   * Строка упоминания автора — только у треков, лицензия которых её
+   * требует (CC-BY и родственные).
+   *
+   * Хранится в снимке, а не собирается на лету, по той же причине,
+   * что и всё остальное здесь: каталог провайдера живёт своей жизнью,
+   * а обязательство упомянуть автора возникло в момент выбора и
+   * относится к ЭТОМУ ролику.
+   */
+  attribution?: string;
+  /** Метка лицензии, как её понял разбор: `CC0-1.0`, `CC-BY-4.0`… */
+  licenseType?: string;
+  /** Страница лицензии — для проверки и для ссылки. */
+  sourceUrl?: string;
+}
+
+/**
+ * Текст карточек поздравления (фичи №38/№39). Отрисовка — в
+ * `common/greeting-cards.ts`; здесь только то, что написал человек.
+ */
+export interface GreetingCards {
+  title?: string | null;
+  closing?: string | null;
+}
+
+/**
+ * GET/PATCH /sessions/:id/greeting-cards. `suggested` — заготовки из
+ * брифа, которые экран подставляет в пустые поля; значениями они не
+ * становятся, пока человек не нажмёт.
+ */
+export interface GreetingCardsView {
+  cards: GreetingCards;
+  suggested: GreetingCards;
+}
+
+/** Экран выбора числа сцен (фича №7). */
+export interface GreetingScenesView {
+  sceneCount: number;
+  maxScenes: number;
+  /** По скольку секунд выйдут сцены при текущем выборе. */
+  durations: number[];
+}
+
+/** Экран выбора наклейки: кандидаты плюс выбранное. */
+export interface GreetingStickerView {
+  results: Array<{
+    id: string;
+    previewUrl: string;
+    sourceUrl: string;
+    tags: string;
+  }>;
+  selected: GreetingStickerSelection | null;
+  /** Поиск не настроен на стенде — экран скажет об этом честно. */
+  configured: boolean;
 }
 
 /** Выбор музыкальной темы — то, что видит экран мастера. */
@@ -270,6 +372,23 @@ export interface GreetingMusicView {
   /** Темы, подходящие поводу сессии; пусто — каталог не наполнен. */
   themes: GreetingMusicTheme[];
   selected: GreetingMusicSelection | null;
+  /** Найденное в библиотеке по последнему запросу. */
+  library?: GreetingMusicCandidate[];
+  /** Хоть один источник библиотеки настроен на стенде. */
+  libraryEnabled?: boolean;
+}
+
+/** Кандидат из библиотеки — то, что экран показывает и даёт послушать. */
+export interface GreetingMusicCandidate {
+  provider: string;
+  providerTrackId: string;
+  title: string;
+  artist: string | null;
+  durationSec: number;
+  previewUrl: string | null;
+  licenseType: string;
+  /** Пусто — упоминание автора не требуется. */
+  attribution: string | null;
 }
 
 export interface GreetingVoiceView {

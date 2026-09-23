@@ -18,8 +18,12 @@ import { readStoredLocale, defaultLocale } from '../lib/i18n';
 import type { GeneratedVideo, GenerationPrompt, Session } from '../types';
 import type {
   GreetingBriefView,
+  GreetingCards,
+  GreetingCardsView,
   GreetingMusicView,
   GreetingReferenceImageView,
+  GreetingScenesView,
+  GreetingStickerView,
   GreetingVoiceView,
   GrokPresetVoice,
   UpdateGreetingBriefInput,
@@ -266,6 +270,118 @@ export async function selectGreetingPresetVoice(
   );
 }
 
+// ── Сколько сцен снимать (фича №7) ─────────────────────────────────────
+
+export async function getGreetingScenes(
+  sessionId: string
+): Promise<GreetingScenesView> {
+  return unwrap(
+    await api.get<GreetingScenesView>(`/sessions/${sessionId}/greeting-scenes`),
+    'greeting-scenes'
+  );
+}
+
+export async function setGreetingScenes(
+  sessionId: string,
+  sceneCount: number
+): Promise<GreetingScenesView> {
+  return unwrap(
+    await api.patch<GreetingScenesView>(
+      `/sessions/${sessionId}/greeting-scenes`,
+      { sceneCount }
+    ),
+    'greeting-scenes'
+  );
+}
+
+// ── Наклейка поверх кадра (фича №8) ────────────────────────────────────
+
+/**
+ * Поиск наклеек. Пустой запрос до сети не доходит, а повторный
+ * кешируется на сервере сутки — того требуют условия Pixabay.
+ */
+export async function searchGreetingStickers(
+  sessionId: string,
+  query: string
+): Promise<GreetingStickerView> {
+  return unwrap(
+    await api.get<GreetingStickerView>(
+      `/sessions/${sessionId}/greeting-sticker?q=${encodeURIComponent(query)}`
+    ),
+    'greeting-sticker'
+  );
+}
+
+/**
+ * Выбрать наклейку из выдачи. `query` шлётся вместе с id не для
+ * красоты: сервер берёт кандидата из кеша ЭТОГО запроса, а не из тела.
+ */
+export async function selectGreetingSticker(
+  sessionId: string,
+  query: string,
+  stickerId: string,
+  placement?: string
+): Promise<GreetingStickerView> {
+  return unwrap(
+    await api.post<GreetingStickerView>(
+      `/sessions/${sessionId}/greeting-sticker`,
+      { query, stickerId, ...(placement ? { placement } : {}) }
+    ),
+    'greeting-sticker'
+  );
+}
+
+export async function moveGreetingSticker(
+  sessionId: string,
+  placement: string
+): Promise<GreetingStickerView> {
+  return unwrap(
+    await api.patch<GreetingStickerView>(
+      `/sessions/${sessionId}/greeting-sticker`,
+      { placement }
+    ),
+    'greeting-sticker'
+  );
+}
+
+export async function clearGreetingSticker(
+  sessionId: string
+): Promise<GreetingStickerView> {
+  return unwrap(
+    await api.deleteWithBody<GreetingStickerView>(
+      `/sessions/${sessionId}/greeting-sticker`
+    ),
+    'greeting-sticker'
+  );
+}
+
+// ── Карточки: титульная и закрывающая (фичи №38/№39) ───────────────────
+
+/** Зеркалит backend `MAX_CARD_TEXT_LENGTH` — сервер обрежет так же. */
+export const MAX_GREETING_CARD_LENGTH = 70;
+
+export async function getGreetingCards(
+  sessionId: string
+): Promise<GreetingCardsView> {
+  return unwrap(
+    await api.get<GreetingCardsView>(`/sessions/${sessionId}/greeting-cards`),
+    'greeting-cards'
+  );
+}
+
+export async function updateGreetingCards(
+  sessionId: string,
+  cards: GreetingCards
+): Promise<GreetingCardsView> {
+  return unwrap(
+    await api.patch<GreetingCardsView>(
+      `/sessions/${sessionId}/greeting-cards`,
+      cards
+    ),
+    'greeting-cards'
+  );
+}
+
 // ── Музыкальная подложка (фича №4) ─────────────────────────────────────
 
 /**
@@ -290,6 +406,44 @@ export async function selectGreetingMusic(
     await api.patch<GreetingMusicView>(
       `/sessions/${sessionId}/greeting-music`,
       { themeId }
+    ),
+    'greeting-music'
+  );
+}
+
+/**
+ * Поиск по библиотекам со свободной лицензией (Freesound, Jamendo,
+ * Mubert). Ничего не меняет и денег не стоит — отсюда GET.
+ */
+export async function searchGreetingMusicLibrary(
+  sessionId: string,
+  query: string
+): Promise<GreetingMusicView> {
+  return unwrap(
+    await api.get<GreetingMusicView>(
+      `/sessions/${sessionId}/greeting-music/library?q=${encodeURIComponent(
+        query
+      )}`
+    ),
+    'greeting-music'
+  );
+}
+
+/**
+ * Взять найденный трек. Сервер скачает его к себе: ссылка провайдера
+ * живёт своей жизнью, а копия у нас — то, что можно предъявить при
+ * разборе лицензии.
+ */
+export async function selectGreetingMusicFromLibrary(
+  sessionId: string,
+  query: string,
+  provider: string,
+  providerTrackId: string
+): Promise<GreetingMusicView> {
+  return unwrap(
+    await api.post<GreetingMusicView>(
+      `/sessions/${sessionId}/greeting-music/library`,
+      { query, provider, providerTrackId }
     ),
     'greeting-music'
   );

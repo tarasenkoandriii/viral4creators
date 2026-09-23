@@ -29,6 +29,7 @@ import type {
   EnvSettingsResult,
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
+  MusicCatalogView,
   AnalysisProviderKey,
   AnalysisProviderSettingsView,
   VideoProviderKey,
@@ -196,6 +197,22 @@ export function setVoiceoverProviderDefault(provider: VoiceoverProviderKey) {
   return apiPatch<VoiceoverProviderSettingsView>('/admin/settings/voiceover-provider', {
     provider,
   });
+}
+
+/**
+ * «Каталог музыки для поздравлений» (фича №4). В отличие от соседних
+ * селекторов значение здесь не одно слово из списка, а JSON, который
+ * оператор вставляет целиком; разбор на бэкенде терпимый, поэтому
+ * ответ несёт ещё и РАЗОБРАННЫЙ каталог — иначе опечатка в ссылке
+ * выглядела бы как «сохранилось, но темы не появилось».
+ */
+export function getMusicCatalog() {
+  return apiGet<MusicCatalogView>('/admin/settings/music-catalog');
+}
+
+/** Пустая строка — осмысленное значение: «выключить музыку в мастере». */
+export function setMusicCatalog(raw: string) {
+  return apiPatch<MusicCatalogView>('/admin/settings/music-catalog', { raw });
 }
 
 /** «Разбор референса по умолчанию» — тот же принцип, что у озвучки выше

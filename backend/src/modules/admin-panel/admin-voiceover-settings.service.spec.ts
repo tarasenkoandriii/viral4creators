@@ -2,9 +2,14 @@ import { BadRequestException } from '@nestjs/common';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { DEFAULT_VOICEOVER_PROVIDER_SETTING_KEY } from '../tts/default-tts-provider';
 
-function build(storedValue: string | null, elevenConfigured = true, resembleConfigured = false) {
+function build(
+  storedValue: string | null,
+  elevenConfigured = true,
+  resembleConfigured = false,
+) {
   const store = new Map<string, string>();
-  if (storedValue !== null) store.set(DEFAULT_VOICEOVER_PROVIDER_SETTING_KEY, storedValue);
+  if (storedValue !== null)
+    store.set(DEFAULT_VOICEOVER_PROVIDER_SETTING_KEY, storedValue);
   const settings = {
     get: jest.fn(async (key: string) => store.get(key) ?? null),
     set: jest.fn(async (key: string, value: string) => {

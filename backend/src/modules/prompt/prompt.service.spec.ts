@@ -31,7 +31,11 @@ function build(prompt: Record<string, unknown> | null) {
   // эти тесты про текст озвучки, не про text-card — `extractLiteralTexts`
   // должен просто вернуть `null` (сбой) и не мешать основной проверке.
   (svc as any).genai = {
-    models: { generateContent: jest.fn().mockRejectedValue(new Error('not mocked in this suite')) },
+    models: {
+      generateContent: jest
+        .fn()
+        .mockRejectedValue(new Error('not mocked in this suite')),
+    },
   };
   return { svc, sessions, session };
 }
@@ -606,5 +610,45 @@ describe('PromptService.seedPrompt — посев уже готового тек
     await expect(svc.seedPrompt('missing', 'текст')).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+});
+
+describe('PromptService.moderateText — гейт, на который опирается отказ рендерить', () => {
+  const original = process.env[KEY];
+  beforeEach(() => {
+    process.env[KEY] = 'test-key';
+  });
+  afterEach(() => {
+    if (original === undefined) delete process.env[KEY];
+    else process.env[KEY] = original;
+  });
+
+  const svc = () =>
+    new PromptService(
+      { getSession: jest.fn() } as any,
+      { recordGemini: jest.fn() } as any,
+      { assertCanSpendSession: jest.fn() } as any,
+    );
+
+  it('чистый текст проходит', () => {
+    const r = svc().moderateText('Марина, с днём рождения!');
+    expect(r.status).toBe(ModerationStatus.PENDING);
+    expect(r.flags).toEqual([]);
+  });
+
+  it('русскоязычная угроза ловится — раньше список был только английский', () => {
+    const r = svc().moderateText('Я убью тебя');
+    expect(r.status).toBe(ModerationStatus.FLAGGED);
+    expect(r.flags).toContain('threat');
+  });
+
+  it('соболезнование НЕ блокируется', () => {
+    // У продукта есть повод СОБОЛЕЗНОВАНИЕ, и FLAGGED означает отказ
+    // рендерить (`GreetingVideoService.startVideo`). Заблокировать его
+    // значило бы отказать человеку в самый неподходящий момент.
+    const r = svc().moderateText(
+      'Примите мои соболезнования в связи со смертью вашего отца.',
+    );
+    expect(r.status).toBe(ModerationStatus.PENDING);
   });
 });

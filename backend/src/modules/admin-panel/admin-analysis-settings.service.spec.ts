@@ -50,7 +50,11 @@ describe('AdminAnalysisSettingsService', () => {
     const { svc } = build(null);
     const { options } = await svc.get();
     const gemini = options.find((o) => o.key === 'gemini');
-    expect(gemini).toEqual({ key: 'gemini', configured: true, available: true });
+    expect(gemini).toEqual({
+      key: 'gemini',
+      configured: true,
+      available: true,
+    });
   });
 
   it('setDefault("gemini") — сохраняет и возвращает обновлённую витрину', async () => {
@@ -76,9 +80,9 @@ describe('AdminAnalysisSettingsService', () => {
 
   it('setDefault с неизвестным значением — 400, ничего не пишет', async () => {
     const { svc, settings } = build(null);
-    await expect(
-      svc.setDefault('claude', 'admin-1'),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.setDefault('claude', 'admin-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
     expect(settings.set).not.toHaveBeenCalled();
   });
 });

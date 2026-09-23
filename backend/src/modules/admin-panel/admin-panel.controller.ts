@@ -31,6 +31,7 @@ import { AdminCatalogBatchService } from './admin-catalog-batch.service';
 import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
+import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { VOICEOVER_PROVIDER_KEYS } from '../tts/default-tts-provider';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { ANALYSIS_PROVIDER_KEYS } from '../analysis/default-analysis-provider';
@@ -95,6 +96,18 @@ export class SetVoiceoverProviderDto {
 
 /** Доп. запрос владельца продукта: тот же селектор, что выше, но для
  * модели разбора референса (ТЗ §17). */
+/**
+ * Каталог музыкальных тем поздравлений (фича №4). Строка, а не
+ * структура: оператор редактирует JSON целиком, и разбирать его на
+ * поля DTO значило бы потерять его же форматирование и комментарии
+ * при первом сохранении.
+ */
+export class SetMusicCatalogDto {
+  @IsString()
+  @MaxLength(65536)
+  raw!: string;
+}
+
 export class SetAnalysisProviderDto {
   @IsIn(ANALYSIS_PROVIDER_KEYS as unknown as string[])
   provider!: string;
@@ -147,6 +160,7 @@ export class AdminPanelController {
     private readonly abTest: AdminAbTestService,
     private readonly feedImport: AdminFeedImportService,
     private readonly voiceoverSettings: AdminVoiceoverSettingsService,
+    private readonly musicCatalog: AdminMusicCatalogService,
     private readonly analysisSettings: AdminAnalysisSettingsService,
     private readonly videoProviderSettings: AdminVideoProviderSettingsService,
     private readonly grokTransportSettings: AdminGrokTransportSettingsService,
@@ -247,6 +261,30 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.voiceoverSettings.setDefault(dto.provider, req.userId);
+  }
+
+  /**
+   * Каталог музыкальных тем поздравлений (фича №4) — тот же принцип,
+   * что у селекторов выше: правится без редеплоя.
+   *
+   * Отличие в ответе: вместе с сырым значением возвращается
+   * РАЗОБРАННЫЙ каталог и число отброшенных записей. Разбор терпимый —
+   * негодная запись пропускается молча, — и без этих чисел опечатка в
+   * ссылке выглядела бы как «сохранилось, но тема не появилась».
+   */
+  @Get('settings/music-catalog')
+  async getMusicCatalog(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.musicCatalog.get();
+  }
+
+  @Patch('settings/music-catalog')
+  async setMusicCatalog(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetMusicCatalogDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.musicCatalog.save(dto.raw, req.userId);
   }
 
   /**

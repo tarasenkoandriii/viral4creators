@@ -36,6 +36,7 @@ import {
   scenesBriefText,
 } from '../../common/analysis-selection';
 import { voiceoverBriefText } from '../../common/voiceover';
+import { findModerationFlags } from '../../common/text-moderation';
 import {
   normalizeVoiceMode,
   usesOwnVoice,
@@ -94,20 +95,6 @@ export class PromptService {
   private readonly genai: GoogleGenAI;
 
   // Basic moderation patterns (simple keyword matching for POC)
-  private readonly moderationPatterns = [
-    /\b(violence|violent|kill|death|blood|gore)\b/i,
-    /\b(explicit|sexual|nude|nudity|porn)\b/i,
-    /\b(hate|racist|discrimination|offensive)\b/i,
-    /\b(illegal|drugs|weapon|bomb)\b/i,
-  ];
-
-  private readonly moderationCategories = [
-    'violence',
-    'sexual-content',
-    'hate-speech',
-    'illegal-content',
-  ];
-
   constructor(
     private readonly sessionService: SessionService,
     private readonly aiUsage: AiUsageService,
@@ -852,28 +839,31 @@ Please respond with a valid JSON object only, with one key "variants": an array 
   }
 
   /**
-   * Basic content moderation using keyword matching
-   * This is a simple POC implementation - production would use a proper moderation API
+   * Ключевой фильтр текста.
    *
-   * @param text - Text to moderate
-   * @returns Moderation result with status and flags
+   * До 23.09.2026 здесь лежали четыре английские регулярки со `\b`. У
+   * продукта, где половина аудитории пишет по-русски и по-украински,
+   * это значило, что гейт не ловит почти ничего, — а на него опирается
+   * отказ рендерить поздравление (`GreetingVideoService.startVideo`
+   * не пускает `FLAGGED` дальше).
+   *
+   * Сам список и разбор переехали в `common/text-moderation.ts`:
+   * чистый модуль тестируется без контейнера, и там же объяснено,
+   * почему насилие ловится адресованной угрозой, а не словом
+   * «смерть» (иначе блокировались бы соболезнования — отдельный повод
+   * этого продукта).
+   *
+   * Это по-прежнему дешёвый первый гейт, а не модерация. Настоящий
+   * ответ — модерационный API или вызов модели, он стоит денег на
+   * каждом промпте и потому остаётся решением владельца.
    */
   private moderateContent(text: string): {
     status: ModerationStatus;
     flags: string[];
   } {
-    const flags: string[] = [];
-
-    // Check each pattern
-    this.moderationPatterns.forEach((pattern, index) => {
-      if (pattern.test(text)) {
-        flags.push(this.moderationCategories[index]);
-      }
-    });
-
+    const flags = findModerationFlags(text);
     const status =
       flags.length > 0 ? ModerationStatus.FLAGGED : ModerationStatus.PENDING;
-
     return { status, flags };
   }
 

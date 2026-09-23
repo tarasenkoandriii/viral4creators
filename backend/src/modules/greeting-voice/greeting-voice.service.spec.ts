@@ -1,12 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
-// Тот же приём, что у соседей: `SessionService` рантаймом импортирует
-// `Prisma`/`WorkflowKind` из `@prisma/client`, которого на стенде без
-// `prisma generate` нет.
-jest.mock('@prisma/client', () => ({
-  Prisma: { DbNull: Symbol.for('Prisma.DbNull') },
-  WorkflowKind: { SINGLE: 'SINGLE', LINE: 'LINE' },
-}));
 
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { GreetingVoiceService } from './greeting-voice.service';

@@ -113,6 +113,39 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
     expect(sessionBlobPathnames(fromCatalog)).toEqual([]);
   });
 
+  it('трек из библиотеки — тоже наша копия и удаляется вместе с сессией', () => {
+    const fromLibrary = {
+      sessionId: 's1',
+      greetingBriefSnapshot: {
+        musicTheme: {
+          id: 'ml_a',
+          title: 'Тёплое утро',
+          url: 'https://blob.test/ml_a.mp3',
+          source: 'library',
+          pathname: 'sessions/s1/music/ml_a.mp3',
+        },
+      },
+    } as unknown as Session;
+    expect(sessionBlobPathnames(fromLibrary)).toEqual([
+      'sessions/s1/music/ml_a.mp3',
+    ]);
+  });
+
+  it('ссылка на чужой хост нам не принадлежит — удалять нечего', () => {
+    const asLink = {
+      sessionId: 's1',
+      greetingBriefSnapshot: {
+        musicTheme: {
+          id: 'ml_b',
+          title: 'Чужая',
+          url: 'https://cdn.example.com/t.mp3',
+          source: 'link',
+        },
+      },
+    } as unknown as Session;
+    expect(sessionBlobPathnames(asLink)).toEqual([]);
+  });
+
   it('старая запись без source каталожной темой и остаётся — не удаляем по догадке', () => {
     const legacy = {
       sessionId: 's1',
@@ -126,6 +159,27 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
       },
     } as unknown as Session;
     expect(sessionBlobPathnames(legacy)).toEqual([]);
+  });
+
+  it('наклейка удаляется вместе с сессией — она всегда наша копия', () => {
+    // Условия Pixabay запрещают постоянный хотлинк, поэтому файл
+    // скачан к нам и живёт под префиксом сессии.
+    const session = {
+      sessionId: 's1',
+      greetingBriefSnapshot: {
+        sticker: {
+          id: 'st_1',
+          url: 'https://blob.test/st_1.png',
+          pathname: 'sessions/s1/stickers/st_1.png',
+          sourceUrl: 'https://pixabay.com/x',
+          source: 'pixabay',
+          placement: 'center',
+        },
+      },
+    } as unknown as Session;
+    expect(sessionBlobPathnames(session)).toEqual([
+      'sessions/s1/stickers/st_1.png',
+    ]);
   });
 
   it('не трогает чужие файлы: ссылку на YouTube, фото персонажа бренда, путь вне префикса', () => {

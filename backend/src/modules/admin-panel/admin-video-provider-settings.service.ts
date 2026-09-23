@@ -40,9 +40,7 @@ export class AdminVideoProviderSettingsService {
   }
 
   async get(): Promise<VideoProviderSettingsView> {
-    const stored = await this.settings.get(
-      DEFAULT_VIDEO_PROVIDER_SETTING_KEY,
-    );
+    const stored = await this.settings.get(DEFAULT_VIDEO_PROVIDER_SETTING_KEY);
     return {
       active: resolveDefaultVideoProvider(stored),
       source: isVideoProviderKey(stored) ? 'admin' : 'env-default',
@@ -57,11 +55,7 @@ export class AdminVideoProviderSettingsService {
     if (!isVideoProviderKey(key)) {
       throw new BadRequestException(`Неизвестный провайдер видео: ${key}`);
     }
-    await this.settings.set(
-      DEFAULT_VIDEO_PROVIDER_SETTING_KEY,
-      key,
-      updatedBy,
-    );
+    await this.settings.set(DEFAULT_VIDEO_PROVIDER_SETTING_KEY, key, updatedBy);
     return this.get();
   }
 }

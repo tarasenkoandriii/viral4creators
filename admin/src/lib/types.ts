@@ -1242,3 +1242,25 @@ export interface VirtualStudioVoiceOption {
   previewUrl: string | null;
   accent: string | null;
 }
+
+// ── Каталог музыкальных тем поздравлений (фича №4) ──
+
+export interface MusicCatalogThemeView {
+  id: string;
+  title: string;
+  url: string;
+  /** `null` — тема подходит любому поводу. */
+  occasions: string[] | null;
+}
+
+export interface MusicCatalogView {
+  /** Сырое значение настройки — то, что оператор редактирует. */
+  raw: string;
+  /** Что из сырого значения реально приняли. */
+  themes: MusicCatalogThemeView[];
+  /** Сколько записей было в присланном JSON; `null` — разобрать не удалось. */
+  submitted: number | null;
+  /** Сколько отброшено при разборе. */
+  rejected: number | null;
+  maxThemes: number;
+}

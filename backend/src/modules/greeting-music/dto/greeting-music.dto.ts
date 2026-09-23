@@ -103,3 +103,23 @@ export class GreetingMusicLinkRequestDto {
   @IsBoolean()
   rightsConfirmed!: boolean;
 }
+
+/**
+ * Взять трек из библиотеки со свободной лицензией. `query` шлётся
+ * вместе с идентификаторами не для красоты: сервер ищет кандидата тем
+ * же запросом, а не берёт URL из тела, — иначе клиент мог бы заставить
+ * его скачать что угодно откуда угодно.
+ */
+export class GreetingMusicLibraryRequestDto {
+  @IsString()
+  @MaxLength(100)
+  query!: string;
+
+  @IsString()
+  @MaxLength(32)
+  provider!: string;
+
+  @IsString()
+  @MaxLength(128)
+  providerTrackId!: string;
+}

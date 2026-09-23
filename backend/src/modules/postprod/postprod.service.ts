@@ -37,6 +37,16 @@ import {
   GenerationStatus,
 } from '../../common/types/generation.types';
 import { planPostProduction, PostProdError } from '../../common/postprod';
+import {
+  GreetingCards,
+  buildCardsAss,
+  hasCards,
+} from '../../common/greeting-cards';
+import {
+  frameWidth,
+  normalizeStickerPlacement,
+  stickerOverlay,
+} from '../../common/sticker-overlay';
 import { NATIVE, planBatchReframe } from '../../common/reframe';
 import { aspectRatioFamily } from '../../common/aspect-ratio';
 import {
@@ -89,6 +99,20 @@ interface Work {
    * ссылка на каталог: см. `GreetingBriefSnapshot.musicTheme`.
    */
   musicUrl: string | null;
+  /**
+   * Текст карточек (фичи №38/№39) — копия из снимка брифа. `null`,
+   * если рисовать нечего.
+   */
+  cards: GreetingCards | null;
+  /** Обязательное упоминание автора музыки, если лицензия его требует. */
+  musicCredit: string | null;
+  /** Формат кадра после обрезки — карточкам нужен для `PlayRes`. */
+  cardsAspectRatio: string | null;
+  /**
+   * Наклейка поверх кадра (фича №8): наш блоб плюс уже посчитанная
+   * геометрия. `null` — наклейки нет.
+   */
+  sticker: { url: string; scale: string; x: string; y: string } | null;
   /** Субтитры (этап 67), как они записаны в снимке бренда. */
   subtitlesMode: SubtitlesMode;
   subtitleTheme: SubtitleTheme;
@@ -254,7 +278,9 @@ export class PostProductionService {
       !work.crop &&
       !usesOwnVoice(work.voiceMode) &&
       !wantsSubtitles &&
-      !work.musicUrl
+      !work.musicUrl &&
+      !work.cards &&
+      !work.sticker
     ) {
       // Кадр родной, озвучка не заказана, субтитры выключены — делать
       // нечего, и это норма.
@@ -349,6 +375,8 @@ export class PostProductionService {
       subsUrl = subs.url;
     }
 
+    const cardsUrl = await this.buildCards(sessionId, work);
+
     let plan;
     try {
       plan = planPostProduction({
@@ -357,6 +385,11 @@ export class PostProductionService {
         voiceMode: work.voiceMode === 'dub' ? 'dub' : 'voiceover',
         sourceHasNoAudio: work.sourceHasNoAudio,
         musicInputKey: work.musicUrl ? 'music' : null,
+        cardsInputKey: cardsUrl ? 'cards' : null,
+        stickerInputKey: work.sticker ? 'sticker' : null,
+        stickerScale: work.sticker?.scale ?? null,
+        stickerX: work.sticker?.x ?? null,
+        stickerY: work.sticker?.y ?? null,
         totalDurationSeconds: work.totalDurationSeconds,
         voiceDelayMs: Math.round(work.speechStartSeconds * 1000),
         subtitlesInputKey: subsUrl ? 'subs' : null,
@@ -380,6 +413,8 @@ export class PostProductionService {
     const inputs: Record<string, string> = { source };
     if (voiceUrl) inputs.voice = voiceUrl;
     if (work.musicUrl) inputs.music = work.musicUrl;
+    if (cardsUrl) inputs.cards = cardsUrl;
+    if (work.sticker) inputs.sticker = work.sticker.url;
     if (subsUrl) inputs.subs = subsUrl;
 
     try {
@@ -581,6 +616,10 @@ export class PostProductionService {
         subsUrl = subs.url;
       }
 
+      // Переозвучка пересобирает ролик с нуля из сырого файла — значит
+      // карточки нужно наложить заново, иначе они бы просто исчезли.
+      const revoiceCardsUrl = await this.buildCards(sessionId, work);
+
       let plan;
       try {
         plan = planPostProduction({
@@ -589,6 +628,11 @@ export class PostProductionService {
           voiceMode: work.voiceMode === 'dub' ? 'dub' : 'voiceover',
           sourceHasNoAudio: work.sourceHasNoAudio,
           musicInputKey: work.musicUrl ? 'music' : null,
+          cardsInputKey: revoiceCardsUrl ? 'cards' : null,
+          stickerInputKey: work.sticker ? 'sticker' : null,
+          stickerScale: work.sticker?.scale ?? null,
+          stickerX: work.sticker?.x ?? null,
+          stickerY: work.sticker?.y ?? null,
           totalDurationSeconds: work.totalDurationSeconds,
           voiceDelayMs: Math.round(work.speechStartSeconds * 1000),
           subtitlesInputKey: subsUrl ? 'subs' : null,
@@ -603,6 +647,8 @@ export class PostProductionService {
 
       const inputs: Record<string, string> = { source, voice: voice.url };
       if (work.musicUrl) inputs.music = work.musicUrl;
+      if (revoiceCardsUrl) inputs.cards = revoiceCardsUrl;
+      if (work.sticker) inputs.sticker = work.sticker.url;
       if (subsUrl) inputs.subs = subsUrl;
 
       const job = await this.api.submit({
@@ -1076,6 +1122,14 @@ export class PostProductionService {
     // них тоже, а выравнивание в этом режиме и так было эвристикой —
     // пословных таймкодов от провайдера здесь нет ни при каком
     // раскладе.
+    const stickerSelection = session?.greetingBriefSnapshot?.sticker ?? null;
+    // Тот формат, в котором ролик увидит зритель: если кроп есть, это
+    // целевой формат, если нет — родной формат рендера.
+    const outputAspectRatio =
+      (video.reframePending ? video.aspectRatio : null) ??
+      video.renderedAspectRatio ??
+      video.aspectRatio ??
+      null;
     const presetVoiceId =
       session?.greetingBriefSnapshot?.presetVoiceId?.trim() || null;
     const voiceMode = presetVoiceId
@@ -1111,6 +1165,33 @@ export class PostProductionService {
       voiceMode,
       sourceHasNoAudio: video.silentSource === true,
       musicUrl: session?.greetingBriefSnapshot?.musicTheme?.url ?? null,
+      // `hasCards` здесь — РАННИЙ выход, а не проверка корректности:
+      // пустой текст всё равно не дойдёт до задачи (`buildCardsAss`
+      // вернёт пустую строку), просто дорогой дорогой. Мутация этой
+      // строки поведения не меняет — и это ожидаемо.
+      cards: hasCards(
+        session?.greetingBriefSnapshot?.cards,
+        session?.greetingBriefSnapshot?.musicTheme?.attribution,
+      )
+        ? (session?.greetingBriefSnapshot?.cards ?? {})
+        : null,
+      // Упоминание автора музыки — не подпись отправителя, а наше
+      // обязательство по лицензии трека. Едет вместе с файлом, потому
+      // что файл пересылают дальше, а описание остаётся у нас.
+      musicCredit:
+        session?.greetingBriefSnapshot?.musicTheme?.attribution ?? null,
+      // Тот формат, в котором ролик увидит зритель: если кроп есть, это
+      // целевой формат, если нет — родной формат рендера.
+      cardsAspectRatio: outputAspectRatio,
+      sticker: stickerSelection
+        ? {
+            url: stickerSelection.url,
+            ...stickerOverlay(
+              normalizeStickerPlacement(stickerSelection.placement),
+              frameWidth(video.resolution, outputAspectRatio),
+            ),
+          }
+        : null,
       subtitlesMode,
       subtitleTheme,
       speech,
@@ -1270,6 +1351,40 @@ export class PostProductionService {
    * по фиксированной длительности ролика (best-effort, решение владельца
    * продукта).
    */
+  /**
+   * `.ass` с карточками (фичи №38/№39) — тем же принципом, что
+   * субтитры: файл собирается ДО задачи, ffmpeg получает готовый.
+   *
+   * Провал не отменяет ни обрезку, ни голос, ни субтитры: ролик без
+   * подписи хуже ролика с подписью, но это всё ещё ролик. Отдельного
+   * статуса у карточек нет намеренно — показывать пользователю ещё
+   * одну шкалу состояния ради двух строк текста незачем.
+   */
+  private async buildCards(
+    sessionId: string,
+    work: Work,
+  ): Promise<string | null> {
+    if (!work.cards) return null;
+    const ass = buildCardsAss(work.cards, {
+      totalDurationSeconds: work.totalDurationSeconds,
+      aspectRatio: work.cardsAspectRatio,
+      credit: work.musicCredit,
+    });
+    if (!ass.trim()) return null;
+    try {
+      const { url } = await this.blob.uploadBuffer(
+        `sessions/${sessionId}/cards.ass`,
+        Buffer.from(ass, 'utf8'),
+        'text/plain',
+      );
+      return url;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`карточки не собрались: ${message}`);
+      return null;
+    }
+  }
+
   private async buildSubtitles(
     sessionId: string,
     work: Work,

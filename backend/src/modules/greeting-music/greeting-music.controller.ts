@@ -4,15 +4,26 @@
  *   POST  /sessions/:id/greeting-music/upload-url  presigned PUT для своей музыки
  *   POST  /sessions/:id/greeting-music/confirm     { pathname, title, rightsConfirmed }
  *   POST  /sessions/:id/greeting-music/link        { url, title, rightsConfirmed }
+ *   GET   /sessions/:id/greeting-music/library?q=… поиск по свободным лицензиям
+ *   POST  /sessions/:id/greeting-music/library     { query, provider, providerTrackId }
  *
  * /sessions convention — предъявитель UUID сессии и есть право
  * доступа, как у соседних `greeting-*` контроллеров.
  */
 
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { GreetingMusicService } from './greeting-music.service';
 import {
   GreetingMusicConfirmRequestDto,
+  GreetingMusicLibraryRequestDto,
   GreetingMusicLinkRequestDto,
   GreetingMusicRequestDto,
   GreetingMusicUploadUrlRequestDto,
@@ -58,5 +69,27 @@ export class GreetingMusicController {
     @Body() dto: GreetingMusicLinkRequestDto,
   ): Promise<GreetingMusicView> {
     return this.service.selectLink(sessionId, dto);
+  }
+
+  /** GET: поиск ничего не меняет и денег не стоит. */
+  @Get('library')
+  library(
+    @Param('sessionId') sessionId: string,
+    @Query('q') q?: string,
+  ): Promise<GreetingMusicView> {
+    return this.service.searchLibrary(sessionId, q ?? '');
+  }
+
+  @Post('library')
+  pickFromLibrary(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: GreetingMusicLibraryRequestDto,
+  ): Promise<GreetingMusicView> {
+    return this.service.selectFromLibrary(
+      sessionId,
+      dto.query,
+      dto.provider,
+      dto.providerTrackId,
+    );
   }
 }

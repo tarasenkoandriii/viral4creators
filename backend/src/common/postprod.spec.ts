@@ -279,6 +279,73 @@ describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () =>
     });
   });
 
+  describe('наклейка поверх кадра (фича №8)', () => {
+    const sticker = {
+      stickerInputKey: 'sticker',
+      stickerScale: 'scale=302:-2',
+      stickerX: 'W-w-43',
+      stickerY: 'H-h-43',
+    };
+
+    it('наклейка — отдельный ВИДЕОвход, кладётся поверх готового кадра', () => {
+      const plan = planPostProduction({
+        targetAspectRatio: '1:1',
+        voiceInputKey: 'voice',
+        ...sticker,
+      });
+      expect(plan.inputKeys).toEqual(['source', 'voice', 'sticker']);
+      expect(plan.command).toContain('[2:v]scale=302:-2[stk]');
+      expect(plan.command).toContain('[vbase][stk]overlay=W-w-43:H-h-43[v]');
+    });
+
+    it('наклейка идёт ПОСЛЕДНИМ входом — номера звуковых потоков не едут', () => {
+      // Иначе появление наклейки превратило бы голос в музыку.
+      const plan = planPostProduction({
+        voiceInputKey: 'voice',
+        musicInputKey: 'music',
+        totalDurationSeconds: 15,
+        targetAspectRatio: '1:1',
+        ...sticker,
+      });
+      expect(plan.inputKeys).toEqual(['source', 'voice', 'music', 'sticker']);
+      expect(plan.command).toContain('[1:a]');
+      expect(plan.command).toContain('[2:a]');
+      expect(plan.command).toContain('[3:v]');
+    });
+
+    it('без кропа и субтитров наклейка кладётся прямо на исходный поток', () => {
+      const plan = planPostProduction({ ...sticker });
+      expect(plan.command).toContain('[0:v][stk]overlay=');
+      expect(plan.command).not.toContain('[vbase]');
+    });
+
+    it('одна наклейка и ничего больше — задача всё равно нужна', () => {
+      expect(() => planPostProduction({ ...sticker })).not.toThrow();
+    });
+
+    it('наклейки нет — лишнего входа и фильтра тоже нет', () => {
+      const plan = planPostProduction({
+        voiceInputKey: 'voice',
+        targetAspectRatio: '1:1',
+      });
+      expect(plan.inputKeys).toEqual(['source', 'voice']);
+      expect(plan.command).not.toContain('[stk]');
+      expect(plan.command).not.toContain('overlay=');
+    });
+
+    it('наклейка ложится поверх карточек и субтитров, а не под ними', () => {
+      // Порядок в команде: сначала фильтры кадра, потом overlay.
+      const plan = planPostProduction({
+        subtitlesInputKey: 'subs',
+        cardsInputKey: 'cards',
+        ...sticker,
+      });
+      expect(plan.command.indexOf('{{cards}}')).toBeLessThan(
+        plan.command.indexOf('overlay='),
+      );
+    });
+  });
+
   describe('обрезка и озвучка вместе — ради этого всё и затевалось', () => {
     const plan = planPostProduction({
       targetAspectRatio: '4:5',

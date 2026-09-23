@@ -67,6 +67,9 @@ import { GreetingVideoModule } from './modules/greeting-video/greeting-video.mod
 import { GreetingReferenceModule } from './modules/greeting-reference/greeting-reference.module';
 import { GreetingVoiceModule } from './modules/greeting-voice/greeting-voice.module';
 import { GreetingMusicModule } from './modules/greeting-music/greeting-music.module';
+import { GreetingCardsModule } from './modules/greeting-cards/greeting-cards.module';
+import { GreetingStickerModule } from './modules/greeting-sticker/greeting-sticker.module';
+import { GreetingScenesModule } from './modules/greeting-scenes/greeting-scenes.module';
 // Маркетплейс исполнителей — Этап 0 / Фаза 1 (ТЗ на маркетплейс §19–§21,
 // ТЗ на бэкенд §6). Tender/Contract/Escrow сознательно не подключены —
 // они не существуют в коде, пока не появится сигнал спроса (§19.4).
@@ -140,6 +143,9 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     GreetingReferenceModule,
     GreetingVoiceModule,
     GreetingMusicModule,
+    GreetingCardsModule,
+    GreetingStickerModule,
+    GreetingScenesModule,
     CreatorProfileModule,
     PortfolioModule,
     CreatorInquiryModule,

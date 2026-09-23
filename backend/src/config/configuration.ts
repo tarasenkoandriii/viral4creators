@@ -65,6 +65,54 @@ export interface Configuration {
      */
     dailyLimitPerUser: number;
   };
+  /**
+   * Pixabay — источник стикеров и оверлеев для поздравлений (фича №8).
+   *
+   * Выбран по двум причинам. Первая: лицензия явная и разрешает
+   * коммерческое использование с изменением, а стикер в ролике — это
+   * ровно изменение. Вторая: в поиске есть фильтр `colors=transparent`,
+   * то есть PNG с прозрачностью можно спросить, а не отбирать вручную
+   * из общей выдачи.
+   *
+   * Без ключа модуль честно отдаёт пустую выдачу, а не мешает стенду
+   * запускаться — тот же приём, что у serpApi/youtube/grok выше.
+   */
+  pixabay: {
+    apiKey: string;
+  };
+
+  /**
+   * Источники музыки для поздравлений (фича №4, часть «библиотека») —
+   * портированы из соседнего проекта автора (`atm-travel`,
+   * `src/audio/`).
+   *
+   * Каждый включается своим ключом и без него молча не участвует в
+   * выдаче. Стенд без единого ключа работает как раньше: остаются
+   * загрузка своего файла и ссылка.
+   */
+  audio: {
+    jamendo: {
+      clientId: string;
+      /**
+       * Бесплатный тариф Jamendo коммерческое использование НЕ
+       * покрывает. Пока здесь `false`, их треки отсекаются фильтром
+       * лицензий — это не поломка, а отказ показывать то, что нельзя
+       * положить в платный продукт. Ставится в `true`, когда
+       * коммерческая лицензия куплена.
+       */
+      hasCommercialLicense: boolean;
+    };
+    freesound: {
+      token: string;
+      /** OAuth-токен для полноразмерного файла; без него берётся превью. */
+      oauthBearer: string;
+    };
+    mubert: {
+      apiKey: string;
+      baseUrl: string;
+    };
+  };
+
   youtube: {
     /** YouTube Data API v3 — reference-video search (spec §6.4). */
     apiKey: string;
@@ -360,6 +408,27 @@ export const loadConfiguration = (): Configuration => {
         50,
       ),
     },
+    pixabay: {
+      apiKey: process.env.PIXABAY_API_KEY || '',
+    },
+
+    audio: {
+      jamendo: {
+        clientId: process.env.JAMENDO_CLIENT_ID || '',
+        hasCommercialLicense: process.env.JAMENDO_HAS_COMMERCIAL === 'true',
+      },
+      freesound: {
+        token: process.env.FREESOUND_TOKEN || '',
+        oauthBearer: process.env.FREESOUND_OAUTH_BEARER || '',
+      },
+      mubert: {
+        apiKey: process.env.MUBERT_API_KEY || '',
+        baseUrl: (
+          process.env.MUBERT_BASE || 'https://api-b2b.mubert.com/v2'
+        ).replace(/\/$/, ''),
+      },
+    },
+
     youtube: {
       apiKey: process.env.YOUTUBE_API_KEY || '',
       searchDailyLimitPerUser: positiveIntFromEnv(

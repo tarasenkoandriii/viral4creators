@@ -152,6 +152,9 @@
         "lines": 100
       }
     },
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^@prisma/client$": "<rootDir>/../test/prisma-client-shim.ts"
+    }
   }
 }

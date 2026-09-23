@@ -23,6 +23,7 @@ import {
   Camera,
   Check,
   Download,
+  Film,
   Gift,
   ImageIcon,
   Pencil,
@@ -30,7 +31,9 @@ import {
   Mic,
   Music,
   Sparkles,
+  Sticker,
   Trash2,
+  Type,
   Upload,
   Wand2,
 } from 'lucide-react';
@@ -62,11 +65,22 @@ import {
   generateGreetingReferenceFrame,
   GREETING_MUSIC_ACCEPT,
   MAX_GREETING_MUSIC_BYTES,
+  MAX_GREETING_CARD_LENGTH,
+  clearGreetingSticker,
+  getGreetingCards,
   getGreetingMusic,
+  getGreetingScenes,
   getGreetingVoice,
   listGreetingPresetVoices,
   linkGreetingMusic,
+  moveGreetingSticker,
+  searchGreetingStickers,
+  searchGreetingMusicLibrary,
   selectGreetingMusic,
+  selectGreetingMusicFromLibrary,
+  selectGreetingSticker,
+  setGreetingScenes,
+  updateGreetingCards,
   uploadGreetingMusic,
   selectGreetingPresetVoice,
   selectGreetingSenderVoice,
@@ -92,14 +106,18 @@ import {
   allowedTonesFor,
   defaultToneFor,
 } from '../../types/project';
+import { STICKER_PLACEMENTS } from '../../types/project';
 import type {
   BrandManifestSummaryView,
   GreetingBriefView,
   GreetingOccasion,
   GreetingPresenterProvider,
   GreetingReferenceImageView,
+  GreetingCardsView,
   GreetingMusicView,
   GreetingResolution,
+  GreetingScenesView,
+  GreetingStickerView,
   GreetingTone,
   GreetingVoiceView,
   GrokPresetVoice,
@@ -225,6 +243,12 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
       {sessionId && prompt && <SenderVoiceStep sessionId={sessionId} />}
 
       {sessionId && prompt && <MusicThemeStep sessionId={sessionId} />}
+
+      {sessionId && prompt && <CardsStep sessionId={sessionId} />}
+
+      {sessionId && prompt && <StickerStep sessionId={sessionId} />}
+
+      {sessionId && prompt && <ScenesStep sessionId={sessionId} />}
 
       {sessionId && prompt && (
         <VideoStep
@@ -1231,6 +1255,405 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
   );
 }
 
+// ── Сколько сцен снимать (фича №7) ───────────────────────────────────────
+
+/**
+ * Один непрерывный кадр или несколько склеенных встык.
+ *
+ * Сцены описываются раскадровкой в одном промпте, и модель рендерит
+ * их одним клипом с монтажными склейками — ровно так же, как это уже
+ * делает товарная ветка. Ни цена, ни время ожидания от числа сцен не
+ * меняются: вызов по-прежнему один.
+ *
+ * Показываем длительности: выбирая число сцен, человек вправе видеть
+ * последствие выбора, а не узнавать его из готового ролика.
+ */
+function ScenesStep({ sessionId }: { sessionId: string }) {
+  const { dict } = useI18n();
+  const w = dict.greetingVideoWizard;
+  const [view, setView] = useState<GreetingScenesView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getGreetingScenes(sessionId)
+      .then((v) => alive && setView(v))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
+
+  if (!view) return null;
+
+  const choose = async (sceneCount: number) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setView(await setGreetingScenes(sessionId, sceneCount));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const counts = Array.from({ length: view.maxScenes }, (_, i) => i + 1);
+
+  return (
+    <Card className="p-5">
+      <CardHeader
+        icon={<Film size={18} />}
+        title={w.scenesHeading}
+        hint={w.scenesHint}
+      />
+
+      {error && (
+        <Alert tone="error" onDismiss={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      <ul className="flex flex-wrap gap-2">
+        {counts.map((n) => (
+          <li key={n}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              active={view.sceneCount === n}
+              onClick={() => void choose(n)}
+            >
+              {n === 1 ? w.scenesOne : w.scenesMany.replace('{n}', String(n))}
+            </Button>
+          </li>
+        ))}
+      </ul>
+
+      <p className="mt-2 text-xs text-silver-400">
+        {view.sceneCount === 1
+          ? w.scenesSingleNote
+          : w.scenesSplitNote.replace(
+              '{parts}',
+              view.durations
+                .map((d) => `${d}${w.musicSecondsSuffix}`)
+                .join(' + ')
+            )}
+      </p>
+    </Card>
+  );
+}
+
+// ── Наклейка поверх кадра (фича №8) ──────────────────────────────────────
+
+/**
+ * Поиск наклейки на Pixabay и её положение в кадре.
+ *
+ * Ссылка на источник показана у каждой находки не из вежливости:
+ * условия API Pixabay требуют показывать, откуда картинки, всякий раз,
+ * когда выдача отображается. Сама лицензия атрибуции не требует — это
+ * разные документы, и обязывает нас первый.
+ *
+ * Скачивает картинку сервер, а не браузер: те же условия запрещают
+ * постоянный хотлинк, поэтому в ролик уходит уже наша копия.
+ */
+function StickerStep({ sessionId }: { sessionId: string }) {
+  const { dict } = useI18n();
+  const w = dict.greetingVideoWizard;
+  const [view, setView] = useState<GreetingStickerView | null>(null);
+  const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    searchGreetingStickers(sessionId, '')
+      .then((v) => alive && setView(v))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
+
+  const run = async (fn: () => Promise<GreetingStickerView>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setView(await fn());
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!view) return null;
+  if (!view.configured && !view.selected) return null;
+
+  const placementLabels: Record<string, string> = {
+    'top-left': w.stickerTopLeft,
+    'top-right': w.stickerTopRight,
+    'bottom-left': w.stickerBottomLeft,
+    'bottom-right': w.stickerBottomRight,
+    center: w.stickerCenter,
+    full: w.stickerFull,
+  };
+
+  return (
+    <Card className="p-5">
+      <CardHeader
+        icon={<Sticker size={18} />}
+        title={w.stickerHeading}
+        hint={w.stickerHint}
+        action={
+          view.selected && (
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={busy}
+              onClick={() => void run(() => clearGreetingSticker(sessionId))}
+            >
+              {w.stickerClear}
+            </Button>
+          )
+        }
+      />
+
+      {error && (
+        <Alert tone="error" onDismiss={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      {view.selected && (
+        <div className="mb-3 flex items-center gap-3 rounded-xl border border-silver-200/70 p-3 dark:border-silver-800">
+          <img
+            src={view.selected.url}
+            alt=""
+            className="h-14 w-14 shrink-0 object-contain"
+          />
+          <div className="min-w-0">
+            <p className="text-xs text-silver-400">{w.stickerPicked}</p>
+            <ul className="mt-1.5 flex flex-wrap gap-1.5">
+              {STICKER_PLACEMENTS.map((placement) => (
+                <li key={placement}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    active={view.selected?.placement === placement}
+                    onClick={() =>
+                      void run(() => moveGreetingSticker(sessionId, placement))
+                    }
+                  >
+                    {placementLabels[placement]}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {view.configured && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value.slice(0, 100))}
+              placeholder={w.stickerSearchPlaceholder}
+              disabled={busy}
+            />
+            <Button
+              size="sm"
+              loading={busy}
+              disabled={!query.trim()}
+              onClick={() =>
+                void run(() => searchGreetingStickers(sessionId, query.trim()))
+              }
+            >
+              {w.stickerSearch}
+            </Button>
+          </div>
+
+          {view.results.length > 0 && (
+            <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
+              {view.results.map((r) => (
+                <li key={r.id} className="text-center">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="block w-full rounded-xl border border-silver-200/70 p-2 hover:border-sky-400 disabled:opacity-50 dark:border-silver-800"
+                    onClick={() =>
+                      void run(() =>
+                        selectGreetingSticker(sessionId, query.trim(), r.id)
+                      )
+                    }
+                  >
+                    <img
+                      src={r.previewUrl}
+                      alt={r.tags}
+                      className="mx-auto h-16 w-16 object-contain"
+                    />
+                  </button>
+                  {/* Требование условий API, а не вежливость. */}
+                  <a
+                    href={r.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 block text-[10px] text-silver-400 underline"
+                  >
+                    Pixabay
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+// ── Карточки: титульная и закрывающая (фичи №38/№39) ─────────────────────
+
+/**
+ * Две подписи поверх кадра: в начале и в конце.
+ *
+ * Титульная НЕ подставляется сама, хотя имя получателя у нас есть:
+ * она называет его в первую же секунду, а половина поздравлений —
+ * сюрприз. Предупреждение стоит рядом, подставить заготовку можно в
+ * один клик — но это решение отправителя, а не наше.
+ */
+function CardsStep({ sessionId }: { sessionId: string }) {
+  const { dict } = useI18n();
+  const w = dict.greetingVideoWizard;
+  const [view, setView] = useState<GreetingCardsView | null>(null);
+  const [title, setTitle] = useState('');
+  const [closing, setClosing] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getGreetingCards(sessionId)
+      .then((v) => {
+        if (!alive) return;
+        setView(v);
+        setTitle(v.cards.title ?? '');
+        setClosing(v.cards.closing ?? '');
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await updateGreetingCards(sessionId, {
+        title: title.trim() || null,
+        closing: closing.trim() || null,
+      });
+      setView(next);
+      setTitle(next.cards.title ?? '');
+      setClosing(next.cards.closing ?? '');
+      setSaved(true);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!view) return null;
+
+  const dirty =
+    title.trim() !== (view.cards.title ?? '') ||
+    closing.trim() !== (view.cards.closing ?? '');
+
+  return (
+    <Card className="p-5">
+      <CardHeader
+        icon={<Type size={18} />}
+        title={w.cardsHeading}
+        hint={w.cardsHint}
+      />
+
+      {error && (
+        <Alert tone="error" onDismiss={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      <div className="space-y-3">
+        <Field label={w.cardsTitleLabel} hint={w.cardsTitleHint}>
+          <Input
+            value={title}
+            onChange={(e) => {
+              setTitle(e.target.value.slice(0, MAX_GREETING_CARD_LENGTH));
+              setSaved(false);
+            }}
+            placeholder={view.suggested.title ?? ''}
+            disabled={busy}
+          />
+        </Field>
+        {!title && view.suggested.title && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              setTitle(view.suggested.title ?? '');
+              setSaved(false);
+            }}
+          >
+            {w.cardsUseSuggestion.replace('{text}', view.suggested.title)}
+          </Button>
+        )}
+
+        <Field label={w.cardsClosingLabel} hint={w.cardsClosingHint}>
+          <Input
+            value={closing}
+            onChange={(e) => {
+              setClosing(e.target.value.slice(0, MAX_GREETING_CARD_LENGTH));
+              setSaved(false);
+            }}
+            placeholder={view.suggested.closing ?? ''}
+            disabled={busy}
+          />
+        </Field>
+        {!closing && view.suggested.closing && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              setClosing(view.suggested.closing ?? '');
+              setSaved(false);
+            }}
+          >
+            {w.cardsUseSuggestion.replace('{text}', view.suggested.closing)}
+          </Button>
+        )}
+
+        <Button
+          size="sm"
+          loading={busy}
+          disabled={!dirty}
+          onClick={() => void save()}
+        >
+          {saved && !dirty ? w.cardsSaved : w.cardsSave}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 // ── Музыкальная подложка (фича №4) ───────────────────────────────────────
 
 /**
@@ -1250,6 +1673,7 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
   const w = dict.greetingVideoWizard;
   const [music, setMusic] = useState<GreetingMusicView | null>(null);
   const [adding, setAdding] = useState(false);
+  const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1263,17 +1687,20 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId]);
 
-  const choose = async (themeId: string | null) => {
+  const apply = async (fn: () => Promise<GreetingMusicView>) => {
     setBusy(true);
     setError(null);
     try {
-      setMusic(await selectGreetingMusic(sessionId, themeId));
+      setMusic(await fn());
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
   };
+
+  const choose = (themeId: string | null) =>
+    apply(() => selectGreetingMusic(sessionId, themeId));
 
   // Раньше секции не было вовсе, пока каталог пуст. Со своей музыкой
   // это перестало быть верным: загрузить трек можно и без каталога —
@@ -1311,6 +1738,13 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
           ? w.musicPicked.replace('{title}', music.selected.title)
           : w.musicEmpty}
       </p>
+      {/* Упоминание автора не спрятано в мелкий шрифт: оно поедет в
+          сам ролик, и человек должен это знать заранее. */}
+      {music.selected?.attribution && (
+        <p className="mt-1 text-xs text-silver-400">
+          {w.musicCreditNote.replace('{credit}', music.selected.attribution)}
+        </p>
+      )}
 
       {music.themes.length > 0 && (
         <ul className="mt-3 flex flex-wrap gap-2">
@@ -1331,6 +1765,84 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {/* Библиотека со свободной лицензией. Показывается только когда
+          хоть один источник настроен: без ключей искать негде. */}
+      {music.libraryEnabled !== false && (
+        <div className="mt-3 border-t border-silver-200/60 pt-3 dark:border-silver-800">
+          <p className="text-xs text-silver-400">{w.musicLibraryHint}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value.slice(0, 100))}
+              placeholder={w.musicLibraryPlaceholder}
+              disabled={busy}
+            />
+            <Button
+              size="sm"
+              loading={busy}
+              disabled={!query.trim()}
+              onClick={() =>
+                void apply(() =>
+                  searchGreetingMusicLibrary(sessionId, query.trim())
+                )
+              }
+            >
+              {w.musicLibrarySearch}
+            </Button>
+          </div>
+
+          {music.library && music.library.length > 0 && (
+            <ul className="mt-2 space-y-1.5">
+              {music.library.map((t) => (
+                <li
+                  key={`${t.provider}:${t.providerTrackId}`}
+                  className="flex flex-wrap items-center gap-2 rounded-xl border border-silver-200/70 p-2 dark:border-silver-800"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm">
+                      {t.title}
+                      {t.artist ? ` — ${t.artist}` : ''}
+                    </p>
+                    {/* Лицензия видна ДО выбора: человек должен
+                        понимать, что берёт и на каких условиях. */}
+                    <p className="text-[11px] text-silver-400">
+                      {t.licenseType} · {Math.round(t.durationSec)}
+                      {w.musicSecondsSuffix}
+                      {t.attribution ? ` · ${w.musicAttributionRequired}` : ''}
+                    </p>
+                  </div>
+                  {t.previewUrl && (
+                    <audio
+                      controls
+                      preload="none"
+                      src={t.previewUrl}
+                      className="h-8 max-w-[180px]"
+                    />
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() =>
+                      void apply(() =>
+                        selectGreetingMusicFromLibrary(
+                          sessionId,
+                          query.trim(),
+                          t.provider,
+                          t.providerTrackId
+                        )
+                      )
+                    }
+                  >
+                    {w.musicLibraryPick}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       <div className="mt-3 border-t border-silver-200/60 pt-3 dark:border-silver-800">

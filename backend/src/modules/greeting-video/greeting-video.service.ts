@@ -97,6 +97,10 @@ import { BlobService } from '../storage/blob.service';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 import { SceneAsset } from '../../common/types/reference.types';
 import { activeSessionSceneImage } from '../../common/active-image';
+import {
+  normalizeSceneCount,
+  withStoryboard,
+} from '../../common/greeting-scenes';
 import { normalizeVoiceMode, usesOwnVoice } from '../../common/voice-mode';
 import { MAX_GREETING_REFERENCE_IMAGES } from '../greeting-reference/greeting-reference.service';
 
@@ -234,7 +238,7 @@ export class GreetingVideoService {
   private async startGrokVideo(
     sessionId: string,
     brief: GreetingBriefSnapshot,
-    scenePrompt: string,
+    basePrompt: string,
     referenceImages: SceneAsset[],
     /**
      * Участвует ли наш синтез (`voiceover`/`dub` в снимке бренда).
@@ -308,10 +312,20 @@ export class GreetingVideoService {
     // `reference_audios` модель попробует куда-нибудь пристроить.
     const presetVoiceId = brief.presetVoiceId?.trim() || null;
     const silent = ownVoice && !presetVoiceId;
+    // Мультисцена (фича №7) — это раскадровка В ПРОМПТЕ, а не
+    // несколько вызовов: модель рендерит сцены с монтажными склейками
+    // одним клипом, ровно как товарная ветка уже делает
+    // (`scenesBriefText`). Никакого нового состояния у ролика от этого
+    // не появляется.
+    const prompt = withStoryboard(
+      basePrompt,
+      normalizeSceneCount(brief.sceneCount ?? 1),
+      GREETING_VIDEO_DURATION_SECONDS,
+    );
 
     try {
       const { requestId } = await this.grokVideo.startGeneration({
-        prompt: scenePrompt,
+        prompt,
         ...(referenceImageUrls.length ? { referenceImageUrls } : {}),
         durationSeconds: GREETING_VIDEO_DURATION_SECONDS,
         aspectRatio,
