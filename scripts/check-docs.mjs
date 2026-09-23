@@ -398,6 +398,111 @@ function checkStepsSymmetry() {
 
 checkStepsSymmetry();
 
+// ── Швы советника в мастере («Тонкая красная линия», аудит волн A–C) ──
+//
+// Три места, где переименование НЕ ломает ни типы, ни линт, ни тесты, а
+// ломает продукт молча, потому что стороны шва живут в разных приложениях
+// и не видят друг друга:
+//
+//  1. Идентификаторы шагов. Их рисует степпер мини-аппа и по ним же
+//     советник выбирает карточку знаний, проверяет кнопки `goto-step` и
+//     складывает частоты. Переименовали на одной стороне — подсказки на
+//     этом шаге молча исчезли, кнопки перестали рисоваться, а телеметрия
+//     разъехалась на два шага, которые выглядят как один.
+//  2. Ключи пунктов готовности. Сервер отдаёт `key`, подпись даёт
+//     словарь мини-аппа: разошлись — человек видит машинный ключ вместо
+//     подписи.
+//  3. Слаги документов для кнопки «открыть документ». Сервер разрешает
+//     их по списку файлов `doc/legal/*.md`, клиент рисует по своему
+//     отображению: появился третий документ — сервер его пропустит, а
+//     кнопка молча не нарисуется.
+
+function idsFrom(source, pattern) {
+  return [...source.matchAll(pattern)].map((m) => m[1]);
+}
+
+function checkGuideSeams() {
+  const problems = [];
+
+  // 1. Шаги обучалки: степпер (frontend) ↔ карточки советника (backend).
+  const stepperIds = idsFrom(
+    read('frontend/src/lib/client-site-steps.ts'),
+    /CLIENT_SITE_STEP_IDS = \[([^\]]+)\]/g,
+  )[0];
+  const stepper = stepperIds
+    ? [...stepperIds.matchAll(/'([a-zA-Z0-9_-]+)'/g)].map((m) => m[1])
+    : [];
+  const cards = idsFrom(
+    read('backend/src/modules/wizard-guide/hint-scenarios.ts'),
+    /stepId: '([a-zA-Z0-9_-]+)'/g,
+  );
+  if (stepper.length === 0) {
+    problems.push('не нашли CLIENT_SITE_STEP_IDS во frontend/src/lib/client-site-steps.ts');
+  } else if (stepper.join(',') !== cards.join(',')) {
+    problems.push(
+      `шаги обучалки разошлись: степпер «${stepper.join(', ')}», ` +
+        `карточки советника «${cards.join(', ')}»`,
+    );
+  }
+
+  // 2. Пункты готовности: сервер отдаёт key, словарь даёт подпись.
+  const readinessKeys = idsFrom(
+    read('backend/src/common/wizard-readiness.ts'),
+    /key: '([a-zA-Z0-9_-]+)'/g,
+  );
+  const dictItems = Object.keys(
+    JSON.parse(read('frontend/src/dictionaries/ru.json')).wizardReadiness.items,
+  );
+  const missingLabels = readinessKeys.filter((k) => !dictItems.includes(k));
+  const orphanLabels = dictItems.filter((k) => !readinessKeys.includes(k));
+  if (missingLabels.length > 0) {
+    problems.push(
+      `у пунктов готовности нет подписи в словаре: ${missingLabels.join(', ')}`,
+    );
+  }
+  if (orphanLabels.length > 0) {
+    problems.push(
+      `в словаре есть подписи для несуществующих пунктов готовности: ${orphanLabels.join(', ')}`,
+    );
+  }
+
+  // 3. Слаги документов: белый список сервера ↔ отображение клиента.
+  const serverSlugs = idsFrom(
+    read('backend/src/modules/wizard-guide/hint-actions.ts'),
+    /HINT_DOC_SLUGS: readonly string\[\] = \[([^\]]+)\]/g,
+  )[0];
+  const server = serverSlugs
+    ? [...serverSlugs.matchAll(/'([a-zA-Z0-9_-]+)'/g)].map((m) => m[1])
+    : [];
+  const clientBlock = /DOC_KEYS: Record<string, [^>]+> = \{([^}]+)\}/.exec(
+    read('frontend/src/components/HintLine.tsx'),
+  );
+  const client = clientBlock
+    ? [...clientBlock[1].matchAll(/'?([a-zA-Z0-9_-]+)'?\s*:/g)].map((m) => m[1])
+    : [];
+  if (server.length === 0 || client.length === 0) {
+    problems.push('не нашли белый список слагов документов на одной из сторон');
+  } else if ([...server].sort().join(',') !== [...client].sort().join(',')) {
+    problems.push(
+      `слаги документов разошлись: сервер «${server.join(', ')}», ` +
+        `клиент «${client.join(', ')}»`,
+    );
+  }
+
+  if (problems.length > 0) {
+    failed++;
+    console.log('FAIL швы советника в мастере:');
+    for (const p of problems) console.log(`  - ${p}`);
+  } else {
+    console.log(
+      `ok   швы советника: шаги (${stepper.join('/')}), пункты готовности ` +
+        `(${readinessKeys.length}) и слаги документов (${server.length}) сходятся`,
+    );
+  }
+}
+
+checkGuideSeams();
+
 if (failed) {
   console.error(
     `\n${failed} расхождени(е/я) между документами и кодом. ` +

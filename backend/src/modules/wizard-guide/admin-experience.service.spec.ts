@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- тестовые двойники */
 /**
  * Модерация корпуса опыта — «Тонкая красная линия» §6.5, §6.7, этап 9.
  *
@@ -59,7 +60,7 @@ function build(
           decision: 'AUTO',
         }
       : over.candidate;
-  const prisma = {
+  const prisma: Record<string, any> = {
     wizardExperience: {
       findMany: jest.fn().mockResolvedValue([experience]),
       findUnique: jest.fn().mockResolvedValue(experience),
@@ -76,7 +77,14 @@ function build(
       update: jest.fn().mockResolvedValue({}),
       create: jest.fn().mockResolvedValue({ id: 'c-new' }),
     },
-    $transaction: jest.fn(async (ops: unknown[]) => ops),
+    // Обе формы: массив операций (у `merge`) и интерактивная
+    // транзакция с `tx` (у `unmerge` — там две модели, и массив по
+    // типам не проходит с настоящим клиентом Prisma).
+    $transaction: jest.fn(async (arg: unknown) =>
+      typeof arg === 'function'
+        ? (arg as (tx: unknown) => Promise<unknown>)(prisma)
+        : arg,
+    ),
   };
   return { prisma, svc: new AdminExperienceService(prisma as never) };
 }

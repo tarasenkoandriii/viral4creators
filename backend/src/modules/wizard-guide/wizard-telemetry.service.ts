@@ -68,16 +68,22 @@ export class WizardTelemetryService {
    */
   async frequencies(days = 7): Promise<StepFrequencyRow[]> {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const grouped: Array<{
+    // Тип НЕ аннотацией слева, а приведением справа — и это не
+    // вкусовщина. У `groupBy` в сгенерированном клиенте перегрузка,
+    // которая при ожидаемом типе слева выбирает не ту сигнатуру и
+    // требует от аргумента быть массивом результата. В песочнице
+    // разработки клиент подменён на `any`, поэтому такая ошибка не
+    // видна ни тестами, ни `tsc` — она ждёт прод-сборки (и дождалась).
+    const grouped = (await this.prisma.wizardStepEvent.groupBy({
+      by: ['scenario', 'stepId', 'kind'],
+      where: { createdAt: { gte: since } },
+      _count: { _all: true },
+    })) as unknown as Array<{
       scenario: string;
       stepId: string;
       kind: string;
       _count: { _all: number };
-    }> = await this.prisma.wizardStepEvent.groupBy({
-      by: ['scenario', 'stepId', 'kind'],
-      where: { createdAt: { gte: since } },
-      _count: { _all: true },
-    });
+    }>;
 
     const rows = new Map<string, StepFrequencyRow>();
     for (const g of grouped) {

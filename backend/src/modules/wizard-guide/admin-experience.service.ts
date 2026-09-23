@@ -305,8 +305,16 @@ export class AdminExperienceService {
     operatorId: string,
   ): Promise<{ ok: true }> {
     const candidate = await this.candidate(candidateId, 'MERGED');
-    const ops = [
-      this.prisma.wizardExperienceCandidate.update({
+    // Интерактивная транзакция, а не массив операций.
+    //
+    // Массив выводится по ПЕРВОМУ элементу, и `push` второй операции на
+    // другой модели не проходит по типам — но увидеть это можно только
+    // с настоящим клиентом Prisma: в песочнице разработки он подменён
+    // на `any`, и ошибка дождалась прод-сборки. Заодно так читается
+    // лучше: видно, что обе записи меняются вместе или не меняются
+    // вовсе.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.wizardExperienceCandidate.update({
         where: { id: candidateId },
         data: {
           status: 'NEW',
@@ -314,17 +322,14 @@ export class AdminExperienceService {
           decision: 'NONE',
           decidedBy: operatorId,
         },
-      }),
-    ];
-    if (candidate.matchedId) {
-      ops.push(
-        this.prisma.wizardExperience.update({
+      });
+      if (candidate.matchedId) {
+        await tx.wizardExperience.update({
           where: { id: candidate.matchedId },
           data: { occurrences: { decrement: 1 } },
-        }),
-      );
-    }
-    await this.prisma.$transaction(ops);
+        });
+      }
+    });
     return { ok: true };
   }
 
