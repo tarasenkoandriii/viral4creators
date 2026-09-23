@@ -1681,7 +1681,15 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
     let alive = true;
     getGreetingMusic(sessionId)
       .then((m) => alive && setMusic(m))
-      .catch(() => alive && setMusic({ themes: [], selected: null }));
+      // Запрос не прошёл — показываем пустую витрину, но БЕЗ блока
+      // поиска: настроена библиотека или нет, мы в этот момент не
+      // знаем, а рисовать поиск «на всякий случай» — ровно та ложь,
+      // из-за которой признак и стал обязательным.
+      .catch(
+        () =>
+          alive &&
+          setMusic({ themes: [], selected: null, libraryEnabled: false })
+      );
     return () => {
       alive = false;
     };
@@ -1768,8 +1776,10 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
       )}
 
       {/* Библиотека со свободной лицензией. Показывается только когда
-          хоть один источник настроен: без ключей искать негде. */}
-      {music.libraryEnabled !== false && (
+          хоть один источник настроен: без ключей искать негде.
+          Условие прямое, а не `!== false`: признак приходит с первым
+          же GET, и «поля нет» больше не значит «наверное, есть». */}
+      {music.libraryEnabled && (
         <div className="mt-3 border-t border-silver-200/60 pt-3 dark:border-silver-800">
           <p className="text-xs text-silver-400">{w.musicLibraryHint}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">

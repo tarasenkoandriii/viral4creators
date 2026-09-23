@@ -373,6 +373,39 @@ describe('GreetingMusicService — библиотека со свободной 
     expect(view.library).toEqual([]);
   });
 
+  it('…и узнаёт об этом ДО первого поиска, из обычного GET', async () => {
+    // Раньше признак приходил только в ответе поиска, а экран писал
+    // условие как `libraryEnabled !== false` — то есть «поля нет»
+    // читалось как «наверное, настроена». На стенде без ключей человек
+    // видел рабочий на вид блок поиска, получал пустоту без
+    // объяснения, а при выборе трека — 400. У наклеек тот же признак
+    // приходит первым же GET, и секция просто не показывается.
+    const { svc } = build({ audioEnabled: false });
+    expect((await svc.get('s1')).libraryEnabled).toBe(false);
+  });
+
+  it('настроена — то же поле приходит из GET, а не только из поиска', async () => {
+    const { svc } = build({ audioEnabled: true });
+    expect((await svc.get('s1')).libraryEnabled).toBe(true);
+  });
+
+  it('признак есть в КАЖДОМ ответе витрины, а не только в двух', async () => {
+    // Собственно защита от повторения: ответов у витрины пять, и
+    // достаточно одного забытого поля, чтобы экран снова соврал.
+    const { svc } = build({ audioEnabled: false });
+    const views = [
+      await svc.get('s1'),
+      await svc.select('s1', null),
+      await svc.selectLink('s1', {
+        url: 'https://cdn.test/own.mp3',
+        title: 'Своя',
+        rightsConfirmed: true,
+      }),
+      await svc.searchLibrary('s1', 'тёплое'),
+    ];
+    for (const view of views) expect(view.libraryEnabled).toBe(false);
+  });
+
   it('запрос требует коммерческой лицензии и отвергает платные', async () => {
     // Поздравление делается в платном продукте и уходит другому
     // человеку: некоммерческая лицензия этого не покрывает, а трек

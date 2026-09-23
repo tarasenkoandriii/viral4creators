@@ -104,13 +104,36 @@ export class GreetingMusicService {
     };
   }
 
+  /**
+   * Единственное место, где собирается витрина музыки.
+   *
+   * Раньше её собирали в четырёх местах руками, и `libraryEnabled`
+   * попал ровно в одно — в ответ поиска. Экран же пишет условие как
+   * `libraryEnabled !== false`, поэтому на стенде, где не задан ни
+   * один аудио-ключ, блок «поиск по библиотекам» рисовался как
+   * рабочий: человек вводил запрос, получал пустоту без объяснения, а
+   * при попытке выбрать трек — 400 «библиотека не настроена». У
+   * наклеек тот же признак приходит первым же GET, и секция просто не
+   * показывается (`GreetingStickerView.configured`) — здесь теперь
+   * так же.
+   *
+   * Сборщик приватный и один: забыть поле больше негде.
+   */
+  private async view(
+    occasion: GreetingOccasion,
+    selected: GreetingMusicView['selected'],
+  ): Promise<GreetingMusicView> {
+    return {
+      themes: await this.themes(occasion),
+      selected,
+      libraryEnabled: this.audio.enabled,
+    };
+  }
+
   async get(sessionId: string): Promise<GreetingMusicView> {
     const session = await this.load(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
-    return {
-      themes: await this.themes(snapshot.occasion),
-      selected: snapshot.musicTheme ?? null,
-    };
+    return this.view(snapshot.occasion, snapshot.musicTheme ?? null);
   }
 
   /**
@@ -135,7 +158,7 @@ export class GreetingMusicService {
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: next,
     });
-    return { themes: await this.themes(snapshot.occasion), selected };
+    return this.view(snapshot.occasion, selected);
   }
 
   /**
@@ -211,7 +234,7 @@ export class GreetingMusicService {
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: { ...snapshot, musicTheme: selected },
     });
-    return { themes: await this.themes(snapshot.occasion), selected };
+    return this.view(snapshot.occasion, selected);
   }
 
   /**
@@ -253,7 +276,7 @@ export class GreetingMusicService {
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: { ...snapshot, musicTheme: selected },
     });
-    return { themes: await this.themes(snapshot.occasion), selected };
+    return this.view(snapshot.occasion, selected);
   }
 
   /**
@@ -268,15 +291,13 @@ export class GreetingMusicService {
     query: string,
   ): Promise<GreetingMusicView> {
     const view = await this.get(sessionId);
+    // `libraryEnabled` уже проставлен сборщиком выше — здесь
+    // добавляется только само найденное.
     if (!this.audio.enabled || !query.trim()) {
-      return { ...view, library: [], libraryEnabled: this.audio.enabled };
+      return { ...view, library: [] };
     }
     const tracks = await this.audio.candidates(this.audioRequest(query));
-    return {
-      ...view,
-      library: tracks.map((t) => toCandidate(t)),
-      libraryEnabled: true,
-    };
+    return { ...view, library: tracks.map((t) => toCandidate(t)) };
   }
 
   /**

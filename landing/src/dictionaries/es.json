@@ -361,6 +361,32 @@
         }
       ]
     },
+    "features": {
+      "title": "De qué se compone el vídeo",
+      "lead": "Quince segundos de vídeo vertical y varias maneras de hacerlos tuyos en lugar de genéricos.",
+      "items": [
+        {
+          "title": "Primero el fotograma, luego el vídeo",
+          "text": "Puedes adjuntar hasta siete fotos o describir la escena con palabras: el servicio dibuja un fotograma y te lo enseña ANTES de generar el vídeo. El decorado lo propone él mismo, según el motivo."
+        },
+        {
+          "title": "Hasta cuatro escenas seguidas",
+          "text": "Los quince segundos se reparten en varios planos con cortes secos: la entrada, la felicitación y el cierre. La misma persona, la misma ropa y el mismo lugar: es un solo mensaje, no un montaje de clips distintos."
+        },
+        {
+          "title": "La voz de quien felicita",
+          "text": "La felicitación puede sonar con la voz de quien la envía. Tu voz se graba una vez y queda disponible en todos los vídeos: ese es el modo Standard. Las voces ya preparadas funcionan en cualquier modo."
+        },
+        {
+          "title": "Tu propia música",
+          "text": "La base musical se añade con tu archivo o con un enlace directo a una pista sobre la que tengas derechos. Se recorta sola a la duración del vídeo y baja de volumen allí donde entra la voz."
+        },
+        {
+          "title": "Rótulo y firma",
+          "text": "Un titular breve al principio y una línea «de parte de» al final. Se escriben como texto y quedan incrustados en el propio archivo, así que se leen incluso donde el vídeo se ve sin sonido."
+        }
+      ]
+    },
     "price": {
       "title": "Cuánto cuesta",
       "text": "Por ahora nada: los tres planes son gratuitos y se cambian dentro de la aplicación. El plan define la resolución: 480p, 720p o 1080p."

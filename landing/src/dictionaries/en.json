@@ -361,6 +361,32 @@
         }
       ]
     },
+    "features": {
+      "title": "What the video is made of",
+      "lead": "Fifteen seconds of vertical video — and several ways to make them yours rather than generic.",
+      "items": [
+        {
+          "title": "The frame first, then the video",
+          "text": "Attach up to seven photos, or just describe the scene — the service draws a frame and shows it BEFORE generating the video. It will suggest the setting itself, based on the occasion."
+        },
+        {
+          "title": "Up to four scenes in a row",
+          "text": "The fifteen seconds split into several shots with hard cuts: the approach, the greeting itself, the closing. Same person, same clothes, same place — it is one message, not a montage of different clips."
+        },
+        {
+          "title": "The sender's own voice",
+          "text": "The greeting can be spoken in the voice of whoever is sending it. Your voice is recorded once and then available in every video — that is the Standard mode. Ready-made voices work in any mode."
+        },
+        {
+          "title": "Your own music",
+          "text": "Add a backing track as a file or as a direct link to music you hold the rights to. It is trimmed to the length of the video automatically and ducked wherever the voice comes in."
+        },
+        {
+          "title": "Opening title and sign-off",
+          "text": "A short headline at the start, a “from” line at the end. You type them, and they are burned into the file itself — so they read even where the video is watched without sound."
+        }
+      ]
+    },
     "price": {
       "title": "What it costs",
       "text": "Nothing right now: all three plans are free and switch inside the app. The plan decides the resolution — 480p, 720p or 1080p."

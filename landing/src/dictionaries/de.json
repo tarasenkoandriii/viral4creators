@@ -361,6 +361,32 @@
         }
       ]
     },
+    "features": {
+      "title": "Woraus das Video besteht",
+      "lead": "Fünfzehn Sekunden Hochformat — und mehrere Wege, sie persönlich statt schablonenhaft zu machen.",
+      "items": [
+        {
+          "title": "Erst das Bild, dann das Video",
+          "text": "Bis zu sieben Fotos hochladen oder die Szene einfach beschreiben — der Dienst zeichnet ein Bild und zeigt es VOR der Videoerzeugung. Die Kulisse schlägt er anhand des Anlasses selbst vor."
+        },
+        {
+          "title": "Bis zu vier Szenen hintereinander",
+          "text": "Die fünfzehn Sekunden teilen sich in mehrere Einstellungen mit harten Schnitten: Auftritt, Glückwunsch, Abschluss. Dieselbe Person, dieselbe Kleidung, derselbe Ort — eine Botschaft, kein Zusammenschnitt verschiedener Clips."
+        },
+        {
+          "title": "Die Stimme des Absenders",
+          "text": "Der Glückwunsch kann in der Stimme dessen klingen, von dem er kommt. Die eigene Stimme wird einmal aufgenommen und steht danach in allen Videos zur Verfügung — das ist der Standard-Modus. Fertige Stimmen gibt es in jedem Modus."
+        },
+        {
+          "title": "Eigene Musik",
+          "text": "Die Untermalung lässt sich als Datei oder als direkter Link auf einen Titel hinzufügen, an dem Sie die Rechte haben. Sie wird automatisch auf die Videolänge gekürzt und dort leiser, wo die Stimme einsetzt."
+        },
+        {
+          "title": "Titel und Signatur",
+          "text": "Am Anfang eine kurze Überschrift, am Ende die Zeile «von wem». Beides wird getippt und fest in die Datei eingebrannt — es ist also auch dort lesbar, wo das Video ohne Ton läuft."
+        }
+      ]
+    },
     "price": {
       "title": "Was es kostet",
       "text": "Derzeit nichts: Alle drei Tarife sind kostenlos und lassen sich direkt in der App umschalten. Der Tarif bestimmt die Auflösung — 480p, 720p oder 1080p."

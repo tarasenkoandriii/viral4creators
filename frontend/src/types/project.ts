@@ -332,7 +332,8 @@ export interface GreetingMusicView {
   themes: GreetingMusicTheme[];
   selected: GreetingMusicSelection | null;
   library?: GreetingMusicCandidate[];
-  libraryEnabled?: boolean;
+  /** Хоть один источник библиотеки настроен на стенде; приходит с первым же GET. */
+  libraryEnabled: boolean;
 }
 
 /** Пресетный голос xAI из роестра `GET /v1/tts/voices`. */
