@@ -154,7 +154,6 @@ export function VoicePicker({
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerOverride]);
 
   const chosen = state?.voices.find((v) => v.voiceId === value) ?? null;

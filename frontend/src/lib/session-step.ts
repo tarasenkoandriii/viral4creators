@@ -108,3 +108,43 @@ export function stepFromSession(
       return 'upload';
   }
 }
+
+/**
+ * Позиции степпера товарки. Их пять, а состояний воркфлоу семь:
+ * `analyzing` и `analysis-complete` делят одну позицию, а `complete`
+ * не занимает ни одной — это состояние ПОСЛЕ последнего шага.
+ */
+export const STEPPER_IDS = [
+  'upload',
+  'analysis',
+  'product',
+  'prompt',
+  'video',
+] as const;
+export type StepperId = (typeof STEPPER_IDS)[number];
+
+/**
+ * Состояние воркфлоу → позиция степпера. `null` означает «все шаги
+ * пройдены»: до перехода на общий контракт это выражалось индексом 5
+ * при пяти подписях, то есть выходом за границу массива
+ * (docs-tz/TZ-Tonkaya-Krasnaya-Liniya.md §4.3).
+ */
+export function stepperIdOf(step: WorkflowStep): StepperId | null {
+  switch (step) {
+    case 'upload':
+      return 'upload';
+    case 'analyzing':
+    case 'analysis-complete':
+      return 'analysis';
+    case 'product-input':
+      return 'product';
+    case 'prompt-generation':
+      return 'prompt';
+    case 'video-generation':
+      return 'video';
+    case 'complete':
+      return null;
+    default:
+      return 'upload';
+  }
+}

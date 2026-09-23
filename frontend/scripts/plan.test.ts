@@ -29,6 +29,11 @@ const NONE: Record<PlanFeature, boolean> = {
   referenceAssets: false,
   characterReplacement: false,
   customAspectRatio: false,
+  fullQualityVideo: false,
+  voiceCloning: false,
+  voiceDub: false,
+  siteTutorial: false,
+  aiSketch: false,
 };
 
 function def(
@@ -58,6 +63,15 @@ function state(plan: PlanId): PlanState {
       PREMIUM: def('PREMIUM', { audit: true, relevance: true, library: true }),
     },
     billingEnabled: false,
+    // Поля ниже этому тесту не нужны — он про матрицу возможностей, —
+    // но тип требует их целиком, и заглушки честнее каста: каст
+    // отключил бы проверку навсегда, а тип — это единственное, что
+    // заметит следующее поле в `PlanState`.
+    blocked: { isBlocked: false, reason: null },
+    budget: { exhausted: false, nearlyExhausted: false },
+    testAccess: { isTestUser: false, freeScenarios: [] },
+    subscription: null,
+    credits: { balance: 0 },
   };
 }
 

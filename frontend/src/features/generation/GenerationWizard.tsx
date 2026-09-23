@@ -23,6 +23,8 @@ import {
   Video,
 } from 'lucide-react';
 import { useWorkflow } from '../../hooks/useWorkflow';
+import { toStepsView } from '../../lib/wizard-steps';
+import { STEPPER_IDS, stepperIdOf } from '../../lib/session-step';
 import { VideoUpload } from '../../components/VideoUpload';
 import { AnalysisDisplay } from '../../components/AnalysisDisplay';
 import { ProgressIndicator } from '../../components/ProgressIndicator';
@@ -198,7 +200,6 @@ export function GenerationWizard() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Доп. запрос владельца продукта: расчёт цены сразу при выборе, до
@@ -298,26 +299,16 @@ export function GenerationWizard() {
   }, [prompt?.promptId]);
 
   const workflowSteps = dict.generationWizard.steps;
-
-  const getStepIndex = () => {
-    switch (currentStep) {
-      case 'upload':
-        return 0;
-      case 'analyzing':
-      case 'analysis-complete':
-        return 1;
-      case 'product-input':
-        return 2;
-      case 'prompt-generation':
-        return 3;
-      case 'video-generation':
-        return 4;
-      case 'complete':
-        return 5;
-      default:
-        return 0;
-    }
-  };
+  const stepsView = toStepsView(
+    STEPPER_IDS.map((id, i) => ({
+      id,
+      label: workflowSteps[i],
+      // Кликабельность по-прежнему решает `stepTargets` внутри хука;
+      // здесь она только переводится в форму общего контракта.
+      target: selectableSteps[i] ? id : null,
+    })),
+    stepperIdOf(currentStep)
+  );
 
   return (
     <div className="space-y-4">
@@ -333,10 +324,10 @@ export function GenerationWizard() {
 
       {/* Этап 52 (В-1.5): пройденные шаги — кнопки возврата. */}
       <ProgressIndicator
-        currentStep={getStepIndex()}
-        steps={workflowSteps}
+        currentStep={stepsView.current}
+        steps={stepsView.steps}
         onSelect={selectStep}
-        selectable={selectableSteps}
+        selectable={stepsView.selectable}
       />
 
       {/* Step 1: Upload Video — за согласием с офертой (§20) */}

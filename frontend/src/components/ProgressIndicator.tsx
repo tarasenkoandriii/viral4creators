@@ -6,6 +6,8 @@ interface ProgressIndicatorProps {
   /** Пройденные шаги кликабельны (этап 52, В-1.5). */
   onSelect?: (index: number) => void;
   selectable?: boolean[];
+  /** Явная завершённость шагов («Тонкая красная линия», §4.2). */
+  done?: boolean[];
 }
 
 /**
@@ -18,6 +20,7 @@ export function ProgressIndicator({
   steps,
   onSelect,
   selectable,
+  done,
 }: ProgressIndicatorProps) {
   return (
     <Stepper
@@ -25,6 +28,7 @@ export function ProgressIndicator({
       current={currentStep}
       onSelect={onSelect}
       selectable={selectable}
+      done={done}
     />
   );
 }

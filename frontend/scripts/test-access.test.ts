@@ -32,10 +32,10 @@ check('каждый код сценария переведён — иначе б
 });
 
 check('порядок списка не зависит от порядка в ответе сервера', () => {
-  eq(
-    testScenarioLabels(['GREETING_VIDEO', 'PRODUCT_VIDEO'], labels),
-    [labels.PRODUCT_VIDEO, labels.GREETING_VIDEO],
-  );
+  eq(testScenarioLabels(['GREETING_VIDEO', 'PRODUCT_VIDEO'], labels), [
+    labels.PRODUCT_VIDEO,
+    labels.GREETING_VIDEO,
+  ]);
 });
 
 check('незнакомый код пропускается, а не показывается сырым', () => {
@@ -50,9 +50,9 @@ check('плашки нет без флага тестового аккаунта
   eq(
     showsTestAccess(
       { isTestUser: false, freeScenarios: ['PRODUCT_VIDEO'] },
-      labels,
+      labels
     ),
-    false,
+    false
   );
 });
 
@@ -61,8 +61,11 @@ check('плашки нет, если не открыт ни один сцена�
   // бесплатный проход, которого нет, — обман.
   eq(showsTestAccess({ isTestUser: true, freeScenarios: [] }, labels), false);
   eq(
-    showsTestAccess({ isTestUser: true, freeScenarios: ['НЕТ_ТАКОГО'] }, labels),
-    false,
+    showsTestAccess(
+      { isTestUser: true, freeScenarios: ['НЕТ_ТАКОГО'] },
+      labels
+    ),
+    false
   );
 });
 
@@ -70,9 +73,9 @@ check('плашка есть, когда открыт хотя бы один с�
   eq(
     showsTestAccess(
       { isTestUser: true, freeScenarios: ['CLIENT_SITE'] },
-      labels,
+      labels
     ),
-    true,
+    true
   );
 });
 
