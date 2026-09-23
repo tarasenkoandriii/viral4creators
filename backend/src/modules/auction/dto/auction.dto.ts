@@ -1,4 +1,14 @@
-import { Equals, IsBoolean, IsIn, IsNumber, IsOptional, IsString, Length, Max, Min } from 'class-validator';
+import {
+  Equals,
+  IsBoolean,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Length,
+  Max,
+  Min,
+} from 'class-validator';
 
 /**
  * Аудит-фикс: ТЕХНИЧЕСКИЙ потолок обработки платежа, НЕ бизнес-
@@ -31,7 +41,10 @@ export class CreateAuctionListingDto {
    * false тоже валидный boolean, но здесь недостаточен: подтверждение
    * обязано быть именно утвердительным, не просто присутствовать.
    */
-  @Equals(true, { message: 'rightsConfirmed must be explicitly true — confirm you have the right to sell this video exclusively' })
+  @Equals(true, {
+    message:
+      'rightsConfirmed must be explicitly true — confirm you have the right to sell this video exclusively',
+  })
   rightsConfirmed!: boolean;
 
   @IsOptional()

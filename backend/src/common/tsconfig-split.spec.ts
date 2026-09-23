@@ -34,9 +34,7 @@ const ROOT = path.join(__dirname, '../..');
 const read = (name: string): Record<string, unknown> =>
   JSON.parse(
     // Комментарии в tsconfig разрешены, JSON.parse их не понимает.
-    fs
-      .readFileSync(path.join(ROOT, name), 'utf8')
-      .replace(/^\s*\/\/.*$/gm, ''),
+    fs.readFileSync(path.join(ROOT, name), 'utf8').replace(/^\s*\/\/.*$/gm, ''),
   ) as Record<string, unknown>;
 
 const AMBIENT = 'test/types/prisma-client-ambient.d.ts';
@@ -48,9 +46,9 @@ describe('конфиги TypeScript: разделение обязанносте
     // быть настоящим.
     const exclude = read('tsconfig.json').exclude as string[] | undefined;
     expect(exclude).toBeDefined();
-    expect(
-      exclude!.some((e) => AMBIENT.startsWith(e.replace(/\/$/, ''))),
-    ).toBe(true);
+    expect(exclude!.some((e) => AMBIENT.startsWith(e.replace(/\/$/, '')))).toBe(
+      true,
+    );
   });
 
   it('tsconfig.build.json не собирает спеки', () => {

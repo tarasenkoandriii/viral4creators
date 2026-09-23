@@ -202,9 +202,9 @@ describe('snapshotFromSession — GREETING_VIDEO', () => {
     expect(snap.title).toBe('BIRTHDAY');
 
     // Единственный путь имени в заголовок — автор вписал его сам.
-    expect(snapshotFromSession(greetingSession, { title: 'Марине 30!' }).title).toBe(
-      'Марине 30!',
-    );
+    expect(
+      snapshotFromSession(greetingSession, { title: 'Марине 30!' }).title,
+    ).toBe('Марине 30!');
   });
 
   it('uses the custom occasion text when the occasion is OTHER', () => {
@@ -888,9 +888,9 @@ describe('SharedVideoService.setShowcase', () => {
   it('adds only a published page to the showcase', async () => {
     const { service, prisma } = build({ found: row({ status: 'PUBLISHED' }) });
     const view = await service.setShowcase('sv1', true);
-    expect(prisma.sharedVideoPage.update.mock.calls[0][0].data.showcasedAt).toBeInstanceOf(
-      Date,
-    );
+    expect(
+      prisma.sharedVideoPage.update.mock.calls[0][0].data.showcasedAt,
+    ).toBeInstanceOf(Date);
     expect(view.featured).toBe(true);
   });
 
@@ -908,7 +908,9 @@ describe('SharedVideoService.setShowcase', () => {
   it('allows removal from the showcase in any status', async () => {
     const { service, prisma } = build({ found: row({ status: 'REJECTED' }) });
     await service.setShowcase('sv1', false);
-    expect(prisma.sharedVideoPage.update.mock.calls[0][0].data.showcasedAt).toBeNull();
+    expect(
+      prisma.sharedVideoPage.update.mock.calls[0][0].data.showcasedAt,
+    ).toBeNull();
   });
 
   it('404 on an unknown page', async () => {

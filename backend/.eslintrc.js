@@ -44,5 +44,17 @@ module.exports = {
     '@typescript-eslint/explicit-function-return-type': 'off',
     '@typescript-eslint/explicit-module-boundary-types': 'off',
     '@typescript-eslint/no-explicit-any': 'warn',
+    /**
+     * Подчёркивание — принятый способ сказать «параметр обязателен
+     * сигнатурой, но здесь не нужен». Ровно такой случай —
+     * `VeoPassthroughService.synthesize(_request)`: параметр требует
+     * интерфейс `TtsProvider`, а эта реализация — заглушка, которая
+     * ничего не синтезирует. Убрать параметр нельзя, а без этой
+     * настройки правило ругалось на имя, которое для того и придумано.
+     */
+    '@typescript-eslint/no-unused-vars': [
+      'error',
+      { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+    ],
   },
 };

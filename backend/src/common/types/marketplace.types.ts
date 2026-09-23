@@ -70,7 +70,12 @@ export type PortfolioItemSourceType = 'SELF_UPLOAD' | 'CONTRACT';
 /** Водяной знак на публичном превью (ТЗ на маркетплейс §9/§22, защита от пиратства). */
 export type WatermarkModeValue = 'SITE_NAME' | 'CUSTOM' | 'NONE';
 export type WatermarkIntensityValue = 'SLIGHT' | 'STANDARD' | 'STRONG';
-export type WatermarkStatusValue = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'SKIPPED';
+export type WatermarkStatusValue =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'READY'
+  | 'FAILED'
+  | 'SKIPPED';
 
 export interface PortfolioItemView {
   id: string;
@@ -387,4 +392,3 @@ export interface AdminAuctionListResult {
   page: number;
   pageSize: number;
 }
-

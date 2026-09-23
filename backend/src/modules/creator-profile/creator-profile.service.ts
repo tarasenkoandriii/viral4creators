@@ -26,9 +26,15 @@ import {
   CreatorStatsView,
   SimilarCreatorView,
 } from '../../common/types/marketplace.types';
-import { CreatorQuizDto, UpdateCreatorProfileDto } from './dto/creator-profile.dto';
+import {
+  CreatorQuizDto,
+  UpdateCreatorProfileDto,
+} from './dto/creator-profile.dto';
 
-function displayNameOf(user: { firstName: string | null; username: string | null }): string | null {
+function displayNameOf(user: {
+  firstName: string | null;
+  username: string | null;
+}): string | null {
   return user.firstName ?? (user.username ? `@${user.username}` : null);
 }
 
@@ -37,11 +43,18 @@ export class CreatorProfileService {
   constructor(private readonly prisma: PrismaService) {}
 
   /** POST /creator-profiles/quiz — ТЗ §21.8: явное предложение, явное согласие. */
-  async createViaQuiz(userId: string, dto: CreatorQuizDto): Promise<CreatorProfileView> {
+  async createViaQuiz(
+    userId: string,
+    dto: CreatorQuizDto,
+  ): Promise<CreatorProfileView> {
     if (!dto.consent) {
-      throw new ForbiddenException('explicit consent is required to become a Creator');
+      throw new ForbiddenException(
+        'explicit consent is required to become a Creator',
+      );
     }
-    const existing = await this.prisma.creatorProfile.findUnique({ where: { userId } });
+    const existing = await this.prisma.creatorProfile.findUnique({
+      where: { userId },
+    });
     if (existing) {
       throw new ConflictException('this user already has a creator profile');
     }
@@ -60,7 +73,10 @@ export class CreatorProfileService {
             slug: dto.slug ?? null,
             consentGivenAt: new Date(),
             socialLinks: {
-              create: dto.socialLinks.map((l) => ({ platform: l.platform, url: l.url })),
+              create: dto.socialLinks.map((l) => ({
+                platform: l.platform,
+                url: l.url,
+              })),
             },
           },
           include: { socialLinks: true, user: true },
@@ -93,7 +109,8 @@ export class CreatorProfileService {
       where: { userId },
       include: { socialLinks: true, user: true },
     });
-    if (!profile) throw new NotFoundException('no creator profile for this user');
+    if (!profile)
+      throw new NotFoundException('no creator profile for this user');
     return this.toView(profile, profile.user);
   }
 
@@ -103,15 +120,23 @@ export class CreatorProfileService {
    * передан, полностью заменяет прежний список (проще для клиента, чем
    * частичный diff по id).
    */
-  async updateOwn(userId: string, dto: UpdateCreatorProfileDto): Promise<CreatorProfileView> {
-    const existing = await this.prisma.creatorProfile.findUnique({ where: { userId } });
-    if (!existing) throw new NotFoundException('no creator profile for this user');
+  async updateOwn(
+    userId: string,
+    dto: UpdateCreatorProfileDto,
+  ): Promise<CreatorProfileView> {
+    const existing = await this.prisma.creatorProfile.findUnique({
+      where: { userId },
+    });
+    if (!existing)
+      throw new NotFoundException('no creator profile for this user');
 
     let updated;
     try {
       updated = await this.prisma.$transaction(async (tx) => {
         if (dto.socialLinks) {
-          await tx.creatorSocialLink.deleteMany({ where: { creatorProfileId: existing.id } });
+          await tx.creatorSocialLink.deleteMany({
+            where: { creatorProfileId: existing.id },
+          });
         }
         return tx.creatorProfile.update({
           where: { id: existing.id },
@@ -126,7 +151,10 @@ export class CreatorProfileService {
             ...(dto.socialLinks
               ? {
                   socialLinks: {
-                    create: dto.socialLinks.map((l) => ({ platform: l.platform, url: l.url })),
+                    create: dto.socialLinks.map((l) => ({
+                      platform: l.platform,
+                      url: l.url,
+                    })),
                   },
                 }
               : {}),
@@ -170,7 +198,9 @@ export class CreatorProfileService {
 
   /** §20 №17 — «похожие креаторы» по пересечению ниш, топ-6. */
   async getSimilar(id: string): Promise<SimilarCreatorView[]> {
-    const profile = await this.prisma.creatorProfile.findUnique({ where: { id } });
+    const profile = await this.prisma.creatorProfile.findUnique({
+      where: { id },
+    });
     if (!profile || profile.niches.length === 0) return [];
     const rows = await this.prisma.creatorProfile.findMany({
       where: {
@@ -181,7 +211,11 @@ export class CreatorProfileService {
       include: { user: true },
       take: 6,
     });
-    return rows.map((p) => ({ id: p.id, displayName: displayNameOf(p.user), niches: p.niches }));
+    return rows.map((p) => ({
+      id: p.id,
+      displayName: displayNameOf(p.user),
+      niches: p.niches,
+    }));
   }
 
   /** §20 №14 — минимальная аналитика для самого исполнителя, не публичная. */
@@ -190,11 +224,18 @@ export class CreatorProfileService {
       where: { userId },
       include: { portfolioItems: true },
     });
-    if (!profile) throw new NotFoundException('no creator profile for this user');
+    if (!profile)
+      throw new NotFoundException('no creator profile for this user');
     return {
       profileViewCount: profile.viewCount,
-      totalPortfolioViews: profile.portfolioItems.reduce((sum, i) => sum + i.viewCount, 0),
-      totalLikes: profile.portfolioItems.reduce((sum, i) => sum + i.likeCount, 0),
+      totalPortfolioViews: profile.portfolioItems.reduce(
+        (sum, i) => sum + i.viewCount,
+        0,
+      ),
+      totalLikes: profile.portfolioItems.reduce(
+        (sum, i) => sum + i.likeCount,
+        0,
+      ),
       itemCount: profile.portfolioItems.length,
     };
   }
@@ -216,7 +257,12 @@ export class CreatorProfileService {
         isAcceptingOrders: true,
         ...(params.niche ? { niches: { has: params.niche } } : {}),
         ...(params.priceMax != null
-          ? { OR: [{ priceRangeMin: null }, { priceRangeMin: { lte: params.priceMax } }] }
+          ? {
+              OR: [
+                { priceRangeMin: null },
+                { priceRangeMin: { lte: params.priceMax } },
+              ],
+            }
           : {}),
       },
       include: {
@@ -271,11 +317,16 @@ export class CreatorProfileService {
     page: number;
     pageSize: number;
   }): Promise<AdminCreatorProfileListResult> {
-    const where = params.isFeatured != null ? { isFeatured: params.isFeatured } : {};
+    const where =
+      params.isFeatured != null ? { isFeatured: params.isFeatured } : {};
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.creatorProfile.findMany({
         where,
-        include: { socialLinks: true, user: true, _count: { select: { portfolioItems: true } } },
+        include: {
+          socialLinks: true,
+          user: true,
+          _count: { select: { portfolioItems: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip: (params.page - 1) * params.pageSize,
         take: params.pageSize,
@@ -283,14 +334,20 @@ export class CreatorProfileService {
       this.prisma.creatorProfile.count({ where }),
     ]);
     return {
-      items: rows.map((p) => ({ ...this.toView(p, p.user), portfolioItemCount: p._count.portfolioItems })),
+      items: rows.map((p) => ({
+        ...this.toView(p, p.user),
+        portfolioItemCount: p._count.portfolioItems,
+      })),
       total,
       page: params.page,
       pageSize: params.pageSize,
     };
   }
 
-  async adminSetFeatured(id: string, isFeatured: boolean): Promise<CreatorProfileView> {
+  async adminSetFeatured(
+    id: string,
+    isFeatured: boolean,
+  ): Promise<CreatorProfileView> {
     const updated = await this.prisma.creatorProfile.update({
       where: { id },
       data: { isFeatured },

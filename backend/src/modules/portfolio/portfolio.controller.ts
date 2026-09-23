@@ -90,7 +90,10 @@ export class PortfolioController {
 
   @Delete(':id')
   @HttpCode(204)
-  withdraw(@Req() req: IdentifiedRequest, @Param('id') id: string): Promise<void> {
+  withdraw(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+  ): Promise<void> {
     return this.service.withdraw(req.telegramUserId, id);
   }
 }
@@ -104,14 +107,19 @@ export class PublicPortfolioController {
     @Req() req: TelegramIdentifiedRequest,
     @Param('creatorProfileId') creatorProfileId: string,
   ): Promise<PortfolioItemView[]> {
-    return this.service.listPublicForCreator(creatorProfileId, req.telegramUserId ?? null);
+    return this.service.listPublicForCreator(
+      creatorProfileId,
+      req.telegramUserId ?? null,
+    );
   }
 
   // Статичные пути ДО ':id' ниже — иначе Nest матчит 'feed'/'collections' как значение :id.
 
   @Get('portfolio-items/feed')
   feed(@Query('limit') limit?: string): Promise<PortfolioFeedItemView[]> {
-    return this.service.getFeed(Math.min(Math.max(parseInt(limit ?? '30', 10) || 30, 1), 100));
+    return this.service.getFeed(
+      Math.min(Math.max(parseInt(limit ?? '30', 10) || 30, 1), 100),
+    );
   }
 
   @Get('portfolio-items/collections')
@@ -185,7 +193,10 @@ export class AdminPortfolioController {
     return this.service.adminList({
       status,
       page: Math.max(parseInt(page ?? '1', 10) || 1, 1),
-      pageSize: Math.min(Math.max(parseInt(pageSize ?? '20', 10) || 20, 1), 100),
+      pageSize: Math.min(
+        Math.max(parseInt(pageSize ?? '20', 10) || 20, 1),
+        100,
+      ),
     });
   }
 

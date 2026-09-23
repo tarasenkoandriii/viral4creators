@@ -45,7 +45,10 @@ export class VirtualStudioController {
   }
 
   @Post()
-  async create(@Req() req: AdminAuthenticatedRequest, @Body() dto: CreateVirtualStudioDto) {
+  async create(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: CreateVirtualStudioDto,
+  ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.studios.createStudio(dto.name, dto.refPrompt, req.userId);
   }
@@ -58,7 +61,10 @@ export class VirtualStudioController {
   }
 
   @Get(':id/variants')
-  async variants(@Req() req: AdminAuthenticatedRequest, @Param('id') id: string) {
+  async variants(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.studios.listVariants(id);
   }
@@ -98,7 +104,10 @@ export class VirtualStudioController {
   }
 
   @Get(':id/fragments')
-  async fragments(@Req() req: AdminAuthenticatedRequest, @Param('id') id: string) {
+  async fragments(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.studios.listFragments(id);
   }

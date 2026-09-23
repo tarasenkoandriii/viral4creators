@@ -64,12 +64,7 @@ function setup(
     recordGemini: jest.fn().mockResolvedValue(undefined),
   } as unknown as AiUsageService;
 
-  const service = new GreetingReferenceService(
-    sessions,
-    blob,
-    frames,
-    aiUsage,
-  );
+  const service = new GreetingReferenceService(sessions, blob, frames, aiUsage);
   return { service, sessions, blob, frames, aiUsage };
 }
 
@@ -83,9 +78,9 @@ describe('generateFrame (№6)', () => {
 
     expect(blob.uploadBuffer).toHaveBeenCalled();
     expect(list).toHaveLength(2);
-    expect((sessions.updateSession as jest.Mock).mock.calls[0][1]).toHaveProperty(
-      'greetingReferenceImages',
-    );
+    expect(
+      (sessions.updateSession as jest.Mock).mock.calls[0][1],
+    ).toHaveProperty('greetingReferenceImages');
   });
 
   it('просьба про образ знаменитости отклоняется ДО платного вызова (№35)', async () => {

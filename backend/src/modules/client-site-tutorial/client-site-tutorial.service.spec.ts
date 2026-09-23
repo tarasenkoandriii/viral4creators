@@ -1180,12 +1180,20 @@ describe('готовый ролик у владельца проекта (Б-4)'
   it('сборка ещё идёт — ссылки нет, а не пустая строка вместо неё', async () => {
     const { service } = setup({
       draft: makeDraftRow({ status: 'APPROVED' }),
-      videoAsset: { assemblyStatus: 'pending', blobUrl: null, durationMs: null },
+      videoAsset: {
+        assemblyStatus: 'pending',
+        blobUrl: null,
+        durationMs: null,
+      },
     });
 
     const view = await service.getState('user1', 'proj1');
 
-    expect(view?.video).toEqual({ status: 'pending', url: null, durationMs: null });
+    expect(view?.video).toEqual({
+      status: 'pending',
+      url: null,
+      durationMs: null,
+    });
   });
 
   it('провалившаяся сборка НЕ отдаёт ссылку, даже если в строке что-то лежит', async () => {
@@ -1203,7 +1211,11 @@ describe('готовый ролик у владельца проекта (Б-4)'
 
     const view = await service.getState('user1', 'proj1');
 
-    expect(view?.video).toEqual({ status: 'failed', url: null, durationMs: null });
+    expect(view?.video).toEqual({
+      status: 'failed',
+      url: null,
+      durationMs: null,
+    });
   });
 
   it('неизвестный assemblyStatus трактуется как «собирается», а не роняет экран состояния', async () => {
@@ -1212,7 +1224,11 @@ describe('готовый ролик у владельца проекта (Б-4)'
     // какого её значения.
     const { service } = setup({
       draft: makeDraftRow({ status: 'APPROVED' }),
-      videoAsset: { assemblyStatus: 'подождите', blobUrl: null, durationMs: null },
+      videoAsset: {
+        assemblyStatus: 'подождите',
+        blobUrl: null,
+        durationMs: null,
+      },
     });
 
     const view = await service.getState('user1', 'proj1');
@@ -1221,7 +1237,9 @@ describe('готовый ролик у владельца проекта (Б-4)'
   });
 
   it('у черновика в работе за роликом вообще не ходим — лишний запрос на каждом открытии экрана', async () => {
-    const { service, prisma } = setup({ draft: makeDraftRow({ status: 'DRAFTING' }) });
+    const { service, prisma } = setup({
+      draft: makeDraftRow({ status: 'DRAFTING' }),
+    });
 
     const view = await service.getState('user1', 'proj1');
 

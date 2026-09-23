@@ -161,7 +161,8 @@ export const GREETING_OCCASION_SPECS: Readonly<
   },
   NEW_BABY: {
     label: 'рождение ребёнка',
-    intent: 'Поздравь с рождением ребёнка, пожелай здоровья малышу и родителям.',
+    intent:
+      'Поздравь с рождением ребёнка, пожелай здоровья малышу и родителям.',
     sceneMood: 'soft, gentle setting in light pastel colours; tender mood',
     tones: EVERYDAY_TONES,
     festive: true,

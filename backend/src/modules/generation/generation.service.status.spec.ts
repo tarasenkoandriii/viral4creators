@@ -548,7 +548,7 @@ function latestGenerateVideosMock() {
 // финализация.
 describe('getVideoStatus — цепочка Scene Extension (§9 ТЗ)', () => {
   it('Veo: сегмент готов, цепочка не дописана — запускает следующий, статус остаётся PROCESSING', async () => {
-    const { svc, sessions, read, aiUsage } = build(
+    const { svc, read, aiUsage } = build(
       inFlight({ chainSegmentsDone: 1, chainSegmentsTotal: 3 }),
       {
         generationPrompt: { finalText: 'a cat walks', approvedAt: new Date() },

@@ -406,7 +406,10 @@ export class CronJobsService {
    * (withdraw/placeBid) в serverless может не долететь, и почему это
    * не симметрично для создания кампании (риск дублей).
    */
-  async runAuctionGoogleAdsSync(): Promise<{ paused: number; stillStuck: number }> {
+  async runAuctionGoogleAdsSync(): Promise<{
+    paused: number;
+    stillStuck: number;
+  }> {
     return this.auctionService.reconcileGoogleAdsCampaigns();
   }
 
@@ -419,7 +422,10 @@ export class CronJobsService {
    * Сам аукцион продолжается — сворачивается только эфир, не торги.
    * Тот же тик раз в 2 минуты, что у остальных тик-воркеров этого списка.
    */
-  async runLiveAuctionTick(): Promise<{ collapsed: number; reapedStalePendingCues: number }> {
+  async runLiveAuctionTick(): Promise<{
+    collapsed: number;
+    reapedStalePendingCues: number;
+  }> {
     return this.liveAuctionOrchestrator.collapseInactiveStreams();
   }
 
@@ -445,7 +451,10 @@ export class CronJobsService {
    * (§26). Тот же приём, что у остальных тик-воркеров этого файла.
    */
   async runPortfolioWatermark(): Promise<{ action: string }> {
-    const acquired = await tryAcquireJobLock(this.prisma, 'portfolio-watermark');
+    const acquired = await tryAcquireJobLock(
+      this.prisma,
+      'portfolio-watermark',
+    );
     if (!acquired) return { action: 'skipped-locked' };
     try {
       return await this.portfolioWatermark.runTick();

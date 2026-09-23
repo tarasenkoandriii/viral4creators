@@ -264,7 +264,9 @@ export class CronController {
    * не стоит, см. AuctionService.reconcileGoogleAdsCampaigns.
    */
   @Get('auction-google-ads-sync')
-  async auctionGoogleAdsSyncCron(@Headers('authorization') authHeader?: string) {
+  async auctionGoogleAdsSyncCron(
+    @Headers('authorization') authHeader?: string,
+  ) {
     assertCronSecret(authHeader);
     return this.jobs.runAndLog(
       'auction-google-ads-sync',

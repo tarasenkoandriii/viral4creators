@@ -53,7 +53,10 @@ export class GreetingBriefService {
     private readonly plans: PlanService,
   ) {}
 
-  async getBrief(userId: string, projectId: string): Promise<GreetingBriefView> {
+  async getBrief(
+    userId: string,
+    projectId: string,
+  ): Promise<GreetingBriefView> {
     const row = await this.findOwnBrief(userId, projectId);
     return toGreetingBriefView(row);
   }
@@ -118,7 +121,8 @@ export class GreetingBriefService {
     // конфигурации тоже активный выбор, не только его первичное задание.
     let presenterProvider: GreetingPresenterProvider =
       current.presenterProvider as GreetingPresenterProvider;
-    let resolution: GreetingResolution = current.resolution as GreetingResolution;
+    let resolution: GreetingResolution =
+      current.resolution as GreetingResolution;
     if (dto.presenterProvider !== undefined || dto.resolution !== undefined) {
       const plan = await this.plans.planOfUser(userId);
       const resolved = resolveGreetingConfig(plan, {
@@ -153,7 +157,9 @@ export class GreetingBriefService {
           : {}),
         ...(dto.occasionDate !== undefined
           ? {
-              occasionDate: dto.occasionDate ? new Date(dto.occasionDate) : null,
+              occasionDate: dto.occasionDate
+                ? new Date(dto.occasionDate)
+                : null,
             }
           : {}),
       },
@@ -169,11 +175,10 @@ export class GreetingBriefService {
     // ProjectService.findOwnItem) — `deletedAt: null` on the project so a
     // soft-deleted project's brief reads as 404 during the grace period,
     // like everything else under it.
-    const row: GreetingBriefRow | null = await this.prisma.greetingBrief.findFirst(
-      {
+    const row: GreetingBriefRow | null =
+      await this.prisma.greetingBrief.findFirst({
         where: { projectId, project: { userId, deletedAt: null } },
-      },
-    );
+      });
     if (!row) {
       throw new NotFoundException(
         `Greeting brief not found for project ${projectId}`,

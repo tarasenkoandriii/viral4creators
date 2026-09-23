@@ -15,10 +15,7 @@ import { createHash } from 'crypto';
 import { SessionService } from '../../common/session.service';
 import { BlobService } from '../storage/blob.service';
 import { OnScreenTextMoment } from '../../common/types/prompt.types';
-import {
-  renderTextCard,
-  TextCardRole,
-} from '../../common/text-card-render';
+import { renderTextCard, TextCardRole } from '../../common/text-card-render';
 
 /** §20.4 п.1 — порядок приоритета при нехватке слотов референсов:
  * персонажи (обрабатываются отдельно, в `reference-plan.ts`) важнее

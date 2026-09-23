@@ -99,7 +99,10 @@ const INTENSITY_PARAMS: Record<WatermarkIntensityValue, IntensityParams> = {
  * или NONE сюда не должны доходить вовсе — вызывающий обязан сам не
  * строить план в этих случаях (см. доккомментарий выше).
  */
-export function buildWatermarkPlan(text: string, intensity: WatermarkIntensityValue): WatermarkPlan {
+export function buildWatermarkPlan(
+  text: string,
+  intensity: WatermarkIntensityValue,
+): WatermarkPlan {
   const params = INTENSITY_PARAMS[intensity];
   const escaped = escapeDrawtext(text);
   const outputName = 'watermarked.mp4';

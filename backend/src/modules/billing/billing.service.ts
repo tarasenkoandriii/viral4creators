@@ -378,7 +378,10 @@ export class BillingService {
         // сумму сперва переводим в UAH-эквивалент (toUahMinorUnits), а
         // не передаём amountMinor как есть: estimateAmountMicroUsd
         // всегда трактует вход как копейки UAH.
-        amountMicroUsd: estimateAmountMicroUsd('WAYFORPAY', toUahMinorUnits(amountMajor, currency)),
+        amountMicroUsd: estimateAmountMicroUsd(
+          'WAYFORPAY',
+          toUahMinorUnits(amountMajor, currency),
+        ),
         providerRef,
       },
     });

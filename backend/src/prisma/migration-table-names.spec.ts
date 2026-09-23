@@ -32,9 +32,7 @@ function mappedTables(): Set<string> {
     path.join(PRISMA_DIR, 'schema.prisma'),
     'utf8',
   );
-  return new Set(
-    [...schema.matchAll(/@@map\("([^"]+)"\)/g)].map((m) => m[1]),
-  );
+  return new Set([...schema.matchAll(/@@map\("([^"]+)"\)/g)].map((m) => m[1]));
 }
 
 interface Reference {
@@ -75,8 +73,6 @@ describe('миграции называют таблицы так же, как �
   it('ни одна миграция не обращается к имени МОДЕЛИ вместо таблицы', () => {
     const unknown = refs.filter((r) => !tables.has(r.table));
     // Сообщение называет и файл, и имя: чинить придётся именно там.
-    expect(
-      unknown.map((r) => `${r.migration}: "${r.table}"`),
-    ).toEqual([]);
+    expect(unknown.map((r) => `${r.migration}: "${r.table}"`)).toEqual([]);
   });
 });

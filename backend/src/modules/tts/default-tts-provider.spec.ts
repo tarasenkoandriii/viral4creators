@@ -28,12 +28,12 @@ describe('resolveDefaultProviderKey', () => {
   });
 
   it('без записи в админке — откат на TTS_PROVIDER из окружения', () => {
-    expect(
-      resolveDefaultProviderKey(null, { TTS_PROVIDER: 'resemble' }),
-    ).toBe('resemble');
-    expect(
-      resolveDefaultProviderKey(undefined, { TTS_PROVIDER: 'VEO' }),
-    ).toBe('veo'); // регистр не важен — так же, как у старой фабрики tts.module.ts
+    expect(resolveDefaultProviderKey(null, { TTS_PROVIDER: 'resemble' })).toBe(
+      'resemble',
+    );
+    expect(resolveDefaultProviderKey(undefined, { TTS_PROVIDER: 'VEO' })).toBe(
+      'veo',
+    ); // регистр не важен — так же, как у старой фабрики tts.module.ts
   });
 
   it('ни админка, ни окружение — умолчание elevenlabs (не регресс этапа 70)', () => {

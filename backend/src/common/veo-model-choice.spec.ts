@@ -9,22 +9,38 @@ import { pickVeoModel, usesVeo30 } from './veo-model-choice';
 describe('pickVeoModel — отключено после сбоя в проде (см. доккомментарий файла)', () => {
   it('нет персонажей + standard — раньше переключало на Veo 3.0, сейчас фолбэк', () => {
     expect(
-      pickVeoModel({ legacyFirstFrame: true }, 'standard', 'veo-3.1-generate-preview'),
+      pickVeoModel(
+        { legacyFirstFrame: true },
+        'standard',
+        'veo-3.1-generate-preview',
+      ),
     ).toBe('veo-3.1-generate-preview');
   });
 
   it('есть персонажи + standard — фолбэк, как и было', () => {
     expect(
-      pickVeoModel({ legacyFirstFrame: false }, 'standard', 'veo-3.1-generate-preview'),
+      pickVeoModel(
+        { legacyFirstFrame: false },
+        'standard',
+        'veo-3.1-generate-preview',
+      ),
     ).toBe('veo-3.1-generate-preview');
   });
 
   it('fast — всегда фолбэк, независимо от персонажей', () => {
     expect(
-      pickVeoModel({ legacyFirstFrame: true }, 'fast', 'veo-3.1-lite-generate-preview'),
+      pickVeoModel(
+        { legacyFirstFrame: true },
+        'fast',
+        'veo-3.1-lite-generate-preview',
+      ),
     ).toBe('veo-3.1-lite-generate-preview');
     expect(
-      pickVeoModel({ legacyFirstFrame: false }, 'fast', 'veo-3.1-lite-generate-preview'),
+      pickVeoModel(
+        { legacyFirstFrame: false },
+        'fast',
+        'veo-3.1-lite-generate-preview',
+      ),
     ).toBe('veo-3.1-lite-generate-preview');
   });
 });

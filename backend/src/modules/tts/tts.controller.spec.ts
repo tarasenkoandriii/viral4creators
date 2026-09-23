@@ -306,9 +306,7 @@ describe('TtsController (ТЗ §15.3)', () => {
         useOriginalDialogue: true,
         sessionId: 's1',
       });
-      expect(analysis.extractOriginalDialogueSample).toHaveBeenCalledWith(
-        's1',
-      );
+      expect(analysis.extractOriginalDialogueSample).toHaveBeenCalledWith('s1');
       expect(tts.synthesize).toHaveBeenCalledWith(
         expect.objectContaining({ text: 'Купи уже наконец!' }),
       );

@@ -315,7 +315,13 @@ export class GoogleAdsService {
     const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
     const refreshToken = process.env.GOOGLE_ADS_REFRESH_TOKEN;
     const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID;
-    if (!developerToken || !clientId || !clientSecret || !refreshToken || !customerId) {
+    if (
+      !developerToken ||
+      !clientId ||
+      !clientSecret ||
+      !refreshToken ||
+      !customerId
+    ) {
       return null;
     }
     return {
@@ -351,8 +357,14 @@ export class GoogleAdsService {
     if (!res.ok) {
       throw new Error(`Google OAuth refresh не удался: ${res.status} ${text}`);
     }
-    const data = JSON.parse(text) as { access_token: string; expires_in: number };
-    this.cachedToken = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+    const data = JSON.parse(text) as {
+      access_token: string;
+      expires_in: number;
+    };
+    this.cachedToken = {
+      value: data.access_token,
+      expiresAt: Date.now() + data.expires_in * 1000,
+    };
     return data.access_token;
   }
 
@@ -369,10 +381,16 @@ export class GoogleAdsService {
       'developer-token': cfg.developerToken,
     };
     if (cfg.loginCustomerId) headers['login-customer-id'] = cfg.loginCustomerId;
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ operations }) });
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ operations }),
+    });
     const text = await res.text();
     if (!res.ok) {
-      throw new Error(`Google Ads ${resource}:mutate не удался: ${res.status} ${text}`);
+      throw new Error(
+        `Google Ads ${resource}:mutate не удался: ${res.status} ${text}`,
+      );
     }
     return JSON.parse(text);
   }
@@ -484,7 +502,9 @@ export class GoogleAdsService {
       {
         create: {
           name: `v4c-blitz-${input.listingId}-budget`,
-          amountMicros: String(Math.max(1, Math.round(input.dailyBudgetMicros))),
+          amountMicros: String(
+            Math.max(1, Math.round(input.dailyBudgetMicros)),
+          ),
           deliveryMethod: 'STANDARD',
         },
       },
@@ -545,7 +565,9 @@ export class GoogleAdsService {
       ]);
       assetGroupResourceName = assetGroupRes.results[0].resourceName;
     } catch (e) {
-      this.logger.warn(`Кампания ${campaignResourceName} создана, но asset group — нет: ${(e as Error).message}`);
+      this.logger.warn(
+        `Кампания ${campaignResourceName} создана, но asset group — нет: ${(e as Error).message}`,
+      );
     }
 
     if (assetGroupResourceName) {
@@ -604,7 +626,9 @@ export class GoogleAdsService {
           })),
         );
       } catch (e) {
-        this.logger.warn(`Текстовые ассеты для ${campaignResourceName} не удалось привязать: ${(e as Error).message}`);
+        this.logger.warn(
+          `Текстовые ассеты для ${campaignResourceName} не удалось привязать: ${(e as Error).message}`,
+        );
       }
 
       // 5. Изображение превью — единственное, что у нас есть на лот.
@@ -622,37 +646,63 @@ export class GoogleAdsService {
       //    Теперь у каждого field type — свой независимый вызов.
       if (input.thumbnailUrl) {
         const imageBase64 =
-          (await this.fetchImageBuffer(input.thumbnailUrl))?.toString('base64') ??
-          null;
+          (await this.fetchImageBuffer(input.thumbnailUrl))?.toString(
+            'base64',
+          ) ?? null;
         if (imageBase64) {
           let imageAssetName: string | null = null;
           try {
             const imageAssetRes = await this.mutate(cfg, token, 'assets', [
-              { create: { name: `v4c-blitz-${input.listingId}-thumb`, imageAsset: { data: imageBase64 } } },
+              {
+                create: {
+                  name: `v4c-blitz-${input.listingId}-thumb`,
+                  imageAsset: { data: imageBase64 },
+                },
+              },
             ]);
             imageAssetName = imageAssetRes.results[0].resourceName;
           } catch (e) {
-            this.logger.warn(`Загрузка превью лота ${input.listingId} в Google Ads не удалась: ${(e as Error).message}`);
+            this.logger.warn(
+              `Загрузка превью лота ${input.listingId} в Google Ads не удалась: ${(e as Error).message}`,
+            );
           }
           if (imageAssetName) {
             const asset = imageAssetName;
             try {
               await this.mutate(cfg, token, 'assetGroupAssets', [
-                { create: { assetGroup: agResourceName, asset, fieldType: 'MARKETING_IMAGE' } },
+                {
+                  create: {
+                    assetGroup: agResourceName,
+                    asset,
+                    fieldType: 'MARKETING_IMAGE',
+                  },
+                },
               ]);
             } catch (e) {
-              this.logger.warn(`MARKETING_IMAGE для ${campaignResourceName} не привязалась: ${(e as Error).message}`);
+              this.logger.warn(
+                `MARKETING_IMAGE для ${campaignResourceName} не привязалась: ${(e as Error).message}`,
+              );
             }
             try {
               await this.mutate(cfg, token, 'assetGroupAssets', [
-                { create: { assetGroup: agResourceName, asset, fieldType: 'SQUARE_MARKETING_IMAGE' } },
+                {
+                  create: {
+                    assetGroup: agResourceName,
+                    asset,
+                    fieldType: 'SQUARE_MARKETING_IMAGE',
+                  },
+                },
               ]);
             } catch (e) {
-              this.logger.warn(`SQUARE_MARKETING_IMAGE для ${campaignResourceName} не привязалась (ожидаемо — см. доккомментарий класса, п.2): ${(e as Error).message}`);
+              this.logger.warn(
+                `SQUARE_MARKETING_IMAGE для ${campaignResourceName} не привязалась (ожидаемо — см. доккомментарий класса, п.2): ${(e as Error).message}`,
+              );
             }
           }
         } else {
-          this.logger.warn(`Не удалось скачать превью лота ${input.listingId} для Google Ads — кампания без изображений.`);
+          this.logger.warn(
+            `Не удалось скачать превью лота ${input.listingId} для Google Ads — кампания без изображений.`,
+          );
         }
       }
 
@@ -688,7 +738,10 @@ export class GoogleAdsService {
     //    не тратятся на заведомо неполную настройку.
     try {
       await this.mutate(cfg, token, 'campaigns', [
-        { update: { resourceName: campaignResourceName, status: 'ENABLED' }, updateMask: 'status' },
+        {
+          update: { resourceName: campaignResourceName, status: 'ENABLED' },
+          updateMask: 'status',
+        },
       ]);
     } catch (e) {
       this.logger.warn(
@@ -710,7 +763,10 @@ export class GoogleAdsService {
     if (!cfg) return;
     const token = await this.accessToken(cfg);
     await this.mutate(cfg, token, 'campaigns', [
-      { update: { resourceName: campaignResourceName, status: 'PAUSED' }, updateMask: 'status' },
+      {
+        update: { resourceName: campaignResourceName, status: 'PAUSED' },
+        updateMask: 'status',
+      },
     ]);
   }
 }

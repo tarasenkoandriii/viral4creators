@@ -30,9 +30,7 @@ import type { IdentifiedRequest } from '../telegram-auth/telegram-identity.guard
 function buildService() {
   return {
     listFeed: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
-    listShowcase: jest
-      .fn()
-      .mockResolvedValue({ items: [], nextCursor: null }),
+    listShowcase: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
     getPublic: jest.fn(),
     fork: jest.fn(),
     recordShare: jest.fn().mockResolvedValue(undefined),

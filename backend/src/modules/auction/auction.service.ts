@@ -98,6 +98,11 @@ const STANDARD_DURATION_MS = 5 * 24 * 60 * 60 * 1000;
  */
 const ANTI_SNIPE_EXTENSION_MS = 2 * 60 * 1000;
 
+// Строка лота с подтянутыми ставками. `Record<string, unknown>` здесь
+// не подходит: поля лота читаются напрямую (`payoutCurrency`,
+// `startingPrice`), и с `unknown` каждое обращение требовало бы
+// приведения на месте — шума больше, чем пользы.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- см. выше
 type ListingWithBids = { bids: { amount: number }[] } & Record<string, any>;
 
 @Injectable()
@@ -115,24 +120,35 @@ export class AuctionService {
   ) {}
 
   private async ownCreatorProfileOrThrow(userId: string) {
-    const profile = await this.prisma.creatorProfile.findUnique({ where: { userId } });
+    const profile = await this.prisma.creatorProfile.findUnique({
+      where: { userId },
+    });
     if (!profile) {
-      throw new ForbiddenException('complete the creator quiz first (POST /creator-profiles/quiz)');
+      throw new ForbiddenException(
+        'complete the creator quiz first (POST /creator-profiles/quiz)',
+      );
     }
     return profile;
   }
 
   // ── Исполнитель: подача заявки, свои заявки, отзыв (§22.1) ──────────
 
-  async create(userId: string, dto: CreateAuctionListingDto): Promise<AuctionListingView> {
+  async create(
+    userId: string,
+    dto: CreateAuctionListingDto,
+  ): Promise<AuctionListingView> {
     const profile = await this.ownCreatorProfileOrThrow(userId);
 
-    const item = await this.prisma.portfolioItem.findUnique({ where: { id: dto.portfolioItemId } });
+    const item = await this.prisma.portfolioItem.findUnique({
+      where: { id: dto.portfolioItemId },
+    });
     if (!item || item.creatorProfileId !== profile.id) {
       throw new NotFoundException('portfolio item not found');
     }
     if (item.status !== 'PUBLISHED') {
-      throw new ConflictException('only a published portfolio item can be auctioned');
+      throw new ConflictException(
+        'only a published portfolio item can be auctioned',
+      );
     }
     // Аудит-фикс: раньше здесь не проверялось, что у этой же работы уже
     // нет незавершённой заявки на другой аукцион — фронтенд просто не
@@ -140,28 +156,41 @@ export class AuctionService {
     // прямым запросом это ограничение ничем не было защищено. Один и
     // тот же эксклюзивный товар не может продаваться дважды одновременно.
     const existingLiveListing = await this.prisma.auctionListing.findFirst({
-      where: { portfolioItemId: item.id, status: { in: [...LIVE_LISTING_STATUSES] } },
+      where: {
+        portfolioItemId: item.id,
+        status: { in: [...LIVE_LISTING_STATUSES] },
+      },
     });
     if (existingLiveListing) {
-      throw new ConflictException('this work already has an active or pending auction listing');
+      throw new ConflictException(
+        'this work already has an active or pending auction listing',
+      );
     }
 
     if (dto.includeBrandManifest) {
       if (!dto.brandManifestId) {
-        throw new BadRequestException('brandManifestId is required when includeBrandManifest is true');
+        throw new BadRequestException(
+          'brandManifestId is required when includeBrandManifest is true',
+        );
       }
-      const manifest = await this.prisma.brandManifest.findUnique({ where: { id: dto.brandManifestId } });
+      const manifest = await this.prisma.brandManifest.findUnique({
+        where: { id: dto.brandManifestId },
+      });
       if (!manifest || manifest.userId !== userId) {
         throw new NotFoundException('brand manifest not found');
       }
       if (manifest.isLocked) {
-        throw new ConflictException('this brand manifest was already sold exclusively and can no longer be listed');
+        throw new ConflictException(
+          'this brand manifest was already sold exclusively and can no longer be listed',
+        );
       }
     }
 
     const reserve = dto.reservePrice ?? dto.startingPrice;
     if (dto.buyNowPrice != null && dto.buyNowPrice < reserve) {
-      throw new BadRequestException('buyNowPrice must be >= reservePrice (or startingPrice if no reserve is set)');
+      throw new BadRequestException(
+        'buyNowPrice must be >= reservePrice (or startingPrice if no reserve is set)',
+      );
     }
 
     const listing = await this.prisma.auctionListing.create({
@@ -187,8 +216,10 @@ export class AuctionService {
         // — конвертация в минорные (копейки/центы) только на этой
         // границе записи в БД, см. common/money.ts.
         startingPrice: toMinorUnits(dto.startingPrice),
-        reservePrice: dto.reservePrice != null ? toMinorUnits(dto.reservePrice) : null,
-        buyNowPrice: dto.buyNowPrice != null ? toMinorUnits(dto.buyNowPrice) : null,
+        reservePrice:
+          dto.reservePrice != null ? toMinorUnits(dto.reservePrice) : null,
+        buyNowPrice:
+          dto.buyNowPrice != null ? toMinorUnits(dto.buyNowPrice) : null,
       },
     });
     return this.toOwnView(listing, []);
@@ -206,14 +237,23 @@ export class AuctionService {
 
   async withdraw(userId: string, id: string): Promise<AuctionListingView> {
     const profile = await this.ownCreatorProfileOrThrow(userId);
-    const listing = await this.prisma.auctionListing.findUnique({ where: { id }, include: { bids: true } });
+    const listing = await this.prisma.auctionListing.findUnique({
+      where: { id },
+      include: { bids: true },
+    });
     if (!listing || listing.creatorProfileId !== profile.id) {
       throw new NotFoundException('listing not found');
     }
     if (listing.status === 'WON') {
-      throw new ConflictException('cannot withdraw a listing that has already been won');
+      throw new ConflictException(
+        'cannot withdraw a listing that has already been won',
+      );
     }
-    if (!LIVE_LISTING_STATUSES.includes(listing.status as (typeof LIVE_LISTING_STATUSES)[number])) {
+    if (
+      !LIVE_LISTING_STATUSES.includes(
+        listing.status as (typeof LIVE_LISTING_STATUSES)[number],
+      )
+    ) {
       return this.toOwnView(listing, listing.bids); // идемпотентно — уже в терминальном статусе (WITHDRAWN/EXPIRED/REJECTED)
     }
     const wasActive = listing.status === 'ACTIVE';
@@ -230,7 +270,9 @@ export class AuctionService {
     // через оператора/спор, а не самообслуживанием исполнителя.
     if (wasActive) {
       const reserve = listing.reservePrice ?? listing.startingPrice;
-      const hasReserveMeetingBid = listing.bids.some((b) => b.amount >= reserve);
+      const hasReserveMeetingBid = listing.bids.some(
+        (b) => b.amount >= reserve,
+      );
       if (hasReserveMeetingBid) {
         throw new ConflictException(
           'cannot withdraw — at least one bid already meets the reserve price; this listing would sell at close, contact an operator to cancel a completed sale',
@@ -256,19 +298,30 @@ export class AuctionService {
       // ставок, удовлетворяющих резерву, среди этих bids нет (иначе
       // выбросили бы ConflictException раньше), так что уведомление верно
       // для всех: их ставка не выигрывала бы в любом случае.
-      void this.notifyBiddersOfWithdrawal(id, listing.bids.map((b) => b.buyerId));
+      void this.notifyBiddersOfWithdrawal(
+        id,
+        listing.bids.map((b) => b.buyerId),
+      );
       await this.promoteNextQueued();
     }
     return this.toOwnView(updated, listing.bids);
   }
 
   /** Best-effort, тот же принцип, что notifyWinner()/sendSoldNotification. */
-  private async notifyBiddersOfWithdrawal(listingId: string, buyerIds: string[]): Promise<void> {
+  private async notifyBiddersOfWithdrawal(
+    listingId: string,
+    buyerIds: string[],
+  ): Promise<void> {
     if (buyerIds.length === 0) return;
     try {
       const [listing, buyers] = await Promise.all([
-        this.prisma.auctionListing.findUnique({ where: { id: listingId }, include: { portfolioItem: true } }),
-        this.prisma.user.findMany({ where: { id: { in: [...new Set(buyerIds)] } } }),
+        this.prisma.auctionListing.findUnique({
+          where: { id: listingId },
+          include: { portfolioItem: true },
+        }),
+        this.prisma.user.findMany({
+          where: { id: { in: [...new Set(buyerIds)] } },
+        }),
       ]);
       if (!listing) return;
       await Promise.all(
@@ -280,7 +333,9 @@ export class AuctionService {
         ),
       );
     } catch (e) {
-      this.logger.warn(`Не удалось уведомить участников торгов о снятии лота ${listingId}: ${(e as Error).message}`);
+      this.logger.warn(
+        `Не удалось уведомить участников торгов о снятии лота ${listingId}: ${(e as Error).message}`,
+      );
     }
   }
 
@@ -319,7 +374,11 @@ export class AuctionService {
 
   // ── Ставки — настоящие торги, не выбор заказчиком (§22.1) ───────────
 
-  async placeBid(userId: string, listingId: string, dto: PlaceBidDto): Promise<BidView> {
+  async placeBid(
+    userId: string,
+    listingId: string,
+    dto: PlaceBidDto,
+  ): Promise<BidView> {
     // Аудит-фикс (race condition, было HIGH): раньше это был обычный
     // read-then-write БЕЗ транзакции и без блокировки строки — два
     // одновременных запроса читали один и тот же currentHighest, ОБА
@@ -364,10 +423,15 @@ export class AuctionService {
       // Проверяется только то, что ставка реально перебивает текущую
       // лучшую. listing.startingPrice/bids[].amount — уже в минорных
       // единицах (из БД), сравниваем с amountMinor того же порядка.
-      const currentHighest = listing.bids.reduce((max, b) => Math.max(max, b.amount), 0);
+      const currentHighest = listing.bids.reduce(
+        (max, b) => Math.max(max, b.amount),
+        0,
+      );
       const floor = Math.max(listing.startingPrice, currentHighest);
       if (amountMinor <= floor) {
-        throw new BadRequestException(`bid must be higher than the current highest bid (${toMajorUnits(floor)})`);
+        throw new BadRequestException(
+          `bid must be higher than the current highest bid (${toMajorUnits(floor)})`,
+        );
       }
 
       const bid = await tx.bid.create({
@@ -385,7 +449,8 @@ export class AuctionService {
       // (см. выше) — иначе два одновременных поздних бида могли бы
       // разойтись в том, что каждый читает как «текущий expiresAt» для
       // формулы max(), и один из них применить лишний/недостающий раз.
-      const buyNowWin = listing.buyNowPrice != null && bid.amount >= listing.buyNowPrice;
+      const buyNowWin =
+        listing.buyNowPrice != null && bid.amount >= listing.buyNowPrice;
       if (!buyNowWin && listing.antiSnipeEnabled && listing.expiresAt) {
         const minExpiresAt = new Date(Date.now() + ANTI_SNIPE_EXTENSION_MS);
         if (minExpiresAt.getTime() > listing.expiresAt.getTime()) {
@@ -403,20 +468,34 @@ export class AuctionService {
     // выше намеренно: closeListing делает СВОЮ отдельную транзакцию и
     // best-effort побочные эффекты (уведомления, Google Ads) — к этому
     // моменту ставка уже гарантированно закоммичена.
-    const buyNowWin = listing.buyNowPrice != null && bid.amount >= listing.buyNowPrice;
+    const buyNowWin =
+      listing.buyNowPrice != null && bid.amount >= listing.buyNowPrice;
     if (buyNowWin) {
-      await this.closeListing(listing.id, bid.id, bid.amount, listing.googleAdsCampaignId);
+      await this.closeListing(
+        listing.id,
+        bid.id,
+        bid.amount,
+        listing.googleAdsCampaignId,
+      );
     } else if (listing.virtualStudioId) {
       // Живой аукцион (ТЗ §7.3, ПРАВКА 1.1) — best-effort, только если у
       // лота назначена студия эфира; торги без студии этот вызов не
       // трогает вовсе. Мгновенная buyNow-победа выше уже останавливает
       // эфир сама (см. closeListing) — новая BID_STATS-подсказка для
       // уже закрытого лота не нужна.
-      void this.liveAuction.onBidPlaced(listing.id, { id: bid.id, amount: bid.amount });
+      void this.liveAuction.onBidPlaced(listing.id, {
+        id: bid.id,
+        amount: bid.amount,
+      });
     }
 
     // bid.amount из БД — минорные единицы, наружу в API-контракте BidView — мажорные.
-    return { id: bid.id, listingId: bid.listingId, amount: toMajorUnits(bid.amount), createdAt: bid.createdAt.toISOString() };
+    return {
+      id: bid.id,
+      listingId: bid.listingId,
+      amount: toMajorUnits(bid.amount),
+      createdAt: bid.createdAt.toISOString(),
+    };
   }
 
   // ── Закрытие по дедлайну — вызывается cron'ом (§22, «Публикация по свободному месту») ──
@@ -432,7 +511,12 @@ export class AuctionService {
         .filter((b) => b.amount >= reserve)
         .sort((a, b) => b.amount - a.amount)[0];
       if (winningBid) {
-        await this.closeListing(listing.id, winningBid.id, winningBid.amount, listing.googleAdsCampaignId);
+        await this.closeListing(
+          listing.id,
+          winningBid.id,
+          winningBid.amount,
+          listing.googleAdsCampaignId,
+        );
       } else {
         // Ставки были или не было — не различаем здесь: обе ветки не
         // приводят к продаже, обе EXPIRED (§22.5, AuctionListingStatus).
@@ -445,15 +529,23 @@ export class AuctionService {
             // Живой аукцион (§7.5) — эфир останавливается вместе с
             // истечением торгов; liveStreamEndedAt не трогается, если
             // эфира не было (см. тот же приём в closeListing выше).
-            ...(listing.liveStreamActive ? { liveStreamActive: false, liveStreamEndedAt: new Date() } : {}),
+            ...(listing.liveStreamActive
+              ? { liveStreamActive: false, liveStreamEndedAt: new Date() }
+              : {}),
           },
         });
-        void this.pauseGoogleAdsCampaignIfAny(listing.id, listing.googleAdsCampaignId);
+        void this.pauseGoogleAdsCampaignIfAny(
+          listing.id,
+          listing.googleAdsCampaignId,
+        );
         // Этап 6 (§7.8) — торги истекли без продажи; если эфир шёл, его
         // остановка (см. data выше) должна долететь до Google как
         // isLiveBroadcast:false, не только до нашей же БД.
         if (listing.liveStreamActive) {
-          void this.googleIndexing.notify(this.listingUrl(listing.id), 'URL_UPDATED');
+          void this.googleIndexing.notify(
+            this.listingUrl(listing.id),
+            'URL_UPDATED',
+          );
         }
         await this.promoteNextQueued();
       }
@@ -497,7 +589,10 @@ export class AuctionService {
     // остановил (`count > 0`, лот действительно был в эфире), не на
     // каждую продажу лота без студии/эфира.
     if (liveStreamStopped.count > 0) {
-      void this.googleIndexing.notify(this.listingUrl(listingId), 'URL_UPDATED');
+      void this.googleIndexing.notify(
+        this.listingUrl(listingId),
+        'URL_UPDATED',
+      );
     }
     await this.promoteNextQueued();
     // Реальный пробел, закрытый этим фиксом: победитель ОБЫЧНЫХ торгов
@@ -525,14 +620,24 @@ export class AuctionService {
   }
 
   /** Best-effort — заблокированный бот/сетевой сбой не должны ронять закрытие лота. */
-  private async notifyWinner(listingId: string, winningBidId: string): Promise<void> {
+  private async notifyWinner(
+    listingId: string,
+    winningBidId: string,
+  ): Promise<void> {
     try {
       const [bid, listing] = await Promise.all([
-        this.prisma.bid.findUnique({ where: { id: winningBidId }, include: { buyer: true } }),
-        this.prisma.auctionListing.findUnique({ where: { id: listingId }, include: { portfolioItem: true } }),
+        this.prisma.bid.findUnique({
+          where: { id: winningBidId },
+          include: { buyer: true },
+        }),
+        this.prisma.auctionListing.findUnique({
+          where: { id: listingId },
+          include: { portfolioItem: true },
+        }),
       ]);
       if (!bid || !listing) return;
-      const siteUrl = process.env.MARKETPLACE_SITE_URL ?? 'http://localhost:3004';
+      const siteUrl =
+        process.env.MARKETPLACE_SITE_URL ?? 'http://localhost:3004';
       // Без префикса локали намеренно — middleware маркетплейса сам
       // редиректит на дефолтную (ru) без cookie явного выбора, тот же
       // принцип, что и у любой другой голой ссылки на этот сайт.
@@ -581,7 +686,9 @@ export class AuctionService {
     const promoted = await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'auction-promote-queue'}))`;
 
-      const activeCount = await tx.auctionListing.count({ where: { status: 'ACTIVE' } });
+      const activeCount = await tx.auctionListing.count({
+        where: { status: 'ACTIVE' },
+      });
       const activeExclusiveCount = await tx.auctionListing.count({
         where: { status: 'ACTIVE', includeBrandManifest: true },
       });
@@ -592,23 +699,39 @@ export class AuctionService {
         orderBy: { createdAt: 'asc' },
       });
       candidates.sort((a, b) => {
-        if (a.auctionType !== b.auctionType) return a.auctionType === 'BLITZ' ? -1 : 1;
+        if (a.auctionType !== b.auctionType)
+          return a.auctionType === 'BLITZ' ? -1 : 1;
         return a.createdAt.getTime() - b.createdAt.getTime();
       });
 
       let freeSlots = MAX_ACTIVE_LISTINGS - activeCount;
-      let freeExclusiveSlots = MAX_ACTIVE_EXCLUSIVE_LISTINGS - activeExclusiveCount;
-      const justPromoted: { id: string; auctionType: string; virtualStudioId: string | null }[] = [];
+      let freeExclusiveSlots =
+        MAX_ACTIVE_EXCLUSIVE_LISTINGS - activeExclusiveCount;
+      const justPromoted: {
+        id: string;
+        auctionType: string;
+        virtualStudioId: string | null;
+      }[] = [];
 
       for (const candidate of candidates) {
         if (freeSlots <= 0) break;
         if (candidate.includeBrandManifest && freeExclusiveSlots <= 0) continue;
-        const durationMs = candidate.auctionType === 'BLITZ' ? BLITZ_DURATION_MS : STANDARD_DURATION_MS;
+        const durationMs =
+          candidate.auctionType === 'BLITZ'
+            ? BLITZ_DURATION_MS
+            : STANDARD_DURATION_MS;
         await tx.auctionListing.update({
           where: { id: candidate.id },
-          data: { status: 'ACTIVE', expiresAt: new Date(Date.now() + durationMs) },
+          data: {
+            status: 'ACTIVE',
+            expiresAt: new Date(Date.now() + durationMs),
+          },
         });
-        justPromoted.push({ id: candidate.id, auctionType: candidate.auctionType, virtualStudioId: candidate.virtualStudioId });
+        justPromoted.push({
+          id: candidate.id,
+          auctionType: candidate.auctionType,
+          virtualStudioId: candidate.virtualStudioId,
+        });
         freeSlots -= 1;
         if (candidate.includeBrandManifest) freeExclusiveSlots -= 1;
       }
@@ -623,7 +746,10 @@ export class AuctionService {
     // коммита правильно в любом случае). best-effort, см. доккомментарий
     // activateGoogleAdsCampaignIfBlitz().
     for (const candidate of promoted) {
-      void this.activateGoogleAdsCampaignIfBlitz(candidate.id, candidate.auctionType);
+      void this.activateGoogleAdsCampaignIfBlitz(
+        candidate.id,
+        candidate.auctionType,
+      );
     }
 
     // Живой аукцион (ТЗ §7.4, п.1) — тот же приём, что у Google Ads
@@ -650,7 +776,10 @@ export class AuctionService {
    * выше. См. подробный разбор реальных ограничений (минимум креативов,
    * conversion goals) в доккомментарии GoogleAdsService.
    */
-  private async activateGoogleAdsCampaignIfBlitz(listingId: string, auctionType: string): Promise<void> {
+  private async activateGoogleAdsCampaignIfBlitz(
+    listingId: string,
+    auctionType: string,
+  ): Promise<void> {
     if (auctionType !== 'BLITZ') return;
     try {
       const listing = await this.prisma.auctionListing.findUnique({
@@ -658,18 +787,25 @@ export class AuctionService {
         include: { portfolioItem: true },
       });
       if (!listing) return;
-      const siteUrl = process.env.MARKETPLACE_SITE_URL ?? 'http://localhost:3004';
+      const siteUrl =
+        process.env.MARKETPLACE_SITE_URL ?? 'http://localhost:3004';
       // Аудит-фикс: Number(env-строка) на невалидном/пустом значении даёт
       // NaN, а не ошибку — раньше это тихо превращалось в amountMicros:
       // "NaN", уходящее прямо в тело запроса к Google Ads. Теперь
       // невалидное значение явно откатывается на дефолт с предупреждением.
-      const rawBudget = Number(process.env.GOOGLE_ADS_BLITZ_DAILY_BUDGET_MICROS);
-      if (process.env.GOOGLE_ADS_BLITZ_DAILY_BUDGET_MICROS && !Number.isFinite(rawBudget)) {
+      const rawBudget = Number(
+        process.env.GOOGLE_ADS_BLITZ_DAILY_BUDGET_MICROS,
+      );
+      if (
+        process.env.GOOGLE_ADS_BLITZ_DAILY_BUDGET_MICROS &&
+        !Number.isFinite(rawBudget)
+      ) {
         this.logger.warn(
           `GOOGLE_ADS_BLITZ_DAILY_BUDGET_MICROS="${process.env.GOOGLE_ADS_BLITZ_DAILY_BUDGET_MICROS}" не число — использован дефолт 5000000.`,
         );
       }
-      const dailyBudgetMicros = Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : 5_000_000;
+      const dailyBudgetMicros =
+        Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : 5_000_000;
       const campaignResourceName = await this.googleAds.createBlitzCampaign({
         listingId: listing.id,
         title: listing.portfolioItem.title,
@@ -686,7 +822,9 @@ export class AuctionService {
         });
       }
     } catch (e) {
-      this.logger.warn(`Не удалось создать кампанию Google Ads для блиц-лота ${listingId}: ${(e as Error).message}`);
+      this.logger.warn(
+        `Не удалось создать кампанию Google Ads для блиц-лота ${listingId}: ${(e as Error).message}`,
+      );
     }
   }
 
@@ -721,7 +859,10 @@ export class AuctionService {
    * этот `void`-вызов из withdraw()/closeExpiredListings()/closeListing()
    * успел завершиться) — крон подхватит на следующем тике.
    */
-  private async pauseGoogleAdsCampaignIfAny(listingId: string, campaignResourceName: string | null): Promise<void> {
+  private async pauseGoogleAdsCampaignIfAny(
+    listingId: string,
+    campaignResourceName: string | null,
+  ): Promise<void> {
     if (!campaignResourceName) return;
     try {
       await this.googleAds.pauseCampaign(campaignResourceName);
@@ -770,13 +911,20 @@ export class AuctionService {
    * часть в fingerprint ломает дедупликацию), чтобы систематический сбой
    * сразу нескольких лотов не размножался по одной тревоге на лот.
    */
-  async reconcileGoogleAdsCampaigns(): Promise<{ paused: number; stillStuck: number }> {
+  async reconcileGoogleAdsCampaigns(): Promise<{
+    paused: number;
+    stillStuck: number;
+  }> {
     const stuck = await this.prisma.auctionListing.findMany({
       where: { status: { not: 'ACTIVE' }, googleAdsCampaignId: { not: null } },
       take: 20, // предел на тик — та же дисциплина, что у остальных тик-воркеров (предсказуемая стоимость шага)
     });
     let paused = 0;
-    const stillStuck: { id: string; campaignResourceName: string; ageMs: number }[] = [];
+    const stillStuck: {
+      id: string;
+      campaignResourceName: string;
+      ageMs: number;
+    }[] = [];
     for (const listing of stuck) {
       try {
         await this.googleAds.pauseCampaign(listing.googleAdsCampaignId!);
@@ -786,7 +934,9 @@ export class AuctionService {
         });
         paused += 1;
       } catch (e) {
-        this.logger.warn(`Повторная попытка паузы кампании Google Ads не удалась (listing=${listing.id}): ${(e as Error).message}`);
+        this.logger.warn(
+          `Повторная попытка паузы кампании Google Ads не удалась (listing=${listing.id}): ${(e as Error).message}`,
+        );
         stillStuck.push({
           id: listing.id,
           campaignResourceName: listing.googleAdsCampaignId!,
@@ -795,7 +945,9 @@ export class AuctionService {
       }
     }
 
-    const escalate = stillStuck.filter((s) => s.ageMs > GOOGLE_ADS_PAUSE_ALERT_AFTER_MS);
+    const escalate = stillStuck.filter(
+      (s) => s.ageMs > GOOGLE_ADS_PAUSE_ALERT_AFTER_MS,
+    );
     if (escalate.length > 0) {
       const details = escalate
         .slice(0, 10)
@@ -829,6 +981,10 @@ export class AuctionService {
     page: number;
     pageSize: number;
   }): Promise<AdminAuctionListResult> {
+    // `status` приходит строкой из query и подставляется в фильтр
+    // Prisma, чей тип — перечисление. Значение проверяет сама Prisma:
+    // неизвестный статус даст ошибку запроса, а не тихую выдачу.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- см. выше
     const where = params.status ? { status: params.status as any } : {};
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.auctionListing.findMany({
@@ -836,7 +992,11 @@ export class AuctionService {
         orderBy: [{ auctionType: 'asc' }, { createdAt: 'desc' }],
         skip: (params.page - 1) * params.pageSize,
         take: params.pageSize,
-        include: { portfolioItem: true, creatorProfile: { include: { user: true } }, bids: true },
+        include: {
+          portfolioItem: true,
+          creatorProfile: { include: { user: true } },
+          bids: true,
+        },
       }),
       this.prisma.auctionListing.count({ where }),
     ]);
@@ -872,12 +1032,19 @@ export class AuctionService {
     // include, что уже использует adminList()).
     const fresh = await this.prisma.auctionListing.findUniqueOrThrow({
       where: { id },
-      include: { portfolioItem: true, creatorProfile: { include: { user: true } }, bids: true },
+      include: {
+        portfolioItem: true,
+        creatorProfile: { include: { user: true } },
+        bids: true,
+      },
     });
     return this.toAdminView(fresh);
   }
 
-  async adminReject(id: string, dto: RejectAuctionListingDto): Promise<AdminAuctionListingView> {
+  async adminReject(
+    id: string,
+    dto: RejectAuctionListingDto,
+  ): Promise<AdminAuctionListingView> {
     // Аудит-фикс — тот же класс, что в adminApprove() выше: include
     // расширен под toAdminView(), bids задаётся пустым массивом здесь
     // намеренно (тот же смысл, что и раньше — только что отклонённая
@@ -885,7 +1052,10 @@ export class AuctionService {
     const listing = await this.prisma.auctionListing.update({
       where: { id },
       data: { status: 'REJECTED', rejectionReason: dto.reason },
-      include: { portfolioItem: true, creatorProfile: { include: { user: true } } },
+      include: {
+        portfolioItem: true,
+        creatorProfile: { include: { user: true } },
+      },
     });
     return this.toAdminView({ ...listing, bids: [] });
   }
@@ -952,7 +1122,10 @@ export class AuctionService {
   async startCheckout(
     userId: string,
     listingId: string,
-  ): Promise<{ wayforpayFormUrl?: string; wayforpayFields?: Record<string, string> }> {
+  ): Promise<{
+    wayforpayFormUrl?: string;
+    wayforpayFields?: Record<string, string>;
+  }> {
     const listing = await this.prisma.auctionListing.findUnique({
       where: { id: listingId },
       include: { payment: true, portfolioItem: true },
@@ -964,11 +1137,17 @@ export class AuctionService {
       throw new ConflictException('payment already confirmed');
     }
     if (listing.payment.paymentId) {
-      throw new ConflictException('checkout already started for this listing — use the existing payment link');
+      throw new ConflictException(
+        'checkout already started for this listing — use the existing payment link',
+      );
     }
-    const winningBid = await this.prisma.bid.findUnique({ where: { id: listing.payment.winningBidId } });
+    const winningBid = await this.prisma.bid.findUnique({
+      where: { id: listing.payment.winningBidId },
+    });
     if (!winningBid || winningBid.buyerId !== userId) {
-      throw new ForbiddenException('only the winning bidder can pay for this listing');
+      throw new ForbiddenException(
+        'only the winning bidder can pay for this listing',
+      );
     }
 
     // listing.payment.amount из БД — минорные единицы; startAuctionCheckout
@@ -996,7 +1175,10 @@ export class AuctionService {
    * который вызывает тот же AuctionPaymentService.applySuccess.
    */
   async adminConfirmPayment(id: string): Promise<AdminAuctionListingView> {
-    const listing = await this.prisma.auctionListing.findUnique({ where: { id }, include: { payment: true } });
+    const listing = await this.prisma.auctionListing.findUnique({
+      where: { id },
+      include: { payment: true },
+    });
     if (!listing || listing.status !== 'WON' || !listing.payment) {
       throw new NotFoundException('no pending payment for this listing');
     }
@@ -1011,7 +1193,11 @@ export class AuctionService {
     // Аудит-фикс — тот же класс, что в adminApprove()/adminReject() выше.
     const fresh = await this.prisma.auctionListing.findUniqueOrThrow({
       where: { id },
-      include: { portfolioItem: true, creatorProfile: { include: { user: true } }, bids: true },
+      include: {
+        portfolioItem: true,
+        creatorProfile: { include: { user: true } },
+        bids: true,
+      },
     });
     return this.toAdminView(fresh);
   }
@@ -1034,11 +1220,18 @@ export class AuctionService {
    * поле просто перезаписывается, у прежнего лота видео эфира исчезает
    * молча — операторская ответственность, не проверяется здесь отдельно.
    */
-  async assignVirtualStudio(listingId: string, dto: AssignVirtualStudioDto): Promise<AdminAuctionListingView> {
-    const listing = await this.prisma.auctionListing.findUnique({ where: { id: listingId } });
+  async assignVirtualStudio(
+    listingId: string,
+    dto: AssignVirtualStudioDto,
+  ): Promise<AdminAuctionListingView> {
+    const listing = await this.prisma.auctionListing.findUnique({
+      where: { id: listingId },
+    });
     if (!listing) throw new NotFoundException('auction listing not found');
     if (listing.status !== 'QUEUED' && listing.status !== 'ACTIVE') {
-      throw new BadRequestException('студию можно назначить лоту только в очереди (QUEUED) или уже идущим торгам (ACTIVE)');
+      throw new BadRequestException(
+        'студию можно назначить лоту только в очереди (QUEUED) или уже идущим торгам (ACTIVE)',
+      );
     }
     // ПРАВКА 1.4 (§7.3 — открытый вопрос версии 1.2 «BLITZ ли только»
     // теперь решён явно): живой эфир имеет смысл только для BLITZ —
@@ -1052,7 +1245,9 @@ export class AuctionService {
     // а не запретом на уровне схемы, чтобы сообщение было понятным
     // оператору, а не голым constraint-нарушением БД.
     if (listing.auctionType !== 'BLITZ') {
-      throw new BadRequestException('живой эфир доступен только для BLITZ-лотов — у STANDARD нет технической/бизнес-ценности (см. ТЗ §7.3, ПРАВКА 1.4)');
+      throw new BadRequestException(
+        'живой эфир доступен только для BLITZ-лотов — у STANDARD нет технической/бизнес-ценности (см. ТЗ §7.3, ПРАВКА 1.4)',
+      );
     }
     // ПРАВКА 1.4 (§7.8) — продавец должен явно согласиться на живую
     // трансляцию своего лота (чекбокс при подаче заявки, тот же приём,
@@ -1060,14 +1255,18 @@ export class AuctionService {
     // хотеть включить эфир, но не должен мочь это сделать в обход воли
     // продавца — отказ, а не молчаливое игнорирование чекбокса.
     if (!listing.liveStreamOptIn) {
-      throw new BadRequestException('продавец не давал согласия на живую трансляцию для этого лота (liveStreamOptIn не включён при подаче заявки)');
+      throw new BadRequestException(
+        'продавец не давал согласия на живую трансляцию для этого лота (liveStreamOptIn не включён при подаче заявки)',
+      );
     }
 
     const studio = await this.prisma.virtualStudio.findFirst({
       where: { id: dto.virtualStudioId, status: 'READY', deletedAt: null },
     });
     if (!studio || !studio.selectedVariantId) {
-      throw new BadRequestException('студия не найдена, не в статусе READY, или у неё не выбран вариант референс-кадра');
+      throw new BadRequestException(
+        'студия не найдена, не в статусе READY, или у неё не выбран вариант референс-кадра',
+      );
     }
 
     const fragment = dto.videoFragmentId
@@ -1080,17 +1279,29 @@ export class AuctionService {
           },
         })
       : await this.prisma.virtualStudioFragment.findFirst({
-          where: { studioId: studio.id, kind: 'VIDEO', status: GenerationStatus.COMPLETE },
+          where: {
+            studioId: studio.id,
+            kind: 'VIDEO',
+            status: GenerationStatus.COMPLETE,
+          },
           orderBy: { createdAt: 'desc' },
         });
     if (!fragment) {
-      throw new BadRequestException('у выбранной студии нет готового видео-фрагмента для эфира (§3.4 — сначала сгенерируйте его в админке)');
+      throw new BadRequestException(
+        'у выбранной студии нет готового видео-фрагмента для эфира (§3.4 — сначала сгенерируйте его в админке)',
+      );
     }
 
     const alreadyAssigned = listing.virtualStudioId != null;
     await this.prisma.$transaction([
-      this.prisma.auctionListing.update({ where: { id: listingId }, data: { virtualStudioId: studio.id } }),
-      this.prisma.virtualStudioFragment.update({ where: { id: fragment.id }, data: { liveAuctionListingId: listingId } }),
+      this.prisma.auctionListing.update({
+        where: { id: listingId },
+        data: { virtualStudioId: studio.id },
+      }),
+      this.prisma.virtualStudioFragment.update({
+        where: { id: fragment.id },
+        data: { liveAuctionListingId: listingId },
+      }),
     ]);
 
     // Лот уже ACTIVE и студии раньше не было — эфир нужно завести прямо
@@ -1110,7 +1321,11 @@ export class AuctionService {
     // исполнителя из строки таблицы сразу после назначения студии).
     const fresh = await this.prisma.auctionListing.findUniqueOrThrow({
       where: { id: listingId },
-      include: { portfolioItem: true, creatorProfile: { include: { user: true } }, bids: true },
+      include: {
+        portfolioItem: true,
+        creatorProfile: { include: { user: true } },
+        bids: true,
+      },
     });
     return this.toAdminView(fresh);
   }
@@ -1172,9 +1387,12 @@ export class AuctionService {
       listingId: listing.id,
       status: listing.status as AuctionLiveStateView['status'],
       liveStreamActive: listing.liveStreamActive,
-      liveStreamStartedAt: listing.liveStreamStartedAt ? listing.liveStreamStartedAt.toISOString() : null,
+      liveStreamStartedAt: listing.liveStreamStartedAt
+        ? listing.liveStreamStartedAt.toISOString()
+        : null,
       expiresAt: listing.expiresAt ? listing.expiresAt.toISOString() : null,
-      highestBidAmount: highestBidMinor != null ? toMajorUnits(highestBidMinor) : null,
+      highestBidAmount:
+        highestBidMinor != null ? toMajorUnits(highestBidMinor) : null,
       bidCount,
       videoUrl,
       cues,
@@ -1196,11 +1414,18 @@ export class AuctionService {
   ): Promise<{ bids: BidView[]; cues: AuctionLiveVoiceCueView[] }> {
     const [bids, cues] = await Promise.all([
       this.prisma.bid.findMany({
-        where: { listingId, ...(sinceBidAt ? { createdAt: { gt: sinceBidAt } } : {}) },
+        where: {
+          listingId,
+          ...(sinceBidAt ? { createdAt: { gt: sinceBidAt } } : {}),
+        },
         orderBy: { createdAt: 'asc' },
       }),
       this.prisma.auctionLiveVoiceCue.findMany({
-        where: { listingId, seq: { gt: sinceSeq }, status: GenerationStatus.COMPLETE },
+        where: {
+          listingId,
+          seq: { gt: sinceSeq },
+          status: GenerationStatus.COMPLETE,
+        },
         orderBy: { seq: 'asc' },
         include: { voiceFragment: true },
       }),
@@ -1213,7 +1438,9 @@ export class AuctionService {
         amount: toMajorUnits(b.amount),
         createdAt: b.createdAt.toISOString(),
       })),
-      cues: cues.map((c) => this.toCueView(c)).filter((c): c is AuctionLiveVoiceCueView => c != null),
+      cues: cues
+        .map((c) => this.toCueView(c))
+        .filter((c): c is AuctionLiveVoiceCueView => c != null),
     };
   }
 
@@ -1269,7 +1496,9 @@ export class AuctionService {
     // минорных единицах (копейки/центы, см. common/money.ts) — весь
     // внешний API-контракт (AuctionListingView и т.д.) остаётся в
     // МАЖОРНЫХ, как и раньше, конвертация только здесь, на границе.
-    const highestBidMinor = bids.length ? Math.max(...bids.map((b) => b.amount)) : null;
+    const highestBidMinor = bids.length
+      ? Math.max(...bids.map((b) => b.amount))
+      : null;
     return {
       id: listing.id,
       creatorProfileId: listing.creatorProfileId,
@@ -1277,16 +1506,22 @@ export class AuctionService {
       brandManifestId: listing.brandManifestId,
       includeBrandManifest: listing.includeBrandManifest,
       auctionType: listing.auctionType as AuctionListingView['auctionType'],
-      payoutCurrency: listing.payoutCurrency as AuctionListingView['payoutCurrency'],
+      payoutCurrency:
+        listing.payoutCurrency as AuctionListingView['payoutCurrency'],
       rightsConfirmedAt: listing.rightsConfirmedAt.toISOString(),
       expiresAt: listing.expiresAt ? listing.expiresAt.toISOString() : null,
       aiAssessment: listing.aiAssessment,
       brandManifestAiAudit: listing.brandManifestAiAudit,
       startingPrice: toMajorUnits(listing.startingPrice),
-      reservePrice: listing.reservePrice != null ? toMajorUnits(listing.reservePrice) : null,
-      buyNowPrice: listing.buyNowPrice != null ? toMajorUnits(listing.buyNowPrice) : null,
+      reservePrice:
+        listing.reservePrice != null
+          ? toMajorUnits(listing.reservePrice)
+          : null,
+      buyNowPrice:
+        listing.buyNowPrice != null ? toMajorUnits(listing.buyNowPrice) : null,
       status: listing.status as AuctionListingView['status'],
-      highestBidAmount: highestBidMinor != null ? toMajorUnits(highestBidMinor) : null,
+      highestBidAmount:
+        highestBidMinor != null ? toMajorUnits(highestBidMinor) : null,
       bidCount: bids.length,
       createdAt: listing.createdAt.toISOString(),
       antiSnipeEnabled: listing.antiSnipeEnabled,
@@ -1299,7 +1534,9 @@ export class AuctionService {
 
   private toPublicView(listing: ListingWithBids): PublicAuctionListingView {
     const bids = listing.bids ?? [];
-    const highestBidMinor = bids.length ? Math.max(...bids.map((b) => b.amount)) : null;
+    const highestBidMinor = bids.length
+      ? Math.max(...bids.map((b) => b.amount))
+      : null;
     return {
       id: listing.id,
       creatorProfileId: listing.creatorProfileId,
@@ -1314,8 +1551,10 @@ export class AuctionService {
       payoutCurrency: listing.payoutCurrency,
       // Минорные единицы (БД) → мажорные (API-контракт), см. toOwnView выше.
       startingPrice: toMajorUnits(listing.startingPrice),
-      buyNowPrice: listing.buyNowPrice != null ? toMajorUnits(listing.buyNowPrice) : null,
-      highestBidAmount: highestBidMinor != null ? toMajorUnits(highestBidMinor) : null,
+      buyNowPrice:
+        listing.buyNowPrice != null ? toMajorUnits(listing.buyNowPrice) : null,
+      highestBidAmount:
+        highestBidMinor != null ? toMajorUnits(highestBidMinor) : null,
       bidCount: bids.length,
       expiresAt: listing.expiresAt.toISOString(),
       antiSnipeEnabled: listing.antiSnipeEnabled,
@@ -1331,10 +1570,20 @@ export class AuctionService {
     // сравнить их «насколько это дорого» без ручного пересчёта. null для
     // payoutCurrency === 'UAH' — конвертация в саму себя не несёт
     // информации (см. доккомментарий convertForDisplay).
+    // Строка пришла из запроса с include; её выведенный тип не
+    // совпадает по составу с `ListingWithBids`, и TS отказывается
+    // приводить одно к другому напрямую.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- см. выше
     const ownView = this.toOwnView(listing as any, listing.bids ?? []);
     const currentPriceMajor = ownView.highestBidAmount ?? ownView.startingPrice;
     const currentPriceUahEquivalent =
-      listing.payoutCurrency === 'UAH' ? null : convertForDisplay(currentPriceMajor, listing.payoutCurrency as AuctionCurrencyValue, 'UAH');
+      listing.payoutCurrency === 'UAH'
+        ? null
+        : convertForDisplay(
+            currentPriceMajor,
+            listing.payoutCurrency as AuctionCurrencyValue,
+            'UAH',
+          );
     return {
       ...ownView,
       creatorDisplayName: listing.creatorProfile?.user?.firstName ?? null,

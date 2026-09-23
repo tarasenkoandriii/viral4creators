@@ -1,5 +1,8 @@
 import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
-import { GreetingOccasion, GreetingTone } from '../../common/types/greeting.types';
+import {
+  GreetingOccasion,
+  GreetingTone,
+} from '../../common/types/greeting.types';
 
 /**
  * Варианты визуального сеттинга для референс-кадра — фича №36

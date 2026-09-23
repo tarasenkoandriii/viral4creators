@@ -37,8 +37,9 @@ function build(current = brief()) {
       findFirst: jest.fn().mockResolvedValue(current),
       update: jest
         .fn()
-        .mockImplementation(async ({ data }: { data: Record<string, unknown> }) =>
-          brief({ ...current, ...data }),
+        .mockImplementation(
+          async ({ data }: { data: Record<string, unknown> }) =>
+            brief({ ...current, ...data }),
         ),
     },
     brandManifest: { findFirst: jest.fn().mockResolvedValue({ id: 'bm1' }) },

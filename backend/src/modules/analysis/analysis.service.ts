@@ -725,7 +725,10 @@ export class AnalysisService {
     const fresh = await this.sessionService.getSession(sessionId);
     if (fresh?.videoAnalysis) {
       await this.sessionService.updateSession(sessionId, {
-        videoAnalysis: { ...fresh.videoAnalysis, originalDialogueSample: sample },
+        videoAnalysis: {
+          ...fresh.videoAnalysis,
+          originalDialogueSample: sample,
+        },
       });
     }
 

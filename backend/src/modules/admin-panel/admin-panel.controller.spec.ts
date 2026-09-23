@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- тестовые двойники: подставляем заглушки на месте зависимостей, форму которых тест не проверяет */
 /**
  * Пятый аудит (doc/AUDIT-2026-09-09-round5.md, Д-... тест-план в
  * `doc/WORKFLOW-FUNNEL-SPEC.md` §9 и `doc/WORKFLOW-FUNNEL-COHORT-

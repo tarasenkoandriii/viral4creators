@@ -153,7 +153,11 @@ export class GreetingReferenceService {
       );
     }
     const imageId = newGreetingReferenceId();
-    const pathname = greetingReferencePathname(sessionId, imageId, dto.mimeType);
+    const pathname = greetingReferencePathname(
+      sessionId,
+      imageId,
+      dto.mimeType,
+    );
     const { uploadUrl } = await this.blob.createUploadUrl(
       pathname,
       dto.mimeType,
@@ -408,11 +412,15 @@ export class GreetingReferenceService {
   }
 
   /** Removes the image, its blob (best effort). */
-  async remove(sessionId: string, imageId: string): Promise<GreetingReferenceImageView[]> {
+  async remove(
+    sessionId: string,
+    imageId: string,
+  ): Promise<GreetingReferenceImageView[]> {
     const session = await this.load(sessionId);
     const images = session.greetingReferenceImages ?? [];
     const image = images.find((s) => s.id === imageId);
-    if (!image) throw new NotFoundException(`Reference image ${imageId} not found`);
+    if (!image)
+      throw new NotFoundException(`Reference image ${imageId} not found`);
     const next = images.filter((s) => s.id !== imageId);
     await this.sessions.updateSession(sessionId, {
       greetingReferenceImages: next,

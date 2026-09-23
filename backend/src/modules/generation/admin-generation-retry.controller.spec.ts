@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- тестовые двойники: подставляем заглушки на месте зависимостей, форму которых тест не проверяет */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
@@ -11,8 +12,12 @@ function build(sessionRow: { data: unknown } | null) {
     getSession: jest.fn().mockResolvedValue({ sessionId: 's1' }),
   };
   const generation = {
-    generateVideo: jest.fn().mockResolvedValue({ status: GenerationStatus.PROCESSING }),
-    getVideoStatus: jest.fn().mockResolvedValue({ status: GenerationStatus.PROCESSING }),
+    generateVideo: jest
+      .fn()
+      .mockResolvedValue({ status: GenerationStatus.PROCESSING }),
+    getVideoStatus: jest
+      .fn()
+      .mockResolvedValue({ status: GenerationStatus.PROCESSING }),
   };
   const videoAudit = {
     run: jest.fn().mockResolvedValue({
@@ -42,7 +47,15 @@ function build(sessionRow: { data: unknown } | null) {
     prisma as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
-  return { controller, adminPanel, generation, videoAudit, prompt, prisma, req };
+  return {
+    controller,
+    adminPanel,
+    generation,
+    videoAudit,
+    prompt,
+    prisma,
+    req,
+  };
 }
 
 describe('AdminGenerationRetryController', () => {
@@ -211,7 +224,7 @@ describe('AdminGenerationRetryController.audit (доп. запрос владе�
   });
 
   it('возвращает состояние аудита как есть — та же запись, что читает визард пользователя', async () => {
-    const { controller, videoAudit, req } = build({ data: {} });
+    const { controller, req } = build({ data: {} });
     const result = await controller.audit(req, 's1');
     expect(result).toEqual({
       history: [{ verdict: 'clean', summary: 'ок' }],
@@ -242,9 +255,9 @@ describe('AdminGenerationRetryController.applyFixAndRetry (реальный сл
     const { controller, videoAudit, prompt, generation, req } = build({
       data: {},
     });
-    await expect(
-      controller.applyFixAndRetry(req, 's1'),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(controller.applyFixAndRetry(req, 's1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
     expect(videoAudit.applyFix).not.toHaveBeenCalled();
     expect(prompt.approvePrompt).not.toHaveBeenCalled();
     expect(generation.generateVideo).not.toHaveBeenCalled();
@@ -254,15 +267,14 @@ describe('AdminGenerationRetryController.applyFixAndRetry (реальный сл
     const { controller, req } = build({
       data: { videoAudit: { history: [{ auditId: 'a1' }] } },
     });
-    await expect(
-      controller.applyFixAndRetry(req, 's1'),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(controller.applyFixAndRetry(req, 's1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
   });
 
   it('три шага по порядку: применить фикс → одобрить → перегенерировать', async () => {
-    const { controller, videoAudit, prompt, generation, req } = build(
-      withAudit(),
-    );
+    const { controller, videoAudit, prompt, generation, req } =
+      build(withAudit());
     const order: string[] = [];
     videoAudit.applyFix.mockImplementation(async () => {
       order.push('applyFix');

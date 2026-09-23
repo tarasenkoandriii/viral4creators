@@ -11,13 +11,24 @@
  *   GET  /creator-inquiries/:id/format-advice   совет по формату (§21.4)
  */
 
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import {
   IdentifiedRequest,
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
 import { CreatorInquiryService } from './creator-inquiry.service';
-import { ContactCreatorDto, CreateCreatorInquiryDto } from './dto/creator-inquiry.dto';
+import {
+  ContactCreatorDto,
+  CreateCreatorInquiryDto,
+} from './dto/creator-inquiry.dto';
 import {
   CreatorInquiryMatchView,
   CreatorInquiryView,
@@ -43,7 +54,10 @@ export class CreatorInquiryController {
   }
 
   @Get(':id')
-  getOne(@Req() req: IdentifiedRequest, @Param('id') id: string): Promise<CreatorInquiryView> {
+  getOne(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+  ): Promise<CreatorInquiryView> {
     return this.service.getOne(req.telegramUserId, id);
   }
 

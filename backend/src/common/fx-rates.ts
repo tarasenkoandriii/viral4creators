@@ -23,7 +23,10 @@ const UAH_PER_UNIT: Record<AuctionCurrencyValue, number> = {
 };
 
 /** Сумма в минорных единицах (копейках) UAH — только для внутренней оценки расхода, не для реального платежа. */
-export function toUahMinorUnits(amountMajor: number, currency: AuctionCurrencyValue): number {
+export function toUahMinorUnits(
+  amountMajor: number,
+  currency: AuctionCurrencyValue,
+): number {
   return Math.round(amountMajor * UAH_PER_UNIT[currency] * 100);
 }
 
@@ -32,7 +35,11 @@ export function toUahMinorUnits(amountMajor: number, currency: AuctionCurrencyVa
  * до целого нарочно грубое (не показываем ложную точность у оценки,
  * которая и так на статичном курсе).
  */
-export function convertForDisplay(amountMajor: number, from: AuctionCurrencyValue, to: AuctionCurrencyValue): number {
+export function convertForDisplay(
+  amountMajor: number,
+  from: AuctionCurrencyValue,
+  to: AuctionCurrencyValue,
+): number {
   if (from === to) return amountMajor;
   const uah = amountMajor * UAH_PER_UNIT[from];
   return Math.round((uah / UAH_PER_UNIT[to]) * 100) / 100;

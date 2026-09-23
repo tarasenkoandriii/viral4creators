@@ -1,4 +1,12 @@
-import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, Length, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Length,
+  Min,
+} from 'class-validator';
 
 /** Держим список закрытым (ТЗ §21.2/§21.4) — от значения зависит совет по формату. */
 export const TARGET_PLATFORMS = [

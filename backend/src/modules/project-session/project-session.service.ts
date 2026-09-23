@@ -177,7 +177,16 @@ export class ProjectSessionService {
       await this.prisma.greetingBrief.findFirst({
         where: { projectId, project: { userId, deletedAt: null } },
         include: {
-          project: { select: { id: true, type: true, deletedAt: true, title: true, currency: true, countryCode: true } },
+          project: {
+            select: {
+              id: true,
+              type: true,
+              deletedAt: true,
+              title: true,
+              currency: true,
+              countryCode: true,
+            },
+          },
           brandManifest: {
             include: {
               characters: {

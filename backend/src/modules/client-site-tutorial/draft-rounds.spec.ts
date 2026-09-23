@@ -250,7 +250,10 @@ describe('assertSameSite — доменный замок §8.1', () => {
       assertSameSite('https://alice.github.io', 'https://bob.github.io/'),
     ).toThrow(DomainLockError);
     expect(() =>
-      assertSameSite('https://shop-a.myshopify.com', 'https://shop-b.myshopify.com/'),
+      assertSameSite(
+        'https://shop-a.myshopify.com',
+        'https://shop-b.myshopify.com/',
+      ),
     ).toThrow(DomainLockError);
     // А свой собственный поддомен внутри того же сайта — можно.
     expect(() =>
@@ -270,7 +273,10 @@ describe('assertSameSite — доменный замок §8.1', () => {
 
   it('многосоставный суффикс разбирается по списку, а не по числу точек', () => {
     expect(() =>
-      assertSameSite('https://shop.example.co.uk', 'https://accounts.example.co.uk/'),
+      assertSameSite(
+        'https://shop.example.co.uk',
+        'https://accounts.example.co.uk/',
+      ),
     ).not.toThrow();
     // `other.co.uk` — другой владелец, хотя совпадают последние две
     // части имени.

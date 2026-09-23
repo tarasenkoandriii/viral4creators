@@ -7,7 +7,11 @@ import { AiUsageModule } from '../ai-usage/ai-usage.module';
 import { GeminiFilesService } from '../analysis/gemini-files.service';
 import { AuctionPaymentModule } from './auction-payment.module';
 import { AuctionAiAssessmentService } from './auction-ai-assessment.service';
-import { AuctionController, PublicAuctionController, AdminAuctionController } from './auction.controller';
+import {
+  AuctionController,
+  PublicAuctionController,
+  AdminAuctionController,
+} from './auction.controller';
 import { AuctionService } from './auction.service';
 import { GoogleAdsService } from './google-ads.service';
 import { GoogleIndexingService } from './google-indexing.service';
@@ -39,8 +43,19 @@ import { LiveAuctionOrchestratorService } from './live-auction-orchestrator.serv
  * явно: TtsModule @Global() (см. tts.module.ts), доступен без импорта.
  */
 @Module({
-  imports: [AdminAuthModule, AdminPanelModule, BillingModule, AuctionPaymentModule, StorageModule, AiUsageModule],
-  controllers: [AuctionController, PublicAuctionController, AdminAuctionController],
+  imports: [
+    AdminAuthModule,
+    AdminPanelModule,
+    BillingModule,
+    AuctionPaymentModule,
+    StorageModule,
+    AiUsageModule,
+  ],
+  controllers: [
+    AuctionController,
+    PublicAuctionController,
+    AdminAuctionController,
+  ],
   providers: [
     AuctionService,
     GeminiFilesService,
@@ -49,6 +64,10 @@ import { LiveAuctionOrchestratorService } from './live-auction-orchestrator.serv
     GoogleIndexingService,
     LiveAuctionOrchestratorService,
   ],
-  exports: [AuctionService, AuctionAiAssessmentService, LiveAuctionOrchestratorService],
+  exports: [
+    AuctionService,
+    AuctionAiAssessmentService,
+    LiveAuctionOrchestratorService,
+  ],
 })
 export class AuctionModule {}

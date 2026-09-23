@@ -105,7 +105,10 @@ export class AuctionController {
   constructor(private readonly service: AuctionService) {}
 
   @Post()
-  create(@Req() req: IdentifiedRequest, @Body() dto: CreateAuctionListingDto): Promise<AuctionListingView> {
+  create(
+    @Req() req: IdentifiedRequest,
+    @Body() dto: CreateAuctionListingDto,
+  ): Promise<AuctionListingView> {
     return this.service.create(req.telegramUserId, dto);
   }
 
@@ -121,7 +124,10 @@ export class AuctionController {
   }
 
   @Delete(':id')
-  withdraw(@Req() req: IdentifiedRequest, @Param('id') id: string): Promise<AuctionListingView> {
+  withdraw(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+  ): Promise<AuctionListingView> {
     return this.service.withdraw(req.telegramUserId, id);
   }
 
@@ -139,7 +145,10 @@ export class AuctionController {
   startCheckout(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
-  ): Promise<{ wayforpayFormUrl?: string; wayforpayFields?: Record<string, string> }> {
+  ): Promise<{
+    wayforpayFormUrl?: string;
+    wayforpayFields?: Record<string, string>;
+  }> {
     return this.service.startCheckout(req.telegramUserId, id);
   }
 }
@@ -192,7 +201,11 @@ export class PublicAuctionController {
    * напрямую — ровно тот путь, который в проде выбрал SilverFinance.
    */
   @Get(':id/stream')
-  async stream(@Param('id') id: string, @Req() req: Request, @Res() res: Response): Promise<void> {
+  async stream(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
     const abortController = new AbortController();
     const onClose = () => abortController.abort();
     req.on?.('close', onClose);
@@ -202,7 +215,10 @@ export class PublicAuctionController {
       try {
         await this.service.getLiveState(id);
       } catch {
-        res.status(404).json({ success: false, error: { code: 'not_found', message: 'auction listing not found' } });
+        res.status(404).json({
+          success: false,
+          error: { code: 'not_found', message: 'auction listing not found' },
+        });
         return;
       }
 
@@ -220,7 +236,10 @@ export class PublicAuctionController {
       const startedAt = Date.now();
       let lastHeartbeatAt = Date.now();
 
-      while (!abortController.signal.aborted && Date.now() - startedAt < LIVE_STREAM_MAX_DURATION_MS) {
+      while (
+        !abortController.signal.aborted &&
+        Date.now() - startedAt < LIVE_STREAM_MAX_DURATION_MS
+      ) {
         let updates;
         try {
           updates = await this.service.getLiveUpdates(id, sinceBidAt, sinceSeq);
@@ -279,7 +298,10 @@ export class AdminAuctionController {
     return this.service.adminList({
       status,
       page: Math.max(parseInt(page ?? '1', 10) || 1, 1),
-      pageSize: Math.min(Math.max(parseInt(pageSize ?? '20', 10) || 20, 1), 100),
+      pageSize: Math.min(
+        Math.max(parseInt(pageSize ?? '20', 10) || 20, 1),
+        100,
+      ),
     });
   }
 

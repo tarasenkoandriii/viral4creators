@@ -6,7 +6,10 @@ import { IsIn, IsOptional, IsString, IsUrl, Length } from 'class-validator';
  * согласие Creator — оно проставляется сервисом, не полем формы).
  */
 export class CreatePortfolioItemDto {
-  @IsUrl({}, { message: 'videoUrl must be a public link to the finished video' })
+  @IsUrl(
+    {},
+    { message: 'videoUrl must be a public link to the finished video' },
+  )
   videoUrl!: string;
 
   @Length(1, 150)

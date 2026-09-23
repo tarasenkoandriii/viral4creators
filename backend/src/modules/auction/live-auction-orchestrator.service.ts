@@ -81,7 +81,10 @@ const CURRENCY_LABEL: Record<AuctionCurrencyValue, string> = {
   EUR: '€',
 };
 
-function formatMoney(amountMinor: number, currency: AuctionCurrencyValue): string {
+function formatMoney(
+  amountMinor: number,
+  currency: AuctionCurrencyValue,
+): string {
   return `${toMajorUnits(amountMinor)} ${CURRENCY_LABEL[currency]}`;
 }
 
@@ -106,8 +109,13 @@ function buildPraiseText(): string {
   return 'viral4creators — маркетплейс эксклюзивного UGC-видео от проверенных исполнителей. Каждый лот — готовый ролик, который можно использовать сразу после покупки.';
 }
 
-function buildBidStatsText(participantCount: number, amountMinor: number, currency: AuctionCurrencyValue): string {
-  const participants = participantCount === 1 ? 'один участник' : `${participantCount} участников`;
+function buildBidStatsText(
+  participantCount: number,
+  amountMinor: number,
+  currency: AuctionCurrencyValue,
+): string {
+  const participants =
+    participantCount === 1 ? 'один участник' : `${participantCount} участников`;
   return `Новая ставка — ${formatMoney(amountMinor, currency)}. В торгах уже участвует ${participants}.`;
 }
 
@@ -153,7 +161,8 @@ export class LiveAuctionOrchestratorService {
         where: { id: listingId },
         include: { portfolioItem: true },
       });
-      if (!listing || !listing.virtualStudioId || listing.status !== 'ACTIVE') return;
+      if (!listing || !listing.virtualStudioId || listing.status !== 'ACTIVE')
+        return;
 
       const activated = await this.prisma.auctionListing.updateMany({
         where: { id: listingId, liveStreamActive: false },
@@ -181,22 +190,40 @@ export class LiveAuctionOrchestratorService {
       // LOT_DESC переиспользует резюме ANALYSIS-фрагмента студии, если
       // оператор его уже сгенерировал (§3.3/§7.4) — иначе собирается из
       // самих данных лота.
-      const analysisFragment = await this.prisma.virtualStudioFragment.findFirst({
-        where: { studioId: listing.virtualStudioId, kind: 'ANALYSIS', status: GenerationStatus.COMPLETE },
-        orderBy: { createdAt: 'desc' },
-      });
-      const lotDescText = analysisFragment?.resultText?.trim() || buildLotDescText(listing);
+      const analysisFragment =
+        await this.prisma.virtualStudioFragment.findFirst({
+          where: {
+            studioId: listing.virtualStudioId,
+            kind: 'ANALYSIS',
+            status: GenerationStatus.COMPLETE,
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+      const lotDescText =
+        analysisFragment?.resultText?.trim() || buildLotDescText(listing);
 
-      const pregen: Array<{ kind: 'LOT_DESC' | 'INVITE' | 'PRAISE'; text: string }> = [
+      const pregen: Array<{
+        kind: 'LOT_DESC' | 'INVITE' | 'PRAISE';
+        text: string;
+      }> = [
         { kind: 'LOT_DESC', text: lotDescText },
         { kind: 'INVITE', text: buildInviteText() },
         { kind: 'PRAISE', text: buildPraiseText() },
       ];
       for (const cue of pregen) {
-        await this.emitCue(listingId, listing.virtualStudioId, cue.kind, 'PREGEN', null, cue.text);
+        await this.emitCue(
+          listingId,
+          listing.virtualStudioId,
+          cue.kind,
+          'PREGEN',
+          null,
+          cue.text,
+        );
       }
     } catch (error) {
-      this.logger.warn(`activateLiveStream(${listingId}) failed (best-effort): ${this.extractErrorMessage(error)}`);
+      this.logger.warn(
+        `activateLiveStream(${listingId}) failed (best-effort): ${this.extractErrorMessage(error)}`,
+      );
     }
   }
 
@@ -206,9 +233,14 @@ export class LiveAuctionOrchestratorService {
    * эфир был свёрнут авто-сворачиванием (§7.5) — эта же ставка снимает
    * таймер и возвращает эфир в обычный режим, ровно как требует ТЗ.
    */
-  async onBidPlaced(listingId: string, bid: { id: string; amount: number }): Promise<void> {
+  async onBidPlaced(
+    listingId: string,
+    bid: { id: string; amount: number },
+  ): Promise<void> {
     try {
-      const listing = await this.prisma.auctionListing.findUnique({ where: { id: listingId } });
+      const listing = await this.prisma.auctionListing.findUnique({
+        where: { id: listingId },
+      });
       if (!listing || !listing.virtualStudioId) return;
 
       if (!listing.liveStreamActive) {
@@ -228,15 +260,35 @@ export class LiveAuctionOrchestratorService {
       // капотом мы сейчас не даём разрешения на новую подсказку.
       const throttleSince = new Date(Date.now() - 60_000);
       const recentCues = await this.prisma.auctionLiveVoiceCue.count({
-        where: { listingId, kind: 'BID_STATS', createdAt: { gte: throttleSince } },
+        where: {
+          listingId,
+          kind: 'BID_STATS',
+          createdAt: { gte: throttleSince },
+        },
       });
       if (recentCues >= MAX_EVENT_CUES_PER_MIN) return;
 
-      const participants = await this.prisma.bid.groupBy({ by: ['buyerId'], where: { listingId } });
-      const text = buildBidStatsText(participants.length, bid.amount, listing.payoutCurrency as AuctionCurrencyValue);
-      await this.emitCue(listingId, listing.virtualStudioId, 'BID_STATS', 'BID', bid.id, text);
+      const participants = await this.prisma.bid.groupBy({
+        by: ['buyerId'],
+        where: { listingId },
+      });
+      const text = buildBidStatsText(
+        participants.length,
+        bid.amount,
+        listing.payoutCurrency as AuctionCurrencyValue,
+      );
+      await this.emitCue(
+        listingId,
+        listing.virtualStudioId,
+        'BID_STATS',
+        'BID',
+        bid.id,
+        text,
+      );
     } catch (error) {
-      this.logger.warn(`onBidPlaced(${listingId}) failed (best-effort): ${this.extractErrorMessage(error)}`);
+      this.logger.warn(
+        `onBidPlaced(${listingId}) failed (best-effort): ${this.extractErrorMessage(error)}`,
+      );
     }
   }
 
@@ -248,10 +300,16 @@ export class LiveAuctionOrchestratorService {
    * аудит, сверка с SilverFinance). Вызывается краном
    * `/api/cron/live-auction-tick`.
    */
-  async collapseInactiveStreams(): Promise<{ collapsed: number; reapedStalePendingCues: number }> {
+  async collapseInactiveStreams(): Promise<{
+    collapsed: number;
+    reapedStalePendingCues: number;
+  }> {
     const staleCutoff = new Date(Date.now() - STALE_PENDING_CUE_MS);
     const reaped = await this.prisma.auctionLiveVoiceCue.updateMany({
-      where: { status: GenerationStatus.PENDING, createdAt: { lt: staleCutoff } },
+      where: {
+        status: GenerationStatus.PENDING,
+        createdAt: { lt: staleCutoff },
+      },
       data: { status: GenerationStatus.FAILED },
     });
 
@@ -263,8 +321,10 @@ export class LiveAuctionOrchestratorService {
 
     let collapsed = 0;
     for (const listing of candidates) {
-      const lastActivityAt = listing.bids[0]?.createdAt ?? listing.liveStreamStartedAt;
-      if (!lastActivityAt || lastActivityAt.getTime() > cutoff.getTime()) continue;
+      const lastActivityAt =
+        listing.bids[0]?.createdAt ?? listing.liveStreamStartedAt;
+      if (!lastActivityAt || lastActivityAt.getTime() > cutoff.getTime())
+        continue;
       // Аудит — каждый лот в своём try/catch: без этого один сбойный
       // update (например, гонка с конкурентным закрытием того же лота
       // ровно в этот момент) прервал бы цикл раньше срока и оставил бы
@@ -284,7 +344,9 @@ export class LiveAuctionOrchestratorService {
         void this.googleIndexing.notify(listingUrl(listing.id), 'URL_UPDATED');
         collapsed++;
       } catch (error) {
-        this.logger.warn(`collapseInactiveStreams: listing ${listing.id} failed (continuing with the rest): ${this.extractErrorMessage(error)}`);
+        this.logger.warn(
+          `collapseInactiveStreams: listing ${listing.id} failed (continuing with the rest): ${this.extractErrorMessage(error)}`,
+        );
       }
     }
     return { collapsed, reapedStalePendingCues: reaped.count };
@@ -315,15 +377,27 @@ export class LiveAuctionOrchestratorService {
     try {
       const cue = await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`live-auction-voice-cue:${listingId}`}))`;
-        const agg = await tx.auctionLiveVoiceCue.aggregate({ where: { listingId }, _max: { seq: true } });
+        const agg = await tx.auctionLiveVoiceCue.aggregate({
+          where: { listingId },
+          _max: { seq: true },
+        });
         const seq = (agg._max.seq ?? 0) + 1;
         return tx.auctionLiveVoiceCue.create({
-          data: { listingId, seq, kind, triggeredBy, bidId, status: GenerationStatus.PENDING },
+          data: {
+            listingId,
+            seq,
+            kind,
+            triggeredBy,
+            bidId,
+            status: GenerationStatus.PENDING,
+          },
         });
       });
       cueId = cue.id;
     } catch (error) {
-      this.logger.warn(`reserving voice cue seq for listing ${listingId} failed: ${this.extractErrorMessage(error)}`);
+      this.logger.warn(
+        `reserving voice cue seq for listing ${listingId} failed: ${this.extractErrorMessage(error)}`,
+      );
       return;
     }
 
@@ -336,7 +410,11 @@ export class LiveAuctionOrchestratorService {
         });
         return;
       }
-      const outcome = await provider.synthesize({ text, voiceId: null, language: 'ru' });
+      const outcome = await provider.synthesize({
+        text,
+        voiceId: null,
+        language: 'ru',
+      });
       if (!outcome.ok) {
         await this.prisma.auctionLiveVoiceCue.update({
           where: { id: cueId },
@@ -355,7 +433,11 @@ export class LiveAuctionOrchestratorService {
       });
 
       const pathname = `virtual-studio/${studioId}/live-voice-cue-${cueId}.mp3`;
-      const { url } = await this.blob.uploadBuffer(pathname, outcome.audio, outcome.mimeType);
+      const { url } = await this.blob.uploadBuffer(
+        pathname,
+        outcome.audio,
+        outcome.mimeType,
+      );
 
       const fragment = await this.prisma.virtualStudioFragment.create({
         data: {
@@ -371,10 +453,16 @@ export class LiveAuctionOrchestratorService {
 
       await this.prisma.auctionLiveVoiceCue.update({
         where: { id: cueId },
-        data: { voiceFragmentId: fragment.id, status: GenerationStatus.COMPLETE, readyAt: new Date() },
+        data: {
+          voiceFragmentId: fragment.id,
+          status: GenerationStatus.COMPLETE,
+          readyAt: new Date(),
+        },
       });
     } catch (error) {
-      this.logger.warn(`synthesizing voice cue ${cueId} failed: ${this.extractErrorMessage(error)}`);
+      this.logger.warn(
+        `synthesizing voice cue ${cueId} failed: ${this.extractErrorMessage(error)}`,
+      );
       try {
         await this.prisma.auctionLiveVoiceCue.update({
           where: { id: cueId },

@@ -23,4 +23,5 @@ export const LIVE_AUCTION_LISTING_STATUSES = [
   'WON',
 ] as const;
 
-export type LiveAuctionListingStatus = (typeof LIVE_AUCTION_LISTING_STATUSES)[number];
+export type LiveAuctionListingStatus =
+  (typeof LIVE_AUCTION_LISTING_STATUSES)[number];

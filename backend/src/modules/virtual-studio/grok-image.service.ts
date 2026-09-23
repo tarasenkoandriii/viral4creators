@@ -75,7 +75,10 @@ export class GrokImageService {
    * `start_image` для последующего image-to-video, поэтому формат
    * должен совпадать с тем, что потом попросят у видео.
    */
-  async generate(prompt: string, aspectRatio: string): Promise<GrokImageResult> {
+  async generate(
+    prompt: string,
+    aspectRatio: string,
+  ): Promise<GrokImageResult> {
     if (!this.apiKey) {
       throw new Error('GROK_API_KEY не задан');
     }
@@ -109,7 +112,9 @@ export class GrokImageService {
       this.logger.error(
         `Grok image generate: ответ без url — ${JSON.stringify(res.data)}`,
       );
-      throw new Error('Grok image generate: не удалось прочитать url изображения из ответа');
+      throw new Error(
+        'Grok image generate: не удалось прочитать url изображения из ответа',
+      );
     }
 
     return { url };

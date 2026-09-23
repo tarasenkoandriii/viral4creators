@@ -48,7 +48,9 @@ export class PortfolioService {
   ) {}
 
   private async ownCreatorProfileOrThrow(userId: string) {
-    const profile = await this.prisma.creatorProfile.findUnique({ where: { userId } });
+    const profile = await this.prisma.creatorProfile.findUnique({
+      where: { userId },
+    });
     if (!profile) {
       throw new ForbiddenException(
         'complete the creator quiz first (POST /creator-profiles/quiz)',
@@ -57,10 +59,15 @@ export class PortfolioService {
     return profile;
   }
 
-  async create(userId: string, dto: CreatePortfolioItemDto): Promise<PortfolioItemView> {
+  async create(
+    userId: string,
+    dto: CreatePortfolioItemDto,
+  ): Promise<PortfolioItemView> {
     const profile = await this.ownCreatorProfileOrThrow(userId);
     if (dto.watermarkMode === 'CUSTOM' && !dto.watermarkText) {
-      throw new ConflictException('watermarkText is required when watermarkMode is CUSTOM');
+      throw new ConflictException(
+        'watermarkText is required when watermarkMode is CUSTOM',
+      );
     }
     const item = await this.prisma.portfolioItem.create({
       data: {
@@ -74,7 +81,8 @@ export class PortfolioService {
         // customerConsent остаётся false намеренно — на Этапе 0 нет
         // стороннего заказчика, поле актуально только для sourceType=CONTRACT.
         watermarkMode: dto.watermarkMode ?? 'SITE_NAME',
-        watermarkText: dto.watermarkMode === 'CUSTOM' ? dto.watermarkText : null,
+        watermarkText:
+          dto.watermarkMode === 'CUSTOM' ? dto.watermarkText : null,
         watermarkIntensity: dto.watermarkIntensity ?? 'STANDARD',
         // watermarkStatus остаётся PENDING по умолчанию схемы — подхватит PortfolioWatermarkService.runTick.
       },
@@ -102,12 +110,19 @@ export class PortfolioService {
     if (!item || item.creatorProfileId !== profile.id) {
       throw new NotFoundException('portfolio item not found');
     }
-    if (dto.watermarkMode === 'CUSTOM' && dto.watermarkText === undefined && !item.watermarkText) {
-      throw new ConflictException('watermarkText is required when watermarkMode is CUSTOM');
+    if (
+      dto.watermarkMode === 'CUSTOM' &&
+      dto.watermarkText === undefined &&
+      !item.watermarkText
+    ) {
+      throw new ConflictException(
+        'watermarkText is required when watermarkMode is CUSTOM',
+      );
     }
 
     const nextMode = dto.watermarkMode ?? item.watermarkMode;
-    const nextText = dto.watermarkText !== undefined ? dto.watermarkText : item.watermarkText;
+    const nextText =
+      dto.watermarkText !== undefined ? dto.watermarkText : item.watermarkText;
     const nextIntensity = dto.watermarkIntensity ?? item.watermarkIntensity;
     // Аудит-фикс: правка настроек знака должна перезапустить обработку
     // — иначе старое превью (снятое по прежним настройкам) осталось бы
@@ -115,7 +130,9 @@ export class PortfolioService {
     // подхватил бы уже READY/FAILED запись повторно. Сравниваем только
     // то, что реально влияет на результат ffmpeg — не сам факт вызова.
     const settingsChanged =
-      nextMode !== item.watermarkMode || nextText !== item.watermarkText || nextIntensity !== item.watermarkIntensity;
+      nextMode !== item.watermarkMode ||
+      nextText !== item.watermarkText ||
+      nextIntensity !== item.watermarkIntensity;
 
     const updated = await this.prisma.portfolioItem.update({
       where: { id },
@@ -140,7 +157,9 @@ export class PortfolioService {
         // по-прежнему сбрасывается — старая (если была) задача ffmpeg
         // относится к уже неактуальным настройкам, ждать её результата
         // незачем.
-        ...(settingsChanged ? { watermarkStatus: 'PENDING', watermarkJobId: null } : {}),
+        ...(settingsChanged
+          ? { watermarkStatus: 'PENDING', watermarkJobId: null }
+          : {}),
       },
     });
     return this.toView(updated, false, false);
@@ -190,10 +209,19 @@ export class PortfolioService {
         ? { likes: { where: { userId: viewerUserId }, select: { id: true } } }
         : undefined,
     });
-    return items.map((i) => this.toView(i, viewerUserId ? (i as any).likes.length > 0 : false, true));
+    return items.map((i) =>
+      // `likes` подтягивается УСЛОВНО (include только при известном
+      // зрителе), поэтому в выведенном типе строки его нет — а в
+      // рантайме он есть ровно тогда, когда мы его читаем.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- см. выше
+      this.toView(i, viewerUserId ? (i as any).likes.length > 0 : false, true),
+    );
   }
 
-  async getPublic(id: string, viewerUserId: string | null): Promise<PortfolioItemView> {
+  async getPublic(
+    id: string,
+    viewerUserId: string | null,
+  ): Promise<PortfolioItemView> {
     const item = await this.prisma.portfolioItem.findUnique({
       where: { id },
       include: viewerUserId
@@ -203,13 +231,22 @@ export class PortfolioService {
     if (!item || item.status !== 'PUBLISHED') {
       throw new NotFoundException('portfolio item not found');
     }
-    return this.toView(item, viewerUserId ? (item as any).likes.length > 0 : false, true);
+    return this.toView(
+      item,
+      // Тот же условный include, что и в списке выше.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- см. выше
+      viewerUserId ? (item as any).likes.length > 0 : false,
+      true,
+    );
   }
 
   /** POST /portfolio-items/:id/view — best-effort счётчик (§20 №13), тот же приём, что у SharedVideoPage. */
   async recordView(id: string): Promise<void> {
     await this.prisma.portfolioItem
-      .updateMany({ where: { id, status: 'PUBLISHED' }, data: { viewCount: { increment: 1 } } })
+      .updateMany({
+        where: { id, status: 'PUBLISHED' },
+        data: { viewCount: { increment: 1 } },
+      })
       .catch(() => undefined);
   }
 
@@ -222,7 +259,11 @@ export class PortfolioService {
     if (!item) return [];
 
     const sameCreator = await this.prisma.portfolioItem.findMany({
-      where: { creatorProfileId: item.creatorProfileId, status: 'PUBLISHED', id: { not: id } },
+      where: {
+        creatorProfileId: item.creatorProfileId,
+        status: 'PUBLISHED',
+        id: { not: id },
+      },
       orderBy: { createdAt: 'desc' },
       take: 6,
     });
@@ -255,7 +296,9 @@ export class PortfolioService {
       creatorProfileId: i.creatorProfileId,
       creatorDisplayName:
         i.creatorProfile.user.firstName ??
-        (i.creatorProfile.user.username ? `@${i.creatorProfile.user.username}` : null),
+        (i.creatorProfile.user.username
+          ? `@${i.creatorProfile.user.username}`
+          : null),
       title: i.title,
       // Публичная лента (§9/§22, защита от пиратства) — та же резолвинг-логика, что у toView().
       videoUrl: publicVideoUrl(i),
@@ -273,7 +316,10 @@ export class PortfolioService {
       _count: { _all: true },
     });
     return rows
-      .map((r) => ({ tag: r.collectionTag as string, itemCount: r._count._all }))
+      .map((r) => ({
+        tag: r.collectionTag as string,
+        itemCount: r._count._all,
+      }))
       .sort((a, b) => b.itemCount - a.itemCount);
   }
 
@@ -293,14 +339,19 @@ export class PortfolioService {
    * участники сделки — которой на Этапе 0 и нет. На порогах — DM
    * исполнителю (§20 №18), best-effort, не влияет на ответ запроса.
    */
-  async like(userId: string, id: string): Promise<{ likeCount: number; likedByViewer: boolean }> {
+  async like(
+    userId: string,
+    id: string,
+  ): Promise<{ likeCount: number; likedByViewer: boolean }> {
     const item = await this.prisma.portfolioItem.findUnique({ where: { id } });
     if (!item || item.status !== 'PUBLISHED') {
       throw new NotFoundException('portfolio item not found');
     }
     try {
       await this.prisma.$transaction([
-        this.prisma.portfolioLike.create({ data: { userId, portfolioItemId: id } }),
+        this.prisma.portfolioLike.create({
+          data: { userId, portfolioItemId: id },
+        }),
         this.prisma.portfolioItem.update({
           where: { id },
           data: { likeCount: { increment: 1 } },
@@ -315,14 +366,23 @@ export class PortfolioService {
         throw e;
       }
     }
-    const fresh = await this.prisma.portfolioItem.findUniqueOrThrow({ where: { id } });
+    const fresh = await this.prisma.portfolioItem.findUniqueOrThrow({
+      where: { id },
+    });
     if (isNotifyWorthy(fresh.likeCount)) {
-      void this.notifyCreatorOfLikes(fresh.creatorProfileId, fresh.title, fresh.likeCount);
+      void this.notifyCreatorOfLikes(
+        fresh.creatorProfileId,
+        fresh.title,
+        fresh.likeCount,
+      );
     }
     return { likeCount: fresh.likeCount, likedByViewer: true };
   }
 
-  async unlike(userId: string, id: string): Promise<{ likeCount: number; likedByViewer: boolean }> {
+  async unlike(
+    userId: string,
+    id: string,
+  ): Promise<{ likeCount: number; likedByViewer: boolean }> {
     const existing = await this.prisma.portfolioLike.findUnique({
       where: { userId_portfolioItemId: { userId, portfolioItemId: id } },
     });
@@ -335,7 +395,9 @@ export class PortfolioService {
         }),
       ]);
     }
-    const fresh = await this.prisma.portfolioItem.findUniqueOrThrow({ where: { id } });
+    const fresh = await this.prisma.portfolioItem.findUniqueOrThrow({
+      where: { id },
+    });
     return { likeCount: fresh.likeCount, likedByViewer: false };
   }
 
@@ -381,7 +443,9 @@ export class PortfolioService {
     const lines = top.map((i, idx) => {
       const name =
         i.creatorProfile.user.firstName ??
-        (i.creatorProfile.user.username ? `@${i.creatorProfile.user.username}` : 'исполнитель');
+        (i.creatorProfile.user.username
+          ? `@${i.creatorProfile.user.username}`
+          : 'исполнитель');
       return `${idx + 1}. «${i.title}» — ${name} (${i.likeCount}❤️)\n${i.videoUrl}`;
     });
     const sent = await this.notify.dm(
@@ -398,6 +462,9 @@ export class PortfolioService {
     page: number;
     pageSize: number;
   }): Promise<AdminPortfolioListResult> {
+    // То же, что у фильтра лотов аукциона: строка из query в
+    // перечисление Prisma, проверку делает сама Prisma.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- см. выше
     const where = params.status ? { status: params.status as any } : {};
     const [items, total] = await this.prisma.$transaction([
       this.prisma.portfolioItem.findMany({
@@ -416,10 +483,17 @@ export class PortfolioService {
     };
   }
 
-  async adminApprove(id: string, moderatorId: string): Promise<PortfolioItemView> {
+  async adminApprove(
+    id: string,
+    moderatorId: string,
+  ): Promise<PortfolioItemView> {
     const item = await this.prisma.portfolioItem.update({
       where: { id },
-      data: { status: 'PUBLISHED', moderatedById: moderatorId, rejectionReason: null },
+      data: {
+        status: 'PUBLISHED',
+        moderatedById: moderatorId,
+        rejectionReason: null,
+      },
     });
     return this.toView(item, false, false);
   }
@@ -431,7 +505,11 @@ export class PortfolioService {
   ): Promise<PortfolioItemView> {
     const item = await this.prisma.portfolioItem.update({
       where: { id },
-      data: { status: 'REJECTED', moderatedById: moderatorId, rejectionReason: dto.reason },
+      data: {
+        status: 'REJECTED',
+        moderatedById: moderatorId,
+        rejectionReason: dto.reason,
+      },
     });
     return this.toView(item, false, false);
   }
@@ -497,8 +575,10 @@ export class PortfolioService {
       rejectionReason: item.rejectionReason ?? null,
       watermarkMode: item.watermarkMode as PortfolioItemView['watermarkMode'],
       watermarkText: item.watermarkText,
-      watermarkIntensity: item.watermarkIntensity as PortfolioItemView['watermarkIntensity'],
-      watermarkStatus: item.watermarkStatus as PortfolioItemView['watermarkStatus'],
+      watermarkIntensity:
+        item.watermarkIntensity as PortfolioItemView['watermarkIntensity'],
+      watermarkStatus:
+        item.watermarkStatus as PortfolioItemView['watermarkStatus'],
       soldAt: item.soldAt ? item.soldAt.toISOString() : null,
       soldPrice: item.soldPrice,
       likedByViewer,

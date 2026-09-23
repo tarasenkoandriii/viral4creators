@@ -44,7 +44,7 @@
  * Регистр первой буквы самого триггера разрешается явно (`[Гг]олос`) —
  * он может стоять в начале предложения.
  */
-const NAME = '[A-ZА-ЯЁЇІЄҐ][a-zа-яёїієґ\'’-]{2,}';
+const NAME = "[A-ZА-ЯЁЇІЄҐ][a-zа-яёїієґ'’-]{2,}";
 
 /**
  * Триггеры. Каждый — про воспроизведение конкретного человека, а не про
@@ -56,8 +56,14 @@ const PATTERNS: ReadonlyArray<{ re: RegExp; kind: string }> = [
   { re: new RegExp(`[Пп]охож\\S*\\s+на\\s+(${NAME})`, 'u'), kind: 'likeness' },
   { re: new RegExp(`[Вв]\\s+образе\\s+(${NAME})`, 'u'), kind: 'likeness' },
   { re: new RegExp(`[Уу]\\s+образі\\s+(${NAME})`, 'u'), kind: 'likeness' },
-  { re: new RegExp(`[Вв]игляда\\S*\\s+як\\s+(${NAME})`, 'u'), kind: 'likeness' },
-  { re: new RegExp(`[Вв]ыгляд\\S*\\s+как\\s+(${NAME})`, 'u'), kind: 'likeness' },
+  {
+    re: new RegExp(`[Вв]игляда\\S*\\s+як\\s+(${NAME})`, 'u'),
+    kind: 'likeness',
+  },
+  {
+    re: new RegExp(`[Вв]ыгляд\\S*\\s+как\\s+(${NAME})`, 'u'),
+    kind: 'likeness',
+  },
   { re: new RegExp(`[Дд]войник\\S*\\s+(${NAME})`, 'u'), kind: 'likeness' },
   { re: new RegExp(`[Дд]війник\\S*\\s+(${NAME})`, 'u'), kind: 'likeness' },
   { re: new RegExp(`[Кк]осплей\\s+(${NAME})`, 'u'), kind: 'likeness' },
@@ -65,9 +71,21 @@ const PATTERNS: ReadonlyArray<{ re: RegExp; kind: string }> = [
   { re: new RegExp(`[Гг]олос(?:ом|у)\\s+(${NAME})`, 'u'), kind: 'voice' },
   // en
   { re: new RegExp(`[Ll]ooks?\\s+like\\s+(${NAME})`, 'u'), kind: 'likeness' },
-  { re: new RegExp(`[Ll]ook-?alike\\s+of\\s+(${NAME})`, 'u'), kind: 'likeness' },
-  { re: new RegExp(`[Ii]n\\s+the\\s+style\\s+of\\s+(${NAME})`, 'u'), kind: 'likeness' },
-  { re: new RegExp(`(?:[Ii]mpersonat\\w*|[Dd]eepfake)\\s+(?:of\\s+)?(${NAME})`, 'u'), kind: 'likeness' },
+  {
+    re: new RegExp(`[Ll]ook-?alike\\s+of\\s+(${NAME})`, 'u'),
+    kind: 'likeness',
+  },
+  {
+    re: new RegExp(`[Ii]n\\s+the\\s+style\\s+of\\s+(${NAME})`, 'u'),
+    kind: 'likeness',
+  },
+  {
+    re: new RegExp(
+      `(?:[Ii]mpersonat\\w*|[Dd]eepfake)\\s+(?:of\\s+)?(${NAME})`,
+      'u',
+    ),
+    kind: 'likeness',
+  },
   { re: new RegExp(`[Vv]oice\\s+of\\s+(${NAME})`, 'u'), kind: 'voice' },
 ];
 

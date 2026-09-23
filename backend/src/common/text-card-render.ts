@@ -57,7 +57,10 @@ export interface TextCardRequest {
   aspectRatio: '9:16' | '16:9' | '1:1';
 }
 
-const CARD_DIMENSIONS: Record<TextCardRequest['aspectRatio'], { width: number; height: number }> = {
+const CARD_DIMENSIONS: Record<
+  TextCardRequest['aspectRatio'],
+  { width: number; height: number }
+> = {
   '9:16': { width: 1080, height: 1920 },
   '16:9': { width: 1920, height: 1080 },
   '1:1': { width: 1080, height: 1080 },
@@ -212,6 +215,10 @@ export async function renderTextCard(req: TextCardRequest): Promise<Buffer> {
             : []),
         ],
       },
+      // Дерево узлов satori: его типы описывают JSX-элементы, а мы
+      // строим ту же структуру объектами. Расписать её типами satori
+      // значило бы повторить их разметку целиком ради одного вызова.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- см. выше
     } as any,
     {
       width,

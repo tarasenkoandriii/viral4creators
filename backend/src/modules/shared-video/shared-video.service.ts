@@ -708,8 +708,7 @@ export class SharedVideoService {
     // опечатку в параметре. Пустая выдача — правильная сторона ошибки.
     const rawType = opts.projectType?.trim() || undefined;
     const rawOccasion = opts.occasion?.trim() || undefined;
-    const projectType =
-      rawType && isProjectType(rawType) ? rawType : undefined;
+    const projectType = rawType && isProjectType(rawType) ? rawType : undefined;
     const occasion =
       rawOccasion && isOccasion(rawOccasion) ? rawOccasion : undefined;
     if ((rawType && !projectType) || (rawOccasion && !occasion)) {
@@ -745,7 +744,10 @@ export class SharedVideoService {
    * любом статусе — снятие всегда безопасно, и запрет на него означал
    * бы, что отклонённая страница не убирается с витрины.
    */
-  async setShowcase(id: string, showcase: boolean): Promise<SharedVideoPageView> {
+  async setShowcase(
+    id: string,
+    showcase: boolean,
+  ): Promise<SharedVideoPageView> {
     const row: SharedVideoRow | null =
       await this.prisma.sharedVideoPage.findUnique({ where: { id } });
     if (!row) throw new NotFoundException(`Shared video page ${id} not found`);

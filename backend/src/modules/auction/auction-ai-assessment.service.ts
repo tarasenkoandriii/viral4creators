@@ -93,15 +93,21 @@ export class AuctionAiAssessmentService {
 
     await this.prisma.auctionListing.update({
       where: { id: listing.id },
-      data: { aiAssessment: videoAssessment, brandManifestAiAudit: brandManifestAssessment },
+      data: {
+        aiAssessment: videoAssessment,
+        brandManifestAiAudit: brandManifestAssessment,
+      },
     });
     return { assessed: true };
   }
 
   private async assessVideo(videoUrl: string, userId: string): Promise<string> {
     try {
-      const res = await fetch(videoUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-      if (!res.ok) return `Не удалось скачать видео для оценки (HTTP ${res.status}).`;
+      const res = await fetch(videoUrl, {
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      });
+      if (!res.ok)
+        return `Не удалось скачать видео для оценки (HTTP ${res.status}).`;
 
       const contentLength = Number(res.headers.get('content-length') ?? '0');
       if (contentLength > MAX_VIDEO_BYTES) {
@@ -117,11 +123,15 @@ export class AuctionAiAssessmentService {
       // Берём Content-Type ответа, если это видео; иначе — безопасный
       // дефолт (Gemini сам откажет на явно не-видео контенте).
       const contentType = res.headers.get('content-type');
-      const mimeType = contentType?.startsWith('video/') ? contentType : 'video/mp4';
+      const mimeType = contentType?.startsWith('video/')
+        ? contentType
+        : 'video/mp4';
 
       const file = await this.geminiFiles.uploadAndWaitActive(buffer, mimeType);
       try {
-        const videoPart: Part = { fileData: { fileUri: file.uri, mimeType: file.mimeType } };
+        const videoPart: Part = {
+          fileData: { fileUri: file.uri, mimeType: file.mimeType },
+        };
         const result = await this.genai.models.generateContent({
           model: GEMINI_MODEL,
           contents: [videoPart, { text: VIDEO_PROMPT }],
@@ -141,7 +151,10 @@ export class AuctionAiAssessmentService {
     }
   }
 
-  private async assessBrandManifest(manifest: BrandManifestForAssessment, userId: string): Promise<string> {
+  private async assessBrandManifest(
+    manifest: BrandManifestForAssessment,
+    userId: string,
+  ): Promise<string> {
     try {
       const summary = [
         `Название: ${manifest.title}`,

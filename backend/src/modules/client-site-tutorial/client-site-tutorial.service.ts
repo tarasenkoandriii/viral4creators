@@ -463,7 +463,10 @@ export class ClientSiteTutorialService {
       await this.usage.releaseRound(userId);
       throw err;
     }
-    await this.assertStillInside(draft.baseUrl, replayed.exploration.currentUrl);
+    await this.assertStillInside(
+      draft.baseUrl,
+      replayed.exploration.currentUrl,
+    );
 
     const next = replaceLastScreenshot(
       undone.next,

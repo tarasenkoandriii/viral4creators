@@ -35,7 +35,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { BlobService } from '../storage/blob.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
-import { buildWatermarkPlan, WatermarkIntensityValue } from '../../common/watermark';
+import {
+  buildWatermarkPlan,
+  WatermarkIntensityValue,
+} from '../../common/watermark';
 
 /** Имя площадки — дефолтный текст знака (WatermarkMode.SITE_NAME). */
 const SITE_NAME = 'viral4creators';
@@ -109,7 +112,10 @@ export class PortfolioWatermarkService {
   }
 
   /** Общий переход в FAILED — увеличивает счётчик попыток (аудит-фикс), не только сам статус. */
-  private async markFailed(id: string, previousAttempts: number): Promise<void> {
+  private async markFailed(
+    id: string,
+    previousAttempts: number,
+  ): Promise<void> {
     await this.prisma.portfolioItem.update({
       where: { id },
       data: {
@@ -136,9 +142,15 @@ export class PortfolioWatermarkService {
       return { action: 'skipped' };
     }
 
-    const text = item.watermarkMode === 'CUSTOM' && item.watermarkText ? item.watermarkText : SITE_NAME;
+    const text =
+      item.watermarkMode === 'CUSTOM' && item.watermarkText
+        ? item.watermarkText
+        : SITE_NAME;
     try {
-      const plan = buildWatermarkPlan(text, item.watermarkIntensity as WatermarkIntensityValue);
+      const plan = buildWatermarkPlan(
+        text,
+        item.watermarkIntensity as WatermarkIntensityValue,
+      );
       const job = await this.ffmpeg.submit({
         inputs: { input: item.videoUrl },
         outputs: [plan.outputName],
@@ -150,7 +162,9 @@ export class PortfolioWatermarkService {
       });
       return { action: 'submitted' };
     } catch (e) {
-      this.logger.warn(`Отправка задачи водяного знака не удалась (item=${item.id}): ${(e as Error).message}`);
+      this.logger.warn(
+        `Отправка задачи водяного знака не удалась (item=${item.id}): ${(e as Error).message}`,
+      );
       await this.markFailed(item.id, item.watermarkAttempts);
       return { action: 'failed-submit' };
     }
@@ -171,7 +185,9 @@ export class PortfolioWatermarkService {
     try {
       jobStatus = await this.ffmpeg.status(item.watermarkJobId);
     } catch (e) {
-      this.logger.warn(`Опрос задачи водяного знака не удался (item=${item.id}): ${(e as Error).message}`);
+      this.logger.warn(
+        `Опрос задачи водяного знака не удался (item=${item.id}): ${(e as Error).message}`,
+      );
       return { action: 'poll-error' }; // не FAILED сразу — попробуем на следующем тике, transient-сбой сети
     }
 
@@ -209,7 +225,11 @@ export class PortfolioWatermarkService {
 
     await this.prisma.portfolioItem.update({
       where: { id: item.id },
-      data: { watermarkStatus: 'READY', watermarkedVideoUrl: url, watermarkJobId: null },
+      data: {
+        watermarkStatus: 'READY',
+        watermarkedVideoUrl: url,
+        watermarkJobId: null,
+      },
     });
     return { action: 'ready' };
   }

@@ -39,7 +39,10 @@ import {
 } from '../admin-auth/admin-session.guard';
 import { AdminPanelService } from '../admin-panel/admin-panel.service';
 import { CreatorProfileService } from './creator-profile.service';
-import { CreatorQuizDto, UpdateCreatorProfileDto } from './dto/creator-profile.dto';
+import {
+  CreatorQuizDto,
+  UpdateCreatorProfileDto,
+} from './dto/creator-profile.dto';
 import { SetFeaturedDto } from './dto/set-featured.dto';
 import {
   AdminCreatorProfileListResult,
@@ -136,7 +139,10 @@ export class AdminCreatorProfileController {
     return this.service.adminList({
       isFeatured: isFeatured === undefined ? undefined : isFeatured === 'true',
       page: Math.max(parseInt(page ?? '1', 10) || 1, 1),
-      pageSize: Math.min(Math.max(parseInt(pageSize ?? '20', 10) || 20, 1), 100),
+      pageSize: Math.min(
+        Math.max(parseInt(pageSize ?? '20', 10) || 20, 1),
+        100,
+      ),
     });
   }
 

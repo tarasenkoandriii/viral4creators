@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- тестовые двойники: подставляем заглушки на месте зависимостей, форму которых тест не проверяет */
 /**
  * ProjectService unit tests — Prisma is mocked, so these cover the
  * service's own decisions (doc/PRODUCT-PROJECT-SPEC.md §7.1–§7.4, §7.8,

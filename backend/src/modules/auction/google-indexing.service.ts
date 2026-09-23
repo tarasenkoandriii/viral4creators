@@ -55,7 +55,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createSign } from 'crypto';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const PUBLISH_URL = 'https://indexing.googleapis.com/v3/urlNotifications:publish';
+const PUBLISH_URL =
+  'https://indexing.googleapis.com/v3/urlNotifications:publish';
 const SCOPE = 'https://www.googleapis.com/auth/indexing';
 /** Токен живёт час (Google) — перевыпускаем на минуту раньше срока, чтобы не словить его протухшим прямо в момент запроса. */
 const TOKEN_REFRESH_SLACK_MS = 60_000;
@@ -63,7 +64,11 @@ const TOKEN_REFRESH_SLACK_MS = 60_000;
 export type IndexingNotifyType = 'URL_UPDATED' | 'URL_DELETED';
 
 function base64url(input: Buffer | string): string {
-  return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return Buffer.from(input)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 }
 
 @Injectable()
@@ -94,28 +99,41 @@ export class GoogleIndexingService {
    * строго (сама индексация не может быть условием бизнес-логики), но
    * оно полезно для логов/будущей телеметрии.
    */
-  async notify(url: string, type: IndexingNotifyType = 'URL_UPDATED'): Promise<boolean> {
+  async notify(
+    url: string,
+    type: IndexingNotifyType = 'URL_UPDATED',
+  ): Promise<boolean> {
     if (!this.isConfigured() || !url) return false;
     const token = await this.getAccessToken();
     if (!token) return false;
     try {
       const res = await fetch(PUBLISH_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ url, type }),
       });
       if (!res.ok) {
-        this.logger.warn(`Indexing API ${res.status} for ${url}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
+        this.logger.warn(
+          `Indexing API ${res.status} for ${url}: ${(await res.text().catch(() => '')).slice(0, 300)}`,
+        );
       }
       return res.ok;
     } catch (error) {
-      this.logger.warn(`Indexing API request failed for ${url}: ${this.extractErrorMessage(error)}`);
+      this.logger.warn(
+        `Indexing API request failed for ${url}: ${this.extractErrorMessage(error)}`,
+      );
       return false;
     }
   }
 
   private async getAccessToken(): Promise<string | null> {
-    if (this.cachedToken && Date.now() < this.cachedToken.exp - TOKEN_REFRESH_SLACK_MS) {
+    if (
+      this.cachedToken &&
+      Date.now() < this.cachedToken.exp - TOKEN_REFRESH_SLACK_MS
+    ) {
       return this.cachedToken.token;
     }
 
@@ -123,13 +141,22 @@ export class GoogleIndexingService {
     // PEM обычно хранится в env с экранированными переносами строк (\n
     // буквально, не настоящий перевод строки) — разэкранируем, тот же
     // приём, что уже используется в проекте для других PEM-ключей.
-    const privateKey = process.env.GOOGLE_INDEXING_SA_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    const privateKey = process.env.GOOGLE_INDEXING_SA_PRIVATE_KEY?.replace(
+      /\\n/g,
+      '\n',
+    );
     if (!email || !privateKey) return null;
 
     const now = Math.floor(Date.now() / 1000);
     const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
     const claim = base64url(
-      JSON.stringify({ iss: email, scope: SCOPE, aud: TOKEN_URL, iat: now, exp: now + 3600 }),
+      JSON.stringify({
+        iss: email,
+        scope: SCOPE,
+        aud: TOKEN_URL,
+        iat: now,
+        exp: now + 3600,
+      }),
     );
     const signingInput = `${header}.${claim}`;
 
@@ -140,7 +167,9 @@ export class GoogleIndexingService {
       signer.end();
       signature = base64url(signer.sign(privateKey));
     } catch (error) {
-      this.logger.warn(`GOOGLE_INDEXING_SA_PRIVATE_KEY не удалось использовать для подписи JWT: ${this.extractErrorMessage(error)}`);
+      this.logger.warn(
+        `GOOGLE_INDEXING_SA_PRIVATE_KEY не удалось использовать для подписи JWT: ${this.extractErrorMessage(error)}`,
+      );
       return null;
     }
     const assertion = `${signingInput}.${signature}`;
@@ -155,15 +184,25 @@ export class GoogleIndexingService {
         }),
       });
       if (!res.ok) {
-        this.logger.warn(`OAuth token exchange ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
+        this.logger.warn(
+          `OAuth token exchange ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`,
+        );
         return null;
       }
-      const data = (await res.json()) as { access_token?: string; expires_in?: number };
+      const data = (await res.json()) as {
+        access_token?: string;
+        expires_in?: number;
+      };
       if (!data.access_token) return null;
-      this.cachedToken = { token: data.access_token, exp: Date.now() + (data.expires_in ?? 3600) * 1000 };
+      this.cachedToken = {
+        token: data.access_token,
+        exp: Date.now() + (data.expires_in ?? 3600) * 1000,
+      };
       return data.access_token;
     } catch (error) {
-      this.logger.warn(`OAuth token exchange failed: ${this.extractErrorMessage(error)}`);
+      this.logger.warn(
+        `OAuth token exchange failed: ${this.extractErrorMessage(error)}`,
+      );
       return null;
     }
   }

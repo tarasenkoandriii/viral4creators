@@ -65,7 +65,12 @@ describe('parseSettings (№36)', () => {
 
   it('четвёртый вариант отбрасывается — просили три', () => {
     const out = parseSettings(
-      ['Sunlit kitchen with flowers', 'Cosy living room lamps', 'Summer terrace evening', 'Snowy balcony at night'].join('\n'),
+      [
+        'Sunlit kitchen with flowers',
+        'Cosy living room lamps',
+        'Summer terrace evening',
+        'Snowy balcony at night',
+      ].join('\n'),
     );
     expect(out).toHaveLength(3);
   });

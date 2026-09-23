@@ -6,7 +6,11 @@
  * (сделка и оплата происходят вне платформы, §21.1).
  */
 
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { STANDARD_ASPECT_RATIOS } from '../../common/aspect-ratio';
 import {
@@ -29,7 +33,10 @@ import {
  * «лучше» для YouTube-преролла означает выбор standard, а не выдуманный
  * третий тир.
  */
-const FORMAT_ADVICE: Record<TargetPlatform, Omit<FormatAdviceView, 'targetPlatform'>> = {
+const FORMAT_ADVICE: Record<
+  TargetPlatform,
+  Omit<FormatAdviceView, 'targetPlatform'>
+> = {
   instagram_reels: {
     aspectRatio: '9:16',
     quality: 'fast',
@@ -61,7 +68,10 @@ const FORMAT_ADVICE: Record<TargetPlatform, Omit<FormatAdviceView, 'targetPlatfo
 export class CreatorInquiryService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(userId: string, dto: CreateCreatorInquiryDto): Promise<CreatorInquiryView> {
+  async create(
+    userId: string,
+    dto: CreateCreatorInquiryDto,
+  ): Promise<CreatorInquiryView> {
     // Аудит-фикс: раньше brandManifestId сохранялся без проверки владения —
     // можно было сослаться на чужой брендбук (стиль, персонажи бренда).
     if (dto.brandManifestId) {
@@ -100,7 +110,9 @@ export class CreatorInquiryService {
   }
 
   private async ownInquiryOrThrow(userId: string, id: string) {
-    const inquiry = await this.prisma.creatorInquiry.findUnique({ where: { id } });
+    const inquiry = await this.prisma.creatorInquiry.findUnique({
+      where: { id },
+    });
     if (!inquiry || inquiry.customerId !== userId) {
       throw new NotFoundException('inquiry not found');
     }
@@ -124,9 +136,13 @@ export class CreatorInquiryService {
    * настоящую ИИ-логику (§16 «Подбор исполнителей») — последующий шаг,
    * не часть минимального среза Этапа 0.
    */
-  async getMatches(userId: string, id: string): Promise<CreatorInquiryMatchView[]> {
+  async getMatches(
+    userId: string,
+    id: string,
+  ): Promise<CreatorInquiryMatchView[]> {
     const inquiry = await this.ownInquiryOrThrow(userId, id);
-    const haystack = `${inquiry.productDescription} ${inquiry.goal ?? ''}`.toLowerCase();
+    const haystack =
+      `${inquiry.productDescription} ${inquiry.goal ?? ''}`.toLowerCase();
 
     const profiles = await this.prisma.creatorProfile.findMany({
       where: { isAcceptingOrders: true, userId: { not: userId } },
@@ -137,7 +153,8 @@ export class CreatorInquiryService {
     const scored = profiles
       .map((p) => {
         let score = p.niches.reduce(
-          (acc, niche) => acc + (haystack.includes(niche.toLowerCase()) ? 1 : 0),
+          (acc, niche) =>
+            acc + (haystack.includes(niche.toLowerCase()) ? 1 : 0),
           0,
         );
         if (
@@ -155,7 +172,8 @@ export class CreatorInquiryService {
 
     return scored.map(({ p, score }) => ({
       creatorProfileId: p.id,
-      displayName: p.user.firstName ?? (p.user.username ? `@${p.user.username}` : null),
+      displayName:
+        p.user.firstName ?? (p.user.username ? `@${p.user.username}` : null),
       niches: p.niches,
       priceRangeMin: p.priceRangeMin,
       priceRangeMax: p.priceRangeMax,
@@ -178,7 +196,9 @@ export class CreatorInquiryService {
     // Аудит-фикс: раньше принимался любой существующий creatorProfileId,
     // включая исполнителя, который уже не принимает заказы.
     if (!creator.isAcceptingOrders) {
-      throw new ConflictException('this creator is not accepting orders anymore');
+      throw new ConflictException(
+        'this creator is not accepting orders anymore',
+      );
     }
 
     const updated = await this.prisma.creatorInquiry.update({

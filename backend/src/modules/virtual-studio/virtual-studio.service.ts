@@ -33,7 +33,6 @@
 
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -147,16 +146,25 @@ export class VirtualStudioService {
   async generateVariant(studioId: string, promptOverride?: string) {
     const studio = await this.getStudioOrThrow(studioId);
     if (!this.grokImage.isConfigured()) {
-      throw new BadRequestException('GROK_API_KEY не задан на этом стенде — генерация референс-кадра недоступна');
+      throw new BadRequestException(
+        'GROK_API_KEY не задан на этом стенде — генерация референс-кадра недоступна',
+      );
     }
     const prompt = promptOverride?.trim() || studio.refPrompt;
 
     let imageUrl: string;
     try {
-      const result = await this.grokImage.generate(prompt, DEFAULT_ASPECT_RATIO);
+      const result = await this.grokImage.generate(
+        prompt,
+        DEFAULT_ASPECT_RATIO,
+      );
       const bytes = await this.download(result.url);
       const pathname = `virtual-studio/${studioId}/variant-${Date.now()}.png`;
-      ({ url: imageUrl } = await this.blob.uploadBuffer(pathname, bytes, 'image/png'));
+      ({ url: imageUrl } = await this.blob.uploadBuffer(
+        pathname,
+        bytes,
+        'image/png',
+      ));
     } catch (error) {
       throw new BadRequestException(
         `Не удалось сгенерировать референс-кадр: ${this.extractErrorMessage(error)}`,
@@ -234,23 +242,33 @@ export class VirtualStudioService {
   }
 
   async getHedraEnabled(): Promise<boolean> {
-    return (await this.settings.get(VIRTUAL_STUDIO_HEDRA_ENABLED_KEY)) === 'true';
+    return (
+      (await this.settings.get(VIRTUAL_STUDIO_HEDRA_ENABLED_KEY)) === 'true'
+    );
   }
 
   async setHedraEnabled(enabled: boolean, updatedBy: string): Promise<void> {
-    await this.settings.set(VIRTUAL_STUDIO_HEDRA_ENABLED_KEY, enabled ? 'true' : 'false', updatedBy);
+    await this.settings.set(
+      VIRTUAL_STUDIO_HEDRA_ENABLED_KEY,
+      enabled ? 'true' : 'false',
+      updatedBy,
+    );
   }
 
   async createVideoFragment(studioId: string, dto: CreateVideoFragmentDto) {
     const studio = await this.getStudioOrThrow(studioId);
     if (!studio.selectedVariantId) {
-      throw new BadRequestException('У студии нет выбранного варианта референс-кадра — сначала выберите или сгенерируйте его (§3.2)');
+      throw new BadRequestException(
+        'У студии нет выбранного варианта референс-кадра — сначала выберите или сгенерируйте его (§3.2)',
+      );
     }
     const variant = await this.prisma.virtualStudioVariant.findFirst({
       where: { id: studio.selectedVariantId, studioId },
     });
     if (!variant) {
-      throw new BadRequestException('Выбранный вариант референс-кадра не найден — выберите другой');
+      throw new BadRequestException(
+        'Выбранный вариант референс-кадра не найден — выберите другой',
+      );
     }
 
     const durationSec = dto.durationSec ?? DEFAULT_VIDEO_DURATION_SEC;
@@ -258,19 +276,30 @@ export class VirtualStudioService {
 
     if (dto.provider === 'hedra') {
       if (!(await this.getHedraEnabled())) {
-        throw new BadRequestException('Hedra выключена в настройках (§3.5) — включите её в /settings, чтобы использовать этот провайдер');
+        throw new BadRequestException(
+          'Hedra выключена в настройках (§3.5) — включите её в /settings, чтобы использовать этот провайдер',
+        );
       }
       if (!this.hedra.configured()) {
         throw new BadRequestException('HEDRA_API_KEY не задан на этом стенде');
       }
       if (!dto.voiceFragmentId) {
-        throw new BadRequestException('Для Hedra нужен готовый голосовой фрагмент (voiceFragmentId) — лип-синк ведётся её озвучкой (§4.2)');
+        throw new BadRequestException(
+          'Для Hedra нужен готовый голосовой фрагмент (voiceFragmentId) — лип-синк ведётся её озвучкой (§4.2)',
+        );
       }
       const voiceFragment = await this.prisma.virtualStudioFragment.findFirst({
-        where: { id: dto.voiceFragmentId, studioId, kind: 'VOICE', status: 'complete' },
+        where: {
+          id: dto.voiceFragmentId,
+          studioId,
+          kind: 'VOICE',
+          status: 'complete',
+        },
       });
       if (!voiceFragment?.resultUrl) {
-        throw new BadRequestException('Указанный голосовой фрагмент не найден или ещё не готов');
+        throw new BadRequestException(
+          'Указанный голосовой фрагмент не найден или ещё не готов',
+        );
       }
 
       let jobId: string;
@@ -280,11 +309,14 @@ export class VirtualStudioService {
           startImage: variant.imageUrl,
           audioUrl: voiceFragment.resultUrl,
           aspectRatio,
-          resolution: (dto.resolution as '540p' | '720p' | '1080p' | undefined) ?? '720p',
+          resolution:
+            (dto.resolution as '540p' | '720p' | '1080p' | undefined) ?? '720p',
         });
         jobId = job.jobId;
       } catch (error) {
-        throw new BadRequestException(`Не удалось запустить Hedra: ${this.extractErrorMessage(error)}`);
+        throw new BadRequestException(
+          `Не удалось запустить Hedra: ${this.extractErrorMessage(error)}`,
+        );
       }
 
       return this.prisma.virtualStudioFragment.create({
@@ -313,11 +345,15 @@ export class VirtualStudioService {
         imageUrl: variant.imageUrl,
         durationSeconds: durationSec,
         aspectRatio,
-        resolution: (dto.resolution as '480p' | '720p' | '1080p' | undefined) ?? DEFAULT_RESOLUTION,
+        resolution:
+          (dto.resolution as '480p' | '720p' | '1080p' | undefined) ??
+          DEFAULT_RESOLUTION,
       });
       requestId = job.requestId;
     } catch (error) {
-      throw new BadRequestException(`Не удалось запустить Grok: ${this.extractErrorMessage(error)}`);
+      throw new BadRequestException(
+        `Не удалось запустить Grok: ${this.extractErrorMessage(error)}`,
+      );
     }
 
     return this.prisma.virtualStudioFragment.create({
@@ -338,7 +374,9 @@ export class VirtualStudioService {
     await this.getStudioOrThrow(studioId);
     const provider = this.tts.resolveByKey(dto.provider);
     if (!provider.configured()) {
-      throw new BadRequestException(`Провайдер озвучки «${dto.provider}» не настроен на этом стенде`);
+      throw new BadRequestException(
+        `Провайдер озвучки «${dto.provider}» не настроен на этом стенде`,
+      );
     }
 
     const outcome = await provider.synthesize({
@@ -347,7 +385,9 @@ export class VirtualStudioService {
       language: dto.language,
     });
     if (!outcome.ok) {
-      throw new BadRequestException(`Синтез голоса не состоялся: ${outcome.reason}`);
+      throw new BadRequestException(
+        `Синтез голоса не состоялся: ${outcome.reason}`,
+      );
     }
 
     await this.aiUsage.record({
@@ -357,7 +397,11 @@ export class VirtualStudioService {
     });
 
     const pathname = `virtual-studio/${studioId}/voice-${Date.now()}.mp3`;
-    const { url } = await this.blob.uploadBuffer(pathname, outcome.audio, outcome.mimeType);
+    const { url } = await this.blob.uploadBuffer(
+      pathname,
+      outcome.audio,
+      outcome.mimeType,
+    );
 
     return this.prisma.virtualStudioFragment.create({
       data: {
@@ -373,14 +417,21 @@ export class VirtualStudioService {
     });
   }
 
-  async createAnalysisFragment(studioId: string, dto: CreateAnalysisFragmentDto) {
+  async createAnalysisFragment(
+    studioId: string,
+    dto: CreateAnalysisFragmentDto,
+  ) {
     await this.getStudioOrThrow(studioId);
 
     const brandManifest = dto.brandManifestId
-      ? await this.prisma.brandManifest.findUnique({ where: { id: dto.brandManifestId } })
+      ? await this.prisma.brandManifest.findUnique({
+          where: { id: dto.brandManifestId },
+        })
       : null;
     if (dto.brandManifestId && !brandManifest) {
-      throw new BadRequestException(`Брендбук ${dto.brandManifestId} не найден`);
+      throw new BadRequestException(
+        `Брендбук ${dto.brandManifestId} не найден`,
+      );
     }
 
     const fragment = await this.prisma.virtualStudioFragment.create({
@@ -400,24 +451,38 @@ export class VirtualStudioService {
     try {
       const [videoAssessment, manifestAssessment] = await Promise.all([
         this.assessVideo(dto.sourceVideoUrl),
-        brandManifest ? this.assessBrandManifest(brandManifest) : Promise.resolve(null),
+        brandManifest
+          ? this.assessBrandManifest(brandManifest)
+          : Promise.resolve(null),
       ]);
-      const resultText = [videoAssessment, manifestAssessment].filter(Boolean).join('\n\n');
+      const resultText = [videoAssessment, manifestAssessment]
+        .filter(Boolean)
+        .join('\n\n');
       return this.prisma.virtualStudioFragment.update({
         where: { id: fragment.id },
-        data: { status: GenerationStatus.COMPLETE, resultText, readyAt: new Date() },
+        data: {
+          status: GenerationStatus.COMPLETE,
+          resultText,
+          readyAt: new Date(),
+        },
       });
     } catch (error) {
       return this.prisma.virtualStudioFragment.update({
         where: { id: fragment.id },
-        data: { status: GenerationStatus.FAILED, errorMessage: this.extractErrorMessage(error) },
+        data: {
+          status: GenerationStatus.FAILED,
+          errorMessage: this.extractErrorMessage(error),
+        },
       });
     }
   }
 
   private async assessVideo(videoUrl: string): Promise<string> {
-    const res = await fetch(videoUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-    if (!res.ok) return `Не удалось скачать видео для анализа (HTTP ${res.status}).`;
+    const res = await fetch(videoUrl, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
+    if (!res.ok)
+      return `Не удалось скачать видео для анализа (HTTP ${res.status}).`;
 
     const contentLength = Number(res.headers.get('content-length') ?? '0');
     if (contentLength > MAX_VIDEO_BYTES) {
@@ -429,11 +494,15 @@ export class VirtualStudioService {
     }
 
     const contentType = res.headers.get('content-type');
-    const mimeType = contentType?.startsWith('video/') ? contentType : 'video/mp4';
+    const mimeType = contentType?.startsWith('video/')
+      ? contentType
+      : 'video/mp4';
 
     const file = await this.geminiFiles.uploadAndWaitActive(buffer, mimeType);
     try {
-      const videoPart: Part = { fileData: { fileUri: file.uri, mimeType: file.mimeType } };
+      const videoPart: Part = {
+        fileData: { fileUri: file.uri, mimeType: file.mimeType },
+      };
       const result = await this.genai.models.generateContent({
         model: GEMINI_MODEL,
         contents: [videoPart, { text: ANALYSIS_VIDEO_PROMPT }],
@@ -475,7 +544,8 @@ export class VirtualStudioService {
     const fragment = await this.prisma.virtualStudioFragment.findFirst({
       where: { id: fragmentId, studioId },
     });
-    if (!fragment) throw new NotFoundException(`Фрагмент ${fragmentId} не найден`);
+    if (!fragment)
+      throw new NotFoundException(`Фрагмент ${fragmentId} не найден`);
 
     if (
       fragment.kind !== 'VIDEO' ||
@@ -491,21 +561,30 @@ export class VirtualStudioService {
       try {
         status = await this.hedra.status(fragment.providerJobId);
       } catch (error) {
-        this.logger.warn(`Hedra status check failed, will retry: ${this.extractErrorMessage(error)}`);
+        this.logger.warn(
+          `Hedra status check failed, will retry: ${this.extractErrorMessage(error)}`,
+        );
         return fragment;
       }
       if (status.status === 'pending') return fragment;
       if (status.status === 'failed') {
         return this.prisma.virtualStudioFragment.update({
           where: { id: fragment.id },
-          data: { status: GenerationStatus.FAILED, errorMessage: status.error ?? 'Hedra сообщила об ошибке' },
+          data: {
+            status: GenerationStatus.FAILED,
+            errorMessage: status.error ?? 'Hedra сообщила об ошибке',
+          },
         });
       }
       const output = status.outputs?.[0];
       if (!output) {
         return this.prisma.virtualStudioFragment.update({
           where: { id: fragment.id },
-          data: { status: GenerationStatus.FAILED, errorMessage: 'Hedra отметила задачу завершённой, но не вернула файл' },
+          data: {
+            status: GenerationStatus.FAILED,
+            errorMessage:
+              'Hedra отметила задачу завершённой, но не вернула файл',
+          },
         });
       }
       return this.finalizeVideo(fragment.id, output.url);
@@ -516,14 +595,19 @@ export class VirtualStudioService {
     try {
       status = await this.grokVideo.getStatus(fragment.providerJobId);
     } catch (error) {
-      this.logger.warn(`Grok status check failed, will retry: ${this.extractErrorMessage(error)}`);
+      this.logger.warn(
+        `Grok status check failed, will retry: ${this.extractErrorMessage(error)}`,
+      );
       return fragment;
     }
     if (!status.done) return fragment;
     if (status.error || !status.videoUrl) {
       return this.prisma.virtualStudioFragment.update({
         where: { id: fragment.id },
-        data: { status: GenerationStatus.FAILED, errorMessage: status.error ?? 'Grok не вернул видео' },
+        data: {
+          status: GenerationStatus.FAILED,
+          errorMessage: status.error ?? 'Grok не вернул видео',
+        },
       });
     }
     return this.finalizeVideo(fragment.id, status.videoUrl);
@@ -535,8 +619,15 @@ export class VirtualStudioService {
     try {
       const bytes = await this.download(providerUrl);
       const pathname = `virtual-studio/fragments/${fragmentId}.mp4`;
-      const { url } = await this.blob.uploadBuffer(pathname, bytes, 'video/mp4');
-      const fragment = await this.prisma.virtualStudioFragment.findUniqueOrThrow({ where: { id: fragmentId } });
+      const { url } = await this.blob.uploadBuffer(
+        pathname,
+        bytes,
+        'video/mp4',
+      );
+      const fragment =
+        await this.prisma.virtualStudioFragment.findUniqueOrThrow({
+          where: { id: fragmentId },
+        });
       if (fragment.durationSec) {
         // Разрешение запроса не хранится отдельной колонкой на
         // фрагменте (схема §2 её не заводит) — для составного ключа
@@ -556,12 +647,19 @@ export class VirtualStudioService {
       }
       return this.prisma.virtualStudioFragment.update({
         where: { id: fragmentId },
-        data: { status: GenerationStatus.COMPLETE, resultUrl: url, readyAt: new Date() },
+        data: {
+          status: GenerationStatus.COMPLETE,
+          resultUrl: url,
+          readyAt: new Date(),
+        },
       });
     } catch (error) {
       return this.prisma.virtualStudioFragment.update({
         where: { id: fragmentId },
-        data: { status: GenerationStatus.FAILED, errorMessage: this.extractErrorMessage(error) },
+        data: {
+          status: GenerationStatus.FAILED,
+          errorMessage: this.extractErrorMessage(error),
+        },
       });
     }
   }
@@ -571,12 +669,17 @@ export class VirtualStudioService {
     const fragment = await this.prisma.virtualStudioFragment.findFirst({
       where: { id: fragmentId, studioId },
     });
-    if (!fragment) throw new NotFoundException(`Фрагмент ${fragmentId} не найден`);
-    await this.prisma.virtualStudioFragment.delete({ where: { id: fragmentId } });
+    if (!fragment)
+      throw new NotFoundException(`Фрагмент ${fragmentId} не найден`);
+    await this.prisma.virtualStudioFragment.delete({
+      where: { id: fragmentId },
+    });
   }
 
   private async download(url: string): Promise<Buffer> {
-    const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`скачивание файла: HTTP ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
   }

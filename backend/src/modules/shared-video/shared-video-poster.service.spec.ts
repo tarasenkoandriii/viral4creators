@@ -26,9 +26,9 @@ function build(
     submit,
     status,
   };
-  const uploadBuffer = jest
-    .fn()
-    .mockResolvedValue({ url: 'https://blob.test/shared-videos/sv1/poster.jpg' });
+  const uploadBuffer = jest.fn().mockResolvedValue({
+    url: 'https://blob.test/shared-videos/sv1/poster.jpg',
+  });
   const blob = { uploadBuffer };
   const svc = new SharedVideoPosterService(ffmpeg as any, blob as any);
   // Ожидание между опросами в тесте не нужно — проверяется логика, а не

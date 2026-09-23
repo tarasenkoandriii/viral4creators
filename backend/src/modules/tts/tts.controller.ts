@@ -107,9 +107,7 @@ export class TtsController {
         provider: tts.providerKey,
       };
     }
-    const { voices, error } = await tts.voices(
-      language?.trim() || undefined,
-    );
+    const { voices, error } = await tts.voices(language?.trim() || undefined);
     return {
       configured: true,
       voices: await this.excludeClonedVoices(voices),

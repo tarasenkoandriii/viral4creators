@@ -282,7 +282,8 @@ export function greetingBriefSnapshotFrom(
   brief: SnapshotGreetingBriefSource,
   now: Date = new Date(),
 ): GreetingBriefSnapshot {
-  const presenterProvider = brief.presenterProvider as GreetingPresenterProvider;
+  const presenterProvider =
+    brief.presenterProvider as GreetingPresenterProvider;
   const resolution = brief.resolution as GreetingResolution;
   return {
     sourceGreetingBriefId: brief.id,

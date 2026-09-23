@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- тестовые двойники: подставляем заглушки на месте зависимостей, форму которых тест не проверяет */
 import axios from 'axios';
 import { GrokVideoBatchService } from './grok-video-batch.service';
 

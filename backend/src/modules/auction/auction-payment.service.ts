@@ -46,7 +46,10 @@ export class AuctionPaymentService {
    * пользуется ручной путь оператора, оборачивая вызов в свою
    * однооперационную $transaction для того же гарантии.
    */
-  async applySuccess(tx: Prisma.TransactionClient, auctionPaymentId: string): Promise<void> {
+  async applySuccess(
+    tx: Prisma.TransactionClient,
+    auctionPaymentId: string,
+  ): Promise<void> {
     // Аудит-фикс: раньше единственной защитой от повторного применения
     // был `if (payment.paidAt) return` НИЖЕ — под READ COMMITTED (дефолт
     // Postgres) это не защищает от двух ПАРАЛЛЕЛЬНЫХ вызовов. Этот метод
@@ -71,7 +74,9 @@ export class AuctionPaymentService {
       include: { listing: true },
     });
     if (!payment) {
-      throw new NotFoundException(`auction payment not found: ${auctionPaymentId}`);
+      throw new NotFoundException(
+        `auction payment not found: ${auctionPaymentId}`,
+      );
     }
     if (payment.paidAt) {
       return; // идемпотентно — уже применено (например, повторная доставка вебхука)
@@ -99,9 +104,16 @@ export class AuctionPaymentService {
       // остаётся Float в МАЖОРНЫХ (read-only витринное поле карточки
       // «Продано», уже отдаётся наружу в API как есть) — конвертируем
       // здесь, на границе записи.
-      data: { status: 'SOLD', soldAt: new Date(), soldPrice: toMajorUnits(payment.amount) },
+      data: {
+        status: 'SOLD',
+        soldAt: new Date(),
+        soldPrice: toMajorUnits(payment.amount),
+      },
     });
-    if (payment.listing.includeBrandManifest && payment.listing.brandManifestId) {
+    if (
+      payment.listing.includeBrandManifest &&
+      payment.listing.brandManifestId
+    ) {
       await tx.brandManifest.update({
         where: { id: payment.listing.brandManifestId },
         data: { isLocked: true },
@@ -115,15 +127,28 @@ export class AuctionPaymentService {
     // сеть/заблокированный бот не должны держать открытой транзакцию
     // вызывающего или ронять сам факт оплаты.
     // payment.amount — минорные единицы; sendSoldNotification форматирует сообщение для человека в мажорных.
-    void this.sendSoldNotification(payment.listing.creatorProfileId, payment.listing.portfolioItemId, toMajorUnits(payment.amount));
+    void this.sendSoldNotification(
+      payment.listing.creatorProfileId,
+      payment.listing.portfolioItemId,
+      toMajorUnits(payment.amount),
+    );
   }
 
   /** Best-effort, через отдельный PrismaService — см. доккомментарий конструктора. */
-  private async sendSoldNotification(creatorProfileId: string, portfolioItemId: string, amount: number): Promise<void> {
+  private async sendSoldNotification(
+    creatorProfileId: string,
+    portfolioItemId: string,
+    amount: number,
+  ): Promise<void> {
     try {
       const [profile, item] = await Promise.all([
-        this.prisma.creatorProfile.findUnique({ where: { id: creatorProfileId }, include: { user: true } }),
-        this.prisma.portfolioItem.findUnique({ where: { id: portfolioItemId } }),
+        this.prisma.creatorProfile.findUnique({
+          where: { id: creatorProfileId },
+          include: { user: true },
+        }),
+        this.prisma.portfolioItem.findUnique({
+          where: { id: portfolioItemId },
+        }),
       ]);
       if (!profile || !item) return;
       await this.notify.dm(
@@ -131,7 +156,9 @@ export class AuctionPaymentService {
         `💰 Ваша работа «${item.title}» продана на аукционе за ${amount}. Подробности — в разделе «Мои заявки на аукцион».`,
       );
     } catch (e) {
-      this.logger.warn(`Уведомление о продаже не удалось: ${(e as Error).message}`);
+      this.logger.warn(
+        `Уведомление о продаже не удалось: ${(e as Error).message}`,
+      );
     }
   }
 }
