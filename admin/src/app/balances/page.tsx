@@ -120,6 +120,39 @@ export default function BalancesPage() {
           </tbody>
         </table>
       )}
+
+      {/* Сырой ответ провайдера. Появился по конкретному поводу:
+          первый живой вызов xAI вернул `total.val = -1827`, тогда как
+          консоль показывает остаток $5.77 — значит разобранное поле не
+          то. Пока не выяснено, какое поле означает остаток человека,
+          экран показывает то, что реально пришло, а не только вывод из
+          него. */}
+      {items?.some((row) => row.rawBody) && (
+        <details style={{ marginTop: 24 }}>
+          <summary className="muted" style={{ cursor: 'pointer' }}>
+            Сырые ответы провайдеров (для сверки полей)
+          </summary>
+          {items
+            .filter((row) => row.rawBody)
+            .map((row) => (
+              <div key={row.provider} style={{ marginTop: 12 }}>
+                <strong>{row.provider}</strong>
+                <pre
+                  style={{
+                    background: 'var(--card)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    padding: 12,
+                    overflowX: 'auto',
+                    fontSize: 12,
+                  }}
+                >
+                  {row.rawBody}
+                </pre>
+              </div>
+            ))}
+        </details>
+      )}
     </div>
   );
 }

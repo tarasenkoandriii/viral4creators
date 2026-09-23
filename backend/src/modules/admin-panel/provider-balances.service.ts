@@ -29,6 +29,7 @@ import {
   ProviderBalance,
   XAI_MANAGEMENT_BASE,
   parseXaiBalance,
+  previewBody,
   xaiBalancePath,
   xaiFailureReason,
 } from '../../common/xai-balance';
@@ -127,6 +128,11 @@ export class ProviderBalancesService {
       }
       const body: unknown = await res.json();
       const parsed = parseXaiBalance(body);
+      // Сырой ответ показывается ПОКА ЧТО всегда, а не только при
+      // отказе: первый живой вызов дал `total.val = -1827` при остатке
+      // $5.77 в консоли, и до выяснения, какое поле означает остаток
+      // человека, экран обязан показывать то, что реально пришло.
+      const rawBody = previewBody(body);
       if (parsed.amountMicroUsd === undefined) {
         return {
           provider: 'GROK',
@@ -135,6 +141,7 @@ export class ProviderBalancesService {
             'ответ получен, но остатка в нём нет — вероятно, аккаунт на постоплате: ' +
             'предоплаченных кредитов у него не бывает',
           raw: parsed.raw,
+          rawBody,
           checkedAt,
         };
       }
@@ -143,6 +150,7 @@ export class ProviderBalancesService {
         state: 'ok',
         amountMicroUsd: parsed.amountMicroUsd,
         raw: parsed.raw,
+        rawBody,
         checkedAt,
       };
     } catch (e) {

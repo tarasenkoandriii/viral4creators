@@ -1281,5 +1281,7 @@ export interface ProviderBalance {
   /** Сырое значение провайдера: единица в его документации не объявлена. */
   raw?: string;
   detail?: string;
+  /** Сырой ответ провайдера — пока мы не знаем, какое поле означает остаток. */
+  rawBody?: string;
   checkedAt: string;
 }

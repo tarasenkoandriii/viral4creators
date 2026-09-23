@@ -60,6 +60,17 @@ export interface ProviderBalance {
   raw?: string;
   /** Человеческое пояснение: что не так и что с этим делать. */
   detail?: string;
+  /**
+   * Сырой ответ провайдера целиком, обрезанный по длине.
+   *
+   * Появился по конкретному поводу: первый живой вызов вернул
+   * `total.val = -1827`, тогда как консоль xAI показывает остаток
+   * $5.77. То есть `total` — НЕ тот остаток, который видит человек, и
+   * без остального ответа (в нём есть ещё `changes`) понять, что это
+   * за число, нельзя. Показывается только оператору и только на этом
+   * экране; ключ сюда не попадает никогда — это тело ответа, не запрос.
+   */
+  rawBody?: string;
   checkedAt: string;
 }
 
@@ -104,6 +115,20 @@ export function xaiFailureReason(status: number): string {
  * живой ответ покажет центы, правка здесь будет одной строкой, а
  * ошибку будет видно сразу, а не через месяц в отчёте.
  */
+/** Сколько сырого ответа показываем: хватает, чтобы увидеть форму. */
+export const RAW_BODY_LIMIT = 4000;
+
+export function previewBody(body: unknown): string {
+  try {
+    const text = JSON.stringify(body, null, 2);
+    return text.length > RAW_BODY_LIMIT
+      ? `${text.slice(0, RAW_BODY_LIMIT)}\n…(обрезано)`
+      : text;
+  } catch {
+    return String(body);
+  }
+}
+
 export function parseXaiBalance(body: unknown): {
   amountMicroUsd?: number;
   raw?: string;
