@@ -35,6 +35,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PlanService } from '../plan/plan.service';
 import { SessionService } from '../../common/session.service';
 import { LibraryService } from '../library/library.service';
+import { SharedVideoPosterService } from './shared-video-poster.service';
 import { BlobService } from '../storage/blob.service';
 import { activeProductImage } from '../../common/active-image';
 import { Session } from '../../common/types/session.types';
@@ -67,6 +68,8 @@ interface SharedVideoRow {
   videoPathname: string;
   aspectRatio: string | null;
   title: string;
+  posterUrl: string | null;
+  posterPathname: string | null;
   projectType: ProjectType | null;
   occasion: GreetingOccasion | null;
   showcasedAt: Date | null;
@@ -309,6 +312,7 @@ export function toPublicView(row: SharedVideoRow): SharedVideoPublicView {
     videoUrl: row.videoUrl,
     aspectRatio: row.aspectRatio,
     title: row.title,
+    posterUrl: row.posterUrl,
     projectType: row.projectType,
     occasion: row.occasion,
     featured: row.showcasedAt !== null,
@@ -344,6 +348,7 @@ export class SharedVideoService {
     private readonly plans: PlanService,
     private readonly library: LibraryService,
     private readonly blob: BlobService,
+    private readonly poster: SharedVideoPosterService,
   ) {}
 
   // ── Owner side (TelegramIdentityGuard) ──────────────────────────────────
@@ -462,6 +467,24 @@ export class SharedVideoService {
         data.productImagePathname = photoPathname;
       }
     }
+    // Кадр-постер — из НАШЕЙ копии ролика, а не из исходной: копия уже
+    // лежит по постоянному адресу, а ссылка сессионного блоба живёт со
+    // своей сессией и переживёт её не обязательно.
+    //
+    // Best-effort ровно как копирование выше: `capture` не бросает и
+    // возвращает `null`, когда ffmpeg-сервис не настроен, задача не
+    // успела или не отдала файл. Публикация в любом из этих случаев
+    // состоится, а страница возьмёт запасную картинку лендинга.
+    const posterSource = (data.videoUrl as string | undefined) ?? row.videoUrl;
+    const captured = await this.poster.capture(
+      posterSource,
+      `shared-videos/${row.id}/poster.jpg`,
+    );
+    if (captured) {
+      data.posterUrl = captured.url;
+      data.posterPathname = captured.pathname;
+    }
+
     if (Object.keys(data).length === 0) return row;
     return (await this.prisma.sharedVideoPage.update({
       where: { id: row.id },
@@ -502,6 +525,11 @@ export class SharedVideoService {
     await this.blob.deleteMany([
       `shared-videos/${pageId}/video.mp4`,
       `shared-videos/${pageId}/photo.jpg`,
+      // `keepOwnCopy` кладёт фото в png, когда исходник был png, —
+      // раньше такой файл переживал отзыв страницы и оставался в Blob
+      // навсегда (найдено попутно).
+      `shared-videos/${pageId}/photo.png`,
+      `shared-videos/${pageId}/poster.jpg`,
     ]);
   }
 

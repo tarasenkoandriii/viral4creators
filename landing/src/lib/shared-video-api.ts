@@ -53,6 +53,8 @@ export interface PublicSharedVideoPage {
   videoUrl: string;
   aspectRatio: string | null;
   title: string;
+  /** Кадр-постер из готового файла; NULL — постера нет, берём запасную обложку. */
+  posterUrl: string | null;
   /**
    * Витрина (этап 1 плана docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md).
    * `projectType === 'GREETING_VIDEO'` — единственный признак, по которому

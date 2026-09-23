@@ -77,6 +77,12 @@ export interface SharedVideoPublicView extends SharedVideoOriginFields {
   videoUrl: string;
   aspectRatio: string | null;
   title: string;
+  /**
+   * Кадр-постер: `og:image` страницы и `poster` у `<video>`. NULL —
+   * нормальное состояние (постер делается best-effort при публикации),
+   * и лендинг подставляет запасную картинку.
+   */
+  posterUrl: string | null;
   /** NULL у поздравлений — у них нет товара (находка 1.1 аудита). */
   productName: string | null;
   productDescription: string | null;

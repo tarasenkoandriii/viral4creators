@@ -11,6 +11,7 @@ import { SITE_URL, SITE_NAME, TMA_URL } from '../../../lib/content';
 import { ShareButtons } from '../../../components/ShareButtons';
 import { jsonLdScript } from '../../../lib/json-ld';
 import { headingOf } from '../../../lib/shared-video-heading';
+import { previewImageOf } from '../../../lib/shared-video-preview';
 
 /**
  * Публичная страница готового ролика и петля шеринга (ТЗ §40, этап 60).
@@ -67,7 +68,14 @@ export async function generateMetadata({
     page.productName ??
     (isGreeting ? dict.sharedVideo.greetingMetaDescription : page.title)
   ).slice(0, 200);
-  const images = page.productImageUrl ? [page.productImageUrl] : undefined;
+  // До этого этапа было `page.productImageUrl ? [...] : undefined` — и
+  // у поздравления, где товарного фото нет по определению, `og:image`
+  // не было ВООБЩЕ: ссылка разворачивалась голой текстовой карточкой.
+  // Теперь картинка есть всегда: свой кадр, фото товара или запасная
+  // обложка лендинга (`previewImageOf` — там же, почему именно такой
+  // порядок).
+  const preview = previewImageOf(page, locale, SITE_URL);
+  const images = [preview.url];
   const heading = headingOf(page, dict);
   return {
     title: `${heading}${dict.sharedVideo.metaTitleSuffix}`,
@@ -82,7 +90,9 @@ export async function generateMetadata({
       videos: [{ url: page.videoUrl }],
     },
     twitter: {
-      card: images ? 'summary_large_image' : 'summary',
+      // Картинка теперь есть всегда, поэтому и карточка всегда
+      // крупная: `summary` показал бы её мелким квадратом сбоку.
+      card: 'summary_large_image',
       title: heading,
       description,
       images,
@@ -118,6 +128,7 @@ export default async function SharedVideoPage({
   // (app/[locale]/blog/[slug]/page.tsx): абсолютные URL, машиночитаемая
   // разметка для шаринга/поисковика, а не переизобретение вручную в JSX.
   const heading = headingOf(page, dict);
+  const preview = previewImageOf(page, locale, SITE_URL);
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'VideoObject',
@@ -126,7 +137,7 @@ export default async function SharedVideoPage({
       page.productDescription ??
       page.productName ??
       (isGreeting ? dict.sharedVideo.greetingMetaDescription : page.title),
-    thumbnailUrl: page.productImageUrl ?? undefined,
+    thumbnailUrl: preview.url,
     uploadDate: page.createdAt,
     contentUrl: page.videoUrl,
     embedUrl: pageUrl,
@@ -189,7 +200,10 @@ export default async function SharedVideoPage({
             src={page.videoUrl}
             controls
             playsInline
-            poster={page.productImageUrl ?? undefined}
+            // Только НАСТОЯЩЕЕ изображение ролика: запасная обложка
+            // 1200×630 за вертикальным роликом выглядит поломкой
+            // вёрстки, а не превью.
+            poster={preview.own ? preview.url : undefined}
           />
         </div>
 

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { StorageModule } from '../storage/storage.module';
+import { PostProductionModule } from '../postprod/postprod.module';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { LibraryModule } from '../library/library.module';
@@ -10,6 +11,7 @@ import {
   SharedVideoLikeController,
 } from './shared-video.controller';
 import { SharedVideoService } from './shared-video.service';
+import { SharedVideoPosterService } from './shared-video-poster.service';
 
 /**
  * SharedVideoModule — публичная страница ролика и петля шеринга (ТЗ §40,
@@ -20,14 +22,21 @@ import { SharedVideoService } from './shared-video.service';
  * `markConverted` при завершении рендера.
  */
 @Module({
-  imports: [AdminAuthModule, AdminPanelModule, StorageModule, LibraryModule],
+  imports: [
+    AdminAuthModule,
+    AdminPanelModule,
+    StorageModule,
+    LibraryModule,
+    // Кадр-постер при публикации — `FfmpegApiService` живёт там.
+    PostProductionModule,
+  ],
   controllers: [
     SharedVideoController,
     PublicSharedVideoController,
     SharedVideoLikeController,
     AdminSharedVideoController,
   ],
-  providers: [SharedVideoService],
+  providers: [SharedVideoService, SharedVideoPosterService],
   exports: [SharedVideoService],
 })
 export class SharedVideoModule {}

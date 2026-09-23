@@ -73,6 +73,8 @@ const row = (over: Record<string, unknown> = {}) => ({
   videoPathname: 'sessions/s1/generated.mp4',
   aspectRatio: '9:16',
   title: 't',
+  posterUrl: null,
+  posterPathname: null,
   productName: 'Кружка Steel 500',
   productDescription: 'd',
   price: 1990,
@@ -270,6 +272,26 @@ describe('toView / toPublicView', () => {
     expect(pub).not.toHaveProperty('status');
     expect(pub.title).toBe('t');
   });
+
+  it('публичная проекция несёт постер — им живёт og:image страницы', () => {
+    // Без него лендинг не увидит кадра вообще и будет вечно
+    // подставлять запасную обложку, хотя кадр снят и лежит в Blob.
+    const pub = toPublicView(
+      row({ posterUrl: 'https://blob.test/poster.jpg' }) as never,
+    );
+    expect(pub.posterUrl).toBe('https://blob.test/poster.jpg');
+    // А внутренний путь блоба наружу не уходит: посетителю он незачем,
+    // как и остальные `*Pathname`.
+    expect(pub).not.toHaveProperty('posterPathname');
+  });
+
+  it('постера нет — в проекции NULL, а не отсутствующее поле', () => {
+    // Поле обязательное в контракте: `undefined` на стороне лендинга
+    // читался бы как «не знаю», и разбирать этот случай пришлось бы
+    // ещё раз там.
+    const pub = toPublicView(row() as never);
+    expect(pub.posterUrl).toBeNull();
+  });
 });
 
 function build(
@@ -357,6 +379,10 @@ function build(
     applyEntryToSessionFree: jest.fn().mockResolvedValue(undefined),
   };
   const plans = plansMock();
+  // Постер — отдельный сервис и best-effort: по умолчанию «не сделан»,
+  // потому что именно так ведёт себя стенд без ffmpeg-ключа, и именно
+  // это состояние обязано быть нормальным для публикации.
+  const poster = { capture: jest.fn().mockResolvedValue(null) };
   return {
     service: new SharedVideoService(
       prisma as never,
@@ -364,12 +390,14 @@ function build(
       plans as never,
       library as never,
       blob as never,
+      poster as never,
     ),
     prisma,
     sessions,
     blob,
     library,
     plans,
+    poster,
   };
 }
 
@@ -449,10 +477,52 @@ describe('SharedVideoService.create', () => {
     );
     expect(v.status).toBe('PENDING');
   });
+
+  it('снимает кадр-постер из НАШЕЙ копии ролика, а не из сессионной', async () => {
+    // Сессионный блоб живёт со своей сессией и переживёт её не
+    // обязательно; копия страницы лежит по постоянному адресу.
+    const { service, poster } = build();
+    await service.create('u1', 's1', {});
+    expect(poster.capture).toHaveBeenCalledWith(
+      'https://blob.test/shared-videos/sv1/video.mp4',
+      expect.stringMatching(/^shared-videos\/.+\/poster\.jpg$/),
+    );
+  });
+
+  it('снятый постер попадает в строку страницы', async () => {
+    const { service, prisma, poster } = build();
+    poster.capture.mockResolvedValue({
+      url: 'https://blob.test/shared-videos/sv1/poster.jpg',
+      pathname: 'shared-videos/sv1/poster.jpg',
+    });
+    await service.create('u1', 's1', {});
+    expect(prisma.sharedVideoPage.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          posterUrl: 'https://blob.test/shared-videos/sv1/poster.jpg',
+          posterPathname: 'shared-videos/sv1/poster.jpg',
+        }),
+      }),
+    );
+  });
+
+  it('постер не сделался — публикация всё равно состоялась', async () => {
+    // Главное свойство всей фичи: чужой сервис не имеет права отменять
+    // публикацию. У страницы просто не будет своего превью, и лендинг
+    // подставит запасную картинку.
+    const { service, prisma, poster } = build();
+    poster.capture.mockResolvedValue(null);
+    const v = await service.create('u1', 's1', {});
+    expect(v.status).toBe('PENDING');
+    const update = prisma.sharedVideoPage.update.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+    expect(update?.data).not.toHaveProperty('posterUrl');
+  });
 });
 
 describe('SharedVideoService.withdraw', () => {
-  it('удаляет строку и обе собственные копии в ЛЮБОМ статусе — только своей', async () => {
+  it('удаляет строку и ВСЕ собственные копии в ЛЮБОМ статусе — только своей', async () => {
     const { service, prisma, blob } = build();
     prisma.sharedVideoPage.findFirst.mockResolvedValueOnce(null);
     await expect(service.withdraw('u1', 's1', 'nope')).rejects.toThrow(
@@ -466,9 +536,15 @@ describe('SharedVideoService.withdraw', () => {
     expect(prisma.sharedVideoPage.delete).toHaveBeenCalledWith({
       where: { id: 'sv1' },
     });
+    // Список именно полный: у страницы могут лежать четыре собственных
+    // файла, и каждый забытый переживает отзыв навсегда — блоб ничем
+    // другим не убирается. `photo.png` и `poster.jpg` до этого этапа в
+    // списке отсутствовали.
     expect(blob.deleteMany).toHaveBeenCalledWith([
       'shared-videos/sv1/video.mp4',
       'shared-videos/sv1/photo.jpg',
+      'shared-videos/sv1/photo.png',
+      'shared-videos/sv1/poster.jpg',
     ]);
   });
 });

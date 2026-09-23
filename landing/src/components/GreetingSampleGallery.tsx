@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { listGreetingShowcase } from '../lib/shared-video-api';
+import { headingOf } from '../lib/shared-video-heading';
 import { SITE_NAME, SITE_URL } from '../lib/content';
 import { jsonLdScript } from '../lib/json-ld';
 import type { Dictionary } from '../lib/get-dictionary';
@@ -46,10 +47,16 @@ export async function GreetingSampleGallery({
       position: index + 1,
       item: {
         '@type': 'VideoObject',
-        name: item.title,
-        description: item.title,
+        // Тот же заголовок, что и на карточке: у поздравления без
+        // своего названия в `title` лежит КОД повода (`BIRTHDAY`), и
+        // без подмены он уезжал бы и в разметку для поисковика.
+        name: headingOf(item, dict),
+        description: headingOf(item, dict),
         uploadDate: item.createdAt,
         contentUrl: item.videoUrl,
+        // Google требует превью у VideoObject; до постера его здесь не
+        // было ни у одной карточки витрины.
+        thumbnailUrl: item.posterUrl ?? undefined,
         embedUrl: `${SITE_URL}/video/${item.id}`,
         publisher: { '@type': 'Organization', name: SITE_NAME },
       },
@@ -68,13 +75,21 @@ export async function GreetingSampleGallery({
                   ту самую, которую этап 1 научил обходиться без товара. */}
               <Link className="sample-card" href={`/video/${item.id}`}>
                 {/* eslint-disable-next-line jsx-a11y/media-has-caption -- пользовательский ролик без дорожки субтитров, как и у остальных плееров проекта */}
+                {/* `preload="metadata"` показывает первый кадр не
+                    сразу, а на мобильных — зачастую вовсе серый
+                    прямоугольник, и так по всей сетке. Постер снят при
+                    публикации и рисуется мгновенно; его отсутствие —
+                    нормальное состояние старых страниц. */}
                 <video
                   src={item.videoUrl}
+                  poster={item.posterUrl ?? undefined}
                   preload="metadata"
                   muted
                   playsInline
                 />
-                <span className="sample-card-title">{item.title}</span>
+                <span className="sample-card-title">
+                  {headingOf(item, dict)}
+                </span>
                 {item.occasion && (
                   <span className="sample-card-occasion">
                     {dict.sharedVideo.occasion[item.occasion]}
