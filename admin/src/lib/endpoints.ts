@@ -30,6 +30,7 @@ import type {
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
   MusicCatalogView,
+  ProviderBalance,
   AnalysisProviderKey,
   AnalysisProviderSettingsView,
   VideoProviderKey,
@@ -446,6 +447,18 @@ export function patchUser(
 
 export function getCosts(params: { top?: number } = {}) {
   return apiGet<CostReport>('/admin/costs', params);
+}
+
+/**
+ * «Сколько ОСТАЛОСЬ» — в отличие от `getCosts` выше, отвечающего на
+ * «сколько потрачено». `refresh` обходит кеш бэкенда: ограничение
+ * частоты у провайдера чужое, и доводит до него наш экран.
+ */
+export function getProviderBalances(refresh = false) {
+  return apiGet<{ items: ProviderBalance[] }>(
+    '/admin/balances',
+    refresh ? { refresh: '1' } : undefined,
+  );
 }
 
 // ── Оплата (ТЗ §41, этап 62) ────────────────────────────────────────────

@@ -1264,3 +1264,22 @@ export interface MusicCatalogView {
   rejected: number | null;
   maxThemes: number;
 }
+
+// ── Балансы провайдеров (TODO §III п.36) ──
+
+export type ProviderBalanceState =
+  | 'ok'
+  | 'not-configured'
+  | 'unsupported'
+  | 'error';
+
+export interface ProviderBalance {
+  provider: string;
+  state: ProviderBalanceState;
+  /** Микродоллары — тот же масштаб, что у расходов. */
+  amountMicroUsd?: number;
+  /** Сырое значение провайдера: единица в его документации не объявлена. */
+  raw?: string;
+  detail?: string;
+  checkedAt: string;
+}

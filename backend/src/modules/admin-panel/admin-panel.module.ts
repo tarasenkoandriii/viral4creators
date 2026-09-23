@@ -10,6 +10,7 @@ import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
+import { ProviderBalancesService } from './provider-balances.service';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { AdminVideoProviderSettingsService } from './admin-video-provider-settings.service';
 import { AdminGrokTransportSettingsService } from './admin-grok-transport-settings.service';
@@ -42,6 +43,7 @@ import { AdminGrokTransportSettingsService } from './admin-grok-transport-settin
   imports: [AdminAuthModule],
   controllers: [AdminPanelController],
   providers: [
+    ProviderBalancesService,
     AdminPanelService,
     AdminUsersService,
     AdminBillingService,

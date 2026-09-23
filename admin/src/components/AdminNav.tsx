@@ -38,6 +38,7 @@ const NAV: NavEntry[] = [
       ['/payments', 'Оплата'],
       ['/marketing', 'Рассылка'],
       ['/costs', 'Расходы'],
+      ['/balances', 'Балансы'],
     ],
   },
   {

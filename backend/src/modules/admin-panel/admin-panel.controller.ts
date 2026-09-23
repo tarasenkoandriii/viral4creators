@@ -32,6 +32,7 @@ import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
+import { ProviderBalancesService } from './provider-balances.service';
 import { VOICEOVER_PROVIDER_KEYS } from '../tts/default-tts-provider';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { ANALYSIS_PROVIDER_KEYS } from '../analysis/default-analysis-provider';
@@ -161,6 +162,7 @@ export class AdminPanelController {
     private readonly feedImport: AdminFeedImportService,
     private readonly voiceoverSettings: AdminVoiceoverSettingsService,
     private readonly musicCatalog: AdminMusicCatalogService,
+    private readonly balances: ProviderBalancesService,
     private readonly analysisSettings: AdminAnalysisSettingsService,
     private readonly videoProviderSettings: AdminVideoProviderSettingsService,
     private readonly grokTransportSettings: AdminGrokTransportSettingsService,
@@ -272,6 +274,23 @@ export class AdminPanelController {
    * негодная запись пропускается молча, — и без этих чисел опечатка в
    * ссылке выглядела бы как «сохранилось, но тема не появилась».
    */
+  /**
+   * GET /admin/balances — «сколько у нас ОСТАЛОСЬ» (TODO §III п.36).
+   *
+   * Отдельно от `/admin/costs`: тот отвечает на «сколько потрачено».
+   * `refresh=1` обходит кеш — кнопка «обновить» на экране; без него
+   * ответ держится несколько минут, потому что ограничение частоты у
+   * провайдера чужое, а доводит до него наш экран.
+   */
+  @Get('balances')
+  async providerBalances(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('refresh') refresh?: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return { items: await this.balances.list(refresh === '1') };
+  }
+
   @Get('settings/music-catalog')
   async getMusicCatalog(@Req() req: AdminAuthenticatedRequest) {
     await this.adminPanel.assertOperator(req.userId);

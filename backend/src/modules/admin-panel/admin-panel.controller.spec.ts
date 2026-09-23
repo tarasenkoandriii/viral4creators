@@ -68,6 +68,7 @@ function build() {
     get: jest.fn(),
     save: jest.fn(),
   };
+  const balances = { list: jest.fn().mockResolvedValue([]) };
   const controller = new AdminPanelController(
     adminPanel as any,
     undefined as any,
@@ -79,12 +80,20 @@ function build() {
     undefined as any,
     voiceoverSettings as any,
     musicCatalog as any,
+    balances as any,
     undefined as any,
     undefined as any,
     undefined as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
-  return { controller, adminPanel, voiceoverSettings, musicCatalog, req };
+  return {
+    controller,
+    adminPanel,
+    voiceoverSettings,
+    musicCatalog,
+    balances,
+    req,
+  };
 }
 
 describe('AdminPanelController — /admin/workflow-funnel*', () => {
@@ -322,5 +331,33 @@ describe('AdminPanelController — /admin/settings/music-catalog', () => {
       controller.setMusicCatalog(req, { raw: '[]' }),
     ).rejects.toThrow();
     expect(musicCatalog.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPanelController — GET /admin/balances', () => {
+  it('оператор проверяется до обращения к остаткам', async () => {
+    const { controller, adminPanel, balances, req } = build();
+    const order: string[] = [];
+    adminPanel.assertOperator.mockImplementation(async () => {
+      order.push('assertOperator');
+    });
+    balances.list.mockImplementation(async () => {
+      order.push('list');
+      return [];
+    });
+    await controller.providerBalances(req);
+    expect(order).toEqual(['assertOperator', 'list']);
+  });
+
+  it('refresh=1 обходит кеш, остальное — нет', async () => {
+    // Кеш здесь не про нашу скорость, а про чужое ограничение частоты:
+    // экран, спрашивающий на каждый рендер, сам доводит до 429.
+    const { controller, balances, req } = build();
+    await controller.providerBalances(req, '1');
+    expect(balances.list).toHaveBeenCalledWith(true);
+    await controller.providerBalances(req);
+    expect(balances.list).toHaveBeenLastCalledWith(false);
+    await controller.providerBalances(req, 'yes');
+    expect(balances.list).toHaveBeenLastCalledWith(false);
   });
 });

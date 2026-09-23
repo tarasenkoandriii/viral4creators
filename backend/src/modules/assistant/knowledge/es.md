@@ -1,6 +1,6 @@
 # Base de conocimiento del consultor de IA de viral4creators
 
-_Собрано автоматически 2026-09-22 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-23 из lending/frontend/backend; коммит — local._
 
 ## Secciones de la mini-app
 
@@ -131,7 +131,7 @@ Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, P
 any aspect ratio
 
 ### Premium
-Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
+Всё вместе с библиотекой разборов, дубляжом (полная замена звука Veo своим голосом) и говорящим аватаром для поздравлений: готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
 Biblioteca de análisis listos, Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Doblaje (reemplazo completo de la voz del modelo), Vídeo tutorial del sitio del cliente, Boceto IA en lugar de la imagen, Vídeo de felicitación
 any aspect ratio
 
