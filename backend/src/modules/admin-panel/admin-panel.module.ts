@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { WizardGuideModule } from '../wizard-guide/wizard-guide.module';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelController } from './admin-panel.controller';
 import { AdminPanelService } from './admin-panel.service';
@@ -40,7 +41,7 @@ import { AdminGrokTransportSettingsService } from './admin-grok-transport-settin
   // поэтому кнопка повтора рендера (доп. запрос владельца продукта)
   // реализована как отдельный контроллер в GenerationModule
   // (admin-retry.controller.ts), а не как метод здесь.
-  imports: [AdminAuthModule],
+  imports: [WizardGuideModule, AdminAuthModule],
   controllers: [AdminPanelController],
   providers: [
     ProviderBalancesService,

@@ -851,6 +851,57 @@ export interface PlanDefinition {
   aspectRatios: string[];
 }
 
+/**
+ * Готовность к цели — «Тонкая красная линия» §7. Зеркало
+ * `backend/src/common/wizard-readiness.ts`; ручная копия, как и
+ * остальные типы этого файла.
+ */
+export interface ReadinessItem {
+  /** Машинный ключ; подпись даёт словарь (`wizardReadiness.items`). */
+  key: string;
+  /** Шаг, на котором это заполняется, — строка кликается и ведёт туда. */
+  stepId: string;
+  /** `false` — влияет на качество, но не блокирует. */
+  required: boolean;
+  done: boolean;
+}
+
+export interface Readiness {
+  items: ReadinessItem[];
+  missingRequired: number;
+  canGenerate: boolean;
+}
+
+/**
+ * Чекбокс «использовать ИИ» на проекте — «Тонкая красная линия» §3.
+ * Зеркало `backend/src/modules/wizard-guide/wizard-guide.service.ts`.
+ */
+export interface WizardGuideState {
+  enabled: boolean;
+  /** Галочку ещё можно ПОСТАВИТЬ. `false` ≠ «выключено»: значит, что
+   * сценарий уже идёт, а линия проводится с начала или никак. */
+  canEnable: boolean;
+  /** Фича включена оператором глобально. `false` — чекбокса нет вовсе:
+   * неработающий переключатель хуже отсутствующего, он обещает. */
+  available: boolean;
+}
+
+/** Действие под подсказкой — «Тонкая красная линия» §5.7. */
+export interface GuideAction {
+  kind: 'goto-step' | 'open-doc';
+  stepId?: string;
+  slug?: string;
+}
+
+export interface WizardHintResult {
+  /** `null` — сказать нечего. Причину наружу не выдают намеренно. */
+  hint: string | null;
+  actions: GuideAction[];
+  source: 'cache' | 'model' | 'static' | null;
+  /** Единственное, о чём говорят вслух: личный суточный лимит. */
+  notice?: string;
+}
+
 export interface PlanState {
   plan: PlanId;
   plans: Record<PlanId, PlanDefinition>;

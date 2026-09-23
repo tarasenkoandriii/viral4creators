@@ -1278,6 +1278,22 @@ export interface MusicCatalogThemeView {
   occasions: string[] | null;
 }
 
+/** Глобальный рубильник советника в мастере («Тонкая красная линия» §3.4). */
+export interface AiGuideSettingsView {
+  enabled: boolean;
+  /** Общий дневной потолок расхода фичи, микродоллары. */
+  dailyBudgetMicroUsd: number;
+  /** Сколько подсказок в сутки положено одному человеку. */
+  personalLimit: number;
+}
+
+/** Частичное сохранение: карточка правит поля по одному. */
+export interface SetAiGuideSettingsInput {
+  enabled?: boolean;
+  dailyBudgetMicroUsd?: number;
+  personalLimit?: number;
+}
+
 export interface MusicCatalogView {
   /** Сырое значение настройки — то, что оператор редактирует. */
   raw: string;

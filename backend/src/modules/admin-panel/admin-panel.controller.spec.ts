@@ -81,6 +81,12 @@ function build() {
     voiceoverSettings as any,
     musicCatalog as any,
     balances as any,
+    // aiGuide, analysisSettings, videoProviderSettings,
+    // grokTransportSettings — этих маршрутов тест не трогает. Число
+    // заглушек обязано совпадать с числом параметров конструктора:
+    // арность проверяет шаг «типы» в CI (корневой tsconfig видит
+    // спеки), а `jest` с `diagnostics: false` — нет.
+    undefined as any,
     undefined as any,
     undefined as any,
     undefined as any,

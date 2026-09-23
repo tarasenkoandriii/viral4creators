@@ -30,6 +30,8 @@ import type {
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
   MusicCatalogView,
+  AiGuideSettingsView,
+  SetAiGuideSettingsInput,
   ProviderBalance,
   AnalysisProviderKey,
   AnalysisProviderSettingsView,
@@ -214,6 +216,23 @@ export function getMusicCatalog() {
 /** Пустая строка — осмысленное значение: «выключить музыку в мастере». */
 export function setMusicCatalog(raw: string) {
   return apiPatch<MusicCatalogView>('/admin/settings/music-catalog', { raw });
+}
+
+/**
+ * Глобальный рубильник советника в мастере («Тонкая красная линия»
+ * §3.4). Отдельно от ассистента: разные фичи, разные бюджеты.
+ */
+export function getAiGuideSettings() {
+  return apiGet<AiGuideSettingsView>('/admin/settings/ai-guide');
+}
+
+/**
+ * Пишутся только переданные поля. Слать всю карточку целиком нельзя:
+ * сохранение бюджета возвращало бы рубильник к тому значению, которое
+ * лежало на экране в момент загрузки.
+ */
+export function setAiGuideSettings(input: SetAiGuideSettingsInput) {
+  return apiPatch<AiGuideSettingsView>('/admin/settings/ai-guide', input);
 }
 
 /** «Разбор референса по умолчанию» — тот же принцип, что у озвучки выше

@@ -1042,13 +1042,7 @@
     "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analysis",
-      "Product",
-      "Prompt",
-      "Generation"
-    ],
+    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
     "openProjectCta": "Open project",
@@ -1354,7 +1348,15 @@
     "resumeButton": "Return to editing",
     "backButton": "Back to the steps",
     "continueButton": "Continue recording",
-    "discardButton": "Delete draft"
+    "discardButton": "Delete draft",
+    "stepUrl": "Link",
+    "stepRecord": "Recording",
+    "stepReview": "Review",
+    "discardConfirm": "Delete the tutorial draft? Recorded steps, frames and saved sign-in data will be gone for good. This is the only way to start from a different link.",
+    "guideLabel": "AI tips along the way",
+    "guideHint": "On every step it says what matters here and what people trip over. You can only turn this on now, at the start — later the guide would not have seen the steps you passed.",
+    "guideDisable": "Turn tips off",
+    "guideDisableConfirm": "Turn AI tips off? You will not be able to turn them back on until a new run of this scenario."
   },
   "sketch": {
     "button": "AI sketch",
@@ -1599,6 +1601,31 @@
       "FORMAL": "Formal",
       "SUPPORTIVE": "Supportive",
       "RESPECTFUL": "Respectful, restrained"
+    }
+  },
+  "wizardGuide": {
+    "title": "AI tip",
+    "loading": "Looking at what matters here…",
+    "gotoStep": "Go to: {{step}}",
+    "openDoc": "Open: {{doc}}",
+    "docs": {
+      "offer": "Public offer",
+      "termsOfUse": "Terms of use"
+    }
+  },
+  "wizardReadiness": {
+    "title": "To a finished video",
+    "ready": "All set — ready to submit",
+    "optionalGroup": "Optional, but it shows",
+    "count": {
+      "one": "{{n}} item left",
+      "other": "{{n}} items left"
+    },
+    "items": {
+      "draft": "Enter the site link",
+      "frames": "Record at least one step",
+      "title": "Name the tutorial",
+      "editable": "The draft is already under review — editing is off"
     }
   }
 }

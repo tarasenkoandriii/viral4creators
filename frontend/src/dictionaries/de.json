@@ -1042,13 +1042,7 @@
     "previewQuota": "Vorschauen heute: noch {{left}} von {{limit}}"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analyse",
-      "Produkt",
-      "Prompt",
-      "Generierung"
-    ],
+    "steps": ["Video", "Analyse", "Produkt", "Prompt", "Generierung"],
     "errorTitle": "Fehler",
     "prefilledAlert": "Die Produktdaten wurden aus dem Projekt übernommen — das ist eine Kopie zum Startzeitpunkt; Änderungen hier ändern nicht das Produkt selbst.",
     "openProjectCta": "Projekt öffnen",
@@ -1354,7 +1348,15 @@
     "resumeButton": "Zurück in Bearbeitung",
     "backButton": "Zurück zu den Schritten",
     "continueButton": "Aufzeichnung fortsetzen",
-    "discardButton": "Entwurf löschen"
+    "discardButton": "Entwurf löschen",
+    "stepUrl": "Link",
+    "stepRecord": "Aufnahme",
+    "stepReview": "Überprüfung",
+    "discardConfirm": "Tutorial-Entwurf löschen? Aufgezeichnete Schritte, Bilder und gespeicherte Anmeldedaten gehen unwiderruflich verloren. Nur so lässt sich mit einem anderen Link neu beginnen.",
+    "guideLabel": "KI-Tipps während des Assistenten",
+    "guideHint": "Sagt bei jedem Schritt, worauf es ankommt und woran andere scheitern. Einschalten geht nur jetzt, am Anfang — später hätte der Berater die zurückgelegten Schritte nicht gesehen.",
+    "guideDisable": "Tipps ausschalten",
+    "guideDisableConfirm": "KI-Tipps ausschalten? Bis zum Ende dieses Durchlaufs lassen sie sich nicht wieder einschalten — nur in einem neuen."
   },
   "sketch": {
     "button": "KI-Skizze",
@@ -1599,6 +1601,31 @@
       "FORMAL": "Formell",
       "SUPPORTIVE": "Unterstützend",
       "RESPECTFUL": "Respektvoll, zurückhaltend"
+    }
+  },
+  "wizardGuide": {
+    "title": "KI-Tipp",
+    "loading": "Ich schaue, worauf es hier ankommt…",
+    "gotoStep": "Zu: {{step}}",
+    "openDoc": "Öffnen: {{doc}}",
+    "docs": {
+      "offer": "Öffentliches Angebot",
+      "termsOfUse": "Nutzungsbedingungen"
+    }
+  },
+  "wizardReadiness": {
+    "title": "Bis zum fertigen Video",
+    "ready": "Alles bereit — kann eingereicht werden",
+    "optionalGroup": "Optional, aber deutlich spürbar",
+    "count": {
+      "one": "noch {{n}} Punkt",
+      "other": "noch {{n}} Punkte"
+    },
+    "items": {
+      "draft": "Link zur Website angeben",
+      "frames": "Mindestens einen Schritt aufzeichnen",
+      "title": "Tutorial benennen",
+      "editable": "Der Entwurf ist bereits in Prüfung — Bearbeiten ist aus"
     }
   }
 }

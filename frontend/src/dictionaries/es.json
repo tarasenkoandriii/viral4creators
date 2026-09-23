@@ -1042,13 +1042,7 @@
     "previewQuota": "Vistas previas hoy: quedan {{left}} de {{limit}}"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Análisis",
-      "Producto",
-      "Prompt",
-      "Generación"
-    ],
+    "steps": ["Video", "Análisis", "Producto", "Prompt", "Generación"],
     "errorTitle": "Error",
     "prefilledAlert": "Los datos del producto se tomaron del proyecto — es una copia del momento de inicio; los cambios aquí no modifican el producto en sí.",
     "openProjectCta": "Abrir proyecto",
@@ -1354,7 +1348,15 @@
     "resumeButton": "Volver a edición",
     "backButton": "Volver a los pasos",
     "continueButton": "Continuar la grabación",
-    "discardButton": "Eliminar borrador"
+    "discardButton": "Eliminar borrador",
+    "stepUrl": "Enlace",
+    "stepRecord": "Grabación",
+    "stepReview": "Revisión",
+    "discardConfirm": "¿Eliminar el borrador del tutorial? Los pasos grabados, los fotogramas y los datos de acceso guardados se perderán definitivamente. Es la única forma de empezar con otro enlace.",
+    "guideLabel": "Consejos de IA durante el asistente",
+    "guideHint": "En cada paso indica qué importa aquí y con qué tropieza la gente. Solo se puede activar ahora, al principio: más adelante el asesor no habría visto los pasos ya recorridos.",
+    "guideDisable": "Desactivar consejos",
+    "guideDisableConfirm": "¿Desactivar los consejos de IA? No podrás volver a activarlos hasta un nuevo recorrido de este escenario."
   },
   "sketch": {
     "button": "Boceto IA",
@@ -1599,6 +1601,31 @@
       "FORMAL": "Formal",
       "SUPPORTIVE": "De apoyo",
       "RESPECTFUL": "Respetuoso, contenido"
+    }
+  },
+  "wizardGuide": {
+    "title": "Consejo de la IA",
+    "loading": "Veo qué importa aquí…",
+    "gotoStep": "Ir a: {{step}}",
+    "openDoc": "Abrir: {{doc}}",
+    "docs": {
+      "offer": "Contrato de oferta",
+      "termsOfUse": "Condiciones de uso"
+    }
+  },
+  "wizardReadiness": {
+    "title": "Hasta el vídeo terminado",
+    "ready": "Todo listo — se puede enviar",
+    "optionalGroup": "Opcional, pero se nota",
+    "count": {
+      "one": "queda {{n}} punto",
+      "other": "quedan {{n}} puntos"
+    },
+    "items": {
+      "draft": "Indicar el enlace del sitio",
+      "frames": "Grabar al menos un paso",
+      "title": "Poner nombre al tutorial",
+      "editable": "El borrador ya está en revisión — no se puede editar"
     }
   }
 }

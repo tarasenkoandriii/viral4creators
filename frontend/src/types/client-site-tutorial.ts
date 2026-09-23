@@ -9,6 +9,8 @@
  * поймает `tsc` на первом же использовании.
  */
 
+import type { Readiness } from './index';
+
 export type ClientSiteDraftStatus =
   | 'DRAFTING'
   | 'PENDING_REVIEW'
@@ -64,6 +66,8 @@ export interface ClientSiteDraftView {
   /** §15.8 контракта реле: кнопка живого входа прячется по ЭТОМУ
    * признаку, а не по тексту ошибки после нажатия. */
   liveLoginAvailable: boolean;
+  /** Чего не хватает до готового ролика («Тонкая красная линия» §7). */
+  readiness: Readiness;
   /** Собранный ролик — только у одобренного черновика (находка Б-4
    * аудита `docs-tz/AUDIT-Client-Site-Tutorial-Landing.md`). До этого
    * визард заканчивался строкой «ролик собирается», после которой не

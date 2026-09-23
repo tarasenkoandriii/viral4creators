@@ -421,6 +421,19 @@ model Project {
   catalogBatchRuns CatalogBatchRun[]
   abTestRuns   AbTestRun[]
   productFeedImportRuns ProductFeedImportRun[]
+  /// Красная линия (docs-tz/TZ-Tonkaya-Krasnaya-Liniya.md §3): советы ИИ
+  /// на шагах мастера. Включается ТОЛЬКО в начале сценария, снимается в
+  /// любой момент и обратно в этом прогоне уже не ставится — линия либо
+  /// проведена с начала, либо её нет: советник, подключённый на пятом
+  /// шаге, не видел первых четырёх, и его «до цели осталось» опиралось
+  /// бы на путь, которого он не наблюдал.
+  ///
+  /// На проекте, а не на пользователе: один и тот же человек на разных
+  /// проектах хочет разного. Умолчание `false` — по той же причине, по
+  /// которой выключен лендинговый ассистент: фича, тратящая деньги на
+  /// каждом шаге у каждого пользователя, включается сознательно.
+  aiGuideEnabled Boolean @default(false)
+
   clientSiteTutorialDraft ClientSiteTutorialDraft?
   /// Бриф ролика-поздравления (ТЗ TZ-Greeting-Video-Project-Type.md §3.2)
   /// — только для `type = GREETING_VIDEO`, по тому же образцу, что
@@ -2438,6 +2451,52 @@ model UserVoice {
 // append-only историю переходов, без которой ни событийная воронка, ни
 // когортная конверсия физически невозможны (данные о переходе,
 // перезаписанном в старой колонке status, взять больше неоткуда).
+/// Кеш подсказок мастера («Тонкая красная линия» §5.5).
+///
+/// В базе, а не в памяти: на Vercel экземпляров много и живут они
+/// недолго — та же причина, по которой там же лежат `rate_limits`.
+/// Ключ строится из КЛАССИФИКАЦИИ состояния, поэтому кеш общий для всех
+/// пользователей и ничего персонального в нём нет.
+model WizardHintCache {
+  /// `scenario|stepId|locale|knowledgeStamp|digest`
+  key       String   @id
+  hint      String
+  actions   Json?
+  createdAt DateTime @default(now())
+  /// Попаданий. Не для красоты: доля попаданий — единственное число, по
+  /// которому видно, разорит фича или нет, и оно же ловит поломку
+  /// классификатора состояния.
+  hits      Int      @default(0)
+
+  @@index([createdAt])
+  @@map("wizard_hint_cache")
+}
+
+/// Журнал выданных подсказок («Тонкая красная линия» §8).
+///
+/// Идентификатора пользователя здесь нет намеренно: разбирают ОТВЕТ, а
+/// не человека, — тот же принцип, что у `assistant_exchanges`.
+model WizardHint {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  scenario     String
+  stepId       String
+  locale       String
+  /// cache | model | static
+  source       String
+  hint         String
+  inTokens     Int      @default(0)
+  outTokens    Int      @default(0)
+  costMicroUsd Int      @default(0)
+  latencyMs    Int      @default(0)
+  /// Пост-фильтр нашёл в ответе контакты или запрещённое обещание.
+  flagged      Boolean  @default(false)
+
+  @@index([createdAt])
+  @@index([flagged, createdAt])
+  @@map("wizard_hints")
+}
+
 enum WorkflowKind {
   SESSION
   CATALOG_BATCH_ITEM

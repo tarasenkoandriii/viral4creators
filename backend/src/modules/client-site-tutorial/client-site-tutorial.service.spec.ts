@@ -758,6 +758,25 @@ describe('/finish — заморозка и заливка кадров', () => 
     ).rejects.toThrow(/data:image/);
   });
 
+  it('черновик без единого кадра не финишируется — и это тот же список, что на экране', async () => {
+    // «Тонкая красная линия» §7.2 п.3: барьер и строка «до готового
+    // ролика» читают ОДНУ функцию (`clientSiteReadiness`). До этого
+    // условие жило только здесь, и до аудита волны B его не проверял
+    // ни один тест — убери строку, и набор оставался зелёным.
+    const { service, blob } = setup({
+      draft: makeDraftRow({
+        steps: [],
+        stepsPerRound: [],
+        roundScreenshots: [],
+      }),
+    });
+    await expect(
+      service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' }),
+    ).rejects.toThrow(/ни одного кадра/);
+    // И ничего не залилось: отказ случился до работы с хранилищем.
+    expect((blob.uploadBuffer as jest.Mock).mock.calls.length).toBe(0);
+  });
+
   it('уже отправленный на проверку черновик не финишируется повторно', async () => {
     const { service } = setup({
       draft: makeDraftRow({ ...FRAMES, status: 'PENDING_REVIEW' }),

@@ -132,14 +132,14 @@ const CHECKS = [
     file: 'doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md',
     label: 'миграции и таблицы (итоговая сверка)',
     section: '## Итоговая сверка',
-    re: /все \*\*(\d+)\*\* миграци[ий] подряд на чистом Postgres 16\s*\n?\s*\(\*\*(\d+)\*\* таблиц/,
+    re: /все \*\*(\d+)\*\* миграци[ийя]+ подряд на чистом Postgres 16\s*\n?\s*\(\*\*(\d+)\*\* таблиц/,
     expect: [actual.migrations, actual.tables],
   },
   {
     file: 'doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md',
     label: 'unit-скрипты фронтенда',
     section: '## Итоговая сверка',
-    re: /\*\*(\d+)\*\*\s*\n?\s*unit-скриптов/,
+    re: /\*\*(\d+)\*\*\s*\n?\s*unit-скрипт(?:ов|а)?/,
     expect: [actual.unitScripts],
   },
   {
@@ -166,7 +166,7 @@ const CHECKS = [
   {
     file: 'doc/ACCEPTANCE-CHECKLIST.md',
     label: 'unit-скрипты (шапка чеклиста)',
-    re: /(\d+) unit-скриптов/,
+    re: /(\d+) unit-скрипт(?:ов|а)?/,
     expect: [actual.unitScripts],
   },
   // README и CI.md добавлены на этапе 43 (Б-5.1): оба годами держали
@@ -210,7 +210,7 @@ const CHECKS = [
   {
     file: 'doc/CI.md',
     label: 'unit-скрипты (таблица джоб)',
-    re: /(\d+) unit-скриптов `npx tsx/,
+    re: /(\d+) unit-скрипт(?:ов|а)? `npx tsx/,
     expect: [actual.unitScripts],
   },
   // Пятый аудит, Д-6.2: doc/TELEGRAM-ADMIN.md называл конкретное число
@@ -222,7 +222,7 @@ const CHECKS = [
   {
     file: 'doc/TELEGRAM-ADMIN.md',
     label: 'миграции (ограничение песочницы, абзац про ручное написание)',
-    re: /\(сейчас (\d+) миграций, актуальное\s*\n?\s*число/,
+    re: /\(сейчас (\d+) миграци[ийя]+, актуальное\s*\n?\s*число/,
     expect: [actual.migrations],
   },
   {

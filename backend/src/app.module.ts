@@ -62,6 +62,7 @@ import { ClientSiteTutorialModule } from './modules/client-site-tutorial/client-
 // Четвёртый тип проекта — ролик-поздравление (ТЗ
 // TZ-Greeting-Video-Project-Type.md).
 import { GreetingBriefModule } from './modules/greeting-brief/greeting-brief.module';
+import { WizardGuideModule } from './modules/wizard-guide/wizard-guide.module';
 import { GreetingPromptModule } from './modules/greeting-prompt/greeting-prompt.module';
 import { GreetingVideoModule } from './modules/greeting-video/greeting-video.module';
 import { GreetingReferenceModule } from './modules/greeting-reference/greeting-reference.module';
@@ -138,6 +139,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     TutorialScenarioModule,
     ClientSiteTutorialModule,
     GreetingBriefModule,
+    WizardGuideModule,
     GreetingPromptModule,
     GreetingVideoModule,
     GreetingReferenceModule,

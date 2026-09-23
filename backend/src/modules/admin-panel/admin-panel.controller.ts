@@ -18,7 +18,9 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   NotEquals,
 } from 'class-validator';
 import {
@@ -35,6 +37,7 @@ import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { ProviderBalancesService } from './provider-balances.service';
+import { AdminWizardGuideService } from '../wizard-guide/admin-wizard-guide.service';
 import { VOICEOVER_PROVIDER_KEYS } from '../tts/default-tts-provider';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { ANALYSIS_PROVIDER_KEYS } from '../analysis/default-analysis-provider';
@@ -94,6 +97,35 @@ export class PatchAdminUserDto {
   @IsString({ each: true })
   @ArrayMaxSize(16)
   freeScenarios?: string[];
+}
+
+/**
+ * Настройки советника в мастере («Тонкая красная линия» §3.4, §5.8).
+ *
+ * Все поля необязательные: карточка правит их по одному, и сохранение
+ * бюджета не должно заодно переписывать рубильник тем значением,
+ * которое лежало на экране в момент загрузки.
+ *
+ * Верхние границы — не формальность. Бюджет задаётся в МИКРОдолларах, и
+ * лишние три нуля в поле превращают $2 в $2000 молча; потолок делает
+ * такую опечатку отказом, а не счётом.
+ */
+export class SetAiGuideDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000_000)
+  dailyBudgetMicroUsd?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10_000)
+  personalLimit?: number;
 }
 
 /** Е-1.5 шестого аудита — ручная правка баланса кредитов. Целое, не
@@ -181,6 +213,7 @@ export class AdminPanelController {
     private readonly voiceoverSettings: AdminVoiceoverSettingsService,
     private readonly musicCatalog: AdminMusicCatalogService,
     private readonly balances: ProviderBalancesService,
+    private readonly aiGuide: AdminWizardGuideService,
     private readonly analysisSettings: AdminAnalysisSettingsService,
     private readonly videoProviderSettings: AdminVideoProviderSettingsService,
     private readonly grokTransportSettings: AdminGrokTransportSettingsService,
@@ -435,6 +468,26 @@ export class AdminPanelController {
         100,
       ),
     });
+  }
+
+  /**
+   * Глобальный рубильник советника в мастере («Тонкая красная линия»
+   * §3.4). Отдельно от ассистента: разные фичи, разные бюджеты, и
+   * выключать их придётся по отдельности.
+   */
+  @Get('settings/ai-guide')
+  async getAiGuide(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.aiGuide.get();
+  }
+
+  @Patch('settings/ai-guide')
+  async setAiGuide(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetAiGuideDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.aiGuide.set(dto, req.userId);
   }
 
   @Get('users/:id')

@@ -18,6 +18,8 @@ import {
   setVirtualStudioHedraEnabled,
   getMusicCatalog,
   setMusicCatalog,
+  getAiGuideSettings,
+  setAiGuideSettings,
 } from '../../lib/endpoints';
 import type {
   EnvCheckResult,
@@ -33,6 +35,8 @@ import type {
   AssistantAdminSettingsView,
   FixtureSeedResult,
   MusicCatalogView,
+  AiGuideSettingsView,
+  SetAiGuideSettingsInput,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -760,6 +764,146 @@ function VirtualStudioHedraCard() {
  * «выключить музыку», и секция музыки в мастере поздравления пропадёт.
  * Кнопка сохранения поэтому активна и для пустого поля.
  */
+/**
+ * Рубильник советника в мастере («Тонкая красная линия» §3.4).
+ *
+ * Выключенный — прячет чекбокс у пользователей целиком, а не оставляет
+ * его неработающим: переключатель, который ничего не делает, обещает
+ * больше, чем его отсутствие.
+ */
+function AiGuideCard() {
+  const [state, setState] = useState<AiGuideSettingsView | null>(null);
+  const [budget, setBudget] = useState('');
+  const [limit, setLimit] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const apply = (s: AiGuideSettingsView) => {
+    setState(s);
+    // Оператор считает в долларах, хранение — в микродолларах. Перевод
+    // здесь, а не на сервере: в хранилище должна лежать та же единица,
+    // что и в расходах, иначе два экрана перестают сравниваться.
+    setBudget((s.dailyBudgetMicroUsd / 1_000_000).toString());
+    setLimit(String(s.personalLimit));
+  };
+
+  useEffect(() => {
+    getAiGuideSettings()
+      .then(apply)
+      .catch((err) =>
+        setError(
+          err instanceof ApiRequestError
+            ? err.message
+            : 'Не удалось загрузить настройку советника',
+        ),
+      );
+  }, []);
+
+  const save = async (input: SetAiGuideSettingsInput) => {
+    setSaving(true);
+    setError(null);
+    try {
+      apply(await setAiGuideSettings(input));
+      setSavedAt(Date.now());
+    } catch (err) {
+      setError(
+        err instanceof ApiRequestError ? err.message : 'Не удалось сохранить',
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveNumbers = async () => {
+    const usd = Number(budget);
+    const personalLimit = Number(limit);
+    if (!Number.isFinite(usd) || usd < 0) {
+      setError('Дневной бюджет должен быть неотрицательным числом');
+      return;
+    }
+    if (!Number.isInteger(personalLimit) || personalLimit < 0) {
+      setError('Личный лимит должен быть целым неотрицательным числом');
+      return;
+    }
+    await save({
+      dailyBudgetMicroUsd: Math.round(usd * 1_000_000),
+      personalLimit,
+    });
+  };
+
+  const dirty =
+    !!state &&
+    (Number(budget) !== state.dailyBudgetMicroUsd / 1_000_000 ||
+      Number(limit) !== state.personalLimit);
+
+  return (
+    <section className="card" style={{ marginTop: 16 }}>
+      <h2>Советник в мастере</h2>
+      <p className="muted" style={{ fontSize: 13 }}>
+        Подсказки ИИ на шагах мастера. Выключено — чекбокса у
+        пользователей нет вовсе. Дневной бюджет — общий потолок расхода
+        фичи: исчерпан, и подсказки молча замолкают, пользователь об
+        этом не узнаёт. Личный лимит — сколько подсказок в сутки
+        положено одному человеку; он о нём узнаёт, это его лимит.
+      </p>
+      {error && <p style={{ color: 'var(--signal-critical)' }}>{error}</p>}
+      {state && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Рубильник сохраняется сразу, числа — кнопкой: галочка
+              однозначна, а поле ввода в момент правки содержит
+              промежуточные значения вроде «0.» и «12». */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={state.enabled}
+              disabled={saving}
+              onChange={(e) => void save({ enabled: e.target.checked })}
+            />
+            Советы ИИ доступны пользователям
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            Дневной бюджет, $
+            <input
+              type="number"
+              min={0}
+              max={1000}
+              step="0.01"
+              value={budget}
+              disabled={saving}
+              style={{ width: 100 }}
+              onChange={(e) => setBudget(e.target.value)}
+            />
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            Подсказок в сутки на человека
+            <input
+              type="number"
+              min={0}
+              max={10000}
+              step="1"
+              value={limit}
+              disabled={saving}
+              style={{ width: 100 }}
+              onChange={(e) => setLimit(e.target.value)}
+            />
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              type="button"
+              disabled={saving || !dirty}
+              onClick={() => void saveNumbers()}
+            >
+              Сохранить
+            </button>
+            {savedAt && !dirty && <span className="muted">Сохранено</span>}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function MusicCatalogCard() {
   const [state, setState] = useState<MusicCatalogView | null>(null);
   const [draft, setDraft] = useState<string>('');
@@ -945,6 +1089,7 @@ export default function SettingsPage() {
       <GrokTransportCard />
       <VirtualStudioHedraCard />
       <AssistantSettingsCard />
+      <AiGuideCard />
       <MusicCatalogCard />
       {/* Не внутри цикла групп ниже намеренно: при фильтре «только
           требуется внимание» группа «Обучалка» пропадает из списка, если

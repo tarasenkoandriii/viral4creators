@@ -73,6 +73,10 @@ import {
 } from './draft-frames';
 import { BlobService } from '../storage/blob.service';
 import {
+  clientSiteReadiness,
+  type Readiness,
+} from '../../common/wizard-readiness';
+import {
   LiveLoginRelayClient,
   RelayNotConfiguredError,
   RelaySessionGoneError,
@@ -148,6 +152,14 @@ export interface DraftView {
    * Фронтенд прячет кнопку живого входа по этому признаку, а не
    * догадывается по тексту ошибки после нажатия. */
   liveLoginAvailable: boolean;
+  /**
+   * Чего не хватает до готового ролика («Тонкая красная линия» §7).
+   *
+   * Едет вместе с черновиком, а не отдельным маршрутом: считается из
+   * тех же полей, что уже здесь, и лишний запрос на каждый шаг визарда
+   * платился бы ни за что.
+   */
+  readiness: Readiness;
   /** Заполняется только у одобренного черновика — до одобрения
    * собирать нечего, и строки `TutorialVideoAsset` ещё не существует. */
   video: TutorialVideoView | null;
@@ -519,7 +531,23 @@ export class ClientSiteTutorialService {
     const { draft } = await this.loadEditableDraft(userId, projectId);
     const state = this.toRoundsState(draft);
     assertRoundsConsistent(state);
-    if (state.roundScreenshots.length === 0) {
+    /**
+     * Барьер читает ТУ ЖЕ функцию, что и строка «до готового ролика»
+     * в интерфейсе («Тонкая красная линия» §7.2 п.3). Раньше условие
+     * жило здесь одной строкой, а на экране его не было вовсе —
+     * человек узнавал о нём, нажав «Готово».
+     *
+     * `loadEditableDraft` выше уже отсёк нередактируемый черновик, а
+     * заголовок приходит этим же запросом, поэтому из трёх
+     * обязательных пунктов здесь проверяется один — тот, который к
+     * этому месту ещё может быть не закрыт.
+     */
+    const readiness = clientSiteReadiness({
+      status: draft.status,
+      frames: state.roundScreenshots.length,
+      title: input.title,
+    });
+    if (!readiness.items.find((i) => i.key === 'frames')?.done) {
       throw new BadRequestException(
         'в черновике нет ни одного кадра — записывать нечего',
       );
@@ -1263,6 +1291,11 @@ export class ClientSiteTutorialService {
       version: draft.version,
       hasCredentials: draft.credentialsEnc !== null,
       liveLoginAvailable: this.relay.configured(),
+      readiness: clientSiteReadiness({
+        status: draft.status,
+        frames: state.roundScreenshots.length,
+        title: draft.title,
+      }),
       // Дешёвое чтение состояния остаётся дешёвым: строку ролика
       // подбирает `attachVideo` и только там, где её реально покажут
       // (`GET`), — раунды визарда о готовом видео ничего не знают и

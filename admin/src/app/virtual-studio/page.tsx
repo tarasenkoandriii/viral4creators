@@ -171,6 +171,11 @@ export default function VirtualStudioPage() {
               onClick={() => setSelectedStudioId(s.id)}
             >
               {s.variants?.find((v) => v.id === s.selectedVariantId)?.imageUrl && (
+                // Картинка из Blob по прямой ссылке — тот же приём, что
+                // на вкладках блога и обучалок: `next/image` потребовал
+                // бы описывать домены хранилища ради внутренней панели,
+                // которую открывает один оператор.
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={s.variants.find((v) => v.id === s.selectedVariantId)!.imageUrl}
                   alt={s.name}
@@ -350,6 +355,7 @@ function StudioDetail({
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
           {variants.map((v) => (
             <div key={v.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 8 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={v.imageUrl} alt="" style={{ width: '100%', borderRadius: 4, aspectRatio: '9/16', objectFit: 'cover' }} />
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 6 }}>
                 <input

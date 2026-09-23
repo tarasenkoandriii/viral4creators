@@ -30,7 +30,7 @@
  *    случайно ввести настоящие данные не нулевая (§14 п.3).
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -76,6 +76,24 @@ import type {
 } from '../../types/client-site-tutorial';
 import { LiveLoginSession } from './LiveLoginSession';
 import { ScreenHeader } from './shared';
+import { Stepper } from '../../components/ui';
+import { ReadinessPanel } from '../../components/ReadinessPanel';
+import { HintLine } from '../../components/HintLine';
+import {
+  getWizardGuide,
+  setWizardGuide,
+} from '../../services/wizard-guide-api';
+import type { WizardGuideState } from '../../types';
+import { toStepsView } from '../../lib/wizard-steps';
+import {
+  clientSiteFactsOf,
+  clientSiteStageFromUrl,
+  clientSiteStepOfStage,
+  clientSiteSteps,
+  clientSiteUrlStep,
+  type ClientSiteStage,
+  type ClientSiteStepId,
+} from '../../lib/client-site-steps';
 import {
   clickCandidates,
   fieldLabel,
@@ -83,7 +101,10 @@ import {
   liveLoginVisible,
 } from './client-site-elements';
 
-type Stage = 'loading' | 'url' | 'page' | 'review';
+/** Состояния экрана. Тип переехал в `lib/client-site-steps.ts` — там же
+ * живут правила шагов, и держать два определения одного и того же было
+ * бы приглашением им разойтись. */
+type Stage = ClientSiteStage;
 
 /** Пауза между опросами готовности ролика (Б-4). Пятнадцать секунд —
  * сборка слайд-шоу занимает минуты, а не секунды, и чаще спрашивать
@@ -93,7 +114,14 @@ const VIDEO_POLL_INTERVAL_MS = 15_000;
  * прекращается: застрявшую сборку фоновый цикл всё равно не оживит. */
 const VIDEO_POLL_MAX_ATTEMPTS = 40;
 
-export function ClientSiteWizard({ projectId }: { projectId: string }) {
+export function ClientSiteWizard({
+  projectId,
+  step: urlStep,
+}: {
+  projectId: string;
+  /** Сегмент адреса; `undefined` — первый шаг (ввод ссылки). */
+  step?: string;
+}) {
   const { dict } = useI18n();
   const t = dict.clientSiteWizard;
 
@@ -113,6 +141,20 @@ export function ClientSiteWizard({ projectId }: { projectId: string }) {
   const [live, setLive] = useState<LiveLoginStart | null>(null);
 
   /**
+   * Шаг из адреса на момент открытия экрана.
+   *
+   * Через ref, а не через зависимость эффекта: адрес после монтирования
+   * пишем мы сами (см. синхронизацию ниже), и попади он в зависимости —
+   * загрузка черновика пошла бы по кругу на каждый переход.
+   */
+  const initialStepRef = useRef(urlStep);
+
+  /** Состояние чекбокса «использовать ИИ» (§3). `null` — ещё не
+   * спросили; фича может быть выключена глобально, и тогда чекбокса
+   * не будет вовсе. */
+  const [guide, setGuide] = useState<WizardGuideState | null>(null);
+
+  /**
    * Лента кадров. Копится в памяти ради мгновенного показа на экране
    * просмотра, но единственной копией НЕ является: сервер держит ту же
    * историю в черновике, и после перезагрузки вкладки она приезжает
@@ -129,6 +171,30 @@ export function ClientSiteWizard({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    // Отдельным запросом и молча: чекбокс — украшение пути, и его
+    // недоступность не должна мешать открыть визард.
+    void getWizardGuide(projectId)
+      .then((g) => {
+        if (!cancelled) setGuide(g);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const toggleGuide = async (next: boolean): Promise<void> => {
+    // Выключение необратимо до конца сценария, поэтому спрашиваем.
+    // Без этой фразы правило превращается в ловушку: человек снимет
+    // галочку «посмотреть, как без неё» и потеряет советы до конца
+    // работы (§3.2).
+    if (!next && !window.confirm(t.guideDisableConfirm)) return;
+    const updated = await run(() => setWizardGuide(projectId, next));
+    if (updated) setGuide(updated);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
     void (async () => {
       try {
         const existing = await getSiteTutorial(projectId);
@@ -141,9 +207,17 @@ export function ClientSiteWizard({ projectId }: { projectId: string }) {
         setTitle(existing.title ?? '');
         // Свежего кадра у нас нет — он приходит только ответом на
         // раунд, и отрисовать экран страницы без него нечем. Поэтому
-        // возвращаемся на экран просмотра: там лента кадров, которую
-        // сервер сохранил сам, и она полная (§15 п.1).
-        setStage('review');
+        // адрес `…/record` тоже открывается на просмотре: там лента
+        // кадров, которую сервер сохранил сам, и она полная (§15 п.1),
+        // а запись продолжается одной кнопкой. Звать `refresh` самим
+        // значило бы поднять браузерную сессию на сервере без просьбы
+        // человека.
+        setStage(
+          clientSiteStageFromUrl(
+            initialStepRef.current,
+            clientSiteFactsOf(existing)
+          )
+        );
       } catch (err) {
         if (cancelled) return;
         setError(errorMessage(err));
@@ -348,6 +422,10 @@ export function ClientSiteWizard({ projectId }: { projectId: string }) {
   };
 
   const discard = async () => {
+    // Единственный путь назад к вводу ссылки — и он не навигация:
+    // черновик хранит шифрованные учётные данные и кадры в хранилище
+    // (§4.4). Спрашиваем ровно потому, что отменить это нечем.
+    if (!window.confirm(t.discardConfirm)) return;
     const done = await run(async () => {
       await deleteSiteTutorial(projectId);
       return true;
@@ -365,6 +443,45 @@ export function ClientSiteWizard({ projectId }: { projectId: string }) {
 
   const editable = draft?.status === 'DRAFTING';
 
+  const facts = clientSiteFactsOf(draft);
+  const currentStepId = clientSiteStepOfStage(stage);
+
+  /**
+   * Адрес следует за состоянием, а не наоборот.
+   *
+   * Наоборот не выходит: переход на запись делает СЕРВЕР (`applyRound`),
+   * и адрес, из которого визард пытался бы вывести состояние, вечно
+   * отставал бы на один ответ. Поэтому состояние ведущее, а адрес —
+   * его отражение, и `replace`, чтобы каждый шаг не оставлял записи в
+   * истории браузера: «назад» должен уводить из визарда, а не
+   * отматывать его по шагу.
+   */
+  useEffect(() => {
+    if (stage === 'loading') return;
+    const next = clientSiteUrlStep(stage);
+    if (next !== urlStep) navigate(routes.siteTutorial(projectId, next), true);
+  }, [stage, urlStep, projectId]);
+
+  const goToStep = (id: ClientSiteStepId): void => {
+    if (id === 'record') setStage('page');
+    else if (id === 'review') setStage('review');
+    else setStage('url');
+  };
+
+  // Подписи шагов в одном месте: их рисует степпер, ими же
+  // подписываются кнопки советника (§5.7 — подпись берётся у нас, а не
+  // из ответа модели).
+  const stepLabels: Record<ClientSiteStepId, string> = {
+    url: t.stepUrl,
+    record: t.stepRecord,
+    review: t.stepReview,
+  };
+
+  const stepsView = toStepsView(
+    clientSiteSteps(facts, stepLabels),
+    currentStepId === 'loading' ? 'url' : currentStepId
+  );
+
   return (
     <div className="animate-fadeIn">
       <ScreenHeader
@@ -372,6 +489,53 @@ export function ClientSiteWizard({ projectId }: { projectId: string }) {
         back={routes.project(projectId)}
         hint={t.hint}
       />
+
+      {/* Верхний уровень степпера: три состояния. Раунды записи
+          нумеруются лентой внутри просмотра — их число заранее
+          неизвестно, и степпер, обещающий конечный путь, врал бы. */}
+      {stage !== 'loading' && (
+        <Stepper
+          steps={stepsView.steps}
+          current={stepsView.current}
+          selectable={stepsView.selectable}
+          done={stepsView.done}
+          onSelect={(i) => {
+            const target = stepsView.targets[i];
+            if (target) goToStep(target);
+          }}
+        />
+      )}
+
+      {/* Строка «до готового ролика» под степпером и на любом шаге:
+          человек должен видеть остаток пути всё время, а не узнавать о
+          нём, нажав «Готово» (§7.4). Считает её сервер той же функцией,
+          которой проверяет барьер `finish()`. */}
+      {stage !== 'loading' && draft && (
+        <ReadinessPanel
+          readiness={draft.readiness}
+          onGoToStep={(stepId) => {
+            const target = stepsView.targets.find((x) => x === stepId);
+            if (target) goToStep(target);
+          }}
+        />
+      )}
+
+      {/* Совет на текущем шаге (§5.11). Лениво: строка рисуется
+          свёрнутой, запрос уходит по клику или после простоя. Ключ по
+          шагу не нужен — смену шага машина состояний обрабатывает
+          сама, а перемонтирование теряло бы прочитанный текст. */}
+      {stage !== 'loading' && currentStepId !== 'loading' && (
+        <HintLine
+          projectId={projectId}
+          stepId={currentStepId}
+          enabled={!!guide?.available && !!guide?.enabled}
+          stepLabels={stepLabels}
+          onGoToStep={(id) => {
+            const target = stepsView.targets.find((x) => x === id);
+            if (target) goToStep(target);
+          }}
+        />
+      )}
 
       {error && (
         <Alert tone="error" className="mb-3">
@@ -389,6 +553,47 @@ export function ClientSiteWizard({ projectId }: { projectId: string }) {
           <Spinner />
         </Card>
       )}
+
+      {/* Чекбокс живёт на первом шаге и только там: включить советы
+          можно ТОЛЬКО в начале сценария (§3.2). Дальше он исчезает —
+          показывать недоступный переключатель значило бы обещать. */}
+      {stage === 'url' && guide?.available && guide.canEnable && (
+        <Card className="p-4 mb-3">
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={guide.enabled}
+              disabled={busy}
+              onChange={(e) => void toggleGuide(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">{t.guideLabel}</span>
+              <span className="block text-sm text-[var(--muted)]">
+                {t.guideHint}
+              </span>
+            </span>
+          </label>
+        </Card>
+      )}
+
+      {/* Дальше по сценарию остаётся только выключатель — и только
+          если советы включены. */}
+      {stage !== 'url' &&
+        stage !== 'loading' &&
+        guide?.available &&
+        guide.enabled && (
+          <div className="mb-3 text-right">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => void toggleGuide(false)}
+            >
+              {t.guideDisable}
+            </Button>
+          </div>
+        )}
 
       {stage === 'url' && (
         <Card className="p-5">
@@ -849,7 +1054,7 @@ function ReviewStage(props: {
                 key={`${i}-${src.slice(-16)}`}
                 type="button"
                 onClick={() => props.onZoom(src)}
-                className="shrink-0"
+                className="shrink-0 relative"
                 aria-label={`${t.frameLabel} ${i + 1}`}
               >
                 <img
@@ -857,6 +1062,13 @@ function ReviewStage(props: {
                   alt=""
                   className="h-40 rounded border border-[var(--border)]"
                 />
+                {/* Номер прямо на кадре — нижний уровень степпера
+                    (§4.4). Отдельным компонентом-степпером его не
+                    нарисовать: кадров бывает полтора десятка, и на
+                    телефоне такой степпер нечитаем (§4.7). */}
+                <span className="absolute left-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/70 text-[11px] font-semibold text-white tabular">
+                  {i + 1}
+                </span>
               </button>
             ))}
           </div>

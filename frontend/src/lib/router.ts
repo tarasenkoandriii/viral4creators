@@ -25,7 +25,7 @@ export type Route =
   | { name: 'ab-test'; projectId: string; runId: string }
   | { name: 'feed-import-start'; projectId: string }
   | { name: 'feed-import'; projectId: string; runId: string }
-  | { name: 'site-tutorial'; projectId: string }
+  | { name: 'site-tutorial'; projectId: string; step?: string }
   | { name: 'greeting-video'; projectId: string }
   | { name: 'generate' }
   | { name: 'postprod' }
@@ -97,11 +97,15 @@ export function parseRoute(hash: string): Route {
       };
     }
     // Этап 115 (§11 doc/CLIENT-SITE-TUTORIAL-SPEC.md): визард обучалки
-    // по сайту заказчика. Один маршрут на все три состояния — они
-    // строго последовательны, и адрес «второго экрана» без черновика
-    // ничего не значит.
+    // по сайту заказчика.
+    //
+    // Сегмент шага добавлен «Тонкой красной линией» (§4.3): без него
+    // «вернуться на просмотр» не переживало перезагрузку вкладки, а
+    // кнопка «назад» браузера уводила из визарда целиком. Сегмента
+    // может не быть — ссылки, выданные до этого этапа, обязаны
+    // продолжать работать (`clientSiteUrlStep`).
     if (parts[2] === 'site-tutorial') {
-      return { name: 'site-tutorial', projectId: parts[1] };
+      return { name: 'site-tutorial', projectId: parts[1], step: parts[3] };
     }
     // GREETING_VIDEO (ТЗ TZ-Greeting-Video-Project-Type.md) — тот же
     // приём, что site-tutorial: один маршрут/визард на весь путь
@@ -172,7 +176,8 @@ export const routes = {
   abTest: (projectId: string, runId: string) =>
     `/projects/${projectId}/ab-test/${runId}`,
   feedImportStart: (projectId: string) => `/projects/${projectId}/feed-import`,
-  siteTutorial: (projectId: string) => `/projects/${projectId}/site-tutorial`,
+  siteTutorial: (projectId: string, step?: string) =>
+    `/projects/${projectId}/site-tutorial${step ? `/${step}` : ''}`,
   greetingVideo: (projectId: string) => `/projects/${projectId}/greeting-video`,
   feedImport: (projectId: string, runId: string) =>
     `/projects/${projectId}/feed-import/${runId}`,

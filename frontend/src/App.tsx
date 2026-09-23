@@ -346,7 +346,7 @@ function App() {
             />
           )}
           {route.name === 'site-tutorial' && (
-            <ClientSiteWizard projectId={route.projectId} />
+            <ClientSiteWizard projectId={route.projectId} step={route.step} />
           )}
           {route.name === 'greeting-video' && (
             <GreetingVideoWizard
