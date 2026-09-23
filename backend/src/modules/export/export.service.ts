@@ -321,7 +321,12 @@ export class ExportService {
         child.sessionId,
         quality ?? video.quality ?? 'fast',
         target,
-        video.provider,
+        // `hedra` сюда не проходит по смыслу: `generateVideo` — это
+        // товарный конвейер (Veo/Grok), а аватар-ролик бывает только у
+        // поздравления, которое ярусом B не экспортируется. `undefined`
+        // означает «провайдер по умолчанию» — ровно то, что нужно, если
+        // такая запись всё же сюда доедет.
+        video.provider === 'hedra' ? undefined : video.provider,
         video.resolution,
         video.chainTargetDurationSeconds,
       );

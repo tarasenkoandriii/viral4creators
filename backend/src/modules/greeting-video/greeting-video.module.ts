@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { GreetingVideoController } from './greeting-video.controller';
 import { GreetingVideoService } from './greeting-video.service';
 import { GrokVideoService } from '../generation/grok-video.service';
+import { HedraClientService } from '../actors/hedra-client.service';
 import { StorageModule } from '../storage/storage.module';
 
 /**
@@ -21,7 +22,13 @@ import { StorageModule } from '../storage/storage.module';
 @Module({
   imports: [StorageModule],
   controllers: [GreetingVideoController],
-  providers: [GreetingVideoService, GrokVideoService],
+  // `HedraClientService` — по тому же доводу, что и `GrokVideoService`
+  // строкой выше: `ActorsModule` его не экспортирует, а собственных
+  // зависимостей у клиента нет (он только читает `HEDRA_API_KEY` и
+  // ходит по HTTP), поэтому второй экземпляр здесь ровно так же
+  // безопасен. `TtsProviderResolverService` отдельной регистрации не
+  // требует — `TtsModule` помечен `@Global()` и экспортирует его.
+  providers: [GreetingVideoService, GrokVideoService, HedraClientService],
   exports: [GreetingVideoService],
 })
 export class GreetingVideoModule {}

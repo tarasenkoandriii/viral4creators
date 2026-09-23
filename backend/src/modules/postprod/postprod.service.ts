@@ -1132,9 +1132,15 @@ export class PostProductionService {
       null;
     const presetVoiceId =
       session?.greetingBriefSnapshot?.presetVoiceId?.trim() || null;
-    const voiceMode = presetVoiceId
-      ? 'veo'
-      : normalizeVoiceMode(brand?.voiceMode);
+    // `speechBakedIn` — аватар-ролик (Hedra): там озвучка это ВХОД,
+    // мы синтезировали реплику сами и отдали её вместе с портретом.
+    // Тот же вывод, что и у пресетного голоса строкой раньше: свой
+    // голос в этом файле уже звучит, класть его поверх — две речи со
+    // сдвигом.
+    const voiceMode =
+      video.speechBakedIn || presetVoiceId
+        ? 'veo'
+        : normalizeVoiceMode(brand?.voiceMode);
     const subtitlesMode = normalizeSubtitlesMode(brand?.subtitlesMode);
     const subtitleTheme = normalizeSubtitleTheme(brand?.subtitleTheme);
     // Родной для Veo формат — это «резать нечего», а не «резать в тот же

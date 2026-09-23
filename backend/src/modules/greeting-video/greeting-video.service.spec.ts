@@ -56,10 +56,35 @@ function build(sessionOver: Record<string, unknown> = {}) {
     claimWork: jest.fn().mockResolvedValue(true),
     releaseWork: jest.fn().mockResolvedValue(undefined),
   };
+  const plans = {
+    assertCanSpendSession: jest.fn().mockResolvedValue(undefined),
+    assertSession: jest.fn().mockResolvedValue(undefined),
+    planOfSession: jest.fn().mockResolvedValue('PREMIUM'),
+  };
+  const aiUsage = {
+    record: jest.fn().mockResolvedValue(undefined),
+    countToday: jest.fn().mockResolvedValue(0),
+  };
+  const hedra = {
+    configured: () => true,
+    submit: jest.fn().mockResolvedValue({ jobId: 'hj1' }),
+    status: jest.fn().mockResolvedValue({ status: 'pending' }),
+  };
+  const ttsResolver = {
+    resolve: jest.fn().mockResolvedValue({
+      providerKey: 'resemble',
+      synthesize: jest.fn().mockResolvedValue({
+        ok: true,
+        audio: Buffer.from('mp3'),
+        mimeType: 'audio/mpeg',
+        characters: 42,
+      }),
+    }),
+  };
   const svc = new GreetingVideoService(
     sessions as any,
-    { assertCanSpendSession: jest.fn().mockResolvedValue(undefined) } as any,
-    { record: jest.fn().mockResolvedValue(undefined) } as any,
+    plans as any,
+    aiUsage as any,
     { start: postprodStart } as any,
     {
       isConfigured: () => true,
@@ -68,9 +93,15 @@ function build(sessionOver: Record<string, unknown> = {}) {
       getStatus,
     } as any,
     { uploadBuffer } as any,
+    hedra as any,
+    ttsResolver as any,
   );
   return {
     svc,
+    plans,
+    aiUsage,
+    hedra,
+    ttsResolver,
     startGeneration,
     updateSession,
     getStatus,
@@ -213,5 +244,152 @@ describe('GreetingVideoService — мультисценовый ролик (фи
     expect(args.referenceAudioVoiceIds).toEqual(['eve']);
     expect(args.generateAudio).toBe(true);
     expect(args.prompt).toContain('Shot 2');
+  });
+});
+
+/**
+ * Говорящий аватар (Hedra) — ветка PREMIUM.
+ *
+ * До решения владельца продукта её не существовало: метод отказывал
+ * раньше, чем доходил до аргументов, и заканчивался `throw new
+ * BadRequestException('Not implemented')`. Поэтому здесь проверяется не
+ * «поведение не изменилось», а устройство целиком — и прежде всего
+ * порядок: у Grok озвучка это последствие, у Hedra — вход.
+ */
+const HEDRA_BRIEF = {
+  ...BRIEF,
+  requestedPresenterProvider: 'hedra',
+  resolvedPresenterProvider: 'hedra',
+  senderVoice: {
+    userVoiceId: 'uv1',
+    resembleVoiceId: 'rv1',
+    label: 'Мой голос',
+  },
+};
+
+const withPortrait = (over: Record<string, unknown> = {}) => ({
+  greetingBriefSnapshot: HEDRA_BRIEF,
+  greetingReferenceImages: [
+    { photoUrl: 'https://blob.test/face.jpg', photoPathname: 'a.jpg' },
+    { photoUrl: 'https://blob.test/second.jpg', photoPathname: 'b.jpg' },
+  ],
+  generationPrompt: {
+    finalText: 'Сцена. Ведущий говорит: «С днём рождения, Марина!»',
+    moderationStatus: 'APPROVED',
+  },
+  ...over,
+});
+
+describe('GreetingVideoService — говорящий аватар', () => {
+  it('портретом становится ПЕРВЫЙ референс-кадр, а не какой придётся', async () => {
+    const { svc, hedra } = build(withPortrait());
+    await svc.startVideo('s1');
+    expect(hedra.submit).toHaveBeenCalledWith(
+      expect.objectContaining({ startImage: 'https://blob.test/face.jpg' }),
+    );
+  });
+
+  it('фото нет — отказ до денег, и Hedra не зовётся вовсе', async () => {
+    // Аватару нужно лицо. Узнать об этом человек должен здесь, а не
+    // после списания за генерацию.
+    const { svc, hedra } = build(withPortrait({ greetingReferenceImages: [] }));
+    await expect(svc.startVideo('s1')).rejects.toThrow(/лицо|фото/i);
+    expect(hedra.submit).not.toHaveBeenCalled();
+  });
+
+  it('озвучка синтезируется ДО платного вызова Hedra', async () => {
+    // Hedra речь не синтезирует — ей нужен готовый файл. Если голос не
+    // выйдет, платить за аватар, которому нечего сказать, незачем.
+    const { svc, hedra, ttsResolver } = build(withPortrait());
+    const provider = await ttsResolver.resolve();
+    provider.synthesize.mockResolvedValue({ ok: false, reason: 'нет ключа' });
+    await expect(svc.startVideo('s1')).rejects.toThrow(/Озвучка/);
+    expect(hedra.submit).not.toHaveBeenCalled();
+  });
+
+  it('говорит голосом отправителя, если клон выбран', async () => {
+    const { svc, ttsResolver } = build(withPortrait());
+    const provider = await ttsResolver.resolve();
+    await svc.startVideo('s1');
+    expect(provider.synthesize).toHaveBeenCalledWith(
+      expect.objectContaining({ voiceId: 'rv1' }),
+    );
+  });
+
+  it('ролик помечен «речь уже внутри» — иначе постобработка положит её второй раз', async () => {
+    const { svc, updateSession } = build(withPortrait());
+    await svc.startVideo('s1');
+    const patch = updateSession.mock.calls[0][1] as any;
+    expect(patch.generatedVideo.speechBakedIn).toBe(true);
+    expect(patch.generatedVideo.provider).toBe('hedra');
+    expect(patch.generatedVideo.hedraJobId).toBe('hj1');
+  });
+
+  it('тариф проверяется у ДЕНЕГ, а не только при выборе в брифе', async () => {
+    // Бриф мог быть сохранён на PREMIUM давно, а тариф с тех пор
+    // понизиться.
+    const { svc, plans, hedra } = build(withPortrait());
+    plans.assertSession.mockRejectedValue(new Error('нет тарифа'));
+    await expect(svc.startVideo('s1')).rejects.toThrow('нет тарифа');
+    expect(plans.assertSession).toHaveBeenCalledWith('s1', 'avatarLipsync');
+    expect(hedra.submit).not.toHaveBeenCalled();
+  });
+
+  it('суточная квота исчерпана — отказ с числами, Hedra не зовётся', async () => {
+    const { svc, aiUsage, hedra } = build(withPortrait());
+    aiUsage.countToday.mockResolvedValue(5);
+    await expect(svc.startVideo('s1')).rejects.toThrow(/5 из 5/);
+    expect(hedra.submit).not.toHaveBeenCalled();
+  });
+
+  it('опрос идёт в Hedra, а не в Grok', async () => {
+    // До этой ветки опрос звался безусловно грокский: у аватар-ролика
+    // нет `grokRequestId`, и он висел бы «в работе» вечно.
+    const { svc, hedra, getStatus } = build(
+      withPortrait({
+        generatedVideo: {
+          generatedVideoId: 'gv1',
+          pathname: 'sessions/s1/generated.mp4',
+          status: GenerationStatus.PROCESSING,
+          provider: 'hedra',
+          hedraJobId: 'hj1',
+          initiatedAt: new Date(),
+        },
+      }),
+    );
+    await svc.pollVideo('s1');
+    expect(hedra.status).toHaveBeenCalledWith('hj1');
+    expect(getStatus).not.toHaveBeenCalled();
+  });
+
+  it('готовая задача: фактическая цена Hedra записывается вместо оценки', async () => {
+    // Оценка по длине озвучки нужна, чтобы квота и суточный потолок
+    // сработали сразу. Факт приходит позже — и в отчёте о расходах
+    // должен стоять он.
+    const { svc, hedra, aiUsage } = build(
+      withPortrait({
+        generatedVideo: {
+          generatedVideoId: 'gv1',
+          pathname: 'sessions/s1/generated.mp4',
+          status: GenerationStatus.PROCESSING,
+          provider: 'hedra',
+          hedraJobId: 'hj1',
+          initiatedAt: new Date(),
+        },
+      }),
+    );
+    hedra.status.mockResolvedValue({
+      status: 'completed',
+      outputs: [{ url: 'https://hedra.test/out.mp4' }],
+      costMicroUsd: 123456,
+    });
+    (globalThis as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(16),
+    });
+    await svc.pollVideo('s1');
+    expect(aiUsage.record).toHaveBeenCalledWith(
+      expect.objectContaining({ costMicroUsd: 123456, calls: 0 }),
+    );
   });
 });

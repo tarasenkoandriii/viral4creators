@@ -1470,7 +1470,7 @@
     "providerGrok": "Відео без ведучого в кадрі (Grok)",
     "providerHedra": "Говорючий аватар (Hedra)",
     "providerHedraPremiumOnly": "Доступно лише на тарифі PREMIUM",
-    "providerHedraPilotNotice": "Зараз недоступно навіть на PREMIUM — пілот говорючого аватара ще не відкрито для всіх користувачів.",
+    "providerHedraPortraitNotice": "Ведучим стане людина з першого доданого фото — аватар вимовить привітання її обличчям і вашим голосом.",
     "resolutionLabel": "Якість",
     "occasionDateLabel": "Дата події (необов'язково)",
     "manifestLabel": "Бренд-маніфест (необов'язково)",

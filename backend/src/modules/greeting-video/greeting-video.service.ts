@@ -91,7 +91,6 @@ import {
   GeneratedVideo,
 } from '../../common/types/generation.types';
 import { ModerationStatus } from '../../common/types/prompt.types';
-import { featureDeniedMessage, planAllows } from '../../common/plans';
 import { v4 as uuidv4 } from 'uuid';
 import { BlobService } from '../storage/blob.service';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
@@ -102,6 +101,32 @@ import {
   withStoryboard,
 } from '../../common/greeting-scenes';
 import { normalizeVoiceMode, usesOwnVoice } from '../../common/voice-mode';
+import { HedraClientService } from '../actors/hedra-client.service';
+import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
+import { speakableText } from '../../common/voiceover-script';
+import { hedraResolution } from '../../common/hedra-resolution';
+import { detectLanguage } from '../../common/voiceover';
+import {
+  AVATAR_OPERATIONS,
+  avatarQuotaExhausted,
+  avatarQuotaPerDay,
+} from '../../common/avatar-quota';
+
+/** Модель аватара у Hedra — та же, что зовёт пилот (`ActorsService`). */
+const HEDRA_MODEL = 'hedra-character-3';
+
+/**
+ * Грубая оценка длительности озвучки по числу символов — тот же
+ * ориентир (≈15 симв/сек), что уже используется в `common/ai-pricing.ts`
+ * для оценки resemble-tts и в пилоте аватара. Нужна только чтобы
+ * записать расход в момент старта: факт уточнится по `cost` от Hedra,
+ * когда задача завершится.
+ */
+const AVATAR_CHARS_PER_SECOND = 15;
+
+function estimateSpeechSeconds(speech: string): number {
+  return Math.max(1, Math.round(speech.length / AVATAR_CHARS_PER_SECOND));
+}
 import { MAX_GREETING_REFERENCE_IMAGES } from '../greeting-reference/greeting-reference.service';
 
 const GREETING_VIDEO_CLAIM_TTL_MS = 5 * 60 * 1000;
@@ -126,6 +151,8 @@ export class GreetingVideoService {
     private readonly postprod: PostProductionService,
     private readonly grokVideo: GrokVideoService,
     private readonly blob: BlobService,
+    private readonly hedra: HedraClientService,
+    private readonly ttsResolver: TtsProviderResolverService,
   ) {}
 
   /** POST /sessions/:id/greeting-video — starts rendering. */
@@ -175,7 +202,13 @@ export class GreetingVideoService {
     }
 
     if (brief.resolvedPresenterProvider === 'hedra') {
-      return this.startHedraVideo(sessionId, brief);
+      return this.startHedraVideo(
+        sessionId,
+        brief,
+        session.generationPrompt.finalText,
+        session.greetingReferenceImages ?? [],
+        session.userId ?? null,
+      );
     }
     return this.startGrokVideo(
       sessionId,
@@ -200,39 +233,284 @@ export class GreetingVideoService {
     if (!current || current.status !== GenerationStatus.PROCESSING) {
       return current;
     }
-    const polled = await this.pollGrokVideo(sessionId, current);
+    // Ветвим по тому же полю, по которому выбиралась генерация. До
+    // аватара здесь безусловно звался опрос Grok — для ролика Hedra это
+    // означало бы бесконечное «в работе»: `grokRequestId` у него нет, и
+    // опрос возвращал бы ролик как есть, ничего не меняя.
+    const polled =
+      current.provider === 'hedra'
+        ? await this.pollHedraVideo(sessionId, current)
+        : await this.pollGrokVideo(sessionId, current);
     return polled;
   }
 
+  /**
+   * Говорящий аватар (Hedra Character-3) — ветка PREMIUM.
+   *
+   * Порядок здесь обратный ветке Grok, и это главное, что о ней нужно
+   * знать. У Grok озвучка — ПОСЛЕДСТВИЕ: модель рендерит ролик, а свой
+   * голос кладёт поверх уже постобработка. У Hedra озвучка — ВХОД:
+   * она не синтезирует речь, ей нужны готовый аудиофайл и портрет.
+   * Поэтому синтез происходит здесь, до вызова, и готовый ролик
+   * помечается `speechBakedIn`, чтобы постобработка не положила ту же
+   * речь второй раз.
+   *
+   * Портрет — первый референс-кадр сессии (решение владельца
+   * продукта). У бытового поздравления снимка бренда обычно нет, а шаг
+   * «добавьте фото» в мастере уже есть и уже необязателен: нет фото —
+   * нет и аватара, и человек узнаёт об этом здесь, до списания денег.
+   */
   private async startHedraVideo(
-    // Оба параметра сегодня не используются: метод гарантированно
-    // отказывает до того, как дойдёт до них (см. ниже). Сигнатура
-    // оставлена целиком, чтобы открытие пилота Hedra не потребовало
-    // править вызывающего, — поэтому глушим правило здесь, а не
-    // выбрасываем аргументы.
-    /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
     sessionId: string,
-    /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
     brief: GreetingBriefSnapshot,
+    script: string,
+    referenceImages: SceneAsset[],
+    userId: string | null,
   ): Promise<GeneratedVideo> {
-    // §7 ТЗ гейтит 'hedra' по тарифу PREMIUM в GreetingBrief; но сама
-    // Hedra-инфраструктура (`avatarLipsync`) сегодня выключена НА ВСЕХ
-    // тарифах — это отдельный, более общий гейт (см. doc-comment файла).
-    // `resolveGreetingConfig` уже гарантирует, что бриф с
-    // `presenterProvider: 'hedra'` мог быть сохранён только на PREMIUM —
-    // но "разрешено по тарифу поздравлений" и "пилот открыт для реальных
-    // пользователей" — два разных вопроса, и второй решается здесь.
-    if (!planAllows('PREMIUM', 'avatarLipsync')) {
+    // Тарифный гейт. `resolveGreetingConfig` уже не пропустил бы бриф с
+    // 'hedra' ниже PREMIUM, но бриф мог быть сохранён давно, а тариф с
+    // тех пор понизиться — проверка тарифа обязана стоять у ДЕНЕГ, а не
+    // только у выбора.
+    await this.plans.assertSession(sessionId, 'avatarLipsync');
+
+    if (!this.hedra.configured()) {
       throw new BadRequestException(
-        `Говорящий аватар для GREETING_VIDEO пока недоступен: ${featureDeniedMessage('avatarLipsync')} ` +
-          '(пилот Hedra/Resemble сегодня открыт только оператору — см. ActorsController). ' +
-          'Выберите presenterProvider "grok" или дождитесь решения о переводе пилота в публичный доступ.',
+        'HEDRA_API_KEY не задан на этом стенде — говорящий аватар не подключён',
       );
     }
-    // Недостижимо, пока условие выше не станет true — оставлено, чтобы
-    // сигнатура метода была на месте и не потребовала правки маршрута,
-    // когда пилот откроется.
-    throw new BadRequestException('Not implemented');
+
+    const portrait = referenceImages
+      .slice(0, MAX_GREETING_REFERENCE_IMAGES)
+      .map((asset) => activeSessionSceneImage(asset)?.url)
+      .find((url): url is string => !!url);
+    if (!portrait) {
+      throw new BadRequestException(
+        'Говорящему аватару нужно лицо: добавьте фото на шаге «Добавьте фото» — ' +
+          'первое из них станет портретом ведущего',
+      );
+    }
+
+    // Ровно тот же текст, который произнёс бы ведущий в ветке Grok:
+    // читаем его той же функцией, что и постобработка.
+    const speech = speakableText(script);
+    if (!speech) {
+      throw new BadRequestException(
+        'Аватару нечего произнести: в сценарии нет реплик — допишите их на шаге промпта',
+      );
+    }
+
+    // Поштучная квота. Суточный денежный потолок PREMIUM ($100) секунда
+    // аватара выбирает нескоро, а нажать «сгенерировать» подряд можно
+    // много раз — см. доккомментарий `common/avatar-quota.ts`.
+    const plan = await this.plans.planOfSession(sessionId);
+    const perDay = avatarQuotaPerDay(plan);
+    const usedToday = await this.aiUsage.countToday(userId, AVATAR_OPERATIONS);
+    if (avatarQuotaExhausted(usedToday, perDay)) {
+      throw new BadRequestException(
+        `Суточный лимит аватар-роликов исчерпан: ${usedToday} из ${perDay}. ` +
+          'Лимит обнуляется в полночь UTC.',
+      );
+    }
+
+    const claimed = await this.sessions.claimWork(
+      sessionId,
+      'generate',
+      GREETING_VIDEO_CLAIM_TTL_MS,
+    );
+    if (!claimed) {
+      throw new ConflictException(GREETING_VIDEO_IN_FLIGHT_MESSAGE);
+    }
+
+    try {
+      // Синтез до платного вызова Hedra: если голос не выйдет, мы не
+      // заплатим за аватар, которому нечего говорить. Тот же довод, по
+      // которому пилот проверяет ключ Hedra ДО обращения к Resemble.
+      const voice = await this.synthesizeAvatarSpeech(sessionId, brief, speech);
+
+      const resolution = brief.resolvedResolution;
+      const aspectRatio = '9:16';
+      const generatedVideoId = uuidv4();
+      const pathname = `sessions/${sessionId}/generated.mp4`;
+
+      const { jobId } = await this.hedra.submit({
+        prompt: script,
+        startImage: portrait,
+        audioUrl: voice.url,
+        aspectRatio,
+        resolution: hedraResolution(resolution),
+      });
+
+      const video: GeneratedVideo = {
+        generatedVideoId,
+        pathname,
+        fileName: 'generated.mp4',
+        mimeType: 'video/mp4',
+        status: GenerationStatus.PROCESSING,
+        provider: 'hedra',
+        resolution,
+        hedraJobId: jobId,
+        aspectRatio,
+        initiatedAt: new Date(),
+        // Речь уже внутри файла — постобработка не должна класть её
+        // второй раз (см. доккомментарий поля).
+        speechBakedIn: true,
+        ...voice.patch,
+      };
+      const updated = await this.sessions.updateSession(sessionId, {
+        generatedVideo: video,
+      });
+      // Расход пишется по ОЦЕНКЕ длительности озвучки: фактическую
+      // длину ролика Hedra сообщит только в готовой задаче, а
+      // квота и суточный потолок должны сработать уже сейчас.
+      // `pollHedraVideo` уточнит сумму по фактическому `cost`.
+      await this.aiUsage.record({
+        operation: 'avatar-generation',
+        model: HEDRA_MODEL,
+        sessionId,
+        seconds: estimateSpeechSeconds(speech),
+        calls: 1,
+      });
+      return updated?.generatedVideo ?? video;
+    } catch (error) {
+      await this.sessions.releaseWork(sessionId, 'generate');
+      throw error;
+    }
+  }
+
+  /**
+   * Озвучка для аватара.
+   *
+   * Тот же провайдер, что и у постобработки, и тот же выбор голоса: у
+   * поздравления это клон отправителя (`senderVoice.resembleVoiceId`),
+   * если он выбран, иначе платформенный голос по умолчанию. Пресетные
+   * голоса xAI сюда не годятся принципиально — они существуют внутри
+   * видеомодели, отдельным файлом их не получить.
+   */
+  private async synthesizeAvatarSpeech(
+    sessionId: string,
+    brief: GreetingBriefSnapshot,
+    speech: string,
+  ): Promise<{ url: string; patch: Partial<GeneratedVideo> }> {
+    const tts = await this.ttsResolver.resolve();
+    const outcome = await tts.synthesize({
+      text: speech,
+      voiceId: brief.senderVoice?.resembleVoiceId ?? null,
+      language: detectLanguage(speech) ?? 'en',
+    });
+    if (!outcome.ok) {
+      throw new BadRequestException(
+        `Озвучка для аватара не состоялась: ${outcome.reason}`,
+      );
+    }
+    await this.aiUsage.record({
+      operation: 'voiceover',
+      model: `${tts.providerKey}-tts`,
+      sessionId,
+      characters: outcome.characters,
+    });
+    const pathname = `sessions/${sessionId}/avatar-speech.mp3`;
+    const { url } = await this.blob.uploadBuffer(
+      pathname,
+      outcome.audio,
+      outcome.mimeType,
+    );
+    return {
+      url,
+      patch: {
+        voiceStatus: 'synthesized',
+        voiceoverPathname: pathname,
+        voiceoverUrl: url,
+        voiceCharacters: outcome.characters,
+      },
+    };
+  }
+
+  private async pollHedraVideo(
+    sessionId: string,
+    current: GeneratedVideo,
+  ): Promise<GeneratedVideo> {
+    if (renderExpired(current)) {
+      return this.markFailed(
+        sessionId,
+        current,
+        'Hedra не ответила за отведённое время — попробуйте сгенерировать ещё раз',
+      );
+    }
+    if (!current.hedraJobId) return current;
+
+    let status: Awaited<ReturnType<HedraClientService['status']>>;
+    try {
+      status = await this.hedra.status(current.hedraJobId);
+    } catch (error) {
+      this.logger.warn(`Hedra status check failed, will retry: ${error}`);
+      return current;
+    }
+    if (status.status === 'pending') return current;
+    if (status.status === 'failed') {
+      return this.markFailed(
+        sessionId,
+        current,
+        status.error ?? 'Hedra вернула ошибку без пояснения',
+      );
+    }
+
+    const videoUrl = status.outputs?.find((o) => !!o.url)?.url;
+    if (!videoUrl) {
+      return this.markFailed(
+        sessionId,
+        current,
+        'Hedra сообщила о готовности, но файла в ответе нет',
+      );
+    }
+
+    let videoBuffer: Buffer;
+    let blobUrl: string;
+    try {
+      const res = await fetch(videoUrl, {
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`Hedra video download HTTP ${res.status}`);
+      videoBuffer = Buffer.from(await res.arrayBuffer());
+      ({ url: blobUrl } = await this.blob.uploadBuffer(
+        current.pathname,
+        videoBuffer,
+        'video/mp4',
+      ));
+    } catch (error) {
+      return this.markFailed(
+        sessionId,
+        current,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    // Фактическая цена от Hedra, если она её сообщила. Запись при
+    // старте шла по ОЦЕНКЕ длительности озвучки — здесь она уточняется
+    // до суммы, которая реально придёт в счёте. Клиент умел читать
+    // `cost` и раньше, но ни один потребитель этого не делал, и отчёт о
+    // расходах расходился со счётом провайдера тем сильнее, чем хуже
+    // угадывала оценка.
+    if (typeof status.costMicroUsd === 'number') {
+      await this.aiUsage.record({
+        operation: 'avatar-generation',
+        model: HEDRA_MODEL,
+        sessionId,
+        costMicroUsd: status.costMicroUsd,
+        calls: 0,
+      });
+    }
+
+    const completed: GeneratedVideo = {
+      ...current,
+      status: GenerationStatus.COMPLETE,
+      completedAt: new Date(),
+      fileSize: videoBuffer.length,
+      downloadUrl: blobUrl,
+    };
+    const updated = await this.sessions.updateSession(sessionId, {
+      generatedVideo: completed,
+    });
+    return this.postprod.start(sessionId, updated?.generatedVideo ?? completed);
   }
 
   private async startGrokVideo(

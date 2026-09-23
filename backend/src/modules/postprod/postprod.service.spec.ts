@@ -625,6 +625,33 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       });
     });
 
+    describe('аватар-ролик — речь уже внутри файла', () => {
+      it('наш синтез не зовётся: Hedra получила озвучку на вход', async () => {
+        // У аватара порядок обратный: мы синтезируем реплику САМИ и
+        // отдаём её вместе с портретом. Положить её же поверх — те же
+        // две речи со сдвигом, что были у пресетного голоса.
+        const { svc, tts } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+          }),
+        });
+        await svc.start('s1', { ...VIDEO, speechBakedIn: true });
+        expect(tts.synthesize).not.toHaveBeenCalled();
+      });
+
+      it('без пометки синтез идёт как обычно — режим бренда не сломан', async () => {
+        // Контроль: пометка должна менять поведение только когда она
+        // есть, иначе тест выше был бы зелёным по любой причине.
+        const { svc, tts } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(tts.synthesize).toHaveBeenCalled();
+      });
+    });
+
     describe('пресетный голос xAI — говорит модель, мы молчим', () => {
       it('наш синтез не зовётся вовсе', async () => {
         // Реплика уже произнесена в кадре, с липсинком. Синтезировать

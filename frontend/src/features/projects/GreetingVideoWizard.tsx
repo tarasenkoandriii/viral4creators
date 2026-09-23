@@ -459,8 +459,13 @@ function BriefStep({
             ]}
           />
           {presenterProvider === 'hedra' && (
-            <Alert tone="warning" className="mt-2">
-              {w.providerHedraPilotNotice}
+            // Не предупреждение, а объяснение: аватару нужно лицо, и
+            // узнать об этом лучше здесь, чем отказом на кнопке
+            // генерации. Раньше на этом месте стояло «недоступно даже
+            // на PREMIUM» — текст пилота, который решение владельца
+            // продукта отменило.
+            <Alert tone="info" className="mt-2">
+              {w.providerHedraPortraitNotice}
             </Alert>
           )}
         </div>

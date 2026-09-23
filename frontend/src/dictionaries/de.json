@@ -1450,7 +1450,7 @@
     "providerGrok": "Video ohne Moderator im Bild (Grok)",
     "providerHedra": "Sprechender Avatar (Hedra)",
     "providerHedraPremiumOnly": "Nur im PREMIUM-Tarif verfügbar",
-    "providerHedraPilotNotice": "Derzeit auch bei PREMIUM nicht verfügbar — das Avatar-Pilotprojekt ist noch nicht für alle geöffnet.",
+    "providerHedraPortraitNotice": "Der Sprecher ist die Person auf dem ersten hinzugefügten Foto — der Avatar spricht den Glückwunsch mit ihrem Gesicht und Ihrer Stimme.",
     "resolutionLabel": "Qualität",
     "occasionDateLabel": "Datum des Ereignisses (optional)",
     "manifestLabel": "Markenmanifest (optional)",

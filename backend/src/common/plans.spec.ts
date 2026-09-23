@@ -76,15 +76,18 @@ describe('матрица режимов (ТЗ §23)', () => {
     expect(PLAN_IDS).toEqual(['LITE', 'STANDARD', 'PREMIUM']);
   });
 
-  it('avatarLipsync (пилот, этап 72) — выключен на всех трёх тарифах, не только LITE', () => {
-    // doc/AVATAR-LIPSYNC-PIPELINE-SPEC.md §4.1: признак существует, но
-    // умышленно не дан НИ ОДНОМУ тарифу — доступ только оператору
-    // напрямую через ActorsController, минуя эту матрицу вовсе.
-    for (const plan of PLAN_IDS) {
-      expect(planAllows(plan, 'avatarLipsync')).toBe(false);
-    }
-    // Ни один план не даёт признак — по определению `minimalPlanFor`
-    // откатывается на самый старший ('PREMIUM'), а не молча ломается.
+  it('avatarLipsync — входит в PREMIUM и только в него', () => {
+    // Решение владельца продукта: аватар перестал быть пилотом.
+    // Раньше признак стоял `false` в базе матрицы и был выключен сразу
+    // у всех трёх тарифов, а доступ существовал только у оператора
+    // через ActorsController, минуя эту матрицу вовсе.
+    expect(planAllows('LITE', 'avatarLipsync')).toBe(false);
+    expect(planAllows('STANDARD', 'avatarLipsync')).toBe(false);
+    expect(planAllows('PREMIUM', 'avatarLipsync')).toBe(true);
+    // Теперь `minimalPlanFor` отвечает про него ЧЕСТНО — находит
+    // настоящий тариф, а не откатывается к старшему оттого, что фичи
+    // нет нигде. До этого решения обе ветки давали 'PREMIUM', и
+    // отличить правду от отката было нельзя.
     expect(minimalPlanFor('avatarLipsync')).toBe('PREMIUM');
     expect(featureDeniedMessage('avatarLipsync')).toContain('Premium');
   });

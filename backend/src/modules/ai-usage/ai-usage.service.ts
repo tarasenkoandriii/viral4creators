@@ -56,6 +56,19 @@ export interface RecordUsageInput extends UsageUnits {
   sessionId?: string | null;
   /** Провайдер: обычно берётся из прайса по модели. */
   provider?: AiProvider;
+  /**
+   * Фактическая цена от провайдера — вместо расчёта по прайсу.
+   *
+   * Обычно цена считается по модели и единицам (`estimateCost`), и это
+   * единственный способ, когда провайдер счёт за конкретный вызов не
+   * присылает. Hedra — присылает: готовая задача несёт `cost`, который
+   * клиент уже умеет читать. Оценка по предсказанной длительности
+   * озвучки в этом случае — приближение, а факт есть факт, и в отчёте о
+   * расходах должен стоять он.
+   *
+   * Задан — берётся как есть, `estimateCost` не зовётся вовсе.
+   */
+  costMicroUsd?: number;
 }
 
 /** Ответ Gemini SDK в той части, которая нас интересует. */
@@ -148,7 +161,15 @@ export class AiUsageService {
         calls: input.calls ?? 1,
         characters: input.characters ?? 0,
       };
-      const cost = estimateCost(input.model, units);
+      // Фактическая цена провайдера важнее расчётной: см.
+      // доккомментарий поля. Версия прайса и признак «нет ставки»
+      // остаются от расчёта — они описывают НАШ прайс, а не счёт
+      // провайдера, и подменять их фактом было бы неправдой.
+      const estimated = estimateCost(input.model, units);
+      const cost =
+        input.costMicroUsd === undefined
+          ? estimated
+          : { ...estimated, costMicroUsd: input.costMicroUsd };
 
       let userId = input.userId ?? null;
       if (!userId && input.sessionId) {

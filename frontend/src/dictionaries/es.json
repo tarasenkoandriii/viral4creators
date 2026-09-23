@@ -1450,7 +1450,7 @@
     "providerGrok": "Vídeo sin presentador en pantalla (Grok)",
     "providerHedra": "Avatar parlante (Hedra)",
     "providerHedraPremiumOnly": "Disponible solo en el plan PREMIUM",
-    "providerHedraPilotNotice": "Aún no disponible, ni en PREMIUM — el piloto de avatar parlante todavía no está abierto a todos.",
+    "providerHedraPortraitNotice": "El presentador será la persona de la primera foto que añadas: el avatar dirá la felicitación con su cara y tu voz.",
     "resolutionLabel": "Calidad",
     "occasionDateLabel": "Fecha del evento (opcional)",
     "manifestLabel": "Manifiesto de marca (opcional)",

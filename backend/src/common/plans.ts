@@ -54,13 +54,19 @@ export type PlanFeature =
    */
   | 'fullQualityVideo'
   /**
-   * Пилот говорящего AI-аватара (Hedra Character-3 + Resemble),
-   * doc/AVATAR-LIPSYNC-PIPELINE-SPEC.md §4.1, этап 72. По умолчанию
-   * `false` на ВСЕХ тарифах до конца пилота — доступ только через
-   * admin-only `ActorsController` (§5.3 документа), это не пользовательская
-   * кнопка. Признак существует уже сейчас, чтобы `planAllows()`/
-   * `featureDeniedMessage()` были готовы к тому дню, когда пилот
-   * откроется пользователям (вероятно Premium — см. §4.1).
+   * Говорящий AI-аватар (Hedra Character-3 + Resemble),
+   * doc/AVATAR-LIPSYNC-PIPELINE-SPEC.md §4.1, этап 72 (пилот) →
+   * решение владельца продукта: аватар входит в пакет PREMIUM и
+   * перестаёт быть пилотом.
+   *
+   * До этого решения признак стоял `false` в `ALL`, то есть был
+   * выключен у всех трёх тарифов сразу, а доступ существовал только
+   * через admin-only `ActorsController`. Теперь это обычный тарифный
+   * признак: `true` в базе, `false` у LITE и STANDARD — и
+   * `minimalPlanFor()` впервые отвечает про него честно. Раньше он не
+   * находил ни одного тарифа и откатывался к `'PREMIUM'`, из-за чего
+   * сообщение об отказе называло тариф, на котором фича всё равно не
+   * работала.
    */
   | 'avatarLipsync'
   /**
@@ -138,11 +144,11 @@ const ALL: Record<PlanFeature, boolean> = {
   characterReplacement: true,
   customAspectRatio: true,
   fullQualityVideo: true,
-  // Этап 72: пилот аватара не даётся ни одному тарифу через это поле —
-  // `ALL: true` здесь означало бы «доступно всем», а решение (§4.1,
-  // §5.3 документа) обратное: `false` на всех трёх ниже, доступ только
-  // оператору напрямую через ActorsController, минуя PlanService.
-  avatarLipsync: false,
+  // Аватар входит в PREMIUM (решение владельца продукта): база — `true`,
+  // сужают его LITE и STANDARD ниже, как и остальные премиальные
+  // признаки. До этого решения здесь стоял `false`, то есть фича была
+  // выключена сразу у всех трёх тарифов.
+  avatarLipsync: true,
   // Этап 73: тот же тариф, что brandManifest ниже (Standard и выше) —
   // временное решение открытого вопроса §3.6.1, см. доккомментарий типа.
   voiceCloning: true,
@@ -175,6 +181,7 @@ export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
       characterReplacement: false,
       customAspectRatio: false,
       fullQualityVideo: false,
+      avatarLipsync: false,
       voiceCloning: false,
       voiceDub: false,
       siteTutorial: false,
@@ -186,14 +193,14 @@ export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
     title: 'Standard',
     summary:
       'Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.',
-    features: { ...ALL, library: false, voiceDub: false },
+    features: { ...ALL, library: false, voiceDub: false, avatarLipsync: false },
     aspectRatios: [],
   },
   PREMIUM: {
     id: 'PREMIUM',
     title: 'Premium',
     summary:
-      'Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.',
+      'Всё вместе с библиотекой разборов, дубляжом (полная замена звука Veo своим голосом) и говорящим аватаром для поздравлений: готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.',
     features: { ...ALL },
     aspectRatios: [],
   },
@@ -216,35 +223,35 @@ const PLAN_SUMMARY: Readonly<Record<SupportedLocale, Record<PlanId, string>>> =
       STANDARD:
         'Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.',
       PREMIUM:
-        'Всё вместе с библиотекой разборов и дубляжом (полная замена звука Veo своим голосом): готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.',
+        'Всё вместе с библиотекой разборов, дубляжом (полная замена звука Veo своим голосом) и говорящим аватаром для поздравлений: готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.',
     },
     uk: {
       LITE: 'Аналіз референсу та генерація ролика у форматі 16:9 або 9:16 — найкоротший шлях від прикладу до результату.',
       STANDARD:
         'Весь функціонал сервісу, крім бібліотеки готових розборів і дубляжу: бренд, персонажі, сцени, релевантність, аудит, публікація, будь-які формати кадру, озвучка власним голосом поверх звуку Veo.',
       PREMIUM:
-        'Все разом із бібліотекою розборів і дубляжем (повна заміна звуку Veo власним голосом): готові сценарії під аудиторію вашого товару та миттєвий розбір уже бачених роликів.',
+        'Усе разом із бібліотекою розборів, дубляжем (повна заміна звуку Veo власним голосом) і мовним аватаром для привітань: готові сценарії під аудиторію вашого товару та миттєвий розбір уже бачених роликів.',
     },
     en: {
       LITE: 'Reference analysis and video generation in 16:9 or 9:16 — the shortest path from example to result.',
       STANDARD:
         "Everything the service offers except the analysis library and dub: brand, characters, scenes, relevance, audit, publishing, any aspect ratio, your own voice mixed over Veo's sound.",
       PREMIUM:
-        "Everything, including the analysis library and dub (your own voice fully replacing Veo's sound): ready-made scripts tailored to your product's audience and instant analysis of videos you've already seen.",
+        "Everything, including the analysis library, dub (your own voice fully replacing Veo's sound) and the talking avatar for greetings: ready-made scripts tailored to your product's audience and instant analysis of videos you've already seen.",
     },
     de: {
       LITE: 'Referenzanalyse und Videogenerierung im Format 16:9 oder 9:16 — der kürzeste Weg vom Beispiel zum Ergebnis.',
       STANDARD:
         'Der gesamte Funktionsumfang außer der Analysebibliothek und der Synchronisation: Marke, Charaktere, Szenen, Relevanz, Audit, Veröffentlichung, beliebige Seitenverhältnisse, eigene Stimme über den Veo-Ton gemischt.',
       PREMIUM:
-        'Alles inklusive Analysebibliothek und Synchronisation (eigene Stimme ersetzt den Veo-Ton vollständig): fertige Skripte für die Zielgruppe Ihres Produkts und sofortige Analyse bereits gesehener Videos.',
+        'Alles inklusive Analysebibliothek, Synchronisation (eigene Stimme ersetzt den Veo-Ton vollständig) und sprechendem Avatar für Glückwünsche: fertige Skripte für die Zielgruppe Ihres Produkts und sofortige Analyse bereits gesehener Videos.',
     },
     es: {
       LITE: 'Análisis de referencia y generación de video en 16:9 o 9:16 — el camino más corto del ejemplo al resultado.',
       STANDARD:
         'Todas las funciones del servicio excepto la biblioteca de análisis y el doblaje: marca, personajes, escenas, relevancia, auditoría, publicación, cualquier relación de aspecto, tu propia voz mezclada sobre el sonido de Veo.',
       PREMIUM:
-        'Todo junto con la biblioteca de análisis y el doblaje (tu propia voz reemplaza por completo el sonido de Veo): guiones listos para la audiencia de tu producto y análisis instantáneo de videos ya vistos.',
+        'Todo junto con la biblioteca de análisis, el doblaje (tu propia voz reemplaza por completo el sonido de Veo) y el avatar parlante para felicitaciones: guiones listos para la audiencia de tu producto y análisis instantáneo de videos ya vistos.',
     },
   };
 
@@ -360,7 +367,7 @@ export function featureDeniedMessage(feature: PlanFeature): string {
     characterReplacement: 'Замена персонажей своим фото',
     customAspectRatio: 'Другие форматы кадра',
     fullQualityVideo: 'Полная модель Veo',
-    avatarLipsync: 'Говорящий AI-аватар (пилот)',
+    avatarLipsync: 'Говорящий AI-аватар',
     voiceCloning: 'Клонирование своего голоса',
     voiceDub: 'Дубляж (полная замена звука Veo своим голосом)',
     siteTutorial: 'Обучающее видео по сайту заказчика',
