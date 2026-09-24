@@ -5,6 +5,8 @@
  * Provides type-safe access to configuration values.
  */
 
+import { blogCategories } from '../common/blog-categories';
+
 export interface Configuration {
   // Server
   port: number;
@@ -459,10 +461,10 @@ export const loadConfiguration = (): Configuration => {
     },
 
     blog: {
-      categories: (process.env.BLOG_CATEGORIES || '')
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter(Boolean),
+      // Умолчание и выключатель — в `common/blog-categories.ts`: у
+      // этого списка две работы, и различать «не задано» и «задано
+      // пустым» приходится в обеих (см. доккомментарий там).
+      categories: blogCategories(process.env),
       youtubeSearchDailyLimit: positiveIntFromEnv(
         process.env.BLOG_YOUTUBE_SEARCH_DAILY_LIMIT,
         10,

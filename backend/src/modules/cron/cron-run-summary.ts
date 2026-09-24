@@ -80,7 +80,10 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
     // ПЕРВОЙ в строке: это единственное, что тут надо прочитать.
     const notConfigured = r.generation?.notConfigured;
     if (notConfigured) {
-      return `генерация пропущена — не задано: ${notConfigured}`;
+      // Текст приходит готовым: у «выключен намеренно» и «не задано
+      // такое-то» разный смысл, и дописывать сюда общую приставку
+      // значило бы превратить первое во второе.
+      return `генерация пропущена — ${notConfigured}`;
     }
     const gen = r.generation
       ? summarizeCounters(r.generation as Record<string, unknown>)

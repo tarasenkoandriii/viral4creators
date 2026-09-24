@@ -327,20 +327,37 @@ describe('BlogGenerationService.runDailyGeneration — почему ничего
     }
   };
 
-  it('без категорий называет переменную и не ходит в YouTube', async () => {
+  it('пустые категории — «выключен намеренно», а не «не задано»', async () => {
+    // Пустой `BLOG_CATEGORIES` — единственный выключатель блога (правка
+    // владельца 24.09.2026 добавила умолчание, но не отобрала кнопку).
+    // Выключенное человеком не проблема, и путать его с нехваткой ключа
+    // нельзя: во второй раз оператор побежит искать несуществующую
+    // поломку.
     await withEnv({ BLOG_CATEGORIES: '' }, async () => {
       const { service, youtubeSearch } = build();
       const summary = await service.runDailyGeneration();
-      expect(summary.notConfigured).toBe('BLOG_CATEGORIES');
+      expect(summary.notConfigured).toContain('выключен намеренно');
+      expect(summary.notConfigured).not.toContain('не задано');
       expect(youtubeSearch.searchTrending).not.toHaveBeenCalled();
     });
   });
 
-  it('без ключа YouTube — тоже причина, а не пустой поиск', async () => {
+  it('переменной нет вовсе — работает на умолчании, а не молчит', async () => {
+    await withEnv({ BLOG_CATEGORIES: undefined }, async () => {
+      const { service, youtubeSearch } = build();
+      const summary = await service.runDailyGeneration();
+      expect(summary.notConfigured).toBeNull();
+      // Три темы умолчания — три захода в поиск.
+      expect(youtubeSearch.searchTrending).toHaveBeenCalledTimes(3);
+      expect(summary.categoriesTried).toBe(3);
+    });
+  });
+
+  it('без ключа YouTube — причина названа, а не пустой поиск', async () => {
     const { service, youtubeSearch, budget } = build();
     youtubeSearch.configured.mockReturnValue(false);
     const summary = await service.runDailyGeneration();
-    expect(summary.notConfigured).toBe('YOUTUBE_API_KEY');
+    expect(summary.notConfigured).toBe('не задано: YOUTUBE_API_KEY');
     // Не просто «сказали причину», но и не потратили ничего: без ключа
     // поиск заведомо пуст, а резерв суточного бюджета поисков сгорел бы
     // ни за что.
@@ -352,13 +369,13 @@ describe('BlogGenerationService.runDailyGeneration — почему ничего
     // Иначе оператор, задав категории, получил бы те же нули и пошёл на
     // второй круг гадания.
     await withEnv(
-      { BLOG_CATEGORIES: '', GEMINI_API_KEY: '', GOOGLE_GEMINI_API_KEY: '' },
+      { GEMINI_API_KEY: '', GOOGLE_GEMINI_API_KEY: '' },
       async () => {
         const { service, youtubeSearch } = build();
         youtubeSearch.configured.mockReturnValue(false);
         const summary = await service.runDailyGeneration();
         expect(summary.notConfigured).toBe(
-          'BLOG_CATEGORIES, YOUTUBE_API_KEY, GEMINI_API_KEY',
+          'не задано: YOUTUBE_API_KEY, GEMINI_API_KEY',
         );
       },
     );

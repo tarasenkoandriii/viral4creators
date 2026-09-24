@@ -250,7 +250,7 @@ covers only the ten routes of the first milestone and is kept as history.
 
 `.github/workflows/ci.yml` runs on every push: backend (Prisma client,
 migrations against a real Postgres 16, **`prisma migrate diff`** to catch
-a hand-written migration drifting from the schema, types, lint, 4304
+a hand-written migration drifting from the schema, types, lint, 4314
 tests with per-file coverage thresholds), frontend (types, lint, 34 unit
 scripts, build), admin and landing
 (types + lint + build), `npm audit --audit-level=high` in every job

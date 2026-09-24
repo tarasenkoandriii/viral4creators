@@ -15,6 +15,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
+import { blogDisabledExplicitly } from '../../common/blog-categories';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
@@ -106,17 +107,27 @@ export class BlogGenerationService {
       notConfigured: null as string | null,
     };
 
-    // Проверяем ВСЕ три сразу, а не по одной на прогон: задав категории
-    // и не задав ключ YouTube, оператор получил бы те же нули и пошёл бы
-    // на второй круг гадания. Список — то, что надо дозаполнить.
+    // Выключен решением человека — это не проблема, и говорить о нём
+    // надо иначе, чем о нехватке ключа. `BLOG_CATEGORIES` задан
+    // пустым — единственный способ остановить генератор, который тратит
+    // квоту YouTube, вызовы Gemini и перевод Grok (см.
+    // `common/blog-categories.ts`).
+    if (blogDisabledExplicitly()) {
+      summary.notConfigured =
+        'выключен намеренно: BLOG_CATEGORIES задан пустым';
+      return summary;
+    }
+
+    // Ключи проверяем ОБА сразу, а не по одному на прогон: задав один и
+    // не задав другой, оператор получил бы те же нули и пошёл бы на
+    // второй круг гадания. Список — то, что надо дозаполнить.
     const missing: string[] = [];
-    if (config.categories.length === 0) missing.push('BLOG_CATEGORIES');
     if (!this.youtubeSearch.configured()) missing.push('YOUTUBE_API_KEY');
     if (!geminiApiKey()) missing.push('GEMINI_API_KEY');
     if (missing.length > 0) {
-      summary.notConfigured = missing.join(', ');
+      summary.notConfigured = `не задано: ${missing.join(', ')}`;
       this.logger.log(
-        `Генератор черновиков блога ничего не делает — не задано: ${summary.notConfigured}`,
+        `Генератор черновиков блога ничего не делает — ${summary.notConfigured}`,
       );
       return summary;
     }

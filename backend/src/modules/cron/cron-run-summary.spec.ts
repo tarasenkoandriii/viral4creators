@@ -36,21 +36,34 @@ describe('buildRunSummary — пропуск отличается от нуля'
 
   it('blog: ненастроенный генератор говорит, чего не хватает', () => {
     // Найдено на живом проде: экран показывал три нуля, и это читалось
-    // как «поискали и ничего не нашли», хотя BLOG_CATEGORIES не был
-    // задан вовсе.
+    // как «поискали и ничего не нашли», хотя ключей не было.
     const summary = buildRunSummary('blog', {
       generation: {
-        notConfigured: 'BLOG_CATEGORIES, YOUTUBE_API_KEY',
+        notConfigured: 'не задано: YOUTUBE_API_KEY, GEMINI_API_KEY',
         categoriesTried: 0,
         candidatesConsidered: 0,
         draftsCreated: 0,
       },
       translation: { polledJobs: 0 },
     });
-    expect(summary).toContain('BLOG_CATEGORIES');
     expect(summary).toContain('YOUTUBE_API_KEY');
+    expect(summary).toContain('GEMINI_API_KEY');
     // Нули в такой строке только мешают: читать надо причину.
     expect(summary).not.toContain('categoriesTried=0');
+  });
+
+  it('blog: выключенный человеком не выдаётся за поломку', () => {
+    // Приставку «не задано» сводка не дописывает: текст приходит
+    // готовым, потому что у выключенного и у ненастроенного разный
+    // смысл, и второй заставил бы искать несуществующую проблему.
+    const summary = buildRunSummary('blog', {
+      generation: {
+        notConfigured: 'выключен намеренно: BLOG_CATEGORIES задан пустым',
+      },
+      translation: {},
+    });
+    expect(summary).toContain('выключен намеренно');
+    expect(summary).not.toContain('не задано');
   });
 
   it('blog настроенный: обе половины счётчиками, как раньше', () => {

@@ -709,6 +709,7 @@ function checkGuideSeams() {
   // правила пошире.
   const WIDENING_CAST = /\bas\s+(?:string|number|boolean)\s*\[\s*\]/;
   const prismaCasts = [];
+  const annotatedGroupBy = [];
   for (const file of walk(path.join(ROOT, 'backend/src'))) {
     if (!file.endsWith('.ts') || file.endsWith('.spec.ts')) continue;
     // Комментарии вырезаем, сохраняя переносы, — иначе объяснение
@@ -717,6 +718,28 @@ function checkGuideSeams() {
       .readFileSync(file, 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
       .replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length));
+    // Вторая форма той же слепой зоны, и она уже стоила прод-сборки
+    // дважды. У `groupBy` в сгенерированном клиенте перегрузка, которая
+    // при ожидаемом типе СЛЕВА выбирает не ту сигнатуру и требует от
+    // аргумента быть массивом результата (prisma/prisma#17297). Приём
+    // проекта — приведение СПРАВА; аннотация слева компилируется в
+    // песочнице (клиент заглушен `any`) и падает на Vercel.
+    //
+    // `[^=]*?` (а не `[^=;]*`): точка с запятой бывает ВНУТРИ самой
+    // аннотации — `{ userId: string; _count: … }`, — и запрет на неё
+    // делал правило слепым ровно к той форме, ради которой оно
+    // заведено. Ограничителем работает `=`: между `const x:` и
+    // присваиванием его быть не может, а чужой оператор без него не
+    // обходится.
+    const ANNOTATED_GROUP_BY =
+      /const\s+\w+\s*:[^=]*?=\s*(?:await\s+)?this\.prisma\.[A-Za-z0-9_.$]+\.groupBy\s*\(/g;
+    for (const m of text.matchAll(ANNOTATED_GROUP_BY)) {
+      const line = text.slice(0, m.index).split('\n').length;
+      annotatedGroupBy.push(
+        `${path.relative(ROOT, file).split(path.sep).join('/')}:${line}`,
+      );
+    }
+
     const calls = /this\.prisma\.[A-Za-z0-9_.$]+\(/g;
     let m;
     while ((m = calls.exec(text))) {
@@ -738,6 +761,14 @@ function checkGuideSeams() {
       calls.lastIndex = i;
     }
   }
+  if (annotatedGroupBy.length > 0) {
+    problems.push(
+      `тип groupBy аннотацией слева: ${annotatedGroupBy.join(', ')} — ` +
+        `перегрузка Prisma выберет не ту сигнатуру и потребует от ` +
+        `аргумента быть массивом (prisma/prisma#17297); приведите тип ` +
+        `СПРАВА, как в wizard-telemetry.service.ts`,
+    );
+  }
   if (prismaCasts.length > 0) {
     problems.push(
       `расширяющий каст в аргументе Prisma: ${prismaCasts.join(', ')} — ` +
@@ -758,7 +789,7 @@ function checkGuideSeams() {
         `стартов рендера под проверкой права: ${RENDER_STARTS.length}; ` +
         `завершений через единую точку: ${completionCallCount}; ` +
         `мест привязки приглашения: ${CLAIM_CALLERS.length}; ` +
-        `расширяющих кастов в аргументах Prisma: 0`,
+        `слепых мест Prisma (касты, groupBy): 0`,
     );
   }
 }

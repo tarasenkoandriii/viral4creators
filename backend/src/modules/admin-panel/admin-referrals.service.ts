@@ -277,21 +277,28 @@ export class AdminReferralsService {
    * граница, и она честная.
    */
   private async spentFreeCredits(): Promise<number> {
-    const grantedBy: { userId: string; _count: { _all: number } }[] =
-      await this.prisma.creditLedger.groupBy({
-        by: ['userId'],
-        where: { reason: { in: [...FREE_GRANT_REASONS] } },
-        _count: { _all: true },
-      });
+    // Тип НЕ аннотацией слева, а приведением СПРАВА — приём этого
+    // проекта, оплаченный прошлой прод-сборкой (см. тот же комментарий
+    // в `wizard-telemetry.service.ts` и `admin-ab-test.service.ts`, баг
+    // prisma/prisma#17297). У `groupBy` в сгенерированном клиенте
+    // перегрузка, которая при ожидаемом типе слева выбирает не ту
+    // сигнатуру и требует от АРГУМЕНТА быть массивом результата —
+    // отсюда «missing length, pop, push…» в ошибке tsc. В песочнице
+    // клиент подменён на `any`, поэтому здесь это не видно ни тестами,
+    // ни typecheck: ошибка ждёт прод-сборки. И дождалась — второй раз.
+    const grantedBy = (await this.prisma.creditLedger.groupBy({
+      by: ['userId'],
+      where: { reason: { in: [...FREE_GRANT_REASONS] } },
+      _count: { _all: true },
+    })) as unknown as Array<{ userId: string; _count: { _all: number } }>;
     if (grantedBy.length === 0) return 0;
 
     const userIds = grantedBy.map((g) => g.userId);
-    const consumedBy: { userId: string; _count: { _all: number } }[] =
-      await this.prisma.creditLedger.groupBy({
-        by: ['userId'],
-        where: { reason: 'CONSUME', userId: { in: userIds } },
-        _count: { _all: true },
-      });
+    const consumedBy = (await this.prisma.creditLedger.groupBy({
+      by: ['userId'],
+      where: { reason: 'CONSUME', userId: { in: userIds } },
+      _count: { _all: true },
+    })) as unknown as Array<{ userId: string; _count: { _all: number } }>;
     const consumed = new Map(
       consumedBy.map((c) => [c.userId, c._count._all] as const),
     );
