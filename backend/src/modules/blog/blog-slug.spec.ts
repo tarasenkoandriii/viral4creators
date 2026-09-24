@@ -48,3 +48,30 @@ describe('blogSlugFor', () => {
     expect(blogSlugFor('Title', 'ролик')).toBe('title-rolik');
   });
 });
+
+describe('blogSlugFor — суффикс не теряется (аудит 24.09.2026)', () => {
+  it('длинный заголовок режется под суффикс, а не вместе с ним', () => {
+    // Прежняя редакция резала склейку целиком, и у заголовка, который
+    // сам добирал предел, суффикс отбрасывался НАЦЕЛО: слаг становился
+    // чистой функцией заголовка. Два похожих заголовка → один слаг →
+    // P2002 на `@@unique` → HTTP 500 у оператора.
+    const long = 'Щучье Юбилейное '.repeat(20);
+    const a = blogSlugFor(long, 'video-aaa');
+    const b = blogSlugFor(long, 'video-bbb');
+    expect(a).toContain('video-aaa');
+    expect(b).toContain('video-bbb');
+    expect(a).not.toBe(b);
+    expect(a.length).toBeLessThanOrEqual(80);
+  });
+
+  it('короткий заголовок по-прежнему читаем', () => {
+    expect(blogSlugFor('Как снять UGC-ролик', 'abc123')).toBe(
+      'kak-snyat-ugc-rolik-abc123',
+    );
+  });
+
+  it('слаг не заканчивается дефисом даже при обрезке', () => {
+    const s = blogSlugFor('Привет '.repeat(30), 'x1');
+    expect(s.endsWith('-')).toBe(false);
+  });
+});

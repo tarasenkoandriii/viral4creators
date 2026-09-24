@@ -25,6 +25,7 @@ import {
   AdminBlogPostListItem,
   AdminBlogPostPage,
   AdminBlogTranslationView,
+  BlogTranslationsState,
   PublicBlogPostDetail,
   PublicBlogPostListItem,
   PublicBlogPostPage,
@@ -154,20 +155,37 @@ export class BlogService {
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.blogPost.update({ where: { id }, data });
       if (textChanged) {
-        // batchJobId НЕ трогаем: старая пачка xAI отработала честно (по
-        // старому тексту), просто её результат больше не годится — новый
-        // прогон перевода заведёт новую пачку сам.
+        // `batchJobId: null` — ОБЯЗАТЕЛЬНО, и это находка аудита
+        // 24.09.2026. Прежняя редакция его намеренно не трогала («новый
+        // прогон заведёт новую пачку сам»), но новая пачка набирается
+        // условием `status: PENDING И batchJobId: null`
+        // (`submitPendingBatch`). Строка со старым `batchJobId` под это
+        // условие не подходила НИКОГДА — то есть готовый, уже
+        // оплаченный перевод стирался в NULL и больше не восстанавливался
+        // ничем: ни кроном, ни действием оператора. Комментарий в коде и
+        // подсказка в админке при этом обещали обратное.
+        //
+        // `FAILED` здесь тоже не случайно: провалившийся перевод не
+        // подбирал никто (см. `submitPendingBatch`), и правка текста была
+        // единственным моментом, когда его можно вернуть в очередь
+        // бесплатно.
         await tx.blogPostTranslation.updateMany({
           where: {
             postId: id,
             status: {
-              in: [BlogTranslationStatus.READY, BlogTranslationStatus.QUEUED],
+              in: [
+                BlogTranslationStatus.READY,
+                BlogTranslationStatus.QUEUED,
+                BlogTranslationStatus.FAILED,
+              ],
             },
           },
           data: {
             status: BlogTranslationStatus.PENDING,
+            batchJobId: null,
             title: null,
             bodyHtml: null,
+            errorMessage: null,
           },
         });
       }
@@ -185,12 +203,26 @@ export class BlogService {
     return toDetail(updated);
   }
 
-  /** DRAFT → APPROVED. Переводы ставятся в очередь отдельным прогоном крона. */
+  /**
+   * DRAFT → APPROVED. Переводы ставятся в очередь отдельным прогоном
+   * крона (§II.3): у черновика их не бывает по определению.
+   *
+   * `REJECTED` тоже принимается — и это находка аудита 24.09.2026. До
+   * неё отклонённая запись была тупиком: вернуть её не давал ни один
+   * маршрут, а удалить и завести заново нельзя без потерь — у ролика
+   * `youtubeVideoId` уникален, и крон второй раз его уже не подберёт,
+   * плюс теряются слаг (а с ним внешние ссылки) и оценка Gemini.
+   * Отклонить по ошибке или «на доработку» — обычное действие, и оно не
+   * должно быть необратимым.
+   */
   async approve(id: string, operatorId: string): Promise<AdminBlogPostDetail> {
     const row = await this.requireRow(id);
-    if (row.status !== BlogPostStatus.DRAFT) {
+    if (
+      row.status !== BlogPostStatus.DRAFT &&
+      row.status !== BlogPostStatus.REJECTED
+    ) {
       throw new BadRequestException(
-        `Post is ${row.status}, only DRAFT can be approved`,
+        `Post is ${row.status}, only DRAFT or REJECTED can be approved`,
       );
     }
     const updated = await this.prisma.blogPost.update({
@@ -245,8 +277,11 @@ export class BlogService {
     const updated = await this.prisma.blogPost.update({
       where: { id },
       data: {
+        // Дата ПЕРВОЙ публикации, а не последней: повторная публикация
+        // после правки не делает статью новой ни для ленты, ни для
+        // Google News, ни для `datePublished` в разметке.
         status: BlogPostStatus.PUBLISHED,
-        publishedAt: new Date(),
+        publishedAt: row.publishedAt ?? new Date(),
         moderatorId: operatorId,
         moderatedAt: new Date(),
       },
@@ -267,8 +302,18 @@ export class BlogService {
     const updated = await this.prisma.blogPost.update({
       where: { id },
       data: {
+        // `publishedAt` НЕ обнуляем (аудит блога 24.09.2026). Снять
+        // статью, поправить опечатку и опубликовать снова — обычное
+        // действие, а обнуление стирало исходную дату навсегда. Цена
+        // конкретная: публичный список сортируется по `publishedAt`, и
+        // старая статья прыгала в начало ленты; `sitemap-news.xml`
+        // снова считал её свежей и отправлял в Google News как новую
+        // публикацию; `datePublished` в JSON-LD начинал врать.
+        //
+        // Статус — единственное, что решает, видна ли статья на
+        // витрине (`where: { status: PUBLISHED }`), так что дата без
+        // статуса ничего не открывает.
         status: BlogPostStatus.APPROVED,
-        publishedAt: null,
         moderatorId: operatorId,
         moderatedAt: new Date(),
       },
@@ -349,6 +394,37 @@ export class BlogService {
   }
 }
 
+/**
+ * Одним словом: что сейчас с переводами этой записи.
+ *
+ * Число «готово/всего» на это не отвечает. `0/4` одинаково выглядит у
+ * черновика (переводов ещё нет и не должно быть), у только что
+ * одобренной статьи (крон заведёт их ближайшим прогоном), у статьи в
+ * очереди xAI (ждать сутки) и у провалившейся (нужен человек). Первые
+ * три — норма, последнее — работа.
+ */
+function translationsStateOf(row: {
+  status: BlogPostStatus;
+  translations: { status: BlogTranslationStatus }[];
+}): BlogTranslationsState {
+  // У черновика и отклонённой переводов не бывает по устройству:
+  // `ensurePendingTranslations` берёт только APPROVED/PUBLISHED.
+  if (
+    row.status !== BlogPostStatus.APPROVED &&
+    row.status !== BlogPostStatus.PUBLISHED
+  ) {
+    return 'not-started';
+  }
+  if (row.translations.length === 0) return 'awaiting-cron';
+  if (row.translations.some((t) => t.status === BlogTranslationStatus.FAILED)) {
+    return 'failed';
+  }
+  if (row.translations.every((t) => t.status === BlogTranslationStatus.READY)) {
+    return 'ready';
+  }
+  return 'in-progress';
+}
+
 function cryptoRandomId(): string {
   // Короткий читаемый суффикс для слага ручных записей — не нужна
   // криптографическая стойкость, только отсутствие коллизий на глаз;
@@ -388,6 +464,11 @@ function toListItem(row: RowWithTranslationsPartial): AdminBlogPostListItem {
       (t) => t.status === BlogTranslationStatus.READY,
     ).length,
     translationsTotal: nonOriginalLocales(row.originalLocale).length,
+    // Само по себе «0/4» означало ПЯТЬ разных состояний, и в трёх из
+    // них нужно вмешательство оператора, а в двух — ничего (аудит
+    // 24.09.2026, жалоба владельца «переводов 0 и непонятно как
+    // инициировать»). Поэтому рядом с числом едет состояние очереди.
+    translationsState: translationsStateOf(row),
   };
 }
 

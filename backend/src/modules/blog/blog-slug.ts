@@ -80,7 +80,15 @@ export function slugify(title: string): string {
  * прогонами крона.
  */
 export function blogSlugFor(title: string, disambiguator: string): string {
-  const base = slugify(title) || 'post';
   const suffix = slugify(disambiguator) || disambiguator.slice(0, 12);
-  return `${base}-${suffix}`.slice(0, MAX_SLUG_LENGTH);
+  // Режем ЗАГОЛОВОК под суффикс, а не склейку целиком. Прежняя редакция
+  // делала `` `${base}-${suffix}`.slice(0, 80) `` — и у заголовка,
+  // который сам добирал 80 символов (кириллица раздувается: щ→sch,
+  // ю→yu, хватает ~40 слов), суффикс отбрасывался НАЦЕЛО. Слаг
+  // становился чистой функцией заголовка — ровно то, от чего
+  // доккомментарий выше обещал защитить: два похожих заголовка давали
+  // один слаг, `@@unique` отвечал P2002, и оператор видел HTTP 500.
+  const room = MAX_SLUG_LENGTH - suffix.length - 1;
+  const base = (slugify(title) || 'post').slice(0, Math.max(room, 1));
+  return `${base.replace(/-+$/g, '')}-${suffix}`.slice(0, MAX_SLUG_LENGTH);
 }

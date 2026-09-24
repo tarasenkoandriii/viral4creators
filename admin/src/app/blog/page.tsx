@@ -31,6 +31,7 @@ import type {
   AdminBlogPostListItem,
   AdminBlogPostPage,
   BlogPostStatus,
+  BlogTranslationsState,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 
@@ -51,6 +52,32 @@ const SOURCE_LABEL = { YOUTUBE_TREND: 'YouTube-тренд', MANUAL: 'вручн�
 function errText(e: unknown): string {
   return e instanceof ApiRequestError ? e.message : 'Не удалось выполнить запрос';
 }
+
+/**
+ * Одно число «готово/всего» означало ПЯТЬ разных состояний, и только в
+ * одном из них нужен человек. Владелец, увидев «0/4» у черновика,
+ * спросил «как инициировать переводы» — и правильно спросил: у
+ * черновика их не бывает по устройству, а экран об этом молчал.
+ */
+const TRANSLATIONS_LABEL: Record<BlogTranslationsState, string> = {
+  'not-started': 'после одобрения',
+  'awaiting-cron': 'в очереди крона',
+  'in-progress': 'переводятся',
+  ready: 'готовы',
+  failed: 'сбой — нужен повтор',
+};
+
+const TRANSLATIONS_HINT: Record<BlogTranslationsState, string> = {
+  'not-started':
+    'Переводы заводятся только у одобренных записей. Одобрите — и суточный крон блога поставит их в очередь.',
+  'awaiting-cron':
+    'Запись одобрена, строки переводов заведёт ближайший прогон крона блога. Можно не ждать сутки: «Система → Кроны → blog → Запустить».',
+  'in-progress':
+    'Пачка подана в xAI. Ответ приходит в течение суток, забирает его тот же крон.',
+  ready: 'Все четыре языка переведены.',
+  failed:
+    'Хотя бы один перевод провалился. Крон повторит его сам (до трёх попыток); если не помогает — правка текста статьи ставит переводы в очередь заново.',
+};
 
 export default function BlogPage() {
   const [status, setStatus] = useState<string>('DRAFT');
@@ -101,6 +128,8 @@ export default function BlogPage() {
       r ? { ...r, items: r.items.map((x) => (x.id === updated.id ? updated : x)) } : r
     );
 
+  const detailRef = useRef<HTMLElement | null>(null);
+
   const openDetail = (item: AdminBlogPostListItem) => {
     setError(null);
     getBlogPost(item.id)
@@ -110,6 +139,20 @@ export default function BlogPage() {
       })
       .catch((e) => setError(errText(e)));
   };
+
+  // Карточка рендерится ПОД таблицей, а в таблице десятки строк с
+  // длинными заголовками — нажав «Открыть» у верхней записи, оператор
+  // не видел ничего: карточка открывалась за сотни пикселей ниже
+  // экрана, и это выглядело как сломанная кнопка (жалоба владельца
+  // 24.09.2026, запрос в сети при этом отвечал 200). Довозим человека
+  // до того, что он открыл, и ставим туда фокус — иначе с клавиатуры
+  // карточка так и остаётся недостижимой.
+  const detailId = detail?.id ?? null;
+  useEffect(() => {
+    if (!detailId) return;
+    detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    detailRef.current?.focus({ preventScroll: true });
+  }, [detailId]);
 
   async function runAction(id: string, action: () => Promise<AdminBlogPostDetail>) {
     setBusy(id);
@@ -145,11 +188,17 @@ export default function BlogPage() {
     setBusy(detail.id);
     setError(null);
     try {
-      const updated = await updateBlogPost(detail.id, {
-        title: editTitle.trim(),
-        bodyHtml: editBody.trim(),
-        category: editCategory.trim(),
-      });
+      // Шлём ТОЛЬКО изменённое. Раньше уходили все три поля всегда, и
+      // бэкенд считал `textChanged` истинным при любом сохранении — то
+      // есть правка одной категории сбрасывала все переводы, а подсказка
+      // рядом обещала обратное (аудит блога 24.09.2026).
+      const patch: Parameters<typeof updateBlogPost>[1] = {};
+      if (editTitle.trim() !== detail.title) patch.title = editTitle.trim();
+      if (editBody.trim() !== detail.bodyHtml) patch.bodyHtml = editBody.trim();
+      if (editCategory.trim() !== detail.category) {
+        patch.category = editCategory.trim();
+      }
+      const updated = await updateBlogPost(detail.id, patch);
       setDetail(updated);
       replaceInList(updated);
       setEditing(false);
@@ -320,8 +369,14 @@ export default function BlogPage() {
                     <td style={{ maxWidth: 320 }}>
                       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                         {item.thumbnailUrl && (
-                          // Обложка YouTube по прямой ссылке — не перезаливается
-                          // в Blob (TODO §II.3: «права на чужие ролики»).
+                          // Обложка лежит в НАШЕМ Blob: с этапа 95
+                          // `downloadAndUploadBlogCoverImage` перезаливает
+                          // её к себе, а `runCoverImageBackfill` догружает
+                          // пропущенные. Комментарий здесь описывал
+                          // состояние до этапа 95 и вводил в заблуждение
+                          // ровно по тому вопросу (права на чужие
+                          // материалы), где цена ошибки юридическая —
+                          // исправлено аудитом блога 24.09.2026.
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={item.thumbnailUrl}
@@ -340,8 +395,21 @@ export default function BlogPage() {
                     <td className="muted">{SOURCE_LABEL[item.source]}</td>
                     <td>{item.category}</td>
                     <td className="muted tabular">{item.score ?? '—'}</td>
-                    <td className="muted tabular">
-                      {item.translationsReady}/{item.translationsTotal}
+                    <td className="tabular" style={{ whiteSpace: 'nowrap' }}>
+                      <span className="muted">
+                        {item.translationsReady}/{item.translationsTotal}
+                      </span>
+                      <div
+                        style={{ fontSize: 11, marginTop: 2 }}
+                        className={
+                          item.translationsState === 'failed'
+                            ? 'critical'
+                            : 'muted'
+                        }
+                        title={TRANSLATIONS_HINT[item.translationsState]}
+                      >
+                        {TRANSLATIONS_LABEL[item.translationsState]}
+                      </div>
                     </td>
                     <td>
                       <span className={`badge-status badge-status-${STATUS_TONE[item.status]}`}>
@@ -445,7 +513,11 @@ export default function BlogPage() {
       )}
 
       {detail && (
-        <section style={{ marginTop: 24, borderTop: '1px solid #333', paddingTop: 16 }}>
+        <section
+          ref={detailRef}
+          tabIndex={-1}
+          style={{ marginTop: 24, borderTop: '1px solid #333', paddingTop: 16 }}
+        >
           <h2>
             {detail.title}{' '}
             <button type="button" onClick={() => setDetail(null)}>
@@ -455,7 +527,7 @@ export default function BlogPage() {
           <p className="muted" style={{ fontSize: 12 }}>
             Оригинал: {detail.originalLocale} · категория: {detail.category} ·
             создана {new Date(detail.createdAt).toLocaleString('ru-RU')}
-            {detail.moderatorId && (
+            {detail.moderatorId && detail.moderatedAt && (
               <>
                 {' '}
                 · решение: {new Date(detail.moderatedAt as string).toLocaleString('ru-RU')} (
@@ -505,8 +577,9 @@ export default function BlogPage() {
               <input value={editCategory} onChange={(e) => setEditCategory(e.target.value)} aria-label="Категория" />
               <textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={8} aria-label="Текст (HTML)" />
               <p className="muted" style={{ fontSize: 12 }}>
-                Правка текста сбросит уже готовые/поданные переводы на «ждёт очереди» —
-                крон переведёт заново по новому тексту.
+                Правка текста сбросит готовые, поданные и провалившиеся
+                переводы на «ждёт очереди» — крон переведёт заново по новому
+                тексту. Правка одной категории переводов не трогает.
               </p>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button type="button" onClick={() => void saveEdit()} disabled={busy === detail.id}>

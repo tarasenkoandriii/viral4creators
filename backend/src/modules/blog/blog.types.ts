@@ -1,3 +1,16 @@
+/** Состояние очереди перевода одной записи — см. `translationsState`. */
+export type BlogTranslationsState =
+  /** Черновик или отклонённая: переводов нет и не должно быть. */
+  | 'not-started'
+  /** Одобрена, но крон ещё не завёл строки — ближайшим прогоном заведёт. */
+  | 'awaiting-cron'
+  /** Часть в очереди xAI или переводится — ждать. */
+  | 'in-progress'
+  /** Все готовы. */
+  | 'ready'
+  /** Хотя бы один провалился — вот тут нужен человек. */
+  | 'failed';
+
 /**
  * Структурные типы блога (doc/TELEGRAM-ADMIN.md §5: "structural row types,
  * like every service here") — тот же приём, что library.types.ts.
@@ -24,6 +37,13 @@ export interface AdminBlogPostListItem {
   /** Сколько из четырёх не-оригинальных локалей уже готовы (READY). */
   translationsReady: number;
   translationsTotal: number;
+  /**
+   * Что с переводами на самом деле. Число `готово/всего` на это не
+   * отвечает: `0/4` одинаково у черновика, у только что одобренной
+   * статьи, у стоящей в очереди xAI и у провалившейся навсегда — а
+   * вмешательство человека нужно только в последнем случае.
+   */
+  translationsState: BlogTranslationsState;
 }
 
 export interface AdminBlogPostPage {

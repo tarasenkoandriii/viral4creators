@@ -165,14 +165,46 @@ describe('GrokBatchService', () => {
       });
     });
 
-    it('нет поля state вообще — нули, не бросает', async () => {
+    it('нет поля state вообще — не бросает, но и готовности не выдумывает', async () => {
+      // Прежняя редакция этого теста требовала здесь `pendingCount: 0`
+      // — и тем закрепляла находку аудита 24.09.2026: ноль означает «в
+      // очереди никого, пачка готова», по нему вызывающий идёт забирать
+      // результаты, получает пустой список и помечает ВСЮ оплаченную
+      // пачку провалившейся. Одна неожиданная форма ответа xAI (батч в
+      // queued/validating/expired, иное именование полей) — и пачка
+      // потеряна целиком, с записью расхода на каждый элемент.
+      //
+      // Исходное намерение теста («не бросает») сохранено: метод
+      // по-прежнему возвращает объект, а не исключение. Изменилось одно
+      // — «xAI не сказал» перестало выдавать себя за «готово».
       mockedAxios.get.mockResolvedValueOnce({ status: 200, data: {} });
       expect(await withKey().getBatchStatus('b1')).toEqual({
         totalCount: 0,
         completedCount: 0,
-        pendingCount: 0,
+        pendingCount: null,
         errorCount: 0,
       });
+    });
+
+    it('num_pending не число — тоже «не сказал», а не ноль', async () => {
+      // Строка, null, отсутствующий ключ — всё это одно и то же: поля
+      // нет. Проверка на `typeof === 'number'`, а не на truthiness:
+      // иначе настоящий ноль («готова») превратился бы в `null`.
+      for (const num_pending of [undefined, null, '0', {}]) {
+        mockedAxios.get.mockResolvedValueOnce({
+          status: 200,
+          data: { state: { num_requests: 3, num_pending } },
+        });
+        const status = await withKey().getBatchStatus('b1');
+        expect(status?.pendingCount).toBeNull();
+      }
+      // А ноль остаётся нулём — иначе готовая пачка не забиралась бы
+      // никогда.
+      mockedAxios.get.mockResolvedValueOnce({
+        status: 200,
+        data: { state: { num_requests: 3, num_pending: 0 } },
+      });
+      expect((await withKey().getBatchStatus('b1'))?.pendingCount).toBe(0);
     });
 
     it('HTTP-ошибка — null, не бросает', async () => {

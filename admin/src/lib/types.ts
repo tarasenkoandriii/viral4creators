@@ -383,6 +383,14 @@ export type BlogPostStatus = 'DRAFT' | 'APPROVED' | 'PUBLISHED' | 'REJECTED';
 export type BlogPostSource = 'YOUTUBE_TREND' | 'MANUAL';
 export type BlogTranslationStatus = 'PENDING' | 'QUEUED' | 'READY' | 'FAILED';
 
+/** Состояние очереди перевода одной записи блога. */
+export type BlogTranslationsState =
+  | 'not-started'
+  | 'awaiting-cron'
+  | 'in-progress'
+  | 'ready'
+  | 'failed';
+
 export interface AdminBlogPostListItem {
   id: string;
   slug: string;
@@ -398,6 +406,8 @@ export interface AdminBlogPostListItem {
   /** Сколько из четырёх не-оригинальных локалей уже готовы (READY). */
   translationsReady: number;
   translationsTotal: number;
+  /** Что с переводами на самом деле — число `готово/всего` на это не отвечает. */
+  translationsState: BlogTranslationsState;
 }
 
 export interface AdminBlogPostPage {

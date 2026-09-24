@@ -82,7 +82,12 @@ export interface GrokBatchRequestItem {
 export interface GrokBatchStatus {
   totalCount: number;
   completedCount: number;
-  pendingCount: number;
+  /**
+   * `null` — поля `num_pending` в ответе не было. Это НЕ ноль: ноль
+   * означает «в очереди никого, пачка готова», и по нему забирают
+   * результаты. Спутать их стоило бы целой оплаченной пачки.
+   */
+  pendingCount: number | null;
   errorCount: number;
 }
 
@@ -196,7 +201,8 @@ export class GrokBatchService {
   }
 
   /**
-   * Опрос статуса. Готовность — `pendingCount === 0` (см. предупреждение
+   * Опрос статуса. Готовность — `pendingCount === 0`, и только оно:
+   * `null` означает «xAI не сказал», а не «ноль» (см. предупреждение
    * в шапке файла про num_success vs num_pending).
    */
   async getBatchStatus(xaiBatchId: string): Promise<GrokBatchStatus | null> {
@@ -212,12 +218,20 @@ export class GrokBatchService {
         this.logger.warn(`getBatchStatus(${xaiBatchId}): HTTP ${res.status}`);
         return null;
       }
-      const state = (res.data?.state ?? {}) as Record<string, number>;
+      const state = (res.data?.state ?? {}) as Record<string, unknown>;
+      const num = (key: string): number | null =>
+        typeof state[key] === 'number' ? (state[key] as number) : null;
       return {
-        totalCount: state.num_requests ?? 0,
-        completedCount: state.num_success ?? 0,
-        pendingCount: state.num_pending ?? 0,
-        errorCount: state.num_error ?? 0,
+        totalCount: num('num_requests') ?? 0,
+        completedCount: num('num_success') ?? 0,
+        // `null`, а НЕ ноль, когда поля нет: ноль здесь означает «в
+        // очереди никого, пачка готова», и вызывающий по нему решает
+        // забирать результаты. Найдено аудитом блога 24.09.2026 —
+        // ответ без `state` (батч в queued/validating/expired, иное
+        // именование полей) выдавал готовность, которой нет, и целая
+        // оплаченная пачка помечалась провалённой.
+        pendingCount: num('num_pending'),
+        errorCount: num('num_error') ?? 0,
       };
     } catch (err) {
       this.logger.warn(

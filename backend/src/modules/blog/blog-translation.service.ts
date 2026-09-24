@@ -58,6 +58,40 @@ import { sanitizeBlogHtml } from '../../common/sanitize-blog-html';
 export const TRANSLATION_TIME_BUDGET_MS = 90_000;
 
 /**
+ * Сколько раз повторять провалившийся перевод, прежде чем оставить его
+ * в покое.
+ *
+ * Перевод проваливается по двум разным причинам: разовый сбой xAI (её
+ * лечит повтор) и что-то в самом тексте статьи, на чём модель спотыкается
+ * каждый раз (её повтор не лечит, а деньги тратит). Три попытки
+ * разделяют эти случаи достаточно: дальше нужен человек, и он видит
+ * такую строку в карточке записи.
+ */
+export const MAX_TRANSLATION_ATTEMPTS = 3;
+
+/**
+ * Сколько ждать ответа по поданной пачке, прежде чем счесть её зависшей.
+ *
+ * xAI обещает сутки на пачку, поэтому порог заметно больше: обрывать
+ * раньше значило бы платить второй раз за работу, которая ещё делается.
+ * Трое суток — это «ответа не будет уже никогда», а не «долго».
+ */
+export const STUCK_BATCH_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Почему пачка не подана. Три РАЗНЫЕ причины, и раньше все три
+ * назывались одним словом `skipped` — по логу нельзя было отличить
+ * «всё переведено» от «очередь встала».
+ */
+export type SubmitOutcome =
+  /** Переводить нечего — норма. */
+  | 'nothing-to-translate'
+  /** xAI отказал в подаче: деньги не потрачены, работа не сделана. */
+  | 'submit-failed'
+  /** Бюджет времени съеден опросом уже поданных пачек. */
+  | 'out-of-time';
+
+/**
  * Форма строки `BlogPostTranslation` вместе с оригинальным текстом
  * родительской статьи (для сборки промпта перевода) — общая для
  * `submitPendingBatch` и `applyCompletedBatch`. Явный интерфейс + явная
@@ -93,7 +127,7 @@ export class BlogTranslationService {
     translationsEnsured: number;
     submittedBatch:
       | { xaiBatchId: string; count: number }
-      | 'skipped'
+      | SubmitOutcome
       | 'not-configured'
       | null;
   }> {
@@ -113,10 +147,15 @@ export class BlogTranslationService {
     const { polledJobs, completedJobs } =
       await this.pollSubmittedBatches(started);
     const translationsEnsured = await this.ensurePendingTranslations();
+    // Раньше здесь и ниже стояло одно слово `skipped` на три разные
+    // причины: переводить нечего (норма), подача не удалась (деньги не
+    // потрачены, но и работа не сделана) и бюджет времени выбран
+    // опросом (очередь встала — вот это и надо ловить первым). По логу
+    // и по ответу крона они были неотличимы.
     const submittedBatch =
       Date.now() - started < TRANSLATION_TIME_BUDGET_MS
         ? await this.submitPendingBatch()
-        : 'skipped';
+        : 'out-of-time';
 
     this.logger.log(
       `Прогон очереди перевода блога: опрошено пачек ${polledJobs}, завершено ${completedJobs}, ` +
@@ -164,17 +203,35 @@ export class BlogTranslationService {
    * иначе один и тот же перевод оказался бы одновременно в двух пачках.
    */
   async submitPendingBatch(): Promise<
-    { xaiBatchId: string; count: number } | 'skipped'
+    { xaiBatchId: string; count: number } | SubmitOutcome
   > {
     const config = loadConfiguration();
+    // Находка аудита 24.09.2026: `FAILED` не подбирал НИКТО — ни этот
+    // отбор, ни `ensurePendingTranslations` (там `createMany` +
+    // `skipDuplicates`, существующую строку он не чинит). Провалившийся
+    // перевод оставался мёртвым навсегда, притом что деньги за элемент
+    // пачки уже списаны, а доккомментарий `blog-translation-apply.ts`
+    // обещал «следующий прогон обязан повторить его в новой пачке».
+    //
+    // Повтор ограничен `MAX_TRANSLATION_ATTEMPTS`: перевод, который
+    // проваливается на самом тексте статьи (а не на разовом сбое xAI),
+    // иначе тратил бы деньги каждые сутки бесконечно.
     const pending: TranslationWithPost[] =
       await this.prisma.blogPostTranslation.findMany({
-        where: { status: BlogTranslationStatus.PENDING, batchJobId: null },
+        where: {
+          OR: [
+            { status: BlogTranslationStatus.PENDING, batchJobId: null },
+            {
+              status: BlogTranslationStatus.FAILED,
+              attempts: { lt: MAX_TRANSLATION_ATTEMPTS },
+            },
+          ],
+        },
         include: { post: { select: { title: true, bodyHtml: true } } },
         orderBy: { createdAt: 'asc' },
         take: config.blog.translateBatchLimit,
       });
-    if (pending.length === 0) return 'skipped';
+    if (pending.length === 0) return 'nothing-to-translate';
 
     const rows: PendingTranslationRow[] = pending.map((t) => ({
       id: t.id,
@@ -183,6 +240,27 @@ export class BlogTranslationService {
       bodyHtml: t.post.bodyHtml,
     }));
     const items = buildTranslationBatchItems(rows, config.grok.model);
+
+    // Порядок: СНАЧАЛА строка в базе, потом деньги. Обратный порядок
+    // (он тут и стоял) давал двойную оплату: упади процесс между
+    // успешной подачей и записью — таймаут функции, деплой, сбой БД, —
+    // и переводы остались бы `PENDING` с пустым `batchJobId`, то есть
+    // следующий прогон подал бы ТЕ ЖЕ элементы второй оплаченной
+    // пачкой, а первая осталась бы висеть в xAI, никому не известная.
+    // Именно этот порядок и описан в схеме (`GrokBatchJob.xaiBatchId`:
+    // «Null, пока submitBatch не вернул id — короткое окно между
+    // записью строки и ответом xAI»), просто код делал наоборот.
+    const job = await this.prisma.grokBatchJob.create({
+      data: {
+        xaiBatchId: null,
+        status: GrokBatchJobStatus.SUBMITTED,
+        requestCount: items.length,
+      },
+    });
+    await this.prisma.blogPostTranslation.updateMany({
+      where: { id: { in: pending.map((t) => t.id) } },
+      data: { status: BlogTranslationStatus.QUEUED, batchJobId: job.id },
+    });
 
     const result = await this.grokBatch.submitBatch(
       `blog-translations-${new Date().toISOString()}`,
@@ -198,19 +276,29 @@ export class BlogTranslationService {
       this.logger.warn(
         `Не удалось подать пачку перевода блога: ${result.error}`,
       );
-      return 'skipped';
+      // Отпускаем переводы обратно в очередь и закрываем job как
+      // FAILED. До этой правки значение `GrokBatchJobStatus.FAILED` не
+      // присваивалось нигде вообще, хотя схема описывает его именно
+      // так («submitBatch вернул ошибку, пачка не была подана вовсе»):
+      // история неудачных подач не сохранялась.
+      await this.prisma.blogPostTranslation.updateMany({
+        where: { batchJobId: job.id },
+        data: { status: BlogTranslationStatus.PENDING, batchJobId: null },
+      });
+      await this.prisma.grokBatchJob.update({
+        where: { id: job.id },
+        data: {
+          status: GrokBatchJobStatus.FAILED,
+          errorMessage: result.error ?? 'подача пачки не удалась',
+          completedAt: new Date(),
+        },
+      });
+      return 'submit-failed';
     }
 
-    const job = await this.prisma.grokBatchJob.create({
-      data: {
-        xaiBatchId: result.xaiBatchId,
-        status: GrokBatchJobStatus.SUBMITTED,
-        requestCount: items.length,
-      },
-    });
-    await this.prisma.blogPostTranslation.updateMany({
-      where: { id: { in: pending.map((t) => t.id) } },
-      data: { status: BlogTranslationStatus.QUEUED, batchJobId: job.id },
+    await this.prisma.grokBatchJob.update({
+      where: { id: job.id },
+      data: { xaiBatchId: result.xaiBatchId },
     });
 
     return { xaiBatchId: result.xaiBatchId, count: items.length };
@@ -225,11 +313,15 @@ export class BlogTranslationService {
   private async pollSubmittedBatches(
     started: number,
   ): Promise<{ polledJobs: number; completedJobs: number }> {
-    const jobs: { id: string; xaiBatchId: string | null }[] =
-      await this.prisma.grokBatchJob.findMany({
-        where: { status: GrokBatchJobStatus.SUBMITTED },
-        orderBy: { submittedAt: 'asc' },
-      });
+    const jobs: {
+      id: string;
+      xaiBatchId: string | null;
+      submittedAt: Date;
+    }[] = await this.prisma.grokBatchJob.findMany({
+      where: { status: GrokBatchJobStatus.SUBMITTED },
+      orderBy: { submittedAt: 'asc' },
+      select: { id: true, xaiBatchId: true, submittedAt: true },
+    });
 
     let polledJobs = 0;
     let completedJobs = 0;
@@ -242,18 +334,91 @@ export class BlogTranslationService {
       }
       polledJobs++;
       if (!job.xaiBatchId) {
-        // Не должно случаться (создаётся вместе с xaiBatchId), но не
-        // падать всем прогоном ради одной сломанной строки.
+        // Теперь это ДОСТИЖИМАЯ ветка, и она означает конкретное:
+        // строку завели, а ответа xAI по ней так и не получили —
+        // процесс умер между двумя запросами. Раньше такого окна не
+        // было (строка создавалась уже с id), и комментарий здесь
+        // честно говорил «не должно случаться»; после перестановки
+        // порядка окно появилось, и молча пропускать такую строку
+        // нельзя — она держит свои переводы в QUEUED навсегда.
+        await this.releaseOrphanJob(job.id);
         continue;
       }
 
       const status = await this.grokBatch.getBatchStatus(job.xaiBatchId);
-      if (!status || status.pendingCount > 0) continue;
+      // Зависшую снимаем до всех прочих решений: она и так уже съела
+      // больше времени, чем ей отведено.
+      if (Date.now() - job.submittedAt.getTime() > STUCK_BATCH_TTL_MS) {
+        await this.releaseStuckJob(job.id);
+        continue;
+      }
+      // `pendingCount === null` — поля `num_pending` в ответе НЕ БЫЛО.
+      // Раньше оно читалось как ноль, то есть «пачка готова», и дальше
+      // пустой список результатов превращал ВСЮ оплаченную пачку в
+      // мёртвые FAILED с записью расхода на каждый элемент. Одна
+      // неожиданная форма ответа xAI — и пачка потеряна целиком.
+      if (!status || status.pendingCount === null || status.pendingCount > 0) {
+        continue;
+      }
 
       const applied = await this.applyCompletedBatch(job.id, job.xaiBatchId);
       if (applied) completedJobs++;
     }
     return { polledJobs, completedJobs };
+  }
+
+  /**
+   * Пачка, по которой xAI так и не ответил, — не вечная.
+   *
+   * Находка аудита 24.09.2026: у `SUBMITTED` не было ни таймаута, ни
+   * счётчика попыток. Истёкший, удалённый или просто зависший батч
+   * оставался в этом статусе НАВСЕГДА, держа свои переводы в `QUEUED`
+   * (а `QUEUED` в новую пачку не попадает — `batchJobId` не пуст). Хуже
+   * того, опрос идёт от старых к новым, поэтому зависшие съедали бюджет
+   * времени первыми, и после нескольких таких конвейер перевода
+   * останавливался целиком — молча, без единого признака где-либо.
+   *
+   * `STUCK_BATCH_TTL_MS` заметно больше суток: xAI обещает сутки на
+   * пачку, и обрывать её раньше значило бы платить второй раз за работу,
+   * которая ещё делается.
+   */
+  private async releaseStuckJob(jobId: string): Promise<void> {
+    await this.prisma.blogPostTranslation.updateMany({
+      where: { batchJobId: jobId, status: BlogTranslationStatus.QUEUED },
+      data: { status: BlogTranslationStatus.PENDING, batchJobId: null },
+    });
+    await this.prisma.grokBatchJob.update({
+      where: { id: jobId },
+      data: {
+        status: GrokBatchJobStatus.FAILED,
+        errorMessage: 'xAI не ответил по этой пачке дольше допустимого',
+        completedAt: new Date(),
+      },
+    });
+    this.logger.warn(
+      `пачка перевода ${jobId} зависла и снята — переводы вернулись в очередь`,
+    );
+  }
+
+  /**
+   * Строка пачки без `xaiBatchId` — процесс умер между её созданием и
+   * ответом xAI. Переводы под ней надо отпустить: сама пачка либо не
+   * подана вовсе, либо подана, но её идентификатор потерян — в обоих
+   * случаях ждать по ней нечего.
+   */
+  private async releaseOrphanJob(jobId: string): Promise<void> {
+    await this.prisma.blogPostTranslation.updateMany({
+      where: { batchJobId: jobId, status: BlogTranslationStatus.QUEUED },
+      data: { status: BlogTranslationStatus.PENDING, batchJobId: null },
+    });
+    await this.prisma.grokBatchJob.update({
+      where: { id: jobId },
+      data: {
+        status: GrokBatchJobStatus.FAILED,
+        errorMessage: 'идентификатор пачки не получен — подача оборвалась',
+        completedAt: new Date(),
+      },
+    });
   }
 
   /** Разбирает результаты одной готовой пачки и закрывает её. */
@@ -319,6 +484,16 @@ export class BlogTranslationService {
           data: {
             status: BlogTranslationStatus.FAILED,
             errorMessage: item.errorMessage ?? 'неизвестная ошибка перевода',
+            // Счётчик растёт ИМЕННО здесь, на неудаче: по нему
+            // `submitPendingBatch` решает, стоит ли пробовать снова, и
+            // он же отделяет разовый сбой xAI от статьи, на которой
+            // модель спотыкается каждый раз.
+            attempts: { increment: 1 },
+            // `batchJobId` снимаем: пачка отработала, и держаться за
+            // неё строке больше незачем — иначе повтор снова упёрся бы
+            // в условие отбора (та самая ловушка, из-за которой FAILED
+            // и был тупиком).
+            batchJobId: null,
           },
         });
       }
