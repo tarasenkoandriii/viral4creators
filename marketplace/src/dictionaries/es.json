@@ -347,5 +347,10 @@
     "empty": "Todavía no has hecho ninguna puja en subastas.",
     "myBidLabel": "Tu puja",
     "paidBadge": "Pagado ✓"
+  },
+  "footer": {
+    "offer": "Oferta",
+    "terms": "Condiciones de uso",
+    "madeWithClaude": "Hecho con Claude — semana gratis"
   }
 }

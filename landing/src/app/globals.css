@@ -2041,3 +2041,97 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
+
+/* ── Страница приглашения (/r/<код>, ТЗ §5.1, этап 134) ───────────────── */
+
+/* Узкая колонка и никакого JS: страницу открывают из мессенджера, во
+   встроенном webview (та же причина, по которой без скриптов сделана
+   заставка поздравления выше). */
+.referral-page {
+  padding: 56px 0 72px;
+  max-width: 560px;
+}
+
+.referral-kicker {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.referral-title {
+  font-size: 32px;
+  line-height: 1.2;
+  margin: 0 0 14px;
+}
+
+.referral-lead {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0 0 24px;
+}
+
+.referral-gift {
+  padding: 16px 18px;
+  margin-bottom: 28px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.referral-gift-title {
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.referral-gift-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Кнопки в столбец на узком экране: это две РАВНОПРАВНЫЕ дороги, и
+   вторая не должна выглядеть довеском, уехавшим на вторую строку. */
+.referral-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.referral-actions .cta {
+  flex: 1 1 200px;
+  text-align: center;
+}
+
+.referral-hint {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 28px;
+}
+
+.referral-code {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.referral-code-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  color: var(--fg);
+}
+
+.referral-about {
+  font-size: 14px;
+}
+
+.referral-about a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: -11px 0;
+}

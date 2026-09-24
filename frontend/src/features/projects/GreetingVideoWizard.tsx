@@ -56,8 +56,10 @@ import { navigate, routes } from '../../lib/router';
 import {
   errorMessage,
   getPlanState,
+  isGenerationLocked,
   listBrandManifests,
 } from '../../services/projects-api';
+import { recordInviteEvent } from '../../services/invite-api';
 import {
   createGreetingSession,
   deleteGreetingReference,
@@ -2226,6 +2228,9 @@ function VideoStep({
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const [starting, setStarting] = useState(false);
+  // Стена бесплатного (этап 132) — отдельно от `error`: это не ошибка,
+  // а состояние «нужен доступ», и рисуется оно по-другому.
+  const [locked, setLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inFlight = useRef(false);
@@ -2265,12 +2270,22 @@ function VideoStep({
   const start = async () => {
     setStarting(true);
     setError(null);
+    setLocked(false);
     try {
       const v = await startGreetingVideo(sessionId);
       onVideo(v);
       if (!isTerminal(v)) startPolling();
     } catch (e) {
-      setError(errorMessage(e));
+      // Стена бесплатного (этап 132) — не поломка, и красной строкой её
+      // показывать нельзя: человеку нужно «чем открывается», а не «что
+      // сломалось». Тот же разбор, что в мастере товарки.
+      if (isGenerationLocked(e)) {
+        setLocked(true);
+        // Четвёртое событие §12.2: стена стоит в ТРЁХ стартах рендера,
+        // и считать её только в товарке значило бы недосчитать ровно
+        // тех, кто пришёл за поздравлением.
+        recordInviteEvent('wall');
+      } else setError(errorMessage(e));
     } finally {
       setStarting(false);
     }
@@ -2286,6 +2301,24 @@ function VideoStep({
           <Button loading={starting} onClick={() => void start()}>
             {w.generateVideoButton}
           </Button>
+        )}
+
+        {locked && (
+          <Alert tone="info" className="mt-3">
+            <p className="font-medium">{dict.generationLocked.title}</p>
+            <p className="mt-1">{dict.generationLocked.body}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button onClick={() => navigate(routes.invite())}>
+                {dict.generationLocked.invite}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => navigate(routes.credits())}
+              >
+                {dict.generationLocked.buy}
+              </Button>
+            </div>
+          </Alert>
         )}
 
         {video && video.status === GenerationStatus.PENDING && (

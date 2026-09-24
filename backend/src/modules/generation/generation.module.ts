@@ -13,6 +13,7 @@ import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { VideoAuditModule } from '../video-audit/video-audit.module';
 import { PromptModule } from '../prompt/prompt.module';
+import { RenderAccessModule } from '../render-access/render-access.module';
 
 /**
  * GenerationModule handles video generation operations.
@@ -43,6 +44,8 @@ import { PromptModule } from '../prompt/prompt.module';
     AdminPanelModule,
     VideoAuditModule,
     PromptModule,
+    // Этап 132: право на рендер — одно на все старты рендера продукта.
+    RenderAccessModule,
   ],
   controllers: [
     GenerationController,

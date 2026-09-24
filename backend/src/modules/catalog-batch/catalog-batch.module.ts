@@ -7,6 +7,7 @@ import { LibraryModule } from '../library/library.module';
 import { PromptModule } from '../prompt/prompt.module';
 import { GenerationModule } from '../generation/generation.module';
 import { StorageModule } from '../storage/storage.module';
+import { RenderAccessModule } from '../render-access/render-access.module';
 
 /**
  * CatalogBatchModule — пакетная генерация по каталогу (ТЗ §44, этап 65).
@@ -27,6 +28,8 @@ import { StorageModule } from '../storage/storage.module';
     PromptModule,
     GenerationModule,
     StorageModule,
+    // Этап 132: право на рендер — партия его требует целиком.
+    RenderAccessModule,
   ],
   controllers: [CatalogBatchController],
   providers: [CatalogBatchService, CatalogBatchWorkerService],

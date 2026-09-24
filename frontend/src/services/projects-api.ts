@@ -1327,3 +1327,22 @@ export async function cloneUserVoice(
 export async function deleteUserVoice(id: string): Promise<void> {
   await api.delete(`/voices/${id}`);
 }
+
+/**
+ * Отказ стены бесплатного — «Условно бесплатный Lite» §8, этап 132.
+ *
+ * Сервер объясняет отказ сам (конверт `error.message`), и человеку
+ * этого достаточно. Машинный признак нужен интерфейсу для другого:
+ * показать дороги, которыми стена открывается, вместо одной красной
+ * строки. Ключ `reason` уже проходит наружу фильтром исключений
+ * (`PASSTHROUGH_KEYS`), так что ничего специального на сервере для
+ * этого не потребовалось.
+ */
+export function isGenerationLocked(err: unknown): boolean {
+  if (!axios.isAxiosError(err)) return false;
+  if (err.response?.status !== 403) return false;
+  const data = err.response?.data as
+    | { error?: { details?: { reason?: unknown } } }
+    | undefined;
+  return data?.error?.details?.reason === 'generation-locked';
+}

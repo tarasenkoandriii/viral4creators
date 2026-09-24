@@ -246,6 +246,10 @@ services:
       # landing/.env.example). На dev-стенде обращения снаружи всё равно
       # идут на localhost:3003 — этого значения достаточно.
       - SITE_URL=http://localhost:3003
+      # Этап 134: кнопка «Открыть в Telegram» на странице приглашения
+      # (`/r/<код>`). Без имени бота кнопки просто нет — вторая дорога
+      # («Продолжить здесь») от этого не страдает.
+      - NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-}
     ports:
       - '3003:3003'
     volumes:

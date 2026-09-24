@@ -45,6 +45,8 @@ import { SharedVideoModule } from './modules/shared-video/shared-video.module';
 import { PublishingChannelModule } from './modules/publishing-channel/publishing-channel.module';
 import { PublishingModule } from './modules/publishing/publishing.module';
 import { CreditLedgerModule } from './modules/credit-ledger/credit-ledger.module';
+import { RenderAccessModule } from './modules/render-access/render-access.module';
+import { InviteModule } from './modules/invite/invite.module';
 import { TelegramStarsModule } from './modules/billing/telegram-stars.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { BillingRenewalModule } from './modules/billing-renewal/billing-renewal.module';
@@ -124,6 +126,10 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     PublishingChannelModule,
     PublishingModule,
     CreditLedgerModule,
+    // Граница бесплатного: право на рендер (этап 132) и кабинет с тем,
+    // чем оно открывается (этап 133).
+    RenderAccessModule,
+    InviteModule,
     TelegramStarsModule,
     BillingModule,
     BillingRenewalModule,

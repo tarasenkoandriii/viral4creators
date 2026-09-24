@@ -20,23 +20,31 @@ import { TUTORIAL_SITE_URL, isTutorialHost } from '../lib/tutorial-host';
  * `robots.txt` до этой правки). Цена — один рендер на запрос вместо
  * закешированного файла; для документа в три строки это несопоставимо
  * дешевле, чем ошибка индексации.
+ *
+ * Этап 134: `/r/` закрыт для обхода на всех трёх хостах. Страница
+ * приглашения и сама отдаёт `noindex` (`app/r/[code]/page.tsx`), но
+ * `Disallow` дешевле: это личная ссылка одного человека, и без него
+ * робот сначала СХОДИТ по каждой — то есть накрутит чужой `visitCount`
+ * (§5.2) ровно тем обходом, который всё равно ничего не проиндексирует.
+ * На превью в мессенджере это не влияет: его рисует не поисковик.
  */
+const DISALLOW_REFERRAL = ['/r/'];
 export default function robots(): MetadataRoute.Robots {
   const host = headers().get('host');
   if (isGreetingHost(host)) {
     return {
-      rules: { userAgent: '*', allow: '/' },
+      rules: { userAgent: '*', allow: '/', disallow: DISALLOW_REFERRAL },
       sitemap: [`${GREETING_SITE_URL}/sitemap.xml`],
     };
   }
   if (isTutorialHost(host)) {
     return {
-      rules: { userAgent: '*', allow: '/' },
+      rules: { userAgent: '*', allow: '/', disallow: DISALLOW_REFERRAL },
       sitemap: [`${TUTORIAL_SITE_URL}/sitemap.xml`],
     };
   }
   return {
-    rules: { userAgent: '*', allow: '/' },
+    rules: { userAgent: '*', allow: '/', disallow: DISALLOW_REFERRAL },
     sitemap: [`${SITE_URL}/sitemap.xml`, `${SITE_URL}/sitemap-news.xml`],
   };
 }

@@ -28,6 +28,7 @@ import { ReadinessPanel } from '../../components/ReadinessPanel';
 import { HintLine } from '../../components/HintLine';
 import { useWizardEvents } from '../../lib/useWizardEvents';
 import { getSessionReadiness } from '../../services/api';
+import { recordInviteEvent } from '../../services/invite-api';
 import {
   getWizardGuide,
   setWizardGuide,
@@ -136,6 +137,7 @@ export function GenerationWizard() {
     generatedVideo,
     videoHistory,
     isGeneratingVideo,
+    generationLocked,
     originalVideoUrl,
     error,
     prefilledFromProject,
@@ -195,6 +197,15 @@ export function GenerationWizard() {
   // держим Grok зашитым в коде фронтенда — `useState('grok')` выше
   // остаётся как фолбэк на время, пока этот запрос не ответил (или не
   // смог), не как единственный источник дефолта.
+  // «Упёрся в стену» (§12.2 ТЗ «Условно бесплатный Lite») — четвёртое из
+  // четырёх событий кабинета и единственное, которое случается ВНЕ его:
+  // отказ рисуется здесь, у самой кнопки. Зависимость одна, поэтому
+  // событие уходит на переходе false → true, а не на каждый рендер
+  // экрана с отказом.
+  useEffect(() => {
+    if (generationLocked) recordInviteEvent('wall');
+  }, [generationLocked]);
+
   useEffect(() => {
     let cancelled = false;
     getDefaultVideoProvider()
@@ -1028,6 +1039,29 @@ export function GenerationWizard() {
                     ? dict.generationWizard.retryGenerateCta
                     : dict.generationWizard.generateVideoCta}
                 </Button>
+                {/* Стена бесплатного (этап 132). Рисуется здесь, у самой
+                    кнопки, а не отдельным экраном: человек уже пришёл
+                    сюда генерировать, и увести его на другой адрес,
+                    чтобы объяснить отказ, значило бы потерять контекст
+                    вместе с ним. Красную строку ошибки при этом не
+                    показываем — отказ не про поломку. */}
+                {generationLocked && (
+                  <Alert tone="info" className="mt-3">
+                    <p className="font-medium">{dict.generationLocked.title}</p>
+                    <p className="mt-1">{dict.generationLocked.body}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button onClick={() => navigate(routes.invite())}>
+                        {dict.generationLocked.invite}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => navigate(routes.credits())}
+                      >
+                        {dict.generationLocked.buy}
+                      </Button>
+                    </div>
+                  </Alert>
+                )}
               </Card>
             )}
 

@@ -8,6 +8,7 @@ import { SetHtmlLang } from '../../components/SetHtmlLang';
 import { TelegramInit } from '../../components/TelegramInit';
 import { LocaleSwitcher } from '../../components/LocaleSwitcher';
 import { TelegramLoginButton } from '../../components/TelegramLoginButton';
+import { Footer } from '../../components/Footer';
 
 /** Все пять локалей — статическая генерация на сборке, тот же приём, что у landing. */
 export function generateStaticParams() {
@@ -76,6 +77,7 @@ export default function LocaleSiteLayout({
         </nav>
       </header>
       <main className="wrap">{children}</main>
+      <Footer dict={dict} />
     </DictionaryProvider>
   );
 }

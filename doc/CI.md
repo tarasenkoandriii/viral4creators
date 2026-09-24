@@ -1,8 +1,8 @@
 # CI — что проверяется автоматически и почему именно это
 
 `.github/workflows/ci.yml`, появился на этапе 33. До него все проверки
-прогонялись руками на каждом этапе: тогда 442 теста (сейчас 4137), 17
-написанных вручную (сейчас 86)
+прогонялись руками на каждом этапе: тогда 442 теста (сейчас 4251), 17
+написанных вручную (сейчас 89)
 миграций и `sync-legal --check`, специально сделанный «для CI»,
 существовали — но запускал их только человек и только когда вспоминал.
 
@@ -18,7 +18,7 @@
 | Джоба | Что делает |
 | --- | --- |
 | `backend` | `npm ci` (генерирует Prisma-клиент), `prisma validate`, `migrate deploy` на Postgres 16, **`migrate diff --exit-code`**, `tsc`, eslint, jest с **пофайловыми порогами покрытия** (этап 40: `blob-paths`, `ai-pricing`, `spend-limits`, `plan.service`, `plan.controller`; этап 49: `serpapi-usage`, `youtube-search-usage`, `telegram-notify`), сверка чисел в документах |
-| `frontend` | `tsc`, eslint, 33 unit-скрипта `npx tsx frontend/scripts/*.test.ts`, `vite build` |
+| `frontend` | `tsc`, **`typecheck:scripts`** (типы самих проверочных скриптов), eslint через `npm run lint` (с `--report-unused-disable-directives`), 34 unit-скрипта `npx tsx frontend/scripts/*.test.ts`, `vite build` |
 | `next-apps` | матрица `admin` / `landing`: `tsc`, `next lint --max-warnings 0` (этап 53), `next build` |
 | `repo` | `sync-legal --check` — юридические тексты и их версия |
 
@@ -66,6 +66,26 @@ make ci-docs   # только документы — быстро, перед к
 игнорировать красный вывод хуже, чем не показывать его вовсе. Тесты по
 той же причине идут с отключёнными диагностиками ts-jest. Оба
 ограничения снимаются в CI сами собой.
+
+Шума, впрочем, стало меньше, и им теперь можно пользоваться руками:
+
+```bash
+cd backend && npm run typecheck:sandbox | grep -v 'TS7006\|TS7031'
+```
+
+Пустой вывод — ошибок типов нет. Раньше их было под сотню: заглушка
+`@prisma/client` была ГЛОБАЛЬНЫМ `declare module`, а глобальное
+объявление проигрывает настоящему пакету, как только тот физически
+стоит в `node_modules`. Теперь заглушка — обычный модуль
+(`backend/test/types/prisma-any/index.d.ts`), подключённый `paths` в
+`tsconfig.typecheck.json`, и три десятка ошибок «namespace has no
+exported member» исчезли. Остались только TS7006/TS7031 — «параметр
+неявно any» в разборе строк из `any`-клиента; в настоящей сборке их нет
+и быть не может, а выключить `noImplicitAny` в песочном конфиге нельзя:
+тогда ломаются «растущие» массивы и вместо честного шума получаются
+ложные ошибки в рабочем коде. Деление трёх конфигов между собой
+сторожит `backend/src/common/tsconfig-split.spec.ts`: подмена клиента,
+попавшая в конфиг продукта, уже дважды роняла боевую сборку.
 
 ## Чего в CI нет и почему
 

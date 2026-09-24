@@ -8,7 +8,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { Alert, Button, Card } from '../../components/ui';
-import { getTelegramWebApp } from '../../lib/telegram';
+import { getTelegramWebApp, openTelegramLink } from '../../lib/telegram';
 import { GreetingQrCode } from './GreetingQrCode';
 import type { Dictionary } from '../../lib/get-dictionary';
 import {
@@ -63,10 +63,9 @@ export function GreetingDeliveryPanel({
   };
 
   const sendToTelegram = () => {
-    const url = telegramShareUrl(videoUrl, message);
-    const tg = getTelegramWebApp();
-    if (tg?.openTelegramLink) tg.openTelegramLink(url);
-    else window.open(url, '_blank', 'noopener');
+    // Тот же помощник, что у кабинета «Пригласить» (этап 133): второе
+    // место с тем же приёмом — повод вынести его, а не скопировать.
+    openTelegramLink(telegramShareUrl(videoUrl, message));
   };
 
   const copy = async () => {

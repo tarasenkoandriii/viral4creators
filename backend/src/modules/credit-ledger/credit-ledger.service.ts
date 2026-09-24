@@ -20,13 +20,39 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { isUniqueConstraintViolation } from '../../common/prisma-errors';
+import {
+  FREE_GRANT_REASONS,
+  freeGrantDailyCap,
+  type FreeGrantReason,
+} from '../../common/free-tier';
+
+/** Начало суток UTC — та же граница, по которой считается суточный
+ * расход (`AiUsageService.spentToday`): два разных «сегодня» в одном
+ * продукте — источник вопросов, на которые никто не может ответить. */
+function startOfTodayUtc(now: Date = new Date()): Date {
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+}
 
 @Injectable()
 export class CreditLedgerService {
   private readonly logger = new Logger(CreditLedgerService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /**
+     * Тревога о суточном предохранителе (§12.3 ТЗ «Условно бесплатный
+     * Lite»). Найдено аудитом этапа 134: ТЗ обещало «в служебный канал
+     * уходит тревога», а уходила одна строка в лог — в бессерверном
+     * деплое её не увидит никто, и программа могла бы простоять
+     * выключенной сутки. `NotifyModule` глобальный, дедупликация по
+     * отпечатку встроена: упёршийся потолок не зальёт канал.
+     */
+    private readonly notify: TelegramNotifyService,
+  ) {}
 
   /** Текущий баланс. Анонимным (userId=null) кредиты не начисляют —
    * покупка требует identity (§41.2, checkout всегда идентифицирован). */
@@ -107,6 +133,81 @@ export class CreditLedgerService {
         throw error;
       }
     });
+  }
+
+  /**
+   * Приветственная генерация — одна на пользователя, навсегда
+   * («Условно бесплатный Lite» §4.1, этап 132).
+   *
+   * Идемпотентность держится НЕ на том, что вызов один: этот метод
+   * зовётся из `RenderAccessService` на каждом старте рендера у
+   * человека без права. Держится она на частичном уникальном индексе
+   * `(userId, reason) WHERE reason = 'WELCOME'` — P2002 здесь означает
+   * «уже выдавали», а не ошибку. Тот же приём, что защищает начисление
+   * за оплату от повторного вебхука.
+   *
+   * Предохранитель (`FREE_GRANT_DAILY_CAP`) считает бесплатные
+   * начисления ВСЕЙ программы за сутки. Упёрлись — не начисляем и
+   * говорим об этом в лог: это защита от нашей же ошибки в условии
+   * засчёта, а не от пользователя, и человек, пришедший в неудачный
+   * день, получит своё начисление позже, когда потолок отпустит.
+   */
+  async grantWelcomeIfFirst(userId: string): Promise<boolean> {
+    return this.grantFree(userId, 'WELCOME');
+  }
+
+  /**
+   * Бесплатное начисление любой причины (§4.1). `WELCOME` — этап 132,
+   * остальные приезжают этапами 133–134 и пользуются тем же путём:
+   * одно место, где считается предохранитель, и одно, где пишется
+   * строка журнала.
+   */
+  async grantFree(
+    userId: string,
+    reason: FreeGrantReason,
+    /** Ключ идемпотентности для причин, которых бывает больше одной
+     * на человека (`REFERRAL`/`REFERRAL_INVITEE` — по одной на
+     * приглашение). `WELCOME`/`SUBSCRIPTION` обходятся без него:
+     * там ключ — сам пользователь. */
+    referralId?: string | null,
+  ): Promise<boolean> {
+    const cap = freeGrantDailyCap();
+    if (cap === 0) return false;
+    const granted = await this.prisma.creditLedger.count({
+      where: {
+        reason: { in: FREE_GRANT_REASONS as string[] },
+        createdAt: { gte: startOfTodayUtc() },
+      },
+    });
+    if (granted >= cap) {
+      this.logger.warn(
+        `суточный потолок бесплатных начислений исчерпан (${granted}/${cap}) — ` +
+          `${reason} для ${userId} не начислен, попробуем завтра`,
+      );
+      // Отпечаток без переменной части — иначе дедупликация не
+      // сработает никогда, и канал зальёт одной и той же тревогой.
+      // Начисление при этом не теряется: догоняющий проход
+      // (`ReferralService.settlePending`, `InviteService.stateOf`)
+      // вернётся к нему, когда потолок отпустит.
+      await this.notify
+        .alert(
+          'free-grant-daily-cap',
+          `Суточный потолок бесплатных начислений исчерпан (${granted}/${cap}). ` +
+            `Начисления отложены до следующих суток; уже выданное не тронуто.`,
+        )
+        .catch(() => false);
+      return false;
+    }
+    try {
+      await this.prisma.creditLedger.create({
+        data: { userId, delta: 1, reason, referralId: referralId ?? null },
+      });
+      return true;
+    } catch (error) {
+      // Уже начисляли — это нормальный ход событий, а не сбой.
+      if (isUniqueConstraintViolation(error)) return false;
+      throw error;
+    }
   }
 
   /**

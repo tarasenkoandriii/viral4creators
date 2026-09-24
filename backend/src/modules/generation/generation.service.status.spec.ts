@@ -42,6 +42,7 @@ import {
   RENDER_DEADLINE_MS,
   renderExpired,
 } from './generation.service';
+import { RenderAccessService } from '../render-access/render-access.service';
 import {
   GeneratedVideo,
   GenerationStatus,
@@ -173,6 +174,19 @@ function build(
     grokBatch as never,
     // Транспорт Grok (14.09.2026): по умолчанию sync — как до настройки.
     { get: jest.fn().mockResolvedValue(null) } as never,
+    // Этап 132: настоящий сервис права с теми же двойниками — этот файл
+    // про опрос статуса и возврат кредита, и подменять здесь порядок
+    // проверок значило бы проверять не то.
+    new RenderAccessService(
+      { user: { findUnique: jest.fn().mockResolvedValue(null) } } as never,
+      plans as never,
+      creditLedger as never,
+    ),
+    // Этап 134: момент «ролик готов» — один на весь продукт. Двойник,
+    // а не настоящий сервис: этот файл не про счётчики, а про рендер, и
+    // подставлять сюда шеринг с приглашениями значило бы тащить в спеку
+    // половину продукта.
+    { onRenderCompleted: jest.fn().mockResolvedValue(undefined) } as never,
   );
   return {
     svc,

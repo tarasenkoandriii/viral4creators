@@ -341,3 +341,43 @@ video {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* Футер (доп. запрос владельца продукта): до него страница обрывалась
+   последним блоком контента, и с сайта, где размещают брифы и делают
+   ставки, некуда было уйти к оферте. Раскладка — зеркало `.mp-header`:
+   на широком экране в строку, на телефоне в столбик, потому что три
+   ссылки и копирайт в 390 px не встают рядом. */
+.mp-footer {
+  margin-top: 48px;
+  padding: 20px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.mp-footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mp-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.mp-footer-links a {
+  /* 44 px — та же минимальная цель нажатия, что у кнопок в TMA. */
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+}
+
+@media (max-width: 600px) {
+  .mp-footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

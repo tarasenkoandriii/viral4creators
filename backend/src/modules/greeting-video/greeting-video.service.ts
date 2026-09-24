@@ -95,6 +95,9 @@ import { BlobService } from '../storage/blob.service';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 import { SceneAsset } from '../../common/types/reference.types';
 import { readinessOfSession } from '../../common/wizard-readiness.session';
+import { RenderAccessService } from '../render-access/render-access.service';
+import { RenderCompletedService } from '../render-access/render-completed.service';
+import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
 import { activeSessionSceneImage } from '../../common/active-image';
 import {
   normalizeSceneCount,
@@ -153,6 +156,11 @@ export class GreetingVideoService {
     private readonly blob: BlobService,
     private readonly hedra: HedraClientService,
     private readonly ttsResolver: TtsProviderResolverService,
+    // Этап 132: тот же сервис права, что у товарки и партии.
+    private readonly renderAccess: RenderAccessService,
+    private readonly renderCompleted: RenderCompletedService,
+    // Он же — ради возврата кредита при неудаче рендера.
+    private readonly credits: CreditLedgerService,
   ) {}
 
   /** POST /sessions/:id/greeting-video — starts rendering. */
@@ -206,28 +214,70 @@ export class GreetingVideoService {
       return inFlight;
     }
 
-    if (brief.resolvedPresenterProvider === 'hedra') {
-      return this.startHedraVideo(
+    // Право на рендер — ПОСЛЕ ветки повтора выше (этап 132, §8.1.1 ТЗ):
+    // идущий рендер опрашивают тем же запросом, и проверка выше неё
+    // давала бы стену человеку, чей ролик уже считается, а кредит уже
+    // списан.
+    //
+    // Идентификатор попытки рождается здесь, а не в двух ветках ниже,
+    // как было раньше: это ключ, по которому кредит списывается и
+    // возвращается, и он обязан быть одним и тем же для кредита и для
+    // самого ролика.
+    const attemptId = uuidv4();
+    await this.renderAccess.assertCanRender(session.userId ?? null, attemptId, {
+      projectId: session.projectId ?? null,
+    });
+
+    // Всё, что может бросить МЕЖДУ списанием кредита и стартом рендера,
+    // обязано кредит вернуть. Найдено аудитом этапа 132, и случаев тут
+    // два, оба настоящие:
+    //
+    //  1. **Сбой старта.** Тарифный гейт аватара, незаданный ключ Grok,
+    //     неудачный синтез голоса, отказ провайдера — кредит списан,
+    //     рендера нет. Ровно та же дыра, что закрывал Г-2.3 в товарке;
+    //     здесь она открылась заново, потому что кредитов у греетинга
+    //     раньше не было вовсе.
+    //  2. **Гонка двух кликов.** Замок `claimWork` стоит ВНУТРИ методов
+    //     ниже, то есть ПОСЛЕ списания: два быстрых нажатия резервируют
+    //     по кредиту каждое, один старт выигрывает замок, второй
+    //     получает 409 — и его кредит сгорал бы ни за что.
+    //
+    // `refundIfReserved` идемпотентен и безопасен, если резерва не
+    // было (обычный суточный лимит), поэтому зовём его на любом отказе,
+    // не разбирая причину.
+    try {
+      if (brief.resolvedPresenterProvider === 'hedra') {
+        return await this.startHedraVideo(
+          sessionId,
+          brief,
+          session.generationPrompt.finalText,
+          session.greetingReferenceImages ?? [],
+          session.userId ?? null,
+          attemptId,
+        );
+      }
+      return await this.startGrokVideo(
         sessionId,
         brief,
         session.generationPrompt.finalText,
         session.greetingReferenceImages ?? [],
-        session.userId ?? null,
+        // Участвует ли НАШ синтез. Режим читается ровно так же, как его
+        // прочитает постобработка (`PostProductionService.planWork`):
+        // снимка бренда у бытового поздравления обычно нет, а
+        // `normalizeVoiceMode` читает его отсутствие как 'voiceover'.
+        usesOwnVoice(
+          normalizeVoiceMode(session.brandManifestSnapshot?.voiceMode),
+        ),
+        attemptId,
       );
+    } catch (error) {
+      await this.credits
+        .refundIfReserved(attemptId)
+        .catch((e) =>
+          this.logger.warn(`возврат кредита не удался: ${String(e)}`),
+        );
+      throw error;
     }
-    return this.startGrokVideo(
-      sessionId,
-      brief,
-      session.generationPrompt.finalText,
-      session.greetingReferenceImages ?? [],
-      // Участвует ли НАШ синтез. Режим читается ровно так же, как его
-      // прочитает постобработка (`PostProductionService.planWork`):
-      // снимка бренда у бытового поздравления обычно нет, а
-      // `normalizeVoiceMode` читает его отсутствие как 'voiceover'.
-      usesOwnVoice(
-        normalizeVoiceMode(session.brandManifestSnapshot?.voiceMode),
-      ),
-    );
   }
 
   /** GET /sessions/:id/greeting-video — polls the in-flight render. */
@@ -271,6 +321,8 @@ export class GreetingVideoService {
     script: string,
     referenceImages: SceneAsset[],
     userId: string | null,
+    /** Ключ попытки из `startVideo` — им же оплачен кредит (этап 132). */
+    generatedVideoId: string,
   ): Promise<GeneratedVideo> {
     // Тарифный гейт. `resolveGreetingConfig` уже не пропустил бы бриф с
     // 'hedra' ниже PREMIUM, но бриф мог быть сохранён давно, а тариф с
@@ -334,7 +386,6 @@ export class GreetingVideoService {
 
       const resolution = brief.resolvedResolution;
       const aspectRatio = '9:16';
-      const generatedVideoId = uuidv4();
       const pathname = `sessions/${sessionId}/generated.mp4`;
 
       const { jobId } = await this.hedra.submit({
@@ -515,6 +566,11 @@ export class GreetingVideoService {
     const updated = await this.sessions.updateSession(sessionId, {
       generatedVideo: completed,
     });
+    // Этап 134: тот же момент «ролик готов», что в товарке. До него
+    // поздравления не видел ни счётчик конверсии шеринга, ни что-либо
+    // ещё — момент существовал в коде четырежды, а потребители стояли
+    // в двух ветках из четырёх.
+    await this.renderCompleted.onRenderCompleted(updated ?? {});
     return this.postprod.start(sessionId, updated?.generatedVideo ?? completed);
   }
 
@@ -548,6 +604,8 @@ export class GreetingVideoService {
      * вторая речь поверх своей — брак.
      */
     ownVoice: boolean,
+    /** Ключ попытки из `startVideo` — им же оплачен кредит (этап 132). */
+    generatedVideoId: string,
   ): Promise<GeneratedVideo> {
     if (!this.grokVideo.isConfigured()) {
       throw new BadRequestException(
@@ -565,7 +623,6 @@ export class GreetingVideoService {
 
     const requestedResolution = brief.resolvedResolution;
     const aspectRatio = '9:16'; // §5.3: короткий вертикальный ролик — тот же формат, что аватар-пилот по умолчанию.
-    const generatedVideoId = uuidv4();
     const pathname = `sessions/${sessionId}/generated.mp4`;
 
     // Активное изображение слота (оригинал или применённый скетч, §6.3
@@ -712,6 +769,7 @@ export class GreetingVideoService {
       generatedVideo: completed,
     });
     const withVoiceover = updated?.generatedVideo ?? completed;
+    await this.renderCompleted.onRenderCompleted(updated ?? {});
     // Тот же вызов, что generation.service.ts делает по завершении Veo/
     // Grok-рендера (`this.postprod.start(sessionId, completed)`) —
     // planWork() читает только session.generationPrompt/
@@ -725,6 +783,17 @@ export class GreetingVideoService {
     current: GeneratedVideo,
     message: string,
   ): Promise<GeneratedVideo> {
+    // Этап 132: неудача возвращает кредит — иначе бесплатная генерация
+    // сгорала бы на сбое провайдера, то есть человек платил бы нам за
+    // нашу же неудачу. `refundIfReserved` — no-op, если кредита не было
+    // (обычный суточный лимит) или он уже возвращён, поэтому безопасно
+    // звать всегда. Best-effort: сбой возврата не должен мешать
+    // пользователю увидеть, что рендер не удался.
+    await this.credits
+      .refundIfReserved(current.generatedVideoId)
+      .catch((e) =>
+        this.logger.warn(`возврат кредита не удался: ${String(e)}`),
+      );
     const failed: GeneratedVideo = {
       ...current,
       status: GenerationStatus.FAILED,

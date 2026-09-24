@@ -57,6 +57,11 @@ import {
 } from './hint-actions';
 import { SCENARIO_HINTS, knowledgeStamp, stepIdsOf } from './hint-scenarios';
 import { factsOfScenario } from './hint-facts';
+// Через enum, а не строкой: значения там строчные, и литерал,
+// написанный по памяти заглавными, молча выключил бы факт — как это
+// уже случилось в тесте барьера greeting.
+import { ModerationStatus } from '../../common/types/prompt.types';
+import { GenerationStatus } from '../../common/types/generation.types';
 import { activeProductImage } from '../../common/active-image';
 import { AVATAR_PRESENTER } from '../../common/wizard-readiness.session';
 
@@ -170,7 +175,6 @@ export class WizardHintService {
     projectId: string,
     stepId: string,
     locale: SupportedLocale = DEFAULT_LOCALE,
-    signal?: AbortSignal,
   ): Promise<HintResult> {
     if (!(await this.guide.available())) return NOTHING;
 
@@ -239,11 +243,23 @@ export class WizardHintService {
         config: {
           systemInstruction: instruction,
           maxOutputTokens: 400,
-          // `any`, а не `??`: переданный сигнал раньше ЗАМЕНЯЛ таймаут,
-          // то есть вызов с отменой оставался без потолка ожидания.
-          abortSignal: signal
-            ? AbortSignal.any([signal, AbortSignal.timeout(HINT_TIMEOUT_MS)])
-            : AbortSignal.timeout(HINT_TIMEOUT_MS),
+          // Только таймаут — отмены снаружи здесь нет и не было.
+          //
+          // Параметр `signal` в сигнатуре был, и его никто никогда не
+          // передавал: контроллер вызывает `hint()` четырьмя
+          // аргументами (найдено приёмочным проходом §14). Клиент при
+          // уходе с шага и снятии галочки рвёт СВОЁ соединение — это
+          // про экран, а не про деньги, и `HintLine` прямо об этом
+          // говорит: «разрыв соединения его не останавливает».
+          //
+          // Довести отмену до сервера (слушать `close` запроса) было
+          // бы дёшево, но цена ошибки несимметрична: ложная отмена
+          // даёт молчание, а молчание у этой фичи НЕОТЛИЧИМО от
+          // «нечего сказать» — по замыслу (§5.9). Экономия же — хвост
+          // из четырёхсот токенов на брошенной подсказке. Поэтому
+          // сервер досчитывает и кладёт ответ в кеш: следующий,
+          // вставший на тот же шаг, получит его бесплатно.
+          abortSignal: AbortSignal.timeout(HINT_TIMEOUT_MS),
         },
       });
       await this.aiUsage.recordGemini(response, {
@@ -427,7 +443,8 @@ export class WizardHintService {
               referenceImages: session.greetingReferenceImages?.length ?? 0,
               hasPrompt: !!session.generationPrompt,
               promptFlagged:
-                session.generationPrompt?.moderationStatus === 'flagged',
+                session.generationPrompt?.moderationStatus ===
+                ModerationStatus.FLAGGED,
               hasVideo: !!session.generatedVideo,
             }
           : null,
@@ -446,8 +463,8 @@ export class WizardHintService {
             )?.pathname,
             promptApproved: !!session.generationPrompt?.approvedAt,
             renderInFlight:
-              session.generatedVideo?.status === 'pending' ||
-              session.generatedVideo?.status === 'processing',
+              session.generatedVideo?.status === GenerationStatus.PENDING ||
+              session.generatedVideo?.status === GenerationStatus.PROCESSING,
             hasVideo: session.generatedVideo?.status === 'completed',
           }
         : null,

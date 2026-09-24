@@ -60,3 +60,18 @@ export const SITE_URL = (process.env.SITE_URL ?? 'http://localhost:3003').replac
 
 /** Имя бренда для RSS-каналов и sitemap-news — то же, что в шапке (Header.tsx). */
 export const SITE_NAME = 'viral4creators';
+
+/**
+ * Имя бота мини-аппа — для кнопки «Открыть в Telegram» на странице
+ * приглашения (`app/r/[code]/page.tsx`, ТЗ §5.1, этап 134). Та же
+ * переменная и тот же способ чтения, что уже у маркетплейса
+ * (`marketplace/src/components/TelegramLoginButton.tsx`).
+ *
+ * Дефолта НЕТ намеренно: у `TMA_URL` неверный дефолт даёт локальный
+ * адрес, по которому видно, что стенд не настроен, а у `t.me/<бот>`
+ * выдуманное имя ведёт на ЧУЖОЙ аккаунт — приглашение уводило бы людей
+ * к постороннему боту. Не задано — кнопки «Открыть в Telegram» просто
+ * нет, вторая дорога («Продолжить здесь») остаётся.
+ */
+export const TELEGRAM_BOT_USERNAME =
+  process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? null;

@@ -2,8 +2,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "incremental": false
+    "incremental": false,
+    "paths": { "@prisma/client": ["./test/types/prisma-any/index.d.ts"] }
   },
-  "files": ["test/types/prisma-client-ambient.d.ts"],
   "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
 }

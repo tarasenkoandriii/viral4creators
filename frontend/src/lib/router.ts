@@ -38,6 +38,7 @@ export type Route =
   | { name: 'channels' }
   | { name: 'credits' }
   | { name: 'feed' }
+  | { name: 'invite' }
   | { name: 'not-found'; path: string };
 
 export function parseRoute(hash: string): Route {
@@ -130,6 +131,7 @@ export function parseRoute(hash: string): Route {
   if (parts[0] === 'channels') return { name: 'channels' };
   if (parts[0] === 'credits') return { name: 'credits' };
   if (parts[0] === 'feed') return { name: 'feed' };
+  if (parts[0] === 'invite') return { name: 'invite' };
   if (parts[0] === 'legal' && parts[1]) {
     return { name: 'legal', slug: parts[1] };
   }
@@ -192,4 +194,6 @@ export const routes = {
   channels: () => '/channels',
   credits: () => '/credits',
   feed: () => '/feed',
+  /** Кабинет «Пригласить» (этап 133): чем открывается стена. */
+  invite: () => '/invite',
 };

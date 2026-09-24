@@ -8,7 +8,7 @@ import { TUTORIAL_SITE_URL, tutorialPageUrl } from '../../../lib/tutorial-host';
 import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
 import { localeAlternates } from '../../../lib/alternates';
 import { SubdomainHeader } from '../../../components/SubdomainHeader';
-import { SITE_URL, TMA_URL } from '../../../lib/content';
+import { CLAUDE_REFERRAL_URL, SITE_URL, TMA_URL } from '../../../lib/content';
 
 /**
  * Посадочная страница третьего типа проекта — обучающего видео по сайту
@@ -265,6 +265,11 @@ export default function SiteTutorialLandingPage({
             <a href={`${SITE_URL}/${locale}`}>{t.backToMain}</a>
             <a href={`${SITE_URL}/legal/offer`}>{dict.footer.offer}</a>
             <a href={`${SITE_URL}/legal/terms-of-use`}>{dict.footer.terms}</a>
+            {/* Та же строка, что в общем футере и на поддомене
+                поздравлений — см. комментарий там. */}
+            <a href={CLAUDE_REFERRAL_URL} target="_blank" rel="noreferrer">
+              {dict.footer.madeWithClaude}
+            </a>
           </nav>
           {locale !== 'ru' && (
             <p className="legal-notice">{dict.footer.legalNoticeOtherLocale}</p>

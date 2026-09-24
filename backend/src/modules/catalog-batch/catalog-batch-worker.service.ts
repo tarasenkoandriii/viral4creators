@@ -66,6 +66,7 @@ import { LibraryService } from '../library/library.service';
 import { PromptService } from '../prompt/prompt.service';
 import { GenerationService } from '../generation/generation.service';
 import { GrokVideoBatchService } from '../generation/grok-video-batch.service';
+import { RenderAccessService } from '../render-access/render-access.service';
 import { GrokResolution } from '../generation/grok-video.service';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
@@ -180,6 +181,9 @@ export class CatalogBatchWorkerService {
     private readonly generation: GenerationService,
     private readonly grokBatch: GrokVideoBatchService,
     private readonly blob: BlobService,
+    // Этап 132: право на рендер. Тот же сервис, что у двух других
+    // стартов; партии он выдаёт право без кредитов (см. вызов ниже).
+    private readonly renderAccess: RenderAccessService,
     // Найдено при аудите (ТЗ §13, этап 2 плана §14): Grok-путь этого
     // воркера вызывает `GrokVideoBatchService` НАПРЯМУЮ, минуя
     // `GenerationService.generateVideo()` — а именно там живут проверка
@@ -579,6 +583,33 @@ export class CatalogBatchWorkerService {
               error instanceof Error
                 ? error.message
                 : 'Пользователь заблокирован',
+            lockedUntil: null,
+          },
+        });
+        continue;
+      }
+      // Этап 132: третий и последний пользовательский старт рендера в
+      // продукте. Партия требует ПРАВА — подписки или снятой стены, — и
+      // кредитами не оплачивается вовсе: двенадцать бесплатных
+      // генераций одним кликом опустошили бы лестницу, которую человек
+      // собирал неделю. Проверяется один раз на всю партию, там же, где
+      // её бюджет: подавать половину и упираться на середине — худший
+      // из возможных исходов.
+      try {
+        await this.renderAccess.assertCanRender(run.userId, run.id, {
+          mode: 'batch',
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Grok-пачка для партии ${run.id}: у владельца ${run.userId} нет ` +
+            `права на рендер — партия помечена FAILED, ничего не подано`,
+        );
+        await this.prisma.catalogBatchItem.updateMany({
+          where: { batchId: run.id, status: 'BATCH_QUEUED' },
+          data: {
+            status: 'FAILED',
+            error:
+              error instanceof Error ? error.message : 'Нет права на генерацию',
             lockedUntil: null,
           },
         });

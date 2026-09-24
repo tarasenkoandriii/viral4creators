@@ -347,5 +347,10 @@
     "empty": "Sie haben noch keine Auktionsgebote abgegeben.",
     "myBidLabel": "Ihr Gebot",
     "paidBadge": "Bezahlt ✓"
+  },
+  "footer": {
+    "offer": "Angebot",
+    "terms": "Nutzungsbedingungen",
+    "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis"
   }
 }

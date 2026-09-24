@@ -74,6 +74,8 @@ import { SharedVideoService } from '../shared-video/shared-video.service';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { activeProductImage } from '../../common/active-image';
 import { readinessOfSession } from '../../common/wizard-readiness.session';
+import { RenderAccessService } from '../render-access/render-access.service';
+import { RenderCompletedService } from '../render-access/render-completed.service';
 
 /**
  * Model IDs for each quality tier, on the Gemini Developer API (not
@@ -223,6 +225,10 @@ export class GenerationService {
     // продукта, 14.09.2026): батч-клиент и настройка стенда.
     private readonly grokBatch: GrokVideoBatchService,
     private readonly settings: PlatformSettingsService,
+    // Право на рендер (этап 132) — один сервис на все три старта
+    // рендера продукта, см. его доккомментарий.
+    private readonly renderAccess: RenderAccessService,
+    private readonly renderCompleted: RenderCompletedService,
   ) {
     // Ключ — явно в SDK (этап 53, В-6.15): `new GoogleGenAI({})` читал
     // только свои переменные, и GOOGLE_GEMINI_API_KEY до него не доходил.
@@ -536,18 +542,19 @@ export class GenerationService {
     // завершении дало бы гонку, где обе параллельные попытки видят
     // «баланс > 0» и обе стартуют бесплатно. Нет кредита — обычная
     // проверка суточного лимита, как и раньше.
-    const usedCredit = await this.creditLedger.reserveForGeneration(
+    // Этап 132: и резерв кредита, и суточный потолок, и стена — внутри
+    // одного сервиса, одинаково для всех трёх стартов рендера продукта.
+    // Проект передаётся ради тестового доступа (TODO §III п.37): без
+    // него самая дорогая операция продукта осталась бы под потолком
+    // даже у тестировщика, ради которого доступ и выдавали.
+    // Возвращаемое `usedCredit` здесь не нужно: `refundIfReserved` ниже
+    // безопасен и без него (no-op, если резерва не было) — так было и
+    // до этапа 132, см. комментарий у самого возврата.
+    await this.renderAccess.assertCanRender(
       session.userId ?? null,
       generatedVideoId,
+      { projectId: session.projectId ?? null },
     );
-    if (!usedCredit) {
-      // Проект передаётся ради тестового доступа (TODO §III п.37): без
-      // него самая дорогая операция продукта осталась бы под потолком
-      // даже у тестировщика, ради которого доступ и выдавали.
-      await this.plans.assertCanSpendUser(session.userId ?? null, {
-        projectId: session.projectId ?? null,
-      });
-    }
 
     // Г-2.3 (аудит round4, этап 64): кредит списан ВЫШЕ, до того, как Veo
     // реально стартовал. Раньше всё, что могло бросить между резервом и
@@ -1470,7 +1477,9 @@ export class GenerationService {
     // Этап 60 (ТЗ §40): счётчик «дошёл до первой генерации» страницы
     // шеринга, с которой начата эта сессия — best-effort, не должен
     // мешать пользователю получить только что готовый ролик.
-    await this.sharedVideos.markConverted(session.sharedFromPageId);
+    // Этап 134: один момент «ролик готов» на весь продукт — счётчик
+    // конверсии шеринга и засчёт приглашения висят там вместе.
+    await this.renderCompleted.onRenderCompleted(session);
 
     this.logger.log(`Video generation complete for session ${sessionId}`);
 
@@ -1719,7 +1728,9 @@ export class GenerationService {
       status: SessionStatus.VIDEO_COMPLETE,
     });
 
-    await this.sharedVideos.markConverted(session.sharedFromPageId);
+    // Этап 134: один момент «ролик готов» на весь продукт — счётчик
+    // конверсии шеринга и засчёт приглашения висят там вместе.
+    await this.renderCompleted.onRenderCompleted(session);
 
     this.logger.log(`Grok video generation complete for session ${sessionId}`);
 

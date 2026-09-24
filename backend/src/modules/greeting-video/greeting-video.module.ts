@@ -4,6 +4,7 @@ import { GreetingVideoService } from './greeting-video.service';
 import { GrokVideoService } from '../generation/grok-video.service';
 import { HedraClientService } from '../actors/hedra-client.service';
 import { StorageModule } from '../storage/storage.module';
+import { RenderAccessModule } from '../render-access/render-access.module';
 
 /**
  * GreetingVideoModule — POST/GET /sessions/:id/greeting-video (ТЗ
@@ -20,7 +21,9 @@ import { StorageModule } from '../storage/storage.module';
  * are all `@Global()`, nothing to import for those.
  */
 @Module({
-  imports: [StorageModule],
+  // `RenderAccessModule` — этап 132: поздравление стало вторым местом,
+  // где стоит стена, и первым, где греетинг вообще касается кредитов.
+  imports: [StorageModule, RenderAccessModule],
   controllers: [GreetingVideoController],
   // `HedraClientService` — по тому же доводу, что и `GrokVideoService`
   // строкой выше: `ActorsModule` его не экспортирует, а собственных

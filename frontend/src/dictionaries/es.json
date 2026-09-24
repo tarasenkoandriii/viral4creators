@@ -1042,7 +1042,13 @@
     "previewQuota": "Vistas previas hoy: quedan {{left}} de {{limit}}"
   },
   "generationWizard": {
-    "steps": ["Video", "Análisis", "Producto", "Prompt", "Generación"],
+    "steps": [
+      "Video",
+      "Análisis",
+      "Producto",
+      "Prompt",
+      "Generación"
+    ],
     "errorTitle": "Error",
     "prefilledAlert": "Los datos del producto se tomaron del proyecto — es una copia del momento de inicio; los cambios aquí no modifican el producto en sí.",
     "openProjectCta": "Abrir proyecto",
@@ -1645,5 +1651,38 @@
       "prompt": "Aprobar el guion",
       "brandManifest": "Conectar el manifiesto de marca: el vídeo mantendrá tu estilo"
     }
+  },
+  "generationLocked": {
+    "title": "Se acabaron las generaciones gratuitas",
+    "body": "Dos caminos para continuar: suscríbete al canal e invita a amigos, o compra un paquete de generaciones.",
+    "buy": "Comprar paquete",
+    "invite": "Invitar a amigos"
+  },
+  "invite": {
+    "title": "Invitar",
+    "availableTitle": "Generaciones disponibles",
+    "availableHint": "Una generación es un vídeo. Consigue más suscribiéndote al canal.",
+    "unlockedHint": "Tu límite está levantado: genera dentro del tope diario.",
+    "wallOffNotice": "Ahora mismo las generaciones no tienen restricciones; las condiciones llegarán después.",
+    "subscriptionTitle": "Suscripción al canal",
+    "subscriptionHint": "Suscríbete al canal del proyecto y pulsa «Comprobar»: añadiremos una generación.",
+    "subscriptionConfirmed": "Suscripción confirmada, generación añadida.",
+    "subscriptionUnavailable": "La comprobación de suscripción no está configurada en esta instalación.",
+    "openChannel": "Abrir canal",
+    "checkSubscription": "Comprobar",
+    "referralsTitle": "Invitaciones",
+    "ladderRegistration": "✓ por registrarte — 1 generación",
+    "ladderSubscription": "por suscribirte al canal — 1 generación",
+    "ladderPerInvite": "por cada invitado que haga un vídeo — 1 generación",
+    "ladderUnlock": "el séptimo levanta el límite para siempre",
+    "funnelVisited": "entraron",
+    "funnelIdentified": "iniciaron sesión",
+    "funnelGenerated": "hicieron vídeo",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "share": "Compartir",
+    "shareText": "Haz un vídeo publicitario en minutos: la primera generación es gratis",
+    "inviteeJoined": "inició sesión",
+    "inviteeGenerated": "hizo vídeo"
   }
 }

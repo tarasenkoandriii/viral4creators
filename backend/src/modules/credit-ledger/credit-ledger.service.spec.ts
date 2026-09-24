@@ -24,7 +24,8 @@ function setup(
   (prisma.$transaction as jest.Mock).mockImplementation(
     (fn: (tx: unknown) => unknown) => fn(prisma),
   );
-  const service = new CreditLedgerService(prisma as never);
+  const notify = { alert: jest.fn().mockResolvedValue(true) };
+  const service = new CreditLedgerService(prisma as never, notify as never);
   return { service, prisma };
 }
 
@@ -235,5 +236,111 @@ describe('CreditLedgerService', () => {
         data: { userId: 'u1', delta: -2, reason: 'ADMIN_ADJUST' },
       });
     });
+  });
+});
+
+/**
+ * Бесплатные начисления — «Условно бесплатный Lite» §4.1, этап 132.
+ *
+ * Два вопроса, на которых здесь можно ошибиться дорого: выдать вторую
+ * приветственную генерацию тому, кто уже получил, и не остановиться,
+ * когда наша же ошибка начнёт раздавать генерации пачками.
+ */
+describe('CreditLedgerService — бесплатные начисления', () => {
+  const KEY = 'FREE_GRANT_DAILY_CAP';
+  const before = process.env[KEY];
+  afterEach(() => {
+    if (before === undefined) delete process.env[KEY];
+    else process.env[KEY] = before;
+  });
+
+  function build(over: { granted?: number; create?: jest.Mock } = {}) {
+    const create =
+      over.create ?? jest.fn().mockResolvedValue({ id: 'row', delta: 1 });
+    const prisma = {
+      creditLedger: {
+        count: jest.fn().mockResolvedValue(over.granted ?? 0),
+        create,
+      },
+    };
+    const notify = { alert: jest.fn().mockResolvedValue(true) };
+    return {
+      svc: new CreditLedgerService(prisma as never, notify as never),
+      prisma,
+      create,
+      notify,
+    };
+  }
+
+  it('первая приветственная выдаётся', async () => {
+    const { svc, create } = build();
+    await expect(svc.grantWelcomeIfFirst('u1')).resolves.toBe(true);
+    expect(create).toHaveBeenCalledWith({
+      data: { userId: 'u1', delta: 1, reason: 'WELCOME', referralId: null },
+    });
+  });
+
+  it('вторая — не выдаётся, и это не ошибка', async () => {
+    // Идемпотентность держится на частичном уникальном индексе, а не на
+    // том, что вызов один: метод зовётся на КАЖДОМ старте рендера у
+    // человека без права. P2002 здесь — нормальный ход событий.
+    const create = jest.fn().mockRejectedValue({ code: 'P2002' });
+    const { svc } = build({ create });
+    await expect(svc.grantWelcomeIfFirst('u1')).resolves.toBe(false);
+  });
+
+  it('упёрлись в суточный потолок — не начисляем и не роняем вызов', async () => {
+    const { svc, create } = build({ granted: 50 });
+    await expect(svc.grantWelcomeIfFirst('u1')).resolves.toBe(false);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('о сработавшем предохранителе узнаёт служебный канал, а не только лог', async () => {
+    // Найдено аудитом этапа 134: §12.3 обещает тревогу, а уходила одна
+    // строка в лог — в бессерверном деплое её не увидит никто, и
+    // программа могла бы простоять выключенной сутки.
+    const { svc, notify } = build({ granted: 50 });
+    await svc.grantWelcomeIfFirst('u1');
+    expect(notify.alert).toHaveBeenCalledWith(
+      // Отпечаток БЕЗ переменной части: с именем пользователя внутри
+      // дедупликация не сработала бы никогда.
+      'free-grant-daily-cap',
+      expect.stringContaining('50'),
+    );
+  });
+
+  it('молчащий канал тревог не ломает начисление', async () => {
+    const { svc, notify } = build({ granted: 50 });
+    notify.alert.mockRejectedValue(new Error('Telegram недоступен'));
+    await expect(svc.grantWelcomeIfFirst('u1')).resolves.toBe(false);
+  });
+
+  it('потолок ноль — начислений нет вовсе, база не спрашивается', async () => {
+    process.env[KEY] = '0';
+    const { svc, prisma } = build();
+    await expect(svc.grantWelcomeIfFirst('u1')).resolves.toBe(false);
+    expect(prisma.creditLedger.count).not.toHaveBeenCalled();
+  });
+
+  it('потолок считает ВСЕ бесплатные причины, а не одну', async () => {
+    // Иначе четыре причины дадут четыре независимых потолка, и
+    // предохранитель перестанет быть предохранителем.
+    const { svc, prisma } = build();
+    await svc.grantWelcomeIfFirst('u1');
+    const where = prisma.creditLedger.count.mock.calls[0][0].where;
+    expect(where.reason.in).toEqual(
+      expect.arrayContaining([
+        'WELCOME',
+        'SUBSCRIPTION',
+        'REFERRAL',
+        'REFERRAL_INVITEE',
+      ]),
+    );
+  });
+
+  it('не-P2002 пробрасывается — тихо терять начисления нельзя', async () => {
+    const create = jest.fn().mockRejectedValue(new Error('база легла'));
+    const { svc } = build({ create });
+    await expect(svc.grantWelcomeIfFirst('u1')).rejects.toThrow('база легла');
   });
 });

@@ -38,10 +38,18 @@ import { isReachableOrigin } from './lib/site-origin';
  * страницы хранит ОДНУ зафиксированную локаль автора на момент публикации
  * (`SharedVideoPage.locale`), и страница сама решает, на каком языке
  * говорить (`getDictionary(page.locale)`), а не читает её из URL.
+ *
+ * Этап 134 («Условно бесплатный Lite» §5.1): `/r/<код>` — страница
+ * приглашения — по той же причине, что и `/video`. Это ссылка, которой
+ * делятся, и язык человека не должен зависеть от адреса, которым его
+ * позвали: страница читает cookie переключателя сама
+ * (`app/r/[code]/page.tsx`). Исключение записано как `r/` со слэшем
+ * НАМЕРЕННО: голое `r` в этой альтернативе совпало бы с началом любого
+ * пути на «r» — `/roadmap` перестал бы получать локаль.
  */
 export const config = {
   matcher: [
-    '/((?!_next|legal|feed|video|icon|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)',
+    '/((?!_next|legal|feed|video|r/|icon|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)',
   ],
 };
 

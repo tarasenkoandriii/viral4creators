@@ -38,6 +38,7 @@ import { PublicationService } from '../publication/publication.service';
 import { BrandManifestService } from '../brand-manifest/brand-manifest.service';
 import { CastingService } from '../casting/casting.service';
 import { GenerationService } from '../generation/generation.service';
+import { RenderAccessService } from '../render-access/render-access.service';
 import { AnalysisStatus } from '../../common/types/analysis.types';
 import { GenerationStatus } from '../../common/types/generation.types';
 
@@ -299,6 +300,17 @@ describe('модули спрашивают разрешение режима (�
       {} as never,
       {} as never,
       { get: jest.fn().mockResolvedValue(null) } as never,
+      // Этап 132 — см. комментарий у такого же двойника выше.
+      new RenderAccessService(
+        { user: { findUnique: jest.fn().mockResolvedValue(null) } } as never,
+        plans as never,
+        creditLedger as never,
+      ),
+      // Этап 134: момент «ролик готов» — один на весь продукт. Двойник,
+      // а не настоящий сервис: этот файл не про счётчики, а про рендер, и
+      // подставлять сюда шеринг с приглашениями значило бы тащить в спеку
+      // половину продукта.
+      { onRenderCompleted: jest.fn().mockResolvedValue(undefined) } as never,
     );
     await expect(svc.generateVideo('s1', 'fast', '1:1')).rejects.toBeInstanceOf(
       ForbiddenException,
@@ -349,6 +361,16 @@ describe('модули спрашивают разрешение режима (�
         {} as never,
         {} as never,
         { get: jest.fn().mockResolvedValue(null) } as never,
+        // Этап 132: настоящий сервис права с теми же двойниками — тот
+        // же приём, что в остальных спеках генерации. Рубильник
+        // выключен, поэтому этот файл по-прежнему проверяет ровно то,
+        // ради чего написан: разрешения РЕЖИМА, а не доступ.
+        new RenderAccessService(
+          { user: { findUnique: jest.fn().mockResolvedValue(null) } } as never,
+          plans as never,
+          creditLedger as never,
+        ),
+        { onRenderCompleted: jest.fn().mockResolvedValue(undefined) } as never,
       );
       await expect(svc.generateVideo('s1', 'fast', ratio)).resolves.toEqual(
         expect.objectContaining({ aspectRatio: ratio }),
@@ -403,6 +425,17 @@ describe('модули спрашивают разрешение режима (�
       {} as never,
       {} as never,
       { get: jest.fn().mockResolvedValue(null) } as never,
+      // Этап 132 — см. комментарий у такого же двойника выше.
+      new RenderAccessService(
+        { user: { findUnique: jest.fn().mockResolvedValue(null) } } as never,
+        plans as never,
+        creditLedger as never,
+      ),
+      // Этап 134: момент «ролик готов» — один на весь продукт. Двойник,
+      // а не настоящий сервис: этот файл не про счётчики, а про рендер, и
+      // подставлять сюда шеринг с приглашениями значило бы тащить в спеку
+      // половину продукта.
+      { onRenderCompleted: jest.fn().mockResolvedValue(undefined) } as never,
     );
 
     const video = await svc.generateVideo('s1', 'fast');

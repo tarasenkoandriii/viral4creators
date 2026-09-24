@@ -1,4 +1,5 @@
 import { CatalogBatchWorkerService } from './catalog-batch-worker.service';
+import { RenderAccessService } from '../render-access/render-access.service';
 import { DailySpendLimitExceededException } from '../../common/spend-limits';
 import { VeoOperationOrphanedError } from '../generation/generation.service';
 
@@ -324,6 +325,15 @@ function setup(
     generation as never,
     grokBatch as never,
     blob as never,
+    // Этап 132: настоящий сервис права с теми же двойниками — тот же
+    // приём, что в спеках товарки и поздравления. Рубильник выключен по
+    // умолчанию, партия кредитов не касается, поэтому прежние проверки
+    // видят прежнее поведение: суточный бюджет и ничего сверх.
+    new RenderAccessService(
+      { user: { findUnique: jest.fn().mockResolvedValue(null) } } as never,
+      plans as never,
+      { reserveForGeneration: jest.fn().mockResolvedValue(false) } as never,
+    ),
     plans as never,
     aiUsage as never,
   );

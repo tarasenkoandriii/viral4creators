@@ -1,8 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
+import { ConflictException } from '@nestjs/common';
 import { GreetingVideoService } from './greeting-video.service';
+import { RenderAccessService } from '../render-access/render-access.service';
 import { GenerationStatus } from '../../common/types/generation.types';
+import { ModerationStatus } from '../../common/types/prompt.types';
 
 const BRIEF = {
   sourceGreetingBriefId: 'gb1',
@@ -56,8 +59,19 @@ function build(sessionOver: Record<string, unknown> = {}) {
     claimWork: jest.fn().mockResolvedValue(true),
     releaseWork: jest.fn().mockResolvedValue(undefined),
   };
+  // Кредиты у поздравления появились этапом 132 — до него оно их не
+  // касалось вовсе. По умолчанию кредита нет: деньги идут прежним путём
+  // через суточный потолок, как и было.
+  const credits = {
+    reserveForGeneration: jest.fn().mockResolvedValue(false),
+    refundIfReserved: jest.fn().mockResolvedValue(undefined),
+    grantWelcomeIfFirst: jest.fn().mockResolvedValue(false),
+  };
   const plans = {
     assertCanSpendSession: jest.fn().mockResolvedValue(undefined),
+    // Этап 132: право на рендер спрашивает потолок у ПОЛЬЗОВАТЕЛЯ —
+    // раньше поздравление знало только `assertCanSpendSession`.
+    assertCanSpendUser: jest.fn().mockResolvedValue(undefined),
     assertSession: jest.fn().mockResolvedValue(undefined),
     planOfSession: jest.fn().mockResolvedValue('PREMIUM'),
   };
@@ -95,9 +109,23 @@ function build(sessionOver: Record<string, unknown> = {}) {
     { uploadBuffer } as any,
     hedra as any,
     ttsResolver as any,
+    // Этап 132: настоящий сервис права с теми же двойниками — см. тот
+    // же приём в `generation.service.spec.ts`. Рубильник выключен по
+    // умолчанию, поэтому прежние проверки видят прежний порядок.
+    new RenderAccessService(
+      { user: { findUnique: jest.fn().mockResolvedValue(null) } } as any,
+      plans as any,
+      credits as any,
+    ),
+    // Этап 134: двойник момента «ролик готов» — этот файл про рендер,
+    // а не про счётчики.
+    { onRenderCompleted: jest.fn().mockResolvedValue(undefined) } as any,
+    credits as any,
   );
   return {
     svc,
+    credits,
+    sessions,
     plans,
     aiUsage,
     hedra,
@@ -391,5 +419,145 @@ describe('GreetingVideoService — говорящий аватар', () => {
     expect(aiUsage.record).toHaveBeenCalledWith(
       expect.objectContaining({ costMicroUsd: 123456, calls: 0 }),
     );
+  });
+});
+
+/**
+ * Приёмка этапа 12: список готовности и условия `startVideo` — одно и
+ * то же (§14, «Тонкая красная линия»).
+ *
+ * Мутация в обе стороны. Убрать `if (!done('scriptClean'))` — краснеет
+ * отказ по модерации: выше стоит только `!session.generationPrompt`, а
+ * сценарий с флагом — это существующий промпт, он проходит насквозь и
+ * уезжает в рендер, ровно как до находки №2. Убрать пункт
+ * `scriptClean` из `greetingReadiness` — краснеет счастливый путь:
+ * сервис ищет пункт по ключу и не находит своего.
+ *
+ * Про `script` тест написать нельзя, и это честнее сказать: пункт
+ * считается как `hasPrompt`, а рядом стоит `!session.generationPrompt`
+ * ради сужения типа для компилятора. Это одно условие в одной точке.
+ */
+describe('GreetingVideoService.startVideo — условия читаются готовностью', () => {
+  it('сценарий без промпта — отказ прежним текстом, до Grok', async () => {
+    const { svc, startGeneration } = build({ generationPrompt: null });
+    await expect(svc.startVideo('s1')).rejects.toThrow(
+      'No prompt yet — call POST /sessions/:id/greeting-prompt first.',
+    );
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('сценарий помечен модерацией — отказ прежним текстом, до Grok', async () => {
+    const { svc, startGeneration } = build({
+      generationPrompt: {
+        finalText: 'сцена',
+        // Через enum, а не строкой: значения там строчные
+        // (`flagged`), и тест, написанный на глаз заглавными, прошёл
+        // бы мимо барьера и остался бы зелёным при любой мутации.
+        moderationStatus: ModerationStatus.FLAGGED,
+        moderationFlags: ['threat'],
+      },
+    });
+    await expect(svc.startVideo('s1')).rejects.toThrow(
+      'Текст сценария не прошёл автоматическую проверку контента',
+    );
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('готовая сессия проходит барьер', async () => {
+    const { svc, startGeneration } = build();
+    await svc.startVideo('s1');
+    expect(startGeneration).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Стена бесплатного в поздравлении — этап 132.
+ *
+ * До этого этапа поздравление было единственным стартом рендера,
+ * который не касался кредитов вовсе: упёршись в стену на товарке,
+ * человек уходил сюда и рендерил сколько угодно. Эти три проверки — про
+ * то, что дверь рядом со стеной закрыта.
+ */
+describe('GreetingVideoService.startVideo — стена (этап 132)', () => {
+  const KEY = 'FREE_TIER_WALL_ENABLED';
+  const before = process.env[KEY];
+  beforeEach(() => {
+    process.env[KEY] = 'true';
+  });
+  afterEach(() => {
+    if (before === undefined) delete process.env[KEY];
+    else process.env[KEY] = before;
+  });
+
+  it('нет права и нет кредитов — 403 и ни одного вызова Grok', async () => {
+    const { svc, startGeneration } = build();
+    await expect(svc.startVideo('s1')).rejects.toMatchObject({ status: 403 });
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('есть кредит — рендер идёт', async () => {
+    const { svc, credits, startGeneration } = build();
+    credits.reserveForGeneration.mockResolvedValue(true);
+    await svc.startVideo('s1');
+    expect(startGeneration).toHaveBeenCalled();
+  });
+
+  it('кредит списывается тем же ключом, которым помечен ролик', async () => {
+    // Иначе возврат при неудаче не найдёт, что возвращать: ключ
+    // идемпотентности — один и тот же для кредита и для попытки рендера.
+    const { svc, credits } = build();
+    credits.reserveForGeneration.mockResolvedValue(true);
+    const video = await svc.startVideo('s1');
+    expect(credits.reserveForGeneration).toHaveBeenCalledWith(
+      'u1',
+      video.generatedVideoId,
+    );
+  });
+});
+
+/**
+ * Кредит не теряется между списанием и стартом — находка аудита
+ * этапа 132.
+ *
+ * До этой правки списание стояло ПЕРЕД замком `claimWork` и перед
+ * всеми проверками двух веток старта. Значит терялся кредит в двух
+ * случаях сразу: когда старт бросал (тарифный гейт, отсутствие ключа,
+ * отказ провайдера) и когда два быстрых клика резервировали по кредиту,
+ * а замок доставался одному.
+ */
+describe('GreetingVideoService.startVideo — кредит при сбое старта', () => {
+  const KEY = 'FREE_TIER_WALL_ENABLED';
+  const before = process.env[KEY];
+  afterEach(() => {
+    if (before === undefined) delete process.env[KEY];
+    else process.env[KEY] = before;
+  });
+
+  it('провайдер отказал — кредит возвращён тем же ключом', async () => {
+    const { svc, credits, startGeneration } = build();
+    credits.reserveForGeneration.mockResolvedValue(true);
+    startGeneration.mockRejectedValue(new Error('xAI недоступен'));
+    await expect(svc.startVideo('s1')).rejects.toThrow('xAI недоступен');
+    const attemptId = credits.reserveForGeneration.mock.calls[0][1];
+    expect(credits.refundIfReserved).toHaveBeenCalledWith(attemptId);
+  });
+
+  it('замок занят (второй клик) — кредит возвращён, а не сгорел', async () => {
+    // Замок стоит ВНУТРИ старта, то есть уже после списания: без
+    // возврата второй клик стоил бы человеку генерации за 409.
+    const { svc, credits, sessions } = build();
+    credits.reserveForGeneration.mockResolvedValue(true);
+    sessions.claimWork.mockResolvedValue(false);
+    await expect(svc.startVideo('s1')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(credits.refundIfReserved).toHaveBeenCalled();
+  });
+
+  it('успешный старт кредит не возвращает', async () => {
+    const { svc, credits } = build();
+    credits.reserveForGeneration.mockResolvedValue(true);
+    await svc.startVideo('s1');
+    expect(credits.refundIfReserved).not.toHaveBeenCalled();
   });
 });

@@ -9,7 +9,7 @@ import { GREETING_SITE_URL, greetingPageUrl } from '../../../lib/greeting-host';
 import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
 import { localeAlternates } from '../../../lib/alternates';
 import { SubdomainHeader } from '../../../components/SubdomainHeader';
-import { SITE_URL, TMA_URL } from '../../../lib/content';
+import { CLAUDE_REFERRAL_URL, SITE_URL, TMA_URL } from '../../../lib/content';
 
 /**
  * Посадочная страница четвёртого типа проекта — роликов-поздравлений
@@ -253,6 +253,15 @@ export default function GreetingsLandingPage({
                 дубль не создаём. */}
             <a href={`${SITE_URL}/legal/offer`}>{dict.footer.offer}</a>
             <a href={`${SITE_URL}/legal/terms-of-use`}>{dict.footer.terms}</a>
+            {/* Доп. запрос владельца продукта: реферальная ссылка Claude
+                стоит во ВСЕХ футерах, а не только на главном хосте —
+                поддомены посещают отдельно, и сокращённый футер здесь
+                сокращён ради навигации, а не ради этой строки. Тот же
+                ключ словаря и тот же адрес из `lib/content`, что у
+                общего футера. */}
+            <a href={CLAUDE_REFERRAL_URL} target="_blank" rel="noreferrer">
+              {dict.footer.madeWithClaude}
+            </a>
           </nav>
           {locale !== 'ru' && (
             <p className="legal-notice">{dict.footer.legalNoticeOtherLocale}</p>

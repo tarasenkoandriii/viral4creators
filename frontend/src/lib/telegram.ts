@@ -20,6 +20,7 @@
  */
 
 import { readStoredThemePreference } from './theme';
+import { captureReferralCode } from './referral';
 
 export interface TelegramWebApp {
   initData: string;
@@ -123,11 +124,16 @@ export function applyTheme(): void {
  * `window.location.hash` как ЕДИНСТВЕННЫЙ источник маршрута — без этой
  * очистки он получает вместо пути строку от Telegram, ни один `if` в
  * `parseRoute` не совпадает, и первый же экран внутри Telegram — «Страница
- * не найдена». Deep-линки через Telegram `start_param` в проекте не
- * используются (см. комментарий в hooks/useWorkflow.ts — параметр
- * приходит query-строкой), так что просто отбрасываем весь hash целиком,
- * ДО того как `useRoute()` в App.tsx впервые его прочитает (эта функция
- * вызывается в main.tsx синхронно, до `ReactDOM...render()`).
+ * не найдена». Поэтому hash отбрасывается целиком, ДО того как
+ * `useRoute()` в App.tsx впервые его прочитает (эта функция вызывается
+ * в main.tsx синхронно, до `ReactDOM...render()`).
+ *
+ * **Порядок с этапа 134 значим.** До него deep-линки Telegram в проекте
+ * не использовались вовсе, и в hash не было ничего нужного. Теперь там
+ * приезжает `tgWebAppStartParam` с кодом приглашения, поэтому
+ * `initTelegramWebApp` сначала зовёт `captureReferralCode()` и только
+ * потом эту функцию. Переставь их местами — и приглашения перестанут
+ * доходить, молча и без единой ошибки.
  */
 function stripTelegramLaunchHash(): void {
   if (typeof window === 'undefined') return;
@@ -142,6 +148,8 @@ function stripTelegramLaunchHash(): void {
 /** Безопасный no-op вне Telegram — вызывать один раз при монтировании
  * приложения (см. main.tsx). */
 export function initTelegramWebApp(): void {
+  // Код приглашения — ДО очистки hash'а (см. её доккомментарий).
+  captureReferralCode();
   stripTelegramLaunchHash();
   applyTheme();
   if (
@@ -240,6 +248,25 @@ export function openExternalLink(url: string): void {
     return;
   }
   window.location.href = url;
+}
+
+/**
+ * Открыть ссылку ВНУТРИ Telegram — канал, чат, шаринг.
+ *
+ * Отдельно от `openExternalLink` и с другим методом: `openLink`
+ * показывает `t.me/...` во внутреннем webview поверх нашего же Mini App,
+ * то есть человек видит веб-версию телеграма в окне приложения вместо
+ * родного экрана канала. Приём уже применялся в панели вручения
+ * поздравления (`GreetingDeliveryPanel`) — вынесен сюда этапом 133,
+ * когда понадобился второй раз.
+ */
+export function openTelegramLink(url: string): void {
+  const webApp = getTelegramWebApp();
+  if (webApp?.openTelegramLink) {
+    webApp.openTelegramLink(url);
+    return;
+  }
+  window.open(url, '_blank', 'noopener');
 }
 
 export function openStarsInvoice(

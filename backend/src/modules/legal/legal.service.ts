@@ -18,7 +18,7 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /** Bumped when the documents change materially — then everyone re-accepts. */
-export const TERMS_VERSION = '2026-09-08';
+export const TERMS_VERSION = '2026-09-24';
 
 export interface TermsStatus {
   version: string;

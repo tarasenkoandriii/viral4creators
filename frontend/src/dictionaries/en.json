@@ -1042,7 +1042,13 @@
     "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
-    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
+    "steps": [
+      "Video",
+      "Analysis",
+      "Product",
+      "Prompt",
+      "Generation"
+    ],
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
     "openProjectCta": "Open project",
@@ -1645,5 +1651,38 @@
       "prompt": "Approve the script",
       "brandManifest": "Attach a brand manifest — the video will match your style"
     }
+  },
+  "generationLocked": {
+    "title": "No free generations left",
+    "body": "Two ways to continue: subscribe to the channel and invite friends — or buy a pack of generations.",
+    "buy": "Buy a pack",
+    "invite": "Invite friends"
+  },
+  "invite": {
+    "title": "Invite",
+    "availableTitle": "Generations available",
+    "availableHint": "One generation is one video. Get more by subscribing to the channel.",
+    "unlockedHint": "Your limit is lifted — generate within the daily cap.",
+    "wallOffNotice": "Generations are unrestricted right now; the conditions switch on later.",
+    "subscriptionTitle": "Channel subscription",
+    "subscriptionHint": "Subscribe to the project channel and press “Check” — we will add one generation.",
+    "subscriptionConfirmed": "Subscription confirmed, generation added.",
+    "subscriptionUnavailable": "Subscription check is not configured on this deployment.",
+    "openChannel": "Open channel",
+    "checkSubscription": "Check",
+    "referralsTitle": "Invitations",
+    "ladderRegistration": "✓ for signing up — 1 generation",
+    "ladderSubscription": "for subscribing to the channel — 1 generation",
+    "ladderPerInvite": "for each invitee who makes a video — 1 generation",
+    "ladderUnlock": "the seventh lifts the limit for good",
+    "funnelVisited": "clicked",
+    "funnelIdentified": "signed in",
+    "funnelGenerated": "made a video",
+    "copy": "Copy",
+    "copied": "Copied",
+    "share": "Share",
+    "shareText": "Make an ad video in minutes — the first generation is free",
+    "inviteeJoined": "signed in",
+    "inviteeGenerated": "made a video"
   }
 }

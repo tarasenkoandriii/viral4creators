@@ -45,6 +45,8 @@ import { ManifestsListScreen } from './features/brand/ManifestsListScreen';
 import { ManifestScreen } from './features/brand/ManifestScreen';
 import { ChannelsScreen } from './features/channels/ChannelsScreen';
 import { CreditsScreen } from './features/credits/CreditsScreen';
+import { claimStoredReferral } from './services/invite-api';
+import { InviteScreen } from './features/invite/InviteScreen';
 import { FeedScreen } from './features/feed/FeedScreen';
 import { pollPlanState } from './services/billing-api';
 import { Alert, Button, EmptyState } from './components/ui';
@@ -101,6 +103,7 @@ function App() {
     route.name !== 'plan' &&
     route.name !== 'channels' &&
     route.name !== 'credits' &&
+    route.name !== 'invite' &&
     route.name !== 'not-found';
   const inPostprod =
     route.name === 'postprod' || route.name === 'postprod-video';
@@ -208,6 +211,21 @@ function App() {
         navigate(routes.plan());
       }
     })();
+  }, []);
+
+  /**
+   * Привязка приглашения (этап 134) — первая из ДВУХ попыток.
+   *
+   * Эта срабатывает при запуске: внутри Telegram личность есть с
+   * первого запроса, и привязка случается сразу. В обычном браузере
+   * человек здесь ещё аноним, маршрут ответит 401, и код останется
+   * лежать — вторую попытку делает вход (`TelegramLoginButton`). До
+   * аудита этапа 134 попытка была одна, и в браузере приглашение
+   * успевало пропасть: первый ролик завершался раньше, чем привязка
+   * происходила.
+   */
+  useEffect(() => {
+    void claimStoredReferral();
   }, []);
 
   return (
@@ -388,6 +406,7 @@ function App() {
           {route.name === 'channels' && <ChannelsScreen />}
           {route.name === 'credits' && <CreditsScreen />}
           {route.name === 'feed' && <FeedScreen />}
+          {route.name === 'invite' && <InviteScreen />}
           {route.name === 'not-found' && (
             <EmptyState
               title={dict.notFound.title}
@@ -454,6 +473,18 @@ function App() {
             onClick={() => navigate(routes.credits())}
           >
             {dict.footer.credits}
+          </button>
+          <span className="mx-1.5 opacity-40">·</span>
+          {/* Кабинет «Пригласить» (этап 133) — той же ссылкой в подвале,
+              что «Каналы» и «Кредиты»: три основные вкладки упираются в
+              390px, а главный вход сюда всё равно не подвал, а кнопка со
+              стены на генерации. */}
+          <button
+            type="button"
+            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+            onClick={() => navigate(routes.invite())}
+          >
+            {dict.invite.title}
           </button>
           <span className="mx-1.5 opacity-40">·</span>
           {/* Доп. запрос владельца продукта: реферальная ссылка Claude —

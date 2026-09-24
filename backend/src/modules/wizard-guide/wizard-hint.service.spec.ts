@@ -17,7 +17,7 @@ const DRAFT = {
 
 /** Ровно те поля запроса к модели, которые читают проверки ниже. */
 interface GenerateCall {
-  config: { systemInstruction: string };
+  config: { systemInstruction: string; abortSignal?: AbortSignal };
 }
 
 function build(
@@ -364,6 +364,21 @@ describe('WizardHintService (§5)', () => {
     expect(instruction).toContain('url, record, review');
     expect(instruction).not.toContain('label');
     expect(instruction).not.toMatch(/"url"/);
+  });
+
+  it('у вызова модели есть потолок ожидания', async () => {
+    // Найдено приёмочным проходом §14. Здесь раньше составлялся сигнал
+    // из внешней отмены и таймаута — но внешнюю отмену НИКТО не
+    // передавал: контроллер зовёт `hint()` четырьмя аргументами, и
+    // ветка с `AbortSignal.any` была недостижима с самого начала.
+    // Параметр убран; таймаут остался и остаться обязан — без него
+    // подсказка висит под спиннером столько, сколько отвечает
+    // провайдер, а мастер ждёт вместе с ней.
+    const { svc, generateContent } = build();
+    await svc.hint('u1', 'p1', 'record');
+    const signal = generateContent.mock.calls[0][0].config.abortSignal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal!.aborted).toBe(false);
   });
 
   // ── Найдено аудитом волн A+B ─────────────────────────────────────

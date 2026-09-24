@@ -1,7 +1,7 @@
 /**
  * Минимальные объявления Node для проверки типов в `scripts/`
  * (`tsconfig.scripts.json`), тот же приём, что у бэкенда с
- * `test/types/prisma-client-ambient.d.ts`.
+ * `test/types/prisma-any/index.d.ts`.
  *
  * Почему не `@types/node`. Корневой `tsconfig.json` держит `"types": []`
  * намеренно и объясняет почему: поднятый наверх `@types/node` меняет

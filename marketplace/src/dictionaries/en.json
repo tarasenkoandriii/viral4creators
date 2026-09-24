@@ -347,5 +347,10 @@
     "empty": "You haven't placed any auction bids yet.",
     "myBidLabel": "Your bid",
     "paidBadge": "Paid ✓"
+  },
+  "footer": {
+    "offer": "Offer",
+    "terms": "Terms of use",
+    "madeWithClaude": "Made with Claude — 1 week free"
   }
 }

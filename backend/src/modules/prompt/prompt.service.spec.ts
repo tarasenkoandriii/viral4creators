@@ -652,3 +652,91 @@ describe('PromptService.moderateText — гейт, на который опир�
     expect(r.status).toBe(ModerationStatus.PENDING);
   });
 });
+
+/**
+ * Приёмка этапа 13: список готовности и условия сервиса — одно и то же
+ * (§14, «Тонкая красная линия»).
+ *
+ * Проверка мутационная и в обе стороны. Убрать `if (!done('analysis'))`
+ * из сервиса — краснеет отказ: выше по коду стоит только
+ * `!session.videoAnalysis`, а это ДРУГОЕ условие, и анализ со статусом
+ * `pending` проходит его насквозь. Убрать пункт `analysis` из
+ * `productReadiness` — краснеет счастливый путь: сервис ищет пункт по
+ * ключу, не находит и отказывает всегда.
+ *
+ * Про пункт `product` такой тест написать нельзя, и это честнее
+ * сказать, чем сделать вид: `!session.productInformation` перед
+ * `!done('product')` — то же самое условие в той же точке, оно стоит
+ * там ради сужения типа для компилятора. Расходиться им негде по
+ * построению.
+ */
+describe('PromptService.generatePrompt — условия читаются готовностью', () => {
+  const original = process.env[KEY];
+  beforeAll(() => {
+    process.env[KEY] = 'test-key';
+  });
+  afterAll(() => {
+    if (original === undefined) delete process.env[KEY];
+    else process.env[KEY] = original;
+  });
+
+  function buildReady(session: Record<string, unknown>) {
+    const sessions = {
+      getSession: jest.fn().mockResolvedValue(session),
+      updateSession: jest.fn().mockResolvedValue(undefined),
+      claimWork: jest.fn().mockResolvedValue(true),
+      releaseWork: jest.fn().mockResolvedValue(undefined),
+    };
+    const svc = new PromptService(
+      sessions as any,
+      { recordGemini: jest.fn().mockResolvedValue(undefined) } as any,
+      { assertCanSpendSession: jest.fn() } as any,
+    );
+    const post = jest.fn().mockResolvedValue({ text: 'промпт' });
+    (svc as any).genai = { models: { generateContent: post } };
+    return { svc, sessions, post };
+  }
+
+  const ready = () => ({
+    sessionId: 's1',
+    videoAnalysis: { status: 'complete', sceneBreakdown: 'Сцена 1: товар' },
+    productInformation: {
+      productName: 'Кроссовки',
+      productDescription: 'лёгкие, для бега',
+    },
+  });
+
+  it('анализ ещё идёт — отказ прежним текстом, до замка и до GPT-5', async () => {
+    const { svc, sessions, post } = buildReady({
+      ...ready(),
+      videoAnalysis: { status: 'pending', sceneBreakdown: '' },
+    });
+    await expect(svc.generatePrompt('s1')).rejects.toThrow(
+      'Video analysis is not complete. Please wait for analysis to finish.',
+    );
+    expect(post).not.toHaveBeenCalled();
+    // «До замка» — не украшение: барьер стоит перед `claimWork`, и
+    // отказ, пришедший после занятия работы, оставил бы сессию
+    // помеченной занятой на весь TTL.
+    expect(sessions.claimWork).not.toHaveBeenCalled();
+  });
+
+  it('нет данных о товаре — отказ прежним текстом, до замка и до GPT-5', async () => {
+    const { svc, sessions, post } = buildReady({
+      sessionId: 's1',
+      videoAnalysis: { status: 'complete', sceneBreakdown: 'Сцена 1: товар' },
+      productInformation: null,
+    });
+    await expect(svc.generatePrompt('s1')).rejects.toThrow(
+      'Product information not provided. Please submit product details first.',
+    );
+    expect(post).not.toHaveBeenCalled();
+    expect(sessions.claimWork).not.toHaveBeenCalled();
+  });
+
+  it('готовая сессия проходит барьер', async () => {
+    const { svc, post } = buildReady(ready());
+    await svc.generatePrompt('s1');
+    expect(post).toHaveBeenCalled();
+  });
+});

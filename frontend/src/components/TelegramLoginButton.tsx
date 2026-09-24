@@ -19,6 +19,7 @@ import {
   telegramLoginCallback,
   TelegramLoginWidgetPayload,
 } from '../lib/telegram-login';
+import { claimStoredReferral } from '../services/invite-api';
 import { useI18n } from '../lib/i18n-context';
 
 const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME;
@@ -75,6 +76,14 @@ export function TelegramLoginButton() {
       try {
         await telegramLoginCallback(payload);
         await refetchMe();
+        // Вторая (и для браузера единственная работающая) попытка
+        // привязать приглашение — сразу после входа, этап 134. До
+        // аудита её не было: попытка при запуске приложения у
+        // анонимного получала 401 и не повторялась, а первый ролик
+        // человека успевал завершиться раньше следующего запуска —
+        // момент, который единственный засчитывает приглашение,
+        // проходил впустую. Не `await`: вход не должен ждать учёта.
+        void claimStoredReferral();
       } catch {
         setError(dict.telegramLoginButton.loginFailed);
       } finally {

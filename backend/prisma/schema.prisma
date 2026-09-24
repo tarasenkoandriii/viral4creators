@@ -241,6 +241,30 @@ model User {
   blockedAt     DateTime?
   blockedReason String?
 
+  /// Стена бесплатного снята — «Условно бесплатный Lite» §4, этап 132.
+  /// Заполняется тремя путями, и `liteUnlockSource` говорит каким:
+  /// EARNED (семь приглашений + подписка), GRANDFATHERED (строка
+  /// миграции: зарегистрированным до 24.09.2026, ровно как обещает
+  /// пункт 6.9.3 оферты) и OPERATOR (выдано вручную).
+  liteUnlockedAt   DateTime?
+  liteUnlockSource LiteUnlockSource?
+  /// Отозвано оператором — с причиной и датой, а не молчаливой правкой
+  /// liteUnlockedAt в NULL: «почему у меня пропал доступ» должно иметь
+  /// ответ в базе. Доступ есть, когда liteUnlockedAt заполнен И
+  /// (liteRevokedAt пуст ИЛИ он РАНЬШЕ liteUnlockedAt) — из этого само
+  /// собой работает повторная разблокировка, не стирая историю.
+  liteRevokedAt     DateTime?
+  liteRevokedReason String?
+
+  /// Подтверждённая подписка на канал (этап 133) — одна на человека.
+  unlockCheck UnlockCheck?
+
+  /// Приглашения (этап 134): своя ссылка, приведённые и — если пришёл
+  /// по чужой ссылке — строка о том, кто привёл его самого.
+  referralCode      ReferralCode?
+  referralsInvited  Referral[]    @relation("ReferralInviter")
+  referralAsInvitee Referral?     @relation("ReferralInvitee")
+
   /// Тестовый аккаунт (TODO §III п.37, common/test-user-scenarios.ts).
   /// Снимает СУТОЧНЫЙ ПОТОЛОК РАСХОДА на отмеченных сценариях и не
   /// трогает больше ничего: тариф остаётся прежним, поэтому тестировщик
@@ -1769,6 +1793,25 @@ enum PaymentStatus {
 /// одновременных прогона (ручной curl + cron, два инстанса Vercel) не
 /// списали с карты дважды; по завершении попытки статус всегда уходит в
 /// ACTIVE/PAST_DUE/CANCELED — здесь не задерживается.
+/// Откуда взялась снятая стена бесплатного (этап 132). Нужен одному
+/// читателю — оператору в админке: на вопрос «почему у этого доступ»
+/// строка журнала кредитов не отвечает, а это поле отвечает.
+/// Чем именно человек заплатил за доступ (этап 133 и далее). Одна
+/// таблица на все способы: вопрос «подтверждена ли подписка» один, а
+/// заводить под каждый канал свою таблицу — значит трижды писать в
+/// кабинете один и тот же запрос.
+enum UnlockKind {
+  TELEGRAM_CHANNEL
+  YOUTUBE_SUBSCRIPTION
+  YOUTUBE_VIDEO_LIKE
+}
+
+enum LiteUnlockSource {
+  EARNED
+  GRANDFATHERED
+  OPERATOR
+}
+
 enum SubscriptionStatus {
   ACTIVE
   PAST_DUE
@@ -1785,6 +1828,14 @@ enum CreditLedgerReason {
   CONSUME
   REFUND
   ADMIN_ADJUST
+  /// Бесплатные начисления программы «условно бесплатного Lite»
+  /// (этап 132 и далее). Отдельные причины, а не одна общая: журнал
+  /// кредитов — единственное место, по которому потом восстанавливается,
+  /// за что человеку выдали каждую генерацию.
+  WELCOME
+  SUBSCRIPTION
+  REFERRAL
+  REFERRAL_INVITEE
 }
 
 /// Один платёж — от старта чекаута до конечного статуса. Строка создаётся
@@ -1856,6 +1907,90 @@ model Payment {
 /// у Stars продление делает сам Telegram (родной subscription_period), крон
 /// только сверяет, что продление действительно пришло — recTokenEnc там
 /// всегда NULL.
+/// Персональная ссылка приглашения — «Условно бесплатный Lite» §5,
+/// этап 134. Выдаётся по первому открытию кабинета, а не всем подряд
+/// при регистрации: коды, которыми никто не поделился, — мусор в
+/// таблице и лишняя строка в каждом ответе.
+model ReferralCode {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  code String @unique
+
+  /// Переходы считаются ЧИСЛОМ, а не строками. Строка на клик не имеет
+  /// ключа (человек ещё никто), обновление страницы плодит дубли, а
+  /// список в кабинете забивается анонимными «кто-то перешёл».
+  visitCount Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@map("referral_codes")
+}
+
+/// Приглашение — «Условно бесплатный Lite» §5.2–5.3, этап 134.
+///
+/// Строка рождается в момент ИДЕНТИФИКАЦИИ приглашённого, а не перехода
+/// по ссылке: до входа привязывать не к кому.
+model Referral {
+  id String @id @default(cuid())
+
+  inviterId String
+  inviter   User   @relation("ReferralInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+
+  /// Одно приглашение на одного приглашённого, НАВСЕГДА: уникальность
+  /// и есть вся защита от повторного засчёта.
+  inviteeId String @unique
+  invitee   User   @relation("ReferralInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  /// IDENTIFIED — вошёл; GENERATED — сам дошёл до готового ролика, и
+  /// только это засчитывается. Переход в GENERATED разрешён один раз и
+  /// служит ключом идемпотентности начисления.
+  status ReferralStatus @default(IDENTIFIED)
+
+  identifiedAt DateTime  @default(now())
+  generatedAt  DateTime?
+
+  /// Снято оператором (этап 135): счётчик не двигает, из списка не
+  /// исчезает — иначе разбор накрутки не на чем вести.
+  revokedAt     DateTime?
+  revokedReason String?
+
+  @@index([inviterId, status])
+  @@map("referrals")
+}
+
+enum ReferralStatus {
+  IDENTIFIED
+  GENERATED
+}
+
+/// Подтверждённая подписка на канал — «Условно бесплатный Lite» §6,
+/// этап 133.
+///
+/// Строка пишется ТОЛЬКО на успешной проверке. Неудача («не подписан»)
+/// не хранится вовсе: хранить её значило бы держать у себя факт о чужом
+/// аккаунте, который нам ничего не даёт, — и рисковать тем, что
+/// уникальность аккаунта заблокирует человеку вторую, уже успешную
+/// попытку.
+model UnlockCheck {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind UnlockKind
+
+  /// Аккаунт, которым подтверждали: Telegram-идентификатор или
+  /// идентификатор канала Google. Уникален, и это главное: иначе один
+  /// аккаунт открывает доступ любому числу пользователей, и проверка
+  /// перестаёт что-либо значить.
+  externalAccountId String @unique
+
+  checkedAt DateTime @default(now())
+
+  @@map("unlock_checks")
+}
+
 model Subscription {
   id     String @id @default(cuid())
   userId String @unique
@@ -1914,6 +2049,14 @@ model CreditLedger {
   /// REFUND одной попытки рендера. NULL у PURCHASE/ADMIN_ADJUST.
   generatedVideoId String?
 
+  /// Ключ идемпотентности начислений за приглашение (этап 134): по одной
+  /// строке REFERRAL и REFERRAL_INVITEE на приглашение. Без FK — таблица
+  /// приглашений появится тем же этапом, а журнал не должен зависеть от
+  /// её судьбы (та же причина, что у generatedVideoId выше).
+  /// NULL у всех остальных причин, включая WELCOME/SUBSCRIPTION: там
+  /// ключ — сам пользователь.
+  referralId String?
+
   createdAt DateTime @default(now())
 
   /// NULL в generatedVideoId не коллидируют в Postgres — PURCHASE/
@@ -1927,7 +2070,16 @@ model CreditLedger {
   /// paymentId (ADMIN_ADJUST/CONSUME/REFUND) не коллидируют — тот же
   /// принцип, что у generatedVideoId выше.
   @@unique([paymentId, reason])
+  /// Ключ идемпотентности начислений за приглашение (этап 134) — по той
+  /// же схеме, что у двух индексов выше: NULL в referralId не
+  /// коллидируют в Postgres, поэтому строки остальных причин этим
+  /// индексом не задеты.
+  @@unique([referralId, reason])
   @@index([userId])
+  /// Суточный счёт предохранителя бесплатных начислений (этап 132):
+  /// без него это последовательный просмотр таблицы, которая растёт с
+  /// каждой генерацией продукта.
+  @@index([reason, createdAt])
   @@map("credit_ledger")
 }
 
@@ -2572,7 +2724,8 @@ model WizardStepEvent {
   createdAt DateTime @default(now())
   scenario  String
   stepId    String
-  /// enter | leave | hint_open | hint_useless | undo | error
+  /// enter | leave | hint_open | hint_useless | undo | error | click
+  /// (`click` — этап 134, кабинет приглашений: нажатие, а не шаг)
   kind      String
   /// Код ошибки или иной машинный признак. Пользовательского текста
   /// здесь не бывает: он живёт в кандидатах опыта и маскируется (§9).

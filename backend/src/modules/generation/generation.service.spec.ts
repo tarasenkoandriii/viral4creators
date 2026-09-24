@@ -29,6 +29,7 @@ import {
   GenerationService,
   VeoOperationOrphanedError,
 } from './generation.service';
+import { RenderAccessService } from '../render-access/render-access.service';
 import { SessionStatus } from '../../common/types/session.types';
 import { GenerationStatus } from '../../common/types/generation.types';
 
@@ -93,6 +94,10 @@ function build(session: unknown = readySession()) {
   const creditLedger = {
     reserveForGeneration: jest.fn().mockResolvedValue(false),
     refundIfReserved: jest.fn().mockResolvedValue(undefined),
+    // Этап 132: приветственная генерация выдаётся на первом же старте у
+    // человека без права. По умолчанию «уже выдавали» — иначе каждый
+    // тест этого файла начинал бы с подарка.
+    grantWelcomeIfFirst: jest.fn().mockResolvedValue(false),
   };
   // Доп. запрос владельца продукта: Grok как провайдер (§10-11 ТЗ) —
   // по умолчанию не настроен, тот же принцип, что уже настроенные
@@ -121,6 +126,21 @@ function build(session: unknown = readySession()) {
     promptService as never,
     { submitBatch: jest.fn(), submitExtendBatch: jest.fn() } as never,
     { get: jest.fn().mockResolvedValue(null) } as never,
+    // Этап 132: сервис права — НАСТОЯЩИЙ, с теми же двойниками планов
+    // и кредитов. Мок здесь сделал бы бессмысленными четыре десятка
+    // проверок ниже: они про то, в каком порядке спрашиваются кредит и
+    // суточный потолок, а порядок с этого этапа живёт именно там.
+    // Рубильник по умолчанию выключен, поэтому поведение — прежнее.
+    new RenderAccessService(
+      { user: { findUnique: jest.fn().mockResolvedValue(null) } } as never,
+      plans as never,
+      creditLedger as never,
+    ),
+    // Этап 134: момент «ролик готов» — один на весь продукт. Двойник,
+    // а не настоящий сервис: этот файл не про счётчики, а про рендер, и
+    // подставлять сюда шеринг с приглашениями значило бы тащить в спеку
+    // половину продукта.
+    { onRenderCompleted: jest.fn().mockResolvedValue(undefined) } as never,
   );
   return {
     svc,
@@ -792,5 +812,104 @@ describe('GenerationService.runPostProductionSyncTick (этап 84)', () => {
     expect(sessions.findSessionsWithPendingPostProduction).toHaveBeenCalledWith(
       50,
     );
+  });
+});
+
+/**
+ * Барьер генерации и строка «до готового ролика» читают ОДИН список —
+ * «Тонкая красная линия» §7.2 п.3, волна D, этап 13.
+ *
+ * Мутация, ради которой эти тесты и написаны, работает в обе стороны:
+ * убрать проверку из сервиса — краснеет отказ; убрать пункт из
+ * `productReadiness` — краснеет счастливый путь, потому что сервис
+ * читает пункты по ключу и не найдёт своего. Разойтись им негде.
+ */
+describe('GenerationService.generateVideo — условия читаются готовностью', () => {
+  it('без одобренного промпта — отказ прежним текстом, до денег', async () => {
+    const { svc, plans, creditLedger } = build({
+      sessionId: 's1',
+      userId: 'u1',
+      generationPrompt: { finalText: 'реклама', approvedAt: null },
+      productInformation: {
+        productImagePathname: 'sessions/s1/product-image.jpg',
+        productImageMimeType: 'image/jpeg',
+      },
+    });
+    await expect(svc.generateVideo('s1')).rejects.toThrow(
+      'Prompt must be approved before generating video',
+    );
+    expect(generateVideos).not.toHaveBeenCalled();
+    // Главное в этих двух проверках — «до»: ниже по стеку, в
+    // `startVeoGeneration`, те же два условия проверяются ещё раз (там
+    // они сужают тип для компилятора) и тем же текстом, но уже ПОСЛЕ
+    // резерва кредита и `assertCanSpendUser`. Без них мутация «убрать
+    // барьер готовности» осталась бы зелёной: отказ пришёл бы из
+    // дублёра, а деньги успели бы сходить туда и обратно.
+    expect(creditLedger.reserveForGeneration).not.toHaveBeenCalled();
+    expect(plans.assertCanSpendUser).not.toHaveBeenCalled();
+  });
+
+  it('без фото товара — отказ прежним текстом, до денег', async () => {
+    const { svc, plans, creditLedger } = build({
+      sessionId: 's1',
+      userId: 'u1',
+      generationPrompt: { finalText: 'реклама', approvedAt: new Date() },
+      productInformation: {},
+    });
+    await expect(svc.generateVideo('s1')).rejects.toThrow(
+      'Product image must be uploaded before generating video',
+    );
+    expect(generateVideos).not.toHaveBeenCalled();
+    expect(creditLedger.reserveForGeneration).not.toHaveBeenCalled();
+    expect(plans.assertCanSpendUser).not.toHaveBeenCalled();
+  });
+
+  it('готовая сессия проходит барьер', async () => {
+    // Это и есть вторая сторона мутации: пропади пункт из списка
+    // готовности — сервис перестал бы находить его по ключу и отказывал
+    // бы всегда, а не только когда надо.
+    const { svc } = build();
+    await svc.generateVideo('s1');
+    expect(generateVideos).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Стена бесплатного — этап 132.
+ *
+ * Остальные проверки этого файла идут с ВЫКЛЮЧЕННЫМ рубильником: до
+ * включения продукт обязан вести себя ровно как раньше, и они этот
+ * инвариант и сторожат. Здесь — единственные два, которым нужен
+ * включённый, и включается он ровно на время каждой из них: переменная
+ * окружения общая на воркер jest, и подброшенная навсегда сломала бы
+ * все остальные.
+ */
+describe('GenerationService.generateVideo — стена (этап 132)', () => {
+  const KEY = 'FREE_TIER_WALL_ENABLED';
+  const before = process.env[KEY];
+  beforeEach(() => {
+    process.env[KEY] = 'true';
+  });
+  afterEach(() => {
+    if (before === undefined) delete process.env[KEY];
+    else process.env[KEY] = before;
+  });
+
+  it('нет права и нет кредитов — 403 и ни одного вызова Veo', async () => {
+    const { svc, plans } = build();
+    await expect(svc.generateVideo('s1')).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(generateVideos).not.toHaveBeenCalled();
+    // И ни одного взгляда на суточный потолок: «попробуйте завтра» там,
+    // где нужно «нужен доступ», — отказ не про то.
+    expect(plans.assertCanSpendUser).not.toHaveBeenCalled();
+  });
+
+  it('есть кредит — рендер идёт, как и до стены', async () => {
+    const { svc, creditLedger } = build();
+    creditLedger.reserveForGeneration.mockResolvedValue(true);
+    await svc.generateVideo('s1');
+    expect(generateVideos).toHaveBeenCalled();
   });
 });

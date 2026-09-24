@@ -1042,7 +1042,13 @@
     "previewQuota": "Vorschauen heute: noch {{left}} von {{limit}}"
   },
   "generationWizard": {
-    "steps": ["Video", "Analyse", "Produkt", "Prompt", "Generierung"],
+    "steps": [
+      "Video",
+      "Analyse",
+      "Produkt",
+      "Prompt",
+      "Generierung"
+    ],
     "errorTitle": "Fehler",
     "prefilledAlert": "Die Produktdaten wurden aus dem Projekt übernommen — das ist eine Kopie zum Startzeitpunkt; Änderungen hier ändern nicht das Produkt selbst.",
     "openProjectCta": "Projekt öffnen",
@@ -1645,5 +1651,38 @@
       "prompt": "Skript freigeben",
       "brandManifest": "Brand-Manifest verbinden — das Video bleibt im Markenstil"
     }
+  },
+  "generationLocked": {
+    "title": "Keine Freigenerierungen mehr",
+    "body": "Zwei Wege weiter: Kanal abonnieren und Freunde einladen — oder ein Paket kaufen.",
+    "buy": "Paket kaufen",
+    "invite": "Freunde einladen"
+  },
+  "invite": {
+    "title": "Einladen",
+    "availableTitle": "Verfügbare Generierungen",
+    "availableHint": "Eine Generierung ist ein Video. Mehr gibt es für ein Kanal-Abo.",
+    "unlockedHint": "Ihr Limit ist aufgehoben — im Rahmen des Tageslimits generieren.",
+    "wallOffNotice": "Generierungen sind derzeit unbeschränkt; die Bedingungen kommen später.",
+    "subscriptionTitle": "Kanal-Abo",
+    "subscriptionHint": "Abonnieren Sie den Projektkanal und drücken Sie „Prüfen“ — eine Generierung wird gutgeschrieben.",
+    "subscriptionConfirmed": "Abo bestätigt, Generierung gutgeschrieben.",
+    "subscriptionUnavailable": "Die Abo-Prüfung ist auf dieser Installation nicht eingerichtet.",
+    "openChannel": "Kanal öffnen",
+    "checkSubscription": "Prüfen",
+    "referralsTitle": "Einladungen",
+    "ladderRegistration": "✓ für die Registrierung — 1 Generierung",
+    "ladderSubscription": "für das Kanal-Abo — 1 Generierung",
+    "ladderPerInvite": "für jede eingeladene Person mit eigenem Video — 1 Generierung",
+    "ladderUnlock": "die siebte hebt das Limit dauerhaft auf",
+    "funnelVisited": "geklickt",
+    "funnelIdentified": "angemeldet",
+    "funnelGenerated": "Video erstellt",
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "share": "Teilen",
+    "shareText": "Werbevideo in Minuten — die erste Generierung ist gratis",
+    "inviteeJoined": "angemeldet",
+    "inviteeGenerated": "Video erstellt"
   }
 }

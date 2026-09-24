@@ -37,6 +37,7 @@ import { revokeObjectUrl } from '../lib/object-url';
 import {
   applyLibraryEntry,
   errorMessage,
+  isGenerationLocked,
   updateBrandSnapshot,
   uploadPreviewFrames,
 } from '../services/projects-api';
@@ -85,6 +86,13 @@ interface UseWorkflowState {
   isGeneratingVideo: boolean;
   originalVideoUrl: string | null;
   error: string | null;
+  /**
+   * Стена бесплатного (этап 132): последний отказ — не поломка, а
+   * «нужен доступ». Отдельный признак рядом с `error`, а не вместо
+   * него: текст сервера остаётся текстом, а интерфейс по этому флагу
+   * показывает дороги, которыми стена открывается.
+   */
+  generationLocked: boolean;
   /**
    * Set when the session was started from a project item (Stage 10 —
    * spec §7.8 snapshot): product info is already on the session, so the
@@ -241,6 +249,7 @@ export function useWorkflow() {
     isGeneratingVideo: false,
     originalVideoUrl: null,
     error: null,
+    generationLocked: false,
     prefilledFromProject: false,
     projectId: null,
     brandManifest: null,
@@ -1250,6 +1259,10 @@ export function useWorkflow() {
         ...prev,
         isGeneratingVideo: true,
         error: null,
+        // Стена (этап 132) снимается на каждой новой попытке: человек
+        // мог за это время купить пакет или заработать генерацию, и
+        // показывать ему прошлый отказ до ответа сервера — врать.
+        generationLocked: false,
       }));
 
       try {
@@ -1303,6 +1316,9 @@ export function useWorkflow() {
             ...prev,
             isGeneratingVideo: false,
             error: message,
+            // Отказ стены рисуется не красной строкой, а дорогами, —
+            // человеку нужно не «что сломалось», а «чем открывается».
+            generationLocked: isGenerationLocked(error),
           }));
         }
       }

@@ -520,6 +520,177 @@ function checkGuideSeams() {
     );
   }
 
+  // 4. Восстановление шага в greeting: сводка сессий не несёт ни
+  // сценария, ни ролика, поэтому мастер обязан дочитать сессию целиком.
+  //
+  // Проверка текстовая, и это осознанно: настоящий тест здесь был бы
+  // тестом React-компонента, а харнеса для них в проекте нет.
+  // Правила шагов проверены в `greeting-steps.test.ts` полностью — но
+  // ПРОВОДКУ (кто и откуда берёт факты) не проверяет ничто, а именно
+  // она была блокером этапа 12: степпер врал после перезагрузки
+  // вкладки, потому что `load()` знал только `sessionId`.
+  const greetingWizard = read('frontend/src/features/projects/GreetingVideoWizard.tsx');
+  //
+  // Оговорка про сводку — не украшение: если `ItemSessionSummary`
+  // когда-нибудь начнёт нести сценарий и ролик, дочитывать сессию
+  // станет незачем, и проверка обязана это понять сама, а не держать
+  // мастер в заложниках. Поэтому оговорка ищется в ТОМ файле, где тип
+  // лежит, и её отсутствие — само по себе расхождение: молча
+  // «не нашли» значило бы проверять не то, что написано.
+  const summaryFields = /interface ItemSessionSummary \{([\s\S]*?)\n\}/.exec(
+    read('frontend/src/services/projects-api.ts'),
+  );
+  if (!summaryFields) {
+    problems.push(
+      'не нашли `ItemSessionSummary` в projects-api.ts — проверка ' +
+        'восстановления шага greeting опирается на состав этого типа',
+    );
+  }
+  const summaryHasPrompt = summaryFields
+    ? /generationPrompt|generatedVideo/.test(summaryFields[1])
+    : false;
+  const greetingRestore = summaryHasPrompt
+    ? 'сводка несёт сценарий'
+    : 'greeting дочитывает сессию';
+  if (summaryFields && !summaryHasPrompt && !/getSession\(/.test(greetingWizard)) {
+    problems.push(
+      'GreetingVideoWizard не дочитывает сессию (`getSession`), а сводка ' +
+        'сессий не несёт ни сценария, ни ролика — степпер снова покажет ' +
+        'первый шаг после перезагрузки вкладки (блокер этапа 12)',
+    );
+  }
+
+  // 5. Стартов рендера три, и у каждого обязана стоять проверка права
+  // (этап 132). Шов, а не внимательность: партия по каталогу уже
+  // однажды ускользнула от денежной проверки — она идёт в xAI напрямую,
+  // минуя `GenerationService.generateVideo()`, и проверку бюджета туда
+  // пришлось дописывать отдельно. Второй раз полагаться на то, что
+  // новый путь рендера кто-то заметит, незачем.
+  const RENDER_STARTS = [
+    'backend/src/modules/generation/generation.service.ts',
+    'backend/src/modules/greeting-video/greeting-video.service.ts',
+    'backend/src/modules/catalog-batch/catalog-batch-worker.service.ts',
+  ];
+  // Кто зовёт провайдера видео напрямую. Спека `grok-video-batch` и
+  // `grok-video` — сами клиенты, их этот список не касается.
+  const PROVIDER_CALLS =
+    /\b(generateVideos|grokVideo\.startGeneration|grokBatch\.submitBatch|hedra\.submit)\s*\(/;
+  const startsWithoutCheck = RENDER_STARTS.filter(
+    (f) => !/assertCanRender\s*\(/.test(read(f)),
+  );
+  if (startsWithoutCheck.length > 0) {
+    problems.push(
+      `старт рендера без проверки права (assertCanRender): ${startsWithoutCheck.join(', ')}`,
+    );
+  }
+  // Кто зовёт провайдера видео, но стены не требует. Список именной и
+  // с причинами — молчаливое исключение по маске рано или поздно
+  // накроет настоящий новый старт рендера.
+  const RENDER_STARTS_EXEMPT = {
+    // Операторские пути: рендер запускает человек из админки, за свои
+    // деньги продукта и по своему решению. Стена — про бесплатный тариф
+    // пользователя, к оператору она отношения не имеет.
+    'backend/src/modules/actors/actors.service.ts':
+      'ручной запуск пилота аватара из админки (AdminSessionGuard)',
+    'backend/src/modules/virtual-studio/virtual-studio.service.ts':
+      'админ-студия, @Controller("admin/virtual-studio")',
+    // Тот же батч-клиент Grok, но перевод ТЕКСТА, а не видео.
+    'backend/src/modules/blog/blog-translation.service.ts':
+      'перевод блога, видео не рендерится',
+    // Сами клиенты провайдеров — они и есть вызов, а не его инициатор.
+    'backend/src/modules/generation/grok-video.service.ts': 'клиент провайдера',
+    'backend/src/modules/generation/grok-video-batch.service.ts':
+      'клиент провайдера',
+    'backend/src/modules/actors/hedra-client.service.ts': 'клиент провайдера',
+  };
+  const unknownStarts = [...walk(path.join(ROOT, 'backend/src/modules'))]
+    .filter((f) => /\.ts$/.test(f) && !f.endsWith('.spec.ts'))
+    .map((f) => ({ f, rel: path.relative(ROOT, f).split(path.sep).join('/') }))
+    .filter(({ f, rel }) => {
+      if (RENDER_STARTS.includes(rel)) return false;
+      if (rel in RENDER_STARTS_EXEMPT) return false;
+      const text = fs.readFileSync(f, 'utf8');
+      return PROVIDER_CALLS.test(text) && !/assertCanRender\s*\(/.test(text);
+    })
+    .map(({ rel }) => rel);
+  if (unknownStarts.length > 0) {
+    problems.push(
+      `новый старт рендера мимо проверки права: ${unknownStarts.join(', ')} — ` +
+        `позовите RenderAccessService.assertCanRender либо внесите в ` +
+        `RENDER_STARTS_EXEMPT с причиной`,
+    );
+  }
+
+  // 6. Завершение рендера — одно место, и оно ровно одно (этап 134).
+  // Шов заведён по свежему следу: `markConverted` публичной страницы
+  // уже однажды разъехался — он стоял в двух завершениях из четырёх, и
+  // ролики, сделанные из поздравления, молча не считались конверсией
+  // шеринга. Теперь и она, и засчёт приглашения висят на
+  // `RenderCompletedService`, а этот шов сторожит, чтобы их снова не
+  // начали звать напрямую из нового места.
+  const COMPLETION_HUB =
+    'backend/src/modules/render-access/render-completed.service.ts';
+  const COMPLETION_CALLS = /\.(markConverted|countFirstGeneration)\s*\(/;
+  const directCompletionCalls = [...walk(path.join(ROOT, 'backend/src'))]
+    .filter((f) => /\.ts$/.test(f) && !f.endsWith('.spec.ts'))
+    .map((f) => ({ f, rel: path.relative(ROOT, f).split(path.sep).join('/') }))
+    .filter(({ f, rel }) => {
+      if (rel === COMPLETION_HUB) return false;
+      // Сами объявления методов (`async markConverted(...)`) — не вызовы.
+      const text = fs
+        .readFileSync(f, 'utf8')
+        .replace(/^\s*(?:async\s+)?(markConverted|countFirstGeneration)\s*\(/gm, '');
+      return COMPLETION_CALLS.test(text);
+    })
+    .map(({ rel }) => rel);
+  if (directCompletionCalls.length > 0) {
+    problems.push(
+      `завершение рендера в обход единой точки: ${directCompletionCalls.join(', ')} — ` +
+        `позовите RenderCompletedService.onRenderCompleted`,
+    );
+  }
+  // И обратная сторона: точек завершения должно быть ровно столько,
+  // сколько их у продукта. Стало меньше — кто-то отключил завершение и
+  // не заметил; стало больше — появился новый путь, и его надо внести
+  // сюда осознанно, а не обнаружить по недосчитанным приглашениям.
+  const COMPLETION_POINTS = [
+    'backend/src/modules/generation/generation.service.ts',
+    'backend/src/modules/greeting-video/greeting-video.service.ts',
+  ];
+  const completionCallCount = COMPLETION_POINTS.reduce(
+    (n, f) => n + (read(f).match(/onRenderCompleted\s*\(/g) ?? []).length,
+    0,
+  );
+  if (completionCallCount !== 4) {
+    problems.push(
+      `завершений рендера ${completionCallCount}, а их четыре ` +
+        `(две ветки товарки и две поздравления) — ` +
+        `см. RenderCompletedService`,
+    );
+  }
+
+  // 7. Привязка приглашения зовётся из ДВУХ мест (этап 134, аудит).
+  // У продукта два живых варианта, и личность в них появляется в разные
+  // моменты: в мини-аппе — с первого кадра, в браузере — только у
+  // кнопки «Сгенерировать». Одна попытка (при запуске) в браузере
+  // всегда опаздывала: первый ролик человека успевал завершиться
+  // раньше, чем привязка происходила, а засчитывает приглашение именно
+  // завершение. Потерять это повторно нельзя — тише всего оно ломается
+  // именно у пришедших с лендинга.
+  const CLAIM_CALLERS = [
+    'frontend/src/App.tsx',
+    'frontend/src/components/TelegramLoginButton.tsx',
+  ];
+  const withoutClaim = CLAIM_CALLERS.filter(
+    (f) => !/claimStoredReferral\s*\(/.test(read(f)),
+  );
+  if (withoutClaim.length > 0) {
+    problems.push(
+      `привязка приглашения не зовётся из ${withoutClaim.join(', ')} — ` +
+        `в браузере личность появляется позже запуска, и одной попытки мало`,
+    );
+  }
+
   if (problems.length > 0) {
     failed++;
     console.log('FAIL швы советника в мастере:');
@@ -527,8 +698,11 @@ function checkGuideSeams() {
   } else {
     console.log(
       `ok   швы советника: шаги (${stepperSummary.join(', ')}), пункты ` +
-        `готовности (${readinessKeys.length}) и слаги документов ` +
-        `(${server.length}) сходятся`,
+        `готовности (${readinessKeys.length}), слаги документов ` +
+        `(${server.length}) сходятся; ${greetingRestore}; ` +
+        `стартов рендера под проверкой права: ${RENDER_STARTS.length}; ` +
+        `завершений через единую точку: ${completionCallCount}; ` +
+        `мест привязки приглашения: ${CLAIM_CALLERS.length}`,
     );
   }
 }
