@@ -691,6 +691,61 @@ function checkGuideSeams() {
     );
   }
 
+  // 8. Расширяющий каст в аргументе Prisma (найдено деплоем этапа 134).
+  //
+  // Песочница НЕ МОЖЕТ поймать этот класс ошибок: `prisma generate`
+  // недоступен по сети, и типы клиента подменены заглушкой `any` (см.
+  // test/types/prisma-any). Значит всё, что уезжает в Prisma, здесь не
+  // проверяется вовсе, а на Vercel проверяется по-настоящему — и там
+  // `FREE_GRANT_REASONS as string[]` в фильтре `in` уронил сборку уже
+  // ПОСЛЕ применения миграций.
+  //
+  // Ловим ровно одну форму, и намеренно узко: каст константы-кортежа к
+  // массиву примитивов. Он всегда неверен — расширяет строковые
+  // литералы до `string`, а колонка перечисления его не принимает, — и
+  // во всём backend/src не встречается больше нигде. Одиночное
+  // `x as string` (снять `| null` у обычной колонки) при этом законно и
+  // в список не попадает: правило без ложных срабатываний полезнее
+  // правила пошире.
+  const WIDENING_CAST = /\bas\s+(?:string|number|boolean)\s*\[\s*\]/;
+  const prismaCasts = [];
+  for (const file of walk(path.join(ROOT, 'backend/src'))) {
+    if (!file.endsWith('.ts') || file.endsWith('.spec.ts')) continue;
+    // Комментарии вырезаем, сохраняя переносы, — иначе объяснение
+    // запрета в комментарии само срабатывало бы как запрет.
+    const text = fs
+      .readFileSync(file, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length));
+    const calls = /this\.prisma\.[A-Za-z0-9_.$]+\(/g;
+    let m;
+    while ((m = calls.exec(text))) {
+      let depth = 0;
+      let i = m.index + m[0].length - 1;
+      for (; i < text.length; i++) {
+        if (text[i] === '(') depth++;
+        else if (text[i] === ')' && --depth === 0) break;
+      }
+      const body = text.slice(m.index, i + 1);
+      const bad = body.match(WIDENING_CAST);
+      if (bad) {
+        const line = text.slice(0, m.index + body.indexOf(bad[0])).split('\n')
+          .length;
+        prismaCasts.push(
+          `${path.relative(ROOT, file).split(path.sep).join('/')}:${line}`,
+        );
+      }
+      calls.lastIndex = i;
+    }
+  }
+  if (prismaCasts.length > 0) {
+    problems.push(
+      `расширяющий каст в аргументе Prisma: ${prismaCasts.join(', ')} — ` +
+        `песочница этого не видит (клиент заглушен), а сборка на Vercel ` +
+        `падает; отдайте копию (\`[...CONST]\`), а не каст`,
+    );
+  }
+
   if (problems.length > 0) {
     failed++;
     console.log('FAIL швы советника в мастере:');
@@ -702,7 +757,8 @@ function checkGuideSeams() {
         `(${server.length}) сходятся; ${greetingRestore}; ` +
         `стартов рендера под проверкой права: ${RENDER_STARTS.length}; ` +
         `завершений через единую точку: ${completionCallCount}; ` +
-        `мест привязки приглашения: ${CLAIM_CALLERS.length}`,
+        `мест привязки приглашения: ${CLAIM_CALLERS.length}; ` +
+        `расширяющих кастов в аргументах Prisma: 0`,
     );
   }
 }

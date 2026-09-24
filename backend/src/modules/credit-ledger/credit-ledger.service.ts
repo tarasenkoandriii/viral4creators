@@ -175,7 +175,13 @@ export class CreditLedgerService {
     if (cap === 0) return false;
     const granted = await this.prisma.creditLedger.count({
       where: {
-        reason: { in: FREE_GRANT_REASONS as string[] },
+        // Копия, а не каст: `readonly FreeGrantReason[]` Prisma не
+        // принимает (ей нужен изменяемый массив), а `as string[]`
+        // РАСШИРЯЕТ тип до `string` — и вот это она не принимает уже
+        // по делу. Каст молча пережил песочницу (там Prisma заглушена
+        // типом `any`) и уронил сборку на Vercel. Спред отдаёт
+        // `FreeGrantReason[]`, то есть ровно значения перечисления.
+        reason: { in: [...FREE_GRANT_REASONS] },
         createdAt: { gte: startOfTodayUtc() },
       },
     });
