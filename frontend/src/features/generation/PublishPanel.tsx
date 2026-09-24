@@ -50,6 +50,11 @@ import { useI18n } from '../../lib/i18n-context';
 import type { Dictionary } from '../../lib/get-dictionary';
 import { navigate, routes } from '../../lib/router';
 import { queueState } from '../../lib/publication-queue';
+import {
+  defaultTags,
+  tagsFromInput,
+  tagsToInput,
+} from '../../lib/publish-tags';
 import { formatRunTime } from '../../lib/intl-locale';
 import { LoadError } from '../projects/shared';
 
@@ -79,12 +84,20 @@ export function PublishPanel({
   productName,
   productDescription,
   category,
+  sourceTags,
 }: {
   sessionId: string;
   generatedVideoId: string;
   productName: string | null;
   productDescription: string | null;
   category: string | null;
+  /**
+   * Теги исходного ролика (этап 136) — умолчание для поля тегов. Есть
+   * только у референсов, заданных ссылкой на YouTube, и только если у
+   * автора оригинала теги вообще заполнены; во всех остальных случаях
+   * умолчание собирается из названия товара и категории.
+   */
+  sourceTags?: string[] | null;
 }) {
   const { dict, locale } = useI18n();
   const STATUS = statusMeta(dict);
@@ -97,7 +110,12 @@ export function PublishPanel({
   const [platform, setPlatform] = useState<PublicationPlatform>('YOUTUBE');
   const [title, setTitle] = useState(productName ?? '');
   const [description, setDescription] = useState(productDescription ?? '');
-  const [tags, setTags] = useState('');
+  // Умолчание считается ОДИН раз, при первом показе панели: дальше поле
+  // принадлежит человеку, и подставлять в него что-то повторно значило
+  // бы затирать правку (этап 136).
+  const [tags, setTags] = useState(() =>
+    tagsToInput(defaultTags({ sourceTags, productName, category }))
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -166,10 +184,7 @@ export function PublishPanel({
         platform,
         title: title.trim(),
         description: description.trim() || undefined,
-        tags: tags
-          .split(/[,\n]/)
-          .map((t) => t.trim())
-          .filter(Boolean),
+        tags: tagsFromInput(tags),
       });
       setRequests((r) => [created, ...(r ?? [])]);
       setOpen(false);

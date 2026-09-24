@@ -17,9 +17,18 @@ function build() {
   const blob = {
     createUploadUrl: jest.fn().mockResolvedValue({ uploadUrl: 'https://put' }),
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const svc = new VideoService(blob as any, sessions as any);
-  return { svc, sessions, blob };
+  const youtubeSearch = {
+    fetchVideoTags: jest.fn().mockResolvedValue([]),
+  };
+  const svc = new VideoService(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    blob as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    sessions as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    youtubeSearch as any,
+  );
+  return { svc, sessions, blob, youtubeSearch };
 }
 
 const patchOf = (sessions: { updateSession: jest.Mock }) =>
@@ -176,5 +185,53 @@ describe('VideoService — расширение ключа не берётся �
       'video/x-msvideo',
       expect.any(Number),
     );
+  });
+});
+
+/**
+ * Теги исходника (ТЗ TZ-Multilingual-YouTube.md, этап 136).
+ *
+ * Регистрация ссылки — единственный момент, когда теги вообще можно
+ * взять, и одновременно момент, в котором ничего нельзя сломать: без
+ * референса дальше не идёт ни разбор, ни генерация. Отсюда два
+ * свойства, которые здесь и проверяются: теги попадают в сессию, а их
+ * отсутствие — по любой причине — регистрации не мешает.
+ */
+describe('VideoService — теги исходного ролика (этап 136)', () => {
+  const youtubeOf = (sessions: { updateSession: jest.Mock }) =>
+    patchOf(sessions).originalVideo as { sourceTags?: string[] };
+
+  it('теги ролика записаны в сессию, id взят из ссылки', async () => {
+    const { svc, sessions, youtubeSearch } = build();
+    youtubeSearch.fetchVideoTags.mockResolvedValue(['бег', 'кроссовки']);
+    await svc.registerYoutubeVideo('s1', 'https://youtu.be/dQw4w9WgXcQ?t=30');
+    expect(youtubeSearch.fetchVideoTags).toHaveBeenCalledWith(
+      'dQw4w9WgXcQ',
+      's1',
+    );
+    expect(youtubeOf(sessions).sourceTags).toEqual(['бег', 'кроссовки']);
+  });
+
+  it('у ролика без тегов поля нет вовсе, а не пустой список', async () => {
+    // «Тегов не было» и «поле есть, но пустое» для панели публикации
+    // одно и то же, и лишнее поле только притворялось бы знанием.
+    const { svc, sessions } = build();
+    await svc.registerYoutubeVideo('s1', 'https://youtu.be/dQw4w9WgXcQ');
+    expect('sourceTags' in youtubeOf(sessions)).toBe(false);
+  });
+
+  it('падение запроса тегов не мешает зарегистрировать референс', async () => {
+    const { svc, sessions, youtubeSearch } = build();
+    youtubeSearch.fetchVideoTags.mockRejectedValue(new Error('google down'));
+    await expect(
+      svc.registerYoutubeVideo('s1', 'https://youtu.be/dQw4w9WgXcQ'),
+    ).resolves.toEqual({ youtubeUrl: 'https://youtu.be/dQw4w9WgXcQ' });
+    expect(sessions.updateSession).toHaveBeenCalled();
+  });
+
+  it('загрузка файлом за тегами не ходит: у файла их неоткуда взять', async () => {
+    const { svc, youtubeSearch } = build();
+    await svc.generateUploadUrl('s1', 'a.mp4', 100, 'video/mp4');
+    expect(youtubeSearch.fetchVideoTags).not.toHaveBeenCalled();
   });
 });

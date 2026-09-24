@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { VideoController } from './video.controller';
 import { VideoService } from './video.service';
 import { StorageModule } from '../storage/storage.module';
+import { YoutubeSearchModule } from '../youtube-search/youtube-search.module';
 
 /**
  * VideoModule
@@ -10,7 +11,7 @@ import { StorageModule } from '../storage/storage.module';
  * for direct browser-to-Blob uploads.
  */
 @Module({
-  imports: [StorageModule],
+  imports: [StorageModule, YoutubeSearchModule],
   controllers: [VideoController],
   providers: [VideoService],
   exports: [VideoService],

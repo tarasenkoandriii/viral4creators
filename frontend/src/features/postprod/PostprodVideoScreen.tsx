@@ -56,6 +56,7 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
     productName,
     productDescription,
     productCategory,
+    sourceTags,
     loading,
     error,
     reVoice,
@@ -212,6 +213,7 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
           productName={productName}
           productDescription={productDescription}
           category={productCategory}
+          sourceTags={sourceTags}
         />
       )}
       {publication.allowed && video.generatedVideoId && (

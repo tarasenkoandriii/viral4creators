@@ -69,6 +69,12 @@ export type AiOperation =
   | 'generation'
   | 'analog-search'
   | 'video-search'
+  // Теги исходного ролика (`videos.list?part=snippet`, ТЗ
+  // TZ-Multilingual-YouTube.md, этап 136) — отдельно от 'video-search':
+  // тот стоит 100 единиц квоты за поиск по запросу человека, этот — 1
+  // единицу за один уже выбранный ролик, и в отчёте о расходе квоты их
+  // нельзя складывать в одну строку.
+  | 'video-tags'
   | 'reframe'
   | 'voiceover'
   | 'voiceover-preview'
@@ -222,6 +228,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   generation: 'Генерация ролика',
   'analog-search': 'Поиск аналогов',
   'video-search': 'Поиск на YouTube',
+  'video-tags': 'Теги исходного ролика',
   reframe: 'Обрезка кадра',
   voiceover: 'Озвучка',
   'voiceover-preview': 'Проба голоса',

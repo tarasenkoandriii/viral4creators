@@ -179,6 +179,10 @@ export interface YouTubeVideo {
   youtubeUrl: string;
   registeredAt: string;
   frame?: VideoFrame;
+  /** Теги исходного ролика на момент регистрации ссылки (этап 136) —
+   * умолчание для поля тегов в панели публикации. Отсутствуют у
+   * роликов без тегов и у референсов, пришедших файлом. */
+  sourceTags?: string[];
 }
 
 export type OriginalVideo = UploadedVideo | YouTubeVideo;

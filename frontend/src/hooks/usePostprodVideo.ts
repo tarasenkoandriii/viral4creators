@@ -140,6 +140,16 @@ export function usePostprodVideo(sessionId: string) {
     productName: session?.productInformation?.productName ?? null,
     productDescription: session?.productInformation?.productDescription ?? null,
     productCategory: session?.productInformation?.category ?? null,
+    /**
+     * Теги исходного ролика (этап 136) — только у референса, заданного
+     * ссылкой на YouTube: у загруженного файла их неоткуда взять.
+     * Сужение по `sourceType` здесь, а не в панели, потому что это
+     * знание о форме сессии, а панель про сессию знать не должна.
+     */
+    sourceTags:
+      session?.originalVideo?.sourceType === 'youtube'
+        ? (session.originalVideo.sourceTags ?? null)
+        : null,
     loading,
     error,
     reVoice,

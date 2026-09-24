@@ -122,11 +122,26 @@ export function snapshotFromSession(
     );
   }
   const category = product?.category?.trim() || null;
-  const tags = uniqueTags([
-    ...(dto.tags ?? []),
-    ...(category ? [category] : []),
-    ...(product?.productName ? [product.productName] : []),
-  ]);
+  // Этап 136 (ТЗ TZ-Multilingual-YouTube.md): категория и название
+  // товара — ЗАПАСНОЙ источник тегов, а не добавка поверх присланных.
+  //
+  // Раньше сервер досыпал их всегда, и это тихо отменяло правку
+  // человека: убранный в панели тег возвращался обратно уже после
+  // отправки, невидимо для того, кто его убирал. Теперь то же самое
+  // умолчание показывается ДО отправки, в поле ввода, — а раз показано,
+  // то и решать, оставлять ли его, человеку.
+  //
+  // Пустой список тегов при этом по-прежнему невозможен: заявка без
+  // тегов вовсе (старый клиент, вызов из админки) получает прежнее
+  // умолчание.
+  const explicit = uniqueTags(dto.tags ?? []);
+  const tags =
+    explicit.length > 0
+      ? explicit
+      : uniqueTags([
+          ...(category ? [category] : []),
+          ...(product?.productName ? [product.productName] : []),
+        ]);
 
   // Этап 75 (автоэкспорт, `doc/MULTI-FORMAT-EXPORT-SPEC.md` §6): заявка
   // на YouTube и TikTok от одной сессии раньше получала ОДИН И ТОТ ЖЕ

@@ -39,6 +39,9 @@ export const OPERATION_LABEL: Record<string, string> = {
   generation: 'Генерация ролика',
   'analog-search': 'Поиск аналогов',
   'video-search': 'Поиск на YouTube',
+  // Этап 136 (ТЗ TZ-Multilingual-YouTube.md): теги исходного ролика —
+  // отдельный вызов videos.list в 1 единицу квоты, не поиск в 100.
+  'video-tags': 'Теги исходного ролика',
   'analysis-translate': 'Перевод разбора видео',
   // GREETING_VIDEO (ТЗ TZ-Greeting-Video-Project-Type.md) — зеркало
   // AI_OPERATION_LABEL['greeting-prompt'] на бэкенде (common/ai-pricing.ts).

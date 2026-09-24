@@ -5,6 +5,8 @@ import { referenceResetPatch } from '../../common/session-reset';
 import { SessionStatus } from '../../common/types/session.types';
 import { aspectRatioFromSize } from '../../common/aspect-ratio';
 import { VideoSourceType } from '../../common/types/video.types';
+import { YoutubeSearchService } from '../youtube-search/youtube-search.service';
+import { parseYoutubeVideoId } from '../youtube-search/youtube-url';
 
 const MAX_VIDEO_BYTES = 104857600; // 100MB
 
@@ -42,6 +44,7 @@ export class VideoService {
   constructor(
     private readonly blobService: BlobService,
     private readonly sessionService: SessionService,
+    private readonly youtubeSearch: YoutubeSearchService,
   ) {}
 
   /**
@@ -129,12 +132,41 @@ export class VideoService {
       throw new BadRequestException('Session not found');
     }
 
+    // Теги исходника (ТЗ TZ-Multilingual-YouTube.md, этап 136) —
+    // единственный момент, когда их вообще можно взять: дальше ссылка
+    // уходит в разбор, а к моменту публикации спрашивать у Google уже
+    // поздно и незачем. Берутся здесь, а не в поиске, потому что этот
+    // путь общий для обоих способов задать референс — и «нашли в
+    // поиске», и «вставили ссылку руками».
+    //
+    // `await` внутри регистрации осознанный: вызов стоит одну единицу
+    // квоты и укладывается в тот же таймаут, что и остальные обращения
+    // к Google, а альтернатива (дописать теги потом, фоном) означала бы
+    // вторую запись в ту же сессию наперегонки с разбором.
+    //
+    // `catch` здесь не дублирует обещание `fetchVideoTags` никогда не
+    // бросать, а страхует от него: «референс регистрируется, даже если
+    // тегов не досталось» — инвариант ЭТОГО метода, и держать его на
+    // честном слове соседнего класса нельзя. Стоит там появиться
+    // исключению — и человек не сможет задать референс вовсе, из-за
+    // украшения поля ввода.
+    const videoId = parseYoutubeVideoId(youtubeUrl);
+    const sourceTags = videoId
+      ? await this.youtubeSearch
+          .fetchVideoTags(videoId, sessionId)
+          .catch(() => [] as string[])
+      : [];
+
     await this.sessionService.updateSession(sessionId, {
       ...referenceResetPatch(),
       originalVideo: {
         sourceType: VideoSourceType.YOUTUBE,
         youtubeUrl,
         registeredAt: new Date(),
+        // Пустой список не пишем вовсе: «тегов у исходника нет» и «поле
+        // есть, но пустое» — одно и то же для панели публикации, а
+        // отсутствие поля честнее говорит, что взять их было неоткуда.
+        ...(sourceTags.length > 0 ? { sourceTags } : {}),
       },
       status: SessionStatus.VIDEO_UPLOADED,
     });

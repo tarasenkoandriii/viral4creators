@@ -317,3 +317,96 @@ describe('YoutubeSearchService.search', () => {
     expect((net as HttpException).message).toMatch(/ECONNRESET/);
   });
 });
+
+/**
+ * Теги исходника (этап 136). Главное свойство метода — он не может
+ * помешать регистрации референса: что бы ни ответил Google, наружу
+ * уходит список, а не исключение. Второе — он не трогает суточный слот
+ * поиска: один выбранный ролик стоит 1 единицу против 100 у поиска, и
+ * отнимать за него у человека поиск было бы воровством.
+ */
+describe('YoutubeSearchService.fetchVideoTags', () => {
+  beforeEach(() => {
+    configState.apiKey = 'key-1';
+    mockedAxios.get.mockReset();
+  });
+
+  it('просит у videos.list именно snippet и отдаёт теги ролика', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { items: [{ id: 'v1', snippet: { tags: ['бег', 'shoes'] } }] },
+    });
+    const { service, usage } = build();
+    expect(await service.fetchVideoTags('v1', 's1')).toEqual(['бег', 'shoes']);
+    expect(mockedAxios.get.mock.calls[0][1]).toMatchObject({
+      params: expect.objectContaining({ part: 'snippet', id: 'v1' }),
+    });
+    // Суточный слот поиска не тратится.
+    expect(usage.reserve).not.toHaveBeenCalled();
+  });
+
+  it('пустые и пробельные теги отбрасывает, сущности раскодирует', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: {
+        items: [{ id: 'v1', snippet: { tags: ['  ', 'Nike &amp; Co', ''] } }],
+      },
+    });
+    const { service } = build();
+    expect(await service.fetchVideoTags('v1')).toEqual(['Nike & Co']);
+  });
+
+  it('у ролика без тегов — пустой список, а не исключение', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { items: [{ id: 'v1', snippet: {} }] },
+    });
+    const { service } = build();
+    expect(await service.fetchVideoTags('v1')).toEqual([]);
+  });
+
+  it('ошибка Google не выходит наружу: регистрация референса важнее тегов', async () => {
+    mockedAxios.get.mockRejectedValueOnce(axiosError(403, 'quotaExceeded'));
+    const { service } = build();
+    await expect(service.fetchVideoTags('v1')).resolves.toEqual([]);
+  });
+
+  it('без ключа не ходит в сеть вовсе', async () => {
+    configState.apiKey = '';
+    const { service } = build();
+    expect(await service.fetchVideoTags('v1')).toEqual([]);
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
+  it('в журнал (§26) пишет свою строку, отдельную от поиска', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { items: [{ id: 'v1', snippet: { tags: ['a'] } }] },
+    });
+    const { service, aiUsage } = build();
+    await service.fetchVideoTags('v1', 's1');
+    expect(aiUsage.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'video-tags',
+        model: 'youtube-data-api',
+        sessionId: 's1',
+        calls: 1,
+      }),
+    );
+  });
+
+  it('не дошедший вызов в журнал не пишет — расхода не было', async () => {
+    // Сеть оборвалась: Google запрос не посчитал, и строка о расходе
+    // квоты означала бы расход, которого не случилось.
+    mockedAxios.get.mockRejectedValueOnce(
+      axiosError(0, undefined, 'ECONNRESET'),
+    );
+    const { service, aiUsage } = build();
+    await service.fetchVideoTags('v1', 's1');
+    expect(aiUsage.record).not.toHaveBeenCalled();
+
+    // А отвергнутый Google'ом — пишет: у него всякий ответ тарифицируется.
+    mockedAxios.get.mockRejectedValueOnce(axiosError(400, 'keyInvalid'));
+    const second = build();
+    await second.service.fetchVideoTags('v1', 's1');
+    expect(second.aiUsage.record).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'video-tags', calls: 1 }),
+    );
+  });
+});

@@ -57,6 +57,13 @@ export interface VideoListItem {
   id?: string;
   contentDetails?: { duration?: string };
   statistics?: { viewCount?: string; likeCount?: string };
+  /**
+   * Приходит только когда в `part` попросили `snippet` (этап 136,
+   * `fetchVideoTags`). У поисковых вызовов `part` — `statistics,
+   * contentDetails`, и там этого поля нет вовсе: теги нужны одному
+   * ролику при регистрации ссылки, а не пятидесяти строкам таблицы.
+   */
+  snippet?: { tags?: string[] };
 }
 
 export interface SearchOptions {
@@ -320,6 +327,76 @@ export class YoutubeSearchService {
     });
 
     return mergeResults(items, videos);
+  }
+
+  /**
+   * Теги исходного ролика по его id (ТЗ TZ-Multilingual-YouTube.md,
+   * этап 136) — умолчание для поля тегов в панели публикации.
+   *
+   * Отдельный вызов `videos.list` с `part: 'snippet'`, а не расширение
+   * поискового: у поиска пятьдесят строк, и теги там не нужны ни одной
+   * — нужны ровно тому ролику, который человек выбрал в референс. К
+   * тому же ссылку можно вставить руками, минуя поиск вовсе, и тогда
+   * расширять было бы нечего.
+   *
+   * Суточный слот пользователя НЕ занимает — по той же причине, по
+   * которой его не занимает `videos.list` за статистикой в `search()`:
+   * у Google он стоит 1 единицу против 100 у поиска и случается не по
+   * отдельной команде человека, а внутри уже начатого действия.
+   * Тратить на него суточную квоту поиска значило бы отнимать у людей
+   * поиски за чужой счёт.
+   *
+   * Никогда не бросает: теги — украшение поля ввода, а не условие
+   * регистрации референса. Нет ключа, не та ссылка, Google промолчал,
+   * у автора теги не заполнены — во всех случаях пустой список, и у
+   * панели публикации на этот случай есть обязательный запасной
+   * источник.
+   */
+  async fetchVideoTags(
+    videoId: string,
+    sessionId: string | null = null,
+  ): Promise<string[]> {
+    if (!this.apiKey || !videoId) return [];
+
+    let res: { items?: VideoListItem[] };
+    try {
+      res = await this.call<{ items?: VideoListItem[] }>('videos', {
+        part: 'snippet',
+        id: videoId,
+        maxResults: '1',
+      });
+    } catch (e) {
+      // Запись в журнал (§26) — только если Google этот запрос посчитал:
+      // не дошедший вызов ничего не стоил и в отчёте о расходе квоты
+      // выглядел бы расходом, которого не было.
+      if (chargedByGoogle(e)) {
+        await this.aiUsage.record({
+          operation: 'video-tags',
+          model: 'youtube-data-api',
+          sessionId,
+          calls: 1,
+        });
+      }
+      this.logger.warn(
+        `videos.list(snippet) failed for ${videoId}, continuing without source tags: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return [];
+    }
+
+    await this.aiUsage.record({
+      operation: 'video-tags',
+      model: 'youtube-data-api',
+      sessionId,
+      calls: 1,
+    });
+
+    const tags = res.items?.[0]?.snippet?.tags ?? [];
+    // `videos.list` теги не экранирует (в отличие от заголовков в
+    // `search.list`), но прогнать через тот же декодер дешевле, чем
+    // однажды показать человеку `&amp;` в поле ввода.
+    return tags
+      .map((t) => decodeEntities(String(t)).trim())
+      .filter((t) => t.length > 0);
   }
 
   private async call<T>(

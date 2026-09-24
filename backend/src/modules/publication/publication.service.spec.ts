@@ -82,7 +82,12 @@ const row = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('snapshotFromSession', () => {
-  it('copies video + product, defaults title/description, adds category and product name to tags', () => {
+  it('copies video + product, defaults title/description, keeps the tags the human sent', () => {
+    // Этап 136: присланные теги уходят как есть. Раньше сервер досыпал
+    // к ним категорию и название товара — и тем отменял правку, уже
+    // после отправки: убранный в панели тег возвращался обратно, и
+    // увидеть это было негде. Теперь то же умолчание показывается ДО
+    // отправки, в поле ввода.
     const snap = snapshotFromSession(session, {
       platform: 'YOUTUBE',
       tags: ['#running', 'Running'],
@@ -93,9 +98,30 @@ describe('snapshotFromSession', () => {
       generatedVideoId: 'v1',
       title: 'Кружка Steel 500',
       description: 'Стальная термокружка',
-      tags: ['running', 'термокружки', 'Кружка Steel 500'],
+      tags: ['running'],
       category: 'термокружки',
     });
+  });
+
+  it('заявка вообще без тегов получает прежнее умолчание — категория и товар', () => {
+    // Запасной источник никуда не делся: пустым список тегов не бывает,
+    // пока про товар известно хоть что-то. Это путь старого клиента и
+    // вызова из админки, где поля ввода нет вовсе.
+    expect(snapshotFromSession(session, { platform: 'YOUTUBE' }).tags).toEqual([
+      'термокружки',
+      'Кружка Steel 500',
+    ]);
+    expect(
+      snapshotFromSession(session, { platform: 'YOUTUBE', tags: [] }).tags,
+    ).toEqual(['термокружки', 'Кружка Steel 500']);
+    // И умолчание не подмешивается к тегам, где человек оставил одно
+    // название товара: список остаётся ровно тем, что он прислал.
+    expect(
+      snapshotFromSession(session, {
+        platform: 'YOUTUBE',
+        tags: ['   ', 'бег'],
+      }).tags,
+    ).toEqual(['бег']);
   });
 
   it('client title/description win; refuses without a completed video or any title', () => {
