@@ -136,6 +136,16 @@ export class YoutubeSearchService {
     this.apiKey = loadConfiguration().youtube.apiKey;
   }
 
+  /**
+   * Задан ли ключ. Нужен генератору блога: без ключа `searchTrending`
+   * молча отдаёт пустой список, и прогон крона выглядит как «поискали и
+   * ничего не нашли». Отличать «не настроено» от «пусто» — работа
+   * вызывающего, и спросить об этом он должен явно.
+   */
+  configured(): boolean {
+    return !!this.apiKey;
+  }
+
   async search(
     userId: string,
     query: string,

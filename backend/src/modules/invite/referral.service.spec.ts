@@ -19,6 +19,7 @@
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { ReferralService } from './referral.service';
+import { LiteUnlockService } from './lite-unlock.service';
 
 type Row = {
   id: string;
@@ -39,6 +40,8 @@ function build(
       isTestUser: boolean;
       isBlocked: boolean;
     } | null;
+    /** Подписка подтверждена — вторая половина условия разблокировки. */
+    subscriptionConfirmed?: boolean;
     /** Общий предохранитель программы (§12.3) исчерпан. */
     capped?: boolean;
     /** Уже начислено этому пригласившему сегодня. */
@@ -81,13 +84,23 @@ function build(
 
   const prisma = {
     user: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue(
-          over.invitee === undefined
-            ? { createdAt: new Date(), isTestUser: false, isBlocked: false }
-            : over.invitee,
-        ),
+      // Один двойник обслуживает два разных вопроса: «новый ли человек»
+      // (привязка) и «выполнено ли условие разблокировки»
+      // (`LiteUnlockService`). Поэтому набор полей — объединение обоих,
+      // а не то, что нужно ближайшему вызову.
+      findUnique: jest.fn().mockResolvedValue(
+        over.invitee === undefined
+          ? {
+              createdAt: new Date(),
+              isTestUser: false,
+              isBlocked: false,
+              liteUnlockedAt: null,
+              liteRevokedAt: null,
+              unlockCheck: over.subscriptionConfirmed ? { id: 'c1' } : null,
+            }
+          : over.invitee,
+      ),
+      update: jest.fn().mockResolvedValue({}),
     },
     referralCode: {
       findUnique: jest
@@ -104,6 +117,19 @@ function build(
       findUnique: jest.fn(
         async ({ where }: { where: { inviteeId: string } }) =>
           rows.find((r) => r.inviteeId === where.inviteeId) ?? null,
+      ),
+      count: jest.fn(
+        async ({
+          where,
+        }: {
+          where: { inviterId: string; status?: string; revokedAt?: null };
+        }) =>
+          rows.filter(
+            (r) =>
+              r.inviterId === where.inviterId &&
+              (where.status === undefined || r.status === where.status) &&
+              (where.revokedAt === undefined || !r.revokedAt),
+          ).length,
       ),
       create: over.createThrows
         ? jest.fn().mockRejectedValue(over.createThrows)
@@ -175,8 +201,13 @@ function build(
     },
   };
 
-  const svc = new ReferralService(prisma as never, credits as never);
-  return { svc, prisma, credits, rows, ledger };
+  const liteUnlock = new LiteUnlockService(prisma as never);
+  const svc = new ReferralService(
+    prisma as never,
+    credits as never,
+    liteUnlock,
+  );
+  return { svc, prisma, credits, rows, ledger, liteUnlock };
 }
 
 const granted = (ledger: Set<string>, reason: string) =>

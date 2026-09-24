@@ -235,3 +235,39 @@ describe('ProviderBalancesService', () => {
     for (const row of unsupported) expect(row.detail).toBeTruthy();
   });
 });
+
+describe('ссылка на консоль провайдера', () => {
+  it('у GROK ссылка есть при ЛЮБОМ исходе — число может врать, дорога к первоисточнику нет', async () => {
+    // Запрос владельца: остаток у GROK расходится с консолью (аккаунт на
+    // постоплате — журнальное сальдо это не «остаток»), и пока это не
+    // разобрано, экран обязан давать дорогу к первоисточнику.
+    const before = process.env.XAI_MANAGEMENT_KEY;
+    delete process.env.XAI_MANAGEMENT_KEY;
+    try {
+      const svc = new ProviderBalancesService();
+      const items = await svc.list(true);
+      const grok = items.find((i) => i.provider === 'GROK');
+      expect(grok?.state).toBe('not-configured');
+      expect(grok?.dashboardUrl).toBe('https://console.x.ai/');
+    } finally {
+      if (before === undefined) delete process.env.XAI_MANAGEMENT_KEY;
+      else process.env.XAI_MANAGEMENT_KEY = before;
+    }
+  });
+
+  it('у провайдеров без API остатка ссылка тоже есть', async () => {
+    // «Смотрите в кабинете» без адреса — половина ответа.
+    const svc = new ProviderBalancesService();
+    const items = await svc.list(true);
+    const openai = items.find((i) => i.provider === 'OPENAI');
+    expect(openai?.state).toBe('unsupported');
+    expect(openai?.dashboardUrl).toContain('openai.com');
+  });
+
+  it('у кого консоли не назвали — поля нет, а не пустая строка', async () => {
+    const svc = new ProviderBalancesService();
+    const items = await svc.list(true);
+    const ffmpeg = items.find((i) => i.provider === 'FFMPEG');
+    expect(ffmpeg?.dashboardUrl).toBeUndefined();
+  });
+});

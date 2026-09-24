@@ -68,7 +68,12 @@ function build() {
       update: jest.fn().mockResolvedValue({}),
     },
   };
-  const youtubeSearch = { searchTrending: jest.fn().mockResolvedValue([]) };
+  const youtubeSearch = {
+    searchTrending: jest.fn().mockResolvedValue([]),
+    // Без ключа `searchTrending` молча отдаёт пустой список, поэтому
+    // генератор спрашивает о ключе ЯВНО (см. `notConfigured`).
+    configured: jest.fn().mockReturnValue(true),
+  };
   const budget = { reserve: jest.fn().mockResolvedValue(true) };
   const aiUsage = { record: jest.fn().mockResolvedValue(undefined) };
   const blob = {};
@@ -293,5 +298,78 @@ describe('BlogGenerationService.runCoverImageBackfill', () => {
     expect(prisma.blogPost.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: COVER_BACKFILL_LIMIT * 4 }),
     );
+  });
+});
+
+describe('BlogGenerationService.runDailyGeneration — почему ничего не сделал', () => {
+  // Найдено живым прогоном на проде: экран крона показывал
+  // `categoriesTried=0, candidatesConsidered=0, draftsCreated=0`, и это
+  // читалось как «поискали и ничего не нашли». На деле `BLOG_CATEGORIES`
+  // не был задан вовсе, а строка об этом ушла в лог бессерверной
+  // функции, куда оператор не смотрит.
+  const withEnv = async (
+    patch: Record<string, string | undefined>,
+    fn: () => Promise<void>,
+  ) => {
+    const before: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(patch)) {
+      before[k] = process.env[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      await fn();
+    } finally {
+      for (const [k, v] of Object.entries(before)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  };
+
+  it('без категорий называет переменную и не ходит в YouTube', async () => {
+    await withEnv({ BLOG_CATEGORIES: '' }, async () => {
+      const { service, youtubeSearch } = build();
+      const summary = await service.runDailyGeneration();
+      expect(summary.notConfigured).toBe('BLOG_CATEGORIES');
+      expect(youtubeSearch.searchTrending).not.toHaveBeenCalled();
+    });
+  });
+
+  it('без ключа YouTube — тоже причина, а не пустой поиск', async () => {
+    const { service, youtubeSearch, budget } = build();
+    youtubeSearch.configured.mockReturnValue(false);
+    const summary = await service.runDailyGeneration();
+    expect(summary.notConfigured).toBe('YOUTUBE_API_KEY');
+    // Не просто «сказали причину», но и не потратили ничего: без ключа
+    // поиск заведомо пуст, а резерв суточного бюджета поисков сгорел бы
+    // ни за что.
+    expect(youtubeSearch.searchTrending).not.toHaveBeenCalled();
+    expect(budget.reserve).not.toHaveBeenCalled();
+  });
+
+  it('называет ВСЁ недостающее сразу, а не по одному за прогон', async () => {
+    // Иначе оператор, задав категории, получил бы те же нули и пошёл на
+    // второй круг гадания.
+    await withEnv(
+      { BLOG_CATEGORIES: '', GEMINI_API_KEY: '', GOOGLE_GEMINI_API_KEY: '' },
+      async () => {
+        const { service, youtubeSearch } = build();
+        youtubeSearch.configured.mockReturnValue(false);
+        const summary = await service.runDailyGeneration();
+        expect(summary.notConfigured).toBe(
+          'BLOG_CATEGORIES, YOUTUBE_API_KEY, GEMINI_API_KEY',
+        );
+      },
+    );
+  });
+
+  it('всё настроено — причины нет, и это не пустая строка', async () => {
+    // `notConfigured: ''` сводка приняла бы за «настроено», но читалось
+    // бы оно как «не задано: ничего». Только `null`.
+    const { service } = build();
+    const summary = await service.runDailyGeneration();
+    expect(summary.notConfigured).toBeNull();
+    expect(summary.categoriesTried).toBe(1);
   });
 });

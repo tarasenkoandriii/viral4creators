@@ -20,6 +20,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
+import { LiteUnlockService } from './lite-unlock.service';
 import {
   isNewcomer,
   makeCode,
@@ -36,6 +37,7 @@ export class ReferralService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly credits: CreditLedgerService,
+    private readonly liteUnlock: LiteUnlockService,
   ) {}
 
   /** Код человека; заводится по первому обращению, не раньше. */
@@ -234,6 +236,12 @@ export class ReferralService {
   async settlePending(userId: string): Promise<void> {
     await this.settleInviterCredits(userId);
     await this.settleInviteeBonus(userId);
+    // Семь засчитанных плюс подтверждённая подписка снимают стену
+    // насовсем (§4.2, этап 135). Проверка стоит ЗДЕСЬ, а не только в
+    // месте засчёта: сюда приходит и открытие кабинета, а значит
+    // человек, у которого условие выполнилось отложенным начислением,
+    // узнает об этом на том же экране, где смотрит прогресс.
+    await this.liteUnlock.maybeUnlock(userId);
   }
 
   /** Кредиты пригласившему за уже дошедших до ролика — в пределах суточного потолка. */

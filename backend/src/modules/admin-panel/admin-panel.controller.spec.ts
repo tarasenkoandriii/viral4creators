@@ -39,7 +39,12 @@ jest.mock('./admin-panel.service', () => ({ AdminPanelService: class {} }));
 jest.mock('../../common/session.service', () => ({ SessionService: class {} }));
 
 import { ForbiddenException } from '@nestjs/common';
-import { AdminPanelController } from './admin-panel.controller';
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
+import {
+  AdminPanelController,
+  RevokeWithReasonDto,
+} from './admin-panel.controller';
 import type { AdminAuthenticatedRequest } from '../admin-auth/admin-session.guard';
 
 function build() {
@@ -56,8 +61,8 @@ function build() {
       pageSize: 20,
     }),
   };
-  // Остальные семь зависимостей контроллера не участвуют ни в одном из
-  // двух проверяемых маршрутов — им намеренно ничего не подставляем
+  // Остальные зависимости контроллера не участвуют ни в одном из
+  // проверяемых маршрутов — им намеренно ничего не подставляем
   // (реальный вызов через них бросил бы TypeError, что и подтверждает,
   // что тест не задевает чужую логику).
   const voiceoverSettings = {
@@ -69,9 +74,21 @@ function build() {
     save: jest.fn(),
   };
   const balances = { list: jest.fn().mockResolvedValue([]) };
+  // Этап 135: вкладка «Приглашения» и два действия оператора. `users`
+  // здесь больше не заглушка — оба действия возвращают свежую карточку
+  // пользователя, и это часть их контракта.
+  const users = { get: jest.fn().mockResolvedValue({ id: 'u1' }) };
+  const referrals = {
+    overview: jest.fn().mockResolvedValue({ window: 'week' }),
+    revokeReferral: jest.fn().mockResolvedValue({ revoked: true }),
+  };
+  const liteUnlock = {
+    revoke: jest.fn().mockResolvedValue(undefined),
+    grantByOperator: jest.fn().mockResolvedValue(undefined),
+  };
   const controller = new AdminPanelController(
     adminPanel as any,
-    undefined as any,
+    users as any,
     undefined as any,
     undefined as any,
     undefined as any,
@@ -94,6 +111,8 @@ function build() {
     undefined as any,
     undefined as any,
     undefined as any,
+    referrals as any,
+    liteUnlock as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
   return {
@@ -102,6 +121,9 @@ function build() {
     voiceoverSettings,
     musicCatalog,
     balances,
+    users,
+    referrals,
+    liteUnlock,
     req,
   };
 }
@@ -369,5 +391,94 @@ describe('AdminPanelController — GET /admin/balances', () => {
     expect(balances.list).toHaveBeenLastCalledWith(false);
     await controller.providerBalances(req, 'yes');
     expect(balances.list).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('AdminPanelController — приглашения (этап 135)', () => {
+  it('GET /admin/referrals: сперва assertOperator, потом данные', async () => {
+    const { controller, adminPanel, referrals, req } = build();
+    const order: string[] = [];
+    adminPanel.assertOperator.mockImplementation(async () => {
+      order.push('assert');
+    });
+    referrals.overview.mockImplementation(async () => {
+      order.push('data');
+      return { window: 'week' };
+    });
+    await controller.referralsOverview(req, 'week');
+    expect(order).toEqual(['assert', 'data']);
+  });
+
+  it('мусорное окно не 400, а умолчание — как у воронки', async () => {
+    const { controller, referrals, req } = build();
+    await controller.referralsOverview(req, 'вчера');
+    expect(referrals.overview).toHaveBeenCalledWith('week');
+  });
+
+  it('часового окна у приглашений нет', async () => {
+    const { controller, referrals, req } = build();
+    await controller.referralsOverview(req, 'hour');
+    expect(referrals.overview).toHaveBeenCalledWith('week');
+  });
+
+  it('снятие приглашения доносит причину до сервиса', async () => {
+    const { controller, referrals, req } = build();
+    await controller.revokeReferral(req, 'r1', { reason: 'пачка за 4 минуты' });
+    expect(referrals.revokeReferral).toHaveBeenCalledWith(
+      'r1',
+      'пачка за 4 минуты',
+    );
+  });
+
+  it('отзыв разблокировки: причина уходит, карточка возвращается', async () => {
+    const { controller, liteUnlock, users, req } = build();
+    const result = await controller.revokeUserLite(req, 'u1', {
+      reason: 'накрутка',
+    });
+    expect(liteUnlock.revoke).toHaveBeenCalledWith('u1', 'накрутка');
+    expect(users.get).toHaveBeenCalledWith('u1');
+    expect(result).toEqual({ id: 'u1' });
+  });
+
+  it('возврат разблокировки — отдельное действие оператора', async () => {
+    // Автоматика её не вернёт (иначе отзыв отменялся бы первым же
+    // следующим приглашением), поэтому маршрут обязан существовать —
+    // без него приёмка «повторная разблокировка работает» невыполнима.
+    const { controller, liteUnlock, req } = build();
+    await controller.unlockUserLite(req, 'u1');
+    expect(liteUnlock.grantByOperator).toHaveBeenCalledWith('u1');
+  });
+
+  it('все три маршрута закрыты проверкой оператора', async () => {
+    const { controller, adminPanel, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+    await expect(controller.referralsOverview(req)).rejects.toThrow();
+    await expect(
+      controller.revokeReferral(req, 'r1', { reason: 'x' }),
+    ).rejects.toThrow();
+    await expect(
+      controller.revokeUserLite(req, 'u1', { reason: 'x' }),
+    ).rejects.toThrow();
+    await expect(controller.unlockUserLite(req, 'u1')).rejects.toThrow();
+  });
+});
+
+describe('RevokeWithReasonDto — причина обязательна', () => {
+  it('пустая строка не проходит: «почему пропал доступ» должно иметь ответ', async () => {
+    const dto = plainToInstance(RevokeWithReasonDto, { reason: '' });
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(1);
+  });
+
+  it('нормальная причина проходит', async () => {
+    const dto = plainToInstance(RevokeWithReasonDto, { reason: 'накрутка' });
+    await expect(validate(dto)).resolves.toEqual([]);
+  });
+
+  it('длинный текст отсекается', async () => {
+    const dto = plainToInstance(RevokeWithReasonDto, {
+      reason: 'x'.repeat(301),
+    });
+    expect(await validate(dto)).toHaveLength(1);
   });
 });

@@ -17,6 +17,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -30,6 +31,11 @@ import {
   AdminAuthenticatedRequest,
 } from '../admin-auth/admin-session.guard';
 import { AdminPanelService, WorkflowWindow } from './admin-panel.service';
+import {
+  AdminReferralsService,
+  type ReferralsWindow,
+} from './admin-referrals.service';
+import { LiteUnlockService } from '../invite/lite-unlock.service';
 import { AdminUsersService } from './admin-users.service';
 import { AdminBillingService } from './admin-billing.service';
 import { AdminMarketingService } from './admin-marketing.service';
@@ -67,6 +73,20 @@ function parseDateParam(v: string | undefined): Date | undefined {
   if (!v) return undefined;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+/**
+ * Причина обязательна у обоих действий этапа 135 — и у снятия
+ * приглашения, и у отзыва разблокировки. Не формальность: «почему у
+ * меня пропал доступ» должно иметь ответ в базе, а пустая строка ответом
+ * не является. Поэтому `@IsNotEmpty` рядом с `@MaxLength` — второе без
+ * первого пропускает `""`.
+ */
+export class RevokeWithReasonDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(300)
+  reason!: string;
 }
 
 export class PatchAdminUserDto {
@@ -251,6 +271,15 @@ export class SetGrokTransportDto {
 
 const WORKFLOW_WINDOWS: WorkflowWindow[] = ['hour', 'day', 'week', 'month'];
 
+/** У приглашений часового окна нет: засчёт — событие редкое по замыслу. */
+const REFERRALS_WINDOWS: ReferralsWindow[] = ['day', 'week', 'month'];
+
+function parseReferralsWindow(value?: string): ReferralsWindow {
+  return REFERRALS_WINDOWS.includes(value as ReferralsWindow)
+    ? (value as ReferralsWindow)
+    : 'week';
+}
+
 /** Этап 78 — невалидный/отсутствующий `?window=` тихо откатывается на
  * `day` (тот же уровень строгости, что у `page`/`pageSize` выше —
  * список сессий тоже не бросает 400 на мусорный `page`), а не 400: это
@@ -292,6 +321,8 @@ export class AdminPanelController {
     private readonly analysisSettings: AdminAnalysisSettingsService,
     private readonly videoProviderSettings: AdminVideoProviderSettingsService,
     private readonly grokTransportSettings: AdminGrokTransportSettingsService,
+    private readonly referrals: AdminReferralsService,
+    private readonly liteUnlock: LiteUnlockService,
   ) {}
 
   @Get('sessions')
@@ -810,6 +841,76 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.users.patch(req.userId, id, dto);
+  }
+
+  /**
+   * GET /admin/referrals — вкладка «Приглашения» («Условно бесплатный
+   * Lite» §11, этап 135): состояния за период, доля дошедших до ролика,
+   * разблокировки, начисленное и потраченное в штуках и в деньгах, и
+   * список тех, у кого засчёты пришли пачкой.
+   */
+  @Get('referrals')
+  async referralsOverview(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('window') window?: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.referrals.overview(parseReferralsWindow(window));
+  }
+
+  /**
+   * POST /admin/referrals/:id/revoke — снять засчитанное приглашение
+   * (§5.4). Строка остаётся на месте со своей причиной: разбор накрутки
+   * не на чем вести, если следы стирать. Уже начисленный кредит не
+   * отбирается, разблокировка не отнимается — для неё отдельное
+   * действие ниже.
+   */
+  @Post('referrals/:id/revoke')
+  async revokeReferral(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: RevokeWithReasonDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.referrals.revokeReferral(id, dto.reason);
+  }
+
+  /**
+   * POST /admin/users/:id/lite-revoke — отнять разблокировку (§5.4).
+   *
+   * Отдельное действие, а не следствие снятых приглашений: автоматика
+   * не отнимает НИКОГДА (отнятое обиднее невыданного), человек — может,
+   * и это видно в истории. `liteUnlockedAt` при этом не стирается.
+   */
+  @Post('users/:id/lite-revoke')
+  async revokeUserLite(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: RevokeWithReasonDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    await this.liteUnlock.revoke(id, dto.reason);
+    return this.users.get(id);
+  }
+
+  /**
+   * POST /admin/users/:id/lite-unlock — вернуть разблокировку после
+   * отзыва.
+   *
+   * В §10 ТЗ этого маршрута не было, а приёмка этапа 135 требует, чтобы
+   * «повторная разблокировка после отзыва работала»: автоматика её не
+   * вернёт (иначе отзыв отменялся бы первым же следующим приглашением,
+   * см. `LiteUnlockService`), значит возвращать должен тот же, кто
+   * отнял. Новая дата ложится поверх, старые строки не правятся.
+   */
+  @Post('users/:id/lite-unlock')
+  async unlockUserLite(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    await this.liteUnlock.grantByOperator(id);
+    return this.users.get(id);
   }
 
   /**

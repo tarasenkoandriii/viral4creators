@@ -1326,6 +1326,12 @@ export interface ProviderBalance {
    */
   raw?: string;
   detail?: string;
+  /**
+   * Консоль провайдера: где посмотреть остаток своими глазами. У GROK
+   * наше число расходится с консолью (аккаунт на постоплате), и пока
+   * это не разобрано, экран обязан давать дорогу к первоисточнику.
+   */
+  dashboardUrl?: string;
   /** Разбивка журнала пополнений и списаний, если провайдер её отдал. */
   changes?: ProviderBalanceChanges;
   /** Сырой ответ — только когда остаток разобрать не удалось. */
@@ -1425,4 +1431,53 @@ export interface WizardHintRow {
   costMicroUsd: number;
   latencyMs: number;
   flagged: boolean;
+}
+
+// ── Приглашения («Условно бесплатный Lite» §11, этап 135) ──
+
+export type ReferralsWindow = 'day' | 'week' | 'month';
+
+export interface SuspiciousInviter {
+  inviterId: string;
+  telegramId: string | null;
+  counted: number;
+  /** Самая плотная пачка засчётов в пределах одного часа. */
+  burst: number;
+  burstStartedAt: string;
+  /** Приглашения из этой пачки — то, что оператор и снимает. */
+  burstReferralIds: string[];
+  liteUnlocked: boolean;
+}
+
+export interface AdminReferralsOverview {
+  window: ReferralsWindow;
+  from: string;
+  to: string;
+  period: { identified: number; generated: number; revoked: number };
+  /** Переходы не имеют даты (§5.2 — счётчик, а не строка), отсюда «за всё время». */
+  allTime: {
+    visits: number;
+    identified: number;
+    generated: number;
+    /** `null` — переходов ещё не было, а не «ноль процентов». */
+    visitToGenerated: number | null;
+  };
+  unlock: {
+    target: number;
+    active: number;
+    earned: number;
+    grandfathered: number;
+    byOperator: number;
+    revoked: number;
+  };
+  credits: {
+    granted: number;
+    /** Оценка сверху: списание не помнит, чей кредит потратили. */
+    spentEstimate: number;
+    /** `null` — ставки модели нет в прайсе, денег на экране не будет. */
+    unitCostMicroUsd: number | null;
+    grantedMicroUsd: number | null;
+    spentEstimateMicroUsd: number | null;
+  };
+  suspicious: SuspiciousInviter[];
 }

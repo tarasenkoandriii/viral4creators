@@ -26,6 +26,7 @@ export function ConfirmDialog({
   confirmLabel = 'Удалить',
   cancelLabel = 'Отмена',
   busy = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: {
@@ -35,6 +36,14 @@ export function ConfirmDialog({
   confirmLabel?: string;
   cancelLabel?: string;
   busy?: boolean;
+  /**
+   * Подтверждение недоступно, но диалог НЕ занят: у действия с
+   * обязательной причиной (этап 135) кнопка «Снять» ждёт, пока причину
+   * напишут. Отдельно от `busy` намеренно — тот гасит и «Отмену» и
+   * подписывает кнопку «Удаление…», то есть запер бы оператора в
+   * диалоге, из которого он ещё вправе выйти.
+   */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -49,8 +58,11 @@ export function ConfirmDialog({
     if (!open) return;
     const focusables = () =>
       Array.from(
-        dialogRef.current?.querySelectorAll<HTMLButtonElement>(
-          'button:not(:disabled)'
+        // Не только кнопки: у диалога с обязательной причиной (этап 135)
+        // внутри стоит `textarea`, и ловушка, знающая про одни кнопки,
+        // до неё не пускала бы вовсе — ни Tab'ом, ни начальным фокусом.
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled)'
         ) ?? []
       );
     focusables()[0]?.focus();
@@ -117,7 +129,7 @@ export function ConfirmDialog({
             type="button"
             className="button-danger"
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
           >
             {busy ? 'Удаление…' : confirmLabel}
           </button>

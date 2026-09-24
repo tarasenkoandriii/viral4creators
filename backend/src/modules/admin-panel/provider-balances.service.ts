@@ -75,6 +75,31 @@ const NO_BALANCE_API: Record<string, string> = {
   FFMPEG: 'сервис без публичного биллингового API',
 };
 
+/**
+ * Где посмотреть остаток своими глазами.
+ *
+ * Добавлено по запросу владельца: у GROK наше число расходится с
+ * консолью, и пока это не разобрано, экран обязан давать дорогу к
+ * первоисточнику. Список общий, а не только для xAI: «остаток спросить
+ * нечем» — тем более повод дать ссылку, а не одну фразу «смотрите в
+ * кабинете» без адреса.
+ *
+ * Только корневые адреса консолей: глубокие ссылки на страницы биллинга
+ * у всех перечисленных меняются чаще, чем этот файл, и протухшая ссылка
+ * хуже отсутствующей.
+ */
+const DASHBOARD_URL: Record<string, string> = {
+  GROK: 'https://console.x.ai/',
+  GEMINI: 'https://console.cloud.google.com/billing',
+  VEO: 'https://console.cloud.google.com/billing',
+  OPENAI: 'https://platform.openai.com/usage',
+  ELEVENLABS: 'https://elevenlabs.io/app/usage',
+  RESEMBLE: 'https://app.resemble.ai/',
+  HEDRA: 'https://www.hedra.com/',
+  SERPAPI: 'https://serpapi.com/dashboard',
+  YOUTUBE: 'https://console.cloud.google.com/apis/dashboard',
+};
+
 @Injectable()
 export class ProviderBalancesService {
   private readonly logger = new Logger(ProviderBalancesService.name);
@@ -94,6 +119,9 @@ export class ProviderBalancesService {
     ) {
       return this.cache.items;
     }
+    // Ссылка приклеивается ЗДЕСЬ, а не внутри `xai()`: та логика
+    // считает остаток и трогать её незачем — адрес консоли от неё не
+    // зависит и одинаков во всех четырёх её исходах.
     const items = [
       await this.xai(),
       ...Object.entries(NO_BALANCE_API).map(([provider, detail]) => ({
@@ -102,7 +130,10 @@ export class ProviderBalancesService {
         detail,
         checkedAt: new Date().toISOString(),
       })),
-    ];
+    ].map((item) => ({
+      ...item,
+      dashboardUrl: DASHBOARD_URL[item.provider],
+    }));
     this.cache = { at: Date.now(), items };
     return items;
   }

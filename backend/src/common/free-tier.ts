@@ -103,8 +103,47 @@ export interface RenderRightInput {
  */
 export function hasRenderRight(input: RenderRightInput): boolean {
   if (input.hasActiveSubscription) return true;
+  return liteUnlockActive(input);
+}
+
+/**
+ * Снята ли стена ИМЕННО разблокировкой — без оглядки на оплаченную
+ * подписку.
+ *
+ * Отдельно от `hasRenderRight` не ради красоты. Этап 135 задаёт два
+ * вопроса, и они разные: «пускать ли этот рендер» (там подписка
+ * считается) и «надо ли записать человеку заработанную разблокировку»
+ * (там не считается — иначе платящий, набравший семь приглашений,
+ * ничего бы не заработал и потерял бы это в день окончания подписки,
+ * хотя условие выполнил, см. Р7).
+ */
+export function liteUnlockActive(input: {
+  liteUnlockedAt?: Date | null;
+  liteRevokedAt?: Date | null;
+}): boolean {
   const unlocked = input.liteUnlockedAt;
   if (!unlocked) return false;
   const revoked = input.liteRevokedAt;
   return !revoked || revoked.getTime() < unlocked.getTime();
+}
+
+/**
+ * Заработана ли разблокировка — §4.2: подтверждённая подписка И
+ * `target` засчитанных приглашений.
+ *
+ * Оба условия обязательны, и «И» здесь не случайно: подписка одна даёт
+ * одну генерацию (§6), приглашения одни — по генерации за каждое (§5),
+ * а снимает стену насовсем только их сочетание.
+ *
+ * `target = 0` не особый случай, а законная настройка «хватит одной
+ * подписки»: это первый рычаг владельца, если §12.4 покажет, что семь
+ * недостижимы.
+ */
+export function earnsUnlock(input: {
+  countedReferrals: number;
+  subscriptionConfirmed: boolean;
+  target: number;
+}): boolean {
+  if (!input.subscriptionConfirmed) return false;
+  return input.countedReferrals >= input.target;
 }

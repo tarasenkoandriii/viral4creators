@@ -30,6 +30,7 @@ import {
   referralUnlockTarget,
 } from '../../common/referral';
 import { ReferralService } from './referral.service';
+import { LiteUnlockService } from './lite-unlock.service';
 
 /** Приглашённый в списке кабинета — СОБЫТИЯ, а не человек (§7.2). */
 export interface InviteeView {
@@ -100,6 +101,7 @@ export class InviteService {
     private readonly credits: CreditLedgerService,
     private readonly telegram: TelegramMembershipService,
     private readonly referrals: ReferralService,
+    private readonly liteUnlock: LiteUnlockService,
   ) {}
 
   async stateOf(userId: string): Promise<InviteState> {
@@ -311,6 +313,13 @@ export class InviteService {
           `суточный предохранитель`,
       );
     }
+    // Вторая половина условия §4.2 могла выполниться ровно сейчас:
+    // приглашения были набраны раньше, а подписки не хватало.
+    await this.liteUnlock
+      .maybeUnlock(userId)
+      .catch((error) =>
+        this.logger.warn(`проверка разблокировки ${userId}: ${String(error)}`),
+      );
     return this.stateOf(userId);
   }
 }

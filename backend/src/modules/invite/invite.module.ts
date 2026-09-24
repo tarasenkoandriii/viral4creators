@@ -15,6 +15,7 @@ import { ReferralPublicController } from './referral-public.controller';
 import { InviteService } from './invite.service';
 import { TelegramMembershipService } from './telegram-membership.service';
 import { ReferralService } from './referral.service';
+import { LiteUnlockService } from './lite-unlock.service';
 
 @Module({
   // WizardGuideModule — ради `WizardTelemetryService`: своей таблицы
@@ -23,7 +24,12 @@ import { ReferralService } from './referral.service';
   // идентификаторов отличалась бы от той только именем.
   imports: [PrismaModule, CreditLedgerModule, WizardGuideModule],
   controllers: [InviteController, ReferralPublicController],
-  providers: [InviteService, TelegramMembershipService, ReferralService],
-  exports: [InviteService, ReferralService],
+  providers: [
+    InviteService,
+    TelegramMembershipService,
+    ReferralService,
+    LiteUnlockService,
+  ],
+  exports: [InviteService, ReferralService, LiteUnlockService],
 })
 export class InviteModule {}

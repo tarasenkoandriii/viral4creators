@@ -15,6 +15,8 @@ import { ProviderBalancesService } from './provider-balances.service';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { AdminVideoProviderSettingsService } from './admin-video-provider-settings.service';
 import { AdminGrokTransportSettingsService } from './admin-grok-transport-settings.service';
+import { AdminReferralsService } from './admin-referrals.service';
+import { InviteModule } from '../invite/invite.module';
 
 @Module({
   // StorageModule здесь больше не нужен (этап 89): удаление сессии
@@ -41,7 +43,12 @@ import { AdminGrokTransportSettingsService } from './admin-grok-transport-settin
   // поэтому кнопка повтора рендера (доп. запрос владельца продукта)
   // реализована как отдельный контроллер в GenerationModule
   // (admin-retry.controller.ts), а не как метод здесь.
-  imports: [WizardGuideModule, AdminAuthModule],
+  // InviteModule — ради `LiteUnlockService`: отзыв разблокировки и
+  // возврат её после отзыва (этап 135) обязаны ходить тем же путём, что
+  // и автоматическая разблокировка, иначе правило «право считается по
+  // паре дат» пришлось бы написать дважды. Цикла нет: `InviteModule`
+  // про админку не знает.
+  imports: [WizardGuideModule, AdminAuthModule, InviteModule],
   controllers: [AdminPanelController],
   providers: [
     ProviderBalancesService,
@@ -60,6 +67,7 @@ import { AdminGrokTransportSettingsService } from './admin-grok-transport-settin
     AdminAnalysisSettingsService,
     AdminVideoProviderSettingsService,
     AdminGrokTransportSettingsService,
+    AdminReferralsService,
   ],
   // Суточный отчёт крона берёт телеметрию отсюда (ТЗ §28, этап 45).
   exports: [AdminPanelService],

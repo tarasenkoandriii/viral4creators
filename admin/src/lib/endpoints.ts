@@ -1,5 +1,7 @@
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './admin-api';
 import type {
+  AdminReferralsOverview,
+  ReferralsWindow,
   AdminCreatorProfile,
   AdminCreatorProfileListResult,
   AdminPortfolioItem,
@@ -1068,4 +1070,29 @@ export function getWizardHints(params: {
   if (params.flagged !== undefined) q.set('flagged', String(params.flagged));
   const suffix = q.toString() ? `?${q}` : '';
   return apiGet<WizardHintRow[]>(`/admin/wizard-guide/hints${suffix}`);
+}
+
+// ── Приглашения («Условно бесплатный Lite» §11, этап 135) ──
+
+export function getReferralsOverview(window: ReferralsWindow) {
+  return apiGet<AdminReferralsOverview>('/admin/referrals', { window });
+}
+
+/** Снять засчитанное приглашение. Причина обязательна — её проверяет и сервер. */
+export function revokeReferral(id: string, reason: string) {
+  return apiPost<{ revoked: boolean }>(`/admin/referrals/${id}/revoke`, {
+    reason,
+  });
+}
+
+/** Отнять разблокировку Lite. Автоматика её не отнимает никогда — только оператор. */
+export function revokeUserLite(userId: string, reason: string) {
+  return apiPost<AdminUserDetail>(`/admin/users/${userId}/lite-revoke`, {
+    reason,
+  });
+}
+
+/** Вернуть разблокировку после отзыва: новая дата поверх, история остаётся. */
+export function unlockUserLite(userId: string) {
+  return apiPost<AdminUserDetail>(`/admin/users/${userId}/lite-unlock`);
 }

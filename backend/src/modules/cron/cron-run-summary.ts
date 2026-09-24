@@ -69,7 +69,19 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
     return `пропущен — ${(result as { skipped: string }).skipped}`;
   }
   if (jobKey === 'blog' && result && typeof result === 'object') {
-    const r = result as { generation?: object; translation?: object };
+    const r = result as {
+      generation?: { notConfigured?: string | null };
+      translation?: object;
+    };
+    // Та же причина, что у двух веток выше, и найдена она на живом
+    // проде: без неё ненастроенный генератор показывал
+    // `categoriesTried=0, candidatesConsidered=0, draftsCreated=0` —
+    // неотличимо от «поискали и правда ничего не нашли». Причина стоит
+    // ПЕРВОЙ в строке: это единственное, что тут надо прочитать.
+    const notConfigured = r.generation?.notConfigured;
+    if (notConfigured) {
+      return `генерация пропущена — не задано: ${notConfigured}`;
+    }
     const gen = r.generation
       ? summarizeCounters(r.generation as Record<string, unknown>)
       : '';

@@ -16,6 +16,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InviteService } from './invite.service';
+import { LiteUnlockService } from './lite-unlock.service';
 
 function build(
   over: {
@@ -37,8 +38,9 @@ function build(
         telegramId: '777',
         liteUnlockedAt: null,
         liteRevokedAt: null,
-        unlockCheck: null,
+        unlockCheck: over.existingCheck ? { id: 'c1' } : null,
       }),
+      update: jest.fn().mockResolvedValue({}),
     },
     referral: {
       // Воронка считается ЗАПРОСАМИ (аудит этапа 134): длина списка
@@ -84,13 +86,15 @@ function build(
     codeOf: jest.fn().mockResolvedValue('ABCD2345'),
     settlePending: jest.fn().mockResolvedValue(undefined),
   };
+  const liteUnlock = new LiteUnlockService(prisma as never);
   const svc = new InviteService(
     prisma as never,
     credits as never,
     telegram as never,
     referrals as never,
+    liteUnlock,
   );
-  return { svc, prisma, credits, telegram, referrals };
+  return { svc, prisma, credits, telegram, referrals, liteUnlock };
 }
 
 describe('InviteService.confirmTelegram', () => {

@@ -14,7 +14,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
-import { createGeminiClient } from '../../common/gemini-client';
+import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
@@ -53,7 +53,7 @@ export const GENERATION_TIME_BUDGET_MS = 180_000;
 @Injectable()
 export class BlogGenerationService {
   private readonly logger = new Logger(BlogGenerationService.name);
-  private readonly genai: GoogleGenAI;
+  private readonly genai: GoogleGenAI | null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -62,7 +62,15 @@ export class BlogGenerationService {
     private readonly aiUsage: AiUsageService,
     private readonly blob: BlobService,
   ) {
-    this.genai = createGeminiClient();
+    // Тот же приём, что у `wizard-hint`/`translation`/`siblings`: без
+    // ключа клиент не создаётся, а не бросает из конструктора. Блог —
+    // необязательная часть продукта, и отсутствие его ключа не должно
+    // ронять СТАРТ всего API (`.env.docker.example`: «стенд поднимается
+    // и без единого ключа, просто соответствующий сервис честно
+    // откажет»). Найдено аудитом этапа 135: до этой правки генератор
+    // физически не мог сообщить, что ключа нет, — он падал раньше, чем
+    // успевал это проверить.
+    this.genai = geminiApiKey() ? createGeminiClient() : null;
   }
 
   /**
@@ -75,6 +83,18 @@ export class BlogGenerationService {
     candidatesConsidered: number;
     draftsCreated: number;
     skippedBudget: boolean;
+    /**
+     * Чего не хватило, чтобы вообще начать. `null` — всё на месте.
+     *
+     * Заведено после живого прогона на проде: экран крона показывал
+     * `categoriesTried=0, candidatesConsidered=0, draftsCreated=0` — и
+     * это выглядело как «поискали и ничего не нашли», хотя на деле
+     * `BLOG_CATEGORIES` просто не был задан. Строка в логе была, но
+     * оператор смотрит на экран, а не в логи бессерверной функции.
+     * Тот же приём, что у `cleanup-sessions` и `tutorial-scenario-run`
+     * (`cron-run-summary.ts`): пропуск обязан отличаться от нуля.
+     */
+    notConfigured: string | null;
   }> {
     const config = loadConfiguration().blog;
     const started = Date.now();
@@ -83,11 +103,20 @@ export class BlogGenerationService {
       candidatesConsidered: 0,
       draftsCreated: 0,
       skippedBudget: false,
+      notConfigured: null as string | null,
     };
 
-    if (config.categories.length === 0) {
+    // Проверяем ВСЕ три сразу, а не по одной на прогон: задав категории
+    // и не задав ключ YouTube, оператор получил бы те же нули и пошёл бы
+    // на второй круг гадания. Список — то, что надо дозаполнить.
+    const missing: string[] = [];
+    if (config.categories.length === 0) missing.push('BLOG_CATEGORIES');
+    if (!this.youtubeSearch.configured()) missing.push('YOUTUBE_API_KEY');
+    if (!geminiApiKey()) missing.push('GEMINI_API_KEY');
+    if (missing.length > 0) {
+      summary.notConfigured = missing.join(', ');
       this.logger.log(
-        'BLOG_CATEGORIES не задан — генератор черновиков блога ничего не делает.',
+        `Генератор черновиков блога ничего не делает — не задано: ${summary.notConfigured}`,
       );
       return summary;
     }
@@ -159,6 +188,10 @@ export class BlogGenerationService {
     },
     category: string,
   ): Promise<boolean> {
+    // Сюда не попасть без ключа: `runDailyGeneration` уходит раньше с
+    // `notConfigured`. Проверка — чтобы это осталось правдой и после
+    // следующей правки, а не держалось на памяти читающего.
+    if (!this.genai) return false;
     const config = loadConfiguration().blog;
     const prompt = buildBlogAnalysisPrompt({
       title: candidate.title,
