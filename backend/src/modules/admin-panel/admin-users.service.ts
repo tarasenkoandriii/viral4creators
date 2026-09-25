@@ -99,6 +99,16 @@ export interface AdminUserListResult {
 }
 
 export interface AdminUserDetail extends AdminUserSummary {
+  /**
+   * Окружение последнего запуска мини-аппа (этап 156). `null` у всех,
+   * кроме тестовых аккаунтов, — пишется только им (`EnvironmentService`).
+   *
+   * Показывается здесь, а не только рядом с тикетом, по простой
+   * причине: поле, которое пишут и никогда не читают, тихо ломается и
+   * остаётся сломанным до первого настоящего бага. Карточка
+   * пользователя — первое место, где расхождение видно глазом.
+   */
+  environment: { at: Date; value: unknown } | null;
   /** Расход по операциям — из чего сложилась сумма. */
   costByOperation: Array<{ key: string; costMicroUsd: number; calls: number }>;
   /** Последние сессии — чтобы из карточки было куда провалиться. */
@@ -280,8 +290,21 @@ export class AdminUsersService {
   async get(id: string): Promise<AdminUserDetail> {
     const row = (await this.prisma.user.findUnique({
       where: { id },
-      select: USER_SELECT,
-    })) as unknown as UserRowWithCounts | null;
+      // Окружение берётся ТОЛЬКО здесь, а не через `USER_SELECT`: тем же
+      // набором полей читает список пользователей, а тащить в него json
+      // с `User-Agent` на каждую из ста строк страницы значит платить
+      // трафиком за поле, которого в списке даже нет.
+      select: {
+        ...USER_SELECT,
+        lastEnvironment: true,
+        lastEnvironmentAt: true,
+      },
+    })) as unknown as
+      | (UserRowWithCounts & {
+          lastEnvironment: unknown;
+          lastEnvironmentAt: Date | null;
+        })
+      | null;
     if (!row) throw new NotFoundException(`User ${id} not found`);
 
     const [sessions, costs, costByOperation, today, credits, subscriptions] =
@@ -308,6 +331,13 @@ export class AdminUsersService {
         credits[id],
         subscriptions[id],
       ),
+      // Пара «есть значение И есть время» обязательна: окружение без
+      // времени нечитаемо — непонятно, та ли это сборка, в которой
+      // человек видел баг.
+      environment:
+        row.lastEnvironment && row.lastEnvironmentAt
+          ? { at: row.lastEnvironmentAt, value: row.lastEnvironment }
+          : null,
       costByOperation,
       recentSessions: sessions.map((s) => {
         return {

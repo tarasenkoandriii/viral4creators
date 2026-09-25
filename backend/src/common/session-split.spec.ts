@@ -55,6 +55,20 @@ describe('какой ключ в какой колонке', () => {
     }
   });
 
+  it('шаблон сцены доходит до колонки, а не выбрасывается по дороге', () => {
+    // Этап 149. Ровно тот дефект, о котором предупреждает Б-2.2: поле
+    // объявлено в типе сессии, пишется сервисом, а в `DATA_KEYS` его
+    // забыли — запись проходит без ошибки и не сохраняет ничего.
+    const { data, live } = splitSessionPatch({
+      sceneTemplate: { templateId: 'unboxing', chosenAt: 'now' },
+    });
+    expect(data.sceneTemplate).toEqual({
+      templateId: 'unboxing',
+      chosenAt: 'now',
+    });
+    expect(live).toEqual({});
+  });
+
   it('`undefined` превращается в null — это стирание, а не пропуск', () => {
     // `JSON.stringify` выбросил бы ключ со значением `undefined`, и
     // стирание не состоялось бы: в колонке осталось бы прежнее значение.

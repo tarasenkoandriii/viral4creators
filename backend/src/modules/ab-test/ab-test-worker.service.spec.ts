@@ -32,6 +32,7 @@ function runRow(overrides: Record<string, unknown> = {}) {
     projectId: 'proj1',
     productItemId: 'pi1',
     libraryEntryId: 'entry1',
+    sceneTemplateId: null,
     quality: 'fast',
     aspectRatio: '9:16',
     locale: 'ru',
@@ -139,6 +140,7 @@ function setup(
       .mockResolvedValue(
         opts.sessionState === undefined ? {} : opts.sessionState,
       ),
+    updateSession: jest.fn().mockResolvedValue(undefined),
   };
   const library = {
     applyToSession: jest.fn().mockResolvedValue(undefined),
@@ -207,8 +209,15 @@ describe('AbTestWorkerService', () => {
 
   describe('успешная обработка строки — четыре шага подряд, без остановки', () => {
     it('без sessionId: создаёт сессию, переносит разбор, сеет уже готовый текст (без GPT-5), одобряет, стартует рендер', async () => {
-      const { service, prisma, projectSession, library, prompt, generation } =
-        setup({ rows: [row()] });
+      const {
+        service,
+        prisma,
+        projectSession,
+        library,
+        prompt,
+        generation,
+        sessions,
+      } = setup({ rows: [row()] });
       const result = await service.runBatch();
 
       expect(result).toEqual({
@@ -232,6 +241,7 @@ describe('AbTestWorkerService', () => {
         data: { sessionId: 'sess-new' },
       });
       expect(library.applyToSession).toHaveBeenCalledWith('sess-new', 'entry1');
+      expect(sessions.updateSession).not.toHaveBeenCalled();
       // Ключевое отличие от CatalogBatchWorkerService: seedPrompt, не
       // generatePrompt — текст уже готов, второй вызов GPT-5 не нужен.
       expect(prompt.seedPrompt).toHaveBeenCalledWith(
@@ -250,6 +260,27 @@ describe('AbTestWorkerService', () => {
         where: { id: 'variant1' },
         data: { status: 'GENERATING', lockedUntil: null, error: null },
       });
+    });
+
+    it('прогон на ПРИЁМЕ передаёт детям приём, а не разбор', async () => {
+      // Промпт варианта уже готов, и рендеру источник не нужен. Но
+      // сессия, которая не может ответить, откуда её сцена, врёт всем
+      // своим экранам: степперу, строке готовности и выбору источника
+      // (этап 152, аудит).
+      const { service, library, sessions, prompt } = setup({
+        rows: [row()],
+        run: runRow({ libraryEntryId: null, sceneTemplateId: 'unboxing' }),
+      });
+      await service.runBatch();
+      expect(library.applyToSession).not.toHaveBeenCalled();
+      expect(sessions.updateSession).toHaveBeenCalledWith(
+        'sess-new',
+        expect.objectContaining({
+          sceneTemplate: expect.objectContaining({ templateId: 'unboxing' }),
+        }),
+      );
+      // Промпт всё равно сеется — это и есть работа воркера.
+      expect(prompt.seedPrompt).toHaveBeenCalled();
     });
 
     it('sessionId уже есть (повторный тик после частичного сбоя) — сессию заново не создаёт', async () => {

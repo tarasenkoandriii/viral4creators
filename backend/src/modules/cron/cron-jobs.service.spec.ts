@@ -88,6 +88,10 @@ function build() {
   const prisma = {
     adminSession: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     userSession: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    // Этап 140: короткие входы через Google убираются тем же прогоном.
+    youtubeUnlockSession: {
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     session: { findMany: jest.fn().mockResolvedValue([]) },
     // Этап 41: метла ходит по нескольким префиксам, у каждого своя таблица.
     project: { findMany: jest.fn().mockResolvedValue([]) },
@@ -301,6 +305,24 @@ function build() {
   const portfolioWatermark = {
     runTick: jest.fn().mockResolvedValue({ processed: 0, failed: 0 }),
   };
+  // Заявки внешнего API на ролик (этап 145).
+  const apiVideo = {
+    runTick: jest.fn().mockResolvedValue({
+      started: 0,
+      completed: 0,
+      failed: 0,
+      running: 0,
+      delivered: 0,
+      retried: 0,
+      gaveUp: 0,
+    }),
+  };
+  // Сторож остатков у провайдеров (этап 143).
+  const balances = {
+    watch: jest
+      .fn()
+      .mockResolvedValue({ watched: 2, low: 0, unreadable: 0, notified: 0 }),
+  };
 
   const service = new CronJobsService(
     sessionService as never,
@@ -328,6 +350,8 @@ function build() {
     auctionAiAssessment as never,
     liveAuctionOrchestrator as never,
     portfolioWatermark as never,
+    balances as never,
+    apiVideo as never,
   );
   return {
     service,
@@ -337,6 +361,8 @@ function build() {
     auctionAiAssessment,
     liveAuctionOrchestrator,
     portfolioWatermark,
+    balances,
+    apiVideo,
     projectService,
     prisma,
     blobService,
@@ -858,6 +884,8 @@ describe('CronJobsService — метла идёт до конца курсора
       {} as never,
       {} as never,
       imageSketch as never,
+      {} as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

@@ -34,13 +34,23 @@ import { loadConfiguration } from '../../config/configuration';
 export class PublishingChannelController {
   constructor(private readonly service: PublishingChannelService) {}
 
+  /**
+   * `?extended=1` (этап 137) — расширенное согласие ради субтитров.
+   * Query, а не отдельный маршрут: это тот же старт того же OAuth, с
+   * одним дополнительным правом в ссылке.
+   */
   @Post('oauth/:platform/start')
   async start(
     @Req() req: IdentifiedRequest,
     @Param('platform') platform: string,
+    @Query('extended') extended?: string,
   ): Promise<{ url: string }> {
     return {
-      url: await this.service.buildAuthUrl(req.telegramUserId, platform),
+      url: await this.service.buildAuthUrl(
+        req.telegramUserId,
+        platform,
+        extended === '1' || extended === 'true',
+      ),
     };
   }
 

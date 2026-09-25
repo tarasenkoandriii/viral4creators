@@ -1,5 +1,7 @@
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './admin-api';
 import type {
+  AudioTracksResult,
+  AudioTrackView,
   AdminReferralsOverview,
   ReferralsWindow,
   AdminCreatorProfile,
@@ -82,6 +84,11 @@ import type {
   VirtualStudioVariant,
   VirtualStudioFragment,
   VirtualStudioVoiceOption,
+  TesterInvite,
+  TesterProgress,
+  TestTicketDetail,
+  TestTicketRow,
+  TicketStatus,
 } from './types';
 
 // ── Аутентификация (backend/src/modules/admin-auth) ──
@@ -144,6 +151,35 @@ export function getSession(id: string) {
 
 export function deleteSession(id: string) {
   return apiDelete<{ ok: true }>(`/admin/sessions/${id}`);
+}
+
+/**
+ * Звуковые дорожки ролика (этап 139). Список сам дозабирает готовые
+ * сборки на бэкенде — отдельного «обновить» для этого не нужно.
+ */
+export function getAudioTracks(sessionId: string) {
+  return apiGet<AudioTracksResult>(`/admin/audio-tracks/${sessionId}`);
+}
+
+/**
+ * Собрать ОДНУ дорожку. По одной за запрос: перевод, синтез и задача
+ * ffmpeg — это десятки секунд, и четыре подряд не укладывались в таймаут
+ * функции. Экран идёт по списку `toBuild` сам.
+ */
+export function buildAudioTrack(sessionId: string, locale: string) {
+  return apiPost<AudioTrackView>(
+    `/admin/audio-tracks/${sessionId}/build/${locale}`
+  );
+}
+
+/**
+ * Отметка «залито в Studio». Именно отметка, а не проверка: API
+ * звуковых дорожек у YouTube нет вовсе.
+ */
+export function setAudioTrackUploaded(id: string, uploaded: boolean) {
+  return apiPost<AudioTrackView>(`/admin/audio-tracks/track/${id}/uploaded`, {
+    uploaded,
+  });
 }
 
 /** Доп. запрос владельца продукта: тот же платный рендер с теми же
@@ -1095,4 +1131,54 @@ export function revokeUserLite(userId: string, reason: string) {
 /** Вернуть разблокировку после отзыва: новая дата поверх, история остаётся. */
 export function unlockUserLite(userId: string) {
   return apiPost<AdminUserDetail>(`/admin/users/${userId}/lite-unlock`);
+}
+
+// ── Работа с тестировщиком (этапы 155–158) ─────────────────────────────
+
+export function getTesterInvites() {
+  return apiGet<TesterInvite[]>('/admin/tester-invites');
+}
+
+export function createTesterInvite(body: {
+  label: string;
+  freeScenarios: string[];
+  expiresAt?: string | null;
+}) {
+  return apiPost<TesterInvite>('/admin/tester-invites', body);
+}
+
+export function revokeTesterInvite(id: string, reason: string) {
+  return apiPost<TesterInvite>(`/admin/tester-invites/${id}/revoke`, {
+    reason,
+  });
+}
+
+/** `status: 'OPEN'` — не статус, а «что ждёт нас»: рабочий вид вкладки. */
+export function getTestTickets(
+  params: { status?: string; userId?: string; envKey?: string } = {}
+) {
+  return apiGet<TestTicketRow[]>('/admin/test-tickets', params);
+}
+
+export function getTesterProgress() {
+  return apiGet<TesterProgress[]>('/admin/test-tickets/progress');
+}
+
+export function getTestTicket(id: string) {
+  return apiGet<TestTicketDetail>(`/admin/test-tickets/${id}`);
+}
+
+export function setTestTicketStatus(
+  id: string,
+  status: TicketStatus,
+  note?: string
+) {
+  return apiPatch<TestTicketDetail>(`/admin/test-tickets/${id}/status`, {
+    status,
+    note,
+  });
+}
+
+export function replyToTestTicket(id: string, text: string) {
+  return apiPost<TestTicketDetail>(`/admin/test-tickets/${id}/reply`, { text });
 }

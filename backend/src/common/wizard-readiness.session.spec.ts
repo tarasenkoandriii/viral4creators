@@ -37,6 +37,40 @@ const product = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+describe('шаблон сцены вместо референса (этап 149)', () => {
+  const done = (session: Record<string, unknown>) =>
+    readinessOfSession(session).items.find((i) => i.key === 'analysis')?.done;
+
+  it('выбранный шаблон закрывает пункт «откуда сцена»', () => {
+    expect(
+      done(
+        product({
+          videoAnalysis: null,
+          sceneTemplate: { templateId: 'unboxing', chosenAt: 'now' },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('снимок без самого выбора выбором не считается', () => {
+    // Пустой объект в JSON сессии — обычный след неудавшейся записи; по
+    // нему нельзя решить, что человек приём выбрал.
+    expect(done(product({ videoAnalysis: null, sceneTemplate: {} }))).toBe(
+      false,
+    );
+    expect(
+      done(product({ videoAnalysis: null, sceneTemplate: { templateId: '' } })),
+    ).toBe(false);
+    expect(done(product({ videoAnalysis: null, sceneTemplate: null }))).toBe(
+      false,
+    );
+  });
+
+  it('разбор без шаблона закрывает пункт по-прежнему', () => {
+    expect(done(product())).toBe(true);
+  });
+});
+
 describe('готовность по сессии', () => {
   it('сценарий определяется снимком брифа, а не аргументом', () => {
     // Вызывающий уже решил, какой перед ним сценарий, когда создавал

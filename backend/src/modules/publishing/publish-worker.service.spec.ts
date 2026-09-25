@@ -25,7 +25,16 @@ function row(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function setup(opts: { rows?: unknown[]; claimCount?: number } = {}) {
+function setup(
+  opts: {
+    rows?: unknown[];
+    claimCount?: number;
+    /** Права подключённого канала (этап 137). */
+    channelScopes?: string[];
+    /** Сколько дорожек субтитров уже ушло за сутки (аудит субтитров). */
+    captionsToday?: number;
+  } = {},
+) {
   const prisma = {
     publicationRequest: {
       findMany: jest.fn().mockResolvedValue(opts.rows ?? []),
@@ -33,12 +42,16 @@ function setup(opts: { rows?: unknown[]; claimCount?: number } = {}) {
       // гонки переопределяет через claimCount.
       updateMany: jest.fn().mockResolvedValue({ count: opts.claimCount ?? 1 }),
       update: jest.fn().mockResolvedValue(undefined),
+      // Счётчик суточного потолка субтитров (аудит субтитров этапа 137).
+      count: jest.fn().mockResolvedValue(opts.captionsToday ?? 0),
     },
   };
   const channels = {
     ensureFreshToken: jest.fn().mockResolvedValue({
       accessToken: 'at-1',
-      channel: { platform: 'YOUTUBE' },
+      // Права канала (этап 137): по умолчанию расширенного согласия
+      // НЕТ — как у всех каналов, подключённых до него.
+      channel: { platform: 'YOUTUBE', scopes: opts.channelScopes ?? [] },
     }),
   };
   const youtube = {
@@ -59,13 +72,21 @@ function setup(opts: { rows?: unknown[]; claimCount?: number } = {}) {
     uploadBytes: jest.fn().mockResolvedValue(undefined),
     pollStatus: jest.fn(),
   };
+  const translations = {
+    translate: jest.fn().mockResolvedValue({}),
+  };
+  const captions = {
+    insert: jest.fn().mockResolvedValue({ captionId: 'cap-1' }),
+  };
   const service = new PublishWorkerService(
     prisma as never,
     channels as never,
     youtube as never,
     tiktok as never,
+    translations as never,
+    captions as never,
   );
-  return { service, prisma, channels, youtube, tiktok };
+  return { service, prisma, channels, youtube, tiktok, translations, captions };
 }
 
 describe('PublishWorkerService', () => {
@@ -393,5 +414,199 @@ describe('PublishWorkerService', () => {
         stillPending: 0,
       });
     });
+  });
+});
+
+/**
+ * Локализации при загрузке (этап 137).
+ *
+ * Уезжают тем же запросом, что и `snippet`, — значит собираются ровно
+ * перед открытием сессии и ровно один раз. Две границы, которые здесь
+ * проверяются, стоят денег и публикаций: перевод не должен запускаться
+ * повторно на возобновлённой сессии (там `snippet` площадкой уже
+ * принят) и не должен ронять публикацию своим отказом.
+ */
+describe('PublishWorkerService — локализации ролика (этап 137)', () => {
+  it('переводит с языка заявки и отдаёт переводы в openSession вместе с языком', async () => {
+    const { service, youtube, translations } = setup({
+      rows: [row({ language: 'uk', sessionId: 's1', userId: 'u1' })],
+    });
+    translations.translate.mockResolvedValue({
+      en: { title: 'Steel mug', description: 'A mug' },
+    });
+
+    await service.runBatch();
+
+    expect(translations.translate).toHaveBeenCalledWith(
+      { title: 'Товар', description: 'Описание' },
+      'uk',
+      { sessionId: 's1', userId: 'u1' },
+    );
+    expect(youtube.openSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        language: 'uk',
+        localizations: { en: { title: 'Steel mug', description: 'A mug' } },
+      }),
+      'at-1',
+    );
+  });
+
+  it('язык из старой заявки (без колонки) превращается в умолчание продукта', async () => {
+    const { service, youtube } = setup({ rows: [row({ language: null })] });
+    await service.runBatch();
+    expect(youtube.openSession).toHaveBeenCalledWith(
+      expect.objectContaining({ language: 'ru' }),
+      'at-1',
+    );
+  });
+
+  it('возобновлённая сессия переводит НЕ заново: snippet площадкой уже принят', async () => {
+    const { service, youtube, translations } = setup({
+      rows: [row({ uploadJobId: 'https://upload.example/session-1' })],
+    });
+    youtube.checkStatus.mockResolvedValue({ done: false, bytesUploaded: 10 });
+
+    await service.runBatch();
+
+    expect(translations.translate).not.toHaveBeenCalled();
+    expect(youtube.openSession).not.toHaveBeenCalled();
+  });
+
+  it('отказ перевода публикацию не отменяет', async () => {
+    // Приёмка этапа прямо это требует: локализация — украшение, а не
+    // условие выгрузки.
+    const { service, youtube, translations } = setup({ rows: [row()] });
+    translations.translate.mockRejectedValue(new Error('gemini down'));
+
+    const result = await service.runBatch();
+
+    expect(result.published).toBe(1);
+    expect(youtube.openSession).toHaveBeenCalledWith(
+      expect.objectContaining({ localizations: {} }),
+      'at-1',
+    );
+  });
+});
+
+/**
+ * Субтитры к опубликованному ролику (этап 137).
+ *
+ * Это единственное место всего ТЗ, которому нужен скоуп
+ * `youtube.force-ssl`. Здесь проверяется, что без него ничего не
+ * ломается, а с ним — уходит ровно то, что снято в заявку.
+ */
+const CAPTIONS_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
+const SRT = '1\n00:00:01,000 --> 00:00:03,000\nПривет\n';
+
+describe('PublishWorkerService — субтитры (этап 137)', () => {
+  it('у канала с расширенным согласием субтитры уходят после публикации', async () => {
+    const { service, captions, prisma } = setup({
+      rows: [row({ subtitlesSrt: SRT, language: 'uk' })],
+      channelScopes: [
+        'https://www.googleapis.com/auth/youtube.upload',
+        CAPTIONS_SCOPE,
+      ],
+    });
+
+    await service.runBatch();
+
+    expect(captions.insert).toHaveBeenCalledWith(
+      { videoId: 'yt-1', language: 'uk', name: 'Original', srt: SRT.trim() },
+      'at-1',
+    );
+    const marked = prisma.publicationRequest.update.mock.calls
+      .map((c) => c[0].data)
+      .find((d) => d.captionsUploadedAt);
+    expect(marked).toBeTruthy();
+  });
+
+  it('у канала со старым согласием субтитры не грузятся, а причина записана', async () => {
+    // Ролик при этом опубликован: отсутствие субтитров не повод
+    // отменять публикацию.
+    const { service, captions, prisma } = setup({
+      rows: [row({ subtitlesSrt: SRT })],
+    });
+
+    const result = await service.runBatch();
+
+    expect(result.published).toBe(1);
+    expect(captions.insert).not.toHaveBeenCalled();
+    const noted = prisma.publicationRequest.update.mock.calls
+      .map((c) => c[0].data)
+      .find((d) => d.captionsError);
+    expect(String(noted?.captionsError)).toMatch(/расширенного согласия/);
+  });
+
+  it('заявка без текста субтитров к площадке не обращается вовсе', async () => {
+    const { service, captions } = setup({
+      rows: [row()],
+      channelScopes: [CAPTIONS_SCOPE],
+    });
+    await service.runBatch();
+    expect(captions.insert).not.toHaveBeenCalled();
+  });
+
+  it('отказ площадки по субтитрам не отменяет публикацию', async () => {
+    // Ролик уже на канале: вернуть заявку в очередь значило бы залить
+    // его второй раз.
+    const { service, prisma, captions } = setup({
+      rows: [row({ subtitlesSrt: SRT })],
+      channelScopes: [CAPTIONS_SCOPE],
+    });
+    captions.insert.mockRejectedValue(new Error('403 insufficient scope'));
+
+    const result = await service.runBatch();
+
+    expect(result.published).toBe(1);
+    expect(
+      prisma.publicationRequest.update.mock.calls.some(
+        (c) => c[0].data.status === 'PUBLISHED',
+      ),
+    ).toBe(true);
+    // Причина записана в заявку: «субтитров нет» должно иметь ответ в
+    // базе, а не только в логе.
+    const noted = prisma.publicationRequest.update.mock.calls
+      .map((c) => c[0].data)
+      .find((d) => d.captionsError);
+    expect(String(noted?.captionsError)).toMatch(/insufficient scope/);
+  });
+
+  it('суточный потолок держит субтитры: площадку не трогаем, причину пишем', async () => {
+    // Дорожка субтитров стоит 400 единиц из 10 000 на весь проект в
+    // сутки — потолок бережёт поиск референсов, блог и теги.
+    const { service, captions, prisma } = setup({
+      rows: [row({ subtitlesSrt: SRT })],
+      channelScopes: [CAPTIONS_SCOPE],
+      captionsToday: 10,
+    });
+
+    const result = await service.runBatch();
+
+    expect(result.published).toBe(1);
+    expect(captions.insert).not.toHaveBeenCalled();
+    const noted = prisma.publicationRequest.update.mock.calls
+      .map((c) => c[0].data)
+      .find((d) => d.captionsError);
+    expect(String(noted?.captionsError)).toMatch(/потолок/);
+  });
+
+  it('под потолком считаются только сегодняшние дорожки', async () => {
+    // Если считать за всё время, потолок сработает один раз и больше
+    // субтитров не будет никогда.
+    const { service, prisma } = setup({
+      rows: [row({ subtitlesSrt: SRT })],
+      channelScopes: [CAPTIONS_SCOPE],
+    });
+
+    await service.runBatch();
+
+    const where = prisma.publicationRequest.count.mock.calls[0]?.[0]?.where as
+      | { captionsUploadedAt?: { gte?: Date } }
+      | undefined;
+    const since = where?.captionsUploadedAt?.gte;
+    expect(since).toBeInstanceOf(Date);
+    const midnight = new Date();
+    midnight.setUTCHours(0, 0, 0, 0);
+    expect(since?.getTime()).toBe(midnight.getTime());
   });
 });

@@ -241,6 +241,49 @@ export interface PublishingChannel {
   avatarUrl: string | null;
   status: ChannelStatus;
   createdAt: string;
+  /** Разрешены ли субтитры (скоуп force-ssl, этап 137 ТЗ
+   * TZ-Multilingual-YouTube.md). У каналов, подключённых раньше, —
+   * false: право выдаётся только новым согласием. */
+  captionsAllowed: boolean;
+}
+
+/**
+ * Альтернативная звуковая дорожка ролика (этап 138/139 ТЗ
+ * TZ-Multilingual-YouTube.md) — зеркало `AudioTrackView` на бэкенде.
+ */
+export interface AudioTrackView {
+  id: string;
+  locale: string;
+  status: string;
+  /** Что произносит дорожка: единственный способ оператору понять, что он заливает. */
+  speech: string | null;
+  /** Готовый полный звук — то, что уходит в Studio. */
+  trackUrl: string | null;
+  /** Только голос: полезен, когда сборка не удалась, а речь есть. */
+  voiceUrl: string | null;
+  /** Задача сборки ещё идёт. */
+  mixing: boolean;
+  /** Собрана для ПРЕЖНЕЙ версии ролика — заливать её нельзя. */
+  stale: boolean;
+  voiceSeconds: number | null;
+  overflowSeconds: number | null;
+  tempoRate: number | null;
+  attempts: number;
+  note: string | null;
+  mixError: string | null;
+  /** Субтитры дорожки (этап 141): оператор скачивает их тем же заходом. */
+  subtitlesSrt: string | null;
+  uploadedAt: string | null;
+  uploadedById: string | null;
+}
+
+export interface AudioTracksResult {
+  sessionId: string;
+  /** Язык оригинала — на него дорожка не нужна. */
+  sourceLocale: string;
+  /** Локали, которые есть смысл собрать сейчас. */
+  toBuild: string[];
+  tracks: AudioTrackView[];
 }
 
 export interface PublicationListResult {
@@ -498,6 +541,18 @@ export interface AdminUserListResult {
 }
 
 export interface AdminUserDetail extends AdminUserSummary {
+  /**
+   * Окружение последнего запуска мини-аппа (этап 156,
+   * `docs-tz/TZ-Rabota-s-Testirovshchikom.md` §3.4). `null` у всех, кроме
+   * тестовых аккаунтов: пишется только им.
+   *
+   * `value` — сознательно `unknown`: набор полей окружения будет меняться
+   * вслед за тем, что понадобится для воспроизведения, а карточка
+   * показывает его как есть. Объявить здесь копию формы значило бы
+   * завести третье место, которое будет расходиться с двумя первыми
+   * (`frontend/src/lib/environment.ts`, `backend/src/common/environment.ts`).
+   */
+  environment: { at: string; value: unknown } | null;
   costByOperation: CostBucket[];
   recentSessions: Array<{
     sessionId: string;
@@ -1342,6 +1397,18 @@ export interface ProviderBalance {
    * это не разобрано, экран обязан давать дорогу к первоисточнику.
    */
   dashboardUrl?: string;
+  /**
+   * Остаток НЕ в деньгах: символы у ElevenLabs, поиски у SerpApi
+   * (этап 142). Отдельным полем, а не пересчётом в доллары — цена
+   * единицы зависит от тарифа и меняется без нашего участия.
+   */
+  units?: {
+    /** Отрицательное — перебор сверх лимита (у ElevenLabs это штатно). */
+    left: number;
+    total?: number;
+    label: string;
+    resetsAt?: string;
+  };
   /** Разбивка журнала пополнений и списаний, если провайдер её отдал. */
   changes?: ProviderBalanceChanges;
   /** Сырой ответ — только когда остаток разобрать не удалось. */
@@ -1490,4 +1557,118 @@ export interface AdminReferralsOverview {
     spentEstimateMicroUsd: number | null;
   };
   suspicious: SuspiciousInviter[];
+}
+
+// ── Работа с тестировщиком (этапы 155–158) ─────────────────────────────
+// Модель backend/src/modules/admin-panel/admin-tester-invites.service.ts и
+// admin-test-tickets.service.ts — держать в синхроне вручную.
+
+export interface TesterInvite {
+  id: string;
+  label: string;
+  freeScenarios: string[];
+  expiresAt: string | null;
+  /** Готовая ссылка — остаётся только скопировать. */
+  link: string;
+  activated: boolean;
+  activatedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+export type TicketStatus =
+  | 'NEW'
+  | 'IN_PROGRESS'
+  | 'ANSWERED'
+  | 'FIXED'
+  | 'REJECTED'
+  | 'DUPLICATE';
+
+export interface TestTicketRow {
+  id: string;
+  number: number;
+  createdAt: string;
+  source: string;
+  status: TicketStatus;
+  preview: string;
+  scenario: string | null;
+  uiLocale: string;
+  envKey: string | null;
+  /** Окружение одной строкой — собрано на бэкенде, здесь только текст. */
+  envSummary: string;
+  /**
+   * Окружение снято НЕ в момент находки. Из бота оно всегда последнее
+   * известное: человек мог написать боту с телефона про то, что видел
+   * на десктопе.
+   */
+  envStale: boolean;
+  attachments: number;
+  tester: { id: string; telegramId: string; label: string };
+  replySentAt: string | null;
+  replyFailedAt: string | null;
+}
+
+export interface TicketAttachment {
+  url: string;
+  kind: string;
+  size: number;
+  fileName: string | null;
+  mimeType: string | null;
+}
+
+export interface TicketComment {
+  at: string;
+  from: 'TESTER' | 'OPERATOR';
+  by?: string;
+  text: string;
+  attachments?: TicketAttachment[];
+}
+
+export interface TestTicketDetail extends TestTicketRow {
+  text: string;
+  env: Record<string, unknown> | null;
+  envCapturedAt: string | null;
+  appBuild: string | null;
+  sessionId: string | null;
+  sessionLocale: string | null;
+  stepId: string | null;
+  attachmentList: TicketAttachment[] | null;
+  comments: TicketComment[] | null;
+  statusBy: string | null;
+  statusAt: string | null;
+  statusNote: string | null;
+  /** Открыт ли диалог с ботом — без него ответ отправить нельзя. */
+  canReply: boolean;
+  /**
+   * Тикеты с ТЕМ ЖЕ ОКРУЖЕНИЕМ. Именно окружением, а не «похожие»: у
+   * находки из бота нет ни сценария, ни шага, и ключ вырождается в «та
+   * же платформа и локаль».
+   */
+  /** Сколько их всего — список ниже обрезан бэкендом. */
+  sameEnvironmentTotal: number;
+  sameEnvironment: Array<{
+    id: string;
+    number: number;
+    createdAt: string;
+    status: TicketStatus;
+    preview: string;
+  }>;
+}
+
+export interface TesterProgress {
+  userId: string;
+  telegramId: string;
+  label: string;
+  scenarios: Array<{
+    scenario: FreeScenario;
+    open: boolean;
+    sessions: number;
+    tickets: number;
+  }>;
+  /** До какого числа действует доступ. null — бессрочно. */
+  accessUntil: string | null;
+  accessActive: boolean;
+  openTickets: number;
+  closedTickets: number;
+  lastActivityAt: string | null;
 }

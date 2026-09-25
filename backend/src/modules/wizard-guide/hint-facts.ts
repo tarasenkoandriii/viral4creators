@@ -53,6 +53,19 @@ export interface GreetingState {
 export interface ProductState {
   hasReference: boolean;
   analysisComplete: boolean;
+  /**
+   * Сцена задана готовым приёмом, а не разбором чужого ролика (этап
+   * 153; приёмы — TODO §III п.11).
+   *
+   * Без этого факта советник получал «референс не выбран, разбор не
+   * завершён» и советовал человеку, сознательно обошедшемуся без
+   * референса, пойти его искать и дождаться разбора, которого не будет.
+   * Это третий случай одного класса подряд: ветку приёмов завели, а
+   * места, читающие `videoAnalysis` на другом конце конвейера, не
+   * прошли (первые два — `RelevancePanel` в аудите 150 и
+   * `AbTestService` в аудите 152).
+   */
+  onSceneTemplate: boolean;
   hasProductInfo: boolean;
   hasProductImage: boolean;
   promptApproved: boolean;
@@ -109,9 +122,17 @@ export function greetingFacts(state: GreetingState | null): string[] {
 
 export function productFacts(state: ProductState | null): string[] {
   if (!state) return ['прогон ещё не начат'];
+  // У сессии на приёме разбора нет и не будет. Строки «разбор не
+  // завершён» здесь быть не должно вовсе: советник пишет по фактам, и
+  // из этой строки он выведет совет подождать того, чего не случится.
+  const source = state.onSceneTemplate
+    ? ['сцена задана готовым приёмом, референс не нужен']
+    : [
+        state.hasReference ? 'референс выбран' : 'референс не выбран',
+        state.analysisComplete ? 'разбор завершён' : 'разбор не завершён',
+      ];
   return [
-    state.hasReference ? 'референс выбран' : 'референс не выбран',
-    state.analysisComplete ? 'разбор завершён' : 'разбор не завершён',
+    ...source,
     state.hasProductInfo ? 'товар описан' : 'товар не описан',
     state.hasProductImage ? 'фото товара есть' : 'фото товара нет',
     state.promptApproved ? 'промпт одобрен' : 'промпт не одобрен',

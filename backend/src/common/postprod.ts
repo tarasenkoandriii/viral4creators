@@ -217,6 +217,113 @@ function usesSourceAudio(mode: 'voiceover' | 'dub'): boolean {
   return mode !== 'dub';
 }
 
+/**
+ * Слагаемые звука одной сборки — общий рецепт (этап 138).
+ *
+ * Вынесено из `planPostProduction` целиком и без изменений, потому что
+ * альтернативная звуковая дорожка на другом языке (ТЗ
+ * TZ-Multilingual-YouTube.md §5) обязана собираться ТЕМ ЖЕ рецептом с
+ * подменой ровно одного входа — файла голоса. Собери её отдельно «из
+ * музыки и голоса», и зритель на немецком получил бы заметно более
+ * пустой звук, чем зритель на украинском: в миксе `voiceover` есть ещё
+ * и приглушённая дорожка самого ролика — атмосфера, шумы, музыка Veo.
+ * Заметить это было бы некому до жалоб.
+ *
+ * Поэтому громкости, приведение подложки к длине ролика, `duration=first`
+ * и `loudnorm` живут здесь в одном экземпляре, а не в двух местах,
+ * которые однажды разойдутся.
+ *
+ * Возвращает строки фильтра, последняя из которых заканчивается на
+ * `[a]` — готовый звук.
+ */
+export function audioMixFilters(input: {
+  /** Дорожка самого ролика (`[0:a]`) и во сколько её приглушить. */
+  source: { duck: number } | null;
+  /** Голос: номер входа, сдвиг и, для дорожек, подгонка темпа. */
+  voice: { index: number; delayMs: number; tempoRate?: number | null } | null;
+  music: { index: number; volume: number } | null;
+  totalSeconds?: number;
+  /**
+   * Дотянуть готовый звук тишиной до этой длины (этап 138). Нужно
+   * только альтернативным дорожкам: YouTube ждёт файл примерно той же
+   * длины, что ролик, а у немого исходника без подложки эталона длины
+   * в миксе нет вовсе — им становится сам голос. Обычная сборка это не
+   * передаёт: там длину держит видеопоток.
+   */
+  padToSeconds?: number;
+}): string[] {
+  const filters: string[] = [];
+  // Слагаемые звука в порядке, в котором они уйдут в `amix`. Первым
+  // обязан стоять вход ТОЧНО той же длины, что ролик: на нём держится
+  // `duration=first`, то есть обещание «длина ролика не изменится».
+  const mixed: string[] = [];
+  const totalSeconds = input.totalSeconds;
+
+  if (input.music) {
+    // `atrim` режет длинный трек, `apad` дотягивает короткий тишиной
+    // — вместе они дают подложку ровно в длину ролика. Без известной
+    // длины (старый вызывающий) оставляем трек как есть: тогда
+    // эталоном длины будет исходная дорожка или голос, как и раньше.
+    const fit = totalSeconds
+      ? `atrim=0:${totalSeconds},apad=whole_dur=${totalSeconds},`
+      : '';
+    filters.push(
+      `[${input.music.index}:a]${fit}volume=${input.music.volume}[mus]`,
+    );
+  }
+
+  if (!input.source) {
+    // Дубляж или немой исходник: дорожки ролика в миксе нет вовсе.
+    // Тогда эталон длины — приведённая подложка, если она есть.
+    if (input.music && totalSeconds) mixed.push('[mus]');
+  } else {
+    // Приглушаем исходную дорожку только под НАШ голос: это и есть
+    // смысл `duck`. Под одной лишь подложкой глушить нечего — там
+    // тише становится сама подложка, а не ролик, иначе музыка
+    // «съедала» бы звук, ради которого её и добавляют.
+    filters.push(`[0:a]volume=${input.source.duck}[bg]`);
+    mixed.push('[bg]');
+  }
+
+  if (input.voice) {
+    // `all=1` обязателен: без него adelay сдвигает только первый канал, и
+    // стереоголос разъезжается по времени между левым и правым.
+    //
+    // `atempo` (этап 138) стоит ДО сдвига: ускоряется сама речь, а не
+    // момент её начала — иначе реплика уехала бы ещё и по времени.
+    // В обычной сборке его не бывает: там длина текста правится до
+    // синтеза, и это записано отдельным решением в шапке файла.
+    const tempo = input.voice.tempoRate;
+    const steps = [
+      ...(tempo && tempo !== 1 ? [`atempo=${tempo}`] : []),
+      ...(input.voice.delayMs > 0
+        ? [`adelay=${input.voice.delayMs}:all=1`]
+        : []),
+    ];
+    filters.push(
+      `[${input.voice.index}:a]${steps.length ? steps.join(',') : 'anull'}[vo]`,
+    );
+    mixed.push('[vo]');
+  }
+
+  // Подложка, если она ещё не встала первой.
+  if (input.music && !mixed.includes('[mus]')) mixed.push('[mus]');
+
+  const pad = input.padToSeconds ? `,apad=whole_dur=${input.padToSeconds}` : '';
+  const normalize = `loudnorm=I=-16:TP=-1.5:LRA=11${pad}[a]`;
+  if (mixed.length === 1) {
+    // Микшировать нечего — один источник просто выравнивается по
+    // громкости. Тот же случай, что дубляж без подложки до этой фичи.
+    filters.push(`${mixed[0]}${normalize}`);
+  } else {
+    filters.push(
+      `${mixed.join('')}amix=inputs=${mixed.length}:duration=first:` +
+        `dropout_transition=0:normalize=0,${normalize}`,
+    );
+  }
+  return filters;
+}
+
 export function planPostProduction(opts: PostProdOptions): PostProdPlan {
   const crop = resolveCrop(opts.targetAspectRatio);
   const voiceKey = opts.voiceInputKey?.trim() || null;
@@ -307,60 +414,14 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
     filters.push(`[0:v]${videoSteps.join(',')}[v]`);
   }
   if (voiceKey || musicKey) {
-    // Слагаемые звука в порядке, в котором они уйдут в `amix`. Первым
-    // обязан стоять вход ТОЧНО той же длины, что ролик: на нём держится
-    // `duration=first`, то есть обещание «длина ролика не изменится».
-    const mixed: string[] = [];
-
-    if (musicKey) {
-      // `atrim` режет длинный трек, `apad` дотягивает короткий тишиной
-      // — вместе они дают подложку ровно в длину ролика. Без известной
-      // длины (старый вызывающий) оставляем трек как есть: тогда
-      // эталоном длины будет исходная дорожка или голос, как и раньше.
-      const fit = totalSeconds
-        ? `atrim=0:${totalSeconds},apad=whole_dur=${totalSeconds},`
-        : '';
-      filters.push(`[${musicIndex}:a]${fit}volume=${musicVolume}[mus]`);
-    }
-
-    if (!usesSourceAudio(mode)) {
-      // Дубляж или немой исходник: дорожки ролика в миксе нет вовсе.
-      // Тогда эталон длины — приведённая подложка, если она есть.
-      if (musicKey && totalSeconds) mixed.push('[mus]');
-    } else {
-      // Приглушаем исходную дорожку только под НАШ голос: это и есть
-      // смысл `duck`. Под одной лишь подложкой глушить нечего — там
-      // тише становится сама подложка, а не ролик, иначе музыка
-      // «съедала» бы звук, ради которого её и добавляют.
-      filters.push(`[0:a]volume=${voiceKey ? duck : 1}[bg]`);
-      mixed.push('[bg]');
-    }
-
-    if (voiceKey) {
-      // `all=1` обязателен: без него adelay сдвигает только первый канал, и
-      // стереоголос разъезжается по времени между левым и правым.
-      filters.push(
-        delayMs > 0
-          ? `[${voiceIndex}:a]adelay=${delayMs}:all=1[vo]`
-          : `[${voiceIndex}:a]anull[vo]`,
-      );
-      mixed.push('[vo]');
-    }
-
-    // Подложка, если она ещё не встала первой.
-    if (musicKey && !mixed.includes('[mus]')) mixed.push('[mus]');
-
-    const normalize = `loudnorm=I=-16:TP=-1.5:LRA=11[a]`;
-    if (mixed.length === 1) {
-      // Микшировать нечего — один источник просто выравнивается по
-      // громкости. Тот же случай, что дубляж без подложки до этой фичи.
-      filters.push(`${mixed[0]}${normalize}`);
-    } else {
-      filters.push(
-        `${mixed.join('')}amix=inputs=${mixed.length}:duration=first:` +
-          `dropout_transition=0:normalize=0,${normalize}`,
-      );
-    }
+    filters.push(
+      ...audioMixFilters({
+        source: usesSourceAudio(mode) ? { duck: voiceKey ? duck : 1 } : null,
+        voice: voiceKey ? { index: voiceIndex, delayMs } : null,
+        music: musicKey ? { index: musicIndex, volume: musicVolume } : null,
+        totalSeconds,
+      }),
+    );
   }
 
   if (filters.length) {
@@ -397,5 +458,95 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
     crop,
     audio: voiceKey ? { mode, delayMs } : null,
     subtitles: !!subtitlesKey,
+  };
+}
+
+/**
+ * Задача ffmpeg на АЛЬТЕРНАТИВНУЮ ЗВУКОВУЮ ДОРОЖКУ (этап 138, ТЗ
+ * TZ-Multilingual-YouTube.md §5) — тот же рецепт звука, что у
+ * оригинальной сборки (`audioMixFilters`), с подменой ровно одного
+ * входа: файла голоса.
+ *
+ * Отличий от обычной сборки ровно три, и все три вынужденные:
+ *
+ * 1. **На выходе только звук** (`-vn`): YouTube принимает дорожку
+ *    отдельным аудиофайлом, а не вторым видео. Значит и видеопоток
+ *    перекодировать не надо — это самая дорогая часть обычной задачи,
+ *    и здесь её нет вовсе.
+ * 2. **`atempo`**, если без него речь не влезает
+ *    (`common/audio-track-fit.ts`). Применяется ЗДЕСЬ, а не отдельным
+ *    проходом: сборка и так задача ffmpeg, и ускорение в ней — ещё один
+ *    фильтр в том же вызове, а не второй счёт.
+ * 3. **Длина гарантируется явно** — `apad` дотягивает короткий микс и
+ *    `-t` режет длинный. У обычной сборки длину держит видеопоток,
+ *    здесь его нет.
+ *
+ * Вход `{{source}}` — ИСХОДНЫЙ рендер, тот же, что уходит в обычную
+ * сборку, а не готовый ролик: в готовом уже звучит оригинальный голос,
+ * и новая дорожка легла бы поверх него.
+ */
+export interface AudioTrackJobOptions {
+  /** Ключ исходного рендера; по умолчанию `source`. */
+  inputKey?: string;
+  /** Ключ файла с переведённой речью. */
+  voiceInputKey: string;
+  /** Ключ музыкальной подложки, если она была у оригинала. */
+  musicInputKey?: string | null;
+  mode: 'voiceover' | 'dub';
+  /** У исходника нет звуковой дорожки вовсе (`silentSource`). */
+  sourceHasNoAudio?: boolean;
+  duck?: number;
+  musicVolume?: number;
+  voiceDelayMs?: number;
+  /** Ускорение речи, если без него не влезает. */
+  tempoRate?: number | null;
+  /** Длина ролика — дорожка приводится ровно к ней. */
+  totalDurationSeconds: number;
+  outputName?: string;
+}
+
+export function planAudioTrackJob(opts: AudioTrackJobOptions): PostProdPlan {
+  const inputKey = opts.inputKey ?? 'source';
+  const voiceKey = opts.voiceInputKey?.trim();
+  if (!voiceKey) {
+    throw new PostProdError('дорожка без файла голоса не собирается');
+  }
+  const total = opts.totalDurationSeconds;
+  if (!(total > 0)) {
+    throw new PostProdError('длина ролика неизвестна — дорожку не собрать');
+  }
+  const musicKey = opts.musicInputKey?.trim() || null;
+  const outputName = opts.outputName ?? 'track.m4a';
+  const delayMs = Math.max(0, Math.round(opts.voiceDelayMs ?? 0));
+  const usesSource = opts.mode === 'voiceover' && !opts.sourceHasNoAudio;
+
+  const inputKeys = [inputKey, voiceKey, ...(musicKey ? [musicKey] : [])];
+  const filters = audioMixFilters({
+    source: usesSource ? { duck: opts.duck ?? DEFAULT_DUCK } : null,
+    voice: { index: 1, delayMs, tempoRate: opts.tempoRate ?? null },
+    music: musicKey
+      ? { index: 2, volume: opts.musicVolume ?? DEFAULT_MUSIC_VOLUME }
+      : null,
+    totalSeconds: total,
+    padToSeconds: total,
+  });
+
+  const command = [
+    ...inputKeys.map((k) => `-i {{${k}}}`),
+    `-filter_complex "${filters.join(';')}"`,
+    '-map "[a]"',
+    '-vn',
+    '-c:a aac -b:a 192k',
+    `-t ${total}`,
+    `{{${outputName}}}`,
+  ].join(' ');
+
+  return {
+    outputName,
+    command,
+    inputKeys,
+    crop: null,
+    audio: { mode: opts.mode, delayMs },
+    subtitles: false,
   };
 }

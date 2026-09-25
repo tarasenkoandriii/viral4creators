@@ -40,6 +40,45 @@ export interface RestorableSession {
   generatedVideo?: { status?: string } | null;
   generationPrompt?: { approvedAt?: string } | null;
   videoAnalysis?: { status?: string } | null;
+  /** Приём сцены вместо референса (этап 150, TODO §III п.11). */
+  sceneTemplate?: { templateId?: string } | null;
+}
+
+/**
+ * Сессия идёт по приёму, а не по референсу.
+ *
+ * Зеркало серверного `usesTemplate` (`common/scene-templates.ts`), и
+ * ключ тот же — ЗАВЕРШЁННОСТЬ разбора, а не наличие записи: у сессии с
+ * провалившимся разбором и выбранным приёмом промпт собирается по
+ * приёму, и экран обязан говорить то же самое, что сервер.
+ */
+export function onSceneTemplate(
+  session: RestorableSession | null | undefined
+): boolean {
+  return usesSceneTemplate(
+    session?.videoAnalysis?.status,
+    !!session?.sceneTemplate?.templateId
+  );
+}
+
+/**
+ * То же правило по двум фактам, а не по сессии.
+ *
+ * Нужно отдельно, потому что экран держит эти два факта в РАЗНЫХ местах
+ * состояния и они меняются независимо: приём приходит от выбора, разбор
+ * — от загрузки референса. Хранить готовый ответ значило бы хранить
+ * производную величину, которая устаревает молча, — ровно это и
+ * случилось (аудит этапа 151, А-1): человек выбирал приём, потом всё
+ * же загружал референс, и степпер оставался укороченным навсегда, то
+ * есть без позиции «Анализ» и без доступа к разбору, за который
+ * заплачено.
+ */
+export function usesSceneTemplate(
+  analysisStatus: string | null | undefined,
+  templateChosen: boolean
+): boolean {
+  if (analysisStatus === 'complete') return false;
+  return templateChosen;
 }
 
 /** Рендер идёт прямо сейчас: опрос надо возобновить, кнопку — не показывать. */
@@ -103,9 +142,15 @@ export function stepFromSession(
       return 'analyzing';
     case 'error':
       // Сбой разбора: возвращаем к выбору референса, а не в пустой экран.
-      return 'upload';
+      //
+      // Кроме случая, когда приём уже выбран (этап 150): разбор упал, но
+      // ролик собирается по приёму, и отправлять человека выбирать
+      // референс заново значило бы прятать от него живой путь вперёд.
+      return onSceneTemplate(session) ? 'product-input' : 'upload';
     default:
-      return 'upload';
+      // Приём выбран, разбора нет и не будет — шага «Анализ» у этой
+      // сессии не существует вовсе, следующий шаг сразу товар.
+      return onSceneTemplate(session) ? 'product-input' : 'upload';
   }
 }
 
@@ -122,6 +167,53 @@ export const STEPPER_IDS = [
   'video',
 ] as const;
 export type StepperId = (typeof STEPPER_IDS)[number];
+
+/**
+ * Позиции степпера у сессии на ПРИЁМЕ сцены (этап 151).
+ *
+ * «Анализа» здесь нет — не спрятан, а не существует: разбирать нечего,
+ * позиция и так была некликабельной с этапа 150. Серая подпись шага,
+ * которого у человека не будет никогда, — это обещание работы, которой
+ * не случится, и вопрос «а почему он не идёт».
+ */
+export const TEMPLATE_STEPPER_IDS = [
+  'upload',
+  'product',
+  'prompt',
+  'video',
+] as const;
+
+export function stepperIdsFor(onTemplate: boolean): readonly StepperId[] {
+  return onTemplate ? TEMPLATE_STEPPER_IDS : STEPPER_IDS;
+}
+
+/**
+ * Подписи позиций.
+ *
+ * Общий список подписей ОДИН, и это не экономия: три из четырёх
+ * подписей у обоих путей совпадают дословно, и второй массив в пяти
+ * локалях был бы пятью местами, где они разойдутся. Отличается первая —
+ * «Видео» у референса и «Сцена» у приёма, — и она одна и приходит
+ * отдельным ключом.
+ */
+export function stepperLabels(
+  onTemplate: boolean,
+  labels: readonly string[],
+  sourceLabel: string
+): string[] {
+  const byId: Record<StepperId, string> = {
+    upload: onTemplate ? sourceLabel : labels[0],
+    analysis: labels[1],
+    product: labels[2],
+    prompt: labels[3],
+    video: labels[4],
+  };
+  // `?? id` достижим: подписи приходят массивом из словаря, и локаль с
+  // коротким массивом дала бы `undefined` — пустой кружок без названия.
+  // Английский идентификатор вместо пустоты уродлив, но читаем, а
+  // счётчик подписей под отдельным тестом (`wizard-steps.test.ts`).
+  return stepperIdsFor(onTemplate).map((id) => byId[id] ?? id);
+}
 
 /**
  * Состояние воркфлоу → позиция степпера. `null` означает «все шаги

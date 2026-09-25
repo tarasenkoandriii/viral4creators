@@ -181,6 +181,7 @@ describe('готовность поздравления (§7.3, этап 12)', (
 describe('готовность товарки (§7.3, этап 13)', () => {
   const base = {
     analysisComplete: true,
+    hasSceneTemplate: false,
     hasProductInfo: true,
     hasProductImage: true,
     promptApproved: true,
@@ -204,6 +205,30 @@ describe('готовность товарки (§7.3, этап 13)', () => {
       expect(r.canGenerate).toBe(false);
       expect(r.missingRequired).toBe(1);
     }
+  });
+
+  it('шаблон сцены закрывает тот же пункт, что и разбор', () => {
+    // «Откуда берётся сцена» — один вопрос с двумя ответами. Отдельный
+    // пункт «нужен разбор» у человека, сознательно обошедшегося без
+    // референса, был бы требованием сделать то, чего от него не хотят
+    // (этап 149, TODO §III п.11).
+    const r = productReadiness({
+      ...base,
+      analysisComplete: false,
+      hasSceneTemplate: true,
+    });
+    expect(r.canGenerate).toBe(true);
+    expect(r.items.find((i) => i.key === 'analysis')?.done).toBe(true);
+  });
+
+  it('без разбора и без шаблона пункт не закрыт', () => {
+    const r = productReadiness({
+      ...base,
+      analysisComplete: false,
+      hasSceneTemplate: false,
+    });
+    expect(r.canGenerate).toBe(false);
+    expect(r.items.find((i) => i.key === 'analysis')?.done).toBe(false);
   });
 
   it('бренд-манифест влияет, но не блокирует', () => {

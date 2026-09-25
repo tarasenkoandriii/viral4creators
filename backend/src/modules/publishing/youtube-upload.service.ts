@@ -27,8 +27,53 @@ import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 import { PublicationPrivacy } from '../../common/types/publication.types';
 
+/**
+ * `localizations` в `part` — этап 137. `videos.insert` принимает эту
+ * часть с уже имеющимся скоупом `youtube.upload`; это проверено по
+ * документации до кода и меняет весь этап: локализованные заголовки и
+ * описания ставятся ПРИ ЗАГРУЗКЕ, а не вторым проходом
+ * `videos.update`, которому понадобился бы `force-ssl` (то есть
+ * верификация приложения в Google и переподключение канала). Заодно
+ * отпадают обе тихие ловушки обновления — «запрос без свойства стирает
+ * свойство» и «categoryId обязателен при обновлении snippet»: стирать
+ * нечего, ролика ещё нет.
+ */
 const UPLOAD_INIT_URL =
-  'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
+  'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=';
+
+/**
+ * Части запроса. `localizations` добавляется ТОЛЬКО когда переводы
+ * действительно есть (аудит этапа 137).
+ *
+ * Причина осторожности: этот запрос — единственный путь всех
+ * YouTube-публикаций продукта, работавший до сих пор без нареканий, а
+ * `part` — строка, которую площадка разбирает раньше тела. Посылать в
+ * ней новое имя части на КАЖДОЙ загрузке ради необязательного
+ * украшения значило бы поставить всю выгрузку в зависимость от того,
+ * насколько точно я угадал поведение чужого API. Нет переводов —
+ * запрос ровно тот же, что до этапа.
+ */
+export function uploadParts(hasLocalizations: boolean): string {
+  return hasLocalizations ? 'snippet,status,localizations' : 'snippet,status';
+}
+
+/**
+ * Категория ролика. Обязательна при любом обновлении `snippet`, а
+ * значит нужна с самого начала — иначе первое же обновление упёрлось бы
+ * в поле, которого у ролика нет (находка аудита §11).
+ *
+ * 22 — «People & Blogs»: единственная категория, назначаемая в любом
+ * регионе, и честная для рекламного ролика от лица продавца. Константой,
+ * а не переменной окружения: канал у продукта один (решение владельца
+ * 24.09.2026), и оператору, которому понадобится другая категория,
+ * правка одной строки честнее, чем ещё одна необъяснённая переменная.
+ */
+export const DEFAULT_CATEGORY_ID = '22';
+
+export interface YoutubeLocalizedText {
+  title: string;
+  description: string;
+}
 
 export interface YoutubeUploadInput {
   title: string;
@@ -37,6 +82,16 @@ export interface YoutubeUploadInput {
   privacy: PublicationPrivacy;
   /** Публичная Blob-ссылка на собственную копию ролика заявки. */
   videoUrl: string;
+  /**
+   * Язык ролика (ISO 639-1) — уезжает и в `defaultLanguage` (язык
+   * заголовка с описанием), и в `defaultAudioLanguage` (язык речи).
+   * Оба сразу: у продукта озвучка всегда на языке сессии, и разделять
+   * их было бы выдумкой. Без `defaultLanguage` YouTube отвергает
+   * локализации целиком (`defaultLanguageNotSet`).
+   */
+  language?: string;
+  /** Переводы заголовка и описания по локалям, без языка оригинала. */
+  localizations?: Record<string, YoutubeLocalizedText>;
 }
 
 export interface YoutubeUploadResult {
@@ -64,12 +119,25 @@ export class YoutubeUploadService {
     input: YoutubeUploadInput,
     accessToken: string,
   ): Promise<string> {
+    const localizations = input.localizations ?? {};
     const body = {
       snippet: {
         title: input.title.slice(0, 100),
         description: input.description.slice(0, 5000),
         tags: input.tags,
+        categoryId: DEFAULT_CATEGORY_ID,
+        ...(input.language
+          ? {
+              defaultLanguage: input.language,
+              defaultAudioLanguage: input.language,
+            }
+          : {}),
       },
+      // Пустую карту не шлём вовсе: `localizations: {}` — это просьба
+      // площадке завести пустую часть, а не «локализаций нет».
+      ...(input.language && Object.keys(localizations).length > 0
+        ? { localizations }
+        : {}),
       status: {
         privacyStatus: mapPrivacy(input.privacy),
         selfDeclaredMadeForKids: false,
@@ -78,15 +146,19 @@ export class YoutubeUploadService {
         containsSyntheticMedia: true,
       },
     };
-    const res = await axios.post(UPLOAD_INIT_URL, body, {
-      timeout: YT_TIMEOUT_MS,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json; charset=UTF-8',
-        'X-Upload-Content-Type': 'video/mp4',
+    const res = await axios.post(
+      UPLOAD_INIT_URL + uploadParts('localizations' in body),
+      body,
+      {
+        timeout: YT_TIMEOUT_MS,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': 'video/mp4',
+        },
+        validateStatus: () => true,
       },
-      validateStatus: () => true,
-    });
+    );
     const location = res.headers?.['location'] as string | undefined;
     if (res.status >= 400 || !location) {
       throw Object.assign(

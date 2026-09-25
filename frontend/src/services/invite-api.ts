@@ -23,6 +23,16 @@ export interface InviteState {
     confirmed: boolean;
     confirmedKind: string | null;
     telegramChannel: string | null;
+    /** Второй способ — подписка на наш YouTube-канал (этап 140). */
+    youtube: {
+      available: boolean;
+      /** Проверять можно прямо сейчас: вход есть или не нужен. */
+      ready: boolean;
+      /** Проверим правом, которое человек уже дал под загрузку роликов. */
+      viaConnectedChannel: boolean;
+      videoId: string | null;
+      channelId: string | null;
+    };
   };
   referrals: {
     code: string;
@@ -78,6 +88,26 @@ export async function claimStoredReferral(): Promise<void> {
     // 401 — ещё не вошёл; всё остальное — сеть. Код оставляем: он
     // пригодится следующей попытке, их теперь две.
   }
+}
+
+/**
+ * Вход через Google ради проверки подписки (этап 140). Возвращает
+ * ссылку согласия — переход делает вызывающий, тем же приёмом, что у
+ * подключения каналов: наши identity-заголовки обычная навигация
+ * браузера не унесла бы.
+ */
+export async function startYoutubeUnlock(): Promise<string> {
+  const res = await api.post<{ url: string }>('/referrals/youtube/start', {});
+  const url = res.data?.url;
+  if (!url) throw new Error('Пустой ответ: ссылка входа');
+  return url;
+}
+
+/** «Я подписался» для YouTube-способа. */
+export async function confirmYoutubeSubscription(): Promise<InviteState> {
+  const res = await api.post<InviteState>('/referrals/youtube/check', {});
+  if (!res.data) throw new Error('Пустой ответ: invite state');
+  return res.data;
 }
 
 export async function confirmTelegramSubscription(): Promise<InviteState> {

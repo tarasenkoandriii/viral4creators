@@ -131,7 +131,27 @@ export type PlanFeature =
    * «cap параметра по тарифу» — новый локальный механизм, не расширение
    * `PlanService`).
    */
-  | 'greetingVideo';
+  | 'greetingVideo'
+  /**
+   * Внешнее API по ключу (этап 144, docs-tz/TZ-Vneshnee-API.md).
+   *
+   * Только PREMIUM, и это не про стоимость вызова — она та же, что из
+   * интерфейса. Это про то, что ключ снимает единственное, что до сих
+   * пор ограничивало темп расхода: человека между вызовами. Суточный
+   * потолок остаётся и применяется к ключу, но потолок — последняя
+   * линия, а не первая.
+   */
+  | 'externalApi'
+  /**
+   * Звуковые дорожки и субтитры ролика на других языках (этап 148,
+   * TODO §III п.12, docs-tz/TZ-Multilingual-YouTube.md).
+   *
+   * Механизм построен этапами 138–141 для НАШЕГО канала и был
+   * admin-only; здесь он открывается пользователю. Premium, потому что
+   * каждая дорожка — это перевод, синтез и задача ffmpeg, то есть
+   * настоящие деньги за каждый язык, а не разовая настройка.
+   */
+  | 'multilingualTracks';
 
 export interface PlanDefinition {
   id: PlanId;
@@ -174,6 +194,10 @@ const ALL: Record<PlanFeature, boolean> = {
   // presenterProvider/resolution внутри — не сужается ни для одного PLAN
   // ниже (в отличие от siteTutorial/brandManifest и т.п.).
   greetingVideo: true,
+  // Этап 144: только PREMIUM — LITE и STANDARD сужают ниже.
+  externalApi: true,
+  // Этап 148: тоже только PREMIUM.
+  multilingualTracks: true,
 };
 
 export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
@@ -197,6 +221,8 @@ export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
       voiceCloning: false,
       voiceDub: false,
       siteTutorial: false,
+      externalApi: false,
+      multilingualTracks: false,
     },
     aspectRatios: NATIVE_ASPECT_RATIOS,
   },
@@ -205,7 +231,14 @@ export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
     title: 'Standard',
     summary:
       'Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.',
-    features: { ...ALL, library: false, voiceDub: false, avatarLipsync: false },
+    features: {
+      ...ALL,
+      library: false,
+      voiceDub: false,
+      avatarLipsync: false,
+      externalApi: false,
+      multilingualTracks: false,
+    },
     aspectRatios: [],
   },
   PREMIUM: {
@@ -385,6 +418,8 @@ export function featureDeniedMessage(feature: PlanFeature): string {
     siteTutorial: 'Обучающее видео по сайту заказчика',
     aiSketch: 'ИИ-скетч вместо изображения',
     greetingVideo: 'Ролик-поздравление',
+    externalApi: 'Внешнее API по ключу',
+    multilingualTracks: 'Ролик на других языках',
   };
   return `${what[feature]} доступна в режиме ${need}. Сейчас все режимы бесплатны — переключитесь в настройках режима.`;
 }

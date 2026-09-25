@@ -76,6 +76,11 @@ const SECRET_KEYS = [
  * вместе с осознанным ответом на вопрос «а это точно не секрет».
  */
 const PUBLIC_VALUE_KEYS = [
+  // Пороги сторожа остатков (этап 143): не секрет, а ровно то, ради
+  // чего на экран и смотрят — выключен нулём сторож или нет.
+  'BALANCE_ALERT_USD',
+  'BALANCE_ALERT_ELEVENLABS_CHARACTERS',
+  'BALANCE_ALERT_SERPAPI_SEARCHES',
   'PORT',
   'NODE_ENV',
   'BLOB_PUBLIC_HOSTS',
@@ -505,5 +510,38 @@ describe('getEnvSettings — оплата (ТЗ §41, этап 62)', () => {
     );
     expect(withoutBilling.ok).toBe(withBilling.ok);
     expect(withoutBilling.severity).toBe(withBilling.severity);
+  });
+});
+
+/**
+ * Аудит этапа 143: выключенный нулём сторож остатков не виден больше
+ * нигде — ни на «Балансах», ни в истории крона иначе как числом
+ * «сторожили ноль».
+ */
+describe('getEnvSettings — пороги сторожа остатков', () => {
+  it('ноль назван выключением, а не порогом «ноль долларов»', () => {
+    const row = find(
+      getEnvSettings({ BALANCE_ALERT_USD: '0' }),
+      'BALANCE_ALERT_USD',
+    );
+    expect(row.message).toMatch(/ВЫКЛЮЧЕН/);
+    expect(row.severity).toBe('warning');
+  });
+
+  it('не задан — умолчание, и это нормально', () => {
+    const row = find(getEnvSettings({}), 'BALANCE_ALERT_SERPAPI_SEARCHES');
+    expect(row.severity).toBe('ok');
+    expect(row.value).toContain('умолчание');
+  });
+
+  it('мусор — предупреждение: молча возьмётся умолчание', () => {
+    // Порог, про который думают, что он свой, а он не свой, хуже
+    // отсутствующего.
+    const row = find(
+      getEnvSettings({ BALANCE_ALERT_ELEVENLABS_CHARACTERS: 'много' }),
+      'BALANCE_ALERT_ELEVENLABS_CHARACTERS',
+    );
+    expect(row.severity).toBe('warning');
+    expect(row.ok).toBe(false);
   });
 });

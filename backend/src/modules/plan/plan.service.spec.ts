@@ -702,3 +702,64 @@ describe('PlanService — тестовые пользователи (TODO §III 
     expect((await one.svc.stateOf('u1')).budget.exhausted).toBe(true);
   });
 });
+
+/**
+ * Этап 144 (аудит): режим и суточный потолок для внешнего API.
+ */
+describe('PlanService.budgetOf', () => {
+  it('отдаёт режим и три числа потолка', async () => {
+    const { svc } = build({ plan: 'PREMIUM' });
+    await expect(svc.budgetOf('u1')).resolves.toEqual({
+      plan: 'PREMIUM',
+      limitMicroUsd: 2_000_000,
+      spentMicroUsd: 0,
+      remainingMicroUsd: 2_000_000,
+    });
+  });
+
+  it('считает потолок по режиму РАСХОДА, а не по выбранному', async () => {
+    // Самостоятельно выбранный режим даёт функции, но потолок остаётся
+    // тарифным (§23, plan.service.ts:207) — иначе переключатель режима
+    // был бы переключателем чужого бюджета.
+    const { svc, aiUsage } = build({
+      plan: 'PREMIUM',
+      planSelfService: true,
+    });
+    await svc.budgetOf('u1');
+    const [, spendPlan] = aiUsage.budget.mock.calls[0] as [string, string];
+    expect(spendPlan).toBe('LITE');
+  });
+
+  it('тестовый потолок — только когда бесплатны ВСЕ сценарии', async () => {
+    // Тот же строгий приём, что в `stateOf`: тестировщик с одной
+    // галочкой видит свой тарифный потолок, и это правда — на
+    // остальных сценариях действует он.
+    const partial = build({
+      plan: 'LITE',
+      isBlocked: false,
+      isTestUser: true,
+      freeScenarios: ['PRODUCT_VIDEO'],
+    });
+    await partial.svc.budgetOf('u1');
+    expect(partial.aiUsage.budget.mock.calls[0][3]).toBeUndefined();
+
+    const all = build({
+      plan: 'LITE',
+      isBlocked: false,
+      isTestUser: true,
+      freeScenarios: ['PRODUCT_VIDEO', 'GREETING_VIDEO', 'CLIENT_SITE'],
+    });
+    await all.svc.budgetOf('u1');
+    expect(all.aiUsage.budget.mock.calls[0][3]).toBeGreaterThan(0);
+  });
+
+  it('не тащит подписку и кредиты — это не экран', async () => {
+    // `stateOf` собран для интерфейса: тарифы с текстами, подписка,
+    // кредиты. Внешнему API нужны два числа, и платить за остальное
+    // запросами в базу на каждом healthcheck незачем.
+    const { svc, prisma, creditLedger } = build({ plan: 'PREMIUM' });
+    await svc.budgetOf('u1');
+    expect(prisma.subscription.findUnique).not.toHaveBeenCalled();
+    expect(creditLedger.balanceOf).not.toHaveBeenCalled();
+  });
+});

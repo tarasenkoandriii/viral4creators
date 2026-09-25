@@ -43,6 +43,7 @@ import { VideoProcessingStatus } from '../../components/VideoProcessingStatus';
 import { usePostprodVideo } from '../../hooks/usePostprodVideo';
 import { RevoicePanel } from '../generation/RevoicePanel';
 import { ExportPanel } from '../generation/ExportPanel';
+import { AudioTracksPanel } from './AudioTracksPanel';
 import { PublishPanel } from '../generation/PublishPanel';
 import { ShareVideoPanel } from '../generation/ShareVideoPanel';
 
@@ -197,6 +198,10 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
       />
 
       <ExportPanel sessionId={sessionId} video={video} />
+
+      {/* Рядом с экспортом, а не в мастере: дорожки заказывают ПОСЛЕ
+          готового ролика и не обязательно в тот же день (этап 148). */}
+      <AudioTracksPanel sessionId={sessionId} video={video} />
 
       {!publication.allowed && !publication.loading && (
         <LockedNote

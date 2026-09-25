@@ -131,6 +131,37 @@ export class PlanService {
   }
 
   /** Режим пользователя; неизвестный/анонимный — Lite. */
+  /**
+   * Режим и суточный потолок одним ответом (этап 144, аудит).
+   *
+   * Отдельный метод, а не `stateOf`: тот собран для экрана — тащит
+   * тарифы со всеми текстами, подписку, кредиты и локаль. Внешнему API
+   * из всего этого нужны два числа, и платить за остальное запросами в
+   * базу на каждом healthcheck интегратора незачем.
+   */
+  async budgetOf(userId: string): Promise<{
+    plan: PlanId;
+    limitMicroUsd: number;
+    spentMicroUsd: number;
+    remainingMicroUsd: number;
+  }> {
+    const access = await this.accessOf(userId);
+    const verdict = await this.aiUsage.budget(
+      userId,
+      access.spendPlan,
+      new Date(),
+      // Тот же строгий приём, что в `stateOf` (там же и объяснён):
+      // показываем, только когда бесплатны ВСЕ сценарии.
+      isSpendFree(access, null) ? dailyLimitForTestUser() : undefined,
+    );
+    return {
+      plan: access.plan,
+      limitMicroUsd: verdict.limitMicroUsd,
+      spentMicroUsd: verdict.spentMicroUsd,
+      remainingMicroUsd: verdict.remainingMicroUsd,
+    };
+  }
+
   async planOfUser(userId: string | null | undefined): Promise<PlanId> {
     return (await this.accessOf(userId)).plan;
   }

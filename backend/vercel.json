@@ -10,6 +10,14 @@
       "schedule": "30 3 * * *"
     },
     {
+      "path": "/api/cron/api-video",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/balances-watch",
+      "schedule": "30 5 * * *"
+    },
+    {
       "path": "/api/cron/report",
       "schedule": "0 6 * * *"
     },

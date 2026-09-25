@@ -5,6 +5,7 @@
  */
 
 import { Module, Global, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { ApiKeyModule } from './modules/api-key/api-key.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { VideoModule } from './modules/video/video.module';
@@ -34,6 +35,7 @@ import { RelevanceModule } from './modules/relevance/relevance.module';
 import { LibraryModule } from './modules/library/library.module';
 import { LegalModule } from './modules/legal/legal.module';
 import { HealthModule } from './modules/health/health.module';
+import { EnvironmentModule } from './modules/environment/environment.module';
 import { PlanModule } from './modules/plan/plan.module';
 import { AiUsageModule } from './modules/ai-usage/ai-usage.module';
 import { ImageSketchModule } from './modules/image-sketch/image-sketch.module';
@@ -49,6 +51,7 @@ import { RenderAccessModule } from './modules/render-access/render-access.module
 import { InviteModule } from './modules/invite/invite.module';
 import { TelegramStarsModule } from './modules/billing/telegram-stars.module';
 import { BillingModule } from './modules/billing/billing.module';
+import { TelegramBotModule } from './modules/telegram-bot/telegram-bot.module';
 import { BillingRenewalModule } from './modules/billing-renewal/billing-renewal.module';
 import { MarketingModule } from './modules/marketing/marketing.module';
 import { CatalogBatchModule } from './modules/catalog-batch/catalog-batch.module';
@@ -89,6 +92,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
   imports: [
     PrismaModule,
     StorageModule,
+    ApiKeyModule,
     VideoModule,
     AnalysisModule,
     SessionsModule,
@@ -116,6 +120,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     LegalModule,
     HealthModule,
     PlanModule,
+    EnvironmentModule,
     AiUsageModule,
     ImageSketchModule,
     TtsModule,
@@ -132,6 +137,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     InviteModule,
     TelegramStarsModule,
     BillingModule,
+    TelegramBotModule,
     BillingRenewalModule,
     MarketingModule,
     CatalogBatchModule,

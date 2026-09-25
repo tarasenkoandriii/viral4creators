@@ -104,6 +104,10 @@ export interface LibraryRow {
   audienceAgeRange: string | null;
   audienceInterests: string[];
   aspectRatio: string | null;
+  /** Теги исходного ролика на момент разбора (этап 136). Необязательно
+   * здесь, как и остальные поля вне проекции рекомендаций: тот `select`
+   * их не читает. */
+  sourceTags?: string[];
   sceneCount: number;
   characterCount: number;
   usageCount: number;
@@ -170,6 +174,9 @@ export class LibraryService {
     sourceType: 'youtube' | 'upload';
     sourceUrl: string | null;
     aspectRatio: string | null;
+    /** Теги исходного ролика (этап 136) — умолчание для поля тегов у
+     * всех, кто возьмёт этот разбор потом. */
+    sourceTags?: string[];
     analysis: VideoAnalysis;
     sessionId: string | null;
     userId: string | null;
@@ -194,6 +201,7 @@ export class LibraryService {
       audienceAgeRange: facets.audienceAgeRange,
       audienceInterests: facets.audienceInterests,
       aspectRatio: input.aspectRatio,
+      sourceTags: input.sourceTags ?? [],
       sceneCount: facets.sceneCount,
       characterCount: facets.characterCount,
       sessionId: input.sessionId,
@@ -510,6 +518,11 @@ export class LibraryService {
               sourceType: VideoSourceType.YOUTUBE,
               youtubeUrl: row.sourceUrl,
               registeredAt: new Date(),
+              // Этап 136: «Сделать такой же» собирает сессию из строки
+              // библиотеки, а не из живого ролика, — теги берутся
+              // отсюда же. У записей, разобранных до этапа, их нет, и
+              // тогда поле тегов заполнит запасной источник.
+              ...(row.sourceTags?.length ? { sourceTags: row.sourceTags } : {}),
               ...(row.aspectRatio
                 ? {
                     frame: {

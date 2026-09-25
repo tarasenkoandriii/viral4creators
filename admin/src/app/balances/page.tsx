@@ -21,6 +21,22 @@ import { usd } from '../../lib/money';
  * Поэтому у каждой строки есть состояние и пояснение, что делать.
  */
 
+/**
+ * Остаток в единицах провайдера (этап 142). В доллары не переводится
+ * намеренно: цена символа зависит от тарифа и меняется без нашего
+ * участия, и посчитанная нами сумма разошлась бы со счётом провайдера
+ * без всякого способа это заметить.
+ */
+function units(u: NonNullable<ProviderBalance['units']>): string {
+  const n = (value: number) => value.toLocaleString('ru-RU');
+  // Перебор — не «осталось минус сто»: у тарифов с overage лимит можно
+  // перебрать, и правда здесь «уже должны», а не «почти пусто».
+  if (u.left < 0) return `перебор на ${n(-u.left)} ${u.label}`;
+  return u.total === undefined
+    ? `${n(u.left)} ${u.label}`
+    : `${n(u.left)} ${u.label} из ${n(u.total)}`;
+}
+
 const STATE_LABEL: Record<ProviderBalance['state'], string> = {
   ok: 'остаток прочитан',
   'not-configured': 'не настроено',
@@ -104,7 +120,18 @@ export default function BalancesPage() {
                 <td>
                   {row.amountMicroUsd !== undefined
                     ? usd(row.amountMicroUsd)
-                    : '—'}
+                    : row.units
+                      ? units(row.units)
+                      : '—'}
+                  {/* Дата сброса — часть ответа на «хватит ли»: сто
+                      тысяч символов до завтра и до конца месяца это
+                      разные новости. */}
+                  {row.units?.resetsAt && (
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      обнулится{' '}
+                      {new Date(row.units.resetsAt).toLocaleDateString('ru-RU')}
+                    </div>
+                  )}
                   {/* Сырое значение рядом намеренно. У xAI остаток
                       приходит как сальдо журнала в центах с обратным
                       знаком: «−1827» — это $18.27. Человек, который

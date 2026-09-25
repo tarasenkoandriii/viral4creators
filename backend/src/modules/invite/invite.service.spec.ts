@@ -15,7 +15,12 @@ import {
   ConflictException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { InviteService } from './invite.service';
+import {
+  InviteService,
+  SUBSCRIPTION_ACCOUNT_TAKEN,
+  YOUTUBE_NOT_SUBSCRIBED,
+  YOUTUBE_SIGN_IN_REQUIRED,
+} from './invite.service';
 import { LiteUnlockService } from './lite-unlock.service';
 
 function build(
@@ -30,6 +35,17 @@ function build(
     generatedCount?: number;
     invitees?: { status: string; revokedAt: Date | null; identifiedAt: Date }[];
     visitCount?: number;
+    /** Этап 140: способ через YouTube. Не задан — способ выключен. */
+    youtube?: {
+      channelId?: string | null;
+      videoId?: string | null;
+      token?: {
+        accessToken: string;
+        googleChannelId: string;
+        fromConnectedChannel: boolean;
+      } | null;
+      check?: 'YOUTUBE_SUBSCRIPTION' | 'YOUTUBE_VIDEO_LIKE' | false | null;
+    };
   } = {},
 ) {
   const prisma = {
@@ -56,6 +72,10 @@ function build(
       findUnique: jest
         .fn()
         .mockResolvedValue({ visitCount: over.visitCount ?? 0 }),
+    },
+    youtubeUnlockSession: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     unlockCheck: {
       findUnique: jest
@@ -87,14 +107,39 @@ function build(
     settlePending: jest.fn().mockResolvedValue(undefined),
   };
   const liteUnlock = new LiteUnlockService(prisma as never);
+  // Этап 140: способ через YouTube по умолчанию выключен — старые тесты
+  // про Telegram не должны о нём знать вовсе.
+  const youtube = {
+    configured: jest.fn().mockReturnValue(over.youtube !== undefined),
+    channelId: jest.fn().mockReturnValue(over.youtube?.channelId ?? null),
+    videoId: jest.fn().mockReturnValue(over.youtube?.videoId ?? null),
+    tokenFor: jest.fn().mockResolvedValue(over.youtube?.token ?? null),
+    // Кабинет спрашивает именно это — дешёвую проверку без похода в
+    // Google (аудит этапа 140).
+    hasSource: jest.fn().mockResolvedValue({
+      ready: !!over.youtube?.token,
+      viaConnectedChannel: over.youtube?.token?.fromConnectedChannel ?? false,
+    }),
+    // `??` здесь нельзя ровно по той же причине, что у `isMember`
+    // выше: `null` — это осмысленное «спросить не удалось», и
+    // `null ?? false` превратил бы его в «не подписан», то есть тест
+    // про 503 проверял бы отказ.
+    check: jest
+      .fn()
+      .mockResolvedValue(
+        over.youtube && 'check' in over.youtube ? over.youtube.check : false,
+      ),
+    forget: jest.fn().mockResolvedValue(undefined),
+  };
   const svc = new InviteService(
     prisma as never,
     credits as never,
     telegram as never,
     referrals as never,
     liteUnlock,
+    youtube as never,
   );
-  return { svc, prisma, credits, telegram, referrals, liteUnlock };
+  return { svc, prisma, credits, telegram, referrals, liteUnlock, youtube };
 }
 
 describe('InviteService.confirmTelegram', () => {
@@ -246,6 +291,51 @@ describe('InviteService — находки аудита', () => {
   });
 });
 
+describe('InviteService.stateOf — способ через YouTube (этап 140)', () => {
+  it('открытие кабинета НЕ ходит за токеном в Google', async () => {
+    // Аудит этапа: `tokenFor` у человека с подключённым каналом зовёт
+    // `ensureFreshToken`, а тот при протухшем токене идёт обновлять его
+    // в Google. Экран, который просто показывает кнопку, не должен
+    // ради этого ходить в чужой сервис.
+    const { svc, youtube } = build({
+      youtube: {
+        channelId: 'UC-ours',
+        token: {
+          accessToken: 'at',
+          googleChannelId: 'UC1',
+          fromConnectedChannel: true,
+        },
+      },
+    });
+
+    const state = await svc.stateOf('u1');
+
+    expect(youtube.hasSource).toHaveBeenCalledWith('u1');
+    expect(youtube.tokenFor).not.toHaveBeenCalled();
+    expect(state.subscription.youtube).toMatchObject({
+      available: true,
+      ready: true,
+      viaConnectedChannel: true,
+    });
+  });
+
+  it('способ выключен — кабинет о нём даже не спрашивает', async () => {
+    const { svc, youtube } = build();
+    const state = await svc.stateOf('u1');
+    expect(youtube.hasSource).not.toHaveBeenCalled();
+    expect(state.subscription.youtube.available).toBe(false);
+    expect(state.subscription.youtube.ready).toBe(false);
+  });
+
+  it('своя же неполадка не закрывает кабинет', async () => {
+    const { svc, youtube } = build({ youtube: { channelId: 'UC-ours' } });
+    youtube.hasSource.mockRejectedValue(new Error('база молчит'));
+    await expect(svc.stateOf('u1')).resolves.toMatchObject({
+      subscription: { youtube: { ready: false } },
+    });
+  });
+});
+
 describe('InviteService.stateOf — кабинет (правки аудита этапа 134)', () => {
   it('воронка считается счётчиками, а не обрезанным списком', async () => {
     // Список приглашённых обрезан полусотней. Первая редакция считала
@@ -304,5 +394,118 @@ describe('InviteService.stateOf — кабинет (правки аудита э
     const state = await svc.stateOf('u1');
     expect(state.referrals.funnel.visited).toBe(7);
     expect(prisma.referralCode.findUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Подтверждение через YouTube (этап 140). Порядок ходов тот же, что у
+ * Telegram-способа, и проверяется здесь по той же причине: между
+ * «спросили Google» и «начислили генерацию» нельзя переставить ни шага
+ * — откатывать кредит нечем, человек успеет его потратить.
+ */
+describe('InviteService.confirmYoutube', () => {
+  const token = {
+    accessToken: 'at',
+    googleChannelId: 'UC123',
+    fromConnectedChannel: false,
+  };
+
+  it('подписка подтверждена: строка с каналом Google и начисленная генерация', async () => {
+    const { svc, prisma, credits, youtube } = build({
+      youtube: { token, check: 'YOUTUBE_SUBSCRIPTION' },
+    });
+
+    await svc.confirmYoutube('u1');
+
+    expect(prisma.unlockCheck.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'u1',
+        kind: 'YOUTUBE_SUBSCRIPTION',
+        // Префикс отличает канал Google от Telegram-идентификатора:
+        // без него два разных мира могли бы совпасть числом.
+        externalAccountId: 'yt:UC123',
+      },
+    });
+    expect(credits.grantFree).toHaveBeenCalledWith('u1', 'SUBSCRIPTION');
+    // Токен после проверки не хранится — мы и не обещали.
+    expect(youtube.forget).toHaveBeenCalledWith('u1');
+  });
+
+  it('лайк засчитывается своим видом, а не подписки', async () => {
+    const { svc, prisma } = build({
+      youtube: { token, check: 'YOUTUBE_VIDEO_LIKE' },
+    });
+    await svc.confirmYoutube('u1');
+    expect(prisma.unlockCheck.create.mock.calls[0][0].data.kind).toBe(
+      'YOUTUBE_VIDEO_LIKE',
+    );
+  });
+
+  it('право взято у подключённого канала — его вход не трогаем', async () => {
+    // Он живёт своей жизнью: человек подключал канал не для этого.
+    const { svc, youtube } = build({
+      youtube: {
+        token: { ...token, fromConnectedChannel: true },
+        check: 'YOUTUBE_SUBSCRIPTION',
+      },
+    });
+    await svc.confirmYoutube('u1');
+    expect(youtube.forget).not.toHaveBeenCalled();
+  });
+
+  it('без входа — понятный отказ, а не поход в Google', async () => {
+    const { svc, youtube, credits } = build({ youtube: { token: null } });
+    await expect(svc.confirmYoutube('u1')).rejects.toThrow(
+      YOUTUBE_SIGN_IN_REQUIRED,
+    );
+    expect(youtube.check).not.toHaveBeenCalled();
+    expect(credits.grantFree).not.toHaveBeenCalled();
+  });
+
+  it('«спросить не удалось» — 503, а не отказ подписчику', async () => {
+    // То же правило, что у Telegram-проверки: отказать из-за нашей же
+    // неполадки — худший исход.
+    const { svc, prisma } = build({ youtube: { token, check: null } });
+    const err = await svc.confirmYoutube('u1').catch((e) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect(prisma.unlockCheck.create).not.toHaveBeenCalled();
+  });
+
+  it('не подписан — отказ без начисления', async () => {
+    const { svc, prisma, credits } = build({
+      youtube: { token, check: false },
+    });
+    await expect(svc.confirmYoutube('u1')).rejects.toThrow(
+      YOUTUBE_NOT_SUBSCRIBED,
+    );
+    expect(prisma.unlockCheck.create).not.toHaveBeenCalled();
+    expect(credits.grantFree).not.toHaveBeenCalled();
+  });
+
+  it('способ выключен на стенде — отказ до всякой работы', async () => {
+    const { svc, youtube } = build();
+    await expect(svc.confirmYoutube('u1')).rejects.toThrow(BadRequestException);
+    expect(youtube.tokenFor).not.toHaveBeenCalled();
+  });
+
+  it('уже подтверждено — 409 и ни одного вызова к Google', async () => {
+    const { svc, youtube } = build({
+      existingCheck: true,
+      youtube: { token, check: 'YOUTUBE_SUBSCRIPTION' },
+    });
+    await expect(svc.confirmYoutube('u1')).rejects.toThrow(ConflictException);
+    expect(youtube.check).not.toHaveBeenCalled();
+  });
+
+  it('тот же Google-аккаунт у второго пользователя — отказ про аккаунт', async () => {
+    // Приёмка этапа требует этого прямо: иначе один аккаунт открывал бы
+    // доступ любому числу людей, и проверка не значила бы ничего.
+    const { svc } = build({
+      createThrows: Object.assign(new Error('unique'), { code: 'P2002' }),
+      youtube: { token, check: 'YOUTUBE_SUBSCRIPTION' },
+    });
+    await expect(svc.confirmYoutube('u1')).rejects.toThrow(
+      SUBSCRIPTION_ACCOUNT_TAKEN,
+    );
   });
 });

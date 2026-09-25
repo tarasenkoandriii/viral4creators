@@ -37,6 +37,7 @@ export type Route =
   | { name: 'plan' }
   | { name: 'channels' }
   | { name: 'credits' }
+  | { name: 'api-keys' }
   | { name: 'feed' }
   | { name: 'invite' }
   | { name: 'not-found'; path: string };
@@ -130,6 +131,7 @@ export function parseRoute(hash: string): Route {
   if (parts[0] === 'plan') return { name: 'plan' };
   if (parts[0] === 'channels') return { name: 'channels' };
   if (parts[0] === 'credits') return { name: 'credits' };
+  if (parts[0] === 'api-keys') return { name: 'api-keys' };
   if (parts[0] === 'feed') return { name: 'feed' };
   if (parts[0] === 'invite') return { name: 'invite' };
   if (parts[0] === 'legal' && parts[1]) {
@@ -193,6 +195,8 @@ export const routes = {
   plan: () => '/plan',
   channels: () => '/channels',
   credits: () => '/credits',
+  /** Ключи внешнего API (этап 145) — Premium. */
+  apiKeys: () => '/api-keys',
   feed: () => '/feed',
   /** Кабинет «Пригласить» (этап 133): чем открывается стена. */
   invite: () => '/invite',

@@ -37,6 +37,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { mp3DurationSeconds } from '../../common/mp3-duration';
 import { SubtitleAlignment } from '../../common/subtitles';
 import {
   SynthesisOutcome,
@@ -238,6 +239,7 @@ export class ResembleService implements TtsProvider {
         audio,
         mimeType: 'audio/mpeg',
         characters: payloadText.length,
+        durationSeconds: mp3DurationSeconds(audio),
         voiceId,
         model: request.model?.trim() || 'resemble',
         alignment,

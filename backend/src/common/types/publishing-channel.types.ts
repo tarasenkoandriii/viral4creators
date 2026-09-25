@@ -16,4 +16,12 @@ export interface PublishingChannelView {
   avatarUrl: string | null;
   status: ChannelStatus;
   createdAt: string;
+  /**
+   * Разрешил ли владелец канала грузить субтитры (скоуп
+   * `youtube.force-ssl`, этап 137). У каналов, подключённых до этапа,
+   * — `false`: право выдаётся только новым согласием, задним числом
+   * добавить его нельзя. Экран по этому полю показывает «подключить
+   * расширенно», а не молчит до отказа площадки.
+   */
+  captionsAllowed: boolean;
 }

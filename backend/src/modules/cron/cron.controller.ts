@@ -1,6 +1,7 @@
 import { Controller, Get, Headers, Query } from '@nestjs/common';
 import { CronJobsService, VERCEL_CRON_TRIGGERED_BY } from './cron-jobs.service';
 import { assertCronSecret } from './cron-secret';
+import type { ApiVideoTickResult } from '../api-key/api-video-job.worker';
 
 /**
  * CronController
@@ -42,6 +43,42 @@ export class CronController {
    * маршрут всё равно отвечает 200 с теми же числами — по ним можно
    * посмотреть отчёт руками.
    */
+  /**
+   * GET /api/cron/api-video — заявки внешнего API на ролик (этап 145).
+   */
+  @Get('api-video')
+  async apiVideo(
+    @Headers('authorization') authHeader?: string,
+  ): Promise<ApiVideoTickResult> {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'api-video',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runApiVideo(),
+    );
+  }
+
+  /**
+   * GET /api/cron/balances-watch — сторож остатков у провайдеров
+   * (TODO §III п.36, этап 143). Порог и повод — `common/balance-alerts.ts`.
+   */
+  @Get('balances-watch')
+  async balancesWatch(@Headers('authorization') authHeader?: string): Promise<{
+    watched: number;
+    low: number;
+    unreadable: number;
+    notified: number;
+  }> {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'balances-watch',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runBalancesWatch(),
+    );
+  }
+
   @Get('report')
   async report(
     @Headers('authorization') authHeader?: string,

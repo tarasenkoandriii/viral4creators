@@ -33,6 +33,8 @@ const NONE: Record<PlanFeature, boolean> = {
   voiceCloning: false,
   voiceDub: false,
   siteTutorial: false,
+  externalApi: false,
+  multilingualTracks: false,
   aiSketch: false,
 };
 

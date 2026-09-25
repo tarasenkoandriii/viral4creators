@@ -57,6 +57,7 @@ const NAV: NavEntry[] = [
     label: 'Система',
     links: [
       ['/cron', 'Кроны'],
+      ['/testing', 'Тестирование'],
       ['/telemetry', 'Телеметрия'],
       ['/funnel', 'Воронка'],
       ['/referrals', 'Приглашения'],

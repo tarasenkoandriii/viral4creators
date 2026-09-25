@@ -16,6 +16,7 @@ import { ReferenceSelection, SceneAsset } from './reference.types';
 import { RelevanceState } from './relevance.types';
 import { AvatarVideo } from './actors.types';
 import { GreetingBriefSnapshot } from './greeting.types';
+import { SceneTemplateChoice } from '../scene-templates';
 
 /**
  * Session status enum representing workflow progression
@@ -174,6 +175,16 @@ export interface Session {
 
   /** Keep/drop choice over scenes and extras (spec §19, Stage 24). */
   analysisSelection?: AnalysisSelection;
+
+  /**
+   * Шаблон сцены вместо референса (этап 149, TODO §III п.11).
+   *
+   * Свой маленький снимок, а НЕ поддельный `videoAnalysis`: разбор
+   * значит «что Gemini увидел в референсе», и запись без референса
+   * сделала бы ложью всё, что её читает. Подробности — в
+   * `common/scene-templates.ts`.
+   */
+  sceneTemplate?: SceneTemplateChoice;
 
   /**
    * Where this session was started from (spec §7.8, Project 1—* Session).

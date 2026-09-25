@@ -10,6 +10,7 @@
  */
 
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -25,7 +26,7 @@ import {
   PublishingChannelView,
 } from '../../common/types/publishing-channel.types';
 import { signOAuthState, verifyOAuthState } from './oauth-state.util';
-import { GoogleOAuthService } from './google-oauth.service';
+import { GoogleOAuthService, hasCaptionsScope } from './google-oauth.service';
 import { TiktokOAuthService } from './tiktok-oauth.service';
 
 /** Структурный тип строки — та же причина, что у PublicationRow. */
@@ -54,6 +55,11 @@ export function toView(row: PublishingChannelRow): PublishingChannelView {
     avatarUrl: row.avatarUrl,
     status: row.status,
     createdAt: row.createdAt.toISOString(),
+    // Этап 137: у канала со старым согласием субтитров не будет, и это
+    // должно быть видно на экране, а не выясняться отказом площадки.
+    // Токены наружу по-прежнему не уходят — здесь только ответ на
+    // вопрос «что этому каналу разрешено».
+    captionsAllowed: hasCaptionsScope(row.scopes),
   };
 }
 
@@ -78,8 +84,21 @@ export class PublishingChannelService {
 
   // ── OAuth start/callback ────────────────────────────────────────────────
 
-  /** POST /channels/oauth/:platform/start. */
-  async buildAuthUrl(userId: string, platformRaw: string): Promise<string> {
+  /**
+   * POST /channels/oauth/:platform/start.
+   *
+   * `extended` (этап 137) — расширенное согласие ради субтитров
+   * (`youtube.force-ssl`). Отдельным действием, а не всем подряд: скоуп
+   * даёт право и на удаление роликов, и просить его у клиента, которому
+   * нужна одна загрузка, нельзя (§4 ТЗ). Повторное подключение того же
+   * канала с расширенным правом обновляет строку на месте — `upsert` по
+   * [platform, externalId] уже так и работает.
+   */
+  async buildAuthUrl(
+    userId: string,
+    platformRaw: string,
+    extended = false,
+  ): Promise<string> {
     if (!isPlatform(platformRaw)) {
       throw new NotFoundException(`Unknown platform ${platformRaw}`);
     }
@@ -92,8 +111,16 @@ export class PublishingChannelService {
         `${platformRaw} не настроен на сервере — обратитесь к владельцу продукта`,
       );
     }
+    if (extended && platformRaw !== 'YOUTUBE') {
+      // Не молча игнорируем: расширенного согласия у других площадок нет
+      // вовсе, и тихо выдать обычную ссылку значило бы пообещать право,
+      // которого человек не получит.
+      throw new BadRequestException(
+        'Расширенное согласие есть только у YouTube',
+      );
+    }
     const state = signOAuthState(userId, platformRaw, this.tokenKey());
-    return provider.buildAuthUrl(state);
+    return provider.buildAuthUrl(state, extended);
   }
 
   /**

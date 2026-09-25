@@ -217,6 +217,17 @@ export function greetingReadiness(input: GreetingReadinessInput): Readiness {
 export interface ProductReadinessInput {
   /** Разбор референса завершён (`videoAnalysis.status === 'complete'`). */
   analysisComplete: boolean;
+  /**
+   * Выбран шаблон сцены вместо референса (этап 149, TODO §III п.11).
+   *
+   * Второй ответ на тот же вопрос — «откуда берётся сцена»: у промпта
+   * есть описание ролика либо от разбора чужого, либо от готового
+   * приёма. Поэтому это не отдельный пункт готовности, а второй способ
+   * закрыть тот же: пункт со своей строкой «нужен разбор» у человека,
+   * который сознательно обошёлся без референса, был бы требованием
+   * сделать то, чего от него не хотят.
+   */
+  hasSceneTemplate: boolean;
   /** Снимок товара в сессии есть. */
   hasProductInfo: boolean;
   /** Активное изображение товара разрешается резолвером. */
@@ -233,7 +244,7 @@ export function productReadiness(input: ProductReadinessInput): Readiness {
       key: 'analysis',
       stepId: 'analysis',
       required: true,
-      done: input.analysisComplete,
+      done: input.analysisComplete || input.hasSceneTemplate,
     },
     {
       key: 'product',

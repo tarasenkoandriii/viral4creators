@@ -34,7 +34,12 @@ import {
   setWizardGuide,
 } from '../../services/wizard-guide-api';
 import type { Readiness, WizardGuideState } from '../../types';
-import { STEPPER_IDS, stepperIdOf } from '../../lib/session-step';
+import {
+  STEPPER_IDS,
+  stepperIdOf,
+  stepperIdsFor,
+  stepperLabels,
+} from '../../lib/session-step';
 import { VideoUpload } from '../../components/VideoUpload';
 import { AnalysisDisplay } from '../../components/AnalysisDisplay';
 import { ProgressIndicator } from '../../components/ProgressIndicator';
@@ -155,6 +160,8 @@ export function GenerationWizard() {
     uploadVideo,
     submitYoutubeUrl,
     pickLibraryEntry,
+    onTemplate,
+    sceneTemplateChanged,
     updateAnalysis,
     proceedToProduct,
     goToStep,
@@ -185,9 +192,16 @@ export function GenerationWizard() {
   const saveAnalysisEdit = async (text: string): Promise<void> => {
     if (await flushBrandEdits()) await updateAnalysis(text);
   };
+  /**
+   * Клик по степперу. Компонент сообщает НОМЕР позиции, а хук ждёт
+   * идентификатор: у сессии на приёме позиций четыре, и номер там
+   * означает уже другой шаг (этап 151).
+   */
   const selectStep = (index: number): void => {
+    const id = stepperIdsFor(onTemplate)[index];
+    if (!id) return;
     void flushBrandEdits().then((ok) => {
-      if (ok) goToStep(index);
+      if (ok) goToStep(id);
     });
   };
 
@@ -369,14 +383,27 @@ export function GenerationWizard() {
     if (updated) setGuide(updated);
   };
 
-  const workflowSteps = dict.generationWizard.steps;
+  // Позиции и подписи — по тому, чем сессия идёт (этап 151). У сессии
+  // на приёме позиции «Анализ» нет вовсе, а первая называется «Сцена»:
+  // «Видео» там, где видео нет, и серый «Анализ», которого не будет
+  // никогда, — два обещания подряд, которых продукт не выполнит.
+  const stepperIds = stepperIdsFor(onTemplate);
+  const stepperTexts = stepperLabels(
+    onTemplate,
+    dict.generationWizard.steps,
+    dict.generationWizard.stepSource
+  );
+  // Кликабельность по-прежнему решает `stepTargets` внутри хука — она
+  // считается по ПОЛНОМУ списку, поэтому берём её по идентификатору, а
+  // не по позиции: у укороченного списка индексы уже другие.
+  const selectableById = new Map(
+    STEPPER_IDS.map((id, i) => [id, selectableSteps[i]])
+  );
   const stepsView = toStepsView(
-    STEPPER_IDS.map((id, i) => ({
+    stepperIds.map((id, i) => ({
       id,
-      label: workflowSteps[i],
-      // Кликабельность по-прежнему решает `stepTargets` внутри хука;
-      // здесь она только переводится в форму общего контракта.
-      target: selectableSteps[i] ? id : null,
+      label: stepperTexts[i],
+      target: selectableById.get(id) ? id : null,
     })),
     stepperIdOf(currentStep)
   );
@@ -424,6 +451,15 @@ export function GenerationWizard() {
           readiness={readiness}
           canGoToStep={(id) => reachable.has(id)}
           onGoToStep={goToReadinessStep}
+          // Пункт `analysis` — это «откуда берётся сцена», и приём
+          // закрывает его наравне с разбором. Но подпись у него про
+          // разбор, и с галочкой она рапортовала о работе, которой не
+          // было (аудит этапа 151, А-2).
+          itemLabels={
+            onTemplate
+              ? { analysis: dict.wizardReadiness.items.sceneTemplate }
+              : undefined
+          }
         />
       )}
 
@@ -497,6 +533,8 @@ export function GenerationWizard() {
           searchDefaults={searchDefaults}
           sessionId={sessionId}
           onPickLibraryEntry={pickLibraryEntry}
+          onSceneTemplateChanged={sceneTemplateChanged}
+          sceneTemplateChosen={onTemplate}
           hasProduct={!!productName || !!productDescription}
         />
       )}
@@ -624,15 +662,25 @@ export function GenerationWizard() {
         <div className="space-y-4">
           {/* Spec §18.3: is this reference right for this product? Before
               the prompt is written, so its advice can feed the brief. */}
-          {sessionId && !prompt && !relevance.allowed && !relevance.loading && (
-            <LockedNote
-              title={dict.generationWizard.relevanceLockedTitle}
-              lock={relevance.lock}
-            >
-              {dict.generationWizard.relevanceLockedBody}
-            </LockedNote>
-          )}
-          {sessionId && !prompt && relevance.allowed && (
+          {/* У сессии на приёме сцены референса НЕТ — а проверка
+              релевантности сравнивает аудиторию товара с аудиторией
+              референса и требует завершённого разбора: сервер отвечает
+              400, и каждый ролик по приёму начинался с красной ошибки
+              (аудит этапа 150, А-1). Замок на LITE там же был предложением
+              заплатить за проверку, которая к этой сессии неприменима. */}
+          {sessionId &&
+            !prompt &&
+            !onTemplate &&
+            !relevance.allowed &&
+            !relevance.loading && (
+              <LockedNote
+                title={dict.generationWizard.relevanceLockedTitle}
+                lock={relevance.lock}
+              >
+                {dict.generationWizard.relevanceLockedBody}
+              </LockedNote>
+            )}
+          {sessionId && !prompt && !onTemplate && relevance.allowed && (
             <RelevancePanel
               sessionId={sessionId}
               onChooseAnother={() => {

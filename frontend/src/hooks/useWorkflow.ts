@@ -1,6 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { isRenderInFlight, stepFromSession } from '../lib/session-step';
+import {
+  STEPPER_IDS,
+  isRenderInFlight,
+  stepFromSession,
+  usesSceneTemplate,
+  type StepperId,
+} from '../lib/session-step';
 import {
   isPostProductionPending,
   shouldKeepPolling,
@@ -61,6 +67,15 @@ interface UseWorkflowState {
   uploadProgress: number;
   isAnalyzing: boolean;
   analysis: VideoAnalysis | null;
+  /**
+   * Приём сцены ВЫБРАН (этап 150, TODO §III п.11).
+   *
+   * Именно факт выбора, а не «сессия идёт по приёму»: второе —
+   * производная от него и от разбора, она меняется сама и хранить её
+   * нельзя (аудит этапа 151, А-1). Считается в `onTemplate` ниже тем же
+   * правилом, что на сервере.
+   */
+  templateChosen: boolean;
   productName: string | null;
   productDescription: string | null;
   isSubmittingProduct: boolean;
@@ -154,6 +169,7 @@ function restoreFromSession(
   return {
     currentStep: stepFromSession(session),
     analysis: session.videoAnalysis ?? null,
+    templateChosen: !!session.sceneTemplate?.templateId,
     prompt: session.generationPrompt ?? null,
     generatedVideo: session.generatedVideo ?? null,
     videoHistory: session.videoHistory ?? [],
@@ -207,11 +223,16 @@ function stepTargets(s: UseWorkflowState): Array<WorkflowStep | null> {
     return [null, null, null, null, null];
   }
   const analysed = s.analysis?.status === 'complete';
+  // Приём закрывает тот же вопрос, что и разбор, — «откуда сцена»
+  // (этап 150). Но позицию «Анализ» он НЕ открывает: смотреть там
+  // нечего, и вести туда значило бы обещать экран, которого нет.
+  const sourced =
+    analysed || usesSceneTemplate(s.analysis?.status, s.templateChosen);
   return [
     'upload',
     analysed ? 'analysis-complete' : null,
-    analysed ? 'product-input' : null,
-    analysed && s.productName ? 'prompt-generation' : null,
+    sourced ? 'product-input' : null,
+    sourced && s.productName ? 'prompt-generation' : null,
     s.prompt?.approvedAt ? 'video-generation' : null,
   ];
 }
@@ -226,6 +247,7 @@ export function useWorkflow() {
   const [state, setState] = useState<UseWorkflowState>({
     currentStep: 'upload',
     sessionId: null,
+    templateChosen: false,
     isInitializing: true,
     isUploading: false,
     uploadProgress: 0,
@@ -1339,9 +1361,21 @@ export function useWorkflow() {
    * Пока идёт платная работа — никуда: переключение шага посреди
    * рендера прятало бы кнопку и спиннер.
    */
-  const goToStep = useCallback((index: number) => {
+  /**
+   * Переход по степперу — ПО ИДЕНТИФИКАТОРУ позиции, а не по её номеру
+   * (этап 151).
+   *
+   * Номер был позицией в ПОЛНОМ списке из пяти, и пока список был один,
+   * это работало. У сессии на приёме позиций четыре: «Товар» там
+   * второй, а `stepTargets[1]` — по-прежнему слот разбора, то есть
+   * каждый клик уезжал бы на соседний шаг или в никуда. Идентификатор
+   * не зависит от длины списка, и класс ошибки исчезает целиком, а не
+   * чинится пересчётом.
+   */
+  const goToStep = useCallback((id: StepperId) => {
     setState((prev) => {
-      const target = stepTargets(prev)[index] ?? null;
+      const index = STEPPER_IDS.indexOf(id);
+      const target = index >= 0 ? (stepTargets(prev)[index] ?? null) : null;
       if (!target || target === prev.currentStep) return prev;
       return { ...prev, currentStep: target, error: null };
     });
@@ -1350,8 +1384,40 @@ export function useWorkflow() {
   /** Какие шаги степпера сейчас можно выбрать — для подсветки и кликов. */
   const selectableSteps = stepTargets(state).map((t) => t !== null);
 
+  /**
+   * Идёт ли сессия ПО ПРИЁМУ прямо сейчас. Производная, а не хранимое:
+   * появившийся разбор отменяет приём — и на сервере, и здесь (аудит
+   * этапа 151, А-1).
+   */
+  const onTemplate = usesSceneTemplate(
+    state.analysis?.status,
+    state.templateChosen
+  );
+
   const proceedToProduct = useCallback(() => {
     setState((prev) => ({ ...prev, currentStep: 'product-input' }));
+  }, []);
+
+  /**
+   * Приём выбран или снят (этап 150). Сам запрос делает
+   * `SceneTemplatePicker`: платного вызова здесь нет, и заводить ради
+   * записи ещё один путь в общий хук значило бы держать две копии
+   * одного запроса.
+   *
+   * Снятие обязано доходить сюда так же, как выбор (аудит этапа 150,
+   * А-3): иначе степпер продолжал бы вести на «Товар» у сессии, где
+   * источника сцены на сервере уже нет, — и человек упирался бы в
+   * отказ сборки промпта, не понимая, откуда он.
+   */
+  const sceneTemplateChanged = useCallback((templateId: string | null) => {
+    setState((prev) => ({
+      ...prev,
+      templateChosen: !!templateId,
+      // Вперёд ведём только на ВЫБОР. Снятие оставляет человека на
+      // выборе источника: он именно за этим и вернулся.
+      currentStep: templateId ? 'product-input' : prev.currentStep,
+      error: null,
+    }));
   }, []);
 
   /**
@@ -1475,7 +1541,9 @@ export function useWorkflow() {
     pickLibraryEntry: handlePickLibraryEntry,
     triggerAnalysis: handleTriggerAnalysis,
     updateAnalysis: handleUpdateAnalysis,
+    onTemplate,
     proceedToProduct,
+    sceneTemplateChanged,
     goToStep,
     selectableSteps,
     setBrandManifest,

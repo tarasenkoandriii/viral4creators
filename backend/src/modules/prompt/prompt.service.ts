@@ -52,6 +52,7 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { AiOperation } from '../../common/ai-pricing';
 import { PlanService } from '../plan/plan.service';
 import { readinessOfSession } from '../../common/wizard-readiness.session';
+import { hasSceneSource, sceneSource } from '../../common/scene-source';
 
 /**
  * Замок сборки промпта (этап 47, В-2.3): клиентский таймаут вызова —
@@ -178,7 +179,17 @@ export class PromptService {
     const done = (key: string) =>
       ready.items.find((i) => i.key === key)?.done === true;
 
-    if (!session.videoAnalysis) {
+    // Этап 149 (TODO §III п.11): описание ролика приходит либо от
+    // разбора референса, либо от выбранного шаблона сцены. Это два
+    // ответа на один вопрос, поэтому и проверка одна.
+    //
+    // Разбор в приоритете: он про КОНКРЕТНЫЙ ролик, который человек
+    // выбрал и за разбор которого заплатил, а шаблон — общий приём.
+    // Ветка достижима: шаблон можно выбрать первым, а потом всё-таки
+    // загрузить и разобрать референс.
+    const source = sceneSource(session);
+    const spec = source.spec;
+    if (!hasSceneSource(session)) {
       throw new BadRequestException(
         'Video analysis not complete. Please analyze video first.',
       );
@@ -210,8 +221,7 @@ export class PromptService {
 
     try {
       // Build prompt generation request
-      const analysisText =
-        session.videoAnalysis.userEdits || session.videoAnalysis.sceneBreakdown;
+      const analysisText = source.text;
       const productName = session.productInformation.productName;
       const productDescription = session.productInformation.productDescription;
 
@@ -235,7 +245,7 @@ export class PromptService {
         session.brandManifestSnapshot?.voiceMode,
       );
       const voiceModeBrief = voiceModeBriefText(voiceMode);
-      const frame = session.originalVideo?.frame?.aspectRatio;
+      const frame = source.frame;
       // ТЗ §29 (этап 46): движение камеры — часть стиля бренда. Просим
       // модель, а не двигаем кадр в ffmpeg: программный зум теряет
       // резкость и выдаёт себя дрожанием на краях. Амплитуда меньше,
@@ -245,22 +255,27 @@ export class PromptService {
         session.brandManifestSnapshot?.cameraMove,
       );
       const cameraBrief = cameraBriefText(cameraMove, frame);
+      // «the reference is …» — про референс. С приёмом референса нет, и
+      // фраза была бы ссылкой на то, чего модель не получала (аудит
+      // этапа 149, А-2: вводную строку и «recreate» поправили, а эту
+      // пропустили — та же неправда, сказанная третий раз).
       const frameBrief = frame
-        ? `PICTURE FORMAT: the reference is ${frame}${frame === '9:16' ? ' (vertical)' : frame === '16:9' ? ' (horizontal)' : ''}; compose the new video for the same orientation unless told otherwise at generation time.`
+        ? `PICTURE FORMAT: ${source.fromTemplate ? 'this format is shot' : 'the reference is'} ${frame}${frame === '9:16' ? ' (vertical)' : frame === '16:9' ? ' (horizontal)' : ''}; compose the new video for the same orientation unless told otherwise at generation time.`
         : '';
       const sceneBrief = sceneBriefText(plan);
       // Spec §18.3 (Stage 23): the relevance report's advice — what to bend
       // so the clone speaks to the PRODUCT's buyers — unless switched off.
       const audienceBrief = relevanceBriefText(session.relevance);
       // Spec §19 (Stage 24): scenes the user dropped and the background crowd.
-      const scenesBrief = scenesBriefText(
-        session.videoAnalysis,
-        session.analysisSelection,
-      );
-      const extrasBrief = extrasBriefText(
-        session.videoAnalysis,
-        session.analysisSelection,
-      );
+      // Сцены и массовка — про КОНКРЕТНЫЙ разобранный ролик: что из
+      // него оставить, а что выбросить. У приёма выбрасывать нечего, и
+      // его собственная раскадровка уже внутри `analysisText`.
+      const scenesBrief = source.fromTemplate
+        ? ''
+        : scenesBriefText(session.videoAnalysis, session.analysisSelection);
+      const extrasBrief = source.fromTemplate
+        ? ''
+        : extrasBriefText(session.videoAnalysis, session.analysisSelection);
       const extraSections = [
         scenesBrief,
         characterBrief,
@@ -277,12 +292,13 @@ export class PromptService {
         .map((t) => `\n${t}\n`)
         .join('');
 
+      const framing = source.framing;
       const userMessage = `You are an expert AI video prompt engineer specializing in Veo 3.1. 
-Below is a detailed description of an existing viral UGC video which includes scene breakdown and Dialogue/voiceover.
+${framing}
 ${analysisText}
 ${extraSections}
-Your task is to analyze all the scenes and generate a single, detailed video generation prompt that Veo could use to recreate the 8-second video but tailored for a product ${productName} ${productDescription}.
-Format as: "[Duration] seconds; [Camera style/lens]. [Subject + action]. Characters: [each kept character with appearance; say "match reference image N" where a reference image exists]. Aesthetic: [visual style]. Camera movement: [specific movements]. Pacing: [fast/medium/slow with rhythm description]. Colors: [palette]. Audio: [music/sound style]. Text overlay: [if needed — a SHORT text (under 100 characters, e.g. a price, a short call-to-action, or the brand name alone) written out VERBATIM, character-for-character, in the dialogue language, and explicitly state it must appear on screen exactly as written, with no other words or numbers substituted; video models frequently misrender on-screen text, especially non-Latin scripts, so shorter and simpler text renders far more reliably than a full sentence]. Dialogue: [spoken lines written out verbatim in the required language, built from the product description, following the reference's rhythm]. End with: [CTA visual and audio].
+Your task is to ${spec ? 'write' : 'analyze all the scenes and generate'} a single, detailed video generation prompt that Veo could use to ${spec ? 'make an 8-second video in this format' : 'recreate the 8-second video'}, tailored for a product ${productName} ${productDescription}.
+Format as: "[Duration] seconds; [Camera style/lens]. [Subject + action]. Characters: [each kept character with appearance; say "match reference image N" where a reference image exists]. Aesthetic: [visual style]. Camera movement: [specific movements]. Pacing: [fast/medium/slow with rhythm description]. Colors: [palette]. Audio: [music/sound style]. Text overlay: [if needed — a SHORT text (under 100 characters, e.g. a price, a short call-to-action, or the brand name alone) written out VERBATIM, character-for-character, in the dialogue language, and explicitly state it must appear on screen exactly as written, with no other words or numbers substituted; video models frequently misrender on-screen text, especially non-Latin scripts, so shorter and simpler text renders far more reliably than a full sentence]. Dialogue: [spoken lines written out verbatim in the required language, built from the product description, ${spec ? "at the pace the format's shots allow" : "following the reference's rhythm"}]. End with: [CTA visual and audio].
 
 Please respond with a valid JSON object only, with two keys:
 - "prompt": the complete, ready-to-use prompt for text-to-video generation, without any conversational filler.
@@ -479,7 +495,29 @@ Please respond with a valid JSON object only, with two keys:
     if (!session) {
       throw new BadRequestException('Session not found');
     }
-    if (!session.videoAnalysis || session.videoAnalysis.status !== 'complete') {
+    // Этап 152: варианты собираются поверх любого источника сцены.
+    // Раньше здесь стоял разбор — и сессия на приёме получала отказ,
+    // хотя варьируются ХУК и CTA уже одобренного промпта, а откуда
+    // взялось описание сцены, для этого безразлично.
+    //
+    // Разбор, который ИДЁТ, по-прежнему не годится: варианты
+    // повторяют его текст, и собранные на полпути разошлись бы с
+    // готовым роликом.
+    const abSource = sceneSource(session);
+    // Порядок проверок: сначала «источника нет вовсе», потом «разбор не
+    // дошёл». Обратный порядок делает второе сообщение недостижимым — у
+    // сессии без разбора и без приёма первым сработал бы разбор, и
+    // человек читал бы «дождитесь разбора» там, где разбора никто не
+    // заказывал.
+    if (!hasSceneSource(session)) {
+      throw new BadRequestException(
+        'A/B-варианты собираются поверх разобранного референса или выбранного приёма сцены — у сессии нет ни того, ни другого.',
+      );
+    }
+    if (
+      !abSource.fromTemplate &&
+      session.videoAnalysis?.status !== 'complete'
+    ) {
       throw new BadRequestException(
         'Video analysis is not complete. Please analyze video first.',
       );
@@ -508,8 +546,7 @@ Please respond with a valid JSON object only, with two keys:
     }
 
     try {
-      const analysisText =
-        session.videoAnalysis.userEdits || session.videoAnalysis.sceneBreakdown;
+      const analysisText = abSource.text;
       const productName = session.productInformation.productName;
       const productDescription = session.productInformation.productDescription;
 
@@ -523,21 +560,19 @@ Please respond with a valid JSON object only, with two keys:
         session.brandManifestSnapshot?.voiceMode,
       );
       const voiceModeBrief = voiceModeBriefText(voiceMode);
-      const frame = session.originalVideo?.frame?.aspectRatio;
+      const frame = abSource.frame;
       const cameraMove = normalizeCameraMove(
         session.brandManifestSnapshot?.cameraMove,
       );
       const cameraBrief = cameraBriefText(cameraMove, frame);
       const sceneBrief = sceneBriefText(plan);
       const audienceBrief = relevanceBriefText(session.relevance);
-      const scenesBrief = scenesBriefText(
-        session.videoAnalysis,
-        session.analysisSelection,
-      );
-      const extrasBrief = extrasBriefText(
-        session.videoAnalysis,
-        session.analysisSelection,
-      );
+      const scenesBrief = abSource.fromTemplate
+        ? ''
+        : scenesBriefText(session.videoAnalysis, session.analysisSelection);
+      const extrasBrief = abSource.fromTemplate
+        ? ''
+        : extrasBriefText(session.videoAnalysis, session.analysisSelection);
       const extraSections = [
         scenesBrief,
         characterBrief,
@@ -558,7 +593,11 @@ Please respond with a valid JSON object only, with two keys:
         '';
 
       const userMessage = `You are an expert AI video prompt engineer specializing in Veo 3.1.
-Below is the reference analysis, and the prompt already approved and used to generate the CURRENT video for product ${productName} ${productDescription}:
+${
+  abSource.fromTemplate
+    ? 'Below is the ad format this video follows, and the prompt already approved and used to generate the CURRENT video'
+    : 'Below is the reference analysis, and the prompt already approved and used to generate the CURRENT video'
+} for product ${productName} ${productDescription}:
 ${analysisText}
 ${extraSections}
 Currently approved prompt:

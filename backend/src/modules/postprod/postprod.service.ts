@@ -1408,7 +1408,17 @@ export class PostProductionService {
     }
 
     const cues: SubtitleCue[] = alignment
-      ? cueTimings(work.speech, alignment)
+      ? // Разметка синтеза отсчитывается от начала файла голоса, а в
+        // миксе голос сдвинут на `speechStartSeconds` (`adelay`,
+        // `common/postprod.ts`). Без сдвига субтитр шёл ВПЕРЕДИ речи
+        // ровно на эту секунду — и это было видно только у сценариев
+        // с таймкодами, то есть у обычных (находка аудита этапа 141:
+        // соседняя ветка ниже сдвиг учитывала, эта — нет).
+        cueTimings(work.speech, alignment).map((cue) => ({
+          ...cue,
+          startSeconds: cue.startSeconds + work.speechStartSeconds,
+          endSeconds: cue.endSeconds + work.speechStartSeconds,
+        }))
       : heuristicCueTimings(
           work.speech,
           work.speechStartSeconds,

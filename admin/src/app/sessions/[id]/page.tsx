@@ -6,6 +6,7 @@ import { getSession, deleteSession } from '../../../lib/endpoints';
 import type { SessionDetail } from '../../../lib/types';
 import { ApiRequestError } from '../../../lib/admin-api';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
+import { AudioTracksPanel } from '../../../components/AudioTracksPanel';
 
 /**
  * Найдено при аудите пайплайна GREETING_VIDEO (находка №4): «Полные
@@ -215,6 +216,13 @@ export default function SessionDetailPage() {
           <video src={session.downloadUrl} controls style={{ maxWidth: '100%', borderRadius: 8 }} />
         </div>
       )}
+
+      {/* Этап 139: мультиязычные дорожки — работа оператора, и место ей
+          рядом с самим роликом, а не отдельной вкладкой: человек
+          приходит сюда, уже открыв нужный ролик. */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <AudioTracksPanel sessionId={params.id} />
+      </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
         <p style={{ marginBottom: 8 }}>

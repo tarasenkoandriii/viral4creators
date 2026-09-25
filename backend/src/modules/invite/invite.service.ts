@@ -31,6 +31,7 @@ import {
 } from '../../common/referral';
 import { ReferralService } from './referral.service';
 import { LiteUnlockService } from './lite-unlock.service';
+import { YoutubeUnlockService } from './youtube-unlock.service';
 
 /** Приглашённый в списке кабинета — СОБЫТИЯ, а не человек (§7.2). */
 export interface InviteeView {
@@ -54,6 +55,18 @@ export interface InviteState {
     confirmedKind: string | null;
     /** Канал Telegram, если способ настроен на стенде. */
     telegramChannel: string | null;
+    /** Второй способ — подписка на наш YouTube-канал (этап 140). */
+    youtube: {
+      /** Способ настроен на стенде (задан канал и ключи Google). */
+      available: boolean;
+      /** Проверять можно прямо сейчас: вход уже есть или не нужен. */
+      ready: boolean;
+      /** Проверять будем правом, которое человек уже дал под загрузку. */
+      viaConnectedChannel: boolean;
+      /** Ролик, лайк которого засчитывается вместо подписки. */
+      videoId: string | null;
+      channelId: string | null;
+    };
   };
   referrals: {
     /** Персональный код; ссылку из него собирает клиент. */
@@ -72,6 +85,12 @@ export const SUBSCRIPTION_NOT_MEMBER =
 
 export const SUBSCRIPTION_ALREADY =
   'Подписка уже подтверждена — генерация за неё начислена.';
+
+export const YOUTUBE_SIGN_IN_REQUIRED =
+  'Сначала войдите через Google — иначе подписку не у кого спросить.';
+
+export const YOUTUBE_NOT_SUBSCRIBED =
+  'Подписка не найдена. Подпишитесь на канал и нажмите «Проверить» ещё раз.';
 
 export const SUBSCRIPTION_ACCOUNT_TAKEN =
   'Этим аккаунтом подписку уже подтверждали для другого пользователя.';
@@ -102,6 +121,7 @@ export class InviteService {
     private readonly telegram: TelegramMembershipService,
     private readonly referrals: ReferralService,
     private readonly liteUnlock: LiteUnlockService,
+    private readonly youtube: YoutubeUnlockService,
   ) {}
 
   async stateOf(userId: string): Promise<InviteState> {
@@ -159,6 +179,18 @@ export class InviteService {
           { status: string; revokedAt: Date | null; identifiedAt: Date }[]
         >,
       ]);
+    // Есть ли чем проверять подписку, если человек нажмёт «Проверить».
+    // Именно `hasSource`, а не `tokenFor` (аудит этапа 140): второй у
+    // человека с подключённым каналом пошёл бы обновлять токен в
+    // Google — на КАЖДОМ открытии кабинета. Право спрашивают, когда
+    // нажали кнопку, а не когда открыли страницу. Тихо: своя же
+    // неполадка не должна мешать кабинету открыться.
+    const youtubeSource = this.youtube.configured()
+      ? await this.youtube
+          .hasSource(userId)
+          .catch(() => ({ ready: false, viaConnectedChannel: false }))
+      : null;
+
     return {
       wallEnabled: wallEnabled(),
       generationsAvailable: Math.max(balance, 0),
@@ -171,6 +203,18 @@ export class InviteService {
         confirmed: !!user?.unlockCheck,
         confirmedKind: user?.unlockCheck?.kind ?? null,
         telegramChannel: this.telegram.channel() ?? null,
+        youtube: {
+          available: this.youtube.configured(),
+          // `ready` считается ДО показа экрана: у человека с подключённым
+          // каналом право уже есть, и предлагать ему вход через Google
+          // значило бы терять конверсию на пустом месте (находка аудита
+          // ТЗ). Отдельного запроса к Google на это не уходит — только
+          // чтение своей же таблицы.
+          ready: youtubeSource?.ready ?? false,
+          viaConnectedChannel: youtubeSource?.viaConnectedChannel ?? false,
+          videoId: this.youtube.videoId() ?? null,
+          channelId: this.youtube.channelId() ?? null,
+        },
       },
       referrals: {
         code: codeRow.code,
@@ -315,6 +359,82 @@ export class InviteService {
     }
     // Вторая половина условия §4.2 могла выполниться ровно сейчас:
     // приглашения были набраны раньше, а подписки не хватало.
+    await this.liteUnlock
+      .maybeUnlock(userId)
+      .catch((error) =>
+        this.logger.warn(`проверка разблокировки ${userId}: ${String(error)}`),
+      );
+    return this.stateOf(userId);
+  }
+
+  /**
+   * «Я подписался на YouTube» — этап 140. Тот же порядок, что у
+   * Telegram-способа, и по той же причине: сначала спрашиваем Google,
+   * потом пишем строку и только потом начисляем. Обратный порядок
+   * начислил бы тому, чью подписку мы не подтвердили, а откатывать
+   * кредит нечем — человек успеет его потратить.
+   */
+  async confirmYoutube(userId: string): Promise<InviteState> {
+    if (!this.youtube.configured()) {
+      throw new BadRequestException(
+        'Подтверждение через YouTube на этом стенде не настроено',
+      );
+    }
+
+    const existing = await this.prisma.unlockCheck.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictException(SUBSCRIPTION_ALREADY);
+
+    const source = await this.youtube.tokenFor(userId);
+    if (!source) throw new BadRequestException(YOUTUBE_SIGN_IN_REQUIRED);
+
+    const kind = await this.youtube.check(source.accessToken);
+    // `null` — «спросить не удалось», и это НЕ «не подписан»: отказать
+    // подписчику из-за нашей же неполадки — худший исход.
+    if (kind === null) {
+      throw new ServiceUnavailableException(SUBSCRIPTION_UNAVAILABLE);
+    }
+    if (kind === false) throw new BadRequestException(YOUTUBE_NOT_SUBSCRIBED);
+
+    try {
+      await this.prisma.unlockCheck.create({
+        data: {
+          userId,
+          kind,
+          // Канал Google-аккаунта: один аккаунт — один подтверждённый.
+          // Префикс тот же по смыслу, что `tg:` у Telegram-способа, —
+          // иначе один и тот же идентификатор из двух разных миров мог
+          // бы совпасть.
+          externalAccountId: `yt:${source.googleChannelId}`,
+        },
+      });
+    } catch (error) {
+      if ((error as { code?: string })?.code === 'P2002') {
+        const mine = await this.prisma.unlockCheck.findUnique({
+          where: { userId },
+          select: { id: true },
+        });
+        throw new ConflictException(
+          mine ? SUBSCRIPTION_ALREADY : SUBSCRIPTION_ACCOUNT_TAKEN,
+        );
+      }
+      throw error;
+    } finally {
+      // Токен нам больше не нужен ни при каком исходе — и держать его
+      // дольше одной проверки мы не обещали (§6.3). Вход, взятый у
+      // подключённого канала, не трогаем: он живёт своей жизнью.
+      if (!source.fromConnectedChannel) await this.youtube.forget(userId);
+    }
+
+    const granted = await this.credits.grantFree(userId, 'SUBSCRIPTION');
+    if (!granted) {
+      this.logger.warn(
+        `подписка YouTube ${userId} подтверждена, но генерация не начислена — ` +
+          `суточный предохранитель`,
+      );
+    }
     await this.liteUnlock
       .maybeUnlock(userId)
       .catch((error) =>

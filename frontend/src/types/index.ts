@@ -38,6 +38,13 @@ export interface Session {
   characterCasting?: CharacterCasting;
   relevance?: RelevanceState;
   analysisSelection?: AnalysisSelection;
+  /**
+   * Приём сцены вместо референса (этап 150). Поле объявлено здесь, а не
+   * читается «как придёт»: без него `onSceneTemplate` работал по
+   * структурной типизации и переименование на бэкенде прошло бы молча
+   * (аудит этапа 150, А-6).
+   */
+  sceneTemplate?: { templateId?: string; chosenAt?: string } | null;
   projectId?: string | null;
   productItemId?: string | null;
   /** GREETING_VIDEO — копия брифа, скопированная в сессию при создании
@@ -487,6 +494,10 @@ export interface PublishingChannel {
   avatarUrl: string | null;
   status: ChannelStatus;
   createdAt: string;
+  /** Разрешены ли субтитры (скоуп force-ssl, этап 137). У каналов,
+   * подключённых раньше, — false: право выдаётся только новым
+   * согласием. */
+  captionsAllowed: boolean;
 }
 
 // ── Публичная страница ролика и петля шеринга (ТЗ §40, этап 60) — mirrors
@@ -844,7 +855,19 @@ export type PlanFeature =
    * равно нужен отдельным флагом: юридическую функцию нужно уметь
    * выключить с сервера, не выкатывая фронтенд.
    */
-  | 'aiSketch';
+  | 'aiSketch'
+  /**
+   * Внешнее API по ключу (этап 144, docs-tz/TZ-Vneshnee-API.md) —
+   * только Premium. Ключ снимает единственное, что ограничивало темп
+   * расхода, — человека между вызовами.
+   */
+  | 'externalApi'
+  /**
+   * Ролик на других языках (этап 148, TODO §III п.12) — Premium.
+   * Механизм построен этапами 138–141 для нашего канала; здесь он
+   * открыт пользователю.
+   */
+  | 'multilingualTracks';
 
 export interface PlanDefinition {
   id: PlanId;

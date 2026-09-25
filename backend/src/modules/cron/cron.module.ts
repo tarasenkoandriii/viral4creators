@@ -23,6 +23,7 @@ import { UiSnapshotModule } from '../ui-snapshot/ui-snapshot.module';
 import { ImageSketchModule } from '../image-sketch/image-sketch.module';
 import { AuctionModule } from '../auction/auction.module';
 import { PortfolioModule } from '../portfolio/portfolio.module';
+import { ApiKeyModule } from '../api-key/api-key.module';
 
 /**
  * CronModule
@@ -96,6 +97,8 @@ import { PortfolioModule } from '../portfolio/portfolio.module';
     UiSnapshotModule,
     AuctionModule,
     PortfolioModule,
+    // Этап 145: воркер заявок внешнего API.
+    ApiKeyModule,
   ],
   controllers: [CronController, AdminCronController],
   providers: [CronJobsService, AdminCronService],

@@ -1,6 +1,6 @@
 # Wissensdatenbank des viral4creators-KI-Beraters
 
-_Собрано автоматически 2026-09-23 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-25 из lending/frontend/backend; коммит — local._
 
 ## Bereiche der Mini-App
 
@@ -132,7 +132,7 @@ any aspect ratio
 
 ### Premium
 Всё вместе с библиотекой разборов, дубляжом (полная замена звука Veo своим голосом) и говорящим аватаром для поздравлений: готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
-Bibliothek fertiger Analysen, Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Synchronisation (modelleigene Stimme vollständig ersetzt), Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes, Grußvideo
+Bibliothek fertiger Analysen, Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Synchronisation (modelleigene Stimme vollständig ersetzt), Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes, Grußvideo, Externe API per Schlüssel, Das Video in anderen Sprachen
 any aspect ratio
 
 ## Pipeline-Regeln

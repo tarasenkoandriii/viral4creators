@@ -219,3 +219,38 @@ describe('orphanSweepPlan по областям (этап 41)', () => {
     expect(plan.byKind).toMatchObject({ voice: 1 });
   });
 });
+
+describe('вложения находок под префиксом users/ (аудит этапа 157)', () => {
+  it('разбирается как файл владельца-пользователя', () => {
+    // Под собственным префиксом `test-tickets/` метла не подобрала бы
+    // эти файлы никогда: она обходит закрытый список областей.
+    expect(ownerIdOf('users/u1/tickets/1700000000-0.jpg', 'users')).toBe('u1');
+  });
+
+  it('попадает в свою строку статистики, а не в «прочее»', () => {
+    // По разбивке видно, ЧТО именно утекает.
+    expect(sweepFileKind('users/u1/tickets/1700000000-0.jpg', 'users')).toBe(
+      'attachment',
+    );
+    expect(sweepFileKind('users/u1/voices/v1/sample.webm', 'users')).toBe(
+      'voice',
+    );
+  });
+
+  it('уходит вместе с удалённым владельцем', () => {
+    const old = new Date('2026-09-01T00:00:00.000Z');
+    const now = new Date('2026-09-25T00:00:00.000Z');
+    const plan = orphanSweepPlan(
+      [
+        { pathname: 'users/dead/tickets/1-0.jpg', uploadedAt: old },
+        { pathname: 'users/alive/tickets/1-0.jpg', uploadedAt: old },
+      ],
+      ['alive'],
+      now,
+      60 * 60 * 1000,
+      'users',
+    );
+    expect(plan.delete).toEqual(['users/dead/tickets/1-0.jpg']);
+    expect(plan.byKind.attachment).toBe(1);
+  });
+});

@@ -86,8 +86,19 @@ function build() {
     revoke: jest.fn().mockResolvedValue(undefined),
     grantByOperator: jest.fn().mockResolvedValue(undefined),
   };
+  const testTickets = {
+    list: jest.fn().mockResolvedValue([]),
+    get: jest.fn().mockResolvedValue({ id: 't1' }),
+    progress: jest.fn().mockResolvedValue([]),
+    setStatus: jest.fn().mockResolvedValue({ id: 't1' }),
+    reply: jest.fn().mockResolvedValue({ id: 't1' }),
+  };
   const controller = new AdminPanelController(
     adminPanel as any,
+    // Этап 155: приглашения тестировщиков — второй параметр.
+    undefined as any,
+    // Этап 158: очередь находок — третий.
+    testTickets as any,
     users as any,
     undefined as any,
     undefined as any,
@@ -124,6 +135,7 @@ function build() {
     users,
     referrals,
     liteUnlock,
+    testTickets,
     req,
   };
 }
@@ -480,5 +492,73 @@ describe('RevokeWithReasonDto — причина обязательна', () => 
       reason: 'x'.repeat(301),
     });
     expect(await validate(dto)).toHaveLength(1);
+  });
+});
+
+describe('AdminPanelController — очередь находок (этап 158)', () => {
+  it('GET /admin/test-tickets: сперва assertOperator, потом данные', async () => {
+    const { controller, adminPanel, testTickets, req } = build();
+    const order: string[] = [];
+    adminPanel.assertOperator.mockImplementation(async () => {
+      order.push('assert');
+    });
+    testTickets.list.mockImplementation(async () => {
+      order.push('list');
+      return [];
+    });
+    await controller.testTickets(req, 'OPEN', undefined, 'p:s:tma:ios:uk');
+    expect(order).toEqual(['assert', 'list']);
+    expect(testTickets.list).toHaveBeenCalledWith({
+      status: 'OPEN',
+      userId: undefined,
+      envKey: 'p:s:tma:ios:uk',
+    });
+  });
+
+  it('прогресс — отдельный маршрут, и он тоже за гвардом', async () => {
+    const { controller, adminPanel, testTickets, req } = build();
+    await controller.testTicketsProgress(req);
+    expect(adminPanel.assertOperator).toHaveBeenCalledWith('op-1');
+    expect(testTickets.progress).toHaveBeenCalled();
+  });
+
+  it('смена статуса доносит до сервиса и статус, и причину, и оператора', async () => {
+    const { controller, testTickets, req } = build();
+    await controller.patchTestTicketStatus(req, 't1', {
+      status: 'REJECTED',
+      note: 'не воспроизводится',
+    });
+    expect(testTickets.setStatus).toHaveBeenCalledWith(
+      'op-1',
+      't1',
+      'REJECTED',
+      'не воспроизводится',
+    );
+  });
+
+  it('причина не пришла — до сервиса доезжает null, а не undefined', async () => {
+    // Обязательность причины решает сервис: она зависит от статуса, и
+    // условие такого вида декоратором выражается хуже, чем кодом.
+    const { controller, testTickets, req } = build();
+    await controller.patchTestTicketStatus(req, 't1', { status: 'FIXED' });
+    expect(testTickets.setStatus).toHaveBeenCalledWith(
+      'op-1',
+      't1',
+      'FIXED',
+      null,
+    );
+  });
+
+  it('ответ тестировщику уходит от имени оператора', async () => {
+    const { controller, adminPanel, testTickets, req } = build();
+    await controller.replyToTestTicket(req, 't1', {
+      text: 'проверьте ещё раз',
+    });
+    expect(adminPanel.assertOperator).toHaveBeenCalledWith('op-1');
+    expect(testTickets.reply).toHaveBeenCalledWith(
+      'op-1',
+      't1',
+      'проверьте ещё раз',
+    );
   });
 });

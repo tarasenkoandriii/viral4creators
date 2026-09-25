@@ -110,6 +110,8 @@ export type SweepFileKind =
   | 'photo'
   | 'voice'
   | 'video'
+  /** Вложение находки тестировщика (аудит этапа 157). */
+  | 'attachment'
   | 'other';
 
 export const EMPTY_KINDS: Record<SweepFileKind, number> = {
@@ -121,6 +123,7 @@ export const EMPTY_KINDS: Record<SweepFileKind, number> = {
   photo: 0,
   voice: 0,
   video: 0,
+  attachment: 0,
   other: 0,
 };
 
@@ -163,9 +166,13 @@ export function sweepFileKind(
       return 'other';
     }
     case 'users':
-      // `users/<userId>/voices/<voiceId>/sample.<ext>` (этап 73/76) —
-      // единственный вид файла под этим префиксом сегодня.
-      return rest.startsWith('voices/') ? 'voice' : 'other';
+      // `users/<userId>/voices/<voiceId>/sample.<ext>` (этап 73/76) и
+      // `users/<userId>/tickets/<ts>-<i>.<ext>` — вложения находок
+      // тестировщика (аудит этапа 157). Своего префикса у них нет
+      // намеренно: метла обходит закрытый список областей, и файлы под
+      // `test-tickets/` не подбирал бы никто.
+      if (rest.startsWith('voices/')) return 'voice';
+      return rest.startsWith('tickets/') ? 'attachment' : 'other';
   }
 }
 

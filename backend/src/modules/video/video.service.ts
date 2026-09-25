@@ -150,12 +150,28 @@ export class VideoService {
     // честном слове соседнего класса нельзя. Стоит там появиться
     // исключению — и человек не сможет задать референс вовсе, из-за
     // украшения поля ввода.
+    //
+    // Повторная регистрация ТОЙ ЖЕ ссылки тегов заново не спрашивает:
+    // это снимок на момент регистрации, а не зеркало YouTube, и второй
+    // вызов дал бы то же самое за ещё одну единицу квоты. Заодно это
+    // закрывает самый дешёвый способ жечь чужую квоту — слать один и
+    // тот же URL в цикле.
+    const previous = session.originalVideo;
+    const sameLink =
+      previous?.sourceType === VideoSourceType.YOUTUBE &&
+      previous.youtubeUrl === youtubeUrl
+        ? (previous.sourceTags ?? [])
+        : null;
+
     const videoId = parseYoutubeVideoId(youtubeUrl);
-    const sourceTags = videoId
-      ? await this.youtubeSearch
-          .fetchVideoTags(videoId, sessionId)
-          .catch(() => [] as string[])
-      : [];
+    const sourceTags =
+      sameLink && sameLink.length > 0
+        ? sameLink
+        : videoId
+          ? await this.youtubeSearch
+              .fetchVideoTags(videoId, sessionId)
+              .catch(() => [] as string[])
+          : [];
 
     await this.sessionService.updateSession(sessionId, {
       ...referenceResetPatch(),

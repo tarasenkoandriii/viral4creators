@@ -61,6 +61,18 @@ function build() {
     },
   };
   const jobs = {
+    runApiVideo: jest.fn().mockResolvedValue({
+      started: 1,
+      completed: 0,
+      failed: 0,
+      running: 0,
+      delivered: 0,
+      retried: 0,
+      gaveUp: 0,
+    }),
+    runBalancesWatch: jest
+      .fn()
+      .mockResolvedValue({ watched: 2, low: 1, unreadable: 0, notified: 1 }),
     runReport: jest
       .fn()
       .mockResolvedValue({ sent: true, text: 'суточный отчёт' }),

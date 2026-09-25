@@ -15,16 +15,39 @@
  * разбирательства прямо сейчас. Поэтому `BalanceState` различает их, а
  * экран показывает `detail` — что именно делать.
  *
- * ## Почему сегодня здесь один xAI
+ * ## Почему спрошены не все десять
  *
  * Провайдеров, за которых платим, десять. Единого способа спросить
  * остаток у них нет: у части есть свой биллинговый API, у части —
- * только личный кабинет. Начат тот, который уже подводил (см.
- * `common/xai-balance.ts`); остальные честно отвечают «остаток не
- * отдаёт», а не молчат.
+ * только личный кабинет. Первым сделан тот, который уже подводил (см.
+ * `common/xai-balance.ts`), затем — двое, у кого остаток есть, но НЕ В
+ * ДЕНЬГАХ: ElevenLabs (символы) и SerpApi (поиски), этап 142.
+ * Остальные честно отвечают «остаток не отдаёт», а не молчат.
+ *
+ * ## Почему единицы не переводятся в доллары
+ *
+ * Соблазн большой: одна колонка, всё складывается. Но цена символа
+ * зависит от тарифа и меняется без нашего участия, и пересчитанная
+ * нами сумма разошлась бы со счётом провайдера — без всякого способа
+ * это заметить. Экран показывает то, что провайдер сказал, в его же
+ * единицах.
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import {
+  balanceWatch,
+  concernFingerprint,
+  thresholdsFromEnv,
+} from '../../common/balance-alerts';
+import { TelegramNotifyService } from '../notify/telegram-notify.service';
+import {
+  BalanceUnits,
+  ELEVENLABS_SUBSCRIPTION_URL,
+  SERPAPI_ACCOUNT_URL,
+  parseElevenLabsBalance,
+  parseSerpApiBalance,
+  redactKey,
+} from '../../common/unit-balance';
 import {
   ProviderBalance,
   XAI_MANAGEMENT_BASE,
@@ -67,10 +90,8 @@ const NO_BALANCE_API: Record<string, string> = {
   GEMINI: 'Google Cloud не отдаёт остаток по ключу — смотрите в Cloud Billing',
   OPENAI: 'публичного эндпоинта остатка нет — смотрите в личном кабинете',
   VEO: 'тарифицируется через Google Cloud, отдельного остатка нет',
-  ELEVENLABS: 'остаток в символах, а не в деньгах — отдельная задача',
   RESEMBLE: 'публичного эндпоинта остатка нет',
   HEDRA: 'публичного эндпоинта остатка нет — кредиты видно в кабинете',
-  SERPAPI: 'остаток в поисках, а не в деньгах — отдельная задача',
   YOUTUBE: 'квота в единицах Google API, не деньги',
   FFMPEG: 'сервис без публичного биллингового API',
 };
@@ -105,6 +126,48 @@ export class ProviderBalancesService {
   private readonly logger = new Logger(ProviderBalancesService.name);
   private cache: { at: number; items: ProviderBalance[] } | null = null;
 
+  constructor(private readonly notify: TelegramNotifyService) {}
+
+  /**
+   * Сторож остатков (этап 143): раз в сутки посмотреть и, если есть о
+   * чём, написать в канал ошибок.
+   *
+   * Кеш обходится намеренно. Он существует ради чужих ограничений
+   * частоты при живом человеке у экрана; сторож ходит раз в сутки, и
+   * ответить ему пятиминутной стариной значило бы сторожить не то, что
+   * есть сейчас.
+   *
+   * Сообщение на КАЖДЫЙ повод отдельно, а не одно общее: у каждого свой
+   * отпечаток, и молчание про один провайдер не прячет крик про
+   * другого. Переменных частей в отпечатке нет — иначе дедупликация не
+   * срабатывает вовсе (правило `TelegramNotifyService.alert`).
+   */
+  async watch(): Promise<{
+    watched: number;
+    low: number;
+    unreadable: number;
+    notified: number;
+  }> {
+    const items = await this.list(true);
+    const { watched, concerns } = balanceWatch(items, thresholdsFromEnv());
+    // Сообщения ПАРАЛЛЕЛЬНО (аудит этапа 143): у отправки в Telegram
+    // свой таймаут в пять секунд, и три подряд ложились поверх десяти
+    // секунд на сами остатки — двадцать пять в худшем случае, снова
+    // мимо таймаута функции. Отпечатки у поводов разные, так что
+    // записи дедупликации друг с другом не спорят.
+    const sent = await Promise.all(
+      concerns.map((concern) =>
+        this.notify.alert(concernFingerprint(concern), concern.text),
+      ),
+    );
+    return {
+      watched,
+      low: concerns.filter((c) => c.kind === 'low').length,
+      unreadable: concerns.filter((c) => c.kind === 'unreadable').length,
+      notified: sent.filter(Boolean).length,
+    };
+  }
+
   /**
    * `force` обходит кеш — кнопка «обновить» на экране. Кеш существует
    * не ради нашей скорости, а ради чужих ограничений частоты: у xAI
@@ -122,8 +185,20 @@ export class ProviderBalancesService {
     // Ссылка приклеивается ЗДЕСЬ, а не внутри `xai()`: та логика
     // считает остаток и трогать её незачем — адрес консоли от неё не
     // зависит и одинаков во всех четырёх её исходах.
+    // ПАРАЛЛЕЛЬНО, а не по очереди (аудит этапа 142). Провайдеры
+    // независимы и живут на разных хостах, а таймаут у каждого свой —
+    // десять секунд. По очереди худший случай складывается в тридцать,
+    // и запрос перестаёт укладываться в таймаут функции: у продукта
+    // это уже было на сборке дорожек (находка аудита этапа 139), а
+    // уйти в фон у serverless нельзя. Ни один из трёх наружу не
+    // бросает, так что `Promise.all` здесь ничего не теряет.
+    const asked = await Promise.all([
+      this.xai(),
+      this.elevenLabs(),
+      this.serpApi(),
+    ]);
     const items = [
-      await this.xai(),
+      ...asked,
       ...Object.entries(NO_BALANCE_API).map(([provider, detail]) => ({
         provider,
         state: 'unsupported' as const,
@@ -136,6 +211,113 @@ export class ProviderBalancesService {
     }));
     this.cache = { at: Date.now(), items };
     return items;
+  }
+
+  /**
+   * Остаток символов ElevenLabs. Ключ тот же, которым ходит синтез
+   * (`VOICE_API_KEY`), — отдельного биллингового у них нет.
+   */
+  private async elevenLabs(): Promise<ProviderBalance> {
+    return this.units({
+      provider: 'ELEVENLABS',
+      key: process.env.VOICE_API_KEY?.trim(),
+      envName: 'VOICE_API_KEY',
+      url: ELEVENLABS_SUBSCRIPTION_URL,
+      init: (key) => ({ headers: { 'xi-api-key': key } }),
+      parse: parseElevenLabsBalance,
+      unparsed:
+        'ответ получен, но в нём нет ни `character_count`, ни `character_limit` — ' +
+        'из чего считать остаток, неизвестно',
+    });
+  }
+
+  /**
+   * Остаток поисков SerpApi. Сам запрос счёта бесплатный и в месячную
+   * квоту не попадает (их документация), так что кеш здесь — вежливость
+   * к чужим ограничениям частоты, а не экономия.
+   */
+  private async serpApi(): Promise<ProviderBalance> {
+    const key = process.env.SERPAPI_API_KEY?.trim();
+    return this.units({
+      provider: 'SERPAPI',
+      key,
+      envName: 'SERPAPI_API_KEY',
+      // Ключ строкой запроса — заголовка их API не принимает. Адрес
+      // собирается здесь и НИКУДА не попадает: ни в лог, ни в `detail`
+      // (см. шапку `common/unit-balance.ts`).
+      url: `${SERPAPI_ACCOUNT_URL}?api_key=${encodeURIComponent(key ?? '')}`,
+      init: () => ({}),
+      parse: parseSerpApiBalance,
+      unparsed:
+        'ответ получен, но остатка поисков в нём нет — вероятно, ключ от другого аккаунта',
+    });
+  }
+
+  /**
+   * Общая половина обоих: спросить, разобрать, назвать причину. Разные
+   * у них только адрес, способ передать ключ и разбор — всё остальное
+   * (нет ключа / не ответили / ответили не тем) одинаково, а написанное
+   * дважды расходится на первой же правке.
+   */
+  private async units(input: {
+    provider: string;
+    key: string | undefined;
+    envName: string;
+    url: string;
+    init: (key: string) => RequestInit;
+    parse: (body: unknown) => BalanceUnits | null;
+    unparsed: string;
+  }): Promise<ProviderBalance> {
+    const checkedAt = new Date().toISOString();
+    if (!input.key) {
+      return {
+        provider: input.provider,
+        state: 'not-configured',
+        detail: `не задан ${input.envName} — тот же ключ, которым продукт ходит к этому провайдеру`,
+        checkedAt,
+      };
+    }
+    try {
+      const res = await fetch(input.url, {
+        ...input.init(input.key),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        return {
+          provider: input.provider,
+          state: 'error',
+          // Ни адреса, ни тела: у SerpApi в адресе ключ, а тело ошибки
+          // у обоих провайдеров может его повторить.
+          detail: `провайдер ответил ${res.status}`,
+          checkedAt,
+        };
+      }
+      const units = input.parse(await res.json());
+      if (!units) {
+        return {
+          provider: input.provider,
+          state: 'error',
+          detail: input.unparsed,
+          checkedAt,
+        };
+      }
+      return { provider: input.provider, state: 'ok', units, checkedAt };
+    } catch (e) {
+      // Ключ вычищается ДО журнала и до `detail`: у SerpApi он стоит в
+      // адресе запроса, а часть отказов `fetch` называет адрес в тексте
+      // (аудит этапа 142).
+      const message = redactKey(
+        e instanceof Error ? e.message : String(e),
+        input.key,
+      );
+      this.logger.warn(`остаток ${input.provider} не прочитан: ${message}`);
+      return {
+        provider: input.provider,
+        state: 'error',
+        detail: `запрос не прошёл: ${message}`,
+        checkedAt,
+      };
+    }
   }
 
   private async xai(): Promise<ProviderBalance> {

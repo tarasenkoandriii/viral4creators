@@ -142,6 +142,28 @@ export class TelegramNotifyService {
   }
 
   /**
+   * То же личное сообщение, но с идентификатором отправленного (этап
+   * 157, ТЗ на работу с тестировщиком §3.2).
+   *
+   * Отдельный метод, а не смена типа у `dm()`: `dm()` зовут из пяти
+   * мест, которым идентификатор не нужен, и `boolean` там читается
+   * лучше объекта. Нужен он ровно тикетам — по нему `reply_to_message`
+   * находит свой тикет, и ответ тестировщика ложится комментарием, а
+   * не новой находкой в очередь.
+   *
+   * `messageId: null` при успехе — обычный исход, а не сбой: Telegram
+   * мог ответить без разбираемого тела, и терять из-за этого сам факт
+   * отправки незачем.
+   */
+  async dmWithId(
+    telegramId: string,
+    text: string,
+  ): Promise<{ ok: boolean; messageId: number | null }> {
+    if (!this.botToken) return { ok: false, messageId: null };
+    return this.send(telegramId, text, true);
+  }
+
+  /**
    * Повторы, которые дедупликация проглотила и ещё не показала (этап 52,
    * В-2.10). Сводка «и ещё N раз» уходит только с первой тревогой ПОСЛЕ
    * окна; если провайдер починился и тревог больше не было, оператор
@@ -239,7 +261,18 @@ export class TelegramNotifyService {
     }
   }
 
-  private async send(chatId: string, text: string): Promise<boolean> {
+  private async send(chatId: string, text: string): Promise<boolean>;
+  private async send(
+    chatId: string,
+    text: string,
+    withId: true,
+  ): Promise<{ ok: boolean; messageId: number | null }>;
+  private async send(
+    chatId: string,
+    text: string,
+    withId = false,
+  ): Promise<boolean | { ok: boolean; messageId: number | null }> {
+    const fail = withId ? { ok: false, messageId: null } : false;
     try {
       const res = await fetch(
         `https://api.telegram.org/bot${this.botToken}/sendMessage`,
@@ -256,15 +289,32 @@ export class TelegramNotifyService {
       );
       if (!res.ok) {
         this.logger.warn(`Telegram ответил ${res.status} на сообщение в чат`);
-        return false;
+        return fail;
       }
-      return true;
+      if (!withId) return true;
+      // Тело читаем только когда идентификатор нужен: пятерым другим
+      // вызывающим он не нужен, а лишнее чтение ответа — лишнее место,
+      // где отправка может «не удаться» уже после того, как удалась.
+      return { ok: true, messageId: await messageIdOf(res) };
     } catch (error) {
       this.logger.warn(
         `не удалось отправить сообщение в Telegram: ${message(error)}`,
       );
-      return false;
+      return fail;
     }
+  }
+}
+
+/** Идентификатор отправленного. `null` — ответ без разбираемого тела. */
+async function messageIdOf(res: Response): Promise<number | null> {
+  try {
+    const body = (await res.json()) as {
+      result?: { message_id?: number };
+    };
+    const id = body.result?.message_id;
+    return typeof id === 'number' ? id : null;
+  } catch {
+    return null;
   }
 }
 

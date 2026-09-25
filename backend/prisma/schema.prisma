@@ -187,6 +187,11 @@ model User {
   subscription  Subscription?
   creditLedger  CreditLedger[]
 
+  // Ключи внешнего API (этап 144, docs-tz/TZ-Vneshnee-API.md).
+  apiKeys ApiKey[]
+  // Заявки внешнего API на ролик (этап 145).
+  apiVideoJobs ApiVideoJob[]
+
   // Согласие на рассылку подборки удачных роликов через Telegram-бота
   // (ТЗ §42, этап 63, TODO §III.4). Две даты, а не один булев флаг: нужна
   // и дата согласия (для аудита), и дата отписки (для истории, а не
@@ -258,11 +263,13 @@ model User {
 
   /// Подтверждённая подписка на канал (этап 133) — одна на человека.
   unlockCheck UnlockCheck?
+  youtubeUnlockSession YoutubeUnlockSession?
 
   /// Приглашения (этап 134): своя ссылка, приведённые и — если пришёл
   /// по чужой ссылке — строка о том, кто привёл его самого.
   referralCode      ReferralCode?
   referralsInvited  Referral[]    @relation("ReferralInviter")
+  testerInvites     TesterInvite[] @relation("TesterInviteUser")
   referralAsInvitee Referral?     @relation("ReferralInvitee")
 
   /// Тестовый аккаунт (TODO §III п.37, common/test-user-scenarios.ts).
@@ -272,6 +279,22 @@ model User {
   /// тестировщика в Premium вместо этого флага проверял бы не тот
   /// продукт.
   isTestUser Boolean @default(false)
+  /// До какого момента действует тестовый доступ (этап 155). NULL —
+  /// бессрочно, как было до приглашений. Проверяется там же, где
+  /// `isTestUser`, — в `PlanService`.
+  testAccessUntil DateTime?
+  /// Когда человек НАЖАЛ START в личке с ботом (этап 155).
+  ///
+  /// Это НЕ то же, что наличие `telegramId`: идентификатор появляется
+  /// при входе в мини-апп, у людей, никогда не открывавших диалог с
+  /// ботом. Права писать им он не даёт — Telegram отвечает `bot can't
+  /// initiate conversation with a user`, и `dm()` глотает это молча.
+  /// Это поле — единственный признак, по которому право известно ДО
+  /// отправки.
+  botChatOpenedAt DateTime?
+  /// Находки, о которых он сообщил (этап 157). Каскад: удаляем
+  /// пользователя — уходят и его тикеты вместе с окружением в них.
+  testTickets TestTicket[]
   /// Сценарии, на которых потолок снят, — значения `FreeScenario`
   /// (`PRODUCT_VIDEO`, `CLIENT_SITE`, `GREETING_VIDEO`). Массив строк, а
   /// не enum, сознательно: это ГРУППИРОВКА типов проектов (SINGLE и LINE
@@ -279,6 +302,24 @@ model User {
   /// неизвестное значение в колонке ничего не открывает
   /// (`normalizeFreeScenarios`). Действует только вместе с `isTestUser`.
   freeScenarios String[] @default([])
+  /// Окружение последнего запуска мини-аппа (этап 156,
+  /// `common/environment.ts`): поверхность (ТМА/браузер), вид
+  /// устройства, семейство и версия ОС, платформа и версия клиента
+  /// Telegram, сырой `User-Agent` и число касаний, экран и видимая
+  /// область, локаль интерфейса, тема и версия сборки.
+  ///
+  /// Json, а не колонки: набор полей будет меняться вслед за тем, что
+  /// окажется нужным для воспроизведения, а миграция ради ещё одного
+  /// необязательного поля окружения — цена, несоразмерная пользе. По
+  /// этим полям не ищут и не соединяют: их читают целиком, одной
+  /// строкой, рядом с тикетом.
+  ///
+  /// Пишется ТОЛЬКО тестовым аккаунтам (`EnvironmentService`): `users`
+  /// — самая крупная таблица проекта, и обновлять её на каждом запуске
+  /// у каждого ради данных, которые прочтёт только вкладка тикетов,
+  /// незачем.
+  lastEnvironment   Json?
+  lastEnvironmentAt DateTime?
 
   aiUsage AiUsage[]
   /// Свёртка журнала расходов (этап 118) — та же судьба при удалении
@@ -953,6 +994,28 @@ model PublicationRequest {
   tags          String[]
   category      String?
 
+  /// Язык ролика — локаль сессии на момент постановки в очередь (этап
+  /// 137, ТЗ TZ-Multilingual-YouTube.md). Уезжает в
+  /// `snippet.defaultLanguage`/`defaultAudioLanguage` при загрузке и
+  /// задаёт, С КАКОГО языка переводить заголовок и описание на
+  /// остальные локали. В снимке, а не по ссылке на сессию, по той же
+  /// причине, что и заголовок рядом: заявка переживает TTL сессии.
+  language      String   @default("ru")
+
+  /// Субтитры оригинального языка в формате `.srt` — снимком, вместе с
+  /// заголовком и описанием (этап 137). Загружаются на YouTube после
+  /// публикации (`captions.insert`), если у канала есть расширенное
+  /// согласие. В снимке, а не по ссылке на сессию, по той же причине,
+  /// что и всё остальное здесь: заявка переживает TTL сессии, а у
+  /// ролика, собранного без субтитров, `.srt` вообще не существует —
+  /// он собирается здесь из реплик, без ffmpeg.
+  subtitlesSrt String?
+  /// Когда субтитры приняты площадкой. Пусто и без ошибки — не
+  /// загружались (у канала нет права либо текста нет).
+  captionsUploadedAt DateTime?
+  /// Почему не загрузились — на человеческом языке, для оператора.
+  captionsError String?
+
   moderatorId  String?
   moderator    User?     @relation("PublicationModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
   moderatedAt  DateTime?
@@ -1277,6 +1340,214 @@ enum LibraryVisibility {
   HIDDEN
 }
 
+/// Статус альтернативной звуковой дорожки (этап 138, ТЗ
+/// TZ-Multilingual-YouTube.md §5).
+enum AudioTrackStatus {
+  /// Речь синтезирована и укладывается в ролик — дорожку можно собирать.
+  READY
+  /// Машина сделала что могла и не уложилась: дальше решает человек.
+  HANDOVER
+  /// Не получилось вовсе (провайдер отказал, текста нет).
+  FAILED
+}
+
+/// Альтернативная звуковая дорожка ролика на другом языке (этап 138).
+///
+/// Одна строка на язык: YouTube принимает по одной дорожке на локаль, и
+/// повторный прогон правит существующую, а не плодит вторую.
+model VideoAudioTrack {
+  id String @id @default(cuid())
+
+  /// Session.id без FK — дорожка переживает TTL-очистку сессий, как и
+  /// заявка на публикацию: файл уже отдан оператору, и терять карточку
+  /// вместе с сессией нельзя.
+  sessionId String
+  /// К КАКОЙ версии ролика относится дорожка. Перегенерация делает
+  /// прежние дорожки негодными: картинка другая, и речь под неё уже не
+  /// ложится. Поле хранится именно для того, чтобы это было видно.
+  generatedVideoId String?
+
+  /// Локаль дорожки: ru | uk | en | de | es.
+  locale String
+  status AudioTrackStatus @default(FAILED)
+
+  /// Переведённая под хронометраж реплика — то, что произносит дорожка.
+  speech String?
+  /// Синтезированный голос в хранилище (не готовый микс: сборка полного
+  /// звука — отдельный шаг тем же рецептом ffmpeg, что у оригинала).
+  voicePathname String?
+  voiceUrl      String?
+
+  /// Измеренная длительность речи и её перебор за конец ролика
+  /// (`common/mp3-duration.ts`, `common/audio-track-fit.ts`).
+  voiceSeconds    Float?
+  overflowSeconds Float?
+  /// Во сколько раз ускорить речь при сборке, если без этого не влезает
+  /// (`atempo`). Пусто — подгонка не нужна.
+  tempoRate Float?
+  /// Сколько раз просили перевод: второй заход — «на N % короче».
+  attempts Int @default(0)
+  /// Почему отдано человеку — на человеческом языке, для карточки.
+  note String?
+
+  /// Задача ffmpeg на сборку полного звука (этап 138). Пока она есть, а
+  /// `trackUrl` пуст — дорожка собирается; так же, как у постобработки
+  /// ролика, отдельного статуса «собирается» для этого не нужно.
+  mixJobId String?
+  /// Готовый файл дорожки: полный звук ролика на другом языке, который
+  /// оператор заливает в Studio (API дорожек у YouTube нет вовсе).
+  trackPathname String?
+  trackUrl      String?
+  /// Почему сборка не удалась — отдельно от `note` про длину речи.
+  mixError String?
+
+  /// Субтитры этой дорожки (этап 141): тайминг от ОРИГИНАЛА — биты
+  /// ролика от языка не переезжают, — текст от построчного перевода.
+  /// Хранится, а не считается при чтении: сценарий живёт в сессии, а
+  /// дорожка её переживает.
+  subtitlesSrt String?
+
+  /// Когда оператор ОТМЕТИЛ, что залил дорожку в Studio (этап 139).
+  /// Именно отметка, а не проверка: API дорожек у YouTube нет вовсе, и
+  /// убедиться машиной, что файл на месте, нельзя ничем. Называть это
+  /// «проверено» значило бы соврать в интерфейсе.
+  uploadedAt   DateTime?
+  uploadedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([sessionId, locale])
+  @@index([sessionId])
+  @@map("video_audio_tracks")
+}
+
+/// Ключ внешнего API (этап 144, docs-tz/TZ-Vneshnee-API.md).
+///
+/// Секрета здесь нет: `keyHash` — sha-256 от него, и поиск при каждом
+/// вызове идёт по уникальному индексу на этой колонке. Соли нет
+/// намеренно (секрет не выбирает человек — 32 случайных байта), и
+/// именно поэтому хеш детерминированный и по нему можно искать.
+model ApiKey {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Имя, которое дал человек: «CI релизов», «скрипт Пети».
+  name String
+  /// Открытое начало ключа — по нему он узнаётся в списке и в логах.
+  hint String
+  /// Куда сообщать об исходе заявки (этап 146). Адрес на КЛЮЧЕ, а не
+  /// на заявке: вебхук — свойство интеграции, а не отдельного ролика.
+  webhookUrl String?
+  /// sha-256 от секрета. Сам секрет показан один раз при выдаче.
+  keyHash String @unique
+
+  /// Последнее использование — с точностью до часа (см.
+  /// `shouldTouchLastUsed`): запись на каждый вызов была бы платой за
+  /// наблюдаемость на самом горячем пути.
+  lastUsedAt DateTime?
+  /// Отзыв, а не удаление: «этого ключа никогда не было» — ответ хуже,
+  /// чем «отозван тогда-то».
+  revokedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+/// Состояние заявки внешнего API (этап 145). То же слово видит чужой код.
+enum ApiVideoJobStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
+/// Заявка внешнего API на ролик (этап 145, docs-tz/TZ-Vneshnee-API.md).
+///
+/// Генерация длится минуты, а фона у serverless нет: ответ — `202` и
+/// `jobId`, работу доводит крон. Строка переживает сессию (её чистит TTL
+/// через сутки простоя), поэтому `sessionId` здесь без внешнего ключа —
+/// как у заявки на публикацию.
+model ApiVideoJob {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Каким ключом заявку подали — видно в журнале, чей скрипт это был.
+  apiKeyId String
+
+  /// Ключ повтора от клиента. Уникален В ПАРЕ с пользователем: его
+  /// выбирает чужой код, и общая уникальность дала бы одному
+  /// интегратору занимать ключ другому.
+  idempotencyKey String?
+  /// Отпечаток тела запроса: тот же ключ с другим телом — не повтор.
+  fingerprint String
+
+  productItemId  String
+  projectId      String
+  libraryEntryId String
+  quality        String
+  aspectRatio    String?
+  locale         String?
+
+  /// Сессия, в которой идёт работа. Без внешнего ключа — см. шапку.
+  sessionId String?
+  status    ApiVideoJobStatus @default(QUEUED)
+
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime?
+  lockedUntil   DateTime?
+
+  videoUrl String?
+  error    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([userId, idempotencyKey])
+  @@index([status, nextAttemptAt])
+  @@index([userId])
+  @@map("api_video_jobs")
+}
+
+/// Состояние доставки вебхука (этап 146).
+enum ApiWebhookStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+/// Журнал доставок вебхуков внешнего API (этап 146).
+///
+/// Одна строка на заявку: вебхук сообщает об исходе, а исход у заявки
+/// один — поэтому `jobId` уникален, и повторная попытка правит ту же
+/// строку, а не плодит соседнюю.
+model ApiWebhookDelivery {
+  id     String @id @default(cuid())
+  jobId  String @unique
+  userId String
+  url    String
+
+  status   ApiWebhookStatus @default(PENDING)
+  attempts Int              @default(0)
+
+  nextAttemptAt DateTime?
+  lockedUntil   DateTime?
+
+  lastStatusCode Int?
+  lastError      String?
+  deliveredAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@map("api_webhook_deliveries")
+}
+
 model AnalysisLibraryEntry {
   id        String @id @default(cuid())
   sourceKey String @unique // yt:<videoId> | sha256:<hex>
@@ -1293,6 +1564,14 @@ model AnalysisLibraryEntry {
   audienceAgeRange  String?
   audienceInterests String[] @default([])
   aspectRatio       String? // originalVideo.frame.aspectRatio
+  /// Теги исходного ролика на момент разбора (этап 136, ТЗ
+  /// TZ-Multilingual-YouTube.md). Денормализованы сюда по той же
+  /// причине, что и `aspectRatio` рядом: сессия живёт по TTL, а «Сделать
+  /// такой же» собирает новую сессию из ЭТОЙ строки — без колонки теги
+  /// исходника доставались бы только первому, кто разобрал ролик.
+  /// Спрашивать их у Google на этом пути нельзя: он публичный и
+  /// бесплатный, и платный вызов в нём стал бы дырой в суточной квоте.
+  sourceTags        String[] @default([])
   sceneCount        Int      @default(0)
   characterCount    Int      @default(0)
 
@@ -1981,6 +2260,33 @@ enum ReferralStatus {
 /// аккаунте, который нам ничего не даёт, — и рисковать тем, что
 /// уникальность аккаунта заблокирует человеку вторую, уже успешную
 /// попытку.
+/// Короткоживущий вход через Google ради ОДНОЙ проверки подписки
+/// («Условно бесплатный Lite» §6.3, этап 140).
+///
+/// Зачем отдельная таблица, а не `PublishingChannel`: тот хранит
+/// долгоживущий грант на загрузку роликов, а здесь нужен токен на десять
+/// минут и только на чтение. Держать ради разовой проверки второй
+/// постоянный токен — лишний риск без выигрыша.
+///
+/// Refresh-токена нет и не запрашивается: продлить эту сессию нечем даже
+/// по ошибке. Строка живёт до `expiresAt`, после проверки удаляется
+/// сразу, а забытые подбирает уборка.
+model YoutubeUnlockSession {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Тем же ключом, что токены каналов публикации (`CHANNEL_TOKEN_KEY`).
+  accessTokenEnc String
+  /// Канал Google-аккаунта — им же проверяется уникальность в UnlockCheck.
+  googleChannelId String
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("youtube_unlock_sessions")
+}
+
 model UnlockCheck {
   id     String @id @default(cuid())
   userId String @unique
@@ -2280,6 +2586,142 @@ model CatalogBatchItem {
 /// одному на строку в воркере. Разбор переносится тем же способом, что у
 /// CatalogBatchRun — через AnalysisLibraryEntry, без FK (снимок, не
 /// ссылка). Доступ — та же Premium-проверка, тот же признак 'library'.
+/// Приглашение тестировщика (этап 155,
+/// `docs-tz/TZ-Rabota-s-Testirovshchikom.md` §2).
+///
+/// Единственный способ впустить тестировщика: Telegram не даёт боту
+/// написать первым, и диалог создаётся только тем, что человек сам
+/// нажал START по ссылке `t.me/<bot>?start=t_<token>`.
+///
+/// Одноразовое и привязывается к первому, кто активировал: ссылка
+/// уходит в переписку, переписку пересылают, а тестовый доступ — это
+/// деньги.
+model TesterInvite {
+  id    String @id @default(cuid())
+  /// То, что уходит в `?start=` после префикса `t_`.
+  token String @unique
+  /// Как зовут тестировщика — для оператора, не для системы.
+  label String
+
+  /// Что открыть при активации — коды из `common/test-user-scenarios.ts`.
+  freeScenarios String[] @default([])
+  /// До какого момента ссылка действует. NULL — бессрочно.
+  expiresAt DateTime?
+
+  /// Кто активировал — `User.id`. NULL, пока не активировано.
+  userId      String?
+  user        User?     @relation("TesterInviteUser", fields: [userId], references: [id], onDelete: SetNull)
+  activatedAt DateTime?
+
+  /// Отзыв не удаляет строку: по ней потом видно, кто, что и когда
+  /// проверял. Тот же приём, что у `Referral.revokedAt`.
+  revokedAt     DateTime?
+  revokedReason String?
+
+  /// Какой оператор завёл — `User.id`.
+  createdBy String
+  createdAt DateTime @default(now())
+
+  tickets TestTicket[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("tester_invites")
+}
+
+/// Находка тестировщика (этап 157,
+/// `docs-tz/TZ-Rabota-s-Testirovshchikom.md` §3).
+///
+/// Два входа, одна сущность: бот — для быстрого «сломалось», кнопка в
+/// мини-аппе — для находки, привязанной к сессии. Разводить их по двум
+/// таблицам значило бы дважды писать очередь разбора и дважды её
+/// фильтровать.
+model TestTicket {
+  id String @id @default(cuid())
+  /// Человекочитаемый номер — он уходит тестировщику в подтверждение.
+  /// Последовательность, а не `id`: «принято, #14» в переписке
+  /// работает, `cmfz3k…` — нет.
+  number Int @unique @default(autoincrement())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// По какому приглашению он тестирует. NULL — доступ выдан руками
+  /// оператора, без приглашения.
+  inviteId String?
+  invite   TesterInvite? @relation(fields: [inviteId], references: [id], onDelete: SetNull)
+
+  /// `BOT` или `APP` — откуда пришло.
+  source String
+  text   String
+  /// Вложения: наш URL, тип и размер (§3.3). Json, а не таблица, — их
+  /// читают целиком вместе с тикетом и никогда по отдельности.
+  attachments Json @default("[]")
+  /// Переписка по тикету: подтверждения бота, комментарии тестировщика
+  /// ответом на них, ответы оператора. Та же причина, что у вложений.
+  comments Json @default("[]")
+  /// Идентификаторы НАШИХ сообщений в личке, относящихся к этому
+  /// тикету. По ним `reply_to_message` находит тикет, и ответ
+  /// тестировщика ложится комментарием, а не новой находкой в очередь.
+  botMessageIds Int[] @default([])
+
+  /// Заполняется только из мини-аппа.
+  sessionId String?
+  scenario  String?
+  stepId    String?
+
+  /// Локаль ИНТЕРФЕЙСА — на каком языке было НАРИСОВАНО увиденное.
+  /// Обязательна: неточности перевода и поехавшая вёрстка видны только
+  /// в своём языке.
+  uiLocale String
+  /// Локаль РОЛИКА — другой перевод и другая команда. «Субтитры на
+  /// немецком с ошибкой» искать в словарях интерфейса бесполезно.
+  sessionLocale String?
+
+  /// Окружение — чем воспроизводить (§3.4).
+  env Json?
+  /// Короткий ключ окружения для группировки похожих (§3.7).
+  envKey String?
+  /// Когда окружение снято. Может быть заметно РАНЬШЕ `createdAt` — из
+  /// бота берётся последнее известное, и это само по себе сигнал, что
+  /// к находке оно, скорее всего, отношения не имеет.
+  envCapturedAt DateTime?
+  appBuild      String?
+
+  /// Строками, а не енумом: набор статусов очереди разбора меняется
+  /// чаще, чем стоит миграции (`common/test-ticket.ts`).
+  status     String    @default("NEW")
+  statusBy   String?
+  statusAt   DateTime?
+  statusNote String?
+
+  /// Когда тестировщику ушёл ответ и когда отправка не удалась.
+  /// Второе отдельным полем: `dm()` глотает отказ молча, и без
+  /// видимого признака оператор думает, что ответил.
+  replySentAt   DateTime?
+  replyFailedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  /// Когда тестировщик писал в этот тикет в последний раз — по нему, и
+  /// только по нему, считается окно склейки (аудит этапа 157).
+  ///
+  /// Отдельно от `updatedAt` сознательно: тот двигает любая правка
+  /// строки — ответ оператора, смена статуса, дописанный
+  /// `botMessageIds`. Окно склейки меряет паузу в речи ЧЕЛОВЕКА, и
+  /// опираться на отметку, которую двигаем мы сами, значит однажды
+  /// приклеить новую находку к вчерашней.
+  lastMessageAt DateTime?
+
+  /// Очередь разбора: свежие сверху, с фильтром по статусу.
+  @@index([status, createdAt])
+  /// «Ещё N тикетов с тем же ключом» в карточке.
+  @@index([envKey])
+  @@index([userId])
+  /// Склейка ищет последний тикет, в который этот человек писал.
+  @@index([userId, source, lastMessageAt])
+  @@map("test_tickets")
+}
+
 model AbTestRun {
   id        String  @id @default(cuid())
   projectId String
@@ -2293,7 +2735,14 @@ model AbTestRun {
   /// Тот же товар, что у исходной сессии — воркеру нужен для
   /// createFromItem при создании каждой дочерней сессии-варианта.
   productItemId String
-  libraryEntryId String
+  /// Разбор, который воркер применит к каждой дочерней сессии. NULL —
+  /// когда сцену задаёт приём, а не референс (этап 152): у такой сессии
+  /// записи в библиотеке нет и не будет.
+  libraryEntryId String?
+  /// Приём сцены — вторая возможная форма источника. Ровно одна из двух
+  /// колонок заполнена, это держит CHECK в миграции: «ни одной» — прогон,
+  /// которому нечего передать детям, «обе» — спор двух источников.
+  sceneTemplateId String?
 
   quality     String
   aspectRatio String?

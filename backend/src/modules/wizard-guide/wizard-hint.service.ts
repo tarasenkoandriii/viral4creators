@@ -83,6 +83,8 @@ interface SessionShape {
   } | null;
   generatedVideo?: { status?: string } | null;
   videoAnalysis?: { status?: string } | null;
+  /** Приём сцены вместо референса (этап 153). */
+  sceneTemplate?: { templateId?: string } | null;
   productInformation?: unknown;
 }
 import { guideSpentToday } from './guide-budget';
@@ -97,6 +99,7 @@ import { WizardGuideService } from './wizard-guide.service';
 import { ExperienceService } from './experience.service';
 import type { ExperienceText } from './experience';
 import { TranslationService } from './translation.service';
+import { usesTemplate } from '../../common/scene-templates';
 
 /** Сколько ждём модель. Короткая реплика — короткое ожидание. */
 const HINT_TIMEOUT_MS = 20_000;
@@ -457,6 +460,10 @@ export class WizardHintService {
         ? {
             hasReference: !!session.videoAnalysis,
             analysisComplete: session.videoAnalysis?.status === 'complete',
+            onSceneTemplate: usesTemplate(
+              session.videoAnalysis?.status,
+              session.sceneTemplate?.templateId,
+            ),
             hasProductInfo: !!session.productInformation,
             hasProductImage: !!activeProductImage(
               session.productInformation as never,

@@ -13,19 +13,21 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Gift, Send } from 'lucide-react';
+import { Gift, Send, Youtube } from 'lucide-react';
 import { Alert, Button, Card, CardHeader, Spinner } from '../../components/ui';
 import {
   confirmTelegramSubscription,
+  confirmYoutubeSubscription,
   getInviteState,
   recordInviteEvent,
+  startYoutubeUnlock,
   type InviteState,
 } from '../../services/invite-api';
 import { errorMessage } from '../../services/projects-api';
 import { referralLink, telegramReferralLink } from '../../lib/referral';
 import { useAsync } from '../../lib/useAsync';
 import { useI18n } from '../../lib/i18n-context';
-import { openTelegramLink } from '../../lib/telegram';
+import { openExternalLink, openTelegramLink } from '../../lib/telegram';
 import { ScreenHeader, LoadError } from '../projects/shared';
 
 /** Тот же адрес лендинга, что у панели шеринга и ленты. */
@@ -49,6 +51,51 @@ export function InviteScreen() {
   // пустой список зависимостей — это и есть «при монтировании».
   useEffect(() => {
     recordInviteEvent('cabinet');
+  }, []);
+
+  // Возврат из Google (этап 140): прослойка приводит сюда с
+  // `?youtube=ok|error` ПЕРЕД хешем — параметр после `#/invite` клиент
+  // бы не увидел. Строку убираем сразу же, иначе она переживёт
+  // перезагрузку и покажет тот же результат повторно.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('youtube');
+    if (!result) return;
+    if (result !== 'ok') setCheckError(params.get('msg') || '');
+    window.history.replaceState(
+      null,
+      '',
+      window.location.pathname + window.location.hash
+    );
+    // Вход состоялся — состояние кабинета изменилось: теперь «Проверить»
+    // доступно без повторного входа.
+    reload();
+    // Однократно при монтировании — намеренно без зависимостей.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const signInYoutube = useCallback(async () => {
+    setBusy(true);
+    setCheckError(null);
+    try {
+      openExternalLink(await startYoutubeUnlock());
+    } catch (e) {
+      setCheckError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const checkYoutube = useCallback(async () => {
+    setBusy(true);
+    setCheckError(null);
+    try {
+      setState(await confirmYoutubeSubscription());
+    } catch (e) {
+      setCheckError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   }, []);
 
   const check = useCallback(async () => {
@@ -100,6 +147,13 @@ export function InviteScreen() {
       ? `https://t.me/${channel.slice(1)}`
       : null;
 
+  const yt = view.subscription.youtube;
+  // Ссылка на канал собирается из его id: @имени у нас нет, а
+  // `youtube.com/channel/UC…` работает всегда.
+  const youtubeChannelUrl = yt?.channelId
+    ? `https://www.youtube.com/channel/${yt.channelId}`
+    : null;
+
   return (
     <div className="space-y-4">
       <ScreenHeader title={t.title} />
@@ -150,6 +204,58 @@ export function InviteScreen() {
           <p className="muted text-sm">{t.subscriptionUnavailable}</p>
         )}
       </Card>
+
+      {/* Второй способ заплатить (этап 140) — рядом с первым, не вместо
+          него: у человека в Telegram подписка на канал дешевле по
+          трению, а у пришедшего с лендинга Google может оказаться
+          единственным. Карточка не показывается вовсе, пока способ не
+          настроен на стенде: обещать условие, которого нет, хуже, чем
+          не обещать ничего. */}
+      {yt?.available && !view.subscription.confirmed && (
+        <Card className="p-5">
+          <CardHeader title={t.youtubeTitle} icon={<Youtube size={16} />} />
+          <p className="muted text-sm">{t.youtubeHint}</p>
+          {checkError && (
+            <Alert tone="error" className="mt-3">
+              {checkError}
+            </Alert>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {youtubeChannelUrl && (
+              <Button
+                variant="outline"
+                icon={<Youtube size={16} />}
+                onClick={() => openExternalLink(youtubeChannelUrl)}
+              >
+                {t.youtubeOpenChannel}
+              </Button>
+            )}
+            {/* Вход не предлагается тем, у кого нужное право уже есть:
+                подключённый канал выгрузки давал `youtube.readonly`
+                вместе с правом на загрузку. Лишний экран согласия здесь
+                стоит дороже, чем код, который его обходит. */}
+            {!yt.ready && (
+              <Button
+                variant="outline"
+                loading={busy}
+                onClick={() => void signInYoutube()}
+              >
+                {t.youtubeSignIn}
+              </Button>
+            )}
+            <Button
+              loading={busy}
+              disabled={!yt.ready}
+              onClick={() => void checkYoutube()}
+            >
+              {t.checkSubscription}
+            </Button>
+          </div>
+          {yt.viaConnectedChannel && (
+            <p className="muted mt-2 text-xs">{t.youtubeViaChannel}</p>
+          )}
+        </Card>
+      )}
 
       <Card className="p-5">
         <CardHeader title={t.referralsTitle} icon={<Gift size={16} />} />

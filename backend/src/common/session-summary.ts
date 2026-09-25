@@ -97,7 +97,11 @@ export interface SummaryQuery {
   createdFrom?: Date;
   /** Включительно, конец суток UTC. */
   createdTo?: Date;
-  /** Подстрока по username/firstName/telegramId владельца, без учёта регистра. */
+  /**
+   * Подстрока по username/firstName/telegramId владельца, без учёта
+   * регистра, ИЛИ точное совпадение по id сессии: из карточки находки
+   * (вкладка «Тестирование») сюда приходят именно с id.
+   */
   search?: string;
   sortBy: SessionSortKey;
   sortDir: SortDirection;
@@ -137,8 +141,16 @@ function buildWhere(
   if (q.createdTo) conditions.push(`s."createdAt" <= ${bind(q.createdTo)}`);
   if (q.search) {
     const pattern = bind(`%${q.search}%`);
+    // Точное совпадение по id сессии — рядом с поиском по владельцу
+    // (аудит этапа 158). Из карточки находки оператор приходит сюда с
+    // конкретным id, и без этого условия поиск по нему возвращал
+    // пустоту: он искал только владельцев. Точное, а не подстрокой —
+    // это первичный ключ, и `ILIKE '%…%'` по нему означал бы
+    // последовательный просмотр таблицы ради того, чего не бывает.
+    const exact = bind(q.search);
     conditions.push(
-      `(u."username" ILIKE ${pattern} OR u."firstName" ILIKE ${pattern} OR u."telegramId" ILIKE ${pattern})`,
+      `(u."username" ILIKE ${pattern} OR u."firstName" ILIKE ${pattern} ` +
+        `OR u."telegramId" ILIKE ${pattern} OR s."id" = ${exact})`,
     );
   }
   return {

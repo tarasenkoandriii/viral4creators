@@ -229,6 +229,48 @@ describe('VideoService — теги исходного ролика (этап 13
     expect(sessions.updateSession).toHaveBeenCalled();
   });
 
+  it('повторная регистрация ТОЙ ЖЕ ссылки за тегами не ходит', async () => {
+    // Снимок, а не зеркало: второй вызов дал бы то же самое за ещё одну
+    // единицу суточной квоты всего деплоя. Заодно это закрывает самый
+    // дешёвый способ жечь чужую квоту — один и тот же URL в цикле.
+    const { svc, sessions, youtubeSearch } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      originalVideo: {
+        sourceType: VideoSourceType.YOUTUBE,
+        youtubeUrl: 'https://youtu.be/dQw4w9WgXcQ',
+        sourceTags: ['бег'],
+      },
+    });
+    await svc.registerYoutubeVideo('s1', 'https://youtu.be/dQw4w9WgXcQ');
+    expect(youtubeSearch.fetchVideoTags).not.toHaveBeenCalled();
+    expect(
+      (patchOf(sessions).originalVideo as { sourceTags?: string[] }).sourceTags,
+    ).toEqual(['бег']);
+  });
+
+  it('ДРУГАЯ ссылка теги перечитывает, даже если старые в сессии есть', async () => {
+    // Иначе новый референс унёс бы теги прежнего — молча и навсегда.
+    const { svc, sessions, youtubeSearch } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      originalVideo: {
+        sourceType: VideoSourceType.YOUTUBE,
+        youtubeUrl: 'https://youtu.be/OLD11111111',
+        sourceTags: ['старые'],
+      },
+    });
+    youtubeSearch.fetchVideoTags.mockResolvedValue(['новые']);
+    await svc.registerYoutubeVideo('s1', 'https://youtu.be/dQw4w9WgXcQ');
+    expect(youtubeSearch.fetchVideoTags).toHaveBeenCalledWith(
+      'dQw4w9WgXcQ',
+      's1',
+    );
+    expect(
+      (patchOf(sessions).originalVideo as { sourceTags?: string[] }).sourceTags,
+    ).toEqual(['новые']);
+  });
+
   it('загрузка файлом за тегами не ходит: у файла их неоткуда взять', async () => {
     const { svc, youtubeSearch } = build();
     await svc.generateUploadUrl('s1', 'a.mp4', 100, 'video/mp4');

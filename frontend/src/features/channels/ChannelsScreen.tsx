@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Music2, PlugZap, Unplug, Youtube } from 'lucide-react';
+import { Captions, Music2, PlugZap, Unplug, Youtube } from 'lucide-react';
 import {
   Alert,
   Badge,
@@ -129,12 +129,12 @@ export function ChannelsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connecting]);
 
-  const connect = async (platform: PublicationPlatform) => {
+  const connect = async (platform: PublicationPlatform, extended = false) => {
     setActionError(null);
     setNotice(null);
     setConnecting(platform);
     try {
-      const url = await startChannelOAuth(platform);
+      const url = await startChannelOAuth(platform, extended);
       openExternalLink(url);
     } catch (err) {
       setActionError(errorMessage(err));
@@ -302,6 +302,36 @@ export function ChannelsScreen() {
                         {dict.channelsScreen.disconnect}
                       </Button>
                     </div>
+                    {/* Этап 137 (ТЗ TZ-Multilingual-YouTube.md §4):
+                        субтитры требуют отдельного, более широкого
+                        согласия Google. Канал без него работает ровно
+                        как раньше — грузит ролики и ничего не теряет, —
+                        поэтому здесь не предупреждение, а предложение, и
+                        рядом сказано, что именно продукт этим правом
+                        делает. Ничего не удаляет. */}
+                    {c.platform === 'YOUTUBE' &&
+                      c.status === 'ACTIVE' &&
+                      !c.captionsAllowed && (
+                        <div className="mt-3 border-t border-silver-200/60 pt-3 dark:border-silver-800/60">
+                          <p className="mb-2 text-xs text-silver-400">
+                            {dict.channelsScreen.captionsHint}
+                          </p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            icon={<Captions size={14} />}
+                            loading={connecting === c.platform}
+                            onClick={() => void connect(c.platform, true)}
+                          >
+                            {dict.channelsScreen.captionsButton}
+                          </Button>
+                        </div>
+                      )}
+                    {c.platform === 'YOUTUBE' && c.captionsAllowed && (
+                      <p className="mt-3 border-t border-silver-200/60 pt-3 text-xs text-silver-400 dark:border-silver-800/60">
+                        {dict.channelsScreen.captionsAllowed}
+                      </p>
+                    )}
                   </Card>
                 );
               })}

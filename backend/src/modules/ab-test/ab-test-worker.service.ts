@@ -51,6 +51,7 @@ import { PromptService } from '../prompt/prompt.service';
 import { GenerationService } from '../generation/generation.service';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import { logWorkflowStage } from '../../common/workflow-stage-events';
+import { SceneTemplateId } from '../../common/scene-templates';
 import {
   DailySpendLimitExceededException,
   startOfDayUtc,
@@ -82,7 +83,9 @@ interface RunRow {
   userId: string;
   projectId: string;
   productItemId: string;
-  libraryEntryId: string;
+  /** Разбор из библиотеки — либо приём; ровно одно из двух (этап 152). */
+  libraryEntryId: string | null;
+  sceneTemplateId: string | null;
   quality: string;
   aspectRatio: string | null;
   locale: string | null;
@@ -373,7 +376,22 @@ export class AbTestWorkerService {
     const videoStarted = Boolean(current?.generatedVideo);
 
     if (!promptApproved && !videoStarted) {
-      await this.library.applyToSession(sessionId, run.libraryEntryId);
+      // Источник сцены наследуется дочерней сессией в той же форме, в
+      // какой он был у исходной (этап 152, аудит). Промпт варианта уже
+      // готов и посеется ниже, так что рендеру от источника ничего не
+      // нужно, — но сессия, которая не может ответить, откуда её сцена,
+      // врёт всем своим экранам: степперу, строке готовности и выбору
+      // источника.
+      if (run.libraryEntryId) {
+        await this.library.applyToSession(sessionId, run.libraryEntryId);
+      } else if (run.sceneTemplateId) {
+        await this.sessions.updateSession(sessionId, {
+          sceneTemplate: {
+            templateId: run.sceneTemplateId as SceneTemplateId,
+            chosenAt: new Date().toISOString(),
+          },
+        });
+      }
       await this.prompt.seedPrompt(
         sessionId,
         row.promptText,

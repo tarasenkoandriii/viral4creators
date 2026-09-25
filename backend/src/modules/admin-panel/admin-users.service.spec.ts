@@ -461,3 +461,35 @@ describe('AdminUsersService — тестовый доступ (TODO §III п.37)
     expect((await svc.get('u1')).freeScenarios).toEqual(['CLIENT_SITE']);
   });
 });
+
+describe('AdminUsersService — окружение в карточке (этап 156)', () => {
+  it('окружение доезжает вместе со временем снимка', async () => {
+    const at = new Date('2026-09-25T10:00:00.000Z');
+    const { svc } = build(
+      row({
+        lastEnvironment: { surface: 'TMA', osFamily: 'ios' },
+        lastEnvironmentAt: at,
+      }),
+    );
+    expect((await svc.get('u1')).environment).toEqual({
+      at,
+      value: { surface: 'TMA', osFamily: 'ios' },
+    });
+  });
+
+  it('без снимка — null, а не пустой объект', async () => {
+    const { svc } = build(
+      row({ lastEnvironment: null, lastEnvironmentAt: null }),
+    );
+    expect((await svc.get('u1')).environment).toBeNull();
+  });
+
+  it('значение без времени не выдаётся за снимок', async () => {
+    // Окружение без времени нечитаемо: непонятно, та ли это сборка, в
+    // которой человек видел баг.
+    const { svc } = build(
+      row({ lastEnvironment: { surface: 'TMA' }, lastEnvironmentAt: null }),
+    );
+    expect((await svc.get('u1')).environment).toBeNull();
+  });
+});

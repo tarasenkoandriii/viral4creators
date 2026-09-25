@@ -67,6 +67,36 @@ assert.equal(
   'длина одного тега ограничена шестьюдесятью, как на сервере'
 );
 
+// Потолок YouTube на ВЕСЬ список — 500 символов (аудит этапа 136).
+// Без него поле показывало бы человеку список, который YouTube потом
+// отвергнет целиком: узнавать о потолке из проваленной публикации —
+// худший из способов.
+{
+  const long = Array.from(
+    { length: 30 },
+    (_, i) => String(i).padStart(2, '0') + 'x'.repeat(58)
+  );
+  const out = normalizeTags(long);
+  assert.ok(out.length < 30, 'список обрывается раньше тридцати штук');
+  assert.ok(
+    out.join('').length <= 500,
+    'суммарная длина не выходит за потолок YouTube'
+  );
+  assert.deepEqual(
+    out,
+    long.slice(0, out.length),
+    'берём с начала, пока влезает: выборочно выпавшую середину человек в поле не объяснит'
+  );
+  const spaced = Array.from(
+    { length: 30 },
+    (_, i) => String(i).padStart(2, '0') + ' ' + 'y'.repeat(47)
+  );
+  assert.ok(
+    normalizeTags(spaced).reduce((n, t) => n + t.length + 2, 0) <= 500,
+    'тег с пробелом стоит дороже на кавычки, которые YouTube вокруг него ставит'
+  );
+}
+
 // Поле ввода и обратно.
 assert.equal(tagsToInput(['бег', 'shoes']), 'бег, shoes');
 assert.deepEqual(

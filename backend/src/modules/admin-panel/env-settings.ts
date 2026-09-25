@@ -48,6 +48,7 @@ import {
 import { PLAN_IDS } from '../../common/plans';
 import { MODEL_RATES, priceEnvKey } from '../../common/ai-pricing';
 import { isDevAuthAllowed } from '../admin-auth/dev-login';
+import { describeBuild } from '../../common/build-info';
 
 export interface EnvLike {
   [key: string]: string | undefined;
@@ -1306,6 +1307,43 @@ export function getEnvSettings(
         value: raw ?? undefined,
       });
     }
+
+    // Пороги сторожа остатков (этап 143, аудит того же этапа). Стоят
+    // здесь не для полноты списка: ноль означает «не сторожить», и
+    // выключенный нулём сторож не виден больше НИГДЕ — ни на
+    // «Балансах», ни в истории крона иначе как числом «сторожили
+    // ноль». Экран настроек это единственное место, где «сторож
+    // выключен» можно увидеть, не зная, что его надо искать.
+    for (const [key, raw, what] of [
+      ['BALANCE_ALERT_USD', env.BALANCE_ALERT_USD, 'в долларах'],
+      [
+        'BALANCE_ALERT_ELEVENLABS_CHARACTERS',
+        env.BALANCE_ALERT_ELEVENLABS_CHARACTERS,
+        'в символах ElevenLabs',
+      ],
+      [
+        'BALANCE_ALERT_SERPAPI_SEARCHES',
+        env.BALANCE_ALERT_SERPAPI_SEARCHES,
+        'в поисках SerpApi',
+      ],
+    ] as Array<[string, string | undefined, string]>) {
+      const off = raw?.trim() === '0';
+      const bad = raw !== undefined && !off && !isPositiveInt(raw.trim());
+      results.push({
+        key,
+        group: 'Telegram-логин',
+        required: false,
+        set: raw !== undefined,
+        ok: !bad,
+        severity: bad ? 'warning' : off ? 'warning' : 'ok',
+        message: bad
+          ? 'Задан, но не похож на число — бэкенд молча возьмёт умолчание. Порог, про который вы думаете, что он свой, а он не свой, хуже отсутствующего.'
+          : off
+            ? `Ноль — сторож остатка ${what} ВЫКЛЮЧЕН целиком, включая сообщение «остаток не читается».`
+            : `Порог остатка ${what}: ниже него крон balances-watch пишет в канал ошибок.`,
+        value: raw ?? '(умолчание)',
+      });
+    }
   }
 
   {
@@ -1390,6 +1428,28 @@ export function getEnvSettings(
       message:
         'Стенд: значение, из которого docker-compose выводит VITE_DEV_USER_ID (TMA шлёт его как X-Dev-User-Id) и NEXT_PUBLIC_DEV_USER_ID (кнопка dev-входа админки). Сам бэкенд его не читает — dev-пользователь приходит заголовком.',
       value: raw ?? '123 (по умолчанию)',
+    });
+  }
+
+  {
+    // Версия сборки (этап 154). Не переменная настройки, а диагностика:
+    // оператору нужно уметь ответить «на какой сборке это было», и
+    // единственное место, где это видно человеку, — здесь. Наружу, в
+    // `/health`, коммит не уходит: там записано «ни версий, ни имён
+    // хостов», и отменять это ради удобства нельзя.
+    const info = describeBuild(env);
+    results.push({
+      key: 'BUILD_ID',
+      group: 'Версия',
+      required: false,
+      set: info.build !== 'dev',
+      ok: true,
+      severity: info.build === 'dev' ? 'warning' : 'ok',
+      message:
+        info.build === 'dev'
+          ? 'Сборка неопознана: ни BUILD_ID, ни VERCEL_GIT_COMMIT_SHA. На стенде это норма, на проде — значит, что по тикету нельзя понять, на какой версии он снят.'
+          : 'Версия, которую сервер сообщает о себе. Она же попадёт в тикеты тестировщиков.',
+      value: info.build,
     });
   }
 

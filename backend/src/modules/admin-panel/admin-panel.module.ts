@@ -17,6 +17,8 @@ import { AdminVideoProviderSettingsService } from './admin-video-provider-settin
 import { AdminGrokTransportSettingsService } from './admin-grok-transport-settings.service';
 import { AdminReferralsService } from './admin-referrals.service';
 import { InviteModule } from '../invite/invite.module';
+import { AdminTesterInvitesService } from './admin-tester-invites.service';
+import { AdminTestTicketsService } from './admin-test-tickets.service';
 
 @Module({
   // StorageModule здесь больше не нужен (этап 89): удаление сессии
@@ -51,6 +53,8 @@ import { InviteModule } from '../invite/invite.module';
   imports: [WizardGuideModule, AdminAuthModule, InviteModule],
   controllers: [AdminPanelController],
   providers: [
+    AdminTesterInvitesService,
+    AdminTestTicketsService,
     ProviderBalancesService,
     AdminPanelService,
     AdminUsersService,
@@ -70,6 +74,8 @@ import { InviteModule } from '../invite/invite.module';
     AdminReferralsService,
   ],
   // Суточный отчёт крона берёт телеметрию отсюда (ТЗ §28, этап 45).
-  exports: [AdminPanelService],
+  // `ProviderBalancesService` наружу — за ним ходит крон-сторож
+  // остатков (этап 143), а `CronModule` уже импортирует этот модуль.
+  exports: [AdminPanelService, ProviderBalancesService],
 })
 export class AdminPanelModule {}

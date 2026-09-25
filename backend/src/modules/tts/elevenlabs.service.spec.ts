@@ -57,6 +57,10 @@ describe('ElevenLabsService (ТЗ §15.3)', () => {
     if (!r.ok) return;
     expect(r.audio.length).toBe(3);
     expect(r.characters).toBe('Привет, мир'.length);
+    // Этап 138: длительность измеряется по байтам. Три байта — не mp3,
+    // и это `null`, а не ноль: «не смогли измерить» и «нулевая длина» —
+    // разные вещи (см. `common/mp3-duration.ts`).
+    expect(r.durationSeconds).toBeNull();
     expect(r.model).toBe('eleven_multilingual_v2');
     expect(r.voiceId).toBe('EXAVITQu4vr4xnSDxMaL');
 
@@ -270,5 +274,43 @@ describe('elevenLabsLanguageCode', () => {
   it('пустой или непонятный язык — не шлём', () => {
     expect(elevenLabsLanguageCode(null, 'eleven_v3')).toBeUndefined();
     expect(elevenLabsLanguageCode('Ukrainian', 'eleven_v3')).toBeUndefined();
+  });
+});
+
+/**
+ * Длительность синтезированной дорожки (этап 138, §5 ТЗ
+ * TZ-Multilingual-YouTube.md).
+ *
+ * Провайдер её не отдаёт — она меряется по самим байтам. Проверяется
+ * здесь, а не только в тесте разборщика, потому что смысл имеет ровно
+ * связка: дорожка вернулась из синтеза уже со своей длиной, и звать
+ * что-то отдельно вызывающему не нужно.
+ */
+describe('ElevenLabsService — длительность дорожки', () => {
+  /** Кадр MPEG1 Layer III, стерео, 128 кбит/с, 44,1 кГц — 0,0261 с. */
+  const frame = () =>
+    Buffer.concat([
+      Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+      Buffer.alloc(Math.floor((144 * 128000) / 44100) - 4),
+    ]);
+
+  it('успех несёт измеренную длительность, а не оценку по символам', async () => {
+    const mp3 = Buffer.concat(Array.from({ length: 80 }, frame));
+    mockFetch(
+      jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () =>
+          mp3.buffer.slice(mp3.byteOffset, mp3.byteOffset + mp3.byteLength),
+      }),
+    );
+    const svc = withEnv({ VOICE_API_KEY: 'k' });
+    const r = await svc.synthesize({ text: 'Привет' });
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // 80 кадров × 1152 сэмпла / 44100 Гц ≈ 2,09 с. Оценка по символам
+    // («Привет» — шесть знаков) дала бы 0,4 с: разница, из-за которой
+    // проверка «дорожка примерно той же длины, что ролик» и заводится.
+    expect(r.durationSeconds).toBeCloseTo((80 * 1152) / 44100, 1);
   });
 });

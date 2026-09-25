@@ -26,6 +26,12 @@ import {
   AnalysisSelectionService,
   AnalysisSelectionView,
 } from './analysis-selection.service';
+import {
+  SceneTemplateRow,
+  SceneTemplateService,
+  SceneTemplateView,
+} from './scene-template.service';
+import { PutSceneTemplateRequestDto } from './dto/scene-template.dto';
 import { PutAnalysisSelectionRequestDto } from './dto/analysis-selection.dto';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -40,6 +46,7 @@ export class AnalysisController {
     private readonly analysisService: AnalysisService,
     private readonly previews: AnalysisPreviewsService,
     private readonly selection: AnalysisSelectionService,
+    private readonly templates: SceneTemplateService,
   ) {}
 
   /**
@@ -139,6 +146,33 @@ export class AnalysisController {
     @Body() dto: PreviewConfirmRequestDto,
   ): Promise<VideoAnalysis> {
     return this.previews.confirm(sessionId, dto.items);
+  }
+
+  /**
+   * GET /scene-templates — каталог готовых приёмов (этап 149, TODO §III
+   * п.11). Без сессии: список одинаков для всех, и экран показывает его
+   * до того, как сессия вообще создана.
+   */
+  @Get('scene-templates')
+  listSceneTemplates(): SceneTemplateRow[] {
+    return this.templates.catalogue();
+  }
+
+  /** GET /sessions/:sessionId/scene-template — что выбрано и что мешает выбрать. */
+  @Get('sessions/:sessionId/scene-template')
+  getSceneTemplate(
+    @Param('sessionId') sessionId: string,
+  ): Promise<SceneTemplateView> {
+    return this.templates.get(sessionId);
+  }
+
+  /** PUT /sessions/:sessionId/scene-template { templateId } — выбрать или снять. */
+  @Put('sessions/:sessionId/scene-template')
+  putSceneTemplate(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: PutSceneTemplateRequestDto,
+  ): Promise<SceneTemplateView> {
+    return this.templates.put(sessionId, dto.templateId ?? null);
   }
 
   /** GET /sessions/:sessionId/analysis/selection — scenes & extras with keep/drop flags (§19). */

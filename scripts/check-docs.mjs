@@ -132,7 +132,10 @@ const CHECKS = [
     file: 'doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md',
     label: 'миграции и таблицы (итоговая сверка)',
     section: '## Итоговая сверка',
-    re: /все \*\*(\d+)\*\* миграци[ийя]+ подряд на чистом Postgres 16\s*\n?\s*\(\*\*(\d+)\*\* таблиц/,
+    // `ю` в окончании — для чисел, кончающихся на единицу: «все 101
+    // миграцию». Без неё проверка молча перестаёт находить формулировку
+    // ровно на каждой сто первой миграции.
+    re: /все \*\*(\d+)\*\* миграци[ийяю]+ подряд на чистом Postgres 16\s*\n?\s*\(\*\*(\d+)\*\* таблиц/,
     expect: [actual.migrations, actual.tables],
   },
   {
@@ -484,8 +487,18 @@ function checkGuideSeams() {
   const dictItems = Object.keys(
     JSON.parse(read('frontend/src/dictionaries/ru.json')).wizardReadiness.items,
   );
+  // Подписи-ЗАМЕНЫ: один и тот же пункт бывает закрыт разной работой, и
+  // у второй работы своя подпись. Пункт «откуда берётся сцена» (`key:
+  // 'analysis'`) закрывает либо разбор референса, либо выбранный приём
+  // (этап 149), и общая подпись про разбор с галочкой рапортовала бы о
+  // работе, которой не было. Список закрытый и живёт здесь, а не
+  // послаблением правила: подпись без пункта и подпись-замена —
+  // разные вещи, и первая по-прежнему ошибка.
+  const OVERRIDE_LABELS = new Set(['sceneTemplate']);
   const missingLabels = readinessKeys.filter((k) => !dictItems.includes(k));
-  const orphanLabels = dictItems.filter((k) => !readinessKeys.includes(k));
+  const orphanLabels = dictItems.filter(
+    (k) => !readinessKeys.includes(k) && !OVERRIDE_LABELS.has(k),
+  );
   if (missingLabels.length > 0) {
     problems.push(
       `у пунктов готовности нет подписи в словаре: ${missingLabels.join(', ')}`,
@@ -777,6 +790,386 @@ function checkGuideSeams() {
     );
   }
 
+  // 8. Внешний контракт `/v1` (этап 144, аудит).
+  //
+  //    Наружу уходит не то, что возвращает метод: успех заворачивает
+  //    `ResponseInterceptor` в `{success, data, meta}`, отказ —
+  //    `HttpExceptionFilter` в `{error, meta}`. Для внутренних
+  //    маршрутов это деталь, для `/v1` — публичный контракт, который
+  //    держат две строки в `main.ts`. Снять их «для порядка» можно, не
+  //    заметив, что ломаешь чужие интеграции: свои экраны читают ответ
+  //    через один общий клиент и переживут, чужой код — нет.
+  const mainSource = read('backend/src/main.ts');
+  const V1_CONTRACT = [
+    ['useGlobalInterceptors(new ResponseInterceptor())', 'конверт успеха'],
+    ['useGlobalFilters(new HttpExceptionFilter())', 'конверт отказа'],
+  ];
+  for (const [needle, what] of V1_CONTRACT) {
+    if (!mainSource.includes(needle)) {
+      problems.push(
+        `внешний контракт /v1: в main.ts нет «${needle}» (${what}). ` +
+          'Форма ответа /v1 описана в doc/API.md и на неё опирается чужой код.',
+      );
+    }
+  }
+
+  // 9. Описание внешнего API не расходится с маршрутами (этап 147).
+  //
+  //    Чужой код опирается на описание так же, как на сами ответы.
+  //    Маршрут, добавленный в контроллер и забытый в `openapi-v1.json`,
+  //    для интегратора не существует; описанный и удалённый —
+  //    существует и не работает. Второе хуже: про первый хотя бы никто
+  //    не знает.
+  const v1Source = read('backend/src/modules/api-key/v1.controller.ts');
+  const V1_ROUTE = /@(Get|Post|Patch|Delete)\('([^']*)'\)/g;
+  const inCode = new Set();
+  for (const m of v1Source.matchAll(V1_ROUTE)) {
+    // `:jobId` в Nest — это `{jobId}` в OpenAPI.
+    const path = m[2].replace(/:([A-Za-z0-9_]+)/g, '{$1}');
+    inCode.add(`${m[1].toLowerCase()} /v1/${path}`);
+  }
+  const spec = JSON.parse(read('doc/openapi-v1.json'));
+  const inSpec = new Set();
+  for (const [path, methods] of Object.entries(spec.paths ?? {})) {
+    for (const method of Object.keys(methods)) {
+      inSpec.add(`${method} ${path}`);
+    }
+  }
+  for (const route of inCode) {
+    if (!inSpec.has(route)) {
+      problems.push(`внешнее API: маршрут ${route} есть в коде, но не описан в doc/openapi-v1.json`);
+    }
+  }
+  for (const route of inSpec) {
+    if (!inCode.has(route)) {
+      problems.push(`внешнее API: ${route} описан в doc/openapi-v1.json, но такого маршрута нет`);
+    }
+  }
+
+  // 10. Каждое поле сессии, живущее в JSON, перечислено в `DATA_KEYS`
+  //     (этап 149).
+  //
+  //     `updateSession` собирает правку СТРОГО по этому списку: ключ, в
+  //     него не попавший, пишется без единой ошибки и не сохраняется.
+  //     Это уже случалось (Б-2.2, `librarySourceKey`): поле объявили,
+  //     писали из двух мест, читали всегда `undefined` — и обложек в
+  //     библиотеке не бывало вовсе, пока кто-то не заметил. Комментарий
+  //     об этом в коде стоит с этапа 39 и не помешал наступить туда же
+  //     на этапе 149; шов надёжнее предупреждения.
+  const sessionTypes = read('backend/src/common/types/session.types.ts');
+  // До ЗАКРЫВАЮЩЕЙ скобки интерфейса, а не до конца файла: иначе
+  // объявление, дописанное после `Session`, попадало бы в разбор и
+  // роняло проверку на пустом месте (аудит этапа 149, А-4).
+  const sessionStart = sessionTypes.indexOf('export interface Session');
+  const sessionEnd = sessionTypes.indexOf('\n}', sessionStart);
+  if (sessionStart < 0 || sessionEnd < 0) {
+    problems.push(
+      'session.types.ts: не нашёлся `export interface Session` — шов на DATA_KEYS проверять нечем',
+    );
+  }
+  const sessionBody = sessionTypes.slice(sessionStart, sessionEnd);
+  // Поля первого уровня интерфейса: две пробела отступа и `?:` или `:`.
+  const declared = new Set(
+    [...sessionBody.matchAll(/^ {2}([A-Za-z][A-Za-z0-9]*)\??:/gm)].map(
+      (m) => m[1],
+    ),
+  );
+  // Настоящие колонки таблицы и служебные замки — они не в JSON и через
+  // `updateSession` не пишутся.
+  const REAL_COLUMNS = new Set([
+    'sessionId',
+    'status',
+    'createdAt',
+    'lastActivityAt',
+    'deletedAt',
+    'generationStatus',
+    'userId',
+    'projectId',
+    'productItemId',
+    'workLocks',
+  ]);
+  const dataKeysSource = read('backend/src/common/session.service.ts');
+  const keysBlock = dataKeysSource.slice(
+    dataKeysSource.indexOf('export const DATA_KEYS'),
+  );
+  const listed = new Set(
+    [...keysBlock.slice(0, keysBlock.indexOf('] as const')).matchAll(/'([^']+)'/g)].map(
+      (m) => m[1],
+    ),
+  );
+  for (const field of declared) {
+    if (REAL_COLUMNS.has(field) || listed.has(field)) continue;
+    problems.push(
+      `поле сессии «${field}» объявлено в session.types.ts, но его нет в DATA_KEYS — ` +
+        'запись через updateSession пройдёт без ошибки и ничего не сохранит',
+    );
+  }
+  for (const key of listed) {
+    if (!declared.has(key)) {
+      problems.push(
+        `«${key}» перечислен в DATA_KEYS, но такого поля в session.types.ts нет`,
+      );
+    }
+  }
+
+  // 11. Сервис, внедрённый в модуль, в нём же и зарегистрирован (этап
+  //     149).
+  //
+  //     Найдено настоящим дефектом: этап 146 объявил
+  //     `ApiWebhookService`, внедрил его в `ApiVideoJobWorker` и в
+  //     `providers` не добавил. Nest не смог бы построить воркер — то
+  //     есть приложение не поднялось бы ВОВСЕ. Обычные спеки этого не
+  //     видят: они конструируют сервисы руками с дублями, минуя
+  //     контейнер, и зелены при любой ошибке в модуле. Поймал eslint, и
+  //     поймал случайно — импорт оказался неиспользованным; будь он
+  //     рядом упомянут в типе, следа бы не осталось, а деплой всё равно
+  //     бы упал.
+  //
+  //     Правило простое и по всему проекту выполняется без исключений:
+  //     если модуль импортирует свой же сервис/воркер/гвард, имя обязано
+  //     встретиться внутри `@Module({...})`.
+  const MODULE_LOCAL_IMPORT =
+    /import \{([^}]*)\} from '(\.\/[^']*\.(?:service|worker|guard|controller))'/g;
+  let modulesChecked = 0;
+  const moduleFiles = walk(path.join(ROOT, 'backend/src')).filter((f) =>
+    f.endsWith('.module.ts'),
+  );
+  for (const full of moduleFiles) {
+    const file = path.relative(ROOT, full);
+    const src = read(file);
+    const decorator = src.match(/@Module\(\{(.*?)\n\}\)/s);
+    if (!decorator) continue;
+    modulesChecked++;
+    const body = decorator[1];
+    for (const m of src.matchAll(MODULE_LOCAL_IMPORT)) {
+      for (const name of m[1].split(',').map((x) => x.trim()).filter(Boolean)) {
+        if (new RegExp(`\\b${name}\\b`).test(body)) continue;
+        problems.push(
+          `${file}: «${name}» импортирован из ${m[2]}, но не упомянут в @Module — ` +
+            'если его кто-то внедряет, приложение не поднимется',
+        );
+      }
+    }
+  }
+
+  // 12. Кто читает `videoAnalysis` как признак «есть ли сцена» (этап
+  //     153).
+  //
+  //     Три раза подряд один класс: ветку приёмов сцены завели (TODO §III
+  //     п.11), а места на ДРУГОМ конце конвейера, решающие по
+  //     `videoAnalysis`, не прошли. Аудит 150 нашёл `RelevancePanel`
+  //     (каждый ролик по приёму начинался с красной ошибки), аудит 152 —
+  //     `AbTestService` (ветка была недостижима целиком), а этап 153 —
+  //     советника мастера, который советовал дождаться разбора, которого
+  //     не будет. Ни один из трёх не был найден чтением кода вокруг
+  //     правки: их находили, когда шли по цепочке ЦЕЛИКОМ.
+  //
+  //     Список закрытый. Новое место, читающее `videoAnalysis` в
+  //     условии, обязано добавить себя сюда — и в этот момент его автор
+  //     ответит себе на вопрос про приёмы, вместо того чтобы узнать о
+  //     нём от пользователя.
+  const SCENE_SOURCE_READERS = new Map([
+    [
+      'backend/src/common/scene-source.ts',
+      'сам источник сцены — здесь решение и принимается',
+    ],
+    [
+      'backend/src/common/wizard-readiness.session.ts',
+      'перевод сессии в готовность; приём закрывает тот же пункт',
+    ],
+    [
+      'backend/src/modules/prompt/prompt.service.ts',
+      'барьер A/B: разбор, который ИДЁТ, для вариантов не годится',
+    ],
+    [
+      'backend/src/modules/ab-test/ab-test.service.ts',
+      'источник прогона: разбор из библиотеки либо приём',
+    ],
+    [
+      'backend/src/modules/wizard-guide/wizard-hint.service.ts',
+      'факты советника: «откуда сцена» он обязан знать верно',
+    ],
+  ]);
+  const SCENE_SOURCE_GATE =
+    /(!\w+\.videoAnalysis\b|videoAnalysis\?\.status|videoAnalysis\.status)/;
+  const sceneReaders = [];
+  for (const full of walk(path.join(ROOT, 'backend/src'))) {
+    if (!full.endsWith('.ts') || full.endsWith('.spec.ts')) continue;
+    const file = path.relative(ROOT, full);
+    // Модуль разбора — его собственное хозяйство; типы и каталог
+    // приёмов упоминают поле только в доккомментариях.
+    if (
+      file.startsWith('backend/src/modules/analysis/') ||
+      file.startsWith('backend/src/common/types/') ||
+      file === 'backend/src/common/scene-templates.ts'
+    ) {
+      continue;
+    }
+    // Комментарии не в счёт: `wizard-readiness.ts` только НАЗЫВАЕТ поле
+    // в доккомментарии к булеву входу, а решения по нему не принимает —
+    // попади он в список, тот перестал бы означать «места, которые
+    // решают».
+    const src = read(file)
+      .split('\n')
+      .filter((l) => {
+        const t = l.trim();
+        return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/**');
+      })
+      .join('\n');
+    if (SCENE_SOURCE_GATE.test(src)) sceneReaders.push(file);
+  }
+  for (const file of sceneReaders) {
+    if (!SCENE_SOURCE_READERS.has(file)) {
+      problems.push(
+        `${file} решает по \`videoAnalysis\`, но не перечислен среди мест, ` +
+          'знающих про приёмы сцены — добавьте его в SCENE_SOURCE_READERS ' +
+          'в scripts/check-docs.mjs, ответив себе, что этот код делает у ' +
+          'сессии на приёме',
+      );
+    }
+  }
+  for (const file of SCENE_SOURCE_READERS.keys()) {
+    if (!sceneReaders.includes(file)) {
+      problems.push(
+        `${file} перечислен среди читающих \`videoAnalysis\`, но больше не читает`,
+      );
+    }
+  }
+
+  // 13. Ключ группировки находок: клиент ↔ сервер (этап 156).
+  //
+  //     `envKey` намеренно посчитан в двух местах — сервер не имеет
+  //     права верить ключу из браузера тестировщика, — но СОСТАВ ключа
+  //     обязан совпадать. Расхождение не ломает ничего громко: групп
+  //     просто станет вдвое больше, и выглядеть это будет как разные
+  //     баги на разных устройствах. Заметить такое по результату
+  //     нельзя, поэтому шов.
+  const envKeyParts = (file) => {
+    const block = /export function envKey\([\s\S]*?\.join\(':'\);/.exec(
+      read(file),
+    );
+    if (!block) return null;
+    return [...block[0].matchAll(/part\(([^)]*)\)/g)].map((m) =>
+      m[1].replace(/input\./g, '').replace(/\s+/g, ' ').trim(),
+    );
+  };
+  const envKeySides = [
+    'frontend/src/lib/environment.ts',
+    'backend/src/common/environment.ts',
+  ].map((file) => ({ file, parts: envKeyParts(file) }));
+  for (const side of envKeySides) {
+    if (!side.parts?.length) {
+      problems.push(
+        `${side.file}: не нашёлся \`export function envKey\` с \`.join(':')\` ` +
+          '— шов на состав ключа группировки проверять нечем',
+      );
+    }
+  }
+  const [envFront, envBack] = envKeySides;
+  let envKeyLen = 0;
+  if (envFront.parts?.length && envBack.parts?.length) {
+    envKeyLen = envFront.parts.length;
+    if (envFront.parts.join(' | ') !== envBack.parts.join(' | ')) {
+      problems.push(
+        'состав ключа группировки находок разошёлся: ' +
+          `клиент [${envFront.parts.join(', ')}] ≠ ` +
+          `сервер [${envBack.parts.join(', ')}] — группы тикетов ` +
+          'рассыплются молча, поправьте обе копии разом',
+      );
+    }
+  }
+
+  //     Тот же шов и по СОСТАВУ снимка. Клиент шлёт то, что описано в
+  //     его `Environment`, сервер разбирает то, что описано в своём;
+  //     переименованное на клиенте поле сервер молча выбросит, и
+  //     окружение станет наполовину пустым, ничего об этом не сказав.
+  //     Проверяем в одну сторону: серверу нужно подмножество — поля,
+  //     которых он не разбирает (`hasTelegram`), у клиента быть могут.
+  const envFields = (file, name) => {
+    const block = new RegExp(
+      `export interface ${name}[^{]*\\{([\\s\\S]*?)\\n\\}`,
+    ).exec(read(file));
+    if (!block) return null;
+    return new Set(
+      [...block[1].matchAll(/^\s{2}(\w+)[?]?:/gm)].map((m) => m[1]),
+    );
+  };
+  const frontFields = new Set([
+    ...(envFields('frontend/src/lib/environment.ts', 'RawEnvironment') ?? []),
+    ...(envFields('frontend/src/lib/environment.ts', 'Environment') ?? []),
+  ]);
+  const backFields = envFields('backend/src/common/environment.ts', 'Environment');
+  let envFieldCount = 0;
+  if (!frontFields.size || !backFields?.size) {
+    problems.push(
+      'не нашлись интерфейсы окружения (`RawEnvironment`/`Environment`) ' +
+        '— шов на состав снимка проверять нечем',
+    );
+  } else {
+    envFieldCount = backFields.size;
+    const missing = [...backFields].filter((f) => !frontFields.has(f));
+    if (missing.length) {
+      problems.push(
+        `сервер разбирает поля окружения, которых клиент не шлёт: ` +
+          `${missing.join(', ')} — снимок приедет наполовину пустым, ` +
+          'и сказано об этом нигде не будет',
+      );
+    }
+  }
+
+  // 14. Наши сообщения тестировщику ↔ их идентификаторы в тикете
+  //     (этап 157).
+  //
+  //     Ответ тестировщика находит свой тикет ТОЛЬКО по
+  //     `botMessageIds`: не записали идентификатор отправленного — и
+  //     его «да, теперь работает» ляжет в очередь разбора новой
+  //     находкой. Сломать это легко и незаметно: достаточно послать
+  //     ещё одно сообщение по тикету (ответ оператора, напоминание) и
+  //     не дописать одну строку. Поэтому: кто зовёт `dmWithId`, тот в
+  //     том же файле пишет `botMessageIds`.
+  //
+  //     Шов грубый и знает об этом: проверка файловая, и пропущенная
+  //     запись В УЖЕ перечисленном файле, где `botMessageIds` есть в
+  //     другом месте, мимо него пройдёт. Ловит он другое и главное —
+  //     НОВОЕ место, которое начало писать тестировщику и про тикет не
+  //     знает; именно так эта связь и рвётся.
+  const REPLY_SENDERS = new Set([
+    'backend/src/modules/telegram-bot/tester-tickets.service.ts',
+    // Этап 158: ответ оператора из админки. Шов поймал этот файл сам,
+    // ровно в том виде, ради которого заводился — новое место, которое
+    // начало писать тестировщику.
+    'backend/src/modules/admin-panel/admin-test-tickets.service.ts',
+  ]);
+  const callers = walk(path.join(ROOT, 'backend/src'))
+    .filter((f) => !f.endsWith('.spec.ts'))
+    .map((f) => path.relative(ROOT, f))
+    // Точка обязательна: так находятся ВЫЗОВЫ, а не объявление метода
+    // в самом `telegram-notify.service.ts`.
+    .filter((f) => /\.dmWithId\(/.test(read(f)));
+  for (const file of callers) {
+    if (!REPLY_SENDERS.has(file)) {
+      problems.push(
+        `${file} шлёт сообщение тестировщику через \`dmWithId\`, но не ` +
+          'перечислен среди мест, записывающих `botMessageIds` — добавьте ' +
+          'его в REPLY_SENDERS в scripts/check-docs.mjs, ответив себе, ' +
+          'найдёт ли ответ на это сообщение свой тикет',
+      );
+    } else if (!/botMessageIds/.test(read(file))) {
+      problems.push(
+        `${file} зовёт \`dmWithId\`, но \`botMessageIds\` не пишет — ответ ` +
+          'тестировщика на это сообщение ляжет в очередь новой находкой',
+      );
+    }
+  }
+  for (const file of REPLY_SENDERS) {
+    if (!callers.includes(file)) {
+      problems.push(
+        `${file} перечислен среди шлющих тестировщику, но \`dmWithId\` ` +
+          'больше не зовёт',
+      );
+    }
+  }
+
   if (problems.length > 0) {
     failed++;
     console.log('FAIL швы советника в мастере:');
@@ -789,7 +1182,15 @@ function checkGuideSeams() {
         `стартов рендера под проверкой права: ${RENDER_STARTS.length}; ` +
         `завершений через единую точку: ${completionCallCount}; ` +
         `мест привязки приглашения: ${CLAIM_CALLERS.length}; ` +
-        `слепых мест Prisma (касты, groupBy): 0`,
+        `слепых мест Prisma (касты, groupBy): 0; ` +
+        `конверт внешнего контракта /v1 на месте; ` +
+        `маршрутов /v1 описано: ${inSpec.size}; ` +
+        `полей сессии в DATA_KEYS: ${listed.size}; ` +
+        `модулей с проверенной регистрацией: ${modulesChecked}; ` +
+        `мест, решающих по разбору: ${sceneReaders.length}; ` +
+        `частей ключа группировки находок (клиент = сервер): ${envKeyLen}; ` +
+        `полей окружения, которые сервер ждёт от клиента: ${envFieldCount}; ` +
+        `мест, пишущих тестировщику по тикету: ${callers.length}`,
     );
   }
 }

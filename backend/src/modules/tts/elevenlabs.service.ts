@@ -22,6 +22,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { mp3DurationSeconds } from '../../common/mp3-duration';
 import {
   SynthesisOutcome,
   SynthesisRequest,
@@ -148,6 +149,7 @@ export class ElevenLabsService implements TtsProvider {
         audio,
         mimeType: 'audio/mpeg',
         characters: payloadText.length,
+        durationSeconds: mp3DurationSeconds(audio),
         voiceId,
         model,
       };
@@ -225,6 +227,7 @@ export class ElevenLabsService implements TtsProvider {
       audio,
       mimeType: 'audio/mpeg',
       characters: payloadText.length,
+      durationSeconds: mp3DurationSeconds(audio),
       voiceId,
       model,
       alignment,

@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PublishingChannelService } from './publishing-channel.service';
 import { signOAuthState } from './oauth-state.util';
 import { encryptToken } from '../../common/token-crypto';
@@ -107,8 +111,33 @@ describe('PublishingChannelService', () => {
       const { service, plans, google } = setup();
       const url = await service.buildAuthUrl('u1', 'YOUTUBE');
       expect(plans.assertUser).toHaveBeenCalledWith('u1', 'publication');
-      expect(google.buildAuthUrl).toHaveBeenCalledWith(expect.any(String));
+      // Второй аргумент (этап 137) — расширенное согласие: по умолчанию
+      // его не просят, иначе на экране согласия у КАЖДОГО клиента
+      // появилось бы право удалять его ролики.
+      expect(google.buildAuthUrl).toHaveBeenCalledWith(
+        expect.any(String),
+        false,
+      );
       expect(url).toContain('accounts.google.com');
+    });
+
+    it('расширенное согласие доезжает до провайдера (этап 137)', async () => {
+      const { service, google } = setup();
+      await service.buildAuthUrl('u1', 'YOUTUBE', true);
+      expect(google.buildAuthUrl).toHaveBeenCalledWith(
+        expect.any(String),
+        true,
+      );
+    });
+
+    it('расширенное согласие у TikTok — отказ, а не тихая обычная ссылка', async () => {
+      // Тихо выдать обычную ссылку значило бы пообещать право, которого
+      // человек не получит: у TikTok такого согласия нет вовсе.
+      const { service, tiktok } = setup();
+      await expect(service.buildAuthUrl('u1', 'TIKTOK', true)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(tiktok.buildAuthUrl).not.toHaveBeenCalled();
     });
 
     it('404 на неизвестной платформе', async () => {
@@ -139,6 +168,9 @@ describe('PublishingChannelService', () => {
         title: 'Мой канал',
         avatarUrl: null,
         status: 'ACTIVE',
+        // Этап 137: у канала со старым согласием субтитров нет, и это
+        // видно на экране, а не выясняется отказом площадки.
+        captionsAllowed: false,
         createdAt: '2026-01-01T00:00:00.000Z',
       });
       expect(view).not.toHaveProperty('accessTokenEnc');

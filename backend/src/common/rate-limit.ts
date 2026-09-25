@@ -70,6 +70,21 @@ export interface RateLimitRule {
   windowSec: number;
   /** Имя маршрута в ключе — чтобы лимиты разных маршрутов не складывались. */
   name: string;
+  /**
+   * По чему считать: по адресу (умолчание) или по вошедшему человеку
+   * (аудит этапа 148).
+   *
+   * Адрес — верный ключ там, где человека ещё нет: регистрация,
+   * публичные формы. Но в мини-аппе за одним адресом сидит целый
+   * оператор сотовой связи, и лимит на платное действие, посчитанный по
+   * адресу, мешает не тому: соседи по NAT выбирают чужое окно, а один
+   * настойчивый меняет адрес и обходит.
+   *
+   * `user` считает по `telegramUserId`. Анонимный запрос откатывается к
+   * адресу — иначе все безымянные сложились бы в одно окно, и первый же
+   * гость закрыл бы вход остальным.
+   */
+  by?: 'ip' | 'user';
 }
 
 export const RATE_LIMIT_KEY = 'rateLimit';
@@ -105,7 +120,9 @@ export class RateLimitGuard implements CanActivate {
     if (!metadata) return true;
     const rules = Array.isArray(metadata) ? metadata : [metadata];
 
-    const req = context.switchToHttp().getRequest<Request>();
+    const req = context
+      .switchToHttp()
+      .getRequest<Request & { telegramUserId?: string }>();
     const ip = clientIp(req);
     const now = new Date();
 
@@ -113,12 +130,16 @@ export class RateLimitGuard implements CanActivate {
     // иначе снятие узкого лимита само по себе ведёт лишний INSERT ради
     // окна, которое всё равно не решает.
     for (const rule of rules) {
-      const verdict = await this.hit(`${rule.name}|${ip}`, rule, now);
+      const who =
+        rule.by === 'user' && req.telegramUserId
+          ? `u:${req.telegramUserId}`
+          : ip;
+      const verdict = await this.hit(`${rule.name}|${who}`, rule, now);
       if (verdict.count > rule.limit) {
         const res = context.switchToHttp().getResponse<Response>();
         res.setHeader('Retry-After', String(verdict.retryAfterSec));
         this.logger.warn(
-          `${rule.name}: ${verdict.count} запросов за окно с ${ip} при лимите ${rule.limit}`,
+          `${rule.name}: ${verdict.count} запросов за окно от ${who} при лимите ${rule.limit}`,
         );
         throw new HttpException(
           RATE_LIMIT_MESSAGE,
@@ -130,39 +151,61 @@ export class RateLimitGuard implements CanActivate {
   }
 
   /** Один запрос: завести, прибавить или начать новое окно. */
-  private async hit(
+  private hit(
     key: string,
     rule: RateLimitRule,
     now: Date,
   ): Promise<{ count: number; retryAfterSec: number }> {
-    const windowMs = rule.windowSec * 1000;
-    const windowStart = new Date(
-      Math.floor(now.getTime() / windowMs) * windowMs,
+    return hitRateLimit(this.prisma, key, rule.windowSec, now, this.logger);
+  }
+}
+
+/**
+ * Счёт одного обращения в окне — тот же, что у гварда (этап 157).
+ *
+ * Вынесено из гварда, потому что появился путь БЕЗ HTTP-контекста:
+ * входящее бота (`docs-tz/TZ-Rabota-s-Testirovshchikom.md` §3.2). Вход
+ * в бота — по сути незалогиненный: там нет ни запроса, ни ответа, в
+ * который можно положить `Retry-After`, ни 429, который клиент поймёт.
+ * Но счётчик нужен тот же самый — второй, свой, разошёлся бы с этим
+ * молча, а окна и уборка (`pruneRateLimits`) у них общие.
+ *
+ * Возвращает `count: 0`, когда счётчик недоступен: база легла — это не
+ * повод отказывать человеку, у отказа из-за неработающей проверки цена
+ * выше, чем у пропущенного лишнего сообщения.
+ */
+export async function hitRateLimit(
+  prisma: PrismaService,
+  key: string,
+  windowSec: number,
+  now: Date = new Date(),
+  logger?: Logger,
+): Promise<{ count: number; retryAfterSec: number }> {
+  const windowMs = windowSec * 1000;
+  const windowStart = new Date(Math.floor(now.getTime() / windowMs) * windowMs);
+  const retryAfterSec = Math.max(
+    1,
+    Math.ceil((windowStart.getTime() + windowMs - now.getTime()) / 1000),
+  );
+  try {
+    const rows = await prisma.$queryRaw<{ count: number }[]>`
+      INSERT INTO "rate_limits" ("key", "windowStart", "count")
+      VALUES (${key}, ${windowStart}, 1)
+      ON CONFLICT ("key") DO UPDATE SET
+        "count" = CASE
+          WHEN "rate_limits"."windowStart" = ${windowStart} THEN "rate_limits"."count" + 1
+          ELSE 1 END,
+        "windowStart" = ${windowStart}
+      RETURNING "count"
+    `;
+    return { count: Number(rows[0]?.count ?? 1), retryAfterSec };
+  } catch (error) {
+    logger?.warn(
+      `счётчик частоты недоступен, запрос пропущен: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     );
-    const retryAfterSec = Math.max(
-      1,
-      Math.ceil((windowStart.getTime() + windowMs - now.getTime()) / 1000),
-    );
-    try {
-      const rows = await this.prisma.$queryRaw<{ count: number }[]>`
-        INSERT INTO "rate_limits" ("key", "windowStart", "count")
-        VALUES (${key}, ${windowStart}, 1)
-        ON CONFLICT ("key") DO UPDATE SET
-          "count" = CASE
-            WHEN "rate_limits"."windowStart" = ${windowStart} THEN "rate_limits"."count" + 1
-            ELSE 1 END,
-          "windowStart" = ${windowStart}
-        RETURNING "count"
-      `;
-      return { count: Number(rows[0]?.count ?? 1), retryAfterSec };
-    } catch (error) {
-      this.logger.warn(
-        `счётчик частоты недоступен, запрос пропущен: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return { count: 0, retryAfterSec };
-    }
+    return { count: 0, retryAfterSec };
   }
 }
 

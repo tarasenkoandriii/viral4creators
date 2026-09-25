@@ -196,10 +196,67 @@ describe('AbTestService.create', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('у исходной сессии нет разбора в библиотеке — 400 (не должно случаться в обычном потоке)', async () => {
+  it('ни разбора в библиотеке, ни приёма сцены — 400', async () => {
     const { service, sessions } = setup();
     sessions.getSession.mockResolvedValue(
       sourceSession({ librarySourceKey: null }),
+    );
+    await expect(
+      service.create('user1', 'proj1', { sourceSessionId: 'src-session' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('сессия на ПРИЁМЕ сцены — прогон заводится (этап 152, аудит)', async () => {
+    // До этой правки ветка приёмов была недостижима целиком: сборка
+    // вариантов их уже умела, а сюда управление не доходило — здесь
+    // требовался разбор в библиотеке, которого у такой сессии нет и не
+    // будет, и человек читал про библиотеку вместо дела.
+    const { service, sessions, prisma } = setup();
+    sessions.getSession.mockResolvedValue(
+      sourceSession({
+        librarySourceKey: null,
+        sceneTemplate: { templateId: 'unboxing', chosenAt: 'now' },
+      }),
+    );
+    await service.create('user1', 'proj1', { sourceSessionId: 'src-session' });
+    // Запись библиотеки при этом не ищется: поиск по `undefined` нашёл
+    // бы первую попавшуюся строку.
+    expect(prisma.analysisLibraryEntry.findUnique).not.toHaveBeenCalled();
+    expect(prisma.abTestRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          libraryEntryId: null,
+          sceneTemplateId: 'unboxing',
+        }),
+      }),
+    );
+  });
+
+  it('завершённый разбор сильнее приёма и здесь', async () => {
+    // Иначе прогон на сессии, где есть и то и другое, унаследовал бы
+    // детям приём, а варианты были бы собраны по разбору.
+    const { service, prisma, sessions } = setup();
+    sessions.getSession.mockResolvedValue(
+      sourceSession({
+        videoAnalysis: { status: 'complete', sceneBreakdown: 'РАЗБОР' },
+        sceneTemplate: { templateId: 'unboxing', chosenAt: 'now' },
+      }),
+    );
+    await service.create('user1', 'proj1', { sourceSessionId: 'src-session' });
+    expect(prisma.abTestRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ sceneTemplateId: null }),
+      }),
+    );
+  });
+
+  it('незнакомый приём источником не считается — 400', async () => {
+    const { service, sessions } = setup();
+    sessions.getSession.mockResolvedValue(
+      sourceSession({
+        librarySourceKey: null,
+        sceneTemplate: { templateId: 'нечто' },
+      }),
     );
     await expect(
       service.create('user1', 'proj1', { sourceSessionId: 'src-session' }),

@@ -33,11 +33,28 @@ export interface TelegramWebApp {
   initDataUnsafe?: { user?: { language_code?: string } };
   ready: () => void;
   expand: () => void;
+  /**
+   * Этап 156 — окружение находки (`lib/environment.ts`). Именно эти два
+   * поля, а не разбор `User-Agent`: их сообщает сам клиент Telegram,
+   * а `platform` вдобавок различает то, что из строки браузера не
+   * видно вовсе — например `weba` и `webk` (две разные веб-версии).
+   * Необязательные: в старых клиентах поля может не быть, и падать
+   * из-за этого сбор окружения не должен.
+   */
+  platform?: string;
+  version?: string;
   colorScheme: 'light' | 'dark';
   themeParams: Record<string, string>;
   setHeaderColor: (color: string) => void;
   setBackgroundColor: (color: string) => void;
-  onEvent?: (event: 'themeChanged', handler: () => void) => void;
+  onEvent?: (
+    event: 'themeChanged' | 'viewportChanged',
+    handler: () => void
+  ) => void;
+  offEvent?: (
+    event: 'themeChanged' | 'viewportChanged',
+    handler: () => void
+  ) => void;
   HapticFeedback?: {
     impactOccurred: (style: 'light' | 'medium' | 'heavy') => void;
     notificationOccurred: (type: 'error' | 'success' | 'warning') => void;

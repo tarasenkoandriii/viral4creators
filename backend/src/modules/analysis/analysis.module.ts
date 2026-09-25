@@ -5,6 +5,7 @@ import { AnalysisService } from './analysis.service';
 import { GeminiFilesService } from './gemini-files.service';
 import { AnalysisPreviewsService } from './analysis-previews.service';
 import { AnalysisSelectionService } from './analysis-selection.service';
+import { SceneTemplateService } from './scene-template.service';
 import { StorageModule } from '../storage/storage.module';
 import { LibraryModule } from '../library/library.module';
 
@@ -23,6 +24,7 @@ import { LibraryModule } from '../library/library.module';
     GeminiFilesService,
     AnalysisPreviewsService,
     AnalysisSelectionService,
+    SceneTemplateService,
   ],
   exports: [AnalysisService],
 })

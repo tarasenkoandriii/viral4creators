@@ -675,6 +675,26 @@ export default function UsersPage() {
               Закрыть
             </button>
           </div>
+          {detail.environment && (
+            <div style={{ marginTop: 12 }}>
+              <strong style={{ fontSize: 13 }}>
+                Окружение последнего запуска — {date(detail.environment.at)}
+              </strong>
+              {/* Как есть, без разбора по полям: набор полей будет
+                  меняться, а воспроизводят баг по всему снимку целиком. */}
+              <pre
+                className="muted"
+                style={{
+                  fontSize: 12,
+                  marginTop: 6,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {JSON.stringify(detail.environment.value, null, 2)}
+              </pre>
+            </div>
+          )}
           {detail.costByOperation.length > 0 && (
             <div style={{ marginTop: 12 }}>
               <strong style={{ fontSize: 13 }}>

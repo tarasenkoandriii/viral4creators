@@ -192,9 +192,17 @@ const clickable = !!onSelect && !active && (selectable ? selectable[i] === true 
 ```
 
 Готовый контракт доступности есть только у товарки — `stepTargets()`
-(`frontend/src/hooks/useWorkflow.ts:197`), `Array<WorkflowStep | null>`
-по индексам степпера, `null` = недоступен; наружу идут `goToStep(index)`
-и `selectableSteps = stepTargets(state).map((t) => t !== null)`.
+(`frontend/src/hooks/useWorkflow.ts`), `Array<WorkflowStep | null>` по
+индексам ПОЛНОГО списка позиций, `null` = недоступен; наружу идут
+`goToStep(id)` и `selectableSteps = stepTargets(state).map((t) => t !==
+null)`.
+
+Наружу — именно `id`, а не номер, с этапа 151: у сессии на приёме сцены
+(TODO §III п.11) позиций четыре, «Анализа» среди них нет, и один и тот
+же номер означает у двух списков разные шаги. Пока список был один,
+номер работал; со вторым каждый клик уезжал бы на соседний шаг или в
+никуда — причём первая позиция у обоих списков совпадает, так что
+ошибка была бы незаметной ровно там, где её стали бы искать первой.
 
 ### 4.2 Две правки в самом `Stepper` — без них унификация врёт
 

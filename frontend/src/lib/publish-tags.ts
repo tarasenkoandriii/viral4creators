@@ -37,17 +37,27 @@ export interface TagDefaultsInput {
 /**
  * Те же правила нормализации, что у сервера (`uniqueTags` в
  * `publication.service.ts`): решётка в начале убирается, регистр не
- * создаёт дубля, пустые отбрасываются, длина тега ≤ 60, список ≤ 30.
- * Совпадение не случайное: человек должен видеть в поле ровно то, что
- * уйдёт, а не то, что сервер потом молча урежет.
+ * создаёт дубля, пустые отбрасываются, длина тега ≤ 60, список ≤ 30 и
+ * ≤ 500 символов суммарно — потолок YouTube на всё свойство
+ * `snippet.tags` (тег с пробелом уезжает в кавычках, и они в потолок
+ * тоже считаются). Совпадение не случайное: человек должен видеть в
+ * поле ровно то, что уйдёт, а не то, что сервер потом молча урежет, —
+ * и уж точно не узнавать о потолке из проваленной публикации.
  */
+const TAG_LIST_BUDGET = 500;
+const tagCost = (tag: string) => tag.length + (/\s/.test(tag) ? 2 : 0);
+
 export function normalizeTags(raw: readonly string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
+  let budget = TAG_LIST_BUDGET;
   for (const t of raw) {
     const v = t.trim().replace(/^#/, '').slice(0, 60);
     const key = v.toLowerCase();
     if (!v || seen.has(key)) continue;
+    const cost = tagCost(v);
+    if (cost > budget) break;
+    budget -= cost;
     seen.add(key);
     out.push(v);
     if (out.length >= 30) break;

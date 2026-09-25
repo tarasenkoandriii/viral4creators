@@ -1111,6 +1111,49 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       expect(srt).toContain('Это работает.');
     });
 
+    it('.srt сдвигается вместе с голосом, а не начинается с нуля', async () => {
+      // Голос в миксе сдвинут на секунду первой реплики (`adelay`), а
+      // разметка синтеза отсчитывается от начала файла: без сдвига
+      // субтитр шёл впереди речи ровно на эту секунду. Видно это
+      // только у сценариев с таймкодами — то есть у обычных.
+      const { svc, tts, blob } = build({
+        session: session({
+          brandManifestSnapshot: {
+            voiceMode: 'voiceover',
+            subtitlesMode: 'on',
+          },
+          generationPrompt: {
+            finalVoiceoverScript: '0:02 Это работает.\n0:05 Берите сейчас.',
+          },
+        }),
+      });
+      tts.synthesize.mockResolvedValue({
+        ok: true,
+        audio: Buffer.from([1]),
+        mimeType: 'audio/mpeg',
+        characters: 28,
+        voiceId: 'voice-1',
+        model: 'eleven_multilingual_v2',
+        alignment: {
+          characters: [...'это работает. берите сейчас.'],
+          starts: [...'это работает. берите сейчас.'].map((_, i) => i * 0.1),
+          ends: [...'это работает. берите сейчас.'].map(
+            (_, i) => i * 0.1 + 0.1,
+          ),
+        },
+      });
+
+      await svc.start('s1', VIDEO);
+
+      const srtCall = blob.uploadBuffer.mock.calls.find((c: unknown[]) =>
+        String(c[0]).endsWith('subtitles.srt'),
+      );
+      const srt = (srtCall![1] as Buffer).toString('utf8');
+      // Первая реплика — на второй секунде ролика, а не на нулевой.
+      expect(srt).toContain('00:00:02,000 --> ');
+      expect(srt).not.toContain('00:00:00,000 --> ');
+    });
+
     it('провал сборки .srt не отменяет ни кроп, ни звук', async () => {
       // То же «ухудшение, а не поломка», что и у голоса: задача уходит
       // без субтитрового фильтра, но кроп и звук остаются.

@@ -360,6 +360,34 @@ describe('AnalysisService — кеш библиотеки экономит са�
     );
   });
 
+  it('теги исходника уезжают в библиотеку вместе с разбором (этап 136)', async () => {
+    // Иначе «Сделать такой же» отдавал бы новой сессии ролик без тегов,
+    // хотя в этот момент они были известны: сессия живёт по TTL, и
+    // другого места, откуда их потом взять, нет — спрашивать Google на
+    // публичном бесплатном пути нельзя.
+    const { svc, library } = build({
+      originalVideo: { ...youtube(), sourceTags: ['бег', 'кроссовки'] },
+    });
+
+    await svc.analyzeVideo('s1');
+
+    expect(library.save).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceTags: ['бег', 'кроссовки'] }),
+    );
+  });
+
+  it('у референса-файла теги пустые, а не отсутствующие', async () => {
+    // `undefined` для Prisma значит «не трогать» — на создании строки
+    // это оставило бы колонку без значения вовсе.
+    const { svc, library } = build({ originalVideo: uploaded() });
+
+    await svc.analyzeVideo('s1');
+
+    expect(library.save).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceTags: [] }),
+    );
+  });
+
   it('нераспознанная ссылка не кладётся в библиотеку под пустым ключом', async () => {
     // sourceKeyOf вернёт null — запись под null затёрла бы чужую строку
     // или упала бы на уникальном индексе.

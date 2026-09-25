@@ -103,7 +103,15 @@ export default function SessionsPage() {
   const [plan, setPlan] = useState('');
   const [createdFrom, setCreatedFrom] = useState('');
   const [createdTo, setCreatedTo] = useState('');
-  const [search, setSearch] = useState('');
+  // Начальное значение из адреса: из карточки находки (вкладка
+  // «Тестирование») сюда приходят ссылкой с конкретным id сессии
+  // (аудит этапа 158). Читается один раз при монтировании — дальше
+  // поле живёт своей жизнью, и переписывать адрес на каждую букву
+  // значило бы засорять историю браузера.
+  const [search, setSearch] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    return new URLSearchParams(window.location.search).get('search') ?? '';
+  });
 
   const [sortBy, setSortBy] = useState<SessionSortKey>('createdAt');
   const [sortDir, setSortDir] = useState<SortDirection>('desc');
@@ -435,8 +443,8 @@ export default function SessionsPage() {
 
         <input
           type="text"
-          aria-label="Поиск по владельцу"
-          placeholder="Владелец (username/имя/telegram id)"
+          aria-label="Поиск по владельцу или id сессии"
+          placeholder="Владелец или id сессии"
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);

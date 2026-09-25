@@ -580,6 +580,13 @@ export class AnalysisService {
                 ? originalVideo.youtubeUrl
                 : null,
             aspectRatio: nextFrame?.aspectRatio ?? null,
+            // Этап 136: теги исходника переезжают в библиотеку вместе с
+            // разбором — иначе «Сделать такой же» отдавал бы новой
+            // сессии ролик без тегов, хотя они были известны здесь.
+            sourceTags:
+              originalVideo.sourceType === VideoSourceType.YOUTUBE
+                ? (originalVideo.sourceTags ?? [])
+                : [],
             analysis: stored.videoAnalysis,
             sessionId,
             // Author of the entry: not an owner (offer §5.2 — the analyses

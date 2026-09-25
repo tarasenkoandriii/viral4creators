@@ -6,6 +6,11 @@ import { BlobService } from '../storage/blob.service';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { AdminPanelService } from '../admin-panel/admin-panel.service';
+import { ProviderBalancesService } from '../admin-panel/provider-balances.service';
+import {
+  ApiVideoJobWorker,
+  ApiVideoTickResult,
+} from '../api-key/api-video-job.worker';
 import { LibraryService } from '../library/library.service';
 import { BlogGenerationService } from '../blog/blog-generation.service';
 import { BlogTranslationService } from '../blog/blog-translation.service';
@@ -197,6 +202,8 @@ export class CronJobsService {
     private readonly auctionAiAssessment: AuctionAiAssessmentService,
     private readonly liveAuctionOrchestrator: LiveAuctionOrchestratorService,
     private readonly portfolioWatermark: PortfolioWatermarkService,
+    private readonly balances: ProviderBalancesService,
+    private readonly apiVideo: ApiVideoJobWorker,
   ) {}
 
   /**
@@ -263,6 +270,35 @@ export class CronJobsService {
    * Суточный отчёт в канал статистики (ТЗ §28). См. доккомментарий,
    * прежде живший на `CronController.report`.
    */
+  /**
+   * Заявки внешнего API на ролик (этап 145,
+   * docs-tz/TZ-Vneshnee-API.md). Тиковый воркер, как у пакетной
+   * генерации: `202` на подаче обещает, что работу доведут, и довести
+   * её больше некому — фона у serverless нет.
+   */
+  async runApiVideo(): Promise<ApiVideoTickResult> {
+    return this.apiVideo.runTick();
+  }
+
+  /**
+   * Сторож остатков у провайдеров (TODO §III п.36, этап 143).
+   *
+   * Раз в СУТКИ, и это осознанно. Порог отвечает на вопрос «когда
+   * пополнять», а не «всё ли ещё работает»: он на то и порог, чтобы
+   * оставался запас на день-другой. Проверка раз в два часа слала бы
+   * двенадцать сообщений об одном и том же числе в день, а канал,
+   * который кричит, перестают читать — и тогда сторож не работает
+   * вовсе, хотя формально исправен.
+   */
+  async runBalancesWatch(): Promise<{
+    watched: number;
+    low: number;
+    unreadable: number;
+    notified: number;
+  }> {
+    return this.balances.watch();
+  }
+
   async runReport(): Promise<{ sent: boolean; text: string }> {
     const [telemetry, cost, suppressed] = await Promise.all([
       this.adminPanel.getTelemetry(),
@@ -801,12 +837,20 @@ export class CronJobsService {
     );
 
     const now = new Date();
-    const [adminResult, userResult, , library, , assistantExchangesPruned] =
+    const [adminResult, userResult, , , library, , assistantExchangesPruned] =
       await Promise.all([
         this.prisma.adminSession.deleteMany({
           where: { expiresAt: { lt: now } },
         }),
         this.prisma.userSession.deleteMany({
+          where: { expiresAt: { lt: now } },
+        }),
+        // Этап 140: короткие входы через Google ради проверки подписки.
+        // Живут десять минут и стираются сразу после проверки — здесь
+        // подбираются забытые: человек начал вход и не закончил. Своей
+        // строки в `vercel.json` для одного `deleteMany` заводить не
+        // за чем, это та же суточная уборка.
+        this.prisma.youtubeUnlockSession.deleteMany({
           where: { expiresAt: { lt: now } },
         }),
         // Этап 47: отпечатки тревог живут в базе — убираем забытые здесь

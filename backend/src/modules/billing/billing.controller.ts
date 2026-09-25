@@ -14,7 +14,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   HttpCode,
   Post,
   Req,
@@ -24,17 +23,12 @@ import {
   IdentifiedRequest,
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
-import {
-  BillingService,
-  TelegramUpdateBody,
-  WayForPayWebhookBody,
-} from './billing.service';
+import { BillingService, WayForPayWebhookBody } from './billing.service';
 import {
   StartCreditPackCheckoutDto,
   StartSubscriptionCheckoutDto,
 } from './dto/start-checkout.dto';
 import { CheckoutResult } from './billing.types';
-import { assertTelegramWebhookSecret } from './telegram-webhook-secret';
 import { localeFromRequest } from '../../common/locale';
 
 @Controller('billing')
@@ -73,16 +67,11 @@ export class BillingController {
     );
   }
 
-  @Post('webhook/telegram')
-  @HttpCode(200)
-  async telegramWebhook(
-    @Headers('x-telegram-bot-api-secret-token') secret: string | undefined,
-    @Body() update: TelegramUpdateBody,
-  ): Promise<{ ok: true }> {
-    assertTelegramWebhookSecret(secret);
-    await this.service.handleTelegramUpdate(update);
-    return { ok: true };
-  }
+  // Вебхук Telegram переехал в `modules/telegram-bot` (этап 155): он
+  // один на весь бот, и с появлением команд его стал разбирать
+  // диспетчер. Путь при этом не изменился — `setWebhook` менять не
+  // пришлось. Сам `handleTelegramUpdate` остался в этом сервисе и
+  // вызывается диспетчером без единой правки.
 
   @Post('webhook/wayforpay')
   @HttpCode(200)

@@ -65,6 +65,17 @@ import {
 } from '../../common/session-summary';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { pricingTable, PRICING_VERSION } from '../../common/ai-pricing';
+import {
+  AdminTesterInvitesService,
+  TesterInviteView,
+} from './admin-tester-invites.service';
+import {
+  AdminTestTicketsService,
+  TesterProgressView,
+  TicketDetailView,
+  TicketRowView,
+} from './admin-test-tickets.service';
+import { TICKET_STATUSES } from '../../common/test-ticket';
 
 /** `undefined` — не задан; `null` — задан, но мусор (не портит, а просто
  * не фильтрует по нему, тот же принцип терпимости, что у `page`/`pageSize`
@@ -87,6 +98,47 @@ export class RevokeWithReasonDto {
   @IsNotEmpty()
   @MaxLength(300)
   reason!: string;
+}
+
+/** Смена статуса находки (этап 158). */
+export class PatchTicketStatusDto {
+  @IsIn(TICKET_STATUSES as unknown as string[])
+  status!: string;
+
+  /**
+   * Причина. Обязательность проверяет СЕРВИС, а не декоратор: она
+   * зависит от статуса («отклонено» и «дубль» без неё нельзя), а
+   * class-validator такое условие выражает хуже, чем одна строка кода.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  note?: string;
+}
+
+/** Ответ тестировщику в личку (этап 158). */
+export class ReplyToTicketDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(3000)
+  text!: string;
+}
+
+/** Приглашение тестировщика (этап 155). */
+export class CreateTesterInviteDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  label!: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  freeScenarios!: string[];
+
+  /** Дата или ISO-момент; пусто — бессрочно. */
+  @IsOptional()
+  @IsString()
+  expiresAt?: string;
 }
 
 export class PatchAdminUserDto {
@@ -304,6 +356,8 @@ function parseWorkflowWindow(value?: string): WorkflowWindow {
 export class AdminPanelController {
   constructor(
     private readonly adminPanel: AdminPanelService,
+    private readonly testerInvitesService: AdminTesterInvitesService,
+    private readonly testTicketsService: AdminTestTicketsService,
     private readonly users: AdminUsersService,
     private readonly aiUsage: AiUsageService,
     private readonly billing: AdminBillingService,
@@ -833,6 +887,101 @@ export class AdminPanelController {
    * передаётся в сервис не для проверки прав (она уже сделана выше), а
    * ради одного правила: снять оператора с самого себя нельзя.
    */
+  /**
+   * GET /api/admin/tester-invites — приглашения тестировщиков (этап
+   * 155). Вкладка появится этапом 4 ТЗ; пока это то, без чего этапом
+   * нечем пользоваться: приглашение надо чем-то завести и где-то взять
+   * готовую ссылку.
+   */
+  @Get('tester-invites')
+  async testerInvites(
+    @Req() req: AdminAuthenticatedRequest,
+  ): Promise<TesterInviteView[]> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.testerInvitesService.list();
+  }
+
+  @Post('tester-invites')
+  async createTesterInvite(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: CreateTesterInviteDto,
+  ): Promise<TesterInviteView> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.testerInvitesService.create(req.userId, dto);
+  }
+
+  @Post('tester-invites/:id/revoke')
+  async revokeTesterInvite(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: RevokeWithReasonDto,
+  ): Promise<TesterInviteView> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.testerInvitesService.revoke(req.userId, id, dto.reason);
+  }
+
+  /**
+   * GET /api/admin/test-tickets — очередь разбора (этап 158, §5.1 ТЗ).
+   *
+   * `status=OPEN` — не статус, а вопрос «что ждёт нас»; он и есть
+   * рабочий вид вкладки. `envKey` — фильтр «покажи всё, что на
+   * телефонах iOS», то есть ответ на вопрос «это у всех или у него
+   * одного», который в разборе задают первым.
+   */
+  @Get('test-tickets')
+  async testTickets(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('status') status?: string,
+    @Query('userId') userId?: string,
+    @Query('envKey') envKey?: string,
+  ): Promise<TicketRowView[]> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.testTicketsService.list({ status, userId, envKey });
+  }
+
+  /** GET /api/admin/test-tickets/progress — покрытие сценариев и сводка. */
+  @Get('test-tickets/progress')
+  async testTicketsProgress(
+    @Req() req: AdminAuthenticatedRequest,
+  ): Promise<TesterProgressView[]> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.testTicketsService.progress();
+  }
+
+  @Get('test-tickets/:id')
+  async testTicket(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ): Promise<TicketDetailView> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.testTicketsService.get(id);
+  }
+
+  @Patch('test-tickets/:id/status')
+  async patchTestTicketStatus(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: PatchTicketStatusDto,
+  ): Promise<TicketDetailView> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.testTicketsService.setStatus(
+      req.userId,
+      id,
+      dto.status,
+      dto.note ?? null,
+    );
+  }
+
+  @Post('test-tickets/:id/reply')
+  async replyToTestTicket(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ReplyToTicketDto,
+  ): Promise<TicketDetailView> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.testTicketsService.reply(req.userId, id, dto.text);
+  }
+
   @Patch('users/:id')
   async patchUser(
     @Req() req: AdminAuthenticatedRequest,

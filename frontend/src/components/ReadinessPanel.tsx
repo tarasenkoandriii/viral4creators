@@ -30,6 +30,7 @@ export function ReadinessPanel({
   readiness,
   onGoToStep,
   canGoToStep,
+  itemLabels,
 }: {
   readiness: Readiness;
   /** Не задан — пункты не кликаются (шага, куда вести, нет). */
@@ -44,6 +45,15 @@ export function ReadinessPanel({
    * кликабельной и молча ничего не делала.
    */
   canGoToStep?: (stepId: string) => boolean;
+  /**
+   * Подписи отдельных пунктов вместо словарных.
+   *
+   * Один и тот же пункт готовности бывает закрыт РАЗНОЙ работой:
+   * «откуда берётся сцена» закрывает либо разбор референса, либо
+   * выбранный приём (этап 149). Общая подпись про разбор с галочкой
+   * рапортовала бы о работе, которой не было.
+   */
+  itemLabels?: Record<string, string>;
 }) {
   const { dict, locale } = useI18n();
   const t = dict.wizardReadiness;
@@ -58,7 +68,10 @@ export function ReadinessPanel({
     : `${t.title}: ${pluralForm(readiness.missingRequired, locale, t.count)}`;
 
   const row = (item: Readiness['items'][number]) => {
-    const name = t.items[item.key as keyof typeof t.items] ?? item.key;
+    const name =
+      itemLabels?.[item.key] ??
+      t.items[item.key as keyof typeof t.items] ??
+      item.key;
     const clickable =
       !item.done && !!onGoToStep && (canGoToStep?.(item.stepId) ?? true);
     return (

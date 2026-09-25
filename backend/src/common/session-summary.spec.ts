@@ -104,12 +104,18 @@ describe('selectSessionSummaries', () => {
     );
     expect(sql).toContain(`u."plan"::text = $4`);
     expect(sql).toContain('ILIKE $5');
+    // Шестой параметр — тот же поиск без процентов: точное совпадение
+    // по id сессии (аудит этапа 158). Подстрокой по первичному ключу
+    // искать нельзя — это последовательный просмотр ради того, чего не
+    // бывает.
+    expect(sql).toContain('s."id" = $6');
     expect(params).toEqual([
       'error',
       'standard',
       'dub',
       'PREMIUM',
       '%anna%',
+      'anna',
       10,
       0,
     ]);

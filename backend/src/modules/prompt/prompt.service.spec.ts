@@ -470,12 +470,86 @@ describe('PromptService.generateAbVariants — набор вариантов о�
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('разбор ещё не завершён — 400', async () => {
+  it('разбор ещё не завершён — 400 с «подождите»', async () => {
     const { svc } = buildAb(THREE_VARIANTS, {
       videoAnalysis: { status: 'pending' },
     });
-    await expect(svc.generateAbVariants('s1', 3)).rejects.toBeInstanceOf(
-      BadRequestException,
+    await expect(svc.generateAbVariants('s1', 3)).rejects.toThrow(
+      'Video analysis is not complete. Please analyze video first.',
+    );
+  });
+
+  it('сессия на приёме сцены — варианты собираются (этап 152)', async () => {
+    // Варьируются ХУК и CTA уже одобренного промпта, и откуда взялось
+    // описание сцены, для этого безразлично. До этапа 152 здесь стоял
+    // отказ.
+    const { svc, post } = buildAb(THREE_VARIANTS, {
+      videoAnalysis: undefined,
+      sceneTemplate: { templateId: 'before-after', chosenAt: 'now' },
+    });
+    const drafts = await svc.generateAbVariants('s1', 3);
+    expect(drafts).toHaveLength(3);
+    const sent = JSON.stringify(post.mock.calls[0][0]);
+    // Правила формата доезжают и сюда: варианты обязаны их соблюдать,
+    // иначе «до и после» в них развалится.
+    expect(sent).toContain('IDENTICAL framing');
+    // И модели не сообщают о разборе, которого не было.
+    expect(sent).not.toContain('Below is the reference analysis');
+    expect(sent).toContain('Below is the ad format this video follows');
+  });
+
+  it('сцены брошенного разбора не подмешиваются к приёму', async () => {
+    // Разбор мог упасть, успев разобрать часть сцен, а человек
+    // переключился на приём. Список «какие сцены оставить» — про тот,
+    // брошенный ролик, и в промпте по приёму он спорил бы с
+    // раскадровкой самого приёма.
+    const { svc, post } = buildAb(THREE_VARIANTS, {
+      videoAnalysis: {
+        status: 'failed',
+        sceneBreakdown: '',
+        scenes: [
+          { id: 's1', start: 0, end: 4, title: 'ЧУЖАЯ СЦЕНА' },
+          { id: 's2', start: 4, end: 8, title: 'И ВТОРАЯ' },
+        ],
+        extras: [
+          { id: 'e1', label: 'ЧУЖАЯ МАССОВКА', description: 'толпа' },
+          { id: 'e2', label: 'И ВТОРАЯ', description: 'прохожие' },
+        ],
+      },
+      analysisSelection: {
+        droppedScenes: ['s1'],
+        droppedExtras: ['e1'],
+        updatedAt: 'now',
+      },
+      sceneTemplate: { templateId: 'before-after', chosenAt: 'now' },
+    });
+    await svc.generateAbVariants('s1', 3);
+    const sent = JSON.stringify(post.mock.calls[0][0]);
+    expect(sent).not.toContain('SCENES TO DROP');
+    expect(sent).not.toContain('ЧУЖАЯ СЦЕНА');
+    expect(sent).not.toContain('ЧУЖАЯ МАССОВКА');
+    expect(sent).toContain('IDENTICAL framing');
+  });
+
+  it('ни разбора, ни приёма — отказ', async () => {
+    const { svc, post } = buildAb(THREE_VARIANTS, {
+      videoAnalysis: undefined,
+      sceneTemplate: null,
+    });
+    await expect(svc.generateAbVariants('s1', 3)).rejects.toThrow(
+      'нет ни того, ни другого',
+    );
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('идущий разбор по-прежнему не годится', async () => {
+    // Варианты повторяют текст разбора; собранные на полпути, они
+    // разошлись бы с готовым роликом.
+    const { svc } = buildAb(THREE_VARIANTS, {
+      videoAnalysis: { status: 'processing' },
+    });
+    await expect(svc.generateAbVariants('s1', 3)).rejects.toThrow(
+      'Video analysis is not complete',
     );
   });
 
@@ -738,5 +812,172 @@ describe('PromptService.generatePrompt — условия читаются го�
     const { svc, post } = buildReady(ready());
     await svc.generatePrompt('s1');
     expect(post).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Шаблон сцены вместо референса — этап 149, TODO §III п.11.
+ *
+ * Проверяется не «ветка выполнилась», а что именно уехало в модель:
+ * шаблон ценен ровно теми правилами формата, которых человек не знает
+ * сам, и если они останутся в каталоге, фича бесполезна.
+ */
+describe('PromptService.generatePrompt — шаблон сцены вместо референса', () => {
+  const original = process.env[KEY];
+  beforeAll(() => {
+    process.env[KEY] = 'test-key';
+  });
+  afterAll(() => {
+    if (original === undefined) delete process.env[KEY];
+    else process.env[KEY] = original;
+  });
+
+  function buildReady(session: Record<string, unknown>) {
+    const sessions = {
+      getSession: jest.fn().mockResolvedValue(session),
+      updateSession: jest.fn().mockResolvedValue(undefined),
+      claimWork: jest.fn().mockResolvedValue(true),
+      releaseWork: jest.fn().mockResolvedValue(undefined),
+    };
+    const svc = new PromptService(
+      sessions as any,
+      { recordGemini: jest.fn().mockResolvedValue(undefined) } as any,
+      { assertCanSpendSession: jest.fn() } as any,
+    );
+    const post = jest.fn().mockResolvedValue({ text: 'промпт' });
+    (svc as any).genai = { models: { generateContent: post } };
+    return { svc, sessions, post };
+  }
+
+  const onTemplate = (over: Record<string, unknown> = {}) => ({
+    sessionId: 's1',
+    videoAnalysis: null,
+    sceneTemplate: { templateId: 'before-after', chosenAt: 'now' },
+    productInformation: {
+      productName: 'Кроссовки',
+      productDescription: 'лёгкие, для бега',
+    },
+    ...over,
+  });
+
+  const sent = (post: jest.Mock) => JSON.stringify(post.mock.calls[0][0]);
+
+  it('сессия без разбора, но с шаблоном — проходит барьер', async () => {
+    const { svc, post } = buildReady(onTemplate());
+    await svc.generatePrompt('s1');
+    expect(post).toHaveBeenCalled();
+  });
+
+  it('кадры приёма и правила формата доезжают до модели', async () => {
+    const { svc, post } = buildReady(onTemplate());
+    await svc.generatePrompt('s1');
+    const text = sent(post);
+    expect(text).toContain('a hard cut to the');
+    // Ремесло приёма: без одинакового ракурса и света «до и после»
+    // бесполезно, и это единственное, чего человек не знает сам.
+    expect(text).toContain('IDENTICAL framing');
+  });
+
+  it('модели не сообщают о референсе, которого нет', async () => {
+    // Рядом в промпте стоят «recreate» и «the reference's rhythm» —
+    // отправить модель искать ритм несуществующего оригинала значит
+    // получить пересказ пустоты.
+    const { svc, post } = buildReady(onTemplate());
+    await svc.generatePrompt('s1');
+    const text = sent(post);
+    expect(text).toContain('There is no reference video');
+    expect(text).not.toContain('description of an existing viral UGC video');
+    expect(text).not.toContain("following the reference's rhythm");
+    expect(text).not.toContain('recreate the 8-second video');
+    // Четвёртое место с тем же словом — формат кадра. Первые три
+    // поправили сразу, это пропустили (аудит этапа 149, А-2).
+    expect(text).not.toContain('the reference is');
+    expect(text).toContain('this format is shot');
+  });
+
+  it('формат кадра берётся у приёма, а не теряется', async () => {
+    // Пустой формат — не «нет данных»: `cameraBriefText` считает
+    // неизвестный формат неродным и срезает амплитуду наезда вдвое.
+    const { svc, post } = buildReady(onTemplate());
+    await svc.generatePrompt('s1');
+    expect(sent(post)).toContain('9:16');
+  });
+
+  it('разбор сильнее шаблона, когда есть оба', async () => {
+    // Разбор — про конкретный ролик, который человек выбрал и за
+    // разбор которого заплатил; шаблон — общий приём.
+    const { svc, post } = buildReady(
+      onTemplate({
+        videoAnalysis: { status: 'complete', sceneBreakdown: 'РАЗБОР РОЛИКА' },
+      }),
+    );
+    await svc.generatePrompt('s1');
+    const text = sent(post);
+    expect(text).toContain('РАЗБОР РОЛИКА');
+    expect(text).not.toContain('IDENTICAL framing');
+  });
+
+  it('сцены брошенного разбора не подмешиваются к приёму', async () => {
+    // То же и в обычной сборке промпта: список «какие сцены оставить»
+    // про брошенный ролик спорил бы с раскадровкой самого приёма.
+    const { svc, post } = buildReady(
+      onTemplate({
+        videoAnalysis: {
+          status: 'failed',
+          sceneBreakdown: '',
+          scenes: [
+            { id: 's1', start: 0, end: 4, title: 'ЧУЖАЯ СЦЕНА' },
+            { id: 's2', start: 4, end: 8, title: 'И ВТОРАЯ' },
+          ],
+          extras: [
+            { id: 'e1', label: 'ЧУЖАЯ МАССОВКА', description: 'толпа' },
+            { id: 'e2', label: 'И ВТОРАЯ', description: 'прохожие' },
+          ],
+        },
+        analysisSelection: {
+          droppedScenes: ['s1'],
+          droppedExtras: ['e1'],
+          updatedAt: 'now',
+        },
+      }),
+    );
+    await svc.generatePrompt('s1');
+    const text = sent(post);
+    expect(text).not.toContain('SCENES TO DROP');
+    expect(text).not.toContain('ЧУЖАЯ СЦЕНА');
+    expect(text).not.toContain('ЧУЖАЯ МАССОВКА');
+    expect(text).toContain('IDENTICAL framing');
+  });
+
+  it('незнакомый приём выбором не считается — прежний отказ', async () => {
+    // Иначе опечатка в идентификаторе давала бы промпт без описания
+    // сцены вовсе, и узнать об этом можно было бы только по ролику.
+    const { svc, post } = buildReady(
+      onTemplate({ sceneTemplate: { templateId: 'распаковка' } }),
+    );
+    await expect(svc.generatePrompt('s1')).rejects.toThrow(
+      'Video analysis not complete. Please analyze video first.',
+    );
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('ПРОВАЛИВШИЙСЯ разбор не отменяет шаблон', async () => {
+    const { svc, post } = buildReady(
+      onTemplate({
+        videoAnalysis: { status: 'failed', sceneBreakdown: '' },
+      }),
+    );
+    await svc.generatePrompt('s1');
+    expect(JSON.stringify(post.mock.calls[0][0])).toContain(
+      'IDENTICAL framing',
+    );
+  });
+
+  it('ни разбора, ни шаблона — прежний отказ', async () => {
+    const { svc, post } = buildReady(onTemplate({ sceneTemplate: null }));
+    await expect(svc.generatePrompt('s1')).rejects.toThrow(
+      'Video analysis not complete. Please analyze video first.',
+    );
+    expect(post).not.toHaveBeenCalled();
   });
 });

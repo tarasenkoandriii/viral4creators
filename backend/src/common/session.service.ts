@@ -64,6 +64,11 @@ export const DATA_KEYS = [
   'greetingReferenceImages',
   'relevance',
   'analysisSelection',
+  // Шаблон сцены вместо референса (этап 149, TODO §III п.11) — второй
+  // ответ на тот же вопрос, что и 'videoAnalysis': откуда берётся
+  // сцена. Ровно тот случай, о котором предупреждает Б-2.2 ниже: без
+  // строки здесь запись прошла бы без ошибки и не сохранила ничего.
+  'sceneTemplate',
   // Б-2.2: ключ записи библиотеки, к которой относится этот разбор.
   //
   // Поле объявили на этапе 39 и писали в двух местах `AnalysisService`,
@@ -934,6 +939,12 @@ export class SessionService {
       relevance: (data.relevance ?? undefined) as Session['relevance'],
       analysisSelection: (data.analysisSelection ??
         undefined) as Session['analysisSelection'],
+      // Этап 149: шаблон сцены вместо референса. Читается обратно
+      // здесь же — запись без чтения это тот же Б-2.2, только с
+      // другого конца (и ровно это поймал круговой тест ниже по
+      // файлу).
+      sceneTemplate: (data.sceneTemplate ??
+        undefined) as Session['sceneTemplate'],
       librarySourceKey: (data.librarySourceKey ??
         undefined) as Session['librarySourceKey'],
       // Б-2.2 style gap, найден и исправлен попутно на этапе 60: поле

@@ -35,6 +35,8 @@ export interface ReadinessSession {
   brandManifestSnapshot?: unknown;
   productInformation?: unknown;
   videoAnalysis?: { status?: string } | null;
+  /** Шаблон сцены вместо референса (этап 149). */
+  sceneTemplate?: { templateId?: string } | null;
   generationPrompt?: {
     approvedAt?: string | Date | null;
     moderationStatus?: string | null;
@@ -71,6 +73,7 @@ export function readinessOfSession(session: ReadinessSession): Readiness {
 
   return productReadiness({
     analysisComplete: session.videoAnalysis?.status === 'complete',
+    hasSceneTemplate: !!session.sceneTemplate?.templateId,
     hasProductInfo: !!session.productInformation,
     // Через резолвер, а не по наличию поля: при применённом скетче в
     // генерацию уходит скетч, и «фото есть» означает именно то, что

@@ -52,6 +52,16 @@ export interface CronRunLogRow {
  */
 const JOB_REGISTRY: CronJobInfo[] = [
   {
+    jobKey: 'api-video',
+    description:
+      'Заявки внешнего API на ролик: сессия от товара, разбор из библиотеки, промпт и генерация — тот же путь, что проходит человек в мастере.',
+  },
+  {
+    jobKey: 'balances-watch',
+    description:
+      'Сторож остатков у провайдеров: порог и «остаток не читается» — в канал ошибок. Раз в сутки: порог отвечает на «когда пополнять», а не «всё ли ещё работает».',
+  },
+  {
     jobKey: 'report',
     description:
       'Суточный (и по понедельникам недельный) отчёт в канал статистики.',
@@ -239,6 +249,10 @@ export class AdminCronService {
    */
   private async dispatch(jobKey: string, debugMode: boolean): Promise<unknown> {
     switch (jobKey) {
+      case 'api-video':
+        return this.jobs.runApiVideo();
+      case 'balances-watch':
+        return this.jobs.runBalancesWatch();
       case 'report':
         return this.jobs.runReport();
       case 'blog':

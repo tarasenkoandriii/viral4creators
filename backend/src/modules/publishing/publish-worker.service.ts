@@ -36,6 +36,10 @@ import {
 import { PublishingChannelService } from '../publishing-channel/publishing-channel.service';
 import { YoutubeUploadService } from './youtube-upload.service';
 import { TiktokUploadService } from './tiktok-upload.service';
+import { PublicationTranslationService } from './publication-translation.service';
+import { YoutubeCaptionsService } from './youtube-captions.service';
+import { hasCaptionsScope } from '../publishing-channel/google-oauth.service';
+import { normalizeLocale } from '../../common/locale';
 
 /** Структурный тип строки — та же причина, что у PublicationRow в
  * publication.service.ts; здесь только поля, нужные воркеру. */
@@ -47,6 +51,13 @@ interface PublishableRow {
   tags: string[];
   privacy: PublicationPrivacy;
   videoUrl: string;
+  /** Язык ролика из снимка заявки (этап 137). */
+  language?: string | null;
+  /** Субтитры оригинального языка, снимком (этап 137). */
+  subtitlesSrt?: string | null;
+  /** Нужен только затем, чтобы расход на перевод лёг на владельца. */
+  sessionId?: string | null;
+  userId?: string;
   externalId: string | null;
   externalUrl: string | null;
   uploadJobId: string | null;
@@ -66,6 +77,22 @@ const TIKTOK_POLL_DEADLINE_MS = 24 * 60 * 60 * 1000;
  * запасом. */
 const LOCK_MS = 15 * 60 * 1000;
 
+/**
+ * Сколько дорожек субтитров грузим за сутки (аудит субтитров этапа
+ * 137).
+ *
+ * `captions.insert` стоит **400 единиц** — это самый дорогой вызов
+ * продукта к YouTube при суточном пуле в 10 000 на ВЕСЬ проект, который
+ * делят поиск референсов (100 за поиск), генератор блога и теги
+ * исходника. Без потолка двадцать пять публикаций за день выносят квоту
+ * в ноль, и первым это заметит не оператор, а пользователь, у которого
+ * перестал работать поиск референсов.
+ *
+ * Десять дорожек — 4000 единиц, меньше половины пула. Упёрлись: ролик
+ * публикуется как обычно, а в заявке записано, почему субтитров нет.
+ */
+const CAPTIONS_DAILY_LIMIT = 10;
+
 export interface PublishBatchResult {
   processed: number;
   published: number;
@@ -82,6 +109,8 @@ export class PublishWorkerService {
     private readonly channels: PublishingChannelService,
     private readonly youtube: YoutubeUploadService,
     private readonly tiktok: TiktokUploadService,
+    private readonly translations: PublicationTranslationService,
+    private readonly captions: YoutubeCaptionsService,
   ) {}
 
   private cfg() {
@@ -154,13 +183,17 @@ export class PublishWorkerService {
       row.channelId as string,
     );
     return channel.platform === 'YOUTUBE'
-      ? this.processYoutube(row, accessToken)
+      ? // Права канала едут сюда же: субтитры (этап 137) требуют
+        // расширенного согласия, и решать по ним надо там, где ролик
+        // уже опубликован, а не гадать в другом месте.
+        this.processYoutube(row, accessToken, channel.scopes)
       : this.processTiktok(row, accessToken);
   }
 
   private async processYoutube(
     row: PublishableRow,
     accessToken: string,
+    channelScopes: string[] = [],
   ): Promise<boolean> {
     if (row.externalId) {
       // Строка уже несёт результат прошлой попытки — статус просто не
@@ -200,6 +233,26 @@ export class PublishWorkerService {
       }
     }
     if (!sessionUri) {
+      // Локализации (этап 137) собираются ровно здесь — перед открытием
+      // сессии, потому что уезжают тем же запросом, что и `snippet`.
+      // Перевод — лучшая попытка: пустая карта означает «ролик уйдёт без
+      // локализаций», а не «публикация не состоялась». Возобновление
+      // сессии (ветка выше) сюда не заходит вовсе: у той сессии
+      // `snippet` уже принят площадкой, и переводить заново было бы
+      // деньгами на ветер.
+      const language = normalizeLocale(row.language);
+      // `catch` здесь не дублирует обещание сервиса не бросать, а
+      // страхует от него: «локализация не роняет публикацию» — инвариант
+      // ЭТОГО метода, и держать его на честном слове соседнего класса
+      // нельзя. Иначе отказ Gemini стоил бы заявке попытки, а на
+      // пятой — статуса FAILED.
+      const localizations = await this.translations
+        .translate(
+          { title: row.title, description: row.description },
+          language,
+          { sessionId: row.sessionId ?? null, userId: row.userId ?? null },
+        )
+        .catch(() => ({}));
       sessionUri = await this.youtube.openSession(
         {
           title: row.title,
@@ -207,6 +260,8 @@ export class PublishWorkerService {
           tags: row.tags,
           privacy: row.privacy,
           videoUrl: row.videoUrl,
+          language,
+          localizations,
         },
         accessToken,
       );
@@ -222,7 +277,90 @@ export class PublishWorkerService {
       offset,
     );
     await this.markPublished(row.id, result.externalId, result.externalUrl);
+    await this.uploadCaptions(
+      row,
+      result.externalId,
+      accessToken,
+      channelScopes,
+    );
     return true;
+  }
+
+  /**
+   * Субтитры оригинального языка (этап 137) — ПОСЛЕ публикации и
+   * лучшей попыткой.
+   *
+   * Отдельным вызовом, а не частью загрузки: `captions.insert` —
+   * единственное место всего ТЗ, которому нужен скоуп
+   * `youtube.force-ssl`. У канала без расширенного согласия шаг просто
+   * не делается: ролик опубликован, заголовок с описанием на месте, а
+   * на экране каналов стоит кнопка «Разрешить субтитры».
+   *
+   * Отказ площадки не отменяет публикацию и не возвращает заявку в
+   * очередь: ролик уже на канале, повторная попытка залила бы его
+   * второй раз. Причина пишется в заявку — чтобы «субтитров нет» имело
+   * ответ в базе, а не только в логе.
+   */
+  private async uploadCaptions(
+    row: PublishableRow,
+    videoId: string,
+    accessToken: string,
+    channelScopes: string[],
+  ): Promise<void> {
+    const srt = row.subtitlesSrt?.trim();
+    if (!srt) return;
+    if (!hasCaptionsScope(channelScopes)) {
+      await this.noteCaptions(
+        row.id,
+        'у канала нет расширенного согласия — субтитры не загружались',
+      );
+      return;
+    }
+
+    // Потолок проверяется ПЕРЕД вызовом, а не после: 400 единиц
+    // списываются самим обращением, и «проверить, а потом пожалеть»
+    // здесь ничего не экономит.
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const uploadedToday = await this.prisma.publicationRequest.count({
+      where: { captionsUploadedAt: { gte: today } },
+    });
+    if (uploadedToday >= CAPTIONS_DAILY_LIMIT) {
+      await this.noteCaptions(
+        row.id,
+        `суточный потолок субтитров исчерпан (${CAPTIONS_DAILY_LIMIT} за сутки: ` +
+          `каждая дорожка стоит 400 единиц квоты YouTube из 10 000 на весь проект)`,
+      );
+      return;
+    }
+
+    try {
+      await this.captions.insert(
+        {
+          videoId,
+          language: normalizeLocale(row.language),
+          name: 'Original',
+          srt,
+        },
+        accessToken,
+      );
+      await this.prisma.publicationRequest.update({
+        where: { id: row.id },
+        data: { captionsUploadedAt: new Date(), captionsError: null },
+      });
+    } catch (e) {
+      await this.noteCaptions(
+        row.id,
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+  }
+
+  private async noteCaptions(id: string, message: string): Promise<void> {
+    this.logger.warn(`субтитры не загружены (${id}): ${message}`);
+    await this.prisma.publicationRequest
+      .update({ where: { id }, data: { captionsError: message.slice(0, 500) } })
+      .catch(() => undefined);
   }
 
   private async processTiktok(

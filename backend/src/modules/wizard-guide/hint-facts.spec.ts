@@ -65,6 +65,7 @@ describe('парность карточек и фактов', () => {
         productFacts({
           hasReference: true,
           analysisComplete: true,
+          onSceneTemplate: false,
           hasProductInfo: true,
           hasProductImage: false,
           promptApproved: false,
@@ -104,6 +105,7 @@ describe('факты — слова, а не значения (§5.10)', () => {
     const facts = productFacts({
       hasReference: true,
       analysisComplete: false,
+      onSceneTemplate: false,
       hasProductInfo: true,
       hasProductImage: true,
       promptApproved: false,
@@ -165,5 +167,49 @@ describe('factsOfScenario', () => {
     expect(factsOfScenario({ scenario: 'PRODUCT_VIDEO', state: null })).toEqual(
       ['прогон ещё не начат'],
     );
+  });
+});
+
+/**
+ * Этап 153. Советник пишет по фактам — значит факт «откуда сцена»
+ * обязан быть верным, иначе он посоветует ждать разбора, которого не
+ * будет.
+ */
+describe('факты товарки: приём сцены вместо референса', () => {
+  const state = (over: Record<string, unknown> = {}) => ({
+    hasReference: false,
+    analysisComplete: false,
+    onSceneTemplate: false,
+    hasProductInfo: true,
+    hasProductImage: true,
+    promptApproved: false,
+    renderInFlight: false,
+    hasVideo: false,
+    ...over,
+  });
+
+  it('у сессии на приёме про разбор не говорится вовсе', () => {
+    const facts = productFacts(state({ onSceneTemplate: true }));
+    expect(facts.join(' | ')).toContain('сцена задана готовым приёмом');
+    // Ни одной строки про разбор: из «разбор не завершён» советник
+    // выведет совет подождать того, чего не случится.
+    expect(facts.some((f) => f.includes('разбор'))).toBe(false);
+    expect(facts.some((f) => f.includes('референс не выбран'))).toBe(false);
+  });
+
+  it('без приёма всё как было', () => {
+    const facts = productFacts(state());
+    expect(facts).toContain('референс не выбран');
+    expect(facts).toContain('разбор не завершён');
+  });
+
+  it('остальные факты не съезжают', () => {
+    // Источник занимает одну строку вместо двух — важно, чтобы это не
+    // потеряло всё, что идёт следом.
+    const facts = productFacts(state({ onSceneTemplate: true }));
+    expect(facts).toContain('товар описан');
+    expect(facts).toContain('фото товара есть');
+    expect(facts).toContain('промпт не одобрен');
+    expect(facts).toContain('ролика ещё нет');
   });
 });

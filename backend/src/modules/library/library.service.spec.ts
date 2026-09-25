@@ -327,6 +327,86 @@ describe('LibraryService', () => {
   });
 });
 
+/**
+ * Теги исходника в библиотеке (аудит этапа 136).
+ *
+ * «Сделать такой же» (§40) собирает новую сессию не из живого ролика, а
+ * из строки библиотеки — и спросить теги у Google на этом пути нельзя:
+ * он публичный и бесплатный, а сессий с одного адреса можно завести
+ * тридцать в минуту, то есть платный вызов в нём выел бы суточную квоту
+ * всего деплоя. Поэтому теги переезжают через колонку.
+ */
+describe('LibraryService — теги исходника переезжают через библиотеку', () => {
+  it('save кладёт теги в строку рядом с остальными денормализованными полями', async () => {
+    const { svc, prisma } = build();
+    await svc.save({
+      sourceKey: 'yt:abc',
+      sourceType: 'youtube',
+      sourceUrl: 'https://youtu.be/abc',
+      aspectRatio: '9:16',
+      sourceTags: ['бег', 'кроссовки'],
+      analysis: {
+        ...(analysisJson as any),
+        analyzedAt: NOW,
+        status: AnalysisStatus.COMPLETE,
+      },
+      sessionId: 's1',
+      userId: null,
+    });
+    const args = prisma.analysisLibraryEntry.upsert.mock.calls[0][0];
+    expect(args.create.sourceTags).toEqual(['бег', 'кроссовки']);
+    // Повторный разбор того же ролика теги обновляет: у автора
+    // оригинала они могли смениться, и свежие вернее.
+    expect(args.update.sourceTags).toEqual(['бег', 'кроссовки']);
+  });
+
+  it('save без тегов пишет пустой массив, а не undefined', async () => {
+    // `undefined` для Prisma значит «не трогать», и на создании строки
+    // это оставило бы колонку без значения вовсе.
+    const { svc, prisma } = build();
+    await svc.save({
+      sourceKey: 'sha256:abc',
+      sourceType: 'upload',
+      sourceUrl: null,
+      aspectRatio: null,
+      analysis: { ...(analysisJson as any), analyzedAt: NOW },
+      sessionId: 's1',
+      userId: null,
+    });
+    expect(
+      prisma.analysisLibraryEntry.upsert.mock.calls[0][0].create.sourceTags,
+    ).toEqual([]);
+  });
+
+  it('«Сделать такой же» переносит теги в новую сессию', async () => {
+    const { svc, prisma, sessions } = build();
+    prisma.analysisLibraryEntry.findUnique.mockResolvedValueOnce(
+      row({ sourceTags: ['бег', 'кроссовки'] }),
+    );
+    await svc.applyEntryToSessionFree('s2', 'l1');
+    const patch = sessions.updateSession.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(
+      (patch.originalVideo as { sourceTags?: string[] }).sourceTags,
+    ).toEqual(['бег', 'кроссовки']);
+  });
+
+  it('у записи, разобранной до этапа 136, поля нет вовсе — сработает запасной источник', async () => {
+    const { svc, prisma, sessions } = build();
+    prisma.analysisLibraryEntry.findUnique.mockResolvedValueOnce(
+      row({ sourceTags: [] }),
+    );
+    await svc.applyEntryToSessionFree('s2', 'l1');
+    const patch = sessions.updateSession.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect('sourceTags' in (patch.originalVideo as object)).toBe(false);
+  });
+});
+
 describe('LibraryService — приватность и модерация (§21.1/§21.3)', () => {
   it('recommend вошедшего пользователя добавляет его приватные записи', async () => {
     const { svc, prisma } = build({

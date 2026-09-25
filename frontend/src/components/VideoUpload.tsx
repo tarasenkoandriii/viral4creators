@@ -3,6 +3,8 @@ import { Film, Link2, Lock, UploadCloud } from 'lucide-react';
 import { Button, Card, CardHeader, Field, Input, LockedNote, Tabs } from './ui';
 import { YoutubeSearch, type YoutubeSearchDefaults } from './YoutubeSearch';
 import { LibraryPicker } from './LibraryPicker';
+import { SceneTemplatePicker } from './SceneTemplatePicker';
+import { initialSourceMode, type SourceMode } from '../lib/scene-templates';
 import { useFeature } from '../lib/plan-context';
 import { useI18n } from '../lib/i18n-context';
 
@@ -26,12 +28,22 @@ interface VideoUploadProps {
   sessionId?: string | null;
   onPickLibraryEntry?: (entryId: string) => void;
   hasProduct?: boolean;
+  /**
+   * Готовый приём вместо референса (этап 150, TODO §III п.11) — пятый
+   * ответ на тот же вопрос «откуда берётся сцена», поэтому вкладка, а
+   * не новый шаг мастера.
+   */
+  onSceneTemplateChanged?: (templateId: string | null) => void;
+  /**
+   * Приём уже выбран в этой сессии — вкладка открывается на нём (аудит
+   * этапа 150, А-4). Иначе человек, вернувшийся на шаг «Видео», видел
+   * бы вкладку файла, будто ничего не выбирал.
+   */
+  sceneTemplateChosen?: boolean;
 }
 
 const YOUTUBE_URL_PATTERN =
   /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[\w-]+/i;
-
-type SourceMode = 'library' | 'search' | 'youtube' | 'upload';
 
 /**
  * VideoUpload Component
@@ -54,18 +66,23 @@ export function VideoUpload({
   sessionId,
   onPickLibraryEntry,
   hasProduct = false,
+  onSceneTemplateChanged,
+  sceneTemplateChosen = false,
 }: VideoUploadProps) {
   const { dict } = useI18n();
   // ТЗ §23: библиотека — возможность режима. Вкладка остаётся на месте и
   // в Lite/Standard, но открывается замком: спрятать её значило бы, что
   // пользователь никогда не узнает о самом быстром из трёх путей.
   const library = useFeature('library');
+  // Порядок и причины — в `lib/scene-templates.ts`, под тестом: четыре
+  // условия в одном тернарнике проверяются только глазами.
   const [mode, setMode] = useState<SourceMode>(
-    onPickLibraryEntry && searchDefaults
-      ? 'library'
-      : searchDefaults
-        ? 'search'
-        : 'upload'
+    initialSourceMode({
+      templateChosen: sceneTemplateChosen,
+      templatesOffered: !!onSceneTemplateChanged,
+      libraryOffered: !!onPickLibraryEntry,
+      seeded: !!searchDefaults,
+    })
   );
   /** Вкладку выбрал сам пользователь — авто-переключение больше не лезет. */
   const [picked, setPicked] = useState(false);
@@ -165,6 +182,17 @@ export function VideoUpload({
           },
           { value: 'youtube', label: dict.videoUpload.tabLink },
           { value: 'upload', label: dict.videoUpload.tabFile },
+          // Последней: четыре предыдущие — это «чужой ролик», и приём
+          // читается как «а если его нет». Первой он звал бы отказаться
+          // от референса раньше, чем человек узнал, что тот бывает.
+          ...(onSceneTemplateChanged
+            ? [
+                {
+                  value: 'template' as const,
+                  label: dict.sceneTemplates.tab,
+                },
+              ]
+            : []),
         ]}
       />
 
@@ -186,6 +214,14 @@ export function VideoUpload({
             {dict.videoUpload.libraryLockedBody}
           </LockedNote>
         ))}
+
+      {mode === 'template' && onSceneTemplateChanged && (
+        <SceneTemplatePicker
+          sessionId={sessionId ?? null}
+          disabled={disabled}
+          onChange={onSceneTemplateChanged}
+        />
+      )}
 
       {mode === 'search' && (
         <YoutubeSearch

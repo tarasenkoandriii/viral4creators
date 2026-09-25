@@ -23,6 +23,7 @@ import { TelegramLoginButton } from './components/TelegramLoginButton';
 import { useRoute, navigate, routes } from './lib/router';
 import { PlanContext } from './lib/plan-context';
 import { getPlanState } from './services/projects-api';
+import { reportEnvironment } from './services/environment-api';
 import { PlanScreen } from './features/plan/PlanScreen';
 import { AccountNotice } from './components/AccountNotice';
 import type { PlanState } from './types';
@@ -45,6 +46,7 @@ import { ManifestsListScreen } from './features/brand/ManifestsListScreen';
 import { ManifestScreen } from './features/brand/ManifestScreen';
 import { ChannelsScreen } from './features/channels/ChannelsScreen';
 import { CreditsScreen } from './features/credits/CreditsScreen';
+import { ApiKeysScreen } from './features/api-keys/ApiKeysScreen';
 import { claimStoredReferral } from './services/invite-api';
 import { InviteScreen } from './features/invite/InviteScreen';
 import { FeedScreen } from './features/feed/FeedScreen';
@@ -53,6 +55,7 @@ import { Alert, Button, EmptyState } from './components/ui';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { ThemeToggle } from './components/ThemeToggle';
 import { useI18n } from './lib/i18n-context';
+import { APP_BUILD } from './lib/build-info';
 
 /**
  * Г-1.1 (аудит round4, этап 64): «Сделать такой же» с публичной страницы
@@ -92,7 +95,7 @@ if (typeof window !== 'undefined') {
 }
 
 function App() {
-  const { dict } = useI18n();
+  const { dict, locale } = useI18n();
   const route = useRoute();
   const inBrand = route.name.startsWith('manifest');
   const inProjects =
@@ -156,6 +159,18 @@ function App() {
     () => ({ state: planState, error: planError, refresh: refreshPlan }),
     [planState, planError, refreshPlan]
   );
+
+  /**
+   * Окружение тестировщика (этап 156). Один раз за запуск и намеренно
+   * БЕЗ локали в зависимостях: переключение языка не повод переснимать
+   * окружение, а вот `uiLocale` в снимке — это язык, на котором человек
+   * впервые увидел экран. Сервер сохранит снимок только тестовому
+   * аккаунту, остальным ответит `stored: false` (`EnvironmentService`).
+   */
+  useEffect(() => {
+    void reportEnvironment(locale);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * Возврат с формы WayForPay (§41.2, решение 17) — `?billingReturn=1`
@@ -405,6 +420,7 @@ function App() {
           {route.name === 'plan' && <PlanScreen />}
           {route.name === 'channels' && <ChannelsScreen />}
           {route.name === 'credits' && <CreditsScreen />}
+          {route.name === 'api-keys' && <ApiKeysScreen />}
           {route.name === 'feed' && <FeedScreen />}
           {route.name === 'invite' && <InviteScreen />}
           {route.name === 'not-found' && (
@@ -487,6 +503,18 @@ function App() {
             {dict.invite.title}
           </button>
           <span className="mx-1.5 opacity-40">·</span>
+          {/* Ключи внешнего API (этап 145) — той же ссылкой в подвале,
+              что «Каналы» и «Кредиты». В три основные вкладки их не
+              ставим: раздел для Premium и для тех, кто пишет код, а
+              вкладки одни на всех. */}
+          <button
+            type="button"
+            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+            onClick={() => navigate(routes.apiKeys())}
+          >
+            {dict.apiKeysScreen.title}
+          </button>
+          <span className="mx-1.5 opacity-40">·</span>
           {/* Доп. запрос владельца продукта: реферальная ссылка Claude —
               ссылка в env (`VITE_CLAUDE_REFERRAL_URL`), а не зашита в код:
               реферальный код можно сменить без правки исходников. Фоллбек —
@@ -505,6 +533,12 @@ function App() {
           >
             {dict.footer.madeWithClaude}
           </a>
+          {/* Версия сборки (этап 154). Отдельной строкой и приглушённо:
+              это не ссылка и не действие, а ответ на вопрос «какая у вас
+              сборка», который задают при разборе находки. Без неё тикет
+              месячной давности неотличим по смыслу от сегодняшнего — а
+              это и решает, чинить или закрывать. */}
+          <div className="mt-2 opacity-50">{APP_BUILD}</div>
         </footer>
       </div>
     </PlanContext.Provider>

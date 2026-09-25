@@ -198,3 +198,69 @@ describe('pruneRateLimits', () => {
     expect(cutoff).toEqual(new Date('2026-09-07T11:00:00Z'));
   });
 });
+
+/**
+ * Аудит этапа 148: платное действие в мини-аппе нельзя считать по
+ * адресу — за ним сидит сотовый оператор.
+ */
+describe('RateLimitGuard — счёт по человеку (by: user)', () => {
+  function withUser(telegramUserId?: string) {
+    const prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([{ count: 1 }]),
+      $executeRaw: jest.fn().mockResolvedValue(0),
+    };
+    const rule: RateLimitRule = {
+      name: 'paid',
+      limit: 10,
+      windowSec: 600,
+      by: 'user',
+    };
+    const reflector = {
+      get: jest.fn((key: string) =>
+        key === RATE_LIMIT_KEY ? rule : undefined,
+      ),
+    };
+    const guard = new RateLimitGuard(reflector as never, prisma as never);
+    const context = {
+      getHandler: () => ({}),
+      switchToHttp: () => ({
+        getRequest: () => ({
+          headers: { 'x-forwarded-for': '203.0.113.7' },
+          ip: '10.0.0.1',
+          socket: {},
+          telegramUserId,
+        }),
+        getResponse: () => ({ setHeader: jest.fn() }),
+      }),
+    };
+    return { guard, prisma, context };
+  }
+
+  it('окно принадлежит человеку, а не адресу', async () => {
+    // Иначе соседи по NAT выбирают чужое окно, ничего дурного не
+    // сделав, а тот, от кого лимит защищает, меняет адрес.
+    const { guard, prisma, context } = withUser('u1');
+    await guard.canActivate(context as never);
+    const key = String(prisma.$queryRaw.mock.calls[0][1]);
+    expect(key).toBe('paid|u:u1');
+    expect(key).not.toContain('203.0.113.7');
+  });
+
+  it('у двух человек за одним адресом окна разные', async () => {
+    const a = withUser('u1');
+    const b = withUser('u2');
+    await a.guard.canActivate(a.context as never);
+    await b.guard.canActivate(b.context as never);
+    expect(String(a.prisma.$queryRaw.mock.calls[0][1])).not.toBe(
+      String(b.prisma.$queryRaw.mock.calls[0][1]),
+    );
+  });
+
+  it('безымянный запрос откатывается к адресу, а не сливается с чужими', async () => {
+    // Общее окно для всех анонимных означало бы, что первый же гость
+    // закрывает вход остальным.
+    const { guard, prisma, context } = withUser(undefined);
+    await guard.canActivate(context as never);
+    expect(String(prisma.$queryRaw.mock.calls[0][1])).toBe('paid|203.0.113.7');
+  });
+});

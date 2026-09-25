@@ -910,10 +910,14 @@ export async function listChannels(): Promise<PublishingChannel[]> {
 }
 
 export async function startChannelOAuth(
-  platform: PublicationPlatform
+  platform: PublicationPlatform,
+  /** Этап 137: расширенное согласие ради субтитров (только YouTube). */
+  extended = false
 ): Promise<string> {
   const { url } = unwrap(
-    await api.post<{ url: string }>(`/channels/oauth/${platform}/start`),
+    await api.post<{ url: string }>(
+      `/channels/oauth/${platform}/start${extended ? '?extended=1' : ''}`
+    ),
     'oauth url'
   );
   return url;

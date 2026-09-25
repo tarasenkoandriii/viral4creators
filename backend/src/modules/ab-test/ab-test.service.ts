@@ -33,6 +33,7 @@ import { SessionStatus } from '../../common/types/session.types';
 import { PlanService } from '../plan/plan.service';
 import { AbTestVariantStatus, Prisma, WorkflowKind } from '@prisma/client';
 import { logWorkflowStage } from '../../common/workflow-stage-events';
+import { usesTemplate } from '../../common/scene-templates';
 
 /** Число вариантов на один запуск — решение владельца продукта: всегда 3. */
 export const AB_TEST_VARIANT_COUNT = 3;
@@ -103,13 +104,24 @@ export class AbTestService {
         'У исходной сессии нет одобренного промпта — A/B-варианты невозможны.',
       );
     }
-    if (!source.librarySourceKey) {
+    // Источник сцены у прогона — разбор из библиотеки ЛИБО приём (этап
+    // 152, аудит). Раньше здесь стоял только разбор, и это делало всю
+    // ветку приёмов недостижимой: `generateAbVariants` научился с ними
+    // работать, а сюда управление не доходило вовсе, и человек читал про
+    // библиотеку, которой у его сессии быть не может.
+    const abTemplateId = usesTemplate(
+      source.videoAnalysis?.status,
+      source.sceneTemplate?.templateId,
+    )
+      ? source.sceneTemplate?.templateId
+      : undefined;
+    if (!source.librarySourceKey && !abTemplateId) {
       // Тот же случай, что у catalog-batch: не должно происходить в
       // обычном потоке (каждый завершённый разбор сохраняется в
       // библиотеку автоматически), но кнопка на фронте не должна была
       // это предложить, если всё же произошло — лучше явная ошибка.
       throw new BadRequestException(
-        'У исходной сессии нет сохранённого разбора в библиотеке — A/B-варианты невозможны.',
+        'У исходной сессии нет ни сохранённого разбора, ни выбранного приёма сцены — A/B-варианты невозможны.',
       );
     }
     if (!source.productItemId) {
@@ -117,11 +129,16 @@ export class AbTestService {
         'У исходной сессии нет привязанного товара — A/B-варианты собираются только для товаров каталога.',
       );
     }
-    const entry = await this.prisma.analysisLibraryEntry.findUnique({
-      where: { sourceKey: source.librarySourceKey },
-      select: { id: true },
-    });
-    if (!entry) {
+    // Запись библиотеки ищем, только когда сцену задаёт разбор: у
+    // прогона на приёме её нет по построению, и поиск по `undefined`
+    // нашёл бы первую попавшуюся строку.
+    const entry = abTemplateId
+      ? null
+      : await this.prisma.analysisLibraryEntry.findUnique({
+          where: { sourceKey: source.librarySourceKey as string },
+          select: { id: true },
+        });
+    if (!abTemplateId && !entry) {
       throw new NotFoundException(
         `Library entry for source ${source.librarySourceKey} not found`,
       );
@@ -167,7 +184,8 @@ export class AbTestService {
                 userId,
                 sourceSessionId: dto.sourceSessionId,
                 productItemId: source.productItemId as string,
-                libraryEntryId: entry.id,
+                libraryEntryId: entry?.id ?? null,
+                sceneTemplateId: abTemplateId ?? null,
                 quality: (source.generatedVideo?.quality ??
                   'fast') as VideoQuality,
                 aspectRatio: source.generatedVideo?.aspectRatio ?? null,

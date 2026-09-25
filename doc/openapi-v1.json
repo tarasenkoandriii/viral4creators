@@ -1,0 +1,512 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "viral4creators — внешнее API",
+    "version": "1.0.0",
+    "summary": "Заказ рекламных роликов по ключу. Premium.",
+    "description": "Описание маршрутов `/v1` (этапы 144–147, docs-tz/TZ-Vneshnee-API.md).\n\nФайл в JSON, а не в YAML, намеренно: его сверяет со списком маршрутов шов в `scripts/check-docs.mjs`, а разбирать YAML пришлось бы сторонней библиотекой ради удобства, которым пользуются в основном инструменты — а они одинаково читают и то, и другое. Расхождение описания с кодом дороже удобства чтения: чужой код опирается на описание.\n\nЛимиты и правила повторов — `doc/API-LIMITS.md`.",
+    "contact": {
+      "name": "viral4creators"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://{host}/api",
+      "description": "Адрес стенда. Хост подставляется свой.",
+      "variables": {
+        "host": {
+          "default": "api.example.com"
+        }
+      }
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "account",
+      "description": "Кто я и сколько можно потратить"
+    },
+    {
+      "name": "videos",
+      "description": "Заказ роликов"
+    }
+  ],
+  "paths": {
+    "/v1/me": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "operationId": "getMe",
+        "summary": "Кто я",
+        "description": "Бесплатно и без побочных действий: на этот маршрут ходят в каждом healthcheck. Проверка ключа платным вызовом была бы дорога обеим сторонам.\n\nПоля «заблокирован» здесь нет намеренно: заблокированный аккаунт до обработчика не доходит — гвард отказывает раньше. Поле, которое не может стать `true`, это ветка в чужом коде, которая не выполнится ни разу.",
+        "responses": {
+          "200": {
+            "description": "Режим и суточный потолок",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/Me"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/v1/videos": {
+      "post": {
+        "tags": [
+          "videos"
+        ],
+        "operationId": "createVideo",
+        "summary": "Заказать ролик",
+        "description": "Отвечает `202` и номером заявки: генерация длится минуты, и держать HTTP-запрос столько нельзя. Результат забирается опросом `GET /v1/videos/{jobId}` или приходит вебхуком.\n\nСуточный потолок проверяется на подаче: выбранный — `403` с числами. Это не заменяет проверку в момент генерации, а предупреждает заранее.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Ключ повтора. С тем же ключом И тем же телом ответ — `200` и та же заявка (после таймаута вы не знаете, дошёл ли первый запрос, и это не ваша ошибка). Тот же ключ с другим телом — `409`: это не повтор, а переиспользованный ключ."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Заявка принята",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/Job"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Такую заявку уже принимали: тот же `Idempotency-Key` и то же тело",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/Job"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "`Idempotency-Key` уже использован с другим телом",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{jobId}": {
+      "get": {
+        "tags": [
+          "videos"
+        ],
+        "operationId": "getVideo",
+        "summary": "Состояние заявки",
+        "description": "Опрос остаётся и при включённых вебхуках: вебхук без опроса — обещание, которое некому проверить. Не дошла доставка — узнать исход будет неоткуда.\n\nСсылка на ролик есть только у `DONE`: у `RUNNING` она указывала бы на файл, который ещё меняется. Причина есть только у `FAILED`.",
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Заявка",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/Job"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "jobFinished": {
+      "post": {
+        "summary": "Заявка кончилась",
+        "description": "Уходит на адрес, заданный ключу, когда заявка кончилась — удачей или отказом. О промежуточных неудачах («попробуем через четыре минуты») не сообщаем: это наша кухня, и слать её значит приучить вас не читать наши сообщения.\n\nПодпись: `X-V4C-Signature: sha256=<hex>` — HMAC-SHA256 от строки `<X-V4C-Timestamp>.<тело>`. Секрет — sha256 вашего ключа в hex (`echo -n \"$KEY\" | sha256sum`). Отдельного секрета нет: сам ключ мы не храним, а этот хеш вы получаете из своего ключа одной строкой.\n\nВремя в подписи — чтобы вы могли отказать старому запросу: окно выбираете вы. Отвечайте `2xx`; на `5xx`, таймаут и сетевую осечку мы повторим (см. `doc/API-LIMITS.md`), на прочие `4xx` — нет.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Job"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Принято. Тело ответа не читается."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "`Authorization: Bearer v4c_…`. Ключ выдаётся в интерфейсе и показывается один раз: мы храним только его хеш, восстановить нельзя ничем — потерянный перевыпускают. Нужен режим Premium."
+      }
+    },
+    "schemas": {
+      "Envelope": {
+        "type": "object",
+        "description": "Общий конверт ответа. Данные лежат в `data`; `meta.requestId` — номер, с которым приходят в поддержку.",
+        "required": [
+          "success",
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {},
+          "meta": {
+            "type": "object",
+            "required": [
+              "timestamp",
+              "requestId"
+            ],
+            "properties": {
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "requestId": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "description": "Конверт отказа. Текст в `error.message` написан для человека.",
+        "required": [
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "examples": [
+                  "Forbidden"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Me": {
+        "type": "object",
+        "required": [
+          "plan",
+          "budget",
+          "apiKeyId"
+        ],
+        "properties": {
+          "plan": {
+            "type": "string",
+            "enum": [
+              "LITE",
+              "STANDARD",
+              "PREMIUM"
+            ],
+            "description": "Сегодня здесь всегда `PREMIUM`: ниже него `/v1` не пускает гвард. Перечисление шире, потому что режим — общее понятие продукта, а не свойство этого маршрута; на «всегда PREMIUM» логику лучше не строить."
+          },
+          "budget": {
+            "type": "object",
+            "description": "Суточный потолок расхода в микродолларах — тот же масштаб, что в журнале расходов. $1 = 1 000 000.",
+            "required": [
+              "limitMicroUsd",
+              "spentMicroUsd",
+              "remainingMicroUsd"
+            ],
+            "properties": {
+              "limitMicroUsd": {
+                "type": "integer"
+              },
+              "spentMicroUsd": {
+                "type": "integer"
+              },
+              "remainingMicroUsd": {
+                "type": "integer"
+              }
+            }
+          },
+          "apiKeyId": {
+            "type": "string",
+            "description": "Каким ключом вошли — видно, какой именно сработал."
+          }
+        }
+      },
+      "VideoRequest": {
+        "type": "object",
+        "required": [
+          "productItemId",
+          "libraryEntryId"
+        ],
+        "properties": {
+          "productItemId": {
+            "type": "string",
+            "description": "Товар, для которого снимаем. Проверяется на подаче: чужой или удалённый — `404`."
+          },
+          "libraryEntryId": {
+            "type": "string",
+            "description": "Разбор референса из библиотеки — по нему строится сценарий. Проверяется на подаче: несуществующий или невидимый вам — `404` сразу, а не заявка, упавшая через минуту."
+          },
+          "quality": {
+            "type": "string",
+            "enum": [
+              "fast",
+              "standard"
+            ],
+            "default": "fast",
+            "description": "Незнакомое значение — `400`, а не тихий откат к дешёвому: иначе вы просили бы `standard` и не узнали, что получили `fast`."
+          },
+          "aspectRatio": {
+            "type": "string",
+            "examples": [
+              "9:16",
+              "16:9"
+            ],
+            "description": "Пусто — умолчание режима. Недоступный вашему режиму формат приводится к разрешённому."
+          },
+          "locale": {
+            "type": "string",
+            "enum": [
+              "ru",
+              "uk",
+              "en",
+              "de",
+              "es"
+            ],
+            "description": "Язык сценария и озвучки. Значение вне списка — `400`: опечатка в локали иначе узнавалась бы только по готовому ролику."
+          }
+        }
+      },
+      "Job": {
+        "type": "object",
+        "required": [
+          "jobId",
+          "status",
+          "videoUrl",
+          "error",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "DONE",
+              "FAILED"
+            ],
+            "description": "`DONE` и `FAILED` окончательны — ходить за заявкой больше незачем."
+          },
+          "videoUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Готовый ролик. Не `null` только у `DONE`."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Причина отказа человеческим языком. Не `null` только у `FAILED`."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Тело запроса не то",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Ключа нет, он не того вида или отозван",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Режим ниже Premium, аккаунт заблокирован или выбран суточный потолок",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Товар, разбор или заявка не найдены. Чужое по номеру не отдаётся — для вас его просто нет.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    }
+  }
+}

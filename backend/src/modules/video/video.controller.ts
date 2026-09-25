@@ -5,7 +5,9 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
+import { RateLimit, RateLimitGuard } from '../../common/rate-limit';
 import { VideoService } from './video.service';
 import { UploadVideoRequestDto } from './dto/upload-video-request.dto';
 import { UploadVideoResponseDto } from './dto/upload-video-response.dto';
@@ -62,8 +64,22 @@ export class VideoController {
    * Register a public YouTube video as the analysis reference. No upload
    * happens — Gemini fetches the video itself from the URL.
    */
+  // Этап 136: регистрация ссылки перестала быть бесплатной для НАС —
+  // она спрашивает у Google теги исходника, и это единица суточной
+  // квоты всего деплоя (10 000 на все: поиск референсов, блог, теги).
+  // Сам маршрут при этом дешёвый и доступен любому, у кого есть id
+  // своей сессии, то есть ровно тот случай, для которого в проекте
+  // заведён `RateLimitGuard`: «дёшево для нас, неограниченно для
+  // чужого». Двадцати в минуту хватает и человеку, который меняет
+  // референс, передумав; двухсот в час — офису за NAT. Перебору,
+  // способному выесть суточную квоту за три минуты, — нет.
   @Post('sessions/:sessionId/video/youtube')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(RateLimitGuard)
+  @RateLimit([
+    { name: 'video-youtube-register', limit: 20, windowSec: 60 },
+    { name: 'video-youtube-register-hour', limit: 200, windowSec: 3600 },
+  ])
   async registerYoutube(
     @Param('sessionId') sessionId: string,
     @Body() dto: RegisterYoutubeRequestDto,

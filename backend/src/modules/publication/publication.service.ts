@@ -27,6 +27,17 @@ import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { aspectRatioFamily } from '../../common/aspect-ratio';
+import { buildSrt } from '../../common/subtitles';
+import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
+import {
+  firstCueSeconds,
+  heuristicCueTimings,
+} from '../../common/voiceover-script';
+import {
+  DEFAULT_LOCALE,
+  normalizeLocale,
+  SupportedLocale,
+} from '../../common/locale';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import {
   PublicationListResult,
@@ -103,6 +114,11 @@ export function snapshotFromSession(
   description: string;
   tags: string[];
   category: string | null;
+  /** Язык ролика (этап 137) — локаль сессии, снимком: заявка переживает
+   * TTL сессии, и перечитать её потом будет неоткуда. */
+  language: SupportedLocale;
+  /** Субтитры оригинального языка (этап 137), тем же снимком. */
+  subtitlesSrt: string | null;
 } {
   const video = session.generatedVideo;
   if (
@@ -186,16 +202,76 @@ export function snapshotFromSession(
       .slice(0, 5000),
     tags,
     category,
+    // Локаль сессии — это язык озвучки и, значит, язык ролика. Неизвестная
+    // или отсутствующая превращается в DEFAULT_LOCALE тем же правилом,
+    // что и везде в продукте: язык не должен блокировать публикацию.
+    language: normalizeLocale(session.locale),
+    subtitlesSrt: subtitlesFromSession(session),
   };
 }
+
+/**
+ * Субтитры оригинального языка для площадки (этап 137).
+ *
+ * Собираются ЗДЕСЬ, из реплик, а не берутся готовым файлом: `.srt`
+ * существует только у роликов, которым субтитры включали, а умолчание
+ * продукта — `off` (`DEFAULT_SUBTITLES_MODE`). Для площадки же субтитры
+ * это просто текст с таймкодами: ffmpeg для него не нужен, нужен тот же
+ * `buildSrt`, что и для прожига.
+ *
+ * Тайминг — эвристический, по длине реплик: настоящее пословное
+ * выравнивание живёт внутри синтеза озвучки и до заявки не доезжает.
+ * Дрейф в доли секунды на восьмисекундном ролике зритель не заметит, а
+ * субтитров у ролика иначе не будет вовсе.
+ */
+export function subtitlesFromSession(session: Session): string | null {
+  const script =
+    session.generationPrompt?.finalVoiceoverScript ??
+    session.generationPrompt?.voiceoverScript ??
+    '';
+  const total =
+    session.generatedVideo?.chainTargetDurationSeconds ??
+    VIDEO_DURATION_SECONDS;
+  const cues = heuristicCueTimings(script, firstCueSeconds(script), total);
+  // Отдельной проверки «а есть ли реплики» здесь нет намеренно: у
+  // ролика без них `heuristicCueTimings` вернёт пустой список, а
+  // `buildSrt` — пустую строку, и она уже отсеивается ниже. Ветка,
+  // которую нечем отличить от этой, выглядела бы защитой, не будучи ею
+  // (мутация в ней выживает).
+  const srt = buildSrt(cues);
+  return srt.trim() ? srt : null;
+}
+
+/**
+ * Потолок YouTube на ВЕСЬ список тегов — 500 символов на свойство
+ * `snippet.tags` (справка Google по ресурсу Videos). Тег с пробелом
+ * уезжает в кавычках, и кавычки в эти 500 тоже считаются, поэтому за
+ * такой тег берём два символа сверх длины.
+ *
+ * До этапа 136 потолок был недостижим: сервер сам складывал список из
+ * двух коротких значений — категории и названия товара. С умолчанием
+ * из исходного ролика он достижим легко: авторы набивают теги
+ * десятками, и тридцать штук по двадцать символов — это уже 600.
+ * Заявка с таким списком уехала бы в YouTube и вернулась оттуда
+ * ошибкой `invalidTags` — то есть падала бы публикация, а не тег.
+ */
+const TAG_LIST_BUDGET = 500;
+const tagCost = (tag: string) => tag.length + (/\s/.test(tag) ? 2 : 0);
 
 export function uniqueTags(raw: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
+  let budget = TAG_LIST_BUDGET;
   for (const t of raw) {
     const v = t.trim().replace(/^#/, '').slice(0, 60);
     const key = v.toLowerCase();
     if (!v || seen.has(key)) continue;
+    // Обрыв, а не пропуск: «взяли, пока влезало» человек может увидеть
+    // глазами в поле ввода, где список считается по тем же правилам, а
+    // выборочно выпавшую середину — нет.
+    const cost = tagCost(v);
+    if (cost > budget) break;
+    budget -= cost;
     seen.add(key);
     out.push(v);
     if (out.length >= 30) break;
@@ -260,6 +336,13 @@ export class PublicationService {
     await this.plans.assertUser(userId, 'publication');
     const session = await this.ownSession(userId, sessionId);
     const snap = snapshotFromSession(session, dto);
+    // Готовый `.srt` ролика важнее собранного по длине реплик (аудит
+    // субтитров этапа 137): у ролика с включёнными субтитрами он уже
+    // лежит в хранилище и посчитан по РЕАЛЬНОМУ пословному
+    // выравниванию, которое отдаёт синтез озвучки. Эвристика по длине
+    // реплик — запасной путь для тех, у кого субтитры выключены (это
+    // умолчание продукта), а не замена готовому.
+    const readySrt = await this.fetchReadySubtitles(session);
 
     // Проверка «нет открытой заявки» и создание — две операции, и между
     // ними успевает вклиниться второй запрос: двойной клик по
@@ -327,6 +410,7 @@ export class PublicationService {
           productItemId: session.productItemId ?? null,
           platform: dto.platform,
           ...snap,
+          ...(readySrt ? { subtitlesSrt: readySrt } : {}),
         },
       })) as PublicationRow;
     });
@@ -343,6 +427,28 @@ export class PublicationService {
   }
 
   /** Собственная копия ролика заявки — см. комментарий в `create`. */
+  /**
+   * Скачать готовый `.srt` ролика, если он есть. Лучшая попытка: не
+   * достали — в заявке останутся субтитры, собранные по длине реплик,
+   * то есть прежнее поведение, а не пустота.
+   */
+  private async fetchReadySubtitles(session: Session): Promise<string | null> {
+    const url = session.generatedVideo?.subtitleUrl;
+    if (!url) return null;
+    try {
+      const res = await fetch(url);
+      // Хранилище на 404 отвечает не пустотой, а страницей с описанием
+      // ошибки: без этой проверки она уехала бы на площадку субтитрами.
+      if (!res.ok) return null;
+      // Порога на длину здесь нет намеренно: пустой ответ и так не
+      // затирает сборку — ниже он не попадает в `data` (мутация в
+      // отдельной проверке выживает).
+      return (await res.text()).trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
   private async keepOwnCopy(row: PublicationRow): Promise<PublicationRow> {
     const pathname = `publications/${row.id}/video.mp4`;
     const url = await this.blob.copyBlob(
@@ -718,6 +824,10 @@ export class PublicationService {
           title: (dto.title?.trim() || asset.title).slice(0, 100),
           description: (dto.description ?? '').trim().slice(0, 5000),
           tags: uniqueTags(dto.tags ?? []),
+          // Обучающее видео заводит оператор, сессии у него нет — язык
+          // берётся из умолчания продукта (этап 137). Локализации к
+          // нему не собираются: их источник — локаль сессии.
+          language: DEFAULT_LOCALE,
           moderatorId: operatorUserId,
           moderatedAt: new Date(),
           channelId: channel.id,

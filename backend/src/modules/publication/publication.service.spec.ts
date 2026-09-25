@@ -100,7 +100,59 @@ describe('snapshotFromSession', () => {
       description: 'Стальная термокружка',
       tags: ['running'],
       category: 'термокружки',
+      // Этап 137: язык ролика и субтитры — часть того же снимка.
+      language: 'ru',
+      // У этой фикстуры реплик нет, значит и субтитрам взяться неоткуда.
+      subtitlesSrt: null,
     });
+  });
+
+  it('субтитры собираются в снимок из реплик, а не берутся файлом', () => {
+    // `.srt` существует только у роликов, которым субтитры включали, а
+    // умолчание продукта — «выключены». Для площадки же это просто
+    // текст с таймкодами: ffmpeg для него не нужен.
+    const withScript = {
+      ...session,
+      generationPrompt: {
+        finalVoiceoverScript: '0:01 Кружка держит тепло\n0:04 Шесть часов',
+      },
+    } as never;
+    const srt = snapshotFromSession(withScript, {
+      platform: 'YOUTUBE',
+    }).subtitlesSrt;
+    expect(srt).toContain('00:00:01,000 -->');
+    expect(srt).toContain('Кружка держит тепло');
+    expect(srt).toContain('2\n');
+  });
+
+  it('ролик без реплик субтитров не получает — пустого файла не бывает', () => {
+    expect(
+      snapshotFromSession({ ...session, generationPrompt: {} } as never, {
+        platform: 'YOUTUBE',
+      }).subtitlesSrt,
+    ).toBeNull();
+  });
+
+  it('язык ролика попадает в снимок из локали сессии (этап 137)', () => {
+    // Снимком, а не ссылкой на сессию: заявка переживает TTL сессии, и
+    // перечитать язык к моменту выгрузки будет неоткуда.
+    expect(
+      snapshotFromSession({ ...session, locale: 'uk' } as never, {
+        platform: 'YOUTUBE',
+      }).language,
+    ).toBe('uk');
+    // Сессия без локали (заведена до этапа 59) — умолчание продукта, а
+    // не пустое поле: язык не должен блокировать публикацию.
+    expect(
+      snapshotFromSession({ ...session, locale: undefined } as never, {
+        platform: 'YOUTUBE',
+      }).language,
+    ).toBe('ru');
+    expect(
+      snapshotFromSession({ ...session, locale: 'fr' } as never, {
+        platform: 'YOUTUBE',
+      }).language,
+    ).toBe('ru');
   });
 
   it('заявка вообще без тегов получает прежнее умолчание — категория и товар', () => {
@@ -234,6 +286,34 @@ describe('snapshotFromSession — семейство кадра под площ�
       { platform: 'YOUTUBE' },
     );
     expect(snap.videoUrl).toBe('https://blob.test/sessions/s1/generated.mp4');
+  });
+});
+
+describe('uniqueTags — потолок YouTube на весь список (аудит этапа 136)', () => {
+  it('обрывает список на 500 символах, а не отдаёт его YouTube на отказ', () => {
+    // До этапа 136 потолок был недостижим: сервер складывал список из
+    // двух коротких значений. С умолчанием из исходного ролика он
+    // достижим легко — авторы набивают теги десятками, и заявка ушла бы
+    // в YouTube за ошибкой `invalidTags`, то есть падала бы публикация.
+    const long = Array.from(
+      { length: 30 },
+      (_, i) => `${i}`.padStart(2, '0') + 'x'.repeat(58),
+    );
+    const out = uniqueTags(long);
+    expect(out.length).toBeLessThan(30);
+    expect(out.join('').length).toBeLessThanOrEqual(500);
+    // Взяли столько, сколько влезло, с начала списка — а не выборочно.
+    expect(out).toEqual(long.slice(0, out.length));
+  });
+
+  it('тег с пробелом стоит на два символа дороже — YouTube берёт его в кавычки', () => {
+    const spaced = Array.from(
+      { length: 30 },
+      (_, i) => `${i}`.padStart(2, '0') + ' ' + 'y'.repeat(47),
+    );
+    const out = uniqueTags(spaced);
+    const cost = out.reduce((n, t) => n + t.length + 2, 0);
+    expect(cost).toBeLessThanOrEqual(500);
   });
 });
 
@@ -462,6 +542,116 @@ describe('PublicationService.create', () => {
     });
     expect(v.status).toBe('PENDING');
     expect(v.platform).toBe('TIKTOK');
+  });
+});
+
+/**
+ * Аудит субтитров (этап 137). Реплики с таймкодами — это догадка о
+ * длине фразы; у ролика, которому субтитры включали, рядом лежит
+ * настоящий `.srt`, выровненный по звуку. Заявке достаётся он.
+ */
+describe('PublicationService.create — готовый .srt важнее собранного', () => {
+  const READY = '1\n00:00:00,480 --> 00:00:02,930\nКружка держит тепло\n\n';
+  const withScript = {
+    ...session,
+    generationPrompt: {
+      finalVoiceoverScript: '0:01 Кружка держит тепло\n0:04 Шесть часов',
+    },
+  } as unknown as Session;
+  const withSubtitleUrl = (url: string | undefined) =>
+    ({
+      ...withScript,
+      generatedVideo: { ...session.generatedVideo, subtitleUrl: url },
+    }) as unknown as Session;
+
+  const fetchMock = jest.fn();
+  const realFetch = global.fetch;
+  beforeEach(() => {
+    fetchMock.mockReset();
+    global.fetch = fetchMock as never;
+  });
+  afterAll(() => {
+    global.fetch = realFetch;
+  });
+
+  const created = (prisma: { publicationRequest: { create: jest.Mock } }) =>
+    prisma.publicationRequest.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+
+  it('берёт файл ролика, а не таймкоды реплик', async () => {
+    fetchMock.mockResolvedValue({ ok: true, text: async () => READY });
+    const { service, prisma } = build({
+      session: withSubtitleUrl('https://blob.test/sessions/s1/subs.srt'),
+    });
+
+    await service.create('u1', 's1', { platform: 'YOUTUBE' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://blob.test/sessions/s1/subs.srt',
+    );
+    expect(created(prisma).subtitlesSrt).toBe(READY.trim());
+  });
+
+  it('ролик без файла остаётся со сборкой по репликам', async () => {
+    const { service, prisma } = build({ session: withSubtitleUrl(undefined) });
+
+    await service.create('u1', 's1', { platform: 'YOUTUBE' });
+
+    // К хранилищу не ходим вовсе: ссылки нет.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(String(created(prisma).subtitlesSrt)).toContain(
+      'Кружка держит тепло',
+    );
+  });
+
+  it('недоступный файл не отменяет публикацию — остаётся сборка', async () => {
+    // Хранилище может ответить 404 или оборвать соединение; заявка
+    // важнее субтитров.
+    fetchMock.mockRejectedValue(new Error('ECONNRESET'));
+    const { service, prisma } = build({
+      session: withSubtitleUrl('https://blob.test/sessions/s1/subs.srt'),
+    });
+
+    await service.create('u1', 's1', { platform: 'YOUTUBE' });
+
+    expect(String(created(prisma).subtitlesSrt)).toContain(
+      'Кружка держит тепло',
+    );
+  });
+
+  it('страница ошибки хранилища субтитрами не становится', async () => {
+    // Копия ролика живёт своей жизнью: ссылка может протухнуть, и тогда
+    // придёт не пустота, а XML с описанием ошибки.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      text: async () =>
+        '<?xml version="1.0"?><Error><Code>BlobNotFound</Code></Error>',
+    });
+    const { service, prisma } = build({
+      session: withSubtitleUrl('https://blob.test/sessions/s1/subs.srt'),
+    });
+
+    await service.create('u1', 's1', { platform: 'YOUTUBE' });
+
+    expect(String(created(prisma).subtitlesSrt)).toContain(
+      'Кружка держит тепло',
+    );
+  });
+
+  it('пустой файл не затирает сборку', async () => {
+    // Заготовка `.srt` иногда лежит на месте ещё до сборки субтитров.
+    fetchMock.mockResolvedValue({ ok: true, text: async () => '  \n' });
+    const { service, prisma } = build({
+      session: withSubtitleUrl('https://blob.test/sessions/s1/subs.srt'),
+    });
+
+    await service.create('u1', 's1', { platform: 'YOUTUBE' });
+
+    expect(String(created(prisma).subtitlesSrt)).toContain(
+      'Кружка держит тепло',
+    );
   });
 });
 
