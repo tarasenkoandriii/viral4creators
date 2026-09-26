@@ -176,6 +176,8 @@
     "how": {
       "title": "Qué aspecto tiene",
       "lead": "Cuatro pantallas, el ciclo completo. Abajo hay esquemas de la interfaz, no la interfaz en sí: un fotograma real muestra tu web, y aquí no hay de dónde sacarlo.",
+      "leadReal": "Cuatro pantallas: el ciclo completo. Abajo hay capturas reales del asistente; el sitio que se ve es el nuestro, porque no podemos mostrar el de otros.",
+      "shotAlt": "Captura de pantalla del asistente",
       "items": [
         {
           "title": "Pegas un enlace",

@@ -1,0 +1,18 @@
+sync: догоняем CI и .env.docker.example, отставшие от песочницы
+
+Пофайловая сверка репозитория нашла три расхождения, не относящихся к
+работе над лендингом.
+
+.github/workflows/ci.yml был от 7 сентября и не содержал трёх вещей:
+шага typecheck:scripts во фронтенде, строгого линта через npm run lint
+(с --report-unused-disable-directives, то есть локальная проверка была
+строже CI) и шага unit-скриптов в матрице landing/admin — из-за
+последнего швы лендинга в CI не запускались вовсе.
+
+.env.docker.example отставал вдвое по размеру, из-за чего check-docs
+падал на 45 переменных окружения.
+
+route-templates.ts — косметика: одна строка не проходила prettier.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NdkGqc73XWbFeuP9TrQnHt

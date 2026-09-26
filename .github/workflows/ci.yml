@@ -100,7 +100,16 @@ jobs:
             --exit-code
         working-directory: backend
 
-      - name: типы
+      # Единственное место, где проверяются типы ТЕСТОВ. Раньше их
+      # заодно компилировал `nest build` при деплое — и ошибка в спеке
+      # роняла прод-сборку на Vercel (так и случилось: лишний аргумент
+      # конструктора в `greeting-video.service.spec.ts`). Сборка теперь
+      # идёт по `tsconfig.build.json` и спеков не видит, а `jest` гоняет
+      # их с `diagnostics: false` — то есть без этого шага ошибка типов
+      # в тесте не всплыла бы нигде. Конфиг здесь БЕЗ `-p`, то есть
+      # корневой `tsconfig.json`: он покрывает `src`, `test` и
+      # `scripts` целиком.
+      - name: типы (включая тесты и скрипты)
         run: npx tsc --noEmit
         working-directory: backend
 
@@ -161,8 +170,23 @@ jobs:
         run: npx tsc --noEmit -p tsconfig.json
         working-directory: frontend
 
+      # Аудит волны A «Тонкой красной линии»: `tsconfig.json` включает
+      # только `src`, а `tsx` типы НЕ проверяет — значит проверочные
+      # скрипты в `scripts/` не проверялись ничем и успели отстать от
+      # типов (фикстура `plan.test.ts` — на пять полей `PlanState`,
+      # найдено уже отставшей). Тот же класс ошибки, что
+      # `diagnostics: false` у ts-jest на бэкенде, из-за которого
+      # однажды упала прод-сборка.
+      - name: типы проверочных скриптов
+        run: npm run typecheck:scripts
+        working-directory: frontend
+
       - name: линт
-        run: npx eslint . --ext ts,tsx --max-warnings 0
+        # Через npm-скрипт, а не своей строкой: у него есть
+        # `--report-unused-disable-directives`, и расхождение означало,
+        # что локальная проверка СТРОЖЕ CI — то есть зелёный CI ничего
+        # не обещал про мёртвые `eslint-disable`.
+        run: npm run lint
         working-directory: frontend
 
       # Тестового раннера во фронтенде нет — проверки живут скриптами
@@ -208,6 +232,19 @@ jobs:
       # — у admin/ и landing/ не было ни конфигурации, ни скрипта.
       - name: линт
         run: npx next lint --max-warnings 0
+        working-directory: ${{ matrix.app }}
+
+      # У `landing/` появились первые тесты — до этого он проверялся
+      # только типами, линтом и сборкой, то есть ни одна строка его
+      # ПОВЕДЕНИЯ не проверялась вовсе (найдено при приёмке страницы
+      # поздравлений). Схема как во фронтенде: чистые функции,
+      # `node:assert` + `tsx`, без тест-раннера.
+      #
+      # `--if-present` — потому что шаг общий для всей матрицы: у
+      # `admin/` скрипта `test` нет, и без этого флага джоба падала бы
+      # на его отсутствии, а не на настоящей ошибке.
+      - name: unit-скрипты
+        run: npm run test --if-present
         working-directory: ${{ matrix.app }}
 
       - name: сборка

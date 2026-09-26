@@ -23,6 +23,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -1227,6 +1228,121 @@ function checkGuideSeams() {
     }
   }
 
+  // 16. OG-карточки лендинга обучалок не должны отставать от словарей.
+  //
+  //     `scripts/og-tutorial-cards.mjs` запекает в картинку заголовок и
+  //     бейдж первого экрана. Картинка статична и коммитится: поменяли
+  //     заголовок в словаре, скрипт перезапустить забыли — и превью
+  //     ссылки тихо показывает прошлогодний текст. Увидеть это на самой
+  //     странице нельзя никак, только переслав ссылку.
+  //
+  //     Генератор пишет отпечаток строк рядом с собой; шов пересчитывает
+  //     его из словарей и сверяет. Разошлось — перезапустить генератор.
+  const lockPath = 'scripts/assets/og-tutorial-cards.lock.json';
+  const ogLock = JSON.parse(read(lockPath));
+  let ogChecked = 0;
+  for (const locale of ['ru', 'uk', 'en', 'de', 'es']) {
+    const hero = JSON.parse(read(`landing/src/dictionaries/${locale}.json`))
+      .siteTutorialLanding.hero;
+    const actual = createHash('sha256')
+      .update(`${hero.title}\n${hero.badge}`)
+      .digest('hex')
+      .slice(0, 16);
+    if (ogLock[locale] !== actual) {
+      problems.push(
+        `OG-карточка tutorial-${locale}.jpg нарисована по старому тексту ` +
+          'первого экрана — перезапустите `node scripts/og-tutorial-cards.mjs` ' +
+          'и закоммитьте картинки вместе с ' +
+          lockPath,
+      );
+    }
+    ogChecked += 1;
+  }
+
+  // 17. Настоящие кадры секции «Как это выглядит»: список, файлы и
+  //     бюджет должны сходиться.
+  //
+  //     `landing/src/lib/tutorial-frames.ts` держит список локалей, для
+  //     которых сняты все четыре кадра. От него зависит и картинка, и
+  //     текст оговорки под заголовком. Ошибиться можно двумя способами,
+  //     и оба тихие: объявить локаль, не положив файлы (страница отдаст
+  //     404 вместо кадра, а оговорка уже скажет «настоящие кадры»), или
+  //     положить файлы, забыв дописать локаль (файлы лежат мёртвым
+  //     грузом, страница по-прежнему показывает схемы).
+  //
+  //     Текстовую сторону проверяет `landing/scripts/tutorial-frames.test.ts`.
+  const framesSrc = read('landing/src/lib/tutorial-frames.ts');
+  const shotLocales = new Set(
+    (framesSrc.match(/REAL_FRAME_LOCALES: readonly Locale\[\] = \[([^\]]*)\]/)?.[1] ?? '')
+      .split(',')
+      .map((x) => x.trim().replace(/^'|'$/g, ''))
+      .filter(Boolean),
+  );
+  if (!/REAL_FRAME_LOCALES: readonly Locale\[\] = \[/.test(framesSrc)) {
+    // Тот же приём, что у шва 15: молчащий шов хуже отсутствующего.
+    // Без этой проверки переименованная константа означала бы «локалей
+    // не объявлено», и при отсутствии файлов всё выглядело бы зелёным.
+    problems.push(
+      'не удалось разобрать REAL_FRAME_LOCALES в landing/src/lib/tutorial-frames.ts ' +
+        '— поправьте регулярку шва 17 в scripts/check-docs.mjs (сломан шов, а не код)',
+    );
+  }
+
+  // Потолок ширины снимка живёт в двух местах: в CSS (`max-width` у
+  // `.frame-card-shot .frame-shot`) и в TS (`SHOT_CSS_WIDTH`, из него
+  // строится `sizes`). Разойдутся — `sizes` начнёт врать браузеру, и
+  // он будет брать картинку крупнее нужного. Ровно это аудит и поймал.
+  const cssCap = read('landing/src/app/globals.css').match(
+    /\.frame-card-shot \.frame-shot \{[^}]*max-width:\s*(\d+)px/,
+  )?.[1];
+  const tsCap = framesSrc.match(/SHOT_CSS_WIDTH = (\d+)/)?.[1];
+  if (!cssCap || !tsCap) {
+    problems.push(
+      'не нашли потолок ширины снимка в CSS или в tutorial-frames.ts — ' +
+        'поправьте регулярки шва 17',
+    );
+  } else if (cssCap !== tsCap) {
+    problems.push(
+      `потолок ширины снимка разошёлся: CSS ${cssCap}px, SHOT_CSS_WIDTH ${tsCap}px — ` +
+        '`sizes` наврёт браузеру, и он возьмёт вариант не того размера',
+    );
+  }
+
+  const shotDir = 'landing/public/illustrations';
+  const shotFiles = fs
+    .readdirSync(path.join(ROOT, shotDir))
+    .filter((f) => /^tutorial-shot-[a-z]{2}-\d\.avif$/.test(f));
+  const SHOT_MAX_BYTES = 120 * 1024;
+  const onDisk = new Map();
+  for (const file of shotFiles) {
+    const locale = file.split('-')[2];
+    onDisk.set(locale, (onDisk.get(locale) ?? 0) + 1);
+    const bytes = fs.statSync(path.join(ROOT, shotDir, file)).size;
+    if (bytes > SHOT_MAX_BYTES) {
+      problems.push(
+        `${shotDir}/${file} весит ${Math.round(bytes / 1024)} КБ при бюджете ` +
+          `${SHOT_MAX_BYTES / 1024} КБ — уменьшайте зону обрезки, а не качество`,
+      );
+    }
+  }
+  for (const locale of shotLocales) {
+    const have = onDisk.get(locale) ?? 0;
+    if (have !== 4) {
+      problems.push(
+        `локаль «${locale}» объявлена в REAL_FRAME_LOCALES, но кадров на диске ${have} из 4 — ` +
+          'страница пообещает настоящие кадры и отдаст 404',
+      );
+    }
+  }
+  for (const [locale, count] of onDisk) {
+    if (!shotLocales.has(locale)) {
+      problems.push(
+        `в ${shotDir} лежат кадры локали «${locale}» (${count} шт.), но её нет в ` +
+          'REAL_FRAME_LOCALES — страница их не показывает',
+      );
+    }
+  }
+
   if (problems.length > 0) {
     failed++;
     console.log('FAIL швы советника в мастере:');
@@ -1248,7 +1364,9 @@ function checkGuideSeams() {
         `частей ключа группировки находок (клиент = сервер): ${envKeyLen}; ` +
         `полей окружения, которые сервер ждёт от клиента: ${envFieldCount}; ` +
         `мест, пишущих тестировщику по тикету: ${callers.length}; ` +
-        `имён маршрутов TMA (фронтенд = копия в бэкенде): ${frontRoutes.size}`,
+        `имён маршрутов TMA (фронтенд = копия в бэкенде): ${frontRoutes.size}; ` +
+        `OG-карточек обучалки сверено со словарём: ${ogChecked}; ` +
+        `локалей с настоящими кадрами мастера: ${shotLocales.size} (файлов ${shotFiles.length})`,
     );
   }
 }

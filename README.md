@@ -348,6 +348,21 @@ All supplementary documentation lives in [`doc/`](doc/):
   voice-over, audience, highlight, frame capture, legal markdown, …)
 - **Legal docs**: after editing `doc/legal/*.md` run `node scripts/sync-legal.mjs`
   (`--check` in CI) to regenerate the copies used by the landing and the TMA
+- **Tutorial-landing OG cards**: after editing `hero.title`/`hero.badge` in
+  `landing/src/dictionaries/*.json` run `node scripts/og-tutorial-cards.mjs`
+  and commit the regenerated `landing/public/og/tutorial-*.jpg` together with
+  `scripts/assets/og-tutorial-cards.lock.json`. CI (`check-docs`, seam 16)
+  fails when the cards were drawn from older text — that drift is invisible on
+  the page itself, it only shows in link previews. Needs a headless Chromium
+  (`CHROME_PATH` if not auto-detected) plus ImageMagick or ffmpeg; no npm
+  dependency.
+- **Tutorial-landing real frames**: the four screenshots in the "how it looks"
+  section are captured on production — see `doc/TUTORIAL-FRAMES-CAPTURE.md`.
+  Pictures, their `alt` and the caveat under the heading all switch off one
+  list (`REAL_FRAME_LOCALES` in `landing/src/lib/tutorial-frames.ts`), so the
+  page can never show real frames under a caption that calls them diagrams.
+  `check-docs` seam 17 refuses a locale declared without its files, and files
+  dropped in without the locale.
 - **Linting**: `npm run lint` in respective directories
 - **Formatting**: `npm run format` in respective directories
 - **API reference**: [`doc/API.md`](doc/API.md) — every route the backend serves

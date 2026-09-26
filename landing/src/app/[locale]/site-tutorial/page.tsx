@@ -10,6 +10,11 @@ import { localeAlternates } from '../../../lib/alternates';
 import { SubdomainHeader } from '../../../components/SubdomainHeader';
 import { CLAUDE_REFERRAL_URL, SITE_URL, TMA_URL } from '../../../lib/content';
 import { COMPARE_VERDICTS } from '../../../lib/compare-verdicts';
+import {
+  frameImage,
+  frameSizes,
+  hasRealFrames,
+} from '../../../lib/tutorial-frames';
 
 /**
  * Посадочная страница третьего типа проекта — обучающего видео по сайту
@@ -115,6 +120,8 @@ export default function SiteTutorialLandingPage({
    * на форму товарного ролика.
    */
   const ctaHref = `${TMA_URL}?entry=site-tutorial#/projects/new`;
+  /** Сняты ли для этой локали настоящие кадры — см. `lib/tutorial-frames.ts`. */
+  const realFrames = hasRealFrames(locale);
 
   return (
     <>
@@ -194,41 +201,62 @@ export default function SiteTutorialLandingPage({
         <section className="frames" id="how">
           <div className="wrap">
             <h2>{t.how.title}</h2>
-            <p className="section-lead">{t.how.lead}</p>
+            {/* Оговорка и картинки переключаются ОДНИМ списком
+                (`lib/tutorial-frames.ts`), а не двумя правками руками.
+                Пока кадры — схемы, текст честно это говорит; как только
+                локаль получила настоящие снимки, меняются оба. Развести
+                их физически негде, и это главное, ради чего заведён тот
+                модуль: страница, которая продаёт достоверность, не
+                может сначала поменять картинки, а текст потом. */}
+            <p className="section-lead">
+              {realFrames ? t.how.leadReal : t.how.lead}
+            </p>
             <ol className="frames-grid">
-              {t.how.items.map((item, index) => (
-                <li className="frame-card" key={item.title}>
-                  {/* `.frame-shot` — оправа кадра (этап A ТЗ
-                      `docs-tz/TZ-Enterprise-Tutorial-Landing.md`).
-                      Обёртка нужна по существу, а не для красоты:
-                      `<img>` — замещаемый элемент, номер шага внутрь
-                      него не положить, и на одном элементе не задать
-                      разный радиус внешней рамке и содержимому (это
-                      понадобится Уровню 2, когда здесь окажется
-                      настоящий снимок). Разметка списка при этом не
-                      тронута: секция остаётся `<ol>` из `<li>`. */}
-                  <div className="frame-shot">
-                    <Image
-                      src={`/illustrations/tutorial-frame-${index + 1}.svg`}
-                      alt=""
-                      /* 840×540 — тот же холст 3:2, что и прежние
-                         560×360, только в полтора раза больше единиц:
-                         связующая ширина показа 286px на телефоне
-                         (этап A, находка И-1), и при 560 единицах
-                         деталь в 2 единицы приходила бы к читателю
-                         толщиной в две трети пикселя. */
-                      width={840}
-                      height={540}
-                      unoptimized
-                    />
-                    <span className="step-number">{index + 1}</span>
-                  </div>
-                  <div className="frame-card-body">
-                    <strong>{item.title}</strong>
-                    <p>{item.text}</p>
-                  </div>
-                </li>
-              ))}
+              {t.how.items.map((item, index) => {
+                const frame = frameImage(locale, index + 1);
+                return (
+                  <li
+                    className={
+                      frame.real ? 'frame-card frame-card-shot' : 'frame-card'
+                    }
+                    key={item.title}
+                  >
+                    {/* `.frame-shot` — оправа кадра (этап A ТЗ
+                        `docs-tz/TZ-Enterprise-Tutorial-Landing.md`).
+                        Обёртка нужна по существу, а не для красоты:
+                        `<img>` — замещаемый элемент, номер шага внутрь
+                        него не положить, и на одном элементе не задать
+                        разный радиус внешней рамке и содержимому —
+                        настоящему снимку это и понадобилось. Разметка
+                        списка при этом не тронута: секция остаётся
+                        `<ol>` из `<li>`. */}
+                    <div className="frame-shot">
+                      <Image
+                        src={frame.src}
+                        /* У схемы `alt` пустой намеренно: подпись под
+                           кадром несёт весь смысл, и дубль только мешал
+                           бы скринридеру. У настоящего снимка — нет:
+                           он показывает то, чего в подписи не сказано,
+                           как именно выглядит экран. */
+                        alt={frame.real ? `${t.how.shotAlt}: ${item.title}` : ''}
+                        aria-hidden={frame.real ? undefined : true}
+                        width={frame.width}
+                        height={frame.height}
+                        sizes={frameSizes(frame.real)}
+                        /* SVG оптимизатор Next не отдаёт без
+                           `dangerouslyAllowSVG`; растровому снимку
+                           оптимизация, наоборот, нужна. */
+                        unoptimized={!frame.real}
+                      />
+                      <span className="step-number">{index + 1}</span>
+                    </div>
+                    <div className="frame-card-body">
+                      <strong>{item.title}</strong>
+                      <p>{item.text}</p>
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           </div>
         </section>

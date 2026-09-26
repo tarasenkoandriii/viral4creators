@@ -176,6 +176,8 @@
     "how": {
       "title": "What it looks like",
       "lead": "Four screens, the whole loop. Below are interface schematics, not the interface itself — a real frame shows your site, and there is nowhere to get one here.",
+      "leadReal": "Four screens — the whole cycle. These are real frames from the wizard; the site in them is our own, because we may not show someone else’s.",
+      "shotAlt": "Screenshot of the wizard",
       "items": [
         {
           "title": "Paste a link",
