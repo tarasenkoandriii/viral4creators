@@ -55,7 +55,8 @@
     "plans": "Planes",
     "channels": "Canales",
     "credits": "Créditos",
-    "madeWithClaude": "Hecho con Claude — semana gratis"
+    "madeWithClaude": "Hecho con Claude — semana gratis",
+    "report": "Informar de un problema"
   },
   "notFound": {
     "title": "Página no encontrada",
@@ -1080,7 +1081,13 @@
     "previewQuota": "Vistas previas hoy: quedan {{left}} de {{limit}}"
   },
   "generationWizard": {
-    "steps": ["Video", "Análisis", "Producto", "Prompt", "Generación"],
+    "steps": [
+      "Video",
+      "Análisis",
+      "Producto",
+      "Prompt",
+      "Generación"
+    ],
     "stepSource": "Escena",
     "errorTitle": "Error",
     "prefilledAlert": "Los datos del producto se tomaron del proyecto — es una copia del momento de inicio; los cambios aquí no modifican el producto en sí.",
@@ -1774,5 +1781,21 @@
     "shareText": "Haz un vídeo publicitario en minutos: la primera generación es gratis",
     "inviteeJoined": "inició sesión",
     "inviteeGenerated": "hizo vídeo"
+  },
+  "reportProblem": {
+    "title": "Informar de un problema",
+    "hint": "¿Qué falló? Descríbelo con tus palabras: la pantalla, la sesión y la versión de compilación se adjuntan solas.",
+    "placeholder": "Por ejemplo: el botón «Generar» no responde en el paso del prompt",
+    "attach": "Adjuntar archivo",
+    "attached": "Archivo adjunto",
+    "send": "Enviar",
+    "sending": "Enviando…",
+    "cancel": "Cancelar",
+    "close": "Cerrar",
+    "sent": "Recibido, informe n.º {number}. Gracias.",
+    "empty": "Describe qué falló o adjunta una captura de pantalla.",
+    "failed": "No se pudo enviar. Inténtalo de nuevo.",
+    "tooBig": "El archivo supera los 10 MB: envía un fragmento o una captura.",
+    "here": "Pantalla: {where}"
   }
 }

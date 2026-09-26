@@ -322,3 +322,72 @@ function sizeOf(value: unknown): string | null {
   const { w, h } = value as { w?: unknown; h?: unknown };
   return typeof w === 'number' && typeof h === 'number' ? `${w}×${h}` : null;
 }
+
+/**
+ * Потолок вложения из мини-аппа (этап 160).
+ *
+ * Не 20 МБ: там это потолок Bot API, чужое ограничение, которое мы
+ * только пересказываем. Здесь потолок наш, и он про другое — про то,
+ * что доказательством бага работает снимок экрана или короткий
+ * фрагмент, а не минутная запись. Человеку об этом говорят до
+ * загрузки, а не после.
+ */
+export const APP_ATTACHMENT_LIMIT = 10 * 1024 * 1024;
+
+/**
+ * Что принимаем вложением. Закрытый список, а не «всё, кроме»: у
+ * открытого списка нет края, и однажды в хранилище приедет то, чего
+ * там быть не должно.
+ */
+const ALLOWED_PREFIXES = ['image/', 'video/', 'audio/'];
+const ALLOWED_EXACT = ['text/plain', 'application/json', 'application/pdf'];
+
+export function isAllowedAttachmentType(mimeType: string): boolean {
+  const type = mimeType?.trim().toLowerCase().split(';')[0] ?? '';
+  if (!type) return false;
+  return (
+    ALLOWED_PREFIXES.some((p) => type.startsWith(p)) ||
+    ALLOWED_EXACT.includes(type)
+  );
+}
+
+/**
+ * Куда класть вложение. Под чужим префиксом `users/<id>/tickets/…` — по
+ * той же причине, что и у вложений из бота (аудит этапа 157): метла
+ * обходит закрытый список областей и разбирает пути как
+ * `<префикс>/<id>/…`, а под собственным префиксом эти файлы не подобрал
+ * бы никто и никогда.
+ */
+export function attachmentPath(userId: string, stamp: number): string {
+  return `${attachmentPrefix(userId)}app-${stamp}-${randomSuffix()}`;
+}
+
+/** Папка вложений ЭТОГО человека. */
+export function attachmentPrefix(userId: string): string {
+  return `users/${userId}/tickets/`;
+}
+
+/**
+ * Наш ли это путь и его ли он (аудит этапа 160).
+ *
+ * Проверять `users/` и `/tickets/` по отдельности мало: под это
+ * подходит и папка ДРУГОГО тестировщика, то есть ровно тот случай,
+ * который проверка и должна была закрыть. Сравниваем с собственным
+ * префиксом целиком.
+ *
+ * `..` отдельной строкой: путь приходит из тела запроса, и `users/u1/
+ * tickets/../../u2/tickets/x` иначе прошёл бы проверку префикса,
+ * оставшись ссылкой на чужое.
+ */
+export function isOwnAttachmentPath(pathname: string, userId: string): boolean {
+  const path = pathname?.trim() ?? '';
+  if (!path || path.includes('..')) return false;
+  return (
+    path.startsWith(attachmentPrefix(userId)) &&
+    path.length > attachmentPrefix(userId).length
+  );
+}
+
+function randomSuffix(): string {
+  return Math.random().toString(36).slice(2, 8);
+}

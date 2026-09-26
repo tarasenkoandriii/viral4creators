@@ -24,6 +24,11 @@ import { useRoute, navigate, routes } from './lib/router';
 import { PlanContext } from './lib/plan-context';
 import { getPlanState } from './services/projects-api';
 import { reportEnvironment } from './services/environment-api';
+import { ReportProblem } from './components/ReportProblem';
+import {
+  ReportLocationContext,
+  type ReportLocation,
+} from './lib/report-location';
 import { PlanScreen } from './features/plan/PlanScreen';
 import { AccountNotice } from './components/AccountNotice';
 import type { PlanState } from './types';
@@ -161,6 +166,23 @@ function App() {
   );
 
   /**
+   * Где человек в мастере — для кнопки «Сообщить о проблеме» (этап
+   * 160). Подвал снаружи мастера и о сессии не знает; сообщает о ней
+   * сам мастер, см. `lib/report-location.ts`.
+   */
+  const [where, setWhere] = useState<ReportLocation>({
+    sessionId: null,
+    stepId: null,
+  });
+  const [reporting, setReporting] = useState(false);
+  const reportValue = useMemo(() => ({ ...where, report: setWhere }), [where]);
+  // Кнопка — только тестировщику с ДЕЙСТВУЮЩИМ доступом: `isTestUser`
+  // в этом ответе уже учитывает срок (этап 159). Обычному пользователю
+  // её не видно: поддержка для всех — другой продукт с другой
+  // нагрузкой.
+  const canReport = planState?.testAccess?.isTestUser === true;
+
+  /**
    * Окружение тестировщика (этап 156). Один раз за запуск и намеренно
    * БЕЗ локали в зависимостях: переключение языка не повод переснимать
    * окружение, а вот `uiLocale` в снимке — это язык, на котором человек
@@ -245,302 +267,326 @@ function App() {
 
   return (
     <PlanContext.Provider value={planValue}>
-      <div className="backdrop-grid min-h-full">
-        <header className="sticky top-0 z-30 border-b border-silver-200/60 dark:border-silver-800 bg-silver-50/80 dark:bg-silver-950/80 backdrop-blur">
-          <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2.5 sm:py-3">
-            <button
-              type="button"
-              onClick={() => navigate(routes.projects())}
-              className="flex min-h-[44px] items-center gap-2 text-left"
-            >
-              <span className="sheen text-lg font-extrabold tracking-tight">
-                Viral4Creators
-              </span>
-              <span className="hidden sm:inline text-[11px] uppercase tracking-widest text-silver-400">
-                {dict.header.tagline}
-              </span>
-            </button>
-            <div className="flex items-center gap-2">
-              <LanguageSwitcher />
-              <ThemeToggle />
-              {/* Режим — рядом с входом, а не четвёртой вкладкой: на 390px
+      <ReportLocationContext.Provider value={reportValue}>
+        <div className="backdrop-grid min-h-full">
+          <header className="sticky top-0 z-30 border-b border-silver-200/60 dark:border-silver-800 bg-silver-50/80 dark:bg-silver-950/80 backdrop-blur">
+            <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2.5 sm:py-3">
+              <button
+                type="button"
+                onClick={() => navigate(routes.projects())}
+                className="flex min-h-[44px] items-center gap-2 text-left"
+              >
+                <span className="sheen text-lg font-extrabold tracking-tight">
+                  Viral4Creators
+                </span>
+                <span className="hidden sm:inline text-[11px] uppercase tracking-widest text-silver-400">
+                  {dict.header.tagline}
+                </span>
+              </button>
+              <div className="flex items-center gap-2">
+                <LanguageSwitcher />
+                <ThemeToggle />
+                {/* Режим — рядом с входом, а не четвёртой вкладкой: на 390px
                 четыре вкладки не помещаются, а знать свой режим нужно
                 всегда, чтобы замок ниже не выглядел поломкой. */}
-              {planState && (
-                <button
-                  type="button"
-                  onClick={() => navigate(routes.plan())}
-                  aria-label={dict.header.modeAriaLabel.replace(
-                    '{{mode}}',
-                    planState.plans[planState.plan]?.title ?? planState.plan
-                  )}
-                  className={`inline-flex min-h-[44px] items-center gap-1 rounded-full px-3 py-0.5 text-[11px] font-medium uppercase tracking-wide transition-colors ${
-                    route.name === 'plan'
-                      ? 'bg-accent text-accent-on'
-                      : 'bg-accent/20 text-sky-800 hover:bg-accent/30 dark:text-accent'
-                  }`}
-                >
-                  {planState.plans[planState.plan]?.title ?? planState.plan}
-                </button>
-              )}
-              <TelegramLoginButton />
-            </div>
-            {/* Three tabs + login don't fit one 390px row: the nav wraps to
+                {planState && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(routes.plan())}
+                    aria-label={dict.header.modeAriaLabel.replace(
+                      '{{mode}}',
+                      planState.plans[planState.plan]?.title ?? planState.plan
+                    )}
+                    className={`inline-flex min-h-[44px] items-center gap-1 rounded-full px-3 py-0.5 text-[11px] font-medium uppercase tracking-wide transition-colors ${
+                      route.name === 'plan'
+                        ? 'bg-accent text-accent-on'
+                        : 'bg-accent/20 text-sky-800 hover:bg-accent/30 dark:text-accent'
+                    }`}
+                  >
+                    {planState.plans[planState.plan]?.title ?? planState.plan}
+                  </button>
+                )}
+                <TelegramLoginButton />
+              </div>
+              {/* Three tabs + login don't fit one 390px row: the nav wraps to
                 its own full-width line on phones, inline from `sm` up. */}
-            <nav className="order-3 flex w-full rounded-xl bg-silver-200/60 dark:bg-silver-800/60 p-0.5 sm:order-none sm:w-auto">
-              <NavTab
-                active={inProjects}
-                onClick={() => navigate(routes.projects())}
-                icon={<FolderKanban size={13} />}
-              >
-                {dict.nav.projects}
-              </NavTab>
-              <NavTab
-                active={inBrand}
-                onClick={() => navigate(routes.manifests())}
-                icon={<Palette size={13} />}
-              >
-                {dict.nav.brand}
-              </NavTab>
-              <NavTab
-                active={route.name === 'generate'}
-                onClick={() => navigate(routes.generate())}
-                icon={<Zap size={13} />}
-              >
-                {dict.nav.generate}
-              </NavTab>
-              <NavTab
-                active={inPostprod}
-                onClick={() => navigate(routes.postprod())}
-                icon={<Clapperboard size={13} />}
-              >
-                {dict.nav.postprod}
-              </NavTab>
-            </nav>
-          </div>
-        </header>
+              <nav className="order-3 flex w-full rounded-xl bg-silver-200/60 dark:bg-silver-800/60 p-0.5 sm:order-none sm:w-auto">
+                <NavTab
+                  active={inProjects}
+                  onClick={() => navigate(routes.projects())}
+                  icon={<FolderKanban size={13} />}
+                >
+                  {dict.nav.projects}
+                </NavTab>
+                <NavTab
+                  active={inBrand}
+                  onClick={() => navigate(routes.manifests())}
+                  icon={<Palette size={13} />}
+                >
+                  {dict.nav.brand}
+                </NavTab>
+                <NavTab
+                  active={route.name === 'generate'}
+                  onClick={() => navigate(routes.generate())}
+                  icon={<Zap size={13} />}
+                >
+                  {dict.nav.generate}
+                </NavTab>
+                <NavTab
+                  active={inPostprod}
+                  onClick={() => navigate(routes.postprod())}
+                  icon={<Clapperboard size={13} />}
+                >
+                  {dict.nav.postprod}
+                </NavTab>
+              </nav>
+            </div>
+          </header>
 
-        <main className="mx-auto max-w-2xl px-4 py-5">
-          {/* §25.3 / §26.4: о блокировке и исчерпанном лимите человек
+          <main className="mx-auto max-w-2xl px-4 py-5">
+            {/* §25.3 / §26.4: о блокировке и исчерпанном лимите человек
             узнаёт сразу и на любом экране, а не красной ошибкой после
             того, как выбрал референс и дождался начала разбора. */}
-          <div className="mb-4 empty:hidden">
-            <AccountNotice />
-          </div>
-          {checkingPayment && (
-            <div className="mb-4">
-              <Alert tone="info">{dict.planScreen.checkoutPending}</Alert>
+            <div className="mb-4 empty:hidden">
+              <AccountNotice />
             </div>
-          )}
-          {billingResult && (
-            <div className="mb-4">
-              <Alert
-                tone={billingResult === 'success' ? 'success' : 'info'}
-                onDismiss={() => setBillingResult(null)}
-              >
-                {billingResult === 'success'
-                  ? dict.planScreen.checkoutSuccess
-                  : dict.planScreen.checkoutUnconfirmed}
-              </Alert>
-            </div>
-          )}
-          {route.name === 'projects' && <ProjectsListScreen />}
-          {route.name === 'project-new' && <ProjectCreateScreen />}
-          {route.name === 'project' && (
-            <ProjectScreen key={route.projectId} projectId={route.projectId} />
-          )}
-          {route.name === 'item' && (
-            <ItemScreen
-              key={route.itemId}
-              projectId={route.projectId}
-              itemId={route.itemId}
-              step={route.step}
-            />
-          )}
-          {route.name === 'catalog-batch-start' && (
-            <CatalogBatchStartScreen
-              key={route.sourceSessionId}
-              projectId={route.projectId}
-              sourceSessionId={route.sourceSessionId}
-            />
-          )}
-          {route.name === 'catalog-batch' && (
-            <CatalogBatchProgressScreen
-              key={route.batchId}
-              projectId={route.projectId}
-              batchId={route.batchId}
-            />
-          )}
-          {route.name === 'ab-test' && (
-            <AbTestProgressScreen
-              key={route.runId}
-              projectId={route.projectId}
-              runId={route.runId}
-            />
-          )}
-          {route.name === 'site-tutorial' && (
-            <ClientSiteWizard projectId={route.projectId} step={route.step} />
-          )}
-          {route.name === 'greeting-video' && (
-            <GreetingVideoWizard
-              key={route.projectId}
-              projectId={route.projectId}
-            />
-          )}
-          {route.name === 'feed-import-start' && (
-            <FeedImportStartScreen
-              key={route.projectId}
-              projectId={route.projectId}
-            />
-          )}
-          {route.name === 'feed-import' && (
-            <FeedImportProgressScreen
-              key={route.runId}
-              projectId={route.projectId}
-              runId={route.runId}
-            />
-          )}
-          {route.name === 'manifests' && <ManifestsListScreen />}
-          {route.name === 'manifest-new' && <ManifestScreen />}
-          {route.name === 'manifest' && (
-            <ManifestScreen
-              key={route.manifestId}
-              manifestId={route.manifestId}
-            />
-          )}
-          {route.name === 'generate' && <GenerationWizard />}
-          {route.name === 'postprod' && <PostprodScreen />}
-          {route.name === 'postprod-video' && (
-            <PostprodVideoScreen
-              key={route.sessionId}
-              sessionId={route.sessionId}
-            />
-          )}
-          {route.name === 'legal' && <LegalScreen slug={route.slug} />}
-          {route.name === 'plan' && <PlanScreen />}
-          {route.name === 'channels' && <ChannelsScreen />}
-          {route.name === 'credits' && <CreditsScreen />}
-          {route.name === 'api-keys' && <ApiKeysScreen />}
-          {route.name === 'feed' && <FeedScreen />}
-          {route.name === 'invite' && <InviteScreen />}
-          {route.name === 'not-found' && (
-            <EmptyState
-              title={dict.notFound.title}
-              hint={`#/${route.path}`}
-              action={
-                <Button
-                  variant="outline"
-                  onClick={() => navigate(routes.projects(), true)}
+            {checkingPayment && (
+              <div className="mb-4">
+                <Alert tone="info">{dict.planScreen.checkoutPending}</Alert>
+              </div>
+            )}
+            {billingResult && (
+              <div className="mb-4">
+                <Alert
+                  tone={billingResult === 'success' ? 'success' : 'info'}
+                  onDismiss={() => setBillingResult(null)}
                 >
-                  {dict.notFound.action}
-                </Button>
-              }
-            />
-          )}
-        </main>
+                  {billingResult === 'success'
+                    ? dict.planScreen.checkoutSuccess
+                    : dict.planScreen.checkoutUnconfirmed}
+                </Alert>
+              </div>
+            )}
+            {route.name === 'projects' && <ProjectsListScreen />}
+            {route.name === 'project-new' && <ProjectCreateScreen />}
+            {route.name === 'project' && (
+              <ProjectScreen
+                key={route.projectId}
+                projectId={route.projectId}
+              />
+            )}
+            {route.name === 'item' && (
+              <ItemScreen
+                key={route.itemId}
+                projectId={route.projectId}
+                itemId={route.itemId}
+                step={route.step}
+              />
+            )}
+            {route.name === 'catalog-batch-start' && (
+              <CatalogBatchStartScreen
+                key={route.sourceSessionId}
+                projectId={route.projectId}
+                sourceSessionId={route.sourceSessionId}
+              />
+            )}
+            {route.name === 'catalog-batch' && (
+              <CatalogBatchProgressScreen
+                key={route.batchId}
+                projectId={route.projectId}
+                batchId={route.batchId}
+              />
+            )}
+            {route.name === 'ab-test' && (
+              <AbTestProgressScreen
+                key={route.runId}
+                projectId={route.projectId}
+                runId={route.runId}
+              />
+            )}
+            {route.name === 'site-tutorial' && (
+              <ClientSiteWizard projectId={route.projectId} step={route.step} />
+            )}
+            {route.name === 'greeting-video' && (
+              <GreetingVideoWizard
+                key={route.projectId}
+                projectId={route.projectId}
+              />
+            )}
+            {route.name === 'feed-import-start' && (
+              <FeedImportStartScreen
+                key={route.projectId}
+                projectId={route.projectId}
+              />
+            )}
+            {route.name === 'feed-import' && (
+              <FeedImportProgressScreen
+                key={route.runId}
+                projectId={route.projectId}
+                runId={route.runId}
+              />
+            )}
+            {route.name === 'manifests' && <ManifestsListScreen />}
+            {route.name === 'manifest-new' && <ManifestScreen />}
+            {route.name === 'manifest' && (
+              <ManifestScreen
+                key={route.manifestId}
+                manifestId={route.manifestId}
+              />
+            )}
+            {route.name === 'generate' && <GenerationWizard />}
+            {route.name === 'postprod' && <PostprodScreen />}
+            {route.name === 'postprod-video' && (
+              <PostprodVideoScreen
+                key={route.sessionId}
+                sessionId={route.sessionId}
+              />
+            )}
+            {route.name === 'legal' && <LegalScreen slug={route.slug} />}
+            {route.name === 'plan' && <PlanScreen />}
+            {route.name === 'channels' && <ChannelsScreen />}
+            {route.name === 'credits' && <CreditsScreen />}
+            {route.name === 'api-keys' && <ApiKeysScreen />}
+            {route.name === 'feed' && <FeedScreen />}
+            {route.name === 'invite' && <InviteScreen />}
+            {route.name === 'not-found' && (
+              <EmptyState
+                title={dict.notFound.title}
+                hint={`#/${route.path}`}
+                action={
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate(routes.projects(), true)}
+                  >
+                    {dict.notFound.action}
+                  </Button>
+                }
+              />
+            )}
+          </main>
 
-        {/* Б-4.8: ссылки подвала — единственный вход в юридические
+          {/* Б-4.8: ссылки подвала — единственный вход в юридические
             документы, а были 45×16.5px. `inline-flex` + min-h даёт
             настоящую цель касания, не меняя вид строки. */}
-        <footer className="mx-auto max-w-2xl px-4 py-6 text-center text-[11px] text-silver-400">
-          <span>{dict.footer.brand}</span>
-          <span className="mx-1.5 opacity-40">·</span>
-          <button
-            type="button"
-            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
-            onClick={() => navigate(routes.legal('offer'))}
-          >
-            {dict.footer.offer}
-          </button>
-          <span className="mx-1.5 opacity-40">·</span>
-          <button
-            type="button"
-            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
-            onClick={() => navigate(routes.legal('terms-of-use'))}
-          >
-            {dict.footer.terms}
-          </button>
-          <span className="mx-1.5 opacity-40">·</span>
-          <button
-            type="button"
-            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
-            onClick={() => navigate(routes.plan())}
-          >
-            {dict.footer.plans}
-          </button>
-          <span className="mx-1.5 opacity-40">·</span>
-          {/* Экран «Каналы» (этап 61) — ссылкой в подвале, не четвёртой
+          <footer className="mx-auto max-w-2xl px-4 py-6 text-center text-[11px] text-silver-400">
+            <span>{dict.footer.brand}</span>
+            <span className="mx-1.5 opacity-40">·</span>
+            <button
+              type="button"
+              className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+              onClick={() => navigate(routes.legal('offer'))}
+            >
+              {dict.footer.offer}
+            </button>
+            <span className="mx-1.5 opacity-40">·</span>
+            <button
+              type="button"
+              className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+              onClick={() => navigate(routes.legal('terms-of-use'))}
+            >
+              {dict.footer.terms}
+            </button>
+            <span className="mx-1.5 opacity-40">·</span>
+            <button
+              type="button"
+              className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+              onClick={() => navigate(routes.plan())}
+            >
+              {dict.footer.plans}
+            </button>
+            {canReport && (
+              <>
+                <span className="mx-1.5 opacity-40">·</span>
+                <button
+                  type="button"
+                  className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+                  onClick={() => setReporting(true)}
+                >
+                  {dict.footer.report}
+                </button>
+              </>
+            )}
+            <span className="mx-1.5 opacity-40">·</span>
+            {/* Экран «Каналы» (этап 61) — ссылкой в подвале, не четвёртой
               вкладкой: три вкладки и так упираются в ширину 390px (см.
               комментарий у <nav> выше), а канал подключается редко. */}
-          <button
-            type="button"
-            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
-            onClick={() => navigate(routes.channels())}
-          >
-            {dict.footer.channels}
-          </button>
-          <span className="mx-1.5 opacity-40">·</span>
-          {/* Экран «Кредиты» (этап 62) — той же ссылкой в подвале, что
+            <button
+              type="button"
+              className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+              onClick={() => navigate(routes.channels())}
+            >
+              {dict.footer.channels}
+            </button>
+            <span className="mx-1.5 opacity-40">·</span>
+            {/* Экран «Кредиты» (этап 62) — той же ссылкой в подвале, что
               «Каналы»: покупка пакетов не относится к режиму работы и не
               вписывается в три основные вкладки. */}
-          <button
-            type="button"
-            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
-            onClick={() => navigate(routes.credits())}
-          >
-            {dict.footer.credits}
-          </button>
-          <span className="mx-1.5 opacity-40">·</span>
-          {/* Кабинет «Пригласить» (этап 133) — той же ссылкой в подвале,
+            <button
+              type="button"
+              className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+              onClick={() => navigate(routes.credits())}
+            >
+              {dict.footer.credits}
+            </button>
+            <span className="mx-1.5 opacity-40">·</span>
+            {/* Кабинет «Пригласить» (этап 133) — той же ссылкой в подвале,
               что «Каналы» и «Кредиты»: три основные вкладки упираются в
               390px, а главный вход сюда всё равно не подвал, а кнопка со
               стены на генерации. */}
-          <button
-            type="button"
-            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
-            onClick={() => navigate(routes.invite())}
-          >
-            {dict.invite.title}
-          </button>
-          <span className="mx-1.5 opacity-40">·</span>
-          {/* Ключи внешнего API (этап 145) — той же ссылкой в подвале,
+            <button
+              type="button"
+              className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+              onClick={() => navigate(routes.invite())}
+            >
+              {dict.invite.title}
+            </button>
+            <span className="mx-1.5 opacity-40">·</span>
+            {/* Ключи внешнего API (этап 145) — той же ссылкой в подвале,
               что «Каналы» и «Кредиты». В три основные вкладки их не
               ставим: раздел для Premium и для тех, кто пишет код, а
               вкладки одни на всех. */}
-          <button
-            type="button"
-            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
-            onClick={() => navigate(routes.apiKeys())}
-          >
-            {dict.apiKeysScreen.title}
-          </button>
-          <span className="mx-1.5 opacity-40">·</span>
-          {/* Доп. запрос владельца продукта: реферальная ссылка Claude —
+            <button
+              type="button"
+              className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+              onClick={() => navigate(routes.apiKeys())}
+            >
+              {dict.apiKeysScreen.title}
+            </button>
+            <span className="mx-1.5 opacity-40">·</span>
+            {/* Доп. запрос владельца продукта: реферальная ссылка Claude —
               ссылка в env (`VITE_CLAUDE_REFERRAL_URL`), а не зашита в код:
               реферальный код можно сменить без правки исходников. Фоллбек —
               тот же адрес, что дал владелец продукта, на случай, если
               переменную забыли задать на стенде. Обычная ссылка, а не
               `navigate()`: адрес внешний (claude.ai), открывается в новой
               вкладке — уводить пользователя со страницы было бы враждебно. */}
-          <a
-            href={
-              import.meta.env.VITE_CLAUDE_REFERRAL_URL ||
-              'https://claude.ai/referral/P7cQCOjbvg?s=android'
-            }
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
-          >
-            {dict.footer.madeWithClaude}
-          </a>
-          {/* Версия сборки (этап 154). Отдельной строкой и приглушённо:
+            <a
+              href={
+                import.meta.env.VITE_CLAUDE_REFERRAL_URL ||
+                'https://claude.ai/referral/P7cQCOjbvg?s=android'
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+            >
+              {dict.footer.madeWithClaude}
+            </a>
+            {/* Версия сборки (этап 154). Отдельной строкой и приглушённо:
               это не ссылка и не действие, а ответ на вопрос «какая у вас
               сборка», который задают при разборе находки. Без неё тикет
               месячной давности неотличим по смыслу от сегодняшнего — а
               это и решает, чинить или закрывать. */}
-          <div className="mt-2 opacity-50">{APP_BUILD}</div>
-        </footer>
-      </div>
+            <div className="mt-2 opacity-50">{APP_BUILD}</div>
+          </footer>
+          {reporting && (
+            <ReportProblem
+              dict={dict}
+              locale={locale}
+              onClose={() => setReporting(false)}
+            />
+          )}
+        </div>
+      </ReportLocationContext.Provider>
     </PlanContext.Provider>
   );
 }

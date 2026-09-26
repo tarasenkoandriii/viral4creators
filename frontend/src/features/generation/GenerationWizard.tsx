@@ -11,6 +11,7 @@
  * + aspect ratio (generation step), audit and publication (result step).
  */
 
+import { useReportHere } from '../../lib/report-location';
 import { useState, useEffect, useRef } from 'react';
 import {
   Clapperboard,
@@ -343,6 +344,10 @@ export function GenerationWizard() {
   const [guide, setGuide] = useState<WizardGuideState | null>(null);
   const track = useWizardEvents(projectId ?? '');
   const stepId = stepperIdOf(currentStep);
+  // Мастер сообщает, где человек, — для кнопки «Сообщить о проблеме» в
+  // подвале (этап 160). Подвал снаружи мастера и сам о сессии не
+  // знает: у маршрута `#/generate` нет ни одного параметра.
+  useReportHere(sessionId, stepId);
 
   useEffect(() => {
     if (!sessionId) return;

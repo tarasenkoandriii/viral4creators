@@ -130,7 +130,10 @@ describe('test-user-scenarios', () => {
 
   it('не тестовому аккаунту срок ничего не открывает', () => {
     expect(
-      testAccessActive({ isTestUser: false, freeScenarios: [] }, new Date()),
+      testAccessActive(
+        { isTestUser: false, testAccessUntil: null },
+        new Date(),
+      ),
     ).toBe(false);
   });
 

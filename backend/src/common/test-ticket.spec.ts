@@ -1,5 +1,9 @@
 import {
+  APP_ATTACHMENT_LIMIT,
+  attachmentPath,
   attachmentsOf,
+  isOwnAttachmentPath,
+  isAllowedAttachmentType,
   envSummary,
   needsReason,
   isTicketStatus,
@@ -256,5 +260,86 @@ describe('окружение одной строкой', () => {
 
   it('половина размера не печатается', () => {
     expect(envSummary({ viewport: { w: 390 } })).toBe('');
+  });
+});
+
+describe('вложения из мини-аппа (этап 160)', () => {
+  it('принимает то, чем доказывают баг', () => {
+    expect(isAllowedAttachmentType('image/png')).toBe(true);
+    expect(isAllowedAttachmentType('video/mp4')).toBe(true);
+    expect(isAllowedAttachmentType('audio/ogg')).toBe(true);
+    expect(isAllowedAttachmentType('text/plain')).toBe(true);
+    expect(isAllowedAttachmentType('application/pdf')).toBe(true);
+  });
+
+  it('и не принимает остального: список закрытый', () => {
+    // У открытого списка («всё, кроме») нет края, и однажды в
+    // хранилище приедет то, чего там быть не должно.
+    expect(isAllowedAttachmentType('application/x-msdownload')).toBe(false);
+    expect(isAllowedAttachmentType('application/zip')).toBe(false);
+    expect(isAllowedAttachmentType('')).toBe(false);
+    expect(isAllowedAttachmentType('   ')).toBe(false);
+  });
+
+  it('разбирает тип с параметрами и регистром', () => {
+    // Браузер шлёт `text/plain; charset=utf-8`, и отказать на этом
+    // значило бы отказать в текстовом логе.
+    expect(isAllowedAttachmentType('TEXT/PLAIN; charset=utf-8')).toBe(true);
+    expect(isAllowedAttachmentType('Image/PNG')).toBe(true);
+  });
+
+  it('путь ложится под владельца, а не в свой префикс', () => {
+    // Метла обходит закрытый список областей и разбирает пути как
+    // `<префикс>/<id>/…` (аудит этапа 157).
+    const path = attachmentPath('u1', 1_700_000_000_000);
+    expect(path.startsWith('users/u1/tickets/app-1700000000000-')).toBe(true);
+  });
+
+  it('два вложения подряд не перетирают друг друга', () => {
+    // Путь детерминирован по времени, а внутри одной миллисекунды
+    // человек успевает приложить второй файл: `allowOverwrite` у
+    // хранилища включён, и совпадение стоило бы потерянного файла.
+    const a = attachmentPath('u1', 1);
+    const b = attachmentPath('u1', 1);
+    expect(a).not.toBe(b);
+  });
+
+  it('чужая папка не проходит проверку пути', () => {
+    // Аудит этапа 160: проверка на `users/` и `/tickets/` по
+    // отдельности пропускала папку ДРУГОГО тестировщика — ровно тот
+    // случай, который она и должна была закрыть.
+    expect(isOwnAttachmentPath('users/u1/tickets/app-1', 'u1')).toBe(true);
+    expect(isOwnAttachmentPath('users/u2/tickets/app-1', 'u1')).toBe(false);
+  });
+
+  it('и чужая область хранилища — тоже', () => {
+    expect(isOwnAttachmentPath('sessions/s1/original.mp4', 'u1')).toBe(false);
+    expect(isOwnAttachmentPath('users/u1/voices/v1/sample.webm', 'u1')).toBe(
+      false,
+    );
+  });
+
+  it('выход вверх по дереву не считается своим путём', () => {
+    // Путь приходит из тела запроса: без этой проверки
+    // `users/u1/tickets/../../u2/tickets/x` прошёл бы по префиксу.
+    expect(
+      isOwnAttachmentPath('users/u1/tickets/../../u2/tickets/x', 'u1'),
+    ).toBe(false);
+  });
+
+  it('сама папка без файла — не путь к файлу', () => {
+    expect(isOwnAttachmentPath('users/u1/tickets/', 'u1')).toBe(false);
+    expect(isOwnAttachmentPath('', 'u1')).toBe(false);
+  });
+
+  it('свой путь, выданный `attachmentPath`, проходит по построению', () => {
+    expect(isOwnAttachmentPath(attachmentPath('u1', 5), 'u1')).toBe(true);
+  });
+
+  it('потолок мини-аппа — наш, а не платформенный', () => {
+    // 20 МБ у бота — чужое ограничение, которое мы пересказываем.
+    // Здесь потолок про другое: доказательством работает снимок
+    // экрана или короткий фрагмент.
+    expect(APP_ATTACHMENT_LIMIT).toBeLessThan(TELEGRAM_FILE_LIMIT);
   });
 });

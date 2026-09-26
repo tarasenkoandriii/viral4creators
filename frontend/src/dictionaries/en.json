@@ -55,7 +55,8 @@
     "plans": "Plans",
     "channels": "Channels",
     "credits": "Credits",
-    "madeWithClaude": "Made with Claude — 1 week free"
+    "madeWithClaude": "Made with Claude — 1 week free",
+    "report": "Report a problem"
   },
   "notFound": {
     "title": "Page not found",
@@ -1080,7 +1081,13 @@
     "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
-    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
+    "steps": [
+      "Video",
+      "Analysis",
+      "Product",
+      "Prompt",
+      "Generation"
+    ],
     "stepSource": "Scene",
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
@@ -1774,5 +1781,21 @@
     "shareText": "Make an ad video in minutes — the first generation is free",
     "inviteeJoined": "signed in",
     "inviteeGenerated": "made a video"
+  },
+  "reportProblem": {
+    "title": "Report a problem",
+    "hint": "What broke? Describe it in your own words — the screen, session and build version are attached automatically.",
+    "placeholder": "For example: the Generate button does nothing on the prompt step",
+    "attach": "Attach a file",
+    "attached": "File attached",
+    "send": "Send",
+    "sending": "Sending…",
+    "cancel": "Cancel",
+    "close": "Close",
+    "sent": "Got it, report #{number}. Thank you.",
+    "empty": "Describe what broke — or attach a screenshot.",
+    "failed": "Could not send. Please try again.",
+    "tooBig": "The file is over 10 MB — send a fragment or a screenshot.",
+    "here": "Screen: {where}"
   }
 }

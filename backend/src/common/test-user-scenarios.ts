@@ -133,9 +133,17 @@ export interface TestAccess {
   testAccessUntil?: Date | null;
 }
 
-/** Действует ли тестовый доступ прямо сейчас. */
+/**
+ * Действует ли тестовый доступ прямо сейчас.
+ *
+ * Принимает УЗКИЙ тип, а не весь `TestAccess` (аудит этапа 160):
+ * функции нужны ровно два поля, и требовать остальные значило бы
+ * заставлять вызывающих подсовывать `as never` вокруг выборки, в
+ * которой галочек нет, — а такой каст прячет не только лишнее, но и
+ * недостающее.
+ */
 export function testAccessActive(
-  access: TestAccess,
+  access: Pick<TestAccess, 'isTestUser' | 'testAccessUntil'>,
   now: Date = new Date(),
 ): boolean {
   if (!access.isTestUser) return false;

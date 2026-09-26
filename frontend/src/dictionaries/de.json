@@ -55,7 +55,8 @@
     "plans": "Tarife",
     "channels": "Kanäle",
     "credits": "Guthaben",
-    "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis"
+    "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis",
+    "report": "Problem melden"
   },
   "notFound": {
     "title": "Seite nicht gefunden",
@@ -1080,7 +1081,13 @@
     "previewQuota": "Vorschauen heute: noch {{left}} von {{limit}}"
   },
   "generationWizard": {
-    "steps": ["Video", "Analyse", "Produkt", "Prompt", "Generierung"],
+    "steps": [
+      "Video",
+      "Analyse",
+      "Produkt",
+      "Prompt",
+      "Generierung"
+    ],
     "stepSource": "Szene",
     "errorTitle": "Fehler",
     "prefilledAlert": "Die Produktdaten wurden aus dem Projekt übernommen — das ist eine Kopie zum Startzeitpunkt; Änderungen hier ändern nicht das Produkt selbst.",
@@ -1774,5 +1781,21 @@
     "shareText": "Werbevideo in Minuten — die erste Generierung ist gratis",
     "inviteeJoined": "angemeldet",
     "inviteeGenerated": "Video erstellt"
+  },
+  "reportProblem": {
+    "title": "Problem melden",
+    "hint": "Was ist kaputt? Beschreiben Sie es in eigenen Worten — Bildschirm, Sitzung und Build-Version werden automatisch angehängt.",
+    "placeholder": "Zum Beispiel: Die Schaltfläche „Generieren“ reagiert im Prompt-Schritt nicht",
+    "attach": "Datei anhängen",
+    "attached": "Datei angehängt",
+    "send": "Senden",
+    "sending": "Wird gesendet…",
+    "cancel": "Abbrechen",
+    "close": "Schließen",
+    "sent": "Angekommen, Meldung Nr. {number}. Danke.",
+    "empty": "Beschreiben Sie, was kaputt ist — oder hängen Sie einen Screenshot an.",
+    "failed": "Senden fehlgeschlagen. Bitte erneut versuchen.",
+    "tooBig": "Die Datei ist größer als 10 MB — senden Sie einen Ausschnitt oder Screenshot.",
+    "here": "Bildschirm: {where}"
   }
 }
