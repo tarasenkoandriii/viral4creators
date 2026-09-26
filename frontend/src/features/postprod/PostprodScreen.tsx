@@ -14,7 +14,7 @@
  * предложить быстрый путь в «Продакшн» без аккаунта.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Clapperboard, Mic2, Trash2 } from 'lucide-react';
 import {
   Alert,
@@ -25,6 +25,10 @@ import {
   Spinner,
 } from '../../components/ui';
 import { useAsync } from '../../lib/useAsync';
+import {
+  isPostProductionPending,
+  mergeVideoStatuses,
+} from '../../lib/video-polling';
 import { useI18n } from '../../lib/i18n-context';
 import { navigate, routes } from '../../lib/router';
 import { ScreenHeader, LoadError } from '../projects/shared';
@@ -37,6 +41,11 @@ import {
 } from '../../services/postprod-api';
 
 const PAGE_SIZE = 20;
+
+/** Тот же интервал, что у опроса одного ролика (`usePostprodVideo`):
+ *  два разных темпа для одного и того же ожидания выглядели бы
+ *  рассинхроном между списком и карточкой. */
+const STATUS_POLL_INTERVAL_MS = 4000;
 
 /** "9:16" → 9/16 для CSS `aspect-ratio`; нераспознанное — 9:16 (портрет,
  * дефолт всего пайплайна) — тот же приём, что FeedScreen/landing. */
@@ -171,6 +180,46 @@ export function PostprodScreen() {
 
   const items = data?.items ?? [];
   const hasMore = !!data && data.items.length < data.total;
+
+  /**
+   * Автообновление статуса (27.09.2026). Бейдж «Обрабатывается» стоял
+   * до перезагрузки экрана: постобработка заканчивается через минуты,
+   * а список — снимок на момент открытия, и человек видел «ещё идёт»
+   * у давно готового ролика.
+   *
+   * Тот же приём, что у `usePostprodVideo` для одного ролика: интервал
+   * 4 секунды, пауза на свёрнутой вкладке, пропуск тика, если
+   * предыдущий запрос ещё летит, и тихое гашение при сетевой икоте —
+   * фоновое обновление не имеет права подменять показанный список
+   * ошибкой.
+   *
+   * Опрос живёт ровно столько, сколько есть что ждать: условие входа
+   * пересчитывается на каждом рендере, и как только последняя строка
+   * ушла из `pending`, эффект перезапускается и интервал не заводится.
+   */
+  const awaitingPostprod = items.some(isPostProductionPending);
+  useEffect(() => {
+    if (!awaitingPostprod) return;
+    let inFlight = false;
+    const timer = setInterval(async () => {
+      if (inFlight) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      inFlight = true;
+      try {
+        const fresh = await listPostprodVideos(1, PAGE_SIZE);
+        setData((prev) =>
+          prev
+            ? { ...prev, items: mergeVideoStatuses(prev.items, fresh.items) }
+            : prev
+        );
+      } catch {
+        // Молча: это необязательное обновление, а не действие человека.
+      } finally {
+        inFlight = false;
+      }
+    }, STATUS_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [awaitingPostprod, setData]);
 
   const onConfirmDelete = async () => {
     const sessionId = pendingDeleteId;

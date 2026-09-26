@@ -16,18 +16,29 @@
  *
  * Общий протокол предсказаний Replicate стабилен много лет и здесь
  * используется он, а не что-то специфичное для модели:
- *   - `POST /v1/models/<owner>/<name>/predictions` с `{input}` —
- *     вызов ПОСЛЕДНЕЙ версии модели, хеш знать не нужно; либо
- *     `POST /v1/predictions` с `{version, input}`, если версия
- *     закреплена. Заголовок `Authorization: Bearer <токен>`. В ответе
- *     — `status` (`starting`/`processing`/`succeeded`/`failed`/
- *     `canceled`), `output`, `error` и `urls.get`;
+ *   - `POST /v1/predictions` с `{version, input}` и заголовком
+ *     `Authorization: Bearer <токен>`. В ответе — `status`
+ *     (`starting`/`processing`/`succeeded`/`failed`/`canceled`),
+ *     `output`, `error` и `urls.get`;
+ *   - хеш версии берётся из `GET /v1/models/<owner>/<name>` →
+ *     `latest_version.id` и запоминается на процесс;
  *   - заголовок `Prefer: wait` просит подождать результат в том же
  *     запросе; если не успело — дочитываем опросом по `urls.get`.
  *
- * Обе формы вызова взяты из рабочего кода владельца в соседнем проекте
- * (`silverfinance/src/lib/server/ideogram.ts`), то есть проверены на
- * живом API, а не по документации.
+ * ## Почему не `POST /v1/models/<owner>/<name>/predictions`
+ *
+ * Первая редакция звала именно его — приём взят из рабочего кода
+ * владельца в соседнем проекте (`silverfinance/.../ideogram.ts`), где
+ * он работает годами. Но у приёма есть предусловие, которого я не
+ * проверила: этот эндпоинт существует только для ОФИЦИАЛЬНЫХ моделей
+ * Replicate. `ideogram-ai/ideogram-v3-turbo` официальная, а
+ * `ryan5453/demucs` — сообщественная, и на живом проде вызов вернул
+ * `404 {"detail":"The requested resource could not be found."}` — при
+ * том что страница модели открывается, токен верный, а деньги за
+ * попытку списываются.
+ *
+ * Отсюда нынешняя форма: версия разрешается всегда, и разница между
+ * официальной и сообщественной моделью перестаёт существовать.
  *
  * ## Чего мы НЕ знаем наверняка — и почему это не мешает
  *
@@ -125,6 +136,9 @@ interface Prediction {
   urls?: { get?: string };
 }
 
+/** Хеш последней версии по «база|модель». Модель меняется раз в год. */
+const versionCache = new Map<string, string>();
+
 const TERMINAL_OK = 'succeeded';
 const TERMINAL_BAD = new Set(['failed', 'canceled']);
 
@@ -137,15 +151,51 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
   }
 
   /**
-   * Закреплённая версия модели — НЕОБЯЗАТЕЛЬНА. Без неё вызов идёт на
-   * эндпоинт модели и берёт последнюю версию; с ней — на общий
-   * эндпоинт предсказаний. Закреплять стоит тогда, когда важна
-   * воспроизводимость результата, а не когда просто хочется
-   * определённости: у модели разделения смена версии — это обычно
-   * улучшение качества, которое мы хотим получить сами собой.
+   * Закреплённая версия модели — НЕОБЯЗАТЕЛЬНА: без неё берётся
+   * последняя (см. `resolveVersion`). Закреплять стоит ради
+   * воспроизводимости результата, а не ради определённости.
    */
   private version(): string | undefined {
     return process.env.REPLICATE_DEMUCS_VERSION?.trim() || undefined;
+  }
+
+  /**
+   * Хеш версии, которым адресуется прогон.
+   *
+   * Закреплён переменной — берём его. Нет — спрашиваем у Replicate
+   * последнюю и запоминаем на процесс: модель меняется раз в год, а
+   * прогонов десятки в день, и платить лишним запросом за каждый
+   * незачем. Кеш модульный, а не в экземпляре, потому что сервис
+   * живёт в DI одним экземпляром, а тесты создают свои — им общий кеш
+   * мешал бы, поэтому ключ включает имя модели и базовый адрес.
+   */
+  private async resolveVersion(token: string): Promise<string> {
+    const pinned = this.version();
+    if (pinned) return pinned;
+
+    const model = this.model();
+    const key = `${this.base()}|${model}`;
+    const cached = versionCache.get(key);
+    if (cached) return cached;
+
+    const res = await fetch(`${this.base()}/models/${model}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(
+        `модель ${model} недоступна (${res.status}) — проверьте REPLICATE_DEMUCS_MODEL или закрепите версию в REPLICATE_DEMUCS_VERSION`,
+      );
+    }
+    const id = (JSON.parse(text) as { latest_version?: { id?: string } })
+      ?.latest_version?.id;
+    if (!id) {
+      throw new Error(
+        `у модели ${model} в ответе нет latest_version.id — закрепите версию в REPLICATE_DEMUCS_VERSION`,
+      );
+    }
+    versionCache.set(key, id);
+    return id;
   }
 
   /** Имя модели вида `owner/name`. */
@@ -261,14 +311,9 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
   }
 
   private async create(token: string, sourceUrl: string): Promise<Prediction> {
-    const version = this.version();
-    // Версия закреплена — общий эндпоинт с полем `version`; не
-    // закреплена — эндпоинт модели, который сам возьмёт последнюю.
-    const url = version
-      ? `${this.base()}/predictions`
-      : `${this.base()}/models/${this.model()}/predictions`;
+    const version = await this.resolveVersion(token);
     const input = this.buildInput(sourceUrl);
-    const res = await fetch(url, {
+    const res = await fetch(`${this.base()}/predictions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -277,12 +322,7 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
         // роликов ответ приходит сразу, и опрос не начинается вовсе.
         Prefer: `wait=${PREFER_WAIT_SECONDS}`,
       },
-      // Тернарник здесь для читателя, а не для провода: `JSON.stringify`
-      // и так выбрасывает поля со значением `undefined`, так что
-      // мутация «слать version всегда» неотличима по байтам. Оставлено
-      // явным, потому что две формы вызова — не деталь сериализации, а
-      // два разных эндпоинта выше.
-      body: JSON.stringify(version ? { version, input } : { input }),
+      body: JSON.stringify({ version, input }),
     });
     const text = await res.text();
     if (!res.ok) {

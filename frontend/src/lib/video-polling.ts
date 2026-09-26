@@ -13,10 +13,19 @@
  * операции с разными состояниями, и каждая имеет право продлить опрос.
  */
 
-/** Только те поля, от которых зависит решение. */
+/**
+ * Только те поля, от которых зависит решение.
+ *
+ * `null` наравне с `undefined` намеренно: строка списка постпрода
+ * (`PostprodVideoSummary`) приходит с `postStatus: null` у роликов, у
+ * которых постобработки не было вовсе, а состояние ролика из мастера —
+ * с `undefined`. Это одно и то же «неизвестно/нечего ждать», и
+ * приводить одно к другому в месте вызова значило бы разложить
+ * знание об этом по экранам.
+ */
 export interface PollableVideo {
-  status?: 'pending' | 'processing' | 'complete' | 'failed';
-  postStatus?: 'pending' | 'complete' | 'failed' | 'skipped';
+  status?: 'pending' | 'processing' | 'complete' | 'failed' | null;
+  postStatus?: 'pending' | 'complete' | 'failed' | 'skipped' | null;
 }
 
 /** Ролик снят и его уже можно показывать — не дожидаясь постобработки. */
@@ -45,4 +54,37 @@ export function shouldKeepPolling(
   if (video.status === 'failed') return false;
   if (video.status !== 'complete') return true;
   return isPostProductionPending(video);
+}
+
+/**
+ * Обновить статусы уже показанных строк списка постпрода свежими
+ * данными, НЕ трогая состав и порядок списка.
+ *
+ * Почему именно так, а не «перезагрузить список». Список
+ * `createdAt DESC` и подгружается страницами со смещением, равным
+ * числу реально показанных строк (см. доккомментарий `loadMore` в
+ * `PostprodScreen`): ролик, доснявшийся, пока вкладка открыта, встал
+ * бы новой первой строкой и сдвинул все остальные вниз — следующее
+ * «Показать ещё» вернуло бы дубликат. Поэтому фоновое обновление
+ * только ОСВЕЖАЕТ то, что человек уже видит, а новые ролики
+ * появляются при обычной перезагрузке экрана. Это осознанный
+ * компромисс: чинить бейдж «Обрабатывается» ценой поехавшей
+ * пагинации — плохая сделка.
+ */
+export function mergeVideoStatuses<T extends { sessionId: string }>(
+  shown: readonly T[],
+  fresh: readonly T[]
+): T[] {
+  if (fresh.length === 0) return [...shown];
+  const bySession = new Map(fresh.map((v) => [v.sessionId, v]));
+  let changed = false;
+  const merged = shown.map((item) => {
+    const next = bySession.get(item.sessionId);
+    if (!next || next === item) return item;
+    changed = true;
+    return next;
+  });
+  // Ссылка не меняется, если ничего не поменялось: лишний рендер
+  // списка на каждом тике опроса — это дёрганье экрана на ровном месте.
+  return changed ? merged : [...shown];
 }

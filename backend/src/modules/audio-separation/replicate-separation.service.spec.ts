@@ -35,8 +35,21 @@ afterEach(() => {
   }
 });
 
+/**
+ * Версия закреплена — прогон делает ровно ОДИН запрос, и тесты про
+ * разбор ответа не обязаны знать про разрешение версии. Тесты самого
+ * разрешения пользуются `configuredAuto()`.
+ */
 function configured() {
   process.env.REPLICATE_API_TOKEN = 'tok';
+  process.env.REPLICATE_DEMUCS_VERSION = 'ver-hash';
+  return new ReplicateSeparationService();
+}
+
+/** Версия НЕ закреплена: прогон сперва спросит последнюю. */
+function configuredAuto() {
+  process.env.REPLICATE_API_TOKEN = 'tok';
+  delete process.env.REPLICATE_DEMUCS_VERSION;
   return new ReplicateSeparationService();
 }
 
@@ -102,30 +115,37 @@ describe('ReplicateSeparationService — вызов', () => {
     expect(typeof out.seconds).toBe('number');
   });
 
-  it('без закреплённой версии зовём эндпоинт модели, поля version нет', async () => {
-    const svc = configured();
-    const fetchMock = jest.spyOn(global, 'fetch' as never).mockResolvedValue(
-      jsonResponse({
-        status: 'succeeded',
-        output: { no_vocals: 'https://o/b.mp3' },
-      }) as never,
-    );
+  it('версия не закреплена — спрашиваем последнюю и шлём её в предсказание', async () => {
+    // Находка прода: эндпоинт `/v1/models/.../predictions` существует
+    // только для ОФИЦИАЛЬНЫХ моделей Replicate, а htdemucs
+    // сообщественная — он отвечал 404, и деньги за попытку списывались.
+    const svc = configuredAuto();
+    const fetchMock = jest
+      .spyOn(global, 'fetch' as never)
+      .mockResolvedValueOnce(
+        jsonResponse({ latest_version: { id: 'ver-latest' } }) as never,
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: 'succeeded',
+          output: { no_vocals: 'https://o/b.mp3' },
+        }) as never,
+      );
 
-    await svc.separate({ sourceUrl: 'https://x/a.mp4' });
+    const out = await svc.separate({ sourceUrl: 'https://x/a.mp4' });
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/models/ryan5453/demucs/predictions');
-    const body = JSON.parse(String(init.body));
-    expect(body.version).toBeUndefined();
-    expect(JSON.stringify(body.input)).toContain('https://x/a.mp4');
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      'Bearer tok',
+    expect(out.ok).toBe(true);
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(
+      /\/v1\/models\/ryan5453\/demucs$/,
     );
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toMatch(/\/v1\/predictions$/);
+    expect(JSON.parse(String(init.body)).version).toBe('ver-latest');
   });
 
-  it('версия закреплена — общий эндпоинт и поле version', async () => {
+  it('версия закреплена — лишнего запроса за ней нет', async () => {
     const svc = configured();
-    process.env.REPLICATE_DEMUCS_VERSION = 'ver-hash';
+    process.env.REPLICATE_DEMUCS_VERSION = 'ver-pinned';
     const fetchMock = jest.spyOn(global, 'fetch' as never).mockResolvedValue(
       jsonResponse({
         status: 'succeeded',
@@ -135,26 +155,62 @@ describe('ReplicateSeparationService — вызов', () => {
 
     await svc.separate({ sourceUrl: 'https://x/a.mp4' });
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toMatch(/\/v1\/predictions$/);
-    expect(JSON.parse(String(init.body)).version).toBe('ver-hash');
+    expect(JSON.parse(String(init.body)).version).toBe('ver-pinned');
   });
 
-  it('REPLICATE_DEMUCS_MODEL меняет адресуемую модель', async () => {
-    const svc = configured();
-    process.env.REPLICATE_DEMUCS_MODEL = 'someone/other-separator';
-    const fetchMock = jest.spyOn(global, 'fetch' as never).mockResolvedValue(
+  it('хеш версии запоминается: второй прогон за ним не ходит', async () => {
+    // Модель меняется раз в год, прогонов десятки в день.
+    const svc = configuredAuto();
+    process.env.REPLICATE_DEMUCS_MODEL = 'owner/cached-model';
+    const ok = () =>
       jsonResponse({
         status: 'succeeded',
         output: { no_vocals: 'https://o/b.mp3' },
-      }) as never,
-    );
+      }) as never;
+    const fetchMock = jest
+      .spyOn(global, 'fetch' as never)
+      .mockResolvedValueOnce(
+        jsonResponse({ latest_version: { id: 'ver-1' } }) as never,
+      )
+      .mockResolvedValueOnce(ok())
+      .mockResolvedValueOnce(ok());
 
     await svc.separate({ sourceUrl: 'https://x/a.mp4' });
+    await svc.separate({ sourceUrl: 'https://x/b.mp4' });
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain(
-      '/models/someone/other-separator/predictions',
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2][0])).toMatch(/\/v1\/predictions$/);
+  });
+
+  it('модель не найдена — причина называет переменную, которую чинить', async () => {
+    const svc = configuredAuto();
+    process.env.REPLICATE_DEMUCS_MODEL = 'owner/missing-model';
+    jest
+      .spyOn(global, 'fetch' as never)
+      .mockResolvedValue(
+        jsonResponse({ detail: 'not found' }, false, 404) as never,
+      );
+
+    const out = await svc.separate({ sourceUrl: 'https://x/a.mp4' });
+
+    expect(out.ok).toBe(false);
+    expect(out.reason).toContain('REPLICATE_DEMUCS_MODEL');
+  });
+
+  it('в ответе нет latest_version — тоже понятная причина, а не падение', async () => {
+    const svc = configuredAuto();
+    process.env.REPLICATE_DEMUCS_MODEL = 'owner/no-version';
+    jest
+      .spyOn(global, 'fetch' as never)
+      .mockResolvedValue(jsonResponse({ name: 'no-version' }) as never);
+
+    const out = await svc.separate({ sourceUrl: 'https://x/a.mp4' });
+
+    expect(out.ok).toBe(false);
+    expect(out.reason).toContain('REPLICATE_DEMUCS_VERSION');
   });
 
   it('REPLICATE_DEMUCS_INPUT переопределяет схему входа и подставляет ссылку', async () => {
