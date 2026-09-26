@@ -205,10 +205,55 @@ describe('активация', () => {
     expect(update.data.freeScenarios).toEqual(['PRODUCT_VIDEO']);
   });
 
-  it('приветствие не обещает того, чего ещё нет', async () => {
-    // Потолок и операции вне проекта появятся вместе со своими
-    // проверками (этап 5 ТЗ). Обещать их первым же сообщением человеку,
-    // который пришёл искать наши ошибки, — худший способ начать.
+  it('права приглашения доезжают до пользователя целиком', async () => {
+    // Этап 159: операции вне проекта и свой потолок — такая же часть
+    // приглашения, как сценарии и срок.
+    const { service, prisma } = build({
+      invite: {
+        id: 'inv1',
+        token: 'TOKEN',
+        freeScenarios: ['CLIENT_SITE'],
+        freeOutsideProject: true,
+        dailyLimitUsd: 7,
+        expiresAt: null,
+        revokedAt: null,
+        userId: null,
+      },
+    });
+    await service.activate(input);
+    const update = prisma.user.update.mock.calls[0][0] as {
+      data: { freeOutsideProject: boolean; testDailyLimitUsd: number | null };
+    };
+    expect(update.data.freeOutsideProject).toBe(true);
+    expect(update.data.testDailyLimitUsd).toBe(7);
+  });
+
+  it('приветствие называет операции вне проекта, когда они открыты', async () => {
+    const { service, notify } = build({
+      invite: {
+        id: 'inv1',
+        token: 'TOKEN',
+        freeScenarios: ['CLIENT_SITE'],
+        freeOutsideProject: true,
+        expiresAt: null,
+        revokedAt: null,
+        userId: null,
+      },
+    });
+    await service.activate(input);
+    expect(said(notify)).toContain('Клон голоса');
+  });
+
+  it('и молчит о них, когда они закрыты', async () => {
+    const { service, notify } = build();
+    await service.activate(input);
+    expect(said(notify)).not.toContain('Клон голоса');
+  });
+
+  it('приветствие не называет суточный потолок', async () => {
+    // Число в долларах человеку ничего не говорит — он не знает,
+    // сколько стоит прогон, — а тревожит сразу. Упрётся — увидит
+    // понятный отказ.
     const { service, notify } = build();
     await service.activate(input);
     expect(said(notify)).not.toContain('потолок');

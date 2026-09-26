@@ -52,6 +52,11 @@ const NEEDS_REASON: TicketStatus[] = ['REJECTED', 'DUPLICATE'];
 
 const STATUSES = Object.keys(STATUS_LABEL) as TicketStatus[];
 
+/** Микродоллары — в доллары, как на вкладке «Расходы». */
+function usd(microUsd: number): string {
+  return `$${(microUsd / 1_000_000).toFixed(2)}`;
+}
+
 function date(value: string | null): string {
   return value ? new Date(value).toLocaleString('ru-RU') : '—';
 }
@@ -81,6 +86,8 @@ export default function TestingPage() {
 
   const [label, setLabel] = useState('');
   const [scenarios, setScenarios] = useState<FreeScenario[]>([]);
+  const [outside, setOutside] = useState(false);
+  const [limit, setLimit] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
 
   const [reply, setReply] = useState('');
@@ -187,13 +194,28 @@ export default function TestingPage() {
     }
     setBusy(true);
     try {
+      // Пустое поле — общий потолок, а не ноль: ноль здесь законное
+      // значение и означает ровно ноль. А непонятное значение — это
+      // отказ, а не тихий откат к общему (аудит этапа 159): `Number`
+      // отдал бы `NaN`, `JSON.stringify` превратил бы его в `null`, и
+      // оператор считал бы, что ограничил трату.
+      const dailyLimitUsd = limit.trim() === '' ? null : Number(limit);
+      if (dailyLimitUsd !== null && !Number.isInteger(dailyLimitUsd)) {
+        setError('Суточный потолок — целое число долларов или пусто.');
+        setBusy(false);
+        return;
+      }
       await createTesterInvite({
         label: label.trim(),
         freeScenarios: scenarios,
+        freeOutsideProject: outside,
+        dailyLimitUsd,
         expiresAt: expiresAt || null,
       });
       setLabel('');
       setScenarios([]);
+      setOutside(false);
+      setLimit('');
       setExpiresAt('');
       setError(null);
       await loadSide();
@@ -260,6 +282,26 @@ export default function TestingPage() {
               {FREE_SCENARIO_LABELS[s]}
             </label>
           ))}
+          <label
+            style={{ fontSize: 13 }}
+            title="Клон голоса, озвучка, скетчи, поиск на YouTube — они не принадлежат проекту"
+          >
+            <input
+              type="checkbox"
+              checked={outside}
+              onChange={(e) => setOutside(e.target.checked)}
+            />{' '}
+            Вне проекта
+          </label>
+          <input
+            type="number"
+            min={0}
+            placeholder="$/сутки"
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
+            style={{ width: 90 }}
+            title="Свой суточный потолок. Пусто — общий для тестовых аккаунтов; общий действует НА КАЖДОГО"
+          />
           <input
             type="date"
             value={expiresAt}
@@ -288,12 +330,13 @@ export default function TestingPage() {
                   <tr key={i.id}>
                     <td>{i.label}</td>
                     <td className="muted">
-                      {i.freeScenarios
-                        .map(
-                          (s) =>
-                            FREE_SCENARIO_LABELS[s as FreeScenario] ?? s
-                        )
-                        .join(', ') || 'ничего'}
+                      {[
+                        ...i.freeScenarios.map(
+                          (s) => FREE_SCENARIO_LABELS[s as FreeScenario] ?? s
+                        ),
+                        ...(i.freeOutsideProject ? ['вне проекта'] : []),
+                      ].join(', ') || 'ничего'}
+                      {i.dailyLimitUsd !== null && ` · $${i.dailyLimitUsd}/сут`}
                     </td>
                     <td className="muted">{date(i.expiresAt)}</td>
                     <td className="muted">
@@ -351,6 +394,7 @@ export default function TestingPage() {
                     </th>
                   ))}
                   <th style={{ textAlign: 'left' }}>Находки</th>
+                  <th style={{ textAlign: 'left' }}>Сегодня</th>
                   <th style={{ textAlign: 'left' }}>Активность</th>
                 </tr>
               </thead>
@@ -374,6 +418,11 @@ export default function TestingPage() {
                     ))}
                     <td className="muted">
                       {p.openTickets} откр. / {p.closedTickets} закр.
+                    </td>
+                    {/* Потолок — НА КАЖДОГО тестировщика, а не общий на
+                        всех: трое это втрое больше денег в сутки. */}
+                    <td className="muted">
+                      {usd(p.spentTodayMicroUsd)} / {usd(p.dailyLimitMicroUsd)}
                     </td>
                     <td className="muted">{date(p.lastActivityAt)}</td>
                   </tr>

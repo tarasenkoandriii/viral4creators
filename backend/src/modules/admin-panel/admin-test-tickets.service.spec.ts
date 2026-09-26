@@ -70,10 +70,16 @@ function build(
   const notify = {
     dmWithId: jest.fn().mockResolvedValue({ ok: true, messageId: 700 }),
   };
+  const aiUsage = { spentTodayByUsers: jest.fn().mockResolvedValue({}) };
   return {
-    service: new AdminTestTicketsService(prisma as never, notify as never),
+    service: new AdminTestTicketsService(
+      prisma as never,
+      notify as never,
+      aiUsage as never,
+    ),
     prisma,
     notify,
+    aiUsage,
   };
 }
 
@@ -362,6 +368,7 @@ describe('прогресс', () => {
         username: 'andrii',
         freeScenarios: ['PRODUCT_VIDEO', 'GREETING_VIDEO'],
         testAccessUntil,
+        testDailyLimitUsd: null,
       },
     ]);
     // Считает база: строки приходят уже свёрнутыми, с bigint из
@@ -456,6 +463,7 @@ describe('прогресс', () => {
         username: null,
         freeScenarios: [],
         testAccessUntil: null,
+        testDailyLimitUsd: null,
       },
     ]);
     await service.progress();
@@ -479,5 +487,47 @@ describe('прогресс', () => {
     const [me] = await service.progress();
     expect(me.accessActive).toBe(true);
     expect(me.scenarios.filter((s) => s.open)).toHaveLength(2);
+  });
+});
+
+describe('расход тестировщика рядом со списком (этап 159)', () => {
+  it('фактический расход и потолок приезжают вместе с прогрессом', async () => {
+    // Общий `DAILY_SPEND_LIMIT_USD_TEST_USER` — потолок НА КАЖДОГО:
+    // трое тестировщиков это втрое больше денег в сутки, и пока это не
+    // стоит рядом с именами, никто этого не замечает (§4.3 ТЗ).
+    const { service, prisma, aiUsage } = build();
+    prisma.user.findMany.mockResolvedValue([
+      {
+        id: 'u1',
+        telegramId: '42',
+        firstName: 'А',
+        username: null,
+        freeScenarios: [],
+        testAccessUntil: null,
+        testDailyLimitUsd: 5,
+      },
+    ]);
+    aiUsage.spentTodayByUsers.mockResolvedValue({ u1: 1_250_000 });
+    const [me] = await service.progress();
+    expect(me.spentTodayMicroUsd).toBe(1_250_000);
+    expect(me.dailyLimitMicroUsd).toBe(5_000_000);
+  });
+
+  it('без своего потолка показывается общий', async () => {
+    const { service, prisma } = build();
+    prisma.user.findMany.mockResolvedValue([
+      {
+        id: 'u1',
+        telegramId: '42',
+        firstName: 'А',
+        username: null,
+        freeScenarios: [],
+        testAccessUntil: null,
+        testDailyLimitUsd: null,
+      },
+    ]);
+    const [me] = await service.progress();
+    expect(me.dailyLimitMicroUsd).toBeGreaterThan(0);
+    expect(me.spentTodayMicroUsd).toBe(0);
   });
 });

@@ -135,6 +135,20 @@ export class CreateTesterInviteDto {
   @IsString({ each: true })
   freeScenarios!: string[];
 
+  /** Операции вне проекта — своя галочка (этап 159, §4.1 ТЗ). */
+  @IsOptional()
+  @IsBoolean()
+  freeOutsideProject?: boolean;
+
+  /**
+   * Свой суточный потолок в долларах; пусто — общий для тестовых.
+   * Границы проверяет сервис: «ноль означает ноль» выражается там
+   * понятнее, чем набором декораторов.
+   */
+  @IsOptional()
+  @IsInt()
+  dailyLimitUsd?: number;
+
   /** Дата или ISO-момент; пусто — бессрочно. */
   @IsOptional()
   @IsString()

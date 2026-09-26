@@ -40,6 +40,7 @@ import {
 import {
   FreeScenario,
   isSpendFree,
+  testAccessActive,
   normalizeFreeScenarios,
   scenarioOfProjectType,
 } from '../../common/test-user-scenarios';
@@ -69,6 +70,12 @@ export interface UserAccess {
   isTestUser: boolean;
   /** Сценарии с бесплатным использованием; пусто — как у всех. */
   freeScenarios: FreeScenario[];
+  /** Операции вне проекта — своя галочка (этап 159, §4.1 ТЗ). */
+  freeOutsideProject: boolean;
+  /** До какого момента действует доступ. NULL — бессрочно. */
+  testAccessUntil: Date | null;
+  /** Свой суточный потолок в долларах. NULL — общий для тестовых. */
+  testDailyLimitUsd: number | null;
 }
 
 @Injectable()
@@ -99,6 +106,9 @@ export class PlanService {
         // не может: иначе бесплатный доступ раздавался бы всем разом.
         isTestUser: false,
         freeScenarios: [],
+        freeOutsideProject: false,
+        testAccessUntil: null,
+        testDailyLimitUsd: null,
       };
     }
     const row: {
@@ -108,6 +118,9 @@ export class PlanService {
       blockedReason: string | null;
       isTestUser: boolean;
       freeScenarios: string[];
+      freeOutsideProject: boolean;
+      testAccessUntil: Date | null;
+      testDailyLimitUsd: number | null;
     } | null = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -117,6 +130,9 @@ export class PlanService {
         blockedReason: true,
         isTestUser: true,
         freeScenarios: true,
+        freeOutsideProject: true,
+        testAccessUntil: true,
+        testDailyLimitUsd: true,
       },
     });
     const plan = planOf(row?.plan);
@@ -127,6 +143,9 @@ export class PlanService {
       blockedReason: row?.blockedReason ?? null,
       isTestUser: row?.isTestUser ?? false,
       freeScenarios: normalizeFreeScenarios(row?.freeScenarios),
+      freeOutsideProject: row?.freeOutsideProject ?? false,
+      testAccessUntil: row?.testAccessUntil ?? null,
+      testDailyLimitUsd: row?.testDailyLimitUsd ?? null,
     };
   }
 
@@ -150,9 +169,9 @@ export class PlanService {
       userId,
       access.spendPlan,
       new Date(),
-      // Тот же строгий приём, что в `stateOf` (там же и объяснён):
-      // показываем, только когда бесплатны ВСЕ сценарии.
-      isSpendFree(access, null) ? dailyLimitForTestUser() : undefined,
+      // Тот же вопрос, что в `stateOf` (там же и объяснён): проекта в
+      // ответе нет, значит спрашиваем про операции вне проекта.
+      isSpendFree(access, 'OUTSIDE_PROJECT') ? testLimitOf(access) : undefined,
     );
     return {
       plan: access.plan,
@@ -256,7 +275,7 @@ export class PlanService {
       userId ?? null,
       access.spendPlan,
       new Date(),
-      free ? dailyLimitForTestUser() : undefined,
+      free ? testLimitOf(access) : undefined,
     );
     if (!verdict.allowed) {
       this.logger.warn(
@@ -283,15 +302,26 @@ export class PlanService {
     access: UserAccess,
     projectId: string | null,
   ): Promise<boolean> {
-    if (!access.isTestUser || !access.freeScenarios.length) return false;
-    const scenario = projectId
-      ? scenarioOfProjectType(await this.projectTypeOf(projectId))
-      : null;
-    const free = isSpendFree(access, scenario);
+    // Срок проверяется ЗДЕСЬ, до поездки за типом проекта (этап 159,
+    // §4.2): истёкший доступ — это обычный пользователь, и лишний
+    // запрос ради него не нужен.
+    if (!testAccessActive(access)) return false;
+    // Ни одной галочки — ни одного разрешения; сюда же попадает
+    // прежнее «тестовый, но ничего не открыто».
+    if (!access.freeScenarios.length && !access.freeOutsideProject) {
+      return false;
+    }
+    // Проекта нет — операция вне проекта. Проект есть, а сценария у
+    // него нет — неизвестный тип, и он не бесплатен (аудит этапа 159:
+    // свалив эти два случая в один, мы сделали бы новый тип проекта
+    // бесплатным сам собой).
+    const target = projectId
+      ? (scenarioOfProjectType(await this.projectTypeOf(projectId)) ??
+        'UNKNOWN_PROJECT')
+      : 'OUTSIDE_PROJECT';
+    const free = isSpendFree(access, target);
     if (free) {
-      this.logger.log(
-        `тестовый доступ: потолок не применён (сценарий ${scenario ?? 'вне проекта'})`,
-      );
+      this.logger.log(`тестовый доступ: потолок не применён (${target})`);
     }
     return free;
   }
@@ -351,17 +381,17 @@ export class PlanService {
     /**
      * Потолок тестового аккаунта.
      *
-     * Ответ общий на весь интерфейс, проекта в нём нет, поэтому
-     * действует то же строгое правило, что и для операций вне сценария:
-     * тестовый потолок показываем, только когда бесплатны ВСЕ
-     * сценарии. Тестировщик с одной галочкой видит свой тарифный
-     * потолок — и это правда: на остальных сценариях действует он.
+     * Ответ общий на весь интерфейс, проекта в нём нет — значит и
+     * вопрос тот же, что у операции вне проекта: снят ли общий потолок.
+     * С этапа 159 на это отвечает своя галочка, а не вывод из трёх
+     * сценарных. Тестировщик с одной сценарной галочкой видит свой
+     * тарифный потолок — и это правда: вне проекта действует он.
      */
     const verdict = await this.aiUsage.budget(
       userId,
       access.spendPlan,
       new Date(),
-      isSpendFree(access, null) ? dailyLimitForTestUser() : undefined,
+      isSpendFree(access, 'OUTSIDE_PROJECT') ? testLimitOf(access) : undefined,
     );
     const [subscriptionRow, creditsBalance] = userId
       ? await Promise.all([
@@ -395,10 +425,18 @@ export class PlanService {
           verdict.remainingMicroUsd / verdict.limitMicroUsd < 0.2,
       },
       testAccess: {
-        isTestUser: access.isTestUser,
-        // Галочки без флага не действуют — и показывать их не надо:
-        // иначе на экране появится обещание, которого нет в проверке.
-        freeScenarios: access.isTestUser ? access.freeScenarios : [],
+        // `testAccessActive`, а не `isTestUser` (аудит этапа 159):
+        // истёкший срок гасит доступ, а строка остаётся. Оставь здесь
+        // голый флаг — и человек, у которого доступ вчера кончился,
+        // читал бы на экране «тестовый доступ, бесплатно: товарка»,
+        // пока `isSpendFree` отвечает отказом. Это ровно то обещание,
+        // которого нет в проверке, — и предупреждение об этом уже
+        // стояло в комментарии строкой ниже.
+        isTestUser: testAccessActive(access),
+        // Галочки без действующего доступа не действуют — и показывать
+        // их не надо: иначе на экране появится обещание, которого нет в
+        // проверке.
+        freeScenarios: testAccessActive(access) ? access.freeScenarios : [],
       },
       subscription: subscriptionRow
         ? {
@@ -545,4 +583,22 @@ export class PlanService {
       );
     }
   }
+}
+
+/**
+ * Суточный потолок тестового аккаунта: свой, если задан, иначе общий
+ * (этап 159, §4.3 ТЗ на работу с тестировщиком).
+ *
+ * Общий `DAILY_SPEND_LIMIT_USD_TEST_USER` — это потолок НА КАЖДОГО
+ * тестировщика: трое это втрое больше денег в сутки, и сказать «этому
+ * меньше» было нечем. Ноль — законное значение и означает ровно ноль, а
+ * не «как у всех»: тестировщику можно временно закрыть трату, не снимая
+ * с него флага и не теряя его галочек.
+ */
+function testLimitOf(access: { testDailyLimitUsd: number | null }): number {
+  const own = access.testDailyLimitUsd;
+  if (own === null || own === undefined || own < 0) {
+    return dailyLimitForTestUser();
+  }
+  return Math.round(own * 1_000_000);
 }

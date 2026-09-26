@@ -30,6 +30,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
+import { AiUsageService } from '../ai-usage/ai-usage.service';
+import { dailyLimitForTestUser } from '../../common/spend-limits';
 import {
   envSummary,
   isTicketStatus,
@@ -105,6 +107,15 @@ export interface TesterProgressView {
   /** До какого числа действует доступ. NULL — бессрочно. */
   accessUntil: Date | null;
   accessActive: boolean;
+  /**
+   * Сколько этот тестировщик потратил за сегодня и где его потолок
+   * (§4.3 ТЗ). Рядом со списком, а не только плиткой на `/costs`:
+   * общий `DAILY_SPEND_LIMIT_USD_TEST_USER` — потолок НА КАЖДОГО, и
+   * трое тестировщиков это втрое больше денег в сутки. Пока это не
+   * стоит рядом с именами, никто этого и не замечает.
+   */
+  spentTodayMicroUsd: number;
+  dailyLimitMicroUsd: number;
   openTickets: number;
   closedTickets: number;
   lastActivityAt: Date | null;
@@ -122,6 +133,7 @@ export class AdminTestTicketsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notify: TelegramNotifyService,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   async list(opts: {
@@ -339,7 +351,12 @@ export class AdminTestTicketsService {
   async progress(): Promise<TesterProgressView[]> {
     const testers = await this.prisma.user.findMany({
       where: { isTestUser: true },
-      select: { ...userSelect, freeScenarios: true, testAccessUntil: true },
+      select: {
+        ...userSelect,
+        freeScenarios: true,
+        testAccessUntil: true,
+        testDailyLimitUsd: true,
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
@@ -354,36 +371,38 @@ export class AdminTestTicketsService {
     //
     // Три независимых запроса — параллельно: на serverless
     // последовательные ожидания складываются в ответ оператору.
-    const [sessionRows, ticketRows, lastTickets] = await Promise.all([
-      // Сырой SQL, потому что группировать надо по ТИПУ ПРОЕКТА —
-      // полю связанной таблицы, а `groupBy` в Prisma по связям не умеет.
-      this.prisma.$queryRaw<
-        Array<{ userId: string; type: string | null; n: bigint }>
-      >`
+    const [sessionRows, ticketRows, lastTickets, spentToday] =
+      await Promise.all([
+        // Сырой SQL, потому что группировать надо по ТИПУ ПРОЕКТА —
+        // полю связанной таблицы, а `groupBy` в Prisma по связям не умеет.
+        this.prisma.$queryRaw<
+          Array<{ userId: string; type: string | null; n: bigint }>
+        >`
         SELECT s."userId", p."type"::text AS "type", COUNT(*) AS n
         FROM "sessions" s
         LEFT JOIN "projects" p ON p."id" = s."projectId"
         WHERE s."userId" = ANY(${ids}::text[])
         GROUP BY s."userId", p."type"
       `,
-      this.prisma.testTicket.groupBy({
-        by: ['userId', 'status', 'scenario'],
-        where: { userId: { in: ids } },
-        _count: { _all: true },
-      }) as unknown as Promise<
-        Array<{
-          userId: string;
-          status: string;
-          scenario: string | null;
-          _count: { _all: number };
-        }>
-      >,
-      this.prisma.testTicket.groupBy({
-        by: ['userId'],
-        where: { userId: { in: ids } },
-        _max: { createdAt: true },
-      }),
-    ]);
+        this.prisma.testTicket.groupBy({
+          by: ['userId', 'status', 'scenario'],
+          where: { userId: { in: ids } },
+          _count: { _all: true },
+        }) as unknown as Promise<
+          Array<{
+            userId: string;
+            status: string;
+            scenario: string | null;
+            _count: { _all: number };
+          }>
+        >,
+        this.prisma.testTicket.groupBy({
+          by: ['userId'],
+          where: { userId: { in: ids } },
+          _max: { createdAt: true },
+        }),
+        this.aiUsage.spentTodayByUsers(ids),
+      ]);
 
     const lastBy = new Map(
       lastTickets.map((r) => [r.userId, r._max.createdAt ?? null]),
@@ -407,6 +426,11 @@ export class AdminTestTicketsService {
         label: label(tester),
         accessUntil: tester.testAccessUntil,
         accessActive: active,
+        spentTodayMicroUsd: spentToday[tester.id] ?? 0,
+        dailyLimitMicroUsd:
+          tester.testDailyLimitUsd === null
+            ? dailyLimitForTestUser()
+            : Math.round(tester.testDailyLimitUsd * 1_000_000),
         scenarios: FREE_SCENARIOS.map((scenario) => ({
           scenario,
           open: active && tester.freeScenarios.includes(scenario),

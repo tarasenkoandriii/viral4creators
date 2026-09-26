@@ -55,6 +55,9 @@ const TEXT = {
   tooBig:
     'Файл больше 20 МБ — столько Telegram боту не отдаёт. Пришлите короткий фрагмент или скриншот.',
   failed: 'Файл не удалось сохранить — попробуйте прислать ещё раз.',
+  expired:
+    'Тестовый доступ закончился — находки я больше не записываю. ' +
+    'Если работа продолжается, напишите оператору: он продлит.',
 };
 
 interface TicketUser {
@@ -93,8 +96,28 @@ export class TesterTicketsService {
       },
     });
     if (!user?.isTestUser) return false;
-    if (user.testAccessUntil && user.testAccessUntil.getTime() <= now.getTime())
-      return false;
+    if (
+      user.testAccessUntil &&
+      user.testAccessUntil.getTime() <= now.getTime()
+    ) {
+      // Не молчим (аудит этапа 159). Человек, который вчера присылал
+      // находки и получал «Принято, #14», сегодня получил бы ничего — и
+      // не отличил бы кончившийся доступ от сломанного бота. Это то же
+      // рассуждение, по которому подтверждение обязательно (§3.2 ТЗ):
+      // без ответа он не знает, дошло ли, и пишет второй раз.
+      //
+      // Ответ ОДИН раз в сутки: повторять его на каждое сообщение —
+      // тот же спам, от которого бережёт ограничитель частоты.
+      const { count } = await hitRateLimit(
+        this.prisma,
+        `tester-expired|u:${user.id}`,
+        24 * 60 * 60,
+        now,
+        this.logger,
+      );
+      if (count === 1) await this.notify.dm(telegramId, TEXT.expired);
+      return true;
+    }
 
     const { count } = await hitRateLimit(
       this.prisma,

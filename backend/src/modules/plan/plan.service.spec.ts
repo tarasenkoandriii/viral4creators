@@ -95,6 +95,9 @@ describe('PlanService (ТЗ §23)', () => {
         blockedReason: true,
         isTestUser: true,
         freeScenarios: true,
+        freeOutsideProject: true,
+        testAccessUntil: true,
+        testDailyLimitUsd: true,
       },
     });
     sessions.getSession.mockResolvedValue({ sessionId: 's2', userId: null });
@@ -254,6 +257,9 @@ describe('PlanService — блокировка (ТЗ §25.3)', () => {
         blockedReason: true,
         isTestUser: true,
         freeScenarios: true,
+        freeOutsideProject: true,
+        testAccessUntil: true,
+        testDailyLimitUsd: true,
       },
     });
   });
@@ -515,11 +521,18 @@ describe('PlanService — тестовые пользователи (TODO §III 
   /** Тарифный потолок выбран, тестовый ($20) — нет. */
   const OVER_PLAN_LIMIT = 2_100_000;
 
-  const testUser = (freeScenarios: string[]) => ({
+  const testUser = (
+    freeScenarios: string[],
+    over: Record<string, unknown> = {},
+  ) => ({
     plan: 'LITE',
     isBlocked: false,
     isTestUser: true,
     freeScenarios,
+    freeOutsideProject: false,
+    testAccessUntil: null,
+    testDailyLimitUsd: null,
+    ...over,
   });
 
   it('отмеченный сценарий поднимает потолок до тестового', async () => {
@@ -587,7 +600,9 @@ describe('PlanService — тестовые пользователи (TODO §III 
     expect(prisma.project.findUnique).not.toHaveBeenCalled();
   });
 
-  it('операция вне проекта бесплатна только при всех галочках', async () => {
+  it('операция вне проекта — по своей галочке, а не по трём другим', async () => {
+    // Этап 159 (§4.1 ТЗ на работу с тестировщиком): «все три» было
+    // неявным условием и стало явным выбором оператора.
     const { svc, aiUsage } = build(testUser(['PRODUCT_VIDEO']));
     aiUsage.budget.mockImplementation(budgetFor(OVER_PLAN_LIMIT));
     await expect(svc.assertCanSpendUser('u1')).rejects.toBeInstanceOf(
@@ -598,7 +613,75 @@ describe('PlanService — тестовые пользователи (TODO §III 
       testUser(['PRODUCT_VIDEO', 'CLIENT_SITE', 'GREETING_VIDEO']),
     );
     all.aiUsage.budget.mockImplementation(budgetFor(OVER_PLAN_LIMIT));
-    await expect(all.svc.assertCanSpendUser('u1')).resolves.toBeUndefined();
+    await expect(all.svc.assertCanSpendUser('u1')).rejects.toBeInstanceOf(
+      DailySpendLimitExceededException,
+    );
+
+    const own = build(testUser([], { freeOutsideProject: true }));
+    own.aiUsage.budget.mockImplementation(budgetFor(OVER_PLAN_LIMIT));
+    await expect(own.svc.assertCanSpendUser('u1')).resolves.toBeUndefined();
+  });
+
+  it('истёкший срок гасит доступ, не доходя до типа проекта', async () => {
+    // Истёкший доступ — это обычный пользователь, и лишняя поездка в
+    // базу ради него не нужна (§4.2).
+    const { svc, aiUsage, prisma } = build(
+      testUser(['PRODUCT_VIDEO'], {
+        testAccessUntil: new Date(Date.now() - 1000),
+      }),
+    );
+    aiUsage.budget.mockImplementation(budgetFor(OVER_PLAN_LIMIT));
+    await expect(
+      svc.assertCanSpendUser('u1', { projectId: 'p1' }),
+    ).rejects.toBeInstanceOf(DailySpendLimitExceededException);
+    expect(prisma.project.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('свой потолок приглашения сильнее общего', async () => {
+    // Общий `DAILY_SPEND_LIMIT_USD_TEST_USER` — потолок НА КАЖДОГО:
+    // трое тестировщиков это втрое больше денег в сутки (§4.3).
+    const { svc, aiUsage } = build(
+      testUser(['PRODUCT_VIDEO'], { testDailyLimitUsd: 5 }),
+    );
+    aiUsage.budget.mockResolvedValue({
+      allowed: true,
+      limitMicroUsd: 0,
+      spentMicroUsd: 0,
+      remainingMicroUsd: 0,
+    });
+    await svc.assertCanSpendUser('u1', { projectId: 'p1' });
+    expect(aiUsage.budget.mock.calls[0][3]).toBe(5_000_000);
+  });
+
+  it('потолок в ноль означает ноль, а не «как у всех»', async () => {
+    // Тестировщику можно временно закрыть трату, не снимая флага и не
+    // теряя его галочек.
+    const { svc, aiUsage } = build(
+      testUser(['PRODUCT_VIDEO'], { testDailyLimitUsd: 0 }),
+    );
+    aiUsage.budget.mockResolvedValue({
+      allowed: true,
+      limitMicroUsd: 0,
+      spentMicroUsd: 0,
+      remainingMicroUsd: 0,
+    });
+    await svc.assertCanSpendUser('u1', { projectId: 'p1' });
+    expect(aiUsage.budget.mock.calls[0][3]).toBe(0);
+  });
+
+  it('проект неизвестного типа не бесплатен даже с галочкой «вне проекта»', async () => {
+    // Аудит этапа 159: «забыть добавить новый тип в
+    // `scenarioOfProjectType` безопасно» — свойство, записанное там же.
+    const { svc, aiUsage, prisma } = build(
+      testUser(['PRODUCT_VIDEO', 'CLIENT_SITE', 'GREETING_VIDEO'], {
+        freeOutsideProject: true,
+      }),
+    );
+    aiUsage.budget.mockImplementation(budgetFor(OVER_PLAN_LIMIT));
+    prisma.project.findUnique.mockResolvedValue({ type: 'ЧТО-ТО НОВОЕ' });
+    await expect(
+      svc.assertCanSpendUser('u1', { projectId: 'p1' }),
+    ).rejects.toBeInstanceOf(DailySpendLimitExceededException);
   });
 
   it('сценарий берётся у проекта СЕССИИ на открытых маршрутах', async () => {
@@ -684,12 +767,40 @@ describe('PlanService — тестовые пользователи (TODO §III 
     });
   });
 
+  it('истёкший доступ не показывается интерфейсу как действующий', async () => {
+    // Аудит этапа 159: иначе человек, у которого доступ вчера кончился,
+    // читает «тестовый доступ, бесплатно: товарка», пока проверка
+    // отвечает отказом. Предупреждение об этом стояло в комментарии
+    // рядом с самим полем — и было нарушено им же.
+    const { svc } = build(
+      testUser(['PRODUCT_VIDEO'], {
+        testAccessUntil: new Date(Date.now() - 1000),
+      }),
+    );
+    const state = await svc.stateOf('u1');
+    expect(state.testAccess.isTestUser).toBe(false);
+    expect(state.testAccess.freeScenarios).toEqual([]);
+  });
+
+  it('действующий доступ показывается как есть', async () => {
+    const { svc } = build(
+      testUser(['PRODUCT_VIDEO'], {
+        testAccessUntil: new Date(Date.now() + 60_000),
+      }),
+    );
+    const state = await svc.stateOf('u1');
+    expect(state.testAccess.isTestUser).toBe(true);
+    expect(state.testAccess.freeScenarios).toEqual(['PRODUCT_VIDEO']);
+  });
+
   it('интерфейс показывает тестовый потолок, а не тарифный', async () => {
-    // Ответ общий на весь интерфейс, проекта в нём нет — поэтому молчим
-    // только при всех галочках. С одной галочкой предупреждение
+    // Ответ общий на весь интерфейс, проекта в нём нет — значит и
+    // вопрос к нему тот же, что у операции вне проекта: снят ли общий
+    // потолок. С этапа 159 на это отвечает своя галочка, а не вывод из
+    // трёх сценарных (§4.1). С одной сценарной предупреждение
     // остаётся, и это правда: на остальных сценариях потолок действует.
     const all = build(
-      testUser(['PRODUCT_VIDEO', 'CLIENT_SITE', 'GREETING_VIDEO']),
+      testUser(['PRODUCT_VIDEO'], { freeOutsideProject: true }),
     );
     all.aiUsage.budget.mockImplementation(budgetFor(OVER_PLAN_LIMIT));
     expect((await all.svc.stateOf('u1')).budget).toEqual({
@@ -730,15 +841,18 @@ describe('PlanService.budgetOf', () => {
     expect(spendPlan).toBe('LITE');
   });
 
-  it('тестовый потолок — только когда бесплатны ВСЕ сценарии', async () => {
-    // Тот же строгий приём, что в `stateOf`: тестировщик с одной
-    // галочкой видит свой тарифный потолок, и это правда — на
-    // остальных сценариях действует он.
+  it('тестовый потолок — когда снят общий, вне проекта', async () => {
+    // Тот же строгий приём, что в `stateOf`: тестировщик со сценарной
+    // галочкой видит свой тарифный потолок, и это правда — вне проекта
+    // действует он. С этапа 159 общий потолок снимает своя галочка.
     const partial = build({
       plan: 'LITE',
       isBlocked: false,
       isTestUser: true,
       freeScenarios: ['PRODUCT_VIDEO'],
+      freeOutsideProject: false,
+      testAccessUntil: null,
+      testDailyLimitUsd: null,
     });
     await partial.svc.budgetOf('u1');
     expect(partial.aiUsage.budget.mock.calls[0][3]).toBeUndefined();
@@ -747,7 +861,10 @@ describe('PlanService.budgetOf', () => {
       plan: 'LITE',
       isBlocked: false,
       isTestUser: true,
-      freeScenarios: ['PRODUCT_VIDEO', 'GREETING_VIDEO', 'CLIENT_SITE'],
+      freeScenarios: ['PRODUCT_VIDEO'],
+      freeOutsideProject: true,
+      testAccessUntil: null,
+      testDailyLimitUsd: null,
     });
     await all.svc.budgetOf('u1');
     expect(all.aiUsage.budget.mock.calls[0][3]).toBeGreaterThan(0);

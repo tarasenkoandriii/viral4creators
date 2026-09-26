@@ -133,6 +133,10 @@ export class TesterOnboardingService {
         data: {
           isTestUser: true,
           freeScenarios: scenarios,
+          // Права выдаются ровно те, что записаны в приглашении, —
+          // включая операции вне проекта и свой потолок (этап 159).
+          freeOutsideProject: invite.freeOutsideProject,
+          testDailyLimitUsd: invite.dailyLimitUsd,
           testAccessUntil: invite.expiresAt,
         },
       }),
@@ -149,14 +153,21 @@ export class TesterOnboardingService {
   }
 
   /**
-   * Приветствие. Говорит ровно то, что уже действует: сценарии и срок.
-   * Про суточный потолок и операции вне проекта здесь молчим — они
-   * появятся вместе с их проверками (этап 5 ТЗ), а обещать в первом же
-   * сообщении то, чего ещё нет, — худший способ начать работу с
-   * человеком, который пришёл искать наши ошибки.
+   * Приветствие. Говорит ровно то, что уже действует: сценарии,
+   * операции вне проекта и срок.
+   *
+   * До этапа 159 про операции вне проекта здесь молчали, потому что их
+   * проверки ещё не было, а обещать в первом же сообщении то, чего
+   * нет, — худший способ начать работу с человеком, который пришёл
+   * искать наши ошибки. Теперь проверка есть, и молчать не о чем.
+   *
+   * Про суточный потолок по-прежнему молчим, и это не забывчивость:
+   * число в долларах человеку ничего не говорит (он не знает, сколько
+   * стоит прогон), а тревожит сразу. Упрётся — увидит понятный отказ.
    */
   private greeting(invite: {
     freeScenarios: string[];
+    freeOutsideProject: boolean;
     expiresAt: Date | null;
   }): string {
     const scenarios = normalizeFreeScenarios(invite.freeScenarios)
@@ -166,6 +177,9 @@ export class TesterOnboardingService {
       'Тестовый доступ открыт.',
       scenarios ? `Бесплатно: ${scenarios}.` : 'Сценарии пока не открыты.',
     ];
+    if (invite.freeOutsideProject) {
+      lines.push('Клон голоса, озвучка, скетчи и поиск на YouTube — тоже.');
+    }
     if (invite.expiresAt) {
       lines.push(
         `Действует до ${invite.expiresAt.toISOString().slice(0, 10)}.`,

@@ -126,6 +126,7 @@ export default function UsersPage() {
       blockedReason?: string;
       isTestUser?: boolean;
       freeScenarios?: string[];
+      freeOutsideProject?: boolean;
     }
   ) => {
     setBusy(id);
@@ -197,6 +198,11 @@ export default function UsersPage() {
       : [...u.freeScenarios, scenario];
     // Шлём набор целиком — так же, как его понимает бэкенд.
     void apply(u.id, { freeScenarios: next });
+  };
+
+  /** Операции вне проекта — своя галочка с этапа 159 (§4.1 ТЗ). */
+  const toggleOutsideProject = (u: AdminUserSummary) => {
+    void apply(u.id, { freeOutsideProject: !u.freeOutsideProject });
   };
 
   /** Отмена подписки — саппорт-действие (ТЗ §41): доступ остаётся до
@@ -605,14 +611,50 @@ export default function UsersPage() {
                               </label>
                             ))}
                           </div>
-                          <p className="muted" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>
-                            Операции вне проекта — клонирование голоса,
-                            озвучка, ИИ-скетч, поиск референсов на YouTube —
-                            к сценарию не относятся, поэтому бесплатны
-                            только когда отмечены все три. Предупреждение
-                            «дневной лимит на исходе» в интерфейсе
-                            пользователя пропадает по тому же правилу.
-                          </p>
+                          <label
+                            style={{
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              gap: 8,
+                              marginTop: 8,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={u.freeOutsideProject}
+                              disabled={busy === u.id || !u.isTestUser}
+                              onChange={() => toggleOutsideProject(u)}
+                            />
+                            <span>
+                              Операции вне проекта
+                              <span
+                                className="muted"
+                                style={{ display: 'block', fontSize: 12 }}
+                              >
+                                Клонирование голоса, озвучка, ИИ-скетч, поиск
+                                референсов на YouTube — они не принадлежат
+                                проекту, поэтому и галочка своя. До этапа 159
+                                условием было «отмечены все три сценария»:
+                                верно по смыслу, но тестировщику одного
+                                сценария означало, что половина его работы
+                                идёт за его счёт, и узнавал он об этом в
+                                середине прогона. Предупреждение «дневной
+                                лимит на исходе» в интерфейсе пользователя
+                                пропадает по этой же галочке.
+                              </span>
+                            </span>
+                          </label>
+                          {(u.testAccessUntil || u.testDailyLimitUsd !== null) && (
+                            <p
+                              className="muted"
+                              style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}
+                            >
+                              {u.testAccessUntil &&
+                                `Доступ до ${date(u.testAccessUntil)}. `}
+                              {u.testDailyLimitUsd !== null &&
+                                `Свой суточный потолок: $${u.testDailyLimitUsd}.`}
+                            </p>
+                          )}
                         </div>
                       </td>
                     </tr>

@@ -505,6 +505,8 @@ export function patchUser(
     isTestUser?: boolean;
     /** Полный набор галочек, а не добавка: иначе снять одну нечем. */
     freeScenarios?: string[];
+    /** Операции вне проекта — своя галочка (этап 159). */
+    freeOutsideProject?: boolean;
   }
 ) {
   return apiPatch<AdminUserDetail>(`/admin/users/${id}`, patch);
@@ -1142,6 +1144,8 @@ export function getTesterInvites() {
 export function createTesterInvite(body: {
   label: string;
   freeScenarios: string[];
+  freeOutsideProject?: boolean;
+  dailyLimitUsd?: number | null;
   expiresAt?: string | null;
 }) {
   return apiPost<TesterInvite>('/admin/tester-invites', body);

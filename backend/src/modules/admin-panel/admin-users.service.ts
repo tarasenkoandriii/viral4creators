@@ -59,6 +59,12 @@ export interface AdminUserSummary {
   isTestUser: boolean;
   /** Сценарии с бесплатным использованием; действуют только с флагом. */
   freeScenarios: FreeScenario[];
+  /** Операции вне проекта — своя галочка (этап 159, §4.1 ТЗ). */
+  freeOutsideProject: boolean;
+  /** До какого числа действует доступ. null — бессрочно. */
+  testAccessUntil: Date | null;
+  /** Свой суточный потолок в долларах. null — общий для тестовых. */
+  testDailyLimitUsd: number | null;
   termsVersion: string | null;
   termsAcceptedAt: Date | null;
   createdAt: Date;
@@ -133,6 +139,8 @@ export interface AdminUserPatch {
   isTestUser?: boolean;
   /** Полный новый набор галочек — не добавка к прежнему. */
   freeScenarios?: string[];
+  /** Операции вне проекта: клон голоса, озвучка, скетч, поиск (этап 159). */
+  freeOutsideProject?: boolean;
 }
 
 const USER_SELECT = {
@@ -149,6 +157,9 @@ const USER_SELECT = {
   planSelfService: true,
   isTestUser: true,
   freeScenarios: true,
+  freeOutsideProject: true,
+  testAccessUntil: true,
+  testDailyLimitUsd: true,
   termsVersion: true,
   termsAcceptedAt: true,
   createdAt: true,
@@ -177,6 +188,9 @@ interface UserRowWithCounts {
   planSelfService: boolean;
   isTestUser: boolean;
   freeScenarios: string[];
+  freeOutsideProject: boolean;
+  testAccessUntil: Date | null;
+  testDailyLimitUsd: number | null;
   termsVersion: string | null;
   termsAcceptedAt: Date | null;
   createdAt: Date;
@@ -383,6 +397,7 @@ export class AdminUsersService {
         planSelfService: true,
         isTestUser: true,
         freeScenarios: true,
+        freeOutsideProject: true,
       },
     });
     if (!target) throw new NotFoundException(`User ${id} not found`);
@@ -456,8 +471,33 @@ export class AdminUsersService {
     if (patch.isTestUser !== undefined) {
       if (patch.isTestUser !== target.isTestUser) {
         data.isTestUser = patch.isTestUser;
-        if (!patch.isTestUser) data.freeScenarios = [];
+        if (!patch.isTestUser) {
+          // Снятый флаг не оставляет позади невидимых разрешений — это
+          // первое правило самого механизма. С этапа 159 их стало
+          // больше одного, и забыть здесь строку означало бы, что
+          // бывший тестировщик продолжает бесплатно клонировать голос.
+          data.freeScenarios = [];
+          data.freeOutsideProject = false;
+          data.testDailyLimitUsd = null;
+          data.testAccessUntil = null;
+        }
       }
+    }
+
+    // `data.freeOutsideProject === undefined` — та же защита, что у
+    // сценариев строкой ниже, и по той же причине (аудит этапа 159).
+    // Без неё правка `{ isTestUser: false, freeOutsideProject: true }`
+    // одним запросом снимала флаг и тут же возвращала разрешение:
+    // ветка выше уже записала `false`, а эта перетирала его обратно.
+    // Через интерфейс так не нажать, но маршрут принимает оба поля
+    // сразу — а «снятый флаг не оставляет позади невидимых разрешений»
+    // это первое правило самого механизма.
+    if (
+      patch.freeOutsideProject !== undefined &&
+      data.freeOutsideProject === undefined
+    ) {
+      const next = Boolean(patch.freeOutsideProject);
+      if (next !== target.freeOutsideProject) data.freeOutsideProject = next;
     }
 
     if (patch.freeScenarios !== undefined && data.freeScenarios === undefined) {
@@ -704,6 +744,9 @@ export class AdminUsersService {
       // Через normalize, по той же причине, что и planOf рядом: в
       // колонке может лежать значение, которого код уже не знает.
       freeScenarios: normalizeFreeScenarios(row.freeScenarios),
+      freeOutsideProject: row.freeOutsideProject,
+      testAccessUntil: row.testAccessUntil,
+      testDailyLimitUsd: row.testDailyLimitUsd,
       termsVersion: row.termsVersion,
       termsAcceptedAt: row.termsAcceptedAt,
       createdAt: row.createdAt,

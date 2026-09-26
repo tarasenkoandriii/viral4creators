@@ -1,6 +1,7 @@
 import {
   FREE_SCENARIOS,
   isSpendFree,
+  testAccessActive,
   normalizeFreeScenarios,
   scenarioOfProjectType,
   unknownScenarios,
@@ -47,20 +48,96 @@ describe('test-user-scenarios', () => {
     expect(isSpendFree(access, 'CLIENT_SITE')).toBe(false);
   });
 
-  it('операция вне сценария бесплатна только при всех галочках', () => {
+  it('операция вне сценария — по своей галочке, а не по трём другим', () => {
     // Клон голоса, озвучка, скетч, поиск на YouTube не принадлежат
-    // проекту. «Хотя бы один» означало бы, что галочка на поздравления
-    // открывает бесплатный поиск референсов для товарки.
+    // проекту. До этапа 159 условием было «все три»: вывод верный, но
+    // тестировщику одного сценария он означал, что половина его работы
+    // идёт за его счёт, и узнавал он об этом в середине прогона.
     const one = { isTestUser: true, freeScenarios: ['GREETING_VIDEO'] };
     const all = { isTestUser: true, freeScenarios: [...FREE_SCENARIOS] };
-    expect(isSpendFree(one, null)).toBe(false);
-    expect(isSpendFree(all, null)).toBe(true);
+    expect(isSpendFree(one, 'OUTSIDE_PROJECT')).toBe(false);
+    // Три галочки САМИ ПО СЕБЕ больше ничего не открывают: условие
+    // стало явным выбором оператора, а не следствием.
+    expect(isSpendFree(all, 'OUTSIDE_PROJECT')).toBe(false);
+    expect(
+      isSpendFree({ ...one, freeOutsideProject: true }, 'OUTSIDE_PROJECT'),
+    ).toBe(true);
+  });
+
+  it('галочка «вне проекта» работает и без единого сценария', () => {
+    // Человек, которому дали только её (проверяет клон голоса), должен
+    // ею пользоваться — это самостоятельное разрешение.
+    expect(
+      isSpendFree(
+        { isTestUser: true, freeScenarios: [], freeOutsideProject: true },
+        'OUTSIDE_PROJECT',
+      ),
+    ).toBe(true);
+    // Но на сценарий она не распространяется: участок остаётся
+    // участком.
+    expect(
+      isSpendFree(
+        { isTestUser: true, freeScenarios: [], freeOutsideProject: true },
+        'PRODUCT_VIDEO',
+      ),
+    ).toBe(false);
+  });
+
+  it('проект неизвестного типа не бесплатен даже с галочкой «вне проекта»', () => {
+    // «Забыть добавить новый тип в `scenarioOfProjectType` безопасно» —
+    // свойство, записанное там же, и галочка «вне проекта» не имеет
+    // права его отменять (аудит этапа 159). Проект ЕСТЬ — значит это не
+    // операция вне проекта, а тип, о котором код ещё не знает.
+    const access = {
+      isTestUser: true,
+      freeScenarios: [...FREE_SCENARIOS],
+      freeOutsideProject: true,
+    };
+    expect(isSpendFree(access, 'UNKNOWN_PROJECT')).toBe(false);
+    expect(isSpendFree(access, 'OUTSIDE_PROJECT')).toBe(true);
+  });
+
+  it('срок гасит доступ сам, сколько бы галочек ни стояло', () => {
+    // Договорённость с тестировщиком срочная (§4.2 ТЗ), а строка
+    // остаётся — по ней потом видно, что он тестировал.
+    const now = new Date('2026-09-26T12:00:00.000Z');
+    const access = {
+      isTestUser: true,
+      freeScenarios: [...FREE_SCENARIOS],
+      freeOutsideProject: true,
+      testAccessUntil: new Date(now.getTime() - 1),
+    };
+    expect(isSpendFree(access, 'PRODUCT_VIDEO', now)).toBe(false);
+    expect(isSpendFree(access, 'OUTSIDE_PROJECT', now)).toBe(false);
+    expect(testAccessActive(access, now)).toBe(false);
+  });
+
+  it('срок ещё не вышел или его нет вовсе — доступ действует', () => {
+    const now = new Date('2026-09-26T12:00:00.000Z');
+    const base = { isTestUser: true, freeScenarios: ['PRODUCT_VIDEO'] };
+    expect(
+      isSpendFree(
+        { ...base, testAccessUntil: new Date(now.getTime() + 1) },
+        'PRODUCT_VIDEO',
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      isSpendFree({ ...base, testAccessUntil: null }, 'PRODUCT_VIDEO', now),
+    ).toBe(true);
+    expect(isSpendFree(base, 'PRODUCT_VIDEO', now)).toBe(true);
+  });
+
+  it('не тестовому аккаунту срок ничего не открывает', () => {
+    expect(
+      testAccessActive({ isTestUser: false, freeScenarios: [] }, new Date()),
+    ).toBe(false);
   });
 
   it('пустой список галочек не даёт ничего даже тестовому', () => {
-    expect(isSpendFree({ isTestUser: true, freeScenarios: [] }, null)).toBe(
-      false,
-    );
+    expect(
+      isSpendFree({ isTestUser: true, freeScenarios: [] }, 'OUTSIDE_PROJECT'),
+    ).toBe(false);
     expect(
       isSpendFree({ isTestUser: true, freeScenarios: [] }, 'PRODUCT_VIDEO'),
     ).toBe(false);
@@ -75,7 +152,10 @@ describe('test-user-scenarios', () => {
     expect(normalizeFreeScenarios(['nonsense'])).toEqual([]);
     expect(normalizeFreeScenarios('PRODUCT_VIDEO')).toEqual([]);
     expect(
-      isSpendFree({ isTestUser: true, freeScenarios: ['nonsense'] }, null),
+      isSpendFree(
+        { isTestUser: true, freeScenarios: ['nonsense'] },
+        'OUTSIDE_PROJECT',
+      ),
     ).toBe(false);
   });
 

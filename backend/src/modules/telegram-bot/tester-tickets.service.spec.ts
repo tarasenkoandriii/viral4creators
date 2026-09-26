@@ -96,8 +96,11 @@ describe('приём находки из бота', () => {
     expect(prisma.testTicket.create).not.toHaveBeenCalled();
   });
 
-  it('истёкший тестовый доступ — тоже не тестировщик', async () => {
-    const { service, prisma } = build({
+  it('истёкший доступ: находку не заводим, но и не молчим', async () => {
+    // Аудит этапа 159. Человек, который вчера присылал находки и
+    // получал «Принято, #14», сегодня получил бы ничего — и не отличил
+    // бы кончившийся доступ от сломанного бота.
+    const { service, prisma, notify } = build({
       user: {
         id: 'u3',
         isTestUser: true,
@@ -107,8 +110,30 @@ describe('приём находки из бота', () => {
       },
     });
     await expect(service.accept('42', { text: 'баг' }, NOW)).resolves.toBe(
-      false,
+      true,
     );
+    expect(prisma.testTicket.create).not.toHaveBeenCalled();
+    expect(notify.dm).toHaveBeenCalledWith(
+      '42',
+      expect.stringContaining('Тестовый доступ закончился'),
+    );
+  });
+
+  it('и повторяет это не чаще раза в сутки', async () => {
+    // Повторять на каждое сообщение — тот же спам, от которого бережёт
+    // ограничитель частоты.
+    const { service, prisma, notify } = build({
+      user: {
+        id: 'u3',
+        isTestUser: true,
+        testAccessUntil: new Date(NOW.getTime() - 1),
+        lastEnvironment: null,
+        lastEnvironmentAt: null,
+      },
+      rateCount: 2,
+    });
+    await service.accept('42', { text: 'ещё баг' }, NOW);
+    expect(notify.dm).not.toHaveBeenCalled();
     expect(prisma.testTicket.create).not.toHaveBeenCalled();
   });
 

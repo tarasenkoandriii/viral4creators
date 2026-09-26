@@ -18,6 +18,10 @@ export interface TesterInviteView {
   id: string;
   label: string;
   freeScenarios: string[];
+  /** Открыты ли операции вне проекта (этап 159, §4.1 ТЗ). */
+  freeOutsideProject: boolean;
+  /** Свой суточный потолок в долларах. null — общий для тестовых. */
+  dailyLimitUsd: number | null;
   expiresAt: string | null;
   /** Готовая ссылка — оператору её остаётся только скопировать. */
   link: string;
@@ -46,6 +50,8 @@ export class AdminTesterInvitesService {
     input: {
       label: string;
       freeScenarios: string[];
+      freeOutsideProject?: boolean;
+      dailyLimitUsd?: number | null;
       expiresAt?: string | null;
     },
   ): Promise<TesterInviteView> {
@@ -71,6 +77,8 @@ export class AdminTesterInvitesService {
         token: inviteToken(),
         label,
         freeScenarios: normalizeFreeScenarios(input.freeScenarios),
+        freeOutsideProject: Boolean(input.freeOutsideProject),
+        dailyLimitUsd: dailyLimit(input.dailyLimitUsd),
         expiresAt,
         createdBy: actorId,
       },
@@ -96,7 +104,18 @@ export class AdminTesterInvitesService {
     if (row.userId) {
       await this.prisma.user.update({
         where: { id: row.userId },
-        data: { isTestUser: false, freeScenarios: [], testAccessUntil: null },
+        data: {
+          isTestUser: false,
+          freeScenarios: [],
+          // Гасится ВСЁ, что выдало приглашение (этап 159). Оставить
+          // здесь `freeOutsideProject` значило бы, что отозванный
+          // тестировщик продолжает бесплатно клонировать голос, — а
+          // «снятый флаг не оставляет позади невидимых разрешений» это
+          // первое правило самого механизма.
+          freeOutsideProject: false,
+          testDailyLimitUsd: null,
+          testAccessUntil: null,
+        },
       });
     }
     this.logger.warn(
@@ -110,6 +129,8 @@ export class AdminTesterInvitesService {
     token: string;
     label: string;
     freeScenarios: string[];
+    freeOutsideProject: boolean;
+    dailyLimitUsd: number | null;
     expiresAt: Date | null;
     activatedAt: Date | null;
     revokedAt: Date | null;
@@ -120,6 +141,8 @@ export class AdminTesterInvitesService {
       id: row.id,
       label: row.label,
       freeScenarios: row.freeScenarios,
+      freeOutsideProject: row.freeOutsideProject,
+      dailyLimitUsd: row.dailyLimitUsd,
       expiresAt: row.expiresAt?.toISOString() ?? null,
       link: inviteLink(botUsername(), row.token),
       activated: !!row.userId,
@@ -155,4 +178,19 @@ function parseExpiry(raw: string | null | undefined): Date | null {
     parsed.setUTCHours(23, 59, 59, 999);
   }
   return parsed;
+}
+
+/**
+ * Свой потолок приглашения. Отрицательное и нецелое — мусор из формы,
+ * и молча превращать его в «как у всех» нельзя: оператор считал бы,
+ * что ограничил трату. Ноль законен и означает ровно ноль.
+ */
+function dailyLimit(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value) || value < 0) {
+    throw new BadRequestException(
+      'Суточный потолок — целое число долларов, не меньше нуля.',
+    );
+  }
+  return Math.round(value);
 }

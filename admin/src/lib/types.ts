@@ -507,6 +507,17 @@ export interface AdminUserSummary {
   isTestUser: boolean;
   /** Сценарии с бесплатным использованием; действуют только с флагом. */
   freeScenarios: FreeScenario[];
+  /**
+   * Операции ВНЕ проекта — своя галочка (этап 159). До неё условием
+   * было «отмечены все три сценария»: верно по происхождению, но
+   * тестировщику одного сценария означало, что половина его работы
+   * идёт за его счёт.
+   */
+  freeOutsideProject: boolean;
+  /** До какого числа действует доступ. null — бессрочно. */
+  testAccessUntil: string | null;
+  /** Свой суточный потолок в долларах. null — общий для тестовых. */
+  testDailyLimitUsd: number | null;
   termsVersion: string | null;
   termsAcceptedAt: string | null;
   createdAt: string;
@@ -1567,6 +1578,10 @@ export interface TesterInvite {
   id: string;
   label: string;
   freeScenarios: string[];
+  /** Операции вне проекта: клон голоса, озвучка, скетч, поиск (этап 159). */
+  freeOutsideProject: boolean;
+  /** Свой суточный потолок в долларах. null — общий для тестовых. */
+  dailyLimitUsd: number | null;
   expiresAt: string | null;
   /** Готовая ссылка — остаётся только скопировать. */
   link: string;
@@ -1668,6 +1683,9 @@ export interface TesterProgress {
   /** До какого числа действует доступ. null — бессрочно. */
   accessUntil: string | null;
   accessActive: boolean;
+  /** Фактический расход за сегодня и потолок этого тестировщика. */
+  spentTodayMicroUsd: number;
+  dailyLimitMicroUsd: number;
   openTickets: number;
   closedTickets: number;
   lastActivityAt: string | null;

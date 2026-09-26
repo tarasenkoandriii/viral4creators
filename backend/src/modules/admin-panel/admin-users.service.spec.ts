@@ -27,6 +27,9 @@ function row(over: Record<string, unknown> = {}) {
     planSelfService: false,
     isTestUser: false,
     freeScenarios: [] as string[],
+    freeOutsideProject: false,
+    testAccessUntil: null as Date | null,
+    testDailyLimitUsd: null as number | null,
     termsVersion: '2026-09-06',
     termsAcceptedAt: new Date('2026-09-01'),
     createdAt: new Date('2026-08-01'),
@@ -491,5 +494,82 @@ describe('AdminUsersService — окружение в карточке (этап
       row({ lastEnvironment: { surface: 'TMA' }, lastEnvironmentAt: null }),
     );
     expect((await svc.get('u1')).environment).toBeNull();
+  });
+});
+
+describe('AdminUsersService — операции вне проекта (этап 159)', () => {
+  it('снятый флаг тестового гасит и галочку вне проекта, и потолок, и срок', async () => {
+    // Снятый флаг не оставляет позади невидимых разрешений — это первое
+    // правило самого механизма. С этапа 159 их стало больше одного, и
+    // забытая строка означала бы, что бывший тестировщик продолжает
+    // бесплатно клонировать голос.
+    const { svc, prisma } = build(
+      row({ isTestUser: true, freeOutsideProject: true }),
+    );
+    await svc.patch('op', 'u1', { isTestUser: false });
+    const data = prisma.user.update.mock.calls[0][0].data;
+    expect(data).toMatchObject({
+      isTestUser: false,
+      freeScenarios: [],
+      freeOutsideProject: false,
+      testDailyLimitUsd: null,
+      testAccessUntil: null,
+    });
+  });
+
+  it('снятие флага сильнее галочки в той же правке', async () => {
+    // Аудит этапа 159: `{ isTestUser: false, freeOutsideProject: true }`
+    // одним запросом снимал флаг и тут же возвращал разрешение. Через
+    // интерфейс так не нажать, но маршрут принимает оба поля сразу.
+    const { svc, prisma } = build(
+      row({ isTestUser: true, freeOutsideProject: false }),
+    );
+    await svc.patch('op', 'u1', {
+      isTestUser: false,
+      freeOutsideProject: true,
+    });
+    expect(prisma.user.update.mock.calls[0][0].data.freeOutsideProject).toBe(
+      false,
+    );
+  });
+
+  it('галочка вне проекта ставится и снимается отдельно', async () => {
+    const on = build(row({ isTestUser: true }));
+    await on.svc.patch('op', 'u1', { freeOutsideProject: true });
+    expect(on.prisma.user.update.mock.calls[0][0].data.freeOutsideProject).toBe(
+      true,
+    );
+
+    const off = build(row({ isTestUser: true, freeOutsideProject: true }));
+    await off.svc.patch('op', 'u1', { freeOutsideProject: false });
+    expect(
+      off.prisma.user.update.mock.calls[0][0].data.freeOutsideProject,
+    ).toBe(false);
+  });
+
+  it('то же значение записью не становится', async () => {
+    // Тот же приём, что у остальных полей: пустая правка не трогает
+    // строку вовсе — сервис до `update` даже не доходит.
+    const { svc, prisma } = build(
+      row({ isTestUser: true, freeOutsideProject: true }),
+    );
+    await svc.patch('op', 'u1', { freeOutsideProject: true });
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('галочка и срок доезжают до карточки', async () => {
+    const until = new Date('2026-10-01T00:00:00.000Z');
+    const { svc } = build(
+      row({
+        isTestUser: true,
+        freeOutsideProject: true,
+        testAccessUntil: until,
+        testDailyLimitUsd: 7,
+      }),
+    );
+    const detail = await svc.get('u1');
+    expect(detail.freeOutsideProject).toBe(true);
+    expect(detail.testAccessUntil).toEqual(until);
+    expect(detail.testDailyLimitUsd).toBe(7);
   });
 });
