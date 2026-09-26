@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { StorageModule } from '../storage/storage.module';
 import { PlanModule } from '../plan/plan.module';
+import { AudioSeparationModule } from '../audio-separation/audio-separation.module';
 import { FfmpegApiService } from './ffmpeg-api.service';
 import { PostProductionService } from './postprod.service';
 import { PostProdController } from './postprod.controller';
@@ -25,7 +26,7 @@ import { PostprodVideosService } from './postprod-videos.service';
  */
 @Global()
 @Module({
-  imports: [StorageModule, PlanModule],
+  imports: [StorageModule, PlanModule, AudioSeparationModule],
   controllers: [PostProdController, PostprodVideosController],
   providers: [FfmpegApiService, PostProductionService, PostprodVideosService],
   exports: [FfmpegApiService, PostProductionService],

@@ -96,9 +96,19 @@ function build(
     resolve: jest.fn().mockResolvedValue(tts),
     resolveByKey: jest.fn().mockReturnValue(tts),
   };
+  // Разделение дорожки по умолчанию НЕ настроено: подавляющее
+  // большинство тестов этого файла про него ничего не знают и знать не
+  // должны — при выключенном провайдере поведение обязано остаться
+  // ровно прежним (docs-tz/TZ-Voice-Replace-Keep-Background.md, §9,
+  // первый уровень отката).
+  const separation = {
+    configured: jest.fn().mockReturnValue(false),
+    separate: jest.fn(),
+  };
   return {
     svc: new PostProductionService(
       api as any,
+      separation as any,
       ttsResolver as any,
       blob as any,
       sessions as any,
@@ -107,6 +117,7 @@ function build(
     ),
     plans,
     api,
+    separation,
     tts,
     ttsResolver,
     blob,
@@ -862,6 +873,130 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       });
       await svc.start('s1', VIDEO);
       expect(api.submit.mock.calls[0][0].commands[0]).not.toContain('amix');
+    });
+
+    it('дубляж с разделением: фон возвращается в микс отдельным входом', async () => {
+      // docs-tz/TZ-Voice-Replace-Keep-Background.md: «дубляж» означает
+      // заменить ГОЛОС, а не звук. Стем — это исходная дорожка без
+      // голоса модели.
+      const { svc, api, separation, aiUsage } = build({
+        session: session({ brandManifestSnapshot: { voiceMode: 'dub' } }),
+      });
+      separation.configured.mockReturnValue(true);
+      separation.separate.mockResolvedValue({
+        ok: true,
+        backgroundUrls: ['https://blob/no_vocals.mp3'],
+        vocalsUrl: 'https://blob/vocals.mp3',
+        seconds: 21,
+      });
+
+      await svc.start('s1', VIDEO);
+
+      const call = api.submit.mock.calls[0][0];
+      expect(call.inputs.bg1).toBe('https://blob/no_vocals.mp3');
+      expect(call.commands[0]).toContain('[bg]');
+      // Дорожки ролика в миксе по-прежнему нет — в ней был голос модели.
+      expect(call.commands[0]).not.toContain('[0:a]');
+      // Прогон платный, и он обязан быть виден в отчёте расходов
+      // отдельной строкой.
+      expect(aiUsage.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operation: 'audio-separation',
+          model: 'htdemucs',
+        }),
+      );
+    });
+
+    it('в режиме voiceover разделение не зовётся вовсе', async () => {
+      // Там исходник и так подмешивается целиком: платить не за что.
+      const { svc, separation } = build({ session: voiced });
+      separation.configured.mockReturnValue(true);
+
+      await svc.start('s1', VIDEO);
+
+      expect(separation.separate).not.toHaveBeenCalled();
+    });
+
+    it('у немого исходника разделять нечего — вызова нет', async () => {
+      const { svc, separation } = build({
+        session: session({ brandManifestSnapshot: { voiceMode: 'dub' } }),
+      });
+      separation.configured.mockReturnValue(true);
+
+      await svc.start('s1', { ...VIDEO, silentSource: true });
+
+      expect(separation.separate).not.toHaveBeenCalled();
+    });
+
+    it('сбой разделения не роняет ролик: собираем дубляж по-старому', async () => {
+      // Первое правило §9 ТЗ: ролик получается всегда. Сохранение фона
+      // — улучшение, а не условие сборки.
+      const { svc, api, separation } = build({
+        session: session({ brandManifestSnapshot: { voiceMode: 'dub' } }),
+      });
+      separation.configured.mockReturnValue(true);
+      separation.separate.mockResolvedValue({
+        ok: false,
+        reason: 'провайдер лёг',
+      });
+
+      const r = await svc.start('s1', VIDEO);
+
+      expect(r.postStatus).toBe('pending');
+      expect(api.submit.mock.calls[0][0].inputs.bg1).toBeUndefined();
+      // И озвучка при этом НЕ помечается сбойной: она удалась, а
+      // «Озвучка: …» — та самая строка, которую читает человек.
+      expect(r.voiceError).toBeFalsy();
+    });
+
+    it('провайдер не настроен — ни вызова, ни строки расхода', async () => {
+      const { svc, separation, aiUsage } = build({
+        session: session({ brandManifestSnapshot: { voiceMode: 'dub' } }),
+      });
+
+      await svc.start('s1', VIDEO);
+
+      expect(separation.separate).not.toHaveBeenCalled();
+      expect(aiUsage.record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ operation: 'audio-separation' }),
+      );
+    });
+
+    it('провайдер сам сказал «пропуск» — расход не пишем: прогона не было', async () => {
+      // `skipped` у провайдера означает «я даже не начинал» (нет
+      // настройки, нечего разделять). Записать за это расход значило
+      // бы придумать счёт.
+      const { svc, separation, aiUsage } = build({
+        session: session({ brandManifestSnapshot: { voiceMode: 'dub' } }),
+      });
+      separation.configured.mockReturnValue(true);
+      separation.separate.mockResolvedValue({
+        ok: false,
+        skipped: true,
+        reason: 'нечего разделять',
+      });
+
+      await svc.start('s1', VIDEO);
+
+      expect(aiUsage.record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ operation: 'audio-separation' }),
+      );
+    });
+
+    it('неудачный прогон всё равно записывается в расходы', async () => {
+      // Провайдер считает и неудачные попытки; спрятать их значило бы
+      // получить счёт, которому нечего противопоставить.
+      const { svc, separation, aiUsage } = build({
+        session: session({ brandManifestSnapshot: { voiceMode: 'dub' } }),
+      });
+      separation.configured.mockReturnValue(true);
+      separation.separate.mockResolvedValue({ ok: false, reason: 'таймаут' });
+
+      await svc.start('s1', VIDEO);
+
+      expect(aiUsage.record).toHaveBeenCalledWith(
+        expect.objectContaining({ operation: 'audio-separation' }),
+      );
     });
 
     it('озвучка родного формата тоже идёт задачей — резать нечего, но звук нужен', async () => {

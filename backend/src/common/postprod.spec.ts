@@ -102,11 +102,159 @@ describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () =>
     it('исходная дорожка не участвует', () => {
       expect(plan.command).not.toContain('amix');
       expect(plan.command).not.toContain('[0:a]');
-      expect(plan.audio).toEqual({ mode: 'dub', delayMs: 0 });
+      expect(plan.audio).toEqual({
+        mode: 'dub',
+        delayMs: 0,
+        backgroundStems: 0,
+      });
     });
 
     it('громкость всё равно выравнивается', () => {
       expect(plan.command).toContain('loudnorm');
+    });
+  });
+
+  describe('дубляж с сохранением фона (стемы)', () => {
+    // docs-tz/TZ-Voice-Replace-Keep-Background.md: пользователь просит
+    // заменить ГОЛОС, а не звук. Стемы — это исходная дорожка без
+    // голоса модели, и именно она возвращается в микс.
+    const base = {
+      voiceInputKey: 'voice',
+      voiceMode: 'dub' as const,
+      backgroundInputKeys: ['bg'],
+    };
+
+    it('стем подмешивается вместо [0:a] и на полной громкости', () => {
+      const plan = planPostProduction(base);
+
+      // Дорожки ролика в миксе по-прежнему нет: в ней был голос модели.
+      expect(plan.command).not.toContain('[0:a]');
+      // А фон — есть, и он не приглушён: приглушать нечего, голос уже
+      // удалён (замерено прототипом на настоящем ролике).
+      expect(plan.command).toContain('[2:a]volume=1[bg]');
+      expect(plan.command).toContain('amix=inputs=2');
+      expect(plan.audio).toEqual({
+        mode: 'dub',
+        delayMs: 0,
+        backgroundStems: 1,
+      });
+    });
+
+    it('стем попадает во входы после голоса, не сдвигая его номер', () => {
+      const plan = planPostProduction(base);
+
+      expect(plan.inputKeys).toEqual(['source', 'voice', 'bg']);
+      // Голос обязан остаться первым входом после исходника: сдвиг
+      // номера превратил бы голос в фон молча.
+      expect(plan.command).toContain('[1:a]');
+    });
+
+    it('несколько стемов складываются между собой, потом идут в общий микс', () => {
+      // Так бывает, если модель отдала стемы по отдельности
+      // (drums/bass/other) вместо двухстемного режима.
+      const plan = planPostProduction({
+        ...base,
+        backgroundInputKeys: ['bg1', 'bg2', 'bg3'],
+      });
+
+      // Каждый стем получает свою метку и только потом складывается:
+      // иначе самый длинный из них задал бы длину их общего микса.
+      expect(plan.command).toContain('[2:a]anull[st0]');
+      expect(plan.command).toContain('[st0][st1][st2]amix=inputs=3');
+      expect(plan.audio?.backgroundStems).toBe(3);
+    });
+
+    it('стем приводится к длине ролика — иначе он удлинил бы весь ролик', () => {
+      // Находка аудита этапа C. `[bg]` стоит в `amix` первым, то есть
+      // по нему считается `duration=first`. Стем приезжает от
+      // стороннего провайдера перекодированным, и его длина не обязана
+      // совпадать с длиной ролика: у mp3 одно выравнивание кадров
+      // добавляет десятки миллисекунд. Раньше этой опасности не было —
+      // фоном была дорожка самого файла.
+      const plan = planPostProduction({
+        ...base,
+        totalDurationSeconds: 8,
+      });
+
+      expect(plan.command).toContain(
+        '[2:a]atrim=0:8,apad=whole_dur=8,volume=1[bg]',
+      );
+    });
+
+    it('несколько стемов приводятся к длине каждый по отдельности', () => {
+      const plan = planPostProduction({
+        ...base,
+        backgroundInputKeys: ['bg1', 'bg2'],
+        totalDurationSeconds: 8,
+      });
+
+      expect(plan.command).toContain('[2:a]atrim=0:8,apad=whole_dur=8[st0]');
+      expect(plan.command).toContain('[3:a]atrim=0:8,apad=whole_dur=8[st1]');
+    });
+
+    it('стемы без своего голоса — отказ: заменять нечем', () => {
+      // Без голоса звуковой фильтр не строится вовсе, стемы скачались
+      // бы впустую, а `-map 0:a?` скопировал бы исходную дорожку с
+      // голосом модели: заказ «замени голос» дал бы ролик с нетронутым
+      // голосом и лишним счётом.
+      expect(() =>
+        planPostProduction({
+          targetAspectRatio: '9:16',
+          voiceMode: 'dub',
+          backgroundInputKeys: ['bg'],
+        }),
+      ).toThrow(/без своего голоса/);
+    });
+
+    it('с подложкой номера не разъезжаются: голос 1, музыка 2, стем 3', () => {
+      const plan = planPostProduction({ ...base, musicInputKey: 'music' });
+
+      expect(plan.inputKeys).toEqual(['source', 'voice', 'music', 'bg']);
+      expect(plan.command).toContain('[3:a]volume=1[bg]');
+    });
+
+    it('наклейка остаётся последним входом даже со стемами', () => {
+      // Её номер считается от конца списка, и стемы не должны его
+      // ломать: иначе overlay взял бы звуковой поток вместо картинки.
+      const plan = planPostProduction({
+        ...base,
+        stickerInputKey: 'sticker',
+        stickerScale: 'null',
+      });
+
+      expect(plan.inputKeys).toEqual(['source', 'voice', 'bg', 'sticker']);
+      expect(plan.command).toContain('[3:v]');
+    });
+
+    it('стемы в режиме voiceover — отказ, а не тихая подмена', () => {
+      // В voiceover исходная дорожка подмешивается целиком и
+      // приглушённой; подменить её стемами значило бы сделать не то,
+      // что просили, и никто бы этого не заметил.
+      expect(() =>
+        planPostProduction({
+          voiceInputKey: 'voice',
+          voiceMode: 'voiceover',
+          backgroundInputKeys: ['bg'],
+        }),
+      ).toThrow(/только в режиме dub/);
+    });
+
+    it('пустой список стемов — обычный дубляж, без изменений', () => {
+      const plan = planPostProduction({ ...base, backgroundInputKeys: [] });
+
+      expect(plan.inputKeys).toEqual(['source', 'voice']);
+      expect(plan.command).not.toContain('[bg]');
+      expect(plan.audio?.backgroundStems).toBe(0);
+    });
+
+    it('пробелы вместо ключа не создают вход-призрак', () => {
+      const plan = planPostProduction({
+        ...base,
+        backgroundInputKeys: ['  ', 'bg'],
+      });
+
+      expect(plan.inputKeys).toEqual(['source', 'voice', 'bg']);
+      expect(plan.audio?.backgroundStems).toBe(1);
     });
   });
 
@@ -131,7 +279,11 @@ describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () =>
     it('команда собирается как дубляж — слышимый результат тот же', () => {
       // Это не выдача платного дубляжа мимо тарифа: дубляж означает
       // «заменить звук модели своим», а здесь звука модели нет вовсе.
-      expect(plan.audio).toEqual({ mode: 'dub', delayMs: 300 });
+      expect(plan.audio).toEqual({
+        mode: 'dub',
+        delayMs: 300,
+        backgroundStems: 0,
+      });
       expect(plan.command).toContain('loudnorm');
       expect(plan.command).toContain('adelay=300:all=1');
     });

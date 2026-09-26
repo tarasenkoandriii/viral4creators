@@ -76,6 +76,7 @@ import {
 } from '../../common/subtitles';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { FfmpegApiService } from './ffmpeg-api.service';
+import { ReplicateSeparationService } from '../audio-separation/replicate-separation.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { isVoiceoverProviderKey } from '../tts/default-tts-provider';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
@@ -243,6 +244,7 @@ export class PostProductionService {
 
   constructor(
     private readonly api: FfmpegApiService,
+    private readonly separation: ReplicateSeparationService,
     private readonly ttsResolver: TtsProviderResolverService,
     private readonly blob: BlobService,
     private readonly sessions: SessionService,
@@ -377,11 +379,18 @@ export class PostProductionService {
 
     const cardsUrl = await this.buildCards(sessionId, work);
 
+    // Фон достаём ТОЛЬКО когда голос вообще будет: без своей озвучки
+    // заменять нечего, и платить за разделение не за что.
+    const background = voiceUrl
+      ? await this.resolveBackground(sessionId, work, source)
+      : { keys: [], inputs: {}, note: '' };
+
     let plan;
     try {
       plan = planPostProduction({
         targetAspectRatio: work.crop,
         voiceInputKey: voiceUrl ? 'voice' : null,
+        backgroundInputKeys: background.keys,
         voiceMode: work.voiceMode === 'dub' ? 'dub' : 'voiceover',
         sourceHasNoAudio: work.sourceHasNoAudio,
         musicInputKey: work.musicUrl ? 'music' : null,
@@ -410,7 +419,7 @@ export class PostProductionService {
       });
     }
 
-    const inputs: Record<string, string> = { source };
+    const inputs: Record<string, string> = { source, ...background.inputs };
     if (voiceUrl) inputs.voice = voiceUrl;
     if (work.musicUrl) inputs.music = work.musicUrl;
     if (cardsUrl) inputs.cards = cardsUrl;
@@ -431,7 +440,7 @@ export class PostProductionService {
       this.logger.log(
         `постобработка запущена (задача ${job.jobId}): ` +
           `${plan.crop ? `кадр ${video.renderedAspectRatio} → ${plan.crop.target}` : 'кадр без изменений'}, ` +
-          `${plan.audio ? `звук — ${plan.audio.mode}` : 'звук без изменений'}, ` +
+          `${plan.audio ? `звук — ${plan.audio.mode}${background.note ? `, ${background.note}` : ''}` : 'звук без изменений'}, ` +
           `${plan.subtitles ? 'субтитры вшиты' : 'без субтитров'}`,
       );
       return this.save(sessionId, video, {
@@ -619,12 +628,18 @@ export class PostProductionService {
       // Переозвучка пересобирает ролик с нуля из сырого файла — значит
       // карточки нужно наложить заново, иначе они бы просто исчезли.
       const revoiceCardsUrl = await this.buildCards(sessionId, work);
+      const revoiceBackground = await this.resolveBackground(
+        sessionId,
+        work,
+        source,
+      );
 
       let plan;
       try {
         plan = planPostProduction({
           targetAspectRatio: crop,
           voiceInputKey: 'voice',
+          backgroundInputKeys: revoiceBackground.keys,
           voiceMode: work.voiceMode === 'dub' ? 'dub' : 'voiceover',
           sourceHasNoAudio: work.sourceHasNoAudio,
           musicInputKey: work.musicUrl ? 'music' : null,
@@ -645,7 +660,11 @@ export class PostProductionService {
         throw new PostProdError(`переозвучка невозможна: ${message}`);
       }
 
-      const inputs: Record<string, string> = { source, voice: voice.url };
+      const inputs: Record<string, string> = {
+        source,
+        voice: voice.url,
+        ...revoiceBackground.inputs,
+      };
       if (work.musicUrl) inputs.music = work.musicUrl;
       if (revoiceCardsUrl) inputs.cards = revoiceCardsUrl;
       if (work.sticker) inputs.sticker = work.sticker.url;
@@ -1366,6 +1385,64 @@ export class PostProductionService {
    * статуса у карточек нет намеренно — показывать пользователю ещё
    * одну шкалу состояния ради двух строк текста незачем.
    */
+  /**
+   * Достать ФОН ролика — исходную дорожку без голоса модели
+   * (docs-tz/TZ-Voice-Replace-Keep-Background.md).
+   *
+   * Зовётся только там, где имеет смысл: режим `dub` (в `voiceover`
+   * исходник и так подмешивается целиком) и у ролика есть звук (у
+   * немого разделять нечего). В остальных случаях не тратим ни
+   * секунды, ни цента.
+   *
+   * Сбой разделения — НЕ сбой ролика: возвращаем пустой список, и
+   * дубляж собирается по-старому, голосом на тишине. Причина уходит в
+   * лог, но НЕ в `voiceError`: это поле выводится человеку строкой
+   * «Озвучка: …», а озвучка-то как раз удалась — соврать там было бы
+   * хуже, чем промолчать. (Правка к §11 ТЗ, где я сгоряча записал
+   * обратное.)
+   */
+  private async resolveBackground(
+    sessionId: string,
+    work: Work,
+    sourceUrl: string,
+  ): Promise<{ keys: string[]; inputs: Record<string, string>; note: string }> {
+    const empty = { keys: [], inputs: {}, note: '' };
+    if (work.voiceMode !== 'dub' || work.sourceHasNoAudio) return empty;
+    if (!this.separation.configured()) return empty;
+
+    const outcome = await this.separation.separate({ sourceUrl, sessionId });
+    // Платим за прогон, а не за результат: провайдер считает даже
+    // неудачные попытки, и прятать их из отчёта расходов значило бы
+    // получить счёт, которому нечего противопоставить.
+    if (!outcome.skipped) {
+      await this.aiUsage.record({
+        operation: 'audio-separation',
+        model: 'htdemucs',
+        sessionId,
+      });
+    }
+    if (!outcome.ok || !outcome.backgroundUrls?.length) {
+      if (!outcome.skipped) {
+        this.logger.warn(
+          `фон ролика сохранить не удалось, собираю дубляж по-старому: ${outcome.reason}`,
+        );
+      }
+      return empty;
+    }
+
+    const inputs: Record<string, string> = {};
+    const keys = outcome.backgroundUrls.map((url, i) => {
+      const key = `bg${i + 1}`;
+      inputs[key] = url;
+      return key;
+    });
+    return {
+      keys,
+      inputs,
+      note: `фон сохранён (${keys.length} стем(ов), ${outcome.seconds?.toFixed(1)} с)`,
+    };
+  }
+
   private async buildCards(
     sessionId: string,
     work: Work,

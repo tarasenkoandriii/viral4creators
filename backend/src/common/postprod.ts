@@ -73,7 +73,21 @@ export interface PostProdPlan {
   /** Обрезка: целевой формат и его число, либо null — кадр не трогаем. */
   crop: { target: string; ratio: number } | null;
   /** Звук: как именно легла дорожка, либо null — звук не трогаем. */
-  audio: { mode: 'voiceover' | 'dub'; delayMs: number } | null;
+  audio: {
+    mode: 'voiceover' | 'dub';
+    delayMs: number;
+    /**
+     * Сколько фоновых стемов подмешано вместо исходной дорожки
+     * (docs-tz/TZ-Voice-Replace-Keep-Background.md). Ноль — обычное
+     * поведение: `voiceover` подмешивает `[0:a]`, `dub` не подмешивает
+     * ничего. Больше нуля — дубляж, сохранивший фон ролика.
+     *
+     * Отдельное поле, а не третье значение `mode`: для всех, кто
+     * читает `mode` (записи в БД, логи, тесты), это по-прежнему
+     * дубляж, и переименование сломало бы их без пользы.
+     */
+    backgroundStems: number;
+  } | null;
   /** Субтитры вшиты в эту задачу или нет — для лога вызывающего. */
   subtitles: boolean;
 }
@@ -111,6 +125,25 @@ export interface PostProdOptions {
    * слышимый результат тот же самый при любом значении `voiceMode`.
    */
   sourceHasNoAudio?: boolean;
+  /**
+   * Ключи входов с ФОНОМ ролика — тем, что осталось от исходной
+   * дорожки после удаления из неё голоса модели
+   * (docs-tz/TZ-Voice-Replace-Keep-Background.md).
+   *
+   * Смысл всей затеи: пользователь в режиме «дубляж» просит заменить
+   * ГОЛОС, а не звук. До этого `dub` выбрасывал дорожку целиком, и
+   * вместе с голосом модели уходили шум улицы, музыка и всё остальное
+   * — оставалась речь на тишине.
+   *
+   * Обычно ключ один (двухстемное разделение), но их может быть
+   * несколько, если модель отдала стемы по отдельности — тогда они
+   * складываются. Список, а не строка, именно поэтому.
+   *
+   * **Только вместе с `dub`.** В `voiceover` исходная дорожка и так
+   * подмешивается целиком, приглушённой, и подменять её стемами там
+   * незачем; сочетание отвергается, а не исправляется молча.
+   */
+  backgroundInputKeys?: readonly string[];
   /**
    * Ключ входного аудиофайла музыкальной подложки (фича №4). Пусто —
    * подложки нет, всё как раньше.
@@ -237,8 +270,15 @@ function usesSourceAudio(mode: 'voiceover' | 'dub'): boolean {
  * `[a]` — готовый звук.
  */
 export function audioMixFilters(input: {
-  /** Дорожка самого ролика (`[0:a]`) и во сколько её приглушить. */
-  source: { duck: number } | null;
+  /**
+   * Фон ролика и во сколько его приглушить.
+   *
+   * Без `stemIndexes` — дорожка самого ролика, `[0:a]`, как было
+   * всегда. С ними — отдельные входы со стемами: из исходной дорожки
+   * убран голос модели, и подмешивается только то, что осталось
+   * (docs-tz/TZ-Voice-Replace-Keep-Background.md).
+   */
+  source: { duck: number; stemIndexes?: readonly number[] } | null;
   /** Голос: номер входа, сдвиг и, для дорожек, подгонка темпа. */
   voice: { index: number; delayMs: number; tempoRate?: number | null } | null;
   music: { index: number; volume: number } | null;
@@ -277,11 +317,53 @@ export function audioMixFilters(input: {
     // Тогда эталон длины — приведённая подложка, если она есть.
     if (input.music && totalSeconds) mixed.push('[mus]');
   } else {
-    // Приглушаем исходную дорожку только под НАШ голос: это и есть
-    // смысл `duck`. Под одной лишь подложкой глушить нечего — там
-    // тише становится сама подложка, а не ролик, иначе музыка
-    // «съедала» бы звук, ради которого её и добавляют.
-    filters.push(`[0:a]volume=${input.source.duck}[bg]`);
+    const stems = input.source.stemIndexes ?? [];
+    if (stems.length > 0) {
+      // Фон собран из стемов: голоса модели в нём уже нет, поэтому
+      // приглушать его нечем и незачем — `duck` сюда приходит равным
+      // единице (см. `planPostProduction`). Проверено прототипом на
+      // настоящем ролике: фон вернулся на полной громкости, остатков
+      // речи не слышно; приглушать его значило бы маскировать то,
+      // чего нет, и заодно терять смысл всей работы.
+      //
+      // Найдено аудитом этапа C: стем приезжает от стороннего
+      // провайдера перекодированным, и его длина НЕ обязана совпадать
+      // с длиной ролика до миллисекунды — у mp3 одно только
+      // выравнивание кадров добавляет десятки миллисекунд. А `[bg]`
+      // стоит в `amix` первым, то есть по нему считается `duration=
+      // first`: чуть более длинный стем удлинил бы весь ролик. Раньше
+      // этой опасности не было — фоном была `[0:a]`, дорожка самого
+      // файла. Поэтому стем приводится к длине ролика тем же приёмом,
+      // что и музыкальная подложка выше: `atrim` режет длинный,
+      // `apad` дотягивает короткий.
+      const fit = totalSeconds
+        ? `atrim=0:${totalSeconds},apad=whole_dur=${totalSeconds},`
+        : '';
+      const gain = `volume=${input.source.duck}[bg]`;
+      if (stems.length === 1) {
+        filters.push(`[${stems[0]}:a]${fit}${gain}`);
+      } else {
+        // Несколько стемов: каждый приводим к длине отдельно, иначе
+        // самый длинный из них задал бы длину их собственного микса.
+        const labels = stems.map((i, n) => {
+          // `fit` заканчивается запятой — она нужна перед следующим
+          // фильтром, а здесь следующего нет; без приведения длины
+          // ставим `anull`, потому что метку потоку дать надо.
+          filters.push(`[${i}:a]${fit ? fit.slice(0, -1) : 'anull'}[st${n}]`);
+          return `[st${n}]`;
+        });
+        filters.push(
+          `${labels.join('')}amix=inputs=${stems.length}:duration=first:` +
+            `dropout_transition=0:normalize=0,${gain}`,
+        );
+      }
+    } else {
+      // Приглушаем исходную дорожку только под НАШ голос: это и есть
+      // смысл `duck`. Под одной лишь подложкой глушить нечего — там
+      // тише становится сама подложка, а не ролик, иначе музыка
+      // «съедала» бы звук, ради которого её и добавляют.
+      filters.push(`[0:a]volume=${input.source.duck}[bg]`);
+    }
     mixed.push('[bg]');
   }
 
@@ -338,6 +420,27 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
   const subtitleForceStyle = opts.subtitleForceStyle?.trim() || '';
   const cardsKey = opts.cardsInputKey?.trim() || null;
   const stickerKey = opts.stickerInputKey?.trim() || null;
+  const backgroundKeys = (opts.backgroundInputKeys ?? [])
+    .map((k) => k.trim())
+    .filter((k) => k.length > 0);
+  if (backgroundKeys.length > 0 && !voiceKey) {
+    // Найдено аудитом этапа C. Без своего голоса звуковой фильтр не
+    // строится вовсе (см. `if (voiceKey || musicKey)` ниже), стемы
+    // скачались бы впустую, а `-map 0:a?` скопировал бы ИСХОДНУЮ
+    // дорожку — ту самую, с голосом модели. То есть заказ «замени
+    // голос» дал бы ролик с нетронутым голосом и лишним счётом.
+    throw new PostProdError(
+      'фоновые стемы бессмысленны без своего голоса: заменять нечем',
+    );
+  }
+  if (backgroundKeys.length > 0 && mode !== 'dub') {
+    // Молча проигнорировать было бы хуже всего: вызывающий думал бы,
+    // что фон сохранён, а на деле получил бы прежний приглушённый
+    // `[0:a]` с голосом модели внутри.
+    throw new PostProdError(
+      'фоновые стемы допустимы только в режиме dub: в voiceover исходная дорожка подмешивается целиком',
+    );
+  }
 
   if (
     !crop &&
@@ -361,10 +464,18 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
     inputKey,
     ...(voiceKey ? [voiceKey] : []),
     ...(musicKey ? [musicKey] : []),
+    // Стемы после музыки и перед наклейкой: так номера голоса и
+    // подложки не сдвигаются, а наклейка по-прежнему считается от
+    // конца списка.
+    ...backgroundKeys,
     ...(stickerKey ? [stickerKey] : []),
   ];
   const voiceIndex = voiceKey ? 1 : -1;
   const musicIndex = musicKey ? (voiceKey ? 2 : 1) : -1;
+  const firstBackgroundIndex = 1 + (voiceKey ? 1 : 0) + (musicKey ? 1 : 0);
+  const backgroundIndexes = backgroundKeys.map(
+    (_, i) => firstBackgroundIndex + i,
+  );
   // Наклейка последняя намеренно: её появление не должно сдвигать
   // номера звуковых потоков, иначе голос внезапно окажется музыкой.
   const stickerIndex = stickerKey ? inputKeys.length - 1 : -1;
@@ -416,7 +527,13 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
   if (voiceKey || musicKey) {
     filters.push(
       ...audioMixFilters({
-        source: usesSourceAudio(mode) ? { duck: voiceKey ? duck : 1 } : null,
+        source: backgroundIndexes.length
+          ? // Фон из стемов: голоса модели в нём нет, приглушать
+            // нечего — отсюда единица, а не `duck`.
+            { duck: 1, stemIndexes: backgroundIndexes }
+          : usesSourceAudio(mode)
+            ? { duck: voiceKey ? duck : 1 }
+            : null,
         voice: voiceKey ? { index: voiceIndex, delayMs } : null,
         music: musicKey ? { index: musicIndex, volume: musicVolume } : null,
         totalSeconds,
@@ -456,7 +573,9 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
     command: parts.join(' '),
     inputKeys,
     crop,
-    audio: voiceKey ? { mode, delayMs } : null,
+    audio: voiceKey
+      ? { mode, delayMs, backgroundStems: backgroundIndexes.length }
+      : null,
     subtitles: !!subtitlesKey,
   };
 }

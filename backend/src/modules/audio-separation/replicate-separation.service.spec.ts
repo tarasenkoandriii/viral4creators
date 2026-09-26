@@ -16,6 +16,7 @@ const KEYS = [
   'REPLICATE_DEMUCS_MODEL',
   'REPLICATE_DEMUCS_VERSION',
   'REPLICATE_DEMUCS_INPUT',
+  'REPLICATE_DEMUCS_TIMEOUT_MS',
   'REPLICATE_API_BASE_URL',
 ] as const;
 
@@ -246,6 +247,32 @@ describe('ReplicateSeparationService — вызов', () => {
     expect(out.ok).toBe(false);
     expect(out.backgroundUrls).toBeUndefined();
   });
+});
+
+describe('ReplicateSeparationService — бюджет времени', () => {
+  it('не дождались за отведённое время — отказ, а не бесконечное ожидание', async () => {
+    // Находка аудита этапа C: у вызывающего (постобработка в функции
+    // Vercel) есть свой потолок, и разделение не вправе его съесть.
+    // Не уложились — собираем ролик по-старому.
+    process.env.REPLICATE_API_TOKEN = 'tok';
+    process.env.REPLICATE_DEMUCS_TIMEOUT_MS = '10000';
+    jest.resetModules();
+    const { ReplicateSeparationService: Fresh } = await import(
+      './replicate-separation.service'
+    );
+    const svc = new Fresh();
+    jest.spyOn(global, 'fetch' as never).mockResolvedValue(
+      jsonResponse({
+        status: 'processing',
+        urls: { get: 'https://api/p/1' },
+      }) as never,
+    );
+
+    const out = await svc.separate({ sourceUrl: 'https://x/a.mp4' });
+
+    expect(out.ok).toBe(false);
+    expect(out.reason).toContain('timeout');
+  }, 30_000);
 });
 
 describe('splitStems — разбор ответа модели', () => {
