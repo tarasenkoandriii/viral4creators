@@ -43,7 +43,10 @@ export type AiProvider =
   | 'GROK'
   // doc/AVATAR-LIPSYNC-PIPELINE-SPEC.md — движок пилота говорящего
   // AI-аватара (Hedra Character-3), этап 72.
-  | 'HEDRA';
+  | 'HEDRA'
+  // docs-tz/TZ-Voice-Replace-Keep-Background.md — разделение звуковой
+  // дорожки на стемы (htdemucs), чтобы дубляж заменял голос, а не звук.
+  | 'REPLICATE';
 
 export const AI_PROVIDERS: readonly AiProvider[] = [
   'GEMINI',
@@ -56,6 +59,7 @@ export const AI_PROVIDERS: readonly AiProvider[] = [
   'RESEMBLE',
   'GROK',
   'HEDRA',
+  'REPLICATE',
 ];
 
 /** Операции, за которые сервис платит. Значения попадают в БД как есть. */
@@ -78,6 +82,14 @@ export type AiOperation =
   | 'reframe'
   | 'voiceover'
   | 'voiceover-preview'
+  // Разделение исходной дорожки на стемы перед дубляжом
+  // (docs-tz/TZ-Voice-Replace-Keep-Background.md) — отдельно от
+  // 'voiceover': тот платит за СИНТЕЗ новой речи, этот — за удаление
+  // старой из фонограммы, другой провайдер и другая ставка. В отчёте
+  // расходов их нельзя складывать: по этой строке видно, сколько
+  // стоит сохранение фона, и её одну можно будет выключить, если
+  // окажется, что оно того не стоит.
+  | 'audio-separation'
   // Перевод статьи блога через Grok Batch API (ТЗ §35.1, этап 57) —
   // отдельная операция, а не переиспользование 'analysis'/'prompt':
   // цена и провайдер (GROK) у неё свои, и в отчёте расходов (§26) она
@@ -243,6 +255,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   reframe: 'Обрезка кадра',
   voiceover: 'Озвучка',
   'voiceover-preview': 'Проба голоса',
+  'audio-separation': 'Разделение дорожки (сохранение фона при дубляже)',
   translate: 'Перевод статьи блога',
   'blog-analysis': 'Разбор ролика для блога',
   'analysis-translate': 'Перевод разбора видео',
@@ -486,6 +499,15 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
     // зависит от тарифа сервиса и здесь заведомо приблизительна.
     perCall: 0.01 * USD,
     note: 'оценка за одну обрезку восьмисекундного ролика; зависит от вашего тарифа — ПРОВЕРИТЬ',
+  },
+  htdemucs: {
+    provider: 'REPLICATE',
+    // Карточка модели на Replicate (`ryan5453/demucs`, сентябрь 2026):
+    // «This model costs approximately $0.026 to run … 38 runs per $1»,
+    // A100 40GB, около 23 секунд на прогон. Ставка за прогон, а не за
+    // секунду: мы не управляем тем, сколько модель считает.
+    perCall: 0.026 * USD,
+    note: 'карточка ryan5453/demucs на Replicate (~$0.026 за прогон, A100); зависит от загрузки — ПРОВЕРИТЬ',
   },
   'elevenlabs-tts': {
     provider: 'ELEVENLABS',

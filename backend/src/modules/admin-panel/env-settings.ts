@@ -740,6 +740,59 @@ export function getEnvSettings(
     });
   }
 
+  // ── Разделение дорожки (docs-tz/TZ-Voice-Replace-Keep-Background.md) ──
+
+  {
+    const raw = env.REPLICATE_API_TOKEN;
+    const set = Boolean(raw?.trim());
+    results.push({
+      key: 'REPLICATE_API_TOKEN',
+      group: 'Озвучка',
+      required: false,
+      set,
+      ok: true,
+      severity: set ? 'ok' : 'warning',
+      message: set
+        ? 'Задан — при дубляже исходная дорожка разделяется на стемы, и фон ролика (улица, музыка, шумы) возвращается под новый голос.'
+        : 'Не задан — дубляж выбрасывает исходную дорожку целиком, как и раньше: голос останется на тишине. Это рабочее состояние, а не сбой.',
+      // Значение не показываем — секрет.
+    });
+  }
+
+  {
+    // Версия модели, а не её имя: у Replicate вызов адресуется хешем
+    // версии, и «взять какую-нибудь» нельзя — счёт придёт настоящий.
+    const raw = env.REPLICATE_DEMUCS_VERSION;
+    const set = Boolean(raw?.trim());
+    results.push({
+      key: 'REPLICATE_DEMUCS_VERSION',
+      group: 'Озвучка',
+      required: false,
+      set,
+      ok: true,
+      severity: 'ok',
+      message:
+        'Хеш версии модели разделения (htdemucs) на Replicate. Без него разделение не вызывается даже при заданном токене: адресовать вызов некуда.',
+      value: raw ?? '(не задано — разделение выключено)',
+    });
+  }
+
+  {
+    const raw = env.REPLICATE_DEMUCS_INPUT;
+    results.push({
+      key: 'REPLICATE_DEMUCS_INPUT',
+      group: 'Озвучка',
+      required: false,
+      set: raw !== undefined,
+      ok: true,
+      severity: 'ok',
+      message:
+        'Необязательное переопределение тела запроса к модели (JSON; ссылка подставляется вместо "{{source}}"). Нужно, только если схема входа у модели отличается от умолчания — тогда это правка переменной, а не деплой.',
+      value:
+        raw ?? '(не задано — умолчание из replicate-separation.service.ts)',
+    });
+  }
+
   // ── Клонирование голоса (этап 73, TODO п.32) ──
 
   {

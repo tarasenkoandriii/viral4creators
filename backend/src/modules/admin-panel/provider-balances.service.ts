@@ -94,6 +94,8 @@ const NO_BALANCE_API: Record<string, string> = {
   HEDRA: 'публичного эндпоинта остатка нет — кредиты видно в кабинете',
   YOUTUBE: 'квота в единицах Google API, не деньги',
   FFMPEG: 'сервис без публичного биллингового API',
+  REPLICATE:
+    'остаток по ключу не отдаётся — смотрите в кабинете; оплата по факту прогонов',
 };
 
 /**
@@ -119,6 +121,7 @@ const DASHBOARD_URL: Record<string, string> = {
   HEDRA: 'https://www.hedra.com/',
   SERPAPI: 'https://serpapi.com/dashboard',
   YOUTUBE: 'https://console.cloud.google.com/apis/dashboard',
+  REPLICATE: 'https://replicate.com/account/billing',
 };
 
 @Injectable()
