@@ -53,6 +53,14 @@ export function usePostprodVideo(sessionId: string) {
   // приём, что часто используют другие экраны: счётчик в зависимостях
   // эффекта, инкремент которого — единственная задача reload().
   const [reloadKey, setReloadKey] = useState(0);
+  /**
+   * Для КАКОЙ сессии в состоянии лежат данные. Нужен экрану, чтобы
+   * отличить «ещё не загрузили» от «загрузили, и ролика нет»: между
+   * сменой `sessionId` и запуском эффекта успевает нарисоваться кадр
+   * со старым `loading: false`, и раньше он попадал в ветку «Ролик не
+   * найден» (см. `postprodViewState`).
+   */
+  const [loadedSessionId, setLoadedSessionId] = useState<string | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -92,6 +100,7 @@ export function usePostprodVideo(sessionId: string) {
       .then((s) => {
         if (!alive) return;
         setSession(s);
+        setLoadedSessionId(sessionId);
         if (s?.generatedVideo && shouldKeepPolling(s.generatedVideo)) {
           startPolling();
         }
@@ -130,6 +139,7 @@ export function usePostprodVideo(sessionId: string) {
   const video: GeneratedVideo | null = session?.generatedVideo ?? null;
 
   return {
+    loadedSessionId,
     session,
     video,
     voiceoverScript:

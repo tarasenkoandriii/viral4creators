@@ -131,7 +131,7 @@ describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () =>
       expect(plan.command).not.toContain('[0:a]');
       // А фон — есть, и он не приглушён: приглушать нечего, голос уже
       // удалён (замерено прототипом на настоящем ролике).
-      expect(plan.command).toContain('[2:a]volume=1[bg]');
+      expect(plan.command).toContain('[2:a]volume=1[bgraw]');
       expect(plan.command).toContain('amix=inputs=2');
       expect(plan.audio).toEqual({
         mode: 'dub',
@@ -177,7 +177,7 @@ describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () =>
       });
 
       expect(plan.command).toContain(
-        '[2:a]atrim=0:8,apad=whole_dur=8,volume=1[bg]',
+        '[2:a]atrim=0:8,apad=whole_dur=8,volume=1[bgraw]',
       );
     });
 
@@ -190,6 +190,42 @@ describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () =>
 
       expect(plan.command).toContain('[2:a]atrim=0:8,apad=whole_dur=8[st0]');
       expect(plan.command).toContain('[3:a]atrim=0:8,apad=whole_dur=8[st1]');
+    });
+
+    it('фон уходит назад ПОД РЕЧЬЮ, а не приглушён постоянно', () => {
+      // Находка прода 27.09.2026: фон на полной громкости местами
+      // перекрывал новый голос. Плоское приглушение вернуло бы нас к
+      // компромиссу, из которого вся работа и выросла: одно число
+      // решает и «слышно ли фон», и «слышно ли голос». Компрессор с
+      // боковой цепью убирает фон только там, где звучит реплика.
+      const plan = planPostProduction(base);
+
+      expect(plan.command).toContain('[vo]asplit=2[vo1][vosc]');
+      expect(plan.command).toContain('[bgraw][vosc]sidechaincompress=');
+      // В микс идёт вторая копия голоса, а фон — уже прижатый.
+      expect(plan.command).toContain('[bg][vo1]amix=');
+    });
+
+    it('фон остаётся первым входом микса — длина ролика держится на нём', () => {
+      const plan = planPostProduction({ ...base, musicInputKey: 'music' });
+
+      const mix = plan.command.slice(plan.command.indexOf('amix=inputs=3'));
+      expect(plan.command).toContain('[bg][vo1][mus]amix=inputs=3');
+      expect(mix).toContain('duration=first');
+    });
+
+    it('без своего голоса компрессор не появляется — прижимать нечем', () => {
+      // Тот же случай, что `voiceover`: там фоном служит исходная
+      // дорожка с голосом модели, и плоский duck — старое поведение,
+      // которое эта работа не трогает.
+      const plan = planPostProduction({
+        targetAspectRatio: '9:16',
+        voiceInputKey: 'voice',
+        voiceMode: 'voiceover',
+      });
+
+      expect(plan.command).not.toContain('sidechaincompress');
+      expect(plan.command).toContain('[0:a]volume=0.15[bg]');
     });
 
     it('стемы без своего голоса — отказ: заменять нечем', () => {
@@ -210,7 +246,7 @@ describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () =>
       const plan = planPostProduction({ ...base, musicInputKey: 'music' });
 
       expect(plan.inputKeys).toEqual(['source', 'voice', 'music', 'bg']);
-      expect(plan.command).toContain('[3:a]volume=1[bg]');
+      expect(plan.command).toContain('[3:a]volume=1[bgraw]');
     });
 
     it('наклейка остаётся последним входом даже со стемами', () => {

@@ -220,6 +220,38 @@ export interface PostProdOptions {
 export const DEFAULT_DUCK = 0.15;
 
 /**
+ * Приглушение фона ПОД РЕЧЬЮ для дубляжа со стемами
+ * (docs-tz/TZ-Voice-Replace-Keep-Background.md).
+ *
+ * Найдено на проде 27.09.2026, первым же роликом с настоящим фоном:
+ * фон, возвращённый на полной громкости, местами перекрывал новый
+ * голос. Прототип этого не показал — там под речью был ровный шум
+ * дороги, а на живом ролике фон динамический.
+ *
+ * Плоское приглушение (как `DEFAULT_DUCK` у `voiceover`) здесь —
+ * возврат к тому самому компромиссу, из которого вся работа и
+ * выросла: одно число одновременно решает «слышно ли фон» и «слышно
+ * ли голос», и любое его значение проигрывает в одном из двух. Фон
+ * должен звучать в полную силу там, где никто не говорит, и уходить
+ * назад ровно под репликой — это и делает `sidechaincompress`,
+ * которым дубляж сводят руками уже полвека.
+ *
+ * Числа: порог низкий (речь после `loudnorm` не тихая, но паузы между
+ * словами не должны поднимать фон рывками), отпускание длинное по той же
+ * причине — фон возвращается плавно, а не «дышит» в такт слогам.
+ */
+const BACKGROUND_DUCK = {
+  /** Выше этого уровня голоса фон начинает уходить назад. */
+  threshold: 0.03,
+  /** Во сколько раз давим при превышении. */
+  ratio: 8,
+  /** Мс: быстро уйти под начало реплики… */
+  attack: 20,
+  /** …и медленно вернуться, чтобы не дёргалось между словами. */
+  release: 400,
+} as const;
+
+/**
  * Разбор целевого формата: null означает «обрезать нечего», а не ошибку —
  * родной формат это нормальный, самый частый случай.
  */
@@ -298,6 +330,14 @@ export function audioMixFilters(input: {
   // `duration=first`, то есть обещание «длина ролика не изменится».
   const mixed: string[] = [];
   const totalSeconds = input.totalSeconds;
+  /**
+   * Приглушать ли фон под речью. Только для дубляжа со стемами: у
+   * `voiceover` фоном служит исходная дорожка с голосом модели, и там
+   * плоский `duck` — осознанное старое поведение, которое эта работа
+   * не трогает.
+   */
+  const duckByVoice =
+    !!input.voice && (input.source?.stemIndexes?.length ?? 0) > 0;
 
   if (input.music) {
     // `atrim` режет длинный трек, `apad` дотягивает короткий тишиной
@@ -339,7 +379,10 @@ export function audioMixFilters(input: {
       const fit = totalSeconds
         ? `atrim=0:${totalSeconds},apad=whole_dur=${totalSeconds},`
         : '';
-      const gain = `volume=${input.source.duck}[bg]`;
+      // Если под фон подмешивается наш голос, финальную метку `[bg]`
+      // даст компрессор ниже, а здесь фон только приводится к длине.
+      const out = duckByVoice ? '[bgraw]' : '[bg]';
+      const gain = `volume=${input.source.duck}${out}`;
       if (stems.length === 1) {
         filters.push(`[${stems[0]}:a]${fit}${gain}`);
       } else {
@@ -385,7 +428,22 @@ export function audioMixFilters(input: {
     filters.push(
       `[${input.voice.index}:a]${steps.length ? steps.join(',') : 'anull'}[vo]`,
     );
-    mixed.push('[vo]');
+
+    if (duckByVoice) {
+      // Голос нужен дважды: он и звучит, и управляет громкостью фона.
+      // `asplit` — единственный способ прочитать поток два раза.
+      filters.push('[vo]asplit=2[vo1][vosc]');
+      filters.push(
+        `[bgraw][vosc]sidechaincompress=` +
+          `threshold=${BACKGROUND_DUCK.threshold}:` +
+          `ratio=${BACKGROUND_DUCK.ratio}:` +
+          `attack=${BACKGROUND_DUCK.attack}:` +
+          `release=${BACKGROUND_DUCK.release}[bg]`,
+      );
+      mixed.push('[vo1]');
+    } else {
+      mixed.push('[vo]');
+    }
   }
 
   // Подложка, если она ещё не встала первой.

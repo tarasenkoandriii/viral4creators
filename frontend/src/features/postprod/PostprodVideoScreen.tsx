@@ -41,6 +41,7 @@ import { deletePostprodVideo } from '../../services/postprod-api';
 import { VideoPlayer } from '../../components/VideoPlayer';
 import { VideoProcessingStatus } from '../../components/VideoProcessingStatus';
 import { usePostprodVideo } from '../../hooks/usePostprodVideo';
+import { postprodViewState } from '../../lib/video-polling';
 import { RevoicePanel } from '../generation/RevoicePanel';
 import { ExportPanel } from '../generation/ExportPanel';
 import { AudioTracksPanel } from './AudioTracksPanel';
@@ -60,6 +61,7 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
     sourceTags,
     loading,
     error,
+    loadedSessionId,
     reVoice,
     setSnapshot,
     reload,
@@ -87,7 +89,19 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
     }
   };
 
-  if (loading) {
+  // Ветвление вынесено в чистое правило (`postprodViewState`) после
+  // находки 27.09.2026: на экране промигивало «Ролик не найден» —
+  // один кадр между сменой sessionId и запуском эффекта рисовался со
+  // старым `loading: false` и пустыми данными.
+  const viewState = postprodViewState({
+    loading,
+    error,
+    requestedId: sessionId,
+    loadedId: loadedSessionId,
+    hasVideo: !!video?.downloadUrl,
+  });
+
+  if (viewState === 'loading') {
     return (
       <div className="flex justify-center py-8">
         <Spinner size={26} />
@@ -95,7 +109,7 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
     );
   }
 
-  if (error) {
+  if (viewState === 'error') {
     return (
       <div className="animate-fadeIn">
         <ScreenHeader
@@ -111,7 +125,12 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
     );
   }
 
-  if (!video?.downloadUrl) {
+  // `!video?.downloadUrl` продублирован намеренно и только ради
+  // сужения типа: ниже по файлу `video` используется как непустой, а
+  // из строкового `viewState` компилятор этого не выводит. Предикат
+  // тот же самый, что ушёл в правило выше, так что разойтись им не на
+  // чем.
+  if (viewState === 'empty' || !video?.downloadUrl) {
     return (
       <div className="animate-fadeIn">
         <ScreenHeader
