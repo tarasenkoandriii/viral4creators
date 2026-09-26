@@ -243,6 +243,64 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
     );
   });
 
+  it('плотность пикселей по умолчанию 1 — крон снимает ровно то же, что снимал', async () => {
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service } = build();
+
+    await service.run({ routeKeys: ['projects'] });
+
+    expect(page.setViewport).toHaveBeenCalledWith({
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+    });
+  });
+
+  it('deviceScaleFactor: 2 доезжает до вьюпорта, а не теряется по дороге', async () => {
+    // Находка прода (этап I): прогон отдавал 390×844 растровых, а
+    // лендингу нужен кадр шириной 780. Растянуть постобработкой значит
+    // подделать резкость — скрипт обработки такой вход отклоняет.
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service } = build();
+
+    await service.run({
+      routeKeys: ['projects'],
+      unmasked: true,
+      deviceScaleFactor: 2,
+    });
+
+    expect(page.setViewport).toHaveBeenCalledWith({
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+    });
+  });
+
+  it('плотность больше 1 без unmasked отвергается — иначе подменит базовый отпечаток крона', async () => {
+    // Размер кадра входит в отпечаток. Маскированный прогон плотностью
+    // 2 записал бы строку, не сравнимую ни с одной прежней, и
+    // следующий тик крона честно закричал бы «изменилось». Отвергаем, а
+    // не исправляем молча: молчаливое исправление вернуло бы оператору
+    // кадр 390px, который он заметит только на шаге обработки.
+    const { service, prisma } = build();
+
+    await expect(
+      service.run({ routeKeys: ['projects'], deviceScaleFactor: 2 }),
+    ).rejects.toThrow(/unmasked/);
+    expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+    expect(prisma.uiSnapshot.create).not.toHaveBeenCalled();
+  });
+
   it('unmasked: сбой маршрута строку тоже не пишет, но сообщить о нём обязан', async () => {
     const page = buildFakePage();
     page.goto.mockRejectedValue(new Error('таймаут навигации'));

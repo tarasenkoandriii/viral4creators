@@ -185,6 +185,26 @@ export interface UiSnapshotRunOptions {
    * видит и уже чинит.
    */
   alerts?: boolean;
+  /**
+   * Плотность пикселей кадра (CSS-пиксель → сколько растровых). По
+   * умолчанию 1 — так ходит крон.
+   *
+   * Понадобилось на проде в этапе I: вьюпорт здесь 390×844 CSS-пикселей,
+   * и при плотности 1 файл выходит ровно 390×844 растровых. Лендингу
+   * нужен кадр шириной 780 — то есть тот же экран, снятый плотностью 2.
+   * Растянуть 390 до 780 постобработкой нельзя: это не резкость, а её
+   * имитация, и `scripts/tutorial-frames-process.mjs` такой вход
+   * отклоняет.
+   *
+   * **Только вместе с `unmasked`.** Плотность меняет размер кадра, а
+   * размер кадра меняет отпечаток: маскированный прогон с плотностью 2
+   * записал бы в базу строку, не сравнимую ни с одной прежней, и
+   * следующий тик крона честно закричал бы «изменилось». Поэтому
+   * сочетание отвергается, а не молча исправляется — молчаливое
+   * исправление вернуло бы оператору кадр 390px, который он заметит
+   * только на шаге обработки.
+   */
+  deviceScaleFactor?: number;
 }
 
 export interface UiSnapshotRouteOutcome {
@@ -230,6 +250,14 @@ export class UiSnapshotRunnerService {
     const theme = options.theme ?? DEFAULT_THEME;
     const unmasked = options.unmasked === true;
     const alerts = options.alerts !== false;
+    const deviceScaleFactor = options.deviceScaleFactor ?? 1;
+    if (deviceScaleFactor !== 1 && !unmasked) {
+      // См. `UiSnapshotRunOptions.deviceScaleFactor`: иной размер кадра —
+      // иной отпечаток, и маскированный прогон испортил бы базу сравнения.
+      throw new Error(
+        'deviceScaleFactor > 1 допустим только вместе с unmasked: иначе прогон подменит базовый отпечаток крона',
+      );
+    }
     const routeKeys =
       options.routeKeys && options.routeKeys.length > 0
         ? [...options.routeKeys]
@@ -308,7 +336,7 @@ export class UiSnapshotRunnerService {
           token,
           tmaBaseUrl,
           wizardSessionId,
-          { locale, theme, unmasked },
+          { locale, theme, unmasked, deviceScaleFactor },
         );
         outcomes.push(outcome);
         // Сбой снять НАДО сообщить в любом прогоне: немаскированный
@@ -351,7 +379,12 @@ export class UiSnapshotRunnerService {
     token: string,
     tmaBaseUrl: string,
     wizardSessionId: string | undefined,
-    view: { locale: string; theme: SnapshotTheme; unmasked: boolean },
+    view: {
+      locale: string;
+      theme: SnapshotTheme;
+      unmasked: boolean;
+      deviceScaleFactor: number;
+    },
   ): Promise<UiSnapshotRouteOutcome> {
     let page: import('puppeteer-core').Page | undefined;
     try {
@@ -361,7 +394,10 @@ export class UiSnapshotRunnerService {
       }
 
       page = await browser.newPage();
-      await page.setViewport(VIEWPORT);
+      await page.setViewport({
+        ...VIEWPORT,
+        deviceScaleFactor: view.deviceScaleFactor,
+      });
       // Тот же приём, что `TutorialScenarioRunnerService.runOne` — заголовок
       // уходит со всеми запросами страницы (CDP `Network.setExtraHTTPHeaders`),
       // включая XHR/fetch самого SPA к API бэкенда.

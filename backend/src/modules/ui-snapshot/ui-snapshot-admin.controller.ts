@@ -58,6 +58,7 @@ interface RunSnapshotBody {
   theme?: unknown;
   routeKeys?: unknown;
   unmasked?: unknown;
+  deviceScaleFactor?: unknown;
 }
 
 @Controller('admin/ui-snapshot')
@@ -114,6 +115,27 @@ export class UiSnapshotAdminController {
       routeKeys = (body.routeKeys as string[]).map((k) => k.trim());
     }
 
+    // Плотность пикселей. Нужна лендингу: вьюпорт прогона — 390 CSS-
+    // пикселей, а кадру на странице нужно 780 растровых, и растянуть
+    // одно до другого постобработкой значит подделать резкость.
+    // Разрешены только 1 и 2: промежуточные дают дробные размеры кадра,
+    // а больше 2 — файл, который всё равно ужимать.
+    const unmasked = body.unmasked === true;
+    let deviceScaleFactor: number | undefined;
+    if (body.deviceScaleFactor !== undefined) {
+      if (body.deviceScaleFactor !== 1 && body.deviceScaleFactor !== 2) {
+        throw new BadRequestException('deviceScaleFactor должен быть 1 или 2');
+      }
+      // Тот же запрет стоит и в сервисе — там он последняя линия для
+      // любого вызывающего, здесь он даёт 400 с объяснением вместо 500.
+      if (body.deviceScaleFactor === 2 && !unmasked) {
+        throw new BadRequestException(
+          'deviceScaleFactor: 2 допустим только с unmasked: true — иначе прогон подменит базовый отпечаток крона',
+        );
+      }
+      deviceScaleFactor = body.deviceScaleFactor;
+    }
+
     // Неизвестное имя маршрута сюда не проверяем специально: резолвер
     // ответит на него понятной причиной в `outcomes[].error`, и это
     // лучше, чем 400 без указания, какой именно из пяти переданных
@@ -127,7 +149,8 @@ export class UiSnapshotAdminController {
       locale,
       theme,
       routeKeys,
-      unmasked: body.unmasked === true,
+      unmasked,
+      deviceScaleFactor,
       alerts: false,
     });
   }

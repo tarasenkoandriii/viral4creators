@@ -41,9 +41,27 @@ const LOCALES = ['ru', 'uk', 'en', 'de', 'es'];
 const OUT_DIR = 'landing/public/illustrations';
 /** Тот же потолок, что проверяет шов 17 в `check-docs.mjs`. */
 const MAX_BYTES = 120 * 1024;
-/** Доля кадра сверху, которую оставляем. Совпадает с расчётом ширины
- *  снимка в `landing/src/lib/tutorial-frames.ts` (780×1012). */
-const KEEP = 0.6;
+/**
+ * Доля кадра сверху, которую оставляем. Совпадает с размерами снимка,
+ * объявленными в `landing/src/lib/tutorial-frames.ts`.
+ *
+ * **0.85, а не 0.6 — правка по первому настоящему кадру с прода
+ * (26.09.2026).** 0.6 брались из головы: «внизу у мастера пусто». На
+ * снимке экрана `url` главная кнопка («Исследовать») стоит на 666-м
+ * пикселе из 844 — то есть 0.6 срезала ровно то действие, ради
+ * которого экран существует. 0.85 = 717px: кнопка целиком, подвал с
+ * юридическими ссылками (с 775-го) отрезан.
+ */
+const KEEP = 0.85;
+
+/**
+ * Ширина, к которой приводим. Апскейл ЗАПРЕЩЁН (см. проверку ниже):
+ * прогон снимков сегодня ходит вьюпортом 390×844 без множителя
+ * плотности, то есть отдаёт 390px по ширине. Растянуть их до 780
+ * означало бы удвоить вес файла, не добавив ни одной детали, и выдать
+ * мыло за retina. Чтобы получить настоящие 780, прогону нужен
+ * `deviceScaleFactor: 2` — этого параметра у него пока нет.
+ */
 const TARGET_WIDTH = 780;
 
 const [locale, ...inputs] = process.argv.slice(2);
@@ -70,6 +88,28 @@ if (!ffmpeg) {
 
 const tmp = mkdtempSync(path.join(tmpdir(), 'frames-'));
 try {
+  // Апскейл — это тихая потеря качества, поэтому он не допущение, а
+  // остановка. Сообщение называет причину и лекарство.
+  for (const input of inputs) {
+    const probe = execFileSync(
+      ffmpeg.replace(/ffmpeg$/, 'ffprobe'),
+      ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width',
+       '-of', 'csv=p=0', input],
+      { encoding: 'utf8' },
+    ).trim();
+    const srcWidth = Number(probe);
+    if (!Number.isFinite(srcWidth) || srcWidth < TARGET_WIDTH) {
+      console.error(
+        `${input}: ширина ${srcWidth || '?'}px, нужна ${TARGET_WIDTH}. Вьюпорт прогона — ` +
+          '390×844 CSS-пикселей, и при плотности 1 файл выходит ровно такой; растянуть ' +
+          'его до 780 значит удвоить вес, не добавив ни одной детали. Снимайте с ' +
+          '"deviceScaleFactor": 2 в POST /admin/ui-snapshot/run (только вместе с ' +
+          '"unmasked": true, см. doc/TUTORIAL-FRAMES-CAPTURE.md).',
+      );
+      process.exit(1);
+    }
+  }
+
   inputs.forEach((input, i) => {
     const index = i + 1;
     const filter = `crop=iw:floor(ih*${KEEP}/2)*2:0:0,scale=${TARGET_WIDTH}:-2:flags=lanczos`;
