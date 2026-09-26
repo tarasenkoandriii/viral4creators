@@ -42,6 +42,12 @@ export const FIXTURE_IDS = {
   item: 'fixture-tutorial-item',
   session: 'fixture-tutorial-session',
   generatedVideo: 'fixture-tutorial-generated-video',
+  /** Проект ТРЕТЬЕГО типа (`CLIENT_SITE`) — отдельный от рекламного, а
+   *  не тот же самый: у `CLIENT_SITE` нет товаров, всё специфичное живёт
+   *  в `ClientSiteTutorialDraft`. Заведён этапом G ТЗ
+   *  `docs-tz/TZ-Enterprise-Tutorial-Landing.md`, чтобы маршрут
+   *  `site-tutorial` было на чём резолвить. */
+  clientSiteProject: 'fixture-tutorial-client-site-project',
 } as const;
 
 export interface FixtureSeedResult {
@@ -52,6 +58,7 @@ export interface FixtureSeedResult {
   projectId: string;
   itemId: string;
   sessionId: string;
+  clientSiteProjectId: string;
   /** Человекочитаемый журнал шагов — тот же текст, что раньше шёл в console.log CLI-скрипта. */
   log: string[];
 }
@@ -136,6 +143,38 @@ export async function seedFixtureUser(
   });
   log.push(`Товар: ${item.id}`);
 
+  /**
+   * Проект-обучалка по сайту заказчика (этап G ТЗ
+   * `docs-tz/TZ-Enterprise-Tutorial-Landing.md`).
+   *
+   * Черновик (`ClientSiteTutorialDraft`) здесь СОЗНАТЕЛЬНО не заводится,
+   * хотя без него визард открывается только на первой стадии («вставьте
+   * адрес»). Черновик обязан нести `roundScreenshots` — настоящие кадры
+   * чужого сайта, снятые настоящим раундом. Выдумать их нельзя: фикстура
+   * с несуществующими картинками дала бы экран с битыми кадрами, и
+   * первый же снимок для лендинга оказался бы снимком поломки. Стадии
+   * `page`/`review` снимаются прогоном по живому сайту (этап I того же
+   * ТЗ), а не подделкой данных.
+   *
+   * То же основание, что у `generatedVideo.pathname` ниже, но вывод
+   * ОБРАТНЫЙ, и это не противоречие: там несуществующий файл безвреден,
+   * потому что раннер работает с DOM и видео не скачивает; здесь кадры
+   * — это и есть то, что видно на экране.
+   */
+  const clientSiteProject = await prisma.project.upsert({
+    where: { id: FIXTURE_IDS.clientSiteProject },
+    update: { userId: user.id },
+    create: {
+      id: FIXTURE_IDS.clientSiteProject,
+      userId: user.id,
+      type: ProjectType.CLIENT_SITE,
+      title: 'Fixture Client Site Tutorial',
+      countryCode: 'UA',
+      currency: currencyForCountry('UA') ?? 'UAH',
+    },
+  });
+  log.push(`Проект-обучалка (CLIENT_SITE): ${clientSiteProject.id}`);
+
   // См. доккомментарий файла: реального файла в Blob по этому pathname
   // нет и не будет создано этой функцией.
   const generatedVideo = {
@@ -197,6 +236,7 @@ export async function seedFixtureUser(
     projectId: project.id,
     itemId: item.id,
     sessionId: FIXTURE_IDS.session,
+    clientSiteProjectId: clientSiteProject.id,
     log,
   };
 }

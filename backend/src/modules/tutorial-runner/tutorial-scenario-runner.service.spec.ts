@@ -231,6 +231,54 @@ describe('TutorialScenarioRunnerService', () => {
     );
   });
 
+  it('проект обучалки и рекламный проект — РАЗНЫЕ строки, а не «самая свежая»', async () => {
+    // Этап G ТЗ `docs-tz/TZ-Enterprise-Tutorial-Landing.md`. До него
+    // контекст брал «самый свежий проект пользователя» без типа. Как
+    // только фикстура завела второй проект (`CLIENT_SITE`), он стал
+    // самым свежим — и рекламные маршруты начали бы строить путь к
+    // товару внутри проекта, у которого товаров нет по построению.
+    //
+    // Мок отвечает ПО ТИПУ в `where`: если фильтр убрать, обе ветки
+    // получат одну и ту же строку, и оба ожидания ниже упадут.
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, prisma } = build([
+      {
+        id: 'ts-cs',
+        subjectKey: 'cs',
+        steps: [
+          { kind: 'goto', route: 'project' },
+          { kind: 'goto', route: 'site-tutorial' },
+        ],
+      },
+    ]);
+    prisma.project.findFirst = jest.fn().mockImplementation((args: any) => {
+      const type = args?.where?.type;
+      if (type === 'CLIENT_SITE') return Promise.resolve({ id: 'proj-cs' });
+      if (type?.in) return Promise.resolve({ id: 'proj-ad' });
+      // Запрос без фильтра по типу — та самая прежняя форма. Возвращаем
+      // заведомо негодный id, чтобы тест упал громко, а не «почти
+      // прошёл».
+      return Promise.resolve({ id: 'proj-UNFILTERED' });
+    });
+
+    const result = await service.run();
+
+    expect(result.failed).toBe(0);
+    const urls = (page.goto as jest.Mock).mock.calls.map(
+      (c: unknown[]) => c[0] as string,
+    );
+    expect(urls.some((u) => u.endsWith('#/projects/proj-ad'))).toBe(true);
+    expect(
+      urls.some((u) => u.endsWith('#/projects/proj-cs/site-tutorial')),
+    ).toBe(true);
+    expect(urls.some((u) => u.includes('proj-UNFILTERED'))).toBe(false);
+  });
+
   describe('видео (этап 98) — сборка слайд-шоу через внешний ffmpeg-api', () => {
     it('FFMPEG_API_KEY не настроен — успешный сценарий не пытается грузить кадры/сабмитить сборку', async () => {
       const page = buildFakePage({ screenshot: true });

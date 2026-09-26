@@ -1170,6 +1170,63 @@ function checkGuideSeams() {
     }
   }
 
+  // 15. Копия таблицы маршрутов в бэкенде не должна отставать от
+  //     фронтенда.
+  //
+  //     `backend/.../tutorial-runner/route-templates.ts` держит ОСОЗНАННУЮ
+  //     копию имён маршрутов из `frontend/src/lib/router.ts` — кросс-
+  //     импорта между пакетами в проекте нет нигде, и её доккомментарий
+  //     честно просит «поправить руками при изменении маршрутов».
+  //
+  //     Просьба не сработала ни разу. К 26.09.2026 во фронтенде было 26
+  //     имён, в копии 21: отстали `site-tutorial`, `greeting-video`,
+  //     `testing`, `api-keys`, `invite`. Обнаружилось случайно, когда
+  //     понадобилось снять кадры мастера обучалки для лендинга, — то
+  //     есть копия была сломана месяцами и молчала.
+  //
+  //     Шов читает оба файла текстом (не импортом: пакеты остаются
+  //     несвязанными) и сверяет множества имён в обе стороны. Отставание
+  //     копии он ловит сразу; удалённый во фронтенде маршрут, оставшийся
+  //     в копии, — тоже.
+  const routerSrc = read('frontend/src/lib/router.ts');
+  const builderSrc = read(
+    'backend/src/modules/tutorial-runner/route-templates.ts',
+  );
+  const frontRoutes = new Set(
+    [...routerSrc.matchAll(/\{\s*name:\s*'([a-z-]+)'/g)].map((m) => m[1]),
+  );
+  const buildersBlock =
+    builderSrc.match(
+      /const ROUTE_BUILDERS[^=]*=\s*\{([\s\S]*?)\n\};/,
+    )?.[1] ?? '';
+  const backRoutes = new Set(
+    [...buildersBlock.matchAll(/^ {2}'?([a-z-]+)'?:/gm)].map((m) => m[1]),
+  );
+  if (frontRoutes.size === 0 || backRoutes.size === 0) {
+    problems.push(
+      'не удалось разобрать таблицы маршрутов — проверьте регулярки шва 15 ' +
+        'в scripts/check-docs.mjs (сам шов сломан, а не код)',
+    );
+  }
+  for (const name of frontRoutes) {
+    if (!backRoutes.has(name)) {
+      problems.push(
+        `маршрут «${name}» есть во frontend/src/lib/router.ts, но копия в ` +
+          'backend/.../tutorial-runner/route-templates.ts о нём не знает — ' +
+          'резолвер сценариев ответит «не найдено» на существующий экран',
+      );
+    }
+  }
+  for (const name of backRoutes) {
+    if (!frontRoutes.has(name)) {
+      problems.push(
+        `маршрут «${name}» перечислен в route-templates.ts, но во ` +
+          'frontend/src/lib/router.ts такого имени нет — копия отстала в ' +
+          'другую сторону',
+      );
+    }
+  }
+
   if (problems.length > 0) {
     failed++;
     console.log('FAIL швы советника в мастере:');
@@ -1190,7 +1247,8 @@ function checkGuideSeams() {
         `мест, решающих по разбору: ${sceneReaders.length}; ` +
         `частей ключа группировки находок (клиент = сервер): ${envKeyLen}; ` +
         `полей окружения, которые сервер ждёт от клиента: ${envFieldCount}; ` +
-        `мест, пишущих тестировщику по тикету: ${callers.length}`,
+        `мест, пишущих тестировщику по тикету: ${callers.length}; ` +
+        `имён маршрутов TMA (фронтенд = копия в бэкенде): ${frontRoutes.size}`,
     );
   }
 }

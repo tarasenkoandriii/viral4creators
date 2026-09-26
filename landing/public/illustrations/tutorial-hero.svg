@@ -1,0 +1,110 @@
+<!-- Кадр продукта для hero (этап E ТЗ docs-tz/TZ-Enterprise-Tutorial-Landing.md).
+     Не повторяет ни одну из четырёх схем секции «Как это выглядит»: там
+     четыре момента по очереди, здесь весь механизм одним кадром —
+     экран сайта, разобранный список того, что на нём нашлось, панель
+     мастера поверх и готовый ролик внизу. Текста нет ни одного символа,
+     поэтому картинка одна на пять локалей. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 620" role="img" aria-hidden="true" focusable="false">
+  <rect width="960" height="620" fill="#08080a"/>
+  <defs>
+    <linearGradient id="hpanel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#212127"/>
+      <stop offset="1" stop-color="#17171b"/>
+    </linearGradient>
+    <linearGradient id="hcta" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8098ff"/>
+      <stop offset="1" stop-color="#5c7dff"/>
+    </linearGradient>
+    <linearGradient id="hglass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".07"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="hglow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#6c8cff" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#6c8cff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="hlift" x="-25%" y="-25%" width="150%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#000000" flood-opacity=".6"/>
+    </filter>
+  </defs>
+
+  <ellipse cx="420" cy="250" rx="420" ry="280" fill="url(#hglow)"/>
+
+  <!-- Дальний план: настоящий экран сайта заказчика. -->
+  <g filter="url(#hlift)">
+    <rect x="56" y="44" width="620" height="372" rx="22" fill="#101014" stroke="#26262c" stroke-width="3"/>
+  </g>
+  <path d="M56 92H676" stroke="#26262c" stroke-width="3"/>
+  <circle cx="86" cy="68" r="7" fill="#9a9a9a" opacity=".35"/>
+  <circle cx="108" cy="68" r="7" fill="#9a9a9a" opacity=".35"/>
+  <circle cx="130" cy="68" r="7" fill="#9a9a9a" opacity=".35"/>
+  <rect x="156" y="60" width="240" height="15" rx="7.5" fill="#9a9a9a" opacity=".16"/>
+
+  <rect x="88" y="118" width="210" height="20" rx="6" fill="#ececec" opacity=".5"/>
+  <rect x="88" y="154" width="340" height="12" rx="6" fill="#9a9a9a" opacity=".26"/>
+  <rect x="88" y="176" width="290" height="12" rx="6" fill="#9a9a9a" opacity=".26"/>
+  <rect x="88" y="206" width="380" height="48" rx="11" fill="#08080a" stroke="#34343c" stroke-width="3"/>
+  <rect x="110" y="223" width="130" height="14" rx="7" fill="#9a9a9a" opacity=".3"/>
+  <rect x="88" y="252" width="380" height="48" rx="11" fill="#08080a" stroke="#34343c" stroke-width="3"/>
+  <rect x="110" y="269" width="170" height="14" rx="7" fill="#9a9a9a" opacity=".3"/>
+  <rect x="88" y="306" width="170" height="44" rx="11" fill="#2a2a33" stroke="#3c3c46" stroke-width="3"/>
+  <rect x="112" y="321" width="96" height="13" rx="6.5" fill="#9a9a9a" opacity=".5"/>
+
+  <!-- Выноски: не просто сняли картинку — разобрали, что на ней есть. -->
+  <g stroke="#6c8cff" stroke-width="4" opacity=".9">
+    <path d="M468 230H628"/>
+    <path d="M468 276H628"/>
+    <path d="M258 328H628"/>
+  </g>
+  <g fill="#6c8cff">
+    <circle cx="468" cy="230" r="7"/>
+    <circle cx="468" cy="276" r="7"/>
+    <circle cx="258" cy="328" r="7"/>
+  </g>
+
+  <!-- Средний план: список найденных полей и кнопок. -->
+  <g filter="url(#hlift)">
+    <rect x="628" y="186" width="286" height="200" rx="20" fill="#17171c" stroke="#32323c" stroke-width="3"/>
+  </g>
+  <rect x="628" y="186" width="286" height="200" rx="20" fill="url(#hglass)"/>
+  <g>
+    <rect x="650" y="208" width="242" height="44" rx="12" fill="#0e0e12" stroke="#2c2c35" stroke-width="3"/>
+    <rect x="666" y="219" width="22" height="22" rx="6" fill="#6c8cff" opacity=".18"/>
+    <rect x="666" y="219" width="22" height="22" rx="6" fill="none" stroke="#6c8cff" stroke-width="3"/>
+    <rect x="704" y="223" width="140" height="13" rx="6.5" fill="#9a9a9a" opacity=".5"/>
+
+    <rect x="650" y="254" width="242" height="44" rx="12" fill="#0e0e12" stroke="#2c2c35" stroke-width="3"/>
+    <rect x="666" y="265" width="22" height="22" rx="6" fill="#6c8cff" opacity=".18"/>
+    <rect x="666" y="265" width="22" height="22" rx="6" fill="none" stroke="#6c8cff" stroke-width="3"/>
+    <rect x="704" y="269" width="112" height="13" rx="6.5" fill="#9a9a9a" opacity=".5"/>
+
+    <rect x="650" y="306" width="242" height="44" rx="12" fill="#0e0e12" stroke="#2c2c35" stroke-width="3"/>
+    <rect x="666" y="317" width="22" height="22" rx="6" fill="#6c8cff" opacity=".18"/>
+    <rect x="666" y="317" width="22" height="22" rx="6" fill="none" stroke="#6c8cff" stroke-width="3"/>
+    <rect x="704" y="321" width="126" height="13" rx="6.5" fill="#9a9a9a" opacity=".5"/>
+  </g>
+
+  <!-- Ближний план: панель мастера, откуда всё начинается. -->
+  <g filter="url(#hlift)">
+    <rect x="96" y="360" width="460" height="232" rx="24" fill="url(#hpanel)" stroke="#3b3b44" stroke-width="3"/>
+  </g>
+  <rect x="96" y="360" width="460" height="232" rx="24" fill="url(#hglass)"/>
+  <rect x="132" y="388" width="150" height="13" rx="6.5" fill="#9a9a9a" opacity=".5"/>
+  <rect x="126" y="408" width="400" height="80" rx="20" fill="none" stroke="#6c8cff" stroke-width="6" opacity=".22"/>
+  <rect x="132" y="414" width="388" height="68" rx="16" fill="#08080a" stroke="#6c8cff" stroke-width="4"/>
+  <circle cx="168" cy="448" r="14" fill="none" stroke="#9a9a9a" stroke-width="4" opacity=".75"/>
+  <path d="M154 448h28M168 434c7 7 7 21 0 28-7-7-7-21 0-28" fill="none" stroke="#9a9a9a" stroke-width="4" opacity=".75"/>
+  <rect x="200" y="441" width="196" height="15" rx="7.5" fill="#ececec" opacity=".72"/>
+  <rect x="410" y="430" width="6" height="38" rx="3" fill="#6c8cff"/>
+  <rect x="132" y="502" width="388" height="62" rx="16" fill="url(#hcta)"/>
+  <rect x="277" y="526" width="98" height="15" rx="7.5" fill="#06060a" opacity=".8"/>
+
+  <!-- И то, ради чего всё: собранный ролик со ссылкой. -->
+  <g filter="url(#hlift)">
+    <rect x="612" y="440" width="302" height="72" rx="18" fill="#0f0f13" stroke="#6c8cff" stroke-width="3"/>
+  </g>
+  <circle cx="654" cy="476" r="20" fill="none" stroke="#6c8cff" stroke-width="4"/>
+  <path d="M648 466l14 10-14 10z" fill="#6c8cff"/>
+  <rect x="692" y="460" width="180" height="13" rx="6.5" fill="#ececec" opacity=".55"/>
+  <rect x="692" y="483" width="120" height="11" rx="5.5" fill="#9a9a9a" opacity=".35"/>
+</svg>

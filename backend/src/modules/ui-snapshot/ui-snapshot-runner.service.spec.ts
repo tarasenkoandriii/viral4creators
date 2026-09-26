@@ -164,6 +164,217 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
     expect(notify.alert).not.toHaveBeenCalled();
   });
 
+  it('локаль и тема ВЫСТАВЛЯЮТСЯ в браузере, а не только записываются в строку', async () => {
+    // До этапа H `locale`/`theme` были ярлыками: прогон писал их в
+    // `UiSnapshot` и нигде не применял, а совпадение с реальностью
+    // держалось на том, что `defaultLocale` фронтенда тоже `ru`, а
+    // headless-Chromium по умолчанию светлый. Ключи ниже — те же, что
+    // пишет сам продукт (`frontend/src/lib/i18n.ts`, `lib/theme.ts`).
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, prisma } = build();
+
+    await service.run({ locale: 'uk', theme: 'dark', routeKeys: ['projects'] });
+
+    const initArgs = (page.evaluateOnNewDocument as jest.Mock).mock.calls.map(
+      (c: unknown[]) => c.slice(1),
+    );
+    expect(initArgs).toContainEqual(['uk', 'dark']);
+    // И то же самое попало в строку — ярлык и настройка больше не могут
+    // разойтись.
+    expect(prisma.uiSnapshot.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ locale: 'uk', theme: 'dark' }),
+      }),
+    );
+  });
+
+  it('routeKeys сужает обход, total считается по переданным', async () => {
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, blob } = build();
+
+    const result = await service.run({ routeKeys: ['projects', 'manifests'] });
+
+    expect(result.total).toBe(2);
+    expect(blob.uploadBuffer).toHaveBeenCalledTimes(2);
+  });
+
+  it('unmasked: не маскирует, не пишет строку, не сравнивает — и отдаёт адрес файла', async () => {
+    // Смысл флага: маркетинговому снимку кадр чужого сайта нужен
+    // видимым, а крону он шум. Если бы такой снимок лёг в ту же
+    // историю, он подменил бы базовый отпечаток, и следующий тик крона
+    // честно закричал бы «изменилось» на собственную же картинку.
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, prisma, notify, blob } = build();
+
+    const result = await service.run({
+      routeKeys: ['projects'],
+      unmasked: true,
+      theme: 'dark',
+    });
+
+    expect(page.evaluate).not.toHaveBeenCalled();
+    expect(prisma.uiSnapshot.create).not.toHaveBeenCalled();
+    expect(prisma.uiSnapshot.findFirst).not.toHaveBeenCalled();
+    expect(notify.alert).not.toHaveBeenCalled();
+    // Отдельный префикс: снимок «на показ» нельзя спутать с базовым ни
+    // глазами в консоли хранилища, ни скриптом.
+    expect(blob.uploadBuffer).toHaveBeenCalledWith(
+      expect.stringMatching(/^qa-shots\/projects\/ru\/dark\//),
+      expect.anything(),
+      'image/png',
+    );
+    expect(result.outcomes[0].blobUrl).toBe(
+      'https://blob.example.com/snap.png',
+    );
+  });
+
+  it('unmasked: сбой маршрута строку тоже не пишет, но сообщить о нём обязан', async () => {
+    const page = buildFakePage();
+    page.goto.mockRejectedValue(new Error('таймаут навигации'));
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, prisma, notify } = build();
+
+    const result = await service.run({
+      routeKeys: ['projects'],
+      unmasked: true,
+    });
+
+    expect(result.failed).toBe(1);
+    expect(prisma.uiSnapshot.create).not.toHaveBeenCalled();
+    // Прогон запускает человек и ждёт результата: молчание — худший
+    // ответ из возможных.
+    expect(notify.alert).toHaveBeenCalledWith(
+      'ui-snapshot-run:projects:error',
+      expect.stringContaining('таймаут навигации'),
+    );
+  });
+
+  it('alerts:false — ни одной тревоги в канал, даже когда маршрут упал', async () => {
+    // Правка аудита: ручной прогон отдаёт весь результат вызывающему
+    // синхронно. Тревога в общий канал о сбое, который человек уже
+    // видит перед собой, — засорение, а не забота.
+    const page = buildFakePage();
+    page.goto.mockRejectedValue(new Error('таймаут навигации'));
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, notify } = build();
+
+    const result = await service.run({
+      routeKeys: ['projects'],
+      alerts: false,
+    });
+
+    expect(result.failed).toBe(1);
+    expect(result.outcomes[0].error).toContain('таймаут навигации');
+    expect(notify.alert).not.toHaveBeenCalled();
+  });
+
+  it('alerts:false — молчит и когда браузер вовсе не поднялся', async () => {
+    launchHeadlessBrowserMock.mockResolvedValue({ error: 'нет памяти' });
+    const { service, notify } = build();
+
+    const result = await service.run({ alerts: false });
+
+    expect(result.failed).toBe(5);
+    expect(notify.alert).not.toHaveBeenCalled();
+  });
+
+  it('служебная сессия заводится ТОЛЬКО когда в прогоне есть мастер', async () => {
+    // Иначе разовый снимок одного экрана оставлял бы пользователю
+    // строку в `Session` ни за чем.
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, prisma } = build();
+
+    // `session.findFirst` зовётся и разрешением фикстурного контекста
+    // (ему нужен ГОТОВЫЙ ролик для `postprod-video`), поэтому считаем
+    // не вызовы вообще, а именно запрос служебной сессии — он узнаётся
+    // по метке `qaFixture`.
+    const qaLookups = () =>
+      (prisma.session.findFirst as jest.Mock).mock.calls.filter((c: any[]) =>
+        JSON.stringify(c[0]).includes('qaFixture'),
+      ).length;
+
+    await service.run({ routeKeys: ['projects'] });
+    expect(qaLookups()).toBe(0);
+
+    (prisma.session.findFirst as jest.Mock).mockClear();
+    await service.run({ routeKeys: ['generate'] });
+    expect(qaLookups()).toBe(1);
+  });
+
+  it('бюджет времени кончился — сколько маршрутов отложено, видно в результате', async () => {
+    // Без `deferred` обрезка была молчаливой: `total` говорил одно,
+    // длина `outcomes` другое, и разбираться приходилось глазами.
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service } = build();
+
+    // Часы прыгают за дедлайн после первого снятого маршрута.
+    const realNow = Date.now.bind(Date);
+    let shots = 0;
+    page.screenshot.mockImplementation(async () => {
+      shots += 1;
+      return new Uint8Array([1]);
+    });
+    const spy = jest
+      .spyOn(Date, 'now')
+      .mockImplementation(() =>
+        shots >= 1 ? realNow() + 10 * 60 * 1000 : realNow(),
+      );
+
+    const result = await service.run();
+
+    spy.mockRestore();
+    expect(result.total).toBe(5);
+    expect(result.outcomes.length).toBe(1);
+    expect(result.deferred).toBe(4);
+  });
+
+  it('обычный прогон deferred не выставляет вовсе', async () => {
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service } = build();
+
+    const result = await service.run();
+
+    expect(result.deferred).toBeUndefined();
+  });
+
   it('маскирование переменных зон вызывается ДО скриншота ([data-qa-mask])', async () => {
     const page = buildFakePage();
     const calls: string[] = [];

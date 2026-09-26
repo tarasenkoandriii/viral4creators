@@ -840,9 +840,22 @@ function PageStage(props: {
   return (
     <div className="space-y-4">
       <Card className="p-3">
+        {/* `data-qa-mask` (этап G ТЗ
+            `docs-tz/TZ-Enterprise-Tutorial-Landing.md`) — кадр чужого
+            сайта меняется КАЖДЫЙ прогон, и для крона UI-снимков это
+            чистый шум: отпечаток расходился бы всегда, то есть тревога
+            перестала бы что-либо значить.
+
+            У этой пометки есть вторая сторона, и о ней надо знать: та
+            же маска прячет кадр и на снимке, который делается ДЛЯ
+            лендинга, — а там кадр и есть весь смысл. Разрешается это не
+            здесь: этап H того же ТЗ добавляет прогону параметр
+            «снимать без масок», и маркетинговый прогон идёт с ним.
+            Регрессионный крон — без. */}
         <img
           src={exploration.screenshotDataUrl}
           alt=""
+          data-qa-mask="client-site-frame"
           className="w-full rounded border border-[var(--border)]"
         />
         <p className="mt-2 text-xs text-[var(--muted)] break-all">
@@ -1114,9 +1127,11 @@ function ReviewStage(props: {
                 className="shrink-0 relative"
                 aria-label={`${t.frameLabel} ${i + 1}`}
               >
+                {/* Та же причина и та же оговорка, что у кадра выше. */}
                 <img
                   src={src}
                   alt=""
+                  data-qa-mask="client-site-frame"
                   className="h-40 rounded border border-[var(--border)]"
                 />
                 {/* Номер прямо на кадре — нижний уровень степпера

@@ -22,6 +22,64 @@
  * globals.css), без второй копии разметки.
  */
 
+import type { RowVerdict, Verdict } from '../lib/compare-verdicts';
+
+/**
+ * Знак «есть»/«нет» перед значением (этап C ТЗ
+ * `docs-tz/TZ-Enterprise-Tutorial-Landing.md`).
+ *
+ * `aria-hidden` — не забывчивость: слово «Да»/«Нет» уже стоит в самой
+ * ячейке текстом, и озвучивать его вторым знаком значило бы читать
+ * строку дважды. Знак существует только для глаза.
+ *
+ * Цвета — акцент и приглушённый серый, НЕ зелёный с красным: красный
+ * читается как «ошибка», и две строки, где мы честно проигрываем,
+ * превратились бы из аргумента в извинение.
+ *
+ * Для `'none'` рисуется пустой слот той же ширины: без него ячейки со
+ * знаком и без знака встали бы с разным отступом слева, и колонка
+ * пошла бы лесенкой.
+ */
+function VerdictMark({ verdict }: { verdict: Verdict }) {
+  if (verdict === 'none') {
+    return <span className="verdict verdict-none" aria-hidden="true" />;
+  }
+  return (
+    <span className={`verdict verdict-${verdict}`} aria-hidden="true">
+      <svg viewBox="0 0 16 16" width="15" height="15" focusable="false">
+        <circle
+          cx="8"
+          cy="8"
+          r="7"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+        />
+        {verdict === 'yes' ? (
+          <path
+            d="M4.9 8.3l2.1 2.2 4.2-4.7"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ) : (
+          /* Черта, а не крестик: крестик — это «неверно», а здесь
+             «такого нет». Диагональная штриховка, которую предлагало
+             ТЗ, на пятнадцати пикселях превращается в грязь. */
+          <path
+            d="M5 8h6"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
+        )}
+      </svg>
+    </span>
+  );
+}
+
 interface ComparisonRow {
   feature: string;
   us: string;
@@ -33,12 +91,21 @@ export function CompetitorComparisonTable({
   ourColumn,
   theirColumn,
   rows,
+  verdicts,
 }: {
   caption: string;
   ourColumn: string;
   theirColumn: string;
   rows: readonly ComparisonRow[];
+  /** Параллелен `rows`; см. `lib/compare-verdicts.ts`. */
+  verdicts?: readonly RowVerdict[];
 }) {
+  /* Расхождение длин означает, что в словарь добавили строку, а таблицу
+     вердиктов — нет. Знаки тогда встали бы не у тех строк, то есть
+     таблица начала бы врать; без знаков она просто беднее. Выбор
+     очевиден. Тест `scripts/compare-verdicts.test.ts` не даст этому
+     доехать до прода незамеченным. */
+  const marks = verdicts?.length === rows.length ? verdicts : undefined;
   return (
     <table className="compare-table">
       {/* `<caption>` визуально скрыт (тот же `.sr-only`, что у подписи
@@ -55,7 +122,7 @@ export function CompetitorComparisonTable({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
+        {rows.map((row, index) => (
           <tr key={row.feature}>
             <th scope="row">{row.feature}</th>
             {/* `data-label` дублирует заголовок колонки: в карточной
@@ -63,9 +130,13 @@ export function CompetitorComparisonTable({
                 подписи две ячейки подряд читаются как два ответа без
                 вопроса. */}
             <td data-label={ourColumn} className="compare-us">
+              {marks && <VerdictMark verdict={marks[index].us} />}
               {row.us}
             </td>
-            <td data-label={theirColumn}>{row.them}</td>
+            <td data-label={theirColumn}>
+              {marks && <VerdictMark verdict={marks[index].them} />}
+              {row.them}
+            </td>
           </tr>
         ))}
       </tbody>

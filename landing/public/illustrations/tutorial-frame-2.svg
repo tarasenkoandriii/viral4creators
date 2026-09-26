@@ -1,26 +1,81 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 360" role="img" aria-hidden="true">
-  <rect width="560" height="360" rx="16" fill="#151517" stroke="#2a2a2e"/>
-  <rect x="24" y="24" width="512" height="172" rx="10" fill="#0b0b0d" stroke="#2a2a2e"/>
-  <path d="M24 52h512" stroke="#2a2a2e"/>
-  <circle cx="44" cy="38" r="4" fill="#9a9a9a" opacity=".5"/>
-  <circle cx="58" cy="38" r="4" fill="#9a9a9a" opacity=".5"/>
-  <circle cx="72" cy="38" r="4" fill="#9a9a9a" opacity=".5"/>
-  <rect x="92" y="33" width="180" height="10" rx="5" fill="#9a9a9a" opacity=".3"/>
-  <rect x="44" y="72" width="200" height="14" rx="4" fill="#ececec" opacity=".75"/>
-  <rect x="44" y="98" width="330" height="8" rx="4" fill="#9a9a9a" opacity=".35"/>
-  <rect x="44" y="114" width="290" height="8" rx="4" fill="#9a9a9a" opacity=".35"/>
-  <rect x="44" y="140" width="210" height="34" rx="7" fill="#151517" stroke="#2a2a2e"/>
-  <rect x="268" y="140" width="210" height="34" rx="7" fill="#151517" stroke="#2a2a2e"/>
-  <rect x="24" y="216" width="248" height="52" rx="9" fill="#0b0b0d" stroke="#6c8cff" stroke-dasharray="5 4"/>
-  <rect x="40" y="232" width="70" height="8" rx="4" fill="#6c8cff" opacity=".8"/>
-  <rect x="40" y="248" width="150" height="8" rx="4" fill="#9a9a9a" opacity=".3"/>
-  <rect x="288" y="216" width="248" height="52" rx="9" fill="#0b0b0d" stroke="#6c8cff" stroke-dasharray="5 4"/>
-  <rect x="304" y="232" width="70" height="8" rx="4" fill="#6c8cff" opacity=".8"/>
-  <rect x="304" y="248" width="150" height="8" rx="4" fill="#9a9a9a" opacity=".3"/>
-  <rect x="24" y="288" width="160" height="44" rx="9" fill="#151517" stroke="#2a2a2e"/>
-  <rect x="44" y="306" width="90" height="8" rx="4" fill="#9a9a9a" opacity=".5"/>
-  <rect x="200" y="288" width="160" height="44" rx="9" fill="#151517" stroke="#2a2a2e"/>
-  <rect x="220" y="306" width="90" height="8" rx="4" fill="#9a9a9a" opacity=".5"/>
-  <rect x="376" y="288" width="160" height="44" rx="9" fill="#151517" stroke="#2a2a2e"/>
-  <rect x="396" y="306" width="90" height="8" rx="4" fill="#9a9a9a" opacity=".5"/>
+<!-- Кадр 2 «Увидели настоящий экран»: кадр сайта и разобранный список полей и кнопок, связанные выносками. Этап D. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 540" role="img" aria-hidden="true" focusable="false">
+  <rect width="840" height="540" fill="#08080a"/>
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#202026"/>
+      <stop offset="1" stop-color="#17171b"/>
+    </linearGradient>
+    <linearGradient id="cta" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8098ff"/>
+      <stop offset="1" stop-color="#5c7dff"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".07"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity=".55"/>
+    </filter>
+  </defs>
+  <!-- Ядро секции: слева настоящий экран сайта, справа — что на нём
+       НАШЛОСЬ, и выноски связывают одно с другим. Именно этой связи
+       («не просто сняли картинку — разобрали, что на ней есть») в
+       прежних схемах не было нарисовано ничем. -->
+  <g filter="url(#lift)">
+    <rect x="48" y="60" width="470" height="400" rx="20" fill="#101014" stroke="#26262c" stroke-width="3"/>
+  </g>
+  <path d="M48 106H518" stroke="#26262c" stroke-width="3"/>
+  <circle cx="78" cy="83" r="6.5" fill="#9a9a9a" opacity=".35"/>
+  <circle cx="100" cy="83" r="6.5" fill="#9a9a9a" opacity=".35"/>
+  <circle cx="122" cy="83" r="6.5" fill="#9a9a9a" opacity=".35"/>
+  <rect x="146" y="75" width="210" height="15" rx="7.5" fill="#9a9a9a" opacity=".16"/>
+
+  <rect x="80" y="132" width="200" height="19" rx="6" fill="#ececec" opacity=".5"/>
+  <rect x="80" y="168" width="330" height="12" rx="6" fill="#9a9a9a" opacity=".28"/>
+  <rect x="80" y="188" width="270" height="12" rx="6" fill="#9a9a9a" opacity=".28"/>
+
+  <!-- Три элемента, которые мастер нашёл на странице. -->
+  <rect x="80" y="206" width="376" height="46" rx="11" fill="#08080a" stroke="#34343c" stroke-width="3"/>
+  <rect x="100" y="222" width="120" height="14" rx="7" fill="#9a9a9a" opacity=".32"/>
+  <rect x="80" y="266" width="376" height="46" rx="11" fill="#08080a" stroke="#34343c" stroke-width="3"/>
+  <rect x="100" y="282" width="160" height="14" rx="7" fill="#9a9a9a" opacity=".32"/>
+  <rect x="80" y="330" width="160" height="42" rx="11" fill="#2a2a33" stroke="#3c3c46" stroke-width="3"/>
+  <rect x="104" y="345" width="90" height="13" rx="6.5" fill="#9a9a9a" opacity=".5"/>
+
+  <rect x="80" y="398" width="200" height="12" rx="6" fill="#9a9a9a" opacity=".16"/>
+  <rect x="80" y="420" width="150" height="12" rx="6" fill="#9a9a9a" opacity=".16"/>
+
+  <!-- Выноски. -->
+  <g stroke="#6c8cff" stroke-width="4" opacity=".9">
+    <path d="M456 229H556"/>
+    <path d="M456 289H556"/>
+    <path d="M240 351H556"/>
+  </g>
+  <g fill="#6c8cff">
+    <circle cx="456" cy="229" r="7"/>
+    <circle cx="456" cy="289" r="7"/>
+    <circle cx="240" cy="351" r="7"/>
+  </g>
+
+  <!-- Список найденного. -->
+  <g>
+    <rect x="556" y="203" width="244" height="52" rx="14" fill="#17171c" stroke="#30303a" stroke-width="3"/>
+    <rect x="574" y="216" width="26" height="26" rx="7" fill="#6c8cff" opacity=".16"/>
+    <rect x="574" y="216" width="26" height="26" rx="7" fill="none" stroke="#6c8cff" stroke-width="3"/>
+    <rect x="583" y="227" width="8" height="4" rx="2" fill="#6c8cff"/>
+    <rect x="616" y="222" width="150" height="14" rx="7" fill="#9a9a9a" opacity=".5"/>
+
+    <rect x="556" y="263" width="244" height="52" rx="14" fill="#17171c" stroke="#30303a" stroke-width="3"/>
+    <rect x="574" y="276" width="26" height="26" rx="7" fill="#6c8cff" opacity=".16"/>
+    <rect x="574" y="276" width="26" height="26" rx="7" fill="none" stroke="#6c8cff" stroke-width="3"/>
+    <rect x="583" y="287" width="8" height="4" rx="2" fill="#6c8cff"/>
+    <rect x="616" y="282" width="120" height="14" rx="7" fill="#9a9a9a" opacity=".5"/>
+
+    <rect x="556" y="325" width="244" height="52" rx="14" fill="#17171c" stroke="#30303a" stroke-width="3"/>
+    <rect x="574" y="338" width="26" height="26" rx="7" fill="#6c8cff" opacity=".16"/>
+    <rect x="574" y="338" width="26" height="26" rx="7" fill="none" stroke="#6c8cff" stroke-width="3"/>
+    <rect x="580" y="347" width="14" height="8" rx="4" fill="#6c8cff"/>
+    <rect x="616" y="344" width="136" height="14" rx="7" fill="#9a9a9a" opacity=".5"/>
+  </g>
 </svg>

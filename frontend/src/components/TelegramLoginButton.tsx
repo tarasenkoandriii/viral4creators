@@ -149,7 +149,19 @@ export function TelegramLoginButton() {
   if (me) {
     return (
       <div className="flex items-center gap-2 text-xs text-silver-400">
-        <span className="truncate max-w-[10rem]">
+        {/* `data-qa-mask` — этап G ТЗ
+            `docs-tz/TZ-Enterprise-Tutorial-Landing.md`. Маска стоит на
+            ИМЕНИ, а не на всей кнопке, и это существенно: крон UI-снимков
+            прячет маскированное через `visibility: hidden`, то есть
+            коробка остаётся на месте. Имя — данные, они у каждого свои и
+            сравнивать их незачем; сама кнопка выхода и раскладка шапки
+            остаются под наблюдением, и сломанный вход крон по-прежнему
+            заметит.
+
+            Побочный эффект, который надо ждать: базовые отпечатки всех
+            уже снимаемых маршрутов изменятся один раз, крон отправит по
+            одной тревоге на маршрут и дальше успокоится. */}
+        <span className="truncate max-w-[10rem]" data-qa-mask="user-name">
           {me.firstName || (me.username ? `@${me.username}` : me.telegramId)}
         </span>
         <button

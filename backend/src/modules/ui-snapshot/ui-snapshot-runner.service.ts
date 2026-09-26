@@ -80,6 +80,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { ProjectType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { BlobService } from '../storage/blob.service';
@@ -93,11 +94,28 @@ import {
 } from '../tutorial-runner/route-templates';
 import { computeDHash, hasChanged, diffScore } from './perceptual-hash';
 
-/** MVP §3.8 ТЗ — одна локаль, одна тема; поля `UiSnapshot.locale/theme`
- * остаются свободной строкой (не enum) именно для будущего расширения
- * за пределы этой единственной пары. */
-const MVP_LOCALE = 'ru';
-const MVP_THEME = 'light';
+/** Значения по умолчанию — те же, что были единственно возможными в MVP
+ * (§3.8 ТЗ `doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md`). Поля
+ * `UiSnapshot.locale/theme` остаются свободной строкой (не enum) именно
+ * ради расширения за пределы этой пары, и этап H ТЗ
+ * `docs-tz/TZ-Enterprise-Tutorial-Landing.md` им наконец пользуется.
+ *
+ * ## Что при этом вскрылось: до этапа H это были ЯРЛЫКИ, а не настройки
+ *
+ * Прогон записывал `locale: 'ru'`, `theme: 'light'` в каждую строку — и
+ * НИГДЕ их не применял. Страница открывалась в том виде, в каком её
+ * отдаёт фронтенд по умолчанию, а совпадение с ярлыком держалось на
+ * том, что `defaultLocale` там тоже `'ru'`, а headless-Chromium по
+ * умолчанию светлый. То есть поле говорило правду случайно и перестало
+ * бы говорить её в день, когда кто-нибудь поменяет умолчание.
+ *
+ * Теперь локаль и тема ВЫСТАВЛЯЮТСЯ до загрузки SPA — через те же
+ * ключи `localStorage`, что пишет сам продукт (`v4c_locale` в
+ * `frontend/src/lib/i18n.ts`, `v4c_theme` в `lib/theme.ts`). Явный выбор
+ * человека приоритетнее автоматики и в продукте, и здесь — то есть
+ * снимок получается ровно той комбинации, которой подписан. */
+const DEFAULT_LOCALE = 'ru';
+const DEFAULT_THEME: SnapshotTheme = 'light';
 
 /** Пять маршрутов §3.8 ТЗ — те же, что нужны Части Б для сценариев
  * обучающих видео (§4.5 ТЗ), фикстуры и обоснование выбора не
@@ -129,10 +147,53 @@ const ROUTE_TIMEOUT_MS = 20_000;
  * смысл только при одинаковом размере кадра между прогонами. */
 const VIEWPORT = { width: 390, height: 844 };
 
+export type SnapshotTheme = 'light' | 'dark';
+
+export interface UiSnapshotRunOptions {
+  /** Код локали продукта (`ru`/`uk`/`en`/…). По умолчанию `ru`. */
+  locale?: string;
+  /** По умолчанию `light`. */
+  theme?: SnapshotTheme;
+  /** Подмножество маршрутов. По умолчанию — те же пять, что у крона. */
+  routeKeys?: readonly string[];
+  /**
+   * Снять БЕЗ маскирования `[data-qa-mask]`.
+   *
+   * Ради этого флага этап H и появился. Один и тот же механизм масок
+   * нужен двум потребителям с противоположными желаниями: крону
+   * регрессий кадр чужого сайта — чистый шум (он меняется каждый
+   * прогон, отпечаток расходился бы всегда, и тревога перестала бы
+   * что-либо значить), а снимку для лендинга этот кадр — весь смысл.
+   *
+   * Немаскированный прогон поэтому **не участвует в сравнении вовсе**:
+   * строка `UiSnapshot` не пишется, тревога не шлётся, файл ложится под
+   * другой префикс в Blob. Иначе он подменил бы базовый отпечаток, и
+   * следующий тик крона честно закричал бы «изменилось» на собственном
+   * же снимке. Адрес файла возвращается в `outcomes[].blobUrl` —
+   * оператор забирает его оттуда.
+   */
+  unmasked?: boolean;
+  /**
+   * Слать ли тревоги в служебный канал. По умолчанию да — так ходит
+   * крон, у которого нет человека, читающего результат.
+   *
+   * Прогон по кнопке оператора ставит `false`, и это правка аудита:
+   * первая редакция этапа H рассуждала, что «молчание — худший ответ»,
+   * и слала тревогу в общий канал даже при ручном вызове. Молчания там
+   * нет — вызывающий получает весь результат синхронно, в ответе HTTP.
+   * А вот канал засорялся сообщениями о сбоях, которые человек уже
+   * видит и уже чинит.
+   */
+  alerts?: boolean;
+}
+
 export interface UiSnapshotRouteOutcome {
   routeKey: string;
   changed: boolean;
   error?: string;
+  /** Заполняется у немаскированных прогонов: строки в БД нет, и это
+   *  единственный способ добраться до файла. */
+  blobUrl?: string;
 }
 
 export interface UiSnapshotRunResult {
@@ -144,6 +205,14 @@ export interface UiSnapshotRunResult {
   changed: number;
   failed: number;
   outcomes: UiSnapshotRouteOutcome[];
+  /**
+   * Сколько маршрутов не успели снять: общий бюджет времени кончился
+   * раньше. У крона это норма (доснимет следующий тик), у ручного
+   * прогона — объяснение, почему `outcomes` короче, чем просили. Без
+   * этого поля обрезка была молчаливой: `total` говорил одно, длина
+   * списка другое, и разбираться приходилось глазами.
+   */
+  deferred?: number;
 }
 
 @Injectable()
@@ -156,7 +225,16 @@ export class UiSnapshotRunnerService {
     private readonly blob: BlobService,
   ) {}
 
-  async run(): Promise<UiSnapshotRunResult> {
+  async run(options: UiSnapshotRunOptions = {}): Promise<UiSnapshotRunResult> {
+    const locale = options.locale?.trim() || DEFAULT_LOCALE;
+    const theme = options.theme ?? DEFAULT_THEME;
+    const unmasked = options.unmasked === true;
+    const alerts = options.alerts !== false;
+    const routeKeys =
+      options.routeKeys && options.routeKeys.length > 0
+        ? [...options.routeKeys]
+        : [...MVP_ROUTE_KEYS];
+
     const telegramId = process.env.FIXTURE_TELEGRAM_ID?.trim();
     const token = process.env.FIXTURE_USER_TOKEN?.trim();
     const tmaBaseUrl = process.env.TMA_PUBLIC_URL?.trim();
@@ -180,20 +258,29 @@ export class UiSnapshotRunnerService {
     }
 
     const ctx = await this.resolveFixtureContext(user.id);
-    const wizardSessionId = await this.ensureWizardSession(user.id);
+    // Служебная сессия нужна ровно одному маршруту — мастеру
+    // (`generate`), который без неё создаёт новую на каждом
+    // монтировании. Прогон, в который этот маршрут не входит, её не
+    // трогает: иначе разовый снимок одного экрана заводил бы
+    // пользователю строку в `Session` ни за чем (правка аудита).
+    const wizardSessionId = routeKeys.includes('generate')
+      ? await this.ensureWizardSession(user.id)
+      : undefined;
 
     const launched = await launchHeadlessBrowser();
     if ('error' in launched) {
       this.logger.warn(`headless-браузер недоступен: ${launched.error}`);
-      await this.notify.alert(
-        'ui-snapshot-run:browser',
-        `Крон-обход UI-снимков: браузер не запустился. ${launched.error}`,
-      );
+      if (alerts) {
+        await this.notify.alert(
+          'ui-snapshot-run:browser',
+          `Крон-обход UI-снимков: браузер не запустился. ${launched.error}`,
+        );
+      }
       return {
-        total: MVP_ROUTE_KEYS.length,
+        total: routeKeys.length,
         changed: 0,
-        failed: MVP_ROUTE_KEYS.length,
-        outcomes: MVP_ROUTE_KEYS.map((routeKey) => ({
+        failed: routeKeys.length,
+        outcomes: routeKeys.map((routeKey) => ({
           routeKey,
           changed: false,
           error: launched.error,
@@ -203,12 +290,14 @@ export class UiSnapshotRunnerService {
 
     const { browser } = launched;
     const outcomes: UiSnapshotRouteOutcome[] = [];
+    let deferred = 0;
     const deadline = Date.now() + RUN_TIME_BUDGET_MS;
     try {
-      for (const routeKey of MVP_ROUTE_KEYS) {
+      for (const routeKey of routeKeys) {
         if (Date.now() >= deadline) {
+          deferred = routeKeys.length - outcomes.length;
           this.logger.warn(
-            `тик исчерпал бюджет времени — ${MVP_ROUTE_KEYS.length - outcomes.length} маршрутов отложено до следующего прогона`,
+            `тик исчерпал бюджет времени — ${deferred} маршрутов отложено до следующего прогона`,
           );
           break;
         }
@@ -219,17 +308,26 @@ export class UiSnapshotRunnerService {
           token,
           tmaBaseUrl,
           wizardSessionId,
+          { locale, theme, unmasked },
         );
         outcomes.push(outcome);
-        if (outcome.error) {
+        // Сбой снять НАДО сообщить в любом прогоне: немаскированный
+        // прогон запускает человек, и «ничего не пришло» без объяснения
+        // — худший ответ.
+        if (!alerts) {
+          // Ручной прогон: вызывающий уже держит `outcomes` в руках.
+        } else if (outcome.error) {
           await this.notify.alert(
             `ui-snapshot-run:${routeKey}:error`,
             `Крон-обход UI-снимков: маршрут «${routeKey}» не удалось проверить: ${outcome.error}`,
           );
         } else if (outcome.changed) {
+          // А вот «изменилось» у немаскированного прогона не бывает по
+          // построению: он ни с чем не сравнивается (см.
+          // `UiSnapshotRunOptions.unmasked`).
           await this.notify.alert(
             `ui-snapshot-run:${routeKey}:changed`,
-            `Крон-обход UI-снимков: внешний вид маршрута «${routeKey}» изменился (locale=${MVP_LOCALE}, theme=${MVP_THEME}).`,
+            `Крон-обход UI-снимков: внешний вид маршрута «${routeKey}» изменился (locale=${locale}, theme=${theme}).`,
           );
         }
       }
@@ -238,10 +336,11 @@ export class UiSnapshotRunnerService {
     }
 
     return {
-      total: MVP_ROUTE_KEYS.length,
+      total: routeKeys.length,
       changed: outcomes.filter((o) => o.changed).length,
       failed: outcomes.filter((o) => o.error).length,
       outcomes,
+      ...(deferred > 0 ? { deferred } : {}),
     };
   }
 
@@ -252,12 +351,13 @@ export class UiSnapshotRunnerService {
     token: string,
     tmaBaseUrl: string,
     wizardSessionId: string | undefined,
+    view: { locale: string; theme: SnapshotTheme; unmasked: boolean },
   ): Promise<UiSnapshotRouteOutcome> {
     let page: import('puppeteer-core').Page | undefined;
     try {
       const resolved = resolveScenarioRoute(routeKey, ctx);
       if (!resolved.ok) {
-        return this.recordFailure(routeKey, resolved.reason);
+        return this.recordFailure(routeKey, resolved.reason, view);
       }
 
       page = await browser.newPage();
@@ -283,6 +383,29 @@ export class UiSnapshotRunnerService {
         }, wizardSessionId);
       }
 
+      // Локаль и тема — ТЕМИ ЖЕ ключами, что пишет сам продукт
+      // (`v4c_locale` в frontend/src/lib/i18n.ts, `v4c_theme` в
+      // lib/theme.ts), и до загрузки SPA. В продукте явный выбор
+      // человека приоритетнее и языка из initData, и системной темы —
+      // значит снимок получается ровно той комбинации, которой
+      // подписан, а не «какой отдал фронтенд по умолчанию» (см.
+      // доккомментарий к DEFAULT_LOCALE выше: до этапа H поля были
+      // ярлыками).
+      await page.evaluateOnNewDocument(
+        (locale: string, theme: string) => {
+          try {
+            window.localStorage.setItem('v4c_locale', locale);
+            window.localStorage.setItem('v4c_theme', theme);
+          } catch {
+            // хранилище недоступно — страница откроется в умолчаниях,
+            // и снимок будет подписан не тем; сбоем это не считаем,
+            // ровно как и выше с сессией.
+          }
+        },
+        view.locale,
+        view.theme,
+      );
+
       const base = tmaBaseUrl.replace(/\/+$/, '');
       const url = `${base}/#${resolved.path}`;
 
@@ -299,27 +422,47 @@ export class UiSnapshotRunnerService {
       // ПЕРЕД скриншотом — `visibility: hidden`, не `display: none`,
       // чтобы не сдвигать раскладку остального экрана (иначе маскирование
       // само стало бы источником ложных "изменилось").
-      await page.evaluate(() => {
-        document.querySelectorAll('[data-qa-mask]').forEach((el) => {
-          (el as HTMLElement).style.visibility = 'hidden';
+      //
+      // Немаскированный прогон пропускает этот шаг целиком — см.
+      // `UiSnapshotRunOptions.unmasked`: ему кадр нужен именно такой,
+      // какой есть, и в сравнении он не участвует.
+      if (!view.unmasked) {
+        await page.evaluate(() => {
+          document.querySelectorAll('[data-qa-mask]').forEach((el) => {
+            (el as HTMLElement).style.visibility = 'hidden';
+          });
         });
-      });
+      }
 
       const screenshot = await page.screenshot({ type: 'png' });
       const buffer = Buffer.from(screenshot);
+
+      // Немаскированный снимок — «на показ», а не «на сравнение».
+      // Отдельный префикс в Blob, чтобы его нельзя было спутать с
+      // базовым, ни глазами в консоли хранилища, ни скриптом.
+      if (view.unmasked) {
+        const shotPath = `qa-shots/${routeKey}/${view.locale}/${view.theme}/${Date.now()}.png`;
+        const { url } = await this.blob.uploadBuffer(
+          shotPath,
+          buffer,
+          'image/png',
+        );
+        return { routeKey, changed: false, blobUrl: url };
+      }
+
       const hash = await computeDHash(buffer);
 
       const previous = await this.prisma.uiSnapshot.findFirst({
         where: {
           routeKey,
-          locale: MVP_LOCALE,
-          theme: MVP_THEME,
+          locale: view.locale,
+          theme: view.theme,
           error: null,
         },
         orderBy: { createdAt: 'desc' },
       });
 
-      const pathname = `qa-snapshots/${routeKey}/${MVP_LOCALE}/${MVP_THEME}/${Date.now()}.png`;
+      const pathname = `qa-snapshots/${routeKey}/${view.locale}/${view.theme}/${Date.now()}.png`;
       const { url: blobUrl } = await this.blob.uploadBuffer(
         pathname,
         buffer,
@@ -333,8 +476,8 @@ export class UiSnapshotRunnerService {
       await this.prisma.uiSnapshot.create({
         data: {
           routeKey,
-          locale: MVP_LOCALE,
-          theme: MVP_THEME,
+          locale: view.locale,
+          theme: view.theme,
           blobUrl,
           comparedToUrl: previous?.blobUrl ?? null,
           diffScore: score,
@@ -346,7 +489,7 @@ export class UiSnapshotRunnerService {
       return { routeKey, changed };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      return this.recordFailure(routeKey, error);
+      return this.recordFailure(routeKey, error, view);
     } finally {
       await page?.close().catch(() => undefined);
     }
@@ -360,21 +503,31 @@ export class UiSnapshotRunnerService {
     return hasChanged(hash, previous.diffHash);
   }
 
+  /**
+   * Строка со сбоем пишется в ТУ ЖЕ комбинацию, в которой снимали:
+   * иначе неудача украинского прогона легла бы в историю русского и
+   * оператор искал бы её не там. Немаскированный прогон строк не пишет
+   * вовсе — у него и успешных нет (см. `UiSnapshotRunOptions.unmasked`),
+   * поэтому сбой возвращается только в результате вызова.
+   */
   private async recordFailure(
     routeKey: string,
     error: string,
+    view: { locale: string; theme: SnapshotTheme; unmasked: boolean },
   ): Promise<UiSnapshotRouteOutcome> {
     this.logger.warn(`маршрут ${routeKey}: ${error}`);
-    await this.prisma.uiSnapshot
-      .create({
-        data: {
-          routeKey,
-          locale: MVP_LOCALE,
-          theme: MVP_THEME,
-          error,
-        },
-      })
-      .catch(() => undefined);
+    if (!view.unmasked) {
+      await this.prisma.uiSnapshot
+        .create({
+          data: {
+            routeKey,
+            locale: view.locale,
+            theme: view.theme,
+            error,
+          },
+        })
+        .catch(() => undefined);
+    }
     return { routeKey, changed: false, error };
   }
 
@@ -386,32 +539,53 @@ export class UiSnapshotRunnerService {
   private async resolveFixtureContext(
     userId: string,
   ): Promise<FixtureRouteContext> {
-    const [project, item, manifest, session] = await Promise.all([
-      this.prisma.project.findFirst({
-        where: { userId, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.productItem.findFirst({
-        where: { project: { userId }, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.brandManifest.findFirst({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-      }),
-      // Экрану готового ролика нужен ГОТОВЫЙ ролик: «последняя сессия
-      // пользователя» раньше почти всегда оказывалась пустой, созданной
-      // этим же кроном, и снимок `postprod-video` был бессмысленным.
-      this.prisma.session.findFirst({
-        where: { userId, deletedAt: null, status: 'video_complete' },
-        orderBy: { createdAt: 'desc' },
-      }),
-    ]);
+    /**
+     * Тип проекта в `where` — обязателен с этапа G ТЗ
+     * `docs-tz/TZ-Enterprise-Tutorial-Landing.md`. Раньше брался «самый
+     * свежий проект пользователя»; как только фикстура завела второй
+     * проект (`CLIENT_SITE` для мастера обучалки), он стал самым свежим
+     * — и все пять MVP-маршрутов рекламного пайплайна начали бы строить
+     * путь к товару внутри проекта, у которого товаров нет по
+     * построению. Крон снимал бы «не найдено» и сравнивал бы отпечатки
+     * экрана ошибки, ничего при этом не заметив. Та же правка внесена в
+     * близнеца в `tutorial-scenario-runner.service.ts`.
+     */
+    const AD_TYPES = [ProjectType.SINGLE, ProjectType.LINE];
+    const [project, clientSiteProject, item, manifest, session] =
+      await Promise.all([
+        this.prisma.project.findFirst({
+          where: { userId, deletedAt: null, type: { in: AD_TYPES } },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.project.findFirst({
+          where: { userId, deletedAt: null, type: ProjectType.CLIENT_SITE },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.productItem.findFirst({
+          where: {
+            project: { userId, type: { in: AD_TYPES } },
+            deletedAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.brandManifest.findFirst({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+        }),
+        // Экрану готового ролика нужен ГОТОВЫЙ ролик: «последняя сессия
+        // пользователя» раньше почти всегда оказывалась пустой, созданной
+        // этим же кроном, и снимок `postprod-video` был бессмысленным.
+        this.prisma.session.findFirst({
+          where: { userId, deletedAt: null, status: 'video_complete' },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ]);
     return {
       projectId: project?.id,
       itemId: item?.id,
       manifestId: manifest?.id,
       sessionId: session?.id,
+      clientSiteProjectId: clientSiteProject?.id,
     };
   }
 
@@ -440,7 +614,14 @@ export class UiSnapshotRunnerService {
         data: {
           userId,
           status: 'created',
-          data: { locale: MVP_LOCALE, qaFixture: true },
+          // `DEFAULT_LOCALE`, а не локаль прогона, и это известное
+          // ограничение, а не недосмотр: сессия одна и переиспользуется
+          // всеми прогонами, переписывать её под каждый значило бы
+          // дёргать общую строку туда-обратно. Затрагивает только
+          // маршрут `generate` (остальные служебную сессию не читают);
+          // если понадобится снимать мастер в другой локали, сессию
+          // придётся заводить по одной на локаль.
+          data: { locale: DEFAULT_LOCALE, qaFixture: true },
         },
         select: { id: true },
       });

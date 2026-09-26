@@ -9,6 +9,7 @@ import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
 import { localeAlternates } from '../../../lib/alternates';
 import { SubdomainHeader } from '../../../components/SubdomainHeader';
 import { CLAUDE_REFERRAL_URL, SITE_URL, TMA_URL } from '../../../lib/content';
+import { COMPARE_VERDICTS } from '../../../lib/compare-verdicts';
 
 /**
  * Посадочная страница третьего типа проекта — обучающего видео по сайту
@@ -118,18 +119,56 @@ export default function SiteTutorialLandingPage({
   return (
     <>
       <SubdomainHeader dict={dict} locale={locale} ctaHref={ctaHref} />
-      <main id="top">
+      {/* `tutorial-page` — не декоративный класс, а область действия
+          типографики этапа B: `globals.css` один на все площадки, и
+          правила вроде `letter-spacing` у `h1`/`h2` или меры строки у
+          `.faq p` без этой обёртки уехали бы на главную, поздравления,
+          блог и правовые страницы. */}
+      <main id="top" className="tutorial-page">
+        {/* Этап E ТЗ: до него первый экран был текстом на градиенте, без
+            единого изображения. Кадр продукта справа от текста на
+            ≥900px, под текстом — ниже.
+
+            Сознательно НЕ рисунок в духе §1 брифа главной («до/после»,
+            кликбейт): этот hero продаёт не эффектность результата, а
+            безопасность способа — «не нужно ставить расширение и давать
+            доступ к рабочему компьютеру». Кликбейтная картинка
+            противоречила бы ровно этому обещанию.
+
+            `hero.note` остаётся на месте: первая редакция ТЗ предлагала
+            заменить его плитками, и это была правка контента при
+            запрете трогать тексты — «работает в браузере и как Telegram
+            Mini App» больше нигде на странице не сказано. */}
         <section className="hero">
-          <div className="wrap">
-            <span className="badge">{t.hero.badge}</span>
-            <h1>{t.hero.title}</h1>
-            <p>{t.hero.subtitle}</p>
-            <div className="hero-actions">
-              <a className="cta" href={ctaHref}>
-                {t.hero.cta}
-              </a>
+          <div className="wrap hero-grid">
+            <div className="hero-copy">
+              <span className="badge">{t.hero.badge}</span>
+              <h1>{t.hero.title}</h1>
+              <p>{t.hero.subtitle}</p>
+              <div className="hero-actions">
+                <a className="cta" href={ctaHref}>
+                  {t.hero.cta}
+                </a>
+              </div>
+              <p className="hero-note">{t.hero.note}</p>
             </div>
-            <p className="hero-note">{t.hero.note}</p>
+            {/* Та же оправа `.frame-shot`, что у кадров ниже: одна
+                визуальная система, а не второй способ показывать
+                картинку. `priority` — кадр в первом экране и кандидат в
+                LCP-элемент; пока это SVG на семь килобайт, цена
+                предзагрузки близка к нулю, но при Уровне 2, когда здесь
+                окажется растровый снимок, бюджет ≤90 КБ из §3 придётся
+                проверять замером. */}
+            <div className="hero-shot frame-shot">
+              <Image
+                src="/illustrations/tutorial-hero.svg"
+                alt=""
+                width={960}
+                height={620}
+                priority
+                unoptimized
+              />
+            </div>
           </div>
         </section>
 
@@ -143,7 +182,15 @@ export default function SiteTutorialLandingPage({
             показывает сайт заказчика, и взять его здесь неоткуда —
             выдавать рисунок за снимок экрана на странице, которая
             продаёт достоверность, было бы ровно тем, против чего она
-            написана. */}
+            написана.
+
+            Этап A ТЗ `docs-tz/TZ-Enterprise-Tutorial-Landing.md`
+            (Уровень 0) сами схемы НЕ трогает — только оправу вокруг
+            них, тени, свечение и ритм «1 + 2 + 1». Оговорка выше
+            остаётся правдой до Уровня 2; когда кадры станут
+            настоящими, придётся поправить и её, и `how.lead` в пяти
+            словарях — это записано в ТЗ отдельным пунктом, чтобы
+            картинки не поменялись раньше текста. */}
         <section className="frames" id="how">
           <div className="wrap">
             <h2>{t.how.title}</h2>
@@ -151,19 +198,34 @@ export default function SiteTutorialLandingPage({
             <ol className="frames-grid">
               {t.how.items.map((item, index) => (
                 <li className="frame-card" key={item.title}>
-                  <Image
-                    src={`/illustrations/tutorial-frame-${index + 1}.svg`}
-                    alt=""
-                    width={560}
-                    height={360}
-                    unoptimized
-                  />
-                  <div className="frame-card-body">
+                  {/* `.frame-shot` — оправа кадра (этап A ТЗ
+                      `docs-tz/TZ-Enterprise-Tutorial-Landing.md`).
+                      Обёртка нужна по существу, а не для красоты:
+                      `<img>` — замещаемый элемент, номер шага внутрь
+                      него не положить, и на одном элементе не задать
+                      разный радиус внешней рамке и содержимому (это
+                      понадобится Уровню 2, когда здесь окажется
+                      настоящий снимок). Разметка списка при этом не
+                      тронута: секция остаётся `<ol>` из `<li>`. */}
+                  <div className="frame-shot">
+                    <Image
+                      src={`/illustrations/tutorial-frame-${index + 1}.svg`}
+                      alt=""
+                      /* 840×540 — тот же холст 3:2, что и прежние
+                         560×360, только в полтора раза больше единиц:
+                         связующая ширина показа 286px на телефоне
+                         (этап A, находка И-1), и при 560 единицах
+                         деталь в 2 единицы приходила бы к читателю
+                         толщиной в две трети пикселя. */
+                      width={840}
+                      height={540}
+                      unoptimized
+                    />
                     <span className="step-number">{index + 1}</span>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <p>{item.text}</p>
-                    </div>
+                  </div>
+                  <div className="frame-card-body">
+                    <strong>{item.title}</strong>
+                    <p>{item.text}</p>
                   </div>
                 </li>
               ))}
@@ -180,6 +242,7 @@ export default function SiteTutorialLandingPage({
               ourColumn={t.compare.ourColumn}
               theirColumn={t.compare.theirColumn}
               rows={t.compare.rows}
+              verdicts={COMPARE_VERDICTS}
             />
             <p className="compare-note">{t.compare.note}</p>
           </div>

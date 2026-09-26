@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { StorageModule } from '../storage/storage.module';
+import { AdminAuthModule } from '../admin-auth/admin-auth.module';
+import { AdminPanelModule } from '../admin-panel/admin-panel.module';
+import { UiSnapshotAdminController } from './ui-snapshot-admin.controller';
 import { UiSnapshotRunnerService } from './ui-snapshot-runner.service';
 
 /**
@@ -21,7 +24,8 @@ import { UiSnapshotRunnerService } from './ui-snapshot-runner.service';
  * `StorageModule` (`BlobService`) — НЕ глобальный, импортируется явно.
  */
 @Module({
-  imports: [StorageModule],
+  imports: [StorageModule, AdminAuthModule, AdminPanelModule],
+  controllers: [UiSnapshotAdminController],
   providers: [UiSnapshotRunnerService],
   exports: [UiSnapshotRunnerService],
 })

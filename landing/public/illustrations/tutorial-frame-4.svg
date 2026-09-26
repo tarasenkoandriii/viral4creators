@@ -1,27 +1,68 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 360" role="img" aria-hidden="true">
-  <rect width="560" height="360" rx="16" fill="#151517" stroke="#2a2a2e"/>
-  <rect x="24" y="28" width="116" height="74" rx="8" fill="#0b0b0d" stroke="#2a2a2e"/>
-  <rect x="36" y="42" width="60" height="7" rx="3.5" fill="#9a9a9a" opacity=".35"/>
-  <rect x="36" y="56" width="88" height="7" rx="3.5" fill="#9a9a9a" opacity=".25"/>
-  <rect x="36" y="76" width="44" height="14" rx="4" fill="#9a9a9a" opacity=".2"/>
-  <rect x="156" y="28" width="116" height="74" rx="8" fill="#0b0b0d" stroke="#2a2a2e"/>
-  <rect x="168" y="42" width="60" height="7" rx="3.5" fill="#9a9a9a" opacity=".35"/>
-  <rect x="168" y="56" width="88" height="7" rx="3.5" fill="#9a9a9a" opacity=".25"/>
-  <rect x="168" y="76" width="44" height="14" rx="4" fill="#9a9a9a" opacity=".2"/>
-  <rect x="288" y="28" width="116" height="74" rx="8" fill="#0b0b0d" stroke="#2a2a2e"/>
-  <rect x="300" y="42" width="60" height="7" rx="3.5" fill="#9a9a9a" opacity=".35"/>
-  <rect x="300" y="56" width="88" height="7" rx="3.5" fill="#9a9a9a" opacity=".25"/>
-  <rect x="300" y="76" width="44" height="14" rx="4" fill="#9a9a9a" opacity=".2"/>
-  <rect x="420" y="28" width="116" height="74" rx="8" fill="#0b0b0d" stroke="#2a2a2e"/>
-  <rect x="432" y="42" width="60" height="7" rx="3.5" fill="#9a9a9a" opacity=".35"/>
-  <rect x="432" y="56" width="88" height="7" rx="3.5" fill="#9a9a9a" opacity=".25"/>
-  <rect x="432" y="76" width="44" height="14" rx="4" fill="#9a9a9a" opacity=".2"/>
-  <rect x="24" y="124" width="512" height="150" rx="10" fill="#0b0b0d" stroke="#2a2a2e"/>
-  <circle cx="280" cy="192" r="34" fill="none" stroke="#6c8cff" stroke-width="2.4"/>
-  <path d="M271 178l22 14-22 14z" fill="#6c8cff"/>
-  <rect x="44" y="246" width="230" height="8" rx="4" fill="#9a9a9a" opacity=".3"/>
-  <rect x="24" y="296" width="512" height="44" rx="10" fill="#151517" stroke="#6c8cff"/>
-  <path d="M50 318a8 8 0 0 1 8-8h10M74 318a8 8 0 0 1-8 8H56" fill="none" stroke="#6c8cff" stroke-width="2" stroke-linecap="round"/>
-  <path d="M54 318h16" stroke="#6c8cff" stroke-width="2" stroke-linecap="round"/>
-  <rect x="92" y="314" width="240" height="8" rx="4" fill="#ececec" opacity=".6"/>
+<!-- Кадр 4 «Получили ролик»: лента кадров, собранный ролик, проверка оператора и ссылка. Этап D. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 540" role="img" aria-hidden="true" focusable="false">
+  <rect width="840" height="540" fill="#08080a"/>
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#202026"/>
+      <stop offset="1" stop-color="#17171b"/>
+    </linearGradient>
+    <linearGradient id="cta" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8098ff"/>
+      <stop offset="1" stop-color="#5c7dff"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".07"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity=".55"/>
+    </filter>
+  </defs>
+  <!-- Лента снятых кадров, из неё собран ролик, проверка оператора и
+       ссылка. Кнопка play — на собранном ролике, а не на пустом
+       прямоугольнике. -->
+  <g>
+    <rect x="48" y="44" width="172" height="104" rx="12" fill="#121216" stroke="#28282f" stroke-width="3"/>
+    <rect x="68" y="66" width="80" height="12" rx="6" fill="#9a9a9a" opacity=".3"/>
+    <rect x="68" y="88" width="120" height="10" rx="5" fill="#9a9a9a" opacity=".18"/>
+    <rect x="68" y="112" width="56" height="18" rx="6" fill="#9a9a9a" opacity=".14"/>
+
+    <rect x="236" y="44" width="172" height="104" rx="12" fill="#121216" stroke="#28282f" stroke-width="3"/>
+    <rect x="256" y="66" width="96" height="12" rx="6" fill="#9a9a9a" opacity=".3"/>
+    <rect x="256" y="88" width="110" height="10" rx="5" fill="#9a9a9a" opacity=".18"/>
+    <rect x="256" y="112" width="70" height="18" rx="6" fill="#6c8cff" opacity=".3"/>
+
+    <rect x="424" y="44" width="172" height="104" rx="12" fill="#121216" stroke="#28282f" stroke-width="3"/>
+    <rect x="444" y="66" width="70" height="12" rx="6" fill="#9a9a9a" opacity=".3"/>
+    <rect x="444" y="88" width="126" height="10" rx="5" fill="#9a9a9a" opacity=".18"/>
+    <rect x="444" y="112" width="56" height="18" rx="6" fill="#9a9a9a" opacity=".14"/>
+
+    <g opacity=".45">
+      <rect x="612" y="44" width="172" height="104" rx="12" fill="#121216" stroke="#28282f" stroke-width="3"/>
+      <rect x="632" y="66" width="86" height="12" rx="6" fill="#9a9a9a" opacity=".3"/>
+      <rect x="632" y="88" width="104" height="10" rx="5" fill="#9a9a9a" opacity=".18"/>
+    </g>
+  </g>
+
+  <!-- Собранный ролик. -->
+  <g filter="url(#lift)">
+    <rect x="48" y="186" width="744" height="228" rx="20" fill="#101014" stroke="#2b2b33" stroke-width="3"/>
+  </g>
+  <rect x="48" y="186" width="744" height="228" rx="20" fill="url(#glass)"/>
+  <circle cx="420" cy="284" r="44" fill="none" stroke="#6c8cff" stroke-width="5"/>
+  <path d="M406 262l32 22-32 22z" fill="#6c8cff"/>
+  <rect x="88" y="366" width="664" height="10" rx="5" fill="#9a9a9a" opacity=".18"/>
+  <rect x="88" y="366" width="270" height="10" rx="5" fill="#6c8cff"/>
+
+  <!-- «Оператор проверил» — реальный шаг пайплайна, он есть в тексте. -->
+  <rect x="48" y="446" width="230" height="54" rx="16" fill="#0f0f13" stroke="#2f2f38" stroke-width="3"/>
+  <circle cx="82" cy="473" r="15" fill="none" stroke="#6c8cff" stroke-width="4"/>
+  <path d="M74 473l6 6 11-12" fill="none" stroke="#6c8cff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="112" y="466" width="136" height="14" rx="7" fill="#9a9a9a" opacity=".5"/>
+
+  <!-- Ссылка на готовый ролик. -->
+  <rect x="298" y="446" width="494" height="54" rx="16" fill="#0b0b0d" stroke="#6c8cff" stroke-width="3"/>
+  <path d="M330 466a10 10 0 0 1 10-10h14M354 480a10 10 0 0 1-10 10h-14" fill="none" stroke="#6c8cff" stroke-width="4" stroke-linecap="round"/>
+  <path d="M334 473h20" stroke="#6c8cff" stroke-width="4" stroke-linecap="round"/>
+  <rect x="376" y="466" width="330" height="14" rx="7" fill="#ececec" opacity=".55"/>
 </svg>

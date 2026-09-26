@@ -64,6 +64,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { ProjectType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { BlobService } from '../storage/blob.service';
@@ -379,29 +380,64 @@ export class TutorialScenarioRunnerService {
   private async resolveFixtureContext(
     userId: string,
   ): Promise<FixtureRouteContext> {
-    const [project, item, manifest, session] = await Promise.all([
-      this.prisma.project.findFirst({
-        where: { userId, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.productItem.findFirst({
-        where: { project: { userId }, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.brandManifest.findFirst({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.session.findFirst({
-        where: { userId, deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-      }),
-    ]);
+    /**
+     * Тип проекта в `where` — обязателен с этапа G ТЗ
+     * `docs-tz/TZ-Enterprise-Tutorial-Landing.md`, и это не
+     * перестраховка.
+     *
+     * Раньше здесь брался просто «самый свежий проект пользователя». У
+     * фикстуры проект был один, и всё сходилось. Как только фикстура
+     * завела ВТОРОЙ проект — `CLIENT_SITE` для мастера обучалки — он
+     * стал самым свежим, и `projectId` начал указывать на него. А по
+     * этому `projectId` строятся пути рекламного пайплайна
+     * (`/projects/<id>`, `/projects/<id>/items/<itemId>`): товар лежит
+     * в ДРУГОМ проекте, у `CLIENT_SITE` товаров нет по построению. Обход
+     * снимал бы «проект не найден» и считал бы это нормальным экраном.
+     *
+     * Поэтому рекламный проект отбирается по типу, обучалка — по
+     * своему, и товар ищется внутри рекламных проектов, а не «любого
+     * проекта пользователя».
+     */
+    const AD_TYPES = [ProjectType.SINGLE, ProjectType.LINE];
+    const [project, clientSiteProject, item, manifest, session] =
+      await Promise.all([
+        this.prisma.project.findFirst({
+          where: { userId, deletedAt: null, type: { in: AD_TYPES } },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.project.findFirst({
+          where: {
+            userId,
+            deletedAt: null,
+            type: ProjectType.CLIENT_SITE,
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.productItem.findFirst({
+          where: {
+            project: { userId, type: { in: AD_TYPES } },
+            deletedAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.brandManifest.findFirst({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.session.findFirst({
+          where: { userId, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ]);
     return {
       projectId: project?.id,
       itemId: item?.id,
       manifestId: manifest?.id,
       sessionId: session?.id,
+      clientSiteProjectId: clientSiteProject?.id,
+      // `greetingProjectId` сознательно не ищется: фикстура проект
+      // четвёртого типа не заводит, и маршрут `greeting-video` честно
+      // отказывает «нет фикстурных данных» — см. route-templates.ts.
     };
   }
 
