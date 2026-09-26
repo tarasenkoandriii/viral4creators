@@ -31,6 +31,8 @@ import type {
   VideoVersion,
   TelemetryResult,
   EnvSettingsResult,
+  AudioSeparationSettingsView,
+  AudioSeparationState,
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
   MusicCatalogView,
@@ -239,6 +241,16 @@ export function getEnvSettings() {
  * диагностика, а редактируемая настройка (см. её PATCH ниже). */
 export function getVoiceoverProviderSettings() {
   return apiGet<VoiceoverProviderSettingsView>('/admin/settings/voiceover-provider');
+}
+
+export function getAudioSeparationSettings() {
+  return apiGet<AudioSeparationSettingsView>('/admin/settings/audio-separation');
+}
+
+export function setAudioSeparationState(state: AudioSeparationState) {
+  return apiPatch<AudioSeparationSettingsView>('/admin/settings/audio-separation', {
+    state,
+  });
 }
 
 export function setVoiceoverProviderDefault(provider: VoiceoverProviderKey) {

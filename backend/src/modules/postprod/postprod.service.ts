@@ -77,6 +77,7 @@ import {
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { FfmpegApiService } from './ffmpeg-api.service';
 import { ReplicateSeparationService } from '../audio-separation/replicate-separation.service';
+import { AudioSeparationSettingsService } from '../audio-separation/audio-separation-settings';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { isVoiceoverProviderKey } from '../tts/default-tts-provider';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
@@ -245,6 +246,7 @@ export class PostProductionService {
   constructor(
     private readonly api: FfmpegApiService,
     private readonly separation: ReplicateSeparationService,
+    private readonly separationSettings: AudioSeparationSettingsService,
     private readonly ttsResolver: TtsProviderResolverService,
     private readonly blob: BlobService,
     private readonly sessions: SessionService,
@@ -1409,6 +1411,13 @@ export class PostProductionService {
     const empty = { keys: [], inputs: {}, note: '' };
     if (work.voiceMode !== 'dub' || work.sourceHasNoAudio) return empty;
     if (!this.separation.configured()) return empty;
+    // Выключатель проверяется ПОСЛЕ дешёвых отсечек и ДО обращения к
+    // провайдеру: один индексный запрос в базу против платного
+    // прогона — цена, которую не жалко.
+    if (!(await this.separationSettings.enabled())) return empty;
+    // Выключатель проверяется ПОСЛЕ дешёвых отсечек и ДО обращения к
+    // провайдеру: один индексный запрос в базу против платного
+    // прогона — цена, которую не жалко.
 
     const outcome = await this.separation.separate({ sourceUrl, sessionId });
     // Платим за прогон, а не за результат: провайдер считает даже

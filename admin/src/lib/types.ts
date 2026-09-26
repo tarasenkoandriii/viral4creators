@@ -129,6 +129,20 @@ export interface FixtureSeedResult {
 
 export type VoiceoverProviderKey = 'elevenlabs' | 'resemble' | 'veo';
 
+/**
+ * Сохранение фона при дубляже
+ * (docs-tz/TZ-Voice-Replace-Keep-Background.md, этап E).
+ */
+export type AudioSeparationState = 'on' | 'off';
+
+export interface AudioSeparationSettingsView {
+  state: AudioSeparationState;
+  /** Настроен ли Replicate: без ключа выключатель ничего не решает. */
+  providerConfigured: boolean;
+  /** Что произойдёт при следующем дубляже — одной фразой. */
+  effect: string;
+}
+
 export interface VoiceoverProviderOptionView {
   key: VoiceoverProviderKey;
   /** Настроен ли ключ/аккаунт на этом стенде — у `veo` всегда `true`. */

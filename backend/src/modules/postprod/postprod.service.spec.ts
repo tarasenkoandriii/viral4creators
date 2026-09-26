@@ -105,10 +105,16 @@ function build(
     configured: jest.fn().mockReturnValue(false),
     separate: jest.fn(),
   };
+  // Выключатель по умолчанию ВКЛЮЧЁН в тестах: их предмет — поведение
+  // при работающем разделении, а сам выключатель проверяется своими
+  // тестами ниже. На проде умолчание обратное (см.
+  // `audio-separation-settings.ts`).
+  const separationSettings = { enabled: jest.fn().mockResolvedValue(true) };
   return {
     svc: new PostProductionService(
       api as any,
       separation as any,
+      separationSettings as any,
       ttsResolver as any,
       blob as any,
       sessions as any,
@@ -118,6 +124,7 @@ function build(
     plans,
     api,
     separation,
+    separationSettings,
     tts,
     ttsResolver,
     blob,
@@ -947,6 +954,24 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       // И озвучка при этом НЕ помечается сбойной: она удалась, а
       // «Озвучка: …» — та самая строка, которую читает человек.
       expect(r.voiceError).toBeFalsy();
+    });
+
+    it('выключатель в админке выключен — провайдер не зовётся вовсе', async () => {
+      // Третий уровень отката §9 ТЗ: «звучит плохо» автоматика не
+      // распознаёт, решение принимает человек — и принимает без
+      // деплоя.
+      const { svc, separation, separationSettings, aiUsage } = build({
+        session: session({ brandManifestSnapshot: { voiceMode: 'dub' } }),
+      });
+      separation.configured.mockReturnValue(true);
+      separationSettings.enabled.mockResolvedValue(false);
+
+      await svc.start('s1', VIDEO);
+
+      expect(separation.separate).not.toHaveBeenCalled();
+      expect(aiUsage.record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ operation: 'audio-separation' }),
+      );
     });
 
     it('провайдер не настроен — ни вызова, ни строки расхода', async () => {

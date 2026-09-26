@@ -5,6 +5,8 @@ import {
   getEnvSettings,
   getVoiceoverProviderSettings,
   setVoiceoverProviderDefault,
+  getAudioSeparationSettings,
+  setAudioSeparationState,
   getAnalysisProviderSettings,
   setAnalysisProviderDefault,
   getVideoProviderSettings,
@@ -26,6 +28,8 @@ import type {
   EnvSettingsResult,
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
+  AudioSeparationSettingsView,
+  AudioSeparationState,
   AnalysisProviderKey,
   AnalysisProviderSettingsView,
   VideoProviderKey,
@@ -84,6 +88,102 @@ type ViewMode = 'all' | 'attention';
  * подхватывается следующим синтезом, без передеплоя (см.
  * backend/src/modules/tts/tts-provider-resolver.service.ts).
  */
+/**
+ * «Фон при дубляже» — выключатель сохранения фона ролика
+ * (docs-tz/TZ-Voice-Replace-Keep-Background.md, этап E).
+ *
+ * Третий уровень отката: «разделение прошло, счёт выставлен, а звучит
+ * плохо» автоматика распознать не может — это решает ухо человека, и
+ * решить он должен без передеплоя.
+ *
+ * Умолчание — ВЫКЛЮЧЕНО, и карточка об этом говорит прямо: наличие
+ * ключа Replicate само по себе ничего не включает.
+ */
+function AudioSeparationCard() {
+  const [state, setState] = useState<AudioSeparationSettingsView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setError(null);
+    getAudioSeparationSettings()
+      .then(setState)
+      .catch((err) =>
+        setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку фона')
+      );
+  };
+
+  useEffect(load, []);
+
+  const handleChange = async (next: AudioSeparationState) => {
+    if (!state || next === state.state) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setState(await setAudioSeparationState(next));
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить настройку фона');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Фон при дубляже</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Режим «дубляж» заменяет голос модели своим. Без этой настройки он выбрасывает звук ролика ЦЕЛИКОМ — вместе с
+        голосом уходят шум улицы, музыка и всё остальное, остаётся речь на тишине. Включённое разделение убирает из
+        дорожки только голос и возвращает фон под новую озвучку. Каждый такой ролик добавляет один платный прогон
+        разделения (около 2,6 цента против 0,84–3,20 доллара за сам рендер). Переключение действует сразу, без
+        передеплоя.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {!state && (
+            <>
+              {' '}
+              <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+                Повторить
+              </button>
+            </>
+          )}
+        </p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && (
+        <>
+          <div className="filters" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <select
+              aria-label="Фон при дубляже"
+              value={state.state}
+              disabled={saving || !state.providerConfigured}
+              onChange={(e) => void handleChange(e.target.value as AudioSeparationState)}
+            >
+              <option value="off">Выключено — звук ролика заменяется целиком</option>
+              <option value="on">Включено — заменяется только голос</option>
+            </select>
+            {saving && <span className="muted">Сохраняю…</span>}
+          </div>
+          <p className="muted">{state.effect}</p>
+          {!state.providerConfigured && (
+            // Выключатель без ключа выглядел бы работающим и не делал
+            // бы ничего — поэтому он заблокирован, а не просто
+            // бесполезен.
+            <p className="muted" style={{ marginTop: 8 }}>
+              Переключатель заблокирован: не задан <code>REPLICATE_API_TOKEN</code> (см. таблицу переменных ниже).
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function VoiceoverProviderCard() {
   const [state, setState] = useState<VoiceoverProviderSettingsView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1084,6 +1184,7 @@ export default function SettingsPage() {
       </p>
 
       <VoiceoverProviderCard />
+      <AudioSeparationCard />
       <AnalysisProviderCard />
       <VideoProviderCard />
       <GrokTransportCard />

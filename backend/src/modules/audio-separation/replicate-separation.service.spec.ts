@@ -256,11 +256,9 @@ describe('ReplicateSeparationService — бюджет времени', () => {
     // Не уложились — собираем ролик по-старому.
     process.env.REPLICATE_API_TOKEN = 'tok';
     process.env.REPLICATE_DEMUCS_TIMEOUT_MS = '10000';
-    jest.resetModules();
-    const { ReplicateSeparationService: Fresh } = await import(
-      './replicate-separation.service'
-    );
-    const svc = new Fresh();
+    // Потолок читается при вызове, а не при импорте — переменную
+    // можно просто выставить, без перезагрузки модуля.
+    const svc = new ReplicateSeparationService();
     jest.spyOn(global, 'fetch' as never).mockResolvedValue(
       jsonResponse({
         status: 'processing',

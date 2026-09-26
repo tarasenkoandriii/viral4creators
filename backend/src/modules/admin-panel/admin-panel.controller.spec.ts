@@ -93,6 +93,10 @@ function build() {
     setStatus: jest.fn().mockResolvedValue({ id: 't1' }),
     reply: jest.fn().mockResolvedValue({ id: 't1' }),
   };
+  const audioSeparation = {
+    view: jest.fn().mockResolvedValue({ state: 'off' }),
+    set: jest.fn().mockResolvedValue(undefined),
+  };
   const controller = new AdminPanelController(
     adminPanel as any,
     // Этап 155: приглашения тестировщиков — второй параметр.
@@ -124,6 +128,9 @@ function build() {
     undefined as any,
     referrals as any,
     liteUnlock as any,
+    // Выключатель «Фон при дубляже» (этап E ТЗ
+    // TZ-Voice-Replace-Keep-Background.md) — последний параметр.
+    audioSeparation as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
   return {
@@ -136,6 +143,7 @@ function build() {
     referrals,
     liteUnlock,
     testTickets,
+    audioSeparation,
     req,
   };
 }
@@ -375,6 +383,39 @@ describe('AdminPanelController — /admin/settings/music-catalog', () => {
       controller.setMusicCatalog(req, { raw: '[]' }),
     ).rejects.toThrow();
     expect(musicCatalog.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPanelController — /admin/settings/audio-separation (этап E)', () => {
+  it('GET: оператор проверяется до обращения к настройке', async () => {
+    const { controller, adminPanel, audioSeparation, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+
+    await expect(controller.getAudioSeparation(req)).rejects.toThrow(
+      'не оператор',
+    );
+    expect(audioSeparation.view).not.toHaveBeenCalled();
+  });
+
+  it('PATCH: записывается выбранное состояние и ИМЕННО оператор', async () => {
+    const { controller, audioSeparation, req } = build();
+
+    await controller.setAudioSeparation(req, { state: 'on' });
+
+    expect(audioSeparation.set).toHaveBeenCalledWith('on', 'op-1');
+    // Ответ — свежая витрина, а не эхо запроса: оператор должен
+    // увидеть, что получилось, а не что он попросил.
+    expect(audioSeparation.view).toHaveBeenCalled();
+  });
+
+  it('PATCH: оператор проверяется до записи', async () => {
+    const { controller, adminPanel, audioSeparation, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+
+    await expect(
+      controller.setAudioSeparation(req, { state: 'off' }),
+    ).rejects.toThrow('не оператор');
+    expect(audioSeparation.set).not.toHaveBeenCalled();
   });
 });
 

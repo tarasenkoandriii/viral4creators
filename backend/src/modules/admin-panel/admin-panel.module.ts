@@ -10,6 +10,8 @@ import { AdminCatalogBatchService } from './admin-catalog-batch.service';
 import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
+import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
+import { AudioSeparationModule } from '../audio-separation/audio-separation.module';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { ProviderBalancesService } from './provider-balances.service';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
@@ -50,7 +52,15 @@ import { AdminTestTicketsService } from './admin-test-tickets.service';
   // и автоматическая разблокировка, иначе правило «право считается по
   // паре дат» пришлось бы написать дважды. Цикла нет: `InviteModule`
   // про админку не знает.
-  imports: [WizardGuideModule, AdminAuthModule, InviteModule],
+  // AudioSeparationModule — ради выключателя «Фон при дубляже»
+  // (docs-tz/TZ-Voice-Replace-Keep-Background.md, этап E). Цикла нет:
+  // модуль разделения про админку не знает.
+  imports: [
+    WizardGuideModule,
+    AdminAuthModule,
+    InviteModule,
+    AudioSeparationModule,
+  ],
   controllers: [AdminPanelController],
   providers: [
     AdminTesterInvitesService,
@@ -67,6 +77,7 @@ import { AdminTestTicketsService } from './admin-test-tickets.service';
     AdminAbTestService,
     AdminFeedImportService,
     AdminVoiceoverSettingsService,
+    AdminAudioSeparationSettingsService,
     AdminMusicCatalogService,
     AdminAnalysisSettingsService,
     AdminVideoProviderSettingsService,

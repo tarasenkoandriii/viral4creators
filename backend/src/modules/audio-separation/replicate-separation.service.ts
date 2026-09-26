@@ -92,11 +92,30 @@ const PREFER_WAIT_SECONDS = 45;
  * (§9 ТЗ). Переопределяется переменной на случай, если на живых
  * роликах окажется иначе — менять код ради одного числа не придётся.
  */
-const TOTAL_TIMEOUT_MS = Math.max(
-  10_000,
-  Number(process.env.REPLICATE_DEMUCS_TIMEOUT_MS) || 60_000,
-);
+const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
+/** Меньше этого ждать бессмысленно: прогон на A100 заявлен ~23 с. */
+const MIN_TOTAL_TIMEOUT_MS = 10_000;
 const POLL_INTERVAL_MS = 2_000;
+
+/**
+ * Читается ПРИ ВЫЗОВЕ, а не при импорте модуля.
+ *
+ * Найдено сквозным аудитом A–F: все остальные переменные в этом файле
+ * (`token()`, `model()`, `base()`) читаются из `process.env` в момент
+ * обращения, и только потолок ожидания вычислялся один раз на импорте.
+ * Практического вреда на проде нет — там процесс всё равно
+ * перезапускается деплоем, — но тесту пришлось городить
+ * `jest.resetModules()` с динамическим импортом, и это ровно тот
+ * сигнал, что константа притворяется настройкой. Теперь она настройка
+ * по-настоящему.
+ */
+function totalTimeoutMs(): number {
+  const raw = Number(process.env.REPLICATE_DEMUCS_TIMEOUT_MS);
+  return Math.max(
+    MIN_TOTAL_TIMEOUT_MS,
+    Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TOTAL_TIMEOUT_MS,
+  );
+}
 
 interface Prediction {
   id?: string;
@@ -199,6 +218,12 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
 
     const started = Date.now();
     try {
+      // `sessionId` до сквозного аудита принимался и никуда не шёл.
+      // Прогон платный и небыстрый; когда в логе десяток таких строк
+      // подряд, единственный способ понять, чьи они, — эта пометка.
+      this.logger.log(
+        `разделяю дорожку${request.sessionId ? ` (сессия ${request.sessionId})` : ''}`,
+      );
       let prediction = await this.create(token, sourceUrl);
       prediction = await this.settle(token, prediction, started);
 
@@ -277,7 +302,7 @@ export class ReplicateSeparationService implements AudioSeparationProvider {
       current.status !== TERMINAL_OK &&
       !TERMINAL_BAD.has(current.status ?? '')
     ) {
-      if (Date.now() - started > TOTAL_TIMEOUT_MS) {
+      if (Date.now() - started > totalTimeoutMs()) {
         return { ...current, status: 'timeout' };
       }
       const next = current.urls?.get;

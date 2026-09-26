@@ -43,6 +43,7 @@ import { AdminCatalogBatchService } from './admin-catalog-batch.service';
 import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
+import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { ProviderBalancesService } from './provider-balances.service';
 import { AdminWizardGuideService } from '../wizard-guide/admin-wizard-guide.service';
@@ -309,6 +310,18 @@ export class SetVoiceoverProviderDto {
   provider!: string;
 }
 
+/**
+ * Выключатель сохранения фона при дубляже
+ * (docs-tz/TZ-Voice-Replace-Keep-Background.md, §9 — третий уровень
+ * отката). Два значения, а не булево: в теле запроса `false` и
+ * «поле не передали» неразличимы после JSON, а перепутать здесь
+ * значит молча продолжить платить за то, что оператор выключал.
+ */
+export class SetAudioSeparationDto {
+  @IsIn(['on', 'off'])
+  state!: 'on' | 'off';
+}
+
 /** Доп. запрос владельца продукта: тот же селектор, что выше, но для
  * модели разбора референса (ТЗ §17). */
 /**
@@ -397,6 +410,10 @@ export class AdminPanelController {
     private readonly grokTransportSettings: AdminGrokTransportSettingsService,
     private readonly referrals: AdminReferralsService,
     private readonly liteUnlock: LiteUnlockService,
+    // Последним намеренно: конструктор этого контроллера
+    // инстанцируется в тестах позиционно, и вставка в середину молча
+    // сдвинула бы все зависимости после себя.
+    private readonly audioSeparationSettings: AdminAudioSeparationSettingsService,
   ) {}
 
   @Get('sessions')
@@ -494,6 +511,22 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.voiceoverSettings.setDefault(dto.provider, req.userId);
+  }
+
+  @Get('settings/audio-separation')
+  async getAudioSeparation(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.audioSeparationSettings.view();
+  }
+
+  @Patch('settings/audio-separation')
+  async setAudioSeparation(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetAudioSeparationDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    await this.audioSeparationSettings.set(dto.state, req.userId);
+    return this.audioSeparationSettings.view();
   }
 
   /**
