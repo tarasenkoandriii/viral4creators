@@ -25,6 +25,7 @@ import { PlanContext } from './lib/plan-context';
 import { getPlanState } from './services/projects-api';
 import { reportEnvironment } from './services/environment-api';
 import { ReportProblem } from './components/ReportProblem';
+import { TestingScreen } from './features/testing/TestingScreen';
 import {
   ReportLocationContext,
   type ReportLocation,
@@ -449,6 +450,13 @@ function App() {
             {route.name === 'api-keys' && <ApiKeysScreen />}
             {route.name === 'feed' && <FeedScreen />}
             {route.name === 'invite' && <InviteScreen />}
+            {/* Бриф тестировщика (этап 161). Экран, а не лендинг:
+                здесь человек уже аутентифицирован, и страницу нельзя
+                переслать кому угодно. Доступ проверяет сервер — адрес
+                открыт, но нетестировщику вернётся отказ. */}
+            {route.name === 'testing' && (
+              <TestingScreen dict={dict} locale={locale} />
+            )}
             {route.name === 'not-found' && (
               <EmptyState
                 title={dict.notFound.title}
@@ -503,6 +511,14 @@ function App() {
                   onClick={() => setReporting(true)}
                 >
                   {dict.footer.report}
+                </button>
+                <span className="mx-1.5 opacity-40">·</span>
+                <button
+                  type="button"
+                  className="inline-flex min-h-[44px] items-center px-1 underline hover:text-accent"
+                  onClick={() => navigate(routes.testing())}
+                >
+                  {dict.footer.testing}
                 </button>
               </>
             )}

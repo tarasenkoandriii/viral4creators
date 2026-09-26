@@ -56,7 +56,8 @@
     "channels": "Canales",
     "credits": "Créditos",
     "madeWithClaude": "Hecho con Claude — semana gratis",
-    "report": "Informar de un problema"
+    "report": "Informar de un problema",
+    "testing": "Pruebas"
   },
   "notFound": {
     "title": "Página no encontrada",
@@ -1797,5 +1798,33 @@
     "failed": "No se pudo enviar. Inténtalo de nuevo.",
     "tooBig": "El archivo supera los 10 MB: envía un fragmento o una captura.",
     "here": "Pantalla: {where}"
+  },
+  "testing": {
+    "title": "Pruebas",
+    "brief": "Gracias por ayudar. Abajo: qué está abierto, cuánto queda hoy y tus informes.",
+    "whatToTest": "Qué probar",
+    "open": "Gratis para ti",
+    "outside": "Clonación de voz, locución, bocetos, búsqueda en YouTube",
+    "nothingOpen": "Todavía no hay nada abierto: escribe al operador.",
+    "until": "Acceso hasta el {date}",
+    "forever": "Acceso sin fecha de fin",
+    "spent": "Gastado hoy: {spent} de {limit}",
+    "myTickets": "Mis informes",
+    "none": "Aún no hay informes. El enlace «Informar de un problema» está en el pie.",
+    "answered": "respondido en el chat",
+    "fromBot": "del chat",
+    "fromApp": "de la app",
+    "loading": "Cargando…",
+    "failed": "No se pudo cargar.",
+    "noAccess": "El acceso de prueba no está activo: esta pantalla es solo para testers.",
+    "shown": "Se muestran los últimos {shown} de {total}",
+    "status": {
+      "NEW": "Nuevo",
+      "IN_PROGRESS": "Arreglando",
+      "ANSWERED": "Te esperamos",
+      "FIXED": "Arreglado",
+      "REJECTED": "Rechazado",
+      "DUPLICATE": "Ya lo sabemos"
+    }
   }
 }

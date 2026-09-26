@@ -1580,6 +1580,8 @@ export interface TesterInvite {
   freeScenarios: string[];
   /** Операции вне проекта: клон голоса, озвучка, скетч, поиск (этап 159). */
   freeOutsideProject: boolean;
+  /** Что проверять — текст брифа на экране `#/testing` (аудит 161). */
+  brief: string | null;
   /** Свой суточный потолок в долларах. null — общий для тестовых. */
   dailyLimitUsd: number | null;
   expiresAt: string | null;

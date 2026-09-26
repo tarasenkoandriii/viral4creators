@@ -87,6 +87,7 @@ export default function TestingPage() {
   const [label, setLabel] = useState('');
   const [scenarios, setScenarios] = useState<FreeScenario[]>([]);
   const [outside, setOutside] = useState(false);
+  const [brief, setBrief] = useState('');
   const [limit, setLimit] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
 
@@ -209,12 +210,14 @@ export default function TestingPage() {
         label: label.trim(),
         freeScenarios: scenarios,
         freeOutsideProject: outside,
+        brief: brief.trim() || null,
         dailyLimitUsd,
         expiresAt: expiresAt || null,
       });
       setLabel('');
       setScenarios([]);
       setOutside(false);
+      setBrief('');
       setLimit('');
       setExpiresAt('');
       setError(null);
@@ -311,6 +314,17 @@ export default function TestingPage() {
           <button type="button" onClick={() => void invite()} disabled={busy}>
             Создать
           </button>
+          {/* Бриф — то, ради чего экран `#/testing` и существует
+              (аудит этапа 161). На приглашении, а не общей настройкой:
+              участок у каждого свой, и общий бриф на всех означал бы,
+              что каждый читает инструкцию для кого-то другого. */}
+          <textarea
+            placeholder="Что проверять — человек увидит этот текст на экране «Тестирование»"
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+            rows={2}
+            style={{ width: '100%', marginTop: 8 }}
+          />
         </div>
 
         {invites?.length ? (
@@ -337,6 +351,11 @@ export default function TestingPage() {
                         ...(i.freeOutsideProject ? ['вне проекта'] : []),
                       ].join(', ') || 'ничего'}
                       {i.dailyLimitUsd !== null && ` · $${i.dailyLimitUsd}/сут`}
+                      {i.brief && (
+                        <div style={{ fontSize: 12, marginTop: 2 }}>
+                          бриф: {i.brief}
+                        </div>
+                      )}
                     </td>
                     <td className="muted">{date(i.expiresAt)}</td>
                     <td className="muted">

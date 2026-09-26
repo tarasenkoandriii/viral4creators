@@ -140,6 +140,12 @@ export class CreateTesterInviteDto {
   @IsBoolean()
   freeOutsideProject?: boolean;
 
+  /** Что проверять — текст брифа на экране `#/testing` (аудит 161). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  brief?: string;
+
   /**
    * Свой суточный потолок в долларах; пусто — общий для тестовых.
    * Границы проверяет сервис: «ноль означает ноль» выражается там

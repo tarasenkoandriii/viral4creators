@@ -93,9 +93,22 @@ export class TesterTicketsService {
         testAccessUntil: true,
         lastEnvironment: true,
         lastEnvironmentAt: true,
+        // Было ли приглашение вообще: по нему отличаем бывшего
+        // тестировщика от случайного прохожего.
+        testerInvites: { take: 1, select: { id: true } },
       },
     });
-    if (!user?.isTestUser) return false;
+    // Отозванный доступ отвечает так же, как истёкший (приёмка ТЗ).
+    // `isTestUser: false` значит и «случайный прохожий», и «человек,
+    // у которого доступ вчера отобрали», — и второму молчание читается
+    // как сломанный бот. Отличает их активированное приглашение: оно
+    // остаётся и после отзыва, ровно затем, чтобы было видно, кто и
+    // что проверял.
+    if (!user?.isTestUser) {
+      if (user?.testerInvites.length)
+        await this.sayExpired(telegramId, user.id, now);
+      return user ? Boolean(user.testerInvites.length) : false;
+    }
     if (
       user.testAccessUntil &&
       user.testAccessUntil.getTime() <= now.getTime()
@@ -108,14 +121,7 @@ export class TesterTicketsService {
       //
       // Ответ ОДИН раз в сутки: повторять его на каждое сообщение —
       // тот же спам, от которого бережёт ограничитель частоты.
-      const { count } = await hitRateLimit(
-        this.prisma,
-        `tester-expired|u:${user.id}`,
-        24 * 60 * 60,
-        now,
-        this.logger,
-      );
-      if (count === 1) await this.notify.dm(telegramId, TEXT.expired);
+      await this.sayExpired(telegramId, user.id, now);
       return true;
     }
 
@@ -178,7 +184,17 @@ export class TesterTicketsService {
     ];
     // Подтверждение обязательно: без него человек не знает, дошло ли,
     // и пишет второй раз.
+    // Оператор узнаёт о находке сам (приёмка ТЗ): до этого вкладку
+    // надо было открыть и посмотреть, а между «принять находку» и
+    // «разобрать её» не было ничего. Канал статистики, а не тревог:
+    // находка — это событие, а не сбой, и дедупликация тревог тут
+    // склеила бы разные находки в одну.
     const sent = await this.notify.dmWithId(telegramId, lines.join('\n'));
+    await this.notify.stat(
+      `🔎 Находка #${ticket.number} от тестировщика (бот)${
+        ticket.merged ? ' — дополнена' : ''
+      }: ${text.slice(0, 200) || '(без текста)'}`,
+    );
     if (sent.messageId !== null) {
       await this.prisma.testTicket.update({
         where: { id: ticket.id },
@@ -198,7 +214,7 @@ export class TesterTicketsService {
   ): Promise<boolean> {
     const ticket = await this.prisma.testTicket.findFirst({
       where: { userId, botMessageIds: { has: replyTo } },
-      select: { id: true, comments: true },
+      select: { id: true, number: true, status: true, comments: true },
     });
     if (!ticket) return false;
     const comments = Array.isArray(ticket.comments) ? ticket.comments : [];
@@ -217,8 +233,27 @@ export class TesterTicketsService {
         // ехать вместе с ним: иначе следующая фраза из той же мысли
         // заведёт находку.
         lastMessageAt: now,
+        // Мяч вернулся к нам (приёмка ТЗ). `ANSWERED` значит «ждём
+        // тестировщика» — а он уже ответил; оставить этот статус
+        // значит спрятать его ответ от оператора в положении «ждёт
+        // ЕГО». Закрытые статусы тоже возвращаются в очередь: «всё
+        // ещё ломается» по исправленной находке — ровно тот случай,
+        // где молчание дороже всего.
+        //
+        // `statusBy` при этом НЕ ставится: статус вернул не оператор,
+        // и подписывать этим кого-то из них было бы неправдой.
+        ...(ticket.status === 'NEW'
+          ? {}
+          : { status: 'IN_PROGRESS', statusBy: null, statusAt: now }),
       },
     });
+    // Оператор узнаёт об ответе так же, как о находке: иначе он придёт
+    // в очередь только тогда, когда сам вспомнит.
+    await this.notify.stat(
+      `💬 Ответ тестировщика по находке #${ticket.number}: ${
+        text.slice(0, 200) || '(файл без текста)'
+      }`,
+    );
     return true;
   }
 
@@ -289,6 +324,22 @@ export class TesterTicketsService {
       select: { id: true, number: true },
     });
     return { ...created, merged: false };
+  }
+
+  /** Доступ кончился или отозван. Раз в сутки, чтобы отказ не стал спамом. */
+  private async sayExpired(
+    telegramId: string,
+    userId: string,
+    now: Date,
+  ): Promise<void> {
+    const { count } = await hitRateLimit(
+      this.prisma,
+      `tester-expired|u:${userId}`,
+      24 * 60 * 60,
+      now,
+      this.logger,
+    );
+    if (count === 1) await this.notify.dm(telegramId, TEXT.expired);
   }
 }
 

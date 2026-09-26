@@ -56,7 +56,8 @@
     "channels": "Channels",
     "credits": "Credits",
     "madeWithClaude": "Made with Claude — 1 week free",
-    "report": "Report a problem"
+    "report": "Report a problem",
+    "testing": "Testing"
   },
   "notFound": {
     "title": "Page not found",
@@ -1797,5 +1798,33 @@
     "failed": "Could not send. Please try again.",
     "tooBig": "The file is over 10 MB — send a fragment or a screenshot.",
     "here": "Screen: {where}"
+  },
+  "testing": {
+    "title": "Testing",
+    "brief": "Thank you for helping. Below: what is open, how much is left for today, and your reports.",
+    "whatToTest": "What to test",
+    "open": "Free to use",
+    "outside": "Voice cloning, voice-over, sketches, YouTube search",
+    "nothingOpen": "Nothing is open yet — message the operator.",
+    "until": "Access until {date}",
+    "forever": "Access with no end date",
+    "spent": "Spent today: {spent} of {limit}",
+    "myTickets": "My reports",
+    "none": "No reports yet. The «Report a problem» link is in the footer.",
+    "answered": "answered in chat",
+    "fromBot": "from chat",
+    "fromApp": "from the app",
+    "loading": "Loading…",
+    "failed": "Could not load.",
+    "noAccess": "Test access is not active — this screen is for testers only.",
+    "shown": "Showing the latest {shown} of {total}",
+    "status": {
+      "NEW": "New",
+      "IN_PROGRESS": "Fixing",
+      "ANSWERED": "Waiting for you",
+      "FIXED": "Fixed",
+      "REJECTED": "Declined",
+      "DUPLICATE": "Already known"
+    }
   }
 }

@@ -1145,6 +1145,7 @@ export function createTesterInvite(body: {
   label: string;
   freeScenarios: string[];
   freeOutsideProject?: boolean;
+  brief?: string | null;
   dailyLimitUsd?: number | null;
   expiresAt?: string | null;
 }) {

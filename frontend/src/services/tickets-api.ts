@@ -78,3 +78,31 @@ export async function createTicket(input: {
   if (!created) throw new Error('ticket not created');
   return created;
 }
+
+export interface TestingBrief {
+  /** Что проверять — текст из приглашения (аудит этапа 161). */
+  brief: string | null;
+  scenarios: string[];
+  freeOutsideProject: boolean;
+  accessUntil: string | null;
+  spentTodayMicroUsd: number;
+  dailyLimitMicroUsd: number;
+  /** Сколько находок всего — список ниже обрезан сервером. */
+  ticketsTotal: number;
+  tickets: Array<{
+    number: number;
+    createdAt: string;
+    status: string;
+    open: boolean;
+    source: string;
+    preview: string;
+    answered: boolean;
+  }>;
+}
+
+export async function getTestingBrief(): Promise<TestingBrief> {
+  const res = await api.get<TestingBrief>('/me/test-tickets/brief');
+  const brief = unwrap(res.data);
+  if (!brief) throw new Error('brief missing');
+  return brief;
+}

@@ -37,6 +37,7 @@ export type Route =
   | { name: 'plan' }
   | { name: 'channels' }
   | { name: 'credits' }
+  | { name: 'testing' }
   | { name: 'api-keys' }
   | { name: 'feed' }
   | { name: 'invite' }
@@ -131,6 +132,9 @@ export function parseRoute(hash: string): Route {
   if (parts[0] === 'plan') return { name: 'plan' };
   if (parts[0] === 'channels') return { name: 'channels' };
   if (parts[0] === 'credits') return { name: 'credits' };
+  // Бриф тестировщика (этап 161). Отдельный маршрут, а не лендинг:
+  // здесь человек уже аутентифицирован, и страницу нельзя переслать.
+  if (parts[0] === 'testing') return { name: 'testing' };
   if (parts[0] === 'api-keys') return { name: 'api-keys' };
   if (parts[0] === 'feed') return { name: 'feed' };
   if (parts[0] === 'invite') return { name: 'invite' };
@@ -195,6 +199,8 @@ export const routes = {
   plan: () => '/plan',
   channels: () => '/channels',
   credits: () => '/credits',
+  /** Бриф тестировщика (этап 161) — только тестовому аккаунту. */
+  testing: () => '/testing',
   /** Ключи внешнего API (этап 145) — Premium. */
   apiKeys: () => '/api-keys',
   feed: () => '/feed',

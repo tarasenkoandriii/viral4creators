@@ -56,7 +56,8 @@
     "channels": "Kanäle",
     "credits": "Guthaben",
     "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis",
-    "report": "Problem melden"
+    "report": "Problem melden",
+    "testing": "Testen"
   },
   "notFound": {
     "title": "Seite nicht gefunden",
@@ -1797,5 +1798,33 @@
     "failed": "Senden fehlgeschlagen. Bitte erneut versuchen.",
     "tooBig": "Die Datei ist größer als 10 MB — senden Sie einen Ausschnitt oder Screenshot.",
     "here": "Bildschirm: {where}"
+  },
+  "testing": {
+    "title": "Testen",
+    "brief": "Danke für Ihre Hilfe. Unten: was freigeschaltet ist, wie viel für heute bleibt und Ihre Meldungen.",
+    "whatToTest": "Was zu testen ist",
+    "open": "Kostenlos freigeschaltet",
+    "outside": "Stimmklon, Vertonung, Skizzen, YouTube-Suche",
+    "nothingOpen": "Noch nichts freigeschaltet — schreiben Sie dem Betreiber.",
+    "until": "Zugang bis {date}",
+    "forever": "Zugang ohne Enddatum",
+    "spent": "Heute ausgegeben: {spent} von {limit}",
+    "myTickets": "Meine Meldungen",
+    "none": "Noch keine Meldungen. Der Link „Problem melden“ steht im Fußbereich.",
+    "answered": "im Chat beantwortet",
+    "fromBot": "aus dem Chat",
+    "fromApp": "aus der App",
+    "loading": "Wird geladen…",
+    "failed": "Laden fehlgeschlagen.",
+    "noAccess": "Der Testzugang ist nicht aktiv — dieser Bildschirm ist nur für Tester.",
+    "shown": "Es werden die letzten {shown} von {total} angezeigt",
+    "status": {
+      "NEW": "Neu",
+      "IN_PROGRESS": "Wird behoben",
+      "ANSWERED": "Warten auf Sie",
+      "FIXED": "Behoben",
+      "REJECTED": "Abgelehnt",
+      "DUPLICATE": "Schon bekannt"
+    }
   }
 }

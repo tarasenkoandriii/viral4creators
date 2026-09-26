@@ -4,6 +4,7 @@ import { EnvironmentController } from './environment.controller';
 import { EnvironmentService } from './environment.service';
 import { TestTicketIntakeController } from './test-ticket-intake.controller';
 import { TestTicketIntakeService } from './test-ticket-intake.service';
+import { TestingBriefService } from './testing-brief.service';
 
 /**
  * Окружение тестировщика (этап 156) и находки из мини-аппа (этап 160) —
@@ -16,7 +17,7 @@ import { TestTicketIntakeService } from './test-ticket-intake.service';
 @Module({
   imports: [StorageModule],
   controllers: [EnvironmentController, TestTicketIntakeController],
-  providers: [EnvironmentService, TestTicketIntakeService],
+  providers: [EnvironmentService, TestTicketIntakeService, TestingBriefService],
   exports: [EnvironmentService],
 })
 export class EnvironmentModule {}

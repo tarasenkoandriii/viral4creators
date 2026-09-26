@@ -57,6 +57,7 @@ function build(options: Options = {}) {
   };
   const notify = {
     dm: jest.fn().mockResolvedValue(true),
+    stat: jest.fn().mockResolvedValue(true),
     dmWithId: jest.fn().mockResolvedValue({
       ok: true,
       messageId: options.messageId === undefined ? 500 : options.messageId,
@@ -88,7 +89,12 @@ describe('приём находки из бота', () => {
 
   it('не тестировщик — не наше дело', async () => {
     const { service, prisma } = build({
-      user: { id: 'u2', isTestUser: false, testAccessUntil: null },
+      user: {
+        id: 'u2',
+        isTestUser: false,
+        testAccessUntil: null,
+        testerInvites: [],
+      },
     });
     await expect(service.accept('42', { text: 'привет' }, NOW)).resolves.toBe(
       false,
@@ -107,6 +113,7 @@ describe('приём находки из бота', () => {
         testAccessUntil: new Date(NOW.getTime() - 1),
         lastEnvironment: null,
         lastEnvironmentAt: null,
+        testerInvites: [{ id: 'inv1' }],
       },
     });
     await expect(service.accept('42', { text: 'баг' }, NOW)).resolves.toBe(
@@ -129,6 +136,7 @@ describe('приём находки из бота', () => {
         testAccessUntil: new Date(NOW.getTime() - 1),
         lastEnvironment: null,
         lastEnvironmentAt: null,
+        testerInvites: [{ id: 'inv1' }],
       },
       rateCount: 2,
     });
@@ -170,6 +178,7 @@ describe('приём находки из бота', () => {
         testAccessUntil: null,
         lastEnvironment: null,
         lastEnvironmentAt: null,
+        testerInvites: [{ id: 'inv1' }],
       },
     });
     await service.accept('42', { text: 'баг' }, NOW);
@@ -242,6 +251,58 @@ describe('приём находки из бота', () => {
     expect(notify.dmWithId).not.toHaveBeenCalled();
   });
 
+  it('ответ тестировщика возвращает находку в очередь к нам', async () => {
+    // Приёмка ТЗ: `ANSWERED` значит «ждём тестировщика» — а он уже
+    // ответил. Оставить этот статус значит спрятать его ответ в
+    // положении «ждёт ЕГО».
+    const { service, prisma, notify } = build({
+      byReply: { id: 'told', number: 9, status: 'ANSWERED', comments: [] },
+    });
+    await service.accept(
+      '42',
+      { text: 'всё ещё ломается', reply_to_message: { message_id: 500 } },
+      NOW,
+    );
+    const data = prisma.testTicket.update.mock.calls[0][0].data;
+    expect(data.status).toBe('IN_PROGRESS');
+    // Статус вернул не оператор — подписывать им кого-то было бы
+    // неправдой.
+    expect(data.statusBy).toBeNull();
+    expect(notify.stat).toHaveBeenCalledWith(expect.stringContaining('#9'));
+  });
+
+  it('и поднимает даже закрытую находку', async () => {
+    // «Всё ещё ломается» по исправленной — ровно тот случай, где
+    // молчание дороже всего.
+    const { service, prisma } = build({
+      byReply: { id: 'told', number: 9, status: 'FIXED', comments: [] },
+    });
+    await service.accept(
+      '42',
+      { text: 'не починилось', reply_to_message: { message_id: 500 } },
+      NOW,
+    );
+    expect(prisma.testTicket.update.mock.calls[0][0].data.status).toBe(
+      'IN_PROGRESS',
+    );
+  });
+
+  it('новую находку в «чиним» не переводит', async () => {
+    // Она и так ждёт нас; менять `NEW` на `IN_PROGRESS` значит соврать,
+    // что за неё уже взялись.
+    const { service, prisma } = build({
+      byReply: { id: 'told', number: 9, status: 'NEW', comments: [] },
+    });
+    await service.accept(
+      '42',
+      { text: 'ещё подробность', reply_to_message: { message_id: 500 } },
+      NOW,
+    );
+    expect(
+      prisma.testTicket.update.mock.calls[0][0].data.status,
+    ).toBeUndefined();
+  });
+
   it('ответ НЕ на наше сообщение находкой всё-таки становится', async () => {
     // Человек уточняет собственную мысль, отвечая себе же. Потерять
     // это было бы хуже, чем завести лишний тикет.
@@ -268,6 +329,53 @@ describe('приём находки из бота', () => {
     await service.accept('42', { text: 'баг' }, NOW);
     expect(prisma.testTicket.create).toHaveBeenCalled();
     expect(prisma.testTicket.update).not.toHaveBeenCalled();
+  });
+
+  it('отозванному доступу отвечаем, а не молчим', async () => {
+    // Приёмка ТЗ: `isTestUser: false` значит и «случайный прохожий», и
+    // «человек, у которого доступ вчера отобрали». Второму молчание
+    // читается как сломанный бот.
+    const { service, notify, prisma } = build({
+      user: {
+        id: 'u9',
+        isTestUser: false,
+        testAccessUntil: null,
+        testerInvites: [{ id: 'inv1' }],
+      },
+    });
+    await expect(service.accept('42', { text: 'баг' }, NOW)).resolves.toBe(
+      true,
+    );
+    expect(notify.dm).toHaveBeenCalledWith(
+      '42',
+      expect.stringContaining('Тестовый доступ закончился'),
+    );
+    expect(prisma.testTicket.create).not.toHaveBeenCalled();
+  });
+
+  it('случайному прохожему по-прежнему молчим', async () => {
+    // Он не начинал этого разговора.
+    const { service, notify } = build({
+      user: {
+        id: 'u2',
+        isTestUser: false,
+        testAccessUntil: null,
+        testerInvites: [],
+      },
+    });
+    await expect(service.accept('42', { text: 'привет' }, NOW)).resolves.toBe(
+      false,
+    );
+    expect(notify.dm).not.toHaveBeenCalled();
+  });
+
+  it('оператор узнаёт о находке сам', async () => {
+    // Между «принять находку» и «разобрать её» не было ничего: вкладку
+    // надо было открыть и посмотреть.
+    const { service, notify } = build();
+    await service.accept('42', { text: 'кнопка не нажимается' }, NOW);
+    expect(notify.stat).toHaveBeenCalledWith(expect.stringContaining('#14'));
+    expect(notify.stat.mock.calls[0][0]).toContain('кнопка не нажимается');
   });
 
   it('перебор частоты: отказ один раз, дальше молчание', async () => {
@@ -394,7 +502,7 @@ describe('приём находки из бота', () => {
     // До аудита вложения качались ПОСЛЕ развилки, то есть в
     // комментарий не попадали вовсе.
     const { service, prisma, files } = build({
-      byReply: { id: 'told', comments: [] },
+      byReply: { id: 'told', number: 9, status: 'NEW', comments: [] },
     });
     files.mockResolvedValue({ stored: [{ url: 'b' }], failures: [] });
     await service.accept(
@@ -416,7 +524,7 @@ describe('приём находки из бота', () => {
 
   it('ответ из одного файла без текста не пропадает целиком', async () => {
     const { service, prisma, files } = build({
-      byReply: { id: 'told', comments: [] },
+      byReply: { id: 'told', number: 9, status: 'NEW', comments: [] },
     });
     files.mockResolvedValue({ stored: [{ url: 'b' }], failures: [] });
     await service.accept(
@@ -433,7 +541,7 @@ describe('приём находки из бота', () => {
     // Комментарий — тоже сообщение человека; иначе следующая фраза из
     // той же мысли заведёт находку.
     const { service, prisma } = build({
-      byReply: { id: 'told', comments: [] },
+      byReply: { id: 'told', number: 9, status: 'NEW', comments: [] },
     });
     await service.accept(
       '42',
@@ -447,7 +555,7 @@ describe('приём находки из бота', () => {
 
   it('не доехавшее вложение в комментарии — тоже вслух', async () => {
     const { service, notify, files } = build({
-      byReply: { id: 'told', comments: [] },
+      byReply: { id: 'told', number: 9, status: 'NEW', comments: [] },
     });
     files.mockResolvedValue({ stored: [], failures: ['too-big'] });
     await service.accept(

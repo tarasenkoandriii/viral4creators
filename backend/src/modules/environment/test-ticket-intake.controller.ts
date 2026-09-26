@@ -12,7 +12,7 @@
  * злоупотребления — здесь выдаётся ещё и ссылка на запись в хранилище.
  */
 
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { IsInt, IsOptional, IsString, MaxLength } from 'class-validator';
 import {
   IdentifiedRequest,
@@ -20,6 +20,10 @@ import {
 } from '../telegram-auth/telegram-identity.guard';
 import { RateLimit, RateLimitGuard } from '../../common/rate-limit';
 import { TestTicketIntakeService } from './test-ticket-intake.service';
+import {
+  TestingBriefService,
+  type TestingBriefView,
+} from './testing-brief.service';
 
 /** Ссылка на загрузку вложения (этап 160). */
 export class TicketUploadUrlDto {
@@ -70,7 +74,22 @@ export class CreateTestTicketDto {
 @Controller('me/test-tickets')
 @UseGuards(TelegramIdentityGuard, RateLimitGuard)
 export class TestTicketIntakeController {
-  constructor(private readonly intake: TestTicketIntakeService) {}
+  constructor(
+    private readonly intake: TestTicketIntakeService,
+    private readonly brief: TestingBriefService,
+  ) {}
+
+  /**
+   * GET /api/me/test-tickets/brief — экран `#/testing` (§2.3 ТЗ).
+   *
+   * Под тем же префиксом, что и находки, а не отдельным маршрутом:
+   * это ответ на вопрос «как у меня дела с находками», и жить ему
+   * рядом с ними.
+   */
+  @Get('brief')
+  async briefOf(@Req() req: IdentifiedRequest): Promise<TestingBriefView> {
+    return this.brief.of(req.telegramUserId);
+  }
 
   @Post('upload-url')
   @RateLimit({

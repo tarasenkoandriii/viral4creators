@@ -30,6 +30,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
+import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { envKeyOf, normalizeEnvironment } from '../../common/environment';
 import {
   MAX_ATTACHMENTS,
@@ -62,6 +63,7 @@ export class TestTicketIntakeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly blob: BlobService,
+    private readonly notify: TelegramNotifyService,
   ) {}
 
   /** Куда браузеру класть файл. Ссылка одноразовая и короткоживущая. */
@@ -152,6 +154,14 @@ export class TestTicketIntakeService {
     this.logger.log(
       `находка #${ticket.number} из мини-аппа: сессия ${session?.id ?? '—'}, ` +
         `шаг ${input.stepId ?? '—'}, вложений ${attachments.length}`,
+    );
+    // Оператор узнаёт о находке сам — так же, как о находке из бота
+    // (приёмка ТЗ). Без этого между «принять» и «разобрать» нет ничего,
+    // кроме привычки открывать вкладку.
+    await this.notify.stat(
+      `🔎 Находка #${ticket.number} от тестировщика (приложение` +
+        `${session?.id ? `, сессия ${session.id}` : ''}): ` +
+        `${text.slice(0, 200) || '(без текста)'}`,
     );
     return ticket;
   }

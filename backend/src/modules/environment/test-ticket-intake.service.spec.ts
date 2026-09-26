@@ -49,10 +49,16 @@ function build(
           : over.head,
       ),
   };
+  const notify = { stat: jest.fn().mockResolvedValue(true) };
   return {
-    service: new TestTicketIntakeService(prisma as never, blob as never),
+    service: new TestTicketIntakeService(
+      prisma as never,
+      blob as never,
+      notify as never,
+    ),
     prisma,
     blob,
+    notify,
   };
 }
 
@@ -273,6 +279,21 @@ describe('находка из мини-аппа', () => {
     expect(
       prisma.testTicket.create.mock.calls[0][0].data.attachments,
     ).toHaveLength(5);
+  });
+
+  it('оператор узнаёт о находке сам', async () => {
+    // Приёмка ТЗ: между «принять находку» и «разобрать её» не было
+    // ничего, кроме привычки открывать вкладку.
+    const { service, notify } = build({ session });
+    await service.create(
+      '42',
+      { text: 'субтитры съехали', sessionId: 's1', environment: ENV },
+      NOW,
+    );
+    const said = notify.stat.mock.calls[0][0] as string;
+    expect(said).toContain('#21');
+    expect(said).toContain('s1');
+    expect(said).toContain('субтитры съехали');
   });
 
   it('без окружения находка всё равно заводится', async () => {

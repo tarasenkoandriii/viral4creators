@@ -20,6 +20,8 @@ export interface TesterInviteView {
   freeScenarios: string[];
   /** Открыты ли операции вне проекта (этап 159, §4.1 ТЗ). */
   freeOutsideProject: boolean;
+  /** Что проверять — текст для экрана `#/testing` (аудит этапа 161). */
+  brief: string | null;
   /** Свой суточный потолок в долларах. null — общий для тестовых. */
   dailyLimitUsd: number | null;
   expiresAt: string | null;
@@ -51,6 +53,7 @@ export class AdminTesterInvitesService {
       label: string;
       freeScenarios: string[];
       freeOutsideProject?: boolean;
+      brief?: string | null;
       dailyLimitUsd?: number | null;
       expiresAt?: string | null;
     },
@@ -78,6 +81,7 @@ export class AdminTesterInvitesService {
         label,
         freeScenarios: normalizeFreeScenarios(input.freeScenarios),
         freeOutsideProject: Boolean(input.freeOutsideProject),
+        brief: input.brief?.trim().slice(0, 2000) || null,
         dailyLimitUsd: dailyLimit(input.dailyLimitUsd),
         expiresAt,
         createdBy: actorId,
@@ -130,6 +134,7 @@ export class AdminTesterInvitesService {
     label: string;
     freeScenarios: string[];
     freeOutsideProject: boolean;
+    brief: string | null;
     dailyLimitUsd: number | null;
     expiresAt: Date | null;
     activatedAt: Date | null;
@@ -142,6 +147,7 @@ export class AdminTesterInvitesService {
       label: row.label,
       freeScenarios: row.freeScenarios,
       freeOutsideProject: row.freeOutsideProject,
+      brief: row.brief,
       dailyLimitUsd: row.dailyLimitUsd,
       expiresAt: row.expiresAt?.toISOString() ?? null,
       link: inviteLink(botUsername(), row.token),
