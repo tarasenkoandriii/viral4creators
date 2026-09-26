@@ -665,7 +665,10 @@ export function planAudioTrackJob(opts: AudioTrackJobOptions): PostProdPlan {
     command,
     inputKeys,
     crop: null,
-    audio: { mode: opts.mode, delayMs },
+    // `backgroundStems: 0` — не заглушка, а факт: альтернативная
+    // звуковая дорожка собирается из голоса и подложки, исходной
+    // дорожки ролика в ней нет вовсе, разделять нечего.
+    audio: { mode: opts.mode, delayMs, backgroundStems: 0 },
     subtitles: false,
   };
 }
