@@ -5,6 +5,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { PromptService } from './prompt.service';
 import { ModerationStatus } from '../../common/types/prompt.types';
 import { SessionStatus } from '../../common/types/session.types';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 const KEY = 'GEMINI_API_KEY';
 
@@ -115,7 +116,9 @@ describe('PromptService.updatePrompt — текст озвучки (ТЗ §15.2)
 
   it('нет сессии — понятный отказ, а не падение', async () => {
     const { svc } = build(null);
-    await expect(svc.updatePrompt('s1', 'x')).rejects.toThrow('Session');
+    await expect(svc.updatePrompt('s1', 'x')).rejects.toThrow(
+      SESSION_NOT_FOUND,
+    );
   });
 });
 

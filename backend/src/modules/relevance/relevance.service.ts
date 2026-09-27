@@ -28,6 +28,7 @@ import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { languageNameForLocale, normalizeLocale } from '../../common/locale';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 const MODEL = GEMINI_MODEL;
 
@@ -124,7 +125,7 @@ export class RelevanceService {
 
   private async load(sessionId: string): Promise<Session> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     return session;
   }
 }

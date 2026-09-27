@@ -269,6 +269,9 @@ function build() {
       failed: 0,
       outcomes: [],
     }),
+    // Сквозной аудит 27.09.2026 (Д-2): опрос только сборок слайд-шоу,
+    // без браузера.
+    pollAssemblies: jest.fn().mockResolvedValue({ pending: 0 }),
   };
   // Этап 100: крон-обход интерфейса TMA (§3 ТЗ) — тот же приём
   // делегирования, что у tutorialScenarioRunner выше.
@@ -1121,6 +1124,50 @@ describe('CronJobsService.runTutorialScenarioRun — исполнение сце
       failed: 0,
       outcomes: [],
     });
+  });
+});
+
+describe('CronJobsService.runTutorialAssemblyPoll — опрос сборок обучалки (сквозной аудит 27.09.2026, Д-2)', () => {
+  it('зовёт pollAssemblies, а НЕ полный прогон сценариев', async () => {
+    const { service, tutorialScenarioRunner } = build();
+    tutorialScenarioRunner.pollAssemblies.mockResolvedValue({ pending: 4 });
+
+    const result = await service.runTutorialAssemblyPoll();
+
+    expect(tutorialScenarioRunner.pollAssemblies).toHaveBeenCalledTimes(1);
+    // Ради этого слот и разделён: общий прогон держит headless-браузер
+    // минутами и раз в две минуты запускаться не может.
+    expect(tutorialScenarioRunner.run).not.toHaveBeenCalled();
+    expect(result).toEqual({ pending: 4 });
+  });
+
+  // Свой джоб-замок, отдельный от tutorial-scenario-run: расписание раз
+  // в две минуты, а один опрос может не уложиться в две минуты на
+  // длинной очереди — два перекрывающихся тика опрашивали бы одну и ту
+  // же сборку.
+  it('джоб-замок: второй тик поверх идущего — пропуск, опрос не вызван', async () => {
+    const { service, prisma, tutorialScenarioRunner } = build();
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.runTutorialAssemblyPoll();
+
+    expect(tutorialScenarioRunner.pollAssemblies).not.toHaveBeenCalled();
+    expect(result).toEqual({ pending: 0 });
+  });
+
+  it('замок берётся и отпускается под своим ключом, не под ключом прогона сценариев', async () => {
+    const { service, prisma } = build();
+
+    await service.runTutorialAssemblyPoll();
+
+    expect(prisma.cronJobLock.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ jobKey: 'tutorial-assembly-poll' }),
+      }),
+    );
   });
 });
 

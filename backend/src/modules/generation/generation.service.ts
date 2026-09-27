@@ -76,6 +76,7 @@ import { activeProductImage } from '../../common/active-image';
 import { readinessOfSession } from '../../common/wizard-readiness.session';
 import { RenderAccessService } from '../render-access/render-access.service';
 import { RenderCompletedService } from '../render-access/render-completed.service';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /**
  * Model IDs for each quality tier, on the Gemini Developer API (not
@@ -318,7 +319,7 @@ export class GenerationService {
     }
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
 
     // Идущий рендер не запускается второй раз (Б-2.3).
@@ -1295,7 +1296,7 @@ export class GenerationService {
   async getVideoStatus(sessionId: string): Promise<GeneratedVideo> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
 
     const current = session.generatedVideo;

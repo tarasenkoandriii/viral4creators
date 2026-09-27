@@ -274,6 +274,133 @@ describe('TelegramNotifyService — канал не ломает продукт'
     ).toEqual([]);
   });
 
+  /**
+   * Личные сообщения (`dm`/`dmWithId`, этапы 20/157) приехали без
+   * единого теста — сквозной аудит 27.09.2026, находка Д-6: порог
+   * покрытия этого файла в `package.json` стоит 100/90/100/100, и CI
+   * был красным на нём ещё до этого аудита. Здесь закрываются ровно те
+   * ветки, ради которых `dmWithId` и заводился.
+   */
+  describe('личные сообщения пользователю', () => {
+    it('без токена бота — не отправляет и не притворяется', async () => {
+      delete process.env.TELEGRAM_BOT_TOKEN;
+      const fetchSpy = jest.spyOn(global, 'fetch' as never);
+      const svc = new TelegramNotifyService(
+        prismaWith({ send: true, reported: 0 }) as any,
+      );
+
+      expect(await svc.dm('777', 'привет')).toBe(false);
+      expect(await svc.dmWithId('777', 'привет')).toEqual({
+        ok: false,
+        messageId: null,
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('dm уходит в чат самого человека, без дедупликации', async () => {
+      configured();
+      const fetchSpy = jest
+        .spyOn(global, 'fetch' as never)
+        .mockResolvedValue({ ok: true } as never);
+      const prisma = prismaWith({ send: true, reported: 0 });
+      const svc = new TelegramNotifyService(prisma as any);
+
+      expect(await svc.dm('777', 'ваш ролик опубликован')).toBe(true);
+
+      const body = JSON.parse(
+        (fetchSpy.mock.calls[0][1] as { body: string }).body,
+      ) as { chat_id: string };
+      expect(body.chat_id).toBe('777');
+      // Транзакционное сообщение — каждое про своё событие; дедуп между
+      // ними только помешал бы, поэтому в базу за вердиктом не ходим.
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('dmWithId отдаёт message_id — по нему ответ тестировщика находит свой тикет', async () => {
+      configured();
+      jest.spyOn(global, 'fetch' as never).mockResolvedValue({
+        ok: true,
+        json: async () => ({ result: { message_id: 4242 } }),
+      } as never);
+      const svc = new TelegramNotifyService(
+        prismaWith({ send: true, reported: 0 }) as any,
+      );
+
+      expect(await svc.dmWithId('777', 'тикет №12')).toEqual({
+        ok: true,
+        messageId: 4242,
+      });
+    });
+
+    it('ответ без разбираемого тела — отправка всё равно состоялась', async () => {
+      // `messageId: null` при `ok: true` — обычный исход, а не сбой:
+      // терять сам факт отправки из-за нечитаемого тела нельзя.
+      configured();
+      jest.spyOn(global, 'fetch' as never).mockResolvedValue({
+        ok: true,
+        json: async () => {
+          throw new Error('не JSON');
+        },
+      } as never);
+      const svc = new TelegramNotifyService(
+        prismaWith({ send: true, reported: 0 }) as any,
+      );
+
+      expect(await svc.dmWithId('777', 'тикет №12')).toEqual({
+        ok: true,
+        messageId: null,
+      });
+    });
+
+    it('тело без message_id — то же самое, null вместо выдуманного числа', async () => {
+      configured();
+      jest.spyOn(global, 'fetch' as never).mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true }),
+      } as never);
+      const svc = new TelegramNotifyService(
+        prismaWith({ send: true, reported: 0 }) as any,
+      );
+
+      expect(await svc.dmWithId('777', 'тикет №12')).toEqual({
+        ok: true,
+        messageId: null,
+      });
+    });
+
+    it('человек заблокировал бота — это не тревога оператору, а false', async () => {
+      configured();
+      jest
+        .spyOn(global, 'fetch' as never)
+        .mockResolvedValue({ ok: false, status: 403 } as never);
+      const svc = new TelegramNotifyService(
+        prismaWith({ send: true, reported: 0 }) as any,
+      );
+
+      expect(await svc.dm('777', 'привет')).toBe(false);
+      expect(await svc.dmWithId('777', 'привет')).toEqual({
+        ok: false,
+        messageId: null,
+      });
+    });
+
+    it('сеть отвалилась — тоже false, а не исключение наружу', async () => {
+      configured();
+      jest
+        .spyOn(global, 'fetch' as never)
+        .mockRejectedValue(new Error('сеть недоступна') as never);
+      const svc = new TelegramNotifyService(
+        prismaWith({ send: true, reported: 0 }) as any,
+      );
+
+      expect(await svc.dm('777', 'привет')).toBe(false);
+      expect(await svc.dmWithId('777', 'привет')).toEqual({
+        ok: false,
+        messageId: null,
+      });
+    });
+  });
+
   it('уборка отпечатков не бросает при сбое базы', async () => {
     const prisma = {
       $executeRaw: jest.fn().mockRejectedValue(new Error('база лежит')),

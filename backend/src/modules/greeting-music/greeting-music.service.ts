@@ -50,6 +50,7 @@ import {
   GreetingMusicUploadUrlRequestDto,
   MAX_MUSIC_BYTES,
 } from './dto/greeting-music.dto';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /**
  * Под какую длину искать трек. Ролик пятнадцать секунд, но искать
@@ -390,11 +391,9 @@ export class GreetingMusicService {
 
   private async load(sessionId: string): Promise<Session> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     if (!session.greetingBriefSnapshot) {
-      throw new NotFoundException(
-        `Session ${sessionId} is not a greeting session`,
-      );
+      throw new NotFoundException('это не поздравительная сессия');
     }
     return session;
   }

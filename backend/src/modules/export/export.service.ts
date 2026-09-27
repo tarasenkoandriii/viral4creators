@@ -62,6 +62,7 @@ import {
   VideoQuality,
 } from '../../common/types/generation.types';
 import { Session } from '../../common/types/session.types';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** Сколько сессий с ожидающим вариантом яруса B досматривает один тик
  * крон-аналога `advanceGenerating()` (Е-2.3 шестого аудита, этап 76) —
@@ -84,7 +85,7 @@ export class ExportService {
     sessionId: string,
   ): Promise<{ session: Session; video: GeneratedVideo }> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     const video = session.generatedVideo;
     if (!video || video.status !== GenerationStatus.COMPLETE) {
       throw new BadRequestException(
@@ -374,7 +375,7 @@ export class ExportService {
    */
   async syncStatus(sessionId: string): Promise<GeneratedVideo> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     let video = session.generatedVideo;
     if (!video) {
       throw new NotFoundException('Video generation has not been initiated');

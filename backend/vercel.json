@@ -82,6 +82,10 @@
       "schedule": "0 9 * * *"
     },
     {
+      "path": "/api/cron/tutorial-assembly-poll",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/cron/ui-snapshot-run",
       "schedule": "*/2 * * * *"
     },

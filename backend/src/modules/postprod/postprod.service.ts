@@ -85,6 +85,20 @@ import { PlanService } from '../plan/plan.service';
 import { Session } from '../../common/types/session.types';
 
 /** Что именно предстоит сделать с готовым роликом. */
+/**
+ * Исход попытки сохранить фоновые звуки исходника. `patch` пишется в
+ * сессию и переживает прогон — без него единственным следом неудачи
+ * была строка в логе Vercel, и «фонового звука снова нет» приходилось
+ * расследовать вслепую (27.09.2026). `patch` отсутствует, когда вопрос
+ * не стоял вовсе: не дубляж или немой исходник.
+ */
+interface BackgroundOutcome {
+  keys: string[];
+  inputs: Record<string, string>;
+  note: string;
+  patch?: Pick<GeneratedVideo, 'backgroundStatus' | 'backgroundError'>;
+}
+
 interface Work {
   /** Нужна ли обрезка кадра. */
   crop: string | null;
@@ -386,6 +400,7 @@ export class PostProductionService {
     const background = voiceUrl
       ? await this.resolveBackground(sessionId, work, source)
       : { keys: [], inputs: {}, note: '' };
+    if (background.patch) patch = { ...patch, ...background.patch };
 
     let plan;
     try {
@@ -635,6 +650,12 @@ export class PostProductionService {
         work,
         source,
       );
+      // Переозвучка делает разделение заново, и её исход заменяет
+      // прежний: иначе после удачной второй попытки в базе осталось бы
+      // `failed` с первой.
+      if (revoiceBackground.patch) {
+        patch = { ...patch, ...revoiceBackground.patch };
+      }
 
       let plan;
       try {
@@ -1407,17 +1428,25 @@ export class PostProductionService {
     sessionId: string,
     work: Work,
     sourceUrl: string,
-  ): Promise<{ keys: string[]; inputs: Record<string, string>; note: string }> {
-    const empty = { keys: [], inputs: {}, note: '' };
-    if (work.voiceMode !== 'dub' || work.sourceHasNoAudio) return empty;
-    if (!this.separation.configured()) return empty;
+  ): Promise<BackgroundOutcome> {
+    // Фон не при чём: вопрос не стоял, поле не пишем вовсе.
+    const notApplicable: BackgroundOutcome = { keys: [], inputs: {}, note: '' };
+    const without = (
+      status: Exclude<GeneratedVideo['backgroundStatus'], 'kept' | undefined>,
+      error?: string,
+    ): BackgroundOutcome => ({
+      keys: [],
+      inputs: {},
+      note: '',
+      patch: { backgroundStatus: status, backgroundError: error },
+    });
+
+    if (work.voiceMode !== 'dub' || work.sourceHasNoAudio) return notApplicable;
+    if (!this.separation.configured()) return without('unavailable');
     // Выключатель проверяется ПОСЛЕ дешёвых отсечек и ДО обращения к
     // провайдеру: один индексный запрос в базу против платного
     // прогона — цена, которую не жалко.
-    if (!(await this.separationSettings.enabled())) return empty;
-    // Выключатель проверяется ПОСЛЕ дешёвых отсечек и ДО обращения к
-    // провайдеру: один индексный запрос в базу против платного
-    // прогона — цена, которую не жалко.
+    if (!(await this.separationSettings.enabled())) return without('off');
 
     const outcome = await this.separation.separate({ sourceUrl, sessionId });
     // Платим за прогон, а не за результат: провайдер считает даже
@@ -1431,12 +1460,15 @@ export class PostProductionService {
       });
     }
     if (!outcome.ok || !outcome.backgroundUrls?.length) {
-      if (!outcome.skipped) {
-        this.logger.warn(
-          `фон ролика сохранить не удалось, собираю дубляж по-старому: ${outcome.reason}`,
-        );
+      if (outcome.skipped) {
+        // Провайдер сам отказался до платного вызова (нет токена в
+        // момент обращения) — для человека это то же «не настроено».
+        return without('unavailable', outcome.reason);
       }
-      return empty;
+      this.logger.warn(
+        `фон ролика сохранить не удалось, собираю дубляж по-старому: ${outcome.reason}`,
+      );
+      return without('failed', outcome.reason);
     }
 
     const inputs: Record<string, string> = {};
@@ -1449,6 +1481,7 @@ export class PostProductionService {
       keys,
       inputs,
       note: `фон сохранён (${keys.length} стем(ов), ${outcome.seconds?.toFixed(1)} с)`,
+      patch: { backgroundStatus: 'kept', backgroundError: undefined },
     };
   }
 

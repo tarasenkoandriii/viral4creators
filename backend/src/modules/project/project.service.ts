@@ -65,6 +65,7 @@ import {
   toneAllowedFor,
 } from '../../common/greeting-occasions';
 import { CreateGreetingBriefDto } from './dto/create-project-request.dto';
+import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** Батч на один прогон крона — тот же порядок величины, что
  * `CLEANUP_BATCH` в `session.service.ts`. */
@@ -825,7 +826,7 @@ export class ProjectService {
       ...(include ? { include } : {}),
     });
     if (!row) {
-      throw new NotFoundException(`Project ${projectId} not found`);
+      throw new NotFoundException(PROJECT_NOT_FOUND);
     }
     return row;
   }

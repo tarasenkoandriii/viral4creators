@@ -914,6 +914,108 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       );
     });
 
+    // Исход сохранения фона теперь переживает прогон (27.09.2026).
+    // До этого единственным следом неудачи была строка в логе Vercel:
+    // «фонового звука снова нет» дважды пришлось расследовать вслепую,
+    // потому что в базе не оставалось ничего.
+    describe('исход сохранения фона записывается в сессию', () => {
+      const dubbed = () =>
+        session({ brandManifestSnapshot: { voiceMode: 'dub' } });
+
+      it('фон отделён — kept, без причины', async () => {
+        const { svc, separation } = build({ session: dubbed() });
+        separation.configured.mockReturnValue(true);
+        separation.separate.mockResolvedValue({
+          ok: true,
+          backgroundUrls: ['https://blob/no_vocals.mp3'],
+          seconds: 21,
+        });
+
+        const r = await svc.start('s1', VIDEO);
+
+        expect(r.backgroundStatus).toBe('kept');
+        expect(r.backgroundError).toBeUndefined();
+      });
+
+      it('платный прогон ничего не вернул — failed с причиной', async () => {
+        const { svc, separation } = build({ session: dubbed() });
+        separation.configured.mockReturnValue(true);
+        separation.separate.mockResolvedValue({
+          ok: false,
+          reason: 'провайдер лёг',
+        });
+
+        const r = await svc.start('s1', VIDEO);
+
+        expect(r.backgroundStatus).toBe('failed');
+        expect(r.backgroundError).toBe('провайдер лёг');
+        // И это по-прежнему НЕ сбой озвучки: она удалась.
+        expect(r.voiceError).toBeFalsy();
+      });
+
+      it('выключатель оператора — off, а не failed', async () => {
+        // Решение человека и поломка — разные вещи, и путать их в
+        // журнале значит гонять оператора чинить то, что он сам и
+        // выключил.
+        const { svc, separation, separationSettings } = build({
+          session: dubbed(),
+        });
+        separation.configured.mockReturnValue(true);
+        separationSettings.enabled.mockResolvedValue(false);
+
+        const r = await svc.start('s1', VIDEO);
+
+        expect(r.backgroundStatus).toBe('off');
+        expect(r.backgroundError).toBeUndefined();
+      });
+
+      it('провайдер не настроен — unavailable', async () => {
+        const { svc } = build({ session: dubbed() });
+
+        const r = await svc.start('s1', VIDEO);
+
+        expect(r.backgroundStatus).toBe('unavailable');
+      });
+
+      it('провайдер сам отказался до платного вызова — тоже unavailable', async () => {
+        // Для человека это то же «не настроено», а не поломка: денег
+        // не потрачено, чинить нечего.
+        const { svc, separation } = build({ session: dubbed() });
+        separation.configured.mockReturnValue(true);
+        separation.separate.mockResolvedValue({
+          ok: false,
+          skipped: true,
+          reason: 'токен не задан',
+        });
+
+        const r = await svc.start('s1', VIDEO);
+
+        expect(r.backgroundStatus).toBe('unavailable');
+        expect(r.backgroundError).toBe('токен не задан');
+      });
+
+      it('не дубляж — поле не пишется вовсе', async () => {
+        // Пустое поле означает «вопрос не стоял», а не «неизвестно»:
+        // писать сюда что-то для voiceover значило бы завести третье
+        // значение, которое ничего не значит.
+        const { svc, separation } = build({ session: voiced });
+        separation.configured.mockReturnValue(true);
+
+        const r = await svc.start('s1', VIDEO);
+
+        expect(r.backgroundStatus).toBeUndefined();
+      });
+
+      it('немой исходник — поле не пишется вовсе', async () => {
+        const { svc, separation } = build({ session: dubbed() });
+        separation.configured.mockReturnValue(true);
+
+        const r = await svc.start('s1', { ...VIDEO, silentSource: true });
+
+        expect(r.backgroundStatus).toBeUndefined();
+      });
+    });
+
     it('в режиме voiceover разделение не зовётся вовсе', async () => {
       // Там исходник и так подмешивается целиком: платить не за что.
       const { svc, separation } = build({ session: voiced });

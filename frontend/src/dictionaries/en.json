@@ -97,7 +97,7 @@
     "hints": {
       "veo": "The model synthesizes speech itself from the lines in the prompt. Nothing to configure, but the voice is different every time. Free — included in every render.",
       "voiceover": "The chosen voice reads the lines while the clip's own sound stays underneath — music and atmosphere are kept. Standard plan and up: billed by character, on top of the render.",
-      "dub": "The chosen voice reads the lines and the clip's sound is replaced entirely. Use this if the model ended up speaking in its own voice anyway. Premium plan: billed by character, on top of the render."
+      "dub": "The chosen voice reads the lines and replaces the model's voice, while the clip's background — noise, music, ambience — stays. Use this if the model ended up speaking in its own voice anyway. Premium plan: billed by character, on top of the render."
     }
   },
   "subtitleTheme": {
@@ -1082,13 +1082,7 @@
     "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analysis",
-      "Product",
-      "Prompt",
-      "Generation"
-    ],
+    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
     "stepSource": "Scene",
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
@@ -1157,9 +1151,11 @@
     "reframePendingNote": "— shot in {{rendered}}, cropping to {{target}}; the video below is already watchable, the link will update itself.",
     "croppedFromNote": "— cropped from {{rendered}}.",
     "postFailedNote": "— shot in {{rendered}}; finishing the video didn't work out{{errorSuffix}}, downloading the original file.",
+    "postFailedNoteNoSource": "— finishing the video didn't work out{{errorSuffix}}, downloading the original file.",
     "reframeSkippedNote": "— shot in {{rendered}} with a composition meant for cropping to {{target}}; cropping isn't wired up on this environment.",
     "processingSkippedNote": "Video processing was skipped: {{error}}",
     "voiceLabel": "Voiceover:",
+    "backgroundLost": "Background: the original video's sounds couldn't be kept — only the voice.",
     "voiceNotDone": "not done ({{reason}}).",
     "noReasonDefault": "no reason given",
     "voiceModelSoundNote": "The video keeps the model's own sound.",

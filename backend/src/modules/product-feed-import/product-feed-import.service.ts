@@ -36,6 +36,7 @@ import {
   ProductFeedImportItemStatus,
   ProductFeedImportRunStatus,
 } from '@prisma/client';
+import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
 
 export interface StartFeedImportResult {
   runId: string;
@@ -91,7 +92,7 @@ export class ProductFeedImportService {
         select: { id: true, type: true },
       });
     if (!project) {
-      throw new NotFoundException(`Project ${projectId} not found`);
+      throw new NotFoundException(PROJECT_NOT_FOUND);
     }
     if (project.type !== 'LINE') {
       throw new BadRequestException(
@@ -144,7 +145,7 @@ export class ProductFeedImportService {
       select: { id: true },
     });
     if (!project) {
-      throw new NotFoundException(`Project ${projectId} not found`);
+      throw new NotFoundException(PROJECT_NOT_FOUND);
     }
     const runs = await this.prisma.productFeedImportRun.findMany({
       where: { projectId, userId },

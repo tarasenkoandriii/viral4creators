@@ -11,6 +11,7 @@ import { UploadProductImageRequestDto } from './dto/upload-product-image-request
 import { UploadProductImageResponseDto } from './dto/upload-product-image-response.dto';
 import { ConfirmProductImageRequestDto } from './dto/confirm-product-image.dto';
 import { SessionStatus } from '../../common/types/session.types';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /**
  * ProductService handles product information submission and image uploads
@@ -34,7 +35,7 @@ export class ProductService {
   ): Promise<SubmitProductInfoResponseDto> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
 
     // MERGE into the existing product info, never replace it: a session
@@ -80,7 +81,7 @@ export class ProductService {
   ): Promise<UploadProductImageResponseDto> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
 
     // Validate product info has been added
@@ -155,7 +156,7 @@ export class ProductService {
   ): Promise<{ success: true; pathname: string }> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
     if (!session.productInformation) {
       throw new BadRequestException(

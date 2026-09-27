@@ -13,6 +13,7 @@ import {
 } from './library.service';
 import { AnalysisStatus } from '../../common/types/analysis.types';
 import { VideoSourceType } from '../../common/types/video.types';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 const plansMock = () => ({
   // §26.4: дневной лимит по умолчанию не выбран.
@@ -321,8 +322,13 @@ describe('LibraryService', () => {
       NotFoundException,
     );
     const missing = build(null);
+    // Идентификатор сессии в тексте больше не светится (аудит
+    // 27.09.2026, Д-5): человеку он ничего не говорит.
     await expect(missing.svc.applyToSession('s9', 'l1')).rejects.toThrow(
-      /Session s9 not found/,
+      SESSION_NOT_FOUND,
+    );
+    await expect(missing.svc.applyToSession('s9', 'l1')).rejects.not.toThrow(
+      /s9/,
     );
   });
 });

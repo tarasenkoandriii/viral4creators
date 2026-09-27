@@ -7,6 +7,7 @@ import { aspectRatioFromSize } from '../../common/aspect-ratio';
 import { VideoSourceType } from '../../common/types/video.types';
 import { YoutubeSearchService } from '../youtube-search/youtube-search.service';
 import { parseYoutubeVideoId } from '../youtube-search/youtube-url';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 const MAX_VIDEO_BYTES = 104857600; // 100MB
 
@@ -64,7 +65,7 @@ export class VideoService {
   ): Promise<{ uploadUrl: string; pathname: string }> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
 
     if (fileSize > MAX_VIDEO_BYTES) {
@@ -129,7 +130,7 @@ export class VideoService {
   ): Promise<{ youtubeUrl: string }> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
 
     // Теги исходника (ТЗ TZ-Multilingual-YouTube.md, этап 136) —

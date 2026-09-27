@@ -30,6 +30,10 @@ import {
   SnapshotProjectSource,
 } from './snapshot';
 import { UpdateBrandSnapshotRequestDto } from './dto/update-brand-snapshot.dto';
+import {
+  SESSION_NOT_FOUND,
+  PROJECT_NOT_FOUND,
+} from '../../common/user-facing-errors';
 
 /** Structural row shapes (see project.service.ts for why not Prisma types). */
 interface ItemWithProjectRow extends SnapshotItemSource {
@@ -289,7 +293,7 @@ export class ProjectSessionService {
       select: { id: true },
     });
     if (!owned) {
-      throw new NotFoundException(`Project ${projectId} not found`);
+      throw new NotFoundException(PROJECT_NOT_FOUND);
     }
     const rows: SessionListRow[] = await this.prisma.session.findMany({
       where: { projectId, deletedAt: null },
@@ -318,11 +322,11 @@ export class ProjectSessionService {
   ): Promise<BrandManifestSnapshot> {
     const session = await this.sessions.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
     if (!session.brandManifestSnapshot) {
       throw new NotFoundException(
-        `Session ${sessionId} has no brand manifest snapshot to edit`,
+        'у этой сессии нет снимка брендбука — править нечего',
       );
     }
     // Доп. запрос владельца продукта: дубляж — премиальный уровень
@@ -386,7 +390,7 @@ export class ProjectSessionService {
       ...resetApproval,
     });
     if (!updated?.brandManifestSnapshot) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
     return updated.brandManifestSnapshot;
   }

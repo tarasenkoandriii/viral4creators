@@ -82,6 +82,9 @@ function build(scenarios: unknown[]) {
       findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockResolvedValue(undefined),
       update: jest.fn().mockResolvedValue(undefined),
+      // Сквозной аудит 27.09.2026 (Д-2): `pollAssemblies` сперва
+      // считает очередь, чтобы сводка крона не была пустой.
+      count: jest.fn().mockResolvedValue(0),
     },
     project: { findFirst: jest.fn().mockResolvedValue({ id: 'proj-1' }) },
     productItem: { findFirst: jest.fn().mockResolvedValue({ id: 'item-1' }) },
@@ -430,6 +433,100 @@ describe('TutorialScenarioRunnerService', () => {
       expect(blob.deleteBlob).toHaveBeenCalledWith(
         'tutorial-video-frames/ts-1/1.jpg',
       );
+    });
+
+    // Сквозной аудит 27.09.2026, находка Д-3: `durationMs` читается
+    // экраном мастера (`client-site-tutorial.service.ts`) и печатается
+    // как «Длительность — около N с», но на завершении сборки никогда
+    // не записывался — строка не появлялась ни у кого.
+    it('poll: на завершении пишет durationMs = кадры × 2 с (находка Д-3)', async () => {
+      const { service, prisma, ffmpeg } = build([]);
+      ffmpeg.configured.mockReturnValue(true);
+      prisma.tutorialVideoAsset.findMany.mockResolvedValue([
+        {
+          id: 'tva-1',
+          subjectKey: '1',
+          scenarioId: 'ts-1',
+          frameCount: 3,
+          assemblyJobId: 'job-1',
+          assemblyStartedAt: new Date(),
+        },
+      ]);
+      ffmpeg.status.mockResolvedValue({
+        status: 'completed',
+        outputs: { 'tutorial.mp4': 'https://ffmpeg-api.example.com/out.mp4' },
+      });
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      }) as unknown as typeof fetch;
+
+      await service.run();
+
+      expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ durationMs: 6000 }),
+        }),
+      );
+    });
+
+    // Без кадров длительность не выдумывается: `null` — это «не знаем»,
+    // и экран мастера строку просто не печатает. Ноль читался бы как
+    // «ролик нулевой длины».
+    it('poll: frameCount = 0 — durationMs остаётся null, а не нулём', async () => {
+      const { service, prisma, ffmpeg } = build([]);
+      ffmpeg.configured.mockReturnValue(true);
+      prisma.tutorialVideoAsset.findMany.mockResolvedValue([
+        {
+          id: 'tva-1',
+          subjectKey: '1',
+          scenarioId: 'ts-1',
+          frameCount: 0,
+          assemblyJobId: 'job-1',
+          assemblyStartedAt: new Date(),
+        },
+      ]);
+      ffmpeg.status.mockResolvedValue({
+        status: 'completed',
+        outputs: { 'tutorial.mp4': 'https://ffmpeg-api.example.com/out.mp4' },
+      });
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      }) as unknown as typeof fetch;
+
+      await service.run();
+
+      expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ durationMs: null }),
+        }),
+      );
+    });
+
+    // Находка Д-2: отдельный вход для частого крона. Он обязан
+    // опрашивать сборки и обязан НЕ открывать браузер.
+    it('pollAssemblies: опрашивает сборки, не запуская headless-браузер', async () => {
+      const { service, prisma, ffmpeg } = build([]);
+      ffmpeg.configured.mockReturnValue(true);
+      prisma.tutorialVideoAsset.count.mockResolvedValue(2);
+      prisma.tutorialVideoAsset.findMany.mockResolvedValue([
+        {
+          id: 'tva-1',
+          subjectKey: '1',
+          scenarioId: 'ts-1',
+          frameCount: 1,
+          assemblyJobId: 'job-1',
+          assemblyStartedAt: new Date(),
+        },
+      ]);
+      ffmpeg.status.mockResolvedValue({ status: 'pending' });
+
+      const result = await service.pollAssemblies();
+
+      expect(ffmpeg.status).toHaveBeenCalledTimes(1);
+      expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+      expect(result).toEqual({ pending: 2 });
     });
 
     it('poll: задача провалилась у внешнего api — помечает failed с причиной, чистит кадры-транзиты', async () => {

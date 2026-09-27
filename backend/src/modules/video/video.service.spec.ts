@@ -3,6 +3,7 @@ jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 import { VideoService } from './video.service';
 import { REFERENCE_DERIVED_KEYS } from '../../common/session-reset';
 import { VideoSourceType } from '../../common/types/video.types';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /**
  * Этап 28: смена референса обнуляет кастинг, выбор сцен/массовки, слоты
@@ -136,7 +137,7 @@ describe('VideoService — что вообще пускается в храни�
     ).sessionService.getSession.mockResolvedValue(null);
     await expect(
       svc.generateUploadUrl('s1', 'a.mp4', 10, 'video/mp4'),
-    ).rejects.toThrow(/Session not found/);
+    ).rejects.toThrow(SESSION_NOT_FOUND);
     expect(blob.createUploadUrl).not.toHaveBeenCalled();
   });
 

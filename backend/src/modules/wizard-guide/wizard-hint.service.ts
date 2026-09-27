@@ -100,6 +100,7 @@ import { ExperienceService } from './experience.service';
 import type { ExperienceText } from './experience';
 import { TranslationService } from './translation.service';
 import { usesTemplate } from '../../common/scene-templates';
+import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** Сколько ждём модель. Короткая реплика — короткое ожидание. */
 const HINT_TIMEOUT_MS = 20_000;
@@ -366,7 +367,7 @@ export class WizardHintService {
         where: { id: projectId, userId, deletedAt: null },
         select: { type: true, aiGuideEnabled: true },
       });
-    if (!row) throw new NotFoundException(`Project ${projectId} not found`);
+    if (!row) throw new NotFoundException(PROJECT_NOT_FOUND);
     return row;
   }
 

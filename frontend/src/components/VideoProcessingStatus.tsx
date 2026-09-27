@@ -20,6 +20,7 @@
  */
 import type { Dictionary } from '../lib/get-dictionary';
 import type { GeneratedVideo } from '../services/api';
+import { aspectRatioNote } from '../lib/aspect-ratio';
 
 export function VideoProcessingStatus({
   video,
@@ -28,6 +29,8 @@ export function VideoProcessingStatus({
   video: GeneratedVideo;
   dict: Dictionary;
 }) {
+  const note = aspectRatioNote(video);
+  const errorSuffix = video.postError ? ` (${video.postError})` : '';
   return (
     <>
       {video.aspectRatio && (
@@ -37,47 +40,53 @@ export function VideoProcessingStatus({
             video.aspectRatio
           )}
           {/* §15.4/§16.1: постобработка идёт после того, как ролик уже
-              отдан, поэтому здесь четыре разных честных состояния, а не
-              одно обещание «появится позже». */}
-          {video.postStatus === 'pending' && video.reframePending && (
+              отдан, поэтому здесь честные состояния, а не одно обещание
+              «появится позже». Какое именно — решает чистая
+              `aspectRatioNote` (сквозной аудит 27.09.2026, Д-4): здесь
+              же это было записано четырьмя условиями в JSX, и одно из
+              них печатало «обрезано из .» с пустым форматом. */}
+          {note.kind === 'reframePending' && (
             <>
               {' '}
               {dict.generationWizard.reframePendingNote
-                .replace('{{rendered}}', video.renderedAspectRatio ?? '')
-                .replace('{{target}}', video.aspectRatio)}
+                .replace('{{rendered}}', note.rendered)
+                .replace('{{target}}', note.target)}
             </>
           )}
-          {video.postStatus === 'complete' &&
-            video.renderedAspectRatio !== video.aspectRatio && (
-              <>
-                {' '}
-                {dict.generationWizard.croppedFromNote.replace(
-                  '{{rendered}}',
-                  video.renderedAspectRatio ?? ''
-                )}
-              </>
-            )}
-          {video.postStatus === 'failed' && (
+          {note.kind === 'croppedFrom' && (
+            <>
+              {' '}
+              {dict.generationWizard.croppedFromNote.replace(
+                '{{rendered}}',
+                note.rendered
+              )}
+            </>
+          )}
+          {note.kind === 'postFailed' && (
             <>
               {' '}
               {dict.generationWizard.postFailedNote
-                .replace('{{rendered}}', video.renderedAspectRatio ?? '')
-                .replace(
-                  '{{errorSuffix}}',
-                  video.postError ? ` (${video.postError})` : ''
-                )}
+                .replace('{{rendered}}', note.rendered)
+                .replace('{{errorSuffix}}', errorSuffix)}
             </>
           )}
-          {video.postStatus === 'skipped' &&
-            video.reframePending &&
-            video.renderedAspectRatio && (
-              <>
-                {' '}
-                {dict.generationWizard.reframeSkippedNote
-                  .replace('{{rendered}}', video.renderedAspectRatio)
-                  .replace('{{target}}', video.aspectRatio)}
-              </>
-            )}
+          {note.kind === 'postFailedNoSource' && (
+            <>
+              {' '}
+              {dict.generationWizard.postFailedNoteNoSource.replace(
+                '{{errorSuffix}}',
+                errorSuffix
+              )}
+            </>
+          )}
+          {note.kind === 'reframeSkipped' && (
+            <>
+              {' '}
+              {dict.generationWizard.reframeSkippedNote
+                .replace('{{rendered}}', note.rendered)
+                .replace('{{target}}', note.target)}
+            </>
+          )}
         </p>
       )}
       {/* Б-2.7: отказ постобработки по дневному лимиту или блокировке
@@ -130,6 +139,19 @@ export function VideoProcessingStatus({
             )} ${dict.generationWizard.voiceModelSoundNote}`}
         </p>
       )}
+      {/* Фон при дубляже (27.09.2026). Показываем ТОЛЬКО неудачу и
+          ТОЛЬКО одной нейтральной строкой: причина у трёх исходов
+          разная (выключатель оператора, ненастроенный провайдер, сбой
+          разделения), а для человека они означают ровно одно — под
+          голосом тишина. Называть ему внутреннюю настройку незачем, а
+          удача в объявлении не нуждается: её слышно. */}
+      {video.voiceMode === 'dub' &&
+        video.backgroundStatus &&
+        video.backgroundStatus !== 'kept' && (
+          <p className="mt-1 text-xs text-silver-400">
+            {dict.generationWizard.backgroundLost}
+          </p>
+        )}
       {/* Этап 67: субтитры — третий ингредиент того же прохода ffmpeg, что
           кроп и голос, но третий, независимый статус (та же логика, что у
           голоса — провал сборки субтитров не отменяет ни кроп, ни звук).

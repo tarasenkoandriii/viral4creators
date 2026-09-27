@@ -114,6 +114,7 @@ import {
   avatarQuotaExhausted,
   avatarQuotaPerDay,
 } from '../../common/avatar-quota';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** Модель аватара у Hedra — та же, что зовёт пилот (`ActorsService`). */
 const HEDRA_MODEL = 'hedra-character-3';
@@ -168,7 +169,7 @@ export class GreetingVideoService {
     await this.plans.assertCanSpendSession(sessionId);
 
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     const brief = session.greetingBriefSnapshot;
     if (!brief) {
       throw new BadRequestException(
@@ -283,7 +284,7 @@ export class GreetingVideoService {
   /** GET /sessions/:id/greeting-video — polls the in-flight render. */
   async pollVideo(sessionId: string): Promise<GeneratedVideo | undefined> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     const current = session.generatedVideo;
     if (!current || current.status !== GenerationStatus.PROCESSING) {
       return current;

@@ -75,7 +75,7 @@ import {
 } from '../../common/headless-chromium';
 import { runScenario, ScenarioPage } from './scenario-runner';
 import { FixtureRouteContext, resolveScenarioRoute } from './route-templates';
-import { planSlideshow } from './tutorial-video-assembly';
+import { planSlideshow, SECONDS_PER_FRAME } from './tutorial-video-assembly';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import { ASSISTANT_STEPS } from '../assistant/knowledge/generated';
 
@@ -527,6 +527,32 @@ export class TutorialScenarioRunnerService {
    * сценариев (`RUN_DEADLINE_MS`) — это дешёвые HTTP-статусы, не запуск
    * браузера, но не должны есть его бюджет.
    */
+  /**
+   * Опросить только сборки слайд-шоу, без запуска сценариев.
+   *
+   * Заведено сквозным аудитом (27.09.2026). Раньше результат сборки
+   * подбирал единственный крон `tutorial-scenario-run` — раз в сутки в
+   * 09:00 UTC. Для регрессионных прогонов это нормально, а для
+   * обучалки по сайту заказчика — нет: оператор одобряет запись,
+   * задача уходит в ffmpeg сразу, готовый файл лежит у подрядчика
+   * через минуту, а ссылка у человека появлялась в следующие сутки.
+   * Экран мастера при этом опрашивает статус 15 с × 40 = десять минут
+   * и сдаётся — то есть в норме пользователь не дожидался ссылки
+   * никогда и уходил, думая, что сломалось.
+   *
+   * Отдельный вход, а не изменение расписания общего прогона: тот
+   * держит headless-браузер открытым минутами, и гонять его каждые две
+   * минуты нельзя. Здесь же — один запрос в базу и несколько проверок
+   * статуса по HTTP.
+   */
+  async pollAssemblies(): Promise<{ pending: number }> {
+    const before = await this.prisma.tutorialVideoAsset.count({
+      where: { assemblyStatus: 'pending' },
+    });
+    await this.pollPendingVideoAssets();
+    return { pending: before };
+  }
+
   private async pollPendingVideoAssets(): Promise<void> {
     if (!this.ffmpeg.configured()) return;
 
@@ -620,6 +646,22 @@ export class TutorialScenarioRunnerService {
           assemblyStatus: 'complete',
           blobUrl: ourUrl,
           assemblyError: null,
+          // Длительность считается, а не измеряется, и это не оценка:
+          // слайд-шоу собирается из статичных кадров ровно по
+          // `SECONDS_PER_FRAME` секунд каждый (`-loop 1 -t N`, см.
+          // `tutorial-video-assembly.ts`), так что произведение —
+          // точная длина файла.
+          //
+          // Найдено сквозным аудитом обучалки (27.09.2026): поле
+          // `durationMs` читается экраном мастера и показывается
+          // строкой «Длительность — около N с», но не записывалось
+          // НИ ОДНИМ путём. То есть строка не появлялась никогда, и
+          // заметить это можно было только сверив читателей с
+          // писателями — тестам и типам тут ловить нечего, поле
+          // необязательное.
+          durationMs: asset.frameCount
+            ? asset.frameCount * SECONDS_PER_FRAME * 1000
+            : null,
         },
       });
       this.logger.log(

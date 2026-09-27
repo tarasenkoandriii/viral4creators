@@ -46,11 +46,36 @@ test:
 # поэтому здесь он не запускается вовсе, чтобы `make ci` не приучал
 # игнорировать красный вывод. Тесты по той же причине идут с
 # отключёнными диагностиками ts-jest.
+#
+# `prisma validate` первым шагом — под защитой, и это не мелочь.
+# Команде нужна сеть до binaries.prisma.sh (она тянет schema-engine), а
+# три строки выше прямо сказано, что в песочнице этой сети нет. То есть
+# цель, написанная ДЛЯ песочницы, падала на первой же своей строке и
+# ни разу не доходила до остальных.
+#
+# Цена этого выяснилась 27.09.2026 (сквозной аудит, находка Д-6):
+# пороги покрытия живут в шаге 3, `make ci` до него не добирался, и
+# четыре файла проседали ниже порога незамеченными — CI был красным, а
+# смотрели на сборку Vercel. Один сломанный первый шаг спрятал всё, что
+# за ним.
+#
+# Поэтому: недоступность binaries.prisma.sh — это пропуск с явным
+# сообщением (схему всё равно проверит CI), а вот НЕВЕРНАЯ схема
+# по-прежнему останавливает прогон. Разница между «не смогли
+# проверить» и «проверили и плохо» здесь и проводится.
 ci:
-	cd backend && npx prisma validate
+	@cd backend && out=$$(npx prisma validate 2>&1); status=$$?; \
+	if [ $$status -eq 0 ]; then \
+		echo "prisma validate: схема в порядке"; \
+	elif echo "$$out" | grep -q 'binaries.prisma.sh'; then \
+		echo "prisma validate ПРОПУЩЕН: нет сети до binaries.prisma.sh." \
+			"Схему проверит CI — остальные шаги идут как обычно."; \
+	else \
+		echo "$$out"; exit $$status; \
+	fi
 	cd backend && npx eslint "src/**/*.ts" --max-warnings 0
 	cd backend && npx jest --ci \
-		--transform '{"^.+\.(t|j)s$$":["ts-jest",{"diagnostics":false}]}' \
+		--transform '{"^.+\\.(t|j)s$$":["ts-jest",{"diagnostics":false}]}' \
 		--coverage --coverageReporters=text-summary \
 		--json --outputFile=jest-results.json
 	cd frontend && npx tsc --noEmit -p tsconfig.json

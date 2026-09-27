@@ -30,6 +30,7 @@ import {
   ScenePhotoUploadUrlRequestDto,
   SceneUpdateRequestDto,
 } from './dto/reference-assets.dto';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 export const MAX_SCENES = 5;
@@ -227,7 +228,7 @@ export class ReferenceAssetsService {
 
   private async load(sessionId: string): Promise<Session> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     return session;
   }
 }

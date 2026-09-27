@@ -295,6 +295,63 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
     ]);
   });
 
+  // Сквозной аудит 27.09.2026, находка Д-6: два блока сборщика —
+  // текст-карточки промпта (М-5.8) и прошлые попытки (М-2.1/М-5.1) —
+  // не исполнялись ни одним тестом, хотя порог покрытия этого файла
+  // стоит 100/100/100/100 и CI был на нём красным. Цена пропуска тут
+  // не абстрактная: путь, выпавший из сборщика, остаётся в Blob как
+  // сирота после удаления строки из базы.
+  it('М-5.8: текст-карточки промпта принадлежат сессии, пустые слоты не выдумываются', () => {
+    const session = {
+      ...base,
+      generatedVideo: { pathname: 'sessions/s1/generated.mp4' },
+      generationPrompt: {
+        onScreenTextMoments: [
+          { cardPathname: 'sessions/s1/text-card-title.png' },
+          { cardPathname: null },
+          {},
+        ],
+      },
+    } as unknown as Session;
+    expect(sessionBlobPathnames(session).sort()).toEqual([
+      'sessions/s1/generated.mp4',
+      'sessions/s1/text-card-title.png',
+    ]);
+  });
+
+  it('М-2.1/М-5.1: прошлые попытки тянут за собой все свои производные', () => {
+    const session = {
+      ...base,
+      generatedVideo: { pathname: 'sessions/s1/generated-2.mp4' },
+      videoHistory: [
+        {
+          pathname: 'sessions/s1/generated-1.mp4',
+          postPathname: 'sessions/s1/post-1.mp4',
+          voiceoverPathname: 'sessions/s1/voice-1.mp3',
+          subtitlePathname: 'sessions/s1/subs-1.srt',
+          exportVariants: [
+            { pathname: 'sessions/s1/export-1-1x1.mp4' },
+            { pathname: null },
+          ],
+        },
+        // Попытка, от которой остался только исходный файл, и попытка,
+        // от которой не осталось ничего: ни одна не должна ни упасть,
+        // ни добавить пустую строку в список на удаление.
+        { pathname: 'sessions/s1/generated-0.mp4' },
+        {},
+      ],
+    } as unknown as Session;
+    expect(sessionBlobPathnames(session).sort()).toEqual([
+      'sessions/s1/export-1-1x1.mp4',
+      'sessions/s1/generated-0.mp4',
+      'sessions/s1/generated-1.mp4',
+      'sessions/s1/generated-2.mp4',
+      'sessions/s1/post-1.mp4',
+      'sessions/s1/subs-1.srt',
+      'sessions/s1/voice-1.mp3',
+    ]);
+  });
+
   it('Е-2.6 шестого аудита: жёстко вшитые субтитры основного пайплайна принадлежат сессии', () => {
     const session = {
       ...base,

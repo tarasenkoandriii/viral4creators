@@ -430,6 +430,31 @@ export class CronController {
   }
 
   /**
+   * GET /api/cron/tutorial-assembly-poll — опрос только сборок слайд-шоу
+   * обучалки, каждые две минуты (`backend/vercel.json`), тот же темп,
+   * что у `/cron/ui-snapshot-run` и соседей.
+   *
+   * Заведён сквозным аудитом (27.09.2026, находка Д-2): результат
+   * сборки подбирал единственный суточный `/cron/tutorial-scenario-run`,
+   * а экран мастера ждёт ссылку десять минут — то есть в норме
+   * пользователь её не дожидался. Тут нет браузера и нет платных
+   * вызовов: один запрос в базу и несколько проверок статуса по HTTP,
+   * поэтому частое расписание безопасно.
+   */
+  @Get('tutorial-assembly-poll')
+  async tutorialAssemblyPollCron(
+    @Headers('authorization') authHeader?: string,
+  ) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'tutorial-assembly-poll',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runTutorialAssemblyPoll(),
+    );
+  }
+
+  /**
    * GET /api/cron/ui-snapshot-run — крон-обход интерфейса TMA (этап 100,
    * §3 doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md, «Фаза 1»).
    * Расписание — раз в две минуты (`backend/vercel.json`) — тот же темп,

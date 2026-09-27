@@ -56,6 +56,7 @@ import {
   ForkSharedVideoRequestDto,
   RejectSharedVideoRequestDto,
 } from './dto/shared-video.dto';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** Structural row type — see project.service.ts for why not Prisma's. */
 interface SharedVideoRow {
@@ -953,7 +954,7 @@ export class SharedVideoService {
     sessionId: string,
   ): Promise<Session> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     const owner = await this.prisma.session.findUnique({
       where: { id: sessionId },
       select: { userId: true },

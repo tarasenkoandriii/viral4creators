@@ -33,6 +33,7 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { languageNameForLocale, normalizeLocale } from '../../common/locale';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /**
  * Замок разбора (этап 47, В-2.3). Сам разбор — синхронный `await` до
@@ -185,7 +186,7 @@ export class AnalysisService {
     // Validate session exists and has a reference video registered
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
 
     if (!session.originalVideo) {
@@ -614,7 +615,7 @@ export class AnalysisService {
   async getAnalysisStatus(sessionId: string): Promise<VideoAnalysis> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
 
     if (!session.videoAnalysis) {
@@ -636,7 +637,7 @@ export class AnalysisService {
   ): Promise<VideoAnalysis> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
 
     if (!session.videoAnalysis) {

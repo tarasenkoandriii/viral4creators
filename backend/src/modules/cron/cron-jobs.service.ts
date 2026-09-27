@@ -584,6 +584,31 @@ export class CronJobsService {
   }
 
   /**
+   * Опрос только сборок слайд-шоу обучалки (сквозной аудит 27.09.2026,
+   * находка Д-2) — отдельный крон-слот и отдельный джоб-замок от
+   * `tutorial-scenario-run`.
+   *
+   * Почему отдельный, а не «участить общий прогон»: общий держит
+   * headless-браузер открытым минутами, раз в две минуты его гонять
+   * нельзя. А результат сборки до этой находки подбирал ТОЛЬКО он —
+   * раз в сутки в 09:00 UTC, тогда как экран мастера ждёт ссылку
+   * 15 с × 40 = десять минут и сдаётся. См. доккомментарий
+   * `TutorialScenarioRunnerService.pollAssemblies`.
+   */
+  async runTutorialAssemblyPoll(): Promise<{ pending: number }> {
+    const acquired = await tryAcquireJobLock(
+      this.prisma,
+      'tutorial-assembly-poll',
+    );
+    if (!acquired) return { pending: 0 };
+    try {
+      return await this.tutorialScenarioRunner.pollAssemblies();
+    } finally {
+      await releaseJobLock(this.prisma, 'tutorial-assembly-poll', acquired);
+    }
+  }
+
+  /**
    * Крон-обход интерфейса TMA (этап 100, §3 ТЗ, «Фаза 1» дорожной карты
    * §6.1) — снимает скриншоты фиксированного списка маршрутов (§3.8),
    * сравнивает с предыдущим снимком той же комбинации маршрут×локаль×

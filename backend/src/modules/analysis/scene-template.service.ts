@@ -26,6 +26,7 @@ import {
   speaksOnCamera,
 } from '../../common/scene-templates';
 import { normalizeVoiceMode, usesOwnVoice } from '../../common/voice-mode';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** Одна карточка каталога. Подписи для человека — в словарях фронта. */
 export interface SceneTemplateRow {
@@ -152,7 +153,7 @@ export class SceneTemplateService {
 
   private async load(sessionId: string) {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     return session;
   }
 }

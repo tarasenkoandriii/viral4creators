@@ -27,6 +27,7 @@ import { BlobService } from '../storage/blob.service';
 import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import { VideoAnalysis } from '../../common/types/analysis.types';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** 480px JPEG frames are ~30-60 KB; the cap is generous on purpose. */
 export const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
@@ -178,7 +179,7 @@ export class AnalysisPreviewsService {
 
   private async load(sessionId: string): Promise<Session> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     return session;
   }
 }

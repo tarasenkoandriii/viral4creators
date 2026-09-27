@@ -61,6 +61,7 @@ import {
   LibraryRecommendation,
   LibraryVisibility,
 } from './library.types';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** How many rows the ranking looks at before sorting — cheap, table is small. */
 const CANDIDATE_LIMIT = 200;
@@ -335,7 +336,7 @@ export class LibraryService {
     limit = 12,
   ): Promise<LibraryRecommendation[]> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     // §23: библиотека — возможность Premium (кеш при этом работает для
     // всех: он экономит вызов, а не даёт пользователю новую функцию).
     await this.plans.assertUser(session.userId ?? null, 'library');
@@ -467,7 +468,7 @@ export class LibraryService {
     entryId: string,
   ): Promise<VideoAnalysis> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     // §23: библиотека готовых разборов — от Premium (эта проверка НЕ
     // применяется к applyToSessionFree ниже — той пользуется публичная
     // страница ролика, этап 60, и платить за неё некому).
@@ -490,7 +491,7 @@ export class LibraryService {
     entryId: string,
   ): Promise<VideoAnalysis> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     return this.applyEntryToSession(sessionId, session.userId ?? null, entryId);
   }
 

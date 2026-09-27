@@ -173,6 +173,48 @@ describe('PlanService (ТЗ §23)', () => {
     expect(stars.cancelSubscription).toHaveBeenCalledWith('tg-1', 'charge-1');
   });
 
+  // Находка Д-6: ранний выход курьерского шага не проверялся ничем.
+  // Он и означает «локальная отмена уже применена, сообщать некому» —
+  // отсутствие платежа Stars не должно ни ронять setPlan, ни звать
+  // Telegram с пустым providerRef.
+  it('отмена Stars без найденного платежа — Telegram не зовём, отмена состоялась', async () => {
+    process.env.PLANS_BILLING_ENABLED = 'true';
+    const { svc, prisma, stars } = build({
+      plan: 'STANDARD',
+      telegramId: 'tg-1',
+    });
+    prisma.subscription.findUnique.mockResolvedValue({
+      id: 'sub1',
+      status: 'ACTIVE',
+      method: 'STARS',
+    });
+    prisma.payment.findFirst.mockResolvedValue(null);
+
+    expect(await svc.setPlan('u1', 'LITE')).toBe('STANDARD');
+    expect(stars.cancelSubscription).not.toHaveBeenCalled();
+  });
+
+  // Находка Д-6: ветка «Telegram не подтвердил отмену» не проверялась.
+  // Она важна именно тем, что НЕ роняет отмену: локально подписка уже
+  // отменена, а курьерский шаг оставляет след оператору.
+  it('Telegram не подтвердил отмену — локальная отмена всё равно применена', async () => {
+    process.env.PLANS_BILLING_ENABLED = 'true';
+    const { svc, prisma, stars } = build({
+      plan: 'STANDARD',
+      telegramId: 'tg-1',
+    });
+    prisma.subscription.findUnique.mockResolvedValue({
+      id: 'sub1',
+      status: 'ACTIVE',
+      method: 'STARS',
+    });
+    prisma.payment.findFirst.mockResolvedValue({ providerRef: 'charge-1' });
+    stars.cancelSubscription.mockResolvedValue(false);
+
+    expect(await svc.setPlan('u1', 'LITE')).toBe('STANDARD');
+    expect(stars.cancelSubscription).toHaveBeenCalledWith('tg-1', 'charge-1');
+  });
+
   it('WayForPay-подписку отменяем локально, Telegram не трогаем', async () => {
     process.env.PLANS_BILLING_ENABLED = 'true';
     const { svc, prisma, stars } = build({ plan: 'STANDARD' });
@@ -620,6 +662,21 @@ describe('PlanService — тестовые пользователи (TODO §III 
     const own = build(testUser([], { freeOutsideProject: true }));
     own.aiUsage.budget.mockImplementation(budgetFor(OVER_PLAN_LIMIT));
     await expect(own.svc.assertCanSpendUser('u1')).resolves.toBeUndefined();
+  });
+
+  // Сквозной аудит 27.09.2026, находка Д-6: ветка «тестовый, но ни одной
+  // галочки» не проверялась ничем, а порог покрытия этого файла — 100%
+  // строк. Смысл ветки — тот же, что у срока: не ездить в базу за типом
+  // проекта, когда решение уже принято.
+  it('тестовый доступ без единой галочки — как обычный пользователь, без поездки за типом проекта', async () => {
+    const { svc, aiUsage, prisma } = build(
+      testUser([], { freeOutsideProject: false }),
+    );
+    aiUsage.budget.mockImplementation(budgetFor(OVER_PLAN_LIMIT));
+    await expect(
+      svc.assertCanSpendUser('u1', { projectId: 'p1' }),
+    ).rejects.toBeInstanceOf(DailySpendLimitExceededException);
+    expect(prisma.project.findUnique).not.toHaveBeenCalled();
   });
 
   it('истёкший срок гасит доступ, не доходя до типа проекта', async () => {

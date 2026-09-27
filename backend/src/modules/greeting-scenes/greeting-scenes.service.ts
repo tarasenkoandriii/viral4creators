@@ -20,6 +20,7 @@ import {
   normalizeSceneCount,
   splitSceneDurations,
 } from '../../common/greeting-scenes';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 @Injectable()
 export class GreetingScenesService {
@@ -53,11 +54,9 @@ export class GreetingScenesService {
 
   private async load(sessionId: string): Promise<Session> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     if (!session.greetingBriefSnapshot) {
-      throw new NotFoundException(
-        `Session ${sessionId} is not a greeting session`,
-      );
+      throw new NotFoundException('это не поздравительная сессия');
     }
     return session;
   }

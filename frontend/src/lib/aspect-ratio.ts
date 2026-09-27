@@ -126,3 +126,63 @@ export function readVideoSize(
     video.src = url;
   });
 }
+
+/**
+ * Какую приписку показать рядом со строкой «Формат: X» — сквозной
+ * аудит 27.09.2026, находка Д-4.
+ *
+ * Правило вынесено из `VideoProcessingStatus` сюда потому, что там оно
+ * было записано четырьмя условиями в JSX, и одно из них врало. Ветка
+ * «обрезано из {{rendered}}» срабатывала при `renderedAspectRatio ===
+ * undefined` — `undefined !== '9:16'` истинно, — и человек читал
+ * «Формат: 9:16 — обрезано из .» с пустым местом вместо формата.
+ *
+ * Это не гипотетический кадр: у Grok `renderedAspectRatio` пишется
+ * ТОЛЬКО когда обрезка нужна (`generation.service.ts`, «что реально
+ * отрендерено»), то есть пустую приписку получал каждый ролик в
+ * родном формате, прошедший постобработку (озвучка, субтитры).
+ *
+ * `postFailed` — единственный исход, у которого есть вариант без
+ * исходного формата: сам факт «довести не получилось, скачивается
+ * исходник» человеку нужен, знаем мы исходный формат или нет.
+ */
+export type AspectRatioNote =
+  | { kind: 'none' }
+  | { kind: 'reframePending'; rendered: string; target: string }
+  | { kind: 'croppedFrom'; rendered: string }
+  | { kind: 'postFailed'; rendered: string }
+  | { kind: 'postFailedNoSource' }
+  | { kind: 'reframeSkipped'; rendered: string; target: string };
+
+export function aspectRatioNote(video: {
+  aspectRatio?: string | null;
+  renderedAspectRatio?: string | null;
+  postStatus?: string | null;
+  reframePending?: boolean | null;
+}): AspectRatioNote {
+  const target = video.aspectRatio;
+  if (!target) return { kind: 'none' };
+  const rendered = video.renderedAspectRatio || null;
+
+  if (video.postStatus === 'pending' && video.reframePending) {
+    return rendered
+      ? { kind: 'reframePending', rendered, target }
+      : { kind: 'none' };
+  }
+  if (video.postStatus === 'complete') {
+    // Обрезка состоялась только если мы ЗНАЕМ, из чего обрезали, и это
+    // не тот же самый формат.
+    return rendered && rendered !== target
+      ? { kind: 'croppedFrom', rendered }
+      : { kind: 'none' };
+  }
+  if (video.postStatus === 'failed') {
+    return rendered
+      ? { kind: 'postFailed', rendered }
+      : { kind: 'postFailedNoSource' };
+  }
+  if (video.postStatus === 'skipped' && video.reframePending && rendered) {
+    return { kind: 'reframeSkipped', rendered, target };
+  }
+  return { kind: 'none' };
+}

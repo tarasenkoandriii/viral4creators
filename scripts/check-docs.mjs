@@ -1371,6 +1371,154 @@ function checkGuideSeams() {
   }
 }
 
+
+/**
+ * Шов «отказ, который читает человек» — заведён сквозным аудитом
+ * (27.09.2026, находка Д-5).
+ *
+ * Фронтенд показывает пользователю ТЕКСТ отказа с сервера как есть:
+ * `errorMessage()` в `frontend/src/services/projects-api.ts` берёт
+ * `error.message` из конверта и только при его отсутствии подставляет
+ * свой переведённый текст. То есть каждая английская строка в
+ * пользовательском (не админском) модуле — это английская строка в
+ * русском интерфейсе, а `${projectId}` в ней — внутренний UUID на
+ * экране у человека, по которому он ничего сделать не может.
+ *
+ * Проверяются только модули, куда ходит TMA. Админские файлы
+ * (`*-admin.*`) исключены сознательно: оператору идентификатор строки
+ * как раз нужен, а язык админки — русский по построению.
+ */
+function checkUserFacingErrorSeams() {
+  const DIRS = [
+    'backend/src/modules/client-site-tutorial',
+    'backend/src/modules/postprod',
+    'backend/src/modules/tutorial-runner',
+  ];
+  const EXCEPTIONS =
+    /new (NotFoundException|BadRequestException|ForbiddenException|ConflictException)\(\s*((`[^`]*`)|('[^']*')|("[^"]*")|([A-Z][A-Z0-9_]*))/g;
+  // Подстановка именно идентификатора — `${id}`, `${projectId}`,
+  // `${sessionId}`, `${draftId}`. Числа лимитов, селекторы и текст
+  // чужой ошибки — это содержательные подстановки, они остаются.
+  const ID_SUBST = /\$\{[^}]*\b[Ii]d\b[^}]*\}|\$\{\s*id\s*\}|\$\{[^}]*Id\s*\}/;
+
+  // Общие тексты (`backend/src/common/user-facing-errors.ts`) — такой
+  // же законный аргумент, как литерал: это те же русские строки, просто
+  // названные один раз на все сорок с лишним мест. Имена собираются из
+  // самого файла, а не перечисляются здесь: список, который надо
+  // помнить руками, — ровно то, от чего этот шов и заводился.
+  const sharedSrc = read('backend/src/common/user-facing-errors.ts');
+  const shared = new Set();
+  const problems = [];
+  for (const m of sharedSrc.matchAll(
+    /export const ([A-Z][A-Z0-9_]*) = '([^']*)'/g,
+  )) {
+    shared.add(m[1]);
+    // Проверяется КАЖДЫЙ экспорт, а не только русские. Собирать
+    // «только те, что с кириллицей» — дыра, которую нашла мутация:
+    // английский текст просто выпадал бы из набора, и молча.
+    if (!/[а-яА-ЯёЁ]/.test(m[2])) {
+      problems.push(
+        `backend/src/common/user-facing-errors.ts: ${m[1]} = '${m[2]}' — ` +
+          'общий текст отказа без единой русской буквы; его читает ' +
+          'пользователь в русском интерфейсе',
+      );
+    }
+    if (ID_SUBST.test(m[2]) || m[2].includes('${')) {
+      problems.push(
+        `backend/src/common/user-facing-errors.ts: ${m[1]} подставляет ` +
+          'что-то внутрь текста — общий отказ обязан быть постоянной строкой',
+      );
+    }
+  }
+  if (shared.size === 0) {
+    problems.push(
+      'backend/src/common/user-facing-errors.ts: ни одной константы — ' +
+        'либо файл переписали, либо шов больше ничего не стережёт',
+    );
+  }
+
+  let checked = 0;
+  let viaShared = 0;
+  for (const dir of DIRS) {
+    const files = walk(path.join(ROOT, dir)).filter(
+      (f) =>
+        f.endsWith('.ts') &&
+        !f.endsWith('.spec.ts') &&
+        !/-admin\.|\/admin-/.test(f),
+    );
+    for (const file of files) {
+      const rel = path.relative(ROOT, file);
+      const src = fs.readFileSync(file, 'utf8');
+      for (const m of src.matchAll(EXCEPTIONS)) {
+        checked++;
+        const msg = m[2];
+        if (/^[A-Z][A-Z0-9_]*$/.test(msg)) {
+          if (shared.has(msg)) {
+            viaShared++;
+            continue;
+          }
+          problems.push(
+            `${rel}: отказ собран из константы ${msg}, которой нет среди ` +
+              'русских текстов в backend/src/common/user-facing-errors.ts',
+          );
+          continue;
+        }
+        if (!/[а-яА-ЯёЁ]/.test(msg)) {
+          problems.push(
+            `${rel}: отказ без единой русской буквы — ${msg}; ` +
+              'его прочитает пользователь, а не только лог',
+          );
+        }
+        if (ID_SUBST.test(msg)) {
+          problems.push(
+            `${rel}: в тексте отказа подставляется идентификатор — ${msg}; ` +
+              'человеку он ничего не говорит, а наружу светить его незачем',
+          );
+        }
+      }
+    }
+  }
+
+  // Две самые частые семьи закрыты целиком по всему бэкенду (аудит
+  // 27.09.2026, находка Д-5), поэтому они проверяются не только в трёх
+  // каталогах выше: вернуть `Session ${id} not found` в любом
+  // пользовательском модуле теперь нельзя.
+  const OLD_FAMILIES =
+    /new \w+Exception\(\s*(`(Session|Project) \$\{[^}]*\} not found`|'Session not found')/g;
+  let families = 0;
+  for (const file of walk(path.join(ROOT, 'backend/src')).filter(
+    (f) =>
+      f.endsWith('.ts') &&
+      !f.endsWith('.spec.ts') &&
+      !/-admin\.|\/admin-|\/admin-panel\//.test(f),
+  )) {
+    const src = fs.readFileSync(file, 'utf8');
+    for (const m of src.matchAll(OLD_FAMILIES)) {
+      families++;
+      problems.push(
+        `${path.relative(ROOT, file)}: вернулся английский отказ с ` +
+          `идентификатором — ${m[1]}; текст берётся из ` +
+          'backend/src/common/user-facing-errors.ts',
+      );
+    }
+  }
+
+  if (problems.length > 0) {
+    failed++;
+    console.log('FAIL тексты отказов, которые видит пользователь:');
+    for (const p of problems) console.log(`  - ${p}`);
+  } else {
+    console.log(
+      `ok   тексты отказов пользовательских модулей: проверено ${checked} ` +
+        `(из них ${viaShared} через общие константы), все по-русски и без ` +
+        `внутренних идентификаторов; английских «… not found» с ` +
+        `идентификатором по бэкенду: ${families}`,
+    );
+  }
+}
+
+checkUserFacingErrorSeams();
+
 checkGuideSeams();
 
 if (failed) {

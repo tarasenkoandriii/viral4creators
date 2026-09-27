@@ -43,9 +43,10 @@ export class PostProdController {
   ) {
     const session = await this.sessions.getSession(sessionId);
     if (!session?.generatedVideo) {
-      throw new NotFoundException(
-        `Session ${sessionId} has no generated video`,
-      );
+      // Находка Д-5 (см. `client-site-tutorial.service.ts`): текст
+      // уходит человеку как есть, а перезапись голоса жмут прямо в
+      // TMA — английская строка с UUID тут была самой заметной.
+      throw new NotFoundException('ролик этой сессии не найден');
     }
     try {
       const data = await this.postprod.reVoice(

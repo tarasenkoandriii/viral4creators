@@ -24,6 +24,7 @@ import {
 import { scenarioOfProjectType } from '../../common/test-user-scenarios';
 import { AI_GUIDE_ENABLED_KEY } from './guide-settings';
 import { SessionStatus } from '../../common/types/session.types';
+import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
 
 /**
  * Статусы сессии товарки, при которых мастер ещё на первом шаге.
@@ -139,7 +140,7 @@ export class WizardGuideService {
         where: { id: projectId, userId, deletedAt: null },
         select: { type: true, aiGuideEnabled: true },
       });
-    if (!row) throw new NotFoundException(`Project ${projectId} not found`);
+    if (!row) throw new NotFoundException(PROJECT_NOT_FOUND);
     return row;
   }
 

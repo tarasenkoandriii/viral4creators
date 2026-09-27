@@ -229,7 +229,7 @@ describe('ProjectSessionService.updateSnapshot', () => {
     );
     sessions.getSession.mockResolvedValueOnce({ sessionId: 's1' });
     await expect(service.updateSnapshot('s1', {})).rejects.toThrow(
-      /no brand manifest snapshot/,
+      /снимка брендбука/,
     );
     expect(sessions.updateSession).not.toHaveBeenCalled();
   });

@@ -54,6 +54,7 @@ import {
   normalizeVoiceMode,
   usesOwnVoice,
 } from '../../common/voice-mode';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 const GREETING_PROMPT_CLAIM_TTL_MS = 3 * 60 * 1000;
 
@@ -128,7 +129,7 @@ export class GreetingPromptService {
 
     const session = await this.sessions.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
     const brief = session.greetingBriefSnapshot;
     if (!brief) {

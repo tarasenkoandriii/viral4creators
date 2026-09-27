@@ -135,6 +135,9 @@ function build() {
       .fn()
       .mockResolvedValue({ processed: 3, failed: 0 }),
     runLiveAuctionTick: jest.fn().mockResolvedValue({ ticked: 4 }),
+    // Сквозной аудит 27.09.2026 (находка Д-2): отдельный опрос сборок
+    // слайд-шоу обучалки.
+    runTutorialAssemblyPoll: jest.fn().mockResolvedValue({ pending: 2 }),
   };
   const service = new AdminCronService(jobs as never, prisma as never);
   return { service, jobs, prisma };
@@ -285,6 +288,17 @@ describe('AdminCronService — debug у девяти джобов только �
     });
     const row = await service.run('tutorial-scenario-run', 'admin-1', false);
     expect(row.summary).toContain('фикстурный вход не настроен');
+  });
+
+  it('tutorial-assembly-poll: делегирует CronJobsService.runTutorialAssemblyPoll (аудит 27.09.2026, Д-2)', async () => {
+    const { service, jobs } = build();
+    const row = await service.run('tutorial-assembly-poll', 'admin-1', false);
+    expect(jobs.runTutorialAssemblyPoll).toHaveBeenCalledTimes(1);
+    // И главное — что это НЕ общий прогон сценариев: тот держит
+    // headless-браузер минутами, ради чего слот и разделён.
+    expect(jobs.runTutorialScenarioRun).not.toHaveBeenCalled();
+    expect(row.status).toBe('SUCCESS');
+    expect(row.summary).toContain('pending=2');
   });
 
   it('ui-snapshot-run: делегирует CronJobsService.runUiSnapshotRun (этап 100, §3 ТЗ)', async () => {

@@ -59,6 +59,7 @@ import {
   celebrityLikenessMessage,
   findCelebrityLikeness,
 } from '../../common/celebrity-likeness';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /**
  * Тот же приём, что `ReferenceSlotsPanel` получает от `ReferenceCandidate`
@@ -431,7 +432,7 @@ export class GreetingReferenceService {
 
   private async load(sessionId: string): Promise<Session> {
     const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     return session;
   }
 }

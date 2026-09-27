@@ -97,7 +97,7 @@
     "hints": {
       "veo": "Das Modell synthetisiert die Sprache selbst anhand der Zeilen im Prompt. Nichts einzustellen, aber die Stimme ist jedes Mal neu. Kostenlos — in jeder Generierung enthalten.",
       "voiceover": "Die gewählte Stimme liest die Zeilen, der Originalton des Clips bleibt im Hintergrund — Musik und Atmosphäre bleiben erhalten. Ab Standard: Abrechnung nach Zeichen, zusätzlich zum Rendering.",
-      "dub": "Die gewählte Stimme liest die Zeilen, der Ton des Clips wird komplett ersetzt. Nützlich, wenn das Modell doch mit eigener Stimme gesprochen hat. Premium: Abrechnung nach Zeichen, zusätzlich zum Rendering."
+      "dub": "Die gewählte Stimme liest die Zeilen und ersetzt die Stimme des Modells; der Hintergrund des Clips — Geräusche, Musik, Umgebung — bleibt erhalten. Nützlich, wenn das Modell doch mit eigener Stimme gesprochen hat. Premium: Abrechnung nach Zeichen, zusätzlich zum Rendering."
     }
   },
   "subtitleTheme": {
@@ -1082,13 +1082,7 @@
     "previewQuota": "Vorschauen heute: noch {{left}} von {{limit}}"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analyse",
-      "Produkt",
-      "Prompt",
-      "Generierung"
-    ],
+    "steps": ["Video", "Analyse", "Produkt", "Prompt", "Generierung"],
     "stepSource": "Szene",
     "errorTitle": "Fehler",
     "prefilledAlert": "Die Produktdaten wurden aus dem Projekt übernommen — das ist eine Kopie zum Startzeitpunkt; Änderungen hier ändern nicht das Produkt selbst.",
@@ -1157,9 +1151,11 @@
     "reframePendingNote": "— aufgenommen in {{rendered}}, wird auf {{target}} zugeschnitten; das Video unten kann bereits angesehen werden, der Link aktualisiert sich von selbst.",
     "croppedFromNote": "— zugeschnitten aus {{rendered}}.",
     "postFailedNote": "— aufgenommen in {{rendered}}; die Nachbearbeitung des Videos ist fehlgeschlagen{{errorSuffix}}, die Originaldatei wird heruntergeladen.",
+    "postFailedNoteNoSource": "— die Nachbearbeitung des Videos ist fehlgeschlagen{{errorSuffix}}, die Originaldatei wird heruntergeladen.",
     "reframeSkippedNote": "— aufgenommen in {{rendered}} mit einer Komposition für den Zuschnitt auf {{target}}; der Zuschnitt ist in dieser Umgebung nicht eingerichtet.",
     "processingSkippedNote": "Die Videobearbeitung wurde übersprungen: {{error}}",
     "voiceLabel": "Vertonung:",
+    "backgroundLost": "Hintergrund: die Originalgeräusche konnten nicht erhalten werden — nur die Stimme.",
     "voiceNotDone": "nicht erstellt ({{reason}}).",
     "noReasonDefault": "ohne Angabe von Gründen",
     "voiceModelSoundNote": "Das Video hat den Originalton des Modells.",

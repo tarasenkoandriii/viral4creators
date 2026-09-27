@@ -87,6 +87,7 @@ import {
   issueLiveTicket,
   readLiveTicket,
 } from './live-login-ticket';
+import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** Ключ шифрования cookie jar и кред черновика. Своя переменная, а НЕ
  * `CHANNEL_TOKEN_KEY`: схема БД фиксирует правило «разные секреты разной
@@ -995,7 +996,13 @@ export class ClientSiteTutorialService {
       select: { id: true, type: true },
     });
     if (!project) {
-      throw new NotFoundException(`Project ${projectId} not found`);
+      // Сквозной аудит 27.09.2026, находка Д-5: текст 404 доходит до
+      // человека как есть (`errorMessage()` во фронтенде предпочитает
+      // `error.message` конверту), а здесь это была английская строка с
+      // внутренним UUID внутри — в русском интерфейсе «Project
+      // 3f2a…-… not found». Ни прочитать, ни что-то сделать по ней
+      // нельзя, а идентификатор чужого проекта наружу светить незачем.
+      throw new NotFoundException(PROJECT_NOT_FOUND);
     }
     if (project.type !== 'CLIENT_SITE') {
       throw new BadRequestException(

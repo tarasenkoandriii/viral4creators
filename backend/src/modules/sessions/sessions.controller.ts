@@ -23,6 +23,7 @@ import { TelegramIdentifiedRequest } from '../telegram-auth/telegram-identity.mi
 import { CreateSessionRequestDto } from './dto/create-session.dto';
 import { readinessOfSession } from '../../common/wizard-readiness.session';
 import { Readiness } from '../../common/wizard-readiness';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 @Controller('sessions')
 export class SessionsController {
@@ -87,7 +88,7 @@ export class SessionsController {
   @Get(':sessionId/readiness')
   async readiness(@Param('sessionId') sessionId: string): Promise<Readiness> {
     const session = await this.sessionService.getSession(sessionId);
-    if (!session) throw new NotFoundException(`Session ${sessionId} not found`);
+    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     return readinessOfSession(session);
   }
 
@@ -116,7 +117,7 @@ export class SessionsController {
   async deleteSession(@Param('sessionId') sessionId: string): Promise<void> {
     const { deleted } = await this.sessionService.softDeleteSession(sessionId);
     if (!deleted) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
   }
 }

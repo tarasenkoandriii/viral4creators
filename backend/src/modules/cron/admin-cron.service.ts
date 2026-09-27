@@ -1,5 +1,5 @@
 /**
- * AdminCronService — реестр пятнадцати крон-задач + ручной запуск из
+ * AdminCronService — реестр крон-задач + ручной запуск из
  * админки с записью истории (этап 69, доп. ТЗ «Кроны в админке»,
  * аналогично Solar Shop). Инжектит `CronJobsService` напрямую (тот же
  * модуль `CronModule` — без кросс-модульного импорта, см.
@@ -136,6 +136,11 @@ const JOB_REGISTRY: CronJobInfo[] = [
     jobKey: 'tutorial-scenario-run',
     description:
       'Исполнение уже сгенерированных (и, если платных, одобренных) сценариев headless-браузером против фикстурного пользователя — регрессионный прогон экранов мастера.',
+  },
+  {
+    jobKey: 'tutorial-assembly-poll',
+    description:
+      'Опрос только сборок слайд-шоу обучалки (без браузера и без платных вызовов) — чтобы ссылка на готовый ролик появлялась у человека через минуты, а не в следующий суточный прогон сценариев.',
   },
   {
     jobKey: 'ui-snapshot-run',
@@ -285,6 +290,8 @@ export class AdminCronService {
         return this.jobs.runTutorialScenarioGenerate();
       case 'tutorial-scenario-run':
         return this.jobs.runTutorialScenarioRun();
+      case 'tutorial-assembly-poll':
+        return this.jobs.runTutorialAssemblyPoll();
       case 'ui-snapshot-run':
         return this.jobs.runUiSnapshotRun();
       case 'ai-usage-rollup':

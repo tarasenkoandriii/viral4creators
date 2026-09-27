@@ -53,6 +53,7 @@ import { AiOperation } from '../../common/ai-pricing';
 import { PlanService } from '../plan/plan.service';
 import { readinessOfSession } from '../../common/wizard-readiness.session';
 import { hasSceneSource, sceneSource } from '../../common/scene-source';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /**
  * Замок сборки промпта (этап 47, В-2.3): клиентский таймаут вызова —
@@ -167,7 +168,7 @@ export class PromptService {
     // Get session and validate state
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
 
     // Условия читаются ТЕМ ЖЕ списком, что рисует строку «до готового
@@ -493,7 +494,7 @@ Please respond with a valid JSON object only, with two keys:
 
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
     // Этап 152: варианты собираются поверх любого источника сцены.
     // Раньше здесь стоял разбор — и сессия на приёме получала отказ,
@@ -715,7 +716,7 @@ Please respond with a valid JSON object only, with one key "variants": an array 
   ): Promise<GenerationPrompt> {
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
 
     // Модерация смотрит на то, что действительно уйдёт в Veo — тот же
@@ -766,7 +767,7 @@ Please respond with a valid JSON object only, with one key "variants": an array 
 
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
 
     if (!session.generationPrompt) {
@@ -840,7 +841,7 @@ Please respond with a valid JSON object only, with one key "variants": an array 
 
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new BadRequestException(SESSION_NOT_FOUND);
     }
 
     if (!session.generationPrompt) {

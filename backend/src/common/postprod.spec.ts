@@ -201,9 +201,45 @@ describe('postprod — один проход ffmpeg (ТЗ §15.4/§16.1)', () =>
       const plan = planPostProduction(base);
 
       expect(plan.command).toContain('[vo]asplit=2[vo1][vosc]');
-      expect(plan.command).toContain('[bgraw][vosc]sidechaincompress=');
+      expect(plan.command).toContain('[bgfmt][voscfmt]sidechaincompress=');
       // В микс идёт вторая копия голоса, а фон — уже прижатый.
       expect(plan.command).toContain('[bg][vo1]amix=');
+    });
+
+    it('фон возвращается ВНУТРИ паузы между репликами, а не после неё', () => {
+      // Второй заход 27.09.2026: «фон не слышно в паузах». Замер на
+      // стемах прототипа показал, что виновата не глубина, а
+      // отпускание: с 400 мс к концу короткой паузы (0.2 с) фон всё
+      // ещё придавлен на 12 дБ, с 150 мс — на 4. Длинная пауза (0.5 с
+      // и больше) успевала отпустить и там, поэтому прототип беды не
+      // показал. Число сторожится здесь: вернуть 400 значит вернуть
+      // ровно ту жалобу.
+      const plan = planPostProduction(base);
+
+      const m = /release=(\d+)\[bg\]/.exec(plan.command);
+      expect(m).not.toBeNull();
+      const release = Number(m![1]);
+      expect(release).toBeLessThanOrEqual(200);
+      // И не настолько коротко, чтобы фон «дышал» в такт слогам.
+      expect(release).toBeGreaterThanOrEqual(80);
+    });
+
+    it('оба входа компрессора приводятся к одной раскладке каналов', () => {
+      // `sidechaincompress` — единственный фильтр этого графа, который
+      // не согласует форматы сам: при «layout unknown» (обычный WAV от
+      // разделителя) или моно от синтезатора ffmpeg падает с «could
+      // not choose their formats», и вместе с ним падает вся
+      // постобработка. Воспроизведено на настоящих стемах 27.09.2026.
+      const plan = planPostProduction(base);
+
+      expect(plan.command).toContain(
+        '[bgraw]aformat=channel_layouts=stereo[bgfmt]',
+      );
+      expect(plan.command).toContain(
+        '[vosc]aformat=channel_layouts=stereo[voscfmt]',
+      );
+      // Слышимый голос не трогаем — правка меняет только детектор и фон.
+      expect(plan.command).not.toContain('[vo1]aformat');
     });
 
     it('фон остаётся первым входом микса — длина ролика держится на нём', () => {

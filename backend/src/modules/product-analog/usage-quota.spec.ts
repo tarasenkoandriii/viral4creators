@@ -17,6 +17,7 @@ jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { SerpApiUsageService, utcDay } from './serpapi-usage.service';
 import { YoutubeSearchUsageService } from '../youtube-search/youtube-search-usage.service';
+import * as configuration from '../../config/configuration';
 
 const env = { ...process.env };
 afterEach(() => {
@@ -126,6 +127,35 @@ describe.each(CASES)(
     });
   },
 );
+
+/**
+ * Сквозной аудит 27.09.2026, находка Д-6: у YouTube есть страховка
+ * `limit <= 0`, которой нет у SerpApi, и её не исполнял ни один тест —
+ * при пороге покрытия 95% этот файл держал CI красным.
+ *
+ * Страховка не декоративная: `WHERE count < limit` действует ТОЛЬКО в
+ * ветке ON CONFLICT (М-3.12 седьмого аудита), то есть ПЕРВЫЙ за сутки
+ * вызов при нулевом потолке проходил бы мимо условия. Через переменную
+ * окружения ноль недостижим (разбор конфигурации подменяет его
+ * умолчанием — тест «мусор в переменной не вырождает условие» выше),
+ * поэтому подменяется сама конфигурация.
+ */
+describe('YouTube — нулевой потолок не пропускает первый за сутки вызов', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('reserve отказывает, не сходив в базу', async () => {
+    const real = configuration.loadConfiguration();
+    jest.spyOn(configuration, 'loadConfiguration').mockReturnValue({
+      ...real,
+      youtube: { ...real.youtube, searchDailyLimitPerUser: 0 },
+    });
+    const prisma = { $executeRaw: jest.fn().mockResolvedValue(1) };
+    const svc = new YoutubeSearchUsageService(prisma as any);
+
+    expect(await svc.reserve('u1')).toBe(false);
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+});
 
 describe.each(CASES)(
   '$name — остаток на экране считается от той же строки',

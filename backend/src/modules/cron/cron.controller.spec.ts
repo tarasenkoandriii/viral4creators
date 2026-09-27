@@ -74,6 +74,7 @@ function build() {
       failed: 0,
       outcomes: [],
     }),
+    runTutorialAssemblyPoll: jest.fn().mockResolvedValue({ pending: 0 }),
     runCleanupSessions: jest.fn().mockResolvedValue({ deletedCount: 2 }),
     runAiUsageRollup: jest
       .fn()
@@ -167,6 +168,11 @@ describe('CronController — секрет закрывает каждый из �
       'tutorial-scenario-run',
       (c) => c.tutorialScenarioRunCron('Bearer подделка'),
       'runTutorialScenarioRun',
+    ],
+    [
+      'tutorial-assembly-poll',
+      (c) => c.tutorialAssemblyPollCron('Bearer подделка'),
+      'runTutorialAssemblyPoll',
     ],
     [
       'ui-snapshot-run',
@@ -288,6 +294,11 @@ describe('CronController — каждый маршрут оборачивает 
       'tutorial-scenario-run',
       (c) => c.tutorialScenarioRunCron(),
       'tutorial-scenario-run',
+    ],
+    [
+      'tutorial-assembly-poll',
+      (c) => c.tutorialAssemblyPollCron(),
+      'tutorial-assembly-poll',
     ],
     ['ui-snapshot-run', (c) => c.uiSnapshotRunCron(), 'ui-snapshot-run'],
     ['cleanup-sessions', (c) => c.cleanupSessions(), 'cleanup-sessions'],

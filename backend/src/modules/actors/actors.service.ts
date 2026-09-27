@@ -165,7 +165,7 @@ export class ActorsService {
   ): Promise<AvatarVideo> {
     const session = await this.sessions.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(`сессия ${sessionId} не найдена`);
     }
 
     // Повторный запуск при идущей операции — та же логика, что у
@@ -450,7 +450,7 @@ export class ActorsService {
   async getAvatarVideoStatus(sessionId: string): Promise<AvatarVideo> {
     const session = await this.sessions.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(`сессия ${sessionId} не найдена`);
     }
 
     const current = session.avatarVideo;
@@ -931,7 +931,7 @@ export class ActorsService {
   ): Promise<{ history: SoundCheck[] }> {
     const session = await this.sessions.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(`сессия ${sessionId} не найдена`);
     }
     return session.soundCheck ?? { history: [] };
   }
@@ -954,7 +954,7 @@ export class ActorsService {
   async runSoundCheck(sessionId: string): Promise<{ history: SoundCheck[] }> {
     const session = await this.sessions.getSession(sessionId);
     if (!session) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(`сессия ${sessionId} не найдена`);
     }
     const video = session.avatarVideo;
     if (

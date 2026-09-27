@@ -87,9 +87,7 @@ export class AbTestService {
 
     const source = await this.sessions.getSession(dto.sourceSessionId);
     if (!source || source.userId !== userId || source.projectId !== projectId) {
-      throw new NotFoundException(
-        `Session ${dto.sourceSessionId} not found in project ${projectId}`,
-      );
+      throw new NotFoundException('исходная сессия не найдена в этом проекте');
     }
     if (
       source.status !== SessionStatus.VIDEO_COMPLETE ||

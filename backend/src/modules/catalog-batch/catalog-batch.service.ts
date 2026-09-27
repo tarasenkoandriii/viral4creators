@@ -33,6 +33,7 @@ import { isItemComplete } from '../project/project.service';
 import { PlanService } from '../plan/plan.service';
 import { CatalogBatchItemStatus, WorkflowKind } from '@prisma/client';
 import { logWorkflowStage } from '../../common/workflow-stage-events';
+import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
 
 export interface StartCatalogBatchResult {
   batchId: string;
@@ -105,14 +106,12 @@ export class CatalogBatchService {
       select: { id: true },
     });
     if (!project) {
-      throw new NotFoundException(`Project ${projectId} not found`);
+      throw new NotFoundException(PROJECT_NOT_FOUND);
     }
 
     const source = await this.sessions.getSession(dto.sourceSessionId);
     if (!source || source.userId !== userId || source.projectId !== projectId) {
-      throw new NotFoundException(
-        `Session ${dto.sourceSessionId} not found in project ${projectId}`,
-      );
+      throw new NotFoundException('исходная сессия не найдена в этом проекте');
     }
     if (
       source.status !== SessionStatus.VIDEO_COMPLETE ||

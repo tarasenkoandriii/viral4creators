@@ -30,6 +30,7 @@ import {
 } from '../../common/types/sketch.types';
 import { SketchSlotKind } from '../../common/sketch-prompts';
 import { activeRowImage } from '../../common/active-image';
+import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** Слот, прочитанный со всех сторон сразу: и для генерации, и для UI. */
 export interface SketchSlot {
@@ -212,7 +213,7 @@ export class SketchTargetsService {
   private async loadSession(sessionId: string, userId: string) {
     const session = await this.sessions.getSession(sessionId);
     if (!session || (session.userId ?? null) !== userId) {
-      throw new NotFoundException(`Session ${sessionId} not found`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
     return session;
   }
