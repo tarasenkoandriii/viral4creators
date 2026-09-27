@@ -366,11 +366,11 @@ function ExchangesTab() {
 
 function assemblyStatusLabel(status: TutorialVideoAssetRow['assemblyStatus']): string {
   switch (status) {
+    case 'preparing':
+      return 'кадры грузятся';
     case 'pending':
-      return 'в очереди';
-    case 'submitted':
       return 'собирается';
-    case 'completed':
+    case 'complete':
       return 'готово';
     case 'failed':
       return 'ошибка';
@@ -560,7 +560,7 @@ function VideoContentTab() {
                       <td>
                         <span
                           className={`badge-status ${
-                            row.assemblyStatus === 'completed'
+                            row.assemblyStatus === 'complete'
                               ? 'badge-status-ok'
                               : row.assemblyStatus === 'failed'
                                 ? 'badge-status-critical'

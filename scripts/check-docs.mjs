@@ -31,6 +31,65 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 // ── Реальность ─────────────────────────────────────────────────────────
 
+/**
+ * Убирает из исходника комментарии, оставляя код.
+ *
+ * Нужен швам, которые ищут в коде имя (константы, поля) и обязаны не
+ * путать его с упоминанием в комментарии. Построчная фильтрация «не
+ * начинается с // или *» ошибалась в обе стороны сразу (найдено
+ * аудитом этапа A): считала кодом блок `/* … *\/` без ведущих звёздочек
+ * и хвостовой комментарий на строке кода, а код после `/* … *\/` в
+ * одной строке, наоборот, не видела. Поэтому — маленький автомат по
+ * символам, знающий про строковые литералы: `//` внутри 'https://…'
+ * не начинает комментария.
+ *
+ * Переводы строк сохраняются: швы разбирают результат построчно.
+ */
+function stripComments(src) {
+  let out = '';
+  let i = 0;
+  let quote = null;
+  while (i < src.length) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (quote) {
+      if (c === '\\') {
+        out += c + (next ?? '');
+        i += 2;
+        continue;
+      }
+      if (c === quote) quote = null;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      quote = c;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === '/' && next === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+        // Переводы строк внутри блока сохраняем, иначе строки кода
+        // по обе стороны комментария склеятся в одну.
+        if (src[i] === '\n') out += '\n';
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -1309,14 +1368,33 @@ function checkGuideSeams() {
   }
 
   const shotDir = 'landing/public/illustrations';
+  // Номера — ровно 1..4, а не любая цифра. Прежняя регулярка (`\d`)
+  // принимала `-0` и `-5`: набор `ru-0..ru-3` давал счёт 4, шов
+  // проходил, а страница просила `-4` и получала 404 на проде
+  // (находка аудита 27.09.2026). Поэтому дальше сверяется МНОЖЕСТВО
+  // номеров, а не их количество.
   const shotFiles = fs
     .readdirSync(path.join(ROOT, shotDir))
-    .filter((f) => /^tutorial-shot-[a-z]{2}-\d\.avif$/.test(f));
+    .filter((f) => /^tutorial-shot-[a-z]{2}-[1-4]\.avif$/.test(f));
+  const strayShots = fs
+    .readdirSync(path.join(ROOT, shotDir))
+    .filter(
+      (f) =>
+        /^tutorial-shot-/.test(f) &&
+        !/^tutorial-shot-[a-z]{2}-[1-4]\.avif$/.test(f),
+    );
+  for (const file of strayShots) {
+    problems.push(
+      `${shotDir}/${file}: имя не похоже на кадр мастера — ожидается ` +
+        'tutorial-shot-<локаль>-<1..4>.avif; страница такой файл не ищет',
+    );
+  }
   const SHOT_MAX_BYTES = 120 * 1024;
   const onDisk = new Map();
   for (const file of shotFiles) {
     const locale = file.split('-')[2];
     onDisk.set(locale, (onDisk.get(locale) ?? 0) + 1);
+
     const bytes = fs.statSync(path.join(ROOT, shotDir, file)).size;
     if (bytes > SHOT_MAX_BYTES) {
       problems.push(
@@ -1327,6 +1405,9 @@ function checkGuideSeams() {
   }
   for (const locale of shotLocales) {
     const have = onDisk.get(locale) ?? 0;
+    // Проверять «четыре файла, но номера не те» незачем: имена
+    // уникальны, значит четыре валидных имени одной локали — это ровно
+    // 1..4. Неверный номер отсекается выше, по имени файла.
     if (have !== 4) {
       problems.push(
         `локаль «${locale}» объявлена в REAL_FRAME_LOCALES, но кадров на диске ${have} из 4 — ` +
@@ -1341,6 +1422,125 @@ function checkGuideSeams() {
           'REAL_FRAME_LOCALES — страница их не показывает',
       );
     }
+  }
+
+  // ── Длительность ролика обучалки считается ОДИН раз, в плане ──────
+  //
+  // Этап A ТЗ `docs-tz/TZ-Tutorial-Video-Voiced.md`. До него писатель
+  // умножал `frameCount × SECONDS_PER_FRAME` у себя, за три модуля от
+  // места, где строится ffmpeg-команда. Пока все кадры были одной
+  // длины, это сходилось; с этапа B длины разные — вторая формула
+  // разошлась бы МОЛЧА, а число читает человек («Длительность — около
+  // N с»). Ни типы, ни тесты такого не ловят: поле необязательное, и
+  // неверное число выглядит как верное.
+  //
+  // Шов держит ровно одно: константу видит только модуль плана, а
+  // писатели берут готовое `plan.durationMs`.
+  // Писателей ищем САМИ, а не по списку в этой строке: третий
+  // писатель появится на этапе B (озвучка) и на этапе G (`xfade`), и
+  // захардкоженный список молча пропустил бы его мимо шва.
+  const assetWriters = walk(path.join(ROOT, 'backend/src'))
+    .filter((f) => f.endsWith('.ts') && !f.endsWith('.spec.ts'))
+    .map((f) => path.relative(ROOT, f))
+    .map((rel) => ({ rel, code: stripComments(read(rel)) }))
+    .filter(({ code }) =>
+      /tutorialVideoAsset\.(create|update|updateMany|upsert)\(/.test(code),
+    );
+  let durationWrites = 0;
+  for (const { rel, code } of assetWriters) {
+    // Любое упоминание `durationMs` в КОДЕ писателя обязано быть
+    // канонической записью. Прежняя редакция шва требовала ровно
+    // однострочную форму с хвостовой запятой — и `durationMs,` через
+    // локальную переменную, и перенос строки проносили самодельную
+    // формулу мимо (находка аудита этапа A).
+    for (const line of code.split('\n')) {
+      if (!/\bdurationMs\b/.test(line)) continue;
+      durationWrites++;
+      if (line.trim() !== 'durationMs: plan.durationMs,') {
+        problems.push(
+          `${rel}: «${line.trim()}» — длительность пишется не как ` +
+            'plan.durationMs; вторая формула расходится с командой молча ' +
+            '(этап A)',
+        );
+      }
+    }
+  }
+  // Число записей проверяется, а не только печатается: если запись
+  // пропадёт целиком, шов обязан это заметить, а не отрапортовать
+  // «все из плана» про пустое множество. Два писателя — сценарный
+  // прогон и обучалка по сайту заказчика; станет больше — строку
+  // ниже поправит тот, кто добавит третьего, и заодно перечитает шов.
+  const DURATION_WRITES_EXPECTED = 2;
+  if (durationWrites < DURATION_WRITES_EXPECTED) {
+    problems.push(
+      `длительность ролика обучалки пишут ${durationWrites} мест из ` +
+        `${DURATION_WRITES_EXPECTED} — запись пропала, и «Длительность — ` +
+        'около N с» исчезнет с экрана мастера (этап A)',
+    );
+  }
+  // ── Статусы сборки: админка знает ровно те строки, что пишет
+  //    бэкенд ─────────────────────────────────────────────────────
+  //
+  // `assemblyStatus` — обычная строка в БД, без enum на уровне Prisma,
+  // и API отдаёт её как есть, без маппинга. Значит связь бэкенда с
+  // админкой держится на договорённости, которую ничто не проверяло:
+  // до аудита этапа A админка объявляла 'submitted' и 'completed'
+  // (бэкенд их не писал НИКОГДА), а настоящие 'preparing' и
+  // 'complete' в её типе отсутствовали — готовый ролик показывался
+  // жёлтым бейджем с сырым английским словом. Ни типы, ни тесты
+  // такого не ловят: обе стороны внутри себя последовательны.
+  const backendStatuses = new Set(
+    [...walk(path.join(ROOT, 'backend/src'))]
+      .filter((f) => f.endsWith('.ts') && !f.endsWith('.spec.ts'))
+      .flatMap((f) => [
+        ...stripComments(read(path.relative(ROOT, f))).matchAll(
+          /assemblyStatus: '([a-z]+)'/g,
+        ),
+      ])
+      .map((m) => m[1]),
+  );
+  const adminStatusDecl = /export type TutorialVideoAssemblyStatus =\s*([^;]+);/.exec(
+    stripComments(read('admin/src/lib/types.ts')),
+  );
+  if (!adminStatusDecl) {
+    problems.push(
+      'admin/src/lib/types.ts: не нашёл объявление TutorialVideoAssemblyStatus — ' +
+        'шов сверки статусов сборки ослеп, поправьте регулярку вместе с типом',
+    );
+  } else {
+    const adminStatuses = new Set(
+      [...adminStatusDecl[1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]),
+    );
+    const onlyBackend = [...backendStatuses].filter((v) => !adminStatuses.has(v));
+    const onlyAdmin = [...adminStatuses].filter((v) => !backendStatuses.has(v));
+    if (onlyBackend.length > 0) {
+      problems.push(
+        `статусы сборки ${onlyBackend.map((v) => `«${v}»`).join(', ')} бэкенд пишет, ` +
+          'а админка о них не знает — оператор увидит сырое английское слово',
+      );
+    }
+    if (onlyAdmin.length > 0) {
+      problems.push(
+        `статусы сборки ${onlyAdmin.map((v) => `«${v}»`).join(', ')} админка объявляет, ` +
+          'а бэкенд их не пишет — мёртвая ветка в подписи и в цвете бейджа',
+      );
+    }
+  }
+
+  const ASSEMBLY_MODULE =
+    'backend/src/modules/tutorial-runner/tutorial-video-assembly.ts';
+  const secondsPerFrameUsers = walk(path.join(ROOT, 'backend/src'))
+    .filter((f) => f.endsWith('.ts') && !f.endsWith('.spec.ts'))
+    .map((f) => path.relative(ROOT, f))
+    .filter((rel) => rel !== ASSEMBLY_MODULE)
+    .filter((rel) =>
+      /\bSECONDS_PER_FRAME\b/.test(stripComments(read(rel))),
+    );
+  for (const rel of secondsPerFrameUsers) {
+    problems.push(
+      `${rel} использует SECONDS_PER_FRAME — длительность кадра знает только ` +
+        'модуль плана, остальные берут plan.durationMs (этап A)',
+    );
   }
 
   if (problems.length > 0) {
@@ -1366,7 +1566,10 @@ function checkGuideSeams() {
         `мест, пишущих тестировщику по тикету: ${callers.length}; ` +
         `имён маршрутов TMA (фронтенд = копия в бэкенде): ${frontRoutes.size}; ` +
         `OG-карточек обучалки сверено со словарём: ${ogChecked}; ` +
-        `локалей с настоящими кадрами мастера: ${shotLocales.size} (файлов ${shotFiles.length})`,
+        `локалей с настоящими кадрами мастера: ${shotLocales.size} (файлов ${shotFiles.length}); ` +
+        `мест, пишущих длительность ролика обучалки: ${durationWrites} ` +
+        `из ${assetWriters.length} писателей актива (все из плана); ` +
+        `статусов сборки (бэкенд = админка): ${backendStatuses.size}`,
     );
   }
 }

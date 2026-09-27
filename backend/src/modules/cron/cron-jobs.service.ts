@@ -49,6 +49,7 @@ import {
   TutorialScenarioGeneratorService,
 } from '../tutorial-scenario/tutorial-scenario-generator.service';
 import {
+  TutorialAssemblyPollResult,
   TutorialScenarioRunResult,
   TutorialScenarioRunnerService,
 } from '../tutorial-runner/tutorial-scenario-runner.service';
@@ -109,6 +110,16 @@ export const VERCEL_CRON_TRIGGERED_BY = 'vercel-cron';
  * их поведение по ошибке — сюда переехало тело каждого маршрута, имя
  * метода стало `runX` вместо прежнего имени handler'а.
  */
+/**
+ * Сколько дней держим журнал прогонов кронов (`CronRunLog`).
+ *
+ * Тридцать: журнал открывают, чтобы понять, что было на днях —
+ * «почему вчера не пришёл отчёт», «когда последний раз собиралось
+ * видео». За всю историю проекта в него не заглядывал никто, а растёт
+ * он быстро: каждый двухминутный джоб пишет по ~720 строк в сутки.
+ */
+export const CRON_LOG_RETENTION_DAYS = 30;
+
 export const CLEANUP_MAX_PASSES = 20;
 export const CLEANUP_TIME_BUDGET_MS = 120_000;
 const SWEEP_MAX_PAGES = 40;
@@ -141,6 +152,8 @@ export interface SweepOrphansResult {
 }
 
 export interface CleanupSessionsResult {
+  /** Строк журнала кронов удалено по ретенции (аудит 27.09.2026). */
+  deletedCronLogs: number;
   deletedCount: number;
   deletedBlobs: number;
   hasMoreSessions: boolean;
@@ -595,17 +608,12 @@ export class CronJobsService {
    * 15 с × 40 = десять минут и сдаётся. См. доккомментарий
    * `TutorialScenarioRunnerService.pollAssemblies`.
    */
-  async runTutorialAssemblyPoll(): Promise<{ pending: number }> {
-    const acquired = await tryAcquireJobLock(
-      this.prisma,
-      'tutorial-assembly-poll',
-    );
-    if (!acquired) return { pending: 0 };
-    try {
-      return await this.tutorialScenarioRunner.pollAssemblies();
-    } finally {
-      await releaseJobLock(this.prisma, 'tutorial-assembly-poll', acquired);
-    }
+  async runTutorialAssemblyPoll(): Promise<TutorialAssemblyPollResult> {
+    // Замка здесь НЕТ намеренно: он взят внутри `pollAssemblies()` —
+    // см. её доккомментарий. Держать его тут значило бы защитить один
+    // маршрут из двух: суточный прогон опрашивает те же строки, и
+    // разошлись они ровно потому, что замок принадлежал вызывающему.
+    return this.tutorialScenarioRunner.pollAssemblies();
   }
 
   /**
@@ -715,6 +723,7 @@ export class CronJobsService {
         'Крон уборки сессий: предыдущий прогон ещё держит замок — пропуск',
       );
       return {
+        deletedCronLogs: 0,
         deletedCount: 0,
         deletedBlobs: 0,
         hasMoreSessions: false,
@@ -759,6 +768,41 @@ export class CronJobsService {
         }`,
       );
     }
+    // Ретенция журнала кронов (аудит 27.09.2026) — тем же суточным
+    // прогоном, по той же причине, что и скетчи выше: заводить
+    // отдельную запись в `vercel.json` ради одного `deleteMany` не
+    // за что.
+    //
+    // Таблица росла без предела: только двухминутные джобы пишут по
+    // ~720 строк в сутки КАЖДЫЙ, и `tutorial-assembly-poll`
+    // (27.09.2026) добавился к ним ещё одним. Журнал нужен, чтобы
+    // посмотреть, что было на днях, а не за всю историю проекта:
+    // старше месяца его не открывал никто ни разу.
+    //
+    // Best-effort, как и уборка скетчей: сбой чистки журнала не должен
+    // ронять уборку сессий, ради которой джоб и существует.
+    let cronLogsDeleted = 0;
+    try {
+      const cutoff = new Date(
+        Date.now() - CRON_LOG_RETENTION_DAYS * 86_400_000,
+      );
+      const { count } = await this.prisma.cronRunLog.deleteMany({
+        where: { startedAt: { lt: cutoff } },
+      });
+      cronLogsDeleted = count;
+      if (count > 0) {
+        this.logger.log(
+          `журнал кронов: удалено ${count} строк старше ${CRON_LOG_RETENTION_DAYS} дней`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `журнал кронов не подчищен: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
     let expired = await this.sessionService.cleanupExpiredSessions();
     let passes = 1;
     const collected = [...expired.blobPathnames];
@@ -944,6 +988,7 @@ export class CronJobsService {
     );
 
     return {
+      deletedCronLogs: cronLogsDeleted,
       deletedCount,
       deletedBlobs,
       hasMoreSessions: expired.hasMore,

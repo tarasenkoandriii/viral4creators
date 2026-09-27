@@ -12,6 +12,7 @@ jest.mock('../../common/headless-chromium', () => ({
 }));
 
 import { TutorialScenarioRunnerService } from './tutorial-scenario-runner.service';
+import * as assembly from './tutorial-video-assembly';
 
 const ENV_KEYS = [
   'FIXTURE_TELEGRAM_ID',
@@ -26,12 +27,25 @@ beforeEach(() => {
   process.env.FIXTURE_USER_TOKEN = 'sekret';
   process.env.TMA_PUBLIC_URL = 'https://app.example.com';
 });
+const fetchBefore = global.fetch;
 afterEach(() => {
   for (const key of ENV_KEYS) {
     if (envBefore[key] === undefined) delete process.env[key];
     else process.env[key] = envBefore[key];
   }
-  jest.clearAllMocks();
+  // Было `clearAllMocks`: он стирает ВЫЗОВЫ, но не реализации, и
+  // подмена, выставленная одним тестом, продолжала действовать во
+  // всех следующих. Эта мина уже выстрелила на этапе A (спай на
+  // `planSlideshow` уронил чужой тест), поэтому чиним причину, а не
+  // очередное следствие. Нужны все три строки, они про разное:
+  // `restoreAllMocks` возвращает настоящие реализации объектам,
+  // подменённым через `jest.spyOn`; `resetAllMocks` сбрасывает
+  // реализации у самостоятельных `jest.fn()` (их `restoreAllMocks`
+  // не трогает — восстанавливать нечего); `global.fetch` тесты
+  // присваивают напрямую, и о нём не знает ни то, ни другое.
+  jest.restoreAllMocks();
+  jest.resetAllMocks();
+  global.fetch = fetchBefore;
 });
 
 const SCENARIO_OK = {
@@ -80,22 +94,36 @@ function build(scenarios: unknown[]) {
     },
     tutorialVideoAsset: {
       findMany: jest.fn().mockResolvedValue([]),
-      create: jest.fn().mockResolvedValue(undefined),
+      // Строка заводится ПЕРВОЙ и отдаёт `id`: по нему строится
+      // префикс кадров (правка аудита 27.09.2026).
+      create: jest.fn().mockResolvedValue({ id: 'tva-new' }),
       update: jest.fn().mockResolvedValue(undefined),
-      // Сквозной аудит 27.09.2026 (Д-2): `pollAssemblies` сперва
-      // считает очередь, чтобы сводка крона не была пустой.
       count: jest.fn().mockResolvedValue(0),
     },
     project: { findFirst: jest.fn().mockResolvedValue({ id: 'proj-1' }) },
     productItem: { findFirst: jest.fn().mockResolvedValue({ id: 'item-1' }) },
     brandManifest: { findFirst: jest.fn().mockResolvedValue(null) },
     session: { findFirst: jest.fn().mockResolvedValue(null) },
+    // Откат черновика обучалки при провале сборки (аудит 27.09.2026).
+    clientSiteTutorialDraft: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    // Замок опроса сборок живёт внутри `pollAssemblies()` (правка
+    // аудита 27.09.2026): его берёт и суточный прогон тоже.
+    cronJobLock: {
+      create: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
   };
   const blob = {
     uploadBuffer: jest
       .fn()
       .mockResolvedValue({ url: 'https://blob.example.com/frame.jpg' }),
     deleteBlob: jest.fn().mockResolvedValue(undefined),
+    // Уборка кадров идёт по префиксу, а не по счётчику.
+    listByPrefix: jest.fn().mockResolvedValue({ blobs: [], cursor: null }),
+    deleteMany: jest.fn().mockResolvedValue(undefined),
   };
   const ffmpeg = {
     // По умолчанию не настроен — большинство тестов о regression-
@@ -315,9 +343,14 @@ describe('TutorialScenarioRunnerService', () => {
 
       expect(result.passed).toBe(1);
       expect(blob.uploadBuffer).toHaveBeenCalledWith(
-        'tutorial-video-frames/ts-1/0.jpg',
+        // Префикс по id АКТИВА, а не по scenarioId: иначе повторный
+        // прогон затирал кадры предыдущего (аудит 27.09.2026).
+        'tutorial-video-frames/tva-new/0.png',
         expect.any(Buffer),
-        'image/jpeg',
+        // Puppeteer без аргументов снимает PNG. Раньше кадры звались
+        // .jpg с image/jpeg: ffmpeg разбирался по содержимому, а Blob
+        // отдавал неверный content-type (находка аудита 27.09.2026).
+        'image/png',
       );
       expect(ffmpeg.submit).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -332,9 +365,53 @@ describe('TutorialScenarioRunnerService', () => {
             title: expect.any(String),
             scenarioId: 'ts-1',
             frameCount: 1,
-            assemblyStatus: 'pending',
-            assemblyJobId: 'job-1',
+            // Строка заводится ДО заливки кадров и потому ещё не
+            // `pending`: опрос выбирает только `pending` и
+            // полусобранную строку не тронет.
+            assemblyStatus: 'preparing',
           }),
+        }),
+      );
+    });
+
+    it('пропавший кадр не сдвигает нумерацию остальных (этап A)', async () => {
+      // Скриншот снимается best-effort и может пропасть молча. По
+      // позиции в массиве уцелевший кадр второго шага залился бы как
+      // `0.png` — и на этапе B реплика второго шага легла бы на
+      // первый экран. Номер шага не сдвигается никогда; дыра в
+      // нумерации честнее.
+      const page = buildFakePage({ screenshot: true });
+      page.screenshot!.mockRejectedValueOnce(new Error('CDP занят'));
+      const browser = {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      launchHeadlessBrowserMock.mockResolvedValue({ browser });
+      const { service, blob, ffmpeg } = build([
+        {
+          ...SCENARIO_OK,
+          steps: [
+            { kind: 'goto', route: 'generate' },
+            { kind: 'goto', route: 'generate' },
+          ],
+        },
+      ]);
+      ffmpeg.configured.mockReturnValue(true);
+      ffmpeg.submit.mockResolvedValue({ jobId: 'job-1', status: 'queued' });
+
+      await service.run();
+
+      const frameNames = blob.uploadBuffer.mock.calls
+        .map(([pathname]: [string]) => pathname)
+        .filter((n: string) => n.startsWith('tutorial-video-frames/'));
+      expect(frameNames).toEqual(['tutorial-video-frames/tva-new/1.png']);
+      // И, главное, номер доезжает до ПЛАНА, а не теряется на
+      // границе (правка аудита этапа A): ключ входа ffmpeg — `frame1`,
+      // не `frame0`. На этапе B по этому же номеру к кадру
+      // привяжется реплика, и привязывать её больше не к чему.
+      expect(ffmpeg.submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inputs: { frame1: 'https://blob.example.com/frame.jpg' },
         }),
       );
     });
@@ -362,14 +439,71 @@ describe('TutorialScenarioRunnerService', () => {
         close: jest.fn().mockResolvedValue(undefined),
       };
       launchHeadlessBrowserMock.mockResolvedValue({ browser });
-      const { service, prisma, ffmpeg } = build([SCENARIO_OK]);
+      const { service, prisma, blob, ffmpeg } = build([SCENARIO_OK]);
       ffmpeg.configured.mockReturnValue(true);
       ffmpeg.submit.mockRejectedValue(new Error('сеть недоступна'));
 
       const result = await service.run();
 
       expect(result.passed).toBe(1);
-      expect(prisma.tutorialVideoAsset.create).not.toHaveBeenCalled();
+      // Строка теперь ЕСТЬ — она заводится до заливки кадров, — но
+      // помечена сбойной с причиной. Прежний порядок оставлял вместо
+      // неё кадры в Blob без единой ссылки из базы: опрашивать нечего,
+      // убирать некому, подметальщика по этому префиксу нет (аудит
+      // 27.09.2026).
+      expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'tva-new' },
+          data: expect.objectContaining({
+            assemblyStatus: 'failed',
+            assemblyError: 'сеть недоступна',
+          }),
+        }),
+      );
+      // И кадры за собой убраны.
+      expect(blob.listByPrefix).toHaveBeenCalledWith(
+        'tutorial-video-frames/tva-new/',
+        expect.anything(),
+      );
+    });
+
+    it('кадры не годятся для сборки — строка и кадры не остаются висеть', async () => {
+      // Ранний выход по `planSlideshow === null` происходил уже ПОСЛЕ
+      // заливки: без уборки это была бы та же сирота.
+      const page = buildFakePage({ screenshot: true });
+      const browser = {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      launchHeadlessBrowserMock.mockResolvedValue({ browser });
+      const { service, prisma, blob, ffmpeg } = build([SCENARIO_OK]);
+      ffmpeg.configured.mockReturnValue(true);
+      // `mockReturnValueOnce`, а не `mockReturnValue`: подмена нужна
+      // ровно на одну сборку. Раньше здесь стоял `mockReturnValue`, и
+      // при `clearAllMocks` в `afterEach` подмена утекала в ВСЕ
+      // следующие тесты файла — любой, дошедший до сборки, молча
+      // получал «кадры не годятся». Найдено на этапе A: новый тест
+      // упал не своей причиной. Причина вылечена в `afterEach`
+      // (`restoreAllMocks` + `resetAllMocks`), «Once» осталось как
+      // выражение намерения.
+      jest
+        .spyOn(assembly, 'planSlideshow')
+        .mockReturnValueOnce(
+          null as unknown as ReturnType<typeof assembly.planSlideshow>,
+        );
+
+      await service.run();
+
+      expect(ffmpeg.submit).not.toHaveBeenCalled();
+      expect(blob.listByPrefix).toHaveBeenCalledWith(
+        'tutorial-video-frames/tva-new/',
+        expect.anything(),
+      );
+      expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ assemblyStatus: 'failed' }),
+        }),
+      );
     });
 
     it('poll: задача ещё pending у внешнего api — TutorialVideoAsset не трогается', async () => {
@@ -427,19 +561,64 @@ describe('TutorialScenarioRunnerService', () => {
           data: expect.objectContaining({ assemblyStatus: 'complete' }),
         }),
       );
-      expect(blob.deleteBlob).toHaveBeenCalledWith(
-        'tutorial-video-frames/ts-1/0.jpg',
-      );
-      expect(blob.deleteBlob).toHaveBeenCalledWith(
-        'tutorial-video-frames/ts-1/1.jpg',
+      // Уборка по ПРЕФИКСУ, а не по счётчику 0..n-1: счётчик мог быть
+      // меньше, чем лежит, и разница осталась бы навсегда.
+      expect(blob.listByPrefix).toHaveBeenCalledWith(
+        'tutorial-video-frames/tva-1/',
+        expect.anything(),
       );
     });
 
     // Сквозной аудит 27.09.2026, находка Д-3: `durationMs` читается
     // экраном мастера (`client-site-tutorial.service.ts`) и печатается
-    // как «Длительность — около N с», но на завершении сборки никогда
-    // не записывался — строка не появлялась ни у кого.
-    it('poll: на завершении пишет durationMs = кадры × 2 с (находка Д-3)', async () => {
+    // как «Длительность — около N с», но не записывался ни одним
+    // путём — строка не появлялась ни у кого.
+    //
+    // Этап A перенёс запись с завершения на ОТПРАВКУ и взял число из
+    // плана: до этого писатель умножал `frameCount × SECONDS_PER_FRAME`
+    // у себя, за три модуля от места, где строится команда. Пока все
+    // кадры одной длины, оба способа дают одно и то же; на этапе B
+    // длины разойдутся, и второй разошёлся бы молча.
+    it('submit: durationMs пишется из плана, а не пересчитывается писателем', async () => {
+      // Подменяем ПЛАНУ длительность на число, которое из кадров
+      // никак не получить: 2 с × 1 кадр дало бы 2000. Если писатель
+      // снова начнёт считать сам (`frameCount × SECONDS_PER_FRAME`),
+      // в базу уйдёт 2000 и тест упадёт. Проверять ожиданием
+      // `SECONDS_PER_FRAME * 1000` было бы бесполезно: та же формула
+      // с обеих сторон, обе мутации проходят.
+      const page = buildFakePage({ screenshot: true });
+      const browser = {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      launchHeadlessBrowserMock.mockResolvedValue({ browser });
+      const { service, prisma, ffmpeg } = build([SCENARIO_OK]);
+      ffmpeg.configured.mockReturnValue(true);
+      ffmpeg.submit.mockResolvedValue({ jobId: 'job-1', status: 'queued' });
+      const real = assembly.planSlideshow;
+      jest
+        .spyOn(assembly, 'planSlideshow')
+        .mockImplementation((frames, outputName) => {
+          const plan = real(frames, outputName);
+          return plan && { ...plan, durationMs: 987_654 };
+        });
+
+      await service.run();
+
+      expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            assemblyStatus: 'pending',
+            durationMs: 987_654,
+          }),
+        }),
+      );
+    });
+
+    it('poll: на завершении durationMs НЕ пересчитывается заново', async () => {
+      // Второй расчёт — это вторая формула, и расходится она молча.
+      // Число уже записано при отправке, из плана, по которому собран
+      // именно этот файл.
       const { service, prisma, ffmpeg } = build([]);
       ffmpeg.configured.mockReturnValue(true);
       prisma.tutorialVideoAsset.findMany.mockResolvedValue([
@@ -463,45 +642,12 @@ describe('TutorialScenarioRunnerService', () => {
 
       await service.run();
 
-      expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ durationMs: 6000 }),
-        }),
+      const completion = prisma.tutorialVideoAsset.update.mock.calls.find(
+        ([arg]: [{ data: Record<string, unknown> }]) =>
+          arg.data.assemblyStatus === 'complete',
       );
-    });
-
-    // Без кадров длительность не выдумывается: `null` — это «не знаем»,
-    // и экран мастера строку просто не печатает. Ноль читался бы как
-    // «ролик нулевой длины».
-    it('poll: frameCount = 0 — durationMs остаётся null, а не нулём', async () => {
-      const { service, prisma, ffmpeg } = build([]);
-      ffmpeg.configured.mockReturnValue(true);
-      prisma.tutorialVideoAsset.findMany.mockResolvedValue([
-        {
-          id: 'tva-1',
-          subjectKey: '1',
-          scenarioId: 'ts-1',
-          frameCount: 0,
-          assemblyJobId: 'job-1',
-          assemblyStartedAt: new Date(),
-        },
-      ]);
-      ffmpeg.status.mockResolvedValue({
-        status: 'completed',
-        outputs: { 'tutorial.mp4': 'https://ffmpeg-api.example.com/out.mp4' },
-      });
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-      }) as unknown as typeof fetch;
-
-      await service.run();
-
-      expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ durationMs: null }),
-        }),
-      );
+      expect(completion).toBeDefined();
+      expect(completion![0].data).not.toHaveProperty('durationMs');
     });
 
     // Находка Д-2: отдельный вход для частого крона. Он обязан
@@ -526,7 +672,98 @@ describe('TutorialScenarioRunnerService', () => {
 
       expect(ffmpeg.status).toHaveBeenCalledTimes(1);
       expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
-      expect(result).toEqual({ pending: 2 });
+      // `polled` — сделанная работа, `pending` — остаток ПОСЛЕ опроса.
+      // Прежняя редакция считала остаток ДО, и после тика, закрывшего
+      // все сборки, в журнале всё равно стояло «pending=N».
+      expect(result).toEqual({ polled: 1, pending: 2 });
+    });
+
+    // Находка аудита 27.09.2026 на собственной вчерашней работе: замок
+    // держал крон, а суточный прогон опрашивал те же строки в обход
+    // него. Проигравший доходил до `failAssembly`/`cleanupFrames` уже
+    // после чужого `complete` — помечал готовую сборку сбойной и
+    // стирал её кадры.
+    it('замок занят — опроса нет вовсе, и это видно по ответу', async () => {
+      const { service, prisma, ffmpeg } = build([]);
+      ffmpeg.configured.mockReturnValue(true);
+      prisma.cronJobLock.create.mockRejectedValue(
+        Object.assign(new Error('unique'), { code: 'P2002' }),
+      );
+      prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await service.pollAssemblies();
+
+      expect(result.skipped).toMatch(/не завершился/);
+      expect(result.polled).toBe(0);
+      expect(prisma.tutorialVideoAsset.findMany).not.toHaveBeenCalled();
+    });
+
+    it('суточный прогон опрашивает через тот же замок, а не в обход', async () => {
+      // Ровно то, чего не хватало: инвариант «опрашивает не больше
+      // одного» принадлежит опросу, а не одному из вызывающих.
+      const { service, prisma } = build([]);
+      prisma.cronJobLock.create.mockRejectedValue(
+        Object.assign(new Error('unique'), { code: 'P2002' }),
+      );
+      prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.run();
+
+      expect(prisma.tutorialVideoAsset.findMany).not.toHaveBeenCalled();
+    });
+
+    it('провал сборки возвращает черновик обучалки из APPROVED на одобрение', async () => {
+      // Без этого неудачная сборка запирала черновик навсегда: из
+      // APPROVED нет выхода ни у кого — `approve`/`reject` требуют
+      // PENDING_REVIEW, пользовательский `resume` — REJECTED. Откат
+      // был предусмотрен только для синхронного сбоя `submit`, а не
+      // для провала, обнаруженного позже на опросе (аудит 27.09.2026).
+      const { service, prisma, ffmpeg } = build([]);
+      ffmpeg.configured.mockReturnValue(true);
+      prisma.tutorialVideoAsset.findMany.mockResolvedValue([
+        {
+          id: 'tva-1',
+          subjectKey: '1',
+          scenarioId: null,
+          clientSiteDraftId: 'draft-7',
+          frameCount: 2,
+          assemblyJobId: 'job-1',
+          assemblyStartedAt: new Date(),
+        },
+      ]);
+      ffmpeg.status.mockResolvedValue({ status: 'failed', error: 'кодек' });
+
+      await service.pollAssemblies();
+
+      expect(prisma.clientSiteTutorialDraft.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // Условие по статусу, а не слепой update: между чтением и
+          // записью оператор мог сделать что-то ещё.
+          where: { id: 'draft-7', status: 'APPROVED' },
+          data: expect.objectContaining({ status: 'PENDING_REVIEW' }),
+        }),
+      );
+    });
+
+    it('у регрессионной сборки черновика нет — откатывать нечего', async () => {
+      const { service, prisma, ffmpeg } = build([]);
+      ffmpeg.configured.mockReturnValue(true);
+      prisma.tutorialVideoAsset.findMany.mockResolvedValue([
+        {
+          id: 'tva-1',
+          subjectKey: '1',
+          scenarioId: 'ts-1',
+          clientSiteDraftId: null,
+          frameCount: 1,
+          assemblyJobId: 'job-1',
+          assemblyStartedAt: new Date(),
+        },
+      ]);
+      ffmpeg.status.mockResolvedValue({ status: 'failed', error: 'кодек' });
+
+      await service.pollAssemblies();
+
+      expect(prisma.clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
     });
 
     it('poll: задача провалилась у внешнего api — помечает failed с причиной, чистит кадры-транзиты', async () => {
@@ -557,8 +794,9 @@ describe('TutorialScenarioRunnerService', () => {
           }),
         }),
       );
-      expect(blob.deleteBlob).toHaveBeenCalledWith(
-        'tutorial-video-frames/ts-1/0.jpg',
+      expect(blob.listByPrefix).toHaveBeenCalledWith(
+        'tutorial-video-frames/tva-1/',
+        expect.anything(),
       );
     });
   });

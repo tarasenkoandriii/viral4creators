@@ -13,12 +13,14 @@ import { UiSnapshotAdminController } from './ui-snapshot-admin.controller';
 function build() {
   const adminPanel = { assertOperator: jest.fn().mockResolvedValue(undefined) };
   const runner = { run: jest.fn().mockResolvedValue({ total: 0 }) };
+  const frames = { capture: jest.fn().mockResolvedValue({ locales: [] }) };
   const controller = new UiSnapshotAdminController(
     adminPanel as never,
     runner as never,
+    frames as never,
   );
   const req = { userId: 'usr_admin' } as never;
-  return { controller, runner, adminPanel, req };
+  return { controller, runner, frames, adminPanel, req };
 }
 
 describe('UiSnapshotAdminController — разбор тела', () => {
@@ -33,6 +35,7 @@ describe('UiSnapshotAdminController — разбор тела', () => {
       routeKeys: undefined,
       unmasked: false,
       deviceScaleFactor: undefined,
+      steps: undefined,
       alerts: false,
     });
   });
@@ -96,6 +99,132 @@ describe('UiSnapshotAdminController — разбор тела', () => {
       controller.run(req, { deviceScaleFactor: 3, unmasked: true }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  // Шаги — этап I, второй заход (27.09.2026): две карточки лендинга из
+  // четырёх это мгновенные состояния браузера, и снять их можно только
+  // действием на уже открытом экране, а не открытием маршрута.
+  describe('steps', () => {
+    const OK_STEPS = [
+      {
+        kind: 'fill',
+        selector: '#site-url',
+        value: 'https://viral4creators.app',
+      },
+      { kind: 'click', selector: '[data-qa="client-site-explore"]' },
+    ];
+
+    it('шаги с unmasked и одним маршрутом — доезжают до сервиса', async () => {
+      const { controller, runner, req } = build();
+
+      await controller.run(req, {
+        routeKeys: ['site-tutorial'],
+        unmasked: true,
+        deviceScaleFactor: 2,
+        steps: OK_STEPS,
+      });
+
+      expect(runner.run).toHaveBeenCalledWith(
+        expect.objectContaining({ steps: OK_STEPS }),
+      );
+    });
+
+    it('шаги без unmasked — 400: сравниваемый прогон обязан быть наблюдателем', async () => {
+      // Запрет строже, чем у плотности: шаги МЕНЯЮТ состояние продукта
+      // — создают черновик, отправляют формы. Прогон, который пишет
+      // отпечаток в базу, действовать не вправе.
+      const { controller, runner, req } = build();
+
+      await expect(
+        controller.run(req, { routeKeys: ['site-tutorial'], steps: OK_STEPS }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(runner.run).not.toHaveBeenCalled();
+    });
+
+    it('шаги без ровно одного маршрута — 400', async () => {
+      // Шаги написаны под конкретный экран: на чужом селекторы либо не
+      // найдутся, либо найдутся не те.
+      const { controller, runner, req } = build();
+
+      await expect(
+        controller.run(req, { unmasked: true, steps: OK_STEPS }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        controller.run(req, {
+          unmasked: true,
+          routeKeys: ['site-tutorial', 'generate'],
+          steps: OK_STEPS,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(runner.run).not.toHaveBeenCalled();
+    });
+
+    it('goto среди шагов — 400: маршрут задаётся routeKeys', async () => {
+      const { controller, runner, req } = build();
+
+      await expect(
+        controller.run(req, {
+          routeKeys: ['site-tutorial'],
+          unmasked: true,
+          // Селектор тут есть намеренно: без него шаг отвергла бы
+          // соседняя проверка, и тест проходил бы, не проверяя
+          // словарь. Эту ловушку поймала мутация.
+          steps: [{ kind: 'goto', route: 'generate', selector: '#site-url' }],
+        }),
+      ).rejects.toThrow(/kind должен быть одним из/);
+      expect(runner.run).not.toHaveBeenCalled();
+    });
+
+    it('triggerPaidOperation среди шагов — 400: здесь он не значит ничего', async () => {
+      // В сценарии обучалки это декларативный маркер для оценки
+      // стоимости. Пропустить его сюда значит дать оператору шаг,
+      // который молча ничего не делает.
+      const { controller, runner, req } = build();
+
+      await expect(
+        controller.run(req, {
+          routeKeys: ['site-tutorial'],
+          unmasked: true,
+          steps: [
+            {
+              kind: 'triggerPaidOperation',
+              operation: 'video',
+              model: 'veo',
+              expectedUnits: {},
+              note: 'x',
+              selector: '#site-url',
+            },
+          ],
+        }),
+      ).rejects.toThrow(/kind должен быть одним из/);
+      expect(runner.run).not.toHaveBeenCalled();
+    });
+
+    it('шаг без селектора — 400 с номером шага', async () => {
+      const { controller, req } = build();
+
+      await expect(
+        controller.run(req, {
+          routeKeys: ['site-tutorial'],
+          unmasked: true,
+          steps: [{ kind: 'fill', value: 'x' }],
+        }),
+      ).rejects.toThrow(/шаг 1/);
+    });
+
+    it('пустой массив шагов — 400, а не «шагов нет»', async () => {
+      // Пустой массив прислали намеренно, значит имели в виду шаги;
+      // молча превратить это в обычный прогон — скрыть опечатку.
+      const { controller, req } = build();
+
+      await expect(
+        controller.run(req, {
+          routeKeys: ['site-tutorial'],
+          unmasked: true,
+          steps: [],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   it('не оператор — до разбора тела дело не доходит', async () => {

@@ -174,7 +174,8 @@ describe('runScenario', () => {
     expect(result.ok).toBe(true);
     expect(screenshot).toHaveBeenCalledTimes(2);
     expect(result.frames).toHaveLength(2);
-    expect(Array.from(result.frames[0])).toEqual([1]);
+    expect(Array.from(result.frames[0].bytes)).toEqual([1]);
+    expect(result.frames.map((f) => f.stepIndex)).toEqual([0, 1]);
   });
 
   it('captureFrames:true, но page.screenshot отсутствует — не бросает, кадров просто нет', async () => {
@@ -204,10 +205,15 @@ describe('runScenario', () => {
 
     expect(result.ok).toBe(true);
     expect(result.frames).toHaveLength(1);
-    expect(Array.from(result.frames[0])).toEqual([9]);
+    expect(Array.from(result.frames[0].bytes)).toEqual([9]);
+    // Главное этого теста с этапа A: уцелевший кадр помнит, что он от
+    // ВТОРОГО шага. По позиции в массиве он был бы первым — и всё
+    // последующее (реплика, подпись, таймкод) уехало бы на шаг назад,
+    // молча.
+    expect(result.frames[0].stepIndex).toBe(1);
   });
 
-  it('captureFrames:true, шаг 2 из 3 проваливается — кадр есть только после шага 1', async () => {
+  it('captureFrames:true, второй шаг проваливается — остаётся кадр первого, со своим номером', async () => {
     const screenshot = jest.fn().mockResolvedValue(new Uint8Array([1]));
     const locator = { click: jest.fn(), fill: jest.fn() };
     const page = buildPage({
@@ -228,6 +234,8 @@ describe('runScenario', () => {
     const result = await runScenario(page, steps, resolveOk, 15_000, true);
 
     expect(result.ok).toBe(false);
-    expect(result.frames).toHaveLength(1);
+    expect(result.frames).toEqual([
+      { stepIndex: 0, bytes: new Uint8Array([1]) },
+    ]);
   });
 });

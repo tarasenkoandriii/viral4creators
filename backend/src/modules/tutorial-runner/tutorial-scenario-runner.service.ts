@@ -24,9 +24,11 @@
  * эквивалента (его собственный `page.screencast()` есть, но требует
  * ЛОКАЛЬНЫЙ ffmpeg-бинарник на диске — которого на Vercel Functions нет,
  * см. `postprod/ffmpeg-api.service.ts`). Вместо непрерывной записи —
- * `scenario-runner.ts` с `captureFrames: true` снимает по JPEG-скриншоту
+ * `scenario-runner.ts` с `captureFrames: true` снимает по PNG-скриншоту
  * после каждого успешного шага, этот сервис грузит их как транзитные
- * файлы в Blob (`tutorial-video-frames/{scenarioId}/{n}.jpg`, тот же
+ * файлы в Blob (`tutorial-video-frames/{assetId}/{номер шага}.png`
+ * — по id АКТИВА и номеру ШАГА, почему именно так, см. у
+ * `scenarioFramePrefix` и у `ScenarioFrame`; тот же
  * транзитный приём, что у референсного видео анализа) и отправляет
  * задачу СБОРКИ слайд-шоу в УЖЕ СУЩЕСТВУЮЩИЙ внешний ffmpeg-api
  * (`FfmpegApiService`, `tutorial-video-assembly.ts`) — тот же провайдер,
@@ -73,9 +75,10 @@ import {
   launchHeadlessBrowser,
   withTimeout,
 } from '../../common/headless-chromium';
-import { runScenario, ScenarioPage } from './scenario-runner';
+import { runScenario, ScenarioFrame, ScenarioPage } from './scenario-runner';
 import { FixtureRouteContext, resolveScenarioRoute } from './route-templates';
-import { planSlideshow, SECONDS_PER_FRAME } from './tutorial-video-assembly';
+import { framesFromSteps, planSlideshow } from './tutorial-video-assembly';
+import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import { ASSISTANT_STEPS } from '../assistant/knowledge/generated';
 
@@ -137,6 +140,31 @@ export interface TutorialScenarioRunResult {
   outcomes: TutorialScenarioRunOutcome[];
 }
 
+/**
+ * Ключ джоб-замка опроса сборок. Тот же, что у крона
+ * `tutorial-assembly-poll` — специально: замок общий на всех, кто
+ * опрашивает, а не на один маршрут.
+ */
+const ASSEMBLY_POLL_LOCK = 'tutorial-assembly-poll';
+
+/**
+ * Префикс кадров-транзитов ОДНОГО актива. По id актива, а не по
+ * `scenarioId`: последний общий для всех прогонов сценария, и прогоны
+ * затирали кадры друг друга (аудит 27.09.2026).
+ */
+function scenarioFramePrefix(assetId: string): string {
+  return `tutorial-video-frames/${assetId}/`;
+}
+
+export interface TutorialAssemblyPollResult {
+  /** Заполнено, когда опрос пропущен: замок держит другой прогон. */
+  skipped?: string;
+  /** Сколько строк опрошено за этот тик. */
+  polled: number;
+  /** Сколько осталось висеть ПОСЛЕ опроса. */
+  pending?: number;
+}
+
 @Injectable()
 export class TutorialScenarioRunnerService {
   private readonly logger = new Logger(TutorialScenarioRunnerService.name);
@@ -154,7 +182,10 @@ export class TutorialScenarioRunnerService {
     // на сегодняшний регресс-прогон, и должна продвигаться независимо
     // от того, настроен ли ещё сам фикстурный вход. См. доккомментарий
     // модуля.
-    await this.pollPendingVideoAssets();
+    // Через `pollAssemblies`, а не напрямую: замок опроса живёт там, и
+    // в обход него суточный прогон снова разошёлся бы с двухминутным
+    // поллером на одной строке.
+    await this.pollAssemblies();
 
     const telegramId = process.env.FIXTURE_TELEGRAM_ID?.trim();
     const token = process.env.FIXTURE_USER_TOKEN?.trim();
@@ -455,7 +486,7 @@ export class TutorialScenarioRunnerService {
    */
   private async submitVideoAssembly(
     scenario: { id: string; subjectKey: string; locale: string },
-    frames: Uint8Array[],
+    frames: readonly ScenarioFrame[],
   ): Promise<void> {
     if (frames.length === 0) return;
     if (!this.ffmpeg.configured()) {
@@ -465,23 +496,71 @@ export class TutorialScenarioRunnerService {
       return;
     }
 
+    // Строка заводится ПЕРВОЙ, ещё до заливки кадров, и это правка
+    // аудита 27.09.2026. Прежний порядок был «кадры → задача →
+    // строка», и у него две дыры сразу:
+    //
+    // 1. Бросит `submit` или `create` — строки нет, кадры в Blob есть,
+    //    опрашивать нечего, `cleanupFrames` не вызовется никогда.
+    //    Подметальщика по префиксу `tutorial-video-frames/` в проекте
+    //    нет, значит файлы оставались навсегда.
+    // 2. Путь кадров строился по `scenarioId`, общему для ВСЕХ
+    //    прогонов одного сценария. Повторный прогон перезаписывал
+    //    файлы предыдущего, а уборка старого актива сносила кадры
+    //    нового; более короткий прогон оставлял «хвост» прошлого.
+    //
+    // Обе лечатся одним: у строки есть `id` до заливки, по нему и
+    // строится префикс. Статус `preparing` — не `pending`: опрос
+    // выбирает только `pending`, и полусобранную строку он не тронет.
+    const asset = (await this.prisma.tutorialVideoAsset.create({
+      data: {
+        subjectKey: scenario.subjectKey,
+        locale: scenario.locale,
+        title: resolveTutorialVideoTitle(scenario.subjectKey, scenario.locale),
+        scenarioId: scenario.id,
+        frameCount: frames.length,
+        assemblyStatus: 'preparing',
+      },
+    })) as { id: string };
+
     try {
-      const frameUrls: string[] = [];
-      for (let i = 0; i < frames.length; i++) {
-        const pathname = `tutorial-video-frames/${scenario.id}/${i}.jpg`;
+      // Имя файла — по номеру ШАГА, а не по позиции в массиве (этап A
+      // ТЗ `TZ-Tutorial-Video-Voiced.md`): пропавший кадр оставляет
+      // дыру в нумерации, а не сдвигает все следующие. Уборка идёт по
+      // префиксу целиком (`wipeScenarioFrames`), сплошная нумерация ей
+      // не нужна.
+      // Номер шага едет С КАДРОМ до самого плана, а не выводится из
+      // позиции в массиве: `uniformFrames` здесь вызывать НЕЛЬЗЯ.
+      // Кадр снимается best-effort и пропадает молча, поэтому
+      // позиция врёт, а номер шага — нет (см. `ScenarioFrame` и
+      // `SlideshowFrame.stepIndex`).
+      //
+      // Длительность у всех пока одна, и назначает её модуль плана
+      // (`framesFromSteps`) — ровно то же поведение, что до этапа A.
+      // Разные длительности появятся на этапе B, когда кадр начнёт
+      // длиться столько, сколько звучит реплика; тогда же сюда
+      // придёт и сама реплика — по этому же номеру шага, иначе
+      // привязывать её не к чему.
+      const shots: { stepIndex: number; url: string }[] = [];
+      for (const frame of frames) {
+        const pathname = `${scenarioFramePrefix(asset.id)}${frame.stepIndex}.png`;
         const { url } = await this.blob.uploadBuffer(
           pathname,
-          Buffer.from(frames[i]),
-          'image/jpeg',
+          Buffer.from(frame.bytes),
+          'image/png',
         );
-        frameUrls.push(url);
+        shots.push({ stepIndex: frame.stepIndex, url });
       }
 
-      const plan = planSlideshow(frameUrls);
+      const plan = planSlideshow(framesFromSteps(shots));
       if (!plan) {
         this.logger.warn(
-          `сценарий ${scenario.subjectKey}: ${frames.length} кадров не годятся для сборки (0 или больше потолка) — пропуск`,
+          `сценарий ${scenario.subjectKey}: ${frames.length} кадров не годятся для сборки (больше потолка слайд-шоу или у кадра неположительная длительность) — пропуск`,
         );
+        // Кадры уже залиты — снимаем их и строку за собой, иначе
+        // получили бы ровно ту сироту, ради которой всё это и
+        // переставлено.
+        await this.abandonAssembly(asset.id, 'кадры не годятся для сборки');
         return;
       }
 
@@ -491,19 +570,18 @@ export class TutorialScenarioRunnerService {
         commands: plan.commands,
       });
 
-      await this.prisma.tutorialVideoAsset.create({
+      await this.prisma.tutorialVideoAsset.update({
+        where: { id: asset.id },
         data: {
-          subjectKey: scenario.subjectKey,
-          locale: scenario.locale,
-          title: resolveTutorialVideoTitle(
-            scenario.subjectKey,
-            scenario.locale,
-          ),
-          scenarioId: scenario.id,
-          frameCount: frames.length,
           assemblyStatus: 'pending',
           assemblyJobId: job.jobId,
           assemblyStartedAt: new Date(),
+          // Длительность берётся из плана и пишется ЗДЕСЬ, при
+          // отправке, — см. комментарий у `durationMs` в
+          // `SlideshowPlan`. До этапа A она вычислялась при
+          // завершении как `frameCount × SECONDS_PER_FRAME`, то есть
+          // повторялась своими словами в трёх модулях от команды.
+          durationMs: plan.durationMs,
         },
       });
 
@@ -511,6 +589,10 @@ export class TutorialScenarioRunnerService {
         `сценарий ${scenario.subjectKey}: слайд-шоу отправлено на сборку (задача ${job.jobId}, ${frames.length} кадров)`,
       );
     } catch (err) {
+      await this.abandonAssembly(
+        asset.id,
+        err instanceof Error ? err.message : String(err),
+      );
       this.logger.warn(
         `сценарий ${scenario.subjectKey}: не удалось отправить слайд-шоу на сборку: ${
           err instanceof Error ? err.message : String(err)
@@ -544,36 +626,79 @@ export class TutorialScenarioRunnerService {
    * держит headless-браузер открытым минутами, и гонять его каждые две
    * минуты нельзя. Здесь же — один запрос в базу и несколько проверок
    * статуса по HTTP.
+   *
+   * ## Замок стоит ЗДЕСЬ, а не у вызывающего
+   *
+   * Правка аудита 27.09.2026, находка на собственной же вчерашней
+   * работе. Сначала замок взял крон, а `run()` продолжал опрашивать
+   * сборки сам — под ДРУГИМ ключом. Значит в 09:00 UTC (и при любом
+   * ручном запуске из админки) суточный прогон и двухминутный поллер
+   * могли взять одну и ту же строку: двойное скачивание, двойная
+   * перезаливка в Blob, а проигравший доходил до `failAssembly` и
+   * `cleanupFrames` уже ПОСЛЕ чужого `complete` — то есть помечал
+   * готовую сборку сбойной и стирал её кадры.
+   *
+   * Инвариант «опрашивает не больше одного» принадлежит тому, что
+   * защищают, а не одному из вызывающих. Поэтому замок взят здесь:
+   * добавить третьего вызывающего и снова его забыть теперь нельзя.
    */
-  async pollAssemblies(): Promise<{ pending: number }> {
-    const before = await this.prisma.tutorialVideoAsset.count({
-      where: { assemblyStatus: 'pending' },
-    });
-    await this.pollPendingVideoAssets();
-    return { pending: before };
+  async pollAssemblies(): Promise<TutorialAssemblyPollResult> {
+    const acquired = await tryAcquireJobLock(this.prisma, ASSEMBLY_POLL_LOCK);
+    if (!acquired) {
+      // Пропуск и «очередь пуста» — разные вещи, и в журнале крона они
+      // обязаны читаться по-разному: иначе занятый замок выглядит как
+      // «сборок и правда не было».
+      return { skipped: 'предыдущий опрос ещё не завершился', polled: 0 };
+    }
+    try {
+      // Счётчик — ПОСЛЕ опроса и по факту: сколько строк осталось
+      // висеть. Прежняя редакция считала до опроса, и в журнале после
+      // успешного тика, закрывшего все сборки, всё равно стояло
+      // `pending=N` — число, по которому нельзя было понять, сделал
+      // тик что-нибудь или нет.
+      const polled = await this.pollPendingVideoAssets();
+      const pending = await this.prisma.tutorialVideoAsset.count({
+        where: { assemblyStatus: 'pending' },
+      });
+      return { polled, pending };
+    } finally {
+      await releaseJobLock(this.prisma, ASSEMBLY_POLL_LOCK, acquired);
+    }
   }
 
-  private async pollPendingVideoAssets(): Promise<void> {
-    if (!this.ffmpeg.configured()) return;
+  /** @returns сколько строк успели опросить. */
+  private async pollPendingVideoAssets(): Promise<number> {
+    if (!this.ffmpeg.configured()) return 0;
 
     const pending = await this.prisma.tutorialVideoAsset.findMany({
       where: { assemblyStatus: 'pending' },
       take: RUN_BATCH_LIMIT,
     });
-    if (pending.length === 0) return;
+    if (pending.length === 0) return 0;
 
     const deadline = Date.now() + POLL_DEADLINE_MS;
+    let polled = 0;
     for (const asset of pending) {
       if (Date.now() >= deadline) break;
       await this.pollOneVideoAsset(asset);
+      polled++;
     }
+    return polled;
   }
 
   private async pollOneVideoAsset(asset: {
     id: string;
     subjectKey: string;
     scenarioId: string | null;
-    frameCount: number | null;
+    // Объявлено, потому что ЧИТАЕТСЯ дальше по цепочке:
+    // `failAssembly` → `releaseClientSiteDraft` возвращает черновик
+    // обучалки из `APPROVED` на одобрение. Поле необязательное в
+    // подписи `releaseClientSiteDraft`, а `findMany` идёт без
+    // `select`, поэтому раньше это сходилось молча — и первый же
+    // `select:` (естественная оптимизация) запер бы черновик в
+    // `APPROVED` навсегда, без единой ошибки компилятора. Найдено
+    // аудитом этапа A.
+    clientSiteDraftId: string | null;
     assemblyJobId: string | null;
     assemblyStartedAt: Date | null;
   }): Promise<void> {
@@ -646,22 +771,18 @@ export class TutorialScenarioRunnerService {
           assemblyStatus: 'complete',
           blobUrl: ourUrl,
           assemblyError: null,
-          // Длительность считается, а не измеряется, и это не оценка:
-          // слайд-шоу собирается из статичных кадров ровно по
-          // `SECONDS_PER_FRAME` секунд каждый (`-loop 1 -t N`, см.
-          // `tutorial-video-assembly.ts`), так что произведение —
-          // точная длина файла.
+          // `durationMs` здесь НЕ пишется: он записан при отправке, из
+          // `plan.durationMs` — того самого плана, по которому собран
+          // файл. До этапа A он вычислялся тут заново, произведением
+          // `frameCount × SECONDS_PER_FRAME`, и это сходилось ровно
+          // пока все кадры были одной длины. С этапа B длины разные, и
+          // повторное вычисление разошлось бы молча — а число это
+          // человек читает на экране мастера («Длительность — около
+          // N с»).
           //
-          // Найдено сквозным аудитом обучалки (27.09.2026): поле
-          // `durationMs` читается экраном мастера и показывается
-          // строкой «Длительность — около N с», но не записывалось
-          // НИ ОДНИМ путём. То есть строка не появлялась никогда, и
-          // заметить это можно было только сверив читателей с
-          // писателями — тестам и типам тут ловить нечего, поле
-          // необязательное.
-          durationMs: asset.frameCount
-            ? asset.frameCount * SECONDS_PER_FRAME * 1000
-            : null,
+          // Строки, отправленные до этой правки, досчитывать задним
+          // числом не пытаемся: `durationMs` необязателен, экран
+          // мастера без него просто не показывает строку.
         },
       });
       this.logger.log(
@@ -683,7 +804,7 @@ export class TutorialScenarioRunnerService {
       id: string;
       subjectKey: string;
       scenarioId?: string | null;
-      frameCount?: number | null;
+      clientSiteDraftId?: string | null;
     },
     reason: string,
   ): Promise<void> {
@@ -695,6 +816,45 @@ export class TutorialScenarioRunnerService {
       data: { assemblyStatus: 'failed', assemblyError: reason },
     });
     await this.cleanupFrames(asset);
+    await this.releaseClientSiteDraft(asset, reason);
+  }
+
+  /**
+   * Вернуть черновик обучалки по сайту заказчика из `APPROVED` в
+   * `PENDING_REVIEW`, если его сборка провалилась.
+   *
+   * Найдено аудитом 27.09.2026. Одобрение переводит черновик в
+   * `APPROVED` и отправляет слайд-шоу на сборку; откат на этот случай
+   * был предусмотрен ТОЛЬКО для синхронного сбоя `submit`
+   * (`client-site-tutorial-admin.service.ts`). Провал, обнаруженный
+   * позже, на опросе, не откатывал ничего — а из `APPROVED` выхода
+   * нет ни у кого: `approve`/`reject` требуют `PENDING_REVIEW`,
+   * пользовательский `resume` — `REJECTED`. То есть неудачная сборка
+   * запирала черновик навсегда, и починить его можно было только
+   * руками в базе.
+   *
+   * `updateMany` с условием по статусу, а не `update`: между чтением и
+   * записью оператор мог сделать что-то ещё, и молча переписывать его
+   * решение нельзя.
+   */
+  private async releaseClientSiteDraft(
+    asset: { clientSiteDraftId?: string | null },
+    reason: string,
+  ): Promise<void> {
+    const draftId = asset.clientSiteDraftId;
+    if (!draftId) return;
+    const { count } = await this.prisma.clientSiteTutorialDraft.updateMany({
+      where: { id: draftId, status: 'APPROVED' },
+      data: {
+        status: 'PENDING_REVIEW',
+        rejectionReason: `сборка ролика не удалась: ${reason}`.slice(0, 500),
+      },
+    });
+    if (count > 0) {
+      this.logger.warn(
+        `черновик обучалки ${draftId} возвращён на одобрение: сборка провалилась`,
+      );
+    }
   }
 
   /** Транзитные кадры (см. `submitVideoAssembly`) удаляются, как только
@@ -704,7 +864,6 @@ export class TutorialScenarioRunnerService {
   private async cleanupFrames(asset: {
     id: string;
     scenarioId?: string | null;
-    frameCount?: number | null;
   }): Promise<void> {
     // Только строки ШТАТНОЙ обучалки: у них кадры транзитные — скачаны
     // внешним ffmpeg-api и больше не нужны. У обучалки по сайту
@@ -712,12 +871,48 @@ export class TutorialScenarioRunnerService {
     // ранний выход ниже намеренный, а не случайный: там те же файлы —
     // это ПРЕДПРОСМОТР, который видят пользователь и оператор, и живут
     // они до удаления черновика (§5.2 `DELETE`), а не до сборки.
-    const owner = asset.scenarioId;
-    const count = asset.frameCount;
-    if (!owner || !count) return;
-    for (let i = 0; i < count; i++) {
-      await this.blob.deleteBlob(`tutorial-video-frames/${owner}/${i}.jpg`);
+    if (!asset.scenarioId) return;
+    // По ПРЕФИКСУ, а не по счётчику 0..frameCount-1 (правка аудита
+    // 27.09.2026, тот же довод, что у `wipeFrames` в обучалке по сайту
+    // заказчика): счётчик мог быть меньше, чем лежит на самом деле, и
+    // разница осталась бы навсегда.
+    await this.wipeScenarioFrames(asset.id);
+  }
+
+  /** Стереть весь префикс кадров одного актива. */
+  private async wipeScenarioFrames(assetId: string): Promise<void> {
+    const prefix = scenarioFramePrefix(assetId);
+    let cursor: string | undefined;
+    do {
+      const page = await this.blob.listByPrefix(prefix, { cursor });
+      if (page.blobs.length > 0) {
+        await this.blob.deleteMany(page.blobs.map((b) => b.pathname));
+      }
+      cursor = page.cursor ?? undefined;
+    } while (cursor);
+  }
+
+  /**
+   * Сборка не состоялась до отправки задачи: убираем за собой кадры и
+   * помечаем строку сбойной. Строка НЕ удаляется — по ней видно, что
+   * прогон пытался собрать видео и почему не вышло; удалённая строка
+   * выглядела бы как «и не пытались».
+   */
+  private async abandonAssembly(
+    assetId: string,
+    reason: string,
+  ): Promise<void> {
+    try {
+      await this.wipeScenarioFrames(assetId);
+    } catch (e) {
+      this.logger.warn(
+        `кадры актива ${assetId} не убрались: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
+    await this.prisma.tutorialVideoAsset.update({
+      where: { id: assetId },
+      data: { assemblyStatus: 'failed', assemblyError: reason.slice(0, 500) },
+    });
   }
 
   private async downloadBytes(url: string): Promise<Buffer> {

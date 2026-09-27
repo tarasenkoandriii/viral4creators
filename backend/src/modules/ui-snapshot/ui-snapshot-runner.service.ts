@@ -93,6 +93,11 @@ import {
   resolveScenarioRoute,
 } from '../tutorial-runner/route-templates';
 import { computeDHash, hasChanged, diffScore } from './perceptual-hash';
+import {
+  runScenario,
+  type ScenarioPage,
+} from '../tutorial-runner/scenario-runner';
+import type { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 
 /** Значения по умолчанию — те же, что были единственно возможными в MVP
  * (§3.8 ТЗ `doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md`). Поля
@@ -146,6 +151,17 @@ const ROUTE_TIMEOUT_MS = 20_000;
  * внутри Telegram на телефоне (§0 ТЗ), а сравнение отпечатков имеет
  * смысл только при одинаковом размере кадра между прогонами. */
 const VIEWPORT = { width: 390, height: 844 };
+
+/**
+ * Потолок на ОДИН съёмочный шаг. Больше умолчания исполнителя
+ * сценариев (15 с) осознанно: один из шагов съёмки — клик
+ * «Исследовать», за которым сервер поднимает собственный
+ * headless-браузер и обходит чужую страницу
+ * (`chromium-page-explorer.ts`). Пятнадцати секунд на это мало, и
+ * прогон обрывался бы на самом интересном месте — ровно там, где
+ * начинаются кадры, ради которых всё и затевалось.
+ */
+const CAPTURE_STEP_TIMEOUT_MS = 45_000;
 
 export type SnapshotTheme = 'light' | 'dark';
 
@@ -205,6 +221,43 @@ export interface UiSnapshotRunOptions {
    * только на шаге обработки.
    */
   deviceScaleFactor?: number;
+  /**
+   * Довести экран до нужного состояния ПЕРЕД съёмкой, снимая кадр
+   * после каждого шага.
+   *
+   * Заведено 27.09.2026, когда выяснилось, чем этап I на самом деле
+   * упирался. Две из четырёх карточек лендинга («вставили ссылку»,
+   * «заполнили и нажали») — это МГНОВЕННЫЕ состояния браузера: текст в
+   * поле до отправки живёт только в React, в базе его нет. Прогон,
+   * который просто открывает маршрут, снимал вместо них пустую форму,
+   * и `doc/TUTORIAL-FRAMES-CAPTURE.md` сделал из этого вывод «нужны
+   * руки человека на всех четырёх».
+   *
+   * Вывод был неверен. Такие состояния снимаются — просто не открытием
+   * маршрута, а действиями на нём. Словарь шагов и исполнитель уже
+   * существуют в соседнем модуле (`scenario-runner.ts`, из его кадров
+   * собираются обучающие ролики): он снимает кадр после КАЖДОГО
+   * успешного шага, то есть «ссылка вставлена, но не отправлена» —
+   * это кадр между `fill` и `click`.
+   *
+   * Здесь же, в отличие от исполнителя сценариев, правильный вьюпорт
+   * (390×844) и плотность — ровно то, чего лендингу не хватало.
+   *
+   * **Только вместе с `unmasked`,** по той же причине, что и
+   * плотность, и по ещё одной, более важной: шаги МЕНЯЮТ состояние
+   * продукта (создают черновик, отправляют формы). Прогону, который
+   * пишет отпечаток в базу и сравнивает, действовать нельзя вовсе.
+   *
+   * `goto` внутри шагов запрещён: маршрут уже открыт этим прогоном, а
+   * второй переход увёл бы кадр с маршрута, которым он подписан.
+   */
+  steps?: readonly ScenarioStep[];
+}
+
+/** Кадр, снятый ПОСЛЕ съёмочного шага `stepIndex` (0-based). */
+export interface UiSnapshotStepShot {
+  stepIndex: number;
+  url: string;
 }
 
 export interface UiSnapshotRouteOutcome {
@@ -214,6 +267,31 @@ export interface UiSnapshotRouteOutcome {
   /** Заполняется у немаскированных прогонов: строки в БД нет, и это
    *  единственный способ добраться до файла. */
   blobUrl?: string;
+  /**
+   * Кадры съёмочных шагов — по одному после каждого УСПЕШНОГО шага, в
+   * порядке шагов, каждый со своим номером шага.
+   *
+   * Номер шага, а не позиция в массиве, — правка аудита этапа A ТЗ
+   * `docs-tz/TZ-Tutorial-Video-Voiced.md`. До неё здесь лежал плоский
+   * `string[]`, и потребитель (`tutorial-frames-capture.service.ts`)
+   * брал кадр по позиции. Скриншот снимается best-effort: единичный
+   * сбой глотается, чтобы не ронять прогон, — и тогда массив
+   * становился короче, все последующие кадры съезжали на позицию
+   * назад, а карточка лендинга подписывалась ЧУЖИМ экраном. Молча:
+   * кадр есть, он правдоподобен, просто не тот.
+   *
+   * Итогового кадра всей страницы здесь НЕТ — он в `blobUrl`. Раньше
+   * он дописывался в конец этого же массива, и «последний элемент»
+   * значил то итоговый кадр, то последний шаговый (на оборванном
+   * прогоне), смотря как закончилось.
+   */
+  shots?: UiSnapshotStepShot[];
+  /**
+   * Сколько шагов выполнено. Меньше, чем просили, — значит сценарий
+   * оборвался; причина в `error`. Без этого числа «кадров меньше, чем
+   * шагов» пришлось бы толковать на глаз.
+   */
+  stepsDone?: number;
 }
 
 export interface UiSnapshotRunResult {
@@ -262,6 +340,25 @@ export class UiSnapshotRunnerService {
       options.routeKeys && options.routeKeys.length > 0
         ? [...options.routeKeys]
         : [...MVP_ROUTE_KEYS];
+
+    const steps = options.steps ?? [];
+    if (steps.length > 0 && !unmasked) {
+      // Причина строже, чем у плотности: шаги МЕНЯЮТ состояние
+      // продукта (создают черновик, отправляют формы). Прогону,
+      // который пишет отпечаток и сравнивает, действовать нельзя.
+      throw new Error(
+        'steps допустимы только вместе с unmasked: шаги меняют состояние продукта, а сравниваемый прогон обязан быть наблюдателем',
+      );
+    }
+    if (steps.length > 0 && routeKeys.length !== 1) {
+      // Шаги написаны под конкретный экран. Прогнать их по пяти
+      // маршрутам значит выполнить их на четырёх чужих — где селекторы
+      // либо не найдутся (и прогон встанет), либо, хуже, найдутся не
+      // те. Требуем ровно один маршрут, а не берём первый молча.
+      throw new Error(
+        'steps требуют ровно одного маршрута в routeKeys: шаги пишутся под конкретный экран',
+      );
+    }
 
     const telegramId = process.env.FIXTURE_TELEGRAM_ID?.trim();
     const token = process.env.FIXTURE_USER_TOKEN?.trim();
@@ -336,7 +433,7 @@ export class UiSnapshotRunnerService {
           token,
           tmaBaseUrl,
           wizardSessionId,
-          { locale, theme, unmasked, deviceScaleFactor },
+          { locale, theme, unmasked, deviceScaleFactor, steps },
         );
         outcomes.push(outcome);
         // Сбой снять НАДО сообщить в любом прогоне: немаскированный
@@ -384,6 +481,7 @@ export class UiSnapshotRunnerService {
       theme: SnapshotTheme;
       unmasked: boolean;
       deviceScaleFactor: number;
+      steps: readonly ScenarioStep[];
     },
   ): Promise<UiSnapshotRouteOutcome> {
     let page: import('puppeteer-core').Page | undefined;
@@ -454,6 +552,71 @@ export class UiSnapshotRunnerService {
         `навигация не уложилась в ${Math.round(ROUTE_TIMEOUT_MS / 1000)}с`,
       );
 
+      // Шаги — ПОСЛЕ навигации и ДО съёмки. Кадр после каждого:
+      // ровно так снимаются мгновенные состояния, которых нет в базе
+      // (см. `UiSnapshotRunOptions.steps`).
+      const shots: UiSnapshotStepShot[] = [];
+      let stepsDone = 0;
+      let stepsError: string | undefined;
+      if (view.steps.length > 0) {
+        const result = await runScenario(
+          page as unknown as ScenarioPage,
+          view.steps as ScenarioStep[],
+          // Маршрут уже открыт этим прогоном. Второй переход увёл бы
+          // кадр с маршрута, которым он подписан, поэтому `goto`
+          // отвергается здесь, а не молча выполняется.
+          () => ({
+            ok: false as const,
+            reason:
+              'шаг goto в съёмочном сценарии запрещён — маршрут задаётся routeKeys',
+          }),
+          CAPTURE_STEP_TIMEOUT_MS,
+          true,
+        );
+        stepsDone = result.steps.filter((r) => r.ok).length;
+        if (!result.ok) {
+          stepsError =
+            result.steps.find((r) => !r.ok)?.error ?? 'шаг не выполнился';
+        }
+        // Номер шага едет С КАДРОМ, а не выводится из позиции в
+        // массиве (этап A ТЗ `TZ-Tutorial-Video-Voiced.md`): кадр
+        // может пропасть молча (см. `ScenarioFrame`), и потребитель,
+        // считающий по позиции, подписал бы карточку чужим экраном.
+        //
+        // В имени файла номер шага — 1-based («третий шаг» читается
+        // человеком в консоли хранилища и в `doc/TUTORIAL-FRAMES-
+        // CAPTURE.md`), в `shots[].stepIndex` — 0-based, как индекс
+        // шага в массиве. Разница на единицу нарочная и здесь
+        // единственное место, где обе нумерации встречаются.
+        for (const frame of result.frames) {
+          const { url } = await this.blob.uploadBuffer(
+            `qa-shots/${routeKey}/${view.locale}/${view.theme}/${Date.now()}-${
+              frame.stepIndex + 1
+            }.png`,
+            Buffer.from(frame.bytes),
+            'image/png',
+          );
+          shots.push({ stepIndex: frame.stepIndex, url });
+        }
+        // Оборвавшийся сценарий — не повод выбросить уже снятое:
+        // кадры до обрыва годные, и оператору нужны и они, и причина.
+        if (stepsError) {
+          return {
+            routeKey,
+            changed: false,
+            error: stepsError,
+            shots,
+            stepsDone,
+            // Итогового кадра у оборванного прогона нет — до него не
+            // дошли. `blobUrl` тогда указывает на последний снятый
+            // шаговый кадр: оператору нужно хоть что-то видеть.
+            ...(shots.length > 0
+              ? { blobUrl: shots[shots.length - 1].url }
+              : {}),
+          };
+        }
+      }
+
       // Маскирование заведомо переменных зон (см. доккомментарий модуля)
       // ПЕРЕД скриншотом — `visibility: hidden`, не `display: none`,
       // чтобы не сдвигать раскладку остального экрана (иначе маскирование
@@ -483,7 +646,15 @@ export class UiSnapshotRunnerService {
           buffer,
           'image/png',
         );
-        return { routeKey, changed: false, blobUrl: url };
+        return {
+          routeKey,
+          changed: false,
+          blobUrl: url,
+          // Итоговый кадр — в `blobUrl` и только там: в `shots`
+          // каждый элемент обязан иметь номер шага, а у итогового
+          // кадра шага нет.
+          ...(view.steps.length > 0 ? { shots, stepsDone } : {}),
+        };
       }
 
       const hash = await computeDHash(buffer);
@@ -572,9 +743,15 @@ export class UiSnapshotRunnerService {
    * `TutorialScenarioRunnerService.resolveFixtureContext`, сознательно
    * продублированная (см. доккомментарий модуля).
    */
-  private async resolveFixtureContext(
-    userId: string,
-  ): Promise<FixtureRouteContext> {
+  /**
+   * Публичный, а не приватный: тем же разрешением пользуется
+   * `TutorialFramesCaptureService` — ему нужен `clientSiteProjectId`,
+   * чтобы сбросить черновик перед съёмкой. Вторая копия этих запросов
+   * рядом разъехалась бы с этой на первой же правке фикстуры (ровно
+   * это уже случалось с близнецом в `tutorial-scenario-runner`, см.
+   * доккомментарий ниже).
+   */
+  async resolveFixtureContext(userId: string): Promise<FixtureRouteContext> {
     /**
      * Тип проекта в `where` — обязателен с этапа G ТЗ
      * `docs-tz/TZ-Enterprise-Tutorial-Landing.md`. Раньше брался «самый
@@ -670,6 +847,21 @@ export class UiSnapshotRunnerService {
       );
       return undefined;
     }
+  }
+
+  /**
+   * Фикстурный пользователь по `FIXTURE_TELEGRAM_ID`. `null` — не
+   * настроен или не заведён; отличать эти два случая вызывающему не
+   * нужно, оба означают «снимать нечем».
+   */
+  async findFixtureUser(): Promise<{ id: string } | null> {
+    const telegramId = process.env.FIXTURE_TELEGRAM_ID?.trim();
+    if (!telegramId) return null;
+    const user = (await this.prisma.user.findUnique({
+      where: { telegramId },
+      select: { id: true },
+    })) as { id: string } | null;
+    return user;
   }
 
   private skip(reason: string): UiSnapshotRunResult {

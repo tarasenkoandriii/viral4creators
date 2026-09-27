@@ -24,7 +24,7 @@
  * CDP-скринкаст (`Page.startScreencast`) пришлось бы кодировать в mp4
  * ЛОКАЛЬНО ffmpeg'ом, которого на Vercel Functions нет (см.
  * `postprod/ffmpeg-api.service.ts`). Вместо этого — опциональный
- * параметр `captureFrames`: по одному JPEG-скриншоту ПОСЛЕ каждого
+ * параметр `captureFrames`: по одному PNG-скриншоту ПОСЛЕ каждого
  * успешного шага (не покадрово, не по таймеру), которые вызывающий код
  * (`tutorial-scenario-runner.service.ts`) собирает в слайд-шоу через уже
  * существующий внешний ffmpeg-api — тот же провайдер, что уже кроит и
@@ -101,6 +101,28 @@ export interface ScenarioStepResult {
   error?: string;
 }
 
+/**
+ * Снятый кадр вместе с номером шага, ПОСЛЕ которого он снят.
+ *
+ * Номер шага, а не позиция в массиве, — с этапа A ТЗ
+ * `docs-tz/TZ-Tutorial-Video-Voiced.md`. Массив кадров короче массива
+ * шагов в трёх штатных случаях сразу: прогон оборвался на ошибке;
+ * единичный скриншот не удался (best-effort, см. `runStep`); у
+ * страницы вовсе нет `screenshot` (см. `ScenarioPage`) — тогда кадров
+ * нет ни одного. Второй случай глотается молча и оставляет ДЫРУ
+ * посреди прогона — после чего
+ * сопоставление «кадр i ↔ шаг i» врёт для всех последующих кадров, и
+ * выглядит это как «реплика написана не к тому экрану», а не как
+ * ошибка. С привязкой сопоставление не может разъехаться в принципе:
+ * сдвиг некуда спрятать, дыра видна как пропущенный номер.
+ */
+export interface ScenarioFrame {
+  /** 0-based индекс шага в исходном массиве `steps`. */
+  stepIndex: number;
+  /** PNG. */
+  bytes: Uint8Array;
+}
+
 export interface ScenarioRunResult {
   ok: boolean;
   steps: ScenarioStepResult[];
@@ -108,10 +130,11 @@ export interface ScenarioRunResult {
   failedAt?: number;
   /** По одному кадру после каждого УСПЕШНОГО шага, только когда вызвано
    * с `captureFrames: true` — иначе всегда пустой массив (этап 98). Может
-   * быть короче `steps.length`: неудачный шаг обрывает прогон раньше, а
-   * единичный сбой самого скриншота (best-effort, см. `runStep`) просто
-   * пропускает этот кадр, не весь прогон. */
-  frames: Uint8Array[];
+   * быть короче `steps.length` и содержать пропуски в нумерации шагов:
+   * неудачный шаг обрывает прогон раньше, а единичный сбой самого
+   * скриншота (best-effort, см. `runStep`) просто пропускает этот кадр,
+   * не весь прогон. Порядок — по возрастанию `stepIndex`. */
+  frames: ScenarioFrame[];
 }
 
 /** Таймаут одного шага по умолчанию — тот же порядок величины, что
@@ -136,7 +159,7 @@ export async function runScenario(
   captureFrames = false,
 ): Promise<ScenarioRunResult> {
   const results: ScenarioStepResult[] = [];
-  const frames: Uint8Array[] = [];
+  const frames: ScenarioFrame[] = [];
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     try {
@@ -147,7 +170,7 @@ export async function runScenario(
         // состоянии, редкая гонка CDP) не должен ронять весь регресс-
         // прогон ради необязательного кадра для слайд-шоу.
         try {
-          frames.push(await page.screenshot());
+          frames.push({ stepIndex: i, bytes: await page.screenshot() });
         } catch {
           /* пропускаем этот кадр, не весь прогон */
         }

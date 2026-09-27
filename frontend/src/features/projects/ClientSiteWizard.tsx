@@ -675,6 +675,14 @@ export function ClientSiteWizard({
               disabled={busy || url.trim().length === 0}
               loading={busy}
               onClick={() => void explore()}
+              /* Якорь для съёмки кадров лендинга (этап I,
+                 doc/TUTORIAL-FRAMES-CAPTURE.md): сценарий прогона
+                 ищет кнопку ПО НЕМУ, а не по тексту — кадры
+                 снимаются в двух локалях, и текстовый селектор
+                 нашёл бы кнопку только в одной. Поле ссылки и поля
+                 найденной страницы якоря уже имели (`#site-url`,
+                 `#f-0`), кнопке его не хватало. */
+              data-qa="client-site-explore"
             >
               {t.exploreButton}
             </Button>

@@ -54,7 +54,11 @@ jest.mock('../ab-test/ab-test-worker.service', () => ({
   AbTestWorkerService: class {},
 }));
 
-import { CronJobsService, VERCEL_CRON_TRIGGERED_BY } from './cron-jobs.service';
+import {
+  CronJobsService,
+  VERCEL_CRON_TRIGGERED_BY,
+  CRON_LOG_RETENTION_DAYS,
+} from './cron-jobs.service';
 
 const HOUR = 60 * 60 * 1000;
 /** Старше суточного порога — иначе метла пропустит файл как свежий. */
@@ -110,6 +114,8 @@ function build() {
     cronRunLog: {
       create: jest.fn().mockResolvedValue({ id: 'run-log-1' }),
       update: jest.fn().mockResolvedValue(undefined),
+      // Ретенция журнала (аудит 27.09.2026) — в суточной уборке.
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   };
   /** Листинг отвечает по префиксу — как настоящее хранилище. */
@@ -271,7 +277,7 @@ function build() {
     }),
     // Сквозной аудит 27.09.2026 (Д-2): опрос только сборок слайд-шоу,
     // без браузера.
-    pollAssemblies: jest.fn().mockResolvedValue({ pending: 0 }),
+    pollAssemblies: jest.fn().mockResolvedValue({ polled: 0, pending: 0 }),
   };
   // Этап 100: крон-обход интерфейса TMA (§3 ТЗ) — тот же приём
   // делегирования, что у tutorialScenarioRunner выше.
@@ -470,6 +476,35 @@ describe('CronJobsService — уборка сессий партиями', () =>
   // ручной кнопкой админки (admin-cron.service.ts) — тот же риск двойного
   // прогона, что уже обосновал джоб-замок у runBlog/runExportSyncRun (см.
   // доккомментарий runCleanupSessions).
+  it('ретенция журнала кронов: строки старше месяца удаляются тем же прогоном', async () => {
+    // Таблица росла без предела: каждый двухминутный джоб пишет ~720
+    // строк в сутки, и `tutorial-assembly-poll` (27.09.2026) добавился
+    // к ним ещё одним. Отдельный крон ради одного `deleteMany` не
+    // нужен — тот же довод, что у уборки ИИ-скетчей рядом.
+    const { service, prisma } = build();
+    prisma.cronRunLog.deleteMany.mockResolvedValue({ count: 42 });
+
+    const result = await service.runCleanupSessions();
+
+    const [[arg]] = prisma.cronRunLog.deleteMany.mock.calls as [
+      [{ where: { startedAt: { lt: Date } } }],
+    ];
+    const days = (Date.now() - arg.where.startedAt.lt.getTime()) / 86_400_000;
+    expect(Math.round(days)).toBe(CRON_LOG_RETENTION_DAYS);
+    expect(result.deletedCronLogs).toBe(42);
+  });
+
+  it('сбой чистки журнала не роняет уборку сессий', async () => {
+    // Best-effort, как и уборка скетчей: джоб существует ради сессий.
+    const { service, prisma } = build();
+    prisma.cronRunLog.deleteMany.mockRejectedValue(new Error('база лежит'));
+
+    const result = await service.runCleanupSessions();
+
+    expect(result.deletedCronLogs).toBe(0);
+    expect(result.deletedCount).toBeGreaterThanOrEqual(0);
+  });
+
   it('джоб-замок: второй прогон поверх уже идущего — пропуск, ничего не тронуто', async () => {
     const { service, sessionService, projectService, blobService, prisma } =
       build();
@@ -481,6 +516,7 @@ describe('CronJobsService — уборка сессий партиями', () =>
     const result = await service.runCleanupSessions();
 
     expect(result).toEqual({
+      deletedCronLogs: 0,
       deletedCount: 0,
       deletedBlobs: 0,
       hasMoreSessions: false,
@@ -1130,7 +1166,10 @@ describe('CronJobsService.runTutorialScenarioRun — исполнение сце
 describe('CronJobsService.runTutorialAssemblyPoll — опрос сборок обучалки (сквозной аудит 27.09.2026, Д-2)', () => {
   it('зовёт pollAssemblies, а НЕ полный прогон сценариев', async () => {
     const { service, tutorialScenarioRunner } = build();
-    tutorialScenarioRunner.pollAssemblies.mockResolvedValue({ pending: 4 });
+    tutorialScenarioRunner.pollAssemblies.mockResolvedValue({
+      polled: 1,
+      pending: 4,
+    });
 
     const result = await service.runTutorialAssemblyPoll();
 
@@ -1138,36 +1177,39 @@ describe('CronJobsService.runTutorialAssemblyPoll — опрос сборок о
     // Ради этого слот и разделён: общий прогон держит headless-браузер
     // минутами и раз в две минуты запускаться не может.
     expect(tutorialScenarioRunner.run).not.toHaveBeenCalled();
-    expect(result).toEqual({ pending: 4 });
+    expect(result).toEqual({ polled: 1, pending: 4 });
   });
 
-  // Свой джоб-замок, отдельный от tutorial-scenario-run: расписание раз
-  // в две минуты, а один опрос может не уложиться в две минуты на
-  // длинной очереди — два перекрывающихся тика опрашивали бы одну и ту
-  // же сборку.
-  it('джоб-замок: второй тик поверх идущего — пропуск, опрос не вызван', async () => {
-    const { service, prisma, tutorialScenarioRunner } = build();
-    prisma.cronJobLock.create.mockRejectedValue(
-      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
-    );
-    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
-
-    const result = await service.runTutorialAssemblyPoll();
-
-    expect(tutorialScenarioRunner.pollAssemblies).not.toHaveBeenCalled();
-    expect(result).toEqual({ pending: 0 });
-  });
-
-  it('замок берётся и отпускается под своим ключом, не под ключом прогона сценариев', async () => {
+  // Замка ЗДЕСЬ больше нет, и это правка аудита 27.09.2026. Он взят
+  // внутри `pollAssemblies()`, потому что те же строки опрашивает и
+  // суточный прогон: пока замок принадлежал крону, тот шёл в обход, и
+  // проигравший помечал готовую сборку сбойной. Проверка замка живёт
+  // теперь в `tutorial-scenario-runner.service.spec.ts`.
+  it('замок здесь не берётся — он принадлежит самому опросу', async () => {
     const { service, prisma } = build();
 
     await service.runTutorialAssemblyPoll();
 
-    expect(prisma.cronJobLock.create).toHaveBeenCalledWith(
+    expect(prisma.cronJobLock.create).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ jobKey: 'tutorial-assembly-poll' }),
       }),
     );
+  });
+
+  it('пропуск по замку доезжает до вызывающего как есть', async () => {
+    const { service, tutorialScenarioRunner } = build();
+    tutorialScenarioRunner.pollAssemblies.mockResolvedValue({
+      skipped: 'предыдущий опрос ещё не завершился',
+      polled: 0,
+    });
+
+    const result = await service.runTutorialAssemblyPoll();
+
+    expect(result).toEqual({
+      skipped: 'предыдущий опрос ещё не завершился',
+      polled: 0,
+    });
   });
 });
 

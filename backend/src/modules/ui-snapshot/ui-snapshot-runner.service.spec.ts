@@ -59,6 +59,13 @@ function buildFakePage() {
     evaluate: jest.fn().mockResolvedValue(undefined),
     screenshot: jest.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
     close: jest.fn().mockResolvedValue(undefined),
+    // Съёмочные шаги (этап I, второй заход) идут через `runScenario`,
+    // а он работает Locators API — тем же, что настоящий puppeteer.
+    locator: jest.fn(() => ({
+      fill: jest.fn().mockResolvedValue(undefined),
+      click: jest.fn().mockResolvedValue(undefined),
+    })),
+    waitForSelector: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -241,6 +248,158 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
     expect(result.outcomes[0].blobUrl).toBe(
       'https://blob.example.com/snap.png',
     );
+  });
+
+  // Шаги перед съёмкой — этап I, второй заход (27.09.2026). Две
+  // карточки лендинга из четырёх это МГНОВЕННЫЕ состояния браузера
+  // («ссылка вставлена, но не отправлена»), которых нет в базе. Прогон,
+  // открывающий маршрут, снимал вместо них пустую форму — отсюда и
+  // родился вывод «нужны руки человека», оказавшийся неверным.
+  describe('шаги перед съёмкой', () => {
+    const STEPS = [
+      {
+        kind: 'fill' as const,
+        selector: '#site-url',
+        value: 'https://viral4creators.app',
+      },
+      { kind: 'click' as const, selector: '[data-qa="client-site-explore"]' },
+    ];
+
+    function withPage() {
+      const page = buildFakePage();
+      const browser = {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      launchHeadlessBrowserMock.mockResolvedValue({ browser });
+      return page;
+    }
+
+    it('кадр снимается ПОСЛЕ КАЖДОГО шага, плюс итоговый', async () => {
+      // Ровно это и делает мгновенные состояния доступными: кадр между
+      // `fill` и `click` — и есть «вставили ссылку».
+      const page = withPage();
+      const { service, blob } = build();
+      blob.uploadBuffer
+        .mockResolvedValueOnce({ url: 'https://blob/1.png' })
+        .mockResolvedValueOnce({ url: 'https://blob/2.png' })
+        .mockResolvedValueOnce({ url: 'https://blob/final.png' });
+
+      const result = await service.run({
+        routeKeys: ['site-tutorial'],
+        unmasked: true,
+        deviceScaleFactor: 2,
+        steps: STEPS,
+      });
+
+      expect(page.locator).toHaveBeenCalledWith('#site-url');
+      expect(page.locator).toHaveBeenCalledWith(
+        '[data-qa="client-site-explore"]',
+      );
+      expect(result.outcomes[0].stepsDone).toBe(2);
+      // Каждый кадр несёт номер СВОЕГО шага, а итоговый кадр всей
+      // страницы сюда не попадает — он в `blobUrl`.
+      expect(result.outcomes[0].shots).toEqual([
+        { stepIndex: 0, url: 'https://blob/1.png' },
+        { stepIndex: 1, url: 'https://blob/2.png' },
+      ]);
+      expect(result.outcomes[0].blobUrl).toBe('https://blob/final.png');
+    });
+
+    it('пропавший кадр не сдвигает остальные — ни в именах, ни в привязке', async () => {
+      // Этап A ТЗ `TZ-Tutorial-Video-Voiced.md` и правка его аудита.
+      // Скриншот снимается best-effort: единичный сбой (страница в
+      // переходном состоянии, гонка CDP) глотается, чтобы не ронять
+      // прогон. Потребитель берёт кадр ПО НОМЕРУ ШАГА
+      // (`CARD_BY_STEP_INDEX`), и если бы номер выводился из позиции
+      // в массиве, карточка лендинга подписалась бы чужим экраном —
+      // молча, правдоподобным кадром соседнего шага.
+      const page = withPage();
+      page.screenshot
+        .mockRejectedValueOnce(new Error('CDP занят'))
+        .mockResolvedValue(new Uint8Array([1, 2, 3]));
+      const { service, blob } = build();
+      blob.uploadBuffer.mockResolvedValue({ url: 'https://blob/2.png' });
+
+      const result = await service.run({
+        routeKeys: ['site-tutorial'],
+        unmasked: true,
+        steps: STEPS,
+      });
+
+      // Уцелел кадр ВТОРОГО шага, и он это про себя знает.
+      expect(result.outcomes[0].shots).toEqual([
+        { stepIndex: 1, url: 'https://blob/2.png' },
+      ]);
+      const stepShots = blob.uploadBuffer.mock.calls
+        .map(([pathname]: [string]) => pathname)
+        .filter((n: string) => /^qa-shots\//.test(n));
+      // В имени файла — тоже второй, а не первый (там номер 1-based).
+      expect(stepShots.some((n: string) => /-2\.png$/.test(n))).toBe(true);
+      expect(stepShots.some((n: string) => /-1\.png$/.test(n))).toBe(false);
+    });
+
+    it('без шагов ни shots, ни stepsDone не появляются', async () => {
+      // Прогон крона не должен получить новых полей ни на байт.
+      withPage();
+      const { service } = build();
+
+      const result = await service.run({
+        routeKeys: ['projects'],
+        unmasked: true,
+      });
+
+      expect(result.outcomes[0].shots).toBeUndefined();
+      expect(result.outcomes[0].stepsDone).toBeUndefined();
+    });
+
+    it('шаги без unmasked отвергаются — шаги меняют состояние продукта', async () => {
+      // Запрет строже, чем у плотности: сравниваемый прогон обязан
+      // быть наблюдателем, а шаги создают черновики и шлют формы.
+      withPage();
+      const { service } = build();
+
+      await expect(
+        service.run({ routeKeys: ['site-tutorial'], steps: STEPS }),
+      ).rejects.toThrow(/unmasked/);
+    });
+
+    it('шаги при нескольких маршрутах отвергаются', async () => {
+      withPage();
+      const { service } = build();
+
+      await expect(
+        service.run({ unmasked: true, steps: STEPS }),
+      ).rejects.toThrow(/routeKeys/);
+    });
+
+    it('шаг упал — кадры до обрыва отдаются вместе с причиной', async () => {
+      // Выбросить уже снятое было бы расточительством: кадры до обрыва
+      // годные, а оператору нужны и они, и причина.
+      const page = withPage();
+      page.locator.mockImplementation(() => ({
+        fill: jest.fn().mockResolvedValue(undefined),
+        click: jest.fn().mockRejectedValue(new Error('кнопка не нашлась')),
+      }));
+      const { service, blob } = build();
+      blob.uploadBuffer.mockResolvedValue({ url: 'https://blob/1.png' });
+
+      const result = await service.run({
+        routeKeys: ['site-tutorial'],
+        unmasked: true,
+        steps: STEPS,
+      });
+
+      expect(result.outcomes[0].error).toMatch(/кнопка не нашлась/);
+      expect(result.outcomes[0].stepsDone).toBe(1);
+      expect(result.outcomes[0].shots).toEqual([
+        { stepIndex: 0, url: 'https://blob/1.png' },
+      ]);
+      // У оборванного прогона итогового кадра нет — `blobUrl`
+      // указывает на последний снятый шаговый.
+      expect(result.outcomes[0].blobUrl).toBe('https://blob/1.png');
+      expect(result.failed).toBe(1);
+    });
   });
 
   it('плотность пикселей по умолчанию 1 — крон снимает ровно то же, что снимал', async () => {

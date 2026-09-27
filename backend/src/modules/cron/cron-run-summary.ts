@@ -58,6 +58,18 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
   ) {
     return `пропущен — ${(result as { skipped: string }).skipped}`;
   }
+  // Тот же приём, что у tutorial-scenario-run выше (аудит 27.09.2026):
+  // замок опроса общий с суточным прогоном, и «занят» здесь частый
+  // штатный исход, а не редкость. Без ветки он читался бы как
+  // «сборок не было».
+  if (
+    jobKey === 'tutorial-assembly-poll' &&
+    result &&
+    typeof result === 'object' &&
+    typeof (result as { skipped?: string }).skipped === 'string'
+  ) {
+    return `пропущен — ${(result as { skipped: string }).skipped}`;
+  }
   // Тот же приём, что у tutorial-scenario-run выше (этап 100,
   // UiSnapshotRunnerService.run()).
   if (

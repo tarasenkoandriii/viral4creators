@@ -4,6 +4,8 @@ import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { UiSnapshotAdminController } from './ui-snapshot-admin.controller';
 import { UiSnapshotRunnerService } from './ui-snapshot-runner.service';
+import { ClientSiteTutorialModule } from '../client-site-tutorial/client-site-tutorial.module';
+import { TutorialFramesCaptureService } from './tutorial-frames-capture.service';
 
 /**
  * UiSnapshotModule — крон-обход интерфейса TMA (Часть А ТЗ, §3
@@ -24,9 +26,17 @@ import { UiSnapshotRunnerService } from './ui-snapshot-runner.service';
  * `StorageModule` (`BlobService`) — НЕ глобальный, импортируется явно.
  */
 @Module({
-  imports: [StorageModule, AdminAuthModule, AdminPanelModule],
+  imports: [
+    StorageModule,
+    AdminAuthModule,
+    AdminPanelModule,
+    // Нужен ровно за одним: сбросить черновик обучалки перед съёмкой
+    // (`TutorialFramesCaptureService`). Цикла нет — модуль обучалки про
+    // снимки не знает.
+    ClientSiteTutorialModule,
+  ],
   controllers: [UiSnapshotAdminController],
-  providers: [UiSnapshotRunnerService],
-  exports: [UiSnapshotRunnerService],
+  providers: [UiSnapshotRunnerService, TutorialFramesCaptureService],
+  exports: [UiSnapshotRunnerService, TutorialFramesCaptureService],
 })
 export class UiSnapshotModule {}

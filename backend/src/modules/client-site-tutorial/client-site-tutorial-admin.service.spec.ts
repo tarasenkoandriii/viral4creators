@@ -24,6 +24,7 @@ import { ClientSiteTutorialAdminService } from './client-site-tutorial-admin.ser
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { BlobService } from '../storage/blob.service';
 import type { FfmpegApiService } from '../postprod/ffmpeg-api.service';
+import * as assembly from '../tutorial-runner/tutorial-video-assembly';
 
 function makeRow(over: Record<string, unknown> = {}) {
   return {
@@ -186,9 +187,34 @@ describe('одобрение запускает сборку — и только
       clientSiteDraftId: 'draft1',
       frameCount: 2,
       assemblyStatus: 'pending',
+      durationMs: 2 * assembly.SECONDS_PER_FRAME * 1000,
     });
     // Поле штатной обучалки НЕ переиспользуется под чужой смысл.
     expect(data.scenarioId).toBeUndefined();
+  });
+
+  it('длительность берётся из плана, а не пересчитывается писателем', async () => {
+    // Подменяем плану длительность на число, которого из двух кадров
+    // по 2 с не получить. Ожидание вида `кадры × SECONDS_PER_FRAME`
+    // ничего бы не доказало: это та же формула, что и у мутации, от
+    // которой тест якобы защищает, — проходили бы обе. С этапа B
+    // кадры разной длины, и вторая формула разошлась бы молча, а
+    // число читает человек («Длительность — около N с»).
+    const { service, tutorialVideoAsset } = setup();
+    const real = assembly.planSlideshow;
+    jest
+      .spyOn(assembly, 'planSlideshow')
+      .mockImplementation((frames, outputName) => {
+        const plan = real(frames, outputName);
+        return plan && { ...plan, durationMs: 987_654 };
+      });
+
+    await service.approve('draft1', 'operator1');
+
+    expect(tutorialVideoAsset.create.mock.calls[0][0].data.durationMs).toBe(
+      987_654,
+    );
+    jest.restoreAllMocks();
   });
 
   it('строка заводится ДО отправки задачи, jobId дописывается после', async () => {

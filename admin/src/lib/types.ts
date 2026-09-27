@@ -1126,7 +1126,17 @@ export interface ClientSiteDraftListResult {
 // §4.8/§4.9, backend/src/modules/tutorial-runner, этап 99) — вкладки
 // «Видео-контент»/«Состояние данных» ──
 
-export type TutorialVideoAssemblyStatus = 'pending' | 'submitted' | 'completed' | 'failed';
+// Ровно те строки, что пишет бэкенд (`tutorial-scenario-runner.
+// service.ts`, `client-site-tutorial-admin.service.ts`) и отдаёт как
+// есть, без маппинга. До правки аудита этапа A здесь стояли
+// 'submitted' и 'completed', которых бэкенд не писал НИКОГДА, а
+// реальные 'preparing' и 'complete' отсутствовали — собранный ролик
+// показывался жёлтым бейджем с сырым текстом «complete».
+export type TutorialVideoAssemblyStatus =
+  | 'preparing'
+  | 'pending'
+  | 'complete'
+  | 'failed';
 
 export interface TutorialVideoAssetRow {
   id: string;

@@ -42,6 +42,11 @@ export interface TutorialVideoListFilter {
 const RELEVANT_JOB_KEYS = [
   'tutorial-scenario-generate',
   'tutorial-scenario-run',
+  // Добавлен 27.09.2026 (аудит): именно этот джоб теперь решает судьбу
+  // сборок — суточный прогон их больше не подбирает в одиночку. Без
+  // него сводка молчала бы ровно о том кроне, который и отвечает за
+  // то, появится ли у человека ссылка на ролик.
+  'tutorial-assembly-poll',
   'ui-snapshot-run',
 ] as const;
 

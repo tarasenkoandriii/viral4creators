@@ -146,7 +146,14 @@ describe('TutorialVideoAdminService.dataStatus', () => {
     expect(result.videoCoverage).toEqual([
       { subjectKey: 'plan-upgrade', locale: 'ru', reviewedCount: 2 },
     ]);
-    expect(result.lastRuns).toHaveLength(3);
+    // Четыре, а не три: с 27.09.2026 в сводке есть и
+    // `tutorial-assembly-poll` — именно он теперь решает судьбу
+    // сборок, и молчать о нём значило бы прятать тот крон, от которого
+    // зависит, появится ли у человека ссылка на ролик.
+    expect(result.lastRuns).toHaveLength(4);
+    expect(result.lastRuns.map((r) => r.jobKey)).toContain(
+      'tutorial-assembly-poll',
+    );
     expect(prisma.tutorialVideoAsset.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
         by: ['subjectKey', 'locale'],

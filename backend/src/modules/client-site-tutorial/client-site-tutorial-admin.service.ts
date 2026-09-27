@@ -37,7 +37,10 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
-import { planSlideshow } from '../tutorial-runner/tutorial-video-assembly';
+import {
+  planSlideshow,
+  uniformFrames,
+} from '../tutorial-runner/tutorial-video-assembly';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import { DraftStatus } from './draft-rounds';
 import { draftFramePathname } from './draft-frames';
@@ -251,10 +254,12 @@ export class ClientSiteTutorialAdminService {
         await this.blob.getPublicUrl(draftFramePathname(row.id, i)),
       );
     }
-    const plan = planSlideshow(frameUrls);
+    // `uniformFrames` — все кадры по `SECONDS_PER_FRAME`, то же
+    // поведение, что до этапа A ТЗ `TZ-Tutorial-Video-Voiced.md`.
+    const plan = planSlideshow(uniformFrames(frameUrls));
     if (!plan) {
       throw new BadRequestException(
-        `${frames} кадров не годятся для сборки: их либо нет, либо больше потолка слайд-шоу`,
+        `${frames} кадров не годятся для сборки: их либо нет, либо больше потолка слайд-шоу, либо у кадра неположительная длительность`,
       );
     }
 
@@ -271,6 +276,9 @@ export class ClientSiteTutorialAdminService {
         frameCount: frames,
         assemblyStatus: 'pending',
         assemblyStartedAt: new Date(),
+        // Из плана, а не произведением у писателя — см. `durationMs`
+        // в `SlideshowPlan` (этап A).
+        durationMs: plan.durationMs,
       },
     })) as { id: string };
 
