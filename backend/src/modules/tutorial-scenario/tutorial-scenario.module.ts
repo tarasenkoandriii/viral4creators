@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
+import { StorageModule } from '../storage/storage.module';
 import { TutorialScenarioAdminController } from './tutorial-scenario-admin.controller';
 import { TutorialScenarioAdminService } from './tutorial-scenario-admin.service';
 import { TutorialScenarioGeneratorService } from './tutorial-scenario-generator.service';
@@ -17,7 +18,7 @@ import { TutorialScenarioGeneratorService } from './tutorial-scenario-generator.
  * `ExportModule`/`CatalogBatchModule` и остальные крон-воркеры).
  */
 @Module({
-  imports: [AdminAuthModule, AdminPanelModule],
+  imports: [AdminAuthModule, AdminPanelModule, StorageModule],
   controllers: [TutorialScenarioAdminController],
   providers: [TutorialScenarioGeneratorService, TutorialScenarioAdminService],
   exports: [TutorialScenarioGeneratorService],

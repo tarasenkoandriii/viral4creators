@@ -123,6 +123,7 @@ describe('AiUsageService.report (ТЗ §26)', () => {
       costMicroUsd: 0,
       calls: 0,
       spentTodayMicroUsd: 0,
+      byOperation: [],
     });
     const wheres = prisma.aiUsage.aggregate.mock.calls.map(
       (c: any) => c[0].where,
@@ -693,11 +694,75 @@ describe('AiUsageService.report — тестовые аккаунты (TODO §II
     await svc.report();
     const buckets = prisma.aiUsage.groupBy.mock.calls
       .map((c: any) => c[0])
-      .filter((a: any) => Array.isArray(a.by) && a.by[0] !== 'userId');
+      .filter((a: any) => Array.isArray(a.by) && a.by[0] !== 'userId')
+      // Разрез ВНУТРИ блока тестовых считается по обратному условию
+      // (`userId: { in: [...] }`) — он и должен видеть только их.
+      .filter((a: any) => a.where?.userId?.in === undefined);
     expect(buckets.length).toBeGreaterThan(0);
     for (const b of buckets) {
       expect(b.where.OR).toContainEqual({ userId: { notIn: ['t1', 't2'] } });
     }
+  });
+
+  it('расход обучалки виден в блоке тестовых поимённо, а не одной суммой', async () => {
+    // Он весь пишется на фикстурного исполнителя, а тот помечен
+    // тестовым: в общей таблице операций его нет по построению. Без
+    // этого разреза строка «Сборка обучающего видео» не
+    // отрисовалась бы ни разу, и вопрос «сколько стоит обучалка за
+    // ночь» — тот самый, ради которого заводилась отдельная
+    // операция, — остался бы без ответа (находка повторного
+    // сквозного аудита A+B+C).
+    const { svc, prisma } = withTestUsers();
+    prisma.aiUsage.groupBy.mockImplementation(async (args: any) =>
+      args.where?.userId?.in
+        ? [
+            {
+              operation: 'tutorial-video-assembly',
+              _sum: { costMicroUsd: 300 },
+              _count: { _all: 30 },
+            },
+          ]
+        : [],
+    );
+
+    const report = await svc.report();
+
+    expect(report.testUsers.byOperation).toEqual([
+      { key: 'tutorial-video-assembly', costMicroUsd: 300, calls: 30 },
+    ]);
+    // И в общих числах её по-прежнему нет — блоки не складывают.
+    expect(report.byOperation).toEqual([]);
+  });
+
+  it('подписи операций приезжают с отчётом — второй копии в админке нет', async () => {
+    // Копия там была и уже разошлась: из сорока операций в ней жило
+    // тринадцать, остальные рисовались сырым ключом.
+    const { svc } = withTestUsers();
+
+    const report = await svc.report();
+
+    expect(report.operationLabels['tutorial-video-assembly']).toBe(
+      'Сборка обучающего видео (ffmpeg)',
+    );
+    expect(Object.keys(report.operationLabels).length).toBeGreaterThan(30);
+  });
+
+  it('у блока тестовых — свой разрез по операциям, по обратному условию', async () => {
+    // Без него расход ночной обучалки не показывается НИГДЕ: он
+    // пишется на фикстурного исполнителя, тот помечен тестовым, а
+    // тестовые исключены из всех остальных чисел отчёта. Строка
+    // «Сборка обучающего видео» не отрисовалась бы ни разу (находка
+    // повторного сквозного аудита A+B+C).
+    const { svc, prisma } = withTestUsers();
+
+    await svc.report();
+
+    const own = prisma.aiUsage.groupBy.mock.calls
+      .map((c: any) => c[0])
+      .filter((a: any) => a.where?.userId?.in !== undefined);
+    expect(own).toHaveLength(1);
+    expect(own[0].by).toEqual(['operation']);
+    expect(own[0].where.userId.in).toEqual(['t1', 't2']);
   });
 
   it('число плативших считает база связью с users, без массива в параметре', async () => {

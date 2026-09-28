@@ -7,18 +7,27 @@
  * т.п.) — прогон делает вся эта логика, `CronJobsService` только
  * оборачивает джоб-локом и передаёт результат в `runAndLog`.
  *
- * ## Объём этой итерации (сознательно сужен)
+ * ## Объём
  *
- * Только 10 шагов обучалки (`ASSISTANT_STEPS`, subjectKey '1'..'10'),
- * только локаль `ru` — тот же принцип, что уже применён к MVP части А
- * этого же ТЗ (§3.8/аудит §10 п.7): расширение на остальные локали и на
- * свободные ключи воркфлоу за пределами обучалки (`postprod-revoice` и
- * подобные, §4.4) — отдельный, более поздний шаг, не первая версия.
- * ИСПОЛНЕНИЕ сгенерированных сценариев (§5 ТЗ, headless-браузер) в этой
- * итерации НЕ реализуется — нет самой браузерной инфраструктуры (§3.2
- * ТЗ, зависимость ещё не заведена); этот сервис только пишет и
- * оценивает сценарии, оставляя `lastRunAt`/`lastRunStatus`/
- * `lastRunError` пустыми до тех пор, пока драйвер не появится.
+ * Только 10 шагов обучалки (`ASSISTANT_STEPS`, subjectKey '1'..'10').
+ * Свободные ключи воркфлоу за пределами обучалки
+ * (`postprod-revoice` и подобные, §4.4) — по-прежнему отдельный, более
+ * поздний шаг.
+ *
+ * **Локали — уже не одна.** С этапа C ТЗ
+ * `docs-tz/TZ-Tutorial-Video-Voiced.md` список языков приходит
+ * настройкой `tutorial.scenarioLocales` (по умолчанию `['ru']`, то
+ * есть прежнее поведение), и прогон обходит пары (шаг × локаль).
+ * Прежняя оговорка «только локаль `ru` — расширение отдельный, более
+ * поздний шаг» относилась ровно к этому этапу, и он сделан.
+ * ИСПОЛНЕНИЕ сгенерированных сценариев живёт отдельно — в
+ * `TutorialScenarioRunnerService` (этап 97, puppeteer). Он же
+ * заполняет `lastRunAt`/`lastRunStatus`/`lastRunError`; этот сервис
+ * их только СТИРАЕТ, и лишь когда переписал шаги: прошлый результат
+ * относится к шагам, которых больше нет (правка аудита этапа C).
+ * Прежняя оговорка «исполнение в этой итерации не реализуется, поля
+ * остаются пустыми» устарела дважды и держалась до сквозного аудита
+ * A+B+C.
  *
  * ## Best-effort по каждому шагу отдельно
  *
@@ -34,22 +43,75 @@ import { createGeminiClient } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
-import { ASSISTANT_STEPS } from '../assistant/knowledge/generated';
-import { estimateScenarioCost } from './scenario-cost';
+import {
+  ASSISTANT_STEPS,
+  AssistantStepItem,
+} from '../assistant/knowledge/generated';
+import { PlatformSettingsService } from '../../common/platform-settings.service';
+import {
+  parseTutorialLocales,
+  TUTORIAL_LOCALES_SETTING_KEY,
+} from './tutorial-locales';
+import { estimateScenarioCost, ScenarioCostEstimate } from './scenario-cost';
+import { ScenarioStep } from './scenario-steps.types';
+import { mergeNarration } from './scenario-steps';
+import { stableStringify } from '../../common/stable-json';
 import {
   buildScenarioPrompt,
   parseScenarioResponse,
 } from './tutorial-scenario-prompt';
 
-/** Только обучалка (§4.4 ТЗ), только ru — см. доккомментарий класса. */
-const SUBJECT_LOCALE = 'ru';
+/**
+ * Бюджет на весь прогон генерации. Меньше потолка функции с запасом
+ * на ответ: обрыв по таймауту не оставляет ни журнала, ни
+ * `failures[]`, а свой бюджет позволяет вернуть частичный результат
+ * и назвать отложенное. Тот же приём, что `RUN_DEADLINE_MS` у
+ * исполнителя.
+ */
+const GENERATE_DEADLINE_MS = 4 * 60 * 1000;
 
 export interface TutorialScenarioGenerateResult {
-  subjectKeys: number;
+  /**
+   * Сколько пар (шаг × локаль) обошли за прогон — при пяти локалях
+   * это 50, а не 10. Имя `pairs`, а не `subjectKeys`: с этапа C
+   * второе читалось бы в журнале крона как «50 шагов обучалки», а их
+   * по-прежнему десять (правка аудита этапа C).
+   */
+  pairs: number;
+  /**
+   * На каких языках РЕАЛЬНО генерировали. Не то же, что список из
+   * настройки: локаль без словаря шагов пропускается, и рапортовать
+   * «генерировали на de», не сгенерировав ничего, нельзя.
+   */
+  locales: string[];
+  /**
+   * Сколько строк не тронули, потому что их правил человек
+   * (`generatedBy: 'manual'`). Не ошибка и не успех — отдельное
+   * число, иначе молчаливая перезапись выглядела бы как генерация.
+   */
+  skippedManual: number;
   generated: number;
   costly: number;
   failed: number;
-  failures: Array<{ subjectKey: string; reason: string }>;
+  /**
+   * Локаль в записи об отказе обязательна с этапа C: без неё пять
+   * локалей дают пять неразличимых строк «шаг 1 не сгенерирован», и
+   * непонятно, сломался один язык или все.
+   */
+  failures: Array<{ subjectKey: string; locale: string; reason: string }>;
+  /**
+   * Сколько реплик отброшено валидацией (§3-бис.2 ТЗ
+   * docs-tz/TZ-Tutorial-Video-Voiced.md, этап D) — сценарии при этом
+   * сгенерированы и записаны, просто эти кадры будут немыми.
+   *
+   * Отдельное число, а не строка в `failed`: отказ сценария и
+   * отброшенная реплика — разные события с разной ценой. Первое
+   * означает «регрессионного прогона на этот шаг не будет», второе —
+   * «прогон будет, кадр будет, диктор промолчит». Смешать их значит
+   * поднять тревогу там, где потерялась подпись, или не поднять там,
+   * где потерялся шаг.
+   */
+  narrationsDropped: number;
 }
 
 @Injectable()
@@ -60,6 +122,9 @@ export class TutorialScenarioGeneratorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiUsage: AiUsageService,
+    // Список локалей — настройкой (этап C). `PlatformSettingsService`
+    // приходит из global-модуля `TtsModule`, явный импорт не нужен.
+    private readonly settings: PlatformSettingsService,
   ) {
     // Тот же приём, что video-audit/relevance/analysis и т.п. — клиент
     // создаётся сервисом сам, не инжектится (common/gemini-client.ts).
@@ -67,20 +132,286 @@ export class TutorialScenarioGeneratorService {
   }
 
   async run(): Promise<TutorialScenarioGenerateResult> {
-    const steps = ASSISTANT_STEPS[SUBJECT_LOCALE] ?? [];
+    // Локали — настройкой, а не константой (этап C): пятый уровень
+    // отката §9 требует сузить список до `['ru']` БЕЗ деплоя, когда
+    // чужой язык начнёт ронять `assertText`.
+    const locales = parseTutorialLocales(
+      await this.settings.get(TUTORIAL_LOCALES_SETTING_KEY),
+    );
     const result: TutorialScenarioGenerateResult = {
-      subjectKeys: steps.length,
+      pairs: 0,
+      locales: [],
+      skippedManual: 0,
       generated: 0,
       costly: 0,
       failed: 0,
       failures: [],
+      narrationsDropped: 0,
     };
 
+    // Бюджет времени, которого у генератора не было: этап C умножил
+    // его работу на пять (50 последовательных вызовов модели в одном
+    // HTTP-запросе), а функция живёт ограниченное время. Без бюджета
+    // обрыв усекал прогон на той локали, до которой дошёл, — всегда
+    // на последних по списку, молча, и `failures[]` не сохранялся
+    // вовсе (находка сквозного аудита A+B+C). У всех соседей по
+    // семейству бюджет есть.
+    const deadline = Date.now() + GENERATE_DEADLINE_MS;
+
+    // Владелец расхода. Генерация — фоновый крон без живого
+    // пользователя, и до сквозного аудита A+B+C её расход шёл БЕЗ
+    // владельца: `AiUsageService.record` помечает такую строку
+    // `anonymous`, и она выбирает общий суточный потолок анонимных
+    // посетителей (≈$5) — тот же, из которого платит настоящий гость
+    // на лендинге. Пятьдесят вызовов Gemini за ночь его и выбирали.
+    // Пишем на ту же фикстуру, на которую пишет исполнитель
+    // (`fixture-seed.ts`): она помечена `isTestUser`, и отчёт
+    // расходов показывает её отдельным блоком, а не в общих числах.
+    // `undefined` (фикстуры нет) — поведение ровно прежнее: расход
+    // записан, просто без владельца; молчать о деньгах хуже.
+    const ownerId = await this.fixtureOwnerId();
+
+    for (const locale of locales) {
+      if (Date.now() >= deadline) {
+        this.logger.warn(
+          `бюджет времени исчерпан — локали ${locales.slice(locales.indexOf(locale)).join(', ')} отложены до следующего прогона`,
+        );
+        break;
+      }
+      // Словарь шагов у каждой локали свой и уже переведён — это и
+      // есть весь «перевод» в этом этапе. Локали без словаря
+      // пропускаем громко: молча она дала бы ноль шагов и выглядела
+      // бы как «сгенерировали, просто нечего».
+      const steps = ASSISTANT_STEPS[locale] ?? [];
+      if (steps.length === 0) {
+        this.logger.warn(
+          `локаль ${locale} запрошена, но шагов обучалки для неё нет — пропуск`,
+        );
+        continue;
+      }
+      // Локаль попадает в отчёт ПОСЛЕ проверки словаря, а не до:
+      // иначе прогон рапортует «генерировали на de», не
+      // сгенерировав ничего (правка аудита этапа C).
+      result.locales.push(locale);
+      result.pairs += steps.length;
+      await this.runLocale(locale, steps, result, deadline, ownerId);
+    }
+
+    this.logger.log(
+      `сценарии обучалки: локалей ${result.locales.length} (${result.locales.join(', ')}), ` +
+        `сгенерировано ${result.generated}, платных ${result.costly}, ` +
+        `отказов ${result.failed}, отброшено реплик ${result.narrationsDropped}, ` +
+        `не тронуто правленных руками ${result.skippedManual}`,
+    );
+    return result;
+  }
+
+  /**
+   * Тот же фикстурный пользователь, под которым исполнитель гоняет
+   * сценарии (`FIXTURE_TELEGRAM_ID`, `fixture-seed.ts`). Ищется, а не
+   * заводится: заводить пользователя из генератора значило бы, что
+   * ночной крон создаёт строки в `User` на стенде, где фикстура
+   * намеренно не настроена.
+   *
+   * Любая неудача — `undefined`, и прогон идёт дальше: расход без
+   * владельца хуже, чем с владельцем, но НЕсгенерированные сценарии
+   * хуже обоих.
+   */
+  private async fixtureOwnerId(): Promise<string | undefined> {
+    const telegramId = process.env.FIXTURE_TELEGRAM_ID?.trim();
+    if (!telegramId) return undefined;
+    try {
+      const user = (await this.prisma.user.findUnique({
+        where: { telegramId },
+        select: { id: true },
+      })) as { id: string } | null;
+      return user?.id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Пишет сценарий пары (шаг, локаль). `false` — строку не тронули.
+   *
+   * ## Почему не голый `upsert`
+   *
+   * Пара (шаг, локаль) — это ОДИН сценарий, а не журнал попыток:
+   * с `create` каждый суточный прогон добавлял новую строку,
+   * исполнитель брал их все и снимал по ролику на каждую, а с пятью
+   * локалями это умножилось бы на пять (§3-бис.6). Но безусловный
+   * `upsert` ломает три вещи сразу, и все три нашёл аудит этапа C.
+   *
+   * **1. Правку человека он затирает.** Промпт сам требует от модели
+   * плейсхолдеры `[data-testid="..."]`, «которые оператор поправит на
+   * настоящие перед первым исполнением», а §11 п.8 приёмки прямо
+   * стоит на сценарии с руками проставленными селекторами. До этапа
+   * C правка выживала: генератор делал `create`, и поправленная
+   * строка оставалась рядом. Поэтому `generatedBy: 'manual'` —
+   * стоп-сигнал: такую строку генератор не трогает вовсе.
+   *
+   * **2. Одобрение он наследует молча.** Сценарий был
+   * `costly, approved`; ночью модель переписала платные шаги —
+   * другая модель, другие единицы. Старое «да» означало бы деньги за
+   * то, чего оператор не видел. Поэтому одобрение снимается, но
+   * ТОЛЬКО когда шаги действительно изменились и платность в деле:
+   * сбрасывать его на неизменившемся сценарии значило бы гонять
+   * оператора переодобрять одно и то же каждую ночь.
+   *
+   * **3. Результат прошлого прогона он оставляет.** `lastRunStatus`
+   * относится к ШАГАМ, которых после перезаписи больше нет, и
+   * карточка показывает зелёное «ok» на переписанном сценарии.
+   * Изменились шаги — прошлый результат больше ничего не значит.
+   */
+  private async writeScenario(
+    subjectKey: string,
+    locale: string,
+    steps: ScenarioStep[],
+    cost: ScenarioCostEstimate,
+  ): Promise<boolean> {
+    const existing = (await this.prisma.tutorialScenario.findUnique({
+      where: { subjectKey_locale: { subjectKey, locale } },
+      select: {
+        steps: true,
+        generatedBy: true,
+        costly: true,
+        approved: true,
+        // Только ради строки в журнале: решение снять отметку
+        // принимается по `changed`, а не по ней. Но «снята» и «её и
+        // не было» — разные события, и писать первое про второе
+        // значит приучить читателя журнала не верить ему.
+        narrationReviewedAt: true,
+      },
+    })) as {
+      steps: unknown;
+      generatedBy: string;
+      costly: boolean;
+      approved: boolean;
+      narrationReviewedAt: Date | null;
+    } | null;
+
+    if (!existing) {
+      await this.prisma.tutorialScenario.create({
+        data: {
+          subjectKey,
+          locale,
+          generatedBy: 'ai',
+          steps: steps as object,
+          costly: cost.costly,
+          estimatedCostMicroUsd: cost.estimatedCostMicroUsd,
+          costUnpriced: cost.unpriced,
+        },
+      });
+      return true;
+    }
+
+    if (existing.generatedBy === 'manual') {
+      this.logger.log(
+        `сценарий шага ${subjectKey} (${locale}) правлен руками — не трогаем, генерация пропущена`,
+      );
+      return false;
+    }
+
+    // `stableStringify`, а НЕ `JSON.stringify`. Прежний комментарий
+    // здесь уверял, что «обе стороны — один и тот же JSON, ложного
+    // «изменилось» не будет», и это было неправдой: `steps` —
+    // колонка `jsonb`, а Postgres хранит её в своём порядке ключей
+    // (короткие раньше длинных). Шаг `{kind, selector, value}`
+    // возвращается как `{kind, value, selector}` — проверено на
+    // живом Postgres 16, — то есть `changed` было истинно ВСЕГДА для
+    // любого сценария с `fill`/`assertText`. Следствия: каждую ночь
+    // стирался результат прогона и снималось одобрение платного
+    // сценария, то есть одобрить его насовсем было невозможно
+    // (находка сквозного аудита A+B+C).
+    // Свежий ответ модели СЛИВАЕТСЯ с сохранённым: механика новая,
+    // реплика прежняя там, где шаг не изменился. Без этого этап D
+    // ломал три предыдущих разом — полное обоснование у
+    // `mergeNarration`, здесь коротко: реплика это свободный текст,
+    // модель формулирует её каждую ночь заново, и «строка не
+    // совпала» перестало значить «сценарий изменился».
+    const merged = mergeNarration(existing.steps, steps);
+    // Стоимость не пересчитывается по слитым шагам, и это безопасно:
+    // слияние трогает ТОЛЬКО реплики, а `estimateScenarioCost` их не
+    // видит вовсе — он считает по шагам `triggerPaidOperation`, у
+    // которых реплики не бывает по типу. Пересчёт дал бы то же
+    // число и создал бы впечатление, что оно могло бы отличаться.
+    const payload = {
+      steps: merged as object,
+      costly: cost.costly,
+      estimatedCostMicroUsd: cost.estimatedCostMicroUsd,
+      costUnpriced: cost.unpriced,
+    };
+
+    const changed = stableStringify(existing.steps) !== stableStringify(merged);
+    const dropApproval =
+      changed && existing.approved && (existing.costly || cost.costly);
+
+    await this.prisma.tutorialScenario.update({
+      where: { subjectKey_locale: { subjectKey, locale } },
+      data: {
+        ...payload,
+        generatedBy: 'ai',
+        // `lastRunAt` НЕ стирается, хотя статус — да. Дата отвечает
+        // на вопрос «когда эту строку последний раз брали в работу»,
+        // и он не перестаёт быть верным от того, что шаги
+        // переписали. А вот исполнитель сортирует по ней («кто
+        // дольше всех не исполнялся»), и обнуление у всех строк
+        // разом вырождало порядок обратно в `createdAt asc` — ту
+        // самую починку этапа C, из-за которой две локали из пяти не
+        // исполнялись никогда (находка сквозного аудита A+B+C).
+        ...(changed ? { lastRunStatus: null, lastRunError: null } : {}),
+        // Отметка о вычитке реплик снимается ровно тогда, когда шаги
+        // ИЗМЕНИЛИСЬ (§3-бис.5 ТЗ, этап D): вычитан был прежний
+        // текст. Условие `changed` здесь обязательно, и по той же
+        // причине, по которой оно стоит у одобрения: без него ночной
+        // прогон снимал бы отметку каждую ночь на неизменившемся
+        // сценарии, и при включённом требовании вычитки озвучить
+        // что-либо стало бы невозможно в принципе — оператор
+        // отмечает днём, крон снимает ночью.
+        //
+        // В отличие от одобрения, платность здесь ни при чём:
+        // одобрение про деньги, вычитка про текст, а текст меняется
+        // и у бесплатного сценария.
+        ...(changed
+          ? { narrationReviewedBy: null, narrationReviewedAt: null }
+          : {}),
+        ...(dropApproval
+          ? { approved: false, approvedBy: null, approvedAt: null }
+          : {}),
+      },
+    });
+    if (changed && existing.narrationReviewedAt) {
+      this.logger.log(
+        `сценарий шага ${subjectKey} (${locale}) переписан — отметка о вычитке реплик снята`,
+      );
+    }
+    if (dropApproval) {
+      this.logger.warn(
+        `сценарий шага ${subjectKey} (${locale}) переписан и содержит платные шаги — одобрение снято, нужно новое`,
+      );
+    }
+    return true;
+  }
+
+  private async runLocale(
+    locale: string,
+    steps: readonly AssistantStepItem[],
+    result: TutorialScenarioGenerateResult,
+    deadline: number,
+    /** Фикстурный пользователь — владелец расхода (см. `run`). */
+    ownerId: string | undefined,
+  ): Promise<void> {
     for (let i = 0; i < steps.length; i++) {
+      if (Date.now() >= deadline) {
+        this.logger.warn(
+          `локаль ${locale}: бюджет времени исчерпан на шаге ${i + 1} — остаток отложен до следующего прогона`,
+        );
+        return;
+      }
       const subjectKey = String(i + 1);
       const step = steps[i];
       try {
-        const prompt = buildScenarioPrompt(subjectKey, SUBJECT_LOCALE, step);
+        const prompt = buildScenarioPrompt(subjectKey, locale, step);
         const res = await this.genai.models.generateContent({
           model: GEMINI_MODEL,
           contents: [{ text: prompt }],
@@ -89,6 +420,7 @@ export class TutorialScenarioGeneratorService {
         await this.aiUsage.recordGemini(res, {
           operation: 'tutorial-scenario-generate',
           model: GEMINI_MODEL,
+          userId: ownerId,
         });
 
         const parsed = parseScenarioResponse(res.text ?? '');
@@ -96,43 +428,62 @@ export class TutorialScenarioGeneratorService {
           result.failed++;
           result.failures.push({
             subjectKey,
+            locale,
             reason: parsed.reason ?? 'неизвестная причина',
           });
           this.logger.warn(
-            `сценарий для шага ${subjectKey} не сгенерирован: ${parsed.reason}`,
+            `сценарий для шага ${subjectKey} (${locale}) не сгенерирован: ${parsed.reason}`,
           );
           continue;
         }
 
-        const cost = estimateScenarioCost(parsed.steps);
-        await this.prisma.tutorialScenario.create({
-          data: {
+        // Отброшенные реплики — в `failures[]`, как требует
+        // §3-бис.2, и НЕ в `lastRunStatus`: то поле принадлежит
+        // исполнителю, он пишет туда `ok`/`failed` каждую ночь и
+        // затёр бы запись генератора ближайшим же прогоном.
+        // Поимённо, а не числом: «отброшено 3» не даёт починить ни
+        // одну, а причин четыре (не строка, пустая, длинная,
+        // многострочная).
+        for (const dropped of parsed.droppedNarrations) {
+          result.narrationsDropped++;
+          result.failures.push({
             subjectKey,
-            locale: SUBJECT_LOCALE,
-            steps: parsed.steps as object,
-            generatedBy: 'ai',
-            costly: cost.costly,
-            estimatedCostMicroUsd: cost.estimatedCostMicroUsd,
-            costUnpriced: cost.unpriced,
-          },
-        });
+            locale,
+            reason: `реплика шага ${dropped.stepNumber} отброшена: ${dropped.reason}`,
+          });
+        }
+        if (parsed.droppedNarrations.length > 0) {
+          this.logger.warn(
+            `сценарий для шага ${subjectKey} (${locale}): отброшено реплик ${parsed.droppedNarrations.length} — эти кадры будут немыми`,
+          );
+        }
+
+        const cost = estimateScenarioCost(parsed.steps);
+        const written = await this.writeScenario(
+          subjectKey,
+          locale,
+          parsed.steps,
+          cost,
+        );
+        if (!written) {
+          result.skippedManual++;
+          continue;
+        }
         result.generated++;
         if (cost.costly) result.costly++;
         if (cost.unpriced) {
           this.logger.warn(
-            `сценарий для шага ${subjectKey}: прикидка стоимости занижена (нет ставки хотя бы для одной модели) — проверьте common/ai-pricing.ts перед одобрением`,
+            `сценарий для шага ${subjectKey} (${locale}): прикидка стоимости занижена (нет ставки хотя бы для одной модели) — проверьте common/ai-pricing.ts перед одобрением`,
           );
         }
       } catch (error) {
         result.failed++;
         const reason = error instanceof Error ? error.message : String(error);
-        result.failures.push({ subjectKey, reason });
+        result.failures.push({ subjectKey, locale, reason });
         this.logger.warn(
-          `сценарий для шага ${subjectKey} упал с ошибкой: ${reason}`,
+          `сценарий для шага ${subjectKey} (${locale}) упал с ошибкой: ${reason}`,
         );
       }
     }
-
-    return result;
   }
 }

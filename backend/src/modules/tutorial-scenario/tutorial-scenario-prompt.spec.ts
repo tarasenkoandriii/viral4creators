@@ -3,6 +3,7 @@ import {
   buildScenarioPrompt,
   parseScenarioResponse,
 } from './tutorial-scenario-prompt';
+import { MAX_NARRATION_LENGTH } from './scenario-steps.types';
 
 const step: AssistantStepItem = {
   title: 'Заведите товар',
@@ -88,5 +89,103 @@ describe('parseScenarioResponse', () => {
     const result = parseScenarioResponse('[{"kind":"goto","route":"x"}]');
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('steps не массив');
+  });
+});
+
+describe('buildScenarioPrompt — язык интерфейса (этап C)', () => {
+  const step = {
+    title: 'Заведите товар',
+    text: 'Проект и товар',
+    details: [],
+  };
+
+  it('язык назван ЯВНО, а не ISO-кодом', () => {
+    // Модель читает `uk` как United Kingdom, а не украинский — та же
+    // находка, что у `languageNameForLocale`.
+    const prompt = buildScenarioPrompt('1', 'uk', step);
+    expect(prompt).toContain('Ukrainian');
+  });
+
+  it('сказано, что assertText и fill пишутся на языке локали', () => {
+    // Без этой инструкции сценарий любой локали получал русский
+    // `assertText` и падал на чужом интерфейсе — тихо и непонятно.
+    //
+    // Проверяется ФРАЗА целиком, а не наличие слова `assertText`:
+    // оно есть в словаре примитивов независимо от этого абзаца, и
+    // тест проходил, даже если абзац вырезать (находка аудита
+    // этапа C).
+    const prompt = buildScenarioPrompt('1', 'es', step);
+    expect(prompt).toMatch(
+      /поле "value" у assertText — ожидаемая надпись интерфейса именно на нём/,
+    );
+    expect(prompt).toMatch(
+      /поле "value" у fill — то, что осмысленно ввести пользователю этого языка/,
+    );
+    expect(prompt).toMatch(/Spanish/);
+  });
+
+  it('селекторы и имена маршрутов переводить запрещено', () => {
+    // Иначе модель «переведёт» route и сценарий не найдёт экран.
+    const prompt = buildScenarioPrompt('1', 'de', step);
+    expect(prompt).toMatch(/Не переводи.*селекторы/);
+  });
+
+  it('у каждой локали своё имя языка', () => {
+    expect(buildScenarioPrompt('1', 'ru', step)).toContain('Russian');
+    expect(buildScenarioPrompt('1', 'en', step)).toContain('English');
+    expect(buildScenarioPrompt('1', 'de', step)).toContain('German');
+  });
+
+  describe('реплики (этап D)', () => {
+    it('потолок длины берётся из контракта, а не пишется числом', () => {
+      // Инструкция модели и отказ валидатора обязаны говорить одно и
+      // то же. Разойдясь, они дают худший из исходов: модель
+      // послушно пишет 240 символов, разбор молча выкидывает
+      // реплику, и кадр немой без единой жалобы.
+      const prompt = buildScenarioPrompt('1', 'ru', step);
+
+      expect(prompt).toContain(`до ${MAX_NARRATION_LENGTH} символов`);
+    });
+
+    it('сказано, что у triggerPaidOperation реплики нет', () => {
+      // Валидатор её отбрасывает; не сказать об этом модели значит
+      // каждый раз платить за текст, который тут же выкинут.
+      const prompt = buildScenarioPrompt('1', 'ru', step);
+
+      expect(prompt).toMatch(/КРОМЕ triggerPaidOperation/);
+      expect(prompt).toMatch(/У triggerPaidOperation реплики быть не должно/);
+    });
+
+    it('словарь примитивов показывает narration настоящим полем', () => {
+      // Тот же принцип, что у маршрутов и операций: промпт дважды
+      // поплатился за плейсхолдеры. Поле, названное только в прозе,
+      // модель ставит куда попало.
+      const prompt = buildScenarioPrompt('1', 'ru', step);
+
+      expect(prompt).toContain('"narration":"<реплика диктора>"');
+    });
+
+    it('запрет на перевод строки и требование одной фразы — в промпте', () => {
+      const prompt = buildScenarioPrompt('1', 'ru', step);
+
+      expect(prompt).toMatch(/одной строкой, без переводов строк/);
+      expect(prompt).toMatch(/одну фразу от первого лица/);
+    });
+
+    it('язык реплики назван именем, а не кодом', () => {
+      // Модель читает `uk` как United Kingdom — та же находка, что у
+      // `languageNameForLocale` в инструкции про assertText.
+      expect(buildScenarioPrompt('1', 'uk', step)).toMatch(
+        /Язык реплики — тот же.*Ukrainian/,
+      );
+    });
+
+    it('три «чего не делать» на месте', () => {
+      const prompt = buildScenarioPrompt('1', 'ru', step);
+
+      expect(prompt).toMatch(/Не повторяй дословно описание шага/);
+      expect(prompt).toMatch(/Не нумеруй/);
+      expect(prompt).toMatch(/Не обещай того, чего на кадре не будет/);
+    });
   });
 });

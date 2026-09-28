@@ -32,6 +32,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../common/session.service';
 import {
+  AI_OPERATION_LABEL,
   AiOperation,
   AiProvider,
   estimateCost,
@@ -98,6 +99,19 @@ export interface CostBucket {
 }
 
 export interface CostReport {
+  /**
+   * Человекочитаемые подписи операций — отдаются С ОТЧЁТОМ, а не
+   * держатся второй копией в админке.
+   *
+   * Копия там была и уже разошлась: из сорока операций в ней лежало
+   * тринадцать, остальные рисовались сырым ключом, и новая
+   * `tutorial-video-assembly` показалась бы как
+   * `tutorial-video-assembly` (находка повторного сквозного аудита
+   * A+B+C). Две копии одного словаря расходятся всегда, вопрос
+   * только когда; здесь цена расхождения — ключ вместо подписи на
+   * экране, и заметить его некому.
+   */
+  operationLabels: Record<string, string>;
   pricingVersion: string;
   totalMicroUsd: number;
   totalCalls: number;
@@ -132,6 +146,21 @@ export interface CostReport {
     costMicroUsd: number;
     calls: number;
     spentTodayMicroUsd: number;
+    /**
+     * Разрез по операциям ВНУТРИ тестовых — четырёх итоговых чисел не
+     * хватает.
+     *
+     * Ночной прогон обучалки пишет расход на фикстурного
+     * исполнителя, а он помечен тестовым: без этого разреза операции
+     * `tutorial-scenario-generate`, `voiceover` и
+     * `tutorial-video-assembly` не показываются НИГДЕ — в общей
+     * таблице их нет по построению (тестовые исключены), а здесь была
+     * одна безымянная сумма. То есть вопрос «сколько стоит обучалка
+     * за ночь», ради которого заводилась отдельная операция сборки,
+     * не имел ответа на экране (находка повторного сквозного аудита
+     * A+B+C).
+     */
+    byOperation: CostBucket[];
   };
   /** Потолки (§26.4) и то, сколько анонимные уже выбрали сегодня. */
   limits: {
@@ -482,13 +511,19 @@ export class AiUsageService {
      * Окна 1/7/30 дней складывать не нужно: они заведомо короче срока
      * хранения сырых строк, свёртка туда не дотягивается.
      */
-    const bucket = async (field: 'provider' | 'operation' | 'model') => {
+    const bucket = async (
+      field: 'provider' | 'operation' | 'model',
+      // По умолчанию — без тестовых, как и все остальные числа отчёта.
+      // Параметр появился для ОБРАТНОГО разреза: у блока тестовых
+      // аккаунтов свой разрез по операциям (см. ниже, `testUsers`).
+      scope: Record<string, unknown> = notTest,
+    ) => {
       // Незакрытый баг типов Prisma `groupBy` (prisma/prisma#17297,
       // #6494) — см. тот же комментарий выше в этом файле; здесь ломает
       // не `where`, а сочетание `_sum` и `_count` сразу.
       const rows = (await this.prisma.aiUsage.groupBy({
         by: [field] as const,
-        where: notTest,
+        where: scope,
         _sum: { costMicroUsd: true },
         _count: { _all: true },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -504,10 +539,7 @@ export class AiUsageService {
           { costMicroUsd: r._sum.costMicroUsd ?? 0, calls: r._count._all },
         ]),
       );
-      const merged = mergeBuckets(
-        raw,
-        await this.rolledBuckets(field, notTest),
-      );
+      const merged = mergeBuckets(raw, await this.rolledBuckets(field, scope));
       return [...merged]
         .map(([key, totals]) => ({ key, ...totals }))
         .sort((a, b) => b.costMicroUsd - a.costMicroUsd);
@@ -711,22 +743,34 @@ export class AiUsageService {
     const testUsers = testIds.length
       ? await (async () => {
           const where = { userId: { in: testIds } };
-          const [cost, calls, rolled, today] = await Promise.all([
+          const [cost, calls, rolled, today, byOperation] = await Promise.all([
             sum(where),
             this.prisma.aiUsage.count({ where }),
             this.rolledTotals(where),
-            sum({ ...where, createdAt: { gte: startOfDayUtc(new Date(now)) } }),
+            sum({
+              ...where,
+              createdAt: { gte: startOfDayUtc(new Date(now)) },
+            }),
+            bucket('operation', where),
           ]);
           return {
             accounts: testIds.length,
             costMicroUsd: cost + rolled.costMicroUsd,
             calls: calls + rolled.calls,
             spentTodayMicroUsd: today,
+            byOperation,
           };
         })()
-      : { accounts: 0, costMicroUsd: 0, calls: 0, spentTodayMicroUsd: 0 };
+      : {
+          accounts: 0,
+          costMicroUsd: 0,
+          calls: 0,
+          spentTodayMicroUsd: 0,
+          byOperation: [],
+        };
 
     const result: CostReport = {
+      operationLabels: AI_OPERATION_LABEL,
       // Версия берётся из последней записи, а не из константы: если прайс
       // правили, старые строки посчитаны по старым ставкам, и показывать
       // текущую версию над суммой, собранной из разных, — враньё.

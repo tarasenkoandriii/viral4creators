@@ -28,26 +28,22 @@ export function share(part: number, total: number): number {
   return Math.round((part / total) * 100);
 }
 
-/** Человеческие названия операций — зеркало AI_OPERATION_LABEL на бэкенде. */
-export const OPERATION_LABEL: Record<string, string> = {
-  analysis: 'Разбор референса',
-  relevance: 'Релевантность',
-  audit: 'Аудит ролика',
-  transcribe: 'Расшифровка голоса',
-  'product-photo': 'Распознавание фото',
-  prompt: 'Сборка промпта',
-  generation: 'Генерация ролика',
-  'analog-search': 'Поиск аналогов',
-  'video-search': 'Поиск на YouTube',
-  // Этап 136 (ТЗ TZ-Multilingual-YouTube.md): теги исходного ролика —
-  // отдельный вызов videos.list в 1 единицу квоты, не поиск в 100.
-  'video-tags': 'Теги исходного ролика',
-  'analysis-translate': 'Перевод разбора видео',
-  // GREETING_VIDEO (ТЗ TZ-Greeting-Video-Project-Type.md) — зеркало
-  // AI_OPERATION_LABEL['greeting-prompt'] на бэкенде (common/ai-pricing.ts).
-  'greeting-prompt': 'Сценарий ролика-поздравления',
-};
-
-export function operationLabel(key: string): string {
-  return OPERATION_LABEL[key] ?? key;
+/**
+ * Человеческое название операции.
+ *
+ * Словарь приезжает С ОТЧЁТОМ (`CostReport.operationLabels`), а не
+ * лежит здесь копией `AI_OPERATION_LABEL`. Копия здесь была: из сорока
+ * операций в ней жило тринадцать, а остальные рисовались сырым ключом
+ * — молча, потому что `?? key` выглядит как подпись. Новая операция
+ * сборки обучающего видео так и показалась бы ключом (находка
+ * повторного сквозного аудита A+B+C).
+ *
+ * `?? key` остаётся, но теперь это честный запасной ход на случай
+ * строки из прайса старее текущего кода, а не половина словаря.
+ */
+export function operationLabel(
+  key: string,
+  labels: Record<string, string> = {},
+): string {
+  return labels[key] ?? key;
 }

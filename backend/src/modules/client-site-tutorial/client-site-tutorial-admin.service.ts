@@ -37,6 +37,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
+import { AiUsageService } from '../ai-usage/ai-usage.service';
 import {
   planSlideshow,
   uniformFrames,
@@ -93,6 +94,7 @@ export class ClientSiteTutorialAdminService {
     private readonly prisma: PrismaService,
     private readonly blob: BlobService,
     private readonly ffmpeg: FfmpegApiService,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   async list(params: {
@@ -151,10 +153,13 @@ export class ClientSiteTutorialAdminService {
    * Одобрение: статус → APPROVED и отправка слайд-шоу на сборку.
    *
    * Строка `TutorialVideoAsset` заводится с `clientSiteDraftId` (§6.2 —
-   * мягкая ссылка, не Prisma-связь) и `assemblyStatus: 'pending'`, после
-   * чего её подхватывает УЖЕ СУЩЕСТВУЮЩИЙ опрос сборок в крон-джобе
-   * обучалки: он ищет все `pending` без разбора, кем они заведены.
-   * Второй воркер специально под этот вид проекта не нужен.
+   * мягкая ссылка, не Prisma-связь) и `assemblyStatus: 'preparing'`, а
+   * в `pending` переводится только после того, как `submit` вернул
+   * `jobId` (см. `submitAssembly` ниже — там и записано, почему
+   * именно так). Дальше её подхватывает УЖЕ СУЩЕСТВУЮЩИЙ опрос
+   * сборок в крон-джобе обучалки: он ищет все `pending` без разбора,
+   * кем они заведены. Второй воркер специально под этот вид проекта
+   * не нужен.
    */
   async approve(id: string, approvedBy: string): Promise<DraftQueueItem> {
     const row = await this.require(id);
@@ -232,10 +237,18 @@ export class ClientSiteTutorialAdminService {
    * этапа 116). Если сначала отправить задачу, а потом не суметь
    * записать строку, деньги за сборку уже потрачены, а `assemblyJobId`
    * не сохранён — результат не подберёт никто, задача оплачена впустую
-   * и невидима. Обратный порядок в худшем случае оставляет строку без
-   * `assemblyJobId`, которую опрос сборок штатно пометит провалившейся
-   * («сборка помечена ожидающей, но задача не была отправлена») — это
-   * видимый и чинимый исход, а не потерянные деньги.
+   * и невидима.
+   *
+   * Но строка заводится в статусе `preparing`, а не `pending` — это
+   * правка сквозного аудита A+B+C, и без неё порядок выше сам
+   * приводил к потере денег. Опрос сборок ходит каждые две минуты и
+   * выбирает `pending`: попав в окно между `create` и записью
+   * `assemblyJobId`, он видел строку без задачи, помечал её
+   * провалившейся и возвращал черновик на одобрение. Оператор
+   * одобрял снова — и платил второй раз за ту же сборку, первая из
+   * которых к тому моменту уже выполнялась. `preparing` опрос не
+   * выбирает; зависшую строку через десять минут подметает
+   * `abandonStalePreparing`.
    */
   private async submitAssembly(
     row: DraftRow,
@@ -274,13 +287,59 @@ export class ClientSiteTutorialAdminService {
         title: row.title ?? row.baseUrl,
         clientSiteDraftId: row.id,
         frameCount: frames,
-        assemblyStatus: 'pending',
-        assemblyStartedAt: new Date(),
+        // `preparing`, а НЕ `pending` — как на сценарном пути.
+        // Опрос сборок выбирает только `pending`, и до этой правки
+        // он мог вклиниться в окно между `create` и записью
+        // `assemblyJobId`: увидел бы строку без задачи, пометил бы
+        // её `failed` и вернул бы черновик в `PENDING_REVIEW`. Задача
+        // при этом уже отправлена и оплачена, результат подобрать
+        // некому, а оператор видит «сборка не удалась» и одобряет
+        // повторно — платим второй раз. Прежний доккомментарий выше
+        // взвешивал только случай «submit бросил» и этот не
+        // рассматривал (находка сквозного аудита A+B+C).
+        //
+        // Зависшую `preparing` через десять минут снимает
+        // `abandonStalePreparing` и возвращает черновик на
+        // одобрение. Кадры при этом остаются, и это правильно: у
+        // обучалки по сайту заказчика они не транзит, а ПРЕДПРОСМОТР,
+        // который видят оператор и пользователь, и живут они до
+        // удаления черновика (§5.2 `DELETE`). Прежняя редакция этой
+        // строки обещала «вместе с кадрами» — неправда вдвойне:
+        // подметальщик ходит по `tutorial-video-frames/{id актива}/`,
+        // а кадры черновика лежат под его собственным префиксом
+        // (`draft-frames.ts`), то есть стирался бы пустой префикс
+        // (находка повторного сквозного аудита A+B+C).
+        assemblyStatus: 'preparing',
         // Из плана, а не произведением у писателя — см. `durationMs`
         // в `SlideshowPlan` (этап A).
         durationMs: plan.durationMs,
       },
     })) as { id: string };
+
+    // Владелец расхода — хозяин проекта, а не оператор, нажавший
+    // «Одобрить»: платит за сборку продукт по заказу этого клиента.
+    //
+    // Ищется ДО `submit`, и это правка повторного сквозного аудита
+    // A+B+C. Между `submit` и записью `assemblyJobId` нельзя класть
+    // ничего, что может бросить (см. доккомментарий метода): задача
+    // уже оплачена, а без `jobId` её результат не подберёт никто —
+    // `abandonStalePreparing` через десять минут вернёт черновик на
+    // одобрение, оператор одобрит снова, и мы заплатим второй раз.
+    // Первая редакция этой правки ставила запрос ровно туда.
+    const owner = (await this.prisma.project.findUnique({
+      where: { id: row.projectId },
+      select: { userId: true },
+    })) as { userId: string } | null;
+    if (!owner) {
+      // Строка расхода без владельца считается АНОНИМНОЙ и выбирает
+      // общий суточный потолок анонимных посетителей (≈$5) — то
+      // самое, от чего эта правка и уводит. Проект у черновика
+      // обязателен по схеме, так что это «не бывает»; но «не бывает»
+      // молча — это и есть способ вернуть себе тот же потолок.
+      throw new ServiceUnavailableException(
+        `проект ${row.projectId} черновика ${row.id} не найден — расход за сборку записать не на кого`,
+      );
+    }
 
     const job = await this.ffmpeg.submit({
       inputs: plan.inputs,
@@ -288,9 +347,26 @@ export class ClientSiteTutorialAdminService {
       commands: plan.commands,
     });
 
+    // Расход за сборку. До сквозного аудита A+B+C он не писался ни
+    // здесь, ни на сценарном пути: одобрение черновика стоило денег
+    // молча, и в отчёте расходов обучалки по сайту заказчика не было
+    // ни строки. Пишем сразу после отправки: деньги списываются за
+    // приём задачи, а не за её результат. `record` наружу не бросает
+    // (внутри свой `catch`), поэтому окно до записи `assemblyJobId`
+    // она не удлиняет.
+    await this.aiUsage.record({
+      operation: 'tutorial-video-assembly',
+      model: 'ffmpeg-api',
+      userId: owner.userId,
+    });
+
     await this.prisma.tutorialVideoAsset.update({
       where: { id: asset.id },
-      data: { assemblyJobId: job.jobId },
+      data: {
+        assemblyStatus: 'pending',
+        assemblyJobId: job.jobId,
+        assemblyStartedAt: new Date(),
+      },
     });
 
     this.logger.log(

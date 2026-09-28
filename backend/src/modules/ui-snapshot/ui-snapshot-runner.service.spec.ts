@@ -187,10 +187,30 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
 
     await service.run({ locale: 'uk', theme: 'dark', routeKeys: ['projects'] });
 
-    const initArgs = (page.evaluateOnNewDocument as jest.Mock).mock.calls.map(
-      (c: unknown[]) => c.slice(1),
-    );
-    expect(initArgs).toContainEqual(['uk', 'dark']);
+    // Колбэк ИСПОЛНЯЕТСЯ на поддельном хранилище: проверка одних
+    // аргументов пропускала опечатку в самом имени ключа (правка
+    // аудита этапа C ТЗ TZ-Tutorial-Video-Voiced.md — там та же
+    // подкладка, и там мутация ключа выживала).
+    const stored: Record<string, string> = {};
+    const g = globalThis as unknown as { window?: unknown };
+    const windowBefore = g.window;
+    g.window = {
+      localStorage: {
+        setItem: (k: string, v: string) => {
+          stored[k] = v;
+        },
+      },
+    };
+    try {
+      for (const call of (page.evaluateOnNewDocument as jest.Mock).mock.calls) {
+        const [fn, ...args] = call as [(...a: unknown[]) => void, ...unknown[]];
+        fn(...args);
+      }
+    } finally {
+      if (windowBefore === undefined) delete g.window;
+      else g.window = windowBefore;
+    }
+    expect(stored).toMatchObject({ v4c_locale: 'uk', v4c_theme: 'dark' });
     // И то же самое попало в строку — ярлык и настройка больше не могут
     // разойтись.
     expect(prisma.uiSnapshot.create).toHaveBeenCalledWith(

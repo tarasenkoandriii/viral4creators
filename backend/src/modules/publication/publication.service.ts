@@ -798,6 +798,25 @@ export class PublicationService {
       // пересечься с блокировкой заявок от сессий.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`tutorial-publish:${assetId}:${dto.platform}`}))`;
 
+      // Актив перечитывается ВНУТРИ транзакции, под тем же
+      // advisory-локом, — правка повторного сквозного аудита A+B+C.
+      // Читали его в начале метода, а с появлением подметальщика
+      // устаревших роликов (`sweepOldAssets`) строка может исчезнуть
+      // между тем чтением и этой вставкой: заявка получилась бы со
+      // ссылкой на удалённый mp4, и упала бы она позже, при выгрузке,
+      // не на глазах у оператора. Подметальщик со своей стороны
+      // спрашивает про заявку прямо перед удалением; вдвоём это
+      // закрывает обе половины окна.
+      const stillThere = await tx.tutorialVideoAsset.findUnique({
+        where: { id: assetId },
+        select: { id: true },
+      });
+      if (!stillThere) {
+        throw new ConflictException(
+          `Обучающее видео ${assetId} только что убрано подметальщиком устаревших роликов — публиковать нечего`,
+        );
+      }
+
       const existing: { id: string; status: string } | null =
         await tx.publicationRequest.findFirst({
           where: { tutorialVideoAssetId: assetId, platform: dto.platform },

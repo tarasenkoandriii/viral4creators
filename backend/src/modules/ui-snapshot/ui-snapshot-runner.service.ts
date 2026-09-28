@@ -98,6 +98,10 @@ import {
   type ScenarioPage,
 } from '../tutorial-runner/scenario-runner';
 import type { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
+import {
+  SPA_LOCALE_STORAGE_KEY,
+  SPA_THEME_STORAGE_KEY,
+} from '../../common/spa-storage-keys';
 
 /** Значения по умолчанию — те же, что были единственно возможными в MVP
  * (§3.8 ТЗ `doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md`). Поля
@@ -526,10 +530,15 @@ export class UiSnapshotRunnerService {
       // доккомментарий к DEFAULT_LOCALE выше: до этапа H поля были
       // ярлыками).
       await page.evaluateOnNewDocument(
-        (locale: string, theme: string) => {
+        (
+          locale: string,
+          theme: string,
+          localeKey: string,
+          themeKey: string,
+        ) => {
           try {
-            window.localStorage.setItem('v4c_locale', locale);
-            window.localStorage.setItem('v4c_theme', theme);
+            window.localStorage.setItem(localeKey, locale);
+            window.localStorage.setItem(themeKey, theme);
           } catch {
             // хранилище недоступно — страница откроется в умолчаниях,
             // и снимок будет подписан не тем; сбоем это не считаем,
@@ -538,6 +547,8 @@ export class UiSnapshotRunnerService {
         },
         view.locale,
         view.theme,
+        SPA_LOCALE_STORAGE_KEY,
+        SPA_THEME_STORAGE_KEY,
       );
 
       const base = tmaBaseUrl.replace(/\/+$/, '');

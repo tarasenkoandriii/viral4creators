@@ -1110,11 +1110,17 @@ describe('CronJobsService.runTutorialScenarioGenerate — генерация с�
 
     expect(tutorialScenarioGenerator.run).not.toHaveBeenCalled();
     expect(result).toEqual({
-      subjectKeys: 0,
+      pairs: 0,
+      // Пустой список локалей, а не `['ru']`: прогона не было
+      // вовсе, и сказать, на каких языках генерировали, нечего
+      // (этап C).
+      locales: [],
+      skippedManual: 0,
       generated: 0,
       costly: 0,
       failed: 0,
       failures: [],
+      narrationsDropped: 0,
     });
   });
 });

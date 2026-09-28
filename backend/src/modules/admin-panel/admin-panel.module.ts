@@ -11,6 +11,8 @@ import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
+import { AdminTutorialVoiceSettingsService } from './admin-tutorial-voice-settings.service';
+import { AdminTutorialLocalesSettingsService } from './admin-tutorial-locales-settings.service';
 import { AudioSeparationModule } from '../audio-separation/audio-separation.module';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { ProviderBalancesService } from './provider-balances.service';
@@ -78,6 +80,8 @@ import { AdminTestTicketsService } from './admin-test-tickets.service';
     AdminFeedImportService,
     AdminVoiceoverSettingsService,
     AdminAudioSeparationSettingsService,
+    AdminTutorialVoiceSettingsService,
+    AdminTutorialLocalesSettingsService,
     AdminMusicCatalogService,
     AdminAnalysisSettingsService,
     AdminVideoProviderSettingsService,

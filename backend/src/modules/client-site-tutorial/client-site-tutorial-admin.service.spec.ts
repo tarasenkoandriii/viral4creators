@@ -20,6 +20,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { ClientSiteTutorialAdminService } from './client-site-tutorial-admin.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { BlobService } from '../storage/blob.service';
@@ -67,9 +68,13 @@ function setup(
     create: jest.fn().mockResolvedValue({ id: 'asset1' }),
     update: jest.fn().mockResolvedValue({}),
   };
+  const project = {
+    findUnique: jest.fn().mockResolvedValue({ userId: 'owner-1' }),
+  };
   const prisma = {
     clientSiteTutorialDraft,
     tutorialVideoAsset,
+    project,
   } as unknown as PrismaService;
 
   const blob = {
@@ -84,7 +89,17 @@ function setup(
     submit,
   } as unknown as FfmpegApiService;
 
-  const service = new ClientSiteTutorialAdminService(prisma, blob, ffmpeg);
+  const aiUsageRecord = jest.fn().mockResolvedValue(undefined);
+  const aiUsage = {
+    record: aiUsageRecord,
+  } as unknown as AiUsageService;
+
+  const service = new ClientSiteTutorialAdminService(
+    prisma,
+    blob,
+    ffmpeg,
+    aiUsage,
+  );
   return {
     service,
     prisma,
@@ -93,6 +108,8 @@ function setup(
     submit,
     clientSiteTutorialDraft,
     tutorialVideoAsset,
+    project,
+    aiUsageRecord,
   };
 }
 
@@ -186,7 +203,11 @@ describe('одобрение запускает сборку — и только
     expect(data).toMatchObject({
       clientSiteDraftId: 'draft1',
       frameCount: 2,
-      assemblyStatus: 'pending',
+      // `preparing`, а не `pending`: опрос сборок ходит каждые две
+      // минуты и, попав в окно до записи `assemblyJobId`, пометил бы
+      // уже оплаченную задачу провалившейся — оператор одобрил бы
+      // повторно и заплатил второй раз (находка сквозного аудита).
+      assemblyStatus: 'preparing',
       durationMs: 2 * assembly.SECONDS_PER_FRAME * 1000,
     });
     // Поле штатной обучалки НЕ переиспользуется под чужой смысл.
@@ -202,12 +223,10 @@ describe('одобрение запускает сборку — и только
     // число читает человек («Длительность — около N с»).
     const { service, tutorialVideoAsset } = setup();
     const real = assembly.planSlideshow;
-    jest
-      .spyOn(assembly, 'planSlideshow')
-      .mockImplementation((frames, outputName) => {
-        const plan = real(frames, outputName);
-        return plan && { ...plan, durationMs: 987_654 };
-      });
+    jest.spyOn(assembly, 'planSlideshow').mockImplementation((frames, opts) => {
+      const plan = real(frames, opts);
+      return plan && { ...plan, durationMs: 987_654 };
+    });
 
     await service.approve('draft1', 'operator1');
 
@@ -226,8 +245,73 @@ describe('одобрение запускает сборку — и только
       submit.mock.invocationCallOrder[0],
     );
     expect(tutorialVideoAsset.update.mock.calls[0][0].data).toEqual({
+      assemblyStatus: 'pending',
       assemblyJobId: 'job-1',
+      assemblyStartedAt: expect.any(Date),
     });
+  });
+
+  it('расход за сборку записан — и на хозяина проекта, не в анонимные', async () => {
+    // До сквозного аудита A+B+C одобрение черновика стоило денег
+    // МОЛЧА: в отчёте расходов не было ни строки. А строка без
+    // владельца считается анонимной (`anonymous: userId === null`)
+    // и выбирает общий суточный потолок анонимных посетителей.
+    const { service, aiUsageRecord, project } = setup();
+
+    await service.approve('draft1', 'operator1');
+
+    expect(project.findUnique).toHaveBeenCalledWith({
+      where: { id: 'proj1' },
+      select: { userId: true },
+    });
+    expect(aiUsageRecord).toHaveBeenCalledWith({
+      operation: 'tutorial-video-assembly',
+      model: 'ffmpeg-api',
+      userId: 'owner-1',
+    });
+  });
+
+  it('владелец расхода ищется ДО отправки задачи, а не после', async () => {
+    // Между `submit` и записью `assemblyJobId` нельзя класть ничего,
+    // что может бросить: задача уже оплачена, а без `jobId` её
+    // результат не подберёт никто — через десять минут черновик
+    // вернётся на одобрение, оператор одобрит снова, и мы заплатим
+    // второй раз. Первая редакция правки «расход за сборку» ставила
+    // запрос владельца ровно в это окно (находка повторного
+    // сквозного аудита A+B+C).
+    const { service, project, submit } = setup();
+
+    await service.approve('draft1', 'operator1');
+
+    expect(project.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+      submit.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('проекта нет — отказ ДО отправки, а не анонимный расход', async () => {
+    // `owner?.userId` при отсутствии проекта дал бы `undefined`, то
+    // есть АНОНИМНУЮ строку расхода — ровно тот общий потолок $5, от
+    // которого уводит вся правка.
+    const { service, submit, aiUsageRecord, project } = setup();
+    project.findUnique.mockResolvedValue(null);
+
+    await expect(service.approve('draft1', 'op')).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    expect(submit).not.toHaveBeenCalled();
+    expect(aiUsageRecord).not.toHaveBeenCalled();
+  });
+
+  it('сборка не отправлена — расход не записан', async () => {
+    // Запись после `submit`, а не до: иначе отказ ffmpeg оставлял бы
+    // в отчёте расход, которого не было.
+    const { service, aiUsageRecord } = setup({
+      submit: jest.fn().mockRejectedValue(new Error('ffmpeg-api лёг')),
+    });
+
+    await expect(service.approve('draft1', 'op')).rejects.toThrow();
+
+    expect(aiUsageRecord).not.toHaveBeenCalled();
   });
 
   it('второй оператор не оплачивает сборку повторно', async () => {

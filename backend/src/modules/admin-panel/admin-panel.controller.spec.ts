@@ -97,6 +97,14 @@ function build() {
     view: jest.fn().mockResolvedValue({ state: 'off' }),
     set: jest.fn().mockResolvedValue(undefined),
   };
+  const tutorialLocales = {
+    get: jest.fn().mockResolvedValue({ locales: ['ru'] }),
+    set: jest.fn().mockResolvedValue({ locales: ['ru', 'en'] }),
+  };
+  const tutorialVoice = {
+    view: jest.fn().mockResolvedValue({ enabled: false, voiceId: null }),
+    set: jest.fn().mockResolvedValue({ enabled: true, voiceId: null }),
+  };
   const controller = new AdminPanelController(
     adminPanel as any,
     // Этап 155: приглашения тестировщиков — второй параметр.
@@ -131,6 +139,8 @@ function build() {
     // Выключатель «Фон при дубляже» (этап E ТЗ
     // TZ-Voice-Replace-Keep-Background.md) — последний параметр.
     audioSeparation as any,
+    tutorialVoice as any,
+    tutorialLocales as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
   return {
@@ -144,6 +154,8 @@ function build() {
     liteUnlock,
     testTickets,
     audioSeparation,
+    tutorialVoice,
+    tutorialLocales,
     req,
   };
 }
@@ -416,6 +428,113 @@ describe('AdminPanelController — /admin/settings/audio-separation (этап E)
       controller.setAudioSeparation(req, { state: 'off' }),
     ).rejects.toThrow('не оператор');
     expect(audioSeparation.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)', () => {
+  // Витрина обязательна, а не желательна: третий уровень отката §9 ТЗ
+  // — «выключить озвучку без деплоя», и без экрана он неисполним.
+  // Найдено аудитом этапа B: настройка была, включить её было нечем.
+  it('GET: оператор проверяется до обращения к настройке', async () => {
+    const { controller, adminPanel, tutorialVoice, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+
+    await expect(controller.getTutorialVoice(req)).rejects.toThrow(
+      'не оператор',
+    );
+    expect(tutorialVoice.view).not.toHaveBeenCalled();
+  });
+
+  it('PATCH: включение с голосом доходит до настройки вместе с оператором', async () => {
+    const { controller, tutorialVoice, req } = build();
+
+    await controller.setTutorialVoice(req, {
+      enabled: true,
+      voiceId: 'rachel-42',
+      requireNarrationReview: false,
+    });
+
+    expect(tutorialVoice.set).toHaveBeenCalledWith(
+      { enabled: true, voiceId: 'rachel-42', requireNarrationReview: false },
+      'op-1',
+    );
+  });
+
+  it('PATCH: голос не указан — это «по умолчанию», а не пустая строка', async () => {
+    // Пустая строка ушла бы провайдеру как id голоса.
+    const { controller, tutorialVoice, req } = build();
+
+    await controller.setTutorialVoice(req, {
+      enabled: true,
+      requireNarrationReview: false,
+    });
+
+    expect(tutorialVoice.set).toHaveBeenCalledWith(
+      { enabled: true, voiceId: null, requireNarrationReview: false },
+      'op-1',
+    );
+  });
+
+  it('PATCH: требование вычитки доезжает до сервиса', async () => {
+    // Выключатель, который не доезжает, — это выключатель, который
+    // ничего не выключает. Ровно та находка, что была у самой
+    // озвучки на этапе B: настройка есть, включить нечем.
+    const { controller, tutorialVoice, req } = build();
+
+    await controller.setTutorialVoice(req, {
+      enabled: true,
+      requireNarrationReview: true,
+    });
+
+    expect(tutorialVoice.set).toHaveBeenCalledWith(
+      expect.objectContaining({ requireNarrationReview: true }),
+      'op-1',
+    );
+  });
+
+  it('PATCH: оператор проверяется до записи', async () => {
+    const { controller, adminPanel, tutorialVoice, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+
+    await expect(
+      controller.setTutorialVoice(req, {
+        enabled: false,
+        requireNarrationReview: false,
+      }),
+    ).rejects.toThrow('не оператор');
+    expect(tutorialVoice.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPanelController — /admin/settings/tutorial-locales (этап C)', () => {
+  it('GET: оператор проверяется до обращения к настройке', async () => {
+    const { controller, adminPanel, tutorialLocales, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+
+    await expect(controller.getTutorialLocales(req)).rejects.toThrow(
+      'не оператор',
+    );
+    expect(tutorialLocales.get).not.toHaveBeenCalled();
+  });
+
+  it('PATCH: сырой ввод уходит в настройку вместе с оператором', async () => {
+    // Разбор живёт в `tutorial-locales.ts`, а не в DTO: оператор
+    // пишет и `ru, en`, и JSON-массив.
+    const { controller, tutorialLocales, req } = build();
+
+    await controller.setTutorialLocales(req, { raw: 'ru, en' });
+
+    expect(tutorialLocales.set).toHaveBeenCalledWith('ru, en', 'op-1');
+  });
+
+  it('PATCH: оператор проверяется до записи', async () => {
+    const { controller, adminPanel, tutorialLocales, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+
+    await expect(
+      controller.setTutorialLocales(req, { raw: '["ru"]' }),
+    ).rejects.toThrow('не оператор');
+    expect(tutorialLocales.set).not.toHaveBeenCalled();
   });
 });
 

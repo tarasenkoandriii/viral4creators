@@ -6,6 +6,10 @@ import {
   getVoiceoverProviderSettings,
   setVoiceoverProviderDefault,
   getAudioSeparationSettings,
+  getTutorialLocalesSettings,
+  setTutorialLocalesSettings,
+  getTutorialVoiceSettings,
+  setTutorialVoiceSettings,
   setAudioSeparationState,
   getAnalysisProviderSettings,
   setAnalysisProviderDefault,
@@ -29,6 +33,8 @@ import type {
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
   AudioSeparationSettingsView,
+  TutorialLocalesSettingsView,
+  TutorialVoiceSettingsView,
   AudioSeparationState,
   AnalysisProviderKey,
   AnalysisProviderSettingsView,
@@ -81,13 +87,266 @@ function groupChecks(checks: EnvCheckResult[]): Array<[string, EnvCheckResult[]]
 type ViewMode = 'all' | 'attention';
 
 /**
- * «Озвучка по умолчанию» — доп. запрос владельца продукта: elevenlabs/
- * resemble/veo, veo как бесплатный фоллбек, когда на балансе платных
- * студий нет денег. В отличие от таблицы ниже (диагностика env-переменных,
- * read-only), это редактируемая настройка — меняется здесь и сразу же
- * подхватывается следующим синтезом, без передеплоя (см.
- * backend/src/modules/tts/tts-provider-resolver.service.ts).
+ * Языки генерации сценариев обучалки (ТЗ
+ * docs-tz/TZ-Tutorial-Video-Voiced.md, этап C) — пятый уровень отката
+ * §9: сузить до `ru` БЕЗ деплоя, когда сценарий на чужом языке начнёт
+ * ронять `assertText`.
+ *
+ * Показывает не только принятое, но и отбракованное: разбор
+ * терпимый — негодный код молча выбрасывается, и оператор должен
+ * видеть разницу, а не гадать.
  */
+function TutorialLocalesCard() {
+  const [state, setState] = useState<TutorialLocalesSettingsView | null>(null);
+  const [raw, setRaw] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setError(null);
+    getTutorialLocalesSettings()
+      .then((next) => {
+        setState(next);
+        setRaw(next.locales.join(', '));
+      })
+      .catch((err) =>
+        setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить языки обучалки')
+      );
+  };
+
+  useEffect(load, []);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await setTutorialLocalesSettings(raw);
+      setState(saved);
+      setRaw(saved.locales.join(', '));
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить языки обучалки');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Языки обучающих роликов</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        На каких языках ночной прогон генерирует сценарии обучалки. Каждый язык — своя генерация, свои ролики и своя
+        озвучка, так что список прямо умножает расход. Уже снятые ролики при сужении списка остаются как есть — просто
+        перестают обновляться. Коды через запятую или JSON-массив; непонятные коды отбрасываются.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {!state && (
+            <>
+              {' '}
+              <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+                Повторить
+              </button>
+            </>
+          )}
+        </p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && (
+        <>
+          <div className="filters" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <input
+              aria-label="Языки обучающих роликов"
+              value={raw}
+              disabled={saving}
+              onChange={(e) => setRaw(e.target.value)}
+              placeholder={state.supported.join(', ')}
+              style={{ minWidth: 320 }}
+            />
+            <button type="button" disabled={saving} onClick={() => void save()}>
+              Сохранить
+            </button>
+            {saving && <span className="muted">Сохраняю…</span>}
+          </div>
+          <p className="muted">{state.effect}</p>
+          {state.rejectedCodes.length > 0 && (
+            <p
+              className="muted"
+              style={{ marginTop: 8, color: state.fellBackToDefault ? 'var(--signal-critical)' : undefined }}
+            >
+              Принято {state.accepted} из {state.submitted}. Не приняты: <code>{state.rejectedCodes.join(', ')}</code>{' '}
+              — либо такого языка нет (поддерживаются <code>{state.supported.join(', ')}</code>), либо это повтор.
+              {state.fellBackToDefault && ' Осталось прежнее умолчание — введённое НЕ сохранилось как список.'}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Озвучка обучающих роликов (ТЗ docs-tz/TZ-Tutorial-Video-Voiced.md,
+ * этап B) — третий уровень отката §9: выключается БЕЗ деплоя.
+ *
+ * Умолчание — ВЫКЛЮЧЕНО, и карточка говорит об этом прямо: ночной
+ * прогон идёт по всем сценариям сразу, и включение стоит денег с
+ * первой же ночи.
+ */
+function TutorialVoiceCard() {
+  const [state, setState] = useState<TutorialVoiceSettingsView | null>(null);
+  const [voiceId, setVoiceId] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setError(null);
+    getTutorialVoiceSettings()
+      .then((next) => {
+        setState(next);
+        setVoiceId(next.voiceId ?? '');
+      })
+      .catch((err) =>
+        setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку озвучки')
+      );
+  };
+
+  useEffect(load, []);
+
+  const save = async (next: {
+    enabled: boolean;
+    voiceId: string | null;
+    requireNarrationReview: boolean;
+  }) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await setTutorialVoiceSettings(next);
+      setState(saved);
+      setVoiceId(saved.voiceId ?? '');
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить настройку озвучки');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Озвучка обучающих роликов</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Ночной прогон собирает обучающие ролики из кадров мастера. Без этой настройки они немые. Включённая
+        озвучка добавляет закадровый голос: где у шагов сценария есть реплики — звучат они, своя на каждый
+        кадр; где реплик нет — одна дорожка на ролик из текста шага обучалки. Дорожки синтезируются один раз и
+        переиспользуются, пока текст не изменится. Полный набор из пятидесяти роликов — примерно $2.5 синтеза
+        на дорожках из текста шага и до $6 на покадровых репликах, единоразово. Переключение действует сразу,
+        без передеплоя.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {!state && (
+            <>
+              {' '}
+              <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+                Повторить
+              </button>
+            </>
+          )}
+        </p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && (
+        <>
+          <div className="filters" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <select
+              aria-label="Озвучка обучающих роликов"
+              value={state.enabled ? 'on' : 'off'}
+              disabled={saving || !state.providerConfigured}
+              onChange={(e) =>
+                void save({
+                  enabled: e.target.value === 'on',
+                  voiceId: voiceId.trim() || null,
+                  requireNarrationReview: state.requireNarrationReview,
+                })
+              }
+            >
+              <option value="off">Выключено — ролики собираются немыми</option>
+              <option value="on">Включено — с закадровым голосом</option>
+            </select>
+            <input
+              aria-label="Голос"
+              placeholder={`Голос ${state.provider} (пусто — по умолчанию)`}
+              value={voiceId}
+              disabled={saving || !state.providerConfigured}
+              onChange={(e) => setVoiceId(e.target.value)}
+              style={{ minWidth: 260 }}
+            />
+            <button
+              type="button"
+              disabled={saving || !state.providerConfigured || (state.voiceId ?? '') === voiceId.trim()}
+              onClick={() =>
+                void save({
+                  enabled: state.enabled,
+                  voiceId: voiceId.trim() || null,
+                  requireNarrationReview: state.requireNarrationReview,
+                })
+              }
+            >
+              Сохранить голос
+            </button>
+            {saving && <span className="muted">Сохраняю…</span>}
+          </div>
+          {/* Вычитка — второй выключатель той же карточки, а не
+              шестая карточка рядом: оператор смотрит сюда с вопросом
+              «что прозвучит в ролике», и оба отвечают на него. */}
+          <div
+            className="filters"
+            style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}
+          >
+            {/* Провайдер здесь ни при чём: это решение про ТЕКСТ, а не
+                про синтез. Заблокировав его вместе с озвучкой, мы
+                запирали бы настройку в состоянии отката на `veo` — ни
+                включить, ни выключить. */}
+            <select
+              aria-label="Вычитка реплик перед озвучкой"
+              value={state.requireNarrationReview ? 'on' : 'off'}
+              disabled={saving}
+              onChange={(e) =>
+                void save({
+                  enabled: state.enabled,
+                  // СОХРАНЁННЫЙ голос, а не содержимое поля ввода:
+                  // иначе набранный, но не подтверждённый кнопкой
+                  // идентификатор уезжал бы в базу заодно с чужой
+                  // правкой.
+                  voiceId: state.voiceId,
+                  requireNarrationReview: e.target.value === 'on',
+                })
+              }
+            >
+              <option value="off">Вычитка реплик не требуется — озвучиваем сразу</option>
+              <option value="on">Требовать вычитку — невычитанные сценарии немые</option>
+            </select>
+          </div>
+          <p className="muted">{state.effect}</p>
+          {!state.providerConfigured && (
+            <p className="muted" style={{ marginTop: 8 }}>
+              Переключатель заблокирован: провайдер синтеза <code>{state.provider}</code> не настроен (см. таблицу
+              переменных ниже).
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /**
  * «Фон при дубляже» — выключатель сохранения фона ролика
  * (docs-tz/TZ-Voice-Replace-Keep-Background.md, этап E).
@@ -184,6 +443,14 @@ function AudioSeparationCard() {
   );
 }
 
+/**
+ * «Озвучка по умолчанию» — доп. запрос владельца продукта: elevenlabs/
+ * resemble/veo, veo как бесплатный фоллбек, когда на балансе платных
+ * студий нет денег. В отличие от таблицы ниже (диагностика env-переменных,
+ * read-only), это редактируемая настройка — меняется здесь и сразу же
+ * подхватывается следующим синтезом, без передеплоя (см.
+ * backend/src/modules/tts/tts-provider-resolver.service.ts).
+ */
 function VoiceoverProviderCard() {
   const [state, setState] = useState<VoiceoverProviderSettingsView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1185,6 +1452,8 @@ export default function SettingsPage() {
 
       <VoiceoverProviderCard />
       <AudioSeparationCard />
+      <TutorialVoiceCard />
+      <TutorialLocalesCard />
       <AnalysisProviderCard />
       <VideoProviderCard />
       <GrokTransportCard />

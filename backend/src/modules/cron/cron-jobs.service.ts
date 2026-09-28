@@ -553,10 +553,13 @@ export class CronJobsService {
     );
     if (!acquired) {
       return {
-        subjectKeys: 0,
+        pairs: 0,
+        locales: [],
+        skippedManual: 0,
         generated: 0,
         costly: 0,
         failed: 0,
+        narrationsDropped: 0,
         failures: [],
       };
     }

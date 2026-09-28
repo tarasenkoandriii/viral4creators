@@ -131,14 +131,15 @@ export default function CostsPage() {
         <code> backend/src/common/ai-pricing.ts</code>; любую ставку можно
         переопределить переменной окружения.
       </p>
+
       {/* Сказать про исключение НАД цифрами, а не под ними: человек,
           который сверяет счёт провайдера с этой страницей, должен
           узнать про недостающую часть до того, как не сойдётся. */}
       <p className="muted" style={{ fontSize: 13 }}>
-        Расход тестовых аккаунтов в эти числа не входит — он вынесен
-        отдельной плиткой. Провайдеру за него заплачено, поэтому при
-        сверке со счётом его надо прибавить; в экономике продукта ему
-        места нет: это её проверка, а не она сама.
+        Расход тестовых аккаунтов в эти числа не входит — он вынесен отдельной
+        плиткой. Провайдеру за него заплачено, поэтому при сверке со счётом его
+        надо прибавить; в экономике продукта ему места нет: это её проверка, а
+        не она сама.
       </p>
 
       <div className="stat-grid">
@@ -239,13 +240,26 @@ export default function CostsPage() {
         title="По операциям"
         rows={report.byOperation}
         total={report.totalMicroUsd}
-        label={operationLabel}
+        label={(k) => operationLabel(k, report.operationLabels)}
       />
       <Breakdown
         title="По моделям"
         rows={report.byModel}
         total={report.totalMicroUsd}
       />
+
+      {/* Тестовые — своим разрезом, а не строками в таблицах выше:
+          складывать их с продуктовыми числами нельзя (см. плитку), но
+          и «одна сумма без имён» не отвечает на вопрос «сколько стоит
+          ночная обучалка» — расход её прогонов идёт именно сюда. */}
+      {report.testUsers.byOperation.length > 0 && (
+        <Breakdown
+          title="По операциям — тестовые аккаунты (в числа выше не входят)"
+          rows={report.testUsers.byOperation}
+          total={report.testUsers.costMicroUsd}
+          label={(k) => operationLabel(k, report.operationLabels)}
+        />
+      )}
 
       <section className="card" style={{ marginTop: 16 }}>
         <h2 style={{ marginTop: 0, fontSize: 16 }}>Кто тратит больше всех</h2>

@@ -143,6 +143,38 @@ export interface AudioSeparationSettingsView {
   effect: string;
 }
 
+/** Языки генерации сценариев обучалки (ТЗ TZ-Tutorial-Video-Voiced.md, этап C). */
+export interface TutorialLocalesSettingsView {
+  /** Что реально будет генерироваться. */
+  locales: string[];
+  /** Из чего выбирать. */
+  supported: string[];
+  /** Сколько кодов прислал оператор и сколько приняли. */
+  submitted: number;
+  accepted: number;
+  /** Отброшенные коды списком: «2 из 3» не говорит, что именно не так. */
+  rejectedCodes: string[];
+  /** Ни один присланный код не принят — подставлено умолчание. */
+  fellBackToDefault: boolean;
+  /** Что будет на следующем ночном прогоне — одной фразой. */
+  effect: string;
+}
+
+/** Озвучка обучающих роликов (ТЗ TZ-Tutorial-Video-Voiced.md, этап B). */
+export interface TutorialVoiceSettingsView {
+  enabled: boolean;
+  /** Голос провайдера; null — голос по умолчанию. */
+  voiceId: string | null;
+  /** Требовать вычитку реплик перед озвучкой (этап D). */
+  requireNarrationReview: boolean;
+  /** Ключ провайдера синтеза, который возьмут при следующей сборке. */
+  provider: string;
+  /** Настроен ли он: без ключа выключатель ничего не решает. */
+  providerConfigured: boolean;
+  /** Что произойдёт при следующем ночном прогоне — одной фразой. */
+  effect: string;
+}
+
 export interface VoiceoverProviderOptionView {
   key: VoiceoverProviderKey;
   /** Настроен ли ключ/аккаунт на этом стенде — у `veo` всегда `true`. */
@@ -779,6 +811,9 @@ export interface CostReport {
   avgPerUserMicroUsd: number;
   avgPerSessionMicroUsd: number;
   sessionsWithCost: number;
+  /** Подписи операций — приезжают с отчётом, второй копии в админке
+   *  нет (см. `operationLabel` в lib/money.ts). */
+  operationLabels: Record<string, string>;
   /** Суточные потолки (§26.4) и то, сколько анонимные выбрали сегодня. */
   /**
    * Тестовые аккаунты (TODO §III п.37) — отдельным блоком: во все
@@ -789,6 +824,10 @@ export interface CostReport {
     costMicroUsd: number;
     calls: number;
     spentTodayMicroUsd: number;
+    /** Разрез по операциям ВНУТРИ тестовых: расход ночной обучалки
+     *  пишется на фикстурного исполнителя, а он тестовый — в общей
+     *  таблице операций его нет по построению. */
+    byOperation: CostBucket[];
   };
   limits: {
     byPlan: Record<string, number>;
@@ -1069,9 +1108,21 @@ export interface TutorialScenarioRow {
   approved: boolean;
   approvedBy: string | null;
   approvedAt: string | null;
+  /** Отметка о вычитке РЕПЛИК (этап D) — третье решение вокруг
+   *  сценария, отдельное и от `approved` («можно тратить»), и от
+   *  `reviewed` у готового ролика («можно показывать»). */
+  narrationReviewedBy: string | null;
+  narrationReviewedAt: string | null;
   lastRunAt: string | null;
   lastRunStatus: string | null;
   lastRunError: string | null;
+}
+
+/** Ответ на правку шагов: строка плюс реплики, которые валидация
+ *  отбросила. Без второго поля оператор видел зелёное «сохранено» и
+ *  не находил свою реплику в списке. */
+export interface TutorialScenarioSaveResult extends TutorialScenarioRow {
+  droppedNarrations: { stepNumber: number; reason: string }[];
 }
 
 export interface TutorialScenarioListResult {

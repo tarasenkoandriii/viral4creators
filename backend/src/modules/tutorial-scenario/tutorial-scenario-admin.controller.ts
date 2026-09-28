@@ -13,6 +13,7 @@
  */
 import {
   BadRequestException,
+  Body,
   Controller,
   Delete,
   Get,
@@ -22,6 +23,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { IsBoolean, IsString, MaxLength } from 'class-validator';
 import {
   AdminAuthenticatedRequest,
   AdminSessionGuard,
@@ -29,6 +31,29 @@ import {
 import { AdminPanelService } from '../admin-panel/admin-panel.service';
 import { TutorialScenarioAdminService } from './tutorial-scenario-admin.service';
 
+/**
+ * Шаги приходят СТРОКОЙ с JSON внутри, а не разобранным массивом:
+ * оператор правит их в текстовом поле, и его форматирование — часть
+ * ввода. Тот же приём, что у каталога музыки
+ * (`SetMusicCatalogDto`). Разбор и валидация — в контроллере и
+ * сервисе, а не в DTO: правила те же, что для ответа модели, и жить
+ * им положено в одном месте.
+ */
+export class ReplaceScenarioStepsDto {
+  @IsString()
+  @MaxLength(64 * 1024)
+  steps!: string;
+}
+
+/**
+ * Отметка о вычитке реплик (§3-бис.5 ТЗ, этап D). Булево, а не
+ * «поставить» отдельным маршрутом: отметка СНИМАЕМАЯ (перечитал,
+ * передумал), и два маршрута под одно поле разошлись бы в правах.
+ */
+export class SetNarrationReviewedDto {
+  @IsBoolean()
+  reviewed!: boolean;
+}
 function parseBool(v?: string): boolean | undefined {
   if (v === 'true') return true;
   if (v === 'false') return false;
@@ -78,6 +103,57 @@ export class TutorialScenarioAdminController {
     await this.adminPanel.assertOperator(req.userId);
     if (!id) throw new BadRequestException('id обязателен');
     return this.scenarioAdmin.approve(id, req.userId);
+  }
+
+  /**
+   * Правка шагов оператором — тот самый рычаг, без которого
+   * сгенерированный сценарий не мог дойти до кадра: промпт нарочно
+   * отдаёт плейсхолдеры селекторов, «которые оператор поправит на
+   * настоящие», а поправить их было нечем (находка сквозного аудита
+   * A+B+C). `PATCH`, как и `approve`: меняет поля существующей
+   * строки. Шаги валидируются тем же `parseScenarioSteps`, что и
+   * ответ модели.
+   */
+  @Patch(':id/steps')
+  async replaceSteps(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ReplaceScenarioStepsDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    if (!id) throw new BadRequestException('id обязателен');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(dto.steps);
+    } catch {
+      throw new BadRequestException(
+        'Это не JSON — проверьте кавычки и запятые',
+      );
+    }
+    return this.scenarioAdmin.replaceSteps(id, parsed, req.userId);
+  }
+
+  /**
+   * «Реплики прочитаны» (§3-бис.5 ТЗ, этап D).
+   *
+   * Отдельный маршрут, а не поле в `PATCH :id/steps`: правка шагов
+   * отметку СБРАСЫВАЕТ, и отправить их одним запросом значило бы
+   * «поправил и сам себе подписал» — ровно то разделение, которое
+   * вычитка и заводит.
+   */
+  @Patch(':id/narration-reviewed')
+  async setNarrationReviewed(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: SetNarrationReviewedDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    if (!id) throw new BadRequestException('id обязателен');
+    return this.scenarioAdmin.setNarrationReviewed(
+      id,
+      dto.reviewed,
+      req.userId,
+    );
   }
 
   /**

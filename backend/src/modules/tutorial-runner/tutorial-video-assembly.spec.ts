@@ -1,9 +1,14 @@
 import {
+  evenFrameSeconds,
   framesFromSteps,
+  narrationFrameSeconds,
   planSlideshow,
+  slideshowContentHash,
   slideshowDurationMs,
   uniformFrames,
   SECONDS_PER_FRAME,
+  FRAME_TAIL_SECONDS,
+  MIN_FRAME_SECONDS,
   MAX_SLIDESHOW_FRAMES,
 } from './tutorial-video-assembly';
 
@@ -63,7 +68,9 @@ describe('planSlideshow', () => {
   });
 
   it('своё имя выходного файла пробрасывается в outputs/outputName/команду', () => {
-    const plan = planSlideshow(uniformFrames([url(0)]), 'custom-name.mp4');
+    const plan = planSlideshow(uniformFrames([url(0)]), {
+      outputName: 'custom-name.mp4',
+    });
     expect(plan!.outputs).toEqual(['custom-name.mp4']);
     expect(plan!.outputName).toBe('custom-name.mp4');
     expect(plan!.commands[0]).toContain('custom-name.mp4');
@@ -204,5 +211,312 @@ describe('покадровые длительности (этап A)', () => {
     expect(uniformFrames([url(0)], 7)).toEqual([
       { stepIndex: 0, url: url(0), seconds: 7 },
     ]);
+  });
+});
+
+describe('длительность кадра под речь (этап B)', () => {
+  it('кадр = реплика плюс пауза, чтобы не сменяться на последнем слоге', () => {
+    expect(narrationFrameSeconds(4)).toBe(4 + FRAME_TAIL_SECONDS);
+  });
+
+  it('короткая реплика не даёт мелькающего кадра', () => {
+    expect(narrationFrameSeconds(0.2)).toBe(MIN_FRAME_SECONDS);
+  });
+
+  it('длину mp3 измерить не удалось — минимум, а не ноль', () => {
+    // `null` в контракте TTS значит «не измерили», и путать его с
+    // нулём нельзя: на нуле кадр исчез бы, а `-t 0` уронил бы
+    // `concat` целиком.
+    expect(narrationFrameSeconds(null)).toBe(MIN_FRAME_SECONDS);
+    expect(narrationFrameSeconds(NaN)).toBe(MIN_FRAME_SECONDS);
+    expect(narrationFrameSeconds(Infinity)).toBe(MIN_FRAME_SECONDS);
+  });
+
+  it('вариант А: речь делится поровну, пауза добавляется ОДНА', () => {
+    // Раздать хвост каждому кадру значило бы вставить `N × 0.6`
+    // секунды тишины в середину речи.
+    expect(evenFrameSeconds(9, 3)).toBeCloseTo((9 + FRAME_TAIL_SECONDS) / 3);
+  });
+
+  it('вариант А: короткая речь не сжимает кадры ниже минимума', () => {
+    expect(evenFrameSeconds(1, 10)).toBe(MIN_FRAME_SECONDS);
+  });
+
+  it('вариант А без измеренной речи — прежняя константа', () => {
+    // Не зная длины речи, делить нечего, а ролик обязан получиться.
+    expect(evenFrameSeconds(null, 4)).toBe(SECONDS_PER_FRAME);
+    expect(evenFrameSeconds(9, 0)).toBe(SECONDS_PER_FRAME);
+    expect(evenFrameSeconds(0, 4)).toBe(SECONDS_PER_FRAME);
+  });
+});
+
+describe('звук в плане сборки (этап B)', () => {
+  const silent = () => planSlideshow(uniformFrames([url(0), url(1)]))!;
+
+  it('немая команда закреплена ЦЕЛИКОМ, а не набором toContain', () => {
+    // Набор `toContain`/`not.toContain` пропускал любую добавку:
+    // проверено мутацией — дописанный `-ar 48000` тест проходил
+    // (находка аудита этапа B). Путь обучалки по сайту заказчика
+    // идёт по этой самой строке, и «не заметил изменений» должно
+    // означать посимвольно, раз уж так написано.
+    //
+    // Строку положено ПЕРЕПИСЫВАТЬ осознанно: если этот тест упал,
+    // значит команда изменилась, и надо решить, хотели ли вы этого.
+    // Отдельной проверки «нет ни дорожки, ни кодека, ни -shortest»
+    // здесь больше нет: равенство строки посимвольно поглощает её
+    // целиком, и упасть отдельно она не могла (находка сквозного
+    // аудита A+B+C).
+    const scale =
+      'scale=720:1560:force_original_aspect_ratio=decrease,' +
+      'pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1';
+    expect(silent().commands[0]).toBe(
+      '-framerate 30 -loop 1 -t 2 -i {{frame0}} ' +
+        '-framerate 30 -loop 1 -t 2 -i {{frame1}} ' +
+        `-filter_complex "[0:v]${scale}[v0];[1:v]${scale}[v1];` +
+        '[v0][v1]concat=n=2:v=1:a=0[outv]" ' +
+        '-map "[outv]" -r 30 -pix_fmt yuv420p tutorial.mp4',
+    );
+  });
+
+  it('реплика на кадр: сегменты подаются ПОПАРНО и склеиваются со звуком', () => {
+    // `concat` с `a=1` требует звуковой поток у КАЖДОГО сегмента —
+    // это не «та же строка с a=1» (§4.3 ТЗ).
+    const plan = planSlideshow([
+      { stepIndex: 0, url: url(0), seconds: 3, audioUrl: 'https://b/0.mp3' },
+      { stepIndex: 1, url: url(1), seconds: 2 },
+    ])!;
+    expect(plan.inputs).toEqual({
+      frame0: url(0),
+      frame1: url(1),
+      voice0: 'https://b/0.mp3',
+    });
+    expect(plan.commands[0]).toContain(
+      '[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][outa]',
+    );
+    expect(plan.commands[0]).toContain('-map "[outv]" -map "[outa]"');
+    expect(plan.commands[0]).toContain('-c:a aac -b:a 192k -shortest');
+  });
+
+  it('немому кадру подставляется тишина ровно его длины', () => {
+    // Иначе `concat` отвергает задачу целиком: у PNG звука нет в
+    // принципе.
+    const plan = planSlideshow([
+      { stepIndex: 0, url: url(0), seconds: 3, audioUrl: 'https://b/0.mp3' },
+      { stepIndex: 1, url: url(1), seconds: 2 },
+    ])!;
+    expect(plan.commands[0]).toContain(
+      'anullsrc=channel_layout=stereo:sample_rate=44100:d=2[a1]',
+    );
+    // Тишина — фильтр-ИСТОЧНИК, а не вход: входы ffmpeg-api это
+    // словарь ссылок, входу без ссылки там места нет.
+    expect(plan.commands[0]).not.toContain('-f lavfi');
+    expect(Object.keys(plan.inputs)).not.toContain('voice1');
+  });
+
+  it('сегмент речи выравнивается по длине кадра — иначе звук уезжает', () => {
+    // `concat` берёт длину сегмента по самому длинному потоку, и
+    // рассинхрон копился бы от кадра к кадру.
+    const plan = planSlideshow([
+      { stepIndex: 0, url: url(0), seconds: 3.6, audioUrl: 'https://b/0.mp3' },
+    ])!;
+    expect(plan.commands[0]).toContain('apad,atrim=0:3.6,asetpts=N/SR/TB[a0]');
+  });
+
+  it('звуковые входы идут ПОСЛЕ кадров — иначе съезжают все [N:v]', () => {
+    const plan = planSlideshow([
+      { stepIndex: 0, url: url(0), seconds: 2 },
+      { stepIndex: 1, url: url(1), seconds: 2, audioUrl: 'https://b/1.mp3' },
+    ])!;
+    // Два кадра — входы 0 и 1; mp3 получает вход 2.
+    expect(plan.commands[0]).toContain('[0:v]scale=');
+    expect(plan.commands[0]).toContain('[1:v]scale=');
+    expect(plan.commands[0]).toContain('[2:a]aresample=44100');
+  });
+
+  it('одна дорожка на весь ролик: видео склеивается немым, звук ложится поверх', () => {
+    const plan = planSlideshow(uniformFrames([url(0), url(1)]), {
+      voiceoverUrl: 'https://b/voice.mp3',
+    })!;
+    expect(plan.inputs.voiceover).toBe('https://b/voice.mp3');
+    expect(plan.commands[0]).toContain('concat=n=2:v=1:a=0[outv]');
+    // Выравнивается по ОБЩЕЙ длине склейки, иначе длина файла
+    // разойдётся с `durationMs`, который уже показан человеку.
+    expect(plan.commands[0]).toContain(
+      `apad,atrim=0:${plan.durationMs / 1000},asetpts=N/SR/TB[outa]`,
+    );
+    expect(plan.commands[0]).toContain('-map "[outv]" -map "[outa]"');
+    expect(plan.commands[0]).toContain('-c:a aac -b:a 192k');
+    expect(plan.commands[0]).not.toContain('anullsrc');
+  });
+
+  it('звук задан дважды — плана нет, а не «смешаем как-нибудь»', () => {
+    // Два разных ответа на вопрос «что звучит на кадре N». Молчаливый
+    // выбор одного из них дал бы ролик, которого никто не заказывал.
+    expect(
+      planSlideshow(
+        [
+          {
+            stepIndex: 0,
+            url: url(0),
+            seconds: 2,
+            audioUrl: 'https://b/0.mp3',
+          },
+        ],
+        { voiceoverUrl: 'https://b/voice.mp3' },
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('длина файла совпадает с durationMs (§11 п.4)', () => {
+  // Измерено настоящим ffmpeg 6.1.1 при аудите этапа B: без правок
+  // ниже ролик из трёх кадров 3.1/1.5/2.7 давал 7.367 с при
+  // объявленных 7.300, и расхождение росло с числом кадров.
+  it('частота входа задана явно — иначе -t квантуется по 25 к/с ВВЕРХ', () => {
+    // Для PNG ffmpeg берёт 25 к/с по умолчанию: `-t 2.7` превращался
+    // в 68 кадров, то есть 2.72 с. На целых двойках это сходилось, на
+    // дробных длительностях этапа B — нет.
+    const plan = planSlideshow([{ stepIndex: 0, url: url(0), seconds: 2.7 }])!;
+    expect(plan.commands[0]).toContain('-framerate 30 -loop 1 -t 2.7 -i');
+  });
+
+  it('со звуком добавляется -shortest — aac пакует по 1024 сэмпла', () => {
+    // Звуковой поток всегда чуть длиннее заказанного (до 23 мс), и
+    // без `-shortest` эта добавка попадала бы в длину файла.
+    const plan = planSlideshow(uniformFrames([url(0)]), {
+      voiceoverUrl: 'https://b/v.mp3',
+    })!;
+    expect(plan.commands[0]).toContain('-shortest');
+  });
+});
+
+describe('slideshowContentHash', () => {
+  const frame = (stepIndex: number, byte: number, seconds = 2) => ({
+    stepIndex,
+    bytes: new Uint8Array([byte, byte, byte]),
+    seconds,
+  });
+
+  it('те же кадры и та же дорожка — тот же отпечаток', () => {
+    // На этом держится обещание §7.2 ТЗ: «ролики пересобираются,
+    // когда меняется интерфейс или текст шага, а не по расписанию».
+    expect(slideshowContentHash([frame(1, 7), frame(2, 8)], 'a.mp3')).toBe(
+      slideshowContentHash([frame(1, 7), frame(2, 8)], 'a.mp3'),
+    );
+  });
+
+  it('изменился ПИКСЕЛЬ кадра — отпечаток другой', () => {
+    // Вторая причина пересборки из §7.2 — «изменился интерфейс». Она
+    // ловится только байтами: шаги при этом те же самые, и номер
+    // версии сценария не сдвинулся бы.
+    expect(slideshowContentHash([frame(1, 7)], null)).not.toBe(
+      slideshowContentHash([frame(1, 8)], null),
+    );
+  });
+
+  it('другая дорожка — другой ролик, даже при тех же кадрах', () => {
+    expect(slideshowContentHash([frame(1, 7)], 'a.mp3')).not.toBe(
+      slideshowContentHash([frame(1, 7)], 'b.mp3'),
+    );
+  });
+
+  it('немой и озвученный не совпадают', () => {
+    expect(slideshowContentHash([frame(1, 7)], null)).not.toBe(
+      slideshowContentHash([frame(1, 7)], 'a.mp3'),
+    );
+  });
+
+  it('другая длительность кадра — другой отпечаток', () => {
+    // Речь стала длиннее, картинка та же: ролик всё равно другой.
+    expect(slideshowContentHash([frame(1, 7, 2)], null)).not.toBe(
+      slideshowContentHash([frame(1, 7, 3)], null),
+    );
+  });
+
+  it('пропавший кадр меняет отпечаток, а не «сдвигает» его', () => {
+    expect(slideshowContentHash([frame(1, 7), frame(2, 7)], null)).not.toBe(
+      slideshowContentHash([frame(1, 7)], null),
+    );
+  });
+
+  it('перестановка кадров различима', () => {
+    expect(slideshowContentHash([frame(1, 7), frame(2, 8)], null)).not.toBe(
+      slideshowContentHash([frame(2, 8), frame(1, 7)], null),
+    );
+  });
+
+  it('граница между кадрами не размывается', () => {
+    // Без разделителя `\u0000` поток склеивается встык, и «один кадр,
+    // в байтах которого лежит текст следующего заголовка» становится
+    // неотличим от «двух кадров». Выдуманный случай — но ровно от
+    // него разделитель и стоит: с ним пересборка пропускалась бы на
+    // РАЗНЫХ входах, то есть ролик перестал бы обновляться молча.
+    const asOne = [
+      {
+        stepIndex: 1,
+        bytes: Buffer.from('3:4:\u0001\u0002'),
+        seconds: 2,
+      },
+    ];
+    const asTwo = [
+      { stepIndex: 1, bytes: Buffer.alloc(0), seconds: 2 },
+      { stepIndex: 3, bytes: Buffer.from('\u0001\u0002'), seconds: 4 },
+    ];
+
+    expect(slideshowContentHash(asOne, null)).not.toBe(
+      slideshowContentHash(asTwo, null),
+    );
+  });
+});
+
+describe('slideshowDurationMs — сетка кадров', () => {
+  // Все числа ниже сверены с настоящим ffmpeg 6.1.1: команда
+  // собиралась, файл измерялся `ffprobe`. Формула переписывалась
+  // дважды, и обе первые редакции проходили бы тесты «на глаз».
+  const frame = (seconds: number, stepIndex = 0) => ({
+    stepIndex,
+    url: `f${stepIndex}.png`,
+    seconds,
+  });
+
+  it('дробные длины округляются ПОКАДРОВО, а не суммой', () => {
+    // Сумма сырых длительностей (3.605 + 1.5 + 9.612 = 14.717)
+    // обещала 14717 мс, а файл вышел 14700: ffmpeg округлил каждый
+    // сегмент к ближайшему кадру ДО `concat` — 108 + 45 + 288 = 441
+    // кадр при 30 fps.
+    expect(
+      slideshowDurationMs([frame(3.605, 0), frame(1.5, 1), frame(9.612, 2)]),
+    ).toBe(14700);
+  });
+
+  it('округление к ближайшему, а не вниз', () => {
+    // Вторая неверная редакция округляла вниз: план 14733 при
+    // реальных 14767. Ошибка сменила знак, но не исчезла. 108.906 →
+    // 109, 45 → 45, 289.151 → 289 = 443 кадра.
+    expect(
+      slideshowDurationMs([
+        frame(3.630204, 0),
+        frame(1.5, 1),
+        frame(9.638367, 2),
+      ]),
+    ).toBe(14767);
+  });
+
+  it('целые длины считаются как раньше', () => {
+    // Немой ролик по две секунды на кадр — путь, по которому ходит
+    // обучалка по сайту заказчика. Правка не должна была его
+    // тронуть.
+    expect(slideshowDurationMs([frame(2, 0), frame(2, 1)])).toBe(4000);
+  });
+
+  it('одна дорожка на четыре кадра — тоже ровно', () => {
+    const seconds = evenFrameSeconds(9.038367, 4);
+    expect(
+      slideshowDurationMs([0, 1, 2, 3].map((i) => frame(seconds, i))),
+    ).toBe(9600);
+  });
+
+  it('кадров нет — нулевая длительность, а не NaN', () => {
+    expect(slideshowDurationMs([])).toBe(0);
   });
 });

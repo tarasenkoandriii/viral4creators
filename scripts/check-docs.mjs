@@ -21,13 +21,13 @@
  * Запуск: `node scripts/check-docs.mjs` (и в CI, .github/workflows/ci.yml).
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
 // ── Реальность ─────────────────────────────────────────────────────────
 
@@ -45,16 +45,32 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
  *
  * Переводы строк сохраняются: швы разбирают результат построчно.
  */
+/**
+ * Может ли `/` в этой позиции начинать regex-литерал.
+ *
+ * Смотрит на последний значащий символ уже разобранного текста:
+ * после значения (`)`, `]`, идентификатор, число, строка) слэш —
+ * это деление, в остальных позициях — начало литерала. Грубо, но
+ * для нашей задачи (снять комментарии, не поломав regex) достаточно:
+ * ошибка возможна только на `)` перед regex, чего в JS не бывает
+ * без `if (…) /re/.test(...)`, а это не пишут.
+ */
+function startsRegex(before) {
+  const prev = before.replace(/\s+$/, "").slice(-1);
+  if (prev === "") return true;
+  return !/[A-Za-z0-9_$)\]'"`]/.test(prev);
+}
+
 function stripComments(src) {
-  let out = '';
+  let out = "";
   let i = 0;
   let quote = null;
   while (i < src.length) {
     const c = src[i];
     const next = src[i + 1];
     if (quote) {
-      if (c === '\\') {
-        out += c + (next ?? '');
+      if (c === "\\") {
+        out += c + (next ?? "");
         i += 2;
         continue;
       }
@@ -63,22 +79,62 @@ function stripComments(src) {
       i++;
       continue;
     }
-    if (c === "'" || c === '"' || c === '`') {
+    if (c === "'" || c === '"' || c === "`") {
       quote = c;
       out += c;
       i++;
       continue;
     }
-    if (c === '/' && next === '/') {
-      while (i < src.length && src[i] !== '\n') i++;
+    // Regex-литерал. Без него автомат ошибался в ОБЕ стороны
+    // (находка сквозного аудита A+B+C): `/["']+$/` открывал
+    // фиктивную строку, и все `//`-комментарии дальше по файлу
+    // переставали сниматься (ложное срабатывание швов), а regex,
+    // кончающийся на `\//` — например `/^https?:\/\//` — съедался
+    // как начало комментария вместе с остатком строки (ложное
+    // молчание). Оба случая воспроизведены на настоящих файлах
+    // репозитория.
+    //
+    // Отличить деление от начала regex по предыдущему значащему
+    // символу — тот же приём, что у всех простых сканеров JS: после
+    // значения (`)`, `]`, идентификатор, число) слэш делит, в
+    // остальных позициях начинает литерал.
+    if (c === "/" && next !== "/" && next !== "*" && startsRegex(out)) {
+      out += c;
+      i++;
+      let inClass = false;
+      while (i < src.length) {
+        const ch = src[i];
+        if (ch === "\\") {
+          out += ch + (src[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        if (ch === "[") inClass = true;
+        else if (ch === "]") inClass = false;
+        else if (ch === "/" && !inClass) {
+          out += ch;
+          i++;
+          break;
+        } else if (ch === "\n") {
+          // Незакрытый literal — значит это было деление; выходим,
+          // не съедая перевод строки.
+          break;
+        }
+        out += ch;
+        i++;
+      }
       continue;
     }
-    if (c === '/' && next === '*') {
+    if (c === "/" && next === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && next === "*") {
       i += 2;
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) {
         // Переводы строк внутри блока сохраняем, иначе строки кода
         // по обе стороны комментария склеятся в одну.
-        if (src[i] === '\n') out += '\n';
+        if (src[i] === "\n") out += "\n";
         i++;
       }
       i += 2;
@@ -94,15 +150,15 @@ function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+      if (entry.name === "node_modules" || entry.name === "dist") continue;
       walk(full, out);
     } else out.push(full);
   }
   return out;
 }
 
-const specFiles = walk(path.join(ROOT, 'backend/src')).filter((f) =>
-  f.endsWith('.spec.ts'),
+const specFiles = walk(path.join(ROOT, "backend/src")).filter((f) =>
+  f.endsWith(".spec.ts"),
 );
 
 /**
@@ -118,10 +174,10 @@ const specFiles = walk(path.join(ROOT, 'backend/src')).filter((f) =>
  * без запуска.
  */
 function jestReport() {
-  const file = path.join(ROOT, 'backend/jest-results.json');
+  const file = path.join(ROOT, "backend/jest-results.json");
   if (!fs.existsSync(file)) return null;
   try {
-    const json = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const json = JSON.parse(fs.readFileSync(file, "utf8"));
     return {
       tests: json.numTotalTests,
       suites: json.numTotalTestSuites,
@@ -133,30 +189,33 @@ function jestReport() {
 
 const report = jestReport();
 
-const migrationsDir = path.join(ROOT, 'backend/prisma/migrations');
+const migrationsDir = path.join(ROOT, "backend/prisma/migrations");
 const migrationCount = fs
   .readdirSync(migrationsDir, { withFileTypes: true })
   .filter((e) => e.isDirectory()).length;
 
 // Таблицы — по `@@map("...")` в схеме: именно они превращаются в таблицы
 // Postgres, а `model` без map даёт другое имя.
-const schema = read('backend/prisma/schema.prisma');
+const schema = read("backend/prisma/schema.prisma");
 const tableCount = (schema.match(/@@map\("/g) ?? []).length;
 
 const unitScriptCount = fs
-  .readdirSync(path.join(ROOT, 'frontend/scripts'))
-  .filter((f) => f.endsWith('.test.ts')).length;
+  .readdirSync(path.join(ROOT, "frontend/scripts"))
+  .filter((f) => f.endsWith(".test.ts")).length;
 
 // Этап 53 (В-6.18): число маршрутов в README — декораторы HTTP-методов в
 // контроллерах и число файлов *.controller.ts.
-const controllerFiles = walk(path.join(ROOT, 'backend/src')).filter((f) =>
-  f.endsWith('.controller.ts'),
+const controllerFiles = walk(path.join(ROOT, "backend/src")).filter((f) =>
+  f.endsWith(".controller.ts"),
 );
 const routeCount = controllerFiles.reduce(
   (n, f) =>
     n +
-    (fs.readFileSync(f, 'utf8').match(/^\s*@(Get|Post|Patch|Put|Delete)\(/gm) ?? [])
-      .length,
+    (
+      fs
+        .readFileSync(f, "utf8")
+        .match(/^\s*@(Get|Post|Patch|Put|Delete)\(/gm) ?? []
+    ).length,
   0,
 );
 
@@ -179,19 +238,19 @@ const actual = {
 
 const CHECKS = [
   {
-    file: 'doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md',
-    label: 'тесты (итоговая сверка)',
+    file: "doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md",
+    label: "тесты (итоговая сверка)",
     // Только в разделе «Итоговая сверка»: выше по файлу те же формулировки
     // стоят в блоках прошлых этапов и должны остаться историей.
-    section: '## Итоговая сверка',
+    section: "## Итоговая сверка",
     re: /\*\*(\d+) тест(?:а|ов)? \/ (\d+) набор(?:а|ов)?\*\*/,
     expect: [actual.tests, actual.suites],
     needsJest: true,
   },
   {
-    file: 'doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md',
-    label: 'миграции и таблицы (итоговая сверка)',
-    section: '## Итоговая сверка',
+    file: "doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md",
+    label: "миграции и таблицы (итоговая сверка)",
+    section: "## Итоговая сверка",
     // `ю` в окончании — для чисел, кончающихся на единицу: «все 101
     // миграцию». Без неё проверка молча перестаёт находить формулировку
     // ровно на каждой сто первой миграции.
@@ -199,15 +258,15 @@ const CHECKS = [
     expect: [actual.migrations, actual.tables],
   },
   {
-    file: 'doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md',
-    label: 'unit-скрипты фронтенда',
-    section: '## Итоговая сверка',
+    file: "doc/PRODUCT-PROJECT-IMPLEMENTATION-PLAN.md",
+    label: "unit-скрипты фронтенда",
+    section: "## Итоговая сверка",
     re: /\*\*(\d+)\*\*\s*\n?\s*unit-скрипт(?:ов|а)?/,
     expect: [actual.unitScripts],
   },
   {
-    file: 'doc/ACCEPTANCE-CHECKLIST.md',
-    label: 'тесты (шапка чеклиста)',
+    file: "doc/ACCEPTANCE-CHECKLIST.md",
+    label: "тесты (шапка чеклиста)",
     re: /backend — (\d+)\s*\n?jest-тест(?:а|ов)? \/ (\d+) набор(?:а|ов)?/,
     expect: [actual.tests, actual.suites],
     // Найдено попутно на этапе 57: у этой проверки, в отличие от точно
@@ -221,14 +280,14 @@ const CHECKS = [
     needsJest: true,
   },
   {
-    file: 'doc/ACCEPTANCE-CHECKLIST.md',
-    label: 'миграции и таблицы (шапка чеклиста)',
+    file: "doc/ACCEPTANCE-CHECKLIST.md",
+    label: "миграции и таблицы (шапка чеклиста)",
     re: /все (\d+)\s*\n?миграци[ий] применяются подряд к чистому Postgres 16 \((\d+) таблиц/,
     expect: [actual.migrations, actual.tables],
   },
   {
-    file: 'doc/ACCEPTANCE-CHECKLIST.md',
-    label: 'unit-скрипты (шапка чеклиста)',
+    file: "doc/ACCEPTANCE-CHECKLIST.md",
+    label: "unit-скрипты (шапка чеклиста)",
     re: /(\d+) unit-скрипт(?:ов|а)?/,
     expect: [actual.unitScripts],
   },
@@ -237,8 +296,8 @@ const CHECKS = [
   // ровно потому, что этого списка не касались, а не потому, что там
   // чисел нет.
   {
-    file: 'README.md',
-    label: 'тесты (README)',
+    file: "README.md",
+    label: "тесты (README)",
     re: /types, lint, (\d+)\s*\ntests/,
     expect: [actual.tests],
     needsJest: true,
@@ -246,33 +305,33 @@ const CHECKS = [
   // Этап 49 (В-6.7): CI.md был в списке, но проверялся только числом
   // unit-скриптов — и держал «919 тестов, 20 миграций» при зелёном прогоне.
   {
-    file: 'doc/CI.md',
-    label: 'тесты (шапка CI.md)',
+    file: "doc/CI.md",
+    label: "тесты (шапка CI.md)",
     re: /тогда 442 теста \(сейчас (\d+)\)/,
     expect: [actual.tests],
     needsJest: true,
   },
   {
-    file: 'doc/CI.md',
-    label: 'миграции (шапка CI.md)',
+    file: "doc/CI.md",
+    label: "миграции (шапка CI.md)",
     re: /написанных вручную \(сейчас (\d+)\)/,
     expect: [actual.migrations],
   },
   {
-    file: 'README.md',
-    label: 'маршруты и контроллеры (README)',
+    file: "README.md",
+    label: "маршруты и контроллеры (README)",
     re: /\((\d+) routes in (\d+) controller files/,
     expect: [actual.routes, actual.controllers],
   },
   {
-    file: 'README.md',
-    label: 'unit-скрипты (README)',
+    file: "README.md",
+    label: "unit-скрипты (README)",
     re: /frontend \(types, lint, (\d+) unit\s*\nscripts/,
     expect: [actual.unitScripts],
   },
   {
-    file: 'doc/CI.md',
-    label: 'unit-скрипты (таблица джоб)',
+    file: "doc/CI.md",
+    label: "unit-скрипты (таблица джоб)",
     re: /(\d+) unit-скрипт(?:ов|а)? `npx tsx/,
     expect: [actual.unitScripts],
   },
@@ -283,14 +342,14 @@ const CHECKS = [
   // (см. сам файл) — эти две проверки закрывают не только сегодняшнее
   // число, но и сам класс дефекта.
   {
-    file: 'doc/TELEGRAM-ADMIN.md',
-    label: 'миграции (ограничение песочницы, абзац про ручное написание)',
+    file: "doc/TELEGRAM-ADMIN.md",
+    label: "миграции (ограничение песочницы, абзац про ручное написание)",
     re: /\(сейчас (\d+) миграци[ийя]+, актуальное\s*\n?\s*число/,
     expect: [actual.migrations],
   },
   {
-    file: 'doc/TELEGRAM-ADMIN.md',
-    label: 'миграции (ограничение песочницы, абзац про применение к Postgres)',
+    file: "doc/TELEGRAM-ADMIN.md",
+    label: "миграции (ограничение песочницы, абзац про применение к Postgres)",
     re: /все\s*\n?\s*миграции \(сейчас (\d+)\) были по-настоящему применены/,
     expect: [actual.migrations],
   },
@@ -299,7 +358,7 @@ const CHECKS = [
 // ── Прогон ─────────────────────────────────────────────────────────────
 
 let failed = 0;
-console.log('Реальность:', JSON.stringify(actual));
+console.log("Реальность:", JSON.stringify(actual));
 
 for (const check of CHECKS) {
   if (check.needsJest && report === null) {
@@ -336,11 +395,11 @@ for (const check of CHECKS) {
   if (!ok) {
     failed++;
     console.log(
-      `FAIL ${check.file} — ${check.label}: в документе ${got.join(' / ')}, ` +
-        `на самом деле ${check.expect.join(' / ')}`,
+      `FAIL ${check.file} — ${check.label}: в документе ${got.join(" / ")}, ` +
+        `на самом деле ${check.expect.join(" / ")}`,
     );
   } else {
-    console.log(`ok   ${check.file} — ${check.label}: ${got.join(' / ')}`);
+    console.log(`ok   ${check.file} — ${check.label}: ${got.join(" / ")}`);
   }
 }
 
@@ -354,32 +413,35 @@ for (const check of CHECKS) {
 // т. п.) и динамические префиксы (`AI_PRICE_*`, `DAILY_SPEND_LIMIT_USD_*`)
 // проверяются по префиксу.
 
-const ENV_SKIP = new Set(['NODE_ENV', 'CI', 'VERCEL', 'VERCEL_ENV', 'TZ']);
-const ENV_PREFIX_OK = ['AI_PRICE_', 'DAILY_SPEND_LIMIT_USD_'];
+const ENV_SKIP = new Set(["NODE_ENV", "CI", "VERCEL", "VERCEL_ENV", "TZ"]);
+const ENV_PREFIX_OK = ["AI_PRICE_", "DAILY_SPEND_LIMIT_USD_"];
 
 function envVarsInCode() {
   const files = [
-    ...walk(path.join(ROOT, 'backend/src')),
-    ...walk(path.join(ROOT, 'admin/src')),
-    ...walk(path.join(ROOT, 'landing/src')),
-    ...walk(path.join(ROOT, 'frontend/src')),
-  ].filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith('.spec.ts'));
+    ...walk(path.join(ROOT, "backend/src")),
+    ...walk(path.join(ROOT, "admin/src")),
+    ...walk(path.join(ROOT, "landing/src")),
+    ...walk(path.join(ROOT, "frontend/src")),
+  ].filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".spec.ts"));
   const found = new Set();
   for (const f of files) {
-    const text = fs.readFileSync(f, 'utf8');
-    for (const m of text.matchAll(/(?:process\.env|import\.meta\.env)\.([A-Z][A-Z0-9_]+)/g)) {
+    const text = fs.readFileSync(f, "utf8");
+    for (const m of text.matchAll(
+      /(?:process\.env|import\.meta\.env)\.([A-Z][A-Z0-9_]+)/g,
+    )) {
       found.add(m[1]);
     }
     // `env.X` в модулях, которые получают process.env параметром
     // (env-settings.ts, spend-limits.ts, csrf.ts, blob-url.ts).
     if (/\benv: NodeJS\.ProcessEnv|\(env\)|env = process\.env/.test(text)) {
-      for (const m of text.matchAll(/\benv\.([A-Z][A-Z0-9_]{3,})\b/g)) found.add(m[1]);
+      for (const m of text.matchAll(/\benv\.([A-Z][A-Z0-9_]{3,})\b/g))
+        found.add(m[1]);
     }
   }
   return [...found].filter((v) => !ENV_SKIP.has(v)).sort();
 }
 
-const envDocs = read('doc/DEPLOYMENT.md') + '\n' + read('.env.docker.example');
+const envDocs = read("doc/DEPLOYMENT.md") + "\n" + read(".env.docker.example");
 const undocumented = envVarsInCode().filter(
   (v) =>
     !ENV_PREFIX_OK.some((p) => v.startsWith(p)) &&
@@ -388,11 +450,13 @@ const undocumented = envVarsInCode().filter(
 if (undocumented.length > 0) {
   failed++;
   console.log(
-    `FAIL переменные окружения: код читает, документы молчат — ${undocumented.join(', ')}. ` +
+    `FAIL переменные окружения: код читает, документы молчат — ${undocumented.join(", ")}. ` +
       `Опишите в doc/DEPLOYMENT.md (прод) или .env.docker.example (стенд).`,
   );
 } else {
-  console.log(`ok   переменные окружения: все ${envVarsInCode().length} описаны в DEPLOYMENT.md или .env.docker.example`);
+  console.log(
+    `ok   переменные окружения: все ${envVarsInCode().length} описаны в DEPLOYMENT.md или .env.docker.example`,
+  );
 }
 
 // ── Симметрия локалей `landing/src/dictionaries/*.json` (аудит трёх
@@ -410,7 +474,7 @@ if (undocumented.length > 0) {
 // каждой позиции (сверка с `ru.json` как эталоном) и каждое
 // `badge`-значение — один из ключей `steps.badges`.
 
-const DICT_LOCALES = ['ru', 'uk', 'en', 'de', 'es'];
+const DICT_LOCALES = ["ru", "uk", "en", "de", "es"];
 
 function loadDict(locale) {
   return JSON.parse(read(`landing/src/dictionaries/${locale}.json`));
@@ -423,18 +487,22 @@ function checkStepsSymmetry() {
   const problems = [];
 
   if (reference.length !== 10) {
-    problems.push(`ru.json: steps.items содержит ${reference.length}, а не 10 элементов`);
+    problems.push(
+      `ru.json: steps.items содержит ${reference.length}, а не 10 элементов`,
+    );
   }
 
   for (const locale of DICT_LOCALES) {
     const items = dicts[locale].steps.items;
     if (items.length !== reference.length) {
-      problems.push(`${locale}.json: steps.items содержит ${items.length}, а не ${reference.length} (как ru.json)`);
+      problems.push(
+        `${locale}.json: steps.items содержит ${items.length}, а не ${reference.length} (как ru.json)`,
+      );
       continue;
     }
     items.forEach((item, i) => {
-      const gotKeys = Object.keys(item).sort().join(',');
-      const wantKeys = Object.keys(reference[i]).sort().join(',');
+      const gotKeys = Object.keys(item).sort().join(",");
+      const wantKeys = Object.keys(reference[i]).sort().join(",");
       if (gotKeys !== wantKeys) {
         problems.push(
           `${locale}.json: steps.items[${i}] (шаг ${i + 1}) — набор полей «${gotKeys}», ` +
@@ -444,7 +512,7 @@ function checkStepsSymmetry() {
       if (item.badge !== undefined && !badgeKeys.has(item.badge)) {
         problems.push(
           `${locale}.json: steps.items[${i}] (шаг ${i + 1}) — badge «${item.badge}» ` +
-            `не входит в steps.badges (${[...badgeKeys].join('/')})`,
+            `не входит в steps.badges (${[...badgeKeys].join("/")})`,
         );
       }
     });
@@ -452,10 +520,14 @@ function checkStepsSymmetry() {
 
   if (problems.length > 0) {
     failed++;
-    console.log(`FAIL симметрия steps.items по локалям (landing/src/dictionaries):`);
+    console.log(
+      `FAIL симметрия steps.items по локалям (landing/src/dictionaries):`,
+    );
     for (const p of problems) console.log(`  - ${p}`);
   } else {
-    console.log(`ok   симметрия steps.items по локалям: 10 шагов × 5 локалей, поля и бейджи совпадают`);
+    console.log(
+      `ok   симметрия steps.items по локалям: 10 шагов × 5 локалей, поля и бейджи совпадают`,
+    );
   }
 }
 
@@ -490,22 +562,24 @@ function checkGuideSeams() {
   // 1. Шаги мастеров: степпер (frontend) ↔ карточки советника (backend).
   //    По одному сравнению на сценарий — общий список ловил бы
   //    расхождение только случайно.
-  const cardsSource = read('backend/src/modules/wizard-guide/hint-scenarios.ts');
+  const cardsSource = read(
+    "backend/src/modules/wizard-guide/hint-scenarios.ts",
+  );
   const SCENARIOS = [
     {
-      scenario: 'CLIENT_SITE',
-      file: 'frontend/src/lib/client-site-steps.ts',
-      constant: 'CLIENT_SITE_STEP_IDS',
+      scenario: "CLIENT_SITE",
+      file: "frontend/src/lib/client-site-steps.ts",
+      constant: "CLIENT_SITE_STEP_IDS",
     },
     {
-      scenario: 'GREETING_VIDEO',
-      file: 'frontend/src/lib/greeting-steps.ts',
-      constant: 'GREETING_STEP_IDS',
+      scenario: "GREETING_VIDEO",
+      file: "frontend/src/lib/greeting-steps.ts",
+      constant: "GREETING_STEP_IDS",
     },
     {
-      scenario: 'PRODUCT_VIDEO',
-      file: 'frontend/src/lib/session-step.ts',
-      constant: 'STEPPER_IDS',
+      scenario: "PRODUCT_VIDEO",
+      file: "frontend/src/lib/session-step.ts",
+      constant: "STEPPER_IDS",
     },
   ];
   let stepperSummary = [];
@@ -527,13 +601,15 @@ function checkGuideSeams() {
       continue;
     }
     if (cards.length === 0) {
-      problems.push(`не нашли карточки сценария ${scenario} в hint-scenarios.ts`);
+      problems.push(
+        `не нашли карточки сценария ${scenario} в hint-scenarios.ts`,
+      );
       continue;
     }
-    if (stepper.join(',') !== cards.join(',')) {
+    if (stepper.join(",") !== cards.join(",")) {
       problems.push(
-        `шаги ${scenario} разошлись: степпер «${stepper.join(', ')}», ` +
-          `карточки советника «${cards.join(', ')}»`,
+        `шаги ${scenario} разошлись: степпер «${stepper.join(", ")}», ` +
+          `карточки советника «${cards.join(", ")}»`,
       );
     }
     stepperSummary.push(`${scenario}: ${stepper.length}`);
@@ -541,11 +617,11 @@ function checkGuideSeams() {
 
   // 2. Пункты готовности: сервер отдаёт key, словарь даёт подпись.
   const readinessKeys = idsFrom(
-    read('backend/src/common/wizard-readiness.ts'),
+    read("backend/src/common/wizard-readiness.ts"),
     /key: '([a-zA-Z0-9_-]+)'/g,
   );
   const dictItems = Object.keys(
-    JSON.parse(read('frontend/src/dictionaries/ru.json')).wizardReadiness.items,
+    JSON.parse(read("frontend/src/dictionaries/ru.json")).wizardReadiness.items,
   );
   // Подписи-ЗАМЕНЫ: один и тот же пункт бывает закрыт разной работой, и
   // у второй работы своя подпись. Пункт «откуда берётся сцена» (`key:
@@ -554,42 +630,42 @@ function checkGuideSeams() {
   // работе, которой не было. Список закрытый и живёт здесь, а не
   // послаблением правила: подпись без пункта и подпись-замена —
   // разные вещи, и первая по-прежнему ошибка.
-  const OVERRIDE_LABELS = new Set(['sceneTemplate']);
+  const OVERRIDE_LABELS = new Set(["sceneTemplate"]);
   const missingLabels = readinessKeys.filter((k) => !dictItems.includes(k));
   const orphanLabels = dictItems.filter(
     (k) => !readinessKeys.includes(k) && !OVERRIDE_LABELS.has(k),
   );
   if (missingLabels.length > 0) {
     problems.push(
-      `у пунктов готовности нет подписи в словаре: ${missingLabels.join(', ')}`,
+      `у пунктов готовности нет подписи в словаре: ${missingLabels.join(", ")}`,
     );
   }
   if (orphanLabels.length > 0) {
     problems.push(
-      `в словаре есть подписи для несуществующих пунктов готовности: ${orphanLabels.join(', ')}`,
+      `в словаре есть подписи для несуществующих пунктов готовности: ${orphanLabels.join(", ")}`,
     );
   }
 
   // 3. Слаги документов: белый список сервера ↔ отображение клиента.
   const serverSlugs = idsFrom(
-    read('backend/src/modules/wizard-guide/hint-actions.ts'),
+    read("backend/src/modules/wizard-guide/hint-actions.ts"),
     /HINT_DOC_SLUGS: readonly string\[\] = \[([^\]]+)\]/g,
   )[0];
   const server = serverSlugs
     ? [...serverSlugs.matchAll(/'([a-zA-Z0-9_-]+)'/g)].map((m) => m[1])
     : [];
   const clientBlock = /DOC_KEYS: Record<string, [^>]+> = \{([^}]+)\}/.exec(
-    read('frontend/src/components/HintLine.tsx'),
+    read("frontend/src/components/HintLine.tsx"),
   );
   const client = clientBlock
     ? [...clientBlock[1].matchAll(/'?([a-zA-Z0-9_-]+)'?\s*:/g)].map((m) => m[1])
     : [];
   if (server.length === 0 || client.length === 0) {
-    problems.push('не нашли белый список слагов документов на одной из сторон');
-  } else if ([...server].sort().join(',') !== [...client].sort().join(',')) {
+    problems.push("не нашли белый список слагов документов на одной из сторон");
+  } else if ([...server].sort().join(",") !== [...client].sort().join(",")) {
     problems.push(
-      `слаги документов разошлись: сервер «${server.join(', ')}», ` +
-        `клиент «${client.join(', ')}»`,
+      `слаги документов разошлись: сервер «${server.join(", ")}», ` +
+        `клиент «${client.join(", ")}»`,
     );
   }
 
@@ -602,7 +678,9 @@ function checkGuideSeams() {
   // ПРОВОДКУ (кто и откуда берёт факты) не проверяет ничто, а именно
   // она была блокером этапа 12: степпер врал после перезагрузки
   // вкладки, потому что `load()` знал только `sessionId`.
-  const greetingWizard = read('frontend/src/features/projects/GreetingVideoWizard.tsx');
+  const greetingWizard = read(
+    "frontend/src/features/projects/GreetingVideoWizard.tsx",
+  );
   //
   // Оговорка про сводку — не украшение: если `ItemSessionSummary`
   // когда-нибудь начнёт нести сценарий и ролик, дочитывать сессию
@@ -611,25 +689,29 @@ function checkGuideSeams() {
   // лежит, и её отсутствие — само по себе расхождение: молча
   // «не нашли» значило бы проверять не то, что написано.
   const summaryFields = /interface ItemSessionSummary \{([\s\S]*?)\n\}/.exec(
-    read('frontend/src/services/projects-api.ts'),
+    read("frontend/src/services/projects-api.ts"),
   );
   if (!summaryFields) {
     problems.push(
-      'не нашли `ItemSessionSummary` в projects-api.ts — проверка ' +
-        'восстановления шага greeting опирается на состав этого типа',
+      "не нашли `ItemSessionSummary` в projects-api.ts — проверка " +
+        "восстановления шага greeting опирается на состав этого типа",
     );
   }
   const summaryHasPrompt = summaryFields
     ? /generationPrompt|generatedVideo/.test(summaryFields[1])
     : false;
   const greetingRestore = summaryHasPrompt
-    ? 'сводка несёт сценарий'
-    : 'greeting дочитывает сессию';
-  if (summaryFields && !summaryHasPrompt && !/getSession\(/.test(greetingWizard)) {
+    ? "сводка несёт сценарий"
+    : "greeting дочитывает сессию";
+  if (
+    summaryFields &&
+    !summaryHasPrompt &&
+    !/getSession\(/.test(greetingWizard)
+  ) {
     problems.push(
-      'GreetingVideoWizard не дочитывает сессию (`getSession`), а сводка ' +
-        'сессий не несёт ни сценария, ни ролика — степпер снова покажет ' +
-        'первый шаг после перезагрузки вкладки (блокер этапа 12)',
+      "GreetingVideoWizard не дочитывает сессию (`getSession`), а сводка " +
+        "сессий не несёт ни сценария, ни ролика — степпер снова покажет " +
+        "первый шаг после перезагрузки вкладки (блокер этапа 12)",
     );
   }
 
@@ -640,9 +722,9 @@ function checkGuideSeams() {
   // пришлось дописывать отдельно. Второй раз полагаться на то, что
   // новый путь рендера кто-то заметит, незачем.
   const RENDER_STARTS = [
-    'backend/src/modules/generation/generation.service.ts',
-    'backend/src/modules/greeting-video/greeting-video.service.ts',
-    'backend/src/modules/catalog-batch/catalog-batch-worker.service.ts',
+    "backend/src/modules/generation/generation.service.ts",
+    "backend/src/modules/greeting-video/greeting-video.service.ts",
+    "backend/src/modules/catalog-batch/catalog-batch-worker.service.ts",
   ];
   // Кто зовёт провайдера видео напрямую. Спека `grok-video-batch` и
   // `grok-video` — сами клиенты, их этот список не касается.
@@ -653,7 +735,7 @@ function checkGuideSeams() {
   );
   if (startsWithoutCheck.length > 0) {
     problems.push(
-      `старт рендера без проверки права (assertCanRender): ${startsWithoutCheck.join(', ')}`,
+      `старт рендера без проверки права (assertCanRender): ${startsWithoutCheck.join(", ")}`,
     );
   }
   // Кто зовёт провайдера видео, но стены не требует. Список именной и
@@ -663,32 +745,32 @@ function checkGuideSeams() {
     // Операторские пути: рендер запускает человек из админки, за свои
     // деньги продукта и по своему решению. Стена — про бесплатный тариф
     // пользователя, к оператору она отношения не имеет.
-    'backend/src/modules/actors/actors.service.ts':
-      'ручной запуск пилота аватара из админки (AdminSessionGuard)',
-    'backend/src/modules/virtual-studio/virtual-studio.service.ts':
+    "backend/src/modules/actors/actors.service.ts":
+      "ручной запуск пилота аватара из админки (AdminSessionGuard)",
+    "backend/src/modules/virtual-studio/virtual-studio.service.ts":
       'админ-студия, @Controller("admin/virtual-studio")',
     // Тот же батч-клиент Grok, но перевод ТЕКСТА, а не видео.
-    'backend/src/modules/blog/blog-translation.service.ts':
-      'перевод блога, видео не рендерится',
+    "backend/src/modules/blog/blog-translation.service.ts":
+      "перевод блога, видео не рендерится",
     // Сами клиенты провайдеров — они и есть вызов, а не его инициатор.
-    'backend/src/modules/generation/grok-video.service.ts': 'клиент провайдера',
-    'backend/src/modules/generation/grok-video-batch.service.ts':
-      'клиент провайдера',
-    'backend/src/modules/actors/hedra-client.service.ts': 'клиент провайдера',
+    "backend/src/modules/generation/grok-video.service.ts": "клиент провайдера",
+    "backend/src/modules/generation/grok-video-batch.service.ts":
+      "клиент провайдера",
+    "backend/src/modules/actors/hedra-client.service.ts": "клиент провайдера",
   };
-  const unknownStarts = [...walk(path.join(ROOT, 'backend/src/modules'))]
-    .filter((f) => /\.ts$/.test(f) && !f.endsWith('.spec.ts'))
-    .map((f) => ({ f, rel: path.relative(ROOT, f).split(path.sep).join('/') }))
+  const unknownStarts = [...walk(path.join(ROOT, "backend/src/modules"))]
+    .filter((f) => /\.ts$/.test(f) && !f.endsWith(".spec.ts"))
+    .map((f) => ({ f, rel: path.relative(ROOT, f).split(path.sep).join("/") }))
     .filter(({ f, rel }) => {
       if (RENDER_STARTS.includes(rel)) return false;
       if (rel in RENDER_STARTS_EXEMPT) return false;
-      const text = fs.readFileSync(f, 'utf8');
+      const text = fs.readFileSync(f, "utf8");
       return PROVIDER_CALLS.test(text) && !/assertCanRender\s*\(/.test(text);
     })
     .map(({ rel }) => rel);
   if (unknownStarts.length > 0) {
     problems.push(
-      `новый старт рендера мимо проверки права: ${unknownStarts.join(', ')} — ` +
+      `новый старт рендера мимо проверки права: ${unknownStarts.join(", ")} — ` +
         `позовите RenderAccessService.assertCanRender либо внесите в ` +
         `RENDER_STARTS_EXEMPT с причиной`,
     );
@@ -702,23 +784,26 @@ function checkGuideSeams() {
   // `RenderCompletedService`, а этот шов сторожит, чтобы их снова не
   // начали звать напрямую из нового места.
   const COMPLETION_HUB =
-    'backend/src/modules/render-access/render-completed.service.ts';
+    "backend/src/modules/render-access/render-completed.service.ts";
   const COMPLETION_CALLS = /\.(markConverted|countFirstGeneration)\s*\(/;
-  const directCompletionCalls = [...walk(path.join(ROOT, 'backend/src'))]
-    .filter((f) => /\.ts$/.test(f) && !f.endsWith('.spec.ts'))
-    .map((f) => ({ f, rel: path.relative(ROOT, f).split(path.sep).join('/') }))
+  const directCompletionCalls = [...walk(path.join(ROOT, "backend/src"))]
+    .filter((f) => /\.ts$/.test(f) && !f.endsWith(".spec.ts"))
+    .map((f) => ({ f, rel: path.relative(ROOT, f).split(path.sep).join("/") }))
     .filter(({ f, rel }) => {
       if (rel === COMPLETION_HUB) return false;
       // Сами объявления методов (`async markConverted(...)`) — не вызовы.
       const text = fs
-        .readFileSync(f, 'utf8')
-        .replace(/^\s*(?:async\s+)?(markConverted|countFirstGeneration)\s*\(/gm, '');
+        .readFileSync(f, "utf8")
+        .replace(
+          /^\s*(?:async\s+)?(markConverted|countFirstGeneration)\s*\(/gm,
+          "",
+        );
       return COMPLETION_CALLS.test(text);
     })
     .map(({ rel }) => rel);
   if (directCompletionCalls.length > 0) {
     problems.push(
-      `завершение рендера в обход единой точки: ${directCompletionCalls.join(', ')} — ` +
+      `завершение рендера в обход единой точки: ${directCompletionCalls.join(", ")} — ` +
         `позовите RenderCompletedService.onRenderCompleted`,
     );
   }
@@ -727,8 +812,8 @@ function checkGuideSeams() {
   // не заметил; стало больше — появился новый путь, и его надо внести
   // сюда осознанно, а не обнаружить по недосчитанным приглашениям.
   const COMPLETION_POINTS = [
-    'backend/src/modules/generation/generation.service.ts',
-    'backend/src/modules/greeting-video/greeting-video.service.ts',
+    "backend/src/modules/generation/generation.service.ts",
+    "backend/src/modules/greeting-video/greeting-video.service.ts",
   ];
   const completionCallCount = COMPLETION_POINTS.reduce(
     (n, f) => n + (read(f).match(/onRenderCompleted\s*\(/g) ?? []).length,
@@ -751,15 +836,15 @@ function checkGuideSeams() {
   // завершение. Потерять это повторно нельзя — тише всего оно ломается
   // именно у пришедших с лендинга.
   const CLAIM_CALLERS = [
-    'frontend/src/App.tsx',
-    'frontend/src/components/TelegramLoginButton.tsx',
+    "frontend/src/App.tsx",
+    "frontend/src/components/TelegramLoginButton.tsx",
   ];
   const withoutClaim = CLAIM_CALLERS.filter(
     (f) => !/claimStoredReferral\s*\(/.test(read(f)),
   );
   if (withoutClaim.length > 0) {
     problems.push(
-      `привязка приглашения не зовётся из ${withoutClaim.join(', ')} — ` +
+      `привязка приглашения не зовётся из ${withoutClaim.join(", ")} — ` +
         `в браузере личность появляется позже запуска, и одной попытки мало`,
     );
   }
@@ -783,14 +868,14 @@ function checkGuideSeams() {
   const WIDENING_CAST = /\bas\s+(?:string|number|boolean)\s*\[\s*\]/;
   const prismaCasts = [];
   const annotatedGroupBy = [];
-  for (const file of walk(path.join(ROOT, 'backend/src'))) {
-    if (!file.endsWith('.ts') || file.endsWith('.spec.ts')) continue;
+  for (const file of walk(path.join(ROOT, "backend/src"))) {
+    if (!file.endsWith(".ts") || file.endsWith(".spec.ts")) continue;
     // Комментарии вырезаем, сохраняя переносы, — иначе объяснение
     // запрета в комментарии само срабатывало бы как запрет.
     const text = fs
-      .readFileSync(file, 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-      .replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length));
+      .readFileSync(file, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+      .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
     // Вторая форма той же слепой зоны, и она уже стоила прод-сборки
     // дважды. У `groupBy` в сгенерированном клиенте перегрузка, которая
     // при ожидаемом типе СЛЕВА выбирает не ту сигнатуру и требует от
@@ -807,9 +892,9 @@ function checkGuideSeams() {
     const ANNOTATED_GROUP_BY =
       /const\s+\w+\s*:[^=]*?=\s*(?:await\s+)?this\.prisma\.[A-Za-z0-9_.$]+\.groupBy\s*\(/g;
     for (const m of text.matchAll(ANNOTATED_GROUP_BY)) {
-      const line = text.slice(0, m.index).split('\n').length;
+      const line = text.slice(0, m.index).split("\n").length;
       annotatedGroupBy.push(
-        `${path.relative(ROOT, file).split(path.sep).join('/')}:${line}`,
+        `${path.relative(ROOT, file).split(path.sep).join("/")}:${line}`,
       );
     }
 
@@ -819,16 +904,17 @@ function checkGuideSeams() {
       let depth = 0;
       let i = m.index + m[0].length - 1;
       for (; i < text.length; i++) {
-        if (text[i] === '(') depth++;
-        else if (text[i] === ')' && --depth === 0) break;
+        if (text[i] === "(") depth++;
+        else if (text[i] === ")" && --depth === 0) break;
       }
       const body = text.slice(m.index, i + 1);
       const bad = body.match(WIDENING_CAST);
       if (bad) {
-        const line = text.slice(0, m.index + body.indexOf(bad[0])).split('\n')
-          .length;
+        const line = text
+          .slice(0, m.index + body.indexOf(bad[0]))
+          .split("\n").length;
         prismaCasts.push(
-          `${path.relative(ROOT, file).split(path.sep).join('/')}:${line}`,
+          `${path.relative(ROOT, file).split(path.sep).join("/")}:${line}`,
         );
       }
       calls.lastIndex = i;
@@ -836,7 +922,7 @@ function checkGuideSeams() {
   }
   if (annotatedGroupBy.length > 0) {
     problems.push(
-      `тип groupBy аннотацией слева: ${annotatedGroupBy.join(', ')} — ` +
+      `тип groupBy аннотацией слева: ${annotatedGroupBy.join(", ")} — ` +
         `перегрузка Prisma выберет не ту сигнатуру и потребует от ` +
         `аргумента быть массивом (prisma/prisma#17297); приведите тип ` +
         `СПРАВА, как в wizard-telemetry.service.ts`,
@@ -844,7 +930,7 @@ function checkGuideSeams() {
   }
   if (prismaCasts.length > 0) {
     problems.push(
-      `расширяющий каст в аргументе Prisma: ${prismaCasts.join(', ')} — ` +
+      `расширяющий каст в аргументе Prisma: ${prismaCasts.join(", ")} — ` +
         `песочница этого не видит (клиент заглушен), а сборка на Vercel ` +
         `падает; отдайте копию (\`[...CONST]\`), а не каст`,
     );
@@ -859,16 +945,16 @@ function checkGuideSeams() {
   //    держат две строки в `main.ts`. Снять их «для порядка» можно, не
   //    заметив, что ломаешь чужие интеграции: свои экраны читают ответ
   //    через один общий клиент и переживут, чужой код — нет.
-  const mainSource = read('backend/src/main.ts');
+  const mainSource = read("backend/src/main.ts");
   const V1_CONTRACT = [
-    ['useGlobalInterceptors(new ResponseInterceptor())', 'конверт успеха'],
-    ['useGlobalFilters(new HttpExceptionFilter())', 'конверт отказа'],
+    ["useGlobalInterceptors(new ResponseInterceptor())", "конверт успеха"],
+    ["useGlobalFilters(new HttpExceptionFilter())", "конверт отказа"],
   ];
   for (const [needle, what] of V1_CONTRACT) {
     if (!mainSource.includes(needle)) {
       problems.push(
         `внешний контракт /v1: в main.ts нет «${needle}» (${what}). ` +
-          'Форма ответа /v1 описана в doc/API.md и на неё опирается чужой код.',
+          "Форма ответа /v1 описана в doc/API.md и на неё опирается чужой код.",
       );
     }
   }
@@ -880,15 +966,15 @@ function checkGuideSeams() {
   //    для интегратора не существует; описанный и удалённый —
   //    существует и не работает. Второе хуже: про первый хотя бы никто
   //    не знает.
-  const v1Source = read('backend/src/modules/api-key/v1.controller.ts');
+  const v1Source = read("backend/src/modules/api-key/v1.controller.ts");
   const V1_ROUTE = /@(Get|Post|Patch|Delete)\('([^']*)'\)/g;
   const inCode = new Set();
   for (const m of v1Source.matchAll(V1_ROUTE)) {
     // `:jobId` в Nest — это `{jobId}` в OpenAPI.
-    const path = m[2].replace(/:([A-Za-z0-9_]+)/g, '{$1}');
+    const path = m[2].replace(/:([A-Za-z0-9_]+)/g, "{$1}");
     inCode.add(`${m[1].toLowerCase()} /v1/${path}`);
   }
-  const spec = JSON.parse(read('doc/openapi-v1.json'));
+  const spec = JSON.parse(read("doc/openapi-v1.json"));
   const inSpec = new Set();
   for (const [path, methods] of Object.entries(spec.paths ?? {})) {
     for (const method of Object.keys(methods)) {
@@ -897,12 +983,16 @@ function checkGuideSeams() {
   }
   for (const route of inCode) {
     if (!inSpec.has(route)) {
-      problems.push(`внешнее API: маршрут ${route} есть в коде, но не описан в doc/openapi-v1.json`);
+      problems.push(
+        `внешнее API: маршрут ${route} есть в коде, но не описан в doc/openapi-v1.json`,
+      );
     }
   }
   for (const route of inSpec) {
     if (!inCode.has(route)) {
-      problems.push(`внешнее API: ${route} описан в doc/openapi-v1.json, но такого маршрута нет`);
+      problems.push(
+        `внешнее API: ${route} описан в doc/openapi-v1.json, но такого маршрута нет`,
+      );
     }
   }
 
@@ -916,15 +1006,15 @@ function checkGuideSeams() {
   //     библиотеке не бывало вовсе, пока кто-то не заметил. Комментарий
   //     об этом в коде стоит с этапа 39 и не помешал наступить туда же
   //     на этапе 149; шов надёжнее предупреждения.
-  const sessionTypes = read('backend/src/common/types/session.types.ts');
+  const sessionTypes = read("backend/src/common/types/session.types.ts");
   // До ЗАКРЫВАЮЩЕЙ скобки интерфейса, а не до конца файла: иначе
   // объявление, дописанное после `Session`, попадало бы в разбор и
   // роняло проверку на пустом месте (аудит этапа 149, А-4).
-  const sessionStart = sessionTypes.indexOf('export interface Session');
-  const sessionEnd = sessionTypes.indexOf('\n}', sessionStart);
+  const sessionStart = sessionTypes.indexOf("export interface Session");
+  const sessionEnd = sessionTypes.indexOf("\n}", sessionStart);
   if (sessionStart < 0 || sessionEnd < 0) {
     problems.push(
-      'session.types.ts: не нашёлся `export interface Session` — шов на DATA_KEYS проверять нечем',
+      "session.types.ts: не нашёлся `export interface Session` — шов на DATA_KEYS проверять нечем",
     );
   }
   const sessionBody = sessionTypes.slice(sessionStart, sessionEnd);
@@ -937,31 +1027,33 @@ function checkGuideSeams() {
   // Настоящие колонки таблицы и служебные замки — они не в JSON и через
   // `updateSession` не пишутся.
   const REAL_COLUMNS = new Set([
-    'sessionId',
-    'status',
-    'createdAt',
-    'lastActivityAt',
-    'deletedAt',
-    'generationStatus',
-    'userId',
-    'projectId',
-    'productItemId',
-    'workLocks',
+    "sessionId",
+    "status",
+    "createdAt",
+    "lastActivityAt",
+    "deletedAt",
+    "generationStatus",
+    "userId",
+    "projectId",
+    "productItemId",
+    "workLocks",
   ]);
-  const dataKeysSource = read('backend/src/common/session.service.ts');
+  const dataKeysSource = read("backend/src/common/session.service.ts");
   const keysBlock = dataKeysSource.slice(
-    dataKeysSource.indexOf('export const DATA_KEYS'),
+    dataKeysSource.indexOf("export const DATA_KEYS"),
   );
   const listed = new Set(
-    [...keysBlock.slice(0, keysBlock.indexOf('] as const')).matchAll(/'([^']+)'/g)].map(
-      (m) => m[1],
-    ),
+    [
+      ...keysBlock
+        .slice(0, keysBlock.indexOf("] as const"))
+        .matchAll(/'([^']+)'/g),
+    ].map((m) => m[1]),
   );
   for (const field of declared) {
     if (REAL_COLUMNS.has(field) || listed.has(field)) continue;
     problems.push(
       `поле сессии «${field}» объявлено в session.types.ts, но его нет в DATA_KEYS — ` +
-        'запись через updateSession пройдёт без ошибки и ничего не сохранит',
+        "запись через updateSession пройдёт без ошибки и ничего не сохранит",
     );
   }
   for (const key of listed) {
@@ -991,8 +1083,8 @@ function checkGuideSeams() {
   const MODULE_LOCAL_IMPORT =
     /import \{([^}]*)\} from '(\.\/[^']*\.(?:service|worker|guard|controller))'/g;
   let modulesChecked = 0;
-  const moduleFiles = walk(path.join(ROOT, 'backend/src')).filter((f) =>
-    f.endsWith('.module.ts'),
+  const moduleFiles = walk(path.join(ROOT, "backend/src")).filter((f) =>
+    f.endsWith(".module.ts"),
   );
   for (const full of moduleFiles) {
     const file = path.relative(ROOT, full);
@@ -1002,11 +1094,14 @@ function checkGuideSeams() {
     modulesChecked++;
     const body = decorator[1];
     for (const m of src.matchAll(MODULE_LOCAL_IMPORT)) {
-      for (const name of m[1].split(',').map((x) => x.trim()).filter(Boolean)) {
+      for (const name of m[1]
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean)) {
         if (new RegExp(`\\b${name}\\b`).test(body)) continue;
         problems.push(
           `${file}: «${name}» импортирован из ${m[2]}, но не упомянут в @Module — ` +
-            'если его кто-то внедряет, приложение не поднимется',
+            "если его кто-то внедряет, приложение не поднимется",
         );
       }
     }
@@ -1030,38 +1125,38 @@ function checkGuideSeams() {
   //     нём от пользователя.
   const SCENE_SOURCE_READERS = new Map([
     [
-      'backend/src/common/scene-source.ts',
-      'сам источник сцены — здесь решение и принимается',
+      "backend/src/common/scene-source.ts",
+      "сам источник сцены — здесь решение и принимается",
     ],
     [
-      'backend/src/common/wizard-readiness.session.ts',
-      'перевод сессии в готовность; приём закрывает тот же пункт',
+      "backend/src/common/wizard-readiness.session.ts",
+      "перевод сессии в готовность; приём закрывает тот же пункт",
     ],
     [
-      'backend/src/modules/prompt/prompt.service.ts',
-      'барьер A/B: разбор, который ИДЁТ, для вариантов не годится',
+      "backend/src/modules/prompt/prompt.service.ts",
+      "барьер A/B: разбор, который ИДЁТ, для вариантов не годится",
     ],
     [
-      'backend/src/modules/ab-test/ab-test.service.ts',
-      'источник прогона: разбор из библиотеки либо приём',
+      "backend/src/modules/ab-test/ab-test.service.ts",
+      "источник прогона: разбор из библиотеки либо приём",
     ],
     [
-      'backend/src/modules/wizard-guide/wizard-hint.service.ts',
-      'факты советника: «откуда сцена» он обязан знать верно',
+      "backend/src/modules/wizard-guide/wizard-hint.service.ts",
+      "факты советника: «откуда сцена» он обязан знать верно",
     ],
   ]);
   const SCENE_SOURCE_GATE =
     /(!\w+\.videoAnalysis\b|videoAnalysis\?\.status|videoAnalysis\.status)/;
   const sceneReaders = [];
-  for (const full of walk(path.join(ROOT, 'backend/src'))) {
-    if (!full.endsWith('.ts') || full.endsWith('.spec.ts')) continue;
+  for (const full of walk(path.join(ROOT, "backend/src"))) {
+    if (!full.endsWith(".ts") || full.endsWith(".spec.ts")) continue;
     const file = path.relative(ROOT, full);
     // Модуль разбора — его собственное хозяйство; типы и каталог
     // приёмов упоминают поле только в доккомментариях.
     if (
-      file.startsWith('backend/src/modules/analysis/') ||
-      file.startsWith('backend/src/common/types/') ||
-      file === 'backend/src/common/scene-templates.ts'
+      file.startsWith("backend/src/modules/analysis/") ||
+      file.startsWith("backend/src/common/types/") ||
+      file === "backend/src/common/scene-templates.ts"
     ) {
       continue;
     }
@@ -1070,21 +1165,23 @@ function checkGuideSeams() {
     // попади он в список, тот перестал бы означать «места, которые
     // решают».
     const src = read(file)
-      .split('\n')
+      .split("\n")
       .filter((l) => {
         const t = l.trim();
-        return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/**');
+        return (
+          !t.startsWith("*") && !t.startsWith("//") && !t.startsWith("/**")
+        );
       })
-      .join('\n');
+      .join("\n");
     if (SCENE_SOURCE_GATE.test(src)) sceneReaders.push(file);
   }
   for (const file of sceneReaders) {
     if (!SCENE_SOURCE_READERS.has(file)) {
       problems.push(
         `${file} решает по \`videoAnalysis\`, но не перечислен среди мест, ` +
-          'знающих про приёмы сцены — добавьте его в SCENE_SOURCE_READERS ' +
-          'в scripts/check-docs.mjs, ответив себе, что этот код делает у ' +
-          'сессии на приёме',
+          "знающих про приёмы сцены — добавьте его в SCENE_SOURCE_READERS " +
+          "в scripts/check-docs.mjs, ответив себе, что этот код делает у " +
+          "сессии на приёме",
       );
     }
   }
@@ -1110,18 +1207,21 @@ function checkGuideSeams() {
     );
     if (!block) return null;
     return [...block[0].matchAll(/part\(([^)]*)\)/g)].map((m) =>
-      m[1].replace(/input\./g, '').replace(/\s+/g, ' ').trim(),
+      m[1]
+        .replace(/input\./g, "")
+        .replace(/\s+/g, " ")
+        .trim(),
     );
   };
   const envKeySides = [
-    'frontend/src/lib/environment.ts',
-    'backend/src/common/environment.ts',
+    "frontend/src/lib/environment.ts",
+    "backend/src/common/environment.ts",
   ].map((file) => ({ file, parts: envKeyParts(file) }));
   for (const side of envKeySides) {
     if (!side.parts?.length) {
       problems.push(
         `${side.file}: не нашёлся \`export function envKey\` с \`.join(':')\` ` +
-          '— шов на состав ключа группировки проверять нечем',
+          "— шов на состав ключа группировки проверять нечем",
       );
     }
   }
@@ -1129,12 +1229,12 @@ function checkGuideSeams() {
   let envKeyLen = 0;
   if (envFront.parts?.length && envBack.parts?.length) {
     envKeyLen = envFront.parts.length;
-    if (envFront.parts.join(' | ') !== envBack.parts.join(' | ')) {
+    if (envFront.parts.join(" | ") !== envBack.parts.join(" | ")) {
       problems.push(
-        'состав ключа группировки находок разошёлся: ' +
-          `клиент [${envFront.parts.join(', ')}] ≠ ` +
-          `сервер [${envBack.parts.join(', ')}] — группы тикетов ` +
-          'рассыплются молча, поправьте обе копии разом',
+        "состав ключа группировки находок разошёлся: " +
+          `клиент [${envFront.parts.join(", ")}] ≠ ` +
+          `сервер [${envBack.parts.join(", ")}] — группы тикетов ` +
+          "рассыплются молча, поправьте обе копии разом",
       );
     }
   }
@@ -1155,15 +1255,18 @@ function checkGuideSeams() {
     );
   };
   const frontFields = new Set([
-    ...(envFields('frontend/src/lib/environment.ts', 'RawEnvironment') ?? []),
-    ...(envFields('frontend/src/lib/environment.ts', 'Environment') ?? []),
+    ...(envFields("frontend/src/lib/environment.ts", "RawEnvironment") ?? []),
+    ...(envFields("frontend/src/lib/environment.ts", "Environment") ?? []),
   ]);
-  const backFields = envFields('backend/src/common/environment.ts', 'Environment');
+  const backFields = envFields(
+    "backend/src/common/environment.ts",
+    "Environment",
+  );
   let envFieldCount = 0;
   if (!frontFields.size || !backFields?.size) {
     problems.push(
-      'не нашлись интерфейсы окружения (`RawEnvironment`/`Environment`) ' +
-        '— шов на состав снимка проверять нечем',
+      "не нашлись интерфейсы окружения (`RawEnvironment`/`Environment`) " +
+        "— шов на состав снимка проверять нечем",
     );
   } else {
     envFieldCount = backFields.size;
@@ -1171,8 +1274,8 @@ function checkGuideSeams() {
     if (missing.length) {
       problems.push(
         `сервер разбирает поля окружения, которых клиент не шлёт: ` +
-          `${missing.join(', ')} — снимок приедет наполовину пустым, ` +
-          'и сказано об этом нигде не будет',
+          `${missing.join(", ")} — снимок приедет наполовину пустым, ` +
+          "и сказано об этом нигде не будет",
       );
     }
   }
@@ -1194,14 +1297,14 @@ function checkGuideSeams() {
   //     НОВОЕ место, которое начало писать тестировщику и про тикет не
   //     знает; именно так эта связь и рвётся.
   const REPLY_SENDERS = new Set([
-    'backend/src/modules/telegram-bot/tester-tickets.service.ts',
+    "backend/src/modules/telegram-bot/tester-tickets.service.ts",
     // Этап 158: ответ оператора из админки. Шов поймал этот файл сам,
     // ровно в том виде, ради которого заводился — новое место, которое
     // начало писать тестировщику.
-    'backend/src/modules/admin-panel/admin-test-tickets.service.ts',
+    "backend/src/modules/admin-panel/admin-test-tickets.service.ts",
   ]);
-  const callers = walk(path.join(ROOT, 'backend/src'))
-    .filter((f) => !f.endsWith('.spec.ts'))
+  const callers = walk(path.join(ROOT, "backend/src"))
+    .filter((f) => !f.endsWith(".spec.ts"))
     .map((f) => path.relative(ROOT, f))
     // Точка обязательна: так находятся ВЫЗОВЫ, а не объявление метода
     // в самом `telegram-notify.service.ts`.
@@ -1210,14 +1313,14 @@ function checkGuideSeams() {
     if (!REPLY_SENDERS.has(file)) {
       problems.push(
         `${file} шлёт сообщение тестировщику через \`dmWithId\`, но не ` +
-          'перечислен среди мест, записывающих `botMessageIds` — добавьте ' +
-          'его в REPLY_SENDERS в scripts/check-docs.mjs, ответив себе, ' +
-          'найдёт ли ответ на это сообщение свой тикет',
+          "перечислен среди мест, записывающих `botMessageIds` — добавьте " +
+          "его в REPLY_SENDERS в scripts/check-docs.mjs, ответив себе, " +
+          "найдёт ли ответ на это сообщение свой тикет",
       );
     } else if (!/botMessageIds/.test(read(file))) {
       problems.push(
         `${file} зовёт \`dmWithId\`, но \`botMessageIds\` не пишет — ответ ` +
-          'тестировщика на это сообщение ляжет в очередь новой находкой',
+          "тестировщика на это сообщение ляжет в очередь новой находкой",
       );
     }
   }
@@ -1225,7 +1328,7 @@ function checkGuideSeams() {
     if (!callers.includes(file)) {
       problems.push(
         `${file} перечислен среди шлющих тестировщику, но \`dmWithId\` ` +
-          'больше не зовёт',
+          "больше не зовёт",
       );
     }
   }
@@ -1248,32 +1351,31 @@ function checkGuideSeams() {
   //     несвязанными) и сверяет множества имён в обе стороны. Отставание
   //     копии он ловит сразу; удалённый во фронтенде маршрут, оставшийся
   //     в копии, — тоже.
-  const routerSrc = read('frontend/src/lib/router.ts');
+  const routerSrc = read("frontend/src/lib/router.ts");
   const builderSrc = read(
-    'backend/src/modules/tutorial-runner/route-templates.ts',
+    "backend/src/modules/tutorial-runner/route-templates.ts",
   );
   const frontRoutes = new Set(
     [...routerSrc.matchAll(/\{\s*name:\s*'([a-z-]+)'/g)].map((m) => m[1]),
   );
   const buildersBlock =
-    builderSrc.match(
-      /const ROUTE_BUILDERS[^=]*=\s*\{([\s\S]*?)\n\};/,
-    )?.[1] ?? '';
+    builderSrc.match(/const ROUTE_BUILDERS[^=]*=\s*\{([\s\S]*?)\n\};/)?.[1] ??
+    "";
   const backRoutes = new Set(
     [...buildersBlock.matchAll(/^ {2}'?([a-z-]+)'?:/gm)].map((m) => m[1]),
   );
   if (frontRoutes.size === 0 || backRoutes.size === 0) {
     problems.push(
-      'не удалось разобрать таблицы маршрутов — проверьте регулярки шва 15 ' +
-        'в scripts/check-docs.mjs (сам шов сломан, а не код)',
+      "не удалось разобрать таблицы маршрутов — проверьте регулярки шва 15 " +
+        "в scripts/check-docs.mjs (сам шов сломан, а не код)",
     );
   }
   for (const name of frontRoutes) {
     if (!backRoutes.has(name)) {
       problems.push(
         `маршрут «${name}» есть во frontend/src/lib/router.ts, но копия в ` +
-          'backend/.../tutorial-runner/route-templates.ts о нём не знает — ' +
-          'резолвер сценариев ответит «не найдено» на существующий экран',
+          "backend/.../tutorial-runner/route-templates.ts о нём не знает — " +
+          "резолвер сценариев ответит «не найдено» на существующий экран",
       );
     }
   }
@@ -1281,8 +1383,8 @@ function checkGuideSeams() {
     if (!frontRoutes.has(name)) {
       problems.push(
         `маршрут «${name}» перечислен в route-templates.ts, но во ` +
-          'frontend/src/lib/router.ts такого имени нет — копия отстала в ' +
-          'другую сторону',
+          "frontend/src/lib/router.ts такого имени нет — копия отстала в " +
+          "другую сторону",
       );
     }
   }
@@ -1297,21 +1399,21 @@ function checkGuideSeams() {
   //
   //     Генератор пишет отпечаток строк рядом с собой; шов пересчитывает
   //     его из словарей и сверяет. Разошлось — перезапустить генератор.
-  const lockPath = 'scripts/assets/og-tutorial-cards.lock.json';
+  const lockPath = "scripts/assets/og-tutorial-cards.lock.json";
   const ogLock = JSON.parse(read(lockPath));
   let ogChecked = 0;
-  for (const locale of ['ru', 'uk', 'en', 'de', 'es']) {
+  for (const locale of ["ru", "uk", "en", "de", "es"]) {
     const hero = JSON.parse(read(`landing/src/dictionaries/${locale}.json`))
       .siteTutorialLanding.hero;
-    const actual = createHash('sha256')
+    const actual = createHash("sha256")
       .update(`${hero.title}\n${hero.badge}`)
-      .digest('hex')
+      .digest("hex")
       .slice(0, 16);
     if (ogLock[locale] !== actual) {
       problems.push(
         `OG-карточка tutorial-${locale}.jpg нарисована по старому тексту ` +
-          'первого экрана — перезапустите `node scripts/og-tutorial-cards.mjs` ' +
-          'и закоммитьте картинки вместе с ' +
+          "первого экрана — перезапустите `node scripts/og-tutorial-cards.mjs` " +
+          "и закоммитьте картинки вместе с " +
           lockPath,
       );
     }
@@ -1330,11 +1432,15 @@ function checkGuideSeams() {
   //     грузом, страница по-прежнему показывает схемы).
   //
   //     Текстовую сторону проверяет `landing/scripts/tutorial-frames.test.ts`.
-  const framesSrc = read('landing/src/lib/tutorial-frames.ts');
+  const framesSrc = read("landing/src/lib/tutorial-frames.ts");
   const shotLocales = new Set(
-    (framesSrc.match(/REAL_FRAME_LOCALES: readonly Locale\[\] = \[([^\]]*)\]/)?.[1] ?? '')
-      .split(',')
-      .map((x) => x.trim().replace(/^'|'$/g, ''))
+    (
+      framesSrc.match(
+        /REAL_FRAME_LOCALES: readonly Locale\[\] = \[([^\]]*)\]/,
+      )?.[1] ?? ""
+    )
+      .split(",")
+      .map((x) => x.trim().replace(/^'|'$/g, ""))
       .filter(Boolean),
   );
   if (!/REAL_FRAME_LOCALES: readonly Locale\[\] = \[/.test(framesSrc)) {
@@ -1342,8 +1448,8 @@ function checkGuideSeams() {
     // Без этой проверки переименованная константа означала бы «локалей
     // не объявлено», и при отсутствии файлов всё выглядело бы зелёным.
     problems.push(
-      'не удалось разобрать REAL_FRAME_LOCALES в landing/src/lib/tutorial-frames.ts ' +
-        '— поправьте регулярку шва 17 в scripts/check-docs.mjs (сломан шов, а не код)',
+      "не удалось разобрать REAL_FRAME_LOCALES в landing/src/lib/tutorial-frames.ts " +
+        "— поправьте регулярку шва 17 в scripts/check-docs.mjs (сломан шов, а не код)",
     );
   }
 
@@ -1351,23 +1457,23 @@ function checkGuideSeams() {
   // `.frame-card-shot .frame-shot`) и в TS (`SHOT_CSS_WIDTH`, из него
   // строится `sizes`). Разойдутся — `sizes` начнёт врать браузеру, и
   // он будет брать картинку крупнее нужного. Ровно это аудит и поймал.
-  const cssCap = read('landing/src/app/globals.css').match(
+  const cssCap = read("landing/src/app/globals.css").match(
     /\.frame-card-shot \.frame-shot \{[^}]*max-width:\s*(\d+)px/,
   )?.[1];
   const tsCap = framesSrc.match(/SHOT_CSS_WIDTH = (\d+)/)?.[1];
   if (!cssCap || !tsCap) {
     problems.push(
-      'не нашли потолок ширины снимка в CSS или в tutorial-frames.ts — ' +
-        'поправьте регулярки шва 17',
+      "не нашли потолок ширины снимка в CSS или в tutorial-frames.ts — " +
+        "поправьте регулярки шва 17",
     );
   } else if (cssCap !== tsCap) {
     problems.push(
       `потолок ширины снимка разошёлся: CSS ${cssCap}px, SHOT_CSS_WIDTH ${tsCap}px — ` +
-        '`sizes` наврёт браузеру, и он возьмёт вариант не того размера',
+        "`sizes` наврёт браузеру, и он возьмёт вариант не того размера",
     );
   }
 
-  const shotDir = 'landing/public/illustrations';
+  const shotDir = "landing/public/illustrations";
   // Номера — ровно 1..4, а не любая цифра. Прежняя регулярка (`\d`)
   // принимала `-0` и `-5`: набор `ru-0..ru-3` давал счёт 4, шов
   // проходил, а страница просила `-4` и получала 404 на проде
@@ -1386,13 +1492,13 @@ function checkGuideSeams() {
   for (const file of strayShots) {
     problems.push(
       `${shotDir}/${file}: имя не похоже на кадр мастера — ожидается ` +
-        'tutorial-shot-<локаль>-<1..4>.avif; страница такой файл не ищет',
+        "tutorial-shot-<локаль>-<1..4>.avif; страница такой файл не ищет",
     );
   }
   const SHOT_MAX_BYTES = 120 * 1024;
   const onDisk = new Map();
   for (const file of shotFiles) {
-    const locale = file.split('-')[2];
+    const locale = file.split("-")[2];
     onDisk.set(locale, (onDisk.get(locale) ?? 0) + 1);
 
     const bytes = fs.statSync(path.join(ROOT, shotDir, file)).size;
@@ -1411,7 +1517,7 @@ function checkGuideSeams() {
     if (have !== 4) {
       problems.push(
         `локаль «${locale}» объявлена в REAL_FRAME_LOCALES, но кадров на диске ${have} из 4 — ` +
-          'страница пообещает настоящие кадры и отдаст 404',
+          "страница пообещает настоящие кадры и отдаст 404",
       );
     }
   }
@@ -1419,7 +1525,7 @@ function checkGuideSeams() {
     if (!shotLocales.has(locale)) {
       problems.push(
         `в ${shotDir} лежат кадры локали «${locale}» (${count} шт.), но её нет в ` +
-          'REAL_FRAME_LOCALES — страница их не показывает',
+          "REAL_FRAME_LOCALES — страница их не показывает",
       );
     }
   }
@@ -1439,8 +1545,8 @@ function checkGuideSeams() {
   // Писателей ищем САМИ, а не по списку в этой строке: третий
   // писатель появится на этапе B (озвучка) и на этапе G (`xfade`), и
   // захардкоженный список молча пропустил бы его мимо шва.
-  const assetWriters = walk(path.join(ROOT, 'backend/src'))
-    .filter((f) => f.endsWith('.ts') && !f.endsWith('.spec.ts'))
+  const assetWriters = walk(path.join(ROOT, "backend/src"))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".spec.ts"))
     .map((f) => path.relative(ROOT, f))
     .map((rel) => ({ rel, code: stripComments(read(rel)) }))
     .filter(({ code }) =>
@@ -1453,14 +1559,14 @@ function checkGuideSeams() {
     // однострочную форму с хвостовой запятой — и `durationMs,` через
     // локальную переменную, и перенос строки проносили самодельную
     // формулу мимо (находка аудита этапа A).
-    for (const line of code.split('\n')) {
+    for (const line of code.split("\n")) {
       if (!/\bdurationMs\b/.test(line)) continue;
       durationWrites++;
-      if (line.trim() !== 'durationMs: plan.durationMs,') {
+      if (line.trim() !== "durationMs: plan.durationMs,") {
         problems.push(
           `${rel}: «${line.trim()}» — длительность пишется не как ` +
-            'plan.durationMs; вторая формула расходится с командой молча ' +
-            '(этап A)',
+            "plan.durationMs; вторая формула расходится с командой молча " +
+            "(этап A)",
         );
       }
     }
@@ -1475,7 +1581,7 @@ function checkGuideSeams() {
     problems.push(
       `длительность ролика обучалки пишут ${durationWrites} мест из ` +
         `${DURATION_WRITES_EXPECTED} — запись пропала, и «Длительность — ` +
-        'около N с» исчезнет с экрана мастера (этап A)',
+        "около N с» исчезнет с экрана мастера (этап A)",
     );
   }
   // ── Статусы сборки: админка знает ровно те строки, что пишет
@@ -1490,8 +1596,8 @@ function checkGuideSeams() {
   // жёлтым бейджем с сырым английским словом. Ни типы, ни тесты
   // такого не ловят: обе стороны внутри себя последовательны.
   const backendStatuses = new Set(
-    [...walk(path.join(ROOT, 'backend/src'))]
-      .filter((f) => f.endsWith('.ts') && !f.endsWith('.spec.ts'))
+    [...walk(path.join(ROOT, "backend/src"))]
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".spec.ts"))
       .flatMap((f) => [
         ...stripComments(read(path.relative(ROOT, f))).matchAll(
           /assemblyStatus: '([a-z]+)'/g,
@@ -1499,57 +1605,413 @@ function checkGuideSeams() {
       ])
       .map((m) => m[1]),
   );
-  const adminStatusDecl = /export type TutorialVideoAssemblyStatus =\s*([^;]+);/.exec(
-    stripComments(read('admin/src/lib/types.ts')),
-  );
+  const adminStatusDecl =
+    /export type TutorialVideoAssemblyStatus =\s*([^;]+);/.exec(
+      stripComments(read("admin/src/lib/types.ts")),
+    );
   if (!adminStatusDecl) {
     problems.push(
-      'admin/src/lib/types.ts: не нашёл объявление TutorialVideoAssemblyStatus — ' +
-        'шов сверки статусов сборки ослеп, поправьте регулярку вместе с типом',
+      "admin/src/lib/types.ts: не нашёл объявление TutorialVideoAssemblyStatus — " +
+        "шов сверки статусов сборки ослеп, поправьте регулярку вместе с типом",
     );
   } else {
     const adminStatuses = new Set(
       [...adminStatusDecl[1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]),
     );
-    const onlyBackend = [...backendStatuses].filter((v) => !adminStatuses.has(v));
+    // Схему сверяем тоже: доккомментарий `assemblyStatus` перечислял
+    // три значения из четырёх и не знал про `preparing` — шов ловил
+    // расхождение бэкенда с админкой и не смотрел туда, откуда оба
+    // берут смысл (находка сквозного аудита A+B+C).
+    const schemaStatusDoc =
+      /Состояние асинхронной сборки[\s\S]*?'failed'/.exec(
+        read("backend/prisma/schema.prisma"),
+      )?.[0] ?? "";
+    for (const value of backendStatuses) {
+      if (!schemaStatusDoc.includes(`'${value}'`)) {
+        problems.push(
+          `schema.prisma: статус сборки «${value}» бэкенд пишет, а доккомментарий ` +
+            "assemblyStatus о нём молчит",
+        );
+      }
+    }
+    const onlyBackend = [...backendStatuses].filter(
+      (v) => !adminStatuses.has(v),
+    );
     const onlyAdmin = [...adminStatuses].filter((v) => !backendStatuses.has(v));
     if (onlyBackend.length > 0) {
       problems.push(
-        `статусы сборки ${onlyBackend.map((v) => `«${v}»`).join(', ')} бэкенд пишет, ` +
-          'а админка о них не знает — оператор увидит сырое английское слово',
+        `статусы сборки ${onlyBackend.map((v) => `«${v}»`).join(", ")} бэкенд пишет, ` +
+          "а админка о них не знает — оператор увидит сырое английское слово",
       );
     }
     if (onlyAdmin.length > 0) {
       problems.push(
-        `статусы сборки ${onlyAdmin.map((v) => `«${v}»`).join(', ')} админка объявляет, ` +
-          'а бэкенд их не пишет — мёртвая ветка в подписи и в цвете бейджа',
+        `статусы сборки ${onlyAdmin.map((v) => `«${v}»`).join(", ")} админка объявляет, ` +
+          "а бэкенд их не пишет — мёртвая ветка в подписи и в цвете бейджа",
+      );
+    }
+  }
+
+  // ── Транзитные файлы обучалки живут под ОДНИМ убираемым
+  //    префиксом ───────────────────────────────────────────────────
+  //
+  // Кадры, mp3 озвучки (этап B) и `.ass`-подписи (этап E) — всё это
+  // временные входы для внешнего ffmpeg-api, которые надо убрать
+  // после сборки. Подметальщик ТРАНЗИТОВ в проекте ровно один и
+  // метёт ОДИН префикс — `scenarioFramePrefix(assetId)` (§4.3 ТЗ
+  // `docs-tz/TZ-Tutorial-Video-Voiced.md`). Файл, залитый мимо него,
+  // не убирает никто и никогда: это не ошибка, которая где-то
+  // всплывёт, а счёт за хранение, растущий тихо.
+  //
+  // Исключение одно и осознанное: готовое видео (`tutorial-videos/`)
+  // — оно не транзит, а результат, и живёт до удаления актива. Его
+  // убирает второй подметальщик, `sweepOldAssets`, и по другому
+  // правилу: не «после сборки», а «когда роль этой строки в паре
+  // (шаг, локаль) заняла более свежая».
+  //
+  // Второе исключение — кеш озвучки (`voiceoverCachePathname`): он
+  // ОБЯЗАН пережить сборку, иначе следующей ночью за ту же фразу
+  // заплатят заново. Ямы он не заводит: вытесняет себя сам, под
+  // ключом (локаль, шаг) всегда ровно один файл.
+  const ALLOWED_UPLOAD_PREFIXES = [
+    "scenarioFramePrefix(",
+    "tutorial-videos/",
+    "voiceoverCachePathname(",
+  ];
+  // Число заливок проверяется, а не только печатается. Обход шва
+  // тривиален — положить `uploadBuffer` в переменную, — и тогда
+  // счётчик просто уменьшится, а вердикт останется `ok`. Ровно эту
+  // дыру аудит этапа A закрыл у соседнего шва, а здесь она появилась
+  // заново (найдено аудитом этапа B).
+  const TRANSIT_UPLOADS_EXPECTED = 3;
+  let transitUploads = 0;
+  for (const file of walk(
+    path.join(ROOT, "backend/src/modules/tutorial-runner"),
+  )) {
+    if (!file.endsWith(".ts") || file.endsWith(".spec.ts")) continue;
+    const rel = path.relative(ROOT, file);
+    const code = stripComments(read(rel));
+    for (const m of code.matchAll(/uploadBuffer\(\s*([^,]+),/g)) {
+      const target = m[1].trim();
+      transitUploads++;
+      if (ALLOWED_UPLOAD_PREFIXES.some((p) => target.includes(p))) continue;
+      problems.push(
+        `${rel}: uploadBuffer(${target}) льёт мимо префикса актива — ` +
+          "уборка идёт только по нему, файл останется в Blob навсегда (§4.3 ТЗ)",
+      );
+    }
+  }
+
+  if (transitUploads !== TRANSIT_UPLOADS_EXPECTED) {
+    problems.push(
+      `заливок в обучалке ${transitUploads}, а шов сторожит ` +
+        `${TRANSIT_UPLOADS_EXPECTED}: заливку либо добавили, либо увели от шва ` +
+        "(например, положив uploadBuffer в переменную) — проверьте, под каким " +
+        "префиксом она пишет, и поправьте число здесь",
+    );
+  }
+
+  // ── Готовое видео обучалки: один префикс на три места ────────────
+  //
+  // Файл заливается под `tutorial-videos/{subjectKey}/{id}.mp4`
+  // (`tutorial-scenario-runner.service.ts`), а читают этот путь ОБРАТНО
+  // из `blobUrl` двое, и оба через `pathnameFromBlobUrl(url,
+  // 'tutorial-videos/')`:
+  //
+  //  - публикация (`publication.service.ts`) — заявка ссылается прямо
+  //    на этот mp4, своей копии она намеренно не делает;
+  //  - подметальщик устаревших роликов (`sweepOldAssets`) — по этому
+  //    же пути он файл и удаляет.
+  //
+  // Разъехавшись, они молчат по-разному и оба скверно: публикация
+  // начнёт отказывать с «не под ожидаемым префиксом», а подметальщик
+  // просто перестанет находить путь — и удалит СТРОКУ, оставив файл
+  // в Blob навсегда, то есть ровно ту яму, ради которой заводился.
+  // Ни один тест этого не поймает: каждый из трёх модулей проверяется
+  // своим набором, а строка литерала в каждом своя.
+  const VIDEO_PREFIX_SITES = [
+    [
+      "backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts",
+      2,
+    ],
+    ["backend/src/modules/publication/publication.service.ts", 1],
+  ];
+  let videoPrefixUses = 0;
+  for (const [rel, expected] of VIDEO_PREFIX_SITES) {
+    const code = stripComments(read(rel));
+    const found = [...code.matchAll(/['"`]tutorial-videos\//g)].length;
+    videoPrefixUses += found;
+    if (found !== expected) {
+      problems.push(
+        `${rel}: упоминаний префикса 'tutorial-videos/' ${found}, а шов ждёт ` +
+          `${expected} — либо префикс увели в переменную/переименовали, либо ` +
+          "появилось третье место; сверьте заливку, публикацию и подметальщика " +
+          "(иначе подметальщик удалит строку, а файл останется навсегда)",
+      );
+    }
+  }
+
+  // ── Уникальность пары и `upsert` держатся друг за друга ───────────
+  //
+  // Этап C ТЗ `docs-tz/TZ-Tutorial-Video-Voiced.md`. До него генератор
+  // делал `create` каждый суточный прогон: строки копились, а
+  // исполнитель брал их ВСЕ и снимал по ролику на каждую. Починка —
+  // из двух половин, и ни одна не работает без второй: `upsert` без
+  // ограничения продолжит плодить строки (и молча — никто не
+  // упадёт), а ограничение без `upsert` уронит генерацию на второй
+  // же ночи, целиком, на первом же шаге. Шов держит их вместе.
+  const SCHEMA_UNIQUE = /@@unique\(\[subjectKey, locale\]\)/;
+  const GENERATOR =
+    "backend/src/modules/tutorial-scenario/tutorial-scenario-generator.service.ts";
+  // `stripComments`, а не сырой текст: закомментированное
+  // `@@unique` — самый естественный способ временно снять
+  // ограничение в Prisma-схеме, и шов рапортовал бы «уникальна: да»
+  // (находка аудита этапа C; тот же класс, что аудит A чинил у
+  // соседнего шва).
+  const pairUnique = SCHEMA_UNIQUE.test(
+    stripComments(read("backend/prisma/schema.prisma")),
+  );
+  const generatorCode = stripComments(read(GENERATOR));
+  // Адресация по составному ключу — и есть «пишем по паре». Проверять
+  // именно `upsert()` было нельзя: после правки аудита этапа C
+  // генератор сперва читает строку (чтобы не затереть правку
+  // человека и не унаследовать одобрение), а пишет `create`/`update`
+  // — по тому же ключу, но другим вызовом.
+  const writesByPair = /subjectKey_locale/.test(generatorCode);
+  if (pairUnique && !writesByPair) {
+    problems.push(
+      `${GENERATOR}: ограничение на пару в схеме есть, а генератор не адресует ` +
+        "строки по subjectKey_locale — повторная генерация не обновит свою же " +
+        "строку, а упадёт на ограничении (этап C)",
+    );
+  }
+  if (!pairUnique && writesByPair) {
+    problems.push(
+      "schema.prisma: пропало @@unique([subjectKey, locale]), а генератор всё ещё " +
+        "адресует строки по этой паре — Prisma отвергнет такой where (этап C)",
+    );
+  }
+  // Обе половины сняты разом — это откат этапа C целиком, и молчать
+  // о нём нельзя: без ограничения и без записи по паре генератор
+  // снова начнёт плодить строки, а исполнитель — снимать по ролику
+  // на каждую (находка аудита этапа C: раньше шов такое пропускал и
+  // при этом печатал «уникальна… : нет» в УСПЕШНОЙ строке).
+  if (!pairUnique && !writesByPair) {
+    problems.push(
+      "пара (subjectKey, locale) больше не уникальна и не адресуется по ключу — " +
+        "это откат этапа C: строки снова начнут копиться, а исполнитель " +
+        "снимать по ролику на каждую",
+    );
+  }
+
+  // ── Ключи localStorage: бэкенд = фронтенд ────────────────────────
+  //
+  // Перед загрузкой SPA два прогона в headless-браузере подкладывают
+  // выбор человека — снимки мастера и сценарии обучалки. Ключи там
+  // КОПИЯ значений фронтенда (у бэкенда нет зависимости на его код,
+  // тот же довод, что у `SUPPORTED_LOCALES`), и опечатка в копии не
+  // ломает ничего заметного: страница откроется в умолчаниях, снимок
+  // подпишется не тем языком, а сценарий чужой локали упадёт на
+  // `assertText` «с виду непонятно почему». До правки аудита этапа C
+  // литерал был написан дважды руками и не проверялся ничем.
+  const SPA_KEYS = [
+    ["SPA_LOCALE_STORAGE_KEY", "frontend/src/lib/i18n.ts"],
+    ["SPA_THEME_STORAGE_KEY", "frontend/src/lib/theme.ts"],
+  ];
+  const backendKeys = stripComments(
+    read("backend/src/common/spa-storage-keys.ts"),
+  );
+  let spaKeysChecked = 0;
+  for (const [constName, frontFile] of SPA_KEYS) {
+    const back = new RegExp(`${constName} = '([^']+)'`).exec(backendKeys)?.[1];
+    const front = /STORAGE_KEY = '([^']+)'/.exec(
+      stripComments(read(frontFile)),
+    )?.[1];
+    if (!back || !front) {
+      problems.push(
+        `не нашёл ключ ${constName} в backend/src/common/spa-storage-keys.ts или ` +
+          `STORAGE_KEY в ${frontFile} — шов сверки ключей localStorage ослеп`,
+      );
+      continue;
+    }
+    spaKeysChecked++;
+    if (back !== front) {
+      problems.push(
+        `${constName} = «${back}», а ${frontFile} пишет «${front}» — прогон ` +
+          "подложит локаль/тему мимо продукта, и отказ будет тихим",
+      );
+    }
+  }
+  // Второй копии литерала быть не должно: константа одна на бэкенд.
+  for (const file of walk(path.join(ROOT, "backend/src"))) {
+    if (!file.endsWith(".ts") || file.endsWith(".spec.ts")) continue;
+    const rel = path.relative(ROOT, file);
+    if (rel === "backend/src/common/spa-storage-keys.ts") continue;
+    if (/'v4c_(locale|theme)'/.test(stripComments(read(rel)))) {
+      problems.push(
+        `${rel}: литерал ключа localStorage мимо spa-storage-keys.ts — ` +
+          "вторая копия разойдётся с фронтендом молча",
       );
     }
   }
 
   const ASSEMBLY_MODULE =
-    'backend/src/modules/tutorial-runner/tutorial-video-assembly.ts';
-  const secondsPerFrameUsers = walk(path.join(ROOT, 'backend/src'))
-    .filter((f) => f.endsWith('.ts') && !f.endsWith('.spec.ts'))
+    "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts";
+  const secondsPerFrameUsers = walk(path.join(ROOT, "backend/src"))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".spec.ts"))
     .map((f) => path.relative(ROOT, f))
     .filter((rel) => rel !== ASSEMBLY_MODULE)
-    .filter((rel) =>
-      /\bSECONDS_PER_FRAME\b/.test(stripComments(read(rel))),
-    );
+    .filter((rel) => /\bSECONDS_PER_FRAME\b/.test(stripComments(read(rel))));
   for (const rel of secondsPerFrameUsers) {
     problems.push(
       `${rel} использует SECONDS_PER_FRAME — длительность кадра знает только ` +
-        'модуль плана, остальные берут plan.durationMs (этап A)',
+        "модуль плана, остальные берут plan.durationMs (этап A)",
     );
+  }
+
+  // ── Три решения вокруг сценария не путаются ──────────────────────
+  //
+  // Их ровно три, и схема их старательно разводит: `approved` —
+  // «можно тратить деньги на платные шаги», `narrationReviewedAt` —
+  // «текст, который произнесёт диктор, человек прочитал»,
+  // `TutorialVideoAsset.reviewed` — «готовый ролик можно показывать
+  // людям». Писателей у второго должно быть ровно столько, сколько
+  // перечислено ниже, и каждый обязан ответить на вопрос «а не надо
+  // ли здесь ещё и снять отметку».
+  //
+  // Число, а не список имён: имя метода переживёт переименование, а
+  // счётчик — нет, и это правильно. Тот, кто заводит четвёртого
+  // писателя, обязан прийти сюда и объяснить себе, почему.
+  const NARRATION_REVIEW_WRITERS = new Map([
+    // Ставит и снимает отметку — сама кнопка в админке.
+    [
+      "backend/src/modules/tutorial-scenario/tutorial-scenario-admin.service.ts",
+      2,
+    ],
+    // Снимает при перезаписи шагов генератором (только когда шаги
+    // изменились: иначе крон снимал бы её каждую ночь).
+    [
+      "backend/src/modules/tutorial-scenario/tutorial-scenario-generator.service.ts",
+      1,
+    ],
+  ]);
+  let narrationReviewWrites = 0;
+  for (const file of walk(path.join(ROOT, "backend/src"))) {
+    if (!file.endsWith(".ts") || file.endsWith(".spec.ts")) continue;
+    const rel = path.relative(ROOT, file);
+    const code = stripComments(read(rel));
+    // По `narrationReviewedBy`, а НЕ по `...At`: второе встречается
+    // ещё и в `select`, и в приведении типа строки — это чтения, а
+    // шов считает записи. Имя автора отметки пишут только там, где её
+    // ставят или снимают.
+    const hits = [...code.matchAll(/narrationReviewedBy:/g)].length;
+    const expected = NARRATION_REVIEW_WRITERS.get(rel);
+    // Ноль пропускается только у файлов, которых шов и не ждал.
+    // У ожидаемого писателя ноль — это «перестал снимать отметку», и
+    // молчать об этом нельзя: первая редакция шва выходила из цикла
+    // раньше проверки и пропускала ровно такую правку.
+    if (hits === 0 && expected === undefined) continue;
+    narrationReviewWrites += hits;
+    if (expected === undefined) {
+      problems.push(
+        `${rel} пишет narrationReviewedBy, а шов о нём не знает — ` +
+          "решений вокруг сценария три (деньги, вычитка, показ), и новый " +
+          "писатель обязан сказать, какое из них он меняет",
+      );
+    } else if (hits !== expected) {
+      problems.push(
+        `${rel}: записей narrationReviewedBy ${hits}, шов ждёт ${expected} — ` +
+          "проверьте, снимается ли отметка там, где переписывается текст",
+      );
+    }
+  }
+
+  // ── Потолок длины реплики — одно число на валидатор и промпт ─────
+  //
+  // Разойдясь, они дают худший из возможных исходов и делают это
+  // молча: модель послушно пишет 240 символов, разбор их выкидывает,
+  // кадр остаётся немым, и никто ни на что не жалуется. Поэтому
+  // промпт обязан подставлять константу, а не печатать число.
+  const NARRATION_LIMIT_FILES = [
+    "backend/src/modules/tutorial-scenario/scenario-steps.ts",
+    "backend/src/modules/tutorial-scenario/tutorial-scenario-prompt.ts",
+  ];
+  for (const rel of NARRATION_LIMIT_FILES) {
+    const code = stripComments(read(rel));
+    if (!/\bMAX_NARRATION_LENGTH\b/.test(code)) {
+      problems.push(
+        `${rel} не ссылается на MAX_NARRATION_LENGTH — потолок длины реплики ` +
+          "обязан быть один на валидатор и промпт (§3-бис.2/§3-бис.3)",
+      );
+    }
+    if (/(?<![\w.])220(?![\w.])/.test(code)) {
+      problems.push(
+        `${rel} содержит число 220 — потолок реплики берётся из ` +
+          "MAX_NARRATION_LENGTH, иначе промпт и валидатор разойдутся молча",
+      );
+    }
+  }
+
+  // ── Реплики читаются по одному правилу на бэкенде и в админке ────
+  //
+  // Импортировать бэкендовый `narrationOf` админка не может, поэтому
+  // копия там неизбежна — но копия, которая разошлась, хуже
+  // отсутствия. Расходиться ей есть где: у `triggerPaidOperation`
+  // реплики не бывает (служебный маркер), и забыв про это, карточка
+  // показала бы оператору реплику, которой в ролике не прозвучит.
+  const NARRATION_READERS = [
+    [
+      "backend/src/modules/tutorial-scenario/scenario-steps.types.ts",
+      "narrationOf",
+    ],
+    ["admin/src/app/tutorial-scenarios/page.tsx", "narrationsOf"],
+  ];
+  for (const [rel, fnName] of NARRATION_READERS) {
+    const whole = stripComments(read(rel));
+    // Тело именно ЭТОЙ функции, а не весь файл: `.trim()` в файле
+    // найдётся всегда, и проверка «есть ли он где-нибудь» ничего не
+    // сторожит — первая редакция шва так и пропускала снятый trim.
+    const start = whole.indexOf(`function ${fnName}(`);
+    if (start < 0) {
+      problems.push(
+        `${rel}: не нашлась функция ${fnName} — шов на чтение реплики ` +
+          "проверять нечем (поправьте шов, а не код)",
+      );
+      continue;
+    }
+    // `{` В КОНЦЕ СТРОКИ — то есть открывающая тело, а не скобка
+    // возвращаемого типа (`: { stepNumber: number }[] {`). Первая
+    // редакция брала первую попавшуюся и разбирала как «тело» кусок
+    // типа — шов при этом ругался на исправный код.
+    const open = whole.indexOf("{\n", start);
+    let depth = 0;
+    let end = open;
+    for (; end < whole.length; end++) {
+      if (whole[end] === "{") depth++;
+      else if (whole[end] === "}" && --depth === 0) break;
+    }
+    const code = whole.slice(open, end + 1);
+    if (!code.includes("triggerPaidOperation")) {
+      problems.push(
+        `${rel}: чтение реплики не отводит triggerPaidOperation — у него ` +
+          "реплики не бывает, а кадр есть (§3-бис.2)",
+      );
+    }
+    if (!/\.trim\(\)/.test(code)) {
+      problems.push(
+        `${rel}: реплика читается без trim — «   » и отсутствие поля обязаны ` +
+          "значить одно и то же, иначе появится третье состояние",
+      );
+    }
   }
 
   if (problems.length > 0) {
     failed++;
-    console.log('FAIL швы советника в мастере:');
+    console.log("FAIL швы советника в мастере:");
     for (const p of problems) console.log(`  - ${p}`);
   } else {
     console.log(
-      `ok   швы советника: шаги (${stepperSummary.join(', ')}), пункты ` +
+      `ok   швы советника: шаги (${stepperSummary.join(", ")}), пункты ` +
         `готовности (${readinessKeys.length}), слаги документов ` +
         `(${server.length}) сходятся; ${greetingRestore}; ` +
         `стартов рендера под проверкой права: ${RENDER_STARTS.length}; ` +
@@ -1569,11 +2031,16 @@ function checkGuideSeams() {
         `локалей с настоящими кадрами мастера: ${shotLocales.size} (файлов ${shotFiles.length}); ` +
         `мест, пишущих длительность ролика обучалки: ${durationWrites} ` +
         `из ${assetWriters.length} писателей актива (все из плана); ` +
-        `статусов сборки (бэкенд = админка): ${backendStatuses.size}`,
+        `статусов сборки (бэкенд = админка): ${backendStatuses.size}; ` +
+        `заливок обучалки под убираемым префиксом: ${transitUploads}; ` +
+        `мест, знающих префикс готового видео: ${videoPrefixUses}; ` +
+        `пара (шаг, локаль) уникальна и пишется по ключу: да; ` +
+        `ключей localStorage сверено с фронтендом: ${spaKeysChecked}; ` +
+        `мест, пишущих отметку о вычитке реплик: ${narrationReviewWrites}; ` +
+        `потолок реплики и правило её чтения — по одному на всех: да`,
     );
   }
 }
-
 
 /**
  * Шов «отказ, который читает человек» — заведён сквозным аудитом
@@ -1593,9 +2060,9 @@ function checkGuideSeams() {
  */
 function checkUserFacingErrorSeams() {
   const DIRS = [
-    'backend/src/modules/client-site-tutorial',
-    'backend/src/modules/postprod',
-    'backend/src/modules/tutorial-runner',
+    "backend/src/modules/client-site-tutorial",
+    "backend/src/modules/postprod",
+    "backend/src/modules/tutorial-runner",
   ];
   const EXCEPTIONS =
     /new (NotFoundException|BadRequestException|ForbiddenException|ConflictException)\(\s*((`[^`]*`)|('[^']*')|("[^"]*")|([A-Z][A-Z0-9_]*))/g;
@@ -1609,7 +2076,7 @@ function checkUserFacingErrorSeams() {
   // названные один раз на все сорок с лишним мест. Имена собираются из
   // самого файла, а не перечисляются здесь: список, который надо
   // помнить руками, — ровно то, от чего этот шов и заводился.
-  const sharedSrc = read('backend/src/common/user-facing-errors.ts');
+  const sharedSrc = read("backend/src/common/user-facing-errors.ts");
   const shared = new Set();
   const problems = [];
   for (const m of sharedSrc.matchAll(
@@ -1622,21 +2089,21 @@ function checkUserFacingErrorSeams() {
     if (!/[а-яА-ЯёЁ]/.test(m[2])) {
       problems.push(
         `backend/src/common/user-facing-errors.ts: ${m[1]} = '${m[2]}' — ` +
-          'общий текст отказа без единой русской буквы; его читает ' +
-          'пользователь в русском интерфейсе',
+          "общий текст отказа без единой русской буквы; его читает " +
+          "пользователь в русском интерфейсе",
       );
     }
-    if (ID_SUBST.test(m[2]) || m[2].includes('${')) {
+    if (ID_SUBST.test(m[2]) || m[2].includes("${")) {
       problems.push(
         `backend/src/common/user-facing-errors.ts: ${m[1]} подставляет ` +
-          'что-то внутрь текста — общий отказ обязан быть постоянной строкой',
+          "что-то внутрь текста — общий отказ обязан быть постоянной строкой",
       );
     }
   }
   if (shared.size === 0) {
     problems.push(
-      'backend/src/common/user-facing-errors.ts: ни одной константы — ' +
-        'либо файл переписали, либо шов больше ничего не стережёт',
+      "backend/src/common/user-facing-errors.ts: ни одной константы — " +
+        "либо файл переписали, либо шов больше ничего не стережёт",
     );
   }
 
@@ -1645,13 +2112,13 @@ function checkUserFacingErrorSeams() {
   for (const dir of DIRS) {
     const files = walk(path.join(ROOT, dir)).filter(
       (f) =>
-        f.endsWith('.ts') &&
-        !f.endsWith('.spec.ts') &&
+        f.endsWith(".ts") &&
+        !f.endsWith(".spec.ts") &&
         !/-admin\.|\/admin-/.test(f),
     );
     for (const file of files) {
       const rel = path.relative(ROOT, file);
-      const src = fs.readFileSync(file, 'utf8');
+      const src = fs.readFileSync(file, "utf8");
       for (const m of src.matchAll(EXCEPTIONS)) {
         checked++;
         const msg = m[2];
@@ -1662,20 +2129,20 @@ function checkUserFacingErrorSeams() {
           }
           problems.push(
             `${rel}: отказ собран из константы ${msg}, которой нет среди ` +
-              'русских текстов в backend/src/common/user-facing-errors.ts',
+              "русских текстов в backend/src/common/user-facing-errors.ts",
           );
           continue;
         }
         if (!/[а-яА-ЯёЁ]/.test(msg)) {
           problems.push(
             `${rel}: отказ без единой русской буквы — ${msg}; ` +
-              'его прочитает пользователь, а не только лог',
+              "его прочитает пользователь, а не только лог",
           );
         }
         if (ID_SUBST.test(msg)) {
           problems.push(
             `${rel}: в тексте отказа подставляется идентификатор — ${msg}; ` +
-              'человеку он ничего не говорит, а наружу светить его незачем',
+              "человеку он ничего не говорит, а наружу светить его незачем",
           );
         }
       }
@@ -1689,26 +2156,26 @@ function checkUserFacingErrorSeams() {
   const OLD_FAMILIES =
     /new \w+Exception\(\s*(`(Session|Project) \$\{[^}]*\} not found`|'Session not found')/g;
   let families = 0;
-  for (const file of walk(path.join(ROOT, 'backend/src')).filter(
+  for (const file of walk(path.join(ROOT, "backend/src")).filter(
     (f) =>
-      f.endsWith('.ts') &&
-      !f.endsWith('.spec.ts') &&
+      f.endsWith(".ts") &&
+      !f.endsWith(".spec.ts") &&
       !/-admin\.|\/admin-|\/admin-panel\//.test(f),
   )) {
-    const src = fs.readFileSync(file, 'utf8');
+    const src = fs.readFileSync(file, "utf8");
     for (const m of src.matchAll(OLD_FAMILIES)) {
       families++;
       problems.push(
         `${path.relative(ROOT, file)}: вернулся английский отказ с ` +
           `идентификатором — ${m[1]}; текст берётся из ` +
-          'backend/src/common/user-facing-errors.ts',
+          "backend/src/common/user-facing-errors.ts",
       );
     }
   }
 
   if (problems.length > 0) {
     failed++;
-    console.log('FAIL тексты отказов, которые видит пользователь:');
+    console.log("FAIL тексты отказов, которые видит пользователь:");
     for (const p of problems) console.log(`  - ${p}`);
   } else {
     console.log(
@@ -1731,4 +2198,4 @@ if (failed) {
   );
   process.exit(1);
 }
-console.log('\ncheck-docs: числа в документах совпадают с реальностью');
+console.log("\ncheck-docs: числа в документах совпадают с реальностью");

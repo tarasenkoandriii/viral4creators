@@ -32,6 +32,8 @@ import type {
   TelemetryResult,
   EnvSettingsResult,
   AudioSeparationSettingsView,
+  TutorialLocalesSettingsView,
+  TutorialVoiceSettingsView,
   AudioSeparationState,
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
@@ -91,7 +93,7 @@ import type {
   TestTicketDetail,
   TestTicketRow,
   TicketStatus,
-} from './types';
+  TutorialScenarioSaveResult,} from './types';
 
 // ── Аутентификация (backend/src/modules/admin-auth) ──
 
@@ -251,6 +253,32 @@ export function setAudioSeparationState(state: AudioSeparationState) {
   return apiPatch<AudioSeparationSettingsView>('/admin/settings/audio-separation', {
     state,
   });
+}
+
+/** Языки генерации сценариев обучалки — пятый уровень отката §9 ТЗ
+ * TZ-Tutorial-Video-Voiced.md: сузить до ['ru'] без деплоя. */
+export function getTutorialLocalesSettings() {
+  return apiGet<TutorialLocalesSettingsView>('/admin/settings/tutorial-locales');
+}
+
+export function setTutorialLocalesSettings(raw: string) {
+  return apiPatch<TutorialLocalesSettingsView>('/admin/settings/tutorial-locales', { raw });
+}
+
+/** Озвучка обучающих роликов — третий уровень отката §9 ТЗ
+ * TZ-Tutorial-Video-Voiced.md: выключается без деплоя. */
+export function getTutorialVoiceSettings() {
+  return apiGet<TutorialVoiceSettingsView>('/admin/settings/tutorial-voice');
+}
+
+export function setTutorialVoiceSettings(input: {
+  enabled: boolean;
+  voiceId?: string | null;
+  /** Обязательное: «не прислали — оставить как было» завело бы у
+   *  выключателя третье состояние. */
+  requireNarrationReview: boolean;
+}) {
+  return apiPatch<TutorialVoiceSettingsView>('/admin/settings/tutorial-voice', input);
 }
 
 export function setVoiceoverProviderDefault(provider: VoiceoverProviderKey) {
@@ -721,14 +749,6 @@ export function approveTutorialScenario(id: string) {
 }
 
 /**
- * Удаляет сгенерированный сценарий (этап 106) — нужно для сломанных/
- * никогда не проходящих сценариев: `tutorial-scenario-generate` только
- * добавляет строки (`create`, не `upsert`), а `tutorial-scenario-run`
- * берёт их все по `createdAt asc` без пропуска уже провалившихся —
- * без удаления сломанный сценарий будет падать и слать алерт на
- * каждом прогоне крона бесконечно.
- */
-/**
  * Очередь модерации обучалок по САЙТУ ЗАКАЗЧИКА (§5.2/§8.3
  * doc/CLIENT-SITE-TUTORIAL-SPEC.md, этап 113). Отдельно от сценариев
  * выше: там одобряется право потратить наши деньги на платный шаг, а
@@ -765,6 +785,39 @@ export function rejectClientSiteDraft(id: string, reason: string) {
   );
 }
 
+/**
+ * Заменяет шаги сценария написанными руками (этап C + сквозной аудит
+ * A+B+C). Промпт нарочно отдаёт плейсхолдеры селекторов, «которые
+ * оператор поправит на настоящие», — это и есть тот рычаг. Строка
+ * помечается `generatedBy: manual`, генератор её больше не трогает;
+ * одобрение и результат прошлого прогона сбрасываются.
+ */
+export function replaceTutorialScenarioSteps(id: string, steps: string) {
+  return apiPatch<TutorialScenarioSaveResult>(
+    `/admin/tutorial-scenarios/${id}/steps`,
+    { steps },
+  );
+}
+
+/** Отметка «реплики прочитаны» (этап D). Снимаемая: перечитал,
+ *  передумал, снял. */
+export function setTutorialScenarioNarrationReviewed(
+  id: string,
+  reviewed: boolean,
+) {
+  return apiPatch<TutorialScenarioRow>(
+    `/admin/tutorial-scenarios/${id}/narration-reviewed`,
+    { reviewed },
+  );
+}
+
+/**
+ * Удаляет сгенерированный сценарий (этап 106) — нужно для сломанных
+ * сценариев и как единственный способ сбросить устаревшее одобрение:
+ * генератор снимает его только при изменившихся платных шагах, а
+ * кнопки «отозвать» нет. Удалённая строка пересоздаётся ближайшей
+ * ночью — уже неодобренной.
+ */
 export function deleteTutorialScenario(id: string) {
   return apiDelete<{ id: string }>(`/admin/tutorial-scenarios/${id}`);
 }

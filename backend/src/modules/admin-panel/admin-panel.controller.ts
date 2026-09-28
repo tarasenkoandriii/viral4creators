@@ -44,6 +44,8 @@ import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
+import { AdminTutorialVoiceSettingsService } from './admin-tutorial-voice-settings.service';
+import { AdminTutorialLocalesSettingsService } from './admin-tutorial-locales-settings.service';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { ProviderBalancesService } from './provider-balances.service';
 import { AdminWizardGuideService } from '../wizard-guide/admin-wizard-guide.service';
@@ -322,6 +324,37 @@ export class SetAudioSeparationDto {
   state!: 'on' | 'off';
 }
 
+/** Языки генерации сценариев обучалки (этап C). Сырая строка, как у
+ * каталога музыки: оператор пишет `ru, en` или JSON-массив, разбор и
+ * его правила живут в `tutorial-locales.ts`, а не в DTO. */
+export class SetTutorialLocalesDto {
+  @IsString()
+  @MaxLength(512)
+  raw!: string;
+}
+
+/**
+ * Озвучка обучающих роликов (ТЗ `TZ-Tutorial-Video-Voiced.md`, этап
+ * B). Два поля, а не строка грамматики `on:<id>`: оператору не место
+ * в разборе формата, а формат — в `tutorial-voice.ts`.
+ */
+export class SetTutorialVoiceDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  /** Пусто — голос провайдера по умолчанию. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  voiceId?: string;
+
+  /** Требовать вычитку реплик (§3-бис.5 ТЗ, этап D). Обязательное,
+   *  а не `@IsOptional`: «не прислали — оставить как было» завело бы
+   *  у выключателя третье состояние. */
+  @IsBoolean()
+  requireNarrationReview!: boolean;
+}
+
 /** Доп. запрос владельца продукта: тот же селектор, что выше, но для
  * модели разбора референса (ТЗ §17). */
 /**
@@ -414,6 +447,8 @@ export class AdminPanelController {
     // инстанцируется в тестах позиционно, и вставка в середину молча
     // сдвинула бы все зависимости после себя.
     private readonly audioSeparationSettings: AdminAudioSeparationSettingsService,
+    private readonly tutorialVoiceSettings: AdminTutorialVoiceSettingsService,
+    private readonly tutorialLocalesSettings: AdminTutorialLocalesSettingsService,
   ) {}
 
   @Get('sessions')
@@ -511,6 +546,53 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.voiceoverSettings.setDefault(dto.provider, req.userId);
+  }
+
+  /**
+   * Языки обучающих роликов — пятый уровень отката §9 ТЗ
+   * `TZ-Tutorial-Video-Voiced.md`: сузить до `['ru']` без деплоя.
+   */
+  @Get('settings/tutorial-locales')
+  async getTutorialLocales(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.tutorialLocalesSettings.get();
+  }
+
+  @Patch('settings/tutorial-locales')
+  async setTutorialLocales(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetTutorialLocalesDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.tutorialLocalesSettings.set(dto.raw, req.userId);
+  }
+
+  /**
+   * Озвучка обучающих роликов — третий уровень отката §9 ТЗ
+   * `TZ-Tutorial-Video-Voiced.md`: выключается БЕЗ деплоя. До правки
+   * аудита этапа B настройка существовала, а экрана у неё не было —
+   * включить её было нечем, кроме прямой записи в таблицу.
+   */
+  @Get('settings/tutorial-voice')
+  async getTutorialVoice(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.tutorialVoiceSettings.view();
+  }
+
+  @Patch('settings/tutorial-voice')
+  async setTutorialVoice(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetTutorialVoiceDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.tutorialVoiceSettings.set(
+      {
+        enabled: dto.enabled,
+        voiceId: dto.voiceId ?? null,
+        requireNarrationReview: dto.requireNarrationReview,
+      },
+      req.userId,
+    );
   }
 
   @Get('settings/audio-separation')
