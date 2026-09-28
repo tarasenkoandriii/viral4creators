@@ -12,6 +12,7 @@ import {
   MIN_FRAME_SECONDS,
   narrationFrameSeconds,
   SECONDS_PER_FRAME,
+  TRANSITION_SECONDS,
 } from './tutorial-video-assembly';
 import { MAX_NARRATION_LENGTH } from '../tutorial-scenario/scenario-steps.types';
 
@@ -294,5 +295,27 @@ describe('captionReadingSeconds (сквозной аудит A–G)', () => {
   it('подписи нет — решать вызывающему', () => {
     expect(captionReadingSeconds(null)).toBeNull();
     expect(captionReadingSeconds('   ')).toBeNull();
+  });
+
+  it('переход съедает ПАУЗУ кадра, а не время чтения подписи', () => {
+    // Стык двух правок разных заходов, и держится он на неравенстве,
+    // которое нигде не записано: этап G отнимает у показа кадра
+    // TRANSITION_SECONDS на каждом стыке, а сквозной аудит A–G дал
+    // кадру с подписью время чтения ПЛЮС хвост. Пока хвост больше
+    // стыка, под нож идёт пауза и подпись успевают прочитать; стоит
+    // хвосту уменьшиться или переходу удлиниться — подписи начнут
+    // срезаться, молча и только при включённом движении.
+    expect(FRAME_TAIL_SECONDS).toBeGreaterThan(TRANSITION_SECONDS);
+
+    // И то же самое на числах, а не только на константах: у подписи
+    // любой длины видимого времени остаётся не меньше, чем нужно на
+    // чтение.
+    for (const chars of [1, 7, 14, 30, 120, 220]) {
+      const held = captionReadingSeconds('x'.repeat(chars))!;
+      const visibleWithMotion = held - TRANSITION_SECONDS;
+      expect(visibleWithMotion).toBeGreaterThanOrEqual(
+        chars / CAPTION_CHARS_PER_SECOND,
+      );
+    }
   });
 });

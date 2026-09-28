@@ -124,6 +124,19 @@ export type SlideshowMotion = (typeof SLIDESHOW_MOTIONS)[number];
 export const TRANSITION_FRAMES = 9;
 
 /**
+ * Тот же переход в СЕКУНДАХ — производное, а не второе число.
+ *
+ * Нужно за пределами этого модуля: время, которое стык съедает у
+ * показа кадра, сверяется с хвостом кадра (`FRAME_TAIL_SECONDS`), и
+ * на этой сверке держится то, что подпись успевают прочитать при
+ * включённом движении (см. тест «переход съедает паузу, а не время
+ * чтения»). Считать `TRANSITION_FRAMES / 30` на стороне вызывающего
+ * значило бы развести знание о сетке кадров по модулям — ровно то,
+ * что запрещает шов «сетку кадров знает только модуль плана».
+ */
+export const TRANSITION_SECONDS = TRANSITION_FRAMES / OUTPUT_FPS;
+
+/**
  * Во сколько раз кадр приближается к концу своего показа — 1.00 → 1.04
  * (§6 ТЗ). Убирает ощущение презентации и при этом не уводит за край
  * ничего, что стоит читать: 4 % — это 14 пикселей по короткой стороне
@@ -277,7 +290,7 @@ export function evenFrameSeconds(
   }
   const overlapSeconds =
     motion !== 'none' && frameCount >= 2
-      ? ((frameCount - 1) * TRANSITION_FRAMES) / OUTPUT_FPS
+      ? (frameCount - 1) * TRANSITION_SECONDS
       : 0;
   return Math.max(
     (speechSeconds + FRAME_TAIL_SECONDS + overlapSeconds) / frameCount,
