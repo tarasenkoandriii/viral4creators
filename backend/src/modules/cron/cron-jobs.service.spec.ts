@@ -937,11 +937,11 @@ describe('CronJobsService — метла идёт до конца курсора
     const { service, blobService } = buildPaged();
     const res = await service.runSweepOrphans({});
     expect(blobService.listByPrefix).toHaveBeenCalledTimes(
-      // три страницы projects/ + по одной пустой у остальных пяти
+      // три страницы projects/ + по одной пустой у остальных шести
       // областей (sessions, brand-manifests, publications, shared-videos,
-      // users — последние две добавились позже исходного теста, отсюда
-      // 5, а не 3).
-      3 + 5,
+      // users, tutorial-video-frames — три последние добавлялись позже
+      // исходного теста, отсюда 6, а не 3).
+      3 + 6,
     );
     expect(blobService.deleteMany).toHaveBeenCalledWith([
       'projects/p-dead/items/i9/photo.png',
@@ -1168,6 +1168,8 @@ describe('CronJobsService.runTutorialScenarioRun — исполнение сце
       narrationFallbacks: 0,
       framesMissed: 0,
       withoutFrames: 0,
+      lostRaces: 0,
+      repeatFailures: 0,
       outcomes: [],
     });
   });

@@ -3,6 +3,7 @@ import {
   ownerIdOf,
   sessionIdOf,
   sweepFileKind,
+  SWEEP_PREFIX,
 } from './orphan-sweep';
 
 const NOW = new Date('2026-09-06T12:00:00Z');
@@ -252,5 +253,45 @@ describe('вложения находок под префиксом users/ (ау
     );
     expect(plan.delete).toEqual(['users/dead/tickets/1-0.jpg']);
     expect(plan.byKind.attachment).toBe(1);
+  });
+});
+
+/**
+ * Кадры-транзиты сборки обучалки — сквозной аудит 29.09.2026. До него
+ * префикс не обходил никто: единичный сбой уборки оставлял до тридцати
+ * PNG, а через несколько ночей подметальщик роликов удалял строку —
+ * единственный носитель `assetId`, — и файлы становились неубираемыми.
+ */
+describe('область tutorial-video-frames', () => {
+  it('владелец кадра — строка ролика', () => {
+    expect(
+      ownerIdOf('tutorial-video-frames/tva-7/3.png', 'tutorial-video-frames'),
+    ).toBe('tva-7');
+  });
+
+  it('кадры и подписи различаются по виду файла', () => {
+    expect(
+      sweepFileKind(
+        'tutorial-video-frames/tva-7/3.png',
+        'tutorial-video-frames',
+      ),
+    ).toBe('previews');
+    expect(
+      sweepFileKind(
+        'tutorial-video-frames/tva-7/captions.ass',
+        'tutorial-video-frames',
+      ),
+    ).toBe('other');
+  });
+
+  it('готовый ролик под эту метлу НЕ попадает', () => {
+    // `tutorial-videos/` — другой префикс: там живёт результат, и его
+    // убирает `sweepOldAssets` по своему правилу трёх ролей.
+    expect(SWEEP_PREFIX['tutorial-video-frames']).toBe(
+      'tutorial-video-frames/',
+    );
+    expect(
+      ownerIdOf('tutorial-videos/1/tva-7.mp4', 'tutorial-video-frames'),
+    ).toBeNull();
   });
 });

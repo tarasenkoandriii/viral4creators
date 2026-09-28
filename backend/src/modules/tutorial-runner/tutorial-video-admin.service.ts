@@ -108,7 +108,10 @@ export class TutorialVideoAdminService {
   async setReviewed(id: string, reviewed: boolean) {
     const row = (await this.prisma.tutorialVideoAsset.findUnique({
       where: { id },
-    })) as { clientSiteDraftId?: string | null } | null;
+    })) as {
+      clientSiteDraftId?: string | null;
+      blobUrl?: string | null;
+    } | null;
     if (!row) throw new NotFoundException('Видео не найдено');
     // Барьер И на самом действии, не только в выборке списка: прямой
     // вызов API мимо витрины отдал бы посетителям ролик по сайту
@@ -117,6 +120,16 @@ export class TutorialVideoAdminService {
       throw new BadRequestException(
         'Это ролик обучалки по сайту заказчика — он одобряется на своей вкладке и посетителям лендинга не выдаётся',
       );
+    }
+    // Одобрить можно только СОБРАННЫЙ ролик (сквозной аудит
+    // 29.09.2026). Барьер стоял только в разметке
+    // (`disabled={!row.blobUrl}`), то есть прямой вызов API одобрял
+    // строку в `preparing`. Консультант её потом отсеет по `blobUrl` —
+    // но в админке она числилась бы одобренной и попадала бы в сводку
+    // «Состояние данных», которая по `blobUrl` не фильтрует. Оператор
+    // видел бы покрытие, которого нет.
+    if (reviewed && !row.blobUrl) {
+      throw new BadRequestException('Ролик ещё не собран — одобрять нечего');
     }
     return this.prisma.tutorialVideoAsset.update({
       where: { id },

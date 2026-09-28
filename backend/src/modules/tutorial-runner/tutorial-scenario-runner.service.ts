@@ -284,6 +284,13 @@ export interface TutorialScenarioRunOutcome {
   /** Шаги прошли, а кадров нет ни одного — ролика не будет, и статус
    *  «ok» об этом не говорит. */
   noFrames?: true;
+  /** Подготовка не уложилась в срок: подметальщик забрал строку, пока
+   *  она шла, и оплаченная задача осталась без хозяина. */
+  lostRace?: true;
+  /** Упал ровно так же, как в прошлый раз. Тревога о такой поломке
+   *  уже была — повторять её каждую ночь значит превратить канал в
+   *  фон, который перестают читать. */
+  repeatFailure?: true;
 }
 
 export interface TutorialScenarioRunResult {
@@ -309,6 +316,13 @@ export interface TutorialScenarioRunResult {
   /** У скольких сценариев не снялось НИ ОДНОГО кадра при пройденных
    *  шагах: зелёный «ok» и отсутствие ролика без объяснения. */
   withoutFrames: number;
+  /** У скольких подготовка не уложилась в срок и оплаченная задача
+   *  осталась без строки. Не ноль — повод поднять
+   *  `ASSEMBLY_DEADLINE_MS` или разобраться с медленным Blob. */
+  lostRaces: number;
+  /** Сколько падений повторяют вчерашние. Тревог о них не шлётся —
+   *  число здесь и есть способ о них узнать. */
+  repeatFailures: number;
   outcomes: TutorialScenarioRunOutcome[];
 }
 
@@ -334,6 +348,10 @@ const MAX_ASSEMBLY_ATTEMPTS = 3;
  *  обучалки — считаные мегабайты; минуты хватает с запасом, а
  *  зависшее навсегда соединение стоит целого тика. */
 const DOWNLOAD_TIMEOUT_MS = 60_000;
+
+/** Ниже этого размера скачанный «ролик» роликом не является. Настоящие
+ *  — сотни килобайт (0.99 и 1.24 МБ на первом боевом прогоне). */
+const MIN_ASSEMBLED_VIDEO_BYTES = 1024;
 
 /**
  * Префикс кадров-транзитов ОДНОГО актива. По id актива, а не по
@@ -1035,6 +1053,8 @@ export class TutorialScenarioRunnerService {
         narrationFallbacks: 0,
         framesMissed: 0,
         withoutFrames: 0,
+        lostRaces: 0,
+        repeatFailures: 0,
         outcomes: [],
       };
     }
@@ -1071,6 +1091,8 @@ export class TutorialScenarioRunnerService {
         narrationFallbacks: 0,
         framesMissed: 0,
         withoutFrames: 0,
+        lostRaces: 0,
+        repeatFailures: 0,
         // `locale` обязателен в `TutorialScenarioRunOutcome` — и
         // именно здесь его забыли. В песочнице это не видно (типы
         // Prisma подменены заглушкой, и `scenarios` выводится как
@@ -1132,7 +1154,21 @@ export class TutorialScenarioRunnerService {
           // получал до тридцати одинаковых красных сообщений за
           // ночь, каждую ночь (находка сквозного аудита A+B+C).
           // Дальше — одно итоговое, в конце прогона.
-          if (failures.length <= ALERT_DETAIL_LIMIT) {
+          //
+          // И ещё одно условие (сквозной аудит 29.09.2026): ТА ЖЕ
+          // причина, что в прошлую ночь, поимённой тревоги не даёт.
+          // Собственная приёмка ТЗ объявляет устойчивое состояние
+          // «шаги 3–8 падают на `waitFor` (ожидаемо)», второй боевой
+          // прогон дал 7 падений из 9 — то есть канал получал бы
+          // четыре красных сообщения каждую ночь навсегда, за то, что
+          // никто чинить и не собирался. Фон не читают, и настоящая
+          // поломка приходит в нём тем же цветом.
+          //
+          // «Та же причина», а не «тот же сценарий»: изменившийся
+          // текст ошибки означает, что сломалось что-то ДРУГОЕ, и об
+          // этом сказать надо. Счётчики при этом считают всё — в
+          // журнале крона провал виден всегда.
+          if (failures.length <= ALERT_DETAIL_LIMIT && !outcome.repeatFailure) {
             await this.notify.alert(
               `tutorial-scenario-run:${scenario.subjectKey}:${scenario.locale}`,
               `Сценарий обучающего видео «${scenario.subjectKey}» (${scenario.locale}) провалился на regression-прогоне: ${outcome.error}`,
@@ -1147,10 +1183,14 @@ export class TutorialScenarioRunnerService {
     // Итоговое сообщение вместо хвоста поимённых: причина у них
     // обычно одна, а тридцать красных строк подряд читаются как
     // тридцать разных поломок.
-    if (failures.length > ALERT_DETAIL_LIMIT) {
+    // Итоговая — тоже только когда есть НОВОЕ. Прогон, у которого все
+    // падения повторяют вчерашние, молчит целиком: его результат
+    // виден в журнале крона числами.
+    const fresh = outcomes.filter((o) => !o.ok && !o.repeatFailure).length;
+    if (failures.length > ALERT_DETAIL_LIMIT && fresh > 0) {
       await this.notify.alert(
         'tutorial-scenario-run:many',
-        `Сценарии обучающего видео: провалились ${failures.length} из ${outcomes.length} — ${failures.join(', ')}. Поимённые сообщения выше только для первых ${ALERT_DETAIL_LIMIT}.`,
+        `Сценарии обучающего видео: провалились ${failures.length} из ${outcomes.length} (новых поломок ${fresh}) — ${failures.join(', ')}. Поимённые сообщения выше только для первых ${ALERT_DETAIL_LIMIT}.`,
       );
     }
 
@@ -1171,6 +1211,8 @@ export class TutorialScenarioRunnerService {
       narrationFallbacks: outcomes.filter((o) => o.narrationFallback).length,
       framesMissed: outcomes.reduce((sum, o) => sum + (o.framesMissed ?? 0), 0),
       withoutFrames: outcomes.filter((o) => o.noFrames).length,
+      lostRaces: outcomes.filter((o) => o.lostRace).length,
+      repeatFailures: outcomes.filter((o) => o.repeatFailure).length,
       outcomes,
     };
   }
@@ -1186,6 +1228,10 @@ export class TutorialScenarioRunnerService {
        *  озвучке: при включённой `tutorial.requireNarrationReview`
        *  сценарий без неё собирается немым (§3-бис.5 ТЗ). */
       narrationReviewedAt?: Date | null;
+      /** Чем этот сценарий упал В ПРОШЛЫЙ раз. Нужен не прогону, а
+       *  тревогам: повтор той же поломки не должен красить канал
+       *  каждую ночь (сквозной аудит 29.09.2026). */
+      lastRunError?: string | null;
     },
     ctx: FixtureRouteContext,
     /** Фикстурный пользователь — владелец расхода прогона. */
@@ -1359,7 +1405,11 @@ export class TutorialScenarioRunnerService {
       // Видео — необязательный побочный продукт успешного прогона
       // (см. доккомментарий модуля): best-effort, никогда не бросает и
       // не меняет уже записанный regression-результат выше.
-      const assemblyNotes: { narrationFallback?: true; noFrames?: true } = {};
+      const assemblyNotes: {
+        narrationFallback?: true;
+        noFrames?: true;
+        lostRace?: true;
+      } = {};
       if (result.ok) {
         await this.submitVideoAssembly(
           scenario,
@@ -1386,6 +1436,12 @@ export class TutorialScenarioRunnerService {
           ? { framesMissed: result.skippedFrames.length }
           : {}),
         ...(assemblyNotes.noFrames ? { noFrames: true as const } : {}),
+        ...(assemblyNotes.lostRace ? { lostRace: true as const } : {}),
+        // Та же причина, что в прошлую ночь — значит поломка
+        // известная, и поимённая тревога о ней уже была.
+        ...(error && error === scenario.lastRunError
+          ? { repeatFailure: true as const }
+          : {}),
       };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -1572,6 +1628,8 @@ export class TutorialScenarioRunnerService {
       narrationFallbacks: 0,
       framesMissed: 0,
       withoutFrames: 0,
+      lostRaces: 0,
+      repeatFailures: 0,
       outcomes: [],
     };
   }
@@ -1604,7 +1662,11 @@ export class TutorialScenarioRunnerService {
     /** Куда сложить замеченное по дороге, чтобы оно доехало до журнала
      *  крона. Объект, а не возвращаемое значение: метод объявлен
      *  best-effort и выходит из себя в полудюжине мест. */
-    assemblyNotes: { narrationFallback?: true; noFrames?: true },
+    assemblyNotes: {
+      narrationFallback?: true;
+      noFrames?: true;
+      lostRace?: true;
+    },
   ): Promise<void> {
     if (frames.length === 0) {
       // Молчать тут нельзя (сквозной аудит 29.09.2026). Сценарий из
@@ -1997,8 +2059,14 @@ export class TutorialScenarioRunnerService {
         userId,
       });
 
-      await this.prisma.tutorialVideoAsset.update({
-        where: { id: asset.id },
+      // Тот же compare-and-set, что у `abandonAssembly` (сквозной
+      // аудит 29.09.2026): если подметальщик успел забрать строку,
+      // пока шли заливки и синтез, воскрешать её из `failed` нельзя —
+      // её кадры уже стёрты, и `pending` указывал бы на входы,
+      // которых нет. Задача у подрядчика при этом оплачена; вернуть
+      // деньги нечем, но строить на них ложное состояние не надо.
+      const taken = (await this.prisma.tutorialVideoAsset.updateMany({
+        where: { id: asset.id, assemblyStatus: 'preparing' },
         data: {
           assemblyStatus: 'pending',
           assemblyJobId: job.jobId,
@@ -2020,7 +2088,20 @@ export class TutorialScenarioRunnerService {
           // следующий прогон собирает заново.
           ...(captionsAss && !captionsUrl ? { contentHash: null } : {}),
         },
-      });
+      })) as { count: number };
+
+      if (taken.count === 0) {
+        this.logger.warn(
+          `сценарий ${scenario.subjectKey}: строку ролика успел забрать подметальщик, пока шла подготовка — задача ${job.jobId} отправлена и оплачена, но её результат подобрать некому`,
+        );
+        // Наружу, а не только в лог: это ОПЛАЧЕННАЯ задача, результат
+        // которой некому подобрать. Если такое случается регулярно,
+        // значит подготовка систематически не укладывается в
+        // `ASSEMBLY_DEADLINE_MS`, и это видно по счётчику в журнале, а
+        // не по чтению логов функции.
+        assemblyNotes.lostRace = true;
+        return;
+      }
 
       this.logger.log(
         `сценарий ${scenario.subjectKey}: слайд-шоу отправлено на сборку (задача ${job.jobId}, ${frames.length} кадров)`,
@@ -2462,6 +2543,23 @@ export class TutorialScenarioRunnerService {
 
     try {
       const bytes = await this.downloadBytes(url);
+      // Пустой или обрезанный ответ — НЕ готовый ролик (сквозной аудит
+      // 29.09.2026). Раньше размер не проверялся вовсе: нулевой mp4
+      // давал `complete`, рабочую кнопку «Просмотр» и сломанный плеер,
+      // а единственным следом было «собрано (0 байт)» в логах функции.
+      //
+      // Потолок снизу, а не точное число: настоящий ролик обучалки —
+      // сотни килобайт (первый боевой прогон дал 0.99 и 1.24 МБ), и
+      // всё, что меньше килобайта, заведомо не видео. Верхнего потолка
+      // нет намеренно: слишком большой файл — это работающий ролик,
+      // просто дорогой в хранении, и ронять из-за этого сборку незачем.
+      if (bytes.length < MIN_ASSEMBLED_VIDEO_BYTES) {
+        await this.failAssembly(
+          asset,
+          `ffmpeg-api отдал ${bytes.length} байт — это не готовый ролик`,
+        );
+        return;
+      }
       const { url: ourUrl } = await this.blob.uploadBuffer(
         `tutorial-videos/${asset.subjectKey}/${asset.id}.mp4`,
         bytes,
@@ -2658,6 +2756,32 @@ export class TutorialScenarioRunnerService {
     assetId: string,
     reason: string,
   ): Promise<void> {
+    // Сначала ЗАБИРАЕМ строку, и только потом трогаем её кадры
+    // (сквозной аудит 29.09.2026).
+    //
+    // Гонка была такая: `abandonStalePreparing` берёт строку, висящую в
+    // `preparing` дольше десяти минут, стирает её кадры и помечает
+    // провалившейся — а `submitVideoAssembly` в это время всё ещё
+    // работает над ней (до тридцати заливок кадров плюс синтез могут не
+    // уложиться в десять минут на медленном Blob) и следом пишет
+    // `pending` с `assemblyJobId`. Получалась оплаченная задача на уже
+    // стёртые входы и строка, воскресшая из `failed`.
+    //
+    // `updateMany` с условием по статусу — это compare-and-set: строку
+    // забирает тот, кто успел первым, второй получает `count: 0` и
+    // отходит. Кадры стираются только выигравшим.
+    const claimed = (await this.prisma.tutorialVideoAsset
+      .updateMany({
+        where: { id: assetId, assemblyStatus: 'preparing' },
+        data: { assemblyStatus: 'failed', assemblyError: reason.slice(0, 500) },
+      })
+      .catch(() => ({ count: 0 }))) as { count: number };
+    if (claimed.count === 0) {
+      this.logger.log(
+        `актив ${assetId}: строку уже забрал другой путь — кадры не трогаем`,
+      );
+      return;
+    }
     try {
       await this.wipeScenarioFrames(assetId);
     } catch (e) {
@@ -2665,23 +2789,6 @@ export class TutorialScenarioRunnerService {
         `кадры актива ${assetId} не убрались: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
-    // Та же защита, что у `failAssembly` (сквозной аудит 29.09.2026):
-    // бросок отсюда обрывал цикл `abandonStalePreparing` и уносил с
-    // собой опрос сборок этого тика. Строка обязана получить статус
-    // даже тогда, когда база икнула, — иначе она останется в
-    // `preparing` и пойдёт по кругу.
-    await this.prisma.tutorialVideoAsset
-      .update({
-        where: { id: assetId },
-        data: { assemblyStatus: 'failed', assemblyError: reason.slice(0, 500) },
-      })
-      .catch((err) => {
-        this.logger.warn(
-          `актив ${assetId}: статус провала не записался: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      });
   }
 
   /**

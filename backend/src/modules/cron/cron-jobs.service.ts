@@ -593,6 +593,8 @@ export class CronJobsService {
         narrationFallbacks: 0,
         framesMissed: 0,
         withoutFrames: 0,
+        lostRaces: 0,
+        repeatFailures: 0,
         outcomes: [],
       };
     }
@@ -1207,9 +1209,17 @@ export class CronJobsService {
               ? await this.prisma.publicationRequest.findMany({ where, select })
               : scope === 'shared-videos'
                 ? await this.prisma.sharedVideoPage.findMany({ where, select })
-                : // 'users' (Е-5.2 шестого аудита, этап 76) — владелец
-                  // `users/<userId>/voices/…` — сама таблица users.
-                  await this.prisma.user.findMany({ where, select });
+                : scope === 'users'
+                  ? // 'users' (Е-5.2 шестого аудита, этап 76) — владелец
+                    // `users/<userId>/voices/…` — сама таблица users.
+                    await this.prisma.user.findMany({ where, select })
+                  : // 'tutorial-video-frames' (сквозной аудит 29.09.2026)
+                    // — владелец кадров-транзитов это строка ролика.
+                    // Удалили строку, а кадры остались — вот их и метём.
+                    await this.prisma.tutorialVideoAsset.findMany({
+                      where,
+                      select,
+                    });
     return rows.map((r) => r.id);
   }
 }

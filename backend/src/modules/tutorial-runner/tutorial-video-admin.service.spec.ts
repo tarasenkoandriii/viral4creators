@@ -93,7 +93,10 @@ describe('TutorialVideoAdminService.setReviewed', () => {
 
   it('ставит reviewed:true', async () => {
     const { service, prisma } = build();
-    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({ id: 'tva-1' });
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      id: 'tva-1',
+      blobUrl: 'https://blob.example/tva-1.mp4',
+    });
     prisma.tutorialVideoAsset.update.mockResolvedValue({
       id: 'tva-1',
       reviewed: true,
@@ -196,9 +199,41 @@ describe('ролики обучалки по сайту заказчика (ск
     prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
       id: 'tva-2',
       clientSiteDraftId: null,
+      blobUrl: 'https://blob.example/tva-2.mp4',
     });
 
     await service.setReviewed('tva-2', true);
     expect(prisma.tutorialVideoAsset.update).toHaveBeenCalled();
+  });
+});
+
+describe('одобрять можно только СОБРАННЫЙ ролик (сквозной аудит 29.09.2026)', () => {
+  it('строка без blobUrl не одобряется через API', () => {
+    // Барьер стоял только в разметке (`disabled={!row.blobUrl}`).
+    // Прямой вызов одобрял строку в `preparing`: консультант её потом
+    // отсеет, но в сводке «Состояние данных» она числилась бы
+    // покрытием, которого нет.
+    const { service, prisma } = build();
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      id: 'tva-3',
+      clientSiteDraftId: null,
+      blobUrl: null,
+    });
+
+    return expect(service.setReviewed('tva-3', true)).rejects.toThrow(
+      /не собран/,
+    );
+  });
+
+  it('СНЯТЬ одобрение у несобранной строки можно', () => {
+    // Запрет только на выдачу наружу; убрать флаг — всегда безопасно.
+    const { service, prisma } = build();
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      id: 'tva-4',
+      clientSiteDraftId: null,
+      blobUrl: null,
+    });
+
+    return expect(service.setReviewed('tva-4', false)).resolves.not.toThrow();
   });
 });

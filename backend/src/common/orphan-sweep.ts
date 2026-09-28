@@ -60,6 +60,19 @@ export const SWEEP_SCOPES = [
   'publications',
   'shared-videos',
   'users',
+  // Кадры-транзиты сборки роликов обучалки (сквозной аудит 29.09.2026).
+  //
+  // У них своя уборка — `wipeScenarioFrames` по префиксу актива, — и
+  // она зовётся в пяти местах. Но любой единичный сбой (икота Blob
+  // после `complete`, смерть функции между заливкой кадров и `submit`,
+  // проигрыш в гонке подметальщика) оставляет до тридцати PNG, а через
+  // несколько ночей `sweepOldAssets` удаляет строку — единственный
+  // носитель `assetId`. После этого имена файлов не восстановить
+  // никому, и они лежат платно навсегда. Доккомментарий раннера это
+  // признавал («подметальщика по префиксу в проекте нет»), но выводил
+  // из этого только необходимость заводить строку первой — случай
+  // «строку завели, а уборка всё равно не прошла» не рассматривался.
+  'tutorial-video-frames',
 ] as const;
 
 export type SweepScope = (typeof SWEEP_SCOPES)[number];
@@ -72,6 +85,7 @@ export const SWEEP_PREFIX: Record<SweepScope, string> = {
   publications: 'publications/',
   'shared-videos': 'shared-videos/',
   users: 'users/',
+  'tutorial-video-frames': 'tutorial-video-frames/',
 };
 
 export interface BlobRef {
@@ -173,6 +187,11 @@ export function sweepFileKind(
       // `test-tickets/` не подбирал бы никто.
       if (rest.startsWith('voices/')) return 'voice';
       return rest.startsWith('tickets/') ? 'attachment' : 'other';
+    case 'tutorial-video-frames':
+      // `tutorial-video-frames/<assetId>/<номер шага>.png` — кадр
+      // слайд-шоу; `…/captions.ass` — подписи. Всё под префиксом
+      // транзитное: готовый ролик живёт в `tutorial-videos/`.
+      return rest.endsWith('.png') ? 'previews' : 'other';
   }
 }
 

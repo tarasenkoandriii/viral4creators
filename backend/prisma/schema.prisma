@@ -3016,8 +3016,15 @@ model CronRunLog {
 /// с сетевыми вызовами, для чего session-scoped advisory-лок не подходит
 /// под PgBouncer в режиме transaction pooling).
 model CronJobLock {
-  /// 'catalog-batch-run' | 'ab-test-run' | 'feed-import-run' — та же
-  /// тройка ключей, что в CronRunLog.jobKey для этих джобов.
+  /// Ключ джоба — тот же, что в CronRunLog.jobKey. Замок берут не три
+  /// джоба, как говорила прежняя редакция этого комментария, а все, у
+  /// которых цикл переживает тик: catalog-batch-run, ab-test-run,
+  /// feed-import-run, tutorial-scenario-generate, tutorial-scenario-run,
+  /// tutorial-assembly-poll, ui-snapshot-run, cleanup-sessions, blog,
+  /// export-sync-run. Перечислять их здесь поимённо смысла мало —
+  /// список живёт в коде (`tryAcquireJobLock` по вызовам); уточнено
+  /// сквозным аудитом обучалки 29.09.2026, когда прежняя тройка
+  /// разошлась с реальностью втрое.
   jobKey String @id
 
   /// null — замок свободен. Дата в прошлом — замок просрочен (процесс
