@@ -18,6 +18,7 @@ const ENV_KEYS = [
   'FIXTURE_TELEGRAM_ID',
   'FIXTURE_USER_TOKEN',
   'TMA_PUBLIC_URL',
+  'API_PUBLIC_URL',
 ];
 const envBefore: Record<string, string | undefined> = {};
 
@@ -26,6 +27,7 @@ beforeEach(() => {
   process.env.FIXTURE_TELEGRAM_ID = 'fixture-1';
   process.env.FIXTURE_USER_TOKEN = 'sekret';
   process.env.TMA_PUBLIC_URL = 'https://app.example.com';
+  process.env.API_PUBLIC_URL = 'https://api.example.com/api';
 });
 const fetchBefore = global.fetch;
 afterEach(() => {
@@ -70,8 +72,16 @@ function buildFakePage(
       : jest.fn().mockResolvedValue(undefined),
     fill: jest.fn().mockResolvedValue(undefined),
   };
+  // Перехват запросов (этап I): обработчик запоминается, чтобы тест мог
+  // прогнать через него настоящие адреса и посмотреть, кому достался
+  // токен.
+  const requestHandlers: Array<(req: unknown) => void> = [];
   return {
-    setExtraHTTPHeaders: jest.fn().mockResolvedValue(undefined),
+    requestHandlers,
+    setRequestInterception: jest.fn().mockResolvedValue(undefined),
+    on: jest.fn((event: string, handler: (req: unknown) => void) => {
+      if (event === 'request') requestHandlers.push(handler);
+    }),
     // Телефонный вьюпорт — до загрузки SPA (этап H).
     setViewport: jest.fn().mockResolvedValue(undefined),
     goto: jest.fn().mockResolvedValue(undefined),
@@ -285,6 +295,15 @@ describe('TutorialScenarioRunnerService', () => {
     expect(prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
+  it('без API_PUBLIC_URL — пропуск: слать токен всем подряд нельзя (этап I)', async () => {
+    delete process.env.API_PUBLIC_URL;
+    const { service, prisma } = build([SCENARIO_OK]);
+    const result = await service.run();
+    expect(result.skipped).toContain('API_PUBLIC_URL');
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+  });
+
   it('фикстурный пользователь не заведён в БД — пропуск с понятной причиной', async () => {
     const { service, prisma } = build([]);
     prisma.user.findUnique.mockResolvedValue(null);
@@ -339,8 +358,35 @@ describe('TutorialScenarioRunnerService', () => {
 
     expect(result.passed).toBe(1);
     expect(result.failed).toBe(0);
-    expect(page.setExtraHTTPHeaders).toHaveBeenCalledWith({
-      'X-Fixture-Token': 'sekret',
+    // Токен — только своему API (этап I). Прогоняем через обработчик
+    // перехвата три настоящих адреса: API, Google Fonts и telegram.org.
+    expect(page.setRequestInterception).toHaveBeenCalledWith(true);
+    expect(page.requestHandlers).toHaveLength(1);
+    const sent: Record<string, Record<string, string> | undefined> = {};
+    for (const url of [
+      'https://api.example.com/api/sessions/s1',
+      'https://fonts.gstatic.com/s/sora.woff2',
+      'https://telegram.org/js/telegram-web-app.js',
+    ]) {
+      page.requestHandlers[0]({
+        url: () => url,
+        headers: () => ({ accept: '*/*' }),
+        isInterceptResolutionHandled: () => false,
+        continue: jest.fn((o?: { headers?: Record<string, string> }) => {
+          sent[url] = o?.headers;
+          return Promise.resolve();
+        }),
+      });
+    }
+    expect(sent['https://api.example.com/api/sessions/s1']).toEqual({
+      accept: '*/*',
+      'x-fixture-token': 'sekret',
+    });
+    expect(sent['https://fonts.gstatic.com/s/sora.woff2']).toEqual({
+      accept: '*/*',
+    });
+    expect(sent['https://telegram.org/js/telegram-web-app.js']).toEqual({
+      accept: '*/*',
     });
     expect(prisma.tutorialScenario.update).toHaveBeenCalledWith(
       expect.objectContaining({

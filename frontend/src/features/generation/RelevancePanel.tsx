@@ -115,7 +115,7 @@ export function RelevancePanel({
   const report = state?.report ?? null;
 
   return (
-    <Card className="p-5 animate-fadeIn">
+    <Card className="p-5 animate-fadeIn" data-qa="relevance-panel">
       <CardHeader
         icon={<Scale size={18} className="text-accent" />}
         title={dict.relevancePanel.title}
@@ -135,7 +135,12 @@ export function RelevancePanel({
       )}
 
       {!report && !running && state !== null && (
-        <Button block variant="outline" onClick={() => void run()}>
+        <Button
+          block
+          variant="outline"
+          data-qa="relevance-check"
+          onClick={() => void run()}
+        >
           {dict.relevancePanel.checkButton}
         </Button>
       )}
@@ -233,6 +238,7 @@ export function RelevancePanel({
                 <label className="ml-auto inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-silver-500">
                   <input
                     type="checkbox"
+                    data-qa="relevance-use-in-prompt"
                     checked={state?.useInPrompt ?? true}
                     onChange={() => void toggleUse()}
                     className="accent-sky-400"

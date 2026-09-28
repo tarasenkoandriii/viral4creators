@@ -102,7 +102,7 @@ export function AspectRatioPicker({
   ];
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-qa="aspect-ratio-picker">
       <span className="label">{dict.aspectRatioPicker.title}</span>
       {referenceAspectRatio && (
         <p className="-mt-1 mb-1 inline-flex items-center gap-1 text-[11px] text-silver-400">

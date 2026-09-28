@@ -2430,7 +2430,99 @@ function checkUserFacingErrorSeams() {
   }
 }
 
+/**
+ * Шов «хуки data-qa» — этап I ТЗ docs-tz/TZ-Tutorial-Video-Voiced.md.
+ *
+ * Сценарии обучалки кликают только по хукам из каталога бэкенда
+ * (`tutorial-scenario/qa-hooks.ts`): его перечисляет промпт генератора,
+ * по нему же валидатор отвергает всё остальное. Каталог — копия
+ * атрибутов фронтенда (пакеты без кросс-импорта, тот же довод, что у
+ * `route-templates.ts`). До этапа копия расходилась с продуктом
+ * полностью: промпт звал писать `[data-qa="..."]`, а нужных хуков во
+ * фронтенде не было ни одного, и ни один ролик не собирался.
+ *
+ * Держит в обе стороны:
+ *  - каждый ключ каталога есть во `frontend/src` буквально —
+ *    `data-qa="ключ"` или `'ключ'` (таблицы хуков степперов и вкладок);
+ *  - каждый `data-qa="…"` фронтенда либо в каталоге, либо в коротком
+ *    списке «не для сценариев» с причиной — иначе новый хук видит
+ *    только тот, кто его поставил, а модель о нём не узнает;
+ *  - промпт берёт список из каталога, а не пишет его сам.
+ */
+function checkQaHookSeams() {
+  const problems = [];
+  const CATALOG = "backend/src/modules/tutorial-scenario/qa-hooks.ts";
+  const catalogSrc = stripComments(read(CATALOG));
+  const keys = [...catalogSrc.matchAll(/^ {2}'([a-z0-9-]+)': \{/gm)].map(
+    (m) => m[1],
+  );
+  if (keys.length === 0) {
+    problems.push(`${CATALOG}: не нашёл ни одного ключа — шов ослеп`);
+  }
+  // Хуки, которые сценариям обучалки не предлагаются намеренно.
+  const NOT_FOR_SCENARIOS = new Map([
+    [
+      "client-site-explore",
+      "мастер обучалки по сайту заказчика: съёмочные шаги лендинга, не шаги обучалки мастера",
+    ],
+  ]);
+
+  const frontFiles = walk(path.join(ROOT, "frontend/src")).filter((f) =>
+    /\.tsx?$/.test(f),
+  );
+  const corpus = frontFiles
+    .map((f) => stripComments(fs.readFileSync(f, "utf8")))
+    .join("\n");
+  for (const key of keys) {
+    if (
+      !corpus.includes(`data-qa="${key}"`) &&
+      !corpus.includes(`'${key}'`)
+    ) {
+      problems.push(
+        `хук «${key}» есть в каталоге, но во frontend/src его нет — модель ` +
+          "напишет селектор, которого нет на экране, и сценарий упадёт ночью",
+      );
+    }
+  }
+  const catalog = new Set(keys);
+  const inFront = new Set(
+    [...corpus.matchAll(/data-qa="([a-z0-9-]+)"/g)].map((m) => m[1]),
+  );
+  for (const key of inFront) {
+    if (!catalog.has(key) && !NOT_FOR_SCENARIOS.has(key)) {
+      problems.push(
+        `frontend/src ставит data-qa="${key}", а в ${CATALOG} его нет — ` +
+          "допишите в каталог или в NOT_FOR_SCENARIOS этого шва с причиной",
+      );
+    }
+  }
+  const promptSrc = stripComments(
+    read("backend/src/modules/tutorial-scenario/tutorial-scenario-prompt.ts"),
+  );
+  if (!/\bQA_HOOKS\b/.test(promptSrc) || !/\bknownQaHook\b/.test(promptSrc)) {
+    problems.push(
+      "tutorial-scenario-prompt.ts не берёт селекторы из QA_HOOKS или не " +
+        "проверяет их knownQaHook — промпт и валидатор разойдутся с каталогом",
+    );
+  }
+
+  if (problems.length > 0) {
+    failed++;
+    console.log("FAIL хуки data-qa для сценариев обучалки:");
+    for (const p of problems) console.log(`  - ${p}`);
+  } else {
+    console.log(
+      `ok   хуки data-qa: ${keys.length} в каталоге, все найдены во ` +
+        `frontend/src; атрибутов data-qa во фронтенде: ${inFront.size} ` +
+        `(вне каталога намеренно: ${NOT_FOR_SCENARIOS.size}); промпт и ` +
+        "валидатор берут каталог",
+    );
+  }
+}
+
 checkUserFacingErrorSeams();
+
+checkQaHookSeams();
 
 checkGuideSeams();
 

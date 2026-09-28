@@ -142,7 +142,7 @@ export function VideoUpload({
   };
 
   return (
-    <Card className="p-5 animate-fadeIn">
+    <Card className="p-5 animate-fadeIn" data-qa="reference-card">
       <CardHeader
         icon={<Film size={18} className="text-accent" />}
         title={dict.videoUpload.title}
@@ -162,6 +162,7 @@ export function VideoUpload({
             ? [
                 {
                   value: 'library' as const,
+                  qa: 'reference-tab-library',
                   label: library.allowed ? (
                     dict.videoUpload.tabLibrary
                   ) : (
@@ -174,14 +175,23 @@ export function VideoUpload({
             : []),
           {
             value: 'search',
+            qa: 'reference-tab-search',
             // С четвёртой вкладкой полное «Поиск YouTube» не помещается на
             // 390px — оставляем короткое, смысл держит подпись карточки.
             label: onPickLibraryEntry
               ? dict.videoUpload.tabYoutubeShort
               : dict.videoUpload.tabYoutubeSearch,
           },
-          { value: 'youtube', label: dict.videoUpload.tabLink },
-          { value: 'upload', label: dict.videoUpload.tabFile },
+          {
+            value: 'youtube',
+            label: dict.videoUpload.tabLink,
+            qa: 'reference-tab-link',
+          },
+          {
+            value: 'upload',
+            label: dict.videoUpload.tabFile,
+            qa: 'reference-tab-file',
+          },
           // Последней: четыре предыдущие — это «чужой ролик», и приём
           // читается как «а если его нет». Первой он звал бы отказаться
           // от референса раньше, чем человек узнал, что тот бывает.
@@ -305,6 +315,7 @@ export function VideoUpload({
               />
               <Input
                 id="youtube-url"
+                data-qa="reference-link-input"
                 type="url"
                 placeholder="https://www.youtube.com/watch?v=…"
                 value={youtubeUrl}
@@ -319,6 +330,7 @@ export function VideoUpload({
             block
             size="lg"
             type="submit"
+            data-qa="reference-link-submit"
             disabled={!youtubeUrl.trim() || disabled}
             loading={disabled}
           >

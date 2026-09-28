@@ -92,7 +92,7 @@ export function AnalysisDisplay({
   }
 
   return (
-    <Card className="p-5 animate-fadeIn">
+    <Card className="p-5 animate-fadeIn" data-qa="analysis-card">
       <CardHeader
         icon={<ScanSearch size={18} className="text-accent" />}
         title={dict.analysisDisplay.title}
@@ -106,6 +106,7 @@ export function AnalysisDisplay({
             <Button
               variant="ghost"
               size="sm"
+              data-qa="analysis-edit"
               onClick={() => setIsEditing(true)}
             >
               {dict.analysisDisplay.edit}
@@ -173,7 +174,7 @@ export function AnalysisDisplay({
               : text}
           </pre>
           {!isAnalyzing && analysisText && (
-            <Button block onClick={onSave}>
+            <Button block data-qa="analysis-continue" onClick={onSave}>
               {dict.analysisDisplay.next}
             </Button>
           )}

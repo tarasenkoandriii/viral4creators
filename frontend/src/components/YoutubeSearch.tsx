@@ -116,6 +116,7 @@ export function YoutubeSearch({
           />
           <Input
             id="youtube-search-q"
+            data-qa="youtube-search-input"
             value={query}
             placeholder={dict.youtubeSearch.searchPlaceholder}
             onChange={(e) => setQuery(e.target.value)}
@@ -126,6 +127,7 @@ export function YoutubeSearch({
         </div>
         <Button
           type="submit"
+          data-qa="youtube-search-submit"
           disabled={disabled || searching || !query.trim()}
           loading={searching}
         >

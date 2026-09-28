@@ -138,7 +138,7 @@ export function ReferenceSlotsPanel({
   ).length;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-qa="reference-slots">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <span className="label">{dict.referenceSlotsPanel.heading}</span>

@@ -10,6 +10,7 @@ export function Stepper({
   onSelect,
   selectable,
   done: doneFlags,
+  qa,
 }: {
   steps: string[];
   current: number;
@@ -38,6 +39,13 @@ export function Stepper({
    *    безопаснее, чем нарисовать галочку там, где человек не был.
    */
   done?: boolean[];
+  /**
+   * Хуки `data-qa` позиций, по индексу (этап I ТЗ на озвученную
+   * обучалку): сценарий обучалки кликает по позиции степпера, а подпись
+   * у неё на пяти языках разная. Литералы пишет вызывающий — шов
+   * check-docs сверяет их с каталогом бэкенда.
+   */
+  qa?: readonly string[];
 }) {
   return (
     // mb-3, а не прежние mb-5: тач-цель шага выросла с 24 до 44px
@@ -55,6 +63,7 @@ export function Stepper({
           <li key={i} className="flex items-center gap-1 flex-1 min-w-0">
             <button
               type="button"
+              data-qa={qa?.[i]}
               disabled={!clickable}
               onClick={() => onSelect?.(i)}
               // Пройденный шаг — кнопка возврата, и промахнуться по кружку

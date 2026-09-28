@@ -161,7 +161,7 @@ export function SceneCasting({
   };
 
   return (
-    <Card className="p-5 animate-fadeIn">
+    <Card className="p-5 animate-fadeIn" data-qa="scene-casting">
       <CardHeader
         icon={<Clapperboard size={18} className="text-accent" />}
         title={dict.sceneCasting.title}

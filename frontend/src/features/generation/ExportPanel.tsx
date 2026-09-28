@@ -201,7 +201,7 @@ export function ExportPanel({
   const selectableA = tierARows.filter((r) => !r.existing);
 
   return (
-    <Card className="p-5 animate-fadeIn">
+    <Card className="p-5 animate-fadeIn" data-qa="export-panel">
       <CardHeader
         icon={<Sparkles size={18} className="text-accent" />}
         title={dict.exportPanel.panelTitle}

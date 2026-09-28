@@ -207,7 +207,7 @@ export function CharacterCasting({
   }
 
   return (
-    <Card className="p-5 animate-fadeIn">
+    <Card className="p-5 animate-fadeIn" data-qa="character-casting">
       <CardHeader
         icon={<Users size={18} className="text-accent" />}
         title={dict.characterCasting.title}

@@ -8,6 +8,8 @@ interface ProgressIndicatorProps {
   selectable?: boolean[];
   /** Явная завершённость шагов («Тонкая красная линия», §4.2). */
   done?: boolean[];
+  /** Хуки `data-qa` позиций — см. `Stepper`. */
+  qa?: readonly string[];
 }
 
 /**
@@ -21,6 +23,7 @@ export function ProgressIndicator({
   onSelect,
   selectable,
   done,
+  qa,
 }: ProgressIndicatorProps) {
   return (
     <Stepper
@@ -29,6 +32,7 @@ export function ProgressIndicator({
       onSelect={onSelect}
       selectable={selectable}
       done={done}
+      qa={qa}
     />
   );
 }

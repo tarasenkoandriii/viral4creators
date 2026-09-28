@@ -153,6 +153,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
       >
         <Textarea
           id="promptText"
+          data-qa="prompt-editor"
           value={editedText}
           onChange={handleTextChange}
           disabled={isUpdating || isApproving}
@@ -238,6 +239,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
         )}
         <Button
           className="flex-1"
+          data-qa="prompt-approve"
           onClick={() => void handleApprove()}
           loading={isApproving}
           disabled={isApproving || isUpdating || !editedText.trim()}

@@ -153,6 +153,7 @@ export const ProductInput: React.FC<ProductInputProps> = ({
         >
           <Input
             id="productName"
+            data-qa="product-name-input"
             value={productName}
             onChange={handleNameChange}
             disabled={isSubmitting}
@@ -174,6 +175,7 @@ export const ProductInput: React.FC<ProductInputProps> = ({
         >
           <Textarea
             id="productDescription"
+            data-qa="product-description-input"
             value={productDescription}
             onChange={handleDescriptionChange}
             disabled={isSubmitting}
@@ -226,6 +228,7 @@ export const ProductInput: React.FC<ProductInputProps> = ({
           block
           size="lg"
           type="submit"
+          data-qa="product-submit"
           loading={isSubmitting}
           disabled={
             isSubmitting ||

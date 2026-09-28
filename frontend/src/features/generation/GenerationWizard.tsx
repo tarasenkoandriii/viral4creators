@@ -41,6 +41,7 @@ import {
   stepperIdsFor,
   stepperLabels,
 } from '../../lib/session-step';
+import type { StepperId } from '../../lib/session-step';
 import { VideoUpload } from '../../components/VideoUpload';
 import { AnalysisDisplay } from '../../components/AnalysisDisplay';
 import { ProgressIndicator } from '../../components/ProgressIndicator';
@@ -86,6 +87,22 @@ import { voiceModeHint } from '../../lib/voice-mode';
 import type { VoiceMode } from '../../types';
 import { useFeature } from '../../lib/plan-context';
 import { useI18n } from '../../lib/i18n-context';
+
+/**
+ * Хуки `data-qa` позиций степпера мастера (этап I ТЗ
+ * docs-tz/TZ-Tutorial-Video-Voiced.md). Литералами, а не шаблоном
+ * `wizard-step-${id}`: шов check-docs ищет в исходниках ровно те строки,
+ * что перечислены в каталоге бэкенда (`tutorial-scenario/qa-hooks.ts`), и
+ * шаблонную строку он бы не увидел. `Record` по `StepperId` — новая
+ * позиция степпера без хука не соберётся.
+ */
+const STEPPER_QA: Record<StepperId, string> = {
+  upload: 'wizard-step-upload',
+  analysis: 'wizard-step-analysis',
+  product: 'wizard-step-product',
+  prompt: 'wizard-step-prompt',
+  video: 'wizard-step-video',
+};
 
 export function GenerationWizard() {
   const { dict, locale } = useI18n();
@@ -446,6 +463,7 @@ export function GenerationWizard() {
         steps={stepsView.steps}
         onSelect={selectStep}
         selectable={stepsView.selectable}
+        qa={stepperIds.map((id) => STEPPER_QA[id])}
       />
 
       {/* Строка «до готового ролика» и совет на шаге — волна D, этап 13.
@@ -709,6 +727,7 @@ export function GenerationWizard() {
                 block
                 size="lg"
                 icon={<Sparkles size={16} />}
+                data-qa="prompt-generate"
                 onClick={generatePrompt}
               >
                 {dict.generationWizard.generatePromptCta}
@@ -796,7 +815,7 @@ export function GenerationWizard() {
       {/* Step 5: Video Generation */}
       {currentStep === 'video-generation' && (
         <div className="space-y-4">
-          <Card className="p-5 animate-fadeIn">
+          <Card className="p-5 animate-fadeIn" data-qa="product-photo-card">
             <CardHeader
               icon={<ImagePlus size={18} className="text-accent" />}
               title={dict.generationWizard.productPhotoTitle}
@@ -908,7 +927,7 @@ export function GenerationWizard() {
                     </p>
                   </div>
                 )}
-                <div className="mb-4">
+                <div className="mb-4" data-qa="video-provider">
                   <span className="label">
                     {dict.generationWizard.providerLabel}
                   </span>
@@ -1016,6 +1035,7 @@ export function GenerationWizard() {
                   </span>
                   <input
                     type="number"
+                    data-qa="video-duration-input"
                     min={8}
                     max={60}
                     step={1}
@@ -1040,6 +1060,7 @@ export function GenerationWizard() {
                   </span>
                   <input
                     type="text"
+                    data-qa="video-avoid-input"
                     maxLength={500}
                     value={avoidText}
                     onChange={(e) => setAvoidText(e.target.value)}
@@ -1077,6 +1098,7 @@ export function GenerationWizard() {
                   block
                   size="lg"
                   icon={<Video size={16} />}
+                  data-qa="video-generate"
                   onClick={() =>
                     startGenerateVideo(
                       videoQuality,
@@ -1190,7 +1212,7 @@ export function GenerationWizard() {
       {/* Step 6: Complete */}
       {currentStep === 'complete' && generatedVideo?.downloadUrl && (
         <div className="space-y-4 animate-fadeIn">
-          <Card className="p-5">
+          <Card className="p-5" data-qa="video-result">
             <CardHeader
               icon={<Sparkles size={18} className="text-emerald-500" />}
               title={dict.generationWizard.videoDoneTitle}
@@ -1327,6 +1349,7 @@ export function GenerationWizard() {
                 </div>
                 <Button
                   variant="outline"
+                  data-qa="open-postprod"
                   onClick={() => navigate(routes.postprodVideo(sessionId))}
                 >
                   {dict.generationWizard.postprodCtaButton}

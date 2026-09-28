@@ -17,7 +17,9 @@ export function Tabs<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  tabs: { value: T; label: ReactNode }[];
+  /** `qa` — хук `data-qa` для сценариев обучалки (этап I ТЗ на озвученную
+   *  обучалку); литерал пишет вызывающий, чтобы шов check-docs его видел. */
+  tabs: { value: T; label: ReactNode; qa?: string }[];
   disabled?: boolean;
   /** Tighter padding/type for tabs inside a narrow panel. */
   compact?: boolean;
@@ -78,6 +80,7 @@ export function Tabs<T extends string>({
           key={t.value}
           ref={value === t.value ? activeTab : undefined}
           type="button"
+          data-qa={t.qa}
           disabled={disabled}
           onClick={() => onChange(t.value)}
           // min-h-[44px] — рекомендованная тач-цель: до этого вкладка была

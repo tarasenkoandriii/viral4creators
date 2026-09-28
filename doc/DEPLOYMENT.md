@@ -298,7 +298,15 @@ Telegram-логин, который их и породил.
      автоматического исполнителя сценариев обучающих видео (крон
      `/api/cron/tutorial-scenario-run`): headless-браузер шлёт заголовок
      `X-Fixture-Token`, middleware сверяет constant-time и выдаёт
-     identity пользователя с `telegramId=FIXTURE_TELEGRAM_ID`. Не
+     identity пользователя с `telegramId=FIXTURE_TELEGRAM_ID`.
+     **С этапа I ТЗ `docs-tz/TZ-Tutorial-Video-Voiced.md` обоим прогонам
+     (сценарии и `/api/cron/ui-snapshot-run`) нужен ещё и
+     `API_PUBLIC_URL`**: заголовок несётся только на origin этого адреса
+     (`backend/src/common/fixture-token-page.ts`), а без него прогон
+     пропускается. До этапа токен уходил со всеми запросами страницы —
+     Google Fonts и telegram.org получали его каждые две минуты. После
+     выката этапа **смените `FIXTURE_USER_TOKEN`**: старое значение
+     считается раскрытым. Не
      ALLOW_DEV_AUTH — тот обход недоступен на проде, а этот исполнитель
      обязан работать именно там. Не заданы — крон-джоб не падает, просто
      логирует предупреждение и пропускает прогон (см.

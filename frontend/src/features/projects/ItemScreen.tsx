@@ -66,6 +66,15 @@ import type {
 
 const STEPS = ['photo', 'analogs', 'voice', 'price'] as const;
 type Step = (typeof STEPS)[number];
+/** Хуки `data-qa` позиций степпера товара (этап I ТЗ
+ *  docs-tz/TZ-Tutorial-Video-Voiced.md) — литералами, см. `STEPPER_QA`
+ *  в `GenerationWizard.tsx`. */
+const STEP_QA: Record<Step, string> = {
+  photo: 'item-step-photo',
+  analogs: 'item-step-analogs',
+  voice: 'item-step-voice',
+  price: 'item-step-price',
+};
 
 export function ItemScreen({
   projectId,
@@ -153,6 +162,7 @@ export function ItemScreen({
         steps={STEPS.map((s) => STEP_LABELS[s])}
         current={STEPS.indexOf(current)}
         onSelect={(i) => go(STEPS[i])}
+        qa={STEPS.map((s) => STEP_QA[s])}
       />
 
       <ItemRuns projectId={projectId} itemId={itemId} />
@@ -390,7 +400,7 @@ function PhotoStep({
   const busy = phase !== 'idle';
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-qa="item-photo-card">
       <CardHeader
         icon={<Camera size={18} className="text-accent" />}
         title={dict.itemScreen.photo.title}
@@ -531,7 +541,13 @@ function PhotoStep({
         ) : (
           <span />
         )}
-        <Button variant="ghost" size="sm" onClick={onSkip} disabled={busy}>
+        <Button
+          variant="ghost"
+          size="sm"
+          data-qa="item-photo-skip"
+          onClick={onSkip}
+          disabled={busy}
+        >
           {dict.itemScreen.photo.skipToDescription} <ArrowRight size={14} />
         </Button>
       </div>
@@ -700,7 +716,11 @@ function AnalogsStep({
       )}
 
       <div className="mt-4 flex justify-end">
-        <Button icon={<ArrowRight size={16} />} onClick={onNext}>
+        <Button
+          icon={<ArrowRight size={16} />}
+          data-qa="item-analogs-next"
+          onClick={onNext}
+        >
           {dict.itemScreen.analogs.next}
         </Button>
       </div>
@@ -984,6 +1004,7 @@ function VoiceStep({
       >
         <Textarea
           id="item-description"
+          data-qa="item-description-input"
           rows={6}
           value={text}
           onChange={(e) => setText(e.target.value.slice(0, 2000))}
@@ -1020,6 +1041,7 @@ function VoiceStep({
       <div className="mt-4 flex items-center justify-between gap-2">
         <Button
           variant="ghost"
+          data-qa="item-description-save"
           onClick={() => void save(false)}
           disabled={!dirty || saving || recording}
           loading={saving}
@@ -1028,6 +1050,7 @@ function VoiceStep({
         </Button>
         <Button
           icon={<ArrowRight size={16} />}
+          data-qa="item-voice-next"
           onClick={() => (dirty ? void save(true) : onNext())}
           disabled={saving || recording || transcribing}
         >
@@ -1191,6 +1214,7 @@ function PriceStep({
       >
         <Input
           id="item-price"
+          data-qa="item-price-input"
           inputMode="decimal"
           value={value}
           onChange={(e) => {
@@ -1214,6 +1238,7 @@ function PriceStep({
         size="lg"
         className="mt-4"
         icon={<Check size={16} />}
+        data-qa="item-price-save"
         onClick={() => void save()}
         disabled={!valid || saving}
         loading={saving}

@@ -89,6 +89,11 @@ import {
   withTimeout,
 } from '../../common/headless-chromium';
 import {
+  attachFixtureToken,
+  fixtureApiOrigin,
+  FixtureTokenPage,
+} from '../../common/fixture-token-page';
+import {
   FixtureRouteContext,
   resolveScenarioRoute,
 } from '../tutorial-runner/route-templates';
@@ -378,6 +383,17 @@ export class UiSnapshotRunnerService {
       this.logger.warn('TMA_PUBLIC_URL не настроен — пропуск');
       return this.skip('TMA_PUBLIC_URL не настроен');
     }
+    // Токен — только на origin своего API (`fixture-token-page.ts`,
+    // этап I ТЗ docs-tz/TZ-Tutorial-Video-Voiced.md). Этот прогон ходит
+    // каждые две минуты, и до правки каждый раз отдавал токен Google
+    // Fonts и telegram.org.
+    const apiOrigin = fixtureApiOrigin();
+    if (!apiOrigin) {
+      this.logger.warn(
+        'API_PUBLIC_URL не настроен или не разбирается — пропуск: без него фикстурный токен ушёл бы и сторонним сайтам',
+      );
+      return this.skip('API_PUBLIC_URL не настроен');
+    }
 
     const user = await this.prisma.user.findUnique({ where: { telegramId } });
     if (!user) {
@@ -436,6 +452,7 @@ export class UiSnapshotRunnerService {
           routeKey,
           ctx,
           token,
+          apiOrigin,
           tmaBaseUrl,
           wizardSessionId,
           { locale, theme, unmasked, deviceScaleFactor, steps },
@@ -479,6 +496,8 @@ export class UiSnapshotRunnerService {
     routeKey: string,
     ctx: FixtureRouteContext,
     token: string,
+    /** Origin API — единственный адресат токена. */
+    apiOrigin: string,
     tmaBaseUrl: string,
     wizardSessionId: string | undefined,
     view: {
@@ -501,10 +520,14 @@ export class UiSnapshotRunnerService {
         ...VIEWPORT,
         deviceScaleFactor: view.deviceScaleFactor,
       });
-      // Тот же приём, что `TutorialScenarioRunnerService.runOne` — заголовок
-      // уходит со всеми запросами страницы (CDP `Network.setExtraHTTPHeaders`),
-      // включая XHR/fetch самого SPA к API бэкенда.
-      await page.setExtraHTTPHeaders({ 'X-Fixture-Token': token });
+      // Тот же приём, что `TutorialScenarioRunnerService.runOne`: токен
+      // получает каждый XHR SPA к API бэкенда — и больше никто. Прежний
+      // `setExtraHTTPHeaders` прикладывал его ко всем запросам страницы.
+      await attachFixtureToken(
+        page as unknown as FixtureTokenPage,
+        token,
+        apiOrigin,
+      );
       // Мастер (`useWorkflow`) при пустом `localStorage['sessionId']`
       // создаёт НОВУЮ сессию на каждом монтировании. У свежего
       // headless-браузера хранилище всегда пустое, поэтому каждый тик

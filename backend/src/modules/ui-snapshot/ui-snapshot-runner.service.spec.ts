@@ -30,6 +30,7 @@ const ENV_KEYS = [
   'FIXTURE_TELEGRAM_ID',
   'FIXTURE_USER_TOKEN',
   'TMA_PUBLIC_URL',
+  'API_PUBLIC_URL',
 ];
 const envBefore: Record<string, string | undefined> = {};
 
@@ -38,6 +39,7 @@ beforeEach(() => {
   process.env.FIXTURE_TELEGRAM_ID = 'fixture-1';
   process.env.FIXTURE_USER_TOKEN = 'sekret';
   process.env.TMA_PUBLIC_URL = 'https://app.example.com';
+  process.env.API_PUBLIC_URL = 'https://api.example.com/api';
   computeDHashMock.mockReturnValue('abc123');
   hasChangedMock.mockReturnValue(false);
   diffScoreMock.mockReturnValue(0);
@@ -51,9 +53,16 @@ afterEach(() => {
 });
 
 function buildFakePage() {
+  const requestHandlers: Array<(req: unknown) => void> = [];
   return {
+    requestHandlers,
     setViewport: jest.fn().mockResolvedValue(undefined),
-    setExtraHTTPHeaders: jest.fn().mockResolvedValue(undefined),
+    // Токен — через перехват и только своему API (этап I ТЗ на
+    // озвученную обучалку), а не `setExtraHTTPHeaders` всем подряд.
+    setRequestInterception: jest.fn().mockResolvedValue(undefined),
+    on: jest.fn((event: string, handler: (req: unknown) => void) => {
+      if (event === 'request') requestHandlers.push(handler);
+    }),
     evaluateOnNewDocument: jest.fn().mockResolvedValue(undefined),
     goto: jest.fn().mockResolvedValue(undefined),
     evaluate: jest.fn().mockResolvedValue(undefined),
@@ -114,6 +123,14 @@ describe('UiSnapshotRunnerService — пропуски (фикстура не н
     expect(prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
+  it('без API_PUBLIC_URL — пропуск: без него токен ушёл бы сторонним сайтам', async () => {
+    delete process.env.API_PUBLIC_URL;
+    const { service, prisma } = build();
+    const result = await service.run();
+    expect(result.skipped).toContain('API_PUBLIC_URL');
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
   it('фикстурный пользователь не заведён в БД — пропуск с понятной причиной', async () => {
     const { service, prisma } = build();
     prisma.user.findUnique.mockResolvedValue(null);
@@ -155,9 +172,27 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
     expect(result.total).toBe(5);
     expect(result.failed).toBe(0);
     expect(result.changed).toBe(0);
-    expect(page.setExtraHTTPHeaders).toHaveBeenCalledWith({
-      'X-Fixture-Token': 'sekret',
+    expect(page.setRequestInterception).toHaveBeenCalledWith(true);
+    // Пять маршрутов — пять страниц, но фейк один: обработчиков пять.
+    const handler = page.requestHandlers[0];
+    const headersFor = (url: string) => {
+      let sent: Record<string, string> | undefined;
+      handler({
+        url: () => url,
+        headers: () => ({}),
+        continue: (o?: { headers?: Record<string, string> }) => {
+          sent = o?.headers;
+          return Promise.resolve();
+        },
+      });
+      return sent;
+    };
+    expect(headersFor('https://api.example.com/api/plan')).toEqual({
+      'x-fixture-token': 'sekret',
     });
+    expect(headersFor('https://fonts.googleapis.com/css2?family=Sora')).toEqual(
+      {},
+    );
     expect(blob.uploadBuffer).toHaveBeenCalledTimes(5);
     expect(prisma.uiSnapshot.create).toHaveBeenCalledWith(
       expect.objectContaining({

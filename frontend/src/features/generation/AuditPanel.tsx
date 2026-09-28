@@ -153,7 +153,7 @@ export function AuditPanel({
   };
 
   return (
-    <Card className="p-5 animate-fadeIn">
+    <Card className="p-5 animate-fadeIn" data-qa="audit-panel">
       <CardHeader
         icon={<ScanSearch size={18} className="text-accent" />}
         title={dict.auditPanel.title}

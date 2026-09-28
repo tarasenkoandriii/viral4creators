@@ -230,7 +230,7 @@ export function PublishPanel({
   }
 
   return (
-    <Card className="p-5 animate-fadeIn">
+    <Card className="p-5 animate-fadeIn" data-qa="publish-panel">
       <CardHeader
         icon={<Send size={18} className="text-accent" />}
         title={dict.publishPanel.title}

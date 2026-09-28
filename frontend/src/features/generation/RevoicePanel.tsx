@@ -187,7 +187,7 @@ export function RevoicePanel({
   };
 
   return (
-    <Card className="p-5 animate-fadeIn">
+    <Card className="p-5 animate-fadeIn" data-qa="revoice-panel">
       <CardHeader
         icon={<Mic2 size={18} className="text-accent" />}
         title={dict.revoicePanel.panelTitle}

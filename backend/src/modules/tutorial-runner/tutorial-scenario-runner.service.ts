@@ -148,6 +148,11 @@ import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import { selectSweepableAssets } from './tutorial-video-retention';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import {
+  attachFixtureToken,
+  fixtureApiOrigin,
+  FixtureTokenPage,
+} from '../../common/fixture-token-page';
+import {
   narrationOf,
   ScenarioStep,
 } from '../tutorial-scenario/scenario-steps.types';
@@ -847,6 +852,17 @@ export class TutorialScenarioRunnerService {
       this.logger.warn('TMA_PUBLIC_URL не настроен — пропуск');
       return this.skip('TMA_PUBLIC_URL не настроен');
     }
+    // Токен несём только на origin своего API (`fixture-token-page.ts`).
+    // Без адреса API отличить свой запрос от чужого нечем, а слать
+    // токен всем подряд — ровно та утечка, которую закрыл этап I
+    // ТЗ docs-tz/TZ-Tutorial-Video-Voiced.md.
+    const apiOrigin = fixtureApiOrigin();
+    if (!apiOrigin) {
+      this.logger.warn(
+        'API_PUBLIC_URL не настроен или не разбирается — пропуск: без него фикстурный токен ушёл бы и сторонним сайтам',
+      );
+      return this.skip('API_PUBLIC_URL не настроен');
+    }
 
     const user = await this.prisma.user.findUnique({
       where: { telegramId },
@@ -950,6 +966,7 @@ export class TutorialScenarioRunnerService {
           // второе назначение у одной структуры.
           user.id,
           token,
+          apiOrigin,
           tmaBaseUrl,
         );
         outcomes.push(outcome);
@@ -1020,6 +1037,8 @@ export class TutorialScenarioRunnerService {
     /** Фикстурный пользователь — владелец расхода прогона. */
     userId: string,
     token: string,
+    /** Origin API — единственный адресат токена (этап I ТЗ на озвученную обучалку). */
+    apiOrigin: string,
     tmaBaseUrl: string,
   ): Promise<TutorialScenarioRunOutcome> {
     const steps = scenario.steps as unknown as ScenarioStep[];
@@ -1036,14 +1055,17 @@ export class TutorialScenarioRunnerService {
         ...SCENARIO_VIEWPORT,
         deviceScaleFactor: SCENARIO_DEVICE_SCALE_FACTOR,
       });
-      // Тот же трюк, что задумывался для og:image (Accept-Language) —
-      // заголовок уходит СО ВСЕМИ запросами страницы, включая XHR/fetch
-      // самого SPA к API бэкенда (CDP `Network.setExtraHTTPHeaders`, не
-      // только на сам document-запрос), поэтому фронтенд не нуждается
-      // ни в какой правке ради фикстурного входа — TelegramIdentity-
-      // Middleware видит заголовок на каждом запросе так же, как видел
-      // бы X-Telegram-Init-Data внутри настоящего Telegram.
-      await page.setExtraHTTPHeaders({ 'X-Fixture-Token': token });
+      // Фикстурный вход (§3.3 ТЗ): `TelegramIdentityMiddleware` видит
+      // `X-Fixture-Token` на каждом XHR SPA так же, как видел бы
+      // `X-Telegram-Init-Data` внутри Telegram, — фронтенду правка не
+      // нужна. До этапа I заголовок ставился `setExtraHTTPHeaders` и
+      // уходил со ВСЕМИ запросами страницы, включая Google Fonts и
+      // telegram.org; теперь — только на origin API.
+      await attachFixtureToken(
+        page as unknown as FixtureTokenPage,
+        token,
+        apiOrigin,
+      );
 
       // Локаль интерфейса — ДО загрузки SPA, теми же ключами, что
       // пишет сам продукт (`v4c_locale` в frontend/src/lib/i18n.ts,
