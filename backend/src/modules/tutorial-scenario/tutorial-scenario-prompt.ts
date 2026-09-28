@@ -16,13 +16,19 @@
  */
 
 import { AssistantStepItem } from '../assistant/knowledge/generated';
-import { ParseScenarioResult, parseScenarioSteps } from './scenario-steps';
+import {
+  DroppedPaidOperation,
+  isTriggerPaidOperationStep,
+  ParseScenarioResult,
+  parseScenarioSteps,
+} from './scenario-steps';
 import {
   MAX_NARRATION_LENGTH,
   WIZARD_PAID_OPERATIONS,
   WizardPaidOperation,
 } from './scenario-steps.types';
 import { ROUTE_DESCRIPTIONS } from '../tutorial-runner/route-templates';
+import { knownQaHook, qaSelector, QA_HOOKS } from './qa-hooks';
 import { languageNameForLocale } from '../../common/locale';
 
 /** Реэкспорт словаря примитивов текстом для промпта — короткое
@@ -54,10 +60,32 @@ const PAID_OPERATION_HINT: Record<WizardPaidOperation, string> = {
   'voice-clone': 'клонирование голоса',
   'avatar-generation': 'аватар-пилот',
 };
-const PAID_OPERATION_VALUES = WIZARD_PAID_OPERATIONS.map(
+/**
+ * Что модели предлагается объявить — не весь белый список, а только
+ * ДОСТИЖИМОЕ: операции, ради которых в каталоге хуков есть кнопка
+ * (находка повторного аудита этапа F).
+ *
+ * Список и достижимость разошлись не по недосмотру этапа F, а позже:
+ * этап I свёл клики к каталогу `QA_HOOKS`, и платный клик остался
+ * ровно один. Промпт при этом продолжал называть пять операций —
+ * четыре из них модель могла объявить, но нажать соответствующую
+ * кнопку было нечем, и сценарий уходил в `costly` впустую (см.
+ * `dropDanglingPaidOperations`).
+ *
+ * Выводится из каталога, а не переписано руками короче: руками
+ * написанный список разошёлся бы снова при первой же новой платной
+ * кнопке. `WIZARD_PAID_OPERATIONS` при этом остаётся тем, что
+ * ПРИНИМАЕТ валидатор, — надмножеством: сценарии, сохранённые до
+ * этапа I, должны разбираться по-прежнему.
+ */
+const REACHABLE_PAID_OPERATIONS: readonly WizardPaidOperation[] =
+  WIZARD_PAID_OPERATIONS.filter((op) =>
+    Object.values(QA_HOOKS).some((hook) => hook.clickCost === op),
+  );
+const PAID_OPERATION_VALUES = REACHABLE_PAID_OPERATIONS.map(
   (op) => `"${op}"`,
 ).join('|');
-const PAID_OPERATION_HINTS = WIZARD_PAID_OPERATIONS.map(
+const PAID_OPERATION_HINTS = REACHABLE_PAID_OPERATIONS.map(
   (op) => `${PAID_OPERATION_HINT[op]} — "${op}"`,
 ).join(', ');
 
@@ -84,6 +112,32 @@ const ROUTE_VOCABULARY = Object.entries(ROUTE_DESCRIPTIONS)
   .map(([key, desc]) => `- "${key}" — ${desc}`)
   .join('\n');
 
+/**
+ * Закрытый список селекторов для промпта — этап I ТЗ
+ * docs-tz/TZ-Tutorial-Video-Voiced.md, тем же приёмом, что
+ * `ROUTE_VOCABULARY` выше. Сгруппирован по маршрутам: модели проще не
+ * путать кнопку экрана товара с кнопкой мастера, когда рядом написано,
+ * где она живёт. Селектор выписан целиком, в той форме, в какой его
+ * нужно скопировать, — чтобы не было соблазна «доработать» кавычки.
+ */
+const QA_VOCABULARY = (() => {
+  const byRoute = new Map<string, string[]>();
+  for (const [key, hook] of Object.entries(QA_HOOKS)) {
+    const lines = byRoute.get(hook.route) ?? [];
+    const cost =
+      hook.clickCost === 'forbidden'
+        ? ' [НЕ НАЖИМАТЬ: платный вызов вне списка операций — только waitFor/assertVisible]'
+        : hook.clickCost
+          ? ` [перед click обязателен triggerPaidOperation с operation "${hook.clickCost}"]`
+          : '';
+    lines.push(`  - ${qaSelector(key)} — ${hook.description}${cost}`);
+    byRoute.set(hook.route, lines);
+  }
+  return [...byRoute.entries()]
+    .map(([route, lines]) => `- экран "${route}":\n${lines.join('\n')}`)
+    .join('\n');
+})();
+
 export function buildScenarioPrompt(
   subjectKey: string,
   locale: string,
@@ -104,13 +158,15 @@ export function buildScenarioPrompt(
     'Опиши сценарий действий headless-браузера, который пройдёт по этому шагу интерфейса и позволит записать видео — короткую последовательность из СЛЕДУЮЩИХ примитивов, и только их:',
     STEP_VOCABULARY,
     '',
-    // `data-qa`, а не `data-testid`: в продукте принято первое
-    // (`ClientSiteWizard.tsx`), а `data-testid` не встречается во
-    // фронтенде ни разу. Плейсхолдер, написанный чужим соглашением,
-    // оператору приходится переписывать целиком, а не поправлять
-    // (находка сквозного аудита A+B+C). Правит он их теперь в
-    // админке — `PATCH /admin/tutorial-scenarios/:id/steps`.
-    'Не придумывай реальные CSS-селекторы наугад — используй понятные семантические плейсхолдеры вида [data-qa="..."] (это соглашение продукта; id вида #site-url тоже встречаются), которые оператор поправит на настоящие перед первым исполнением.',
+    // До этапа I здесь стояло приглашение писать «семантические
+    // плейсхолдеры [data-qa="..."], которые оператор поправит» — а
+    // настоящих хуков во фронтенде не было ни одного из нужных. Каждый
+    // сгенерированный сценарий падал на первом click, ни один ролик не
+    // собирался. Теперь — закрытый список, и валидатор ниже отвергает
+    // всё, что не из него (`qa-hooks.ts`).
+    '"selector" — НЕ плейсхолдер и НЕ произвольный CSS. Используй ТОЛЬКО селекторы из списка ниже, копируя их буква в букву вместе с квадратными скобками и кавычками; никаких классов, id, текста кнопок, потомков через пробел и :nth-child. Сценарий с любым другим селектором будет отклонён целиком. Если для задуманного действия подходящего селектора в списке нет — не делай этого действия, обойдись assertVisible по ближайшей карточке:',
+    QA_VOCABULARY,
+    'Пометки в квадратных скобках после описания — жёсткие правила: кнопку с пометкой «НЕ НАЖИМАТЬ» нельзя использовать в click (сценарий будет отклонён), а перед click по кнопке с пометкой про triggerPaidOperation этот шаг должен стоять ПРЯМО перед click.',
     '"route" в шаге goto — НЕ плейсхолдер, это настоящее имя экрана. Выбери РОВНО ОДНО значение из списка ниже, скопировав его буква в букву (без точек, без "wizard.", без придуманных суффиксов вроде "step-3") — других маршрутов в продукте не существует:',
     ROUTE_VOCABULARY,
     'Мастер создания ролика ("generate") и экран товара ("item") — однастраничные: если шаг обучалки описывает происходящее ВНУТРИ них (выбор референса, разбор, промпт, формат, рендер — всё это "generate"; фото/аналоги/голос/цена товара — всё это "item"), goto делается ОДИН раз в начале сценария на этот экран, а дальнейшее продвижение по шагам мастера описывается click/fill/waitFor, не повторными goto на разные маршруты.',
@@ -166,7 +222,123 @@ export function parseScenarioResponse(text: string): ParseScenarioResult {
       steps: [],
       reason: 'ответ не JSON-объект',
       droppedNarrations: [],
+      droppedPaidOperations: [],
     };
   }
-  return parseScenarioSteps(json.steps);
+  const parsed = parseScenarioSteps(json.steps);
+  if (!parsed.ok) return parsed;
+  return dropDanglingPaidOperations(rejectUnknownSelectors(parsed));
+}
+
+/**
+ * Вырезает `triggerPaidOperation`, за которым не следует платный клик
+ * (находка повторного аудита этапа F).
+ *
+ * ## Что ломалось
+ *
+ * Правило платных кнопок работало в ОДНУ сторону: клик по платному
+ * хуку требовал объявления перед собой. Объявление без клика не
+ * проверял никто — а стоило оно дорого. `estimateScenarioCost`
+ * считает `costly` по одним только `triggerPaidOperation`-шагам, и
+ * ночной прогон берёт сценарии по `OR: [{costly:false},{approved:true}]`.
+ * То есть сценарий, объявивший платный вызов и никуда не нажавший,
+ * получал `costly: true`, выпадал из выборки и ролика не получал
+ * ВОВСЕ — до ручного одобрения траты, которой в нём не случится.
+ * Строки в журнале при этом нет: сценарий просто не попадает в
+ * `findMany`.
+ *
+ * Попасть туда было легко. В `WIZARD_PAID_OPERATIONS` пять операций, а
+ * платный клик после этапа I есть ровно у одного хука
+ * (`video-generate` → `generation`). Четыре значения из пяти нажать
+ * нечем в принципе, и промпт при этом честно предлагал модели все
+ * пять.
+ *
+ * ## Почему вырезать, а не отказывать
+ *
+ * Отказ выбросил бы сценарий целиком — вместе с десятком исправных
+ * шагов и ради шага, который при исполнении и так no-op
+ * (`scenario-runner.ts`). Это то же решение, что у негодной реплики:
+ * вырезать плохую часть, сохранить ролик, сказать оператору. «Ролик
+ * получается ВСЕГДА» (§3 ТЗ) — про это.
+ *
+ * Номер шага — ИСХОДНЫЙ, до вырезания: оператор читает его рядом с
+ * ответом модели, а не с уже почищенным списком.
+ */
+function dropDanglingPaidOperations(
+  parsed: ParseScenarioResult,
+): ParseScenarioResult {
+  if (!parsed.ok) return parsed;
+  const dropped: DroppedPaidOperation[] = [];
+  const steps = parsed.steps.filter((step, i) => {
+    if (!isTriggerPaidOperationStep(step)) return true;
+    const next = parsed.steps[i + 1];
+    const key = next && 'selector' in next ? knownQaHook(next.selector) : null;
+    const paidBy = key === null ? undefined : QA_HOOKS[key].clickCost;
+    if (next && next.kind === 'click' && paidBy === step.operation) {
+      return true;
+    }
+    dropped.push({
+      stepNumber: i + 1,
+      operation: step.operation,
+      reason:
+        `объявлен платный вызов "${step.operation}", но следом за ним ` +
+        'нет нажатия кнопки, которая его запускает — сценарий считался ' +
+        'бы платным и ждал бы одобрения оператора впустую',
+    });
+    return false;
+  });
+  return { ...parsed, steps, droppedPaidOperations: dropped };
+}
+
+/**
+ * Отказ сценарию с селектором не из каталога (этап I). Целиком, а не
+ * вырезанием шага: без клика следующий шаг ждёт экран, которого не
+ * будет, — то есть сценарий всё равно упадёт, только ночью и за деньги
+ * сборки. Названы номер шага и сам селектор — по ним оператор видит,
+ * придумала модель кнопку или каталог отстал от продукта.
+ *
+ * Только для ответа МОДЕЛИ. Ручная правка шагов в админке идёт мимо
+ * этой функции (`parseScenarioSteps` напрямую) и по-прежнему допускает
+ * любой CSS: человек, который правит руками, видит экран сам.
+ */
+function rejectUnknownSelectors(
+  parsed: ParseScenarioResult,
+): ParseScenarioResult {
+  for (let i = 0; i < parsed.steps.length; i++) {
+    const step = parsed.steps[i];
+    if (!('selector' in step)) continue;
+    const key = knownQaHook(step.selector);
+    const refuse = (why: string): ParseScenarioResult => ({
+      ok: false,
+      steps: [],
+      reason: `шаг ${i + 1} (${step.kind}): ${why}`,
+      droppedNarrations: [],
+      droppedPaidOperations: [],
+    });
+    if (key === null) {
+      return refuse(
+        `селектор «${step.selector}» не из каталога хуков data-qa (tutorial-scenario/qa-hooks.ts)`,
+      );
+    }
+    // Платные кнопки (аудит этапа I): клик мимо гейта одобрения
+    // тратил бы деньги каждую ночь без ведома оператора.
+    const cost = QA_HOOKS[key].clickCost;
+    if (step.kind !== 'click' || !cost) continue;
+    if (cost === 'forbidden') {
+      return refuse(
+        `«${key}» запускает платный вызов, которого нет среди операций triggerPaidOperation, — нажимать его сценарию нельзя`,
+      );
+    }
+    const before = parsed.steps[i - 1];
+    if (
+      !before ||
+      before.kind !== 'triggerPaidOperation' ||
+      before.operation !== cost
+    ) {
+      return refuse(
+        `перед нажатием «${key}» нужен triggerPaidOperation с operation "${cost}" — без него сценарий не попадёт под одобрение оператора`,
+      );
+    }
+  }
+  return parsed;
 }

@@ -164,7 +164,7 @@ export interface CostReport {
      *
      * Ночной прогон обучалки пишет расход на фикстурного
      * исполнителя, а он помечен тестовым: без этого разреза операции
-     * `tutorial-scenario-generate`, `voiceover` и
+     * `tutorial-scenario-generate`, `tutorial-voiceover` и
      * `tutorial-video-assembly` не показываются НИГДЕ — в общей
      * таблице их нет по построению (тестовые исключены), а здесь была
      * одна безымянная сумма. То есть вопрос «сколько стоит обучалка
@@ -877,7 +877,17 @@ export class AiUsageService {
     for (const [userId, totals] of rolled) {
       if (!userId) continue;
       const existing = out[userId];
-      out[userId] = existing ? mergeTotals(existing, totals) : { ...totals };
+      // Поимённо, а не спредом. `rolledBuckets` отдаёт `UnitTotals` —
+      // с символами; спред протащил бы их сюда ТОЛЬКО тем
+      // пользователям, что пришли со стороны свёртки, и строки одного
+      // списка получились бы разной формы: у кого-то два поля, у
+      // кого-то три. Типом это не ловится — проверка лишних свойств
+      // на спред-выражения в TS не распространяется. Ровно эту правку
+      // этап F сделал у `mergeBuckets` этажом выше и не сделал здесь
+      // (находка повторного аудита этапа F).
+      out[userId] = existing
+        ? mergeTotals(existing, totals)
+        : { costMicroUsd: totals.costMicroUsd, calls: totals.calls };
     }
     return out;
   }

@@ -8,12 +8,24 @@ import {
   WIZARD_PAID_OPERATIONS,
 } from './scenario-steps.types';
 import { AI_OPERATION_LABEL } from '../../common/ai-pricing';
+import { QA_HOOKS } from './qa-hooks';
 
 const step: AssistantStepItem = {
   title: 'Заведите товар',
   text: 'Проект и товар: фото, описание, цена.',
   details: ['Быстрый путь без проекта тоже работает'],
 };
+
+describe('buildScenarioPrompt — каталог селекторов (этап I)', () => {
+  it('перечисляет каждый хук каталога готовым селектором и не зовёт писать плейсхолдеры', () => {
+    const prompt = buildScenarioPrompt('2', 'ru', step);
+    for (const key of Object.keys(QA_HOOKS)) {
+      expect(prompt).toContain(`[data-qa="${key}"]`);
+    }
+    expect(prompt).not.toContain('оператор поправит');
+    expect(prompt).toContain('НЕ плейсхолдер и НЕ произвольный CSS');
+  });
+});
 
 describe('buildScenarioPrompt', () => {
   it('включает заголовок/описание/детали шага и словарь примитивов', () => {
@@ -28,16 +40,23 @@ describe('buildScenarioPrompt', () => {
     expect(prompt).toContain('{"steps":[...]}');
   });
 
-  it('промпт называет ровно те операции, что пропустит валидатор (этап F)', () => {
-    // Две стороны одного контракта: модель пишет то, что ей назвали,
-    // валидатор роняет ВЕСЬ сценарий на незнакомом значении. До этапа
-    // F промпт называл пять значений руками, а валидатор принимал все
-    // ключи отчёта расходов.
+  it('промпт называет ровно ДОСТИЖИМЫЕ операции — подмножество белого списка (этап F, уточнено повторным аудитом)', () => {
+    // Две стороны одного контракта, но они не равны, и это нарочно.
+    // Валидатор ПРИНИМАЕТ весь `WIZARD_PAID_OPERATIONS` — иначе
+    // сценарий, сохранённый до этапа I, перестал бы разбираться.
+    // Промпт ПРЕДЛАГАЕТ только то, для чего в каталоге хуков есть
+    // кнопка: назвать модели операцию, которую нечем нажать, значит
+    // позвать её написать шаг, который будет вырезан
+    // (`dropDanglingPaidOperations`).
     const prompt = buildScenarioPrompt('1', 'ru', step);
     const listed = /"operation":((?:"[a-z-]+"\|?)+)/.exec(prompt);
     expect(listed).not.toBeNull();
     const values = listed![1].split('|').map((v) => v.replace(/"/g, ''));
-    expect(values).toEqual([...WIZARD_PAID_OPERATIONS]);
+    const reachable = WIZARD_PAID_OPERATIONS.filter((op) =>
+      Object.values(QA_HOOKS).some((hook) => hook.clickCost === op),
+    );
+    expect(values).toEqual([...reachable]);
+    expect(values.length).toBeGreaterThan(0);
     // И ни одной фоновой строки отчёта — ни в перечне, ни в
     // пояснении к нему.
     const background = Object.keys(AI_OPERATION_LABEL).filter(
@@ -52,7 +71,10 @@ describe('buildScenarioPrompt', () => {
     // Пояснение — `Record` по типу списка, но проверяем и текст:
     // значение без пояснения модель выбирает наугад.
     const prompt = buildScenarioPrompt('1', 'ru', step);
-    for (const op of WIZARD_PAID_OPERATIONS) {
+    const reachable = WIZARD_PAID_OPERATIONS.filter((op) =>
+      Object.values(QA_HOOKS).some((hook) => hook.clickCost === op),
+    );
+    for (const op of reachable) {
       expect(prompt).toMatch(new RegExp(`[а-яё-]+ — "${op}"`));
     }
   });
@@ -89,7 +111,7 @@ describe('parseScenarioResponse', () => {
   it('разбирает {"steps":[...]} внутри ```json ограждения', () => {
     const text =
       '```json\n{"steps":[{"kind":"goto","route":"wizard.product"},' +
-      '{"kind":"click","selector":"[data-testid=\\"next\\"]"}]}\n```';
+      '{"kind":"click","selector":"[data-qa=\\"analysis-continue\\"]"}]}\n```';
     const result = parseScenarioResponse(text);
     expect(result.ok).toBe(true);
     expect(result.steps).toHaveLength(2);
@@ -100,6 +122,112 @@ describe('parseScenarioResponse', () => {
     const result = parseScenarioResponse(text);
     expect(result.ok).toBe(true);
     expect(result.steps).toHaveLength(1);
+  });
+
+  it('селектор не из каталога data-qa — отказ с номером шага и самим селектором (этап I)', () => {
+    const cases = [
+      '[data-qa="next"]', // похоже, но такого хука нет
+      '#promptText', // настоящий id, но не хук
+      '[data-qa="prompt-approve"] button', // потомок через пробел
+      '[data-testid="prompt-approve"]', // чужое соглашение
+    ];
+    for (const selector of cases) {
+      const result = parseScenarioResponse(
+        JSON.stringify({
+          steps: [
+            { kind: 'goto', route: 'generate' },
+            { kind: 'click', selector },
+          ],
+        }),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.steps).toEqual([]);
+      expect(result.reason).toContain('шаг 2 (click)');
+      expect(result.reason).toContain(selector);
+    }
+  });
+
+  it('все виды шагов с селектором проверяются, а не только click', () => {
+    for (const kind of ['fill', 'waitFor', 'assertVisible', 'assertText']) {
+      const result = parseScenarioResponse(
+        JSON.stringify({ steps: [{ kind, selector: '.btn', value: 'x' }] }),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain(`шаг 1 (${kind})`);
+    }
+  });
+
+  it('платную кнопку вне списка операций нажимать нельзя, ждать можно (аудит этапа I)', () => {
+    for (const key of [
+      'reference-link-submit',
+      'relevance-check',
+      'prompt-generate',
+    ]) {
+      const click = parseScenarioResponse(
+        JSON.stringify({
+          steps: [{ kind: 'click', selector: `[data-qa="${key}"]` }],
+        }),
+      );
+      expect(click.ok).toBe(false);
+      expect(click.reason).toContain('нажимать его сценарию нельзя');
+      const wait = parseScenarioResponse(
+        JSON.stringify({
+          steps: [{ kind: 'waitFor', selector: `[data-qa="${key}"]` }],
+        }),
+      );
+      expect(wait.ok).toBe(true);
+    }
+  });
+
+  it('рендер нажимается только сразу после triggerPaidOperation "generation"', () => {
+    const paid = {
+      kind: 'triggerPaidOperation',
+      operation: 'generation',
+      model: 'veo-3.1-generate-preview',
+      expectedUnits: { seconds: 8 },
+      note: 'рендер',
+    };
+    const click = { kind: 'click', selector: '[data-qa="video-generate"]' };
+    const wait = { kind: 'waitFor', selector: '[data-qa="video-provider"]' };
+    expect(parseScenarioResponse(JSON.stringify({ steps: [click] })).ok).toBe(
+      false,
+    );
+    // Декларация есть, но не прямо перед кликом.
+    expect(
+      parseScenarioResponse(JSON.stringify({ steps: [paid, wait, click] })).ok,
+    ).toBe(false);
+    // Не та операция.
+    expect(
+      parseScenarioResponse(
+        JSON.stringify({
+          steps: [
+            {
+              ...paid,
+              operation: 'voiceover',
+              expectedUnits: { characters: 100 },
+            },
+            click,
+          ],
+        }),
+      ).reason,
+    ).toContain('"generation"');
+    expect(
+      parseScenarioResponse(JSON.stringify({ steps: [wait, paid, click] })).ok,
+    ).toBe(true);
+  });
+
+  it('хук из каталога и шаги без селектора проходят', () => {
+    const result = parseScenarioResponse(
+      JSON.stringify({
+        steps: [
+          { kind: 'goto', route: 'generate' },
+          { kind: 'waitFor', selector: '[data-qa="prompt-editor"]' },
+          { kind: 'click', selector: ' [data-qa="prompt-approve"] ' },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.steps).toHaveLength(3);
   });
 
   it('не-JSON текст — ok:false с понятной причиной', () => {
@@ -220,5 +348,136 @@ describe('buildScenarioPrompt — язык интерфейса (этап C)', (
       expect(prompt).toMatch(/Не нумеруй/);
       expect(prompt).toMatch(/Не обещай того, чего на кадре не будет/);
     });
+  });
+});
+
+describe('повисшее объявление платного вызова (повторный аудит этапа F)', () => {
+  const paid = {
+    kind: 'triggerPaidOperation',
+    operation: 'generation',
+    model: 'veo-3.1-generate-preview',
+    expectedUnits: { seconds: 8 },
+    note: 'Veo, ожидаемо 8 секунд рендера',
+  };
+
+  it('объявление без нажатия ВЫРЕЗАЕТСЯ, а сценарий остаётся', () => {
+    // Отказ выбросил бы десяток исправных шагов ради шага, который
+    // при исполнении и так no-op. Вырезаем плохую часть — то же
+    // решение, что у негодной реплики (§3 ТЗ: ролик получается ВСЕГДА).
+    const result = parseScenarioResponse(
+      JSON.stringify({
+        steps: [
+          { kind: 'goto', route: 'generate' },
+          paid,
+          { kind: 'assertVisible', selector: '[data-qa="video-result"]' },
+        ],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.steps.map((s) => s.kind)).toEqual(['goto', 'assertVisible']);
+  });
+
+  it('вырезанное названо оператору: номер шага, операция и почему', () => {
+    // Без этой строки единственным следом правки было бы то, что
+    // сценарий ПЕРЕСТАЛ быть платным, — а «перестал» в журнале не
+    // видно вовсе.
+    const result = parseScenarioResponse(
+      JSON.stringify({
+        steps: [{ kind: 'goto', route: 'generate' }, paid],
+      }),
+    );
+
+    expect(result.droppedPaidOperations).toHaveLength(1);
+    expect(result.droppedPaidOperations[0].stepNumber).toBe(2);
+    expect(result.droppedPaidOperations[0].operation).toBe('generation');
+    expect(result.droppedPaidOperations[0].reason).toMatch(/одобрения/);
+  });
+
+  it('объявление ПЕРЕД своей кнопкой остаётся нетронутым', () => {
+    const result = parseScenarioResponse(
+      JSON.stringify({
+        steps: [
+          { kind: 'goto', route: 'generate' },
+          paid,
+          { kind: 'click', selector: '[data-qa="video-generate"]' },
+        ],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.steps).toHaveLength(3);
+    expect(result.droppedPaidOperations).toEqual([]);
+  });
+
+  it('объявление НЕ ТОЙ операции перед платной кнопкой — отказ, а не вырезание', () => {
+    // Здесь первым срабатывает правило платного клика (этап I), и оно
+    // строже нарочно: вырезав объявление, мы оставили бы нажатие
+    // кнопки рендера мимо гейта одобрения — то есть настоящую трату
+    // каждую ночь. Порядок правил важен, поэтому он под тестом.
+    const result = parseScenarioResponse(
+      JSON.stringify({
+        steps: [
+          { kind: 'goto', route: 'generate' },
+          { ...paid, operation: 'voiceover' },
+          { kind: 'click', selector: '[data-qa="video-generate"]' },
+        ],
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('video-generate');
+    expect(result.reason).toContain('generation');
+    expect(result.droppedPaidOperations).toEqual([]);
+  });
+
+  it('объявление перед НЕ нажатием вырезается — ждать кнопку не значит нажать', () => {
+    const result = parseScenarioResponse(
+      JSON.stringify({
+        steps: [
+          { kind: 'goto', route: 'generate' },
+          paid,
+          { kind: 'waitFor', selector: '[data-qa="video-generate"]' },
+        ],
+      }),
+    );
+
+    expect(result.droppedPaidOperations).toHaveLength(1);
+  });
+
+  it('промпт предлагает только ДОСТИЖИМЫЕ операции', () => {
+    // В белом списке пять значений, а платная кнопка после этапа I
+    // одна. Предлагать остальные — звать модель написать то, что
+    // будет вырезано.
+    const reachable = WIZARD_PAID_OPERATIONS.filter((op) =>
+      Object.values(QA_HOOKS).some((hook) => hook.clickCost === op),
+    );
+    const prompt = buildScenarioPrompt('1', 'ru', step);
+
+    expect(reachable).toEqual(['generation']);
+    // Обе стороны одним утверждением, а не ветвлением внутри цикла:
+    // названо ровно достижимое, и ни одного слова сверх него.
+    const named = WIZARD_PAID_OPERATIONS.filter((op) =>
+      prompt.includes(`"${op}"`),
+    );
+    expect(named).toEqual([...reachable]);
+  });
+
+  it('валидатор при этом принимает ВЕСЬ белый список — сценарии до этапа I должны разбираться', () => {
+    // Сузить приём значило бы, что одобренный сценарий, сохранённый
+    // раньше, перестаёт разбираться и пара теряет ролик.
+    for (const operation of WIZARD_PAID_OPERATIONS) {
+      const result = parseScenarioResponse(
+        JSON.stringify({
+          steps: [
+            { kind: 'goto', route: 'generate' },
+            { ...paid, operation },
+          ],
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.reason).toBeUndefined();
+    }
   });
 });

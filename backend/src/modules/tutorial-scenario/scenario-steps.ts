@@ -178,6 +178,20 @@ export interface DroppedNarration {
   reason: string;
 }
 
+/**
+ * Отброшенный `triggerPaidOperation` — объявление платного вызова, за
+ * которым не следует платный клик (находка повторного аудита этапа F).
+ *
+ * Операция названа рядом с номером шага не для симметрии с
+ * `DroppedNarration`, а потому что именно она объясняет оператору, что
+ * произошло: «шаг 4, voiceover» читается сразу, «шаг 4» — нет.
+ */
+export interface DroppedPaidOperation {
+  stepNumber: number;
+  operation: string;
+  reason: string;
+}
+
 export interface ParseScenarioResult {
   ok: boolean;
   steps: ScenarioStep[];
@@ -190,6 +204,15 @@ export interface ParseScenarioResult {
    * говорить не о чем).
    */
   droppedNarrations: DroppedNarration[];
+  /**
+   * Объявления платных вызовов, вырезанные как повисшие. Поле
+   * ОБЯЗАТЕЛЬНОЕ, а не `?`: необязательное умолчание — ровно та
+   * ловушка, которую этап F снял у словаря подписей и у третьего
+   * параметра `slideshowContentHash`. Заполняется только на пути
+   * ответа модели (`parseScenarioResponse`); ручная правка шагов в
+   * админке идёт мимо, там человек видит экран сам.
+   */
+  droppedPaidOperations: DroppedPaidOperation[];
 }
 
 /**
@@ -205,6 +228,7 @@ export function parseScenarioSteps(raw: unknown): ParseScenarioResult {
       steps: [],
       reason: 'steps не массив',
       droppedNarrations: [],
+      droppedPaidOperations: [],
     };
   }
   if (raw.length === 0) {
@@ -213,6 +237,7 @@ export function parseScenarioSteps(raw: unknown): ParseScenarioResult {
       steps: [],
       reason: 'пустой сценарий',
       droppedNarrations: [],
+      droppedPaidOperations: [],
     };
   }
   if (raw.length > MAX_SCENARIO_STEPS) {
@@ -221,6 +246,7 @@ export function parseScenarioSteps(raw: unknown): ParseScenarioResult {
       steps: [],
       reason: `слишком много шагов (${raw.length} > ${MAX_SCENARIO_STEPS})`,
       droppedNarrations: [],
+      droppedPaidOperations: [],
     };
   }
   const steps: ScenarioStep[] = [];
@@ -233,6 +259,7 @@ export function parseScenarioSteps(raw: unknown): ParseScenarioResult {
         steps: [],
         reason: `шаг ${i + 1} невалиден${invalidStepHint(item)}`,
         droppedNarrations: [],
+        droppedPaidOperations: [],
       };
     }
     const problem = narrationProblem(
@@ -253,7 +280,7 @@ export function parseScenarioSteps(raw: unknown): ParseScenarioResult {
     };
     steps.push(rest as ScenarioStep);
   }
-  return { ok: true, steps, droppedNarrations };
+  return { ok: true, steps, droppedNarrations, droppedPaidOperations: [] };
 }
 
 /**

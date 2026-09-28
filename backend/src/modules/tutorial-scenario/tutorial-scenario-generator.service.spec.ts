@@ -78,7 +78,7 @@ function build(storedLocales: string | null = null) {
 const FREE_SCENARIO_TEXT = JSON.stringify({
   steps: [
     { route: 'wizard.product', kind: 'goto' },
-    { selector: '[data-qa="next"]', kind: 'click' },
+    { selector: '[data-qa="analysis-continue"]', kind: 'click' },
   ],
 });
 
@@ -92,7 +92,7 @@ const COSTLY_SCENARIO_TEXT = JSON.stringify({
       expectedUnits: { seconds: 8 },
       note: 'Veo рендер',
     },
-    { kind: 'click', selector: '[data-testid="generate"]' },
+    { kind: 'click', selector: '[data-qa="video-generate"]' },
   ],
 });
 
@@ -101,6 +101,27 @@ beforeEach(() => {
 });
 
 describe('TutorialScenarioGeneratorService.run', () => {
+  it('селектор не из каталога data-qa — сценарий отклонён целиком, в базу не пишется (этап I)', async () => {
+    generateContent.mockResolvedValue({
+      text: JSON.stringify({
+        steps: [
+          { kind: 'goto', route: 'generate' },
+          { kind: 'click', selector: '[data-qa="next-button"]' },
+        ],
+      }),
+      usageMetadata: {},
+    });
+    const { service, prisma } = build();
+
+    const result = await service.run();
+
+    expect(result.generated).toBe(0);
+    expect(result.failed).toBeGreaterThan(0);
+    expect(result.failures[0].reason).toContain('next-button');
+    expect(result.failures[0].reason).toContain('шаг 2');
+    expect(prisma.tutorialScenario.create).not.toHaveBeenCalled();
+  });
+
   it('вторая ночь с другой формулировкой — строка НЕ считается изменённой', async () => {
     // Главная находка аудита этапа D. Крон идёт каждую ночь, реплика
     // — свободный текст, и модель формулирует её заново. Без
@@ -224,7 +245,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
       // (короткие раньше длинных) — то есть «не изменилось».
       steps: [
         { kind: 'goto', route: 'wizard.product' },
-        { kind: 'click', selector: '[data-qa="next"]' },
+        { kind: 'click', selector: '[data-qa="analysis-continue"]' },
       ],
       generatedBy: 'ai',
       costly: false,
@@ -239,6 +260,55 @@ describe('TutorialScenarioGeneratorService.run', () => {
     expect(data).not.toHaveProperty('narrationReviewedBy');
   });
 
+  it('повисшее объявление платного вызова вырезано, сценарий записан НЕплатным (повторный аудит этапа F)', async () => {
+    // Без вырезания сценарий получал бы `costly: true`, выпадал бы из
+    // ночной выборки `OR: [{costly:false},{approved:true}]` и ролика
+    // не получал ВОВСЕ — до одобрения траты, которой в нём не
+    // случится. Строки в журнале при этом нет: он просто не попадает
+    // в `findMany`.
+    const withDanglingPaid = JSON.stringify({
+      steps: [
+        { kind: 'goto', route: 'generate', narration: 'Открываем экран.' },
+        {
+          kind: 'triggerPaidOperation',
+          operation: 'generation',
+          model: 'veo-3.1-generate-preview',
+          expectedUnits: { seconds: 8 },
+          note: 'Veo, ожидаемо 8 секунд рендера',
+        },
+        {
+          kind: 'assertVisible',
+          selector: '[data-qa="video-result"]',
+          narration: 'Ролик готов.',
+        },
+      ],
+    });
+    generateContent.mockResolvedValue({
+      text: withDanglingPaid,
+      usageMetadata: {},
+    });
+    const { service, prisma } = build();
+
+    const result = await service.run();
+
+    expect(result.generated).toBe(2);
+    expect(result.failed).toBe(0);
+    // Оператору сказано поимённо — иначе единственным следом правки
+    // было бы то, что сценарий ПЕРЕСТАЛ быть платным, а «перестал» в
+    // журнале не видно вовсе.
+    expect(result.failures[0]).toEqual({
+      subjectKey: '1',
+      locale: 'ru',
+      reason: expect.stringContaining('шаг 2'),
+    });
+    expect(result.failures[0].reason).toContain('generation');
+    const written = prisma.tutorialScenario.create.mock.calls[0][0].data;
+    expect(written.costly).toBe(false);
+    expect(
+      (written.steps as Record<string, unknown>[]).map((s) => s.kind),
+    ).toEqual(['goto', 'assertVisible']);
+  });
+
   it('отброшенная реплика НЕ отменяет сценарий — он записан, кадр немой', async () => {
     // Единственное место, где всё-или-ничего сознательно не
     // применяется: плохая подпись к кадру не должна лишать нас
@@ -247,7 +317,11 @@ describe('TutorialScenarioGeneratorService.run', () => {
     const withBadNarration = JSON.stringify({
       steps: [
         { kind: 'goto', route: 'wizard.product', narration: 'x'.repeat(300) },
-        { kind: 'click', selector: '#next', narration: 'Идём дальше.' },
+        {
+          kind: 'click',
+          selector: '[data-qa="analysis-continue"]',
+          narration: 'Идём дальше.',
+        },
       ],
     });
     generateContent.mockResolvedValue({
@@ -281,7 +355,13 @@ describe('TutorialScenarioGeneratorService.run', () => {
     // потерялась подпись.
     generateContent.mockResolvedValue({
       text: JSON.stringify({
-        steps: [{ kind: 'click', selector: '#a', narration: '' }],
+        steps: [
+          {
+            kind: 'click',
+            selector: '[data-qa="analysis-continue"]',
+            narration: '',
+          },
+        ],
       }),
       usageMetadata: {},
     });
@@ -579,7 +659,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
       // «изменилось» на каждом прогоне (находка сквозного аудита).
       steps: [
         { kind: 'goto', route: 'wizard.product' },
-        { kind: 'click', selector: '[data-qa="next"]' },
+        { kind: 'click', selector: '[data-qa="analysis-continue"]' },
       ],
       generatedBy: 'ai',
       costly: true,

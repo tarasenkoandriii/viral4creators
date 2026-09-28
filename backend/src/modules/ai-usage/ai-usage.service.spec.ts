@@ -869,3 +869,32 @@ describe('AiUsageService.report — тестовые аккаунты (TODO §II
     expect(sql).toContain('u."isTestUser" = false');
   });
 });
+
+describe('AiUsageService.forUsers — форма строк (повторный аудит этапа F)', () => {
+  it('строки одинаковы по форме, откуда бы ни пришли', async () => {
+    // `rolledBuckets` отдаёт `UnitTotals` — с символами. Спред
+    // протащил бы их СЮДА только тем, у кого расход целиком свёрнут:
+    // у одного пользователя в карте два поля, у другого три. Типом
+    // это не ловится — проверка лишних свойств на спред-выражения в
+    // TS не распространяется, — а следующий вызывающий, который
+    // отдаст карту наружу, получит неоднородный список.
+    const { svc, prisma } = build();
+    // `u-raw` пришёл из сырого журнала, `u-rolled` — только из свёртки.
+    prisma.aiUsage.groupBy.mockResolvedValue([
+      { userId: 'u-raw', _sum: { costMicroUsd: 12 }, _count: { _all: 3 } },
+    ]);
+    prisma.aiUsageMonthly.groupBy.mockResolvedValue([
+      {
+        userId: 'u-rolled',
+        _sum: { costMicroUsd: 9, calls: 3, characters: 300 },
+      },
+    ]);
+
+    const out = await svc.forUsers(['u-raw', 'u-rolled']);
+
+    expect(Object.keys(out).sort()).toEqual(['u-raw', 'u-rolled']);
+    for (const row of Object.values(out)) {
+      expect(Object.keys(row).sort()).toEqual(['calls', 'costMicroUsd']);
+    }
+  });
+});
