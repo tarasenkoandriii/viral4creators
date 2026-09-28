@@ -1,5 +1,7 @@
 import {
+  measurePointer,
   runScenario,
+  SCENARIO_VIEWPORT,
   ScenarioPage,
   ScenarioRouteResolver,
 } from './scenario-runner';
@@ -237,5 +239,149 @@ describe('runScenario', () => {
     expect(result.frames).toEqual([
       { stepIndex: 0, bytes: new Uint8Array([1]) },
     ]);
+  });
+});
+
+describe('указатель клика: замер в момент снимка (этап H)', () => {
+  // Кнопка «Далее»: CSS 30…360 × 740…790 при вьюпорте 390×844.
+  const box = { x: 30, y: 740, width: 330, height: 50 };
+  const pointerPage = (
+    over: Partial<ScenarioPage> = {},
+    found: typeof box | null = box,
+  ) => {
+    const order: string[] = [];
+    const page = buildPage({
+      screenshot: jest.fn(async () => {
+        order.push('screenshot');
+        return new Uint8Array([1]);
+      }),
+      $: jest.fn(async () => {
+        order.push('$');
+        return { boundingBox: jest.fn().mockResolvedValue(found) };
+      }),
+      viewport: jest.fn().mockReturnValue({ width: 390, height: 844 }),
+      ...over,
+    });
+    return { page, order };
+  };
+  const steps: ScenarioStep[] = [
+    { kind: 'goto', route: 'generate' },
+    { kind: 'fill', selector: '#name', value: 'Товар' },
+    { kind: 'click', selector: '#next' },
+  ];
+
+  it('вьюпорт съёмки — телефонный, один на обучалку и снимки мастера', () => {
+    expect(SCENARIO_VIEWPORT).toEqual({ width: 390, height: 844 });
+  });
+
+  it('указатель ложится на кадр ПЕРЕД кликом — там кнопка видна', async () => {
+    const { page } = pointerPage();
+
+    const result = await runScenario(page, steps, resolveOk, undefined, true);
+
+    // Кадр шага 1 (fill) — последний перед кликом шага 2.
+    expect(result.frames.map((f) => f.stepIndex)).toEqual([0, 1, 2]);
+    expect(result.frames[1].pointer).toEqual({ x: 0.5, y: 0.9064 });
+    expect(result.frames[0].pointer).toBeUndefined();
+    expect(result.frames[2].pointer).toBeUndefined();
+    expect(page.$).toHaveBeenCalledWith('#next');
+    expect(page.$).toHaveBeenCalledTimes(1);
+  });
+
+  it('замер — сразу ПОСЛЕ снимка и без ожидания элемента', async () => {
+    // Ожидание (как у локатора клика) дало бы рамку кнопки, которой на
+    // снимке ещё нет.
+    const { page, order } = pointerPage();
+
+    await runScenario(page, steps, resolveOk, undefined, true);
+
+    expect(order).toEqual(['screenshot', 'screenshot', '$', 'screenshot']);
+    expect(page.waitForSelector).not.toHaveBeenCalled();
+  });
+
+  it('снимок не удался — нет кадра, нет и указателя, и прогон не падает', async () => {
+    const { page } = pointerPage({
+      screenshot: jest
+        .fn()
+        .mockResolvedValueOnce(new Uint8Array([1]))
+        .mockRejectedValueOnce(new Error('гонка CDP'))
+        .mockResolvedValue(new Uint8Array([1])),
+    });
+
+    const result = await runScenario(page, steps, resolveOk, undefined, true);
+
+    expect(result.ok).toBe(true);
+    expect(result.frames.map((f) => f.stepIndex)).toEqual([0, 2]);
+    expect(result.frames.some((f) => f.pointer)).toBe(false);
+    expect(page.$).not.toHaveBeenCalled();
+  });
+
+  it('без captureFrames не меряется ничего', async () => {
+    const { page } = pointerPage();
+    await runScenario(page, steps, resolveOk);
+    expect(page.$).not.toHaveBeenCalled();
+  });
+
+  type Box = typeof box;
+  const noPointer: Array<[string, Box | null | undefined]> = [
+    ['элемента нет на странице', null],
+    ['рамки нет — элемент скрыт', undefined],
+    ['рамка пустая', { ...box, width: 0 }],
+    ['центр ниже экрана — клик прокрутил бы страницу', { ...box, y: 900 }],
+    ['центр левее экрана', { ...box, x: -400 }],
+  ];
+
+  it.each(noPointer)(
+    '%s — указателя нет',
+    async (_name: string, found: Box | null | undefined) => {
+      const page = buildPage({
+        viewport: () => ({ width: 390, height: 844 }),
+        $: jest.fn(async () =>
+          found === null
+            ? null
+            : { boundingBox: jest.fn().mockResolvedValue(found ?? null) },
+        ),
+      });
+      expect(await measurePointer(page, '#next')).toBeNull();
+    },
+  );
+
+  it('страница без $ или без вьюпорта — без указателя, без ошибки', async () => {
+    expect(await measurePointer(buildPage(), '#x')).toBeNull();
+    expect(
+      await measurePointer(
+        buildPage({
+          $: jest.fn(),
+          viewport: () => null,
+        }),
+        '#x',
+      ),
+    ).toBeNull();
+  });
+
+  it('сбой замера глотается — это улучшение, а не условие прогона', async () => {
+    const page = buildPage({
+      viewport: () => ({ width: 390, height: 844 }),
+      $: jest.fn().mockRejectedValue(new Error('страница закрылась')),
+    });
+    expect(await measurePointer(page, '#x')).toBeNull();
+  });
+
+  it('доли округлены до десятитысячных — дробный хвост рамки не меняет отпечаток', async () => {
+    const page = buildPage({
+      viewport: () => ({ width: 390, height: 844 }),
+      $: jest.fn(async () => ({
+        boundingBox: jest.fn().mockResolvedValue({
+          x: 10.123456,
+          y: 20.987654,
+          width: 33.333333,
+          height: 11.111111,
+        }),
+      })),
+    });
+    const p = (await measurePointer(page, '#x'))!;
+    expect(String(p.x).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(4);
+    expect(String(p.y).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(4);
+    expect(p.x).toBeCloseTo((10.123456 + 33.333333 / 2) / 390, 4);
   });
 });

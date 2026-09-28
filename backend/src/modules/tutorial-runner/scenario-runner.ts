@@ -78,6 +78,55 @@ export interface ScenarioPage {
    * структурно совместим (возвращает `Buffer`/`Uint8Array`); моки в
    * тестах, не собирающие кадры, могут его не реализовывать вовсе. */
   screenshot?(): Promise<Uint8Array>;
+  /**
+   * Опционально (этап H ТЗ `docs-tz/TZ-Tutorial-Video-Voiced.md`) —
+   * нужны только указателю клика. `$` — БЕЗ ожидания: элемент ищется
+   * ровно в том состоянии страницы, что попало на снимок. Реальный
+   * puppeteer `Page` структурно совместим; мок без них просто не даёт
+   * указателя.
+   */
+  $?(selector: string): Promise<ScenarioElement | null>;
+  viewport?(): { width: number; height: number } | null;
+}
+
+/** Подмножество puppeteer `ElementHandle`, нужное указателю клика. */
+export interface ScenarioElement {
+  boundingBox(): Promise<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>;
+}
+
+/**
+ * Вьюпорт съёмки: мобильный экран, как у TMA внутри Telegram.
+ *
+ * Один на ночную обучалку и на снимки мастера для лендинга
+ * (`ui-snapshot-runner`). До этапа H ночная обучалка вьюпорт не
+ * выставляла вовсе, и puppeteer открывал страницу в своём умолчании —
+ * 800×600, настольный альбомный экран. Холст ролика при этом
+ * портретный (`CANVAS`, 720×1560, «пропорция телефонного экрана
+ * 390×844»), и кадр ложился полосой 720×540 посреди чёрного холста:
+ * две трети ролика — чернота, а интерфейс снят в настольной вёрстке,
+ * которой пользователь в Telegram не видит (найдено аудитом этапа H:
+ * координаты клика без известного вьюпорта привязывать не к чему).
+ */
+export const SCENARIO_VIEWPORT = { width: 390, height: 844 } as const;
+
+/**
+ * Где на снимке элемент, по которому кликнет СЛЕДУЮЩИЙ шаг, — доли
+ * ширины и высоты вьюпорта (0…1), центр рамки (этап H).
+ *
+ * Доли, а не пиксели: снимок снимается с плотностью пикселей
+ * вьюпорта, а рисуется на холсте другого размера, и переводить в
+ * пиксели холста — дело плана сборки, знающего холст. Округлены до
+ * десятитысячных: иначе дробный хвост `boundingBox()` менял бы
+ * отпечаток сборки при побайтово том же снимке.
+ */
+export interface FramePointer {
+  x: number;
+  y: number;
 }
 
 export interface ScenarioLocator {
@@ -121,6 +170,14 @@ export interface ScenarioFrame {
   stepIndex: number;
   /** PNG. */
   bytes: Uint8Array;
+  /**
+   * Куда кликнет следующий шаг, если он `click` и его элемент ВИДЕН на
+   * этом снимке (этап H). Замер — сразу после снимка и без ожидания: в
+   * том же состоянии страницы. Элемента на снимке нет (появится позже,
+   * пока локатор клика его ждёт) — указателя нет, а не кружок на пустом
+   * месте.
+   */
+  pointer?: FramePointer;
 }
 
 export interface ScenarioRunResult {
@@ -169,10 +226,21 @@ export async function runScenario(
         // Best-effort: неудачный скриншот (страница в переходном
         // состоянии, редкая гонка CDP) не должен ронять весь регресс-
         // прогон ради необязательного кадра для слайд-шоу.
+        let frame: ScenarioFrame | null = null;
         try {
-          frames.push({ stepIndex: i, bytes: await page.screenshot() });
+          frame = { stepIndex: i, bytes: await page.screenshot() };
+          frames.push(frame);
         } catch {
           /* пропускаем этот кадр, не весь прогон */
+        }
+        // Указатель (этап H) — на кадр ПЕРЕД кликом: кнопка видна
+        // именно на нём, а кадр самого клика снимается уже после
+        // нажатия, и кнопки там может не быть вовсе (клик увёл на
+        // другой экран). Нет кадра — не к чему и указатель.
+        const next = steps[i + 1];
+        if (frame && next?.kind === 'click') {
+          const pointer = await measurePointer(page, next.selector);
+          if (pointer) frame.pointer = pointer;
         }
       }
     } catch (err) {
@@ -182,6 +250,35 @@ export async function runScenario(
     }
   }
   return { ok: true, steps: results, frames };
+}
+
+/**
+ * Центр рамки элемента в долях вьюпорта — или `null`, если указывать
+ * не на что: элемента нет на странице, он скрыт (рамки нет), рамка
+ * пустая или центр вне экрана (клик прокрутил бы страницу, и снимок
+ * показывает не то место).
+ *
+ * Best-effort, как и сам снимок: любая ошибка — просто без указателя.
+ */
+export async function measurePointer(
+  page: ScenarioPage,
+  selector: string,
+): Promise<FramePointer | null> {
+  if (!page.$ || !page.viewport) return null;
+  try {
+    const viewport = page.viewport();
+    if (!viewport || viewport.width <= 0 || viewport.height <= 0) return null;
+    const element = await page.$(selector);
+    const box = element ? await element.boundingBox() : null;
+    if (!box || box.width <= 0 || box.height <= 0) return null;
+    const x = (box.x + box.width / 2) / viewport.width;
+    const y = (box.y + box.height / 2) / viewport.height;
+    if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) return null;
+    const round = (v: number) => Math.round(v * 10_000) / 10_000;
+    return { x: round(x), y: round(y) };
+  } catch {
+    return null;
+  }
 }
 
 async function runStep(

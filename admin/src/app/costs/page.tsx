@@ -19,7 +19,7 @@
 import { useEffect, useState } from 'react';
 import { getCosts } from '../../lib/endpoints';
 import type { CostBucket, CostReport } from '../../lib/types';
-import { operationLabel, share, usd } from '../../lib/money';
+import { chars, operationLabel, share, usd } from '../../lib/money';
 import { ApiRequestError } from '../../lib/admin-api';
 
 function errText(e: unknown): string {
@@ -51,6 +51,10 @@ function Breakdown({
                   <td style={{ padding: '6px 0' }}>{label(r.key)}</td>
                   <td className="muted" style={{ width: 90, fontSize: 12 }}>
                     {r.calls} выз.
+                    {/* Символы синтеза — второй строкой в той же ячейке,
+                        а не своей колонкой: они есть у двух-трёх строк
+                        из сорока, и колонка стояла бы почти пустой. */}
+                    {r.characters > 0 && <div>{chars(r.characters)}</div>}
                   </td>
                   {/* Полоска доли — иллюстрация к проценту справа, а не
                       данные. На телефоне она уводила бы саму сумму за

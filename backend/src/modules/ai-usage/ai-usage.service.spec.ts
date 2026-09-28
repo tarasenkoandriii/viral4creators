@@ -352,8 +352,17 @@ describe('AiUsageService — свёртка журнала (doc/TODO.md §I-Б.5
         unpriced: false,
         calls: 2,
         costMicroUsd: 150n,
+        // Символов у разбора нет — но поле есть всегда: колонка
+        // `NOT NULL`, и строка свёртки без неё не записалась бы.
+        characters: 0,
       },
     ]);
+    // Символы группирует база вместе с деньгами (этап F): не
+    // попроси их здесь — после удаления сырых строк их не вернуть.
+    expect(prisma.aiUsage.groupBy.mock.calls[0][0]._sum).toEqual({
+      costMicroUsd: true,
+      characters: true,
+    });
     // Сырые строки удаляются ровно по границам месяца и строго `lt`.
     expect(prisma.aiUsage.deleteMany.mock.calls[0][0].where.createdAt).toEqual({
       gte: new Date('2026-01-01T00:00:00.000Z'),
@@ -466,8 +475,54 @@ describe('AiUsageService — отчёт «за всё время» читает 
     );
     const report = await svc.report();
     expect(report.byProvider).toEqual([
-      { key: 'GEMINI', costMicroUsd: 100, calls: 10 },
-      { key: 'OPENAI', costMicroUsd: 3, calls: 1 },
+      { key: 'GEMINI', costMicroUsd: 100, calls: 10, characters: 0 },
+      { key: 'OPENAI', costMicroUsd: 3, calls: 1, characters: 0 },
+    ]);
+  });
+
+  it('символы синтеза в разрезе по операциям — из обоих источников (этап F)', async () => {
+    // Приёмка §11 п.22 ТЗ на озвученную обучалку: «расход виден
+    // отдельной операцией, с числом символов». Символы обязаны
+    // складываться так же, как деньги: сырая половина без свёрнутой
+    // — заниженное число без единой ошибки.
+    const { svc, prisma } = build();
+    prisma.aiUsage.groupBy.mockImplementation(
+      async (args: { by: readonly string[]; _sum: Record<string, true> }) =>
+        args.by[0] === 'operation'
+          ? [
+              {
+                operation: 'voiceover',
+                // Символы в группировке появляются, только если их
+                // попросили: не попросишь — база вернёт одни деньги.
+                _sum: {
+                  costMicroUsd: 10,
+                  characters: args._sum.characters ? 500 : undefined,
+                },
+                _count: { _all: 1 },
+              },
+            ]
+          : [],
+    );
+    prisma.aiUsageMonthly.groupBy.mockImplementation(
+      async (args: { by: readonly string[]; _sum: Record<string, true> }) =>
+        args.by[0] === 'operation'
+          ? [
+              {
+                operation: 'voiceover',
+                _sum: {
+                  costMicroUsd: 90n,
+                  calls: 9,
+                  characters: args._sum.characters ? 4500n : undefined,
+                },
+              },
+            ]
+          : [],
+    );
+
+    const report = await svc.report();
+
+    expect(report.byOperation).toEqual([
+      { key: 'voiceover', costMicroUsd: 100, calls: 10, characters: 5000 },
     ]);
   });
 
@@ -615,7 +670,37 @@ describe('AiUsageService — отчёт «за всё время» читает 
       { operation: 'prompt', _sum: { costMicroUsd: 6n, calls: 3 } },
     ]);
     const rows = await svc.breakdownForUser('u1');
-    expect(rows).toEqual([{ key: 'prompt', costMicroUsd: 10, calls: 5 }]);
+    expect(rows).toEqual([
+      { key: 'prompt', costMicroUsd: 10, calls: 5, characters: 0 },
+    ]);
+  });
+
+  it('в карточке пользователя символы тоже складываются из двух источников (этап F)', async () => {
+    // Карточка фикстурного пользователя — второе место, где видна
+    // озвучка обучалки: весь её расход записан на него.
+    const { svc, prisma } = build();
+    prisma.aiUsage.groupBy.mockResolvedValue([
+      {
+        operation: 'tutorial-voiceover',
+        _sum: { costMicroUsd: 4, characters: 120 },
+        _count: { _all: 1 },
+      },
+    ]);
+    prisma.aiUsageMonthly.groupBy.mockResolvedValue([
+      {
+        operation: 'tutorial-voiceover',
+        _sum: { costMicroUsd: 6n, calls: 2, characters: 360 },
+      },
+    ]);
+    const rows = await svc.breakdownForUser('u1');
+    expect(rows).toEqual([
+      {
+        key: 'tutorial-voiceover',
+        costMicroUsd: 10,
+        calls: 3,
+        characters: 480,
+      },
+    ]);
   });
 });
 
@@ -728,7 +813,12 @@ describe('AiUsageService.report — тестовые аккаунты (TODO §II
     const report = await svc.report();
 
     expect(report.testUsers.byOperation).toEqual([
-      { key: 'tutorial-video-assembly', costMicroUsd: 300, calls: 30 },
+      {
+        key: 'tutorial-video-assembly',
+        costMicroUsd: 300,
+        calls: 30,
+        characters: 0,
+      },
     ]);
     // И в общих числах её по-прежнему нет — блоки не складывают.
     expect(report.byOperation).toEqual([]);
@@ -743,6 +833,10 @@ describe('AiUsageService.report — тестовые аккаунты (TODO §II
 
     expect(report.operationLabels['tutorial-video-assembly']).toBe(
       'Сборка обучающего видео (ffmpeg)',
+    );
+    // Этап F: своя строка у озвучки обучалки, а не общая «Озвучка».
+    expect(report.operationLabels['tutorial-voiceover']).toBe(
+      'Озвучка обучающего видео',
     );
     expect(Object.keys(report.operationLabels).length).toBeGreaterThan(30);
   });

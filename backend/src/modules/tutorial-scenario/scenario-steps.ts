@@ -11,16 +11,23 @@
  * отказаться от генерации в этом прогоне и попробовать в следующий раз.
  */
 
-import { AI_OPERATION_LABEL } from '../../common/ai-pricing';
 import { stableStringify } from '../../common/stable-json';
 import {
   MAX_NARRATION_LENGTH,
   MAX_SCENARIO_STEPS,
   ScenarioStep,
   SCENARIO_STEP_KINDS,
+  WIZARD_PAID_OPERATIONS,
 } from './scenario-steps.types';
 
-const VALID_OPERATIONS = new Set(Object.keys(AI_OPERATION_LABEL));
+/**
+ * Белый список `triggerPaidOperation.operation` — ровно то, что
+ * перечисляет промпт, а не все ключи отчёта расходов. См.
+ * доккомментарий `WIZARD_PAID_OPERATIONS`: до этапа F здесь стояло
+ * `Object.keys(AI_OPERATION_LABEL)`, и каждая новая строка отчёта
+ * расширяла словарь модели.
+ */
+const VALID_OPERATIONS: ReadonlySet<string> = new Set(WIZARD_PAID_OPERATIONS);
 
 /** Непустая строка разумной длины — общая проверка для selector/route/value. */
 function isNonEmptyString(v: unknown, maxLen = 500): v is string {
@@ -91,6 +98,32 @@ function isValidScenarioStep(value: unknown): value is ScenarioStep {
     default:
       return false;
   }
+}
+
+/**
+ * Уточнение к «шаг N невалиден» — только для одного случая, и он не
+ * случаен.
+ *
+ * Этап F сузил белый список `triggerPaidOperation.operation` с сорока с
+ * лишним ключей отчёта расходов до пяти операций мастера. Шаг, который
+ * вчера проходил (`"reframe"`, `"audit"` — модель их не должна была
+ * писать, но валидатор пропускал), сегодня роняет сценарий целиком. На
+ * ночной генерации это просто следующая попытка; а оператор, правящий
+ * такой сценарий в админке (`PATCH …/steps`), видел бы «шаг 3
+ * невалиден» и искал бы опечатку в селекторе. Причина названа прямо,
+ * вместе со списком допустимого.
+ */
+function invalidStepHint(value: unknown): string {
+  if (!value || typeof value !== 'object') return '';
+  const v = value as Record<string, unknown>;
+  if (
+    v.kind === 'triggerPaidOperation' &&
+    typeof v.operation === 'string' &&
+    !VALID_OPERATIONS.has(v.operation)
+  ) {
+    return `: операции «${v.operation}» мастер не запускает — допустимы ${WIZARD_PAID_OPERATIONS.join(', ')}`;
+  }
+  return '';
 }
 
 /**
@@ -198,7 +231,7 @@ export function parseScenarioSteps(raw: unknown): ParseScenarioResult {
       return {
         ok: false,
         steps: [],
-        reason: `шаг ${i + 1} невалиден`,
+        reason: `шаг ${i + 1} невалиден${invalidStepHint(item)}`,
         droppedNarrations: [],
       };
     }

@@ -59,6 +59,138 @@ const AUDIO_RATE = 44_100;
 const OUTPUT_FPS = 30;
 
 /**
+ * Сэмплов звука на один кадр видео: 44100 / 30 = 1470 — ЦЕЛОЕ число, и
+ * на этом стоит точная длина звука (аудит этапа G).
+ *
+ * Звук, обрезанный секундами (`atrim=0:3.6333333333333333`), режется
+ * вниз до сэмпла и теряет на каждом таком сегменте долю сэмпла. Сама по
+ * себе потеря ничтожна, но `-shortest` кончает файл по КОРОТКОМУ потоку,
+ * и звук, вышедший короче картинки хотя бы на сэмпл, отрезает у ролика
+ * последний кадр целиком. Замерено настоящим ffmpeg: тридцать кадров с
+ * переходами — 3615 кадров в файле при 3616 в плане; одна дорожка на
+ * весь ролик — 186 при 187 всякий раз, когда `durationMs` округляется
+ * вниз (это дефект этапа B, найденный аудитом этапа G). Резка целыми
+ * сэмплами — `atrim=end_sample=` — даёт звук ровно той длины, что
+ * картинка, и `-shortest` снова отрезает только хвост aac.
+ */
+const SAMPLES_PER_FRAME = AUDIO_RATE / OUTPUT_FPS;
+
+/**
+ * Хвост тишины в ОДИН кадр у звука, который собирается отдельно от
+ * картинки (переходы и одна дорожка на весь ролик).
+ *
+ * Звук ровно в длину картинки — ещё не гарантия. `-shortest` в ffmpeg
+ * 6.1 решает по границам aac-пакетов (1024 сэмпла), и на равных длинах
+ * он всё равно ронял последний кадр: тридцать кадров с переходами при
+ * звуке, точном до сэмпла, дали 3615 кадров при 3616 в плане. Звук на
+ * кадр длиннее картинки делает её заведомо более коротким потоком, и
+ * `-shortest` режет уже звук — в тишине хвоста, — а картинка и длина
+ * файла совпадают с планом до кадра (замерено, см. запись этапа G в
+ * ТЗ). 1470 сэмплов больше пакета, поэтому хватает одного кадра.
+ */
+const AUDIO_TAIL_SAMPLES = SAMPLES_PER_FRAME;
+if (!Number.isInteger(SAMPLES_PER_FRAME)) {
+  // Сменят частоту звука или кадров так, что деление перестанет быть
+  // целым, — узнают об этом при старте, а не по съехавшему ролику.
+  throw new Error(
+    `AUDIO_RATE / OUTPUT_FPS обязано быть целым (${AUDIO_RATE} / ${OUTPUT_FPS})`,
+  );
+}
+
+/**
+ * Движение в слайд-шоу (§6 ТЗ, этап G): переходы между кадрами и лёгкий
+ * зум внутри кадра.
+ *
+ * Три режима, а не два флага: зум без переходов не заказывал никто, и
+ * лишняя комбинация была бы лишней строкой в каждом тесте и в каждой
+ * фразе витрины. Режим — ОБЯЗАТЕЛЬНЫЙ параметр всех трёх потребителей
+ * сетки времени: плана, подписей и отпечатка. Ни у одного из них нет
+ * умолчания, и это не педантизм: переход укорачивает ролик на 0.3 с на
+ * каждом стыке, и подписи, посчитанные без переходов поверх ролика с
+ * переходами, к тридцатому кадру отставали бы на восемь с половиной
+ * секунд. Ровно эту ловушку аудит этапа E снял у третьего параметра
+ * `slideshowContentHash`.
+ */
+export const SLIDESHOW_MOTIONS = ['none', 'fade', 'fade+zoom'] as const;
+
+export type SlideshowMotion = (typeof SLIDESHOW_MOTIONS)[number];
+
+/**
+ * Длина перехода — В КАДРАХ, а не в секундах: 9 кадров при 30 к/с —
+ * это 0.3 с из §6 ТЗ. Кадрами потому, что вся сетка времени
+ * (`frameSpansSeconds`) считается в целых кадрах, и переход, заданный
+ * секундами, пришлось бы округлять на каждом стыке своим правилом.
+ */
+export const TRANSITION_FRAMES = 9;
+
+/**
+ * Во сколько раз кадр приближается к концу своего показа — 1.00 → 1.04
+ * (§6 ТЗ). Убирает ощущение презентации и при этом не уводит за край
+ * ничего, что стоит читать: 4 % — это 14 пикселей по короткой стороне
+ * холста с каждого края.
+ */
+export const ZOOM_TO = 1.04;
+
+/**
+ * Ролик длиннее этого — без зума, только с переходами.
+ *
+ * Зум — самая дорогая часть сборки: `perspective` с кубической
+ * интерполяцией на холсте 720×1560 утраивает работу ffmpeg (замерено в
+ * песочнице на двух ядрах: 120 с ролика — 60 с сборки с переходами и
+ * 180 с — с переходами и зумом). У задачи внешнего сервиса потолок
+ * `ASSEMBLY_DEADLINE_MS` — десять минут, и самый длинный ролик
+ * сценарного пути (тридцать шагов по реплике в 220 символов, ≈470 с)
+ * с зумом его бы превысил: задача оплачена, ролика нет. 180 с — это
+ * вдвое ниже потолка по тому же замеру, и в пять раз длиннее обычного
+ * ролика обучалки (§7.1: ≈35–40 с), то есть на живых сценариях
+ * ограничение не срабатывает.
+ *
+ * Снимается только зум: он не двигает сетку времени, и подписи со
+ * звуком, посчитанные с ним, остаются верными и без него.
+ */
+export const ZOOM_MAX_SECONDS = 180;
+
+/**
+ * Режим, который план ПРИМЕНИТ на самом деле: зум снимается у ролика
+ * длиннее `ZOOM_MAX_SECONDS`. Сетку времени это не меняет — её
+ * определяют только переходы.
+ */
+export function appliedMotion(
+  frames: readonly { seconds: number }[],
+  motion: SlideshowMotion,
+): SlideshowMotion {
+  if (motion !== 'fade+zoom') return motion;
+  const spans = frameSpansSeconds(frames, motion);
+  return (spans.at(-1)?.end ?? 0) > ZOOM_MAX_SECONDS ? 'fade' : motion;
+}
+
+/**
+ * Сколько кадров на самом деле занимает переход при этом наборе кадров.
+ *
+ * Не всегда `TRANSITION_FRAMES`. Переход откусывает начало кадра
+ * (въезд) и его конец (выезд); кадр короче двух переходов отдал бы
+ * одни и те же кадры обоим, и `xfade` смешивал бы три экрана сразу.
+ * На живых путях такого нет — самый короткий кадр полторы секунды
+ * (`MIN_FRAME_SECONDS`, 45 кадров против 18), — но план обязан
+ * получаться при любом входе, поэтому исход не отказ, а резкая смена
+ * кадров: движение — улучшение, а не условие сборки.
+ *
+ * Одна функция на всех, кто считает время: и сетку (`frameSpansSeconds`),
+ * и команду (`planSlideshow`). Реши они это порознь — подписи и речь
+ * ушли бы от картинки ровно на тех роликах, где переходы отменились.
+ */
+export function transitionFrames(
+  frames: readonly { seconds: number }[],
+  motion: SlideshowMotion,
+): number {
+  if (motion === 'none' || frames.length < 2) return 0;
+  const shortest = Math.min(
+    ...frames.map((f) => Math.round(f.seconds * OUTPUT_FPS)),
+  );
+  return shortest >= 2 * TRANSITION_FRAMES ? TRANSITION_FRAMES : 0;
+}
+
+/**
  * Сколько держать кадр с репликой такой длительности.
  *
  * `durationSeconds` — измеренная длина mp3 из общего контракта TTS
@@ -74,6 +206,11 @@ const OUTPUT_FPS = 30;
  * уезжающий звук на всех следующих кадрах. Поэтому `null` здесь —
  * заметный, а не безобидный исход; §11 п.5 требует от него только
  * «сборка не падает».
+ *
+ * При включённых подписях этот исход мягче: исполнитель поднимает кадр
+ * до времени чтения подписи (`captionReadingSeconds` в
+ * `tutorial-captions.ts`, сквозной аудит A–G), и реплика получает
+ * столько, сколько заняла бы при обычном темпе речи.
  */
 export function narrationFrameSeconds(durationSeconds: number | null): number {
   if (durationSeconds === null || !Number.isFinite(durationSeconds)) {
@@ -106,10 +243,29 @@ export function narrationFrameSeconds(durationSeconds: number | null): number {
  * тридцать немые. Речь не режется, но хвост длинный. Это цена
  * варианта А (одна дорожка на весь ролик) и ещё один довод за
  * покадровые реплики этапа D, где такого хвоста не бывает.
+ *
+ * ## С переходами (правка сквозного аудита A–G)
+ *
+ * `motion` обязателен, как у всех, кто считает время. Каждый стык
+ * `xfade` съедает `TRANSITION_FRAMES` общей длины, а дорожка у
+ * варианта А одна и режется по концу ролика. Этап G закрыл это для
+ * покадровых реплик (там под нож идёт только пауза кадра) и не
+ * тронул вариант А: на десяти кадрах ролик выходил на 2.7 с короче
+ * склейки, а пауза в конце — 0.6 с, то есть последние две секунды
+ * речи обрезались. Замерено настоящим ffmpeg: 30 с речи на десяти
+ * кадрах, слышно до 27.95 с. Поэтому переходы добавляются к делимому:
+ * ролик с переходами ровно той же длины по речи, что и без них.
+ *
+ * Прибавка — только когда переходы действительно будут. Кадр здесь
+ * не короче `MIN_FRAME_SECONDS` (45 кадров), а `transitionFrames`
+ * отменяет переходы лишь у кадров короче двух переходов (18), так что
+ * при двух кадрах и больше они есть всегда. Режим `none` даёт прежнее
+ * число символ в символ — отпечатки собранных роликов не меняются.
  */
 export function evenFrameSeconds(
   speechSeconds: number | null,
   frameCount: number,
+  motion: SlideshowMotion,
 ): number {
   if (
     speechSeconds === null ||
@@ -119,8 +275,12 @@ export function evenFrameSeconds(
   ) {
     return SECONDS_PER_FRAME;
   }
+  const overlapSeconds =
+    motion !== 'none' && frameCount >= 2
+      ? ((frameCount - 1) * TRANSITION_FRAMES) / OUTPUT_FPS
+      : 0;
   return Math.max(
-    (speechSeconds + FRAME_TAIL_SECONDS) / frameCount,
+    (speechSeconds + FRAME_TAIL_SECONDS + overlapSeconds) / frameCount,
     MIN_FRAME_SECONDS,
   );
 }
@@ -177,6 +337,73 @@ export interface SlideshowFrame {
    * требует звуковой поток у КАЖДОГО сегмента (§4.3 ТЗ).
    */
   audioUrl?: string | null;
+  /**
+   * Куда кликнет следующий шаг — доли ширины и высоты снимка (этап H).
+   * Кружок рисуется в последнюю секунду этого кадра, перед сменой
+   * экрана. Нет — кадр без указателя, команда прежняя символ в символ.
+   */
+  pointer?: { x: number; y: number } | null;
+}
+
+/**
+ * Указатель клика (§6 ТЗ, этап H): сколько кадров он виден — последние
+ * `POINTER_FRAMES` показа (1 с), но не больше половины кадра: на
+ * коротком кадре указатель, висящий с самого начала, читался бы как
+ * часть интерфейса, а не как «сейчас нажмём».
+ */
+export const POINTER_FRAMES = 30;
+
+/** Размер кольца на холсте (720 по короткой стороне) — ≈13 % ширины,
+ *  с кнопку мастера: меньше — теряется на телефоне, больше — закрывает
+ *  подпись кнопки. */
+const POINTER_SIZE = 96;
+
+/**
+ * Цвет кольца — тёплый оранжевый, а не акцент продукта: кнопки мастера
+ * как раз акцентные (синие, `--accent` во `frontend/src/index.css`), и
+ * кольцо их цвета на них бы потерялось.
+ */
+const POINTER_RGB = { r: 255, g: 106, b: 0 } as const;
+
+/**
+ * Источник кольца внутри `-filter_complex` — как `anullsrc` у тишины:
+ * у внешнего сервиса входы — только ссылки, и готовой картинки
+ * кружка ему не подать.
+ *
+ * Прозрачность — гауссово кольцо: мягкий край без ступенек. Заливки
+ * внутри НЕТ, и это проверено на снимке: полупрозрачный оранжевый
+ * поверх синей кнопки смешивался в грязно-серый и притемнял её
+ * подпись, а указатель не должен мешать прочитать, КУДА жмём.
+ * Выражение без запятых внутри значений нарочно: вместо `hypot(…,…)`
+ * — сумма квадратов, иначе строку пришлось бы экранировать для чужого
+ * разбора.
+ */
+function pointerRing(seconds: number): string {
+  // Центр — середина картинки (47.5 при 96), а не пиксель 48: иначе
+  // кольцо перекошено на полпикселя вправо-вниз (замерено при аудите
+  // этапа H).
+  const c = (POINTER_SIZE - 1) / 2;
+  const radius = 36;
+  const dist = `sqrt((X-${c})*(X-${c})+(Y-${c})*(Y-${c}))`;
+  const ring = `255*exp(-(${dist}-${radius})*(${dist}-${radius})/10)`;
+  return (
+    `color=c=black@0:s=${POINTER_SIZE}x${POINTER_SIZE}:r=${OUTPUT_FPS}:d=${gridSeconds(
+      seconds,
+    )},format=rgba,` +
+    `geq=r=${POINTER_RGB.r}:g=${POINTER_RGB.g}:b=${POINTER_RGB.b}:a=${ring}`
+  );
+}
+
+/**
+ * С какого момента показа кадра (секунды от его начала) виден
+ * указатель. Порог — на полкадра раньше нужного: время кадра —
+ * вещественное, и точный порог мог бы отдать первый кадр показа не той
+ * стороне сравнения.
+ */
+function pointerFromSeconds(seconds: number): number {
+  const length = Math.round(seconds * OUTPUT_FPS);
+  const shown = Math.min(POINTER_FRAMES, Math.floor(length / 2));
+  return Math.round(((length - shown - 0.5) / OUTPUT_FPS) * 10_000) / 10_000;
 }
 
 /**
@@ -211,8 +438,11 @@ export interface SlideshowFrame {
  * (длина берётся измерением mp3), и какую сторону выбирает ffmpeg в
  * этой точке, не проверялось.
  */
-export function slideshowDurationMs(frames: readonly SlideshowFrame[]): number {
-  const spans = frameSpansSeconds(frames);
+export function slideshowDurationMs(
+  frames: readonly SlideshowFrame[],
+  motion: SlideshowMotion,
+): number {
+  const spans = frameSpansSeconds(frames, motion);
   return Math.round((spans.at(-1)?.end ?? 0) * 1000);
 }
 
@@ -231,17 +461,35 @@ export function slideshowDurationMs(frames: readonly SlideshowFrame[]): number {
  * входа `-loop 1` даёт ближайшее ЦЕЛОЕ число кадров при
  * `-framerate 30`, и округление идёт у каждого сегмента отдельно, ДО
  * `concat`. Сверено настоящим ffmpeg (см. `slideshowDurationMs`).
+ *
+ * ## С переходами (этап G)
+ *
+ * `xfade` накладывает конец кадра i на начало кадра i+1, и каждый стык
+ * съедает `TRANSITION_FRAMES` кадров общей длины. Кадр i+1 «начинается»
+ * там, где начинается переход к нему, — в этот же миг меняются подпись
+ * и речь. Не в середине перехода и не в конце: речь, начавшаяся позже
+ * картинки, звучит как запоздание, а подпись обязана совпадать с речью
+ * (§11 п.16). Конец кадра — начало следующего, конец последнего —
+ * конец ролика. Итого ролик короче на `переход × (кадров − 1)`, и
+ * именно это число `slideshowDurationMs` обязан отдать (§6 ТЗ: «xfade
+ * укорачивает общую длину на время перехода — slideshowDurationMs
+ * придётся поправить»).
  */
 export function frameSpansSeconds(
   frames: readonly { seconds: number }[],
+  motion: SlideshowMotion,
 ): { start: number; end: number }[] {
+  const overlap = transitionFrames(frames, motion);
   const spans: { start: number; end: number }[] = [];
   let atFrame = 0;
-  for (const frame of frames) {
+  frames.forEach((frame, i) => {
     const start = atFrame;
-    atFrame += Math.round(frame.seconds * OUTPUT_FPS);
+    const length = Math.round(frame.seconds * OUTPUT_FPS);
+    // Каждый кадр, кроме последнего, отдаёт переходу хвост: следующий
+    // начинается раньше, чем этот кончился бы сам.
+    atFrame += i < frames.length - 1 ? length - overlap : length;
     spans.push({ start: start / OUTPUT_FPS, end: atFrame / OUTPUT_FPS });
-  }
+  });
   return spans;
 }
 
@@ -258,6 +506,46 @@ export function frameSpansSeconds(
  */
 export function gridSeconds(seconds: number): number {
   return Math.round(seconds * OUTPUT_FPS) / OUTPUT_FPS;
+}
+
+/**
+ * Зум внутри кадра: 1.00 → `ZOOM_TO` за всё время показа, к центру.
+ *
+ * `perspective`, а не `zoompan`, хотя §6 ТЗ называет второй, — и это
+ * решено замером, а не вкусом. `zoompan` кадрирует ЦЕЛЫМИ пикселями:
+ * при зуме в 4 % за три секунды точка у края кадра движется на 0.13
+ * пикселя за кадр, и `zoompan` на холсте 720×1560 из 90 кадров 61 раз
+ * стоит на месте, а 12 раз дёргается НАЗАД на целый пиксель
+ * (замерено ffmpeg 6.1.1 по вертикальной линии у края кадра). Это и
+ * есть известное «дрожание zoompan», и на тексте интерфейса оно
+ * читается как брак. Лечат его обычно увеличением перед `zoompan` —
+ * вчетверо: дрожь меньше, но ступеньки остаются (34 остановки). А
+ * `perspective` интерполирует с субпиксельной точностью: ни одной
+ * остановки, ни одного шага назад, наибольший шаг 0.38 пикселя. Цена —
+ * время сборки: в шесть раз дольше `zoompan`, см. запись этапа G в ТЗ.
+ *
+ * `in` — номер кадра НА ВХОДЕ этого фильтра, то есть свой у каждого
+ * кадра слайд-шоу, от нуля. Выражения без запятых и кавычек нарочно:
+ * строка уходит во внешний сервис внутри `-filter_complex "…"`, и
+ * каждый лишний уровень экранирования — повод разойтись с тем, как
+ * этот сервис разбирает команду.
+ */
+function zoomFilter(seconds: number): string {
+  const last = Math.max(Math.round(seconds * OUTPUT_FPS) - 1, 1);
+  // Доля, на которую каждая сторона источника уходит внутрь, — чтобы
+  // видимая часть стала в `z` раз меньше: (1 − 1/z) / 2.
+  // `toPrecision`: `1.04 - 1` в двоичной арифметике —
+  // 0.040000000000000036, и этот хвост уехал бы в команду, а с ней в
+  // ключ идемпотентности задачи.
+  const gain = Number((ZOOM_TO - 1).toPrecision(6));
+  const f = `((1-1/(1+${gain}*in/${last}))/2)`;
+  const lo = (side: string) => `${side}*${f}`;
+  const hi = (side: string) => `${side}*(1-${f})`;
+  return (
+    `perspective=x0=${lo('W')}:y0=${lo('H')}:x1=${hi('W')}:y1=${lo('H')}:` +
+    `x2=${lo('W')}:y2=${hi('H')}:x3=${hi('W')}:y3=${hi('H')}:` +
+    `interpolation=cubic:eval=frame`
+  );
 }
 
 /**
@@ -337,6 +625,13 @@ export interface SlideshowPlan {
    * около N с»).
    */
   durationMs: number;
+  /**
+   * Режим движения, который план применил (этап G): может быть
+   * скромнее заказанного — см. `appliedMotion`. Отдаётся наружу, чтобы
+   * исполнитель сказал об этом в журнале, а не оставил оператора
+   * гадать, почему зума нет.
+   */
+  motion: SlideshowMotion;
   /** Имя единственного выходного файла — то же значение, что
    * `outputs[0]`, отдельным полем ради читаемости на стороне вызывающего
    * кода (не нужно доставать из массива по индексу). */
@@ -376,6 +671,7 @@ export function slideshowContentHash(
     bytes: Uint8Array;
     seconds: number;
     audioUrl?: string | null;
+    pointer?: { x: number; y: number } | null;
   }[],
   voiceoverUrl: string | null,
   /**
@@ -389,14 +685,38 @@ export function slideshowContentHash(
    * выключение настройки (пустая строка).
    */
   captionsAss: string | null,
+  /**
+   * Движение (этап G) меняет картинку при тех же кадрах, звуке и
+   * подписях — немой ролик без подписей иначе вообще не отличил бы
+   * «с переходами» от «без». Не войди режим в отпечаток, переключатель
+   * на витрине не менял бы уже собранные ролики никогда.
+   *
+   * Режим `none` в отпечаток НЕ пишется — нарочно. Иначе сам деплой
+   * этапа сменил бы отпечаток у всех роликов разом, и первая же ночь
+   * пересобрала бы весь набор (пятьдесят платных задач) ради того же
+   * самого mp4: по умолчанию движение выключено, и видео не меняется.
+   */
+  motion: SlideshowMotion,
 ): string {
   const h = createHash('sha256');
   h.update(String(voiceoverUrl ?? ''));
   h.update('\u0000');
   h.update(String(captionsAss ?? ''));
+  if (motion !== 'none') {
+    h.update('\u0000motion:');
+    h.update(motion);
+  }
   for (const frame of frames) {
     h.update('\u0000');
     h.update(`${frame.stepIndex}:${frame.seconds}:${frame.audioUrl ?? ''}:`);
+    // Указатель меняет картинку при тех же байтах снимка (этап H), и
+    // без него в отпечатке выключатель указателя не трогал бы уже
+    // собранные ролики. Пишется ТОЛЬКО когда он есть — отпечатки
+    // роликов без указателя остаются прежними, и деплой этапа ничего
+    // не пересобирает.
+    if (frame.pointer) {
+      h.update(`p${frame.pointer.x}/${frame.pointer.y}:`);
+    }
     h.update(Buffer.from(frame.bytes));
   }
   return h.digest('hex');
@@ -439,6 +759,21 @@ export function slideshowContentHash(
  * Последние два вместе — отказ, а не «смешаем». Это два разных
  * ответа на вопрос «что звучит на кадре N», и молчаливый выбор одного
  * из них дал бы ролик, который никто не заказывал.
+ *
+ * ## Движение (этап G)
+ *
+ * `motion: 'none'` — команда ровно та же, что до этапа, символ в
+ * символ: путь обучалки по сайту заказчика её и получает (§8 ТЗ —
+ * «не трогает обучалку по сайту заказчика»), и строка закреплена
+ * тестом целиком.
+ *
+ * С переходами кадры склеивает не `concat`, а цепочка `xfade`, и звук
+ * уже не может ехать с картинкой одной парой `[v][a]` — у картинки
+ * стыки внахлёст, у звука нет. Поэтому звук при переходах собирается
+ * своим `concat` из сегментов длиной «от начала кадра до начала
+ * следующего» по `frameSpansSeconds`: у озвученного кадра это речь
+ * плюс пауза минус переход, то есть под нож идёт только тишина хвоста
+ * (пауза 0.6 с против перехода 0.3), а речь не режется никогда.
  */
 export function planSlideshow(
   frames: readonly SlideshowFrame[],
@@ -448,9 +783,13 @@ export function planSlideshow(
     /** Ссылка на `.ass` с подписями (§5 ТЗ, этап E). `null` — ролик
      *  без подписей: настройка выключена или реплик нет. */
     captionsUrl?: string | null;
-  } = {},
+    /** Движение (этап G). Обязательно и без умолчания — см.
+     *  `SlideshowMotion`. */
+    motion: SlideshowMotion;
+  },
 ): SlideshowPlan | null {
   const outputName = opts.outputName ?? 'tutorial.mp4';
+  const motion = appliedMotion(frames, opts.motion);
   const voiceoverUrl = opts.voiceoverUrl ?? null;
   const captionsUrl = opts.captionsUrl ?? null;
   if (frames.length === 0 || frames.length > MAX_SLIDESHOW_FRAMES) {
@@ -491,7 +830,7 @@ export function planSlideshow(
   const inputArgs: string[] = [];
   const scaleFilters: string[] = [];
 
-  frames.forEach(({ url, seconds, stepIndex }, i) => {
+  frames.forEach(({ url, seconds, stepIndex, pointer }, i) => {
     // Ключ входа и метка потока — по номеру ШАГА: команду читает
     // человек, разбирая неудачную сборку, и `frame3` обязано
     // означать третий шаг, а не третий уцелевший кадр. Пропавший
@@ -532,13 +871,44 @@ export function planSlideshow(
     // холста без обрезки, `pad` дополняет чёрным по центру. Кадр
     // никогда не растягивается: пропорции экрана важнее заполнения
     // холста, растянутый интерфейс выглядит поломкой.
+    const zoom = motion === 'fade+zoom' ? `,${zoomFilter(seconds)}` : '';
+    if (!pointer) {
+      scaleFilters.push(
+        `[${i}:v]scale=${CANVAS.width}:${CANVAS.height}:` +
+          `force_original_aspect_ratio=decrease,` +
+          `pad=${CANVAS.width}:${CANVAS.height}:(ow-iw)/2:(oh-ih)/2,` +
+          `setsar=1${zoom}[v${stepIndex}]`,
+      );
+      return;
+    }
+    // Указатель (этап H) ложится на снимок, уже вписанный в холст, но
+    // ещё БЕЗ полей: `main_w`/`main_h` у `overlay` — это ровно размер
+    // картинки снимка, и доли из замера переводятся в пиксели без
+    // знания пропорций экрана. И ДО зума: приближение уводит кнопку к
+    // краю, и кольцо обязано уезжать вместе с ней, а не висеть там,
+    // где кнопка была в начале кадра.
     scaleFilters.push(
       `[${i}:v]scale=${CANVAS.width}:${CANVAS.height}:` +
-        `force_original_aspect_ratio=decrease,` +
+        `force_original_aspect_ratio=decrease[sc${stepIndex}]`,
+      `${pointerRing(seconds)}[pr${stepIndex}]`,
+      // `+1` — не опечатка. `overlay` работает в yuv420 и кладёт
+      // накладку по сетке цветности: положение округляется ВНИЗ до
+      // чётного пикселя, то есть кольцо уезжало до двух пикселей
+      // влево-вверх (замерено ffmpeg 6.1.1 при аудите этапа H).
+      // Сдвиг на единицу делает это округлением к ближайшему чётному —
+      // ошибка ±1 вместо от −2 до 0.
+      `[sc${stepIndex}][pr${stepIndex}]overlay=` +
+        `x=main_w*${pointer.x}-overlay_w/2+1:y=main_h*${pointer.y}-overlay_h/2+1:` +
+        `enable=1+sgn(t-${pointerFromSeconds(seconds)}),` +
         `pad=${CANVAS.width}:${CANVAS.height}:(ow-iw)/2:(oh-ih)/2,` +
-        `setsar=1[v${stepIndex}]`,
+        `setsar=1${zoom}[v${stepIndex}]`,
     );
   });
+
+  const overlap = transitionFrames(frames, motion);
+  // Сетка времени — ОДНА на картинку, звук, подписи и длительность:
+  // та же функция, по которой вызывающий построил `.ass`.
+  const spans = frameSpansSeconds(frames, motion);
 
   // Звуковые входы идут ПОСЛЕ всех кадров — нумерацию входов ведёт
   // ffmpeg по порядку `-i`, и вставить mp3 между кадрами значило бы
@@ -557,7 +927,26 @@ export function planSlideshow(
   // тридцати +133 мс, и к концу ролика подпись висела над
   // предыдущим кадром, а картинка отставала от речи (находка аудита
   // этапа E).
+  //
+  // С переходами (этап G) сегмент звука — не длина кадра, а отрезок
+  // «от его начала до начала следующего»: кадры идут внахлёст, звук —
+  // встык. И режется он ЦЕЛЫМИ СЭМПЛАМИ (`SAMPLES_PER_FRAME`), а не
+  // секундами: у склейки звука отдельным `concat` нет пары `[v][a]`,
+  // которая выравнивала бы каждый сегмент по картинке, и доли сэмпла,
+  // потерянные на каждом стыке, копились бы в недостачу, по которой
+  // `-shortest` отрезал бы последний кадр (замерено, см.
+  // `SAMPLES_PER_FRAME`).
+  //
+  // Без переходов строка прежняя, символ в символ: там пара `[v][a]`
+  // в общем `concat` выравнивает каждый сегмент сама, и настоящий
+  // ffmpeg на тридцати кадрах дал длину, совпавшую с планом до кадра.
   const onGrid = frames.map((f) => gridSeconds(f.seconds));
+  const segmentSamples = frames.map(
+    (f, i) =>
+      (Math.round(f.seconds * OUTPUT_FPS) -
+        (i < frames.length - 1 ? overlap : 0)) *
+      SAMPLES_PER_FRAME,
+  );
   if (voiced.length > 0) {
     for (const [i, { stepIndex, audioUrl }] of frames.entries()) {
       const seconds = onGrid[i];
@@ -579,7 +968,10 @@ export function planSlideshow(
         audioFilters.push(
           `[${audioInputIndex}:a]aresample=${AUDIO_RATE},` +
             `aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-            `apad,atrim=0:${seconds},asetpts=N/SR/TB[a${stepIndex}]`,
+            (overlap === 0
+              ? `apad,atrim=0:${seconds}`
+              : `apad,atrim=end_sample=${segmentSamples[i]}`) +
+            `,asetpts=N/SR/TB[a${stepIndex}]`,
         );
         audioInputIndex++;
       } else {
@@ -590,27 +982,71 @@ export function planSlideshow(
         // `-filter_complex` тот же `anullsrc` работает и ничего не
         // требует от вызывающего.
         audioFilters.push(
-          `anullsrc=channel_layout=stereo:sample_rate=${AUDIO_RATE}:` +
-            `d=${seconds}[a${stepIndex}]`,
+          `anullsrc=channel_layout=stereo:sample_rate=${AUDIO_RATE}` +
+            (overlap === 0
+              ? `:d=${seconds}`
+              : `,atrim=end_sample=${segmentSamples[i]}`) +
+            `[a${stepIndex}]`,
         );
       }
     }
   }
 
   const withFrameAudio = voiced.length > 0;
-  const concatInputs = frames
-    .map((f) =>
-      withFrameAudio
-        ? `[v${f.stepIndex}][a${f.stepIndex}]`
-        : `[v${f.stepIndex}]`,
-    )
-    .join('');
-  const concat = `${concatInputs}concat=n=${frames.length}:v=1:a=${
-    withFrameAudio ? 1 : 0
-  }[outv]${withFrameAudio ? '[outa]' : ''}`;
+  const joins: string[] = [];
+  if (overlap === 0) {
+    // Без переходов — прежняя склейка; немой ролик — символ в символ
+    // (путь обучалки по сайту заказчика), у звука — хвост в кадр.
+    const concatInputs = frames
+      .map((f) =>
+        withFrameAudio
+          ? `[v${f.stepIndex}][a${f.stepIndex}]`
+          : `[v${f.stepIndex}]`,
+      )
+      .join('');
+    joins.push(
+      `${concatInputs}concat=n=${frames.length}:v=1:a=${
+        withFrameAudio ? 1 : 0
+      }[outv]${withFrameAudio ? '[acat]' : ''}`,
+    );
+    // Хвост в кадр и здесь (`AUDIO_TAIL_SAMPLES`): пара `[v][a]`
+    // выравнивает сегменты между собой, но не конец ролика — звук
+    // выходит на доли сэмпла короче картинки, и `-shortest` на части
+    // раскладок срезал последний кадр. Замерено: 25 кадров с
+    // репликами, 2065 кадров в файле при 2066 в плане (дефект этапа D,
+    // найден аудитом этапа G на случайных раскладках).
+    if (withFrameAudio) {
+      joins.push(`[acat]apad=pad_len=${AUDIO_TAIL_SAMPLES}[outa]`);
+    }
+  } else {
+    // Цепочка `xfade`: каждый следующий кадр въезжает поверх
+    // накопленной склейки. `offset` — начало перехода, то есть начало
+    // кадра по той же сетке (`spans`); секунды пишутся из ЦЕЛОГО
+    // числа кадров, делённого один раз, иначе `xfade` пересчитал бы
+    // мусорные знаки в метку времени и мог промахнуться на кадр.
+    // Метки `[xf…]` — свои, чтобы не совпасть с `[v{шаг}]` кадров.
+    let previous = `[v${frames[0].stepIndex}]`;
+    for (let i = 1; i < frames.length; i++) {
+      const out = i === frames.length - 1 ? '[outv]' : `[xf${i}]`;
+      const offset = Math.round(spans[i].start * OUTPUT_FPS) / OUTPUT_FPS;
+      joins.push(
+        `${previous}[v${frames[i].stepIndex}]xfade=transition=fade:` +
+          `duration=${overlap / OUTPUT_FPS}:offset=${offset}${out}`,
+      );
+      previous = out;
+    }
+    if (withFrameAudio) {
+      joins.push(
+        `${frames.map((f) => `[a${f.stepIndex}]`).join('')}` +
+          `concat=n=${frames.length}:v=0:a=1,` +
+          `apad=pad_len=${AUDIO_TAIL_SAMPLES}[outa]`,
+      );
+    }
+  }
 
-  const durationMs = slideshowDurationMs(frames);
-  const parts = [...scaleFilters, ...audioFilters, concat];
+  const durationMs = slideshowDurationMs(frames, motion);
+  const totalFrames = Math.round((spans.at(-1)?.end ?? 0) * OUTPUT_FPS);
+  const parts = [...scaleFilters, ...audioFilters, ...joins];
   const maps = ['-map "[outv]"'];
 
   if (voiceoverUrl) {
@@ -624,7 +1060,16 @@ export function planSlideshow(
     parts.push(
       `[${frames.length}:a]aresample=${AUDIO_RATE},` +
         `aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `apad,atrim=0:${durationMs / 1000},asetpts=N/SR/TB[outa]`,
+        // Целыми сэмплами, а не `durationMs / 1000`: тот округлён до
+        // миллисекунды и в трети раскладок выходит на долю
+        // миллисекунды КОРОЧЕ картинки — и `-shortest` отрезал
+        // последний кадр, а в базе оставалась длина на 33 мс больше
+        // файла (дефект этапа B, найден аудитом этапа G на настоящем
+        // ffmpeg: 186 кадров в файле при 187 в плане).
+        // Плюс хвост в кадр — см. `AUDIO_TAIL_SAMPLES`.
+        `apad,atrim=end_sample=${
+          totalFrames * SAMPLES_PER_FRAME + AUDIO_TAIL_SAMPLES
+        },asetpts=N/SR/TB[outa]`,
     );
   }
 
@@ -668,5 +1113,6 @@ export function planSlideshow(
     commands: [command],
     outputName,
     durationMs,
+    motion,
   };
 }

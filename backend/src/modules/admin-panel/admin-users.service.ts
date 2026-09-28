@@ -28,7 +28,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { selectSessionSummaries } from '../../common/session-summary';
 import { PlanId, planOf, PLAN_IDS, spendPlanOf } from '../../common/plans';
-import { AiUsageService } from '../ai-usage/ai-usage.service';
+import { AiUsageService, CostBucket } from '../ai-usage/ai-usage.service';
+import { AI_OPERATION_LABEL } from '../../common/ai-pricing';
 import { dailyLimitForPlan } from '../../common/spend-limits';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
 import {
@@ -116,7 +117,18 @@ export interface AdminUserDetail extends AdminUserSummary {
    */
   environment: { at: Date; value: unknown } | null;
   /** Расход по операциям — из чего сложилась сумма. */
-  costByOperation: Array<{ key: string; costMicroUsd: number; calls: number }>;
+  costByOperation: CostBucket[];
+  /**
+   * Подписи операций — С ответом, тем же приёмом, что у
+   * `CostReport.operationLabels`. Повторный сквозной аудит A+B+C убрал
+   * из админки копию словаря, и отчёт расходов подписи с тех пор
+   * получает, а карточка пользователя — нет: она звала
+   * `operationLabel(key)` без словаря и рисовала сырые ключи для ВСЕХ
+   * операций (найдено аудитом этапа F). Хуже всего это било по
+   * фикстурному пользователю ночной обучалки — ровно там, куда этап F
+   * выводит `tutorial-voiceover`.
+   */
+  operationLabels: Record<string, string>;
   /** Последние сессии — чтобы из карточки было куда провалиться. */
   recentSessions: Array<{
     sessionId: string;
@@ -353,6 +365,7 @@ export class AdminUsersService {
           ? { at: row.lastEnvironmentAt, value: row.lastEnvironment }
           : null,
       costByOperation,
+      operationLabels: AI_OPERATION_LABEL,
       recentSessions: sessions.map((s) => {
         return {
           sessionId: s.id,

@@ -3,7 +3,11 @@ import {
   buildScenarioPrompt,
   parseScenarioResponse,
 } from './tutorial-scenario-prompt';
-import { MAX_NARRATION_LENGTH } from './scenario-steps.types';
+import {
+  MAX_NARRATION_LENGTH,
+  WIZARD_PAID_OPERATIONS,
+} from './scenario-steps.types';
+import { AI_OPERATION_LABEL } from '../../common/ai-pricing';
 
 const step: AssistantStepItem = {
   title: 'Заведите товар',
@@ -22,6 +26,35 @@ describe('buildScenarioPrompt', () => {
     expect(prompt).toContain('"kind":"goto"');
     expect(prompt).toContain('"kind":"triggerPaidOperation"');
     expect(prompt).toContain('{"steps":[...]}');
+  });
+
+  it('промпт называет ровно те операции, что пропустит валидатор (этап F)', () => {
+    // Две стороны одного контракта: модель пишет то, что ей назвали,
+    // валидатор роняет ВЕСЬ сценарий на незнакомом значении. До этапа
+    // F промпт называл пять значений руками, а валидатор принимал все
+    // ключи отчёта расходов.
+    const prompt = buildScenarioPrompt('1', 'ru', step);
+    const listed = /"operation":((?:"[a-z-]+"\|?)+)/.exec(prompt);
+    expect(listed).not.toBeNull();
+    const values = listed![1].split('|').map((v) => v.replace(/"/g, ''));
+    expect(values).toEqual([...WIZARD_PAID_OPERATIONS]);
+    // И ни одной фоновой строки отчёта — ни в перечне, ни в
+    // пояснении к нему.
+    const background = Object.keys(AI_OPERATION_LABEL).filter(
+      (op) => !(WIZARD_PAID_OPERATIONS as readonly string[]).includes(op),
+    );
+    for (const op of background) {
+      expect(prompt).not.toContain(`"${op}"`);
+    }
+  });
+
+  it('у каждой операции мастера есть пояснение в промпте', () => {
+    // Пояснение — `Record` по типу списка, но проверяем и текст:
+    // значение без пояснения модель выбирает наугад.
+    const prompt = buildScenarioPrompt('1', 'ru', step);
+    for (const op of WIZARD_PAID_OPERATIONS) {
+      expect(prompt).toMatch(new RegExp(`[а-яё-]+ — "${op}"`));
+    }
   });
 
   it('без деталей — раздела "Детали:" нет вовсе', () => {

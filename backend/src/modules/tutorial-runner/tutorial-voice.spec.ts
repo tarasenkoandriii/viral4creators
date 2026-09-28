@@ -2,8 +2,13 @@ import {
   joinNarrationParts,
   narrationTextForSubject,
   parseTutorialCaptionsSetting,
+  parseTutorialMotionSetting,
+  parseTutorialPointerSetting,
   parseTutorialVoiceSetting,
   TUTORIAL_CAPTIONS_SETTING_KEY,
+  TUTORIAL_MOTION_SETTING_KEY,
+  TUTORIAL_POINTER_SETTING_KEY,
+  tutorialMotionSettingValue,
   TUTORIAL_VOICE_SETTING_KEY,
 } from './tutorial-voice';
 import { ASSISTANT_STEPS } from '../assistant/knowledge/generated';
@@ -138,8 +143,8 @@ describe('parseTutorialCaptionsSetting (этап E)', () => {
 
   it('ничего не задано — ВКЛЮЧЕНО, и это обратное умолчание озвучки', () => {
     // Озвучка по умолчанию выключена: набор стоит ≈$6. Подписи не
-    // стоят ни вызова провайдера, ни секунды хронометража, а без
-    // звука ролик смотрят чаще, чем со звуком (§5 ТЗ).
+    // стоят вызова провайдера, а без звука ролик смотрят чаще, чем со
+    // звуком (§5 ТЗ).
     expect(parseTutorialCaptionsSetting(null)).toBe(true);
   });
 
@@ -154,5 +159,55 @@ describe('parseTutorialCaptionsSetting (этап E)', () => {
     // здесь не выключает пользу.
     expect(parseTutorialCaptionsSetting('ага')).toBe(true);
     expect(parseTutorialCaptionsSetting('')).toBe(true);
+  });
+});
+
+describe('parseTutorialMotionSetting (этап G)', () => {
+  it('ключ — рядом с остальными решениями о сборке файла', () => {
+    expect(TUTORIAL_MOTION_SETTING_KEY).toBe('postprod.tutorialMotion');
+  });
+
+  it('ничего не задано — БЕЗ движения: косметику включает тот, кто её видел', () => {
+    expect(parseTutorialMotionSetting(null)).toBe('none');
+    expect(parseTutorialMotionSetting('')).toBe('none');
+  });
+
+  it('грамматика: off / fade / on', () => {
+    expect(parseTutorialMotionSetting('off')).toBe('none');
+    expect(parseTutorialMotionSetting('fade')).toBe('fade');
+    expect(parseTutorialMotionSetting(' ON ')).toBe('fade+zoom');
+  });
+
+  it('непонятное значение — без движения, как у озвучки, а не как у подписей', () => {
+    // «Не разобрали — человек ничего не решил», а решение меняет и
+    // картинку, и время работы внешнего сервиса.
+    expect(parseTutorialMotionSetting('zoom')).toBe('none');
+    expect(parseTutorialMotionSetting('fade+zoom')).toBe('none');
+    expect(parseTutorialMotionSetting('yes')).toBe('none');
+  });
+
+  it('запись и разбор — взаимно обратны на всех трёх режимах', () => {
+    for (const motion of ['none', 'fade', 'fade+zoom'] as const) {
+      expect(
+        parseTutorialMotionSetting(tutorialMotionSettingValue(motion)),
+      ).toBe(motion);
+    }
+  });
+});
+
+describe('parseTutorialPointerSetting (этап H)', () => {
+  it('ключ — рядом с остальными решениями о сборке файла', () => {
+    expect(TUTORIAL_POINTER_SETTING_KEY).toBe('postprod.tutorialPointer');
+  });
+
+  it('по умолчанию выключен, включается ровно строкой on', () => {
+    expect(parseTutorialPointerSetting(null)).toBe(false);
+    expect(parseTutorialPointerSetting('off')).toBe(false);
+    expect(parseTutorialPointerSetting(' ON ')).toBe(true);
+  });
+
+  it('непонятное значение — выключено: человек ничего не решил', () => {
+    expect(parseTutorialPointerSetting('yes')).toBe(false);
+    expect(parseTutorialPointerSetting('1')).toBe(false);
   });
 });

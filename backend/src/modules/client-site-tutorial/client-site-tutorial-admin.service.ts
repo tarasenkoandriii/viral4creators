@@ -269,7 +269,12 @@ export class ClientSiteTutorialAdminService {
     }
     // `uniformFrames` — все кадры по `SECONDS_PER_FRAME`, то же
     // поведение, что до этапа A ТЗ `TZ-Tutorial-Video-Voiced.md`.
-    const plan = planSlideshow(uniformFrames(frameUrls));
+    // Без движения — явно, а не умолчанием: §8 того же ТЗ этот путь
+    // не трогает, и переключатель движения на витрине к нему не
+    // относится (этап G). У обучалки по сайту заказчика своя логика
+    // одобрения, и менять её картинку оператор ночной обучалки не
+    // должен.
+    const plan = planSlideshow(uniformFrames(frameUrls), { motion: 'none' });
     if (!plan) {
       throw new BadRequestException(
         `${frames} кадров не годятся для сборки: их либо нет, либо больше потолка слайд-шоу, либо у кадра неположительная длительность`,

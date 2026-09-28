@@ -98,10 +98,16 @@ import {
   launchHeadlessBrowser,
   withTimeout,
 } from '../../common/headless-chromium';
-import { runScenario, ScenarioFrame, ScenarioPage } from './scenario-runner';
+import {
+  runScenario,
+  SCENARIO_VIEWPORT,
+  ScenarioFrame,
+  ScenarioPage,
+} from './scenario-runner';
 import { FixtureRouteContext, resolveScenarioRoute } from './route-templates';
 import {
   buildTutorialCaptionsAss,
+  captionReadingSeconds,
   captionsPathname,
 } from './tutorial-captions';
 import {
@@ -110,6 +116,7 @@ import {
   planSlideshow,
   slideshowContentHash,
   SlideshowFrame,
+  ZOOM_MAX_SECONDS,
 } from './tutorial-video-assembly';
 import {
   hasTutorialSteps,
@@ -121,8 +128,12 @@ import {
   narrationTextForSubject,
   parseRequireNarrationReview,
   parseTutorialCaptionsSetting,
+  parseTutorialMotionSetting,
+  parseTutorialPointerSetting,
   parseTutorialVoiceSetting,
   TUTORIAL_CAPTIONS_SETTING_KEY,
+  TUTORIAL_MOTION_SETTING_KEY,
+  TUTORIAL_POINTER_SETTING_KEY,
   TUTORIAL_REQUIRE_NARRATION_REVIEW_KEY,
   TUTORIAL_VOICE_SETTING_KEY,
   TutorialVoiceKey,
@@ -178,6 +189,9 @@ const ASSEMBLY_DEADLINE_MS = 10 * 60 * 1000;
  * снимков мастера (`ui-snapshot-runner`), чтобы кадры обучалки и
  * кадры лендинга выглядели одним продуктом, а не двумя. */
 const SCENARIO_THEME = 'light';
+
+/** Плотность пикселей ночной съёмки — см. `setViewport` в `runOne`. */
+const SCENARIO_DEVICE_SCALE_FACTOR = 2;
 
 /** Сколько провалов назвать поимённо, прежде чем перейти на одно
  * итоговое сообщение. Три — чтобы единичная поломка приходила со
@@ -706,12 +720,14 @@ export class TutorialScenarioRunnerService {
 
     // Расход пишется СРАЗУ и до заливки: деньги провайдеру уже
     // отданы, и запись о них не должна зависеть от того, доедет ли
-    // файл до Blob. Операция — общая `voiceover`: своя строка
-    // (`tutorial-voiceover`) заводится этапом F вместе с ключом в
-    // `AI_OPERATION_LABEL`, а до тех пор молчаливая трата была бы
-    // хуже неточной подписи.
+    // файл до Blob. Операция — своя, `tutorial-voiceover` (этап F):
+    // с этапа B до этапа F синтез обучалки писался общей `voiceover`
+    // и в отчёте складывался с озвучкой роликов пользователей, так что
+    // «сколько стоит озвучка обучалки» было не узнать. Модель — та же
+    // `{провайдер}-tts`, что у постпрода: ставка у них одна, различается
+    // только вопрос, на который отвечает строка.
     await this.aiUsage.record({
-      operation: 'voiceover',
+      operation: 'tutorial-voiceover',
       model: `${provider.providerKey}-tts`,
       characters: outcome.characters,
       // На фикстурного пользователя, а не «в никуда»: строка без
@@ -1010,6 +1026,16 @@ export class TutorialScenarioRunnerService {
     let page: import('puppeteer-core').Page | undefined;
     try {
       page = await browser.newPage();
+      // Телефонный вьюпорт — ДО загрузки SPA (этап H, находка аудита).
+      // Без него puppeteer открывает страницу 800×600: кадр ролика
+      // выходил полосой посреди портретного холста, интерфейс — в
+      // настольной вёрстке, а координаты клика привязывать было не к
+      // чему. Плотность 2 — чтобы 390 CSS-пикселей дали 780 пикселей
+      // снимка и холст в 720 брал их с запасом, а не растягивал.
+      await page.setViewport({
+        ...SCENARIO_VIEWPORT,
+        deviceScaleFactor: SCENARIO_DEVICE_SCALE_FACTOR,
+      });
       // Тот же трюк, что задумывался для og:image (Accept-Language) —
       // заголовок уходит СО ВСЕМИ запросами страницы, включая XHR/fetch
       // самого SPA к API бэкенда (CDP `Network.setExtraHTTPHeaders`, не
@@ -1298,28 +1324,66 @@ export class TutorialScenarioRunnerService {
     const captionsOn = parseTutorialCaptionsSetting(
       await this.settings.get(TUTORIAL_CAPTIONS_SETTING_KEY).catch(() => null),
     );
+    // Движение (этап G). Читается ОДИН раз и одной переменной уходит
+    // во все три места, которые считают время: подписи, отпечаток и
+    // план. Прочитанное дважды, оно могло бы разойтись между
+    // чтениями (оператор переключил посреди прогона) — и подписи
+    // легли бы на ролик другой длины. Сбой чтения — без движения:
+    // это улучшение, а не условие сборки.
+    const motion = parseTutorialMotionSetting(
+      await this.settings.get(TUTORIAL_MOTION_SETTING_KEY).catch(() => null),
+    );
+    // Указатель клика (этап H). Замер делается всегда — он дешёвый и
+    // уже лежит на кадре, — а рисуется только по выключателю.
+    // Выключенный указатель СНИМАЕТСЯ с кадров здесь, до отпечатка:
+    // иначе отпечаток зависел бы от замера, которого на картинке нет,
+    // и дрожание вёрстки между ночами заказывало бы пересборку.
+    const pointerOn = parseTutorialPointerSetting(
+      await this.settings.get(TUTORIAL_POINTER_SETTING_KEY).catch(() => null),
+    );
     // Длительность кадра назначается по-разному в двух вариантах, и
     // это не деталь реализации, а разница между ними (§3/§3-бис).
     // Вариант А: речь одна на весь ролик, делим поровну. Вариант Б:
     // каждый кадр висит ровно столько, сколько звучит ЕГО реплика, а
     // кадр без реплики — минимум. Вариант А на покадровых репликах
     // дал бы кадр, который меняется посреди фразы.
+    //
+    // Третье правило — у кадра, где подпись ЕСТЬ, а измеренной речи
+    // НЕТ (озвучка выключена, дорожка не синтезировалась или не
+    // измерилась): он держится столько, сколько читается подпись
+    // (`captionReadingSeconds`, правка сквозного аудита A–G). Прежнее
+    // число остаётся нижней границей. Кадры без подписи — и все кадры
+    // при выключенных подписях — получают ровно то, что и раньше, так
+    // что отпечатки таких роликов не меняются.
     const planFrames = frames.map((frame) => {
       const track =
         narration.mode === 'perFrame'
           ? (narration.tracks.get(frame.stepIndex) ?? null)
           : null;
+      const baseSeconds =
+        narration.mode === 'perFrame'
+          ? narrationFrameSeconds(track?.seconds ?? null)
+          : evenFrameSeconds(
+              narration.mode === 'whole' ? narration.speechSeconds : null,
+              frames.length,
+              motion,
+            );
+      const measuredSpeech =
+        (narration.mode === 'perFrame' &&
+          track?.seconds != null &&
+          Number.isFinite(track.seconds)) ||
+        narration.mode === 'whole';
+      const reading =
+        captionsOn && !measuredSpeech
+          ? captionReadingSeconds(captionTexts.get(frame.stepIndex) ?? null)
+          : null;
       return {
         stepIndex: frame.stepIndex,
         bytes: frame.bytes,
         seconds:
-          narration.mode === 'perFrame'
-            ? narrationFrameSeconds(track?.seconds ?? null)
-            : evenFrameSeconds(
-                narration.mode === 'whole' ? narration.speechSeconds : null,
-                frames.length,
-              ),
+          reading === null ? baseSeconds : Math.max(baseSeconds, reading),
         audioUrl: track?.url ?? null,
+        pointer: pointerOn ? (frame.pointer ?? null) : null,
         // Текст подписи — та же реплика, что синтезирована, и берётся
         // она из того же места (§11 п.16 требует дословного
         // совпадения). Кадр без реплики подписи не получает.
@@ -1344,6 +1408,7 @@ export class TutorialScenarioRunnerService {
             seconds: f.seconds,
             narration: f.narration,
           })),
+          motion,
         )
       : '';
 
@@ -1357,6 +1422,7 @@ export class TutorialScenarioRunnerService {
       planFrames,
       narration.mode === 'whole' ? narration.url : null,
       captionsAss,
+      motion,
     );
     // Сбой этой выборки — не повод не собирать ролик: худшее, что
     // случится без неё, — лишняя пересборка, то есть поведение ровно
@@ -1447,6 +1513,7 @@ export class TutorialScenarioRunnerService {
           url,
           seconds: frame.seconds,
           ...(frame.audioUrl ? { audioUrl: frame.audioUrl } : {}),
+          ...(frame.pointer ? { pointer: frame.pointer } : {}),
         });
       }
 
@@ -1487,6 +1554,7 @@ export class TutorialScenarioRunnerService {
       const plan = planSlideshow(slides, {
         voiceoverUrl: narration.mode === 'whole' ? narration.url : null,
         captionsUrl,
+        motion,
       });
       if (!plan) {
         this.logger.warn(
@@ -1497,6 +1565,15 @@ export class TutorialScenarioRunnerService {
         // переставлено.
         await this.abandonAssembly(asset.id, 'кадры не годятся для сборки');
         return;
+      }
+
+      if (plan.motion !== motion) {
+        // Зум снят планом у слишком длинного ролика (`ZOOM_MAX_SECONDS`
+        // — иначе сборка рискует не уложиться в потолок внешнего
+        // сервиса). Молча — это «включил, а зума нет».
+        this.logger.log(
+          `сценарий ${scenario.subjectKey} (${scenario.locale}): ролик длиннее потолка зума (${ZOOM_MAX_SECONDS} с) — собирается только с переходами`,
+        );
       }
 
       const job = await this.ffmpeg.submit({
@@ -1528,6 +1605,16 @@ export class TutorialScenarioRunnerService {
           // завершении как `frameCount × SECONDS_PER_FRAME`, то есть
           // повторялась своими словами в трёх модулях от команды.
           durationMs: plan.durationMs,
+          // Подписи заказаны, но не залились — ролик соберётся без них,
+          // а отпечаток, записанный при создании строки, говорит «с
+          // подписями». Оставь его, и следующая ночь сочла бы ролик
+          // готовым: вход тот же, отпечаток совпал, сборка не нужна —
+          // и подписи не появились бы НИКОГДА, пока не поменяется
+          // что-нибудь ещё (правка сквозного аудита A–G: этап E сделал
+          // заливку подписей необязательной, отпечаток §11-тер об этом
+          // не знал). Без отпечатка строка не совпадает ни с чем, и
+          // следующий прогон собирает заново.
+          ...(captionsAss && !captionsUrl ? { contentHash: null } : {}),
         },
       });
 

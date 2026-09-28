@@ -4,7 +4,11 @@ import {
   parseScenarioSteps,
 } from './scenario-steps';
 import { stableStringify } from '../../common/stable-json';
-import { MAX_SCENARIO_STEPS } from './scenario-steps.types';
+import { AI_OPERATION_LABEL } from '../../common/ai-pricing';
+import {
+  MAX_SCENARIO_STEPS,
+  WIZARD_PAID_OPERATIONS,
+} from './scenario-steps.types';
 
 describe('parseScenarioSteps', () => {
   it('принимает валидную последовательность разных видов шагов', () => {
@@ -92,6 +96,106 @@ describe('parseScenarioSteps', () => {
       },
     ]);
     expect(result.ok).toBe(false);
+  });
+
+  describe('белый список операций — свой, а не все строки отчёта (этап F)', () => {
+    const paid = (operation: string) =>
+      parseScenarioSteps([
+        {
+          kind: 'triggerPaidOperation',
+          operation,
+          model: 'veo-3.1-generate-preview',
+          expectedUnits: { seconds: 8 },
+          note: 'x',
+        },
+      ]).ok;
+
+    it.each([...WIZARD_PAID_OPERATIONS])(
+      'операция мастера «%s» принимается',
+      (operation: string) => {
+        expect(paid(operation)).toBe(true);
+      },
+    );
+
+    // Перебор по ВСЕМ ключам отчёта расходов, а не по списку,
+    // выписанному здесь руками: новая строка отчёта попадает в этот
+    // тест сама и обязана быть отвергнута, пока её не впишут в
+    // `WIZARD_PAID_OPERATIONS` осознанно. До этапа F валидатор
+    // принимал любой ключ `AI_OPERATION_LABEL` — сорок с лишним
+    // значений при пяти названных модели в промпте.
+    const outside = Object.keys(AI_OPERATION_LABEL).filter(
+      (op) => !(WIZARD_PAID_OPERATIONS as readonly string[]).includes(op),
+    );
+
+    it('строк отчёта вне белого списка больше, чем в нём, — перебор не пустой', () => {
+      expect(outside.length).toBeGreaterThan(WIZARD_PAID_OPERATIONS.length);
+      expect(outside).toContain('tutorial-voiceover');
+      expect(outside).toContain('tutorial-video-assembly');
+    });
+
+    it.each(outside)(
+      'фоновая или чужая операция «%s» отвергается',
+      (operation: string) => {
+        expect(paid(operation)).toBe(false);
+      },
+    );
+
+    it('перечень операций мастера закреплён — сужение тоже решение, а не следствие', () => {
+      // Тесты выше перебирают САМ список и потому согласны с любой его
+      // редакцией: выпади из него `avatar-generation`, все они
+      // остались бы зелёными, а сценарий с платным шагом аватара стал
+      // бы невалидным целиком (всё-или-ничего) — молча, на ночном
+      // прогоне. Найдено мутацией при аудите этапа F.
+      expect([...WIZARD_PAID_OPERATIONS]).toEqual([
+        'generation',
+        'voiceover',
+        'voiceover-preview',
+        'voice-clone',
+        'avatar-generation',
+      ]);
+    });
+
+    it('отказ по операции называет причину, а не «шаг невалиден» (аудит этапа F)', () => {
+      // Оператор правит в админке сценарий, сохранённый до этапа F с
+      // `"reframe"`: без названной причины он искал бы опечатку в
+      // селекторе.
+      const result = parseScenarioSteps([
+        { kind: 'goto', route: 'generate' },
+        {
+          kind: 'triggerPaidOperation',
+          operation: 'reframe',
+          model: 'ffmpeg-api',
+          expectedUnits: { calls: 1 },
+          note: 'x',
+        },
+      ]);
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain('шаг 2 невалиден');
+      expect(result.reason).toContain('«reframe»');
+      expect(result.reason).toContain('avatar-generation');
+    });
+
+    it('прочие отказы остаются короткими — уточнение только про операцию', () => {
+      const result = parseScenarioSteps([
+        {
+          kind: 'triggerPaidOperation',
+          operation: 'generation',
+          model: 'veo-3.1-generate-preview',
+          expectedUnits: {},
+          note: 'x',
+        },
+      ]);
+      expect(result.reason).toBe('шаг 1 невалиден');
+    });
+
+    it('каждая операция мастера — настоящая строка отчёта расходов', () => {
+      // Обратная сторона: значение из белого списка, которого нет в
+      // прайсе, прошло бы валидацию, а запись расхода по нему не
+      // нашла бы подписи.
+      for (const op of WIZARD_PAID_OPERATIONS) {
+        expect(Object.keys(AI_OPERATION_LABEL)).toContain(op);
+      }
+    });
   });
 
   it('triggerPaidOperation с отрицательным expectedUnits.seconds — невалиден', () => {

@@ -161,15 +161,25 @@ export interface TutorialLocalesSettingsView {
 }
 
 /** Озвучка обучающих роликов (ТЗ TZ-Tutorial-Video-Voiced.md, этап B). */
+/** Режим движения обучающего ролика — ровно `SlideshowMotion`
+ *  бэкенда (`tutorial-video-assembly.ts`); строки сверяет шов в
+ *  `scripts/check-docs.mjs`. */
+export type TutorialMotion = 'none' | 'fade' | 'fade+zoom';
+
 export interface TutorialVoiceSettingsView {
   enabled: boolean;
   /** Голос провайдера; null — голос по умолчанию. */
   voiceId: string | null;
   /** Требовать вычитку реплик перед озвучкой (этап D). */
   requireNarrationReview: boolean;
-  /** Подписи на кадрах (этап E) — единственный из трёх выключателей,
-   *  включённый по умолчанию, и от звука не зависит. */
+  /** Подписи на кадрах (этап E) — единственный из выключателей
+   *  карточки, включённый по умолчанию, и от звука не зависит. */
   captions: boolean;
+  /** Движение в слайд-шоу (этап G): переходы и зум. По умолчанию
+   *  `none`. */
+  motion: TutorialMotion;
+  /** Указатель клика (этап H). По умолчанию выключен. */
+  pointer: boolean;
   /** Ключ провайдера синтеза, который возьмут при следующей сборке. */
   provider: string;
   /** Настроен ли он: без ключа выключатель ничего не решает. */
@@ -178,6 +188,10 @@ export interface TutorialVoiceSettingsView {
   effect: string;
   /** То же про подписи, отдельной фразой: они от звука не зависят. */
   captionsEffect: string;
+  /** То же про движение. */
+  motionEffect: string;
+  /** То же про указатель клика. */
+  pointerEffect: string;
 }
 
 export interface VoiceoverProviderOptionView {
@@ -616,6 +630,9 @@ export interface AdminUserDetail extends AdminUserSummary {
    */
   environment: { at: string; value: unknown } | null;
   costByOperation: CostBucket[];
+  /** Подписи операций — приезжают с карточкой, как у `CostReport`
+   *  (своей копии словаря в админке нет, и заводить её нельзя). */
+  operationLabels: Record<string, string>;
   recentSessions: Array<{
     sessionId: string;
     status: string;
@@ -781,6 +798,9 @@ export interface CostBucket {
   key: string;
   costMicroUsd: number;
   calls: number;
+  /** Символы синтезированной речи; ноль у всего, что не синтез
+   *  (этап F ТЗ docs-tz/TZ-Tutorial-Video-Voiced.md). */
+  characters: number;
 }
 
 export interface PricingRow {

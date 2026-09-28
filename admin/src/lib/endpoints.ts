@@ -33,6 +33,7 @@ import type {
   EnvSettingsResult,
   AudioSeparationSettingsView,
   TutorialLocalesSettingsView,
+  TutorialMotion,
   TutorialVoiceSettingsView,
   AudioSeparationState,
   VoiceoverProviderKey,
@@ -279,6 +280,10 @@ export function setTutorialVoiceSettings(input: {
   requireNarrationReview: boolean;
   /** Обязательное по той же причине. */
   captions: boolean;
+  /** Движение (этап G). Обязательное по той же причине. */
+  motion: TutorialMotion;
+  /** Указатель клика (этап H). Обязательное по той же причине. */
+  pointer: boolean;
 }) {
   return apiPatch<TutorialVoiceSettingsView>('/admin/settings/tutorial-voice', input);
 }

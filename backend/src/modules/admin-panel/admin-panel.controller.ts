@@ -45,6 +45,10 @@ import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
 import { AdminTutorialVoiceSettingsService } from './admin-tutorial-voice-settings.service';
+import {
+  SLIDESHOW_MOTIONS,
+  SlideshowMotion,
+} from '../tutorial-runner/tutorial-video-assembly';
 import { AdminTutorialLocalesSettingsService } from './admin-tutorial-locales-settings.service';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { ProviderBalancesService } from './provider-balances.service';
@@ -358,6 +362,15 @@ export class SetTutorialVoiceDto {
    *  причине. */
   @IsBoolean()
   captions!: boolean;
+
+  /** Движение в слайд-шоу (§6 ТЗ, этап G). Обязательное по той же
+   *  причине; значения — ровно `SlideshowMotion`. */
+  @IsIn(SLIDESHOW_MOTIONS as unknown as string[])
+  motion!: SlideshowMotion;
+
+  /** Указатель клика (§6 ТЗ, этап H). Обязательное по той же причине. */
+  @IsBoolean()
+  pointer!: boolean;
 }
 
 /** Доп. запрос владельца продукта: тот же селектор, что выше, но для
@@ -596,6 +609,8 @@ export class AdminPanelController {
         voiceId: dto.voiceId ?? null,
         requireNarrationReview: dto.requireNarrationReview,
         captions: dto.captions,
+        motion: dto.motion,
+        pointer: dto.pointer,
       },
       req.userId,
     );

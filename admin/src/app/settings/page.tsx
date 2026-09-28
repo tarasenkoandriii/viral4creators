@@ -34,6 +34,7 @@ import type {
   VoiceoverProviderSettingsView,
   AudioSeparationSettingsView,
   TutorialLocalesSettingsView,
+  TutorialMotion,
   TutorialVoiceSettingsView,
   AudioSeparationState,
   AnalysisProviderKey,
@@ -221,6 +222,8 @@ function TutorialVoiceCard() {
     voiceId: string | null;
     requireNarrationReview: boolean;
     captions: boolean;
+    motion: TutorialMotion;
+    pointer: boolean;
   }) => {
     setSaving(true);
     setError(null);
@@ -245,6 +248,16 @@ function TutorialVoiceCard() {
         переиспользуются, пока текст не изменится. Полный набор из пятидесяти роликов — примерно $2.5 синтеза
         на дорожках из текста шага и до $6 на покадровых репликах, единоразово. Переключение действует сразу,
         без передеплоя.
+      </p>
+      {/* Где искать деньги — прямо здесь, а не только в ТЗ (этап F).
+          Ночной прогон тратит от имени фикстурного пользователя, а он
+          помечен тестовым: его расход намеренно не входит в общие
+          числа вкладки «Расходы», и в основной таблице операций
+          оператор строку озвучки не найдёт. */}
+      <p className="muted" style={{ marginBottom: 16, fontSize: 13 }}>
+        Расход виден на вкладке «Расходы» строками «Озвучка обучающего видео» (с числом символов) и «Сборка
+        обучающего видео» — в разрезе тестовых аккаунтов: прогон идёт от фикстурного пользователя, и в общие
+        числа его траты не входят.
       </p>
 
       {error && (
@@ -276,6 +289,8 @@ function TutorialVoiceCard() {
                   voiceId: voiceId.trim() || null,
                   requireNarrationReview: state.requireNarrationReview,
                   captions: state.captions,
+                  motion: state.motion,
+                  pointer: state.pointer,
                 })
               }
             >
@@ -299,6 +314,8 @@ function TutorialVoiceCard() {
                   voiceId: voiceId.trim() || null,
                   requireNarrationReview: state.requireNarrationReview,
                   captions: state.captions,
+                  motion: state.motion,
+                  pointer: state.pointer,
                 })
               }
             >
@@ -331,6 +348,8 @@ function TutorialVoiceCard() {
                   voiceId: state.voiceId,
                   requireNarrationReview: e.target.value === 'on',
                   captions: state.captions,
+                  motion: state.motion,
+                  pointer: state.pointer,
                 })
               }
             >
@@ -357,6 +376,8 @@ function TutorialVoiceCard() {
                   voiceId: state.voiceId,
                   requireNarrationReview: state.requireNarrationReview,
                   captions: e.target.value === 'on',
+                  motion: state.motion,
+                  pointer: state.pointer,
                 })
               }
             >
@@ -364,8 +385,63 @@ function TutorialVoiceCard() {
               <option value="off">Без подписей — только звук</option>
             </select>
           </div>
+          {/* Движение — четвёртый выключатель карточки (этап G), по
+              умолчанию выключенный: это косметика, которую человек
+              должен увидеть на настоящих кадрах, прежде чем включить
+              для всех. От звука и подписей не зависит. */}
+          <div
+            className="filters"
+            style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}
+          >
+            <select
+              aria-label="Движение в ролике"
+              value={state.motion}
+              disabled={saving}
+              onChange={(e) =>
+                void save({
+                  enabled: state.enabled,
+                  voiceId: state.voiceId,
+                  requireNarrationReview: state.requireNarrationReview,
+                  captions: state.captions,
+                  motion: e.target.value as TutorialMotion,
+                  pointer: state.pointer,
+                })
+              }
+            >
+              <option value="none">Без движения — кадры сменяются резко</option>
+              <option value="fade">Плавные переходы между кадрами</option>
+              <option value="fade+zoom">Переходы и лёгкое приближение внутри кадра</option>
+            </select>
+          </div>
+          {/* Указатель клика — пятый выключатель (этап H), по
+              умолчанию выключенный: та же косметика, что движение. */}
+          <div
+            className="filters"
+            style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}
+          >
+            <select
+              aria-label="Указатель клика"
+              value={state.pointer ? 'on' : 'off'}
+              disabled={saving}
+              onChange={(e) =>
+                void save({
+                  enabled: state.enabled,
+                  voiceId: state.voiceId,
+                  requireNarrationReview: state.requireNarrationReview,
+                  captions: state.captions,
+                  motion: state.motion,
+                  pointer: e.target.value === 'on',
+                })
+              }
+            >
+              <option value="off">Без указателя клика</option>
+              <option value="on">Указатель клика — кольцо на кнопке перед нажатием</option>
+            </select>
+          </div>
           <p className="muted">{state.effect}</p>
           <p className="muted">{state.captionsEffect}</p>
+          <p className="muted">{state.motionEffect}</p>
+          <p className="muted">{state.pointerEffect}</p>
           {!state.providerConfigured && (
             <p className="muted" style={{ marginTop: 8 }}>
               Переключатель заблокирован: провайдер синтеза <code>{state.provider}</code> не настроен (см. таблицу

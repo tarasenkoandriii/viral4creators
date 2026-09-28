@@ -1,12 +1,17 @@
 import {
   buildTutorialCaptionsAss,
+  captionReadingSeconds,
+  CAPTION_CHARS_PER_SECOND,
   captionsPathname,
   hasCaptions,
 } from './tutorial-captions';
 import {
   CANVAS,
+  FRAME_TAIL_SECONDS,
   frameSpansSeconds,
+  MIN_FRAME_SECONDS,
   narrationFrameSeconds,
+  SECONDS_PER_FRAME,
 } from './tutorial-video-assembly';
 import { MAX_NARRATION_LENGTH } from '../tutorial-scenario/scenario-steps.types';
 
@@ -26,7 +31,7 @@ describe('hasCaptions', () => {
     // задачи: лишний вход это лишний скачанный файл на стороне
     // чужого сервиса.
     expect(hasCaptions([frame(2), frame(2)])).toBe(false);
-    expect(buildTutorialCaptionsAss([frame(2)])).toBe('');
+    expect(buildTutorialCaptionsAss([frame(2)], 'none')).toBe('');
   });
 
   it('пробелы вместо реплики — тоже нечего', () => {
@@ -44,17 +49,16 @@ describe('buildTutorialCaptionsAss', () => {
     // значит показать не то, что произнесено.
     const text = 'Открываем мастер и загружаем референс.';
 
-    expect(buildTutorialCaptionsAss([frame(3, text)])).toContain(text);
+    expect(buildTutorialCaptionsAss([frame(3, text)], 'none')).toContain(text);
   });
 
   it('кадр без реплики не получает события вовсе', () => {
     // «Реплики нет» и «пустая подпись» — разные вещи: вторая мигнула
     // бы пустой плашкой посреди ролика.
-    const ass = buildTutorialCaptionsAss([
-      frame(3, 'Первая.'),
-      frame(1.5),
-      frame(3, 'Третья.'),
-    ]);
+    const ass = buildTutorialCaptionsAss(
+      [frame(3, 'Первая.'), frame(1.5), frame(3, 'Третья.')],
+      'none',
+    );
 
     expect(events(ass)).toHaveLength(2);
   });
@@ -68,8 +72,8 @@ describe('buildTutorialCaptionsAss', () => {
       frame(narrationFrameSeconds(null)),
       frame(narrationFrameSeconds(9.04), 'Третья.'),
     ];
-    const spans = frameSpansSeconds(frames);
-    const ass = events(buildTutorialCaptionsAss(frames));
+    const spans = frameSpansSeconds(frames, 'none');
+    const ass = events(buildTutorialCaptionsAss(frames, 'none'));
 
     expect(ass[0]).toContain(
       `0:00:${spans[0].start.toFixed(2).padStart(5, '0')}`,
@@ -92,7 +96,7 @@ describe('buildTutorialCaptionsAss', () => {
     // 3.6333, то есть «3.63», а не «3.65». Иначе подпись к
     // десятому кадру висела бы над девятым.
     const ass = events(
-      buildTutorialCaptionsAss([frame(3.649, 'A'), frame(2.681, 'B')]),
+      buildTutorialCaptionsAss([frame(3.649, 'A'), frame(2.681, 'B')], 'none'),
     );
 
     expect(ass[0]).toContain('0:00:03.63');
@@ -106,7 +110,7 @@ describe('buildTutorialCaptionsAss', () => {
     // Конец одной — начало следующей: ровно так же, как сменяются
     // кадры. Иначе подпись к десятому кадру висела бы над девятым.
     const frames = [frame(3.63, 'A'), frame(1.5, 'B'), frame(9.64, 'C')];
-    const times = events(buildTutorialCaptionsAss(frames)).map((l) => {
+    const times = events(buildTutorialCaptionsAss(frames, 'none')).map((l) => {
       const [, start, end] = l.split(',');
       return { start, end };
     });
@@ -118,7 +122,7 @@ describe('buildTutorialCaptionsAss', () => {
   it('фигурные скобки экранируются — иначе libass съест текст', () => {
     // `{` открывает блок команд: незакрытый или чужой блок либо
     // проглотит реплику, либо применит к ней что попало.
-    const ass = buildTutorialCaptionsAss([frame(3, 'Жмём {Готово}')]);
+    const ass = buildTutorialCaptionsAss([frame(3, 'Жмём {Готово}')], 'none');
 
     expect(ass).toContain('\\{Готово\\}');
   });
@@ -128,7 +132,7 @@ describe('buildTutorialCaptionsAss', () => {
     // подписей на это не полагается: одна реплика — одна строка
     // файла. Схлопывается в пробел, а не в `\\N`: реплика это одна
     // фраза, и перенос посреди неё был бы случайной паузой в чтении.
-    const ass = buildTutorialCaptionsAss([frame(3, 'Первая\nвторая')]);
+    const ass = buildTutorialCaptionsAss([frame(3, 'Первая\nвторая')], 'none');
 
     expect(events(ass)).toHaveLength(1);
     expect(ass).toContain('Первая вторая');
@@ -142,7 +146,7 @@ describe('buildTutorialCaptionsAss', () => {
     const max = ('слово '.repeat(40) + 'конец').slice(0, MAX_NARRATION_LENGTH);
     expect(max).toHaveLength(MAX_NARRATION_LENGTH);
 
-    expect(buildTutorialCaptionsAss([frame(12, max)])).toContain(max);
+    expect(buildTutorialCaptionsAss([frame(12, max)], 'none')).toContain(max);
   });
 
   it('длинное слово без пробелов рвётся жёстким переносом', () => {
@@ -153,7 +157,7 @@ describe('buildTutorialCaptionsAss', () => {
     // этапа E).
     const url = `https://app.example.com/x?ref=${'a'.repeat(120)}`;
 
-    const ass = buildTutorialCaptionsAss([frame(5, `Откройте ${url}`)]);
+    const ass = buildTutorialCaptionsAss([frame(5, `Откройте ${url}`)], 'none');
 
     expect(ass).toContain('\\N');
     // Ни одного куска длиннее потолка строки.
@@ -168,7 +172,7 @@ describe('buildTutorialCaptionsAss', () => {
   it('перенос жёсткий, а не нулевой пробел', () => {
     // U+200B libass точкой переноса не считает вовсе — проверено
     // отрисовкой: строка с ним так же уезжает за оба края кадра.
-    const ass = buildTutorialCaptionsAss([frame(5, 'ы'.repeat(80))]);
+    const ass = buildTutorialCaptionsAss([frame(5, 'ы'.repeat(80))], 'none');
 
     expect(ass).not.toContain('\u200b');
     expect(ass).toContain('\\N');
@@ -177,7 +181,7 @@ describe('buildTutorialCaptionsAss', () => {
   it('обычная реплика с пробелами переносами не засоряется', () => {
     const text = 'Открываем мастер и загружаем референсный ролик.';
 
-    expect(buildTutorialCaptionsAss([frame(5, text)])).toContain(text);
+    expect(buildTutorialCaptionsAss([frame(5, text)], 'none')).toContain(text);
   });
 
   it('граница подписи округляется ВНИЗ, а не к ближайшему', () => {
@@ -186,7 +190,7 @@ describe('buildTutorialCaptionsAss', () => {
     // оказывается ПОЗЖЕ смены кадра, и первый кадр следующего шага
     // успевает показаться со старой подписью (находка аудита E).
     const ass = events(
-      buildTutorialCaptionsAss([frame(2.6667, 'A'), frame(2, 'B')]),
+      buildTutorialCaptionsAss([frame(2.6667, 'A'), frame(2, 'B')], 'none'),
     );
 
     expect(ass[0]).toContain('0:00:02.66');
@@ -199,7 +203,7 @@ describe('buildTutorialCaptionsAss', () => {
     // `BorderStyle=3` самого по себе мало — libass без ненулевой
     // обводки коробку не строит вовсе, и подпись выходит белым
     // текстом на светлом экране мастера. Отрисовано и сверено.
-    const style = buildTutorialCaptionsAss([frame(3, 'x')])
+    const style = buildTutorialCaptionsAss([frame(3, 'x')], 'none')
       .split('\n')
       .find((l) => l.startsWith('Style:'));
     const f = (style ?? '').split(',');
@@ -215,7 +219,7 @@ describe('buildTutorialCaptionsAss', () => {
     // если пропорции разойдутся. Переписанное от руки число
     // расходится ровно тогда, когда холст сборки меняют и сюда не
     // заглядывают (находка аудита этапа E).
-    const ass = buildTutorialCaptionsAss([frame(2, 'x')]);
+    const ass = buildTutorialCaptionsAss([frame(2, 'x')], 'none');
     const x = Number(/PlayResX: (\d+)/.exec(ass)?.[1]);
     const y = Number(/PlayResY: (\d+)/.exec(ass)?.[1]);
 
@@ -228,5 +232,67 @@ describe('buildTutorialCaptionsAss', () => {
     expect(captionsPathname('tutorial-video-frames/tva-1/')).toBe(
       'tutorial-video-frames/tva-1/captions.ass',
     );
+  });
+});
+
+describe('подписи и движение (этап G)', () => {
+  it('с переходами подпись следующего кадра начинается вместе с въездом, а не после', () => {
+    // 3 с + 2 с + 4 с: кадры начинаются на 0, 81, 132 кадре (2.70 и
+    // 4.40 с), ролик кончается на 252-м (8.40 с). Без переходов было
+    // бы 3.00 / 5.00 / 9.00 — и к третьему кадру подпись отставала бы
+    // от картинки на 0.6 с.
+    const frames = [frame(3, 'Раз.'), frame(2, 'Два.'), frame(4, 'Три.')];
+    const lines = events(buildTutorialCaptionsAss(frames, 'fade'));
+    expect(lines[0]).toContain('0:00:00.00,0:00:02.70');
+    expect(lines[1]).toContain('0:00:02.70,0:00:04.40');
+    expect(lines[2]).toContain('0:00:04.40,0:00:08.40');
+  });
+
+  it('зум таймкодов не меняет — только переходы', () => {
+    const frames = [frame(3, 'Раз.'), frame(2, 'Два.')];
+    expect(buildTutorialCaptionsAss(frames, 'fade+zoom')).toBe(
+      buildTutorialCaptionsAss(frames, 'fade'),
+    );
+  });
+});
+
+describe('captionReadingSeconds (сквозной аудит A–G)', () => {
+  it('немой кадр с подписью держится, сколько подпись читается', () => {
+    // Реплика средней длины (§7.1 — ≈120 символов). Прежние две
+    // секунды — это шестьдесят символов в секунду.
+    const text = 'а'.repeat(120);
+    const seconds = captionReadingSeconds(text)!;
+    expect(seconds).toBeCloseTo(
+      120 / CAPTION_CHARS_PER_SECOND + FRAME_TAIL_SECONDS,
+    );
+    expect(seconds).toBeGreaterThan(4 * SECONDS_PER_FRAME);
+    // Темп тот же, по которому §7.1 прикидывает речь: без звука
+    // ролик идёт так же, как со звуком.
+    expect(CAPTION_CHARS_PER_SECOND).toBe(15);
+  });
+
+  it('правило то же, что у кадра с речью: хвост и нижняя граница', () => {
+    expect(captionReadingSeconds('Готово.')).toBe(MIN_FRAME_SECONDS);
+    expect(captionReadingSeconds('x'.repeat(45))).toBe(
+      narrationFrameSeconds(3),
+    );
+  });
+
+  it('считается ПОКАЗАННЫЙ текст: пробелы схлопнуты, края обрезаны', () => {
+    const shown = 'x'.repeat(60);
+    expect(
+      captionReadingSeconds(`   ${'x'.repeat(30)}\n\n   ${'x'.repeat(29)}  `),
+    ).toBe(captionReadingSeconds(shown));
+  });
+
+  it('символ вне BMP — один символ, а не два', () => {
+    expect(captionReadingSeconds('😀'.repeat(45))).toBe(
+      captionReadingSeconds('x'.repeat(45)),
+    );
+  });
+
+  it('подписи нет — решать вызывающему', () => {
+    expect(captionReadingSeconds(null)).toBeNull();
+    expect(captionReadingSeconds('   ')).toBeNull();
   });
 });

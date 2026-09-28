@@ -1715,6 +1715,126 @@ function checkGuideSeams() {
     );
   }
 
+  // ── Режимы движения обучалки: бэкенд = админка ───────────────────
+  //
+  // Этап G ТЗ `docs-tz/TZ-Tutorial-Video-Voiced.md`. Режим уходит из
+  // `<select>` витрины строкой и принимается DTO по списку
+  // `SLIDESHOW_MOTIONS`. Типы приложений друг друга не видят: админка
+  // объявила бы `'zoom'`, DTO его отверг бы с 400, и оператор получил
+  // бы «не удалось сохранить» ровно в тот момент, когда откатывает
+  // движение (уровень «4-бис»). Сверяются три места: список на
+  // бэкенде, тип в админке и значения пунктов выпадающего списка.
+  const motionSrc = stripComments(
+    read("backend/src/modules/tutorial-runner/tutorial-video-assembly.ts"),
+  );
+  const motionList = /SLIDESHOW_MOTIONS\s*=\s*\[([^\]]*)\]/.exec(motionSrc);
+  const backendMotions = motionList
+    ? [...motionList[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+    : [];
+  const adminTypeMatch = /export type TutorialMotion\s*=\s*([^;]+);/.exec(
+    read("admin/src/lib/types.ts"),
+  );
+  const adminMotions = adminTypeMatch
+    ? [...adminTypeMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+    : [];
+  const settingsPage = read("admin/src/app/settings/page.tsx");
+  const motionSelect = /aria-label="Движение в ролике"[\s\S]*?<\/select>/.exec(
+    settingsPage,
+  );
+  const optionMotions = motionSelect
+    ? [...motionSelect[0].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1])
+    : [];
+  if (backendMotions.length === 0) {
+    problems.push("не нашли SLIDESHOW_MOTIONS в tutorial-video-assembly.ts");
+  } else {
+    const want = backendMotions.join(",");
+    if (adminMotions.join(",") !== want) {
+      problems.push(
+        `режимы движения разошлись: бэкенд «${want}», тип админки «${adminMotions.join(",")}»`,
+      );
+    }
+    if (optionMotions.join(",") !== want) {
+      problems.push(
+        `режимы движения разошлись: бэкенд «${want}», пункты витрины «${optionMotions.join(",")}» — ` +
+          "лишний пункт DTO отвергнет, недостающий нельзя выбрать",
+      );
+    }
+  }
+
+  // ── Расход обучалки пишется СВОИМИ операциями ─────────────────────
+  //
+  // Этап F ТЗ `docs-tz/TZ-Tutorial-Video-Voiced.md`: синтез обучалки
+  // с этапа B писался общей `voiceover` и в отчёте складывался с
+  // озвучкой роликов пользователей — вопрос «сколько стоит обучалка за
+  // ночь» из отчёта было не достать. Теперь у каждой траты обучалки
+  // своя строка с приставкой `tutorial-`. Типы этого не сторожат:
+  // `voiceover` — законный `AiOperation`, и новая запись с ним
+  // скомпилируется, пройдёт линт и тесты, а в отчёте молча растворится.
+  //
+  // Операция обязана быть ЛИТЕРАЛОМ прямо в вызове: переменная на её
+  // месте ослепила бы шов — тот же обход, что у заливок выше.
+  // Число вызовов сверяется: `record`, уведённый в обёртку, иначе
+  // просто выпал бы из подсчёта, а вердикт остался бы `ok`.
+  //
+  // Три модуля, а не один: генератор сценариев, ночной исполнитель и
+  // обучалка по сайту заказчика тратят каждый своё, и отчёт обязан
+  // различать это по строкам. `recordGemini` — тот же вход в журнал,
+  // что `record`, и под шов попадает так же.
+  const TUTORIAL_USAGE_DIRS = [
+    "backend/src/modules/tutorial-runner",
+    "backend/src/modules/tutorial-scenario",
+    "backend/src/modules/client-site-tutorial",
+  ];
+  // синтез + сборка (ночной прогон), генерация сценария, сборка
+  // обучалки по сайту заказчика
+  const TUTORIAL_USAGE_RECORDS_EXPECTED = 4;
+  let tutorialUsageRecords = 0;
+  const tutorialOps = new Set();
+  const tutorialFiles = TUTORIAL_USAGE_DIRS.flatMap((dir) =>
+    walk(path.join(ROOT, dir)),
+  );
+  for (const file of tutorialFiles) {
+    if (!file.endsWith(".ts") || file.endsWith(".spec.ts")) continue;
+    const rel = path.relative(ROOT, file);
+    const code = stripComments(read(rel));
+    for (const m of code.matchAll(/\.record(?:Gemini|OpenAi)?\(/g)) {
+      // Тело вызова — до парной скобки: объект расхода многострочный,
+      // и регэксп «до ближайшей `)`» обрезал бы его на первом же
+      // вложенном вызове.
+      let depth = 0;
+      let end = m.index + m[0].length - 1;
+      for (; end < code.length; end++) {
+        if (code[end] === "(") depth++;
+        else if (code[end] === ")" && --depth === 0) break;
+      }
+      const call = code.slice(m.index, end + 1);
+      tutorialUsageRecords++;
+      const op = /\boperation:\s*'([^']*)'/.exec(call);
+      if (!op) {
+        problems.push(
+          `${rel}: запись расхода без литерала operation — шов не видит, ` +
+            "какой строкой отчёта она пишется (этап F)",
+        );
+        continue;
+      }
+      tutorialOps.add(op[1]);
+      if (!op[1].startsWith("tutorial-")) {
+        problems.push(
+          `${rel}: расход обучалки пишется операцией «${op[1]}» — в отчёте он ` +
+            "растворится в расходе пользователей; заведите свою строку " +
+            "tutorial-* в common/ai-pricing.ts (этап F)",
+        );
+      }
+    }
+  }
+  if (tutorialUsageRecords !== TUTORIAL_USAGE_RECORDS_EXPECTED) {
+    problems.push(
+      `записей расхода в обучалке ${tutorialUsageRecords}, а шов сторожит ` +
+        `${TUTORIAL_USAGE_RECORDS_EXPECTED}: запись либо добавили, либо увели ` +
+        "в обёртку — проверьте её операцию и поправьте число здесь",
+    );
+  }
+
   // ── Готовое видео обучалки: один префикс на три места ────────────
   //
   // Файл заливается под `tutorial-videos/{subjectKey}/{id}.mp4`
@@ -2151,6 +2271,9 @@ function checkGuideSeams() {
         `из ${assetWriters.length} писателей актива (все из плана); ` +
         `статусов сборки (бэкенд = админка): ${backendStatuses.size}; ` +
         `заливок обучалки под убираемым префиксом: ${transitUploads}; ` +
+        `режимов движения (бэкенд = тип админки = витрина): ${backendMotions.length}; ` +
+        `записей расхода обучалки под своими операциями: ${tutorialUsageRecords} ` +
+        `(${[...tutorialOps].sort().join(", ")}); ` +
         `мест, знающих префикс готового видео: ${videoPrefixUses}; ` +
         `пара (шаг, локаль) уникальна и пишется по ключу: да; ` +
         `ключей localStorage сверено с фронтендом: ${spaKeysChecked}; ` +

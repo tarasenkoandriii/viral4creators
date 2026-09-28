@@ -88,10 +88,41 @@ export interface ScenarioExpectedUnits {
   calls?: number;
 }
 
+/**
+ * Платные операции, которые ЭКРАН МАСТЕРА вообще способен запустить, —
+ * то, что модели разрешено написать в `triggerPaidOperation.operation`.
+ *
+ * Один список на две стороны: его перечисляет промпт генератора
+ * (`tutorial-scenario-prompt.ts`) и по нему же отказывает валидатор
+ * (`scenario-steps.ts`). До этапа F (ТЗ docs-tz/TZ-Tutorial-Video-
+ * Voiced.md) стороны жили порознь: промпт называл пять значений руками,
+ * а валидатор принимал ЛЮБОЙ ключ `AI_OPERATION_LABEL` — сорок с
+ * лишним строк отчёта расходов, включая фоновые, которых мастер не
+ * запускает никогда (`tutorial-video-assembly`, `blog-analysis`,
+ * `assistant`). Каждая новая строка отчёта молча становилась словом,
+ * которое модели позволено сказать; этап F добавлял
+ * `tutorial-voiceover` — то есть позволил бы сценарию объявить платной
+ * озвучку самой обучалки, у которой нет ни кнопки, ни экрана.
+ *
+ * Отсюда и форма: явный перечень, а не «всё, кроме». Новая строка
+ * отчёта расходов сюда НЕ попадает сама — её надо вписать, и это
+ * решение про мастер, а не про бухгалтерию.
+ */
+export const WIZARD_PAID_OPERATIONS = [
+  'generation',
+  'voiceover',
+  'voiceover-preview',
+  'voice-clone',
+  'avatar-generation',
+] as const satisfies readonly AiOperation[];
+
+export type WizardPaidOperation = (typeof WIZARD_PAID_OPERATIONS)[number];
+
 export interface ScenarioStepTriggerPaidOperation {
   kind: 'triggerPaidOperation';
-  /** Та же операция, что попала бы в AiUsageService.record() при реальном исполнении. */
-  operation: AiOperation;
+  /** Та же операция, что попала бы в AiUsageService.record() при реальном
+   *  исполнении, — но только из тех, что мастер умеет запустить. */
+  operation: WizardPaidOperation;
   /** Ключ модели — должен найтись в MODEL_RATES (common/ai-pricing.ts), иначе оценка помечается unpriced. */
   model: string;
   expectedUnits: ScenarioExpectedUnits;

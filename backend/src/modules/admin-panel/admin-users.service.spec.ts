@@ -289,6 +289,29 @@ describe('AdminUsersService — кредиты и подписка (этап 62,
     });
   });
 
+  it('карточка несёт подписи операций — иначе админка рисует сырые ключи (аудит этапа F)', async () => {
+    // Копии словаря в админке нет с повторного сквозного аудита A+B+C;
+    // отчёт расходов подписи с тех пор привозит сам, а карточка —
+    // нет, и `operationLabel(key)` без словаря молча отдавал ключ.
+    // Сильнее всего это било по фикстурному пользователю обучалки: его
+    // расход — это ровно `tutorial-voiceover` и
+    // `tutorial-video-assembly`.
+    const { svc, aiUsage } = build();
+    aiUsage.breakdownForUser.mockResolvedValue([
+      {
+        key: 'tutorial-voiceover',
+        costMicroUsd: 10,
+        calls: 1,
+        characters: 480,
+      },
+    ]);
+    const detail = await svc.get('u1');
+    expect(detail.operationLabels['tutorial-voiceover']).toBe(
+      'Озвучка обучающего видео',
+    );
+    expect(detail.costByOperation[0].characters).toBe(480);
+  });
+
   it('карточка пользователя тоже несёт кредиты и подписку', async () => {
     const { svc, prisma, creditLedger } = build();
     creditLedger.balancesFor.mockResolvedValue({ u1: 3 });

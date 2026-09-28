@@ -453,6 +453,8 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
       voiceId: 'rachel-42',
       requireNarrationReview: false,
       captions: true,
+      motion: 'none',
+      pointer: false,
     });
 
     expect(tutorialVoice.set).toHaveBeenCalledWith(
@@ -461,6 +463,8 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
         voiceId: 'rachel-42',
         requireNarrationReview: false,
         captions: true,
+        motion: 'none',
+        pointer: false,
       },
       'op-1',
     );
@@ -474,6 +478,8 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
       enabled: true,
       requireNarrationReview: false,
       captions: true,
+      motion: 'none',
+      pointer: false,
     });
 
     expect(tutorialVoice.set).toHaveBeenCalledWith(
@@ -482,6 +488,8 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
         voiceId: null,
         requireNarrationReview: false,
         captions: true,
+        motion: 'none',
+        pointer: false,
       },
       'op-1',
     );
@@ -497,10 +505,49 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
       enabled: true,
       requireNarrationReview: true,
       captions: true,
+      motion: 'none',
+      pointer: false,
     });
 
     expect(tutorialVoice.set).toHaveBeenCalledWith(
       expect.objectContaining({ requireNarrationReview: true }),
+      'op-1',
+    );
+  });
+
+  it('PATCH: режим движения доезжает до сервиса (этап G)', async () => {
+    // Та же находка, что у вычитки: выключатель, который не
+    // доезжает, ничего не выключает — а уровень отката «4-бис»
+    // обещает выключить движение без деплоя.
+    const { controller, tutorialVoice, req } = build();
+
+    await controller.setTutorialVoice(req, {
+      enabled: false,
+      requireNarrationReview: false,
+      captions: true,
+      motion: 'fade+zoom',
+      pointer: false,
+    });
+
+    expect(tutorialVoice.set).toHaveBeenCalledWith(
+      expect.objectContaining({ motion: 'fade+zoom' }),
+      'op-1',
+    );
+  });
+
+  it('PATCH: указатель клика доезжает до сервиса (этап H)', async () => {
+    const { controller, tutorialVoice, req } = build();
+
+    await controller.setTutorialVoice(req, {
+      enabled: false,
+      requireNarrationReview: false,
+      captions: true,
+      motion: 'none',
+      pointer: true,
+    });
+
+    expect(tutorialVoice.set).toHaveBeenCalledWith(
+      expect.objectContaining({ pointer: true }),
       'op-1',
     );
   });
@@ -514,6 +561,8 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
         enabled: false,
         requireNarrationReview: false,
         captions: true,
+        motion: 'none',
+        pointer: false,
       }),
     ).rejects.toThrow('не оператор');
     expect(tutorialVoice.set).not.toHaveBeenCalled();

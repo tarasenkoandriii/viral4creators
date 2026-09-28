@@ -17,7 +17,11 @@
 
 import { AssistantStepItem } from '../assistant/knowledge/generated';
 import { ParseScenarioResult, parseScenarioSteps } from './scenario-steps';
-import { MAX_NARRATION_LENGTH } from './scenario-steps.types';
+import {
+  MAX_NARRATION_LENGTH,
+  WIZARD_PAID_OPERATIONS,
+  WizardPaidOperation,
+} from './scenario-steps.types';
 import { ROUTE_DESCRIPTIONS } from '../tutorial-runner/route-templates';
 import { languageNameForLocale } from '../../common/locale';
 
@@ -32,14 +36,38 @@ import { languageNameForLocale } from '../../common/locale';
 // — одно неверное значение роняет ВЕСЬ сценарий, причём именно на
 // платном шаге, ради которого нужна была прикидка стоимости (§4.11).
 // Перечисляем реальные значения `AiOperation`, какие в принципе может
-// запустить экран мастера генерации (`common/ai-pricing.ts`).
+// запустить экран мастера генерации.
+//
+// Этап F (ТЗ docs-tz/TZ-Tutorial-Video-Voiced.md): перечень больше не
+// пишется здесь руками, а берётся из `WIZARD_PAID_OPERATIONS` — того
+// же списка, по которому отказывает валидатор. До этапа промпт называл
+// пять значений, а валидатор принимал все ключи отчёта расходов; две
+// стороны одного контракта расходились в восемь раз, и разошлись бы
+// дальше с первой же новой строкой отчёта.
+//
+// Пояснение к каждому значению — `Record` по тому же типу: забыть
+// пояснение к новой операции не даст компилятор, а не память.
+const PAID_OPERATION_HINT: Record<WizardPaidOperation, string> = {
+  generation: 'рендер видео',
+  voiceover: 'озвучка ролика',
+  'voiceover-preview': 'проба голоса',
+  'voice-clone': 'клонирование голоса',
+  'avatar-generation': 'аватар-пилот',
+};
+const PAID_OPERATION_VALUES = WIZARD_PAID_OPERATIONS.map(
+  (op) => `"${op}"`,
+).join('|');
+const PAID_OPERATION_HINTS = WIZARD_PAID_OPERATIONS.map(
+  (op) => `${PAID_OPERATION_HINT[op]} — "${op}"`,
+).join(', ');
+
 const STEP_VOCABULARY = `- {"kind":"goto","route":"<ключ маршрута>","narration":"<реплика диктора>"} — открыть экран
 - {"kind":"fill","selector":"<CSS-селектор>","value":"<текст>","narration":"<реплика диктора>"} — заполнить поле
 - {"kind":"click","selector":"<CSS-селектор>","narration":"<реплика диктора>"} — нажать
 - {"kind":"waitFor","selector":"<CSS-селектор>","narration":"<реплика диктора>"} — дождаться появления элемента
 - {"kind":"assertVisible","selector":"<CSS-селектор>","narration":"<реплика диктора>"} — проверить, что элемент виден (для regression-теста)
 - {"kind":"assertText","selector":"<CSS-селектор>","value":"<ожидаемый текст>","narration":"<реплика диктора>"} — проверить текст элемента
-- {"kind":"triggerPaidOperation","operation":"generation"|"voiceover"|"voiceover-preview"|"voice-clone"|"avatar-generation","model":"<точное имя модели провайдера>","expectedUnits":{"seconds":<число>|"characters":<число>|"calls":<число>},"note":"<кратко зачем>"} — ставится ПЕРЕД шагом, который реально запускает платный вызов (рендер видео — "generation", озвучка — "voiceover"/"voiceover-preview"/"voice-clone", аватар-пилот — "avatar-generation"), только когда такой шаг в сценарии есть. "operation" — строго одно из перечисленных значений, ничего другого. "expectedUnits" — ОБЯЗАТЕЛЬНО заполни хотя бы одно поле (пустой объект отклоняется целиком)`;
+- {"kind":"triggerPaidOperation","operation":${PAID_OPERATION_VALUES},"model":"<точное имя модели провайдера>","expectedUnits":{"seconds":<число>|"characters":<число>|"calls":<число>},"note":"<кратко зачем>"} — ставится ПЕРЕД шагом, который реально запускает платный вызов (${PAID_OPERATION_HINTS}), только когда такой шаг в сценарии есть. "operation" — строго одно из перечисленных значений, ничего другого. "expectedUnits" — ОБЯЗАТЕЛЬНО заполни хотя бы одно поле (пустой объект отклоняется целиком)`;
 
 /** Список допустимых "route" для goto текстом в промпт — найдено этим
  * этапом: раньше промпт называл "route" плейсхолдером и приводил В

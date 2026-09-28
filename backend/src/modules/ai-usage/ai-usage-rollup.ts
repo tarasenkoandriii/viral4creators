@@ -105,6 +105,17 @@ export interface RollupBucket {
   unpriced: boolean;
   calls: number;
   costMicroUsd: bigint;
+  /**
+   * Символы синтезированной речи за месяц (этап F ТЗ
+   * docs-tz/TZ-Tutorial-Video-Voiced.md). Без этой колонки отчёт «за
+   * всё время» показывал бы символы только за последние 90 дней, а
+   * после свёртки — ноль, и молча: сырых строк, по которым их можно
+   * пересчитать, уже нет. `Int`, а не `BigInt`, как у денег: месяц
+   * одного пользователя на одной модели в два миллиарда символов — это
+   * счёт ElevenLabs на полмиллиона долларов, раньше сработает всё
+   * остальное.
+   */
+  characters: number;
 }
 
 /**
@@ -122,7 +133,10 @@ export interface GroupedUsageRow {
   operation: string;
   model: string;
   unpriced: boolean;
-  _sum: { costMicroUsd: number | bigint | null };
+  _sum: {
+    costMicroUsd: number | bigint | null;
+    characters: number | bigint | null;
+  };
   _count: { _all: number };
 }
 
@@ -151,6 +165,9 @@ export function bucketsFromGrouped(
     // может приехать и числом — приводим одинаково, иначе сумма месяца
     // молча упёрлась бы в 32 бита (и пересчитать было бы не из чего).
     costMicroUsd: BigInt(row._sum.costMicroUsd ?? 0),
+    // `sum(int4)` у Postgres — `bigint`: приводим тем же приёмом, что
+    // деньги, только в `number` (см. доккомментарий поля).
+    characters: Number(row._sum.characters ?? 0),
   }));
 }
 
@@ -182,7 +199,59 @@ export function mergeBuckets(raw: Buckets, rolled: Buckets): Buckets {
   const out: Buckets = new Map(raw);
   for (const [key, totals] of rolled) {
     const existing = out.get(key);
-    out.set(key, existing ? mergeTotals(existing, totals) : { ...totals });
+    // Поля — поимённо, а не `{ ...totals }`: свёртка отдаёт ещё и
+    // символы (`UnitTotals`, этап F), и спред протащил бы их в топ
+    // пользователей только у тех, кто пришёл со стороны свёртки, —
+    // поле то есть, то нет у строк одного списка.
+    out.set(
+      key,
+      existing
+        ? mergeTotals(existing, totals)
+        : { costMicroUsd: totals.costMicroUsd, calls: totals.calls },
+    );
+  }
+  return out;
+}
+
+/**
+ * Суммы разреза вместе с объёмом синтеза речи (этап F ТЗ
+ * docs-tz/TZ-Tutorial-Video-Voiced.md, приёмка §11 п.22: «расход виден
+ * отдельной операцией, с числом символов»).
+ *
+ * Отдельным типом, а не необязательным полем `Totals`: необязательное
+ * поле — это ровно та ловушка, от которой написан `mergeTotals`.
+ * Сырая сторона с символами плюс свёрнутая без них дали бы заниженное
+ * число без единой ошибки. Здесь поле обязательно, и забыть его на
+ * одной из сторон не даст компилятор.
+ *
+ * Символы нужны только разрезам (провайдер / операция / модель);
+ * топу пользователей и итогам они ни к чему, и таскать их туда
+ * значило бы добавить по запросу на каждое открытие вкладки.
+ */
+export interface UnitTotals extends Totals {
+  characters: number;
+}
+
+export type UnitBuckets = Map<string, UnitTotals>;
+
+export function mergeUnitTotals(
+  raw: UnitTotals,
+  rolled: UnitTotals,
+): UnitTotals {
+  return {
+    ...mergeTotals(raw, rolled),
+    characters: raw.characters + rolled.characters,
+  };
+}
+
+export function mergeUnitBuckets(
+  raw: UnitBuckets,
+  rolled: UnitBuckets,
+): UnitBuckets {
+  const out: UnitBuckets = new Map(raw);
+  for (const [key, totals] of rolled) {
+    const existing = out.get(key);
+    out.set(key, existing ? mergeUnitTotals(existing, totals) : { ...totals });
   }
   return out;
 }

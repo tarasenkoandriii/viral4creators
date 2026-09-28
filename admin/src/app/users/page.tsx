@@ -30,7 +30,7 @@ import type {
   PlanId,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
-import { operationLabel, usd } from '../../lib/money';
+import { chars, operationLabel, usd } from '../../lib/money';
 import { useAdminAuth } from '../../lib/admin-auth-context';
 
 const PLAN_LABEL: Record<PlanId, string> = {
@@ -745,8 +745,9 @@ export default function UsersPage() {
               <ul className="muted" style={{ fontSize: 13, marginTop: 6 }}>
                 {detail.costByOperation.map((b) => (
                   <li key={b.key}>
-                    {operationLabel(b.key)} — {usd(b.costMicroUsd)} ({b.calls}{' '}
-                    выз.)
+                    {operationLabel(b.key, detail.operationLabels)} —{' '}
+                    {usd(b.costMicroUsd)} ({b.calls} выз.
+                    {b.characters > 0 && `, ${chars(b.characters)}`})
                   </li>
                 ))}
               </ul>

@@ -62,7 +62,7 @@ const SCENARIO_FAIL = {
 };
 
 function buildFakePage(
-  opts: { failClick?: boolean; screenshot?: boolean } = {},
+  opts: { failClick?: boolean; screenshot?: boolean; pointer?: boolean } = {},
 ) {
   const locator = {
     click: opts.failClick
@@ -72,6 +72,8 @@ function buildFakePage(
   };
   return {
     setExtraHTTPHeaders: jest.fn().mockResolvedValue(undefined),
+    // Телефонный вьюпорт — до загрузки SPA (этап H).
+    setViewport: jest.fn().mockResolvedValue(undefined),
     goto: jest.fn().mockResolvedValue(undefined),
     waitForSelector: jest.fn().mockResolvedValue(undefined),
     // Локаль интерфейса выставляется до загрузки SPA (этап C).
@@ -81,6 +83,20 @@ function buildFakePage(
     close: jest.fn().mockResolvedValue(undefined),
     ...(opts.screenshot
       ? { screenshot: jest.fn().mockResolvedValue(new Uint8Array([1])) }
+      : {}),
+    // Замер рамки для указателя клика (этап H): кнопка по центру у низа.
+    ...(opts.pointer
+      ? {
+          $: jest.fn().mockResolvedValue({
+            boundingBox: jest.fn().mockResolvedValue({
+              x: 30,
+              y: 740,
+              width: 330,
+              height: 50,
+            }),
+          }),
+          viewport: jest.fn().mockReturnValue({ width: 390, height: 844 }),
+        }
       : {}),
   };
 }
@@ -446,6 +462,38 @@ describe('TutorialScenarioRunnerService', () => {
     expect(order).toContain('goto');
   });
 
+  it('телефонный вьюпорт выставляется ДО загрузки SPA (этап H)', async () => {
+    // Без него puppeteer открывал страницу 800×600: кадр ролика ложился
+    // полосой посреди портретного холста, а интерфейс снимался в
+    // настольной вёрстке. После `goto` смена вьюпорта перевёрстывает
+    // уже открытую страницу — снимок первого шага был бы другим.
+    const order: string[] = [];
+    const page = buildFakePage();
+    page.setViewport.mockImplementation(async () => {
+      order.push('viewport');
+    });
+    page.goto.mockImplementation(async () => {
+      order.push('goto');
+    });
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service } = build([SCENARIO_OK]);
+
+    await service.run();
+
+    expect(page.setViewport).toHaveBeenCalledWith({
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+    });
+    expect(order.indexOf('viewport')).toBeLessThan(order.indexOf('goto'));
+    expect(order.indexOf('viewport')).toBeGreaterThanOrEqual(0);
+  });
+
   it('провалившийся шаг пишет lastRunStatus:failed с описанием шага и шлёт тревогу по fingerprint сценария', async () => {
     const page = buildFakePage({ failClick: true });
     const browser = {
@@ -794,7 +842,7 @@ describe('TutorialScenarioRunnerService', () => {
 
         expect(aiUsage.record).toHaveBeenCalledWith(
           expect.objectContaining({
-            operation: 'voiceover',
+            operation: 'tutorial-voiceover',
             userId: 'usr_fixture',
           }),
         );
@@ -925,9 +973,13 @@ describe('TutorialScenarioRunnerService', () => {
           over: {
             scenario?: Record<string, unknown>;
             settings?: Record<string, string | null>;
+            pointer?: boolean;
           } = {},
         ) {
-          const page = buildFakePage({ screenshot: true });
+          const page = buildFakePage({
+            screenshot: true,
+            pointer: over.pointer,
+          });
           const browser = {
             newPage: jest.fn().mockResolvedValue(page),
             close: jest.fn().mockResolvedValue(undefined),
@@ -1396,6 +1448,421 @@ describe('TutorialScenarioRunnerService', () => {
           expect(a).not.toBe(b);
         });
 
+        describe('сквозной аудит A–G', () => {
+          // Реплика средней длины (§7.1 — ≈120 символов): читается
+          // 120 / 15 + 0.6 = 8.6 с, то есть 258 кадров.
+          const LONG =
+            'Открываем мастер и выбираем референс: он задаёт стиль будущего ролика, поэтому берите тот, что ближе всего к задумке. Да';
+          const LONG_SCENARIO = {
+            steps: [
+              { kind: 'goto', route: 'generate', narration: LONG },
+              { kind: 'click', selector: '#next' },
+            ],
+          };
+          const pending = (prisma: any) =>
+            prisma.tutorialVideoAsset.update.mock.calls.find(
+              ([arg]: [{ data: Record<string, unknown> }]) =>
+                arg.data.assemblyStatus === 'pending',
+            )?.[0].data;
+          const cmd = (run: ReturnType<typeof narratedRun>) =>
+            run.ffmpeg.submit.mock.calls[0][0].commands[0] as string;
+
+          it('по умолчанию (озвучка выключена, подписи включены) подпись успевают прочитать', async () => {
+            // Две секунды на 120 символов — шестьдесят символов в
+            // секунду: подпись была, прочитать её было нельзя.
+            expect(Array.from(LONG).length).toBe(120);
+            const run = narratedRun({
+              scenario: LONG_SCENARIO,
+              settings: { 'postprod.tutorialVoice': null },
+            });
+
+            await run.service.run();
+
+            expect(run.ttsProvider.synthesize).not.toHaveBeenCalled();
+            expect(cmd(run)).toContain('-t 8.6 -i {{frame0}}');
+            // Кадр без подписи — прежние две секунды.
+            expect(cmd(run)).toContain('-t 2 -i {{frame1}}');
+            expect(pending(run.prisma).durationMs).toBe(10600);
+          });
+
+          it('короткая подпись немой кадр не укорачивает — прежнее число остаётся нижней границей', async () => {
+            // «Открываем мастер.» читается за 1.7 с, а немой кадр и так
+            // держится две.
+            const run = narratedRun({
+              settings: { 'postprod.tutorialVoice': null },
+            });
+
+            await run.service.run();
+
+            expect(cmd(run)).toContain('-t 2 -i {{frame0}}');
+            expect(cmd(run)).toContain('-t 2 -i {{frame1}}');
+          });
+
+          it('длину дорожки не удалось измерить — кадр держится по подписи', async () => {
+            // Прежде такой кадр получал полторы секунды, и реплика
+            // обрезалась вместе с подписью.
+            const run = narratedRun({ scenario: LONG_SCENARIO });
+            run.ttsProvider.synthesize.mockResolvedValue({
+              ok: true,
+              audio: Buffer.from([1]),
+              mimeType: 'audio/mpeg',
+              characters: 120,
+              durationSeconds: null,
+            });
+
+            await run.service.run();
+
+            expect(cmd(run)).toContain('{{voice0}}');
+            expect(cmd(run)).toContain('-t 8.6 -i {{frame0}}');
+          });
+
+          it('подписи выключены — длительности прежние, и отпечаток тоже', async () => {
+            // Правка не должна пересобирать ролики, которые от неё не
+            // меняются: без подписей немой кадр живёт по-старому.
+            const run = narratedRun({
+              scenario: LONG_SCENARIO,
+              settings: {
+                'postprod.tutorialVoice': null,
+                'postprod.tutorialCaptions': 'off',
+              },
+            });
+
+            await run.service.run();
+
+            expect(cmd(run)).toContain('-t 2 -i {{frame0}}');
+            expect(pending(run.prisma).durationMs).toBe(4000);
+          });
+
+          it('дорожка не синтезировалась — кадр держится по подписи, соседний по речи', async () => {
+            const run = narratedRun({
+              scenario: {
+                steps: [
+                  { kind: 'goto', route: 'generate', narration: LONG },
+                  {
+                    kind: 'click',
+                    selector: '#next',
+                    narration: 'Нажимаем «Далее».',
+                  },
+                ],
+              },
+            });
+            run.ttsProvider.synthesize
+              .mockResolvedValueOnce({
+                ok: false,
+                skipped: false,
+                reason: 'лимит',
+              })
+              .mockResolvedValue({
+                ok: true,
+                audio: Buffer.from([1]),
+                mimeType: 'audio/mpeg',
+                characters: 10,
+                durationSeconds: 3,
+              });
+
+            await run.service.run();
+
+            // Без правки было бы 1.5 с — `MIN_FRAME_SECONDS`.
+            expect(cmd(run)).toContain('-t 8.6 -i {{frame0}}');
+            // Измеренная речь решает сама: 3 + 0.6, подпись короче.
+            expect(cmd(run)).toContain('-t 3.6 -i {{frame1}}');
+          });
+
+          it('речь измерена — длительность по речи, даже если подпись длиннее', async () => {
+            // Кадр с речью держится, сколько звучит реплика (§3-бис):
+            // зритель читает, пока слушает.
+            const run = narratedRun({ scenario: LONG_SCENARIO });
+            run.ttsProvider.synthesize.mockResolvedValue({
+              ok: true,
+              audio: Buffer.from([1]),
+              mimeType: 'audio/mpeg',
+              characters: 120,
+              durationSeconds: 7,
+            });
+
+            await run.service.run();
+
+            // Реплика одна из двух кадров — ровно порог варианта Б.
+            expect(cmd(run)).toContain('-t 7.6 -i {{frame0}}');
+          });
+
+          it('подписи не залились — отпечаток снят, следующая ночь соберёт заново', async () => {
+            // Отпечаток при создании строки считается С подписями, а
+            // ролик собирается без них. Оставленный как есть, он
+            // совпал бы со следующей ночью, и сборка не заказалась бы
+            // больше никогда.
+            const run = narratedRun();
+            run.blob.uploadBuffer.mockImplementation(
+              async (pathname: string) => {
+                if (pathname.endsWith('.ass'))
+                  throw new Error('Blob недоступен');
+                return { url: `https://blob.example.com/${pathname}` };
+              },
+            );
+
+            await run.service.run();
+
+            expect(
+              run.prisma.tutorialVideoAsset.create.mock.calls[0][0].data
+                .contentHash,
+            ).toEqual(expect.any(String));
+            expect(pending(run.prisma)).toHaveProperty('contentHash', null);
+          });
+
+          it('подписи залились — отпечаток остаётся тем, что посчитан при создании', async () => {
+            const run = narratedRun();
+
+            await run.service.run();
+
+            expect(pending(run.prisma)).not.toHaveProperty('contentHash');
+          });
+
+          it('вариант А с переходами — ролик не короче речи', async () => {
+            // Четыре кадра без реплик — вариант А, одна дорожка в 9 с
+            // (умолчание поддельного провайдера) на весь ролик.
+            const run = narratedRun({
+              scenario: {
+                steps: [
+                  { kind: 'goto', route: 'generate' },
+                  { kind: 'click', selector: '#a' },
+                  { kind: 'click', selector: '#b' },
+                  { kind: 'click', selector: '#c' },
+                ],
+              },
+              settings: { 'postprod.tutorialMotion': 'fade' },
+            });
+
+            await run.service.run();
+
+            expect(cmd(run)).toContain('{{voiceover}}');
+            // 9 с речи + 0.6 паузы: без запаса на три стыка ролик
+            // вышел бы 8.7 с и съел бы конец фразы.
+            expect(pending(run.prisma).durationMs).toBeGreaterThanOrEqual(9600);
+          });
+        });
+
+        describe('указатель клика (этап H)', () => {
+          // NARRATED: goto, затем click — кадр шага 0 получает замер
+          // кнопки шага 1.
+          const cmd = (run: ReturnType<typeof narratedRun>) =>
+            run.ffmpeg.submit.mock.calls[0][0].commands[0] as string;
+          const hash = (run: ReturnType<typeof narratedRun>) =>
+            run.prisma.tutorialVideoAsset.create.mock.calls[0][0].data
+              .contentHash as string;
+
+          it('включён — кольцо на кадре перед кликом, в долях замера', async () => {
+            const run = narratedRun({
+              pointer: true,
+              settings: { 'postprod.tutorialPointer': 'on' },
+            });
+
+            await run.service.run();
+
+            expect(cmd(run)).toContain(
+              '[sc0][pr0]overlay=x=main_w*0.5-overlay_w/2+1:y=main_h*0.9064-overlay_h/2+1:',
+            );
+            expect(cmd(run)).not.toContain('[sc1]');
+          });
+
+          it('по умолчанию выключен — замер есть, а на картинке и в отпечатке его нет', async () => {
+            // Иначе дрожание вёрстки между ночами меняло бы отпечаток
+            // при выключенном указателе и заказывало пересборку.
+            const measured = narratedRun({ pointer: true });
+            await measured.service.run();
+            const blind = narratedRun();
+            await blind.service.run();
+
+            expect(cmd(measured)).not.toContain('overlay');
+            expect(hash(measured)).toBe(hash(blind));
+          });
+
+          it('включение указателя заказывает пересборку', async () => {
+            const off = narratedRun({ pointer: true });
+            await off.service.run();
+            const on = narratedRun({
+              pointer: true,
+              settings: { 'postprod.tutorialPointer': 'on' },
+            });
+            await on.service.run();
+
+            expect(hash(on)).not.toBe(hash(off));
+          });
+
+          it('сбой чтения настройки — без указателя, ролик собирается', async () => {
+            const run = narratedRun({ pointer: true });
+            run.settings.get.mockImplementation(async (key: string) => {
+              if (key === 'postprod.tutorialPointer') {
+                throw new Error('база икнула');
+              }
+              return key === 'postprod.tutorialVoice' ? 'on' : null;
+            });
+
+            await run.service.run();
+
+            expect(run.ffmpeg.submit).toHaveBeenCalledTimes(1);
+            expect(cmd(run)).not.toContain('overlay');
+          });
+        });
+
+        describe('движение (этап G)', () => {
+          // Две реплики по 9 с → кадры по 9.6 с = 288 кадров. С
+          // переходом второй кадр начинается на 279-м кадре (9.3 с),
+          // ролик — 567 кадров (18.9 с) вместо 576 (19.2 с).
+          const pendingDuration = (prisma: any) =>
+            prisma.tutorialVideoAsset.update.mock.calls.find(
+              ([arg]: [{ data: Record<string, unknown> }]) =>
+                arg.data.assemblyStatus === 'pending',
+            )?.[0].data.durationMs;
+          const assText = (blob: any) =>
+            String(
+              blob.uploadBuffer.mock.calls.find((c: string[]) =>
+                c[0].endsWith('.ass'),
+              )?.[1],
+            );
+
+          it('по умолчанию движения нет — прежняя склейка и прежняя длина', async () => {
+            const { service, ffmpeg, prisma } = narratedRun();
+
+            await service.run();
+
+            const cmd = ffmpeg.submit.mock.calls[0][0].commands[0];
+            expect(cmd).not.toMatch(/xfade|perspective/);
+            expect(pendingDuration(prisma)).toBe(19200);
+          });
+
+          it('переходы включены — команда, длительность и подписи живут по ОДНОЙ сетке', async () => {
+            // Если режим дойдёт до плана, но не до подписей (или
+            // наоборот), подпись второго кадра окажется на 0.3 с
+            // позже его картинки и речи, а к тридцатому кадру — на
+            // восемь с половиной секунд.
+            const { service, ffmpeg, prisma, blob } = narratedRun({
+              settings: { 'postprod.tutorialMotion': 'fade' },
+            });
+
+            await service.run();
+
+            const cmd = ffmpeg.submit.mock.calls[0][0].commands[0];
+            expect(cmd).toContain(
+              '[v0][v1]xfade=transition=fade:duration=0.3:offset=9.3[outv]',
+            );
+            expect(cmd).not.toContain('perspective');
+            expect(pendingDuration(prisma)).toBe(18900);
+            const ass = assText(blob);
+            // Сотая «вниз» может потерять ещё одну на двоичной
+            // арифметике (18.9 × 100 = 1889.999…) — это известно с
+            // аудита этапа G и безвредно: кадры идут через 33 мс, и
+            // сдвиг в 10 мс не пересекает ни одной границы кадра.
+            // Проверяем главное: границы ОДНИ И ТЕ ЖЕ у подписей,
+            // картинки и длительности, и они сдвинуты переходом.
+            expect(ass).toMatch(/0:00:00\.00,0:00:09\.(29|30),caption/);
+            expect(ass).toMatch(/0:00:09\.(29|30),0:00:18\.(89|90),caption/);
+            expect(ass).not.toContain('0:00:09.60');
+          });
+
+          it('режим on — переходы и зум', async () => {
+            const { service, ffmpeg } = narratedRun({
+              settings: { 'postprod.tutorialMotion': 'on' },
+            });
+
+            await service.run();
+
+            const cmd = ffmpeg.submit.mock.calls[0][0].commands[0];
+            expect(cmd).toContain('xfade');
+            expect(cmd.match(/perspective=/g)).toHaveLength(2);
+          });
+
+          it('план снял зум — исполнитель говорит об этом в журнале', async () => {
+            // Иначе «включил, а зума нет» оставалось бы загадкой. План
+            // подменён: ролик длиннее трёх минут в этом наборе не
+            // собрать, а проверяется здесь только реакция исполнителя.
+            const { service } = narratedRun({
+              settings: { 'postprod.tutorialMotion': 'on' },
+            });
+            const real = assembly.planSlideshow;
+            jest
+              .spyOn(assembly, 'planSlideshow')
+              .mockImplementation((frames, opts) => {
+                const plan = real(frames, opts);
+                return plan && { ...plan, motion: 'fade' as const };
+              });
+            const log = jest.spyOn(
+              (service as unknown as { logger: { log: () => void } }).logger,
+              'log',
+            );
+
+            await service.run();
+
+            expect(
+              log.mock.calls.some((c: unknown[]) =>
+                String(c[0]).includes('длиннее потолка зума'),
+              ),
+            ).toBe(true);
+          });
+
+          it('переключение движения заказывает пересборку', async () => {
+            // Режим входит в отпечаток: иначе выключатель на витрине
+            // не менял бы ни одного уже собранного ролика.
+            const still = narratedRun();
+            await still.service.run();
+            const moving = narratedRun({
+              settings: { 'postprod.tutorialMotion': 'fade' },
+            });
+            await moving.service.run();
+
+            expect(
+              still.prisma.tutorialVideoAsset.create.mock.calls[0][0].data
+                .contentHash,
+            ).not.toBe(
+              moving.prisma.tutorialVideoAsset.create.mock.calls[0][0].data
+                .contentHash,
+            );
+          });
+
+          it('переключение движения заказывает пересборку и у ролика БЕЗ подписей', async () => {
+            // Тест выше проходил бы и без режима в отпечатке: с
+            // переходами сдвигаются таймкоды подписей, а подписи в
+            // отпечатке есть. У ролика без подписей (выключены или
+            // реплик нет) картинка меняется, а подписей нет — и без
+            // режима в отпечатке выключатель не тронул бы его никогда
+            // (найдено мутацией при аудите этапа G).
+            const hash = async (motion: string | null) => {
+              const run = narratedRun({
+                settings: {
+                  'postprod.tutorialCaptions': 'off',
+                  'postprod.tutorialVoice': 'off',
+                  'postprod.tutorialMotion': motion,
+                },
+              });
+              await run.service.run();
+              return run.prisma.tutorialVideoAsset.create.mock.calls[0][0].data
+                .contentHash as string;
+            };
+
+            expect(await hash('fade')).not.toBe(await hash(null));
+          });
+
+          it('сбой чтения настройки движения — ролик собирается без движения', async () => {
+            // Движение — улучшение, а не условие сборки.
+            const { service, ffmpeg, settings } = narratedRun();
+            const values: Record<string, string | null> = {
+              'postprod.tutorialVoice': 'on',
+            };
+            settings.get.mockImplementation(async (key: string) => {
+              if (key === 'postprod.tutorialMotion') {
+                throw new Error('база икнула');
+              }
+              return values[key] ?? null;
+            });
+
+            await service.run();
+
+            expect(ffmpeg.submit).toHaveBeenCalledTimes(1);
+            expect(ffmpeg.submit.mock.calls[0][0].commands[0]).not.toContain(
+              'xfade',
+            );
+          });
+        });
+
         it('кеш сценария выметается от лишнего, а нужное остаётся', async () => {
           // Три способа накопить сирот разом: старая плоская
           // раскладка, шаг с убранной репликой, переход Б → А.
@@ -1569,6 +2036,12 @@ describe('TutorialScenarioRunnerService', () => {
         // Не «ни одной записи расхода» — сборка ffmpeg платная и
         // пишется всегда (сквозной аудит A+B+C). Проверяем ровно
         // то, ради чего тест: за СИНТЕЗ не платят повторно.
+        //
+        // Ключ — тот, которым синтез обучалки пишется НА САМОМ ДЕЛЕ
+        // (этап F). Оставь здесь прежний `voiceover` — и тест
+        // проходил бы всегда, при любом числе синтезов: строки с этим
+        // ключом обучалка больше не пишет.
+        expect(operationsRecorded(aiUsage)).not.toContain('tutorial-voiceover');
         expect(operationsRecorded(aiUsage)).not.toContain('voiceover');
         expect(ffmpeg.submit.mock.calls[0][0].inputs.voiceover).toBe(
           'https://blob.example.com/hit.mp3',
@@ -1641,11 +2114,27 @@ describe('TutorialScenarioRunnerService', () => {
 
         expect(aiUsage.record).toHaveBeenCalledWith(
           expect.objectContaining({
-            operation: 'voiceover',
+            operation: 'tutorial-voiceover',
             model: 'elevenlabs-tts',
             characters: 42,
           }),
         );
+      });
+
+      it('синтез обучалки — СВОЕЙ операцией, не общей озвучкой (этап F)', async () => {
+        // С этапа B до этапа F синтез писался общей `voiceover` и в
+        // отчёте складывался с озвучкой роликов пользователей:
+        // «сколько стоит озвучка обучалки» было не узнать. Проверяется
+        // и наличие своей строки, и ОТСУТСТВИЕ общей: без второго
+        // двойная запись (своя + общая) прошла бы незамеченной и
+        // удвоила бы расход в отчёте.
+        const { service, aiUsage } = voicedRun();
+
+        await service.run();
+
+        const ops = operationsRecorded(aiUsage);
+        expect(ops).toContain('tutorial-voiceover');
+        expect(ops).not.toContain('voiceover');
       });
 
       it('синтез отказал — ролик всё равно собирается, немым', async () => {

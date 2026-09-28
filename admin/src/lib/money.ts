@@ -22,6 +22,18 @@ export function usd(micro: number): string {
   return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 }
 
+/**
+ * «12 345 симв.» — объём синтеза речи рядом с деньгами (этап F ТЗ
+ * docs-tz/TZ-Tutorial-Video-Voiced.md). У TTS счёт идёт за символы, и
+ * без них строка озвучки отвечает «сколько заплатили», но не «за
+ * сколько текста». Пустая строка при нуле: у всего, что не синтез,
+ * «0 симв.» было бы шумом в каждой строке таблицы.
+ */
+export function chars(count: number): string {
+  if (!count) return '';
+  return `${count.toLocaleString('ru-RU')} симв.`;
+}
+
 /** Доля в процентах — для полосок в разбивке. */
 export function share(part: number, total: number): number {
   if (total <= 0) return 0;
@@ -43,7 +55,12 @@ export function share(part: number, total: number): number {
  */
 export function operationLabel(
   key: string,
-  labels: Record<string, string> = {},
+  // Обязательный, без умолчания. С `= {}` вызов без словаря выглядел
+  // законным и молча рисовал сырой ключ: так карточка пользователя
+  // показывала ключи вместо подписей у ВСЕХ операций с тех пор, как
+  // копию словаря отсюда убрали (найдено аудитом этапа F). Та же
+  // ловушка, что снята у третьего параметра `slideshowContentHash`.
+  labels: Record<string, string>,
 ): string {
   return labels[key] ?? key;
 }

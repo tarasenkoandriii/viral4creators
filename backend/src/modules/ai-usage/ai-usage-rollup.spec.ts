@@ -12,6 +12,7 @@ import {
   bucketsFromGrouped,
   mergeBuckets,
   mergeTotals,
+  mergeUnitBuckets,
   microToNumber,
   monthEnd,
   monthKey,
@@ -100,7 +101,7 @@ describe('строки GROUP BY → строки свёртки', () => {
       operation: 'analysis',
       model: 'gemini-2.5-flash',
       unpriced: false,
-      _sum: { costMicroUsd: 300 },
+      _sum: { costMicroUsd: 300, characters: null },
       _count: { _all: 3 },
       ...over,
     }) as Parameters<typeof bucketsFromGrouped>[1][0];
@@ -118,12 +119,12 @@ describe('строки GROUP BY → строки свёртки', () => {
     // бы в 32 бита — а пересчитать после удаления сырых строк не из чего.
     expect(
       bucketsFromGrouped('2026-01', [
-        row({ _sum: { costMicroUsd: 30_000_000_000n } }),
+        row({ _sum: { costMicroUsd: 30_000_000_000n, characters: null } }),
       ])[0].costMicroUsd,
     ).toBe(30_000_000_000n);
     expect(
       bucketsFromGrouped('2026-01', [
-        row({ _sum: { costMicroUsd: 30_000_000_000 } }),
+        row({ _sum: { costMicroUsd: 30_000_000_000, characters: null } }),
       ])[0].costMicroUsd,
     ).toBe(30_000_000_000n);
   });
@@ -131,8 +132,9 @@ describe('строки GROUP BY → строки свёртки', () => {
   it('пустая сумма — ноль, а не исключение', () => {
     // `_sum` по группе без денег приходит как NULL.
     expect(
-      bucketsFromGrouped('2026-01', [row({ _sum: { costMicroUsd: null } })])[0]
-        .costMicroUsd,
+      bucketsFromGrouped('2026-01', [
+        row({ _sum: { costMicroUsd: null, characters: null } }),
+      ])[0].costMicroUsd,
     ).toBe(0n);
   });
 
@@ -170,7 +172,24 @@ describe('строки GROUP BY → строки свёртки', () => {
       unpriced: true,
       calls: 3,
       costMicroUsd: 300n,
+      characters: 0,
     });
+  });
+
+  it('символы синтеза доезжают до свёртки — иначе пропали бы вместе с сырыми строками (этап F)', () => {
+    // Сырые строки месяца после свёртки удаляются. Не сверни символы
+    // сейчас — и «Озвучка обучающего видео, N симв.» через 90 дней
+    // молча покажет ноль: пересчитывать будет не из чего.
+    const [bucket] = bucketsFromGrouped('2026-01', [
+      row({ _sum: { costMicroUsd: 300, characters: 24_000 } }),
+    ]);
+    expect(bucket.characters).toBe(24_000);
+    // `sum(int4)` у Postgres — `bigint`; в строку свёртки уходит число.
+    expect(
+      bucketsFromGrouped('2026-01', [
+        row({ _sum: { costMicroUsd: 300, characters: 480n } }),
+      ])[0].characters,
+    ).toBe(480);
   });
 
   it('пустой месяц даёт пустую свёртку, а не строку с нулями', () => {
@@ -203,6 +222,51 @@ describe('сложение отчёта из двух источников', () 
     expect(merged.get('GEMINI')).toEqual({ costMicroUsd: 100, calls: 10 });
     expect(merged.get('VEO')).toEqual({ costMicroUsd: 7, calls: 1 });
     expect(merged.get('OPENAI')).toEqual({ costMicroUsd: 3, calls: 1 });
+  });
+
+  it('символы складываются из обоих источников, а не берутся с одного (этап F)', () => {
+    // Сырая сторона с символами и свёрнутая без них дали бы
+    // заниженное число без единой ошибки — ровно то, от чего
+    // `mergeTotals` вообще существует.
+    const raw = new Map([
+      ['tutorial-voiceover', { costMicroUsd: 10, calls: 1, characters: 400 }],
+      ['prompt', { costMicroUsd: 5, calls: 1, characters: 0 }],
+    ]);
+    const rolled = new Map([
+      ['tutorial-voiceover', { costMicroUsd: 90, calls: 9, characters: 3600 }],
+      ['voiceover', { costMicroUsd: 3, calls: 1, characters: 120 }],
+    ]);
+    const merged = mergeUnitBuckets(raw, rolled);
+    expect(merged.get('tutorial-voiceover')).toEqual({
+      costMicroUsd: 100,
+      calls: 10,
+      characters: 4000,
+    });
+    expect(merged.get('voiceover')).toEqual({
+      costMicroUsd: 3,
+      calls: 1,
+      characters: 120,
+    });
+    expect(merged.get('prompt')).toEqual({
+      costMicroUsd: 5,
+      calls: 1,
+      characters: 0,
+    });
+    // Исходники не мутируются — та же гарантия, что у `mergeBuckets`.
+    expect(raw.get('tutorial-voiceover')!.characters).toBe(400);
+  });
+
+  it('разрез без символов не протаскивает их со стороны свёртки', () => {
+    // Топ пользователей строится `mergeBuckets`, а свёртка отдаёт ещё
+    // и символы. Спред дал бы поле только тем, кто пришёл со стороны
+    // свёртки, — у строк одного списка оно то было бы, то нет.
+    const rolled = new Map([
+      ['u1', { costMicroUsd: 5, calls: 1, characters: 99 }],
+    ]);
+    expect(mergeBuckets(new Map(), rolled).get('u1')).toEqual({
+      costMicroUsd: 5,
+      calls: 1,
+    });
   });
 
   it('исходные разрезы не мутируются', () => {

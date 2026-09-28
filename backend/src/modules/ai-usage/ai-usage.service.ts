@@ -21,9 +21,11 @@ import {
   Buckets,
   GroupedUsageRow,
   Totals,
+  UnitBuckets,
   bucketsFromGrouped,
   mergeBuckets,
   mergeTotals,
+  mergeUnitBuckets,
   microToNumber,
   monthEnd,
   monthStart,
@@ -96,6 +98,16 @@ export interface CostBucket {
   key: string;
   costMicroUsd: number;
   calls: number;
+  /**
+   * Символы синтезированной речи — у TTS счёт идёт за них, и без них
+   * строка «Озвучка обучающего видео» отвечала бы «сколько денег», но
+   * не «за сколько текста» (приёмка §11 п.22 ТЗ
+   * docs-tz/TZ-Tutorial-Video-Voiced.md, этап F). Ноль — у всего, что
+   * не синтез речи. Сырые строки и свёртка складываются
+   * `mergeUnitBuckets`: одна сторона без другой дала бы заниженное
+   * число молча.
+   */
+  characters: number;
 }
 
 export interface CostReport {
@@ -524,22 +536,29 @@ export class AiUsageService {
       const rows = (await this.prisma.aiUsage.groupBy({
         by: [field] as const,
         where: scope,
-        _sum: { costMicroUsd: true },
+        _sum: { costMicroUsd: true, characters: true },
         _count: { _all: true },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any)) as Array<
         Record<string, string> & {
-          _sum: { costMicroUsd: number | null };
+          _sum: { costMicroUsd: number | null; characters: number | null };
           _count: { _all: number };
         }
       >;
-      const raw: Buckets = new Map(
+      const raw: UnitBuckets = new Map(
         rows.map((r) => [
           r[field],
-          { costMicroUsd: r._sum.costMicroUsd ?? 0, calls: r._count._all },
+          {
+            costMicroUsd: r._sum.costMicroUsd ?? 0,
+            calls: r._count._all,
+            characters: r._sum.characters ?? 0,
+          },
         ]),
       );
-      const merged = mergeBuckets(raw, await this.rolledBuckets(field, scope));
+      const merged = mergeUnitBuckets(
+        raw,
+        await this.rolledBuckets(field, scope),
+      );
       return [...merged]
         .map(([key, totals]) => ({ key, ...totals }))
         .sort((a, b) => b.costMicroUsd - a.costMicroUsd);
@@ -870,21 +889,25 @@ export class AiUsageService {
     const rows = (await this.prisma.aiUsage.groupBy({
       by: ['operation'] as const,
       where: { userId },
-      _sum: { costMicroUsd: true },
+      _sum: { costMicroUsd: true, characters: true },
       _count: { _all: true },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any)) as Array<{
       operation: string;
-      _sum: { costMicroUsd: number | null };
+      _sum: { costMicroUsd: number | null; characters: number | null };
       _count: { _all: number };
     }>;
-    const raw: Buckets = new Map(
+    const raw: UnitBuckets = new Map(
       rows.map((r) => [
         r.operation,
-        { costMicroUsd: r._sum.costMicroUsd ?? 0, calls: r._count._all },
+        {
+          costMicroUsd: r._sum.costMicroUsd ?? 0,
+          calls: r._count._all,
+          characters: r._sum.characters ?? 0,
+        },
       ]),
     );
-    const merged = mergeBuckets(
+    const merged = mergeUnitBuckets(
       raw,
       await this.rolledBuckets('operation', { userId }),
     );
@@ -977,7 +1000,9 @@ export class AiUsageService {
         'unpriced',
       ] as const,
       where: window,
-      _sum: { costMicroUsd: true },
+      // Символы — вместе с деньгами (этап F): после свёртки сырых
+      // строк не останется, и не свёрнутое сейчас не посчитать никогда.
+      _sum: { costMicroUsd: true, characters: true },
       _count: { _all: true },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any)) as GroupedUsageRow[];
@@ -1131,27 +1156,39 @@ export class AiUsageService {
     };
   }
 
-  /** Разрез свёртки по одному измерению — вторая половина `bucket()`. */
+  /**
+   * Разрез свёртки по одному измерению — вторая половина `bucket()`.
+   *
+   * Отдаёт и символы (этап F): разрезам отчёта они нужны, а
+   * вызывающим, которым не нужны (карточки пользователей, топ),
+   * лишнее поле ничего не стоит — `UnitBuckets` годится везде, где
+   * ждут `Buckets`.
+   */
   private async rolledBuckets(
     field: 'provider' | 'operation' | 'model' | 'userId',
     where: Record<string, unknown> = {},
-  ): Promise<Buckets> {
+  ): Promise<UnitBuckets> {
     const rows = (await this.prisma.aiUsageMonthly.groupBy({
       by: [field] as const,
       where,
-      _sum: { costMicroUsd: true, calls: true },
+      _sum: { costMicroUsd: true, calls: true, characters: true },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any)) as Array<
       Record<string, string | null> & {
-        _sum: { costMicroUsd: bigint | null; calls: number | null };
+        _sum: {
+          costMicroUsd: bigint | null;
+          calls: number | null;
+          characters: number | bigint | null;
+        };
       }
     >;
-    const out: Buckets = new Map();
+    const out: UnitBuckets = new Map();
     for (const row of rows) {
       const key = (row[field] as string | null) ?? '';
       out.set(key, {
         costMicroUsd: microToNumber(row._sum.costMicroUsd),
         calls: row._sum.calls ?? 0,
+        characters: microToNumber(row._sum.characters),
       });
     }
     return out;

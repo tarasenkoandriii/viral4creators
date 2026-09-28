@@ -63,6 +63,8 @@ describe('AdminTutorialVoiceSettingsService', () => {
         voiceId: 'rachel-42',
         requireNarrationReview: false,
         captions: true,
+        motion: 'none',
+        pointer: false,
       },
       'op-1',
     );
@@ -83,6 +85,8 @@ describe('AdminTutorialVoiceSettingsService', () => {
         voiceId: '  ',
         requireNarrationReview: false,
         captions: true,
+        motion: 'none',
+        pointer: false,
       },
       'op-1',
     );
@@ -103,6 +107,8 @@ describe('AdminTutorialVoiceSettingsService', () => {
         voiceId: 'rachel-42',
         requireNarrationReview: false,
         captions: true,
+        motion: 'none',
+        pointer: false,
       },
       'op-1',
     );
@@ -120,7 +126,13 @@ describe('AdminTutorialVoiceSettingsService', () => {
 
     expect(
       await service.set(
-        { enabled: true, requireNarrationReview: false, captions: true },
+        {
+          enabled: true,
+          requireNarrationReview: false,
+          captions: true,
+          motion: 'none',
+          pointer: false,
+        },
         'op-1',
       ),
     ).toMatchObject({
@@ -187,7 +199,13 @@ describe('AdminTutorialVoiceSettingsService — вычитка реплик (э�
     const { service, settings } = build();
 
     await service.set(
-      { enabled: true, requireNarrationReview: true, captions: true },
+      {
+        enabled: true,
+        requireNarrationReview: true,
+        captions: true,
+        motion: 'none',
+        pointer: false,
+      },
       'op-1',
     );
 
@@ -212,7 +230,13 @@ describe('AdminTutorialVoiceSettingsService — вычитка реплик (э�
     });
 
     await service.set(
-      { enabled: true, requireNarrationReview: false, captions: true },
+      {
+        enabled: true,
+        requireNarrationReview: false,
+        captions: true,
+        motion: 'none',
+        pointer: false,
+      },
       'op-1',
     );
 
@@ -275,18 +299,184 @@ describe('AdminTutorialVoiceSettingsService — подписи (этап E)', ()
 
     expect(view.effect).toMatch(/Озвучка выключена/);
     expect(view.captionsEffect).toMatch(/Подписи на кадрах включены/);
+    // Оператор должен знать, почему немой ролик стал длиннее
+    // (сквозной аудит A–G): кадр держится, пока подпись читается.
+    expect(view.captionsEffect).toMatch(/прочитать подпись/);
   });
 
   it('запись кладёт все три настройки', async () => {
     const { service, settings } = build();
 
     await service.set(
-      { enabled: true, requireNarrationReview: false, captions: false },
+      {
+        enabled: true,
+        requireNarrationReview: false,
+        captions: false,
+        motion: 'none',
+        pointer: false,
+      },
       'op-1',
     );
 
     expect(settings.set).toHaveBeenCalledWith(
       'postprod.tutorialCaptions',
+      'off',
+      'op-1',
+    );
+  });
+});
+
+describe('AdminTutorialVoiceSettingsService — движение (этап G)', () => {
+  function build(stored: Record<string, string | null> = {}) {
+    const settings = {
+      get: jest.fn(async (key: string) => stored[key] ?? null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const tts = {
+      resolve: jest.fn().mockResolvedValue({
+        providerKey: 'elevenlabs',
+        configured: () => true,
+      }),
+    };
+    const service = new AdminTutorialVoiceSettingsService(
+      settings as never,
+      tts as never,
+    );
+    return { service, settings };
+  }
+
+  it('по умолчанию движения нет, и витрина говорит, что заказчика это не касается', async () => {
+    const view = await build().service.view();
+    expect(view.motion).toBe('none');
+    expect(view.motionEffect).toMatch(/Без движения/);
+    expect(view.motionEffect).toMatch(/по сайту заказчика/);
+  });
+
+  it('режимы читаются из настройки', async () => {
+    expect(
+      (await build({ 'postprod.tutorialMotion': 'fade' }).service.view())
+        .motion,
+    ).toBe('fade');
+    expect(
+      (await build({ 'postprod.tutorialMotion': 'on' }).service.view()).motion,
+    ).toBe('fade+zoom');
+  });
+
+  it('фраза витрины называет цену: зум и пересборку всего набора', async () => {
+    const zoom = await build({
+      'postprod.tutorialMotion': 'on',
+    }).service.view();
+    expect(zoom.motionEffect).toMatch(/удлиняет работу внешнего ffmpeg/);
+    // И о потолке: «включил, а зума нет» не должно быть загадкой.
+    expect(zoom.motionEffect).toMatch(/длиннее трёх минут/);
+    expect(zoom.motionEffect).toMatch(/пересобирает весь набор/);
+    const fade = await build({
+      'postprod.tutorialMotion': 'fade',
+    }).service.view();
+    expect(fade.motionEffect).toMatch(/пересобирает весь набор/);
+    expect(fade.motionEffect).not.toMatch(/ffmpeg/);
+    // «Ролик короче на каждом стыке» верно только для покадровой речи:
+    // ролик с одной дорожкой берёт запас, иначе обрезался бы конец речи.
+    expect(fade.motionEffect).toMatch(/конец речи не обрезался/);
+  });
+
+  it('запись кладёт строку грамматики, а не название режима', async () => {
+    // В базе — `off | fade | on`; `fade+zoom` разбор не принял бы.
+    const { service, settings } = build();
+
+    await service.set(
+      {
+        enabled: false,
+        requireNarrationReview: false,
+        captions: true,
+        motion: 'fade+zoom',
+        pointer: false,
+      },
+      'op-1',
+    );
+
+    expect(settings.set).toHaveBeenCalledWith(
+      'postprod.tutorialMotion',
+      'on',
+      'op-1',
+    );
+  });
+
+  it('выключение пишется явным off', async () => {
+    const { service, settings } = build({ 'postprod.tutorialMotion': 'on' });
+
+    await service.set(
+      {
+        enabled: false,
+        requireNarrationReview: false,
+        captions: true,
+        motion: 'none',
+        pointer: false,
+      },
+      'op-1',
+    );
+
+    expect(settings.set).toHaveBeenCalledWith(
+      'postprod.tutorialMotion',
+      'off',
+      'op-1',
+    );
+  });
+});
+
+describe('AdminTutorialVoiceSettingsService — указатель клика (этап H)', () => {
+  function build(stored: Record<string, string | null> = {}) {
+    const settings = {
+      get: jest.fn(async (key: string) => stored[key] ?? null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const tts = {
+      resolve: jest.fn().mockResolvedValue({
+        providerKey: 'elevenlabs',
+        configured: () => true,
+      }),
+    };
+    const service = new AdminTutorialVoiceSettingsService(
+      settings as never,
+      tts as never,
+    );
+    return { service, settings };
+  }
+
+  it('по умолчанию выключен, и витрина говорит, что это значит', async () => {
+    const view = await build().service.view();
+    expect(view.pointer).toBe(false);
+    expect(view.pointerEffect).toMatch(/Без указателя/);
+  });
+
+  it('включённый — фраза честно говорит, когда кольца не будет', async () => {
+    const view = await build({
+      'postprod.tutorialPointer': 'on',
+    }).service.view();
+    expect(view.pointer).toBe(true);
+    expect(view.pointerEffect).toMatch(/на снимке ещё нет/);
+    expect(view.pointerEffect).toMatch(/пересобирает/);
+  });
+
+  it('запись кладёт явные on/off', async () => {
+    const { service, settings } = build();
+    const input = {
+      enabled: false,
+      requireNarrationReview: false,
+      captions: true,
+      motion: 'none' as const,
+    };
+
+    await service.set({ ...input, pointer: true }, 'op-1');
+    expect(settings.set).toHaveBeenCalledWith(
+      'postprod.tutorialPointer',
+      'on',
+      'op-1',
+    );
+
+    await service.set({ ...input, pointer: false }, 'op-1');
+    expect(settings.set).toHaveBeenCalledWith(
+      'postprod.tutorialPointer',
       'off',
       'op-1',
     );
