@@ -353,6 +353,11 @@ export class SetTutorialVoiceDto {
    *  у выключателя третье состояние. */
   @IsBoolean()
   requireNarrationReview!: boolean;
+
+  /** Подписи на кадрах (§5 ТЗ, этап E). Обязательное по той же
+   *  причине. */
+  @IsBoolean()
+  captions!: boolean;
 }
 
 /** Доп. запрос владельца продукта: тот же селектор, что выше, но для
@@ -590,6 +595,7 @@ export class AdminPanelController {
         enabled: dto.enabled,
         voiceId: dto.voiceId ?? null,
         requireNarrationReview: dto.requireNarrationReview,
+        captions: dto.captions,
       },
       req.userId,
     );

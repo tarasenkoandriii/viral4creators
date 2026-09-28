@@ -220,6 +220,7 @@ function TutorialVoiceCard() {
     enabled: boolean;
     voiceId: string | null;
     requireNarrationReview: boolean;
+    captions: boolean;
   }) => {
     setSaving(true);
     setError(null);
@@ -274,6 +275,7 @@ function TutorialVoiceCard() {
                   enabled: e.target.value === 'on',
                   voiceId: voiceId.trim() || null,
                   requireNarrationReview: state.requireNarrationReview,
+                  captions: state.captions,
                 })
               }
             >
@@ -296,6 +298,7 @@ function TutorialVoiceCard() {
                   enabled: state.enabled,
                   voiceId: voiceId.trim() || null,
                   requireNarrationReview: state.requireNarrationReview,
+                  captions: state.captions,
                 })
               }
             >
@@ -327,6 +330,7 @@ function TutorialVoiceCard() {
                   // правкой.
                   voiceId: state.voiceId,
                   requireNarrationReview: e.target.value === 'on',
+                  captions: state.captions,
                 })
               }
             >
@@ -334,7 +338,34 @@ function TutorialVoiceCard() {
               <option value="on">Требовать вычитку — невычитанные сценарии немые</option>
             </select>
           </div>
+          {/* Подписи — третий выключатель карточки и единственный
+              включённый по умолчанию. От звука он НЕ зависит: немой
+              ролик с подписями это рабочий исход, а не
+              недоразумение, и §9 требует уметь выключить их
+              независимо. */}
+          <div
+            className="filters"
+            style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}
+          >
+            <select
+              aria-label="Подписи на кадрах"
+              value={state.captions ? 'on' : 'off'}
+              disabled={saving}
+              onChange={(e) =>
+                void save({
+                  enabled: state.enabled,
+                  voiceId: state.voiceId,
+                  requireNarrationReview: state.requireNarrationReview,
+                  captions: e.target.value === 'on',
+                })
+              }
+            >
+              <option value="on">Подписи на кадрах — реплика дублируется текстом</option>
+              <option value="off">Без подписей — только звук</option>
+            </select>
+          </div>
           <p className="muted">{state.effect}</p>
+          <p className="muted">{state.captionsEffect}</p>
           {!state.providerConfigured && (
             <p className="muted" style={{ marginTop: 8 }}>
               Переключатель заблокирован: провайдер синтеза <code>{state.provider}</code> не настроен (см. таблицу

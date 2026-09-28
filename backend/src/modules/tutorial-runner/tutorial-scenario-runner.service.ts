@@ -62,9 +62,12 @@
  * Первый — не собирать лишнего. §7.2 ТЗ обещает, что ролики
  * пересобираются при изменении интерфейса или текста шага, а не по
  * расписанию; исполняет это `contentHash` (`slideshowContentHash` от
- * байтов кадров, дорожки и длительностей): совпал с отпечатком
- * последнего собранного ролика пары — задача не отправляется и строка
- * не заводится.
+ * байтов кадров, дорожек, длительностей и СОДЕРЖИМОГО подписей):
+ * совпал с отпечатком последнего собранного ролика пары — задача не
+ * отправляется и строка не заводится. Первая ночь после выката
+ * этапа E пересоберёт весь уже собранный набор — до пятидесяти
+ * платных задач единоразово: подписи меняют картинку, и это ровно
+ * та пересборка, ради которой отпечаток и заводился.
  *
  * Второй — убирать лишнее. `sweepOldAssets` ходит вместе с опросом
  * сборок и держит на пару (шаг, локаль) до трёх строк, по одной на
@@ -98,6 +101,10 @@ import {
 import { runScenario, ScenarioFrame, ScenarioPage } from './scenario-runner';
 import { FixtureRouteContext, resolveScenarioRoute } from './route-templates';
 import {
+  buildTutorialCaptionsAss,
+  captionsPathname,
+} from './tutorial-captions';
+import {
   evenFrameSeconds,
   narrationFrameSeconds,
   planSlideshow,
@@ -113,7 +120,9 @@ import {
 import {
   narrationTextForSubject,
   parseRequireNarrationReview,
+  parseTutorialCaptionsSetting,
   parseTutorialVoiceSetting,
+  TUTORIAL_CAPTIONS_SETTING_KEY,
   TUTORIAL_REQUIRE_NARRATION_REVIEW_KEY,
   TUTORIAL_VOICE_SETTING_KEY,
   TutorialVoiceKey,
@@ -274,14 +283,43 @@ export interface TutorialAssemblyPollResult {
  * отвергает план, где есть оба, и тип обязан говорить то же самое,
  * что планировщик.
  */
+/**
+ * Что решено про звук И про подписи разом.
+ *
+ * Разом, потому что решается это по одним и тем же данным (реплики
+ * шагов, настройки, отметка о вычитке), но исходы РАЗНЫЕ: подписи не
+ * зависят от того, удалось ли озвучить. §9 требует уметь выключить
+ * их независимо, а §5 объясняет зачем — ролик смотрят без звука чаще,
+ * чем со звуком, и подпись тогда единственное, что объясняет кадр.
+ * Первая редакция этапа E брала текст подписи у СИНТЕЗИРОВАННОЙ
+ * дорожки, и подписи не появлялись вовсе, пока озвучка выключена —
+ * то есть по умолчанию не появлялись никогда.
+ */
+interface NarrationOutcome {
+  plan: NarrationPlan;
+  /**
+   * Номер шага → текст подписи. Заполняется из ШАГОВ СЦЕНАРИЯ, а не
+   * из дорожек: у кадра, чья дорожка не синтезировалась, подпись
+   * есть — текст-то цел. Пусто, когда реплик нет или вычитка
+   * требуется и не сделана: непрочитанный текст не должен попасть
+   * зрителю ни в уши, ни на экран.
+   */
+  captionTexts: Map<number, string>;
+}
+
 type NarrationPlan =
   | { mode: 'none' }
   | { mode: 'whole'; url: string; speechSeconds: number | null }
   | {
       mode: 'perFrame';
-      /** Номер шага → дорожка. Шаги без реплики сюда не попадают:
-       *  их кадр получает `MIN_FRAME_SECONDS` и тишину. */
-      tracks: Map<number, { url: string; seconds: number | null }>;
+      /** Номер шага → дорожка и ЕЁ ТЕКСТ. Шаги без реплики сюда не
+       *  попадают: их кадр получает `MIN_FRAME_SECONDS` и тишину.
+       *  Текст нужен подписям (этап E) и обязан быть тем же самым,
+       *  что ушёл в синтез, — иначе подпись разойдётся с речью. */
+      tracks: Map<
+        number,
+        { url: string; seconds: number | null; text: string }
+      >;
     };
 
 @Injectable()
@@ -378,22 +416,28 @@ export class TutorialScenarioRunnerService {
     /** Фикстурный пользователь, под которым идёт прогон. Расход
      *  пишется на него — см. `fixture-seed.ts`. */
     userId: string,
-  ): Promise<NarrationPlan> {
+  ): Promise<NarrationOutcome> {
+    // Реплики читаются ПЕРВЫМИ и независимо от выключателя озвучки:
+    // подписям синтез не нужен, им нужен текст.
+    const requireReview = parseRequireNarrationReview(
+      await this.settings
+        .get(TUTORIAL_REQUIRE_NARRATION_REVIEW_KEY)
+        .catch(() => null),
+    );
+    const perStep = this.narrationByStep(scenario, stepIndexes, requireReview);
+    const captionTexts =
+      perStep === 'blocked' ? new Map<number, string>() : perStep;
+    const silent = (): NarrationOutcome => ({
+      plan: { mode: 'none' },
+      captionTexts,
+    });
+
     try {
       const voice = parseTutorialVoiceSetting(
         await this.settings.get(TUTORIAL_VOICE_SETTING_KEY),
       );
-      if (!voice.enabled) return { mode: 'none' };
-
-      const requireReview = parseRequireNarrationReview(
-        await this.settings.get(TUTORIAL_REQUIRE_NARRATION_REVIEW_KEY),
-      );
-      const perStep = this.narrationByStep(
-        scenario,
-        stepIndexes,
-        requireReview,
-      );
-      if (perStep === 'blocked') return { mode: 'none' };
+      if (!voice.enabled) return silent();
+      if (perStep === 'blocked') return silent();
 
       // Провайдер выбирается ДО обращения к кешу: он входит в ключ.
       // Сети тут нет — `resolve()` читает настройку.
@@ -421,7 +465,7 @@ export class TutorialScenarioRunnerService {
       if (perStep.size > 0 && narratedShare >= MIN_NARRATED_SHARE) {
         const tracks = new Map<
           number,
-          { url: string; seconds: number | null }
+          { url: string; seconds: number | null; text: string }
         >();
         // `keep` строится по ВСЕМ репликам сценария, а не по снятым
         // сегодня кадрам. Кадр снимается best-effort и пропадает
@@ -451,6 +495,7 @@ export class TutorialScenarioRunnerService {
             tracks.set(stepIndex, {
               url: track.url,
               seconds: track.speechSeconds,
+              text,
             });
           } catch (e) {
             this.logger.warn(
@@ -467,7 +512,8 @@ export class TutorialScenarioRunnerService {
           // подмена дала бы ролик, который сегодня говорит одно,
           // завтра другое. Отличается от порога выше: там реплик
           // НЕТ по существу, здесь они есть и просто не доехали.
-          return { mode: 'none' };
+          // Подписи при этом ОСТАЮТСЯ: текст цел, не доехал звук.
+          return silent();
         }
         if (tracks.size < perStep.size) {
           this.logger.warn(
@@ -475,7 +521,7 @@ export class TutorialScenarioRunnerService {
           );
         }
         await this.reconcileVoiceCache(scenario, keep);
-        return { mode: 'perFrame', tracks };
+        return { plan: { mode: 'perFrame', tracks }, captionTexts };
       }
 
       // Вариант А. Текста может не быть, и причин две — называть надо
@@ -494,7 +540,7 @@ export class TutorialScenarioRunnerService {
             ? `сценарий ${scenario.subjectKey}: ключ не из десяти шагов обучалки, текста озвучки нет — ролик соберётся немым`
             : `сценарий ${scenario.subjectKey}: локали ${scenario.locale} нет в словаре шагов, текста озвучки нет — ролик соберётся немым`,
         );
-        return { mode: 'none' };
+        return silent();
       }
       const track = await this.voiceTrack(
         scenario,
@@ -504,12 +550,19 @@ export class TutorialScenarioRunnerService {
         provider,
         userId,
       );
-      if (!track) return { mode: 'none' };
+      if (!track) return silent();
       await this.reconcileVoiceCache(scenario, [track.key]);
       return {
-        mode: 'whole',
-        url: track.url,
-        speechSeconds: track.speechSeconds,
+        plan: {
+          mode: 'whole',
+          url: track.url,
+          speechSeconds: track.speechSeconds,
+        },
+        // Вариант А: звучит текст карточки шага обучалки, а не
+        // реплики сценария. Подписывать кадры репликами, которых
+        // никто не произносит, значит показать одно и озвучить
+        // другое — зритель прочтёт не то, что услышит.
+        captionTexts: new Map<number, string>(),
       };
     } catch (err) {
       this.logger.warn(
@@ -517,7 +570,7 @@ export class TutorialScenarioRunnerService {
           err instanceof Error ? err.message : String(err)
         }) — ролик соберётся немым`,
       );
-      return { mode: 'none' };
+      return silent();
     }
   }
 
@@ -1231,10 +1284,19 @@ export class TutorialScenarioRunnerService {
     // есть дешевле, чем заливка кадров, которую он теперь опережает.
     // `buildNarration` свой `catch` уже имеет и на любой сбой
     // возвращает `{mode:'none'}` (немой ролик — штатный исход).
-    const narration = await this.buildNarration(
+    const { plan: narration, captionTexts } = await this.buildNarration(
       scenario,
       frames.map((f) => f.stepIndex),
       userId,
+    );
+    // Подписи включены по умолчанию, в отличие от самой озвучки:
+    // ролик смотрят без звука чаще, чем со звуком, и подпись —
+    // единственное, что в этом случае объясняет кадр (§5 ТЗ).
+    // Выключается независимо от звука — четвёртый уровень отката §9.
+    // Сбой чтения настройки не должен ронять сборку: без подписей
+    // ролик получается, без ролика — нет.
+    const captionsOn = parseTutorialCaptionsSetting(
+      await this.settings.get(TUTORIAL_CAPTIONS_SETTING_KEY).catch(() => null),
     );
     // Длительность кадра назначается по-разному в двух вариантах, и
     // это не деталь реализации, а разница между ними (§3/§3-бис).
@@ -1258,8 +1320,32 @@ export class TutorialScenarioRunnerService {
                 frames.length,
               ),
         audioUrl: track?.url ?? null,
+        // Текст подписи — та же реплика, что синтезирована, и берётся
+        // она из того же места (§11 п.16 требует дословного
+        // совпадения). Кадр без реплики подписи не получает.
+        // Подпись берётся из ТЕКСТА ШАГА, а не из синтезированной
+        // дорожки. Иначе подписи не появлялись бы, пока озвучка
+        // выключена, — а выключена она по умолчанию, то есть не
+        // появлялись бы никогда (находка аудита этапа E). Кадр,
+        // чья дорожка не синтезировалась, подпись всё равно
+        // получает: текст-то цел.
+        narration: captionTexts.get(frame.stepIndex) ?? null,
       };
     });
+
+    // Подписи (§5 ТЗ, этап E). Строятся ДО отпечатка и входят в
+    // него: правка реплики меняет и звук, и подпись, а выключение
+    // настройки меняет картинку — и то и другое обязано заказать
+    // пересборку, иначе исправленный текст не появится на экране
+    // никогда.
+    const captionsAss = captionsOn
+      ? buildTutorialCaptionsAss(
+          planFrames.map((f) => ({
+            seconds: f.seconds,
+            narration: f.narration,
+          })),
+        )
+      : '';
 
     // §7.2 ТЗ: «ролики пересобираются, когда меняется интерфейс или
     // текст шага, а не по расписанию». До этой проверки обещание не
@@ -1270,6 +1356,7 @@ export class TutorialScenarioRunnerService {
     const contentHash = slideshowContentHash(
       planFrames,
       narration.mode === 'whole' ? narration.url : null,
+      captionsAss,
     );
     // Сбой этой выборки — не повод не собирать ролик: худшее, что
     // случится без неё, — лишняя пересборка, то есть поведение ровно
@@ -1363,8 +1450,43 @@ export class TutorialScenarioRunnerService {
         });
       }
 
+      // `.ass` — под тем же префиксом актива, что и кадры: файл
+      // транзитный (внешний сервис скачивает его один раз), и уборка
+      // кадров уносит его вместе с ними. Шов «все транзитные заливки
+      // обучалки под одним убираемым префиксом» это и сторожит.
+      //
+      // Свой `try`: подписи — необязательное улучшение, и их сбой не
+      // должен стоить ролика. Ровно эту находку аудит этапа D закрыл
+      // у дорожек озвучки, а этап E завёл заново, положив заливку в
+      // общий `try` сборки: икота Blob уводила задачу в
+      // `abandonAssembly`, и mp4 не появлялся вовсе.
+      let captionsUrl: string | null = null;
+      try {
+        if (captionsAss) {
+          const { url } = await this.blob.uploadBuffer(
+            captionsPathname(scenarioFramePrefix(asset.id)),
+            Buffer.from(captionsAss, 'utf8'),
+            // `text/x-ssa` — тип, под которым отдают `.ass`. Сам
+            // libass определяет формат пробой СОДЕРЖИМОГО, а не по
+            // типу и не по расширению; тип важен по дороге —
+            // отдавать текстовый файл как
+            // `application/octet-stream` значит полагаться на то,
+            // что ни один промежуточный сервис его не тронет.
+            'text/x-ssa; charset=utf-8',
+          );
+          captionsUrl = url;
+        }
+      } catch (e) {
+        this.logger.warn(
+          `сценарий ${scenario.subjectKey}: подписи не залились (${
+            e instanceof Error ? e.message : String(e)
+          }) — ролик соберётся без них`,
+        );
+      }
+
       const plan = planSlideshow(slides, {
         voiceoverUrl: narration.mode === 'whole' ? narration.url : null,
+        captionsUrl,
       });
       if (!plan) {
         this.logger.warn(

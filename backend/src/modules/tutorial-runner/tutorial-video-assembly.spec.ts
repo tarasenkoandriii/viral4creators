@@ -400,49 +400,49 @@ describe('slideshowContentHash', () => {
   it('те же кадры и та же дорожка — тот же отпечаток', () => {
     // На этом держится обещание §7.2 ТЗ: «ролики пересобираются,
     // когда меняется интерфейс или текст шага, а не по расписанию».
-    expect(slideshowContentHash([frame(1, 7), frame(2, 8)], 'a.mp3')).toBe(
-      slideshowContentHash([frame(1, 7), frame(2, 8)], 'a.mp3'),
-    );
+    expect(
+      slideshowContentHash([frame(1, 7), frame(2, 8)], 'a.mp3', null),
+    ).toBe(slideshowContentHash([frame(1, 7), frame(2, 8)], 'a.mp3', null));
   });
 
   it('изменился ПИКСЕЛЬ кадра — отпечаток другой', () => {
     // Вторая причина пересборки из §7.2 — «изменился интерфейс». Она
     // ловится только байтами: шаги при этом те же самые, и номер
     // версии сценария не сдвинулся бы.
-    expect(slideshowContentHash([frame(1, 7)], null)).not.toBe(
-      slideshowContentHash([frame(1, 8)], null),
+    expect(slideshowContentHash([frame(1, 7)], null, null)).not.toBe(
+      slideshowContentHash([frame(1, 8)], null, null),
     );
   });
 
   it('другая дорожка — другой ролик, даже при тех же кадрах', () => {
-    expect(slideshowContentHash([frame(1, 7)], 'a.mp3')).not.toBe(
-      slideshowContentHash([frame(1, 7)], 'b.mp3'),
+    expect(slideshowContentHash([frame(1, 7)], 'a.mp3', null)).not.toBe(
+      slideshowContentHash([frame(1, 7)], 'b.mp3', null),
     );
   });
 
   it('немой и озвученный не совпадают', () => {
-    expect(slideshowContentHash([frame(1, 7)], null)).not.toBe(
-      slideshowContentHash([frame(1, 7)], 'a.mp3'),
+    expect(slideshowContentHash([frame(1, 7)], null, null)).not.toBe(
+      slideshowContentHash([frame(1, 7)], 'a.mp3', null),
     );
   });
 
   it('другая длительность кадра — другой отпечаток', () => {
     // Речь стала длиннее, картинка та же: ролик всё равно другой.
-    expect(slideshowContentHash([frame(1, 7, 2)], null)).not.toBe(
-      slideshowContentHash([frame(1, 7, 3)], null),
+    expect(slideshowContentHash([frame(1, 7, 2)], null, null)).not.toBe(
+      slideshowContentHash([frame(1, 7, 3)], null, null),
     );
   });
 
   it('пропавший кадр меняет отпечаток, а не «сдвигает» его', () => {
-    expect(slideshowContentHash([frame(1, 7), frame(2, 7)], null)).not.toBe(
-      slideshowContentHash([frame(1, 7)], null),
-    );
+    expect(
+      slideshowContentHash([frame(1, 7), frame(2, 7)], null, null),
+    ).not.toBe(slideshowContentHash([frame(1, 7)], null, null));
   });
 
   it('перестановка кадров различима', () => {
-    expect(slideshowContentHash([frame(1, 7), frame(2, 8)], null)).not.toBe(
-      slideshowContentHash([frame(2, 8), frame(1, 7)], null),
-    );
+    expect(
+      slideshowContentHash([frame(1, 7), frame(2, 8)], null, null),
+    ).not.toBe(slideshowContentHash([frame(2, 8), frame(1, 7)], null, null));
   });
 
   it('граница между кадрами не размывается', () => {
@@ -463,8 +463,8 @@ describe('slideshowContentHash', () => {
       { stepIndex: 3, bytes: Buffer.from('\u0001\u0002'), seconds: 4 },
     ];
 
-    expect(slideshowContentHash(asOne, null)).not.toBe(
-      slideshowContentHash(asTwo, null),
+    expect(slideshowContentHash(asOne, null, null)).not.toBe(
+      slideshowContentHash(asTwo, null, null),
     );
   });
 });
@@ -518,5 +518,103 @@ describe('slideshowDurationMs — сетка кадров', () => {
 
   it('кадров нет — нулевая длительность, а не NaN', () => {
     expect(slideshowDurationMs([])).toBe(0);
+  });
+});
+
+describe('planSlideshow — подписи (этап E)', () => {
+  const shot = (i: number, over: Record<string, unknown> = {}) => ({
+    stepIndex: i,
+    url: `f${i}.png`,
+    seconds: 2,
+    ...over,
+  });
+
+  it('подписи — ФИЛЬТР над склейкой, а не вход `-i`', () => {
+    // Хостед-сервис подставляет `{{ключ}}` везде в строке команды, а
+    // `subtitles=` читает файл по пути. Поданный входом `.ass` стал
+    // бы ещё одним потоком и сдвинул бы нумерацию `[N:a]` дорожек —
+    // молча, потому что номера остались бы валидными.
+    const plan = planSlideshow([shot(0), shot(1)], {
+      captionsUrl: 'https://blob/captions.ass',
+    });
+
+    expect(plan?.inputs.captions).toBe('https://blob/captions.ass');
+    expect(plan?.commands[0]).not.toContain('-i {{captions}}');
+    expect(plan?.commands[0]).toContain('[outv]subtitles={{captions}}[outc]');
+    expect(plan?.commands[0]).toContain('-map "[outc]"');
+    expect(plan?.commands[0]).not.toContain('-map "[outv]"');
+  });
+
+  it('без подписей команда не меняется ни на символ', () => {
+    // Тот же приём, что у немой команды этапа B: набор `toContain`
+    // пропустил бы дописанный флаг, целая строка — нет.
+    const withOut = planSlideshow([shot(0), shot(1)]);
+    const withNull = planSlideshow([shot(0), shot(1)], { captionsUrl: null });
+
+    expect(withNull?.commands[0]).toBe(withOut?.commands[0]);
+    expect(withOut?.commands[0]).not.toContain('subtitles');
+    expect(Object.keys(withOut?.inputs ?? {})).toEqual(['frame0', 'frame1']);
+  });
+
+  it('подписи поверх общей дорожки: нумерация входов не сдвигается', () => {
+    // `[frames.length:a]` у варианта А обязан по-прежнему указывать
+    // на mp3, а не на `.ass`.
+    const plan = planSlideshow([shot(0), shot(1)], {
+      voiceoverUrl: 'https://blob/v.mp3',
+      captionsUrl: 'https://blob/c.ass',
+    });
+
+    expect(plan?.commands[0]).toContain('[2:a]aresample=');
+    expect(plan?.commands[0]).toContain('-map "[outc]" -map "[outa]"');
+    // Вход дорожки есть, входа подписей — нет.
+    expect(plan?.commands[0]).toContain('-i {{voiceover}}');
+    expect(plan?.commands[0]).not.toContain('-i {{captions}}');
+  });
+
+  it('подписи поверх покадрового звука: порядок карт верный', () => {
+    const plan = planSlideshow(
+      [
+        shot(0, { audioUrl: 'https://blob/a0.mp3' }),
+        shot(1, { audioUrl: 'https://blob/a1.mp3' }),
+      ],
+      { captionsUrl: 'https://blob/c.ass' },
+    );
+
+    expect(plan?.commands[0]).toContain('-map "[outc]" -map "[outa]"');
+    expect(plan?.commands[0]).toContain('concat=n=2:v=1:a=1[outv][outa]');
+  });
+
+  it('один кадр с подписью — тоже рабочий план', () => {
+    const plan = planSlideshow([shot(0)], { captionsUrl: 'c.ass' });
+
+    expect(plan).not.toBeNull();
+    expect(plan?.commands[0]).toContain('[outv]subtitles={{captions}}[outc]');
+  });
+});
+
+describe('planSlideshow — звук выравнивается ПО СЕТКЕ кадров', () => {
+  it('atrim режет дорожку по реальной длине кадра, а не по заказанной', () => {
+    // `-t N` даёт ближайшее ЦЕЛОЕ число кадров, а `atrim=0:N` резал
+    // ровно по N: сегменты выходили разной длины, `concat` брал
+    // длину по самому длинному, и сдвиг копился. Замерено настоящим
+    // ffmpeg: на тридцати кадрах +133 мс, картинка отставала от
+    // речи (находка аудита этапа E).
+    //
+    // 3.649 × 30 = 109.47 → 109 кадров → 3.6333…
+    const plan = planSlideshow([
+      { stepIndex: 0, url: 'f0.png', seconds: 3.649, audioUrl: 'a0.mp3' },
+    ]);
+
+    expect(plan?.commands[0]).toContain('atrim=0:3.6333333333333333');
+    expect(plan?.commands[0]).not.toContain('atrim=0:3.649');
+  });
+
+  it('тишина немого кадра — той же длины, что его картинка', () => {
+    const plan = planSlideshow([
+      { stepIndex: 0, url: 'f0.png', seconds: 2, audioUrl: 'a0.mp3' },
+      { stepIndex: 1, url: 'f1.png', seconds: 3.649 },
+    ]);
+
+    expect(plan?.commands[0]).toContain('d=3.6333333333333333[a1]');
   });
 });

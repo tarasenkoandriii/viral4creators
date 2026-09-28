@@ -135,7 +135,7 @@ export function evenFrameSeconds(
  * всего оба источника, округлённая до чётных сторон, кратных 8 (H.264
  * любит такие).
  */
-const CANVAS = { width: 720, height: 1560 } as const;
+export const CANVAS = { width: 720, height: 1560 } as const;
 
 /**
  * Один кадр слайд-шоу: чей это шаг, что показать и сколько держать.
@@ -212,11 +212,52 @@ export interface SlideshowFrame {
  * этой точке, не проверялось.
  */
 export function slideshowDurationMs(frames: readonly SlideshowFrame[]): number {
-  const totalFrames = frames.reduce(
-    (sum, f) => sum + Math.round(f.seconds * OUTPUT_FPS),
-    0,
-  );
-  return Math.round((totalFrames / OUTPUT_FPS) * 1000);
+  const spans = frameSpansSeconds(frames);
+  return Math.round((spans.at(-1)?.end ?? 0) * 1000);
+}
+
+/**
+ * Когда каждый кадр НА САМОМ ДЕЛЕ появляется и уходит, в секундах от
+ * начала ролика.
+ *
+ * Один источник на две вещи сразу: отсюда считается длительность
+ * ролика и отсюда же берутся таймкоды подписей (§5 ТЗ — «таймкоды
+ * берутся из того же массива длительностей, что и кадры, — один
+ * источник, не два»). Второй расчёт разошёлся бы с первым, и
+ * расхождение накапливалось бы к концу ролика: подпись к десятому
+ * кадру висела бы над девятым.
+ *
+ * Границы лежат на сетке кадров, а не на сырых `seconds`: `-t N` у
+ * входа `-loop 1` даёт ближайшее ЦЕЛОЕ число кадров при
+ * `-framerate 30`, и округление идёт у каждого сегмента отдельно, ДО
+ * `concat`. Сверено настоящим ffmpeg (см. `slideshowDurationMs`).
+ */
+export function frameSpansSeconds(
+  frames: readonly { seconds: number }[],
+): { start: number; end: number }[] {
+  const spans: { start: number; end: number }[] = [];
+  let atFrame = 0;
+  for (const frame of frames) {
+    const start = atFrame;
+    atFrame += Math.round(frame.seconds * OUTPUT_FPS);
+    spans.push({ start: start / OUTPUT_FPS, end: atFrame / OUTPUT_FPS });
+  }
+  return spans;
+}
+
+/**
+ * Сколько кадр держится НА САМОМ ДЕЛЕ — заказанные секунды,
+ * притянутые к сетке 30 к/с.
+ *
+ * Отдельно от `frameSpansSeconds`, хотя правило то же: там границы
+ * накапливаются, и длина кадра как разность двух накопленных чисел
+ * тянет за собой погрешность сложения (3.6333333333333337 вместо
+ * 3.6333333333333333). В команду ffmpeg уезжает именно это число, и
+ * лишние знаки там — мусор, который вдобавок меняет
+ * ключ идемпотентности задачи.
+ */
+export function gridSeconds(seconds: number): number {
+  return Math.round(seconds * OUTPUT_FPS) / OUTPUT_FPS;
 }
 
 /**
@@ -337,9 +378,22 @@ export function slideshowContentHash(
     audioUrl?: string | null;
   }[],
   voiceoverUrl: string | null,
+  /**
+   * СОДЕРЖИМОЕ `.ass` с подписями, а не ссылка на него (этап E).
+   *
+   * Ссылка не годится: файл лежит под префиксом АКТИВА, то есть у
+   * каждой сборки свой путь, и отпечаток не совпадал бы никогда —
+   * ровно та ночная пересборка, которую отпечаток и заводился
+   * прекращать. Содержимое же меняется тогда и только тогда, когда
+   * меняется картинка: правка реплики, сдвиг длительностей,
+   * выключение настройки (пустая строка).
+   */
+  captionsAss: string | null,
 ): string {
   const h = createHash('sha256');
   h.update(String(voiceoverUrl ?? ''));
+  h.update('\u0000');
+  h.update(String(captionsAss ?? ''));
   for (const frame of frames) {
     h.update('\u0000');
     h.update(`${frame.stepIndex}:${frame.seconds}:${frame.audioUrl ?? ''}:`);
@@ -388,10 +442,17 @@ export function slideshowContentHash(
  */
 export function planSlideshow(
   frames: readonly SlideshowFrame[],
-  opts: { outputName?: string; voiceoverUrl?: string | null } = {},
+  opts: {
+    outputName?: string;
+    voiceoverUrl?: string | null;
+    /** Ссылка на `.ass` с подписями (§5 ТЗ, этап E). `null` — ролик
+     *  без подписей: настройка выключена или реплик нет. */
+    captionsUrl?: string | null;
+  } = {},
 ): SlideshowPlan | null {
   const outputName = opts.outputName ?? 'tutorial.mp4';
   const voiceoverUrl = opts.voiceoverUrl ?? null;
+  const captionsUrl = opts.captionsUrl ?? null;
   if (frames.length === 0 || frames.length > MAX_SLIDESHOW_FRAMES) {
     return null;
   }
@@ -484,8 +545,22 @@ export function planSlideshow(
   // сдвинуть все `[N:v]`.
   const audioFilters: string[] = [];
   let audioInputIndex = frames.length;
+  // Длины сегментов — ПО СЕТКЕ КАДРОВ, той же, по которой считается
+  // длительность ролика. Звук выравнивается не по заказанным
+  // `seconds`, а по той длине, которую реально получит его кадр.
+  //
+  // Разница мелкая на кадр и убийственная на тридцати. `-t N` у
+  // входа `-loop 1` даёт ближайшее ЦЕЛОЕ число кадров, а
+  // `atrim=0:N` режет звук РОВНО по N: сегменты выходят разной
+  // длины, `concat` берёт длину по самому длинному, и сдвиг
+  // копится. Замерено настоящим ffmpeg: на десяти кадрах +33 мс, на
+  // тридцати +133 мс, и к концу ролика подпись висела над
+  // предыдущим кадром, а картинка отставала от речи (находка аудита
+  // этапа E).
+  const onGrid = frames.map((f) => gridSeconds(f.seconds));
   if (voiced.length > 0) {
-    for (const { stepIndex, seconds, audioUrl } of frames) {
+    for (const [i, { stepIndex, audioUrl }] of frames.entries()) {
+      const seconds = onGrid[i];
       if (audioUrl) {
         const key = `voice${stepIndex}`;
         inputs[key] = audioUrl;
@@ -554,6 +629,25 @@ export function planSlideshow(
   }
 
   const hasAudio = withFrameAudio || !!voiceoverUrl;
+
+  // Подписи (§5 ТЗ, этап E) — ФИЛЬТР над готовой склейкой, а не
+  // отдельный `-i`, и это не выбор из двух рабочих способов.
+  // Хостед-сервис подставляет `{{ключ}}` ВЕЗДЕ в строке команды, а не
+  // только после `-i` (`ffmpeg-api.service.ts`), а `subtitles=`
+  // читает файл ПО ПУТИ, а не по номеру потока. Поданный входом
+  // `.ass` стал бы для ffmpeg ещё одним потоком и сломал бы
+  // нумерацию `[N:a]` у дорожек — молча, потому что номера остались
+  // бы валидными, просто указывали бы не туда.
+  //
+  // Поверх `concat`, а не на каждый кадр: подпись живёт ровно свои
+  // секунды по таймкодам внутри файла, и накладывать её покадрово
+  // значило бы повторить ту же раскладку второй раз.
+  if (captionsUrl) {
+    inputs.captions = captionsUrl;
+    parts.push(`[outv]subtitles={{captions}}[outc]`);
+    maps[0] = '-map "[outc]"';
+  }
+
   if (hasAudio) maps.push('-map "[outa]"');
 
   // `-shortest` только при звуке, и по той же причине, что

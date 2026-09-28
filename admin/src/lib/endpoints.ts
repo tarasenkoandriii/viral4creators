@@ -277,6 +277,8 @@ export function setTutorialVoiceSettings(input: {
   /** Обязательное: «не прислали — оставить как было» завело бы у
    *  выключателя третье состояние. */
   requireNarrationReview: boolean;
+  /** Обязательное по той же причине. */
+  captions: boolean;
 }) {
   return apiPatch<TutorialVoiceSettingsView>('/admin/settings/tutorial-voice', input);
 }

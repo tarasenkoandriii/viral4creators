@@ -167,12 +167,17 @@ export interface TutorialVoiceSettingsView {
   voiceId: string | null;
   /** Требовать вычитку реплик перед озвучкой (этап D). */
   requireNarrationReview: boolean;
+  /** Подписи на кадрах (этап E) — единственный из трёх выключателей,
+   *  включённый по умолчанию, и от звука не зависит. */
+  captions: boolean;
   /** Ключ провайдера синтеза, который возьмут при следующей сборке. */
   provider: string;
   /** Настроен ли он: без ключа выключатель ничего не решает. */
   providerConfigured: boolean;
   /** Что произойдёт при следующем ночном прогоне — одной фразой. */
   effect: string;
+  /** То же про подписи, отдельной фразой: они от звука не зависят. */
+  captionsEffect: string;
 }
 
 export interface VoiceoverProviderOptionView {

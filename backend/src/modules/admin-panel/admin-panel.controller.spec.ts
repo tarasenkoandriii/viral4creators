@@ -452,10 +452,16 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
       enabled: true,
       voiceId: 'rachel-42',
       requireNarrationReview: false,
+      captions: true,
     });
 
     expect(tutorialVoice.set).toHaveBeenCalledWith(
-      { enabled: true, voiceId: 'rachel-42', requireNarrationReview: false },
+      {
+        enabled: true,
+        voiceId: 'rachel-42',
+        requireNarrationReview: false,
+        captions: true,
+      },
       'op-1',
     );
   });
@@ -467,10 +473,16 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
     await controller.setTutorialVoice(req, {
       enabled: true,
       requireNarrationReview: false,
+      captions: true,
     });
 
     expect(tutorialVoice.set).toHaveBeenCalledWith(
-      { enabled: true, voiceId: null, requireNarrationReview: false },
+      {
+        enabled: true,
+        voiceId: null,
+        requireNarrationReview: false,
+        captions: true,
+      },
       'op-1',
     );
   });
@@ -484,6 +496,7 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
     await controller.setTutorialVoice(req, {
       enabled: true,
       requireNarrationReview: true,
+      captions: true,
     });
 
     expect(tutorialVoice.set).toHaveBeenCalledWith(
@@ -500,6 +513,7 @@ describe('AdminPanelController — /admin/settings/tutorial-voice (этап B)',
       controller.setTutorialVoice(req, {
         enabled: false,
         requireNarrationReview: false,
+        captions: true,
       }),
     ).rejects.toThrow('не оператор');
     expect(tutorialVoice.set).not.toHaveBeenCalled();

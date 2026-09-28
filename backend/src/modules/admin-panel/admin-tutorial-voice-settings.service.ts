@@ -23,7 +23,9 @@ import { PlatformSettingsService } from '../../common/platform-settings.service'
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import {
   parseRequireNarrationReview,
+  parseTutorialCaptionsSetting,
   parseTutorialVoiceSetting,
+  TUTORIAL_CAPTIONS_SETTING_KEY,
   TUTORIAL_REQUIRE_NARRATION_REVIEW_KEY,
   TUTORIAL_VOICE_SETTING_KEY,
   TutorialVoiceSetting,
@@ -41,6 +43,17 @@ export interface TutorialVoiceSettingsView extends TutorialVoiceSetting {
    * обратного.
    */
   requireNarrationReview: boolean;
+  /**
+   * Подписи на кадрах (§5 ТЗ, этап E) — ТРЕТИЙ выключатель той же
+   * карточки и единственный включённый по умолчанию.
+   *
+   * Живёт здесь, а не отдельно, по тому же доводу, что и вычитка:
+   * оператор смотрит сюда с вопросом «что увидит и услышит зритель».
+   * Но от звука он НЕ зависит: §9 требует уметь выключить подписи
+   * независимо, и немой ролик с подписями — рабочий исход, а не
+   * недоразумение.
+   */
+  captions: boolean;
   /** Ключ провайдера синтеза, который возьмут при следующей сборке. */
   provider: string;
   /** Настроен ли он: без ключа выключатель бессмыслен. */
@@ -50,6 +63,8 @@ export interface TutorialVoiceSettingsView extends TutorialVoiceSetting {
    * оператору не приходилось складывать два флага в голове.
    */
   effect: string;
+  /** То же про подписи, отдельной фразой: они от звука не зависят. */
+  captionsEffect: string;
 }
 
 @Injectable()
@@ -66,13 +81,23 @@ export class AdminTutorialVoiceSettingsService {
     const requireNarrationReview = parseRequireNarrationReview(
       await this.settings.get(TUTORIAL_REQUIRE_NARRATION_REVIEW_KEY),
     );
+    const captions = parseTutorialCaptionsSetting(
+      await this.settings.get(TUTORIAL_CAPTIONS_SETTING_KEY),
+    );
     const provider = await this.tts.resolve();
     const providerConfigured = provider.configured();
     return {
       ...voice,
       requireNarrationReview,
+      captions,
       provider: provider.providerKey,
       providerConfigured,
+      // Фраза про подписи ОТДЕЛЬНАЯ и идёт всегда, даже когда
+      // озвучка выключена: подписи от неё не зависят, и приписав их
+      // к любой из веток звука, мы бы сказали неправду в остальных.
+      captionsEffect: captions
+        ? 'Подписи на кадрах включены: реплика шага дублируется текстом. Ролик смотрят без звука чаще, чем со звуком.'
+        : 'Подписи выключены: ролик без текста на кадрах. Без звука он ничего не объясняет.',
       effect: !providerConfigured
         ? `Провайдер синтеза (${provider.providerKey}) не настроен: ролики собираются немыми, как и раньше.`
         : !voice.enabled
@@ -104,6 +129,8 @@ export class AdminTutorialVoiceSettingsService {
        * сказать, чего хочет.
        */
       requireNarrationReview: boolean;
+      /** Обязательное по той же причине, что и выше. */
+      captions: boolean;
     },
     updatedBy?: string,
   ): Promise<TutorialVoiceSettingsView> {
@@ -117,6 +144,14 @@ export class AdminTutorialVoiceSettingsService {
     await this.settings.set(
       TUTORIAL_REQUIRE_NARRATION_REVIEW_KEY,
       input.requireNarrationReview ? 'on' : 'off',
+      updatedBy,
+    );
+    // `off` пишется ЯВНО, а `on` — тоже явно, хотя разбор считает
+    // включённым всё, кроме `off`. Строка в базе должна читаться
+    // человеком без знания правил разбора.
+    await this.settings.set(
+      TUTORIAL_CAPTIONS_SETTING_KEY,
+      input.captions ? 'on' : 'off',
       updatedBy,
     );
     return this.view();

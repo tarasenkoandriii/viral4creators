@@ -1683,7 +1683,11 @@ function checkGuideSeams() {
   // счётчик просто уменьшится, а вердикт останется `ok`. Ровно эту
   // дыру аудит этапа A закрыл у соседнего шва, а здесь она появилась
   // заново (найдено аудитом этапа B).
-  const TRANSIT_UPLOADS_EXPECTED = 3;
+  // Четыре: кадры, кеш озвучки, готовое видео и `.ass` с подписями
+  // (этап E). Запись этапа B предсказывала, что `.ass` попадёт под
+  // этот шов «ничего не читая», — так и вышло: путь строится от
+  // `scenarioFramePrefix`, и шов заметил только новое число.
+  const TRANSIT_UPLOADS_EXPECTED = 4;
   let transitUploads = 0;
   for (const file of walk(
     path.join(ROOT, "backend/src/modules/tutorial-runner"),
@@ -1869,6 +1873,120 @@ function checkGuideSeams() {
     );
   }
 
+  // ── Таймкоды подписей и длина ролика — из одной функции ─────────
+  //
+  // §5 ТЗ: «таймкоды берутся из того же массива длительностей, что и
+  // кадры, — один источник, не два». Второй расчёт разошёлся бы с
+  // первым не сразу, а к концу ролика: кадр держится ближайшее ЦЕЛОЕ
+  // число кадров при 30 fps, округление идёт посегментно, и ошибка
+  // накапливается. Подпись к десятому кадру висела бы над девятым — и
+  // это тот сорт поломки, который никто не заметит, пока не станет
+  // смотреть ролик целиком.
+  //
+  // Поэтому перевод секунд в сетку кадров живёт ровно в модуле плана.
+  // Всё, что умеет умножать на `OUTPUT_FPS`, обязано быть там же.
+  const FPS_MATH_HOME =
+    "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts";
+  for (const file of walk(path.join(ROOT, "backend/src"))) {
+    if (!file.endsWith(".ts") || file.endsWith(".spec.ts")) continue;
+    const rel = path.relative(ROOT, file);
+    if (rel === FPS_MATH_HOME) continue;
+    if (/\bOUTPUT_FPS\b/.test(stripComments(read(rel)))) {
+      problems.push(
+        `${rel} считает по OUTPUT_FPS — сетку кадров знает только модуль ` +
+          "плана, остальные берут frameSpansSeconds/plan.durationMs (§5 ТЗ)",
+      );
+    }
+  }
+  const captionsSrc = stripComments(
+    read("backend/src/modules/tutorial-runner/tutorial-captions.ts"),
+  );
+  // Проверяются ОБА конца: что функция ввезена именно из модуля
+  // плана и что она действительно ВЫЗВАНА. Одного упоминания имени
+  // мало — локальная заглушка с тем же именем прошла бы (находка
+  // мутации шва).
+  const importsSpans =
+    /import\s*\{[^}]*\bframeSpansSeconds\b[^}]*\}\s*from\s*['"]\.\/tutorial-video-assembly['"]/.test(
+      captionsSrc,
+    );
+  if (!importsSpans || !/\bframeSpansSeconds\(/.test(captionsSrc)) {
+    problems.push(
+      "tutorial-captions.ts не зовёт frameSpansSeconds из модуля плана — " +
+        "таймкоды подписей обязаны браться из той же сетки, что и " +
+        "длительность ролика (§5 ТЗ)",
+    );
+  }
+
+  // ── Плашка в `.ass` действительно рисуется ───────────────────────
+  //
+  // `BorderStyle=3` САМОГО ПО СЕБЕ мало: libass строит коробку по
+  // `OutlineColour` с полем `Outline`, и ноль там означает «коробки
+  // нет вовсе», а `BackColour` при этом стиле уходит на тень. Пара
+  // «цвет в BackColour, Outline: 0» выглядит правдоподобно и не
+  // рисует ничего — белый текст остаётся белым текстом на светлом
+  // кадре.
+  //
+  // Так было написано в карточках поздравления полтора этапа, и тест
+  // рядом дефект пропускал, потому что проверял только `BorderStyle`.
+  // Вскрылось отрисовкой при этапе E. Список файлов, выпускающих
+  // `.ass`, пинуется целиком: четвёртый обязан прийти сюда и
+  // прочитать, обо что споткнулись двое первых.
+  const ASS_AUTHORS = [
+    "backend/src/common/greeting-cards.ts",
+    "backend/src/modules/tutorial-runner/tutorial-captions.ts",
+  ];
+  let assStyles = 0;
+  for (const file of walk(path.join(ROOT, "backend/src"))) {
+    if (!file.endsWith(".ts") || file.endsWith(".spec.ts")) continue;
+    const rel = path.relative(ROOT, file);
+    const code = stripComments(read(rel));
+    const styles = [...code.matchAll(/`Style: [^`]*`/g)].map((m) => m[0]);
+    if (styles.length === 0) continue;
+    if (!ASS_AUTHORS.includes(rel)) {
+      problems.push(
+        `${rel} выпускает строки Style: для .ass, а шов о нём не знает — ` +
+          "проверьте, что плашка рисуется (BorderStyle=3 требует ненулевого " +
+          "Outline, и цвет её берётся из OutlineColour, а не BackColour)",
+      );
+      continue;
+    }
+    for (const style of styles) {
+      assStyles++;
+      // Поля стиля: 15-е — BorderStyle, 16-е — Outline. Считаем по
+      // запятым внутри шаблона.
+      const fields = style
+        .replace(/^`Style: /, "")
+        .replace(/`$/, "")
+        .split(",");
+      if (fields[15] !== "3") continue;
+      const outline = fields[16];
+      // ЧИСЛО, а не интерполяция. Первая редакция шва сравнивала с
+      // «0» и на `${BOX_PADDING}` молчала — то есть слепла ровно на
+      // файле, ради которого писалась (находка аудита этапа E):
+      // константу можно было обнулить, не потревожив шов.
+      if (!/^\d+(\.\d+)?$/.test(outline)) {
+        problems.push(
+          `${rel}: поле Outline стиля задано выражением «${outline}», а не ` +
+            "числом — шов не может проверить, что плашка вообще рисуется; " +
+            "впишите число прямо в строку стиля",
+        );
+        continue;
+      }
+      if (Number(outline) === 0) {
+        problems.push(
+          `${rel}: стиль с BorderStyle=3 и Outline=0 — плашка НЕ нарисуется, ` +
+            "libass без ненулевой обводки коробку не строит",
+        );
+      }
+      if (/^&H(FF|ff)/.test(fields[5] ?? "")) {
+        problems.push(
+          `${rel}: цвет плашки (OutlineColour) полностью прозрачен — ` +
+            "при BorderStyle=3 коробку красит именно он, а не BackColour",
+        );
+      }
+    }
+  }
+
   // ── Три решения вокруг сценария не путаются ──────────────────────
   //
   // Их ровно три, и схема их старательно разводит: `approved` —
@@ -2037,7 +2155,9 @@ function checkGuideSeams() {
         `пара (шаг, локаль) уникальна и пишется по ключу: да; ` +
         `ключей localStorage сверено с фронтендом: ${spaKeysChecked}; ` +
         `мест, пишущих отметку о вычитке реплик: ${narrationReviewWrites}; ` +
-        `потолок реплики и правило её чтения — по одному на всех: да`,
+        `потолок реплики и правило её чтения — по одному на всех: да; ` +
+        `стилей .ass с проверенной плашкой: ${assStyles}; ` +
+        `сетку кадров знает только модуль плана: да`,
     );
   }
 }

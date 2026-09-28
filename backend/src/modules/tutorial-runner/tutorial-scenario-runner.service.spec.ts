@@ -1226,6 +1226,176 @@ describe('TutorialScenarioRunnerService', () => {
           expect(deleted).not.toContain(cached[1]);
         });
 
+        it('подписи прожигаются и лежат под префиксом актива (этап E)', async () => {
+          // Ролик смотрят без звука чаще, чем со звуком, и подпись —
+          // единственное, что в этом случае объясняет кадр (§5 ТЗ).
+          const { service, ffmpeg, blob } = narratedRun();
+
+          await service.run();
+
+          const ass = blob.uploadBuffer.mock.calls.find((c: string[]) =>
+            c[0].endsWith('.ass'),
+          );
+          expect(ass[0]).toBe('tutorial-video-frames/tva-new/captions.ass');
+          // Текст реплики — дословно тот же, что ушёл в синтез.
+          expect(String(ass[1])).toContain('Открываем мастер.');
+          const submitted = ffmpeg.submit.mock.calls[0][0];
+          expect(submitted.inputs.captions).toBeDefined();
+          // Фильтр над готовой склейкой, не отдельный `-i`: иначе
+          // `.ass` стал бы ещё одним потоком и сломал бы нумерацию
+          // дорожек.
+          expect(submitted.commands[0]).toContain(
+            '[outv]subtitles={{captions}}[outc]',
+          );
+          expect(submitted.commands[0]).toContain('-map "[outc]"');
+        });
+
+        it('подписи есть и без озвучки — они от неё не зависят', async () => {
+          // §9 п.4 требует уметь выключить подписи независимо от
+          // звука, §5 объясняет зачем: ролик смотрят без звука чаще,
+          // чем со звуком. Первая редакция этапа E брала текст
+          // подписи у СИНТЕЗИРОВАННОЙ дорожки — и подписей не было,
+          // пока озвучка выключена, то есть по умолчанию не было
+          // никогда (находка аудита этапа E).
+          const { service, ffmpeg, blob, ttsProvider } = narratedRun({
+            settings: { 'postprod.tutorialVoice': null },
+          });
+
+          await service.run();
+
+          expect(ttsProvider.synthesize).not.toHaveBeenCalled();
+          const ass = blob.uploadBuffer.mock.calls.find((c: string[]) =>
+            c[0].endsWith('.ass'),
+          );
+          expect(String(ass?.[1])).toContain('Открываем мастер.');
+          const submitted = ffmpeg.submit.mock.calls[0][0];
+          expect(submitted.inputs.captions).toBeDefined();
+          // Ролик при этом немой — и это рабочий исход, а не
+          // недоразумение.
+          expect(submitted.commands[0]).not.toContain('-map "[outa]"');
+        });
+
+        it('дорожка шага не синтезировалась — подпись у кадра всё равно есть', async () => {
+          // Текст-то цел, не доехал звук.
+          const { service, blob, ttsProvider } = narratedRun();
+          ttsProvider.synthesize
+            .mockResolvedValueOnce({
+              ok: true,
+              audio: Buffer.from([1]),
+              mimeType: 'audio/mpeg',
+              characters: 10,
+              durationSeconds: 3,
+            })
+            .mockResolvedValue({ ok: false, skipped: false, reason: 'лимит' });
+
+          await service.run();
+
+          const ass = String(
+            blob.uploadBuffer.mock.calls.find((c: string[]) =>
+              c[0].endsWith('.ass'),
+            )?.[1],
+          );
+          expect(ass).toContain('Открываем мастер.');
+          expect(ass).toContain('Нажимаем «Далее».');
+        });
+
+        it('вычитка требуется и не сделана — ни звука, НИ подписей', async () => {
+          // Непрочитанный текст не должен попасть зрителю ни в уши,
+          // ни на экран.
+          const { service, ffmpeg, blob } = narratedRun({
+            settings: { 'tutorial.requireNarrationReview': 'on' },
+          });
+
+          await service.run();
+
+          expect(
+            blob.uploadBuffer.mock.calls.filter((c: string[]) =>
+              c[0].endsWith('.ass'),
+            ),
+          ).toHaveLength(0);
+          expect(
+            ffmpeg.submit.mock.calls[0][0].inputs.captions,
+          ).toBeUndefined();
+        });
+
+        it('подписи не залились — ролик собирается без них, а не падает', async () => {
+          // Необязательное улучшение не должно стоить ролика. Ровно
+          // эту находку аудит этапа D закрыл у дорожек озвучки.
+          const { service, ffmpeg, blob } = narratedRun();
+          blob.uploadBuffer.mockImplementation(async (pathname: string) => {
+            if (pathname.endsWith('.ass')) throw new Error('Blob недоступен');
+            return { url: `https://blob.example.com/${pathname}` };
+          });
+
+          await service.run();
+
+          expect(ffmpeg.submit).toHaveBeenCalledTimes(1);
+          expect(
+            ffmpeg.submit.mock.calls[0][0].inputs.captions,
+          ).toBeUndefined();
+        });
+
+        it('подписи выключены настройкой — ролик со звуком, без них', async () => {
+          // Четвёртый уровень отката §9: выключается независимо от
+          // звука. §11 п.19 требует, чтобы звук при этом не пострадал.
+          const { service, ffmpeg, blob } = narratedRun({
+            settings: { 'postprod.tutorialCaptions': 'off' },
+          });
+
+          await service.run();
+
+          expect(
+            blob.uploadBuffer.mock.calls.filter((c: string[]) =>
+              c[0].endsWith('.ass'),
+            ),
+          ).toHaveLength(0);
+          const submitted = ffmpeg.submit.mock.calls[0][0];
+          expect(submitted.inputs.captions).toBeUndefined();
+          expect(submitted.commands[0]).not.toContain('subtitles=');
+          // Звук на месте.
+          expect(Object.keys(submitted.inputs)).toContain('voice0');
+          expect(submitted.commands[0]).toContain('-map "[outa]"');
+        });
+
+        it('реплик нет — подписей нет, но вариант А звучит', async () => {
+          // Подпись — это подпись к КАДРУ. У варианта А текст один на
+          // весь ролик, и растянуть его на всю склейку значило бы
+          // показать стену текста поверх всего.
+          const { service, ffmpeg, blob } = narratedRun({
+            scenario: { steps: [{ kind: 'goto', route: 'generate' }] },
+          });
+
+          await service.run();
+
+          expect(
+            blob.uploadBuffer.mock.calls.filter((c: string[]) =>
+              c[0].endsWith('.ass'),
+            ),
+          ).toHaveLength(0);
+          expect(Object.keys(ffmpeg.submit.mock.calls[0][0].inputs)).toContain(
+            'voiceover',
+          );
+        });
+
+        it('выключение подписей заказывает пересборку', async () => {
+          // Картинка изменилась — значит изменился и отпечаток.
+          // Иначе выключатель не подействовал бы ни на один уже
+          // собранный ролик, и «без деплоя» оказалось бы неправдой.
+          const withCaps = narratedRun();
+          await withCaps.service.run();
+          const a = withCaps.prisma.tutorialVideoAsset.create.mock.calls[0][0]
+            .data.contentHash as string;
+
+          const without = narratedRun({
+            settings: { 'postprod.tutorialCaptions': 'off' },
+          });
+          await without.service.run();
+          const b = without.prisma.tutorialVideoAsset.create.mock.calls[0][0]
+            .data.contentHash as string;
+
+          expect(a).not.toBe(b);
+        });
+
         it('кеш сценария выметается от лишнего, а нужное остаётся', async () => {
           // Три способа накопить сирот разом: старая плоская
           // раскладка, шаг с убранной репликой, переход Б → А.

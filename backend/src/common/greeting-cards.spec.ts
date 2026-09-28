@@ -21,14 +21,26 @@ describe('escapeAssText', () => {
     expect(escapeAssText('С {днём} рождения')).toBe('С \\{днём\\} рождения');
   });
 
+  it('обратный слэш становится косой чертой, а не удваивается', () => {
+    // В тексте Dialogue у ASS нет способа записать литеральный
+    // бэкслэш. Удвоение давало худший из исходов: `ААА\\NБББ` в файле
+    // libass рисует как `ААА\\` + перенос строки + `БББ` — и лишний
+    // слэш, и тот самый перенос. Проверено отрисовкой при этапе E.
+    expect(escapeAssText('ААА\\NБББ')).toBe('ААА/NБББ');
+    expect(escapeAssText('Путь C:\\Users')).toBe('Путь C:/Users');
+  });
+
   it('перевод строки становится \\N — одна реплика это одна строка файла', () => {
     expect(escapeAssText('Марине\nот Андрея')).toBe('Марине\\Nот Андрея');
     expect(escapeAssText('a\r\nb')).toBe('a\\Nb');
   });
 
-  it('обратная косая экранируется первой, а не после скобок', () => {
-    // Иначе экранирование скобок само оказалось бы экранировано.
-    expect(escapeAssText('a\\b')).toBe('a\\\\b');
+  it('обратная косая обрабатывается ПЕРВОЙ, а не после скобок', () => {
+    // Порядок важен по-прежнему: замени скобки раньше — и косая
+    // съела бы уже поставленное экранирование. Само правило для
+    // косой изменилось (см. тест выше): не удвоение, а замена.
+    expect(escapeAssText('a\\b')).toBe('a/b');
+    expect(escapeAssText('a\\{b}')).toBe('a/\\{b\\}');
   });
 });
 
@@ -105,12 +117,31 @@ describe('buildCardsAss', () => {
     expect(ass).toContain('Style: closing,');
   });
 
-  it('плашка за текстом, а не обводка', () => {
-    // BorderStyle=3 — тот же приём, что у темы субтитров `minimal`.
-    const ass = buildCardsAss({ title: 'Марине' }, opts);
-    for (const line of ass.split('\n').filter((l) => l.startsWith('Style:'))) {
+  it('плашка за текстом, а не обводка — и она РИСУЕТСЯ', () => {
+    // `BorderStyle=3` самого по себе мало, и прежняя редакция этого
+    // теста проверяла только его. Плашку libass строит по
+    // `OutlineColour` с полем `Outline`, а ноль там значит «плашки
+    // нет вовсе»; `BackColour` при этом стиле уходит на тень.
+    // Карточка полтора этапа выходила белым текстом без подложки —
+    // на светлом кадре почти невидимым. Отрисовано и сверено при
+    // этапе E.
+    const ass = buildCardsAss(
+      { title: 'Марине', closing: 'С любовью' },
+      { ...opts, credit: 'Автор — Имя' },
+    );
+    const styles = ass.split('\n').filter((l) => l.startsWith('Style:'));
+    expect(styles).toHaveLength(3);
+    for (const line of styles) {
+      const f = line.split(',');
       // BorderStyle — 16-е поле формата; `Style: <имя>` это одно поле.
-      expect(line.split(',')[15]).toBe('3');
+      expect(f[15]).toBe('3');
+      // Outline — поле коробки. Ноль = коробки нет.
+      expect(Number(f[16])).toBeGreaterThan(0);
+      // Цвет плашки — в OutlineColour, и он непрозрачнее полного
+      // «невидимо» (первый байт после &H — альфа, 0xFF это «совсем
+      // прозрачно»).
+      expect(f[5]).toMatch(/^&H[0-9A-F]{8}$/);
+      expect(parseInt(f[5].slice(2, 4), 16)).toBeLessThan(0xff);
     }
   });
 

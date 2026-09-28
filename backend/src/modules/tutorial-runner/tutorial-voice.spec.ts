@@ -1,7 +1,9 @@
 import {
   joinNarrationParts,
   narrationTextForSubject,
+  parseTutorialCaptionsSetting,
   parseTutorialVoiceSetting,
+  TUTORIAL_CAPTIONS_SETTING_KEY,
   TUTORIAL_VOICE_SETTING_KEY,
 } from './tutorial-voice';
 import { ASSISTANT_STEPS } from '../assistant/knowledge/generated';
@@ -126,5 +128,31 @@ describe('joinNarrationParts', () => {
     expect(joinNarrationParts(['Шаг', 'Ждём… и продолжаем...'])).toBe(
       'Шаг. Ждём… и продолжаем...',
     );
+  });
+});
+
+describe('parseTutorialCaptionsSetting (этап E)', () => {
+  it('ключ лежит там же, где решение об озвучке', () => {
+    expect(TUTORIAL_CAPTIONS_SETTING_KEY).toBe('postprod.tutorialCaptions');
+  });
+
+  it('ничего не задано — ВКЛЮЧЕНО, и это обратное умолчание озвучки', () => {
+    // Озвучка по умолчанию выключена: набор стоит ≈$6. Подписи не
+    // стоят ни вызова провайдера, ни секунды хронометража, а без
+    // звука ролик смотрят чаще, чем со звуком (§5 ТЗ).
+    expect(parseTutorialCaptionsSetting(null)).toBe(true);
+  });
+
+  it('выключается ровно строкой off', () => {
+    expect(parseTutorialCaptionsSetting('off')).toBe(false);
+    expect(parseTutorialCaptionsSetting('  OFF  ')).toBe(false);
+  });
+
+  it('непонятное значение НЕ выключает подписи', () => {
+    // Правило то же, что у озвучки, — «человек ничего не решил», —
+    // но смотрит оно в другую сторону: там мусор не включает трату,
+    // здесь не выключает пользу.
+    expect(parseTutorialCaptionsSetting('ага')).toBe(true);
+    expect(parseTutorialCaptionsSetting('')).toBe(true);
   });
 });

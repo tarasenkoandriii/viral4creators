@@ -58,7 +58,12 @@ describe('AdminTutorialVoiceSettingsService', () => {
     const { service, settings } = build();
 
     await service.set(
-      { enabled: true, voiceId: 'rachel-42', requireNarrationReview: false },
+      {
+        enabled: true,
+        voiceId: 'rachel-42',
+        requireNarrationReview: false,
+        captions: true,
+      },
       'op-1',
     );
 
@@ -73,7 +78,12 @@ describe('AdminTutorialVoiceSettingsService', () => {
     const { service, settings } = build();
 
     await service.set(
-      { enabled: true, voiceId: '  ', requireNarrationReview: false },
+      {
+        enabled: true,
+        voiceId: '  ',
+        requireNarrationReview: false,
+        captions: true,
+      },
       'op-1',
     );
 
@@ -88,7 +98,12 @@ describe('AdminTutorialVoiceSettingsService', () => {
     const { service, settings } = build();
 
     await service.set(
-      { enabled: false, voiceId: 'rachel-42', requireNarrationReview: false },
+      {
+        enabled: false,
+        voiceId: 'rachel-42',
+        requireNarrationReview: false,
+        captions: true,
+      },
       'op-1',
     );
 
@@ -105,7 +120,7 @@ describe('AdminTutorialVoiceSettingsService', () => {
 
     expect(
       await service.set(
-        { enabled: true, requireNarrationReview: false },
+        { enabled: true, requireNarrationReview: false, captions: true },
         'op-1',
       ),
     ).toMatchObject({
@@ -171,7 +186,10 @@ describe('AdminTutorialVoiceSettingsService — вычитка реплик (э�
   it('запись кладёт обе настройки, а не одну', async () => {
     const { service, settings } = build();
 
-    await service.set({ enabled: true, requireNarrationReview: true }, 'op-1');
+    await service.set(
+      { enabled: true, requireNarrationReview: true, captions: true },
+      'op-1',
+    );
 
     expect(settings.set).toHaveBeenCalledWith(
       'postprod.tutorialVoice',
@@ -193,10 +211,82 @@ describe('AdminTutorialVoiceSettingsService — вычитка реплик (э�
       'tutorial.requireNarrationReview': 'on',
     });
 
-    await service.set({ enabled: true, requireNarrationReview: false }, 'op-1');
+    await service.set(
+      { enabled: true, requireNarrationReview: false, captions: true },
+      'op-1',
+    );
 
     expect(settings.set).toHaveBeenCalledWith(
       'tutorial.requireNarrationReview',
+      'off',
+      'op-1',
+    );
+  });
+});
+
+describe('AdminTutorialVoiceSettingsService — подписи (этап E)', () => {
+  function build(stored: Record<string, string | null> = {}) {
+    const settings = {
+      get: jest.fn(async (key: string) => stored[key] ?? null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const tts = {
+      resolve: jest.fn().mockResolvedValue({
+        providerKey: 'elevenlabs',
+        configured: () => true,
+      }),
+    };
+    const service = new AdminTutorialVoiceSettingsService(
+      settings as never,
+      tts as never,
+    );
+    return { service, settings };
+  }
+
+  it('по умолчанию ВКЛЮЧЕНЫ — обратное умолчание озвучки', async () => {
+    // Озвучка выключена по умолчанию, потому что стоит ≈$6 за набор.
+    // Подписи не стоят ничего, а без звука ролик смотрят чаще, чем со
+    // звуком (§5 ТЗ).
+    expect((await build().service.view()).captions).toBe(true);
+  });
+
+  it('выключаются явным off', async () => {
+    const { service } = build({ 'postprod.tutorialCaptions': 'off' });
+
+    expect((await service.view()).captions).toBe(false);
+  });
+
+  it('непонятное значение НЕ выключает подписи', async () => {
+    // Терпимость к мусору смотрит в другую сторону, чем у озвучки:
+    // там непонятное значение не включает трату, здесь не выключает
+    // пользу. Правило одно — «человек ничего не решил».
+    const { service } = build({ 'postprod.tutorialCaptions': 'ага' });
+
+    expect((await service.view()).captions).toBe(true);
+  });
+
+  it('фраза про подписи отдельная и идёт даже при выключенной озвучке', async () => {
+    // Подписи от звука не зависят (§9, четвёртый уровень отката), и
+    // приписав их к любой из веток звука, витрина соврала бы в
+    // остальных.
+    const { service } = build({ 'postprod.tutorialVoice': 'off' });
+
+    const view = await service.view();
+
+    expect(view.effect).toMatch(/Озвучка выключена/);
+    expect(view.captionsEffect).toMatch(/Подписи на кадрах включены/);
+  });
+
+  it('запись кладёт все три настройки', async () => {
+    const { service, settings } = build();
+
+    await service.set(
+      { enabled: true, requireNarrationReview: false, captions: false },
+      'op-1',
+    );
+
+    expect(settings.set).toHaveBeenCalledWith(
+      'postprod.tutorialCaptions',
       'off',
       'op-1',
     );

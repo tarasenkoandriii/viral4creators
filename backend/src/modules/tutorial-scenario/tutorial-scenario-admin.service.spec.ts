@@ -12,6 +12,7 @@ function build() {
       count: jest.fn().mockResolvedValue(0),
       findUnique: jest.fn(),
       update: jest.fn(),
+      delete: jest.fn().mockResolvedValue({}),
     },
   };
   const blob = {
@@ -34,7 +35,6 @@ describe('TutorialScenarioAdminService.remove (этап D)', () => {
       subjectKey: '3',
       locale: 'en',
     });
-    prisma.tutorialScenario.delete = jest.fn().mockResolvedValue({});
     blob.listByPrefix.mockResolvedValue({
       blobs: [{ pathname: 'tutorial-voiceovers/en/3/0/a-1.mp3' }],
       cursor: null,
@@ -59,7 +59,6 @@ describe('TutorialScenarioAdminService.remove (этап D)', () => {
       subjectKey: '3',
       locale: 'en',
     });
-    prisma.tutorialScenario.delete = jest.fn().mockResolvedValue({});
     blob.listByPrefix.mockRejectedValue(new Error('Blob недоступен'));
 
     await expect(service.remove('ts-1')).resolves.toEqual({ id: 'ts-1' });
