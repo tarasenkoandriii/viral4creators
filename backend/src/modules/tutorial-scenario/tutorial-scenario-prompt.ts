@@ -130,7 +130,16 @@ const QA_VOCABULARY = (() => {
         : hook.clickCost
           ? ` [перед click обязателен triggerPaidOperation с operation "${hook.clickCost}"]`
           : '';
-    lines.push(`  - ${qaSelector(key)} — ${hook.description}${cost}`);
+    // Позиция степпера есть в DOM всегда, но её кнопка ВЫКЛЮЧЕНА,
+    // пока шаг не пройден (находка боевого прогона 29.09.2026). Без
+    // этой пометки модель писала «открыть экран → нажать нужный шаг»,
+    // и такой клик ждал включения кнопки тридцать секунд и падал.
+    const visited = hook.clickOnlyWhenVisited
+      ? ' [НЕ НАЖИМАТЬ для перехода: кнопка выключена, пока шаг не пройден; ' +
+        'click только чтобы ВЕРНУТЬСЯ на уже пройденный шаг. Ждать и ' +
+        'проверять можно всегда]'
+      : '';
+    lines.push(`  - ${qaSelector(key)} — ${hook.description}${cost}${visited}`);
     byRoute.set(hook.route, lines);
   }
   return [...byRoute.entries()]

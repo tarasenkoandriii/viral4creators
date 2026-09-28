@@ -79,6 +79,31 @@ describe('buildScenarioPrompt', () => {
     }
   });
 
+  it('про выключенную кнопку степпера промпт говорит прямо', () => {
+    // Находка боевого прогона 29.09.2026. Без этой строки модель
+    // писала «открыть экран → нажать нужный шаг», и такой клик ждал
+    // включения кнопки тридцать секунд и падал.
+    const prompt = buildScenarioPrompt('1', 'ru', step);
+    const stepperLine = prompt
+      .split('\n')
+      .find((l) => l.includes('wizard-step-product'));
+
+    expect(stepperLine).toBeDefined();
+    expect(stepperLine).toContain('НЕ НАЖИМАТЬ для перехода');
+    expect(stepperLine).toContain('пока шаг не пройден');
+
+    // И ровно у помеченных: предупреждение на всех подряд
+    // обесценивает его.
+    const warned = prompt
+      .split('\n')
+      .filter((l) => l.includes('НЕ НАЖИМАТЬ для перехода')).length;
+    const marked = Object.values(QA_HOOKS).filter(
+      (h) => h.clickOnlyWhenVisited,
+    ).length;
+    expect(warned).toBe(marked);
+    expect(warned).toBeGreaterThan(0);
+  });
+
   it('без деталей — раздела "Детали:" нет вовсе', () => {
     const prompt = buildScenarioPrompt('2', 'ru', { ...step, details: [] });
     expect(prompt).not.toContain('Детали:');

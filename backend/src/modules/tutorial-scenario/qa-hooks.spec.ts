@@ -33,3 +33,45 @@ describe('knownQaHook', () => {
     expect(knownQaHook('[data-qa="constructor"]')).toBeNull();
   });
 });
+
+describe('позиции степпера кликабельны только у пройденных шагов', () => {
+  // Находка боевого прогона 29.09.2026: `Stepper.tsx` рисует каждую
+  // позицию как `<button disabled={!clickable}>`, а `clickable`
+  // истинно только у пройденного шага. Модель читала описание
+  // «позиция «Товар» в степпере мастера» как приглашение перейти и
+  // писала `goto generate` → `click wizard-step-product` вторым
+  // шагом; на свежем мастере эта кнопка выключена, и восемь сценариев
+  // из девяти падали таймаутом в тридцать секунд.
+  const stepperKeys = Object.keys(QA_HOOKS).filter((k) => k.includes('-step-'));
+
+  it('их девять, и все помечены', () => {
+    // Список выписан руками, а не выведен из самого каталога: тест,
+    // перебирающий то же, что и код, согласится с любой его
+    // редакцией — включая ту, где пометку сняли со всех.
+    expect(stepperKeys.sort()).toEqual([
+      'item-step-analogs',
+      'item-step-photo',
+      'item-step-price',
+      'item-step-voice',
+      'wizard-step-analysis',
+      'wizard-step-product',
+      'wizard-step-prompt',
+      'wizard-step-upload',
+      'wizard-step-video',
+    ]);
+    for (const key of stepperKeys) {
+      expect(QA_HOOKS[key].clickOnlyWhenVisited).toBe(true);
+    }
+  });
+
+  it('обычные хуки пометки не носят — иначе она ничего не значит', () => {
+    expect(QA_HOOKS['video-generate'].clickOnlyWhenVisited).toBeUndefined();
+    expect(
+      QA_HOOKS['reference-link-submit'].clickOnlyWhenVisited,
+    ).toBeUndefined();
+    const marked = Object.values(QA_HOOKS).filter(
+      (h) => h.clickOnlyWhenVisited,
+    );
+    expect(marked).toHaveLength(stepperKeys.length);
+  });
+});

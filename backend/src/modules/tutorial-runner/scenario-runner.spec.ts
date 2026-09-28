@@ -270,6 +270,97 @@ describe('указатель клика: замер в момент снимка
     { kind: 'click', selector: '#next' },
   ];
 
+  it('выключенная кнопка — named отказ сразу, а не таймаут через 30 секунд', async () => {
+    // Находка боевого прогона 29.09.2026. Позиции степпера
+    // отрисованы как `<button disabled>`, пока шаг не пройден;
+    // `locator().click()` ждал включения тридцать секунд и падал с
+    // «Timed out after waiting 30000ms» — причина в этой строке не
+    // названа. Восемь сценариев из девяти падали так и съели весь
+    // бюджет тика.
+    const page = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue(undefined),
+      locator: jest.fn(() => ({
+        click: jest.fn().mockResolvedValue(undefined),
+        fill: jest.fn().mockResolvedValue(undefined),
+      })),
+      $eval: jest.fn().mockResolvedValue(''),
+      $: jest.fn().mockResolvedValue({
+        boundingBox: jest.fn().mockResolvedValue(null),
+        evaluate: jest.fn().mockResolvedValue(true),
+      }),
+      viewport: () => SCENARIO_VIEWPORT,
+    } as unknown as ScenarioPage;
+
+    const result = await runScenario(
+      page,
+      [{ kind: 'click', selector: '[data-qa="wizard-step-product"]' }],
+      resolveOk,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.failedAt).toBe(0);
+    expect(result.steps[0].error).toContain('выключен');
+    expect(result.steps[0].error).toContain('wizard-step-product');
+    // Кликать выключённую кнопку не пробовали вовсе.
+    expect(page.locator).not.toHaveBeenCalled();
+  });
+
+  it('включённая кнопка нажимается как раньше', async () => {
+    const click = jest.fn().mockResolvedValue(undefined);
+    const page = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue(undefined),
+      locator: jest.fn(() => ({ click, fill: jest.fn() })),
+      $eval: jest.fn().mockResolvedValue(''),
+      $: jest.fn().mockResolvedValue({
+        boundingBox: jest.fn().mockResolvedValue(null),
+        evaluate: jest.fn().mockResolvedValue(false),
+      }),
+      viewport: () => SCENARIO_VIEWPORT,
+    } as unknown as ScenarioPage;
+
+    const result = await runScenario(
+      page,
+      [{ kind: 'click', selector: '#go' }],
+      resolveOk,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+
+    // Мок отдаёт своё значение, не исполняя колбэк, — значит сам
+    // предикат надо проверить отдельно, иначе «выключено всегда» и
+    // «выключено никогда» тест не различает.
+    const evaluate = (await (page.$ as jest.Mock).mock.results[0].value)
+      .evaluate as jest.Mock;
+    const predicate = evaluate.mock.calls[0][0] as (el: unknown) => boolean;
+    expect(predicate({ disabled: true })).toBe(true);
+    expect(predicate({ disabled: false })).toBe(false);
+    expect(predicate({})).toBe(false);
+  });
+
+  it('страница без $ или без evaluate — клик ведёт себя как раньше', async () => {
+    // Мок, не знающий про проверку, не должен от неё падать: она
+    // необязательная по построению.
+    const click = jest.fn().mockResolvedValue(undefined);
+    const page = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue(undefined),
+      locator: jest.fn(() => ({ click, fill: jest.fn() })),
+      $eval: jest.fn().mockResolvedValue(''),
+    } as unknown as ScenarioPage;
+
+    const result = await runScenario(
+      page,
+      [{ kind: 'click', selector: '#go' }],
+      resolveOk,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
   it('вьюпорт съёмки — телефонный, один на обучалку и снимки мастера', () => {
     expect(SCENARIO_VIEWPORT).toEqual({ width: 390, height: 844 });
   });
@@ -285,7 +376,10 @@ describe('указатель клика: замер в момент снимка
     expect(result.frames[0].pointer).toBeUndefined();
     expect(result.frames[2].pointer).toBeUndefined();
     expect(page.$).toHaveBeenCalledWith('#next');
-    expect(page.$).toHaveBeenCalledTimes(1);
+    // Дважды: замер указателя перед снимком и проверка «кнопка не
+    // выключена» перед самим нажатием (находка боевого прогона
+    // 29.09.2026). Оба — БЕЗ ожидания, см. следующий тест.
+    expect(page.$).toHaveBeenCalledTimes(2);
   });
 
   it('замер — сразу ПОСЛЕ снимка и без ожидания элемента', async () => {
@@ -295,7 +389,9 @@ describe('указатель клика: замер в момент снимка
 
     await runScenario(page, steps, resolveOk, undefined, true);
 
-    expect(order).toEqual(['screenshot', 'screenshot', '$', 'screenshot']);
+    // Второй `$` — перед кликом: спросить, не выключена ли кнопка,
+    // дешевле, чем узнать это таймаутом через тридцать секунд.
+    expect(order).toEqual(['screenshot', 'screenshot', '$', '$', 'screenshot']);
     expect(page.waitForSelector).not.toHaveBeenCalled();
   });
 
@@ -313,13 +409,20 @@ describe('указатель клика: замер в момент снимка
     expect(result.ok).toBe(true);
     expect(result.frames.map((f) => f.stepIndex)).toEqual([0, 2]);
     expect(result.frames.some((f) => f.pointer)).toBe(false);
-    expect(page.$).not.toHaveBeenCalled();
+    // Замера указателя не было (снимка нет — мерить не для чего), но
+    // проверка «кнопка не выключена» перед кликом идёт всегда: она не
+    // про кадр, а про то, чтобы не ждать таймаут зря.
+    expect(page.$).toHaveBeenCalledTimes(1);
+    expect(page.$).toHaveBeenCalledWith('#next');
   });
 
-  it('без captureFrames не меряется ничего', async () => {
+  it('без captureFrames указатель не меряется — но кнопку всё равно проверяем', async () => {
     const { page } = pointerPage();
     await runScenario(page, steps, resolveOk);
-    expect(page.$).not.toHaveBeenCalled();
+    // Ровно один вызов, и тот перед кликом: указателю без кадров
+    // мерить нечего.
+    expect(page.$).toHaveBeenCalledTimes(1);
+    expect(page.$).toHaveBeenCalledWith('#next');
   });
 
   type Box = typeof box;

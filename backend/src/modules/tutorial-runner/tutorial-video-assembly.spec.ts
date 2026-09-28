@@ -17,6 +17,7 @@ import {
   appliedMotion,
   ZOOM_MAX_SECONDS,
   POINTER_FRAMES,
+  OUTPUT_CRF,
 } from './tutorial-video-assembly';
 import { createHash } from 'crypto';
 
@@ -383,8 +384,49 @@ describe('звук в плане сборки (этап B)', () => {
         '-framerate 30 -loop 1 -t 2 -i {{frame1}} ' +
         `-filter_complex "[0:v]${scale}[v0];[1:v]${scale}[v1];` +
         '[v0][v1]concat=n=2:v=1:a=0[outv]" ' +
-        '-map "[outv]" -r 30 -pix_fmt yuv420p tutorial.mp4',
+        '-map "[outv]" -r 30 ' +
+        '-c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p ' +
+        '-movflags +faststart {{tutorial.mp4}}',
     );
+  });
+
+  it('ВЫХОД пишется плейсхолдером, а не голым именем файла', () => {
+    // Находка боевого прогона 29.09.2026. Голым именем ffmpeg клал mp4
+    // в свой рабочий каталог, а хостед-сервис забирал выход по тому
+    // пути, который сам подставил бы вместо `{{имя}}`, — и отвечал
+    // «1 output upload(s) failed: expected output was not created».
+    // Ни один ролик обучалки не собрался ни разу, при том что команда
+    // валидна и локально даёт правильный mp4.
+    const withVoice = planSlideshow(
+      [
+        { stepIndex: 0, url: url(0), seconds: 3, audioUrl: 'https://b/0.mp3' },
+        { stepIndex: 1, url: url(1), seconds: 3, audioUrl: 'https://b/1.mp3' },
+      ],
+      { motion: 'none' },
+    )!;
+    for (const plan of [silent(), withVoice]) {
+      expect(plan.commands[0]).toContain(`{{${plan.outputName}}}`);
+      // И ровно один раз, в самом конце: имя выхода, встреченное ещё
+      // где-то, означало бы вторую запись того же файла.
+      expect(plan.commands[0].endsWith(`{{${plan.outputName}}}`)).toBe(true);
+      // Голого имени в команде быть не должно вовсе — иначе тест
+      // проходил бы и на строке, где есть оба написания.
+      expect(
+        plan.commands[0].replace(`{{${plan.outputName}}}`, ''),
+      ).not.toContain(plan.outputName);
+      // Имя, объявленное сервису, и имя в команде — одно и то же.
+      expect(plan.outputs).toEqual([plan.outputName]);
+    }
+  });
+
+  it('кодек задан ЯВНО — умолчание ffmpeg это догадка о чужом контейнере', () => {
+    expect(silent().commands[0]).toContain('-c:v libx264 -preset veryfast');
+    // Тот же crf, что у проверенного пути постобработки: своё число
+    // означало бы, что ролики обучалки выглядят иначе без причины.
+    expect(silent().commands[0]).toContain(`-crf ${OUTPUT_CRF}`);
+    expect(OUTPUT_CRF).toBe(18);
+    // `+faststart` — как у соседей: без него плеер ждёт полной загрузки.
+    expect(silent().commands[0]).toContain('-movflags +faststart');
   });
 
   it('реплика на кадр: сегменты подаются ПОПАРНО и склеиваются со звуком', () => {

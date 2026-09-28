@@ -68,6 +68,22 @@ export interface QaHook {
    *   нажимать.
    */
   clickCost?: WizardPaidOperation | 'forbidden';
+  /**
+   * Элемент есть на экране ВСЕГДА, но нажать его можно только после
+   * того, как шаг пройден (находка боевого прогона 29.09.2026).
+   *
+   * Так устроены позиции степпера: `Stepper.tsx` рисует каждую
+   * `<button disabled={!clickable}>`, и `clickable` истинно только у
+   * пройденного шага. Модель читала описание «позиция «Товар» в
+   * степпере мастера» как приглашение туда перейти и писала
+   * `goto generate` → `click wizard-step-product` вторым шагом. На
+   * свежем мастере эта кнопка выключена, puppeteer ждёт её тридцать
+   * секунд и сдаётся: восемь сценариев из девяти падали так, съев
+   * весь бюджет прогона.
+   *
+   * Ждать и проверять такие элементы можно всегда — они в DOM.
+   */
+  clickOnlyWhenVisited?: true;
 }
 
 export const QA_HOOKS: Record<string, QaHook> = {
@@ -75,18 +91,22 @@ export const QA_HOOKS: Record<string, QaHook> = {
   'item-step-photo': {
     route: 'item',
     description: 'позиция «Фото» в степпере товара (click — открыть шаг)',
+    clickOnlyWhenVisited: true,
   },
   'item-step-analogs': {
     route: 'item',
     description: 'позиция «Аналоги» в степпере товара',
+    clickOnlyWhenVisited: true,
   },
   'item-step-voice': {
     route: 'item',
     description: 'позиция «Описание» в степпере товара',
+    clickOnlyWhenVisited: true,
   },
   'item-step-price': {
     route: 'item',
     description: 'позиция «Цена» в степпере товара',
+    clickOnlyWhenVisited: true,
   },
   'item-photo-card': {
     route: 'item',
@@ -135,22 +155,27 @@ export const QA_HOOKS: Record<string, QaHook> = {
     route: 'generate',
     description:
       'позиция «Референс» в степпере мастера (click — вернуться на пройденный шаг)',
+    clickOnlyWhenVisited: true,
   },
   'wizard-step-analysis': {
     route: 'generate',
     description: 'позиция «Анализ» в степпере мастера',
+    clickOnlyWhenVisited: true,
   },
   'wizard-step-product': {
     route: 'generate',
     description: 'позиция «Товар» в степпере мастера',
+    clickOnlyWhenVisited: true,
   },
   'wizard-step-prompt': {
     route: 'generate',
     description: 'позиция «Промпт» в степпере мастера',
+    clickOnlyWhenVisited: true,
   },
   'wizard-step-video': {
     route: 'generate',
     description: 'позиция «Видео» в степпере мастера',
+    clickOnlyWhenVisited: true,
   },
 
   // ── Шаг 2: референс ───────────────────────────────────────────────

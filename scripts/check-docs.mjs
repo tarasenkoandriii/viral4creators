@@ -1993,6 +1993,52 @@ function checkGuideSeams() {
     );
   }
 
+  // ── Выход ffmpeg-команды пишется ТОЛЬКО плейсхолдером ──────────
+  //
+  // Хостед-сервис подставляет путь вместо `{{имя}}` и забирает готовый
+  // файл ОТТУДА. Команда, где выход написан голым именем, валидна,
+  // локально даёт правильный mp4 — и на сервисе кончается ответом
+  // «1 output upload(s) failed: expected output was not created»:
+  // ffmpeg положил файл себе, забирать нечего.
+  //
+  // Именно так сборка обучалки не собрала НИ ОДНОГО ролика с самого
+  // этапа A и до боевого прогона 29.09.2026. Читать это по коду было
+  // нечем: все остальные строители команд (`postprod.ts`, `reframe.ts`,
+  // `watermark.ts`, `poster-frame.ts`) писали плейсхолдер с первого дня,
+  // а один — нет, и никакой тип этого не связывал.
+  //
+  // Правило: в строителе команд имя выхода встречается ТОЛЬКО внутри
+  // `{{…}}`. Ищем обратное — `${outputName}` без фигурных скобок.
+  const commandBuilders = [
+    "backend/src/common/postprod.ts",
+    "backend/src/common/reframe.ts",
+    "backend/src/common/watermark.ts",
+    "backend/src/common/poster-frame.ts",
+    "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts",
+  ];
+  let placeholderOutputs = 0;
+  for (const rel of commandBuilders) {
+    const src = stripComments(read(rel));
+    if (!/\{\{\$\{outputName\}\}\}/.test(src)) {
+      problems.push(
+        `${rel}: выход ffmpeg-команды не написан плейсхолдером ` +
+          "`{{${outputName}}}` — сервис заберёт файл не оттуда, куда его " +
+          "положит ffmpeg, и ответит «expected output was not created»",
+      );
+      continue;
+    }
+    // Голое `${outputName}` в шаблонной строке рядом с флагами вывода
+    // — то самое написание, которое ломало сборку.
+    if (/[^{]\$\{outputName\}[^}]/.test(src)) {
+      problems.push(
+        `${rel}: имя выхода встречается и БЕЗ плейсхолдера — ` +
+          "команда запишет файл мимо того пути, откуда сервис его заберёт",
+      );
+      continue;
+    }
+    placeholderOutputs++;
+  }
+
   // ── Таймкоды подписей и длина ролика — из одной функции ─────────
   //
   // §5 ТЗ: «таймкоды берутся из того же массива длительностей, что и
@@ -2280,7 +2326,8 @@ function checkGuideSeams() {
         `мест, пишущих отметку о вычитке реплик: ${narrationReviewWrites}; ` +
         `потолок реплики и правило её чтения — по одному на всех: да; ` +
         `стилей .ass с проверенной плашкой: ${assStyles}; ` +
-        `сетку кадров знает только модуль плана: да`,
+        `сетку кадров знает только модуль плана: да; ` +
+        `строителей ffmpeg-команд с выходом через плейсхолдер: ${placeholderOutputs} из ${commandBuilders.length}`,
     );
   }
 }

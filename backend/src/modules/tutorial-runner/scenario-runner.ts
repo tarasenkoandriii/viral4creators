@@ -97,6 +97,13 @@ export interface ScenarioElement {
     width: number;
     height: number;
   } | null>;
+  /**
+   * Необязательно — нужно только быстрому отказу на выключенной
+   * кнопке (см. `case 'click'`). Реальный `ElementHandle` puppeteer
+   * структурно совместим; мок без него просто не даёт этой проверки, и
+   * клик ведёт себя как раньше.
+   */
+  evaluate?<T>(fn: (el: Element) => T): Promise<T>;
 }
 
 /**
@@ -306,9 +313,34 @@ async function runStep(
       // отрисован (частый случай сразу после `goto`/`click` в SPA).
       await page.locator(step.selector).fill(step.value);
       return;
-    case 'click':
+    case 'click': {
+      // Выключенная кнопка — отдельный, НАЗВАННЫЙ отказ, а не таймаут
+      // (находка боевого прогона 29.09.2026).
+      //
+      // `locator().click()` у выключенного элемента ждёт, пока тот
+      // включится, и падает через тридцать секунд с «Timed out after
+      // waiting 30000ms» — причина в этой строке не названа вовсе.
+      // Восемь сценариев из девяти падали так, съев весь бюджет тика:
+      // каждый отдал тридцать секунд, чтобы сообщить, что кнопка
+      // выключена. Спросить это можно сразу.
+      const handle = page.$
+        ? await page.$(step.selector).catch(() => null)
+        : null;
+      const disabled = handle?.evaluate
+        ? await handle
+            .evaluate((el) => (el as HTMLButtonElement).disabled === true)
+            .catch(() => false)
+        : false;
+      if (disabled) {
+        throw new Error(
+          `элемент ${step.selector} есть на экране, но выключен — ` +
+            'нажать его нельзя; позиции степпера включаются только у ' +
+            'пройденных шагов',
+        );
+      }
       await page.locator(step.selector).click();
       return;
+    }
     case 'waitFor':
     case 'assertVisible':
       // Оба шага технически делают одно и то же на исполнении —
