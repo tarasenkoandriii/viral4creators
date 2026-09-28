@@ -11,6 +11,7 @@ jest.mock('../../common/headless-chromium', () => ({
   withTimeout: (p: Promise<unknown>) => p,
 }));
 
+import { GenerationStatus } from '../../common/types/generation.types';
 import { TutorialScenarioRunnerService } from './tutorial-scenario-runner.service';
 import * as assembly from './tutorial-video-assembly';
 
@@ -62,6 +63,45 @@ const SCENARIO_FAIL = {
   locale: 'ru',
   steps: [{ kind: 'click', selector: '[data-testid="missing"]' }],
 };
+
+/**
+ * Исполняет все колбэки `evaluateOnNewDocument` на поддельном
+ * `localStorage` и возвращает то, что в нём осталось.
+ *
+ * Именно ИСПОЛНЯЕТ, а не сверяет аргументы: проверка аргументов
+ * пропускала опечатку в имени ключа (находка аудита этапа C), а с
+ * подсевом сессии (29.09.2026) пропустила бы и перепутанные местами
+ * `setItem`/`removeItem`. `removeItem` у подделки настоящий — без него
+ * ветка «чистый мастер» бросала бы TypeError внутрь `catch` колбэка и
+ * молча выглядела бы рабочей.
+ */
+function runStorageSeeds(page: {
+  evaluateOnNewDocument: jest.Mock;
+}): Record<string, string> {
+  const stored: Record<string, string> = {};
+  const g = globalThis as unknown as { window?: unknown };
+  const windowBefore = g.window;
+  g.window = {
+    localStorage: {
+      setItem: (k: string, v: string) => {
+        stored[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete stored[k];
+      },
+    },
+  };
+  try {
+    for (const call of page.evaluateOnNewDocument.mock.calls) {
+      const [fn, ...args] = call as [(...a: unknown[]) => void, ...unknown[]];
+      fn(...args);
+    }
+  } finally {
+    if (windowBefore === undefined) delete g.window;
+    else g.window = windowBefore;
+  }
+  return stored;
+}
 
 function buildFakePage(
   opts: { failClick?: boolean; screenshot?: boolean; pointer?: boolean } = {},
@@ -202,7 +242,13 @@ function build(scenarios: unknown[]) {
     voices: jest.fn(),
   };
   const tts = { resolve: jest.fn().mockResolvedValue(ttsProvider) };
-  const aiUsage = { record: jest.fn().mockResolvedValue(undefined) };
+  const aiUsage = {
+    record: jest.fn().mockResolvedValue(undefined),
+    // Суточный потолок (сквозной аудит 29.09.2026): по умолчанию ноль
+    // потраченного — то есть потолок не мешает ни одному из прежних
+    // тестов, а свои проверяют его явно.
+    spentTodayForOperation: jest.fn().mockResolvedValue(0),
+  };
   const service = new TutorialScenarioRunnerService(
     prisma as any,
     notify as any,
@@ -314,7 +360,16 @@ describe('TutorialScenarioRunnerService', () => {
   it('нет сценариев, подходящих под фильтр (бесплатные или одобренные) — total:0', async () => {
     const { service } = build([]);
     const result = await service.run();
-    expect(result).toEqual({ total: 0, passed: 0, failed: 0, outcomes: [] });
+    expect(result).toEqual({
+      total: 0,
+      passed: 0,
+      failed: 0,
+      paidClicksSkipped: 0,
+      narrationFallbacks: 0,
+      framesMissed: 0,
+      withoutFrames: 0,
+      outcomes: [],
+    });
   });
 
   it('браузер не поднялся — все сценарии помечены failed одним UPDATE, одна тревога', async () => {
@@ -424,13 +479,192 @@ describe('TutorialScenarioRunnerService', () => {
     // опечатку в самом имени ключа (`v4c_lang` вместо `v4c_locale`)
     // — мутация выживала, а это ровно тот тихий отказ, против
     // которого этап C и написан (находка его аудита).
-    const stored: Record<string, string> = {};
+    const stored = runStorageSeeds(page);
+    // Тема задана ЯВНО: кадр не должен зависеть от системной темы
+    // машины, где случился прогон.
+    // Ключа сессии тут быть не должно: сценарий идёт на ЧИСТЫЙ мастер.
+    expect(stored).toEqual({ v4c_locale: 'es', v4c_theme: 'light' });
+  });
+
+  it('generate-ready — сессия фикстуры подсевается ДО загрузки SPA', async () => {
+    // Второй боевой прогон 29.09.2026: у мастера нет URL с
+    // идентификатором сессии, вернуться к ней умеет только
+    // `localStorage.sessionId`. Без подсева шесть сценариев из девяти
+    // открывали пустой мастер и ждали по 15с элемент пройденного шага.
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service, prisma } = build([
+      { ...SCENARIO_OK, steps: [{ kind: 'goto', route: 'generate-ready' }] },
+    ]);
+    prisma.session.findFirst.mockResolvedValue({ id: 'sess-fixture' });
+
+    await service.run();
+
+    expect(runStorageSeeds(page)).toEqual({
+      v4c_locale: 'ru',
+      v4c_theme: 'light',
+      sessionId: 'sess-fixture',
+    });
+  });
+
+  it('пропущенный платный клик доезжает до журнала крона отдельным числом', async () => {
+    // «Прошло» и «прошло, но кнопку рендера никто не нажимал» — разные
+    // исходы, и второй оператор обязан видеть, не открывая логи.
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service, prisma } = build([
+      {
+        ...SCENARIO_OK,
+        steps: [
+          { kind: 'goto', route: 'generate-ready' },
+          {
+            kind: 'triggerPaidOperation',
+            operation: 'generation',
+            model: 'veo-3.1-generate-preview',
+            expectedUnits: { seconds: 8 },
+            note: 'рендер',
+          },
+          { kind: 'click', selector: '[data-qa="video-generate"]' },
+        ],
+      },
+    ]);
+    prisma.session.findFirst.mockResolvedValue({ id: 'sess-with-video' });
+
+    const result = await service.run();
+
+    expect(result.passed).toBe(1);
+    expect(result.paidClicksSkipped).toBe(1);
+    expect(result.outcomes[0].paidClicksSkipped).toBe(1);
+  });
+
+  it('пропуск прогона поднимает тревогу — витрина показывает ПРОШЛУЮ ночь', async () => {
+    // «Не запускалось» неотличимо от «прошло»: при пропуске ни одна
+    // строка TutorialScenario не трогается, и админка показывает
+    // зелёное «ok» недельной давности.
+    const { service, notify } = build([SCENARIO_OK]);
+    const saved = process.env.TMA_PUBLIC_URL;
+    delete process.env.TMA_PUBLIC_URL;
+    try {
+      const result = await service.run();
+      expect(result.skipped).toContain('TMA_PUBLIC_URL');
+      expect(notify.alert).toHaveBeenCalledWith(
+        'tutorial-scenario-run:skipped',
+        expect.stringContaining('прогон не состоялся'),
+      );
+    } finally {
+      if (saved !== undefined) process.env.TMA_PUBLIC_URL = saved;
+    }
+  });
+
+  it('суточный потолок выбран — прогон откладывается, браузер не поднимается', async () => {
+    // Потолок читается ДО запуска Chromium: если тратить уже нельзя,
+    // поднимать браузер незачем.
+    const { service, settings, aiUsage, notify } = build([SCENARIO_OK]);
+    settings.get.mockImplementation(async (key: string) =>
+      key === 'postprod.tutorialDailyBudgetUsd' ? '1' : '["ru"]',
+    );
+    aiUsage.spentTodayForOperation.mockResolvedValue(1_000_000);
+
+    const result = await service.run();
+
+    expect(result.skipped).toContain('потолок');
+    expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+    expect(notify.alert).toHaveBeenCalledWith(
+      'tutorial-scenario-run:budget',
+      expect.stringContaining('потолок'),
+    );
+  });
+
+  it('потолок ещё не выбран — прогон идёт как обычно', async () => {
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service, settings, aiUsage } = build([SCENARIO_OK]);
+    settings.get.mockImplementation(async (key: string) =>
+      key === 'postprod.tutorialDailyBudgetUsd' ? '1' : '["ru"]',
+    );
+    aiUsage.spentTodayForOperation.mockResolvedValue(999_999);
+
+    const result = await service.run();
+
+    expect(result.skipped).toBeUndefined();
+    expect(result.passed).toBe(1);
+  });
+
+  it('фикстурная сессия отбирается по готовому ролику, а не по свежести', async () => {
+    // Находка сквозного аудита 29.09.2026: у фикстурного пользователя
+    // сессий несколько, и самая свежая штатно НЕ та. `ui-snapshot-
+    // runner` держит служебную (`qaFixture`, статус `created`), каждый
+    // сценарий на чистом мастере заводит ещё одну — обе новее
+    // фикстурной. Отбор «по свежести» подсевал пустую сессию, мастер
+    // честно её восстанавливал и открывался на первом шаге: правка
+    // §11-сексиес на проде не работала, а выглядела сделанной.
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service, prisma } = build([
+      { ...SCENARIO_OK, steps: [{ kind: 'goto', route: 'generate-ready' }] },
+    ]);
+    prisma.session.findFirst.mockResolvedValue({ id: 'sess-with-video' });
+
+    await service.run();
+
+    // Запрос обязан сузиться по состоянию сессии: без этого условия
+    // выигрывает служебная пустая, и подсев теряет смысл.
+    expect(prisma.session.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          generationStatus: GenerationStatus.COMPLETE,
+        }),
+      }),
+    );
+    expect(runStorageSeeds(page).sessionId).toBe('sess-with-video');
+  });
+
+  it('чистый мастер — ключ сессии УДАЛЯЕТСЯ, а не просто не ставится', async () => {
+    // Страница могла остаться от предыдущего сценария. Молча
+    // унаследованная сессия хуже отсутствия подсева: экран откроется не
+    // тот, а причина не назовётся нигде.
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service, prisma } = build([SCENARIO_OK]);
+    prisma.session.findFirst.mockResolvedValue({ id: 'sess-fixture' });
+
+    await service.run();
+
     const g = globalThis as unknown as { window?: unknown };
-    const windowBefore = g.window;
+    const before = g.window;
+    const stored: Record<string, string> = { sessionId: 'чужая-сессия' };
     g.window = {
       localStorage: {
         setItem: (k: string, v: string) => {
           stored[k] = v;
+        },
+        removeItem: (k: string) => {
+          delete stored[k];
         },
       },
     };
@@ -440,12 +674,46 @@ describe('TutorialScenarioRunnerService', () => {
         fn(...args);
       }
     } finally {
-      if (windowBefore === undefined) delete g.window;
-      else g.window = windowBefore;
+      if (before === undefined) delete g.window;
+      else g.window = before;
     }
-    // Тема задана ЯВНО: кадр не должен зависеть от системной темы
-    // машины, где случился прогон.
-    expect(stored).toEqual({ v4c_locale: 'es', v4c_theme: 'light' });
+    expect(stored.sessionId).toBeUndefined();
+  });
+
+  it('сценарий, смешавший чистый мастер и мастер на сессии, не запускается', async () => {
+    // Подсев действует на весь прогон, значит второй `goto` получил бы
+    // не тот экран — и падение случилось бы на шаге, который ни в чём
+    // не виноват. Причина называется прямо, до открытия страницы.
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service, prisma } = build([
+      {
+        ...SCENARIO_OK,
+        steps: [
+          { kind: 'goto', route: 'generate-ready' },
+          { kind: 'goto', route: 'generate' },
+        ],
+      },
+    ]);
+    prisma.session.findFirst.mockResolvedValue({ id: 'sess-fixture' });
+
+    const result = await service.run();
+
+    expect(result.failed).toBe(1);
+    expect(page.goto).not.toHaveBeenCalled();
+    expect(prisma.tutorialScenario.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          lastRunStatus: 'failed',
+          lastRunError: expect.stringContaining('разделите на два сценария'),
+        }),
+      }),
+    );
   });
 
   it('локали вне tutorial.scenarioLocales не исполняются (пятый уровень отката)', async () => {
@@ -1046,6 +1314,149 @@ describe('TutorialScenarioRunnerService', () => {
           );
           return built;
         }
+
+        it('реплик меньше порога — запасной путь виден в журнале, а не только в логах', async () => {
+          // Админка в этот момент показывает «N реплик, вычитаны», а в
+          // ролик не попадает ни одна: звучит текст карточки шага,
+          // подписи обнуляются. До сквозного аудита 29.09.2026 след
+          // был один — logger.warn в функции.
+          const built = narratedRun({
+            scenario: {
+              steps: [
+                { kind: 'goto', route: 'generate', narration: 'Открываем.' },
+                { kind: 'waitFor', selector: '[data-qa="reference-card"]' },
+                {
+                  kind: 'assertVisible',
+                  selector: '[data-qa="reference-card"]',
+                },
+              ],
+            },
+          });
+
+          const result = await built.service.run();
+
+          expect(result.narrationFallbacks).toBe(1);
+          expect(result.outcomes[0].narrationFallback).toBe(true);
+        });
+
+        it('часть кадров не снялась — счёт доезжает до журнала крона', async () => {
+          // «Прошло» и «прошло наполовину» — разные исходы, а ролик во
+          // втором случае короче сценария.
+          const built = narratedRun();
+          const page = buildFakePage({ screenshot: true });
+          let n = 0;
+          page.screenshot!.mockImplementation(async () => {
+            n++;
+            if (n === 2) throw new Error('гонка CDP');
+            return new Uint8Array([n]);
+          });
+          launchHeadlessBrowserMock.mockResolvedValue({
+            browser: {
+              newPage: jest.fn().mockResolvedValue(page),
+              close: jest.fn().mockResolvedValue(undefined),
+            },
+          });
+
+          const result = await built.service.run();
+
+          expect(result.framesMissed).toBe(1);
+          expect(result.outcomes[0].framesMissed).toBe(1);
+        });
+
+        it('кадров не снято ни одного — «ok» перестаёт быть немым', async () => {
+          // Сценарий прошёл, ролика нет, статус зелёный. До сквозного
+          // аудита 29.09.2026 объяснения этому не было нигде — ни в
+          // журнале, ни в логах.
+          const built = narratedRun();
+          built.prisma.tutorialVideoAsset.create.mockClear();
+          const page = buildFakePage({ screenshot: false });
+          launchHeadlessBrowserMock.mockResolvedValue({
+            browser: {
+              newPage: jest.fn().mockResolvedValue(page),
+              close: jest.fn().mockResolvedValue(undefined),
+            },
+          });
+
+          const result = await built.service.run();
+
+          expect(result.passed).toBe(1);
+          expect(result.withoutFrames).toBe(1);
+          expect(result.outcomes[0].noFrames).toBe(true);
+        });
+
+        it('реплик хватает — пометки запасного пути нет', async () => {
+          const built = narratedRun();
+          const result = await built.service.run();
+          expect(result.narrationFallbacks).toBe(0);
+        });
+
+        it('одно и то же содержимое падало трижды — больше не пробуем', async () => {
+          // Предпроверка отпечатка сличала только с СОБРАННЫМ роликом,
+          // а строка `failed` в сличении не участвовала вовсе. Кадр, на
+          // котором внешний сервис стабильно спотыкается, давал вечный
+          // цикл: каждую ночь та же задача, та же оплата, тот же алерт.
+          const built = narratedRun();
+          built.prisma.tutorialVideoAsset.count.mockResolvedValue(3);
+
+          await built.service.run();
+
+          expect(built.ffmpeg.submit).not.toHaveBeenCalled();
+          expect(built.notify.alert).toHaveBeenCalledWith(
+            expect.stringContaining('giveup'),
+            expect.stringContaining('провалилась'),
+          );
+        });
+
+        it('падало дважды — ещё пробуем', async () => {
+          // Сбой внешнего сервиса чаще случайный, чем систематический:
+          // бросать после первого промаха значило бы терять ролики
+          // из-за икоты.
+          const built = narratedRun();
+          built.prisma.tutorialVideoAsset.count.mockResolvedValue(2);
+
+          await built.service.run();
+
+          expect(built.ffmpeg.submit).toHaveBeenCalled();
+        });
+
+        it('счёт попыток ведётся по СОДЕРЖИМОМУ, а не по паре', async () => {
+          // Иначе поправленная реплика не сняла бы блокировку, и
+          // выходом из отказа была бы правка базы руками.
+          const built = narratedRun();
+          built.prisma.tutorialVideoAsset.count.mockResolvedValue(0);
+
+          await built.service.run();
+
+          expect(built.prisma.tutorialVideoAsset.count).toHaveBeenCalledWith(
+            expect.objectContaining({
+              where: expect.objectContaining({
+                assemblyStatus: 'failed',
+                contentHash: expect.any(String),
+              }),
+            }),
+          );
+        });
+
+        it('потолок выбран синтезом — сборка не отправляется и не оплачивается', async () => {
+          // Самый дорогой порядок: синтез съедает потолок по дороге, а
+          // сборка уходит уже сверх него. Проверка перед `submit` —
+          // последняя точка, где ещё можно не потратить.
+          const built = narratedRun({
+            settings: {
+              'postprod.tutorialVoice': 'on',
+              'postprod.tutorialDailyBudgetUsd': '0.000001',
+            },
+          });
+          built.aiUsage.spentTodayForOperation.mockResolvedValue(0);
+
+          await built.service.run();
+
+          expect(built.ffmpeg.submit).not.toHaveBeenCalled();
+          const operations = built.aiUsage.record.mock.calls.map(
+            (c: [{ operation: string }]) => c[0].operation,
+          );
+          expect(operations).not.toContain('tutorial-video-assembly');
+        });
 
         it('у каждого шага своя дорожка, а не одна на весь ролик', async () => {
           // Ради этого этап D и делался: вариант Б (§3-бис) вместо
@@ -2576,6 +2987,100 @@ describe('TutorialScenarioRunnerService', () => {
         pending: 2,
         abandoned: 0,
         swept: 0,
+        // Провалов за тик — отдельным числом с 29.09.2026: до него
+        // провал сборки не проявлялся нигде, кроме логов функции.
+        failed: 0,
+      });
+    });
+
+    describe('застревания и отказы уборки (сквозной аудит 29.09.2026)', () => {
+      function pendingRun(rows: Record<string, unknown>[]) {
+        const built = build([]);
+        built.ffmpeg.configured.mockReturnValue(true);
+        built.prisma.tutorialVideoAsset.findMany.mockImplementation(
+          async (args: { where?: { assemblyStatus?: string } }) =>
+            args?.where?.assemblyStatus === 'pending' ? rows : [],
+        );
+        built.prisma.tutorialVideoAsset.count.mockResolvedValue(0);
+        return built;
+      }
+
+      const overdue = {
+        id: 'tva-1',
+        subjectKey: '1',
+        locale: 'ru',
+        scenarioId: 'ts-1',
+        clientSiteDraftId: 'draft-7',
+        assemblyJobId: 'job-1',
+        assemblyStartedAt: new Date(Date.now() - 60 * 60 * 1000),
+      };
+
+      it('ключ ffmpeg снят — просроченные pending закрываются, а не висят вечно', async () => {
+        // Раньше проверка `configured()` стояла до выборки: снятый
+        // ключ (второй уровень отката §9) оставлял строки в `pending`
+        // навсегда — подметальщик их не трогает, `abandonStalePreparing`
+        // ходит только по `preparing`.
+        const built = pendingRun([overdue]);
+        built.ffmpeg.configured.mockReturnValue(false);
+
+        await built.service.pollAssemblies();
+
+        expect(built.prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ assemblyStatus: 'failed' }),
+          }),
+        );
+      });
+
+      it('ключ снят, но срок ЕЩЁ не вышел — строку не трогаем', async () => {
+        const built = pendingRun([
+          { ...overdue, assemblyStartedAt: new Date() },
+        ]);
+        built.ffmpeg.configured.mockReturnValue(false);
+
+        await built.service.pollAssemblies();
+
+        expect(built.prisma.tutorialVideoAsset.update).not.toHaveBeenCalled();
+      });
+
+      it('сбой уборки кадров не отменяет возврат черновика заказчика', async () => {
+        // До правки порядок был `update` → `cleanupFrames` →
+        // `releaseClientSiteDraft` без защиты: икота Blob запирала
+        // черновик в APPROVED навсегда и рушила весь тик опроса.
+        const built = pendingRun([overdue]);
+        built.ffmpeg.status.mockResolvedValue({
+          status: 'failed',
+          error: 'кодек',
+        });
+        built.blob.listByPrefix.mockRejectedValue(new Error('Blob недоступен'));
+
+        await expect(built.service.pollAssemblies()).resolves.toBeDefined();
+
+        expect(
+          built.prisma.clientSiteTutorialDraft.updateMany,
+        ).toHaveBeenCalled();
+      });
+
+      it('провалы за тик считаются и дают ОДНУ тревогу, а не тревогу на строку', async () => {
+        // Тик идёт каждые две минуты: тревога на каждую строку
+        // превратила бы канал в фон уже к обеду.
+        const built = pendingRun([
+          overdue,
+          { ...overdue, id: 'tva-2', subjectKey: '2' },
+        ]);
+        built.ffmpeg.status.mockResolvedValue({
+          status: 'failed',
+          error: 'кодек',
+        });
+
+        const result = await built.service.pollAssemblies();
+
+        expect(result.failed).toBe(2);
+        expect(
+          built.notify.alert.mock.calls.filter(
+            (c: [string]) => c[0] === 'tutorial-assembly-poll:failed',
+          ),
+        ).toHaveLength(1);
       });
     });
 

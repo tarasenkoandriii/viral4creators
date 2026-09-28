@@ -1,4 +1,9 @@
-import { resolveScenarioRoute, ROUTE_DESCRIPTIONS } from './route-templates';
+import {
+  FRESH_WIZARD_ROUTE,
+  resolveScenarioRoute,
+  ROUTE_DESCRIPTIONS,
+  SEEDED_SESSION_ROUTES,
+} from './route-templates';
 
 /** Заведомо неподдержанные (§4.10 ТЗ — не входят в фикстурные данные или
  * не относятся к обучалке мастера) — не должны попадать в
@@ -184,5 +189,47 @@ describe('ROUTE_DESCRIPTIONS — единственный источник пр�
         'фикстурные данные',
       );
     }
+  });
+});
+
+/**
+ * Псевдоним мастера на ПРОЙДЕННОЙ сессии — находка второго боевого
+ * прогона 29.09.2026 (см. доккомментарий `SEEDED_SESSION_ROUTES`).
+ */
+describe('generate-ready', () => {
+  it('ведёт на тот же путь, что и чистый мастер — отличается подсев, не URL', () => {
+    expect(resolveScenarioRoute('generate-ready', { sessionId: 's1' })).toEqual(
+      {
+        ok: true,
+        path: '/generate',
+      },
+    );
+    expect(resolveScenarioRoute('generate', {})).toEqual({
+      ok: true,
+      path: '/generate',
+    });
+  });
+
+  it('без фикстурной сессии отказывает НАЗВАННОЙ причиной, а не открывает пустой мастер', () => {
+    const resolved = resolveScenarioRoute('generate-ready', {});
+    expect(resolved.ok).toBe(false);
+    expect(resolved.ok ? '' : resolved.reason).toContain('sessionId');
+  });
+
+  it('объявлен и в описаниях для модели, и в списке маршрутов с подсевом', () => {
+    expect(ROUTE_DESCRIPTIONS['generate-ready']).toBeDefined();
+    expect(SEEDED_SESSION_ROUTES.has('generate-ready')).toBe(true);
+    // Чистый мастер подсева НЕ требует: иначе шаги 1–2 открывались бы
+    // на готовой сессии и падали бы на `reference-card`.
+    expect(SEEDED_SESSION_ROUTES.has(FRESH_WIZARD_ROUTE)).toBe(false);
+    expect(FRESH_WIZARD_ROUTE).toBe('generate');
+  });
+
+  it('описание чистого мастера прямо ограничивает его шагами 1–2', () => {
+    // Без этого модель читала «весь мастер … ВСЕ эти шаги происходят на
+    // одном экране» как приглашение ждать карточку разбора сразу после
+    // `goto generate` — и шесть сценариев из девяти падали на `waitFor`.
+    expect(ROUTE_DESCRIPTIONS.generate).toContain('1–2');
+    expect(ROUTE_DESCRIPTIONS['generate-ready']).toContain('3–9');
   });
 });

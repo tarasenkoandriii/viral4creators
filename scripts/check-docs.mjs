@@ -1379,14 +1379,182 @@ function checkGuideSeams() {
       );
     }
   }
+  //
+  //     Исключение — ПСЕВДОНИМЫ исполнителя (`SEEDED_SESSION_ROUTES`,
+  //     находка второго боевого прогона 29.09.2026). `generate-ready`
+  //     ведёт на тот же `/generate`, что и `generate`: во фронтенде
+  //     второго имени нет и быть не должно. Отличается не путь, а то,
+  //     что исполнитель подсевает в `localStorage` ДО загрузки — и
+  //     именно это тут и проверяется, потому что псевдоним без подсева
+  //     снова молча откроет пустой мастер, а сценарий упадёт через 15
+  //     секунд на селекторе вместо причины.
+  const seededBlock =
+    builderSrc.match(
+      /SEEDED_SESSION_ROUTES[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/,
+    )?.[1] ?? "";
+  const seededRoutes = new Set(
+    [...seededBlock.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]),
+  );
+  if (seededRoutes.size === 0) {
+    problems.push(
+      "не удалось разобрать SEEDED_SESSION_ROUTES в route-templates.ts — " +
+        "шов 15 ослеп на псевдонимы исполнителя",
+    );
+  }
+  const scenarioRunnerSrc = read(
+    "backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts",
+  );
   for (const name of backRoutes) {
-    if (!frontRoutes.has(name)) {
+    if (frontRoutes.has(name)) continue;
+    if (seededRoutes.has(name)) continue;
+    problems.push(
+      `маршрут «${name}» перечислен в route-templates.ts, но во ` +
+        "frontend/src/lib/router.ts такого имени нет и в " +
+        "SEEDED_SESSION_ROUTES он не объявлен — копия отстала в " +
+        "другую сторону",
+    );
+  }
+  for (const name of seededRoutes) {
+    if (!backRoutes.has(name)) {
       problems.push(
-        `маршрут «${name}» перечислен в route-templates.ts, но во ` +
-          "frontend/src/lib/router.ts такого имени нет — копия отстала в " +
-          "другую сторону",
+        `«${name}» объявлен псевдонимом с подсевом сессии, но резолвера ` +
+          "в ROUTE_BUILDERS у него нет — сценарий с таким goto упадёт " +
+          "«не знаю такой маршрут»",
       );
     }
+    if (!new RegExp(`\\b${name}\\b`).test(stripComments(builderSrc))) {
+      problems.push(
+        `«${name}» не описан в ROUTE_DESCRIPTIONS — модель о нём не ` +
+          "узнает и продолжит писать goto на чистый мастер",
+      );
+    }
+  }
+  // Псевдоним без подсева бесполезен и опасен: маршрут разрешится, а
+  // экран откроется не тот. Проверяем, что исполнитель ЧИТАЕТ список и
+  // кладёт ключ сессии.
+  if (seededRoutes.size > 0) {
+    // Импорты отрезаны намеренно: мутация «подставить литерал вместо
+    // константы» оставляет имя в строке `import`, и шов, ищущий имя по
+    // всему файлу, её переживает (проверено мутациями S1/S2). Смотрим
+    // на ВЫЗОВ, а не на упоминание.
+    const runnerBody = stripComments(scenarioRunnerSrc).replace(
+      /^import[\s\S]*?from '[^']+';$/gm,
+      "",
+    );
+    if (
+      !/\bSEEDED_SESSION_ROUTES\.has\(/.test(runnerBody) ||
+      !/\bSPA_SESSION_STORAGE_KEY\b/.test(runnerBody)
+    ) {
+      problems.push(
+        "tutorial-scenario-runner.service.ts не читает SEEDED_SESSION_ROUTES " +
+          "или не кладёт SPA_SESSION_STORAGE_KEY — псевдоним маршрута " +
+          "разрешится, но мастер откроется пустым, как до 29.09.2026",
+      );
+    }
+  }
+  // Три операции, которые тратят деньги ночью, и суточный потолок над
+  // ними (сквозной аудит обучалки 29.09.2026).
+  //
+  // Список в `tutorial-budget.ts` должен совпадать с тем, что реально
+  // пишет `aiUsage.record({ operation: … })` в подсистеме. Разойдись
+  // они — и потолок молча перестанет видеть часть расхода: он не
+  // упадёт и не пожалуется, просто пропустит трату. Это ровно тот тип
+  // отказа, ради которого предохранитель и ставили.
+  const budgetSrc = stripComments(
+    read("backend/src/modules/tutorial-runner/tutorial-budget.ts"),
+  );
+  const budgetOps = new Set(
+    [
+      ...(
+        budgetSrc.match(
+          /TUTORIAL_PAID_OPERATIONS[^=]*=\s*\[([\s\S]*?)\]/,
+        )?.[1] ?? ""
+      ).matchAll(/'([a-z-]+)'/g),
+    ].map((m) => m[1]),
+  );
+  const recordedOps = new Set();
+  for (const rel of [
+    "backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts",
+    "backend/src/modules/tutorial-scenario/tutorial-scenario-generator.service.ts",
+  ]) {
+    for (const m of stripComments(read(rel)).matchAll(
+      /operation:\s*'(tutorial-[a-z-]+)'/g,
+    )) {
+      recordedOps.add(m[1]);
+    }
+  }
+  if (budgetOps.size === 0 || recordedOps.size === 0) {
+    problems.push(
+      "не удалось разобрать операции расхода обучалки — шов суточного " +
+        "потолка ослеп (проверьте регулярки в scripts/check-docs.mjs)",
+    );
+  }
+  for (const op of recordedOps) {
+    if (!budgetOps.has(op)) {
+      problems.push(
+        `операция «${op}» пишет расход обучалки, но в TUTORIAL_PAID_OPERATIONS ` +
+          "её нет — суточный потолок не увидит эту трату и пропустит её молча",
+      );
+    }
+  }
+  for (const op of budgetOps) {
+    if (!recordedOps.has(op)) {
+      problems.push(
+        `операция «${op}» объявлена платной для потолка, но расход по ней ` +
+          "никто не пишет — список отстал от кода",
+      );
+    }
+  }
+  // Потолок обязан проверяться ПЕРЕД каждой из трёх трат, а не только
+  // на входе в прогон: синтез тридцати дорожек внутри одного сценария
+  // — это тридцать трат, и остановиться надо на той, которая
+  // перевалила.
+  const budgetCallers = [
+    "backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts",
+    "backend/src/modules/tutorial-scenario/tutorial-scenario-generator.service.ts",
+  ];
+  let budgetChecks = 0;
+  for (const rel of budgetCallers) {
+    const body = stripComments(read(rel));
+    const n = [...body.matchAll(/budgetExhausted\(/g)].length;
+    if (n === 0) {
+      problems.push(
+        `${rel}: не проверяет суточный потолок расхода обучалки — ` +
+          "ночная работа снова сможет тратить без ограничения",
+      );
+    }
+    budgetChecks += n;
+  }
+
+  // Хук, который «нажимается только после того, как шаг пройден», на  // Хук, который «нажимается только после того, как шаг пройден», на
+  // ЧИСТОМ мастере не нажимается никогда. До 29.09.2026 все пять
+  // позиций степпера сидели там — и сценарии ждали выключенную кнопку.
+  const hooksSrc = stripComments(
+    read("backend/src/modules/tutorial-scenario/qa-hooks.ts"),
+  );
+  const freshRoute =
+    /FRESH_WIZARD_ROUTE = '([a-z-]+)'/.exec(stripComments(builderSrc))?.[1] ??
+    "";
+  let visitedOnlyHooks = 0;
+  for (const m of hooksSrc.matchAll(
+    /'([a-z0-9-]+)':\s*\{\s*route:\s*'([a-z-]+)',[\s\S]*?\n {2}\}/g,
+  )) {
+    const [, hook, route] = m;
+    if (!/clickOnlyWhenVisited:\s*true/.test(m[0])) continue;
+    visitedOnlyHooks++;
+    if (freshRoute && route === freshRoute) {
+      problems.push(
+        `хук «${hook}» помечен clickOnlyWhenVisited, но живёт на чистом ` +
+          `маршруте «${freshRoute}» — там шаг не пройден никогда, и клик ` +
+          "по нему будет ждать выключенную кнопку до таймаута",
+      );
+    }
+  }
+  if (visitedOnlyHooks === 0) {
+    problems.push(
+      "не нашёл ни одного хука clickOnlyWhenVisited в qa-hooks.ts — шов " +
+        "15-бис ослеп (проверьте регулярку в scripts/check-docs.mjs)",
+    );
   }
 
   // 16. OG-карточки лендинга обучалок не должны отставать от словарей.
@@ -1938,17 +2106,31 @@ function checkGuideSeams() {
   // подпишется не тем языком, а сценарий чужой локали упадёт на
   // `assertText` «с виду непонятно почему». До правки аудита этапа C
   // литерал был написан дважды руками и не проверялся ничем.
+  //
+  // Третий ключ (`sessionId`) добавлен вторым боевым прогоном
+  // 29.09.2026 и стоит дороже двух первых: мастер подхватывает сессию
+  // ТОЛЬКО из него (URL с идентификатором сессии у мастера нет), и
+  // опечатка тут не «откроет умолчания», а тихо заведёт новую пустую
+  // сессию — сценарий шага 3–9 упадёт на `waitFor` через 15 секунд,
+  // назвав селектор вместо причины. Во фронтенде он написан литералом
+  // прямо в `useWorkflow.ts`, а не именованной константой, поэтому
+  // сверяется своим выражением, а не общим `STORAGE_KEY = '…'`.
   const SPA_KEYS = [
     ["SPA_LOCALE_STORAGE_KEY", "frontend/src/lib/i18n.ts"],
     ["SPA_THEME_STORAGE_KEY", "frontend/src/lib/theme.ts"],
+    [
+      "SPA_SESSION_STORAGE_KEY",
+      "frontend/src/hooks/useWorkflow.ts",
+      /localStorage\.getItem\('([^']+)'\)/,
+    ],
   ];
   const backendKeys = stripComments(
     read("backend/src/common/spa-storage-keys.ts"),
   );
   let spaKeysChecked = 0;
-  for (const [constName, frontFile] of SPA_KEYS) {
+  for (const [constName, frontFile, frontPattern] of SPA_KEYS) {
     const back = new RegExp(`${constName} = '([^']+)'`).exec(backendKeys)?.[1];
-    const front = /STORAGE_KEY = '([^']+)'/.exec(
+    const front = (frontPattern ?? /STORAGE_KEY = '([^']+)'/).exec(
       stripComments(read(frontFile)),
     )?.[1];
     if (!back || !front) {
@@ -1962,7 +2144,10 @@ function checkGuideSeams() {
     if (back !== front) {
       problems.push(
         `${constName} = «${back}», а ${frontFile} пишет «${front}» — прогон ` +
-          "подложит локаль/тему мимо продукта, и отказ будет тихим",
+          (constName === "SPA_SESSION_STORAGE_KEY"
+            ? "откроет мастер на НОВОЙ пустой сессии вместо пройденной, и " +
+              "сценарий упадёт на waitFor через 15с, назвав селектор вместо причины"
+            : "подложит локаль/тему мимо продукта, и отказ будет тихим"),
       );
     }
   }
@@ -1971,10 +2156,20 @@ function checkGuideSeams() {
     if (!file.endsWith(".ts") || file.endsWith(".spec.ts")) continue;
     const rel = path.relative(ROOT, file);
     if (rel === "backend/src/common/spa-storage-keys.ts") continue;
-    if (/'v4c_(locale|theme)'/.test(stripComments(read(rel)))) {
+    const src = stripComments(read(rel));
+    if (/'v4c_(locale|theme)'/.test(src)) {
       problems.push(
         `${rel}: литерал ключа localStorage мимо spa-storage-keys.ts — ` +
           "вторая копия разойдётся с фронтендом молча",
+      );
+    }
+    // `'sessionId'` — слишком частая строка, чтобы запрещать её во всём
+    // бэкенде (это имя поля в десятке DTO). Ловим только соседство с
+    // `localStorage`: другого повода написать её рядом нет.
+    if (/localStorage[\s\S]{0,200}?'sessionId'/.test(src)) {
+      problems.push(
+        `${rel}: ключ сессии написан литералом рядом с localStorage мимо ` +
+          "spa-storage-keys.ts — вторая копия разойдётся с useWorkflow.ts молча",
       );
     }
   }
@@ -2311,6 +2506,10 @@ function checkGuideSeams() {
         `полей окружения, которые сервер ждёт от клиента: ${envFieldCount}; ` +
         `мест, пишущих тестировщику по тикету: ${callers.length}; ` +
         `имён маршрутов TMA (фронтенд = копия в бэкенде): ${frontRoutes.size}; ` +
+        `псевдонимов маршрута с подсевом сессии: ${seededRoutes.size}; ` +
+        `хуков «только после прохода», ни одного на чистом мастере: ${visitedOnlyHooks}; ` +
+        `платных операций обучалки под суточным потолком: ${budgetOps.size} ` +
+        `(проверок потолка в коде: ${budgetChecks}); ` +
         `OG-карточек обучалки сверено со словарём: ${ogChecked}; ` +
         `локалей с настоящими кадрами мастера: ${shotLocales.size} (файлов ${shotFiles.length}); ` +
         `мест, пишущих длительность ролика обучалки: ${durationWrites} ` +

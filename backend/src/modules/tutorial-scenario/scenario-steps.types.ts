@@ -126,7 +126,7 @@ export interface ScenarioStepTriggerPaidOperation {
   /** Ключ модели — должен найтись в MODEL_RATES (common/ai-pricing.ts), иначе оценка помечается unpriced. */
   model: string;
   expectedUnits: ScenarioExpectedUnits;
-  /** Короткое человекочитаемое объяснение — «Veo, ожидаемо 40 секунд рендера» — для карточки одобрения в админке (§4.11). */
+  /** Короткое человекочитаемое объяснение — «Grok 480p, ожидаемо 8 секунд рендера» — для карточки одобрения в админке (§4.11). */
   note: string;
 }
 

@@ -12,6 +12,11 @@ import {
   mergeVideoStatuses,
 } from '../src/lib/video-polling';
 
+// Широкий тип строки: литералы `'pending' as const` иначе сужали
+// параметр дженерика до одного статуса, и `tsc -p tsconfig.scripts.json`
+// (шаг CI) отвергал свежие строки со статусом `complete`.
+type Row = { sessionId: string; postStatus: 'pending' | 'complete' };
+
 let passed = 0;
 function it(name: string, fn: () => void) {
   fn();
@@ -22,7 +27,7 @@ function it(name: string, fn: () => void) {
 console.log('postprod-list-refresh');
 
 it('статус показанной строки обновляется', () => {
-  const shown = [
+  const shown: Row[] = [
     { sessionId: 'a', postStatus: 'pending' as const },
     { sessionId: 'b', postStatus: 'complete' as const },
   ];
@@ -38,7 +43,7 @@ it('статус показанной строки обновляется', () =
 });
 
 it('новые ролики в список НЕ добавляются — иначе поедет пагинация', () => {
-  const shown = [{ sessionId: 'a', postStatus: 'pending' as const }];
+  const shown: Row[] = [{ sessionId: 'a', postStatus: 'pending' as const }];
   const fresh = [
     { sessionId: 'new', postStatus: 'complete' as const },
     { sessionId: 'a', postStatus: 'complete' as const },
@@ -51,7 +56,7 @@ it('новые ролики в список НЕ добавляются — ин
 });
 
 it('порядок сохраняется, даже если свежий ответ пришёл в другом', () => {
-  const shown = [
+  const shown: Row[] = [
     { sessionId: 'a', postStatus: 'pending' as const },
     { sessionId: 'b', postStatus: 'pending' as const },
   ];
@@ -70,7 +75,7 @@ it('порядок сохраняется, даже если свежий отв
 
 it('строка, которой нет в свежем ответе, остаётся как была', () => {
   // Она могла уехать на вторую страницу — это не повод её стирать.
-  const shown = [
+  const shown: Row[] = [
     { sessionId: 'a', postStatus: 'pending' as const },
     { sessionId: 'old', postStatus: 'complete' as const },
   ];
@@ -84,7 +89,7 @@ it('строка, которой нет в свежем ответе, остаё
 });
 
 it('пустой свежий ответ ничего не портит', () => {
-  const shown = [{ sessionId: 'a', postStatus: 'pending' as const }];
+  const shown: Row[] = [{ sessionId: 'a', postStatus: 'pending' as const }];
   assert.deepEqual(mergeVideoStatuses(shown, []), shown);
 });
 

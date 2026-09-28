@@ -18,7 +18,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { voiceoverCachePrefix } from '../tutorial-runner/tutorial-voice';
-import { parseScenarioSteps } from './scenario-steps';
+import { validateScenarioSteps } from './tutorial-scenario-prompt';
 import { estimateScenarioCost } from './scenario-cost';
 
 export interface TutorialScenarioListFilter {
@@ -95,9 +95,12 @@ export class TutorialScenarioAdminService {
    * ради которого генератор заводил стоп-сигнал, было недостижимо
    * через продукт (находка сквозного аудита A+B+C).
    *
-   * Шаги валидируются тем же `parseScenarioSteps`, что и ответ
-   * модели: всё-или-ничего. Ослаблять валидацию для человека
-   * незачем — он ошибается так же, а исполняет их тот же код.
+   * Шаги валидируются тем же `validateScenarioSteps`, что и ответ
+   * модели: всё-или-ничего, каталог хуков, правило платных кнопок.
+   * Ослаблять валидацию для человека незачем — он ошибается так же, а
+   * исполняет их тот же ночной крон. До сквозного аудита 29.09.2026
+   * этот абзац был верен только наполовину: звался `parseScenarioSteps`
+   * напрямую, то есть без каталога и без правила платных кнопок.
    *
    * `generatedBy: 'manual'` — не ярлык, а договор: со следующей ночи
    * генератор эту строку не трогает. Вернуть её под автоматику можно
@@ -116,7 +119,10 @@ export class TutorialScenarioAdminService {
     });
     if (!row) throw new NotFoundException('Сценарий не найден');
 
-    const parsed = parseScenarioSteps(rawSteps);
+    // Та же проверка, что у ответа модели (сквозной аудит 29.09.2026):
+    // ручная правка исполняется тем же ночным кроном, значит платные
+    // кнопки в ней так же опасны — см. `validateScenarioSteps`.
+    const parsed = validateScenarioSteps(rawSteps);
     if (!parsed.ok) {
       throw new BadRequestException(
         `Шаги не приняты: ${parsed.reason ?? 'не разобрались'}`,

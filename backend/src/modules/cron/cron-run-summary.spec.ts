@@ -82,3 +82,67 @@ describe('buildRunSummary — пропуск отличается от нуля'
     );
   });
 });
+
+/**
+ * Причины отказа текстом — сквозной аудит обучалки 29.09.2026.
+ * До него `summarizeCounters` брала только числа, и `failures[]`
+ * генератора отбрасывался целиком: в журнале оставалось `failed=50`
+ * без единого слова о том, что именно сломалось.
+ */
+describe('summarizeCounters — причины отказа', () => {
+  it('failures[] генератора попадают в сводку поимённо', () => {
+    const out = summarizeCounters({
+      pairs: 2,
+      failed: 2,
+      failures: [
+        { subjectKey: '3', locale: 'ru', reason: 'ответ не JSON-объект' },
+        { subjectKey: '4', locale: 'uk', reason: 'селектор не из каталога' },
+      ],
+    });
+    expect(out).toContain('failed=2');
+    expect(out).toContain('3/ru: ответ не JSON-объект');
+    expect(out).toContain('4/uk: селектор не из каталога');
+  });
+
+  it('outcomes[] исполнителя — только провалившиеся', () => {
+    const out = summarizeCounters({
+      total: 2,
+      outcomes: [
+        { subjectKey: '1', locale: 'ru', ok: true },
+        { subjectKey: '2', locale: 'ru', ok: false, error: 'шаг 2: таймаут' },
+      ],
+    });
+    expect(out).toContain('2/ru: шаг 2: таймаут');
+    expect(out).not.toContain('1/ru');
+  });
+
+  it('длинный список урезается с честным хвостом', () => {
+    // `summary` читают глазами в таблице; пятьдесят строк туда не лезут.
+    const failures = Array.from({ length: 10 }, (_, i) => ({
+      subjectKey: String(i),
+      locale: 'ru',
+      reason: 'причина',
+    }));
+    const out = summarizeCounters({ failed: 10, failures });
+    expect(out).toContain('и ещё 7');
+  });
+
+  it('массивы ДАННЫХ в сводку не тащатся', () => {
+    // `locales[]` — не причины, и в сводке только мешают.
+    const out = summarizeCounters({ pairs: 1, locales: ['ru', 'uk'] });
+    expect(out).toBe('pairs=1');
+  });
+});
+
+describe('buildRunSummary — пропуск генерации сценариев', () => {
+  it('отложенная генерация не выглядит как «делать было нечего»', () => {
+    expect(
+      buildRunSummary('tutorial-scenario-generate', {
+        skipped: 'суточный потолок расхода обучалки выбран',
+        pairs: 0,
+        generated: 0,
+        failed: 0,
+      }),
+    ).toContain('пропущен — суточный потолок');
+  });
+});

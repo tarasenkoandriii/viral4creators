@@ -13,7 +13,11 @@
  * ЖИВЫМ для посетителей лендинга немедленно (см. предупреждение в
  * контроллере/фронтенде), а не «поставлено в очередь на публикацию».
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SUPPORTED_LOCALES, SupportedLocale } from '../../common/locale';
 import {
@@ -59,6 +63,27 @@ export class TutorialVideoAdminService {
       subjectKey: filter.subjectKey || undefined,
       locale: filter.locale || undefined,
       reviewed: filter.reviewed,
+      // Ролики обучалки по сайту ЗАКАЗЧИКА сюда не попадают (сквозной
+      // аудит 29.09.2026).
+      //
+      // Они живут в той же таблице (`client-site-tutorial-admin.
+      // service.ts` пишет `subjectKey: 'client-site'`, `locale: 'ru'`,
+      // `title` — адрес сайта заказчика) и до этой строки показывались
+      // вперемешку с десятью штатными шагами: тот же бейдж «готово»,
+      // та же кнопка «Одобрить», то же подтверждение «видео станет
+      // доступно посетителям». Нажатие делало `reviewed: true`, и
+      // `AssistantService.availableVideoSubjectKeys` начинал предлагать
+      // модели ключ `client-site` — то есть ролик по сайту одного
+      // заказчика мог уехать любому посетителю лендинга.
+      //
+      // Одно неверное нажатие на экране, который ничем от него не
+      // удерживает. Плюс `sweepOldAssets` такие строки намеренно не
+      // трогает, значит они копятся здесь бессрочно и вероятность
+      // промаха только растёт.
+      //
+      // У них своя витрина — «Черновики обучалок по сайту» — и своё
+      // одобрение. Эта таблица про десять шагов обучалки продукта.
+      clientSiteDraftId: null,
     };
     const [rows, total] = await Promise.all([
       this.prisma.tutorialVideoAsset.findMany({
@@ -81,10 +106,18 @@ export class TutorialVideoAdminService {
    * one-way, а обычная установка значения.
    */
   async setReviewed(id: string, reviewed: boolean) {
-    const row = await this.prisma.tutorialVideoAsset.findUnique({
+    const row = (await this.prisma.tutorialVideoAsset.findUnique({
       where: { id },
-    });
+    })) as { clientSiteDraftId?: string | null } | null;
     if (!row) throw new NotFoundException('Видео не найдено');
+    // Барьер И на самом действии, не только в выборке списка: прямой
+    // вызов API мимо витрины отдал бы посетителям ролик по сайту
+    // заказчика так же, как ошибочное нажатие.
+    if (row.clientSiteDraftId) {
+      throw new BadRequestException(
+        'Это ролик обучалки по сайту заказчика — он одобряется на своей вкладке и посетителям лендинга не выдаётся',
+      );
+    }
     return this.prisma.tutorialVideoAsset.update({
       where: { id },
       data: { reviewed },

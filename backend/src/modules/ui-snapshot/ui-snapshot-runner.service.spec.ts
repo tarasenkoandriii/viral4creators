@@ -106,6 +106,36 @@ function build() {
   return { service, prisma, notify, blob };
 }
 
+/** Исполняет подкладки `evaluateOnNewDocument` на поддельном
+ *  `localStorage` и возвращает получившееся содержимое. */
+function seededStorage(page: {
+  evaluateOnNewDocument: unknown;
+}): Record<string, string> {
+  const stored: Record<string, string> = {};
+  const g = globalThis as unknown as { window?: unknown };
+  const before = g.window;
+  g.window = {
+    localStorage: {
+      setItem: (k: string, v: string) => {
+        stored[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete stored[k];
+      },
+    },
+  };
+  try {
+    for (const call of (page.evaluateOnNewDocument as jest.Mock).mock.calls) {
+      const [fn, ...args] = call as [(...a: unknown[]) => void, ...unknown[]];
+      fn(...args);
+    }
+  } finally {
+    if (before === undefined) delete g.window;
+    else g.window = before;
+  }
+  return stored;
+}
+
 describe('UiSnapshotRunnerService — пропуски (фикстура не настроена)', () => {
   it('без FIXTURE_USER_TOKEN/FIXTURE_TELEGRAM_ID — пропуск, ни одного запроса к БД', async () => {
     delete process.env.FIXTURE_USER_TOKEN;
@@ -791,10 +821,11 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
 
     await service.run();
 
-    expect(page.evaluateOnNewDocument).toHaveBeenCalledWith(
-      expect.any(Function),
-      'qa-session',
-    );
+    // Ключ хранилища сверяется ИСПОЛНЕНИЕМ колбэка, а не списком
+    // аргументов: список пропускал опечатку в самом ключе, а с общей
+    // константой `SPA_SESSION_STORAGE_KEY` (29.09.2026) пропустил бы и
+    // подмену её литералом.
+    expect(seededStorage(page).sessionId).toBe('qa-session');
     // postprod-video смотрит готовый ролик, а не служебную пустую сессию
     expect(page.goto).toHaveBeenCalledWith(
       'https://app.example.com/#/postprod/done-session',
@@ -828,9 +859,6 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
     expect(
       (prisma.session as any).create.mock.calls[0][0].data.data.qaFixture,
     ).toBe(true);
-    expect(page.evaluateOnNewDocument).toHaveBeenCalledWith(
-      expect.any(Function),
-      'new-qa',
-    );
+    expect(seededStorage(page).sessionId).toBe('new-qa');
   });
 });

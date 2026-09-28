@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- двойники Prisma */
 import { seedFixtureUser } from './fixture-seed';
+import { DEFAULT_VOICE_MODE, usesOwnVoice } from '../../common/voice-mode';
 
 function build() {
   const upsert = (id: string) =>
@@ -18,7 +19,7 @@ function build() {
     productItem: { upsert: upsert('i') },
     session: { upsert: upsert('s') },
   };
-  return { prisma, user };
+  return { prisma, user, session: prisma.session.upsert };
 }
 
 describe('seedFixtureUser', () => {
@@ -74,5 +75,25 @@ describe('seedFixtureUser', () => {
     const result = await seedFixtureUser(prisma as any, '42');
 
     expect(result.log[0]).toMatch(/помечен тестовым/);
+  });
+
+  it('готовый ролик несёт режим озвучки — иначе карточки переозвучки нет', async () => {
+    // Находка второго боевого прогона 29.09.2026: `RevoicePanel`
+    // рендерится только при `usesOwnVoice(video.voiceMode)`, а фикстура
+    // клала ролик без поля вовсе — карточка не появлялась никогда, и
+    // сценарий хука `revoice-panel` ждал её 15 секунд и падал.
+    //
+    // Значение сверяется с `DEFAULT_VOICE_MODE`, а не пишется строкой:
+    // фикстура должна выглядеть как обычный сегодняшний ролик, и когда
+    // умолчание продукта сменится, тест обязан поехать вместе с ним.
+    const { prisma, session } = build();
+
+    await seedFixtureUser(prisma as any, '42');
+
+    const args = session.mock.calls[0][0];
+    for (const side of [args.create, args.update]) {
+      expect(side.liveData.generatedVideo.voiceMode).toBe(DEFAULT_VOICE_MODE);
+      expect(usesOwnVoice(side.liveData.generatedVideo.voiceMode)).toBe(true);
+    }
   });
 });

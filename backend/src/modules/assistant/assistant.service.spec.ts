@@ -262,7 +262,12 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
       expect(callArgs.config.systemInstruction).toContain('export-video');
       expect(prisma.tutorialVideoAsset.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { locale: 'ru', reviewed: true, blobUrl: { not: null } },
+          where: {
+            locale: 'ru',
+            reviewed: true,
+            blobUrl: { not: null },
+            clientSiteDraftId: null,
+          },
         }),
       );
     });
@@ -315,6 +320,7 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
             locale: 'ru',
             reviewed: true,
             blobUrl: { not: null },
+            clientSiteDraftId: null,
           },
         }),
       );

@@ -27,6 +27,8 @@ import {
   WIZARD_PAID_OPERATIONS,
   WizardPaidOperation,
 } from './scenario-steps.types';
+import { MODEL_RATES } from '../../common/ai-pricing';
+import { VideoProviderKey } from '../generation/default-video-provider';
 import { ROUTE_DESCRIPTIONS } from '../tutorial-runner/route-templates';
 import { knownQaHook, qaSelector, QA_HOOKS } from './qa-hooks';
 import { languageNameForLocale } from '../../common/locale';
@@ -89,13 +91,88 @@ const PAID_OPERATION_HINTS = REACHABLE_PAID_OPERATIONS.map(
   (op) => `${PAID_OPERATION_HINT[op]} — "${op}"`,
 ).join(', ');
 
+/**
+ * Закрытый список имён моделей для `triggerPaidOperation.model` —
+ * находка сквозного аудита 29.09.2026.
+ *
+ * Промпт до неё писал `"model":<ОДНО имя из списка ниже, буква в букву>`, а
+ * валидатор принимал любую непустую строку. Ключи прайса при этом
+ * узкие (`veo-3.1-generate-preview`, `grok-imagine-video-1.5:720p`), и
+ * угадать их модель не могла — значит прикидка ВСЕГДА выходила нулём с
+ * подписью «занижена», а оператор одобрял трату вслепую.
+ *
+ * Это третий раз, когда одно и то же лечится одинаково: выдуманные
+ * маршруты (`wizard.step-N`, этап 106) и выдуманные селекторы (этап I)
+ * закрывались ровно так же — закрытым списком настоящих значений в
+ * промпт и отказом валидатора на всём остальном. Имена моделей были
+ * последним местом, где список так и не завели.
+ *
+ * Берётся из прайса, а не переписывается руками: ставки меняются, и
+ * руками написанный список разошёлся бы с ними молча — то есть вернул
+ * бы ровно тот ноль, ради которого всё это и заводится.
+ *
+ * Отбор — по ПРОВАЙДЕРАМ, которые мастер вообще умеет выбрать
+ * (`VIDEO_PROVIDER_KEYS` в `generation/default-video-provider.ts`), а не
+ * по «есть ставка за секунду»: по секундам считаются ещё и говорящий
+ * аватар, и клон голоса — модели, которых кнопка «Сгенерировать
+ * рекламный ролик» не запускает никогда. Пустить их в список значило бы
+ * заменить нулевую прикидку на уверенно НЕВЕРНУЮ, а это хуже: у нуля
+ * хотя бы есть подпись «занижена».
+ *
+ * ## Промпт просит модели ОДНОГО провайдера — того, что стоит по
+ * умолчанию
+ *
+ * Правка 29.09.2026, по замечанию владельца: провайдер по умолчанию —
+ * **Grok**, а не Veo (`default-video-provider.ts`, `FALLBACK_KEY =
+ * 'grok'`; у Grok дешевле и больше слотов под референсы). Первая
+ * редакция этого списка давала модели все восемь имён сразу, и это
+ * заводило НОВУЮ ошибку вместо исправленной: сценарий, объявивший
+ * `veo-3.1-generate-preview`, получал прикидку $3.20 за восьмисекундный
+ * ролик, а продукт отрендерил бы его Grok'ом 480p за $0.64 — впятеро
+ * меньше. Оператор одобряет не ту сумму; для гейта одобрения это ровно
+ * такая же поломка, как ноль, просто в другую сторону.
+ *
+ * Поэтому промпт печатает модели ТОГО провайдера, который реально
+ * предзаполнен в мастере, а валидатор по-прежнему принимает любую
+ * оцениваемую модель мастера. Асимметрия намеренная: промпт ведёт
+ * новые сценарии к верной прикидке, а валидатор не обязан ломать
+ * сценарии, сохранённые до смены умолчания, — при смене провайдера они
+ * перегенерируются ближайшей ночью сами.
+ */
+const WIZARD_VIDEO_PROVIDERS: Record<VideoProviderKey, string> = {
+  veo: 'VEO',
+  grok: 'GROK',
+};
+
+function pricedModelsOf(providers: readonly string[]): string[] {
+  return Object.entries(MODEL_RATES)
+    .filter(
+      ([, rate]) =>
+        providers.includes(rate.provider) && rate.perSecond !== undefined,
+    )
+    .map(([name]) => name)
+    .sort();
+}
+
+/** Все оцениваемые движки мастера — то, что ПРИНИМАЕТ валидатор. */
+export const PRICED_VIDEO_MODELS: readonly string[] = pricedModelsOf(
+  Object.values(WIZARD_VIDEO_PROVIDERS),
+);
+
+/** Модели одного провайдера — то, что промпт ПРЕДЛАГАЕТ модели. */
+export function pricedModelsForProvider(
+  provider: VideoProviderKey,
+): readonly string[] {
+  return pricedModelsOf([WIZARD_VIDEO_PROVIDERS[provider]]);
+}
+
 const STEP_VOCABULARY = `- {"kind":"goto","route":"<ключ маршрута>","narration":"<реплика диктора>"} — открыть экран
 - {"kind":"fill","selector":"<CSS-селектор>","value":"<текст>","narration":"<реплика диктора>"} — заполнить поле
 - {"kind":"click","selector":"<CSS-селектор>","narration":"<реплика диктора>"} — нажать
 - {"kind":"waitFor","selector":"<CSS-селектор>","narration":"<реплика диктора>"} — дождаться появления элемента
 - {"kind":"assertVisible","selector":"<CSS-селектор>","narration":"<реплика диктора>"} — проверить, что элемент виден (для regression-теста)
 - {"kind":"assertText","selector":"<CSS-селектор>","value":"<ожидаемый текст>","narration":"<реплика диктора>"} — проверить текст элемента
-- {"kind":"triggerPaidOperation","operation":${PAID_OPERATION_VALUES},"model":"<точное имя модели провайдера>","expectedUnits":{"seconds":<число>|"characters":<число>|"calls":<число>},"note":"<кратко зачем>"} — ставится ПЕРЕД шагом, который реально запускает платный вызов (${PAID_OPERATION_HINTS}), только когда такой шаг в сценарии есть. "operation" — строго одно из перечисленных значений, ничего другого. "expectedUnits" — ОБЯЗАТЕЛЬНО заполни хотя бы одно поле (пустой объект отклоняется целиком)`;
+- {"kind":"triggerPaidOperation","operation":${PAID_OPERATION_VALUES},"model":<ОДНО имя из списка ниже, буква в букву>,"expectedUnits":{"seconds":<число>|"characters":<число>|"calls":<число>},"note":"<кратко зачем>"} — ставится ПЕРЕД шагом, который реально запускает платный вызов (${PAID_OPERATION_HINTS}), только когда такой шаг в сценарии есть. "operation" — строго одно из перечисленных значений, ничего другого. "expectedUnits" — для рендера ролика ОБЯЗАТЕЛЬНО "seconds" (по нему считается цена; "calls"/"characters" дадут нулевую прикидку и сценарий будет отклонён)`;
 
 /** Список допустимых "route" для goto текстом в промпт — найдено этим
  * этапом: раньше промпт называл "route" плейсхолдером и приводил В
@@ -151,6 +228,12 @@ export function buildScenarioPrompt(
   subjectKey: string,
   locale: string,
   step: AssistantStepItem,
+  /** Провайдер видео, предзаполненный в мастере. Модель должна
+   *  объявлять ЕГО движок, иначе прикидка разойдётся с настоящей
+   *  тратой в разы — см. `pricedModelsForProvider`. Умолчание тут
+   *  повторяет `FALLBACK_KEY` продукта, чтобы вызывающий, не читавший
+   *  настройку, получал верное поведение, а не тихо неверное. */
+  videoProvider: VideoProviderKey = 'grok',
 ): string {
   const lines = [
     `Ты помогаешь автоматизировать съёмку обучающего видео по шагу мастера генерации рекламных роликов (шаг "${subjectKey}", локаль ${locale}).`,
@@ -180,6 +263,14 @@ export function buildScenarioPrompt(
     ROUTE_VOCABULARY,
     'Мастер создания ролика ("generate") и экран товара ("item") — однастраничные: если шаг обучалки описывает происходящее ВНУТРИ них (выбор референса, разбор, промпт, формат, рендер — всё это "generate"; фото/аналоги/голос/цена товара — всё это "item"), goto делается ОДИН раз в начале сценария на этот экран, а дальнейшее продвижение по шагам мастера описывается click/fill/waitFor, не повторными goto на разные маршруты.',
     'Если этот шаг мастера сам по себе не запускает платную генерацию/переозвучку — НЕ добавляй triggerPaidOperation вовсе.',
+    // Третий закрытый список в этом промпте, по той же причине, что
+    // маршруты и селекторы: угаданное имя модели даёт нулевую прикидку,
+    // и оператор одобряет трату вслепую (сквозной аудит 29.09.2026).
+    `"model" в triggerPaidOperation — тоже НЕ плейсхолдер. В мастере предзаполнен движок «${videoProvider}», и объявлять надо ЕГО модель: иначе прикидка стоимости разойдётся с настоящей тратой в разы. Выбери РОВНО ОДНО имя из списка ниже, буква в букву:\n${pricedModelsForProvider(
+      videoProvider,
+    )
+      .map((m) => `- ${m}`)
+      .join('\n')}`,
     // Язык — отдельной инструкцией, ЯВНЫМ названием и с примером
     // (этап C). До него в промпте стоял только ISO-код в первой
     // строке, справкой: `assertText` уезжал по-русски в сценарий
@@ -234,9 +325,84 @@ export function parseScenarioResponse(text: string): ParseScenarioResult {
       droppedPaidOperations: [],
     };
   }
-  const parsed = parseScenarioSteps(json.steps);
+  return validateScenarioSteps(json.steps);
+}
+
+/**
+ * Полная проверка списка шагов — ОДНА на все источники: ответ модели и
+ * ручная правка оператора в админке.
+ *
+ * ## Почему одна
+ *
+ * До сквозного аудита 29.09.2026 источников было два с разными
+ * правилами: `parseScenarioResponse` вёл ответ модели через
+ * `rejectUnknownSelectors` + `dropDanglingPaidOperations`, а
+ * `TutorialScenarioAdminService.replaceSteps` звал `parseScenarioSteps`
+ * напрямую. Обоснование стояло прямо в доккомментарии
+ * `rejectUnknownSelectors`: «человек, который правит руками, видит
+ * экран сам».
+ *
+ * Про экран это верно, а про деньги — нет. Ручная правка исполняется
+ * тем же ночным кроном КАЖДУЮ ночь, и оператор, сохранивший
+ * `click [data-qa="relevance-check"]`, видел экран один раз, а платный
+ * разбор Gemini уходил бы каждую ночь. Хуже: такая строка получала
+ * `costly: false` (стоимость считается по `triggerPaidOperation`-шагам,
+ * которых в ней нет), то есть кнопки одобрения у неё не появлялось
+ * вовсе — гейт не просто обходился, он был неприменим.
+ *
+ * Правило поэтому одно: что нельзя написать модели, нельзя сохранить и
+ * руками. Селектор вне каталога отвергается тоже — ночью он всё равно
+ * уронит сценарий, только позже и за деньги сборки.
+ */
+export function validateScenarioSteps(rawSteps: unknown): ParseScenarioResult {
+  const parsed = parseScenarioSteps(rawSteps);
   if (!parsed.ok) return parsed;
-  return dropDanglingPaidOperations(rejectUnknownSelectors(parsed));
+  return dropDanglingPaidOperations(
+    rejectUnpricedModels(rejectUnknownSelectors(parsed)),
+  );
+}
+
+/**
+ * Отказ шагу `triggerPaidOperation`, чью модель нельзя оценить в
+ * деньгах (сквозной аудит 29.09.2026).
+ *
+ * Отказ целиком, а не вырезание: вырезать значило бы сделать платный
+ * сценарий бесплатным на вид и пустить его мимо гейта одобрения — то
+ * есть ровно та поломка, от которой гейт и стоит. Пусть лучше
+ * сценарий пересоберётся следующей ночью с именем из списка.
+ *
+ * Проверяется имя И единицы: ставка видеомодели задана в секундах, и
+ * `expectedUnits: {calls: 1}` при верном имени даёт тихий ноль без
+ * всякой пометки. Оба случая называются оператору поимённо — он по
+ * сообщению видит, промахнулась модель или отстал прайс.
+ */
+function rejectUnpricedModels(
+  parsed: ParseScenarioResult,
+): ParseScenarioResult {
+  for (let i = 0; i < parsed.steps.length; i++) {
+    const step = parsed.steps[i];
+    if (!isTriggerPaidOperationStep(step)) continue;
+    const refuse = (why: string): ParseScenarioResult => ({
+      ok: false,
+      steps: [],
+      reason: `шаг ${i + 1} (triggerPaidOperation): ${why}`,
+      droppedNarrations: [],
+      droppedPaidOperations: [],
+    });
+    if (!PRICED_VIDEO_MODELS.includes(step.model)) {
+      return refuse(
+        `модели «${step.model}» нет среди оцениваемых (common/ai-pricing.ts) — ` +
+          'прикидка вышла бы нулём, и оператор одобрял бы трату вслепую',
+      );
+    }
+    if (!step.expectedUnits.seconds) {
+      return refuse(
+        `у модели «${step.model}» ставка задана за секунду, а expectedUnits.seconds не заполнен — ` +
+          'прикидка вышла бы нулём без всякой пометки',
+      );
+    }
+  }
+  return parsed;
 }
 
 /**
@@ -306,9 +472,10 @@ function dropDanglingPaidOperations(
  * сборки. Названы номер шага и сам селектор — по ним оператор видит,
  * придумала модель кнопку или каталог отстал от продукта.
  *
- * Только для ответа МОДЕЛИ. Ручная правка шагов в админке идёт мимо
- * этой функции (`parseScenarioSteps` напрямую) и по-прежнему допускает
- * любой CSS: человек, который правит руками, видит экран сам.
+ * Зовётся из `validateScenarioSteps` — то есть и для ответа модели, и
+ * для ручной правки оператора. Разделения больше нет, см. её
+ * доккомментарий: прежнее «человек видит экран сам» верно про экран и
+ * неверно про деньги.
  */
 function rejectUnknownSelectors(
   parsed: ParseScenarioResult,

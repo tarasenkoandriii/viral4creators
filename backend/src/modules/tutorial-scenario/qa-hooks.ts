@@ -39,13 +39,44 @@
  * одинаков во всех локалях; подпись кнопки — нет. Поэтому клики и
  * заполнение идут только по хукам, а текст сравнивает `assertText`.
  *
+ * ## Два маршрута одного мастера
+ *
+ * Поле `route` у хуков мастера — не формальность и не копипаста: оно
+ * решает, на КАКОМ мастере элемент вообще бывает на экране.
+ *
+ * - `generate` — чистый мастер, шаги 1–2: оферта и выбор референса.
+ *   Одиннадцать хуков.
+ * - `generate-ready` — тот же экран, открытый на фикстурной сессии с
+ *   пройденными шагами. Двадцать девять хуков: весь степпер, разбор,
+ *   состав кадра, товар, релевантность, промпт, формат, рендер,
+ *   результат.
+ *
+ * Разделение — находка ВТОРОГО боевого прогона (29.09.2026), и оно
+ * исправляет ошибку в прежней редакции этого же доккомментария. Он
+ * говорил: «хуки шагов 3–8 верны, но до фикстуры с нужным состоянием
+ * такие сценарии будут падать на `waitFor`». Формулировка обещала, что
+ * дело в ДАННЫХ фикстуры. Дело было не в них: у маршрута `generate` во
+ * `frontend/src/lib/router.ts` нет параметра сессии вовсе, мастер
+ * возвращается к сессии только через `localStorage.sessionId`
+ * (`useWorkflow.ts`), а headless-прогон открывает чистый профиль. То
+ * есть никакая фикстура не помогла бы: мастер было нечем направить на
+ * готовую сессию. Шесть сценариев из девяти ждали по 15 секунд элемент,
+ * которого на том экране быть не могло.
+ *
+ * Чинится не здесь, а в паре мест: `route-templates.ts` заводит имя
+ * `generate-ready`, а `tutorial-scenario-runner.service.ts` подсевает по
+ * нему `localStorage.sessionId` — ровно тем способом, которым к своей
+ * сессии возвращается человек, открывший приложение назавтра. Каталог же
+ * отвечает за то, чтобы модель выбрала верное из двух имён: промпт
+ * группирует хуки по `route` и печатает их как отдельные экраны.
+ *
  * ## Чего каталог не обещает
  *
- * Что элемент ЕСТЬ на экране в момент шага. Шаги 3–8 мастера требуют
- * сессии с разбором и промптом, а фикстура сегодня держит только сессию
- * с готовым роликом; хуки этих шагов верны, но до фикстуры с нужным
- * состоянием такие сценарии будут падать на `waitFor` — честно и с
- * понятной причиной, а не на выдуманном селекторе.
+ * Что элемент есть на экране В МОМЕНТ шага. `generate-ready`
+ * открывается на шаге «Видео»; до карточек разбора, товара и промпта
+ * сценарий обязан дойти кликом по степперу (позиции пройдены, значит
+ * кликабельны — см. `clickOnlyWhenVisited`). Хук говорит, на каком
+ * экране элемент живёт, а не что туда уже пришли.
  */
 
 import { WizardPaidOperation } from './scenario-steps.types';
@@ -152,28 +183,28 @@ export const QA_HOOKS: Record<string, QaHook> = {
     description: 'кнопка подтверждения согласия с офертой',
   },
   'wizard-step-upload': {
-    route: 'generate',
+    route: 'generate-ready',
     description:
       'позиция «Референс» в степпере мастера (click — вернуться на пройденный шаг)',
     clickOnlyWhenVisited: true,
   },
   'wizard-step-analysis': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'позиция «Анализ» в степпере мастера',
     clickOnlyWhenVisited: true,
   },
   'wizard-step-product': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'позиция «Товар» в степпере мастера',
     clickOnlyWhenVisited: true,
   },
   'wizard-step-prompt': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'позиция «Промпт» в степпере мастера',
     clickOnlyWhenVisited: true,
   },
   'wizard-step-video': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'позиция «Видео» в степпере мастера',
     clickOnlyWhenVisited: true,
   },
@@ -220,95 +251,95 @@ export const QA_HOOKS: Record<string, QaHook> = {
 
   // ── Шаги 3 и 5: разбор и состав кадра ─────────────────────────────
   'analysis-card': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'карточка разбора ролика по сценам (waitFor/assertVisible)',
   },
   'analysis-edit': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'кнопка «Редактировать» разбор',
   },
   'analysis-continue': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'кнопка «Далее» под разбором',
   },
   'character-casting': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'карточка персонажей разбора (состав кадра)',
   },
   'scene-casting': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'карточка сцен и массовки (состав кадра)',
   },
 
   // ── Товар внутри мастера ──────────────────────────────────────────
   'product-name-input': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'поле названия товара в мастере (fill)',
   },
   'product-description-input': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'поле описания товара в мастере (fill)',
   },
   'product-submit': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'кнопка «Продолжить» после товара',
   },
 
   // ── Шаги 4 и 6: релевантность и промпт ────────────────────────────
   'relevance-panel': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'карточка проверки релевантности (waitFor/assertVisible)',
   },
   'relevance-check': {
-    route: 'generate',
+    route: 'generate-ready',
     clickCost: 'forbidden',
     description: 'кнопка «Проверить релевантность» — платный вызов Gemini',
   },
   'relevance-use-in-prompt': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'чекбокс «Учитывать при генерации»',
   },
   'prompt-generate': {
-    route: 'generate',
+    route: 'generate-ready',
     clickCost: 'forbidden',
     description: 'кнопка «Сгенерировать промпт» — платный вызов модели',
   },
   'prompt-editor': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'поле текста промпта (waitFor, fill для правки)',
   },
   'prompt-approve': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'кнопка одобрения промпта',
   },
 
   // ── Шаги 7 и 8: формат и рендер ───────────────────────────────────
   'product-photo-card': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'карточка фото товара на шаге видео (waitFor/assertVisible)',
   },
   'video-provider': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'блок выбора движка Grok/Veo (assertVisible)',
   },
   'aspect-ratio-picker': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'блок выбора формата кадра (assertVisible)',
   },
   'reference-slots': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'блок референс-картинок для модели (Standard+)',
   },
   'video-duration-input': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'поле длительности ролика в секундах (fill числом 8–60)',
   },
   'video-avoid-input': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'поле «Чего избежать» (fill)',
   },
   'video-generate': {
-    route: 'generate',
+    route: 'generate-ready',
     clickCost: 'generation',
     description:
       'кнопка «Сгенерировать рекламный ролик» — ЗАПУСКАЕТ платный рендер',
@@ -316,15 +347,15 @@ export const QA_HOOKS: Record<string, QaHook> = {
 
   // ── Шаг 9: результат ──────────────────────────────────────────────
   'video-result': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'карточка готового ролика (waitFor/assertVisible)',
   },
   'audit-panel': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'карточка проверки ролика на артефакты',
   },
   'open-postprod': {
-    route: 'generate',
+    route: 'generate-ready',
     description: 'кнопка «Открыть в Постпрод»',
   },
 

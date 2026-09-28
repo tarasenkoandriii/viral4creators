@@ -13,12 +13,87 @@
  * руками; общий чистый модуль этого не требует.
  */
 
-/** Числовые поля результата — для короткой сводки без debug. */
+/**
+ * Сколько ПРИЧИН отказа дописывать к сводке. Не все: `summary` читают
+ * глазами в таблице, и пятьдесят строк там не помещаются. Три — тот же
+ * порядок, что у `ALERT_DETAIL_LIMIT` в исполнителе сценариев, и по той
+ * же причине: назвать поимённо первые, чтобы человек понял КЛАСС
+ * поломки, а не листал.
+ */
+const SUMMARY_REASON_LIMIT = 3;
+
+/**
+ * Числовые поля результата — для короткой сводки без debug.
+ *
+ * Плюс первые причины отказа текстом (сквозной аудит 29.09.2026).
+ *
+ * До правки функция брала ТОЛЬКО числа, и `failures[]` генератора
+ * сценариев — массив, который он старательно собирает поимённо
+ * («реплика шага 3 отброшена: длиннее 220 символов», «шаг 5: селектор
+ * не из каталога», текст отказа модели) — отбрасывался целиком. В
+ * журнале оставалось `pairs=50, generated=0, failed=50`, и по этой
+ * строке нельзя было отличить сломанный ключ Gemini от сменившегося
+ * формата ответа. `debugLog` при этом пуст: настоящий Vercel Cron
+ * зовёт `runAndLog` с `debugMode: false` всегда, то есть поимённые
+ * причины не доезжали до оператора НИКОГДА — при том, что три
+ * отдельных аудита требовали называть их поимённо.
+ */
 export function summarizeCounters(result: Record<string, unknown>): string {
   const parts = Object.entries(result)
     .filter(([, v]) => typeof v === 'number')
     .map(([k, v]) => `${k}=${v as number}`);
+  const reasons = extractReasons(result);
+  if (reasons.length > 0) {
+    const shown = reasons.slice(0, SUMMARY_REASON_LIMIT);
+    const tail =
+      reasons.length > shown.length
+        ? ` и ещё ${reasons.length - shown.length}`
+        : '';
+    parts.push(`причины: ${shown.join('; ')}${tail}`);
+  }
   return parts.length > 0 ? parts.join(', ') : JSON.stringify(result);
+}
+
+/**
+ * Достаёт человекочитаемые причины отказа из результата джоба.
+ *
+ * Два known-поля, а не «любой массив»: `failures[]` у генератора
+ * сценариев и `outcomes[]` у их исполнителя. Обобщать до «всё, что
+ * похоже на список» нельзя — в результатах есть и массивы данных
+ * (`locales[]`), которые в сводке только мешают.
+ */
+function extractReasons(result: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const failures = result.failures;
+  if (Array.isArray(failures)) {
+    for (const f of failures) {
+      if (!f || typeof f !== 'object') continue;
+      const row = f as {
+        subjectKey?: unknown;
+        locale?: unknown;
+        reason?: unknown;
+      };
+      if (typeof row.reason !== 'string') continue;
+      out.push(
+        `${String(row.subjectKey)}/${String(row.locale)}: ${row.reason}`,
+      );
+    }
+  }
+  const outcomes = result.outcomes;
+  if (Array.isArray(outcomes)) {
+    for (const o of outcomes) {
+      if (!o || typeof o !== 'object') continue;
+      const row = o as {
+        ok?: unknown;
+        subjectKey?: unknown;
+        locale?: unknown;
+        error?: unknown;
+      };
+      if (row.ok !== false || typeof row.error !== 'string') continue;
+      out.push(`${String(row.subjectKey)}/${String(row.locale)}: ${row.error}`);
+    }
+  }
+  return out;
 }
 
 /**
@@ -52,6 +127,20 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
   // оператору тут интересно увидеть без раскрытия debug.
   if (
     jobKey === 'tutorial-scenario-run' &&
+    result &&
+    typeof result === 'object' &&
+    typeof (result as { skipped?: string }).skipped === 'string'
+  ) {
+    return `пропущен — ${(result as { skipped: string }).skipped}`;
+  }
+  // Генерация сценариев — та же ветка, добавлена сквозным аудитом
+  // 29.09.2026. Довод «без неё пропущенный запуск выглядел бы как всё
+  // по нулям» выписан в этом файле четыре раза для четырёх других
+  // джобов, а для генератора применён не был: пропуск по замку или по
+  // денежному потолку давал `pairs=0, generated=0, failed=0` — ровно
+  // ту же строку, что полный прогон, которому нечего было делать.
+  if (
+    jobKey === 'tutorial-scenario-generate' &&
     result &&
     typeof result === 'object' &&
     typeof (result as { skipped?: string }).skipped === 'string'

@@ -75,19 +75,36 @@
  *
  * ## Почему платные сценарии не тратят деньги на этом прогоне
  *
- * `triggerPaidOperation` — декларативный маркер и на генерации, и на
- * исполнении (см. `scenario-runner.ts`): регрессионный прогон нужен
- * КАЖДУЮ ночь, а платить за настоящий рендер Veo/переозвучку при
- * каждом прогоне крона нельзя — `approved` (§4.11 ТЗ) в принципе не про
- * «можно тратить при каждом regression-тесте», а про будущий видео-
- * захват, где платный шаг случится по-настоящему один раз для записи.
- * Оценка `costly`/`approved` здесь используется только как входной
- * фильтр (см. ниже), не как разрешение тратить.
+ * Регрессионный прогон нужен КАЖДУЮ ночь, а платить за настоящий
+ * рендер при каждом прогоне крона нельзя: `approved` (§4.11 ТЗ) не
+ * про «можно тратить при каждом regression-тесте», а про будущий
+ * видео-захват, где платный шаг случится по-настоящему один раз для
+ * записи. Поэтому `scenario-runner.ts` не исполняет ни сам маркер
+ * `triggerPaidOperation`, ни `click`, идущий сразу за ним, и
+ * возвращает их номера в `skippedPaidClicks`. Оценка `costly`/
+ * `approved` здесь — входной фильтр (см. ниже), не разрешение тратить.
+ *
+ * До сквозного аудита 29.09.2026 этот абзац утверждал ровно то же
+ * самое, а `scenario-runner.ts` в своём доккомментарии прямо писал,
+ * что следующий за маркером клик «тоже выполнится буквально» и «это
+ * осознанно НЕ блокируется здесь». Правы были не оба: защиты не
+ * существовало, а обещание о ней стояло здесь — в файле, который
+ * читают, когда спрашивают «а не потратит ли крон денег». Стоит
+ * помнить как образец: два доккомментария о ОДНОМ механизме в разных
+ * файлах разошлись, и разошлись в сторону, безопасную для чтения и
+ * опасную для кошелька.
  */
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ProjectType } from '@prisma/client';
+import { GenerationStatus } from '../../common/types/generation.types';
 import { PrismaService } from '../../prisma/prisma.service';
+import { estimateCost } from '../../common/ai-pricing';
+import {
+  budgetExhausted,
+  openTutorialBudget,
+  TutorialBudget,
+} from './tutorial-budget';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { BlobService } from '../storage/blob.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
@@ -104,7 +121,12 @@ import {
   ScenarioFrame,
   ScenarioPage,
 } from './scenario-runner';
-import { FixtureRouteContext, resolveScenarioRoute } from './route-templates';
+import {
+  FRESH_WIZARD_ROUTE,
+  FixtureRouteContext,
+  SEEDED_SESSION_ROUTES,
+  resolveScenarioRoute,
+} from './route-templates';
 import {
   buildTutorialCaptionsAss,
   captionReadingSeconds,
@@ -158,6 +180,7 @@ import {
 } from '../tutorial-scenario/scenario-steps.types';
 import {
   SPA_LOCALE_STORAGE_KEY,
+  SPA_SESSION_STORAGE_KEY,
   SPA_THEME_STORAGE_KEY,
 } from '../../common/spa-storage-keys';
 
@@ -247,6 +270,20 @@ export interface TutorialScenarioRunOutcome {
   locale: string;
   ok: boolean;
   error?: string;
+  /** Сколько платных кликов прогон пропустил, не нажимая (см.
+   * `scenario-runner.ts`). Больше нуля означает, что ролик показывает
+   * экран ДО нажатия, а не результат — исход, отличный и от «прошло», и
+   * от «упало». */
+  paidClicksSkipped?: number;
+  /** Реплики были, но их не хватило на порог — ролик озвучен текстом
+   *  карточки шага, и вычитанные реплики в него не попали. */
+  narrationFallback?: true;
+  /** Сколько кадров не снялось при пройденных шагах: ролик короче
+   *  сценария. «Прошло» и «прошло наполовину» — разные исходы. */
+  framesMissed?: number;
+  /** Шаги прошли, а кадров нет ни одного — ролика не будет, и статус
+   *  «ok» об этом не говорит. */
+  noFrames?: true;
 }
 
 export interface TutorialScenarioRunResult {
@@ -259,6 +296,19 @@ export interface TutorialScenarioRunResult {
   total: number;
   passed: number;
   failed: number;
+  /** Сумма пропущенных платных кликов по всем сценариям тика. В журнал
+   * крона едет отдельным числом: «прогон прошёл» и «прогон прошёл, но
+   * кнопку рендера никто не нажимал» оператор обязан различать, не
+   * открывая логи. */
+  paidClicksSkipped: number;
+  /** У скольких сценариев вычитанные реплики не прозвучали: их было
+   *  меньше порога, и ролик озвучен текстом карточки шага. */
+  narrationFallbacks: number;
+  /** Сколько кадров не снялось за тик при пройденных шагах. */
+  framesMissed: number;
+  /** У скольких сценариев не снялось НИ ОДНОГО кадра при пройденных
+   *  шагах: зелёный «ok» и отсутствие ролика без объяснения. */
+  withoutFrames: number;
   outcomes: TutorialScenarioRunOutcome[];
 }
 
@@ -268,6 +318,22 @@ export interface TutorialScenarioRunResult {
  * опрашивает, а не на один маршрут.
  */
 const ASSEMBLY_POLL_LOCK = 'tutorial-assembly-poll';
+
+/**
+ * Сколько раз пробовать собрать ОДНО И ТО ЖЕ содержимое, прежде чем
+ * перестать (сквозной аудит 29.09.2026).
+ *
+ * Три, а не одна: сбой внешнего сервиса чаще случайный, чем
+ * систематический, и бросать после первого промаха значило бы терять
+ * ролики из-за икоты. И не десять: к третьему утру одинаковый алерт
+ * уже перестают читать, а платить за него продолжают.
+ */
+const MAX_ASSEMBLY_ATTEMPTS = 3;
+
+/** Потолок на скачивание готового ролика у внешнего сервиса. Ролик
+ *  обучалки — считаные мегабайты; минуты хватает с запасом, а
+ *  зависшее навсегда соединение стоит целого тика. */
+const DOWNLOAD_TIMEOUT_MS = 60_000;
 
 /**
  * Префикс кадров-транзитов ОДНОГО актива. По id актива, а не по
@@ -293,6 +359,10 @@ export interface TutorialAssemblyPollResult {
    *  В устоявшемся состоянии 0 или единицы за ночь: ровно столько,
    *  сколько новых сборок вытеснило прежние. */
   swept?: number;
+  /** Сколько сборок провалилось за этот тик. В журнале крона отдельным
+   *  числом: до сквозного аудита 29.09.2026 провал сборки нигде, кроме
+   *  логов функции и цветного бейджа, не проявлялся. */
+  failed?: number;
 }
 
 /**
@@ -324,6 +394,21 @@ interface NarrationOutcome {
    * зрителю ни в уши, ни на экран.
    */
   captionTexts: Map<number, string>;
+  /**
+   * Реплики были, но их не хватило на порог `MIN_NARRATED_SHARE`, и
+   * ролик озвучен ЗАПАСНЫМ путём — текстом карточки шага (сквозной
+   * аудит 29.09.2026).
+   *
+   * Исход дорогой и до этого был виден только в логах функции: админка
+   * в этот момент показывает «N реплик, вычитаны», оператор под ними
+   * подписался, а в ролик не попала ни одна — ни в звук (звучит другой
+   * текст), ни на экран (`captionTexts` обнуляется, иначе подпись
+   * разошлась бы со звуком, что §11 п.16 прямо запрещает).
+   *
+   * Поэтому выносится наружу и считается в журнале крона: «прошло» и
+   * «прошло, но вычитанные реплики не прозвучали» — разные исходы.
+   */
+  narrationFallback?: true;
 }
 
 type NarrationPlan =
@@ -343,6 +428,11 @@ type NarrationPlan =
 
 @Injectable()
 export class TutorialScenarioRunnerService {
+  /** Провалов сборки за текущий тик опроса — для одной агрегатной
+   *  тревоги вместо тревоги на строку. Обнуляется в начале
+   *  `pollAssemblies`; вне его не читается. */
+  private failedThisTick = 0;
+
   private readonly logger = new Logger(TutorialScenarioRunnerService.name);
 
   constructor(
@@ -421,6 +511,11 @@ export class TutorialScenarioRunnerService {
    * дорожка, и покадровая, — это два разных ответа на вопрос «что
    * звучит на кадре N».
    */
+  /** Потолок тика — см. `tutorial-budget.ts`. */
+  private openBudget(): Promise<TutorialBudget> {
+    return openTutorialBudget(this.settings, this.aiUsage);
+  }
+
   private async buildNarration(
     scenario: {
       subjectKey: string;
@@ -435,6 +530,9 @@ export class TutorialScenarioRunnerService {
     /** Фикстурный пользователь, под которым идёт прогон. Расход
      *  пишется на него — см. `fixture-seed.ts`. */
     userId: string,
+    /** Суточный потолок тика. Синтез — самая дробная из трёх трат, и
+     *  именно он обязан уметь остановиться посередине сценария. */
+    budget: TutorialBudget,
   ): Promise<NarrationOutcome> {
     // Реплики читаются ПЕРВЫМИ и независимо от выключателя озвучки:
     // подписям синтез не нужен, им нужен текст.
@@ -476,9 +574,11 @@ export class TutorialScenarioRunnerService {
       // ролик, а не про файл.
       const narratedShare =
         stepIndexes.length > 0 ? perStep.size / stepIndexes.length : 0;
-      if (perStep.size > 0 && narratedShare < MIN_NARRATED_SHARE) {
+      const narrationFallback =
+        perStep.size > 0 && narratedShare < MIN_NARRATED_SHARE;
+      if (narrationFallback) {
         this.logger.warn(
-          `сценарий ${scenario.subjectKey} (${scenario.locale}): реплик хватает только на ${perStep.size} из ${stepIndexes.length} кадров — берём запасной путь, текст шага обучалки`,
+          `сценарий ${scenario.subjectKey} (${scenario.locale}): реплик хватает только на ${perStep.size} из ${stepIndexes.length} кадров — берём запасной путь, текст шага обучалки; вычитанные реплики в ролик не попадут`,
         );
       }
       if (perStep.size > 0 && narratedShare >= MIN_NARRATED_SHARE) {
@@ -502,6 +602,16 @@ export class TutorialScenarioRunnerService {
           // вероятность попасть выросла тридцатикратно, а цена — с
           // «одна фраза» до «весь сценарий молчит».
           try {
+            // Потолок проверяется перед КАЖДОЙ дорожкой, а не раз за
+            // сценарий: тридцать реплик — это тридцать трат, и
+            // остановиться надо на той, которая перевалила, а не
+            // после всех.
+            if (budgetExhausted(budget)) {
+              this.logger.warn(
+                `сценарий ${scenario.subjectKey}/${scenario.locale}: суточный потолок расхода обучалки выбран — остальные реплики этой ночью не синтезируются`,
+              );
+              break;
+            }
             const track = await this.voiceTrack(
               scenario,
               String(stepIndex),
@@ -509,6 +619,7 @@ export class TutorialScenarioRunnerService {
               voice,
               provider,
               userId,
+              budget,
             );
             if (!track) continue;
             tracks.set(stepIndex, {
@@ -561,6 +672,12 @@ export class TutorialScenarioRunnerService {
         );
         return silent();
       }
+      if (budgetExhausted(budget)) {
+        this.logger.warn(
+          `сценарий ${scenario.subjectKey}/${scenario.locale}: суточный потолок расхода обучалки выбран — ролик собирается немым`,
+        );
+        return silent();
+      }
       const track = await this.voiceTrack(
         scenario,
         VOICE_SLOT_WHOLE,
@@ -568,6 +685,7 @@ export class TutorialScenarioRunnerService {
         voice,
         provider,
         userId,
+        budget,
       );
       if (!track) return silent();
       await this.reconcileVoiceCache(scenario, [track.key]);
@@ -582,6 +700,7 @@ export class TutorialScenarioRunnerService {
         // никто не произносит, значит показать одно и озвучить
         // другое — зритель прочтёт не то, что услышит.
         captionTexts: new Map<number, string>(),
+        ...(narrationFallback ? { narrationFallback: true as const } : {}),
       };
     } catch (err) {
       this.logger.warn(
@@ -685,6 +804,7 @@ export class TutorialScenarioRunnerService {
     voice: { voiceId: string | null },
     provider: Awaited<ReturnType<TtsProviderResolverService['resolve']>>,
     userId: string,
+    budget: TutorialBudget,
   ): Promise<{
     url: string;
     speechSeconds: number | null;
@@ -731,6 +851,9 @@ export class TutorialScenarioRunnerService {
     // «сколько стоит озвучка обучалки» было не узнать. Модель — та же
     // `{провайдер}-tts`, что у постпрода: ставка у них одна, различается
     // только вопрос, на который отвечает строка.
+    budget.spentMicroUsd += estimateCost(`${provider.providerKey}-tts`, {
+      characters: outcome.characters,
+    }).costMicroUsd;
     await this.aiUsage.record({
       operation: 'tutorial-voiceover',
       model: `${provider.providerKey}-tts`,
@@ -843,14 +966,12 @@ export class TutorialScenarioRunnerService {
     const token = process.env.FIXTURE_USER_TOKEN?.trim();
     const tmaBaseUrl = process.env.TMA_PUBLIC_URL?.trim();
     if (!telegramId || !token) {
-      this.logger.warn(
-        'FIXTURE_USER_TOKEN/FIXTURE_TELEGRAM_ID не настроены — пропуск (см. .env.example)',
+      return this.skipLoudly(
+        'фикстурный вход не настроен (FIXTURE_USER_TOKEN/FIXTURE_TELEGRAM_ID, см. .env.example)',
       );
-      return this.skip('фикстурный вход не настроен');
     }
     if (!tmaBaseUrl) {
-      this.logger.warn('TMA_PUBLIC_URL не настроен — пропуск');
-      return this.skip('TMA_PUBLIC_URL не настроен');
+      return this.skipLoudly('TMA_PUBLIC_URL не настроен');
     }
     // Токен несём только на origin своего API (`fixture-token-page.ts`).
     // Без адреса API отличить свой запрос от чужого нечем, а слать
@@ -858,20 +979,18 @@ export class TutorialScenarioRunnerService {
     // ТЗ docs-tz/TZ-Tutorial-Video-Voiced.md.
     const apiOrigin = fixtureApiOrigin();
     if (!apiOrigin) {
-      this.logger.warn(
-        'API_PUBLIC_URL не настроен или не разбирается — пропуск: без него фикстурный токен ушёл бы и сторонним сайтам',
+      return this.skipLoudly(
+        'API_PUBLIC_URL не настроен или не разбирается — без него фикстурный токен ушёл бы и сторонним сайтам',
       );
-      return this.skip('API_PUBLIC_URL не настроен');
     }
 
     const user = await this.prisma.user.findUnique({
       where: { telegramId },
     });
     if (!user) {
-      this.logger.warn(
-        `фикстурный пользователь telegramId=${telegramId} не найден — запустите npm run seed:fixture-user`,
+      return this.skipLoudly(
+        `фикстурный пользователь telegramId=${telegramId} не заведён — запустите npm run seed:fixture-user`,
       );
-      return this.skip('фикстурный пользователь не заведён');
     }
 
     // Только не-платные ИЛИ платные, но явно одобренные оператором
@@ -908,10 +1027,33 @@ export class TutorialScenarioRunnerService {
       take: RUN_BATCH_LIMIT,
     });
     if (scenarios.length === 0) {
-      return { total: 0, passed: 0, failed: 0, outcomes: [] };
+      return {
+        total: 0,
+        passed: 0,
+        failed: 0,
+        paidClicksSkipped: 0,
+        narrationFallbacks: 0,
+        framesMissed: 0,
+        withoutFrames: 0,
+        outcomes: [],
+      };
     }
 
     const ctx = await this.resolveFixtureContext(user.id);
+    // Потолок открывается ОДИН раз на тик и ведётся в памяти — см.
+    // `openBudget`. Читается до запуска браузера: если он уже выбран,
+    // поднимать Chromium незачем.
+    const budget = await this.openBudget();
+    if (budgetExhausted(budget)) {
+      const reason =
+        'суточный потолок расхода обучалки выбран — прогон отложен до завтра';
+      this.logger.warn(reason);
+      await this.notify.alert(
+        'tutorial-scenario-run:budget',
+        `Сценарии обучающего видео: ${reason}.`,
+      );
+      return this.skip(reason);
+    }
 
     const launched = await launchHeadlessBrowser();
     if ('error' in launched) {
@@ -925,6 +1067,10 @@ export class TutorialScenarioRunnerService {
         total: scenarios.length,
         passed: 0,
         failed: scenarios.length,
+        paidClicksSkipped: 0,
+        narrationFallbacks: 0,
+        framesMissed: 0,
+        withoutFrames: 0,
         // `locale` обязателен в `TutorialScenarioRunOutcome` — и
         // именно здесь его забыли. В песочнице это не видно (типы
         // Prisma подменены заглушкой, и `scenarios` выводится как
@@ -968,6 +1114,7 @@ export class TutorialScenarioRunnerService {
           token,
           apiOrigin,
           tmaBaseUrl,
+          budget,
         );
         outcomes.push(outcome);
         if (!outcome.ok) {
@@ -1017,6 +1164,13 @@ export class TutorialScenarioRunnerService {
       executed: outcomes.length,
       passed: outcomes.filter((o) => o.ok).length,
       failed: outcomes.filter((o) => !o.ok).length,
+      paidClicksSkipped: outcomes.reduce(
+        (sum, o) => sum + (o.paidClicksSkipped ?? 0),
+        0,
+      ),
+      narrationFallbacks: outcomes.filter((o) => o.narrationFallback).length,
+      framesMissed: outcomes.reduce((sum, o) => sum + (o.framesMissed ?? 0), 0),
+      withoutFrames: outcomes.filter((o) => o.noFrames).length,
       outcomes,
     };
   }
@@ -1040,10 +1194,43 @@ export class TutorialScenarioRunnerService {
     /** Origin API — единственный адресат токена (этап I ТЗ на озвученную обучалку). */
     apiOrigin: string,
     tmaBaseUrl: string,
+    /** Суточный денежный потолок тика — один на все сценарии прогона. */
+    budget: TutorialBudget,
   ): Promise<TutorialScenarioRunOutcome> {
     const steps = scenario.steps as unknown as ScenarioStep[];
+
+    // Какую сессию держать в `localStorage` до первой загрузки SPA.
+    //
+    // Решается ДО открытия браузера и на весь сценарий: подсев
+    // работает через `evaluateOnNewDocument`, то есть на каждый
+    // документ, а не на отдельный `goto`. Поэтому сценарий, зовущий и
+    // чистый мастер, и мастер на готовой сессии, не запускается вовсе:
+    // иначе второй `goto` молча получил бы не тот экран, и падение
+    // случилось бы на шаге, который ни в чём не виноват.
+    const gotoRoutes = steps
+      .filter(
+        (step): step is Extract<ScenarioStep, { kind: 'goto' }> =>
+          step.kind === 'goto',
+      )
+      .map((step) => step.route);
+    const wantsSeededSession = gotoRoutes.some((route) =>
+      SEEDED_SESSION_ROUTES.has(route),
+    );
+    const mixesWizardRoutes =
+      wantsSeededSession && gotoRoutes.includes(FRESH_WIZARD_ROUTE);
+    const seededSessionId = wantsSeededSession ? (ctx.sessionId ?? '') : '';
+
     let page: import('puppeteer-core').Page | undefined;
     try {
+      // Брошено внутри `try` намеренно: ниже уже есть `catch`, который
+      // пишет причину в `lastRunError` и возвращает исход нужной формы.
+      // Отдельная ветка выхода до него дублировала бы эту запись — и
+      // однажды разошлась бы с ней.
+      if (mixesWizardRoutes) {
+        throw new Error(
+          `сценарий смешивает "${FRESH_WIZARD_ROUTE}" и маршрут на готовой сессии — подсев сессии действует на весь прогон, и чистый мастер после него чистым уже не будет; разделите на два сценария`,
+        );
+      }
       page = await browser.newPage();
       // Телефонный вьюпорт — ДО загрузки SPA (этап H, находка аудита).
       // Без него puppeteer открывает страницу 800×600: кадр ролика
@@ -1085,16 +1272,33 @@ export class TutorialScenarioRunnerService {
       // и раньше по умолчанию; важно здесь только то, что тема
       // задана ЯВНО и не зависит от системной у машины, где
       // случился прогон.
+      //
+      // Тем же способом подсевается и СЕССИЯ мастера (находка второго
+      // боевого прогона 29.09.2026, маршрут `generate-ready`): у
+      // мастера нет URL с идентификатором сессии, вернуться к ней
+      // умеет только `localStorage.sessionId` — ровно так возвращается
+      // и человек, открывший приложение назавтра. Пустая строка здесь
+      // означает «чистый мастер», и ключ тогда УДАЛЯЕТСЯ, а не
+      // пропускается: страница могла остаться от предыдущего сценария,
+      // и молча унаследованная сессия была бы хуже отсутствия подсева —
+      // экран открылся бы не тот, а причина не назвалась бы нигде.
       await page.evaluateOnNewDocument(
         (
           locale: string,
           theme: string,
           localeKey: string,
           themeKey: string,
+          sessionId: string,
+          sessionKey: string,
         ) => {
           try {
             window.localStorage.setItem(localeKey, locale);
             window.localStorage.setItem(themeKey, theme);
+            if (sessionId) {
+              window.localStorage.setItem(sessionKey, sessionId);
+            } else {
+              window.localStorage.removeItem(sessionKey);
+            }
           } catch {
             // хранилище недоступно — SPA откроется в умолчаниях, и
             // сценарий чужой локали честно упадёт на `assertText`.
@@ -1105,6 +1309,8 @@ export class TutorialScenarioRunnerService {
         SCENARIO_THEME,
         SPA_LOCALE_STORAGE_KEY,
         SPA_THEME_STORAGE_KEY,
+        seededSessionId,
+        SPA_SESSION_STORAGE_KEY,
       );
 
       const base = tmaBaseUrl.replace(/\/+$/, '');
@@ -1127,6 +1333,15 @@ export class TutorialScenarioRunnerService {
         `сценарий не уложился в ${Math.round(SCENARIO_TIMEOUT_MS / 1000)}с`,
       );
 
+      // Кадр не снялся — прогон прошёл, а ролик будет короче
+      // сценария. В журнал поимённо: это единственный след частичного
+      // успеха, и до сквозного аудита 29.09.2026 его не было вовсе.
+      for (const miss of result.skippedFrames) {
+        this.logger.warn(
+          `сценарий ${scenario.subjectKey} (${scenario.locale}): кадр шага ${miss.stepIndex + 1} не снялся (${miss.error}) — в ролике его не будет`,
+        );
+      }
+
       const failedStep = result.steps.find((s) => !s.ok);
       const error = failedStep
         ? `шаг ${failedStep.index + 1} (${failedStep.step.kind}): ${failedStep.error}`
@@ -1144,8 +1359,15 @@ export class TutorialScenarioRunnerService {
       // Видео — необязательный побочный продукт успешного прогона
       // (см. доккомментарий модуля): best-effort, никогда не бросает и
       // не меняет уже записанный regression-результат выше.
+      const assemblyNotes: { narrationFallback?: true; noFrames?: true } = {};
       if (result.ok) {
-        await this.submitVideoAssembly(scenario, result.frames, userId);
+        await this.submitVideoAssembly(
+          scenario,
+          result.frames,
+          budget,
+          userId,
+          assemblyNotes,
+        );
       }
 
       return {
@@ -1154,6 +1376,16 @@ export class TutorialScenarioRunnerService {
         locale: scenario.locale,
         ok: result.ok,
         error,
+        ...(result.skippedPaidClicks.length > 0
+          ? { paidClicksSkipped: result.skippedPaidClicks.length }
+          : {}),
+        ...(assemblyNotes.narrationFallback
+          ? { narrationFallback: true as const }
+          : {}),
+        ...(result.skippedFrames.length > 0
+          ? { framesMissed: result.skippedFrames.length }
+          : {}),
+        ...(assemblyNotes.noFrames ? { noFrames: true as const } : {}),
       };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -1254,8 +1486,37 @@ export class TutorialScenarioRunnerService {
           where: { userId },
           orderBy: { createdAt: 'desc' },
         }),
+        /*
+         * Сессия — только с ГОТОВЫМ роликом, а не «самая свежая»
+         * (находка сквозного аудита 29.09.2026).
+         *
+         * У фикстурного пользователя сессий несколько, и штатно самая
+         * свежая из них — НЕ та, что нужна. `ui-snapshot-runner`
+         * держит служебную сессию (`data.qaFixture`, статус `created`,
+         * без ролика), чтобы обход мастера не плодил пустые строки
+         * каждые две минуты; её `createdAt` новее фикстурной. Плюс
+         * каждый сценарий, идущий на ЧИСТЫЙ мастер, заводит ещё одну
+         * пустую сессию — таков сам мастер.
+         *
+         * Отбор «по свежести» поэтому отдавал пустую сессию обоим
+         * потребителям: `generate-ready` подсевал её в `localStorage`,
+         * мастер честно её восстанавливал и открывался на первом шаге
+         * — то есть правка второго боевого прогона (§11-сексиес) на
+         * проде не работала вовсе, а выглядела сделанной. То же и с
+         * `postprod-video`: экран открывался у сессии без ролика.
+         *
+         * `generationStatus: COMPLETE` — признак по СОДЕРЖАНИЮ, а не
+         * фиксированный id из `seed-fixture-user.ts`: резолвер должен
+         * работать и для фикстуры, донастроенной руками (тот же довод,
+         * что у остальных полей этого метода). Служебная сессия обхода
+         * под него не попадает по построению — у неё статус `created`.
+         */
         this.prisma.session.findFirst({
-          where: { userId, deletedAt: null },
+          where: {
+            userId,
+            deletedAt: null,
+            generationStatus: GenerationStatus.COMPLETE,
+          },
           orderBy: { createdAt: 'desc' },
         }),
       ]);
@@ -1271,8 +1532,48 @@ export class TutorialScenarioRunnerService {
     };
   }
 
+  /**
+   * Прогон не состоялся целиком — и об этом ОБЯЗАТЕЛЬНО узнаёт человек
+   * (сквозной аудит 29.09.2026).
+   *
+   * До правки все четыре причины пропуска (нет фикстурного входа, нет
+   * `TMA_PUBLIC_URL`, нет `API_PUBLIC_URL`, фикстурный пользователь не
+   * заведён) писали только `logger.warn`. Асимметрия была ровно в
+   * опасную сторону: провал ЗАПУСКА БРАУЗЕРА тревогу слал, а «не за
+   * что было браться» — нет, хотя второе и чаще, и тише.
+   *
+   * Тише потому, что при пропуске НЕ ТРОГАЕТСЯ ни одна строка
+   * `TutorialScenario`: `lastRunAt`/`lastRunStatus` остаются от
+   * последней удачной ночи, и витрина сценариев показывает зелёное
+   * «ok» недельной давности. То есть «не запускалось» неотличимо от
+   * «прошло» — на той самой витрине, ради которой регресс-раннер и
+   * существует. `API_PUBLIC_URL` при этом требование этапа I,
+   * добавленное последним: забыть его при выкате легче всего.
+   *
+   * Ключ дедупликации — без причины: разные причины одного и того же
+   * («прогона не было») не должны давать четыре разных сообщения.
+   */
+  private async skipLoudly(reason: string): Promise<TutorialScenarioRunResult> {
+    this.logger.warn(reason);
+    await this.notify.alert(
+      'tutorial-scenario-run:skipped',
+      `Сценарии обучающего видео: прогон не состоялся — ${reason}. Витрина сценариев показывает результат ПРОШЛОГО прогона, не сегодняшнего.`,
+    );
+    return this.skip(reason);
+  }
+
   private skip(reason: string): TutorialScenarioRunResult {
-    return { skipped: reason, total: 0, passed: 0, failed: 0, outcomes: [] };
+    return {
+      skipped: reason,
+      total: 0,
+      passed: 0,
+      failed: 0,
+      paidClicksSkipped: 0,
+      narrationFallbacks: 0,
+      framesMissed: 0,
+      withoutFrames: 0,
+      outcomes: [],
+    };
   }
 
   /**
@@ -1294,11 +1595,31 @@ export class TutorialScenarioRunnerService {
       narrationReviewedAt?: Date | null;
     },
     frames: readonly ScenarioFrame[],
+    /** Суточный потолок тика: проверяется и перед синтезом каждой
+     *  дорожки, и перед отправкой сборки. */
+    budget: TutorialBudget,
     /** Фикстурный пользователь — владелец расхода (см.
      *  `synthesizeNarration`). */
     userId: string,
+    /** Куда сложить замеченное по дороге, чтобы оно доехало до журнала
+     *  крона. Объект, а не возвращаемое значение: метод объявлен
+     *  best-effort и выходит из себя в полудюжине мест. */
+    assemblyNotes: { narrationFallback?: true; noFrames?: true },
   ): Promise<void> {
-    if (frames.length === 0) return;
+    if (frames.length === 0) {
+      // Молчать тут нельзя (сквозной аудит 29.09.2026). Сценарий из
+      // одних `assertVisible`, отвалившийся на каждом шаге
+      // `page.screenshot`, мок без `screenshot` — во всех случаях
+      // `lastRunStatus: 'ok'`, зелёная строка в админке и НИ ОДНОЙ
+      // строки в журнале. Оператор видит зелёное и отсутствие ролика, и
+      // объяснения не находит нигде: соседняя ветка «не изменилось,
+      // сборка не нужна» хотя бы пишется.
+      this.logger.log(
+        `сценарий ${scenario.subjectKey} (${scenario.locale}): кадров не снято — собирать нечего`,
+      );
+      assemblyNotes.noFrames = true;
+      return;
+    }
     if (!this.ffmpeg.configured()) {
       this.logger.warn(
         `сценарий ${scenario.subjectKey}: FFMPEG_API_KEY не настроен — слайд-шоу не собирается (regression-результат уже учтён)`,
@@ -1332,11 +1653,17 @@ export class TutorialScenarioRunnerService {
     // есть дешевле, чем заливка кадров, которую он теперь опережает.
     // `buildNarration` свой `catch` уже имеет и на любой сбой
     // возвращает `{mode:'none'}` (немой ролик — штатный исход).
-    const { plan: narration, captionTexts } = await this.buildNarration(
+    const {
+      plan: narration,
+      captionTexts,
+      narrationFallback,
+    } = await this.buildNarration(
       scenario,
       frames.map((f) => f.stepIndex),
       userId,
+      budget,
     );
+    if (narrationFallback) assemblyNotes.narrationFallback = true;
     // Подписи включены по умолчанию, в отличие от самой озвучки:
     // ролик смотрят без звука чаще, чем со звуком, и подпись —
     // единственное, что в этом случае объясняет кадр (§5 ТЗ).
@@ -1472,6 +1799,45 @@ export class TutorialScenarioRunnerService {
       return;
     }
 
+    // Столько же раз, сколько и ПРОВАЛИВШИХСЯ на том же содержимом
+    // (сквозной аудит 29.09.2026).
+    //
+    // Предпроверка выше сличает отпечаток только с СОБРАННЫМ роликом
+    // (`assemblyStatus: 'complete'`) — и это правильно для своей
+    // задачи. Но строка со статусом `failed` в сличении не
+    // участвовала вовсе, а счётчика попыток не было нигде. Кадр, на
+    // котором внешний сервис стабильно спотыкается (или `.ass` с
+    // символом, ломающим libass), давал так вечный цикл: каждую ночь
+    // одна и та же задача отправлялась заново, оплачивалась и падала.
+    // Тридцать строк — это ≈$0.30 за ночь за ролики, которых не будет,
+    // и один и тот же алерт каждое утро, который перестают читать
+    // примерно на третий раз.
+    //
+    // Потолок именно на ОДНО содержимое: поправили реплику, сменился
+    // отпечаток — счёт начинается заново, и починка не требует
+    // трогать базу руками. Это и есть выход из отказа, который иначе
+    // пришлось бы описывать в инструкции.
+    const failedSameContent = (await this.prisma.tutorialVideoAsset
+      .count({
+        where: {
+          subjectKey: scenario.subjectKey,
+          locale: scenario.locale,
+          assemblyStatus: 'failed',
+          contentHash,
+        },
+      })
+      .catch(() => 0)) as number;
+    if (failedSameContent >= MAX_ASSEMBLY_ATTEMPTS) {
+      this.logger.warn(
+        `сценарий ${scenario.subjectKey} (${scenario.locale}): сборка этого содержимого проваливалась ${failedSameContent} раз(а) — больше не пробуем, пока не изменятся кадры или реплики`,
+      );
+      await this.notify.alert(
+        `tutorial-assembly:giveup:${scenario.subjectKey}:${scenario.locale}`,
+        `Сборка ролика обучалки ${scenario.subjectKey}/${scenario.locale} провалилась ${failedSameContent} раз(а) на одном и том же содержимом — попытки остановлены. Посмотрите последнюю ошибку во вкладке «Видео-контент».`,
+      );
+      return;
+    }
+
     // Строка заводится в своём `try`: до неё убирать нечего, и
     // `abandonAssembly` ниже звать не с чем. Без него любая икота
     // базы на `create` летела бы наружу — в `runOne`, который уже
@@ -1598,6 +1964,21 @@ export class TutorialScenarioRunnerService {
         );
       }
 
+      // Последняя из трёх трат — и последняя точка, где ещё можно не
+      // потратить. Синтез мог выбрать потолок сам, пока шёл по
+      // тридцати репликам; отправлять сборку после этого значило бы
+      // перешагнуть потолок ровно на ту сумму, ради которой он стоит.
+      if (budgetExhausted(budget)) {
+        this.logger.warn(
+          `сценарий ${scenario.subjectKey} (${scenario.locale}): суточный потолок расхода обучалки выбран — сборка отложена до завтра`,
+        );
+        await this.abandonAssembly(
+          asset.id,
+          'суточный потолок расхода обучалки выбран',
+        );
+        return;
+      }
+
       const job = await this.ffmpeg.submit({
         inputs: plan.inputs,
         outputs: plan.outputs,
@@ -1609,6 +1990,7 @@ export class TutorialScenarioRunnerService {
       // сайту заказчика. При пяти локалях это до тридцати
       // неучтённых вызовов за ночь. Пишем сразу после отправки:
       // деньги списываются за приём задачи, а не за её результат.
+      budget.spentMicroUsd += estimateCost('ffmpeg-api', {}).costMicroUsd;
       await this.aiUsage.record({
         operation: 'tutorial-video-assembly',
         model: 'ffmpeg-api',
@@ -1705,6 +2087,7 @@ export class TutorialScenarioRunnerService {
       // «сборок и правда не было».
       return { skipped: 'предыдущий опрос ещё не завершился', polled: 0 };
     }
+    this.failedThisTick = 0;
     try {
       // Счётчик — ПОСЛЕ опроса и по факту: сколько строк осталось
       // висеть. Прежняя редакция считала до опроса, и в журнале после
@@ -1721,7 +2104,29 @@ export class TutorialScenarioRunnerService {
       const pending = await this.prisma.tutorialVideoAsset.count({
         where: { assemblyStatus: 'pending' },
       });
-      return { polled, pending, abandoned, swept };
+      // Одна тревога на тик, а не на строку (сквозной аудит
+      // 29.09.2026).
+      //
+      // До неё во ВСЕЙ ветке сборки не было ни одной тревоги: отказ
+      // Resemble, отказ Blob, 5xx от ffmpeg-api, задача, не уложившаяся
+      // в срок, — всё это давало `logger.warn` в логи функции и цветной
+      // бейдж на вкладке, которую надо пойти и открыть. Подсистема,
+      // чей смысл — узнать о поломке, о своей собственной молчала.
+      //
+      // Агрегатом, потому что тик идёт каждые две минуты: тревога на
+      // каждую провалившуюся строку превратила бы канал в фон уже к
+      // обеду, а фон не читают (см. `ALERT_DETAIL_LIMIT` — тот же урок
+      // на прогоне сценариев). Поимённый разбор — на вкладке
+      // «Видео-контент», здесь только «пойдите посмотрите».
+      const failedThisTick = this.failedThisTick;
+      if (failedThisTick > 0) {
+        await this.notify.alert(
+          'tutorial-assembly-poll:failed',
+          `Сборка роликов обучалки: за этот тик провалилось ${failedThisTick}. Причины — во вкладке «ИИ-консультант» → «Видео-контент».`,
+        );
+      }
+      const failed = this.failedThisTick;
+      return { polled, pending, abandoned, swept, failed };
     } finally {
       await releaseJobLock(this.prisma, ASSEMBLY_POLL_LOCK, acquired);
     }
@@ -1928,13 +2333,45 @@ export class TutorialScenarioRunnerService {
 
   /** @returns сколько строк успели опросить. */
   private async pollPendingVideoAssets(): Promise<number> {
-    if (!this.ffmpeg.configured()) return 0;
-
     const pending = await this.prisma.tutorialVideoAsset.findMany({
       where: { assemblyStatus: 'pending' },
       take: RUN_BATCH_LIMIT,
     });
     if (pending.length === 0) return 0;
+
+    // Ключа сервиса нет — спрашивать статус не у кого, но и бросать
+    // строки в `pending` навсегда нельзя (сквозной аудит 29.09.2026).
+    //
+    // Раньше проверка `configured()` стояла ПЕРВОЙ строкой метода, до
+    // выборки и до дедлайна. Ключ снят или ротирован (второй уровень
+    // отката §9 прямо предлагает «синтез не настроен» как штатное
+    // состояние) — и уже отправленные строки висели вечно: опрос
+    // выходил на нулевой строке, `abandonStalePreparing` ходит только
+    // по `preparing`, а подметальщик намеренно не трогает ни
+    // `preparing`, ни `pending`. Оператор видел бессрочное
+    // «собирается», а в журнале — `polled=0, pending=N` с растущим N и
+    // без единого слова о причине.
+    //
+    // Дедлайн сборки применяется и без ключа: он про время, а не про
+    // ответ сервиса. Задача, не уложившаяся в него, закрывается
+    // названной причиной, и пара пересоберётся следующей ночью.
+    if (!this.ffmpeg.configured()) {
+      let closed = 0;
+      for (const asset of pending) {
+        if (!this.assemblyOverdue(asset)) continue;
+        await this.failAssembly(
+          asset,
+          'ключ внешнего сервиса сборки не настроен, а срок задачи истёк',
+        );
+        closed++;
+      }
+      if (closed > 0) {
+        this.logger.warn(
+          `опрос сборок: ключ ffmpeg-api не настроен — ${closed} просроченных задач(и) закрыто, пара пересоберётся после настройки`,
+        );
+      }
+      return 0;
+    }
 
     const deadline = Date.now() + POLL_DEADLINE_MS;
     let polled = 0;
@@ -1944,6 +2381,15 @@ export class TutorialScenarioRunnerService {
       polled++;
     }
     return polled;
+  }
+
+  /** Срок задачи внешнего сервиса истёк. Одно место на обе ветки
+   *  опроса — с ключом и без него. */
+  private assemblyOverdue(asset: { assemblyStartedAt?: Date | null }): boolean {
+    return (
+      !!asset.assemblyStartedAt &&
+      Date.now() - asset.assemblyStartedAt.getTime() > ASSEMBLY_DEADLINE_MS
+    );
   }
 
   private async pollOneVideoAsset(asset: {
@@ -1970,10 +2416,7 @@ export class TutorialScenarioRunnerService {
       return;
     }
 
-    if (
-      asset.assemblyStartedAt &&
-      Date.now() - asset.assemblyStartedAt.getTime() > ASSEMBLY_DEADLINE_MS
-    ) {
+    if (this.assemblyOverdue(asset)) {
       await this.failAssembly(
         asset,
         `сборка не завершилась за ${ASSEMBLY_DEADLINE_MS / 60000} мин`,
@@ -2035,9 +2478,14 @@ export class TutorialScenarioRunnerService {
           // файл. До этапа A он вычислялся тут заново, произведением
           // `frameCount × SECONDS_PER_FRAME`, и это сходилось ровно
           // пока все кадры были одной длины. С этапа B длины разные, и
-          // повторное вычисление разошлось бы молча — а число это
-          // человек читает на экране мастера («Длительность — около
-          // N с»).
+          // повторное вычисление разошлось бы молча.
+          //
+          // Кто это число читает: на сценарном пути — никто (уточнено
+          // сквозным аудитом 29.09.2026, см. доккомментарий
+          // `slideshowDurationMs`). Прежняя редакция ссылалась на
+          // экран мастера («Длительность — около N с»), но это экран
+          // обучалки по САЙТУ ЗАКАЗЧИКА, у которого длительность
+          // считается иначе.
           //
           // Строки, отправленные до этой правки, досчитывать задним
           // числом не пытаемся: `durationMs` необязателен, экран
@@ -2096,12 +2544,43 @@ export class TutorialScenarioRunnerService {
     this.logger.warn(
       `сценарий ${asset.subjectKey}: сборка видео провалилась — ${reason}`,
     );
+    this.failedThisTick++;
     await this.prisma.tutorialVideoAsset.update({
       where: { id: asset.id },
       data: { assemblyStatus: 'failed', assemblyError: reason },
     });
-    await this.cleanupFrames(asset);
-    await this.releaseClientSiteDraft(asset, reason);
+    // Уборка кадров и откат черновика — НЕЗАВИСИМЫЕ шаги, и ни один не
+    // вправе отменить другой (сквозной аудит 29.09.2026).
+    //
+    // До этой правки все три операции шли подряд без защиты. Икота
+    // Blob в `cleanupFrames` — после того, как строка уже помечена
+    // `failed`, — давала сразу три последствия, и каждое хуже
+    // предыдущего: (1) `releaseClientSiteDraft` не вызывался вовсе, и
+    // черновик обучалки заказчика оставался в `APPROVED` НАВСЕГДА (из
+    // `APPROVED` выхода нет ни у кого — ровно та яма, которую закрывал
+    // аудит 27.09.2026, открытая заново через путь исключения);
+    // (2) исключение улетало вверх и рушило весь тик опроса — остальные
+    // `pending`-строки в эту минуту не опрашивались, крон отвечал 500;
+    // (3) повторялось это каждые две минуты, пока Blob икает.
+    //
+    // Порядок тоже важен: откат черновика идёт ПЕРВЫМ, потому что он
+    // про состояние, которое видит человек, а уборка кадров — про
+    // место в хранилище. Если выбирать, что потерять при отказе, —
+    // теряем место, а не выход из состояния.
+    await this.releaseClientSiteDraft(asset, reason).catch((err) => {
+      this.logger.warn(
+        `сценарий ${asset.subjectKey}: черновик обучалки заказчика не вернулся на одобрение: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
+    await this.cleanupFrames(asset).catch((err) => {
+      this.logger.warn(
+        `сценарий ${asset.subjectKey}: кадры провалившейся сборки не убрались: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
   }
 
   /**
@@ -2186,14 +2665,38 @@ export class TutorialScenarioRunnerService {
         `кадры актива ${assetId} не убрались: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
-    await this.prisma.tutorialVideoAsset.update({
-      where: { id: assetId },
-      data: { assemblyStatus: 'failed', assemblyError: reason.slice(0, 500) },
-    });
+    // Та же защита, что у `failAssembly` (сквозной аудит 29.09.2026):
+    // бросок отсюда обрывал цикл `abandonStalePreparing` и уносил с
+    // собой опрос сборок этого тика. Строка обязана получить статус
+    // даже тогда, когда база икнула, — иначе она останется в
+    // `preparing` и пойдёт по кругу.
+    await this.prisma.tutorialVideoAsset
+      .update({
+        where: { id: assetId },
+        data: { assemblyStatus: 'failed', assemblyError: reason.slice(0, 500) },
+      })
+      .catch((err) => {
+        this.logger.warn(
+          `актив ${assetId}: статус провала не записался: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
   }
 
+  /**
+   * Скачивание готового mp4 у внешнего сервиса.
+   *
+   * Таймаут обязателен (сквозной аудит 29.09.2026): без него зависшее
+   * соединение съедает весь тик опроса и джоб-замок вместе с ним —
+   * `POLL_DEADLINE_MS` проверяется только МЕЖДУ строками, а не внутри
+   * сетевого вызова. Приём в проекте уже известен (`AbortSignal.timeout`
+   * у TTS), просто сюда не дошёл.
+   */
   private async downloadBytes(url: string): Promise<Buffer> {
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
     if (!res.ok) {
       throw new Error(`скачивание результата: HTTP ${res.status}`);
     }

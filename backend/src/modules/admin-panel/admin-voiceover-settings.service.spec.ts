@@ -28,9 +28,13 @@ function build(
 
 describe('AdminVoiceoverSettingsService', () => {
   it('ничего не задавалось — active из фоллбека, source "env-default"', async () => {
+    // Фоллбек с 29.09.2026 — `resemble`, решение владельца (§7.2 ТЗ
+    // обучалки). Раньше здесь стоял `elevenlabs` «как было до этапа
+    // 70», и решение владельца держалось только на строке в
+    // PlatformSetting: потеряйся она — счёт вырос бы в 6.7 раза молча.
     const { svc } = build(null);
     const result = await svc.get();
-    expect(result.active).toBe('elevenlabs');
+    expect(result.active).toBe('resemble');
     expect(result.source).toBe('env-default');
   });
 

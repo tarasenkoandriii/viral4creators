@@ -34,6 +34,7 @@ import { ProjectType } from '@prisma/client';
 import { currencyForCountry } from '../../common/data/countries';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { SessionStatus } from '../../common/types/session.types';
+import { DEFAULT_VOICE_MODE } from '../../common/voice-mode';
 
 export const FIXTURE_IDS = {
   manifest: 'fixture-tutorial-manifest',
@@ -226,6 +227,17 @@ export async function seedFixtureUser(
     // не принимает `Date` напрямую.
     initiatedAt: new Date().toISOString(),
     provider: 'veo' as const,
+    // Режим озвучки — НЕ умолчание и не косметика (находка второго
+    // боевого прогона 29.09.2026). `RevoicePanel` на экране постпрода
+    // рендерится только при `usesOwnVoice(video.voiceMode)`, а фикстура
+    // клала ролик вовсе без поля — карточка переозвучки не появлялась
+    // никогда, и сценарий хука `revoice-panel` ждал её 15 секунд.
+    //
+    // `'voiceover'` здесь не произвольный выбор: это
+    // `DEFAULT_VOICE_MODE` (`common/voice-mode.ts`) — то, что продукт
+    // ставит новым брендам с 15.09.2026. Фикстура должна выглядеть как
+    // обычный сегодняшний ролик, иначе она проверяет не тот продукт.
+    voiceMode: DEFAULT_VOICE_MODE,
   };
 
   const sessionData = {

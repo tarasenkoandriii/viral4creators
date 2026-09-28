@@ -1164,6 +1164,10 @@ describe('CronJobsService.runTutorialScenarioRun — исполнение сце
       total: 0,
       passed: 0,
       failed: 0,
+      paidClicksSkipped: 0,
+      narrationFallbacks: 0,
+      framesMissed: 0,
+      withoutFrames: 0,
       outcomes: [],
     });
   });

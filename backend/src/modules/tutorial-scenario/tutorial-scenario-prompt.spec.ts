@@ -2,12 +2,14 @@ import { AssistantStepItem } from '../assistant/knowledge/generated';
 import {
   buildScenarioPrompt,
   parseScenarioResponse,
+  PRICED_VIDEO_MODELS,
+  validateScenarioSteps,
 } from './tutorial-scenario-prompt';
 import {
   MAX_NARRATION_LENGTH,
   WIZARD_PAID_OPERATIONS,
 } from './scenario-steps.types';
-import { AI_OPERATION_LABEL } from '../../common/ai-pricing';
+import { AI_OPERATION_LABEL, MODEL_RATES } from '../../common/ai-pricing';
 import { QA_HOOKS } from './qa-hooks';
 
 const step: AssistantStepItem = {
@@ -505,4 +507,109 @@ describe('повисшее объявление платного вызова (�
       expect(result.reason).toBeUndefined();
     }
   });
+});
+
+/**
+ * Закрытый список имён моделей — третий в этом промпте после маршрутов
+ * и селекторов (сквозной аудит 29.09.2026).
+ */
+describe('модель платного шага — закрытый список', () => {
+  const steps = (model: string, expectedUnits: Record<string, number>) => [
+    { kind: 'goto', route: 'generate-ready' },
+    {
+      kind: 'triggerPaidOperation',
+      operation: 'generation',
+      model,
+      expectedUnits,
+      note: 'рендер',
+    },
+    { kind: 'click', selector: '[data-qa="video-generate"]' },
+  ];
+
+  it('список берётся из прайса и не пуст', () => {
+    expect(PRICED_VIDEO_MODELS.length).toBeGreaterThan(0);
+    expect(PRICED_VIDEO_MODELS).toContain('veo-3.1-generate-preview');
+  });
+
+  const STEP_8 = {
+    title: 'Сгенерируйте видео',
+    text: 'Нажмите кнопку генерации.',
+    details: [],
+  } as never;
+
+  it('промпт печатает модели ТОГО движка, что предзаполнен в мастере', () => {
+    // Замечание владельца 29.09.2026: умолчание — Grok, не Veo. Дать
+    // модели оба списка значило бы завести новую ошибку вместо
+    // исправленной: объявленный Veo даёт прикидку $3.20 за
+    // восьмисекундный ролик, а Grok 480p отрендерит его за $0.64 —
+    // оператор одобряет не ту сумму.
+    const prompt = buildScenarioPrompt('8', 'ru', STEP_8, 'grok');
+    expect(prompt).toContain('grok-imagine-video-1.5:480p');
+    expect(prompt).not.toContain('veo-3.1-generate-preview');
+  });
+
+  it('умолчание аргумента повторяет умолчание продукта', () => {
+    // Вызывающий, не прочитавший настройку, обязан получить верное
+    // поведение, а не тихо неверное.
+    expect(buildScenarioPrompt('8', 'ru', STEP_8)).toBe(
+      buildScenarioPrompt('8', 'ru', STEP_8, 'grok'),
+    );
+  });
+
+  it('оператор переключил мастер на Veo — промпт едет следом', () => {
+    const prompt = buildScenarioPrompt('8', 'ru', STEP_8, 'veo');
+    expect(prompt).toContain('veo-3.1-generate-preview');
+    expect(prompt).not.toContain('grok-imagine-video-1.5:480p');
+  });
+
+  it('валидатор принимает движки ОБОИХ провайдеров', () => {
+    // Асимметрия намеренная: промпт ведёт новые сценарии к верной
+    // прикидке, валидатор не ломает сохранённые до смены умолчания.
+    for (const model of [
+      'grok-imagine-video-1.5:480p',
+      'veo-3.1-generate-preview',
+    ]) {
+      expect(validateScenarioSteps(steps(model, { seconds: 8 })).ok).toBe(true);
+    }
+  });
+
+  it('придуманное имя модели отвергает сценарий целиком', () => {
+    const parsed = validateScenarioSteps(steps('veo-3', { seconds: 8 }));
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toContain('нет среди оцениваемых');
+  });
+
+  it('верное имя с неверными единицами тоже отвергается', () => {
+    const parsed = validateScenarioSteps(
+      steps('veo-3.1-generate-preview', { calls: 1 }),
+    );
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toContain('expectedUnits.seconds');
+  });
+
+  it('верное имя и секунды проходят', () => {
+    const parsed = validateScenarioSteps(
+      steps('veo-3.1-generate-preview', { seconds: 8 }),
+    );
+    expect(parsed.ok).toBe(true);
+  });
+});
+
+it('список моделей — только движки мастера, без аватара и клона голоса', () => {
+  // По секундам считаются ещё и hedra-character-3, и клон голоса.
+  // Пустить их в список значило бы заменить нулевую прикидку на
+  // уверенно неверную — у нуля хотя бы есть подпись «занижена».
+  for (const name of PRICED_VIDEO_MODELS) {
+    expect(['VEO', 'GROK']).toContain(MODEL_RATES[name].provider);
+  }
+  expect(PRICED_VIDEO_MODELS).not.toContain('hedra-character-3');
+  expect(PRICED_VIDEO_MODELS).not.toContain('resemble-voice-clone');
+  // Одного провайдера мало: у GROK есть и модель-КАРТИНКА, у которой
+  // ставки за секунду нет вовсе. Попади она в список — валидатор
+  // потребовал бы `expectedUnits.seconds` у того, что секундами не
+  // считается, и отверг бы верный сценарий.
+  for (const name of PRICED_VIDEO_MODELS) {
+    expect(MODEL_RATES[name].perSecond).toBeDefined();
+  }
+  expect(PRICED_VIDEO_MODELS).not.toContain('grok-imagine-image');
 });

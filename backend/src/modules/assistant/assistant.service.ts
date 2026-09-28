@@ -448,7 +448,19 @@ export class AssistantService {
   ): Promise<string[]> {
     try {
       const rows = await this.prisma.tutorialVideoAsset.findMany({
-        where: { locale, reviewed: true, blobUrl: { not: null } },
+        // `clientSiteDraftId: null` — третий барьер против выдачи
+        // посетителю ролика по сайту ЗАКАЗЧИКА (сквозной аудит
+        // 29.09.2026). Первые два стоят в админке — витрина их не
+        // показывает, одобрение их отвергает, — но последнее слово
+        // здесь: этот запрос решает, что модель вообще имеет право
+        // предложить. Три барьера на одном пути, потому что цена
+        // ошибки — чужой материал у постороннего человека.
+        where: {
+          locale,
+          reviewed: true,
+          blobUrl: { not: null },
+          clientSiteDraftId: null,
+        },
         select: { subjectKey: true },
         distinct: ['subjectKey'],
       });
@@ -490,6 +502,7 @@ export class AssistantService {
           locale,
           reviewed: true,
           blobUrl: { not: null },
+          clientSiteDraftId: null,
         },
         orderBy: { createdAt: 'desc' },
         select: { blobUrl: true, title: true },

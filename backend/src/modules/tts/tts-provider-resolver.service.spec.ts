@@ -52,16 +52,16 @@ describe('TtsProviderResolverService', () => {
     await expect(resolver.resolve()).resolves.toBe(resemble);
   });
 
-  it('ни настройка, ни окружение — умолчание elevenlabs', async () => {
+  it('ни настройка, ни окружение — умолчание resemble (решение владельца, §7.2)', async () => {
     delete process.env.TTS_PROVIDER;
-    const { resolver, eleven } = build(null);
-    await expect(resolver.resolve()).resolves.toBe(eleven);
+    const { resolver, resemble } = build(null);
+    await expect(resolver.resolve()).resolves.toBe(resemble);
   });
 
   it('мусор в настройке — не роняет резолвер, откатывается как «не задано»', async () => {
     delete process.env.TTS_PROVIDER;
-    const { resolver, eleven } = build('cartesia');
-    await expect(resolver.resolve()).resolves.toBe(eleven);
+    const { resolver, resemble } = build('cartesia');
+    await expect(resolver.resolve()).resolves.toBe(resemble);
   });
 
   it('resolveKey отдаёт голый ключ без похода за самим провайдером повторно', async () => {

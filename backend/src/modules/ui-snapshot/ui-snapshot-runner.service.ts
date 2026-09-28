@@ -106,6 +106,7 @@ import {
 import type { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import {
   SPA_LOCALE_STORAGE_KEY,
+  SPA_SESSION_STORAGE_KEY,
   SPA_THEME_STORAGE_KEY,
 } from '../../common/spa-storage-keys';
 
@@ -535,14 +536,27 @@ export class UiSnapshotRunnerService {
       // пустую сессию `created` — в админке это выглядело как поток
       // фейковых сессий. Подкладываем одну постоянную служебную сессию
       // ДО загрузки SPA: мастер её восстанавливает и ничего не создаёт.
+      //
+      // Тот же ключ подсевает и `TutorialScenarioRunnerService` — ради
+      // другого: открыть мастер на ПРОЙДЕННОЙ сессии (маршрут
+      // `generate-ready`). Приём здесь появился раньше и работал, но
+      // сценарный раннер его не перенял, и шесть сценариев из девяти
+      // молча открывали пустой мастер до 29.09.2026. Константа общая
+      // (`SPA_SESSION_STORAGE_KEY`) именно поэтому: литерал в двух
+      // местах уже однажды означал, что второе место про первое не
+      // знает.
       if (wizardSessionId) {
-        await page.evaluateOnNewDocument((id: string) => {
-          try {
-            window.localStorage.setItem('sessionId', id);
-          } catch {
-            // хранилище недоступно — мастер создаст сессию, как раньше
-          }
-        }, wizardSessionId);
+        await page.evaluateOnNewDocument(
+          (id: string, key: string) => {
+            try {
+              window.localStorage.setItem(key, id);
+            } catch {
+              // хранилище недоступно — мастер создаст сессию, как раньше
+            }
+          },
+          wizardSessionId,
+          SPA_SESSION_STORAGE_KEY,
+        );
       }
 
       // Локаль и тема — ТЕМИ ЖЕ ключами, что пишет сам продукт

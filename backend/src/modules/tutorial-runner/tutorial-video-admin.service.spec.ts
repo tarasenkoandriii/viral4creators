@@ -35,6 +35,11 @@ describe('TutorialVideoAdminService.list (§4.9, этап 99)', () => {
       subjectKey: 'plan-upgrade',
       locale: 'ru',
       reviewed: true,
+      // Ролики обучалки по сайту заказчика в эту таблицу не попадают
+      // (сквозной аудит 29.09.2026) — у них своя витрина и своё
+      // одобрение, а одна кнопка отсюда отдавала бы их посетителям
+      // лендинга.
+      clientSiteDraftId: null,
     };
     expect(prisma.tutorialVideoAsset.findMany).toHaveBeenCalledWith({
       where: expectedWhere,
@@ -53,6 +58,7 @@ describe('TutorialVideoAdminService.list (§4.9, этап 99)', () => {
     expect(prisma.tutorialVideoAsset.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
+          clientSiteDraftId: null,
           subjectKey: undefined,
           locale: undefined,
           reviewed: undefined,
@@ -166,5 +172,33 @@ describe('TutorialVideoAdminService.dataStatus', () => {
     const { service } = build();
     const result = await service.dataStatus();
     expect(result.lastRuns.every((r) => r.status === null)).toBe(true);
+  });
+});
+
+describe('ролики обучалки по сайту заказчика (сквозной аудит 29.09.2026)', () => {
+  it('одобрить через API нельзя — барьер не только в витрине', async () => {
+    // Прямой вызов мимо экрана отдал бы посетителям ролик по чужому
+    // сайту так же, как ошибочное нажатие.
+    const { service, prisma } = build();
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      id: 'tva-1',
+      clientSiteDraftId: 'draft-7',
+    });
+
+    await expect(service.setReviewed('tva-1', true)).rejects.toThrow(
+      /сайту заказчика/,
+    );
+    expect(prisma.tutorialVideoAsset.update).not.toHaveBeenCalled();
+  });
+
+  it('штатный ролик одобряется по-прежнему', async () => {
+    const { service, prisma } = build();
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      id: 'tva-2',
+      clientSiteDraftId: null,
+    });
+
+    await service.setReviewed('tva-2', true);
+    expect(prisma.tutorialVideoAsset.update).toHaveBeenCalled();
   });
 });

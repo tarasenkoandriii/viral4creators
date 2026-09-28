@@ -36,9 +36,13 @@ describe('resolveDefaultProviderKey', () => {
     ); // регистр не важен — так же, как у старой фабрики tts.module.ts
   });
 
-  it('ни админка, ни окружение — умолчание elevenlabs (не регресс этапа 70)', () => {
-    expect(resolveDefaultProviderKey(null, {})).toBe('elevenlabs');
-    expect(resolveDefaultProviderKey(undefined, {})).toBe('elevenlabs');
+  it('ни админка, ни окружение — умолчание resemble (решение владельца, §7.2)', () => {
+    // До сквозного аудита 29.09.2026 здесь стоял elevenlabs — «тот же
+    // дефолт, что был до этапа 70». Решение владельца держалось только
+    // на строке в PlatformSetting: потеряйся она — и счёт вырос бы в
+    // 6.7 раза молча ($220/M символов против $33/M).
+    expect(resolveDefaultProviderKey(null, {})).toBe('resemble');
+    expect(resolveDefaultProviderKey(undefined, {})).toBe('resemble');
   });
 
   it('мусор в любом из двух источников пропускается молча, а не бросает', () => {
@@ -46,7 +50,7 @@ describe('resolveDefaultProviderKey', () => {
       resolveDefaultProviderKey('cartesia', { TTS_PROVIDER: 'resemble' }),
     ).toBe('resemble');
     expect(resolveDefaultProviderKey('cartesia', { TTS_PROVIDER: 'xyz' })).toBe(
-      'elevenlabs',
+      'resemble',
     );
   });
 });

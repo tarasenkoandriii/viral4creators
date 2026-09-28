@@ -398,18 +398,45 @@ export default function TutorialScenariosPage() {
                         );
                       })()}
                     </td>
+                    {/* Причина падения — ЗДЕСЬ, а не только внутри
+                        «Шаги» (долг из doc/TODO.md, закрыт сквозным
+                        аудитом 29.09.2026). У регресс-раннера вся
+                        ценность в том, что он называет поломку; при
+                        семи падениях из девяти оператор делал семь
+                        разворотов и семь прокруток, чтобы выяснить,
+                        что причина у всех одна.
+
+                        Три состояния, а не два: «переписан генератором»
+                        (`lastRunAt` есть, `lastRunStatus` обнулён) до
+                        этой правки рисовалось как «— 28.09.2026» и
+                        читалось «прогон был, результат непонятен». */}
                     <td className="muted" style={{ fontSize: 12 }}>
-                      {row.lastRunAt ? (
+                      {!row.lastRunAt ? (
+                        'ещё не запускался'
+                      ) : row.lastRunStatus === null ? (
+                        <>
+                          переписан генератором{' '}
+                          {new Date(row.lastRunAt).toLocaleDateString('ru-RU')}
+                        </>
+                      ) : (
                         <>
                           {row.lastRunStatus === 'failed' ? (
                             <span className="critical">ошибка</span>
                           ) : (
-                            row.lastRunStatus ?? '—'
+                            row.lastRunStatus
                           )}{' '}
                           {new Date(row.lastRunAt).toLocaleDateString('ru-RU')}
+                          {row.lastRunStatus === 'failed' &&
+                            row.lastRunError && (
+                              <div
+                                className="critical"
+                                style={{ marginTop: 4, fontSize: 11 }}
+                                title={row.lastRunError}
+                              >
+                                {row.lastRunError}
+                              </div>
+                            )}
                         </>
-                      ) : (
-                        'ещё не запускался'
                       )}
                     </td>
                     <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

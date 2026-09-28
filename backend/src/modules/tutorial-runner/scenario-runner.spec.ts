@@ -488,3 +488,172 @@ describe('указатель клика: замер в момент снимка
     expect(p.x).toBeCloseTo((10.123456 + 33.333333 / 2) / 390, 4);
   });
 });
+
+/**
+ * Платный клик не исполняется — находка сквозного аудита 29.09.2026.
+ * До неё `click` за маркером нажимался буквально, то есть регрессионный
+ * прогон запускал настоящий рендер Veo каждую ночь.
+ */
+describe('runScenario — платный клик', () => {
+  function pageSpy() {
+    const clicked: string[] = [];
+    const shots: number[] = [];
+    let shot = 0;
+    return {
+      clicked,
+      shots,
+      page: {
+        goto: jest.fn().mockResolvedValue(undefined),
+        waitForSelector: jest.fn().mockResolvedValue(undefined),
+        locator: (selector: string) => ({
+          click: jest.fn().mockImplementation(async () => {
+            clicked.push(selector);
+          }),
+          fill: jest.fn().mockResolvedValue(undefined),
+        }),
+        $eval: jest.fn().mockResolvedValue(''),
+        screenshot: jest.fn().mockImplementation(async () => {
+          shots.push(shot);
+          return new Uint8Array([shot++]);
+        }),
+      } as never,
+    };
+  }
+  const route = () => ({ ok: true as const, url: 'https://tma.example/#/x' });
+
+  it('клик сразу за triggerPaidOperation не нажимается и не даёт кадра', async () => {
+    const { page, clicked } = pageSpy();
+    const result = await runScenario(
+      page,
+      [
+        { kind: 'goto', route: 'generate-ready' },
+        {
+          kind: 'triggerPaidOperation',
+          operation: 'generation',
+          model: 'veo-3.1-generate-preview',
+          expectedUnits: { seconds: 8 },
+          note: 'рендер ролика',
+        },
+        { kind: 'click', selector: '[data-qa="video-generate"]' },
+      ] as never,
+      route,
+      1000,
+      true,
+    );
+
+    expect(result.ok).toBe(true);
+    // Главное: кнопка рендера НЕ нажата.
+    expect(clicked).toEqual([]);
+    expect(result.skippedPaidClicks).toEqual([2]);
+    expect(result.steps[2]).toMatchObject({ ok: true, skippedAsPaid: true });
+    // Кадр экрана ДО нажатия остаётся (его даёт сам маркер), кадра
+    // пропущенного клика нет — иначе в ролик уехал бы дубль.
+    expect(result.frames.map((f) => f.stepIndex)).toEqual([0, 1]);
+  });
+
+  it('обычный клик, не идущий за маркером, нажимается как раньше', async () => {
+    const { page, clicked } = pageSpy();
+    const result = await runScenario(
+      page,
+      [
+        { kind: 'goto', route: 'generate' },
+        { kind: 'click', selector: '[data-qa="reference-tab-link"]' },
+      ] as never,
+      route,
+      1000,
+      true,
+    );
+
+    expect(clicked).toEqual(['[data-qa="reference-tab-link"]']);
+    expect(result.skippedPaidClicks).toEqual([]);
+  });
+
+  it('пропускается ТОЛЬКО соседний клик, следующий за ним — обычный', async () => {
+    // Иначе один маркер глушил бы весь хвост сценария, и оператор
+    // считал бы пройденным то, что не исполнялось.
+    const { page, clicked } = pageSpy();
+    const result = await runScenario(
+      page,
+      [
+        {
+          kind: 'triggerPaidOperation',
+          operation: 'generation',
+          model: 'veo-3.1-generate-preview',
+          expectedUnits: { seconds: 8 },
+          note: 'рендер',
+        },
+        { kind: 'click', selector: '[data-qa="video-generate"]' },
+        { kind: 'click', selector: '[data-qa="open-postprod"]' },
+      ] as never,
+      route,
+      1000,
+      false,
+    );
+
+    expect(clicked).toEqual(['[data-qa="open-postprod"]']);
+    expect(result.skippedPaidClicks).toEqual([1]);
+  });
+});
+
+/**
+ * Пропавший кадр обязан быть виден снаружи — сквозной аудит
+ * 29.09.2026. Пустой `catch` прятал единственный след частичного
+ * успеха: ролик из пяти кадров вместо десяти и ни строчки об этом.
+ */
+describe('runScenario — несостоявшийся снимок', () => {
+  it('сбой скриншота не роняет прогон, но попадает в skippedFrames', async () => {
+    let n = 0;
+    const page = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue(undefined),
+      locator: () => ({
+        click: jest.fn().mockResolvedValue(undefined),
+        fill: jest.fn().mockResolvedValue(undefined),
+      }),
+      $eval: jest.fn().mockResolvedValue(''),
+      screenshot: jest.fn().mockImplementation(async () => {
+        n++;
+        if (n === 2) throw new Error('страница в переходном состоянии');
+        return new Uint8Array([n]);
+      }),
+    } as never;
+
+    const result = await runScenario(
+      page,
+      [
+        { kind: 'goto', route: 'generate' },
+        { kind: 'waitFor', selector: '[data-qa="reference-card"]' },
+        { kind: 'assertVisible', selector: '[data-qa="reference-card"]' },
+      ] as never,
+      () => ({ ok: true as const, url: 'https://tma.example/#/generate' }),
+      1000,
+      true,
+    );
+
+    expect(result.ok).toBe(true);
+    // Дыра в нумерации, а не сдвиг: шаг 1 пропал, шаги 0 и 2 на месте.
+    expect(result.frames.map((f) => f.stepIndex)).toEqual([0, 2]);
+    expect(result.skippedFrames).toEqual([
+      { stepIndex: 1, error: 'страница в переходном состоянии' },
+    ]);
+  });
+
+  it('всё снялось — список пуст, а не отсутствует', async () => {
+    const page = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      waitForSelector: jest.fn().mockResolvedValue(undefined),
+      locator: () => ({ click: jest.fn(), fill: jest.fn() }),
+      $eval: jest.fn().mockResolvedValue(''),
+      screenshot: jest.fn().mockResolvedValue(new Uint8Array([1])),
+    } as never;
+
+    const result = await runScenario(
+      page,
+      [{ kind: 'goto', route: 'generate' }] as never,
+      () => ({ ok: true as const, url: 'https://tma.example/#/generate' }),
+      1000,
+      true,
+    );
+    expect(result.skippedFrames).toEqual([]);
+  });
+});

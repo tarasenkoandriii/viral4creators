@@ -60,7 +60,12 @@ function build(storedLocales: string | null = null) {
     },
     user: { findUnique: jest.fn().mockResolvedValue({ id: 'usr_fixture' }) },
   };
-  const aiUsage = { recordGemini: jest.fn().mockResolvedValue(undefined) };
+  const aiUsage = {
+    recordGemini: jest.fn().mockResolvedValue(undefined),
+    // Суточный потолок (сквозной аудит 29.09.2026): ноль потраченного
+    // — прежние тесты он не трогает, свои проверяют его явно.
+    spentTodayForOperation: jest.fn().mockResolvedValue(0),
+  };
   // `null` — настройки нет, то есть умолчание `['ru']`: ровно то, что
   // генератор делал до этапа C.
   const settings = { get: jest.fn().mockResolvedValue(storedLocales) };
@@ -101,6 +106,63 @@ beforeEach(() => {
 });
 
 describe('TutorialScenarioGeneratorService.run', () => {
+  it('движок для промпта берётся из настройки мастера, а не зашит', async () => {
+    // Иначе прикидка разойдётся с настоящей тратой в разы, как только
+    // оператор переключит провайдера: промпт продолжит просить модели
+    // прежнего движка.
+    const { service, settings } = build();
+    settings.get.mockImplementation(async (key: string) =>
+      key === 'default_video_provider' ? 'veo' : '["ru"]',
+    );
+
+    await service.run();
+
+    const prompt = generateContent.mock.calls[0][0].contents[0].text as string;
+    expect(prompt).toContain('veo-3.1-generate-preview');
+    expect(prompt).not.toContain('grok-imagine-video-1.5:480p');
+  });
+
+  it('настройки нет — промпт просит Grok, умолчание продукта', async () => {
+    const { service } = build();
+
+    await service.run();
+
+    const prompt = generateContent.mock.calls[0][0].contents[0].text as string;
+    expect(prompt).toContain('grok-imagine-video-1.5:480p');
+    expect(prompt).not.toContain('veo-3.1-generate-preview');
+  });
+
+  it('правленная руками пара не доходит до модели — и не оплачивается', async () => {
+    // `generatedBy: 'manual'` объявлен договором «со следующей ночи
+    // генератор эту строку не трогает». До сквозного аудита 29.09.2026
+    // проверка стояла ПОСЛЕ вызова модели и после записи расхода: он
+    // её трогал, просто платно и впустую.
+    const { service, prisma, aiUsage } = build();
+    prisma.tutorialScenario.findUnique.mockResolvedValue({
+      generatedBy: 'manual',
+    });
+
+    const result = await service.run();
+
+    expect(generateContent).not.toHaveBeenCalled();
+    expect(aiUsage.recordGemini).not.toHaveBeenCalled();
+    expect(result.skippedManual).toBeGreaterThan(0);
+    expect(result.generated).toBe(0);
+  });
+
+  it('суточный потолок выбран — генерация откладывается, модель не зовём', async () => {
+    const { service, settings, aiUsage } = build();
+    settings.get.mockImplementation(async (key: string) =>
+      key === 'postprod.tutorialDailyBudgetUsd' ? '1' : '["ru"]',
+    );
+    aiUsage.spentTodayForOperation.mockResolvedValue(1_000_000);
+
+    const result = await service.run();
+
+    expect(result.skipped).toContain('потолок');
+    expect(generateContent).not.toHaveBeenCalled();
+  });
+
   it('селектор не из каталога data-qa — сценарий отклонён целиком, в базу не пишется (этап I)', async () => {
     generateContent.mockResolvedValue({
       text: JSON.stringify({

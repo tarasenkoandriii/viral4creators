@@ -53,6 +53,17 @@ import {
   TUTORIAL_LOCALES_SETTING_KEY,
 } from './tutorial-locales';
 import { estimateScenarioCost, ScenarioCostEstimate } from './scenario-cost';
+import { estimateCost } from '../../common/ai-pricing';
+import {
+  DEFAULT_VIDEO_PROVIDER_SETTING_KEY,
+  resolveDefaultVideoProvider,
+  VideoProviderKey,
+} from '../generation/default-video-provider';
+import {
+  budgetExhausted,
+  openTutorialBudget,
+  TutorialBudget,
+} from '../tutorial-runner/tutorial-budget';
 import { ScenarioStep } from './scenario-steps.types';
 import { mergeNarration } from './scenario-steps';
 import { stableStringify } from '../../common/stable-json';
@@ -90,6 +101,10 @@ export interface TutorialScenarioGenerateResult {
    * число, иначе молчаливая перезапись выглядела бы как генерация.
    */
   skippedManual: number;
+  /** Заполнено, когда прогон отложен целиком — сегодня это суточный
+   *  денежный потолок. Без отдельного поля «отложено» выглядело бы
+   *  как «прогнали, и делать было нечего». */
+  skipped?: string;
   generated: number;
   costly: number;
   failed: number;
@@ -158,6 +173,31 @@ export class TutorialScenarioGeneratorService {
     // семейству бюджет есть.
     const deadline = Date.now() + GENERATE_DEADLINE_MS;
 
+    // Денежный потолок — рядом с бюджетом времени и по той же причине
+    // (сквозной аудит 29.09.2026): до него у ночной работы обучалки
+    // потолков было три, и все три считали штуки и секунды, а не
+    // деньги. Генерация — первая из трёх трат за ночь, и выбирать
+    // потолок она может сама: пятьдесят пар по вызову модели.
+    const budget = await openTutorialBudget(this.settings, this.aiUsage);
+
+    // Провайдер видео, предзаполненный в мастере (правка 29.09.2026 по
+    // замечанию владельца: умолчание — Grok, не Veo). Читается ОДИН раз
+    // на прогон и передаётся в промпт: сценарий должен объявлять модель
+    // того движка, которым продукт реально отрендерит ролик, иначе
+    // прикидка расходится с тратой в разы — $3.20 против $0.64 за
+    // восьмисекундный ролик, — и оператор одобряет не ту сумму.
+    const videoProvider = resolveDefaultVideoProvider(
+      await this.settings
+        .get(DEFAULT_VIDEO_PROVIDER_SETTING_KEY)
+        .catch(() => null),
+    );
+    if (budgetExhausted(budget)) {
+      const reason =
+        'суточный потолок расхода обучалки выбран — генерация отложена до завтра';
+      this.logger.warn(reason);
+      return { ...result, skipped: reason };
+    }
+
     // Владелец расхода. Генерация — фоновый крон без живого
     // пользователя, и до сквозного аудита A+B+C её расход шёл БЕЗ
     // владельца: `AiUsageService.record` помечает такую строку
@@ -194,7 +234,15 @@ export class TutorialScenarioGeneratorService {
       // сгенерировав ничего (правка аудита этапа C).
       result.locales.push(locale);
       result.pairs += steps.length;
-      await this.runLocale(locale, steps, result, deadline, ownerId);
+      await this.runLocale(
+        locale,
+        steps,
+        result,
+        deadline,
+        ownerId,
+        budget,
+        videoProvider,
+      );
     }
 
     this.logger.log(
@@ -401,6 +449,10 @@ export class TutorialScenarioGeneratorService {
     deadline: number,
     /** Фикстурный пользователь — владелец расхода (см. `run`). */
     ownerId: string | undefined,
+    /** Суточный денежный потолок тика — один на все локали. */
+    budget: TutorialBudget,
+    /** Движок видео, предзаполненный в мастере, — в промпт. */
+    videoProvider: VideoProviderKey,
   ): Promise<void> {
     for (let i = 0; i < steps.length; i++) {
       if (Date.now() >= deadline) {
@@ -409,10 +461,41 @@ export class TutorialScenarioGeneratorService {
         );
         return;
       }
+      if (budgetExhausted(budget)) {
+        this.logger.warn(
+          `локаль ${locale}: суточный потолок расхода обучалки выбран на шаге ${i + 1} — остаток отложен до следующего прогона`,
+        );
+        return;
+      }
       const subjectKey = String(i + 1);
       const step = steps[i];
       try {
-        const prompt = buildScenarioPrompt(subjectKey, locale, step);
+        // Правленная руками пара проверяется ДО вызова модели
+        // (сквозной аудит 29.09.2026). Раньше проверка стояла внутри
+        // `writeScenario`, то есть после `generateContent` и после
+        // записи расхода: `generatedBy: 'manual'` объявлен договором
+        // «со следующей ночи генератор эту строку не трогает», а
+        // генератор её трогал — просто платно и впустую. Десять
+        // правленных пар давали десять лишних вызовов Gemini каждую
+        // ночь, и ответ выбрасывался.
+        const existing = await this.prisma.tutorialScenario.findUnique({
+          where: { subjectKey_locale: { subjectKey, locale } },
+          select: { generatedBy: true },
+        });
+        if (existing?.generatedBy === 'manual') {
+          this.logger.log(
+            `сценарий шага ${subjectKey} (${locale}) правлен руками — не трогаем, модель не зовём`,
+          );
+          result.skippedManual++;
+          continue;
+        }
+
+        const prompt = buildScenarioPrompt(
+          subjectKey,
+          locale,
+          step,
+          videoProvider,
+        );
         const res = await this.genai.models.generateContent({
           model: GEMINI_MODEL,
           contents: [{ text: prompt }],
@@ -423,6 +506,13 @@ export class TutorialScenarioGeneratorService {
           model: GEMINI_MODEL,
           userId: ownerId,
         });
+        // Потраченное ведётся в памяти, а не перечитывается из журнала
+        // перед каждой парой: пятьдесят агрегатов за прогон ради
+        // одного числа — см. `openBudget` в исполнителе.
+        budget.spentMicroUsd += estimateCost(GEMINI_MODEL, {
+          inputTokens: res.usageMetadata?.promptTokenCount ?? 0,
+          outputTokens: res.usageMetadata?.candidatesTokenCount ?? 0,
+        }).costMicroUsd;
 
         const parsed = parseScenarioResponse(res.text ?? '');
         if (!parsed.ok) {

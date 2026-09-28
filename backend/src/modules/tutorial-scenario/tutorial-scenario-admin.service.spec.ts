@@ -234,7 +234,7 @@ describe('TutorialScenarioAdminService.approve', () => {
   describe('replaceSteps — рычаг, без которого цепочка была заперта', () => {
     const GOOD = [
       { kind: 'goto', route: 'generate' },
-      { kind: 'click', selector: '[data-qa="client-site-explore"]' },
+      { kind: 'click', selector: '[data-qa="reference-tab-link"]' },
     ];
 
     it('шаги заменяются и строка помечается правленной руками', async () => {
@@ -306,7 +306,11 @@ describe('TutorialScenarioAdminService.approve', () => {
         'ts-1',
         [
           { kind: 'goto', route: 'generate', narration: 'ы'.repeat(300) },
-          { kind: 'click', selector: '#a', narration: 'Жмём.' },
+          {
+            kind: 'click',
+            selector: '[data-qa="reference-tab-link"]',
+            narration: 'Жмём.',
+          },
         ],
         'op-1',
       );
@@ -354,6 +358,55 @@ describe('TutorialScenarioAdminService.approve', () => {
       expect(result.droppedNarrations).toEqual([]);
     });
 
+    it('платную кнопку без объявления руками сохранить нельзя', async () => {
+      // Находка сквозного аудита 29.09.2026. Раньше ручная правка шла
+      // мимо каталога хуков: оператор мог сохранить нажатие кнопки,
+      // помеченной `forbidden`, строка получала `costly: false` — то
+      // есть кнопки одобрения у неё не появлялось вовсе, — и платный
+      // разбор Gemini уходил бы каждую ночь.
+      const { service, prisma } = build();
+      prisma.tutorialScenario.findUnique.mockResolvedValue({
+        id: 'ts-1',
+        subjectKey: '1',
+        locale: 'ru',
+      });
+
+      await expect(
+        service.replaceSteps(
+          'ts-1',
+          [
+            { kind: 'goto', route: 'generate-ready' },
+            { kind: 'click', selector: '[data-qa="relevance-check"]' },
+          ],
+          'op-1',
+        ),
+      ).rejects.toThrow(/платный вызов/);
+      expect(prisma.tutorialScenario.update).not.toHaveBeenCalled();
+    });
+
+    it('селектор не из каталога руками тоже не сохранить', async () => {
+      // Ночью он всё равно уронит сценарий — только позже и за деньги
+      // сборки. Отказать сразу дешевле и понятнее.
+      const { service, prisma } = build();
+      prisma.tutorialScenario.findUnique.mockResolvedValue({
+        id: 'ts-1',
+        subjectKey: '1',
+        locale: 'ru',
+      });
+
+      await expect(
+        service.replaceSteps(
+          'ts-1',
+          [
+            { kind: 'goto', route: 'generate' },
+            { kind: 'click', selector: '#выдуманная-кнопка' },
+          ],
+          'op-1',
+        ),
+      ).rejects.toThrow(/каталога хуков/);
+      expect(prisma.tutorialScenario.update).not.toHaveBeenCalled();
+    });
+
     it('стоимость пересчитывается по новым шагам', async () => {
       const { service, prisma } = build();
       prisma.tutorialScenario.findUnique.mockResolvedValue({
@@ -373,6 +426,12 @@ describe('TutorialScenarioAdminService.approve', () => {
             expectedUnits: { seconds: 8 },
             note: 'рендер',
           },
+          // Клик обязателен: с 29.09.2026 ручная правка идёт через ту
+          // же проверку, что ответ модели, и повисшее объявление
+          // вырезается (`dropDanglingPaidOperations`). Без него строка
+          // получила бы `costly: false` — и это правильный ответ, а не
+          // регрессия.
+          { kind: 'click', selector: '[data-qa="video-generate"]' },
         ],
         'op-1',
       );

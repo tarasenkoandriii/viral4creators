@@ -34,9 +34,27 @@ export type VoiceoverProviderKey = (typeof VOICEOVER_PROVIDER_KEYS)[number];
 export const DEFAULT_VOICEOVER_PROVIDER_SETTING_KEY =
   'default_voiceover_provider';
 
-/** Тот же дефолт, что был у `TTS_PROVIDER` до этой фичи (этап 70) — менять
- * умолчание для стендов, которые ничего не настраивали, не повод. */
-const FALLBACK_KEY: VoiceoverProviderKey = 'elevenlabs';
+/**
+ * Провайдер, когда не настроено НИЧЕГО: ни строки в `PlatformSetting`,
+ * ни `TTS_PROVIDER` в окружении.
+ *
+ * До сквозного аудита 29.09.2026 здесь стоял `'elevenlabs'` — «тот же
+ * дефолт, что был у `TTS_PROVIDER` до этой фичи (этап 70)». Довод был
+ * верен для этапа 70 и перестал быть верным, когда владелец выбрал
+ * Resemble (§7.2 ТЗ `docs-tz/TZ-Tutorial-Video-Voiced.md`: «считать
+ * надо по Resemble, а не по ElevenLabs», разница в счёте 6.7-кратная).
+ * Решение владельца при этом держалось ТОЛЬКО на строке в
+ * `PlatformSetting`: потеряйся она при переносе базы или чистке
+ * настроек — и следующей ночью весь набор синтезировался бы по ставке
+ * в 6.7 раза выше, без единого предупреждения. Запасное значение —
+ * последняя линия, и стоять на ней должно решение владельца, а не
+ * историческое умолчание.
+ *
+ * Менять это значение — значит менять счёт. Рядом со ставками:
+ * `resemble-tts` $33/M символов, `elevenlabs-tts` $220/M
+ * (`common/ai-pricing.ts`).
+ */
+const FALLBACK_KEY: VoiceoverProviderKey = 'resemble';
 
 export function isVoiceoverProviderKey(
   value: string | null | undefined,
