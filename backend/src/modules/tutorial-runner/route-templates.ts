@@ -295,6 +295,24 @@ export const SEEDED_SESSION_ROUTES: ReadonlyMap<
 export const FRESH_WIZARD_ROUTE = 'generate';
 
 /**
+ * Знает ли исполнитель такое имя маршрута.
+ *
+ * Отдельно от `ROUTE_DESCRIPTIONS` намеренно: описания — это то, что
+ * ПРЕДЛАГАЕТСЯ модели, а здесь — то, что исполнитель умеет открыть.
+ * Списки не совпадают: `greeting-video` резолвится, но не предлагается
+ * (фикстура проект четвёртого типа не заводит), и валидатор,
+ * проверяющий по описаниям, отверг бы законный сценарий, написанный
+ * оператором руками.
+ *
+ * `ROUTE_BUILDERS` наружу не отдаём: вопрос «знаешь ли такой маршрут»
+ * — это всё, что нужно снаружи, а отданная таблица однажды окажется
+ * вторым местом, где маршруты резолвят.
+ */
+export function isResolvableRoute(name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(ROUTE_BUILDERS, name);
+}
+
+/**
  * Резолвит имя маршрута в hash-путь. Возвращает путь БЕЗ `#` и без
  * домена — вызывающий (`tutorial-scenario-runner.service.ts`) склеивает
  * его с `TMA_PUBLIC_URL`.

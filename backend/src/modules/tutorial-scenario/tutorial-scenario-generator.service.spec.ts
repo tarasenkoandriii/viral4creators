@@ -195,7 +195,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
         steps: [
           {
             kind: 'goto',
-            route: 'wizard.product',
+            route: 'generate-ready',
             narration: 'Сегодня модель сказала иначе.',
           },
         ],
@@ -207,7 +207,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
       steps: [
         {
           kind: 'goto',
-          route: 'wizard.product',
+          route: 'generate-ready',
           narration: 'Вчерашняя формулировка.',
         },
       ],
@@ -237,7 +237,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
         steps: [
           {
             kind: 'goto',
-            route: 'wizard.generation',
+            route: 'generate-ready-to-render',
             narration: 'Новая реплика к новому шагу.',
           },
         ],
@@ -249,7 +249,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
       steps: [
         {
           kind: 'goto',
-          route: 'wizard.product',
+          route: 'generate-ready',
           narration: 'Старая реплика.',
         },
       ],
@@ -277,7 +277,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
     });
     const { service, prisma } = build();
     prisma.tutorialScenario.findUnique.mockResolvedValue({
-      steps: [{ kind: 'goto', route: 'wizard.item' }],
+      steps: [{ kind: 'goto', route: 'item' }],
       generatedBy: 'ai',
       costly: false,
       approved: false,

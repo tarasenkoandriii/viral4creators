@@ -29,7 +29,10 @@ import {
 } from './scenario-steps.types';
 import { MODEL_RATES } from '../../common/ai-pricing';
 import { VideoProviderKey } from '../generation/default-video-provider';
-import { ROUTE_DESCRIPTIONS } from '../tutorial-runner/route-templates';
+import {
+  isResolvableRoute,
+  ROUTE_DESCRIPTIONS,
+} from '../tutorial-runner/route-templates';
 import { knownQaHook, qaSelector, QA_HOOKS } from './qa-hooks';
 import { languageNameForLocale } from '../../common/locale';
 
@@ -377,8 +380,47 @@ export function validateScenarioSteps(rawSteps: unknown): ParseScenarioResult {
   const parsed = parseScenarioSteps(rawSteps);
   if (!parsed.ok) return parsed;
   return dropDanglingPaidOperations(
-    rejectUnpricedModels(rejectHooksOffRoute(rejectUnknownSelectors(parsed))),
+    rejectUnpricedModels(
+      rejectHooksOffRoute(rejectUnknownRoutes(rejectUnknownSelectors(parsed))),
+    ),
   );
+}
+
+/**
+ * Отказ сценарию с несуществующим именем экрана (разбор достижимости
+ * 29.09.2026, доводка).
+ *
+ * Закрытый список маршрутов существует с этапа 106 — но только в
+ * промпте. Валидатор его не проверял, и придуманное моделью имя вроде
+ * «wizard.product» доезжало до раннера: тот честно отвечал «маршрут не
+ * найден», но уже ночью, потратив место в партии и сутки ожидания.
+ *
+ * Третий закрытый список в этой цепочке, после селекторов и моделей, и
+ * по той же причине: угаданное имя не совпадает с продуктом никогда, а
+ * цена угадывания — ночь.
+ *
+ * Проверяется ПЕРЕД сверкой хука с экраном: иначе про несуществующий
+ * маршрут сообщалось бы «хук живёт на другом экране», что уводит в
+ * сторону — экран-то не другой, его нет вовсе.
+ */
+function rejectUnknownRoutes(parsed: ParseScenarioResult): ParseScenarioResult {
+  if (!parsed.ok) return parsed;
+  for (let i = 0; i < parsed.steps.length; i++) {
+    const step = parsed.steps[i];
+    if (step.kind !== 'goto') continue;
+    if (isResolvableRoute(step.route)) continue;
+    return {
+      ok: false,
+      steps: [],
+      reason:
+        `шаг ${i + 1} (goto): экрана «${step.route}» в продукте не ` +
+        'существует — имя маршрута берётся из списка в промпте буква в ' +
+        'букву, придумывать его нельзя',
+      droppedNarrations: [],
+      droppedPaidOperations: [],
+    };
+  }
+  return parsed;
 }
 
 /**

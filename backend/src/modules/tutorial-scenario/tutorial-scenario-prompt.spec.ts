@@ -146,7 +146,7 @@ describe('parseScenarioResponse', () => {
   });
 
   it('разбирает голый JSON без ограждения', () => {
-    const text = '{"steps":[{"kind":"goto","route":"wizard.product"}]}';
+    const text = '{"steps":[{"kind":"goto","route":"generate-ready"}]}';
     const result = parseScenarioResponse(text);
     expect(result.ok).toBe(true);
     expect(result.steps).toHaveLength(1);
@@ -752,5 +752,47 @@ describe('хук должен жить на том экране, который 
       { kind: 'goto', route: 'generate' },
     ]);
     expect(r.ok).toBe(true);
+  });
+});
+
+/**
+ * Имя экрана — закрытый список (разбор достижимости 29.09.2026,
+ * доводка).
+ *
+ * Список существовал с этапа 106, но только в промпте: придуманное
+ * моделью имя доезжало до раннера и отвергалось уже ночью.
+ */
+describe('несуществующий экран отвергается на генерации', () => {
+  it('придуманное имя — отказ, и сказано, что такого экрана нет', () => {
+    const r = validateScenarioSteps([
+      { kind: 'goto', route: 'wizard.product' },
+      { kind: 'click', selector: '[data-qa="analysis-continue"]' },
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('не существует');
+    // Именно «нет такого экрана», а не «хук на другом экране»:
+    // проверка обязана стоять ПЕРЕД сверкой хука с маршрутом, иначе
+    // причина уводит в сторону.
+    expect(r.reason).not.toContain('живёт на экране');
+  });
+
+  it('маршрут, который исполнитель умеет открыть, но НЕ предлагает модели, проходит', () => {
+    // `greeting-video` резолвится, но в ROUTE_DESCRIPTIONS его нет:
+    // фикстура проект четвёртого типа не заводит. Валидатор по
+    // описаниям отверг бы законный сценарий, написанный руками.
+    const r = validateScenarioSteps([
+      { kind: 'goto', route: 'greeting-video' },
+    ]);
+    expect(r.ok).toBe(true);
+    expect(ROUTE_DESCRIPTIONS['greeting-video']).toBeUndefined();
+  });
+
+  it('все предлагаемые модели экраны — резолвятся', () => {
+    // Иначе промпт звал бы туда, куда исполнитель не умеет.
+    for (const name of Object.keys(ROUTE_DESCRIPTIONS)) {
+      expect(validateScenarioSteps([{ kind: 'goto', route: name }]).ok).toBe(
+        true,
+      );
+    }
   });
 });
