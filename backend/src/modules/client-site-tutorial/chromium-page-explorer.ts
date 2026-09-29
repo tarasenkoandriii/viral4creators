@@ -64,6 +64,7 @@ import {
   CAPTURE_VIEWPORT,
 } from '../tutorial-runner/tutorial-video-assembly';
 import { LAUNCH_TIMEOUT_MS } from '../../common/headless-chromium';
+import { VIDEO_FRAME_CONTENT_TYPE } from './draft-frames';
 
 /**
  * Размер окна — общий для всех съёмщиков кадров продукта
@@ -96,10 +97,38 @@ const NAV_TIMEOUT_MS = 20_000;
 /** Одно действие (`fill`/`click`) — Locators API сам ждёт появления и
  * кликабельности элемента, так что это потолок на «элемента нет вовсе». */
 const ACTION_TIMEOUT_MS = 10_000;
-/** Сколько ждать после клика: либо навигация, либо затишье сети. Без
- * этого кадр снимался бы в момент, когда страница ещё перерисовывается,
- * и пользователь видел бы пустой экран вместо результата своего шага. */
-const POST_CLICK_SETTLE_MS = 6_000;
+/** Сколько ждать оседания страницы: либо навигация, либо затишье сети.
+ * Без этого кадр снимался бы в момент, когда страница ещё
+ * перерисовывается, и пользователь видел бы пустой экран вместо
+ * результата своего шага. Потолок один на оба пути — после клика и на
+ * первом открытии: страница, которая ещё собирается, одинаково плоха в
+ * обоих случаях. */
+const SETTLE_TIMEOUT_MS = 6_000;
+
+/** Сколько сеть должна молчать, чтобы считаться затихшей. */
+const NETWORK_IDLE_MS = 400;
+
+/**
+ * Пол возраста кадра: раньше этого времени от начала перехода кадр не
+ * снимается НИКОГДА (замер 29.09.2026, §11-седециес ТЗ).
+ *
+ * Почему пол, а не «дождаться, пока всё догрузится». Дождаться нельзя:
+ * содержимое на таймере не даёт сети ни единого пакета, и никакое
+ * ожидание сети его не увидит. На полигоне это измерено: блок
+ * появляется на 1000-й миллисекунде, `networkidle2` отпускает на
+ * 990-й — десять миллисекунд, и в одном прогоне из десяти блок в кадр
+ * попадал, в девяти нет. Решало не правило, а то, с какой стороны
+ * границы лёг запуск.
+ *
+ * Пол не делает разведчика всеведущим: содержимое, появившееся позже,
+ * в кадр по-прежнему не попадёт. Но это станет ЗАПИСАННЫМ правилом с
+ * названным числом, а не совпадением, которое нельзя ни воспроизвести,
+ * ни объяснить человеку, у которого «половина сайта не видна».
+ *
+ * Шов держит пол выше задержки ленивого блока полигона: полигон для
+ * того и заведён, чтобы правило на нём проверялось, а не обходилось.
+ */
+export const SETTLE_FLOOR_MS = 1_500;
 /** Потолок на весь раунд целиком — страховка от суммы таймаутов. */
 const ROUND_TIMEOUT_MS = 45_000;
 
@@ -128,14 +157,13 @@ const REPLAY_TIMEOUT_MS = 120_000;
 const SCREENSHOT_QUALITY = 60;
 
 /**
- * Качество съёмочного кадра. Выше предпросмотрового, потому что
- * потребитель другой: этот кадр показывают на весь экран в ролике, а
- * не в ленте раундов, и едет он в Blob, где вес не так дорог.
- *
- * Не 100: JPEG выше восьмидесяти растёт в весе быстрее, чем в
- * различимости, а следом кадр всё равно проходит через ffmpeg.
+ * Формат съёмочного кадра — PNG, и он НЕ тот же, что у предпросмотра
+ * (29.09.2026, замер по живым страницам). Довод целиком — у
+ * `VIDEO_FRAME_CONTENT_TYPE` в `draft-frames.ts`, где тип и объявлен:
+ * оттуда же берётся имя файла в хранилище, и двух мнений о формате
+ * кадра в проекте быть не должно. Прежнее качество JPEG (80) больше
+ * ни при чём — у PNG качества нет.
  */
-const VIDEO_FRAME_QUALITY = 80;
 
 /**
  * Плотность кадра ПРЕДПРОСМОТРА — единица, и это настройка, а не
@@ -186,11 +214,14 @@ export interface ExplorerPage extends CookieSettablePage {
     timeout?: number;
   }): Promise<unknown>;
   evaluate(source: string): Promise<unknown>;
-  screenshot(options: {
-    type: 'jpeg';
-    quality: number;
-    encoding: 'base64';
-  }): Promise<string>;
+  /** Два кадра — два формата: предпросмотр JPEG с качеством,
+   *  съёмочный PNG без него (у PNG качества не бывает, и `quality`
+   *  вместе с ним puppeteer считает ошибкой). */
+  screenshot(
+    options:
+      | { type: 'jpeg'; quality: number; encoding: 'base64' }
+      | { type: 'png'; encoding: 'base64' },
+  ): Promise<string>;
   createCDPSession(): Promise<CdpSession>;
 }
 
@@ -371,6 +402,7 @@ export class ChromiumPageExplorer implements PageExplorer {
     url: string,
     allowedOrigin: string,
   ): Promise<void> {
+    const startedAt = this.now();
     await withTimeout(
       page.goto(url, {
         waitUntil: 'domcontentloaded',
@@ -379,7 +411,50 @@ export class ChromiumPageExplorer implements PageExplorer {
       NAV_TIMEOUT_MS,
       `страница не открылась за ${Math.round(NAV_TIMEOUT_MS / 1000)}с`,
     );
+    // Оседание — и на ПЕРВОМ открытии тоже, а не только после клика.
+    // До 29.09.2026 первый кадр снимался на 57-й миллисекунде (замер на
+    // полигоне): `domcontentloaded` и сразу съёмка. На статической
+    // странице это незаметно, на живом сайте с клиентской отрисовкой
+    // разведчик отчитывался бы «нашёл восемь элементов» там, где их
+    // двадцать, — и ни он, ни человек не узнали бы, что смотрели на
+    // недособранную страницу.
+    await this.settle(page, startedAt);
     this.assertInside(allowedOrigin, page.url());
+  }
+
+  /**
+   * Оседание страницы после перехода: затишье сети, затем пол возраста
+   * кадра (`SETTLE_FLOOR_MS`). Оба шага мягкие — «не случилось» здесь
+   * нормальный исход, а не ошибка: сайт с вечным опросом сервера
+   * затишья не даст никогда, и валить из-за этого раунд, за который
+   * уже потрачен слот суточного лимита, — обмен не в пользу человека.
+   */
+  private async settle(page: ExplorerPage, startedAt: number): Promise<void> {
+    await page
+      .waitForNetworkIdle({
+        idleTime: NETWORK_IDLE_MS,
+        timeout: SETTLE_TIMEOUT_MS,
+      })
+      .catch(() => null);
+    await this.floor(startedAt);
+  }
+
+  /** Досидеть до пола возраста кадра. Отдельным методом, потому что у
+   * пути после клика своё ожидание (навигация ИЛИ затишье), а пол —
+   * общий. */
+  private async floor(startedAt: number): Promise<void> {
+    const left = startedAt + SETTLE_FLOOR_MS - this.now();
+    if (left > 0) await this.sleep(left);
+  }
+
+  /** Часы и сон — методами, чтобы тест не ждал полторы секунды на
+   * каждый раунд по-настоящему. */
+  protected now(): number {
+    return Date.now();
+  }
+
+  protected sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async fill(
@@ -408,9 +483,10 @@ export class ChromiumPageExplorer implements PageExplorer {
     const navigated = page
       .waitForNavigation({
         waitUntil: 'domcontentloaded',
-        timeout: POST_CLICK_SETTLE_MS,
+        timeout: SETTLE_TIMEOUT_MS,
       })
       .catch(() => null);
+    const startedAt = this.now();
     await withTimeout(
       locator.click() as Promise<unknown>,
       ACTION_TIMEOUT_MS,
@@ -419,9 +495,13 @@ export class ChromiumPageExplorer implements PageExplorer {
     await Promise.race([
       navigated,
       page
-        .waitForNetworkIdle({ idleTime: 400, timeout: POST_CLICK_SETTLE_MS })
+        .waitForNetworkIdle({
+          idleTime: NETWORK_IDLE_MS,
+          timeout: SETTLE_TIMEOUT_MS,
+        })
         .catch(() => null),
     ]);
+    await this.floor(startedAt);
 
     // Замок ПОСЛЕ каждого перехода — клик на чужом сайте мог увести
     // куда угодно, и следующее действие (или кадр) уже не наше дело.
@@ -481,11 +561,10 @@ export class ChromiumPageExplorer implements PageExplorer {
         deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
       });
       const videoBase64 = await page.screenshot({
-        type: 'jpeg',
-        quality: VIDEO_FRAME_QUALITY,
+        type: 'png',
         encoding: 'base64',
       });
-      videoFrameDataUrl = `data:image/jpeg;base64,${videoBase64}`;
+      videoFrameDataUrl = `data:${VIDEO_FRAME_CONTENT_TYPE};base64,${videoBase64}`;
     } catch (err) {
       this.logger.warn(
         `съёмочный кадр не снялся (${err instanceof Error ? err.message : String(err)}) — ролик будет мягче на один кадр`,

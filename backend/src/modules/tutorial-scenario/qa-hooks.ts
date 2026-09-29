@@ -393,6 +393,120 @@ export const QA_HOOKS: Record<string, QaHook> = {
     route: 'postprod-video',
     description: 'карточка публикации',
   },
+
+  // ── Мастер поздравления (29.09.2026) ──────────────────────────────
+  //
+  // Девять карточек на ОДНОМ экране, степпер из четырёх позиций
+  // скроллит к якорям — вкладок и отдельных URL внутри мастера нет.
+  // Видно ли карточку, решает состояние ПОСЛЕДНЕЙ СЕССИИ ПРОЕКТА,
+  // поэтому у каждого состояния свой фикстурный проект и свой маршрут:
+  // `greeting-video` (сессии нет), `greeting-video-drafting` (сессия
+  // есть, сценария нет), `greeting-video-ready` (сценарий собран).
+  //
+  // Экран у каждого хука объявлен здесь, а не выводится: разбор
+  // достижимости 29.09.2026 показал, чем кончается обратное — десять
+  // хуков мастера товара обещали экраны, где их не бывает, и восемь
+  // сценариев из девяти падали на ожидании.
+  //
+  // Маршрут позиции степпера — ЭКРАН, ГДЕ ПО НЕЙ МОЖНО КЛИКНУТЬ, а не
+  // тот, где она нарисована. Нарисованы все четыре везде;
+  // `Stepper.tsx` делает кнопку живой, только если шаг НЕ текущий и у
+  // него есть цель (`target !== null`). Разница стоила мастеру товара
+  // восьми сценариев из девяти: модель читала описание как приглашение
+  // перейти, а кнопка была выключена, и puppeteer ждал её тридцать
+  // секунд. Раскладка по состояниям поздравления:
+  //
+  //   бриф без сессии  — текущий «Бриф», у остальных цели нет: живых нет;
+  //   сессия без сценария — текущий «Фото»: живы «Бриф» и «Сценарий»;
+  //   сценарий собран  — текущий «Сценарий»: живы «Бриф», «Фото», «Ролик».
+  'greeting-step-brief': {
+    route: 'greeting-video-drafting',
+    description:
+      'позиция «Бриф» в степпере поздравления (click — вернуться к брифу). На свежем проекте это ТЕКУЩИЙ шаг и кнопка выключена',
+    clickOnlyWhenVisited: true,
+  },
+  'greeting-step-references': {
+    route: 'greeting-video-ready',
+    description:
+      'позиция «Фото» в степпере поздравления. Пока сценарий не собран, это текущий шаг и кнопка выключена',
+    clickOnlyWhenVisited: true,
+  },
+  'greeting-step-script': {
+    route: 'greeting-video-drafting',
+    description:
+      'позиция «Сценарий» в степпере поздравления. Когда сценарий уже собран, это текущий шаг и кнопка выключена',
+    clickOnlyWhenVisited: true,
+  },
+  'greeting-step-video': {
+    route: 'greeting-video-ready',
+    description:
+      'позиция «Ролик» в степпере поздравления. Появляется вместе со сценарием',
+    clickOnlyWhenVisited: true,
+  },
+  'greeting-brief-card': {
+    route: 'greeting-video',
+    description:
+      'карточка брифа поздравления: повод, кому, от кого, тон (waitFor/assertVisible)',
+  },
+  'greeting-brief-save': {
+    route: 'greeting-video',
+    description: 'кнопка сохранения брифа поздравления',
+  },
+  'greeting-start': {
+    route: 'greeting-video',
+    description:
+      'кнопка «начать» — заводит сессию поздравления. Есть ТОЛЬКО пока сессии нет',
+  },
+  'greeting-references-card': {
+    route: 'greeting-video-drafting',
+    description:
+      'карточка референс-кадров поздравления. После сборки сценария остаётся на экране, но правки в ней запрещены',
+  },
+  'greeting-script-card': {
+    route: 'greeting-video-drafting',
+    description: 'карточка сценария поздравления (waitFor/assertVisible)',
+  },
+  'greeting-script-generate': {
+    route: 'greeting-video-drafting',
+    description:
+      'кнопка «собрать сценарий». Видна ТОЛЬКО пока сценария нет; нажимать ЗАПРЕЩЕНО — это платный вызов модели',
+    clickCost: 'forbidden',
+  },
+  'greeting-script-edit': {
+    route: 'greeting-video-ready',
+    description:
+      'поле правки текста поздравления. Видно ТОЛЬКО когда сценарий уже собран',
+  },
+  'greeting-voice-card': {
+    route: 'greeting-video-ready',
+    description: 'карточка голоса отправителя',
+  },
+  'greeting-scenes-card': {
+    route: 'greeting-video-ready',
+    description: 'карточка раскадровки (сколько сцен в ролике)',
+  },
+  'greeting-sticker-card': {
+    route: 'greeting-video-ready',
+    description: 'карточка наклейки поверх кадра',
+  },
+  'greeting-cards-card': {
+    route: 'greeting-video-ready',
+    description: 'карточка титров — открывающей и закрывающей подписи',
+  },
+  'greeting-music-card': {
+    route: 'greeting-video-ready',
+    description: 'карточка музыкальной темы',
+  },
+  'greeting-video-card': {
+    route: 'greeting-video-ready',
+    description: 'карточка готового ролика поздравления',
+  },
+  'greeting-render': {
+    route: 'greeting-video-ready',
+    description:
+      'кнопка запуска рендера поздравления — платная, нажимать только после triggerPaidOperation generation',
+    clickCost: 'generation',
+  },
 };
 
 /** Селектор хука ровно в той форме, которую пишет модель и ждёт раннер. */

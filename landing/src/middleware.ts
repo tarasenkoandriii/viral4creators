@@ -46,10 +46,20 @@ import { isReachableOrigin } from './lib/site-origin';
  * (`app/r/[code]/page.tsx`). Исключение записано как `r/` со слэшем
  * НАМЕРЕННО: голое `r` в этой альтернативе совпало бы с началом любого
  * пути на «r» — `/roadmap` перестал бы получать локаль.
+ *
+ * `qa/` — страница-полигон для разведчика чужих сайтов
+ * (`app/qa/site-sandbox`, каталог
+ * `backend/src/modules/client-site-tutorial/sandbox-catalog.ts`). Она
+ * лежит вне `[locale]` сознательно: переводить полигон незачем, а пять
+ * его адресов — это пять адресов страницы, которой в поиске быть не
+ * должно (`robots.ts` держит `Disallow: /qa/`). Без этого исключения
+ * запрос уезжал на `/ru/qa/site-sandbox` и получал 404 — страница была
+ * недостижима с первого дня и до 29.09.2026, потому что открыть её
+ * никто не пробовал. Со слэшем — по той же причине, что и `r/`.
  */
 export const config = {
   matcher: [
-    '/((?!_next|legal|feed|video|r/|icon|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)',
+    '/((?!_next|legal|feed|video|r/|qa/|icon|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)',
   ],
 };
 

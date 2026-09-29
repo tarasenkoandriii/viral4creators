@@ -16,6 +16,15 @@ import { useEffect, useState } from 'react';
  * `qa-hooks.ts` для мастера, и здесь он законен ровно потому, что этот
  * «чужой» DOM на самом деле наш.
  */
+/**
+ * Через сколько появляется «ленивый» блок. Названо числом с именем, а не
+ * литералом: шов держит `SETTLE_FLOOR_MS` разведчика ВЫШЕ этого числа —
+ * полигон для того и заведён, чтобы правило оседания на нём
+ * проверялось, а не обходилось. Поднимете задержку выше пола — шов
+ * скажет, что полигон перестал проверять то, ради чего он есть.
+ */
+export const SANDBOX_LATE_BLOCK_MS = 1000;
+
 export function SandboxClient() {
   const [cookiesAccepted, setCookiesAccepted] = useState(false);
   const [screen, setScreen] = useState<'start' | 'signed-in'>('start');
@@ -25,7 +34,7 @@ export function SandboxClient() {
     // Ленивый блок: кадр, снятый сразу после навигации, его не увидит.
     // Секунда — заметно больше `idleTime: 400` у `waitForNetworkIdle`
     // и заметно меньше любого таймаута раунда.
-    const t = setTimeout(() => setLateVisible(true), 1000);
+    const t = setTimeout(() => setLateVisible(true), SANDBOX_LATE_BLOCK_MS);
     return () => clearTimeout(t);
   }, []);
 

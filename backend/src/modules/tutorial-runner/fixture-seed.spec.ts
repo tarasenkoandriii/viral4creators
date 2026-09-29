@@ -18,8 +18,23 @@ function build() {
     project: { upsert: upsert('p') },
     productItem: { upsert: upsert('i') },
     session: { upsert: upsert('s') },
+    // Бриф поздравления: 1:1 к проекту, поэтому `where` — `projectId`,
+    // а не `id`. Отдельный мок нужен потому, что три фикстурных
+    // проекта-поздравления заводятся вместе с брифами (29.09.2026).
+    greetingBrief: {
+      upsert: jest.fn(async (args?: Record<string, any>) => ({
+        id: `gb_${args?.where?.projectId ?? 'x'}`,
+        ...(args?.create ?? {}),
+      })),
+    },
   };
-  return { prisma, user, session: prisma.session.upsert };
+  return {
+    prisma,
+    user,
+    session: prisma.session.upsert,
+    greetingBrief: prisma.greetingBrief.upsert,
+    project: prisma.project.upsert,
+  };
 }
 
 describe('seedFixtureUser', () => {
@@ -110,12 +125,17 @@ describe('seedFixtureUser: сессии под каждое состояние �
     new Map<string, any>(
       session.mock.calls.map((c) => [c[0].where.id, c[0].create]),
     );
+  /** Сессии МАСТЕРА ТОВАРА — у них есть снимок товара. У сессий
+   *  поздравления его нет: там проект 1:1 к брифу, товара не бывает. */
+  const wizardSessionsOf = (session: jest.Mock) =>
+    new Map(
+      [...sessionsOf(session)].filter(([, s]) => s.data.productInformation),
+    );
 
-  it('заводит ровно три сессии: готовую, до промпта и перед рендером', async () => {
+  it('заводит ровно три сессии мастера: готовую, до промпта и перед рендером', async () => {
     const { prisma, session } = build();
     await seedFixtureUser(prisma as any, '42');
-    const ids = [...sessionsOf(session).keys()];
-    expect(ids).toEqual([
+    expect([...wizardSessionsOf(session).keys()]).toEqual([
       'fixture-tutorial-session',
       'fixture-tutorial-session-prompt-pending',
       'fixture-tutorial-session-ready-to-render',
@@ -155,7 +175,7 @@ describe('seedFixtureUser: сессии под каждое состояние �
     // `stepTargets` требует `sourced && s.productName`.
     const { prisma, session } = build();
     await seedFixtureUser(prisma as any, '42');
-    for (const s of sessionsOf(session).values()) {
+    for (const s of wizardSessionsOf(session).values()) {
       expect(s.data.productInformation.productName).toEqual(expect.any(String));
       expect(s.data.productInformation.productDescription).toEqual(
         expect.any(String),
@@ -177,7 +197,7 @@ describe('seedFixtureUser: сессии под каждое состояние �
     // состояние), и следующий `waitFor` падает через 15 секунд.
     const { prisma, session } = build();
     await seedFixtureUser(prisma as any, '42');
-    for (const s of sessionsOf(session).values()) {
+    for (const s of wizardSessionsOf(session).values()) {
       expect(s.data.videoAnalysis.status).toBe('complete');
       expect(s.data.videoAnalysis.sceneBreakdown).toEqual(expect.any(String));
       expect(s.data.videoAnalysis.characters.length).toBeGreaterThan(0);
@@ -190,7 +210,7 @@ describe('seedFixtureUser: сессии под каждое состояние �
     // данные, и находка растворилась бы в «ну там другая сессия».
     const { prisma, session } = build();
     await seedFixtureUser(prisma as any, '42');
-    const all = [...sessionsOf(session).values()];
+    const all = [...wizardSessionsOf(session).values()];
     const first = JSON.stringify(all[0].data.videoAnalysis);
     for (const s of all) {
       expect(JSON.stringify(s.data.videoAnalysis)).toBe(first);

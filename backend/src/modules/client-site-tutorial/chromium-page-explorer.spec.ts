@@ -26,7 +26,10 @@ import {
   BadRequestException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { ChromiumPageExplorer } from './chromium-page-explorer';
+import {
+  ChromiumPageExplorer,
+  SETTLE_FLOOR_MS,
+} from './chromium-page-explorer';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -96,6 +99,26 @@ function makePage(over: Record<string, any> = {}) {
   return page;
 }
 
+/**
+ * Разведчик с ручными часами. `SETTLE_FLOOR_MS` — полторы секунды на
+ * каждый переход: по-настоящему их ждать значило бы платить минутой
+ * прогона за проверку, которая к времени отношения не имеет. Часы
+ * подменяются, а не отключаются — сколько именно проспано, спек
+ * проверяет отдельно.
+ */
+class TestExplorer extends ChromiumPageExplorer {
+  slept: number[] = [];
+  clock = 0;
+  protected now(): number {
+    return this.clock;
+  }
+  protected sleep(ms: number): Promise<void> {
+    this.slept.push(ms);
+    this.clock += ms;
+    return Promise.resolve();
+  }
+}
+
 function setup(over: Record<string, any> = {}) {
   const page = makePage(over);
   const browser = {
@@ -103,7 +126,8 @@ function setup(over: Record<string, any> = {}) {
     close: jest.fn().mockResolvedValue(undefined),
   };
   launchHeadlessBrowserMock.mockResolvedValue({ browser });
-  return { explorer: new ChromiumPageExplorer(), page, browser };
+  const explorer = new TestExplorer();
+  return { explorer, page, browser };
 }
 
 const REQUEST = {
@@ -120,7 +144,7 @@ beforeEach(() => {
 describe('браузер не поднялся', () => {
   it('503 с причиной, а не «внутренняя ошибка»', async () => {
     launchHeadlessBrowserMock.mockResolvedValue({ error: 'нет памяти' });
-    const explorer = new ChromiumPageExplorer();
+    const explorer = new TestExplorer();
     await expect(explorer.runRound(REQUEST)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
@@ -128,7 +152,7 @@ describe('браузер не поднялся', () => {
 
   it('причина видна в сообщении — иначе диагностировать нечем', async () => {
     launchHeadlessBrowserMock.mockResolvedValue({ error: 'нет памяти' });
-    const explorer = new ChromiumPageExplorer();
+    const explorer = new TestExplorer();
     await expect(explorer.runRound(REQUEST)).rejects.toThrow(/нет памяти/);
   });
 });
@@ -515,5 +539,61 @@ describe('бюджет раунда против потолка функции',
 
   it('запуск браузера ограничен — иначе счёт выше считает не всё', () => {
     expect(chromium).toMatch(/withTimeout\(\s*launching,\s*LAUNCH_TIMEOUT_MS,/);
+  });
+});
+
+/**
+ * Оседание страницы (29.09.2026, замер на полигоне).
+ *
+ * До этой правки первый кадр снимался на 57-й миллисекунде:
+ * `domcontentloaded` — и сразу съёмка, а ожидание сети включалось
+ * только ПОСЛЕ клика. Здесь проверяется, что оба пути оседают
+ * одинаково и что кадр не бывает моложе пола.
+ */
+describe('оседание перед кадром', () => {
+  it('первое открытие ждёт затишья сети, а не только DOMContentLoaded', async () => {
+    const { explorer, page } = setup();
+    await explorer.runRound(REQUEST);
+    // Именно на ПЕРВОМ открытии: кликов в REQUEST нет вовсе.
+    expect(page.waitForNetworkIdle).toHaveBeenCalledTimes(1);
+    expect(page.goto).toHaveBeenCalledWith(
+      `${ORIGIN}/cabinet`,
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+  });
+
+  it('кадр не бывает моложе пола', async () => {
+    const { explorer } = setup();
+    await explorer.runRound(REQUEST);
+    // Часы теста стоят, значит досидеть нужно весь пол целиком.
+    expect(explorer.slept).toEqual([SETTLE_FLOOR_MS]);
+  });
+
+  it('пол применяется и после клика — там кадр тоже снимают', async () => {
+    const { explorer } = setup();
+    await explorer.runRound({
+      ...REQUEST,
+      actions: [{ kind: 'click', selector: '#go' }],
+    });
+    // Два перехода — два пола: открытие страницы и клик.
+    expect(explorer.slept).toEqual([SETTLE_FLOOR_MS, SETTLE_FLOOR_MS]);
+  });
+
+  it('медленная страница не досиживает сверх пола', async () => {
+    // Затишье наступило позже пола — ждать ещё раз незачем: кадру уже
+    // больше, чем пол требует. Иначе каждый медленный сайт платил бы
+    // полторы секунды сверху ни за что.
+    const { explorer, page } = setup({
+      waitForNetworkIdle: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            (explorer as any).clock += SETTLE_FLOOR_MS + 1;
+            resolve(null);
+          }),
+      ),
+    });
+    void page;
+    await explorer.runRound(REQUEST);
+    expect(explorer.slept).toEqual([]);
   });
 });

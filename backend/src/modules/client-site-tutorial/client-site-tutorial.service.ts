@@ -68,6 +68,7 @@ import {
 import {
   FrameDecodeError,
   decodeFrameDataUrl,
+  VIDEO_FRAME_CONTENT_TYPE,
   draftFramePathname,
   draftRoundFramePathname,
   draftFramePrefix,
@@ -333,14 +334,12 @@ export class ClientSiteTutorialService {
     if (!dataUrl) return draft;
     try {
       const { buffer, contentType } = decodeFrameDataUrl(dataUrl);
-      await this.blob.uploadBuffer(
-        draftRoundFramePathname(draft.id, index),
-        buffer,
-        contentType,
-      );
-      const url = await this.blob.getPublicUrl(
-        draftRoundFramePathname(draft.id, index),
-      );
+      // Тип — из самого кадра, а не из константы: имя файла обязано
+      // описывать то, что в нём лежит, даже если съёмщик однажды
+      // сменит формат и забудет сказать об этом здесь.
+      const pathname = draftRoundFramePathname(draft.id, index, contentType);
+      await this.blob.uploadBuffer(pathname, buffer, contentType);
+      const url = await this.blob.getPublicUrl(pathname);
       const state = this.toRoundsState(draft);
       const frames = [...state.roundVideoFrames];
       frames[index] = url;
@@ -1350,15 +1349,20 @@ export class ClientSiteTutorialService {
   ): Promise<number> {
     for (let i = 0; i < frames.length; i++) {
       if (videoFrames[i]) {
+        // Тип — ТРЕТЬИМ аргументом, а не по умолчанию: умолчание
+        // `copyBlob` — `image/jpeg`, и съёмочный кадр (PNG) уехал бы в
+        // хранилище с чужим типом. Имя файла при этом говорило бы
+        // правду, а заголовок — нет, и разошлись бы они молча.
         await this.blob.copyBlob(
-          draftRoundFramePathname(draftId, i),
-          draftFramePathname(draftId, i),
+          draftRoundFramePathname(draftId, i, VIDEO_FRAME_CONTENT_TYPE),
+          draftFramePathname(draftId, i, VIDEO_FRAME_CONTENT_TYPE),
+          VIDEO_FRAME_CONTENT_TYPE,
         );
         continue;
       }
       const { buffer, contentType } = decodeFrameDataUrl(frames[i]);
       await this.blob.uploadBuffer(
-        draftFramePathname(draftId, i),
+        draftFramePathname(draftId, i, contentType),
         buffer,
         contentType,
       );

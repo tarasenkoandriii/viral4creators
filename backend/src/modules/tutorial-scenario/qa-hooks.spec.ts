@@ -44,11 +44,19 @@ describe('позиции степпера кликабельны только у
   // из девяти падали таймаутом в тридцать секунд.
   const stepperKeys = Object.keys(QA_HOOKS).filter((k) => k.includes('-step-'));
 
-  it('их девять, и все помечены', () => {
+  it('их тринадцать, и все помечены', () => {
     // Список выписан руками, а не выведен из самого каталога: тест,
     // перебирающий то же, что и код, согласится с любой его
     // редакцией — включая ту, где пометку сняли со всех.
     expect(stepperKeys.sort()).toEqual([
+      // Поздравление (29.09.2026): степпер из четырёх позиций, и у него
+      // та же ловушка — текущий шаг нарисован, но выключен. Какая
+      // позиция жива на каком экране, проверяет шов check-docs по
+      // таблице `LIVE_BY_ROUTE` во `frontend/scripts/greeting-steps.test.ts`.
+      'greeting-step-brief',
+      'greeting-step-references',
+      'greeting-step-script',
+      'greeting-step-video',
       'item-step-analogs',
       'item-step-photo',
       'item-step-price',

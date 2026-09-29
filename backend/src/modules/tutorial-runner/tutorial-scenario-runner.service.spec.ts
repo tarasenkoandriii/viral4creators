@@ -210,7 +210,14 @@ function build(scenarios: unknown[]) {
       // вопрос выше задан один раз на всю партию.
       count: jest.fn().mockResolvedValue(0),
     },
-    project: { findFirst: jest.fn().mockResolvedValue({ id: 'proj-1' }) },
+    project: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'proj-1' }),
+      // Проекты-поздравления: три состояния экрана — три проекта
+      // (29.09.2026). Здесь один, без сессий: контексту достаточно, а
+      // раскладку «какое состояние у какого проекта» проверяет
+      // `greetingContext` собственным тестом, без базы.
+      findMany: jest.fn().mockResolvedValue([{ id: 'greet-1', sessions: [] }]),
+    },
     productItem: { findFirst: jest.fn().mockResolvedValue({ id: 'item-1' }) },
     brandManifest: { findFirst: jest.fn().mockResolvedValue(null) },
     session: { findFirst: jest.fn().mockResolvedValue(null) },

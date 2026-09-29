@@ -1646,6 +1646,7 @@ export class TutorialScenarioRunnerService {
     const [
       project,
       clientSiteProject,
+      greetingProjects,
       item,
       manifest,
       session,
@@ -1663,6 +1664,33 @@ export class TutorialScenarioRunnerService {
           type: ProjectType.CLIENT_SITE,
         },
         orderBy: { createdAt: 'desc' },
+      }),
+      /*
+       * Проекты-поздравления — ВСЕ, вместе с последней сессией каждого.
+       *
+       * Не три запроса «проект в таком-то состоянии»: состояние экрана
+       * задаёт ПОСЛЕДНЯЯ сессия проекта (мастер читает `sessions[0]`),
+       * и запрос «есть сессия со статусом X» отвечал бы на другой
+       * вопрос — «была когда-нибудь». Для фикстуры с одной сессией на
+       * проект разницы нет, для проекта, созданного оператором руками,
+       * есть, и молчаливая: сценарий открыл бы экран не того состояния
+       * и ждал бы элемент, которого там нет.
+       */
+      this.prisma.project.findMany({
+        where: {
+          userId,
+          deletedAt: null,
+          type: ProjectType.GREETING_VIDEO,
+        },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          sessions: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { status: true },
+          },
+        },
       }),
       this.prisma.productItem.findFirst({
         where: {
@@ -1752,9 +1780,7 @@ export class TutorialScenarioRunnerService {
       promptPendingSessionId: promptPending?.id,
       readyToRenderSessionId: readyToRender?.id,
       clientSiteProjectId: clientSiteProject?.id,
-      // `greetingProjectId` сознательно не ищется: фикстура проект
-      // четвёртого типа не заводит, и маршрут `greeting-video` честно
-      // отказывает «нет фикстурных данных» — см. route-templates.ts.
+      ...greetingContext(greetingProjects),
     };
   }
 
@@ -2980,4 +3006,56 @@ export class TutorialScenarioRunnerService {
     }
     return Buffer.from(await res.arrayBuffer());
   }
+}
+
+/**
+ * Три состояния мастера поздравления — по последней сессии каждого
+ * проекта (29.09.2026).
+ *
+ * Чистая функция, а не запрос: решение здесь одно и то же для фикстуры
+ * и для проекта, заведённого оператором руками, и проверяется оно без
+ * базы. Состояние читается ровно так же, как его читает сам мастер, —
+ * по ПОСЛЕДНЕЙ сессии проекта:
+ *
+ *   - сессий нет вовсе → экран брифа с кнопкой «начать»;
+ *   - последняя сессия без сценария → кнопка «собрать сценарий»;
+ *   - последняя сессия со сценарием → все девять карточек.
+ *
+ * `PROMPT_GENERATED` и всё, что после него, — это «сценарий собран»:
+ * статус сессии только растёт, и поздравление с готовым роликом тоже
+ * показывает все карточки. Проект, чьё состояние не опознано, просто не
+ * попадает в контекст: маршрут тогда честно откажет «нет фикстурных
+ * данных» вместо того, чтобы открыть не тот экран.
+ */
+export function greetingContext(
+  projects: ReadonlyArray<{
+    id: string;
+    sessions: ReadonlyArray<{ status: SessionStatus }>;
+  }>,
+): {
+  greetingProjectId?: string;
+  greetingDraftingProjectId?: string;
+  greetingReadyProjectId?: string;
+} {
+  const WITH_SCRIPT: readonly SessionStatus[] = [
+    SessionStatus.PROMPT_GENERATED,
+    SessionStatus.GENERATING_VIDEO,
+    SessionStatus.VIDEO_COMPLETE,
+  ];
+  const out: {
+    greetingProjectId?: string;
+    greetingDraftingProjectId?: string;
+    greetingReadyProjectId?: string;
+  } = {};
+  for (const project of projects) {
+    const latest = project.sessions[0];
+    if (!latest) {
+      out.greetingProjectId ??= project.id;
+    } else if (WITH_SCRIPT.includes(latest.status)) {
+      out.greetingReadyProjectId ??= project.id;
+    } else {
+      out.greetingDraftingProjectId ??= project.id;
+    }
+  }
+  return out;
 }

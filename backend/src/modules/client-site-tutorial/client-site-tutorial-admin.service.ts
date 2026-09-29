@@ -44,7 +44,7 @@ import {
 } from '../tutorial-runner/tutorial-video-assembly';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import { DraftStatus } from './draft-rounds';
-import { draftFramePathname } from './draft-frames';
+import { draftFramePrefix, orderedFramePathnames } from './draft-frames';
 
 export interface DraftQueueItem {
   id: string;
@@ -88,6 +88,26 @@ interface DraftRow {
 
 @Injectable()
 export class ClientSiteTutorialAdminService {
+  /**
+   * Имена итоговых кадров черновика — из хранилища, а не из счётчика в
+   * строке: расширение следует за содержимым кадра (PNG у съёмочного,
+   * JPEG у предпросмотрового), и собрать имя по номеру больше нельзя.
+   * Страницы листинга проходим до конца — у черновика кадров немного,
+   * но обрывать список на первой странице значило бы молча потерять
+   * хвост ролика.
+   */
+  private async framePathnames(draftId: string): Promise<string[]> {
+    const prefix = draftFramePrefix(draftId);
+    const names: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.blob.listByPrefix(prefix, { cursor });
+      names.push(...page.blobs.map((b) => b.pathname));
+      cursor = page.cursor ?? undefined;
+    } while (cursor);
+    return orderedFramePathnames(draftId, names);
+  }
+
   private readonly logger = new Logger(ClientSiteTutorialAdminService.name);
 
   constructor(
@@ -132,13 +152,14 @@ export class ClientSiteTutorialAdminService {
     // мог разойтись с хранилищем — например, после оборвавшегося
     // повторного `/finish`. Оператору важнее увидеть шаги и решить, чем
     // получить 500 на всю заявку.
-    const count = row.previewFrameCount ?? 0;
     const frameUrls: string[] = [];
-    for (let i = 0; i < count; i++) {
+    for (const pathname of await this.framePathnames(id)) {
       try {
-        frameUrls.push(await this.blob.getPublicUrl(draftFramePathname(id, i)));
+        frameUrls.push(await this.blob.getPublicUrl(pathname));
       } catch {
-        this.logger.warn(`черновик ${id}: кадр ${i} не найден в хранилище`);
+        this.logger.warn(
+          `черновик ${id}: кадр ${pathname} не найден в хранилище`,
+        );
       }
     }
     return {
@@ -262,10 +283,8 @@ export class ClientSiteTutorialAdminService {
     }
 
     const frameUrls: string[] = [];
-    for (let i = 0; i < frames; i++) {
-      frameUrls.push(
-        await this.blob.getPublicUrl(draftFramePathname(row.id, i)),
-      );
+    for (const pathname of await this.framePathnames(row.id)) {
+      frameUrls.push(await this.blob.getPublicUrl(pathname));
     }
     // `uniformFrames` — все кадры по `SECONDS_PER_FRAME`, то же
     // поведение, что до этапа A ТЗ `TZ-Tutorial-Video-Voiced.md`.

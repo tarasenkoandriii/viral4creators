@@ -144,20 +144,25 @@ describe('запасные тексты: язык × регистр', () => {
 });
 
 describe('снимок брифа несёт язык (этап C)', () => {
-  const row = (over: Record<string, unknown>) => ({
-    id: 'gb1',
-    occasion: 'BIRTHDAY',
-    customOccasionText: null,
-    recipientName: 'Anna',
-    senderName: null,
-    tone: 'WARM',
-    personalMessage: null,
-    presenterProvider: 'grok',
-    resolution: '720p',
-    brandManifestId: null,
-    occasionDate: null,
-    ...over,
-  });
+  // Тип строки — из самой функции, а не свой: иначе спек проверял бы
+  // совпадение с собственным представлением о строке брифа, а не с тем,
+  // что снимок на самом деле принимает.
+  type Row = Parameters<typeof greetingBriefSnapshotFrom>[0];
+  const row = (over: Partial<Row> & Record<string, unknown>): Row =>
+    ({
+      id: 'gb1',
+      occasion: 'BIRTHDAY',
+      customOccasionText: null,
+      recipientName: 'Anna',
+      senderName: null,
+      tone: 'WARM',
+      personalMessage: null,
+      presenterProvider: 'grok',
+      resolution: '720p',
+      brandManifestId: null,
+      occasionDate: null,
+      ...over,
+    }) as Row;
   it('копирует выбранный язык', () => {
     expect(
       greetingBriefSnapshotFrom(row({ scriptLanguage: 'de' })).scriptLanguage,

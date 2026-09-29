@@ -55,6 +55,8 @@ function setup(
     claimCount?: number;
     ffmpegConfigured?: boolean;
     submit?: jest.Mock;
+    /** Что лежит в хранилище под префиксом кадров этого черновика. */
+    storedFrames?: string[];
   } = {},
 ) {
   const row = opts.row === undefined ? makeRow() : opts.row;
@@ -77,10 +79,29 @@ function setup(
     project,
   } as unknown as PrismaService;
 
+  /**
+   * Кадры берутся ЛИСТИНГОМ хранилища, а не именем, собранным из
+   * счётчика: расширение следует за содержимым (PNG у съёмочного, JPEG
+   * у предпросмотрового). Поэтому мок отдаёт список файлов — включая
+   * кадр раунда под тем же префиксом, который в ролик попасть не
+   * должен.
+   */
   const blob = {
     getPublicUrl: jest
       .fn()
       .mockImplementation((p: string) => Promise.resolve(`https://blob/${p}`)),
+    listByPrefix: jest.fn().mockImplementation((prefix: string) =>
+      Promise.resolve({
+        blobs: (
+          opts.storedFrames ?? [
+            `${prefix}0.png`,
+            `${prefix}1.jpg`,
+            `${prefix}round-0.png`,
+          ]
+        ).map((pathname: string) => ({ pathname, uploadedAt: new Date() })),
+        cursor: null,
+      }),
+    ),
   } as unknown as BlobService;
 
   const submit = opts.submit ?? jest.fn().mockResolvedValue({ jobId: 'job-1' });
@@ -145,12 +166,30 @@ describe('очередь', () => {
 
 describe('карточка заявки', () => {
   it('отдаёт ссылки на ВСЕ залитые кадры — иначе оператор одобряет вслепую', async () => {
+    // Расширения РАЗНЫЕ намеренно: кадр из съёмочного — PNG, из
+    // предпросмотра — JPEG, и у одного черновика бывают оба. Кадр
+    // раунда (`round-0.png`) лежит под тем же префиксом и в ролик не
+    // входит — иначе оператор увидел бы кадров больше, чем в ролике.
     const { service } = setup();
     const details = await service.details('draft1');
     expect(details.frameUrls).toEqual([
-      'https://blob/tutorial-video-frames/draft1/0.jpg',
+      'https://blob/tutorial-video-frames/draft1/0.png',
       'https://blob/tutorial-video-frames/draft1/1.jpg',
     ]);
+  });
+
+  it('кадры берутся из хранилища, а не из счётчика в строке', async () => {
+    // Счётчик говорит «два» (`previewFrameCount: 2`), в хранилище три
+    // кадра. Оборвавшийся повторный `/finish` оставляет ровно такое
+    // расхождение, и правда — у хранилища.
+    const { service } = setup({
+      storedFrames: [
+        'tutorial-video-frames/draft1/0.png',
+        'tutorial-video-frames/draft1/1.png',
+        'tutorial-video-frames/draft1/2.png',
+      ],
+    });
+    expect((await service.details('draft1')).frameUrls).toHaveLength(3);
   });
 
   it('шаги видны целиком — по ним и принимается решение', async () => {
@@ -191,7 +230,7 @@ describe('одобрение запускает сборку — и только
     await service.approve('draft1', 'operator1');
     const inputs = submit.mock.calls[0][0].inputs as Record<string, string>;
     expect(Object.values(inputs)).toEqual([
-      'https://blob/tutorial-video-frames/draft1/0.jpg',
+      'https://blob/tutorial-video-frames/draft1/0.png',
       'https://blob/tutorial-video-frames/draft1/1.jpg',
     ]);
   });

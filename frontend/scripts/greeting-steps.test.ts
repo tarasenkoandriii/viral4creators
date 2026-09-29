@@ -107,8 +107,61 @@ check('потерянный при загрузке промпт даёт пер
   eq(greetingStepOf(broken), 'references');
 });
 
+/**
+ * ЖИВЫЕ позиции степпера в каждом из трёх состояний мастера
+ * (29.09.2026, этап обучалок по поздравлению).
+ *
+ * Каталог хуков обучалки
+ * (`backend/src/modules/tutorial-scenario/qa-hooks.ts`) объявляет у
+ * каждой позиции степпера маршрут — экран, на котором по ней МОЖНО
+ * КЛИКНУТЬ. Нарисованы все четыре везде, живой делает
+ * `clickable = !active && selectable[i]`, и перепутать «видно» с
+ * «кликается» уже стоило мастеру товара восьми сценариев из девяти:
+ * сценарий ждал выключенную кнопку тридцать секунд и падал.
+ *
+ * Здесь это правило зафиксировано с той стороны, где оно и живёт.
+ * Каталог обязан совпадать с этой таблицей:
+ *
+ *   greeting-video           — живых нет вовсе;
+ *   greeting-video-drafting  — «Бриф» и «Сценарий»;
+ *   greeting-video-ready     — «Бриф», «Фото» и «Ролик».
+ */
+const liveSteps = (f: GreetingFacts): GreetingStepId[] => {
+  const view = toStepsView(greetingSteps(f, LABELS), greetingStepOf(f));
+  return GREETING_STEP_IDS.filter(
+    (_, i) => i !== view.current && view.selectable[i]
+  ) as GreetingStepId[];
+};
+
+/**
+ * Таблица, которую читает шов `check-docs.mjs`: имя маршрута обучалки →
+ * позиции степпера, живые на нём. Литералом и в разбираемой форме
+ * именно затем, чтобы каталог хуков на бэкенде не разошёлся с этим
+ * файлом молча.
+ */
+const LIVE_BY_ROUTE: Record<string, GreetingStepId[]> = {
+  'greeting-video': [],
+  'greeting-video-drafting': ['brief', 'script'],
+  'greeting-video-ready': ['brief', 'references', 'video'],
+};
+
+check('на свежем проекте ни одна позиция степпера не кликается', () => {
+  eq(liveSteps(facts({ hasSession: false })), LIVE_BY_ROUTE['greeting-video']);
+});
+
+check('сессия без сценария: живы «Бриф» и «Сценарий»', () => {
+  eq(liveSteps(facts()), LIVE_BY_ROUTE['greeting-video-drafting']);
+});
+
+check('сценарий собран: живы «Бриф», «Фото» и «Ролик»', () => {
+  eq(
+    liveSteps(facts({ hasPrompt: true })),
+    LIVE_BY_ROUTE['greeting-video-ready']
+  );
+});
+
 if (failed) {
   console.error(`\n${failed} проверок упало`);
   process.exit(1);
 }
-console.log('\n9 проверок пройдено');
+console.log('\n12 проверок пройдено');

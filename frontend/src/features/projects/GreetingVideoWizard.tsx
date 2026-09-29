@@ -159,6 +159,19 @@ const REFERENCE_PHOTO_MIME = ['image/png', 'image/jpeg'];
 const REFERENCE_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
 const POLL_INTERVAL_MS = 4000;
 
+/**
+ * Хуки позиций степпера — литералами и по индексу, как `STEPPER_QA` у
+ * мастера товара: подпись шага на пяти языках разная, а селектор
+ * сценария обучалки обязан быть один. Порядок — `GREETING_STEP_IDS`,
+ * и шов check-docs держит длину списка равной числу шагов.
+ */
+const GREETING_STEPPER_QA = [
+  'greeting-step-brief',
+  'greeting-step-references',
+  'greeting-step-script',
+  'greeting-step-video',
+] as const;
+
 export function GreetingVideoWizard({ projectId }: { projectId: string }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -337,6 +350,7 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
         hint={w.hint}
       />
       <Stepper
+        qa={GREETING_STEPPER_QA}
         steps={stepsView.steps}
         current={stepsView.current}
         selectable={stepsView.selectable}
@@ -653,7 +667,7 @@ function BriefStep({
   };
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-qa="greeting-brief-card">
       <CardHeader
         icon={<Gift size={18} />}
         title={w.occasionLabel}
@@ -854,6 +868,7 @@ function BriefStep({
 
         <div className="flex gap-2">
           <Button
+            data-qa="greeting-brief-save"
             variant="outline"
             disabled={!canSave || saving || starting}
             loading={saving}
@@ -863,6 +878,7 @@ function BriefStep({
           </Button>
           {!hasSession && (
             <Button
+              data-qa="greeting-start"
               disabled={!canSave || saving || starting}
               loading={starting}
               onClick={() => void start()}
@@ -941,7 +957,7 @@ function ReferencesStep({
     images.length < MAX_GREETING_REFERENCE_IMAGES;
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-qa="greeting-references-card">
       <CardHeader
         icon={<ImageIcon size={18} />}
         title={w.referencesHeading}
@@ -1455,7 +1471,7 @@ function ScriptStep({
   };
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-qa="greeting-script-card">
       <CardHeader title={w.scriptHeading} />
       {error && <Alert tone="error">{error}</Alert>}
       {prompt ? (
@@ -1466,6 +1482,7 @@ function ScriptStep({
             counter={`${text.length}/2000`}
           >
             <Textarea
+              data-qa="greeting-script-edit"
               rows={4}
               value={text}
               onChange={(e) => {
@@ -1513,7 +1530,11 @@ function ScriptStep({
       ) : (
         <div className="space-y-3">
           <p className="text-xs text-silver-400">{w.scriptEmpty}</p>
-          <Button loading={loading} onClick={() => void generate()}>
+          <Button
+            data-qa="greeting-script-generate"
+            loading={loading}
+            onClick={() => void generate()}
+          >
             {w.generateScriptButton}
           </Button>
         </div>
@@ -1583,7 +1604,7 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
     voice.presetVoiceId;
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-qa="greeting-voice-card">
       <CardHeader
         icon={<Mic size={18} />}
         title={w.senderVoiceHeading}
@@ -1719,7 +1740,7 @@ function ScenesStep({ sessionId }: { sessionId: string }) {
   const counts = Array.from({ length: view.maxScenes }, (_, i) => i + 1);
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-qa="greeting-scenes-card">
       <CardHeader
         icon={<Film size={18} />}
         title={w.scenesHeading}
@@ -1824,7 +1845,7 @@ function StickerStep({ sessionId }: { sessionId: string }) {
   };
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-qa="greeting-sticker-card">
       <CardHeader
         icon={<Sticker size={18} />}
         title={w.stickerHeading}
@@ -2000,7 +2021,7 @@ function CardsStep({ sessionId }: { sessionId: string }) {
     closing.trim() !== (view.cards.closing ?? '');
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-qa="greeting-cards-card">
       <CardHeader
         icon={<Type size={18} />}
         title={w.cardsHeading}
@@ -2139,7 +2160,7 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
   if (!music) return null;
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-qa="greeting-music-card">
       <CardHeader
         icon={<Music size={18} />}
         title={w.musicHeading}
@@ -2542,12 +2563,16 @@ function VideoStep({
 
   return (
     <>
-      <Card className="p-5">
+      <Card className="p-5" data-qa="greeting-video-card">
         <CardHeader title={w.videoHeading} />
         {error && <Alert tone="error">{error}</Alert>}
 
         {!video && (
-          <Button loading={starting} onClick={() => void start()}>
+          <Button
+            data-qa="greeting-render"
+            loading={starting}
+            onClick={() => void start()}
+          >
             {w.generateVideoButton}
           </Button>
         )}

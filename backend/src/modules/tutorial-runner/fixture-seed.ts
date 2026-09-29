@@ -36,6 +36,7 @@ import { GenerationStatus } from '../../common/types/generation.types';
 import { AnalysisStatus } from '../../common/types/analysis.types';
 import { SessionStatus } from '../../common/types/session.types';
 import { DEFAULT_VOICE_MODE } from '../../common/voice-mode';
+import { greetingBriefSnapshotFrom } from '../project-session/snapshot';
 
 export const FIXTURE_IDS = {
   manifest: 'fixture-tutorial-manifest',
@@ -71,6 +72,20 @@ export const FIXTURE_IDS = {
    *  `docs-tz/TZ-Enterprise-Tutorial-Landing.md`, чтобы маршрут
    *  `site-tutorial` было на чём резолвить. */
   clientSiteProject: 'fixture-tutorial-client-site-project',
+  /**
+   * Проекты ЧЕТВЁРТОГО типа (`GREETING_VIDEO`) — три, по одному на
+   * состояние экрана (29.09.2026).
+   *
+   * Три ПРОЕКТА, а не три сессии: мастер поздравления берёт последнюю
+   * сессию проекта с сервера, а не из localStorage, поэтому состояние
+   * задаётся адресом. Разные проекты — единственный способ иметь три
+   * состояния одновременно.
+   */
+  greetingProject: 'fixture-tutorial-greeting-project',
+  greetingDraftingProject: 'fixture-tutorial-greeting-drafting-project',
+  greetingReadyProject: 'fixture-tutorial-greeting-ready-project',
+  greetingDraftingSession: 'fixture-tutorial-greeting-drafting-session',
+  greetingReadySession: 'fixture-tutorial-greeting-ready-session',
 } as const;
 
 export interface FixtureSeedResult {
@@ -86,6 +101,12 @@ export interface FixtureSeedResult {
   /** Промпт одобрен, ролика нет — экран запуска рендера. */
   readyToRenderSessionId: string;
   clientSiteProjectId: string;
+  /** Поздравление: бриф есть, сессии нет. */
+  greetingProjectId: string;
+  /** Поздравление: сессия есть, сценарий не собран. */
+  greetingDraftingProjectId: string;
+  /** Поздравление: сценарий собран, видны все девять карточек. */
+  greetingReadyProjectId: string;
   /** Человекочитаемый журнал шагов — тот же текст, что раньше шёл в console.log CLI-скрипта. */
   log: string[];
 }
@@ -472,6 +493,121 @@ export async function seedFixtureUser(
     'Сессия с одобренным промптом и без ролика (карточка запуска рендера)',
   );
 
+  /**
+   * Три проекта-поздравления — по одному на состояние экрана.
+   *
+   * Снимок брифа в сессию кладёт `greetingBriefSnapshotFrom` — ТА ЖЕ
+   * функция, которой пользуется продукт (`ProjectSessionService`). Не
+   * ради экономии строк: ровно здесь фикстура однажды уже написала
+   * снимок товара придуманными ключами, и четыре позиции степпера стали
+   * некликабельными — падение выглядело как ошибка сценариев, а было
+   * ошибкой фикстуры. Второй раз этот способ не повторяется.
+   */
+  const seedGreetingProject = async (
+    projectId: string,
+    title: string,
+    recipientName: string,
+  ) => {
+    const greetingProject = await prisma.project.upsert({
+      where: { id: projectId },
+      update: { userId: user.id },
+      create: {
+        id: projectId,
+        userId: user.id,
+        type: ProjectType.GREETING_VIDEO,
+        title,
+        countryCode: 'UA',
+        currency: currencyForCountry('UA') ?? 'UAH',
+      },
+    });
+    const briefFields = {
+      projectId: greetingProject.id,
+      // Повод из КАТАЛОГА, а не `OTHER`: у `OTHER` регистр зависит от
+      // описания и определяется в том числе платным классификатором —
+      // фикстуре такое ни к чему.
+      occasion: 'BIRTHDAY' as const,
+      customOccasionText: null,
+      recipientName,
+      senderName: 'Команда',
+      tone: 'WARM' as const,
+      personalMessage: null,
+      presenterProvider: 'grok',
+      resolution: '720p',
+      brandManifestId: null,
+      occasionDate: null,
+    };
+    const brief = await prisma.greetingBrief.upsert({
+      where: { projectId: greetingProject.id },
+      update: briefFields,
+      create: briefFields,
+    });
+    log.push(`Проект-поздравление (${title}): ${greetingProject.id}`);
+    return { projectId: greetingProject.id, brief };
+  };
+
+  const greetingFresh = await seedGreetingProject(
+    FIXTURE_IDS.greetingProject,
+    'Fixture Greeting (бриф без сессии)',
+    'Анна',
+  );
+  const greetingDrafting = await seedGreetingProject(
+    FIXTURE_IDS.greetingDraftingProject,
+    'Fixture Greeting (сессия без сценария)',
+    'Борис',
+  );
+  const greetingReady = await seedGreetingProject(
+    FIXTURE_IDS.greetingReadyProject,
+    'Fixture Greeting (сценарий собран)',
+    'Вера',
+  );
+
+  const seedGreetingSession = async (
+    id: string,
+    projectId: string,
+    brief: Parameters<typeof greetingBriefSnapshotFrom>[0],
+    withPrompt: boolean,
+    note: string,
+  ) => {
+    const fields = {
+      userId: user.id,
+      projectId,
+      // Товара у поздравления нет: это проект 1:1 к брифу, а не к
+      // списку карточек. `productItemId` остаётся пустым намеренно.
+      productItemId: null,
+      status: withPrompt
+        ? SessionStatus.PROMPT_GENERATED
+        : SessionStatus.CREATED,
+      generationStatus: null,
+      data: {
+        locale: 'ru',
+        greetingBriefSnapshot: greetingBriefSnapshotFrom(brief),
+        ...(withPrompt ? { generationPrompt: approvedPrompt(id) } : {}),
+      },
+      liveData: {},
+    };
+    await prisma.session.upsert({
+      where: { id },
+      update: fields,
+      create: { id, ...fields },
+    });
+    log.push(`${note}: ${id}`);
+  };
+
+  await seedGreetingSession(
+    FIXTURE_IDS.greetingDraftingSession,
+    greetingDrafting.projectId,
+    greetingDrafting.brief,
+    false,
+    'Сессия поздравления без сценария (кнопка «собрать сценарий»)',
+  );
+  await seedGreetingSession(
+    FIXTURE_IDS.greetingReadySession,
+    greetingReady.projectId,
+    greetingReady.brief,
+    true,
+    'Сессия поздравления со сценарием (все девять карточек)',
+  );
+
   log.push('Готово: фикстурные данные заведены/обновлены.');
 
   return {
@@ -485,6 +621,9 @@ export async function seedFixtureUser(
     promptPendingSessionId: FIXTURE_IDS.sessionPromptPending,
     readyToRenderSessionId: FIXTURE_IDS.sessionReadyToRender,
     clientSiteProjectId: clientSiteProject.id,
+    greetingProjectId: greetingFresh.projectId,
+    greetingDraftingProjectId: greetingDrafting.projectId,
+    greetingReadyProjectId: greetingReady.projectId,
     log,
   };
 }

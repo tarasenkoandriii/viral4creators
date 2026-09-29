@@ -28,7 +28,18 @@ const KNOWN_UNSUPPORTED = [
  *  нет — значит в `ROUTE_DESCRIPTIONS` им не место: предложенный модели
  *  маршрут, который потом откажет на прогоне, это ровно та поломка, из-за
  *  которой описания вообще завели (см. доккомментарий route-templates). */
-const NO_FIXTURE_DATA = ['greeting-video'];
+/**
+ * Маршруты, которые резолвятся, но НЕ предлагаются модели, потому что
+ * фикстурных данных под них нет.
+ *
+ * С 29.09.2026 список пуст: фикстура завела три проекта-поздравления, и
+ * `greeting-video` из «резолвится, но не предлагается» переехал в
+ * обычные описанные маршруты. Массив оставлен, а не удалён: проверка
+ * ниже — про ПРАВИЛО («описан ⇒ есть данные»), а не про конкретное имя,
+ * и следующий маршрут без фикстуры впишется сюда, а не заведёт вторую
+ * такую же проверку.
+ */
+const NO_FIXTURE_DATA: string[] = [];
 
 describe('resolveScenarioRoute', () => {
   it('маршруты без параметров резолвятся без фикстурного контекста', () => {
@@ -167,6 +178,9 @@ describe('ROUTE_DESCRIPTIONS — единственный источник пр�
       promptPendingSessionId: 's2',
       readyToRenderSessionId: 's3',
       clientSiteProjectId: 'cs1',
+      greetingProjectId: 'g1',
+      greetingDraftingProjectId: 'g2',
+      greetingReadyProjectId: 'g3',
     };
     for (const key of Object.keys(ROUTE_DESCRIPTIONS)) {
       expect(resolveScenarioRoute(key, fullCtx).ok).toBe(true);

@@ -1425,14 +1425,117 @@ function checkGuideSeams() {
   const scenarioRunnerSrc = read(
     "backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts",
   );
+  /**
+   * Второй способ завести имя маршрута, которого нет во фронтенде:
+   * псевдоним по СОСТОЯНИЮ ПРОЕКТА (`PROJECT_STATE_ROUTES`). У
+   * поздравления состояние экрана задаёт адрес, а не сессия в
+   * браузере, поэтому подсевать нечего — но объяснить имя всё равно
+   * обязательно, иначе опечатка в `ROUTE_DESCRIPTIONS` останется
+   * незамеченной до первого ночного прогона.
+   */
+  const stateRoutes = new Map(
+    [
+      ...(/PROJECT_STATE_ROUTES[^=]*=[^[]*\[([\s\S]*?)\]\);/.exec(builderSrc)?.[1] ?? "").matchAll(
+        /\['([a-z0-9-]+)',\s*'([A-Za-z]+)'\]/g,
+      ),
+    ].map((m) => [m[1], m[2]]),
+  );
+  if (stateRoutes.size === 0) {
+    problems.push(
+      "не удалось разобрать PROJECT_STATE_ROUTES в route-templates.ts — " +
+        "шов ослеп на псевдонимы по состоянию проекта",
+    );
+  }
+  if (new Set(stateRoutes.values()).size !== stateRoutes.size) {
+    problems.push(
+      "два маршрута по состоянию проекта берут проект из ОДНОГО поля " +
+        "контекста — это два имени одного экрана, и модель не сможет " +
+        "выбрать верное",
+    );
+  }
+  for (const [, field] of stateRoutes) {
+    if (!new RegExp(`\\b${field}\\?: string`).test(builderSrc)) {
+      problems.push(
+        `PROJECT_STATE_ROUTES ссылается на поле «${field}», которого нет в ` +
+          "FixtureRouteContext — маршрут молча отказал бы «нет данных»",
+      );
+    }
+  }
+  /**
+   * Позиция степпера поздравления объявлена на экране, ГДЕ ПО НЕЙ
+   * МОЖНО КЛИКНУТЬ (29.09.2026).
+   *
+   * Нарисованы все четыре позиции на всех трёх экранах; живой кнопку
+   * делает `clickable = !active && selectable[i]`. Перепутать «видно»
+   * с «кликается» уже стоило мастеру товара восьми сценариев из
+   * девяти — сценарий ждал выключенную кнопку тридцать секунд.
+   *
+   * Правило живёт во фронтенде и там же проверено
+   * (`frontend/scripts/greeting-steps.test.ts`, таблица
+   * `LIVE_BY_ROUTE`); здесь сверяется КОПИЯ этого правила в каталоге
+   * хуков бэкенда — второе место, где оно записано.
+   */
+  const liveByRoute = new Map();
+  const liveTable = /LIVE_BY_ROUTE: Record<string, GreetingStepId\[\]> = \{([\s\S]*?)\};/.exec(
+    read("frontend/scripts/greeting-steps.test.ts"),
+  )?.[1];
+  if (!liveTable) {
+    problems.push(
+      "frontend/scripts/greeting-steps.test.ts: не нашлась таблица " +
+        "LIVE_BY_ROUTE — шов на живые позиции степпера поздравления " +
+        "проверять нечем (поправьте шов, а не код)",
+    );
+  } else {
+    for (const m of liveTable.matchAll(/'([a-z-]+)':\s*\[([^\]]*)\]/g)) {
+      liveByRoute.set(
+        m[1],
+        [...m[2].matchAll(/'([a-z]+)'/g)].map((x) => x[1]),
+      );
+    }
+    // Каталог читается здесь заново: карта `routeOf` живёт в соседнем
+    // шве, и тянуть её через модуль значило бы связать два шва одним
+    // состоянием ради экономии трёх строк.
+    const hookRoutes = [
+      ...read(
+        "backend/src/modules/tutorial-scenario/qa-hooks.ts",
+      ).matchAll(/^ {2}'(greeting-step-[a-z-]+)': \{\s*\n\s*route: '([a-z-]+)'/gm),
+    ];
+    if (hookRoutes.length === 0) {
+      problems.push(
+        "в каталоге хуков не нашлось ни одной позиции степпера " +
+          "поздравления — шов на живость проверять нечем (поправьте шов, " +
+          "а не код)",
+      );
+    }
+    for (const [, hook, route] of hookRoutes) {
+      const step = /^greeting-step-(.+)$/.exec(hook)?.[1];
+      if (!step) continue;
+      const live = liveByRoute.get(route);
+      if (!live) {
+        problems.push(
+          `каталог отправляет «${hook}» на «${route}», которого нет в ` +
+            "LIVE_BY_ROUTE — экран не описан, и живость позиции никем не " +
+            "проверена",
+        );
+      } else if (!live.includes(step)) {
+        problems.push(
+          `каталог отправляет «${hook}» на «${route}», где эта позиция ` +
+            `степпера ВЫКЛЮЧЕНА (живые там: ${live.join(", ") || "нет"}) — ` +
+            "сценарий будет ждать её тридцать секунд и упадёт",
+        );
+      }
+    }
+  }
+
   for (const name of backRoutes) {
     if (frontRoutes.has(name)) continue;
     if (seededRoutes.has(name)) continue;
+    if (stateRoutes.has(name)) continue;
     problems.push(
       `маршрут «${name}» перечислен в route-templates.ts, но во ` +
-        "frontend/src/lib/router.ts такого имени нет и в " +
-        "SEEDED_SESSION_ROUTES он не объявлен — копия отстала в " +
-        "другую сторону",
+        "frontend/src/lib/router.ts такого имени нет и ни в " +
+        "SEEDED_SESSION_ROUTES, ни в PROJECT_STATE_ROUTES он не " +
+        "объявлен — копия отстала в другую сторону",
     );
   }
   for (const name of seededRoutes) {
@@ -2623,6 +2726,9 @@ function checkGuideSeams() {
         `мест, пишущих тестировщику по тикету: ${callers.length}; ` +
         `имён маршрутов TMA (фронтенд = копия в бэкенде): ${frontRoutes.size}; ` +
         `псевдонимов маршрута с подсевом сессии: ${seededRoutes.size}; ` +
+        `псевдонимов по состоянию проекта: ${stateRoutes.size}; ` +
+        `живых позиций степпера поздравления: ${[...liveByRoute.values()].flat().length} ` +
+        `на ${liveByRoute.size} экранах; ` +
         `хуков «только после прохода», ни одного на чистом мастере: ${visitedOnlyHooks}; ` +
         `платных операций обучалки под суточным потолком: ${budgetOps.size} ` +
         `(проверок потолка в коде: ${budgetChecks}); ` +
@@ -3209,6 +3315,84 @@ function checkQaHookSeams() {
     );
   }
 
+  /**
+   * Дойдёт ли до полигона ЗАПРОС. Проверять существование файла
+   * страницы мало — это и подвело: файл лежал на месте, каталог и
+   * страница сходились, `Disallow: /qa/` стоял, а `/qa/site-sandbox`
+   * с первого дня отвечал 404. Middleware лендинга дописывает префикс
+   * локали всем путям, кроме перечисленных в `matcher`, и путь уезжал
+   * на `/ru/qa/site-sandbox`, которого нет: страница живёт вне
+   * сегмента `[locale]` — и правильно живёт, переводить полигон
+   * незачем. Нашлось это только тогда, когда страницу впервые открыли.
+   */
+  const middlewareSrc = read("landing/src/middleware.ts");
+  const matcher = /matcher:\s*\[\s*'([^']+)'/.exec(middlewareSrc)?.[1] ?? "";
+  if (!matcher) {
+    problems.push(
+      "landing/src/middleware.ts: не нашёлся matcher — шов на " +
+        "достижимость полигона проверять нечем (поправьте шов, а не код)",
+    );
+  } else {
+    // Первый сегмент пути (`qa` у `/qa/site-sandbox`) обязан быть в
+    // списке исключений — и со слэшем, как `r/`: голое `qa` совпало бы
+    // с началом любого пути на «qa».
+    const head = sandboxPath.replace(/^\//, "").split("/")[0];
+    if (!matcher.includes(`${head}/`)) {
+      problems.push(
+        `middleware лендинга не исключает «${head}/» из локаль-редиректа ` +
+          `— запрос к ${sandboxPath} уедет на /<локаль>${sandboxPath} и ` +
+          "получит 404, как это было до 29.09.2026",
+      );
+    }
+  }
+
+  /**
+   * Пол оседания разведчика — ВЫШЕ задержки ленивого блока полигона.
+   *
+   * Ленивый блок для того на полигоне и живёт: он изображает
+   * содержимое, которое приходит не из сети, а по таймеру, и которого
+   * поэтому не дождётся никакое ожидание сети. Замер 29.09.2026:
+   * блок появлялся на 1000-й мс, `networkidle2` отпускал на 990-й — и
+   * попадёт блок в кадр или нет, решали десять миллисекунд. Пол сделал
+   * это правилом; если пол опустится ниже задержки (или задержку
+   * поднимут выше пола), полигон перестанет проверять оседание,
+   * оставшись с виду прежним.
+   */
+  const pageDelay = Number(
+    /SANDBOX_LATE_BLOCK_MS = (\d+)/.exec(
+      read(`landing/src/app${sandboxPath}/SandboxClient.tsx`),
+    )?.[1],
+  );
+  const catalogDelay = Number(
+    /SANDBOX_LATE_BLOCK_MS = (\d+)/.exec(sandboxCatalogSrc)?.[1],
+  );
+  const settleFloor = Number(
+    /SETTLE_FLOOR_MS = ([\d_]+)/
+      .exec(read("backend/src/modules/client-site-tutorial/chromium-page-explorer.ts"))?.[1]
+      ?.replace(/_/g, ""),
+  );
+  if (!pageDelay || !catalogDelay || !settleFloor) {
+    problems.push(
+      "не нашлись SANDBOX_LATE_BLOCK_MS (страница/каталог) или " +
+        "SETTLE_FLOOR_MS — шов на оседание проверять нечем (поправьте " +
+        "шов, а не код)",
+    );
+  } else {
+    if (pageDelay !== catalogDelay) {
+      problems.push(
+        `задержка ленивого блока разошлась: на странице ${pageDelay} мс, ` +
+          `в каталоге ${catalogDelay} мс`,
+      );
+    }
+    if (settleFloor <= pageDelay) {
+      problems.push(
+        `пол оседания разведчика (${settleFloor} мс) не выше задержки ` +
+          `ленивого блока полигона (${pageDelay} мс) — полигон перестал ` +
+          "проверять то, ради чего в нём этот блок",
+      );
+    }
+  }
+
   const promptSrc = stripComments(
     read("backend/src/modules/tutorial-scenario/tutorial-scenario-prompt.ts"),
   );
@@ -3234,7 +3418,9 @@ function checkQaHookSeams() {
         `съёмщиков кадров: ${shooters.length}, все берут формат из одного ` +
         `места; владельцев префикса кадров: ${frameOwners.size}, метла знает ` +
         `${sweepTables.size} таблиц(ы); элементов полигона: ${inPage.size}, ` +
-        "каталог и страница сходятся",
+        "каталог и страница сходятся; полигон достижим мимо локаль-" +
+        `редиректа, пол оседания ${settleFloor} мс выше ленивого блока ` +
+        `${pageDelay} мс`,
     );
   }
 }

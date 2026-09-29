@@ -28,8 +28,46 @@ export function draftFramePrefix(draftId: string): string {
   return `tutorial-video-frames/${draftId}/`;
 }
 
-export function draftFramePathname(draftId: string, index: number): string {
-  return `${draftFramePrefix(draftId)}${index}.jpg`;
+/**
+ * Расширение файла по типу его содержимого.
+ *
+ * Имя в хранилище обязано совпадать с байтами внутри. До 29.09.2026 оба
+ * пути ниже были зашиты на `.jpg`, и это было верно ровно до того дня,
+ * когда съёмочный кадр стал PNG: `.jpg` с PNG внутри открывается не
+ * везде, а разбирать такую находку через полгода пришлось бы по
+ * содержимому файла, а не по его имени.
+ *
+ * Список закрытый, с внятным отказом: `image/svg+xml` или `image/gif`
+ * здесь не появляются ни при каких условиях (кадр снимает браузер), и
+ * молча превратить неизвестный тип в `.bin` значило бы завести файл,
+ * которого не ждёт ни сборка, ни админка.
+ */
+export function frameExtension(contentType: string): string {
+  switch (contentType.toLowerCase()) {
+    case 'image/png':
+      return 'png';
+    case 'image/jpeg':
+      return 'jpg';
+    case 'image/webp':
+      return 'webp';
+    default:
+      throw new FrameDecodeError(
+        `кадр в формате ${contentType} не кладётся в хранилище: браузер снимает только png, jpeg и webp`,
+      );
+  }
+}
+
+/**
+ * Путь ИТОГОВОГО кадра ролика. Расширение — по типу содержимого, а не
+ * по привычке: кадр приезжает либо из съёмочного (PNG), либо из
+ * предпросмотра (JPEG), и эти два случая различаются именно им.
+ */
+export function draftFramePathname(
+  draftId: string,
+  index: number,
+  contentType: string,
+): string {
+  return `${draftFramePrefix(draftId)}${index}.${frameExtension(contentType)}`;
 }
 
 /**
@@ -49,9 +87,28 @@ export function draftFramePathname(draftId: string, index: number): string {
 export function draftRoundFramePathname(
   draftId: string,
   index: number,
+  contentType: string = VIDEO_FRAME_CONTENT_TYPE,
 ): string {
-  return `${draftFramePrefix(draftId)}round-${index}.jpg`;
+  return `${draftFramePrefix(draftId)}round-${index}.${frameExtension(contentType)}`;
 }
+
+/**
+ * Тип съёмочного кадра — PNG (29.09.2026, §11-седециес ТЗ).
+ *
+ * Замер на живых страницах: на форме — той самой, из которой состоит
+ * личный кабинет заказчика, — PNG в плотности съёмки весит 58.7 КБ
+ * против 63.2 у прежнего JPEG q80, то есть ДЕШЕВЛЕ, и при этом не мылит
+ * буквы; на фото-странице PNG дороже втрое, но съёмочный кадр едет в
+ * Blob, где вес не так дорог (это и записано у `VIDEO_FRAME_QUALITY`,
+ * пока он был). Решающее — третье: `computeDHash` читает только PNG, и
+ * пока кадр был JPEG, сверить его было нечем и не с чем. Кадры мастера
+ * (`tutorial-video-frames/{assetId}/{шаг}.png`) и так PNG — здесь
+ * убирается исключение, а не заводится новое.
+ *
+ * Предпросмотровый кадр остаётся JPEG: он едет в JSON-ответ и в
+ * `jsonb`-колонку, а там PNG фото-страницы стоит 110 КБ вместо 27.
+ */
+export const VIDEO_FRAME_CONTENT_TYPE = 'image/png';
 
 export class FrameDecodeError extends Error {}
 
@@ -80,4 +137,40 @@ export function decodeFrameDataUrl(dataUrl: string): {
     throw new FrameDecodeError('кадр предпросмотра пуст');
   }
   return { buffer, contentType: match[1].toLowerCase() };
+}
+
+/**
+ * Итоговые кадры черновика — по СПИСКУ файлов хранилища, а не по имени,
+ * собранному из номера (29.09.2026).
+ *
+ * До этой правки расширение было одно на всех (`.jpg`), и админка
+ * спокойно строила путь из счётчика в строке. Теперь расширение следует
+ * за содержимым кадра: съёмочный кадр PNG, предпросмотровый JPEG, и у
+ * одного черновика бывают оба. Угадать имя по номеру больше нельзя.
+ *
+ * Заодно уходит то, на что админка и так жаловалась в комментарии:
+ * счётчик в строке мог разойтись с хранилищем после оборвавшегося
+ * `/finish`, и путь строился на кадр, которого нет. Список знает правду.
+ *
+ * `round-*` под тем же префиксом — кадры РАУНДОВ, а не ролика
+ * (`draftRoundFramePathname`). Они сюда не попадают: иначе незавершённый
+ * черновик показывал бы оператору вдвое больше кадров, чем в ролике.
+ */
+export function orderedFramePathnames(
+  draftId: string,
+  pathnames: readonly string[],
+): string[] {
+  const prefix = draftFramePrefix(draftId);
+  const numbered: Array<{ index: number; pathname: string }> = [];
+  for (const pathname of pathnames) {
+    if (!pathname.startsWith(prefix)) continue;
+    // Номер и расширение, и ничего между ними: `12.png` — кадр,
+    // `round-12.png` — не кадр, `12.thumb.png` — тоже не кадр.
+    const m = /^(\d+)\.[a-z0-9]+$/i.exec(pathname.slice(prefix.length));
+    if (!m) continue;
+    numbered.push({ index: Number(m[1]), pathname });
+  }
+  // По числу, а не по строке: иначе десятый кадр встал бы перед вторым.
+  numbered.sort((a, b) => a.index - b.index);
+  return numbered.map((n) => n.pathname);
 }
