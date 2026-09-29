@@ -79,7 +79,7 @@
     },
     {
       "path": "/api/cron/tutorial-scenario-run",
-      "schedule": "0 9 * * *"
+      "schedule": "0 9,10 * * *"
     },
     {
       "path": "/api/cron/tutorial-assembly-poll",

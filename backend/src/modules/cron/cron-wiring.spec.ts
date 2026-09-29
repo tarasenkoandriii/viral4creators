@@ -17,6 +17,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { JOB_LOCK_MS } from '../../common/cron-job-lock';
+
 const BACKEND_ROOT = join(__dirname, '..', '..', '..');
 
 function controllerRoutes(): string[] {
@@ -80,5 +82,45 @@ describe('швы крон-подсистемы: маршрут ↔ распис�
     expect(poll?.schedule).toMatch(/^\*\/\d+ \* \* \* \*$/);
     const everyMinutes = Number(/^\*\/(\d+)/.exec(poll!.schedule)![1]);
     expect(everyMinutes).toBeLessThanOrEqual(5);
+  });
+
+  /**
+   * Второй тик прогона сценариев (29.09.2026).
+   *
+   * Девять сценариев требуют ≈405–420 с (два замера подряд), а потолок
+   * функции Vercel — 300 с и на Hobby не поднимается. Значит одним
+   * тиком полный обход не помещается НИКОГДА, и три сценария каждую
+   * ночь откладываются на следующие сутки. Закрыто это не константой
+   * `RUN_DEADLINE_MS`, а вторым тиком в расписании — то есть решение
+   * живёт в `vercel.json`, где его ничего не держало.
+   *
+   * Два условия, и второе не очевидно: тики должны отстоять друг от
+   * друга дальше, чем живёт замок `JOB_LOCK_MS`, иначе второй тик
+   * увидит незакрытый замок первого и молча не сделает ничего —
+   * расписание будет выглядеть исправленным, а поведение останется
+   * прежним.
+   */
+  it('прогон сценариев обучалки идёт двумя тиками, разнесёнными дальше замка', () => {
+    const run = vercelCrons().find(
+      (c) => c.path === '/api/cron/tutorial-scenario-run',
+    );
+    expect(run).toBeDefined();
+    const [minute, hour] = run!.schedule.trim().split(/\s+/);
+    const hours = hour
+      .split(',')
+      .map(Number)
+      .sort((a, b) => a - b);
+    const minutes = minute
+      .split(',')
+      .map(Number)
+      .sort((a, b) => a - b);
+    expect(hours.every((h) => Number.isInteger(h))).toBe(true);
+    expect(minutes.every((m) => Number.isInteger(m))).toBe(true);
+    const ticks = hours
+      .flatMap((h) => minutes.map((m) => h * 60 + m))
+      .sort((a, b) => a - b);
+    expect(ticks.length).toBeGreaterThanOrEqual(2);
+    const gaps = ticks.slice(1).map((t, i) => (t - ticks[i]) * 60 * 1000);
+    expect(Math.min(...gaps)).toBeGreaterThan(JOB_LOCK_MS);
   });
 });

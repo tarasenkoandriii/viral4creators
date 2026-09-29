@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   budgetExhausted,
   openTutorialBudget,
@@ -102,6 +104,55 @@ describe('openTutorialBudget', () => {
     );
     expect(budget.limitMicroUsd).toBe(
       DEFAULT_TUTORIAL_DAILY_BUDGET_USD * 1_000_000,
+    );
+  });
+});
+
+/**
+ * Бюджет времени тика — четвёртый боевой прогон 29.09.2026.
+ *
+ * Тесты здесь не про «число такое-то», а про то, что оно ВЫВЕДЕНО из
+ * потолка функции, а не выбрано круглым. Круглые четыре минуты
+ * пережили бы любую правку соседних констант молча.
+ */
+describe('RUN_DEADLINE_MS выведен из потолка функции', () => {
+  // Читаем исходник: константы приватные, и делать их публичными ради
+  // теста значило бы расширять контракт модуля под инструмент.
+  const src = readFileSync(
+    join(__dirname, 'tutorial-scenario-runner.service.ts'),
+    'utf8',
+  );
+  const num = (name: string) =>
+    Number(
+      (new RegExp(`const ${name} = ([0-9_]+)`).exec(src)?.[1] ?? '0').replace(
+        /_/g,
+        '',
+      ),
+    );
+
+  it('дедлайн = потолок минус запас на хвост, а не круглое число', () => {
+    expect(src).toContain(
+      'const RUN_DEADLINE_MS = TICK_CEILING_MS - TICK_TAIL_RESERVE_MS',
+    );
+  });
+
+  it('запас на хвост покрывает замеренную стоимость сценария', () => {
+    // 278 с и 269 с на шесть сценариев — ≈46 с вместе со сборкой.
+    expect(num('TICK_TAIL_RESERVE_MS')).toBeGreaterThanOrEqual(46_000);
+  });
+
+  it('потолок функции — 300 с, и он не выдуман здесь', () => {
+    expect(num('TICK_CEILING_MS')).toBe(300_000);
+  });
+
+  it('таймаут одного сценария не превышает запас на хвост… не обязан', () => {
+    // SCENARIO_TIMEOUT_MS (90 с) БОЛЬШЕ запаса — и это осознанно:
+    // закладывать худший случай значило бы резать пропускную
+    // способность вдвое ради события, которого не было ни в одном из
+    // четырёх прогонов. Тест фиксирует само знание о разрыве, чтобы
+    // следующий читатель не счёл его недосмотром.
+    expect(num('SCENARIO_TIMEOUT_MS')).toBeGreaterThan(
+      num('TICK_TAIL_RESERVE_MS'),
     );
   });
 });
