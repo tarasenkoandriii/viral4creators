@@ -1020,6 +1020,24 @@ export class TutorialScenarioRunnerService {
   }
 
   async run(): Promise<TutorialScenarioRunResult> {
+    /**
+     * Точка отсчёта бюджета — ВХОД в обработчик, а не момент, когда
+     * поднялся браузер (правка 29.09.2026).
+     *
+     * `RUN_DEADLINE_MS` выведен из потолка функции Vercel, и весь смысл
+     * этого вывода в том, чтобы тик не был убит платформой посреди
+     * работы. Но считался он от `Date.now()` ПОСЛЕ
+     * `launchHeadlessBrowser()`, а до него ещё шли опрос сборок,
+     * фикстурный вход и сам запуск браузера — то есть формула была
+     * верна для того, что измеряла, и измеряла не то.
+     *
+     * Цена честного счёта названа прямо: запуск браузера переехал
+     * внутрь бюджета, поэтому в медленную ночь тик сделает на один
+     * сценарий меньше. Ротация `lastRunAt asc nulls first` к этому
+     * готова — остаток уйдёт первым на следующий тик, — но «девять за
+     * одну ночь» перестало быть гарантией и стало обычным случаем.
+     */
+    const tickStartedAt = Date.now();
     // Опрос сборок прошлых тиков — до фикстурного входа и запуска
     // браузера намеренно: сборка видео не завязана ни на фикстуру, ни
     // на сегодняшний регресс-прогон, и должна продвигаться независимо
@@ -1183,7 +1201,7 @@ export class TutorialScenarioRunnerService {
     const { browser } = launched;
     const outcomes: TutorialScenarioRunOutcome[] = [];
     const failures: string[] = [];
-    const deadline = Date.now() + RUN_DEADLINE_MS;
+    const deadline = tickStartedAt + RUN_DEADLINE_MS;
     try {
       for (const scenario of scenarios) {
         if (Date.now() >= deadline) {

@@ -199,6 +199,47 @@ describe('RUN_DEADLINE_MS выведен из потолка функции', ()
     );
   });
 
+  it('запуск браузера ограничен, и граница входит в счёт', () => {
+    // До 29.09.2026 `puppeteer.launch` не был обёрнут ничем, а бюджет
+    // тика отсчитывался ПОСЛЕ него. Зависший запуск не давал ни
+    // ошибки, ни строки в журнале — платформа убивала функцию молча.
+    const chromium = readFileSync(
+      join(__dirname, '..', '..', 'common', 'headless-chromium.ts'),
+      'utf8',
+    );
+    expect(chromium).toMatch(/withTimeout\(\s*launching,\s*LAUNCH_TIMEOUT_MS,/);
+    // И бюджет считается от ВХОДА в обработчик, иначе запуск снова
+    // окажется снаружи счёта.
+    expect(src).toContain('const tickStartedAt = Date.now();');
+    expect(src).toContain('const deadline = tickStartedAt + RUN_DEADLINE_MS;');
+  });
+
+  it('худший случай с запуском браузера тоже под потолком', () => {
+    // Полная цепочка тика: запуск + последний сценарий + его сборка.
+    const chromium = readFileSync(
+      join(__dirname, '..', '..', 'common', 'headless-chromium.ts'),
+      'utf8',
+    );
+    const launch = Number(
+      (
+        /const LAUNCH_TIMEOUT_MS = ([0-9_]+);/.exec(chromium)?.[1] ?? '0'
+      ).replace(/_/g, ''),
+    );
+    expect(launch).toBeGreaterThan(0);
+    // Запуск внутри бюджета, значит к потолку добавляется только
+    // хвост: дедлайн отсчитан от входа, и всё, что было до браузера,
+    // уже съело часть бюджета.
+    expect(
+      deadline() +
+        lit('SCENARIO_TIMEOUT_MS') +
+        lit('ASSEMBLY_SUBMIT_TIMEOUT_MS'),
+    ).toBeLessThanOrEqual(lit('TICK_CEILING_MS'));
+    // А сам запуск обязан помещаться в бюджет — иначе тик, у которого
+    // браузер поднимался предельно долго, не успеет НИ ОДНОГО
+    // сценария и отчитается `executed=0` без объяснения.
+    expect(launch).toBeLessThan(deadline());
+  });
+
   it('двух тиков хватает на девять сценариев по замеренной скорости', () => {
     // Пятый прогон: 8 сценариев за 298.6 с — ≈37 с на сценарий.
     // Стартов в тике: сколько их влезает до дедлайна.

@@ -103,6 +103,7 @@ import {
   type ScenarioPage,
 } from '../tutorial-runner/scenario-runner';
 import { CAPTURE_VIEWPORT } from '../tutorial-runner/tutorial-video-assembly';
+import { CLIENT_ROUND_BUDGET_MS } from '../client-site-tutorial/chromium-page-explorer';
 import type { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import {
   SPA_LOCALE_STORAGE_KEY,
@@ -171,8 +172,20 @@ const VIEWPORT = CAPTURE_VIEWPORT;
  * (`chromium-page-explorer.ts`). Пятнадцати секунд на это мало, и
  * прогон обрывался бы на самом интересном месте — ровно там, где
  * начинаются кадры, ради которых всё и затевалось.
+ *
+ * ## Почему это ВЫРАЖЕНИЕ, а не 45 секунд
+ *
+ * Сорок пять здесь стояло числом и совпадало с `ROUND_TIMEOUT_MS`
+ * сервера — но сервер отсчитывает свои сорок пять ПОСЛЕ запуска
+ * браузера, а наблюдатель ждёт вместе с ним. То есть две границы на
+ * одну операцию, и меньшая — у того, кто ждёт: сервер честно
+ * доделывал раунд (и тратил слот суточного лимита), а съёмка уже
+ * записала шаг провалившимся (аудит собственных правок 29.09.2026).
+ *
+ * Теперь ожидание выведено из настоящего бюджета раунда, и разойтись
+ * им негде.
  */
-const CAPTURE_STEP_TIMEOUT_MS = 45_000;
+const CAPTURE_STEP_TIMEOUT_MS = CLIENT_ROUND_BUDGET_MS;
 
 export type SnapshotTheme = 'light' | 'dark';
 

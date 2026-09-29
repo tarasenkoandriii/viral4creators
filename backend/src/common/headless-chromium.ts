@@ -60,6 +60,25 @@ const EXTRACTED_CHROMIUM_PATH = '/tmp/chromium';
  */
 const LAUNCH_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
 
+/**
+ * Потолок на САМ запуск браузера (29.09.2026).
+ *
+ * До этой границы ограничено было только СКАЧИВАНИЕ Chromium
+ * (`CHROMIUM_DOWNLOAD_TIMEOUT_MS`), а `puppeteer.launch` не обёрнут
+ * ничем — при том, что сообщение об ошибке парой строк ниже само
+ * упоминает SIGKILL и нехватку памяти, то есть этот режим отказа был
+ * известен. Зависший запуск давал не ошибку, а смерть функции: вызов
+ * уходил в потолок платформы, и наружу не попадало ни причины, ни
+ * строки в журнале.
+ *
+ * Граница касается всех четырёх съёмщиков разом — они зовут эту
+ * функцию, — и входит в их арифметику потолка. Именно поэтому она
+ * невелика: штатный запуск идёт секунды, и тридцати достаточно с
+ * запасом, а каждая лишняя секунда здесь отнимается у полезной работы
+ * тика.
+ */
+export const LAUNCH_TIMEOUT_MS = 30_000;
+
 export type HeadlessBrowserLaunchPlan =
   | {
       kind: 'ready';
@@ -120,13 +139,32 @@ export async function launchHeadlessBrowser(): Promise<
   const plan = await resolveHeadlessBrowserLaunchPlan();
   if (plan.kind === 'unavailable') return { error: plan.diagnostic };
 
+  // Запуск и его ожидание — РАЗНЫЕ вещи, и здесь это важно.
+  // `withTimeout` устроен как `Promise.race` и запуск не отменяет:
+  // Chromium, поднявшийся на тридцать первой секунде, просто окажется
+  // никому не нужным. Не закрыть его значило бы вылечить зависание
+  // ценой утечки процесса — а незакрытый Chromium держит память
+  // инстанса до его смерти (об этом же доккомментарий `inFreshBrowser`
+  // у разведчика чужой страницы). Поэтому ссылка на запуск живёт
+  // отдельно от гонки, и опоздавший браузер закрывается сам.
+  //
+  // Найдено аудитом собственной правки 29.09.2026: первая редакция
+  // границы этого не делала.
+  let handedOver = false;
+  let launching: Promise<import('puppeteer-core').Browser> | null = null;
   try {
     const puppeteer = await import('puppeteer-core');
-    const browser = await puppeteer.launch({
+    launching = puppeteer.launch({
       executablePath: plan.executablePath,
       headless: plan.headless,
       args: plan.args,
     });
+    const browser = await withTimeout(
+      launching,
+      LAUNCH_TIMEOUT_MS,
+      `запуск браузера не уложился в ${Math.round(LAUNCH_TIMEOUT_MS / 1000)}с`,
+    );
+    handedOver = true;
     return { browser };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -137,6 +175,13 @@ export async function launchHeadlessBrowser(): Promise<
           : ''
       }`,
     };
+  } finally {
+    // `.catch` обязателен: если запуск провалился по-настоящему,
+    // `launching` уже отклонён, и без него здесь появился бы
+    // необработанный reject поверх честно возвращённой ошибки.
+    if (!handedOver && launching) {
+      void launching.then((b) => b.close()).catch(() => undefined);
+    }
   }
 }
 

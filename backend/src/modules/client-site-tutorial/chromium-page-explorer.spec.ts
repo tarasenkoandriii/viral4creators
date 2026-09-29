@@ -27,6 +27,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ChromiumPageExplorer } from './chromium-page-explorer';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const ORIGIN = 'https://shop.example.com';
 
@@ -436,5 +438,82 @@ describe('переигровка сценария (§5.2 /undo, этап 113)', 
         allowedOrigin: ORIGIN,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+/**
+ * Потолок функции против суммы границ раунда (29.09.2026).
+ *
+ * Тот же счёт, что у тика обучалки, и заведён он потому, что запуск
+ * браузера жил СНАРУЖИ обоих таймаутов: `inFreshBrowser` поднимает
+ * браузер до `withTimeout`, а сам `puppeteer.launch` не был ограничен
+ * ничем.
+ */
+describe('бюджет раунда против потолка функции', () => {
+  const src = readFileSync(
+    join(__dirname, 'chromium-page-explorer.ts'),
+    'utf8',
+  );
+  const chromium = readFileSync(
+    join(__dirname, '..', '..', 'common', 'headless-chromium.ts'),
+    'utf8',
+  );
+  const num = (text: string, name: string) =>
+    Number(
+      (
+        new RegExp(`(?:export )?const ${name} = ([0-9_]+);`).exec(text)?.[1] ??
+        '0'
+      ).replace(/_/g, ''),
+    );
+  /** Потолок функции Vercel — тот же, что у тика обучалки. */
+  const CEILING_MS = 300_000;
+
+  it('раунд и переигровка вместе с запуском браузера помещаются под потолок', () => {
+    const launch = num(chromium, 'LAUNCH_TIMEOUT_MS');
+    const download = num(chromium, 'CHROMIUM_DOWNLOAD_TIMEOUT_MS');
+    expect(launch).toBeGreaterThan(0);
+    for (const name of ['ROUND_TIMEOUT_MS', 'REPLAY_TIMEOUT_MS']) {
+      // Худший случай: качаем Chromium, поднимаем браузер, работаем всё
+      // отведённое время. Скачивание и запуск идут последовательно, и
+      // оба — ДО `withTimeout` вокруг самой работы.
+      expect(download + launch + num(src, name)).toBeLessThanOrEqual(
+        CEILING_MS,
+      );
+    }
+  });
+
+  it('ожидающий раунда ждёт НЕ МЕНЬШЕ, чем сервер себе разрешает', () => {
+    // Две границы на одну операцию, и меньшая была у наблюдателя:
+    // съёмка карточек лендинга ждала клик «Исследовать» 45 с, а
+    // сервер отсчитывает свои 45 ПОСЛЕ запуска браузера. Сервер
+    // честно доделывал раунд и тратил слот суточного лимита, а съёмка
+    // уже записала шаг провалившимся.
+    const snapshot = readFileSync(
+      join(__dirname, '..', 'ui-snapshot', 'ui-snapshot-runner.service.ts'),
+      'utf8',
+    );
+    expect(snapshot).toContain(
+      'const CAPTURE_STEP_TIMEOUT_MS = CLIENT_ROUND_BUDGET_MS;',
+    );
+    // Сам бюджет обязан ВКЛЮЧАТЬ запуск браузера. Первая версия
+    // этого теста складывала слагаемые сама и пережила мутацию
+    // «убрать запуск из суммы»: она проверяла свою арифметику, а не
+    // решение в коде. Тот же промах, что у первой проверки запаса
+    // хвоста тика.
+    expect(src).toContain(
+      'CLIENT_ROUND_BUDGET_MS = LAUNCH_TIMEOUT_MS + ROUND_TIMEOUT_MS',
+    );
+    // И само ожидание обязано помещаться в бюджет тика съёмки —
+    // иначе шаг не успеет даже начаться.
+    const tickBudget = num(snapshot, 'RUN_TIME_BUDGET_MS');
+    const roundBudget =
+      num(chromium, 'LAUNCH_TIMEOUT_MS') + num(src, 'ROUND_TIMEOUT_MS');
+    expect(roundBudget).toBeLessThanOrEqual(
+      tickBudget > 0 ? tickBudget : 2 * 60 * 1000,
+    );
+  });
+
+  it('запуск браузера ограничен — иначе счёт выше считает не всё', () => {
+    expect(chromium).toMatch(/withTimeout\(\s*launching,\s*LAUNCH_TIMEOUT_MS,/);
   });
 });

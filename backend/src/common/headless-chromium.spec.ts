@@ -278,6 +278,70 @@ describe('launchHeadlessBrowser', () => {
     expect(result.error).toContain('нехватку памяти');
   });
 
+  /**
+   * Граница на сам запуск — правка 29.09.2026, и оба теста здесь про
+   * её цену, а не про неё саму.
+   */
+  it('запуск не уложился в срок — ошибка, а не зависание', async () => {
+    // До этой границы `puppeteer.launch` не был обёрнут ничем: вызов
+    // уходил в потолок функции, и наружу не попадало ни причины, ни
+    // строки в журнале.
+    process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium';
+    jest.useFakeTimers();
+    try {
+      launchMock.mockReturnValue(new Promise(() => {}));
+      const pending = launchHeadlessBrowser();
+      await jest.advanceTimersByTimeAsync(31_000);
+      const result = await pending;
+      assertLaunchError(result);
+      expect(result.error).toContain('не уложился');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('опоздавший браузер ЗАКРЫВАЕТСЯ, а не остаётся висеть', async () => {
+    // `withTimeout` — это `Promise.race`, запуск он не отменяет.
+    // Chromium, поднявшийся после срока, никому не нужен, и не
+    // закрыть его значит вылечить зависание ценой утечки процесса:
+    // незакрытый браузер держит память инстанса до его смерти.
+    process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium';
+    jest.useFakeTimers();
+    try {
+      const close = jest.fn().mockResolvedValue(undefined);
+      let settle: (b: unknown) => void = () => {};
+      launchMock.mockReturnValue(
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+      );
+      const pending = launchHeadlessBrowser();
+      await jest.advanceTimersByTimeAsync(31_000);
+      assertLaunchError(await pending);
+      // Браузер поднялся с опозданием.
+      settle({ close });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(close).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('успешный запуск НЕ закрывается — его отдали вызывающему', async () => {
+    // Обратная сторона той же правки: уборка не должна срабатывать на
+    // штатном пути, иначе раннер получит уже закрытый браузер.
+    process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium';
+    const close = jest.fn();
+    launchMock.mockResolvedValue({ close });
+
+    const result = await launchHeadlessBrowser();
+
+    expect('browser' in result).toBe(true);
+    await Promise.resolve();
+    expect(close).not.toHaveBeenCalled();
+  });
+
   it('puppeteer.launch падает с обычной ошибкой — без подсказки про память', async () => {
     process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium';
     launchMock.mockRejectedValue(new Error('какая-то другая ошибка'));
