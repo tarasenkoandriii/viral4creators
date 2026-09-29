@@ -1388,13 +1388,34 @@ function checkGuideSeams() {
   //     именно это тут и проверяется, потому что псевдоним без подсева
   //     снова молча откроет пустой мастер, а сценарий упадёт через 15
   //     секунд на селекторе вместо причины.
+  //     С 29.09.2026 это Map: имя маршрута → поле контекста, из
+  //     которого берётся сессия для подсева. Множества стало мало,
+  //     потому что подсеянных маршрутов три, а ключ в `localStorage`
+  //     один: подсунуть не ту сессию — значит снять не тот экран, и
+  //     сценарий при этом ПРОЙДЁТ.
   const seededBlock =
     builderSrc.match(
-      /SEEDED_SESSION_ROUTES[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/,
+      /SEEDED_SESSION_ROUTES[^=]*=\s*new Map\(\[([\s\S]*?)\]\)/,
     )?.[1] ?? "";
-  const seededRoutes = new Set(
-    [...seededBlock.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]),
-  );
+  const seededPairs = [
+    ...seededBlock.matchAll(/\['([a-z-]+)',\s*'([A-Za-z]+)'/g),
+  ].map((m) => [m[1], m[2]]);
+  const seededRoutes = new Set(seededPairs.map(([name]) => name));
+  const seededFields = new Set(seededPairs.map(([, field]) => field));
+  if (seededFields.size !== seededPairs.length) {
+    problems.push(
+      "два маршрута с подсевом берут сессию из ОДНОГО поля контекста — " +
+        "это два имени одного экрана, и модель не сможет выбрать верное",
+    );
+  }
+  for (const [, field] of seededPairs) {
+    if (!new RegExp(`\\b${field}\\?: string`).test(builderSrc)) {
+      problems.push(
+        `SEEDED_SESSION_ROUTES ссылается на поле «${field}», которого нет в ` +
+          "FixtureRouteContext — подсев молча возьмёт пустую строку",
+      );
+    }
+  }
   if (seededRoutes.size === 0) {
     problems.push(
       "не удалось разобрать SEEDED_SESSION_ROUTES в route-templates.ts — " +
@@ -1441,8 +1462,12 @@ function checkGuideSeams() {
       /^import[\s\S]*?from '[^']+';$/gm,
       "",
     );
+    // `.get(`, а не `.has(`: с тремя маршрутами важно не «просит ли
+    // сценарий подсев», а КАКУЮ из трёх сессий он просит. Проверка на
+    // `.has(` пережила бы возврат к одной сессии на все маршруты —
+    // то есть к молча снятому не тому экрану.
     if (
-      !/\bSEEDED_SESSION_ROUTES\.has\(/.test(runnerBody) ||
+      !/\bSEEDED_SESSION_ROUTES\.get\(/.test(runnerBody) ||
       !/\bSPA_SESSION_STORAGE_KEY\b/.test(runnerBody)
     ) {
       problems.push(
@@ -2742,6 +2767,129 @@ function checkQaHookSeams() {
       );
     }
   }
+  /**
+   * Достижимость: маршрут в каталоге против НАСТОЯЩИХ условий
+   * отрисовки (разбор 29.09.2026).
+   *
+   * Каталог до этого дня объявлял все двадцать девять хуков мастера
+   * живущими на `generate-ready`, и десять из них там не появлялись
+   * никогда: карточку релевантности и кнопку «Сгенерировать промпт»
+   * прячет написанный промпт, всю форму запуска рендера — готовый
+   * ролик. Утверждение было машинно-читаемым (из каталога берут
+   * промпт и валидатор), поэтому ошибка тиражировалась в каждый
+   * сгенерированный сценарий, а падала как «waitFor 15000ms
+   * exceeded» — причина, по которой её пять прогонов подряд
+   * объясняли не тем.
+   *
+   * Шов идёт от ЭКРАНА, а не от каталога: находит блок под условием
+   * «ролика ещё нет», выбирает из него все `data-qa` и требует, чтобы
+   * каталог отправлял ровно их на `generate-ready-to-render`. Уедет
+   * условие во фронтенде — шов покажет расхождение до прогона, а не
+   * после.
+   */
+  const WIZARD = "frontend/src/features/generation/GenerationWizard.tsx";
+  const wizardSrc = stripComments(read(WIZARD));
+  const routeOf = new Map(
+    [
+      ...catalogSrc.matchAll(
+        /^ {2}'([a-z0-9-]+)': \{\s*\n\s*route: '([a-z-]+)'/gm,
+      ),
+    ].map((m) => [m[1], m[2]]),
+  );
+
+  /** Кусок JSX под условием: от места совпадения до баланса скобок. */
+  const guardedRegion = (marker) => {
+    const at = wizardSrc.indexOf(marker);
+    if (at < 0) return null;
+    const open = wizardSrc.indexOf("(", at);
+    if (open < 0) return null;
+    let depth = 0;
+    for (let i = open; i < wizardSrc.length; i += 1) {
+      if (wizardSrc[i] === "(") depth += 1;
+      else if (wizardSrc[i] === ")") {
+        depth -= 1;
+        if (depth === 0) return wizardSrc.slice(open, i + 1);
+      }
+    }
+    return null;
+  };
+
+  const LAUNCH_GUARD = "generatedVideo?.status !== 'complete'";
+  const launchCard = guardedRegion(LAUNCH_GUARD);
+  if (!launchCard) {
+    problems.push(
+      `${WIZARD}: не нашёл блок под условием «${LAUNCH_GUARD}» — шов ` +
+        "достижимости ослеп, а каталог снова может обещать экраны, " +
+        "которых нет",
+    );
+  } else {
+    // Разметкой И компонентами. `AspectRatioPicker` и
+    // `ReferenceSlotsPanel` держат свои `data-qa` у себя, в карточке
+    // стоит только вызов, — и первая версия этого шва честно на них
+    // и споткнулась, объявив оба хука «в карточке нет». Считать это
+    // ошибкой каталога было бы неверно: в карточке они есть, просто
+    // через один уровень.
+    const hooksOfComponent = (name) => {
+      const file = frontFiles.find(
+        (f) => path.basename(f) === `${name}.tsx`,
+      );
+      if (!file) return [];
+      return [
+        ...stripComments(fs.readFileSync(file, "utf8")).matchAll(
+          /data-qa="([a-z0-9-]+)"/g,
+        ),
+      ].map((m) => m[1]);
+    };
+    const inCard = new Set(
+      [...launchCard.matchAll(/data-qa="([a-z0-9-]+)"/g)].map((m) => m[1]),
+    );
+    for (const m of launchCard.matchAll(/<([A-Z][A-Za-z0-9]*)/g)) {
+      for (const hook of hooksOfComponent(m[1])) inCard.add(hook);
+    }
+    for (const hook of inCard) {
+      const route = routeOf.get(hook);
+      if (!route) continue;
+      if (route !== "generate-ready-to-render") {
+        problems.push(
+          `хук «${hook}» стоит внутри карточки запуска рендера (её прячет ` +
+            `готовый ролик), но каталог отправляет его на «${route}» — ` +
+            "сценарий будет ждать его на экране, где его не бывает",
+        );
+      }
+    }
+    for (const [hook, route] of routeOf) {
+      if (route !== "generate-ready-to-render") continue;
+      if (!inCard.has(hook)) {
+        problems.push(
+          `каталог отправляет «${hook}» на generate-ready-to-render, но в ` +
+            "карточке запуска рендера его нет — либо хук переехал, либо " +
+            "маршрут выбран наугад",
+        );
+      }
+    }
+  }
+
+  // Вторая группа — компонентами, а не разметкой: `RelevancePanel`
+  // держит три своих хука внутри себя, поэтому проверяется МЕСТО ЕЁ
+  // ВЫЗОВА и кнопка генерации промпта рядом.
+  const PROMPT_GUARD = "!prompt && !onTemplate";
+  const beforePrompt = guardedRegion(PROMPT_GUARD);
+  if (!beforePrompt || !/<RelevancePanel/.test(beforePrompt)) {
+    problems.push(
+      `${WIZARD}: карточка релевантности больше не стоит под условием ` +
+        `«${PROMPT_GUARD}» — значит правило «её прячет написанный промпт» ` +
+        "устарело, и маршрут generate-prompt-pending надо пересмотреть",
+    );
+  }
+  for (const hook of ["relevance-panel", "relevance-check", "prompt-generate"]) {
+    if (routeOf.get(hook) !== "generate-prompt-pending") {
+      problems.push(
+        `хук «${hook}» виден только пока промпт не написан, но каталог ` +
+          `отправляет его на «${routeOf.get(hook) ?? "—"}»`,
+      );
+    }
+  }
+
   const promptSrc = stripComments(
     read("backend/src/modules/tutorial-scenario/tutorial-scenario-prompt.ts"),
   );
@@ -2761,7 +2909,9 @@ function checkQaHookSeams() {
       `ok   хуки data-qa: ${keys.length} в каталоге, все найдены во ` +
         `frontend/src; атрибутов data-qa во фронтенде: ${inFront.size} ` +
         `(вне каталога намеренно: ${NOT_FOR_SCENARIOS.size}); промпт и ` +
-        "валидатор берут каталог",
+        "валидатор берут каталог; достижимость сверена с условиями " +
+        `отрисовки: ${[...routeOf.values()].filter((r) => r.startsWith("generate")).length} хуков мастера ` +
+        `на ${new Set([...routeOf.values()].filter((r) => r.startsWith("generate"))).size} экранах`,
     );
   }
 }

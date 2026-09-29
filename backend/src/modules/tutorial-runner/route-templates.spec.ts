@@ -164,6 +164,8 @@ describe('ROUTE_DESCRIPTIONS — единственный источник пр�
       itemId: 'i1',
       manifestId: 'm1',
       sessionId: 's1',
+      promptPendingSessionId: 's2',
+      readyToRenderSessionId: 's3',
       clientSiteProjectId: 'cs1',
     };
     for (const key of Object.keys(ROUTE_DESCRIPTIONS)) {
@@ -230,6 +232,58 @@ describe('generate-ready', () => {
     // одном экране» как приглашение ждать карточку разбора сразу после
     // `goto generate` — и шесть сценариев из девяти падали на `waitFor`.
     expect(ROUTE_DESCRIPTIONS.generate).toContain('1–2');
-    expect(ROUTE_DESCRIPTIONS['generate-ready']).toContain('3–9');
+  });
+
+  /**
+   * Разбор достижимости 29.09.2026. Прежний тест требовал, чтобы
+   * описание `generate-ready` обещало «шаги 3–9», — и обещание было
+   * ложным: десять хуков этих шагов на готовой сессии не появляются
+   * никогда. Тест закреплял неверное утверждение, потому что проверял
+   * СЛОВА описания, а не то, что за ними стоит.
+   *
+   * Теперь проверяется структура: на каждое состояние сессии — своё
+   * имя маршрута, и описание `generate-ready` обязано называть, чего
+   * на нём НЕТ. Отрицание здесь важнее перечисления: модель ошибается
+   * не тем, что не найдёт нужный экран, а тем, что будет ждать
+   * элемент на экране, где его не бывает.
+   */
+  it('у каждого состояния сессии своё имя маршрута', () => {
+    expect(ROUTE_DESCRIPTIONS['generate-prompt-pending']).toBeDefined();
+    expect(ROUTE_DESCRIPTIONS['generate-ready-to-render']).toBeDefined();
+    expect(SEEDED_SESSION_ROUTES.get('generate-prompt-pending')).toBe(
+      'promptPendingSessionId',
+    );
+    expect(SEEDED_SESSION_ROUTES.get('generate-ready-to-render')).toBe(
+      'readyToRenderSessionId',
+    );
+    expect(SEEDED_SESSION_ROUTES.get('generate-ready')).toBe('sessionId');
+    // Три подсева — три РАЗНЫХ поля контекста. Одно и то же поле у
+    // двух маршрутов означало бы два имени одного экрана, то есть
+    // ровно ту неоднозначность, ради ухода от которой всё и затеяно.
+    expect(new Set(SEEDED_SESSION_ROUTES.values()).size).toBe(
+      SEEDED_SESSION_ROUTES.size,
+    );
+  });
+
+  it('описание готовой сессии называет, чего на ней НЕ БУДЕТ', () => {
+    const desc = ROUTE_DESCRIPTIONS['generate-ready'];
+    expect(desc).toContain('НЕТ И НЕ БУДЕТ');
+    expect(desc).toContain('релевантности');
+    expect(desc).toContain('рендера');
+  });
+
+  it('маршруты недостающих состояний объявлены единственными для своих экранов', () => {
+    expect(ROUTE_DESCRIPTIONS['generate-prompt-pending']).toContain(
+      'Единственный маршрут',
+    );
+    expect(ROUTE_DESCRIPTIONS['generate-ready-to-render']).toContain(
+      'Единственный маршрут',
+    );
+    // Платный рендер: запрет обязан стоять в описании маршрута, а не
+    // только в общих правилах — именно здесь кнопка становится видимой
+    // впервые.
+    expect(ROUTE_DESCRIPTIONS['generate-ready-to-render']).toContain(
+      'ЗАПРЕЩЕНО',
+    );
   });
 });

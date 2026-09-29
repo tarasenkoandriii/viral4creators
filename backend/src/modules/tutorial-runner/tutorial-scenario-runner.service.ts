@@ -98,6 +98,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ProjectType } from '@prisma/client';
 import { GenerationStatus } from '../../common/types/generation.types';
+import { SessionStatus } from '../../common/types/session.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { estimateCost } from '../../common/ai-pricing';
 import {
@@ -1334,12 +1335,24 @@ export class TutorialScenarioRunnerService {
           step.kind === 'goto',
       )
       .map((step) => step.route);
-    const wantsSeededSession = gotoRoutes.some((route) =>
-      SEEDED_SESSION_ROUTES.has(route),
-    );
+    // Какие подсеянные маршруты просит сценарий — МНОЖЕСТВО, а не
+    // «есть ли хоть один»: маршрутов с подсевом стало три
+    // (29.09.2026), а ключ в `localStorage` один. Два разных в одном
+    // сценарии — это молча не тот экран на втором goto, а не падение.
+    const seededFields = [
+      ...new Set(
+        gotoRoutes
+          .map((route) => SEEDED_SESSION_ROUTES.get(route))
+          .filter((f): f is NonNullable<typeof f> => !!f),
+      ),
+    ];
+    const wantsSeededSession = seededFields.length > 0;
     const mixesWizardRoutes =
-      wantsSeededSession && gotoRoutes.includes(FRESH_WIZARD_ROUTE);
-    const seededSessionId = wantsSeededSession ? (ctx.sessionId ?? '') : '';
+      (wantsSeededSession && gotoRoutes.includes(FRESH_WIZARD_ROUTE)) ||
+      seededFields.length > 1;
+    const seededSessionId = wantsSeededSession
+      ? (ctx[seededFields[0]] ?? '')
+      : '';
 
     let page: import('puppeteer-core').Page | undefined;
     try {
@@ -1349,7 +1362,9 @@ export class TutorialScenarioRunnerService {
       // однажды разошлась бы с ней.
       if (mixesWizardRoutes) {
         throw new Error(
-          `сценарий смешивает "${FRESH_WIZARD_ROUTE}" и маршрут на готовой сессии — подсев сессии действует на весь прогон, и чистый мастер после него чистым уже не будет; разделите на два сценария`,
+          seededFields.length > 1
+            ? `сценарий смешивает несколько маршрутов с подсевом сессии (${seededFields.join(', ')}) — ключ localStorage один, и второй goto открыл бы ПЕРВУЮ сессию, то есть снял бы не тот экран; разделите на два сценария`
+            : `сценарий смешивает "${FRESH_WIZARD_ROUTE}" и маршрут на готовой сессии — подсев сессии действует на весь прогон, и чистый мастер после него чистым уже не будет; разделите на два сценария`,
         );
       }
       page = await browser.newPage();
@@ -1616,70 +1631,114 @@ export class TutorialScenarioRunnerService {
      * проекта пользователя».
      */
     const AD_TYPES = [ProjectType.SINGLE, ProjectType.LINE];
-    const [project, clientSiteProject, item, manifest, session] =
-      await Promise.all([
-        this.prisma.project.findFirst({
-          where: { userId, deletedAt: null, type: { in: AD_TYPES } },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.project.findFirst({
-          where: {
-            userId,
-            deletedAt: null,
-            type: ProjectType.CLIENT_SITE,
-          },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.productItem.findFirst({
-          where: {
-            project: { userId, type: { in: AD_TYPES } },
-            deletedAt: null,
-          },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.brandManifest.findFirst({
-          where: { userId },
-          orderBy: { createdAt: 'desc' },
-        }),
-        /*
-         * Сессия — только с ГОТОВЫМ роликом, а не «самая свежая»
-         * (находка сквозного аудита 29.09.2026).
-         *
-         * У фикстурного пользователя сессий несколько, и штатно самая
-         * свежая из них — НЕ та, что нужна. `ui-snapshot-runner`
-         * держит служебную сессию (`data.qaFixture`, статус `created`,
-         * без ролика), чтобы обход мастера не плодил пустые строки
-         * каждые две минуты; её `createdAt` новее фикстурной. Плюс
-         * каждый сценарий, идущий на ЧИСТЫЙ мастер, заводит ещё одну
-         * пустую сессию — таков сам мастер.
-         *
-         * Отбор «по свежести» поэтому отдавал пустую сессию обоим
-         * потребителям: `generate-ready` подсевал её в `localStorage`,
-         * мастер честно её восстанавливал и открывался на первом шаге
-         * — то есть правка второго боевого прогона (§11-сексиес) на
-         * проде не работала вовсе, а выглядела сделанной. То же и с
-         * `postprod-video`: экран открывался у сессии без ролика.
-         *
-         * `generationStatus: COMPLETE` — признак по СОДЕРЖАНИЮ, а не
-         * фиксированный id из `seed-fixture-user.ts`: резолвер должен
-         * работать и для фикстуры, донастроенной руками (тот же довод,
-         * что у остальных полей этого метода). Служебная сессия обхода
-         * под него не попадает по построению — у неё статус `created`.
-         */
-        this.prisma.session.findFirst({
-          where: {
-            userId,
-            deletedAt: null,
-            generationStatus: GenerationStatus.COMPLETE,
-          },
-          orderBy: { createdAt: 'desc' },
-        }),
-      ]);
+    const [
+      project,
+      clientSiteProject,
+      item,
+      manifest,
+      session,
+      promptPending,
+      readyToRender,
+    ] = await Promise.all([
+      this.prisma.project.findFirst({
+        where: { userId, deletedAt: null, type: { in: AD_TYPES } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.project.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          type: ProjectType.CLIENT_SITE,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.productItem.findFirst({
+        where: {
+          project: { userId, type: { in: AD_TYPES } },
+          deletedAt: null,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.brandManifest.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      /*
+       * Сессия — только с ГОТОВЫМ роликом, а не «самая свежая»
+       * (находка сквозного аудита 29.09.2026).
+       *
+       * У фикстурного пользователя сессий несколько, и штатно самая
+       * свежая из них — НЕ та, что нужна. `ui-snapshot-runner`
+       * держит служебную сессию (`data.qaFixture`, статус `created`,
+       * без ролика), чтобы обход мастера не плодил пустые строки
+       * каждые две минуты; её `createdAt` новее фикстурной. Плюс
+       * каждый сценарий, идущий на ЧИСТЫЙ мастер, заводит ещё одну
+       * пустую сессию — таков сам мастер.
+       *
+       * Отбор «по свежести» поэтому отдавал пустую сессию обоим
+       * потребителям: `generate-ready` подсевал её в `localStorage`,
+       * мастер честно её восстанавливал и открывался на первом шаге
+       * — то есть правка второго боевого прогона (§11-сексиес) на
+       * проде не работала вовсе, а выглядела сделанной. То же и с
+       * `postprod-video`: экран открывался у сессии без ролика.
+       *
+       * `generationStatus: COMPLETE` — признак по СОДЕРЖАНИЮ, а не
+       * фиксированный id из `seed-fixture-user.ts`: резолвер должен
+       * работать и для фикстуры, донастроенной руками (тот же довод,
+       * что у остальных полей этого метода). Служебная сессия обхода
+       * под него не попадает по построению — у неё статус `created`.
+       */
+      this.prisma.session.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          generationStatus: GenerationStatus.COMPLETE,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      /*
+       * Сессия ДО промпта и сессия ПЕРЕД рендером — разбор
+       * достижимости хуков 29.09.2026.
+       *
+       * Отбор по `status`, а не по `generationStatus`: вторая
+       * колонка ведёт статус РЕНДЕРА, а состояние мастера живёт в
+       * `status` — по нему же его читает `stepFromSession` во
+       * фронтенде. Признак по СОДЕРЖАНИЮ, а не фиксированный id из
+       * `fixture-seed.ts`, по тому же доводу, что у сессии выше:
+       * резолвер обязан работать и для фикстуры, донастроенной
+       * руками.
+       *
+       * `generationStatus: null` у третьей — существенно, а не для
+       * полноты: карточку запуска рендера прячет ЛЮБОЙ готовый
+       * ролик, и сессия с рендером в любом состоянии, кроме «его
+       * нет», показала бы ровно тот же пустой экран, ради ухода от
+       * которого она и заводится.
+       */
+      this.prisma.session.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          status: SessionStatus.PRODUCT_INFO_ADDED,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.session.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          status: SessionStatus.PROMPT_GENERATED,
+          generationStatus: null,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
     return {
       projectId: project?.id,
       itemId: item?.id,
       manifestId: manifest?.id,
       sessionId: session?.id,
+      promptPendingSessionId: promptPending?.id,
+      readyToRenderSessionId: readyToRender?.id,
       clientSiteProjectId: clientSiteProject?.id,
       // `greetingProjectId` сознательно не ищется: фикстура проект
       // четвёртого типа не заводит, и маршрут `greeting-video` честно

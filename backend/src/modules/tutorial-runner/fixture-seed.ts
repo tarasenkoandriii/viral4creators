@@ -33,6 +33,7 @@ import type { PrismaClient } from '@prisma/client';
 import { ProjectType } from '@prisma/client';
 import { currencyForCountry } from '../../common/data/countries';
 import { GenerationStatus } from '../../common/types/generation.types';
+import { AnalysisStatus } from '../../common/types/analysis.types';
 import { SessionStatus } from '../../common/types/session.types';
 import { DEFAULT_VOICE_MODE } from '../../common/voice-mode';
 
@@ -42,6 +43,27 @@ export const FIXTURE_IDS = {
   project: 'fixture-tutorial-project',
   item: 'fixture-tutorial-item',
   session: 'fixture-tutorial-session',
+  /**
+   * Вторая и третья сессии — разбор достижимости хуков 29.09.2026.
+   *
+   * Сессия с ГОТОВЫМ роликом показывает поверхности просмотра и не
+   * показывает поверхности работы, и это не дефект интерфейса, а его
+   * природа: законченное не может показывать органы управления тем,
+   * что его производит. Десять хуков каталога жили на экранах, до
+   * которых с неё не дойти:
+   *
+   *   - `relevance-panel` и соседи рисуются под `!prompt`
+   *     (`GenerationWizard.tsx`) — нужна сессия ДО промпта;
+   *   - карточка запуска рендера (`aspect-ratio-picker`,
+   *     `video-generate` и ещё четыре) — под
+   *     `generatedVideo?.status !== 'complete'` — нужна сессия С
+   *     одобренным промптом и БЕЗ ролика.
+   *
+   * Стоит это ноль: сидирование — обычный upsert строк, платных
+   * вызовов здесь нет ни одного.
+   */
+  sessionPromptPending: 'fixture-tutorial-session-prompt-pending',
+  sessionReadyToRender: 'fixture-tutorial-session-ready-to-render',
   generatedVideo: 'fixture-tutorial-generated-video',
   /** Проект ТРЕТЬЕГО типа (`CLIENT_SITE`) — отдельный от рекламного, а
    *  не тот же самый: у `CLIENT_SITE` нет товаров, всё специфичное живёт
@@ -59,6 +81,10 @@ export interface FixtureSeedResult {
   projectId: string;
   itemId: string;
   sessionId: string;
+  /** Сессия на шаге промпта, промпт ещё не сгенерирован. */
+  promptPendingSessionId: string;
+  /** Промпт одобрен, ролика нет — экран запуска рендера. */
+  readyToRenderSessionId: string;
   clientSiteProjectId: string;
   /** Человекочитаемый журнал шагов — тот же текст, что раньше шёл в console.log CLI-скрипта. */
   log: string[];
@@ -115,6 +141,29 @@ export async function seedFixtureUser(
       isOperator: false,
       isTestUser: true,
       freeOutsideProject: true,
+      /**
+       * Тариф задаётся ЯВНО и только при создании (разбор
+       * достижимости 29.09.2026).
+       *
+       * Умолчание схемы — LITE, а у LITE выключены `relevance`,
+       * `audit` и `referenceAssets` (`common/plans.ts`). Это ровно
+       * три хука каталога: `relevance-panel`, `audit-panel`,
+       * `reference-slots`. На LITE-фикстуре они не появились бы ни
+       * при каком состоянии сессии и ни при каком клике — то есть
+       * заново та же поломка, ради которой весь этот разбор и
+       * затевался, только спрятанная в тарифе, а не в данных сессии.
+       *
+       * Сегодня фикстура на проде Premium, но держится это на строке
+       * в базе, поставленной руками 13.09.2026. Пересев фикстуры на
+       * чистого пользователя молча вернул бы LITE.
+       *
+       * ТОЛЬКО в `create`: `telegramId` из `.env` вполне может
+       * указывать на живой аккаунт («возьмём мой»), и менять тариф
+       * живому человеку сидирование права не имеет. Уже заведённому
+       * пользователю тариф не трогаем, а расхождение называем в
+       * журнале ниже.
+       */
+      plan: 'PREMIUM',
     },
   });
   // Оператор обязан прочитать это в ответе кнопки «Завести
@@ -126,6 +175,18 @@ export async function seedFixtureUser(
       'его расход показывается отдельным блоком отчёта, а суточный потолок — ' +
       'потолок тестовых аккаунтов',
   );
+  // Тариф существующего пользователя не трогаем, но молчать о нём
+  // нельзя: на LITE три хука каталога недостижимы навсегда, и
+  // сценарии с ними будут падать на `waitFor` без внятной причины.
+  if (user.plan !== 'PREMIUM') {
+    log.push(
+      `ВНИМАНИЕ: тариф фикстуры — ${user.plan}, а не PREMIUM. Проверка ` +
+        'релевантности, проверка ролика на артефакты и свои референс-слоты ' +
+        'на нём выключены (common/plans.ts), значит сценарии хуков ' +
+        'relevance-panel, audit-panel и reference-slots будут падать по ' +
+        'таймауту. Тариф менялся не здесь — поменяйте его в «Пользователях».',
+    );
+  }
 
   const manifest = await prisma.brandManifest.upsert({
     where: { id: FIXTURE_IDS.manifest },
@@ -215,6 +276,114 @@ export async function seedFixtureUser(
   });
   log.push(`Проект-обучалка (CLIENT_SITE): ${clientSiteProject.id}`);
 
+  /**
+   * Снимок товара в сессии — по НАСТОЯЩЕМУ контракту
+   * `ProductInformation`, а не по придуманным ключам.
+   *
+   * До 29.09.2026 здесь стояло `{ title, description }`. Контракт —
+   * `productName` / `productDescription`, и читает его
+   * `seedFromSession` (`frontend/src/hooks/useWorkflow.ts`) именно по
+   * этим именам. Получал он `undefined`, и дальше рушилась вся
+   * навигация: `stepTargets` открывает позицию «Промпт» только при
+   * `sourced && s.productName`. Экран товара при этом открывался
+   * пустым, хотя товар в фикстуре есть.
+   *
+   * Ошибка была тихой ровно потому, что `data` — Json-колонка: лишние
+   * ключи никто не отвергает, а недостающие превращаются в
+   * `undefined` в интерфейсе, а не в ошибку здесь.
+   *
+   * `productImagePathname` задан намеренно: по нему `seedFromSession`
+   * ставит `imageUploadProgress: 100`, а без этой сотни карточка
+   * запуска рендера скрыта первым же условием — то есть третья
+   * сессия не показала бы того, ради чего заведена. Файла по этому
+   * пути в Blob нет, и это безвредно по тому же основанию, что у
+   * `generatedVideo.pathname` ниже: раннер работает с DOM.
+   */
+  const productInformation = {
+    productName: item.title,
+    productDescription: item.description ?? '',
+    addedAt: new Date().toISOString(),
+    category: item.category ?? null,
+    countryCode: 'UA',
+    languageCode: 'ru',
+    dialogueLanguage: 'ru',
+    productImagePathname: `sessions/${FIXTURE_IDS.session}/product.jpg`,
+    sourceProductItemId: item.id,
+  };
+
+  /**
+   * Разбор референса. Без него `stepTargets` не открывает НИ ОДНОЙ
+   * позиции степпера кроме «Загрузки»: `analysed` ложно, а из него
+   * выводится `sourced`, от которого зависят «Товар» и «Промпт».
+   *
+   * То есть до 29.09.2026 на фикстуре была кликабельна ровно одна
+   * позиция из пяти, и любой сценарий, переходящий по степперу,
+   * молча не переходил никуда: `goToStep` при `target === null`
+   * возвращает прежнее состояние, клик проходит, экран не меняется, а
+   * следующий `waitFor` ждёт пятнадцать секунд и падает. Так падали
+   * сценарии 4 и 7 во всех пяти боевых прогонах.
+   *
+   * Персонаж и сцена перечислены не для красоты: `CharacterCasting`
+   * рисуется при `analysis?.characters !== undefined`, `SceneCasting`
+   * — при непустом разборе. Пустой массив достаточен для первого, но
+   * карточка без строк проверяла бы меньше, чем может.
+   */
+  const videoAnalysis = {
+    analysisId: `${FIXTURE_IDS.session}-analysis`,
+    analyzedAt: new Date().toISOString(),
+    status: AnalysisStatus.COMPLETE,
+    sceneBreakdown:
+      'Фикстурный разбор референса для регрессионных сценариев обучалки. ' +
+      'Сцена 1: крупный план товара на столе. Сцена 2: человек берёт товар в руки. ' +
+      'Сцена 3: товар в использовании, финальный кадр с логотипом.',
+    characters: [
+      {
+        id: 'c1',
+        label: 'Fixture Presenter',
+        role: 'presenter',
+        appearance: 'Человек средних лет, светлая рубашка, нейтральный фон.',
+        prominence: 'main' as const,
+        previewAt: null,
+        previewUrl: null,
+      },
+    ],
+    scenes: [
+      {
+        id: 's1',
+        start: 0,
+        end: 3,
+        title: 'Крупный план товара на столе',
+        previewAt: null,
+        previewUrl: null,
+      },
+      {
+        id: 's2',
+        start: 3,
+        end: 6,
+        title: 'Человек берёт товар в руки',
+        previewAt: null,
+        previewUrl: null,
+      },
+    ],
+    extras: [],
+  };
+
+  /**
+   * Одобренный промпт. `stepTargets` открывает позицию «Видео» только
+   * при `s.prompt?.approvedAt` — без него до экрана запуска рендера
+   * не дойти ни кликом, ни как-либо ещё.
+   */
+  const approvedPrompt = (sessionId: string) => ({
+    promptId: `${sessionId}-prompt`,
+    generatedText:
+      'Фикстурный промпт для регрессионных сценариев обучающих видео.',
+    finalText: 'Фикстурный промпт для регрессионных сценариев обучающих видео.',
+    characterCount: 62,
+    generatedAt: new Date().toISOString(),
+    approvedAt: new Date().toISOString(),
+    moderationStatus: 'approved',
+  });
+
   // См. доккомментарий файла: реального файла в Blob по этому pathname
   // нет и не будет создано этой функцией.
   const generatedVideo = {
@@ -240,43 +409,69 @@ export async function seedFixtureUser(
     voiceMode: DEFAULT_VOICE_MODE,
   };
 
-  const sessionData = {
-    locale: 'ru',
-    productInformation: {
-      title: item.title,
-      description: item.description,
+  /**
+   * Три сессии, а не одна, и различаются они СОСТОЯНИЕМ, а не
+   * содержимым: товар, разбор и бренд у всех одинаковы, чтобы
+   * расхождение экранов нельзя было списать на разные данные.
+   */
+  const seedSession = async (
+    id: string,
+    status: SessionStatus,
+    extra: {
+      generationStatus?: GenerationStatus;
+      prompt?: boolean;
+      video?: boolean;
     },
+    note: string,
+  ): Promise<void> => {
+    const data = {
+      locale: 'ru',
+      productInformation,
+      videoAnalysis,
+      ...(extra.prompt ? { generationPrompt: approvedPrompt(id) } : {}),
+    };
+    // Этап 122: готовый ролик живёт во второй колонке — так же, как его
+    // пишет `SessionService.updateSession`. Положить его в `data` значило
+    // бы завести фикстуру в раскладке, которой в проде не бывает: экраны
+    // постпрода и админки читают `liveData`, и регрессионный обход снимал
+    // бы пустой экран, ничего при этом не заметив.
+    const liveData = extra.video ? { generatedVideo } : {};
+    const fields = {
+      userId: user.id,
+      projectId: project.id,
+      productItemId: item.id,
+      status,
+      generationStatus: extra.generationStatus ?? null,
+      data,
+      liveData,
+    };
+    await prisma.session.upsert({
+      where: { id },
+      update: fields,
+      create: { id, ...fields },
+    });
+    log.push(`${note}: ${id}`);
   };
-  // Этап 122: готовый ролик живёт во второй колонке — так же, как его
-  // пишет `SessionService.updateSession`. Положить его в `data` значило
-  // бы завести фикстуру в раскладке, которой в проде не бывает: экраны
-  // постпрода и админки читают `liveData`, и регрессионный обход снимал
-  // бы пустой экран, ничего при этом не заметив.
-  const sessionLiveData = { generatedVideo };
 
-  await prisma.session.upsert({
-    where: { id: FIXTURE_IDS.session },
-    update: {
-      userId: user.id,
-      projectId: project.id,
-      productItemId: item.id,
-      status: SessionStatus.VIDEO_COMPLETE,
-      generationStatus: GenerationStatus.COMPLETE,
-      data: sessionData,
-      liveData: sessionLiveData,
-    },
-    create: {
-      id: FIXTURE_IDS.session,
-      userId: user.id,
-      projectId: project.id,
-      productItemId: item.id,
-      status: SessionStatus.VIDEO_COMPLETE,
-      generationStatus: GenerationStatus.COMPLETE,
-      data: sessionData,
-      liveData: sessionLiveData,
-    },
-  });
-  log.push(`Сессия с готовым роликом: ${FIXTURE_IDS.session}`);
+  await seedSession(
+    FIXTURE_IDS.session,
+    SessionStatus.VIDEO_COMPLETE,
+    { generationStatus: GenerationStatus.COMPLETE, prompt: true, video: true },
+    'Сессия с готовым роликом',
+  );
+  await seedSession(
+    FIXTURE_IDS.sessionPromptPending,
+    SessionStatus.PRODUCT_INFO_ADDED,
+    {},
+    'Сессия до промпта (релевантность, кнопка «Сгенерировать промпт»)',
+  );
+  await seedSession(
+    FIXTURE_IDS.sessionReadyToRender,
+    SessionStatus.PROMPT_GENERATED,
+    { prompt: true },
+    'Сессия с одобренным промптом и без ролика (карточка запуска рендера)',
+  );
+
   log.push('Готово: фикстурные данные заведены/обновлены.');
 
   return {
@@ -287,6 +482,8 @@ export async function seedFixtureUser(
     projectId: project.id,
     itemId: item.id,
     sessionId: FIXTURE_IDS.session,
+    promptPendingSessionId: FIXTURE_IDS.sessionPromptPending,
+    readyToRenderSessionId: FIXTURE_IDS.sessionReadyToRender,
     clientSiteProjectId: clientSiteProject.id,
     log,
   };

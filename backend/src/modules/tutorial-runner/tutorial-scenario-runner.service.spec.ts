@@ -741,6 +741,90 @@ describe('TutorialScenarioRunnerService', () => {
     expect(runStorageSeeds(page).sessionId).toBe('sess-with-video');
   });
 
+  /**
+   * КАКАЯ из трёх сессий подсевается — разбор достижимости
+   * 29.09.2026.
+   *
+   * Проверка «подсев вообще случился» это не ловит: маршрут
+   * `generate-ready-to-render` с сессией готового ролика открыл бы
+   * экран без карточки запуска рендера — то есть сценарий упал бы на
+   * `waitFor` ровно так же, как до всей этой правки, и объяснение
+   * снова оказалось бы не тем. Мутация «брать всегда ctx.sessionId»
+   * первую версию этих тестов пережила.
+   */
+  it.each([
+    ['generate-ready', 'sess-done'],
+    ['generate-prompt-pending', 'sess-prompt-pending'],
+    ['generate-ready-to-render', 'sess-ready-to-render'],
+  ])(
+    'маршрут %s подсевает свою сессию, а не соседнюю',
+    async (route, expected) => {
+      const page = buildFakePage();
+      launchHeadlessBrowserMock.mockResolvedValue({
+        browser: {
+          newPage: jest.fn().mockResolvedValue(page),
+          close: jest.fn().mockResolvedValue(undefined),
+        },
+      });
+      const { service, prisma } = build([
+        { ...SCENARIO_OK, steps: [{ kind: 'goto', route }] },
+      ]);
+      // Резолвер зовёт findFirst трижды; различаем вызовы по `where`,
+      // как это делает сама выборка.
+      prisma.session.findFirst.mockImplementation(
+        async (args: {
+          where?: { generationStatus?: unknown; status?: string };
+        }) => {
+          if (args?.where?.generationStatus === GenerationStatus.COMPLETE) {
+            return { id: 'sess-done' };
+          }
+          if (args?.where?.status === 'product_info_added') {
+            return { id: 'sess-prompt-pending' };
+          }
+          if (args?.where?.status === 'prompt_generated') {
+            return { id: 'sess-ready-to-render' };
+          }
+          return null;
+        },
+      );
+
+      await service.run();
+
+      expect(runStorageSeeds(page).sessionId).toBe(expected);
+    },
+  );
+
+  it('сессия перед рендером ищется БЕЗ начатого рендера', async () => {
+    // `generationStatus: null` здесь существенно: карточку запуска
+    // прячет любой готовый ролик, и сессия с рендером в любом
+    // состоянии, кроме «его нет», дала бы тот же пустой экран.
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service, prisma } = build([
+      {
+        ...SCENARIO_OK,
+        steps: [{ kind: 'goto', route: 'generate-ready-to-render' }],
+      },
+    ]);
+    prisma.session.findFirst.mockResolvedValue({ id: 's' });
+
+    await service.run();
+
+    expect(prisma.session.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: 'prompt_generated',
+          generationStatus: null,
+        }),
+      }),
+    );
+  });
+
   it('чистый мастер — ключ сессии УДАЛЯЕТСЯ, а не просто не ставится', async () => {
     // Страница могла остаться от предыдущего сценария. Молча
     // унаследованная сессия хуже отсутствия подсева: экран откроется не
@@ -3291,6 +3375,66 @@ describe('TutorialScenarioRunnerService', () => {
           jest.useRealTimers();
         }
       }, 20_000);
+    });
+
+    /**
+     * Один ключ `localStorage`, три подсеянных маршрута — разбор
+     * достижимости 29.09.2026.
+     *
+     * Сценарий, зовущий два разных подсева, получил бы на втором
+     * goto ПЕРВУЮ сессию и снял бы не тот экран — при этом ПРОЙДЯ.
+     * Молчаливо неверный ролик хуже падения: его никто не
+     * перепроверит.
+     */
+    describe('смешивание маршрутов с подсевом сессии', () => {
+      const withSteps = (routes: string[]) => ({
+        id: 'ts-mix',
+        subjectKey: '1',
+        locale: 'ru',
+        steps: routes.map((route) => ({ kind: 'goto', route })),
+      });
+
+      const runWith = async (routes: string[]) => {
+        const page = buildFakePage({ screenshot: true });
+        launchHeadlessBrowserMock.mockResolvedValue({
+          browser: {
+            newPage: jest.fn().mockResolvedValue(page),
+            close: jest.fn().mockResolvedValue(undefined),
+          },
+        });
+        const built = build([withSteps(routes)]);
+        return built.service.run();
+      };
+
+      it('два разных подсева в одном сценарии — отказ с названной причиной', async () => {
+        const result = await runWith([
+          'generate-prompt-pending',
+          'generate-ready-to-render',
+        ]);
+        expect(result.failed).toBe(1);
+        expect(result.outcomes[0].error).toContain(
+          'несколько маршрутов с подсевом',
+        );
+        // Причина обязана называть последствие, а не только факт:
+        // «снял бы не тот экран» — это то, из-за чего правило есть.
+        expect(result.outcomes[0].error).toContain('не тот экран');
+      });
+
+      it('подсев вместе с чистым мастером — прежний отказ, он не потерялся', async () => {
+        const result = await runWith(['generate-ready-to-render', 'generate']);
+        expect(result.failed).toBe(1);
+        expect(result.outcomes[0].error).toContain('чистый мастер');
+      });
+
+      it('ОДИН подсев, пусть и в двух goto подряд, — не отказ', async () => {
+        // Иначе правило запрещало бы законное: вернуться на тот же
+        // экран посреди сценария можно, сессия от этого не меняется.
+        const result = await runWith([
+          'generate-ready-to-render',
+          'generate-ready-to-render',
+        ]);
+        expect(result.outcomes[0].error ?? '').not.toContain('подсевом');
+      });
     });
 
     describe('застревания и отказы уборки (сквозной аудит 29.09.2026)', () => {
