@@ -5,7 +5,7 @@
  * источниках (landing/frontend dictionaries, common/plans.ts и соседние).
  */
 
-export const ASSISTANT_KNOWLEDGE_BUILT_AT = '2026-09-29T10:36:56.148Z';
+export const ASSISTANT_KNOWLEDGE_BUILT_AT = '2026-09-29T18:40:26.856Z';
 export const ASSISTANT_KNOWLEDGE_COMMIT = 'local';
 
 export interface ProactiveTips {
@@ -623,8 +623,8 @@ export const GREETING_TUTORIAL_TOPICS: Record<string, AssistantStepItem> = {
     details: [],
   },
   'ru:greeting-settings': {
-    title: 'Настройте ролик',
-    text: 'Голос отправителя: Поздравление можно прочитать вашим голосом — если вы уже клонировали его. Музыка: Подложка звучит тише голоса и не спорит с ним. Подписи в кадре: Короткий текст поверх картинки — в начале и в конце ролика. Наклейка: Картинка поверх кадра — конфетти, сердечки, шарики. Поиск по Pixabay, прозрачные PNG. Сколько сцен: Один кадр или несколько с монтажными склейками. На цену и время не влияет — вызов всё равно один.',
+    title: 'Характер ролика',
+    text: 'Голос, музыка, надписи, наклейка и сцены — всё, что задаёт настроение ролика. Голос отправителя: Поздравление можно прочитать вашим голосом — если вы уже клонировали его. Музыка: Подложка звучит тише голоса и не спорит с ним. Подписи в кадре: Короткий текст поверх картинки — в начале и в конце ролика. Наклейка: Картинка поверх кадра — конфетти, сердечки, шарики. Поиск по Pixabay, прозрачные PNG. Сколько сцен: Один кадр или несколько с монтажными склейками. На цену и время не влияет — вызов всё равно один.',
     details: [],
   },
   'ru:greeting-video': {
@@ -648,8 +648,8 @@ export const GREETING_TUTORIAL_TOPICS: Record<string, AssistantStepItem> = {
     details: [],
   },
   'uk:greeting-settings': {
-    title: 'Налаштуйте ролик',
-    text: 'Голос відправника: Привітання можна прочитати вашим голосом — якщо ви вже клонували його. Музика: Підкладка звучить тихіше за голос і не сперечається з ним. Підписи в кадрі: Короткий текст поверх картинки — на початку та наприкінці ролика. Наліпка: Картинка поверх кадру — конфеті, сердечка, кульки. Пошук у Pixabay, прозорі PNG. Скільки сцен: Один кадр або кілька з монтажними склейками. На ціну й час не впливає — виклик усе одно один.',
+    title: 'Характер ролика',
+    text: 'Голос, музика, написи, наліпка й сцени — усе, що задає настрій ролика. Голос відправника: Привітання можна прочитати вашим голосом — якщо ви вже клонували його. Музика: Підкладка звучить тихіше за голос і не сперечається з ним. Підписи в кадрі: Короткий текст поверх картинки — на початку та наприкінці ролика. Наліпка: Картинка поверх кадру — конфеті, сердечка, кульки. Пошук у Pixabay, прозорі PNG. Скільки сцен: Один кадр або кілька з монтажними склейками. На ціну й час не впливає — виклик усе одно один.',
     details: [],
   },
   'uk:greeting-video': {
@@ -673,8 +673,8 @@ export const GREETING_TUTORIAL_TOPICS: Record<string, AssistantStepItem> = {
     details: [],
   },
   'en:greeting-settings': {
-    title: 'Tune the video',
-    text: "Sender's voice: The greeting can be read in your own voice — if you have already cloned it. Music: The bed sits under the voice and never competes with it. On-screen captions: A short line over the picture, at the start and at the end. Sticker: An image over the frame — confetti, hearts, balloons. Searched on Pixabay, transparent PNGs. How many shots: One continuous take, or several with hard cuts. Costs the same and takes the same time — it is still one render.",
+    title: 'Video character',
+    text: "Voice, music, captions, sticker and scenes — everything that sets the mood of the video. Sender's voice: The greeting can be read in your own voice — if you have already cloned it. Music: The bed sits under the voice and never competes with it. On-screen captions: A short line over the picture, at the start and at the end. Sticker: An image over the frame — confetti, hearts, balloons. Searched on Pixabay, transparent PNGs. How many shots: One continuous take, or several with hard cuts. Costs the same and takes the same time — it is still one render.",
     details: [],
   },
   'en:greeting-video': {
@@ -698,8 +698,8 @@ export const GREETING_TUTORIAL_TOPICS: Record<string, AssistantStepItem> = {
     details: [],
   },
   'de:greeting-settings': {
-    title: 'Das Video einstellen',
-    text: 'Stimme des Absenders: Der Gruß kann mit Ihrer eigenen Stimme gelesen werden — sofern Sie sie bereits geklont haben. Musik: Die Unterlegung bleibt leiser als die Stimme und drängt sich nicht vor. Einblendungen: Eine kurze Zeile über dem Bild, am Anfang und am Ende. Sticker: Ein Bild über dem Kader — Konfetti, Herzen, Luftballons. Gesucht bei Pixabay, transparente PNGs. Wie viele Einstellungen: Eine durchgehende Einstellung oder mehrere mit harten Schnitten. Preis und Dauer bleiben gleich — es ist weiterhin ein Rendering.',
+    title: 'Charakter des Videos',
+    text: 'Stimme, Musik, Einblendungen, Sticker und Szenen — alles, was die Stimmung des Videos bestimmt. Stimme des Absenders: Der Gruß kann mit Ihrer eigenen Stimme gelesen werden — sofern Sie sie bereits geklont haben. Musik: Die Unterlegung bleibt leiser als die Stimme und drängt sich nicht vor. Einblendungen: Eine kurze Zeile über dem Bild, am Anfang und am Ende. Sticker: Ein Bild über dem Kader — Konfetti, Herzen, Luftballons. Gesucht bei Pixabay, transparente PNGs. Wie viele Einstellungen: Eine durchgehende Einstellung oder mehrere mit harten Schnitten. Preis und Dauer bleiben gleich — es ist weiterhin ein Rendering.',
     details: [],
   },
   'de:greeting-video': {
@@ -723,8 +723,8 @@ export const GREETING_TUTORIAL_TOPICS: Record<string, AssistantStepItem> = {
     details: [],
   },
   'es:greeting-settings': {
-    title: 'Ajusta el video',
-    text: 'Voz del remitente: La felicitación puede leerse con tu propia voz, si ya la has clonado. Música: La base suena por debajo de la voz y nunca compite con ella. Rótulos en pantalla: Una línea corta sobre la imagen, al principio y al final. Pegatina: Una imagen sobre el plano: confeti, corazones, globos. Se busca en Pixabay, PNG transparentes. Cuántos planos: Un plano continuo o varios con cortes secos. El precio y el tiempo no cambian: sigue siendo un solo render.',
+    title: 'Carácter del vídeo',
+    text: 'Voz, música, rótulos, pegatina y escenas: todo lo que marca el ánimo del vídeo. Voz del remitente: La felicitación puede leerse con tu propia voz, si ya la has clonado. Música: La base suena por debajo de la voz y nunca compite con ella. Rótulos en pantalla: Una línea corta sobre la imagen, al principio y al final. Pegatina: Una imagen sobre el plano: confeti, corazones, globos. Se busca en Pixabay, PNG transparentes. Cuántos planos: Un plano continuo o varios con cortes secos. El precio y el tiempo no cambian: sigue siendo un solo render.',
     details: [],
   },
   'es:greeting-video': {

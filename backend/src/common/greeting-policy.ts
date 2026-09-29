@@ -249,8 +249,11 @@ export interface ResolvedRegister {
  * Итоговый регистр «Особого повода» = самый строгий из сигналов (§3.4).
  *
  * Без выбора человека стартовая точка — базовый регистр OTHER (тёплый
- * нейтральный), а НЕ праздничный: до этапа B интерфейс вопроса не задаёт,
- * и молчание не должно превращаться в праздник.
+ * нейтральный), а НЕ праздничный: молчание не должно превращаться в
+ * праздник. Для НОВЫХ записей эта ветка больше не достижима — сервисы
+ * создания и правки брифа с этапа D требуют ответа (`otherMoodMissing`).
+ * Умолчание остаётся ради снимков и брифов, собранных до этого, которые
+ * читаются и рендерятся как есть.
  */
 export function resolveOtherRegister(
   s: OtherRegisterSignals,
@@ -570,10 +573,59 @@ export function greetingPolicyView(): GreetingPolicyView {
 
 // ── Регистр брифа целиком (создание и правка) ────────────────────────────
 
+/**
+ * Этап D (§3.4 п.1, приёмка §8.1): у «Особого повода» вопрос «какое это
+ * событие по настроению» обязателен. Пропуск нельзя молча заменить
+ * умолчанием: регистр решает, можно ли шутить, и угадывать его за
+ * человека — ровно та ошибка, ради которой вопрос и задаётся.
+ *
+ * Текст — одна константа, чтобы создание и правка отказывали одинаково.
+ */
+export const OTHER_MOOD_REQUIRED = `Для «Особого повода» ответьте, какое это событие по настроению: occasionRegister — одно из ${GREETING_REGISTERS.join(', ')}.`;
+
+/**
+ * Не хватает ли ответа о настроении: только у OTHER, `null` — тоже пропуск.
+ * Сервисы проверяют это ДО `resolveBriefRegister`: запрос, который всё
+ * равно будет отклонён, не должен стоить вызова классификатора. Модуль
+ * остаётся чистым (без Nest), поэтому 400 бросают сами сервисы.
+ */
+export function otherMoodMissing(
+  occasion: GreetingOccasion,
+  userRegister: GreetingRegister | null | undefined,
+): boolean {
+  return occasion === 'OTHER' && !userRegister;
+}
+
+/**
+ * Сохранённый ответ человека о настроении — из брифа или снимка сессии.
+ *
+ * Ответ хранится отдельно от итога (`userOccasionRegister`): когда ключевые
+ * слова или классификатор поднимают регистр, в `occasionRegister` лежит
+ * победивший сигнал, а не ответ. Брифы и снимки, сделанные до этой
+ * колонки, её не несут — у них ответ восстановим, только если победил сам
+ * человек (`registerSource === 'user'`); иначе он потерян, и это `null`.
+ */
+export function storedUserRegister(brief: {
+  occasion: GreetingOccasion;
+  occasionRegister?: GreetingRegister | null;
+  registerSource?: string | null;
+  userOccasionRegister?: GreetingRegister | null;
+}): GreetingRegister | null {
+  if (brief.occasion !== 'OTHER') return null;
+  if (brief.userOccasionRegister) return brief.userOccasionRegister;
+  return brief.registerSource === 'user'
+    ? (brief.occasionRegister ?? null)
+    : null;
+}
+
 export interface BriefRegisterInput {
   occasion: GreetingOccasion;
   customOccasionText: string | null;
-  /** Явный выбор человека (вопрос о настроении), если был. */
+  /**
+   * Явный выбор человека (вопрос о настроении). Сервисы требуют его для
+   * OTHER заранее (`otherMoodMissing`); здесь он необязателен ради старых
+   * снимков.
+   */
   userRegister?: GreetingRegister | null;
   /**
    * Ранее полученный ответ классификатора — чтобы не платить за вызов

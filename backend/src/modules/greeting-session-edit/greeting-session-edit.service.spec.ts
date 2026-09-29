@@ -546,3 +546,102 @@ describe('PATCH /sessions/:id/greeting-script', () => {
     );
   });
 });
+
+/**
+ * Этап D (§3.4 п.1, приёмка §8.1): правка из сессии идёт через тот же
+ * `resolveNext`, поэтому и здесь OTHER без ответа о настроении не
+ * сохраняется — ни в снимок сессии, ни в бриф проекта.
+ */
+describe('PATCH /sessions/:id/greeting-brief — OTHER требует ответа о настроении', () => {
+  const otherSnap = (over: Partial<GreetingBriefSnapshot> = {}) =>
+    snap({
+      occasion: 'OTHER',
+      customOccasionText: 'Защита диплома',
+      tone: 'WARM',
+      ...over,
+    });
+
+  it('старый снимок OTHER без ответа — 400, ничего не записано', async () => {
+    const { service, sessions, prisma } = build({
+      greetingBriefSnapshot: otherSnap(),
+    });
+    await expect(
+      service.updateBrief('s1', { recipientName: 'Аня' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(sessions.updateSession).not.toHaveBeenCalled();
+    expect(prisma.greetingBrief.update).not.toHaveBeenCalled();
+  });
+
+  it('с ответом — снимок и бриф проекта получают регистр человека', async () => {
+    const { service, store, prisma } = build({
+      greetingBriefSnapshot: otherSnap(),
+    });
+    await service.updateBrief('s1', {
+      recipientName: 'Аня',
+      occasionRegister: 'SOLEMN',
+    });
+    const s = store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(s.occasionRegister).toBe('SOLEMN');
+    expect(s.registerSource).toBe('user');
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      occasionRegister: 'SOLEMN',
+      registerSource: 'user',
+    });
+  });
+});
+
+/**
+ * Этап D, «Открыто осознанно» §12: ответ человека хранится в снимке
+ * отдельно от итога. Поднятый словами снимок правится без повторного
+ * ответа, а старый снимок без поля читается по `registerSource`.
+ */
+describe('PATCH /sessions/:id/greeting-brief — ответ о настроении отдельно от итога', () => {
+  const raisedSnap = (over: Partial<GreetingBriefSnapshot> = {}) =>
+    snap({
+      occasion: 'OTHER',
+      customOccasionText: 'Поминки деда',
+      tone: 'RESPECTFUL',
+      occasionRegister: 'MOURNING',
+      registerSource: 'keywords',
+      userOccasionRegister: 'SOLEMN',
+      ...over,
+    });
+
+  it('поднятый снимок правится без ответа; ответ — и в снимке, и в брифе', async () => {
+    const { service, store, prisma } = build({
+      greetingBriefSnapshot: raisedSnap(),
+    });
+    await service.updateBrief('s1', { recipientName: 'Аня' });
+    const s = store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(s.occasionRegister).toBe('MOURNING');
+    expect(s.userOccasionRegister).toBe('SOLEMN');
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      occasionRegister: 'MOURNING',
+      userOccasionRegister: 'SOLEMN',
+    });
+  });
+
+  it('описание переписано, подъём снят — итог по ответу, а не по умолчанию', async () => {
+    const { service, store } = build({ greetingBriefSnapshot: raisedSnap() });
+    await service.updateBrief('s1', { customOccasionText: 'Юбилей деда' });
+    const s = store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(s.occasionRegister).toBe('SOLEMN');
+    expect(s.registerSource).toBe('user');
+  });
+
+  it('старый снимок без поля, источник user — ответ восстановлен', async () => {
+    const { service, store } = build({
+      greetingBriefSnapshot: raisedSnap({
+        customOccasionText: 'Защита диплома',
+        tone: 'WARM',
+        occasionRegister: 'SOLEMN',
+        registerSource: 'user',
+        userOccasionRegister: undefined,
+      }),
+    });
+    await service.updateBrief('s1', { recipientName: 'Аня' });
+    const s = store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(s.occasionRegister).toBe('SOLEMN');
+    expect(s.userOccasionRegister).toBe('SOLEMN');
+  });
+});

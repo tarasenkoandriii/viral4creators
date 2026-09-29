@@ -13,12 +13,23 @@
  * Теперь зовётся та же функция, что и экран (`landing-entry.ts`).
  */
 import assert from 'node:assert/strict';
-import {
-  GREETING_OCCASIONS,
-  allowedTonesFor,
-  defaultToneFor,
-} from '../src/types/project';
+import * as backendPolicyNs from '../../backend/src/common/greeting-policy';
+import { GREETING_OCCASIONS } from '../src/types/project';
 import { occasionFromSearch } from '../src/features/projects/landing-entry';
+import {
+  allowedTones,
+  briefRegister,
+  recommendedTone,
+} from '../src/lib/greeting-policy';
+
+// Этап D (Т-18): своей копии тонов во фронтенде нет — умолчание экрана
+// создания берётся из таблицы сервера, поэтому и проверяется по ней же,
+// живой, а не по рукописной копии (почему — см. greeting-policy.test.ts;
+// там же — зачем разворачивать `default` у CJS-модуля бэкенда).
+const backend =
+  (backendPolicyNs as { default?: typeof backendPolicyNs }).default ??
+  backendPolicyNs;
+const policy = JSON.parse(JSON.stringify(backend.greetingPolicyView()));
 
 assert.equal(
   occasionFromSearch('?entry=greetings&occasion=WEDDING'),
@@ -42,8 +53,14 @@ for (const occasion of GREETING_OCCASIONS) {
   // И умолчание тона для него обязано быть допустимым: иначе переход по
   // плитке «Соболезнование» открыл бы форму с тоном, который сервер
   // сразу отвергнет.
+  // «Особый повод» — исключение: до ответа о настроении регистра нет, и
+  // умолчания тоже; экран не подставляет его, пока человек не ответит.
+  if (occasion === 'OTHER') continue;
+  const register = briefRegister(policy, occasion, null);
+  const tone = recommendedTone(policy, occasion, register);
+  if (!tone) throw new Error(`нет умолчания тона для ${occasion}`);
   assert.ok(
-    allowedTonesFor(occasion).includes(defaultToneFor(occasion)),
+    allowedTones(policy, occasion, register)?.includes(tone),
     `умолчание тона недопустимо для ${occasion}`
   );
 }

@@ -540,9 +540,11 @@ export function navLabelsFor(locale: Locale): string[] {
  *     что и у десяти шагов мастера товара;
  *   - пятая, «настройки ролика», на лендинге отсутствует намеренно: его
  *     раздел называется «Четыре шага», и пятый пункт изменил бы
- *     страницу. Её текст собирается из подписей САМИХ карточек мастера
- *     (`greetingVideoWizard.*Heading`/`*Hint` во фронтенде) — они уже
- *     написаны как человеческие объяснения и уже переведены.
+ *     страницу. Её текст собирается из подписей САМОГО мастера: блока
+ *     «Характер ролика» (`greetingVideoWizard.characterHeading`/
+ *     `characterHint` — заголовок и подсказка блока целиком) и пяти его карточек
+ *     (`*Heading`/`*Hint`) — они уже написаны как человеческие
+ *     объяснения и уже переведены.
  *
  * Побочная польза важнее экономии: поправят подпись на экране — поедет
  * и озвучка, вместо того чтобы разойтись с ней.
@@ -564,16 +566,6 @@ const GREETING_SETTINGS_CARDS = [
   'scenes',
 ] as const;
 
-/** Заголовок пятой темы — из подписи шага «Ролик» соседних тем не
- *  собрать, поэтому берётся заголовок группы прямо из мастера. */
-const GREETING_SETTINGS_TITLE: Record<Locale, string> = {
-  ru: 'Настройте ролик',
-  uk: 'Налаштуйте ролик',
-  en: 'Tune the video',
-  de: 'Das Video einstellen',
-  es: 'Ajusta el video',
-};
-
 export function greetingTopicsFor(locale: Locale): AssistantStepItem[] {
   const landing = readJson(LANDING_DICT_DIR, locale);
   const wizard = readJson(FRONTEND_DICT_DIR, locale);
@@ -588,26 +580,53 @@ export function greetingTopicsFor(locale: Locale): AssistantStepItem[] {
       } — темы обучалок поздравления собрать не из чего`,
     );
   }
+  /*
+   * Заголовок пятой темы и начало её текста (подсказка блока целиком) —
+   * из блока «Характер ролика»
+   * (`CharacterBlock`, 29.09.2026), который теперь обёртывает пять
+   * карточек на экране.
+   *
+   * До блока у группы не было своей подписи, и заголовок темы жил
+   * здесь таблицей на пять языков («Настройте ролик»). Как только на
+   * экране появился настоящий заголовок группы, таблица стала его
+   * второй копией: лист справки по кнопке (i) открывался бы словами,
+   * которых над карточкой нет, а поправка заголовка в мастере не
+   * доезжала бы ни до справки, ни до диктора. Тот же принцип, что у
+   * самих карточек ниже: текст темы — это подписи экрана.
+   */
+  const character = (key: 'characterHeading' | 'characterHint'): string => {
+    const value = get(wizard, ['greetingVideoWizard', key]);
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new Error(
+        `locale ${locale}: нет greetingVideoWizard.${key} — заголовок пятой темы обучалки собрать не из чего`,
+      );
+    }
+    return value;
+  };
   const settings: AssistantStepItem = {
-    title: GREETING_SETTINGS_TITLE[locale],
-    // Одна строка на карточку: «Заголовок — подсказка». Так же читает
-    // человек на экране, и так же прочтёт диктор.
-    text: GREETING_SETTINGS_CARDS.map((card) => {
-      const heading = get(wizard, [
-        'greetingVideoWizard',
-        `${card}Heading`,
-      ]) as string;
-      const hint = get(wizard, [
-        'greetingVideoWizard',
-        `${card}Hint`,
-      ]) as string;
-      if (!heading || !hint) {
-        throw new Error(
-          `locale ${locale}: нет greetingVideoWizard.${card}Heading/${card}Hint — пятую тему обучалки собрать не из чего`,
-        );
-      }
-      return `${heading}: ${hint}`;
-    }).join(' '),
+    title: character('characterHeading'),
+    // Сначала подпись блока — что это за группа, потом одна строка на
+    // карточку: «Заголовок: подсказка». Так же читает человек на
+    // экране сверху вниз, и так же прочтёт диктор.
+    text: [
+      character('characterHint'),
+      ...GREETING_SETTINGS_CARDS.map((card) => {
+        const heading = get(wizard, [
+          'greetingVideoWizard',
+          `${card}Heading`,
+        ]) as string;
+        const hint = get(wizard, [
+          'greetingVideoWizard',
+          `${card}Hint`,
+        ]) as string;
+        if (!heading || !hint) {
+          throw new Error(
+            `locale ${locale}: нет greetingVideoWizard.${card}Heading/${card}Hint — пятую тему обучалки собрать не из чего`,
+          );
+        }
+        return `${heading}: ${hint}`;
+      }),
+    ].join(' '),
     details: [],
   };
   // Порядок — тот же, что у `GREETING_TOPIC_KEYS`: настройки между
@@ -622,7 +641,9 @@ export function greetingTopicsFor(locale: Locale): AssistantStepItem[] {
   ];
 }
 
-function buildGreetingTopics(): Record<string, AssistantStepItem> {
+/** Экспортируется ради сверки «закоммиченный `generated.ts` совпадает
+ *  с пересобранным» — той же, что у `ASSISTANT_STEPS`. */
+export function buildGreetingTopics(): Record<string, AssistantStepItem> {
   const out: Record<string, AssistantStepItem> = {};
   for (const locale of LOCALES) {
     const topics = greetingTopicsFor(locale);

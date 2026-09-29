@@ -31,6 +31,7 @@ import type {
   UpdateGreetingBriefInput,
 } from '../types/project';
 import type { ItemSessionSummary } from './projects-api';
+import type { GreetingPolicyView } from '../lib/greeting-policy';
 
 function unwrap<T>(res: { data?: T }, what: string): T {
   if (res.data === undefined) throw new Error(`Пустой ответ: ${what}`);
@@ -55,6 +56,29 @@ async function putToBlob(
         onProgress(Math.round((e.loaded / e.total) * 100));
     },
   });
+}
+
+// ── Политика правил по регистру (этап D, §3.5 ТЗ Greeting 2.0) ─────────
+
+let policyCache: Promise<GreetingPolicyView> | null = null;
+
+/**
+ * `GET /greeting/policy` — таблица правил, по которой сервер отвечает 400.
+ * Одна на всю вкладку: она меняется только релизом (сервер кэширует её
+ * на 5 минут). Неудачный запрос из кэша выбрасывается — следующий экран
+ * попробует снова, а не будет жить с ошибкой до перезагрузки.
+ */
+export function getGreetingPolicy(): Promise<GreetingPolicyView> {
+  if (!policyCache) {
+    policyCache = api
+      .get<GreetingPolicyView>('/greeting/policy')
+      .then((res) => unwrap(res, 'greeting-policy'))
+      .catch((e: unknown) => {
+        policyCache = null;
+        throw e;
+      });
+  }
+  return policyCache;
 }
 
 // ── Brief (§8 ТЗ) ────────────────────────────────────────────────────────

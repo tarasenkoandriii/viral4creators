@@ -93,6 +93,28 @@ describe('buildScenarioPrompt', () => {
     expect(prompt).not.toContain('wizard-step-product');
   });
 
+  /**
+   * Блок «Характер ролика» и вопрос о настроении (29.09.2026). Ролики
+   * темы настроек сняты ДО блока, и пересъёмка должна его показать;
+   * бриф фикстуры — день рождения, и вопроса о настроении (он только
+   * у «Особого повода») в кадре не будет — диктор не должен его обещать.
+   */
+  it('тема настроек видит блок «Характер ролика», бриф — оговорку про настроение', () => {
+    const settings = buildScenarioPrompt('greeting-settings', 'ru', step);
+    expect(settings).toContain(
+      '[data-qa="greeting-character-block"] — блок «Характер ролика»',
+    );
+    expect(settings).toContain('С него начинается тема настроек ролика');
+    const brief = buildScenarioPrompt('greeting-brief', 'ru', step);
+    expect(brief).toMatch(
+      /greeting-brief-card"\] — [^\n]*настроении появляется ТОЛЬКО при «Особом поводе»[^\n]*не обещать/,
+    );
+    // В товарный мастер ни то ни другое не протекает.
+    const product = buildScenarioPrompt('1', 'ru', step);
+    expect(product).not.toContain('greeting-character-block');
+    expect(product).not.toContain('Особом поводе');
+  });
+
   it('шаг мастера товара описан товарным мастером', () => {
     const prompt = buildScenarioPrompt('1', 'ru', step);
     expect(prompt).toContain('мастера генерации рекламных роликов');

@@ -160,6 +160,7 @@ export class GreetingSessionEditService {
         customOccasionText: next.customOccasionText,
         occasionRegister: next.occasionRegister,
         registerSource: next.registerSource,
+        userOccasionRegister: next.userOccasionRegister,
         scriptLanguage: next.scriptLanguage,
         recipientName: next.recipientName,
         senderName: next.senderName,
@@ -432,6 +433,9 @@ export function baseOf(s: GreetingBriefSnapshot) {
     customOccasionText: s.customOccasionText,
     occasionRegister: s.occasionRegister ?? null,
     registerSource: s.registerSource ?? null,
+    // Снимок до этапа D поля не несёт — `resolveNext` тогда восстановит
+    // ответ из `occasionRegister` при `registerSource === 'user'`.
+    userOccasionRegister: s.userOccasionRegister ?? null,
     scriptLanguage: s.scriptLanguage ?? null,
     recipientName: s.recipientName,
     senderName: s.senderName,

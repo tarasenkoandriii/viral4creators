@@ -102,44 +102,11 @@ export const GREETING_TONES: readonly GreetingTone[] = [
   'RESPECTFUL',
 ];
 
-const EVERYDAY_TONES: readonly GreetingTone[] = ['WARM', 'FUNNY', 'FORMAL'];
-
-/**
- * Какие тоны показывать для повода — зеркало
- * `backend/src/common/greeting-occasions.ts`.
- *
- * Это ПОДСКАЗКА интерфейсу, а не защита: настоящая проверка живёт на
- * сервере и отвечает 400 (§3 компаньон-ТЗ — «валидироваться серверно,
- * не просто скрываться в UI»). Здесь копия нужна затем, чтобы человек
- * не выбирал шутливый тон для соболезнования и не получал отказ уже
- * после заполнения всей формы. Перечислены только поводы, у которых
- * набор отличается от обычного, — так расхождение с сервером заметнее,
- * чем в полной таблице из 24 строк.
- */
-const GREETING_TONE_OVERRIDES: Partial<
-  Record<GreetingOccasion, readonly GreetingTone[]>
-> = {
-  DEFENDERS_DAY: ['WARM', 'FORMAL', 'RESPECTFUL'],
-  BAPTISM: ['WARM', 'FORMAL', 'RESPECTFUL'],
-  // Этап B: порядок = умолчание. Серьёзные поводы по умолчанию серьёзны,
-  // корпоративный — официален (docs-tz/TZ-Greeting-2.0-Adaptive-Persona-
-  // Landing.md §3.2). Сверяется с сервером тестом
-  // `backend/src/common/greeting-policy.spec.ts`.
-  CORPORATE: ['FORMAL', 'WARM', 'FUNNY'],
-  APOLOGY: ['RESPECTFUL', 'WARM'],
-  GET_WELL: ['SUPPORTIVE', 'WARM'],
-  CONDOLENCE: ['RESPECTFUL', 'SUPPORTIVE'],
-};
-
-export function allowedTonesFor(
-  occasion: GreetingOccasion
-): readonly GreetingTone[] {
-  return GREETING_TONE_OVERRIDES[occasion] ?? EVERYDAY_TONES;
-}
-
-export function defaultToneFor(occasion: GreetingOccasion): GreetingTone {
-  return allowedTonesFor(occasion)[0];
-}
+// Какие тоны допустимы для повода, фронтенд больше не знает сам: раньше
+// здесь жила копия серверной таблицы (`allowedTonesFor`), и две копии
+// одного правила — ровно то, что уже разошлось однажды (Г-11). Этап D
+// (Т-18) её удалил; выбор строится по `GET /greeting/policy` через
+// `lib/greeting-policy.ts`.
 
 /** 'grok' — референс(ы) + видео без лип-синка, голос закадровый;
  * 'hedra' — говорящий аватар, только PREMIUM (§7 ТЗ) — и сегодня
@@ -204,6 +171,12 @@ export interface GreetingBriefView {
    */
   occasionRegister?: GreetingRegister | null;
   registerSource?: 'user' | 'keywords' | 'classifier' | 'default' | null;
+  /**
+   * Ответ человека о настроении — отдельно от итога (этап D): подъём
+   * регистра словами или классификатором его не стирает. Необязательное —
+   * сервер до этой колонки его не отдавал.
+   */
+  userOccasionRegister?: GreetingRegister | null;
   /** `null` — не выбран: текст пишется на языке интерфейса сессии. */
   scriptLanguage?: GreetingScriptLanguage | null;
   recipientName: string;
@@ -222,6 +195,8 @@ export interface GreetingBriefView {
 export interface CreateGreetingBriefInput {
   occasion: GreetingOccasion;
   customOccasionText?: string;
+  /** Ответ на вопрос о настроении «Особого повода» (§3.4); обязателен при OTHER. */
+  occasionRegister?: GreetingRegister;
   scriptLanguage?: GreetingScriptLanguage;
   recipientName: string;
   senderName?: string;
@@ -238,6 +213,8 @@ export interface CreateGreetingBriefInput {
 export interface UpdateGreetingBriefInput {
   occasion?: GreetingOccasion;
   customOccasionText?: string | null;
+  /** Ответ на вопрос о настроении «Особого повода» (§3.4). */
+  occasionRegister?: GreetingRegister | null;
   scriptLanguage?: GreetingScriptLanguage | null;
   recipientName?: string;
   senderName?: string | null;
@@ -338,6 +315,11 @@ export interface GreetingMusicSelection {
    * ссылка, `library` — находка со свободной лицензией. Старые записи
    * поля не имеют и читаются как каталожные. */
   source?: 'catalog' | 'upload' | 'link' | 'library';
+  /** Поводы каталожной темы на момент выбора (этап B): `null` — «для
+   * любого повода», нет поля — выбор до этапа B или своя музыка (файл,
+   * ссылка, библиотека: у них поводов нет). Нужны предупреждению брифа о сбросе музыки
+   * (`predictedSessionResets`). */
+  occasions?: GreetingOccasion[] | null;
   pathname?: string;
   rightsConfirmedAt?: string;
   /** Обязательное упоминание автора; пусто — не требуется. */

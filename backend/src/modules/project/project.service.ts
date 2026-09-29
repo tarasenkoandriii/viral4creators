@@ -63,6 +63,8 @@ import { resolveGreetingConfig } from './greeting-config';
 import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
 import {
   defaultToneForRegister,
+  OTHER_MOOD_REQUIRED,
+  otherMoodMissing,
   resolveBriefRegister,
   toneAllowedForRegister,
   toneRefusal,
@@ -254,6 +256,12 @@ export class ProjectService {
     // Этап B (§3.4 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
     // у «Особого повода» тоны зависят от регистра — самого строгого из
     // выбора человека, ключевых слов и классификатора.
+    // Этап D (§3.4 п.1, приёмка §8.1): без ответа о настроении бриф OTHER
+    // не сохраняется. Проверка — до классификатора: за запрос, который
+    // всё равно получит 400, не платим вызовом модели.
+    if (otherMoodMissing(brief.occasion, brief.occasionRegister)) {
+      throw new BadRequestException(OTHER_MOOD_REQUIRED);
+    }
     const reg = await resolveBriefRegister(
       {
         occasion: brief.occasion,
@@ -304,6 +312,12 @@ export class ProjectService {
           customOccasionText: brief.customOccasionText?.trim() || null,
           occasionRegister: reg.occasionRegister,
           registerSource: reg.registerSource,
+          // Этап D: ответ человека — отдельно от итога, чтобы подъём
+          // регистра словами или классификатором его не стирал.
+          userOccasionRegister:
+            brief.occasion === 'OTHER'
+              ? (brief.occasionRegister ?? null)
+              : null,
           // Этап C (§3.8): язык поздравления; без него — язык интерфейса
           // сессии, который станет известен при старте.
           scriptLanguage: brief.scriptLanguage ?? null,

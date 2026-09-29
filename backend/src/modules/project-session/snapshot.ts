@@ -16,6 +16,7 @@ import { SketchRef } from '../../common/types/sketch.types';
 import { AudienceProfile } from '../../common/types/audience.types';
 import { findCountry } from '../../common/data/countries';
 import { isSupportedLocale } from '../../common/locale';
+import { storedUserRegister } from '../../common/greeting-policy';
 import {
   BrandCharacterSnapshot,
   BrandManifestSnapshot,
@@ -261,6 +262,7 @@ export interface SnapshotGreetingBriefSource {
   /** Этап B; необязательные — старые вызовы/фикстуры их не несут. */
   occasionRegister?: GreetingRegister | null;
   registerSource?: string | null;
+  userOccasionRegister?: GreetingRegister | null;
   scriptLanguage?: string | null;
   recipientName: string;
   senderName: string | null;
@@ -301,6 +303,16 @@ export function greetingBriefSnapshotFrom(
     occasionRegister: brief.occasionRegister ?? null,
     registerSource:
       (brief.registerSource as GreetingRegisterSource | null) ?? null,
+    // Этап D: ответ человека — тоже в снимок, иначе правка из сессии
+    // потеряла бы его и снова требовала ответа (`resolveNext`).
+    // Через тот же помощник, что и ответ GET брифа: у строк до колонки
+    // ответ живёт в `occasionRegister` при источнике 'user'.
+    userOccasionRegister: storedUserRegister({
+      occasion: brief.occasion,
+      occasionRegister: brief.occasionRegister ?? null,
+      registerSource: brief.registerSource ?? null,
+      userOccasionRegister: brief.userOccasionRegister ?? null,
+    }),
     // Этап C: язык поздравления — тоже в снимок; неизвестное значение из
     // базы читается как «не выбран», а не протаскивается в промпт.
     scriptLanguage: isSupportedLocale(brief.scriptLanguage)

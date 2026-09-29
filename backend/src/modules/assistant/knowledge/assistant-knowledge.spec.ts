@@ -5,15 +5,36 @@
  * кто-то поправил словарь и забыл пересобрать базу знаний, эта проверка
  * красная, а не молчаливо устаревшая база в проде.
  */
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   buildAll,
+  buildGreetingTopics,
+  greetingTopicsFor,
   LOCALES,
   navLabelsFor,
   PROACTIVE_TIPS,
   stepsFor,
 } from '../../../../scripts/build-assistant-knowledge';
 import { PLANS, PLAN_IDS } from '../../../common/plans';
-import { ASSISTANT_KNOWLEDGE, ASSISTANT_STEPS } from './generated';
+import {
+  ASSISTANT_KNOWLEDGE,
+  ASSISTANT_STEPS,
+  GREETING_TUTORIAL_TOPICS,
+} from './generated';
+
+/** Подписи мастера поздравления из словаря фронтенда — те же файлы,
+ *  которые читает сборщик. Читаются здесь напрямую, а не через
+ *  сборщик: проверка обязана знать ожидаемое независимо от того, что
+ *  проверяемый код с ним делает. */
+function wizardDict(locale: string): Record<string, string> {
+  const file = path.join(
+    __dirname,
+    '../../../../../frontend/src/dictionaries',
+    `${locale}.json`,
+  );
+  return JSON.parse(fs.readFileSync(file, 'utf8')).greetingVideoWizard;
+}
 
 /**
  * Шапка базы знаний несёт дату сборки и коммит — величины, которые
@@ -92,6 +113,35 @@ describe('assistant knowledge base', () => {
       const fresh = stepsFor(locale);
       expect(fresh).toHaveLength(10);
       expect(ASSISTANT_STEPS[locale]).toEqual(fresh);
+    },
+  );
+
+  it('GREETING_TUTORIAL_TOPICS in generated.ts matches the build script output (CI parity)', () => {
+    // Сверки у тем поздравления не было вовсе, хотя у десяти шагов
+    // мастера товара она есть: поправили подпись карточки и не
+    // пересобрали базу — справка и промпт генератора молча говорили
+    // старым текстом до ближайшего деплоя.
+    expect(GREETING_TUTORIAL_TOPICS).toEqual(buildGreetingTopics());
+  });
+
+  it.each(LOCALES)(
+    '%s: the «настройки ролика» topic is titled and opened by the «Характер ролика» block (29.09.2026)',
+    (locale) => {
+      const w = wizardDict(locale);
+      const settings = greetingTopicsFor(locale)[3];
+      // Заголовок — подпись блока на экране, а не своя таблица: лист
+      // справки открывается над этим блоком и обязан называть его так же.
+      expect(settings.title).toBe(w.characterHeading);
+      // Первая фраза — подсказка блока, потом пять карточек в порядке
+      // экрана: голос первым, сцены последними.
+      expect(settings.text.startsWith(`${w.characterHint} `)).toBe(true);
+      const voice = settings.text.indexOf(`${w.senderVoiceHeading}: `);
+      const scenes = settings.text.indexOf(`${w.scenesHeading}: `);
+      expect(voice).toBeGreaterThan(w.characterHint.length);
+      expect(scenes).toBeGreaterThan(voice);
+      expect(GREETING_TUTORIAL_TOPICS[`${locale}:greeting-settings`]).toEqual(
+        settings,
+      );
     },
   );
 

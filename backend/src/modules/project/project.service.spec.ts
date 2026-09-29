@@ -31,6 +31,7 @@ import {
   itemDataFromDto,
   toProjectSummaryView,
 } from './project.service';
+import { OTHER_MOOD_REQUIRED } from '../../common/greeting-policy';
 
 const USER = 'user-1';
 const NOW = new Date('2026-09-05T12:00:00.000Z');
@@ -228,6 +229,97 @@ describe('ProjectService', () => {
     });
   });
 
+  /**
+   * Этап D (ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.4
+   * п.1, приёмка §8.1): «OTHER … без ответа на вопрос о настроении бриф
+   * не сохраняется». Классификатор подставлен шпионом — отказ не должен
+   * стоить вызова модели.
+   */
+  describe('createProject — GREETING_VIDEO, OTHER требует ответа о настроении', () => {
+    let classify: jest.Mock;
+    let withClassifier: ProjectService;
+
+    beforeEach(() => {
+      classify = jest.fn().mockResolvedValue(null);
+      withClassifier = new ProjectService(
+        prisma as any,
+        blob as any,
+        plans as any,
+        { classify } as any,
+      );
+      prisma.project.create.mockResolvedValue(
+        projectRow({ type: 'GREETING_VIDEO' }),
+      );
+    });
+
+    const create = (brief: Record<string, unknown>) =>
+      withClassifier.createProject(USER, {
+        type: 'GREETING_VIDEO',
+        title: 'Поздравление',
+        countryCode: 'UA',
+        greetingBrief: {
+          occasion: 'OTHER',
+          customOccasionText: 'Защита диплома',
+          recipientName: 'Аня',
+          ...brief,
+        } as any,
+      });
+
+    it('без occasionRegister — 400 с понятным текстом, классификатор не зовётся', async () => {
+      await expect(create({})).rejects.toThrow(OTHER_MOOD_REQUIRED);
+      expect(classify).not.toHaveBeenCalled();
+      expect(prisma.project.create).not.toHaveBeenCalled();
+      expect(prisma.greetingBrief.create).not.toHaveBeenCalled();
+    });
+
+    it('явный null — тот же пропуск, 400', async () => {
+      await expect(create({ occasionRegister: null })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(classify).not.toHaveBeenCalled();
+      expect(prisma.greetingBrief.create).not.toHaveBeenCalled();
+    });
+
+    it('с ответом — бриф сохраняется с источником user', async () => {
+      await create({ occasionRegister: 'SOLEMN' });
+      expect(classify).toHaveBeenCalledTimes(1);
+      expect(prisma.greetingBrief.create.mock.calls[0][0].data).toMatchObject({
+        occasion: 'OTHER',
+        occasionRegister: 'SOLEMN',
+        registerSource: 'user',
+      });
+    });
+
+    // «Открыто осознанно» §12: подъём регистра ключевыми словами больше не
+    // стирает ответ человека — он пишется в свою колонку.
+    it('поднятый словами регистр не стирает ответ человека', async () => {
+      await create({
+        customOccasionText: 'Поминки деда',
+        occasionRegister: 'SOLEMN',
+      });
+      expect(prisma.greetingBrief.create.mock.calls[0][0].data).toMatchObject({
+        occasionRegister: 'MOURNING',
+        registerSource: 'keywords',
+        userOccasionRegister: 'SOLEMN',
+      });
+    });
+
+    it('каталожному поводу ответ не нужен и игнорируется', async () => {
+      await create({
+        occasion: 'BIRTHDAY',
+        customOccasionText: undefined,
+        occasionRegister: 'MOURNING',
+      });
+      expect(classify).not.toHaveBeenCalled();
+      expect(prisma.greetingBrief.create.mock.calls[0][0].data).toMatchObject({
+        occasion: 'BIRTHDAY',
+        occasionRegister: null,
+        registerSource: null,
+        userOccasionRegister: null,
+      });
+    });
+  });
+
   describe('createProject — GREETING_VIDEO (ТЗ TZ-Greeting-Video-Project-Type.md)', () => {
     it('rejects GREETING_VIDEO without a greetingBrief', async () => {
       await expect(
@@ -246,9 +338,14 @@ describe('ProjectService', () => {
           type: 'GREETING_VIDEO',
           title: 'Поздравление',
           countryCode: 'UA',
-          greetingBrief: { occasion: 'OTHER', recipientName: 'Аня' },
+          // Ответ о настроении есть — отказ именно из-за пустого описания.
+          greetingBrief: {
+            occasion: 'OTHER',
+            occasionRegister: 'CELEBRATORY',
+            recipientName: 'Аня',
+          },
         }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(/customOccasionText/);
       expect(plans.assertUser).not.toHaveBeenCalled();
     });
 

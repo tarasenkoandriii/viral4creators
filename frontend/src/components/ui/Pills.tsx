@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { haptic } from '../../lib/telegram';
-import { pillColumns } from './pill-columns';
+import { pillColumns, pillDisabledState } from './pill-columns';
 
 /**
  * Segmented control — SilverFinance's "metal pills" from the TMA page
@@ -14,6 +14,9 @@ export interface PillOption<T extends string> {
    * Вариант виден, но не выбирается — так закрыт режимом (ТЗ §23).
    * Показать и погасить честнее, чем убрать: убранного варианта для
    * пользователя не существует, и он не узнает, что режим что-то даёт.
+   * Гасится через `aria-disabled`, а не нативно: вариант остаётся в
+   * порядке Tab, и скринридер читает его подпись — объяснение, почему
+   * нельзя (см. `pillDisabledState`).
    */
   disabled?: boolean;
 }
@@ -47,14 +50,19 @@ export function Pills<T extends string>({
     >
       {options.map((o) => {
         const active = o.value === value;
+        const off = pillDisabledState(disabled, o.disabled);
         return (
           <button
             key={o.value}
             type="button"
             role="radio"
             aria-checked={active}
-            disabled={disabled || o.disabled}
+            disabled={off.native}
+            aria-disabled={off.aria || undefined}
             onClick={() => {
+              // Погашенный вариант фокусируется и «нажимается» с
+              // клавиатуры — клик вхолостую, выбор не меняется.
+              if (!off.selectable) return;
               onChange(o.value);
               haptic();
             }}
@@ -64,7 +72,7 @@ export function Pills<T extends string>({
             // `break-words` — вторая половина той же починки: колонка
             // с `minmax(0, 1fr)` не растягивается, но содержимое без
             // разрыва длинных слов всё равно вылезает за фон кнопки.
-            className={`flex min-h-[44px] flex-col justify-center break-words rounded-xl px-2 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
+            className={`flex min-h-[44px] flex-col justify-center break-words rounded-xl px-2 py-2 text-xs font-medium transition-colors disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${
               active
                 ? 'bg-accent text-accent-on'
                 : 'bg-silver-200/60 dark:bg-silver-800/60 text-silver-500 hover:text-silver-700 dark:hover:text-silver-300'

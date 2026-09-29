@@ -106,7 +106,10 @@ import { ReadinessPanel } from '../../components/ReadinessPanel';
 import { HintLine } from '../../components/HintLine';
 import { useWizardEvents } from '../../lib/useWizardEvents';
 import { toStepsView } from '../../lib/wizard-steps';
-import { changedBriefFields } from '../../lib/greeting-brief-diff';
+import {
+  sessionBriefPatch,
+  startAfterSave,
+} from '../../lib/greeting-brief-diff';
 import {
   greetingAnchorId,
   greetingFactsOf,
@@ -123,19 +126,28 @@ import type { Readiness, WizardGuideState } from '../../types';
 import { GreetingDeliveryPanel } from './GreetingDeliveryPanel';
 import { MyVoicesSection } from '../brand/VoicePicker';
 import {
-  GREETING_OCCASIONS,
   GREETING_RESOLUTIONS,
   GREETING_SCRIPT_LANGUAGES,
   GREETING_SCRIPT_LANGUAGE_NAMES,
-  MAX_CUSTOM_OCCASION_LENGTH,
-  allowedTonesFor,
-  defaultToneFor,
 } from '../../types/project';
+import { GreetingOccasionFields } from './GreetingOccasionFields';
+import {
+  initialMood,
+  occasionFieldsComplete,
+  occasionRegisterField,
+  effectiveServerRegister,
+  fieldsRegister,
+  type OccasionFieldsState,
+} from '../../lib/greeting-occasion-fields';
+import {
+  useGreetingPolicy,
+  useSessionSelections,
+} from '../../lib/useGreetingPolicy';
+import { predictedSessionResets } from '../../lib/greeting-policy';
 import { STICKER_PLACEMENTS } from '../../types/project';
 import type {
   BrandManifestSummaryView,
   GreetingBriefView,
-  GreetingOccasion,
   GreetingPresenterProvider,
   GreetingReferenceImageView,
   GreetingCardsView,
@@ -148,13 +160,27 @@ import type {
   SessionScriptEditResult,
   UpdateGreetingBriefInput,
   GreetingStickerView,
-  GreetingTone,
   GreetingVoiceView,
   GrokPresetVoice,
 } from '../../types/project';
 import type { GeneratedVideo, GenerationPrompt, PlanId } from '../../types';
 import { GenerationStatus, ModerationStatus } from '../../types';
 import { HelpButton, HelpProvider } from './HelpSheet';
+import { useMemo } from 'react';
+import { rulesOf, type GreetingRegisterRules } from '../../lib/greeting-policy';
+import {
+  cardsSummary,
+  characterRegister,
+  characterSummaryLine,
+  musicSummary,
+  scenesSummary,
+  showOwnMusicWarning,
+  stickerCardHidden,
+  stickerSummary,
+  voiceSummary,
+  type CharacterPart,
+  type CharacterSummary,
+} from '../../lib/greeting-character';
 
 const REFERENCE_PHOTO_MIME = ['image/png', 'image/jpeg'];
 const REFERENCE_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
@@ -476,29 +502,11 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
         )}
 
         {sessionId && prompt && (
-          <SenderVoiceStep
-            key={`${sessionId}:${revision}`}
+          <CharacterBlock
             sessionId={sessionId}
+            stepKey={`${sessionId}:${revision}`}
+            brief={brief}
           />
-        )}
-
-        {sessionId && prompt && (
-          <MusicThemeStep
-            key={`${sessionId}:${revision}`}
-            sessionId={sessionId}
-          />
-        )}
-
-        {sessionId && prompt && (
-          <CardsStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
-        )}
-
-        {sessionId && prompt && (
-          <StickerStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
-        )}
-
-        {sessionId && prompt && (
-          <ScenesStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
         )}
 
         {sessionId && prompt && (
@@ -566,13 +574,25 @@ function BriefStep({
   const w = dict.greetingVideoWizard;
   const hasSession = !!sessionId;
 
-  const [occasion, setOccasion] = useState<GreetingOccasion>(brief.occasion);
-  const [customOccasionText, setCustomOccasionText] = useState(
-    brief.customOccasionText ?? ''
-  );
+  // Этап D (§3.4, §3.5): повод, настроение и тон — одним куском, его
+  // правит общий с экраном создания блок `GreetingOccasionFields`.
+  // Настроение — сохранённый ответ человека (сервер хранит его отдельно
+  // от поднятого итога), см. `initialMood`; нет ответа — вопрос заново.
+  const [occ, setOcc] = useState<OccasionFieldsState>(() => ({
+    occasion: brief.occasion,
+    customOccasionText: brief.customOccasionText ?? '',
+    mood: initialMood(brief),
+    tone: brief.tone,
+  }));
+  const { occasion, customOccasionText, tone } = occ;
+  const policy = useGreetingPolicy();
+  // Итог сервера из ПОСЛЕДНЕГО сохранения: `brief` обновляется после
+  // каждой правки, так что строка «уточнено как …» не отстаёт. Переписал
+  // человек описание — прежний итог уже не про этот текст и не держит
+  // тоны (`effectiveServerRegister`).
+  const serverRegister = effectiveServerRegister(brief, occ);
   const [recipientName, setRecipientName] = useState(brief.recipientName);
   const [senderName, setSenderName] = useState(brief.senderName ?? '');
-  const [tone, setTone] = useState<GreetingTone>(brief.tone);
   const [personalMessage, setPersonalMessage] = useState(
     brief.personalMessage ?? ''
   );
@@ -598,14 +618,43 @@ function BriefStep({
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /**
+   * Счётчик удачных сохранений. Сохранение само сбрасывает несовместимое
+   * в сессии и делает устаревшей строку «Тон: … → …», а регистр от него
+   * может не поменяться — без счётчика предупреждение «сбросится …»
+   * висело бы после уже случившегося сброса.
+   */
+  const [saveCount, setSaveCount] = useState(0);
 
+  // У «Особого повода» без ответа о настроении сервер отвечает 400
+  // (§3.4: «без ответа бриф не сохраняется») — кнопка гаснет раньше.
   const canSave =
-    recipientName.trim().length > 0 &&
-    (occasion !== 'OTHER' || customOccasionText.trim().length > 0);
+    recipientName.trim().length > 0 && occasionFieldsComplete(occ);
+
+  // Предупреждение ДО сохранения: что сбросится в уже начатой сессии при
+  // новом поводе и регистре (музыка каталога зависит от повода).
+  // Окончательный список всё равно назовёт сервер (`resetFields` рядом с
+  // «Сохранено»); это — чтобы не удивлять.
+  const registerNow = fieldsRegister(policy, occ, serverRegister);
+  const selections = useSessionSelections(
+    sessionId,
+    occasion,
+    registerNow,
+    saveCount
+  );
+  const predictedResets = selections
+    ? predictedSessionResets(policy, occasion, registerNow, selections)
+    : [];
 
   const fieldsNow = () => ({
     occasion: occasion as string,
     customOccasionText: occasion === 'OTHER' ? customOccasionText.trim() : null,
+    // Только у «Особого повода». После старта уходят лишь изменённые
+    // поля, но ответ о настроении — ВСЕГДА (`sessionBriefPatch`): сервер
+    // теперь помнит ответ сам, но у брифа, поднятого словами или
+    // классификатором до отдельной колонки ответа, его там нет, и правка
+    // без него получила бы 400 OTHER_MOOD_REQUIRED.
+    occasionRegister: occasionRegisterField(occ) as string | null,
     scriptLanguage: scriptLanguage as string,
     recipientName: recipientName.trim(),
     senderName: senderName.trim() || null,
@@ -619,8 +668,9 @@ function BriefStep({
   const baseline = useRef<ReturnType<typeof fieldsNow> | null>(null);
   if (!baseline.current) baseline.current = fieldsNow();
 
-  const save = async () => {
-    if (!canSave) return;
+  /** `true` — сохранено; ошибку показывает сам (`start` ждёт ответа). */
+  const save = async (): Promise<boolean> => {
+    if (!canSave) return false;
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -631,11 +681,12 @@ function BriefStep({
         // Этап C (§3.6): после старта правка идёт в СЕССИЮ — сервер
         // обновит и её снимок, и бриф проекта. Раньше здесь был бриф
         // проекта, до сессии правка не доходила (Г-3), и этап A закрыл
-        // поля целиком. Уходят только изменённые поля — почему, см.
+        // поля целиком. Уходят только изменённые поля (и ответ о
+        // настроении «Особого повода») — почему, см.
         // `lib/greeting-brief-diff.ts`.
         const result = await updateSessionGreetingBrief(
           sessionId,
-          changedBriefFields(
+          sessionBriefPatch(
             baseline.current!,
             fields
           ) as UpdateGreetingBriefInput
@@ -652,8 +703,11 @@ function BriefStep({
         onSaved(updated);
       }
       setSaved(true);
+      setSaveCount((n) => n + 1);
+      return true;
     } catch (e) {
       setError(errorMessage(e));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -663,8 +717,9 @@ function BriefStep({
     setStarting(true);
     setError(null);
     try {
-      await save();
-      await onStartSession();
+      // Бриф не сохранился (например, 400) — сессию не начинаем: она
+      // собралась бы из СТАРОГО брифа, а ошибку `save` уже показал.
+      await startAfterSave(save, onStartSession);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -681,42 +736,19 @@ function BriefStep({
         action={<HelpButton cardHook="greeting-brief-card" />}
       />
       <div className="space-y-4">
-        <Field label={w.occasionLabel}>
-          <Select
-            value={occasion}
-            onChange={(e) => {
-              // Тот же сброс тона при смене повода, что и в
-              // ProjectCreateScreen: иначе «С юмором», выбранный для дня
-              // рождения, поедет в соболезнование и получит 400 уже
-              // после заполнения всей формы.
-              const next = e.target.value as GreetingOccasion;
-              setOccasion(next);
-              if (!allowedTonesFor(next).includes(tone)) {
-                setTone(defaultToneFor(next));
-              }
-            }}
-          >
-            {GREETING_OCCASIONS.map((o) => (
-              <option key={o} value={o}>
-                {w.occasion[o]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-
-        {occasion === 'OTHER' && (
-          <Field label={w.customOccasionLabel}>
-            <Input
-              value={customOccasionText}
-              onChange={(e) =>
-                setCustomOccasionText(
-                  e.target.value.slice(0, MAX_CUSTOM_OCCASION_LENGTH)
-                )
-              }
-              placeholder={w.customOccasionPlaceholder}
-            />
-          </Field>
-        )}
+        {/* Этап D (§3.5): повод → настроение → тон одной группой, тот же
+            блок, что на экране создания, — сброс тона при смене повода
+            и объяснение недоступного живут в нём, а не в двух копиях. */}
+        <GreetingOccasionFields
+          // Новый `key` после сохранения сбрасывает строку «Тон: … → …»:
+          // она об изменении, которое уже сохранено.
+          key={saveCount}
+          value={occ}
+          onChange={(patch) => setOcc((prev) => ({ ...prev, ...patch }))}
+          policy={policy}
+          serverRegister={serverRegister}
+          serverRegisterFor={(next) => effectiveServerRegister(brief, next)}
+        />
 
         <Field label={w.recipientNameLabel}>
           <Input
@@ -733,20 +765,6 @@ function BriefStep({
             placeholder={w.senderNamePlaceholder}
           />
         </Field>
-
-        <div>
-          <span className="label">{w.toneLabel}</span>
-          <Pills
-            value={tone}
-            onChange={setTone}
-            // Этап 2, фича №3: набор тонов зависит от повода — см.
-            // тот же приём и то же обоснование в ProjectCreateScreen.
-            options={allowedTonesFor(occasion).map((t) => ({
-              value: t,
-              label: w.tone[t],
-            }))}
-          />
-        </div>
 
         <Field
           label={w.personalMessageLabel}
@@ -872,6 +890,17 @@ function BriefStep({
             (§3.6) снял временную блокировку этапа A: правка после старта
             идёт в сессию через `PATCH /sessions/:id/greeting-brief`. */}
         {hasSession && <Alert tone="info">{w.briefSessionHint}</Alert>}
+        {/* Этап D (§3.5): несовместимое с новым регистром называется до
+            нажатия, а не только после — «Сохранено» со списком снятого
+            ниже остаётся окончательным ответом сервера. */}
+        {hasSession && predictedResets.length > 0 && (
+          <Alert tone="warning">
+            {w.sessionResetWarning.replace(
+              '{list}',
+              predictedResets.map((f) => resetFieldLabel(w, f)).join(', ')
+            )}
+          </Alert>
+        )}
 
         <div className="flex gap-2">
           <Button
@@ -1556,6 +1585,98 @@ function ScriptStep({
   );
 }
 
+// ── Характер ролика: пять карточек одной группой (этап D, §3.3) ──────────
+
+/**
+ * Голос, музыка, титры, наклейка и сцены — одна группа «настройте
+ * ролик»: у них и тема справки одна (`greeting-help.ts`). Сводка сверху
+ * отвечает «что уже выбрано», не заставляя листать пять карточек.
+ *
+ * Карточки НЕ сворачиваются: их `data-qa` — хуки сценариев обучалки,
+ * и хук, спрятанный за раскрытием, упал бы на `assertVisible`. Шагом
+ * степпера блок тоже не становится — степпер остаётся из четырёх.
+ *
+ * Правила регистра (предупреждение о своей музыке) — по серверной
+ * таблице `GET /greeting/policy`; не загрузилась — предупреждений нет,
+ * своих правил интерфейс не выдумывает.
+ */
+function CharacterBlock({
+  sessionId,
+  stepKey,
+  brief,
+}: {
+  sessionId: string;
+  /** Ключ пересоздания карточек: новая версия сессии — новое состояние. */
+  stepKey: string;
+  brief: Pick<GreetingBriefView, 'occasion' | 'occasionRegister'>;
+}) {
+  const { dict } = useI18n();
+  const w = dict.greetingVideoWizard;
+  // Та же таблица, что у брифа, через общий хук: второй копии загрузки
+  // (и второго толкования «не загрузилась») у экрана быть не должно.
+  const policy = useGreetingPolicy();
+  const [summary, setSummary] = useState<CharacterSummary>({});
+
+  // Колбэки стабильны: карточки сообщают сводку из эффекта, и новая
+  // функция на каждый рендер гоняла бы этот эффект впустую.
+  const report = useMemo(() => {
+    const one = (part: CharacterPart) => (value: string | null) =>
+      setSummary((prev) =>
+        prev[part] === value ? prev : { ...prev, [part]: value }
+      );
+    return {
+      voice: one('voice'),
+      music: one('music'),
+      cards: one('cards'),
+      sticker: one('sticker'),
+      scenes: one('scenes'),
+    };
+  }, []);
+
+  const rules = rulesOf(policy, characterRegister(policy, brief));
+  const line = characterSummaryLine(summary, w);
+
+  return (
+    <section className="space-y-4" data-qa="greeting-character-block">
+      <div>
+        <h2 className="text-base font-semibold">{w.characterHeading}</h2>
+        <p className="mt-0.5 text-xs text-silver-400">{w.characterHint}</p>
+        {line && <p className="mt-2 text-sm">{line}</p>}
+      </div>
+      {/* Ключ у каждой карточки свой, с общим префиксом версии сессии:
+          пять братьев с ОДНИМ ключом — это дубликат, на который React
+          ругается и при смене версии может потерять или задвоить
+          карточку, а её `data-qa` — хук сценария обучалки. */}
+      <SenderVoiceStep
+        key={`${stepKey}:voice`}
+        sessionId={sessionId}
+        onSummary={report.voice}
+      />
+      <MusicThemeStep
+        key={`${stepKey}:music`}
+        sessionId={sessionId}
+        rules={rules}
+        onSummary={report.music}
+      />
+      <CardsStep
+        key={`${stepKey}:cards`}
+        sessionId={sessionId}
+        onSummary={report.cards}
+      />
+      <StickerStep
+        key={`${stepKey}:sticker`}
+        sessionId={sessionId}
+        onSummary={report.sticker}
+      />
+      <ScenesStep
+        key={`${stepKey}:scenes`}
+        sessionId={sessionId}
+        onSummary={report.scenes}
+      />
+    </section>
+  );
+}
+
 // ── Голос отправителя (фича №34) ─────────────────────────────────────────
 
 /**
@@ -1570,7 +1691,14 @@ function ScriptStep({
  * из редактора бренда: второй реализации у этой механики быть не
  * должно.
  */
-function SenderVoiceStep({ sessionId }: { sessionId: string }) {
+function SenderVoiceStep({
+  sessionId,
+  onSummary,
+}: {
+  sessionId: string;
+  /** Значение для сводки блока «Характер ролика». */
+  onSummary?: (value: string | null) => void;
+}) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const [voice, setVoice] = useState<GreetingVoiceView>({
@@ -1578,6 +1706,11 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
     presetVoiceId: null,
   });
   const [presets, setPresets] = useState<GrokPresetVoice[] | null>(null);
+  // Прочитан ли выбор с сервера. Начальное `voice` выше — заглушка для
+  // экрана («голос по умолчанию»), а не знание: до ответа и после
+  // ошибки сводка о голосе молчит, иначе «по умолчанию» могло бы
+  // оказаться неправдой про уже выбранный клон (аудит этапа D).
+  const [voiceLoaded, setVoiceLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1591,7 +1724,10 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
       listGreetingPresetVoices(sessionId).catch(() => [] as GrokPresetVoice[]),
     ]).then(([v, list]) => {
       if (!alive) return;
-      if (v) setVoice(v);
+      if (v) {
+        setVoice(v);
+        setVoiceLoaded(true);
+      }
       setPresets(list);
     });
     return () => {
@@ -1604,6 +1740,9 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
     setError(null);
     try {
       setVoice(await fn());
+      // Ответ на выбор — тоже прочитанное состояние, даже если первое
+      // чтение не прошло.
+      setVoiceLoaded(true);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -1615,6 +1754,16 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
   const presetName =
     presets?.find((p) => p.voiceId === voice.presetVoiceId)?.name ??
     voice.presetVoiceId;
+
+  const summary = voiceSummary(
+    voiceLoaded
+      ? { senderLabel: voice.senderVoice?.label ?? null, presetName }
+      : null,
+    w
+  );
+  useEffect(() => {
+    onSummary?.(summary);
+  }, [onSummary, summary]);
 
   return (
     <Card className="p-5" data-qa="greeting-voice-card">
@@ -1722,7 +1871,13 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
  * Показываем длительности: выбирая число сцен, человек вправе видеть
  * последствие выбора, а не узнавать его из готового ролика.
  */
-function ScenesStep({ sessionId }: { sessionId: string }) {
+function ScenesStep({
+  sessionId,
+  onSummary,
+}: {
+  sessionId: string;
+  onSummary?: (value: string | null) => void;
+}) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const [view, setView] = useState<GreetingScenesView | null>(null);
@@ -1738,6 +1893,12 @@ function ScenesStep({ sessionId }: { sessionId: string }) {
       alive = false;
     };
   }, [sessionId]);
+
+  // Карточки нет, пока не загрузилась, — и в сводке её тоже нет.
+  const summary = scenesSummary(view);
+  useEffect(() => {
+    onSummary?.(summary);
+  }, [onSummary, summary]);
 
   if (!view) return null;
 
@@ -1813,7 +1974,13 @@ function ScenesStep({ sessionId }: { sessionId: string }) {
  * Скачивает картинку сервер, а не браузер: те же условия запрещают
  * постоянный хотлинк, поэтому в ролик уходит уже наша копия.
  */
-function StickerStep({ sessionId }: { sessionId: string }) {
+function StickerStep({
+  sessionId,
+  onSummary,
+}: {
+  sessionId: string;
+  onSummary?: (value: string | null) => void;
+}) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const [view, setView] = useState<GreetingStickerView | null>(null);
@@ -1843,14 +2010,23 @@ function StickerStep({ sessionId }: { sessionId: string }) {
     }
   };
 
-  if (!view) return null;
-  if (!view.configured && !view.selected) return null;
-  // Этап B: у торжественных, деликатных и траурных поводов наклеек нет
-  // (сервер откажет в выборе). Прятать молча — временно: объяснение
-  // вместо секции появится с адаптивным блоком этапа D. Уже выбранную
+  // Нет ключа Pixabay и нечего снимать — карточки нет вовсе (хук
+  // `greeting-sticker-card` объявляет это как `absentWhen`), и в сводке
+  // её тоже нет: правило одно, `stickerCardHidden`. Запрос не прошёл —
+  // `view` остаётся `null`, и сводка молчит, а не говорит «нет».
+  const hidden = stickerCardHidden(view);
+  const summary = stickerSummary(view, w);
+  useEffect(() => {
+    onSummary?.(summary);
+  }, [onSummary, summary]);
+
+  if (!view || hidden) return null;
+  // У торжественных, деликатных и траурных поводов наклеек нет (сервер
+  // откажет в выборе): поиск картинок нельзя ограничить настроением.
+  // Этап D: карточка не пропадает молча, а объясняет почему — пустое
+  // место на месте знакомой секции выглядит поломкой. Уже выбранную
   // раньше наклейку показываем — её нужно иметь возможность снять.
   const stickersAllowed = view.allowed !== false;
-  if (!stickersAllowed && !view.selected) return null;
 
   const placementLabels: Record<string, string> = {
     'top-left': w.stickerTopLeft,
@@ -1918,6 +2094,10 @@ function StickerStep({ sessionId }: { sessionId: string }) {
             </ul>
           </div>
         </div>
+      )}
+
+      {!stickersAllowed && (
+        <p className="text-xs text-silver-400">{w.stickerUnavailable}</p>
       )}
 
       {view.configured && stickersAllowed && (
@@ -1990,7 +2170,13 @@ function StickerStep({ sessionId }: { sessionId: string }) {
  * сюрприз. Предупреждение стоит рядом, подставить заготовку можно в
  * один клик — но это решение отправителя, а не наше.
  */
-function CardsStep({ sessionId }: { sessionId: string }) {
+function CardsStep({
+  sessionId,
+  onSummary,
+}: {
+  sessionId: string;
+  onSummary?: (value: string | null) => void;
+}) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const [view, setView] = useState<GreetingCardsView | null>(null);
@@ -2033,6 +2219,12 @@ function CardsStep({ sessionId }: { sessionId: string }) {
       setBusy(false);
     }
   };
+
+  // По сохранённому, а не по набранному: сводка — о том, что уйдёт в ролик.
+  const summary = cardsSummary(view?.cards ?? null, w);
+  useEffect(() => {
+    onSummary?.(summary);
+  }, [onSummary, summary]);
 
   if (!view) return null;
 
@@ -2133,10 +2325,23 @@ function CardsStep({ sessionId }: { sessionId: string }) {
  * соболезнования и дня рождения общей подложки не бывает ни при каком
  * тоне.
  */
-function MusicThemeStep({ sessionId }: { sessionId: string }) {
+function MusicThemeStep({
+  sessionId,
+  rules = null,
+  onSummary,
+}: {
+  sessionId: string;
+  /** Правила регистра брифа; `null` — таблица не загрузилась. */
+  rules?: GreetingRegisterRules | null;
+  onSummary?: (value: string | null) => void;
+}) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const [music, setMusic] = useState<GreetingMusicView | null>(null);
+  // Прочитано ли состояние с сервера. После ошибки `music` — запасная
+  // пустая витрина для экрана, и «Музыка: нет» по ней было бы
+  // выдумкой: тема могла быть выбрана (аудит этапа D).
+  const [musicLoaded, setMusicLoaded] = useState(false);
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
@@ -2145,7 +2350,11 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     let alive = true;
     getGreetingMusic(sessionId)
-      .then((m) => alive && setMusic(m))
+      .then((m) => {
+        if (!alive) return;
+        setMusic(m);
+        setMusicLoaded(true);
+      })
       // Запрос не прошёл — показываем пустую витрину, но БЕЗ блока
       // поиска: настроена библиотека или нет, мы в этот момент не
       // знаем, а рисовать поиск «на всякий случай» — ровно та ложь,
@@ -2165,6 +2374,7 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
     setError(null);
     try {
       setMusic(await fn());
+      setMusicLoaded(true);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -2178,7 +2388,23 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
   // Раньше секции не было вовсе, пока каталог пуст. Со своей музыкой
   // это перестало быть верным: загрузить трек можно и без каталога —
   // ждём только первой загрузки состояния.
+  const summary = musicSummary(musicLoaded ? music : null, w);
+  useEffect(() => {
+    onSummary?.(summary);
+  }, [onSummary, summary]);
+
   if (!music) return null;
+
+  // §3.5: у деликатного и траурного регистров своя музыка разрешена «с
+  // предупреждением». Каталог сервер уже отфильтровал по поводу, а
+  // загрузку, ссылку и библиотеку — нет: за уместность трека отвечает
+  // человек, и сказать ему об этом нужно до выбора, а не после ролика.
+  // Выдача библиотеки на экране — тоже «добавляю своё»: выбор из неё
+  // делается в один клик, и предупреждение после клика опоздало бы.
+  const ownMusicWarning = showOwnMusicWarning(rules, {
+    adding: adding || (music.library?.length ?? 0) > 0,
+    selected: music.selected,
+  });
 
   return (
     <Card className="p-5" data-qa="greeting-music-card">
@@ -2220,6 +2446,12 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
         <p className="mt-1 text-xs text-silver-400">
           {w.musicCreditNote.replace('{credit}', music.selected.attribution)}
         </p>
+      )}
+
+      {ownMusicWarning && (
+        <Alert tone="info" className="mt-3">
+          {w.ownMusicWarning}
+        </Alert>
       )}
 
       {music.themes.length > 0 && (

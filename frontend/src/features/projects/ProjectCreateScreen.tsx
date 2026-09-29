@@ -3,7 +3,7 @@
  * (currency derived), title, optional Brand Manifest (§12).
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Gift, Globe, Layers, Lock, Package, Search } from 'lucide-react';
 import {
   Alert,
@@ -26,17 +26,17 @@ import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import { CountryPicker } from './CountryPicker';
 import { LoadError, ScreenHeader } from './shared';
-import type {
-  GreetingOccasion,
-  GreetingTone,
-  ProjectType,
-} from '../../types/project';
+import type { ProjectType } from '../../types/project';
+import { GreetingOccasionFields } from './GreetingOccasionFields';
 import {
-  GREETING_OCCASIONS,
-  MAX_CUSTOM_OCCASION_LENGTH,
-  allowedTonesFor,
-  defaultToneFor,
-} from '../../types/project';
+  createToneField,
+  fieldsRegister,
+  occasionFieldsComplete,
+  occasionRegisterField,
+  type OccasionFieldsState,
+} from '../../lib/greeting-occasion-fields';
+import { recommendedTone } from '../../lib/greeting-policy';
+import { useGreetingPolicy } from '../../lib/useGreetingPolicy';
 import { exploreSite } from '../../services/client-site-tutorial-api';
 import { deleteProject } from '../../services/projects-api';
 import { usePlanState } from '../../lib/plan-context';
@@ -109,39 +109,55 @@ export function ProjectCreateScreen() {
   // получатель. Ведущий/качество/референсы/текст поздравления — на
   // следующем экране (GreetingVideoWizard), тем же приёмом, что
   // CLIENT_SITE спрашивает название только в конце своего визарда.
-  const [occasion, setOccasion] = useState<GreetingOccasion>(
-    occasionFromQuery() ?? 'BIRTHDAY'
-  );
-  const [customOccasionText, setCustomOccasionText] = useState('');
+  //
+  // Этап D (§3.4, §3.5): повод, настроение «Особого повода» и тон —
+  // одним куском; его правит общий с брифом мастера блок
+  // `GreetingOccasionFields`, там же сброс тона при смене повода (раньше —
+  // своя копия здесь и правило-копия `allowedTonesFor`, удалённая Т-18).
+  const [occ, setOcc] = useState<OccasionFieldsState>(() => ({
+    occasion: occasionFromQuery() ?? 'BIRTHDAY',
+    customOccasionText: '',
+    mood: null,
+    // Временное значение до прихода таблицы: умолчание повода знает
+    // только сервер, см. эффект ниже. Не пришла таблица вовсе — заглушка
+    // в запрос не уходит (`createToneField`).
+    tone: 'WARM',
+  }));
+  const { occasion, customOccasionText, mood, tone } = occ;
+  const policy = useGreetingPolicy();
+  /** Человек сам трогал тон — умолчание таблицы его уже не перетирает. */
+  const [toneTouched, setToneTouched] = useState(false);
   const [recipientName, setRecipientName] = useState('');
   const [senderName, setSenderName] = useState('');
-  const [tone, setTone] = useState<GreetingTone>(
-    defaultToneFor(occasionFromQuery() ?? 'BIRTHDAY')
-  );
 
   /**
-   * Этап 2, фича №3: у чувствительных поводов свой набор тонов, и смена
-   * повода может обессмыслить уже выбранный — «С юмором» для
-   * соболезнования сервер отвергнет с 400.
+   * Начальный тон — умолчание регистра по таблице сервера, как только она
+   * пришла. Без этого переход с плитки «Соболезнование» открыл бы форму
+   * с тёплым тоном, которого у траурного регистра нет.
    *
-   * Переключаем тон на умолчание нового повода ровно тогда, когда
-   * прежний стал недопустим, и не трогаем его в остальных случаях: у
-   * поводов с обычным набором человек выбрал тон осознанно, и сбрасывать
-   * его при каждом переключении повода было бы навязчиво.
-   *
-   * Это подсказка интерфейса, а не проверка: настоящая живёт на сервере
-   * (`GreetingBriefService`/`ProjectService`), потому что визард
-   * обходится прямым запросом к API, а она — нет.
+   * Только пока человек не выбирал тон сам; дальше несовместимый тон
+   * сбрасывает сам блок при смене повода или настроения, и называет
+   * замену. Таблица не пришла — тон остаётся, проверит сервер.
    */
-  function handleOccasionChange(next: GreetingOccasion) {
-    setOccasion(next);
-    if (!allowedTonesFor(next).includes(tone)) setTone(defaultToneFor(next));
-  }
+  useEffect(() => {
+    if (!policy || toneTouched) return;
+    const recommended = recommendedTone(
+      policy,
+      occasion,
+      fieldsRegister(policy, { occasion, mood }, null)
+    );
+    if (recommended) setOcc((prev) => ({ ...prev, tone: recommended }));
+    // Только приход таблицы: смены повода дальше разбирает блок сам.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policy]);
+
   const [personalMessage, setPersonalMessage] = useState('');
 
+  // У «Особого повода» обязательны и описание, и ответ о настроении:
+  // без ответа сервер отвечает 400 (§3.4).
   const canSubmitGreeting =
     recipientName.trim().length > 0 &&
-    (occasion !== 'OTHER' || customOccasionText.trim().length > 0) &&
+    occasionFieldsComplete(occ) &&
     !!countryCode &&
     !submitting;
 
@@ -166,14 +182,23 @@ export function ProjectCreateScreen() {
         greetingBrief: {
           occasion,
           ...(occasion === 'OTHER'
-            ? { customOccasionText: customOccasionText.trim() }
+            ? {
+                customOccasionText: customOccasionText.trim(),
+                occasionRegister: occasionRegisterField(occ) ?? undefined,
+              }
             : {}),
           recipientName: recipientName.trim(),
           // Этап C (§3.8): язык поздравления по умолчанию — язык
           // интерфейса автора; поменять его можно в брифе мастера.
           scriptLanguage: locale,
           ...(senderName.trim() ? { senderName: senderName.trim() } : {}),
-          tone,
+          // Таблица не пришла, а тон человек не трогал — в форме заглушка,
+          // и её не шлём: с лендинга `?occasion=CONDOLENCE` она дала бы
+          // 400, а сервер без поля возьмёт умолчание регистра сам.
+          tone: createToneField(tone, {
+            policyLoaded: !!policy,
+            toneTouched,
+          }),
           ...(personalMessage.trim()
             ? { personalMessage: personalMessage.trim() }
             : {}),
@@ -402,42 +427,21 @@ export function ProjectCreateScreen() {
             */}
             {type === 'GREETING_VIDEO' && (
               <div className="space-y-5">
-                <Field label={dict.greetingVideoWizard.occasionLabel}>
-                  <Select
-                    value={occasion}
-                    onChange={(e) =>
-                      handleOccasionChange(e.target.value as GreetingOccasion)
-                    }
-                    disabled={submitting}
-                  >
-                    {GREETING_OCCASIONS.map((o) => (
-                      <option key={o} value={o}>
-                        {dict.greetingVideoWizard.occasion[o]}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-
-                {occasion === 'OTHER' && (
-                  <Field
-                    label={dict.greetingVideoWizard.customOccasionLabel}
-                    htmlFor="greeting-custom-occasion"
-                  >
-                    <Input
-                      id="greeting-custom-occasion"
-                      value={customOccasionText}
-                      onChange={(e) =>
-                        setCustomOccasionText(
-                          e.target.value.slice(0, MAX_CUSTOM_OCCASION_LENGTH)
-                        )
-                      }
-                      placeholder={
-                        dict.greetingVideoWizard.customOccasionPlaceholder
-                      }
-                      disabled={submitting}
-                    />
-                  </Field>
-                )}
+                {/* Этап D (§3.5): повод → настроение → тон одной группой,
+                    тот же блок, что в брифе мастера; имена — после. */}
+                <GreetingOccasionFields
+                  value={occ}
+                  onChange={(patch) => {
+                    // Тон без повода и настроения в той же правке — выбор
+                    // человека (пилюля или «Рекомендуемые»), а не сброс
+                    // блоком: после него умолчание таблицы не вмешивается.
+                    if (patch.tone && !('occasion' in patch || 'mood' in patch))
+                      setToneTouched(true);
+                    setOcc((prev) => ({ ...prev, ...patch }));
+                  }}
+                  policy={policy}
+                  disabled={submitting}
+                />
 
                 <Field
                   label={dict.greetingVideoWizard.recipientNameLabel}
@@ -471,21 +475,6 @@ export function ProjectCreateScreen() {
                     disabled={submitting}
                   />
                 </Field>
-
-                <div>
-                  <span className="label">
-                    {dict.greetingVideoWizard.toneLabel}
-                  </span>
-                  <Pills
-                    value={tone}
-                    onChange={setTone}
-                    disabled={submitting}
-                    options={allowedTonesFor(occasion).map((t) => ({
-                      value: t,
-                      label: dict.greetingVideoWizard.tone[t],
-                    }))}
-                  />
-                </div>
 
                 <Field
                   label={dict.greetingVideoWizard.personalMessageLabel}

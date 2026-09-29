@@ -3,12 +3,18 @@
 // Этап C ТЗ Greeting 2.0 (§3.6): после старта сессии бриф уходит только
 // изменёнными полями.
 
-import { changedBriefFields } from '../src/lib/greeting-brief-diff';
+import {
+  changedBriefFields,
+  sessionBriefPatch,
+  startAfterSave,
+} from '../src/lib/greeting-brief-diff';
 
 let failed = 0;
+let passed = 0;
 function check(name: string, fn: () => void) {
   try {
     fn();
+    passed++;
     console.log(`  ✓ ${name}`);
   } catch (e) {
     failed++;
@@ -54,5 +60,82 @@ check('язык отправляется, только если его смен�
   });
 });
 
-console.log(failed ? `\n${failed} провалено` : '\n4 проверок пройдено');
+// ── Тело правки сессии: ответ о настроении «Особого повода» всегда ────
+
+const other: Record<string, string | null> = {
+  occasion: 'OTHER',
+  customOccasionText: 'Поминки дедушки',
+  occasionRegister: 'CELEBRATORY',
+  recipientName: 'Марина',
+  scriptLanguage: 'ru',
+};
+
+check('«Особый повод»: ответ о настроении уходит и без его правки', () => {
+  // Сервер поднял регистр словом «поминки» (`registerSource:
+  // 'keywords'`) — ответа человека в брифе нет, и без поля в теле
+  // `resolveNext` получил бы `userRegister = null` → 400
+  // OTHER_MOOD_REQUIRED на исправлении опечатки в имени.
+  eq(sessionBriefPatch(other, { ...other, recipientName: 'Марине' }), {
+    recipientName: 'Марине',
+    occasionRegister: 'CELEBRATORY',
+  });
+  eq(sessionBriefPatch(other, { ...other }), {
+    occasionRegister: 'CELEBRATORY',
+  });
+});
+
+check('повод из списка — только изменённые поля', () => {
+  eq(sessionBriefPatch(base, { ...base, recipientName: 'Марине' }), {
+    recipientName: 'Марине',
+  });
+});
+
+check('ушли с «Особого» — очистка ответа уходит как правка', () => {
+  eq(
+    sessionBriefPatch(other, {
+      ...other,
+      occasion: 'BIRTHDAY',
+      customOccasionText: null,
+      occasionRegister: null,
+    }),
+    { occasion: 'BIRTHDAY', customOccasionText: null, occasionRegister: null }
+  );
+});
+
+// ── «Начать» после неудачного сохранения ────────────────────────────────
+
+async function checkAsync(name: string, fn: () => Promise<void>) {
+  try {
+    await fn();
+    passed++;
+    console.log(`  ✓ ${name}`);
+  } catch (e) {
+    failed++;
+    console.error(`  ✗ ${name}\n    ${(e as Error).message}`);
+  }
+}
+
+await checkAsync('бриф не сохранился — сессия не начинается', async () => {
+  let started = false;
+  const ok = await startAfterSave(
+    async () => false,
+    async () => {
+      started = true;
+    }
+  );
+  eq([ok, started], [false, false]);
+});
+
+await checkAsync('бриф сохранился — сессия начинается', async () => {
+  let started = false;
+  const ok = await startAfterSave(
+    async () => true,
+    async () => {
+      started = true;
+    }
+  );
+  eq([ok, started], [true, true]);
+});
+
+console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);
 if (failed) process.exit(1);

@@ -8,7 +8,10 @@
  * обрезался краем экрана, описание уезжало под карточку).
  */
 import assert from 'node:assert/strict';
-import { pillColumns } from '../src/components/ui/pill-columns';
+import {
+  pillColumns,
+  pillDisabledState,
+} from '../src/components/ui/pill-columns';
 
 let passed = 0;
 function it(name: string, fn: () => void) {
@@ -59,6 +62,41 @@ it('пустой список даёт одну колонку, а не ноль
 
 it('null в подписи не считается подписью', () => {
   assert.equal(pillColumns([{ sub: null }, { sub: null }, { sub: null }]), 3);
+});
+
+// Аудит этапа D Greeting 2.0: погашенный тон был нативно `disabled`, и
+// подпись «недоступен для этого повода» не доходила ни до Tab, ни до
+// скринридера.
+it('погашенный вариант остаётся в фокусе: aria-disabled, не нативный', () => {
+  assert.deepEqual(pillDisabledState(false, true), {
+    native: false,
+    aria: true,
+    selectable: false,
+  });
+  assert.deepEqual(pillDisabledState(undefined, true), {
+    native: false,
+    aria: true,
+    selectable: false,
+  });
+});
+
+it('выключенная группа — нативный disabled, и он сильнее варианта', () => {
+  const off = { native: true, aria: false, selectable: false };
+  assert.deepEqual(pillDisabledState(true, false), off);
+  assert.deepEqual(pillDisabledState(true, true), off);
+});
+
+it('обычный вариант выбирается', () => {
+  assert.deepEqual(pillDisabledState(false, false), {
+    native: false,
+    aria: false,
+    selectable: true,
+  });
+  assert.deepEqual(pillDisabledState(undefined, undefined), {
+    native: false,
+    aria: false,
+    selectable: true,
+  });
 });
 
 console.log(`pill-columns: ${passed} проверок пройдено`);

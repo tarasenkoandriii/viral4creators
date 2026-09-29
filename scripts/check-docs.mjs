@@ -3913,6 +3913,165 @@ function checkProcessorsSeam() {
 
 checkProcessorsSeam();
 
+/**
+ * Шов «тоны по поводу — только с сервера» — Greeting 2.0, этап D
+ * (`docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md` §3.1, §3.5; Т-18).
+ *
+ * До этапа D фронтенд держал свою копию таблицы тонов по поводу
+ * (`allowedTonesFor` / `GREETING_TONE_OVERRIDES` в `types/project.ts`).
+ * Две копии одного правила уже расходились (Г-11, лимит длины повода), а
+ * у тонов цена расхождения — шутливая пилюля, доступная в соболезновании,
+ * и отказ 400 уже после нажатия. Копию убрали: интерфейс решает всё по
+ * `GET /greeting/policy` через `frontend/src/lib/greeting-policy.ts`.
+ *
+ * Шов держит это в двух местах:
+ *  а) во `frontend/src` не появляется копия таблицы снова — ни под
+ *     прежними именами, ни в виде `Record<GreetingOccasion, GreetingTone[]>`
+ *     под новым (имя сменить легко, форму таблицы — нет);
+ *  б) поля `GreetingRegisterRules` фронтенда совпадают с полями элемента
+ *     `GreetingPolicyView.registers` бэкенда. Типы по сети не сверяются
+ *     никем: сервер добавит поле — интерфейс его не увидит, уберёт —
+ *     интерфейс прочтёт `undefined` как «запрещено» или «разрешено»
+ *     наугад. Сверяем по тексту, как остальные швы.
+ */
+function checkGreetingPolicyCopySeam() {
+  const problems = [];
+  const FRONT_LIB = "frontend/src/lib/greeting-policy.ts";
+  const BACK_LIB = "backend/src/common/greeting-policy.ts";
+
+  // а) Копии таблицы. Комментарии снимаем: библиотека политики сама
+  // объясняет в шапке, что `allowedTonesFor` удалён, — это не копия.
+  const COPY_NAMES = [
+    "GREETING_TONE_OVERRIDES",
+    "allowedTonesFor",
+    "defaultToneFor",
+    "EVERYDAY_TONES",
+  ];
+  const nameRe = new RegExp(`\\b(?:${COPY_NAMES.join("|")})\\b`);
+  // Форма таблицы «повод → тоны» под любым именем.
+  const shapeRe =
+    /Record<\s*GreetingOccasion\s*,\s*(?:readonly\s+)?(?:GreetingTone\s*\[\s*\]|(?:Readonly)?Array<\s*GreetingTone\s*>)/;
+  const frontFiles = walk(path.join(ROOT, "frontend/src")).filter((f) =>
+    /\.(ts|tsx)$/.test(f),
+  );
+  for (const f of frontFiles) {
+    const rel = path.relative(ROOT, f);
+    const src = stripComments(fs.readFileSync(f, "utf8"));
+    const lines = src.split("\n");
+    lines.forEach((line, i) => {
+      const hit = line.match(nameRe);
+      if (hit) {
+        problems.push(
+          `${rel}:${i + 1}: «${hit[0]}» — копия таблицы тонов по поводу ` +
+            "(Т-18). Тоны решаются по GET /greeting/policy через " +
+            `${FRONT_LIB}, а не своей копией`,
+        );
+      }
+    });
+    const shape = src.match(shapeRe);
+    if (shape) {
+      const line = src.slice(0, shape.index).split("\n").length;
+      problems.push(
+        `${rel}:${line}: «${shape[0].replace(/\s+/g, " ")}» — таблица ` +
+          "«повод → тоны» во фронтенде, копия серверной под новым именем (Т-18)",
+      );
+    }
+  }
+  if (frontFiles.length < 50) {
+    problems.push(
+      `frontend/src: нашёл всего ${frontFiles.length} файлов .ts/.tsx — ` +
+        "обход ослеп, поправьте шов",
+    );
+  }
+
+  // б) Поля правил регистра. Тело блока — по парным скобкам.
+  const bodyAfter = (src, re) => {
+    const m = re.exec(src);
+    if (!m) return null;
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    for (let k = open; k < src.length; k++) {
+      if (src[k] === "{") depth++;
+      else if (src[k] === "}" && --depth === 0) return src.slice(open + 1, k);
+    }
+    return null;
+  };
+  // Поля только верхнего уровня: вложенные `{ … }` вырезаем, чтобы поле
+  // вложенного объекта не засчиталось полем правил.
+  const fieldsOf = (body) => {
+    let flat = body;
+    let prev;
+    do {
+      prev = flat;
+      flat = flat.replace(/\{[^{}]*\}/g, "");
+    } while (flat !== prev);
+    return [...flat.matchAll(/^\s*(?:readonly\s+)?(\w+)\??\s*:/gm)].map(
+      (m) => m[1],
+    );
+  };
+  const front = bodyAfter(
+    stripComments(read(FRONT_LIB)),
+    /export\s+interface\s+GreetingRegisterRules\s*\{/,
+  );
+  const back = bodyAfter(
+    bodyAfter(
+      stripComments(read(BACK_LIB)),
+      /export\s+interface\s+GreetingPolicyView\s*\{/,
+    ) ?? "",
+    /\bregisters\s*:\s*Array<\s*\{/,
+  );
+  const frontFields = front ? fieldsOf(front) : [];
+  const backFields = back ? fieldsOf(back) : [];
+  // Защита от слепоты: в правилах регистра сейчас семь полей, и меньше
+  // пяти значит, что регулярка перестала находить интерфейс, а не что
+  // правил стало мало.
+  if (!front || frontFields.length < 5) {
+    problems.push(
+      `${FRONT_LIB}: не нашёл interface GreetingRegisterRules или в нём ` +
+        `меньше 5 полей (${frontFields.length}) — шов ослеп, поправьте шов`,
+    );
+  }
+  if (!back || backFields.length < 5) {
+    problems.push(
+      `${BACK_LIB}: не нашёл GreetingPolicyView.registers: Array<{ … }> ` +
+        `или в нём меньше 5 полей (${backFields.length}) — шов ослеп, ` +
+        "поправьте шов вместе с типом",
+    );
+  }
+  if (front && back) {
+    const onlyBack = backFields.filter((x) => !frontFields.includes(x));
+    const onlyFront = frontFields.filter((x) => !backFields.includes(x));
+    if (onlyBack.length > 0) {
+      problems.push(
+        `сервер отдаёт в правилах регистра ${onlyBack.join(", ")}, а ` +
+          `GreetingRegisterRules в ${FRONT_LIB} их не знает — интерфейс ` +
+          "не увидит правило",
+      );
+    }
+    if (onlyFront.length > 0) {
+      problems.push(
+        `GreetingRegisterRules в ${FRONT_LIB} ждёт ${onlyFront.join(", ")}, ` +
+          `а GreetingPolicyView.registers в ${BACK_LIB} их не отдаёт — ` +
+          "интерфейс прочтёт undefined",
+      );
+    }
+  }
+
+  if (problems.length > 0) {
+    failed++;
+    console.log("FAIL тоны по поводу — только с сервера (Т-18):");
+    for (const x of problems) console.log(`  - ${x}`);
+  } else {
+    console.log(
+      `ok   тоны по поводу — только с сервера: файлов frontend/src ` +
+        `${frontFiles.length}, копий таблицы 0; полей правил регистра ` +
+        `${frontFields.length} — одни и те же у фронтенда и сервера`,
+    );
+  }
+}
+
+checkGreetingPolicyCopySeam();
+
 if (failed) {
   console.error(
     `\n${failed} расхождени(е/я) между документами и кодом. ` +

@@ -184,6 +184,13 @@ export interface GreetingBriefSnapshot {
   occasionRegister?: GreetingRegister | null;
   registerSource?: GreetingRegisterSource | null;
   /**
+   * Ответ человека о настроении (этап D, §3.4) — отдельно от итога, чтобы
+   * подъём регистра словами или классификатором его не стирал. Снимки до
+   * этой колонки его не несут: ответ берётся из `occasionRegister`, только
+   * если победил сам человек (`storedUserRegister`).
+   */
+  userOccasionRegister?: GreetingRegister | null;
+  /**
    * Язык поздравления (этап C, §3.8). Необязательное: снимки до этапа C
    * его не несут и читаются по языку интерфейса сессии
    * (`scriptLanguageOf`), как и раньше фактически происходило.
@@ -499,6 +506,11 @@ export interface GreetingBriefView {
   /** Регистр «Особого повода» после всех проверок (§3.4); у каталожных — `null`. */
   occasionRegister: GreetingRegister | null;
   registerSource: GreetingRegisterSource | null;
+  /**
+   * Ответ человека о настроении (этап D) — даже если итог поднят словами
+   * или классификатором; интерфейс подставляет его, а не переспрашивает.
+   */
+  userOccasionRegister: GreetingRegister | null;
   /** Язык поздравления; `null` — не выбран, берётся язык интерфейса. */
   scriptLanguage: SupportedLocale | null;
   recipientName: string;

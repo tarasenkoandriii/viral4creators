@@ -1,6 +1,7 @@
 import {
   blobPathnameFromUrl,
   brandManifestSnapshotFrom,
+  greetingBriefSnapshotFrom,
   imageMimeFromPathname,
   productInformationFromItem,
 } from './snapshot';
@@ -256,5 +257,42 @@ describe('brandManifestSnapshotFrom', () => {
     expect(snap.effects).toBeNull();
     // Pre-Stage-22 callers pass no scenes → empty list, never undefined.
     expect(snap.scenes).toEqual([]);
+  });
+});
+
+/**
+ * Этап D, «Открыто осознанно» §12: ответ человека о настроении копируется
+ * в снимок рядом с итогом — иначе правка из сессии теряла бы его и снова
+ * требовала ответа.
+ */
+describe('greetingBriefSnapshotFrom — ответ о настроении', () => {
+  const row = {
+    id: 'gb1',
+    occasion: 'OTHER' as const,
+    customOccasionText: 'Поминки деда',
+    occasionRegister: 'MOURNING' as const,
+    registerSource: 'keywords',
+    recipientName: 'Аня',
+    senderName: null,
+    tone: 'RESPECTFUL' as const,
+    personalMessage: null,
+    presenterProvider: 'grok',
+    resolution: '720p',
+    brandManifestId: null,
+    occasionDate: null,
+  };
+
+  it('копирует ответ человека отдельно от поднятого итога', () => {
+    const snap = greetingBriefSnapshotFrom({
+      ...row,
+      userOccasionRegister: 'SOLEMN',
+    });
+    expect(snap.occasionRegister).toBe('MOURNING');
+    expect(snap.registerSource).toBe('keywords');
+    expect(snap.userOccasionRegister).toBe('SOLEMN');
+  });
+
+  it('строка без колонки — null, а не undefined', () => {
+    expect(greetingBriefSnapshotFrom(row).userOccasionRegister).toBeNull();
   });
 });

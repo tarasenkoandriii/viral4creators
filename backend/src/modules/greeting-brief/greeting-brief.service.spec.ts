@@ -12,6 +12,7 @@ jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { BadRequestException } from '@nestjs/common';
 import { GreetingBriefService } from './greeting-brief.service';
+import { OTHER_MOOD_REQUIRED } from '../../common/greeting-policy';
 
 const brief = (over: Record<string, unknown> = {}) => ({
   id: 'gb1',
@@ -103,5 +104,260 @@ describe('GreetingBriefService.updateBrief — пара (повод, тон)', (
     expect(prisma.greetingBrief.update.mock.calls[0][0].data.occasion).toBe(
       'HOUSEWARMING',
     );
+  });
+});
+
+/**
+ * Этап D (ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.4
+ * п.1, приёмка §8.1): «OTHER … без ответа на вопрос о настроении бриф не
+ * сохраняется» — и при правке тоже. `resolveNext` общий для правки брифа
+ * проекта и правки из сессии, поэтому достаточно проверить его здесь.
+ */
+describe('GreetingBriefService.updateBrief — OTHER требует ответа о настроении', () => {
+  function buildWithClassifier(current = brief()) {
+    const built = build(current);
+    const classify = jest.fn().mockResolvedValue(null);
+    const service = new GreetingBriefService(
+      built.prisma as never,
+      { planOfUser: jest.fn().mockResolvedValue('PREMIUM') } as never,
+      { classify } as never,
+    );
+    return { ...built, service, classify };
+  }
+
+  const other = (over: Record<string, unknown> = {}) =>
+    brief({
+      occasion: 'OTHER',
+      customOccasionText: 'Защита диплома',
+      tone: 'WARM',
+      ...over,
+    });
+
+  it('смена повода на OTHER без ответа — 400, классификатор не зовётся', async () => {
+    const { service, prisma, classify } = buildWithClassifier(
+      brief({ tone: 'WARM' }),
+    );
+    await expect(
+      service.updateBrief('u1', 'p1', {
+        occasion: 'OTHER',
+        customOccasionText: 'Защита диплома',
+      }),
+    ).rejects.toThrow(OTHER_MOOD_REQUIRED);
+    expect(classify).not.toHaveBeenCalled();
+    expect(prisma.greetingBrief.update).not.toHaveBeenCalled();
+  });
+
+  it('смена повода на OTHER с ответом — сохраняется с источником user', async () => {
+    const { service, prisma, classify } = buildWithClassifier(
+      brief({ tone: 'WARM' }),
+    );
+    await service.updateBrief('u1', 'p1', {
+      occasion: 'OTHER',
+      customOccasionText: 'Защита диплома',
+      occasionRegister: 'SOLEMN',
+    });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      occasion: 'OTHER',
+      occasionRegister: 'SOLEMN',
+      registerSource: 'user',
+    });
+  });
+
+  /**
+   * Старый бриф OTHER: вопрос тогда не задавался, регистр — умолчание.
+   * Любая правка без ответа отклоняется — так и задумано: интерфейс
+   * теперь спрашивает и без ответа дальше не пускает.
+   */
+  it.each([
+    ['default', 'WARM_NEUTRAL'],
+    [null, null],
+  ])(
+    'старый бриф OTHER (источник %s) без ответа не сохраняется',
+    async (registerSource, occasionRegister) => {
+      const { service, prisma, classify } = buildWithClassifier(
+        other({ registerSource, occasionRegister }),
+      );
+      await expect(
+        service.updateBrief('u1', 'p1', { recipientName: 'Оля' }),
+      ).rejects.toThrow(OTHER_MOOD_REQUIRED);
+      expect(classify).not.toHaveBeenCalled();
+      expect(prisma.greetingBrief.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('старый бриф OTHER с ответом в правке — сохраняется', async () => {
+    const { service, prisma } = buildWithClassifier(
+      other({ registerSource: 'default', occasionRegister: 'WARM_NEUTRAL' }),
+    );
+    await service.updateBrief('u1', 'p1', {
+      recipientName: 'Оля',
+      occasionRegister: 'CELEBRATORY',
+    });
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      recipientName: 'Оля',
+      occasionRegister: 'CELEBRATORY',
+      registerSource: 'user',
+    });
+  });
+
+  it('прежний ответ человека (источник user) переживает правку других полей', async () => {
+    const { service, prisma } = buildWithClassifier(
+      other({ registerSource: 'user', occasionRegister: 'SOLEMN' }),
+    );
+    await service.updateBrief('u1', 'p1', { recipientName: 'Оля' });
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      occasionRegister: 'SOLEMN',
+      registerSource: 'user',
+    });
+  });
+
+  it('явный null у OTHER — тот же пропуск, 400', async () => {
+    const { service, prisma, classify } = buildWithClassifier(
+      other({ registerSource: 'user', occasionRegister: 'SOLEMN' }),
+    );
+    await expect(
+      service.updateBrief('u1', 'p1', { occasionRegister: null }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(classify).not.toHaveBeenCalled();
+    expect(prisma.greetingBrief.update).not.toHaveBeenCalled();
+  });
+
+  it('каталожному поводу ответ не нужен, присланный — игнорируется', async () => {
+    const { service, prisma, classify } = buildWithClassifier(
+      brief({ tone: 'WARM' }),
+    );
+    await service.updateBrief('u1', 'p1', {
+      recipientName: 'Оля',
+      occasionRegister: null,
+    });
+    await service.updateBrief('u1', 'p1', { occasionRegister: 'MOURNING' });
+    expect(classify).not.toHaveBeenCalled();
+    for (const [call] of prisma.greetingBrief.update.mock.calls) {
+      expect(call.data).toMatchObject({
+        occasionRegister: null,
+        registerSource: null,
+      });
+    }
+  });
+
+  it('уход с OTHER на каталожный повод без ответа — проходит', async () => {
+    const { service, prisma } = buildWithClassifier(
+      other({ registerSource: 'default', occasionRegister: 'WARM_NEUTRAL' }),
+    );
+    await service.updateBrief('u1', 'p1', { occasion: 'BIRTHDAY' });
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data.occasion).toBe(
+      'BIRTHDAY',
+    );
+  });
+});
+
+/**
+ * Этап D, «Открыто осознанно» §12: ответ человека о настроении хранится
+ * отдельно от итога (`userOccasionRegister`). Раньше при подъёме регистра
+ * словами или классификатором в брифе оставался только победивший сигнал,
+ * и ответ терялся: правка без повторного ответа получала 400, а
+ * переписанное описание, с которого подъём снят, падало в умолчание.
+ */
+describe('GreetingBriefService — ответ о настроении отдельно от итога', () => {
+  function buildWith(current: ReturnType<typeof brief>) {
+    const built = build(current);
+    const classify = jest.fn().mockResolvedValue(null);
+    const service = new GreetingBriefService(
+      built.prisma as never,
+      { planOfUser: jest.fn().mockResolvedValue('PREMIUM') } as never,
+      { classify } as never,
+    );
+    return { ...built, service, classify };
+  }
+
+  // Поднятый ключевыми словами бриф: человек ответил «торжественное»,
+  // «поминки» подняли регистр до траурного.
+  const raised = (over: Record<string, unknown> = {}) =>
+    brief({
+      occasion: 'OTHER',
+      customOccasionText: 'Поминки деда',
+      tone: 'RESPECTFUL',
+      occasionRegister: 'MOURNING',
+      registerSource: 'keywords',
+      userOccasionRegister: 'SOLEMN',
+      ...over,
+    });
+
+  it('поднятый бриф правится без повторного ответа, ответ сохраняется', async () => {
+    const { service, prisma } = buildWith(raised());
+    await service.updateBrief('u1', 'p1', { recipientName: 'Оля' });
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      recipientName: 'Оля',
+      occasionRegister: 'MOURNING',
+      registerSource: 'keywords',
+      userOccasionRegister: 'SOLEMN',
+    });
+  });
+
+  it('подъём снят переписанным описанием — итог возвращается к ответу, не к умолчанию', async () => {
+    const { service, prisma, classify } = buildWith(raised());
+    await service.updateBrief('u1', 'p1', {
+      customOccasionText: 'Юбилей деда',
+    });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      occasionRegister: 'SOLEMN',
+      registerSource: 'user',
+      userOccasionRegister: 'SOLEMN',
+    });
+  });
+
+  it('новый ответ в запросе заменяет сохранённый', async () => {
+    const { service, prisma } = buildWith(raised());
+    await service.updateBrief('u1', 'p1', { occasionRegister: 'SENSITIVE' });
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      occasionRegister: 'MOURNING',
+      userOccasionRegister: 'SENSITIVE',
+    });
+  });
+
+  it('старая строка без колонки, источник user — ответ берётся из итога и записывается', async () => {
+    const { service, prisma } = buildWith(
+      brief({
+        occasion: 'OTHER',
+        customOccasionText: 'Защита диплома',
+        tone: 'WARM',
+        occasionRegister: 'SOLEMN',
+        registerSource: 'user',
+      }),
+    );
+    await service.updateBrief('u1', 'p1', { recipientName: 'Оля' });
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      occasionRegister: 'SOLEMN',
+      userOccasionRegister: 'SOLEMN',
+    });
+  });
+
+  it('уход на каталожный повод забывает ответ', async () => {
+    const { service, prisma } = buildWith(raised());
+    await service.updateBrief('u1', 'p1', { occasion: 'CONDOLENCE' });
+    expect(
+      prisma.greetingBrief.update.mock.calls[0][0].data.userOccasionRegister,
+    ).toBeNull();
+  });
+
+  it('GET отдаёт ответ человека и у поднятого брифа, и у старой строки', async () => {
+    expect(
+      (await buildWith(raised()).service.getBrief('u1', 'p1'))
+        .userOccasionRegister,
+    ).toBe('SOLEMN');
+    const legacy = await buildWith(
+      raised({
+        userOccasionRegister: undefined,
+        registerSource: 'user',
+        occasionRegister: 'SOLEMN',
+      }),
+    ).service.getBrief('u1', 'p1');
+    expect(legacy.userOccasionRegister).toBe('SOLEMN');
+    const lost = await buildWith(
+      raised({ userOccasionRegister: undefined }),
+    ).service.getBrief('u1', 'p1');
+    expect(lost.userOccasionRegister).toBeNull();
   });
 });

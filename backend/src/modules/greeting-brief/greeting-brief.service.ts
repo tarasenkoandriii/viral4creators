@@ -20,7 +20,10 @@ import { resolveGreetingConfig } from '../project/greeting-config';
 import { UpdateGreetingBriefDto } from '../project/dto/update-greeting-brief.dto';
 import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
 import {
+  OTHER_MOOD_REQUIRED,
+  otherMoodMissing,
   resolveBriefRegister,
+  storedUserRegister,
   toneAllowedForRegister,
   toneRefusal,
 } from '../../common/greeting-policy';
@@ -43,6 +46,7 @@ interface GreetingBriefRow {
   customOccasionText: string | null;
   occasionRegister?: GreetingRegister | null;
   registerSource?: string | null;
+  userOccasionRegister?: GreetingRegister | null;
   scriptLanguage?: string | null;
   recipientName: string;
   senderName: string | null;
@@ -62,6 +66,7 @@ export interface BriefBase {
   customOccasionText: string | null;
   occasionRegister?: GreetingRegister | null;
   registerSource?: string | null;
+  userOccasionRegister?: GreetingRegister | null;
   scriptLanguage?: string | null;
   recipientName: string;
   senderName: string | null;
@@ -78,6 +83,8 @@ export interface ResolvedBriefFields {
   customOccasionText: string | null;
   occasionRegister: GreetingRegister | null;
   registerSource: GreetingRegisterSource | null;
+  /** Ответ человека о настроении; у каталожных поводов — `null`. */
+  userOccasionRegister: GreetingRegister | null;
   scriptLanguage: SupportedLocale | null;
   recipientName: string;
   senderName: string | null;
@@ -210,8 +217,9 @@ export class GreetingBriefService {
      * ещё одного короткого вызова модели.
      *
      * Так и задумано. Отличить «классификатор ответил, но не поднял
-     * регистр» от «классификатор не ответил вовсе» негде: победивший
-     * сигнал хранится, проигравший — нет. Если считать оба за «уже
+     * регистр» от «классификатор не ответил вовсе» негде: из сигналов
+     * машины хранится только победивший (ответ человека — отдельно, в
+     * `userOccasionRegister`). Если считать оба за «уже
      * спрашивали», один сбой Gemini навсегда выключил бы третий сигнал
      * для этого брифа — ошибка в сторону праздника, ровно та, ради
      * которой этап B и написан. Лишний вызов дешевле.
@@ -221,12 +229,25 @@ export class GreetingBriefService {
       customOccasionText !== current.customOccasionText;
     const currentSource = (current.registerSource ??
       null) as GreetingRegisterSource | null;
+    // Ответ человека — из запроса, а без него сохранённый: он лежит
+    // отдельно от итога, так что подъём регистра словами или
+    // классификатором его не стирает, и правка опечатки в имени не
+    // требует отвечать заново. Переписал человек описание так, что
+    // подъём снят, — итог вернётся к этому ответу, а не к умолчанию.
     const userRegister =
       dto.occasionRegister !== undefined
         ? dto.occasionRegister
-        : currentSource === 'user'
-          ? (current.occasionRegister ?? null)
-          : null;
+        : storedUserRegister(current);
+    // Этап D (§3.4 п.1, приёмка §8.1): у OTHER ответ о настроении
+    // обязателен и при правке. Старый бриф OTHER без ответа (источник
+    // 'default' или поднятый словами/классификатором ДО отдельной колонки
+    // ответа) не сохранится, пока человек не ответит, — так и задумано:
+    // интерфейс задаёт вопрос и без ответа дальше не пускает. Явный
+    // `null` — тот же пропуск.
+    // Проверка — до классификатора, чтобы отказ не стоил вызова модели.
+    if (otherMoodMissing(occasion, userRegister)) {
+      throw new BadRequestException(OTHER_MOOD_REQUIRED);
+    }
     const reg = await resolveBriefRegister(
       {
         occasion,
@@ -277,6 +298,10 @@ export class GreetingBriefService {
       customOccasionText,
       occasionRegister: reg.occasionRegister,
       registerSource: reg.registerSource,
+      // Только у OTHER: у каталожных поводов вопрос не задаётся, и
+      // прежний ответ при смене повода с «Особого» забывается.
+      userOccasionRegister:
+        occasion === 'OTHER' ? (userRegister ?? null) : null,
       scriptLanguage:
         dto.scriptLanguage !== undefined
           ? dto.scriptLanguage
@@ -354,6 +379,8 @@ export function toGreetingBriefView(row: GreetingBriefRow): GreetingBriefView {
     occasionRegister: row.occasionRegister ?? null,
     registerSource:
       (row.registerSource as GreetingRegisterSource | null | undefined) ?? null,
+    // Строка до этой колонки — тот же разбор, что и при правке.
+    userOccasionRegister: storedUserRegister(row),
     scriptLanguage: isSupportedLocale(row.scriptLanguage)
       ? row.scriptLanguage
       : null,

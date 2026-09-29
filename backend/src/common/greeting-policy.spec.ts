@@ -8,8 +8,6 @@
  * (ORACLE ниже), а не с самой политикой — иначе тест проверял бы код
  * этим же кодом.
  */
-import * as fs from 'fs';
-import * as path from 'path';
 import {
   GREETING_OCCASIONS,
   GREETING_REGISTERS,
@@ -20,11 +18,13 @@ import {
 } from './types/greeting.types';
 import { GREETING_OCCASION_SPECS, fallbackMessage } from './greeting-occasions';
 import {
+  OTHER_MOOD_REQUIRED,
   REGISTER_POLICY,
   catalogThemeAllowed,
   evaluateGreetingPolicy,
   greetingPolicyView,
   mourningKeyword,
+  otherMoodMissing,
   presenterExpression,
   registerOfBrief,
   resolveBriefRegister,
@@ -424,7 +424,7 @@ describe('текст модели в серьёзных регистрах (§3.
   });
 });
 
-describe('публичная таблица и зеркало фронтенда', () => {
+describe('публичная таблица GET /greeting/policy', () => {
   it('GET /greeting/policy покрывает все поводы и регистры', () => {
     const v = greetingPolicyView();
     expect(v.occasions.map((o) => o.occasion).sort()).toEqual(
@@ -433,31 +433,37 @@ describe('публичная таблица и зеркало фронтенда
     expect(v.registers.map((r) => r.register)).toEqual([...GREETING_REGISTERS]);
   });
 
-  /**
-   * Пока интерфейс не читает `GET /greeting/policy` (этап D), у него своя
-   * копия тонов. Тест держит её равной серверной — по тексту файла, тем
-   * же приёмом, что сверка словарей в `greeting-occasions.spec.ts`.
+  /*
+   * Этап D (Т-18): копии тонов во фронтенде больше нет — интерфейс строит
+   * выбор из `GET /greeting/policy`. Сверку копии заменили шов check-docs
+   * «тоны по поводу — только с сервера» и тест
+   * `frontend/scripts/greeting-policy.test.ts`, который гоняет помощники
+   * интерфейса по этой самой таблице.
    */
-  it('копия тонов во фронтенде совпадает с сервером', () => {
-    const file = fs.readFileSync(
-      path.resolve(
-        __dirname,
-        '..',
-        '..',
-        '..',
-        'frontend',
-        'src',
-        'types',
-        'project.ts',
-      ),
-      'utf8',
-    );
-    const everyday = JSON.stringify(['WARM', 'FUNNY', 'FORMAL']);
-    for (const occasion of GREETING_OCCASIONS) {
-      const tones = GREETING_OCCASION_SPECS[occasion].tones;
-      if (JSON.stringify(tones) === everyday) continue;
-      const literal = `${occasion}: [${tones.map((t) => `'${t}'`).join(', ')}]`;
-      expect(file).toContain(literal);
+});
+
+describe('otherMoodMissing — этап D, §3.4 п.1', () => {
+  it('у OTHER пропуск и явный null — «нет ответа»', () => {
+    expect(otherMoodMissing('OTHER', undefined)).toBe(true);
+    expect(otherMoodMissing('OTHER', null)).toBe(true);
+  });
+
+  it('у OTHER любой из регистров — ответ есть', () => {
+    for (const r of GREETING_REGISTERS) {
+      expect(otherMoodMissing('OTHER', r)).toBe(false);
+    }
+  });
+
+  it('каталожным поводам ответ не нужен', () => {
+    for (const o of GREETING_OCCASIONS.filter((x) => x !== 'OTHER')) {
+      expect(otherMoodMissing(o, null)).toBe(false);
+    }
+  });
+
+  it('текст отказа называет поле и все допустимые значения', () => {
+    expect(OTHER_MOOD_REQUIRED).toContain('occasionRegister');
+    for (const r of GREETING_REGISTERS) {
+      expect(OTHER_MOOD_REQUIRED).toContain(r);
     }
   });
 });
