@@ -101,6 +101,7 @@ import type { ExperienceText } from './experience';
 import { TranslationService } from './translation.service';
 import { usesTemplate } from '../../common/scene-templates';
 import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
+import { greetingTopicKeys } from '../tutorial-scenario/tutorial-locales';
 
 /** Сколько ждём модель. Короткая реплика — короткое ожидание. */
 const HINT_TIMEOUT_MS = 20_000;
@@ -226,6 +227,21 @@ export class WizardHintService {
     if (!(await this.canSpend(userId, projectId))) return NOTHING;
     if (!this.genai) return NOTHING;
 
+    /*
+     * Темы обучалок — из каталога, а не списком рядом (29.09.2026).
+     *
+     * `greetingTopicKeys` читает те самые темы, из которых собраны
+     * ролики и озвучка; список, записанный здесь руками, отстал бы от
+     * каталога и предложил бы модели тему, которой нет, — кнопка вела
+     * бы в 404.
+     *
+     * У остальных сценариев тем пока нет, и кнопки ролика тоже: пустой
+     * список убирает её из промпта целиком, а не оставляет
+     * приглашением выдумать значение.
+     */
+    const topics =
+      scenario === 'GREETING_VIDEO' ? greetingTopicKeys(locale) : [];
+
     const instruction = buildHintInstruction({
       locale,
       scenarioGoal: hints.goal,
@@ -237,6 +253,7 @@ export class WizardHintService {
       // на тех шагах, которые переименовали.
       stepIds: stepIdsOf(scenario),
       docSlugs: HINT_DOC_SLUGS,
+      topics,
     });
 
     const started = Date.now();
@@ -308,6 +325,7 @@ export class WizardHintService {
         split.actionsJson,
         stepIdsOf(scenario),
         HINT_DOC_SLUGS,
+        topics,
       );
 
       await this.remember(key, masked, actions);

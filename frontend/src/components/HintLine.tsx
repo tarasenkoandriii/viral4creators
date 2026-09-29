@@ -26,6 +26,7 @@ import { useEffect, useReducer, useState } from 'react';
 import { ChevronRight, Lightbulb } from 'lucide-react';
 import { Spinner } from './ui';
 import { useI18n } from '../lib/i18n-context';
+import { useHelp } from '../features/projects/help-context';
 import { routes } from '../lib/router';
 import {
   HINT_IDLE_MS,
@@ -302,6 +303,8 @@ function HintActions({
   openTemplate: string;
   onGoToStep: (stepId: string) => void;
 }) {
+  const { dict } = useI18n();
+  const openHelp = useHelp();
   const rendered = actions
     .map((a, i) => {
       if (a.kind === 'goto-step' && a.stepId) {
@@ -316,6 +319,23 @@ function HintActions({
             onClick={() => onGoToStep(stepId)}
           >
             {gotoTemplate.replace('{{step}}', label)}
+          </button>
+        );
+      }
+      if (a.kind === 'play-video' && a.topic) {
+        // Тот же лист, что открывает кнопка (i): второго пути к ролику
+        // не заводим, он разошёлся бы с первым. Провайдера нет (совет
+        // показан вне мастера) — кнопки тоже нет: она бы не сработала.
+        if (!openHelp) return null;
+        const topic = a.topic;
+        return (
+          <button
+            key={`v${i}`}
+            type="button"
+            className="rounded-full border border-[var(--border)] px-3 py-1 text-xs"
+            onClick={() => openHelp(topic)}
+          >
+            {dict.tutorialHelp.watch}
           </button>
         );
       }

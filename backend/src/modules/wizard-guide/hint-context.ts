@@ -55,6 +55,8 @@ export interface HintContextInput {
    */
   stepIds?: readonly string[];
   docSlugs?: readonly string[];
+  /** Темы обучалок этого сценария — под кнопку «посмотреть ролик». */
+  topics?: readonly string[];
 }
 
 /**
@@ -103,8 +105,9 @@ export function hintCacheKey(parts: {
 function actionsBlock(
   stepIds: readonly string[],
   docSlugs: readonly string[],
+  topics: readonly string[] = [],
 ): string {
-  if (!stepIds.length && !docSlugs.length) return '';
+  if (!stepIds.length && !docSlugs.length && !topics.length) return '';
   const kinds: string[] = [];
   if (stepIds.length) {
     kinds.push(
@@ -114,6 +117,11 @@ function actionsBlock(
   if (docSlugs.length) {
     kinds.push(
       `{"kind":"open-doc","slug":"…"} — открыть документ. Допустимые slug: ${docSlugs.join(', ')}.`,
+    );
+  }
+  if (topics.length) {
+    kinds.push(
+      `{"kind":"play-video","topic":"…"} — показать обучающий ролик. Допустимые topic: ${topics.join(', ')}.`,
     );
   }
   return `## Кнопки
@@ -156,7 +164,7 @@ export function buildHintInstruction(input: HintContextInput): string {
 
   const parts = [
     head,
-    actionsBlock(input.stepIds ?? [], input.docSlugs ?? []),
+    actionsBlock(input.stepIds ?? [], input.docSlugs ?? [], input.topics ?? []),
     `## Шаг «${input.card.stepId}»\n${input.card.goal}`,
     input.facts.length
       ? `## Состояние\n${input.facts.map((f) => `- ${f}`).join('\n')}`

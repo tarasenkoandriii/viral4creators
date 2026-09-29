@@ -131,3 +131,46 @@ describe('cleanHint', () => {
     expect(cleanHint(null)).toBe('');
   });
 });
+
+/**
+ * Кнопка «посмотреть ролик» в промпте (29.09.2026).
+ *
+ * Модель называет ТОЛЬКО ключ темы; что с ним делать, решает клиент.
+ * Поэтому проверяется ровно две вещи: тема предложена списком и без
+ * списка блока нет вовсе — пустой перечень «допустимых» был бы
+ * приглашением выдумать значение.
+ */
+describe('кнопка ролика в промпте', () => {
+  const base = {
+    locale: 'ru',
+    scenarioGoal: 'цель',
+    card: { stepId: 'brief', goal: 'заполнить бриф' },
+    facts: [],
+  };
+
+  it('темы перечислены закрытым списком', () => {
+    const prompt = buildHintInstruction({
+      ...base,
+      topics: ['greeting-brief', 'greeting-settings'],
+    } as never);
+    expect(prompt).toContain('play-video');
+    expect(prompt).toContain('greeting-brief, greeting-settings');
+  });
+
+  it('без тем кнопки ролика в промпте нет', () => {
+    const prompt = buildHintInstruction({ ...base, topics: [] } as never);
+    expect(prompt).not.toContain('play-video');
+  });
+
+  it('темы не отменяют шаги и документы', () => {
+    const prompt = buildHintInstruction({
+      ...base,
+      stepIds: ['brief', 'script'],
+      docSlugs: ['offer'],
+      topics: ['greeting-brief'],
+    } as never);
+    for (const kind of ['goto-step', 'open-doc', 'play-video']) {
+      expect(prompt).toContain(kind);
+    }
+  });
+});

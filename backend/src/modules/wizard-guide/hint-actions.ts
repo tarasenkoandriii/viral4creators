@@ -38,7 +38,17 @@ export type GuideActionKind =
   /** Перейти на другой шаг ЭТОГО же мастера. */
   | 'goto-step'
   /** Открыть документ по слагу из белого списка. */
-  | 'open-doc';
+  | 'open-doc'
+  /**
+   * Показать обучающий ролик по теме (29.09.2026).
+   *
+   * Тот же лист справки, что открывает кнопка (i), и та же ручка
+   * `GET /tutorial-help/:subjectKey`. Совет, который умеет сказать
+   * «посмотрите, как это делается», полезнее совета, который может
+   * только объяснить словами, — а второго пути к ролику заводить
+   * незачем: он разошёлся бы с первым.
+   */
+  | 'play-video';
 
 export interface GuideAction {
   kind: GuideActionKind;
@@ -46,6 +56,8 @@ export interface GuideAction {
   stepId?: string;
   /** open-doc: слаг из белого списка. */
   slug?: string;
+  /** play-video: ключ темы из белого списка. */
+  topic?: string;
 }
 
 export interface SplitHint {
@@ -77,6 +89,8 @@ export function parseHintActions(
   actionsJson: string | null,
   knownSteps: readonly string[],
   knownDocs: readonly string[] = [],
+  /** Темы обучалок этого сценария; пустой список — кнопки ролика нет. */
+  knownTopics: readonly string[] = [],
 ): GuideAction[] {
   if (!actionsJson) return [];
   let parsed: unknown;
@@ -102,6 +116,14 @@ export function parseHintActions(
     if (item?.kind === 'open-doc') {
       if (typeof item.slug === 'string' && knownDocs.includes(item.slug)) {
         out.push({ kind: 'open-doc', slug: item.slug });
+      }
+      continue;
+    }
+    if (item?.kind === 'play-video') {
+      // Тот же закрытый список, что у шагов и документов: выдуманная
+      // тема дала бы кнопку, ведущую в 404.
+      if (typeof item.topic === 'string' && knownTopics.includes(item.topic)) {
+        out.push({ kind: 'play-video', topic: item.topic });
       }
     }
   }

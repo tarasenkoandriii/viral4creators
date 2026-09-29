@@ -922,9 +922,13 @@ export interface WizardGuideState {
 
 /** Действие под подсказкой — «Тонкая красная линия» §5.7. */
 export interface GuideAction {
-  kind: 'goto-step' | 'open-doc';
+  /** `play-video` — показать обучающий ролик темы (29.09.2026): тот же
+   *  лист справки, что открывает кнопка (i) на карточке. */
+  kind: 'goto-step' | 'open-doc' | 'play-video';
   stepId?: string;
   slug?: string;
+  /** play-video: ключ темы обучалки. */
+  topic?: string;
 }
 
 export interface WizardHintResult {

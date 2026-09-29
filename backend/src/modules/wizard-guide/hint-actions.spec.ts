@@ -95,3 +95,74 @@ describe('действия под подсказкой (§5.7)', () => {
     expect([...HINT_DOC_SLUGS].sort()).toEqual(onDisk);
   });
 });
+
+/**
+ * Кнопка «посмотреть ролик» (29.09.2026) — тот же закрытый список, что
+ * у шагов и документов, и по той же причине: выдуманная тема дала бы
+ * кнопку, ведущую в 404.
+ */
+describe('play-video', () => {
+  const TOPICS = ['greeting-brief', 'greeting-settings'];
+  const json = (items: unknown) => JSON.stringify({ items });
+
+  it('тема из списка проходит', () => {
+    expect(
+      parseHintActions(
+        json([{ kind: 'play-video', topic: 'greeting-brief' }]),
+        [],
+        [],
+        TOPICS,
+      ),
+    ).toEqual([{ kind: 'play-video', topic: 'greeting-brief' }]);
+  });
+
+  it('выдуманная тема отбрасывается', () => {
+    expect(
+      parseHintActions(
+        json([{ kind: 'play-video', topic: 'greeting-nonsense' }]),
+        [],
+        [],
+        TOPICS,
+      ),
+    ).toEqual([]);
+  });
+
+  it('без списка тем кнопки не бывает вовсе', () => {
+    // У сценариев без обучалок список пуст, и тогда любая тема — чужая.
+    expect(
+      parseHintActions(
+        json([{ kind: 'play-video', topic: 'greeting-brief' }]),
+        [],
+        [],
+      ),
+    ).toEqual([]);
+  });
+
+  it('тема без строки — не действие', () => {
+    expect(
+      parseHintActions(
+        json([{ kind: 'play-video', topic: 42 }]),
+        [],
+        [],
+        TOPICS,
+      ),
+    ).toEqual([]);
+  });
+
+  it('не мешает соседям: шаг, документ и ролик в одном ответе', () => {
+    expect(
+      parseHintActions(
+        json([
+          { kind: 'goto-step', stepId: 'brief' },
+          { kind: 'play-video', topic: 'greeting-settings' },
+        ]),
+        ['brief'],
+        [],
+        TOPICS,
+      ),
+    ).toEqual([
+      { kind: 'goto-step', stepId: 'brief' },
+      { kind: 'play-video', topic: 'greeting-settings' },
+    ]);
+  });
+});
