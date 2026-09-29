@@ -28,23 +28,36 @@ import { TUTORIAL_SITE_URL, isTutorialHost } from '../lib/tutorial-host';
  * (§5.2) ровно тем обходом, который всё равно ничего не проиндексирует.
  * На превью в мессенджере это не влияет: его рисует не поисковик.
  */
-const DISALLOW_REFERRAL = ['/r/'];
+/**
+ * Закрытые для обхода пути. Имя было `DISALLOW_REFERRAL`, пока путь
+ * был один; со вторым оно стало враньём — переименовано 29.09.2026.
+ *
+ * `/r/` — личные ссылки приглашений (этап 134, см. выше). `/qa/` — полигон для разведчика чужих сайтов
+ * (29.09.2026): служебная страница с формой входа и кнопкой «Удалить
+ * аккаунт», которой в выдаче делать нечего.
+ *
+ * Третий замок при двух уже имеющихся (страница сама отдаёт `noindex`
+ * и не перечислена в `sitemap.ts`) — не перестраховка: каждый из трёх
+ * живёт в своём файле, и снять его может правка, не знающая про
+ * остальные два.
+ */
+const DISALLOWED_PATHS = ['/r/', '/qa/'];
 export default function robots(): MetadataRoute.Robots {
   const host = headers().get('host');
   if (isGreetingHost(host)) {
     return {
-      rules: { userAgent: '*', allow: '/', disallow: DISALLOW_REFERRAL },
+      rules: { userAgent: '*', allow: '/', disallow: DISALLOWED_PATHS },
       sitemap: [`${GREETING_SITE_URL}/sitemap.xml`],
     };
   }
   if (isTutorialHost(host)) {
     return {
-      rules: { userAgent: '*', allow: '/', disallow: DISALLOW_REFERRAL },
+      rules: { userAgent: '*', allow: '/', disallow: DISALLOWED_PATHS },
       sitemap: [`${TUTORIAL_SITE_URL}/sitemap.xml`],
     };
   }
   return {
-    rules: { userAgent: '*', allow: '/', disallow: DISALLOW_REFERRAL },
+    rules: { userAgent: '*', allow: '/', disallow: DISALLOWED_PATHS },
     sitemap: [`${SITE_URL}/sitemap.xml`, `${SITE_URL}/sitemap-news.xml`],
   };
 }

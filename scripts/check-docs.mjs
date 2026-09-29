@@ -3050,6 +3050,72 @@ function checkQaHookSeams() {
     );
   }
 
+  /**
+   * Полигон для разведчика чужих сайтов и его каталог (29.09.2026).
+   *
+   * У обучалки по сайту заказчика нет оракула: сайт чужой, список
+   * элементов закрыть нельзя, и «нашёл три поля» — это много или мало,
+   * сказать нечем. Полигон возвращает оракул тем, что его DOM наш.
+   *
+   * Но оракул стоит ровно столько, сколько стоит его соответствие
+   * странице: каталог, отставший от разметки, превращает проверку
+   * разведки в проверку двух копий одного вранья. Поэтому шов держит
+   * их в обе стороны — как `qa-hooks` держит каталог мастера.
+   */
+  const SANDBOX_PAGE =
+    "landing/src/app/qa/site-sandbox/SandboxClient.tsx";
+  const sandboxSrc = stripComments(read(SANDBOX_PAGE));
+  const sandboxCatalogSrc = stripComments(
+    read("backend/src/modules/client-site-tutorial/sandbox-catalog.ts"),
+  );
+  const inPage = new Set(
+    [...sandboxSrc.matchAll(/data-qa="([a-z0-9-]+)"/g)].map((m) => m[1]),
+  );
+  const inCatalog = new Set(
+    [...sandboxCatalogSrc.matchAll(/hook: '([a-z0-9-]+)'/g)].map((m) => m[1]),
+  );
+  if (inPage.size === 0 || inCatalog.size === 0) {
+    problems.push(
+      `шов полигона ослеп: на странице ${inPage.size} элементов, в ` +
+        `каталоге ${inCatalog.size}`,
+    );
+  }
+  for (const hook of inPage) {
+    if (!inCatalog.has(hook)) {
+      problems.push(
+        `элемент «${hook}» есть на полигоне, но не в каталоге — значит ` +
+          "оракул разведки его не ждёт, и потерянный элемент останется " +
+          "незамеченным",
+      );
+    }
+  }
+  for (const hook of inCatalog) {
+    if (!inPage.has(hook)) {
+      problems.push(
+        `каталог полигона ждёт «${hook}», а на странице его нет — ` +
+          "проверка разведки провалится не потому, что разведка плоха",
+      );
+    }
+  }
+  // Путь полигона — копия литерала, как и остальные копии в проекте.
+  const sandboxPath =
+    /SANDBOX_PATH = '([^']+)'/.exec(sandboxCatalogSrc)?.[1] ?? "";
+  if (!sandboxPath || !fs.existsSync(path.join(ROOT, `landing/src/app${sandboxPath}/page.tsx`))) {
+    problems.push(
+      `SANDBOX_PATH = «${sandboxPath}» не соответствует ни одному ` +
+        "маршруту лендинга — черновик полигона открылся бы на 404",
+    );
+  }
+  // И полигон обязан быть закрыт от обхода: страница служебная, с
+  // формой входа и кнопкой «Удалить аккаунт».
+  const robotsSrc = stripComments(read("landing/src/app/robots.ts"));
+  if (!/'\/qa\/'/.test(robotsSrc)) {
+    problems.push(
+      "landing/src/app/robots.ts не закрывает /qa/ — полигон с формой " +
+        "входа попал бы в выдачу",
+    );
+  }
+
   const promptSrc = stripComments(
     read("backend/src/modules/tutorial-scenario/tutorial-scenario-prompt.ts"),
   );
@@ -3074,7 +3140,8 @@ function checkQaHookSeams() {
         `на ${new Set([...routeOf.values()].filter((r) => r.startsWith("generate"))).size} экранах; ` +
         `съёмщиков кадров: ${shooters.length}, все берут формат из одного ` +
         `места; владельцев префикса кадров: ${frameOwners.size}, метла знает ` +
-        `${sweepTables.size} таблиц(ы)`,
+        `${sweepTables.size} таблиц(ы); элементов полигона: ${inPage.size}, ` +
+        "каталог и страница сходятся",
     );
   }
 }
