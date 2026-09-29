@@ -100,9 +100,9 @@ import {
 import { computeDHash, hasChanged, diffScore } from './perceptual-hash';
 import {
   runScenario,
-  SCENARIO_VIEWPORT,
   type ScenarioPage,
 } from '../tutorial-runner/scenario-runner';
+import { CAPTURE_VIEWPORT } from '../tutorial-runner/tutorial-video-assembly';
 import type { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import {
   SPA_LOCALE_STORAGE_KEY,
@@ -161,7 +161,7 @@ const ROUTE_TIMEOUT_MS = 20_000;
 /** Вьюпорт — фиксированный размер мобильного экрана: TMA открывается
  * внутри Telegram на телефоне (§0 ТЗ), а сравнение отпечатков имеет
  * смысл только при одинаковом размере кадра между прогонами. */
-const VIEWPORT = SCENARIO_VIEWPORT;
+const VIEWPORT = CAPTURE_VIEWPORT;
 
 /**
  * Потолок на ОДИН съёмочный шаг. Больше умолчания исполнителя

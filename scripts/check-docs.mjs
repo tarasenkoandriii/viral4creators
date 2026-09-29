@@ -2890,6 +2890,107 @@ function checkQaHookSeams() {
     }
   }
 
+  /**
+   * Формат съёмки — один владелец на всех (29.09.2026).
+   *
+   * Съёмщиков кадров у продукта четыре, и до этого дня размер 390×844
+   * был записан в двух местах литералом, а плотность — в трёх, причём
+   * в четвёртом её не было вовсе. Намерение «пусть у всех будет
+   * одинаково» держал доккомментарий («те же 390×844, что у
+   * ui-snapshot-runner»), а не код: геометрия совпадала, плотность
+   * разошлась, и кадры обучалки по сайту заказчика приходили на холст
+   * 720 растянутыми почти вдвое. В CI это видно не было — только в
+   * готовом ролике, глазами.
+   *
+   * Шов идёт от ВЫЗОВА `setViewport`, а не от списка файлов: новый
+   * съёмщик добавляется одной строкой, и список файлов устарел бы
+   * молча. Каждый вызов обязан брать размер из `CAPTURE_VIEWPORT`.
+   *
+   * Плотность проверяется мягче — «литеральной двойки рядом нет»:
+   * `ui-snapshot-runner` берёт её из параметра прогона осознанно
+   * (отпечатки сравниваются на плотности 1, двойка допустима только с
+   * `unmasked`), а `chromium-page-explorer` не задаёт её вовсе и
+   * объясняет почему.
+   */
+  const shooters = [];
+  for (const file of walk(path.join(ROOT, "backend/src")).filter((f) =>
+    /\.ts$/.test(f) && !/\.spec\.ts$/.test(f),
+  )) {
+    const src = stripComments(fs.readFileSync(file, "utf8"));
+    const calls = [...src.matchAll(/\.setViewport\(([\s\S]{0,160}?)\)/g)];
+    for (const call of calls) {
+      // Объявление в интерфейсе-двойнике puppeteer — не съёмка.
+      if (/^v:/.test(call[1].trim())) continue;
+      shooters.push({
+        file: path.relative(ROOT, file),
+        arg: call[1],
+        src,
+      });
+    }
+  }
+  if (shooters.length === 0) {
+    problems.push(
+      "не нашёл ни одного вызова setViewport в backend/src — шов формата " +
+        "съёмки ослеп",
+    );
+  }
+  for (const shooter of shooters) {
+    const usesViewport =
+      /CAPTURE_VIEWPORT/.test(shooter.arg) ||
+      // Через локальную переменную — тогда она обязана быть присвоена
+      // из общего владельца в том же файле.
+      /=\s*CAPTURE_VIEWPORT\b/.test(shooter.src);
+    if (!usesViewport) {
+      problems.push(
+        `${shooter.file}: setViewport не берёт размер из CAPTURE_VIEWPORT — ` +
+          "съёмщики продукта обязаны давать один размер кадра, иначе " +
+          "`concat` слайд-шоу получает разнокалиберные кадры",
+      );
+    }
+  }
+  // Плотность числом — ГДЕ УГОДНО в исходниках, а не только в
+  // аргументе `setViewport`. Первая версия этого шва смотрела только
+  // туда и пережила мутацию: `tutorial-frames-capture.service.ts`
+  // задаёт плотность не съёмкой, а ПАРАМЕТРОМ чужого прогона
+  // (`this.runner.run({ deviceScaleFactor: 2 })`), то есть литерал
+  // жил у вызывающего. Тот же промах, что у швов S1/S2 и у первой
+  // проверки таймаута сборки: искал имя там, где его удобно искать, а
+  // не там, где принимается решение.
+  //
+  // Строки сообщений не считаются: `stripComments` их оставляет, а
+  // текст «deviceScaleFactor: 2 допустим только с unmasked» в
+  // `ui-snapshot-admin.controller.ts` — объяснение оператору, не
+  // настройка.
+  for (const file of walk(path.join(ROOT, "backend/src")).filter(
+    (f) => /\.ts$/.test(f) && !/\.spec\.ts$/.test(f),
+  )) {
+    const src = stripComments(fs.readFileSync(file, "utf8")).replace(
+      /(['"`])(?:\\.|(?!\1)[\s\S])*\1/g,
+      "''",
+    );
+    if (!/deviceScaleFactor:\s*\d/.test(src)) continue;
+    problems.push(
+      `${path.relative(ROOT, file)}: плотность съёмки задана числом — она ` +
+        "выводится из холста (CAPTURE_DEVICE_SCALE_FACTOR), и литерал " +
+        "однажды разойдётся с ним молча",
+    );
+  }
+  // И сама плотность обязана остаться ПРОИЗВОДНОЙ от холста.
+  const assemblySrc = stripComments(
+    read("backend/src/modules/tutorial-runner/tutorial-video-assembly.ts"),
+  );
+  if (
+    !/CAPTURE_DEVICE_SCALE_FACTOR = Math\.ceil\(\s*CANVAS\.width \/ CAPTURE_VIEWPORT\.width/.test(
+      assemblySrc,
+    )
+  ) {
+    problems.push(
+      "CAPTURE_DEVICE_SCALE_FACTOR перестал выводиться из CANVAS — число " +
+        "вместо выражения переживёт смену холста и оставит кадры " +
+        "растянутыми",
+    );
+  }
+
   const promptSrc = stripComments(
     read("backend/src/modules/tutorial-scenario/tutorial-scenario-prompt.ts"),
   );
@@ -2911,7 +3012,8 @@ function checkQaHookSeams() {
         `(вне каталога намеренно: ${NOT_FOR_SCENARIOS.size}); промпт и ` +
         "валидатор берут каталог; достижимость сверена с условиями " +
         `отрисовки: ${[...routeOf.values()].filter((r) => r.startsWith("generate")).length} хуков мастера ` +
-        `на ${new Set([...routeOf.values()].filter((r) => r.startsWith("generate"))).size} экранах`,
+        `на ${new Set([...routeOf.values()].filter((r) => r.startsWith("generate"))).size} экранах; ` +
+        `съёмщиков кадров: ${shooters.length}, все берут формат из одного места`,
     );
   }
 }

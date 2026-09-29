@@ -63,6 +63,7 @@ import {
   UiSnapshotRunnerService,
   type SnapshotTheme,
 } from './ui-snapshot-runner.service';
+import { CAPTURE_DEVICE_SCALE_FACTOR } from '../tutorial-runner/tutorial-video-assembly';
 
 /** Сайт в кадре — только наш собственный (§9 ТЗ, решение владельца). */
 export const DEFAULT_CAPTURE_SITE_URL = 'https://viral4creators.app';
@@ -213,7 +214,7 @@ export class TutorialFramesCaptureService {
       locale: arg.locale,
       theme: arg.theme,
       unmasked: true,
-      deviceScaleFactor: 2,
+      deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
       steps: captureSteps(arg.siteUrl, arg.fieldValue),
       alerts: false,
     });
@@ -239,7 +240,7 @@ export class TutorialFramesCaptureService {
       locale: arg.locale,
       theme: arg.theme,
       unmasked: true,
-      deviceScaleFactor: 2,
+      deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
       alerts: false,
     });
     const videoOutcome = video.outcomes[0];

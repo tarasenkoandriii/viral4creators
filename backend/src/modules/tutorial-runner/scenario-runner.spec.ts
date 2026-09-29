@@ -1,10 +1,10 @@
 import {
   measurePointer,
   runScenario,
-  SCENARIO_VIEWPORT,
   ScenarioPage,
   ScenarioRouteResolver,
 } from './scenario-runner';
+import { CAPTURE_VIEWPORT } from './tutorial-video-assembly';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 
 function buildPage(overrides: Partial<ScenarioPage> = {}): ScenarioPage {
@@ -289,7 +289,7 @@ describe('указатель клика: замер в момент снимка
         boundingBox: jest.fn().mockResolvedValue(null),
         evaluate: jest.fn().mockResolvedValue(true),
       }),
-      viewport: () => SCENARIO_VIEWPORT,
+      viewport: () => CAPTURE_VIEWPORT,
     } as unknown as ScenarioPage;
 
     const result = await runScenario(
@@ -317,7 +317,7 @@ describe('указатель клика: замер в момент снимка
         boundingBox: jest.fn().mockResolvedValue(null),
         evaluate: jest.fn().mockResolvedValue(false),
       }),
-      viewport: () => SCENARIO_VIEWPORT,
+      viewport: () => CAPTURE_VIEWPORT,
     } as unknown as ScenarioPage;
 
     const result = await runScenario(
@@ -362,7 +362,7 @@ describe('указатель клика: замер в момент снимка
   });
 
   it('вьюпорт съёмки — телефонный, один на обучалку и снимки мастера', () => {
-    expect(SCENARIO_VIEWPORT).toEqual({ width: 390, height: 844 });
+    expect(CAPTURE_VIEWPORT).toEqual({ width: 390, height: 844 });
   });
 
   it('указатель ложится на кадр ПЕРЕД кликом — там кнопка видна', async () => {

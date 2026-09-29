@@ -116,12 +116,7 @@ import {
   launchHeadlessBrowser,
   withTimeout,
 } from '../../common/headless-chromium';
-import {
-  runScenario,
-  SCENARIO_VIEWPORT,
-  ScenarioFrame,
-  ScenarioPage,
-} from './scenario-runner';
+import { runScenario, ScenarioFrame, ScenarioPage } from './scenario-runner';
 import {
   FRESH_WIZARD_ROUTE,
   FixtureRouteContext,
@@ -134,6 +129,8 @@ import {
   captionsPathname,
 } from './tutorial-captions';
 import {
+  CAPTURE_DEVICE_SCALE_FACTOR,
+  CAPTURE_VIEWPORT,
   evenFrameSeconds,
   narrationFrameSeconds,
   planSlideshow,
@@ -281,9 +278,6 @@ const ASSEMBLY_DEADLINE_MS = 10 * 60 * 1000;
  * снимков мастера (`ui-snapshot-runner`), чтобы кадры обучалки и
  * кадры лендинга выглядели одним продуктом, а не двумя. */
 const SCENARIO_THEME = 'light';
-
-/** Плотность пикселей ночной съёмки — см. `setViewport` в `runOne`. */
-const SCENARIO_DEVICE_SCALE_FACTOR = 2;
 
 /** Сколько провалов назвать поимённо, прежде чем перейти на одно
  * итоговое сообщение. Три — чтобы единичная поломка приходила со
@@ -1375,8 +1369,8 @@ export class TutorialScenarioRunnerService {
       // чему. Плотность 2 — чтобы 390 CSS-пикселей дали 780 пикселей
       // снимка и холст в 720 брал их с запасом, а не растягивал.
       await page.setViewport({
-        ...SCENARIO_VIEWPORT,
-        deviceScaleFactor: SCENARIO_DEVICE_SCALE_FACTOR,
+        ...CAPTURE_VIEWPORT,
+        deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
       });
       // Фикстурный вход (§3.3 ТЗ): `TelegramIdentityMiddleware` видит
       // `X-Fixture-Token` на каждом XHR SPA так же, как видел бы
