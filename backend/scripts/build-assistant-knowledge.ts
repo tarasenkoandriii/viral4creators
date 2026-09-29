@@ -528,6 +528,111 @@ export function navLabelsFor(locale: Locale): string[] {
   return NAV_SECTION_KEYS.map((key) => get(dict, ['nav', key]) as string);
 }
 
+/**
+ * Темы обучалок по мастеру ПОЗДРАВЛЕНИЯ — пять, по числу тем, о которых
+ * договорились 29.09.2026 (§11-септдециес `TZ-Tutorial-Video-Voiced.md`).
+ *
+ * Ни одной новой строки перевода: всё берётся там, где уже написано и
+ * переведено.
+ *
+ *   - четыре темы — из шагов лендинга поздравлений
+ *     (`greetingsLanding.steps.items`), теми же полями `title`/`text`,
+ *     что и у десяти шагов мастера товара;
+ *   - пятая, «настройки ролика», на лендинге отсутствует намеренно: его
+ *     раздел называется «Четыре шага», и пятый пункт изменил бы
+ *     страницу. Её текст собирается из подписей САМИХ карточек мастера
+ *     (`greetingVideoWizard.*Heading`/`*Hint` во фронтенде) — они уже
+ *     написаны как человеческие объяснения и уже переведены.
+ *
+ * Побочная польза важнее экономии: поправят подпись на экране — поедет
+ * и озвучка, вместо того чтобы разойтись с ней.
+ */
+const GREETING_TOPIC_KEYS = [
+  'greeting-brief',
+  'greeting-references',
+  'greeting-script',
+  'greeting-settings',
+  'greeting-video',
+] as const;
+
+/** Карточки «настроек ролика» — порядок тот же, что на экране. */
+const GREETING_SETTINGS_CARDS = [
+  'senderVoice',
+  'music',
+  'cards',
+  'sticker',
+  'scenes',
+] as const;
+
+/** Заголовок пятой темы — из подписи шага «Ролик» соседних тем не
+ *  собрать, поэтому берётся заголовок группы прямо из мастера. */
+const GREETING_SETTINGS_TITLE: Record<Locale, string> = {
+  ru: 'Настройте ролик',
+  uk: 'Налаштуйте ролик',
+  en: 'Tune the video',
+  de: 'Das Video einstellen',
+  es: 'Ajusta el video',
+};
+
+export function greetingTopicsFor(locale: Locale): AssistantStepItem[] {
+  const landing = readJson(LANDING_DICT_DIR, locale);
+  const wizard = readJson(FRONTEND_DICT_DIR, locale);
+  const steps = get(landing, ['greetingsLanding', 'steps', 'items']) as Array<{
+    title: string;
+    text: string;
+  }>;
+  if (!Array.isArray(steps) || steps.length !== 4) {
+    throw new Error(
+      `locale ${locale}: greetingsLanding.steps.items ожидались четыре шага, а их ${
+        Array.isArray(steps) ? steps.length : 'нет'
+      } — темы обучалок поздравления собрать не из чего`,
+    );
+  }
+  const settings: AssistantStepItem = {
+    title: GREETING_SETTINGS_TITLE[locale],
+    // Одна строка на карточку: «Заголовок — подсказка». Так же читает
+    // человек на экране, и так же прочтёт диктор.
+    text: GREETING_SETTINGS_CARDS.map((card) => {
+      const heading = get(wizard, [
+        'greetingVideoWizard',
+        `${card}Heading`,
+      ]) as string;
+      const hint = get(wizard, [
+        'greetingVideoWizard',
+        `${card}Hint`,
+      ]) as string;
+      if (!heading || !hint) {
+        throw new Error(
+          `locale ${locale}: нет greetingVideoWizard.${card}Heading/${card}Hint — пятую тему обучалки собрать не из чего`,
+        );
+      }
+      return `${heading}: ${hint}`;
+    }).join(' '),
+    details: [],
+  };
+  // Порядок — тот же, что у `GREETING_TOPIC_KEYS`: настройки между
+  // сценарием и роликом, как они и стоят на экране.
+  const [brief, references, script, video] = steps;
+  return [
+    { title: brief.title, text: brief.text, details: [] },
+    { title: references.title, text: references.text, details: [] },
+    { title: script.title, text: script.text, details: [] },
+    settings,
+    { title: video.title, text: video.text, details: [] },
+  ];
+}
+
+function buildGreetingTopics(): Record<string, AssistantStepItem> {
+  const out: Record<string, AssistantStepItem> = {};
+  for (const locale of LOCALES) {
+    const topics = greetingTopicsFor(locale);
+    GREETING_TOPIC_KEYS.forEach((key, i) => {
+      out[`${locale}:${key}`] = topics[i];
+    });
+  }
+  return out;
+}
+
 function buildAllSteps(): Record<Locale, AssistantStepItem[]> {
   const steps: Record<Locale, AssistantStepItem[]> = {} as Record<
     Locale,
@@ -542,6 +647,7 @@ function buildAllSteps(): Record<Locale, AssistantStepItem[]> {
 async function writeGeneratedTs(
   knowledge: Record<Locale, string>,
   steps: Record<Locale, AssistantStepItem[]>,
+  greetingTopics: Record<string, AssistantStepItem>,
 ): Promise<void> {
   const header = `/**
  * ГЕНЕРИРУЕТСЯ автоматически — backend/scripts/build-assistant-knowledge.ts.
@@ -574,6 +680,13 @@ export const ASSISTANT_SUGGESTED_QUESTIONS: Record<string, string[]> = ${JSON.st
 
 // Карточки шагов обучалки (§4.4, п.4) — по локали, индекс массива = stepId - 1.
 export const ASSISTANT_STEPS: Record<string, AssistantStepItem[]> = ${JSON.stringify(steps, null, 2)};
+
+/**
+ * Темы обучалок по мастеру поздравления — ключ \`<локаль>:<тема>\`.
+ * Плоская карта, а не массив по локали: у тем поздравления имена, а не
+ * номера, и индекс здесь ничего не значил бы.
+ */
+export const GREETING_TUTORIAL_TOPICS: Record<string, AssistantStepItem> = ${JSON.stringify(greetingTopics, null, 2)};
 `;
   // `JSON.stringify` пишет двойные кавычки — прогоняем через prettier тем
   // же конфигом, что и `npm run lint --fix` (`.prettierrc`), иначе
@@ -613,7 +726,7 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log(`assistant knowledge: ${locale}.md — ${kb.toFixed(1)} KB`);
   }
-  await writeGeneratedTs(knowledge, buildAllSteps());
+  await writeGeneratedTs(knowledge, buildAllSteps(), buildGreetingTopics());
 }
 
 // Запускается напрямую скриптом (`npm run prebuild`/`build:assistant-

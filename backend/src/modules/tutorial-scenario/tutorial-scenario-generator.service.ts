@@ -49,7 +49,9 @@ import {
 } from '../assistant/knowledge/generated';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 import {
+  greetingTopicKeys,
   parseTutorialLocales,
+  tutorialStepFor,
   TUTORIAL_LOCALES_SETTING_KEY,
 } from './tutorial-locales';
 import { estimateScenarioCost, ScenarioCostEstimate } from './scenario-cost';
@@ -229,14 +231,32 @@ export class TutorialScenarioGeneratorService {
         );
         continue;
       }
+      /*
+       * Две семьи тем в одном прогоне (29.09.2026): десять шагов
+       * мастера товара под номерами и пять тем поздравления под
+       * именами. Ключ задаётся здесь, а не выводится из индекса
+       * внутри цикла: у второй семьи номера нет вовсе, и вывод из
+       * индекса дал бы ей чужие ключи '1'..'5', то есть перезаписал бы
+       * первые пять сценариев мастера.
+       *
+       * Порядок — сначала мастер: если бюджет тика кончится на
+       * середине, отложится менее обжитая половина, а не наоборот.
+       */
+      const subjects = [
+        ...steps.map((item, i) => ({ key: String(i + 1), item })),
+        ...greetingTopicKeys(locale).flatMap((key) => {
+          const item = tutorialStepFor(key, locale);
+          return item ? [{ key, item }] : [];
+        }),
+      ];
       // Локаль попадает в отчёт ПОСЛЕ проверки словаря, а не до:
       // иначе прогон рапортует «генерировали на de», не
       // сгенерировав ничего (правка аудита этапа C).
       result.locales.push(locale);
-      result.pairs += steps.length;
+      result.pairs += subjects.length;
       await this.runLocale(
         locale,
-        steps,
+        subjects,
         result,
         deadline,
         ownerId,
@@ -444,7 +464,9 @@ export class TutorialScenarioGeneratorService {
 
   private async runLocale(
     locale: string,
-    steps: readonly AssistantStepItem[],
+    /** Тема и её ключ. Ключ приходит снаружи, а не выводится из
+     *  индекса: у шагов мастера он номер, у тем поздравления — имя. */
+    subjects: ReadonlyArray<{ key: string; item: AssistantStepItem }>,
     result: TutorialScenarioGenerateResult,
     deadline: number,
     /** Фикстурный пользователь — владелец расхода (см. `run`). */
@@ -454,21 +476,20 @@ export class TutorialScenarioGeneratorService {
     /** Движок видео, предзаполненный в мастере, — в промпт. */
     videoProvider: VideoProviderKey,
   ): Promise<void> {
-    for (let i = 0; i < steps.length; i++) {
+    for (let i = 0; i < subjects.length; i++) {
+      const { key: subjectKey, item: step } = subjects[i];
       if (Date.now() >= deadline) {
         this.logger.warn(
-          `локаль ${locale}: бюджет времени исчерпан на шаге ${i + 1} — остаток отложен до следующего прогона`,
+          `локаль ${locale}: бюджет времени исчерпан на теме ${subjectKey} — остаток отложен до следующего прогона`,
         );
         return;
       }
       if (budgetExhausted(budget)) {
         this.logger.warn(
-          `локаль ${locale}: суточный потолок расхода обучалки выбран на шаге ${i + 1} — остаток отложен до следующего прогона`,
+          `локаль ${locale}: суточный потолок расхода обучалки выбран на теме ${subjectKey} — остаток отложен до следующего прогона`,
         );
         return;
       }
-      const subjectKey = String(i + 1);
-      const step = steps[i];
       try {
         // Правленная руками пара проверяется ДО вызова модели
         // (сквозной аудит 29.09.2026). Раньше проверка стояла внутри

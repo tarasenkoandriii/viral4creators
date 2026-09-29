@@ -1,6 +1,6 @@
 # Wissensdatenbank des viral4creators-KI-Beraters
 
-_Собрано автоматически 2026-09-25 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-29 из lending/frontend/backend; коммит — local._
 
 ## Bereiche der Mini-App
 

@@ -18,6 +18,7 @@
 
 import {
   ASSISTANT_STEPS,
+  GREETING_TUTORIAL_TOPICS,
   AssistantStepItem,
 } from '../assistant/knowledge/generated';
 import {
@@ -140,12 +141,33 @@ export function tutorialStepFor(
   subjectKey: string,
   locale: string,
 ): AssistantStepItem | null {
+  // Две семьи тем, и различает их ФОРМА ключа, а не таблица: номер —
+  // шаг мастера товара, имя — тема поздравления (29.09.2026). Третьей
+  // семье, если она появится, тоже понадобится своя форма ключа, а не
+  // ещё одна ветка здесь.
+  const named = GREETING_TUTORIAL_TOPICS[`${locale}:${subjectKey}`];
+  if (named) return named;
   const steps = ASSISTANT_STEPS[locale] ?? [];
   const index = Number(subjectKey);
   if (!Number.isInteger(index) || index < 1 || index > steps.length) {
     return null;
   }
   return steps[index - 1] ?? null;
+}
+
+/**
+ * Ключи тем поздравления для этой локали, в порядке экрана.
+ *
+ * Выводятся из самого каталога, а не из второго списка: список,
+ * записанный рядом, однажды отстанет, а расхождение будет означать
+ * «тема есть, а генератор о ней не знает» — то есть молча ненаписанный
+ * ролик.
+ */
+export function greetingTopicKeys(locale: string): string[] {
+  const prefix = `${locale}:`;
+  return Object.keys(GREETING_TUTORIAL_TOPICS)
+    .filter((k) => k.startsWith(prefix))
+    .map((k) => k.slice(prefix.length));
 }
 
 /** Есть ли у локали словарь шагов вообще. Отличает «ключ не тот» от

@@ -78,6 +78,9 @@ import { GreetingStickerModule } from './modules/greeting-sticker/greeting-stick
 import { GreetingScenesModule } from './modules/greeting-scenes/greeting-scenes.module';
 // Этап C ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.6.
 import { GreetingSessionEditModule } from './modules/greeting-session-edit/greeting-session-edit.module';
+// Справка по теме мастера: текст всегда, вычитанный ролик если есть
+// (§11-септдециес docs-tz/TZ-Tutorial-Video-Voiced.md).
+import { TutorialHelpModule } from './modules/tutorial-help/tutorial-help.module';
 // Маркетплейс исполнителей — Этап 0 / Фаза 1 (ТЗ на маркетплейс §19–§21,
 // ТЗ на бэкенд §6). Tender/Contract/Escrow сознательно не подключены —
 // они не существуют в коде, пока не появится сигнал спроса (§19.4).
@@ -163,6 +166,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     GreetingStickerModule,
     GreetingScenesModule,
     GreetingSessionEditModule,
+    TutorialHelpModule,
     CreatorProfileModule,
     PortfolioModule,
     CreatorInquiryModule,

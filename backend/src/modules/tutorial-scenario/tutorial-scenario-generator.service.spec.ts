@@ -30,6 +30,21 @@ jest.mock('../assistant/knowledge/generated', () => ({
       { title: 'Step 2', text: 'Second step', details: [] },
     ],
   },
+  // Вторая семья тем (29.09.2026) — поздравление. Здесь по одной на
+  // локаль, а не пять: проверяется, что генератор ВООБЩЕ ходит по
+  // второй семье и берёт её ключи как есть, а не выводит из индекса.
+  GREETING_TUTORIAL_TOPICS: {
+    'ru:greeting-brief': {
+      title: 'Повод',
+      text: 'Расскажите о поводе',
+      details: [],
+    },
+    'en:greeting-brief': {
+      title: 'Occasion',
+      text: 'Describe the occasion',
+      details: [],
+    },
+  },
 }));
 
 const keyBefore = process.env.GEMINI_API_KEY;
@@ -357,7 +372,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
 
     const result = await service.run();
 
-    expect(result.generated).toBe(2);
+    expect(result.generated).toBe(3);
     expect(result.failed).toBe(0);
     // Оператору сказано поимённо — иначе единственным следом правки
     // было бы то, что сценарий ПЕРЕСТАЛ быть платным, а «перестал» в
@@ -398,9 +413,9 @@ describe('TutorialScenarioGeneratorService.run', () => {
 
     const result = await service.run();
 
-    expect(result.generated).toBe(2);
+    expect(result.generated).toBe(3);
     expect(result.failed).toBe(0);
-    expect(result.narrationsDropped).toBe(2);
+    expect(result.narrationsDropped).toBe(3);
     // Поимённо, а не числом: «отброшено 2» не даёт починить ни одну.
     expect(result.failures[0]).toEqual({
       subjectKey: '1',
@@ -436,8 +451,8 @@ describe('TutorialScenarioGeneratorService.run', () => {
     const result = await service.run();
 
     expect(result.failed).toBe(0);
-    expect(result.generated).toBe(2);
-    expect(result.narrationsDropped).toBe(2);
+    expect(result.generated).toBe(3);
+    expect(result.narrationsDropped).toBe(3);
   });
 
   it('расход генерации ложится на фикстуру, а не в анонимный потолок', async () => {
@@ -478,30 +493,40 @@ describe('TutorialScenarioGeneratorService.run', () => {
 
     const result = await service.run();
 
-    expect(result.generated).toBe(2);
+    expect(result.generated).toBe(3);
     expect(aiUsage.recordGemini.mock.calls[0][1].userId).toBeUndefined();
   });
 
-  it('генерирует по одному сценарию на каждый шаг обучалки и пишет их в базу', async () => {
-    generateContent
-      .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} })
-      .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} });
+  it('генерирует по одному сценарию на каждую ТЕМУ — обе семьи', async () => {
+    // Две семьи тем (29.09.2026): два шага мастера под номерами и одна
+    // тема поздравления под именем. Три вызова, а не два.
+    generateContent.mockResolvedValue({
+      text: FREE_SCENARIO_TEXT,
+      usageMetadata: {},
+    });
     const { service, prisma, aiUsage } = build();
 
     const result = await service.run();
 
-    expect(generateContent).toHaveBeenCalledTimes(2);
-    expect(prisma.tutorialScenario.create).toHaveBeenCalledTimes(2);
-    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(2);
+    expect(generateContent).toHaveBeenCalledTimes(3);
+    expect(prisma.tutorialScenario.create).toHaveBeenCalledTimes(3);
+    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(3);
     expect(aiUsage.recordGemini).toHaveBeenCalledWith(
       expect.objectContaining({ text: FREE_SCENARIO_TEXT }),
       expect.objectContaining({ operation: 'tutorial-scenario-generate' }),
     );
+    // Ключи — как объявлены, а не как вышел индекс: тема поздравления
+    // под своим именем, иначе она перезаписала бы сценарий шага «1».
+    expect(
+      prisma.tutorialScenario.create.mock.calls.map(
+        ([a]: [{ data: { subjectKey: string } }]) => a.data.subjectKey,
+      ),
+    ).toEqual(['1', '2', 'greeting-brief']);
     expect(result).toEqual({
-      pairs: 2,
+      pairs: 3,
       locales: ['ru'],
       skippedManual: 0,
-      generated: 2,
+      generated: 3,
       costly: 0,
       failed: 0,
       failures: [],
@@ -532,29 +557,31 @@ describe('TutorialScenarioGeneratorService.run', () => {
   it('невалидный JSON на одном шаге — не роняет весь прогон, считается как failed', async () => {
     generateContent
       .mockResolvedValueOnce({ text: 'не JSON вовсе', usageMetadata: {} })
-      .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} });
+      // Хвост, а не второй `Once`: тем теперь три, и молчаливый
+      // `undefined` на третьей выглядел бы вторым отказом.
+      .mockResolvedValue({ text: FREE_SCENARIO_TEXT, usageMetadata: {} });
     const { service, prisma } = build();
 
     const result = await service.run();
 
-    expect(result.generated).toBe(1);
+    expect(result.generated).toBe(2);
     expect(result.failed).toBe(1);
     expect(result.failures).toEqual([
       { subjectKey: '1', locale: 'ru', reason: 'ответ не JSON-объект' },
     ]);
-    expect(prisma.tutorialScenario.create).toHaveBeenCalledTimes(1);
+    expect(prisma.tutorialScenario.create).toHaveBeenCalledTimes(2);
   });
 
   it('сетевая ошибка Gemini на одном шаге — best-effort, следующий шаг всё равно обрабатывается', async () => {
     generateContent
       .mockRejectedValueOnce(new Error('upstream недоступен'))
-      .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} });
+      .mockResolvedValue({ text: FREE_SCENARIO_TEXT, usageMetadata: {} });
     const { service } = build();
 
     const result = await service.run();
 
     expect(result.failed).toBe(1);
-    expect(result.generated).toBe(1);
+    expect(result.generated).toBe(2);
     expect(result.failures).toEqual([
       { subjectKey: '1', locale: 'ru', reason: 'upstream недоступен' },
     ]);
@@ -574,7 +601,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
     const result = await service.run();
 
     expect(result.locales).toEqual(['ru']);
-    expect(prisma.tutorialScenario.create).toHaveBeenCalledTimes(2);
+    expect(prisma.tutorialScenario.create).toHaveBeenCalledTimes(3);
     for (const [arg] of prisma.tutorialScenario.create.mock.calls) {
       expect(arg.data.locale).toBe('ru');
     }
@@ -590,9 +617,9 @@ describe('TutorialScenarioGeneratorService.run', () => {
     const result = await service.run();
 
     expect(result).toMatchObject({
-      pairs: 4,
+      pairs: 6,
       locales: ['ru', 'en'],
-      generated: 4,
+      generated: 6,
     });
     const pairs = prisma.tutorialScenario.create.mock.calls.map(
       ([arg]: [{ data: { subjectKey: string; locale: string } }]) => ({
@@ -600,11 +627,15 @@ describe('TutorialScenarioGeneratorService.run', () => {
         locale: arg.data.locale,
       }),
     );
+    // Порядок значим: сначала мастер, потом поздравление. Кончится
+    // бюджет тика на середине — отложится менее обжитая половина.
     expect(pairs).toEqual([
       { subjectKey: '1', locale: 'ru' },
       { subjectKey: '2', locale: 'ru' },
+      { subjectKey: 'greeting-brief', locale: 'ru' },
       { subjectKey: '1', locale: 'en' },
       { subjectKey: '2', locale: 'en' },
+      { subjectKey: 'greeting-brief', locale: 'en' },
     ]);
   });
 
@@ -623,10 +654,17 @@ describe('TutorialScenarioGeneratorService.run', () => {
     const prompts = generateContent.mock.calls.map(
       ([arg]: [{ contents: { text: string }[] }]) => arg.contents[0].text,
     );
+    // На локаль приходится ТРИ темы (два шага мастера и одна тема
+    // поздравления), поэтому вторая локаль начинается с четвёртого
+    // вызова, а не с третьего.
     expect(prompts[0]).toContain('Первый шаг');
     expect(prompts[0]).toContain('Russian');
-    expect(prompts[2]).toContain('First step');
-    expect(prompts[2]).toContain('English');
+    expect(prompts[3]).toContain('First step');
+    expect(prompts[3]).toContain('English');
+    // И темы разных семей описаны РАЗНЫМИ мастерами: иначе модель
+    // напишет сценарий поздравления по экранам товарки.
+    expect(prompts[0]).toContain('мастера генерации рекламных роликов');
+    expect(prompts[2]).toContain('мастера ПОЗДРАВИТЕЛЬНОГО ролика');
   });
 
   it('запрошенная локаль без словаря шагов — громкий пропуск, а не «ноль шагов»', async () => {
@@ -653,11 +691,14 @@ describe('TutorialScenarioGeneratorService.run', () => {
   it('упавший вызов тоже помнит язык, а не только невалидный ответ', async () => {
     // Две разные ветки записи отказа — разбор и `catch`; у второй
     // локаль легко потерять, она дальше от места, где язык виден.
+    // Три удачи, потом отказ: на локаль приходится ТРИ темы, поэтому
+    // четвёртый вызов — первая тема второй локали.
     generateContent
       .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} })
       .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} })
+      .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} })
       .mockRejectedValueOnce(new Error('upstream недоступен'))
-      .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} });
+      .mockResolvedValue({ text: FREE_SCENARIO_TEXT, usageMetadata: {} });
     const { service } = build('["ru","en"]');
 
     const result = await service.run();
@@ -673,8 +714,9 @@ describe('TutorialScenarioGeneratorService.run', () => {
     generateContent
       .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} })
       .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} })
+      .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} })
       .mockResolvedValueOnce({ text: 'не JSON вовсе', usageMetadata: {} })
-      .mockResolvedValueOnce({ text: FREE_SCENARIO_TEXT, usageMetadata: {} });
+      .mockResolvedValue({ text: FREE_SCENARIO_TEXT, usageMetadata: {} });
     const { service } = build('["ru","en"]');
 
     const result = await service.run();
@@ -706,7 +748,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
 
     expect(prisma.tutorialScenario.update).not.toHaveBeenCalled();
     expect(prisma.tutorialScenario.create).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ skippedManual: 2, generated: 0 });
+    expect(result).toMatchObject({ skippedManual: 3, generated: 0 });
   });
 
   it('шаги не изменились — одобрение и результат прогона на месте', async () => {

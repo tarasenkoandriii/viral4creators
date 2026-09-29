@@ -20,20 +20,46 @@ const step: AssistantStepItem = {
 };
 
 describe('buildScenarioPrompt — каталог селекторов (этап I)', () => {
-  it('перечисляет каждый хук каталога готовым селектором и не зовёт писать плейсхолдеры', () => {
-    const prompt = buildScenarioPrompt('2', 'ru', step);
-    for (const key of Object.keys(QA_HOOKS)) {
-      expect(prompt).toContain(`[data-qa="${key}"]`);
+  it('перечисляет каждый хук СВОЕЙ семьи готовым селектором и не зовёт писать плейсхолдеры', () => {
+    // «Своей», а не «каждый»: с 29.09.2026 тем две семьи, и экраны
+    // чужого мастера в словарь не попадают — иначе список привычных
+    // экранов сам приглашает модель выбрать не тот.
+    // Убирается ЧУЖОЙ мастер, а не «всё, кроме своего»: постпрод,
+    // список проектов и тариф — ничьи, до них доходят оба.
+    const cases: Array<[string, (route: string) => boolean]> = [
+      ['2', (route) => route.startsWith('greeting-video')],
+      [
+        'greeting-brief',
+        (route) => route.startsWith('generate') || route === 'item',
+      ],
+    ];
+    for (const [subjectKey, foreign] of cases) {
+      const prompt = buildScenarioPrompt(subjectKey, 'ru', step);
+      // Списками, а не `if` в цикле: упавшая проверка называет
+      // конкретные селекторы, а не только «не совпало».
+      const missing: string[] = [];
+      const leaked: string[] = [];
+      for (const [key, hook] of Object.entries(QA_HOOKS)) {
+        const selector = `[data-qa="${key}"]`;
+        const there = prompt.includes(selector);
+        if (foreign(hook.route) && there) leaked.push(key);
+        if (!foreign(hook.route) && !there) missing.push(key);
+      }
+      expect({ subjectKey, missing, leaked }).toEqual({
+        subjectKey,
+        missing: [],
+        leaked: [],
+      });
+      expect(prompt).not.toContain('оператор поправит');
+      expect(prompt).toContain('НЕ плейсхолдер и НЕ произвольный CSS');
     }
-    expect(prompt).not.toContain('оператор поправит');
-    expect(prompt).toContain('НЕ плейсхолдер и НЕ произвольный CSS');
   });
 });
 
 describe('buildScenarioPrompt', () => {
   it('включает заголовок/описание/детали шага и словарь примитивов', () => {
     const prompt = buildScenarioPrompt('1', 'ru', step);
-    expect(prompt).toContain('шаг "1"');
+    expect(prompt).toContain('тема "1"');
     expect(prompt).toContain('ru');
     expect(prompt).toContain('Заведите товар');
     expect(prompt).toContain('Проект и товар: фото, описание, цена.');
@@ -41,6 +67,38 @@ describe('buildScenarioPrompt', () => {
     expect(prompt).toContain('"kind":"goto"');
     expect(prompt).toContain('"kind":"triggerPaidOperation"');
     expect(prompt).toContain('{"steps":[...]}');
+  });
+
+  /**
+   * Тем две семьи (29.09.2026), и промпт обязан называть РАЗНЫЕ
+   * мастера. Одна формулировка на обе стоила бы дорого и молча: модель,
+   * которой сказали «шаг мастера генерации рекламных роликов», писала
+   * бы сценарий поздравления по экранам товарки — с её маршрутами и её
+   * хуками, — и валидатор отверг бы результат уже ПОСЛЕ платного
+   * вызова.
+   */
+  it('тема поздравления описана СВОИМ мастером, а не товарным', () => {
+    const prompt = buildScenarioPrompt('greeting-brief', 'ru', step);
+    expect(prompt).toContain('мастера ПОЗДРАВИТЕЛЬНОГО ролика');
+    expect(prompt).not.toContain('мастера генерации рекламных роликов');
+    // И прямым запретом: перечисление маршрутов ниже по промпту
+    // содержит экраны обоих мастеров, и без запрета модель выбрала бы
+    // привычные.
+    expect(prompt).toContain('greeting-video*');
+    expect(prompt).toContain('использовать НЕЛЬЗЯ');
+    // И экранов чужого мастера в словаре нет вовсе — запрет запретом,
+    // но лежащий рядом список привычных экранов сам себе приглашение.
+    expect(prompt).toContain('"greeting-video-ready"');
+    expect(prompt).not.toContain('"generate-ready"');
+    expect(prompt).not.toContain('wizard-step-product');
+  });
+
+  it('шаг мастера товара описан товарным мастером', () => {
+    const prompt = buildScenarioPrompt('1', 'ru', step);
+    expect(prompt).toContain('мастера генерации рекламных роликов');
+    expect(prompt).toContain('"generate-ready"');
+    expect(prompt).not.toContain('"greeting-video-ready"');
+    expect(prompt).not.toContain('greeting-brief-card');
   });
 
   it('промпт называет ровно ДОСТИЖИМЫЕ операции — подмножество белого списка (этап F, уточнено повторным аудитом)', () => {
@@ -95,13 +153,15 @@ describe('buildScenarioPrompt', () => {
     expect(stepperLine).toContain('НЕ НАЖИМАТЬ для перехода');
     expect(stepperLine).toContain('пока шаг не пройден');
 
-    // И ровно у помеченных: предупреждение на всех подряд
-    // обесценивает его.
+    // И ровно у помеченных — СВОЕЙ семьи: с 29.09.2026 промпт не
+    // показывает экраны чужого мастера, поэтому и предупреждать ему
+    // не о чем. Предупреждение на всех подряд обесценивает его так же,
+    // как предупреждение не там, где оно нужно.
     const warned = prompt
       .split('\n')
       .filter((l) => l.includes('НЕ НАЖИМАТЬ для перехода')).length;
     const marked = Object.values(QA_HOOKS).filter(
-      (h) => h.clickOnlyWhenVisited,
+      (h) => h.clickOnlyWhenVisited && !h.route.startsWith('greeting-video'),
     ).length;
     expect(warned).toBe(marked);
     expect(warned).toBeGreaterThan(0);

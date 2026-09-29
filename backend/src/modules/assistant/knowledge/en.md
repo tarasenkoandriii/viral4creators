@@ -1,6 +1,6 @@
 # viral4creators AI consultant knowledge base
 
-_Собрано автоматически 2026-09-25 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-09-29 из lending/frontend/backend; коммит — local._
 
 ## Mini-app sections
 

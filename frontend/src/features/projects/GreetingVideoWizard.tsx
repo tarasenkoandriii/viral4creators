@@ -154,6 +154,7 @@ import type {
 } from '../../types/project';
 import type { GeneratedVideo, GenerationPrompt, PlanId } from '../../types';
 import { GenerationStatus, ModerationStatus } from '../../types';
+import { HelpButton, HelpProvider } from './HelpSheet';
 
 const REFERENCE_PHOTO_MIME = ['image/png', 'image/jpeg'];
 const REFERENCE_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
@@ -165,6 +166,7 @@ const POLL_INTERVAL_MS = 4000;
  * сценария обучалки обязан быть один. Порядок — `GREETING_STEP_IDS`,
  * и шов check-docs держит длину списка равной числу шагов.
  */
+// Кнопка (i) и лист справки — общий провайдер на весь мастер.
 const GREETING_STEPPER_QA = [
   'greeting-step-brief',
   'greeting-step-references',
@@ -343,175 +345,179 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
   };
 
   return (
-    <div className="animate-fadeIn space-y-4">
-      <ScreenHeader
-        title={w.title}
-        back={routes.project(projectId)}
-        hint={w.hint}
-      />
-      <Stepper
-        qa={GREETING_STEPPER_QA}
-        steps={stepsView.steps}
-        current={stepsView.current}
-        selectable={stepsView.selectable}
-        done={stepsView.done}
-        onSelect={(i) => {
-          const target = stepsView.targets[i];
-          if (target) goToStep(target);
-        }}
-      />
-
-      {readiness && (
-        <ReadinessPanel
-          readiness={readiness}
-          canGoToStep={(stepId) => reachable.has(stepId)}
-          onGoToStep={goToTarget}
+    // Провайдер оборачивает ВЕСЬ мастер: лист справки один на девять
+    // карточек, и открывает его любая из них.
+    <HelpProvider>
+      <div className="animate-fadeIn space-y-4">
+        <ScreenHeader
+          title={w.title}
+          back={routes.project(projectId)}
+          hint={w.hint}
         />
-      )}
-
-      <HintLine
-        projectId={projectId}
-        stepId={currentStepId}
-        enabled={!!guide?.available && !!guide?.enabled}
-        stepLabels={Object.fromEntries(reachable)}
-        onGoToStep={goToTarget}
-        onEvent={(kind, detail) => track(kind, currentStepId, detail)}
-      />
-
-      {/* Чекбокс живёт на первом шаге и только там: включить советы
-          можно ТОЛЬКО в начале сценария (§3.2). У поздравления первый
-          шаг — бриф, то есть всё время до создания сессии. */}
-      {guide?.available && guide.canEnable && (
-        <Card className="p-4">
-          <label className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={guide.enabled}
-              onChange={(e) => void toggleGuide(e.target.checked)}
-            />
-            <span>
-              <span className="font-medium">
-                {dict.wizardGuide.checkboxLabel}
-              </span>
-              <span className="block text-sm text-[var(--muted)]">
-                {dict.wizardGuide.checkboxHint}
-              </span>
-            </span>
-          </label>
-        </Card>
-      )}
-      {!guide?.canEnable && guide?.available && guide.enabled && (
-        <div className="text-right">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void toggleGuide(false)}
-          >
-            {dict.wizardGuide.disableButton}
-          </Button>
-        </div>
-      )}
-
-      <div id={greetingAnchorId('brief')}>
-        <BriefStep
-          brief={brief}
-          manifests={manifests}
-          plan={plan}
-          sessionId={sessionId}
-          onSaved={setBrief}
-          onSessionEdited={(r) => afterSessionEdit(r.sessionId)}
-          onStartSession={async () => {
-            const session = await createGreetingSession(projectId);
-            setSessionId(session.sessionId);
-            setReadiness(await getSessionReadiness(session.sessionId));
+        <Stepper
+          qa={GREETING_STEPPER_QA}
+          steps={stepsView.steps}
+          current={stepsView.current}
+          selectable={stepsView.selectable}
+          done={stepsView.done}
+          onSelect={(i) => {
+            const target = stepsView.targets[i];
+            if (target) goToStep(target);
           }}
         />
-      </div>
 
-      {sessionId && (
-        <div id={greetingAnchorId('references')}>
-          {/* Клик по шагу «Фото» после сборки сценария приводит на
+        {readiness && (
+          <ReadinessPanel
+            readiness={readiness}
+            canGoToStep={(stepId) => reachable.has(stepId)}
+            onGoToStep={goToTarget}
+          />
+        )}
+
+        <HintLine
+          projectId={projectId}
+          stepId={currentStepId}
+          enabled={!!guide?.available && !!guide?.enabled}
+          stepLabels={Object.fromEntries(reachable)}
+          onGoToStep={goToTarget}
+          onEvent={(kind, detail) => track(kind, currentStepId, detail)}
+        />
+
+        {/* Чекбокс живёт на первом шаге и только там: включить советы
+          можно ТОЛЬКО в начале сценария (§3.2). У поздравления первый
+          шаг — бриф, то есть всё время до создания сессии. */}
+        {guide?.available && guide.canEnable && (
+          <Card className="p-4">
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={guide.enabled}
+                onChange={(e) => void toggleGuide(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">
+                  {dict.wizardGuide.checkboxLabel}
+                </span>
+                <span className="block text-sm text-[var(--muted)]">
+                  {dict.wizardGuide.checkboxHint}
+                </span>
+              </span>
+            </label>
+          </Card>
+        )}
+        {!guide?.canEnable && guide?.available && guide.enabled && (
+          <div className="text-right">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void toggleGuide(false)}
+            >
+              {dict.wizardGuide.disableButton}
+            </Button>
+          </div>
+        )}
+
+        <div id={greetingAnchorId('brief')}>
+          <BriefStep
+            brief={brief}
+            manifests={manifests}
+            plan={plan}
+            sessionId={sessionId}
+            onSaved={setBrief}
+            onSessionEdited={(r) => afterSessionEdit(r.sessionId)}
+            onStartSession={async () => {
+              const session = await createGreetingSession(projectId);
+              setSessionId(session.sessionId);
+              setReadiness(await getSessionReadiness(session.sessionId));
+            }}
+          />
+        </div>
+
+        {sessionId && (
+          <div id={greetingAnchorId('references')}>
+            {/* Клик по шагу «Фото» после сборки сценария приводит на
               серый экран: референсы после генерации не меняют. Это
               правда, но кликабельность и редактируемость здесь
               расходятся, и интерфейс обязан сказать почему (§4.5). */}
-          {prompt && (
-            <Alert tone="info" className="mb-2">
-              {w.referencesLockedHint}
-            </Alert>
-          )}
-          <ReferencesStep
+            {prompt && (
+              <Alert tone="info" className="mb-2">
+                {w.referencesLockedHint}
+              </Alert>
+            )}
+            <ReferencesStep
+              key={`${sessionId}:${revision}`}
+              sessionId={sessionId}
+              disabled={!!prompt}
+            />
+          </div>
+        )}
+
+        {sessionId && (
+          <div id={greetingAnchorId('script')}>
+            <ScriptStep
+              sessionId={sessionId}
+              prompt={prompt}
+              videoDone={video?.status === GenerationStatus.COMPLETE}
+              onGenerated={(p) => {
+                setPrompt(p);
+                void getSessionReadiness(sessionId).then(setReadiness);
+              }}
+              onEdited={(r) => {
+                if (r.newVersion) {
+                  void afterSessionEdit(r.sessionId);
+                  return;
+                }
+                setPrompt(r.prompt);
+                void getSessionReadiness(sessionId).then(setReadiness);
+              }}
+            />
+          </div>
+        )}
+
+        {sessionId && prompt && (
+          <SenderVoiceStep
             key={`${sessionId}:${revision}`}
             sessionId={sessionId}
-            disabled={!!prompt}
           />
-        </div>
-      )}
+        )}
 
-      {sessionId && (
-        <div id={greetingAnchorId('script')}>
-          <ScriptStep
+        {sessionId && prompt && (
+          <MusicThemeStep
+            key={`${sessionId}:${revision}`}
             sessionId={sessionId}
-            prompt={prompt}
-            videoDone={video?.status === GenerationStatus.COMPLETE}
-            onGenerated={(p) => {
-              setPrompt(p);
-              void getSessionReadiness(sessionId).then(setReadiness);
-            }}
-            onEdited={(r) => {
-              if (r.newVersion) {
-                void afterSessionEdit(r.sessionId);
-                return;
-              }
-              setPrompt(r.prompt);
-              void getSessionReadiness(sessionId).then(setReadiness);
-            }}
           />
-        </div>
-      )}
+        )}
 
-      {sessionId && prompt && (
-        <SenderVoiceStep
-          key={`${sessionId}:${revision}`}
-          sessionId={sessionId}
-        />
-      )}
+        {sessionId && prompt && (
+          <CardsStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
+        )}
 
-      {sessionId && prompt && (
-        <MusicThemeStep
-          key={`${sessionId}:${revision}`}
-          sessionId={sessionId}
-        />
-      )}
+        {sessionId && prompt && (
+          <StickerStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
+        )}
 
-      {sessionId && prompt && (
-        <CardsStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
-      )}
+        {sessionId && prompt && (
+          <ScenesStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
+        )}
 
-      {sessionId && prompt && (
-        <StickerStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
-      )}
-
-      {sessionId && prompt && (
-        <ScenesStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
-      )}
-
-      {sessionId && prompt && (
-        <div id={greetingAnchorId('video')}>
-          <VideoStep
-            key={sessionId}
-            sessionId={sessionId}
-            video={video}
-            onVideo={(v) => {
-              setVideo(v);
-              void getSessionReadiness(sessionId).then(setReadiness);
-            }}
-            recipientName={brief.recipientName}
-            senderName={brief.senderName}
-          />
-        </div>
-      )}
-    </div>
+        {sessionId && prompt && (
+          <div id={greetingAnchorId('video')}>
+            <VideoStep
+              key={sessionId}
+              sessionId={sessionId}
+              video={video}
+              onVideo={(v) => {
+                setVideo(v);
+                void getSessionReadiness(sessionId).then(setReadiness);
+              }}
+              recipientName={brief.recipientName}
+              senderName={brief.senderName}
+            />
+          </div>
+        )}
+      </div>
+    </HelpProvider>
   );
 }
 
@@ -672,6 +678,7 @@ function BriefStep({
         icon={<Gift size={18} />}
         title={w.occasionLabel}
         hint={hasSession ? undefined : w.hint}
+        action={<HelpButton cardHook="greeting-brief-card" />}
       />
       <div className="space-y-4">
         <Field label={w.occasionLabel}>
@@ -963,49 +970,52 @@ function ReferencesStep({
         title={w.referencesHeading}
         hint={w.referencesHint}
         action={
-          canDraw && (
-            <div className="flex flex-wrap gap-2">
-              {/* Фича №6: нарисовать кадр по брифу. Рядом с загрузкой, а
+          <>
+            <HelpButton cardHook="greeting-references-card" />
+            {canDraw && (
+              <div className="flex flex-wrap gap-2">
+                {/* Фича №6: нарисовать кадр по брифу. Рядом с загрузкой, а
                   не вместо неё — своё фото остаётся более точным
                   вариантом, а кадр нужен тем, у кого фото нет вовсе:
                   именно у них grok-путь уходил в text-to-video вслепую
                   и показывал результат только после дорогого рендера. */}
-              <Button
-                size="sm"
-                variant="outline"
-                icon={<Sparkles size={14} />}
-                loading={saving}
-                disabled={saving}
-                onClick={() =>
-                  void apply(() => generateGreetingReferenceFrame(sessionId))
-                }
-              >
-                {w.generateReference}
-              </Button>
-              {/* Фича №36: дешёвый текстовый вызов перед дорогим
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Sparkles size={14} />}
+                  loading={saving}
+                  disabled={saving}
+                  onClick={() =>
+                    void apply(() => generateGreetingReferenceFrame(sessionId))
+                  }
+                >
+                  {w.generateReference}
+                </Button>
+                {/* Фича №36: дешёвый текстовый вызов перед дорогим
                   рисованием. Отдельной кнопкой, а не автоматически при
                   открытии шага, — иначе платный вызов уходил бы у
                   каждого, кто просто пролистал шаг. */}
-              <Button
-                size="sm"
-                variant="outline"
-                icon={<Wand2 size={14} />}
-                loading={settingsBusy}
-                disabled={saving || settingsBusy}
-                onClick={() => void suggest()}
-              >
-                {w.suggestSettings}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setAdding((v) => !v)}
-                active={adding}
-              >
-                {w.addReference}
-              </Button>
-            </div>
-          )
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Wand2 size={14} />}
+                  loading={settingsBusy}
+                  disabled={saving || settingsBusy}
+                  onClick={() => void suggest()}
+                >
+                  {w.suggestSettings}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setAdding((v) => !v)}
+                  active={adding}
+                >
+                  {w.addReference}
+                </Button>
+              </div>
+            )}
+          </>
         }
       />
 
@@ -1472,7 +1482,10 @@ function ScriptStep({
 
   return (
     <Card className="p-5" data-qa="greeting-script-card">
-      <CardHeader title={w.scriptHeading} />
+      <CardHeader
+        title={w.scriptHeading}
+        action={<HelpButton cardHook="greeting-script-card" />}
+      />
       {error && <Alert tone="error">{error}</Alert>}
       {prompt ? (
         <div className="space-y-3">
@@ -1610,22 +1623,25 @@ function SenderVoiceStep({ sessionId }: { sessionId: string }) {
         title={w.senderVoiceHeading}
         hint={w.senderVoiceHint}
         action={
-          chosen && (
-            <Button
-              size="sm"
-              variant="ghost"
-              loading={busy}
-              onClick={() =>
-                void apply(() =>
-                  voice.presetVoiceId
-                    ? selectGreetingPresetVoice(sessionId, null)
-                    : selectGreetingSenderVoice(sessionId, null)
-                )
-              }
-            >
-              {w.senderVoiceClear}
-            </Button>
-          )
+          <>
+            <HelpButton cardHook="greeting-voice-card" />
+            {chosen && (
+              <Button
+                size="sm"
+                variant="ghost"
+                loading={busy}
+                onClick={() =>
+                  void apply(() =>
+                    voice.presetVoiceId
+                      ? selectGreetingPresetVoice(sessionId, null)
+                      : selectGreetingSenderVoice(sessionId, null)
+                  )
+                }
+              >
+                {w.senderVoiceClear}
+              </Button>
+            )}
+          </>
         }
       />
 
@@ -1745,6 +1761,7 @@ function ScenesStep({ sessionId }: { sessionId: string }) {
         icon={<Film size={18} />}
         title={w.scenesHeading}
         hint={w.scenesHint}
+        action={<HelpButton cardHook="greeting-scenes-card" />}
       />
 
       {error && (
@@ -1851,16 +1868,19 @@ function StickerStep({ sessionId }: { sessionId: string }) {
         title={w.stickerHeading}
         hint={w.stickerHint}
         action={
-          view.selected && (
-            <Button
-              size="sm"
-              variant="ghost"
-              loading={busy}
-              onClick={() => void run(() => clearGreetingSticker(sessionId))}
-            >
-              {w.stickerClear}
-            </Button>
-          )
+          <>
+            <HelpButton cardHook="greeting-sticker-card" />
+            {view.selected && (
+              <Button
+                size="sm"
+                variant="ghost"
+                loading={busy}
+                onClick={() => void run(() => clearGreetingSticker(sessionId))}
+              >
+                {w.stickerClear}
+              </Button>
+            )}
+          </>
         }
       />
 
@@ -2026,6 +2046,7 @@ function CardsStep({ sessionId }: { sessionId: string }) {
         icon={<Type size={18} />}
         title={w.cardsHeading}
         hint={w.cardsHint}
+        action={<HelpButton cardHook="greeting-cards-card" />}
       />
 
       {error && (
@@ -2166,16 +2187,19 @@ function MusicThemeStep({ sessionId }: { sessionId: string }) {
         title={w.musicHeading}
         hint={w.musicHint}
         action={
-          music.selected && (
-            <Button
-              size="sm"
-              variant="ghost"
-              loading={busy}
-              onClick={() => void choose(null)}
-            >
-              {w.musicClear}
-            </Button>
-          )
+          <>
+            <HelpButton cardHook="greeting-music-card" />
+            {music.selected && (
+              <Button
+                size="sm"
+                variant="ghost"
+                loading={busy}
+                onClick={() => void choose(null)}
+              >
+                {w.musicClear}
+              </Button>
+            )}
+          </>
         }
       />
 
@@ -2564,7 +2588,10 @@ function VideoStep({
   return (
     <>
       <Card className="p-5" data-qa="greeting-video-card">
-        <CardHeader title={w.videoHeading} />
+        <CardHeader
+          title={w.videoHeading}
+          action={<HelpButton cardHook="greeting-video-card" />}
+        />
         {error && <Alert tone="error">{error}</Alert>}
 
         {!video && (

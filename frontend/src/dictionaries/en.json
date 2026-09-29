@@ -1082,7 +1082,13 @@
     "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
-    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
+    "steps": [
+      "Video",
+      "Analysis",
+      "Product",
+      "Prompt",
+      "Generation"
+    ],
     "stepSource": "Scene",
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
@@ -1839,5 +1845,13 @@
       "REJECTED": "Declined",
       "DUPLICATE": "Already known"
     }
+  },
+  "tutorialHelp": {
+    "button": "How this works",
+    "title": "Help",
+    "watch": "Watch the video",
+    "notReady": "The video for this step is not ready yet — text only for now.",
+    "close": "Close",
+    "failed": "Could not load the help."
   }
 }

@@ -1082,7 +1082,13 @@
     "previewQuota": "Vistas previas hoy: quedan {{left}} de {{limit}}"
   },
   "generationWizard": {
-    "steps": ["Video", "Análisis", "Producto", "Prompt", "Generación"],
+    "steps": [
+      "Video",
+      "Análisis",
+      "Producto",
+      "Prompt",
+      "Generación"
+    ],
     "stepSource": "Escena",
     "errorTitle": "Error",
     "prefilledAlert": "Los datos del producto se tomaron del proyecto — es una copia del momento de inicio; los cambios aquí no modifican el producto en sí.",
@@ -1839,5 +1845,13 @@
       "REJECTED": "Rechazado",
       "DUPLICATE": "Ya lo sabemos"
     }
+  },
+  "tutorialHelp": {
+    "button": "Cómo funciona",
+    "title": "Ayuda",
+    "watch": "Ver el video",
+    "notReady": "El video de este paso aún no está listo: por ahora solo texto.",
+    "close": "Cerrar",
+    "failed": "No se pudo cargar la ayuda."
   }
 }

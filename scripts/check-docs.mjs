@@ -1462,6 +1462,73 @@ function checkGuideSeams() {
     }
   }
   /**
+   * Каждая карточка поздравления знает свою тему справки (29.09.2026).
+   *
+   * Кнопка (i) стоит на ВСЕХ девяти карточках, тем пять. Списков,
+   * которые обязаны сходиться, здесь три: карточки на экране (атрибуты
+   * `data-qa="greeting-*-card"`), каталог хуков бэкенда и резолвер
+   * `GREETING_CARD_TOPIC` во фронтенде.
+   *
+   * Разойтись они могут молча и в обе стороны: новая карточка без
+   * темы оставит человека без кнопки помощи ровно там, где он её
+   * нажмёт, а тема, указывающая на исчезнувшую карточку, отправит
+   * справку в никуда. Ни то ни другое не падает — просто справка
+   * оказывается не про то, что на экране.
+   */
+  const cardHooks = [
+    ...read(
+      "backend/src/modules/tutorial-scenario/qa-hooks.ts",
+    ).matchAll(/^ {2}'(greeting-[a-z-]+-card)':/gm),
+  ].map((m) => m[1]);
+  const topicOf = new Map(
+    [
+      ...(/GREETING_CARD_TOPIC: Readonly<Record<string, GreetingHelpTopic>> =\s*\{([\s\S]*?)\};/.exec(
+        read("frontend/src/lib/greeting-help.ts"),
+      )?.[1] ?? "").matchAll(/'([a-z-]+)':\s*'([a-z-]+)'/g),
+    ].map((m) => [m[1], m[2]]),
+  );
+  if (cardHooks.length === 0 || topicOf.size === 0) {
+    problems.push(
+      `шов справки ослеп: карточек в каталоге ${cardHooks.length}, тем в ` +
+        `резолвере ${topicOf.size} (поправьте шов, а не код)`,
+    );
+  } else {
+    for (const hook of cardHooks) {
+      if (!topicOf.has(hook)) {
+        problems.push(
+          `карточка «${hook}» есть в каталоге хуков, но темы справки у ` +
+            "неё нет — кнопка (i) на ней покажет пустоту",
+        );
+      }
+    }
+    for (const hook of topicOf.keys()) {
+      if (!cardHooks.includes(hook)) {
+        problems.push(
+          `резолвер справки знает карточку «${hook}», которой нет в ` +
+            "каталоге хуков — тема указывает в никуда",
+        );
+      }
+    }
+    // И каждая тема обязана существовать как тема обучалки: иначе
+    // кнопка позовёт `/tutorial-help/<тема>` и получит 404.
+    const topicsBuilt = new Set(
+      [
+        ...read("backend/scripts/build-assistant-knowledge.ts").matchAll(
+          /'(greeting-[a-z-]+)',/g,
+        ),
+      ].map((m) => m[1]),
+    );
+    for (const topic of new Set(topicOf.values())) {
+      if (!topicsBuilt.has(topic)) {
+        problems.push(
+          `тема справки «${topic}» не собирается сборщиком базы знаний — ` +
+            "кнопка (i) получит 404",
+        );
+      }
+    }
+  }
+
+  /**
    * Позиция степпера поздравления объявлена на экране, ГДЕ ПО НЕЙ
    * МОЖНО КЛИКНУТЬ (29.09.2026).
    *
@@ -2727,6 +2794,8 @@ function checkGuideSeams() {
         `имён маршрутов TMA (фронтенд = копия в бэкенде): ${frontRoutes.size}; ` +
         `псевдонимов маршрута с подсевом сессии: ${seededRoutes.size}; ` +
         `псевдонимов по состоянию проекта: ${stateRoutes.size}; ` +
+        `карточек поздравления со своей темой справки: ${cardHooks.length} ` +
+        `на ${new Set(topicOf.values()).size} тем; ` +
         `живых позиций степпера поздравления: ${[...liveByRoute.values()].flat().length} ` +
         `на ${liveByRoute.size} экранах; ` +
         `хуков «только после прохода», ни одного на чистом мастере: ${visitedOnlyHooks}; ` +
@@ -2934,6 +3003,16 @@ function checkQaHookSeams() {
     [
       "client-site-explore",
       "мастер обучалки по сайту заказчика: съёмочные шаги лендинга, не шаги обучалки мастера",
+    ],
+    // Лист справки — это то, что ПОКАЗЫВАЕТ обучалку, а не то, что она
+    // снимает. Сценарий, открывающий справку, снял бы ролик про ролик.
+    [
+      "tutorial-help-play",
+      "кнопка «посмотреть ролик» в листе справки: обучалка её не снимает — она из неё и состоит",
+    ],
+    [
+      "tutorial-help-video",
+      "сам проигрыватель в листе справки, по той же причине",
     ],
   ]);
 
