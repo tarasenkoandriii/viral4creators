@@ -595,6 +595,7 @@ export class CronJobsService {
         withoutFrames: 0,
         lostRaces: 0,
         repeatFailures: 0,
+        assemblyTimeouts: 0,
         outcomes: [],
       };
     }

@@ -5,10 +5,24 @@ jest.mock('../notify/telegram-notify.service', () => ({
 }));
 
 const launchHeadlessBrowserMock = jest.fn();
+// `withTimeout` здесь НЕ заглушка-пропускалка, а тот же гонщик, что в
+// `headless-chromium.ts`. Раньше стояло `(p) => p`, и это был слепой
+// угол на весь набор: ни `SCENARIO_TIMEOUT_MS`, ни появившийся пятым
+// прогоном `ASSEMBLY_SUBMIT_TIMEOUT_MS` не могли сработать ни в одном
+// тесте — любая правка, снимающая обрыв, проходила зелёной.
+// `requireActual` не годится: модуль тянет puppeteer.
 jest.mock('../../common/headless-chromium', () => ({
   launchHeadlessBrowser: (...args: unknown[]) =>
     launchHeadlessBrowserMock(...args),
-  withTimeout: (p: Promise<unknown>) => p,
+  withTimeout: <T>(p: Promise<T>, ms: number, message: string): Promise<T> => {
+    let timer: NodeJS.Timeout;
+    return Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]).finally(() => clearTimeout(timer)) as Promise<T>;
+  },
 }));
 
 import { GenerationStatus } from '../../common/types/generation.types';
@@ -384,6 +398,7 @@ describe('TutorialScenarioRunnerService', () => {
       withoutFrames: 0,
       lostRaces: 0,
       repeatFailures: 0,
+      assemblyTimeouts: 0,
       outcomes: [],
     });
   });
@@ -3221,6 +3236,61 @@ describe('TutorialScenarioRunnerService', () => {
 
         expect(built.blob.listByPrefix).not.toHaveBeenCalled();
       });
+    });
+
+    /**
+     * Обрыв отправки сборки по времени — пятый боевой прогон
+     * 29.09.2026. Тик занял 298.6 с при потолке функции 300 с, и
+     * разбор показал, что хвост после `runScenario` не ограничен
+     * ничем: заливка кадров, синтез озвучки и submit шли без
+     * таймаута, а время под них резервировалось.
+     */
+    describe('отправка сборки оборвана по времени (пятый прогон)', () => {
+      it('regression-результат остаётся успешным, а обрыв виден отдельным числом', async () => {
+        // Смысл разделения: «шаги мастера прошли» и «ролик собрался»
+        // — разные утверждения. Ролик объявлен необязательным
+        // побочным продуктом, поэтому его обрыв НЕ имеет права
+        // перекрашивать зелёный прогон в красный; но и промолчать
+        // он не должен, иначе обрыв неотличим от полного успеха.
+        jest.useFakeTimers();
+        try {
+          const page = buildFakePage({ screenshot: true });
+          launchHeadlessBrowserMock.mockResolvedValue({
+            browser: {
+              newPage: jest.fn().mockResolvedValue(page),
+              close: jest.fn().mockResolvedValue(undefined),
+            },
+          });
+          const built = build([SCENARIO_OK]);
+          built.ffmpeg.configured.mockReturnValue(true);
+          // Внешний ffmpeg-api принял запрос и не отвечает никогда.
+          built.ffmpeg.submit.mockReturnValue(new Promise(() => {}));
+
+          const running = built.service.run();
+          // Крутим часы, ПОКА тик не завершится, а не фиксированное
+          // число раз. Таймер обрыва заводится не в начале прогона, а
+          // когда дело дойдёт до отправки сборки, — и фиксированная
+          // серия прыжков просто заканчивалась раньше, чем он
+          // появлялся (первая версия этого теста висла именно так).
+          let settled = false;
+          void running.then(
+            () => (settled = true),
+            () => (settled = true),
+          );
+          for (let i = 0; i < 40 && !settled; i += 1) {
+            await jest.advanceTimersByTimeAsync(10_000);
+          }
+          const result = await running;
+
+          expect(result.passed).toBe(1);
+          expect(result.failed).toBe(0);
+          expect(result.assemblyTimeouts).toBe(1);
+          expect(result.outcomes[0].assemblyTimedOut).toBe(true);
+          expect(result.outcomes[0].ok).toBe(true);
+        } finally {
+          jest.useRealTimers();
+        }
+      }, 20_000);
     });
 
     describe('застревания и отказы уборки (сквозной аудит 29.09.2026)', () => {

@@ -197,15 +197,44 @@ const RUN_BATCH_LIMIT = 30;
  */
 const TICK_CEILING_MS = 300_000;
 
+/** Таймаут на один сценарий целиком (до 30 шагов, `MAX_SCENARIO_STEPS`) —
+ * защита от одного зависшего сценария, съедающего весь бюджет тика.
+ * Накрывает ТОЛЬКО браузерную часть (`runScenario`). */
+const SCENARIO_TIMEOUT_MS = 90_000;
+
 /**
- * Запас на «хвост» тика: сценарий, уже начатый к моменту дедлайна, плюс
- * отправка его сборки (заливка кадров, синтез, `submit`).
+ * Дедлайн на отправку сборки (`submitVideoAssembly`) — заливка кадров,
+ * синтез дорожек озвучки, `submit` в ffmpeg-api.
  *
- * Замерено третьим и четвёртым боевыми прогонами (29.09.2026): 278 с и
- * 269 с на шесть сценариев, то есть ≈46 с на сценарий вместе с его
- * сборкой. Округлено вверх.
+ * Заведён пятым боевым прогоном (29.09.2026). До него эта часть не была
+ * ограничена НИЧЕМ: `SCENARIO_TIMEOUT_MS` накрывает `runScenario` и
+ * заканчивается там, а дальше шли до тридцати заливок и до семи вызовов
+ * внешнего синтеза без единого таймаута. Резерв под этот хвост при этом
+ * существовал (`TICK_TAIL_RESERVE_MS`) — то есть время резервировалось
+ * под величину, у которой не было верхней границы.
+ *
+ * Обрыв по времени здесь безопасен ровно потому, что метод объявлен
+ * best-effort: regression-результат сценария уже записан в базу ДО
+ * него, и ни его исход, ни его обрыв на этот результат не влияют.
+ * Недоделанная сборка остаётся строкой в `preparing`, которую подберёт
+ * `sweepStalledAssemblies`, а её кадры — метла по префиксу
+ * `tutorial-video-frames` (сквозной аудит 29.09.2026).
  */
-const TICK_TAIL_RESERVE_MS = 55_000;
+const ASSEMBLY_SUBMIT_TIMEOUT_MS = 60_000;
+
+/**
+ * Запас на «хвост» тика: сценарий, уже начатый к моменту дедлайна,
+ * плюс отправка его сборки.
+ *
+ * Это СУММА ДВУХ НАСТОЯЩИХ ГРАНИЦ, а не замер. Так было не всегда: до
+ * пятого прогона здесь стояли 55 с, выведенные из среднего (≈46 с на
+ * сценарий вместе со сборкой). У константы, которая существует ради
+ * худшего случая, среднее не может быть основанием — и пятый прогон
+ * это показал: тик занял 298.6 с при потолке 300 с, то есть хвост
+ * съел 53.6 с из отведённых 55. Держалось это пять прогонов только
+ * потому, что обычная сборка быстрая.
+ */
+const TICK_TAIL_RESERVE_MS = SCENARIO_TIMEOUT_MS + ASSEMBLY_SUBMIT_TIMEOUT_MS;
 
 /**
  * Общий бюджет времени на весь тик. Не круглое «четыре минуты», а
@@ -215,27 +244,25 @@ const TICK_TAIL_RESERVE_MS = 55_000;
  * До 29.09.2026 здесь стояло `4 * 60 * 1000` с оговоркой «оставляем
  * запас» — но запас нигде не считался, и сценарий, начатый за секунду
  * до дедлайна, мог идти ещё `SCENARIO_TIMEOUT_MS` (90 с) плюс сборку,
- * то есть перевалить за потолок и быть убитым платформой. Не случалось
- * это только потому, что сценарии идут ≈46 с, а не 90.
+ * то есть перевалить за потолок и быть убитым платформой.
  *
  * ## Чего эта константа НЕ может
  *
- * Вместить все сценарии в один тик. Девяти нужно ≈405–420 с (два
- * замера подряд), потолок функции — 300 с. Поднимать дедлайн до
- * потолка бессмысленно: разница даст в лучшем случае один лишний
- * сценарий, а рискует убийством процесса посреди сборки. Узкое место —
- * не бюджет, а сама функция, и лечится оно вторым тиком крона
- * (`vercel.json`), а не этим числом. Ротация `lastRunAt asc nulls
- * first` к этому готова: отложенные идут первыми.
+ * Вместить все сценарии в один тик. Девяти нужно ≈330–420 с (три
+ * замера), потолок функции — 300 с. Узкое место — не бюджет, а сама
+ * функция, и лечится оно вторым тиком крона (`vercel.json`), а не
+ * этим числом. Ротация `lastRunAt asc nulls first` к этому готова:
+ * отложенные идут первыми.
+ *
+ * Арифметика покрытия: при ≈37 с на сценарий (пятый прогон: 8 за
+ * 298.6 с) в 150 с бюджета помещается пять стартов, два тика дают
+ * десять при девяти сценариях. Запас в один сценарий — не роскошь:
+ * добавится десятый, и одного тика снова не хватит.
  *
  * Сценарии, не уложившиеся в бюджет, остаются на следующий прогон —
  * `lastRunAt` у них просто не обновится сегодня.
  */
 const RUN_DEADLINE_MS = TICK_CEILING_MS - TICK_TAIL_RESERVE_MS;
-
-/** Таймаут на один сценарий целиком (до 30 шагов, `MAX_SCENARIO_STEPS`) —
- * защита от одного зависшего сценария, съедающего весь бюджет тика. */
-const SCENARIO_TIMEOUT_MS = 90_000;
 
 /** Отдельный, заметно меньший бюджет на опрос НЕЗАВЕРШЁННЫХ сборок
  * видео в начале тика (этап 98) — это дешёвые HTTP-статусы, не запуск
@@ -327,6 +354,10 @@ export interface TutorialScenarioRunOutcome {
    *  уже была — повторять её каждую ночь значит превратить канал в
    *  фон, который перестают читать. */
   repeatFailure?: true;
+  /** Отправку сборки оборвал `ASSEMBLY_SUBMIT_TIMEOUT_MS`. Шаги
+   *  прошли, ролика не будет. Без этой отметки обрыв выглядел бы как
+   *  чистый успех: regression-результат к этому моменту уже записан. */
+  assemblyTimedOut?: true;
 }
 
 export interface TutorialScenarioRunResult {
@@ -359,6 +390,11 @@ export interface TutorialScenarioRunResult {
   /** Сколько падений повторяют вчерашние. Тревог о них не шлётся —
    *  число здесь и есть способ о них узнать. */
   repeatFailures: number;
+  /** У скольких сценариев отправка сборки оборвана по времени.
+   *  Устойчиво не ноль — значит сборка систематически не влезает в
+   *  `ASSEMBLY_SUBMIT_TIMEOUT_MS`, и это разговор о самой сборке, а
+   *  не о бюджете тика. */
+  assemblyTimeouts: number;
   outcomes: TutorialScenarioRunOutcome[];
 }
 
@@ -1090,6 +1126,7 @@ export class TutorialScenarioRunnerService {
         framesMissed: 0,
         withoutFrames: 0,
         lostRaces: 0,
+        assemblyTimeouts: 0,
         repeatFailures: 0,
         outcomes: [],
       };
@@ -1128,6 +1165,7 @@ export class TutorialScenarioRunnerService {
         framesMissed: 0,
         withoutFrames: 0,
         lostRaces: 0,
+        assemblyTimeouts: 0,
         repeatFailures: 0,
         // `locale` обязателен в `TutorialScenarioRunOutcome` — и
         // именно здесь его забыли. В песочнице это не видно (типы
@@ -1249,6 +1287,7 @@ export class TutorialScenarioRunnerService {
       withoutFrames: outcomes.filter((o) => o.noFrames).length,
       lostRaces: outcomes.filter((o) => o.lostRace).length,
       repeatFailures: outcomes.filter((o) => o.repeatFailure).length,
+      assemblyTimeouts: outcomes.filter((o) => o.assemblyTimedOut).length,
       outcomes,
     };
   }
@@ -1445,15 +1484,36 @@ export class TutorialScenarioRunnerService {
         narrationFallback?: true;
         noFrames?: true;
         lostRace?: true;
+        assemblyTimedOut?: true;
       } = {};
       if (result.ok) {
-        await this.submitVideoAssembly(
-          scenario,
-          result.frames,
-          budget,
-          userId,
-          assemblyNotes,
-        );
+        // Дедлайн — снаружи метода, а не внутри: обрывать надо всю
+        // отправку целиком, а не каждый её вызов по отдельности.
+        // Десять заливок по пять секунд укладываются в любой
+        // повызовный таймаут и всё равно уводят тик за потолок.
+        //
+        // `catch` обязателен и не является проглатыванием ошибки:
+        // метод объявлен best-effort и сам не бросает, а брошенное
+        // ЗДЕСЬ — это только наш собственный таймаут. Дать ему уйти
+        // выше значило бы перекрасить уже записанный успешный
+        // regression-результат в провал из-за необязательного
+        // побочного продукта.
+        await withTimeout(
+          this.submitVideoAssembly(
+            scenario,
+            result.frames,
+            budget,
+            userId,
+            assemblyNotes,
+          ),
+          ASSEMBLY_SUBMIT_TIMEOUT_MS,
+          `сборка не уложилась в ${Math.round(ASSEMBLY_SUBMIT_TIMEOUT_MS / 1000)}с`,
+        ).catch((e: unknown) => {
+          assemblyNotes.assemblyTimedOut = true;
+          this.logger.warn(
+            `сценарий ${scenario.subjectKey} (${scenario.locale}): отправка сборки оборвана по времени (${e instanceof Error ? e.message : String(e)}) — прогон засчитан, ролика не будет`,
+          );
+        });
       }
 
       return {
@@ -1473,6 +1533,9 @@ export class TutorialScenarioRunnerService {
           : {}),
         ...(assemblyNotes.noFrames ? { noFrames: true as const } : {}),
         ...(assemblyNotes.lostRace ? { lostRace: true as const } : {}),
+        ...(assemblyNotes.assemblyTimedOut
+          ? { assemblyTimedOut: true as const }
+          : {}),
         // Та же причина, что в прошлую ночь — значит поломка
         // известная, и поимённая тревога о ней уже была.
         ...(error && error === scenario.lastRunError
@@ -1665,6 +1728,7 @@ export class TutorialScenarioRunnerService {
       framesMissed: 0,
       withoutFrames: 0,
       lostRaces: 0,
+      assemblyTimeouts: 0,
       repeatFailures: 0,
       outcomes: [],
     };
