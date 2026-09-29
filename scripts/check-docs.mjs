@@ -1435,9 +1435,11 @@ function checkGuideSeams() {
    */
   const stateRoutes = new Map(
     [
-      ...(/PROJECT_STATE_ROUTES[^=]*=[^[]*\[([\s\S]*?)\]\);/.exec(builderSrc)?.[1] ?? "").matchAll(
-        /\['([a-z0-9-]+)',\s*'([A-Za-z]+)'\]/g,
-      ),
+      ...(
+        /PROJECT_STATE_ROUTES[^=]*=[^[]*\[([\s\S]*?)\]\);/.exec(
+          builderSrc,
+        )?.[1] ?? ""
+      ).matchAll(/\['([a-z0-9-]+)',\s*'([A-Za-z]+)'\]/g),
     ].map((m) => [m[1], m[2]]),
   );
   if (stateRoutes.size === 0) {
@@ -1486,7 +1488,9 @@ function checkGuideSeams() {
         "каталога и предложит тему, которой нет",
     );
   }
-  const offered = /buildHintInstruction\(\{[\s\S]*?\n {4}\}\);/.exec(hintSrc)?.[0];
+  const offered = /buildHintInstruction\(\{[\s\S]*?\n {4}\}\);/.exec(
+    hintSrc,
+  )?.[0];
   const accepted = /parseHintActions\([\s\S]*?\n {6}\);/.exec(hintSrc)?.[0];
   if (!offered || !accepted) {
     problems.push(
@@ -1526,15 +1530,17 @@ function checkGuideSeams() {
    * оказывается не про то, что на экране.
    */
   const cardHooks = [
-    ...read(
-      "backend/src/modules/tutorial-scenario/qa-hooks.ts",
-    ).matchAll(/^ {2}'(greeting-[a-z-]+-card)':/gm),
+    ...read("backend/src/modules/tutorial-scenario/qa-hooks.ts").matchAll(
+      /^ {2}'(greeting-[a-z-]+-card)':/gm,
+    ),
   ].map((m) => m[1]);
   const topicOf = new Map(
     [
-      ...(/GREETING_CARD_TOPIC: Readonly<Record<string, GreetingHelpTopic>> =\s*\{([\s\S]*?)\};/.exec(
-        read("frontend/src/lib/greeting-help.ts"),
-      )?.[1] ?? "").matchAll(/'([a-z-]+)':\s*'([a-z-]+)'/g),
+      ...(
+        /GREETING_CARD_TOPIC: Readonly<Record<string, GreetingHelpTopic>> =\s*\{([\s\S]*?)\};/.exec(
+          read("frontend/src/lib/greeting-help.ts"),
+        )?.[1] ?? ""
+      ).matchAll(/'([a-z-]+)':\s*'([a-z-]+)'/g),
     ].map((m) => [m[1], m[2]]),
   );
   if (cardHooks.length === 0 || topicOf.size === 0) {
@@ -1593,9 +1599,10 @@ function checkGuideSeams() {
    * хуков бэкенда — второе место, где оно записано.
    */
   const liveByRoute = new Map();
-  const liveTable = /LIVE_BY_ROUTE: Record<string, GreetingStepId\[\]> = \{([\s\S]*?)\};/.exec(
-    read("frontend/scripts/greeting-steps.test.ts"),
-  )?.[1];
+  const liveTable =
+    /LIVE_BY_ROUTE: Record<string, GreetingStepId\[\]> = \{([\s\S]*?)\};/.exec(
+      read("frontend/scripts/greeting-steps.test.ts"),
+    )?.[1];
   if (!liveTable) {
     problems.push(
       "frontend/scripts/greeting-steps.test.ts: не нашлась таблица " +
@@ -1613,9 +1620,9 @@ function checkGuideSeams() {
     // шве, и тянуть её через модуль значило бы связать два шва одним
     // состоянием ради экономии трёх строк.
     const hookRoutes = [
-      ...read(
-        "backend/src/modules/tutorial-scenario/qa-hooks.ts",
-      ).matchAll(/^ {2}'(greeting-step-[a-z-]+)': \{\s*\n\s*route: '([a-z-]+)'/gm),
+      ...read("backend/src/modules/tutorial-scenario/qa-hooks.ts").matchAll(
+        /^ {2}'(greeting-step-[a-z-]+)': \{\s*\n\s*route: '([a-z-]+)'/gm,
+      ),
     ];
     if (hookRoutes.length === 0) {
       problems.push(
@@ -2788,9 +2795,10 @@ function checkGuideSeams() {
         "— шов на порядок строгости проверять нечем (поправьте шов, а не код)",
     );
   } else {
-    const createType = /CREATE TYPE "GreetingRegister" AS ENUM \(([^)]*)\)/.exec(
-      fs.readFileSync(registerMigration, "utf8"),
-    );
+    const createType =
+      /CREATE TYPE "GreetingRegister" AS ENUM \(([^)]*)\)/.exec(
+        fs.readFileSync(registerMigration, "utf8"),
+      );
     if (!createType) {
       problems.push(
         `${path.relative(ROOT, registerMigration)}: не нашёлся CREATE TYPE ` +
@@ -3074,10 +3082,7 @@ function checkQaHookSeams() {
     .map((f) => stripComments(fs.readFileSync(f, "utf8")))
     .join("\n");
   for (const key of keys) {
-    if (
-      !corpus.includes(`data-qa="${key}"`) &&
-      !corpus.includes(`'${key}'`)
-    ) {
+    if (!corpus.includes(`data-qa="${key}"`) && !corpus.includes(`'${key}'`)) {
       problems.push(
         `хук «${key}» есть в каталоге, но во frontend/src его нет — модель ` +
           "напишет селектор, которого нет на экране, и сценарий упадёт ночью",
@@ -3159,9 +3164,7 @@ function checkQaHookSeams() {
     // ошибкой каталога было бы неверно: в карточке они есть, просто
     // через один уровень.
     const hooksOfComponent = (name) => {
-      const file = frontFiles.find(
-        (f) => path.basename(f) === `${name}.tsx`,
-      );
+      const file = frontFiles.find((f) => path.basename(f) === `${name}.tsx`);
       if (!file) return [];
       return [
         ...stripComments(fs.readFileSync(file, "utf8")).matchAll(
@@ -3210,7 +3213,11 @@ function checkQaHookSeams() {
         "устарело, и маршрут generate-prompt-pending надо пересмотреть",
     );
   }
-  for (const hook of ["relevance-panel", "relevance-check", "prompt-generate"]) {
+  for (const hook of [
+    "relevance-panel",
+    "relevance-check",
+    "prompt-generate",
+  ]) {
     if (routeOf.get(hook) !== "generate-prompt-pending") {
       problems.push(
         `хук «${hook}» виден только пока промпт не написан, но каталог ` +
@@ -3242,8 +3249,8 @@ function checkQaHookSeams() {
    * объясняет почему.
    */
   const shooters = [];
-  for (const file of walk(path.join(ROOT, "backend/src")).filter((f) =>
-    /\.ts$/.test(f) && !/\.spec\.ts$/.test(f),
+  for (const file of walk(path.join(ROOT, "backend/src")).filter(
+    (f) => /\.ts$/.test(f) && !/\.spec\.ts$/.test(f),
   )) {
     const src = stripComments(fs.readFileSync(file, "utf8"));
     const calls = [...src.matchAll(/\.setViewport\(([\s\S]{0,160}?)\)/g)];
@@ -3347,9 +3354,7 @@ function checkQaHookSeams() {
     (f) => /\.ts$/.test(f) && !/\.spec\.ts$/.test(f),
   )) {
     const src = stripComments(fs.readFileSync(file, "utf8"));
-    for (const m of src.matchAll(
-      /`tutorial-video-frames\/\$\{(\w+)\}\//g,
-    )) {
+    for (const m of src.matchAll(/`tutorial-video-frames\/\$\{(\w+)\}\//g)) {
       frameOwners.add(m[1]);
     }
   }
@@ -3391,8 +3396,7 @@ function checkQaHookSeams() {
    * разведки в проверку двух копий одного вранья. Поэтому шов держит
    * их в обе стороны — как `qa-hooks` держит каталог мастера.
    */
-  const SANDBOX_PAGE =
-    "landing/src/app/qa/site-sandbox/SandboxClient.tsx";
+  const SANDBOX_PAGE = "landing/src/app/qa/site-sandbox/SandboxClient.tsx";
   const sandboxSrc = stripComments(read(SANDBOX_PAGE));
   const sandboxCatalogSrc = stripComments(
     read("backend/src/modules/client-site-tutorial/sandbox-catalog.ts"),
@@ -3429,7 +3433,10 @@ function checkQaHookSeams() {
   // Путь полигона — копия литерала, как и остальные копии в проекте.
   const sandboxPath =
     /SANDBOX_PATH = '([^']+)'/.exec(sandboxCatalogSrc)?.[1] ?? "";
-  if (!sandboxPath || !fs.existsSync(path.join(ROOT, `landing/src/app${sandboxPath}/page.tsx`))) {
+  if (
+    !sandboxPath ||
+    !fs.existsSync(path.join(ROOT, `landing/src/app${sandboxPath}/page.tsx`))
+  ) {
     problems.push(
       `SANDBOX_PATH = «${sandboxPath}» не соответствует ни одному ` +
         "маршруту лендинга — черновик полигона открылся бы на 404",
@@ -3498,7 +3505,11 @@ function checkQaHookSeams() {
   );
   const settleFloor = Number(
     /SETTLE_FLOOR_MS = ([\d_]+)/
-      .exec(read("backend/src/modules/client-site-tutorial/chromium-page-explorer.ts"))?.[1]
+      .exec(
+        read(
+          "backend/src/modules/client-site-tutorial/chromium-page-explorer.ts",
+        ),
+      )?.[1]
       ?.replace(/_/g, ""),
   );
   if (!pageDelay || !catalogDelay || !settleFloor) {
@@ -3533,6 +3544,58 @@ function checkQaHookSeams() {
     );
   }
 
+  /*
+   * Пометка «элемента может не быть» обязана называть настоящую
+   * переменную окружения (четвёртый боевой прогон 29.09.2026).
+   *
+   * `absentWhen` — строка, и строка едет в промпт как причина. Значит
+   * она стареет молча: переименовали переменную в `configuration.ts`
+   * — и каталог продолжает уверенно называть несуществующую. Оператор
+   * идёт заводить `PIXABAY_API_KEY`, которого код уже не читает, и не
+   * понимает, почему карточка не появилась.
+   *
+   * Поэтому: каждое имя в ВЕРХНЕМ РЕГИСТРЕ внутри `absentWhen` должно
+   * читаться в `configuration.ts` как `process.env.ИМЯ`. Это же
+   * требование заодно держит саму пометку конкретной: «стенд не
+   * настроен» без имени переменной шов не пропустит.
+   */
+  const CONFIG = "backend/src/config/configuration.ts";
+  const configSrc = read(CONFIG);
+  const rawMarks = (catalogSrc.match(/^ {4}absentWhen:/gm) ?? []).length;
+  const marks = [
+    ...catalogSrc.matchAll(
+      /^ {2}'([a-z0-9-]+)': \{[^}]*?absentWhen:\s*\n?\s*'([^']+)'/gm,
+    ),
+  ];
+  if (marks.length !== rawMarks) {
+    problems.push(
+      `${CATALOG}: пометок absentWhen ${rawMarks}, разобрано ${marks.length} — ` +
+        "шов ослеп на остальные, поправьте шов, а не код",
+    );
+  }
+  const envNames = [];
+  for (const [, key, why] of marks) {
+    const named = [...why.matchAll(/\b([A-Z][A-Z0-9_]{3,})\b/g)].map(
+      (m) => m[1],
+    );
+    if (named.length === 0) {
+      problems.push(
+        `${CATALOG}: «${key}» помечен absentWhen, но причина не называет ` +
+          "переменную окружения — оператору нечего заводить",
+      );
+      continue;
+    }
+    for (const name of named) {
+      envNames.push(name);
+      if (!configSrc.includes(`process.env.${name}`)) {
+        problems.push(
+          `${CATALOG}: «${key}» ссылается на ${name}, но ${CONFIG} такой ` +
+            "переменной не читает — пометка устарела вместе с кодом",
+        );
+      }
+    }
+  }
+
   if (problems.length > 0) {
     failed++;
     console.log("FAIL хуки data-qa для сценариев обучалки:");
@@ -3550,7 +3613,8 @@ function checkQaHookSeams() {
         `${sweepTables.size} таблиц(ы); элементов полигона: ${inPage.size}, ` +
         "каталог и страница сходятся; полигон достижим мимо локаль-" +
         `редиректа, пол оседания ${settleFloor} мс выше ленивого блока ` +
-        `${pageDelay} мс`,
+        `${pageDelay} мс; условных хуков: ${marks.length}, каждый называет ` +
+        `живую переменную стенда (${envNames.join(", ") || "—"})`,
     );
   }
 }

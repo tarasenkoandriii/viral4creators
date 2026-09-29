@@ -859,3 +859,130 @@ describe('несуществующий экран отвергается на г
     }
   });
 });
+
+/**
+ * Элемент, которого на стенде может не быть вовсе (четвёртый боевой
+ * прогон 29.09.2026).
+ *
+ * `greeting-settings/ru` упал на `assertVisible` карточки наклейки:
+ * `StickerStep` возвращает `null`, пока стенду не задан ключ Pixabay,
+ * — то есть карточки нет в DOM, и puppeteer ждал её пятнадцать
+ * секунд. Сценарий был верен во всём остальном: маршрут, голос,
+ * музыка, титры прошли. Соврал КАТАЛОГ, объявивший карточку
+ * безусловной, — и потому чинится каталогом, а не сценарием.
+ *
+ * Третий раз подряд один и тот же именованный класс отказа: хук
+ * обещает экран, где его не бывает.
+ */
+describe('хук, которого на стенде может не быть', () => {
+  const marked = Object.entries(QA_HOOKS).filter(([, h]) => h.absentWhen);
+
+  it('пометка несёт ПРИЧИНУ, а не голый флаг', () => {
+    // Строка, а не `true`, именно ради этого: «карточки может не
+    // быть» без «потому что стенду не задан ключ» модель прочтёт как
+    // каприз и обойдёт формулировкой.
+    expect(marked.length).toBeGreaterThan(0);
+    for (const [key, hook] of marked) {
+      expect(`${key}: ${hook.absentWhen}`).toMatch(/: .{20}/);
+    }
+  });
+
+  it('промпт печатает запрет вместе с причиной — на строке самого хука', () => {
+    const prompt = buildScenarioPrompt('greeting-settings', 'ru', step);
+    const line = prompt
+      .split('\n')
+      .find((l) => l.includes('greeting-sticker-card'));
+
+    expect(line).toBeDefined();
+    expect(line).toContain('НЕ УПОМИНАТЬ В ШАГАХ ВООБЩЕ');
+    expect(line).toContain(QA_HOOKS['greeting-sticker-card'].absentWhen);
+    // Запрет шире клика: перечислены все четыре вида шага, иначе
+    // модель прочтёт его как «нельзя нажимать» — ровно ту пометку,
+    // которая у соседних хуков уже есть.
+    for (const kind of ['waitFor', 'assertVisible', 'click', 'fill']) {
+      expect(line).toContain(kind);
+    }
+  });
+
+  it('и ровно у помеченных — соседние карточки того же экрана чисты', () => {
+    const prompt = buildScenarioPrompt('greeting-settings', 'ru', step);
+    // Только строки САМИХ хуков: общее правило ниже повторяет эту
+    // же формулировку в кавычках, и счёт по всему промпту считал бы
+    // пометку там, где стоит объяснение пометки. Ровно тот же
+    // промах, что уже стоил одного теста-пустышки.
+    const warned = prompt
+      .split('\n')
+      .filter(
+        (l) =>
+          l.trimStart().startsWith('- [data-qa=') &&
+          l.includes('НЕ УПОМИНАТЬ В ШАГАХ ВООБЩЕ'),
+      ).length;
+    expect(warned).toBe(
+      marked.filter(([, h]) => h.route.startsWith('greeting-video')).length,
+    );
+    expect(warned).toBeGreaterThan(0);
+    const music = prompt
+      .split('\n')
+      .find((l) => l.includes('greeting-music-card'));
+    expect(music).not.toContain('НЕ УПОМИНАТЬ');
+  });
+
+  it('промпт объясняет последствие, а не только запрещает', () => {
+    // Без «ролик не соберётся» запрет выглядит стилистическим, и
+    // модель торгуется с ним: «покажу, но мягко».
+    const prompt = buildScenarioPrompt('greeting-settings', 'ru', step);
+    const rule = prompt
+      .split('\n')
+      .find(
+        (l) =>
+          l.includes('НЕ УПОМИНАТЬ В ШАГАХ ВООБЩЕ') &&
+          !l.includes('greeting-sticker-card'),
+      );
+    expect(rule).toBeDefined();
+    expect(rule).toContain('не собирается');
+    // И даёт выход, а не только тупик: иначе шаг обучалки про
+    // наклейки описывать нечем.
+    expect(rule).toContain('say');
+  });
+
+  it('валидатор отвергает ЛЮБОЙ вид шага, а не только click', () => {
+    const selector = '[data-qa="greeting-sticker-card"]';
+    const cases = [
+      { kind: 'waitFor', selector },
+      { kind: 'assertVisible', selector },
+      { kind: 'click', selector },
+      { kind: 'fill', selector, value: 'снеговик' },
+    ];
+    for (const bad of cases) {
+      const r = validateScenarioSteps([
+        { kind: 'goto', route: 'greeting-video-ready' },
+        bad,
+      ]);
+      expect(`${bad.kind}: ${r.ok}`).toBe(`${bad.kind}: false`);
+      // Причина называет условие и последствие: по ней оператор
+      // понимает, что чинить — стенд, а не сценарий.
+      expect(r.reason).toContain(QA_HOOKS['greeting-sticker-card'].absentWhen);
+      expect(r.reason).toContain('не соберёт ролик');
+    }
+  });
+
+  it('соседний хук того же экрана проходит — запрет пообъектный, не поэкранный', () => {
+    const r = validateScenarioSteps([
+      { kind: 'goto', route: 'greeting-video-ready' },
+      { kind: 'waitFor', selector: '[data-qa="greeting-music-card"]' },
+    ]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('причина — про отсутствие, а не про чужой экран', () => {
+    // Проверка обязана стоять ПЕРЕД сверкой хука с маршрутом: иначе
+    // про несуществующую карточку сообщалось бы «она на другом
+    // экране», и оператор пошёл бы править goto.
+    const r = validateScenarioSteps([
+      { kind: 'goto', route: 'generate' },
+      { kind: 'waitFor', selector: '[data-qa="greeting-sticker-card"]' },
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).not.toContain('живёт на экране');
+  });
+});
