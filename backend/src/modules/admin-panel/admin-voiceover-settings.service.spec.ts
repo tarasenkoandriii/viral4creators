@@ -6,6 +6,7 @@ function build(
   storedValue: string | null,
   elevenConfigured = true,
   resembleConfigured = false,
+  sonioxConfigured = false,
 ) {
   const store = new Map<string, string>();
   if (storedValue !== null)
@@ -18,15 +19,32 @@ function build(
   };
   const eleven = { configured: jest.fn(() => elevenConfigured) };
   const resemble = { configured: jest.fn(() => resembleConfigured) };
+  const soniox = { configured: jest.fn(() => sonioxConfigured) };
   const svc = new AdminVoiceoverSettingsService(
     settings as never,
     eleven as never,
     resemble as never,
+    soniox as never,
   );
   return { svc, settings };
 }
 
 describe('AdminVoiceoverSettingsService', () => {
+  it('Soniox — пункт селектора со своим признаком «настроен»', async () => {
+    const { svc } = build(null, true, false, true);
+    const opts = (await svc.get()).options;
+    expect(opts.map((o) => o.key)).toEqual([
+      'elevenlabs',
+      'resemble',
+      'soniox',
+      'veo',
+    ]);
+    expect(opts.find((o) => o.key === 'soniox')?.configured).toBe(true);
+    await expect(svc.setDefault('soniox', 'op')).resolves.toMatchObject({
+      active: 'soniox',
+    });
+  });
+
   it('ничего не задавалось — active из фоллбека, source "env-default"', async () => {
     // Фоллбек с 29.09.2026 — `resemble`, решение владельца (§7.2 ТЗ
     // обучалки). Раньше здесь стоял `elevenlabs` «как было до этапа
@@ -51,6 +69,7 @@ describe('AdminVoiceoverSettingsService', () => {
     expect(options).toEqual([
       { key: 'elevenlabs', configured: true },
       { key: 'resemble', configured: false },
+      { key: 'soniox', configured: false },
       { key: 'veo', configured: true },
     ]);
   });

@@ -5,6 +5,8 @@ import {
   getEnvSettings,
   getVoiceoverProviderSettings,
   setVoiceoverProviderDefault,
+  getSpeechRecognitionSettings,
+  setSpeechRecognitionProvider,
   getAudioSeparationSettings,
   getTutorialLocalesSettings,
   setTutorialLocalesSettings,
@@ -32,6 +34,8 @@ import type {
   EnvSettingsResult,
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
+  SpeechRecognitionProviderKey,
+  SpeechRecognitionProviderSettingsView,
   AudioSeparationSettingsView,
   TutorialLocalesSettingsView,
   TutorialMotion,
@@ -54,6 +58,7 @@ import { ApiRequestError } from '../../lib/admin-api';
 const PROVIDER_LABEL: Record<VoiceoverProviderKey, string> = {
   elevenlabs: 'ElevenLabs',
   resemble: 'Resemble',
+  soniox: 'Soniox (сильный русский и украинский)',
   veo: 'Veo (бесплатно, встроенный голос модели)',
 };
 
@@ -638,6 +643,99 @@ function VoiceoverProviderCard() {
             {state.active !== 'veo' &&
               !state.options.find((o) => o.key === state.active)?.configured &&
               'Внимание: выбранный провайдер не настроен на этом стенде (нет ключа/аккаунта) — озвучка будет молча пропускаться, ролики останутся с голосом Veo.'}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+const SPEECH_RECOGNITION_LABEL: Record<SpeechRecognitionProviderKey, string> = {
+  gemini: 'Gemini (по умолчанию, без отдельного ключа)',
+  soniox: 'Soniox (сильный русский и украинский)',
+};
+
+/**
+ * «Распознавание речи» — решение владельца 29.09.2026: Soniox вариантом
+ * рядом с Gemini. Действует на весь голосовой ввод: диктовку описания
+ * товара и реплики мастера поздравления. Выбран Soniox без ключа — ввод
+ * не ломается, расшифровывает Gemini (backend `VoiceTranscriptionService.recognize`).
+ */
+function SpeechRecognitionCard() {
+  const [state, setState] = useState<SpeechRecognitionProviderSettingsView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setError(null);
+    getSpeechRecognitionSettings()
+      .then(setState)
+      .catch((err) =>
+        setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройку распознавания'),
+      );
+  };
+
+  useEffect(load, []);
+
+  const handleChange = async (provider: SpeechRecognitionProviderKey) => {
+    if (!state || provider === state.active) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setState(await setSpeechRecognitionProvider(provider));
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить настройку распознавания');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const activeOption = state?.options.find((o) => o.key === state.active);
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Распознавание речи</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Кто расшифровывает голосовой ввод: диктовку описания товара и реплики в мастере поздравления. Soniox заметно
+        точнее на русском и украинском и знает имена из брифа; запись удаляется у провайдера сразу после расшифровки.
+        Переключение действует сразу, без передеплоя. Ключ Soniox (SONIOX_API_KEY) общий с озвучкой Soniox.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {!state && (
+            <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+              Повторить
+            </button>
+          )}
+        </p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && (
+        <>
+          <div className="filters" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <select
+              aria-label="Распознавание речи"
+              value={state.active}
+              disabled={saving}
+              onChange={(e) => handleChange(e.target.value as SpeechRecognitionProviderKey)}
+            >
+              {state.options.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {SPEECH_RECOGNITION_LABEL[opt.key]}
+                  {opt.configured ? ' — настроен' : ' — НЕ настроен на этом стенде'}
+                </option>
+              ))}
+            </select>
+            {saving && <span className="muted">Сохраняю…</span>}
+          </div>
+          <p className="muted" style={{ fontSize: 13 }}>
+            {state.source === 'admin' ? 'Задано вручную на этом экране.' : 'Ещё не менялось здесь — работает Gemini.'}{' '}
+            {activeOption && !activeOption.configured && state.active === 'soniox' &&
+              'Внимание: ключа Soniox на стенде нет — пока его не заведут, расшифровывает Gemini.'}
           </p>
         </>
       )}
@@ -1562,6 +1660,7 @@ export default function SettingsPage() {
       </p>
 
       <VoiceoverProviderCard />
+      <SpeechRecognitionCard />
       <AudioSeparationCard />
       <TutorialVoiceCard />
       <TutorialLocalesCard />

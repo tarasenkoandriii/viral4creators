@@ -43,6 +43,21 @@ const usageMock = () => ({
   recordOpenAi: jest.fn(),
 });
 
+/** «Распознавание речи» в админке: по умолчанию ничего не выбрано → Gemini. */
+const settingsMock = (stored: string | null = null) => ({
+  get: jest.fn().mockResolvedValue(stored),
+});
+const sonioxMock = (over: Record<string, unknown> = {}) => ({
+  configured: jest.fn().mockReturnValue(true),
+  transcribe: jest.fn().mockResolvedValue({
+    text: 'Сонікс',
+    seconds: 3.2,
+    language: 'uk',
+    billable: true,
+  }),
+  ...over,
+});
+
 const mockedHead = head as jest.MockedFunction<typeof head>;
 const USER = 'u1';
 const AUDIO = Buffer.from('opus-bytes');
@@ -87,6 +102,8 @@ describe('VoiceTranscriptionService', () => {
     delete process.env.GOOGLE_GEMINI_API_KEY;
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
+      settingsMock() as never,
+      sonioxMock() as never,
     ).transcribe(AUDIO, 'audio/webm', { userId: 'u1' });
     expect(r).toEqual({ text: null, reason: 'GEMINI_API_KEY not set' });
     expect(mockGenerate).not.toHaveBeenCalled();
@@ -96,6 +113,8 @@ describe('VoiceTranscriptionService', () => {
     mockGenerate.mockResolvedValue({ text: ' Кроссовки для бега, лёгкие. ' });
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
+      settingsMock() as never,
+      sonioxMock() as never,
     ).transcribe(AUDIO, 'audio/webm;codecs=opus');
     const arg = mockGenerate.mock.calls[0][0];
     expect(arg.contents[0]).toEqual({
@@ -109,6 +128,8 @@ describe('VoiceTranscriptionService', () => {
     mockGenerate.mockResolvedValue({ text: '' });
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
+      settingsMock() as never,
+      sonioxMock() as never,
     ).transcribe(AUDIO, 'audio/webm', { userId: 'u1' });
     expect(r).toEqual({ text: null, reason: 'no speech recognised' });
   });
@@ -116,6 +137,8 @@ describe('VoiceTranscriptionService', () => {
   it('empty buffer short-circuits without a paid call', async () => {
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
+      settingsMock() as never,
+      sonioxMock() as never,
     ).transcribe(Buffer.alloc(0), 'audio/webm', { userId: 'u1' });
     expect(r.reason).toBe('empty audio');
     expect(mockGenerate).not.toHaveBeenCalled();
@@ -125,8 +148,241 @@ describe('VoiceTranscriptionService', () => {
     mockGenerate.mockRejectedValue(new Error('503 overloaded'));
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
+      settingsMock() as never,
+      sonioxMock() as never,
     ).transcribe(AUDIO, 'audio/webm', { userId: 'u1' });
     expect(r).toEqual({ text: null, reason: '503 overloaded' });
+  });
+});
+
+describe('VoiceTranscriptionService.recognize — провайдер из админки', () => {
+  beforeEach(() => {
+    mockGenerate.mockReset();
+    process.env.GEMINI_API_KEY = 'k';
+  });
+
+  const opts = {
+    geminiPrompt: 'инструкция',
+    languageHints: ['uk', 'ru'],
+    terms: ['Марина'],
+    strictLanguage: true,
+    operation: 'voice-assistant-stt' as const,
+    sessionId: 's1',
+  };
+
+  it('ничего не выбрано — Gemini, Soniox не трогается', async () => {
+    mockGenerate.mockResolvedValue({ text: 'так' });
+    const soniox = sonioxMock();
+    const r = await new VoiceTranscriptionService(
+      usageMock() as never,
+      settingsMock(null) as never,
+      soniox as never,
+    ).recognize(AUDIO, 'audio/webm', opts);
+    expect(r).toEqual({ text: 'так' });
+    expect(soniox.transcribe).not.toHaveBeenCalled();
+    expect(mockGenerate.mock.calls[0][0].contents[1].text).toBe('инструкция');
+  });
+
+  it('выбран Soniox — ему уходят подсказки, имена и строгость; расход по секундам', async () => {
+    const soniox = sonioxMock();
+    const usage = usageMock();
+    const r = await new VoiceTranscriptionService(
+      usage as never,
+      settingsMock('soniox') as never,
+      soniox as never,
+    ).recognize(AUDIO, 'audio/webm;codecs=opus', opts);
+    // Язык речи — от Soniox, определён по звуку.
+    expect(r).toEqual({ text: 'Сонікс', language: 'uk' });
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(soniox.transcribe).toHaveBeenCalledWith({
+      audio: AUDIO,
+      mimeType: 'audio/webm',
+      languageHints: ['uk', 'ru'],
+      strictLanguage: true,
+      terms: ['Марина'],
+    });
+    expect(usage.record).toHaveBeenCalledWith({
+      operation: 'voice-assistant-stt',
+      model: 'soniox-stt-async',
+      seconds: 3.2,
+      userId: null,
+      sessionId: 's1',
+    });
+  });
+
+  it('выбран Soniox, но ключа нет — расшифровывает Gemini, микрофон не ломается', async () => {
+    mockGenerate.mockResolvedValue({ text: 'так' });
+    const soniox = sonioxMock({ configured: jest.fn().mockReturnValue(false) });
+    const r = await new VoiceTranscriptionService(
+      usageMock() as never,
+      settingsMock('soniox') as never,
+      soniox as never,
+    ).recognize(AUDIO, 'audio/webm', opts);
+    expect(r).toEqual({ text: 'так' });
+    expect(soniox.transcribe).not.toHaveBeenCalled();
+  });
+
+  it('Soniox ничего не услышал — причина наружу, расход не пишется, если звука не было', async () => {
+    const usage = usageMock();
+    const soniox = sonioxMock({
+      transcribe: jest
+        .fn()
+        .mockResolvedValue({ text: null, reason: 'empty audio', seconds: 0 }),
+    });
+    const r = await new VoiceTranscriptionService(
+      usage as never,
+      settingsMock('soniox') as never,
+      soniox as never,
+    ).recognize(AUDIO, 'audio/webm', opts);
+    expect(r).toEqual({ text: null, reason: 'empty audio' });
+    expect(usage.record).not.toHaveBeenCalled();
+  });
+
+  it('диктовка товара через Soniox — без подсказок языка: язык продавца неизвестен', async () => {
+    const soniox = sonioxMock();
+    await new VoiceTranscriptionService(
+      usageMock() as never,
+      settingsMock('soniox') as never,
+      soniox as never,
+    ).transcribe(AUDIO, 'audio/webm', { userId: 'u1' });
+    expect(soniox.transcribe.mock.calls[0][0].languageHints).toEqual([]);
+  });
+
+  it('настройка не прочиталась — Gemini, а не исключение: ввод «никогда не бросает»', async () => {
+    mockGenerate.mockResolvedValue({ text: 'так' });
+    const settings = { get: jest.fn().mockRejectedValue(new Error('db down')) };
+    const r = await new VoiceTranscriptionService(
+      usageMock() as never,
+      settings as never,
+      sonioxMock() as never,
+    ).recognize(AUDIO, 'audio/webm', opts);
+    expect(r).toEqual({ text: 'так' });
+  });
+
+  it('Soniox сломался — расшифровывает Gemini; оплаченная попытка Soniox всё равно в расходе', async () => {
+    mockGenerate.mockResolvedValue({ text: 'так' });
+    const usage = usageMock();
+    const soniox = sonioxMock({
+      transcribe: jest.fn().mockResolvedValue({
+        text: null,
+        reason: 'Soniox: распознавание не уложилось во время',
+        seconds: 2,
+        billable: true,
+      }),
+    });
+    const r = await new VoiceTranscriptionService(
+      usage as never,
+      settingsMock('soniox') as never,
+      soniox as never,
+    ).recognize(AUDIO, 'audio/webm', opts);
+    expect(r).toEqual({ text: 'так' });
+    expect(usage.record).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'soniox-stt-async', seconds: 2 }),
+    );
+  });
+
+  it('Soniox не услышал речи — Gemini НЕ зовётся: тишину он тоже не расслышит, а платить второй раз незачем', async () => {
+    const soniox = sonioxMock({
+      transcribe: jest.fn().mockResolvedValue({
+        text: null,
+        reason: 'no speech recognised',
+        seconds: 4,
+        billable: true,
+      }),
+    });
+    const usage = usageMock();
+    const r = await new VoiceTranscriptionService(
+      usage as never,
+      settingsMock('soniox') as never,
+      soniox as never,
+    ).recognize(AUDIO, 'audio/webm', opts);
+    expect(r).toEqual({ text: null, reason: 'no speech recognised' });
+    expect(mockGenerate).not.toHaveBeenCalled();
+    // Тишина у Soniox оплачена — расход пишется.
+    expect(usage.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('неизвестное значение настройки — Gemini', async () => {
+    mockGenerate.mockResolvedValue({ text: 'так' });
+    const soniox = sonioxMock();
+    await new VoiceTranscriptionService(
+      usageMock() as never,
+      settingsMock('whisper') as never,
+      soniox as never,
+    ).recognize(AUDIO, 'audio/webm', opts);
+    expect(soniox.transcribe).not.toHaveBeenCalled();
+  });
+});
+
+describe('VoiceService — запись не остаётся у Сервиса (сквозной аудит голоса)', () => {
+  function build2(over: { spend?: jest.Mock; transcribe?: jest.Mock } = {}) {
+    const prisma = {
+      productItem: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'i1' }),
+        update: jest.fn(),
+      },
+      project: { update: jest.fn() },
+    };
+    const blob = {
+      createUploadUrl: jest.fn(),
+      downloadBuffer: jest.fn().mockResolvedValue(AUDIO),
+      deleteBlob: jest.fn().mockResolvedValue(undefined),
+    };
+    const access = accessMock();
+    if (over.spend) access.assertCanSpendUser = over.spend;
+    const transcription = {
+      transcribe:
+        over.transcribe ?? jest.fn().mockResolvedValue({ text: 'Описание' }),
+    };
+    const svc = new VoiceService(
+      prisma as any,
+      blob as any,
+      transcription as any,
+      access as any,
+    );
+    return { svc, prisma, blob, access };
+  }
+  const PATH = 'projects/p1/items/i1/voice-1.webm';
+  beforeEach(() => {
+    mockedHead.mockResolvedValue({ contentType: 'audio/webm' } as any);
+  });
+
+  it('отказ по дневному лимиту — уже загруженная запись удаляется', async () => {
+    const { svc, blob } = build2({
+      spend: jest.fn().mockRejectedValue(new Error('лимит')),
+    });
+    await expect(
+      svc.transcribe(USER, 'p1', 'i1', { pathname: PATH }),
+    ).rejects.toThrow('лимит');
+    expect(blob.deleteBlob).toHaveBeenCalledWith(PATH);
+  });
+
+  it('исключение при расшифровке — запись всё равно удаляется', async () => {
+    const { svc, blob } = build2({
+      transcribe: jest.fn().mockRejectedValue(new Error('db down')),
+    });
+    await expect(
+      svc.transcribe(USER, 'p1', 'i1', { pathname: PATH }),
+    ).rejects.toThrow('db down');
+    expect(blob.deleteBlob).toHaveBeenCalledWith(PATH);
+  });
+
+  it('проверка лимита знает проект — по нему выбирается сценарий тестового доступа', async () => {
+    const { svc, access } = build2();
+    await svc.transcribe(USER, 'p1', 'i1', { pathname: PATH });
+    expect(access.assertCanSpendUser).toHaveBeenCalledWith(USER, {
+      projectId: 'p1',
+    });
+  });
+
+  it('надиктованное длиннее потолка поля — в базу уходит не больше 2000 символов', async () => {
+    const { svc, prisma } = build2({
+      transcribe: jest.fn().mockResolvedValue({ text: 'а'.repeat(2500) }),
+    });
+    await svc.transcribe(USER, 'p1', 'i1', { pathname: PATH, apply: true });
+    expect(
+      prisma.productItem.update.mock.calls[0][0].data.description,
+    ).toHaveLength(2000);
   });
 });
 

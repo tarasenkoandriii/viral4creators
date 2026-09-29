@@ -25,6 +25,10 @@
 export const VOICEOVER_PROVIDER_KEYS = [
   'elevenlabs',
   'resemble',
+  // Решение владельца 29.09.2026 — сильный русский и украинский
+  // (`soniox-tts.service.ts`). Ключ `SONIOX_API_KEY` общий с
+  // распознаванием речи.
+  'soniox',
   'veo',
 ] as const;
 
@@ -73,7 +77,11 @@ export function isVoiceoverProviderKey(
  * `skipped: true`), то есть к обречённому платному вызову переозвучки
  * — том самом, от чего вся эта проверка изначально защищала.
  */
-export const EXPLICIT_TTS_PROVIDER_KEYS = ['elevenlabs', 'resemble'] as const;
+export const EXPLICIT_TTS_PROVIDER_KEYS = [
+  'elevenlabs',
+  'resemble',
+  'soniox',
+] as const;
 
 export type ExplicitTtsProviderKey =
   (typeof EXPLICIT_TTS_PROVIDER_KEYS)[number];

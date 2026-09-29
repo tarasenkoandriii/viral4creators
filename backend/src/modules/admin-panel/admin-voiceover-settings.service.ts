@@ -16,6 +16,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 import { ElevenLabsService } from '../tts/elevenlabs.service';
 import { ResembleService } from '../tts/resemble.service';
+import { SonioxTtsService } from '../tts/soniox-tts.service';
 import {
   DEFAULT_VOICEOVER_PROVIDER_SETTING_KEY,
   isVoiceoverProviderKey,
@@ -47,12 +48,14 @@ export class AdminVoiceoverSettingsService {
     private readonly settings: PlatformSettingsService,
     private readonly eleven: ElevenLabsService,
     private readonly resemble: ResembleService,
+    private readonly soniox: SonioxTtsService,
   ) {}
 
   private options(): VoiceoverProviderOptionView[] {
     return [
       { key: 'elevenlabs', configured: this.eleven.configured() },
       { key: 'resemble', configured: this.resemble.configured() },
+      { key: 'soniox', configured: this.soniox.configured() },
       // Ничего не настраивается — это и есть смысл пункта.
       { key: 'veo', configured: true },
     ];

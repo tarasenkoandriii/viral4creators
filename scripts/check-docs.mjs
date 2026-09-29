@@ -3681,6 +3681,238 @@ checkQaHookSeams();
 
 checkGuideSeams();
 
+/**
+ * Шов «голос не остаётся у провайдера» — Условия, пункт 3.4, редакция
+ * 2026-09-29.
+ *
+ * Условия теперь ОБЕЩАЮТ пользователю: аудиозапись голосового ввода «не
+ * передаётся на хранение ИИ-провайдеру». Верно это по построению одной
+ * строки: `voice-transcription.service.ts` отдаёт звук Gemini как
+ * `inlineData` — внутри запроса, файлом у провайдера он не ложится. Files
+ * API Gemini (`files.upload`, ссылка `fileData`/`fileUri`) хранит файл у
+ * Google до двух суток; одна «оптимизация» под длинные записи — и
+ * юридический текст молча становится неправдой.
+ *
+ * Поэтому: в модуле голоса есть `inlineData` и нет ни одного пути к
+ * Files API. Правка, которой это понадобится, обязана сначала сменить
+ * Условия — шов напоминает ровно об этом.
+ */
+function checkVoiceRetentionSeam() {
+  const problems = [];
+  const DIR = "backend/src/modules/voice";
+  const files = fs
+    .readdirSync(path.join(ROOT, DIR))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".spec.ts"));
+  let inline = 0;
+  for (const f of files) {
+    const src = stripComments(read(`${DIR}/${f}`));
+    if (/\binlineData\b/.test(src)) inline++;
+    const hit = src.match(/\bfiles\.upload\b|\bfileData\b|\bfileUri\b/);
+    if (hit) {
+      problems.push(
+        `${DIR}/${f}: «${hit[0]}» — запись ляжет файлом у ИИ-провайдера, а ` +
+          "Условия (3.4, редакция 2026-09-29) обещают обратное. Сначала " +
+          "Условия, потом код",
+      );
+    }
+  }
+  if (inline === 0) {
+    problems.push(
+      `${DIR}: не нашёл ни одного inlineData — либо голос ушёл другим путём ` +
+        "(и обещание Условий не проверено), либо шов ослеп: поправьте шов",
+    );
+  }
+  // Soniox хранит загруженный файл и транскрипт, пока их не удалят
+  // (решение владельца 29.09.2026 — Soniox вариантом распознавания).
+  // Обещание Условий держится только уборкой в `finally`: файл, где
+  // звук уходит к Soniox, обязан удалять И транскрипцию, И файл, и
+  // делать это в `finally`, а не только в ветке успеха.
+  let sonioxUploaders = 0;
+  let blobCleaners = 0;
+  // Тело блока по открывающей скобке. Все блоки `finally` файла, а не
+  // первый (аудит 29.09.2026), и с раскрытием вызовов `this.метод(` —
+  // уборка, вынесенная в свой метод, должна засчитываться, а вынесенная
+  // ЗА блок — нет.
+  const blockAt = (src, openIdx) => {
+    let depth = 0;
+    for (let k = openIdx; k < src.length; k++) {
+      if (src[k] === "{") depth++;
+      else if (src[k] === "}" && --depth === 0)
+        return src.slice(openIdx + 1, k);
+    }
+    return "";
+  };
+  const methodBody = (src, name) => {
+    const m = new RegExp(
+      `\\b(?:private |public |protected )?async ${name}\\s*\\(`,
+    ).exec(src);
+    if (!m) return "";
+    const sig = src.slice(m.index);
+    const close = sig.search(/\)\s*(?::[^{]*)?\{/);
+    return close < 0 ? "" : blockAt(src, m.index + sig.indexOf("{", close));
+  };
+  const finallyBodies = (src) => {
+    const out = [];
+    for (const m of src.matchAll(/\bfinally\s*\{/g)) {
+      let body = blockAt(src, m.index + m[0].length - 1);
+      for (const call of body.matchAll(/\bthis\.(\w+)\(/g)) {
+        body += "\n" + methodBody(src, call[1]);
+      }
+      out.push(body);
+    }
+    return out;
+  };
+  for (const f of files) {
+    const src = stripComments(read(`${DIR}/${f}`));
+    const fins = finallyBodies(src);
+
+    // Blob — «у Сервиса» половина обещания 3.4: удаление в `finally` и
+    // с `await` (без него на Vercel оно может не выполниться).
+    if (/\bdeleteBlob\(/.test(src)) {
+      blobCleaners++;
+      if (/\bvoid\s+this\.blobService\.deleteBlob\(/.test(src)) {
+        problems.push(
+          `${DIR}/${f}: удаление записи из Blob без await — на Vercel после ответа оно может не выполниться`,
+        );
+      }
+      if (
+        !fins.some((b) => /\bawait\s+this\.blobService\.deleteBlob\(/.test(b))
+      ) {
+        problems.push(
+          `${DIR}/${f}: удаление записи из Blob не стоит в finally — отказ по лимиту или исключение оставят файл у Сервиса`,
+        );
+      }
+    }
+
+    if (!/SONIOX_API_BASE/.test(src) || !/['"`]\/files['"`]/.test(src))
+      continue;
+    sonioxUploaders++;
+    const cleaned =
+      fins.some(
+        (b) =>
+          /\/transcriptions\/\$\{/.test(b) &&
+          /\/files\/\$\{/.test(b) &&
+          !/^\s*return\b/m.test(b.split("\n")[0] ?? ""),
+      ) && /method:\s*['"]DELETE['"]/.test(src);
+    if (!cleaned) {
+      problems.push(
+        `${DIR}/${f}: звук уходит к Soniox, но удаление транскрипции и файла ` +
+          "не стоит в finally — запись останется у провайдера, а Условия " +
+          "(3.4) обещают обратное",
+      );
+    }
+  }
+  const terms = read("doc/legal/terms-of-use.md").replace(/\s+/g, " ");
+  // Обещание пункта 3.4 после сквозного аудита голоса 29.09.2026:
+  // у Сервиса запись удаляется сразу; у провайдера не хранится как файл
+  // (Soniox удаляет по запросу, Gemini получает внутри запроса). Прежняя
+  // формулировка «удаляется и у ИИ-провайдера» была неверна для Gemini:
+  // Google по умолчанию логирует запросы для выявления злоупотреблений.
+  for (const phrase of [
+    "удаляется у Сервиса сразу после расшифровки",
+    "не сохраняется как файл",
+  ]) {
+    if (!terms.includes(phrase)) {
+      problems.push(
+        `doc/legal/terms-of-use.md: обещания «${phrase}» больше нет — шов ` +
+          "сторожит пустоту, снимите его вместе с обещанием",
+      );
+    }
+  }
+  if (problems.length > 0) {
+    failed++;
+    console.log("FAIL голос не остаётся у провайдера:");
+    for (const x of problems) console.log(`  - ${x}`);
+  } else {
+    console.log(
+      `ok   голос не остаётся у провайдера: файлов модуля голоса ${files.length}, ` +
+        `звук внутри запроса в ${inline}, путей к Files API 0, отправок в ` +
+        `Soniox ${sonioxUploaders}, все с уборкой в finally; удалений из ` +
+        `Blob ${blobCleaners}, все в finally и с await — обещание ` +
+        "пункта 3.4 Условий держится кодом",
+    );
+  }
+}
+
+checkVoiceRetentionSeam();
+
+/**
+ * Шов «субподрядчики в коде = субподрядчики в Условиях» (29.09.2026).
+ *
+ * Находка при добавлении Soniox: `doc/TODO.md` II.10 от 27.09.2026
+ * записывал Replicate, Resemble AI и ElevenLabs как ДОБАВЛЕННЫЕ в пункт
+ * 7.8 Условий и 2.3 оферты — а в текстах документов их не было ни в
+ * одном коммите. Правка потерялась по дороге, запись о ней осталась, и
+ * два дня документы называли пользователю не всех получателей его
+ * материалов. Проверки, которая заметила бы расхождение, не было.
+ *
+ * Теперь есть: для каждого провайдера — признак в коде (переменная
+ * окружения с его ключом) и имя, под которым он обязан стоять в 7.8
+ * Условий и 2.3 оферты. Ключ читается кодом — имя обязано быть в обоих.
+ */
+function checkProcessorsSeam() {
+  const problems = [];
+  const PROCESSORS = [
+    { name: "Soniox", marker: /\bSONIOX_API_KEY\b/ },
+    { name: "ElevenLabs", marker: /\bprocess\.env\.VOICE_API_KEY\b/ },
+    { name: "Resemble AI", marker: /\bRESEMBLE_API_KEY\b/ },
+    { name: "Replicate", marker: /\bREPLICATE_API_TOKEN\b/ },
+  ];
+  const code = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(path.join(ROOT, dir), {
+      withFileTypes: true,
+    })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(rel);
+      else if (e.name.endsWith(".ts") && !e.name.endsWith(".spec.ts"))
+        code.push(read(rel));
+    }
+  };
+  walk("backend/src");
+  const all = code.join("\n");
+  const terms = read("doc/legal/terms-of-use.md").replace(/\s+/g, " ");
+  const offer = read("doc/legal/offer.md").replace(/\s+/g, " ");
+  const clause = (text, re) => text.match(re)?.[0] ?? "";
+  const t78 = clause(
+    terms,
+    /7\.8\. \*\*Трансграничная передача\.\*\*.*?(?= 7\.9\.)/,
+  );
+  const o23 = clause(offer, /2\.3\. Отдельные функции Сервиса.*?(?= ## 3\.)/);
+  if (!t78 || !o23) {
+    problems.push(
+      "не нашёл пункт 7.8 Условий или 2.3 оферты — шов ослеп, поправьте шов, а не документы",
+    );
+  }
+  let used = 0;
+  for (const p of PROCESSORS) {
+    if (!p.marker.test(all)) continue;
+    used++;
+    if (t78 && !t78.includes(p.name)) {
+      problems.push(
+        `код обращается к ${p.name}, а пункт 7.8 Условий его не называет`,
+      );
+    }
+    if (o23 && !o23.includes(p.name)) {
+      problems.push(
+        `код обращается к ${p.name}, а пункт 2.3 оферты его не называет`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    failed++;
+    console.log("FAIL субподрядчики в коде и в документах:");
+    for (const x of problems) console.log(`  - ${x}`);
+  } else {
+    console.log(
+      `ok   субподрядчики: провайдеров речи и звука в коде ${used}, все названы ` +
+        "в пункте 7.8 Условий и 2.3 оферты",
+    );
+  }
+}
+
+checkProcessorsSeam();
+
 if (failed) {
   console.error(
     `\n${failed} расхождени(е/я) между документами и кодом. ` +

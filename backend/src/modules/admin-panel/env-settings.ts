@@ -722,6 +722,40 @@ export function getEnvSettings(
   }
 
   {
+    // Soniox (решение владельца 29.09.2026) — один ключ на распознавание
+    // речи и озвучку; оба выбираются в админке, а не переменной.
+    const raw = env.SONIOX_API_KEY;
+    const set = Boolean(raw?.trim());
+    results.push({
+      key: 'SONIOX_API_KEY',
+      group: 'Озвучка',
+      required: false,
+      set,
+      ok: set,
+      severity: set ? 'ok' : 'warning',
+      message: set
+        ? 'Задан — в «Распознавании речи» и «Озвучке по умолчанию» можно выбрать Soniox.'
+        : 'Не задан — Soniox выбрать можно, но распознавание уйдёт в Gemini, а озвучка Soniox будет пропускаться (мягкий фоллбек, не сбой).',
+    });
+  }
+
+  {
+    const raw = env.SONIOX_TTS_VOICE;
+    results.push({
+      key: 'SONIOX_TTS_VOICE',
+      group: 'Озвучка',
+      required: false,
+      set: Boolean(raw?.trim()),
+      ok: true,
+      severity: 'ok',
+      message: raw?.trim()
+        ? 'Голос Soniox по умолчанию задан.'
+        : 'Не задан — голос Soniox по умолчанию «Maya»; бренд может выбрать свой.',
+      value: raw?.trim() || 'Maya (по умолчанию)',
+    });
+  }
+
+  {
     // У Resemble нет универсального голоса каталога (в отличие от
     // VOICE_ID/ElevenLabs) — если не задан и бренд не выбрал свой,
     // синтез Resemble пропускается с понятной причиной, а не выдуманным

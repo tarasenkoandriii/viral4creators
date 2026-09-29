@@ -46,7 +46,11 @@ export type AiProvider =
   | 'HEDRA'
   // docs-tz/TZ-Voice-Replace-Keep-Background.md — разделение звуковой
   // дорожки на стемы (htdemucs), чтобы дубляж заменял голос, а не звук.
-  | 'REPLICATE';
+  | 'REPLICATE'
+  // Распознавание и синтез речи с сильным ru/uk — вариант рядом с
+  // Gemini (распознавание) и ElevenLabs/Resemble (озвучка), выбор в
+  // админке (решение владельца 29.09.2026).
+  | 'SONIOX';
 
 export const AI_PROVIDERS: readonly AiProvider[] = [
   'GEMINI',
@@ -60,6 +64,7 @@ export const AI_PROVIDERS: readonly AiProvider[] = [
   'GROK',
   'HEDRA',
   'REPLICATE',
+  'SONIOX',
 ];
 
 /** Операции, за которые сервис платит. Значения попадают в БД как есть. */
@@ -270,7 +275,14 @@ export type AiOperation =
   /** Классификатор регистра «Особого повода» (этап B ТЗ
    * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.4) — один
    * короткий текстовый вызов при сохранении брифа. */
-  | 'greeting-register';
+  | 'greeting-register'
+  /** Распознавание голосовой реплики в мастере поздравления (этап K2
+   * ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §4А.5) —
+   * отдельно от 'transcribe': та расшифровывает диктовку описания товара
+   * раз-два за товар, эта — команды и ответы мастеру, и при голосовом
+   * управлении целиком (§4А.7) их десятки за сессию. Смешав строки, не
+   * увидеть, во что обходится голос как способ управления. */
+  | 'voice-assistant-stt';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -318,6 +330,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'greeting-frame': 'Референс-кадр поздравления',
   'greeting-setting': 'Варианты сеттинга для кадра',
   'greeting-register': 'Настроение «особого повода»',
+  'voice-assistant-stt': 'Голосовой ввод в мастере поздравления',
 };
 
 export interface ModelRate {
@@ -563,6 +576,25 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
     // реальным переключением TTS_PROVIDER=resemble в продакшн.
     perMChars: 33 * USD,
     note: 'грубая оценка от $0.0005/сек (вторичный источник, не resemble.ai/pricing напрямую) — ПРОВЕРИТЬ из личного кабинета перед продакшном',
+  },
+  // soniox.com/pricing, 29.09.2026. Ставки у Soniox — за токены, а
+  // считаем мы в тех единицах, что есть на руках, поэтому пересчёт по
+  // опубликованным эквивалентам той же страницы:
+  //  - распознавание, асинхронное: «≈ $0.10 за час» ($1.50/M звуковых
+  //    токенов на входе + $3.50/M текста на выходе) → за секунду; секунды
+  //    берём по последнему токену расшифровки;
+  //  - синтез: «≈ $0.70 за час речи», «15 000 входных токенов текста ≈
+  //    час речи», «1 символ ≈ 0.3 токена» → 50 000 символов ≈ час →
+  //    $14 за миллион символов.
+  'soniox-stt-async': {
+    provider: 'SONIOX',
+    perSecond: (0.1 / 3600) * USD,
+    note: 'из «≈$0.10/час» soniox.com/pricing (асинхронное распознавание) — ПРОВЕРИТЬ по первому счёту',
+  },
+  'soniox-tts': {
+    provider: 'SONIOX',
+    perMChars: 14 * USD,
+    note: 'пересчёт «≈$0.70/час речи» и «15k токенов ≈ час, 1 символ ≈ 0.3 токена» soniox.com/pricing — ПРОВЕРИТЬ по первому счёту',
   },
   'hedra-character-3': {
     provider: 'HEDRA',

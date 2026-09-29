@@ -773,7 +773,7 @@ export interface BrandSnapshotInput {
    * `UpdateBrandSnapshotRequestDto.ttsProvider` на бэкенде. `'veo'` не
    * входит намеренно: это не провайдер синтеза, а «не озвучивать вовсе».
    */
-  ttsProvider?: 'elevenlabs' | 'resemble';
+  ttsProvider?: 'elevenlabs' | 'resemble' | 'soniox';
   ttsModel?: string | null;
   /** Движение камеры (§29, этап 46). */
   cameraMove?: CameraMove;

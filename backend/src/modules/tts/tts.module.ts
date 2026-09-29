@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { ElevenLabsService } from './elevenlabs.service';
 import { ResembleService } from './resemble.service';
 import { VeoPassthroughService } from './veo-passthrough.service';
+import { SonioxTtsService } from './soniox-tts.service';
 import { TtsProviderResolverService } from './tts-provider-resolver.service';
 import { TtsController } from './tts.controller';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
@@ -46,6 +47,7 @@ import { AnalysisModule } from '../analysis/analysis.module';
   providers: [
     ElevenLabsService,
     ResembleService,
+    SonioxTtsService,
     VeoPassthroughService,
     PlatformSettingsService,
     TtsProviderResolverService,
@@ -64,6 +66,7 @@ import { AnalysisModule } from '../analysis/analysis.module';
     PlatformSettingsService,
     ElevenLabsService,
     ResembleService,
+    SonioxTtsService,
   ],
 })
 export class TtsModule {}

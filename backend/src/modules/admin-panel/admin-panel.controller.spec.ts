@@ -105,6 +105,10 @@ function build() {
     view: jest.fn().mockResolvedValue({ enabled: false, voiceId: null }),
     set: jest.fn().mockResolvedValue({ enabled: true, voiceId: null }),
   };
+  const speechRecognition = {
+    get: jest.fn().mockResolvedValue({ active: 'gemini' }),
+    set: jest.fn().mockResolvedValue({ active: 'soniox' }),
+  };
   const controller = new AdminPanelController(
     adminPanel as any,
     // Этап 155: приглашения тестировщиков — второй параметр.
@@ -141,6 +145,7 @@ function build() {
     audioSeparation as any,
     tutorialVoice as any,
     tutorialLocales as any,
+    speechRecognition as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
   return {
@@ -156,6 +161,7 @@ function build() {
     audioSeparation,
     tutorialVoice,
     tutorialLocales,
+    speechRecognition,
     req,
   };
 }
@@ -598,6 +604,32 @@ describe('AdminPanelController — /admin/settings/tutorial-locales (этап C)
       controller.setTutorialLocales(req, { raw: '["ru"]' }),
     ).rejects.toThrow('не оператор');
     expect(tutorialLocales.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPanelController — /admin/settings/speech-recognition-provider (Soniox)', () => {
+  it('GET: оператор проверяется до обращения к настройке', async () => {
+    const { controller, adminPanel, speechRecognition, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+    await expect(controller.getSpeechRecognitionProvider(req)).rejects.toThrow(
+      'не оператор',
+    );
+    expect(speechRecognition.get).not.toHaveBeenCalled();
+  });
+
+  it('PATCH: выбор уходит в настройку вместе с оператором', async () => {
+    const { controller, speechRecognition, req } = build();
+    await controller.setSpeechRecognitionProvider(req, { provider: 'soniox' });
+    expect(speechRecognition.set).toHaveBeenCalledWith('soniox', 'op-1');
+  });
+
+  it('PATCH: оператор проверяется до записи', async () => {
+    const { controller, adminPanel, speechRecognition, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+    await expect(
+      controller.setSpeechRecognitionProvider(req, { provider: 'soniox' }),
+    ).rejects.toThrow('не оператор');
+    expect(speechRecognition.set).not.toHaveBeenCalled();
   });
 });
 

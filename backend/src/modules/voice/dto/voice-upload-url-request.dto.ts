@@ -20,7 +20,7 @@ import {
  * reject every real browser recording. Compare the base type instead.
  */
 @ValidatorConstraint({ name: 'allowedAudioMime', async: false })
-class AllowedAudioMime implements ValidatorConstraintInterface {
+export class AllowedAudioMime implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {
     return (
       typeof value === 'string' &&

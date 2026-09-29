@@ -10,6 +10,7 @@ import { AdminCatalogBatchService } from './admin-catalog-batch.service';
 import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
+import { AdminSpeechRecognitionSettingsService } from './admin-speech-recognition-settings.service';
 import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
 import { AdminTutorialVoiceSettingsService } from './admin-tutorial-voice-settings.service';
 import { AdminTutorialLocalesSettingsService } from './admin-tutorial-locales-settings.service';
@@ -79,6 +80,7 @@ import { AdminTestTicketsService } from './admin-test-tickets.service';
     AdminAbTestService,
     AdminFeedImportService,
     AdminVoiceoverSettingsService,
+    AdminSpeechRecognitionSettingsService,
     AdminAudioSeparationSettingsService,
     AdminTutorialVoiceSettingsService,
     AdminTutorialLocalesSettingsService,

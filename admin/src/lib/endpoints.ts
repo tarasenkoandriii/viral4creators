@@ -38,6 +38,8 @@ import type {
   AudioSeparationState,
   VoiceoverProviderKey,
   VoiceoverProviderSettingsView,
+  SpeechRecognitionProviderKey,
+  SpeechRecognitionProviderSettingsView,
   MusicCatalogView,
   AiGuideSettingsView,
   SetAiGuideSettingsInput,
@@ -286,6 +288,17 @@ export function setTutorialVoiceSettings(input: {
   pointer: boolean;
 }) {
   return apiPatch<TutorialVoiceSettingsView>('/admin/settings/tutorial-voice', input);
+}
+
+/** «Распознавание речи» — Gemini или Soniox для всего голосового ввода. */
+export function getSpeechRecognitionSettings() {
+  return apiGet<SpeechRecognitionProviderSettingsView>('/admin/settings/speech-recognition-provider');
+}
+
+export function setSpeechRecognitionProvider(provider: SpeechRecognitionProviderKey) {
+  return apiPatch<SpeechRecognitionProviderSettingsView>('/admin/settings/speech-recognition-provider', {
+    provider,
+  });
 }
 
 export function setVoiceoverProviderDefault(provider: VoiceoverProviderKey) {

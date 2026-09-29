@@ -43,6 +43,8 @@ import { AdminCatalogBatchService } from './admin-catalog-batch.service';
 import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
+import { AdminSpeechRecognitionSettingsService } from './admin-speech-recognition-settings.service';
+import { SPEECH_RECOGNITION_PROVIDER_KEYS } from '../../common/speech-recognition-provider';
 import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
 import { AdminTutorialVoiceSettingsService } from './admin-tutorial-voice-settings.service';
 import {
@@ -316,6 +318,13 @@ export class SetVoiceoverProviderDto {
   provider!: string;
 }
 
+/** «Распознавание речи» — Gemini или Soniox, см.
+ * `common/speech-recognition-provider.ts`. */
+export class SetSpeechRecognitionProviderDto {
+  @IsIn(SPEECH_RECOGNITION_PROVIDER_KEYS as unknown as string[])
+  provider!: string;
+}
+
 /**
  * Выключатель сохранения фона при дубляже
  * (docs-tz/TZ-Voice-Replace-Keep-Background.md, §9 — третий уровень
@@ -467,6 +476,8 @@ export class AdminPanelController {
     private readonly audioSeparationSettings: AdminAudioSeparationSettingsService,
     private readonly tutorialVoiceSettings: AdminTutorialVoiceSettingsService,
     private readonly tutorialLocalesSettings: AdminTutorialLocalesSettingsService,
+    // «Распознавание речи» (Soniox, 29.09.2026) — в конец по той же причине.
+    private readonly speechRecognitionSettings: AdminSpeechRecognitionSettingsService,
   ) {}
 
   @Get('sessions')
@@ -564,6 +575,22 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.voiceoverSettings.setDefault(dto.provider, req.userId);
+  }
+
+  /** «Распознавание речи» — Gemini или Soniox для всего голосового ввода. */
+  @Get('settings/speech-recognition-provider')
+  async getSpeechRecognitionProvider(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.speechRecognitionSettings.get();
+  }
+
+  @Patch('settings/speech-recognition-provider')
+  async setSpeechRecognitionProvider(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetSpeechRecognitionProviderDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.speechRecognitionSettings.set(dto.provider, req.userId);
   }
 
   /**

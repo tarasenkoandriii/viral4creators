@@ -13,8 +13,9 @@
  * same pattern, no new dependency, no body-size cliff.
  *
  * The recording is a TRANSIT copy — like the reference-video transit
- * copy for analysis, it's deleted from Blob right after Gemini has read
- * it (best-effort). Only the resulting text is kept (item.description).
+ * copy for analysis, it's deleted from Blob right after the speech
+ * provider (Gemini or Soniox, admin setting) has read it — in `finally`,
+ * whatever the outcome (best-effort). Only the resulting text is kept (item.description).
  * Each recording gets a timestamped key so a re-record never races a
  * still-running transcription of the previous take.
  */
@@ -36,6 +37,7 @@ import {
 import { VoiceUploadUrlRequestDto } from './dto/voice-upload-url-request.dto';
 import { TranscribeRequestDto } from './dto/transcribe-request.dto';
 import { PlanService } from '../plan/plan.service';
+import { ITEM_DESCRIPTION_MAX } from '../project/dto/product-item-request.dto';
 
 export interface VoiceUploadUrl {
   uploadUrl: string;
@@ -114,8 +116,6 @@ export class VoiceService {
     itemId: string,
     dto: TranscribeRequestDto,
   ): Promise<TranscribeResult> {
-    // ТЗ §25.3: расшифровка — платный вызов Gemini.
-    await this.plans.assertCanSpendUser(userId);
     await this.assertOwnedItem(userId, projectId, itemId);
 
     const expectedPrefix = `projects/${projectId}/items/${itemId}/`;
@@ -125,43 +125,58 @@ export class VoiceService {
       );
     }
 
-    let audio: Buffer;
-    let mimeType: string;
+    // Всё, что после проверки префикса, — внутри `try`, а удаление
+    // записи — в `finally` (сквозной аудит голоса 29.09.2026). Раньше
+    // удаление стояло после расшифровки, и отказ по дневному лимиту или
+    // любое исключение оставляли уже загруженный файл в Blob до удаления
+    // проекта: метла сирот живых владельцев не трогает. Условия (3.4)
+    // обещают обратное; путь поздравления был починен так же ещё на K2.
     try {
-      const meta = await head(dto.pathname);
-      mimeType = meta.contentType || 'audio/webm';
-      audio = await this.blobService.downloadBuffer(dto.pathname);
-    } catch (e) {
-      throw new BadRequestException(
-        `Recording not found in storage at "${dto.pathname}" — upload it first via the voice/upload-url step (${e instanceof Error ? e.message : String(e)})`,
-      );
-    }
+      // ТЗ §25.3: расшифровка — платный вызов. Проект передаётся: по нему
+      // определяется сценарий тестового доступа (`assertCanSpendUser`).
+      await this.plans.assertCanSpendUser(userId, { projectId });
 
-    const result = await this.transcription.transcribe(audio, mimeType, {
-      userId,
-    });
+      let audio: Buffer;
+      let mimeType: string;
+      try {
+        const meta = await head(dto.pathname);
+        mimeType = meta.contentType || 'audio/webm';
+        audio = await this.blobService.downloadBuffer(dto.pathname);
+      } catch (e) {
+        throw new BadRequestException(
+          `Recording not found in storage at "${dto.pathname}" — upload it first via the voice/upload-url step (${e instanceof Error ? e.message : String(e)})`,
+        );
+      }
 
-    // Transit copy: Gemini has read it (or failed) — either way we don't
-    // keep audio around. Best-effort, never affects the response.
-    void this.blobService.deleteBlob(dto.pathname);
-
-    const apply = dto.apply ?? true;
-    let applied = false;
-    if (apply && result.text) {
-      await this.prisma.productItem.update({
-        where: { id: itemId },
-        data: { description: result.text },
+      const result = await this.transcription.transcribe(audio, mimeType, {
+        userId,
       });
-      await this.prisma.project.update({
-        where: { id: projectId },
-        data: { updatedAt: new Date() },
-      });
-      applied = true;
-    }
 
-    const out: TranscribeResult = { text: result.text, applied };
-    if (result.reason) out.reason = result.reason;
-    return out;
+      const apply = dto.apply ?? true;
+      let applied = false;
+      if (apply && result.text) {
+        await this.prisma.productItem.update({
+          where: { id: itemId },
+          // Потолок поля — тот же, что у ручной правки (DTO товара):
+          // диктовка без него записала бы в базу текст, который
+          // следующее же «Сохранить» отвергнет с 400.
+          data: { description: result.text.slice(0, ITEM_DESCRIPTION_MAX) },
+        });
+        await this.prisma.project.update({
+          where: { id: projectId },
+          data: { updatedAt: new Date() },
+        });
+        applied = true;
+      }
+
+      const out: TranscribeResult = { text: result.text, applied };
+      if (result.reason) out.reason = result.reason;
+      return out;
+    } finally {
+      // Транзитная копия — не храним ни при каком исходе. С `await`: на
+      // Vercel работа, не дождавшаяся ответа, может не выполниться вовсе.
+      await this.blobService.deleteBlob(dto.pathname);
+    }
   }
 
   private async assertOwnedItem(

@@ -96,6 +96,10 @@ const NO_BALANCE_API: Record<string, string> = {
   FFMPEG: 'сервис без публичного биллингового API',
   REPLICATE:
     'остаток по ключу не отдаётся — смотрите в кабинете; оплата по факту прогонов',
+  // Добавлен 29.09.2026. Эндпоинт остатка в документации не найден;
+  // признак исчерпания бюджета — ответ 402 на сам вызов.
+  SONIOX:
+    'эндпоинт остатка не найден в документации — смотрите в кабинете; исчерпанный бюджет провайдер сообщает ответом 402',
 };
 
 /**
@@ -122,6 +126,7 @@ const DASHBOARD_URL: Record<string, string> = {
   SERPAPI: 'https://serpapi.com/dashboard',
   YOUTUBE: 'https://console.cloud.google.com/apis/dashboard',
   REPLICATE: 'https://replicate.com/account/billing',
+  SONIOX: 'https://soniox.com/',
 };
 
 @Injectable()

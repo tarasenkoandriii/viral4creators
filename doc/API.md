@@ -99,6 +99,8 @@
 | `POST /api/projects/:id/items/:itemId/photo/process` | идентичность | распознать категорию/аудиторию + аналоги (SerpApi) |
 | `POST /api/projects/:id/items/:itemId/voice/upload-url` | идентичность | presigned PUT для голосового описания |
 | `POST /api/projects/:id/items/:itemId/voice/transcribe` | идентичность | расшифровка (Gemini), файл удаляется сразу |
+| `POST /api/sessions/:sessionId/voice/upload-url` | UUID сессии | presigned PUT для голосовой реплики в мастере поздравления (≤ 4 МБ) |
+| `POST /api/sessions/:sessionId/voice/transcribe` | UUID сессии | дословная расшифровка реплики (Gemini, `inlineData`), подсказки языка и имён из брифа, один повтор при латинице; ничего не применяет; файл удаляется сразу |
 | `POST/GET /api/projects/:id/items/:itemId/sessions` | идентичность | создать сессию из товара (снимок) / её прогоны |
 | `POST/GET /api/brand-manifests` | идентичность | манифест бренда: создать / список |
 | `GET/PATCH/DELETE /api/brand-manifests/:id` | идентичность | манифест (удаление уносит фото персонажей и сцен) |

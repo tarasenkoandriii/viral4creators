@@ -24,6 +24,7 @@ import { PlatformSettingsService } from '../../common/platform-settings.service'
 import { ElevenLabsService } from './elevenlabs.service';
 import { ResembleService } from './resemble.service';
 import { VeoPassthroughService } from './veo-passthrough.service';
+import { SonioxTtsService } from './soniox-tts.service';
 import {
   DEFAULT_VOICEOVER_PROVIDER_SETTING_KEY,
   resolveDefaultProviderKey,
@@ -38,10 +39,16 @@ export class TtsProviderResolverService {
     private readonly eleven: ElevenLabsService,
     private readonly resemble: ResembleService,
     private readonly veo: VeoPassthroughService,
+    private readonly soniox: SonioxTtsService,
   ) {}
 
   private registry(): Record<VoiceoverProviderKey, TtsProvider> {
-    return { elevenlabs: this.eleven, resemble: this.resemble, veo: this.veo };
+    return {
+      elevenlabs: this.eleven,
+      resemble: this.resemble,
+      soniox: this.soniox,
+      veo: this.veo,
+    };
   }
 
   /** Ключ, который сейчас активен — читает настройку из админки (с

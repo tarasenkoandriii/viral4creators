@@ -1266,6 +1266,7 @@
     "providerCurrent": "Keep current",
     "providerElevenlabs": "ElevenLabs",
     "providerResemble": "Resemble",
+    "providerSoniox": "Soniox",
     "providerHint": "An explicit choice — the voice catalogue and the re-voice itself will use this provider, even if a different one is active on the stand right now.",
     "prelistenCta": "Pre-listen",
     "prelistenHint": "Pick a voice above first — the pre-listen reads your script text in that voice.",

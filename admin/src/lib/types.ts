@@ -127,7 +127,7 @@ export interface FixtureSeedResult {
 
 // ── Озвучка по умолчанию (backend/src/modules/admin-panel/admin-voiceover-settings.service.ts) ──
 
-export type VoiceoverProviderKey = 'elevenlabs' | 'resemble' | 'veo';
+export type VoiceoverProviderKey = 'elevenlabs' | 'resemble' | 'soniox' | 'veo';
 
 /**
  * Сохранение фона при дубляже
@@ -192,6 +192,17 @@ export interface TutorialVoiceSettingsView {
   motionEffect: string;
   /** То же про указатель клика. */
   pointerEffect: string;
+}
+
+// ── Распознавание речи (Soniox, 29.09.2026) ──
+// Зеркалит backend/src/common/speech-recognition-provider.ts.
+export type SpeechRecognitionProviderKey = 'gemini' | 'soniox';
+
+export interface SpeechRecognitionProviderSettingsView {
+  active: SpeechRecognitionProviderKey;
+  /** `admin` — выбрано на этом экране; `default` — не менялось (Gemini). */
+  source: 'admin' | 'default';
+  options: Array<{ key: SpeechRecognitionProviderKey; configured: boolean }>;
 }
 
 export interface VoiceoverProviderOptionView {

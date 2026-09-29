@@ -6,13 +6,15 @@ function build(storedValue: string | null) {
   const eleven = { providerKey: 'elevenlabs', marker: 'eleven' };
   const resemble = { providerKey: 'resemble', marker: 'resemble' };
   const veo = { providerKey: 'veo', marker: 'veo' };
+  const soniox = { providerKey: 'soniox', marker: 'soniox' };
   const resolver = new TtsProviderResolverService(
     settings as never,
     eleven as never,
     resemble as never,
     veo as never,
+    soniox as never,
   );
-  return { resolver, settings, eleven, resemble, veo };
+  return { resolver, settings, eleven, resemble, veo, soniox };
 }
 
 describe('TtsProviderResolverService', () => {
@@ -33,6 +35,12 @@ describe('TtsProviderResolverService', () => {
   it('elevenlabs в настройке — возвращает именно ElevenLabsService', async () => {
     const { resolver, eleven } = build('elevenlabs');
     await expect(resolver.resolve()).resolves.toBe(eleven);
+  });
+
+  it('soniox в настройке — возвращает именно SonioxTtsService (решение владельца 29.09.2026)', async () => {
+    const { resolver, soniox } = build('soniox');
+    await expect(resolver.resolve()).resolves.toBe(soniox);
+    expect(resolver.resolveByKey('soniox')).toBe(soniox);
   });
 
   it('resemble в настройке — возвращает именно ResembleService', async () => {

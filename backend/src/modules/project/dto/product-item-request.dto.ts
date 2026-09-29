@@ -14,6 +14,9 @@ import {
 } from 'class-validator';
 import type { ProductPriceSource } from '../../../common/types/project.types';
 
+/** Потолок описания товара — и ручного, и надиктованного (`voice.service.ts`). */
+export const ITEM_DESCRIPTION_MAX = 2000;
+
 /**
  * Target audience of the product (spec §18) as the user edits it. Every
  * field optional/nullable; the service stamps `source: 'user'` so a later
@@ -65,8 +68,8 @@ export class ProductItemRequestDto {
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
   @IsString()
-  @Length(1, 2000, {
-    message: 'description must be between 1 and 2000 characters',
+  @Length(1, ITEM_DESCRIPTION_MAX, {
+    message: `description must be between 1 and ${ITEM_DESCRIPTION_MAX} characters`,
   })
   description?: string | null;
 

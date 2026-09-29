@@ -23,6 +23,13 @@ import { GoogleGenAI } from '@google/genai';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import type { AiOperation } from '../../common/ai-pricing';
+import { PlatformSettingsService } from '../../common/platform-settings.service';
+import {
+  SPEECH_RECOGNITION_PROVIDER_SETTING_KEY,
+  resolveSpeechRecognitionProvider,
+} from '../../common/speech-recognition-provider';
+import { SonioxSttClient } from './soniox-stt.client';
 
 /** Gemini's documented audio MIME list ∩ what browsers actually record. Exported for the DTO. */
 export const ALLOWED_AUDIO_MIME = [
@@ -61,6 +68,12 @@ export interface TranscriptionResult {
   /** Cleaned transcript; null when nothing usable came back. */
   text: string | null;
   reason?: string;
+  /**
+   * Язык, на котором говорили, — только от провайдера, который определяет
+   * его по звуку (Soniox). У Gemini поля нет: угадывать язык по буквам
+   * расшифровки — не то же самое, и подменять одно другим нельзя.
+   */
+  language?: string | null;
 }
 
 /** Normalise the model's reply — exported for tests. */
@@ -83,12 +96,30 @@ export function baseMime(mimeType: string): string {
   return mimeType.split(';')[0].trim().toLowerCase();
 }
 
+/**
+ * Причины, означающие «речи нет», а не «провайдер сломался». Экспорт —
+ * для сервиса поздравления: он различает «не расслышал» и «недоступно»
+ * по тем же строкам.
+ */
+export const SPEECHLESS_REASONS: readonly string[] = [
+  'empty audio',
+  'no speech recognised',
+];
+
+export function isSpeechlessReason(reason: string | undefined): boolean {
+  return !!reason && SPEECHLESS_REASONS.includes(reason);
+}
+
 @Injectable()
 export class VoiceTranscriptionService {
   private readonly logger = new Logger(VoiceTranscriptionService.name);
   private readonly genai: GoogleGenAI | null;
 
-  constructor(private readonly aiUsage: AiUsageService) {
+  constructor(
+    private readonly aiUsage: AiUsageService,
+    private readonly settings: PlatformSettingsService,
+    private readonly soniox: SonioxSttClient,
+  ) {
     // Ключ передаётся SDK явно (этап 53, В-6.15).
     this.genai = geminiApiKey() ? createGeminiClient() : null;
   }
@@ -98,6 +129,121 @@ export class VoiceTranscriptionService {
     mimeType: string,
     /** Чей это расход (ТЗ §26) — маршрут расшифровки идёт под идентичностью. */
     owner?: { userId?: string | null },
+  ): Promise<TranscriptionResult> {
+    // Язык продавца заранее неизвестен — подсказок нет, Soniox определит
+    // сам. Soniox отдаёт речь дословно, без чистки междометий, которую
+    // просит инструкция Gemini: для описания товара это приемлемо —
+    // поле редактируемое, а распознаётся точнее.
+    return this.recognize(audio, mimeType, {
+      geminiPrompt: PROMPT,
+      languageHints: [],
+      operation: 'transcribe',
+      userId: owner?.userId ?? null,
+    });
+  }
+
+  /**
+   * Расшифровка активным провайдером (админка → «Распознавание речи»).
+   *
+   * Выбран Soniox, но ключа на стенде нет — расшифровывает Gemini, с
+   * предупреждением в лог. Голосовой ввод — способ заполнить поле, а не
+   * барьер (шапка файла): «выбрали провайдера без ключа» не должно
+   * превращаться в «микрофон перестал работать у всех».
+   */
+  async recognize(
+    audio: Buffer,
+    mimeType: string,
+    opts: {
+      /** Инструкция для Gemini; Soniox инструкций не читает. */
+      geminiPrompt: string;
+      languageHints: readonly string[];
+      /** Имена и прочие слова, которые должны распознаться буква в букву. */
+      terms?: ReadonlyArray<string | null | undefined>;
+      /** Повтор после ответа латиницей. У Gemini строгость — в самой инструкции. */
+      strictLanguage?: boolean;
+      operation: AiOperation;
+      userId?: string | null;
+      sessionId?: string | null;
+    },
+  ): Promise<TranscriptionResult> {
+    // Настройка из БД — единственное, что здесь может бросить. Голосовой
+    // ввод обещан «никогда не бросает» (шапка файла), и отказ чтения
+    // настройки не должен превращаться в «микрофон сломан»: читаем как
+    // «ничего не выбрано» — Gemini (сквозной аудит голоса 29.09.2026).
+    const stored = await this.settings
+      .get(SPEECH_RECOGNITION_PROVIDER_SETTING_KEY)
+      .catch((e: unknown) => {
+        this.logger.warn(
+          `распознавание: настройка провайдера не прочиталась (${e instanceof Error ? e.message : String(e)}) — Gemini`,
+        );
+        return null;
+      });
+    const provider = resolveSpeechRecognitionProvider(stored);
+    if (provider === 'soniox') {
+      if (this.soniox.configured()) {
+        const r = await this.soniox.transcribe({
+          audio,
+          mimeType: baseMime(mimeType),
+          languageHints: opts.languageHints,
+          strictLanguage: opts.strictLanguage,
+          terms: opts.terms,
+        });
+        // Расход — по факту созданной задачи, а не по наличию текста:
+        // тишина и ошибка у Soniox тоже оплачены (аудит 29.09.2026).
+        if (r.billable) {
+          await this.aiUsage.record({
+            operation: opts.operation,
+            model: 'soniox-stt-async',
+            seconds: r.seconds,
+            userId: opts.userId ?? null,
+            ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+          });
+        }
+        if (r.text) return { text: r.text, language: r.language ?? null };
+        // «Не услышал» — это ответ, а не сбой: Gemini ту же тишину
+        // не расслышит, а платить второй раз незачем.
+        if (!isSpeechlessReason(r.reason)) {
+          this.logger.warn(
+            `распознавание: Soniox не справился (${r.reason ?? 'без причины'}) — расшифровывает Gemini`,
+          );
+        } else {
+          return { text: null, reason: r.reason };
+        }
+      } else {
+        this.logger.warn(
+          'распознавание: выбран Soniox, но SONIOX_API_KEY не задан — расшифровывает Gemini',
+        );
+      }
+    }
+    return this.transcribeWith(audio, mimeType, {
+      prompt: opts.geminiPrompt,
+      operation: opts.operation,
+      userId: opts.userId,
+      sessionId: opts.sessionId,
+    });
+  }
+
+  /**
+   * Та же расшифровка со своей инструкцией и своей строкой расхода.
+   *
+   * Заведено под голосовой ввод поздравления (этап K2 ТЗ Greeting 2.0,
+   * §4А.3): там нужна ДОСЛОВНАЯ расшифровка с подсказками языка и имён, а
+   * не «чистый связный текст» описания товара. Транспорт при этом
+   * обязан остаться одним — `inlineData`, звук внутри запроса: Условия
+   * (пункт 3.4, редакция 2026-09-29) обещают, что запись не остаётся у
+   * ИИ-провайдера, и держит это обещание ровно эта строка. Второй
+   * метод с собственным вызовом модели был бы вторым местом, где его
+   * можно нарушить; шов `check-docs.mjs` смотрит на модуль целиком.
+   */
+  async transcribeWith(
+    audio: Buffer,
+    mimeType: string,
+    opts: {
+      prompt: string;
+      operation: AiOperation;
+      userId?: string | null;
+      sessionId?: string | null;
+    },
   ): Promise<TranscriptionResult> {
     if (!this.genai) {
       return { text: null, reason: 'GEMINI_API_KEY not set' };
@@ -115,13 +261,14 @@ export class VoiceTranscriptionService {
               data: audio.toString('base64'),
             },
           },
-          { text: PROMPT },
+          { text: opts.prompt },
         ],
       });
       await this.aiUsage.recordGemini(response, {
-        operation: 'transcribe',
+        operation: opts.operation,
         model: MODEL,
-        userId: owner?.userId ?? null,
+        userId: opts.userId ?? null,
+        ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       });
       const text = cleanTranscript(response?.text);
       return text ? { text } : { text: null, reason: 'no speech recognised' };

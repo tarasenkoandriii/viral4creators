@@ -66,7 +66,7 @@ import type { GeneratedVideo } from '../../services/api';
 const MAX_SCRIPT_LENGTH = 5000;
 
 /** Зеркалит backend/src/modules/tts/default-tts-provider.ts EXPLICIT_TTS_PROVIDER_KEYS. */
-type ExplicitProvider = 'elevenlabs' | 'resemble';
+type ExplicitProvider = 'elevenlabs' | 'resemble' | 'soniox';
 
 export function RevoicePanel({
   sessionId,
@@ -241,6 +241,7 @@ export function RevoicePanel({
             {dict.revoicePanel.providerElevenlabs}
           </option>
           <option value="resemble">{dict.revoicePanel.providerResemble}</option>
+          <option value="soniox">{dict.revoicePanel.providerSoniox}</option>
         </Select>
       </Field>
 
