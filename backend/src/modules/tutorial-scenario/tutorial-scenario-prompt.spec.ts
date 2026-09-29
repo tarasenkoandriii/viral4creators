@@ -246,9 +246,13 @@ describe('parseScenarioResponse', () => {
   });
 
   it('платную кнопку вне списка операций нажимать нельзя, ждать можно (аудит этапа I)', () => {
+    // `relevance-recheck`, а не `relevance-check`: вторая с 29.09.2026
+    // помечена «её может не быть» и отвергается раньше — по другой
+    // причине. Пример должен проверять ПРАВИЛО ПЛАТНОСТИ, а не
+    // случайно срабатывать на соседнем запрете.
     for (const key of [
       'reference-link-submit',
-      'relevance-check',
+      'relevance-recheck',
       'prompt-generate',
     ]) {
       const click = parseScenarioResponse(
@@ -883,7 +887,7 @@ describe('хук, которого на стенде может не быть', 
     // каприз и обойдёт формулировкой.
     expect(marked.length).toBeGreaterThan(0);
     for (const [key, hook] of marked) {
-      expect(`${key}: ${hook.absentWhen}`).toMatch(/: .{20}/);
+      expect(`${key}: ${hook.absentWhen?.why}`).toMatch(/: .{30}/);
     }
   });
 
@@ -895,7 +899,7 @@ describe('хук, которого на стенде может не быть', 
 
     expect(line).toBeDefined();
     expect(line).toContain('НЕ УПОМИНАТЬ В ШАГАХ ВООБЩЕ');
-    expect(line).toContain(QA_HOOKS['greeting-sticker-card'].absentWhen);
+    expect(line).toContain(QA_HOOKS['greeting-sticker-card'].absentWhen?.why);
     // Запрет шире клика: перечислены все четыре вида шага, иначе
     // модель прочтёт его как «нельзя нажимать» — ровно ту пометку,
     // которая у соседних хуков уже есть.
@@ -961,7 +965,9 @@ describe('хук, которого на стенде может не быть', 
       expect(`${bad.kind}: ${r.ok}`).toBe(`${bad.kind}: false`);
       // Причина называет условие и последствие: по ней оператор
       // понимает, что чинить — стенд, а не сценарий.
-      expect(r.reason).toContain(QA_HOOKS['greeting-sticker-card'].absentWhen);
+      expect(r.reason).toContain(
+        QA_HOOKS['greeting-sticker-card'].absentWhen?.why,
+      );
       expect(r.reason).toContain('не соберёт ролик');
     }
   });
@@ -984,5 +990,58 @@ describe('хук, которого на стенде может не быть', 
     ]);
     expect(r.ok).toBe(false);
     expect(r.reason).not.toContain('живёт на экране');
+  });
+});
+
+/**
+ * Элемент, исчезающий сам (пятый боевой прогон 29.09.2026).
+ *
+ * `4/ru` упал на `assertVisible [data-qa="relevance-check"]`, а двумя
+ * шагами раньше успешно поставил галочку `relevance-use-in-prompt` —
+ * то есть сценарий утверждал разом две ВЗАИМОИСКЛЮЧАЮЩИЕ вещи:
+ * чекбокс живёт под `{report && …}`, кнопка — под `{!report && …}`.
+ *
+ * Причина глубже каталога. `RelevancePanel` запускает проверку САМА
+ * при открытии (`if (!s.report) void run()`), поэтому «Проверить
+ * релевантность» — не обычная кнопка экрана, а повтор после неудачи:
+ * на исправной сессии её не видно никогда. Модель же, читая описание
+ * «кнопка проверки релевантности», честно на неё сослалась, а хотела
+ * описать соседнюю — «Проверить ещё раз», у которой `data-qa` не было
+ * вовсе. Каталог предлагал недостижимое и умалчивал о достижимом.
+ */
+describe('кнопка релевантности: недостижимая помечена, достижимая заведена', () => {
+  const run = (selector: string) =>
+    validateScenarioSteps([
+      { kind: 'goto', route: 'generate-prompt-pending' },
+      { kind: 'assertVisible', selector: `[data-qa="${selector}"]` },
+    ]);
+
+  it('первичная кнопка отвергается — её не бывает на исправной сессии', () => {
+    const r = run('relevance-check');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('отчёт');
+  });
+
+  it('повторная — проходит: она видна ровно тогда, когда отчёт есть', () => {
+    expect(run('relevance-recheck').ok).toBe(true);
+  });
+
+  it('обе остаются платными, нажимать нельзя ни ту, ни другую', () => {
+    // Пометка «не бывает» не отменяет пометку «платная»: кнопка,
+    // которая всё-таки появилась после неудачи, тратит деньги так же.
+    for (const key of ['relevance-check', 'relevance-recheck']) {
+      expect(`${key}: ${QA_HOOKS[key].clickCost}`).toBe(`${key}: forbidden`);
+    }
+  });
+
+  it('причина отсутствия НЕ называет переменную окружения — она не в настройке стенда', () => {
+    // Две причины отсутствия живут в одном поле, и различает их
+    // только `env`. Спутать их дорого: шов требует живую переменную
+    // у тех, кто её объявил, и промолчал бы, объяви эта кнопка
+    // чужую.
+    expect(QA_HOOKS['relevance-check'].absentWhen?.env).toBeUndefined();
+    expect(QA_HOOKS['greeting-sticker-card'].absentWhen?.env).toBe(
+      'PIXABAY_API_KEY',
+    );
   });
 });

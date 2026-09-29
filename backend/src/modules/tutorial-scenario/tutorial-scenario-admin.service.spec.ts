@@ -376,7 +376,10 @@ describe('TutorialScenarioAdminService.approve', () => {
           'ts-1',
           [
             { kind: 'goto', route: 'generate-ready' },
-            { kind: 'click', selector: '[data-qa="relevance-check"]' },
+            // Именно `relevance-recheck`: у `relevance-check` с
+            // 29.09.2026 своя пометка «её может не быть», и отказ
+            // приходил бы по ней, а проверяем мы платность.
+            { kind: 'click', selector: '[data-qa="relevance-recheck"]' },
           ],
           'op-1',
         ),

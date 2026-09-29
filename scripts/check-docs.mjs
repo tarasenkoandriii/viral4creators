@@ -3561,10 +3561,10 @@ function checkQaHookSeams() {
    */
   const CONFIG = "backend/src/config/configuration.ts";
   const configSrc = read(CONFIG);
-  const rawMarks = (catalogSrc.match(/^ {4}absentWhen:/gm) ?? []).length;
+  const rawMarks = (catalogSrc.match(/^ {4}absentWhen: \{/gm) ?? []).length;
   const marks = [
     ...catalogSrc.matchAll(
-      /^ {2}'([a-z0-9-]+)': \{[^}]*?absentWhen:\s*\n?\s*'([^']+)'/gm,
+      /^ {2}'([a-z0-9-]+)': \{(?:(?!^ {2}')[\s\S])*?absentWhen: \{([\s\S]*?)\n {4}\},/gm,
     ),
   ];
   if (marks.length !== rawMarks) {
@@ -3574,25 +3574,30 @@ function checkQaHookSeams() {
     );
   }
   const envNames = [];
-  for (const [, key, why] of marks) {
-    const named = [...why.matchAll(/\b([A-Z][A-Z0-9_]{3,})\b/g)].map(
-      (m) => m[1],
-    );
-    if (named.length === 0) {
+  for (const [, key, body] of marks) {
+    const env = /\benv: '([^']+)'/.exec(body);
+    const why = /\bwhy:\s*\n?\s*'([^']+)'/.exec(body);
+    if (!why || why[1].length < 30) {
       problems.push(
-        `${CATALOG}: «${key}» помечен absentWhen, но причина не называет ` +
-          "переменную окружения — оператору нечего заводить",
+        `${CATALOG}: «${key}» помечен absentWhen, но причина пуста или ` +
+          "коротка — она едет в промпт, и по ней модель решает, обходить " +
+          "элемент или торговаться",
       );
-      continue;
     }
-    for (const name of named) {
-      envNames.push(name);
-      if (!configSrc.includes(`process.env.${name}`)) {
-        problems.push(
-          `${CATALOG}: «${key}» ссылается на ${name}, но ${CONFIG} такой ` +
-            "переменной не читает — пометка устарела вместе с кодом",
-        );
-      }
+    if (!env) continue;
+    envNames.push(env[1]);
+    if (!configSrc.includes(`process.env.${env[1]}`)) {
+      problems.push(
+        `${CATALOG}: «${key}» ссылается на ${env[1]}, но ${CONFIG} такой ` +
+          "переменной не читает — пометка устарела вместе с кодом",
+      );
+    }
+    if (!why || !why[1].includes(env[1])) {
+      problems.push(
+        `${CATALOG}: «${key}» объявил env ${env[1]}, но причина его не ` +
+          "называет — оператор прочтёт в промпте «стенд не настроен» и не " +
+          "поймёт, что заводить",
+      );
     }
   }
 
@@ -3613,8 +3618,8 @@ function checkQaHookSeams() {
         `${sweepTables.size} таблиц(ы); элементов полигона: ${inPage.size}, ` +
         "каталог и страница сходятся; полигон достижим мимо локаль-" +
         `редиректа, пол оседания ${settleFloor} мс выше ленивого блока ` +
-        `${pageDelay} мс; условных хуков: ${marks.length}, каждый называет ` +
-        `живую переменную стенда (${envNames.join(", ") || "—"})`,
+        `${pageDelay} мс; условных хуков: ${marks.length}, из них от настройки ` +
+        `стенда ${envNames.length} (${envNames.join(", ") || "—"}), живые`,
     );
   }
 }

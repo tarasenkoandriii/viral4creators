@@ -247,7 +247,7 @@ function qaVocabulary(greeting: boolean): string {
     // Пометка печатается вместе с причиной: без неё «может не быть»
     // читается как каприз, а с ней — как факт про окружение.
     const absent = hook.absentWhen
-      ? ` [НЕ УПОМИНАТЬ В ШАГАХ ВООБЩЕ: ${hook.absentWhen}. Ни waitFor, ни ` +
+      ? ` [НЕ УПОМИНАТЬ В ШАГАХ ВООБЩЕ: ${hook.absentWhen.why}. Ни waitFor, ни ` +
         'assertVisible, ни click, ни fill — сценарий должен работать и ' +
         'на стенде без этого. В репликах тоже не обещай того, чего ' +
         'может не оказаться в кадре]'
@@ -682,8 +682,8 @@ function rejectUnknownSelectors(
     const absentWhen = QA_HOOKS[key].absentWhen;
     if (absentWhen) {
       return refuse(
-        `«${key}» есть на экране не всегда (${absentWhen}) — сценарий, ` +
-          'опирающийся на него, не соберёт ролик на стенде без этого',
+        `«${key}» есть на экране не всегда (${absentWhen.why}) — сценарий, ` +
+          'опирающийся на него, не соберёт ролик',
       );
     }
     // Платные кнопки (аудит этапа I): клик мимо гейта одобрения

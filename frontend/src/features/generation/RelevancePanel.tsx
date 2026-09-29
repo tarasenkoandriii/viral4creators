@@ -162,6 +162,7 @@ export function RelevancePanel({
             </div>
             <button
               type="button"
+              data-qa="relevance-recheck"
               aria-label={dict.relevancePanel.recheck}
               title={dict.relevancePanel.recheck}
               onClick={() => void run()}
