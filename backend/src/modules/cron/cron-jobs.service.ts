@@ -1214,13 +1214,39 @@ export class CronJobsService {
                   ? // 'users' (Е-5.2 шестого аудита, этап 76) — владелец
                     // `users/<userId>/voices/…` — сама таблица users.
                     await this.prisma.user.findMany({ where, select })
-                  : // 'tutorial-video-frames' (сквозной аудит 29.09.2026)
-                    // — владелец кадров-транзитов это строка ролика.
-                    // Удалили строку, а кадры остались — вот их и метём.
-                    await this.prisma.tutorialVideoAsset.findMany({
-                      where,
-                      select,
-                    });
+                  : await this.liveFrameOwners(ids);
     return rows.map((r) => r.id);
+  }
+
+  /**
+   * Живые владельцы кадров под префиксом `tutorial-video-frames/`.
+   *
+   * Отдельным методом, а не веткой тернарника, по двум причинам. У
+   * этого префикса ДВА владельца, и это осознанное решение продукта:
+   * `tutorial-video-frames/<assetId>/` — кадры-транзиты сборки роликов
+   * мастера, `tutorial-video-frames/<draftId>/` — кадры обучалки по
+   * сайту заказчика (`draft-frames.ts`: «паттерн пути тот же, что у
+   * штатной обучалки, владелец другой — и это сознательно: дальше по
+   * конвейеру оба вида кадров собирает один и тот же внешний
+   * ffmpeg-api»). Первая редакция знала одного владельца и сносила
+   * кадры ЖИВЫХ черновиков, пролежавших на модерации дольше порога
+   * свежести, — молча и безвозвратно, а по этим кадрам черновик
+   * смотрят и из них собирают ролик.
+   *
+   * Вторая причина — сам шов: у ветки тернарника нет имени, и
+   * `check-docs` не мог отличить её таблицы от соседских. Именованный
+   * метод виден и человеку, и шву.
+   *
+   * Два запроса, а не join: таблицы разные, и «жив хотя бы у одного» —
+   * это объединение, а не пересечение.
+   */
+  private async liveFrameOwners(ids: string[]): Promise<Array<{ id: string }>> {
+    const where = { id: { in: ids } };
+    const select = { id: true };
+    const [assets, drafts] = await Promise.all([
+      this.prisma.tutorialVideoAsset.findMany({ where, select }),
+      this.prisma.clientSiteTutorialDraft.findMany({ where, select }),
+    ]);
+    return [...assets, ...drafts];
   }
 }

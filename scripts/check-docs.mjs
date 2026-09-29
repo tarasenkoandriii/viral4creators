@@ -2991,6 +2991,65 @@ function checkQaHookSeams() {
     );
   }
 
+  /**
+   * У префикса `tutorial-video-frames/` несколько владельцев, и метла
+   * обязана знать ВСЕХ (аудит собственных правок 29.09.2026).
+   *
+   * Общий префикс — осознанное решение продукта: дальше по конвейеру
+   * оба вида кадров собирает один и тот же внешний ffmpeg-api. Но
+   * `orphanSweepPlan` считает сиротой владельца, которого нет в базе,
+   * а «база» для этой области — это перечень таблиц в одной ветке
+   * `cron-jobs.service.ts`. Первая редакция знала только
+   * `tutorialVideoAsset` и сносила кадры ЖИВЫХ черновиков обучалки по
+   * сайту заказчика — молча, через несколько ночей после создания.
+   *
+   * Шов считает ПРОИЗВОДИТЕЛЕЙ путей под этим префиксом и требует
+   * столько же таблиц в ветке метлы. Третий потребитель добавится —
+   * CI покажет расхождение до того, как метла до него доберётся.
+   */
+  // Владелец — это ВИД ключа, а не место в коде: `draftId` из двух
+  // разных файлов — один владелец, а не два. Первая редакция этого шва
+  // считала пары «файл:переменная» и получала три при двух владельцах —
+  // и совпадала с тремя `findMany`, выхваченными из чужой ветки
+  // тернарника. Два неверных счёта дали зелёный результат; это хуже,
+  // чем красный, потому что не заставляет посмотреть.
+  const frameOwners = new Set();
+  for (const file of walk(path.join(ROOT, "backend/src")).filter(
+    (f) => /\.ts$/.test(f) && !/\.spec\.ts$/.test(f),
+  )) {
+    const src = stripComments(fs.readFileSync(file, "utf8"));
+    for (const m of src.matchAll(
+      /`tutorial-video-frames\/\$\{(\w+)\}\//g,
+    )) {
+      frameOwners.add(m[1]);
+    }
+  }
+  const sweepSrc = stripComments(
+    read("backend/src/modules/cron/cron-jobs.service.ts"),
+  );
+  // Ровно ПОСЛЕДНЯЯ ветка тернарника — та, что резолвит владельцев
+  // этой области. Брать от первого упоминания строки значило бы
+  // прихватить соседние ветки и посчитать чужие таблицы своими.
+  const framesFn =
+    /private async liveFrameOwners[\s\S]*?\n  \}/.exec(sweepSrc)?.[0] ?? "";
+  const sweepTables = new Set(
+    [...framesFn.matchAll(/this\.prisma\.(\w+)\.findMany/g)].map((m) => m[1]),
+  );
+  if (frameOwners.size === 0 || sweepTables.size === 0) {
+    problems.push(
+      "шов владельцев префикса tutorial-video-frames/ ослеп: владельцев " +
+        `${frameOwners.size}, таблиц ${sweepTables.size}`,
+    );
+  } else if (sweepTables.size < frameOwners.size) {
+    problems.push(
+      `под префиксом tutorial-video-frames/ пишут ${frameOwners.size} вида ` +
+        `владельцев (${[...frameOwners].join(", ")}), а метла спрашивает ` +
+        `${sweepTables.size} таблиц(ы) (${[...sweepTables].join(", ")}) — ` +
+        "владелец, о котором она не знает, считается сиротой, и его кадры " +
+        "будут удалены",
+    );
+  }
+
   const promptSrc = stripComments(
     read("backend/src/modules/tutorial-scenario/tutorial-scenario-prompt.ts"),
   );
@@ -3013,7 +3072,9 @@ function checkQaHookSeams() {
         "валидатор берут каталог; достижимость сверена с условиями " +
         `отрисовки: ${[...routeOf.values()].filter((r) => r.startsWith("generate")).length} хуков мастера ` +
         `на ${new Set([...routeOf.values()].filter((r) => r.startsWith("generate"))).size} экранах; ` +
-        `съёмщиков кадров: ${shooters.length}, все берут формат из одного места`,
+        `съёмщиков кадров: ${shooters.length}, все берут формат из одного ` +
+        `места; владельцев префикса кадров: ${frameOwners.size}, метла знает ` +
+        `${sweepTables.size} таблиц(ы)`,
     );
   }
 }

@@ -37,6 +37,7 @@ function emptyState(): DraftRoundsState {
     steps: [],
     stepsPerRound: [],
     roundScreenshots: [],
+    roundVideoFrames: [],
     requiresLiveLoginReplay: false,
   };
 }
@@ -144,6 +145,7 @@ describe('undoLastRound', () => {
       steps: [GOTO],
       stepsPerRound: [1, 5],
       roundScreenshots: ['a', 'b'],
+      roundVideoFrames: [null, null],
       requiresLiveLoginReplay: false,
     };
     expect(() => undoLastRound(broken, { lastRoundWasLive: false })).toThrow(
@@ -185,6 +187,7 @@ describe('assertRoundsConsistent', () => {
         steps: [GOTO],
         stepsPerRound: [1],
         roundScreenshots: [],
+        roundVideoFrames: [],
         requiresLiveLoginReplay: false,
       }),
     ).toThrow(DraftRoundMismatchError);
@@ -196,6 +199,7 @@ describe('assertRoundsConsistent', () => {
         steps: [GOTO, CLICK],
         stepsPerRound: [1],
         roundScreenshots: ['a'],
+        roundVideoFrames: [null],
         requiresLiveLoginReplay: false,
       }),
     ).toThrow(DraftRoundMismatchError);
@@ -314,5 +318,75 @@ describe('assertEditable', () => {
     expect(() => assertEditable('PENDING_REVIEW')).toThrow(/оператора/);
     expect(() => assertEditable('APPROVED')).toThrow(/сборку/);
     expect(() => assertEditable('REJECTED')).toThrow(/верните/);
+  });
+});
+
+/**
+ * Третий массив — съёмочные кадры (вариант А, 29.09.2026).
+ *
+ * У кадра раунда два потребителя с противоположными требованиями:
+ * предпросмотр едет в JSON и в колонку БД и потому лёгкий, ролик
+ * собирается на холсте 720×1560 и потому хочет пикселей.
+ */
+describe('съёмочные кадры идут в ногу с предпросмотровыми', () => {
+  const empty = () => ({
+    steps: [],
+    stepsPerRound: [],
+    roundScreenshots: [],
+    roundVideoFrames: [],
+    requiresLiveLoginReplay: false,
+  });
+
+  it('раунд без съёмочного кадра занимает своё место как null, а не пропускает его', () => {
+    // Пропуск сделал бы «кадра нет» и «массив короче» неразличимыми, и
+    // ролик молча собрался бы не из тех раундов.
+    const s = appendRound(empty(), {
+      steps: [{ kind: 'goto', route: 'https://x.test' }],
+      screenshot: 'data:image/jpeg;base64,AAA',
+    });
+    expect(s.roundVideoFrames).toEqual([null]);
+    expect(() => assertRoundsConsistent(s)).not.toThrow();
+  });
+
+  it('отмена раунда снимает обе записи', () => {
+    let s = appendRound(empty(), {
+      steps: [{ kind: 'goto', route: 'https://x.test' }],
+      screenshot: 'a',
+      videoFrame: 'https://blob/0.jpg',
+    });
+    s = appendRound(s, {
+      steps: [{ kind: 'click', selector: '#b' }],
+      screenshot: 'b',
+      videoFrame: 'https://blob/1.jpg',
+    });
+    const { next } = undoLastRound(s, { lastRoundWasLive: false });
+    expect(next.roundScreenshots).toEqual(['a']);
+    expect(next.roundVideoFrames).toEqual(['https://blob/0.jpg']);
+    expect(() => assertRoundsConsistent(next)).not.toThrow();
+  });
+
+  it('замена последнего кадра меняет ПАРУ, а не половину', () => {
+    // Иначе предпросмотр показывал бы актуальное состояние страницы, а
+    // в ролик уходил кадр, снятый при первом проходе через неё.
+    let s = appendRound(empty(), {
+      steps: [{ kind: 'goto', route: 'https://x.test' }],
+      screenshot: 'a',
+      videoFrame: 'https://blob/old.jpg',
+    });
+    s = replaceLastScreenshot(s, 'a2', 'https://blob/new.jpg');
+    expect(s.roundScreenshots).toEqual(['a2']);
+    expect(s.roundVideoFrames).toEqual(['https://blob/new.jpg']);
+  });
+
+  it('рассогласованные длины ловятся инвариантом', () => {
+    expect(() =>
+      assertRoundsConsistent({
+        steps: [{ kind: 'goto', route: 'https://x.test' }],
+        stepsPerRound: [1],
+        roundScreenshots: ['a'],
+        roundVideoFrames: [],
+        requiresLiveLoginReplay: false,
+      }),
+    ).toThrow(/съёмочных/);
   });
 });

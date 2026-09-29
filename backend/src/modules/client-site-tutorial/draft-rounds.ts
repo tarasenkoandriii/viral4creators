@@ -45,6 +45,24 @@ export interface DraftRoundsState {
   steps: ScenarioStep[];
   stepsPerRound: number[];
   roundScreenshots: string[];
+  /**
+   * Съёмочные кадры раундов — ссылки в Blob, по одной на раунд
+   * (вариант А, 29.09.2026).
+   *
+   * Второй кадр за раунд, а не замена первому: у кадра раунда два
+   * потребителя с противоположными требованиями. Предпросмотр едет в
+   * JSON-ответ и в колонку БД (§6.3) и потому снимается лёгким
+   * (`SCREENSHOT_QUALITY = 60`, без плотности); ролик собирается на
+   * холсте 720×1560 и потому хочет пикселей. Раньше побеждала
+   * лёгкость, и ролики по сайтам мылили молча.
+   *
+   * `null` — раунд, снятый ДО этой правки: у старых черновиков
+   * съёмочного кадра нет и взять его неоткуда. Длина при этом всё
+   * равно равна длине `roundScreenshots` — выравнивание делает
+   * `toRoundsState`, чтобы инвариант ниже был один и тот же для
+   * старых и новых строк.
+   */
+  roundVideoFrames: (string | null)[];
   requiresLiveLoginReplay: boolean;
 }
 
@@ -53,6 +71,10 @@ export interface AppendRoundInput {
   steps: ScenarioStep[];
   /** Кадр этого раунда — ровно один, независимо от числа шагов. */
   screenshot: string;
+  /** Ссылка на съёмочный кадр в Blob. `null`/отсутствие — кадр снять
+   *  не удалось: ролик станет мягче, но раунд обязан состояться
+   *  (§3 ТЗ: ролик получается ВСЕГДА). */
+  videoFrame?: string | null;
   /** Раунд завершения live-сессии входа (§7.4.5) — помечает весь
    * черновик как непересобираемый автоматически. */
   live?: boolean;
@@ -88,6 +110,7 @@ export function appendRound(
     steps,
     stepsPerRound: [...state.stepsPerRound, round.steps.length],
     roundScreenshots: [...state.roundScreenshots, round.screenshot],
+    roundVideoFrames: [...state.roundVideoFrames, round.videoFrame ?? null],
     requiresLiveLoginReplay:
       state.requiresLiveLoginReplay || round.live === true,
   };
@@ -138,6 +161,7 @@ export function undoLastRound(
       steps: state.steps.slice(0, state.steps.length - removedSteps),
       stepsPerRound: state.stepsPerRound.slice(0, -1),
       roundScreenshots: state.roundScreenshots.slice(0, -1),
+      roundVideoFrames: state.roundVideoFrames.slice(0, -1),
       // Флаг НЕ сбрасывается: если live-раунд был раньше в сценарии, он
       // там и остался (отменить можно только последний раунд, а
       // последним live-раунд быть не мог — см. проверку выше).
@@ -154,6 +178,7 @@ export function undoLastRound(
 export function replaceLastScreenshot(
   state: DraftRoundsState,
   screenshot: string,
+  videoFrame?: string | null,
 ): DraftRoundsState {
   if (state.roundScreenshots.length === 0) {
     throw new DraftRoundMismatchError('нет ни одного кадра для замены');
@@ -161,6 +186,13 @@ export function replaceLastScreenshot(
   return {
     ...state,
     roundScreenshots: [...state.roundScreenshots.slice(0, -1), screenshot],
+    // Замещается ПАРА, а не один из двух: иначе предпросмотр показывал
+    // бы актуальное состояние страницы, а в ролик уходил кадр,
+    // снятый при первом проходе через неё.
+    roundVideoFrames: [
+      ...state.roundVideoFrames.slice(0, -1),
+      videoFrame ?? null,
+    ],
   };
 }
 
@@ -172,6 +204,15 @@ export function assertRoundsConsistent(state: DraftRoundsState): void {
   if (state.stepsPerRound.length !== state.roundScreenshots.length) {
     throw new DraftRoundMismatchError(
       `раундов ${state.stepsPerRound.length}, кадров ${state.roundScreenshots.length} — должно совпадать`,
+    );
+  }
+  // Третий массив держится тем же правилом, что и два первых. Пустых
+  // мест у него не бывает: у раунда без съёмочного кадра стоит `null`,
+  // а не пропуск, — иначе «кадра нет» и «массив короче» стали бы
+  // неразличимы, и ролик молча собрался бы не из тех раундов.
+  if (state.roundVideoFrames.length !== state.roundScreenshots.length) {
+    throw new DraftRoundMismatchError(
+      `кадров предпросмотра ${state.roundScreenshots.length}, съёмочных ${state.roundVideoFrames.length} — должно совпадать`,
     );
   }
   const declared = state.stepsPerRound.reduce((sum, n) => sum + n, 0);

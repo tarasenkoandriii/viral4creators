@@ -59,7 +59,10 @@ import {
   ReplayRequest,
   RoundAction,
 } from './page-explorer';
-import { CAPTURE_VIEWPORT } from '../tutorial-runner/tutorial-video-assembly';
+import {
+  CAPTURE_DEVICE_SCALE_FACTOR,
+  CAPTURE_VIEWPORT,
+} from '../tutorial-runner/tutorial-video-assembly';
 import { LAUNCH_TIMEOUT_MS } from '../../common/headless-chromium';
 
 /**
@@ -124,6 +127,28 @@ const REPLAY_TIMEOUT_MS = 120_000;
  * не в Blob, поэтому вес важнее детализации. */
 const SCREENSHOT_QUALITY = 60;
 
+/**
+ * Качество съёмочного кадра. Выше предпросмотрового, потому что
+ * потребитель другой: этот кадр показывают на весь экран в ролике, а
+ * не в ленте раундов, и едет он в Blob, где вес не так дорог.
+ *
+ * Не 100: JPEG выше восьмидесяти растёт в весе быстрее, чем в
+ * различимости, а следом кадр всё равно проходит через ffmpeg.
+ */
+const VIDEO_FRAME_QUALITY = 80;
+
+/**
+ * Плотность кадра ПРЕДПРОСМОТРА — единица, и это настройка, а не
+ * умолчание браузера.
+ *
+ * Предпросмотр едет в JSON-ответ и в колонку БД (§6.3), и каждый
+ * множитель плотности учетверяет его вес. Своё имя нужно ровно
+ * потому, что рядом живёт вторая плотность: без имени единица в коде
+ * читается как «забыли задать», а это осознанный выбор, симметричный
+ * `CAPTURE_DEVICE_SCALE_FACTOR`.
+ */
+const PREVIEW_DEVICE_SCALE_FACTOR = 1;
+
 /** Те же значения, что `PuppeteerLifeCycleEvent`. Своим типом, а не
  * `string`: широкий `string` сделал бы интерфейс НЕсовместимым с
  * настоящим `Page` (проверено отдельной временной сверкой типов, см.
@@ -139,7 +164,13 @@ type LifecycleEvent =
  * файл. Настоящий `Page` ему структурно удовлетворяет; тест подставляет
  * лёгкий мок — тот же приём, что `ScenarioPage`/`CookieSettablePage`. */
 export interface ExplorerPage extends CookieSettablePage {
-  setViewport(v: { width: number; height: number }): Promise<void>;
+  setViewport(v: {
+    width: number;
+    height: number;
+    /** Плотность — часть контракта съёмки (вариант А, 29.09.2026):
+     *  съёмочный кадр снимается ею, предпросмотровый без неё. */
+    deviceScaleFactor?: number;
+  }): Promise<void>;
   goto(
     url: string,
     options?: { waitUntil?: LifecycleEvent; timeout?: number },
@@ -431,9 +462,51 @@ export class ChromiumPageExplorer implements PageExplorer {
       encoding: 'base64',
     });
 
+    /**
+     * Второй кадр — съёмочный (вариант А, 29.09.2026).
+     *
+     * Сначала лёгкий, потом плотный, а не наоборот: лёгкий обязателен
+     * — он и есть ответ человеку, — а плотный необязателен. Снять его
+     * первым значило бы рисковать ответом ради ролика.
+     *
+     * `catch` без проброса по той же причине: сбой второго снимка
+     * делает ролик мягче на один кадр и только. Валить из-за него
+     * раунд, за который уже потрачен слот суточного лимита, — обмен не
+     * в пользу человека.
+     */
+    let videoFrameDataUrl: string | undefined;
+    try {
+      await page.setViewport({
+        ...CAPTURE_VIEWPORT,
+        deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
+      });
+      const videoBase64 = await page.screenshot({
+        type: 'jpeg',
+        quality: VIDEO_FRAME_QUALITY,
+        encoding: 'base64',
+      });
+      videoFrameDataUrl = `data:image/jpeg;base64,${videoBase64}`;
+    } catch (err) {
+      this.logger.warn(
+        `съёмочный кадр не снялся (${err instanceof Error ? err.message : String(err)}) — ролик будет мягче на один кадр`,
+      );
+    } finally {
+      // Вернуть плотность обязательно: страница живёт дальше в этом же
+      // раунде (переигровка делает несколько снимков подряд), и
+      // следующий лёгкий кадр иначе приехал бы тяжёлым — то есть
+      // правка отменила бы сама себя через один шаг.
+      await page
+        .setViewport({
+          ...CAPTURE_VIEWPORT,
+          deviceScaleFactor: PREVIEW_DEVICE_SCALE_FACTOR,
+        })
+        .catch(() => undefined);
+    }
+
     return {
       currentUrl: page.url(),
       screenshotDataUrl: `data:image/jpeg;base64,${screenshotBase64}`,
+      ...(videoFrameDataUrl ? { videoFrameDataUrl } : {}),
       elements,
       looksLikeLogin: collected.looksLikeLogin,
       ...(dangerWarning ? { dangerWarning } : {}),

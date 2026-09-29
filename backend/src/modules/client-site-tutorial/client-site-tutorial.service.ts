@@ -69,6 +69,7 @@ import {
   FrameDecodeError,
   decodeFrameDataUrl,
   draftFramePathname,
+  draftRoundFramePathname,
   draftFramePrefix,
 } from './draft-frames';
 import { BlobService } from '../storage/blob.service';
@@ -191,6 +192,7 @@ interface DraftRow {
   steps: unknown;
   stepsPerRound: number[];
   roundScreenshots: unknown;
+  roundVideoFrames: unknown;
   lastUrl: string | null;
   cookiesEnc: string | null;
   credentialsEnc: string | null;
@@ -263,11 +265,16 @@ export class ClientSiteTutorialService {
         steps: [],
         stepsPerRound: [],
         roundScreenshots: [],
+        roundVideoFrames: [],
         requiresLiveLoginReplay: false,
       },
       {
         steps: [{ kind: 'goto', route: url }],
         screenshot: round.exploration.screenshotDataUrl,
+        // Черновика ещё нет — значит нет и пути в Blob, ключ которого
+        // это его id. Съёмочный кадр первого раунда заливается сразу
+        // после создания строки, ниже.
+        videoFrame: null,
       },
     );
 
@@ -281,7 +288,73 @@ export class ClientSiteTutorialService {
       cookiesEnc: this.encryptCookies(round.cookies),
     });
 
-    return { draft: this.toView(created), exploration: round.exploration };
+    // Съёмочный кадр — ПОСЛЕ создания строки: путь в Blob ключуется
+    // id черновика, а до вставки его нет. Отдельной правкой строки, не
+    // частью `createDraft`: заливка может не удаться, и тогда черновик
+    // обязан существовать всё равно (§3 ТЗ: ролик получается ВСЕГДА,
+    // просто будет мягче).
+    const withFrame = await this.storeVideoFrame(
+      created,
+      0,
+      round.exploration.videoFrameDataUrl,
+    );
+
+    return { draft: this.toView(withFrame), exploration: round.exploration };
+  }
+
+  /**
+   * Кладёт съёмочный кадр раунда в Blob и записывает ССЫЛКУ в строку
+   * (вариант А, 29.09.2026).
+   *
+   * Best-effort целиком: раунд уже состоялся, слот суточного лимита
+   * потрачен, а этот кадр — улучшение ролика, не условие его
+   * существования. Провал заливки оставляет `null` на своём месте, и
+   * `/finish` соберёт ролик из предпросмотра, как делал до этой
+   * правки.
+   *
+   * Возвращает строку черновика — обновлённую или исходную, — чтобы
+   * вызывающему не приходилось помнить, изменилась ли она.
+   */
+  /** Свежая строка по id — нужна после `updateMany`, который строку не
+   *  возвращает, а съёмочному кадру важна актуальная версия массива. */
+  private async requireDraftById(id: string): Promise<DraftRow> {
+    const row = await this.prisma.clientSiteTutorialDraft.findUnique({
+      where: { id },
+    });
+    if (!row) throw this.conflict();
+    return row as unknown as DraftRow;
+  }
+
+  private async storeVideoFrame(
+    draft: DraftRow,
+    index: number,
+    dataUrl: string | undefined,
+  ): Promise<DraftRow> {
+    if (!dataUrl) return draft;
+    try {
+      const { buffer, contentType } = decodeFrameDataUrl(dataUrl);
+      await this.blob.uploadBuffer(
+        draftRoundFramePathname(draft.id, index),
+        buffer,
+        contentType,
+      );
+      const url = await this.blob.getPublicUrl(
+        draftRoundFramePathname(draft.id, index),
+      );
+      const state = this.toRoundsState(draft);
+      const frames = [...state.roundVideoFrames];
+      frames[index] = url;
+      const updated = await this.prisma.clientSiteTutorialDraft.update({
+        where: { id: draft.id },
+        data: { roundVideoFrames: frames as object },
+      });
+      return updated as unknown as DraftRow;
+    } catch (err) {
+      this.logger.warn(
+        `съёмочный кадр раунда ${index} не сохранён (${err instanceof Error ? err.message : String(err)}) — ролик соберётся из предпросмотра`,
+      );
+      return draft;
+    }
   }
 
   /** Обычный раунд: ноль или больше `fill` и не более одного `click`
@@ -481,9 +554,14 @@ export class ClientSiteTutorialService {
       replayed.exploration.currentUrl,
     );
 
+    // Съёмочный кадр — `null` здесь и заливка ПОСЛЕ успешной правки
+    // строки: путь в Blob перезаписывает кадр того же индекса, и
+    // сделать это до того, как правка прошла проверку версии, значило
+    // бы испортить кадр чужому — тому, кто выиграл гонку.
     const next = replaceLastScreenshot(
       undone.next,
       replayed.exploration.screenshotDataUrl,
+      null,
     );
 
     const claim = await this.prisma.clientSiteTutorialDraft.updateMany({
@@ -492,12 +570,22 @@ export class ClientSiteTutorialService {
         steps: next.steps as object,
         stepsPerRound: next.stepsPerRound,
         roundScreenshots: next.roundScreenshots as object,
+        roundVideoFrames: next.roundVideoFrames as object,
         lastUrl: replayed.exploration.currentUrl,
         cookiesEnc: this.encryptCookies(replayed.cookies),
         version: { increment: 1 },
       },
     });
     if (claim.count === 0) throw this.conflict();
+
+    // Съёмочный кадр — после того, как правка строки выиграла
+    // гонку версий: иначе кадр лёг бы под индексом, который
+    // достался другому раунду.
+    await this.storeVideoFrame(
+      await this.requireDraft(projectId),
+      next.roundScreenshots.length - 1,
+      replayed.exploration.videoFrameDataUrl,
+    );
 
     return {
       draft: this.toView(await this.requireDraft(projectId)),
@@ -560,7 +648,11 @@ export class ClientSiteTutorialService {
     await this.wipeFrames(draft.id);
     let uploaded: number;
     try {
-      uploaded = await this.uploadFrames(draft.id, state.roundScreenshots);
+      uploaded = await this.uploadFrames(
+        draft.id,
+        state.roundScreenshots,
+        state.roundVideoFrames,
+      );
     } catch (err) {
       // Сбой на середине заливки оставлял файлы в хранилище при пустом
       // `previewFrameCount` — то есть невидимыми для любой уборки
@@ -779,6 +871,7 @@ export class ClientSiteTutorialService {
         steps: next.steps as object,
         stepsPerRound: next.stepsPerRound,
         roundScreenshots: next.roundScreenshots as object,
+        roundVideoFrames: next.roundVideoFrames as object,
         lastUrl: round.exploration.currentUrl,
         requiresLiveLoginReplay: true,
         ...(cookiesEnc ? { cookiesEnc } : {}),
@@ -786,6 +879,15 @@ export class ClientSiteTutorialService {
       },
     });
     if (claim.count === 0) throw this.conflict();
+
+    // Съёмочный кадр — после того, как правка строки выиграла
+    // гонку версий: иначе кадр лёг бы под индексом, который
+    // достался другому раунду.
+    await this.storeVideoFrame(
+      await this.requireDraft(projectId),
+      next.roundScreenshots.length - 1,
+      round.exploration.videoFrameDataUrl,
+    );
 
     return {
       draft: this.toView(await this.requireDraft(projectId)),
@@ -946,6 +1048,7 @@ export class ClientSiteTutorialService {
         steps: next.steps as object,
         stepsPerRound: next.stepsPerRound,
         roundScreenshots: next.roundScreenshots as object,
+        roundVideoFrames: next.roundVideoFrames as object,
         lastUrl: round.exploration.currentUrl,
         cookiesEnc: this.encryptCookies(round.cookies),
         ...(extra.credentialsEnc
@@ -955,6 +1058,15 @@ export class ClientSiteTutorialService {
       },
     });
     if (claim.count === 0) throw this.conflict();
+
+    // Съёмочный кадр — после того, как правка строки выиграла
+    // гонку версий: иначе кадр лёг бы под индексом, который
+    // достался другому раунду.
+    await this.storeVideoFrame(
+      await this.requireDraftById(draft.id),
+      next.roundScreenshots.length - 1,
+      round.exploration.videoFrameDataUrl,
+    );
 
     return {
       draft: this.toView(await this.requireDraft(draft.projectId)),
@@ -1217,11 +1329,33 @@ export class ClientSiteTutorialService {
     } while (cursor);
   }
 
+  /**
+   * Раскладывает итоговые кадры ролика по путям, которые дальше читают
+   * админка и сборщик.
+   *
+   * Источник у каждого кадра выбирается по одному правилу: есть
+   * съёмочный — берём его, нет — предпросмотровый (вариант А,
+   * 29.09.2026). `null` в третьем массиве бывает у черновиков, начатых
+   * до этой правки, и у раундов, где второй снимок не удался; в обоих
+   * случаях ролик собирается как раньше, просто мягче.
+   *
+   * Съёмочный переносится `copyBlob`, а не перезаливкой: байты уже в
+   * хранилище, и гонять их через функцию значило бы платить трафиком
+   * за то, что умеет сам Blob.
+   */
   private async uploadFrames(
     draftId: string,
     frames: string[],
+    videoFrames: (string | null)[] = [],
   ): Promise<number> {
     for (let i = 0; i < frames.length; i++) {
+      if (videoFrames[i]) {
+        await this.blob.copyBlob(
+          draftRoundFramePathname(draftId, i),
+          draftFramePathname(draftId, i),
+        );
+        continue;
+      }
       const { buffer, contentType } = decodeFrameDataUrl(frames[i]);
       await this.blob.uploadBuffer(
         draftFramePathname(draftId, i),
@@ -1267,12 +1401,28 @@ export class ClientSiteTutorialService {
   }
 
   private toRoundsState(draft: DraftRow): DraftRoundsState {
+    const screenshots = Array.isArray(draft.roundScreenshots)
+      ? (draft.roundScreenshots as string[])
+      : [];
+    const videoFrames = Array.isArray(draft.roundVideoFrames)
+      ? (draft.roundVideoFrames as (string | null)[])
+      : [];
     return {
       steps: Array.isArray(draft.steps) ? (draft.steps as ScenarioStep[]) : [],
       stepsPerRound: draft.stepsPerRound ?? [],
-      roundScreenshots: Array.isArray(draft.roundScreenshots)
-        ? (draft.roundScreenshots as string[])
-        : [],
+      roundScreenshots: screenshots,
+      // Выравнивание по ЛЕВОМУ краю: у черновика, начатого до варианта
+      // А, съёмочных кадров нет у РАННИХ раундов, а не у поздних.
+      // Инвариант `assertRoundsConsistent` после этого один и тот же
+      // для старых и новых строк — иначе пришлось бы держать два, и
+      // второй однажды разошёлся бы с первым.
+      roundVideoFrames: [
+        ...Array.from(
+          { length: Math.max(0, screenshots.length - videoFrames.length) },
+          () => null,
+        ),
+        ...videoFrames,
+      ],
       requiresLiveLoginReplay: draft.requiresLiveLoginReplay,
     };
   }

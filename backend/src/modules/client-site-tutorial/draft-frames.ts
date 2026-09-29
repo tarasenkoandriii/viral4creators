@@ -32,6 +32,27 @@ export function draftFramePathname(draftId: string, index: number): string {
   return `${draftFramePrefix(draftId)}${index}.jpg`;
 }
 
+/**
+ * Путь СЪЁМОЧНОГО кадра раунда (вариант А, 29.09.2026).
+ *
+ * Отдельное имя файла, а не `{n}.jpg`: под этим же префиксом
+ * `/finish` раскладывает итоговые кадры ролика, и совпадение имён
+ * означало бы, что незавершённый черновик уже выглядит завершённым —
+ * а `previewFrameCount` ещё не выставлен, и админка считала бы кадры
+ * по другому правилу, чем они лежат.
+ *
+ * Тот же префикс — намеренно: уборка черновика (`wipeFrames`,
+ * `DELETE`, каскад проекта) стирает его целиком и уносит обе
+ * разновидности разом, без отдельного списка путей, который однажды
+ * отстал бы.
+ */
+export function draftRoundFramePathname(
+  draftId: string,
+  index: number,
+): string {
+  return `${draftFramePrefix(draftId)}round-${index}.jpg`;
+}
+
 export class FrameDecodeError extends Error {}
 
 /**

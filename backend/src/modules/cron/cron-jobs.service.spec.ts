@@ -933,6 +933,125 @@ describe('CronJobsService — метла идёт до конца курсора
     return { service, blobService };
   }
 
+  /**
+   * У префикса `tutorial-video-frames/` ДВА владельца, и метла обязана
+   * знать обоих (аудит собственных правок 29.09.2026).
+   *
+   * `tutorial-video-frames/<assetId>/` — кадры-транзиты сборки роликов
+   * мастера, `tutorial-video-frames/<draftId>/` — кадры обучалки по
+   * сайту заказчика. Общий префикс выбран продуктом сознательно
+   * (`draft-frames.ts`), а первая редакция метлы знала только первого
+   * владельца — и сносила кадры ЖИВЫХ черновиков, пролежавших на
+   * модерации дольше порога свежести.
+   */
+  function buildFramesSweep(live: { assets?: string[]; drafts?: string[] }) {
+    const old = () => new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const blobService = {
+      listByPrefix: jest.fn((prefix: string) =>
+        Promise.resolve(
+          prefix === 'tutorial-video-frames/'
+            ? {
+                blobs: [
+                  {
+                    pathname: 'tutorial-video-frames/tva-1/0.png',
+                    uploadedAt: old(),
+                  },
+                  {
+                    pathname: 'tutorial-video-frames/draft-1/0.jpg',
+                    uploadedAt: old(),
+                  },
+                ],
+                cursor: null,
+              }
+            : { blobs: [], cursor: null },
+        ),
+      ),
+      deleteMany: jest.fn((paths: string[]) => Promise.resolve(paths.length)),
+    };
+    const none = { findMany: jest.fn().mockResolvedValue([]) };
+    const prisma = {
+      session: none,
+      project: none,
+      brandManifest: none,
+      publicationRequest: none,
+      sharedVideoPage: none,
+      user: none,
+      tutorialVideoAsset: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue((live.assets ?? []).map((id) => ({ id }))),
+      },
+      clientSiteTutorialDraft: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue((live.drafts ?? []).map((id) => ({ id }))),
+      },
+    };
+    const service = new CronJobsService(
+      {} as never,
+      {} as never,
+      prisma as never,
+      blobService as never,
+      {
+        runCleanupTick: jest.fn().mockResolvedValue({ expired: 0, purged: 0 }),
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    return { service, blobService, prisma };
+  }
+
+  it('кадры ЖИВОГО черновика по сайту заказчика не удаляются', async () => {
+    const { service, blobService } = buildFramesSweep({ drafts: ['draft-1'] });
+
+    await service.runSweepOrphans({});
+
+    const deleted = blobService.deleteMany.mock.calls.flatMap((c) => c[0]);
+    expect(deleted).not.toContain('tutorial-video-frames/draft-1/0.jpg');
+    // А кадры несуществующего ролика метутся, как и раньше.
+    expect(deleted).toContain('tutorial-video-frames/tva-1/0.png');
+  });
+
+  it('живой РОЛИК тоже защищён — второй владелец не вытеснил первого', async () => {
+    const { service, blobService } = buildFramesSweep({ assets: ['tva-1'] });
+
+    await service.runSweepOrphans({});
+
+    const deleted = blobService.deleteMany.mock.calls.flatMap((c) => c[0]);
+    expect(deleted).not.toContain('tutorial-video-frames/tva-1/0.png');
+    expect(deleted).toContain('tutorial-video-frames/draft-1/0.jpg');
+  });
+
+  it('спрашивает обе таблицы, а не одну', async () => {
+    // Иначе «жив хотя бы у одного» держалось бы на удаче порядка.
+    const { service, prisma } = buildFramesSweep({});
+
+    await service.runSweepOrphans({});
+
+    expect(prisma.tutorialVideoAsset.findMany).toHaveBeenCalled();
+    expect(prisma.clientSiteTutorialDraft.findMany).toHaveBeenCalled();
+  });
+
   it('сирота на третьей странице находится и удаляется', async () => {
     const { service, blobService } = buildPaged();
     const res = await service.runSweepOrphans({});
