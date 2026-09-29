@@ -10,6 +10,7 @@ import {
   WIZARD_PAID_OPERATIONS,
 } from './scenario-steps.types';
 import { AI_OPERATION_LABEL, MODEL_RATES } from '../../common/ai-pricing';
+import { ROUTE_DESCRIPTIONS } from '../tutorial-runner/route-templates';
 import { QA_HOOKS } from './qa-hooks';
 
 const step: AssistantStepItem = {
@@ -612,4 +613,49 @@ it('список моделей — только движки мастера, б
     expect(MODEL_RATES[name].perSecond).toBeDefined();
   }
   expect(PRICED_VIDEO_MODELS).not.toContain('grok-imagine-image');
+});
+
+/**
+ * Третий боевой прогон 29.09.2026: механизм `generate-ready` заработал,
+ * но модель пользовалась им через раз — шаг 3 сам догадался кликнуть
+ * степпер и прошёл, шаги 4 и 5 ждали карточку сразу после goto и упали
+ * по 15 секунд. Правило в промпте было, но мягкое: «отсюда МОЖНО
+ * вернуться».
+ */
+describe('переход по степперу перед ожиданием карточки', () => {
+  const prompt = () =>
+    buildScenarioPrompt('5', 'ru', {
+      title: 'Разбор ролика',
+      text: 'Посмотрите, как ИИ разобрал ролик по сценам.',
+      details: [],
+    } as never);
+
+  it('промпт требует сначала кликнуть степпер, а не просто разрешает', () => {
+    const p = prompt();
+    expect(p).toContain('ОБЯЗАН сначала перейти на нужную позицию степпера');
+    expect(p).toContain('первым действием ПОСЛЕ goto поставь click');
+  });
+
+  it('названо, на КАКОМ шаге открывается generate-ready', () => {
+    // Без этого правило «кликни степпер» выглядит произволом: модель
+    // не знает, почему карточки нет.
+    expect(prompt()).toContain('«Видео»');
+  });
+
+  it('позиции степпера названы В ОПИСАНИИ МАРШРУТА, а не только в общем списке хуков', () => {
+    // Проверяем само описание, а не весь промпт: имена этих хуков есть
+    // и в каталоге селекторов, поэтому «промпт их содержит» ничего не
+    // доказывает. Модель должна встретить их там, где объясняется,
+    // ЗАЧЕМ по ним кликать.
+    const desc = ROUTE_DESCRIPTIONS['generate-ready'];
+    for (const hook of [
+      'wizard-step-upload',
+      'wizard-step-analysis',
+      'wizard-step-product',
+      'wizard-step-prompt',
+      'wizard-step-video',
+    ]) {
+      expect(desc).toContain(hook);
+    }
+  });
 });
