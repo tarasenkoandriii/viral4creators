@@ -48,6 +48,14 @@ import {
   GREETING_TONE_LABELS,
   fallbackMessage,
 } from '../../common/greeting-occasions';
+import {
+  presenterExpression,
+  presenterMood,
+  registerOfBrief,
+  sceneMoodFor,
+  textFitsRegister,
+} from '../../common/greeting-policy';
+import { GreetingRegister } from '../../common/types/greeting.types';
 import { SceneAsset } from '../../common/types/reference.types';
 import {
   VoiceMode,
@@ -55,11 +63,24 @@ import {
   usesOwnVoice,
 } from '../../common/voice-mode';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  GreetingScriptLanguage,
+  scriptLanguageForPrompt,
+  scriptLanguageOf,
+} from '../../common/greeting-language';
+import {
+  GREETING_EDIT_BUSY_MESSAGE,
+  editModeOf,
+} from '../../common/greeting-session-edit';
 
 const GREETING_PROMPT_CLAIM_TTL_MS = 3 * 60 * 1000;
 
 export const GREETING_PROMPT_IN_FLIGHT_MESSAGE =
   'Сценарий уже собирается — дождитесь ответа первого запроса.';
+
+export const GREETING_PROMPT_AFTER_VIDEO_MESSAGE =
+  'Ролик уже готов. Чтобы изменить текст, поправьте его на шаге «Сценарий» или в брифе — ' +
+  'появится новая версия, а готовый ролик останется как был.';
 
 /**
  * Этап 2: подписи поводов и тонов больше не живут здесь двумя
@@ -71,8 +92,6 @@ export const GREETING_PROMPT_IN_FLIGHT_MESSAGE =
 const OCCASION_LABEL = Object.fromEntries(
   Object.entries(GREETING_OCCASION_SPECS).map(([k, v]) => [k, v.label]),
 ) as Record<GreetingBriefSnapshot['occasion'], string>;
-
-const TONE_LABEL = GREETING_TONE_LABELS;
 
 /**
  * Сборка запроса к Gemini на текст сообщения — чистая функция,
@@ -88,27 +107,61 @@ const TONE_LABEL = GREETING_TONE_LABELS;
 export function buildScriptPrompt(
   brief: GreetingBriefSnapshot,
   occasionText: string,
+  /**
+   * Этап C (§3.8, Г-5): язык текста. Раньше здесь стояло жёсткое «на
+   * русском языке», и выбрать другой было нельзя вовсе.
+   */
+  language: GreetingScriptLanguage = scriptLanguageOf(brief),
 ): string {
   const spec = GREETING_OCCASION_SPECS[brief.occasion];
+  const register = registerOfBrief(brief);
   return [
     // «Сообщение», а не «поздравление»: соболезнование и извинение —
     // тоже сообщения этого типа проекта, и просить у модели
     // «поздравление на повод «соболезнование»» значило бы толкать её
     // ровно к той ошибке, которую мы предотвращаем.
-    `Напиши короткий текст для видео-сообщения на русском языке (2–4 предложения, не длиннее 45 секунд озвучки).`,
+    `Напиши короткий текст для видео-сообщения ${scriptLanguageForPrompt(language)} (2–4 предложения, не длиннее 45 секунд озвучки).`,
     `Повод: ${occasionText}.`,
     // Та самая промптовая ветка на каждый повод (находка 1.8 аудита):
     // без неё «Соболезнование» отличалось бы от «Дня рождения» только
     // подставленным словом.
     spec.intent,
+    // Этап B: у «Особого повода» замысел каталога общий на все случаи —
+    // регистр уточняет, праздник это или нет. Без этой строки
+    // «Особый повод: похороны» получал бы только «опирайся на описание».
+    brief.occasion === 'OTHER' ? REGISTER_INTENT[register] : '',
     `Получатель: ${brief.recipientName}.`,
     brief.senderName ? `От кого: ${brief.senderName}.` : '',
     `Тон: ${GREETING_TONE_LABELS[brief.tone]}.`,
     `Обращайся к получателю по имени, без вступлений вида "вот твой текст" — выдай ТОЛЬКО сам текст сообщения, без кавычек и пояснений.`,
+    // Подписи повода и тона выше — по-русски; без этой строки модель
+    // иногда отвечала на языке подписей, а не на выбранном.
+    language === 'ru'
+      ? ''
+      : `Весь текст сообщения — строго ${scriptLanguageForPrompt(language)}, даже если описание повода выше написано на другом языке.`,
   ]
     .filter(Boolean)
     .join('\n');
 }
+
+/**
+ * Замысел «Особого повода» по регистру (этап B ТЗ
+ * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.4). Формулировки
+ * — те же, что у каталожных поводов этого регистра (`intent` в
+ * `greeting-occasions.ts`), чтобы свой повод не звучал иначе, чем
+ * соседний из списка.
+ */
+const REGISTER_INTENT: Readonly<Record<GreetingRegister, string>> = {
+  CELEBRATORY: 'Это праздничный повод — поздравь тепло и по-человечески.',
+  WARM_NEUTRAL:
+    'Это тёплое личное сообщение, не обязательно праздник: не используй праздничные клише.',
+  SOLEMN:
+    'Это торжественный, сдержанный повод: без шуток и без праздничных клише.',
+  SENSITIVE:
+    'Это деликатный повод. Не поздравляй и не шути; говори бережно, без восклицательных знаков.',
+  MOURNING:
+    'Это ТРАУРНЫЙ повод. Не поздравляй, не желай радости и веселья, не используй восклицательные знаки и праздничные слова. Вырази сочувствие сдержанно и коротко, предложи поддержку.',
+};
 
 @Injectable()
 export class GreetingPromptService {
@@ -150,6 +203,18 @@ export class GreetingPromptService {
     // Проверяется ТО, ЧТО НАПИСАЛ ЧЕЛОВЕК, а не сгенерированный текст:
     // сценарий пишет Gemini по этому же брифу, и ловить чужой образ
     // после генерации значило бы заплатить за вызов, чтобы отказать.
+    // Этап C (§3.6): те же правила, что у правки брифа и сценария. Во
+    // время рендера сценарий не меняется — ролик собирался бы по одному
+    // тексту, а в сессии лежал бы другой. У готового ролика сценарий тоже
+    // не переписывается на месте: правка из шага «Сценарий» или брифа
+    // заводит новую версию, и готовый ролик остаётся со своим текстом.
+    const mode = editModeOf(session.generatedVideo);
+    if (mode === 'busy')
+      throw new ConflictException(GREETING_EDIT_BUSY_MESSAGE);
+    if (mode === 'new-version' && session.generationPrompt) {
+      throw new ConflictException(GREETING_PROMPT_AFTER_VIDEO_MESSAGE);
+    }
+
     const likeness =
       findCelebrityLikeness(brief.personalMessage) ??
       findCelebrityLikeness(brief.customOccasionText);
@@ -184,7 +249,12 @@ export class GreetingPromptService {
       // подставить).
       const speech = brief.personalMessage?.trim()
         ? brief.personalMessage.trim()
-        : await this.draftPersonalMessage(sessionId, brief, occasionText);
+        : await this.draftPersonalMessage(
+            sessionId,
+            brief,
+            occasionText,
+            scriptLanguageOf(brief, session.locale),
+          );
 
       // Режим озвучки — тот же, что прочитает постобработка
       // (`PostProductionService.planWork`): у поздравления снимка
@@ -258,30 +328,53 @@ export class GreetingPromptService {
     sessionId: string,
     brief: GreetingBriefSnapshot,
     occasionText: string,
+    language: GreetingScriptLanguage,
   ): Promise<string> {
-    const prompt = buildScriptPrompt(brief, occasionText);
-
-    const response = await this.genai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: [{ text: prompt }],
-      config: { temperature: 0.8, maxOutputTokens: 500 },
-    });
-    await this.aiUsage.recordGemini(response, {
-      operation: 'greeting-prompt',
-      model: GEMINI_MODEL,
-      sessionId,
-    });
-    const text = response.text?.trim();
-    if (!text) {
-      // Best-effort деградация: лучше отдать нейтральный текст, чем
-      // упасть — пользователь всё равно может отредактировать бриф и
-      // задать personalMessage вручную (PATCH .../greeting-brief).
-      this.logger.warn(
-        `сессия ${sessionId}: Gemini не вернул текст поздравления, использую нейтральный шаблон`,
+    const prompt = buildScriptPrompt(brief, occasionText, language);
+    const register = registerOfBrief(brief);
+    const fallback = () =>
+      fallbackMessage(
+        brief.occasion,
+        brief.recipientName,
+        occasionText,
+        brief.occasionRegister ?? null,
+        language,
       );
-      return fallbackMessage(brief.occasion, brief.recipientName, occasionText);
+
+    // Этап B, §3.7 ТЗ: для деликатного и траурного регистров текст
+    // модели проверяется, а не только запрашивается «не поздравляй».
+    // Провал — одна повторная попытка, затем запасной текст регистра.
+    // Две попытки, а не больше: каждая — платный вызов, а запасной
+    // текст для этих регистров написан ровно на такой случай.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await this.genai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [{ text: prompt }],
+        config: { temperature: 0.8, maxOutputTokens: 500 },
+      });
+      await this.aiUsage.recordGemini(response, {
+        operation: 'greeting-prompt',
+        model: GEMINI_MODEL,
+        sessionId,
+      });
+      const text = response.text?.trim();
+      if (!text) {
+        // Best-effort деградация: лучше отдать нейтральный текст, чем
+        // упасть. С этапа C человек может поправить его на шаге сценария
+        // (`PATCH /sessions/:id/greeting-script`), но запасной текст всё
+        // равно обязан быть уместным сам по себе — он и выбирается по
+        // регистру и языку.
+        this.logger.warn(
+          `сессия ${sessionId}: Gemini не вернул текст поздравления, использую нейтральный шаблон`,
+        );
+        return fallback();
+      }
+      if (textFitsRegister(register, text)) return text;
+      this.logger.warn(
+        `сессия ${sessionId}: текст для регистра ${register} звучит празднично (попытка ${attempt + 1})`,
+      );
     }
-    return text;
+    return fallback();
   }
 }
 
@@ -315,23 +408,17 @@ export function buildSceneDescription(
   // выключен (`PostProductionService.planWork`), и молчаливая
   // формулировка ниже была бы прямо противоположна тому, что нужно.
   const presetVoiceId = brief.presetVoiceId?.trim() || null;
-  const toneText = TONE_LABEL[brief.tone];
   const referenceLines = referenceImages.map((img, i) => {
     const tag = `<IMAGE_${i + 1}>`;
     const caption = (img.description || img.label).trim();
     return `${tag} — ${caption}`;
   });
-  const spec = GREETING_OCCASION_SPECS[brief.occasion];
-  const mood =
-    toneText === TONE_LABEL.FUNNY
-      ? 'playful and lighthearted'
-      : toneText === TONE_LABEL.FORMAL
-        ? 'composed and professional'
-        : toneText === TONE_LABEL.RESPECTFUL
-          ? 'quiet and respectful'
-          : toneText === TONE_LABEL.SUPPORTIVE
-            ? 'gentle and reassuring'
-            : 'warm and sincere';
+  // Этап B: настроение, лицо и декорации — из политики по регистру.
+  // Раньше «smiling» стояло безусловно (Г-2 ТЗ), а декорации брались из
+  // каталога, где «Особый повод» был праздничным.
+  const register = registerOfBrief(brief);
+  const mood = presenterMood(register, brief.tone);
+  const expression = presenterExpression(brief.occasion, register, brief.tone);
   // Реплику озвучиваем мы — значит на экране её НЕ произносят.
   //
   // До этой правки сцена всегда просила «presenter speaks directly to
@@ -354,13 +441,13 @@ export function buildSceneDescription(
     // `message`, не `greeting`: см. тот же довод в draftPersonalMessage.
     `A short vertical video message for ${occasionText} addressed to ${brief.recipientName}.`,
     silent
-      ? `A camera-facing presenter looks straight at the viewer with a ${mood} mood, smiling, gesturing and reacting — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.`
+      ? `A camera-facing presenter looks straight at the viewer with a ${mood} mood (${expression}), gesturing and reacting naturally — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.`
       : presetVoiceId
-        ? `A camera-facing presenter speaks directly to the viewer with the voice from <AUDIO_0>, natural expression, ${mood} mood.`
-        : `A camera-facing presenter speaks directly to the viewer, natural expression, ${mood} mood.`,
+        ? `A camera-facing presenter speaks directly to the viewer with the voice from <AUDIO_0>, ${expression}, ${mood} mood.`
+        : `A camera-facing presenter speaks directly to the viewer, ${expression}, ${mood} mood.`,
     // Декорации приходят от повода, а не от тона: у соболезнования
     // нет праздничного варианта ни при каком тоне.
-    `${spec.sceneMood}; no on-screen text.`,
+    `${sceneMoodFor(brief.occasion, register)}; no on-screen text.`,
     silent
       ? 'Audio: ambience and music only — the greeting itself is carried by a separate voice track added afterwards.'
       : '',

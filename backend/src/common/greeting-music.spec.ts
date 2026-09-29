@@ -106,13 +106,32 @@ describe('themesForOccasion / findThemeForOccasion', () => {
     ]),
   );
 
-  it('общая тема подходит любому поводу', () => {
+  /**
+   * Этап B (Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
+   * раньше здесь проверялось «общая тема подходит ЛЮБОМУ поводу» — и
+   * именно так праздничная подложка «для всех» доезжала до соболезнования.
+   * Теперь общая тема открыта праздничному и тёплому регистрам, а
+   * серьёзным — только темы, где повод указан явно.
+   */
+  it('общая тема подходит празднику, но не соболезнованию', () => {
     expect(themesForOccasion(catalog, 'BIRTHDAY').map((t) => t.id)).toContain(
       'common',
     );
-    expect(themesForOccasion(catalog, 'CONDOLENCE').map((t) => t.id)).toContain(
-      'common',
-    );
+    expect(
+      themesForOccasion(catalog, 'CONDOLENCE').map((t) => t.id),
+    ).not.toContain('common');
+    expect(themesForOccasion(catalog, 'CONDOLENCE').map((t) => t.id)).toEqual([
+      'quiet',
+    ]);
+  });
+
+  it('у «Особого повода» решает регистр, а не код повода', () => {
+    expect(
+      themesForOccasion(catalog, 'OTHER', 'CELEBRATORY').map((t) => t.id),
+    ).toContain('common');
+    expect(
+      themesForOccasion(catalog, 'OTHER', 'MOURNING').map((t) => t.id),
+    ).not.toContain('common');
   });
 
   it('праздничная тема не доезжает до соболезнования', () => {

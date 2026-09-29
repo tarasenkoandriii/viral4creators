@@ -1692,7 +1692,24 @@
       "SUPPORTIVE": "De apoyo",
       "RESPECTFUL": "Respetuoso, contenido"
     },
-    "referencesLockedHint": "El guion ya está montado, así que las fotos ya no influyen en él. Para cambiarlas, vuelve a montar el guion."
+    "referencesLockedHint": "El guion ya está montado, así que las fotos ya no influyen en él. Para cambiarlas, vuelve a montar el guion.",
+    "briefSessionHint": "Los cambios se aplican al montaje actual. Si el video ya está listo, se crea una nueva versión y el terminado se conserva tal cual.",
+    "scriptLanguageLabel": "Idioma de la felicitación",
+    "scriptLanguageHint": "El texto se escribirá y se locutará en este idioma. Puede ser distinto del idioma de la app.",
+    "manifestSessionHint": "La marca no se puede cambiar una vez iniciado el montaje.",
+    "savedResetPrefix": "Se restableció porque no encaja con la nueva ocasión:",
+    "resetFieldSticker": "sticker",
+    "resetFieldMusic": "música",
+    "resetFieldScenes": "número de escenas",
+    "resetFieldPhotos": "fotos",
+    "promptClearedNote": "La ocasión, el tono o el texto cambiaron: vuelve a montar el guion.",
+    "newVersionNote": "El video ya estaba listo, así que los cambios pasaron a una nueva versión. El video terminado se conserva.",
+    "editScriptLabel": "Texto del mensaje",
+    "editScriptHint": "Puedes ajustar las palabras: la escena y la locución se actualizan juntas.",
+    "saveScriptButton": "Guardar texto",
+    "scriptSavedNote": "Texto guardado.",
+    "scriptRegisterWarning": "El texto suena festivo, pero la ocasión no lo pide. ¿Lo dejas así o lo ajustas?",
+    "scriptFlaggedNote": "El texto no pasó la revisión automática. Corrígelo antes de iniciar el video."
   },
   "wizardGuide": {
     "title": "Consejo de la IA",

@@ -10,7 +10,11 @@
  * ролик, сколько бы в нём ни было монтажных склеек.
  */
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import { GreetingScenesView } from '../../common/types/greeting.types';
@@ -21,6 +25,13 @@ import {
   splitSceneDurations,
 } from '../../common/greeting-scenes';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  REGISTER_POLICY,
+  evaluateGreetingPolicy,
+  policyMessage,
+  registerOfBrief,
+} from '../../common/greeting-policy';
+import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 
 @Injectable()
 export class GreetingScenesService {
@@ -28,7 +39,7 @@ export class GreetingScenesService {
 
   async get(sessionId: string): Promise<GreetingScenesView> {
     const snapshot = (await this.load(sessionId)).greetingBriefSnapshot!;
-    return this.toView(normalizeSceneCount(snapshot.sceneCount ?? 1));
+    return this.toView(snapshot, normalizeSceneCount(snapshot.sceneCount ?? 1));
   }
 
   async setCount(
@@ -38,16 +49,41 @@ export class GreetingScenesService {
     const session = await this.load(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     const next = normalizeSceneCount(sceneCount);
+    // Этап B: потолок сцен — по регистру повода (траурному ролику нарезка
+    // из четырёх склеек не подходит). Отказ, а не тихое урезание: иначе
+    // человек увидел бы «сохранено» и получил другое число сцен.
+    const verdict = evaluateGreetingPolicy({
+      occasion: snapshot.occasion,
+      occasionRegister: snapshot.occasionRegister ?? null,
+      tone: snapshot.tone,
+      sceneCount: next,
+    });
+    if (verdict.violations.some((v) => v.field === 'sceneCount')) {
+      throw new BadRequestException(
+        policyMessage({
+          ...verdict,
+          violations: verdict.violations.filter(
+            (v) => v.field === 'sceneCount',
+          ),
+        }),
+      );
+    }
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: { ...snapshot, sceneCount: next },
     });
-    return this.toView(next);
+    return this.toView(snapshot, next);
   }
 
-  private toView(sceneCount: number): GreetingScenesView {
+  private toView(
+    snapshot: Pick<GreetingBriefSnapshot, 'occasion' | 'occasionRegister'>,
+    sceneCount: number,
+  ): GreetingScenesView {
     return {
       sceneCount,
-      maxScenes: MAX_GREETING_SCENES,
+      maxScenes: Math.min(
+        MAX_GREETING_SCENES,
+        REGISTER_POLICY[registerOfBrief(snapshot)].maxScenes,
+      ),
       durations: splitSceneDurations(GREETING_SCENE_SECONDS, sceneCount),
     };
   }

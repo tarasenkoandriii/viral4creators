@@ -402,7 +402,7 @@
         },
         {
           "question": "What language will the greeting be in?",
-          "answer": "The service writes the text in Russian. The interface is available in five languages, but the greeting script itself is currently generated in Russian only — if you need another language, type your own text at the script step and it goes into the video as is."
+          "answer": "In the one you choose: English, German, Spanish, Ukrainian or Russian. It defaults to the app language, but the greeting language is a separate setting — the service writes and voices the text in it."
         },
         {
           "question": "What happens to the photos and the recipient's name?",
@@ -414,11 +414,11 @@
         },
         {
           "question": "What if I don't like the result?",
-          "answer": "You can edit the script before rendering and render the video again. All plans are free right now, so re-rendering costs nothing."
+          "answer": "You can edit the script or have it rewritten before rendering, and render the video again. If the video is already finished, an edit creates a new version and the finished one is kept. All plans are free right now, so re-rendering costs nothing."
         },
         {
           "question": "Can I record something other than a greeting?",
-          "answer": "Yes. Besides holidays there is an apology, words of support for someone who is ill, and a condolence. For those the service writes differently, does not congratulate, and does not offer a playful tone."
+          "answer": "Yes. Besides holidays there is an apology, words of support for someone who is ill, and a condolence. For those the service writes differently and does not congratulate, and the playful tone and festive catalogue music are unavailable. If you describe your own occasion, say a funeral, the service treats it as mourning too."
         }
       ]
     },

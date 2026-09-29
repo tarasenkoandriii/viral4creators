@@ -1,6 +1,8 @@
 import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
+import { REGISTER_POLICY, registerOfBrief } from '../../common/greeting-policy';
 import {
   GreetingOccasion,
+  GreetingRegister,
   GreetingTone,
 } from '../../common/types/greeting.types';
 
@@ -39,8 +41,13 @@ export function buildSettingsPrompt(
   occasion: GreetingOccasion,
   customOccasionText: string | null,
   tone: GreetingTone,
+  /** Регистр «Особого повода» (этап B); у каталожных игнорируется. */
+  occasionRegister: GreetingRegister | null = null,
 ): string {
   const spec = GREETING_OCCASION_SPECS[occasion];
+  // Пять градаций настроения вместо двух (`festive` каталога) — этап B.
+  const policy =
+    REGISTER_POLICY[registerOfBrief({ occasion, occasionRegister })];
   const occasionText =
     occasion === 'OTHER' && customOccasionText?.trim()
       ? customOccasionText.trim()
@@ -50,7 +57,7 @@ export function buildSettingsPrompt(
     'видео-поздравления. Кадр статичный, в нём один человек, который',
     'обращается к зрителю.',
     `Повод: ${occasionText}.`,
-    `Настроение: ${spec.festive ? 'праздничное' : 'сдержанное, без праздничной атрибутики'}.`,
+    `Настроение: ${policy.settingMood}.`,
     `Тон обращения: ${tone}.`,
     '',
     'Требования к ответу:',
@@ -61,7 +68,7 @@ export function buildSettingsPrompt(
     '  перефразировкой одного;',
     '— без нумерации, без маркеров списка, без кавычек, без пояснений;',
     '— не упоминай текст, надписи, логотипы и реальных людей.',
-    spec.festive
+    policy.festive
       ? ''
       : '— никаких шаров, конфетти, тортов и подарков: это не праздник.',
   ]

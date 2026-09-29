@@ -70,10 +70,14 @@ describe('GreetingMusicService (фича №4)', () => {
   it('показывает только темы, подходящие поводу сессии', async () => {
     const view = await build().svc.get('s1');
     expect(view.themes.map((t) => t.id)).toEqual(['common', 'party']);
+    // Этап B (Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
+    // общая тема (`occasions: null`) траурному поводу больше не
+    // предлагается — праздничная подложка «для всех» доезжала до
+    // соболезнования. Подходят только темы, где повод указан явно.
     const condolence = await build({
       snapshot: { occasion: 'CONDOLENCE' },
     }).svc.get('s1');
-    expect(condolence.themes.map((t) => t.id)).toEqual(['common']);
+    expect(condolence.themes.map((t) => t.id)).toEqual([]);
   });
 
   it('каталог пуст — пустой список, а не ошибка: фича выключена, ролик собирается', async () => {
@@ -91,6 +95,9 @@ describe('GreetingMusicService (фича №4)', () => {
       id: 'party',
       title: 'Праздничная',
       url: 'https://blob.test/party.mp3',
+      // Этап B: поводы темы копируются в выбор — по ним проверка перед
+      // рендером решает, не читая каталога.
+      occasions: ['BIRTHDAY'],
     });
     expect(updateSession).toHaveBeenCalledWith('s1', {
       greetingBriefSnapshot: expect.objectContaining({

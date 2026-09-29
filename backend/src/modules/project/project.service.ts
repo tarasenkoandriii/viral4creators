@@ -29,6 +29,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadConfiguration } from '../../config/configuration';
@@ -59,11 +60,14 @@ import { isRecordNotFoundError } from '../../common/prisma-errors';
 import { activeRowPhotoUrl, SketchableRow } from '../../common/active-image';
 import { PlanService } from '../plan/plan.service';
 import { resolveGreetingConfig } from './greeting-config';
+import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
 import {
-  allowedTonesFor,
-  defaultToneFor,
-  toneAllowedFor,
-} from '../../common/greeting-occasions';
+  defaultToneForRegister,
+  resolveBriefRegister,
+  toneAllowedForRegister,
+  toneRefusal,
+} from '../../common/greeting-policy';
+import { GreetingRegisterClassifier } from '../greeting-brief/greeting-register-classifier.service';
 import { CreateGreetingBriefDto } from './dto/create-project-request.dto';
 import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
 
@@ -158,6 +162,13 @@ export class ProjectService {
     // (resolveGreetingConfig) требуют знать тариф вызывающего. PlanModule
     // — @Global(), поэтому импортировать его в ProjectModule не нужно.
     private readonly plans: PlanService,
+    /**
+     * Этап B: классификатор регистра «Особого повода». Необязательный —
+     * без него остаются выбор человека и ключевые слова (§3.4 ТЗ
+     * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md).
+     */
+    @Optional()
+    private readonly registerClassifier?: GreetingRegisterClassifier,
   ) {
     this.lineItemLimit = loadConfiguration().project.lineItemLimit;
   }
@@ -240,12 +251,25 @@ export class ProjectService {
      * раньше, для CONDOLENCE недопустимо, и бриф-соболезнование без
      * явного тона падал бы на первой же собственной правке.
      */
-    const tone = brief.tone ?? defaultToneFor(brief.occasion);
-    if (!toneAllowedFor(brief.occasion, tone)) {
+    // Этап B (§3.4 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
+    // у «Особого повода» тоны зависят от регистра — самого строгого из
+    // выбора человека, ключевых слов и классификатора.
+    const reg = await resolveBriefRegister(
+      {
+        occasion: brief.occasion,
+        customOccasionText: brief.customOccasionText?.trim() || null,
+        userRegister: brief.occasionRegister ?? null,
+      },
+      this.registerClassifier
+        ? (text) => this.registerClassifier!.classify(text, userId)
+        : undefined,
+    );
+    const register =
+      reg.occasionRegister ?? GREETING_OCCASION_SPECS[brief.occasion].register;
+    const tone = brief.tone ?? defaultToneForRegister(brief.occasion, register);
+    if (!toneAllowedForRegister(brief.occasion, register, tone)) {
       throw new BadRequestException(
-        `Тон ${tone} недопустим для повода ${brief.occasion}. Допустимые: ${allowedTonesFor(
-          brief.occasion,
-        ).join(', ')}.`,
+        toneRefusal(brief.occasion, register, tone, reg.keyword),
       );
     }
     if (brief.brandManifestId) {
@@ -278,6 +302,11 @@ export class ProjectService {
           projectId: project.id,
           occasion: brief.occasion,
           customOccasionText: brief.customOccasionText?.trim() || null,
+          occasionRegister: reg.occasionRegister,
+          registerSource: reg.registerSource,
+          // Этап C (§3.8): язык поздравления; без него — язык интерфейса
+          // сессии, который станет известен при старте.
+          scriptLanguage: brief.scriptLanguage ?? null,
           recipientName: brief.recipientName.trim(),
           senderName: brief.senderName?.trim() || null,
           tone,

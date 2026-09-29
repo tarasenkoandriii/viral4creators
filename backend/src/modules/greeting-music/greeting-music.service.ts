@@ -28,9 +28,10 @@ import {
   GreetingMusicCandidate,
   GreetingMusicSelection,
   GreetingMusicTheme,
+  GreetingBriefSnapshot,
   GreetingMusicView,
-  GreetingOccasion,
 } from '../../common/types/greeting.types';
+import { registerOfBrief } from '../../common/greeting-policy';
 import { AudioService } from '../audio/audio.service';
 import {
   AudioRequest,
@@ -121,11 +122,11 @@ export class GreetingMusicService {
    * Сборщик приватный и один: забыть поле больше негде.
    */
   private async view(
-    occasion: GreetingOccasion,
+    snapshot: GreetingBriefSnapshot,
     selected: GreetingMusicView['selected'],
   ): Promise<GreetingMusicView> {
     return {
-      themes: await this.themes(occasion),
+      themes: await this.themes(snapshot),
       selected,
       libraryEnabled: this.audio.enabled,
     };
@@ -134,7 +135,7 @@ export class GreetingMusicService {
   async get(sessionId: string): Promise<GreetingMusicView> {
     const session = await this.load(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
-    return this.view(snapshot.occasion, snapshot.musicTheme ?? null);
+    return this.view(snapshot, snapshot.musicTheme ?? null);
   }
 
   /**
@@ -150,16 +151,30 @@ export class GreetingMusicService {
     const snapshot = session.greetingBriefSnapshot!;
     let selected: GreetingMusicView['selected'] = null;
     if (themeId) {
-      const catalog = await this.themes(snapshot.occasion);
-      const theme = findThemeForOccasion(catalog, snapshot.occasion, themeId);
+      // Каталог уже отфильтрован по поводу И регистру (`themes`), так что
+      // тема, не подходящая траурному ролику, здесь просто не найдётся.
+      const catalog = await this.themes(snapshot);
+      const theme = findThemeForOccasion(
+        catalog,
+        snapshot.occasion,
+        themeId,
+        registerOfBrief(snapshot),
+      );
       if (!theme) throw new NotFoundException('Такой музыкальной темы нет');
-      selected = { id: theme.id, title: theme.title, url: theme.url };
+      // `occasions` — копия на момент выбора: по ней проверка перед
+      // рендером (`evaluateGreetingPolicy`) решает, не каталога читая.
+      selected = {
+        id: theme.id,
+        title: theme.title,
+        url: theme.url,
+        occasions: theme.occasions,
+      };
     }
     const next = { ...snapshot, musicTheme: selected };
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: next,
     });
-    return this.view(snapshot.occasion, selected);
+    return this.view(snapshot, selected);
   }
 
   /**
@@ -235,7 +250,7 @@ export class GreetingMusicService {
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: { ...snapshot, musicTheme: selected },
     });
-    return this.view(snapshot.occasion, selected);
+    return this.view(snapshot, selected);
   }
 
   /**
@@ -277,7 +292,7 @@ export class GreetingMusicService {
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: { ...snapshot, musicTheme: selected },
     });
-    return this.view(snapshot.occasion, selected);
+    return this.view(snapshot, selected);
   }
 
   /**
@@ -383,10 +398,14 @@ export class GreetingMusicService {
   }
 
   private async themes(
-    occasion: GreetingOccasion,
+    snapshot: Pick<GreetingBriefSnapshot, 'occasion' | 'occasionRegister'>,
   ): Promise<GreetingMusicTheme[]> {
     const raw = await this.settings.get(GREETING_MUSIC_SETTING_KEY);
-    return themesForOccasion(parseMusicCatalog(raw), occasion);
+    return themesForOccasion(
+      parseMusicCatalog(raw),
+      snapshot.occasion,
+      registerOfBrief(snapshot),
+    );
   }
 
   private async load(sessionId: string): Promise<Session> {

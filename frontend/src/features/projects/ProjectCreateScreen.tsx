@@ -33,6 +33,7 @@ import type {
 } from '../../types/project';
 import {
   GREETING_OCCASIONS,
+  MAX_CUSTOM_OCCASION_LENGTH,
   allowedTonesFor,
   defaultToneFor,
 } from '../../types/project';
@@ -61,7 +62,7 @@ function occasionFromQuery() {
 }
 
 export function ProjectCreateScreen() {
-  const { dict } = useI18n();
+  const { dict, locale } = useI18n();
   const countries = useAsync(getCountries, []);
   /**
    * Находка Б-2 аудита: признак `siteTutorial` выключен у LITE, с
@@ -168,6 +169,9 @@ export function ProjectCreateScreen() {
             ? { customOccasionText: customOccasionText.trim() }
             : {}),
           recipientName: recipientName.trim(),
+          // Этап C (§3.8): язык поздравления по умолчанию — язык
+          // интерфейса автора; поменять его можно в брифе мастера.
+          scriptLanguage: locale,
           ...(senderName.trim() ? { senderName: senderName.trim() } : {}),
           tone,
           ...(personalMessage.trim()
@@ -423,7 +427,9 @@ export function ProjectCreateScreen() {
                       id="greeting-custom-occasion"
                       value={customOccasionText}
                       onChange={(e) =>
-                        setCustomOccasionText(e.target.value.slice(0, 120))
+                        setCustomOccasionText(
+                          e.target.value.slice(0, MAX_CUSTOM_OCCASION_LENGTH)
+                        )
                       }
                       placeholder={
                         dict.greetingVideoWizard.customOccasionPlaceholder

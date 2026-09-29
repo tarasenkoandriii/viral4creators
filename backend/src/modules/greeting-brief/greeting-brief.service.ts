@@ -12,28 +12,38 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanService } from '../plan/plan.service';
 import { resolveGreetingConfig } from '../project/greeting-config';
 import { UpdateGreetingBriefDto } from '../project/dto/update-greeting-brief.dto';
+import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
 import {
-  allowedTonesFor,
-  toneAllowedFor,
-} from '../../common/greeting-occasions';
+  resolveBriefRegister,
+  toneAllowedForRegister,
+  toneRefusal,
+} from '../../common/greeting-policy';
 import {
   GreetingBriefView,
   GreetingOccasion,
   GreetingPresenterProvider,
+  GreetingRegister,
+  GreetingRegisterSource,
   GreetingResolution,
   GreetingTone,
 } from '../../common/types/greeting.types';
+import { GreetingRegisterClassifier } from './greeting-register-classifier.service';
+import { SupportedLocale, isSupportedLocale } from '../../common/locale';
 
 interface GreetingBriefRow {
   id: string;
   projectId: string;
   occasion: GreetingOccasion;
   customOccasionText: string | null;
+  occasionRegister?: GreetingRegister | null;
+  registerSource?: string | null;
+  scriptLanguage?: string | null;
   recipientName: string;
   senderName: string | null;
   tone: GreetingTone;
@@ -46,11 +56,50 @@ interface GreetingBriefRow {
   updatedAt: Date;
 }
 
+/** База правки: строка брифа или снимок сессии, приведённый к ней. */
+export interface BriefBase {
+  occasion: GreetingOccasion;
+  customOccasionText: string | null;
+  occasionRegister?: GreetingRegister | null;
+  registerSource?: string | null;
+  scriptLanguage?: string | null;
+  recipientName: string;
+  senderName: string | null;
+  tone: GreetingTone;
+  personalMessage: string | null;
+  presenterProvider: string;
+  resolution: string;
+  occasionDate: Date | null;
+}
+
+/** Проверенный итог правки — полный набор редактируемых полей. */
+export interface ResolvedBriefFields {
+  occasion: GreetingOccasion;
+  customOccasionText: string | null;
+  occasionRegister: GreetingRegister | null;
+  registerSource: GreetingRegisterSource | null;
+  scriptLanguage: SupportedLocale | null;
+  recipientName: string;
+  senderName: string | null;
+  tone: GreetingTone;
+  personalMessage: string | null;
+  presenterProvider: GreetingPresenterProvider;
+  resolution: GreetingResolution;
+  occasionDate: Date | null;
+}
+
 @Injectable()
 export class GreetingBriefService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly plans: PlanService,
+    /**
+     * Этап B: третий сигнал регистра «Особого повода». Необязательный —
+     * без него (юнит-тесты, стенд без ключа Gemini) остаются выбор
+     * человека и ключевые слова, и результат всё равно безопасный.
+     */
+    @Optional()
+    private readonly registerClassifier?: GreetingRegisterClassifier,
   ) {}
 
   async getBrief(
@@ -75,7 +124,51 @@ export class GreetingBriefService {
     dto: UpdateGreetingBriefDto,
   ): Promise<GreetingBriefView> {
     const current = await this.findOwnBrief(userId, projectId);
+    const next = await this.resolveNext(userId, current, dto);
+    const row: GreetingBriefRow = await this.prisma.greetingBrief.update({
+      where: { id: current.id },
+      data: {
+        ...next,
+        ...(dto.brandManifestId !== undefined
+          ? { brandManifestId: dto.brandManifestId }
+          : {}),
+      },
+    });
+    return toGreetingBriefView(row);
+  }
 
+  /**
+   * Этап C (§3.6): правка из сессии пишет итог и в бриф проекта — следующая
+   * сессия этого проекта начнётся уже с исправленного, а не с того, что
+   * было до правки. `next` уже проверен `resolveNext`.
+   */
+  async writeResolved(
+    userId: string,
+    projectId: string,
+    next: ResolvedBriefFields,
+  ): Promise<void> {
+    const current = await this.findOwnBrief(userId, projectId);
+    await this.prisma.greetingBrief.update({
+      where: { id: current.id },
+      data: { ...next },
+    });
+  }
+
+  /**
+   * Вся проверка правки брифа — одна на оба пути: `PATCH
+   * /projects/:id/greeting-brief` (база — строка брифа) и `PATCH
+   * /sessions/:id/greeting-brief` (база — снимок сессии, этап C). Две
+   * копии проверки однажды разошлись бы, и путь, который забыли
+   * обновить, пропустил бы шутливое соболезнование.
+   *
+   * Возвращает ПОЛНЫЙ набор полей, а не только изменённые: сессия
+   * собирает из него снимок, проект — строку.
+   */
+  async resolveNext(
+    userId: string,
+    current: BriefBase,
+    dto: UpdateGreetingBriefDto,
+  ): Promise<ResolvedBriefFields> {
     const occasion = dto.occasion ?? current.occasion;
     const customOccasionText =
       dto.customOccasionText !== undefined
@@ -103,12 +196,58 @@ export class GreetingBriefService {
      * 3 компаньон-ТЗ, тот же, по которому `resolveGreetingConfig`
      * отвечает 403 вместо подмены hedra на grok.
      */
+    /**
+     * Этап B (ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md
+     * §3.4): у «Особого повода» набор тонов зависит от регистра, а регистр
+     * — от выбора человека, ключевых слов и классификатора, и итог — самый
+     * строгий из них.
+     *
+     * Прошлый ответ классификатора переиспользуется, только если он
+     * ТОГДА ПОБЕДИЛ (`registerSource === 'classifier'`) и описание повода
+     * с тех пор не менялось. Во всех остальных случаях — а это обычный
+     * случай: классификатор согласился с базовым регистром и потому не
+     * записан — он зовётся заново, и повторное сохранение брифа стоит
+     * ещё одного короткого вызова модели.
+     *
+     * Так и задумано. Отличить «классификатор ответил, но не поднял
+     * регистр» от «классификатор не ответил вовсе» негде: победивший
+     * сигнал хранится, проигравший — нет. Если считать оба за «уже
+     * спрашивали», один сбой Gemini навсегда выключил бы третий сигнал
+     * для этого брифа — ошибка в сторону праздника, ровно та, ради
+     * которой этап B и написан. Лишний вызов дешевле.
+     */
+    const textChanged =
+      occasion !== current.occasion ||
+      customOccasionText !== current.customOccasionText;
+    const currentSource = (current.registerSource ??
+      null) as GreetingRegisterSource | null;
+    const userRegister =
+      dto.occasionRegister !== undefined
+        ? dto.occasionRegister
+        : currentSource === 'user'
+          ? (current.occasionRegister ?? null)
+          : null;
+    const reg = await resolveBriefRegister(
+      {
+        occasion,
+        customOccasionText,
+        userRegister,
+        knownClassifier:
+          !textChanged && currentSource === 'classifier'
+            ? (current.occasionRegister ?? null)
+            : null,
+      },
+      this.registerClassifier
+        ? (text) => this.registerClassifier!.classify(text, userId)
+        : undefined,
+    );
+    const register =
+      reg.occasionRegister ?? GREETING_OCCASION_SPECS[occasion].register;
+
     const tone = dto.tone ?? current.tone;
-    if (!toneAllowedFor(occasion, tone)) {
+    if (!toneAllowedForRegister(occasion, register, tone)) {
       throw new BadRequestException(
-        `Тон ${tone} недопустим для повода ${occasion}. Допустимые: ${allowedTonesFor(
-          occasion,
-        ).join(', ')}.`,
+        toneRefusal(occasion, register, tone, reg.keyword),
       );
     }
 
@@ -133,38 +272,41 @@ export class GreetingBriefService {
       resolution = resolved.resolution;
     }
 
-    const row: GreetingBriefRow = await this.prisma.greetingBrief.update({
-      where: { id: current.id },
-      data: {
-        occasion,
-        customOccasionText,
-        ...(dto.recipientName !== undefined
-          ? { recipientName: dto.recipientName.trim() }
-          : {}),
-        ...(dto.senderName !== undefined
-          ? { senderName: dto.senderName?.trim() || null }
-          : {}),
-        // `tone`, а не `dto.tone`: в базу уходит ровно то значение,
-        // которое прошло проверку пары выше.
-        tone,
-        ...(dto.personalMessage !== undefined
-          ? { personalMessage: dto.personalMessage?.trim() || null }
-          : {}),
-        presenterProvider,
-        resolution,
-        ...(dto.brandManifestId !== undefined
-          ? { brandManifestId: dto.brandManifestId }
-          : {}),
-        ...(dto.occasionDate !== undefined
-          ? {
-              occasionDate: dto.occasionDate
-                ? new Date(dto.occasionDate)
-                : null,
-            }
-          : {}),
-      },
-    });
-    return toGreetingBriefView(row);
+    return {
+      occasion,
+      customOccasionText,
+      occasionRegister: reg.occasionRegister,
+      registerSource: reg.registerSource,
+      scriptLanguage:
+        dto.scriptLanguage !== undefined
+          ? dto.scriptLanguage
+          : isSupportedLocale(current.scriptLanguage)
+            ? current.scriptLanguage
+            : null,
+      recipientName:
+        dto.recipientName !== undefined
+          ? dto.recipientName.trim()
+          : current.recipientName,
+      senderName:
+        dto.senderName !== undefined
+          ? dto.senderName?.trim() || null
+          : current.senderName,
+      // `tone`, а не `dto.tone`: в базу уходит ровно то значение,
+      // которое прошло проверку пары выше.
+      tone,
+      personalMessage:
+        dto.personalMessage !== undefined
+          ? dto.personalMessage?.trim() || null
+          : current.personalMessage,
+      presenterProvider,
+      resolution,
+      occasionDate:
+        dto.occasionDate !== undefined
+          ? dto.occasionDate
+            ? new Date(dto.occasionDate)
+            : null
+          : current.occasionDate,
+    };
   }
 
   private async findOwnBrief(
@@ -209,6 +351,12 @@ export function toGreetingBriefView(row: GreetingBriefRow): GreetingBriefView {
     projectId: row.projectId,
     occasion: row.occasion,
     customOccasionText: row.customOccasionText,
+    occasionRegister: row.occasionRegister ?? null,
+    registerSource:
+      (row.registerSource as GreetingRegisterSource | null | undefined) ?? null,
+    scriptLanguage: isSupportedLocale(row.scriptLanguage)
+      ? row.scriptLanguage
+      : null,
     recipientName: row.recipientName,
     senderName: row.senderName,
     tone: row.tone,

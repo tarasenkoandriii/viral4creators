@@ -137,3 +137,29 @@ describe('готовность по сессии', () => {
     expect(r.items.find((i) => i.key === 'prompt')?.done).toBe(false);
   });
 });
+
+describe('подпись поздравления после закрытия брифа (Г-3)', () => {
+  const senderDone = (brief: Record<string, unknown>) =>
+    readinessOfSession(greeting({ brief })).items.find(
+      (i) => i.key === 'sender',
+    )?.done;
+
+  it('«от кого» в брифе — подписано', () => {
+    expect(senderDone({})).toBe(true);
+  });
+
+  it('без «от кого», но с закрывающей карточкой — тоже подписано', () => {
+    // Бриф после старта сессии закрыт, и единственный способ подписаться
+    // из интерфейса — закрывающая карточка. Не считать её значило бы
+    // держать пункт, который нельзя закрыть.
+    expect(senderDone({ senderName: null, cards: { closing: 'Андрей' } })).toBe(
+      true,
+    );
+  });
+
+  it('пустые строки подписью не считаются', () => {
+    expect(senderDone({ senderName: '  ', cards: { closing: ' ' } })).toBe(
+      false,
+    );
+  });
+});

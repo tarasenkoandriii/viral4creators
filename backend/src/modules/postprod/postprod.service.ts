@@ -28,6 +28,10 @@
  *    способ понять, что композиция поехала или голос лёг не туда.
  */
 
+import {
+  scriptLanguageOf,
+  speechLanguage,
+} from '../../common/greeting-language';
 import { Injectable, Logger } from '@nestjs/common';
 import { BlobService } from '../storage/blob.service';
 import { SessionService } from '../../common/session.service';
@@ -1280,7 +1284,14 @@ export class PostProductionService {
       // `resolveVoiceoverLanguage` сама использует как один из шагов.
       language: session?.productInformation
         ? resolveVoiceoverLanguage(session.productInformation).language
-        : (detectLanguage(speech) ?? 'en'),
+        : session?.greetingBriefSnapshot
+          ? // Этап C ТЗ Greeting 2.0 (§3.8): у поздравления язык выбран
+            // в брифе — он и уходит в синтез; буквы — только страховка.
+            speechLanguage(
+              scriptLanguageOf(session.greetingBriefSnapshot, session.locale),
+              speech,
+            )
+          : (detectLanguage(speech) ?? 'en'),
     };
   }
 

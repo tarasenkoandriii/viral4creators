@@ -1,7 +1,14 @@
 import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
 import {
+  isFestiveRegister,
+  presenterExpression,
+  registerOfBrief,
+  sceneMoodFor,
+} from '../../common/greeting-policy';
+import {
   GreetingOccasion,
   GreetingPresenterProvider,
+  GreetingRegister,
   GreetingTone,
 } from '../../common/types/greeting.types';
 
@@ -48,12 +55,18 @@ import {
 export function buildGreetingFramePrompt(input: {
   occasion: GreetingOccasion;
   customOccasionText: string | null;
+  /** Регистр «Особого повода» (этап B); у каталожных игнорируется. */
+  occasionRegister?: GreetingRegister | null;
   tone: GreetingTone;
   presenter: GreetingPresenterProvider;
   /** Выбранный сеттинг (фича №36). Пусто — сцена из каталога поводов. */
   setting?: string | null;
 }): string {
   const spec = GREETING_OCCASION_SPECS[input.occasion];
+  // Этап B: сцена, лицо и запрет праздничной атрибутики — от РЕГИСТРА, а
+  // не от `festive` каталога. Для OTHER это главное: раньше «Особый
+  // повод» считался праздничным всегда (Г-1 ТЗ).
+  const register = registerOfBrief(input);
   const occasionText =
     input.occasion === 'OTHER' && input.customOccasionText?.trim()
       ? input.customOccasionText.trim()
@@ -67,8 +80,8 @@ export function buildGreetingFramePrompt(input: {
     // дописывается к ней (фича №36): две сцены в одном промпте —
     // «bright festive decor» и «snowy balcony at night» — модель
     // сводит в кашу, а не выбирает лучшую.
-    `Scene: ${input.setting?.trim() || spec.sceneMood}.`,
-    `Mood of the person on camera: ${TONE_LOOK[input.tone]}.`,
+    `Scene: ${input.setting?.trim() || sceneMoodFor(input.occasion, register)}.`,
+    `Mood of the person on camera: ${presenterExpression(input.occasion, register, input.tone)}.`,
     PRESENTER_LOOK[input.presenter],
     'Vertical or horizontal framing is acceptable; keep the subject centred',
     'with room around the head so the frame works as a video start.',
@@ -77,7 +90,7 @@ export function buildGreetingFramePrompt(input: {
     'Do not render any text, letters, numbers, captions or watermarks.',
     'Do not include any recognisable real person or celebrity.',
   ];
-  if (!spec.festive) {
+  if (!isFestiveRegister(register)) {
     lines.push(
       'This is NOT a celebration: no balloons, no confetti, no cake, no gifts,',
       'no party decorations of any kind.',
@@ -87,17 +100,10 @@ export function buildGreetingFramePrompt(input: {
 }
 
 /**
- * Как тон выглядит НА ЛИЦЕ. Отдельно от `GREETING_TONE_LABELS`: те
- * подписи русские и описывают речь («с юмором, но уважительно») —
- * в промпт изображения они не годятся ни языком, ни смыслом.
+ * Как тон выглядит на лице — теперь `presenterExpression` в
+ * `common/greeting-policy.ts`: одна таблица на кадр и видео, и зависит
+ * она не только от тона, но и от регистра повода (этап B).
  */
-const TONE_LOOK: Readonly<Record<GreetingTone, string>> = {
-  WARM: 'warm, genuine smile; relaxed and friendly',
-  FUNNY: 'playful, light-hearted expression; a hint of mischief, never mocking',
-  FORMAL: 'composed, polite, professional expression',
-  SUPPORTIVE: 'calm, kind, attentive expression; gentle, not cheerful',
-  RESPECTFUL: 'serious, respectful, quiet expression; no smile',
-};
 
 /**
  * Кто в кадре. `grok` — единственный путь, ради которого фича и

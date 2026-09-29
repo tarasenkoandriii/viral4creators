@@ -56,18 +56,21 @@
  *    message — a real cross-ratio re-render path for this project type is
  *    future work, not implemented here.
  *
- *  - 'hedra': NOT wired to a public endpoint here. Reading
- *    `common/plans.ts` and `actors.controller.ts` shows the Hedra/Resemble
- *    pipeline (`ActorsService.generateAvatarVideo`) is a deliberate,
- *    documented ADMIN-ONLY pilot — `avatarLipsync` is `false` on every
- *    plan today, and its only controller is `admin/actors`, guarded by
- *    `AdminSessionGuard`, specifically because it isn't considered ready
- *    for real users yet (see that controller's doc-comment). §5.3's claim
- *    that GREETING_VIDEO can call it "exactly as today" for PREMIUM users
- *    would silently reverse that safety decision. `startHedraVideo` below
- *    exists so the API shape is complete, but it refuses with a clear,
- *    honest error until a product decision reopens that pilot to real
- *    traffic — see the audit's top finding for the two ways to close this.
+ *  - 'hedra': говорящий аватар, ветка PREMIUM — РЕАЛИЗОВАНА
+ *    (`startHedraVideo`/`pollHedraVideo` ниже). Раньше здесь было написано,
+ *    что ветка не подключена и честно отказывает: это было верно до решения
+ *    владельца продукта от 23.09.2026 (вариант A ветки H плана
+ *    docs-tz/AUDIT-Greeting-Landing-And-Upgrade-Plan.md) и перестало быть
+ *    верным после него. Сейчас: признак тарифа `avatarLipsync` (только
+ *    PREMIUM) проверяется у денег, поштучная суточная квота —
+ *    `common/avatar-quota.ts`, озвучка синтезируется ДО вызова Hedra и
+ *    помечается `speechBakedIn`. Портретом служит первый референс сессии —
+ *    известное слабое место (Г-7 ТЗ
+ *    docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md), закрывается
+ *    выбором образа в Фазе 1Б.
+ *
+ *    Юридический периметр аватара (согласие изображённого, маркировка ИИ)
+ *    решением 23.09 не закрыт — см. тот же план, ветка H.
  */
 
 import {
@@ -103,12 +106,21 @@ import {
   normalizeSceneCount,
   withStoryboard,
 } from '../../common/greeting-scenes';
+import {
+  REGISTER_POLICY,
+  evaluateGreetingPolicy,
+  policyMessage,
+  registerOfBrief,
+} from '../../common/greeting-policy';
 import { normalizeVoiceMode, usesOwnVoice } from '../../common/voice-mode';
 import { HedraClientService } from '../actors/hedra-client.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { speakableText } from '../../common/voiceover-script';
 import { hedraResolution } from '../../common/hedra-resolution';
-import { detectLanguage } from '../../common/voiceover';
+import {
+  scriptLanguageOf,
+  speechLanguage,
+} from '../../common/greeting-language';
 import {
   AVATAR_OPERATIONS,
   avatarQuotaExhausted,
@@ -195,15 +207,44 @@ export class GreetingVideoService {
     // осознанно обойти флаг (как `approvePrompt()`'s FLAGGED → BYPASSED у
     // SINGLE/LINE) — без этой проверки флаг был бы записан в БД, но ничто
     // ниже по конвейеру на него бы не посмотрело, и видео всё равно бы
-    // сгенерировалось. Пользователь сам решает, что делать дальше:
-    // отредактировать текст поздравления (`personalMessage`/
-    // `customOccasionText`) на шаге брифа и заново собрать сценарий.
+    // сгенерировалось.
+    //
+    // Совет в тексте отказа — «исправить текст»: с этапа C ТЗ
+    // docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md (§3.6) текст
+    // правится прямо в сессии (`PATCH /sessions/:id/greeting-script`,
+    // `PATCH /sessions/:id/greeting-brief`). На этапе A, пока правка до
+    // сессии не доходила, здесь честно советовали создать новое
+    // поздравление.
     if (!done('scriptClean')) {
       throw new BadRequestException(
         'Текст сценария не прошёл автоматическую проверку контента ' +
           `(${(session.generationPrompt.moderationFlags ?? []).join(', ') || 'без деталей'}). ` +
-          'Измените текст поздравления или повод на шаге брифа и соберите сценарий заново.',
+          'Исправьте текст на шаге «Сценарий» и сохраните его заново.',
       );
+    }
+
+    // Этап B, §3.1 ТЗ: весь набор правил ролика ещё раз — у денег, до
+    // списания кредита. Каждое правило проверяется и при записи, но
+    // снимок мог быть собран до того, как правило вступило в силу, или
+    // поле мог записать путь, который проверки не знает. Тот же довод,
+    // по которому тарифный гейт аватара стоит здесь, а не только у выбора.
+    const verdict = evaluateGreetingPolicy({
+      occasion: brief.occasion,
+      occasionRegister: brief.occasionRegister ?? null,
+      tone: brief.tone,
+      sticker: !!brief.sticker,
+      music: brief.musicTheme
+        ? {
+            source: brief.musicTheme.source ?? 'catalog',
+            // `undefined` у снимков до этапа B — «неизвестно», и такая
+            // тема не блокируется задним числом (см. `catalogThemeAllowed`).
+            occasions: brief.musicTheme.occasions,
+          }
+        : null,
+      sceneCount: normalizeSceneCount(brief.sceneCount ?? 1),
+    });
+    if (!verdict.ok) {
+      throw new BadRequestException(policyMessage(verdict));
     }
 
     const inFlight = session.generatedVideo;
@@ -255,6 +296,7 @@ export class GreetingVideoService {
           session.greetingReferenceImages ?? [],
           session.userId ?? null,
           attemptId,
+          session.locale,
         );
       }
       return await this.startGrokVideo(
@@ -324,6 +366,8 @@ export class GreetingVideoService {
     userId: string | null,
     /** Ключ попытки из `startVideo` — им же оплачен кредит (этап 132). */
     generatedVideoId: string,
+    /** Язык интерфейса сессии — запасной язык озвучки (этап C, §3.8). */
+    sessionLocale?: string | null,
   ): Promise<GeneratedVideo> {
     // Тарифный гейт. `resolveGreetingConfig` уже не пропустил бы бриф с
     // 'hedra' ниже PREMIUM, но бриф мог быть сохранён давно, а тариф с
@@ -383,7 +427,12 @@ export class GreetingVideoService {
       // Синтез до платного вызова Hedra: если голос не выйдет, мы не
       // заплатим за аватар, которому нечего говорить. Тот же довод, по
       // которому пилот проверяет ключ Hedra ДО обращения к Resemble.
-      const voice = await this.synthesizeAvatarSpeech(sessionId, brief, speech);
+      const voice = await this.synthesizeAvatarSpeech(
+        sessionId,
+        brief,
+        speech,
+        sessionLocale,
+      );
 
       const resolution = brief.resolvedResolution;
       const aspectRatio = '9:16';
@@ -447,12 +496,15 @@ export class GreetingVideoService {
     sessionId: string,
     brief: GreetingBriefSnapshot,
     speech: string,
+    sessionLocale?: string | null,
   ): Promise<{ url: string; patch: Partial<GeneratedVideo> }> {
     const tts = await this.ttsResolver.resolve();
     const outcome = await tts.synthesize({
       text: speech,
       voiceId: brief.senderVoice?.resembleVoiceId ?? null,
-      language: detectLanguage(speech) ?? 'en',
+      // Этап C (§3.8): язык поздравления — явно; буквы текста решают,
+      // только если спорят с ним (см. `speechLanguage`).
+      language: speechLanguage(scriptLanguageOf(brief, sessionLocale), speech),
     });
     if (!outcome.ok) {
       throw new BadRequestException(
@@ -662,6 +714,9 @@ export class GreetingVideoService {
       basePrompt,
       normalizeSceneCount(brief.sceneCount ?? 1),
       GREETING_VIDEO_DURATION_SECONDS,
+      // Этап B: ракурсы по регистру — без улыбки и «жеста прощания» там,
+      // где повод не праздник (Г-2 ТЗ).
+      REGISTER_POLICY[registerOfBrief(brief)].beats,
     );
 
     try {

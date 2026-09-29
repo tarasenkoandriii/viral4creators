@@ -51,6 +51,15 @@ export type GreetingOccasion =
   | 'CONDOLENCE'
   | 'OTHER';
 
+/**
+ * Потолок длины «своего» повода (`customOccasionText`). Зеркало
+ * `MAX_CUSTOM_OCCASION_LENGTH` бэкенда (`common/types/greeting.types.ts`):
+ * до этого визард резал текст до 120 символов, а DTO принимал 200 — два
+ * источника правды об одном лимите (Г-11 ТЗ
+ * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md).
+ */
+export const MAX_CUSTOM_OCCASION_LENGTH = 200;
+
 export const GREETING_OCCASIONS: readonly GreetingOccasion[] = [
   'BIRTHDAY',
   'WEDDING',
@@ -112,8 +121,13 @@ const GREETING_TONE_OVERRIDES: Partial<
 > = {
   DEFENDERS_DAY: ['WARM', 'FORMAL', 'RESPECTFUL'],
   BAPTISM: ['WARM', 'FORMAL', 'RESPECTFUL'],
-  APOLOGY: ['WARM', 'RESPECTFUL'],
-  GET_WELL: ['WARM', 'SUPPORTIVE'],
+  // Этап B: порядок = умолчание. Серьёзные поводы по умолчанию серьёзны,
+  // корпоративный — официален (docs-tz/TZ-Greeting-2.0-Adaptive-Persona-
+  // Landing.md §3.2). Сверяется с сервером тестом
+  // `backend/src/common/greeting-policy.spec.ts`.
+  CORPORATE: ['FORMAL', 'WARM', 'FUNNY'],
+  APOLOGY: ['RESPECTFUL', 'WARM'],
+  GET_WELL: ['SUPPORTIVE', 'WARM'],
   CONDOLENCE: ['RESPECTFUL', 'SUPPORTIVE'],
 };
 
@@ -144,11 +158,54 @@ export const GREETING_RESOLUTIONS: readonly GreetingResolution[] = [
 ];
 
 /** GET/PATCH /projects/:id/greeting-brief (§8 ТЗ). */
+/** Регистр повода — зеркало бэкенда (этап B, §3.2 ТЗ). Порядок = строгость. */
+export type GreetingRegister =
+  | 'CELEBRATORY'
+  | 'WARM_NEUTRAL'
+  | 'SOLEMN'
+  | 'SENSITIVE'
+  | 'MOURNING';
+
+/**
+ * Язык поздравления (этап C, §3.8 ТЗ Greeting 2.0) — те же пять кодов,
+ * что у интерфейса, но выбирается отдельно: язык получателя не обязан
+ * совпадать с языком автора.
+ */
+export type GreetingScriptLanguage = 'ru' | 'uk' | 'en' | 'de' | 'es';
+
+export const GREETING_SCRIPT_LANGUAGES: readonly GreetingScriptLanguage[] = [
+  'ru',
+  'uk',
+  'en',
+  'de',
+  'es',
+];
+
+/** Названия языков — на самих языках: так их узнаёт и получатель. */
+export const GREETING_SCRIPT_LANGUAGE_NAMES: Readonly<
+  Record<GreetingScriptLanguage, string>
+> = {
+  ru: 'Русский',
+  uk: 'Українська',
+  en: 'English',
+  de: 'Deutsch',
+  es: 'Español',
+};
+
 export interface GreetingBriefView {
   id: string;
   projectId: string;
   occasion: GreetingOccasion;
   customOccasionText: string | null;
+  /**
+   * Регистр «Особого повода» после всех проверок сервера (этап B). У
+   * каталожных поводов — `null`. Необязательное: интерфейс начнёт им
+   * пользоваться на этапе D, а до него поле просто приходит.
+   */
+  occasionRegister?: GreetingRegister | null;
+  registerSource?: 'user' | 'keywords' | 'classifier' | 'default' | null;
+  /** `null` — не выбран: текст пишется на языке интерфейса сессии. */
+  scriptLanguage?: GreetingScriptLanguage | null;
   recipientName: string;
   senderName: string | null;
   tone: GreetingTone;
@@ -165,6 +222,7 @@ export interface GreetingBriefView {
 export interface CreateGreetingBriefInput {
   occasion: GreetingOccasion;
   customOccasionText?: string;
+  scriptLanguage?: GreetingScriptLanguage;
   recipientName: string;
   senderName?: string;
   tone?: GreetingTone;
@@ -180,6 +238,7 @@ export interface CreateGreetingBriefInput {
 export interface UpdateGreetingBriefInput {
   occasion?: GreetingOccasion;
   customOccasionText?: string | null;
+  scriptLanguage?: GreetingScriptLanguage | null;
   recipientName?: string;
   senderName?: string | null;
   tone?: GreetingTone;
@@ -188,6 +247,35 @@ export interface UpdateGreetingBriefInput {
   resolution?: GreetingResolution;
   brandManifestId?: string | null;
   occasionDate?: string | null;
+}
+
+/** Что сбрасывается при смене регистра повода (этап C, §3.6). */
+export type GreetingResetField =
+  | 'sticker'
+  | 'musicTheme'
+  | 'sceneCount'
+  /** Фото, не скопировавшееся в новую версию сессии. */
+  | 'referenceImages';
+
+/** PATCH /sessions/:id/greeting-brief — ответ (этап C, §3.6). */
+export interface SessionBriefEditResult {
+  /** Та же сессия или новая версия, если ролик уже был готов. */
+  sessionId: string;
+  newVersion: boolean;
+  resetFields: GreetingResetField[];
+  /** Собранный сценарий стёрт — его нужно собрать заново. */
+  promptCleared: boolean;
+}
+
+/** PATCH /sessions/:id/greeting-script — ответ (этап C, §3.6). */
+export interface SessionScriptEditResult {
+  sessionId: string;
+  newVersion: boolean;
+  prompt: import('./index').GenerationPrompt;
+  /** Мягкое предупреждение §3.7: текст звучит празднично при трауре. */
+  registerMismatch: boolean;
+  /** То же по-русски — для прямых клиентов API; интерфейс берёт словарь. */
+  registerWarning: string | null;
 }
 
 /**
@@ -317,6 +405,8 @@ export interface GreetingStickerView {
   selected: GreetingStickerSelection | null;
   /** Поиск не настроен на стенде — секция говорит об этом честно. */
   configured: boolean;
+  /** Этап B: разрешены ли наклейки регистру повода. Нет поля — да. */
+  allowed?: boolean;
 }
 
 export const STICKER_PLACEMENTS = [

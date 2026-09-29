@@ -9,6 +9,8 @@
  * `ProjectType` above for the risk of these two sources of truth diverging.
  */
 
+import type { SupportedLocale } from '../locale';
+
 /**
  * Этап 2 (фича №1 компаньон-ТЗ): семь поводов стали двадцатью четырьмя.
  * Порядок в `GREETING_OCCASIONS` — это порядок выпадающего списка в
@@ -45,6 +47,14 @@ export type GreetingOccasion =
   | 'CONDOLENCE'
   | 'OTHER';
 
+/**
+ * Потолок длины «своего» повода (`customOccasionText`) — одна константа
+ * для обоих DTO (создание и правка брифа). Фронтенд держит зеркало с тем
+ * же именем в `frontend/src/types/project.ts`; раньше там стояло 120,
+ * здесь 200 (Г-11 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md).
+ */
+export const MAX_CUSTOM_OCCASION_LENGTH = 200;
+
 export const GREETING_OCCASIONS: readonly GreetingOccasion[] = [
   'BIRTHDAY',
   'WEDDING',
@@ -71,6 +81,37 @@ export const GREETING_OCCASIONS: readonly GreetingOccasion[] = [
   'CONDOLENCE',
   'OTHER',
 ];
+
+/**
+ * Регистр повода — его класс по настроению (этап B ТЗ
+ * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.2).
+ *
+ * Зеркало Prisma-енума `GreetingRegister`. Порядок в
+ * `GREETING_REGISTERS` — порядок СТРОГОСТИ, от праздничного к
+ * траурному, и он значим: проверки «Особого повода» могут только поднять
+ * регистр по этому списку, но никогда не опустить (`stricterRegister`).
+ */
+export type GreetingRegister =
+  | 'CELEBRATORY'
+  | 'WARM_NEUTRAL'
+  | 'SOLEMN'
+  | 'SENSITIVE'
+  | 'MOURNING';
+
+export const GREETING_REGISTERS: readonly GreetingRegister[] = [
+  'CELEBRATORY',
+  'WARM_NEUTRAL',
+  'SOLEMN',
+  'SENSITIVE',
+  'MOURNING',
+];
+
+/** Откуда взялся регистр «Особого повода». */
+export type GreetingRegisterSource =
+  | 'user'
+  | 'keywords'
+  | 'classifier'
+  | 'default';
 
 /**
  * Этап 2 (фича №3): два новых тона для чувствительных поводов. Не
@@ -133,6 +174,21 @@ export interface GreetingBriefSnapshot {
 
   occasion: GreetingOccasion;
   customOccasionText: string | null;
+  /**
+   * Регистр «Особого повода» (этап B). Только у OTHER; у поводов из
+   * каталога регистр задаёт каталог, и это поле `null`. Необязательное —
+   * снимки, сделанные до этапа B, его не несут и читаются как «тёплый
+   * нейтральный» (`registerOfBrief`), то есть строже прежнего
+   * «праздничного по умолчанию».
+   */
+  occasionRegister?: GreetingRegister | null;
+  registerSource?: GreetingRegisterSource | null;
+  /**
+   * Язык поздравления (этап C, §3.8). Необязательное: снимки до этапа C
+   * его не несут и читаются по языку интерфейса сессии
+   * (`scriptLanguageOf`), как и раньше фактически происходило.
+   */
+  scriptLanguage?: SupportedLocale | null;
   recipientName: string;
   senderName: string | null;
   tone: GreetingTone;
@@ -307,6 +363,14 @@ export interface GreetingMusicSelection {
    * появления загрузки.
    */
   source?: 'catalog' | 'upload' | 'link' | 'library';
+  /**
+   * Поводы темы каталога на момент выбора (этап B) — копия
+   * `GreetingMusicTheme.occasions`: `null` — тема «для любого повода».
+   * Нужна проверке перед рендером (`evaluateGreetingPolicy`), которая
+   * каталога не читает. Нет поля — снимок до этапа B: проверка такую
+   * тему пропускает, а не блокирует задним числом.
+   */
+  occasions?: GreetingOccasion[] | null;
   /** Путь в хранилище — только у загруженных, для уборки. */
   pathname?: string;
   /** Когда пользователь подтвердил права на этот файл. */
@@ -365,6 +429,8 @@ export interface GreetingStickerView {
   selected: GreetingStickerSelection | null;
   /** Поиск не настроен на стенде — экран скажет об этом честно. */
   configured: boolean;
+  /** Этап B: разрешены ли наклейки регистру повода (§3.3 ТЗ). */
+  allowed?: boolean;
 }
 
 /** Выбор музыкальной темы — то, что видит экран мастера. */
@@ -430,6 +496,11 @@ export interface GreetingBriefView {
   projectId: string;
   occasion: GreetingOccasion;
   customOccasionText: string | null;
+  /** Регистр «Особого повода» после всех проверок (§3.4); у каталожных — `null`. */
+  occasionRegister: GreetingRegister | null;
+  registerSource: GreetingRegisterSource | null;
+  /** Язык поздравления; `null` — не выбран, берётся язык интерфейса. */
+  scriptLanguage: SupportedLocale | null;
   recipientName: string;
   senderName: string | null;
   tone: GreetingTone;

@@ -43,6 +43,12 @@ import {
   stickerSearchParams,
 } from './pixabay-stickers';
 import { normalizeStickerPlacement } from '../../common/sticker-overlay';
+import {
+  REGISTER_POLICY,
+  evaluateGreetingPolicy,
+  policyMessage,
+  registerOfBrief,
+} from '../../common/greeting-policy';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 const PIXABAY_API = 'https://pixabay.com/api/';
@@ -89,6 +95,9 @@ export class GreetingStickerService {
       })),
       selected: snapshot.sticker ?? null,
       configured,
+      // Этап B: у торжественного, деликатного и траурного регистров
+      // наклеек нет вовсе — экран скажет об этом, а не покажет поиск.
+      allowed: REGISTER_POLICY[registerOfBrief(snapshot)].stickers,
     };
   }
 
@@ -107,6 +116,22 @@ export class GreetingStickerService {
   ): Promise<GreetingStickerView> {
     const session = await this.load(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
+    // Этап B (Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
+    // проверка ДО поиска и скачивания — отказ не должен стоить запроса к
+    // Pixabay. Свободный поиск настроением не ограничить, поэтому у
+    // серьёзных регистров наклеек нет совсем, а не «только уместные».
+    if (!REGISTER_POLICY[registerOfBrief(snapshot)].stickers) {
+      throw new BadRequestException(
+        policyMessage(
+          evaluateGreetingPolicy({
+            occasion: snapshot.occasion,
+            occasionRegister: snapshot.occasionRegister ?? null,
+            tone: snapshot.tone,
+            sticker: true,
+          }),
+        ),
+      );
+    }
     if (!this.apiKey) {
       throw new BadRequestException(
         'Поиск наклеек не настроен на этом стенде (PIXABAY_API_KEY)',

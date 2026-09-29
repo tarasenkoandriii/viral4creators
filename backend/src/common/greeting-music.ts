@@ -27,7 +27,10 @@ import {
   GREETING_OCCASIONS,
   GreetingMusicTheme,
   GreetingOccasion,
+  GreetingRegister,
 } from './types/greeting.types';
+import { GREETING_OCCASION_SPECS } from './greeting-occasions';
+import { catalogThemeAllowed } from './greeting-policy';
 
 import type { GreetingMusicSelection } from './types/greeting.types';
 
@@ -166,13 +169,24 @@ export function parseMusicCatalog(raw: string | null): GreetingMusicTheme[] {
   return out;
 }
 
-/** Темы, подходящие поводу: общие плюс перечислившие его явно. */
+/**
+ * Темы, подходящие поводу: перечислившие его явно плюс общие — но общие
+ * только там, где регистр повода это допускает.
+ *
+ * Этап B ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md (Г-2):
+ * раньше тема с `occasions: null` подходила любому поводу, включая
+ * соболезнование, — и праздничная подложка, заведённая в каталоге «для
+ * всех», доезжала до траурного ролика. Теперь для торжественного,
+ * деликатного и траурного регистров годятся только темы, где повод
+ * указан явно (`catalogThemeAllowed`).
+ */
 export function themesForOccasion(
   catalog: readonly GreetingMusicTheme[],
   occasion: GreetingOccasion,
+  register: GreetingRegister = GREETING_OCCASION_SPECS[occasion].register,
 ): GreetingMusicTheme[] {
-  return catalog.filter(
-    (t) => t.occasions === null || t.occasions.includes(occasion),
+  return catalog.filter((t) =>
+    catalogThemeAllowed(occasion, register, t.occasions),
   );
 }
 
@@ -187,10 +201,11 @@ export function findThemeForOccasion(
   catalog: readonly GreetingMusicTheme[],
   occasion: GreetingOccasion,
   id: string,
+  register: GreetingRegister = GREETING_OCCASION_SPECS[occasion].register,
 ): GreetingMusicTheme | null {
   const wanted = id.trim().toLowerCase();
   return (
-    themesForOccasion(catalog, occasion).find(
+    themesForOccasion(catalog, occasion, register).find(
       (t) => t.id.toLowerCase() === wanted,
     ) ?? null
   );

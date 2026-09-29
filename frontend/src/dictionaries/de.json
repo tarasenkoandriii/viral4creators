@@ -1692,7 +1692,24 @@
       "SUPPORTIVE": "Unterstützend",
       "RESPECTFUL": "Respektvoll, zurückhaltend"
     },
-    "referencesLockedHint": "Das Skript steht bereits, Fotos wirken sich nicht mehr darauf aus. Zum Ändern das Skript neu erstellen."
+    "referencesLockedHint": "Das Skript steht bereits, Fotos wirken sich nicht mehr darauf aus. Zum Ändern das Skript neu erstellen.",
+    "briefSessionHint": "Änderungen fließen in die laufende Erstellung ein. Ist das Video schon fertig, entsteht eine neue Version, und das fertige bleibt unverändert.",
+    "scriptLanguageLabel": "Sprache des Grußes",
+    "scriptLanguageHint": "In dieser Sprache wird der Text geschrieben und vertont. Sie kann von der App-Sprache abweichen.",
+    "manifestSessionHint": "Die Marke lässt sich nach dem Start nicht mehr ändern.",
+    "savedResetPrefix": "Zurückgesetzt, weil es nicht zum neuen Anlass passt:",
+    "resetFieldSticker": "Sticker",
+    "resetFieldMusic": "Musik",
+    "resetFieldScenes": "Anzahl der Szenen",
+    "resetFieldPhotos": "Fotos",
+    "promptClearedNote": "Anlass, Ton oder Text haben sich geändert — erstellen Sie das Skript neu.",
+    "newVersionNote": "Das Video war bereits fertig, daher gingen die Änderungen in eine neue Version. Das fertige Video bleibt erhalten.",
+    "editScriptLabel": "Text der Nachricht",
+    "editScriptHint": "Sie können die Formulierung anpassen — Szene und Vertonung werden gemeinsam aktualisiert.",
+    "saveScriptButton": "Text speichern",
+    "scriptSavedNote": "Text gespeichert.",
+    "scriptRegisterWarning": "Der Text klingt festlich, der Anlass passt aber nicht dazu. So lassen oder anpassen?",
+    "scriptFlaggedNote": "Der Text hat die automatische Prüfung nicht bestanden. Korrigieren Sie ihn vor dem Start des Videos."
   },
   "wizardGuide": {
     "title": "KI-Tipp",

@@ -355,7 +355,7 @@
         },
         {
           "title": "Revisa el guion",
-          "text": "El servicio escribe un texto corto según la ocasión y el tono. Se ve entero y se puede editar a mano antes de generar."
+          "text": "El servicio escribe un texto corto según la ocasión y el tono. Se ve entero y puedes corregirlo a mano antes de generar."
         },
         {
           "title": "Recibe el video",
@@ -402,7 +402,7 @@
         },
         {
           "question": "¿En qué idioma será la felicitación?",
-          "answer": "El texto lo escribe el servicio en ruso. La interfaz está en cinco idiomas, pero el guion de la felicitación se genera por ahora solo en ruso: si necesitas otro idioma, escribe tu propio texto en el paso del guion y pasará al video tal cual."
+          "answer": "En el que elijas: español, inglés, alemán, ucraniano o ruso. Por defecto es el idioma de la app, pero el idioma de la felicitación se elige aparte: en él el servicio escribe y locuta el texto."
         },
         {
           "question": "¿Qué pasa con las fotos y el nombre del destinatario?",
@@ -414,11 +414,11 @@
         },
         {
           "question": "¿Y si no me gusta el resultado?",
-          "answer": "Puedes editar el guion antes de generar y volver a generar el video. Ahora mismo todos los planes son gratuitos, así que volver a generar no cuesta nada."
+          "answer": "Puedes corregir el guion o pedir que se reescriba antes de generar, y volver a generar el video. Si el video ya está listo, un cambio crea una nueva versión y el terminado se conserva. Ahora mismo todos los planes son gratuitos, así que volver a generar no cuesta nada."
         },
         {
           "question": "¿Puedo grabar algo que no sea una felicitación?",
-          "answer": "Sí. Además de las fiestas hay una disculpa, palabras de apoyo para alguien enfermo y un pésame. Para esos el servicio escribe de otra forma, no felicita y no ofrece tono humorístico."
+          "answer": "Sí. Además de las fiestas hay una disculpa, palabras de apoyo para alguien enfermo y un pésame. Para esos el servicio escribe de otra forma y no felicita, y el tono humorístico y la música festiva del catálogo no están disponibles. Si describes tu propia ocasión, por ejemplo un funeral, el servicio también la trata como duelo."
         }
       ]
     },

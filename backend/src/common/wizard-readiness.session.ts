@@ -29,6 +29,8 @@ export interface ReadinessSession {
     presenterProvider?: string;
     /** Провайдер после тарифного резолвера — по нему и рендерит сервис. */
     resolvedPresenterProvider?: string;
+    /** Карточки ролика: закрывающая подпись тоже подписывает поздравление. */
+    cards?: { closing?: string | null } | null;
   } | null;
   /** Референс-кадры поздравления лежат в самой сессии. */
   greetingReferenceImages?: unknown[] | null;
@@ -53,7 +55,15 @@ export function readinessOfSession(session: ReadinessSession): Readiness {
       occasion: brief.occasion ?? '',
       customOccasionText: brief.customOccasionText ?? null,
       recipientName: brief.recipientName ?? '',
-      senderName: brief.senderName ?? null,
+      // Подпись — это либо «от кого» из брифа, либо закрывающая карточка.
+      // Обе правятся после старта сессии: бриф — через `PATCH
+      // /sessions/:id/greeting-brief` (этап C ТЗ
+      // docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md, §3.6), карточка
+      // — в любой момент до рендера. Карточка засчитывается потому, что
+      // подпись в ней и есть подпись: требовать ещё и «от кого» значило бы
+      // просить подписаться дважды.
+      senderName:
+        brief.senderName?.trim() || brief.cards?.closing?.trim() || null,
       // РАЗРЕШЁННЫЙ провайдер, а не выбранный: тариф мог понизиться
       // после сохранения брифа, и рендерить будет именно резолвер —
       // требовать лицо по выбору значило бы просить фото там, где

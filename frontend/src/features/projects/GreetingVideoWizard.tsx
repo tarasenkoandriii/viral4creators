@@ -95,6 +95,8 @@ import {
   startGreetingVideo,
   updateGreetingBrief,
   updateGreetingReference,
+  updateGreetingScript,
+  updateSessionGreetingBrief,
   uploadGreetingReference,
 } from '../../services/greeting-api';
 import { SketchSlotActions } from '../sketch/SketchSlotActions';
@@ -104,6 +106,7 @@ import { ReadinessPanel } from '../../components/ReadinessPanel';
 import { HintLine } from '../../components/HintLine';
 import { useWizardEvents } from '../../lib/useWizardEvents';
 import { toStepsView } from '../../lib/wizard-steps';
+import { changedBriefFields } from '../../lib/greeting-brief-diff';
 import {
   greetingAnchorId,
   greetingFactsOf,
@@ -122,6 +125,9 @@ import { MyVoicesSection } from '../brand/VoicePicker';
 import {
   GREETING_OCCASIONS,
   GREETING_RESOLUTIONS,
+  GREETING_SCRIPT_LANGUAGES,
+  GREETING_SCRIPT_LANGUAGE_NAMES,
+  MAX_CUSTOM_OCCASION_LENGTH,
   allowedTonesFor,
   defaultToneFor,
 } from '../../types/project';
@@ -135,14 +141,19 @@ import type {
   GreetingCardsView,
   GreetingMusicView,
   GreetingResolution,
+  GreetingResetField,
   GreetingScenesView,
+  GreetingScriptLanguage,
+  SessionBriefEditResult,
+  SessionScriptEditResult,
+  UpdateGreetingBriefInput,
   GreetingStickerView,
   GreetingTone,
   GreetingVoiceView,
   GrokPresetVoice,
 } from '../../types/project';
 import type { GeneratedVideo, GenerationPrompt, PlanId } from '../../types';
-import { GenerationStatus } from '../../types';
+import { GenerationStatus, ModerationStatus } from '../../types';
 
 const REFERENCE_PHOTO_MIME = ['image/png', 'image/jpeg'];
 const REFERENCE_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
@@ -161,6 +172,13 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
   const [prompt, setPrompt] = useState<GenerationPrompt | undefined>();
   const [video, setVideo] = useState<GeneratedVideo | undefined>();
   const [readiness, setReadiness] = useState<Readiness | null>(null);
+  /**
+   * Этап C: правка брифа после старта может сбросить наклейку, музыку и
+   * число сцен или увести в новую версию сессии. Шаги ниже читают своё
+   * состояние сами при монтировании — счётчик в `key` перемонтирует их,
+   * чтобы экран не показывал уже сброшенное.
+   */
+  const [revision, setRevision] = useState(0);
   /** Чекбокс «использовать ИИ» (§3). `null` — ещё не спросили. */
   const [guide, setGuide] = useState<WizardGuideState | null>(null);
   const track = useWizardEvents(projectId);
@@ -251,6 +269,26 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
       </div>
     );
   }
+
+  /**
+   * После правки из сессии (этап C, §3.6): сессия могла смениться на
+   * новую версию, сценарий — стереться. Всё перечитывается с сервера, а
+   * не собирается из ответа по кусочкам: так экран не может разойтись с
+   * тем, что реально лежит в сессии.
+   */
+  const afterSessionEdit = async (nextSessionId: string): Promise<void> => {
+    setSessionId(nextSessionId);
+    const [full, b, ready] = await Promise.all([
+      getSession(nextSessionId).catch(() => null),
+      getGreetingBrief(projectId).catch(() => null),
+      getSessionReadiness(nextSessionId).catch(() => null),
+    ]);
+    setPrompt(full?.generationPrompt);
+    setVideo(full?.generatedVideo);
+    if (b) setBrief(b);
+    if (ready) setReadiness(ready);
+    setRevision((r) => r + 1);
+  };
 
   const toggleGuide = async (next: boolean): Promise<void> => {
     if (!next && !window.confirm(dict.wizardGuide.disableConfirm)) return;
@@ -366,8 +404,9 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
           brief={brief}
           manifests={manifests}
           plan={plan}
-          hasSession={!!sessionId}
+          sessionId={sessionId}
           onSaved={setBrief}
+          onSessionEdited={(r) => afterSessionEdit(r.sessionId)}
           onStartSession={async () => {
             const session = await createGreetingSession(projectId);
             setSessionId(session.sessionId);
@@ -387,7 +426,11 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
               {w.referencesLockedHint}
             </Alert>
           )}
-          <ReferencesStep sessionId={sessionId} disabled={!!prompt} />
+          <ReferencesStep
+            key={`${sessionId}:${revision}`}
+            sessionId={sessionId}
+            disabled={!!prompt}
+          />
         </div>
       )}
 
@@ -396,27 +439,53 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
           <ScriptStep
             sessionId={sessionId}
             prompt={prompt}
+            videoDone={video?.status === GenerationStatus.COMPLETE}
             onGenerated={(p) => {
               setPrompt(p);
+              void getSessionReadiness(sessionId).then(setReadiness);
+            }}
+            onEdited={(r) => {
+              if (r.newVersion) {
+                void afterSessionEdit(r.sessionId);
+                return;
+              }
+              setPrompt(r.prompt);
               void getSessionReadiness(sessionId).then(setReadiness);
             }}
           />
         </div>
       )}
 
-      {sessionId && prompt && <SenderVoiceStep sessionId={sessionId} />}
+      {sessionId && prompt && (
+        <SenderVoiceStep
+          key={`${sessionId}:${revision}`}
+          sessionId={sessionId}
+        />
+      )}
 
-      {sessionId && prompt && <MusicThemeStep sessionId={sessionId} />}
+      {sessionId && prompt && (
+        <MusicThemeStep
+          key={`${sessionId}:${revision}`}
+          sessionId={sessionId}
+        />
+      )}
 
-      {sessionId && prompt && <CardsStep sessionId={sessionId} />}
+      {sessionId && prompt && (
+        <CardsStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
+      )}
 
-      {sessionId && prompt && <StickerStep sessionId={sessionId} />}
+      {sessionId && prompt && (
+        <StickerStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
+      )}
 
-      {sessionId && prompt && <ScenesStep sessionId={sessionId} />}
+      {sessionId && prompt && (
+        <ScenesStep key={`${sessionId}:${revision}`} sessionId={sessionId} />
+      )}
 
       {sessionId && prompt && (
         <div id={greetingAnchorId('video')}>
           <VideoStep
+            key={sessionId}
             sessionId={sessionId}
             video={video}
             onVideo={(v) => {
@@ -434,23 +503,48 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
 
 // ── Шаг 1: бриф ──────────────────────────────────────────────────────────
 
+function resetFieldLabel(
+  w: {
+    resetFieldSticker: string;
+    resetFieldMusic: string;
+    resetFieldScenes: string;
+    resetFieldPhotos: string;
+  },
+  field: GreetingResetField
+): string {
+  switch (field) {
+    case 'referenceImages':
+      return w.resetFieldPhotos;
+    case 'sticker':
+      return w.resetFieldSticker;
+    case 'musicTheme':
+      return w.resetFieldMusic;
+    case 'sceneCount':
+      return w.resetFieldScenes;
+  }
+}
+
 function BriefStep({
   brief,
   manifests,
   plan,
-  hasSession,
+  sessionId,
   onSaved,
+  onSessionEdited,
   onStartSession,
 }: {
   brief: GreetingBriefView;
   manifests: BrandManifestSummaryView[];
   plan: PlanId;
-  hasSession: boolean;
+  /** Есть — правка идёт в сессию (этап C, §3.6), нет — в бриф проекта. */
+  sessionId: string | null;
   onSaved: (brief: GreetingBriefView) => void;
+  onSessionEdited: (result: SessionBriefEditResult) => Promise<void>;
   onStartSession: () => Promise<void>;
 }) {
-  const { dict } = useI18n();
+  const { dict, locale } = useI18n();
   const w = dict.greetingVideoWizard;
+  const hasSession = !!sessionId;
 
   const [occasion, setOccasion] = useState<GreetingOccasion>(brief.occasion);
   const [customOccasionText, setCustomOccasionText] = useState(
@@ -471,6 +565,14 @@ function BriefStep({
     brief.brandManifestId ?? ''
   );
   const [occasionDate, setOccasionDate] = useState(brief.occasionDate ?? '');
+  // Этап C (§3.8): по умолчанию — язык интерфейса автора.
+  const [scriptLanguage, setScriptLanguage] = useState<GreetingScriptLanguage>(
+    brief.scriptLanguage ?? locale
+  );
+  /** Что показать рядом с «Сохранено» после правки из сессии. */
+  const [editResult, setEditResult] = useState<SessionBriefEditResult | null>(
+    null
+  );
 
   const [saving, setSaving] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -481,26 +583,54 @@ function BriefStep({
     recipientName.trim().length > 0 &&
     (occasion !== 'OTHER' || customOccasionText.trim().length > 0);
 
+  const fieldsNow = () => ({
+    occasion: occasion as string,
+    customOccasionText: occasion === 'OTHER' ? customOccasionText.trim() : null,
+    scriptLanguage: scriptLanguage as string,
+    recipientName: recipientName.trim(),
+    senderName: senderName.trim() || null,
+    tone: tone as string,
+    personalMessage: personalMessage.trim() || null,
+    presenterProvider: presenterProvider as string,
+    resolution: resolution as string,
+    occasionDate: occasionDate || null,
+  });
+  /** Что было на экране при открытии или после последнего сохранения. */
+  const baseline = useRef<ReturnType<typeof fieldsNow> | null>(null);
+  if (!baseline.current) baseline.current = fieldsNow();
+
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
     setError(null);
     setSaved(false);
+    setEditResult(null);
+    const fields = fieldsNow();
     try {
-      const updated = await updateGreetingBrief(brief.projectId, {
-        occasion,
-        customOccasionText:
-          occasion === 'OTHER' ? customOccasionText.trim() : null,
-        recipientName: recipientName.trim(),
-        senderName: senderName.trim() || null,
-        tone,
-        personalMessage: personalMessage.trim() || null,
-        presenterProvider,
-        resolution,
-        brandManifestId: brandManifestId || null,
-        occasionDate: occasionDate || null,
-      });
-      onSaved(updated);
+      if (sessionId) {
+        // Этап C (§3.6): после старта правка идёт в СЕССИЮ — сервер
+        // обновит и её снимок, и бриф проекта. Раньше здесь был бриф
+        // проекта, до сессии правка не доходила (Г-3), и этап A закрыл
+        // поля целиком. Уходят только изменённые поля — почему, см.
+        // `lib/greeting-brief-diff.ts`.
+        const result = await updateSessionGreetingBrief(
+          sessionId,
+          changedBriefFields(
+            baseline.current!,
+            fields
+          ) as UpdateGreetingBriefInput
+        );
+        baseline.current = fields;
+        setEditResult(result);
+        await onSessionEdited(result);
+      } else {
+        const updated = await updateGreetingBrief(brief.projectId, {
+          ...(fields as UpdateGreetingBriefInput),
+          brandManifestId: brandManifestId || null,
+        });
+        baseline.current = fields;
+        onSaved(updated);
+      }
       setSaved(true);
     } catch (e) {
       setError(errorMessage(e));
@@ -544,7 +674,6 @@ function BriefStep({
                 setTone(defaultToneFor(next));
               }
             }}
-            disabled={hasSession}
           >
             {GREETING_OCCASIONS.map((o) => (
               <option key={o} value={o}>
@@ -559,10 +688,11 @@ function BriefStep({
             <Input
               value={customOccasionText}
               onChange={(e) =>
-                setCustomOccasionText(e.target.value.slice(0, 120))
+                setCustomOccasionText(
+                  e.target.value.slice(0, MAX_CUSTOM_OCCASION_LENGTH)
+                )
               }
               placeholder={w.customOccasionPlaceholder}
-              disabled={hasSession}
             />
           </Field>
         )}
@@ -572,7 +702,6 @@ function BriefStep({
             value={recipientName}
             onChange={(e) => setRecipientName(e.target.value.slice(0, 120))}
             placeholder={w.recipientNamePlaceholder}
-            disabled={hasSession}
           />
         </Field>
 
@@ -611,12 +740,26 @@ function BriefStep({
           />
         </Field>
 
+        <Field label={w.scriptLanguageLabel} hint={w.scriptLanguageHint}>
+          <Select
+            value={scriptLanguage}
+            onChange={(e) =>
+              setScriptLanguage(e.target.value as GreetingScriptLanguage)
+            }
+          >
+            {GREETING_SCRIPT_LANGUAGES.map((l) => (
+              <option key={l} value={l}>
+                {GREETING_SCRIPT_LANGUAGE_NAMES[l]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
         <div>
           <span className="label">{w.presenterProviderLabel}</span>
           <Pills
             value={presenterProvider}
             onChange={setPresenterProvider}
-            disabled={hasSession}
             options={[
               { value: 'grok', label: w.providerGrok },
               {
@@ -645,7 +788,6 @@ function BriefStep({
             onChange={(e) =>
               setResolution(e.target.value as GreetingResolution)
             }
-            disabled={hasSession}
           >
             {GREETING_RESOLUTIONS.map((r) => (
               <option key={r} value={r}>
@@ -663,7 +805,10 @@ function BriefStep({
           />
         </Field>
 
-        <Field label={w.manifestLabel}>
+        <Field
+          label={w.manifestLabel}
+          hint={hasSession ? w.manifestSessionHint : undefined}
+        >
           <Select
             value={brandManifestId}
             onChange={(e) => setBrandManifestId(e.target.value)}
@@ -683,8 +828,29 @@ function BriefStep({
           <Alert tone="success">
             <Check size={14} className="inline mr-1" />
             {w.editSubmitButton}
+            {/* Этап C (§3.6): молча ничего не пропадает — сброшенное
+                называется рядом с «Сохранено». */}
+            {editResult && editResult.resetFields.length > 0 && (
+              <span className="block">
+                {w.savedResetPrefix}{' '}
+                {editResult.resetFields
+                  .map((f) => resetFieldLabel(w, f))
+                  .join(', ')}
+              </span>
+            )}
+            {editResult?.promptCleared && (
+              <span className="block">{w.promptClearedNote}</span>
+            )}
+            {editResult?.newVersion && (
+              <span className="block">{w.newVersionNote}</span>
+            )}
           </Alert>
         )}
+
+        {/* Этап C ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md
+            (§3.6) снял временную блокировку этапа A: правка после старта
+            идёт в сессию через `PATCH /sessions/:id/greeting-brief`. */}
+        {hasSession && <Alert tone="info">{w.briefSessionHint}</Alert>}
 
         <div className="flex gap-2">
           <Button
@@ -1226,15 +1392,55 @@ function ScriptStep({
   sessionId,
   prompt,
   onGenerated,
+  onEdited,
+  videoDone,
 }: {
   sessionId: string;
   prompt: GenerationPrompt | undefined;
   onGenerated: (p: GenerationPrompt) => void;
+  onEdited: (r: SessionScriptEditResult) => void;
+  /**
+   * Ролик готов — «Пересобрать» скрыта: сценарий готового ролика на
+   * месте не переписывается (сервер ответил бы 409). Правка текста при
+   * этом доступна — она заводит новую версию.
+   */
+  videoDone: boolean;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Этап C (§3.6 п.3): текст сообщения правится здесь же. Уходит только
+   * реплика — сцену сервер пересобирает из неё сам, поэтому сцена и
+   * озвучка не расходятся (Г-4).
+   */
+  const current = prompt?.finalVoiceoverScript ?? prompt?.voiceoverScript ?? '';
+  const [text, setText] = useState(current);
+  const [savingText, setSavingText] = useState(false);
+  const [savedText, setSavedText] = useState(false);
+  const [warning, setWarning] = useState(false);
+  useEffect(() => {
+    setText(current);
+  }, [current]);
+
+  const saveText = async () => {
+    setSavingText(true);
+    setError(null);
+    setSavedText(false);
+    setWarning(false);
+    try {
+      const r = await updateGreetingScript(sessionId, text.trim());
+      // Своё переведённое предупреждение, а не русская строка сервера.
+      setWarning(r.registerMismatch);
+      setSavedText(true);
+      onEdited(r);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSavingText(false);
+    }
+  };
 
   const generate = async () => {
     setLoading(true);
@@ -1254,18 +1460,55 @@ function ScriptStep({
       {error && <Alert tone="error">{error}</Alert>}
       {prompt ? (
         <div className="space-y-3">
-          <p className="whitespace-pre-wrap rounded-xl border border-silver-200/70 p-3 text-sm dark:border-silver-800">
-            {prompt.voiceoverScript || prompt.finalText}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<RefreshCw size={14} />}
-            loading={loading}
-            onClick={() => void generate()}
+          <Field
+            label={w.editScriptLabel}
+            hint={w.editScriptHint}
+            counter={`${text.length}/2000`}
           >
-            {w.regenerateScriptButton}
-          </Button>
+            <Textarea
+              rows={4}
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value.slice(0, 2000));
+                setSavedText(false);
+              }}
+            />
+          </Field>
+          {prompt.moderationStatus === ModerationStatus.FLAGGED && (
+            <Alert tone="error">{w.scriptFlaggedNote}</Alert>
+          )}
+          {warning && <Alert tone="warning">{w.scriptRegisterWarning}</Alert>}
+          {savedText && !warning && (
+            <Alert tone="success">
+              <Check size={14} className="inline mr-1" />
+              {w.scriptSavedNote}
+            </Alert>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              icon={<Pencil size={14} />}
+              loading={savingText}
+              disabled={
+                !text.trim() || text.trim() === current.trim() || loading
+              }
+              onClick={() => void saveText()}
+            >
+              {w.saveScriptButton}
+            </Button>
+            {!videoDone && (
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<RefreshCw size={14} />}
+                loading={loading}
+                disabled={savingText}
+                onClick={() => void generate()}
+              >
+                {w.regenerateScriptButton}
+              </Button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="space-y-3">
@@ -1564,6 +1807,12 @@ function StickerStep({ sessionId }: { sessionId: string }) {
 
   if (!view) return null;
   if (!view.configured && !view.selected) return null;
+  // Этап B: у торжественных, деликатных и траурных поводов наклеек нет
+  // (сервер откажет в выборе). Прятать молча — временно: объяснение
+  // вместо секции появится с адаптивным блоком этапа D. Уже выбранную
+  // раньше наклейку показываем — её нужно иметь возможность снять.
+  const stickersAllowed = view.allowed !== false;
+  if (!stickersAllowed && !view.selected) return null;
 
   const placementLabels: Record<string, string> = {
     'top-left': w.stickerTopLeft,
@@ -1630,7 +1879,7 @@ function StickerStep({ sessionId }: { sessionId: string }) {
         </div>
       )}
 
-      {view.configured && (
+      {view.configured && stickersAllowed && (
         <>
           <div className="flex flex-wrap items-center gap-2">
             <Input

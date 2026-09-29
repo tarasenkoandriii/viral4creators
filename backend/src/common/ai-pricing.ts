@@ -266,7 +266,11 @@ export type AiOperation =
   // вызов, в отличие от 'greeting-frame' рядом. Отдельно именно
   // поэтому: смешав их в одной строке, нельзя ответить на вопрос
   // «сколько стоит кадр», ради которого обе строки и заведены.
-  | 'greeting-setting';
+  | 'greeting-setting'
+  /** Классификатор регистра «Особого повода» (этап B ТЗ
+   * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.4) — один
+   * короткий текстовый вызов при сохранении брифа. */
+  | 'greeting-register';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -313,6 +317,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'virtual-studio-analysis': 'Виртуальная студия: ИИ-анализ',
   'greeting-frame': 'Референс-кадр поздравления',
   'greeting-setting': 'Варианты сеттинга для кадра',
+  'greeting-register': 'Настроение «особого повода»',
 };
 
 export interface ModelRate {

@@ -92,6 +92,11 @@ function parseGeminiApiError(error: unknown): {
 /**
  * PromptService generates and manages text-to-video prompts
  */
+/** Отказ общей правки промпта для сессии-поздравления (этап C, §3.6 п.4). */
+export const GREETING_PROMPT_PATCH_REFUSAL =
+  'У поздравления текст правится на шаге «Сценарий» (PATCH /sessions/:id/greeting-script): ' +
+  'так сцена и озвучка меняются вместе.';
+
 @Injectable()
 export class PromptService {
   private readonly logger = new Logger(PromptService.name);
@@ -768,6 +773,16 @@ Please respond with a valid JSON object only, with one key "variants": an array 
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
       throw new BadRequestException(SESSION_NOT_FOUND);
+    }
+
+    // Этап C ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md
+    // §3.6 п.4 (Г-4): у поздравления промпт сцены и текст озвучки —
+    // одна реплика в двух видах (`buildSceneDescription` вставляет
+    // `speech` внутрь сцены). Общая правка меняла бы их по отдельности, и
+    // ведущий в кадре говорил бы одно, а озвучка — другое. Правильный путь
+    // пересобирает оба вместе.
+    if (session.greetingBriefSnapshot) {
+      throw new BadRequestException(GREETING_PROMPT_PATCH_REFUSAL);
     }
 
     if (!session.generationPrompt) {

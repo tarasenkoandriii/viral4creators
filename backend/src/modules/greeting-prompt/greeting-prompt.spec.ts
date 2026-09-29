@@ -262,3 +262,86 @@ describe('buildSceneDescription — пресетный голос xAI', () => {
     expect(scene).toContain('<IMAGE_1> — Марина');
   });
 });
+
+/**
+ * Этап B (Г-1, Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
+ * «Особый повод» с трауром больше не собирается как праздник — ни в
+ * сцене видео, ни в запросе текста.
+ */
+describe('регистр «Особого повода» в промптах (этап B)', () => {
+  const mourning = brief({
+    occasion: 'OTHER',
+    customOccasionText: 'похороны бабушки',
+    occasionRegister: 'MOURNING',
+    tone: 'RESPECTFUL',
+  });
+
+  it('сцена: без улыбки и без праздничных декораций', () => {
+    const scene = buildSceneDescription(
+      mourning,
+      'похороны бабушки',
+      'Марина, мы рядом.',
+      [],
+      'voiceover',
+    );
+    expect(scene).not.toMatch(/smiling/);
+    expect(scene).toMatch(/no smile/);
+    expect(scene).not.toMatch(/festive decor/);
+    expect(scene).toMatch(/no confetti/);
+  });
+
+  it('праздничная сцена больше не «smiling» по умолчанию, но улыбается по тону', () => {
+    const scene = buildSceneDescription(
+      brief(),
+      'день рождения',
+      'Марина, с днём рождения!',
+      [],
+      'voiceover',
+    );
+    expect(scene).toMatch(/smile/);
+  });
+
+  it('запрос текста получает траурный замысел', () => {
+    const prompt = buildScriptPrompt(mourning, 'похороны бабушки');
+    expect(prompt).toMatch(/ТРАУРНЫЙ повод/);
+    expect(prompt).toMatch(/[Нн]е поздравляй/);
+  });
+
+  it('у каталожного повода замысел регистра не дублируется', () => {
+    const prompt = buildScriptPrompt(
+      brief({ occasion: 'CONDOLENCE', tone: 'RESPECTFUL' }),
+      'соболезнование',
+    );
+    expect(prompt).not.toMatch(/ТРАУРНЫЙ повод/);
+  });
+});
+
+describe('язык поздравления в запросе (этап C, §3.8)', () => {
+  it('по умолчанию — русский, как до этапа C', () => {
+    expect(buildScriptPrompt(brief(), 'повод')).toContain(
+      'на русском языке (Russian)',
+    );
+  });
+
+  it('язык из брифа уходит в запрос явным названием', () => {
+    const p = buildScriptPrompt(brief({ scriptLanguage: 'uk' }), 'повод');
+    expect(p).toContain('на украинском языке (Ukrainian)');
+    expect(p).not.toContain('на русском языке');
+  });
+
+  /**
+   * Подписи повода и тона — по-русски. Без отдельной строки модель
+   * отвечала на языке подписей, а не на выбранном.
+   */
+  it('для нерусского языка отдельно требует писать только на нём', () => {
+    const p = buildScriptPrompt(
+      brief({ scriptLanguage: 'es' }),
+      'День рождения',
+    );
+    expect(p).toContain('строго на испанском языке (Spanish)');
+  });
+
+  it('без языка в брифе берётся переданный язык интерфейса сессии', () => {
+    expect(buildScriptPrompt(brief(), 'повод', 'de')).toContain('German');
+  });
+});

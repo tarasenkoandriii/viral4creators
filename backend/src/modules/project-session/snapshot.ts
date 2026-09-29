@@ -15,6 +15,7 @@ import { SketchableRow, sketchRefFromRow } from '../../common/active-image';
 import { SketchRef } from '../../common/types/sketch.types';
 import { AudienceProfile } from '../../common/types/audience.types';
 import { findCountry } from '../../common/data/countries';
+import { isSupportedLocale } from '../../common/locale';
 import {
   BrandCharacterSnapshot,
   BrandManifestSnapshot,
@@ -25,6 +26,8 @@ import {
   GreetingBriefSnapshot,
   GreetingOccasion,
   GreetingPresenterProvider,
+  GreetingRegister,
+  GreetingRegisterSource,
   GreetingResolution,
   GreetingTone,
 } from '../../common/types/greeting.types';
@@ -255,6 +258,10 @@ export interface SnapshotGreetingBriefSource {
   id: string;
   occasion: GreetingOccasion;
   customOccasionText: string | null;
+  /** Этап B; необязательные — старые вызовы/фикстуры их не несут. */
+  occasionRegister?: GreetingRegister | null;
+  registerSource?: string | null;
+  scriptLanguage?: string | null;
   recipientName: string;
   senderName: string | null;
   tone: GreetingTone;
@@ -289,6 +296,16 @@ export function greetingBriefSnapshotFrom(
     sourceGreetingBriefId: brief.id,
     occasion: brief.occasion,
     customOccasionText: brief.customOccasionText,
+    // Этап B: регистр «Особого повода» — в снимок как есть; политика ролика
+    // читает его отсюда (`registerOfBrief`), а не из брифа.
+    occasionRegister: brief.occasionRegister ?? null,
+    registerSource:
+      (brief.registerSource as GreetingRegisterSource | null) ?? null,
+    // Этап C: язык поздравления — тоже в снимок; неизвестное значение из
+    // базы читается как «не выбран», а не протаскивается в промпт.
+    scriptLanguage: isSupportedLocale(brief.scriptLanguage)
+      ? brief.scriptLanguage
+      : null,
     recipientName: brief.recipientName,
     senderName: brief.senderName,
     tone: brief.tone,

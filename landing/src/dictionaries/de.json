@@ -355,7 +355,7 @@
         },
         {
           "title": "Das Skript prüfen",
-          "text": "Der Dienst schreibt einen kurzen Text passend zu Anlass und Ton. Er ist vollständig sichtbar und lässt sich vor dem Rendern von Hand ändern."
+          "text": "Der Dienst schreibt einen kurzen Text passend zu Anlass und Ton. Er ist vollständig sichtbar und lässt sich vor dem Rendern von Hand anpassen."
         },
         {
           "title": "Das Video erhalten",
@@ -402,7 +402,7 @@
         },
         {
           "question": "In welcher Sprache ist der Gruß?",
-          "answer": "Den Text schreibt der Dienst auf Russisch. Die Oberfläche gibt es in fünf Sprachen, das Grußskript selbst wird derzeit aber nur auf Russisch erzeugt — brauchen Sie eine andere Sprache, tragen Sie Ihren eigenen Text im Skript-Schritt ein, er geht unverändert ins Video."
+          "answer": "In der, die Sie wählen: Deutsch, Englisch, Spanisch, Ukrainisch oder Russisch. Standard ist die Sprache der Oberfläche, die Sprache des Grußes lässt sich aber separat wählen — in ihr schreibt und vertont der Dienst den Text."
         },
         {
           "question": "Was passiert mit den Fotos und dem Namen des Empfängers?",
@@ -414,11 +414,11 @@
         },
         {
           "question": "Und wenn mir das Ergebnis nicht gefällt?",
-          "answer": "Das Skript lässt sich vor dem Rendern ändern und das Video erneut erzeugen. Alle Tarife sind derzeit kostenlos, ein erneutes Rendern kostet also nichts."
+          "answer": "Sie können das Skript vor dem Rendern bearbeiten oder neu schreiben lassen und das Video erneut erzeugen. Ist das Video schon fertig, entsteht bei einer Änderung eine neue Version, und das fertige bleibt erhalten. Alle Tarife sind derzeit kostenlos, ein erneutes Rendern kostet also nichts."
         },
         {
           "question": "Kann ich etwas anderes als einen Gruß aufnehmen?",
-          "answer": "Ja. Neben den Feiertagen gibt es eine Entschuldigung, Worte der Unterstützung für jemanden, der krank ist, und ein Beileid. Dafür schreibt der Dienst anders, gratuliert nicht und bietet keinen scherzhaften Ton an."
+          "answer": "Ja. Neben den Feiertagen gibt es eine Entschuldigung, Worte der Unterstützung für jemanden, der krank ist, und ein Beileid. Dafür schreibt der Dienst anders und gratuliert nicht; scherzhafter Ton und festliche Katalogmusik sind nicht verfügbar. Beschreiben Sie einen eigenen Anlass, etwa eine Beerdigung, behandelt der Dienst auch ihn als Trauerfall."
         }
       ]
     },

@@ -20,7 +20,21 @@ describe('buildSettingsPrompt (№36)', () => {
   it('у соболезнования ЗАПРЕЩАЕТ праздничную атрибутику отдельной строкой', () => {
     const p = buildSettingsPrompt('CONDOLENCE', null, 'RESPECTFUL');
     expect(p).toContain('никаких шаров');
-    expect(p).toContain('сдержанное');
+    // Этап B: пять градаций вместо двух — соболезнование теперь прямо
+    // «траурное», а не общее «сдержанное».
+    expect(p).toContain('траурное');
+  });
+
+  it('«Особый повод» в траурном регистре тоже без праздника (этап B, Г-1)', () => {
+    const p = buildSettingsPrompt(
+      'OTHER',
+      'похороны бабушки',
+      'RESPECTFUL',
+      'MOURNING',
+    );
+    expect(p).toContain('траурное');
+    expect(p).toContain('никаких шаров');
+    expect(p).not.toContain('праздничное.');
   });
 
   it('свой повод подставляется вместо родовой подписи', () => {

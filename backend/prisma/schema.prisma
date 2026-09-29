@@ -655,6 +655,18 @@ enum GreetingTone {
   RESPECTFUL // уважительный, без праздничности — для CONDOLENCE/APOLOGY
 }
 
+/// Регистр повода — класс по настроению (этап B ТЗ
+/// docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.2). Порядок
+/// значений — порядок строгости. Хранится только для OTHER: у поводов
+/// каталога регистр задаёт код (common/greeting-occasions.ts).
+enum GreetingRegister {
+  CELEBRATORY
+  WARM_NEUTRAL
+  SOLEMN
+  SENSITIVE
+  MOURNING
+}
+
 /// Бриф поздравительного ролика — аналог ProductItem для GREETING_VIDEO-
 /// проектов, но 1:1 к Project (не список карточек, как ProductItem у
 /// LINE): один проект-поздравление = одно поздравление одному получателю
@@ -666,6 +678,17 @@ model GreetingBrief {
 
   occasion           GreetingOccasion
   customOccasionText String? // обязателен, если occasion = OTHER (валидация в DTO/сервисе, не в БД)
+
+  /// Регистр «Особого повода» после всех проверок (§3.4): самый строгий
+  /// из выбора человека, ключевых слов и классификатора. Только у OTHER.
+  occasionRegister GreetingRegister?
+  /// Кто определил регистр: 'user' | 'keywords' | 'classifier' | 'default'.
+  registerSource   String?
+
+  /// Язык поздравления (этап C, §3.8): ru | uk | en | de | es. NULL — не
+  /// выбран, текст пишется на языке интерфейса сессии. Язык получателя не
+  /// обязан совпадать с языком интерфейса автора.
+  scriptLanguage String?
 
   recipientName String // «Кому» — подставляется в промпт и в текст реплики
   senderName    String? // «От кого» — озвучивается в конце, если задано

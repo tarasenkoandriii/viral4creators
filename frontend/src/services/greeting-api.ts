@@ -26,6 +26,8 @@ import type {
   GreetingStickerView,
   GreetingVoiceView,
   GrokPresetVoice,
+  SessionBriefEditResult,
+  SessionScriptEditResult,
   UpdateGreetingBriefInput,
 } from '../types/project';
 import type { ItemSessionSummary } from './projects-api';
@@ -73,6 +75,24 @@ export async function updateGreetingBrief(
   return unwrap(
     await api.patch<GreetingBriefView>(
       `/projects/${projectId}/greeting-brief`,
+      input
+    ),
+    'greeting-brief'
+  );
+}
+
+/**
+ * PATCH /sessions/:id/greeting-brief — правка брифа ПОСЛЕ старта (этап C,
+ * §3.6 ТЗ Greeting 2.0). Доходит и до сессии, и до брифа проекта. Если
+ * ролик уже готов, сервер заводит новую версию сессии — её id в ответе.
+ */
+export async function updateSessionGreetingBrief(
+  sessionId: string,
+  input: Omit<UpdateGreetingBriefInput, 'brandManifestId'>
+): Promise<SessionBriefEditResult> {
+  return unwrap(
+    await api.patch<SessionBriefEditResult>(
+      `/sessions/${sessionId}/greeting-brief`,
       input
     ),
     'greeting-brief'
@@ -528,6 +548,24 @@ export async function generateGreetingPrompt(
   return unwrap(
     await api.post<GenerationPrompt>(`/sessions/${sessionId}/greeting-prompt`),
     'greeting-prompt'
+  );
+}
+
+/**
+ * PATCH /sessions/:id/greeting-script — правка текста сообщения (этап C,
+ * §3.6 п.3). Сцену сервер пересобирает сам: сцена и озвучка меняются
+ * только вместе.
+ */
+export async function updateGreetingScript(
+  sessionId: string,
+  speech: string
+): Promise<SessionScriptEditResult> {
+  return unwrap(
+    await api.patch<SessionScriptEditResult>(
+      `/sessions/${sessionId}/greeting-script`,
+      { speech }
+    ),
+    'greeting-script'
   );
 }
 

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ProjectController } from './project.controller';
 import { ProjectService } from './project.service';
 import { StorageModule } from '../storage/storage.module';
+import { GreetingBriefModule } from '../greeting-brief/greeting-brief.module';
 
 /**
  * ProjectModule — Project / ProductItem catalog
@@ -16,7 +17,9 @@ import { StorageModule } from '../storage/storage.module';
 @Module({
   // StorageModule — за BlobService: удаление товара/проекта убирает и фото
   // (doc/STORAGE-AUDIT.md, этап 26).
-  imports: [StorageModule],
+  // GreetingBriefModule — за классификатором регистра «Особого повода»
+  // (этап B ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.4).
+  imports: [StorageModule, GreetingBriefModule],
   controllers: [ProjectController],
   providers: [ProjectService],
   exports: [ProjectService],

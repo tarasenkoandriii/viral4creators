@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { GreetingCardsService } from './greeting-cards.service';
 import { MAX_CARD_TEXT_LENGTH } from '../../common/greeting-cards';
 import type { SessionService } from '../../common/session.service';
@@ -98,5 +98,17 @@ describe('GreetingCardsService (фичи №38/№39)', () => {
   it('не поздравительная сессия — 404', async () => {
     const { svc } = build(null);
     await expect(svc.get('s1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  /**
+   * Этап B (Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
+   * карточки вшиваются в файл и раньше модерацию не проходили вовсе.
+   */
+  it('карточка с запрещённым текстом отклоняется и не сохраняется', async () => {
+    const { svc, updateSession } = build();
+    await expect(
+      svc.update('s1', { title: 'порнография в кадре', closing: null }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(updateSession).not.toHaveBeenCalled();
   });
 });

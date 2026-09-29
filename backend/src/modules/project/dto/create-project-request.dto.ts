@@ -12,14 +12,19 @@ import {
 import type { ProjectType } from '../../../common/types/project.types';
 import type {
   GreetingOccasion,
+  GreetingRegister,
   GreetingPresenterProvider,
   GreetingResolution,
   GreetingTone,
 } from '../../../common/types/greeting.types';
 import {
   GREETING_OCCASIONS,
+  GREETING_REGISTERS,
+  MAX_CUSTOM_OCCASION_LENGTH,
   GREETING_TONES,
 } from '../../../common/types/greeting.types';
+import { SUPPORTED_LOCALES } from '../../../common/locale';
+import type { SupportedLocale } from '../../../common/locale';
 
 /**
  * POST /projects/:id/greeting-brief и вложенный `greetingBrief` в
@@ -41,8 +46,28 @@ export class CreateGreetingBriefDto {
 
   @ValidateIf((o: CreateGreetingBriefDto) => o.occasion === 'OTHER')
   @IsString()
-  @Length(1, 200)
+  @Length(1, MAX_CUSTOM_OCCASION_LENGTH)
   customOccasionText?: string;
+
+  /**
+   * Этап B (ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md
+   * §3.4): ответ человека на вопрос «какое это событие по настроению» —
+   * только для OTHER. Это ОДИН из трёх сигналов: сервер может поднять
+   * регистр ключевыми словами и классификатором, но не опустить.
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsIn([...GREETING_REGISTERS])
+  occasionRegister?: GreetingRegister | null;
+
+  /**
+   * Этап C (ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md
+   * §3.8): язык поздравления. Не обязан совпадать с языком интерфейса.
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsIn([...SUPPORTED_LOCALES])
+  scriptLanguage?: SupportedLocale | null;
 
   @IsString()
   @Length(1, 120, {

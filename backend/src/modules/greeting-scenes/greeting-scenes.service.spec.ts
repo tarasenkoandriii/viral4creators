@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { GreetingScenesService } from './greeting-scenes.service';
 import { MAX_GREETING_SCENES } from '../../common/greeting-scenes';
 import type { SessionService } from '../../common/session.service';
@@ -63,5 +63,30 @@ describe('GreetingScenesService (фича №7)', () => {
   it('не поздравительная сессия — 404', async () => {
     const { svc } = build(null);
     await expect(svc.get('s1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  /**
+   * Этап B (Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
+   * потолок сцен — по регистру повода. Траурному ролику нарезка из
+   * четырёх склеек не подходит; отказ, а не тихое урезание.
+   */
+  it('соболезнование: не больше двух сцен, и экран это знает', async () => {
+    const { svc } = build({ occasion: 'CONDOLENCE', tone: 'RESPECTFUL' });
+    expect((await svc.get('s1')).maxScenes).toBe(2);
+    expect((await svc.setCount('s1', 2)).sceneCount).toBe(2);
+    await expect(svc.setCount('s1', 3)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('«Особый повод» в траурном регистре — тот же потолок', async () => {
+    const { svc } = build({
+      occasion: 'OTHER',
+      occasionRegister: 'MOURNING',
+      tone: 'RESPECTFUL',
+    });
+    await expect(svc.setCount('s1', 4)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });

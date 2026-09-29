@@ -90,6 +90,51 @@ const BEATS: Record<number, string[]> = {
 };
 
 /**
+ * Раскадровка по регистру повода (этап B ТЗ
+ * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.9).
+ *
+ * `festive` — прежний набор, байт в байт: праздничный ролик собирается
+ * тем же промптом, что и до этапа B. Остальные наборы убирают из ракурсов
+ * улыбку и «жест прощания»: в трёхсценной раскадровке «a smile» стояло
+ * для всех поводов, включая соболезнование (Г-2 ТЗ). Потолок сцен по
+ * регистру задаёт `REGISTER_POLICY.maxScenes`; наборов длиннее потолка
+ * здесь нет — `buildStoryboard` тогда молча откатится на одну сцену, а
+ * отказ скажет политика.
+ */
+export type BeatStyle = 'festive' | 'neutral' | 'solemn' | 'calm';
+
+const BEATS_BY_STYLE: Record<BeatStyle, Record<number, string[]>> = {
+  festive: BEATS,
+  neutral: {
+    ...BEATS,
+    3: [
+      'a wider establishing shot — the presenter arrives into the moment',
+      'a medium shot — the heart of the message, closest to the viewer',
+      'a closing shot — a warm, simple gesture, the moment settling',
+    ],
+  },
+  solemn: {
+    1: [],
+    2: [
+      'open on the presenter, composed and direct, establishing the moment',
+      'a closer, still shot — the presenter finishes the thought with dignity',
+    ],
+    3: [
+      'a steady establishing shot — the presenter in a calm, dignified setting',
+      'a medium shot — the heart of the message, spoken with restraint',
+      'a closing shot — a respectful pause, the setting again',
+    ],
+  },
+  calm: {
+    1: [],
+    2: [
+      'open on the presenter, quiet and attentive, in a calm setting',
+      'a closer, still shot — the presenter finishes the thought gently; no smile, no gestures of celebration',
+    ],
+  },
+};
+
+/**
  * Блок раскадровки для промпта.
  *
  * Пустая строка при одной сцене — не мелочь: односценовый ролик обязан
@@ -99,9 +144,10 @@ const BEATS: Record<number, string[]> = {
 export function buildStoryboard(
   sceneCount: number,
   totalSeconds: number = GREETING_SCENE_SECONDS,
+  style: BeatStyle = 'festive',
 ): string {
   const n = normalizeSceneCount(sceneCount);
-  const beats = BEATS[n] ?? [];
+  const beats = BEATS_BY_STYLE[style][n] ?? [];
   if (beats.length < 2) return '';
   const durations = splitSceneDurations(totalSeconds, n);
   return [
@@ -116,7 +162,8 @@ export function withStoryboard(
   basePrompt: string,
   sceneCount: number,
   totalSeconds: number = GREETING_SCENE_SECONDS,
+  style: BeatStyle = 'festive',
 ): string {
-  const storyboard = buildStoryboard(sceneCount, totalSeconds);
+  const storyboard = buildStoryboard(sceneCount, totalSeconds, style);
   return storyboard ? `${basePrompt}\n${storyboard}` : basePrompt;
 }

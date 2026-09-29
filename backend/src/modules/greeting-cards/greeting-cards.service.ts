@@ -12,7 +12,12 @@
  * отправитель, глядя на предупреждение.
  */
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { findModerationFlags } from '../../common/text-moderation';
 import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import {
@@ -53,6 +58,19 @@ export class GreetingCardsService {
       title: clean(cards.title),
       closing: clean(cards.closing),
     };
+    // Этап B (Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
+    // карточки вшиваются в сам файл, а модерацию проходил только текст
+    // сценария. Тот же фильтр, что у сценария (`common/text-moderation.ts`),
+    // — и отказ сразу, а не флаг: у карточек нет экрана «одобрить всё
+    // равно», как нет его и у сценария поздравления.
+    const flags = findModerationFlags(
+      [next.title, next.closing].filter(Boolean).join('\n'),
+    );
+    if (flags.length) {
+      throw new BadRequestException(
+        `Текст карточки не прошёл автоматическую проверку (${flags.join(', ')}). Измените его.`,
+      );
+    }
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: { ...snapshot, cards: next },
     });

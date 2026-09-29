@@ -1692,7 +1692,24 @@
       "SUPPORTIVE": "Supportive",
       "RESPECTFUL": "Respectful, restrained"
     },
-    "referencesLockedHint": "The script is already built, so photos no longer affect it. To change them, build the script again."
+    "referencesLockedHint": "The script is already built, so photos no longer affect it. To change them, build the script again.",
+    "briefSessionHint": "Changes go into the current build. If the video is already finished, a new version is created and the finished one stays as it was.",
+    "scriptLanguageLabel": "Greeting language",
+    "scriptLanguageHint": "The text will be written and voiced in this language. It can differ from the app language.",
+    "manifestSessionHint": "The brand can't be changed once the build has started.",
+    "savedResetPrefix": "Reset because it doesn't suit the new occasion:",
+    "resetFieldSticker": "sticker",
+    "resetFieldMusic": "music",
+    "resetFieldScenes": "number of scenes",
+    "resetFieldPhotos": "photos",
+    "promptClearedNote": "The occasion, tone or text changed — build the script again.",
+    "newVersionNote": "The video was already finished, so your changes went into a new version. The finished video is kept.",
+    "editScriptLabel": "Message text",
+    "editScriptHint": "You can adjust the wording — the scene and the voice-over update together.",
+    "saveScriptButton": "Save text",
+    "scriptSavedNote": "Text saved.",
+    "scriptRegisterWarning": "The text sounds festive, but the occasion doesn't call for it. Keep it as is, or adjust it?",
+    "scriptFlaggedNote": "The text didn't pass the automatic check. Fix it before starting the video."
   },
   "wizardGuide": {
     "title": "AI tip",

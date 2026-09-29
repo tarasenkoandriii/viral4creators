@@ -2509,6 +2509,97 @@ function checkGuideSeams() {
     }
   }
 
+  /**
+   * Шов «порядок строгости регистров — один на три файла» (этап B ТЗ
+   * Greeting 2.0).
+   *
+   * `GREETING_REGISTERS` — не просто список значений, а ПОРЯДОК: вся
+   * защита «Особого повода» стоит на том, что сигнал может поднять
+   * регистр по этому списку и не может опустить (`stricterRegister`
+   * сравнивает `indexOf`). Тот же набор живёт ещё в двух местах, куда
+   * TypeScript не смотрит: enum в схеме Prisma и `CREATE TYPE` в
+   * миграции.
+   *
+   * Разойтись они могут молча и в опасную сторону. Значение, которое
+   * есть в базе и нет в списке, даёт `indexOf === -1`, то есть «мягче
+   * всех»: соболезнование прошло бы как праздник. А `REGISTER_POLICY`
+   * по такому ключу — `undefined`, и проверка перед рендером падает
+   * пятисоткой у самых денег.
+   */
+  const registerLists = [];
+  const schemaEnum = /enum GreetingRegister \{([^}]*)\}/.exec(
+    read("backend/prisma/schema.prisma"),
+  );
+  if (!schemaEnum) {
+    problems.push(
+      "backend/prisma/schema.prisma: не нашёлся enum GreetingRegister — " +
+        "шов на порядок строгости проверять нечем (поправьте шов, а не код)",
+    );
+  } else {
+    registerLists.push([
+      "схема Prisma",
+      (schemaEnum[1].match(/^\s*([A-Z_]+)/gm) ?? []).map((v) => v.trim()),
+    ]);
+  }
+  const typesArray =
+    /GREETING_REGISTERS: readonly GreetingRegister\[\] = \[([^\]]*)\]/.exec(
+      read("backend/src/common/types/greeting.types.ts"),
+    );
+  if (!typesArray) {
+    problems.push(
+      "backend/src/common/types/greeting.types.ts: не нашёлся массив " +
+        "GREETING_REGISTERS — шов на порядок строгости проверять нечем " +
+        "(поправьте шов, а не код)",
+    );
+  } else {
+    registerLists.push([
+      "types/greeting.types.ts",
+      [...typesArray[1].matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]),
+    ]);
+  }
+  const registerMigration = fs
+    .readdirSync(migrationsDir)
+    .filter((n) => n.endsWith("_greeting_occasion_register"))
+    .map((n) => path.join(migrationsDir, n, "migration.sql"))
+    .find((f) => fs.existsSync(f));
+  if (!registerMigration) {
+    problems.push(
+      "backend/prisma/migrations: не нашлась миграция *_greeting_occasion_register " +
+        "— шов на порядок строгости проверять нечем (поправьте шов, а не код)",
+    );
+  } else {
+    const createType = /CREATE TYPE "GreetingRegister" AS ENUM \(([^)]*)\)/.exec(
+      fs.readFileSync(registerMigration, "utf8"),
+    );
+    if (!createType) {
+      problems.push(
+        `${path.relative(ROOT, registerMigration)}: не нашёлся CREATE TYPE ` +
+          '"GreetingRegister" — шов на порядок строгости проверять нечем ' +
+          "(поправьте шов, а не код)",
+      );
+    } else {
+      registerLists.push([
+        "миграция",
+        [...createType[1].matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]),
+      ]);
+    }
+  }
+  // Сверяются именно СПИСКИ, а не множества: порядок и есть смысл.
+  const registerCount = registerLists[0]?.[1].length ?? 0;
+  for (const [where, list] of registerLists.slice(1)) {
+    if (list.join(",") !== registerLists[0][1].join(",")) {
+      problems.push(
+        `порядок строгости регистров разошёлся: ${registerLists[0][0]} — ` +
+          `[${registerLists[0][1].join(", ")}], ${where} — [${list.join(", ")}]`,
+      );
+    }
+  }
+  if (registerCount === 0) {
+    problems.push(
+      "список регистров пуст — шов на порядок строгости ничего не сверил",
+    );
+  }
+
   if (problems.length > 0) {
     failed++;
     console.log("FAIL швы советника в мастере:");
@@ -2551,7 +2642,9 @@ function checkGuideSeams() {
         `потолок реплики и правило её чтения — по одному на всех: да; ` +
         `стилей .ass с проверенной плашкой: ${assStyles}; ` +
         `сетку кадров знает только модуль плана: да; ` +
-        `строителей ffmpeg-команд с выходом через плейсхолдер: ${placeholderOutputs} из ${commandBuilders.length}`,
+        `строителей ffmpeg-команд с выходом через плейсхолдер: ${placeholderOutputs} из ${commandBuilders.length}; ` +
+        `порядок строгости регистров (схема = типы = миграция): ${registerCount} ` +
+        `в ${registerLists.length} местах`,
     );
   }
 }

@@ -278,6 +278,7 @@ export class GreetingReferenceService {
     const prompt = buildGreetingFramePrompt({
       occasion: brief.occasion,
       customOccasionText: brief.customOccasionText,
+      occasionRegister: brief.occasionRegister ?? null,
       tone: brief.tone,
       presenter: brief.resolvedPresenterProvider,
       setting: chosenSetting || null,
@@ -361,6 +362,7 @@ export class GreetingReferenceService {
       brief.occasion,
       brief.customOccasionText,
       brief.tone,
+      brief.occasionRegister ?? null,
     );
     try {
       const response = await this.genai.models.generateContent({

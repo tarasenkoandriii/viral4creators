@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { GreetingVideoService } from './greeting-video.service';
 import { RenderAccessService } from '../render-access/render-access.service';
 import { GenerationStatus } from '../../common/types/generation.types';
@@ -559,5 +559,56 @@ describe('GreetingVideoService.startVideo — кредит при сбое ст�
     credits.reserveForGeneration.mockResolvedValue(true);
     await svc.startVideo('s1');
     expect(credits.refundIfReserved).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Этап B (§3.1 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
+ * набор правил проверяется ещё раз перед рендером — «у денег». Снимок
+ * мог быть собран до того, как правило вступило в силу.
+ */
+describe('проверка правил перед рендером (этап B)', () => {
+  it('траурный «особый повод» с шутливым тоном — отказ, провайдера не зовут', async () => {
+    const { svc, startGeneration } = build({
+      greetingBriefSnapshot: {
+        ...BRIEF,
+        occasion: 'OTHER',
+        customOccasionText: 'похороны бабушки',
+        occasionRegister: 'MOURNING',
+        tone: 'FUNNY',
+      },
+    });
+    await expect(svc.startVideo('s1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('наклейка на соболезновании, записанная до этапа B, тоже не пройдёт', async () => {
+    const { svc, startGeneration } = build({
+      greetingBriefSnapshot: {
+        ...BRIEF,
+        occasion: 'CONDOLENCE',
+        tone: 'RESPECTFUL',
+        sticker: {
+          id: 'st',
+          url: 'u',
+          pathname: 'p',
+          sourceUrl: 's',
+          source: 'pixabay',
+          placement: 'top',
+        },
+      },
+    });
+    await expect(svc.startVideo('s1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('праздничный бриф проходит, как и раньше', async () => {
+    const { svc, startGeneration } = build();
+    await svc.startVideo('s1');
+    expect(startGeneration).toHaveBeenCalled();
   });
 });

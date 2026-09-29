@@ -34,7 +34,12 @@
  * поздравление.
  */
 
-import { GreetingOccasion, GreetingTone } from './types/greeting.types';
+import {
+  GreetingOccasion,
+  GreetingRegister,
+  GreetingTone,
+} from './types/greeting.types';
+import { GreetingScriptLanguage, localizedFallback } from './greeting-language';
 
 export interface GreetingOccasionSpec {
   label: string;
@@ -43,6 +48,14 @@ export interface GreetingOccasionSpec {
   tones: readonly GreetingTone[];
   /** Праздничный ли повод — решает вид запасного текста и декораций. */
   festive: boolean;
+  /**
+   * Регистр повода (этап B ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-
+   * Landing.md §3.2). От него `common/greeting-policy.ts` выводит все
+   * остальные правила ролика — наклейки, музыку, раскадровку, лицо
+   * ведущего. У OTHER здесь стоит БАЗОВЫЙ регистр — тот, что действует,
+   * пока настоящий не определён (§3.4); настоящий живёт в брифе.
+   */
+  register: GreetingRegister;
 }
 
 /** Обычный набор тонов — три исходных, которые были до этапа 2. */
@@ -62,6 +75,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: FESTIVE_SCENE,
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   WEDDING: {
     label: 'свадьба',
@@ -70,6 +84,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: FESTIVE_SCENE,
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   ANNIVERSARY: {
     label: 'годовщина',
@@ -77,6 +92,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: FESTIVE_SCENE,
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   NEW_YEAR: {
     label: 'Новый год',
@@ -84,6 +100,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'winter holiday setting with soft lights; warm, cosy mood',
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   CHRISTMAS: {
     label: 'Рождество',
@@ -91,6 +108,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'warm Christmas setting with soft lights; calm, cosy mood',
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   GRADUATION: {
     label: 'выпускной',
@@ -99,6 +117,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: FESTIVE_SCENE,
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   VALENTINES_DAY: {
     label: 'День святого Валентина',
@@ -106,6 +125,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'soft romantic setting, warm light; tasteful, not kitschy',
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   WOMENS_DAY: {
     label: 'Международный женский день',
@@ -114,6 +134,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'light spring setting with fresh flowers; bright, airy mood',
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   MOTHERS_DAY: {
     label: 'День матери',
@@ -121,6 +142,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'warm home setting with soft light; tender mood',
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   FATHERS_DAY: {
     label: 'День отца',
@@ -128,6 +150,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'warm home setting with soft light; sincere mood',
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   /**
    * Намеренно без даты в названии. Компаньон-ТЗ предлагало «23 Февраля /
@@ -143,6 +166,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'restrained, dignified setting; calm, respectful mood',
     tones: ['WARM', 'FORMAL', 'RESPECTFUL'],
     festive: false,
+    register: 'SOLEMN',
   },
   TEACHERS_DAY: {
     label: 'День учителя',
@@ -150,6 +174,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: FESTIVE_SCENE,
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   FIRST_SCHOOL_DAY: {
     label: 'первый день в школе',
@@ -158,6 +183,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: FESTIVE_SCENE,
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   NEW_BABY: {
     label: 'рождение ребёнка',
@@ -166,6 +192,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'soft, gentle setting in light pastel colours; tender mood',
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   BAPTISM: {
     label: 'крестины',
@@ -173,6 +200,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'calm, light setting; quiet and solemn mood',
     tones: ['WARM', 'FORMAL', 'RESPECTFUL'],
     festive: false,
+    register: 'SOLEMN',
   },
   HOUSEWARMING: {
     label: 'новоселье',
@@ -180,6 +208,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: FESTIVE_SCENE,
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   PROMOTION: {
     label: 'повышение или новая работа',
@@ -187,6 +216,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'clean modern setting; confident, upbeat mood',
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   RETIREMENT: {
     label: 'выход на пенсию',
@@ -195,6 +225,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'warm, calm setting; grateful mood',
     tones: EVERYDAY_TONES,
     festive: true,
+    register: 'CELEBRATORY',
   },
   FAREWELL_COLLEAGUE: {
     label: 'прощание с коллегой',
@@ -203,14 +234,18 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: 'friendly office-like setting; warm but composed mood',
     tones: EVERYDAY_TONES,
     festive: false,
+    register: 'WARM_NEUTRAL',
   },
   CORPORATE: {
     label: 'корпоративное поздравление',
     intent:
       'Поздравь от имени компании: по-деловому, но по-человечески, без канцелярита.',
     sceneMood: 'clean professional setting; composed, friendly mood',
-    tones: EVERYDAY_TONES,
+    // Этап B: FORMAL первым — умолчание для корпоративного поздравления.
+    // Схема прямо называет этот тон «в основном для CORPORATE».
+    tones: ['FORMAL', 'WARM', 'FUNNY'],
     festive: true,
+    register: 'CELEBRATORY',
   },
   /**
    * Три чувствительных повода. `FUNNY` у них отсутствует не по вкусовым
@@ -222,16 +257,20 @@ export const GREETING_OCCASION_SPECS: Readonly<
     intent:
       'Это ИЗВИНЕНИЕ, а не поздравление. Признай вину прямо, без оправданий и без шуток, не поздравляй и ничего не желай. Не используй восклицательные знаки.',
     sceneMood: CALM_SCENE,
-    tones: ['WARM', 'RESPECTFUL'],
+    // Этап B: умолчание RESPECTFUL — извинение по умолчанию серьёзно.
+    tones: ['RESPECTFUL', 'WARM'],
     festive: false,
+    register: 'SENSITIVE',
   },
   GET_WELL: {
     label: 'пожелание выздоровления',
     intent:
-      'Это слова ПОДДЕРЖКИ болеющему человеку. Не поздравляй: пожелай сил и скорого выздоровления, не шути про болезнь, не давай медицинских советов и не обещай, что всё точно будет хорошо.',
+      'Это слова ПОДДЕРЖКИ болеющему человеку. Не поздравляй: пожелай сил и скорого выздоровления, не шути про болезнь, не давай медицинских советов, не обещай, что всё точно будет хорошо, и не используй восклицательные знаки.',
     sceneMood: CALM_SCENE,
-    tones: ['WARM', 'SUPPORTIVE'],
+    // Этап B: умолчание SUPPORTIVE — слова поддержки, а не просто тепло.
+    tones: ['SUPPORTIVE', 'WARM'],
     festive: false,
+    register: 'SENSITIVE',
   },
   CONDOLENCE: {
     label: 'соболезнование',
@@ -240,6 +279,7 @@ export const GREETING_OCCASION_SPECS: Readonly<
     sceneMood: CALM_SCENE,
     tones: ['RESPECTFUL', 'SUPPORTIVE'],
     festive: false,
+    register: 'MOURNING',
   },
   OTHER: {
     label: 'особый повод',
@@ -247,7 +287,16 @@ export const GREETING_OCCASION_SPECS: Readonly<
       'Повод описан пользователем своими словами — опирайся на это описание и не подменяй его типовым поздравлением.',
     sceneMood: 'neutral, well-lit setting appropriate for a personal message',
     tones: EVERYDAY_TONES,
-    festive: true,
+    /**
+     * Этап B: «Особый повод» больше не праздничный по умолчанию. Раньше
+     * здесь стояло `festive: true` — и «Особый повод: похороны бабушки»
+     * получал праздничный сеттинг, шутливый тон и запасной текст
+     * «поздравляем с этим особым днём!» (Г-1 ТЗ). Настоящий регистр
+     * определяет `resolveOtherRegister`; до него действует тёплый
+     * нейтральный — не праздник, но и не траур.
+     */
+    festive: false,
+    register: 'WARM_NEUTRAL',
   },
 };
 
@@ -296,22 +345,21 @@ export function defaultToneFor(occasion: GreetingOccasion): GreetingTone {
 export function fallbackMessage(
   occasion: GreetingOccasion,
   recipientName: string,
-  occasionText: string,
+  // Не используется с этапа C: подпись повода есть только по-русски, а
+  // «поздравляем с День рождения» была ошибкой и по-русски. Параметр
+  // оставлен, чтобы не ломать вызовы.
+  _occasionText: string,
+  /**
+   * Регистр «Особого повода» (этап B). Для OTHER запасной текст зависит
+   * именно от него: «особый повод» бывает и праздником, и трауром. У
+   * каталожных поводов параметр не нужен — регистр задаёт каталог.
+   */
+  otherRegister?: GreetingRegister | null,
+  /** Язык поздравления (этап C, §3.8); без него — русский, как раньше. */
+  language: GreetingScriptLanguage = 'ru',
 ): string {
   const spec = GREETING_OCCASION_SPECS[occasion];
-  if (occasion === 'CONDOLENCE') {
-    return `${recipientName}, примите наши искренние соболезнования. Мы рядом.`;
-  }
-  if (occasion === 'APOLOGY') {
-    return `${recipientName}, простите нас. Нам действительно жаль.`;
-  }
-  if (occasion === 'GET_WELL') {
-    return `${recipientName}, сил вам и скорейшего выздоровления.`;
-  }
-  if (!spec.festive) {
-    return `${recipientName}, эти слова — для вас.`;
-  }
-  return `${recipientName}, поздравляем с ${
-    occasion === 'OTHER' ? 'этим особым днём' : occasionText
-  }! Пусть всё будет хорошо.`;
+  const register =
+    occasion === 'OTHER' ? (otherRegister ?? spec.register) : spec.register;
+  return localizedFallback(language, occasion, register, recipientName);
 }
