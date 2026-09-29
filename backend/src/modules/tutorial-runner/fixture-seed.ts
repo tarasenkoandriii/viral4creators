@@ -29,7 +29,7 @@
  * `scripts/seed-fixture-user.ts` — то же упрощение, тот же довод).
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { ProjectType } from '@prisma/client';
 import { currencyForCountry } from '../../common/data/countries';
 import { GenerationStatus } from '../../common/types/generation.types';
@@ -568,6 +568,22 @@ export async function seedFixtureUser(
     withPrompt: boolean,
     note: string,
   ) => {
+    // Тип объявлен, а не выведен, и это ТОТ ЖЕ приём, которым пишет
+    // снимок сам продукт (`SessionService.createSession`). Мимо него не
+    // пройти: `GreetingBriefSnapshot` — именованный тип с
+    // необязательными полями, а `InputJsonObject` не принимает ни
+    // именованные типы (у них нет неявной индексной сигнатуры), ни
+    // `undefined` в значениях. Соседние снимки мастера проходят
+    // случайно: они собраны литералами прямо здесь.
+    //
+    // Проверка от этого не слепнет: форму снимка держит
+    // `greetingBriefSnapshotFrom`, а не это место, и объявление касается
+    // только того, как Prisma описывает Json-колонку.
+    const data: Record<string, unknown> = {
+      locale: 'ru',
+      greetingBriefSnapshot: greetingBriefSnapshotFrom(brief),
+      ...(withPrompt ? { generationPrompt: approvedPrompt(id) } : {}),
+    };
     const fields = {
       userId: user.id,
       projectId,
@@ -578,11 +594,7 @@ export async function seedFixtureUser(
         ? SessionStatus.PROMPT_GENERATED
         : SessionStatus.CREATED,
       generationStatus: null,
-      data: {
-        locale: 'ru',
-        greetingBriefSnapshot: greetingBriefSnapshotFrom(brief),
-        ...(withPrompt ? { generationPrompt: approvedPrompt(id) } : {}),
-      },
+      data: data as Prisma.InputJsonValue,
       liveData: {},
     };
     await prisma.session.upsert({

@@ -3030,14 +3030,18 @@ export class TutorialScenarioRunnerService {
 export function greetingContext(
   projects: ReadonlyArray<{
     id: string;
-    sessions: ReadonlyArray<{ status: SessionStatus }>;
+    // `string`, а не `SessionStatus`: колонка `status` в схеме — обычная
+    // строка, и Prisma отдаёт её строкой. Обещать здесь перечисление
+    // значило бы обещать то, чего база не гарантирует; неизвестное
+    // значение просто не попадёт ни в одно из трёх состояний.
+    sessions: ReadonlyArray<{ status: string }>;
   }>,
 ): {
   greetingProjectId?: string;
   greetingDraftingProjectId?: string;
   greetingReadyProjectId?: string;
 } {
-  const WITH_SCRIPT: readonly SessionStatus[] = [
+  const WITH_SCRIPT: readonly string[] = [
     SessionStatus.PROMPT_GENERATED,
     SessionStatus.GENERATING_VIDEO,
     SessionStatus.VIDEO_COMPLETE,
