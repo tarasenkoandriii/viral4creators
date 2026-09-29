@@ -550,6 +550,48 @@ describe('TutorialScenarioRunnerService', () => {
     });
   });
 
+  it('сессии мастера товарки ищутся ТОЛЬКО среди рекламных проектов', async () => {
+    /*
+     * Шестой боевой прогон 29.09.2026. Запрос «одобренный промпт,
+     * рендера нет» выиграла `fixture-tutorial-greeting-ready-session`
+     * — сессия ПОЗДРАВЛЕНИЯ, заведённая в тот же день пятью часами
+     * позже рекламной. Признак по содержанию описывал её так же
+     * верно, мастер товарки честно восстановил чужую сессию, и формы
+     * запуска рендера на экране не оказалось: `7/ru` упал на
+     * `aspect-ratio-picker`.
+     *
+     * Проверяется КАЖДЫЙ из трёх запросов, а не «хотя бы один»:
+     * дыра была ровно в том, что рамку поставили товару и забыли
+     * сессиям, и забыть её снова можно так же поштучно.
+     */
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service, prisma } = build([
+      { ...SCENARIO_OK, steps: [{ kind: 'goto', route: 'generate-ready' }] },
+    ]);
+    prisma.session.findFirst.mockResolvedValue({ id: 'sess-fixture' });
+
+    await service.run();
+
+    const wheres = prisma.session.findFirst.mock.calls.map(
+      (c: any[]) => c[0].where,
+    );
+    expect(wheres.length).toBe(3);
+    for (const where of wheres) {
+      expect(where.project).toEqual({ type: { in: ['SINGLE', 'LINE'] } });
+    }
+    // И рамка не подменила собой признак: без него запрос отдал бы
+    // первую попавшуюся рекламную сессию, а нужны три разных.
+    expect(
+      wheres.map((w: any) => w.status ?? w.generationStatus).sort(),
+    ).toEqual(['complete', 'product_info_added', 'prompt_generated'].sort());
+  });
+
   it('пропущенный платный клик доезжает до журнала крона отдельным числом', async () => {
     // «Прошло» и «прошло, но кнопку рендера никто не нажимал» — разные
     // исходы, и второй оператор обязан видеть, не открывая логи.

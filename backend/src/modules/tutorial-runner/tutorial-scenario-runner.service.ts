@@ -1733,6 +1733,7 @@ export class TutorialScenarioRunnerService {
           userId,
           deletedAt: null,
           generationStatus: GenerationStatus.COMPLETE,
+          project: { type: { in: AD_TYPES } },
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -1753,12 +1754,37 @@ export class TutorialScenarioRunnerService {
        * ролик, и сессия с рендером в любом состоянии, кроме «его
        * нет», показала бы ровно тот же пустой экран, ради ухода от
        * которого она и заводится.
+       *
+       * ## `project.type` — и вот почему он тут появился
+       *
+       * Шестой боевой прогон 29.09.2026: `7/ru` упал на
+       * `aspect-ratio-picker`. Победителем запроса «одобренный промпт,
+       * рендера нет» оказалась `fixture-tutorial-greeting-ready-session`
+       * — сессия ПОЗДРАВЛЕНИЯ, заведённая в тот же день пятью часами
+       * позже фикстурной рекламной. Признак по содержанию описывал её
+       * так же верно: промпт собран, ролика нет. Мастер товарки честно
+       * восстановил чужую сессию, и формы запуска рендера на экране,
+       * разумеется, не оказалось.
+       *
+       * Урок шире этих трёх строк: **«признак по содержанию»
+       * перестаёт различать ровно в тот день, когда в данных
+       * появляется новый ВИД сущности.** Довод в пользу содержания
+       * (резолвер работает и для фикстуры, донастроенной руками) не
+       * отменяется — добавляется рамка: искать внутри рекламных
+       * проектов, как этажом выше уже ищется товар. Отбор по
+       * фиксированному id прошёл бы этот прогон и не пережил бы
+       * ручную донастройку; рамка переживает оба.
+       *
+       * Сессии без проекта под рамку не попадают намеренно: у
+       * анонимной нет ни товара, ни разбора, ни промпта, и ни один
+       * из трёх экранов на ней не собрался бы.
        */
       this.prisma.session.findFirst({
         where: {
           userId,
           deletedAt: null,
           status: SessionStatus.PRODUCT_INFO_ADDED,
+          project: { type: { in: AD_TYPES } },
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -1768,6 +1794,7 @@ export class TutorialScenarioRunnerService {
           deletedAt: null,
           status: SessionStatus.PROMPT_GENERATED,
           generationStatus: null,
+          project: { type: { in: AD_TYPES } },
         },
         orderBy: { createdAt: 'desc' },
       }),
