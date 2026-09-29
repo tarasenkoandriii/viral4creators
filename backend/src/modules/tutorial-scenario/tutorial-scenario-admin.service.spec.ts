@@ -418,7 +418,11 @@ describe('TutorialScenarioAdminService.approve', () => {
       await service.replaceSteps(
         'ts-1',
         [
-          ...GOOD,
+          // НЕ `...GOOD`: тот открывает чистый мастер, а кнопка
+          // рендера живёт на экране «промпт одобрен, ролика нет»
+          // (разбор достижимости 29.09.2026). Смешивать их в одном
+          // сценарии нельзя — подсев сессии действует на весь прогон.
+          { kind: 'goto', route: 'generate-ready-to-render' },
           {
             kind: 'triggerPaidOperation',
             operation: 'generation',

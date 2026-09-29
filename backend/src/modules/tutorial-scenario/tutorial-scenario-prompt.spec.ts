@@ -138,7 +138,7 @@ describe('buildScenarioPrompt', () => {
 describe('parseScenarioResponse', () => {
   it('разбирает {"steps":[...]} внутри ```json ограждения', () => {
     const text =
-      '```json\n{"steps":[{"kind":"goto","route":"wizard.product"},' +
+      '```json\n{"steps":[{"kind":"goto","route":"generate-ready"},' +
       '{"kind":"click","selector":"[data-qa=\\"analysis-continue\\"]"}]}\n```';
     const result = parseScenarioResponse(text);
     expect(result.ok).toBe(true);
@@ -248,7 +248,7 @@ describe('parseScenarioResponse', () => {
     const result = parseScenarioResponse(
       JSON.stringify({
         steps: [
-          { kind: 'goto', route: 'generate' },
+          { kind: 'goto', route: 'generate-ready' },
           { kind: 'waitFor', selector: '[data-qa="prompt-editor"]' },
           { kind: 'click', selector: ' [data-qa="prompt-approve"] ' },
         ],
@@ -395,7 +395,7 @@ describe('повисшее объявление платного вызова (�
     const result = parseScenarioResponse(
       JSON.stringify({
         steps: [
-          { kind: 'goto', route: 'generate' },
+          { kind: 'goto', route: 'generate-ready' },
           paid,
           { kind: 'assertVisible', selector: '[data-qa="video-result"]' },
         ],
@@ -426,7 +426,7 @@ describe('повисшее объявление платного вызова (�
     const result = parseScenarioResponse(
       JSON.stringify({
         steps: [
-          { kind: 'goto', route: 'generate' },
+          { kind: 'goto', route: 'generate-ready-to-render' },
           paid,
           { kind: 'click', selector: '[data-qa="video-generate"]' },
         ],
@@ -446,7 +446,7 @@ describe('повисшее объявление платного вызова (�
     const result = parseScenarioResponse(
       JSON.stringify({
         steps: [
-          { kind: 'goto', route: 'generate' },
+          { kind: 'goto', route: 'generate-ready-to-render' },
           { ...paid, operation: 'voiceover' },
           { kind: 'click', selector: '[data-qa="video-generate"]' },
         ],
@@ -463,7 +463,7 @@ describe('повисшее объявление платного вызова (�
     const result = parseScenarioResponse(
       JSON.stringify({
         steps: [
-          { kind: 'goto', route: 'generate' },
+          { kind: 'goto', route: 'generate-ready-to-render' },
           paid,
           { kind: 'waitFor', selector: '[data-qa="video-generate"]' },
         ],
@@ -516,7 +516,10 @@ describe('повисшее объявление платного вызова (�
  */
 describe('модель платного шага — закрытый список', () => {
   const steps = (model: string, expectedUnits: Record<string, number>) => [
-    { kind: 'goto', route: 'generate-ready' },
+    // Кнопка рендера живёт на экране «промпт одобрен, ролика нет» —
+    // на готовой сессии её прячет сам готовый ролик (разбор
+    // достижимости 29.09.2026).
+    { kind: 'goto', route: 'generate-ready-to-render' },
     {
       kind: 'triggerPaidOperation',
       operation: 'generation',
@@ -682,5 +685,72 @@ describe('переход по степперу перед ожиданием к�
     ]) {
       expect(desc).toContain(hook);
     }
+  });
+});
+
+/**
+ * Хук на чужом экране — разбор достижимости 29.09.2026.
+ *
+ * До этой проверки промах маршрута был неотличим от поломки продукта:
+ * сценарий проходил валидацию, уезжал в базу и падал ночью на
+ * `waitFor` через пятнадцать секунд. Пять боевых прогонов подряд
+ * причина была именно в маршруте, и каждый раз объяснялась не тем.
+ */
+describe('хук должен жить на том экране, который открыл сценарий', () => {
+  const run = (route: string, selector: string) =>
+    validateScenarioSteps([
+      { kind: 'goto', route },
+      { kind: 'waitFor', selector: `[data-qa="${selector}"]` },
+    ]);
+
+  it('карточка запуска рендера на готовой сессии — отказ с названным экраном', () => {
+    // Ровно сценарий 7, падавший все пять прогонов.
+    const r = run('generate-ready', 'aspect-ratio-picker');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('generate-ready-to-render');
+    // Причина обязана называть последствие: иначе оператор увидит
+    // «не тот экран» и не поймёт, что дело в таймауте прогона.
+    expect(r.reason).toContain('до таймаута');
+  });
+
+  it('карточка релевантности на готовой сессии — отказ', () => {
+    // Сценарий 4, та же история.
+    const r = run('generate-ready', 'relevance-panel');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('generate-prompt-pending');
+  });
+
+  it('свой хук на своём экране проходит — все четыре маршрута мастера', () => {
+    for (const [route, hook] of [
+      ['generate', 'reference-tab-link'],
+      ['generate-ready', 'video-result'],
+      ['generate-prompt-pending', 'relevance-panel'],
+      ['generate-ready-to-render', 'aspect-ratio-picker'],
+    ] as const) {
+      expect(run(route, hook).ok).toBe(true);
+    }
+  });
+
+  it('маршрут запоминается последним goto, а не первым', () => {
+    // Сценарий может перейти на другой экран посреди себя; правило
+    // обязано следовать за ним, иначе оно запрещало бы законное.
+    const r = validateScenarioSteps([
+      { kind: 'goto', route: 'generate' },
+      { kind: 'waitFor', selector: '[data-qa="reference-tab-link"]' },
+      { kind: 'goto', route: 'postprod-video' },
+      { kind: 'waitFor', selector: '[data-qa="revoice-panel"]' },
+    ]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('шаги ДО первого goto не проверяются — маршрут ещё неизвестен', () => {
+    // Сознательный пробел, названный в доккомментарии: заводить здесь
+    // ещё один класс отказа значило бы решать в одной правке две
+    // задачи. Тест держит именно это решение, а не недосмотр.
+    const r = validateScenarioSteps([
+      { kind: 'waitFor', selector: '[data-qa="video-result"]' },
+      { kind: 'goto', route: 'generate' },
+    ]);
+    expect(r.ok).toBe(true);
   });
 });

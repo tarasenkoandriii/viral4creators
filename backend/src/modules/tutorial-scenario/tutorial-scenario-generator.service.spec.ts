@@ -82,14 +82,14 @@ function build(storedLocales: string | null = null) {
 // разнице и ломалось сравнение «изменились ли шаги».
 const FREE_SCENARIO_TEXT = JSON.stringify({
   steps: [
-    { route: 'wizard.product', kind: 'goto' },
+    { route: 'generate-ready', kind: 'goto' },
     { selector: '[data-qa="analysis-continue"]', kind: 'click' },
   ],
 });
 
 const COSTLY_SCENARIO_TEXT = JSON.stringify({
   steps: [
-    { kind: 'goto', route: 'wizard.generation' },
+    { kind: 'goto', route: 'generate-ready-to-render' },
     {
       kind: 'triggerPaidOperation',
       operation: 'generation',
@@ -306,7 +306,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
       // Те же шаги в порядке ключей, в каком их вернёт `jsonb`
       // (короткие раньше длинных) — то есть «не изменилось».
       steps: [
-        { kind: 'goto', route: 'wizard.product' },
+        { kind: 'goto', route: 'generate-ready' },
         { kind: 'click', selector: '[data-qa="analysis-continue"]' },
       ],
       generatedBy: 'ai',
@@ -330,7 +330,11 @@ describe('TutorialScenarioGeneratorService.run', () => {
     // в `findMany`.
     const withDanglingPaid = JSON.stringify({
       steps: [
-        { kind: 'goto', route: 'generate', narration: 'Открываем экран.' },
+        {
+          kind: 'goto',
+          route: 'generate-ready',
+          narration: 'Открываем экран.',
+        },
         {
           kind: 'triggerPaidOperation',
           operation: 'generation',
@@ -378,7 +382,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
     // (§3-бис.2 ТЗ).
     const withBadNarration = JSON.stringify({
       steps: [
-        { kind: 'goto', route: 'wizard.product', narration: 'x'.repeat(300) },
+        { kind: 'goto', route: 'generate-ready', narration: 'x'.repeat(300) },
         {
           kind: 'click',
           selector: '[data-qa="analysis-continue"]',
@@ -720,7 +724,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
       // `JSON.stringify` выглядело бы рабочим и на деле объявляло
       // «изменилось» на каждом прогоне (находка сквозного аудита).
       steps: [
-        { kind: 'goto', route: 'wizard.product' },
+        { kind: 'goto', route: 'generate-ready' },
         { kind: 'click', selector: '[data-qa="analysis-continue"]' },
       ],
       generatedBy: 'ai',

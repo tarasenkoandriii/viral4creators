@@ -377,8 +377,64 @@ export function validateScenarioSteps(rawSteps: unknown): ParseScenarioResult {
   const parsed = parseScenarioSteps(rawSteps);
   if (!parsed.ok) return parsed;
   return dropDanglingPaidOperations(
-    rejectUnpricedModels(rejectUnknownSelectors(parsed)),
+    rejectUnpricedModels(rejectHooksOffRoute(rejectUnknownSelectors(parsed))),
   );
+}
+
+/**
+ * Отказ сценарию, который ждёт хук на ЧУЖОМ экране (разбор
+ * достижимости 29.09.2026).
+ *
+ * До этой проверки промах маршрута был неотличим от поломки продукта:
+ * сценарий проходил валидацию, уезжал в базу, ночью открывал не тот
+ * экран и падал на `waitFor` через пятнадцать секунд с сообщением
+ * «Waiting for selector … failed». По нему нельзя понять, сломался ли
+ * интерфейс, отстал ли каталог или модель выбрала не тот из четырёх
+ * маршрутов мастера. Пять боевых прогонов подряд ответ был третий, и
+ * каждый раз я объяснял его не тем.
+ *
+ * Теперь промах невозможно донести до раннера: `route` у хука в
+ * каталоге — то же самое поле, из которого промпт строит описания
+ * экранов, и расхождение с ним ловится на генерации, бесплатно и с
+ * названным правильным маршрутом.
+ *
+ * Чего проверка НЕ делает: не требует `goto` первым шагом. До первого
+ * `goto` маршрут неизвестен, и такие шаги пропускаются — заводить
+ * здесь ещё один класс отказа значило бы решать в одной правке две
+ * задачи. Сегодня без `goto` сценарий и так падает на пустой
+ * странице, то есть молчаливо неверного результата этот пробел не
+ * даёт.
+ */
+function rejectHooksOffRoute(parsed: ParseScenarioResult): ParseScenarioResult {
+  if (!parsed.ok) return parsed;
+  let route: string | null = null;
+  for (let i = 0; i < parsed.steps.length; i++) {
+    const step = parsed.steps[i];
+    if (step.kind === 'goto') {
+      route = step.route;
+      continue;
+    }
+    if (!('selector' in step) || route === null) continue;
+    const key = knownQaHook(step.selector);
+    // `null` здесь невозможен: `rejectUnknownSelectors` отработал
+    // выше. Проверка — не перестраховка, а защита от перестановки
+    // вызовов местами: тогда эта функция молча пропускала бы всё.
+    if (key === null) continue;
+    const hookRoute = QA_HOOKS[key].route;
+    if (hookRoute !== route) {
+      return {
+        ok: false,
+        steps: [],
+        reason:
+          `шаг ${i + 1} (${step.kind}): «${key}» живёт на экране ` +
+          `«${hookRoute}», а сценарий открыл «${route}» — там этого ` +
+          'элемента не бывает, и прогон ждал бы его до таймаута',
+        droppedNarrations: [],
+        droppedPaidOperations: [],
+      };
+    }
+  }
+  return parsed;
 }
 
 /**
