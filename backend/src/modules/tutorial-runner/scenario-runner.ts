@@ -107,6 +107,20 @@ export interface ScenarioPage {
    */
   $?(selector: string): Promise<ScenarioElement | null>;
   viewport?(): { width: number; height: number } | null;
+  /**
+   * Опционально — подготовка кадра (`prepareFrame`, 01.10.2026). Реальный
+   * puppeteer `Page` структурно совместим; мок без них снимает кадр
+   * как раньше, сразу.
+   */
+  waitForNetworkIdle?(options: {
+    idleTime: number;
+    timeout: number;
+  }): Promise<unknown>;
+  waitForFunction?(
+    fn: () => boolean,
+    options: { timeout: number },
+  ): Promise<unknown>;
+  evaluate?<A>(fn: (arg: A) => void, arg: A): Promise<unknown>;
 }
 
 /** Подмножество puppeteer `ElementHandle`, нужное указателю клика. */
@@ -276,6 +290,7 @@ export async function runScenario(
         // прогон ради необязательного кадра для слайд-шоу.
         let frame: ScenarioFrame | null = null;
         try {
+          await prepareFrame(page, step);
           frame = { stepIndex: i, bytes: await page.screenshot() };
           frames.push(frame);
         } catch (err) {
@@ -319,6 +334,58 @@ export async function runScenario(
     skippedPaidClicks,
     skippedFrames,
   };
+}
+
+/** Сколько ждать оседания экрана перед кадром — мягко, не осело —
+ * снимаем как есть. Сеть — только после перехода (`goto`). */
+export const FRAME_SETTLE_NETWORK_MS = 3_000;
+export const FRAME_SETTLE_SPINNER_MS = 3_000;
+const FRAME_NETWORK_IDLE_MS = 500;
+
+/**
+ * Подготовка кадра: экран осел и то, о чём говорит шаг, — в кадре.
+ *
+ * Найдено просмотром роликов прода 01.10.2026 перед одобрением:
+ *  - первый кадр почти каждого ролика — спиннер: снимок шёл сразу за
+ *    `goto(networkidle2)`, а SPA дорисовывает экран после него;
+ *  - кадр шага «ждём карточку готового ролика» показывал форму «Повод»
+ *    над ней: `waitForSelector` дождался элемента, но он ниже края
+ *    экрана, и реплика говорила о том, чего на кадре нет.
+ *
+ * Поэтому: после перехода — затишье сети; перед каждым кадром — нет
+ * `.animate-spin` (тот же признак, что у ночного снимка интерфейса);
+ * у шага с селектором — элемент в центр экрана. Всё мягкое: ни одно
+ * ожидание не роняет шаг, кадр best-effort, как и раньше.
+ */
+export async function prepareFrame(
+  page: ScenarioPage,
+  step: ScenarioStep,
+): Promise<void> {
+  if (step.kind === 'goto' && page.waitForNetworkIdle) {
+    await page
+      .waitForNetworkIdle({
+        idleTime: FRAME_NETWORK_IDLE_MS,
+        timeout: FRAME_SETTLE_NETWORK_MS,
+      })
+      .catch(() => undefined);
+  }
+  const selector = 'selector' in step ? step.selector : null;
+  if (selector && page.evaluate) {
+    await page
+      .evaluate((sel: string) => {
+        document
+          .querySelector(sel)
+          ?.scrollIntoView({ block: 'center', behavior: 'instant' });
+      }, selector)
+      .catch(() => undefined);
+  }
+  if (page.waitForFunction) {
+    await page
+      .waitForFunction(() => document.querySelector('.animate-spin') === null, {
+        timeout: FRAME_SETTLE_SPINNER_MS,
+      })
+      .catch(() => undefined);
+  }
 }
 
 /**

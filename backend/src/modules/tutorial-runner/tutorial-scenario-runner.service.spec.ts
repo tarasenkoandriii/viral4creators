@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from '../legal/legal.service';
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 jest.mock('../notify/telegram-notify.service', () => ({
@@ -178,7 +179,10 @@ function buildFakePage(
 function build(scenarios: unknown[]) {
   const notify = { alert: jest.fn().mockResolvedValue(true) };
   const prisma = {
-    user: { findUnique: jest.fn().mockResolvedValue({ id: 'usr_fixture' }) },
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ id: 'usr_fixture' }),
+      update: jest.fn().mockResolvedValue(undefined),
+    },
     tutorialScenario: {
       findMany: jest.fn().mockResolvedValue(scenarios),
       update: jest.fn().mockResolvedValue(undefined),
@@ -3642,6 +3646,62 @@ describe('TutorialScenarioRunnerService', () => {
             (c: [string]) => c[0] === 'tutorial-assembly-poll:failed',
           ),
         ).toHaveLength(1);
+      });
+    });
+
+    describe('оферта фикстуры (просмотр роликов 01.10.2026)', () => {
+      it('тестовая фикстура со старой версией — принимается текущая', async () => {
+        const { service, prisma } = build([]);
+        prisma.user.findUnique.mockResolvedValue({
+          id: 'usr_fixture',
+          isTestUser: true,
+          termsVersion: '2026-09-01',
+          termsAcceptedAt: new Date('2026-09-01'),
+        });
+        await service.run();
+        expect(prisma.user.update).toHaveBeenCalledWith({
+          where: { id: 'usr_fixture' },
+          data: {
+            termsVersion: TERMS_VERSION,
+            termsAcceptedAt: expect.any(Date),
+          },
+        });
+      });
+
+      it('не тестовый аккаунт — за человека документы не принимаются', async () => {
+        const { service, prisma } = build([]);
+        prisma.user.findUnique.mockResolvedValue({
+          id: 'usr_fixture',
+          isTestUser: false,
+          termsVersion: null,
+          termsAcceptedAt: null,
+        });
+        await service.run();
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      });
+
+      it('версия уже текущая — не трогаем', async () => {
+        const { service, prisma } = build([]);
+        prisma.user.findUnique.mockResolvedValue({
+          id: 'usr_fixture',
+          isTestUser: true,
+          termsVersion: TERMS_VERSION,
+          termsAcceptedAt: new Date(),
+        });
+        await service.run();
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      });
+
+      it('сбой записи не роняет прогон', async () => {
+        const { service, prisma } = build([]);
+        prisma.user.findUnique.mockResolvedValue({
+          id: 'usr_fixture',
+          isTestUser: true,
+          termsVersion: null,
+          termsAcceptedAt: null,
+        });
+        prisma.user.update.mockRejectedValue(new Error('база'));
+        await expect(service.run()).resolves.toBeDefined();
       });
     });
 

@@ -143,6 +143,7 @@ import {
   SlideshowFrame,
   ZOOM_MAX_SECONDS,
 } from './tutorial-video-assembly';
+import { TERMS_VERSION } from '../legal/legal.service';
 import { resolveChangeSensitivity } from '../ui-snapshot/perceptual-hash';
 import {
   hasTutorialSteps,
@@ -1116,6 +1117,36 @@ export class TutorialScenarioRunnerService {
       return this.skipLoudly(
         `фикстурный пользователь telegramId=${telegramId} не заведён — запустите npm run seed:fixture-user`,
       );
+    }
+
+    // Оферта фикстуры — текущей версии (просмотр роликов прода
+    // 01.10.2026). `TERMS_VERSION` сменился 29.09.2026, фикстура
+    // принимала прежнюю, и мастер товара с тех пор открывался экраном
+    // согласия (`TermsGate`) вместо выбора референса: сценарий шага 2
+    // падал каждый тик на `reference-card`, а шаги, начинающиеся с
+    // чистого мастера, снимали бы в ролик чекбокс оферты. Только для
+    // тестового аккаунта (`isTestUser` ставит сидирование фикстуры):
+    // `FIXTURE_TELEGRAM_ID` может указывать и на живого человека, а
+    // принимать документы за него исполнитель права не имеет.
+    if (
+      user.isTestUser &&
+      (user.termsVersion !== TERMS_VERSION || !user.termsAcceptedAt)
+    ) {
+      try {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { termsVersion: TERMS_VERSION, termsAcceptedAt: new Date() },
+        });
+        this.logger.log(
+          `фикстура: оферта обновлена до версии ${TERMS_VERSION} (было ${user.termsVersion ?? 'ничего'})`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `фикстура: не удалось обновить версию оферты — сценарии чистого мастера упрутся в экран согласия: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
     // Только не-платные ИЛИ платные, но явно одобренные оператором

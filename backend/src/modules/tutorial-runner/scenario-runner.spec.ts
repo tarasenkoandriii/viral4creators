@@ -1,4 +1,6 @@
 import {
+  FRAME_SETTLE_NETWORK_MS,
+  FRAME_SETTLE_SPINNER_MS,
   measurePointer,
   runScenario,
   ScenarioPage,
@@ -655,5 +657,113 @@ describe('runScenario — несостоявшийся снимок', () => {
       true,
     );
     expect(result.skippedFrames).toEqual([]);
+  });
+});
+
+describe('подготовка кадра (просмотр роликов прода 01.10.2026)', () => {
+  function recordingPage() {
+    const log: string[] = [];
+    const page = buildPage({
+      screenshot: jest.fn(async () => {
+        log.push('shot');
+        return new Uint8Array([1]);
+      }),
+      waitForNetworkIdle: jest.fn(async () => {
+        log.push('network');
+      }),
+      waitForFunction: jest.fn(async () => {
+        log.push('spinner');
+      }),
+      evaluate: jest.fn(async (_fn: unknown, arg: unknown) => {
+        log.push(`scroll:${String(arg)}`);
+      }) as ScenarioPage['evaluate'],
+    });
+    return { page, log };
+  }
+
+  it('после перехода — затишье сети и нет спиннера, потом снимок', async () => {
+    const { page, log } = recordingPage();
+    await runScenario(
+      page,
+      [{ kind: 'goto', route: 'generate' }],
+      resolveOk,
+      undefined,
+      true,
+    );
+    expect(log).toEqual(['network', 'spinner', 'shot']);
+    expect(page.waitForNetworkIdle).toHaveBeenCalledWith(
+      expect.objectContaining({ timeout: FRAME_SETTLE_NETWORK_MS }),
+    );
+    expect(page.waitForFunction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: FRAME_SETTLE_SPINNER_MS,
+    });
+  });
+
+  it('шаг с селектором — элемент в центр экрана до снимка, сеть не ждём', async () => {
+    const { page, log } = recordingPage();
+    await runScenario(
+      page,
+      [{ kind: 'waitFor', selector: '[data-qa="greeting-video-card"]' }],
+      resolveOk,
+      undefined,
+      true,
+    );
+    expect(log).toEqual([
+      'scroll:[data-qa="greeting-video-card"]',
+      'spinner',
+      'shot',
+    ]);
+  });
+
+  it('прокрутка в странице: scrollIntoView по центру', async () => {
+    const { page } = recordingPage();
+    await runScenario(
+      page,
+      [{ kind: 'assertVisible', selector: '#card' }],
+      resolveOk,
+      undefined,
+      true,
+    );
+    const fn = (page.evaluate as jest.Mock).mock.calls[0][0] as (
+      sel: string,
+    ) => void;
+    const scrollIntoView = jest.fn();
+    const querySelector = jest.fn().mockReturnValue({ scrollIntoView });
+    (global as unknown as { document: unknown }).document = { querySelector };
+    try {
+      fn('#card');
+    } finally {
+      delete (global as unknown as { document?: unknown }).document;
+    }
+    expect(querySelector).toHaveBeenCalledWith('#card');
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      block: 'center',
+      behavior: 'instant',
+    });
+  });
+
+  it('ожидания мягкие: их отказ не роняет шаг и не отменяет кадр', async () => {
+    const { page } = recordingPage();
+    (page.waitForNetworkIdle as jest.Mock).mockRejectedValue(new Error('t'));
+    (page.waitForFunction as jest.Mock).mockRejectedValue(new Error('t'));
+    (page.evaluate as jest.Mock).mockRejectedValue(new Error('t'));
+    const result = await runScenario(
+      page,
+      [
+        { kind: 'goto', route: 'generate' },
+        { kind: 'waitFor', selector: '#x' },
+      ],
+      resolveOk,
+      undefined,
+      true,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.frames).toHaveLength(2);
+  });
+
+  it('без кадров — никакой подготовки', async () => {
+    const { page, log } = recordingPage();
+    await runScenario(page, [{ kind: 'goto', route: 'generate' }], resolveOk);
+    expect(log).toEqual([]);
   });
 });
