@@ -135,6 +135,12 @@ export function ceilToMinute(d: Date): Date {
   return new Date(Math.ceil(d.getTime() / MINUTE_MS) * MINUTE_MS);
 }
 
+/** Округление вниз до целой минуты UTC — минута тика, от которого
+ * стартовала строка журнала (старт отстаёт от тика на секунды). */
+export function floorToMinute(d: Date): Date {
+  return new Date(Math.floor(d.getTime() / MINUTE_MS) * MINUTE_MS);
+}
+
 export interface VercelCronEntry {
   path: string;
   schedule: string;

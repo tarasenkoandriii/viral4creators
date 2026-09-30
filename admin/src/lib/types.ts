@@ -1031,6 +1031,10 @@ export interface CronJobSummary {
   /** Прогоны Vercel Cron в окне ожидания — с ними сравнивается expected. */
   scheduledRunsInWindow: number;
   missed: number | null;
+  /** Первый прогон Vercel Cron в журнале за срок хранения; null — ни одного. */
+  firstScheduledRunAt: string | null;
+  /** Начало окна ожидания этого джоба: не раньше минуты первого прогона. */
+  expectedSinceJob: string;
   total: number;
   byStatus: Record<CronRunStatus, number>;
   medianDurationMs: number | null;

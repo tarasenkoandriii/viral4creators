@@ -431,16 +431,23 @@ describe('AdminCronService — сводка за период', () => {
     medians?: unknown[];
     stuck?: unknown[];
     window?: unknown[];
+    first?: unknown[];
     failures?: unknown[];
   }) {
     const groupBy = jest.fn(
-      (args: { by: string[]; where: Record<string, unknown> }) =>
+      (args: {
+        by: string[];
+        where: Record<string, unknown>;
+        _min?: unknown;
+      }) =>
         Promise.resolve(
           args.by.length > 1
             ? opts.groups
-            : args.where.status === 'RUNNING'
-              ? (opts.stuck ?? [])
-              : (opts.window ?? []),
+            : args._min
+              ? (opts.first ?? [])
+              : args.where.status === 'RUNNING'
+                ? (opts.stuck ?? [])
+                : (opts.window ?? []),
         ),
     );
     const prisma = {
@@ -595,6 +602,98 @@ describe('AdminCronService — сводка за период', () => {
     expect(s.retentionDays).toBe(30);
     // report (0 6 * * *) в [08-31T12:00, 09-02T00:00) — только 1 сентября 06:00.
     expect(s.jobs.find((j) => j.jobKey === 'report')?.expected).toBe(1);
+  });
+
+  it('новый крон: ожидание — с минуты его первого прогона', async () => {
+    // Выкачен посреди суток: первый прогон в 02:45:07, дальше без пропусков.
+    const { service, prisma } = buildSummary({
+      groups: [],
+      first: [
+        {
+          jobKey: 'api-video',
+          _min: { startedAt: new Date('2026-09-30T02:45:07Z') },
+        },
+      ],
+      window: [{ jobKey: 'api-video', _count: { _all: 276 } }],
+    });
+    const s = await service.getSummary(
+      {
+        since: new Date('2026-09-30T00:00:00Z'),
+        until: new Date('2026-10-01T00:00:00Z'),
+      },
+      now,
+    );
+    // */2 в [02:45, 11:57): 02:46 … 11:56 — 276 тиков.
+    const job = s.jobs.find((j) => j.jobKey === 'api-video');
+    expect(job).toMatchObject({
+      expected: 276,
+      missed: 0,
+      firstScheduledRunAt: new Date('2026-09-30T02:45:07Z'),
+      expectedSinceJob: new Date('2026-09-30T02:45:00Z'),
+    });
+    // Общее окно сводки не сдвигается.
+    expect(s.expectedSince).toEqual(new Date('2026-09-30T00:00:00Z'));
+    // Первый прогон ищется за весь срок хранения, а не только в окне.
+    expect(prisma.cronRunLog.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        by: ['jobKey'],
+        where: {
+          triggeredBy: 'vercel-cron',
+          startedAt: {
+            gte: new Date('2026-08-31T12:00:00Z'),
+            lt: new Date('2026-09-30T11:57:00Z'),
+          },
+        },
+        _min: { startedAt: true },
+      }),
+    );
+    // У остальных (первого прогона нет) — ожидание с начала окна.
+    expect(s.jobs.find((j) => j.jobKey === 'report')).toMatchObject({
+      firstScheduledRunAt: null,
+      expectedSinceJob: new Date('2026-09-30T00:00:00Z'),
+      missed: 1,
+    });
+  });
+
+  it('первый прогон раньше окна — ожидание с начала окна (молчание видно)', async () => {
+    const { service } = buildSummary({
+      groups: [],
+      first: [
+        {
+          jobKey: 'report',
+          _min: { startedAt: '2026-09-20T06:00:03.000Z' },
+        },
+      ],
+    });
+    const s = await service.getSummary({ since, until }, now);
+    expect(s.jobs.find((j) => j.jobKey === 'report')).toMatchObject({
+      expected: 1,
+      missed: 1,
+      expectedSinceJob: since,
+    });
+  });
+
+  it('первый прогон позже конца окна ожидания — ожидается 0', async () => {
+    const { service } = buildSummary({
+      groups: [],
+      first: [
+        {
+          jobKey: 'report',
+          _min: { startedAt: new Date('2026-09-30T11:58:30Z') },
+        },
+      ],
+    });
+    const s = await service.getSummary(
+      {
+        since: new Date('2026-09-30T00:00:00Z'),
+        until: new Date('2026-10-01T00:00:00Z'),
+      },
+      now,
+    );
+    expect(s.jobs.find((j) => j.jobKey === 'report')).toMatchObject({
+      expected: 0,
+      missed: 0,
+    });
   });
 
   it('зависший RUNNING: старше замка JOB_LOCK_MS → stuck', async () => {

@@ -7,6 +7,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   ceilToMinute,
+  floorToMinute,
   countExpectedRuns,
   loadVercelSchedules,
   parseCronExpression,
@@ -168,5 +169,14 @@ describe('vercel.json → расписания по jobKey', () => {
     expect(
       ceilToMinute(new Date('2026-09-29T10:00:00.001Z')).toISOString(),
     ).toBe('2026-09-29T10:01:00.000Z');
+  });
+
+  it('floorToMinute', () => {
+    expect(
+      floorToMinute(new Date('2026-09-29T10:00:59.999Z')).toISOString(),
+    ).toBe('2026-09-29T10:00:00.000Z');
+    expect(floorToMinute(new Date('2026-09-29T10:01:00Z')).toISOString()).toBe(
+      '2026-09-29T10:01:00.000Z',
+    );
   });
 });

@@ -32,6 +32,7 @@ import {
 } from './cron-history-query';
 import {
   ceilToMinute,
+  floorToMinute,
   countExpectedRuns,
   loadVercelSchedules,
   parseCronExpression,
@@ -95,6 +96,14 @@ export interface CronJobSummary {
   manualRuns: number;
   /** max(0, expected − scheduledRunsInWindow); null — если expected неизвестно. */
   missed: number | null;
+  /** Самый ранний прогон по расписанию в журнале (в пределах срока
+   * хранения); null — ни одного. Ожидание у джоба считается не раньше
+   * минуты этого прогона: только что выкаченный крон не «пропускал»
+   * тики до своего первого деплоя. */
+  firstScheduledRunAt: Date | null;
+  /** Начало окна ожидания именно этого джоба:
+   * max(expectedSince, минута firstScheduledRunAt). */
+  expectedSinceJob: Date;
   total: number;
   byStatus: Record<CronRunStatusValue, number>;
   medianDurationMs: number | null;
@@ -342,44 +351,62 @@ export class AdminCronService {
     );
     const windowOpen = expectedUntil.getTime() > expectedSince.getTime();
 
-    const [groups, medians, stuckGroups, windowGroups] = await Promise.all([
-      this.prisma.cronRunLog.groupBy({
-        by: ['jobKey', 'status', 'triggeredBy'],
-        where: { startedAt: range },
-        _count: { _all: true },
-        _max: { durationMs: true },
-      }),
-      this.prisma.$queryRaw<
-        Array<{ jobKey: string; median: number | string | null }>
-      >`SELECT "jobKey", percentile_cont(0.5) WITHIN GROUP (ORDER BY "durationMs") AS median
+    const [groups, medians, stuckGroups, windowGroups, firstGroups] =
+      await Promise.all([
+        this.prisma.cronRunLog.groupBy({
+          by: ['jobKey', 'status', 'triggeredBy'],
+          where: { startedAt: range },
+          _count: { _all: true },
+          _max: { durationMs: true },
+        }),
+        this.prisma.$queryRaw<
+          Array<{ jobKey: string; median: number | string | null }>
+        >`SELECT "jobKey", percentile_cont(0.5) WITHIN GROUP (ORDER BY "durationMs") AS median
         FROM "cron_run_logs"
         WHERE "startedAt" >= ${since} AND "startedAt" < ${until} AND "durationMs" IS NOT NULL
         GROUP BY "jobKey"`,
-      stuckBefore.getTime() > since.getTime()
-        ? this.prisma.cronRunLog.groupBy({
-            by: ['jobKey'],
-            where: {
-              status: 'RUNNING',
-              startedAt: { gte: since, lt: stuckBefore },
-            },
-            _count: { _all: true },
-          })
-        : Promise.resolve(
-            [] as Array<{ jobKey: string; _count: { _all: number } }>,
-          ),
-      windowOpen
-        ? this.prisma.cronRunLog.groupBy({
-            by: ['jobKey'],
-            where: {
-              triggeredBy: VERCEL_CRON_TRIGGERED_BY,
-              startedAt: { gte: expectedSince, lt: expectedUntil },
-            },
-            _count: { _all: true },
-          })
-        : Promise.resolve(
-            [] as Array<{ jobKey: string; _count: { _all: number } }>,
-          ),
-    ]);
+        stuckBefore.getTime() > since.getTime()
+          ? this.prisma.cronRunLog.groupBy({
+              by: ['jobKey'],
+              where: {
+                status: 'RUNNING',
+                startedAt: { gte: since, lt: stuckBefore },
+              },
+              _count: { _all: true },
+            })
+          : Promise.resolve(
+              [] as Array<{ jobKey: string; _count: { _all: number } }>,
+            ),
+        windowOpen
+          ? this.prisma.cronRunLog.groupBy({
+              by: ['jobKey'],
+              where: {
+                triggeredBy: VERCEL_CRON_TRIGGERED_BY,
+                startedAt: { gte: expectedSince, lt: expectedUntil },
+              },
+              _count: { _all: true },
+            })
+          : Promise.resolve(
+              [] as Array<{ jobKey: string; _count: { _all: number } }>,
+            ),
+        // Первый прогон по расписанию за весь срок хранения: окно сводки
+        // обычно сутки, а крон мог появиться посреди них (новый деплой) —
+        // тики до его первого прогона пропусками не являются. Джоб, который
+        // хоть раз шёл за срок хранения и потом замолчал, так не прячется:
+        // его первый прогон раньше окна.
+        windowOpen
+          ? this.prisma.cronRunLog.groupBy({
+              by: ['jobKey'],
+              where: {
+                triggeredBy: VERCEL_CRON_TRIGGERED_BY,
+                startedAt: { gte: retentionStart, lt: expectedUntil },
+              },
+              _min: { startedAt: true },
+            })
+          : Promise.resolve(
+              [] as Array<{ jobKey: string; _min: { startedAt: Date | null } }>,
+            ),
+      ]);
 
     const schedules = loadVercelSchedules();
     const keys = JOB_REGISTRY.map((j) => j.jobKey);
@@ -427,17 +454,34 @@ export class AdminCronService {
           windowGroups as Array<{ jobKey: string; _count: { _all: number } }>
         ).find((g) => g.jobKey === jobKey)?._count._all ?? 0;
 
+      const firstRaw =
+        (
+          firstGroups as Array<{
+            jobKey: string;
+            _min: { startedAt: Date | string | null };
+          }>
+        ).find((g) => g.jobKey === jobKey)?._min.startedAt ?? null;
+      const firstScheduledRunAt = firstRaw == null ? null : new Date(firstRaw);
+      // Минута тика первого прогона (строка стартует на секунды позже
+      // тика). Ни одного прогона за срок хранения — ожидание с начала
+      // окна: молчащий крон должен быть виден как пропуски.
+      const expectedSinceJob =
+        firstScheduledRunAt &&
+        floorToMinute(firstScheduledRunAt).getTime() > expectedSince.getTime()
+          ? floorToMinute(firstScheduledRunAt)
+          : expectedSince;
       const schedule = schedules?.[jobKey] ?? null;
       let expected: number | null = null;
       if (schedule) {
         try {
-          expected = windowOpen
-            ? countExpectedRuns(
-                parseCronExpression(schedule),
-                expectedSince,
-                expectedUntil,
-              )
-            : 0;
+          expected =
+            windowOpen && expectedUntil.getTime() > expectedSinceJob.getTime()
+              ? countExpectedRuns(
+                  parseCronExpression(schedule),
+                  expectedSinceJob,
+                  expectedUntil,
+                )
+              : 0;
         } catch (error) {
           this.logger.warn(
             `сводка кронов: расписание ${jobKey} не разобрано: ${
@@ -457,6 +501,8 @@ export class AdminCronService {
           expected == null
             ? null
             : Math.max(0, expected - scheduledRunsInWindow),
+        firstScheduledRunAt,
+        expectedSinceJob,
         total: byStatus.RUNNING + byStatus.SUCCESS + byStatus.FAILED,
         byStatus,
         medianDurationMs,

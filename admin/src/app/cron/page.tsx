@@ -342,7 +342,10 @@ export default function CronPage() {
           {summary ? Math.round(summary.expectedGraceMs / 60000) : 3} мин»: только что наступивший
           тик ещё мог не записаться, и без запаса он выглядел бы пропущенным. «Пропущено» сравнивает
           ожидание с прогонами Vercel Cron в том же окне; «по расписанию» — все прогоны Vercel Cron
-          за день, ручные запуски — отдельно. «Зависшие» — RUNNING дольше замка джоба
+          за день, ручные запуски — отдельно. Новый крон (в журнале нет прогонов раньше окна) ожидается с
+          минуты своего первого прогона; крон без единого прогона за срок хранения — с начала окна,
+          чтобы молчание было видно. Смену расписания сводка не знает: тики по старому расписанию
+          до деплоя считаются по новому. «Зависшие» — RUNNING дольше замка джоба
           {summary ? ` (${Math.round(summary.lockMs / 60000)} мин)` : ''}.
         </p>
 
@@ -389,7 +392,14 @@ export default function CronPage() {
                         </span>
                       )}
                     </td>
-                    <td>{j.expected ?? '—'}</td>
+                    <td>
+                      {j.expected ?? '—'}
+                      {summary.expectedSince !== j.expectedSinceJob && (
+                        <span className="muted" style={{ display: 'block', fontSize: 12 }}>
+                          с первого прогона {new Date(j.expectedSinceJob).toLocaleString('ru-RU')}
+                        </span>
+                      )}
+                    </td>
                     <td>{j.scheduledRuns}</td>
                     <td className={(j.missed ?? 0) > 0 ? 'critical' : undefined}>
                       {j.missed ?? '—'}
