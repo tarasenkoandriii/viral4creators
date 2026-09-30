@@ -1259,6 +1259,7 @@ describe('CronJobsService.runTutorialScenarioGenerate — генерация с�
       // (этап C).
       locales: [],
       skippedManual: 0,
+      deferred: 0,
       generated: 0,
       costly: 0,
       failed: 0,

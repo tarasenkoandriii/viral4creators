@@ -1,10 +1,12 @@
 import {
   IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   Length,
   ValidateIf,
 } from 'class-validator';
+import { SUPPORTED_LOCALES, SupportedLocale } from '../../../common/locale';
 
 /**
  * POST /tts/preview (ТЗ §15.3, этап 36) — послушать голос до генерации.
@@ -67,4 +69,15 @@ export class PreviewVoiceRequestDto {
   @IsOptional()
   @IsBoolean()
   useOriginalDialogue?: boolean;
+
+  /**
+   * Язык пробы (аудит S2). Без него провайдер угадывает язык по буквам
+   * (`detectLanguage`), а короткая испанская или немецкая фраза
+   * латиницей угадывается неверно — Soniox прочитал бы её как `pl`.
+   * Список — языки поздравления (`SUPPORTED_LOCALES`), в которых экран
+   * и просит пробу.
+   */
+  @IsOptional()
+  @IsIn(SUPPORTED_LOCALES)
+  language?: SupportedLocale;
 }

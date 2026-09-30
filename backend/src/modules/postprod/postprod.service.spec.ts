@@ -787,6 +787,105 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       });
     });
 
+    describe('голос Soniox отправителя (S2)', () => {
+      const brand = {
+        voiceMode: 'voiceover',
+        ttsVoiceId: 'brand-1',
+        ttsProvider: 'elevenlabs',
+        ttsModel: 'eleven_multilingual_v2',
+      };
+
+      it('голос каталога перебивает бренд: провайдер soniox, без модели бренда', async () => {
+        const { svc, tts, ttsResolver } = build({
+          session: session({
+            brandManifestSnapshot: brand,
+            greetingBriefSnapshot: {
+              sonioxVoice: { voiceId: 'Maya', label: 'Maya' },
+              scriptLanguage: 'uk',
+            },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('soniox');
+        expect(tts.synthesize).toHaveBeenCalledWith(
+          expect.objectContaining({
+            voiceId: 'Maya',
+            model: null,
+            language: 'uk',
+          }),
+        );
+      });
+
+      it('голос Soniox по умолчанию — voiceId null идёт в Soniox, а не в бренд', async () => {
+        const { svc, tts, ttsResolver } = build({
+          session: session({
+            brandManifestSnapshot: brand,
+            greetingBriefSnapshot: {
+              sonioxVoice: { voiceId: null, label: null },
+            },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('soniox');
+        expect(tts.synthesize).toHaveBeenCalledWith(
+          expect.objectContaining({ voiceId: null, model: null }),
+        );
+      });
+
+      it('режим бренда veo не глушит Soniox — Grok снял ролик без звука', async () => {
+        const { svc, tts } = build({
+          session: session({
+            brandManifestSnapshot: { ...brand, voiceMode: 'veo' },
+            greetingBriefSnapshot: {
+              sonioxVoice: { voiceId: 'Maya', label: 'Maya' },
+            },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(tts.synthesize).toHaveBeenCalled();
+      });
+
+      it('старая запись с клоном и Soniox — клон первым (как у аватара)', async () => {
+        const { svc, tts, ttsResolver } = build({
+          session: session({
+            brandManifestSnapshot: brand,
+            greetingBriefSnapshot: {
+              senderVoice: {
+                userVoiceId: 'uv1',
+                resembleVoiceId: 'clone-42',
+                label: 'Мой голос',
+              },
+              sonioxVoice: { voiceId: 'Maya', label: 'Maya' },
+            },
+          }),
+        });
+        await svc.start('s1', VIDEO);
+        expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('resemble');
+        expect(tts.synthesize).toHaveBeenCalledWith(
+          expect.objectContaining({ voiceId: 'clone-42' }),
+        );
+      });
+
+      it('Soniox не перебивает речь внутри аватара и пресет — второй речи нет', async () => {
+        for (const extra of [
+          { brief: { presetVoiceId: 'eve' }, video: {} },
+          { brief: {}, video: { speechBakedIn: true } },
+        ]) {
+          const { svc, tts } = build({
+            session: session({
+              brandManifestSnapshot: brand,
+              greetingBriefSnapshot: {
+                sonioxVoice: { voiceId: 'Maya', label: 'Maya' },
+                ...extra.brief,
+              },
+            }),
+          });
+          await svc.start('s1', { ...VIDEO, ...extra.video });
+          expect(tts.synthesize).not.toHaveBeenCalled();
+        }
+      });
+    });
+
     it('ненастроенный синтез не отменяет обрезку', async () => {
       // Иначе ненастроенный необязательный сервис наказывал бы за себя
       // операцией, которая от него не зависит.
@@ -1999,6 +2098,31 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       await expect(svc.reVoice('s1', DONE_VIDEO)).rejects.toThrow(
         /голос ведёт сама Veo/,
       );
+    });
+
+    // П-8: то же правило, что `canRevoice` в списке (revoice-eligibility).
+    it('без снимка брендбука и брифа поздравления — отказ до синтеза и бюджета', async () => {
+      const { svc, tts, plans, sessions } = build({
+        session: session({ brandManifestSnapshot: undefined }),
+      });
+      await expect(svc.reVoice('s1', DONE_VIDEO)).rejects.toThrow(
+        /нет снимка брендбука/,
+      );
+      expect(tts.synthesize).not.toHaveBeenCalled();
+      expect(plans.assertCanSpendSession).not.toHaveBeenCalled();
+      expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'revoice');
+    });
+
+    it('поздравление без брендбука (голос в снимке брифа) — переозвучка проходит', async () => {
+      const { svc, api } = build({
+        session: session({
+          brandManifestSnapshot: undefined,
+          greetingBriefSnapshot: { presenter: null },
+        }),
+      });
+      const r = await svc.reVoice('s1', DONE_VIDEO);
+      expect(r.postStatus).toBe('pending');
+      expect(api.submit).toHaveBeenCalledTimes(1);
     });
 
     it('ролик ещё не готов — переозвучка отказывает сразу, не занимая замок', async () => {

@@ -15,6 +15,7 @@ import {
   voiceSummary,
   characterLockOf,
   lockedFieldRefusals,
+  senderVoiceKind,
 } from '../src/lib/greeting-character';
 import type { GreetingPolicyView } from '../src/lib/greeting-policy';
 
@@ -74,6 +75,100 @@ check('голос: клон отправителя, затем пресет, з�
   eq(voiceSummary({ senderLabel: 'Мама', presetName: 'Eve' }, w), 'Мама');
   eq(voiceSummary({ senderLabel: null, presetName: 'Eve' }, w), 'Eve');
   eq(voiceSummary({ senderLabel: null, presetName: null }, w), 'по умолчанию');
+});
+
+// S2: голос Soniox — третий вид; «по умолчанию» у Soniox — не то же, что
+// «голос по умолчанию» стенда, и сводка их различает.
+const s2 = {
+  summaryDefault: 'Soniox по умолчанию',
+  summaryNamed: 'Soniox · {label}',
+};
+check(
+  'голос Soniox: имя каталога, id без имени, голос Soniox по умолчанию',
+  () => {
+    const v = (
+      soniox: { voiceId: string | null; label: string | null } | null
+    ) => voiceSummary({ senderLabel: null, presetName: null, soniox }, w, s2);
+    eq(
+      v({ voiceId: 'Maya', label: 'Maya (female)' }),
+      'Soniox · Maya (female)'
+    );
+    eq(v({ voiceId: 'Adrian', label: null }), 'Soniox · Adrian');
+    eq(v({ voiceId: null, label: null }), 'Soniox по умолчанию');
+    // Soniox не выбран — прежнее «по умолчанию» стенда.
+    eq(v(null), 'по умолчанию');
+    // Без подписей Soniox (старый вызывающий) — прежнее поведение.
+    eq(
+      voiceSummary(
+        {
+          senderLabel: null,
+          presetName: null,
+          soniox: { voiceId: 'x', label: 'X' },
+        },
+        w
+      ),
+      'по умолчанию'
+    );
+  }
+);
+
+check('голос: порядок видов у сводки и у кнопки «Снять» один', () => {
+  const both = { voiceId: 'Maya', label: 'Maya' };
+  eq(
+    voiceSummary(
+      { senderLabel: 'Мама', presetName: null, soniox: both },
+      w,
+      s2
+    ),
+    'Мама'
+  );
+  eq(
+    voiceSummary({ senderLabel: null, presetName: 'Eve', soniox: both }, w, s2),
+    'Eve'
+  );
+  eq(
+    senderVoiceKind({
+      senderVoice: { label: 'Мама' },
+      presetVoiceId: 'eve',
+      sonioxVoice: both,
+    }),
+    'clone'
+  );
+  eq(
+    senderVoiceKind({
+      senderVoice: null,
+      presetVoiceId: 'eve',
+      sonioxVoice: both,
+    }),
+    'preset'
+  );
+  eq(
+    senderVoiceKind({
+      senderVoice: null,
+      presetVoiceId: null,
+      sonioxVoice: both,
+    }),
+    'soniox'
+  );
+  // «Голос Soniox по умолчанию» — тоже выбран: снимать есть что.
+  eq(
+    senderVoiceKind({
+      senderVoice: null,
+      presetVoiceId: null,
+      sonioxVoice: { voiceId: null, label: null },
+    }),
+    'soniox'
+  );
+  eq(
+    senderVoiceKind({
+      senderVoice: null,
+      presetVoiceId: null,
+      sonioxVoice: null,
+    }),
+    'default'
+  );
+  // Сервер до S2 поля не отдавал.
+  eq(senderVoiceKind({ senderVoice: null, presetVoiceId: null }), 'default');
 });
 
 // Аудит этапа D: «Голос: по умолчанию» до ответа и после ошибки, «Музыка:

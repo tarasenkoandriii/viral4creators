@@ -1296,6 +1296,11 @@ export async function previewVoice(
     provider?: string;
     useOriginalDialogue?: boolean;
     sessionId?: string;
+    /**
+     * Язык синтеза (S2): без него провайдер угадывает язык по буквам, и
+     * короткая испанская фраза уходила в Soniox как `pl`.
+     */
+    language?: string;
   }
 ): Promise<VoicePreview> {
   return unwrap(
@@ -1305,6 +1310,7 @@ export async function previewVoice(
       ...(options?.provider ? { provider: options.provider } : {}),
       ...(options?.useOriginalDialogue ? { useOriginalDialogue: true } : {}),
       ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
+      ...(options?.language ? { language: options.language } : {}),
     }),
     'preview'
   );

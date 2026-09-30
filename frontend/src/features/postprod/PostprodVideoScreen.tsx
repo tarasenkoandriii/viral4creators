@@ -43,6 +43,7 @@ import { VideoProcessingStatus } from '../../components/VideoProcessingStatus';
 import { usePostprodVideo } from '../../hooks/usePostprodVideo';
 import { postprodViewState } from '../../lib/video-polling';
 import { RevoicePanel } from '../generation/RevoicePanel';
+import { revoiceBlock } from '../../lib/revoice-eligibility';
 import { ExportPanel } from '../generation/ExportPanel';
 import { AudioTracksPanel } from './AudioTracksPanel';
 import { PublishPanel } from '../generation/PublishPanel';
@@ -216,6 +217,13 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
         snapshot={snapshot}
         onReVoice={reVoice}
         onBrandUpdated={setSnapshot}
+        // То же правило, что у сервера в `reVoice()` и у признака
+        // `canRevoice` в списке — кнопка гаснет до выбора голоса (П-8).
+        block={revoiceBlock({
+          voiceMode: video.voiceMode,
+          hasBrandSnapshot: !!snapshot,
+          hasGreetingSnapshot: !!session?.greetingBriefSnapshot,
+        })}
       />
 
       <ExportPanel sessionId={sessionId} video={video} />

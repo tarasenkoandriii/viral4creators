@@ -80,14 +80,15 @@ export function personaVoiceNeedsPresenter(
  * бренда (`avatarVoiceChoice` в greeting-video.service.ts) — и лицо с
  * первого фото заговорило бы голосом автора в обход проверки
  * `senderVoice`. Условие зеркалит `avatarVoiceChoice`: клон отправителя
- * перебивает голос бренда, значит тогда голос бренда не звучит. Признак
+ * и голос Soniox (S2) перебивают голос бренда, значит тогда голос бренда
+ * не звучит. Признак
  * `brandPersonaVoice` — только по базе (`isPersonaVoice`), снимок его не
  * несёт, поэтому считает вызывающий.
  */
 export function brandPersonaVoiceNeedsPresenter(
   brief: Pick<
     GreetingBriefSnapshot,
-    'resolvedPresenterProvider' | 'presenter' | 'senderVoice'
+    'resolvedPresenterProvider' | 'presenter' | 'senderVoice' | 'sonioxVoice'
   >,
   brandPersonaVoice: boolean,
 ): boolean {
@@ -95,7 +96,10 @@ export function brandPersonaVoiceNeedsPresenter(
     brandPersonaVoice &&
     brief.resolvedPresenterProvider === 'hedra' &&
     !brief.presenter &&
-    !brief.senderVoice?.resembleVoiceId
+    !brief.senderVoice?.resembleVoiceId &&
+    // S2: голос Soniox тоже перебивает голос бренда (`avatarVoiceChoice`)
+    // — голос персоны тогда не звучит, и запрещать нечего.
+    !brief.sonioxVoice
   );
 }
 

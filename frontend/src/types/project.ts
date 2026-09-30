@@ -310,6 +310,23 @@ export interface GreetingSenderVoice {
 export interface GreetingVoiceView {
   senderVoice: GreetingSenderVoice | null;
   presetVoiceId: string | null;
+  /**
+   * Голос каталога Soniox (S2, /tmp/k/S2-API.md) — третий вид, путь как у
+   * клона: модель молчит, речь ложится постобработкой. Необязательное:
+   * сервер до S2 поля не отдавал, читать через `?? null`.
+   */
+  sonioxVoice?: GreetingSonioxVoice | null;
+}
+
+/**
+ * Зеркалит backend `GreetingSonioxVoice`. `voiceId: null` — «Голос Soniox
+ * по умолчанию» (выбран, но без конкретного голоса), что НЕ то же самое,
+ * что `sonioxVoice: null` (Soniox не выбран вовсе).
+ */
+export interface GreetingSonioxVoice {
+  voiceId: string | null;
+  /** Имя из каталога; `null` у голоса по умолчанию. */
+  label: string | null;
 }
 
 /**

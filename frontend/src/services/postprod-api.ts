@@ -26,6 +26,7 @@
 import { api } from './api';
 import type { GeneratedVideo } from './api';
 import type { VoiceMode } from '../types';
+import type { RevoiceBlock } from '../lib/revoice-eligibility';
 
 function unwrap<T>(res: { data?: T }, what: string): T {
   if (res.data === undefined) throw new Error(`Пустой ответ: ${what}`);
@@ -57,8 +58,10 @@ export interface PostprodVideoSummary {
   quality: string | null;
   provider: string | null;
   resolution: string | null;
-  /** У Veo-озвучки своей дорожки нет — кнопка «Переозвучить» скрыта. */
+  /** `revoiceBlock === null` — то же правило, что у `reVoice()` на сервере. */
   canRevoice: boolean;
+  /** Почему нельзя (П-8): Veo-голос или нет снимка брендбука. */
+  revoiceBlock: RevoiceBlock | null;
 }
 
 export interface PostprodVideoListResult {

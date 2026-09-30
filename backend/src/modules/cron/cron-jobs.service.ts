@@ -567,6 +567,7 @@ export class CronJobsService {
         pairs: 0,
         locales: [],
         skippedManual: 0,
+        deferred: 0,
         generated: 0,
         costly: 0,
         failed: 0,

@@ -75,7 +75,7 @@ import { VoiceToggle } from '../../components/VoiceToggle';
 import { BriefStep } from './greeting/BriefStep';
 import { ReferencesStep } from './greeting/ReferencesStep';
 import { ScriptStep } from './greeting/ScriptStep';
-import { CharacterBlock } from './greeting/CharacterBlock';
+import { CharacterBlock, type SelectedVoice } from './greeting/CharacterBlock';
 import { VideoStep } from './greeting/VideoStep';
 
 /**
@@ -105,6 +105,12 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
   const [prompt, setPrompt] = useState<GenerationPrompt | undefined>();
   const [video, setVideo] = useState<GeneratedVideo | undefined>();
   const [readiness, setReadiness] = useState<Readiness | null>(null);
+  // Голос из «Характера ролика» — шагу «Видео» (S2): подпись для сводки
+  // согласия K7, вид — для плашки «озвучка не легла».
+  const [senderVoice, setSenderVoice] = useState<SelectedVoice>({
+    label: null,
+    kind: null,
+  });
   /**
    * Этап C: правка брифа после старта может сбросить наклейку, музыку и
    * число сцен или увести в новую версию сессии. Шаги ниже читают своё
@@ -443,6 +449,7 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
               stepKey={`${sessionId}:${revision}`}
               brief={brief}
               videoStatus={video?.status ?? null}
+              onVoice={setSenderVoice}
             />
           )}
 
@@ -462,6 +469,8 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
                 prompt={prompt}
                 readiness={readiness}
                 onGoToScript={() => goToStep('script')}
+                voiceLabel={senderVoice.label}
+                voiceKind={senderVoice.kind}
               />
             </div>
           )}

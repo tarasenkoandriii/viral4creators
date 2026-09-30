@@ -196,6 +196,16 @@ check('низкая уверенность — переспрос, не стар
   ]);
 });
 
+check('отпечаток: другой голос — другая сводка', () => {
+  const base = consentFingerprint(FACTS);
+  const maya = consentFingerprint({ ...FACTS, voice: 'Soniox · Maya' });
+  if (base === maya) throw new Error('голос не в отпечатке');
+  if (maya === consentFingerprint({ ...FACTS, voice: 'Soniox по умолчанию' }))
+    throw new Error('Soniox по умолчанию = Maya');
+  // Без голоса и `null` — одно и то же (не прочитан).
+  eq(consentFingerprint({ ...FACTS, voice: null }), base);
+});
+
 check('кнопка занята / ролик идёт / готов — отказ причиной', () => {
   for (const block of ['busy', 'in-progress', 'done'] as const) {
     const r = run([consent(0), consent(1000, { block })]);
@@ -410,6 +420,43 @@ async function main() {
       h.release({ kind: 'unknown', reason: 'locked' });
       eq(await p, { kind: 'refuse', reason: 'locked' });
       eq(h.starts(), 0);
+    }
+  );
+
+  // S2: голос — часть того, с чем соглашаются. Сменили голос между двумя
+  // «генерируй» — это другой ролик: снова сводка, не старт.
+  await checkAsync(
+    'runConsent: голос в сводке; сменили голос — снова сводка, не старт',
+    async () => {
+      const h = harness();
+      h.setInput({ facts: { ...FACTS, voice: 'Soniox · Maya' } });
+      const first = h.run();
+      h.release(FACTS.charge);
+      const e1 = await first;
+      eq(e1?.kind === 'summary' ? e1.summary.voice : 'нет', 'Soniox · Maya');
+      h.setInput({ facts: { ...FACTS, voice: 'Мама' } });
+      const second = h.run();
+      h.release(FACTS.charge);
+      const e2 = await second;
+      eq(e2?.kind, 'summary');
+      eq(e2?.kind === 'summary' ? e2.summary.voice : 'нет', 'Мама');
+      eq(h.starts(), 0);
+      // Тот же голос — старт.
+      const third = h.run();
+      h.release(FACTS.charge);
+      eq((await third)?.kind, 'start');
+      eq(h.starts(), 1);
+    }
+  );
+
+  await checkAsync(
+    'runConsent: голос не прочитан — в сводке null, а не «по умолчанию»',
+    async () => {
+      const h = harness();
+      const first = h.run();
+      h.release(FACTS.charge);
+      const e = await first;
+      eq(e?.kind === 'summary' ? e.summary.voice : 'нет', null);
     }
   );
 

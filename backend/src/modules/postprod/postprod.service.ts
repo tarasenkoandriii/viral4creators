@@ -69,6 +69,11 @@ import {
   VoiceMode,
 } from '../../common/voice-mode';
 import {
+  revoiceBlock,
+  REVOICE_BLOCK_MESSAGE,
+} from '../../common/revoice-eligibility';
+import { greetingVoiceMode } from '../../common/greeting-soniox-voice';
+import {
   cueTimings,
   firstCueSeconds,
   heuristicCueTimings,
@@ -622,11 +627,16 @@ export class PostProductionService {
         fresh ? { ...fresh, generationPrompt } : fresh,
         freshVideo,
       );
-      if (!usesOwnVoice(work.voiceMode)) {
-        throw new PostProdError(
-          'переозвучка недоступна — в этом ролике голос ведёт сама Veo, отдельной звуковой дорожки нет',
-        );
-      }
+      // То же правило, что у признака `canRevoice` в списке «Постпрод»
+      // (common/revoice-eligibility.ts): кнопка видна ровно там, где
+      // этот вызов не откажет. Проверка до платного синтеза и до правки
+      // бюджета — отказ ничего не стоит.
+      const block = revoiceBlock({
+        voiceMode: work.voiceMode,
+        hasBrandSnapshot: !!fresh?.brandManifestSnapshot,
+        hasGreetingSnapshot: !!fresh?.greetingBriefSnapshot,
+      });
+      if (block) throw new PostProdError(REVOICE_BLOCK_MESSAGE[block]);
 
       // CONTRACT6 п.5: переозвучка — новый синтез голосом из снимка, и
       // проверка «Я в кадре» та же, что у рендера (`personaRenderProblem`):
@@ -1193,6 +1203,10 @@ export class PostProductionService {
   ): Work {
     const brand = session?.brandManifestSnapshot;
     const senderVoice = session?.greetingBriefSnapshot?.senderVoice ?? null;
+    // S2: голос Soniox отправителя — наш синтез поверх, провайдером Soniox.
+    // Клон и пресет его гасят при выборе, а в старой записи с обоими полями
+    // клон читается первым (ниже) — тот же порядок, что у `avatarVoiceChoice`.
+    const sonioxVoice = session?.greetingBriefSnapshot?.sonioxVoice ?? null;
     // Пресетный голос xAI: реплику произнесла сама модель, в кадре и с
     // липсинком (`reference_audios`). Синтезировать её второй раз
     // значит получить то же двоение, ради устранения которого ролик
@@ -1218,10 +1232,17 @@ export class PostProductionService {
     // Тот же вывод, что и у пресетного голоса строкой раньше: свой
     // голос в этом файле уже звучит, класть его поверх — две речи со
     // сдвигом.
+    //
+    // S2: при голосе Soniox режим бренда 'veo' не глушит озвучку
+    // (`greetingVoiceMode`) — ту же функцию прочитали сцена и рендер Grok,
+    // и ролик снят без звука: без нашей дорожки он вышел бы немым.
     const voiceMode =
       video.speechBakedIn || presetVoiceId
         ? 'veo'
-        : normalizeVoiceMode(brand?.voiceMode);
+        : greetingVoiceMode(
+            session?.greetingBriefSnapshot,
+            normalizeVoiceMode(brand?.voiceMode),
+          );
     const subtitlesMode = normalizeSubtitlesMode(brand?.subtitlesMode);
     const subtitleTheme = normalizeSubtitleTheme(brand?.subtitleTheme);
     // Родной для Veo формат — это «резать нечего», а не «резать в тот же
@@ -1304,9 +1325,22 @@ export class PostProductionService {
       // `synthesize` зовёт именно Resemble (`resolveByKey`).
       // `ttsModel` у клона своего не бывает — модель выбирает
       // провайдер.
-      voiceId: senderVoice?.resembleVoiceId ?? brand?.ttsVoiceId ?? null,
-      ttsModel: senderVoice ? null : (brand?.ttsModel ?? null),
-      ttsProvider: senderVoice ? 'resemble' : (brand?.ttsProvider ?? null),
+      //
+      // Голос Soniox (S2) — так же поверх бренда, провайдером `soniox`;
+      // `voiceId: null` у него — голос Soniox по умолчанию, а не «голоса
+      // нет» (`SonioxTtsService.synthesize` сам подставит `SONIOX_TTS_VOICE`),
+      // и модель бренда (чужого провайдера) ему не передаётся.
+      voiceId: senderVoice
+        ? senderVoice.resembleVoiceId
+        : sonioxVoice
+          ? sonioxVoice.voiceId?.trim() || null
+          : (brand?.ttsVoiceId ?? null),
+      ttsModel: senderVoice || sonioxVoice ? null : (brand?.ttsModel ?? null),
+      ttsProvider: senderVoice
+        ? 'resemble'
+        : sonioxVoice
+          ? 'soniox'
+          : (brand?.ttsProvider ?? null),
       // Найдено при аудите пайплайна GREETING_VIDEO: раньше здесь стоял
       // голый `null` для любой сессии без `productInformation` — не
       // "нейтральное" значение, а обход собственного дефолта

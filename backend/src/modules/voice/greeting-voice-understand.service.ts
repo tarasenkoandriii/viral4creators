@@ -60,6 +60,7 @@ import { SupportedLocale } from '../../common/locale';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { voiceLanguageHints } from '../../common/greeting-voice';
+import { scriptLanguageOf } from '../../common/greeting-language';
 import {
   REPLIES,
   VoiceBriefState,
@@ -689,7 +690,7 @@ export class GreetingVoiceUnderstandService {
         );
         return null;
       });
-    const [voice, presets, clones, music, cards, sticker, scenes] =
+    const [voice, presets, clones, soniox, music, cards, sticker, scenes] =
       await Promise.all([
         safe(this.senderVoice.get(id)),
         // Экран тоже глотает сбой роестра и прячет блок пресетов.
@@ -697,6 +698,13 @@ export class GreetingVoiceUnderstandService {
         // ждёт xAI дольше пары секунд, сбой — пустой список.
         this.senderVoice.listPresetVoicesQuick().catch(() => []),
         safe(this.readyClones(session.userId ?? null)),
+        // S2: каталог Soniox — на том же языке, что раздел экрана (язык
+        // поздравления), с тем же кешем и потолком ожидания, что роестр.
+        this.senderVoice
+          .listSonioxVoicesQuick(
+            scriptLanguageOf(session.greetingBriefSnapshot, session.locale),
+          )
+          .catch(() => []),
         safe(this.music.get(id)),
         safe(this.cards.get(id)),
         safe(this.stickers.view(id, '')),
@@ -709,6 +717,9 @@ export class GreetingVoiceUnderstandService {
             clones: clones ?? [],
             presetVoiceId: voice.presetVoiceId,
             cloneId: voice.senderVoice?.resembleVoiceId ?? null,
+            soniox: soniox.map((v) => ({ id: v.voiceId, name: v.name })),
+            sonioxVoiceId: voice.sonioxVoice?.voiceId ?? null,
+            sonioxSelected: !!voice.sonioxVoice,
           }
         : null,
       music: music

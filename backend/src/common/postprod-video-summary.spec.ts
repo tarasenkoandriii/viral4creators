@@ -39,6 +39,13 @@ describe('selectPostprodVideoSummaries', () => {
     expect(sql).toContain(
       `COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'voiceMode'`,
     );
+    // П-8: признаки снимков — один бит на строку, а не сами снимки.
+    expect(sql).toContain(
+      `COALESCE(jsonb_typeof(s."data" -> 'brandManifestSnapshot') = 'object', false) AS "hasBrandSnapshot"`,
+    );
+    expect(sql).toContain(
+      `COALESCE(jsonb_typeof(s."data" -> 'greetingBriefSnapshot') = 'object', false) AS "hasGreetingSnapshot"`,
+    );
     expect(sql).not.toMatch(/SELECT \*|,\s*s\."data"\s*,|s\."data"\s+FROM/);
     // userId — настоящий фильтр (не JSON-путь): только owner видит свой
     // список, никакого LEFT JOIN на users (это не админский экран).

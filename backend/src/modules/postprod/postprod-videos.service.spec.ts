@@ -37,6 +37,8 @@ function row(overrides: Partial<PostprodVideoSummaryRow> = {}) {
     quality: null,
     provider: 'grok',
     resolution: '1080p',
+    hasBrandSnapshot: true,
+    hasGreetingSnapshot: false,
   };
   return { ...base, ...overrides };
 }
@@ -68,6 +70,46 @@ describe('PostprodVideosService.listFinishedVideos', () => {
     expect(bySessionId['s-veo'].canRevoice).toBe(false);
     expect(bySessionId['s-null'].canRevoice).toBe(false);
     expect(bySessionId['s-null'].voiceMode).toBeNull();
+  });
+
+  // П-8: сессия без снимка брендбука получала «Переозвучить», а первый
+  // же шаг панели (PATCH снимка) отвечал 404 — после выбора голоса.
+  it('без снимка брендбука и брифа поздравления → canRevoice=false с причиной', async () => {
+    selectMock.mockResolvedValue([
+      row({ sessionId: 's-bare', hasBrandSnapshot: false }),
+      row({
+        sessionId: 's-greeting',
+        hasBrandSnapshot: false,
+        hasGreetingSnapshot: true,
+      }),
+      row({ sessionId: 's-brand' }),
+      row({
+        sessionId: 's-veo-bare',
+        voiceMode: 'veo',
+        hasBrandSnapshot: false,
+      }),
+    ]);
+    countMock.mockResolvedValue(4);
+
+    const service = new PostprodVideosService({} as any);
+    const result = await service.listFinishedVideos('user-1', 1, 20);
+    const by = Object.fromEntries(result.items.map((i) => [i.sessionId, i]));
+
+    expect(by['s-bare']).toMatchObject({
+      canRevoice: false,
+      revoiceBlock: 'no-voice-settings',
+    });
+    // Поздравление держит голос в снимке брифа — его переозвучка законна.
+    expect(by['s-greeting']).toMatchObject({
+      canRevoice: true,
+      revoiceBlock: null,
+    });
+    expect(by['s-brand']).toMatchObject({
+      canRevoice: true,
+      revoiceBlock: null,
+    });
+    // Veo важнее: снимок человеку не поможет, дорожки всё равно нет.
+    expect(by['s-veo-bare'].revoiceBlock).toBe('veo-voice');
   });
 
   it('page/pageSize → skip передаётся в select, total/page/pageSize возвращаются как есть', async () => {

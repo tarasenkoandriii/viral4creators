@@ -67,7 +67,7 @@ export const GREETING_PROMPT_LOCK_TTL_MS = 5 * 60 * 1000;
 export interface GreetingScriptInputsSource {
   greetingBriefSnapshot?: Pick<
     GreetingBriefSnapshot,
-    'presenter' | 'presetVoiceId' | 'senderVoice'
+    'presenter' | 'presetVoiceId' | 'senderVoice' | 'sonioxVoice'
   > | null;
   greetingReferenceImages?: SceneAsset[] | null;
   brandManifestSnapshot?: Pick<
@@ -97,6 +97,14 @@ export function greetingScriptInputs(s: GreetingScriptInputsSource): string {
     presetVoiceId: brief?.presetVoiceId?.trim() || null,
     clone: brief?.senderVoice?.resembleVoiceId ?? null,
     voiceMode: normalizeVoiceMode(s.brandManifestSnapshot?.voiceMode),
+    // S2: голос Soniox меняет строку сцены (ведущий молчит, речь поверх),
+    // значит, и сценарий. Ключ — только когда голос выбран: иначе
+    // отпечаток КАЖДОЙ уже собранной сессии сменился бы от одной этой
+    // правки, и все они разом получили бы «сценарий устарел».
+    // `null` — голос Soniox по умолчанию (ключ есть, значение пусто).
+    ...(brief?.sonioxVoice
+      ? { soniox: brief.sonioxVoice.voiceId ?? null }
+      : {}),
   });
 }
 

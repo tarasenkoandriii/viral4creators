@@ -93,8 +93,10 @@ export function sessionPromptLines(ctx: VoiceUnderstandContext): string[] {
       `голос ведущего в кадре, value — id из: ${opts((s?.voice?.presets ?? []).map((o) => ({ id: o.id, name: o.name })))}; сейчас ${asData(s?.voice?.presetVoiceId ?? 'нет', 64)}`,
     voiceClone: () =>
       `свой клонированный голос, value — id из: ${opts((s?.voice?.clones ?? []).map((o) => ({ id: o.id, name: o.label })))}`,
+    voiceSoniox: () =>
+      `голос Soniox (озвучка поверх ролика), value — id из: ${opts(s?.voice?.soniox ?? [])}; сейчас ${asData(s?.voice?.sonioxVoiceId ?? (s?.voice?.sonioxSelected ? 'Soniox по умолчанию' : 'нет'), 64)}`,
     voiceCustom: () =>
-      `галочка «свой/выбранный голос», value true/false (false — «голос по умолчанию»); сейчас ${s?.voice?.presetVoiceId || s?.voice?.cloneId ? 'выбран' : 'по умолчанию'}`,
+      `галочка «свой/выбранный голос», value true/false (false — «голос по умолчанию»); сейчас ${s?.voice?.presetVoiceId || s?.voice?.cloneId || s?.voice?.sonioxSelected ? 'выбран' : 'по умолчанию'}`,
     musicTheme: () =>
       `музыкальная тема, value — id из: ${opts((s?.music?.themes ?? []).map((o) => ({ id: o.id, name: o.title })))}; сейчас ${asData(s?.music?.selectedId ?? 'нет', 64)}`,
     musicEnabled: () =>

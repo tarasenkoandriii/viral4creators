@@ -46,10 +46,15 @@ import {
   greetingErrorCodeOfError,
 } from '../../../lib/greeting-errors';
 import {
+  isVoiceStartError,
+  pollSettled,
   renderBlockOf,
   renderPollDelay,
   renderPollErrorKind,
+  voiceTrackIssue,
 } from '../../../lib/greeting-render';
+import { reVoiceVideo } from '../../../services/postprod-api';
+import type { SenderVoiceKind } from '../../../lib/greeting-character';
 import { GreetingDeliveryPanel } from '../GreetingDeliveryPanel';
 import type { GreetingBriefView } from '../../../types/project';
 import { HelpButton } from '../HelpSheet';
@@ -74,6 +79,8 @@ export function VideoStep({
   prompt,
   readiness,
   onGoToScript,
+  voiceLabel = null,
+  voiceKind = null,
 }: {
   sessionId: string;
   video: GeneratedVideo | undefined;
@@ -88,6 +95,13 @@ export function VideoStep({
   readiness: Readiness | null;
   /** Прокрутить к шагу «Сценарий» — выход из «сценарий устарел». */
   onGoToScript?: () => void;
+  /**
+   * Чьим голосом прозвучит ролик — подпись сводки «Характера ролика»
+   * (S2); `null` — выбор ещё не прочитан, строки голоса в сводке нет.
+   */
+  voiceLabel?: string | null;
+  /** Вид выбранного голоса (аудит S2); `null` — не прочитан. */
+  voiceKind?: SenderVoiceKind | null;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -102,6 +116,8 @@ export function VideoStep({
    * сборка (новый `prompt`) снимает плашку.
    */
   const [staleScript, setStaleScript] = useState(false);
+  /** Старт отказал из-за голоса (S2) — рядом с ошибкой путь к карточке голоса. */
+  const [voiceStartError, setVoiceStartError] = useState(false);
   useEffect(() => {
     setStaleScript(false);
   }, [prompt]);
@@ -112,6 +128,11 @@ export function VideoStep({
   const failuresRef = useRef(0);
   const inFlight = useRef(false);
   const startingRef = useRef(false);
+  /** Идёт «Переозвучить»: опрос ждёт конца постобработки, а не рендера. */
+  const awaitingRevoiceRef = useRef(false);
+  const [revoicing, setRevoicing] = useState(false);
+  /** Переозвучку запросили в этом экране — показать, что она идёт. */
+  const [revoiceRequested, setRevoiceRequested] = useState(false);
   // Опрос — таймер, а колбэк из мастера — новая стрелка на каждый рендер:
   // таймер зовёт последний, а не тот, что был при запуске.
   const onVideoRef = useRef(onVideo);
@@ -158,8 +179,10 @@ export function VideoStep({
       failuresRef.current = 0;
       setPollTrouble(null);
       if (status) onVideoRef.current(status);
-      if (isTerminal(status)) pollingRef.current = false;
-      else next = renderPollDelay(0);
+      if (pollSettled(status, awaitingRevoiceRef.current)) {
+        pollingRef.current = false;
+        awaitingRevoiceRef.current = false;
+      } else next = renderPollDelay(0);
     } catch (e) {
       const httpStatus = (e as { response?: { status?: number } })?.response
         ?.status;
@@ -230,6 +253,43 @@ export function VideoStep({
         ? dict.greetingUi.renderBlockedNotReady
         : null;
 
+  // Аудит S2: ролик готов, а наша речь на него не легла — немой ролик.
+  const voiceIssue = voiceTrackIssue(video, {
+    voiceKind,
+    presenter: consentBrief.presenterProvider,
+  });
+  const s2 = dict.greetingSoniox;
+  /**
+   * «Переозвучить» — дорожка поверх ГОТОВОГО ролика тем же голосом, без
+   * второго платного рендера (`/postprod/revoice`, как в постпродакшене).
+   */
+  const revoice = async () => {
+    if (revoicing) return;
+    setRevoicing(true);
+    setError(null);
+    try {
+      // Ответ маршрута — общий тип постпродакшена; состояние ролика
+      // поздравления читаем тем же опросом, что и рендер.
+      await reVoiceVideo(sessionId);
+      awaitingRevoiceRef.current = true;
+      setRevoiceRequested(true);
+      startPolling(0);
+    } catch (e) {
+      setError(greetingErrorMessage(e, dict));
+    } finally {
+      setRevoicing(false);
+    }
+  };
+  /**
+   * К карточке голоса. Голос готового ролика не меняется (карточки
+   * заперты, CONTRACT6) — карточка сама объяснит путь через новую версию,
+   * и плашка говорит то же самое словами (`changeVoiceHint`).
+   */
+  const goToVoiceCard = () =>
+    document
+      .querySelector('[data-qa="greeting-voice-card"]')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
   const start = async () => {
     // Повторный вход — двойное нажатие или нажатие поверх голосового
     // старта: `starting` из замыкания ещё прежний, ref — уже нет (K7).
@@ -242,6 +302,7 @@ export function VideoStep({
     setError(null);
     setLocked(false);
     setStaleScript(false);
+    setVoiceStartError(false);
     try {
       const v = await startGreetingVideo(sessionId);
       onVideo(v);
@@ -258,7 +319,9 @@ export function VideoStep({
         recordInviteEvent('wall');
       } else {
         setError(greetingErrorMessage(e, dict));
-        setStaleScript(greetingErrorCodeOfError(e) === GREETING_SCRIPT_STALE);
+        const code = greetingErrorCodeOfError(e);
+        setStaleScript(code === GREETING_SCRIPT_STALE);
+        setVoiceStartError(isVoiceStartError(code));
       }
       // K4: отказ старта (стена, суточный лимит) помощник объясняет и
       // голосом — у включивших «голосом»; экран показал его сам.
@@ -282,6 +345,7 @@ export function VideoStep({
       customOccasion: consentBrief.customOccasionText,
       resolution: consentBrief.resolution,
       presenter: consentBrief.presenterProvider,
+      voice: voiceLabel,
     },
     occasionLabel:
       consentBrief.occasion === 'OTHER' && consentBrief.customOccasionText
@@ -319,6 +383,13 @@ export function VideoStep({
           action={<HelpButton cardHook="greeting-video-card" />}
         />
         {error && <Alert tone="error">{error}</Alert>}
+        {error && voiceStartError && (
+          <div className="mt-2">
+            <Button size="sm" variant="outline" onClick={goToVoiceCard}>
+              {dict.greetingSoniox.changeVoiceButton}
+            </Button>
+          </div>
+        )}
         {staleScript && (
           <Alert tone="info" className="mt-2">
             <div className="flex items-center justify-between gap-3">
@@ -428,6 +499,38 @@ export function VideoStep({
         {video && video.status === GenerationStatus.COMPLETE && (
           <div className="space-y-3">
             <Badge tone="success">{w.videoReady}</Badge>
+            {voiceIssue && (
+              // Причину говорим своими словами: `voiceError` — технический
+              // текст, в нём бывает сырой ответ провайдера.
+              <Alert tone="warning">
+                <p>
+                  {voiceIssue.kind === 'failed'
+                    ? s2.voiceFailed
+                    : s2.voiceSkipped}
+                </p>
+                <p className="mt-1 text-xs">{s2.changeVoiceHint}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {voiceIssue.canRevoice && (
+                    <Button
+                      size="sm"
+                      loading={revoicing}
+                      onClick={() => void revoice()}
+                    >
+                      {s2.revoiceButton}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={goToVoiceCard}>
+                    {s2.changeVoiceButton}
+                  </Button>
+                </div>
+              </Alert>
+            )}
+            {revoiceRequested && video.postStatus === 'pending' && (
+              <Alert tone="info">
+                <Spinner size={14} className="inline mr-2" />
+                {s2.revoicePending}
+              </Alert>
+            )}
             {video.downloadUrl && (
               <video
                 ref={videoPlaybackRef}

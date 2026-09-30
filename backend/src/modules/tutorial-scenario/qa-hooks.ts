@@ -736,6 +736,18 @@ export const QA_HOOKS: Record<string, QaHook> = {
     // попасть в них.
     clickCost: 'forbidden',
   },
+  'greeting-voice-soniox': {
+    route: 'greeting-video-ready',
+    description:
+      'раздел «Голоса Soniox» в карточке голоса: голоса каталога Soniox и «Голос Soniox по умолчанию». Только waitFor/assertVisible: список приходит от провайдера',
+    // Контейнер группы: клик попал бы в случайную кнопку (или в пробу голоса).
+    clickCost: 'forbidden',
+    // Без `env`: ключ Soniox читает `common/soniox.ts` (`sonioxApiKey`),
+    // а не `config/configuration.ts`, по которому шов сверяет пометку.
+    absentWhen: {
+      why: 'без ключа Soniox на стенде (SONIOX_API_KEY) каталог пуст, и раздела нет в DOM',
+    },
+  },
   'greeting-voice-custom': {
     route: 'greeting-video-ready',
     description:

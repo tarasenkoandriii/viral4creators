@@ -8,7 +8,7 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { useI18n } from '../../../lib/i18n-context';
 import type { GreetingBriefView } from '../../../types/project';
 import { useGreetingPolicy } from '../../../lib/useGreetingPolicy';
@@ -19,8 +19,16 @@ import {
   characterRegister,
   characterSummaryLine,
   characterLockOf,
+  type SenderVoiceKind,
 } from '../../../lib/greeting-character';
+
+/** Выбранный голос для шага «Видео»; поля `null` — не прочитаны. */
+export interface SelectedVoice {
+  label: string | null;
+  kind: SenderVoiceKind | null;
+}
 import { Alert } from '../../../components/ui';
+import { greetingVoiceLanguage } from '../../../lib/tts-provider-choice';
 import { SenderVoiceStep } from './SenderVoiceStep';
 import { MusicThemeStep } from './MusicThemeStep';
 import { CardsStep } from './CardsStep';
@@ -47,15 +55,25 @@ export function CharacterBlock({
   stepKey,
   brief,
   videoStatus = null,
+  onVoice,
 }: {
   sessionId: string;
   /** Ключ пересоздания карточек: новая версия сессии — новое состояние. */
   stepKey: string;
-  brief: Pick<GreetingBriefView, 'occasion' | 'occasionRegister'>;
+  brief: Pick<
+    GreetingBriefView,
+    'occasion' | 'occasionRegister' | 'scriptLanguage'
+  >;
   /** Статус ролика сессии: готов или снимается — карточки заперты. */
   videoStatus?: string | null;
+  /**
+   * Выбранный голос для шага «Видео» (S2): подпись — та же, что в сводке
+   * (её показывает карточка согласия K7), вид — для плашки «озвучка не
+   * легла». `null` — не прочитан.
+   */
+  onVoice?: (voice: SelectedVoice) => void;
 }) {
-  const { dict } = useI18n();
+  const { dict, locale } = useI18n();
   const w = dict.greetingVideoWizard;
   // Та же таблица, что у брифа, через общий хук: второй копии загрузки
   // (и второго толкования «не загрузилась») у экрана быть не должно.
@@ -77,6 +95,26 @@ export function CharacterBlock({
       scenes: one('scenes'),
     };
   }, []);
+
+  // Голос уходит и в сводку блока, и наверх — шагу «Видео». Подпись и
+  // вид приходят из двух эффектов карточки, поэтому копятся в ref и
+  // уходят наверх вместе.
+  const voiceRef = useRef<SelectedVoice>({ label: null, kind: null });
+  const reportVoice = useCallback(
+    (label: string | null) => {
+      report.voice(label);
+      voiceRef.current = { ...voiceRef.current, label };
+      onVoice?.(voiceRef.current);
+    },
+    [report, onVoice]
+  );
+  const reportVoiceKind = useCallback(
+    (kind: SenderVoiceKind | null) => {
+      voiceRef.current = { ...voiceRef.current, kind };
+      onVoice?.(voiceRef.current);
+    },
+    [onVoice]
+  );
 
   const rules = rulesOf(policy, characterRegister(policy, brief));
   const line = characterSummaryLine(summary, w);
@@ -125,7 +163,9 @@ export function CharacterBlock({
         <SenderVoiceStep
           key={`${stepKey}:voice`}
           sessionId={sessionId}
-          onSummary={report.voice}
+          language={greetingVoiceLanguage(brief.scriptLanguage, locale)}
+          onSummary={reportVoice}
+          onVoiceKind={reportVoiceKind}
           lockText={lockText}
         />
         <MusicThemeStep

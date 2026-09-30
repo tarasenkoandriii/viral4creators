@@ -270,6 +270,8 @@ const MASKED_TEXT: Array<[file: string, mask: string, count: number]> = [
   ['features/projects/greeting/SenderVoiceStep.tsx', 'personal-voice-label', 1],
   ['features/voice/VoiceConsentCard.tsx', 'personal-recipient', 1],
   ['features/voice/VoiceConsentCard.tsx', 'personal-occasion', 1],
+  // Голос в сводке согласия (S2): подпись клона — личный текст.
+  ['features/voice/VoiceConsentCard.tsx', 'personal-voice-label', 1],
   // Своя музыка: название трека (строка выбора и поле загрузки).
   ['features/projects/greeting/MusicThemeStep.tsx', 'personal-music-title', 2],
   // Голосовой помощник: продиктованные значения и распознанная фраза.

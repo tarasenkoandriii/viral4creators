@@ -15,6 +15,7 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
 import { SessionService } from '../../common/session.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
+import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { VoiceModule } from './voice.module';
 import { GreetingVoiceService } from './greeting-voice.service';
 import { GreetingVoiceUnderstandService } from './greeting-voice-understand.service';
@@ -30,6 +31,8 @@ import { WizardGuideService } from '../wizard-guide/wizard-guide.service';
     { provide: SessionService, useValue: {} },
     // Глобальный `TtsModule` на проде.
     { provide: PlatformSettingsService, useValue: {} },
+    // S2: каталог Soniox для карточки голоса — тоже из глобального TtsModule.
+    { provide: TtsProviderResolverService, useValue: {} },
   ],
   exports: [
     PrismaService,
@@ -37,6 +40,7 @@ import { WizardGuideService } from '../wizard-guide/wizard-guide.service';
     PlanService,
     SessionService,
     PlatformSettingsService,
+    TtsProviderResolverService,
   ],
 })
 class GlobalStubsModule {}

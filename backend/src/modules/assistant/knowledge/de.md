@@ -5,7 +5,7 @@ _Собрано автоматически 2026-09-30 из lending/frontend/back
 ## Bereiche der Mini-App
 
 - **Projekte** — Produkt oder Produktlinie, für die Werbung generiert wird
-- **Marke** — Ein einheitlicher Stil und Charaktere für alle Projekte einer Marke
+- **Markenbuch** — Ein einheitlicher Stil und Charaktere für alle Projekte einer Marke
 - **Produktion** — der Generierungsassistent — von der Referenzauswahl bis zum fertigen Video (siehe die Anleitungsschritte unten)
 - **Postprod** — Alle Ihre fertigen Videos: Neuvertonung, Export, Veröffentlichung und Teilen.
 

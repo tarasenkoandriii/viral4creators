@@ -20,6 +20,9 @@
  * есть прежнее поведение), и прогон обходит пары (шаг × локаль).
  * Прежняя оговорка «только локаль `ru` — расширение отдельный, более
  * поздний шаг» относилась ровно к этому этапу, и он сделан.
+ * Порядок обхода — ротация по давности (`generate-rotation.ts`, пункт
+ * A1): за ночь бюджет пропускает ≈28 пар из 75, и фиксированный
+ * порядок оставлял хвостовые локали без сценариев навсегда.
  * ИСПОЛНЕНИЕ сгенерированных сценариев живёт отдельно — в
  * `TutorialScenarioRunnerService` (этап 97, puppeteer). Он же
  * заполняет `lastRunAt`/`lastRunStatus`/`lastRunError`; этот сервис
@@ -73,6 +76,16 @@ import {
   buildScenarioPrompt,
   parseScenarioResponse,
 } from './tutorial-scenario-prompt';
+import {
+  GENERATE_ROTATION_SETTING_KEY,
+  orderByStaleness,
+  parseGenerateStamps,
+  rotationKey,
+  serializeGenerateStamps,
+} from './generate-rotation';
+
+/** Пара круга генерации: тема (шаг мастера или тема поздравления) × локаль. */
+type RotationPair = { locale: string; key: string; item: AssistantStepItem };
 
 /**
  * Бюджет на весь прогон генерации. Меньше потолка функции с запасом
@@ -80,13 +93,19 @@ import {
  * `failures[]`, а свой бюджет позволяет вернуть частичный результат
  * и назвать отложенное. Тот же приём, что `RUN_DEADLINE_MS` у
  * исполнителя.
+ *
+ * Экспортируется ради теста ротации: «за N ночей покрыты все пары»
+ * считается от этого бюджета, и зашитое в тест число молча разошлось
+ * бы с ним при первой правке.
  */
-const GENERATE_DEADLINE_MS = 4 * 60 * 1000;
+export const GENERATE_DEADLINE_MS = 4 * 60 * 1000;
 
 export interface TutorialScenarioGenerateResult {
   /**
-   * Сколько пар (шаг × локаль) обошли за прогон — при пяти локалях
-   * это 50, а не 10. Имя `pairs`, а не `subjectKeys`: с этапа C
+   * Сколько пар (тема × локаль) в круге генерации — при пяти локалях
+   * это 75 (десять шагов мастера и пять тем поздравления на язык), а
+   * не 15. С ротацией (пункт A1) это размер КРУГА, а не число
+   * обойдённых за ночь: сколько не успели — в `deferred`. Имя `pairs`, а не `subjectKeys`: с этапа C
    * второе читалось бы в журнале крона как «50 шагов обучалки», а их
    * по-прежнему десять (правка аудита этапа C).
    */
@@ -107,6 +126,12 @@ export interface TutorialScenarioGenerateResult {
    *  денежный потолок. Без отдельного поля «отложено» выглядело бы
    *  как «прогнали, и делать было нечего». */
   skipped?: string;
+  /**
+   * Сколько пар круга не успели взять в работу (бюджет времени или
+   * денег) — они первыми пойдут в следующий прогон по ротации. Без
+   * этого числа по журналу не видно, сколько ночей займёт круг.
+   */
+  deferred: number;
   generated: number;
   costly: number;
   failed: number;
@@ -159,6 +184,7 @@ export class TutorialScenarioGeneratorService {
       pairs: 0,
       locales: [],
       skippedManual: 0,
+      deferred: 0,
       generated: 0,
       costly: 0,
       failed: 0,
@@ -213,13 +239,15 @@ export class TutorialScenarioGeneratorService {
     // записан, просто без владельца; молчать о деньгах хуже.
     const ownerId = await this.fixtureOwnerId();
 
+    // Сначала — весь круг пар (тема × локаль) плоским списком, и
+    // только потом обход. Прежний обход шёл локаль за локалью в
+    // порядке настройки, и бюджет времени (≈28 пар из 75 при пяти
+    // локалях) каждую ночь кончался на одном и том же месте: хвостовые
+    // локали не генерировались никогда (пункт A1 обучалок). Плоский
+    // список нужен, чтобы ротация могла поставить впереди пару из любой
+    // локали, а не только локаль целиком.
+    const circle: RotationPair[] = [];
     for (const locale of locales) {
-      if (Date.now() >= deadline) {
-        this.logger.warn(
-          `бюджет времени исчерпан — локали ${locales.slice(locales.indexOf(locale)).join(', ')} отложены до следующего прогона`,
-        );
-        break;
-      }
       // Словарь шагов у каждой локали свой и уже переведён — это и
       // есть весь «перевод» в этом этапе. Локали без словаря
       // пропускаем громко: молча она дала бы ноль шагов и выглядела
@@ -239,37 +267,49 @@ export class TutorialScenarioGeneratorService {
        * индекса дал бы ей чужие ключи '1'..'5', то есть перезаписал бы
        * первые пять сценариев мастера.
        *
-       * Порядок — сначала мастер: если бюджет тика кончится на
-       * середине, отложится менее обжитая половина, а не наоборот.
+       * Порядок — сначала мастер: при равной давности (первая ночь,
+       * отметок ещё нет) бюджет отложит менее обжитую половину.
        */
-      const subjects = [
-        ...steps.map((item, i) => ({ key: String(i + 1), item })),
+      circle.push(
+        ...steps.map((item, i) => ({ locale, key: String(i + 1), item })),
         ...greetingTopicKeys(locale).flatMap((key) => {
           const item = tutorialStepFor(key, locale);
-          return item ? [{ key, item }] : [];
+          return item ? [{ locale, key, item }] : [];
         }),
-      ];
-      // Локаль попадает в отчёт ПОСЛЕ проверки словаря, а не до:
-      // иначе прогон рапортует «генерировали на de», не
-      // сгенерировав ничего (правка аудита этапа C).
-      result.locales.push(locale);
-      result.pairs += subjects.length;
-      await this.runLocale(
-        locale,
-        subjects,
-        result,
-        deadline,
-        ownerId,
-        budget,
-        videoProvider,
       );
     }
+    result.pairs = circle.length;
+
+    // Ротация по давности — тот же приём, что `lastRunAt asc nulls
+    // first` у исполнителя: впереди пары, которые дольше всех не брали
+    // в работу. Настройку читаем терпимо: без карты порядок просто
+    // прежний, а уронить генерацию из-за вспомогательной отметки
+    // хуже, чем одну ночь пройти по старому порядку.
+    const stamps = parseGenerateStamps(
+      await this.settings.get(GENERATE_ROTATION_SETTING_KEY).catch(() => null),
+    );
+    const taken = await this.runPairs(
+      orderByStaleness(circle, stamps),
+      stamps,
+      result,
+      deadline,
+      ownerId,
+      budget,
+      videoProvider,
+    );
+    // Локаль попадает в отчёт, только если хоть одну её пару сегодня
+    // взяли в работу, и в порядке настройки: с ротацией локаль может
+    // целиком уйти на завтра, и рапортовать «генерировали на de», не
+    // сгенерировав ничего, нельзя (правка аудита этапа C).
+    result.locales = locales.filter((l) => taken.has(l));
+    await this.saveStamps(stamps, circle);
 
     this.logger.log(
       `сценарии обучалки: локалей ${result.locales.length} (${result.locales.join(', ')}), ` +
         `сгенерировано ${result.generated}, платных ${result.costly}, ` +
         `отказов ${result.failed}, отброшено реплик ${result.narrationsDropped}, ` +
-        `не тронуто правленных руками ${result.skippedManual}`,
+        `не тронуто правленных руками ${result.skippedManual}, ` +
+        `отложено по ротации ${result.deferred} из ${result.pairs}`,
     );
     return result;
   }
@@ -462,11 +502,43 @@ export class TutorialScenarioGeneratorService {
     return true;
   }
 
-  private async runLocale(
-    locale: string,
-    /** Тема и её ключ. Ключ приходит снаружи, а не выводится из
-     *  индекса: у шагов мастера он номер, у тем поздравления — имя. */
-    subjects: ReadonlyArray<{ key: string; item: AssistantStepItem }>,
+  /**
+   * Пишет карту отметок ротации. Одна запись за прогон, а не по записи
+   * на пару: тридцать upsert-ов в `PlatformSetting` ради одной карты
+   * ничего не дают — прогон и так укладывается в свой бюджет времени
+   * именно для того, чтобы дойти до этой строки.
+   *
+   * Неудача — предупреждение, а не исключение: сценарии уже записаны,
+   * и ронять из-за отметки весь отчёт прогона (а с ним `failures[]`)
+   * хуже, чем одну ночь повторить прежний порядок.
+   */
+  private async saveStamps(
+    stamps: ReadonlyMap<string, number>,
+    circle: ReadonlyArray<RotationPair>,
+  ): Promise<void> {
+    try {
+      await this.settings.set(
+        GENERATE_ROTATION_SETTING_KEY,
+        serializeGenerateStamps(stamps, circle),
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `отметки ротации генерации не сохранены (${reason}) — следующий прогон начнёт с прежнего порядка`,
+      );
+    }
+  }
+
+  /**
+   * Обходит пары в уже заданном порядке. Возвращает локали, чьи пары
+   * взяли в работу; `stamps` дополняет на месте.
+   */
+  private async runPairs(
+    /** Пары в порядке ротации. Ключ приходит снаружи, а не выводится
+     *  из индекса: у шагов мастера он номер, у тем поздравления — имя. */
+    pairs: ReadonlyArray<RotationPair>,
+    /** Карта «когда пару последний раз брали в работу». */
+    stamps: Map<string, number>,
     result: TutorialScenarioGenerateResult,
     deadline: number,
     /** Фикстурный пользователь — владелец расхода (см. `run`). */
@@ -475,21 +547,32 @@ export class TutorialScenarioGeneratorService {
     budget: TutorialBudget,
     /** Движок видео, предзаполненный в мастере, — в промпт. */
     videoProvider: VideoProviderKey,
-  ): Promise<void> {
-    for (let i = 0; i < subjects.length; i++) {
-      const { key: subjectKey, item: step } = subjects[i];
+  ): Promise<Set<string>> {
+    const taken = new Set<string>();
+    for (let i = 0; i < pairs.length; i++) {
+      const { locale, key: subjectKey, item: step } = pairs[i];
       if (Date.now() >= deadline) {
+        result.deferred = pairs.length - i;
         this.logger.warn(
-          `локаль ${locale}: бюджет времени исчерпан на теме ${subjectKey} — остаток отложен до следующего прогона`,
+          `бюджет времени исчерпан на теме ${subjectKey} (${locale}) — пар отложено ${result.deferred}, они первыми пойдут в следующий прогон`,
         );
-        return;
+        break;
       }
       if (budgetExhausted(budget)) {
+        result.deferred = pairs.length - i;
         this.logger.warn(
-          `локаль ${locale}: суточный потолок расхода обучалки выбран на теме ${subjectKey} — остаток отложен до следующего прогона`,
+          `суточный потолок расхода обучалки выбран на теме ${subjectKey} (${locale}) — пар отложено ${result.deferred}, они первыми пойдут в следующий прогон`,
         );
-        return;
+        break;
       }
+      // Отметка ставится при ВЗЯТИИ в работу, а не при успехе — как
+      // `lastRunAt` у исполнителя, который пишет дату и на `failed`.
+      // Иначе локаль, на которой модель стабильно отказывает, каждую
+      // ночь стояла бы в голове очереди и съедала бюджет, а круг по
+      // остальным парам растягивался бы на её длину. Случайный отказ
+      // от этого не теряется: пара вернётся через круг (≈3 ночи).
+      stamps.set(rotationKey(locale, subjectKey), Date.now());
+      taken.add(locale);
       try {
         // Правленная руками пара проверяется ДО вызова модели
         // (сквозной аудит 29.09.2026). Раньше проверка стояла внутри
@@ -615,5 +698,6 @@ export class TutorialScenarioGeneratorService {
         );
       }
     }
+    return taken;
   }
 }

@@ -5,7 +5,7 @@ _Собрано автоматически 2026-09-30 из lending/frontend/back
 ## Mini-app sections
 
 - **Projects** — A product or line for which ads are generated
-- **Brand** — A single style and characters for all of a brand's projects
+- **Brand book** — A single style and characters for all of a brand's projects
 - **Production** — the generation wizard — from choosing a reference to a finished video (see the tutorial steps below)
 - **Postprod** — All your finished videos: re-voice, export, publish and share.
 

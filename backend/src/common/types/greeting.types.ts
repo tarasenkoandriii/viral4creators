@@ -283,6 +283,19 @@ export interface GreetingBriefSnapshot {
   presetVoiceId?: string | null;
 
   /**
+   * Голос каталога Soniox (S2): реплику, как у клона, произносит НАШ
+   * синтез поверх немого рендера Grok (у Hedra — речь аватара), только
+   * провайдером Soniox. Взаимоисключающе с `senderVoice` и
+   * `presetVoiceId` — говорящий в ролике один.
+   *
+   * Отдельным полем, а не внутри `senderVoice`: там клон Resemble со
+   * своими инвариантами (владелец, готовность, персона), а у Soniox
+   * `voiceId: null` осмыслен — «голос Soniox по умолчанию», — и внутри
+   * `senderVoice` его не отличить от «ничего не выбрано».
+   */
+  sonioxVoice?: GreetingSonioxVoice | null;
+
+  /**
    * Музыкальная подложка (фича №4) — копия выбранной темы, не ссылка
    * на каталог.
    *
@@ -376,6 +389,16 @@ export interface GreetingSenderVoice {
    * идёт в витрину без галочки. Нет поля — записи до этапа G.
    */
   personaVoice?: boolean;
+}
+
+/**
+ * Выбранный голос Soniox (S2). `voiceId: null` — голос Soniox по
+ * умолчанию (`SONIOX_TTS_VOICE`/Maya); `label` — имя из каталога для
+ * экрана, у голоса по умолчанию `null`.
+ */
+export interface GreetingSonioxVoice {
+  voiceId: string | null;
+  label: string | null;
 }
 
 /**
@@ -542,6 +565,7 @@ export interface GreetingMusicCandidate {
 export interface GreetingVoiceView {
   senderVoice: GreetingSenderVoice | null;
   presetVoiceId: string | null;
+  sonioxVoice: GreetingSonioxVoice | null;
 }
 
 /**

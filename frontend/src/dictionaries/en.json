@@ -1,7 +1,7 @@
 {
   "nav": {
     "projects": "Projects",
-    "brand": "Brand",
+    "brand": "Brand book",
     "generate": "Production",
     "postprod": "Postprod"
   },
@@ -1018,7 +1018,7 @@
     "auto": "Auto",
     "ownScene": "Custom scene",
     "slotsFull": "{{max}} of {{max}} slots are taken — remove one to add another.",
-    "emptyState": "There's nothing yet to show Veo as an image: character photos are set on the \"Analysis\" step, the product's on this step, you can upload your own scene with the button above, and the brand's permanent scenes live in the \"Brand\" section. Without references, the product photo becomes the first frame, as before.",
+    "emptyState": "There's nothing yet to show Veo as an image: character photos are set on the \"Analysis\" step, the product's on this step, you can upload your own scene with the button above, and the brand's permanent scenes live in the \"Brand book\" section. Without references, the product photo becomes the first frame, as before.",
     "asText": "as text",
     "kindCharacter": "character",
     "kindScene": "scene",
@@ -1082,13 +1082,7 @@
     "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analysis",
-      "Product",
-      "Prompt",
-      "Generation"
-    ],
+    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
     "stepSource": "Scene",
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
@@ -1271,7 +1265,8 @@
     "prelistenCta": "Pre-listen",
     "prelistenHint": "Pick a voice above first — the pre-listen reads your script text in that voice.",
     "submitCta": "Re-voice",
-    "footerNote": "Billed like regular post-processing — a new voice synthesis and a new processing job."
+    "footerNote": "Billed like regular post-processing — a new voice synthesis and a new processing job.",
+    "blockedNoBrandSnapshot": "This video has no brand book snapshot — there is nowhere to save the chosen voice, so re-voicing is unavailable. It works for videos made from a project with a brand book."
   },
   "postprodScreen": {
     "title": "Postprod",
@@ -2152,7 +2147,10 @@
     "GREETING_REFERENCE_UPLOAD_MISSING": "The photo did not reach storage. Upload it again.",
     "GREETING_REFERENCE_NOT_FOUND": "Photo not found — it may have been deleted already. Refresh the list.",
     "GREETING_PERSONA_VOICE_NEEDS_PRESENTER": "Your persona’s voice for the talking avatar (Hedra) can only be used together with your own look as presenter — otherwise a stranger’s face would speak with your voice. Choose your look in the brief, the Grok presenter or another voice.",
-    "GREETING_BRAND_VOICE_UNAVAILABLE": "The brand book voice was deleted — choose another voice in the video settings or remove the brand book."
+    "GREETING_BRAND_VOICE_UNAVAILABLE": "The brand book voice was deleted — choose another voice in the video settings or remove the brand book.",
+    "GREETING_SONIOX_UNAVAILABLE": "Soniox voices are unavailable right now — choose another voice.",
+    "GREETING_SONIOX_VOICE_UNKNOWN": "There is no such Soniox voice — choose a voice from the list.",
+    "GREETING_AVATAR_SPEECH_FAILED": "The avatar's voice-over didn't work out — try again or choose another voice."
   },
   "voiceProvider": {
     "label": "Synthesis provider",
@@ -2164,6 +2162,29 @@
     "sonioxDefaultVoice": "Soniox default voice",
     "sonioxDefaultHint": "Picking a voice is optional — Soniox will use its default voice.",
     "sonioxNoWordTiming": "Soniox has no per-word timing: subtitles for this voiceover will be placed approximately."
+  },
+  "greetingSoniox": {
+    "heading": "Soniox voices",
+    "hint": "Soniox reads the line in the greeting's language — the same way as your own voice: the speech is synthesised separately and laid onto the video.",
+    "defaultVoice": "Default Soniox voice",
+    "listen": "Listen to “{label}”",
+    "listenDefault": "Listen to the default voice",
+    "previewCount": "Previews today: {used} of {limit}",
+    "previewFailed": "Couldn't play the voice — please try again.",
+    "catalogFailed": "The Soniox voice catalogue didn't load — you can still pick the default voice.",
+    "catalogEmpty": "The Soniox catalogue has no voices for the greeting's language — you can pick the default voice.",
+    "picked": "Read by the Soniox voice “{label}”.",
+    "pickedDefault": "Read by the default Soniox voice.",
+    "summaryDefault": "Soniox default",
+    "summaryNamed": "Soniox · {label}",
+    "noWordTiming": "Soniox has no word-level timing: subtitles for this voiceover will be placed approximately.",
+    "consentVoiceRow": "Voice",
+    "voiceFailed": "The voiceover didn't make it onto the video — right now it has no speech.",
+    "voiceSkipped": "The voiceover couldn't be made: the chosen voice is unavailable right now, so the video has no speech.",
+    "changeVoiceHint": "A finished video keeps its voice: to pick another one, edit the brief or the text — the voice card opens again in the new version.",
+    "revoiceButton": "Re-voice",
+    "changeVoiceButton": "Choose another voice",
+    "revoicePending": "Re-voicing the video…"
   },
   "wizardReadiness": {
     "title": "To a finished video",

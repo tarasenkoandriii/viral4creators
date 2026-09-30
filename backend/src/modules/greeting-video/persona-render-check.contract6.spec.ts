@@ -227,6 +227,62 @@ describe('голос персоны из бренд-бука на Hedra без �
   });
 });
 
+describe('голос Soniox отправителя (S2): голос бренда не звучит — и не проверяется', () => {
+  const SONIOX = { sonioxVoice: { voiceId: 'Maya', label: 'Maya' } };
+
+  it('удалённый клон в бренд-буке не отказывает в рендере, когда звучит Soniox', async () => {
+    const d = db({
+      voices: { rv1: [{ id: 'uv1', userId: 'u1' }] },
+      pending: ['rv1'],
+    });
+    const brief = {
+      presenter: null,
+      senderVoice: null,
+      resolvedPresenterProvider: 'grok',
+    };
+    await expect(
+      personaRenderProblem(
+        d,
+        session({
+          greetingBriefSnapshot: { ...brief, ...SONIOX },
+          brandManifestSnapshot: brand(),
+        }),
+      ),
+    ).resolves.toBeNull();
+    // Контроль: без Soniox тот же бренд-бук отказывает.
+    await expect(
+      personaRenderProblem(
+        d,
+        session({
+          greetingBriefSnapshot: brief,
+          brandManifestSnapshot: brand(),
+        }),
+      ),
+    ).resolves.toMatchObject({ code: 'GREETING_BRAND_VOICE_UNAVAILABLE' });
+  });
+
+  it('голос персоны бренда на Hedra без образа — пропускает: аватар говорит Soniox', async () => {
+    const personalBrand = brand({ kind: 'PERSONAL', ttsVoiceId: 'rv-p' });
+    const d = db({
+      voices: { 'rv-p': [{ id: 'uv-p', userId: 'u1', personaId: 'p1' }] },
+    });
+    await expect(
+      personaRenderProblem(
+        d,
+        session({
+          greetingBriefSnapshot: {
+            presenter: null,
+            senderVoice: null,
+            resolvedPresenterProvider: 'hedra',
+            ...SONIOX,
+          },
+          brandManifestSnapshot: personalBrand,
+        }),
+      ),
+    ).resolves.toBeNull();
+  });
+});
+
 describe('голос персоны на Hedra без образа (CONTRACT6 п.3)', () => {
   const personaVoice = {
     userVoiceId: 'uv-p',

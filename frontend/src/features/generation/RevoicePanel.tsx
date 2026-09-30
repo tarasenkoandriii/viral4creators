@@ -63,7 +63,7 @@ import {
   previewVoice,
   updateBrandSnapshot,
 } from '../../services/projects-api';
-import { usesOwnVoice } from '../../lib/voice-mode';
+import type { RevoiceBlock } from '../../lib/revoice-eligibility';
 import { useI18n } from '../../lib/i18n-context';
 import type { BrandManifestSnapshot } from '../../types';
 import type { GeneratedVideo } from '../../services/api';
@@ -84,6 +84,7 @@ export function RevoicePanel({
   snapshot,
   onReVoice,
   onBrandUpdated,
+  block,
 }: {
   sessionId: string;
   video: GeneratedVideo;
@@ -92,6 +93,10 @@ export function RevoicePanel({
   snapshot: BrandManifestSnapshot | null;
   onReVoice: (voiceoverScript?: string) => Promise<GeneratedVideo>;
   onBrandUpdated: (s: BrandManifestSnapshot) => void;
+  /** Почему переозвучка невозможна — `revoiceBlock()` (lib/revoice-eligibility),
+   * тем же правилом отказывает сервер. Считает экран: панель не знает
+   * про снимок брифа поздравления. */
+  block: RevoiceBlock | null;
 }) {
   const { dict } = useI18n();
   const [script, setScript] = useState(voiceoverScript);
@@ -109,8 +114,29 @@ export function RevoicePanel({
   const [prelistenNote, setPrelistenNote] = useState<string | null>(null);
 
   // §15.1: у Veo своей звуковой дорожки нет — голос вшит в сам рендер,
-  // переозвучить без перегенерации нечего.
-  if (!usesOwnVoice(video.voiceMode)) return null;
+  // переозвучить без перегенерации нечего; панель не показываем вовсе,
+  // как и раньше.
+  if (block === 'veo-voice') return null;
+  // П-8: без снимка брендбука выбор голоса некуда сохранить — раньше
+  // человек выбирал провайдера и голос и только потом получал 404.
+  // Гасим кнопку сразу и говорим почему, а не прячем панель молча:
+  // иначе непонятно, куда пропала переозвучка у соседнего ролика.
+  if (block === 'no-voice-settings') {
+    return (
+      <Card className="p-5 animate-fadeIn" data-qa="revoice-panel">
+        <CardHeader
+          icon={<Mic2 size={18} className="text-accent" />}
+          title={dict.revoicePanel.panelTitle}
+        />
+        <Alert tone="info" className="mb-3">
+          {dict.revoicePanel.blockedNoBrandSnapshot}
+        </Alert>
+        <Button block variant="solid" disabled icon={<Mic2 size={14} />}>
+          {dict.revoicePanel.submitCta}
+        </Button>
+      </Card>
+    );
+  }
   // Постобработка (в т.ч. предыдущая переозвучка) уже идёт — новый запрос
   // лёг бы поверх неё же; кнопка вернётся, как только текущий проход
   // закончится (см. доккомментарий выше про общий опрос).

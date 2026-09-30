@@ -72,6 +72,7 @@ import {
   normalizeVoiceMode,
   usesOwnVoice,
 } from '../../common/voice-mode';
+import { greetingVoiceMode } from '../../common/greeting-soniox-voice';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 import {
   GreetingScriptLanguage,
@@ -545,7 +546,12 @@ export function buildSceneDescription(
   // а у поздравления ведущий в кадре и есть весь смысл, и экранный
   // текст запрещён соседней строкой этого же промпта. Поэтому
   // формулировка своя: ведущий в кадре остаётся, произнесение — нет.
-  const silent = !presetVoiceId && usesOwnVoice(voiceMode);
+  //
+  // S2: голос Soniox — наш синтез поверх, как у клона, и звучит даже
+  // при режиме бренда 'veo' (`greetingVoiceMode`): та же функция решает
+  // и у рендера Grok, и у постобработки, иначе сцена и звук разойдутся.
+  const silent =
+    !presetVoiceId && usesOwnVoice(greetingVoiceMode(brief, voiceMode));
   return [
     // `message`, не `greeting`: см. тот же довод в draftPersonalMessage.
     `A short vertical video message for ${occasionText} addressed to ${brief.recipientName}.`,

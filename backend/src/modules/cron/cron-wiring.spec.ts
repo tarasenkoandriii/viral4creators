@@ -100,7 +100,13 @@ describe('швы крон-подсистемы: маршрут ↔ распис�
    * расписание будет выглядеть исправленным, а поведение останется
    * прежним.
    */
-  it('прогон сценариев обучалки идёт двумя тиками, разнесёнными дальше замка', () => {
+  /*
+   * Пять локалей × 15 тем = 75 пар, тик берёт ≈5 сценариев (бюджет
+   * `RUN_DEADLINE_MS`, ≈37 с на сценарий) — чтобы полный круг укладывался
+   * в сутки, тиков нужно не меньше 15 (решение владельца 30.09.2026:
+   * тики, а не длинная функция).
+   */
+  it('прогон сценариев обучалки идёт не меньше чем 15 тиками в сутки, разнесёнными дальше замка', () => {
     const run = vercelCrons().find(
       (c) => c.path === '/api/cron/tutorial-scenario-run',
     );
@@ -119,7 +125,7 @@ describe('швы крон-подсистемы: маршрут ↔ распис�
     const ticks = hours
       .flatMap((h) => minutes.map((m) => h * 60 + m))
       .sort((a, b) => a - b);
-    expect(ticks.length).toBeGreaterThanOrEqual(2);
+    expect(ticks.length).toBeGreaterThanOrEqual(15);
     const gaps = ticks.slice(1).map((t, i) => (t - ticks[i]) * 60 * 1000);
     expect(Math.min(...gaps)).toBeGreaterThan(JOB_LOCK_MS);
   });

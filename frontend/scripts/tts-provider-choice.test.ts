@@ -6,7 +6,10 @@
 import {
   allowsDefaultVoice,
   effectiveProvider,
+  greetingVoiceLanguage,
   hasSynthesisVoice,
+  SONIOX_PREVIEW_PHRASES,
+  sonioxPreviewText,
   lacksWordTiming,
   parseExplicitProvider,
   savedProviderTag,
@@ -127,6 +130,40 @@ check('действующий провайдер: без выбора — сох
 check('действующий провайдер: тег не провайдер синтеза — null', () => {
   eq(effectiveProvider(null, 'veo'), null);
   eq(effectiveProvider(null, null), null);
+});
+
+// ── S2-FE: голос Soniox у отправителя поздравления ──
+
+check('язык голоса: язык поздравления, иначе интерфейса, иначе ru', () => {
+  eq(greetingVoiceLanguage('de', 'ru'), 'de');
+  eq(greetingVoiceLanguage(null, 'uk'), 'uk');
+  eq(greetingVoiceLanguage(undefined, 'es'), 'es');
+  // Незнакомое значение не превращается в язык синтеза.
+  eq(greetingVoiceLanguage('fr', 'en'), 'en');
+  eq(greetingVoiceLanguage(null, 'fr'), 'ru');
+  eq(greetingVoiceLanguage(null, null), 'ru');
+});
+
+check('фраза пробы — на языке поздравления, для каждого языка своя', () => {
+  eq(Object.keys(SONIOX_PREVIEW_PHRASES).sort(), [
+    'de',
+    'en',
+    'es',
+    'ru',
+    'uk',
+  ]);
+  const all = Object.values(SONIOX_PREVIEW_PHRASES);
+  eq(new Set(all).size, all.length);
+  eq(sonioxPreviewText('uk'), SONIOX_PREVIEW_PHRASES.uk);
+  // Короткая: проба ограничена числом и стоит денег.
+  for (const t of all) if (!t.trim() || t.length > 80) throw new Error(t);
+  // Проверка на язык по буквам: украинская фраза — с украинской буквой,
+  // русская — без неё; немецкая — с умлаутом, испанская — с «¡».
+  if (!/[іїєґ]/.test(SONIOX_PREVIEW_PHRASES.uk)) throw new Error('uk');
+  if (/[іїєґ]/.test(SONIOX_PREVIEW_PHRASES.ru)) throw new Error('ru');
+  if (!/[äöüß]/.test(SONIOX_PREVIEW_PHRASES.de)) throw new Error('de');
+  if (!SONIOX_PREVIEW_PHRASES.es.startsWith('¡')) throw new Error('es');
+  if (/[^ -~]/.test(SONIOX_PREVIEW_PHRASES.en)) throw new Error('en');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

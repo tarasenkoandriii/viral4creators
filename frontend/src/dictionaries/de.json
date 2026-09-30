@@ -1,7 +1,7 @@
 {
   "nav": {
     "projects": "Projekte",
-    "brand": "Marke",
+    "brand": "Markenbuch",
     "generate": "Produktion",
     "postprod": "Postprod"
   },
@@ -1018,7 +1018,7 @@
     "auto": "Auto",
     "ownScene": "Eigene Szene",
     "slotsFull": "{{max}} von {{max}} Plätzen belegt — entfernen Sie einen, um einen anderen hinzuzufügen.",
-    "emptyState": "Bisher gibt es nichts, was Veo als Bild gezeigt werden könnte: Charakterfotos werden im Schritt „Analyse“ festgelegt, das Produktfoto in diesem Schritt, eine eigene Szene können Sie über die Schaltfläche oben hochladen, dauerhafte Markenszenen finden Sie im Bereich „Marke“. Ohne Referenzen wird das Produktfoto wie bisher zum ersten Bild.",
+    "emptyState": "Bisher gibt es nichts, was Veo als Bild gezeigt werden könnte: Charakterfotos werden im Schritt „Analyse“ festgelegt, das Produktfoto in diesem Schritt, eine eigene Szene können Sie über die Schaltfläche oben hochladen, dauerhafte Markenszenen finden Sie im Bereich „Markenbuch“. Ohne Referenzen wird das Produktfoto wie bisher zum ersten Bild.",
     "asText": "als Text",
     "kindCharacter": "Figur",
     "kindScene": "Szene",
@@ -1271,7 +1271,8 @@
     "prelistenCta": "Vorab anhören",
     "prelistenHint": "Wählen Sie zuerst oben eine Stimme — das Vorab-Hören liest Ihren Sprechertext mit dieser Stimme vor.",
     "submitCta": "Neu vertonen",
-    "footerNote": "Wird wie eine normale Nachbearbeitung abgerechnet — eine neue Sprachsynthese und ein neuer Verarbeitungsauftrag."
+    "footerNote": "Wird wie eine normale Nachbearbeitung abgerechnet — eine neue Sprachsynthese und ein neuer Verarbeitungsauftrag.",
+    "blockedNoBrandSnapshot": "Dieses Video hat keinen Brandbook-Snapshot — die gewählte Stimme lässt sich nirgends speichern, daher ist die Neuvertonung nicht verfügbar. Sie funktioniert für Videos aus einem Projekt mit Brandbook."
   },
   "postprodScreen": {
     "title": "Postprod",
@@ -2152,7 +2153,10 @@
     "GREETING_REFERENCE_UPLOAD_MISSING": "Das Foto ist nicht im Speicher angekommen. Laden Sie es erneut hoch.",
     "GREETING_REFERENCE_NOT_FOUND": "Foto nicht gefunden — es wurde möglicherweise bereits gelöscht. Aktualisieren Sie die Liste.",
     "GREETING_PERSONA_VOICE_NEEDS_PRESENTER": "Die Stimme Ihrer Persona beim sprechenden Avatar (Hedra) ist nur zusammen mit Ihrem eigenen Look als Moderator wählbar — sonst spräche ein fremdes Gesicht mit Ihrer Stimme. Wählen Sie Ihren Look im Briefing, den Grok-Moderator oder eine andere Stimme.",
-    "GREETING_BRAND_VOICE_UNAVAILABLE": "Die Stimme aus dem Brandbook wurde gelöscht — wählen Sie in der Videogestaltung eine andere Stimme oder entfernen Sie das Brandbook."
+    "GREETING_BRAND_VOICE_UNAVAILABLE": "Die Stimme aus dem Brandbook wurde gelöscht — wählen Sie in der Videogestaltung eine andere Stimme oder entfernen Sie das Brandbook.",
+    "GREETING_SONIOX_UNAVAILABLE": "Soniox-Stimmen sind gerade nicht verfügbar — wählen Sie eine andere Stimme.",
+    "GREETING_SONIOX_VOICE_UNKNOWN": "Diese Soniox-Stimme gibt es nicht — wählen Sie eine Stimme aus der Liste.",
+    "GREETING_AVATAR_SPEECH_FAILED": "Die Vertonung für den Avatar hat nicht geklappt — versuchen Sie es erneut oder wählen Sie eine andere Stimme."
   },
   "voiceProvider": {
     "label": "Sprachsynthese-Anbieter",
@@ -2164,6 +2168,29 @@
     "sonioxDefaultVoice": "Soniox-Standardstimme",
     "sonioxDefaultHint": "Eine Stimme muss nicht gewählt werden — Soniox spricht mit seiner Standardstimme.",
     "sonioxNoWordTiming": "Soniox liefert kein wortgenaues Timing: Untertitel zu dieser Vertonung werden nur ungefähr gesetzt."
+  },
+  "greetingSoniox": {
+    "heading": "Soniox-Stimmen",
+    "hint": "Soniox spricht die Zeile in der Sprache des Glückwunschs — genau wie deine eigene Stimme: Die Sprache wird separat erzeugt und auf das Video gelegt.",
+    "defaultVoice": "Soniox-Standardstimme",
+    "listen": "„{label}“ anhören",
+    "listenDefault": "Standardstimme anhören",
+    "previewCount": "Hörproben heute: {used} von {limit}",
+    "previewFailed": "Die Stimme konnte nicht abgespielt werden — bitte erneut versuchen.",
+    "catalogFailed": "Der Soniox-Stimmenkatalog wurde nicht geladen — die Standardstimme ist trotzdem wählbar.",
+    "catalogEmpty": "Im Soniox-Katalog gibt es keine Stimmen für die Sprache des Glückwunschs — die Standardstimme ist wählbar.",
+    "picked": "Gesprochen von der Soniox-Stimme „{label}“.",
+    "pickedDefault": "Gesprochen von der Soniox-Standardstimme.",
+    "summaryDefault": "Soniox-Standard",
+    "summaryNamed": "Soniox · {label}",
+    "noWordTiming": "Soniox liefert kein wortgenaues Timing: Untertitel zu dieser Vertonung werden ungefähr gesetzt.",
+    "consentVoiceRow": "Stimme",
+    "voiceFailed": "Die Vertonung ist nicht im Video gelandet — es hat gerade keine Sprache.",
+    "voiceSkipped": "Die Vertonung war nicht möglich: Die gewählte Stimme ist gerade nicht verfügbar, das Video hat keine Sprache.",
+    "changeVoiceHint": "Ein fertiges Video behält seine Stimme: Für eine andere Stimme bearbeite das Briefing oder den Text — in der neuen Version ist die Stimmkarte wieder offen.",
+    "revoiceButton": "Neu vertonen",
+    "changeVoiceButton": "Andere Stimme wählen",
+    "revoicePending": "Video wird neu vertont…"
   },
   "wizardReadiness": {
     "title": "Bis zum fertigen Video",

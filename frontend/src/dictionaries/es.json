@@ -1,7 +1,7 @@
 {
   "nav": {
     "projects": "Proyectos",
-    "brand": "Marca",
+    "brand": "Brandbook",
     "generate": "Producción",
     "postprod": "Postprod"
   },
@@ -1018,7 +1018,7 @@
     "auto": "Auto",
     "ownScene": "Escena propia",
     "slotsFull": "{{max}} de {{max}} ranuras ocupadas — quita una para añadir otra.",
-    "emptyState": "Todavía no hay nada que mostrarle a Veo como imagen: las fotos de personajes se definen en el paso «Análisis», la del producto en este paso, puedes subir tu propia escena con el botón de arriba, y las escenas permanentes de la marca están en la sección «Marca». Sin referencias, la foto del producto será el primer fotograma, como antes.",
+    "emptyState": "Todavía no hay nada que mostrarle a Veo como imagen: las fotos de personajes se definen en el paso «Análisis», la del producto en este paso, puedes subir tu propia escena con el botón de arriba, y las escenas permanentes de la marca están en la sección «Brandbook». Sin referencias, la foto del producto será el primer fotograma, como antes.",
     "asText": "como texto",
     "kindCharacter": "personaje",
     "kindScene": "escena",
@@ -1271,7 +1271,8 @@
     "prelistenCta": "Escuchar antes",
     "prelistenHint": "Elige antes una voz arriba: la escucha previa lee tu texto de réplicas con esa voz.",
     "submitCta": "Doblar de nuevo",
-    "footerNote": "Se cobra como una postproducción normal: una nueva síntesis de voz y un nuevo trabajo de procesamiento."
+    "footerNote": "Se cobra como una postproducción normal: una nueva síntesis de voz y un nuevo trabajo de procesamiento.",
+    "blockedNoBrandSnapshot": "Este vídeo no tiene una instantánea del manual de marca: no hay dónde guardar la voz elegida, por eso el redoblaje no está disponible. Funciona con vídeos creados desde un proyecto con manual de marca."
   },
   "postprodScreen": {
     "title": "Postprod",
@@ -2152,7 +2153,10 @@
     "GREETING_REFERENCE_UPLOAD_MISSING": "La foto no llegó al almacenamiento. Vuelve a subirla.",
     "GREETING_REFERENCE_NOT_FOUND": "No se encontró la foto: puede que ya se haya eliminado. Actualiza la lista.",
     "GREETING_PERSONA_VOICE_NEEDS_PRESENTER": "La voz de tu persona en el avatar parlante (Hedra) solo se puede elegir junto con tu propia imagen como presentador; si no, una cara ajena hablaría con tu voz. Elige tu imagen en el brief, el presentador Grok u otra voz.",
-    "GREETING_BRAND_VOICE_UNAVAILABLE": "La voz del brandbook se eliminó: elige otra voz en el diseño del vídeo o quita el brandbook."
+    "GREETING_BRAND_VOICE_UNAVAILABLE": "La voz del brandbook se eliminó: elige otra voz en el diseño del vídeo o quita el brandbook.",
+    "GREETING_SONIOX_UNAVAILABLE": "Las voces de Soniox no están disponibles ahora: elige otra voz.",
+    "GREETING_SONIOX_VOICE_UNKNOWN": "Esa voz de Soniox no existe: elige una voz de la lista.",
+    "GREETING_AVATAR_SPEECH_FAILED": "No se pudo generar la voz del avatar: inténtalo de nuevo o elige otra voz."
   },
   "voiceProvider": {
     "label": "Proveedor de síntesis",
@@ -2164,6 +2168,29 @@
     "sonioxDefaultVoice": "Voz predeterminada de Soniox",
     "sonioxDefaultHint": "No hace falta elegir voz: Soniox usará su voz predeterminada.",
     "sonioxNoWordTiming": "Soniox no da tiempos por palabra: los subtítulos de esta locución se colocarán de forma aproximada."
+  },
+  "greetingSoniox": {
+    "heading": "Voces de Soniox",
+    "hint": "Soniox lee la frase en el idioma de la felicitación — igual que tu propia voz: la voz se sintetiza aparte y se coloca sobre el vídeo.",
+    "defaultVoice": "Voz predeterminada de Soniox",
+    "listen": "Escuchar «{label}»",
+    "listenDefault": "Escuchar la voz predeterminada",
+    "previewCount": "Pruebas hoy: {used} de {limit}",
+    "previewFailed": "No se pudo reproducir la voz — inténtalo de nuevo.",
+    "catalogFailed": "El catálogo de voces de Soniox no se cargó — puedes elegir la voz predeterminada.",
+    "catalogEmpty": "El catálogo de Soniox no tiene voces para el idioma de la felicitación — puedes elegir la voz predeterminada.",
+    "picked": "La leerá la voz de Soniox «{label}».",
+    "pickedDefault": "La leerá la voz predeterminada de Soniox.",
+    "summaryDefault": "Soniox predeterminada",
+    "summaryNamed": "Soniox · {label}",
+    "noWordTiming": "Soniox no ofrece tiempos por palabra: los subtítulos de esta locución se colocarán de forma aproximada.",
+    "consentVoiceRow": "Voz",
+    "voiceFailed": "La locución no llegó al vídeo — ahora mismo no tiene voz.",
+    "voiceSkipped": "No se pudo hacer la locución: la voz elegida no está disponible ahora y el vídeo quedó sin voz.",
+    "changeVoiceHint": "Un vídeo terminado conserva su voz: para elegir otra, edita el brief o el texto — en la nueva versión la tarjeta de voz vuelve a abrirse.",
+    "revoiceButton": "Volver a locutar",
+    "changeVoiceButton": "Elegir otra voz",
+    "revoicePending": "Volviendo a locutar el vídeo…"
   },
   "wizardReadiness": {
     "title": "Hasta el vídeo terminado",

@@ -74,6 +74,13 @@ export const GREETING_ERROR_CODES = {
     'GREETING_PERSONA_VOICE_NEEDS_PRESENTER',
   /** Голос бренд-бука (свой клон) удалён или ждёт удаления у провайдера. */
   GREETING_BRAND_VOICE_UNAVAILABLE: 'GREETING_BRAND_VOICE_UNAVAILABLE',
+  // ── S2: голос Soniox у отправителя ─────────────────────────────────
+  /** На стенде нет ключа Soniox — голос выбрать можно было бы, озвучить нельзя. */
+  GREETING_SONIOX_UNAVAILABLE: 'GREETING_SONIOX_UNAVAILABLE',
+  /** Голоса нет в каталоге Soniox (или строка не похожа на id голоса). */
+  GREETING_SONIOX_VOICE_UNKNOWN: 'GREETING_SONIOX_VOICE_UNKNOWN',
+  /** Речь для говорящего аватара не синтезировалась (любой провайдер). */
+  GREETING_AVATAR_SPEECH_FAILED: 'GREETING_AVATAR_SPEECH_FAILED',
 } as const;
 
 export type GreetingErrorCode =

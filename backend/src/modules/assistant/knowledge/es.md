@@ -5,7 +5,7 @@ _Собрано автоматически 2026-09-30 из lending/frontend/back
 ## Secciones de la mini-app
 
 - **Proyectos** — Producto o línea para la que se genera publicidad
-- **Marca** — Un estilo y unos personajes unificados para todos los proyectos de la marca
+- **Brandbook** — Un estilo y unos personajes unificados para todos los proyectos de la marca
 - **Producción** — el asistente de generación — desde elegir la referencia hasta el video terminado (ver los pasos del tutorial más abajo)
 - **Postprod** — Todos tus vídeos terminados: redoblaje, exportación, publicación y compartir.
 

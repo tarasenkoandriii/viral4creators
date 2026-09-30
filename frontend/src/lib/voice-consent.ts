@@ -71,6 +71,12 @@ export interface ConsentSummary {
   occasion: string;
   /** Качество: разрешение и ведущий (`1080p · Grok`). */
   quality: string;
+  /**
+   * Чьим голосом прозвучит ролик — подпись сводки «Характера ролика»
+   * (клон, пресет, «Soniox · Maya», «по умолчанию»). `null`/нет — выбор
+   * не прочитан: строку не показываем, а не утверждаем «по умолчанию».
+   */
+  voice?: string | null;
   charge: RenderCharge;
   /** Отпечаток всего, что влияет на ролик и цену (`consentFingerprint`). */
   fingerprint: string;
@@ -86,6 +92,8 @@ export interface ConsentFacts {
   customOccasion: string | null;
   resolution: string;
   presenter: string;
+  /** Подпись выбранного голоса (S2): другой голос — другой ролик. */
+  voice?: string | null;
   charge: RenderCharge;
 }
 
@@ -114,6 +122,7 @@ export function consentFingerprint(f: ConsentFacts): string {
     f.customOccasion ?? '',
     f.resolution,
     f.presenter,
+    f.voice ?? '',
     charge,
   ].join('|');
 }
@@ -366,6 +375,7 @@ export async function runConsent(deps: {
       recipient: input.facts.recipient,
       occasion: input.occasionLabel,
       quality: input.qualityLabel,
+      voice: input.facts.voice ?? null,
       charge,
       fingerprint: consentFingerprint({ ...input.facts, charge }),
     },

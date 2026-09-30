@@ -373,6 +373,15 @@ export const SESSION_FIELD_HOOKS = {
     kind: 'list',
     domain: 'resembleVoiceId своего готового клона голоса',
   },
+  // S2: голоса каталога Soniox — третий вид голоса карточки. «Голос
+  // Soniox по умолчанию» голосом не выбирается: стабильного id у него нет
+  // (имя из настроек стенда), а назвать можно любой голос каталога.
+  voiceSoniox: {
+    hook: 'greeting-voice-soniox',
+    card: 'greeting-voice-card',
+    kind: 'list',
+    domain: 'voiceId голоса каталога Soniox из раздела «Голоса Soniox»',
+  },
   voiceCustom: {
     hook: 'greeting-voice-custom',
     card: 'greeting-voice-card',
@@ -486,6 +495,7 @@ function sessionNamesFor(l: SupportedLocale): Record<SessionField, string> {
     scriptText: title('editScriptLabel'),
     voicePreset: title('senderVoiceHeading'),
     voiceClone: title('senderVoiceHeading'),
+    voiceSoniox: title('senderVoiceHeading'),
     voiceCustom: title('senderVoiceHeading'),
     musicTheme: title('musicHeading'),
     musicEnabled: title('musicHeading'),
@@ -549,6 +559,15 @@ export interface VoiceSessionState {
     clones: ReadonlyArray<{ id: string; label: string }>;
     presetVoiceId: string | null;
     cloneId: string | null;
+    /**
+     * S2: голоса каталога Soniox — тот же список, что у раздела экрана
+     * (`voices(scriptLanguage)`); нет поля — раздела нет.
+     */
+    soniox?: ReadonlyArray<{ id: string; name: string }>;
+    /** Выбранный голос каталога Soniox; `null` — не выбран или по умолчанию. */
+    sonioxVoiceId?: string | null;
+    /** Выбран ли Soniox вообще (в том числе голос по умолчанию). */
+    sonioxSelected?: boolean;
   } | null;
   music: {
     themes: ReadonlyArray<{ id: string; title: string }>;

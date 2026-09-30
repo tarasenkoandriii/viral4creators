@@ -2,6 +2,7 @@
  *   GET   /sessions/:id/greeting-voice          выбранный голос
  *   GET   /sessions/:id/greeting-voice/presets  роестр пресетных голосов xAI
  *   PATCH /sessions/:id/greeting-voice          { resembleVoiceId } | { presetVoiceId }
+ *                                               | { sonioxVoice: { voiceId } | null }
  *
  * /sessions convention — предъявитель UUID сессии и есть право доступа
  * (как у соседнего `GreetingReferenceController`). Принадлежность
@@ -35,16 +36,19 @@ export class GreetingVoiceController {
   }
 
   /**
-   * Одна ручка на оба вида голоса, а не две: выбор взаимоисключающий,
-   * и разделение на два маршрута означало бы, что клиент может
-   * поставить оба и получить ролик, где реплику произносят дважды.
-   * Здесь сервис сам гасит противоположное поле.
+   * Одна ручка на все виды голоса (клон, пресет, Soniox), а не по
+   * маршруту на каждый: выбор взаимоисключающий, и раздельные маршруты
+   * означали бы, что клиент может поставить два и получить ролик, где
+   * реплику произносят дважды. Здесь сервис сам гасит остальные поля.
    */
   @Patch()
   select(
     @Param('sessionId') sessionId: string,
     @Body() dto: GreetingSenderVoiceRequestDto,
   ): Promise<GreetingVoiceView> {
+    if (dto.sonioxVoice !== undefined) {
+      return this.service.selectSoniox(sessionId, dto.sonioxVoice ?? null);
+    }
     if (dto.presetVoiceId !== undefined) {
       return this.service.selectPreset(sessionId, dto.presetVoiceId ?? null);
     }

@@ -157,7 +157,13 @@ export async function personaRenderProblem(
   const presenter = brief?.presenter ?? null;
   const senderPersonaVoice = brief?.senderVoice?.personaVoice === true;
   const personal = brand?.kind === 'PERSONAL';
-  const brandVoice = brand?.ttsVoiceId?.trim() || null;
+  // S2: при голосе Soniox голос бренд-бука не звучит нигде — ни в
+  // постобработке, ни у аватара (`avatarVoiceChoice`), — и его проверки
+  // (удалённый клон, голос персоны) отказывали бы в рендере за голос,
+  // которого в ролике не будет.
+  const brandVoice = brief?.sonioxVoice
+    ? null
+    : brand?.ttsVoiceId?.trim() || null;
   if (!presenter && !senderPersonaVoice && !personal && !brandVoice) {
     return null;
   }

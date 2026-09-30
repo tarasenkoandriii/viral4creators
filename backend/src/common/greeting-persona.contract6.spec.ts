@@ -159,6 +159,20 @@ describe('голос персоны из бренд-бука на Hedra без �
     ).toBe(false);
   });
 
+  it('голос Soniox отправителя (S2) тоже перебивает голос бренда', () => {
+    for (const voiceId of ['Maya', null]) {
+      expect(
+        brandPersonaVoiceNeedsPresenter(
+          brief({
+            resolvedPresenterProvider: 'hedra',
+            sonioxVoice: { voiceId, label: null },
+          }),
+          true,
+        ),
+      ).toBe(false);
+    }
+  });
+
   it('assertGreetingReferencesAllowed — отказ с кодом при голосе персоны бренда', () => {
     const err = thrown(() =>
       assertGreetingReferencesAllowed(

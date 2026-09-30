@@ -246,6 +246,9 @@ export class TtsController {
       // `provider: 'soniox'` без voiceId звучит `SONIOX_TTS_VOICE`/Maya).
       voiceId: dto.voiceId?.trim() || null,
       model: dto.model ?? null,
+      // Аудит S2: язык пробы — явно, если экран его знает (язык
+      // поздравления); иначе провайдер угадывает по буквам, как раньше.
+      ...(dto.language ? { language: dto.language } : {}),
     });
 
     if (!outcome.ok) {

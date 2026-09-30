@@ -2,9 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   countPostprodVideoSummaries,
+  PostprodVideoSummaryRow,
   selectPostprodVideoSummaries,
 } from '../../common/postprod-video-summary';
-import { isVoiceMode, usesOwnVoice, VoiceMode } from '../../common/voice-mode';
+import { isVoiceMode, VoiceMode } from '../../common/voice-mode';
+import { revoiceBlock, RevoiceBlock } from '../../common/revoice-eligibility';
 
 export interface PostprodVideoSummary {
   sessionId: string;
@@ -19,10 +21,12 @@ export interface PostprodVideoSummary {
   quality: string | null;
   provider: string | null;
   resolution: string | null;
-  /** У Veo-озвучки своей звуковой дорожки нет — переозвучить нечего
-   * (то же условие, что `RevoicePanel`/`PostProductionService.reVoice`
-   * проверяют на конкретном ролике, см. их доккомментарии). */
+  /** `revoiceBlock === null` — то же правило, по которому отказывает
+   * `PostProductionService.reVoice` (common/revoice-eligibility.ts). */
   canRevoice: boolean;
+  /** Почему нельзя: фронтенду нужна причина, чтобы погасить кнопку с
+   * объяснением, а не просто спрятать её (П-8). */
+  revoiceBlock: RevoiceBlock | null;
 }
 
 export interface PostprodVideoListResult {
@@ -87,11 +91,29 @@ export class PostprodVideosService {
         // всегда.
         provider: row.provider ?? 'veo',
         resolution: row.resolution,
-        canRevoice: isVoiceMode(row.voiceMode) && usesOwnVoice(row.voiceMode),
+        ...this.revoiceFields(row),
       })),
       total,
       page,
       pageSize,
     };
+  }
+
+  /** Оба поля из одного вызова правила — чтобы `canRevoice` не мог
+   * разойтись с причиной отказа. */
+  private revoiceFields(
+    row: Pick<
+      PostprodVideoSummaryRow,
+      'voiceMode' | 'hasBrandSnapshot' | 'hasGreetingSnapshot'
+    >,
+  ): Pick<PostprodVideoSummary, 'canRevoice' | 'revoiceBlock'> {
+    const block = revoiceBlock({
+      voiceMode: row.voiceMode,
+      // `=== true`: драйвер отдаёт boolean, но строка из старой проекции
+      // или мока без поля не должна читаться как «снимок есть».
+      hasBrandSnapshot: row.hasBrandSnapshot === true,
+      hasGreetingSnapshot: row.hasGreetingSnapshot === true,
+    });
+    return { canRevoice: block === null, revoiceBlock: block };
   }
 }

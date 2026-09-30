@@ -32,6 +32,7 @@ import { Session } from '../../common/types/session.types';
 import {
   GreetingBriefSnapshot,
   GreetingSenderVoice,
+  GreetingSonioxVoice,
   GreetingVoiceView,
 } from '../../common/types/greeting.types';
 import {
@@ -54,6 +55,13 @@ import {
 } from '../../common/greeting-errors';
 import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
 import { writeWithGreetingRestamp } from '../greeting-session-edit/restamp';
+import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
+import type { VoiceOption } from '../tts/tts.types';
+import {
+  GREETING_SONIOX_UNAVAILABLE_MESSAGE,
+  GREETING_SONIOX_VOICE_UNKNOWN_MESSAGE,
+  SONIOX_VOICE_ID_PATTERN,
+} from '../../common/greeting-soniox-voice';
 
 /**
  * Идентификаторы роестра xAI — строчные слова («eve», «leo», «carina»).
@@ -73,8 +81,12 @@ function toView(snapshot: GreetingBriefSnapshot): GreetingVoiceView {
   return {
     senderVoice: snapshot.senderVoice ?? null,
     presetVoiceId: snapshot.presetVoiceId ?? null,
+    sonioxVoice: snapshot.sonioxVoice ?? null,
   };
 }
+
+/** Каталог Soniox одного языка: `null` — прочитать не удалось. */
+type SonioxCatalog = VoiceOption[] | null;
 
 type UserVoiceRow = {
   id: string;
@@ -90,6 +102,7 @@ export class GreetingVoiceService {
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
     private readonly grokVideo: GrokVideoService,
+    private readonly ttsResolver: TtsProviderResolverService,
   ) {}
 
   async get(sessionId: string): Promise<GreetingVoiceView> {
@@ -203,7 +216,7 @@ export class GreetingVoiceService {
       return {
         ...fresh,
         senderVoice: next,
-        ...(next ? { presetVoiceId: null } : {}),
+        ...(next ? { presetVoiceId: null, sonioxVoice: null } : {}),
       };
     });
   }
@@ -233,9 +246,143 @@ export class GreetingVoiceService {
     return this.write(sessionId, (fresh) => ({
       ...fresh,
       presetVoiceId: next,
-      ...(next ? { senderVoice: null } : {}),
+      ...(next ? { senderVoice: null, sonioxVoice: null } : {}),
     }));
   }
+
+  /**
+   * Голос Soniox (S2): реплику произносит наш синтез поверх немого
+   * рендера, как у клона, только провайдером Soniox. `voiceId: null` —
+   * голос Soniox по умолчанию; `choice: null` — снять выбор.
+   *
+   * Сверка с каталогом, в отличие от пресетов xAI: каталог Soniox —
+   * справочник моделей того же провайдера, что потом синтезирует, и
+   * читается он дёшево (кеш ниже), так что неизвестный голос можно
+   * отклонить сразу и вслух, а не узнать о нём по немому ролику. Сбой
+   * чтения каталога — мягко: принимаем голос по форме id, как пресет,
+   * чтобы минутный сбой не прятал рабочие голоса; неверный id тогда
+   * штатно провалит синтез (`outcome.ok === false`).
+   *
+   * Ограничений клона здесь нет сознательно: это не голос человека
+   * (согласие, тариф клонирования, персона — не про него), а каталог
+   * провайдера, как пресеты, — доступен на всех тарифах.
+   */
+  async selectSoniox(
+    sessionId: string,
+    choice: { voiceId?: string | null } | null,
+  ): Promise<GreetingVoiceView> {
+    const session = await this.load(sessionId);
+    assertGreetingNotRendering(session);
+    const next = choice ? await this.resolveSonioxVoice(choice.voiceId) : null;
+    return this.write(sessionId, (fresh) => ({
+      ...fresh,
+      sonioxVoice: next,
+      ...(next ? { senderVoice: null, presetVoiceId: null } : {}),
+    }));
+  }
+
+  private async resolveSonioxVoice(
+    raw: string | null | undefined,
+  ): Promise<GreetingSonioxVoice> {
+    const tts = this.ttsResolver.resolveByKey('soniox');
+    // Без ключа синтеза не будет вовсе: голос, выбранный сейчас, дал бы
+    // ролик без озвучки — отказываем до записи.
+    if (!tts.configured()) {
+      throw new BadRequestException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_SONIOX_UNAVAILABLE,
+          GREETING_SONIOX_UNAVAILABLE_MESSAGE,
+        ),
+      );
+    }
+    const voiceId = raw?.trim() || null;
+    if (!voiceId) return { voiceId: null, label: null };
+    const unknown = () =>
+      new BadRequestException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_SONIOX_VOICE_UNKNOWN,
+          GREETING_SONIOX_VOICE_UNKNOWN_MESSAGE,
+        ),
+      );
+    if (!SONIOX_VOICE_ID_PATTERN.test(voiceId)) throw unknown();
+    const catalog = await this.listSonioxVoices();
+    if (!catalog) return { voiceId, label: voiceId };
+    const found = catalog.find((v) => v.voiceId === voiceId);
+    if (!found) throw unknown();
+    return { voiceId: found.voiceId, label: found.name || found.voiceId };
+  }
+
+  /**
+   * Каталог голосов Soniox — для сверки выбора и для голосового
+   * помощника (K5), с кешем по языку тем же доводом, что у роестра
+   * пресетов: помощник сверяет выбор на КАЖДОЙ реплике. Язык — тот же
+   * фильтр, что у экрана (`GET /tts/voices?provider=soniox&language=`):
+   * язык, которого модель не знает, даёт пустой список и на экране, и
+   * здесь. `null` в ответе — каталог не прочитан (сбой, нет ключа);
+   * такой ответ кешируется коротко.
+   */
+  listSonioxVoices(language?: string | null): Promise<SonioxCatalog> {
+    const key = language?.trim().toLowerCase() || '';
+    const now = this.now();
+    const cached = this.sonioxCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return Promise.resolve(cached.voices);
+    }
+    let inFlight = this.sonioxInFlight.get(key);
+    if (!inFlight) {
+      inFlight = this.ttsResolver
+        .resolveByKey('soniox')
+        .voices(key || undefined)
+        .then(({ voices, error }): SonioxCatalog => {
+          // Пустой список с пояснением — это «язык не поддержан» или сбой;
+          // отличить их по тексту нельзя, и для сверки выбора оба значат
+          // одно: сверить не с чем.
+          const result = error && !voices.length ? null : voices;
+          this.sonioxCache.set(key, {
+            voices: result,
+            expiresAt:
+              this.now() +
+              (result?.length ? PRESET_CACHE_TTL_MS : PRESET_EMPTY_TTL_MS),
+          });
+          return result;
+        })
+        .finally(() => {
+          this.sonioxInFlight.delete(key);
+        });
+      this.sonioxInFlight.set(key, inFlight);
+    }
+    return inFlight;
+  }
+
+  /**
+   * Тот же каталог для голосового разбора — не дольше `timeoutMs`; сбой и
+   * таймаут — пустой список (экран в этом случае раздела не покажет).
+   */
+  async listSonioxVoicesQuick(
+    language?: string | null,
+    timeoutMs = PRESET_VOICE_PATH_TIMEOUT_MS,
+  ): Promise<VoiceOption[]> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<VoiceOption[]>((resolve) => {
+      timer = setTimeout(() => resolve([]), timeoutMs);
+    });
+    try {
+      return await Promise.race([
+        this.listSonioxVoices(language)
+          .then((v) => v ?? [])
+          .catch(() => [] as VoiceOption[]),
+        timeout,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private sonioxCache = new Map<
+    string,
+    { voices: SonioxCatalog; expiresAt: number }
+  >();
+  private sonioxInFlight = new Map<string, Promise<SonioxCatalog>>();
 
   /**
    * CONTRACT6 (регрессия аудита): смена голоса пишется под замком

@@ -62,7 +62,11 @@ afterAll(() => {
   else process.env.FIXTURE_TELEGRAM_ID = telegramBefore;
 });
 
-import { TutorialScenarioGeneratorService } from './tutorial-scenario-generator.service';
+import {
+  GENERATE_DEADLINE_MS,
+  TutorialScenarioGeneratorService,
+} from './tutorial-scenario-generator.service';
+import { GENERATE_ROTATION_SETTING_KEY } from './generate-rotation';
 import { stableStringify } from '../../common/stable-json';
 
 function build(storedLocales: string | null = null) {
@@ -83,7 +87,12 @@ function build(storedLocales: string | null = null) {
   };
   // `null` — настройки нет, то есть умолчание `['ru']`: ровно то, что
   // генератор делал до этапа C.
-  const settings = { get: jest.fn().mockResolvedValue(storedLocales) };
+  const settings = {
+    get: jest.fn().mockResolvedValue(storedLocales),
+    // Карта ротации (пункт A1) пишется в конце прогона; прежним тестам
+    // её содержимое безразлично, свои проверяют его явно.
+    set: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new TutorialScenarioGeneratorService(
     prisma as any,
     aiUsage as any,
@@ -526,6 +535,7 @@ describe('TutorialScenarioGeneratorService.run', () => {
       pairs: 3,
       locales: ['ru'],
       skippedManual: 0,
+      deferred: 0,
       generated: 3,
       costly: 0,
       failed: 0,
@@ -629,6 +639,8 @@ describe('TutorialScenarioGeneratorService.run', () => {
     );
     // Порядок значим: сначала мастер, потом поздравление. Кончится
     // бюджет тика на середине — отложится менее обжитая половина.
+    // Это порядок ПЕРВОЙ ночи (отметок ротации ещё нет); со второй его
+    // определяет давность — см. блок «ротация» ниже.
     expect(pairs).toEqual([
       { subjectKey: '1', locale: 'ru' },
       { subjectKey: '2', locale: 'ru' },
@@ -858,5 +870,170 @@ describe('TutorialScenarioGeneratorService.run', () => {
     expect(
       prisma.tutorialScenario.update.mock.calls[0][0].data,
     ).not.toHaveProperty('approved');
+  });
+});
+
+/*
+ * Ротация по давности (пункт A1 обучалок). Ночь моделируется честно:
+ * часы подменены, каждый вызов модели «стоит» чуть больше половины
+ * бюджета, то есть за ночь успеваются ровно ДВЕ пары из шести (две
+ * локали × три темы). Карта отметок живёт в настоящем хранилище между
+ * ночами — так проверяется не только порядок, но и то, что он
+ * переживает запись и чтение настройки.
+ */
+describe('TutorialScenarioGeneratorService — ротация пар по давности', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const PAIR_COST_MS = GENERATE_DEADLINE_MS / 2 + 1;
+  let clock = 0;
+
+  beforeEach(() => {
+    jest.spyOn(Date, 'now').mockImplementation(() => clock);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  /** Сервис с живым хранилищем настроек и «дорогой» моделью. */
+  function buildNights(fail?: (prompt: string) => boolean) {
+    const built = build('["ru","en"]');
+    const store = new Map<string, string>([
+      ['tutorial.scenarioLocales', '["ru","en"]'],
+    ]);
+    built.settings.get.mockImplementation(
+      async (key: string) => store.get(key) ?? null,
+    );
+    built.settings.set.mockImplementation(
+      async (key: string, value: string) => {
+        store.set(key, value);
+      },
+    );
+    generateContent.mockImplementation(
+      async (arg: { contents: { text: string }[] }) => {
+        clock += PAIR_COST_MS;
+        return {
+          text:
+            fail && fail(arg.contents[0].text)
+              ? 'не JSON вовсе'
+              : FREE_SCENARIO_TEXT,
+          usageMetadata: {},
+        };
+      },
+    );
+    /** Одна ночь: пары, взятые в работу, в порядке обхода. */
+    async function night(n: number) {
+      clock = n * DAY;
+      built.prisma.tutorialScenario.findUnique.mockClear();
+      const result = await built.service.run();
+      // Первый `findUnique` пары — проверка «правлено руками»; он
+      // идёт ровно один раз на взятую пару, до вызова модели.
+      const taken = built.prisma.tutorialScenario.findUnique.mock.calls
+        .map(([a]: [{ where: any; select: any }]) => a)
+        .filter((a: { select: any }) => a.select.generatedBy && !a.select.steps)
+        .map(
+          (a: { where: { subjectKey_locale: any } }) =>
+            `${a.where.subjectKey_locale.locale}:${a.where.subjectKey_locale.subjectKey}`,
+        );
+      return { result, taken };
+    }
+    return { ...built, store, night };
+  }
+
+  it('вторая ночь начинает с того, что не успела первая, — порядок не фиксирован', async () => {
+    const { night } = buildNights();
+
+    const first = await night(1);
+    const second = await night(2);
+
+    expect(first.taken).toEqual(['ru:1', 'ru:2']);
+    // `en` в эту ночь не брали вовсе — и в отчёте его нет: «генерировали
+    // на en», не тронув ни одной его пары, было бы неправдой.
+    expect(first.result).toMatchObject({
+      pairs: 6,
+      deferred: 4,
+      locales: ['ru'],
+    });
+    // Без ротации вторая ночь снова взяла бы ru:1, ru:2 — и `en` не
+    // дошёл бы никогда.
+    expect(second.taken).toEqual(['ru:greeting-brief', 'en:1']);
+    expect(second.result.locales).toEqual(['ru', 'en']);
+  });
+
+  it('за ⌈пар / пар-за-ночь⌉ ночей покрыт весь круг, каждая пара ровно раз', async () => {
+    const { night } = buildNights();
+
+    const covered: string[] = [];
+    for (let n = 1; n <= 3; n++) covered.push(...(await night(n)).taken);
+
+    expect(covered).toHaveLength(6);
+    expect(new Set(covered)).toEqual(
+      new Set([
+        'ru:1',
+        'ru:2',
+        'ru:greeting-brief',
+        'en:1',
+        'en:2',
+        'en:greeting-brief',
+      ]),
+    );
+    // Четвёртая ночь — второй круг, и он снова начинается с самых
+    // давних, то есть с пар первой ночи.
+    expect((await night(4)).taken).toEqual(['ru:1', 'ru:2']);
+  });
+
+  it('отказ модели тоже ставит отметку — сломанная пара не держит голову очереди', async () => {
+    // Иначе локаль, на которой модель стабильно отказывает, каждую
+    // ночь съедала бы бюджет первой, и круг не замыкался бы.
+    const { night } = buildNights((prompt) => prompt.includes('Первый шаг'));
+
+    const first = await night(1);
+    const second = await night(2);
+
+    expect(first.result.failures).toEqual([
+      { subjectKey: '1', locale: 'ru', reason: 'ответ не JSON-объект' },
+    ]);
+    expect(second.taken).not.toContain('ru:1');
+  });
+
+  it('карта отметок хранит только пары текущего круга', async () => {
+    const { night, store } = buildNights();
+    store.set(
+      GENERATE_ROTATION_SETTING_KEY,
+      JSON.stringify({ 'de:1': '2020-01-01T00:00:00.000Z' }),
+    );
+
+    await night(1);
+
+    const saved = JSON.parse(store.get(GENERATE_ROTATION_SETTING_KEY) ?? '{}');
+    expect(Object.keys(saved).sort()).toEqual(['ru:1', 'ru:2']);
+  });
+
+  it('денежный потолок посреди прогона — остаток посчитан отложенным', async () => {
+    // Без этого числа журнал ночи, оборванной деньгами, выглядел бы как
+    // «круг пройден»: `pairs` — размер круга, а не число обойдённых.
+    const { service, settings, aiUsage } = build();
+    settings.get.mockImplementation(async (key: string) =>
+      key === 'postprod.tutorialDailyBudgetUsd' ? '1' : null,
+    );
+    aiUsage.spentTodayForOperation.mockResolvedValue(999_999);
+    generateContent.mockResolvedValue({
+      text: FREE_SCENARIO_TEXT,
+      usageMetadata: { promptTokenCount: 1_000_000 },
+    });
+
+    const result = await service.run();
+
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ pairs: 3, deferred: 2, generated: 1 });
+  });
+
+  it('не удалось сохранить отметки — прогон всё равно отдаёт отчёт', async () => {
+    // Сценарии уже записаны; ронять отчёт (и с ним `failures[]`) из-за
+    // вспомогательной отметки хуже, чем одну ночь пройти по-старому.
+    const { night, settings } = buildNights();
+    settings.set.mockRejectedValue(new Error('база недоступна'));
+
+    const { result } = await night(1);
+
+    expect(result.generated).toBe(2);
   });
 });

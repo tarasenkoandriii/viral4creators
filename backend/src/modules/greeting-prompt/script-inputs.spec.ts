@@ -105,6 +105,33 @@ describe('greetingScriptInputs / greetingScriptStale', () => {
   });
 });
 
+describe('greetingScriptInputs — голос Soniox (S2)', () => {
+  const stamp = (brief: Record<string, unknown>) =>
+    greetingScriptInputs({
+      ...base(),
+      greetingBriefSnapshot: { ...base().greetingBriefSnapshot, ...brief },
+    } as never);
+
+  it('без Soniox отпечаток прежний — уже собранные сессии не устаревают', () => {
+    // Ключ `soniox` в отпечатке без выбора сменил бы его у ВСЕХ сессий.
+    const plain = stamp({});
+    expect(plain).not.toContain('soniox');
+    expect(stamp({ sonioxVoice: null })).toBe(plain);
+  });
+
+  it('Soniox по умолчанию, голос каталога и другой голос — три разных отпечатка', () => {
+    const none = stamp({});
+    const def = stamp({ sonioxVoice: { voiceId: null, label: null } });
+    const maya = stamp({ sonioxVoice: { voiceId: 'Maya', label: 'Maya' } });
+    const adrian = stamp({ sonioxVoice: { voiceId: 'Adrian', label: 'A' } });
+    expect(new Set([none, def, maya, adrian]).size).toBe(4);
+    // Имя из каталога — не вход сценария: сцена от него не меняется.
+    expect(stamp({ sonioxVoice: { voiceId: 'Maya', label: 'другое' } })).toBe(
+      maya,
+    );
+  });
+});
+
 describe('assertNoRenderAfterWrite', () => {
   it('ролик не появился — ничего не делает', async () => {
     const sessions = {

@@ -2,7 +2,10 @@
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { ForbiddenException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 import { PREVIEWS_PER_DAY, TtsController } from './tts.controller';
+import { PreviewVoiceRequestDto } from './dto/preview-voice.dto';
 
 const req = { telegramUserId: 'u1' } as any;
 
@@ -305,6 +308,37 @@ describe('TtsController (ТЗ §15.3)', () => {
         );
       },
     );
+  });
+
+  describe('язык пробы (аудит S2)', () => {
+    it('явный язык уходит в синтез — испанская фраза не читается как pl', async () => {
+      const { ctl, tts } = build();
+      await ctl.preview(req, {
+        text: 'Hola, feliz cumpleaños',
+        provider: 'soniox',
+        language: 'es',
+      });
+      expect(tts.synthesize).toHaveBeenCalledWith(
+        expect.objectContaining({ language: 'es' }),
+      );
+    });
+
+    it('без языка — поля нет, провайдер угадывает по буквам, как раньше', async () => {
+      const { ctl, tts } = build();
+      await ctl.preview(req, { text: 'Привет' });
+      expect(tts.synthesize.mock.calls[0][0]).not.toHaveProperty('language');
+    });
+
+    const errorsOf = (body: unknown) =>
+      validateSync(plainToInstance(PreviewVoiceRequestDto, body));
+    it('DTO: язык только из языков поздравления', () => {
+      for (const language of ['ru', 'uk', 'en', 'de', 'es']) {
+        expect(errorsOf({ text: 'x', language })).toHaveLength(0);
+      }
+      for (const language of ['pl', 'ES', '', 'ru-RU', 42]) {
+        expect(errorsOf({ text: 'x', language }).length).toBeGreaterThan(0);
+      }
+    });
   });
 
   // Доп. запрос владельца продукта: проба репликами ОРИГИНАЛА, не

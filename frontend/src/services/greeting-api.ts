@@ -335,6 +335,24 @@ export async function selectGreetingPresetVoice(
   );
 }
 
+/**
+ * Голос каталога Soniox (S2): `{ voiceId }` — голос каталога,
+ * `{ voiceId: null }` — «голос Soniox по умолчанию», `null` — снять
+ * Soniox. Выбор гасит клон и пресет на сервере — ответ читается целиком.
+ */
+export async function selectGreetingSonioxVoice(
+  sessionId: string,
+  sonioxVoice: { voiceId: string | null } | null
+): Promise<GreetingVoiceView> {
+  return unwrap(
+    await api.patch<GreetingVoiceView>(
+      `/sessions/${sessionId}/greeting-voice`,
+      { sonioxVoice }
+    ),
+    'greeting-voice'
+  );
+}
+
 // ── Сколько сцен снимать (фича №7) ─────────────────────────────────────
 
 export async function getGreetingScenes(

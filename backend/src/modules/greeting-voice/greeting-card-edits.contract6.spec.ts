@@ -74,12 +74,18 @@ describe('правка карточек во время рендера — 409 �
     [
       'голос: свой клон',
       (s, p) =>
-        new GreetingVoiceService(p, s, {} as any).select('s1', 'clone-42'),
+        new GreetingVoiceService(p, s, {} as any, {} as any).select(
+          's1',
+          'clone-42',
+        ),
     ],
     [
       'голос: пресет',
       (s, p) =>
-        new GreetingVoiceService(p, s, {} as any).selectPreset('s1', 'eve'),
+        new GreetingVoiceService(p, s, {} as any, {} as any).selectPreset(
+          's1',
+          'eve',
+        ),
     ],
     [
       'музыка: тема',
@@ -153,6 +159,7 @@ describe('голос персоны на Hedra без образа (CONTRACT6 п
       prisma as any,
       sessions as any,
       {} as any,
+      {} as any,
     );
     const { status, body } = await bodyOf(svc.select('s1', 'rv-p'));
     expect(status).toBe(400);
@@ -179,6 +186,7 @@ describe('голос персоны на Hedra без образа (CONTRACT6 п
         prisma as any,
         sessions as any,
         {} as any,
+        {} as any,
       ).select('s1', 'rv-p');
       expect(view.senderVoice).toMatchObject({ personaVoice: true });
     }
@@ -196,6 +204,7 @@ describe('голос персоны на Hedra без образа (CONTRACT6 п
     await new GreetingVoiceService(
       prisma as any,
       sessions as any,
+      {} as any,
       {} as any,
     ).select('s1', 'rv-p');
     expect(sessions.updateSession).toHaveBeenCalled();

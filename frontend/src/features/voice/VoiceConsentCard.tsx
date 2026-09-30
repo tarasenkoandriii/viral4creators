@@ -39,6 +39,15 @@ export function VoiceConsentCard({
     [c.occasion, summary.occasion, 'personal-occasion'],
     [c.quality, summary.quality],
   ];
+  // Голос (S2): человек соглашается и с тем, КАК прозвучит ролик — клон,
+  // пресет или голос Soniox. Подпись клона даёт человек («голос мамы»),
+  // поэтому под маской, как и в карточке голоса. Не прочитан — строки нет.
+  if (summary.voice)
+    rows.push([
+      dict.greetingSoniox.consentVoiceRow,
+      summary.voice,
+      'personal-voice-label',
+    ]);
   if (cost) rows.push([c.cost, cost]);
   const titleId = useId();
   return (

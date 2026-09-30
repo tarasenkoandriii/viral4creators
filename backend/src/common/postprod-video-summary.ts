@@ -41,6 +41,11 @@ export interface PostprodVideoSummaryRow {
   quality: string | null;
   provider: string | null;
   resolution: string | null;
+  /** Есть ли у сессии снимок брендбука / брифа поздравления — входы
+   * `revoiceBlock()` (common/revoice-eligibility.ts). Только признак,
+   * не сами снимки: они тяжёлые, а списку нужен один бит. */
+  hasBrandSnapshot: boolean;
+  hasGreetingSnapshot: boolean;
 }
 
 const SELECT_FROM = `
@@ -54,7 +59,9 @@ const SELECT_FROM = `
          COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'aspectRatio' AS "aspectRatio",
          COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'quality' AS "quality",
          COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'provider' AS "provider",
-         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'resolution' AS "resolution"
+         COALESCE(s."data" -> 'generatedVideo', s."liveData" -> 'generatedVideo') ->> 'resolution' AS "resolution",
+         COALESCE(jsonb_typeof(s."data" -> 'brandManifestSnapshot') = 'object', false) AS "hasBrandSnapshot",
+         COALESCE(jsonb_typeof(s."data" -> 'greetingBriefSnapshot') = 'object', false) AS "hasGreetingSnapshot"
   FROM "sessions" s
   WHERE s."userId" = $1 AND s."generationStatus" = 'complete'
     AND s."deletedAt" IS NULL

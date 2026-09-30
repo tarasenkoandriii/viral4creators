@@ -565,6 +565,149 @@ check('голос: занято — busy', () => {
   ]);
 });
 
+// ── Голос Soniox (S2) ──
+
+const withSoniox = {
+  ...voices,
+  soniox: [
+    { voiceId: 'Maya', name: 'Maya' },
+    { voiceId: 'Adrian', name: 'Adrian' },
+  ],
+  sonioxSelected: false,
+  sonioxVoiceId: null,
+};
+
+check('Soniox: голос из раздела — soniox; не из раздела — отказ', () => {
+  eq(planVoiceChoice(withSoniox, false, [f(T.voiceSoniox, 'Maya')]).action, {
+    kind: 'soniox',
+    voiceId: 'Maya',
+  });
+  // Имя пресета — не голос Soniox, и наоборот.
+  eq(reasons(planVoiceChoice(withSoniox, false, [f(T.voiceSoniox, 'eve')])), [
+    `${T.voiceSoniox}:not-on-screen`,
+  ]);
+  eq(reasons(planVoiceChoice(withSoniox, false, [f(T.voicePreset, 'Maya')])), [
+    `${T.voicePreset}:not-on-screen`,
+  ]);
+  // Раздела нет на экране (ключа Soniox нет) — голос не выбирается.
+  eq(reasons(planVoiceChoice(voices, false, [f(T.voiceSoniox, 'Maya')])), [
+    `${T.voiceSoniox}:not-on-screen`,
+  ]);
+  eq(reasons(planVoiceChoice(withSoniox, false, [f(T.voiceSoniox, true)])), [
+    `${T.voiceSoniox}:not-on-screen`,
+  ]);
+});
+
+check(
+  'Soniox: уже выбранный — «уже так»; поверх «по умолчанию» — выбор',
+  () => {
+    const picked = {
+      ...withSoniox,
+      sonioxSelected: true,
+      sonioxVoiceId: 'Maya',
+    };
+    eq(reasons(planVoiceChoice(picked, false, [f(T.voiceSoniox, 'Maya')])), [
+      `${T.voiceSoniox}:already`,
+    ]);
+    eq(planVoiceChoice(picked, false, [f(T.voiceSoniox, 'Adrian')]).action, {
+      kind: 'soniox',
+      voiceId: 'Adrian',
+    });
+    const byDefault = {
+      ...withSoniox,
+      sonioxSelected: true,
+      sonioxVoiceId: null,
+    };
+    eq(planVoiceChoice(byDefault, false, [f(T.voiceSoniox, 'Maya')]).action, {
+      kind: 'soniox',
+      voiceId: 'Maya',
+    });
+    // id выбранного без флага выбора — не «уже» (флаг решает).
+    eq(
+      planVoiceChoice({ ...withSoniox, sonioxVoiceId: 'Maya' }, false, [
+        f(T.voiceSoniox, 'Maya'),
+      ]).action,
+      { kind: 'soniox', voiceId: 'Maya' }
+    );
+  }
+);
+
+check('Soniox: с пресетом или клоном разом, с «выключи свой» — спор', () => {
+  const two = planVoiceChoice(withSoniox, false, [
+    f(T.voiceSoniox, 'Maya'),
+    f(T.voiceClone, 'c1'),
+  ]);
+  eq(two.action, null);
+  eq(reasons(two), [`${T.voiceClone}:conflict`, `${T.voiceSoniox}:conflict`]);
+  const three = planVoiceChoice(withSoniox, false, [
+    f(T.voicePreset, 'eve'),
+    f(T.voiceSoniox, 'Maya'),
+  ]);
+  eq(reasons(three), [
+    `${T.voicePreset}:conflict`,
+    `${T.voiceSoniox}:conflict`,
+  ]);
+  const off = planVoiceChoice(withSoniox, false, [
+    f(T.voiceCustom, false),
+    f(T.voiceSoniox, 'Maya'),
+  ]);
+  eq(off.action, null);
+  eq(reasons(off), [`${T.voiceSoniox}:conflict`, `${T.voiceCustom}:conflict`]);
+});
+
+check('Soniox: «выключи свой» при Soniox (и по умолчанию) — clear', () => {
+  for (const id of ['Maya', null]) {
+    eq(
+      planVoiceChoice(
+        { ...withSoniox, sonioxSelected: true, sonioxVoiceId: id },
+        false,
+        [f(T.voiceCustom, false)]
+      ).action,
+      { kind: 'clear' }
+    );
+  }
+  eq(reasons(planVoiceChoice(withSoniox, false, [f(T.voiceCustom, false)])), [
+    `${T.voiceCustom}:already`,
+  ]);
+});
+
+check(
+  'Soniox: «включи свой» — перечень с голосами Soniox; при Soniox — «уже»',
+  () => {
+    eq(
+      planVoiceChoice(withSoniox, false, [f(T.voiceCustom, true)]).refused[0]
+        .refusal,
+      {
+        reason: 'ambiguous',
+        options: ['Мой голос', 'Eve', 'Rex', 'Maya', 'Adrian'],
+      }
+    );
+    eq(
+      reasons(
+        planVoiceChoice(
+          { ...withSoniox, sonioxSelected: true, sonioxVoiceId: null },
+          false,
+          [f(T.voiceCustom, true)]
+        )
+      ),
+      [`${T.voiceCustom}:already`]
+    );
+    eq(
+      planVoiceChoice(withSoniox, false, [
+        f(T.voiceCustom, true),
+        f(T.voiceSoniox, 'Adrian'),
+      ]),
+      { action: { kind: 'soniox', voiceId: 'Adrian' }, refused: [] }
+    );
+  }
+);
+
+check('Soniox: занято — busy и для раздела Soniox', () => {
+  eq(reasons(planVoiceChoice(withSoniox, true, [f(T.voiceSoniox, 'Maya')])), [
+    `${T.voiceSoniox}:busy`,
+  ]);
+});
+
 // ── Сценарий ─────────────────────────────────────────────────────────────
 
 check('сценарий: полный текст с потолком 2000', () => {

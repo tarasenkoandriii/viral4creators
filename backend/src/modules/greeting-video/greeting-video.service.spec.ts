@@ -3,6 +3,7 @@ jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import {
+  GREETING_AVATAR_SPEECH_FAILED_MESSAGE,
   avatarVoiceChoice,
   GreetingVideoService,
 } from './greeting-video.service';
@@ -92,6 +93,11 @@ function build(sessionOver: Record<string, unknown> = {}) {
   // какой ключ запрошен, проверяют отдельные тесты по вызовам резолвера.
   const ttsProvider = {
     providerKey: 'resemble',
+    // Аудит S2: проверка голоса Soniox у денег — ключ и каталог.
+    configured: jest.fn().mockReturnValue(true),
+    voices: jest.fn().mockResolvedValue({
+      voices: [{ voiceId: 'Maya' }, { voiceId: 'Adrian' }],
+    }),
     synthesize: jest.fn().mockResolvedValue({
       ok: true,
       audio: Buffer.from('mp3'),
@@ -246,6 +252,133 @@ describe('GreetingVideoService — звук ролика заказываетс�
   });
 });
 
+describe('GreetingVideoService — голос Soniox отправителя (S2)', () => {
+  const sonioxBrief = {
+    ...BRIEF,
+    sonioxVoice: { voiceId: 'Maya', label: 'Maya' },
+  };
+
+  it('Grok снимает без звука даже при режиме бренда veo — речь ляжет поверх', async () => {
+    const { svc, startGeneration } = build({
+      greetingBriefSnapshot: sonioxBrief,
+      brandManifestSnapshot: { voiceMode: 'veo' },
+    });
+    const video = await svc.startVideo('s1');
+    expect(startGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({ generateAudio: false }),
+    );
+    const args = startGeneration.mock.calls[0][0] as Record<string, unknown>;
+    expect(args).not.toHaveProperty('referenceAudioVoiceIds');
+    expect(video.silentSource).toBe(true);
+  });
+
+  it('говорящий аватар озвучивается Soniox этим голосом, а не голосом бренда', async () => {
+    const { svc, ttsResolver } = build(
+      withPortrait({
+        greetingBriefSnapshot: {
+          ...HEDRA_BRIEF,
+          senderVoice: null,
+          sonioxVoice: { voiceId: 'Adrian', label: 'Adrian' },
+          scriptLanguage: 'uk',
+        },
+        brandManifestSnapshot: {
+          ttsVoiceId: 'el-1',
+          ttsProvider: 'elevenlabs',
+        },
+      }),
+    );
+    const provider = await ttsResolver.resolve();
+    ttsResolver.resolve.mockClear();
+    await svc.startVideo('s1');
+    expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('soniox');
+    expect(ttsResolver.resolveByKey).not.toHaveBeenCalledWith('elevenlabs');
+    expect(ttsResolver.resolve).not.toHaveBeenCalled();
+    expect(provider.synthesize).toHaveBeenCalledWith(
+      expect.objectContaining({ voiceId: 'Adrian', language: 'uk' }),
+    );
+  });
+});
+
+describe('GreetingVideoService — голос Soniox у денег (аудит S2)', () => {
+  const withSoniox = (voiceId: string | null, extra = {}) => ({
+    greetingBriefSnapshot: {
+      ...BRIEF,
+      sonioxVoice: { voiceId, label: voiceId },
+      ...extra,
+    },
+  });
+  const refusal = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e: any) {
+      return { status: e.getStatus(), code: e.getResponse().code };
+    }
+    return 'не бросил';
+  };
+
+  it('нет ключа Soniox — 400 до списания, рендер не зовётся', async () => {
+    for (const voiceId of ['Maya', null]) {
+      const b = build(withSoniox(voiceId));
+      const tts = b.ttsResolver.resolveByKey('soniox');
+      tts.configured.mockReturnValue(false);
+      b.ttsResolver.resolveByKey.mockClear();
+      await expect(refusal(b.svc.startVideo('s1'))).resolves.toEqual({
+        status: 400,
+        code: 'GREETING_SONIOX_UNAVAILABLE',
+      });
+      expect(b.ttsResolver.resolveByKey).toHaveBeenCalledWith('soniox');
+      expect(b.credits.reserveForGeneration).not.toHaveBeenCalled();
+      expect(b.startGeneration).not.toHaveBeenCalled();
+    }
+  });
+
+  it('голос убран из каталога после выбора — 400 GREETING_SONIOX_VOICE_UNKNOWN', async () => {
+    const b = build(withSoniox('Zed'));
+    await expect(refusal(b.svc.startVideo('s1'))).resolves.toEqual({
+      status: 400,
+      code: 'GREETING_SONIOX_VOICE_UNKNOWN',
+    });
+    expect(b.credits.reserveForGeneration).not.toHaveBeenCalled();
+    expect(b.startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('голос в каталоге — рендер идёт; голос по умолчанию каталог не читает', async () => {
+    const a = build(withSoniox('Adrian'));
+    await a.svc.startVideo('s1');
+    expect(a.startGeneration).toHaveBeenCalled();
+    const b = build(withSoniox(null));
+    await b.svc.startVideo('s1');
+    expect(b.startGeneration).toHaveBeenCalled();
+    expect(b.ttsResolver.resolveByKey('soniox').voices).not.toHaveBeenCalled();
+  });
+
+  it('каталог не прочитан — мягко: рендер идёт', async () => {
+    for (const fail of [
+      (m: jest.Mock) => m.mockResolvedValue({ voices: [], error: '503' }),
+      (m: jest.Mock) => m.mockRejectedValue(new Error('сеть')),
+    ]) {
+      const b = build(withSoniox('Zed'));
+      fail(b.ttsResolver.resolveByKey('soniox').voices);
+      await b.svc.startVideo('s1');
+      expect(b.startGeneration).toHaveBeenCalled();
+    }
+  });
+
+  it('Soniox перебит клоном или пресетом (старая запись) — не проверяется', async () => {
+    for (const extra of [
+      { presetVoiceId: 'eve' },
+      {
+        senderVoice: { userVoiceId: 'uv1', resembleVoiceId: 'rv1', label: 'L' },
+      },
+    ]) {
+      const b = build(withSoniox('Zed', extra));
+      b.ttsResolver.resolveByKey('soniox').configured.mockReturnValue(false);
+      await b.svc.startVideo('s1');
+      expect(b.startGeneration).toHaveBeenCalled();
+    }
+  });
+});
+
 describe('GreetingVideoService — мультисценовый ролик (фича №7)', () => {
   const multi = { ...BRIEF, sceneCount: 3 };
 
@@ -356,6 +489,24 @@ describe('GreetingVideoService — говорящий аватар', () => {
     const provider = await ttsResolver.resolve();
     provider.synthesize.mockResolvedValue({ ok: false, reason: 'нет ключа' });
     await expect(svc.startVideo('s1')).rejects.toThrow(/Озвучка/);
+    expect(hedra.submit).not.toHaveBeenCalled();
+  });
+
+  it('сбой синтеза — код и текст без сырого ответа провайдера (аудит S2)', async () => {
+    const { svc, ttsResolver, hedra } = build(withPortrait());
+    const provider = await ttsResolver.resolve();
+    provider.synthesize.mockResolvedValue({
+      ok: false,
+      reason: 'Soniox ответил 503: key sk-секрет',
+    });
+    let err: any;
+    await svc.startVideo('s1').catch((e) => (err = e));
+    expect(err.getStatus()).toBe(400);
+    expect(err.getResponse()).toEqual({
+      code: 'GREETING_AVATAR_SPEECH_FAILED',
+      message: GREETING_AVATAR_SPEECH_FAILED_MESSAGE,
+    });
+    expect(JSON.stringify(err.getResponse())).not.toMatch(/503|sk-/);
     expect(hedra.submit).not.toHaveBeenCalled();
   });
 
@@ -1164,6 +1315,25 @@ describe('avatarVoiceChoice — голос и провайдер озвучки 
         { ttsVoiceId: 'el-1', ttsProvider: 'elevenlabs' },
       ),
     ).toEqual({ voiceId: 'el-1', provider: 'elevenlabs' });
+  });
+  it('голос Soniox отправителя (S2) перебивает голос бренда; null — голос по умолчанию', () => {
+    const brand = { ttsVoiceId: 'el-1', ttsProvider: 'elevenlabs' };
+    expect(
+      avatarVoiceChoice(
+        { sonioxVoice: { voiceId: 'Maya', label: 'Maya' } },
+        brand,
+      ),
+    ).toEqual({ voiceId: 'Maya', provider: 'soniox' });
+    expect(
+      avatarVoiceChoice({ sonioxVoice: { voiceId: null, label: null } }, brand),
+    ).toEqual({ voiceId: null, provider: 'soniox' });
+    // Старая запись с обоими полями: клон — первым, как у постобработки.
+    expect(
+      avatarVoiceChoice(
+        { ...clone, sonioxVoice: { voiceId: 'Maya', label: 'Maya' } },
+        brand,
+      ),
+    ).toEqual({ voiceId: 'rv1', provider: 'resemble' });
   });
   it('Soniox без голоса — его голос по умолчанию (voiceId null)', () => {
     expect(

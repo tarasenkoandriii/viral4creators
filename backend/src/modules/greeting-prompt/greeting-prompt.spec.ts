@@ -144,6 +144,24 @@ describe('buildSceneDescription — кто произносит реплику',
     expect(scene).not.toMatch(/Audio: ambience and music only/);
   });
 
+  it('голос Soniox (S2): ведущий молчит, речь поверх — даже при режиме бренда veo', () => {
+    // Сцена обязана совпасть с рендером Grok (`generateAudio: false`) и
+    // постобработкой — та же `greetingVoiceMode` у всех трёх.
+    for (const voiceId of [null, 'Maya']) {
+      const scene = buildSceneDescription(
+        brief({ sonioxVoice: { voiceId, label: null } }),
+        'день рождения',
+        speech,
+        [],
+        'veo',
+      );
+      expect(scene).toMatch(/does NOT say the line out loud/);
+      expect(scene).toMatch(/Audio: ambience and music only/);
+      expect(scene).not.toMatch(/presenter speaks directly/);
+      expect(scene).not.toContain('<AUDIO_0>');
+    }
+  });
+
   it('ведущий остаётся в кадре и в молчаливом режиме — это не закадровый ролик', () => {
     // `voiceModeBriefText` для товарных роликов запрещает говорящие
     // головы вообще; у поздравления ведущий в кадре и есть продукт.

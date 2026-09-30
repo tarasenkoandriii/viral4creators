@@ -41,6 +41,7 @@ export const SESSION_VOICE_TARGETS = {
   scriptText: 'greeting-script-edit',
   voicePreset: 'greeting-voice-preset',
   voiceClone: 'greeting-voice-clone',
+  voiceSoniox: 'greeting-voice-soniox',
   voiceCustom: 'greeting-voice-custom',
   musicTheme: 'greeting-music-theme',
   musicEnabled: 'greeting-music-enabled',
@@ -443,11 +444,25 @@ export interface VoiceChoiceState {
   presetVoiceId: string | null;
   /** `resembleVoiceId` выбранного клона. */
   cloneVoiceId: string | null;
+  /**
+   * Голоса каталога Soniox на экране (S2): `voiceId` → имя. Необязательное
+   * — у вызывающих до S2 раздела Soniox нет, и это «на экране пусто».
+   */
+  soniox?: ReadonlyArray<{ voiceId: string; name: string }>;
+  /** Выбран ли Soniox вовсе — в том числе голос по умолчанию. */
+  sonioxSelected?: boolean;
+  /** `voiceId` выбранного голоса Soniox; `null` — не выбран или по умолчанию. */
+  sonioxVoiceId?: string | null;
 }
 
 export type VoiceChoiceAction =
   | { kind: 'preset'; voiceId: string }
   | { kind: 'clone'; voiceId: string }
+  /**
+   * Голос каталога Soniox. «Голос Soniox по умолчанию» голосом не
+   * выбирается: стабильного id у него нет (S2-API), только руками.
+   */
+  | { kind: 'soniox'; voiceId: string }
   /** Голос по умолчанию — та же кнопка «Снять», что в заголовке. */
   | { kind: 'clear' };
 
@@ -461,7 +476,7 @@ export function planVoiceChoice(
   busy: boolean,
   fields: readonly VoiceField[]
 ): VoiceChoicePlan {
-  const targets = [T.voicePreset, T.voiceClone, T.voiceCustom];
+  const targets = [T.voicePreset, T.voiceClone, T.voiceSoniox, T.voiceCustom];
   if (busy) {
     return {
       action: null,
@@ -472,48 +487,72 @@ export function planVoiceChoice(
   const plan: VoiceChoicePlan = { action: null, refused: [] };
   const refuse = (target: string, refusal: SessionVoiceRefusal) =>
     plan.refused.push({ target, refusal });
+  const soniox = state.soniox ?? [];
   const options = () => [
     ...state.clones.map((c) => c.label),
     ...state.presets.map((p) => p.name),
+    ...soniox.map((s) => s.name),
   ];
-  const chosen = state.presetVoiceId !== null || state.cloneVoiceId !== null;
+  const chosen =
+    state.presetVoiceId !== null ||
+    state.cloneVoiceId !== null ||
+    !!state.sonioxSelected;
 
-  const presetField = by.get(T.voicePreset);
-  const cloneField = by.get(T.voiceClone);
   const customField = by.get(T.voiceCustom);
   const custom = customField ? toggleOf(customField.value) : undefined;
 
-  // Занят может быть только один голос (сервер гасит противоположный):
-  // два названных сразу — неоднозначно, «без своего голоса» вместе с
+  // Три вида списка — пресет, клон, Soniox. Порядок пары важен только для
+  // порядка отказов: он тот же, что до S2 (пресет, клон), Soniox — третьим.
+  const kinds = [
+    {
+      kind: 'preset' as const,
+      target: T.voicePreset,
+      onScreen: (v: string) => state.presets.some((p) => p.voiceId === v),
+      current: state.presetVoiceId,
+    },
+    {
+      kind: 'clone' as const,
+      target: T.voiceClone,
+      onScreen: (v: string) => state.clones.some((c) => c.voiceId === v),
+      current: state.cloneVoiceId,
+    },
+    {
+      kind: 'soniox' as const,
+      target: T.voiceSoniox,
+      onScreen: (v: string) => soniox.some((s) => s.voiceId === v),
+      // «По умолчанию» (`sonioxVoiceId: null`) — не «уже» ни для одного
+      // голоса каталога: названный голос его заменяет.
+      current: state.sonioxSelected ? (state.sonioxVoiceId ?? null) : null,
+    },
+  ];
+  const named = kinds.flatMap((k) => {
+    const f = by.get(k.target);
+    return f ? [{ ...k, field: f }] : [];
+  });
+
+  // Занят может быть только один голос (сервер гасит остальные): два
+  // названных сразу — неоднозначно, «без своего голоса» вместе с
   // названным — спор. Ни то ни другое не угадываем.
-  if (presetField && cloneField) {
-    refuse(T.voicePreset, { reason: 'conflict' });
-    refuse(T.voiceClone, { reason: 'conflict' });
-  } else if (presetField || cloneField) {
-    const f = (presetField ?? cloneField)!;
-    const isPreset = !!presetField;
-    const v = typeof f.value === 'string' ? f.value : null;
-    const onScreen = isPreset
-      ? state.presets.some((p) => p.voiceId === v)
-      : state.clones.some((c) => c.voiceId === v);
-    if (custom === false) refuse(f.target, { reason: 'conflict' });
-    else if (!v || !onScreen) refuse(f.target, { reason: 'not-on-screen' });
-    else if ((isPreset ? state.presetVoiceId : state.cloneVoiceId) === v)
-      refuse(f.target, { reason: 'already' });
-    else
-      plan.action = isPreset
-        ? { kind: 'preset', voiceId: v }
-        : { kind: 'clone', voiceId: v };
+  if (named.length > 1) {
+    for (const k of named) refuse(k.target, { reason: 'conflict' });
+  } else if (named.length === 1) {
+    const k = named[0];
+    const v = typeof k.field.value === 'string' ? k.field.value : null;
+    if (custom === false) refuse(k.target, { reason: 'conflict' });
+    else if (!v || !k.onScreen(v))
+      refuse(k.target, { reason: 'not-on-screen' });
+    else if (k.current === v) refuse(k.target, { reason: 'already' });
+    else plan.action = { kind: k.kind, voiceId: v };
   }
 
   if (customField) {
-    const named = !!presetField || !!cloneField;
+    const hasNamed = named.length > 0;
     if (custom === null) refuse(T.voiceCustom, { reason: 'invalid' });
     else if (custom === false) {
-      if (named) refuse(T.voiceCustom, { reason: 'conflict' });
+      if (hasNamed) refuse(T.voiceCustom, { reason: 'conflict' });
       else if (!chosen) refuse(T.voiceCustom, { reason: 'already' });
       else plan.action = { kind: 'clear' };
-    } else if (named) {
+    } else if (hasNamed) {
       // «Включи свой голос, Анну» — включение и есть выбор Анны:
       // галочка применяется вместе с ним и отказывает вместе с ним.
       if (!plan.action)

@@ -69,6 +69,8 @@ function build(
     views?: {
       voice?: unknown;
       presets?: unknown;
+      /** S2: каталог Soniox раздела карточки голоса. */
+      soniox?: unknown;
       music?: unknown;
       cards?: unknown;
       sticker?: unknown;
@@ -89,6 +91,15 @@ function build(
     listPresetVoicesQuick: view(v.presets, [
       { voiceId: 'ara', name: 'Ara', language: 'multilingual' },
       { voiceId: 'rex', name: 'Rex', language: 'multilingual' },
+    ]),
+    listSonioxVoicesQuick: view(v.soniox, [
+      {
+        voiceId: 'Maya',
+        name: 'Maya (female)',
+        previewUrl: null,
+        accent: null,
+      },
+      { voiceId: 'Adrian', name: 'Adrian', previewUrl: null, accent: null },
     ]),
   };
   const music = {
@@ -889,6 +900,94 @@ describe('элементы сессии (K5)', () => {
     const b = build({ session: withScript });
     await run(b);
     expect(b.senderVoice.listPresetVoicesQuick).toHaveBeenCalledTimes(1);
+  });
+
+  it('S2: голос Soniox — из каталога на языке поздравления, значение — id голоса', async () => {
+    const b = build({
+      session: {
+        ...withScript,
+        greetingBriefSnapshot: {
+          ...withScript.greetingBriefSnapshot,
+          scriptLanguage: 'uk',
+        },
+      },
+      model: {
+        kind: 'fill',
+        confidence: 0.9,
+        fields: [{ target: 'voiceSoniox', value: 'adrian' }],
+      },
+    });
+    const r = await run(b);
+    expect(b.senderVoice.listSonioxVoicesQuick).toHaveBeenCalledWith('uk');
+    expect(r.intent).toEqual({
+      kind: 'fill',
+      fields: [
+        {
+          target: 'greeting-voice-soniox',
+          value: 'Adrian',
+          label: 'Голос отправителя',
+        },
+      ],
+    });
+    expect(promptOf(b)).toContain('Adrian ("Adrian")');
+  });
+
+  it('S2: уже выбранный голос Soniox — «уже», голоса нет в каталоге — «нет такого»', async () => {
+    const already = build({
+      session: withScript,
+      views: {
+        voice: {
+          senderVoice: null,
+          presetVoiceId: null,
+          sonioxVoice: { voiceId: 'Maya', label: 'Maya (female)' },
+        },
+      },
+      model: {
+        kind: 'fill',
+        confidence: 0.9,
+        fields: [{ target: 'voiceSoniox', value: 'Maya (female)' }],
+      },
+    });
+    const r1 = await run(already);
+    expect(r1.intent).toEqual({ kind: 'unknown' });
+    expect(r1.reply).toBe(
+      REPLIES.ru.alreadySelected('Голос отправителя', 'Maya (female)'),
+    );
+
+    const missing = build({
+      session: withScript,
+      views: { soniox: new Error('soniox down') },
+      model: {
+        kind: 'fill',
+        confidence: 0.9,
+        fields: [{ target: 'voiceSoniox', value: 'Maya' }],
+      },
+    });
+    const r2 = await run(missing);
+    expect(r2.reply).toBe(REPLIES.ru.noSuchOption('Голос отправителя'));
+  });
+
+  it('S2: «верни обычный голос» при выбранном Soniox (по умолчанию) — снимается', async () => {
+    const b = build({
+      session: withScript,
+      views: {
+        voice: {
+          senderVoice: null,
+          presetVoiceId: null,
+          sonioxVoice: { voiceId: null, label: null },
+        },
+      },
+      model: {
+        kind: 'fill',
+        confidence: 0.9,
+        fields: [{ target: 'voiceCustom', value: false }],
+      },
+    });
+    expect((await run(b)).intent).toMatchObject({
+      kind: 'fill',
+      fields: [{ target: 'greeting-voice-custom', value: false }],
+    });
+    expect(promptOf(b)).toContain('сейчас Soniox по умолчанию');
   });
 });
 

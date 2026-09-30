@@ -58,12 +58,53 @@ export interface CharacterLabels {
   summaryYes: string;
 }
 
+/** Подписи голоса Soniox для сводки (раздел словаря `greetingSoniox`). */
+export interface SonioxSummaryLabels {
+  /** «Soniox по умолчанию». */
+  summaryDefault: string;
+  /** «Soniox · {label}». */
+  summaryNamed: string;
+}
+
 export function voiceSummary(
-  voice: { senderLabel: string | null; presetName: string | null } | null,
-  w: CharacterLabels
+  voice: {
+    senderLabel: string | null;
+    presetName: string | null;
+    /** S2: выбранный голос Soniox; `null`/нет — Soniox не выбран. */
+    soniox?: { voiceId: string | null; label: string | null } | null;
+  } | null,
+  w: CharacterLabels,
+  s?: SonioxSummaryLabels
 ): string | null {
   if (!voice) return null;
-  return voice.senderLabel || voice.presetName || w.summaryDefault;
+  // Сервер держит три вида взаимоисключающими, но порядок проверки тот же,
+  // что у `senderVoiceKind`: сводка и подпись карточки не должны называть
+  // разные голоса, даже если ответ пришёл противоречивым.
+  if (voice.senderLabel) return voice.senderLabel;
+  if (voice.presetName) return voice.presetName;
+  if (voice.soniox && s) {
+    const name = voice.soniox.label?.trim() || voice.soniox.voiceId?.trim();
+    return name ? s.summaryNamed.replace('{label}', name) : s.summaryDefault;
+  }
+  return w.summaryDefault;
+}
+
+/**
+ * Какой из трёх голосов выбран. Нужен кнопке «Снять»: снятие гасит ТОЛЬКО
+ * своё поле (S2-API), и кнопка должна слать ровно тот ключ, что выбран, —
+ * иначе при выбранном Soniox «снять клон» ничего бы не сняло.
+ */
+export type SenderVoiceKind = 'clone' | 'preset' | 'soniox' | 'default';
+
+export function senderVoiceKind(view: {
+  senderVoice: unknown;
+  presetVoiceId: string | null;
+  sonioxVoice?: unknown;
+}): SenderVoiceKind {
+  if (view.senderVoice) return 'clone';
+  if (view.presetVoiceId) return 'preset';
+  if (view.sonioxVoice) return 'soniox';
+  return 'default';
 }
 
 export function musicSummary(

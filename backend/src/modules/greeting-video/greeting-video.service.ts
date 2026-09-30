@@ -113,6 +113,11 @@ import {
   registerOfBrief,
 } from '../../common/greeting-policy';
 import { normalizeVoiceMode, usesOwnVoice } from '../../common/voice-mode';
+import {
+  greetingVoiceMode,
+  sonioxVoiceProblem,
+  sonioxVoiceSounds,
+} from '../../common/greeting-soniox-voice';
 import { HedraClientService } from '../actors/hedra-client.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import {
@@ -211,6 +216,9 @@ export const GREETING_EDIT_IN_PROGRESS_MESSAGE =
 export const GREETING_SCRIPT_STALE_MESSAGE =
   'Сценарий собран для других фото, образа или голоса. Соберите его заново на шаге «Сценарий».';
 
+/** Аудит S2: без сырого ответа провайдера — только что делать дальше. */
+export const GREETING_AVATAR_SPEECH_FAILED_MESSAGE =
+  'Озвучка для аватара не получилась — попробуйте ещё раз или выберите другой голос.';
 export const GREETING_VIDEO_ALREADY_READY_MESSAGE =
   'Ролик уже готов. Чтобы сделать другой, поправьте бриф — появится новая версия, ' +
   'а готовый ролик останется.';
@@ -446,6 +454,17 @@ export class GreetingVideoService {
           : personaProblem.message,
       );
     }
+    // Аудит S2: голос Soniox — у денег. Grok при нём снимает без звука, и
+    // сбой синтеза потом дал бы немой ролик за полный кредит (см.
+    // `sonioxVoiceProblem`). У Hedra синтез идёт до вызова, но и там
+    // отказать до списания честнее, чем списать и вернуть.
+    if (sonioxVoiceSounds(brief)) {
+      const sonioxProblem = await sonioxVoiceProblem(
+        this.ttsResolver.resolveByKey('soniox'),
+        brief.sonioxVoice!.voiceId,
+      );
+      if (sonioxProblem) throw new BadRequestException(sonioxProblem);
+    }
 
     // Идентификатор попытки рождается здесь: это ключ, по которому кредит
     // списывается и возвращается, и он обязан быть одним и тем же для
@@ -494,8 +513,13 @@ export class GreetingVideoService {
         // прочитает постобработка (`PostProductionService.planWork`):
         // снимка бренда у бытового поздравления обычно нет, а
         // `normalizeVoiceMode` читает его отсутствие как 'voiceover'.
+        // S2: выбранный голос Soniox озвучивает и при режиме бренда 'veo'
+        // (`greetingVoiceMode`) — Grok тогда снимает без звука.
         usesOwnVoice(
-          normalizeVoiceMode(session.brandManifestSnapshot?.voiceMode),
+          greetingVoiceMode(
+            brief,
+            normalizeVoiceMode(session.brandManifestSnapshot?.voiceMode),
+          ),
         ),
         attemptId,
       );
@@ -741,8 +765,17 @@ export class GreetingVideoService {
       language: speechLanguage(scriptLanguageOf(brief, sessionLocale), speech),
     });
     if (!outcome.ok) {
+      // Аудит S2: сырой ответ провайдера («Soniox ответил 503», текст
+      // ключа) человеку не показываем — он в логе; экран переводит код.
+      // Кредит вернёт `startVideo` (отказ до вызова Hedra).
+      this.logger.warn(
+        `сессия ${sessionId}: озвучка аватара (${tts.providerKey}) не состоялась: ${outcome.reason}`,
+      );
       throw new BadRequestException(
-        `Озвучка для аватара не состоялась: ${outcome.reason}`,
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_AVATAR_SPEECH_FAILED,
+          GREETING_AVATAR_SPEECH_FAILED_MESSAGE,
+        ),
       );
     }
     await this.aiUsage.record({
@@ -1139,6 +1172,8 @@ export interface AvatarBrandVoice {
  * провайдера — источник правды:
  * 1. клон отправителя — всегда Resemble (клонирование идёт только через
  *    него);
+ * 1а. голос Soniox отправителя (S2) — Soniox; `voiceId: null` — голос
+ *    Soniox по умолчанию (`SONIOX_TTS_VOICE`/Maya), как у тега бренда;
  * 2. голос бренда с явным тегом — провайдером из тега; у Soniox голос
  *    может быть пуст — это его голос по умолчанию (`SONIOX_TTS_VOICE`);
  * 3. иначе — провайдер стенда (`provider: null`) и его голос по
@@ -1147,11 +1182,17 @@ export interface AvatarBrandVoice {
  *    провайдера — тот же обречённый вызов.
  */
 export function avatarVoiceChoice(
-  brief: Pick<GreetingBriefSnapshot, 'senderVoice'>,
+  brief: Pick<GreetingBriefSnapshot, 'senderVoice' | 'sonioxVoice'>,
   brand: AvatarBrandVoice | null | undefined,
 ): { voiceId: string | null; provider: ExplicitTtsProviderKey | null } {
   const clone = brief.senderVoice?.resembleVoiceId;
   if (clone) return { voiceId: clone, provider: 'resemble' };
+  if (brief.sonioxVoice) {
+    return {
+      voiceId: brief.sonioxVoice.voiceId?.trim() || null,
+      provider: 'soniox',
+    };
+  }
   const tag = brand?.ttsProvider;
   if (isExplicitProvider(tag)) {
     return { voiceId: brand?.ttsVoiceId?.trim() || null, provider: tag };

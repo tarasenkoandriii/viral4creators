@@ -740,9 +740,18 @@ export function validateSessionField(
       }
       return { ok: true, value: c.id };
     }
+    case 'voiceSoniox': {
+      const v = s.voice!;
+      const c = pickOption(v.soniox ?? [], text, (o) => o.name);
+      if (!c) return { ok: false, reason: t.noSuchOption(name) };
+      if (v.sonioxVoiceId === c.id) {
+        return { ok: false, reason: t.alreadySelected(name, c.name) };
+      }
+      return { ok: true, value: c.id };
+    }
     case 'voiceCustom': {
       const v = s.voice!;
-      const chosen = !!(v.presetVoiceId || v.cloneId);
+      const chosen = !!(v.presetVoiceId || v.cloneId || v.sonioxSelected);
       if (value === false) {
         return chosen
           ? { ok: true, value: false }
@@ -754,6 +763,7 @@ export function validateSessionField(
         reason: t.chooseVariant(name, [
           ...v.clones.map((o) => o.label),
           ...v.presets.map((o) => o.name),
+          ...(v.soniox ?? []).map((o) => o.name),
         ]),
       };
     }

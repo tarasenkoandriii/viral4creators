@@ -107,3 +107,53 @@ export function effectiveProvider(
 ): ExplicitTtsProvider | null {
   return override ?? parseExplicitProvider(savedTag);
 }
+
+// ── Голос Soniox у отправителя поздравления (S2-FE) ─────────────────────
+
+/** Языки поздравления — зеркало `GreetingScriptLanguage` (types/project.ts). */
+export type SonioxGreetingLanguage = 'ru' | 'uk' | 'en' | 'de' | 'es';
+
+const SONIOX_GREETING_LANGUAGES: readonly SonioxGreetingLanguage[] = [
+  'ru',
+  'uk',
+  'en',
+  'de',
+  'es',
+];
+
+/**
+ * Фраза пробы голоса — на языке ПОЗДРАВЛЕНИЯ, а не интерфейса: человек
+ * выбирает, как прозвучит ролик, и русская проба голосом, которым затем
+ * заговорит немецкое поздравление, обещала бы не то. Поэтому фразы здесь,
+ * а не в словаре интерфейса (словарь следует языку экрана). Soniox язык
+ * синтеза определяет по тексту, отдельного поля у пробы нет.
+ */
+export const SONIOX_PREVIEW_PHRASES: Readonly<
+  Record<SonioxGreetingLanguage, string>
+> = {
+  ru: 'Привет! Так прозвучит твоё поздравление.',
+  uk: 'Привіт! Так звучатиме твоє привітання.',
+  en: 'Hi! This is how your greeting will sound.',
+  de: 'Hallo! So wird dein Glückwunsch klingen.',
+  es: '¡Hola! Así sonará tu felicitación.',
+};
+
+/**
+ * Язык поздравления: выбранный в брифе, иначе язык интерфейса сессии
+ * (так пишет сценарий сервер, когда `scriptLanguage` не задан), иначе
+ * русский — основной язык продукта.
+ */
+export function greetingVoiceLanguage(
+  scriptLanguage: string | null | undefined,
+  uiLocale: string | null | undefined
+): SonioxGreetingLanguage {
+  const known = (v: string | null | undefined) =>
+    (SONIOX_GREETING_LANGUAGES as readonly string[]).includes(v ?? '')
+      ? (v as SonioxGreetingLanguage)
+      : null;
+  return known(scriptLanguage) ?? known(uiLocale) ?? 'ru';
+}
+
+export function sonioxPreviewText(language: SonioxGreetingLanguage): string {
+  return SONIOX_PREVIEW_PHRASES[language];
+}

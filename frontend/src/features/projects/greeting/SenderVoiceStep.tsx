@@ -8,17 +8,27 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Mic } from 'lucide-react';
+import { Mic, Volume2 } from 'lucide-react';
 import { Card, CardHeader, Button, Alert } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
-import { listUserVoices } from '../../../services/projects-api';
+import {
+  getVoices,
+  listUserVoices,
+  previewVoice,
+  type VoiceCatalogue,
+} from '../../../services/projects-api';
 import {
   getGreetingVoice,
   listGreetingPresetVoices,
   selectGreetingPresetVoice,
   selectGreetingSenderVoice,
+  selectGreetingSonioxVoice,
   greetingErrorMessage,
 } from '../../../services/greeting-api';
+import {
+  sonioxPreviewText,
+  type SonioxGreetingLanguage,
+} from '../../../lib/tts-provider-choice';
 import { MyVoicesSection } from '../../brand/VoicePicker';
 import type {
   GreetingVoiceView,
@@ -36,6 +46,8 @@ import { useVoiceFieldApplier } from '../../voice/voice-commands';
 import {
   voiceSummary,
   lockedFieldRefusals,
+  senderVoiceKind,
+  type SenderVoiceKind,
 } from '../../../lib/greeting-character';
 import {
   useSessionVoiceTexts,
@@ -58,12 +70,24 @@ import {
  */
 export function SenderVoiceStep({
   sessionId,
+  language,
   onSummary,
+  onVoiceKind,
   lockText = null,
 }: {
   sessionId: string;
+  /**
+   * Язык поздравления (S2): по нему фильтруется каталог Soniox — тот же
+   * фильтр, что у сервера при сверке голосом, — и на нём звучит проба.
+   */
+  language: SonioxGreetingLanguage;
   /** Значение для сводки блока «Характер ролика». */
   onSummary?: (value: string | null) => void;
+  /**
+   * Вид выбранного голоса (аудит S2) — шагу «Видео», чтобы отличить
+   * немой ролик от штатного «озвучка пропущена». `null` — не прочитан.
+   */
+  onVoiceKind?: (kind: SenderVoiceKind | null) => void;
   /**
    * Карточка заперта (ролик готов или снимается): причина для голоса —
    * тот же отказ, что подпись на экране (`CharacterBlock`).
@@ -72,9 +96,11 @@ export function SenderVoiceStep({
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
+  const s2 = dict.greetingSoniox;
   const [voice, setVoice] = useState<GreetingVoiceView>({
     senderVoice: null,
     presetVoiceId: null,
+    sonioxVoice: null,
   });
   const [presets, setPresets] = useState<GrokPresetVoice[] | null>(null);
   // Прочитан ли выбор с сервера. Начальное `voice` выше — заглушка для
@@ -140,22 +166,89 @@ export function SenderVoiceStep({
     }
   };
 
-  const chosen = voice.senderVoice || voice.presetVoiceId;
+  const kind = senderVoiceKind(voice);
+  const chosen = kind !== 'default';
+  const sonioxVoice = voice.sonioxVoice ?? null;
   const presetName =
     presets?.find((p) => p.voiceId === voice.presetVoiceId)?.name ??
     voice.presetVoiceId;
 
-  // Кнопки карточки и голос (K5) — одни и те же три обработчика.
+  // Кнопки карточки и голос (K5) — одни и те же обработчики. Снятие гасит
+  // только своё поле (S2-API), поэтому ключ — по тому, что выбрано.
   const clear = () =>
     apply(() =>
-      voice.presetVoiceId
-        ? selectGreetingPresetVoice(sessionId, null)
-        : selectGreetingSenderVoice(sessionId, null)
+      kind === 'soniox'
+        ? selectGreetingSonioxVoice(sessionId, null)
+        : kind === 'preset'
+          ? selectGreetingPresetVoice(sessionId, null)
+          : selectGreetingSenderVoice(sessionId, null)
     );
   const pickClone = (voiceId: string) =>
     apply(() => selectGreetingSenderVoice(sessionId, voiceId));
   const pickPreset = (voiceId: string) =>
     apply(() => selectGreetingPresetVoice(sessionId, voiceId));
+  /** `null` — «Голос Soniox по умолчанию» (выбран, но без голоса каталога). */
+  const pickSoniox = (voiceId: string | null) =>
+    apply(() => selectGreetingSonioxVoice(sessionId, { voiceId }));
+
+  // ── Голоса Soniox (S2) ──
+  // Каталог — отдельный запрос, а не часть `Promise.all` выше: его сбой не
+  // должен гасить карточку, а голос по умолчанию выбирается и без списка.
+  // `configured: false` — ключа Soniox на стенде нет: раздела нет вовсе
+  // (так же объявлен хук `greeting-voice-soniox` — `absentWhen`).
+  const [soniox, setSoniox] = useState<VoiceCatalogue | 'failed' | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setSoniox(null);
+    getVoices(language, 'soniox')
+      .then((c) => alive && setSoniox(c))
+      .catch(() => alive && setSoniox('failed'));
+    return () => {
+      alive = false;
+    };
+  }, [language]);
+  const sonioxList =
+    soniox && soniox !== 'failed' && !soniox.error ? soniox.voices : [];
+  const sonioxShown =
+    soniox === 'failed' || (soniox !== null && soniox.configured);
+  const sonioxNote =
+    soniox === 'failed' || (soniox && soniox.error)
+      ? s2.catalogFailed
+      : soniox && sonioxList.length === 0
+        ? s2.catalogEmpty
+        : null;
+
+  // Проба стоит денег и ограничена числом в сутки — по нажатию, как в
+  // `VoicePicker`. Текст — короткая фраза на языке поздравления.
+  const [previewing, setPreviewing] = useState<string | null>(null);
+  const [previewAudio, setPreviewAudio] = useState<string | null>(null);
+  const [previewNote, setPreviewNote] = useState<string | null>(null);
+  const listen = async (voiceId: string | null) => {
+    const key = voiceId ?? '';
+    setPreviewing(key);
+    setPreviewAudio(null);
+    setPreviewNote(null);
+    try {
+      const r = await previewVoice(sonioxPreviewText(language), voiceId, {
+        provider: 'soniox',
+        language,
+      });
+      if (r.ok && r.audio) {
+        setPreviewAudio(r.audio);
+        setPreviewNote(
+          s2.previewCount
+            .replace('{used}', String(r.used))
+            .replace('{limit}', String(r.limit))
+        );
+      } else {
+        setPreviewNote(r.reason ?? s2.previewFailed);
+      }
+    } catch (e) {
+      setPreviewNote(greetingErrorMessage(e, dict) || s2.previewFailed);
+    } finally {
+      setPreviewing(null);
+    }
+  };
 
   // Готовые клоны — тот же список, что показывает `MyVoicesSection` (и тот
   // же гейт тарифа): голос выбирает только клон, который виден на экране.
@@ -193,6 +286,7 @@ export function SenderVoiceStep({
     targets: [
       SESSION_VOICE_TARGETS.voicePreset,
       SESSION_VOICE_TARGETS.voiceClone,
+      SESSION_VOICE_TARGETS.voiceSoniox,
       SESSION_VOICE_TARGETS.voiceCustom,
     ],
     describe: (f) =>
@@ -200,7 +294,9 @@ export function SenderVoiceStep({
         ? presetList.find((p) => p.voiceId === f.value)?.name
         : f.target === SESSION_VOICE_TARGETS.voiceClone
           ? clones.find((c) => c.voiceId === f.value)?.label
-          : undefined) ?? describeSessionValue(f.value, dict.voiceFields),
+          : f.target === SESSION_VOICE_TARGETS.voiceSoniox
+            ? sonioxList.find((v) => v.voiceId === f.value)?.name
+            : undefined) ?? describeSessionValue(f.value, dict.voiceFields),
     apply: (fields) => {
       if (lockText)
         return lockedFieldRefusals(fields, voiceTexts.refusedField, lockText);
@@ -210,6 +306,12 @@ export function SenderVoiceStep({
           clones,
           presetVoiceId: voice.presetVoiceId,
           cloneVoiceId: voice.senderVoice?.resembleVoiceId ?? null,
+          // Голосом выбирается только голос, видимый в разделе Soniox.
+          soniox: sonioxShown
+            ? sonioxList.map((v) => ({ voiceId: v.voiceId, name: v.name }))
+            : [],
+          sonioxSelected: sonioxVoice !== null,
+          sonioxVoiceId: sonioxVoice?.voiceId ?? null,
         },
         busy,
         fields
@@ -223,7 +325,9 @@ export function SenderVoiceStep({
             ? pickPreset(a.voiceId)
             : a?.kind === 'clone'
               ? pickClone(a.voiceId)
-              : null;
+              : a?.kind === 'soniox'
+                ? pickSoniox(a.voiceId)
+                : null;
       if (!saving) return { refusals, effects: [] };
       // «Готово» — после ответа сервера, а не до него.
       return saving.then((err) => ({ refusals, effects: [saveEffect(err)] }));
@@ -232,13 +336,22 @@ export function SenderVoiceStep({
 
   const summary = voiceSummary(
     voiceLoaded
-      ? { senderLabel: voice.senderVoice?.label ?? null, presetName }
+      ? {
+          senderLabel: voice.senderVoice?.label ?? null,
+          presetName,
+          soniox: sonioxVoice,
+        }
       : null,
-    w
+    w,
+    s2
   );
   useEffect(() => {
     onSummary?.(summary);
   }, [onSummary, summary]);
+  const reportedKind = voiceLoaded ? kind : null;
+  useEffect(() => {
+    onVoiceKind?.(reportedKind);
+  }, [onVoiceKind, reportedKind]);
 
   return (
     <Card className="p-5" data-qa="greeting-voice-card">
@@ -292,7 +405,14 @@ export function SenderVoiceStep({
           ? w.senderVoicePicked.replace('{label}', voice.senderVoice.label)
           : voice.presetVoiceId
             ? w.presetVoicePicked.replace('{label}', presetName ?? '')
-            : w.senderVoiceDefault}
+            : sonioxVoice
+              ? sonioxVoice.voiceId
+                ? s2.picked.replace(
+                    '{label}',
+                    sonioxVoice.label || sonioxVoice.voiceId
+                  )
+                : s2.pickedDefault
+              : w.senderVoiceDefault}
       </p>
 
       <div className="mt-3" data-qa="greeting-voice-clone">
@@ -336,6 +456,83 @@ export function SenderVoiceStep({
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Третий путь (S2): голос каталога Soniox — путь как у клона, но
+          без записи образца; ниже пресетов, потому что он для тех, кому
+          не подошли ни свой голос, ни голоса модели. */}
+      {sonioxShown && (
+        <div className="mt-4 border-t border-silver-200/60 pt-3 dark:border-silver-800">
+          <p className="text-sm font-medium">{s2.heading}</p>
+          <p className="mt-0.5 text-xs text-silver-400">{s2.hint}</p>
+          <ul
+            className="mt-2 flex flex-wrap gap-2"
+            data-qa="greeting-voice-soniox"
+          >
+            {[
+              { voiceId: null, name: s2.defaultVoice },
+              ...sonioxList.map((v) => ({
+                voiceId: v.voiceId as string | null,
+                name: v.accent ? `${v.name} · ${v.accent}` : v.name,
+              })),
+            ].map((v) => {
+              const active =
+                sonioxVoice !== null &&
+                (sonioxVoice.voiceId ?? null) === v.voiceId;
+              return (
+                <li key={v.voiceId ?? ''} className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    active={active}
+                    onClick={() => void pickSoniox(v.voiceId)}
+                  >
+                    {v.name}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<Volume2 size={14} />}
+                    aria-label={
+                      v.voiceId
+                        ? s2.listen.replace('{label}', v.name)
+                        : s2.listenDefault
+                    }
+                    title={
+                      v.voiceId
+                        ? s2.listen.replace('{label}', v.name)
+                        : s2.listenDefault
+                    }
+                    loading={previewing === (v.voiceId ?? '')}
+                    disabled={previewing !== null}
+                    onClick={() => void listen(v.voiceId)}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+          {sonioxNote && (
+            <p className="mt-1 text-xs text-silver-400">{sonioxNote}</p>
+          )}
+          {previewAudio && (
+            <audio
+              className="mt-2 w-full"
+              controls
+              autoPlay
+              src={previewAudio}
+            />
+          )}
+          {previewNote && (
+            <p className="mt-1 text-xs text-silver-400">{previewNote}</p>
+          )}
+          {/* Пометка о субтитрах — под выбором Soniox, как в `VoicePicker`:
+              пословного тайминга у Soniox нет, и титры встанут
+              приблизительно. */}
+          {sonioxVoice && (
+            <p className="mt-1 text-xs text-silver-400">{s2.noWordTiming}</p>
+          )}
         </div>
       )}
     </Card>
