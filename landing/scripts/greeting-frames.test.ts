@@ -125,6 +125,55 @@ for (const { file, max } of schemes) {
   assert.ok(!svg.includes('Заглушка'), `${file}: всё ещё заглушка`);
 }
 
+/**
+ * Скрипт обработки снимков (`scripts/tutorial-frames-process.mjs
+ * --greeting`, этап I ТЗ Greeting 2.0) ↔ эта страница. Скрипт кладёт
+ * файлы и называет список, в который потом дописывают локаль; страница
+ * ищет файлы по своему шаблону. Разойдись имя — владелец положит четыре
+ * кадра, допишет локаль, и шов 17-бис назовёт их «лишними», а страница
+ * отдаст 404. Разойдись размер — оправа кадра растянет снимок.
+ */
+{
+  const script = readFileSync(
+    path.join(__dirname, '..', '..', 'scripts', 'tutorial-frames-process.mjs'),
+    'utf8',
+  );
+  const greetingKind =
+    /greeting: \{\s*prefix: '([a-z-]+)',\s*list: '([A-Z_]+)',\s*module: '([^']+)'/.exec(
+      script,
+    );
+  assert.ok(
+    greetingKind,
+    'в tutorial-frames-process.mjs не нашёлся KINDS.greeting',
+  );
+  const [, prefix, list, modulePath] = greetingKind;
+  const pageSrc = readFileSync(
+    path.join(__dirname, '..', 'src', 'lib', 'greeting-frames.ts'),
+    'utf8',
+  );
+  assert.ok(
+    pageSrc.includes(`/illustrations/${prefix}-\${locale}-\${n}.avif`),
+    `страница ищет не те файлы, что кладёт скрипт (${prefix}-<локаль>-<n>.avif)`,
+  );
+  assert.ok(
+    pageSrc.includes(`export const ${list}:`),
+    `скрипт велит дописать локаль в ${list}, а такого списка на странице нет`,
+  );
+  assert.equal(modulePath, 'landing/src/lib/greeting-frames.ts');
+
+  // 844 CSS-пикселя × плотность 2 × KEEP, вниз до чётного — ровно так
+  // режет ffmpeg (`floor(ih*KEEP/2)*2`); ширина — TARGET_WIDTH.
+  const keep = Number(/const KEEP = ([0-9.]+);/.exec(script)?.[1]);
+  const width = Number(/const TARGET_WIDTH = (\d+);/.exec(script)?.[1]);
+  const shot = /const SHOT = \{ width: (\d+), height: (\d+) \}/.exec(pageSrc);
+  assert.ok(shot, 'в greeting-frames.ts не нашёлся SHOT');
+  assert.deepEqual(
+    [Number(shot[1]), Number(shot[2])],
+    [width, Math.floor((844 * 2 * keep) / 2) * 2],
+    'размер снимка на странице разошёлся с обрезкой скрипта',
+  );
+}
+
 console.log(
   `greeting-frames: ok (${locales.length} локалей × ${GREETING_FRAME_COUNT} кадров + hero; ` +
     `с настоящими кадрами: ${GREETING_REAL_FRAME_LOCALES.length || 'ни одной, пока схемы'})`,

@@ -236,7 +236,18 @@ export function MusicThemeStep({
         </Alert>
       )}
 
-      <p className="text-xs text-silver-400">
+      <p
+        className="text-xs text-silver-400"
+        // Название своего трека (файл или ссылка) пишет человек —
+        // личный текст, на кадре лендинга размывается (этап I ТЗ
+        // Greeting 2.0). Название темы из каталога — текст продукта.
+        data-qa-mask={
+          music.selected?.source === 'upload' ||
+          music.selected?.source === 'link'
+            ? 'personal-music-title'
+            : undefined
+        }
+      >
         {music.selected
           ? w.musicPicked.replace('{title}', music.selected.title)
           : w.musicEmpty}
@@ -496,6 +507,7 @@ function MusicUploader({
         <>
           <Field label={w.musicTitleLabel}>
             <Input
+              data-qa-mask="personal-music-title"
               value={title}
               onChange={(e) => setTitle(e.target.value.slice(0, 80))}
               disabled={uploading}

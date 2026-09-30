@@ -24,7 +24,12 @@ jest.mock('./perceptual-hash', () => ({
   diffScore: (...args: unknown[]) => diffScoreMock(...args),
 }));
 
-import { UiSnapshotRunnerService } from './ui-snapshot-runner.service';
+import {
+  PERSONAL_TEXT_MASK_CSS,
+  PERSONAL_TEXT_MASK_PREFIX,
+  scrollToSection,
+  UiSnapshotRunnerService,
+} from './ui-snapshot-runner.service';
 
 const ENV_KEYS = [
   'FIXTURE_TELEGRAM_ID',
@@ -75,6 +80,9 @@ function buildFakePage() {
       click: jest.fn().mockResolvedValue(undefined),
     })),
     waitForSelector: jest.fn().mockResolvedValue(undefined),
+    // Маска личного текста (этап I ТЗ Greeting 2.0) — стилем документа.
+    addStyleTag: jest.fn().mockResolvedValue(undefined),
+    waitForFunction: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -82,7 +90,10 @@ function build() {
   const notify = { alert: jest.fn().mockResolvedValue(true) };
   const prisma = {
     user: { findUnique: jest.fn().mockResolvedValue({ id: 'usr_fixture' }) },
-    project: { findFirst: jest.fn().mockResolvedValue({ id: 'proj-1' }) },
+    project: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'proj-1' }),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     productItem: { findFirst: jest.fn().mockResolvedValue({ id: 'item-1' }) },
     brandManifest: {
       findFirst: jest.fn().mockResolvedValue({ id: 'manifest-1' }),
@@ -860,5 +871,245 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
       (prisma.session as any).create.mock.calls[0][0].data.data.qaFixture,
     ).toBe(true);
     expect(seededStorage(page).sessionId).toBe('new-qa');
+  });
+});
+
+/**
+ * Этап I ТЗ `docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md`
+ * (§5.3): кадры мастера поздравлений. Три вещи, каждая из которых
+ * ломается молча — кадр снимется, просто не тот.
+ */
+describe('UiSnapshotRunnerService — кадры мастера поздравлений', () => {
+  function withPage() {
+    const page = buildFakePage();
+    const calls: string[] = [];
+    page.addStyleTag.mockImplementation(async () => {
+      calls.push('style');
+    });
+    page.waitForSelector.mockImplementation(async () => {
+      calls.push('wait');
+    });
+    page.evaluate.mockImplementation(async () => {
+      calls.push('evaluate');
+    });
+    page.screenshot.mockImplementation(async () => {
+      calls.push('screenshot');
+      return new Uint8Array([1]);
+    });
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    return { page, calls };
+  }
+
+  it('личный текст скрыт и в немаскированном прогоне — стилем до съёмки', async () => {
+    // Немаскированный прогон открывает переменные зоны (кадр сайта,
+    // постер ролика) — но не имена: выдуманное имя на маркетинговом
+    // кадре запрещено правилом §5.5 образца.
+    const { page, calls } = withPage();
+    const { service } = build();
+
+    await service.run({ routeKeys: ['projects'], unmasked: true });
+
+    expect(page.addStyleTag).toHaveBeenCalledWith({
+      content: PERSONAL_TEXT_MASK_CSS,
+    });
+    expect(calls.indexOf('style')).toBeLessThan(calls.indexOf('screenshot'));
+  });
+
+  it('…и в маскированном тоже: личное не показывается никому', async () => {
+    const { page } = withPage();
+    const { service } = build();
+
+    await service.run({ routeKeys: ['projects'] });
+
+    expect(page.addStyleTag).toHaveBeenCalledTimes(1);
+  });
+
+  it('маска цепляется за префикс и размывает, а не прячет поле целиком', () => {
+    expect(PERSONAL_TEXT_MASK_PREFIX).toBe('personal-');
+    expect(PERSONAL_TEXT_MASK_CSS).toContain(
+      '[data-qa-mask^="personal-"]{color:transparent',
+    );
+    expect(PERSONAL_TEXT_MASK_CSS).toContain('text-shadow');
+    // `visibility: hidden` убрал бы и рамку поля — на кадре осталась бы
+    // дыра посреди формы.
+    expect(PERSONAL_TEXT_MASK_CSS).not.toContain('visibility');
+    // Плейсхолдер скрыт вместе с текстом (наследует прозрачную заливку):
+    // у титров он собран из брифа с именем получателя. Ни одного правила,
+    // которое вернуло бы ему видимость, быть не должно.
+    expect(PERSONAL_TEXT_MASK_CSS).not.toMatch(/placeholder/);
+    expect(PERSONAL_TEXT_MASK_CSS.match(/\{[^}]*\}/g)).toHaveLength(1);
+  });
+
+  it('scrollTo без unmasked — отказ: прокрученный кадр подменил бы отпечаток крона', async () => {
+    const { service } = build();
+    await expect(
+      service.run({ routeKeys: ['projects'], scrollTo: '#x' }),
+    ).rejects.toThrow('scrollTo допустим только вместе с unmasked');
+    await expect(
+      service.run({
+        routeKeys: ['projects', 'postprod'],
+        unmasked: true,
+        scrollTo: '#x',
+      }),
+    ).rejects.toThrow('ровно одного маршрута');
+  });
+
+  it('scrollTo: ждёт секцию и прокручивает ДО снимка', async () => {
+    const { page, calls } = withPage();
+    const { service } = build();
+
+    const result = await service.run({
+      routeKeys: ['projects'],
+      unmasked: true,
+      scrollTo: '[data-qa="greeting-script-card"]',
+    });
+
+    expect(page.waitForSelector).toHaveBeenCalledWith(
+      '[data-qa="greeting-script-card"]',
+      expect.objectContaining({ visible: true }),
+    );
+    expect(calls).toEqual(['style', 'wait', 'evaluate', 'screenshot']);
+    expect(result.outcomes[0].blobUrl).toBeTruthy();
+  });
+
+  it('секция не нашлась — ошибка маршрута, а не кадр верха страницы под чужой подписью', async () => {
+    const { page } = withPage();
+    page.waitForSelector.mockRejectedValue(new Error('Waiting failed'));
+    const { service, blob } = build();
+
+    const result = await service.run({
+      routeKeys: ['projects'],
+      unmasked: true,
+      scrollTo: '[data-qa="greeting-video-card"]',
+    });
+
+    expect(result.outcomes[0].error).toContain('Waiting failed');
+    expect(result.outcomes[0].blobUrl).toBeUndefined();
+    expect(page.screenshot).not.toHaveBeenCalled();
+    expect(blob.uploadBuffer).not.toHaveBeenCalled();
+  });
+
+  it('резолвер знает проекты-поздравления — до этапа I их здесь не было вовсе', async () => {
+    const { prisma, service } = build();
+    prisma.project.findMany.mockResolvedValue([
+      {
+        id: 'g-done',
+        sessions: [
+          { status: 'prompt_generated', generationStatus: 'complete' },
+        ],
+      },
+      {
+        id: 'g-ready',
+        sessions: [{ status: 'prompt_generated', generationStatus: null }],
+      },
+      { id: 'g-fresh', sessions: [] },
+    ]);
+
+    const ctx = await service.resolveFixtureContext('usr_fixture');
+
+    expect(ctx).toMatchObject({
+      greetingProjectId: 'g-fresh',
+      greetingReadyProjectId: 'g-ready',
+      greetingDoneProjectId: 'g-done',
+    });
+    expect(prisma.project.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ type: 'GREETING_VIDEO' }),
+      }),
+    );
+  });
+});
+
+describe('scrollToSection — расчёт в браузере', () => {
+  /** Исполняет колбэк `evaluate` на поддельном документе. */
+  function runInFakeDom(opts: { headerBottom: number; sticky: boolean }) {
+    const scrolls: Array<{ top: number; behavior: string }> = [];
+    const video = {
+      currentSrc: 'https://blob/v.mp4',
+      getAttribute: () => 'https://blob/v.mp4',
+      preload: '',
+      currentTime: 0,
+      duration: 6,
+      readyState: 1,
+      addEventListener: jest.fn(),
+    };
+    const g = globalThis as any;
+    const before = { document: g.document, window: g.window };
+    g.document = {
+      querySelector: () => ({
+        getBoundingClientRect: () => ({ top: 500 }),
+      }),
+      querySelectorAll: (sel: string) =>
+        sel === 'header'
+          ? [{ getBoundingClientRect: () => ({ bottom: opts.headerBottom }) }]
+          : [video],
+    };
+    g.window = {
+      scrollY: 100,
+      getComputedStyle: () => ({
+        position: opts.sticky ? 'sticky' : 'static',
+      }),
+      scrollTo: (arg: { top: number; behavior: string }) => scrolls.push(arg),
+    };
+    return {
+      scrolls,
+      video,
+      restore: () => {
+        g.document = before.document;
+        g.window = before.window;
+      },
+    };
+  }
+
+  function fakePage() {
+    return {
+      waitForSelector: jest.fn().mockResolvedValue(undefined),
+      evaluate: jest.fn(async (fn: (sel: string) => void, sel: string) =>
+        fn(sel),
+      ),
+      waitForFunction: jest.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it('секция встаёт под липкую шапку, мгновенно, а ролик просят загрузить', async () => {
+    const dom = runInFakeDom({ headerBottom: 56, sticky: true });
+    try {
+      const page = fakePage();
+      await scrollToSection(page, '#s');
+      // 500 (секция в окне) + 100 (уже прокручено) − 56 (шапка) − 8.
+      expect(dom.scrolls).toEqual([{ top: 536, behavior: 'instant' }]);
+      expect(dom.video.preload).toBe('auto');
+      // Первый кадр сгенерированного ролика часто затемнён — встаём на
+      // секунду вперёд.
+      expect(dom.video.currentTime).toBe(1);
+      expect(page.waitForFunction).toHaveBeenCalled();
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it('нелипкая шапка не сдвигает секцию', async () => {
+    const dom = runInFakeDom({ headerBottom: 56, sticky: false });
+    try {
+      await scrollToSection(fakePage(), '#s');
+      expect(dom.scrolls[0].top).toBe(592);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it('ролик так и не загрузился — кадр всё равно снимается (best-effort)', async () => {
+    const dom = runInFakeDom({ headerBottom: 0, sticky: false });
+    try {
+      const page = fakePage();
+      page.waitForFunction.mockRejectedValue(new Error('timeout'));
+      await expect(scrollToSection(page, '#s')).resolves.toBeUndefined();
+    } finally {
+      dom.restore();
+    }
   });
 });

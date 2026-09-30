@@ -60,6 +60,10 @@ import {
   TutorialFramesCaptureService,
   type CaptureResult,
 } from './tutorial-frames-capture.service';
+import {
+  GreetingFramesCaptureService,
+  type FixtureVideoResult,
+} from './greeting-frames-capture.service';
 
 interface RunSnapshotBody {
   locale?: unknown;
@@ -68,6 +72,7 @@ interface RunSnapshotBody {
   unmasked?: unknown;
   deviceScaleFactor?: unknown;
   steps?: unknown;
+  scrollTo?: unknown;
 }
 
 @Controller('admin/ui-snapshot')
@@ -77,6 +82,7 @@ export class UiSnapshotAdminController {
     private readonly adminPanel: AdminPanelService,
     private readonly runner: UiSnapshotRunnerService,
     private readonly frames: TutorialFramesCaptureService,
+    private readonly greetingFrames: GreetingFramesCaptureService,
   ) {}
 
   @Post('run')
@@ -202,6 +208,27 @@ export class UiSnapshotAdminController {
       steps = body.steps as ScenarioStep[];
     }
 
+    // Прокрутка к секции (этап I ТЗ Greeting 2.0): те же запреты, что у
+    // шагов, и по той же причине — 400 с объяснением здесь, а не 500
+    // из глубины прогона.
+    let scrollTo: string | undefined;
+    if (body.scrollTo !== undefined) {
+      if (typeof body.scrollTo !== 'string' || body.scrollTo.trim() === '') {
+        throw new BadRequestException('scrollTo — непустой CSS-селектор');
+      }
+      if (!unmasked) {
+        throw new BadRequestException(
+          'scrollTo допустим только с unmasked: true — прокрученный экран подменил бы базовый отпечаток крона',
+        );
+      }
+      if (!routeKeys || routeKeys.length !== 1) {
+        throw new BadRequestException(
+          'scrollTo требует ровно одного маршрута в routeKeys: селектор секции пишется под конкретный экран',
+        );
+      }
+      scrollTo = body.scrollTo.trim();
+    }
+
     // Неизвестное имя маршрута сюда не проверяем специально: резолвер
     // ответит на него понятной причиной в `outcomes[].error`, и это
     // лучше, чем 400 без указания, какой именно из пяти переданных
@@ -218,6 +245,7 @@ export class UiSnapshotAdminController {
       unmasked,
       deviceScaleFactor,
       steps,
+      scrollTo,
       alerts: false,
     });
   }
@@ -240,31 +268,8 @@ export class UiSnapshotAdminController {
   ): Promise<CaptureResult> {
     await this.adminPanel.assertOperator(req.userId);
 
-    let locales: string[] = ['ru'];
-    if (body.locales !== undefined) {
-      if (
-        !Array.isArray(body.locales) ||
-        body.locales.length === 0 ||
-        body.locales.some(
-          (l) =>
-            typeof l !== 'string' ||
-            !(SUPPORTED_LOCALES as readonly string[]).includes(l),
-        )
-      ) {
-        throw new BadRequestException(
-          `locales — непустой массив из: ${SUPPORTED_LOCALES.join(', ')}`,
-        );
-      }
-      locales = body.locales as string[];
-    }
-
-    let theme: SnapshotTheme | undefined;
-    if (body.theme !== undefined) {
-      if (body.theme !== 'light' && body.theme !== 'dark') {
-        throw new BadRequestException('theme должен быть light или dark');
-      }
-      theme = body.theme;
-    }
+    const locales = parseLocales(body.locales);
+    const theme = parseTheme(body.theme);
 
     // Чужой сайт в кадре запрещён (§9 ТЗ), и проверить это машиной
     // можно ровно здесь: дальше адрес просто печатается в поле.
@@ -281,4 +286,79 @@ export class UiSnapshotAdminController {
 
     return this.frames.capture({ locales, theme, siteUrl });
   }
+
+  /**
+   * POST /api/admin/ui-snapshot/greeting-frames — четыре кадра «Как это
+   * работает» страницы поздравлений (этап I ТЗ Greeting 2.0, §5.3,
+   * `doc/GREETING-FRAMES-CAPTURE.md`). Тело то же, что у
+   * `tutorial-frames`, без `siteUrl`: чужого сайта в мастере
+   * поздравлений нет.
+   */
+  @Post('greeting-frames')
+  async greetingFramesCapture(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() body: { locales?: unknown; theme?: unknown },
+  ): Promise<CaptureResult> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.greetingFrames.capture({
+      locales: parseLocales(body.locales),
+      theme: parseTheme(body.theme),
+    });
+  }
+
+  /**
+   * POST /api/admin/ui-snapshot/greeting-frames/fixture-video — довести
+   * ролик фикстуры под кадр 4 до готового, по шагу за вызов.
+   *
+   * **Платно** (сценарий и рендер — те же вызовы, что у кнопки
+   * человека), поэтому POST и только оператору. Повторный вызов не
+   * платит второй раз: идущий рендер он опрашивает, готовый — отдаёт
+   * как есть (`fixtureVideoAction`). `{ "rerender": true }` — снять
+   * готовый ролик заново, когда он не прошёл отбор глазами; только
+   * явным флагом и только строгим `true`. Отдельного GET нет намеренно:
+   * опрос здесь тоже двигает состояние (готовый ролик скачивается в
+   * хранилище и уходит в постобработку), а GET обещал бы обратное.
+   */
+  @Post('greeting-frames/fixture-video')
+  async greetingFixtureVideo(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() body: { rerender?: unknown } = {},
+  ): Promise<FixtureVideoResult> {
+    await this.adminPanel.assertOperator(req.userId);
+    // Строго `true`: повторный рендер платный, и «"yes"» или `1` по
+    // ошибке не должны его запускать.
+    return this.greetingFrames.fixtureVideo({
+      rerender: body?.rerender === true,
+    });
+  }
+}
+
+/**
+ * Разбор `locales` — общий для обеих съёмок кадров: у них один набор
+ * локалей лендинга, и второй разбор рядом разошёлся бы с первым.
+ */
+function parseLocales(raw: unknown): string[] {
+  if (raw === undefined) return ['ru'];
+  if (
+    !Array.isArray(raw) ||
+    raw.length === 0 ||
+    raw.some(
+      (l) =>
+        typeof l !== 'string' ||
+        !(SUPPORTED_LOCALES as readonly string[]).includes(l),
+    )
+  ) {
+    throw new BadRequestException(
+      `locales — непустой массив из: ${SUPPORTED_LOCALES.join(', ')}`,
+    );
+  }
+  return raw as string[];
+}
+
+function parseTheme(raw: unknown): SnapshotTheme | undefined {
+  if (raw === undefined) return undefined;
+  if (raw !== 'light' && raw !== 'dark') {
+    throw new BadRequestException('theme должен быть light или dark');
+  }
+  return raw;
 }

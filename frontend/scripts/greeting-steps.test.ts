@@ -11,6 +11,7 @@ import {
   type GreetingStepId,
 } from '../src/lib/greeting-steps';
 import { toStepsView } from '../src/lib/wizard-steps';
+import { readFileSync } from 'node:fs';
 
 const LABELS: Record<GreetingStepId, string> = {
   brief: 'Повод',
@@ -160,8 +161,155 @@ check('сценарий собран: живы «Бриф», «Фото» и «�
   );
 });
 
+// ── Маски личного текста для кадров лендинга ─────────────────────────
+//
+// Этап I ТЗ `docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md` (§5.3).
+// Настоящие кадры мастера снимаются немаскированным прогоном (иначе не
+// видно постера ролика), а поля с именами и свободным текстом должны быть
+// размыты и там: выдуманное имя на маркетинговом кадре запрещено. Бэкенд
+// размывает всё, что помечено `data-qa-mask="personal-…"`
+// (`PERSONAL_TEXT_MASK_CSS`), — а помечено ли поле, держит только этот
+// файл: забытая маска не роняет ни сборку, ни съёмку, она роняет кадр,
+// и заметить это можно лишь глазами на лендинге.
+//
+// Здесь, а не отдельным файлом: число unit-скриптов фронтенда сверяется
+// с документами (check-docs), а проверка — продолжение той же темы
+// «экраны мастера, которые снимает прогон».
+
+const src = (rel: string) =>
+  readFileSync(new URL(`../src/${rel}`, import.meta.url), 'utf8');
+
+/** Поле с хуком `data-qa` и маской СРАЗУ следующей строкой — так маска
+ *  не уедет к соседнему элементу незаметно. */
+const MASKED_FIELDS: Array<[file: string, qa: string, mask: string]> = [
+  [
+    'features/projects/greeting/BriefStep.tsx',
+    'data-qa={BRIEF_VOICE_TARGETS.recipient}',
+    'personal-recipient',
+  ],
+  [
+    'features/projects/greeting/BriefStep.tsx',
+    'data-qa={BRIEF_VOICE_TARGETS.sender}',
+    'personal-sender',
+  ],
+  [
+    'features/projects/greeting/BriefStep.tsx',
+    'data-qa={BRIEF_VOICE_TARGETS.message}',
+    'personal-message',
+  ],
+  [
+    'features/projects/GreetingOccasionFields.tsx',
+    'data-qa="greeting-field-custom-occasion"',
+    'personal-custom-occasion',
+  ],
+  [
+    'features/projects/greeting/ScriptStep.tsx',
+    'data-qa="greeting-script-edit"',
+    'personal-script',
+  ],
+  [
+    'features/projects/greeting/CardsStep.tsx',
+    'data-qa="greeting-cards-title"',
+    'personal-card-title',
+  ],
+  [
+    'features/projects/greeting/CardsStep.tsx',
+    'data-qa="greeting-cards-closing"',
+    'personal-card-closing',
+  ],
+  [
+    'features/projects/greeting/ReferencesStep.tsx',
+    'data-qa="greeting-references-label"',
+    'personal-reference-label',
+  ],
+  [
+    'features/projects/greeting/ReferencesStep.tsx',
+    'data-qa="greeting-references-description"',
+    'personal-reference-description',
+  ],
+];
+
+const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+check('каждое поле с именем или свободным текстом помечено маской', () => {
+  for (const [file, qa, mask] of MASKED_FIELDS) {
+    const text = src(file);
+    const all = text.split(qa).length - 1;
+    if (all === 0) throw new Error(`${file}: хук ${qa} не найден`);
+    const masked = (
+      text.match(
+        new RegExp(`${escapeRe(qa)}\\s*\\n\\s*data-qa-mask="${mask}"`, 'g')
+      ) ?? []
+    ).length;
+    // Каждое вхождение: у ссылок и описаний референсов по две формы
+    // (добавление и правка), и маска на одной из них — дыра на кадре.
+    eq(masked, all, `${file}: ${qa} без маски ${mask}`);
+  }
+});
+
+/** Личный текст без поля-хука: сводки, подписи, подсказки. */
+const MASKED_TEXT: Array<[file: string, mask: string, count: number]> = [
+  // Подпись и описание в списке — вдобавок к двум формам выше.
+  [
+    'features/projects/greeting/ReferencesStep.tsx',
+    'personal-reference-label',
+    3,
+  ],
+  [
+    'features/projects/greeting/ReferencesStep.tsx',
+    'personal-reference-description',
+    3,
+  ],
+  // Кнопки «взять подсказку»: подсказка титра собрана с именем.
+  ['features/projects/greeting/CardsStep.tsx', 'personal-card-suggestion', 2],
+  [
+    'features/projects/greeting/CharacterBlock.tsx',
+    'personal-character-summary',
+    1,
+  ],
+  ['features/projects/greeting/SenderVoiceStep.tsx', 'personal-voice-label', 1],
+  ['features/voice/VoiceConsentCard.tsx', 'personal-recipient', 1],
+  ['features/voice/VoiceConsentCard.tsx', 'personal-occasion', 1],
+  // Своя музыка: название трека (строка выбора и поле загрузки).
+  ['features/projects/greeting/MusicThemeStep.tsx', 'personal-music-title', 2],
+  // Голосовой помощник: продиктованные значения и распознанная фраза.
+  ['features/voice/VoiceConfirmCard.tsx', 'personal-voice-value', 1],
+  ['features/voice/VoiceAssistant.tsx', 'personal-voice-transcript', 1],
+];
+
+check('сводки и подписи с личным текстом тоже под маской', () => {
+  for (const [file, mask, count] of MASKED_TEXT) {
+    const n =
+      src(file).split(`'${mask}'`).length -
+      1 +
+      src(file).split(`"${mask}"`).length -
+      1;
+    eq(n, count, `${file}: маска ${mask}`);
+  }
+});
+
+check('префикс маски — тот же, что размывает бэкенд', () => {
+  const backend = readFileSync(
+    new URL(
+      '../../backend/src/modules/ui-snapshot/ui-snapshot-runner.service.ts',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  const prefix = /PERSONAL_TEXT_MASK_PREFIX = '([a-z-]+)'/.exec(backend)?.[1];
+  eq(prefix, 'personal-', 'PERSONAL_TEXT_MASK_PREFIX в ui-snapshot-runner');
+  for (const [, , mask] of MASKED_FIELDS) {
+    if (!mask.startsWith(prefix ?? '?'))
+      throw new Error(`маска ${mask} не под префиксом ${prefix}`);
+  }
+  for (const [, mask] of MASKED_TEXT) {
+    if (!mask.startsWith(prefix ?? '?'))
+      throw new Error(`маска ${mask} не под префиксом ${prefix}`);
+  }
+});
+
 if (failed) {
   console.error(`\n${failed} проверок упало`);
   process.exit(1);
 }
-console.log('\n12 проверок пройдено');
+console.log('\n15 проверок пройдено');

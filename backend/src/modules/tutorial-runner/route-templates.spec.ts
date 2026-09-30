@@ -41,7 +41,12 @@ const KNOWN_UNSUPPORTED = [
  * и следующий маршрут без фикстуры впишется сюда, а не заведёт вторую
  * такую же проверку.
  */
-const NO_FIXTURE_DATA: string[] = [];
+const NO_FIXTURE_DATA: string[] = [
+  // Этап I ТЗ Greeting 2.0: проект под кадр «готовый ролик» фикстура
+  // заводит, а сам ролик — только платный рендер по кнопке оператора.
+  // До него маршрут честно отказывает, и предлагать его модели нельзя.
+  'greeting-video-done',
+];
 
 describe('resolveScenarioRoute', () => {
   it('маршруты без параметров резолвятся без фикстурного контекста', () => {
@@ -120,6 +125,21 @@ describe('resolveScenarioRoute', () => {
     expect((withAdProject as { reason: string }).reason).toContain(
       'clientSiteProjectId',
     );
+  });
+
+  it('greeting-video-done — свой проект, не «сценарий собран»', () => {
+    expect(
+      resolveScenarioRoute('greeting-video-done', {
+        greetingDoneProjectId: 'g4',
+      }),
+    ).toEqual({ ok: true, path: '/projects/g4/greeting-video' });
+    // Проект «сценарий собран» сюда не подставляется: на нём нет ролика,
+    // и кадр 4 лендинга показал бы кнопку запуска вместо ролика.
+    expect(
+      resolveScenarioRoute('greeting-video-done', {
+        greetingReadyProjectId: 'g3',
+      }).ok,
+    ).toBe(false);
   });
 
   it('greeting-video — требует свой проект, рекламный не подходит', () => {

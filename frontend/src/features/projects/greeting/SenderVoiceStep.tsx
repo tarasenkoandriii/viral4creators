@@ -246,7 +246,13 @@ export function SenderVoiceStep({
         </Alert>
       )}
 
-      <p className="text-xs text-silver-400">
+      <p
+        className="text-xs text-silver-400"
+        // Подпись своего голоса даёт человек («голос мамы») — маска
+        // только тогда: строка по умолчанию — текст продукта, и
+        // размывать её на кадре лендинга незачем.
+        data-qa-mask={voice.senderVoice ? 'personal-voice-label' : undefined}
+      >
         {voice.senderVoice
           ? w.senderVoicePicked.replace('{label}', voice.senderVoice.label)
           : voice.presetVoiceId

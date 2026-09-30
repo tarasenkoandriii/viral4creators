@@ -6,6 +6,9 @@ import { UiSnapshotAdminController } from './ui-snapshot-admin.controller';
 import { UiSnapshotRunnerService } from './ui-snapshot-runner.service';
 import { ClientSiteTutorialModule } from '../client-site-tutorial/client-site-tutorial.module';
 import { TutorialFramesCaptureService } from './tutorial-frames-capture.service';
+import { GreetingFramesCaptureService } from './greeting-frames-capture.service';
+import { GreetingPromptModule } from '../greeting-prompt/greeting-prompt.module';
+import { GreetingVideoModule } from '../greeting-video/greeting-video.module';
 
 /**
  * UiSnapshotModule — крон-обход интерфейса TMA (Часть А ТЗ, §3
@@ -34,9 +37,23 @@ import { TutorialFramesCaptureService } from './tutorial-frames-capture.service'
     // (`TutorialFramesCaptureService`). Цикла нет — модуль обучалки про
     // снимки не знает.
     ClientSiteTutorialModule,
+    // Нужны ровно за одним: оператор доводит ролик фикстуры под кадр 4
+    // страницы поздравлений (`GreetingFramesCaptureService.fixtureVideo`)
+    // тем же конвейером, что и кнопка человека. Цикла нет — модули
+    // поздравления про снимки не знают.
+    GreetingPromptModule,
+    GreetingVideoModule,
   ],
   controllers: [UiSnapshotAdminController],
-  providers: [UiSnapshotRunnerService, TutorialFramesCaptureService],
-  exports: [UiSnapshotRunnerService, TutorialFramesCaptureService],
+  providers: [
+    UiSnapshotRunnerService,
+    TutorialFramesCaptureService,
+    GreetingFramesCaptureService,
+  ],
+  exports: [
+    UiSnapshotRunnerService,
+    TutorialFramesCaptureService,
+    GreetingFramesCaptureService,
+  ],
 })
 export class UiSnapshotModule {}

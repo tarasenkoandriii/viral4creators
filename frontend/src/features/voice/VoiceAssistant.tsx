@@ -510,8 +510,13 @@ export function VoiceAssistant({
         // понял так» — рядом с ним, чтобы «да» было видно, на что.
         <div ref={setPanelEl} className="sticky bottom-3 z-30">
           <Card className="space-y-2 p-3 shadow-lg">
+            {/* Распознанная фраза — речь человека, в ней имена: на
+                кадре лендинга размывается (этап I ТЗ Greeting 2.0). */}
             {transcript && (
-              <p className="text-xs text-silver-400">
+              <p
+                className="text-xs text-silver-400"
+                data-qa-mask="personal-voice-transcript"
+              >
                 {v.youSaid.replace('{text}', transcript)}
               </p>
             )}

@@ -297,11 +297,21 @@ export function ReferencesStep({
                       />
                     ) : (
                       <div className="p-2">
-                        <p className="truncate text-xs font-medium">
+                        {/* Подпись и описание пишет человек — это личный
+                            текст, как имя в брифе: на кадре лендинга он
+                            размывается (`data-qa-mask="personal-…"`, этап I
+                            ТЗ Greeting 2.0, §5.3), а сам кадр — нет. */}
+                        <p
+                          className="truncate text-xs font-medium"
+                          data-qa-mask="personal-reference-label"
+                        >
                           {img.label}
                         </p>
                         {img.description && (
-                          <p className="line-clamp-2 text-[11px] text-silver-400">
+                          <p
+                            className="line-clamp-2 text-[11px] text-silver-400"
+                            data-qa-mask="personal-reference-description"
+                          >
                             {img.description}
                           </p>
                         )}
@@ -537,6 +547,7 @@ function ReferenceUploader({
           <Field label={w.referenceLabelLabel}>
             <Input
               data-qa="greeting-references-label"
+              data-qa-mask="personal-reference-label"
               value={label}
               maxLength={80}
               placeholder={w.referenceLabelPlaceholder}
@@ -552,6 +563,7 @@ function ReferenceUploader({
       >
         <Textarea
           data-qa="greeting-references-description"
+          data-qa-mask="personal-reference-description"
           rows={2}
           value={description}
           onChange={(e) => setDescription(e.target.value.slice(0, 2000))}
@@ -646,6 +658,7 @@ function ReferenceEditor({
       <Field label={w.referenceLabelLabel}>
         <Input
           data-qa="greeting-references-label"
+          data-qa-mask="personal-reference-label"
           value={label}
           maxLength={80}
           placeholder={w.referenceLabelPlaceholder}
@@ -660,6 +673,7 @@ function ReferenceEditor({
       >
         <Textarea
           data-qa="greeting-references-description"
+          data-qa-mask="personal-reference-description"
           rows={2}
           value={description}
           onChange={(e) => setDescription(e.target.value.slice(0, 2000))}

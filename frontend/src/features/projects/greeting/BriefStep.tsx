@@ -515,9 +515,16 @@ export function BriefStep({
           announcedToneChange={voiceToneChange}
         />
 
+        {/* `data-qa-mask="personal-…"` — личный текст (этап I ТЗ
+            Greeting 2.0, §5.3): на кадрах лендинга размывается в любом
+            режиме съёмки (`PERSONAL_TEXT_MASK_CSS` в бэкенде), потому
+            что выдуманное имя на маркетинговом кадре запрещено, а без
+            имён кадр брифа не снять. `data-qa` рядом — хук голоса, его
+            не трогаем. */}
         <Field label={w.recipientNameLabel}>
           <Input
             data-qa={BRIEF_VOICE_TARGETS.recipient}
+            data-qa-mask="personal-recipient"
             value={recipientName}
             onChange={(e) =>
               setRecipientName(e.target.value.slice(0, BRIEF_NAME_MAX))
@@ -529,6 +536,7 @@ export function BriefStep({
         <Field label={w.senderNameLabel}>
           <Input
             data-qa={BRIEF_VOICE_TARGETS.sender}
+            data-qa-mask="personal-sender"
             value={senderName}
             onChange={(e) =>
               setSenderName(e.target.value.slice(0, BRIEF_NAME_MAX))
@@ -544,6 +552,7 @@ export function BriefStep({
         >
           <Textarea
             data-qa={BRIEF_VOICE_TARGETS.message}
+            data-qa-mask="personal-message"
             rows={3}
             value={personalMessage}
             onChange={(e) =>

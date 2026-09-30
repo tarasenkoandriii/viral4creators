@@ -46,7 +46,15 @@ export function VoiceConfirmCard({
           {card.fields.map((f) => (
             <div key={f.target} className="flex gap-2">
               <dt className="shrink-0 text-silver-400">{f.label}:</dt>
-              <dd className="break-words font-medium">{describe(f)}</dd>
+              {/* Значения, продиктованные голосом, — это имена и
+                  пожелания: на кадре лендинга размываются (этап I ТЗ
+                  Greeting 2.0). Подпись поля — текст продукта. */}
+              <dd
+                className="break-words font-medium"
+                data-qa-mask="personal-voice-value"
+              >
+                {describe(f)}
+              </dd>
             </div>
           ))}
         </dl>

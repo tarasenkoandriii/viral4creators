@@ -97,6 +97,7 @@ import {
   FixtureRouteContext,
   resolveScenarioRoute,
 } from '../tutorial-runner/route-templates';
+import { greetingContext } from '../tutorial-runner/tutorial-scenario-runner.service';
 import { computeDHash, hasChanged, diffScore } from './perceptual-hash';
 import {
   runScenario,
@@ -187,6 +188,52 @@ const VIEWPORT = CAPTURE_VIEWPORT;
  */
 const CAPTURE_STEP_TIMEOUT_MS = CLIENT_ROUND_BUDGET_MS;
 
+/**
+ * Маски ЛИЧНОГО ТЕКСТА — `data-qa-mask="personal-…"` (этап I ТЗ
+ * `docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md`, §5.3).
+ *
+ * ## Почему у них отдельный префикс, а не общий `[data-qa-mask]`
+ *
+ * Общие маски — про ПЕРЕМЕННОЕ (постер ролика, кадр чужого сайта,
+ * дата): крону они шум, а снимку для лендинга — весь смысл, поэтому
+ * немаскированный прогон их не трогает (`UiSnapshotRunOptions.unmasked`).
+ * Имя получателя, личное пожелание, текст сценария — другое: их нельзя
+ * показывать НИКОМУ. Правило образца (§5.5 ТЗ лендинга обучалки)
+ * запрещает выдуманные имена на маркетинговом кадре, а кадр мастера
+ * поздравлений без имён не снять — они в каждом втором поле.
+ *
+ * Поэтому личные маски действуют в ОБОИХ режимах. Одним списком
+ * селекторов в бэкенде это было бы нельзя — он устарел бы при первой
+ * правке мастера (см. доккомментарий модуля); префикс живёт на самих
+ * полях, а шов во фронтенде (`frontend/scripts/greeting-steps.test.ts`)
+ * держит, что поля мастера им помечены и что префикс там тот же.
+ *
+ * ## Почему размытие, а не `visibility: hidden`
+ *
+ * Поле с именем — это и рамка поля. Спрятанное целиком, оно оставляет
+ * на кадре дыру посреди формы, и «вот здесь пишут имя» пропадает
+ * вместе с именем. Прозрачный текст с размытой тенью оставляет рамку и
+ * силуэт строки, а буквы прочесть нельзя.
+ *
+ * Подсказка-плейсхолдер у помеченного поля скрыта ТОЖЕ, и это
+ * намеренно (аудит этапа I): `-webkit-text-fill-color` наследуется в
+ * `::placeholder`, а у титров плейсхолдер — подсказка, собранная из
+ * брифа, то есть с именем получателя. Правила, возвращающего
+ * плейсхолдеру цвет или снимающего с него размытие, здесь быть не
+ * должно — спек это проверяет.
+ */
+export const PERSONAL_TEXT_MASK_PREFIX = 'personal-';
+
+export const PERSONAL_TEXT_MASK_CSS =
+  `[data-qa-mask^="${PERSONAL_TEXT_MASK_PREFIX}"]` +
+  '{color:transparent!important;-webkit-text-fill-color:transparent!important;' +
+  'text-shadow:0 0 9px rgba(128,128,128,.9)!important}';
+
+/** Сколько ждать, пока у ролика в кадре появится картинка. Сверх — кадр
+ *  снимается как есть: чёрный плеер заметит отбор §3, а ронять прогон
+ *  ради медленного Blob незачем. */
+const MEDIA_SETTLE_TIMEOUT_MS = 10_000;
+
 export type SnapshotTheme = 'light' | 'dark';
 
 export interface UiSnapshotRunOptions {
@@ -276,6 +323,27 @@ export interface UiSnapshotRunOptions {
    * второй переход увёл бы кадр с маршрута, которым он подписан.
    */
   steps?: readonly ScenarioStep[];
+  /**
+   * Прокрутить экран к секции перед итоговым кадром (этап I ТЗ
+   * Greeting 2.0, §5.3).
+   *
+   * Мастер поздравления — одна длинная лента из девяти карточек, а кадр
+   * — это окно 390×844. «Характер ролика», сценарий и готовый ролик
+   * лежат ниже первого экрана, и открытие маршрута снимало бы бриф
+   * каждый раз. Степпер мастера тоже прокручивает, но плавно, и кадр
+   * после клика ловил бы середину прокрутки.
+   *
+   * Селектор ждётся видимым (тот же предел, что у шага), затем экран
+   * мгновенно ставится так, чтобы секция начиналась под липкой шапкой
+   * приложения. Не нашлась — это ошибка маршрута, а не кадр верха
+   * страницы под чужой подписью. Ролик в кадре дожидается картинки
+   * (best-effort, `MEDIA_SETTLE_TIMEOUT_MS`).
+   *
+   * **Только вместе с `unmasked` и ровно с одним маршрутом** — по тем же
+   * причинам, что `steps`: прокрученный экран даёт иной отпечаток, а
+   * селектор пишется под конкретный экран.
+   */
+  scrollTo?: string;
 }
 
 /** Кадр, снятый ПОСЛЕ съёмочного шага `stepIndex` (0-based). */
@@ -374,6 +442,17 @@ export class UiSnapshotRunnerService {
         'steps допустимы только вместе с unmasked: шаги меняют состояние продукта, а сравниваемый прогон обязан быть наблюдателем',
       );
     }
+    const scrollTo = options.scrollTo?.trim() || undefined;
+    if (scrollTo && !unmasked) {
+      throw new Error(
+        'scrollTo допустим только вместе с unmasked: прокрученный экран подменил бы базовый отпечаток крона',
+      );
+    }
+    if (scrollTo && routeKeys.length !== 1) {
+      throw new Error(
+        'scrollTo требует ровно одного маршрута в routeKeys: селектор секции пишется под конкретный экран',
+      );
+    }
     if (steps.length > 0 && routeKeys.length !== 1) {
       // Шаги написаны под конкретный экран. Прогнать их по пяти
       // маршрутам значит выполнить их на четырёх чужих — где селекторы
@@ -469,7 +548,7 @@ export class UiSnapshotRunnerService {
           apiOrigin,
           tmaBaseUrl,
           wizardSessionId,
-          { locale, theme, unmasked, deviceScaleFactor, steps },
+          { locale, theme, unmasked, deviceScaleFactor, steps, scrollTo },
         );
         outcomes.push(outcome);
         // Сбой снять НАДО сообщить в любом прогоне: немаскированный
@@ -520,6 +599,7 @@ export class UiSnapshotRunnerService {
       unmasked: boolean;
       deviceScaleFactor: number;
       steps: readonly ScenarioStep[];
+      scrollTo?: string;
     },
   ): Promise<UiSnapshotRouteOutcome> {
     let page: import('puppeteer-core').Page | undefined;
@@ -614,6 +694,13 @@ export class UiSnapshotRunnerService {
         `навигация не уложилась в ${Math.round(ROUTE_TIMEOUT_MS / 1000)}с`,
       );
 
+      // Личный текст — сразу после загрузки, ДО шагов и в любом режиме:
+      // шаговые кадры снимаются внутри `runScenario`, и вставить маску
+      // между шагом и его снимком иначе нечем. Стиль, а не правка
+      // элементов: SPA перерисовывает поля, а правило документа
+      // действует и на новые (см. `PERSONAL_TEXT_MASK_PREFIX`).
+      await page.addStyleTag({ content: PERSONAL_TEXT_MASK_CSS });
+
       // Шаги — ПОСЛЕ навигации и ДО съёмки. Кадр после каждого:
       // ровно так снимаются мгновенные состояния, которых нет в базе
       // (см. `UiSnapshotRunOptions.steps`).
@@ -677,6 +764,10 @@ export class UiSnapshotRunnerService {
               : {}),
           };
         }
+      }
+
+      if (view.scrollTo) {
+        await scrollToSection(page, view.scrollTo);
       }
 
       // Маскирование заведомо переменных зон (см. доккомментарий модуля)
@@ -826,41 +917,66 @@ export class UiSnapshotRunnerService {
      * близнеца в `tutorial-scenario-runner.service.ts`.
      */
     const AD_TYPES = [ProjectType.SINGLE, ProjectType.LINE];
-    const [project, clientSiteProject, item, manifest, session] =
-      await Promise.all([
-        this.prisma.project.findFirst({
-          where: { userId, deletedAt: null, type: { in: AD_TYPES } },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.project.findFirst({
-          where: { userId, deletedAt: null, type: ProjectType.CLIENT_SITE },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.productItem.findFirst({
-          where: {
-            project: { userId, type: { in: AD_TYPES } },
-            deletedAt: null,
+    const [
+      project,
+      clientSiteProject,
+      item,
+      manifest,
+      session,
+      greetingProjects,
+    ] = await Promise.all([
+      this.prisma.project.findFirst({
+        where: { userId, deletedAt: null, type: { in: AD_TYPES } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.project.findFirst({
+        where: { userId, deletedAt: null, type: ProjectType.CLIENT_SITE },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.productItem.findFirst({
+        where: {
+          project: { userId, type: { in: AD_TYPES } },
+          deletedAt: null,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.brandManifest.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      // Экрану готового ролика нужен ГОТОВЫЙ ролик: «последняя сессия
+      // пользователя» раньше почти всегда оказывалась пустой, созданной
+      // этим же кроном, и снимок `postprod-video` был бессмысленным.
+      this.prisma.session.findFirst({
+        where: { userId, deletedAt: null, status: 'video_complete' },
+        orderBy: { createdAt: 'desc' },
+      }),
+      // Проекты-поздравления с последней сессией — тот же запрос и то
+      // же решение (`greetingContext`), что у близнеца в
+      // `tutorial-scenario-runner`. До этапа I ТЗ Greeting 2.0 здесь
+      // их не было вовсе: маршруты `greeting-video*` в этом прогоне
+      // отказывали «нет фикстурных данных», хотя фикстура их заводила,
+      // — снять кадры мастера поздравлений было нечем.
+      this.prisma.project.findMany({
+        where: { userId, deletedAt: null, type: ProjectType.GREETING_VIDEO },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          sessions: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { status: true, generationStatus: true },
           },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.brandManifest.findFirst({
-          where: { userId },
-          orderBy: { createdAt: 'desc' },
-        }),
-        // Экрану готового ролика нужен ГОТОВЫЙ ролик: «последняя сессия
-        // пользователя» раньше почти всегда оказывалась пустой, созданной
-        // этим же кроном, и снимок `postprod-video` был бессмысленным.
-        this.prisma.session.findFirst({
-          where: { userId, deletedAt: null, status: 'video_complete' },
-          orderBy: { createdAt: 'desc' },
-        }),
-      ]);
+        },
+      }),
+    ]);
     return {
       projectId: project?.id,
       itemId: item?.id,
       manifestId: manifest?.id,
       sessionId: session?.id,
       clientSiteProjectId: clientSiteProject?.id,
+      ...greetingContext(greetingProjects),
     };
   }
 
@@ -929,4 +1045,80 @@ export class UiSnapshotRunnerService {
   private skip(reason: string): UiSnapshotRunResult {
     return { skipped: reason, total: 0, changed: 0, failed: 0, outcomes: [] };
   }
+}
+
+/** Подмножество puppeteer `Page`, нужное прокрутке к секции. */
+interface ScrollPage {
+  waitForSelector(
+    selector: string,
+    options: { visible: boolean; timeout: number },
+  ): Promise<unknown>;
+  evaluate(fn: (selector: string) => void, selector: string): Promise<unknown>;
+  waitForFunction(
+    fn: () => boolean,
+    options: { timeout: number },
+  ): Promise<unknown>;
+}
+
+/**
+ * Поставить экран так, чтобы секция начиналась сразу под липкой шапкой
+ * приложения, и дождаться картинки у ролика в кадре
+ * (`UiSnapshotRunOptions.scrollTo`).
+ *
+ * Экспортирована ради спека: прокрутка исполняется в браузере, и
+ * проверить её расчёт можно только вызвав на поддельном документе.
+ */
+export async function scrollToSection(
+  page: ScrollPage,
+  selector: string,
+): Promise<void> {
+  // Не нашлась — бросаем: `captureOne` запишет это ошибкой маршрута.
+  // Снять верх страницы и подписать его «сценарием» — хуже, чем не снять.
+  await page.waitForSelector(selector, {
+    visible: true,
+    timeout: CAPTURE_STEP_TIMEOUT_MS,
+  });
+  await page.evaluate((sel: string) => {
+    const el = document.querySelector(sel);
+    if (!el) return;
+    // Шапка приложения липкая (`App.tsx`): секция, поставленная к самому
+    // верху окна, уехала бы под неё заголовком — ровно той строкой,
+    // которая говорит, что на кадре.
+    let offset = 0;
+    document.querySelectorAll('header').forEach((h) => {
+      const position = window.getComputedStyle(h).position;
+      if (position === 'sticky' || position === 'fixed') {
+        offset = Math.max(offset, h.getBoundingClientRect().bottom);
+      }
+    });
+    const top = el.getBoundingClientRect().top + window.scrollY - offset - 8;
+    // `instant`, а не умолчание: у страницы может стоять
+    // `scroll-behavior: smooth`, и кадр поймал бы середину прокрутки.
+    window.scrollTo({ top: Math.max(0, top), behavior: 'instant' });
+    // Ролик без `preload` показывает чёрный прямоугольник, пока не
+    // загрузит кадр. Просим загрузить и встать на секунду вперёд:
+    // первый кадр у сгенерированных роликов часто затемнён.
+    document.querySelectorAll('video').forEach((v) => {
+      if (!v.currentSrc && !v.getAttribute('src')) return;
+      v.preload = 'auto';
+      if (v.currentTime === 0) {
+        const seek = () => {
+          if (Number.isFinite(v.duration) && v.duration > 2) v.currentTime = 1;
+        };
+        if (v.readyState >= 1) seek();
+        else v.addEventListener('loadedmetadata', seek, { once: true });
+      }
+    });
+  }, selector);
+  await page
+    .waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll('video')).every(
+          (v) =>
+            (!v.currentSrc && !v.getAttribute('src')) ||
+            (v.readyState >= 2 && !v.seeking),
+        ),
+      { timeout: MEDIA_SETTLE_TIMEOUT_MS },
+    )
+    .catch(() => undefined);
 }

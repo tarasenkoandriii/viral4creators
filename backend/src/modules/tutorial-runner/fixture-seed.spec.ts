@@ -278,3 +278,76 @@ describe('seedFixtureUser: тариф', () => {
     expect(result.log.some((l) => l.includes('ВНИМАНИЕ'))).toBe(false);
   });
 });
+
+/**
+ * Проект под кадр «готовый ролик» страницы поздравлений (этап I ТЗ
+ * `docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md`, §5.3).
+ *
+ * Две вещи здесь ломаются молча. Ролик этого проекта идёт на лендинг
+ * НЕМАСКИРОВАННЫМ — выдуманное имя в брифе оказалось бы в самом ролике,
+ * где маска не поможет. И ролик оплачен: пересев, перезаписавший сессию,
+ * стёр бы его без единой ошибки.
+ */
+describe('seedFixtureUser: поздравление под кадр «готовый ролик»', () => {
+  const DONE_PROJECT = 'fixture-tutorial-greeting-done-project';
+  const DONE_SESSION = 'fixture-tutorial-greeting-done-session';
+
+  it('проект заводится по фиксированному id и возвращается наружу', async () => {
+    const { prisma, project } = build();
+    const result = await seedFixtureUser(prisma as any, '42');
+    const call = (project.mock.calls as any[]).find(
+      ([args]) => args.where.id === DONE_PROJECT,
+    );
+    expect(call?.[0].create.type).toBe('GREETING_VIDEO');
+    expect(result.greetingDoneProjectId).toBe(DONE_PROJECT);
+  });
+
+  it('в брифе — роли, а не выдуманные имена людей', async () => {
+    const { prisma, greetingBrief } = build();
+    await seedFixtureUser(prisma as any, '42');
+    const call = (greetingBrief.mock.calls as any[]).find(
+      ([args]) => args.where.projectId === DONE_PROJECT,
+    );
+    const brief = call?.[0].create;
+    expect(brief.recipientName).toBe('Коллеги');
+    expect(brief.senderName).toBe('Команда');
+    // Повод, к которому обращение «коллеги» естественно; и не `OTHER`:
+    // у него регистр зависит от платного классификатора.
+    expect(brief.occasion).toBe('NEW_YEAR');
+    expect(brief.personalMessage).toBeNull();
+    expect(brief.customOccasionText).toBeNull();
+  });
+
+  it('сессия заводится, но пересев её НЕ перезаписывает — в ней оплаченный ролик', async () => {
+    const { prisma, session } = build();
+    await seedFixtureUser(prisma as any, '42');
+    const call = (session.mock.calls as any[]).find(
+      ([args]) => args.where.id === DONE_SESSION,
+    );
+    const args = call?.[0];
+    expect(args.create.projectId).toBe(DONE_PROJECT);
+    // Сценария сид не пишет: его соберёт конвейер вместе с рендером.
+    expect(args.create.data.generationPrompt).toBeUndefined();
+    expect(args.create.data.greetingBriefSnapshot.recipientName).toBe(
+      'Коллеги',
+    );
+    // В `update` — только владелец и проект: ни `data`, ни `liveData`,
+    // ни статуса, иначе «Завести фикстуру» стирало бы ролик.
+    expect(Object.keys(args.update).sort()).toEqual(['projectId', 'userId']);
+  });
+
+  it('три прежних проекта-поздравления по-прежнему перезаписываются целиком', async () => {
+    const { prisma, session } = build();
+    await seedFixtureUser(prisma as any, '42');
+    for (const id of [
+      'fixture-tutorial-greeting-drafting-session',
+      'fixture-tutorial-greeting-ready-session',
+    ]) {
+      const call = (session.mock.calls as any[]).find(
+        ([args]) => args.where.id === id,
+      );
+      expect(call?.[0].update.data).toEqual(expect.any(Object));
+      expect(call?.[0].update.status).toEqual(expect.any(String));
+    }
+  });
+});

@@ -148,8 +148,11 @@ export function GreetingOccasionFields({
       {value.occasion === 'OTHER' && (
         <>
           <Field label={w.customOccasionLabel} htmlFor={customId}>
+            {/* Описание особого повода пишет человек — личный текст,
+                на кадре лендинга размывается (этап I ТЗ Greeting 2.0). */}
             <Input
               data-qa="greeting-field-custom-occasion"
+              data-qa-mask="personal-custom-occasion"
               id={customId}
               value={value.customOccasionText}
               // Через тот же сброс, что повод и настроение: переписанное

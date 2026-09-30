@@ -81,7 +81,13 @@ export function CharacterBlock({
       <div>
         <h2 className="text-base font-semibold">{w.characterHeading}</h2>
         <p className="mt-0.5 text-xs text-silver-400">{w.characterHint}</p>
-        {line && <p className="mt-2 text-sm">{line}</p>}
+        {/* Сводка повторяет подпись своего голоса и титры — личный
+            текст; на кадре лендинга размывается (этап I ТЗ Greeting 2.0). */}
+        {line && (
+          <p className="mt-2 text-sm" data-qa-mask="personal-character-summary">
+            {line}
+          </p>
+        )}
       </div>
       {/* Ключ у каждой карточки свой, с общим префиксом версии сессии:
           пять братьев с ОДНИМ ключом — это дубликат, на который React

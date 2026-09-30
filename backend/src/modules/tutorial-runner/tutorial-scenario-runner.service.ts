@@ -117,6 +117,7 @@ import {
   withTimeout,
 } from '../../common/headless-chromium';
 import { runScenario, ScenarioFrame, ScenarioPage } from './scenario-runner';
+import { FIXTURE_IDS } from './fixture-seed';
 import {
   FRESH_WIZARD_ROUTE,
   FixtureRouteContext,
@@ -1699,7 +1700,10 @@ export class TutorialScenarioRunnerService {
             where: { deletedAt: null },
             orderBy: { createdAt: 'desc' },
             take: 1,
-            select: { status: true },
+            // `generationStatus` — ради четвёртого состояния, «ролик
+            // готов» (этап I ТЗ Greeting 2.0): рендер поздравления
+            // `status` сессии не двигает, готовность видна только здесь.
+            select: { status: true, generationStatus: true },
           },
         },
       }),
@@ -3047,8 +3051,8 @@ export class TutorialScenarioRunnerService {
 }
 
 /**
- * Три состояния мастера поздравления — по последней сессии каждого
- * проекта (29.09.2026).
+ * Состояния мастера поздравления — по последней сессии каждого проекта
+ * (29.09.2026; четвёртое — этап I ТЗ Greeting 2.0, 30.09.2026).
  *
  * Чистая функция, а не запрос: решение здесь одно и то же для фикстуры
  * и для проекта, заведённого оператором руками, и проверяется оно без
@@ -3057,13 +3061,26 @@ export class TutorialScenarioRunnerService {
  *
  *   - сессий нет вовсе → экран брифа с кнопкой «начать»;
  *   - последняя сессия без сценария → кнопка «собрать сценарий»;
- *   - последняя сессия со сценарием → все девять карточек.
+ *   - последняя сессия со сценарием и БЕЗ ролика → все девять карточек
+ *     и кнопка запуска рендера;
+ *   - ролик готов (`generationStatus: complete`) → экран готового
+ *     ролика, кадр 4 лендинга.
  *
  * `PROMPT_GENERATED` и всё, что после него, — это «сценарий собран»:
- * статус сессии только растёт, и поздравление с готовым роликом тоже
- * показывает все карточки. Проект, чьё состояние не опознано, просто не
- * попадает в контекст: маршрут тогда честно откажет «нет фикстурных
- * данных» вместо того, чтобы открыть не тот экран.
+ * статус сессии только растёт. Но рендер поздравления `status` не
+ * двигает вовсе (`GreetingVideoService` пишет только `generatedVideo`),
+ * поэтому готовый ролик различим лишь по `generationStatus`. Без этого
+ * различия проект с роликом — самый свежий, фикстурный «готовый» —
+ * побеждал бы в `greetingReadyProjectId`, и сценарий хука
+ * `greeting-render` ждал бы кнопку, которую готовый ролик прячет.
+ *
+ * Сессия с рендером В ПУТИ или с упавшим рендером не попадает никуда:
+ * кнопки запуска на ней уже нет, а готового ролика ещё нет. Такой
+ * проект честнее пропустить, чем открыть сценарию не тот экран.
+ *
+ * Проект, чьё состояние не опознано, просто не попадает в контекст:
+ * маршрут тогда честно откажет «нет фикстурных данных» вместо того,
+ * чтобы открыть не тот экран.
  */
 export function greetingContext(
   projects: ReadonlyArray<{
@@ -3071,13 +3088,21 @@ export function greetingContext(
     // `string`, а не `SessionStatus`: колонка `status` в схеме — обычная
     // строка, и Prisma отдаёт её строкой. Обещать здесь перечисление
     // значило бы обещать то, чего база не гарантирует; неизвестное
-    // значение просто не попадёт ни в одно из трёх состояний.
-    sessions: ReadonlyArray<{ status: string }>;
+    // значение просто не попадёт ни в одно из состояний.
+    //
+    // `generationStatus` необязателен: вызывающий, который его не
+    // выбирает, получает прежние три состояния, а не молчаливое «ролика
+    // нет ни у кого».
+    sessions: ReadonlyArray<{
+      status: string;
+      generationStatus?: string | null;
+    }>;
   }>,
 ): {
   greetingProjectId?: string;
   greetingDraftingProjectId?: string;
   greetingReadyProjectId?: string;
+  greetingDoneProjectId?: string;
 } {
   const WITH_SCRIPT: readonly string[] = [
     SessionStatus.PROMPT_GENERATED,
@@ -3088,11 +3113,32 @@ export function greetingContext(
     greetingProjectId?: string;
     greetingDraftingProjectId?: string;
     greetingReadyProjectId?: string;
+    greetingDoneProjectId?: string;
   } = {};
   for (const project of projects) {
     const latest = project.sessions[0];
+    // Фикстурный проект под кадр «готовый ролик» — только в своё поле и
+    // никогда в три других (аудит этапа I). Он заведён последним, значит
+    // при отборе «самый свежий первым» забирал бы «сценария нет», пока
+    // его сессия `created`, и «сессии нет», когда крон уборки её снёс
+    // (`cleanupExpiredSessions` щадит только готовые ролики). Ночные
+    // сценарии хуков тогда писали бы в ту самую сессию, из которой
+    // рендерится ролик лендинга. Исключение по id, а не по содержанию:
+    // по содержанию до рендера он неотличим от остальных — в этом и беда.
+    if (project.id === FIXTURE_IDS.greetingDoneProject) {
+      if (latest?.generationStatus === GenerationStatus.COMPLETE) {
+        out.greetingDoneProjectId ??= project.id;
+      }
+      continue;
+    }
     if (!latest) {
       out.greetingProjectId ??= project.id;
+    } else if (latest.generationStatus === GenerationStatus.COMPLETE) {
+      out.greetingDoneProjectId ??= project.id;
+    } else if (latest.generationStatus) {
+      // Рендер в пути или упал — см. доккомментарий: ни одно из
+      // состояний, которые умеют открывать сценарии.
+      continue;
     } else if (WITH_SCRIPT.includes(latest.status)) {
       out.greetingReadyProjectId ??= project.id;
     } else {

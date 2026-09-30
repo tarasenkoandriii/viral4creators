@@ -101,6 +101,19 @@ export interface FixtureRouteContext {
   /** Сценарий собран: видны все девять карточек, включая голос,
    *  музыку, титры, наклейку, сцены и ролик. */
   greetingReadyProjectId?: string;
+  /**
+   * Ролик ГОТОВ: последняя сессия проекта с отрендеренным роликом
+   * (этап I ТЗ Greeting 2.0, §5.3 — кадр «готовый ролик» для лендинга).
+   *
+   * Отдельным полем, а не частью «сценарий собран»: готовый ролик
+   * прячет кнопку запуска рендера, и проект с роликом, попавший в
+   * `greetingReadyProjectId`, молча сломал бы сценарий хука
+   * `greeting-render`. Фикстура заводит под это отдельный проект, но
+   * ролика в нём нет, пока оператор его не отрендерит
+   * (`doc/GREETING-FRAMES-CAPTURE.md`), — поэтому модели этот маршрут
+   * не предлагается (`ROUTE_DESCRIPTIONS`).
+   */
+  greetingDoneProjectId?: string;
   /** Проект-обучалка по сайту заказчика (`CLIENT_SITE`) — отдельный
    *  проект, а не тот же самый: у него нет товаров, а у рекламного нет
    *  черновика обучалки. */
@@ -263,6 +276,17 @@ const ROUTE_BUILDERS: Record<string, RouteBuilder> = {
           path: `/projects/${ctx.greetingReadyProjectId}/greeting-video`,
         }
       : missingFixtureData('greetingReadyProjectId'),
+  // Резолвится, но в `ROUTE_DESCRIPTIONS` его нет: ролик на фикстуре
+  // появляется только после платного рендера по кнопке оператора, и
+  // предложенный модели маршрут до этого честно отказывал бы «нет
+  // данных» (см. `NO_FIXTURE_DATA` в спеке).
+  'greeting-video-done': (ctx) =>
+    ctx.greetingDoneProjectId
+      ? {
+          ok: true,
+          path: `/projects/${ctx.greetingDoneProjectId}/greeting-video`,
+        }
+      : missingFixtureData('greetingDoneProjectId'),
   'api-keys': () => ({ ok: true, path: '/api-keys' }),
   invite: () => ({ ok: true, path: '/invite' }),
   // Резолвится технически (маршрут без параметров), но сценариям не
@@ -347,6 +371,7 @@ export const PROJECT_STATE_ROUTES: ReadonlyMap<string, string> = new Map([
   ['greeting-video', 'greetingProjectId'],
   ['greeting-video-drafting', 'greetingDraftingProjectId'],
   ['greeting-video-ready', 'greetingReadyProjectId'],
+  ['greeting-video-done', 'greetingDoneProjectId'],
 ]);
 
 /**

@@ -14,13 +14,18 @@ function build() {
   const adminPanel = { assertOperator: jest.fn().mockResolvedValue(undefined) };
   const runner = { run: jest.fn().mockResolvedValue({ total: 0 }) };
   const frames = { capture: jest.fn().mockResolvedValue({ locales: [] }) };
+  const greetingFrames = {
+    capture: jest.fn().mockResolvedValue({ locales: [] }),
+    fixtureVideo: jest.fn().mockResolvedValue({ stage: 'complete' }),
+  };
   const controller = new UiSnapshotAdminController(
     adminPanel as never,
     runner as never,
     frames as never,
+    greetingFrames as never,
   );
   const req = { userId: 'usr_admin' } as never;
-  return { controller, runner, frames, adminPanel, req };
+  return { controller, runner, frames, greetingFrames, adminPanel, req };
 }
 
 describe('UiSnapshotAdminController — разбор тела', () => {
@@ -36,6 +41,7 @@ describe('UiSnapshotAdminController — разбор тела', () => {
       unmasked: false,
       deviceScaleFactor: undefined,
       steps: undefined,
+      scrollTo: undefined,
       alerts: false,
     });
   });
@@ -235,5 +241,112 @@ describe('UiSnapshotAdminController — разбор тела', () => {
       'не оператор',
     );
     expect(runner.run).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Этап I ТЗ Greeting 2.0 (§5.3): прокрутка к секции у ручного прогона и
+ * две кнопки кадров поздравлений. Прокрутка меняет отпечаток кадра,
+ * значит у неё те же запреты, что у шагов, — и их надо уметь уронить.
+ */
+describe('UiSnapshotAdminController — кадры поздравлений', () => {
+  it('scrollTo с unmasked и одним маршрутом — доезжает до сервиса', async () => {
+    const { controller, runner, req } = build();
+
+    await controller.run(req, {
+      routeKeys: ['greeting-video-ready'],
+      unmasked: true,
+      scrollTo: ' [data-qa="greeting-script-card"] ',
+    });
+
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scrollTo: '[data-qa="greeting-script-card"]',
+        unmasked: true,
+      }),
+    );
+  });
+
+  it('scrollTo без unmasked — 400: прокрученный кадр подменил бы отпечаток крона', async () => {
+    const { controller, runner, req } = build();
+
+    await expect(
+      controller.run(req, {
+        routeKeys: ['greeting-video-ready'],
+        scrollTo: '[data-qa="greeting-script-card"]',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  it('scrollTo без ровно одного маршрута — 400', async () => {
+    const { controller, runner, req } = build();
+
+    await expect(
+      controller.run(req, {
+        routeKeys: ['greeting-video', 'greeting-video-ready'],
+        unmasked: true,
+        scrollTo: '[data-qa="greeting-script-card"]',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.run(req, { unmasked: true, scrollTo: '   ' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  it('greeting-frames: локали и тема разбираются тем же разбором, что у обучалки', async () => {
+    const { controller, greetingFrames, req } = build();
+
+    await controller.greetingFramesCapture(req, {
+      locales: ['ru', 'de'],
+      theme: 'dark',
+    });
+    expect(greetingFrames.capture).toHaveBeenCalledWith({
+      locales: ['ru', 'de'],
+      theme: 'dark',
+    });
+
+    await controller.greetingFramesCapture(req, {});
+    expect(greetingFrames.capture).toHaveBeenLastCalledWith({
+      locales: ['ru'],
+      theme: undefined,
+    });
+
+    await expect(
+      controller.greetingFramesCapture(req, { locales: ['xx'] }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.greetingFramesCapture(req, { theme: 'purple' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(greetingFrames.capture).toHaveBeenCalledTimes(2);
+  });
+
+  it('fixture-video: переснять готовый ролик — только строгим true', async () => {
+    const { controller, greetingFrames, req } = build();
+
+    await controller.greetingFixtureVideo(req, {});
+    await controller.greetingFixtureVideo(req, { rerender: 'yes' });
+    await controller.greetingFixtureVideo(req, { rerender: true });
+
+    expect(greetingFrames.fixtureVideo.mock.calls).toEqual([
+      [{ rerender: false }],
+      [{ rerender: false }],
+      [{ rerender: true }],
+    ]);
+  });
+
+  it('обе кнопки — только оператору: платный рендер не запускается без проверки', async () => {
+    const { controller, greetingFrames, adminPanel, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+
+    await expect(controller.greetingFixtureVideo(req, {})).rejects.toThrow(
+      'не оператор',
+    );
+    await expect(controller.greetingFramesCapture(req, {})).rejects.toThrow(
+      'не оператор',
+    );
+    expect(greetingFrames.fixtureVideo).not.toHaveBeenCalled();
+    expect(greetingFrames.capture).not.toHaveBeenCalled();
   });
 });

@@ -31,9 +31,12 @@ export function VoiceConsentCard({
   const { dict } = useI18n();
   const c = dict.voiceConsent;
   const cost = chargeText(summary.charge, c);
-  const rows: Array<[string, string]> = [
-    [c.recipient, summary.recipient],
-    [c.occasion, summary.occasion],
+  // Третье поле — маска личного текста (этап I ТЗ Greeting 2.0, §5.3):
+  // кому и «особый повод» пишет человек, и на кадре лендинга они
+  // размываются. Качество и цена — текст продукта.
+  const rows: Array<[string, string, string?]> = [
+    [c.recipient, summary.recipient, 'personal-recipient'],
+    [c.occasion, summary.occasion, 'personal-occasion'],
     [c.quality, summary.quality],
   ];
   if (cost) rows.push([c.cost, cost]);
@@ -48,10 +51,12 @@ export function VoiceConsentCard({
         {c.title}
       </p>
       <dl className="mt-2 space-y-1 text-sm">
-        {rows.map(([label, value]) => (
+        {rows.map(([label, value, mask]) => (
           <div key={label} className="flex gap-2">
             <dt className="shrink-0 text-silver-400">{label}:</dt>
-            <dd className="break-words font-medium">{value}</dd>
+            <dd className="break-words font-medium" data-qa-mask={mask}>
+              {value}
+            </dd>
           </div>
         ))}
       </dl>

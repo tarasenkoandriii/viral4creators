@@ -176,8 +176,12 @@ export function CardsStep({
 
       <div className="space-y-3">
         <Field label={w.cardsTitleLabel} hint={w.cardsTitleHint}>
+          {/* Титры пишет человек, подсказка собрана из брифа с именем —
+              личный текст, на кадре лендинга размывается (этап I ТЗ
+              Greeting 2.0, §5.3). */}
           <Input
             data-qa="greeting-cards-title"
+            data-qa-mask="personal-card-title"
             value={title}
             onChange={(e) => {
               setTitle(e.target.value.slice(0, MAX_GREETING_CARD_LENGTH));
@@ -196,6 +200,8 @@ export function CardsStep({
               setTitle(view.suggested.title ?? '');
               setSaved(false);
             }}
+            // Подсказка титра собрана из брифа и несёт имя получателя.
+            data-qa-mask="personal-card-suggestion"
           >
             {w.cardsUseSuggestion.replace('{text}', view.suggested.title)}
           </Button>
@@ -204,6 +210,7 @@ export function CardsStep({
         <Field label={w.cardsClosingLabel} hint={w.cardsClosingHint}>
           <Input
             data-qa="greeting-cards-closing"
+            data-qa-mask="personal-card-closing"
             value={closing}
             onChange={(e) => {
               setClosing(e.target.value.slice(0, MAX_GREETING_CARD_LENGTH));
@@ -222,6 +229,7 @@ export function CardsStep({
               setClosing(view.suggested.closing ?? '');
               setSaved(false);
             }}
+            data-qa-mask="personal-card-suggestion"
           >
             {w.cardsUseSuggestion.replace('{text}', view.suggested.closing)}
           </Button>

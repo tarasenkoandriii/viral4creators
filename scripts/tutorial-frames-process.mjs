@@ -13,6 +13,17 @@
  *
  * Порядок работы целиком — `doc/TUTORIAL-FRAMES-CAPTURE.md`.
  *
+ * С флагом `--greeting` — то же самое для страницы поздравлений (этап I
+ * ТЗ `docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md`, §5.3):
+ * файлы `greet-shot-<локаль>-<n>.avif`, список — `GREETING_REAL_FRAME_LOCALES`,
+ * порядок работы — `doc/GREETING-FRAMES-CAPTURE.md`.
+ *
+ *     node scripts/tutorial-frames-process.mjs --greeting ru 1.png 2.png 3.png 4.png
+ *
+ * Флаг, а не второй скрипт: обрезка, размер и бюджет у двух страниц одни
+ * (оправа кадра общая, `.frame-shot`), и второй скрипт разошёлся бы с
+ * первым на первой же правке `KEEP`.
+ *
  * ## Что делает и почему
  *
  * **Обрезает верхние 85% кадра** (`KEEP` ниже — единственный источник
@@ -66,10 +77,36 @@ const KEEP = 0.85;
  */
 const TARGET_WIDTH = 780;
 
-const [locale, ...inputs] = process.argv.slice(2);
+/**
+ * Куда и под каким именем кладётся кадр и что включать после. Имя файла
+ * здесь обязано совпадать с тем, что ищет страница
+ * (`tutorial-frames.ts` / `greeting-frames.ts`) и шов 17/17-бис в
+ * `check-docs.mjs`; для поздравлений это сверяет
+ * `landing/scripts/greeting-frames.test.ts`.
+ */
+const KINDS = {
+  tutorial: {
+    prefix: 'tutorial-shot',
+    list: 'REAL_FRAME_LOCALES',
+    module: 'landing/src/lib/tutorial-frames.ts',
+    seam: 'шов 17',
+  },
+  greeting: {
+    prefix: 'greet-shot',
+    list: 'GREETING_REAL_FRAME_LOCALES',
+    module: 'landing/src/lib/greeting-frames.ts',
+    seam: 'шов 17-бис',
+  },
+};
+
+const args = process.argv.slice(2);
+const kindName = args[0] === '--greeting' ? 'greeting' : 'tutorial';
+if (kindName === 'greeting') args.shift();
+const kind = KINDS[kindName];
+const [locale, ...inputs] = args;
 if (!LOCALES.includes(locale) || inputs.length !== 4) {
   console.error(
-    `Использование: node scripts/tutorial-frames-process.mjs <${LOCALES.join('|')}> кадр1 кадр2 кадр3 кадр4`,
+    `Использование: node scripts/tutorial-frames-process.mjs [--greeting] <${LOCALES.join('|')}> кадр1 кадр2 кадр3 кадр4`,
   );
   process.exit(1);
 }
@@ -142,10 +179,10 @@ try {
       );
       process.exit(1);
     }
-    const out = path.join(ROOT, OUT_DIR, `tutorial-shot-${locale}-${index}.avif`);
+    const out = path.join(ROOT, OUT_DIR, `${kind.prefix}-${locale}-${index}.avif`);
     copyFileSync(chosen.file, out);
     console.log(
-      `${OUT_DIR}/tutorial-shot-${locale}-${index}.avif  ` +
+      `${OUT_DIR}/${kind.prefix}-${locale}-${index}.avif  ` +
         `${(chosen.bytes / 1024).toFixed(1)} КБ  (crf ${chosen.crf})`,
     );
   });
@@ -154,7 +191,7 @@ try {
 }
 
 console.log(
-  `Готово. Добавьте '${locale}' в REAL_FRAME_LOCALES ` +
-    '(landing/src/lib/tutorial-frames.ts) — ПОСЛЕ этого шага, не раньше: ' +
-    'порядок проверяет шов 17 в scripts/check-docs.mjs.',
+  `Готово. Добавьте '${locale}' в ${kind.list} ` +
+    `(${kind.module}) — ПОСЛЕ этого шага, не раньше: ` +
+    `порядок проверяет ${kind.seam} в scripts/check-docs.mjs.`,
 );

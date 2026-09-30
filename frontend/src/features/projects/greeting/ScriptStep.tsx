@@ -162,8 +162,12 @@ export function ScriptStep({
             hint={w.editScriptHint}
             counter={`${text.length}/2000`}
           >
+            {/* Текст сценария пересказывает бриф с именами — личный
+                текст, на кадре лендинга размывается (этап I ТЗ Greeting
+                2.0, §5.3). */}
             <Textarea
               data-qa="greeting-script-edit"
+              data-qa-mask="personal-script"
               rows={4}
               value={text}
               onChange={(e) => {

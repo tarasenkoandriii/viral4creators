@@ -86,6 +86,24 @@ export const FIXTURE_IDS = {
   greetingReadyProject: 'fixture-tutorial-greeting-ready-project',
   greetingDraftingSession: 'fixture-tutorial-greeting-drafting-session',
   greetingReadySession: 'fixture-tutorial-greeting-ready-session',
+  /**
+   * Четвёртый проект-поздравление — под кадр «готовый ролик» лендинга
+   * (этап I ТЗ `docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md`,
+   * §5.3, 30.09.2026).
+   *
+   * Отдельный проект, а не рендер в «готовом к рендеру»: готовый ролик
+   * прячет кнопку запуска, и сценарий хука `greeting-render` на том
+   * проекте перестал бы проходить навсегда.
+   *
+   * Ролика сидирование НЕ заводит: выдуманный `pathname` дал бы на
+   * кадре битый плеер, а кадр обязан показывать настоящий ролик с
+   * ИИ-ведущим. Ролик рендерит оператор отдельной кнопкой
+   * (`doc/GREETING-FRAMES-CAPTURE.md`), и потому сессия этого проекта
+   * при пересеве НЕ перезаписывается — иначе каждое «Завести фикстуру»
+   * стирало бы оплаченный ролик.
+   */
+  greetingDoneProject: 'fixture-tutorial-greeting-done-project',
+  greetingDoneSession: 'fixture-tutorial-greeting-done-session',
 } as const;
 
 export interface FixtureSeedResult {
@@ -107,6 +125,9 @@ export interface FixtureSeedResult {
   greetingDraftingProjectId: string;
   /** Поздравление: сценарий собран, видны все девять карточек. */
   greetingReadyProjectId: string;
+  /** Поздравление под кадр «готовый ролик»: сессия есть, ролик —
+   *  только после рендера оператором. */
+  greetingDoneProjectId: string;
   /** Человекочитаемый журнал шагов — тот же текст, что раньше шёл в console.log CLI-скрипта. */
   log: string[];
 }
@@ -519,6 +540,14 @@ export async function seedFixtureUser(
     projectId: string,
     title: string,
     recipientName: string,
+    // Повод и отправитель — параметрами ради четвёртого проекта: его
+    // ролик попадает на лендинг НЕМАСКИРОВАННЫМ (кадр 4 — это и есть
+    // сам ролик), значит и в брифе, и в ролике не должно быть
+    // выдуманного имени человека. Трём прежним нужны прежние значения.
+    extra: {
+      occasion?: 'BIRTHDAY' | 'NEW_YEAR';
+      senderName?: string;
+    } = {},
   ) => {
     const greetingProject = await prisma.project.upsert({
       where: { id: projectId },
@@ -540,10 +569,10 @@ export async function seedFixtureUser(
       // Повод из КАТАЛОГА, а не `OTHER`: у `OTHER` регистр зависит от
       // описания и определяется в том числе платным классификатором —
       // фикстуре такое ни к чему.
-      occasion: 'BIRTHDAY' as const,
+      occasion: extra.occasion ?? ('BIRTHDAY' as const),
       customOccasionText: null,
       recipientName,
-      senderName: 'Команда',
+      senderName: extra.senderName ?? 'Команда',
       tone: 'WARM' as const,
       personalMessage: null,
       presenterProvider: 'grok',
@@ -576,12 +605,26 @@ export async function seedFixtureUser(
     'Вера',
   );
 
+  // Четвёртый проект — без имени человека вовсе: «Коллеги» от «Команды»
+  // к Новому году. Это роли, а не выдуманные люди, и повод, к которому
+  // такое обращение естественно (правило §5.5 образца: выдуманных имён
+  // на маркетинговом кадре нет — а ролик в кадре 4 не маскируется).
+  const greetingDone = await seedGreetingProject(
+    FIXTURE_IDS.greetingDoneProject,
+    'Fixture Greeting (кадр «готовый ролик»)',
+    'Коллеги',
+    { occasion: 'NEW_YEAR', senderName: 'Команда' },
+  );
+
   const seedGreetingSession = async (
     id: string,
     projectId: string,
     brief: Parameters<typeof greetingBriefSnapshotFrom>[0],
     withPrompt: boolean,
     note: string,
+    // `false` — сессию только завести, существующую не трогать: у
+    // четвёртого проекта в ней живёт оплаченный ролик (см. FIXTURE_IDS).
+    overwrite = true,
   ) => {
     // Тип объявлен, а не выведен, и это ТОТ ЖЕ приём, которым пишет
     // снимок сам продукт (`SessionService.createSession`). Мимо него не
@@ -614,7 +657,9 @@ export async function seedFixtureUser(
     };
     await prisma.session.upsert({
       where: { id },
-      update: fields,
+      // Владелец — и при непересеве: фикстура могла переехать на
+      // другого пользователя, и чужая сессия не открылась бы в мастере.
+      update: overwrite ? fields : { userId: user.id, projectId },
       create: { id, ...fields },
     });
     log.push(`${note}: ${id}`);
@@ -634,6 +679,17 @@ export async function seedFixtureUser(
     true,
     'Сессия поздравления со сценарием (все девять карточек)',
   );
+  // Без сценария: его соберёт настоящий конвейер вместе с рендером по
+  // кнопке оператора — написанный здесь руками текст ушёл бы в ролик,
+  // который показывает лендинг.
+  await seedGreetingSession(
+    FIXTURE_IDS.greetingDoneSession,
+    greetingDone.projectId,
+    greetingDone.brief,
+    false,
+    'Сессия поздравления под кадр «готовый ролик» (ролик — по кнопке оператора, пересев его не трогает)',
+    false,
+  );
 
   log.push('Готово: фикстурные данные заведены/обновлены.');
 
@@ -651,6 +707,7 @@ export async function seedFixtureUser(
     greetingProjectId: greetingFresh.projectId,
     greetingDraftingProjectId: greetingDrafting.projectId,
     greetingReadyProjectId: greetingReady.projectId,
+    greetingDoneProjectId: greetingDone.projectId,
     log,
   };
 }
