@@ -98,7 +98,13 @@ import {
   resolveScenarioRoute,
 } from '../tutorial-runner/route-templates';
 import { greetingContext } from '../tutorial-runner/tutorial-scenario-runner.service';
-import { computeDHash, hasChanged, diffScore } from './perceptual-hash';
+import {
+  ChangeSensitivity,
+  computeSnapshotHash,
+  diffScore,
+  hasChanged,
+  resolveChangeSensitivity,
+} from './perceptual-hash';
 import {
   runScenario,
   type ScenarioPage,
@@ -810,7 +816,9 @@ export class UiSnapshotRunnerService {
         };
       }
 
-      const hash = await computeDHash(buffer);
+      // Составной отпечаток (dHash + сетка яркостей): голый dHash не видел
+      // появления целого блока контента — см. `computeSnapshotHash`.
+      const hash = computeSnapshotHash(buffer);
 
       const previous = await this.prisma.uiSnapshot.findFirst({
         where: {
@@ -829,9 +837,14 @@ export class UiSnapshotRunnerService {
         'image/png',
       );
 
-      const changed = previous ? this.compareToLatest(hash, previous) : false;
+      const sensitivity = this.changeSensitivity();
+      const changed = previous
+        ? this.compareToLatest(hash, previous, sensitivity)
+        : false;
       const score =
-        previous?.diffHash != null ? diffScore(hash, previous.diffHash) : null;
+        previous?.diffHash != null
+          ? diffScore(hash, previous.diffHash, sensitivity)
+          : null;
 
       await this.prisma.uiSnapshot.create({
         data: {
@@ -858,9 +871,28 @@ export class UiSnapshotRunnerService {
   private compareToLatest(
     hash: string,
     previous: { diffHash: string | null },
+    sensitivity: ChangeSensitivity,
   ): boolean {
     if (!previous.diffHash) return false;
-    return hasChanged(hash, previous.diffHash);
+    return hasChanged(hash, previous.diffHash, sensitivity);
+  }
+
+  /**
+   * Чувствительность «экран изменился» — из окружения на КАЖДЫЙ снимок,
+   * а не один раз в конструкторе: владелец подкручивает её переменной
+   * окружения, и на serverless это вступает в силу без знания о том,
+   * когда был собран экземпляр сервиса. Неверное значение не роняет
+   * обход, но и не проходит молча — иначе владелец думал бы, что
+   * загрубил сравнение, а работали бы умолчания.
+   */
+  private changeSensitivity(): ChangeSensitivity {
+    const { sensitivity, invalid } = resolveChangeSensitivity(process.env);
+    for (const name of invalid) {
+      this.logger.warn(
+        `${name}="${process.env[name]}" — не целое в допустимом диапазоне, взято умолчание`,
+      );
+    }
+    return sensitivity;
   }
 
   /**

@@ -138,7 +138,7 @@ describe('snapshotFromSession', () => {
         { ...session, productInformation: undefined } as never,
         {},
       ),
-    ).toThrow(/No product information/);
+    ).toThrow(/Сначала добавьте товар/);
   });
 });
 
@@ -249,7 +249,7 @@ describe('snapshotFromSession — GREETING_VIDEO', () => {
         { ...greetingSession, greetingBriefSnapshot: undefined } as never,
         {},
       ),
-    ).toThrow(/No product information/);
+    ).toThrow(/Сначала добавьте товар/);
   });
 });
 
@@ -818,7 +818,9 @@ describe('SharedVideoService — operator', () => {
     prisma.sharedVideoPage.findUnique.mockResolvedValueOnce(
       row({ status: 'REJECTED' }),
     );
-    await expect(service.approve('sv1', 'op1')).rejects.toThrow(/only PENDING/);
+    await expect(service.approve('sv1', 'op1')).rejects.toThrow(
+      /уже рассмотрена/,
+    );
   });
 });
 

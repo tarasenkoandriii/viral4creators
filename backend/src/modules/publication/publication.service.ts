@@ -54,6 +54,12 @@ import {
 } from './dto/publication.dto';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
+/**
+ * «Заявки нет» — один текст на все места; номер заявки в текст не
+ * подставляется, человеку он ничего не говорит (аудит Д-5).
+ */
+const PUBLICATION_REQUEST_NOT_FOUND = 'Заявка на публикацию не найдена';
+
 /** Structural row type — see project.service.ts for why not Prisma's. */
 interface PublicationRow {
   id: string;
@@ -127,15 +133,16 @@ export function snapshotFromSession(
     video.status !== GenerationStatus.COMPLETE ||
     !video.downloadUrl
   ) {
-    throw new BadRequestException(
-      'No completed video in this session — generate the video first',
-    );
+    throw new BadRequestException({
+      code: 'PUBLICATION_NO_VIDEO',
+      message: 'Готового ролика пока нет — сначала сгенерируйте видео',
+    });
   }
   const product = session.productInformation;
   const title = (dto.title ?? product?.productName ?? '').trim().slice(0, 100);
   if (!title) {
     throw new BadRequestException(
-      'title is required (no product name to fall back to)',
+      'Укажите название ролика — у товара нет названия, подставить нечего',
     );
   }
   const category = product?.category?.trim() || null;
@@ -488,12 +495,13 @@ export class PublicationService {
       await this.prisma.publicationRequest.findFirst({
         where: { id: requestId, sessionId, userId },
       });
-    if (!row)
-      throw new NotFoundException(`Publication request ${requestId} not found`);
+    if (!row) throw new NotFoundException(PUBLICATION_REQUEST_NOT_FOUND);
     if (row.status !== 'PENDING') {
-      throw new BadRequestException(
-        `Only PENDING requests can be withdrawn (this one is ${row.status})`,
-      );
+      throw new BadRequestException({
+        code: 'PUBLICATION_ALREADY_REVIEWED',
+        message:
+          'Заявку уже рассмотрел оператор — отозвать можно только ту, что ждёт проверки',
+      });
     }
     await this.prisma.publicationRequest.delete({ where: { id: requestId } });
     // Копия ролика принадлежала заявке — вместе с ней и уходит (§22).
@@ -547,7 +555,7 @@ export class PublicationService {
     const row = await this.find(id);
     if (row.status !== 'PENDING') {
       throw new BadRequestException(
-        `Request is ${row.status}, only PENDING can be approved`,
+        'Эта заявка уже рассмотрена — одобрить можно только заявку, которая ждёт проверки',
       );
     }
     const channelId = await this.resolveChannelId(row, dto.channelId);
@@ -592,8 +600,12 @@ export class PublicationService {
         channel.userId !== row.userId ||
         channel.platform !== row.platform
       ) {
+        // Идентификатор канала — в лог, оператору в тексте хватает смысла.
+        this.logger.warn(
+          `канал ${explicitChannelId} не подходит заявке ${row.id} (${row.platform})`,
+        );
         throw new BadRequestException(
-          `channelId ${explicitChannelId} is not a valid ${row.platform} channel owned by this request's author`,
+          `Выбранный канал не подходит: это должен быть действующий канал ${row.platform}, подключённый автором заявки`,
         );
       }
       return explicitChannelId;
@@ -639,7 +651,7 @@ export class PublicationService {
     const row = await this.find(id);
     if (row.status !== 'PENDING') {
       throw new BadRequestException(
-        `Request is ${row.status}, only PENDING can be rejected`,
+        'Эта заявка уже рассмотрена — отклонить можно только заявку, которая ждёт проверки',
       );
     }
     const updated: PublicationRow = await this.prisma.publicationRequest.update(
@@ -683,7 +695,7 @@ export class PublicationService {
     const row = await this.find(id);
     if (row.status !== 'FAILED') {
       throw new BadRequestException(
-        `Request is ${row.status}, only FAILED can be retried`,
+        'Повторить можно только заявку, публикация которой не удалась',
       );
     }
     const updated: PublicationRow = await this.prisma.publicationRequest.update(
@@ -748,11 +760,11 @@ export class PublicationService {
       where: { id: assetId },
     });
     if (!asset) {
-      throw new NotFoundException(`Обучающее видео ${assetId} не найдено`);
+      throw new NotFoundException('Обучающее видео не найдено');
     }
     if (!asset.reviewed) {
       throw new BadRequestException(
-        'Видео ещё не одобрено (reviewed=false) — сначала одобрите его на вкладке «Видео-контент»',
+        'Видео ещё не одобрено — сначала одобрите его на вкладке «Видео-контент»',
       );
     }
     if (asset.assemblyStatus !== 'complete' || !asset.blobUrl) {
@@ -773,8 +785,12 @@ export class PublicationService {
     // об именовании из tutorial-scenario-runner.service.ts второй раз.
     const videoPathname = pathnameFromBlobUrl(blobUrl, 'tutorial-videos/');
     if (!videoPathname) {
+      // Адрес файла и id — в лог: оператору по ним искать, но не в тексте.
+      this.logger.warn(
+        `обучающее видео ${assetId}: адрес файла вне tutorial-videos/ — ${blobUrl}`,
+      );
       throw new BadRequestException(
-        `blobUrl обучающего видео ${assetId} не под ожидаемым префиксом tutorial-videos/ — публикация невозможна`,
+        'Файл обучающего видео лежит не в том хранилище — публикация невозможна',
       );
     }
 
@@ -786,8 +802,11 @@ export class PublicationService {
       channel.userId !== operatorUserId ||
       channel.platform !== dto.platform
     ) {
+      this.logger.warn(
+        `канал ${dto.channelId} не подходит оператору ${operatorUserId} (${dto.platform})`,
+      );
       throw new BadRequestException(
-        `channelId ${dto.channelId} — не действующий ${dto.platform}-канал, подключённый именно этим оператором`,
+        `Выбранный канал не подходит: это должен быть действующий канал ${dto.platform}, подключённый вами`,
       );
     }
 
@@ -813,7 +832,7 @@ export class PublicationService {
       });
       if (!stillThere) {
         throw new ConflictException(
-          `Обучающее видео ${assetId} только что убрано подметальщиком устаревших роликов — публиковать нечего`,
+          'Обучающее видео только что убрано как устаревшее — публиковать нечего',
         );
       }
 
@@ -823,8 +842,12 @@ export class PublicationService {
           select: { id: true, status: true },
         });
       if (existing) {
+        // Номер заявки — в лог; оператор найдёт её в списке по видео.
+        this.logger.warn(
+          `обучающее видео ${assetId}: уже есть заявка ${existing.id} (${existing.status})`,
+        );
         throw new ConflictException(
-          `Это видео уже в очереди ${dto.platform} (${existing.status}, заявка ${existing.id})` +
+          `Это видео уже в очереди ${dto.platform} (статус заявки: ${existing.status})` +
             (existing.status === 'FAILED'
               ? ' — используйте «Повторить» на этой заявке, а не публикуйте заново'
               : ''),
@@ -895,11 +918,11 @@ export class PublicationService {
     });
     if (!owner?.userId) {
       throw new ForbiddenException(
-        'Publishing needs a signed-in owner — this session was created anonymously',
+        'Публикация требует владельца сессии — эта сессия анонимна',
       );
     }
     if (owner.userId !== userId) {
-      throw new ForbiddenException('This session belongs to another user');
+      throw new ForbiddenException('Эта сессия принадлежит другому аккаунту');
     }
     return session;
   }
@@ -909,8 +932,7 @@ export class PublicationService {
       await this.prisma.publicationRequest.findUnique({
         where: { id },
       });
-    if (!row)
-      throw new NotFoundException(`Publication request ${id} not found`);
+    if (!row) throw new NotFoundException(PUBLICATION_REQUEST_NOT_FOUND);
     return row;
   }
 }

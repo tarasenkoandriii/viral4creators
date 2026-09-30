@@ -44,6 +44,7 @@ import { usePostprodVideo } from '../../hooks/usePostprodVideo';
 import { postprodViewState } from '../../lib/video-polling';
 import { RevoicePanel } from '../generation/RevoicePanel';
 import { revoiceBlock } from '../../lib/revoice-eligibility';
+import { greetingRevoiceVoice } from '../../lib/revoice-greeting-voice';
 import { ExportPanel } from '../generation/ExportPanel';
 import { AudioTracksPanel } from './AudioTracksPanel';
 import { PublishPanel } from '../generation/PublishPanel';
@@ -224,6 +225,15 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
           hasBrandSnapshot: !!snapshot,
           hasGreetingSnapshot: !!session?.greetingBriefSnapshot,
         })}
+        // Поздравление: брендбука нет, голос — в снимке брифа и меняется
+        // только в мастере поздравления (PATCH brand-manifest давал 404).
+        greetingVoice={greetingRevoiceVoice({
+          hasBrandSnapshot: !!snapshot,
+          greetingBriefSnapshot: session?.greetingBriefSnapshot,
+        })}
+        greetingWizardRoute={
+          session?.projectId ? routes.greetingVideo(session.projectId) : null
+        }
       />
 
       <ExportPanel sessionId={sessionId} video={video} />

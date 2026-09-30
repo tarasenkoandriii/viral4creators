@@ -50,6 +50,19 @@ export const OG_LOCALES: Record<Locale, string> = {
   es: 'es_ES',
 };
 
+/**
+ * Направление письма для `<html dir>`. Все пять языков — слева направо,
+ * но таблица, а не константа `'ltr'` в разметке: `Record<Locale, …>` не
+ * даст добавить шестую локаль (скажем, арабскую), не решив за неё и это.
+ */
+export const LOCALE_DIR: Record<Locale, 'ltr' | 'rtl'> = {
+  ru: 'ltr',
+  uk: 'ltr',
+  en: 'ltr',
+  de: 'ltr',
+  es: 'ltr',
+};
+
 export function isLocale(value: string): value is Locale {
   return (locales as readonly string[]).includes(value);
 }

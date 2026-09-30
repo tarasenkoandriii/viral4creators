@@ -217,7 +217,7 @@ export class PublicAuctionController {
       } catch {
         res.status(404).json({
           success: false,
-          error: { code: 'not_found', message: 'auction listing not found' },
+          error: { code: 'not_found', message: 'Лот не найден' },
         });
         return;
       }

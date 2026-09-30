@@ -59,6 +59,14 @@ import {
 } from './dto/shared-video.dto';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
+/**
+ * Отказ «страницы нет» — один текст на все места: для постороннего
+ * снятая, отклонённая и никогда не существовавшая страница выглядят
+ * одинаково. Идентификатор страницы в текст не подставляется — человеку
+ * он ничего не говорит (аудит Д-5).
+ */
+const PAGE_NOT_FOUND = 'Страница с роликом не найдена или снята с публикации';
+
 /** Structural row type — see project.service.ts for why not Prisma's. */
 interface SharedVideoRow {
   id: string;
@@ -187,9 +195,10 @@ export function snapshotFromSession(
     video.status !== GenerationStatus.COMPLETE ||
     !video.downloadUrl
   ) {
-    throw new BadRequestException(
-      'No completed video in this session — generate the video first',
-    );
+    throw new BadRequestException({
+      code: 'SHARED_VIDEO_NO_VIDEO',
+      message: 'Готового ролика пока нет — сначала сгенерируйте видео',
+    });
   }
 
   const common = {
@@ -226,7 +235,7 @@ export function snapshotFromSession(
     const fallback = greeting.customOccasionText?.trim() || greeting.occasion;
     const title = (dto.title ?? fallback).trim().slice(0, 100);
     if (!title) {
-      throw new BadRequestException('title is required');
+      throw new BadRequestException('Укажите заголовок страницы');
     }
     return {
       ...common,
@@ -248,14 +257,15 @@ export function snapshotFromSession(
 
   const product = session.productInformation;
   if (!product?.productName) {
-    throw new BadRequestException(
-      'No product information in this session — add the product first',
-    );
+    throw new BadRequestException({
+      code: 'SHARED_VIDEO_NO_PRODUCT',
+      message: 'Сначала добавьте товар — без него страницу не собрать',
+    });
   }
   const title = (dto.title ?? product.productName ?? '').trim().slice(0, 100);
   if (!title) {
     throw new BadRequestException(
-      'title is required (no product name to fall back to)',
+      'Укажите заголовок страницы — у товара нет названия, подставить нечего',
     );
   }
   return {
@@ -394,12 +404,20 @@ export class SharedVideoService {
         where: { sessionId, status: { in: ['PENDING', 'PUBLISHED'] } },
         select: { id: true, status: true },
       });
+      // Два отдельных броска, а не тернарник внутри одного: шов
+      // «тексты отказов» в check-docs читает первый аргумент исключения
+      // и выражение-развилку проверить не смог бы.
+      if (open?.status === 'PUBLISHED') {
+        throw new ConflictException({
+          code: 'SHARED_VIDEO_ALREADY_PUBLISHED',
+          message: 'У этого ролика уже есть открытая страница',
+        });
+      }
       if (open) {
-        throw new ConflictException(
-          open.status === 'PUBLISHED'
-            ? 'This video already has a public page'
-            : 'This video already has a pending shared-page request',
-        );
+        throw new ConflictException({
+          code: 'SHARED_VIDEO_ALREADY_PENDING',
+          message: 'Страница этого ролика уже ждёт проверки',
+        });
       }
 
       return (await tx.sharedVideoPage.create({
@@ -541,8 +559,7 @@ export class SharedVideoService {
       await this.prisma.sharedVideoPage.findFirst({
         where: { id: pageId, sessionId, userId },
       });
-    if (!row)
-      throw new NotFoundException(`Shared video page ${pageId} not found`);
+    if (!row) throw new NotFoundException(PAGE_NOT_FOUND);
     await this.prisma.sharedVideoPage.delete({ where: { id: pageId } });
     await this.blob.deleteMany([
       `shared-videos/${pageId}/video.mp4`,
@@ -566,7 +583,7 @@ export class SharedVideoService {
     const row: SharedVideoRow | null =
       await this.prisma.sharedVideoPage.findUnique({ where: { id } });
     if (!row || row.status !== 'PUBLISHED') {
-      throw new NotFoundException(`Shared video page ${id} not found`);
+      throw new NotFoundException(PAGE_NOT_FOUND);
     }
     await this.bumpViewCount(id);
     return toPublicView(row);
@@ -601,7 +618,7 @@ export class SharedVideoService {
     const row: SharedVideoRow | null =
       await this.prisma.sharedVideoPage.findUnique({ where: { id } });
     if (!row || row.status !== 'PUBLISHED') {
-      throw new NotFoundException(`Shared video page ${id} not found`);
+      throw new NotFoundException(PAGE_NOT_FOUND);
     }
     const session = await this.sessions.createSession(
       undefined,
@@ -772,10 +789,10 @@ export class SharedVideoService {
   ): Promise<SharedVideoPageView> {
     const row: SharedVideoRow | null =
       await this.prisma.sharedVideoPage.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException(`Shared video page ${id} not found`);
+    if (!row) throw new NotFoundException(PAGE_NOT_FOUND);
     if (showcase && row.status !== 'PUBLISHED') {
       throw new ConflictException(
-        'Only a published page can be added to the showcase',
+        'В витрину можно добавить только опубликованную страницу',
       );
     }
     // Этап G (ТЗ Greeting 2.0 §4.9): ролик с персоной автора — в витрину
@@ -882,7 +899,7 @@ export class SharedVideoService {
   private async findPublished(id: string): Promise<SharedVideoRow> {
     const row = await this.find(id);
     if (row.status !== 'PUBLISHED') {
-      throw new NotFoundException(`Shared video page ${id} not found`);
+      throw new NotFoundException(PAGE_NOT_FOUND);
     }
     return row;
   }
@@ -939,7 +956,7 @@ export class SharedVideoService {
     const row = await this.find(id);
     if (row.status !== 'PENDING') {
       throw new BadRequestException(
-        `Request is ${row.status}, only PENDING can be approved`,
+        'Эта заявка уже рассмотрена — одобрить можно только заявку, которая ждёт проверки',
       );
     }
     const updated: SharedVideoRow = await this.prisma.sharedVideoPage.update({
@@ -968,7 +985,7 @@ export class SharedVideoService {
     const row = await this.find(id);
     if (row.status !== 'PENDING') {
       throw new BadRequestException(
-        `Request is ${row.status}, only PENDING can be rejected`,
+        'Эта заявка уже рассмотрена — отклонить можно только заявку, которая ждёт проверки',
       );
     }
     const updated: SharedVideoRow = await this.prisma.sharedVideoPage.update({
@@ -1009,7 +1026,7 @@ export class SharedVideoService {
   private async find(id: string): Promise<SharedVideoRow> {
     const row: SharedVideoRow | null =
       await this.prisma.sharedVideoPage.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException(`Shared video page ${id} not found`);
+    if (!row) throw new NotFoundException(PAGE_NOT_FOUND);
     return row;
   }
 }

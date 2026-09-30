@@ -1272,7 +1272,15 @@
     "prelistenHint": "Wählen Sie zuerst oben eine Stimme — das Vorab-Hören liest Ihren Sprechertext mit dieser Stimme vor.",
     "submitCta": "Neu vertonen",
     "footerNote": "Wird wie eine normale Nachbearbeitung abgerechnet — eine neue Sprachsynthese und ein neuer Verarbeitungsauftrag.",
-    "blockedNoBrandSnapshot": "Dieses Video hat keinen Brandbook-Snapshot — die gewählte Stimme lässt sich nirgends speichern, daher ist die Neuvertonung nicht verfügbar. Sie funktioniert für Videos aus einem Projekt mit Brandbook."
+    "blockedNoBrandSnapshot": "Dieses Video hat keinen Brandbook-Snapshot — die gewählte Stimme lässt sich nirgends speichern, daher ist die Neuvertonung nicht verfügbar. Sie funktioniert für Videos aus einem Projekt mit Brandbook.",
+    "greetingVoiceHint": "Das ist ein Glückwunsch — seine Stimme wird im Glückwunsch-Assistenten gewählt, nicht hier. Die Neuvertonung nutzt dieselbe Stimme; den Text kannst du trotzdem bearbeiten.",
+    "greetingVoiceClone": "Stimme: eigene — „{label}“",
+    "greetingVoicePreset": "Stimme: Grok-Moderator ({label})",
+    "greetingVoiceSoniox": "Stimme: Soniox — {label}",
+    "greetingVoiceSonioxDefault": "Stimme: Soniox-Standard",
+    "greetingVoiceDefault": "Stimme: Standard",
+    "greetingChangeVoiceCta": "Stimme im Glückwunsch-Assistenten ändern",
+    "greetingNoProjectHint": "Die Stimme lässt sich im Glückwunsch-Assistenten seines Projekts ändern."
   },
   "postprodScreen": {
     "title": "Postprod",

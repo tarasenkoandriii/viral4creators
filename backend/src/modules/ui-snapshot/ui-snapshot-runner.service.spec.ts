@@ -15,15 +15,20 @@ jest.mock('../../common/headless-chromium', () => ({
 // перцептивный хэш (perceptual-hash.ts) уже отдельно покрыт своими
 // тестами (perceptual-hash.spec.ts) — здесь мокается, чтобы проверять
 // логику сравнения/записи независимо от реального декодирования PNG.
-const computeDHashMock = jest.fn();
+// `resolveChangeSensitivity` — настоящая: проверяется, что переменные
+// окружения доходят до `hasChanged`, а не подменённое её поведение.
+const computeSnapshotHashMock = jest.fn();
 const hasChangedMock = jest.fn();
 const diffScoreMock = jest.fn();
 jest.mock('./perceptual-hash', () => ({
-  computeDHash: (...args: unknown[]) => computeDHashMock(...args),
+  computeSnapshotHash: (...args: unknown[]) => computeSnapshotHashMock(...args),
   hasChanged: (...args: unknown[]) => hasChangedMock(...args),
   diffScore: (...args: unknown[]) => diffScoreMock(...args),
+  resolveChangeSensitivity:
+    jest.requireActual('./perceptual-hash').resolveChangeSensitivity,
 }));
 
+import { Logger } from '@nestjs/common';
 import {
   PERSONAL_TEXT_MASK_CSS,
   PERSONAL_TEXT_MASK_PREFIX,
@@ -36,6 +41,8 @@ const ENV_KEYS = [
   'FIXTURE_USER_TOKEN',
   'TMA_PUBLIC_URL',
   'API_PUBLIC_URL',
+  'UI_SNAPSHOT_CELL_DELTA',
+  'UI_SNAPSHOT_MIN_CHANGED_CELLS',
 ];
 const envBefore: Record<string, string | undefined> = {};
 
@@ -45,7 +52,9 @@ beforeEach(() => {
   process.env.FIXTURE_USER_TOKEN = 'sekret';
   process.env.TMA_PUBLIC_URL = 'https://app.example.com';
   process.env.API_PUBLIC_URL = 'https://api.example.com/api';
-  computeDHashMock.mockReturnValue('abc123');
+  delete process.env.UI_SNAPSHOT_CELL_DELTA;
+  delete process.env.UI_SNAPSHOT_MIN_CHANGED_CELLS;
+  computeSnapshotHashMock.mockReturnValue('abc123');
   hasChangedMock.mockReturnValue(false);
   diffScoreMock.mockReturnValue(0);
 });
@@ -760,6 +769,78 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
       'ui-snapshot-run:generate:changed',
       expect.stringContaining('generate'),
     );
+  });
+
+  it('в diffHash пишется составной отпечаток целиком — иначе следующей ночи не с чем сравнить сетку', async () => {
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, prisma } = build();
+    const composite = '0123456789abcdef:g1x1:ff';
+    computeSnapshotHashMock.mockReturnValue(composite);
+
+    await service.run();
+
+    expect(prisma.uiSnapshot.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ diffHash: composite }),
+      }),
+    );
+  });
+
+  it('чувствительность из окружения доходит до hasChanged и diffScore', async () => {
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, prisma } = build();
+    prisma.uiSnapshot.findFirst.mockResolvedValue({
+      blobUrl: 'https://blob.example.com/prev.png',
+      diffHash: 'prevhash',
+    });
+    process.env.UI_SNAPSHOT_CELL_DELTA = '20';
+    process.env.UI_SNAPSHOT_MIN_CHANGED_CELLS = '6';
+
+    await service.run();
+
+    const expected = { cellDelta: 20, minChangedCells: 6 };
+    expect(hasChangedMock).toHaveBeenCalledWith('abc123', 'prevhash', expected);
+    expect(diffScoreMock).toHaveBeenCalledWith('abc123', 'prevhash', expected);
+  });
+
+  it('неверная чувствительность — умолчание и предупреждение в лог, обход не падает', async () => {
+    const page = buildFakePage();
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service, prisma } = build();
+    prisma.uiSnapshot.findFirst.mockResolvedValue({
+      blobUrl: 'https://blob.example.com/prev.png',
+      diffHash: 'prevhash',
+    });
+    process.env.UI_SNAPSHOT_MIN_CHANGED_CELLS = 'три';
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+
+    const result = await service.run();
+
+    expect(result.failed).toBe(0);
+    expect(hasChangedMock).toHaveBeenCalledWith('abc123', 'prevhash', {
+      cellDelta: 12,
+      minChangedCells: 3,
+    });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('UI_SNAPSHOT_MIN_CHANGED_CELLS'),
+    );
+    warn.mockRestore();
   });
 
   it('маршрут postprod-video без sessionId у фикстуры — ошибка маршрута, не падает весь батч', async () => {

@@ -91,7 +91,8 @@ Next.js 14 App Router, пять локалей `ru` (по умолчанию), `
 `landing/src/dictionaries/*.json`, серверные компоненты почти везде;
 клиентские — `Header.tsx`, `Faq.tsx`, `LocaleSwitcher.tsx`,
 `ShareButtons.tsx` (через `useDictionary()` из
-`lib/dictionary-context.tsx`), а также `SetHtmlLang.tsx` и
+`lib/dictionary-context.tsx`), а также `SetHtmlLang.tsx` (удалён
+30.09.2026: `<html lang>` теперь серверный, см. `components/HtmlDocument.tsx`) и
 `app/[locale]/not-found.tsx` (уточнено при аудите 15.09.2026: в
 исходной редакции пропущены — но оба не делают сетевых запросов, вывод
 §2.2 о «первом клиентском запросе» это не меняет). Стили — один `landing/src/app/globals.css`

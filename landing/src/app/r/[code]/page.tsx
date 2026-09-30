@@ -1,14 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { cookies, headers } from 'next/headers';
+import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { getDictionary } from '../../../lib/get-dictionary';
-import {
-  defaultLocale,
-  isLocale,
-  LOCALE_COOKIE,
-  type Locale,
-} from '../../../lib/i18n';
+import { cookieLocale } from '../../../lib/cookie-locale';
 import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
 import {
   SITE_URL,
@@ -56,11 +51,6 @@ import {
  */
 export const dynamic = 'force-dynamic';
 
-function currentLocale(): Locale {
-  const raw = cookies().get(LOCALE_COOKIE)?.value;
-  return raw && isLocale(raw) ? raw : defaultLocale;
-}
-
 export function generateMetadata({
   params,
 }: {
@@ -68,7 +58,7 @@ export function generateMetadata({
 }): Metadata {
   const code = normalizeCode(params.code);
   if (!code) return {};
-  const locale = currentLocale();
+  const locale = cookieLocale();
   const t = getDictionary(locale).referral;
   return {
     title: t.metaTitle,
@@ -113,7 +103,7 @@ export default async function ReferralPage({
     await registerReferralVisit(code);
   }
 
-  const locale = currentLocale();
+  const locale = cookieLocale();
   const dict = getDictionary(locale);
   const t = dict.referral;
   const telegramUrl = TELEGRAM_BOT_USERNAME

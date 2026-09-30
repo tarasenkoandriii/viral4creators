@@ -198,7 +198,7 @@ describe('snapshotFromSession', () => {
         { ...session, productInformation: undefined } as never,
         { platform: 'YOUTUBE' },
       ),
-    ).toThrow(/title is required/);
+    ).toThrow(/Укажите название ролика/);
   });
 });
 
@@ -483,7 +483,7 @@ describe('PublicationService.create', () => {
       build({ ownerId: null }).service.create('u1', 's1', {
         platform: 'YOUTUBE',
       }),
-    ).rejects.toThrow(/signed-in owner/);
+    ).rejects.toThrow(/требует владельца/);
     await expect(
       build({ ownerId: 'u2' }).service.create('u1', 's1', {
         platform: 'YOUTUBE',
@@ -706,7 +706,7 @@ describe('PublicationService.withdraw', () => {
       row({ status: 'APPROVED' }),
     );
     await expect(service.withdraw('u1', 's1', 'pr1')).rejects.toThrow(
-      /Only PENDING/,
+      /отозвать можно только ту, что ждёт проверки/,
     );
     prisma.publicationRequest.findFirst.mockResolvedValueOnce(row());
     await service.withdraw('u1', 's1', 'pr1');
@@ -758,7 +758,9 @@ describe('PublicationService — operator', () => {
     prisma.publicationRequest.findUnique.mockResolvedValueOnce(
       row({ status: 'REJECTED' }),
     );
-    await expect(service.approve('pr1', 'op1')).rejects.toThrow(/only PENDING/);
+    await expect(service.approve('pr1', 'op1')).rejects.toThrow(
+      /уже рассмотрена/,
+    );
     prisma.publicationRequest.findUnique.mockResolvedValueOnce(null);
     await expect(service.get('zz')).rejects.toThrow(NotFoundException);
   });
@@ -872,7 +874,9 @@ describe('PublicationService.retry — FAILED → APPROVED (§14.5)', () => {
 
   it('отказывает вне FAILED', async () => {
     const { service } = build({ found: row({ status: 'APPROVED' }) });
-    await expect(service.retry('pr1')).rejects.toThrow(/only FAILED/);
+    await expect(service.retry('pr1')).rejects.toThrow(
+      /публикация которой не удалась/,
+    );
   });
 });
 

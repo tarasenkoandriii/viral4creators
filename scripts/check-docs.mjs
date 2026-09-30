@@ -3113,12 +3113,20 @@ function checkGuideSeams() {
  */
 function checkUserFacingErrorSeams() {
   const DIRS = [
+    "backend/src/modules/auction",
     "backend/src/modules/client-site-tutorial",
+    "backend/src/modules/generation",
     "backend/src/modules/postprod",
+    "backend/src/modules/publication",
+    "backend/src/modules/shared-video",
     "backend/src/modules/tutorial-runner",
   ];
+  // Первый аргумент — литерал, константа или тело с машинным кодом
+  // `{ code: '…', message: <литерал|константа> }` (образец —
+  // common/greeting-errors.ts): текст в теле читает человек так же, как
+  // строку, и без этой ветки отказ с кодом выпадал бы из проверки молча.
   const EXCEPTIONS =
-    /new (NotFoundException|BadRequestException|ForbiddenException|ConflictException)\(\s*((`[^`]*`)|('[^']*')|("[^"]*")|([A-Z][A-Z0-9_]*))/g;
+    /new (NotFoundException|BadRequestException|ForbiddenException|ConflictException)\(\s*(?:\{\s*code:\s*(?:'[^']*'|[A-Za-z_][\w.]*),\s*message:\s*)?((`[^`]*`)|('[^']*')|("[^"]*")|([A-Z][A-Z0-9_]*))/g;
   // Подстановка именно идентификатора — `${id}`, `${projectId}`,
   // `${sessionId}`, `${draftId}`. Числа лимитов, селекторы и текст
   // чужой ошибки — это содержательные подстановки, они остаются.
@@ -3160,50 +3168,74 @@ function checkUserFacingErrorSeams() {
     );
   }
 
-  let checked = 0;
-  let viaShared = 0;
-  for (const dir of DIRS) {
-    const files = walk(path.join(ROOT, dir)).filter(
+  const dirFiles = DIRS.flatMap((dir) =>
+    walk(path.join(ROOT, dir)).filter(
       (f) =>
         f.endsWith(".ts") &&
         !f.endsWith(".spec.ts") &&
         !/-admin\.|\/admin-/.test(f),
-    );
-    for (const file of files) {
-      const rel = path.relative(ROOT, file);
-      const src = fs.readFileSync(file, "utf8");
-      for (const m of src.matchAll(EXCEPTIONS)) {
-        checked++;
-        const msg = m[2];
-        if (/^[A-Z][A-Z0-9_]*$/.test(msg)) {
-          if (shared.has(msg)) {
-            viaShared++;
-            continue;
-          }
-          problems.push(
-            `${rel}: отказ собран из константы ${msg}, которой нет среди ` +
-              "русских текстов в backend/src/common/user-facing-errors.ts",
-          );
+    ),
+  );
+  // Константы самих проверяемых модулей (`PAGE_NOT_FOUND` у страницы
+  // ролика, `PERSONA_VIDEO_NOT_FOR_SALE` у аукциона) — такой же законный
+  // аргумент, как общие: текст назван один раз на несколько мест своего
+  // модуля. Собираются из файлов тех же каталогов и проверяются тем же
+  // правилом, что общие, — иначе константа стала бы обходом шва.
+  for (const file of dirFiles) {
+    const rel = path.relative(ROOT, file);
+    const src = fs.readFileSync(file, "utf8");
+    for (const m of src.matchAll(
+      /^(?:export )?const ([A-Z][A-Z0-9_]*) =\s*'([^']*)';/gm,
+    )) {
+      if (!/[а-яА-ЯёЁ]/.test(m[2]) && !src.includes(`Exception(${m[1]})`)) {
+        // Английская константа, которую никто не бросает, — не отказ.
+        continue;
+      }
+      shared.add(m[1]);
+      if (!/[а-яА-ЯёЁ]/.test(m[2])) {
+        problems.push(
+          `${rel}: ${m[1]} = '${m[2]}' — текст отказа без единой русской буквы`,
+        );
+      }
+    }
+  }
+
+  let checked = 0;
+  let viaShared = 0;
+  for (const file of dirFiles) {
+    const rel = path.relative(ROOT, file);
+    const src = fs.readFileSync(file, "utf8");
+    for (const m of src.matchAll(EXCEPTIONS)) {
+      checked++;
+      const msg = m[2];
+      if (/^[A-Z][A-Z0-9_]*$/.test(msg)) {
+        if (shared.has(msg)) {
+          viaShared++;
           continue;
         }
-        if (!/[а-яА-ЯёЁ]/.test(msg)) {
-          problems.push(
-            `${rel}: отказ без единой русской буквы — ${msg}; ` +
-              "его прочитает пользователь, а не только лог",
-          );
-        }
-        if (ID_SUBST.test(msg)) {
-          problems.push(
-            `${rel}: в тексте отказа подставляется идентификатор — ${msg}; ` +
-              "человеку он ничего не говорит, а наружу светить его незачем",
-          );
-        }
+        problems.push(
+          `${rel}: отказ собран из константы ${msg}, которой нет среди ` +
+            "русских текстов в backend/src/common/user-facing-errors.ts",
+        );
+        continue;
+      }
+      if (!/[а-яА-ЯёЁ]/.test(msg)) {
+        problems.push(
+          `${rel}: отказ без единой русской буквы — ${msg}; ` +
+            "его прочитает пользователь, а не только лог",
+        );
+      }
+      if (ID_SUBST.test(msg)) {
+        problems.push(
+          `${rel}: в тексте отказа подставляется идентификатор — ${msg}; ` +
+            "человеку он ничего не говорит, а наружу светить его незачем",
+        );
       }
     }
   }
 
   // Две самые частые семьи закрыты целиком по всему бэкенду (аудит
-  // 27.09.2026, находка Д-5), поэтому они проверяются не только в трёх
+  // 27.09.2026, находка Д-5), поэтому они проверяются не только в
   // каталогах выше: вернуть `Session ${id} not found` в любом
   // пользовательском модуле теперь нельзя.
   const OLD_FAMILIES =

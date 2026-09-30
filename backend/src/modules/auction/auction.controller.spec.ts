@@ -205,7 +205,7 @@ describe('PublicAuctionController.stream — SSE живого эфира', () =>
     expect(res.status).toHaveBeenCalledWith(404);
     expect(res.json).toHaveBeenCalledWith({
       success: false,
-      error: { code: 'not_found', message: 'auction listing not found' },
+      error: { code: 'not_found', message: 'Лот не найден' },
     });
     expect(res.writeHead).not.toHaveBeenCalled();
     expect(service.getLiveUpdates).not.toHaveBeenCalled();

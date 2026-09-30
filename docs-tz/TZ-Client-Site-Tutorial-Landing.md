@@ -303,3 +303,7 @@ Site-Tutorial.md` — внутренний аналитический матер
    язык правится только на клиенте (`components/SetHtmlLang.tsx`). Это
    общее устройство лендинга, не этой страницы; hreflang и canonical при
    этом верны.
+   **Исправлено 30.09.2026:** `<html lang dir>` рисует
+   `app/[locale]/layout.tsx` через `components/HtmlDocument.tsx`, корневой
+   layout только пропускает детей, `SetHtmlLang` удалён; стережёт
+   `landing/scripts/html-lang.test.ts`.

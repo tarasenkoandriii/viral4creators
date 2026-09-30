@@ -129,9 +129,11 @@ export class AuctionService {
       where: { userId },
     });
     if (!profile) {
-      throw new ForbiddenException(
-        'complete the creator quiz first (POST /creator-profiles/quiz)',
-      );
+      throw new ForbiddenException({
+        code: 'AUCTION_CREATOR_PROFILE_REQUIRED',
+        message:
+          'Сначала пройдите анкету исполнителя — без неё выставить работу на аукцион нельзя',
+      });
     }
     return profile;
   }
@@ -148,12 +150,13 @@ export class AuctionService {
       where: { id: dto.portfolioItemId },
     });
     if (!item || item.creatorProfileId !== profile.id) {
-      throw new NotFoundException('portfolio item not found');
+      throw new NotFoundException('Работа в портфолио не найдена');
     }
     if (item.status !== 'PUBLISHED') {
-      throw new ConflictException(
-        'only a published portfolio item can be auctioned',
-      );
+      throw new ConflictException({
+        code: 'AUCTION_ITEM_NOT_PUBLISHED',
+        message: 'На аукцион можно выставить только опубликованную работу',
+      });
     }
     // Аудит-фикс: раньше здесь не проверялось, что у этой же работы уже
     // нет незавершённой заявки на другой аукцион — фронтенд просто не
@@ -167,27 +170,30 @@ export class AuctionService {
       },
     });
     if (existingLiveListing) {
-      throw new ConflictException(
-        'this work already has an active or pending auction listing',
-      );
+      throw new ConflictException({
+        code: 'AUCTION_ITEM_ALREADY_LISTED',
+        message: 'Эта работа уже выставлена на аукцион или ждёт проверки',
+      });
     }
 
     if (dto.includeBrandManifest) {
       if (!dto.brandManifestId) {
         throw new BadRequestException(
-          'brandManifestId is required when includeBrandManifest is true',
+          'Выберите бренд-бук, который продаётся вместе с работой',
         );
       }
       const manifest = await this.prisma.brandManifest.findUnique({
         where: { id: dto.brandManifestId },
       });
       if (!manifest || manifest.userId !== userId) {
-        throw new NotFoundException('brand manifest not found');
+        throw new NotFoundException('Бренд-бук не найден');
       }
       if (manifest.isLocked) {
-        throw new ConflictException(
-          'this brand manifest was already sold exclusively and can no longer be listed',
-        );
+        throw new ConflictException({
+          code: 'AUCTION_MANIFEST_SOLD',
+          message:
+            'Этот бренд-бук уже продан эксклюзивно — выставить его снова нельзя',
+        });
       }
       // Этап G (ТЗ Greeting 2.0 §4.7, Т-8): личный бренд-бук — лицо и
       // голос автора, продаже не подлежит. Независимо от PERSONA_ENABLED:
@@ -212,7 +218,7 @@ export class AuctionService {
     const reserve = dto.reservePrice ?? dto.startingPrice;
     if (dto.buyNowPrice != null && dto.buyNowPrice < reserve) {
       throw new BadRequestException(
-        'buyNowPrice must be >= reservePrice (or startingPrice if no reserve is set)',
+        'Цена мгновенного выкупа не может быть ниже резервной цены (а если резерв не задан — ниже стартовой)',
       );
     }
 
@@ -265,12 +271,13 @@ export class AuctionService {
       include: { bids: true },
     });
     if (!listing || listing.creatorProfileId !== profile.id) {
-      throw new NotFoundException('listing not found');
+      throw new NotFoundException('Лот не найден');
     }
     if (listing.status === 'WON') {
-      throw new ConflictException(
-        'cannot withdraw a listing that has already been won',
-      );
+      throw new ConflictException({
+        code: 'AUCTION_WITHDRAW_ALREADY_WON',
+        message: 'Лот уже выигран — снять его с торгов нельзя',
+      });
     }
     if (
       !LIVE_LISTING_STATUSES.includes(
@@ -297,9 +304,11 @@ export class AuctionService {
         (b) => b.amount >= reserve,
       );
       if (hasReserveMeetingBid) {
-        throw new ConflictException(
-          'cannot withdraw — at least one bid already meets the reserve price; this listing would sell at close, contact an operator to cancel a completed sale',
-        );
+        throw new ConflictException({
+          code: 'AUCTION_WITHDRAW_RESERVE_MET',
+          message:
+            'Снять лот нельзя: уже есть ставка не ниже резервной цены, и к закрытию он будет продан. Чтобы отменить сделку, напишите оператору',
+        });
       }
     }
     // Аудит-фикс: googleAdsCampaignId больше НЕ обнуляется здесь — см.
@@ -390,7 +399,7 @@ export class AuctionService {
     // отдаёт 404, тот же принцип, что уже применён к /item/:id для
     // непубличных PortfolioItem (§20).
     if (!listing || listing.status !== 'ACTIVE') {
-      throw new NotFoundException('auction listing not found');
+      throw new NotFoundException('Лот не найден');
     }
     return this.toPublicView(listing);
   }
@@ -427,17 +436,23 @@ export class AuctionService {
         include: { bids: true, creatorProfile: true },
       });
       if (!listing || listing.status !== 'ACTIVE') {
-        throw new NotFoundException('auction listing not found');
+        throw new NotFoundException('Лот не найден');
       }
       if (listing.expiresAt && listing.expiresAt.getTime() <= Date.now()) {
-        throw new ConflictException('this auction has already ended');
+        throw new ConflictException({
+          code: 'AUCTION_ENDED',
+          message: 'Торги по этому лоту уже закончились',
+        });
       }
       // Аудит-фикс: раньше ничего не мешало исполнителю самому ставить на
       // собственный лот (shill bidding) — включая мгновенный «выкуп»
       // через buyNowPrice, что фиктивно помечало бы брендбук как
       // проданный без реальной сделки на стороне.
       if (listing.creatorProfile.userId === userId) {
-        throw new ForbiddenException('cannot bid on your own auction listing');
+        throw new ForbiddenException({
+          code: 'AUCTION_OWN_LISTING',
+          message: 'На собственный лот ставить нельзя',
+        });
       }
 
       // Резерв НЕ проверяется здесь намеренно (§22.1, «Три разные цены»)
@@ -452,9 +467,10 @@ export class AuctionService {
       );
       const floor = Math.max(listing.startingPrice, currentHighest);
       if (amountMinor <= floor) {
-        throw new BadRequestException(
-          `bid must be higher than the current highest bid (${toMajorUnits(floor)})`,
-        );
+        throw new BadRequestException({
+          code: 'AUCTION_BID_TOO_LOW',
+          message: `Ставка должна быть выше текущей лучшей (${toMajorUnits(floor)})`,
+        });
       }
 
       const bid = await tx.bid.create({
@@ -1154,23 +1170,32 @@ export class AuctionService {
       include: { payment: true, portfolioItem: true },
     });
     if (!listing || listing.status !== 'WON' || !listing.payment) {
-      throw new NotFoundException('no pending payment for this listing');
+      throw new NotFoundException({
+        code: 'AUCTION_NO_PENDING_PAYMENT',
+        message: 'По этому лоту нет ожидающей оплаты',
+      });
     }
     if (listing.payment.paidAt) {
-      throw new ConflictException('payment already confirmed');
+      throw new ConflictException({
+        code: 'AUCTION_PAYMENT_CONFIRMED',
+        message: 'Оплата уже подтверждена',
+      });
     }
     if (listing.payment.paymentId) {
-      throw new ConflictException(
-        'checkout already started for this listing — use the existing payment link',
-      );
+      throw new ConflictException({
+        code: 'AUCTION_CHECKOUT_STARTED',
+        message:
+          'Оплата по этому лоту уже начата — воспользуйтесь уже выданной ссылкой на оплату',
+      });
     }
     const winningBid = await this.prisma.bid.findUnique({
       where: { id: listing.payment.winningBidId },
     });
     if (!winningBid || winningBid.buyerId !== userId) {
-      throw new ForbiddenException(
-        'only the winning bidder can pay for this listing',
-      );
+      throw new ForbiddenException({
+        code: 'AUCTION_NOT_WINNER',
+        message: 'Оплатить лот может только победитель торгов',
+      });
     }
 
     // listing.payment.amount из БД — минорные единицы; startAuctionCheckout
@@ -1203,10 +1228,16 @@ export class AuctionService {
       include: { payment: true },
     });
     if (!listing || listing.status !== 'WON' || !listing.payment) {
-      throw new NotFoundException('no pending payment for this listing');
+      throw new NotFoundException({
+        code: 'AUCTION_NO_PENDING_PAYMENT',
+        message: 'По этому лоту нет ожидающей оплаты',
+      });
     }
     if (listing.payment.paidAt) {
-      throw new ConflictException('payment already confirmed');
+      throw new ConflictException({
+        code: 'AUCTION_PAYMENT_CONFIRMED',
+        message: 'Оплата уже подтверждена',
+      });
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -1250,7 +1281,7 @@ export class AuctionService {
     const listing = await this.prisma.auctionListing.findUnique({
       where: { id: listingId },
     });
-    if (!listing) throw new NotFoundException('auction listing not found');
+    if (!listing) throw new NotFoundException('Лот не найден');
     if (listing.status !== 'QUEUED' && listing.status !== 'ACTIVE') {
       throw new BadRequestException(
         'студию можно назначить лоту только в очереди (QUEUED) или уже идущим торгам (ACTIVE)',
@@ -1370,7 +1401,7 @@ export class AuctionService {
     const listing = await this.prisma.auctionListing.findUnique({
       where: { id: listingId },
     });
-    if (!listing) throw new NotFoundException('auction listing not found');
+    if (!listing) throw new NotFoundException('Лот не найден');
 
     // Аудит L-4: раньше здесь стояло `include: { bids: true }`, и максимум
     // с количеством считались в памяти. Из всей выборки нужны ровно два

@@ -44,10 +44,17 @@
  * выбирать не обязательно — пустой voiceId сохраняется как
  * `ttsProvider: 'soniox', ttsVoiceId: null` («голос Soniox по
  * умолчанию») и так же прослушивается (`hasSynthesisVoice`).
+ *
+ * Поздравление (`greetingVoice` не `null`, см. lib/revoice-greeting-voice):
+ * брендбука у него нет, и `PATCH brand-manifest` отвечал 404 на любую
+ * смену голоса. Голос поздравления живёт в снимке брифа и меняется в
+ * мастере поздравления — поэтому здесь ни провайдера, ни голоса не
+ * выбираем: подпись текущего голоса, ссылка в мастер и переозвучка тем
+ * же голосом (реплики править можно — `reVoice()` их принимает).
  */
 
 import { useState } from 'react';
-import { Mic2, Volume2 } from 'lucide-react';
+import { ArrowRight, Mic2, Volume2 } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -64,6 +71,11 @@ import {
   updateBrandSnapshot,
 } from '../../services/projects-api';
 import type { RevoiceBlock } from '../../lib/revoice-eligibility';
+import {
+  greetingVoiceCaption,
+  type GreetingRevoiceVoice,
+} from '../../lib/revoice-greeting-voice';
+import { navigate } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import type { BrandManifestSnapshot } from '../../types';
 import type { GeneratedVideo } from '../../services/api';
@@ -85,6 +97,8 @@ export function RevoicePanel({
   onReVoice,
   onBrandUpdated,
   block,
+  greetingVoice = null,
+  greetingWizardRoute = null,
 }: {
   sessionId: string;
   video: GeneratedVideo;
@@ -97,6 +111,12 @@ export function RevoicePanel({
    * тем же правилом отказывает сервер. Считает экран: панель не знает
    * про снимок брифа поздравления. */
   block: RevoiceBlock | null;
+  /** Голос поздравления — `greetingRevoiceVoice()`; `null` — обычный ролик
+   * с брендбуком, выбор провайдера и голоса как раньше. */
+  greetingVoice?: GreetingRevoiceVoice | null;
+  /** Маршрут мастера поздравления проекта (`routes.greetingVideo`);
+   * `null` — проекта у сессии нет, ссылку заменяет подсказка. */
+  greetingWizardRoute?: string | null;
 }) {
   const { dict } = useI18n();
   const [script, setScript] = useState(voiceoverScript);
@@ -198,10 +218,13 @@ export function RevoicePanel({
     setBusy(true);
     setError(null);
     try {
+      // Поздравление: снимка бренда нет, голос не меняется здесь вовсе —
+      // сравнивать с ним и слать PATCH нечего (он и давал 404).
       const voiceChanged =
-        ttsVoiceId.trim() !== (snapshot?.ttsVoiceId ?? '').trim() ||
-        (!!providerOverride &&
-          providerOverride !== (snapshot?.ttsProvider ?? null));
+        !greetingVoice &&
+        (ttsVoiceId.trim() !== (snapshot?.ttsVoiceId ?? '').trim() ||
+          (!!providerOverride &&
+            providerOverride !== (snapshot?.ttsProvider ?? null)));
       if (voiceChanged) {
         // Голос — своя, независимая правка снимка бренда (тот же
         // маршрут, что BrandSnapshotEditor), сохраняется первой: если
@@ -226,14 +249,8 @@ export function RevoicePanel({
     }
   };
 
-  return (
-    <Card className="p-5 animate-fadeIn" data-qa="revoice-panel">
-      <CardHeader
-        icon={<Mic2 size={18} className="text-accent" />}
-        title={dict.revoicePanel.panelTitle}
-        hint={dict.revoicePanel.panelHint}
-      />
-
+  const errorAlerts = (
+    <>
       {error && (
         <Alert tone="error" className="mb-3" onDismiss={() => setError(null)}>
           {error}
@@ -245,23 +262,106 @@ export function RevoicePanel({
           {video.postError}
         </Alert>
       )}
+    </>
+  );
 
-      <Field
-        label={dict.revoicePanel.scriptLabel}
-        htmlFor="revoice-script"
-        counter={`${script.length}/${MAX_SCRIPT_LENGTH}`}
+  const scriptField = (
+    <Field
+      label={dict.revoicePanel.scriptLabel}
+      htmlFor="revoice-script"
+      counter={`${script.length}/${MAX_SCRIPT_LENGTH}`}
+    >
+      <Textarea
+        id="revoice-script"
+        value={script}
+        onChange={(e) => {
+          const value = e.target.value;
+          if (value.length <= MAX_SCRIPT_LENGTH) setScript(value);
+        }}
+        disabled={busy}
+        rows={4}
+      />
+    </Field>
+  );
+
+  const submitButton = (
+    <>
+      <Button
+        block
+        className="mt-3"
+        variant="solid"
+        loading={busy}
+        disabled={busy || !script.trim()}
+        icon={<Mic2 size={14} />}
+        onClick={() => void onSubmit()}
       >
-        <Textarea
-          id="revoice-script"
-          value={script}
-          onChange={(e) => {
-            const value = e.target.value;
-            if (value.length <= MAX_SCRIPT_LENGTH) setScript(value);
-          }}
-          disabled={busy}
-          rows={4}
+        {dict.revoicePanel.submitCta}
+      </Button>
+      <p className="mt-2 text-xs text-silver-400">
+        {dict.revoicePanel.footerNote}
+      </p>
+    </>
+  );
+
+  // Поздравление: голос только называем и ведём в мастер, где он
+  // выбирается; предпрослушки тоже нет — она прослушивает голос,
+  // выбранный здесь, а выбирать здесь нечего.
+  if (greetingVoice) {
+    return (
+      <Card className="p-5 animate-fadeIn" data-qa="revoice-panel">
+        <CardHeader
+          icon={<Mic2 size={18} className="text-accent" />}
+          title={dict.revoicePanel.panelTitle}
+          hint={dict.revoicePanel.panelHint}
         />
-      </Field>
+        {errorAlerts}
+        {scriptField}
+        <div className="mt-3 space-y-2">
+          <p
+            className="text-sm"
+            // Подпись клона даёт человек («голос мамы») — маскируем только
+            // её, как на шаге голоса в мастере поздравления.
+            data-qa-mask={
+              greetingVoice.kind === 'clone'
+                ? 'personal-voice-label'
+                : undefined
+            }
+          >
+            {greetingVoiceCaption(greetingVoice, dict.revoicePanel)}
+          </p>
+          <p className="text-xs text-silver-400">
+            {dict.revoicePanel.greetingVoiceHint}
+          </p>
+          {greetingWizardRoute ? (
+            <Button
+              block
+              variant="outline"
+              disabled={busy}
+              icon={<ArrowRight size={14} />}
+              onClick={() => navigate(greetingWizardRoute)}
+            >
+              {dict.revoicePanel.greetingChangeVoiceCta}
+            </Button>
+          ) : (
+            <p className="text-xs text-silver-400">
+              {dict.revoicePanel.greetingNoProjectHint}
+            </p>
+          )}
+        </div>
+        {submitButton}
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-5 animate-fadeIn" data-qa="revoice-panel">
+      <CardHeader
+        icon={<Mic2 size={18} className="text-accent" />}
+        title={dict.revoicePanel.panelTitle}
+        hint={dict.revoicePanel.panelHint}
+      />
+      {errorAlerts}
+      {scriptField}
 
       <Field
         label={dict.revoicePanel.providerLabel}
@@ -330,20 +430,7 @@ export function RevoicePanel({
         )}
       </div>
 
-      <Button
-        block
-        className="mt-3"
-        variant="solid"
-        loading={busy}
-        disabled={busy || !script.trim()}
-        icon={<Mic2 size={14} />}
-        onClick={() => void onSubmit()}
-      >
-        {dict.revoicePanel.submitCta}
-      </Button>
-      <p className="mt-2 text-xs text-silver-400">
-        {dict.revoicePanel.footerNote}
-      </p>
+      {submitButton}
     </Card>
   );
 }

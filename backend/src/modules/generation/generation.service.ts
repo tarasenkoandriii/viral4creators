@@ -505,9 +505,11 @@ export class GenerationService {
       ready.items.find((i) => i.key === key)?.done === true;
 
     if (!done('prompt')) {
-      throw new BadRequestException(
-        'Prompt must be approved before generating video',
-      );
+      throw new BadRequestException({
+        code: 'GENERATION_PROMPT_NOT_APPROVED',
+        message:
+          'Сначала утвердите сценарий ролика — без него генерацию не запустить',
+      });
     }
 
     // Изображение товара — только через резолвер: при применённом
@@ -516,9 +518,11 @@ export class GenerationService {
     // же `activeProductImage`, поэтому отдельного чтения здесь больше
     // нет.
     if (!done('photo')) {
-      throw new BadRequestException(
-        'Product image must be uploaded before generating video',
-      );
+      throw new BadRequestException({
+        code: 'GENERATION_PRODUCT_IMAGE_MISSING',
+        message:
+          'Сначала загрузите фото товара — без него генерацию не запустить',
+      });
     }
 
     const generatedVideoId = uuidv4();
@@ -621,17 +625,21 @@ export class GenerationService {
     // компилятора), а не пробрасываем параметрами лишний раз доказанные
     // непустыми значения через всю сигнатуру.
     if (!session.generationPrompt || !session.generationPrompt.approvedAt) {
-      throw new BadRequestException(
-        'Prompt must be approved before generating video',
-      );
+      throw new BadRequestException({
+        code: 'GENERATION_PROMPT_NOT_APPROVED',
+        message:
+          'Сначала утвердите сценарий ролика — без него генерацию не запустить',
+      });
     }
     // Тот же резолвер, что и в `generateVideo` выше: при скетче в Veo
     // уходит он, а не оригинал (§4 п.1 doc/AI-SKETCH-SPEC.md).
     const productImage = activeProductImage(session.productInformation);
     if (!productImage?.pathname) {
-      throw new BadRequestException(
-        'Product image must be uploaded before generating video',
-      );
+      throw new BadRequestException({
+        code: 'GENERATION_PRODUCT_IMAGE_MISSING',
+        message:
+          'Сначала загрузите фото товара — без него генерацию не запустить',
+      });
     }
 
     // Spec §10.2/§10.3 (Stage 15): the same reference plan PromptService
@@ -799,8 +807,10 @@ export class GenerationService {
           `Veo временно недоступен (${status}): ${this.extractErrorMessage(error)}`,
         );
       }
+      // Текст провайдера — только в лог (он уже записан выше): человеку
+      // он ничего не объяснит, а внутренние подробности наружу незачем.
       throw new BadRequestException(
-        `Failed to start video generation: ${this.extractErrorMessage(error)}`,
+        'Не удалось запустить генерацию видео — сервис генерации отклонил запрос. Попробуйте ещё раз или измените сценарий',
       );
     }
 
@@ -930,9 +940,13 @@ export class GenerationService {
     avoidText?: string,
   ): Promise<GeneratedVideo> {
     if (!this.grokVideo.isConfigured()) {
-      throw new BadRequestException(
-        'Grok video provider is not configured (GROK_API_KEY missing)',
-      );
+      // Имя переменной окружения — оператору, в лог; человеку — смысл.
+      this.logger.error('Grok не настроен: нет GROK_API_KEY');
+      throw new BadRequestException({
+        code: 'GENERATION_PROVIDER_UNAVAILABLE',
+        message:
+          'Выбранный сервис генерации сейчас недоступен — выберите другой',
+      });
     }
 
     const plan = buildReferencePlan(session);
@@ -945,9 +959,11 @@ export class GenerationService {
         session.productInformation,
       )?.url;
       if (!productImageUrl) {
-        throw new BadRequestException(
-          'Product image URL is required for Grok generation (productImageUrl missing on session)',
-        );
+        throw new BadRequestException({
+          code: 'GENERATION_PRODUCT_IMAGE_MISSING',
+          message:
+            'Сначала загрузите фото товара — без него генерацию не запустить',
+        });
       }
       imageUrl = productImageUrl;
       sceneText = session.generationPrompt!.finalText;
@@ -1071,8 +1087,9 @@ export class GenerationService {
           `Grok временно недоступен: ${message}`,
         );
       }
+      // Текст провайдера — только в лог (записан выше), как у Veo.
       throw new BadRequestException(
-        `Failed to start video generation: ${message}`,
+        'Не удалось запустить генерацию видео — сервис генерации отклонил запрос. Попробуйте ещё раз или измените сценарий',
       );
     }
 
@@ -1177,7 +1194,7 @@ export class GenerationService {
     }
     if (!ref.url) {
       throw new BadRequestException(
-        `Reference image ${ref.index} (${ref.label}) has neither a pathname nor a URL`,
+        `Референс №${ref.index} («${ref.label}») без файла — загрузите его заново`,
       );
     }
     // Вторая линия той же защиты, что в DTO (А-2.11): снимок манифеста
@@ -1189,15 +1206,19 @@ export class GenerationService {
         `референс ${ref.index} (${ref.label}) указывает вне нашего хранилища — пропущен`,
       );
       throw new BadRequestException(
-        `Reference image ${ref.index} (${ref.label}): ${FOREIGN_BLOB_URL_MESSAGE}`,
+        `Референс №${ref.index} («${ref.label}»): ${FOREIGN_BLOB_URL_MESSAGE}`,
       );
     }
     const res = await fetch(ref.url, {
       signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
     });
     if (!res.ok) {
+      // Код ответа хранилища — в лог, человеку он ничего не скажет.
+      this.logger.warn(
+        `референс ${ref.index} (${ref.label}) не скачался: HTTP ${res.status}`,
+      );
       throw new BadRequestException(
-        `Failed to fetch reference image ${ref.index} (${ref.label}): HTTP ${res.status}`,
+        `Не удалось загрузить референс №${ref.index} («${ref.label}») — попробуйте ещё раз`,
       );
     }
     return Buffer.from(await res.arrayBuffer());
@@ -1219,7 +1240,7 @@ export class GenerationService {
     }
     if (!ref.url) {
       throw new BadRequestException(
-        `Reference image ${ref.index} (${ref.label}) has neither a pathname nor a URL`,
+        `Референс №${ref.index} («${ref.label}») без файла — загрузите его заново`,
       );
     }
     if (!isOwnBlobUrl(ref.url)) {
@@ -1227,7 +1248,7 @@ export class GenerationService {
         `референс ${ref.index} (${ref.label}) указывает вне нашего хранилища — пропущен`,
       );
       throw new BadRequestException(
-        `Reference image ${ref.index} (${ref.label}): ${FOREIGN_BLOB_URL_MESSAGE}`,
+        `Референс №${ref.index} («${ref.label}»): ${FOREIGN_BLOB_URL_MESSAGE}`,
       );
     }
     return ref.url;
@@ -1301,7 +1322,10 @@ export class GenerationService {
 
     const current = session.generatedVideo;
     if (!current) {
-      throw new NotFoundException('Video generation has not been initiated');
+      throw new NotFoundException({
+        code: 'GENERATION_NOT_STARTED',
+        message: 'Генерация ролика ещё не запускалась',
+      });
     }
 
     if (current.status === GenerationStatus.COMPLETE) {

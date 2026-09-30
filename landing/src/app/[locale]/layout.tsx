@@ -6,14 +6,18 @@ import { localeAlternates } from '../../lib/alternates';
 import { ogImageUrl, socialMeta } from '../../lib/social-meta';
 import { SITE_URL } from '../../lib/content';
 import { DictionaryProvider } from '../../lib/dictionary-context';
-import { SetHtmlLang } from '../../components/SetHtmlLang';
+import { HtmlDocument } from '../../components/HtmlDocument';
 
 /** Все пять локалей — статическая генерация на сборке, не по требованию. */
 export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
 }
 
-export function generateMetadata({ params }: { params: { locale: string } }): Metadata {
+export function generateMetadata({
+  params,
+}: {
+  params: { locale: string };
+}): Metadata {
   if (!isLocale(params.locale)) return {};
   const dict = getDictionary(params.locale);
   return {
@@ -52,17 +56,18 @@ export default function LocaleLayout({
   const dict = getDictionary(locale);
 
   return (
-    // `clientDictionary`: всё, что уходит клиентскому провайдеру, лежит в
-    // HTML каждой страницы (RSC-данные), — тексты «Вы в кадре» туда
-    // попасть не должны (см. get-dictionary.ts).
-    <DictionaryProvider dict={clientDictionary(dict)} locale={locale}>
-      {/* Корневой <html lang> задан один раз в app/layout.tsx (там, где
-          он физически рендерится) и не может быть переписан отсюда —
-          вложенный layout меняет его через маленький клиентский эффект,
-          тот же приём, что применяют next-intl и сам Next.js в проектах
-          без route-groups под каждую локаль. */}
-      <SetHtmlLang locale={locale} />
-      {children}
-    </DictionaryProvider>
+    // `<html lang dir>` рисуется ЗДЕСЬ, а не в корневом app/layout.tsx:
+    // только этот layout знает локаль на сборке, и серверный HTML каждой
+    // из пяти локалей (и страниц поддоменов, которые middleware
+    // переписывает в тот же сегмент) несёт свой язык без клиентских
+    // правок (см. components/HtmlDocument.tsx).
+    <HtmlDocument locale={locale}>
+      {/* `clientDictionary`: всё, что уходит клиентскому провайдеру, лежит
+          в HTML каждой страницы (RSC-данные), — тексты «Вы в кадре» туда
+          попасть не должны (см. get-dictionary.ts). */}
+      <DictionaryProvider dict={clientDictionary(dict)} locale={locale}>
+        {children}
+      </DictionaryProvider>
+    </HtmlDocument>
   );
 }

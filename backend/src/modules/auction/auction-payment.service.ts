@@ -74,9 +74,10 @@ export class AuctionPaymentService {
       include: { listing: true },
     });
     if (!payment) {
-      throw new NotFoundException(
-        `auction payment not found: ${auctionPaymentId}`,
-      );
+      // Идентификатор — только в лог: текст отказа может дойти до
+      // человека (ручное подтверждение оплаты), а UUID ему ничего не скажет.
+      this.logger.warn(`платёж аукциона ${auctionPaymentId} не найден`);
+      throw new NotFoundException('Платёж по лоту не найден');
     }
     if (payment.paidAt) {
       return; // идемпотентно — уже применено (например, повторная доставка вебхука)

@@ -1272,7 +1272,15 @@
     "prelistenHint": "Elige antes una voz arriba: la escucha previa lee tu texto de réplicas con esa voz.",
     "submitCta": "Doblar de nuevo",
     "footerNote": "Se cobra como una postproducción normal: una nueva síntesis de voz y un nuevo trabajo de procesamiento.",
-    "blockedNoBrandSnapshot": "Este vídeo no tiene una instantánea del manual de marca: no hay dónde guardar la voz elegida, por eso el redoblaje no está disponible. Funciona con vídeos creados desde un proyecto con manual de marca."
+    "blockedNoBrandSnapshot": "Este vídeo no tiene una instantánea del manual de marca: no hay dónde guardar la voz elegida, por eso el redoblaje no está disponible. Funciona con vídeos creados desde un proyecto con manual de marca.",
+    "greetingVoiceHint": "Esto es una felicitación: su voz se elige en el asistente de felicitación, no aquí. El redoblaje usa la misma voz; el texto sí se puede editar.",
+    "greetingVoiceClone": "Voz: la tuya — «{label}»",
+    "greetingVoicePreset": "Voz: presentador de Grok ({label})",
+    "greetingVoiceSoniox": "Voz: Soniox — {label}",
+    "greetingVoiceSonioxDefault": "Voz: Soniox predeterminada",
+    "greetingVoiceDefault": "Voz: predeterminada",
+    "greetingChangeVoiceCta": "Cambiar la voz en el asistente de felicitación",
+    "greetingNoProjectHint": "Puedes cambiar la voz en el asistente de felicitación de su proyecto."
   },
   "postprodScreen": {
     "title": "Postprod",

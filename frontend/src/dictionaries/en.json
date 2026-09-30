@@ -1266,7 +1266,15 @@
     "prelistenHint": "Pick a voice above first — the pre-listen reads your script text in that voice.",
     "submitCta": "Re-voice",
     "footerNote": "Billed like regular post-processing — a new voice synthesis and a new processing job.",
-    "blockedNoBrandSnapshot": "This video has no brand book snapshot — there is nowhere to save the chosen voice, so re-voicing is unavailable. It works for videos made from a project with a brand book."
+    "blockedNoBrandSnapshot": "This video has no brand book snapshot — there is nowhere to save the chosen voice, so re-voicing is unavailable. It works for videos made from a project with a brand book.",
+    "greetingVoiceHint": "This is a greeting — its voice is chosen in the greeting wizard, not here. Re-voicing uses the same voice; you can still edit the lines.",
+    "greetingVoiceClone": "Voice: your own — “{label}”",
+    "greetingVoicePreset": "Voice: Grok host ({label})",
+    "greetingVoiceSoniox": "Voice: Soniox — {label}",
+    "greetingVoiceSonioxDefault": "Voice: Soniox default",
+    "greetingVoiceDefault": "Voice: default",
+    "greetingChangeVoiceCta": "Change voice in the greeting wizard",
+    "greetingNoProjectHint": "You can change the voice in the greeting wizard of its project."
   },
   "postprodScreen": {
     "title": "Postprod",

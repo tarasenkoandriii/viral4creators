@@ -738,9 +738,11 @@ describe('GenerationService.fetchReference — вторая линия защи�
     expect([...bytes]).toEqual([1, 2, 3]);
 
     fetchSpy.mockResolvedValue({ ok: false, status: 404 } as never);
+    // Код ответа хранилища уходит в лог; человеку — какой референс и что
+    // делать (аудит Д-5: тексты отказов по-русски).
     await expect(
       (svc as any).fetchReference(ref({ url: own })),
-    ).rejects.toThrow(/HTTP 404/);
+    ).rejects.toThrow(/Не удалось загрузить референс №1/);
   });
 
   it('ни пути, ни адреса — отказ, а не пустая картинка в Veo', async () => {
@@ -836,7 +838,7 @@ describe('GenerationService.generateVideo — условия читаются г
       },
     });
     await expect(svc.generateVideo('s1')).rejects.toThrow(
-      'Prompt must be approved before generating video',
+      'Сначала утвердите сценарий ролика — без него генерацию не запустить',
     );
     expect(generateVideos).not.toHaveBeenCalled();
     // Главное в этих двух проверках — «до»: ниже по стеку, в
@@ -857,7 +859,7 @@ describe('GenerationService.generateVideo — условия читаются г
       productInformation: {},
     });
     await expect(svc.generateVideo('s1')).rejects.toThrow(
-      'Product image must be uploaded before generating video',
+      'Сначала загрузите фото товара — без него генерацию не запустить',
     );
     expect(generateVideos).not.toHaveBeenCalled();
     expect(creditLedger.reserveForGeneration).not.toHaveBeenCalled();
