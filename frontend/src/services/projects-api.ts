@@ -63,6 +63,7 @@ import type {
 
 import type { BrandManifestKind, CardStyle } from '../lib/persona-greeting';
 import { EmptyResponseError } from '../lib/greeting-errors';
+import { normalizeAudioMime } from '../lib/voice-sample';
 import type { ExplicitTtsProvider } from '../lib/tts-provider-choice';
 
 // ── Error helpers ──────────────────────────────────────────────────────
@@ -1335,15 +1336,19 @@ export async function uploadVoiceSample(
   mimeType: string,
   fileName = 'sample'
 ): Promise<{ pathname: string }> {
+  // Один нормализованный тип на оба шага: сервер подписывает адрес Blob
+  // под голый тип (`audio/webm`, не `audio/webm;codecs=opus`), и PUT с
+  // другим Content-Type получил бы 400 от Blob.
+  const type = normalizeAudioMime(mimeType, 'audio/webm');
   const target = unwrap(
     await api.post<PresignedUpload>('/voices/upload-url', {
       fileName,
       fileSize: file.size,
-      mimeType,
+      mimeType: type,
     }),
     'upload-url'
   );
-  await putToBlob(target, file, mimeType);
+  await putToBlob(target, file, type);
   return { pathname: target.pathname };
 }
 

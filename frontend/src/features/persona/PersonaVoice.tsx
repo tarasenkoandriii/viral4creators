@@ -34,10 +34,15 @@ import { releaseMicrophone } from '../../lib/mic-recorder';
 import { revokeObjectUrl } from '../../lib/object-url';
 import { haptic } from '../../lib/telegram';
 import {
-  baseMime,
   consentPhraseWithName,
   pickAudioMime,
 } from '../../lib/persona-capture';
+import {
+  fmtDuration,
+  prepareVoiceSample,
+  type PreparedVoiceSample,
+} from '../../lib/voice-sample';
+import { VOICE_SAMPLE_MAX_SEC, VOICE_SAMPLE_MIN_SEC } from '../../lib/wav';
 import { errorMessage } from '../../services/projects-api';
 import {
   clonePersonaVoice,
@@ -66,11 +71,22 @@ export function PersonaVoice({
   const [name, setName] = useState('');
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [sample, setSample] = useState<{
-    blob: Blob;
-    mime: string;
-    url: string;
-  } | null>(null);
+  // Образец уже подготовлен (WAV — формат, который называет Resemble;
+  // не декодировался — исходник с нормализованным типом), см.
+  // lib/voice-sample.ts. Длительность — по декодированному звуку или по
+  // счётчику записи: у webm MediaRecorder её нет в заголовке.
+  const [sample, setSample] = useState<
+    (PreparedVoiceSample & { url: string; recordedSec: number }) | null
+  >(null);
+  const [preparing, setPreparing] = useState(false);
+  const prepareGenRef = useRef(0);
+  const prepareAbortRef = useRef<AbortController | null>(null);
+  /** Отменить идущую подготовку: поздний результат не создаст ни образца, ни URL. */
+  const cancelPrepare = () => {
+    prepareGenRef.current++;
+    prepareAbortRef.current?.abort();
+    prepareAbortRef.current = null;
+  };
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playbackRef] = useState(() => mediaPlaybackRef());
@@ -137,6 +153,7 @@ export function PersonaVoice({
     () => () => {
       stopTimer();
       releaseMic();
+      cancelPrepare();
     },
     // Уборка — только при уходе с экрана; функции читают ref'ы.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -162,6 +179,7 @@ export function PersonaVoice({
       const rec = mime
         ? new MediaRecorder(stream, { mimeType: mime })
         : new MediaRecorder(stream);
+      const startedAt = Date.now();
       chunksRef.current = [];
       rec.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -171,13 +189,31 @@ export function PersonaVoice({
         streamRef.current = null;
         releaseBusy();
         if (micBusyRef.current === releaseBusy) micBusyRef.current = null;
-        const type = baseMime(rec.mimeType || mime, 'audio/webm');
+        const type = rec.mimeType || mime || 'audio/webm';
         const blob = new Blob(chunksRef.current, { type });
         if (blob.size === 0) {
           setError(t.emptyRecording);
           return;
         }
-        setSample({ blob, mime: type, url: URL.createObjectURL(blob) });
+        const recordedSec = (Date.now() - startedAt) / 1000;
+        cancelPrepare();
+        const gen = prepareGenRef.current;
+        const ctrl = new AbortController();
+        prepareAbortRef.current = ctrl;
+        setPreparing(true);
+        void prepareVoiceSample(blob, type, {
+          knownDurationSec: recordedSec,
+          signal: ctrl.signal,
+        }).then((prepared) => {
+          if (!prepared || gen !== prepareGenRef.current) return;
+          prepareAbortRef.current = null;
+          setPreparing(false);
+          setSample({
+            ...prepared,
+            recordedSec,
+            url: URL.createObjectURL(prepared.blob),
+          });
+        });
       };
       rec.start();
       recorderRef.current = rec;
@@ -201,8 +237,23 @@ export function PersonaVoice({
     haptic();
   };
 
+  // Потолок образца (lib/wav.ts): дальше запись Resemble не нужна.
+  useEffect(() => {
+    if (recording && seconds >= VOICE_SAMPLE_MAX_SEC) stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording, seconds]);
+
+  const sampleSec = sample ? (sample.durationSec ?? sample.recordedSec) : null;
+  // Размер отдельно не проверяется: запись не длиннее потолка, а WAV
+  // двух минут — ≈10,6 МБ при лимите 15 МБ.
+  const sampleProblem = sample?.tooLong
+    ? t.voiceTooLong
+    : sample?.unsupported
+      ? t.voiceFormatUnsupported
+      : null;
+
   const submit = async () => {
-    if (!sample || !phrase) return;
+    if (!sample || sampleProblem || !phrase) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -305,13 +356,18 @@ export function PersonaVoice({
                 <span className="tabular">{fmtSec(seconds)}</span>
               </Button>
             ) : (
-              <Button
-                icon={<Mic size={14} />}
-                disabled={!phrase}
-                onClick={() => void start()}
-              >
-                {t.voiceRecord}
-              </Button>
+              <div className="space-y-1">
+                <Button
+                  icon={<Mic size={14} />}
+                  disabled={!phrase || preparing}
+                  onClick={() => void start()}
+                >
+                  {t.voiceRecord}
+                </Button>
+                {preparing && (
+                  <p className="text-xs text-silver-400">{t.voicePreparing}</p>
+                )}
+              </div>
             )
           ) : (
             <div className="space-y-2">
@@ -321,10 +377,35 @@ export function PersonaVoice({
                 controls
                 src={sample.url}
               />
+              {sampleSec !== null && (
+                <p className="text-xs text-silver-400">
+                  {t.voiceDuration.replace(
+                    '{{duration}}',
+                    fmtDuration(sampleSec)
+                  )}
+                </p>
+              )}
+              {sampleProblem ? (
+                <Alert tone="error">{sampleProblem}</Alert>
+              ) : sample.trimmed ? (
+                <Alert tone="warning">
+                  {t.voiceTrimmed
+                    .split('{{max}}')
+                    .join(fmtDuration(VOICE_SAMPLE_MAX_SEC))}
+                </Alert>
+              ) : sampleSec !== null && sampleSec < VOICE_SAMPLE_MIN_SEC ? (
+                <Alert tone="warning">
+                  {t.voiceTooShort.replace(
+                    '{{min}}',
+                    String(VOICE_SAMPLE_MIN_SEC)
+                  )}
+                </Alert>
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 <Button
                   icon={<Volume2 size={14} />}
                   loading={submitting}
+                  disabled={!!sampleProblem}
                   onClick={() => void submit()}
                 >
                   {t.voiceSubmit}

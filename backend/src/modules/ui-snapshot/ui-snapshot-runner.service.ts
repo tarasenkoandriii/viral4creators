@@ -110,6 +110,7 @@ import {
   type ScenarioPage,
 } from '../tutorial-runner/scenario-runner';
 import { CAPTURE_VIEWPORT } from '../tutorial-runner/tutorial-video-assembly';
+import { UI_SNAPSHOT_BLOB_PREFIX } from './ui-snapshot-retention';
 import { CLIENT_ROUND_BUDGET_MS } from '../client-site-tutorial/chromium-page-explorer';
 import type { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import {
@@ -239,6 +240,74 @@ export const PERSONAL_TEXT_MASK_CSS =
  *  снимается как есть: чёрный плеер заметит отбор §3, а ронять прогон
  *  ради медленного Blob незачем. */
 const MEDIA_SETTLE_TIMEOUT_MS = 10_000;
+
+/**
+ * Заморозка движения перед снимком СРАВНИВАЕМОГО прогона (разбор
+ * «мигания» крона 30.09.2026).
+ *
+ * ## Что мигало
+ *
+ * На проде `changed=1` приходил парами через две минуты («экран
+ * поменялся» → «вернулся») с интервалом 10–30 минут и в произвольные
+ * минуты часа — то есть не по расписанию соседних кронов (обучалка
+ * ходит в :00–:05, остальные либо раз в сутки, либо тем же темпом раз в
+ * две минуты), а случайно. Пара означает одно промежуточное состояние
+ * длиной в один тик — то есть не данные поменялись, а кадр был снят
+ * в другой момент жизни страницы.
+ *
+ * Источник, который виден на КАЖДОМ из пяти маршрутов: словесный знак
+ * «Viral4Creators» в шапке (`App.tsx`, класс `.sheen`) — бесконечная
+ * анимация градиента (`sheen 6s linear infinite`, tailwind.config.js),
+ * от тёмного `#1f2733` до светлого `#8892a6` по буквам. Фаза в кадре =
+ * (время от монтирования приложения до снимка) mod 6 с. Обычно это
+ * время почти одинаково от тика к тику, и фаза тоже; но стоит одному
+ * запросу к API задержаться на секунду-другую (холодный старт функции),
+ * фаза уезжает, пять клеток сетки 12×24 в верхней строке меняют
+ * яркость больше порога — «изменилось». Следующий тик с обычной
+ * задержкой — «вернулось». Тот же механизм у `animate-fadeIn` корня
+ * каждого экрана (0,2 с) и у крутящегося `Spinner`.
+ *
+ * ## Почему заморозка, а не маска
+ *
+ * Маска на знак убрала бы шапку из-под наблюдения, а сломанную шапку
+ * крон как раз должен замечать. `animation: none` ставит элемент в его
+ * собственный, неанимированный стиль: знак — в начальную позицию
+ * градиента, экран — в полностью проявленный. Кадр от этого перестаёт
+ * зависеть от того, КОГДА он снят, и не теряет ничего из того, ЧТО на
+ * нём. Правило действует на весь документ, то есть и на анимацию,
+ * которую кто-нибудь добавит завтра, — список селекторов в бэкенде
+ * здесь устарел бы так же, как устарел бы список масок (см.
+ * доккомментарий модуля).
+ *
+ * Немаскированному прогону (кадры лендинга) заморозка не ставится: он
+ * ни с чем не сравнивается, а поведение его кадров здесь не меняется.
+ */
+export const FREEZE_MOTION_CSS =
+  '*,*::before,*::after{animation:none!important;transition:none!important;' +
+  'caret-color:transparent!important}';
+
+/**
+ * Оседание сравниваемого кадра — вторая половина того же разбора.
+ *
+ * `goto(..., networkidle2)` отпускает, когда в полёте НЕ БОЛЕЕ ДВУХ
+ * запросов. У оболочки приложения их на старте больше двух: `/me/plan`
+ * (от него зависят пилюля режима в шапке, `AccountNotice` и замки
+ * `useFeature` — у `postprod-video` это `LockedNote` против
+ * `PublishPanel`), `/telegram-login/me`, данные самого экрана, `persona/me`
+ * у `manifests`, расчёт цены и готовность у мастера, шрифты Google Fonts
+ * с `display=swap` (JetBrains Mono запрашивается только когда
+ * отрисовался список со счётчиками). Задержись два из них — кадр
+ * снимается со спиннером, без пилюли режима или запасным шрифтом, и это
+ * та же пара «изменилось/вернулось».
+ *
+ * Поэтому перед снимком: полное затишье сети (ноль запросов, а не два),
+ * загруженные шрифты и ни одного `Spinner` на экране (`animate-spin` —
+ * единственный класс, которым его рисует `components/ui/Spinner.tsx`).
+ * Оба ожидания мягкие: экран, который так и не осел, снимается как есть
+ * — «висит на загрузке» тоже изменение, о котором крон обязан сказать.
+ */
+const SETTLE_NETWORK_IDLE_MS = 500;
+const SETTLE_TIMEOUT_MS = 5_000;
 
 export type SnapshotTheme = 'light' | 'dark';
 
@@ -785,11 +854,12 @@ export class UiSnapshotRunnerService {
       // `UiSnapshotRunOptions.unmasked`: ему кадр нужен именно такой,
       // какой есть, и в сравнении он не участвует.
       if (!view.unmasked) {
-        await page.evaluate(() => {
-          document.querySelectorAll('[data-qa-mask]').forEach((el) => {
-            (el as HTMLElement).style.visibility = 'hidden';
-          });
-        });
+        // Сначала дождаться, пока экран осядет, затем замаскировать и
+        // заморозить движение — см. `SETTLE_TIMEOUT_MS` и
+        // `FREEZE_MOTION_CSS`: без этого кадр зависел от того, КОГДА
+        // он снят, и крон «мигал» парами.
+        await settleForComparison(page);
+        await page.evaluate(maskAndFreezeInPage, FREEZE_MOTION_CSS);
       }
 
       const screenshot = await page.screenshot({ type: 'png' });
@@ -830,7 +900,9 @@ export class UiSnapshotRunnerService {
         orderBy: { createdAt: 'desc' },
       });
 
-      const pathname = `qa-snapshots/${routeKey}/${view.locale}/${view.theme}/${Date.now()}.png`;
+      // Префикс — общий с уборкой по сроку хранения
+      // (`ui-snapshot-retention.ts`): она удаляет только файлы под ним.
+      const pathname = `${UI_SNAPSHOT_BLOB_PREFIX}${routeKey}/${view.locale}/${view.theme}/${Date.now()}.png`;
       const { url: blobUrl } = await this.blob.uploadBuffer(
         pathname,
         buffer,
@@ -1151,6 +1223,59 @@ export async function scrollToSection(
             (v.readyState >= 2 && !v.seeking),
         ),
       { timeout: MEDIA_SETTLE_TIMEOUT_MS },
+    )
+    .catch(() => undefined);
+}
+
+/**
+ * Маскирование переменных зон и заморозка движения — исполняется В
+ * СТРАНИЦЕ (`page.evaluate`), одним вызовом перед снимком
+ * сравниваемого прогона. Самодостаточна: puppeteer передаёт её в
+ * браузер текстом, внешних имён в теле быть не должно.
+ *
+ * Экспортирована ради спека — проверить, что стиль заморозки реально
+ * попадает в документ, можно только вызвав её на поддельном документе.
+ */
+export function maskAndFreezeInPage(freezeCss: string): void {
+  document.querySelectorAll('[data-qa-mask]').forEach((el) => {
+    (el as HTMLElement).style.visibility = 'hidden';
+  });
+  const style = document.createElement('style');
+  style.setAttribute('data-qa-freeze', '');
+  style.textContent = freezeCss;
+  document.head.appendChild(style);
+}
+
+/** Подмножество puppeteer `Page`, нужное оседанию кадра. */
+interface SettlePage {
+  waitForNetworkIdle(options: {
+    idleTime: number;
+    timeout: number;
+  }): Promise<unknown>;
+  waitForFunction(
+    fn: () => boolean,
+    options: { timeout: number },
+  ): Promise<unknown>;
+}
+
+/**
+ * Дождаться, пока сравниваемый кадр осядет: полное затишье сети,
+ * загруженные шрифты, ни одного спиннера (см. `SETTLE_TIMEOUT_MS`).
+ * Оба ожидания мягкие — не осевший экран снимается как есть.
+ */
+export async function settleForComparison(page: SettlePage): Promise<void> {
+  await page
+    .waitForNetworkIdle({
+      idleTime: SETTLE_NETWORK_IDLE_MS,
+      timeout: SETTLE_TIMEOUT_MS,
+    })
+    .catch(() => undefined);
+  await page
+    .waitForFunction(
+      () =>
+        document.fonts.status === 'loaded' &&
+        document.querySelector('.animate-spin') === null,
+      { timeout: SETTLE_TIMEOUT_MS },
     )
     .catch(() => undefined);
 }

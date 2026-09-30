@@ -9,6 +9,10 @@
  */
 import { BadRequestException } from '@nestjs/common';
 import { UiSnapshotAdminController } from './ui-snapshot-admin.controller';
+import {
+  UiSnapshotQueryService,
+  parseSnapshotSummarySince,
+} from './ui-snapshot-query.service';
 
 function build() {
   const adminPanel = { assertOperator: jest.fn().mockResolvedValue(undefined) };
@@ -18,14 +22,30 @@ function build() {
     capture: jest.fn().mockResolvedValue({ locales: [] }),
     fixtureVideo: jest.fn().mockResolvedValue({ stage: 'complete' }),
   };
+  const prisma = {
+    uiSnapshot: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
+  };
   const controller = new UiSnapshotAdminController(
     adminPanel as never,
     runner as never,
     frames as never,
     greetingFrames as never,
+    new UiSnapshotQueryService(prisma as never),
   );
   const req = { userId: 'usr_admin' } as never;
-  return { controller, runner, frames, greetingFrames, adminPanel, req };
+  return {
+    controller,
+    runner,
+    frames,
+    greetingFrames,
+    adminPanel,
+    prisma,
+    req,
+  };
 }
 
 describe('UiSnapshotAdminController — разбор тела', () => {
@@ -348,5 +368,231 @@ describe('UiSnapshotAdminController — кадры поздравлений', ()
     );
     expect(greetingFrames.fixtureVideo).not.toHaveBeenCalled();
     expect(greetingFrames.capture).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Просмотр снимков в админке («Система → Снимки интерфейса»). Главное,
+ * что здесь нельзя тихо сломать: что лента отдаёт к изменившемуся
+ * снимку ЕГО предыдущий (иначе сравнивать бок о бок не с чем), что
+ * «только изменившиеся» фильтруются в базе, а не на странице, и что
+ * чтение закрыто проверкой оператора, как и соседние POST.
+ */
+describe('UiSnapshotAdminController — просмотр снимков', () => {
+  const t = (iso: string) => new Date(iso);
+
+  function row(over: Record<string, unknown>) {
+    return {
+      id: 'snap',
+      routeKey: 'projects',
+      locale: 'ru',
+      theme: 'light',
+      createdAt: t('2026-09-30T10:00:00Z'),
+      changed: false,
+      diffScore: 0,
+      blobUrl: 'https://blob/qa-snapshots/projects/ru/light/2.png',
+      comparedToUrl: 'https://blob/qa-snapshots/projects/ru/light/1.png',
+      diffHash: 'abcd1234:g8x12:ffee',
+      error: null,
+      ...over,
+    };
+  }
+
+  it('без оператора — 403 от проверки, в базу не ходит', async () => {
+    const { controller, adminPanel, prisma, req } = build();
+    adminPanel.assertOperator.mockRejectedValueOnce(new Error('forbidden'));
+
+    await expect(controller.listSnapshots(req)).rejects.toThrow('forbidden');
+    adminPanel.assertOperator.mockRejectedValueOnce(new Error('forbidden'));
+    await expect(controller.snapshotSummary(req)).rejects.toThrow('forbidden');
+    expect(prisma.uiSnapshot.findMany).not.toHaveBeenCalled();
+    expect(prisma.uiSnapshot.groupBy).not.toHaveBeenCalled();
+  });
+
+  it('фильтры и курсор уходят в запрос, «только изменившиеся» — в where', async () => {
+    const { controller, prisma, req } = build();
+
+    await controller.listSnapshots(
+      req,
+      'projects',
+      '2026-09-29',
+      '500',
+      'ckcursor1',
+      'true',
+    );
+
+    expect(prisma.uiSnapshot.findMany).toHaveBeenCalledWith({
+      where: {
+        routeKey: 'projects',
+        createdAt: { gte: t('2026-09-29T00:00:00Z') },
+        changed: true,
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 101,
+      cursor: { id: 'ckcursor1' },
+      skip: 1,
+    });
+  });
+
+  it('изменившийся снимок получает предыдущий той же комбинации, остальные — нет', async () => {
+    const { controller, prisma, req } = build();
+    prisma.uiSnapshot.findMany.mockResolvedValueOnce([
+      row({ id: 's3', changed: true, diffScore: 0.2 }),
+      row({ id: 's2', createdAt: t('2026-09-30T09:58:00Z') }),
+      // Лишняя строка сверх limit — признак «дальше есть», в ответ не идёт.
+      row({ id: 's1', createdAt: t('2026-09-30T09:56:00Z') }),
+    ]);
+    prisma.uiSnapshot.findFirst.mockResolvedValueOnce({
+      id: 's2',
+      createdAt: t('2026-09-30T09:58:00Z'),
+      blobUrl: 'https://blob/qa-snapshots/projects/ru/light/1.png',
+    });
+
+    const res = await controller.listSnapshots(req, undefined, undefined, '2');
+
+    expect(prisma.uiSnapshot.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.uiSnapshot.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          routeKey: 'projects',
+          locale: 'ru',
+          theme: 'light',
+          error: null,
+          createdAt: { lt: t('2026-09-30T10:00:00Z') },
+        },
+      }),
+    );
+    expect(res.items[0].previous).toEqual({
+      id: 's2',
+      createdAt: t('2026-09-30T09:58:00Z'),
+      blobUrl: 'https://blob/qa-snapshots/projects/ru/light/1.png',
+    });
+    expect(res.items[1].previous).toBeNull();
+    // Отпечаток — только dHash и коротко, сетка яркостей не уезжает.
+    expect(res.items[0].diffHash).toBe('abcd1234');
+    // Дальше строки есть — курсор на последнюю отданную.
+    expect(res.items.map((i) => i.id)).toEqual(['s3', 's2']);
+    expect(res.nextBefore).toBe('s2');
+  });
+
+  it('неполная страница — курсора нет', async () => {
+    const { controller, prisma, req } = build();
+    prisma.uiSnapshot.findMany.mockResolvedValueOnce([row({ id: 's1' })]);
+
+    const res = await controller.listSnapshots(req);
+
+    expect(res.nextBefore).toBeNull();
+    expect(prisma.uiSnapshot.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 31, where: {} }),
+    );
+  });
+
+  it('последняя страница ровно в limit строк — курсора нет', async () => {
+    const { controller, prisma, req } = build();
+    prisma.uiSnapshot.findMany.mockResolvedValueOnce([
+      row({ id: 's2' }),
+      row({ id: 's1' }),
+    ]);
+
+    const res = await controller.listSnapshots(req, undefined, undefined, '2');
+
+    expect(res.items).toHaveLength(2);
+    expect(res.nextBefore).toBeNull();
+  });
+
+  it.each([
+    ['limit', [undefined, undefined, '0']],
+    ['route', ['../x']],
+    ['since без зоны', [undefined, '2026-09-29T10:00']],
+    ['changed', [undefined, undefined, undefined, undefined, 'yes']],
+  ])('кривой %s — 400, в базу не ходит', async (_name, args) => {
+    const { controller, prisma, req } = build();
+    await expect(
+      (controller.listSnapshots as (...a: unknown[]) => Promise<unknown>).call(
+        controller,
+        req,
+        ...args,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.uiSnapshot.findMany).not.toHaveBeenCalled();
+  });
+
+  it('сводка: счётчики сведены по маршруту, изменчивые — сверху', async () => {
+    const { controller, prisma, req } = build();
+    prisma.uiSnapshot.groupBy
+      .mockResolvedValueOnce([
+        {
+          routeKey: 'a-stable',
+          _count: { _all: 720 },
+          _max: { createdAt: t('2026-09-30T10:00:00Z') },
+        },
+        {
+          routeKey: 'z-blinking',
+          _count: { _all: 700 },
+          _max: { createdAt: t('2026-09-30T10:00:00Z') },
+        },
+      ])
+      .mockResolvedValueOnce([{ routeKey: 'z-blinking', _count: { _all: 40 } }])
+      .mockResolvedValueOnce([{ routeKey: 'a-stable', _count: { _all: 3 } }]);
+    prisma.uiSnapshot.findMany.mockResolvedValueOnce([
+      { createdAt: t('2026-09-30T09:58:00Z') },
+    ]);
+
+    const res = await controller.snapshotSummary(req, '2026-09-29T10:00:00Z');
+
+    expect(res.routes.map((r) => r.routeKey)).toEqual([
+      'z-blinking',
+      'a-stable',
+    ]);
+    expect(res.routes[0]).toMatchObject({
+      total: 700,
+      changed: 40,
+      errors: 0,
+      recentChangedAt: [t('2026-09-30T09:58:00Z')],
+    });
+    expect(res.routes[1]).toMatchObject({
+      total: 720,
+      changed: 0,
+      errors: 3,
+      recentChangedAt: [],
+    });
+    // Времена перемен запрашиваются только там, где перемены были.
+    expect(prisma.uiSnapshot.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.uiSnapshot.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          routeKey: 'z-blinking',
+          changed: true,
+        }),
+      }),
+    );
+  });
+
+  it('сводка «30 дней» по часам клиента проходит, хотя сервер позже', () => {
+    const now = t('2026-09-30T12:00:00Z');
+    // Клиент посчитал since минутой раньше, чем пришёл запрос.
+    const clientSince = new Date(now.getTime() - 30 * 86_400_000 - 60_000);
+    expect(parseSnapshotSummarySince(clientSince.toISOString(), now)).toEqual(
+      clientSince,
+    );
+    // Но допуск — минуты, а не лазейка: на 10 минут шире — 400.
+    const tooWide = new Date(now.getTime() - 30 * 86_400_000 - 10 * 60_000);
+    expect(() => parseSnapshotSummarySince(tooWide.toISOString(), now)).toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('сводка отдаёт срок хранения обычных снимков', async () => {
+    const { controller, req } = build();
+    const res = await controller.snapshotSummary(req);
+    expect(res.plainRetentionDays).toBe(3);
+  });
+
+  it('сводка шире 30 дней — 400', async () => {
+    const { controller, prisma, req } = build();
+    await expect(
+      controller.snapshotSummary(req, '2020-01-01'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.uiSnapshot.groupBy).not.toHaveBeenCalled();
   });
 });

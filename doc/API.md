@@ -408,6 +408,8 @@
 | `GET/POST /api/admin/wizard-guide/candidates`; `POST …/candidates/:id/classify` · `promote` · `merge` · `unmerge` · `attach` · `reject`; `GET/PATCH /api/admin/wizard-guide/siblings` | оператор | кандидаты из жалоб, сведение дублей и его пороги |
 | `GET /api/cron/voice-uploads-sweep` | `CRON_SECRET` | уборка необработанных голосовых записей старше часа и сводок перед согласием (каждые 15 минут) |
 | `POST /api/admin/ui-snapshot/greeting-frames` · `…/greeting-frames/fixture-video` | оператор | съёмка кадров лендинга поздравлений (этап I); фикстурный ролик — платно |
+| `GET /api/admin/ui-snapshot/snapshots?route=&since=&limit=&before=&changed=` | оператор | лента снимков крона `ui-snapshot-run`, новые сверху: маршрут, локаль/тема, время, `changed`, `diffScore`, публичный адрес PNG, начало dHash; у изменившегося — `previous` (снимок, с которым сравнивали); `limit` до 100, курсор `nextBefore`; `changed=true` — только изменившиеся |
+| `GET /api/admin/ui-snapshot/summary?since=` | оператор | по маршрутам за период (по умолчанию сутки, не длиннее 30 дней): снимков, изменилось, не снялось, последние 5 времён перемен; `plainRetentionDays` — срок хранения обычных снимков (за период длиннее него «снимков» и «не снялось» неполны); изменчивые сверху (вкладка «Система → Снимки интерфейса») |
 
 ### Коды отказов поздравления
 

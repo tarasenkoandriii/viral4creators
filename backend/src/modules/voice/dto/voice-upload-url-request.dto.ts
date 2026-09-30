@@ -27,8 +27,11 @@ export class AllowedAudioMime implements ValidatorConstraintInterface {
       (ALLOWED_AUDIO_MIME as readonly string[]).includes(baseMime(value))
     );
   }
+  // Сообщение видит человек (конверт ошибки уходит в интерфейс как
+  // есть) — по-русски, как у образца голоса (user-voices.dto.ts), а не
+  // английский перечень типов.
   defaultMessage(): string {
-    return `mimeType must be one of ${ALLOWED_AUDIO_MIME.join(', ')} (codec parameters allowed)`;
+    return 'Этот формат записи не поддерживается — запишите голос заново';
   }
 }
 

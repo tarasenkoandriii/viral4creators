@@ -107,6 +107,36 @@ describe('UserVoicesService.createUploadUrl', () => {
     );
   });
 
+  it('тип с параметром кодека: путь и подпись Blob — под голый тип (иначе PUT получит 400)', async () => {
+    const { svc, blob } = build();
+    const r = await svc.createUploadUrl(USER, {
+      fileName: 'sample',
+      fileSize: 1000,
+      mimeType: 'audio/webm;codecs=opus',
+    } as never);
+    expect(r.pathname).toMatch(/\/sample\.webm$/);
+    expect(blob.createUploadUrl).toHaveBeenCalledWith(
+      r.pathname,
+      'audio/webm',
+      15 * 1024 * 1024,
+    );
+  });
+
+  it('WAV из браузера — sample.wav и подпись под audio/wav', async () => {
+    const { svc, blob } = build();
+    const r = await svc.createUploadUrl(USER, {
+      fileName: 'sample',
+      fileSize: 1000,
+      mimeType: 'audio/wav',
+    } as never);
+    expect(r.pathname).toMatch(/\/sample\.wav$/);
+    expect(blob.createUploadUrl).toHaveBeenCalledWith(
+      r.pathname,
+      'audio/wav',
+      15 * 1024 * 1024,
+    );
+  });
+
   it('лимит достигнут (не считая FAILED) — отказ до вызова Blob', async () => {
     const { svc, prisma, blob } = build();
     prisma.userVoice.count.mockResolvedValue(3);

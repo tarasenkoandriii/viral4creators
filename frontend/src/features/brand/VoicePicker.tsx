@@ -36,6 +36,15 @@ import { useI18n } from '../../lib/i18n-context';
 import type { Dictionary } from '../../lib/get-dictionary';
 import { useFeature } from '../../lib/plan-context';
 import { haptic } from '../../lib/telegram';
+import { pickAudioMime } from '../../lib/persona-capture';
+import {
+  fmtDuration,
+  mimeFromFileName,
+  prepareVoiceSample,
+  VOICE_SAMPLE_MAX_BYTES,
+  type PreparedVoiceSample,
+} from '../../lib/voice-sample';
+import { VOICE_SAMPLE_MAX_SEC, VOICE_SAMPLE_MIN_SEC } from '../../lib/wav';
 import type { UserVoice } from '../../types';
 import {
   EXPLICIT_TTS_PROVIDERS,
@@ -404,21 +413,20 @@ function providerLabel(p: ExplicitTtsProvider, dict: Dictionary): string {
 
 const MAX_USER_VOICES = 3; // зеркалит backend/src/modules/user-voices/user-voices.service.ts
 
-function pickRecorderMime(): string {
-  const candidates = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/mp4',
-    'audio/ogg;codecs=opus',
-  ];
-  for (const c of candidates) {
-    if (
+/**
+ * Формат записи — тот же выбор, что у голоса персоны
+ * (`pickAudioMime`, lib/persona-capture.ts). До 30.09.2026 здесь был свой
+ * список, и его первый кандидат `audio/webm;codecs=opus` уходил на сервер
+ * целиком — Telegram Android получал 400 «mimeType must be one of…».
+ * Теперь запись всё равно перекодируется в WAV (`prepareVoiceSample`), а
+ * тип нормализуется и на клиенте, и на сервере.
+ */
+function pickRecorderMime(): string | null {
+  return pickAudioMime(
+    (m) =>
       typeof MediaRecorder !== 'undefined' &&
-      MediaRecorder.isTypeSupported?.(c)
-    )
-      return c;
-  }
-  return 'audio/webm';
+      !!MediaRecorder.isTypeSupported?.(m)
+  );
 }
 
 function fmtSec(s: number): string {
@@ -471,10 +479,25 @@ export function MyVoicesSection({
   // и форма открывалась заново с чужим счётчиком).
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [sampleBlob, setSampleBlob] = useState<{
-    blob: Blob;
-    mime: string;
-  } | null>(null);
+  // Уже подготовленный образец (WAV или исходник с нормализованным
+  // типом) — ровно то, что уйдёт в upload-url и PUT.
+  const [sampleBlob, setSampleBlob] = useState<PreparedVoiceSample | null>(
+    null
+  );
+  const [preparing, setPreparing] = useState(false);
+  // Длительность по счётчику записи: у webm от MediaRecorder её нет в
+  // заголовке, и `<audio>` показывал «18:19» (или Infinity).
+  const [recordedSec, setRecordedSec] = useState<number | null>(null);
+  // Поколение подготовки: «Отмена» во время декодирования не должна
+  // вернуть образец в уже закрытую форму.
+  const prepareGenRef = useRef(0);
+  const prepareAbortRef = useRef<AbortController | null>(null);
+  /** Отменить идущую подготовку: поздний результат не создаст ни образца, ни URL. */
+  const cancelPrepare = () => {
+    prepareGenRef.current++;
+    prepareAbortRef.current?.abort();
+    prepareAbortRef.current = null;
+  };
   const [sampleObjectUrl, setSampleObjectUrl] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [consent, setConsent] = useState(false);
@@ -553,6 +576,7 @@ export function MyVoicesSection({
     () => () => {
       stopTimer();
       releaseMic();
+      cancelPrepare();
     },
     // Уборка — только при уходе с экрана. `stopTimer`/`releaseMic` читают
     // одни ref'ы (запись, поток, таймер, «микрофон занят»), поэтому
@@ -599,6 +623,9 @@ export function MyVoicesSection({
     setRecording(false);
     setSeconds(0);
     setAdding(false);
+    cancelPrepare();
+    setPreparing(false);
+    setRecordedSec(null);
     setSampleBlob(null);
     revokeObjectUrl(sampleObjectUrl);
     setSampleObjectUrl(null);
@@ -618,7 +645,10 @@ export function MyVoicesSection({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const mime = pickRecorderMime();
-      const rec = new MediaRecorder(stream, { mimeType: mime });
+      const rec = mime
+        ? new MediaRecorder(stream, { mimeType: mime })
+        : new MediaRecorder(stream);
+      const startedAt = Date.now();
       chunksRef.current = [];
       rec.ondataavailable = (e) =>
         e.data.size > 0 && chunksRef.current.push(e.data);
@@ -629,13 +659,15 @@ export function MyVoicesSection({
         // тому времени могла начаться новая запись со своим захватом.
         releaseBusy();
         if (micBusyRef.current === releaseBusy) micBusyRef.current = null;
-        const blob = new Blob(chunksRef.current, { type: mime });
+        const type = rec.mimeType || mime || 'audio/webm';
+        const blob = new Blob(chunksRef.current, { type });
         if (blob.size === 0) {
           setError(t.emptyRecording);
           return;
         }
-        setSampleBlob({ blob, mime });
-        setSampleObjectUrl(URL.createObjectURL(blob));
+        // Длительность — по часам записи: у webm MediaRecorder её нет в
+        // заголовке, и `<audio>` её не узнает.
+        void acceptSample(blob, type, (Date.now() - startedAt) / 1000);
       };
       rec.start();
       recorderRef.current = rec;
@@ -662,14 +694,55 @@ export function MyVoicesSection({
     haptic();
   };
 
-  const onFilePicked = (file: File | undefined) => {
-    if (!file) return;
-    setSampleBlob({ blob: file, mime: file.type || 'audio/mpeg' });
-    setSampleObjectUrl(URL.createObjectURL(file));
+  // Потолок образца: дальше Resemble запись не нужна, а WAV вырос бы за
+  // лимит загрузки — запись останавливается сама.
+  useEffect(() => {
+    if (recording && seconds >= VOICE_SAMPLE_MAX_SEC) stopRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording, seconds]);
+
+  /** Запись или файл → WAV (или исходник с нормализованным типом). */
+  const acceptSample = async (
+    blob: Blob,
+    mime: string,
+    recorded: number | null
+  ) => {
+    cancelPrepare();
+    const gen = prepareGenRef.current;
+    const ctrl = new AbortController();
+    prepareAbortRef.current = ctrl;
+    setError(null);
+    setPreparing(true);
+    setRecordedSec(recorded);
+    const prepared = await prepareVoiceSample(blob, mime, {
+      knownDurationSec: recorded,
+      signal: ctrl.signal,
+    });
+    if (!prepared || gen !== prepareGenRef.current) return;
+    prepareAbortRef.current = null;
+    setPreparing(false);
+    setSampleBlob(prepared);
+    setSampleObjectUrl(URL.createObjectURL(prepared.blob));
   };
 
+  const onFilePicked = (file: File | undefined) => {
+    if (!file) return;
+    void acceptSample(file, file.type || mimeFromFileName(file.name), null);
+  };
+
+  const sampleSec = sampleBlob?.durationSec ?? recordedSec;
+  const sampleProblem = !sampleBlob
+    ? null
+    : sampleBlob.tooLong
+      ? t.tooLong
+      : sampleBlob.unsupported
+        ? t.formatUnsupported
+        : sampleBlob.blob.size > VOICE_SAMPLE_MAX_BYTES
+          ? t.fileTooLarge.replace('{{max}}', fmtDuration(VOICE_SAMPLE_MAX_SEC))
+          : null;
+
   const submit = async () => {
-    if (!sampleBlob || !label.trim() || !consent) return;
+    if (!sampleBlob || sampleProblem || !label.trim() || !consent) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -835,6 +908,7 @@ export function MyVoicesSection({
                       variant="outline"
                       size="sm"
                       icon={<Mic size={14} />}
+                      disabled={preparing}
                       onClick={() => void startRecording()}
                     >
                       {t.recordButton}
@@ -851,11 +925,20 @@ export function MyVoicesSection({
                     type="file"
                     accept="audio/*"
                     className="hidden"
-                    disabled={recording}
+                    disabled={recording || preparing}
                     onChange={(e) => onFilePicked(e.target.files?.[0])}
                   />
                 </label>
               </div>
+              {preparing ? (
+                <p className="text-xs text-silver-400">{t.preparing}</p>
+              ) : (
+                <p className="text-xs text-silver-400">
+                  {t.durationHint
+                    .replace('{{min}}', String(VOICE_SAMPLE_MIN_SEC))
+                    .replace('{{max}}', fmtDuration(VOICE_SAMPLE_MAX_SEC))}
+                </p>
+              )}
               <Button variant="ghost" size="sm" onClick={resetForm}>
                 {t.cancelButton}
               </Button>
@@ -870,6 +953,24 @@ export function MyVoicesSection({
                   src={sampleObjectUrl}
                 />
               )}
+              {sampleSec !== null && (
+                <p className="text-xs text-silver-400">
+                  {t.duration.replace('{{duration}}', fmtDuration(sampleSec))}
+                </p>
+              )}
+              {sampleProblem ? (
+                <Alert tone="error">{sampleProblem}</Alert>
+              ) : sampleBlob.trimmed ? (
+                <Alert tone="warning">
+                  {t.trimmed
+                    .split('{{max}}')
+                    .join(fmtDuration(VOICE_SAMPLE_MAX_SEC))}
+                </Alert>
+              ) : sampleSec !== null && sampleSec < VOICE_SAMPLE_MIN_SEC ? (
+                <Alert tone="warning">
+                  {t.tooShort.replace('{{min}}', String(VOICE_SAMPLE_MIN_SEC))}
+                </Alert>
+              ) : null}
               <Field label={t.labelFieldLabel} htmlFor="my-voice-label">
                 <Input
                   id="my-voice-label"
@@ -894,7 +995,7 @@ export function MyVoicesSection({
                   size="sm"
                   icon={<Volume2 size={14} />}
                   loading={submitting}
-                  disabled={!label.trim() || !consent}
+                  disabled={!label.trim() || !consent || !!sampleProblem}
                   onClick={() => void submit()}
                 >
                   {t.submitButton}

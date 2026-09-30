@@ -7,6 +7,7 @@ import { UiSnapshotRunnerService } from './ui-snapshot-runner.service';
 import { ClientSiteTutorialModule } from '../client-site-tutorial/client-site-tutorial.module';
 import { TutorialFramesCaptureService } from './tutorial-frames-capture.service';
 import { GreetingFramesCaptureService } from './greeting-frames-capture.service';
+import { UiSnapshotQueryService } from './ui-snapshot-query.service';
 import { GreetingPromptModule } from '../greeting-prompt/greeting-prompt.module';
 import { GreetingVideoModule } from '../greeting-video/greeting-video.module';
 import { GreetingSessionEditModule } from '../greeting-session-edit/greeting-session-edit.module';
@@ -53,6 +54,8 @@ import { GreetingSessionEditModule } from '../greeting-session-edit/greeting-ses
     UiSnapshotRunnerService,
     TutorialFramesCaptureService,
     GreetingFramesCaptureService,
+    // Чтение истории снимков для админки — только внутри модуля.
+    UiSnapshotQueryService,
   ],
   exports: [
     UiSnapshotRunnerService,

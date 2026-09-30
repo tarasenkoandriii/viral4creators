@@ -86,6 +86,8 @@ import type {
   AdminFeedImportListResult,
   CronJobInfo,
   CronRunLog,
+  UiSnapshotList,
+  UiSnapshotSummary,
   CronSummary,
   AvatarVideo,
   SoundCheckState,
@@ -711,6 +713,21 @@ export function getCronSummary(since: string, until: string) {
 
 export function runCronJob(jobKey: string, debug: boolean) {
   return apiPost<CronRunLog>(`/admin/cron/${jobKey}/run?debug=${debug}`);
+}
+
+// ── Снимки интерфейса (крон ui-snapshot-run) ───────────────────────────
+
+/** Сводка по маршрутам с `since` (ISO; по умолчанию — сутки). */
+export function getUiSnapshotSummary(since?: string) {
+  return apiGet<UiSnapshotSummary>('/admin/ui-snapshot/summary', { since });
+}
+
+/** Лента снимков, новые сверху. `changed: 'true'` — только изменившиеся
+ * (фильтр в базе); `before` — `nextBefore` прошлой страницы. */
+export function getUiSnapshots(
+  params: { route?: string; since?: string; limit?: number; before?: string; changed?: 'true' } = {},
+) {
+  return apiGet<UiSnapshotList>('/admin/ui-snapshot/snapshots', params);
 }
 
 // ── Пилот говорящего AI-аватара (backend/src/modules/actors, этап 72,

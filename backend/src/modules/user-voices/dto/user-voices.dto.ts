@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsIn,
@@ -15,10 +16,18 @@ import {
  * Presigned-Blob поток, тот же приём, что у фото персонажа/сцены бренда
  * (`brand-manifest/dto/character-photo.dto.ts`) и сцен-референсов
  * (`reference-assets/dto/reference-assets.dto.ts`) — здесь тело записи
- * голоса вместо изображения. Форматы — то, что реально отдаёт браузерная
- * запись (`audio/webm`, `MediaRecorder` по умолчанию в большинстве
- * браузеров) плюс распространённые форматы файла, который могли
- * загрузить готовым.
+ * голоса вместо изображения.
+ *
+ * Образец уходит в Resemble ссылкой (`dataset_url`,
+ * `ResembleService.cloneVoice`). Документация Resemble называет для
+ * образца «Single WAV file (≥10 seconds)», длина «10 seconds – 3 minutes»
+ * (docs.resemble.ai/voice-creation/voices/clone-overview) — поэтому
+ * клиент с 30.09.2026 перекодирует запись в WAV в браузере
+ * (frontend/src/lib/voice-sample.ts). Остальные типы — запасной путь,
+ * когда браузер не смог декодировать запись: mp3/m4a — обычные форматы
+ * готового файла, webm — запись MediaRecorder как есть. ogg/aac сюда
+ * НЕ добавлены: Resemble их не называет, а браузер, который их записал
+ * или открыл, их же и декодирует в WAV.
  */
 const ALLOWED_MIME_TYPES = [
   'audio/mpeg',
@@ -28,18 +37,56 @@ const ALLOWED_MIME_TYPES = [
   'audio/webm',
 ] as const;
 
+/**
+ * Синонимы одного контейнера → тип из списка. Та же таблица —
+ * `MIME_ALIASES` в frontend/src/lib/voice-sample.ts (сверяет тест
+ * фронтенда): клиент нормализует тип так же, и PUT в Blob идёт ровно с
+ * тем Content-Type, под который подписан адрес.
+ */
+const MIME_ALIASES: Readonly<Record<string, string>> = {
+  'audio/mp3': 'audio/mpeg',
+  'audio/x-mp3': 'audio/mpeg',
+  'audio/x-mpeg': 'audio/mpeg',
+  'audio/x-m4a': 'audio/mp4',
+  'audio/m4a': 'audio/mp4',
+  'audio/wave': 'audio/wav',
+  'audio/vnd.wave': 'audio/wav',
+};
+
+/**
+ * `audio/webm;codecs=opus` → `audio/webm`, регистр — нижний, синонимы —
+ * к типу из списка. Прод-дефект 30.09.2026: Telegram Android присылал тип
+ * с параметром кодека, `@IsIn` сверял строку целиком и отвечал английским
+ * «mimeType must be one of…». Нормализация — ДО проверки (`@Transform`),
+ * и дальше (путь, `allowedContentTypes` подписи Blob) идёт уже голый тип.
+ */
+export function normalizeVoiceSampleMime(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const base = value.split(';')[0].trim().toLowerCase();
+  return MIME_ALIASES[base] ?? base;
+}
+
+export const VOICE_SAMPLE_FORMAT_UNSUPPORTED =
+  'Этот формат записи не поддерживается — запишите голос заново или загрузите mp3/wav/m4a';
+
 export class VoiceSampleUploadUrlRequestDto {
-  @IsString()
-  @MaxLength(255)
+  @IsString({ message: 'Не удалось прочитать имя файла записи' })
+  @MaxLength(255, { message: 'Слишком длинное имя файла записи' })
   fileName!: string;
 
-  @IsNumber()
-  @Min(1)
-  @Max(15 * 1024 * 1024) // 15MB — с большим запасом над «минутой речи» (§5.2б TTS-спека)
+  @IsNumber({}, { message: 'Не удалось определить размер записи' })
+  @Min(1, { message: 'Запись пустая — запишите голос ещё раз' })
+  // 15MB — с большим запасом над «минутой речи» (§5.2б TTS-спека); WAV
+  // двух минут, который собирает клиент, — ≈10,6 МБ.
+  @Max(15 * 1024 * 1024, {
+    message:
+      'Запись больше 15 МБ — загрузите запись покороче (до 2 минут) в mp3/wav/m4a',
+  })
   fileSize!: number;
 
-  @IsString()
-  @IsIn(ALLOWED_MIME_TYPES)
+  @Transform(({ value }) => normalizeVoiceSampleMime(value))
+  @IsString({ message: VOICE_SAMPLE_FORMAT_UNSUPPORTED })
+  @IsIn(ALLOWED_MIME_TYPES, { message: VOICE_SAMPLE_FORMAT_UNSUPPORTED })
   mimeType!: string;
 
   /**
@@ -60,7 +107,8 @@ const EXT_BY_MIME: Readonly<Record<string, string>> = {
 };
 
 export function sampleExtFor(mimeType: string): string {
-  return EXT_BY_MIME[mimeType] ?? 'bin';
+  const base = normalizeVoiceSampleMime(mimeType);
+  return (typeof base === 'string' && EXT_BY_MIME[base]) || 'bin';
 }
 
 export class VoiceCloneRequestDto {

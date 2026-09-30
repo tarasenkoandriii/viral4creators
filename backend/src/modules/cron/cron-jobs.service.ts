@@ -59,6 +59,10 @@ import {
   UiSnapshotRunnerService,
 } from '../ui-snapshot/ui-snapshot-runner.service';
 import {
+  pruneUiSnapshots,
+  UI_SNAPSHOT_PRUNE_TIME_BUDGET_MS,
+} from '../ui-snapshot/ui-snapshot-retention';
+import {
   EMPTY_KINDS,
   orphanSweepPlan,
   ownerIdOf,
@@ -177,6 +181,21 @@ export interface CleanupSessionsResult {
   /** Хоть один из трёх счётчиков выше уперся в `PURGE_BATCH`/`CLEANUP_BATCH`
    * за отведённые партии/время — остаток доберёт завтрашний прогон. */
   hasMoreSoftDeleted: boolean;
+  /**
+   * Снимки крон-обхода интерфейса (`ui-snapshot-run`) по сроку хранения —
+   * см. `ui-snapshot/ui-snapshot-retention.ts`: строк удалено, их файлов
+   * под `qa-snapshots/` удалено, и строк оставлено, потому что файл
+   * удалить не удалось (доберёт следующий прогон).
+   */
+  deletedUiSnapshots: number;
+  deletedUiSnapshotBlobs: number;
+  uiSnapshotCleanupFailed: number;
+  /** Уборка снимков упёрлась в потолок страниц/времени — остаток завтра. */
+  hasMoreUiSnapshots: boolean;
+  /** Страниц и миллисекунд уборки снимков за прогон — видно, успевает
+   * ли она за притоком (см. `UiSnapshotPruneResult`). */
+  uiSnapshotCleanupPages: number;
+  uiSnapshotCleanupMs: number;
   /**
    * Найдено доп. аудитом (MEDIUM) — тот же приём джоб-замка, что уже
    * есть у `runBlog`/`runExportSyncRun` (см. `common/cron-job-lock.ts`):
@@ -805,6 +824,12 @@ export class CronJobsService {
         purgedSoftDeletedProjects: 0,
         purgedSoftDeletedItems: 0,
         hasMoreSoftDeleted: false,
+        deletedUiSnapshots: 0,
+        deletedUiSnapshotBlobs: 0,
+        uiSnapshotCleanupFailed: 0,
+        hasMoreUiSnapshots: false,
+        uiSnapshotCleanupPages: 0,
+        uiSnapshotCleanupMs: 0,
         skipped: true,
       };
     }
@@ -868,6 +893,48 @@ export class CronJobsService {
     } catch (error) {
       this.logger.warn(
         `журнал кронов не подчищен: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    // Снимки крон-обхода интерфейса (`ui-snapshot-run`) — тем же
+    // суточным прогоном и по той же причине, что журнал кронов выше:
+    // ~3600 строк и публичных PNG в сутки, а метла `sweep-orphans`
+    // префикс `qa-snapshots/` не обходит. Что и сколько хранится —
+    // `ui-snapshot-retention.ts`. Свой бюджет времени от `started`:
+    // таймаут функции общий с уборкой сессий ниже. Best-effort, как и
+    // соседи.
+    const snapshots = {
+      deleted: 0,
+      deletedBlobs: 0,
+      failed: 0,
+      hasMore: false,
+      pages: 0,
+      ms: 0,
+    };
+    try {
+      Object.assign(
+        snapshots,
+        await pruneUiSnapshots(this.prisma, this.blobService, {
+          now: new Date(started),
+          deadlineMs: started + UI_SNAPSHOT_PRUNE_TIME_BUDGET_MS,
+        }),
+      );
+      if (snapshots.deleted > 0 || snapshots.failed > 0 || snapshots.hasMore) {
+        this.logger.log(
+          `снимки интерфейса: удалено ${snapshots.deleted} строк и ` +
+            `${snapshots.deletedBlobs} файлов` +
+            (snapshots.failed > 0
+              ? `, ${snapshots.failed} строк оставлено — файл не удалился, доберём завтра`
+              : '') +
+            ` за ${snapshots.pages} стр. / ${snapshots.ms} мс` +
+            (snapshots.hasMore ? ' (есть ещё, доберём завтра)' : ''),
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `снимки интерфейса не подчищены: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -1081,6 +1148,12 @@ export class CronJobsService {
       purgedSoftDeletedProjects: purgedProjectsCount,
       purgedSoftDeletedItems: purgedItemsCount,
       hasMoreSoftDeleted,
+      deletedUiSnapshots: snapshots.deleted,
+      deletedUiSnapshotBlobs: snapshots.deletedBlobs,
+      uiSnapshotCleanupFailed: snapshots.failed,
+      hasMoreUiSnapshots: snapshots.hasMore,
+      uiSnapshotCleanupPages: snapshots.pages,
+      uiSnapshotCleanupMs: snapshots.ms,
     };
   }
 

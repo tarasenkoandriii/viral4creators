@@ -54,6 +54,20 @@ jest.mock('../ab-test/ab-test-worker.service', () => ({
   AbTestWorkerService: class {},
 }));
 
+// Уборка снимков интерфейса — настоящая функция по умолчанию; тесты
+// ниже подменяют её результат, чтобы проверить проводку счётчиков в
+// отчёт крона (её собственные правила — `ui-snapshot-retention.spec.ts`).
+jest.mock('../ui-snapshot/ui-snapshot-retention', () => {
+  const actual = jest.requireActual('../ui-snapshot/ui-snapshot-retention');
+  return {
+    ...actual,
+    pruneUiSnapshots: jest.fn(
+      (...args: Parameters<typeof actual.pruneUiSnapshots>) =>
+        actual.pruneUiSnapshots(...args),
+    ),
+  };
+});
+
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -117,6 +131,13 @@ function build() {
       create: jest.fn().mockResolvedValue({ id: 'run-log-1' }),
       update: jest.fn().mockResolvedValue(undefined),
       // Ретенция журнала (аудит 27.09.2026) — в суточной уборке.
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    // Срок хранения снимков интерфейса — по умолчанию убирать нечего.
+    uiSnapshot: {
+      groupBy: jest.fn().mockResolvedValue([]),
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   };
@@ -552,8 +573,15 @@ describe('CronJobsService — уборка сессий партиями', () =>
       purgedSoftDeletedProjects: 0,
       purgedSoftDeletedItems: 0,
       hasMoreSoftDeleted: false,
+      deletedUiSnapshots: 0,
+      deletedUiSnapshotBlobs: 0,
+      uiSnapshotCleanupFailed: 0,
+      hasMoreUiSnapshots: false,
+      uiSnapshotCleanupPages: 0,
+      uiSnapshotCleanupMs: 0,
       skipped: true,
     });
+    expect(prisma.uiSnapshot.groupBy).not.toHaveBeenCalled();
     expect(sessionService.cleanupExpiredSessions).not.toHaveBeenCalled();
     expect(projectService.purgeSoftDeletedProjects).not.toHaveBeenCalled();
     expect(blobService.deleteMany).not.toHaveBeenCalled();
@@ -1483,6 +1511,97 @@ describe('CronJobsService — аудиокеш голоса советника (
     expect(blobService.deleteMany).toHaveBeenCalledWith([
       'wizard-hint-audio/k.mp3',
     ]);
+  });
+});
+
+describe('CronJobsService — срок хранения снимков интерфейса (ui-snapshot-run)', () => {
+  const pruneMock = () =>
+    jest.requireMock('../ui-snapshot/ui-snapshot-retention')
+      .pruneUiSnapshots as jest.Mock;
+
+  it('суточная уборка зовёт уборку снимков и кладёт счётчики в отчёт и summary', async () => {
+    const { service, prisma, blobService } = build();
+    pruneMock().mockResolvedValueOnce({
+      deleted: 7,
+      deletedBlobs: 5,
+      failed: 2,
+      hasMore: true,
+      pages: 20,
+      ms: 29_512,
+    });
+
+    const result = await service.runCleanupSessions();
+
+    const [[p, b, opts]] = pruneMock().mock.calls.slice(-1) as [
+      [unknown, unknown, { now: Date; deadlineMs: number }],
+    ];
+    expect(p).toBe(prisma);
+    expect(b).toBe(blobService);
+    const { UI_SNAPSHOT_PRUNE_TIME_BUDGET_MS } = jest.requireActual(
+      '../ui-snapshot/ui-snapshot-retention',
+    );
+    expect(opts.deadlineMs - opts.now.getTime()).toBe(
+      UI_SNAPSHOT_PRUNE_TIME_BUDGET_MS,
+    );
+    expect(result).toMatchObject({
+      deletedUiSnapshots: 7,
+      deletedUiSnapshotBlobs: 5,
+      uiSnapshotCleanupFailed: 2,
+      hasMoreUiSnapshots: true,
+      uiSnapshotCleanupPages: 20,
+      uiSnapshotCleanupMs: 29_512,
+    });
+    const { buildRunSummary } = await import('./cron-run-summary');
+    const summary = buildRunSummary('cleanup-sessions', result);
+    expect(summary).toContain('deletedUiSnapshots=7');
+    expect(summary).toContain('deletedUiSnapshotBlobs=5');
+    expect(summary).toContain('uiSnapshotCleanupFailed=2');
+    // Успевает ли уборка за притоком — видно без debug.
+    expect(summary).toContain('uiSnapshotCleanupPages=20');
+    expect(summary).toContain('uiSnapshotCleanupMs=29512');
+  });
+
+  it('настоящая уборка: старый обычный снимок уходит, файл — под qa-snapshots/', async () => {
+    const { service, prisma, blobService } = build();
+    const old = new Date(Date.now() - 5 * 86_400_000);
+    const url = `https://s.public.blob.vercel-storage.com/qa-snapshots/home/ru/light/${old.getTime()}.png`;
+    prisma.uiSnapshot.groupBy.mockResolvedValue([
+      { routeKey: 'home', locale: 'ru', theme: 'light' },
+    ]);
+    prisma.uiSnapshot.findMany.mockResolvedValueOnce([
+      { id: 'old', createdAt: old, changed: false, error: null, blobUrl: url },
+    ]);
+    // Позже есть обычный снимок — `old` не база и не «было».
+    prisma.uiSnapshot.findFirst.mockResolvedValueOnce({
+      id: 'next',
+      createdAt: new Date(),
+      changed: false,
+      comparedToUrl: url,
+    });
+    prisma.uiSnapshot.deleteMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.runCleanupSessions();
+
+    expect(blobService.deleteMany).toHaveBeenCalledWith(
+      [`qa-snapshots/home/ru/light/${old.getTime()}.png`],
+      1,
+    );
+    expect(prisma.uiSnapshot.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['old'] } },
+    });
+    expect(result.deletedUiSnapshots).toBe(1);
+    expect(result.deletedUiSnapshotBlobs).toBe(1);
+  });
+
+  it('сбой уборки снимков не роняет уборку сессий', async () => {
+    const { service, prisma } = build();
+    prisma.uiSnapshot.groupBy.mockRejectedValue(new Error('база лежит'));
+
+    const result = await service.runCleanupSessions();
+
+    expect(result.deletedUiSnapshots).toBe(0);
+    expect(result.uiSnapshotCleanupFailed).toBe(0);
+    expect(result.deletedCount).toBe(2);
   });
 });
 

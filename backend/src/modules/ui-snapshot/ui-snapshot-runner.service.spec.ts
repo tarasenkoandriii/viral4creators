@@ -30,9 +30,12 @@ jest.mock('./perceptual-hash', () => ({
 
 import { Logger } from '@nestjs/common';
 import {
+  FREEZE_MOTION_CSS,
+  maskAndFreezeInPage,
   PERSONAL_TEXT_MASK_CSS,
   PERSONAL_TEXT_MASK_PREFIX,
   scrollToSection,
+  settleForComparison,
   UiSnapshotRunnerService,
 } from './ui-snapshot-runner.service';
 
@@ -92,6 +95,8 @@ function buildFakePage() {
     // Маска личного текста (этап I ТЗ Greeting 2.0) — стилем документа.
     addStyleTag: jest.fn().mockResolvedValue(undefined),
     waitForFunction: jest.fn().mockResolvedValue(undefined),
+    // Оседание сравниваемого кадра (разбор «мигания» 30.09.2026).
+    waitForNetworkIdle: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -244,6 +249,12 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
       {},
     );
     expect(blob.uploadBuffer).toHaveBeenCalledTimes(5);
+    // Сравниваемые снимки — под префиксом, который знает уборка по сроку
+    // хранения (`ui-snapshot-retention.ts`): чужой префикс она не трогает,
+    // и файлы копились бы вечно.
+    for (const [pathname] of blob.uploadBuffer.mock.calls as Array<[string]>) {
+      expect(pathname).toMatch(/^qa-snapshots\/[a-z-]+\/ru\/light\/\d+\.png$/);
+    }
     expect(prisma.uiSnapshot.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -1191,6 +1202,157 @@ describe('scrollToSection — расчёт в браузере', () => {
       await expect(scrollToSection(page, '#s')).resolves.toBeUndefined();
     } finally {
       dom.restore();
+    }
+  });
+});
+
+/**
+ * Разбор «мигания» крона 30.09.2026: `changed=1` парами через две
+ * минуты в случайные минуты часа. Кадр зависел от того, КОГДА он снят
+ * (фаза бесконечной анимации знака в шапке, недогруженные запросы при
+ * `networkidle2`), а не от того, что на экране.
+ */
+describe('UiSnapshotRunnerService — кадр не зависит от момента съёмки', () => {
+  function withPage() {
+    const page = buildFakePage();
+    const calls: string[] = [];
+    page.waitForNetworkIdle.mockImplementation(async () => {
+      calls.push('idle');
+    });
+    page.waitForFunction.mockImplementation(async () => {
+      calls.push('ready');
+    });
+    page.evaluate.mockImplementation(async () => {
+      calls.push('evaluate');
+    });
+    page.screenshot.mockImplementation(async () => {
+      calls.push('screenshot');
+      return new Uint8Array([1]);
+    });
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    return { page, calls };
+  }
+
+  it('сравниваемый прогон: оседание → маска с заморозкой → снимок', async () => {
+    const { page, calls } = withPage();
+    const { service } = build();
+
+    await service.run({ routeKeys: ['projects'] });
+
+    expect(calls).toEqual(['idle', 'ready', 'evaluate', 'screenshot']);
+    // Полное затишье сети — не `networkidle2` с двумя запросами в полёте.
+    expect(page.waitForNetworkIdle).toHaveBeenCalledWith(
+      expect.objectContaining({ idleTime: expect.any(Number) }),
+    );
+    expect(
+      (page.waitForNetworkIdle.mock.calls[0] as unknown[])[0],
+    ).not.toHaveProperty('concurrency');
+    expect(page.evaluate).toHaveBeenCalledWith(
+      maskAndFreezeInPage,
+      FREEZE_MOTION_CSS,
+    );
+  });
+
+  it('экран не осел — кадр всё равно снимается и сравнивается, без ошибки маршрута', async () => {
+    const { page } = withPage();
+    page.waitForNetworkIdle.mockRejectedValue(new Error('timeout'));
+    page.waitForFunction.mockRejectedValue(new Error('timeout'));
+    const { service, prisma } = build();
+
+    const result = await service.run({ routeKeys: ['projects'] });
+
+    expect(result.outcomes[0].error).toBeUndefined();
+    expect(page.screenshot).toHaveBeenCalledTimes(1);
+    expect(prisma.uiSnapshot.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ diffHash: 'abc123' }),
+      }),
+    );
+  });
+
+  it('немаскированный прогон не ждёт оседания и не замораживает — его кадры не меняются', async () => {
+    const { page } = withPage();
+    const { service } = build();
+
+    await service.run({ routeKeys: ['projects'], unmasked: true });
+
+    expect(page.waitForNetworkIdle).not.toHaveBeenCalled();
+    expect(page.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('заморозка — на весь документ, включая псевдоэлементы, и снимает и анимации, и переходы', () => {
+    expect(FREEZE_MOTION_CSS).toMatch(/^\*,\*::before,\*::after\{/);
+    expect(FREEZE_MOTION_CSS).toContain('animation:none!important');
+    expect(FREEZE_MOTION_CSS).toContain('transition:none!important');
+    // Не прячет ничего: только движение. Маскирование — отдельно.
+    expect(FREEZE_MOTION_CSS).not.toContain('visibility');
+    expect(FREEZE_MOTION_CSS).not.toContain('display');
+  });
+
+  it('в странице: маски прячутся, стиль заморозки попадает в документ', () => {
+    const masked = [
+      { style: { visibility: '' } },
+      { style: { visibility: '' } },
+    ];
+    const appended: Array<{
+      textContent: string;
+      attrs: Record<string, string>;
+    }> = [];
+    const g = globalThis as any;
+    const before = g.document;
+    g.document = {
+      querySelectorAll: (sel: string) =>
+        sel === '[data-qa-mask]' ? masked : [],
+      createElement: () => {
+        const attrs: Record<string, string> = {};
+        return {
+          attrs,
+          textContent: '',
+          setAttribute: (k: string, v: string) => {
+            attrs[k] = v;
+          },
+        };
+      },
+      head: {
+        appendChild: (el: any) => appended.push(el),
+      },
+    };
+    try {
+      maskAndFreezeInPage(FREEZE_MOTION_CSS);
+    } finally {
+      g.document = before;
+    }
+    expect(masked.map((m) => m.style.visibility)).toEqual(['hidden', 'hidden']);
+    expect(appended).toHaveLength(1);
+    expect(appended[0].textContent).toBe(FREEZE_MOTION_CSS);
+    expect(appended[0].attrs).toHaveProperty('data-qa-freeze');
+  });
+
+  it('условие готовности: шрифты загружены и ни одного спиннера', async () => {
+    const g = globalThis as any;
+    const before = g.document;
+    const page = {
+      waitForNetworkIdle: jest.fn().mockResolvedValue(undefined),
+      waitForFunction: jest.fn().mockResolvedValue(undefined),
+    };
+    await settleForComparison(page);
+    const ready = page.waitForFunction.mock.calls[0][0] as () => boolean;
+    try {
+      g.document = { fonts: { status: 'loading' }, querySelector: () => null };
+      expect(ready()).toBe(false);
+      g.document = { fonts: { status: 'loaded' }, querySelector: () => ({}) };
+      expect(ready()).toBe(false);
+      g.document = {
+        fonts: { status: 'loaded' },
+        querySelector: (sel: string) => (sel === '.animate-spin' ? null : {}),
+      };
+      expect(ready()).toBe(true);
+    } finally {
+      g.document = before;
     }
   });
 });

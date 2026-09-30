@@ -31,6 +31,7 @@ import { resembleWebhookUrl } from './resemble-webhook-secret';
 import {
   VoiceCloneRequestDto,
   VoiceSampleUploadUrlRequestDto,
+  normalizeVoiceSampleMime,
   sampleExtFor,
 } from './dto/user-voices.dto';
 import {
@@ -156,10 +157,15 @@ export class UserVoicesService {
       await this.assertUnderLimit(userId);
     }
     const voiceId = randomUUID();
-    const pathname = `users/${userId}/voices/${voiceId}/sample.${sampleExtFor(dto.mimeType)}`;
+    // DTO уже нормализовал тип (`@Transform`); повтор — для вызовов в
+    // обход ValidationPipe. Подпись Blob (`allowedContentTypes`) и PUT
+    // клиента должны совпасть строка в строку — клиент шлёт тот же
+    // голый тип (frontend/src/lib/voice-sample.ts `normalizeAudioMime`).
+    const mimeType = String(normalizeVoiceSampleMime(dto.mimeType));
+    const pathname = `users/${userId}/voices/${voiceId}/sample.${sampleExtFor(mimeType)}`;
     const { uploadUrl } = await this.blob.createUploadUrl(
       pathname,
-      dto.mimeType,
+      mimeType,
       15 * 1024 * 1024,
     );
     return { uploadUrl, pathname, voiceId };

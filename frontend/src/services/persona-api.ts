@@ -20,6 +20,7 @@ import {
   type PublishedShare,
 } from '../lib/persona-flow';
 import type { UserVoice } from '../types';
+import { normalizeAudioMime } from '../lib/voice-sample';
 
 function unwrap<T>(res: { data?: T }, what: string): T {
   if (res.data === undefined) throw new Error(`Пустой ответ: ${what}`);
@@ -239,6 +240,8 @@ export async function uploadPersonaVoiceSample(
   file: Blob,
   mimeType: string
 ): Promise<{ pathname: string }> {
+  // См. `uploadVoiceSample`: один нормализованный тип на upload-url и PUT.
+  const type = normalizeAudioMime(mimeType, 'audio/webm');
   const target = unwrap(
     await api.post<{ uploadUrl: string; pathname: string }>(
       '/voices/upload-url',
@@ -247,13 +250,13 @@ export async function uploadPersonaVoiceSample(
       {
         fileName: 'persona-sample',
         fileSize: file.size,
-        mimeType,
+        mimeType: type,
         forPersona: true,
       }
     ),
     'voices/upload-url'
   );
-  await putPersonaFile(target.uploadUrl, file, mimeType);
+  await putPersonaFile(target.uploadUrl, file, type);
   return { pathname: target.pathname };
 }
 

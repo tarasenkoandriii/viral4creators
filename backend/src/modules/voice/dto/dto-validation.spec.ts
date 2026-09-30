@@ -63,6 +63,22 @@ describe('voice DTOs under the real ValidationPipe settings', () => {
       pathname: 'x',
     });
   });
+  it('upload-url: отказ по формату — по-русски (сообщение видит человек)', async () => {
+    const err = await run(VoiceUploadUrlRequestDto, {
+      fileName: 'v',
+      fileSize: 1000,
+      mimeType: 'video/webm',
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(BadRequestException);
+    const msg = (
+      (err as BadRequestException).getResponse() as { message: string[] }
+    ).message.join(' ');
+    expect(msg).toContain('Этот формат записи не поддерживается');
+    expect(msg).not.toMatch(/must be one of/);
+  });
   it('transcribe accepts an item voice key (+ optional apply) and rejects anything else', async () => {
     await ok(TranscribeRequestDto, {
       pathname: 'projects/p1/items/i1/voice-1700000000000.webm',

@@ -945,6 +945,58 @@ export interface CronJobInfo {
 
 export type CronRunStatus = 'RUNNING' | 'SUCCESS' | 'FAILED';
 
+// ── Снимки интерфейса крона ui-snapshot-run
+// (backend/src/modules/ui-snapshot/ui-snapshot-query.service.ts) ──────
+
+export interface UiSnapshotPrevious {
+  id: string;
+  createdAt: string;
+  blobUrl: string | null;
+}
+
+export interface UiSnapshotItem {
+  id: string;
+  routeKey: string;
+  locale: string;
+  theme: string;
+  createdAt: string;
+  changed: boolean;
+  /** Расстояние между отпечатками 0..1; null у первого снимка и у сбоя. */
+  diffScore: number | null;
+  /** Публичный адрес PNG в Blob; null — снимок не удалось снять. */
+  blobUrl: string | null;
+  /** Адрес картинки, с которой сравнивали. */
+  comparedToUrl: string | null;
+  /** Первые символы dHash. */
+  diffHash: string | null;
+  error: string | null;
+  /** Только у изменившихся: предыдущий снимок той же комбинации. */
+  previous: UiSnapshotPrevious | null;
+}
+
+export interface UiSnapshotList {
+  items: UiSnapshotItem[];
+  /** Курсор следующей страницы; null — дальше нет. */
+  nextBefore: string | null;
+}
+
+export interface UiSnapshotRouteSummary {
+  routeKey: string;
+  total: number;
+  changed: number;
+  errors: number;
+  lastAt: string | null;
+  recentChangedAt: string[];
+}
+
+export interface UiSnapshotSummary {
+  since: string;
+  routes: UiSnapshotRouteSummary[];
+  /** Сколько дней хранятся обычные снимки: за период длиннее этого
+   * `total` и `errors` считают только последние дни. */
+  plainRetentionDays: number;
+}
+
 export interface CronRunLog {
   id: string;
   jobKey: string;

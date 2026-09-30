@@ -890,8 +890,12 @@ function checkGuideSeams() {
     // заведено. Ограничителем работает `=`: между `const x:` и
     // присваиванием его быть не может, а чужой оператор без него не
     // обходится.
+    //
+    // `this.` необязателен: уборки, вынесенные в функции модуля
+    // (`pruneWizardHintAudio`, `pruneUiSnapshots`), получают клиент
+    // параметром `prisma`, и первая редакция правила их не видела.
     const ANNOTATED_GROUP_BY =
-      /const\s+\w+\s*:[^=]*?=\s*(?:await\s+)?this\.prisma\.[A-Za-z0-9_.$]+\.groupBy\s*\(/g;
+      /const\s+\w+\s*:[^=]*?=\s*(?:await\s+)?(?:\bthis\.|\b)prisma\.[A-Za-z0-9_.$]+\.groupBy\s*\(/g;
     for (const m of text.matchAll(ANNOTATED_GROUP_BY)) {
       const line = text.slice(0, m.index).split("\n").length;
       annotatedGroupBy.push(

@@ -32,12 +32,20 @@
  * вторая копия расписания. Два одновременных прогона по одним маршрутам
  * друг другу не мешают — каждый пишет свой файл со своей меткой
  * времени.
+ *
+ * ## Чтение истории
+ *
+ * Два GET (`snapshots`, `summary`) — просмотр снимков крона во вкладке
+ * «Система → Снимки интерфейса»; сами запросы живут в
+ * `UiSnapshotQueryService`.
  */
 import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -64,6 +72,13 @@ import {
   GreetingFramesCaptureService,
   type FixtureVideoResult,
 } from './greeting-frames-capture.service';
+import {
+  UiSnapshotQueryService,
+  parseSnapshotListQuery,
+  parseSnapshotSummarySince,
+  type UiSnapshotListResult,
+  type UiSnapshotSummary,
+} from './ui-snapshot-query.service';
 
 interface RunSnapshotBody {
   locale?: unknown;
@@ -83,7 +98,46 @@ export class UiSnapshotAdminController {
     private readonly runner: UiSnapshotRunnerService,
     private readonly frames: TutorialFramesCaptureService,
     private readonly greetingFrames: GreetingFramesCaptureService,
+    private readonly snapshots: UiSnapshotQueryService,
   ) {}
+
+  /**
+   * GET /api/admin/ui-snapshot/snapshots — лента снимков крона, новые
+   * сверху (вкладка «Снимки интерфейса»). `route` — имя маршрута,
+   * `since` — ISO-дата, `limit` (по умолчанию 30, не больше 100),
+   * `before` — курсор из `nextBefore` прошлой страницы, `changed=true` —
+   * только изменившиеся: они редки, и отбирать их на клиенте из
+   * страницы в 30 строк значило бы почти всегда видеть пустоту.
+   */
+  @Get('snapshots')
+  async listSnapshots(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('route') route?: string,
+    @Query('since') since?: string,
+    @Query('limit') limit?: string,
+    @Query('before') before?: string,
+    @Query('changed') changed?: string,
+  ): Promise<UiSnapshotListResult> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.snapshots.list(
+      parseSnapshotListQuery({ route, since, limit, before, changed }),
+    );
+  }
+
+  /**
+   * GET /api/admin/ui-snapshot/summary — по маршрутам за период
+   * (`since`, по умолчанию сутки, не длиннее 30 дней): сколько снимков,
+   * сколько «изменилось», сколько не снялось, последние времена
+   * перемен. Изменчивые маршруты — сверху.
+   */
+  @Get('summary')
+  async snapshotSummary(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('since') since?: string,
+  ): Promise<UiSnapshotSummary> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.snapshots.summary(parseSnapshotSummarySince(since));
+  }
 
   @Post('run')
   async run(
