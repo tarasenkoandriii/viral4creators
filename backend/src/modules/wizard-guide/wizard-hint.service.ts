@@ -56,14 +56,10 @@ import {
   type GuideAction,
 } from './hint-actions';
 import { SCENARIO_HINTS, knowledgeStamp, stepIdsOf } from './hint-scenarios';
-import { factsOfScenario } from './hint-facts';
-// Через enum, а не строкой: значения там строчные, и литерал,
-// написанный по памяти заглавными, молча выключил бы факт — как это
-// уже случилось в тесте барьера greeting.
-import { ModerationStatus } from '../../common/types/prompt.types';
+import { factsOfScenario, greetingStateOf } from './hint-facts';
+// Через enum, а не строкой (см. `greetingStateOf` в `hint-facts.ts`).
 import { GenerationStatus } from '../../common/types/generation.types';
 import { activeProductImage } from '../../common/active-image';
-import { AVATAR_PRESENTER } from '../../common/wizard-readiness.session';
 
 /** Ровно те поля сессии, которые читают факты состояния. */
 interface SessionShape {
@@ -457,27 +453,9 @@ export class WizardHintService {
       : null;
 
     if (scenario === 'GREETING_VIDEO') {
-      const brief = session?.greetingBriefSnapshot;
-      return factsOfScenario({
-        scenario,
-        state: session
-          ? {
-              occasion: brief?.occasion ?? null,
-              customOccasionText: brief?.customOccasionText ?? null,
-              recipientName: brief?.recipientName ?? null,
-              senderName: brief?.senderName ?? null,
-              usesAvatar:
-                (brief?.resolvedPresenterProvider ??
-                  brief?.presenterProvider) === AVATAR_PRESENTER,
-              referenceImages: session.greetingReferenceImages?.length ?? 0,
-              hasPrompt: !!session.generationPrompt,
-              promptFlagged:
-                session.generationPrompt?.moderationStatus ===
-                ModerationStatus.FLAGGED,
-              hasVideo: !!session.generatedVideo,
-            }
-          : null,
-      });
+      // Чтение состояния — общее с голосом (`greetingStateOf`, K4): ответ
+      // на вопрос голосом и подсказка видят одно и то же.
+      return factsOfScenario({ scenario, state: greetingStateOf(session) });
     }
 
     return factsOfScenario({
@@ -498,7 +476,8 @@ export class WizardHintService {
             renderInFlight:
               session.generatedVideo?.status === GenerationStatus.PENDING ||
               session.generatedVideo?.status === GenerationStatus.PROCESSING,
-            hasVideo: session.generatedVideo?.status === 'completed',
+            hasVideo:
+              session.generatedVideo?.status === GenerationStatus.COMPLETE,
           }
         : null,
     });

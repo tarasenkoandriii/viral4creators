@@ -95,6 +95,18 @@ function build(sessionOver: Record<string, unknown> = {}) {
       }),
     }),
   };
+  const prisma = {
+    persona: {
+      findFirst: jest.fn().mockResolvedValue({
+        id: 'p1',
+        livenessCheckedAt: new Date(),
+        revokedAt: null,
+        verifyResult: { status: 'ok' },
+      }),
+    },
+    personaLook: { findFirst: jest.fn().mockResolvedValue({ id: 'l1' }) },
+    userVoice: { findFirst: jest.fn().mockResolvedValue(null) },
+  };
   const svc = new GreetingVideoService(
     sessions as any,
     plans as any,
@@ -121,9 +133,13 @@ function build(sessionOver: Record<string, unknown> = {}) {
     // а не про счётчики.
     { onRenderCompleted: jest.fn().mockResolvedValue(undefined) } as any,
     credits as any,
+    // CONTRACT5 п.14: повторная проверка персоны у денег — по умолчанию
+    // персона проверена, образ и голос на месте.
+    prisma as any,
   );
   return {
     svc,
+    prisma,
     credits,
     sessions,
     plans,
@@ -610,5 +626,162 @@ describe('проверка правил перед рендером (этап B)
     const { svc, startGeneration } = build();
     await svc.startVideo('s1');
     expect(startGeneration).toHaveBeenCalled();
+  });
+});
+
+describe('этап G — ведущий-образ и лица в референсах (§4.8, Г-7, Г-8)', () => {
+  const PRESENTER = {
+    lookId: 'l1',
+    label: 'Деловой',
+    url: 'https://blob.test/look.png',
+    pathname: 'users/u1/personas/p1/looks/l1.png',
+    variant: 'photo',
+  };
+  const ref = (over: Record<string, unknown> = {}) => ({
+    id: 'r1',
+    label: 'дача',
+    description: null,
+    photoUrl: 'https://blob.test/dacha.jpg',
+    photoPathname: 'sessions/s1/greeting-refs/r1/photo.jpg',
+    createdAt: '2026-09-30T00:00:00.000Z',
+    // Проверено, лица нет — иначе fail-closed (CONTRACT5 п.4) блокирует.
+    hasFace: false,
+    ...over,
+  });
+  const OLD_FLAG = process.env.PERSONA_ENABLED;
+  beforeEach(() => {
+    process.env.PERSONA_ENABLED = 'true';
+  });
+  afterAll(() => {
+    process.env.PERSONA_ENABLED = OLD_FLAG;
+  });
+
+  it('Grok: образ — первый референс, затем свои фото, затем сцены бренда', async () => {
+    const { svc, startGeneration } = build({
+      greetingBriefSnapshot: { ...BRIEF, presenter: PRESENTER },
+      greetingReferenceImages: [ref()],
+      brandManifestSnapshot: {
+        voiceMode: 'voiceover',
+        scenes: [
+          {
+            sourceSceneId: 's1',
+            label: 'Офис',
+            photoUrl:
+              'https://blob.test/brand-manifests/m/scenes/s1/checked-ab12.jpg',
+            description: null,
+          },
+        ],
+      },
+    });
+    await svc.startVideo('s1');
+    expect(startGeneration.mock.calls[0][0].referenceImageUrls).toEqual([
+      'https://blob.test/look.png',
+      'https://blob.test/dacha.jpg',
+      'https://blob.test/brand-manifests/m/scenes/s1/checked-ab12.jpg',
+    ]);
+  });
+
+  it('Grok: фото с лицом без согласия — отказ до денег, Grok не зовётся', async () => {
+    const { svc, startGeneration, credits } = build({
+      greetingReferenceImages: [ref({ label: 'соседка', hasFace: true })],
+    });
+    await expect(svc.startVideo('s1')).rejects.toThrow(/«соседка»/);
+    expect(startGeneration).not.toHaveBeenCalled();
+    expect(credits.reserveForGeneration).not.toHaveBeenCalled();
+  });
+
+  it('Grok: с согласием или скетчем фото уходит в модель', async () => {
+    const { svc, startGeneration } = build({
+      greetingReferenceImages: [
+        ref({ hasFace: true, faceConsentAt: '2026-09-30T00:00:00.000Z' }),
+      ],
+    });
+    await svc.startVideo('s1');
+    expect(startGeneration.mock.calls[0][0].referenceImageUrls).toEqual([
+      'https://blob.test/dacha.jpg',
+    ]);
+  });
+
+  it('ведущий-образ при выключенном режиме — отказ до денег', async () => {
+    process.env.PERSONA_ENABLED = 'false';
+    const { svc, startGeneration } = build({
+      greetingBriefSnapshot: { ...BRIEF, presenter: PRESENTER },
+    });
+    await expect(svc.startVideo('s1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('Hedra: портрет — выбранный образ, а не первое фото (Г-7)', async () => {
+    const { svc, hedra } = build(
+      withPortrait({
+        greetingBriefSnapshot: {
+          ...BRIEF,
+          requestedPresenterProvider: 'hedra',
+          resolvedPresenterProvider: 'hedra',
+          presenter: PRESENTER,
+        },
+      }),
+    );
+    await svc.startVideo('s1');
+    expect(hedra.submit).toHaveBeenCalledWith(
+      expect.objectContaining({ startImage: 'https://blob.test/look.png' }),
+    );
+  });
+
+  it('Hedra: скетч-ведущий — отказ, Hedra не зовётся', async () => {
+    const { svc, hedra } = build(
+      withPortrait({
+        greetingBriefSnapshot: {
+          ...BRIEF,
+          requestedPresenterProvider: 'hedra',
+          resolvedPresenterProvider: 'hedra',
+          presenter: { ...PRESENTER, variant: 'sketch' },
+        },
+      }),
+    );
+    await expect(svc.startVideo('s1')).rejects.toThrow(/Hedra/);
+    expect(hedra.submit).not.toHaveBeenCalled();
+  });
+
+  it('Hedra без образа: чужое лицо без согласия портретом не станет', async () => {
+    const { svc, hedra } = build(
+      withPortrait({
+        greetingReferenceImages: [
+          ref({ photoUrl: 'https://blob.test/face.jpg', hasFace: true }),
+        ],
+      }),
+    );
+    await expect(svc.startVideo('s1')).rejects.toThrow(/лицо|фото/i);
+    expect(hedra.submit).not.toHaveBeenCalled();
+  });
+});
+
+describe('CONTRACT5 п.14 — персона проверяется заново у денег', () => {
+  const OLD_FLAG = process.env.PERSONA_ENABLED;
+  beforeEach(() => {
+    process.env.PERSONA_ENABLED = 'true';
+  });
+  afterAll(() => {
+    process.env.PERSONA_ENABLED = OLD_FLAG;
+  });
+  it('образ удалён после выбора — отказ до кредита, Grok не зовётся', async () => {
+    const { svc, prisma, startGeneration, credits } = build({
+      greetingBriefSnapshot: {
+        ...BRIEF,
+        presenter: {
+          lookId: 'l1',
+          label: 'Я',
+          url: 'https://blob.test/look.png',
+          pathname: 'x',
+          variant: 'photo',
+        },
+      },
+    });
+    prisma.personaLook.findFirst.mockResolvedValue(null);
+    await expect(svc.startVideo('s1')).rejects.toThrow(/Образ ведущего/);
+    expect(startGeneration).not.toHaveBeenCalled();
+    expect(credits.reserveForGeneration).not.toHaveBeenCalled();
   });
 });

@@ -184,6 +184,11 @@ export interface GreetingBriefView {
   tone: GreetingTone;
   personalMessage: string | null;
   presenterProvider: GreetingPresenterProvider;
+  /**
+   * «Кто в кадре» (ТЗ Greeting 2.0 §4.8). Необязательное: сервер до
+   * этапа G его не отдавал; читается через `presenterFromBrief`.
+   */
+  presenter?: import('../lib/persona-greeting').GreetingPresenter;
   resolution: GreetingResolution;
   brandManifestId: string | null;
   occasionDate: string | null;
@@ -221,6 +226,8 @@ export interface UpdateGreetingBriefInput {
   tone?: GreetingTone;
   personalMessage?: string | null;
   presenterProvider?: GreetingPresenterProvider;
+  /** «Кто в кадре» (§4.8) — шлётся, только когда режим персоны есть. */
+  presenter?: import('../lib/persona-greeting').GreetingPresenter;
   resolution?: GreetingResolution;
   brandManifestId?: string | null;
   occasionDate?: string | null;
@@ -269,6 +276,16 @@ export interface GreetingReferenceImageView {
   variant: 'original' | 'sketch';
   originalPhotoUrl: string | null;
   originalDeleted: boolean;
+  /**
+   * На фото есть лицо (проверка сервера при загрузке, §4.8, Г-8): без
+   * подтверждённого согласия фото в видеомодель не идёт. Необязательные —
+   * сервер до этой проверки их не отдавал.
+   */
+  hasFace?: boolean | null;
+  /** Проверка лица упала — сервер считает «лицо может быть». */
+  faceCheckUnavailable?: boolean;
+  needsFaceConsent?: boolean;
+  faceConsentAt?: string | null;
   createdAt: string;
 }
 
@@ -508,6 +525,8 @@ export interface CountryOption {
 export interface BrandManifestSummaryView {
   id: string;
   title: string;
+  /** Личный бренд-бук «Я в кадре» (§4.7); нет — корпоративный. */
+  kind?: import('../lib/persona-greeting').BrandManifestKind;
   characterCount: number;
   sceneCount: number;
   projectCount: number;
@@ -547,6 +566,11 @@ export interface BrandCharacterView {
   originalDeleted?: boolean;
   /** Id применённого скетча — начальное состояние меню без доп. запроса. */
   activeSketchId?: string | null;
+  /**
+   * Фото прошло проверку лица (CONTRACT5 п.10). `false` при включённом
+   * «Я в кадре» — в поздравление фото идёт только словами до скетча.
+   */
+  photoFaceChecked?: boolean;
   description: string | null;
   createdAt: string;
   updatedAt: string;
@@ -580,6 +604,17 @@ export interface BrandManifestView {
   effects: JsonObject | null;
   characters: BrandCharacterView[];
   scenes: BrandSceneView[];
+  /**
+   * Личный бренд-бук «Я в кадре» (ТЗ Greeting 2.0 §4.7). Необязательные:
+   * сервер без режима персоны их не отдаёт — тогда бренд-бук корпоративный.
+   * `cardStyle` — Json колонки, форма читается `normalizeCardStyle`.
+   */
+  kind?: import('../lib/persona-greeting').BrandManifestKind;
+  personaId?: string | null;
+  defaultLookId?: string | null;
+  signature?: string | null;
+  defaultTone?: string | null;
+  cardStyle?: unknown;
   projectCount: number;
   createdAt: string;
   updatedAt: string;

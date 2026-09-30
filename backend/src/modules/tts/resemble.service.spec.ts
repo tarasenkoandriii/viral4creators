@@ -494,34 +494,92 @@ describe('ResembleService (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md)', () => {
     });
   });
 
-  describe('deleteVoice — лучшее старание, никогда не бросает', () => {
-    it('без ключа — тихо ничего не делает', async () => {
+  describe('deleteVoice — не бросает, но возвращает итог и ставит неудачу в повтор (CONTRACT5 п.15)', () => {
+    function withPrisma(env: Partial<Record<(typeof KEYS)[number], string>>) {
+      for (const k of KEYS) delete process.env[k];
+      Object.assign(process.env, env);
+      const prisma = {
+        platformSetting: {
+          upsert: jest.fn().mockResolvedValue({}),
+          deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+      };
+      return { svc: new ResembleService(prisma as any), prisma };
+    }
+
+    it('без ключа — no-key, запрос не шлётся, голос в списке повтора', async () => {
       const fetchMock = mockFetch(jest.fn());
-      const svc = withEnv({});
-      await expect(svc.deleteVoice('u1')).resolves.toBeUndefined();
+      const { svc, prisma } = withPrisma({});
+      await expect(svc.deleteVoice('u1')).resolves.toBe('no-key');
       expect(fetchMock).not.toHaveBeenCalled();
+      expect(prisma.platformSetting.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { key: 'resemble_pending_delete:u1' },
+        }),
+      );
     });
 
-    it('успех шлёт DELETE на нужный URL', async () => {
+    it('успех шлёт DELETE на нужный URL и снимает из повтора', async () => {
       const fetchMock = mockFetch(jest.fn().mockResolvedValue({ ok: true }));
-      const svc = withEnv({ RESEMBLE_API_KEY: 'k' });
-      await svc.deleteVoice('u1');
+      const { svc, prisma } = withPrisma({ RESEMBLE_API_KEY: 'k' });
+      await expect(svc.deleteVoice('u1')).resolves.toBe('deleted');
       expect(fetchMock.mock.calls[0][0]).toBe(
         'https://app.resemble.ai/api/v2/voices/u1',
       );
       expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'DELETE' });
+      expect(prisma.platformSetting.deleteMany).toHaveBeenCalledWith({
+        where: { key: 'resemble_pending_delete:u1' },
+      });
+      expect(prisma.platformSetting.upsert).not.toHaveBeenCalled();
     });
 
-    it('HTTP-ошибка не бросает исключение', async () => {
+    it('404 — голоса у Resemble уже нет: not-found, из повтора снимается', async () => {
+      mockFetch(jest.fn().mockResolvedValue({ ok: false, status: 404 }));
+      const { svc, prisma } = withPrisma({ RESEMBLE_API_KEY: 'k' });
+      await expect(svc.deleteVoice('u1')).resolves.toBe('not-found');
+      expect(prisma.platformSetting.upsert).not.toHaveBeenCalled();
+    });
+
+    it('HTTP-ошибка и сетевой сбой — failed без исключения, в повтор', async () => {
+      mockFetch(jest.fn().mockResolvedValue({ ok: false, status: 500 }));
+      const a = withPrisma({ RESEMBLE_API_KEY: 'k' });
+      await expect(a.svc.deleteVoice('u1')).resolves.toBe('failed');
+      expect(a.prisma.platformSetting.upsert).toHaveBeenCalled();
+      mockFetch(jest.fn().mockRejectedValue(new Error('ETIMEDOUT')));
+      const b = withPrisma({ RESEMBLE_API_KEY: 'k' });
+      await expect(b.svc.deleteVoice('u1')).resolves.toBe('failed');
+      expect(b.prisma.platformSetting.upsert).toHaveBeenCalled();
+    });
+
+    it('без базы (синтез, старые тесты) — итог есть, записи нет, не бросает', async () => {
       mockFetch(jest.fn().mockResolvedValue({ ok: false, status: 500 }));
       const svc = withEnv({ RESEMBLE_API_KEY: 'k' });
-      await expect(svc.deleteVoice('u1')).resolves.toBeUndefined();
+      await expect(svc.deleteVoice('u1')).resolves.toBe('failed');
     });
 
-    it('сетевой сбой не бросает исключение', async () => {
-      mockFetch(jest.fn().mockRejectedValue(new Error('ETIMEDOUT')));
-      const svc = withEnv({ RESEMBLE_API_KEY: 'k' });
-      await expect(svc.deleteVoice('u1')).resolves.toBeUndefined();
+    it('retryPendingDeletes — повторяет каждый из списка, считает итог', async () => {
+      mockFetch(
+        jest
+          .fn()
+          .mockResolvedValueOnce({ ok: true })
+          .mockResolvedValueOnce({ ok: false, status: 500 }),
+      );
+      const { svc, prisma } = withPrisma({ RESEMBLE_API_KEY: 'k' });
+      prisma.platformSetting.findMany.mockResolvedValue([
+        { key: 'resemble_pending_delete:a' },
+        { key: 'resemble_pending_delete:b' },
+      ]);
+      await expect(svc.retryPendingDeletes()).resolves.toEqual({
+        retried: 2,
+        deleted: 1,
+        stillFailing: 1,
+      });
+      expect(prisma.platformSetting.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { key: { startsWith: 'resemble_pending_delete:' } },
+        }),
+      );
     });
   });
 });

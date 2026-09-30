@@ -83,6 +83,10 @@ import {
   VoiceUploadService,
   VoiceUploadSweepResult,
 } from '../voice-upload/voice-upload.service';
+import {
+  PersonaRetentionResult,
+  PersonaService,
+} from '../persona/persona.service';
 
 /**
  * `triggeredBy` для прогонов НАСТОЯЩЕГО Vercel Cron (`CronController` →
@@ -223,6 +227,7 @@ export class CronJobsService {
     private readonly balances: ProviderBalancesService,
     private readonly apiVideo: ApiVideoJobWorker,
     private readonly voiceUploads: VoiceUploadService,
+    private readonly personas: PersonaService,
   ) {}
 
   /**
@@ -754,6 +759,33 @@ export class CronJobsService {
       return await this.voiceUploads.sweepExpired();
     } finally {
       await releaseJobLock(this.prisma, 'voice-uploads-sweep', acquired);
+    }
+  }
+
+  /**
+   * Срок хранения селфи и ролика живости персоны (В-3, ТЗ Greeting 2.0
+   * §4.9; временно по рекомендации ТЗ — 30 дней после последнего образа)
+   * и файлы незавершённых попыток старше суток — см.
+   * `PersonaService.purgeExpiredSources`. Раз в сутки: срок — дни, и
+   * опоздание на часы обещание не нарушает. Работает и при выключенном
+   * `PERSONA_ENABLED`: выключение режима не должно продлевать хранение
+   * уже загруженных лиц.
+   */
+  async runPersonaSourcesPurge(): Promise<PersonaRetentionResult> {
+    const acquired = await tryAcquireJobLock(
+      this.prisma,
+      'persona-sources-purge',
+    );
+    if (!acquired) {
+      this.logger.warn(
+        'Уборка селфи персон: предыдущий прогон ещё держит замок — пропуск',
+      );
+      return { purged: 0, abandoned: 0, erased: 0, failed: 0, skipped: true };
+    }
+    try {
+      return await this.personas.purgeExpiredSources();
+    } finally {
+      await releaseJobLock(this.prisma, 'persona-sources-purge', acquired);
     }
   }
 

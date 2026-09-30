@@ -17,6 +17,8 @@ import { AudienceProfile } from '../../common/types/audience.types';
 import { findCountry } from '../../common/data/countries';
 import { isSupportedLocale } from '../../common/locale';
 import { storedUserRegister } from '../../common/greeting-policy';
+import { normalizeCardStyle } from '../../common/greeting-cards';
+import { snapshotUsesPersona } from '../../common/greeting-persona';
 import {
   BrandCharacterSnapshot,
   BrandManifestSnapshot,
@@ -27,6 +29,7 @@ import {
   GreetingBriefSnapshot,
   GreetingOccasion,
   GreetingPresenterProvider,
+  GreetingPresenterSnapshot,
   GreetingRegister,
   GreetingRegisterSource,
   GreetingResolution,
@@ -81,6 +84,10 @@ export interface SnapshotManifestSource {
     photoUrl: string | null;
     description: string | null;
   }>;
+  /** Этап G (§4.7): вид, подпись и стиль карточек. Необязательные — старые вызовы. */
+  kind?: string | null;
+  signature?: string | null;
+  cardStyle?: unknown;
 }
 
 /**
@@ -251,6 +258,12 @@ export function brandManifestSnapshotFrom(
     scenes: (manifest.scenes ?? []).map(sceneSnapshot),
     snapshotAt: now.toISOString(),
     editedAt: null,
+    // Этап G (Г-6): подпись и стиль карточек — часть бренда, заморожены
+    // вместе с остальным. `kind` — чтобы ролик с личным бренд-буком знал,
+    // что он с персоной (`usesPersona`).
+    kind: manifest.kind === 'PERSONAL' ? 'PERSONAL' : 'COMPANY',
+    signature: manifest.signature?.trim() || null,
+    cardStyle: normalizeCardStyle(manifest.cardStyle),
   };
 }
 
@@ -272,6 +285,23 @@ export interface SnapshotGreetingBriefSource {
   resolution: string;
   brandManifestId: string | null;
   occasionDate: Date | null;
+  /** Этап G: колонки «кто в кадре»; необязательные — старые фикстуры. */
+  presenterLookId?: string | null;
+  presenterVariant?: string | null;
+}
+
+/** Что ещё нужно снимку брифа, кроме строки брифа (этап G). */
+export interface GreetingSnapshotExtras {
+  /**
+   * Копия образа-ведущего — уже проверенная вызывающим
+   * (`presenterLookProblem`); `null` — ИИ-ведущий.
+   */
+  presenter?: GreetingPresenterSnapshot | null;
+  /** Бренд-бук брифа: подпись по умолчанию, стиль карточек, вид. */
+  manifest?: Pick<
+    SnapshotManifestSource,
+    'kind' | 'signature' | 'cardStyle'
+  > | null;
 }
 
 /**
@@ -290,7 +320,11 @@ export interface SnapshotGreetingBriefSource {
 export function greetingBriefSnapshotFrom(
   brief: SnapshotGreetingBriefSource,
   now: Date = new Date(),
+  extras: GreetingSnapshotExtras = {},
 ): GreetingBriefSnapshot {
+  const presenter = extras.presenter ?? null;
+  const manifest = extras.manifest ?? null;
+  const cardStyle = normalizeCardStyle(manifest?.cardStyle);
   const presenterProvider =
     brief.presenterProvider as GreetingPresenterProvider;
   const resolution = brief.resolution as GreetingResolution;
@@ -319,7 +353,9 @@ export function greetingBriefSnapshotFrom(
       ? brief.scriptLanguage
       : null,
     recipientName: brief.recipientName,
-    senderName: brief.senderName,
+    // Г-6: подпись бренд-бука — «от кого» по умолчанию, только когда
+    // отправитель в брифе не указан; явный отправитель брифа главнее.
+    senderName: brief.senderName ?? (manifest?.signature?.trim() || null),
     tone: brief.tone,
     personalMessage: brief.personalMessage,
     requestedPresenterProvider: presenterProvider,
@@ -328,6 +364,16 @@ export function greetingBriefSnapshotFrom(
     resolvedResolution: resolution,
     brandManifestId: brief.brandManifestId,
     occasionDate: brief.occasionDate ? brief.occasionDate.toISOString() : null,
+    // Г-6: стиль карточек бренд-бука. Текста карточек нет — рисовать
+    // нечего, и стиль лежит до первой подписи (`hasCards`).
+    ...(cardStyle ? { cards: { style: cardStyle } } : {}),
+    // §4.8: образ — копия, не ссылка; §4.7: признак персоны для аукциона
+    // и витрины.
+    presenter,
+    usesPersona: snapshotUsesPersona({
+      presenter,
+      manifestKind: manifest?.kind ?? null,
+    }),
     addedAt: now.toISOString(),
   };
 }

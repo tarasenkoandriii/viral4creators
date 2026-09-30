@@ -7,6 +7,9 @@ import {
   planAllows,
   planOf,
   PLAN_IDS,
+  PERSONA_LOOK_QUOTA_DEFAULTS,
+  PERSONA_LOOK_QUOTA_SETTING_KEYS,
+  personaLookQuotaFor,
   PLANS,
   plansFor,
   resolveTargetAspectRatio,
@@ -223,6 +226,49 @@ describe('какой формат кадра будет отрендерен (Б
     // режима обязана смотреть на результат, а не на исходную строку.
     expect(resolveTargetAspectRatio('LITE', '1080:1350', null).denied).toBe(
       '4:5',
+    );
+  });
+});
+
+describe('«Я в кадре»: признак personalBrand и квота persona-look (В-1, В-7)', () => {
+  it('personalBrand — на всех тарифах (В-1)', () => {
+    for (const id of PLAN_IDS)
+      expect(planAllows(id, 'personalBrand')).toBe(true);
+    expect(minimalPlanFor('personalBrand')).toBe('LITE');
+    expect(featureDeniedMessage('personalBrand')).toContain('Я в кадре');
+  });
+
+  it('умолчания В-7: LITE 3/20, STANDARD 10/100, PREMIUM 30/300', () => {
+    expect(personaLookQuotaFor('LITE')).toEqual({ day: 3, month: 20 });
+    expect(personaLookQuotaFor('STANDARD')).toEqual({ day: 10, month: 100 });
+    expect(personaLookQuotaFor('PREMIUM')).toEqual({ day: 30, month: 300 });
+    expect(PERSONA_LOOK_QUOTA_DEFAULTS.LITE).toEqual({ day: 3, month: 20 });
+  });
+
+  it('настройка админки перекрывает умолчание; 0 — законно, мусор — умолчание', () => {
+    expect(personaLookQuotaFor('LITE', { day: '5', month: '50' })).toEqual({
+      day: 5,
+      month: 50,
+    });
+    expect(personaLookQuotaFor('STANDARD', { day: '0', month: null })).toEqual({
+      day: 0,
+      month: 100,
+    });
+    for (const junk of ['', '  ', 'abc', '-1', '2.5', 'NaN']) {
+      expect(
+        personaLookQuotaFor('PREMIUM', { day: junk, month: junk }),
+      ).toEqual({ day: 30, month: 300 });
+    }
+  });
+
+  it('ключи настроек у каждого тарифа свои и не пересекаются', () => {
+    const keys = PLAN_IDS.flatMap((id) => [
+      PERSONA_LOOK_QUOTA_SETTING_KEYS[id].day,
+      PERSONA_LOOK_QUOTA_SETTING_KEYS[id].month,
+    ]);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(PERSONA_LOOK_QUOTA_SETTING_KEYS.LITE.day).toBe(
+      'persona_look_day_lite',
     );
   });
 });

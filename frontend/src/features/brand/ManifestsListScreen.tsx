@@ -20,6 +20,8 @@ import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import type { Locale } from '../../lib/i18n';
 import { LoadError, ScreenHeader } from '../projects/shared';
+import { canCreateManifest } from '../../lib/persona-greeting';
+import { usePersonaState } from '../../lib/persona-greeting-api';
 
 export function ManifestsListScreen() {
   const { dict, locale } = useI18n();
@@ -30,6 +32,12 @@ export function ManifestsListScreen() {
    * человека то, что он уже описал, было бы наказанием за смену режима.
    */
   const brand = useFeature('brandManifest');
+  // Личный бренд-бук (§4.7, В-1) — на всех тарифах, но только у
+  // проверенной персоны: у LITE с персоной кнопка «Создать» есть, форма
+  // откроется личной (`defaultCreateKind`).
+  const persona = usePersonaState();
+  const canCreate =
+    brand.allowed || canCreateManifest('PERSONAL', brand.allowed, persona);
 
   return (
     <div className="animate-fadeIn">
@@ -37,7 +45,7 @@ export function ManifestsListScreen() {
         title={dict.manifestsListScreen.title}
         hint={dict.manifestsListScreen.hint}
         action={
-          brand.allowed ? (
+          canCreate ? (
             <Button
               size="sm"
               icon={<Plus size={14} />}
@@ -73,7 +81,7 @@ export function ManifestsListScreen() {
           title={dict.manifestsListScreen.emptyTitle}
           hint={dict.manifestsListScreen.emptyHint}
           action={
-            brand.allowed ? (
+            canCreate ? (
               <Button
                 icon={<Plus size={14} />}
                 onClick={() => navigate(routes.manifestNew())}
@@ -98,6 +106,11 @@ export function ManifestsListScreen() {
                   <div className="flex items-center gap-2">
                     <Palette size={14} className="shrink-0 text-accent" />
                     <h3 className="truncate font-semibold">{m.title}</h3>
+                    {m.kind === 'PERSONAL' && (
+                      <Badge tone="accent">
+                        {dict.personaGreeting.kindPersonalBadge}
+                      </Badge>
+                    )}
                   </div>
                   <p className="mt-0.5 text-xs text-silver-400">
                     {m.projectCount === 0

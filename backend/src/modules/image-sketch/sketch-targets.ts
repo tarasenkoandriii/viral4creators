@@ -13,6 +13,7 @@
 
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -28,7 +29,15 @@ import {
   SketchSlotView,
   SketchTarget,
 } from '../../common/types/sketch.types';
-import { SketchSlotKind } from '../../common/sketch-prompts';
+import {
+  SketchLikeness,
+  SketchSlotKind,
+  sketchLikenessFor,
+} from '../../common/sketch-prompts';
+import {
+  personaModeEnabled,
+  personaSelfLikenessEligible,
+} from '../persona/persona-looks.rules';
 import { activeRowImage } from '../../common/active-image';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
@@ -36,6 +45,12 @@ import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 export interface SketchSlot {
   target: SketchTarget;
   kind: SketchSlotKind;
+  /**
+   * Что делать с лицом (`sketchLikenessFor`). Ставит ТОЛЬКО адаптер
+   * `persona-look`; у остальных слотов поля нет, и отсутствие значит
+   * «лицо меняется» — умолчание запрещающее, а не разрешающее.
+   */
+  likeness?: SketchLikeness;
   /** Кто владеет слотом — он же платит и на него считается квота. */
   userId: string;
   /** Признак тарифа, который даёт доступ К СЛОТУ (не к скетчу). */
@@ -154,6 +169,8 @@ export class SketchTargetsService {
         return this.loadBrandAsset(target, userId);
       case 'project-item':
         return this.loadProjectItem(target, userId);
+      case 'persona-look':
+        return this.loadPersonaLook(target, userId);
       default:
         throw new BadRequestException(`Неизвестный тип слота: ${target.type}`);
     }
@@ -203,6 +220,9 @@ export class SketchTargetsService {
         break;
       case 'project-item':
         await this.writeProjectItem(slot, sketch, opts);
+        break;
+      case 'persona-look':
+        await this.writePersonaLook(slot, sketch);
         break;
     }
     return this.load(slot.target, slot.userId);
@@ -572,6 +592,100 @@ export class SketchTargetsService {
         activeSketchId: sketch?.sketchId ?? null,
         ...(opts.originalDeleted ? { originalDeletedAt: new Date() } : {}),
       },
+    });
+  }
+
+  // ── Образ персоны «Я в кадре» (ТЗ TZ-Greeting-2.0 §4.5) ──────────
+
+  /**
+   * Скетч-аватар образа самого автора. Единственный слот с `likeness:
+   * 'self'`, и только у персоны с действующим согласием и пройденной
+   * живостью — иначе отказ, а не тихий переход на обезличивание: скетч
+   * «себя» с чужим лицом человеку не нужен и стоил бы квоты.
+   *
+   * Файл образа принадлежит ПЕРСОНЕ, а не слоту: «удалить оригинал»
+   * здесь не удаляет его (`ownsOriginalFile: false`) — образ убирается
+   * целиком в разделе персоны (`DELETE /personas/me/looks/:id`).
+   */
+  private async loadPersonaLook(
+    target: SketchTarget,
+    userId: string,
+  ): Promise<SketchSlot> {
+    if (!personaModeEnabled()) {
+      throw new NotFoundException({
+        message: 'Режим «Я в кадре» недоступен',
+        code: 'PERSONA_DISABLED',
+      });
+    }
+    const row = (await this.prisma.personaLook.findFirst({
+      where: {
+        id: target.id,
+        deletedAt: null,
+        persona: { userId, revokedAt: null },
+      },
+      include: { persona: true, activeSketch: true },
+    })) as
+      | (BrandAssetRow & {
+          photoPathname: string | null;
+          status: string;
+          persona: Parameters<typeof personaSelfLikenessEligible>[0];
+        })
+      | null;
+    if (!row) {
+      throw new NotFoundException('Образ не найден');
+    }
+    const verified = personaSelfLikenessEligible(row.persona);
+    if (!verified) {
+      throw new ForbiddenException(
+        'Скетч-аватар со своим лицом доступен после согласия и проверки селфи',
+      );
+    }
+    if (row.status !== 'ready' || !row.photoPathname) {
+      throw new BadRequestException(
+        'Образ ещё не готов — скетч можно сделать, когда появится фото',
+      );
+    }
+    const image = activeRowImage(row);
+    return {
+      target,
+      kind: 'character',
+      likeness: sketchLikenessFor(target.type, verified),
+      userId,
+      // В-1: личный режим — на всех тарифах.
+      feature: 'personalBrand',
+      originalPathname: row.photoPathname,
+      originalUrl: row.photoUrl ?? null,
+      ownsOriginalFile: false,
+      sketch:
+        image?.variant === 'sketch'
+          ? {
+              sketchId: row.activeSketchId!,
+              url: image.url,
+              pathname: image.pathname!,
+              mimeType: image.mimeType,
+              style: (row.activeSketch?.style ??
+                'pencil') as SketchRef['style'],
+              sketchRendering: image.sketchRendering ?? 'realistic',
+              appliedAt:
+                row.activeSketch?.appliedAt?.toISOString() ??
+                new Date().toISOString(),
+            }
+          : null,
+      originalDeleted: false,
+      // Описание образа в скетч не идёт: всё нужное уже на фото, а текст
+      // пользователя — лишний канал для «в образе Монро».
+      description: null,
+      name: null,
+    };
+  }
+
+  private async writePersonaLook(
+    slot: SketchSlot,
+    sketch: SketchRef | null,
+  ): Promise<void> {
+    await this.prisma.personaLook.update({
+      where: { id: slot.target.id },
+      data: { activeSketchId: sketch?.sketchId ?? null },
     });
   }
 

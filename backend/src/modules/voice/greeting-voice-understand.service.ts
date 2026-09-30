@@ -105,6 +105,12 @@ import { GreetingCardsService } from '../greeting-cards/greeting-cards.service';
 import { GreetingStickerService } from '../greeting-sticker/greeting-sticker.service';
 import { GreetingScenesService } from '../greeting-scenes/greeting-scenes.service';
 import { WizardGuideService } from '../wizard-guide/wizard-guide.service';
+import {
+  GreetingState,
+  greetingAnswer,
+  greetingStateOf,
+  greetingStateOfBrief,
+} from '../wizard-guide/hint-facts';
 import { planAllows } from '../../common/plans';
 import {
   GreetingVoiceResult,
@@ -190,6 +196,8 @@ interface GreetingBriefRow {
   presenterProvider: string;
   resolution: string;
   occasionDate: Date | null;
+  /** Образ персоны в кадре (этап G) — для ответов о фото (K4). */
+  presenterLookId?: string | null;
 }
 
 interface RunInput {
@@ -211,6 +219,11 @@ interface RunInput {
    * Зовётся ПОСЛЕ быстрых путей («да»/«нет»): им состояние не нужно.
    */
   sessionState?: () => Promise<VoiceSessionState>;
+  /**
+   * K4: состояние поздравления для ответов на вопросы о шаге — то же
+   * чтение, что у советника (`greetingStateOf`). До сессии — `null`.
+   */
+  greeting: GreetingState | null;
 }
 
 @Injectable()
@@ -287,6 +300,8 @@ export class GreetingVoiceUnderstandService {
       // доступа, как у голоса товара.
       assertPlanSpend: () =>
         this.plans.assertCanSpendUser(userId, { projectId }),
+      // До сессии — живой бриф (CONTRACT5): «что дальше?» видит заполненное.
+      greeting: greetingStateOfBrief(row),
     });
   }
 
@@ -316,6 +331,7 @@ export class GreetingVoiceUnderstandService {
       sessionId,
       assertPlanSpend: () => this.plans.assertCanSpendSession(sessionId),
       sessionState: () => this.sessionState(session),
+      greeting: greetingStateOf(session),
     });
   }
 
@@ -513,6 +529,9 @@ export class GreetingVoiceUnderstandService {
         uiLocale: input.uiLocale,
         replyLocale,
         session,
+        // K4: ответ на вопрос о шаге — из фактов, не от модели.
+        answerQuestion: (topic, locale) =>
+          greetingAnswer(topic, input.greeting, locale),
       };
       const raw = await this.parse(transcript, ctx, input);
       if (raw === null) {
@@ -535,6 +554,8 @@ export class GreetingVoiceUnderstandService {
         intent: resolved.intent,
         confidence: resolved.confidence,
         reply: resolved.reply,
+        // K4: отказ, который помощник объяснит голосом, — только если был.
+        ...(resolved.refusal ? { refusal: resolved.refusal } : {}),
       };
     } finally {
       // Транзитная копия — не храним ни при каком исходе. С `await`: на

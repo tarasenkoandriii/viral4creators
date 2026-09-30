@@ -18,5 +18,7 @@ import { UserVoicesService } from './user-voices.service';
   imports: [StorageModule, AiUsageModule],
   controllers: [UserVoicesController, UserVoicesWebhookController],
   providers: [UserVoicesService],
+  // Голос персоны (`isPersonaVoice`) — бренд-буку и поздравлению (§4.7).
+  exports: [UserVoicesService],
 })
 export class UserVoicesModule {}

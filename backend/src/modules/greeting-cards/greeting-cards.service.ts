@@ -57,6 +57,9 @@ export class GreetingCardsService {
     const next: GreetingCards = {
       title: clean(cards.title),
       closing: clean(cards.closing),
+      // Этап G (Г-6): стиль карточек пришёл из бренд-бука при старте
+      // сессии и правкой текста не сбрасывается — клиент его не присылает.
+      ...(snapshot.cards?.style ? { style: snapshot.cards.style } : {}),
     };
     // Этап B (Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
     // карточки вшиваются в сам файл, а модерацию проходил только текст

@@ -14,6 +14,8 @@ import { SketchTargetsService } from './sketch-targets';
   imports: [StorageModule],
   controllers: [ImageSketchController],
   providers: [ImageSketchService, SketchGeneratorService, SketchTargetsService],
-  exports: [ImageSketchService, SketchTargetsService],
+  // SketchGeneratorService — ещё и образам персоны (persona-looks): тот же
+  // вызов модели картинок, другой промпт.
+  exports: [ImageSketchService, SketchTargetsService, SketchGeneratorService],
 })
 export class ImageSketchModule {}

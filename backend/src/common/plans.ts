@@ -151,7 +151,17 @@ export type PlanFeature =
    * каждая дорожка — это перевод, синтез и задача ffmpeg, то есть
    * настоящие деньги за каждый язык, а не разовая настройка.
    */
-  | 'multilingualTracks';
+  | 'multilingualTracks'
+  /**
+   * Личный бренд-бук и режим «Я в кадре» (ТЗ
+   * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §4.7, решение
+   * В-1 — временно по рекомендации ТЗ). На ВСЕХ тарифах: у человека одно
+   * лицо, и закрывать его за тарифом незачем — тарифы различают квоту
+   * образов (`personaLookQuotaFor` ниже), а не сам доступ. Отдельный
+   * признак, а не `brandManifest` (Standard+): личный бренд-бук — не
+   * манифест компании, и двигать их границы нужно независимо.
+   */
+  | 'personalBrand';
 
 export interface PlanDefinition {
   id: PlanId;
@@ -198,6 +208,9 @@ const ALL: Record<PlanFeature, boolean> = {
   externalApi: true,
   // Этап 148: тоже только PREMIUM.
   multilingualTracks: true,
+  // В-1, временно по рекомендации ТЗ: на всех тарифах, ни один PLAN ниже
+  // не сужает — различается только квота образов.
+  personalBrand: true,
 };
 
 export const PLANS: Readonly<Record<PlanId, PlanDefinition>> = {
@@ -420,8 +433,79 @@ export function featureDeniedMessage(feature: PlanFeature): string {
     greetingVideo: 'Ролик-поздравление',
     externalApi: 'Внешнее API по ключу',
     multilingualTracks: 'Ролик на других языках',
+    personalBrand: 'Личный бренд-бук и режим «Я в кадре»',
   };
   return `${what[feature]} доступна в режиме ${need}. Сейчас все режимы бесплатны — переключитесь в настройках режима.`;
+}
+
+/**
+ * Квота образов персоны (`persona-look`) — сутки и месяц по тарифу
+ * (ТЗ §4.2, решение В-7 — временно по рекомендации ТЗ).
+ *
+ * Образ — платная картинка, как ИИ-скетч, поэтому и приём тот же, что у
+ * квоты скетча (`common/image-generation-quota.ts`): считаем ЧИСЛО
+ * оплаченных вызовов операции `persona-look` в `ai_usage`, а не строки
+ * образов (отказ модели оплачен, сетевой сбой — нет). Квота своя, а не
+ * общая со скетчем: иначе тридцать образов одной девушки съедали бы
+ * скетчи её же роликов, и наоборот.
+ *
+ * Отличие от квоты скетча — источник значений: не env, а настройки
+ * админки (`PlatformSettingsService`), как потолок голоса В-14: В-7 ещё
+ * не решено владельцем, и двигать числа нужно без редеплоя. Базовый
+ * образ (часть проверки селфи) квоту не тратит — он пишется своей
+ * операцией `persona-look-base`.
+ */
+export interface PersonaLookQuota {
+  day: number;
+  month: number;
+}
+
+/** В-7, временно по рекомендации ТЗ: LITE 3/20, STANDARD 10/100, PREMIUM 30/300. */
+export const PERSONA_LOOK_QUOTA_DEFAULTS: Readonly<
+  Record<PlanId, PersonaLookQuota>
+> = {
+  LITE: { day: 3, month: 20 },
+  STANDARD: { day: 10, month: 100 },
+  PREMIUM: { day: 30, month: 300 },
+};
+
+/** Ключи настроек админки (`platform_settings`). */
+export const PERSONA_LOOK_QUOTA_SETTING_KEYS: Readonly<
+  Record<PlanId, { day: string; month: string }>
+> = {
+  LITE: { day: 'persona_look_day_lite', month: 'persona_look_month_lite' },
+  STANDARD: {
+    day: 'persona_look_day_standard',
+    month: 'persona_look_month_standard',
+  },
+  PREMIUM: {
+    day: 'persona_look_day_premium',
+    month: 'persona_look_month_premium',
+  },
+};
+
+/**
+ * Целое ≥ 0 из строки настройки; пусто или мусор — умолчание. Ноль —
+ * законный способ закрыть генерацию образов на тарифе, поэтому мусор
+ * не должен молча превращаться в ноль (тот же приём, что у квоты скетча).
+ */
+function quotaIntFrom(stored: string | null | undefined, fallback: number) {
+  if (stored === null || stored === undefined || stored.trim() === '') {
+    return fallback;
+  }
+  const n = Number(stored);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
+export function personaLookQuotaFor(
+  plan: PlanId,
+  stored: { day?: string | null; month?: string | null } = {},
+): PersonaLookQuota {
+  const base = PERSONA_LOOK_QUOTA_DEFAULTS[plan];
+  return {
+    day: quotaIntFrom(stored.day, base.day),
+    month: quotaIntFrom(stored.month, base.month),
+  };
 }
 
 /**

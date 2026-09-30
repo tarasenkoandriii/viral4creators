@@ -57,6 +57,12 @@ import {
 } from '../../common/greeting-policy';
 import { GreetingRegister } from '../../common/types/greeting.types';
 import { SceneAsset } from '../../common/types/reference.types';
+import { BrandManifestSnapshot } from '../../common/types/brand-manifest.types';
+import {
+  assertGreetingReferencesAllowed,
+  greetingVideoReferences,
+} from '../../common/greeting-persona';
+import { MAX_GREETING_REFERENCE_IMAGES } from '../greeting-reference/greeting-reference.service';
 import {
   VoiceMode,
   normalizeVoiceMode,
@@ -217,10 +223,17 @@ export class GreetingPromptService {
 
     const likeness =
       findCelebrityLikeness(brief.personalMessage) ??
-      findCelebrityLikeness(brief.customOccasionText);
+      findCelebrityLikeness(brief.customOccasionText) ??
+      // Этап G (Г-6): заметки стиля бренд-бука теперь тоже доходят до
+      // промпта — «в стиле Монро» там так же недопустимо, как в тексте.
+      findCelebrityLikeness(session.brandManifestSnapshot?.styleNotes);
     if (likeness) {
       throw new BadRequestException(celebrityLikenessMessage(likeness));
     }
+    assertGreetingReferencesAllowed(
+      brief,
+      session.greetingReferenceImages ?? [],
+    );
 
     // Тот же замок, что уже используют другие платные сборки промпта
     // (`WORK_KINDS` в session.service.ts включает 'prompt' без правок —
@@ -269,6 +282,7 @@ export class GreetingPromptService {
         speech,
         session.greetingReferenceImages ?? [],
         normalizeVoiceMode(session.brandManifestSnapshot?.voiceMode),
+        session.brandManifestSnapshot ?? null,
       );
 
       // Найдено при аудите пайплайна GREETING_VIDEO (находка №2): раньше
@@ -401,6 +415,12 @@ export function buildSceneDescription(
   speech: string,
   referenceImages: SceneAsset[],
   voiceMode: VoiceMode,
+  /**
+   * Бренд-бук сессии (этап G, Г-6): до этапа G из него в поздравление
+   * шёл только `voiceMode`, а сцены и `styleNotes` терялись. Нет снимка
+   * бренда — как раньше.
+   */
+  brand?: Pick<BrandManifestSnapshot, 'styleNotes' | 'scenes'> | null,
 ): string {
   // Пресетный голос xAI: реплику произносит сама модель, своим
   // липсинком (`reference_audios`, метка `<AUDIO_0>` — так же, как
@@ -408,11 +428,22 @@ export function buildSceneDescription(
   // выключен (`PostProductionService.planWork`), и молчаливая
   // формулировка ниже была бы прямо противоположна тому, что нужно.
   const presetVoiceId = brief.presetVoiceId?.trim() || null;
-  const referenceLines = referenceImages.map((img, i) => {
-    const tag = `<IMAGE_${i + 1}>`;
-    const caption = (img.description || img.label).trim();
-    return `${tag} — ${caption}`;
+  // Этап G: тот же порядок изображений, что уйдёт в Grok
+  // (`greetingVideoReferences` — одна функция на промпт и рендер): образ
+  // ведущего первым, затем свои фото без заблокированных лиц (Г-8), затем
+  // сцены бренд-бука (Г-6). Метка `<IMAGE_n>` — по позиции в этом списке.
+  const plan = greetingVideoReferences({
+    presenter: brief.presenter ?? null,
+    images: referenceImages,
+    brandScenes: brand?.scenes ?? null,
+    max: MAX_GREETING_REFERENCE_IMAGES,
   });
+  const presenterTag = plan.refs[0]?.role === 'presenter' ? '<IMAGE_1>' : null;
+  const referenceLines = plan.refs
+    .map((ref, i) => ({ ref, tag: `<IMAGE_${i + 1}>` }))
+    .filter(({ ref }) => ref.role !== 'presenter')
+    .map(({ ref, tag }) => `${tag} — ${ref.caption}`);
+  const styleNotes = promptSafeNote(brand?.styleNotes);
   // Этап B: настроение, лицо и декорации — из политики по регистру.
   // Раньше «smiling» стояло безусловно (Г-2 ТЗ), а декорации брались из
   // каталога, где «Особый повод» был праздничным.
@@ -440,6 +471,16 @@ export function buildSceneDescription(
   return [
     // `message`, не `greeting`: см. тот же довод в draftPersonalMessage.
     `A short vertical video message for ${occasionText} addressed to ${brief.recipientName}.`,
+    // Т-17 (§4.8): образ автора — первый референс, и промпт говорит прямо,
+    // кто ведущий. Раньше референсы шли «where they naturally fit», и лицо
+    // могло достаться не ведущему, а случайному прохожему в кадре.
+    presenterTag
+      ? `The presenter is the person shown in ${presenterTag}${
+          brief.presenter?.variant === 'sketch'
+            ? ', keeping their drawn, illustrated look'
+            : ', keeping their face, hairstyle and outfit exactly as in that image'
+        }; nobody else in the scene looks like them.`
+      : '',
     silent
       ? `A camera-facing presenter looks straight at the viewer with a ${mood} mood (${expression}), gesturing and reacting naturally — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.`
       : presetVoiceId
@@ -454,10 +495,33 @@ export function buildSceneDescription(
     referenceLines.length
       ? `Use these visual references where they naturally fit the scene: ${referenceLines.join('; ')}.`
       : '',
+    // Г-6: стиль серии и постоянные места бренда — и у личного, и у
+    // корпоративного бренд-бука. Сцены без фото (или не поместившиеся в
+    // потолок изображений) — словами.
+    plan.textScenes.length
+      ? `Possible settings from the brand: ${plan.textScenes.map(promptSafeNote).filter(Boolean).join('; ')}.`
+      : '',
+    styleNotes ? `Visual style of the brand: ${styleNotes}.` : '',
     presetVoiceId
       ? `Spoken line, to be said aloud by the presenter (never rendered as on-screen text): "${speech.replace(/"/g, "'")}"`
       : `Spoken line (for reference, not to be rendered as on-screen text): "${speech.replace(/"/g, "'")}"`,
   ]
     .filter(Boolean)
     .join(' ');
+}
+
+/** Длина заметки стиля в промпте: это подсказка, а не второй сценарий. */
+export const MAX_STYLE_NOTE_PROMPT_LENGTH = 300;
+
+/**
+ * Пользовательский текст бренд-бука в промпт — одной строкой, без кавычек
+ * (они обрамляют реплику ниже) и с потолком длины.
+ */
+export function promptSafeNote(value: string | null | undefined): string {
+  return (value ?? '')
+    .replace(/["\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_STYLE_NOTE_PROMPT_LENGTH)
+    .trim();
 }

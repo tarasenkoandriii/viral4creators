@@ -36,7 +36,8 @@
  *   ElevenLabs `/with-timestamps`, не нужно.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
 import { mp3DurationSeconds } from '../../common/mp3-duration';
 import { SubtitleAlignment } from '../../common/subtitles';
 import {
@@ -45,6 +46,16 @@ import {
   TtsProvider,
   VoiceOption,
 } from './tts.types';
+
+/** Итог удаления клона у Resemble. */
+export type ResembleDeleteStatus =
+  | 'deleted'
+  | 'not-found'
+  | 'failed'
+  | 'no-key';
+
+/** Ключ `platform_settings` для голоса, ожидающего повтора удаления у Resemble. */
+export const RESEMBLE_PENDING_DELETE_PREFIX = 'resemble_pending_delete:';
 
 /** Лимит одного запроса — подтверждён `docs.resemble.ai/api-reference/text-to-speech/synthesize`. */
 const MAX_CHARACTERS = 3000;
@@ -107,6 +118,12 @@ export class ResembleService implements TtsProvider {
   private readonly logger = new Logger(ResembleService.name);
   private readonly synthesizeBase = 'https://f.cluster.resemble.ai';
   private readonly manageBase = 'https://app.resemble.ai/api/v2';
+
+  /**
+   * База — только для списка ожидания удалений (`deleteVoice`).
+   * Необязательна: синтез и тесты создают сервис без неё.
+   */
+  constructor(@Optional() private readonly prisma?: PrismaService) {}
 
   private key(): string | undefined {
     return process.env.RESEMBLE_API_KEY?.trim() || undefined;
@@ -468,14 +485,63 @@ export class ResembleService implements TtsProvider {
   }
 
   /**
-   * Лучшее-старание удаление на стороне Resemble при удалении
-   * `UserVoice` — не бросает: локальная запись должна удаляться
-   * независимо от того, ответил ли Resemble (тот же принцип
-   * деградации, что у `BlobService.deleteBlob`).
+   * Удаление клона у Resemble при удалении `UserVoice` (и персоны).
+   * Не бросает: локальная запись удаляется независимо от ответа Resemble
+   * (тот же принцип деградации, что у `BlobService.deleteBlob`).
+   *
+   * Но и не молчит (волна исправлений «Я в кадре», CONTRACT5 п.15):
+   * возвращает итог, а неудачу (`failed`, `no-key`) записывает в список
+   * ожидания — строка `platform_settings` с ключом
+   * `RESEMBLE_PENDING_DELETE_PREFIX + id` (своя строка на голос: без
+   * гонок за общий список и без новой таблицы). Крон хранения персон
+   * повторяет их (`retryPendingDeletes`). Согласие обещает удаление
+   * голоса — «ответили 500, забыли» это обещание нарушало бы молча.
+   * 404 у Resemble — голоса там уже нет, это успех (`not-found`).
    */
-  async deleteVoice(resembleVoiceId: string): Promise<void> {
+  async deleteVoice(resembleVoiceId: string): Promise<ResembleDeleteStatus> {
+    const status = await this.deleteRemote(resembleVoiceId);
+    if (status === 'deleted' || status === 'not-found') {
+      await this.forgetPendingDelete(resembleVoiceId);
+    } else {
+      await this.rememberPendingDelete(resembleVoiceId);
+    }
+    return status;
+  }
+
+  /** Повтор удалений из списка ожидания; не бросает на отдельном голосе. */
+  async retryPendingDeletes(
+    limit = 50,
+  ): Promise<{ retried: number; deleted: number; stillFailing: number }> {
+    if (!this.prisma) return { retried: 0, deleted: 0, stillFailing: 0 };
+    const rows = await this.prisma.platformSetting.findMany({
+      where: { key: { startsWith: RESEMBLE_PENDING_DELETE_PREFIX } },
+      select: { key: true },
+      orderBy: { key: 'asc' },
+      take: limit,
+    });
+    let deleted = 0;
+    for (const r of rows) {
+      const id = r.key.slice(RESEMBLE_PENDING_DELETE_PREFIX.length);
+      const s = await this.deleteVoice(id);
+      if (s === 'deleted' || s === 'not-found') deleted++;
+    }
+    return {
+      retried: rows.length,
+      deleted,
+      stillFailing: rows.length - deleted,
+    };
+  }
+
+  private async deleteRemote(
+    resembleVoiceId: string,
+  ): Promise<ResembleDeleteStatus> {
     const key = this.key();
-    if (!key) return;
+    if (!key) {
+      this.logger.warn(
+        `RESEMBLE_API_KEY не задан — голос ${resembleVoiceId} у Resemble не удалён, поставлен в повтор`,
+      );
+      return 'no-key';
+    }
     try {
       const res = await fetch(
         `${this.manageBase}/voices/${encodeURIComponent(resembleVoiceId)}`,
@@ -485,17 +551,46 @@ export class ResembleService implements TtsProvider {
           signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
         },
       );
-      if (!res.ok) {
-        this.logger.warn(
-          `Resemble DELETE /voices/${resembleVoiceId} ответил ${res.status} — запись в нашей БД всё равно удаляется`,
-        );
-      }
+      if (res.ok) return 'deleted';
+      if (res.status === 404) return 'not-found';
+      this.logger.warn(
+        `Resemble DELETE /voices/${resembleVoiceId} ответил ${res.status} — запись в нашей БД всё равно удаляется, удаление у Resemble — в повтор`,
+      );
+      return 'failed';
     } catch (e) {
       this.logger.warn(
         `не удалось удалить голос ${resembleVoiceId} на стороне Resemble: ${
           e instanceof Error ? e.message : String(e)
-        } — запись в нашей БД всё равно удаляется`,
+        } — запись в нашей БД всё равно удаляется, удаление у Resemble — в повтор`,
       );
+      return 'failed';
+    }
+  }
+
+  private async rememberPendingDelete(resembleVoiceId: string): Promise<void> {
+    if (!this.prisma) return;
+    const key = RESEMBLE_PENDING_DELETE_PREFIX + resembleVoiceId;
+    try {
+      await this.prisma.platformSetting.upsert({
+        where: { key },
+        create: { key, value: new Date().toISOString() },
+        update: {},
+      });
+    } catch (e) {
+      this.logger.warn(
+        `голос ${resembleVoiceId} не записан в повтор удаления: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  private async forgetPendingDelete(resembleVoiceId: string): Promise<void> {
+    if (!this.prisma) return;
+    try {
+      await this.prisma.platformSetting.deleteMany({
+        where: { key: RESEMBLE_PENDING_DELETE_PREFIX + resembleVoiceId },
+      });
+    } catch {
+      // Строка останется — следующий повтор получит 404 и уберёт её.
     }
   }
 }

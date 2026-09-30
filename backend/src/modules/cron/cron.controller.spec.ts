@@ -80,6 +80,9 @@ function build() {
       .fn()
       .mockResolvedValue({ months: [], foldedRows: 0, deletedRows: 0 }),
     runSweepOrphans: jest.fn().mockResolvedValue({ deleted: 0, dryRun: false }),
+    runPersonaSourcesPurge: jest
+      .fn()
+      .mockResolvedValue({ purged: 0, abandoned: 0, failed: 0 }),
     // Пятый аудит, Д-4.3: контроллер больше не зовёт `runX()` напрямую —
     // каждый маршрут оборачивает его в `runAndLog`. Мок здесь просто
     // прозрачно выполняет переданную задачу — сама логика записи
@@ -194,6 +197,11 @@ describe('CronController — секрет закрывает каждый из �
       (c) => c.sweepOrphans('Bearer подделка'),
       'runSweepOrphans',
     ],
+    [
+      'persona-sources-purge',
+      (c) => c.personaSourcesPurge('Bearer подделка'),
+      'runPersonaSourcesPurge',
+    ],
   ];
 
   it.each(cases)(
@@ -303,6 +311,11 @@ describe('CronController — каждый маршрут оборачивает 
     ['ui-snapshot-run', (c) => c.uiSnapshotRunCron(), 'ui-snapshot-run'],
     ['cleanup-sessions', (c) => c.cleanupSessions(), 'cleanup-sessions'],
     ['ai-usage-rollup', (c) => c.aiUsageRollup(), 'ai-usage-rollup'],
+    [
+      'persona-sources-purge',
+      (c) => c.personaSourcesPurge(),
+      'persona-sources-purge',
+    ],
   ];
 
   it.each(cases)(

@@ -116,6 +116,37 @@ export const VOICE_NAVIGATE_TARGETS = [
 ] as const;
 export type VoiceNavigateTarget = (typeof VOICE_NAVIGATE_TARGETS)[number];
 
+/**
+ * Вопросы о шаге (K4, §4А.2 п.5) — ЗАКРЫТЫЙ набор тем: «зачем фото?»,
+ * «сколько ждать?», «что дальше?», «почему сценарий не проходит?».
+ * Ответ собирает сервер из фактов состояния (`hint-facts.ts`,
+ * `greetingAnswer`), модель только узнаёт тему. Темы, которой нет в
+ * списке (цена, сроки доставки, что угодно ещё), модель не называет —
+ * вопрос уходит с `topic: null`, и помощник честно говорит «не знаю,
+ * посмотрите справку» вместо выдуманного ответа.
+ */
+export const VOICE_QUESTION_TOPICS = [
+  'why-photo',
+  'how-long',
+  'what-next',
+  'script-flagged',
+] as const;
+export type VoiceQuestionTopic = (typeof VOICE_QUESTION_TOPICS)[number];
+
+/**
+ * Отказы, которые помощник объясняет голосом (K4, §4А.2 п.1): тон не для
+ * повода, проверка содержания, суточный лимит, стена доступа. Код, а не
+ * фраза: фразу собирает сервер (`POST …/wizard-guide/speak`), и клиент
+ * не может подсунуть в синтез свой текст.
+ */
+export const VOICE_REFUSAL_CODES = [
+  'tone',
+  'moderation',
+  'quota',
+  'locked',
+] as const;
+export type VoiceRefusalCode = (typeof VOICE_REFUSAL_CODES)[number];
+
 export type VoiceIntent =
   | { kind: 'fill'; fields: VoiceField[] }
   | { kind: 'command'; command: VoiceCommand; args?: Record<string, string> }
@@ -124,6 +155,12 @@ export type VoiceIntent =
   | { kind: 'consent'; phrase: string }
   | { kind: 'confirm' }
   | { kind: 'cancel' }
+  /**
+   * K4: вопрос о шаге. `answered: false` — факта нет (или тема вне
+   * списка): в `reply` — «не знаю, посмотрите справку», клиент рядом
+   * показывает кнопку справки.
+   */
+  | { kind: 'question'; topic: VoiceQuestionTopic | null; answered: boolean }
   | { kind: 'unknown' };
 
 export interface VoiceUnderstandResult {
@@ -136,6 +173,13 @@ export interface VoiceUnderstandResult {
   scriptMismatch: boolean;
   /** Причина отказа; `null` (или нет поля), когда отказа нет. */
   reason?: VoiceReason | null;
+  /**
+   * K4: реплика отказала по правилу, которое помощник объясняет голосом
+   * (сейчас — только тон, запрещённый регистром повода). Клиент с
+   * включённым голосом просит озвучку этого отказа (`speak`); нет поля —
+   * объяснять голосом нечего.
+   */
+  refusal?: VoiceRefusalCode | null;
 }
 
 export const VOICE_SCREEN_STEPS = [
@@ -668,6 +712,16 @@ export interface VoiceUnderstandContext {
    * элементы сессии голосом недоступны (а не «доступно всё»).
    */
   session?: VoiceSessionState | null;
+  /**
+   * K4: ответ на вопрос о шаге из фактов состояния (`greetingAnswer` в
+   * `modules/wizard-guide/hint-facts.ts`) на языке реплики; `null` —
+   * факта нет. Колбэком, а не данными: общий модуль разбора не знает о
+   * модулях сервера, а ответ нужен только для интента `question`.
+   */
+  answerQuestion?: (
+    topic: VoiceQuestionTopic,
+    locale: SupportedLocale,
+  ) => string | null;
 }
 
 /** Язык реплики: язык речи (K2, по звуку), если он из пяти; иначе интерфейса. */

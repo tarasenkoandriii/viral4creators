@@ -1,3 +1,6 @@
+// Декораторы `@Type` в DTO брифа (этап G) читают метаданные при загрузке
+// класса — без этого импорта набор падает до первого теста.
+import 'reflect-metadata';
 import { validateSync } from 'class-validator';
 import {
   BRIEF_FIELD_HOOKS,

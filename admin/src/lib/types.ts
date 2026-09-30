@@ -231,6 +231,29 @@ export interface SetVoiceAssistantInput {
   voice?: { provider: VoiceAssistantProviderKey; voiceId: string | null } | null;
 }
 
+// ── Квота образов «Я в кадре» (этап F ТЗ Greeting 2.0 §4.2, В-7, 30.09.2026) ──
+// Зеркалит backend/src/modules/admin-panel/admin-persona-look-quota-settings.service.ts.
+export type PersonaLookQuotaPlan = 'LITE' | 'STANDARD' | 'PREMIUM';
+export type PersonaLookQuotaPeriod = 'day' | 'month';
+
+export interface PersonaLookQuotaCell {
+  /** Действующее число новых образов за период. */
+  value: number;
+  /** Умолчание В-7. */
+  defaultValue: number;
+  source: 'admin' | 'default';
+}
+
+export type PersonaLookQuotaSettingsView = Record<
+  PersonaLookQuotaPlan,
+  Record<PersonaLookQuotaPeriod, PersonaLookQuotaCell>
+>;
+
+/** Не присланное не трогается. Целые 0…1000. */
+export type SetPersonaLookQuotaInput = Partial<
+  Record<PersonaLookQuotaPlan, Partial<Record<PersonaLookQuotaPeriod, number>>>
+>;
+
 export interface VoiceoverProviderOptionView {
   key: VoiceoverProviderKey;
   /** Настроен ли ключ/аккаунт на этом стенде — у `veo` всегда `true`. */

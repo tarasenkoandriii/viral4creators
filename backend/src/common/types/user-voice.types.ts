@@ -15,6 +15,11 @@ export interface UserVoiceView {
   /** Resemble voice_uuid — то, что подставляется как ttsVoiceId после READY. */
   resembleVoiceId: string | null;
   error: string | null;
+  /**
+   * Голос персоны «Я в кадре» (ТЗ TZ-Greeting-2.0 §4.6): один на персону
+   * и вне лимита клонов. `null` — обычный клон.
+   */
+  personaId?: string | null;
   createdAt: string;
   updatedAt: string;
 }

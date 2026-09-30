@@ -61,6 +61,8 @@ import type {
   TranscribeResult,
 } from '../types/project';
 
+import type { BrandManifestKind, CardStyle } from '../lib/persona-greeting';
+
 // ── Error helpers ──────────────────────────────────────────────────────
 
 export function isUnauthorized(err: unknown): boolean {
@@ -395,6 +397,12 @@ export interface ManifestInput {
   subtitleTheme?: SubtitleTheme;
   filters?: JsonObject | null;
   effects?: JsonObject | null;
+  /** Личный бренд-бук «Я в кадре» (ТЗ Greeting 2.0 §4.7). */
+  kind?: BrandManifestKind;
+  defaultLookId?: string | null;
+  signature?: string | null;
+  defaultTone?: string | null;
+  cardStyle?: CardStyle | null;
 }
 
 export async function getBrandManifest(id: string): Promise<BrandManifestView> {
@@ -934,11 +942,14 @@ export async function disconnectChannel(id: string): Promise<void> {
 /** Ставит готовый ролик на модерацию — как и публикация, никогда не публикует сразу. */
 export async function createSharedVideo(
   sessionId: string,
-  title?: string
+  title?: string,
+  /** Галочка «можно в витрину» — только у ролика с персоной (§4.9). */
+  extra: { allowShowcaseWithPersona?: boolean } = {}
 ): Promise<SharedVideoPage> {
   return unwrap(
     await api.post<SharedVideoPage>(`/sessions/${sessionId}/shared-video`, {
       ...(title ? { title } : {}),
+      ...extra,
     }),
     'shared-video'
   );

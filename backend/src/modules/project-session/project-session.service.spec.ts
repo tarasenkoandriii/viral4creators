@@ -5,6 +5,10 @@ import {
 } from './project-session.service';
 import { BrandManifestSnapshot } from '../../common/types/brand-manifest.types';
 import type { SessionSeed } from '../../common/session.service';
+import {
+  PERSONAL_MANIFEST_GREETING_ONLY,
+  PERSONA_VOICE_ONLY_PERSONAL,
+} from '../../common/greeting-persona';
 
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 jest.mock('@prisma/client', () => ({ Prisma: {} }));
@@ -337,7 +341,12 @@ describe('ProjectSessionService.updateSnapshot', () => {
       userId: 'u1',
       brandManifestSnapshot: snapshot,
     });
-    prisma.userVoice.findFirst.mockResolvedValue({ id: 'uv1' });
+    // Обычный клон, не голос персоны: запрос «голос персоны?»
+    // (`isPersonaVoice`, CONTRACT5 п.5а) ищет с `personaId` и не находит.
+    prisma.userVoice.findFirst.mockImplementation(
+      async (args: { where?: { personaId?: unknown } }) =>
+        args?.where?.personaId ? null : { id: 'uv1' },
+    );
     sessions.updateSession.mockImplementation(
       async (
         _id: string,
@@ -606,5 +615,170 @@ describe('applySnapshotEdit', () => {
       now,
     );
     expect(next.characters).toEqual([]);
+  });
+});
+
+describe('ProjectSessionService.createFromGreetingBrief — этап G (§4.7, §4.8)', () => {
+  const look = {
+    id: 'l1',
+    label: 'Деловой',
+    status: 'ready',
+    deletedAt: null,
+    photoUrl: 'https://blob/l1.png',
+    photoPathname: 'users/u1/personas/p1/looks/l1.png',
+    activeSketch: null,
+    persona: { userId: 'u1', revokedAt: null },
+  };
+  const briefRow = (over: Record<string, unknown> = {}) => ({
+    id: 'gb1',
+    occasion: 'BIRTHDAY',
+    customOccasionText: null,
+    recipientName: 'Мама',
+    senderName: null,
+    tone: 'WARM',
+    personalMessage: null,
+    presenterProvider: 'grok',
+    resolution: '720p',
+    brandManifestId: null,
+    occasionDate: null,
+    presenterLookId: 'l1',
+    presenterVariant: 'photo',
+    presenterLook: look,
+    brandManifest: null,
+    project: {
+      id: 'p1',
+      type: 'GREETING_VIDEO',
+      deletedAt: null,
+      title: 'Маме',
+      currency: 'UAH',
+      countryCode: 'UA',
+    },
+    ...over,
+  });
+  const OLD_FLAG = process.env.PERSONA_ENABLED;
+  beforeEach(() => {
+    process.env.PERSONA_ENABLED = 'true';
+  });
+  afterAll(() => {
+    process.env.PERSONA_ENABLED = OLD_FLAG;
+  });
+  const withBrief = (row: unknown) => {
+    const b = build();
+    (b.prisma as Record<string, unknown>).greetingBrief = {
+      findFirst: jest.fn().mockResolvedValue(row),
+    };
+    return b;
+  };
+
+  it('образ копируется в снимок, ролик помечен как ролик с персоной', async () => {
+    const { service, sessions } = withBrief(briefRow());
+    await service.createFromGreetingBrief('u1', 'p1');
+    const seed = sessions.createSession.mock.calls[0][1];
+    expect(seed.greetingBriefSnapshot).toMatchObject({
+      presenter: {
+        lookId: 'l1',
+        url: 'https://blob/l1.png',
+        variant: 'photo',
+      },
+      usesPersona: true,
+    });
+  });
+
+  it('образ удалён после выбора — отказ, а не тихий ИИ-ведущий', async () => {
+    const { service, sessions } = withBrief(
+      briefRow({ presenterLook: { ...look, deletedAt: new Date() } }),
+    );
+    await expect(service.createFromGreetingBrief('u1', 'p1')).rejects.toThrow(
+      /Образ ведущего не найден/,
+    );
+    expect(sessions.createSession).not.toHaveBeenCalled();
+  });
+
+  it('режим выключен — отказ с кодом PERSONA_DISABLED', async () => {
+    process.env.PERSONA_ENABLED = 'false';
+    const { service } = withBrief(briefRow());
+    await expect(
+      service.createFromGreetingBrief('u1', 'p1'),
+    ).rejects.toMatchObject({ response: { code: 'PERSONA_DISABLED' } });
+  });
+
+  it('личный бренд-бук: подпись — «от кого», стиль карточек, признак персоны', async () => {
+    const { service, sessions } = withBrief(
+      briefRow({
+        presenterLookId: null,
+        presenterVariant: null,
+        presenterLook: null,
+        brandManifest: {
+          id: 'bm1',
+          title: 'Я',
+          styleNotes: null,
+          filters: null,
+          effects: null,
+          characters: [],
+          scenes: [],
+          kind: 'PERSONAL',
+          signature: 'Андрей',
+          cardStyle: { font: 'serif', color: 'cream' },
+        },
+      }),
+    );
+    await service.createFromGreetingBrief('u1', 'p1');
+    const seed = sessions.createSession.mock.calls[0][1];
+    expect(seed.greetingBriefSnapshot).toMatchObject({
+      presenter: null,
+      usesPersona: true,
+      senderName: 'Андрей',
+      cards: { style: { font: 'serif', color: 'cream' } },
+    });
+    expect(seed.brandManifestSnapshot).toMatchObject({
+      kind: 'PERSONAL',
+      signature: 'Андрей',
+    });
+  });
+});
+
+describe('CONTRACT5 п.5а/п.5в — сессии и личный бренд-бук', () => {
+  it('товарная сессия от проекта с личным бренд-буком — 400', async () => {
+    const { service, sessions } = build({
+      item: {
+        ...itemRow,
+        project: {
+          ...itemRow.project,
+          brandManifest: { ...itemRow.project.brandManifest, kind: 'PERSONAL' },
+        },
+      },
+    });
+    await expect(service.createFromItem('u1', 'p1', 'i1')).rejects.toThrow(
+      PERSONAL_MANIFEST_GREETING_ONLY,
+    );
+    expect(sessions.createSession).not.toHaveBeenCalled();
+  });
+
+  it('голос персоны в снимке корпоративного бренд-бука — 400', async () => {
+    const { service, sessions, prisma } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      userId: 'u1',
+      brandManifestSnapshot: {
+        brandManifestId: 'bm1',
+        title: 'Co',
+        styleNotes: null,
+        voiceNotes: null,
+        filters: null,
+        effects: null,
+        characters: [],
+        snapshotAt: '2026-09-30T00:00:00.000Z',
+        editedAt: null,
+        kind: 'COMPANY',
+      },
+    });
+    prisma.userVoice.findFirst.mockImplementation(
+      async (args: { where?: { personaId?: unknown } }) =>
+        args?.where?.personaId ? { id: 'uv-p' } : null,
+    );
+    await expect(
+      service.updateSnapshot('s1', { ttsVoiceId: 'rv-p' }),
+    ).rejects.toThrow(PERSONA_VOICE_ONLY_PERSONAL);
+    expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 });

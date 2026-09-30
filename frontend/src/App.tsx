@@ -50,6 +50,8 @@ import { GreetingVideoWizard } from './features/projects/GreetingVideoWizard';
 import { FeedImportProgressScreen } from './features/projects/FeedImportProgressScreen';
 import { ManifestsListScreen } from './features/brand/ManifestsListScreen';
 import { ManifestScreen } from './features/brand/ManifestScreen';
+import { PersonaScreen } from './features/persona/PersonaScreen';
+import { PersonaEntryCard } from './features/persona/PersonaEntryCard';
 import { ChannelsScreen } from './features/channels/ChannelsScreen';
 import { CreditsScreen } from './features/credits/CreditsScreen';
 import { ApiKeysScreen } from './features/api-keys/ApiKeysScreen';
@@ -103,7 +105,8 @@ if (typeof window !== 'undefined') {
 function App() {
   const { dict, locale } = useI18n();
   const route = useRoute();
-  const inBrand = route.name.startsWith('manifest');
+  // «Я в кадре» — под вкладкой бренда: личный бренд-бук строится на персоне.
+  const inBrand = route.name.startsWith('manifest') || route.name === 'persona';
   const inProjects =
     !inBrand &&
     route.name !== 'generate' &&
@@ -427,7 +430,14 @@ function App() {
                 runId={route.runId}
               />
             )}
-            {route.name === 'manifests' && <ManifestsListScreen />}
+            {route.name === 'manifests' && (
+              <>
+                {/* Вход «Создать себя» прячется сам, пока режим выключен. */}
+                <PersonaEntryCard />
+                <ManifestsListScreen />
+              </>
+            )}
+            {route.name === 'persona' && <PersonaScreen />}
             {route.name === 'manifest-new' && <ManifestScreen />}
             {route.name === 'manifest' && (
               <ManifestScreen

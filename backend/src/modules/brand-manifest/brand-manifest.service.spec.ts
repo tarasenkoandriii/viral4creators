@@ -347,7 +347,12 @@ describe('manifests', () => {
 
   it('Е-4.1 шестого аудита: свой клон на Resemble — ttsProvider безусловно resemble, а не активный на стенде провайдер', async () => {
     const { svc, prisma } = build();
-    prisma.userVoice.findFirst.mockResolvedValue({ id: 'uv1' });
+    // Обычный клон, не голос персоны: запрос «голос персоны?»
+    // (`isPersonaVoice`, CONTRACT5 п.5а) ищет с `personaId` и не находит.
+    prisma.userVoice.findFirst.mockImplementation(
+      async (args: { where?: { personaId?: unknown } }) =>
+        args?.where?.personaId ? null : { id: 'uv1' },
+    );
     prisma.brandManifest.create.mockResolvedValue(manifestRow());
     await svc.create(USER, { title: 'Мой бренд', ttsVoiceId: 'clone-1' });
     expect(prisma.userVoice.findFirst).toHaveBeenCalledWith({

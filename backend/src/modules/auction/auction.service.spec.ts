@@ -33,6 +33,12 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  PERSONAL_MANIFEST_NOT_FOR_SALE,
+  PERSONA_VIDEO_NOT_FOR_SALE,
+  sessionIdFromVideoUrl,
+  videoUsesPersona,
+} from './auction-persona-guard';
 import { AuctionService } from './auction.service';
 
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
@@ -106,6 +112,9 @@ function build() {
       findUnique: jest.fn().mockResolvedValue({ id: 'cp1', userId: 'seller' }),
     },
     portfolioItem: { findUnique: jest.fn().mockResolvedValue(portfolioItem()) },
+    // Этап G: проверка «ролик с персоной» читает страницы и сессии.
+    sharedVideoPage: { findMany: jest.fn().mockResolvedValue([]) },
+    session: { findMany: jest.fn().mockResolvedValue([]) },
     brandManifest: {
       findUnique: jest
         .fn()
@@ -1699,5 +1708,100 @@ describe('listMyBids — «мои ставки» для победителя о�
     expect((await other.service.listMyBids('buyer1'))[0]).toEqual(
       expect.objectContaining({ isWinner: false, paymentPaid: true }),
     );
+  });
+});
+
+describe('create — лицо и голос автора не продаются (этап G, §4.7, Т-8)', () => {
+  const dto = {
+    portfolioItemId: 'pi1',
+    startingPrice: 1000,
+    rightsConfirmed: true,
+  } as never;
+
+  it('личный бренд-бук в связке — 403, лот не создаётся', async () => {
+    const { service, prisma } = build();
+    prisma.brandManifest.findUnique.mockResolvedValueOnce({
+      id: 'bm1',
+      userId: 'seller',
+      isLocked: false,
+      kind: 'PERSONAL',
+    });
+    await expect(
+      service.create('seller', {
+        ...(dto as object),
+        includeBrandManifest: true,
+        brandManifestId: 'bm1',
+      } as never),
+    ).rejects.toThrow(PERSONAL_MANIFEST_NOT_FOR_SALE);
+    expect(prisma.auctionListing.create).not.toHaveBeenCalled();
+  });
+
+  it('ролик сессии с персоной (наш файл sessions/<id>/…) — 403', async () => {
+    const { service, prisma } = build();
+    prisma.portfolioItem.findUnique.mockResolvedValueOnce(
+      portfolioItem({
+        videoUrl:
+          'https://store.public.blob.vercel-storage.com/sessions/s9/final.mp4',
+      }),
+    );
+    prisma.session.findMany.mockResolvedValueOnce([
+      { data: { greetingBriefSnapshot: { usesPersona: true } } },
+    ]);
+    await expect(service.create('seller', dto)).rejects.toThrow(
+      PERSONA_VIDEO_NOT_FOR_SALE,
+    );
+    expect(prisma.session.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['s9'] } },
+      select: { data: true },
+    });
+    expect(prisma.auctionListing.create).not.toHaveBeenCalled();
+  });
+
+  it('ссылка совпала с опубликованной страницей ролика с персоной — 403', async () => {
+    const { service, prisma } = build();
+    prisma.sharedVideoPage.findMany.mockResolvedValueOnce([
+      { sessionId: 's7' },
+    ]);
+    prisma.session.findMany.mockResolvedValueOnce([
+      { data: { greetingBriefSnapshot: { usesPersona: true } } },
+    ]);
+    await expect(service.create('seller', dto)).rejects.toThrow(
+      PERSONA_VIDEO_NOT_FOR_SALE,
+    );
+  });
+
+  it('ролик без персоны — лот создаётся как раньше', async () => {
+    const { service, prisma } = build();
+    prisma.sharedVideoPage.findMany.mockResolvedValueOnce([
+      { sessionId: 's7' },
+    ]);
+    prisma.session.findMany.mockResolvedValueOnce([
+      { data: { greetingBriefSnapshot: { usesPersona: false } } },
+    ]);
+    await service.create('seller', dto);
+    expect(prisma.auctionListing.create).toHaveBeenCalled();
+  });
+});
+
+describe('auction-persona-guard', () => {
+  it('sessionIdFromVideoUrl — только наш путь sessions/<id>/', () => {
+    expect(
+      sessionIdFromVideoUrl(
+        'https://x.blob.vercel-storage.com/sessions/abc/generated.mp4',
+      ),
+    ).toBe('abc');
+    expect(sessionIdFromVideoUrl('https://youtube.com/watch?v=1')).toBeNull();
+    expect(sessionIdFromVideoUrl(null)).toBeNull();
+  });
+
+  it('videoUsesPersona — пустые ссылки не ходят в БД', async () => {
+    const prisma = {
+      sharedVideoPage: { findMany: jest.fn() },
+      session: { findMany: jest.fn() },
+    };
+    await expect(videoUsesPersona(prisma, [null, undefined])).resolves.toBe(
+      false,
+    );
+    expect(prisma.sharedVideoPage.findMany).not.toHaveBeenCalled();
   });
 });

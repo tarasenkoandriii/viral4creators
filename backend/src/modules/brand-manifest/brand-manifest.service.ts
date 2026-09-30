@@ -35,8 +35,20 @@ import {
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
+import { AiUsageService } from '../ai-usage/ai-usage.service';
+import { isPersonaVoice } from '../user-voices/persona-voice';
+import { createGeminiClient } from '../../common/gemini-client';
+import { GEMINI_MODEL } from '../../common/gemini-model';
+import {
+  FaceCheckGenerator,
+  checkFaces,
+  mayContainFace,
+} from '../persona/face-check';
 import { head } from '@vercel/blob';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -54,6 +66,29 @@ import {
   JsonObject,
 } from '../../common/types/brand-manifest.types';
 import { BrandManifestRequestDto } from './dto/brand-manifest-request.dto';
+import { normalizeCardStyle } from '../../common/greeting-cards';
+import {
+  FACE_CHECKED_SCENE_PREFIX,
+  PERSONA_VOICE_ONLY_PERSONAL,
+  isFaceCheckedScenePhoto,
+  personaUsable,
+  PERSONA_DISABLED_CODE,
+  PERSONA_DISABLED_MESSAGE,
+  personaEnabled,
+} from '../../common/greeting-persona';
+import { GREETING_TONES } from '../../common/types/greeting.types';
+import type { GreetingTone } from '../../common/types/greeting.types';
+
+/** Этап G (§4.7): тексты отказов личного бренд-бука. */
+export const PERSONAL_NEEDS_PERSONA =
+  'Личный бренд-бук привязан к вашей проверенной персоне — сначала создайте её и пройдите проверку в разделе «Я в кадре».';
+
+export const KIND_IMMUTABLE =
+  'Вид бренд-бука (личный или корпоративный) задаётся при создании и не меняется — создайте новый бренд-бук.';
+export const DEFAULT_LOOK_ONLY_PERSONAL =
+  'Образ по умолчанию есть только у личного бренд-бука.';
+export const DEFAULT_LOOK_NOT_FOUND =
+  'Образ не найден среди ваших образов (он удалён или принадлежит не вам).';
 import { BrandCharacterRequestDto } from './dto/brand-character-request.dto';
 import { AddCharacterFromSessionCastDto } from './dto/add-character-from-session-cast.dto';
 import {
@@ -113,6 +148,13 @@ interface ManifestRow {
   ttsProvider?: string | null;
   filters: unknown;
   effects: unknown;
+  /** Этап G (§4.7); необязательные — фикстуры до этапа G их не несут. */
+  kind?: string | null;
+  personaId?: string | null;
+  defaultLookId?: string | null;
+  signature?: string | null;
+  defaultTone?: string | null;
+  cardStyle?: unknown;
   createdAt: Date;
   updatedAt: Date;
   characters?: CharacterRow[];
@@ -191,13 +233,29 @@ export function scenePhotoPathname(
 
 @Injectable()
 export class BrandManifestService {
+  private readonly logger = new Logger(BrandManifestService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly blobService: BlobService,
     private readonly plans: PlanService,
     private readonly ttsResolver: TtsProviderResolverService,
     private readonly sessions: SessionService,
+    /**
+     * Расход проверки лица на фото сцены (CONTRACT5 п.10). Необязательный:
+     * модуль расхода глобальный, но юнит-тесты сервиса строят его без него.
+     */
+    @Optional() private readonly aiUsage?: AiUsageService,
   ) {}
+
+  /**
+   * Клиент Gemini для проверки лица — лениво: без ключа он бросает, и в
+   * конструкторе это сломало бы весь бренд-бук на стенде без ключа.
+   */
+  private faceClient: FaceCheckGenerator | null = null;
+  private get faceGenai(): FaceCheckGenerator {
+    this.faceClient ??= createGeminiClient() as unknown as FaceCheckGenerator;
+    return this.faceClient;
+  }
 
   // ── Manifests ─────────────────────────────────────────────────────────
 
@@ -208,7 +266,30 @@ export class BrandManifestService {
     // §23: манифест бренда — от Standard и выше. Проверяем только при
     // создании: уже созданные манифесты остаются доступны, если человек
     // вернулся на Lite — отбирать сделанное было бы враждебно.
-    await this.plans.assertUser(userId, 'brandManifest');
+    // Этап G (§4.7, В-1): личный бренд-бук — отдельный признак тарифа
+    // `personalBrand` (на всех тарифах), а не `brandManifest` (Standard+).
+    // Персона и режим проверяются раньше тарифа: при выключенном режиме
+    // ответ — тот же 404 PERSONA_DISABLED, что у маршрутов персоны.
+    const personal = dto.kind === 'PERSONAL';
+    let personaFields: Record<string, unknown> = {};
+    if (personal) {
+      const personaId = await this.personalPersonaId(userId);
+      if (dto.defaultLookId) {
+        await this.assertOwnLook(personaId, dto.defaultLookId);
+      }
+      personaFields = {
+        kind: 'PERSONAL',
+        personaId,
+        defaultLookId: dto.defaultLookId ?? null,
+      };
+    } else if (dto.defaultLookId) {
+      throw new BadRequestException(DEFAULT_LOOK_ONLY_PERSONAL);
+    }
+    await this.assertPersonaVoiceAllowed(userId, dto.ttsVoiceId, personal);
+    await this.plans.assertUser(
+      userId,
+      personal ? 'personalBrand' : 'brandManifest',
+    );
     if (!dto.title?.trim()) {
       throw new BadRequestException('title is required to create a manifest');
     }
@@ -233,6 +314,7 @@ export class BrandManifestService {
       data: {
         userId,
         ...manifestDataFromDto(dto, tts.providerKey, isResembleClone),
+        ...personaFields,
       } as unknown as Prisma.BrandManifestUncheckedCreateInput,
       include: FULL_INCLUDE,
     });
@@ -267,9 +349,40 @@ export class BrandManifestService {
     if (dto.voiceMode === 'dub' && current.voiceMode !== 'dub') {
       await this.plans.assertUser(userId, 'voiceDub');
     }
+    // Этап G (§4.7): вид не меняется — корпоративный, ставший личным,
+    // мог уже стоять на аукционе, а личный, ставший корпоративным, ушёл
+    // бы туда с лицом автора. Форма пересылает текущий вид при каждом
+    // сохранении — то же значение не отказ.
+    const currentKind = current.kind === 'PERSONAL' ? 'PERSONAL' : 'COMPANY';
+    if (dto.kind !== undefined && dto.kind !== currentKind) {
+      throw new BadRequestException(KIND_IMMUTABLE);
+    }
+    await this.assertPersonaVoiceAllowed(
+      userId,
+      dto.ttsVoiceId,
+      currentKind === 'PERSONAL',
+    );
+    const lookData: Record<string, unknown> = {};
+    if (dto.defaultLookId !== undefined) {
+      if (dto.defaultLookId === null) {
+        lookData.defaultLookId = null;
+      } else if (currentKind !== 'PERSONAL') {
+        throw new BadRequestException(DEFAULT_LOOK_ONLY_PERSONAL);
+      } else {
+        const personaId = await this.personalPersonaId(userId);
+        await this.assertOwnLook(personaId, dto.defaultLookId);
+        // Персону могли удалить и создать заново (§4.9: личные бренд-буки
+        // остаются без персоны) — привязка следует за образом.
+        lookData.defaultLookId = dto.defaultLookId;
+        lookData.personaId = personaId;
+      }
+    }
     const isResembleClone = await this.isOwnResembleVoice(userId, dto);
     const tts = await this.ttsResolver.resolve();
-    const data = manifestDataFromDto(dto, tts.providerKey, isResembleClone);
+    const data = {
+      ...manifestDataFromDto(dto, tts.providerKey, isResembleClone),
+      ...lookData,
+    };
     if (Object.keys(data).length === 0) return toManifestView(current);
     const row: ManifestRow = await this.prisma.brandManifest.update({
       where: { id: manifestId },
@@ -574,15 +687,21 @@ export class BrandManifestService {
     const asset = await this.findOwnAsset(kind, userId, manifestId, assetId);
     await this.delegate(kind).delete({ where: { id: assetId } });
     if (asset.photoUrl) {
-      // Best-effort: the blob key is deterministic, derive it from the URL's
-      // stored pathname convention rather than parsing the CDN URL.
+      // Best-effort. Путь — из самого URL (под префиксом этого ассета): с
+      // волны CONTRACT5 п.10 фото сцены может лежать под серверным
+      // `checked-<hex>`, и фиксированный `photo.<ext>` оставил бы его
+      // сиротой. Не разобрался — прежнее детерминированное имя.
       void this.blobService.deleteBlob(
-        assetPhotoPathname(
-          kind,
-          manifestId,
-          assetId,
-          asset.photoUrl.endsWith('.png') ? 'image/png' : 'image/jpeg',
-        ),
+        pathnameFromBlobUrl(
+          asset.photoUrl,
+          `brand-manifests/${manifestId}/${kind}/${assetId}/`,
+        ) ??
+          assetPhotoPathname(
+            kind,
+            manifestId,
+            assetId,
+            asset.photoUrl.endsWith('.png') ? 'image/png' : 'image/jpeg',
+          ),
       );
     }
     await this.touch(manifestId);
@@ -624,7 +743,7 @@ export class BrandManifestService {
     assetId: string,
     dto: CharacterPhotoConfirmRequestDto,
   ): Promise<BrandCharacterView> {
-    await this.findOwnAsset(kind, userId, manifestId, assetId);
+    const previous = await this.findOwnAsset(kind, userId, manifestId, assetId);
     const expectedPrefix = `brand-manifests/${manifestId}/${kind}/${assetId}/`;
     if (!dto.pathname.startsWith(expectedPrefix)) {
       throw new BadRequestException(
@@ -639,6 +758,14 @@ export class BrandManifestService {
         `Photo not found in storage at "${dto.pathname}" — upload it first via the photo/upload-url step (${e instanceof Error ? e.message : String(e)})`,
       );
     }
+    if (kind === 'scenes' && personaEnabled()) {
+      url = await this.faceCheckedScenePhoto(
+        manifestId,
+        assetId,
+        dto.pathname,
+        url,
+      );
+    }
     const row = await this.delegate(kind).update({
       where: { id: assetId },
       // §3.3 ТЗ скетча: новое фото ассета отвязывает прежний скетч
@@ -646,8 +773,91 @@ export class BrandManifestService {
       data: { photoUrl: url, activeSketchId: null, originalDeletedAt: null },
       include: ASSET_INCLUDE,
     });
+    // Прежний серверный `checked-<hex>` при новом фото больше никому не
+    // принадлежит — клиентский `photo.<ext>` перезаписывается загрузкой
+    // сам, а этот остался бы сиротой (CONTRACT5 п.10, аудит волны).
+    const oldPath = pathnameFromBlobUrl(previous.photoUrl, expectedPrefix);
+    const newPath = pathnameFromBlobUrl(url, expectedPrefix);
+    if (
+      oldPath &&
+      oldPath !== newPath &&
+      isFaceCheckedScenePhoto(previous.photoUrl)
+    ) {
+      await this.blobService
+        .deleteBlob(oldPath)
+        .catch((e: unknown) =>
+          this.logger.warn(
+            `${kind} ${assetId}: прежний файл не удалён: ${String(e)}`,
+          ),
+        );
+    }
     await this.touch(manifestId);
     return toCharacterView(row);
+  }
+
+  /**
+   * Лица на фото сцены бренд-бука (CONTRACT5 п.10) — только при
+   * включённом режиме. Сцена бренда — место; фото, на котором лица точно
+   * нет, сервер копирует под путь с отметкой проверки
+   * (`FACE_CHECKED_SCENE_PREFIX` + случайный суффикс) и удаляет
+   * клиентский файл. Фото, где лицо есть или проверка не ответила
+   * (fail-closed), остаётся как загружено: в бренд-буке оно видно, но в
+   * видеомодель уходит только словами — до скетча, который рисует место
+   * без людей (`brandSceneImageAllowed`). Отказ здесь не нужен: человек
+   * должен иметь возможность сделать из этого фото скетч.
+   */
+  private async faceCheckedScenePhoto(
+    manifestId: string,
+    sceneId: string,
+    pathname: string,
+    url: string,
+  ): Promise<string> {
+    let data: Buffer;
+    let genai: FaceCheckGenerator;
+    try {
+      genai = this.faceGenai;
+      data = await this.blobService.downloadBuffer(pathname);
+    } catch (e) {
+      this.logger.warn(
+        `сцена ${sceneId}: проверка лица недоступна — фото пойдёт в ролик только словами: ${String(e)}`,
+      );
+      return url;
+    }
+    const mimeType = pathname.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    const result = await checkFaces(
+      genai,
+      { purpose: 'reference', photo: { data, mimeType } },
+      {
+        model: GEMINI_MODEL,
+        onResponse: (res) =>
+          this.aiUsage?.recordGemini(res, {
+            operation: 'reference-face-check',
+            model: GEMINI_MODEL,
+          }),
+      },
+    );
+    if (mayContainFace(result)) {
+      this.logger.warn(
+        `сцена ${sceneId}: ${result ? 'на фото лицо' : 'проверка лица не ответила'} — фото пойдёт в ролик только словами`,
+      );
+      return url;
+    }
+    const checkedPath = `brand-manifests/${manifestId}/scenes/${sceneId}/${FACE_CHECKED_SCENE_PREFIX}${randomBytes(12).toString('hex')}.${
+      mimeType === 'image/png' ? 'png' : 'jpg'
+    }`;
+    const uploaded = await this.blobService.uploadBuffer(
+      checkedPath,
+      data,
+      mimeType,
+    );
+    await this.blobService
+      .deleteBlob(pathname)
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `сцена ${sceneId}: клиентский файл не удалён: ${String(e)}`,
+        ),
+      );
+    return uploaded.url;
   }
 
   // ── Internals ─────────────────────────────────────────────────────────
@@ -670,6 +880,66 @@ export class BrandManifestService {
       select: { id: true },
     });
     return !!own;
+  }
+
+  /**
+   * Персона автора для личного бренд-бука: режим включён, персона есть и
+   * не отозвана. Иначе — 404 PERSONA_DISABLED (как маршруты персоны) или
+   * 400 с подсказкой, где её создать.
+   */
+  private async personalPersonaId(userId: string): Promise<string> {
+    if (!personaEnabled()) {
+      throw new NotFoundException({
+        code: PERSONA_DISABLED_CODE,
+        message: PERSONA_DISABLED_MESSAGE,
+      });
+    }
+    // CONTRACT5 п.13: персона проверена (живость пройдена) и без отказа
+    // (в том числе «младше 18» — надгробие с `revokedAt`).
+    const persona = await this.prisma.persona.findFirst({
+      where: { userId, revokedAt: null },
+      select: {
+        id: true,
+        livenessCheckedAt: true,
+        revokedAt: true,
+        verifyResult: true,
+      },
+    });
+    if (!persona || !personaUsable(persona)) {
+      throw new BadRequestException(PERSONAL_NEEDS_PERSONA);
+    }
+    return persona.id;
+  }
+
+  /**
+   * CONTRACT5 п.5а: клон голоса персоны — только в личном бренд-буке.
+   * Корпоративный бренд-бук продаётся на аукционе и не несёт признака
+   * персоны, и голос живого человека ушёл бы туда без следа. В личном —
+   * только при включённом режиме.
+   */
+  private async assertPersonaVoiceAllowed(
+    userId: string,
+    voiceId: string | null | undefined,
+    personal: boolean,
+  ): Promise<void> {
+    if (!voiceId?.trim()) return;
+    if (!(await isPersonaVoice(this.prisma, userId, voiceId))) return;
+    if (!personal) throw new BadRequestException(PERSONA_VOICE_ONLY_PERSONAL);
+    if (!personaEnabled()) {
+      throw new NotFoundException({
+        code: PERSONA_DISABLED_CODE,
+        message: PERSONA_DISABLED_MESSAGE,
+      });
+    }
+  }
+
+  /** Образ своей персоны, не удалённый. Чужой — «не найден», без подробностей. */
+  private async assertOwnLook(personaId: string, lookId: string) {
+    const look = await this.prisma.personaLook.findFirst({
+      where: { id: lookId, personaId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!look) throw new BadRequestException(DEFAULT_LOOK_NOT_FOUND);
   }
 
   private async findOwn(
@@ -791,6 +1061,18 @@ export function manifestDataFromDto(
   if (dto.effects !== undefined) {
     data.effects = dto.effects === null ? Prisma.DbNull : dto.effects;
   }
+  // Этап G (§4.7, Г-6): подпись, тон и стиль карточек — у любого вида
+  // бренд-бука. Вид и образ по умолчанию решает сервис (нужна персона).
+  if (dto.signature !== undefined) {
+    data.signature = dto.signature?.trim() || null;
+  }
+  if (dto.defaultTone !== undefined) {
+    data.defaultTone = dto.defaultTone ?? null;
+  }
+  if (dto.cardStyle !== undefined) {
+    const style = normalizeCardStyle(dto.cardStyle);
+    data.cardStyle = style ?? Prisma.DbNull;
+  }
   return data;
 }
 
@@ -824,6 +1106,7 @@ export function toCharacterView(row: AssetRow): BrandCharacterView {
     originalPhotoUrl: row.photoUrl,
     originalDeleted: !!row.originalDeletedAt,
     activeSketchId: active?.variant === 'sketch' ? row.activeSketch!.id : null,
+    photoFaceChecked: isFaceCheckedScenePhoto(row.photoUrl),
     description: row.description,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -848,6 +1131,11 @@ export function toManifestView(row: ManifestRow): BrandManifestView {
     characters: (row.characters ?? []).map(toCharacterView),
     scenes: (row.scenes ?? []).map(toCharacterView),
     projectCount: row._count?.projects ?? 0,
+    kind: row.kind === 'PERSONAL' ? 'PERSONAL' : 'COMPANY',
+    defaultLookId: row.defaultLookId ?? null,
+    signature: row.signature ?? null,
+    defaultTone: toneOrNull(row.defaultTone),
+    cardStyle: normalizeCardStyle(row.cardStyle),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -860,7 +1148,15 @@ export function toSummaryView(row: ManifestRow): BrandManifestSummaryView {
     characterCount: row._count?.characters ?? row.characters?.length ?? 0,
     sceneCount: row._count?.scenes ?? row.scenes?.length ?? 0,
     projectCount: row._count?.projects ?? 0,
+    kind: row.kind === 'PERSONAL' ? 'PERSONAL' : 'COMPANY',
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/** Тон из строки БД — только известный код, иначе `null`. */
+function toneOrNull(value: string | null | undefined): GreetingTone | null {
+  return (GREETING_TONES as readonly string[]).includes(value ?? '')
+    ? (value as GreetingTone)
+    : null;
 }

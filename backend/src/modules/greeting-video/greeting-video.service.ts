@@ -79,6 +79,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { SessionService } from '../../common/session.service';
 import { PlanService } from '../plan/plan.service';
@@ -101,7 +102,6 @@ import { readinessOfSession } from '../../common/wizard-readiness.session';
 import { RenderAccessService } from '../render-access/render-access.service';
 import { RenderCompletedService } from '../render-access/render-completed.service';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
-import { activeSessionSceneImage } from '../../common/active-image';
 import {
   normalizeSceneCount,
   withStoryboard,
@@ -144,6 +144,13 @@ function estimateSpeechSeconds(speech: string): number {
   return Math.max(1, Math.round(speech.length / AVATAR_CHARS_PER_SECOND));
 }
 import { MAX_GREETING_REFERENCE_IMAGES } from '../greeting-reference/greeting-reference.service';
+import { PrismaService } from '../../prisma/prisma.service';
+import { PersonaRenderDb, personaRenderProblem } from './persona-render-check';
+import {
+  assertGreetingReferencesAllowed,
+  greetingVideoReferences,
+  hedraPortrait,
+} from '../../common/greeting-persona';
 
 const GREETING_VIDEO_CLAIM_TTL_MS = 5 * 60 * 1000;
 export const GREETING_VIDEO_IN_FLIGHT_MESSAGE =
@@ -174,6 +181,12 @@ export class GreetingVideoService {
     private readonly renderCompleted: RenderCompletedService,
     // Он же — ради возврата кредита при неудаче рендера.
     private readonly credits: CreditLedgerService,
+    /**
+     * Повторная проверка персоны у денег (CONTRACT5 п.14). Необязательная
+     * ради юнит-тестов; без неё рендер с персоной отказывает
+     * (`personaRenderProblem`), а без персоны — идёт как раньше.
+     */
+    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   /** POST /sessions/:id/greeting-video — starts rendering. */
@@ -246,6 +259,27 @@ export class GreetingVideoService {
     if (!verdict.ok) {
       throw new BadRequestException(policyMessage(verdict));
     }
+    // Этап G (§4.8, Г-8): ведущий-образ при выключенном режиме, скетч на
+    // Hedra и фото чужого лица без согласия — тоже у денег, до списания
+    // кредита. Сценарий проверяет то же самое, но фото могли загрузить
+    // уже после сборки сценария.
+    assertGreetingReferencesAllowed(
+      brief,
+      session.greetingReferenceImages ?? [],
+    );
+    // CONTRACT5 п.14: режим, образ, персона и голос персоны — по базе, не
+    // по копии в снимке: согласие могли забрать после выбора.
+    const personaProblem = await personaRenderProblem(
+      this.prisma as unknown as PersonaRenderDb | undefined,
+      session,
+    );
+    if (personaProblem) {
+      throw new BadRequestException(
+        personaProblem.code
+          ? { code: personaProblem.code, message: personaProblem.message }
+          : personaProblem.message,
+      );
+    }
 
     const inFlight = session.generatedVideo;
     if (
@@ -303,7 +337,15 @@ export class GreetingVideoService {
         sessionId,
         brief,
         session.generationPrompt.finalText,
-        session.greetingReferenceImages ?? [],
+        // Тот же список и порядок, что расставил метки `<IMAGE_n>` в
+        // сценарии (`buildSceneDescription`): образ первым, лица без
+        // согласия — никогда, сцены бренд-бука — после своих фото.
+        greetingVideoReferences({
+          presenter: brief.presenter ?? null,
+          images: session.greetingReferenceImages ?? [],
+          brandScenes: session.brandManifestSnapshot?.scenes ?? null,
+          max: MAX_GREETING_REFERENCE_IMAGES,
+        }).refs.map((r) => r.url),
         // Участвует ли НАШ синтез. Режим читается ровно так же, как его
         // прочитает постобработка (`PostProductionService.planWork`):
         // снимка бренда у бытового поздравления обычно нет, а
@@ -353,9 +395,11 @@ export class GreetingVideoService {
    * помечается `speechBakedIn`, чтобы постобработка не положила ту же
    * речь второй раз.
    *
-   * Портрет — первый референс-кадр сессии (решение владельца
-   * продукта). У бытового поздравления снимка бренда обычно нет, а шаг
-   * «добавьте фото» в мастере уже есть и уже необязателен: нет фото —
+   * Портрет (этап G, Г-7) — выбранный образ ведущего («Я в кадре»,
+   * вариант «фото»; скетч на Hedra не проверен и отклоняется раньше).
+   * Без образа — первый референс-кадр сессии (прежнее решение владельца
+   * продукта), но только среди фото, которые можно отправлять в модель:
+   * лицо без согласия портретом не станет (Г-8). Нет подходящего фото —
    * нет и аватара, и человек узнаёт об этом здесь, до списания денег.
    */
   private async startHedraVideo(
@@ -381,14 +425,18 @@ export class GreetingVideoService {
       );
     }
 
-    const portrait = referenceImages
-      .slice(0, MAX_GREETING_REFERENCE_IMAGES)
-      .map((asset) => activeSessionSceneImage(asset)?.url)
-      .find((url): url is string => !!url);
+    // Г-7: портрет — выбранный образ ведущего, а не «первое фото, какое
+    // есть» (им могли оказаться торт или место). Без образа — прежнее
+    // правило, но только среди фото, которым можно в модель (Г-8).
+    const portrait = hedraPortrait(
+      brief,
+      referenceImages,
+      MAX_GREETING_REFERENCE_IMAGES,
+    )?.url;
     if (!portrait) {
       throw new BadRequestException(
-        'Говорящему аватару нужно лицо: добавьте фото на шаге «Добавьте фото» — ' +
-          'первое из них станет портретом ведущего',
+        'Говорящему аватару нужно лицо: выберите свой образ в брифе («Кто в кадре») ' +
+          'или добавьте фото на шаге «Добавьте фото» — первое из них станет портретом ведущего',
       );
     }
 
@@ -631,7 +679,8 @@ export class GreetingVideoService {
     sessionId: string,
     brief: GreetingBriefSnapshot,
     basePrompt: string,
-    referenceImages: SceneAsset[],
+    /** Уже упорядоченные URL (`greetingVideoReferences`), ≤ потолка Grok. */
+    referenceImageUrlsIn: string[],
     /**
      * Участвует ли наш синтез (`voiceover`/`dub` в снимке бренда).
      *
@@ -684,10 +733,10 @@ export class GreetingVideoService {
     // `MAX_GREETING_REFERENCE_IMAGES` уже гарантирован лимитом загрузки
     // (`GreetingReferenceService`), здесь лишний .slice — просто defence
     // in depth против будущей правки того лимита.
-    const referenceImageUrls = referenceImages
-      .slice(0, MAX_GREETING_REFERENCE_IMAGES)
-      .map((s) => activeSessionSceneImage(s)?.url)
-      .filter((url): url is string => !!url);
+    const referenceImageUrls = referenceImageUrlsIn.slice(
+      0,
+      MAX_GREETING_REFERENCE_IMAGES,
+    );
 
     // Grok's own limitation, confirmed in `GrokVideoService`'s
     // doc-comment: reference-to-video caps at 720p regardless of what

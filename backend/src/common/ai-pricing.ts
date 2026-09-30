@@ -276,6 +276,11 @@ export type AiOperation =
    * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.4) — один
    * короткий текстовый вызов при сохранении брифа. */
   | 'greeting-register'
+  /** Проверка лица на референсе поздравления (этап G ТЗ
+   * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §4.8, Г-8) —
+   * один мультимодальный вызов на каждую загрузку фото. Своя строка:
+   * это цена безопасности, а не кадра, и в отчёте её надо видеть. */
+  | 'reference-face-check'
   /** Распознавание голосовой реплики в мастере поздравления (этап K2
    * ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §4А.5) —
    * отдельно от 'transcribe': та расшифровывает диктовку описания товара
@@ -293,7 +298,19 @@ export type AiOperation =
    * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §4А.4–4А.5).
    * Отдельно от 'voiceover': та озвучивает ролик, эта — реплики
    * помощника, и входит в суточный потолок голоса (В-14). */
-  | 'voice-assistant-tts';
+  | 'voice-assistant-tts'
+  /** Проверка селфи и ролика живости персоны «Я в кадре» (этап E ТЗ
+   * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §4.3–4.4) — один
+   * мультимодальный вызов Gemini: лицо, анфас, свет, не экран, тот же
+   * человек в ролике, возраст диапазоном. Своя строка: вызов с видео
+   * заметно дороже текстовых, и режим за юридическим флагом. */
+  | 'persona-verify'
+  // Образ персоны «Я в кадре» (ТЗ §4.5) — image-to-image той же модели,
+  // что превью персонажа. Своя операция: по ней считается квота образов
+  // `persona-look` (В-7), отдельная от квоты скетча. Базовый образ —
+  // отдельной строкой: он часть проверки селфи и квоту не тратит.
+  | 'persona-look'
+  | 'persona-look-base';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -341,9 +358,13 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'greeting-frame': 'Референс-кадр поздравления',
   'greeting-setting': 'Варианты сеттинга для кадра',
   'greeting-register': 'Настроение «особого повода»',
+  'reference-face-check': 'Проверка лица на фото-референсе',
   'voice-assistant-stt': 'Голосовой ввод в мастере поздравления',
   'voice-assistant-understand': 'Голосовой помощник: разбор реплики',
   'voice-assistant-tts': 'Голос советника: озвучка подсказки',
+  'persona-verify': '«Я в кадре»: проверка селфи и живости',
+  'persona-look': '«Я в кадре»: новый образ',
+  'persona-look-base': '«Я в кадре»: базовый образ',
 };
 
 export interface ModelRate {

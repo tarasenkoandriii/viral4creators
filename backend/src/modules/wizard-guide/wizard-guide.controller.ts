@@ -5,6 +5,7 @@
  *   PATCH /projects/:projectId/wizard-guide
  *   POST  /projects/:projectId/wizard-guide/hint
  *   POST  /projects/:projectId/wizard-guide/hint-audio  { key }
+ *   POST  /projects/:projectId/wizard-guide/speak  { kind, locale, … } (K4)
  *
  * Та же конвенция, что у `GreetingBriefController`: `projectId` в пути,
  * `TelegramIdentityGuard` опознаёт звонящего, владение проверяет сервис.
@@ -53,6 +54,15 @@ import {
 } from './wizard-guide.service';
 import { WizardTelemetryService } from './wizard-telemetry.service';
 import { HintAudioResult, HintAudioService } from './hint-audio.service';
+import { ProactiveSpeechService } from './proactive-speech.service';
+import {
+  SPEAK_KINDS,
+  VOICE_QUESTION_TOPICS,
+  VOICE_REFUSAL_CODES,
+  type SpeakRequest,
+  type VoiceQuestionTopic,
+  type VoiceRefusalCode,
+} from './proactive-speech';
 import { CANDIDATE_TEXT_MAX, ExperienceService } from './experience.service';
 import { SiblingsService } from './siblings.service';
 import {
@@ -97,6 +107,57 @@ export class HintAudioRequestDto {
   @IsOptional()
   @IsIn(SUPPORTED_LOCALES as unknown as string[])
   lang?: string;
+}
+
+/**
+ * Запрос проактивной речи (ТЗ Greeting 2.0 §4А.2 п.1, п.5; K4).
+ *
+ * Только вид и коды — ТЕКСТА в запросе нет и быть не может: фразу
+ * собирает сервер из шаблонов и фактов (`proactive-speech.ts`). Код,
+ * которого нет в закрытом списке, — 400 валидацией, а не молчание:
+ * это ошибка клиента, а не «нечего сказать».
+ */
+export class SpeakRequestDto {
+  @IsIn(SPEAK_KINDS as unknown as string[])
+  kind!: string;
+
+  /** Язык фразы. У ответа на вопрос — язык реплики, как у `reply`. */
+  @IsIn(SUPPORTED_LOCALES as unknown as string[])
+  locale!: string;
+
+  /** Только у `kind: 'refusal'`. */
+  @IsOptional()
+  @IsIn(VOICE_REFUSAL_CODES as unknown as string[])
+  refusal?: string;
+
+  /** Только у `kind: 'answer'`; нет — ответ «не знаю» (CONTRACT5). */
+  @IsOptional()
+  @IsIn(VOICE_QUESTION_TOPICS as unknown as string[])
+  topic?: string;
+}
+
+/** DTO → запрос речи; нет обязательного кода вида — `null` (400). */
+export function speakRequestOf(dto: SpeakRequestDto): SpeakRequest | null {
+  const locale = dto.locale as SupportedLocale;
+  switch (dto.kind) {
+    case 'refusal':
+      return dto.refusal
+        ? { kind: 'refusal', refusal: dto.refusal as VoiceRefusalCode, locale }
+        : null;
+    case 'answer':
+      // Без темы — вопрос без факта: «не знаю, посмотрите справку» вслух.
+      return {
+        kind: 'answer',
+        topic: (dto.topic as VoiceQuestionTopic | undefined) ?? null,
+        locale,
+      };
+    case 'video-ready':
+      return { kind: 'video-ready', locale };
+    case 'consent-summary':
+      return { kind: 'consent-summary', locale };
+    default:
+      return null;
+  }
 }
 
 export class WizardHintDto {
@@ -173,6 +234,7 @@ export class WizardGuideController {
     private readonly experience: ExperienceService,
     private readonly siblings: SiblingsService,
     private readonly audio: HintAudioService,
+    private readonly speech: ProactiveSpeechService,
   ) {}
 
   @Get()
@@ -253,6 +315,45 @@ export class WizardGuideController {
       req.telegramUserId,
       projectId,
       dto.key,
+    );
+    if (result) return result;
+    res.status(204);
+    return undefined;
+  }
+
+  /**
+   * Проактивная речь помощника (ТЗ Greeting 2.0 §4А.2 п.1, п.5; K4):
+   * отказ сервера, готовый ролик, сводка перед согласием, ответ на
+   * вопрос о шаге.
+   *
+   * Ответы — как у озвучки подсказки: 200 `{ url }`, 204 — сказать нечего
+   * (голос выключен, повода на самом деле нет, реплика не для регистра,
+   * синтез не удался), 200 `{ url: null, reason: 'budget-exhausted' }` —
+   * потолок голоса. Лимит частоты — своё окно по человеку, того же
+   * размера, что у озвучки подсказки: реплик проактивной речи на шаге не
+   * больше, чем подсказок.
+   */
+  @Post('speak')
+  @HttpCode(200)
+  @UseGuards(RateLimitGuard)
+  @RateLimit([
+    { name: 'wizard-speak', limit: 20, windowSec: 60, by: 'user' },
+    { name: 'wizard-speak-hour', limit: 120, windowSec: 3600, by: 'user' },
+  ])
+  async speak(
+    @Req() req: IdentifiedRequest,
+    @Param('projectId') projectId: string,
+    @Body() dto: SpeakRequestDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<HintAudioResult | undefined> {
+    const request = speakRequestOf(dto);
+    if (!request) {
+      throw new BadRequestException('Нужен код отказа: refusal');
+    }
+    const result = await this.speech.speak(
+      req.telegramUserId,
+      projectId,
+      request,
     );
     if (result) return result;
     res.status(204);

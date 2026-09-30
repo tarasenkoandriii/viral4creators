@@ -153,3 +153,20 @@ describe('generateFrame (№6)', () => {
     ).not.toHaveProperty('userId');
   });
 });
+
+describe('generateFrame — лицо вымышленное (CONTRACT5 п.4)', () => {
+  it('кадр нашей модели помечен «лица нет» и не требует согласия', async () => {
+    const OLD = process.env.PERSONA_ENABLED;
+    process.env.PERSONA_ENABLED = 'true';
+    try {
+      const { service, sessions } = setup();
+      const list = await service.generateFrame('s1', 'u1');
+      const saved = (sessions.updateSession as jest.Mock).mock.calls[0][1]
+        .greetingReferenceImages;
+      expect(saved[0].hasFace).toBe(false);
+      expect(list[0].needsFaceConsent).toBe(false);
+    } finally {
+      process.env.PERSONA_ENABLED = OLD;
+    }
+  });
+});

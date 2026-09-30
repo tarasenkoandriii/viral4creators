@@ -45,6 +45,7 @@ import { recordSharedVideoShare } from '../../services/feed-api';
 import type { SharedVideoPage, SharedVideoStatus } from '../../types';
 import { useI18n } from '../../lib/i18n-context';
 import type { Dictionary } from '../../lib/get-dictionary';
+import { sharedVideoRequestExtra } from '../../lib/persona-greeting';
 
 const LANDING_URL = (
   import.meta.env.VITE_LANDING_URL || 'http://localhost:3003'
@@ -71,10 +72,16 @@ export function ShareVideoPanel({
   sessionId,
   generatedVideoId,
   productName,
+  usesPersona = false,
 }: {
   sessionId: string;
   generatedVideoId: string;
   productName: string | null;
+  /**
+   * Ролик снят с персоной (`usesPersona` в снимке брифа, ТЗ Greeting 2.0
+   * §4.9): в витрину лендинга — только с отдельной галочкой автора.
+   */
+  usesPersona?: boolean;
 }) {
   const { dict } = useI18n();
   const STATUS = statusMeta(dict);
@@ -86,6 +93,9 @@ export function ShareVideoPanel({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Отдельная галочка и снята по умолчанию: публичная страница по ссылке
+  // и показ лица автора всем посетителям витрины — разные решения.
+  const [showcaseConsent, setShowcaseConsent] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -119,7 +129,11 @@ export function ShareVideoPanel({
     setSubmitting(true);
     setError(null);
     try {
-      const created = await createSharedVideo(sessionId, title.trim());
+      const created = await createSharedVideo(
+        sessionId,
+        title.trim(),
+        sharedVideoRequestExtra(usesPersona, showcaseConsent)
+      );
       setPages((p) => [created, ...(p ?? [])]);
       setOpen(false);
     } catch (err) {
@@ -222,6 +236,23 @@ export function ShareVideoPanel({
               disabled={submitting}
             />
           </Field>
+          {usesPersona && (
+            <label className="flex cursor-pointer gap-2 text-xs leading-relaxed">
+              <input
+                type="checkbox"
+                checked={showcaseConsent}
+                onChange={(e) => setShowcaseConsent(e.target.checked)}
+                disabled={submitting}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-sky-400"
+              />
+              <span>
+                {dict.personaGreeting.showcaseConsentLabel}
+                <span className="block text-silver-400">
+                  {dict.personaGreeting.showcaseConsentHint}
+                </span>
+              </span>
+            </label>
+          )}
           <div className="flex justify-end gap-2">
             <Button
               type="button"

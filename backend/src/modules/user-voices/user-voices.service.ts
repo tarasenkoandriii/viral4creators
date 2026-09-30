@@ -15,6 +15,8 @@
 import { randomUUID } from 'crypto';
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -36,6 +38,13 @@ import {
   UserVoiceView,
 } from '../../common/types/user-voice.types';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
+import {
+  personaModeEnabled,
+  personaSelfLikenessEligible,
+  PersonaEligibilityRow,
+} from '../persona/persona-looks.rules';
+import { PERSONA_VOICE_CONSENT_VERSION } from './persona-voice-consent';
+import { isPersonaVoice, PersonaVoiceDb } from './persona-voice';
 
 /**
  * TODO §3.6.2: лимит клонов на пользователя — Resemble тарифицирует
@@ -43,12 +52,20 @@ import { pathnameFromBlobUrl } from '../../common/blob-paths';
  * `RESEMBLE_API_KEY` на всех), значит лимит обязан быть на нашей
  * стороне, не только через ai-usage. FAILED-попытки в счёт не идут —
  * неудача не должна сжигать квоту пользователя навсегда.
+ *
+ * Голос персоны «Я в кадре» (`personaId` не пусто) в этот лимит НЕ
+ * входит (ТЗ TZ-Greeting-2.0 §4.2, §6): он один на персону, а персона
+ * одна на аккаунт — потолок у него свой и равен единице.
  */
-const MAX_USER_VOICES = 3;
+export const MAX_USER_VOICES = 3;
+
+/** Голосов на персону — один, подходит ко всем образам (§4.1 п.6). */
+export const MAX_PERSONA_VOICES = 1;
 
 type UserVoiceRow = {
   id: string;
   userId: string;
+  personaId?: string | null;
   label: string;
   status: 'TRAINING' | 'READY' | 'FAILED';
   resembleVoiceId: string | null;
@@ -71,6 +88,7 @@ function toView(row: UserVoiceRow): UserVoiceView {
     status,
     resembleVoiceId: row.resembleVoiceId,
     error: row.error,
+    personaId: row.personaId ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -92,8 +110,15 @@ export class UserVoicesService {
     userId: string,
     dto: VoiceSampleUploadUrlRequestDto,
   ): Promise<{ uploadUrl: string; pathname: string; voiceId: string }> {
+    // В-1 (временно по рекомендации ТЗ): клон голоса персоны — Standard+,
+    // тот же признак, что у обычного клона.
     await this.plans.assertUser(userId, 'voiceCloning');
-    await this.assertUnderLimit(userId);
+    if (dto.forPersona) {
+      const persona = await this.requireVoicePersona(userId);
+      await this.assertPersonaHasNoVoice(this.prisma, persona.id);
+    } else {
+      await this.assertUnderLimit(userId);
+    }
     const voiceId = randomUUID();
     const pathname = `users/${userId}/voices/${voiceId}/sample.${sampleExtFor(dto.mimeType)}`;
     const { uploadUrl } = await this.blob.createUploadUrl(
@@ -121,6 +146,19 @@ export class UserVoicesService {
         'Нужно подтвердить согласие на использование записи для клонирования голоса',
       );
     }
+    // Голос персоны: запись начинается фразой согласия вслух (§4.6) —
+    // клиент обязан показать ДЕЙСТВУЮЩУЮ редакцию фразы.
+    if (
+      dto.forPersona &&
+      dto.consentPhraseVersion !== PERSONA_VOICE_CONSENT_VERSION
+    ) {
+      throw new BadRequestException(
+        'Фраза согласия обновилась — перечитайте её и запишите голос заново',
+      );
+    }
+    const persona = dto.forPersona
+      ? await this.requireVoicePersona(userId)
+      : null;
 
     let sampleUrl: string;
     try {
@@ -148,15 +186,22 @@ export class UserVoicesService {
     // она и есть резерв: следующий параллельный запрос увидит её в
     // count() (WHERE status != FAILED) и получит отказ, даже пока
     // Resemble этого первого запроса ещё не ответил.
+    //
+    // Голос персоны — под тем же замком, но со своим счётом: один на
+    // персону, обычные клоны его не видят и он не видит их (§4.2).
     await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`user-voices:${userId}`}))`;
-      const count = await tx.userVoice.count({
-        where: { userId, status: { not: 'FAILED' } },
-      });
-      if (count >= MAX_USER_VOICES) {
-        throw new BadRequestException(
-          `Достигнут лимит ${MAX_USER_VOICES} клонированных голосов — удалите один, чтобы создать новый`,
-        );
+      if (persona) {
+        await this.assertPersonaHasNoVoice(tx, persona.id);
+      } else {
+        const count = await tx.userVoice.count({
+          where: { userId, personaId: null, status: { not: 'FAILED' } },
+        });
+        if (count >= MAX_USER_VOICES) {
+          throw new BadRequestException(
+            `Достигнут лимит ${MAX_USER_VOICES} клонированных голосов — удалите один, чтобы создать новый`,
+          );
+        }
       }
       await tx.userVoice.create({
         data: {
@@ -166,6 +211,7 @@ export class UserVoicesService {
           status: 'TRAINING',
           sampleUrl,
           consentAt: new Date(),
+          ...(persona ? { personaId: persona.id } : {}),
         },
       });
     });
@@ -302,9 +348,73 @@ export class UserVoicesService {
     }
   }
 
+  /**
+   * Это голос персоны этого пользователя? (см. `persona-voice.ts`) —
+   * вызывают бренд-бук и поздравление: голос персоны назначается только
+   * в PERSONAL бренд-буке и отправителем (CONTRACT5 п.5а).
+   */
+  isPersonaVoice(
+    userId: string,
+    voiceId: string | null | undefined,
+  ): Promise<boolean> {
+    return isPersonaVoice(
+      this.prisma as unknown as PersonaVoiceDb,
+      userId,
+      voiceId,
+    );
+  }
+
+  /**
+   * Персона, которой можно записать голос: режим включён, согласие
+   * действует, живость пройдена (те же условия, что у своего лица в
+   * скетче, `personaSelfLikenessEligible`).
+   */
+  private async requireVoicePersona(userId: string): Promise<{ id: string }> {
+    if (!personaModeEnabled()) {
+      throw new NotFoundException({
+        code: 'PERSONA_DISABLED',
+        message: 'Режим «Я в кадре» недоступен',
+      });
+    }
+    const persona = (await this.prisma.persona.findFirst({
+      where: { userId, revokedAt: null },
+    })) as (PersonaEligibilityRow & { id: string }) | null;
+    if (!persona) {
+      throw new NotFoundException(
+        'Сначала создайте себя в разделе «Я в кадре»',
+      );
+    }
+    if (!personaSelfLikenessEligible(persona)) {
+      throw new ForbiddenException(
+        'Голос для «Я в кадре» можно записать после согласия и проверки селфи',
+      );
+    }
+    return { id: persona.id };
+  }
+
+  /** Один голос на персону; неудачные попытки не в счёт. */
+  private async assertPersonaHasNoVoice(
+    db: {
+      userVoice: {
+        count(args: { where: Record<string, unknown> }): Promise<number>;
+      };
+    },
+    personaId: string,
+  ): Promise<void> {
+    const count = await db.userVoice.count({
+      where: { personaId, status: { not: 'FAILED' } },
+    });
+    if (count >= MAX_PERSONA_VOICES) {
+      throw new ConflictException(
+        'Голос для «Я в кадре» уже записан — удалите его, чтобы записать заново',
+      );
+    }
+  }
+
   private async assertUnderLimit(userId: string): Promise<void> {
+    // Голос персоны в лимит не входит (§4.2) — `personaId: null`.
     const count = await this.prisma.userVoice.count({
-      where: { userId, status: { not: 'FAILED' } },
+      where: { userId, personaId: null, status: { not: 'FAILED' } },
     });
     if (count >= MAX_USER_VOICES) {
       throw new BadRequestException(

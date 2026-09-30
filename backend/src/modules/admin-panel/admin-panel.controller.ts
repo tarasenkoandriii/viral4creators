@@ -48,6 +48,10 @@ import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { AdminSpeechRecognitionSettingsService } from './admin-speech-recognition-settings.service';
 import { AdminVoiceAssistantSettingsService } from './admin-voice-assistant-settings.service';
+import {
+  AdminPersonaLookQuotaSettingsService,
+  PERSONA_LOOK_QUOTA_MAX,
+} from './admin-persona-look-quota-settings.service';
 import { EXPLICIT_TTS_PROVIDER_KEYS } from '../tts/default-tts-provider';
 import { SPEECH_RECOGNITION_PROVIDER_KEYS } from '../../common/speech-recognition-provider';
 import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
@@ -374,6 +378,42 @@ export class VoiceAssistantVoiceDto {
   voiceId?: string | null;
 }
 
+/**
+ * «Квота образов «Я в кадре»» (ТЗ Greeting 2.0 §4.2, В-7): новых образов
+ * персоны в сутки и в месяц по тарифу. Целые 0…1000; 0 — генерация
+ * образов на тарифе закрыта. Не присланное не трогается.
+ */
+export class PersonaLookQuotaPeriodsDto {
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(PERSONA_LOOK_QUOTA_MAX)
+  day?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(PERSONA_LOOK_QUOTA_MAX)
+  month?: number;
+}
+
+export class SetPersonaLookQuotaDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PersonaLookQuotaPeriodsDto)
+  LITE?: PersonaLookQuotaPeriodsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PersonaLookQuotaPeriodsDto)
+  STANDARD?: PersonaLookQuotaPeriodsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PersonaLookQuotaPeriodsDto)
+  PREMIUM?: PersonaLookQuotaPeriodsDto;
+}
+
 export class SetVoiceAssistantDto {
   @IsOptional()
   @ValidateNested()
@@ -543,6 +583,8 @@ export class AdminPanelController {
     private readonly speechRecognitionSettings: AdminSpeechRecognitionSettingsService,
     // «Голосовой помощник» (этап K3, 29.09.2026) — в конец по той же причине.
     private readonly voiceAssistantSettings: AdminVoiceAssistantSettingsService,
+    // «Квота образов «Я в кадре»» (этап F, 30.09.2026) — в конец по той же причине.
+    private readonly personaLookQuotaSettings: AdminPersonaLookQuotaSettingsService,
   ) {}
 
   @Get('sessions')
@@ -681,6 +723,36 @@ export class AdminPanelController {
       },
       req.userId,
     );
+  }
+
+  /**
+   * «Квота образов «Я в кадре»» — новых образов персоны в сутки и в месяц
+   * по тарифу (В-7). Действует сразу, без передеплоя.
+   */
+  @Get('settings/persona-look-quota')
+  async getPersonaLookQuota(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.personaLookQuotaSettings.view();
+  }
+
+  @Patch('settings/persona-look-quota')
+  async setPersonaLookQuota(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetPersonaLookQuotaDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    // Только присланные тарифы и периоды: экземпляр DTO может нести
+    // объявленные, но не присланные поля.
+    const input: Record<string, Record<string, number>> = {};
+    for (const plan of ['LITE', 'STANDARD', 'PREMIUM'] as const) {
+      const p = dto[plan];
+      if (!p) continue;
+      const periods: Record<string, number> = {};
+      if (p.day !== undefined) periods.day = p.day;
+      if (p.month !== undefined) periods.month = p.month;
+      input[plan] = periods;
+    }
+    return this.personaLookQuotaSettings.set(input, req.userId);
   }
 
   /**

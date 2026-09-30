@@ -342,6 +342,13 @@ function build() {
       .mockResolvedValue({ deleted: 0, failed: 0, hasMore: false }),
   };
 
+  // Срок хранения селфи персоны (этап E Greeting 2.0, В-3).
+  const personas = {
+    purgeExpiredSources: jest
+      .fn()
+      .mockResolvedValue({ purged: 0, abandoned: 0, failed: 0 }),
+  };
+
   const service = new CronJobsService(
     sessionService as never,
     projectService as never,
@@ -371,10 +378,12 @@ function build() {
     balances as never,
     apiVideo as never,
     voiceUploads as never,
+    personas as never,
   );
   return {
     service,
     voiceUploads,
+    personas,
     library,
     sessionService,
     auctionService,
@@ -941,6 +950,7 @@ describe('CronJobsService — метла идёт до конца курсора
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     return { service, blobService };
   }
@@ -1007,6 +1017,7 @@ describe('CronJobsService — метла идёт до конца курсора
       {
         runCleanupTick: jest.fn().mockResolvedValue({ expired: 0, purged: 0 }),
       } as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -1517,5 +1528,54 @@ describe('CronJobsService — voice-uploads-sweep (финальный аудит
     const m = /^\*\/(\d+) \* \* \* \*$/.exec(slot!.schedule);
     expect(m).not.toBeNull();
     expect(Number(m![1])).toBeLessThanOrEqual(30);
+  });
+});
+
+describe('CronJobsService — persona-sources-purge (этап E Greeting 2.0, В-3)', () => {
+  it('под замком зовёт уборку источников персон и снимает замок', async () => {
+    const { service, personas, prisma } = build();
+    personas.purgeExpiredSources.mockResolvedValue({
+      purged: 2,
+      abandoned: 1,
+      failed: 0,
+    });
+    await expect(service.runPersonaSourcesPurge()).resolves.toEqual({
+      purged: 2,
+      abandoned: 1,
+      failed: 0,
+    });
+    expect(personas.purgeExpiredSources).toHaveBeenCalledTimes(1);
+    expect(prisma.cronJobLock.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ jobKey: 'persona-sources-purge' }),
+      }),
+    );
+  });
+
+  it('замок занят — пропуск, уборка не зовётся', async () => {
+    const { service, personas, prisma } = build();
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+    await expect(service.runPersonaSourcesPurge()).resolves.toEqual({
+      purged: 0,
+      abandoned: 0,
+      erased: 0,
+      failed: 0,
+      skipped: true,
+    });
+    expect(personas.purgeExpiredSources).not.toHaveBeenCalled();
+  });
+
+  it('в расписании vercel.json — не реже раза в сутки', () => {
+    const json = JSON.parse(
+      readFileSync(join(__dirname, '..', '..', '..', 'vercel.json'), 'utf8'),
+    ) as { crons: Array<{ path: string; schedule: string }> };
+    const slot = json.crons.find(
+      (c) => c.path === '/api/cron/persona-sources-purge',
+    );
+    expect(slot).toBeDefined();
+    expect(slot!.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
   });
 });

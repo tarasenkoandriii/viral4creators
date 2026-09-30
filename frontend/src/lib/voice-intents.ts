@@ -23,6 +23,7 @@ import type { GreetingStepId } from './greeting-steps';
 import type {
   VoiceCommand,
   VoiceIntent,
+  VoiceQuestionTopic,
   VoiceUnderstandResult,
 } from './voice-types';
 
@@ -34,7 +35,19 @@ export type VoicePlan =
   // K6 (`voice-nav.ts`): применяются сразу, без карточки «я понял так» —
   // ни прокрутка к шагу, ни лист справки ничего не меняют в данных.
   | { kind: 'navigate'; step: GreetingStepId; text?: string }
-  | { kind: 'help'; topic: GreetingHelpTopic };
+  | { kind: 'help'; topic: GreetingHelpTopic }
+  /**
+   * K4 (`voice-proactive.ts`): ответ на вопрос о шаге — строкой и, у
+   * включивших звук, голосом (`speak` `answer`). Нет факта (`topic` или
+   * `answered` пусты) — строка «не знаю» и кнопка справки `help`.
+   */
+  | {
+      kind: 'answer';
+      text: string;
+      topic: VoiceQuestionTopic | null;
+      answered: boolean;
+      help: GreetingHelpTopic | null;
+    };
 
 /** Итог команды у зарегистрированного обработчика экрана. */
 export type VoiceCommandOutcome =

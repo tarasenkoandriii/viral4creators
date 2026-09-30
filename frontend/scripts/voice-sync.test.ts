@@ -35,7 +35,9 @@ import {
   VOICE_COMMANDS,
   VOICE_CURRENT_FIELDS,
   VOICE_NAVIGATE_TARGETS,
+  VOICE_QUESTION_TOPICS,
   VOICE_REASONS,
+  VOICE_REFUSAL_CODES,
   VOICE_STATUSES,
   VOICE_STEP_IDS,
 } from '../src/lib/voice-types';
@@ -76,6 +78,9 @@ check('закрытые списки контракта — те же, что у
   eq([...VOICE_NAVIGATE_TARGETS], [...intent.VOICE_NAVIGATE_TARGETS]);
   eq([...VOICE_STEP_IDS], [...intent.VOICE_SCREEN_STEPS]);
   eq([...VOICE_CURRENT_FIELDS], [...intent.VOICE_CURRENT_FIELDS]);
+  // K4: темы вопросов и коды отказов — клиент просит по ним речь.
+  eq([...VOICE_QUESTION_TOPICS], [...intent.VOICE_QUESTION_TOPICS]);
+  eq([...VOICE_REFUSAL_CODES], [...intent.VOICE_REFUSAL_CODES]);
 });
 
 check('потолки длины — серверные VOICE_*_MAX', () => {

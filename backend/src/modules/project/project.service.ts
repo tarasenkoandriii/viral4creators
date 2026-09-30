@@ -70,6 +70,11 @@ import {
   toneRefusal,
 } from '../../common/greeting-policy';
 import { GreetingRegisterClassifier } from '../greeting-brief/greeting-register-classifier.service';
+import { resolvePresenterChoice } from '../greeting-brief/greeting-brief.service';
+import {
+  PERSONAL_MANIFEST_GREETING_ONLY,
+  presenterProviderProblem,
+} from '../../common/greeting-persona';
 import { CreateGreetingBriefDto } from './dto/create-project-request.dto';
 import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
 
@@ -185,7 +190,7 @@ export class ProjectService {
     const currency = this.resolveCurrency(countryCode);
 
     if (dto.brandManifestId !== undefined) {
-      await this.assertOwnBrandManifest(userId, dto.brandManifestId);
+      await this.assertOwnBrandManifest(userId, dto.brandManifestId, dto.type);
     }
 
     // ТЗ TZ-Greeting-Video-Project-Type.md §4.1/§4.3: бриф обязателен для
@@ -292,6 +297,19 @@ export class ProjectService {
       presenterProvider: brief.presenterProvider,
       resolution: brief.resolution,
     });
+    // Этап G (ТЗ Greeting 2.0 §4.8): «кто в кадре» — те же проверки, что
+    // у правки брифа (`resolvePresenterChoice`): свой, готовый образ, режим
+    // включён, скетч не на Hedra.
+    const presenter = brief.presenter
+      ? await resolvePresenterChoice(this.prisma, userId, brief.presenter)
+      : { presenterLookId: null, presenterVariant: null };
+    const presenterProblem = presenter.presenterLookId
+      ? presenterProviderProblem(
+          resolved.presenterProvider,
+          presenter.presenterVariant,
+        )
+      : null;
+    if (presenterProblem) throw new BadRequestException(presenterProblem);
 
     const row: ProjectRow = await this.prisma.$transaction(async (tx) => {
       const project = await tx.project.create({
@@ -331,6 +349,7 @@ export class ProjectService {
           occasionDate: brief.occasionDate
             ? new Date(brief.occasionDate)
             : null,
+          ...presenter,
         },
       });
       return project;
@@ -423,9 +442,21 @@ export class ProjectService {
 
     if (dto.brandManifestId !== undefined) {
       if (dto.brandManifestId !== null) {
-        await this.assertOwnBrandManifest(userId, dto.brandManifestId);
+        await this.assertOwnBrandManifest(
+          userId,
+          dto.brandManifestId,
+          (data.type as string | undefined) ?? current.type,
+        );
       }
       data.brandManifestId = dto.brandManifestId;
+    } else if (data.type !== undefined && current.brandManifestId) {
+      // Смена типа с уже привязанным бренд-буком: личный не может остаться
+      // у товарного проекта (CONTRACT5 п.5в).
+      await this.assertOwnBrandManifest(
+        userId,
+        current.brandManifestId,
+        data.type as string,
+      );
     }
 
     if (Object.keys(data).length === 0) {
@@ -902,15 +933,28 @@ export class ProjectService {
   private async assertOwnBrandManifest(
     userId: string,
     brandManifestId: string,
+    /**
+     * Тип проекта, к которому привязывают. Личный бренд-бук (лицо и голос
+     * автора) — только у поздравления (CONTRACT5 п.5в): товарный ролик
+     * продаётся и публикуется без признака персоны.
+     */
+    projectType?: string,
   ): Promise<void> {
     const manifest = await this.prisma.brandManifest.findFirst({
       where: { id: brandManifestId, userId },
-      select: { id: true },
+      select: { id: true, kind: true },
     });
     if (!manifest) {
       throw new BadRequestException(
         `Brand manifest ${brandManifestId} not found`,
       );
+    }
+    if (
+      projectType !== undefined &&
+      projectType !== 'GREETING_VIDEO' &&
+      manifest.kind === 'PERSONAL'
+    ) {
+      throw new BadRequestException(PERSONAL_MANIFEST_GREETING_ONLY);
     }
   }
 

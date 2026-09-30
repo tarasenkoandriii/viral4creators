@@ -13,7 +13,25 @@
  * future explicit action).
  */
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  PERSONAL_MANIFEST_GREETING_ONLY,
+  PERSONA_VOICE_ONLY_PERSONAL,
+  PERSONA_DISABLED_CODE,
+  PERSONA_DISABLED_MESSAGE,
+  PresenterLookRow,
+  personaEnabled,
+  presenterLookProblem,
+  presenterProviderProblem,
+  presenterSnapshotFrom,
+} from '../../common/greeting-persona';
+import { PRESENTER_LOOK_INCLUDE } from '../greeting-brief/greeting-brief.service';
+import { isPersonaVoice } from '../user-voices/persona-voice';
+import type { GreetingPresenterVariant } from '../../common/types/greeting.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sessionData, SessionService } from '../../common/session.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
@@ -57,6 +75,8 @@ interface GreetingBriefWithProjectRow extends SnapshotGreetingBriefSource {
    * one. See `CreateGreetingBriefDto.brandManifestId` vs
    * `CreateProjectRequestDto.brandManifestId`. */
   brandManifest: SnapshotManifestSource | null;
+  /** Этап G (§4.8): образ-ведущий — проверяется и копируется в снимок. */
+  presenterLook?: PresenterLookRow | null;
 }
 
 interface SessionListRow {
@@ -144,6 +164,12 @@ export class ProjectSessionService {
 
     const now = new Date();
     const manifest = item.project.brandManifest;
+    // CONTRACT5 п.5в: личный бренд-бук — только у поздравлений. Привязку
+    // к товарному проекту сервис проекта уже не пропускает; здесь — на
+    // случай строк, привязанных до этой проверки.
+    if (manifest?.kind === 'PERSONAL') {
+      throw new BadRequestException(PERSONAL_MANIFEST_GREETING_ONLY);
+    }
     return this.sessions.createSession(
       userId,
       {
@@ -203,6 +229,7 @@ export class ProjectSessionService {
               },
             },
           },
+          presenterLook: { include: PRESENTER_LOOK_INCLUDE },
         },
       });
     if (!brief) {
@@ -220,13 +247,39 @@ export class ProjectSessionService {
       );
     }
 
+    // Этап G (§4.8): образ-ведущий копируется в снимок. Проверка — та же,
+    // что при выборе в брифе, и отказ, а не тихая замена на ИИ-ведущего:
+    // образ могли удалить, режим — выключить, а человек выбирал себя.
+    let presenter = null;
+    if (brief.presenterLookId) {
+      if (!personaEnabled()) {
+        throw new BadRequestException({
+          code: PERSONA_DISABLED_CODE,
+          message: `${PERSONA_DISABLED_MESSAGE} Выберите ИИ-ведущего в брифе.`,
+        });
+      }
+      const variant: GreetingPresenterVariant =
+        brief.presenterVariant === 'sketch' ? 'sketch' : 'photo';
+      const problem =
+        presenterLookProblem(brief.presenterLook, variant, userId) ??
+        presenterProviderProblem(
+          brief.presenterProvider === 'hedra' ? 'hedra' : 'grok',
+          variant,
+        );
+      if (problem) throw new BadRequestException(problem);
+      presenter = presenterSnapshotFrom(brief.presenterLook!, variant);
+    }
+
     const now = new Date();
     const manifest = brief.brandManifest;
     return this.sessions.createSession(
       userId,
       {
         projectId: brief.project.id,
-        greetingBriefSnapshot: greetingBriefSnapshotFrom(brief, now),
+        greetingBriefSnapshot: greetingBriefSnapshotFrom(brief, now, {
+          presenter,
+          manifest,
+        }),
         ...(manifest
           ? { brandManifestSnapshot: brandManifestSnapshotFrom(manifest, now) }
           : {}),
@@ -349,6 +402,15 @@ export class ProjectSessionService {
     // TTS_PROVIDER. Анонимная сессия (`session.userId` нет) клонов не
     // имеет — запрос не нужен.
     const voiceId = dto.ttsVoiceId?.trim();
+    // CONTRACT5 п.5а: клон голоса персоны — только в личном бренд-буке.
+    if (
+      voiceId &&
+      session.userId &&
+      session.brandManifestSnapshot.kind !== 'PERSONAL' &&
+      (await isPersonaVoice(this.prisma, session.userId, voiceId))
+    ) {
+      throw new BadRequestException(PERSONA_VOICE_ONLY_PERSONAL);
+    }
     const isResembleClone =
       !!voiceId && !!session.userId
         ? !!(await this.prisma.userVoice.findFirst({

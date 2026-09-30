@@ -28,6 +28,8 @@ import { AdminWizardGuideService } from './admin-wizard-guide.service';
 import { SiblingsService } from './siblings.service';
 import { TranslationService } from './translation.service';
 import { HintAudioService } from './hint-audio.service';
+import { ProactiveSpeechService } from './proactive-speech.service';
+import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 
@@ -42,6 +44,9 @@ import { PlatformSettingsService } from '../../common/platform-settings.service'
     // сам не объявляет и берёт оттуда же).
     { provide: TtsProviderResolverService, useValue: {} },
     { provide: PlatformSettingsService, useValue: {} },
+    // Глобальный `CreditLedgerModule` — баланс для цены в сводке перед
+    // согласием (K4).
+    { provide: CreditLedgerService, useValue: {} },
   ],
   exports: [
     PrismaService,
@@ -49,6 +54,7 @@ import { PlatformSettingsService } from '../../common/platform-settings.service'
     PlanService,
     TtsProviderResolverService,
     PlatformSettingsService,
+    CreditLedgerService,
   ],
 })
 class GlobalStubsModule {}
@@ -69,6 +75,7 @@ describe('WizardGuideModule', () => {
       SiblingsService,
       TranslationService,
       HintAudioService,
+      ProactiveSpeechService,
     ]) {
       expect(moduleRef.get(token, { strict: false })).toBeDefined();
     }

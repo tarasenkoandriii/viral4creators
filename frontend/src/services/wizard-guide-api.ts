@@ -8,6 +8,7 @@
 import { api } from './api';
 import type { WizardGuideState, WizardHintResult } from '../types';
 import { interpretHintAudio, type HintAudioAnswer } from '../lib/hint-audio';
+import type { SpeakBody } from '../lib/voice-proactive';
 
 /**
  * Подсказка с ключом кеша — по нему просят озвучку (ТЗ Greeting 2.0
@@ -77,6 +78,25 @@ export async function getHintAudio(
       key,
     });
     // 204 — тело пустое, `res` приходит пустой строкой.
+    return interpretHintAudio(res && typeof res === 'object' ? res.data : null);
+  } catch {
+    return { kind: 'silent' };
+  }
+}
+
+/**
+ * Проактивная речь помощника (ТЗ Greeting 2.0 §4А.2 п.1, п.5; K4):
+ * отказ, готовый ролик, сводка перед согласием, ответ на вопрос. В теле
+ * — ВИД и коды, никогда текст: фразу собирает сервер (`SpeakBody`).
+ * Ответы и правила те же, что у озвучки подсказки: никогда не бросает,
+ * 204 и сбой — тишина, потолок голоса — `budget-exhausted`.
+ */
+export async function requestSpeech(
+  projectId: string,
+  body: SpeakBody
+): Promise<HintAudioAnswer> {
+  try {
+    const res = await api.post<unknown>(`${base(projectId)}/speak`, body);
     return interpretHintAudio(res && typeof res === 'object' ? res.data : null);
   } catch {
     return { kind: 'silent' };

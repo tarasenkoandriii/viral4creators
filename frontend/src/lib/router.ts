@@ -41,6 +41,7 @@ export type Route =
   | { name: 'api-keys' }
   | { name: 'feed' }
   | { name: 'invite' }
+  | { name: 'persona' }
   | { name: 'not-found'; path: string };
 
 export function parseRoute(hash: string): Route {
@@ -138,6 +139,9 @@ export function parseRoute(hash: string): Route {
   if (parts[0] === 'api-keys') return { name: 'api-keys' };
   if (parts[0] === 'feed') return { name: 'feed' };
   if (parts[0] === 'invite') return { name: 'invite' };
+  // «Я в кадре» (ТЗ Greeting 2.0 §4): один маршрут на весь путь — шаг
+  // выводится из состояния персоны на сервере, а не из адреса.
+  if (parts[0] === 'persona') return { name: 'persona' };
   if (parts[0] === 'legal' && parts[1]) {
     return { name: 'legal', slug: parts[1] };
   }
@@ -206,4 +210,6 @@ export const routes = {
   feed: () => '/feed',
   /** Кабинет «Пригласить» (этап 133): чем открывается стена. */
   invite: () => '/invite',
+  /** «Создать себя» / «Я в кадре» (ТЗ Greeting 2.0 §4). */
+  persona: () => '/persona',
 };

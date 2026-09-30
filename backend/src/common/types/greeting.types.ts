@@ -145,6 +145,35 @@ export const GREETING_PRESENTER_PROVIDERS: readonly GreetingPresenterProvider[] 
   ['grok', 'hedra'];
 
 /**
+ * «Кто в кадре» (этап G, ТЗ Greeting 2.0 §4.8): ИИ-ведущий или образ
+ * персоны автора — фотографией или скетч-аватаром. Отдельно от
+ * `GreetingPresenterProvider`: провайдер решает, КАК снимать (Grok или
+ * говорящий аватар Hedra), а это — КОГО.
+ */
+export const GREETING_PRESENTER_VARIANTS = ['photo', 'sketch'] as const;
+export type GreetingPresenterVariant =
+  (typeof GREETING_PRESENTER_VARIANTS)[number];
+
+export type GreetingPresenterChoice =
+  | { kind: 'ai' }
+  | { kind: 'persona'; lookId: string; variant: GreetingPresenterVariant };
+
+/**
+ * Образ ведущего, СКОПИРОВАННЫЙ в снимок сессии (§4.8): удаление образа
+ * или его скетча не ломает уже снятый ролик — файл остаётся под путём
+ * образа до уборки, а ссылка и путь зафиксированы здесь.
+ */
+export interface GreetingPresenterSnapshot {
+  lookId: string;
+  /** Подпись образа — для промпта и экрана. */
+  label: string;
+  /** Активное изображение выбранного варианта (фото или скетч). */
+  url: string;
+  pathname: string | null;
+  variant: GreetingPresenterVariant;
+}
+
+/**
  * Пересечение словарей GrokResolution ('480p'|'720p'|'1080p') и
  * HedraClientService/GenerateAvatarRequestDto ('540p'|'720p'|'1080p') —
  * ровно то же, на чём сходятся оба провайдера (§11.3 ТЗ: конфликта
@@ -297,6 +326,24 @@ export interface GreetingBriefSnapshot {
    */
   sceneCount?: number;
 
+  /**
+   * Ведущий-образ персоны (этап G, §4.8) — копия, не ссылка. Нет поля или
+   * `null` — ИИ-ведущий, как до этапа G.
+   */
+  presenter?: GreetingPresenterSnapshot | null;
+  /**
+   * В ролике есть лицо или голос персоны автора: образ-ведущий или личный
+   * бренд-бук. Такой ролик никогда не продаётся на аукционе (§4.7, Т-8) и
+   * попадает в витрину только с отдельной галочкой автора (§4.9).
+   */
+  usesPersona?: boolean;
+  /**
+   * Галочка автора «можно показать в витрине» для ролика с персоной
+   * (§4.9) — ставится при публикации страницы. Без неё оператор не может
+   * отметить страницу в витрину.
+   */
+  personaShowcaseConsentAt?: string | null;
+
   addedAt: string;
 }
 
@@ -323,6 +370,12 @@ export interface GreetingSenderVoice {
   userVoiceId: string;
   resembleVoiceId: string;
   label: string;
+  /**
+   * Это клон голоса персоны автора (`UserVoice.personaId`, этап G, §4.6):
+   * ролик с ним — ролик с персоной (`usesPersona`), он не продаётся и не
+   * идёт в витрину без галочки. Нет поля — записи до этапа G.
+   */
+  personaVoice?: boolean;
 }
 
 /**
@@ -405,6 +458,21 @@ export interface GreetingMusicSelection {
 export interface GreetingCards {
   title?: string | null;
   closing?: string | null;
+  /**
+   * Шрифт и цвет карточек из бренд-бука (этап G, Г-6) — ключи белого
+   * списка `common/greeting-cards.ts`. Нет — Arial белым, как раньше.
+   */
+  style?: GreetingCardStyle | null;
+}
+
+/**
+ * Стиль карточек: ключи белого списка, а не произвольные имя шрифта и
+ * цвет — шрифт должен быть у ffmpeg-сервиса, а цвет — читаться на тёмной
+ * плашке (см. `CARD_FONTS`/`CARD_COLORS` в `common/greeting-cards.ts`).
+ */
+export interface GreetingCardStyle {
+  font: string;
+  color: string;
 }
 
 /**
@@ -495,6 +563,17 @@ export interface GreetingReferenceImageView {
   originalPhotoUrl: string | null;
   originalDeleted: boolean;
   createdAt: string;
+  /**
+   * Лица на фото (этап G, Г-8): `true` — проверка нашла лицо; `false` —
+   * не нашла; `null` — не проверялось или проверка была недоступна.
+   */
+  hasFace: boolean | null;
+  /** Лицо есть, согласия нет — фото не уйдёт в модель, пока не подтвердят
+   * согласие или не превратят его в скетч с заменой лица. */
+  needsFaceConsent: boolean;
+  faceConsentAt: string | null;
+  /** Проверка лица не дала ответа — согласие нужно «на всякий случай». */
+  faceCheckUnavailable: boolean;
 }
 
 /** GET/PATCH /projects/:id/greeting-brief response shape (§8 ТЗ). */
@@ -521,6 +600,8 @@ export interface GreetingBriefView {
   resolution: GreetingResolution;
   brandManifestId: string | null;
   occasionDate: string | null;
+  /** «Кто в кадре» (этап G, §4.8). */
+  presenter: GreetingPresenterChoice;
   createdAt: string;
   updatedAt: string;
 }

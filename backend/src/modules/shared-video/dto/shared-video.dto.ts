@@ -13,6 +13,14 @@ export class CreateSharedVideoRequestDto {
   @IsString()
   @Length(1, 100)
   title?: string;
+  /**
+   * Этап G (ТЗ Greeting 2.0 §4.9): ролик с персоной автора («Я в кадре»)
+   * попадает в витрину лендинга только с этой отдельной галочкой. Для
+   * ролика без персоны ничего не значит.
+   */
+  @IsOptional()
+  @IsBoolean()
+  allowShowcaseWithPersona?: boolean;
 }
 
 /** POST /admin/shared-videos/:id/reject */

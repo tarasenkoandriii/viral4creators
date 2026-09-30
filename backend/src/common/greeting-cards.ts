@@ -32,9 +32,75 @@
  * решение принимает отправитель, и он же видит предупреждение.
  */
 
-import { GreetingCards } from './types/greeting.types';
+import { GreetingCardStyle, GreetingCards } from './types/greeting.types';
 
-export type { GreetingCards };
+export type { GreetingCards, GreetingCardStyle };
+
+/**
+ * Белый список шрифтов карточек (этап G ТЗ Greeting 2.0 §4.7, Г-6).
+ *
+ * Ключ — то, что хранит бренд-бук и присылает клиент; значение — имя
+ * семейства для libass. Произвольное имя не принимаем: шрифт ищет
+ * fontconfig на ffmpeg-сервисе, и незнакомое имя тихо превращается в
+ * запасной шрифт — а кириллица в нём может стать квадратами (см.
+ * «Почему `.ass`» выше). DejaVu есть почти в любом образе с fontconfig и
+ * покрывает кириллицу; `sans` — прежний Arial, чтобы по умолчанию ничего
+ * не поменялось.
+ */
+export const CARD_FONTS = {
+  sans: 'Arial',
+  serif: 'DejaVu Serif',
+  condensed: 'DejaVu Sans Condensed',
+  mono: 'DejaVu Sans Mono',
+} as const;
+export type CardFontKey = keyof typeof CARD_FONTS;
+export const CARD_FONT_KEYS = Object.keys(CARD_FONTS) as CardFontKey[];
+
+/**
+ * Белый список цветов текста карточек (RGB). Только светлые: плашка за
+ * текстом всегда тёмная полупрозрачная (`BorderStyle=3` ниже), и тёмный
+ * текст на ней не читается. `white` — прежний белый.
+ */
+export const CARD_COLORS = {
+  white: 'FFFFFF',
+  cream: 'FFF4D6',
+  gold: 'FFD54F',
+  pink: 'F8BBD0',
+  sky: 'B3E5FC',
+  mint: 'C8E6C9',
+} as const;
+export type CardColorKey = keyof typeof CARD_COLORS;
+export const CARD_COLOR_KEYS = Object.keys(CARD_COLORS) as CardColorKey[];
+
+/** Ключ из белого списка или `null` — чужое значение не протаскиваем. */
+export function normalizeCardStyle(raw: unknown): GreetingCardStyle | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const { font, color } = raw as { font?: unknown; color?: unknown };
+  const f = typeof font === 'string' && font in CARD_FONTS ? font : null;
+  const c = typeof color === 'string' && color in CARD_COLORS ? color : null;
+  if (!f && !c) return null;
+  return { font: f ?? 'sans', color: c ?? 'white' };
+}
+
+/** RGB `RRGGBB` → цвет ASS `&H00BBGGRR` (порядок байт у ASS обратный). */
+export function assColor(rgb: string): string {
+  const r = rgb.slice(0, 2);
+  const g = rgb.slice(2, 4);
+  const b = rgb.slice(4, 6);
+  return `&H00${b}${g}${r}`.toUpperCase();
+}
+
+/** Шрифт и цвет текста карточек после белого списка. */
+export function cardFontAndColor(style: unknown): {
+  font: string;
+  color: string;
+} {
+  const s = normalizeCardStyle(style);
+  return {
+    font: CARD_FONTS[(s?.font ?? 'sans') as CardFontKey],
+    color: assColor(CARD_COLORS[(s?.color ?? 'white') as CardColorKey]),
+  };
+}
 
 /** Сколько секунд висит каждая карточка. */
 export const CARD_SECONDS = 2;
@@ -154,6 +220,7 @@ export function buildCardsAss(
   if (!title && !closing && !credit) return '';
 
   const res = playRes(opts.aspectRatio);
+  const style = cardFontAndColor(cards?.style);
   const total = Math.max(CARD_SECONDS, opts.totalDurationSeconds);
 
   const events: string[] = [];
@@ -215,10 +282,13 @@ export function buildCardsAss(
     // Альфа — первый байт (в ASS больше значит ПРОЗРАЧНЕЕ): 0x99 у
     // карточек, 0x66 у кредита — он плотнее, потому что мельче.
     // Alignment 8 — верх по центру, 2 — низ по центру.
-    `Style: title,Arial,64,&H00FFFFFF,&H000000FF,&H99000000,&H00000000,1,0,0,0,100,100,0,0,3,8,0,8,80,80,${Math.round(
+    // Шрифт и цвет — из бренд-бука через белый список (этап G, Г-6);
+    // без стиля — прежние Arial и белый. Кредит автора музыки стиль не
+    // меняет: это не часть поздравления.
+    `Style: title,${style.font},64,${style.color},&H000000FF,&H99000000,&H00000000,1,0,0,0,100,100,0,0,3,8,0,8,80,80,${Math.round(
       res.y * 0.12,
     )},1`,
-    `Style: closing,Arial,52,&H00FFFFFF,&H000000FF,&H99000000,&H00000000,0,0,0,0,100,100,0,0,3,8,0,2,80,80,${Math.round(
+    `Style: closing,${style.font},52,${style.color},&H000000FF,&H99000000,&H00000000,0,0,0,0,100,100,0,0,3,8,0,2,80,80,${Math.round(
       res.y * 0.1,
     )},1`,
     // Кредит мельче подписи и прижат к самому низу: он обязателен, но

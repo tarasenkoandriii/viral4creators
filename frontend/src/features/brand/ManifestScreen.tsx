@@ -90,6 +90,21 @@ import { SketchSlotActions } from '../sketch/SketchSlotActions';
 import { VoicePicker } from './VoicePicker';
 import { voiceModeHint } from '../../lib/voice-mode';
 import { JsonField } from './JsonField';
+import {
+  KindSwitch,
+  PersonalBrandFields,
+  type PersonalFieldsValue,
+} from './PersonalBrandFields';
+import {
+  type BrandManifestKind,
+  canCreateManifest,
+  defaultCreateKind,
+  normalizeCardStyle,
+  personalManifestPatch,
+  scenePhotoTextOnly,
+  showKindSwitch,
+} from '../../lib/persona-greeting';
+import { usePersonaState } from '../../lib/persona-greeting-api';
 
 /** Same cap as the backend / spec §10.3. */
 const REFERENCE_IMAGE_CAP = 3;
@@ -105,6 +120,13 @@ export function ManifestScreen({ manifestId }: { manifestId?: string }) {
 
 function CreateForm() {
   const { dict } = useI18n();
+  // «Я в кадре» (§4.7): у проверенной персоны — выбор «компания /
+  // личный». Корпоративный закрыт режимом (§23), личный — нет (В-1), так
+  // что на LITE с персоной форма открывается сразу личной.
+  const persona = usePersonaState();
+  const company = useFeature('brandManifest');
+  const [kindChoice, setKindChoice] = useState<BrandManifestKind | null>(null);
+  const kind = kindChoice ?? defaultCreateKind(company.allowed, persona);
   const [title, setTitle] = useState('');
   const [styleNotes, setStyleNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -122,6 +144,9 @@ function CreateForm() {
       const m = await createBrandManifest({
         title: t,
         styleNotes: styleNotes.trim() || null,
+        // Поле шлётся только у личного: сервер без режима персоны не
+        // обязан его знать, а корпоративный — умолчание колонки.
+        ...(kind === 'PERSONAL' ? { kind } : {}),
       });
       navigate(routes.manifest(m.id), true);
     } catch (e) {
@@ -145,6 +170,14 @@ function CreateForm() {
             void onSubmit();
           }}
         >
+          {showKindSwitch(persona, kind) && (
+            <KindSwitch
+              value={kind}
+              onChange={setKindChoice}
+              companyAllowed={company.allowed}
+              disabled={submitting}
+            />
+          )}
           <Field
             label={dict.manifestScreen.titleLabel}
             htmlFor="manifest-title"
@@ -175,7 +208,16 @@ function CreateForm() {
             />
           </Field>
           {error && <Alert tone="error">{error}</Alert>}
-          <Button block type="submit" loading={submitting}>
+          <Button
+            block
+            type="submit"
+            loading={submitting}
+            disabled={
+              !company.loading &&
+              persona.kind !== 'loading' &&
+              !canCreateManifest(kind, company.allowed, persona)
+            }
+          >
             {dict.manifestScreen.createSubmitButton}
           </Button>
           <p className="text-center text-xs text-silver-400">
@@ -313,6 +355,24 @@ function StyleForm({
 }) {
   const { dict } = useI18n();
   const dub = useFeature('voiceDub');
+  const company = useFeature('brandManifest');
+  // Личный бренд-бук (§4.7): вид и его поля — только когда режим персоны
+  // есть или бренд-бук уже личный (`showKindSwitch`); иначе форма и
+  // запрос — ровно прежние.
+  const persona = usePersonaState();
+  const initialKind: BrandManifestKind = manifest.kind ?? 'COMPANY';
+  const personalOn = showKindSwitch(persona, initialKind);
+  const [kind, setKind] = useState<BrandManifestKind>(initialKind);
+  const initialPersonal: PersonalFieldsValue = {
+    defaultLookId: manifest.defaultLookId ?? '',
+    signature: manifest.signature ?? '',
+    defaultTone: manifest.defaultTone ?? '',
+    cardStyle: normalizeCardStyle(manifest.cardStyle),
+  };
+  const [personal, setPersonal] =
+    useState<PersonalFieldsValue>(initialPersonal);
+  const personalBody = (k: BrandManifestKind, v: PersonalFieldsValue) =>
+    JSON.stringify(personalManifestPatch(k, v));
   const [title, setTitle] = useState(manifest.title);
   const [styleNotes, setStyleNotes] = useState(manifest.styleNotes ?? '');
   const [voiceNotes, setVoiceNotes] = useState(manifest.voiceNotes ?? '');
@@ -350,7 +410,10 @@ function StyleForm({
     subtitlesMode !== (manifest.subtitlesMode ?? 'off') ||
     subtitleTheme !== (manifest.subtitleTheme ?? 'classic') ||
     JSON.stringify(filters) !== JSON.stringify(manifest.filters) ||
-    JSON.stringify(effects) !== JSON.stringify(manifest.effects);
+    JSON.stringify(effects) !== JSON.stringify(manifest.effects) ||
+    (personalOn &&
+      personalBody(kind, personal) !==
+        personalBody(initialKind, initialPersonal));
   const canSave =
     dirty && title.trim().length > 0 && jsonValid.filters && jsonValid.effects;
 
@@ -370,6 +433,7 @@ function StyleForm({
         subtitleTheme,
         filters,
         effects,
+        ...(personalOn ? personalManifestPatch(kind, personal) : {}),
       });
       onSaved(m);
       setSavedAt(Date.now());
@@ -393,6 +457,22 @@ function StyleForm({
         hint={dict.manifestScreen.styleCardHint}
       />
       <div className="space-y-4">
+        {personalOn && (
+          <KindSwitch
+            value={kind}
+            onChange={setKind}
+            companyAllowed={company.allowed}
+            disabled={saving}
+          />
+        )}
+        {personalOn && kind === 'PERSONAL' && (
+          <PersonalBrandFields
+            value={personal}
+            onChange={(patch) => setPersonal((p) => ({ ...p, ...patch }))}
+            persona={persona}
+            disabled={saving}
+          />
+        )}
         <Field label={dict.manifestScreen.titleLabel} htmlFor="m-title">
           <Input
             id="m-title"
@@ -823,6 +903,8 @@ function AssetRow({
   onError: (msg: string | null) => void;
 }) {
   const { dict } = useI18n();
+  // Общий кеш персоны — не отдельный запрос на каждую строку.
+  const persona = usePersonaState();
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState<'photo' | 'delete' | null>(null);
   const [progress, setProgress] = useState(0);
@@ -944,6 +1026,11 @@ function AssetRow({
         <p className="mt-0.5 text-xs text-silver-400 line-clamp-2">
           {character.description || copy.noDescription}
         </p>
+        {kind === 'scene' && scenePhotoTextOnly(character, persona) && (
+          <p className="mt-1 text-[11px] text-amber-500">
+            {dict.personaGreeting.scenePhotoTextOnly}
+          </p>
+        )}
         {/* ИИ-скетч слотов S4/S5 (doc/AI-SKETCH-SPEC.md §7.2). Оригинал
             бренда разделяемый (со снимками бренда в сессиях), поэтому
             применение и удаление разбирает сервер — экрану достаточно

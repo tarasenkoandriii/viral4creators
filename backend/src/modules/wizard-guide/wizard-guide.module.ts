@@ -10,15 +10,19 @@ import { SiblingsService } from './siblings.service';
 import { TranslationService } from './translation.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 import { HintAudioService } from './hint-audio.service';
+import { ProactiveSpeechService } from './proactive-speech.service';
 import { StorageModule } from '../storage/storage.module';
 import { VoiceBudgetModule } from '../voice-budget/voice-budget.module';
+import { VoiceUploadModule } from '../voice-upload/voice-upload.module';
 
 @Module({
   // Голос советника (ТЗ Greeting 2.0 §4А.4, K1): Blob — для аудиокеша,
   // потолок голоса В-14 — отдельным модулем, общим с распознаванием.
   // Синтез (`TtsProviderResolverService`) приходит из глобального
   // `TtsModule`.
-  imports: [StorageModule, VoiceBudgetModule],
+  // Учёт транзитных файлов — для личной реплики помощника (сводка перед
+  // согласием, K4): крон `voice-uploads-sweep` удаляет её в пределах часа.
+  imports: [StorageModule, VoiceBudgetModule, VoiceUploadModule],
   controllers: [WizardGuideController],
   providers: [
     WizardGuideService,
@@ -31,6 +35,8 @@ import { VoiceBudgetModule } from '../voice-budget/voice-budget.module';
     AdminWizardGuideService,
     PlatformSettingsService,
     HintAudioService,
+    // Проактивная речь (K4) — поверх того же аудиокеша и потолков.
+    ProactiveSpeechService,
   ],
   exports: [
     WizardGuideService,

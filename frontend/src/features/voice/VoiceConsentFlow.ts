@@ -11,8 +11,12 @@
  * проверки старта (тариф, суточный потолок, стена, evaluateGreetingPolicy)
  * остаются на сервере и не знают, голосом нажали или пальцем.
  *
- * Сводка произносится текстом в панели помощника; голос советника (K1)
- * озвучивает только подсказки по ключу, и свою реплику ему не передать.
+ * Сводка показывается текстом в панели помощника и карточкой у кнопки,
+ * а с K4 (§4А.7.4) и ПРОИЗНОСИТСЯ: помощник просит у сервера озвучку
+ * сводки (`speak` `consent-summary`) — сервер собирает её сам из снимка
+ * брифа и цены, клиентский текст в синтез не уходит. Один раз на
+ * отпечаток сводки: второе «генерируй» при той же сводке — запуск, а не
+ * повтор цены.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -32,6 +36,7 @@ import {
 } from '../../lib/voice-consent';
 import { getInviteState } from '../../services/invite-api';
 import { useVoiceConsentTarget, type VoiceConsentLine } from './voice-commands';
+import { announceProactive } from './voice-proactive-bus';
 
 export interface RenderConsentInput extends ConsentInput {
   /** Обработчик кнопки генерации — ровно тот, что у `onClick`. */
@@ -125,6 +130,12 @@ export function useRenderVoiceConsent(input: RenderConsentInput): {
         start: () => inputRef.current.start(),
         now: Date.now,
       });
+      if (effect?.kind === 'summary') {
+        announceProactive({
+          kind: 'consent-summary',
+          fingerprint: effect.summary.fingerprint,
+        });
+      }
       return effect ? lineOf(effect) : null;
     },
     cancel: () => lineOf(step({ type: 'cancel' })),

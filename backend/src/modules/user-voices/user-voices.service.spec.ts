@@ -114,8 +114,9 @@ describe('UserVoicesService.createUploadUrl', () => {
         mimeType: 'audio/mpeg',
       } as never),
     ).rejects.toBeInstanceOf(BadRequestException);
+    // Голос персоны «Я в кадре» в лимит не входит — `personaId: null`.
     expect(prisma.userVoice.count).toHaveBeenCalledWith({
-      where: { userId: USER, status: { not: 'FAILED' } },
+      where: { userId: USER, personaId: null, status: { not: 'FAILED' } },
     });
     expect(blob.createUploadUrl).not.toHaveBeenCalled();
   });

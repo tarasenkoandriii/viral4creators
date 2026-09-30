@@ -260,6 +260,9 @@ check('consentRoute — куда идёт реплика', () => {
   eq(consentRoute('navigate', true, true), 'pass');
   eq(consentRoute('command', false, true), 'interrupt');
   eq(consentRoute('fill', false, false), 'pass');
+  // K4: вопрос о шаге ничего не меняет — сводку не закрывает.
+  eq(consentRoute('question', false, true), 'pass');
+  eq(consentRoute('question', true, true), 'pass');
 });
 
 check('chargeText — цена словами; неизвестная — null', () => {

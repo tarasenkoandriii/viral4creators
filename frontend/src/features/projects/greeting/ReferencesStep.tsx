@@ -43,6 +43,8 @@ import {
 import { SketchSlotActions } from '../../sketch/SketchSlotActions';
 import { revokeObjectUrl } from '../../../lib/object-url';
 import type { GreetingReferenceImageView } from '../../../types/project';
+import { referenceFaceState } from '../../../lib/persona-greeting';
+import { confirmReferenceFaceConsent } from '../../../lib/persona-greeting-api';
 import { HelpButton } from '../HelpSheet';
 import {
   type ReferenceFormsState,
@@ -341,6 +343,15 @@ export function ReferencesStep({
                       </button>
                     </div>
                   )}
+                  <FaceConsentNote
+                    image={img}
+                    disabled={saving || disabled}
+                    onConfirm={() =>
+                      void apply(() =>
+                        confirmReferenceFaceConsent(sessionId, img.id)
+                      )
+                    }
+                  />
                   <SketchSlotActions
                     className="mt-1"
                     target={{
@@ -364,6 +375,57 @@ export function ReferencesStep({
         </>
       )}
     </Card>
+  );
+}
+
+/**
+ * Лицо на фото референса (ТЗ Greeting 2.0 §4.8, Г-8). Сервер при
+ * загрузке ищет лицо; нашёл — без подтверждения автора фото в
+ * видеомодель не уйдёт. Два честных выхода: подтвердить согласие этого
+ * человека или сделать скетч с заменой лица (кнопка «Скетч» ниже —
+ * существующие действия слота). Снять подтверждение нельзя: контракт
+ * знает только `faceConsent: true`, и чекбокс после него гаснет.
+ */
+function FaceConsentNote({
+  image,
+  disabled,
+  onConfirm,
+}: {
+  image: GreetingReferenceImageView;
+  disabled: boolean;
+  onConfirm: () => void;
+}) {
+  const { dict } = useI18n();
+  const pg = dict.personaGreeting;
+  const state = referenceFaceState(image);
+  if (state === 'none') return null;
+  if (state === 'sketched') {
+    return (
+      <p className="mt-1 text-[11px] text-silver-400">{pg.faceSketched}</p>
+    );
+  }
+  return (
+    <div className="mt-1 space-y-1 rounded-lg border border-amber-400/40 bg-amber-400/5 p-2 text-[11px] leading-relaxed">
+      {state === 'needs-consent' && <p>{pg.faceFound}</p>}
+      {/* Проверка лица не состоялась (или фото старше неё): сервер
+          теперь закрыт по умолчанию и считает, что лицо может быть. */}
+      {state === 'unchecked' && <p>{pg.faceUnchecked}</p>}
+      <label className="flex cursor-pointer gap-2">
+        <input
+          type="checkbox"
+          checked={state === 'consented'}
+          disabled={disabled || state === 'consented'}
+          onChange={(e) => {
+            if (e.target.checked) onConfirm();
+          }}
+          className="mt-0.5 h-4 w-4 shrink-0 accent-sky-400"
+        />
+        <span>{pg.faceConsentLabel}</span>
+      </label>
+      {(state === 'needs-consent' || state === 'unchecked') && (
+        <p className="text-silver-400">{pg.faceNotSentNote}</p>
+      )}
+    </div>
   );
 }
 

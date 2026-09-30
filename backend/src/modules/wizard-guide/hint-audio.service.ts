@@ -9,7 +9,8 @@
  * ## Порядок проверок
  *
  * Тот же принцип, что у подсказки: бесплатное раньше платного.
- * Рубильник → владение и «голосом» → подсказка в кеше → регистр повода →
+ * Рубильник → владение и «голосом» → подсказка в кеше → регистр повода
+ * («коротко» в траурном — `speechForRegister`, K4) →
  * аудиокеш → правила расхода → бюджет советника → потолок голоса (В-14)
  * → синтез. Аудиокеш стоит РАНЬШЕ потолков: повтор готового файла
  * ничего не стоит, и отказывать в нём человеку, у которого кончился
@@ -36,6 +37,7 @@ import { PlanService } from '../plan/plan.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { BlobService } from '../storage/blob.service';
 import { VoiceBudgetService } from '../voice-budget/voice-budget.service';
+import { VoiceUploadService } from '../voice-upload/voice-upload.service';
 import { scenarioOfProjectType } from '../../common/test-user-scenarios';
 import { registerOfBrief } from '../../common/greeting-policy';
 import type {
@@ -53,11 +55,12 @@ import {
 import {
   VOICE_ASSISTANT_VOICE_KEY,
   hintAudioKey,
+  ephemeralSpeechPathname,
   hintAudioPathname,
   hintKeyBelongsTo,
   hintKeyLocale,
-  mayVoiceInRegister,
   parseAssistantVoice,
+  speechForRegister,
 } from './hint-audio';
 
 /**
@@ -94,6 +97,7 @@ export class HintAudioService {
     private readonly tts: TtsProviderResolverService,
     private readonly blob: BlobService,
     private readonly voiceBudget: VoiceBudgetService,
+    private readonly voiceUploads: VoiceUploadService,
   ) {}
 
   async audioFor(
@@ -101,22 +105,7 @@ export class HintAudioService {
     projectId: string,
     hintKey: string,
   ): Promise<HintAudioResult | null> {
-    if (!(await this.guide.available())) return null;
-
-    const project: {
-      type: string;
-      aiGuideEnabled: boolean;
-      aiGuideVoice: boolean;
-    } | null = await this.prisma.project.findFirst({
-      where: { id: projectId, userId, deletedAt: null },
-      select: { type: true, aiGuideEnabled: true, aiGuideVoice: true },
-    });
-    if (!project) throw new NotFoundException(PROJECT_NOT_FOUND);
-    // Голос без советника не существует (В-10): столбец мог остаться
-    // включённым у старой строки, но говорить без советника нечего.
-    if (!project.aiGuideEnabled || !project.aiGuideVoice) return null;
-
-    const scenario = scenarioOfProjectType(project.type);
+    const scenario = await this.voicedScenario(userId, projectId);
     if (!scenario || !hintKeyBelongsTo(hintKey, scenario)) return null;
     // Язык — из ключа, а не из запроса: текст написан именно на нём
     // (см. `hintKeyLocale`).
@@ -131,23 +120,80 @@ export class HintAudioService {
     const text = row?.hint?.trim();
     if (!text) return null;
 
-    if (!mayVoiceInRegister(await this.registerOf(scenario, projectId), text)) {
+    const spoken = speechForRegister(
+      await this.registerOf(scenario, projectId),
+      text,
+    );
+    if (!spoken) {
       this.logger.log(
         `подсказка не озвучена: не для регистра повода (проект ${projectId})`,
       );
       return null;
     }
+    return this.synthesizeCached(userId, projectId, {
+      cacheKey: hintKey,
+      text: spoken,
+      lang,
+    });
+  }
 
-    const voice = parseAssistantVoice(
-      await this.settings.get(VOICE_ASSISTANT_VOICE_KEY),
-    );
-    const provider = this.tts.resolveByKey(voice.provider);
-    const voiceId = voice.voiceId ?? provider.defaultVoice?.() ?? null;
-    // Голоса нет ни в настройке, ни на стенде (Resemble без
-    // `RESEMBLE_VOICE_ID`) — синтез всё равно пропустился бы.
-    if (!voiceId) return null;
+  /**
+   * Сценарий проекта, если голос в нём сейчас возможен: рубильник
+   * советника, владение (чужой — 404), советник и «голосом» включены.
+   * `null` — голоса нет. Общий вход и для подсказки, и для проактивной
+   * речи (K4, `ProactiveSpeechService`): у второго канала нет своего
+   * права говорить там, где первый молчит.
+   */
+  async voicedScenario(
+    userId: string,
+    projectId: string,
+  ): Promise<string | null> {
+    if (!(await this.guide.available())) return null;
+
+    const project: {
+      type: string;
+      aiGuideEnabled: boolean;
+      aiGuideVoice: boolean;
+    } | null = await this.prisma.project.findFirst({
+      where: { id: projectId, userId, deletedAt: null },
+      select: { type: true, aiGuideEnabled: true, aiGuideVoice: true },
+    });
+    if (!project) throw new NotFoundException(PROJECT_NOT_FOUND);
+    // Голос без советника не существует (В-10): столбец мог остаться
+    // включённым у старой строки, но говорить без советника нечего.
+    if (!project.aiGuideEnabled || !project.aiGuideVoice) return null;
+    return scenarioOfProjectType(project.type) ?? null;
+  }
+
+  /**
+   * Озвучить уже собранный СЕРВЕРОМ текст: аудиокеш → правила расхода →
+   * бюджет советника → потолок голоса (В-14) → синтез → Blob.
+   *
+   * Текст сюда приходит только из кода сервера — из кеша подсказок или
+   * из шаблонов проактивной речи (K4), — и уже пропущенный через
+   * `speechForRegister`. `cacheKey` — ключ подсказки или речи
+   * (`speak|…`): он входит в ключ файла вместе с голосом, языком и самим
+   * текстом.
+   *
+   * `skipUserSpend` — только для фразы «суточный лимит исчерпан» (K4,
+   * CONTRACT5): общий лимит расхода ей по определению отказал бы, и
+   * отказ, о котором помощник обязан сказать, молчал бы именно тогда,
+   * когда он случился. Фраза фиксированная и серверная, в общем кеше
+   * синтезируется один раз на голос и язык; бюджет советника и потолок
+   * голоса В-14 проверяются как всегда.
+   */
+  async synthesizeCached(
+    userId: string,
+    projectId: string,
+    spec: { cacheKey: string; text: string; lang: string },
+    opts: { skipUserSpend?: boolean } = {},
+  ): Promise<HintAudioResult | null> {
+    const { cacheKey, text, lang } = spec;
+    const voice = await this.voice();
+    if (!voice) return null;
+    const { provider, voiceId } = voice;
     const audioKey = hintAudioKey({
-      hintKey,
+      hintKey: cacheKey,
       provider: provider.providerKey,
       voiceId,
       lang,
@@ -173,67 +219,32 @@ export class HintAudioService {
       return { url: cached.url };
     }
 
-    // Блокировка оператора и суточный потолок пользователя — общие для
-    // всех платных вызовов (как у подсказки). Отказ молчит: человек уже
-    // видит блокировку там, где она что-то решает.
-    if (!(await this.canSpend(userId, projectId))) return null;
-    if (!(await this.guideBudgetLeft())) return null;
-
-    // Потолок голоса В-14 — последним перед синтезом и единственным,
-    // о котором говорят вслух.
-    try {
-      await this.voiceBudget.assertCanSpendVoice(userId);
-    } catch (e) {
-      if (e instanceof ForbiddenException) {
-        return { url: null, reason: VOICE_BUDGET_EXHAUSTED };
-      }
-      this.logger.warn(
-        `потолок голоса не проверен: ${e instanceof Error ? e.message : String(e)}`,
-      );
-      return null;
-    }
-
-    const outcome = await provider.synthesize({
+    const synth = await this.gateAndSynthesize(userId, projectId, voice, {
       text,
-      voiceId,
-      language: lang,
+      lang,
+      skipUserSpend: !!opts.skipUserSpend,
     });
-    if (!outcome.ok) {
-      this.logger.warn(
-        `голос советника: синтез ${provider.providerKey} не состоялся — ${outcome.reason}`,
-      );
-      return null;
-    }
+    if (!synth || !('audio' in synth)) return synth;
 
-    // Расход пишется ДО заливки: деньги у провайдера уже потрачены, и
-    // сорвавшаяся заливка не делает их бесплатными — иначе потолок
-    // голоса считал бы меньше, чем списал провайдер.
-    await this.aiUsage.record({
-      operation: 'voice-assistant-tts',
-      model: `${provider.providerKey}-tts`,
-      userId,
-      characters: outcome.characters,
-    });
-
-    const pathname = hintAudioPathname(audioKey, outcome.mimeType);
+    const pathname = hintAudioPathname(audioKey, synth.mimeType);
     try {
       const { url } = await this.blob.uploadBuffer(
         pathname,
-        outcome.audio,
-        outcome.mimeType,
+        synth.audio,
+        synth.mimeType,
       );
       await this.prisma.wizardHintAudio
         .upsert({
           where: { key: audioKey },
           create: {
             key: audioKey,
-            hintKey,
+            hintKey: cacheKey,
             provider: provider.providerKey,
-            voiceId: outcome.voiceId,
+            voiceId: synth.voiceId,
             lang,
             pathname,
             url,
-            characters: outcome.characters,
+            characters: synth.characters,
           },
           // Гонка двух одновременных запросов: второй перезаписал тот
           // же путь тем же текстом — строка просто остаётся.
@@ -252,11 +263,141 @@ export class HintAudioService {
   }
 
   /**
+   * Озвучить реплику с ЛИЧНЫМИ данными (сводка перед согласием: имя
+   * получателя) — мимо общего аудиокеша (K4, CONTRACT5).
+   *
+   * Общий кеш публичен по ссылке, живёт 30 дней и адресуется хешем
+   * текста — для имени получателя это слишком долго и слишком общо.
+   * Здесь файл кладётся под префикс проекта со СЛУЧАЙНЫМ именем (ни из
+   * текста, ни из имени его не вывести), в кеш не пишется и заносится в
+   * учёт транзитных записей (`VoiceUploadService.remember`): крон
+   * `voice-uploads-sweep` удалит его в пределах часа (`VOICE_RECORDING_
+   * MAX_AGE_MS`), как запись голоса. Каждая сводка синтезируется заново —
+   * это одна фраза перед рендером, а не частая реплика.
+   */
+  async synthesizeEphemeral(
+    userId: string,
+    projectId: string,
+    spec: { text: string; lang: string },
+  ): Promise<HintAudioResult | null> {
+    const voice = await this.voice();
+    if (!voice) return null;
+    const synth = await this.gateAndSynthesize(userId, projectId, voice, {
+      ...spec,
+      skipUserSpend: false,
+    });
+    if (!synth || !('audio' in synth)) return synth;
+    const pathname = ephemeralSpeechPathname(projectId, synth.mimeType);
+    try {
+      // Учёт — ДО заливки: файл без строки учёта не удалил бы никто.
+      await this.voiceUploads.remember(pathname);
+      const { url } = await this.blob.uploadBuffer(
+        pathname,
+        synth.audio,
+        synth.mimeType,
+      );
+      return { url };
+    } catch (e) {
+      this.logger.warn(
+        `личная реплика не сохранена: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return null;
+    }
+  }
+
+  /** Голос помощника: провайдер и разрешённый голос; нет голоса — `null`. */
+  private async voice(): Promise<{
+    provider: ReturnType<TtsProviderResolverService['resolveByKey']>;
+    voiceId: string;
+  } | null> {
+    const voice = parseAssistantVoice(
+      await this.settings.get(VOICE_ASSISTANT_VOICE_KEY),
+    );
+    const provider = this.tts.resolveByKey(voice.provider);
+    const voiceId = voice.voiceId ?? provider.defaultVoice?.() ?? null;
+    // Голоса нет ни в настройке, ни на стенде (Resemble без
+    // `RESEMBLE_VOICE_ID`) — синтез всё равно пропустился бы.
+    return voiceId ? { provider, voiceId } : null;
+  }
+
+  /**
+   * Потолки и синтез: правила расхода (кроме `skipUserSpend`) → бюджет
+   * советника → потолок голоса В-14 → синтез → запись расхода. Итог —
+   * аудио, либо ответ маршруту (`null` / исчерпанный потолок).
+   */
+  private async gateAndSynthesize(
+    userId: string,
+    projectId: string,
+    voice: NonNullable<Awaited<ReturnType<HintAudioService['voice']>>>,
+    spec: { text: string; lang: string; skipUserSpend: boolean },
+  ): Promise<
+    | {
+        audio: Buffer;
+        mimeType: string;
+        characters: number;
+        voiceId: string;
+      }
+    | HintAudioResult
+    | null
+  > {
+    const { provider, voiceId } = voice;
+    // Блокировка оператора и суточный потолок пользователя — общие для
+    // всех платных вызовов (как у подсказки). Отказ молчит: человек уже
+    // видит блокировку там, где она что-то решает.
+    if (!spec.skipUserSpend && !(await this.canSpend(userId, projectId))) {
+      return null;
+    }
+    if (!(await this.guideBudgetLeft())) return null;
+
+    // Потолок голоса В-14 — последним перед синтезом и единственным,
+    // о котором говорят вслух.
+    try {
+      await this.voiceBudget.assertCanSpendVoice(userId);
+    } catch (e) {
+      if (e instanceof ForbiddenException) {
+        return { url: null, reason: VOICE_BUDGET_EXHAUSTED };
+      }
+      this.logger.warn(
+        `потолок голоса не проверен: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return null;
+    }
+
+    const outcome = await provider.synthesize({
+      text: spec.text,
+      voiceId,
+      language: spec.lang,
+    });
+    if (!outcome.ok) {
+      this.logger.warn(
+        `голос советника: синтез ${provider.providerKey} не состоялся — ${outcome.reason}`,
+      );
+      return null;
+    }
+
+    // Расход пишется ДО заливки: деньги у провайдера уже потрачены, и
+    // сорвавшаяся заливка не делает их бесплатными — иначе потолок
+    // голоса считал бы меньше, чем списал провайдер.
+    await this.aiUsage.record({
+      operation: 'voice-assistant-tts',
+      model: `${provider.providerKey}-tts`,
+      userId,
+      characters: outcome.characters,
+    });
+    return {
+      audio: outcome.audio,
+      mimeType: outcome.mimeType,
+      characters: outcome.characters,
+      voiceId: outcome.voiceId,
+    };
+  }
+
+  /**
    * Регистр повода — только у поздравления, и только из брифа проекта:
    * это живой бриф, тот, что человек сейчас правит. Брифа ещё нет —
    * `null`, ограничений нет.
    */
-  private async registerOf(
+  async registerOf(
     scenario: string,
     projectId: string,
   ): Promise<GreetingRegister | null> {

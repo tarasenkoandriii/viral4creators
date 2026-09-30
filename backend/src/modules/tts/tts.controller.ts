@@ -16,6 +16,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Post,
   Query,
@@ -137,6 +138,37 @@ export class TtsController {
   }
 
   /**
+   * Чей голос пробуем (аудит волны «Я в кадре»). Ключ Resemble один на
+   * всех подписчиков, поэтому клон — это просто id, и проба с чужим id
+   * озвучила бы любой текст голосом другого человека. Клон голоса
+   * персоны (реальный человек, согласие на синтетическую копию — только
+   * для своих поздравлений, ТЗ Greeting 2.0 §4.6) в пробе не звучит
+   * вовсе, даже у владельца: произвольный текст его голосом — ровно то,
+   * от чего защищает согласие. Голоса каталога в `UserVoice` не лежат и
+   * проходят как раньше.
+   */
+  private async assertPreviewVoiceAllowed(
+    userId: string,
+    voiceId: string | null | undefined,
+  ): Promise<void> {
+    const id = voiceId?.trim();
+    if (!id) return;
+    const row = (await this.prisma.userVoice.findFirst({
+      where: { OR: [{ id }, { resembleVoiceId: id }] },
+      select: { userId: true, personaId: true },
+    })) as { userId: string; personaId: string | null } | null;
+    if (!row) return;
+    if (row.userId !== userId) {
+      throw new ForbiddenException('Этот голос принадлежит другому человеку.');
+    }
+    if (row.personaId) {
+      throw new ForbiddenException(
+        'Голос вашей персоны в пробе не озвучивается — он звучит только в ваших поздравлениях.',
+      );
+    }
+  }
+
+  /**
    * Проба голоса. Ответ — data-URL, а не файл в Blob: проба живёт секунды,
    * и класть её в хранилище значило бы заводить мусор, за которым потом
    * придётся ходить подметателю (§22).
@@ -151,6 +183,7 @@ export class TtsController {
     // Порядок важен: блокировку и бюджет проверяем ДО потолка на пробы —
     // заблокированному незачем объяснять, сколько проб у него осталось.
     await this.plans.assertCanSpendUser(userId);
+    await this.assertPreviewVoiceAllowed(userId, dto.voiceId);
 
     const used = await this.aiUsage.countToday(userId, 'voiceover-preview');
     if (used >= PREVIEWS_PER_DAY) {

@@ -49,6 +49,12 @@ interface Replies {
   contradiction: (names: string[]) => string;
   shorterByHand: string;
   noOtherMusic: (name: string) => string;
+  /**
+   * K4: вопрос о шаге, на который у помощника нет факта (тема вне
+   * закрытого списка). Честное «не знаю» вместо выдумки, и куда смотреть:
+   * клиент рядом показывает кнопку справки.
+   */
+  questionUnknown: string;
 }
 
 /** Перечень вариантов вслух: не больше шести, остальное — «…». */
@@ -117,6 +123,7 @@ export const REPLIES: Readonly<Record<SupportedLocale, Replies>> = {
     shorterByHand:
       'Сократить голосом пока нельзя — отредактируйте текст сценария или соберите его заново.',
     noOtherMusic: (n) => `${n}: других тем для этого повода нет.`,
+    questionUnknown: 'Этого я не знаю. Посмотрите справку.',
   },
   uk: {
     notHeard: 'Не розчув. Повторіть, будь ласка.',
@@ -169,6 +176,7 @@ export const REPLIES: Readonly<Record<SupportedLocale, Replies>> = {
     shorterByHand:
       'Скоротити голосом поки не можна — відредагуйте текст сценарію або зберіть його заново.',
     noOtherMusic: (n) => `${n}: інших тем для цього приводу немає.`,
+    questionUnknown: 'Цього я не знаю. Перегляньте довідку.',
   },
   en: {
     notHeard: "I didn't catch that. Please say it again.",
@@ -223,6 +231,7 @@ export const REPLIES: Readonly<Record<SupportedLocale, Replies>> = {
     shorterByHand:
       "Shortening by voice isn't available yet — edit the script text or build it again.",
     noOtherMusic: (n) => `${n}: there are no other themes for this occasion.`,
+    questionUnknown: "I don't know that. Please check the help.",
   },
   de: {
     notHeard: 'Das habe ich nicht verstanden. Bitte noch einmal.',
@@ -281,6 +290,7 @@ export const REPLIES: Readonly<Record<SupportedLocale, Replies>> = {
       'Kürzen per Sprache geht noch nicht — bearbeiten Sie den Skripttext oder erstellen Sie ihn neu.',
     noOtherMusic: (n) =>
       `${n}: Für diesen Anlass gibt es keine anderen Themen.`,
+    questionUnknown: 'Das weiß ich nicht. Bitte sehen Sie in der Hilfe nach.',
   },
   es: {
     notHeard: 'No te he oído bien. Repítelo, por favor.',
@@ -337,5 +347,6 @@ export const REPLIES: Readonly<Record<SupportedLocale, Replies>> = {
     shorterByHand:
       'Todavía no se puede acortar por voz: edita el texto del guion o vuelve a montarlo.',
     noOtherMusic: (n) => `${n}: no hay otros temas para esta ocasión.`,
+    questionUnknown: 'Eso no lo sé. Consulta la ayuda.',
   },
 };

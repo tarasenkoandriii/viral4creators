@@ -16,6 +16,7 @@ import { Alert, Badge, Card, ConfirmDialog } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
 import { errorMessage } from '../../services/projects-api';
 import { deleteSketchOriginal, revertSketch } from '../../services/sketch-api';
+import { canDeleteOriginal } from './sketch-model';
 import type { SketchSlotView, SketchTarget } from '../../types/sketch';
 
 export function SketchBadge({
@@ -120,7 +121,7 @@ export function SketchBadge({
               onClick={() => void run(() => revertSketch(target))}
             />
           )}
-          {!slot.originalDeleted && (
+          {!slot.originalDeleted && canDeleteOriginal(target.type) && (
             <MenuItem
               icon={<Trash2 size={13} />}
               label={t.deleteOriginal}

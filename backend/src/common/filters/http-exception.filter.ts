@@ -44,12 +44,26 @@ const PASSTHROUGH_KEYS = [
   'retryAfterMs',
 ] as const;
 
-function detailsOf(
+/**
+ * Машинный код отказа (`{ code: 'PERSONA_DISABLED', message }`) —
+ * клиент ветвится по нему, а не по тексту (волна «Я в кадре», CONTRACT5).
+ * Раньше фильтр его отбрасывал, и клиент видел только статус: 404
+ * «режим выключен» и 404 «персоны нет» были неразличимы. Пропускается
+ * только короткий идентификатор — строка произвольного вида могла бы
+ * нести наружу то, что в ответ не предназначалось.
+ */
+const MACHINE_CODE = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
+
+export function detailsOf(
   responseObj: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const details: Record<string, unknown> = {};
   for (const key of PASSTHROUGH_KEYS) {
     if (responseObj[key] !== undefined) details[key] = responseObj[key];
+  }
+  const code = responseObj.code;
+  if (typeof code === 'string' && MACHINE_CODE.test(code)) {
+    details.code = code;
   }
   return Object.keys(details).length > 0 ? details : null;
 }

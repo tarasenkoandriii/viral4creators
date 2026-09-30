@@ -265,7 +265,15 @@ export function consentRoute(
   // Справка и переход ничего не меняют в данных — сводка переживает
   // и «что здесь», и «назад к сценарию» (финальный аудит): отпечаток всё
   // равно не даст запустить то, что успело поменяться.
-  if (intentKind === 'help' || intentKind === 'navigate') return 'pass';
+  // Вопрос о шаге (K4) — тоже ничего не меняет: «сколько ждать?» при
+  // открытой сводке не должен её закрывать.
+  if (
+    intentKind === 'help' ||
+    intentKind === 'navigate' ||
+    intentKind === 'question'
+  ) {
+    return 'pass';
+  }
   return 'interrupt';
 }
 

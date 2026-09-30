@@ -77,6 +77,10 @@ export const SKETCH_TARGET_TYPES = [
   // 'session-scene': разный массив сессии, разный (отсутствующий) гейт
   // тарифа.
   'session-greeting-reference',
+  // «Я в кадре» (ТЗ TZ-Greeting-2.0 §4.5): скетч-аватар образа персоны,
+  // `id` — lookId. Единственный слот, где лицо НЕ меняется (`likeness:
+  // 'self'`), и только у проверенной персоны — см. `sketchLikenessFor`.
+  'persona-look',
 ] as const;
 export type SketchTargetType = (typeof SKETCH_TARGET_TYPES)[number];
 

@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsDateString,
   IsIn,
@@ -5,7 +6,9 @@ import {
   IsString,
   Length,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { GreetingPresenterDto } from './greeting-presenter.dto';
 import type {
   GreetingOccasion,
   GreetingRegister,
@@ -122,4 +125,12 @@ export class UpdateGreetingBriefDto {
   @ValidateIf((_, v) => v !== null)
   @IsDateString()
   occasionDate?: string | null;
+  /**
+   * «Кто в кадре» (этап G, ТЗ Greeting 2.0 §4.8). Не передано — прежний
+   * выбор (при создании — ИИ-ведущий).
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GreetingPresenterDto)
+  presenter?: GreetingPresenterDto;
 }

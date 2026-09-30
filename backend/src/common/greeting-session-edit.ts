@@ -36,7 +36,7 @@ export type ResettableField =
  * повод сменили на соболезнование.
  *
  * Провайдер и качество видео сюда не входят: описание сцены от них не
- * зависит (`buildSceneDescription`).
+ * зависит (`buildSceneDescription`). Ведущий-образ (этап G) — входит.
  */
 export function scriptInputsChanged(
   before: GreetingBriefSnapshot,
@@ -53,7 +53,13 @@ export function scriptInputsChanged(
     (before.senderName ?? null) !== (after.senderName ?? null) ||
     (before.personalMessage ?? null) !== (after.personalMessage ?? null) ||
     scriptLanguageOf(before, sessionLocale) !==
-      scriptLanguageOf(after, sessionLocale)
+      scriptLanguageOf(after, sessionLocale) ||
+    // Этап G (§4.8): ведущий-образ меняет описание сцены — строку «The
+    // presenter is the person shown in <IMAGE_1>» и нумерацию остальных
+    // изображений. Старая сцена с новым ведущим отправила бы метки не
+    // туда.
+    (before.presenter?.lookId ?? null) !== (after.presenter?.lookId ?? null) ||
+    (before.presenter?.variant ?? null) !== (after.presenter?.variant ?? null)
   );
 }
 

@@ -31,7 +31,6 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { head } from '@vercel/blob';
 import { randomBytes } from 'crypto';
 import { BlobService } from '../storage/blob.service';
 import { SessionService } from '../../common/session.service';
@@ -60,6 +59,20 @@ import {
   findCelebrityLikeness,
 } from '../../common/celebrity-likeness';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  personaEnabled,
+  referenceNeedsFaceConsent,
+} from '../../common/greeting-persona';
+import {
+  FaceCheckGenerator,
+  FaceCheckResult,
+  checkFaces,
+  mayContainFace,
+} from '../persona/face-check';
+
+/** Согласие подтверждают только для фото, на котором лицо найдено. */
+export const FACE_CONSENT_NOT_NEEDED =
+  'На этом фото лица не найдено — подтверждать согласие не нужно.';
 
 /**
  * Тот же приём, что `ReferenceSlotsPanel` получает от `ReferenceCandidate`
@@ -78,6 +91,11 @@ function toView(image: SceneAsset): GreetingReferenceImageView {
     originalPhotoUrl: image.originalDeleted ? null : image.photoUrl,
     originalDeleted: image.originalDeleted === true,
     createdAt: image.createdAt,
+    // Этап G (Г-8): экран спрашивает согласие только там, где лицо найдено.
+    hasFace: typeof image.hasFace === 'boolean' ? image.hasFace : null,
+    needsFaceConsent: referenceNeedsFaceConsent(image),
+    faceConsentAt: image.faceConsentAt ?? null,
+    faceCheckUnavailable: image.faceCheckFailed === true,
   };
 }
 
@@ -100,6 +118,22 @@ export function greetingReferencePathname(
   mimeType: string,
 ): string {
   return `sessions/${sessionId}/greeting-refs/${imageId}/photo.${
+    mimeType === 'image/png' ? 'png' : 'jpg'
+  }`;
+}
+
+/**
+ * Путь файла референса, который пишет СЕРВЕР после проверки (CONTRACT5
+ * п.2): под тем же префиксом сессии (уборка и копирование версий его
+ * знают), но со случайным именем — клиент его не знает и не может
+ * перезаписать своей presigned-ссылкой.
+ */
+export function serverReferencePathname(
+  sessionId: string,
+  imageId: string,
+  mimeType: string,
+): string {
+  return `sessions/${sessionId}/greeting-refs/${imageId}/${randomBytes(12).toString('hex')}.${
     mimeType === 'image/png' ? 'png' : 'jpg'
   }`;
 }
@@ -188,21 +222,54 @@ export class GreetingReferenceService {
         `At most ${MAX_GREETING_REFERENCE_IMAGES} reference images per session`,
       );
     }
-    let url: string;
+    let data: Buffer;
     try {
-      url = (await head(dto.pathname)).url;
+      data = await this.blob.downloadBuffer(dto.pathname);
     } catch (e) {
       throw new BadRequestException(
         `Reference photo not found in storage at "${dto.pathname}" — upload it first (${e instanceof Error ? e.message : String(e)})`,
       );
     }
+    const mimeType = dto.pathname.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    // Этап G (Г-8) — только при включённом режиме (CONTRACT5 п.6): есть ли
+    // на фото лицо — ДО записи, чтобы фото с лицом ни мгновения не лежало
+    // в сессии «разрешённым». Проверяются ТЕ ЖЕ байты, что станут файлом
+    // сессии ниже.
+    const face = personaEnabled()
+      ? await this.checkFace(sessionId, session.userId ?? null, data, mimeType)
+      : undefined;
+    // CONTRACT5 п.2: файл сессии — копия, которую пишет сервер, под путём
+    // со случайным суффиксом. Клиент знает только свой путь загрузки, и
+    // его presigned-ссылка не может подменить уже проверенный файл.
+    const serverPathname = serverReferencePathname(
+      sessionId,
+      imageId,
+      mimeType,
+    );
+    const { url } = await this.blob.uploadBuffer(
+      serverPathname,
+      data,
+      mimeType,
+    );
+    await this.blob
+      .deleteBlob(dto.pathname)
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `сессия ${sessionId}: клиентский файл ${dto.pathname} не удалён: ${String(e)}`,
+        ),
+      );
     const image: SceneAsset = {
       id: imageId,
       label: dto.label.trim(),
       description: dto.description?.trim() || null,
       photoUrl: url,
-      photoPathname: dto.pathname,
+      photoPathname: serverPathname,
       createdAt: new Date().toISOString(),
+      ...(face === undefined
+        ? {}
+        : face === null
+          ? { faceCheckFailed: true }
+          : { hasFace: mayContainFace(face) }),
     };
     const next = [...images, image];
     await this.sessions.updateSession(sessionId, {
@@ -319,6 +386,12 @@ export class GreetingReferenceService {
       outcome.bytes,
       outcome.mimeType,
     );
+    // Проверки лица (Г-8) здесь нет намеренно: кадр рисует наша модель
+    // по промпту, который запрещает узнаваемых реальных людей
+    // (`greeting-frame-prompt.ts`), и человек в нём вымышленный — давать
+    // согласие не за кого. Проверка же нашла бы лицо на КАЖДОМ кадре
+    // (промпт просит ведущего в кадре) и требовала бы бессмысленного
+    // подтверждения за вызов модели.
     const image: SceneAsset = {
       id: imageId,
       label: GENERATED_FRAME_LABEL,
@@ -326,6 +399,9 @@ export class GreetingReferenceService {
       photoUrl: url,
       photoPathname: pathname,
       createdAt: new Date().toISOString(),
+      // Вымышленный человек нашей модели — явное «лица нет», иначе
+      // fail-closed (CONTRACT5 п.4) потребовал бы согласия за каждый кадр.
+      hasFace: false,
     };
     const next = [...images, image];
     await this.sessions.updateSession(sessionId, {
@@ -394,8 +470,18 @@ export class GreetingReferenceService {
   ): Promise<GreetingReferenceImageView[]> {
     const session = await this.load(sessionId);
     const images = session.greetingReferenceImages ?? [];
-    if (!images.some((s) => s.id === imageId)) {
+    const target = images.find((s) => s.id === imageId);
+    if (!target) {
       throw new NotFoundException(`Reference image ${imageId} not found`);
+    }
+    // Этап G (Г-8): «у меня есть согласие этого человека». Только `true` —
+    // отозвать согласие значит удалить фото или сделать скетч, а не
+    // тихо снять отметку с уже отправленного в модель кадра. Для фото без
+    // найденного лица подтверждать нечего — отказ, а не пустая запись.
+    // Fail-closed (CONTRACT5 п.4): подтвердить можно всё, где лицо
+    // «может быть», — и найденное, и непроверенное.
+    if (dto.faceConsent === true && target.hasFace === false) {
+      throw new BadRequestException(FACE_CONSENT_NOT_NEEDED);
     }
     const next = images.map((s) =>
       s.id === imageId
@@ -404,6 +490,9 @@ export class GreetingReferenceService {
             ...(dto.label !== undefined ? { label: dto.label.trim() } : {}),
             ...(dto.description !== undefined
               ? { description: dto.description?.trim() || null }
+              : {}),
+            ...(dto.faceConsent === true && !s.faceConsentAt
+              ? { faceConsentAt: new Date().toISOString() }
               : {}),
           }
         : s,
@@ -430,6 +519,52 @@ export class GreetingReferenceService {
     });
     void this.blob.deleteBlob(image.photoPathname).catch(() => undefined);
     return next.map(toView);
+  }
+
+  /**
+   * Лицо на загруженном фото (Г-8) — тот же мультимодальный вызов, что у
+   * проверки селфи персоны (`persona/face-check.ts`), без вопроса о
+   * возрасте. `null` — проверка недоступна (нет ключа Gemini, модель
+   * ответила непонятно): вызывающий считает «лицо может быть»
+   * (`mayContainFace`, CONTRACT5 п.4) и пишет предупреждение в лог.
+   */
+  private async checkFace(
+    sessionId: string,
+    userId: string | null,
+    data: Buffer,
+    mimeType: string,
+  ): Promise<FaceCheckResult | null> {
+    let genai: FaceCheckGenerator;
+    try {
+      genai = this.genai as unknown as FaceCheckGenerator;
+    } catch (e) {
+      this.logger.warn(
+        `сессия ${sessionId}: проверка лица недоступна (нет клиента Gemini) — фото потребует согласия: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return null;
+    }
+    const result = await checkFaces(
+      genai,
+      { purpose: 'reference', photo: { data, mimeType } },
+      {
+        model: GEMINI_MODEL,
+        onResponse: (res) =>
+          this.aiUsage.recordGemini(res, {
+            operation: 'reference-face-check',
+            model: GEMINI_MODEL,
+            sessionId,
+            ...(userId ? { userId } : {}),
+          }),
+      },
+    );
+    if (!result) {
+      this.logger.warn(
+        `сессия ${sessionId}: проверка лица не дала ответа — фото потребует согласия`,
+      );
+    }
+    return result;
   }
 
   private async load(sessionId: string): Promise<Session> {

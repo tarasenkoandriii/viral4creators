@@ -25,6 +25,7 @@ import { AuctionModule } from '../auction/auction.module';
 import { PortfolioModule } from '../portfolio/portfolio.module';
 import { ApiKeyModule } from '../api-key/api-key.module';
 import { VoiceUploadModule } from '../voice-upload/voice-upload.module';
+import { PersonaModule } from '../persona/persona.module';
 
 /**
  * CronModule
@@ -102,6 +103,8 @@ import { VoiceUploadModule } from '../voice-upload/voice-upload.module';
     ApiKeyModule,
     // Финальный аудит ветки K: уборка необработанных голосовых записей.
     VoiceUploadModule,
+    // Этап E Greeting 2.0: срок хранения селфи и ролика живости (В-3).
+    PersonaModule,
   ],
   controllers: [CronController, AdminCronController],
   providers: [CronJobsService, AdminCronService],

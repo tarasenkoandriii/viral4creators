@@ -645,3 +645,164 @@ describe('PATCH /sessions/:id/greeting-brief — ответ о настроен�
     expect(s.userOccasionRegister).toBe('SOLEMN');
   });
 });
+
+describe('этап G — ведущий-образ в правке из сессии (§4.8)', () => {
+  const PRESENTER = {
+    lookId: 'l1',
+    label: 'Деловой',
+    url: 'https://blob/l1.png',
+    pathname: 'users/u1/personas/p1/looks/l1.png',
+    variant: 'photo' as const,
+  };
+  const lookRow = {
+    id: 'l1',
+    label: 'Деловой',
+    status: 'ready',
+    deletedAt: null,
+    photoUrl: 'https://blob/l1.png',
+    photoPathname: 'users/u1/personas/p1/looks/l1.png',
+    activeSketch: null,
+    persona: { userId: 'u1', revokedAt: null },
+  };
+  const OLD_FLAG = process.env.PERSONA_ENABLED;
+  beforeEach(() => {
+    process.env.PERSONA_ENABLED = 'true';
+  });
+  afterAll(() => {
+    process.env.PERSONA_ENABLED = OLD_FLAG;
+  });
+
+  it('смена ведущего — смена смысла сцены: сценарий устаревает', () => {
+    const a = snap();
+    expect(scriptInputsChanged(a, snap({ presenter: PRESENTER }))).toBe(true);
+    expect(
+      scriptInputsChanged(
+        snap({ presenter: PRESENTER }),
+        snap({ presenter: { ...PRESENTER, variant: 'sketch' } }),
+      ),
+    ).toBe(true);
+    expect(
+      scriptInputsChanged(
+        snap({ presenter: PRESENTER }),
+        snap({ presenter: PRESENTER }),
+      ),
+    ).toBe(false);
+    // Другой образ того же варианта — тоже другая сцена.
+    expect(
+      scriptInputsChanged(
+        snap({ presenter: PRESENTER }),
+        snap({ presenter: { ...PRESENTER, lookId: 'l2' } }),
+      ),
+    ).toBe(true);
+  });
+
+  it('выбор образа: копия в снимок, признак персоны, сценарий стёрт, бриф проекта обновлён', async () => {
+    const { service, store, prisma } = build({
+      greetingBriefSnapshot: snap({ tone: 'WARM' }),
+    });
+    Object.assign(prisma, {
+      personaLook: { findFirst: jest.fn().mockResolvedValue(lookRow) },
+    });
+    const r = await service.updateBrief('s1', {
+      presenter: { kind: 'persona', lookId: 'l1', variant: 'photo' },
+    });
+    const s = store.get('s1')!;
+    const b = s.greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(b.presenter).toEqual(PRESENTER);
+    expect(b.usesPersona).toBe(true);
+    expect(r.promptCleared).toBe(true);
+    expect(prisma.greetingBrief.update.mock.calls[0][0].data).toMatchObject({
+      presenterLookId: 'l1',
+      presenterVariant: 'photo',
+    });
+  });
+
+  it('правка без presenter не трогает прежнюю копию образа', async () => {
+    const { service, store, prisma } = build({
+      greetingBriefSnapshot: snap({
+        tone: 'WARM',
+        presenter: PRESENTER,
+        usesPersona: true,
+      }),
+    });
+    const findFirst = jest.fn().mockResolvedValue(lookRow);
+    Object.assign(prisma, { personaLook: { findFirst } });
+    await service.updateBrief('s1', { recipientName: 'Аня' });
+    const b = store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(b.presenter).toEqual(PRESENTER);
+    expect(b.usesPersona).toBe(true);
+  });
+
+  it('клон голоса персоны в снимке держит признак персоны при правке', async () => {
+    const { service, store } = build({
+      greetingBriefSnapshot: snap({
+        tone: 'WARM',
+        senderVoice: {
+          userVoiceId: 'uv1',
+          resembleVoiceId: 'c',
+          label: 'Я',
+          personaVoice: true,
+        },
+        usesPersona: true,
+      }),
+    });
+    await service.updateBrief('s1', { recipientName: 'Аня' });
+    const b = store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(b.usesPersona).toBe(true);
+  });
+
+  it('правка на месте после упавшего рендера признак персоны не снимает (аудит п.5б)', async () => {
+    const { service, store } = build({
+      greetingBriefSnapshot: snap({
+        tone: 'WARM',
+        presenter: PRESENTER,
+        usesPersona: true,
+      }),
+      generatedVideo: { status: 'failed' },
+    });
+    const r = await service.updateBrief('s1', {
+      presenter: { kind: 'ai' } as never,
+    });
+    expect(r.newVersion).toBe(false);
+    const b = store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(b.presenter).toBeNull();
+    expect(b.usesPersona).toBe(true);
+  });
+
+  it('новая версия после готового ролика: признак следует за выбором', async () => {
+    const { service, store } = build({
+      greetingBriefSnapshot: snap({
+        tone: 'WARM',
+        presenter: PRESENTER,
+        usesPersona: true,
+      }),
+      generatedVideo: { status: 'complete' },
+    });
+    const r = await service.updateBrief('s1', {
+      presenter: { kind: 'ai' } as never,
+    });
+    expect(r.newVersion).toBe(true);
+    const b = store.get(r.sessionId)!
+      .greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(b.usesPersona).toBe(false);
+    expect(
+      (store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot)
+        .usesPersona,
+    ).toBe(true);
+  });
+
+  it('новая версия сессии спрашивает галочку витрины заново', async () => {
+    const { service, store } = build({
+      greetingBriefSnapshot: snap({
+        tone: 'WARM',
+        personaShowcaseConsentAt: '2026-09-30T00:00:00.000Z',
+      }),
+      generatedVideo: { status: 'complete' },
+    });
+    const r = await service.updateBrief('s1', { recipientName: 'Аня' });
+    expect(r.newVersion).toBe(true);
+    const b = store.get(r.sessionId)!
+      .greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(b.personaShowcaseConsentAt).toBeNull();
+  });
+});

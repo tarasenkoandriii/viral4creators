@@ -12,6 +12,17 @@ import { VoiceMode } from '../voice-mode';
 import { CameraMove } from '../camera-move';
 import { SubtitlesMode, SubtitleTheme } from '../subtitles';
 import { SketchRef } from './sketch.types';
+import type { GreetingCardStyle } from './greeting.types';
+
+/**
+ * Вид бренд-бука (этап G ТЗ Greeting 2.0 §4.7): COMPANY — все прежние;
+ * PERSONAL — личный, привязан к персоне автора и никогда не продаётся.
+ */
+export type BrandManifestKind = 'COMPANY' | 'PERSONAL';
+export const BRAND_MANIFEST_KINDS: readonly BrandManifestKind[] = [
+  'COMPANY',
+  'PERSONAL',
+];
 
 export type JsonObject = Record<string, unknown>;
 
@@ -34,6 +45,12 @@ export interface BrandCharacterView {
   originalDeleted?: boolean;
   /** Id применённого скетча — начальное состояние меню без доп. запроса. */
   activeSketchId?: string | null;
+  /**
+   * Фото сцены прошло проверку лица (CONTRACT5 п.10). При включённом
+   * режиме «Я в кадре» непроверенное фото сцены уходит в поздравление
+   * только словами, пока из него не сделан скетч.
+   */
+  photoFaceChecked?: boolean;
   /** Appearance in words — used when there is no photo or it didn't fit the 3-image cap (§10.3). */
   description: string | null;
   createdAt: string;
@@ -53,6 +70,8 @@ export interface BrandSceneView {
   label: string;
   photoUrl: string | null;
   description: string | null;
+  /** Фото прошло проверку лица (CONTRACT5 п.10), см. BrandCharacterView. */
+  photoFaceChecked?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -89,6 +108,16 @@ export interface BrandManifestView {
   scenes: BrandSceneView[];
   /** How many projects currently link to this manifest — shown before deleting. */
   projectCount: number;
+  /** Личный или корпоративный (этап G, §4.7). */
+  kind: BrandManifestKind;
+  /** Образ персоны по умолчанию для «Я в кадре»; только у PERSONAL. */
+  defaultLookId: string | null;
+  /** Подпись «от кого» по умолчанию — подставляется в бриф без отправителя. */
+  signature: string | null;
+  /** Тон по умолчанию (код GreetingTone) — подсказка брифу, не приказ. */
+  defaultTone: string | null;
+  /** Шрифт и цвет карточек поздравления; `null` — Arial белым. */
+  cardStyle: GreetingCardStyle | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -100,6 +129,7 @@ export interface BrandManifestSummaryView {
   characterCount: number;
   sceneCount: number;
   projectCount: number;
+  kind: BrandManifestKind;
   createdAt: string;
   updatedAt: string;
 }
@@ -187,6 +217,14 @@ export interface BrandManifestSnapshot {
   snapshotAt: string;
   /** Set when the user edited the snapshot for this session (§12). */
   editedAt: string | null;
+  /**
+   * Этап G (§4.7, Г-6): вид бренд-бука, подпись и стиль карточек —
+   * замораживаются вместе с остальным. Необязательные: у снимков до
+   * этапа G их нет, и читаются они как COMPANY без подписи и стиля.
+   */
+  kind?: BrandManifestKind;
+  signature?: string | null;
+  cardStyle?: GreetingCardStyle | null;
   /**
    * Когда пользователь сам поменял голос/модель озвучки ЭТОЙ сессии.
    * Пока пусто — перед первым рендером голос подтягивается из бренда

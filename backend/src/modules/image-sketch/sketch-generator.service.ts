@@ -25,6 +25,12 @@ export interface SketchGenerationInput {
   prompt: string;
   /** Байты оригинала для image-to-image; пусто — рисуем по описанию. */
   source?: { bytes: Buffer; mimeType: string } | null;
+  /**
+   * Модель вместо `GEMINI_SKETCH_MODEL`. Нужна образу персоны (ТЗ
+   * TZ-Greeting-2.0 §4.5): он фотореалистичный и идёт моделью картинок
+   * (`GEMINI_IMAGE_MODEL`), а формат вызова и три исхода — те же.
+   */
+  model?: string;
 }
 
 export type SketchGenerationOutcome =
@@ -50,7 +56,7 @@ export class SketchGeneratorService {
   async generate(
     input: SketchGenerationInput,
   ): Promise<SketchGenerationOutcome> {
-    const model = GEMINI_SKETCH_MODEL;
+    const model = input.model || GEMINI_SKETCH_MODEL;
     const contents: Array<Record<string, unknown>> = [];
     if (input.source) {
       contents.push({

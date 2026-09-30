@@ -38,6 +38,11 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { BillingService } from '../billing/billing.service';
 import { AuctionPaymentService } from './auction-payment.service';
+import {
+  PERSONAL_MANIFEST_NOT_FOR_SALE,
+  PERSONA_VIDEO_NOT_FOR_SALE,
+  videoUsesPersona,
+} from './auction-persona-guard';
 import { GoogleAdsService } from './google-ads.service';
 import { GoogleIndexingService } from './google-indexing.service';
 import { LiveAuctionOrchestratorService } from './live-auction-orchestrator.service';
@@ -184,6 +189,24 @@ export class AuctionService {
           'this brand manifest was already sold exclusively and can no longer be listed',
         );
       }
+      // Этап G (ТЗ Greeting 2.0 §4.7, Т-8): личный бренд-бук — лицо и
+      // голос автора, продаже не подлежит. Независимо от PERSONA_ENABLED:
+      // выключенный режим не делает уже созданный личный бренд-бук
+      // продаваемым.
+      if (manifest.kind === 'PERSONAL') {
+        throw new ForbiddenException(PERSONAL_MANIFEST_NOT_FOR_SALE);
+      }
+    }
+    // Этап G (§4.7): ролик с персоной не продаётся ни с бренд-буком, ни
+    // без него. Проверяются обе ссылки работы — исходная и с водяным
+    // знаком (см. `auction-persona-guard.ts`, как узнаётся ролик).
+    if (
+      await videoUsesPersona(this.prisma, [
+        item.videoUrl,
+        item.watermarkedVideoUrl,
+      ])
+    ) {
+      throw new ForbiddenException(PERSONA_VIDEO_NOT_FOR_SALE);
     }
 
     const reserve = dto.reservePrice ?? dto.startingPrice;

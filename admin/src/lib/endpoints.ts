@@ -42,6 +42,8 @@ import type {
   SpeechRecognitionProviderSettingsView,
   VoiceAssistantSettingsView,
   SetVoiceAssistantInput,
+  PersonaLookQuotaSettingsView,
+  SetPersonaLookQuotaInput,
   MusicCatalogView,
   AiGuideSettingsView,
   SetAiGuideSettingsInput,
@@ -310,6 +312,15 @@ export function getVoiceAssistantSettings() {
 
 export function setVoiceAssistantSettings(input: SetVoiceAssistantInput) {
   return apiPatch<VoiceAssistantSettingsView>('/admin/settings/voice-assistant', input);
+}
+
+/** «Квота образов «Я в кадре»» — новых образов персоны в сутки и в месяц по тарифу (В-7). */
+export function getPersonaLookQuotaSettings() {
+  return apiGet<PersonaLookQuotaSettingsView>('/admin/settings/persona-look-quota');
+}
+
+export function setPersonaLookQuotaSettings(input: SetPersonaLookQuotaInput) {
+  return apiPatch<PersonaLookQuotaSettingsView>('/admin/settings/persona-look-quota', input);
 }
 
 export function setVoiceoverProviderDefault(provider: VoiceoverProviderKey) {

@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsIn,
   IsNumber,
+  IsOptional,
   IsString,
   Matches,
   Max,
@@ -40,6 +41,14 @@ export class VoiceSampleUploadUrlRequestDto {
   @IsString()
   @IsIn(ALLOWED_MIME_TYPES)
   mimeType!: string;
+
+  /**
+   * Голос персоны «Я в кадре» (ТЗ TZ-Greeting-2.0 §4.6): один на персону,
+   * вне лимита клонов — проверка лимита на этом шаге другая.
+   */
+  @IsOptional()
+  @IsBoolean()
+  forPersona?: boolean;
 }
 
 const EXT_BY_MIME: Readonly<Record<string, string>> = {
@@ -76,4 +85,20 @@ export class VoiceCloneRequestDto {
    */
   @IsBoolean()
   consent!: boolean;
+
+  /** Голос персоны (§4.6) — см. `VoiceSampleUploadUrlRequestDto.forPersona`. */
+  @IsOptional()
+  @IsBoolean()
+  forPersona?: boolean;
+
+  /**
+   * Версия фразы согласия, которую человек произнёс первой в записи
+   * (`GET /personas/voice-consent-phrase`). Обязательна при
+   * `forPersona`: запись со старой фразой — не то согласие, что сейчас
+   * действует.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  consentPhraseVersion?: string;
 }

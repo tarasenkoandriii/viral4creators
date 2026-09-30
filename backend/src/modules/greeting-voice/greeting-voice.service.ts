@@ -39,6 +39,13 @@ import {
   GrokVideoService,
 } from '../generation/grok-video.service';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  PERSONA_DISABLED_CODE,
+  PERSONA_DISABLED_MESSAGE,
+  nextUsesPersona,
+  personaEnabled,
+  snapshotUsesPersona,
+} from '../../common/greeting-persona';
 
 /**
  * Идентификаторы роестра xAI — строчные слова («eve», «leo», «carina»).
@@ -66,6 +73,7 @@ type UserVoiceRow = {
   label: string;
   status: string;
   resembleVoiceId: string | null;
+  personaId?: string | null;
 };
 
 @Injectable()
@@ -164,11 +172,15 @@ export class GreetingVoiceService {
       : null;
     // Свой клон гасит пресетный голос: произносить реплику может
     // кто-то ОДИН — либо модель в кадре, либо наш синтез поверх.
-    return this.write(sessionId, {
-      ...snapshot,
-      senderVoice: next,
-      ...(next ? { presetVoiceId: null } : {}),
-    });
+    return this.write(
+      sessionId,
+      {
+        ...snapshot,
+        senderVoice: next,
+        ...(next ? { presetVoiceId: null } : {}),
+      },
+      session,
+    );
   }
 
   /**
@@ -193,17 +205,38 @@ export class GreetingVoiceService {
     if (next && !PRESET_VOICE_ID_PATTERN.test(next)) {
       throw new BadRequestException('Неверный идентификатор голоса');
     }
-    return this.write(sessionId, {
-      ...snapshot,
-      presetVoiceId: next,
-      ...(next ? { senderVoice: null } : {}),
-    });
+    return this.write(
+      sessionId,
+      {
+        ...snapshot,
+        presetVoiceId: next,
+        ...(next ? { senderVoice: null } : {}),
+      },
+      session,
+    );
   }
 
   private async write(
     sessionId: string,
-    snapshot: GreetingBriefSnapshot,
+    draft: GreetingBriefSnapshot,
+    session: Session,
   ): Promise<GreetingVoiceView> {
+    // Этап G (§4.7): признак персоны пересчитывается при каждой смене
+    // голоса — выбрали клон персоны — ролик с персоной; сняли — признак
+    // остаётся, только если персона есть в кадре или в бренд-буке.
+    // После готового ролика признак не снимается (CONTRACT5 п.5б).
+    const snapshot: GreetingBriefSnapshot = {
+      ...draft,
+      usesPersona: nextUsesPersona(
+        draft.usesPersona,
+        snapshotUsesPersona({
+          presenter: draft.presenter ?? null,
+          manifestKind: session.brandManifestSnapshot?.kind ?? null,
+          senderVoice: draft.senderVoice ?? null,
+        }),
+        session.generatedVideo,
+      ),
+    };
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: snapshot,
     });
@@ -234,6 +267,7 @@ export class GreetingVoiceService {
             label: true,
             status: true,
             resembleVoiceId: true,
+            personaId: true,
           },
         })) as UserVoiceRow | null)
       : null;
@@ -243,10 +277,20 @@ export class GreetingVoiceService {
     if (row.status !== 'READY' || !row.resembleVoiceId) {
       throw new NotFoundException('Голос ещё не готов');
     }
+    // Голос персоны — часть режима «Я в кадре»: при выключенном режиме
+    // его не назначить (CONTRACT5, всё про персону — только за флагом).
+    if (row.personaId && !personaEnabled()) {
+      throw new NotFoundException({
+        code: PERSONA_DISABLED_CODE,
+        message: PERSONA_DISABLED_MESSAGE,
+      });
+    }
     return {
       userVoiceId: row.id,
       resembleVoiceId: row.resembleVoiceId,
       label: row.label,
+      // Этап G (§4.7): клон голоса персоны делает ролик роликом с персоной.
+      ...(row.personaId ? { personaVoice: true } : {}),
     };
   }
 

@@ -27,6 +27,16 @@
  *    звука» виден всегда, пока голос включён, и помнится на устройстве;
  *    уход с шага и размонтирование глушат реплику. Правила — в
  *    `lib/hint-audio.ts`, состояние страницы — в `lib/hint-audio-session.ts`.
+ * 6. **Проактивность (K4, §4А.2 п.1).** У включившего «голосом» строка
+ *    раскрывается и звучит при входе на шаг — через 1,5 с, чтобы не
+ *    говорить о шаге, мимо которого прокрутили (`autoOpenDelayMs`), а
+ *    после 20 секунд без действия прозвучавшая реплика повторяется ОДИН
+ *    раз — тем же файлом, без запроса (`VOICE_IDLE_REPEAT_MS`). Почему
+ *    у строки текста по-прежнему 8 секунд — у `autoOpenDelayMs`.
+ *    «Без звука» — общее со всей страницей (`setHintMuted`): его слушает
+ *    и проактивная речь помощника. Реплики идут через очередь страницы
+ *    (`sayReply`): подсказка не обрывает звучащую проактивную речь, а
+ *    ждёт её конца; уход с шага глушит только подсказку.
  */
 
 import { useEffect, useReducer, useRef, useState } from 'react';
@@ -36,7 +46,7 @@ import { useI18n } from '../lib/i18n-context';
 import { useHelp } from '../features/projects/help-context';
 import { routes } from '../lib/router';
 import {
-  HINT_IDLE_MS,
+  autoOpenDelayMs,
   hintReducer,
   initialHintState,
   isVisible,
@@ -47,20 +57,22 @@ import {
   requestWizardHint,
   sendWizardComplaint,
 } from '../services/wizard-guide-api';
-import {
-  VOICE_BUDGET_EXHAUSTED,
-  hintVoicePlan,
-  readMuted,
-  writeMuted,
-} from '../lib/hint-audio';
+import { VOICE_BUDGET_EXHAUSTED, hintVoicePlan } from '../lib/hint-audio';
+import { VOICE_IDLE_REPEAT_MS, idleRepeatDue } from '../lib/voice-proactive';
 import {
   claimVoiceBudgetNotice,
   hasGesture,
   hintPlayer,
+  isHintMuted,
   isVoiceBudgetExhaustedToday,
   markGesture,
   markVoiceBudgetExhausted,
+  sayReply,
+  setHintMuted,
+  silenceStepHint,
   subscribeGesture,
+  subscribeHintMuted,
+  subscribeVoiceActivity,
   useVoiceBudgetOwner,
 } from '../lib/hint-audio-session';
 import type { GuideAction } from '../types';
@@ -75,15 +87,6 @@ import type { GuideAction } from '../types';
  */
 function noticeText(code: string, t: { personalLimit: string }): string | null {
   return code === 'personal-limit' ? t.personalLimit : null;
-}
-
-/** localStorage, которого может не быть (приватный режим, WebView). */
-function deviceStorage(): Storage | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
 }
 
 /** Было ли касание на странице — с подпиской на первое. */
@@ -172,9 +175,24 @@ export function HintLine({
   // ── Голос (§4А.4) ─────────────────────────────────────────────────
   const voiceOn = enabled && voice;
   const gestured = useFirstGesture(voiceOn);
-  const [muted, setMuted] = useState(() => readMuted(deviceStorage()));
+  // «Без звука» — общее на страницу (K4): его же слушает проактивная
+  // речь помощника.
+  const [muted, setMuted] = useState(isHintMuted);
+  useEffect(() => subscribeHintMuted(setMuted), []);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  /**
+   * Прозвучавшая на шаге реплика — для повтора после 20 секунд простоя
+   * (K4): тот же файл, без запроса. `repeatedKeyRef` — повтор был.
+   */
+  const [played, setPlayed] = useState<{
+    stepId: string;
+    key: string;
+    url: string;
+  } | null>(null);
+  const repeatedKeyRef = useRef<string | null>(null);
+  const stepIdRef = useRef(stepId);
+  stepIdRef.current = stepId;
   /** Ключ кеша подсказки, приехавшей на шаг, — по нему просят звук. */
   const [spoken, setSpoken] = useState<{
     stepId: string;
@@ -206,11 +224,18 @@ export function HintLine({
   // возвращает ТОТ ЖЕ объект, когда событие ничего не изменило, — иначе
   // каждый рендер перезаряжал бы отсчёт и восьми секунд не наступало бы
   // никогда.
+  //
+  // У включившего «голосом» ожидание короткое (K4): вход на шаг — сам
+  // по себе повод заговорить, 1,5 с — только от дребезга прокрутки
+  // (`autoOpenDelayMs`).
   useEffect(() => {
     if (!waitsForIdle(state)) return;
-    const id = setTimeout(() => dispatch({ type: 'idle' }), HINT_IDLE_MS);
+    const id = setTimeout(
+      () => dispatch({ type: 'idle' }),
+      autoOpenDelayMs(voiceOn)
+    );
     return () => clearTimeout(id);
-  }, [state]);
+  }, [state, voiceOn]);
 
   // Шаг берётся ИЗ СОСТОЯНИЯ, а не из пропа, и проп в зависимостях не
   // участвует. Иначе уход с шага во время загрузки давал лишний
@@ -271,7 +296,15 @@ export function HintLine({
       if (pendingRef.current !== hintKey) return;
       pendingRef.current = null;
       if (answer.kind === 'play') {
-        if (!mutedRef.current) hintPlayer.play(answer.url);
+        if (!mutedRef.current) {
+          sayReply(answer.url, 'hint');
+          // Шаг — текущий: ответ на ушедший шаг уронил `pendingRef` выше.
+          setPlayed({
+            stepId: stepIdRef.current,
+            key: hintKey,
+            url: answer.url,
+          });
+        }
       } else if (answer.kind === VOICE_BUDGET_EXHAUSTED) {
         // Дальше голос молчит до конца суток UTC (и микрофон тоже —
         // источник общий), а мастер работает текстом. Сказать об этом —
@@ -287,11 +320,55 @@ export function HintLine({
   useEffect(
     () => () => {
       pendingRef.current = null;
-      hintPlayer.stop();
+      // Только подсказка ушедшего шага — проактивная речь о событии
+      // (ролик готов, отказ) шагом не обрывается (CONTRACT5).
+      silenceStepHint();
       setBudgetNotice(false);
+      setPlayed(null);
     },
     [stepId]
   );
+
+  // Простой 20 секунд после реплики (K4, §4А.2 п.1): та же реплика ещё
+  // ОДИН раз, тем же файлом. Отсчёт — с конца звучания и заново от
+  // каждого действия человека: касания, клавиши, ввода, фразы в микрофон
+  // (её сообщает помощник, `markVoiceActivity`).
+  useEffect(() => {
+    if (!played || played.stepId !== stepId) return;
+    if (
+      !idleRepeatDue({
+        voice: voiceOn,
+        muted,
+        spokenKey: played.key,
+        repeatedKey: repeatedKeyRef.current,
+      })
+    ) {
+      return;
+    }
+    let id: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      clearTimeout(id);
+      // Пока реплика звучит, простоя нет — отсчёт с её конца.
+      if (hintPlayer.playing) return;
+      id = setTimeout(() => {
+        if (mutedRef.current || repeatedKeyRef.current === played.key) return;
+        repeatedKeyRef.current = played.key;
+        sayReply(played.url, 'hint');
+      }, VOICE_IDLE_REPEAT_MS);
+    };
+    arm();
+    const offPlaying = hintPlayer.onPlayingChange(arm);
+    const offVoice = subscribeVoiceActivity(arm);
+    const events = ['pointerdown', 'keydown', 'input'] as const;
+    for (const e of events) window.addEventListener(e, arm, true);
+    return () => {
+      clearTimeout(id);
+      offPlaying();
+      offVoice();
+      for (const e of events) window.removeEventListener(e, arm, true);
+    };
+    // `played` целиком: новая реплика — новый отсчёт.
+  }, [played, stepId, voiceOn, muted]);
   useEffect(() => {
     if (!voiceOn) hintPlayer.stop();
   }, [voiceOn]);
@@ -299,10 +376,9 @@ export function HintLine({
   const toggleMute = () => {
     // Кнопка — тоже касание: отпирает звук, если его ещё не было.
     markGesture();
-    const next = !muted;
-    setMuted(next);
-    writeMuted(deviceStorage(), next);
-    if (next) hintPlayer.stop();
+    // Общее на страницу: запоминается на устройстве, глушит плеер и
+    // доходит до помощника (K4).
+    setHintMuted(!muted);
   };
 
   if (!isVisible(state)) return null;

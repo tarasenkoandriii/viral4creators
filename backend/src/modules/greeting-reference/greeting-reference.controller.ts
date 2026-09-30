@@ -4,7 +4,7 @@
  *   POST   /sessions/:id/greeting-references/confirm     { pathname, label, description? }
  *   POST   /sessions/:id/greeting-references/settings    три варианта сеттинга (фича №36)
  *   POST   /sessions/:id/greeting-references/generate    нарисовать кадр по брифу (фича №6)
- *   PATCH  /sessions/:id/greeting-references/:imageId    label / description
+ *   PATCH  /sessions/:id/greeting-references/:imageId    label / description / faceConsent (Г-8)
  *   DELETE /sessions/:id/greeting-references/:imageId
  *
  * /sessions convention — the session UUID is the bearer (same as

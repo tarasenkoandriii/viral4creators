@@ -8,12 +8,15 @@
  * пишет.
  */
 
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import {
   EXPLICIT_TTS_PROVIDER_KEYS,
   type ExplicitTtsProviderKey,
 } from '../tts/default-tts-provider';
-import { textFitsRegister } from '../../common/greeting-policy';
+import {
+  REGISTER_POLICY,
+  textFitsRegister,
+} from '../../common/greeting-policy';
 import type { GreetingRegister } from '../../common/types/greeting.types';
 import { isSupportedLocale, type SupportedLocale } from '../../common/locale';
 
@@ -150,6 +153,25 @@ export function hintAudioPathname(audioKey: string, mimeType: string): string {
 }
 
 /**
+ * Путь личной реплики (сводка перед согласием, K4 / CONTRACT5): под
+ * префиксом проекта и со СЛУЧАЙНЫМ именем — 128 бит, ни из текста, ни из
+ * имени получателя не выводится. Удаляет крон транзитных записей в
+ * пределах часа и уборка проекта.
+ */
+export function ephemeralSpeechPathname(
+  projectId: string,
+  mimeType: string,
+  random: () => string = () => randomBytes(16).toString('hex'),
+): string {
+  const ext = mimeType.includes('wav')
+    ? 'wav'
+    : mimeType.includes('ogg')
+      ? 'ogg'
+      : 'mp3';
+  return `projects/${projectId}/assistant-speech-${random()}.${ext}`;
+}
+
+/**
  * Ключ подсказки принадлежит сценарию проекта.
  *
  * Ключ приходит от клиента, и без этой проверки маршрут озвучки одного
@@ -175,4 +197,50 @@ export function mayVoiceInRegister(
 ): boolean {
   if (!register) return true;
   return textFitsRegister(register, text);
+}
+
+/**
+ * «Коротко» в траурном и деликатном регистрах (§4А.4, K4): там, где
+ * политика регистра проверяет текст (`strictText` — SENSITIVE и
+ * MOURNING), помощник говорит не длиннее этого числа знаков. Порядка
+ * двух коротких фраз — около десяти секунд речи: на соболезновании
+ * абзац голосом звучит как лекция, а не как помощь.
+ */
+export const SOMBER_SPEECH_MAX = 160;
+
+/** Границы фраз: точка, вопрос, многоточие — с пробелом после. */
+function sentencesOf(text: string): string[] {
+  return (text.match(/[^.!?…]+[.!?…]*\s*/gu) ?? [text])
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Что из реплики произносить в регистре повода (§3.7, §4А.4, K4).
+ *
+ * - регистр неизвестен или праздничный — реплика целиком;
+ * - реплика не проходит `textFitsRegister` — `null`: не звучит вовсе
+ *   (текст на экране остаётся);
+ * - строгий регистр и реплика длиннее `SOMBER_SPEECH_MAX` — первые
+ *   ЦЕЛЫЕ фразы, укладывающиеся в предел. Начало той же реплики, а не
+ *   пересказ: звучит ровно то, что человек видит первым на экране. Даже
+ *   первая фраза длиннее предела — `null`: резать фразу посередине
+ *   значило бы произнести обрывок.
+ */
+export function speechForRegister(
+  register: GreetingRegister | null,
+  text: string,
+): string | null {
+  const clean = text.trim();
+  if (!clean) return null;
+  if (!mayVoiceInRegister(register, clean)) return null;
+  if (!register || !REGISTER_POLICY[register].strictText) return clean;
+  if (clean.length <= SOMBER_SPEECH_MAX) return clean;
+  let out = '';
+  for (const sentence of sentencesOf(clean)) {
+    const next = out ? `${out} ${sentence}` : sentence;
+    if (next.length > SOMBER_SPEECH_MAX) break;
+    out = next;
+  }
+  return out || null;
 }

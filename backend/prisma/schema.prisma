@@ -218,6 +218,8 @@ model User {
 
   // Клонирование голоса — self-service, этап 73, TODO п.32.
   userVoices UserVoice[]
+  /// «Я в кадре» (Greeting 2.0, фаза 1Б, этап E): одна персона на аккаунт.
+  persona    Persona?
 
   // Принятие оферты и условий использования (ТЗ §20, этап 24): когда и
   // какую версию документов пользователь принял. Анонимный путь хранит
@@ -738,10 +740,19 @@ model GreetingBrief {
   /// получателю» (§6.3, вне объёма этого ТЗ).
   occasionDate DateTime?
 
+  /// «Кто в кадре» (этап G, ТЗ Greeting 2.0 §4.8): NULL — ИИ-ведущий;
+  /// иначе образ персоны автора и вариант 'photo' | 'sketch'. В снимок
+  /// сессии копируется сам образ (URL, pathname) — удаление образа не
+  /// ломает уже снятый ролик.
+  presenterLookId  String?
+  presenterLook    PersonaLook? @relation("GreetingPresenterLook", fields: [presenterLookId], references: [id], onDelete: SetNull)
+  presenterVariant String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
   @@index([brandManifestId])
+  @@index([presenterLookId])
   @@map("greeting_briefs")
 }
 
@@ -843,6 +854,22 @@ model BrandManifest {
   /// именно этот брендбук в новых работах. Выставляется только сервисом
   /// при подтверждённой AuctionPayment, никогда напрямую пользователем.
   isLocked Boolean @default(false)
+
+  /// Личный бренд-бук «Я в кадре» (этап G, ТЗ Greeting 2.0 §4.7):
+  /// COMPANY — все существующие; PERSONAL — привязан к персоне, никогда
+  /// не продаётся на аукционе (отказ на сервере).
+  kind          BrandManifestKind @default(COMPANY)
+  personaId     String?
+  persona       Persona?          @relation(fields: [personaId], references: [id], onDelete: SetNull)
+  /// Образ по умолчанию для «Я в кадре»; удаление образа не ломает бренд-бук.
+  defaultLookId String?
+  defaultLook   PersonaLook?      @relation("BrandDefaultLook", fields: [defaultLookId], references: [id], onDelete: SetNull)
+  /// Подпись «от кого» по умолчанию.
+  signature     String?
+  /// Тон по умолчанию (код GreetingTone строкой; проверяется сервисом).
+  defaultTone   String?
+  /// Стиль карточек: { font, color } — сегодня карточки жёстко Arial белым.
+  cardStyle     Json?
 
   projects        Project[]
   characters      BrandCharacter[]
@@ -3122,11 +3149,17 @@ model UserVoice {
   /// Причина FAILED — с вебхука или от самого вызова Resemble.
   error String?
 
+  /// Голос персоны «Я в кадре» (этап F, ТЗ Greeting 2.0 §4.6): один на
+  /// персону, в лимит обычных клонов (`MAX_USER_VOICES`) не входит.
+  personaId String?
+  persona   Persona? @relation(fields: [personaId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([resembleVoiceId])
+  @@index([personaId])
   @@map("user_voices")
 }
 
@@ -3857,6 +3890,7 @@ model ImageSketch {
   expiresAt DateTime?
 
   activeForBrandCharacter BrandCharacter? @relation("ActiveSketchBrandCharacter")
+  activeForPersonaLook    PersonaLook?    @relation("ActiveSketchPersonaLook")
   activeForBrandScene     BrandScene?     @relation("ActiveSketchBrandScene")
   activeForProductItem    ProductItem?    @relation("ActiveSketchProductItem")
 
@@ -4623,4 +4657,82 @@ model AuctionLiveVoiceCue {
   @@unique([listingId, seq])
   @@index([listingId])
   @@map("auction_live_voice_cues")
+}
+
+// ── «Я в кадре» (Greeting 2.0, фаза 1Б, этапы E–G) ─────────────────────
+// ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §4, §6. Всё — за
+// флагом PERSONA_ENABLED; выпуск людям — после юридического шлюза §4.10.
+
+enum BrandManifestKind {
+  COMPANY
+  PERSONAL
+}
+
+/// Персона автора: согласие, селфи, живость, оценка возраста. Одна на
+/// аккаунт — вторая «я» была бы чужим лицом (§4.2).
+model Persona {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Согласие — до камеры; без него запись не создаётся (§4.3).
+  consentGivenAt     DateTime
+  consentText        String   @db.Text
+  consentTextVersion String
+
+  /// users/{userId}/personas/{id}/… — URL на фронтенд не отдаются (§4.9).
+  selfiePathname    String?
+  livenessPathname  String?
+  livenessCheckedAt DateTime?
+  /// Итог автопроверки: одно лицо, анфас, свет, не экран (§4.3).
+  verifyResult      Json?
+  /// Оценка возраста диапазоном (§4.4) — только для этого режима.
+  ageMin            Int?
+  ageMax            Int?
+  ageEstimatedAt    DateTime?
+  /// Когда удалены селфи и ролик живости по сроку хранения (В-3).
+  sourcesPurgedAt   DateTime?
+
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  looks          PersonaLook[]
+  voices         UserVoice[]
+  brandManifests BrandManifest[]
+
+  @@map("personas")
+}
+
+/// Образ персоны: только из селфи или другого образа (§4.5).
+model PersonaLook {
+  id        String  @id @default(cuid())
+  personaId String
+  persona   Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+
+  label        String
+  /// Пресет ('business' | 'evening' | 'festive' | 'sport' | 'winter') или NULL.
+  preset       String?
+  prompt       String?  @db.Text
+  targetAge    Int?
+  /// NULL — из селфи (базовый образ); иначе из другого образа.
+  sourceLookId String?
+  isBase       Boolean  @default(false)
+  photoPathname String?
+  photoUrl      String?
+  /// Скетч-аватар образа — тем же приёмом, что BrandCharacter.activeSketchId.
+  activeSketchId String?      @unique
+  activeSketch   ImageSketch? @relation("ActiveSketchPersonaLook", fields: [activeSketchId], references: [id], onDelete: SetNull)
+  /// pending | ready | failed
+  status       String   @default("pending")
+  error        String?
+  deletedAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  presenterForBriefs GreetingBrief[] @relation("GreetingPresenterLook")
+  defaultForBrands   BrandManifest[] @relation("BrandDefaultLook")
+
+  @@index([personaId, deletedAt])
+  @@map("persona_looks")
 }

@@ -3,6 +3,7 @@
  * (currency derived), title, optional Brand Manifest (§12).
  */
 
+import { manifestsForProjectType } from '../../lib/persona-greeting';
 import { useEffect, useState } from 'react';
 import { Gift, Globe, Layers, Lock, Package, Search } from 'lucide-react';
 import {
@@ -93,6 +94,16 @@ export function ProjectCreateScreen() {
   const [brandManifestId, setBrandManifestId] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Личный бренд-бук «Я в кадре» — только для поздравления (CONTRACT5
+  // п.5в): товарной форме он не предлагается, а выбранный в форме
+  // поздравления и оставшийся после смены типа — не отправляется.
+  const productManifests = manifestsForProjectType(manifests.data ?? [], type);
+  const productManifestId = productManifests.some(
+    (m) => m.id === brandManifestId
+  )
+    ? brandManifestId
+    : '';
 
   const selectedCountry =
     countries.data?.find((c) => c.code === countryCode) ?? null;
@@ -271,7 +282,7 @@ export function ProjectCreateScreen() {
         type,
         title: title.trim(),
         countryCode,
-        ...(brandManifestId ? { brandManifestId } : {}),
+        ...(productManifestId ? { brandManifestId: productManifestId } : {}),
       });
       navigate(routes.project(project.id), true);
     } catch (err) {
@@ -624,7 +635,7 @@ export function ProjectCreateScreen() {
                 >
                   <Select
                     id="project-manifest"
-                    value={brandManifestId}
+                    value={productManifestId}
                     onChange={(e) => setBrandManifestId(e.target.value)}
                     disabled={
                       submitting ||
@@ -635,7 +646,7 @@ export function ProjectCreateScreen() {
                     <option value="">
                       {dict.projectCreateScreen.noManifestOption}
                     </option>
-                    {manifests.data?.map((m) => (
+                    {productManifests.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.title}
                       </option>

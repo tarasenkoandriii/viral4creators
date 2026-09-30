@@ -166,6 +166,12 @@ const JOB_REGISTRY: CronJobInfo[] = [
       'старше часа — файл и строка учёта. Каждые 15 минут: Условия обещают, что звук не хранится.',
   },
   {
+    jobKey: 'persona-sources-purge',
+    description:
+      '«Я в кадре»: удаление селфи и ролика живости через 30 дней после последнего образа персоны (В-3) ' +
+      'и файлов незавершённых попыток старше суток. Раз в сутки.',
+  },
+  {
     jobKey: 'sweep-orphans',
     description:
       'Метла по осиротевшим файлам хранилища (sessions/projects/brand-manifests/publications). ' +
@@ -306,6 +312,8 @@ export class AdminCronService {
         return this.jobs.runCleanupSessions();
       case 'voice-uploads-sweep':
         return this.jobs.runVoiceUploadsSweep();
+      case 'persona-sources-purge':
+        return this.jobs.runPersonaSourcesPurge();
       case 'sweep-orphans':
         return this.jobs.runSweepOrphans({
           dryRun: debugMode ? '1' : undefined,

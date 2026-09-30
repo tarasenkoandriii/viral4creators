@@ -29,6 +29,10 @@ import { useRenderVoiceConsent } from '../../voice/VoiceConsentFlow';
 import { mediaPlaybackRef } from '../../../lib/media-playback';
 import { VoiceConsentCard } from '../../voice/VoiceConsentCard';
 import {
+  announceStartRefusal,
+  useVoiceProactiveWatch,
+} from '../../voice/voice-proactive-bus';
+import {
   getGreetingVideoStatus,
   startGreetingVideo,
 } from '../../../services/greeting-api';
@@ -36,6 +40,7 @@ import {
   type GeneratedVideo,
   GenerationStatus,
   type GenerationPrompt,
+  ModerationStatus,
 } from '../../../types';
 import { GreetingDeliveryPanel } from '../GreetingDeliveryPanel';
 import type { GreetingBriefView } from '../../../types/project';
@@ -143,6 +148,9 @@ export function VideoStep({
         // тех, кто пришёл за поздравлением.
         recordInviteEvent('wall');
       } else setError(errorMessage(e));
+      // K4: отказ старта (стена, суточный лимит) помощник объясняет и
+      // голосом — у включивших «голосом»; экран показал его сам.
+      announceStartRefusal(e);
     } finally {
       startingRef.current = false;
       setStarting(false);
@@ -180,6 +188,15 @@ export function VideoStep({
           ? 'done'
           : 'in-progress',
     start: () => void start(),
+  });
+
+  // K4 (§4А.2 п.1): ролик готов, сценарий помечен проверкой — поводы
+  // заговорить. Слышит их помощник, только если «голосом» включён.
+  useVoiceProactiveWatch({
+    sessionId,
+    videoStatus: video?.status ?? null,
+    promptId: prompt?.promptId ?? null,
+    scriptFlagged: prompt?.moderationStatus === ModerationStatus.FLAGGED,
   });
 
   return (

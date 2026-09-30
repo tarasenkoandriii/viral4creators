@@ -2,7 +2,13 @@
  * Фильтр — единственная точка, где текст исключения встречается с
  * клиентом (этап 54, Б-3.6). Проверяем границу: своё уходит, чужое нет.
  */
-import { BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   HttpExceptionFilter,
   INTERNAL_ERROR_MESSAGE,
@@ -21,7 +27,11 @@ function run(exception: unknown, headers?: Record<string, string>) {
   return {
     status: status.mock.calls[0][0] as number,
     body: json.mock.calls[0][0] as {
-      error: { code: string; message: string };
+      error: {
+        code: string;
+        message: string;
+        details?: Record<string, unknown>;
+      };
       meta: { requestId: string };
     },
   };
@@ -87,5 +97,49 @@ describe('HttpExceptionFilter', () => {
     // Незнакомая/отсутствующая локаль — прежнее поведение, русский текст.
     const unknown = run(new Error('boom'), { 'accept-language': 'xx' });
     expect(unknown.body.error.message).toBe(INTERNAL_ERROR_MESSAGE);
+  });
+});
+
+describe('HttpExceptionFilter — машинный код отказа (CONTRACT5)', () => {
+  it('`code` из тела исключения уходит в error.details.code вместе с текстом', () => {
+    const r = run(
+      new NotFoundException({
+        code: 'PERSONA_DISABLED',
+        message: 'Режим «Я в кадре» недоступен',
+      }),
+    );
+    expect(r.status).toBe(404);
+    expect(r.body.error.message).toBe('Режим «Я в кадре» недоступен');
+    expect(r.body.error.details).toEqual({ code: 'PERSONA_DISABLED' });
+  });
+
+  it('`code` рядом с другими пропускаемыми полями (quota) — оба на месте', () => {
+    const r = run(
+      new HttpException(
+        { code: 'SKETCH_QUOTA', message: 'Лимит', quota: { dayLeft: 0 } },
+        429,
+      ),
+    );
+    expect(r.body.error.details).toEqual({
+      code: 'SKETCH_QUOTA',
+      quota: { dayLeft: 0 },
+    });
+  });
+
+  it('`code` не-идентификатор (пробелы, объект, длинная строка) не пропускается', () => {
+    for (const code of [
+      'SELECT * FROM users',
+      { nested: 1 },
+      'A'.repeat(65),
+      '',
+    ]) {
+      const r = run(new ConflictException({ code, message: 'x' }));
+      expect(r.body.error.details).toBeUndefined();
+    }
+  });
+
+  it('нет `code` — details нет (формат прежних ответов не меняется)', () => {
+    const r = run(new ConflictException({ message: 'Генерация уже идёт' }));
+    expect(r.body.error.details).toBeUndefined();
   });
 });

@@ -61,6 +61,7 @@ import { ProductFeedImportModule } from './modules/product-feed-import/product-f
 import { ActorsModule } from './modules/actors/actors.module';
 import { VirtualStudioModule } from './modules/virtual-studio/virtual-studio.module';
 import { UserVoicesModule } from './modules/user-voices/user-voices.module';
+import { PersonaModule } from './modules/persona/persona.module';
 import { AssistantModule } from './modules/assistant/assistant.module';
 import { TutorialScenarioModule } from './modules/tutorial-scenario/tutorial-scenario.module';
 import { ClientSiteTutorialModule } from './modules/client-site-tutorial/client-site-tutorial.module';
@@ -151,6 +152,8 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     ActorsModule,
     VirtualStudioModule,
     UserVoicesModule,
+    // Режим «Я в кадре» (ТЗ Greeting 2.0 §4), за рубильником PERSONA_ENABLED.
+    PersonaModule,
     ExportModule,
     AssistantModule,
     TutorialScenarioModule,

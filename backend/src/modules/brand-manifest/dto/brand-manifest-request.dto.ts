@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsIn,
   IsOptional,
@@ -5,6 +6,7 @@ import {
   Length,
   Validate,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { VOICE_MODES, VoiceMode } from '../../../common/voice-mode';
 import { CAMERA_MOVES, CameraMove } from '../../../common/camera-move';
@@ -15,7 +17,36 @@ import {
   SubtitleTheme,
 } from '../../../common/subtitles';
 import { IsJsonObject } from './json-object.validator';
-import type { JsonObject } from '../../../common/types/brand-manifest.types';
+import type {
+  BrandManifestKind,
+  JsonObject,
+} from '../../../common/types/brand-manifest.types';
+import { BRAND_MANIFEST_KINDS } from '../../../common/types/brand-manifest.types';
+import {
+  GREETING_TONES,
+  GreetingTone,
+} from '../../../common/types/greeting.types';
+import {
+  CARD_COLOR_KEYS,
+  CARD_FONT_KEYS,
+} from '../../../common/greeting-cards';
+
+/**
+ * Стиль карточек поздравления (этап G, Г-6) — только ключи белого списка
+ * `common/greeting-cards.ts`: шрифт должен быть у ffmpeg-сервиса, цвет —
+ * читаться на тёмной плашке.
+ */
+export class CardStyleDto {
+  @IsIn(CARD_FONT_KEYS, {
+    message: `cardStyle.font must be one of: ${CARD_FONT_KEYS.join(', ')}`,
+  })
+  font!: string;
+
+  @IsIn(CARD_COLOR_KEYS, {
+    message: `cardStyle.color must be one of: ${CARD_COLOR_KEYS.join(', ')}`,
+  })
+  color!: string;
+}
 
 /**
  * Shared by POST /brand-manifests and PATCH /brand-manifests/:id.
@@ -107,4 +138,39 @@ export class BrandManifestRequestDto {
   @ValidateIf((_, v) => v !== null)
   @Validate(IsJsonObject)
   effects?: JsonObject | null;
+  /**
+   * Этап G (ТЗ Greeting 2.0 §4.7): личный бренд-бук. Меняется только при
+   * создании — сервис отвергает смену вида у существующего (личный
+   * бренд-бук, ставший корпоративным, ушёл бы на аукцион с лицом автора).
+   * PERSONAL требует персону автора и включённый режим; `personaId`
+   * сервер ставит сам.
+   */
+  @IsOptional()
+  @IsIn(BRAND_MANIFEST_KINDS)
+  kind?: BrandManifestKind;
+
+  /** Образ персоны по умолчанию («Я в кадре»); только у PERSONAL. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @Length(1, 64)
+  defaultLookId?: string | null;
+
+  /** Подпись «от кого» по умолчанию — той же длины, что `senderName` брифа. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @Length(1, 120)
+  signature?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsIn([...GREETING_TONES])
+  defaultTone?: GreetingTone | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @ValidateNested()
+  @Type(() => CardStyleDto)
+  cardStyle?: CardStyleDto | null;
 }

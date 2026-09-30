@@ -68,7 +68,7 @@ export function SketchSheet({
 }) {
   const { dict } = useI18n();
   const t = dict.sketch;
-  const modes = availableModes(hasImage);
+  const modes = availableModes(hasImage, target.type);
 
   const [mode, setMode] = useState<SketchMode>(defaultMode(hasImage));
   const [style, setStyle] = useState<SketchStyle>(DEFAULT_SKETCH_STYLE);

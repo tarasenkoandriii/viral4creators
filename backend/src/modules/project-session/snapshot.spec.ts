@@ -223,6 +223,9 @@ describe('brandManifestSnapshotFrom', () => {
           description: 'белые стены',
         },
       ],
+      kind: 'COMPANY',
+      signature: null,
+      cardStyle: null,
       snapshotAt: '2026-09-05T12:00:00.000Z',
       editedAt: null,
     });
@@ -294,5 +297,67 @@ describe('greetingBriefSnapshotFrom — ответ о настроении', () 
 
   it('строка без колонки — null, а не undefined', () => {
     expect(greetingBriefSnapshotFrom(row).userOccasionRegister).toBeNull();
+  });
+});
+
+describe('greetingBriefSnapshotFrom — этап G (§4.7, §4.8, Г-6)', () => {
+  const row = {
+    id: 'gb1',
+    occasion: 'BIRTHDAY' as const,
+    customOccasionText: null,
+    recipientName: 'Аня',
+    senderName: null,
+    tone: 'WARM' as const,
+    personalMessage: null,
+    presenterProvider: 'grok',
+    resolution: '720p',
+    brandManifestId: null,
+    occasionDate: null,
+  };
+  const PRESENTER = {
+    lookId: 'l1',
+    label: 'Деловой',
+    url: 'https://blob/look.png',
+    pathname: 'users/u1/personas/p1/looks/l1.png',
+    variant: 'photo' as const,
+  };
+
+  it('без образа и бренда — ИИ-ведущий, персоны нет, карточек нет', () => {
+    const snap = greetingBriefSnapshotFrom(row);
+    expect(snap.presenter).toBeNull();
+    expect(snap.usesPersona).toBe(false);
+    expect(snap.cards).toBeUndefined();
+    expect(snap.senderName).toBeNull();
+  });
+
+  it('образ копируется в снимок, и ролик помечается как ролик с персоной', () => {
+    const snap = greetingBriefSnapshotFrom(row, new Date(), {
+      presenter: PRESENTER,
+    });
+    expect(snap.presenter).toEqual(PRESENTER);
+    expect(snap.usesPersona).toBe(true);
+  });
+
+  it('личный бренд-бук — тоже персона; подпись — «от кого» по умолчанию; стиль карточек', () => {
+    const snap = greetingBriefSnapshotFrom(row, new Date(), {
+      manifest: {
+        kind: 'PERSONAL',
+        signature: ' Мама ',
+        cardStyle: { font: 'serif', color: 'gold', junk: 1 },
+      },
+    });
+    expect(snap.usesPersona).toBe(true);
+    expect(snap.senderName).toBe('Мама');
+    expect(snap.cards).toEqual({ style: { font: 'serif', color: 'gold' } });
+  });
+
+  it('явный отправитель брифа главнее подписи бренд-бука', () => {
+    const snap = greetingBriefSnapshotFrom(
+      { ...row, senderName: 'Андрей' },
+      new Date(),
+      { manifest: { kind: 'COMPANY', signature: 'ООО Ромашка' } },
+    );
+    expect(snap.senderName).toBe('Андрей');
+    expect(snap.usesPersona).toBe(false);
   });
 });

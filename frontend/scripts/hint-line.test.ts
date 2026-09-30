@@ -5,6 +5,9 @@
 // на шаг, ответ не на тот шаг, поведение после снятия галочки.
 
 import {
+  HINT_IDLE_MS,
+  VOICE_ENTRY_DEBOUNCE_MS,
+  autoOpenDelayMs,
   hintReducer,
   initialHintState,
   isVisible,
@@ -234,8 +237,28 @@ check('выключённый советник таймера не ждёт', ()
   eq(waitsForIdle(off()), false);
 });
 
+check(
+  'K4: голосом — строка раскрывается при входе на шаг (1,5 с от дребезга), текстом — через 8 с',
+  () => {
+    eq(autoOpenDelayMs(true), VOICE_ENTRY_DEBOUNCE_MS);
+    eq(VOICE_ENTRY_DEBOUNCE_MS, 1500);
+    eq(autoOpenDelayMs(false), HINT_IDLE_MS);
+    eq(HINT_IDLE_MS, 8000);
+  }
+);
+
+check('K4: немедленное раскрытие — тот же один запрос на шаг', () => {
+  // Голос открывает строку тем же событием `idle`: второй раз на том же
+  // шаге оно ничего не делает, и лишнего платного запроса нет.
+  const opened = run(on(), { type: 'idle' });
+  eq(opened.phase, 'loading');
+  const failedOnce = run(opened, { type: 'failed' });
+  eq(waitsForIdle(failedOnce), false);
+  eq(run(failedOnce, { type: 'idle' }).phase, 'collapsed');
+});
+
 if (failed) {
   console.error(`\n${failed} проверок упало`);
   process.exit(1);
 }
-console.log('\n20 проверок пройдено');
+console.log('\n22 проверки пройдено');

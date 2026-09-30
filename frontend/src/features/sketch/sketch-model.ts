@@ -59,9 +59,15 @@ export function isAnonymizeForced(
   return sketchSubject(type) === 'character' && mode === 'from-image';
 }
 
-/** «Убрать логотипы и надписи» — только у товаров и сцен (§3.2, п. 3). */
+/**
+ * «Убрать логотипы и надписи» — только у товаров и сцен (§3.2, п. 3).
+ * Образ персоны («Я в кадре», §4.5) — портрет человека: логотипов там
+ * нет, и промпт образа запрещает их и так. Отдельно от `sketchSubject`:
+ * в «персонажи» образ не записан, иначе окно показало бы вынужденную
+ * замену лица, которой у своего лица нет (`likeness: 'self'`).
+ */
 export function supportsRemoveLogos(type: SketchTargetType): boolean {
-  return sketchSubject(type) !== 'character';
+  return sketchSubject(type) !== 'character' && type !== 'persona-look';
 }
 
 /**
@@ -82,8 +88,24 @@ export function defaultSketchOptions(type: SketchTargetType): SketchOptions {
  * текстовой замены персонажа (`kind:'text'`, аудит А-10) его нет, и
  * остаётся один режим — окно тогда не показывает выбор вовсе.
  */
-export function availableModes(hasImage: boolean): SketchMode[] {
+export function availableModes(
+  hasImage: boolean,
+  type?: SketchTargetType
+): SketchMode[] {
+  // Образ персоны («Я в кадре», §4.5): скетч — только по самому образу.
+  // «По описанию» нарисовало бы произвольного человека под именем
+  // персоны — сервер описание для этого слота всё равно отбрасывает.
+  if (type === 'persona-look') return ['from-image'];
   return hasImage ? ['from-image', 'from-text'] : ['from-text'];
+}
+
+/**
+ * «Удалить оригинал» — не для образа персоны: оригинал там сам образ,
+ * и удаляется он из галереи «Я в кадре» (вместе со скетчем), а не из
+ * меню скетча, где «необратимо» означало бы потерю образа мимо галереи.
+ */
+export function canDeleteOriginal(type: SketchTargetType): boolean {
+  return type !== 'persona-look';
 }
 
 /** По умолчанию «по фото», если фото есть: качество заметно выше (§3.2). */

@@ -1154,3 +1154,89 @@ describe('финальный аудит ветки K (30.09.2026)', () => {
     expect(b.voiceUploads.remember).not.toHaveBeenCalled();
   });
 });
+
+describe('K4: вопрос о шаге и отказ по тону', () => {
+  const inSession = (b: ReturnType<typeof build>) =>
+    b.service.understandForSession(
+      SID,
+      { pathname: SPATH, screen: { step: 'video' } } as any,
+      'ru',
+    );
+
+  it('вопрос в сессии — ответ из фактов ЕЁ состояния, не от модели', async () => {
+    const b = build({
+      recognized: { text: 'сколько ждать?' },
+      model: {
+        kind: 'question',
+        topic: 'how-long',
+        confidence: 0.9,
+        // Модель «ответила» сама — это не должно дойти до человека.
+        reply: 'Секунд десять, не больше!',
+      },
+      session: {
+        id: SID,
+        userId: 'u-1',
+        locale: 'ru',
+        greetingBriefSnapshot: snapshot(),
+        generationPrompt: { moderationStatus: 'approved' },
+        generatedVideo: { status: 'processing' },
+      },
+    });
+    const r = await inSession(b);
+    expect(r.intent).toEqual({
+      kind: 'question',
+      topic: 'how-long',
+      answered: true,
+    });
+    expect(r.reply).toBe(
+      'Ролик генерируется — обычно это занимает несколько минут.',
+    );
+    expect('refusal' in r).toBe(false);
+  });
+
+  it('вопрос до сессии — ответ по ЖИВОМУ брифу (CONTRACT5)', async () => {
+    const b = build({
+      recognized: { text: 'что дальше?' },
+      model: { kind: 'question', topic: 'what-next', confidence: 0.9 },
+    });
+    const r = await project(b);
+    expect(r.intent).toMatchObject({ kind: 'question', answered: true });
+    // Бриф заполнен — дальше сессия, а не «заполните бриф».
+    expect(r.reply).toMatch(/начните сессию/);
+
+    const empty = build({
+      brief: { ...BRIEF_ROW, recipientName: '' },
+      recognized: { text: 'что дальше?' },
+      model: { kind: 'question', topic: 'what-next', confidence: 0.9 },
+    });
+    expect((await project(empty)).reply).toBe('Назовите получателя.');
+  });
+
+  it('вопрос вне закрытого списка — «не знаю», answered: false', async () => {
+    const b = build({
+      recognized: { text: 'а сколько это стоит?' },
+      model: { kind: 'question', topic: 'price', confidence: 0.9 },
+    });
+    const r = await project(b);
+    expect(r.intent).toEqual({
+      kind: 'question',
+      topic: null,
+      answered: false,
+    });
+    expect(r.reply).toBe(REPLIES.ru.questionUnknown);
+  });
+
+  it('отказ по тону — refusal: tone в ответе', async () => {
+    const b = build({
+      brief: { ...BRIEF_ROW, occasion: 'CONDOLENCE', tone: 'RESPECTFUL' },
+      recognized: { text: 'сделай веселее' },
+      model: { kind: 'command', command: 'tone-lighter', confidence: 0.9 },
+    });
+    const r = await project(b);
+    expect(r).toMatchObject({
+      status: 'ok',
+      intent: { kind: 'unknown' },
+      refusal: 'tone',
+    });
+  });
+});

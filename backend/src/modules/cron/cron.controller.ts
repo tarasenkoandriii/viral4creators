@@ -517,6 +517,22 @@ export class CronController {
   }
 
   /**
+   * GET /api/cron/persona-sources-purge — селфи и ролик живости персоны
+   * через 30 дней после последнего образа (В-3) и файлы незавершённых
+   * попыток — см. `CronJobsService.runPersonaSourcesPurge`. Раз в сутки.
+   */
+  @Get('persona-sources-purge')
+  async personaSourcesPurge(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'persona-sources-purge',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runPersonaSourcesPurge(),
+    );
+  }
+
+  /**
    * GET /api/cron/ai-usage-rollup
    *
    * Свёртка журнала расходов (doc/TODO.md §I-Б.5): месяцы старше срока

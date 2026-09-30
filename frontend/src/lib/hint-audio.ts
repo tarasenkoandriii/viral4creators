@@ -294,13 +294,24 @@ export interface AudioLike {
 export const SILENT_WAV =
   'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
+/** Чья реплика звучит (K4, CONTRACT5). */
+export type SpeechTag = 'hint' | 'proactive';
+
 export interface HintPlayer {
   /** Звать синхронно из обработчика касания. Повтор ничего не делает. */
   unlock(): void;
-  /** Играть файл. Прежняя реплика обрывается: говорит одна. */
-  play(url: string): void;
-  /** Замолчать — уход с шага, «без звука», размонтирование. */
+  /**
+   * Играть файл. Прежняя реплика обрывается: говорит одна. `tag` — чья
+   * реплика (`'hint'` — подсказка шага, `'proactive'` — повод K4): по нему
+   * уход с шага глушит только подсказку (`stopTag`).
+   */
+  play(url: string, tag?: SpeechTag): void;
+  /** Замолчать — «без звука», размонтирование, перебивание. */
   stop(): void;
+  /** Замолчать, только если звучит реплика с этим тегом. */
+  stopTag(tag: SpeechTag): void;
+  /** Тег звучащей реплики; `null` — тишина. */
+  readonly currentTag: SpeechTag | null;
   readonly unlocked: boolean;
   /**
    * Звучит ли реплика прямо сейчас. Микрофон (`features/voice`) по нему
@@ -317,8 +328,10 @@ export function createHintPlayer(make: () => AudioLike): HintPlayer {
   let el: AudioLike | null = null;
   let unlocked = false;
   let playing = false;
+  let tag: SpeechTag | null = null;
   const subscribers = new Set<(playing: boolean) => void>();
   const setPlaying = (next: boolean) => {
+    if (!next) tag = null;
     if (next === playing) return;
     playing = next;
     for (const cb of subscribers) cb(next);
@@ -359,6 +372,9 @@ export function createHintPlayer(make: () => AudioLike): HintPlayer {
     get playing() {
       return playing;
     },
+    get currentTag() {
+      return playing ? tag : null;
+    },
     onPlayingChange(cb) {
       subscribers.add(cb);
       return () => {
@@ -373,7 +389,7 @@ export function createHintPlayer(make: () => AudioLike): HintPlayer {
       a.src = SILENT_WAV;
       quietly(a.play());
     },
-    play(url: string) {
+    play(url: string, next: SpeechTag = 'hint') {
       const a = element();
       a.pause();
       a.muted = false;
@@ -381,6 +397,7 @@ export function createHintPlayer(make: () => AudioLike): HintPlayer {
       a.currentTime = 0;
       // Сразу, не дожидаясь события `playing`: микрофон должен замолчать
       // раньше, чем из динамика пойдёт первый звук.
+      tag = next;
       setPlaying(true);
       quietly(a.play(), () => setPlaying(false));
     },
@@ -389,6 +406,73 @@ export function createHintPlayer(make: () => AudioLike): HintPlayer {
       if (!el) return;
       el.pause();
       el.currentTime = 0;
+    },
+    stopTag(which) {
+      if (playing && tag === which) this.stop();
+    },
+  };
+}
+
+// ── Очередь реплик (CONTRACT5) ────────────────────────────────────────
+
+/** Ожидающая реплика старше этого — устарела и не звучит. */
+export const SPEECH_STALE_MS = 8_000;
+
+/** Минимум от плеера, который нужен очереди. */
+export interface QueuePlayer {
+  readonly playing: boolean;
+  play(url: string, tag: SpeechTag): void;
+}
+
+export interface QueuedSpeech {
+  url: string;
+  tag: SpeechTag;
+  at: number;
+}
+
+/**
+ * Очередь реплик — ОДИН ожидающий слот.
+ *
+ * Реплика, пришедшая, пока звучит другая, не обрывает её (сводка перед
+ * согласием, оборванная «ролик готов», — потерянная цена), а ждёт конца.
+ * Слот один: новая ожидающая вытесняет прежнюю — помощник говорит о
+ * последнем, а не зачитывает накопившееся. Дождавшаяся дольше
+ * `SPEECH_STALE_MS` выбрасывается: через восемь секунд «лимит исчерпан»
+ * звучит уже не ответом на нажатие, а внезапно.
+ */
+export interface SpeechQueue {
+  /** Сказать: сразу, если тихо, иначе — в слот. */
+  say(url: string, tag: SpeechTag, now: number): 'now' | 'queued';
+  /** Плеер замолчал — сказать ожидающую, если она не устарела. */
+  idle(now: number): void;
+  /** Выбросить ожидающую (всю или только с этим тегом). */
+  drop(tag?: SpeechTag): void;
+  readonly pending: QueuedSpeech | null;
+}
+
+export function createSpeechQueue(player: QueuePlayer): SpeechQueue {
+  let pending: QueuedSpeech | null = null;
+  return {
+    get pending() {
+      return pending;
+    },
+    say(url, tag, now) {
+      if (!player.playing) {
+        pending = null;
+        player.play(url, tag);
+        return 'now';
+      }
+      pending = { url, tag, at: now };
+      return 'queued';
+    },
+    idle(now) {
+      const next = pending;
+      pending = null;
+      if (!next || now - next.at > SPEECH_STALE_MS) return;
+      player.play(next.url, next.tag);
+    },
+    drop(tag) {
+      if (!tag || pending?.tag === tag) pending = null;
     },
   };
 }

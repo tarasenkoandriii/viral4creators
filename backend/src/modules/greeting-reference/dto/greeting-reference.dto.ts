@@ -1,4 +1,5 @@
 import {
+  Equals,
   IsIn,
   IsNumber,
   IsOptional,
@@ -67,6 +68,14 @@ export class GreetingReferenceUpdateRequestDto {
   @IsString()
   @Length(1, 2000)
   description?: string | null;
+  /**
+   * Этап G (Г-8): «у меня есть согласие этого человека» для фото, на
+   * котором найдено лицо. Только `true`: снять согласие — значит удалить
+   * фото или превратить его в скетч.
+   */
+  @IsOptional()
+  @Equals(true, { message: 'faceConsent can only be true' })
+  faceConsent?: true;
 }
 
 /**

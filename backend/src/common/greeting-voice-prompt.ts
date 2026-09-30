@@ -23,6 +23,7 @@ import {
   SESSION_FIELDS,
   SESSION_FIELD_HOOKS,
   SessionField,
+  VOICE_QUESTION_TOPICS,
   VOICE_REFERENCE_DESCRIPTION_MAX,
   VOICE_REFERENCE_LABEL_MAX,
   VOICE_SCRIPT_MAX,
@@ -172,6 +173,10 @@ export function buildUnderstandPrompt(
     '- command — просит изменить ролик: tone-serious (серьёзнее, сдержаннее), tone-lighter (веселее, легче), no-jokes (без шуток), shorter (просит сократить текст — голосом это пока не выполняется, но верни shorter: помощник объяснит, как сделать руками), regenerate-script (перепиши сценарий заново), other-music (другую музыку);',
     '- navigate — просит перейти: next (дальше), back (назад), brief, references (фото), script, video;',
     '- help — просит помощь, информацию, «как это работает»;',
+    // K4 (§4А.2 п.5): модель только узнаёт тему — ответ собирает сервер
+    // из фактов состояния. Тема вне списка — `null`, и помощник честно
+    // скажет «не знаю», а не перескажет догадку модели.
+    `- question — задаёт вопрос О ШАГЕ, а не просит действие; topic — код темы: ${VOICE_QUESTION_TOPICS.join(', ')} (why-photo — зачем/нужно ли фото; how-long — сколько ждать, долго ли делается ролик; what-next — что делать дальше, что осталось; script-flagged — почему сценарий не проходит проверку). Вопрос на другую тему — question с topic null. Сам НЕ отвечай на вопрос — верни только тему;`,
     '- consent — ЯВНО велит запустить генерацию ролика («генерируй», «создавай», «согласен»); «да», «ок», «ага» — НЕ consent;',
     '- confirm / cancel — ответ на карточку подтверждения;',
     '- unknown — всё остальное или непонятно.',
@@ -193,6 +198,6 @@ export function buildUnderstandPrompt(
     'Правила:',
     '- Не выдумывай: заполняй только то, что человек назвал. Не переводи имена и текст.',
     '- confidence (0..1) — насколько ты уверен в понимании; у каждого поля своя confidence. Если слово могло быть расслышано неточно или значение неоднозначно — ставь низкую уверенность, а не угадывай.',
-    '- Ответ — ТОЛЬКО JSON вида {"kind":"fill","fields":[{"target":"recipient","value":"Мама","confidence":0.9}],"command":null,"to":null,"confidence":0.9}.',
+    '- Ответ — ТОЛЬКО JSON вида {"kind":"fill","fields":[{"target":"recipient","value":"Мама","confidence":0.9}],"command":null,"to":null,"topic":null,"confidence":0.9}.',
   ].join('\n');
 }

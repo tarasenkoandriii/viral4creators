@@ -32,6 +32,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { showcaseRefusal } from '../../common/greeting-persona';
 import { PlanService } from '../plan/plan.service';
 import { SessionService } from '../../common/session.service';
 import { LibraryService } from '../library/library.service';
@@ -378,6 +379,22 @@ export class SharedVideoService {
     await this.plans.assertUserNotBlocked(userId);
     const session = await this.ownSession(userId, sessionId);
     const snap = snapshotFromSession(session, dto);
+    // Этап G (§4.9): галочка «можно показать в витрине» для ролика с
+    // персоной — отдельное явное решение автора при публикации. Пишется в
+    // снимок сессии (у страницы своего поля нет — см. `showcaseRefusal`),
+    // каждая публикация решает заново: снятая галочка стирает прежнюю.
+    const greeting = session.greetingBriefSnapshot;
+    if (greeting?.usesPersona) {
+      await this.sessions.updateSession(sessionId, {
+        greetingBriefSnapshot: {
+          ...greeting,
+          personaShowcaseConsentAt:
+            dto.allowShowcaseWithPersona === true
+              ? new Date().toISOString()
+              : null,
+        },
+      });
+    }
     const libraryEntryId = await this.resolveLibraryEntryId(
       session.librarySourceKey,
     );
@@ -756,6 +773,21 @@ export class SharedVideoService {
       throw new ConflictException(
         'Only a published page can be added to the showcase',
       );
+    }
+    // Этап G (ТЗ Greeting 2.0 §4.9): ролик с персоной автора — в витрину
+    // только с галочкой автора при публикации. Строка сессии читается
+    // напрямую, включая мягко удалённую: удаление сессии не отменяет
+    // того, что на ролике лицо автора. Снять с витрины можно всегда.
+    if (showcase) {
+      const sessionRow =
+        row.projectType === 'GREETING_VIDEO'
+          ? await this.prisma.session.findUnique({
+              where: { id: row.sessionId },
+              select: { data: true },
+            })
+          : null;
+      const refusal = showcaseRefusal(row.projectType, sessionRow?.data);
+      if (refusal) throw new ConflictException(refusal);
     }
     const updated = (await this.prisma.sharedVideoPage.update({
       where: { id },

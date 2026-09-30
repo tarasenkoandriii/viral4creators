@@ -142,7 +142,12 @@ describe('GreetingVoiceService — голос отправителя (фича �
     });
     expect(findFirst).not.toHaveBeenCalled();
     expect(updateSession).toHaveBeenCalledWith('s1', {
-      greetingBriefSnapshot: { recipientName: 'Аня', senderVoice: null },
+      // Этап G: признак персоны пересчитывается при каждой смене голоса.
+      greetingBriefSnapshot: {
+        recipientName: 'Аня',
+        senderVoice: null,
+        usesPersona: false,
+      },
     });
   });
 
@@ -344,5 +349,116 @@ describe('роестр пресетов: кеш и короткий путь г�
 
   it('потолок голосового пути — пара секунд, а не тридцать', () => {
     expect(PRESET_VOICE_PATH_TIMEOUT_MS).toBeLessThanOrEqual(3000);
+  });
+});
+
+describe('GreetingVoiceService — голос персоны делает ролик роликом с персоной (этап G)', () => {
+  const OLD_FLAG = process.env.PERSONA_ENABLED;
+  beforeEach(() => {
+    process.env.PERSONA_ENABLED = 'true';
+  });
+  afterAll(() => {
+    process.env.PERSONA_ENABLED = OLD_FLAG;
+  });
+  const written = (u: jest.Mock) => u.mock.calls[0][1].greetingBriefSnapshot;
+
+  it('клон персоны: senderVoice помечен, usesPersona = true', async () => {
+    const { svc, updateSession } = build({
+      voice: { ...READY, personaId: 'p1' },
+    });
+    await svc.select('s1', 'clone-42');
+    expect(written(updateSession).senderVoice.personaVoice).toBe(true);
+    expect(written(updateSession).usesPersona).toBe(true);
+  });
+
+  it('обычный клон — персоны нет', async () => {
+    const { svc, updateSession } = build({
+      voice: { ...READY, personaId: null },
+    });
+    await svc.select('s1', 'clone-42');
+    expect(written(updateSession).senderVoice.personaVoice).toBeUndefined();
+    expect(written(updateSession).usesPersona).toBe(false);
+  });
+
+  it('пресет вместо клона персоны снимает признак, если персоны больше нигде нет', async () => {
+    const { svc, updateSession } = build({
+      session: {
+        sessionId: 's1',
+        userId: 'u1',
+        greetingBriefSnapshot: {
+          senderVoice: {
+            userVoiceId: 'uv1',
+            resembleVoiceId: 'c',
+            label: 'L',
+            personaVoice: true,
+          },
+          usesPersona: true,
+        },
+      },
+    });
+    await svc.selectPreset('s1', 'eve');
+    expect(written(updateSession).usesPersona).toBe(false);
+  });
+
+  it('снятие голоса не снимает признак, если в кадре образ или бренд-бук личный', async () => {
+    const { svc, updateSession } = build({
+      session: {
+        sessionId: 's1',
+        userId: 'u1',
+        brandManifestSnapshot: { kind: 'PERSONAL' },
+        greetingBriefSnapshot: {
+          senderVoice: {
+            userVoiceId: 'uv1',
+            resembleVoiceId: 'c',
+            label: 'L',
+            personaVoice: true,
+          },
+          usesPersona: true,
+        },
+      },
+    });
+    await svc.select('s1', null);
+    expect(written(updateSession).usesPersona).toBe(true);
+  });
+});
+
+describe('CONTRACT5 — голос персоны отправителем: флаг и монотонность', () => {
+  const OLD_FLAG = process.env.PERSONA_ENABLED;
+  afterEach(() => {
+    process.env.PERSONA_ENABLED = OLD_FLAG;
+  });
+  it('режим выключен — голос персоны не назначить', async () => {
+    process.env.PERSONA_ENABLED = 'false';
+    const { svc, updateSession } = build({
+      voice: { ...READY, personaId: 'p1' },
+    });
+    await expect(svc.select('s1', 'clone-42')).rejects.toMatchObject({
+      response: { code: 'PERSONA_DISABLED' },
+    });
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('после готового ролика снятие голоса персоны признак не снимает (п.5б)', async () => {
+    process.env.PERSONA_ENABLED = 'true';
+    const { svc, updateSession } = build({
+      session: {
+        sessionId: 's1',
+        userId: 'u1',
+        generatedVideo: { status: 'complete' },
+        greetingBriefSnapshot: {
+          senderVoice: {
+            userVoiceId: 'uv1',
+            resembleVoiceId: 'c',
+            label: 'L',
+            personaVoice: true,
+          },
+          usesPersona: true,
+        },
+      },
+    });
+    await svc.selectPreset('s1', 'eve');
+    expect(
+      updateSession.mock.calls[0][1].greetingBriefSnapshot.usesPersona,
+    ).toBe(true);
   });
 });

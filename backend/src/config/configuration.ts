@@ -343,6 +343,14 @@ export interface Configuration {
      */
     maxFeedBytes: number;
   };
+  /**
+   * Режим «Я в кадре» (ТЗ Greeting 2.0 §4.10): до юридического ревью —
+   * выключен. Сервис персоны читает `PERSONA_ENABLED` сам на каждом
+   * запросе (`persona-flag.ts`), здесь — для обзора конфигурации.
+   */
+  persona: {
+    enabled: boolean;
+  };
 }
 
 /**
@@ -539,6 +547,9 @@ export const loadConfiguration = (): Configuration => {
         process.env.PRODUCT_FEED_IMPORT_MAX_BYTES,
         8 * 1024 * 1024,
       ),
+    },
+    persona: {
+      enabled: process.env.PERSONA_ENABLED === 'true',
     },
   };
 };

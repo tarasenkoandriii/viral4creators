@@ -36,7 +36,11 @@ function build(
     record: jest.fn(),
   };
   const prisma = {
-    userVoice: { findMany: jest.fn().mockResolvedValue([]) },
+    userVoice: {
+      findMany: jest.fn().mockResolvedValue([]),
+      // Проба: голос не из `UserVoice` (каталог) — по умолчанию.
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
   };
   // Найдено при доп. запросе (добавление явного выбора провайдера,
   // resolveByKey): этот мок был написан ДО рефакторинга на
@@ -329,6 +333,41 @@ describe('TtsController (ТЗ §15.3)', () => {
       const r = await ctl.preview(req, {});
       expect(r.ok).toBe(false);
       expect(tts.synthesize).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('проба чужого клона и голоса персоны (аудит «Я в кадре»)', () => {
+    it.each([
+      ['чужой клон', { userId: 'u-other', personaId: null }],
+      ['голос персоны, даже свой', { userId: 'u1', personaId: 'p1' }],
+    ])('%s — 403, синтеза нет', async (_n, row) => {
+      const { ctl, prisma, tts } = build();
+      prisma.userVoice.findFirst.mockResolvedValue(row);
+      await expect(
+        ctl.preview({ telegramUserId: 'u1' } as any, {
+          text: 'Привет',
+          voiceId: 'rv-x',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(tts.synthesize).not.toHaveBeenCalled();
+      expect(prisma.userVoice.findFirst).toHaveBeenCalledWith({
+        where: { OR: [{ id: 'rv-x' }, { resembleVoiceId: 'rv-x' }] },
+        select: { userId: true, personaId: true },
+      });
+    });
+
+    it('свой обычный клон — проба идёт', async () => {
+      const { ctl, prisma, tts } = build();
+      prisma.userVoice.findFirst.mockResolvedValue({
+        userId: 'u1',
+        personaId: null,
+      });
+      const r = await ctl.preview({ telegramUserId: 'u1' } as any, {
+        text: 'Привет',
+        voiceId: 'rv-mine',
+      });
+      expect(r.ok).toBe(true);
+      expect(tts.synthesize).toHaveBeenCalled();
     });
   });
 });

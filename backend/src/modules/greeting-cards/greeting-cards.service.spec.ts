@@ -112,3 +112,28 @@ describe('GreetingCardsService (фичи №38/№39)', () => {
     expect(updateSession).not.toHaveBeenCalled();
   });
 });
+
+describe('GreetingCardsService — стиль из бренд-бука (этап G, Г-6)', () => {
+  it('правка текста не сбрасывает стиль, пришедший из бренд-бука', async () => {
+    const { svc, updateSession } = build({
+      cards: { style: { font: 'serif', color: 'gold' } },
+    });
+    await svc.update('s1', { title: 'Марине', closing: null });
+    expect(updateSession.mock.calls[0][1].greetingBriefSnapshot.cards).toEqual({
+      title: 'Марине',
+      closing: null,
+      style: { font: 'serif', color: 'gold' },
+    });
+  });
+
+  it('стиль из запроса клиента не берётся — только из снимка', async () => {
+    const { svc, updateSession } = build();
+    await svc.update('s1', {
+      title: 'x',
+      style: { font: 'mono', color: 'pink' },
+    } as never);
+    expect(
+      updateSession.mock.calls[0][1].greetingBriefSnapshot.cards.style,
+    ).toBeUndefined();
+  });
+});

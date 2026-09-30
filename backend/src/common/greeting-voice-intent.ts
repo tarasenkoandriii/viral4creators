@@ -55,6 +55,7 @@ import {
   SESSION_FIELD_NAMES,
   VoiceField,
   VoiceIntent,
+  VoiceRefusalCode,
   VoiceUnderstandContext,
   briefFieldOf,
   fieldNameOf,
@@ -91,6 +92,8 @@ export {
   greetingVoiceMaxBytesFor,
   VOICE_COMMANDS,
   VOICE_NAVIGATE_TARGETS,
+  VOICE_QUESTION_TOPICS,
+  VOICE_REFUSAL_CODES,
   VOICE_SCREEN_STEPS,
   BRIEF_FIELD_HOOKS,
   BRIEF_FIELDS,
@@ -120,6 +123,8 @@ export type {
   VoiceField,
   VoiceCommand,
   VoiceNavigateTarget,
+  VoiceQuestionTopic,
+  VoiceRefusalCode,
   VoiceIntent,
   VoiceUnderstandResult,
   VoiceScreenStep,
@@ -186,6 +191,19 @@ export interface ResolvedIntent {
   intent: VoiceIntent;
   confidence: number;
   reply: string | null;
+  /**
+   * K4: отказ, который помощник объясняет голосом (`speak` `refusal`).
+   * Только когда он был: у прочих ответов поля нет вовсе.
+   */
+  refusal?: VoiceRefusalCode;
+}
+
+/** Код отказа — полем, только если он есть. */
+function withRefusal(
+  resolved: ResolvedIntent,
+  code: VoiceRefusalCode | undefined,
+): ResolvedIntent {
+  return code ? { ...resolved, refusal: code } : resolved;
 }
 
 function joinReply(parts: Array<string | null | undefined>): string | null {
@@ -297,7 +315,7 @@ export function resolveIntent(
     case 'command': {
       if (!answer.command) return unknown(t.notUnderstood);
       const check = checkCommand(answer.command, ctx);
-      if (!check.ok) return unknown(check.reason);
+      if (!check.ok) return withRefusal(unknown(check.reason), check.code);
       if (answer.command === 'other-music') {
         return resolveOtherMusic(answer.confidence, ctx);
       }
@@ -313,6 +331,8 @@ export function resolveIntent(
     }
     case 'fill':
       return resolveFill(answer, ctx);
+    case 'question':
+      return resolveQuestion(answer, ctx);
     default:
       return unknown(t.notUnderstood);
   }
@@ -361,6 +381,29 @@ export function resolveOtherMusic(
   };
 }
 
+/**
+ * K4 (§4А.2 п.5): вопрос о шаге. Ответ — ТОЛЬКО из фактов состояния
+ * (`ctx.answerQuestion` → `greetingAnswer` в `hint-facts.ts`), ни слова
+ * от модели: она лишь узнала тему. Темы нет в закрытом списке или факта
+ * нет — «не знаю, посмотрите справку» и `answered: false` (клиент
+ * показывает кнопку справки), а не догадка.
+ */
+function resolveQuestion(
+  answer: ModelAnswer,
+  ctx: VoiceUnderstandContext,
+): ResolvedIntent {
+  const topic = answer.topic ?? null;
+  const text =
+    topic && ctx.answerQuestion
+      ? ctx.answerQuestion(topic, ctx.replyLocale)
+      : null;
+  return {
+    intent: { kind: 'question', topic, answered: !!text },
+    confidence: answer.confidence,
+    reply: text ?? REPLIES[ctx.replyLocale].questionUnknown,
+  };
+}
+
 function resolveFill(
   answer: ModelAnswer,
   ctx: VoiceUnderstandContext,
@@ -382,6 +425,8 @@ function resolveFill(
   const unsure: string[] = [];
   const contradictions: string[] = [];
   const reasons: string[] = [];
+  // K4: первый отказ, который помощник объясняет голосом (тон).
+  let refusal: VoiceRefusalCode | undefined;
   const fields: VoiceField[] = [];
   const conflicted = conflictingSessionFields(answer.fields);
   const ordered = [...answer.fields].sort(
@@ -403,6 +448,10 @@ function resolveFill(
         : ({ ok: false, reason: t.notUnderstood } as const);
     if (!c.ok) {
       reasons.push(c.reason);
+      // Код отказа есть не у каждой ветки проверки: запасной ответ
+      // «не понял» его не несёт, отсюда явное чтение поля.
+      const code = (c as { code?: VoiceRefusalCode }).code;
+      if (!refusal && code) refusal = code;
       continue;
     }
     if (!isSessionField(mf.field)) {
@@ -424,15 +473,21 @@ function resolveFill(
     fields.length ? t.confirmQuestion : null,
   ]);
   if (fields.length === 0) {
-    return {
-      intent: { kind: 'unknown' },
-      confidence: answer.confidence,
-      reply: reply ?? t.notUnderstood,
-    };
+    return withRefusal(
+      {
+        intent: { kind: 'unknown' },
+        confidence: answer.confidence,
+        reply: reply ?? t.notUnderstood,
+      },
+      refusal,
+    );
   }
-  return {
-    intent: { kind: 'fill', fields },
-    confidence: answer.confidence,
-    reply,
-  };
+  return withRefusal(
+    {
+      intent: { kind: 'fill', fields },
+      confidence: answer.confidence,
+      reply,
+    },
+    refusal,
+  );
 }

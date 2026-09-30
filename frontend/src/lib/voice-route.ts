@@ -175,6 +175,8 @@ export function planLine(
       return { text: plan.text, tone: 'info' };
     case 'navigate':
       return plan.text ? { text: plan.text, tone: 'info' } : null;
+    case 'answer':
+      return { text: plan.text, tone: 'info' };
   }
 }
 

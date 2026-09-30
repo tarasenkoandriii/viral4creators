@@ -58,6 +58,10 @@ import { sha256, slotView, SketchTargetsService } from './sketch-targets';
 import { mimeFromPath } from '../../common/active-image';
 import { GEMINI_SKETCH_MODEL } from '../../common/gemini-image-model';
 import { PlanId } from '../../common/plans';
+import {
+  celebrityLikenessMessage,
+  findCelebrityLikeness,
+} from '../../common/celebrity-likeness';
 
 /** Сколько живёт неприменённый кандидат, прежде чем его подберёт уборка. */
 export const SKETCH_CANDIDATE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -226,8 +230,26 @@ export class ImageSketchService {
     await this.plans.assertUser(userId, 'aiSketch');
     await this.plans.assertCanSpendUser(userId);
 
+    // Скетч-аватар образа — только с фото образа: «по описанию» получился
+    // бы вымышленный человек, а не автор (ТЗ TZ-Greeting-2.0 §4.5).
+    if (input.target.type === 'persona-look' && input.mode !== 'from-image') {
+      throw new BadRequestException(
+        'Скетч-аватар образа рисуется только с фото образа',
+      );
+    }
+    // Скетч-аватар образа рисуется ТОЛЬКО с фото образа: текст клиента в
+    // промпт не идёт — с сохранённым лицом «в образе Монро» было бы уже
+    // не про автора (CONTRACT5 п.12).
     const description =
-      input.description?.trim() || slot.description?.trim() || null;
+      input.target.type === 'persona-look'
+        ? null
+        : input.description?.trim() || slot.description?.trim() || null;
+    // Описание — данные в промпте, но «нарисуй как Монро» остаётся просьбой
+    // о чужом образе: тот же гейт, что у сценария и образов (§4.5).
+    const celebrity = findCelebrityLikeness(description);
+    if (celebrity) {
+      throw new BadRequestException(celebrityLikenessMessage(celebrity));
+    }
     if (input.mode === 'from-text' && !description) {
       throw new BadRequestException(
         'Для скетча по описанию нужен текст — опишите, что нарисовать',
@@ -240,12 +262,14 @@ export class ImageSketchService {
     }
 
     // §4 п.3 ТЗ: у людей, срисованных с фото, лицо меняется всегда —
-    // что бы ни прислал клиент.
+    // что бы ни прислал клиент. Кроме слота persona-look проверенной
+    // персоны: `likeness` ставит адаптер слота, не клиент (Т-3).
+    const likeness = slot.likeness === 'self' ? 'self' : 'anonymise';
     const options: SketchOptions = {
       ...input.options,
       anonymizeFace:
         slot.kind === 'character' && input.mode === 'from-image'
-          ? true
+          ? likeness !== 'self'
           : input.options.anonymizeFace,
       sketchRendering: input.options.sketchRendering ?? 'realistic',
     };
@@ -256,6 +280,7 @@ export class ImageSketchService {
       options,
       description,
       name: slot.name,
+      likeness,
     });
 
     // Бронь квоты ДО дорогого вызова: строка `pending` видна другим
@@ -576,6 +601,13 @@ export class ImageSketchService {
     updatedRefs: number;
     fileDeleted: boolean;
   }> {
+    if (target.type === 'persona-look') {
+      // Фото образа — не «оригинал слота», а сам образ: убирается целиком
+      // в разделе персоны, иначе у образа не осталось бы фото.
+      throw new BadRequestException(
+        'Фото образа удаляется вместе с образом в разделе «Я в кадре»',
+      );
+    }
     const slot = await this.targets.load(target, userId);
     await this.targets.assertSlotAccess(slot);
     if (!slot.sketch) {
@@ -757,12 +789,13 @@ export class ImageSketchService {
    * денормализована, отдельной колонки под неё нет.
    */
   private async isSketchReferenced(sketchId: string): Promise<boolean> {
-    const [asItem, asCharacter, asScene] = await Promise.all([
+    const [asItem, asCharacter, asScene, asLook] = await Promise.all([
       this.prisma.productItem.count({ where: { activeSketchId: sketchId } }),
       this.prisma.brandCharacter.count({ where: { activeSketchId: sketchId } }),
       this.prisma.brandScene.count({ where: { activeSketchId: sketchId } }),
+      this.prisma.personaLook.count({ where: { activeSketchId: sketchId } }),
     ]);
-    if (asItem + asCharacter + asScene > 0) return true;
+    if (asItem + asCharacter + asScene + asLook > 0) return true;
     // Мягко удалённая сессия тоже считается ссылкой: весь грейс-период
     // её ещё можно вернуть, и файл ей нужен. Физически исчезнувшие
     // сессии отпускают свои скетчи через `supersedeOrphans` выше.

@@ -368,6 +368,8 @@ function build(
     createSession: jest
       .fn()
       .mockResolvedValue({ ...session, sessionId: 'new-s' }),
+    // Этап G: галочка витрины ролика с персоной пишется в снимок сессии.
+    updateSession: jest.fn().mockResolvedValue({}),
   };
   const blob = {
     copyBlob: jest
@@ -918,5 +920,78 @@ describe('SharedVideoService.setShowcase', () => {
     await expect(service.setShowcase('nope', true)).rejects.toThrow(
       NotFoundException,
     );
+  });
+});
+
+describe('витрина и ролик с персоной (этап G, §4.9)', () => {
+  const personaSession = () =>
+    ({
+      ...greetingSession,
+      greetingBriefSnapshot: {
+        ...greetingSession.greetingBriefSnapshot,
+        usesPersona: true,
+      },
+    }) as never;
+
+  it('публикация ролика с персоной записывает решение автора о витрине', async () => {
+    const yes = build({ session: personaSession() });
+    await yes.service.create('u1', 's2', { allowShowcaseWithPersona: true });
+    expect(
+      yes.sessions.updateSession.mock.calls[0][1].greetingBriefSnapshot
+        .personaShowcaseConsentAt,
+    ).toEqual(expect.any(String));
+
+    const no = build({ session: personaSession() });
+    await no.service.create('u1', 's2', {});
+    expect(
+      no.sessions.updateSession.mock.calls[0][1].greetingBriefSnapshot
+        .personaShowcaseConsentAt,
+    ).toBeNull();
+  });
+
+  it('ролик без персоны — сессия не переписывается', async () => {
+    const plain = build({ session: greetingSession as never });
+    await plain.service.create('u1', 's2', { allowShowcaseWithPersona: true });
+    expect(plain.sessions.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('оператор не добавит в витрину ролик с персоной без галочки автора', async () => {
+    const { service, prisma } = build({
+      found: row({ status: 'PUBLISHED', projectType: 'GREETING_VIDEO' }),
+    });
+    prisma.session.findUnique.mockResolvedValueOnce({
+      data: { greetingBriefSnapshot: { usesPersona: true } },
+    } as never);
+    await expect(service.setShowcase('sv1', true)).rejects.toThrow(
+      /галочкой автора/,
+    );
+    expect(prisma.sharedVideoPage.update).not.toHaveBeenCalled();
+  });
+
+  it('с галочкой — можно; снять с витрины можно всегда, сессию не читая', async () => {
+    const { service, prisma } = build({
+      found: row({ status: 'PUBLISHED', projectType: 'GREETING_VIDEO' }),
+    });
+    prisma.session.findUnique.mockResolvedValueOnce({
+      data: {
+        greetingBriefSnapshot: {
+          usesPersona: true,
+          personaShowcaseConsentAt: '2026-09-30T00:00:00.000Z',
+        },
+      },
+    } as never);
+    await service.setShowcase('sv1', true);
+    expect(prisma.sharedVideoPage.update).toHaveBeenCalled();
+    prisma.session.findUnique.mockClear();
+    await service.setShowcase('sv1', false);
+    expect(prisma.session.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('поздравление, сессия которого удалена, — отказ: персону не проверить', async () => {
+    const { service, prisma } = build({
+      found: row({ status: 'PUBLISHED', projectType: 'GREETING_VIDEO' }),
+    });
+    prisma.session.findUnique.mockResolvedValueOnce(null as never);
+    await expect(service.setShowcase('sv1', true)).rejects.toThrow(/удалена/);
   });
 });

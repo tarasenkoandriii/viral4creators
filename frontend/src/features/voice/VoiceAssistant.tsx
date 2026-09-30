@@ -18,12 +18,35 @@ import {
 } from '../../lib/voice-route';
 import {
   claimVoiceBudgetNotice,
+  hasGesture,
+  isHintMuted,
   isHintPlaying,
   isVoiceBudgetExhaustedToday,
+  markVoiceActivity,
   markVoiceBudgetExhausted,
+  sayReply,
   stopHint,
+  subscribeGesture,
+  subscribeHintMuted,
   useVoiceBudgetOwner,
 } from '../../lib/hint-audio-session';
+import {
+  createProactiveMemory,
+  proactiveChannel,
+  proactiveDecision,
+  refusalOf,
+  speakBodyOf,
+  withQuestionHandler,
+  type ProactiveEvent,
+} from '../../lib/voice-proactive';
+import { VOICE_BUDGET_EXHAUSTED } from '../../lib/hint-audio';
+import { requestSpeech } from '../../services/wizard-guide-api';
+import type { GreetingHelpTopic } from '../../lib/greeting-help';
+import {
+  announceProactive,
+  stickyProactiveEvents,
+  subscribeProactive,
+} from './voice-proactive-bus';
 import type { VoiceStepId } from '../../lib/voice-types';
 import { understandVoice } from '../../services/greeting-voice-api';
 import { VoiceConfirmCard } from './VoiceConfirmCard';
@@ -50,8 +73,13 @@ import { withMediaPlayback } from '../../lib/media-playback';
  * закрывает микрофон (`useVoiceListening`), так что выключенный голос —
  * это гарантированно закрытый микрофон, а не флаг внутри открытого.
  *
- * Реплику советника (K1) озвучивает `HintLine`; здесь — только текст
- * ответа на сказанное.
+ * Реплику советника (K1) озвучивает `HintLine`; здесь — ответ на
+ * сказанное и проактивная речь K4 (§4А.2 п.1, п.5): отказ сервера,
+ * готовый ролик, сводка перед согласием, ответ на вопрос о шаге. Поводы
+ * приходят от экранов шиной (`voice-proactive-bus.ts`), текст реплики
+ * собирает сервер (`requestSpeech` шлёт только вид и коды), звучит она
+ * тем же плеером, что подсказка, — и только у включившего звук; без
+ * звука остаётся строка.
  */
 
 /** Голос советника — микрофон не пишет его и глушит при перебивании. */
@@ -188,6 +216,66 @@ export function VoiceAssistant({
     }
   }, [blocked, budgetText]);
   const [transcript, setTranscript] = useState<string | null>(null);
+  /**
+   * K4: на вопрос о шаге нет факта — «не знаю» и кнопка справки темы
+   * карточки в фокусе. Лист сам не открывается: спросили, а не просили.
+   */
+  const [helpTopic, setHelpTopic] = useState<GreetingHelpTopic | null>(null);
+
+  // ── Проактивная речь (K4) ─────────────────────────────────────────
+  // Память — на монтирование помощника: что уже звучало, повторно не
+  // звучит (готовый ролик — раз на сессию, отказ — не чаще раза в 30 с).
+  const [memory] = useState(createProactiveMemory);
+  const speakRef = useRef<(event: ProactiveEvent) => void>(() => undefined);
+  speakRef.current = (event) => {
+    const channel = proactiveChannel({
+      voice: true,
+      muted: isHintMuted(),
+      gestured: hasGesture(),
+      budgetExhausted: isVoiceBudgetExhaustedToday(budgetOwnerRef.current),
+    });
+    // Повод с ключом (помеченный сценарий) строкой не расходуется — ждёт
+    // голоса (CONTRACT5, `proactiveDecision`).
+    const decision = proactiveDecision(event, channel, memory, Date.now());
+    // Готовый ролик — ещё и строкой: без звука это единственный способ
+    // сказать «готов» в панели, а читалке — в области объявлений.
+    if (decision.line) {
+      setLine({ text: dict.generationWizard.videoDoneTitle, tone: 'success' });
+    }
+    // Без звука — только строка; у отказов, ответа и сводки она уже на
+    // экране (строка разбора, карточка шага, карточка сводки).
+    if (!decision.speak) return;
+    void requestSpeech(projectId, speakBodyOf(event, locale)).then((answer) => {
+      if (answer.kind === 'play') {
+        // Звук могли выключить, пока файл ехал. Звучащую реплику не
+        // обрываем — очередь страницы скажет эту следом (CONTRACT5).
+        if (!isHintMuted()) sayReply(answer.url, 'proactive');
+      } else if (answer.kind === VOICE_BUDGET_EXHAUSTED) {
+        markVoiceBudgetExhausted(budgetOwnerRef.current);
+        if (claimVoiceBudgetNotice()) {
+          setLine({ text: budgetText, tone: 'warning' });
+        }
+      }
+    });
+  };
+  useEffect(() => subscribeProactive((e) => speakRef.current(e)), []);
+  // Поводы, которые держатся, пока верны (помеченный сценарий), — ещё раз,
+  // когда голосовой канал открывается: первое касание, включённый звук.
+  useEffect(() => {
+    const retry = () => {
+      for (const e of stickyProactiveEvents()) speakRef.current(e);
+    };
+    retry();
+    const offGesture = subscribeGesture(retry);
+    const offMuted = subscribeHintMuted((muted) => {
+      if (!muted) retry();
+    });
+    return () => {
+      offGesture();
+      offMuted();
+    };
+  }, []);
+
   const budgetExhaustedRef = useRef<() => void>(() => undefined);
   const stopUntilTapRef = useRef<() => void>(() => undefined);
 
@@ -223,6 +311,9 @@ export function VoiceAssistant({
     isCurrent: () => boolean,
     meta: UtteranceMeta
   ): Promise<void> => {
+    // Фраза — действие человека: 20-секундный простой (K4) начинается
+    // заново, и подсказка шага не повторяется поверх разговора.
+    markVoiceActivity();
     // Больше серверного потолка своего типа — сервер откажет ещё на
     // ссылке загрузки: не шлём, сразу «короче» (микрофон слушает дальше).
     if (meta.tooLarge) {
@@ -262,14 +353,18 @@ export function VoiceAssistant({
         setTruncated(meta.truncated);
       },
       handlers: () =>
-        withNavHelpHandlers(K3_INTENT_HANDLERS, {
-          nav: navRef.current ?? null,
-          card,
-          stepCard: STEP_CARD[step],
-          canOpenHelp: !!openHelp,
-          uiLocale: locale,
-          stepInView: stepSectionInView,
-        }),
+        withQuestionHandler(
+          withNavHelpHandlers(K3_INTENT_HANDLERS, {
+            nav: navRef.current ?? null,
+            card,
+            stepCard: STEP_CARD[step],
+            canOpenHelp: !!openHelp,
+            uiLocale: locale,
+            stepInView: stepSectionInView,
+          }),
+          // K4: вопрос о шаге — тот же резолвер темы справки, что у (i).
+          { card, stepCard: STEP_CARD[step], canOpenHelp: !!openHelp }
+        ),
       dispatch: {
         canFill: (target) => !!registry?.canFill(target),
         command: (command, args) => registry?.command(command, args) ?? null,
@@ -307,6 +402,11 @@ export function VoiceAssistant({
     }
     const plan = out.plan;
     const next = planLine(plan, result);
+    setHelpTopic(plan.kind === 'answer' ? plan.help : null);
+    // K4: отказ, который сервер пометил кодом (тон не для повода), —
+    // объяснить голосом; строка с причиной уже в ответе разбора.
+    const refusal = refusalOf(result.refusal);
+    if (refusal) announceProactive({ kind: 'refusal', refusal });
     switch (plan.kind) {
       case 'propose':
         onConfirmEvent({ type: 'propose', card: plan.card });
@@ -325,6 +425,17 @@ export function VoiceAssistant({
         break;
       case 'help':
         openHelp?.(plan.topic);
+        break;
+      case 'answer':
+        // Ответ из фактов звучит тем же текстом, что в строке: сервер
+        // собирает его заново по теме и языку реплики.
+        // «Не знаю, посмотрите справку» — тоже вслух (CONTRACT5): сервер
+        // говорит свою фразу по `topic: null`.
+        announceProactive({
+          kind: 'answer',
+          topic: plan.answered ? plan.topic : null,
+          language: result.language,
+        });
         break;
       case 'reply':
         break;
@@ -406,6 +517,18 @@ export function VoiceAssistant({
             )}
             {line && (
               <p className={`text-sm ${LINE_TONE[line.tone]}`}>{line.text}</p>
+            )}
+            {helpTopic && openHelp && (
+              <button
+                type="button"
+                className="rounded-full border border-[var(--border)] px-3 py-1 text-xs"
+                onClick={() => {
+                  openHelp(helpTopic);
+                  setHelpTopic(null);
+                }}
+              >
+                {dict.tutorialHelp.button}
+              </button>
             )}
             {/* Обрезанная фраза (изменение контракта 4): у карточки — на
                 ней, иначе — под строкой ответа. */}

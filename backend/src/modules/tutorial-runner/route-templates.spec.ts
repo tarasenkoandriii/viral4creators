@@ -22,6 +22,8 @@ const KNOWN_UNSUPPORTED = [
   // тестировщик — обход снял бы экран отказа в доступе и записал бы его
   // как «экран продукта».
   'testing',
+  // «Я в кадре»: за флагом и начинается с камеры — снимать нечего.
+  'persona',
 ];
 
 /** Маршруты, которые резолвятся В ПРИНЦИПЕ, но фикстурных данных для них
@@ -145,6 +147,14 @@ describe('resolveScenarioRoute', () => {
     expect(result.ok).toBe(false);
     const reason = (result as { reason: string }).reason;
     expect(reason).toContain('тестировщик');
+    expect(reason).not.toContain('не найдено');
+  });
+
+  it('persona — отказ с причиной про флаг и камеру, а не «неизвестное имя»', () => {
+    const result = resolveScenarioRoute('persona', {});
+    expect(result.ok).toBe(false);
+    const reason = (result as { reason: string }).reason;
+    expect(reason).toContain('PERSONA_ENABLED');
     expect(reason).not.toContain('не найдено');
   });
 

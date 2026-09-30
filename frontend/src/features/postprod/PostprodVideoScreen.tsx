@@ -47,6 +47,7 @@ import { ExportPanel } from '../generation/ExportPanel';
 import { AudioTracksPanel } from './AudioTracksPanel';
 import { PublishPanel } from '../generation/PublishPanel';
 import { ShareVideoPanel } from '../generation/ShareVideoPanel';
+import { snapshotUsesPersona } from '../../lib/persona-greeting';
 
 export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
   const { dict } = useI18n();
@@ -65,6 +66,7 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
     reVoice,
     setSnapshot,
     reload,
+    session,
   } = usePostprodVideo(sessionId);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -245,6 +247,7 @@ export function PostprodVideoScreen({ sessionId }: { sessionId: string }) {
           sessionId={sessionId}
           generatedVideoId={video.generatedVideoId}
           productName={productName}
+          usesPersona={snapshotUsesPersona(session?.greetingBriefSnapshot)}
         />
       )}
 

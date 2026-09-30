@@ -23,7 +23,13 @@ export type SketchTargetType =
   | 'brand-scene'
   | 'project-item'
   /** GREETING_VIDEO — референс-изображение Grok reference-to-video. */
-  | 'session-greeting-reference';
+  | 'session-greeting-reference'
+  /**
+   * «Я в кадре» (ТЗ Greeting 2.0 §4.5): образ проверенной персоны, `id` —
+   * id образа. Лицо не анонимизируется (`likeness: 'self'`) — решает
+   * сервер по персоне, клиент ничего для этого не шлёт.
+   */
+  | 'persona-look';
 
 export interface SketchTarget {
   type: SketchTargetType;

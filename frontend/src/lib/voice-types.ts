@@ -67,6 +67,29 @@ export const VOICE_NAVIGATE_TARGETS = [
 ] as const;
 export type VoiceNavigateTarget = (typeof VOICE_NAVIGATE_TARGETS)[number];
 
+/**
+ * K4 (§4А.2 п.5): темы вопросов о шаге — закрытый список сервера
+ * (`VOICE_QUESTION_TOPICS`). Ответ собирает сервер из фактов; здесь
+ * список нужен, чтобы попросить ОЗВУЧКУ того же ответа (`speak`
+ * `{ kind: 'answer', topic }`).
+ */
+export const VOICE_QUESTION_TOPICS = [
+  'why-photo',
+  'how-long',
+  'what-next',
+  'script-flagged',
+] as const;
+export type VoiceQuestionTopic = (typeof VOICE_QUESTION_TOPICS)[number];
+
+/** K4: отказы, которые помощник объясняет голосом (коды, не текст). */
+export const VOICE_REFUSAL_CODES = [
+  'tone',
+  'moderation',
+  'quota',
+  'locked',
+] as const;
+export type VoiceRefusalCode = (typeof VOICE_REFUSAL_CODES)[number];
+
 export type VoiceIntent =
   | { kind: 'fill'; fields: VoiceField[] }
   | { kind: 'command'; command: VoiceCommand; args?: Record<string, string> }
@@ -75,6 +98,8 @@ export type VoiceIntent =
   | { kind: 'consent'; phrase: string }
   | { kind: 'confirm' }
   | { kind: 'cancel' }
+  /** K4: вопрос о шаге; `answered: false` — «не знаю» и кнопка справки. */
+  | { kind: 'question'; topic: VoiceQuestionTopic | null; answered: boolean }
   | { kind: 'unknown' };
 
 export interface VoiceUnderstandResult {
@@ -87,6 +112,8 @@ export interface VoiceUnderstandResult {
   scriptMismatch: boolean;
   /** Причина отказа; нет поля или `null` — отказа нет (старый сервер). */
   reason?: VoiceReason | null;
+  /** K4: отказ, который помощник объясняет голосом; нет — нечего объяснять. */
+  refusal?: VoiceRefusalCode | null;
 }
 
 /**

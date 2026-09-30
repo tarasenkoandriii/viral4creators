@@ -14,6 +14,15 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import {
+  PERSONA_DISABLED_CODE,
+  PERSONA_DISABLED_MESSAGE,
+  PresenterLookRow,
+  personaEnabled,
+  presenterLookProblem,
+  presenterProviderProblem,
+  presenterSnapshotFrom,
+} from '../../common/greeting-persona';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanService } from '../plan/plan.service';
 import { resolveGreetingConfig } from '../project/greeting-config';
@@ -30,7 +39,10 @@ import {
 import {
   GreetingBriefView,
   GreetingOccasion,
+  GreetingPresenterChoice,
   GreetingPresenterProvider,
+  GreetingPresenterSnapshot,
+  GreetingPresenterVariant,
   GreetingRegister,
   GreetingRegisterSource,
   GreetingResolution,
@@ -56,6 +68,8 @@ interface GreetingBriefRow {
   resolution: string;
   brandManifestId: string | null;
   occasionDate: Date | null;
+  presenterLookId?: string | null;
+  presenterVariant?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -75,6 +89,9 @@ export interface BriefBase {
   presenterProvider: string;
   resolution: string;
   occasionDate: Date | null;
+  /** Этап G: ведущий-образ; нет полей — ИИ-ведущий. */
+  presenterLookId?: string | null;
+  presenterVariant?: string | null;
 }
 
 /** Проверенный итог правки — полный набор редактируемых полей. */
@@ -93,6 +110,71 @@ export interface ResolvedBriefFields {
   presenterProvider: GreetingPresenterProvider;
   resolution: GreetingResolution;
   occasionDate: Date | null;
+  /** Этап G (§4.8): образ персоны автора или `null` — ИИ-ведущий. */
+  presenterLookId: string | null;
+  presenterVariant: GreetingPresenterVariant | null;
+}
+
+/** Образ со всем, что нужно проверке и снимку (`PresenterLookRow`). */
+export const PRESENTER_LOOK_INCLUDE = {
+  activeSketch: { select: { url: true, pathname: true, status: true } },
+  persona: { select: { userId: true, revokedAt: true } },
+} as const;
+
+export interface PresenterColumns {
+  presenterLookId: string | null;
+  presenterVariant: GreetingPresenterVariant | null;
+}
+
+/** Минимум Prisma, нужный чтению образа (структурно — ради тестов). */
+export interface PresenterLookReader {
+  personaLook: {
+    findFirst(args: {
+      where: Record<string, unknown>;
+      include: typeof PRESENTER_LOOK_INCLUDE;
+    }): Promise<unknown>;
+  };
+}
+
+/**
+ * Образ персоны автора. Режим выключен — 404 с кодом `PERSONA_DISABLED`,
+ * тем же, что у маршрутов персоны: фронтенд прячет выбор по этому коду.
+ */
+export async function loadPresenterLook(
+  prisma: PresenterLookReader,
+  userId: string,
+  lookId: string,
+): Promise<PresenterLookRow | null> {
+  if (!personaEnabled()) {
+    throw new NotFoundException({
+      code: PERSONA_DISABLED_CODE,
+      message: PERSONA_DISABLED_MESSAGE,
+    });
+  }
+  return (await prisma.personaLook.findFirst({
+    where: { id: lookId, persona: { userId } },
+    include: PRESENTER_LOOK_INCLUDE,
+  })) as PresenterLookRow | null;
+}
+
+/**
+ * Выбор ведущего из DTO → колонки брифа. `ai` — сброс (поля образа, если
+ * их прислали, игнорируются). Образ персоны — только при включённом
+ * режиме и только свой: чужой id читается как «не найден». Один код на
+ * создание проекта и на правку брифа.
+ */
+export async function resolvePresenterChoice(
+  prisma: PresenterLookReader,
+  userId: string,
+  choice: GreetingPresenterChoice,
+): Promise<PresenterColumns> {
+  if (choice.kind !== 'persona') {
+    return { presenterLookId: null, presenterVariant: null };
+  }
+  const look = await loadPresenterLook(prisma, userId, choice.lookId);
+  const problem = presenterLookProblem(look, choice.variant, userId);
+  if (problem) throw new BadRequestException(problem);
+  return { presenterLookId: choice.lookId, presenterVariant: choice.variant };
 }
 
 @Injectable()
@@ -155,9 +237,22 @@ export class GreetingBriefService {
     next: ResolvedBriefFields,
   ): Promise<void> {
     const current = await this.findOwnBrief(userId, projectId);
+    // Этап G: ведущий из снимка сессии может ссылаться на образ, которого
+    // уже нет (персону удалили, строки образов ушли каскадом). Внешний
+    // ключ такую запись отверг бы 500-й; бриф проекта для следующей
+    // сессии честно становится «ИИ-ведущий».
+    const lookGone =
+      !!next.presenterLookId &&
+      !(await this.prisma.personaLook.findFirst({
+        where: { id: next.presenterLookId },
+        select: { id: true },
+      }));
     await this.prisma.greetingBrief.update({
       where: { id: current.id },
-      data: { ...next },
+      data: {
+        ...next,
+        ...(lookGone ? { presenterLookId: null, presenterVariant: null } : {}),
+      },
     });
   }
 
@@ -293,6 +388,25 @@ export class GreetingBriefService {
       resolution = resolved.resolution;
     }
 
+    // Этап G (§4.8): «кто в кадре». Не передан — прежний выбор. Выбор
+    // образа проверяется здесь, на обоих путях правки: образ свой, не
+    // удалён, готов; скетч — только если скетч у образа есть. Сочетание
+    // со скетчем на Hedra проверяется и тогда, когда поменяли только
+    // провайдера: иначе смена grok → hedra протащила бы непроверенный
+    // рисованный портрет.
+    let presenterLookId = current.presenterLookId ?? null;
+    let presenterVariant = (current.presenterVariant ??
+      null) as GreetingPresenterVariant | null;
+    if (dto.presenter !== undefined) {
+      const choice = await this.resolvePresenterChoice(userId, dto.presenter);
+      presenterLookId = choice.presenterLookId;
+      presenterVariant = choice.presenterVariant;
+    }
+    const providerProblem = presenterLookId
+      ? presenterProviderProblem(presenterProvider, presenterVariant)
+      : null;
+    if (providerProblem) throw new BadRequestException(providerProblem);
+
     return {
       occasion,
       customOccasionText,
@@ -331,7 +445,33 @@ export class GreetingBriefService {
             ? new Date(dto.occasionDate)
             : null
           : current.occasionDate,
+      presenterLookId,
+      presenterVariant: presenterLookId ? presenterVariant : null,
     };
+  }
+
+  /** См. модульную `resolvePresenterChoice` выше — метод ради DI. */
+  resolvePresenterChoice(
+    userId: string,
+    choice: GreetingPresenterChoice,
+  ): Promise<PresenterColumns> {
+    return resolvePresenterChoice(this.prisma, userId, choice);
+  }
+
+  /**
+   * Копия образа для снимка сессии (правка из сессии, этап C + G). Та же
+   * проверка, что при выборе: образ, удалённый между выбором и стартом,
+   * не должен молча превратиться в ИИ-ведущего или в битую ссылку.
+   */
+  async presenterSnapshot(
+    userId: string,
+    lookId: string,
+    variant: GreetingPresenterVariant,
+  ): Promise<GreetingPresenterSnapshot> {
+    const look = await loadPresenterLook(this.prisma, userId, lookId);
+    const problem = presenterLookProblem(look, variant, userId);
+    if (problem || !look) throw new BadRequestException(problem);
+    return presenterSnapshotFrom(look, variant);
   }
 
   private async findOwnBrief(
@@ -392,7 +532,22 @@ export function toGreetingBriefView(row: GreetingBriefRow): GreetingBriefView {
     resolution: row.resolution as GreetingResolution,
     brandManifestId: row.brandManifestId,
     occasionDate: row.occasionDate ? row.occasionDate.toISOString() : null,
+    presenter: presenterChoiceOf(row),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/** Колонки брифа → выбор «кто в кадре» для экрана. */
+export function presenterChoiceOf(row: {
+  presenterLookId?: string | null;
+  presenterVariant?: string | null;
+}): GreetingPresenterChoice {
+  return row.presenterLookId
+    ? {
+        kind: 'persona',
+        lookId: row.presenterLookId,
+        variant: row.presenterVariant === 'sketch' ? 'sketch' : 'photo',
+      }
+    : { kind: 'ai' };
 }

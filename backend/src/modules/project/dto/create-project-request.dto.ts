@@ -10,6 +10,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import type { ProjectType } from '../../../common/types/project.types';
+import { GreetingPresenterDto } from './greeting-presenter.dto';
 import type {
   GreetingOccasion,
   GreetingRegister,
@@ -111,6 +112,14 @@ export class CreateGreetingBriefDto {
   @IsOptional()
   @IsDateString()
   occasionDate?: string;
+  /**
+   * «Кто в кадре» (этап G, ТЗ Greeting 2.0 §4.8). Не передано — прежний
+   * выбор (при создании — ИИ-ведущий).
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GreetingPresenterDto)
+  presenter?: GreetingPresenterDto;
 }
 
 /**

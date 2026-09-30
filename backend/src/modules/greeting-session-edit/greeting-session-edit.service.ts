@@ -53,6 +53,10 @@ import {
   GreetingResolution,
 } from '../../common/types/greeting.types';
 import {
+  nextUsesPersona,
+  snapshotUsesPersona,
+} from '../../common/greeting-persona';
+import {
   GenerationPrompt,
   ModerationStatus,
 } from '../../common/types/prompt.types';
@@ -174,6 +178,36 @@ export class GreetingSessionEditService {
           ? next.occasionDate.toISOString()
           : null,
       };
+      // Этап G (§4.8): новый ведущий — новая копия образа в снимок; не
+      // передан — прежняя копия остаётся как есть (образ мог быть удалён
+      // после старта, и это не должно ломать правку имени получателя).
+      if (dto.presenter !== undefined) {
+        merged.presenter =
+          next.presenterLookId && next.presenterVariant
+            ? await this.briefs.presenterSnapshot(
+                userId,
+                next.presenterLookId,
+                next.presenterVariant,
+              )
+            : null;
+      }
+      // CONTRACT5 п.5б: правка после готового ролика уходит в НОВУЮ
+      // сессию-версию без ролика — там признак следует за выбором. Правка
+      // на месте бывает и после упавшего рендера (в том числе повторного
+      // поверх готового ролика с персоной) — там признак не снимается.
+      const computedPersona = snapshotUsesPersona({
+        presenter: merged.presenter ?? null,
+        manifestKind: session.brandManifestSnapshot?.kind ?? null,
+        senderVoice: merged.senderVoice ?? null,
+      });
+      merged.usesPersona =
+        mode === 'new-version'
+          ? computedPersona
+          : nextUsesPersona(
+              before.usesPersona,
+              computedPersona,
+              session.generatedVideo,
+            );
       const { snapshot, resetFields } = reconcileSelections(merged);
       const meaningChanged =
         !!session.generationPrompt &&
@@ -274,6 +308,9 @@ export class GreetingSessionEditService {
         target.greetingReferenceImages ?? [],
         normalizeVoiceMode(target.brandManifestSnapshot?.voiceMode),
         (text) => this.promptService.moderateText(text),
+        // Этап G (Г-6): сцены и стиль бренд-бука — и в правленый сценарий,
+        // тем же `buildSceneDescription`, что и при сборке.
+        target.brandManifestSnapshot ?? null,
       );
       await this.sessions.updateSession(target.sessionId, {
         generationPrompt: prompt,
@@ -328,6 +365,9 @@ export class GreetingSessionEditService {
           ...snapshot,
           sticker: null,
           musicTheme: null,
+          // Галочка витрины относилась к странице прежней версии (§4.9) —
+          // новая версия спрашивает заново.
+          personaShowcaseConsentAt: null,
           addedAt: new Date().toISOString(),
         },
         ...(source.brandManifestSnapshot
@@ -446,6 +486,10 @@ export function baseOf(s: GreetingBriefSnapshot) {
       s.requestedPresenterProvider as GreetingPresenterProvider,
     resolution: s.requestedResolution as GreetingResolution,
     occasionDate: s.occasionDate ? new Date(s.occasionDate) : null,
+    // Этап G: ведущий из снимка — чтобы смена провайдера на Hedra при
+    // скетч-ведущем проверялась и при правке из сессии.
+    presenterLookId: s.presenter?.lookId ?? null,
+    presenterVariant: s.presenter?.variant ?? null,
   };
 }
 
@@ -465,6 +509,7 @@ export function composeEditedPrompt(
   referenceImages: SceneAsset[],
   voiceMode: ReturnType<typeof normalizeVoiceMode>,
   moderate: (text: string) => { status: ModerationStatus; flags: string[] },
+  brand?: Parameters<typeof buildSceneDescription>[5],
 ): GenerationPrompt {
   const occasionText =
     brief.occasion === 'OTHER' && brief.customOccasionText
@@ -476,6 +521,7 @@ export function composeEditedPrompt(
     speech,
     referenceImages,
     voiceMode,
+    brand ?? null,
   );
   const moderation = moderate(scene);
   const flagged = moderation.status === ModerationStatus.FLAGGED;

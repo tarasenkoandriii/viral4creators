@@ -108,6 +108,7 @@ function build(
       if (over.budgetThrows) throw over.budgetThrows;
     }),
   };
+  const voiceUploads = { remember: jest.fn().mockResolvedValue(undefined) };
   const svc = new HintAudioService(
     prisma as any,
     settings as any,
@@ -117,8 +118,20 @@ function build(
     tts as any,
     blob as any,
     voiceBudget as any,
+    voiceUploads as any,
   );
-  return { svc, prisma, aiUsage, provider, tts, blob, voiceBudget, settings };
+  return {
+    svc,
+    prisma,
+    aiUsage,
+    provider,
+    tts,
+    blob,
+    voiceBudget,
+    settings,
+    plan,
+    voiceUploads,
+  };
 }
 
 describe('HintAudioService — голос советника (Greeting 2.0 §4А.4, K1)', () => {
@@ -320,6 +333,44 @@ describe('HintAudioService — голос советника (Greeting 2.0 §4А
     expect(provider.synthesize).toHaveBeenCalled();
   });
 
+  it('траурный повод: длинная подсказка звучит коротко — первыми фразами (K4)', async () => {
+    const long =
+      'Начните с повода — от него зависит тон ролика. Дальше назовите, кому и от кого. ' +
+      'Тон к этому поводу подходит не любой, и сервис проверит пару, прежде чем сохранить бриф целиком.';
+    const { svc, provider, prisma } = build({
+      hint: long,
+      brief: { occasion: 'OTHER', occasionRegister: 'MOURNING' },
+    });
+    await svc.audioFor('u1', 'p1', KEY);
+    const spoken = provider.synthesize.mock.calls[0][0].text as string;
+    expect(spoken).toBe(
+      'Начните с повода — от него зависит тон ролика. Дальше назовите, кому и от кого.',
+    );
+    // Ключ файла — по произнесённому тексту: короткая версия не
+    // выдаётся за полную и наоборот.
+    const created = prisma.wizardHintAudio.upsert.mock.calls[0][0].create;
+    expect(created.hintKey).toBe(KEY);
+    expect(created.key).toBe(
+      hintAudioKey({
+        hintKey: KEY,
+        provider: 'soniox',
+        voiceId: 'Maya',
+        lang: 'ru',
+        text: spoken,
+      }),
+    );
+  });
+
+  it('праздничный повод: длинная подсказка звучит целиком', async () => {
+    const long = `${HINT} `.repeat(5).trim();
+    const { svc, provider } = build({
+      hint: long,
+      brief: { occasion: 'BIRTHDAY', occasionRegister: null },
+    });
+    await svc.audioFor('u1', 'p1', KEY);
+    expect(provider.synthesize.mock.calls[0][0].text).toBe(long);
+  });
+
   it('праздничный повод: та же бодрая реплика звучит', async () => {
     const { svc, provider } = build({
       hint: 'Ура! Отличный выбор 🎉',
@@ -432,5 +483,79 @@ describe('hint-audio — чистые правила', () => {
     expect(mayVoiceInRegister('SENSITIVE', 'Спокойно заполните бриф.')).toBe(
       true,
     );
+  });
+});
+
+describe('HintAudioService — K4 (CONTRACT5): лимит и личная реплика', () => {
+  const SPEC = {
+    cacheKey: 'speak|refusal|quota|ru',
+    text: 'Лимит.',
+    lang: 'ru',
+  };
+
+  it('обычная речь при отказе общего лимита молчит', async () => {
+    const { svc, provider } = build({ canSpend: false });
+    expect(await svc.synthesizeCached('u1', 'p1', SPEC)).toBeNull();
+    expect(provider.synthesize).not.toHaveBeenCalled();
+  });
+
+  it('фраза «лимит исчерпан» — мимо общего лимита, но с потолком голоса', async () => {
+    const { svc, provider, plan } = build({ canSpend: false });
+    expect(
+      await svc.synthesizeCached('u1', 'p1', SPEC, { skipUserSpend: true }),
+    ).toMatchObject({ url: expect.any(String) });
+    expect(plan.assertCanSpendUser).not.toHaveBeenCalled();
+    expect(provider.synthesize).toHaveBeenCalled();
+
+    const capped = build({
+      canSpend: false,
+      budgetThrows: new ForbiddenException('потолок'),
+    });
+    expect(
+      await capped.svc.synthesizeCached('u1', 'p1', SPEC, {
+        skipUserSpend: true,
+      }),
+    ).toEqual({ url: null, reason: VOICE_BUDGET_EXHAUSTED });
+    const broke = build({ canSpend: false, spentToday: 10 ** 12 });
+    expect(
+      await broke.svc.synthesizeCached('u1', 'p1', SPEC, {
+        skipUserSpend: true,
+      }),
+    ).toBeNull();
+  });
+
+  it('личная реплика: мимо аудиокеша, случайный путь проекта, учёт до заливки', async () => {
+    const { svc, prisma, blob, voiceUploads } = build();
+    const a = await svc.synthesizeEphemeral('u1', 'p1', {
+      text: 'Проверьте: Мама…',
+      lang: 'ru',
+    });
+    const b = await svc.synthesizeEphemeral('u1', 'p1', {
+      text: 'Проверьте: Мама…',
+      lang: 'ru',
+    });
+    expect(prisma.wizardHintAudio.findUnique).not.toHaveBeenCalled();
+    expect(prisma.wizardHintAudio.upsert).not.toHaveBeenCalled();
+    const paths = blob.uploadBuffer.mock.calls.map((c: any[]) => c[0]);
+    expect(paths[0]).toMatch(
+      /^projects\/p1\/assistant-speech-[0-9a-f]{32}\.mp3$/,
+    );
+    // Тот же текст — другой путь: из текста имя файла не вывести.
+    expect(paths[0]).not.toBe(paths[1]);
+    expect(a).not.toEqual(b);
+    expect(voiceUploads.remember.mock.calls.map((c: any[]) => c[0])).toEqual(
+      paths,
+    );
+    expect(voiceUploads.remember.mock.invocationCallOrder[0]).toBeLessThan(
+      blob.uploadBuffer.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('личная реплика — с общим лимитом (это не отказ, а обычная речь)', async () => {
+    const { svc, provider } = build({ canSpend: false });
+    expect(
+      await svc.synthesizeEphemeral('u1', 'p1', { text: 'x', lang: 'ru' }),
+    ).toBeNull();
+    expect(provider.synthesize).not.toHaveBeenCalled();
   });
 });

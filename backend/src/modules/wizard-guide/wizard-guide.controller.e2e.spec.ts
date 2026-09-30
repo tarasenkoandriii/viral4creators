@@ -24,6 +24,7 @@ import { WizardTelemetryService } from './wizard-telemetry.service';
 import { ExperienceService } from './experience.service';
 import { SiblingsService } from './siblings.service';
 import { HintAudioService } from './hint-audio.service';
+import { ProactiveSpeechService } from './proactive-speech.service';
 import { TelegramIdentityGuard } from '../telegram-auth/telegram-identity.guard';
 import { RateLimitGuard } from '../../common/rate-limit';
 import { ResponseInterceptor } from '../../common/interceptors/response.interceptor';
@@ -51,6 +52,7 @@ const doubles = {
   experience: { addCandidate: jest.fn().mockResolvedValue({ id: 'c1' }) },
   siblings: { classify: jest.fn().mockResolvedValue(null) },
   audio: { audioFor: jest.fn() },
+  speech: { speak: jest.fn() },
 };
 
 async function boot(identified: boolean): Promise<INestApplication> {
@@ -63,6 +65,7 @@ async function boot(identified: boolean): Promise<INestApplication> {
       { provide: ExperienceService, useValue: doubles.experience },
       { provide: SiblingsService, useValue: doubles.siblings },
       { provide: HintAudioService, useValue: doubles.audio },
+      { provide: ProactiveSpeechService, useValue: doubles.speech },
     ],
   })
     .overrideGuard(TelegramIdentityGuard)
@@ -312,6 +315,85 @@ describe('маршруты советника (e2e, один контролле�
     expect(doubles.guide.setVoice).not.toHaveBeenCalled();
   });
 
+  // ── Проактивная речь (K4) ─────────────────────────────────────────
+
+  it('речь: вид и коды уходят сервису, ответ — в общем конверте', async () => {
+    doubles.speech.speak.mockResolvedValueOnce({ url: 'https://blob/a.mp3' });
+    const res = await request(app.getHttpServer())
+      .post('/api/projects/p1/wizard-guide/speak')
+      .send({ kind: 'refusal', refusal: 'tone', locale: 'uk' })
+      .expect(200);
+    expect(res.body).toMatchObject({
+      success: true,
+      data: { url: 'https://blob/a.mp3' },
+    });
+    expect(doubles.speech.speak).toHaveBeenCalledWith('u1', 'p1', {
+      kind: 'refusal',
+      refusal: 'tone',
+      locale: 'uk',
+    });
+  });
+
+  it('речь: сказать нечего — 204 без тела', async () => {
+    doubles.speech.speak.mockResolvedValueOnce(null);
+    const res = await request(app.getHttpServer())
+      .post('/api/projects/p1/wizard-guide/speak')
+      .send({ kind: 'video-ready', locale: 'ru' })
+      .expect(204);
+    expect(res.text).toBe('');
+  });
+
+  it('речь: ТЕКСТ в запросе не принимается — фразу собирает сервер', async () => {
+    // Главное правило K4: иначе маршрут стал бы синтезатором чего угодно
+    // за счёт потолка голоса человека.
+    await request(app.getHttpServer())
+      .post('/api/projects/p1/wizard-guide/speak')
+      .send({ kind: 'answer', topic: 'how-long', locale: 'ru', text: 'ура' })
+      .expect(400);
+    expect(doubles.speech.speak).not.toHaveBeenCalled();
+  });
+
+  it('речь: коды вне закрытых списков и вид без кода — 400', async () => {
+    for (const body of [
+      { kind: 'poem', locale: 'ru' },
+      { kind: 'refusal', refusal: 'anything', locale: 'ru' },
+      { kind: 'answer', topic: 'price', locale: 'ru' },
+      { kind: 'refusal', locale: 'ru' },
+      { kind: 'video-ready', locale: 'fr' },
+    ]) {
+      await request(app.getHttpServer())
+        .post('/api/projects/p1/wizard-guide/speak')
+        .send(body)
+        .expect(400);
+    }
+    expect(doubles.speech.speak).not.toHaveBeenCalled();
+  });
+
+  it('речь: ответ без темы — «не знаю» вслух (topic: null)', async () => {
+    doubles.speech.speak.mockResolvedValueOnce({ url: 'https://blob/u.mp3' });
+    await request(app.getHttpServer())
+      .post('/api/projects/p1/wizard-guide/speak')
+      .send({ kind: 'answer', locale: 'ru' })
+      .expect(200);
+    expect(doubles.speech.speak).toHaveBeenCalledWith('u1', 'p1', {
+      kind: 'answer',
+      topic: null,
+      locale: 'ru',
+    });
+  });
+
+  it('речь: потолок голоса — причина в теле', async () => {
+    doubles.speech.speak.mockResolvedValueOnce({
+      url: null,
+      reason: 'budget-exhausted',
+    });
+    const res = await request(app.getHttpServer())
+      .post('/api/projects/p1/wizard-guide/speak')
+      .send({ kind: 'consent-summary', locale: 'en' })
+      .expect(200);
+    expect(res.body.data).toEqual({ url: null, reason: 'budget-exhausted' });
+  });
+
   it('PATCH без полей — 400, а не молчаливое «ничего»', async () => {
     await request(app.getHttpServer())
       .patch('/api/projects/p1/wizard-guide')
@@ -345,6 +427,10 @@ describe('маршруты советника без личности', () => {
     await request(app.getHttpServer())
       .post('/api/projects/p1/wizard-guide/hint-audio')
       .send({ key: 'k', lang: 'ru' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post('/api/projects/p1/wizard-guide/speak')
+      .send({ kind: 'video-ready', locale: 'ru' })
       .expect(403);
   });
 });

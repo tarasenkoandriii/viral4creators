@@ -20,8 +20,10 @@ jest.mock('../prompt/prompt.service', () => ({ PromptService: class {} }));
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import {
+  MAX_STYLE_NOTE_PROMPT_LENGTH,
   buildSceneDescription,
   buildScriptPrompt,
+  promptSafeNote,
 } from './greeting-prompt.service';
 import { GREETING_OCCASIONS } from '../../common/types/greeting.types';
 import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
@@ -173,8 +175,18 @@ describe('buildSceneDescription — кто произносит реплику',
 
   it('референсы размечаются метками <IMAGE_n> в обоих режимах', () => {
     const images = [
-      { id: 'a', label: 'Марина', description: null },
-      { id: 'b', label: 'дача', description: 'веранда летом' },
+      {
+        id: 'a',
+        label: 'Марина',
+        description: null,
+        photoUrl: 'https://b/a.jpg',
+      },
+      {
+        id: 'b',
+        label: 'дача',
+        description: 'веранда летом',
+        photoUrl: 'https://b/b.jpg',
+      },
     ] as never;
     for (const mode of ['veo', 'voiceover'] as const) {
       const scene = buildSceneDescription(
@@ -250,7 +262,14 @@ describe('buildSceneDescription — пресетный голос xAI', () => {
   it('голос и картинки-референсы уживаются в одном промпте', () => {
     // docs.x.ai: «You can use a voice alongside reference images or on
     // its own» — обе разметки должны остаться.
-    const images = [{ id: 'a', label: 'Марина', description: null }] as never;
+    const images = [
+      {
+        id: 'a',
+        label: 'Марина',
+        description: null,
+        photoUrl: 'https://b/a.jpg',
+      },
+    ] as never;
     const scene = buildSceneDescription(
       withPreset,
       'день рождения',
@@ -343,5 +362,120 @@ describe('язык поздравления в запросе (этап C, §3.8
 
   it('без языка в брифе берётся переданный язык интерфейса сессии', () => {
     expect(buildScriptPrompt(brief(), 'повод', 'de')).toContain('German');
+  });
+});
+
+describe('ведущий-образ и бренд-бук в сцене (этап G, §4.8, Т-17, Г-6)', () => {
+  const afterFlag: Array<() => void> = [];
+  afterEach(() => afterFlag.splice(0).forEach((f) => f()));
+  const speech = 'Марина, с днём рождения!';
+  const PRESENTER = {
+    lookId: 'l1',
+    label: 'Деловой',
+    url: 'https://blob/look.png',
+    pathname: 'users/u1/personas/p1/looks/l1.png',
+    variant: 'photo' as const,
+  };
+  const ref = (over: Record<string, unknown> = {}) =>
+    ({
+      id: 'a',
+      label: 'дача',
+      description: null,
+      photoUrl: 'https://blob/a.jpg',
+      hasFace: false,
+      ...over,
+    }) as never;
+
+  it('образ — <IMAGE_1>, и промпт прямо говорит, кто ведущий; свои фото — со второй метки', () => {
+    const scene = buildSceneDescription(
+      brief({ presenter: PRESENTER }),
+      'день рождения',
+      speech,
+      [ref()],
+      'voiceover',
+    );
+    expect(scene).toContain('The presenter is the person shown in <IMAGE_1>');
+    expect(scene).toContain('<IMAGE_2> — дача');
+    expect(scene).not.toContain('<IMAGE_1> — ');
+  });
+
+  it('скетч-ведущий — рисованный облик сохраняется', () => {
+    const scene = buildSceneDescription(
+      brief({ presenter: { ...PRESENTER, variant: 'sketch' } }),
+      'день рождения',
+      speech,
+      [],
+      'voiceover',
+    );
+    expect(scene).toContain('keeping their drawn, illustrated look');
+  });
+
+  it('без образа — строки про ведущего нет, метки как раньше', () => {
+    const scene = buildSceneDescription(
+      brief(),
+      'день рождения',
+      speech,
+      [ref()],
+      'voiceover',
+    );
+    expect(scene).not.toContain('The presenter is the person shown');
+    expect(scene).toContain('<IMAGE_1> — дача');
+  });
+
+  it('фото с лицом без согласия в промпт не попадает (Г-8)', () => {
+    const OLD = process.env.PERSONA_ENABLED;
+    process.env.PERSONA_ENABLED = 'true';
+    afterFlag.push(() => (process.env.PERSONA_ENABLED = OLD));
+    const scene = buildSceneDescription(
+      brief(),
+      'день рождения',
+      speech,
+      [ref({ id: 'x', label: 'соседка', hasFace: true }), ref()],
+      'voiceover',
+    );
+    expect(scene).not.toContain('соседка');
+    expect(scene).toContain('<IMAGE_1> — дача');
+  });
+
+  it('бренд-бук: стиль и сцены доходят до промпта (Г-6)', () => {
+    const scene = buildSceneDescription(
+      brief(),
+      'день рождения',
+      speech,
+      [],
+      'voiceover',
+      {
+        styleNotes: 'тёплые "пастельные"\nтона',
+        scenes: [
+          {
+            sourceSceneId: 's1',
+            label: 'Офис',
+            photoUrl: 'https://blob/o.jpg',
+            description: null,
+          },
+          {
+            sourceSceneId: 's2',
+            label: 'Пляж',
+            photoUrl: null,
+            description: 'пляж на закате',
+          },
+        ],
+      },
+    );
+    expect(scene).toContain('<IMAGE_1> — Офис');
+    expect(scene).toContain(
+      'Possible settings from the brand: пляж на закате.',
+    );
+    // Кавычки и переводы строк из заметки не ломают реплику в кавычках.
+    expect(scene).toContain(
+      'Visual style of the brand: тёплые пастельные тона.',
+    );
+  });
+
+  it('заметка стиля обрезается по потолку', () => {
+    expect(promptSafeNote('x'.repeat(1000))).toHaveLength(
+      MAX_STYLE_NOTE_PROMPT_LENGTH,
+    );
+    expect(promptSafeNote(null)).toBe('');
   });
 });

@@ -25,6 +25,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { PERSONAL_MANIFEST_GREETING_ONLY } from '../../common/greeting-persona';
 import {
   ProjectService,
   isItemComplete,
@@ -316,6 +317,90 @@ describe('ProjectService', () => {
         occasionRegister: null,
         registerSource: null,
         userOccasionRegister: null,
+      });
+    });
+  });
+
+  describe('createProject — GREETING_VIDEO, «кто в кадре» (этап G, §4.8)', () => {
+    const OLD_FLAG = process.env.PERSONA_ENABLED;
+    const look = {
+      id: 'l1',
+      label: 'Деловой',
+      status: 'ready',
+      deletedAt: null,
+      photoUrl: 'https://blob/l1.png',
+      photoPathname: 'users/u1/personas/p1/looks/l1.png',
+      activeSketch: null,
+      persona: { userId: USER, revokedAt: null },
+    };
+    beforeEach(() => {
+      process.env.PERSONA_ENABLED = 'true';
+      (prisma as any).personaLook = {
+        findFirst: jest.fn().mockResolvedValue(look),
+      };
+      prisma.project.create.mockResolvedValue(
+        projectRow({ type: 'GREETING_VIDEO' }),
+      );
+    });
+    afterAll(() => {
+      process.env.PERSONA_ENABLED = OLD_FLAG;
+    });
+    const create = (presenter: unknown, extra: Record<string, unknown> = {}) =>
+      service.createProject(USER, {
+        type: 'GREETING_VIDEO',
+        title: 'Маме',
+        countryCode: 'UA',
+        greetingBrief: {
+          occasion: 'BIRTHDAY',
+          recipientName: 'Мама',
+          presenter,
+          ...extra,
+        } as any,
+      });
+
+    it('свой готовый образ — колонки брифа заполнены', async () => {
+      await create({ kind: 'persona', lookId: 'l1', variant: 'photo' });
+      expect(prisma.greetingBrief.create.mock.calls[0][0].data).toMatchObject({
+        presenterLookId: 'l1',
+        presenterVariant: 'photo',
+      });
+    });
+
+    it('скетч без скетча у образа — 400, проект не создаётся', async () => {
+      await expect(
+        create({ kind: 'persona', lookId: 'l1', variant: 'sketch' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.greetingBrief.create).not.toHaveBeenCalled();
+    });
+
+    it('режим выключен — отказ', async () => {
+      process.env.PERSONA_ENABLED = 'false';
+      await expect(
+        create({ kind: 'persona', lookId: 'l1', variant: 'photo' }),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(prisma.greetingBrief.create).not.toHaveBeenCalled();
+    });
+
+    it('скетч-ведущий на Hedra — отказ', async () => {
+      (prisma as any).personaLook.findFirst.mockResolvedValue({
+        ...look,
+        activeSketch: { url: 'https://blob/s.png', pathname: 's.png' },
+      });
+      plans.planOfUser.mockResolvedValue('PREMIUM');
+      await expect(
+        create(
+          { kind: 'persona', lookId: 'l1', variant: 'sketch' },
+          { presenterProvider: 'hedra' },
+        ),
+      ).rejects.toThrow(/Hedra/);
+    });
+
+    it('ИИ-ведущий — колонки пустые, образы не читаются', async () => {
+      await create({ kind: 'ai' });
+      expect((prisma as any).personaLook.findFirst).not.toHaveBeenCalled();
+      expect(prisma.greetingBrief.create.mock.calls[0][0].data).toMatchObject({
+        presenterLookId: null,
+        presenterVariant: null,
       });
     });
   });
@@ -709,6 +794,52 @@ describe('ProjectService', () => {
       expect(prisma.project.update.mock.calls[0][0].data).toEqual({
         brandManifestId: null,
       });
+    });
+
+    it('CONTRACT5 п.5в: личный бренд-бук к товарному проекту — 400', async () => {
+      prisma.project.findFirst.mockResolvedValue(projectRow());
+      prisma.brandManifest.findFirst.mockResolvedValue({
+        id: 'bm1',
+        kind: 'PERSONAL',
+      });
+      await expect(
+        service.updateProject(USER, 'p1', { brandManifestId: 'bm1' }),
+      ).rejects.toThrow(PERSONAL_MANIFEST_GREETING_ONLY);
+      await expect(
+        service.createProject(USER, {
+          type: 'SINGLE',
+          title: 'x',
+          countryCode: 'UA',
+          brandManifestId: 'bm1',
+        }),
+      ).rejects.toThrow(PERSONAL_MANIFEST_GREETING_ONLY);
+      expect(prisma.project.update).not.toHaveBeenCalled();
+      expect(prisma.project.create).not.toHaveBeenCalled();
+    });
+
+    it('CONTRACT5 п.5в: смена типа поздравления на товарный с личным бренд-буком — 400', async () => {
+      prisma.project.findFirst.mockResolvedValue(
+        projectRow({ type: 'GREETING_VIDEO', brandManifestId: 'bm1' }),
+      );
+      prisma.brandManifest.findFirst.mockResolvedValue({
+        id: 'bm1',
+        kind: 'PERSONAL',
+      });
+      await expect(
+        service.updateProject(USER, 'p1', { type: 'SINGLE' }),
+      ).rejects.toThrow(PERSONAL_MANIFEST_GREETING_ONLY);
+      expect(prisma.project.update).not.toHaveBeenCalled();
+    });
+
+    it('корпоративный бренд-бук к товарному — как раньше', async () => {
+      prisma.project.findFirst.mockResolvedValue(projectRow());
+      prisma.project.update.mockResolvedValue(projectRow());
+      prisma.brandManifest.findFirst.mockResolvedValue({
+        id: 'bm1',
+        kind: 'COMPANY',
+      });
+      await service.updateProject(USER, 'p1', { brandManifestId: 'bm1' });
+      expect(prisma.project.update).toHaveBeenCalled();
     });
 
     it('an empty PATCH returns the current project without writing', async () => {

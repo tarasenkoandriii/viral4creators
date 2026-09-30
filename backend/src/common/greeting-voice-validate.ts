@@ -52,6 +52,7 @@ import {
   VALIDATION_ORDER,
   VOICE_COMMANDS,
   VOICE_NAVIGATE_TARGETS,
+  VOICE_QUESTION_TOPICS,
   VOICE_REFERENCE_DESCRIPTION_MAX,
   VOICE_REFERENCE_LABEL_MAX,
   VOICE_SCRIPT_MAX,
@@ -60,6 +61,8 @@ import {
   VoiceCommand,
   VoiceFieldKey,
   VoiceNavigateTarget,
+  VoiceQuestionTopic,
+  VoiceRefusalCode,
   VoiceUnderstandContext,
   isSessionField,
   sessionCardShown,
@@ -77,6 +80,8 @@ export const MODEL_ANSWER_KINDS = [
   'consent',
   'confirm',
   'cancel',
+  // K4: вопрос о шаге — тема из закрытого списка (`VOICE_QUESTION_TOPICS`).
+  'question',
   'unknown',
 ] as const;
 export type ModelAnswerKind = (typeof MODEL_ANSWER_KINDS)[number];
@@ -120,6 +125,13 @@ export interface ModelAnswer {
   command: VoiceCommand | null;
   to: VoiceNavigateTarget | null;
   confidence: number;
+  /**
+   * K4: тема вопроса — только у `kind: 'question'` и только из закрытого
+   * списка; нет поля или `null` — тема вне списка (ответа не будет).
+   * Необязательное поле, а не всегда `null`: у остальных видов ответа его
+   * нет вовсе, и прежние сравнения формы ответа не меняются.
+   */
+  topic?: VoiceQuestionTopic | null;
 }
 
 const UNKNOWN_ANSWER: ModelAnswer = {
@@ -203,7 +215,23 @@ export function normalizeModelAnswer(raw: unknown): ModelAnswer {
   const to = (VOICE_NAVIGATE_TARGETS as readonly unknown[]).includes(o.to)
     ? (o.to as VoiceNavigateTarget)
     : null;
-  return { kind, fields: [...byField.values()], command, to, confidence };
+  const answer: ModelAnswer = {
+    kind,
+    fields: [...byField.values()],
+    command,
+    to,
+    confidence,
+  };
+  if (kind === 'question') {
+    // Тема — только из закрытого списка: выдуманная моделью тема — это
+    // «ответа нет», а не повод собрать ответ по догадке.
+    answer.topic = (VOICE_QUESTION_TOPICS as readonly unknown[]).includes(
+      o.topic,
+    )
+      ? (o.topic as VoiceQuestionTopic)
+      : null;
+  }
+  return answer;
 }
 
 // ── Проверка значений ───────────────────────────────────────────────────
@@ -438,7 +466,11 @@ const RESOLUTION_RANK: Readonly<Record<string, number>> = {
 
 export type FieldCheck =
   | { ok: true; value: string }
-  | { ok: false; reason: string };
+  /**
+   * `code` — только у отказов, которые помощник объясняет голосом (K4):
+   * сейчас тон, запрещённый регистром повода.
+   */
+  | { ok: false; reason: string; code?: VoiceRefusalCode };
 
 /**
  * Проверка одного значения против ДОСТУПНОГО в состоянии `eff`. Причина
@@ -488,6 +520,7 @@ export function validateField(
         return {
           ok: false,
           reason: `«${TONE_LABELS[loc][tone]}» — ${TONE_UNAVAILABLE[loc]}.`,
+          code: 'tone',
         };
       }
       return { ok: true, value: tone };
@@ -854,7 +887,7 @@ const TONE_LIGHTNESS: Readonly<Record<GreetingTone, number>> = {
 
 type CommandCheck =
   | { ok: true; args?: Record<string, string> }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; code?: VoiceRefusalCode };
 
 /**
  * Команда → действие мастера, которое уже существует (§4А.2 п.4). Тоновые
@@ -899,6 +932,7 @@ export function checkCommand(
           : {
               ok: false,
               reason: `«${TONE_LABELS[loc].FUNNY}» — ${TONE_UNAVAILABLE[loc]}.`,
+              code: 'tone',
             };
       }
       const best = Math.min(...higher.map((x) => TONE_LIGHTNESS[x]));

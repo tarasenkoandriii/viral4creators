@@ -9,7 +9,7 @@
  */
 
 import { useState, useRef } from 'react';
-import { Gift, Check } from 'lucide-react';
+import { Gift, Check, UserRound } from 'lucide-react';
 import {
   Card,
   CardHeader,
@@ -82,6 +82,21 @@ import {
   useVoiceCommand,
 } from '../../voice/voice-commands';
 import { briefVoiceMissing } from '../../../lib/brief-voice-missing';
+import {
+  type PresenterOption,
+  hedraSketchConflict,
+  parsePresenterKey,
+  presenterBlockMode,
+  presenterFromBrief,
+  presenterKey,
+  presenterOptionLabel,
+  presenterOptions,
+  shouldSendPresenter,
+  withPresenterBody,
+} from '../../../lib/persona-greeting';
+import { usePersonaState } from '../../../lib/persona-greeting-api';
+import { lookDisplayLabel } from '../../../lib/persona-flow';
+import { navigate, routes } from '../../../lib/router';
 
 // ── Шаг 1: бриф ──────────────────────────────────────────────────────────
 
@@ -155,6 +170,30 @@ export function BriefStep({
   const [resolution, setResolution] = useState<GreetingResolution>(
     brief.resolution
   );
+  // «Кто в кадре» (ТЗ Greeting 2.0 §4.1 п. 8, §4.8): ИИ-ведущий или
+  // образ персоны (фото или скетч). В форме — ключом-строкой, чтобы
+  // сравнение «было/стало» брифа работало как у остальных полей.
+  const persona = usePersonaState();
+  const pg = dict.personaGreeting;
+  const [presenter, setPresenter] = useState(() =>
+    presenterKey(presenterFromBrief(brief))
+  );
+  const presenterNow = parsePresenterKey(presenter) ?? { kind: 'ai' as const };
+  const presenterMode = presenterBlockMode(persona, presenterNow);
+  const presenterChoices = presenterOptions(persona, presenterNow);
+  const presenterSelected = presenterChoices.find((o) => o.key === presenter);
+  const presenterLabel = (o: PresenterOption): string =>
+    presenterOptionLabel(
+      o,
+      {
+        ai: pg.presenterAi,
+        missing: pg.presenterMissing,
+        pending: pg.presenterSelfPending,
+        photo: pg.presenterSelfPhoto,
+        sketch: pg.presenterSelfSketch,
+      },
+      (look) => lookDisplayLabel(look, dict.persona)
+    );
   const [brandManifestId, setBrandManifestId] = useState(
     brief.brandManifestId ?? ''
   );
@@ -375,6 +414,7 @@ export function BriefStep({
     tone: tone as string,
     personalMessage: personalMessage.trim() || null,
     presenterProvider: presenterProvider as string,
+    presenter,
     resolution: resolution as string,
     occasionDate: occasionDate || null,
   });
@@ -390,6 +430,13 @@ export function BriefStep({
     setSaved(false);
     setEditResult(null);
     const fields = fieldsNow();
+    // Ведущий-персона уходит объектом и только когда режим есть (или в
+    // брифе уже стоит «я») — см. `shouldSendPresenter`.
+    const sendPresenter = shouldSendPresenter(
+      persona,
+      parsePresenterKey(baseline.current!.presenter ?? '') ?? { kind: 'ai' },
+      presenterNow
+    );
     try {
       if (sessionId) {
         // Этап C (§3.6): после старта правка идёт в СЕССИЮ — сервер
@@ -400,9 +447,9 @@ export function BriefStep({
         // `lib/greeting-brief-diff.ts`.
         const result = await updateSessionGreetingBrief(
           sessionId,
-          sessionBriefPatch(
-            baseline.current!,
-            fields
+          withPresenterBody(
+            sessionBriefPatch(baseline.current!, fields),
+            sendPresenter
           ) as UpdateGreetingBriefInput
         );
         baseline.current = fields;
@@ -410,7 +457,10 @@ export function BriefStep({
         await onSessionEdited(result);
       } else {
         const updated = await updateGreetingBrief(brief.projectId, {
-          ...(fields as UpdateGreetingBriefInput),
+          ...(withPresenterBody(
+            fields,
+            sendPresenter
+          ) as UpdateGreetingBriefInput),
           brandManifestId: brandManifestId || null,
         });
         baseline.current = fields;
@@ -545,6 +595,61 @@ export function BriefStep({
             </Alert>
           )}
         </div>
+
+        {/* «Кто в кадре» (§4.8). Режим выключен — ни слова о нём;
+            персоны нет — только вход «Создать себя». data-qa здесь пока
+            нет: шов check-docs требует пары с qa-hooks.ts сервера. */}
+        {presenterMode === 'create' && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-silver-300 p-3 text-xs dark:border-silver-700">
+            <UserRound size={14} className="shrink-0 text-accent" aria-hidden />
+            <span className="min-w-0 flex-1 text-silver-400">
+              {pg.createSelfHint}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate(routes.persona())}
+            >
+              {pg.createSelf}
+            </Button>
+          </div>
+        )}
+        {presenterMode === 'choose' && (
+          <div>
+            <span className="label">{pg.presenterLabel}</span>
+            <Pills
+              value={presenter}
+              onChange={setPresenter}
+              ariaLabel={pg.presenterLabel}
+              columns={2}
+              options={presenterChoices.map((o) => ({
+                value: o.key,
+                label: presenterLabel(o),
+              }))}
+            />
+            {presenterSelected?.thumbUrl && (
+              <div className="mt-2 flex items-center gap-3">
+                <img
+                  src={presenterSelected.thumbUrl}
+                  alt=""
+                  data-qa-mask="presenter-look-thumbnail"
+                  className="h-16 w-16 shrink-0 rounded-lg border border-silver-200/70 object-cover dark:border-silver-800"
+                />
+                <p className="text-xs text-silver-400">{pg.likenessNote}</p>
+              </div>
+            )}
+            {presenterSelected?.missing && (
+              <Alert tone="warning" className="mt-2">
+                {pg.presenterMissingHint}
+              </Alert>
+            )}
+            {hedraSketchConflict(presenterProvider, presenterNow) && (
+              <Alert tone="warning" className="mt-2">
+                {pg.hedraSketchWarning}
+              </Alert>
+            )}
+          </div>
+        )}
 
         <Field label={w.resolutionLabel}>
           <Select

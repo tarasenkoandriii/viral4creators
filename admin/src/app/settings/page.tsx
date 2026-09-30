@@ -9,6 +9,8 @@ import {
   setSpeechRecognitionProvider,
   getVoiceAssistantSettings,
   setVoiceAssistantSettings,
+  getPersonaLookQuotaSettings,
+  setPersonaLookQuotaSettings,
   getAudioSeparationSettings,
   getTutorialLocalesSettings,
   setTutorialLocalesSettings,
@@ -41,6 +43,10 @@ import type {
   VoiceAssistantPlan,
   VoiceAssistantProviderKey,
   VoiceAssistantSettingsView,
+  PersonaLookQuotaPeriod,
+  PersonaLookQuotaPlan,
+  PersonaLookQuotaSettingsView,
+  SetPersonaLookQuotaInput,
   AudioSeparationSettingsView,
   TutorialLocalesSettingsView,
   TutorialMotion,
@@ -948,6 +954,149 @@ function VoiceAssistantCard() {
             )}
             {saving && <span className="muted">Сохраняю…</span>}
             {savedAt && !saving && !capsDirty && !voiceDirty && <span className="muted">Сохранено</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PERSONA_LOOK_QUOTA_PLANS: PersonaLookQuotaPlan[] = ['LITE', 'STANDARD', 'PREMIUM'];
+const PERSONA_LOOK_QUOTA_PERIODS: PersonaLookQuotaPeriod[] = ['day', 'month'];
+const PERSONA_LOOK_QUOTA_PERIOD_LABEL: Record<PersonaLookQuotaPeriod, string> = {
+  day: 'в сутки',
+  month: 'в месяц',
+};
+type PersonaLookQuotaDraft = Record<PersonaLookQuotaPlan, Record<PersonaLookQuotaPeriod, string>>;
+
+/** Черновик полей из ответа сервера. */
+function personaLookQuotaDraft(s: PersonaLookQuotaSettingsView): PersonaLookQuotaDraft {
+  const out = {} as PersonaLookQuotaDraft;
+  for (const p of PERSONA_LOOK_QUOTA_PLANS) {
+    out[p] = { day: String(s[p].day.value), month: String(s[p].month.value) };
+  }
+  return out;
+}
+
+/**
+ * «Квота образов «Я в кадре»» — этап F ТЗ Greeting 2.0 (§4.2, решение В-7,
+ * временно по рекомендации ТЗ). Сколько новых образов персоны человек может
+ * сгенерировать в сутки (UTC) и в месяц по тарифу. Базовый образ (часть
+ * проверки селфи) в квоту не входит; число хранимых образов не ограничено.
+ * `0` — генерация образов на тарифе закрыта.
+ */
+function PersonaLookQuotaCard() {
+  const [state, setState] = useState<PersonaLookQuotaSettingsView | null>(null);
+  const [draft, setDraft] = useState<PersonaLookQuotaDraft | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const apply = (s: PersonaLookQuotaSettingsView) => {
+    setState(s);
+    setDraft(personaLookQuotaDraft(s));
+  };
+
+  const load = () => {
+    setError(null);
+    getPersonaLookQuotaSettings()
+      .then(apply)
+      .catch((err) =>
+        setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить квоту образов «Я в кадре»'),
+      );
+  };
+
+  useEffect(load, []);
+
+  const dirty =
+    !!state &&
+    !!draft &&
+    PERSONA_LOOK_QUOTA_PLANS.some((p) =>
+      PERSONA_LOOK_QUOTA_PERIODS.some((k) => Number(draft[p][k]) !== state[p][k].value),
+    );
+
+  const save = async () => {
+    if (!state || !draft) return;
+    const input: SetPersonaLookQuotaInput = {};
+    for (const p of PERSONA_LOOK_QUOTA_PLANS) {
+      for (const k of PERSONA_LOOK_QUOTA_PERIODS) {
+        const raw = draft[p][k].trim();
+        const n = Number(raw);
+        if (raw === '' || !Number.isInteger(n) || n < 0 || n > 1000) {
+          setError(`Квота ${p} ${PERSONA_LOOK_QUOTA_PERIOD_LABEL[k]} — целое число от 0 до 1000`);
+          return;
+        }
+        if (n !== state[p][k].value) input[p] = { ...input[p], [k]: n };
+      }
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      apply(await setPersonaLookQuotaSettings(input));
+      setSavedAt(Date.now());
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить квоту образов «Я в кадре»');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Квота образов «Я в кадре»</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Сколько новых образов персоны можно сгенерировать в сутки (UTC) и в месяц по тарифу. Каждый образ — платная
+        картинка; число хранимых образов не ограничено, базовый образ в квоту не входит. 0 — генерация образов на
+        тарифе закрыта. Изменения действуют сразу, без передеплоя.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {!state && (
+            <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+              Повторить
+            </button>
+          )}
+        </p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && draft && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {PERSONA_LOOK_QUOTA_PLANS.map((p) => (
+            <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+              <strong style={{ width: 90 }}>{p}</strong>
+              {PERSONA_LOOK_QUOTA_PERIODS.map((k) => (
+                <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {PERSONA_LOOK_QUOTA_PERIOD_LABEL[k]}
+                  <input
+                    type="number"
+                    min={0}
+                    max={1000}
+                    step={1}
+                    value={draft[p][k]}
+                    disabled={saving}
+                    style={{ width: 80 }}
+                    onChange={(e) =>
+                      setDraft((prev) => (prev ? { ...prev, [p]: { ...prev[p], [k]: e.target.value } } : prev))
+                    }
+                  />
+                  <span className="muted" style={{ fontSize: 13 }}>
+                    {state[p][k].source === 'admin' ? `задано здесь; умолчание ${state[p][k].defaultValue}` : 'умолчание'}
+                  </span>
+                </label>
+              ))}
+            </div>
+          ))}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button type="button" disabled={saving || !dirty} onClick={() => void save()}>
+              Сохранить
+            </button>
+            {saving && <span className="muted">Сохраняю…</span>}
+            {savedAt && !saving && !dirty && <span className="muted">Сохранено</span>}
           </div>
         </div>
       )}
@@ -1874,6 +2023,7 @@ export default function SettingsPage() {
       <VoiceoverProviderCard />
       <SpeechRecognitionCard />
       <VoiceAssistantCard />
+      <PersonaLookQuotaCard />
       <AudioSeparationCard />
       <TutorialVoiceCard />
       <TutorialLocalesCard />

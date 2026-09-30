@@ -1,7 +1,9 @@
 import {
   CARD_SECONDS,
   MAX_CARD_TEXT_LENGTH,
+  assColor,
   assTime,
+  normalizeCardStyle,
   buildCardsAss,
   escapeAssText,
   hasCards,
@@ -230,5 +232,61 @@ describe('упоминание автора музыки', () => {
   it('фигурные скобки в кредите экранируются так же, как везде', () => {
     const ass = buildCardsAss(null, { ...opts, credit: 'a {b} c' });
     expect(ass).toContain('a \\{b\\} c');
+  });
+});
+
+describe('стиль карточек из бренд-бука (этап G, Г-6)', () => {
+  const styleLine = (ass: string, name: string) =>
+    ass.split('\n').find((l) => l.startsWith(`Style: ${name},`)) ?? '';
+
+  it('без стиля — прежние Arial и белый', () => {
+    const ass = buildCardsAss({ title: 'Марине' }, opts);
+    expect(styleLine(ass, 'title')).toContain('title,Arial,64,&H00FFFFFF,');
+    expect(styleLine(ass, 'closing')).toContain('closing,Arial,52,&H00FFFFFF,');
+  });
+
+  it('шрифт и цвет из белого списка; цвет — в порядке байт ASS (BGR)', () => {
+    const ass = buildCardsAss(
+      { title: 'Марине', style: { font: 'serif', color: 'gold' } },
+      opts,
+    );
+    // gold = FFD54F (RGB) → &H004FD5FF (BGR).
+    expect(styleLine(ass, 'title')).toContain(
+      'title,DejaVu Serif,64,&H004FD5FF,',
+    );
+    expect(styleLine(ass, 'closing')).toContain(
+      'closing,DejaVu Serif,52,&H004FD5FF,',
+    );
+    // Кредит автора музыки стиль не меняет.
+    const withCredit = buildCardsAss(
+      { title: 'x', style: { font: 'mono', color: 'pink' } },
+      { ...opts, credit: 'Автор' },
+    );
+    expect(styleLine(withCredit, 'credit')).toContain('credit,Arial,28,');
+  });
+
+  it('чужой шрифт или цвет не протаскивается — умолчание по полю', () => {
+    const ass = buildCardsAss(
+      { title: 'x', style: { font: 'Comic Sans', color: 'mint' } },
+      opts,
+    );
+    expect(styleLine(ass, 'title')).toContain('title,Arial,64,&H00C9E6C8,');
+    expect(normalizeCardStyle({ font: 'x', color: 'y' })).toBeNull();
+    expect(normalizeCardStyle(['serif'])).toBeNull();
+    expect(normalizeCardStyle({ font: 'serif' })).toEqual({
+      font: 'serif',
+      color: 'white',
+    });
+  });
+
+  it('стиль без текста — рисовать нечего', () => {
+    expect(hasCards({ style: { font: 'serif', color: 'gold' } })).toBe(false);
+    expect(
+      buildCardsAss({ style: { font: 'serif', color: 'gold' } }, opts),
+    ).toBe('');
+  });
+
+  it('assColor переставляет байты', () => {
+    expect(assColor('112233')).toBe('&H00332211');
   });
 });

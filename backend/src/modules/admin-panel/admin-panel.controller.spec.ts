@@ -113,6 +113,10 @@ function build() {
     view: jest.fn().mockResolvedValue({ caps: {} }),
     set: jest.fn().mockResolvedValue({ caps: {} }),
   };
+  const personaLookQuota = {
+    view: jest.fn().mockResolvedValue({}),
+    set: jest.fn().mockResolvedValue({}),
+  };
   const controller = new AdminPanelController(
     adminPanel as any,
     // Этап 155: приглашения тестировщиков — второй параметр.
@@ -150,8 +154,9 @@ function build() {
     tutorialVoice as any,
     tutorialLocales as any,
     speechRecognition as any,
-    // «Голосовой помощник» (этап K3) — последний параметр.
     voiceAssistant as any,
+    // «Квота образов «Я в кадре»» (этап F) — последний параметр.
+    personaLookQuota as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
   return {
@@ -169,6 +174,7 @@ function build() {
     tutorialLocales,
     speechRecognition,
     voiceAssistant,
+    personaLookQuota,
     req,
   };
 }
@@ -860,5 +866,39 @@ describe('AdminPanelController — очередь находок (этап 158)'
       't1',
       'проверьте ещё раз',
     );
+  });
+});
+
+describe('AdminPanelController — /admin/settings/persona-look-quota (этап F)', () => {
+  it('GET: оператор проверяется до обращения к настройке', async () => {
+    const { controller, adminPanel, personaLookQuota, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+    await expect(controller.getPersonaLookQuota(req)).rejects.toThrow(
+      'не оператор',
+    );
+    expect(personaLookQuota.view).not.toHaveBeenCalled();
+  });
+
+  it('PATCH: уходят только присланные тариф и период, с оператором', async () => {
+    const { controller, personaLookQuota, req } = build();
+    await controller.setPersonaLookQuota(req, {
+      LITE: { day: 5 },
+      PREMIUM: { day: undefined, month: 0 },
+    });
+    // Строго: «не присланный» период не должен доехать даже как undefined.
+    expect(personaLookQuota.set.mock.calls[0][0]).toStrictEqual({
+      LITE: { day: 5 },
+      PREMIUM: { month: 0 },
+    });
+    expect(personaLookQuota.set.mock.calls[0][1]).toBe('op-1');
+  });
+
+  it('PATCH: оператор проверяется до записи', async () => {
+    const { controller, adminPanel, personaLookQuota, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+    await expect(
+      controller.setPersonaLookQuota(req, { LITE: { day: 1 } }),
+    ).rejects.toThrow('не оператор');
+    expect(personaLookQuota.set).not.toHaveBeenCalled();
   });
 });

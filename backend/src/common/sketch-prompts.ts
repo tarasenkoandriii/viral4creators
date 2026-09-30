@@ -6,8 +6,14 @@
  * Три правила, которые НЕ должны исчезнуть ни в одной ветке:
  *  - результат обязан выглядеть рисунком, а не фотографией (иначе вся
  *    юридическая идея теряется);
- *  - лицо человека, срисованного с фото, меняется всегда — даже если
- *    клиент прислал `anonymizeFace: false`;
+ *  - лицо меняется всегда, кроме слота persona-look проверенной
+ *    персоны: у человека, срисованного с фото, черты лица меняются, даже
+ *    если клиент прислал `anonymizeFace: false`. Единственное исключение
+ *    — скетч-аватар образа самого автора («Я в кадре», ТЗ TZ-Greeting-2.0
+ *    §4.5, Т-3): слот `persona-look`, персона с действующим согласием и
+ *    пройденной живостью. Решает это ТОЛЬКО сервер по типу слота и
+ *    состоянию персоны (`sketchLikenessFor`) — ни поле клиента, ни
+ *    описание не превращают `character`/`scene`/`product` в `self`;
  *  - запреты на несовершеннолетних, откровенный контент и реальных
  *    людей идут в КАЖДЫЙ промпт.
  *
@@ -20,6 +26,32 @@ import { SketchMode, SketchOptions, SketchStyle } from './types/sketch.types';
 
 /** Какого рода слот рисуем — от этого зависит, что сохранять. */
 export type SketchSlotKind = 'character' | 'product' | 'scene';
+
+/**
+ * Что делать с лицом человека на исходном фото. `anonymise` — по
+ * умолчанию и для всех слотов; `self` — только слот `persona-look`
+ * проверенной персоны (см. инвариант в шапке файла).
+ */
+export type SketchLikeness = 'anonymise' | 'self';
+
+/** Тип слота, для которого вообще возможен `self`. Один. */
+export const SELF_LIKENESS_TARGET_TYPE = 'persona-look';
+
+/**
+ * Единственное место, где решается `likeness`. Принимает ТОЛЬКО то, что
+ * сервер знает сам: тип слота и признак «персона с действующим согласием
+ * и пройденной живостью». Входа клиента здесь нет по построению — поэтому
+ * `character`, `scene` и `product` не получают `self` ни при каком
+ * запросе (Т-3; тест `sketch-prompts.spec.ts`).
+ */
+export function sketchLikenessFor(
+  targetType: string,
+  personaVerified: boolean,
+): SketchLikeness {
+  return targetType === SELF_LIKENESS_TARGET_TYPE && personaVerified === true
+    ? 'self'
+    : 'anonymise';
+}
 
 const STYLE_FRAGMENT: Record<SketchStyle, { plain: string; colour: string }> = {
   pencil: {
@@ -47,6 +79,22 @@ export const ANONYMISE_LINE =
   'Change facial features so the person is NOT recognisable as the individual in the photo.';
 
 /**
+ * Скетч-аватар САМОГО автора (`likeness: 'self'`): лицо сохраняется —
+ * человек дал согласие на своё лицо и прошёл проверку живости.
+ */
+export const SELF_LIKENESS_LINE =
+  'Keep the facial features of the person in the photo so the drawing is recognisably them.';
+
+/**
+ * Запреты для `self`. Строка «не изображать реальных людей» здесь была бы
+ * противоречием (человек на фото реален и согласился), поэтому она
+ * сужена до «никого, кроме него», а запреты на несовершеннолетних и
+ * откровенное — те же, дословно.
+ */
+export const SELF_SAFETY_LINE =
+  'Do not depict minors; the person must look like an adult. No nudity or sexual content. Do not depict any other real, identifiable or famous person.';
+
+/**
  * Описание пользователя для промпта: без управляющих символов и двойных
  * кавычек (они закрыли бы цитату), не длиннее 2000 символов.
  */
@@ -71,6 +119,21 @@ export interface SketchPromptInput {
   description?: string | null;
   /** Название товара — попадает в промпт вместе с описанием. */
   name?: string | null;
+  /**
+   * Что делать с лицом (`sketchLikenessFor`). Учитывается ТОЛЬКО у
+   * человека по фото (`character` + `from-image`); отсутствует или любое
+   * другое значение — лицо меняется.
+   */
+  likeness?: SketchLikeness;
+}
+
+/** `self` действует только для человека, срисованного с фото. */
+function keepsOwnFace(input: SketchPromptInput): boolean {
+  return (
+    input.likeness === 'self' &&
+    input.slotKind === 'character' &&
+    input.mode === 'from-image'
+  );
 }
 
 function styleSentence(style: SketchStyle, keepColors: boolean): string {
@@ -88,11 +151,12 @@ function bodyFor(input: SketchPromptInput): string {
   if (input.slotKind === 'character') {
     if (input.mode === 'from-image') {
       // Обезличивание — не опция для фото человека: сервер ставит его
-      // сам, здесь оно просто всегда в тексте (§4 п.3 ТЗ).
+      // сам, здесь оно в тексте всегда (§4 п.3 ТЗ), кроме `self` слота
+      // persona-look проверенной персоны (см. шапку файла).
       return [
         'Redraw the person from the reference image.',
         'Keep pose, clothing, body type, approximate age group and hairstyle silhouette.',
-        ANONYMISE_LINE,
+        keepsOwnFace(input) ? SELF_LIKENESS_LINE : ANONYMISE_LINE,
         quoted ? `Extra notes about the person: ${quoted}.` : '',
         'Plain light background.',
       ]
@@ -152,7 +216,7 @@ export function buildSketchPrompt(input: SketchPromptInput): string {
     styleSentence(input.style, input.options.keepColors !== false),
     bodyFor(input),
     'No captions, watermarks or signatures.',
-    SAFETY_LINE,
+    keepsOwnFace(input) ? SELF_SAFETY_LINE : SAFETY_LINE,
   ].join(' ');
 }
 

@@ -5,6 +5,7 @@
  * SINGLE project has exactly one ProductItem).
  */
 
+import { manifestsForProjectType } from '../../lib/persona-greeting';
 import { useEffect, useState } from 'react';
 import {
   CheckCircle2,
@@ -601,7 +602,12 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
               disabled={busy !== null || manifests.loading}
             >
               <option value="">{dict.projectScreen.noManifestOption}</option>
-              {manifests.data?.map((m) => (
+              {/* Личный бренд-бук — только у поздравления (CONTRACT5 п.5в). */}
+              {manifestsForProjectType(
+                manifests.data ?? [],
+                project.type,
+                project.brandManifestId
+              ).map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.title}
                 </option>

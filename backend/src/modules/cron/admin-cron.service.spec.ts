@@ -123,6 +123,9 @@ function build() {
     runVoiceUploadsSweep: jest
       .fn()
       .mockResolvedValue({ deleted: 2, failed: 0, hasMore: false }),
+    runPersonaSourcesPurge: jest
+      .fn()
+      .mockResolvedValue({ purged: 1, abandoned: 0, failed: 0 }),
     runSweepOrphans: jest
       .fn()
       .mockResolvedValue({ deleted: 0, dryRun: false, byKind: {} }),
