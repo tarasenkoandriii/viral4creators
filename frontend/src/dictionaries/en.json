@@ -878,7 +878,7 @@
   },
   "publishPanel": {
     "title": "Publishing",
-    "hint": "The button puts the video in the moderation queue — an operator reviews it in the admin panel, approves it and assigns a channel; after that the upload happens automatically (see doc/PRODUCT-PROJECT-SPEC.md §14).",
+    "hint": "The button puts the video in the moderation queue — an operator reviews it in the admin panel, approves it and assigns a channel; after that the upload happens automatically.",
     "unauthHint": "The video goes into the moderation queue, not straight to the channel.",
     "unauthAlert": "Publishing is available after signing in — open the app in Telegram or sign in from the header. Downloading still works either way.",
     "publishButton": "Publish",

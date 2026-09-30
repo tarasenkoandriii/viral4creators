@@ -51,6 +51,25 @@ export interface FixtureTokenRequest {
   headers(): Record<string, string>;
   isInterceptResolutionHandled?(): boolean;
   continue(overrides?: { headers?: Record<string, string> }): Promise<void>;
+  /** Нужны только `blockMedia`; настоящий puppeteer `HTTPRequest` их имеет. */
+  resourceType?(): string;
+  abort?(): Promise<void>;
+}
+
+export interface AttachFixtureTokenOptions {
+  /**
+   * Не скачивать `<video>`/`<audio>` (`resourceType() === 'media'`).
+   *
+   * Разбор счёта Vercel 01.10.2026: главная статья — Blob Data
+   * Transfer ($24.67 за цикл при хранении на $0.07). Робот
+   * `ui-snapshot-run` открывал экраны с настоящими роликами 720 раз в
+   * сутки свежим браузером без кеша, и Chromium буферизовал каждый
+   * ролик почти целиком даже при `preload="metadata"` (замер: 25–100 %
+   * файла). В сравниваемом кадре содержимое `<video>` и так скрыто —
+   * байты качались впустую. Плеер без медиа остаётся на месте и в
+   * раскладке.
+   */
+  blockMedia?: boolean;
 }
 
 const HEADER = 'x-fixture-token';
@@ -99,12 +118,21 @@ export async function attachFixtureToken(
   page: FixtureTokenPage,
   token: string,
   apiOrigin: string,
+  options: AttachFixtureTokenOptions = {},
 ): Promise<void> {
   await page.setRequestInterception(true);
   page.on('request', (request) => {
     // Кооперативный перехват: если запрос уже кто-то разрешил, второй
     // `continue` бросил бы и уронил обработчик.
     if (request.isInterceptResolutionHandled?.()) return;
+    if (
+      options.blockMedia &&
+      request.abort &&
+      request.resourceType?.() === 'media'
+    ) {
+      request.abort().catch(() => undefined);
+      return;
+    }
     const headers = { ...request.headers() };
     delete headers[HEADER];
     if (carriesFixtureToken(request.url(), apiOrigin)) {

@@ -204,6 +204,10 @@ export default async function SharedVideoPage({
             // 1200×630 за вертикальным роликом выглядит поломкой
             // вёрстки, а не превью.
             poster={preview.own ? preview.url : undefined}
+            // С настоящим постером ролик качается по нажатию «плей», а
+            // не при каждом открытии ссылки (разбор счёта Blob
+            // 01.10.2026); без постера — первый кадр, как раньше.
+            preload={preview.own ? 'none' : 'metadata'}
           />
         </div>
 

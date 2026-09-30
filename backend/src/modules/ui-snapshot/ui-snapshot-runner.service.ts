@@ -714,6 +714,10 @@ export class UiSnapshotRunnerService {
         page as unknown as FixtureTokenPage,
         token,
         apiOrigin,
+        // Сравниваемый прогон видео не показывает (`HIDE_VIDEO_CONTENT_CSS`)
+        // — и не качает: это была главная статья счёта за Blob
+        // (01.10.2026). Немаскированный (кадры лендинга) — как раньше.
+        { blockMedia: !view.unmasked },
       );
       // Мастер (`useWorkflow`) при пустом `localStorage['sessionId']`
       // создаёт НОВУЮ сессию на каждом монтировании. У свежего

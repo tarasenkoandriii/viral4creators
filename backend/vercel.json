@@ -87,7 +87,7 @@
     },
     {
       "path": "/api/cron/ui-snapshot-run",
-      "schedule": "*/2 * * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/voice-uploads-sweep",

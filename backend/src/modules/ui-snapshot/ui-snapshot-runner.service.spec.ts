@@ -250,6 +250,18 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
     expect(headersFor('https://fonts.googleapis.com/css2?family=Sora')).toEqual(
       {},
     );
+    // Ролики в сравниваемом прогоне не качаются (счёт Blob 01.10.2026).
+    const abort = jest.fn().mockResolvedValue(undefined);
+    const cont = jest.fn().mockResolvedValue(undefined);
+    handler({
+      url: () => 'https://x.public.blob.vercel-storage.com/v.mp4',
+      headers: () => ({}),
+      resourceType: () => 'media',
+      abort,
+      continue: cont,
+    });
+    expect(abort).toHaveBeenCalled();
+    expect(cont).not.toHaveBeenCalled();
     expect(blob.uploadBuffer).toHaveBeenCalledTimes(5);
     // Сравниваемые снимки — под префиксом, который знает уборка по сроку
     // хранения (`ui-snapshot-retention.ts`): чужой префикс она не трогает,
@@ -355,6 +367,18 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
     expect(page.evaluate).not.toHaveBeenCalled();
     expect(prisma.uiSnapshot.create).not.toHaveBeenCalled();
     expect(prisma.uiSnapshot.findFirst).not.toHaveBeenCalled();
+    // Кадру на показ ролик нужен — медиа не обрывается.
+    const abort = jest.fn().mockResolvedValue(undefined);
+    const cont = jest.fn().mockResolvedValue(undefined);
+    (page.requestHandlers[0] as (r: unknown) => void)({
+      url: () => 'https://x.public.blob.vercel-storage.com/v.mp4',
+      headers: () => ({}),
+      resourceType: () => 'media',
+      abort,
+      continue: cont,
+    });
+    expect(abort).not.toHaveBeenCalled();
+    expect(cont).toHaveBeenCalled();
     expect(notify.alert).not.toHaveBeenCalled();
     // Отдельный префикс: снимок «на показ» нельзя спутать с базовым ни
     // глазами в консоли хранилища, ни скриптом.

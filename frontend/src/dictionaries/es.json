@@ -878,7 +878,7 @@
   },
   "publishPanel": {
     "title": "Publicación",
-    "hint": "El botón pone el video en la cola de moderación — un operador lo revisa en el panel de administración, lo aprueba y asigna un canal; después la subida ocurre automáticamente (ver doc/PRODUCT-PROJECT-SPEC.md §14).",
+    "hint": "El botón pone el video en la cola de moderación — un operador lo revisa en el panel de administración, lo aprueba y asigna un canal; después la subida ocurre automáticamente.",
     "unauthHint": "El video pasa a la cola de moderación, no directamente al canal.",
     "unauthAlert": "La publicación está disponible tras iniciar sesión — abre la app en Telegram o inicia sesión desde la cabecera. La descarga funciona de todos modos.",
     "publishButton": "Publicar",

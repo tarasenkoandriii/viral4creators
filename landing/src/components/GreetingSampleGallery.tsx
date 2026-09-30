@@ -80,10 +80,15 @@ export async function GreetingSampleGallery({
                     прямоугольник, и так по всей сетке. Постер снят при
                     публикации и рисуется мгновенно; его отсутствие —
                     нормальное состояние старых страниц. */}
+                {/* Есть постер — ролик до клика не качается вовсе
+                    (`none`): `metadata` у коротких роликов тянет почти
+                    весь файл, а сетка — девять роликов на визит (разбор
+                    счёта Blob 01.10.2026). Без постера — прежний
+                    первый кадр. */}
                 <video
                   src={item.videoUrl}
                   poster={item.posterUrl ?? undefined}
-                  preload="metadata"
+                  preload={item.posterUrl ? 'none' : 'metadata'}
                   muted
                   playsInline
                 />

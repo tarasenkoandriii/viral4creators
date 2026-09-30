@@ -166,7 +166,9 @@ export function FeedScreen() {
                 poster={item.productImageUrl ?? undefined}
                 controls
                 playsInline
-                preload="metadata"
+                // С постером — не качать до «плей» (разбор счёта Blob
+                // 01.10.2026: `metadata` тянет почти весь короткий ролик).
+                preload={item.productImageUrl ? 'none' : 'metadata'}
                 className="w-full bg-black"
                 style={{ aspectRatio: cssAspectRatio(item.aspectRatio) }}
               />

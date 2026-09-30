@@ -114,4 +114,59 @@ describe('attachFixtureToken', () => {
       }),
     ).not.toThrow();
   });
+
+  describe('blockMedia (счёт Blob, 01.10.2026)', () => {
+    function mediaReq(type: string) {
+      const cont = jest.fn().mockResolvedValue(undefined);
+      const abort = jest.fn().mockResolvedValue(undefined);
+      return {
+        req: {
+          url: () => 'https://x.public.blob.vercel-storage.com/v.mp4',
+          headers: () => ({}),
+          resourceType: () => type,
+          continue: cont,
+          abort,
+        },
+        cont,
+        abort,
+      };
+    }
+
+    it('с blockMedia медиа обрывается, остальное идёт как раньше', async () => {
+      const { page } = harness();
+      await attachFixtureToken(page, 's', 'https://api.example.com', {
+        blockMedia: true,
+      });
+      const handler = page.on.mock.calls[0][1];
+      const video = mediaReq('media');
+      handler(video.req);
+      expect(video.abort).toHaveBeenCalled();
+      expect(video.cont).not.toHaveBeenCalled();
+      const img = mediaReq('image');
+      handler(img.req);
+      expect(img.abort).not.toHaveBeenCalled();
+      expect(img.cont).toHaveBeenCalled();
+    });
+
+    it('без blockMedia медиа качается (кадры лендинга, обучалка)', async () => {
+      const { page } = harness();
+      await attachFixtureToken(page, 's', 'https://api.example.com');
+      const handler = page.on.mock.calls[0][1];
+      const video = mediaReq('media');
+      handler(video.req);
+      expect(video.abort).not.toHaveBeenCalled();
+      expect(video.cont).toHaveBeenCalled();
+    });
+
+    it('отказ abort не всплывает наружу', async () => {
+      const { page } = harness();
+      await attachFixtureToken(page, 's', 'https://api.example.com', {
+        blockMedia: true,
+      });
+      const handler = page.on.mock.calls[0][1];
+      const video = mediaReq('media');
+      video.abort.mockRejectedValue(new Error('closed'));
+      expect(() => handler(video.req)).not.toThrow();
+    });
+  });
 });

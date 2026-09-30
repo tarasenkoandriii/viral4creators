@@ -535,6 +535,9 @@ export function VideoStep({
               <video
                 ref={videoPlaybackRef}
                 src={video.downloadUrl}
+                // Без атрибута браузер вправе качать ролик целиком при
+                // каждом открытии шага (разбор счёта Blob 01.10.2026).
+                preload="metadata"
                 controls
                 className="w-full rounded-xl border border-silver-200/70 dark:border-silver-800"
               />

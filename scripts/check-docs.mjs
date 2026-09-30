@@ -4459,6 +4459,56 @@ function checkGreetingPolicyCopySeam() {
 
 checkGreetingPolicyCopySeam();
 
+/**
+ * Внутренние пути репозитория не попадают в тексты интерфейса.
+ *
+ * Найдено просмотром ролика обучалки 01.10.2026: подсказка карточки
+ * «Публикация» в постпроде заканчивалась «(см. doc/PRODUCT-PROJECT-SPEC.md
+ * §14)» — на всех пяти языках, в кадре ролика для посетителей и на
+ * экране каждого пользователя. Человеку этот файл не открыть, а
+ * документация проекта — не его дело. Словари TMA и лендинга: ни
+ * `doc/…`, ни `docs-tz/…`, ни `backend/src/…`, ни имени `*.md`.
+ */
+function checkUiCopyInternalPaths() {
+  const problems = [];
+  const LEAK = /(?:\bdocs?-?tz\/|\bdoc\/[\w./-]+|\b(?:backend|frontend|admin|landing)\/src\/|\b[\w-]+\.md\b)/;
+  const dirs = ["frontend/src/dictionaries", "landing/src/dictionaries"];
+  let files = 0;
+  let strings = 0;
+  const visit = (node, where, rel) => {
+    if (typeof node === "string") {
+      strings++;
+      const m = node.match(LEAK);
+      if (m) problems.push(`${rel}: ${where} — «${m[0]}»`);
+    } else if (node && typeof node === "object") {
+      for (const [k, v] of Object.entries(node)) {
+        visit(v, where ? `${where}.${k}` : k, rel);
+      }
+    }
+  };
+  for (const dir of dirs) {
+    if (!fs.existsSync(path.join(ROOT, dir))) continue;
+    for (const name of fs.readdirSync(path.join(ROOT, dir))) {
+      if (!name.endsWith(".json")) continue;
+      files++;
+      const rel = `${dir}/${name}`;
+      visit(JSON.parse(read(rel)), "", rel);
+    }
+  }
+  if (files === 0) problems.push("словари не найдены — шов ослеп");
+  if (problems.length > 0) {
+    failed++;
+    console.log("FAIL внутренние пути в текстах интерфейса:");
+    for (const x of problems) console.log(`  - ${x}`);
+  } else {
+    console.log(
+      `ok   тексты интерфейса без внутренних путей: словарей ${files}, строк ${strings}`,
+    );
+  }
+}
+
+checkUiCopyInternalPaths();
+
 if (failed) {
   console.error(
     `\n${failed} расхождени(е/я) между документами и кодом. ` +

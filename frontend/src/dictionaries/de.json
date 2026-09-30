@@ -878,7 +878,7 @@
   },
   "publishPanel": {
     "title": "Veröffentlichung",
-    "hint": "Die Schaltfläche stellt das Video in die Moderationswarteschlange — ein Operator prüft es im Admin-Panel, genehmigt es und weist einen Kanal zu; danach erfolgt der Upload automatisch (siehe doc/PRODUCT-PROJECT-SPEC.md §14).",
+    "hint": "Die Schaltfläche stellt das Video in die Moderationswarteschlange — ein Operator prüft es im Admin-Panel, genehmigt es und weist einen Kanal zu; danach erfolgt der Upload automatisch.",
     "unauthHint": "Das Video geht in die Moderationswarteschlange, nicht direkt in den Kanal.",
     "unauthAlert": "Die Veröffentlichung ist nach der Anmeldung verfügbar — öffnen Sie die App in Telegram oder melden Sie sich über die Kopfzeile an. Der Download funktioniert trotzdem.",
     "publishButton": "Veröffentlichen",
