@@ -72,7 +72,7 @@ export class SonioxTtsService implements TtsProvider {
     return !!sonioxApiKey();
   }
 
-  private defaultVoice(): string {
+  defaultVoice(): string {
     return process.env.SONIOX_TTS_VOICE?.trim() || SONIOX_DEFAULT_TTS_VOICE;
   }
 

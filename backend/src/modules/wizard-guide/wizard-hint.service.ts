@@ -124,6 +124,13 @@ export interface HintResult {
   source: 'cache' | 'model' | 'static' | null;
   /** Заполняется ТОЛЬКО когда исчерпан личный лимит этого человека. */
   notice?: string;
+  /**
+   * Ключ кеша подсказки — по нему клиент просит озвучку
+   * (`GET …/wizard-guide/hint-audio?key=`, ТЗ Greeting 2.0 §4А.4, K1).
+   * Только у подсказок, которые лежат в кеше: озвучивается ровно тот
+   * текст, что на экране, а не пересказ, собранный заново.
+   */
+  key?: string;
 }
 
 const NOTHING: HintResult = { hint: null, actions: [], source: null };
@@ -208,7 +215,7 @@ export class WizardHintService {
     });
 
     const cached = await this.fromCache(key);
-    if (cached) return cached;
+    if (cached) return { ...cached, key };
 
     // Личный лимит. Ноль — это НЕ «у вас кончилось»: ноль ставит
     // оператор, когда приостанавливает фичу, и говорить человеку про
@@ -344,7 +351,7 @@ export class WizardHintService {
       // его, чтобы показать совет, значило бы добавить второй вызов
       // модели в путь, который и так небыстрый.
       await this.fillLocale(slice.needTranslation, locale);
-      return { hint: masked, actions, source: 'model' };
+      return { hint: masked, actions, source: 'model', key };
     } catch (e) {
       // Таймаут, отмена, отказ провайдера — всё это «строка свернулась
       // обратно», а не красная ошибка поверх мастера.

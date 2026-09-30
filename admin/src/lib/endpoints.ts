@@ -40,6 +40,8 @@ import type {
   VoiceoverProviderSettingsView,
   SpeechRecognitionProviderKey,
   SpeechRecognitionProviderSettingsView,
+  VoiceAssistantSettingsView,
+  SetVoiceAssistantInput,
   MusicCatalogView,
   AiGuideSettingsView,
   SetAiGuideSettingsInput,
@@ -299,6 +301,15 @@ export function setSpeechRecognitionProvider(provider: SpeechRecognitionProvider
   return apiPatch<SpeechRecognitionProviderSettingsView>('/admin/settings/speech-recognition-provider', {
     provider,
   });
+}
+
+/** «Голосовой помощник» — суточные потолки голоса по тарифу (В-14) и голос помощника (В-11). */
+export function getVoiceAssistantSettings() {
+  return apiGet<VoiceAssistantSettingsView>('/admin/settings/voice-assistant');
+}
+
+export function setVoiceAssistantSettings(input: SetVoiceAssistantInput) {
+  return apiPatch<VoiceAssistantSettingsView>('/admin/settings/voice-assistant', input);
 }
 
 export function setVoiceoverProviderDefault(provider: VoiceoverProviderKey) {

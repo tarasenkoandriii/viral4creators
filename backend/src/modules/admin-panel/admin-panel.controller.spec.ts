@@ -109,6 +109,10 @@ function build() {
     get: jest.fn().mockResolvedValue({ active: 'gemini' }),
     set: jest.fn().mockResolvedValue({ active: 'soniox' }),
   };
+  const voiceAssistant = {
+    view: jest.fn().mockResolvedValue({ caps: {} }),
+    set: jest.fn().mockResolvedValue({ caps: {} }),
+  };
   const controller = new AdminPanelController(
     adminPanel as any,
     // Этап 155: приглашения тестировщиков — второй параметр.
@@ -146,6 +150,8 @@ function build() {
     tutorialVoice as any,
     tutorialLocales as any,
     speechRecognition as any,
+    // «Голосовой помощник» (этап K3) — последний параметр.
+    voiceAssistant as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
   return {
@@ -162,6 +168,7 @@ function build() {
     tutorialVoice,
     tutorialLocales,
     speechRecognition,
+    voiceAssistant,
     req,
   };
 }
@@ -630,6 +637,44 @@ describe('AdminPanelController — /admin/settings/speech-recognition-provider (
       controller.setSpeechRecognitionProvider(req, { provider: 'soniox' }),
     ).rejects.toThrow('не оператор');
     expect(speechRecognition.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPanelController — /admin/settings/voice-assistant (этап K3)', () => {
+  it('GET: оператор проверяется до обращения к настройке', async () => {
+    const { controller, adminPanel, voiceAssistant, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+    await expect(controller.getVoiceAssistant(req)).rejects.toThrow(
+      'не оператор',
+    );
+    expect(voiceAssistant.view).not.toHaveBeenCalled();
+  });
+
+  it('PATCH: потолки и голос уходят в настройку вместе с оператором', async () => {
+    const { controller, voiceAssistant, req } = build();
+    await controller.setVoiceAssistant(req, {
+      caps: { LITE: 0.75 },
+      voice: { provider: 'soniox', voiceId: 'Maya' },
+    });
+    expect(voiceAssistant.set).toHaveBeenCalledWith(
+      { caps: { LITE: 0.75 }, voice: { provider: 'soniox', voiceId: 'Maya' } },
+      'op-1',
+    );
+  });
+
+  it('PATCH: null у голоса — «вернуть умолчание» доезжает как есть', async () => {
+    const { controller, voiceAssistant, req } = build();
+    await controller.setVoiceAssistant(req, { voice: null });
+    expect(voiceAssistant.set).toHaveBeenCalledWith({ voice: null }, 'op-1');
+  });
+
+  it('PATCH: оператор проверяется до записи', async () => {
+    const { controller, adminPanel, voiceAssistant, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+    await expect(
+      controller.setVoiceAssistant(req, { caps: { LITE: 1 } }),
+    ).rejects.toThrow('не оператор');
+    expect(voiceAssistant.set).not.toHaveBeenCalled();
   });
 });
 

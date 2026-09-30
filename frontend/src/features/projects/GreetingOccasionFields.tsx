@@ -18,7 +18,7 @@
  * Логика без разметки — в `lib/greeting-occasion-fields.ts` (с тестом).
  */
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Button, Field, Input, Pills, Select } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
 import {
@@ -49,6 +49,7 @@ export function GreetingOccasionFields({
   serverRegister = null,
   serverRegisterFor,
   disabled,
+  announcedToneChange,
 }: {
   value: OccasionFieldsState;
   onChange: (patch: Partial<OccasionFieldsState>) => void;
@@ -68,11 +69,30 @@ export function GreetingOccasionFields({
    */
   serverRegisterFor?: (next: OccasionFieldsState) => GreetingRegister | null;
   disabled?: boolean;
+  /**
+   * Сброс тона, случившийся НЕ здесь, — голосом (этап K3): карточка «я
+   * понял так» применила повод, и строку «Тон: … → …» надо назвать так
+   * же, как при выборе в списке. `seq` — чтобы одно и то же изменение,
+   * пришедшее дважды, показалось дважды.
+   */
+  announcedToneChange?: { change: ToneChange | null; seq: number };
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const customId = useId();
   const [toneChange, setToneChange] = useState<ToneChange | null>(null);
+  const announcedSeq = announcedToneChange?.seq;
+  const announced = announcedToneChange?.change ?? null;
+  // Номер на момент монтирования — уже показанное: после сохранения блок
+  // перемонтируется (`key`), и прежняя строка не должна вернуться.
+  const [mountedSeq] = useState(announcedSeq);
+  useEffect(() => {
+    if (announcedSeq !== undefined && announcedSeq !== mountedSeq) {
+      setToneChange(announced);
+    }
+    // Только по номеру: объект изменения новый на каждом рендере экрана.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [announcedSeq]);
 
   const register = fieldsRegister(policy, value, serverRegister);
   const recommended = recommendedTone(policy, value.occasion, register);
@@ -108,6 +128,7 @@ export function GreetingOccasionFields({
     <>
       <Field label={w.occasionLabel}>
         <Select
+          data-qa="greeting-field-occasion"
           value={value.occasion}
           onChange={(e) =>
             changeRegisterInput({
@@ -128,6 +149,7 @@ export function GreetingOccasionFields({
         <>
           <Field label={w.customOccasionLabel} htmlFor={customId}>
             <Input
+              data-qa="greeting-field-custom-occasion"
               id={customId}
               value={value.customOccasionText}
               // Через тот же сброс, что повод и настроение: переписанное
@@ -149,7 +171,7 @@ export function GreetingOccasionFields({
               повода». Регистр по тексту угадывают и сервер, и
               классификатор, но только вверх — мягче ответа человека
               ролик не станет, а без ответа не с чего начинать. */}
-          <div>
+          <div data-qa="greeting-field-mood">
             <span className="label">{w.moodLabel}</span>
             <Pills
               value={value.mood ?? ('' as GreetingRegister)}
@@ -173,7 +195,7 @@ export function GreetingOccasionFields({
         </>
       )}
 
-      <div>
+      <div data-qa="greeting-field-tone">
         <span className="label">{w.toneLabel}</span>
         {/* Недоступный тон виден серым с подписью, а не пропадает (§3.5):
             пропавшего варианта для человека не существует, и он не

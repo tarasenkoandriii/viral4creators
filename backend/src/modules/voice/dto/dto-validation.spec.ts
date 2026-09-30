@@ -81,3 +81,74 @@ describe('voice DTOs under the real ValidationPipe settings', () => {
     });
   });
 });
+
+// Этап K3 — разбор реплики.
+import {
+  GreetingVoiceUnderstandRequestDto,
+  ProjectGreetingVoiceUnderstandRequestDto,
+} from './greeting-voice.dto';
+
+describe('understand DTOs', () => {
+  const screen = { step: 'brief', card: 'greeting-brief-card' };
+
+  it('сессия: путь сессии, экран и карточка на нём', async () => {
+    await ok(GreetingVoiceUnderstandRequestDto, {
+      pathname: 'sessions/s1/voice-1.webm',
+      screen,
+      pending: {
+        kind: 'fill',
+        fields: [
+          { target: 'greeting-field-recipient', value: 'Мама', label: 'Кому' },
+          { target: 'greeting-field-x', value: true },
+        ],
+      },
+    });
+    await bad(GreetingVoiceUnderstandRequestDto, {
+      pathname: 'projects/p1/greeting-voice-1.webm',
+      screen,
+    });
+  });
+
+  it('проект: только путь брифа проекта', async () => {
+    await ok(ProjectGreetingVoiceUnderstandRequestDto, {
+      pathname: 'projects/p1/greeting-voice-1.webm',
+      screen: { step: 'brief' },
+    });
+    await bad(ProjectGreetingVoiceUnderstandRequestDto, {
+      pathname: 'projects/p1/items/i1/voice-1.webm',
+      screen,
+    });
+  });
+
+  it('экран — из четырёх шагов; карточка — только fill, значения — строка или галочка', async () => {
+    const base = { pathname: 'sessions/s1/voice-1.webm' };
+    await bad(GreetingVoiceUnderstandRequestDto, {
+      ...base,
+      screen: { step: 'admin' },
+    });
+    await bad(GreetingVoiceUnderstandRequestDto, base);
+    await bad(GreetingVoiceUnderstandRequestDto, {
+      ...base,
+      screen,
+      pending: { kind: 'command', fields: [] },
+    });
+    await bad(GreetingVoiceUnderstandRequestDto, {
+      ...base,
+      screen,
+      pending: { kind: 'fill', fields: [{ target: 't', value: { x: 1 } }] },
+    });
+    await bad(GreetingVoiceUnderstandRequestDto, {
+      ...base,
+      screen,
+      pending: {
+        kind: 'fill',
+        fields: [{ target: 't', value: 'я'.repeat(2001) }],
+      },
+    });
+    await bad(GreetingVoiceUnderstandRequestDto, {
+      ...base,
+      screen,
+      extra: 1,
+    });
+  });
+});

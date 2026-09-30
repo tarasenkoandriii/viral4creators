@@ -50,7 +50,7 @@ export class ElevenLabsService implements TtsProvider {
     return !!this.key();
   }
 
-  private defaultVoice(): string {
+  defaultVoice(): string {
     // Тот же голос по умолчанию, что в проекте-референсе: нейтральный
     // женский из библиотеки. Бренд задаёт свой в манифесте (§12).
     return process.env.VOICE_ID?.trim() || 'EXAVITQu4vr4xnSDxMaL';

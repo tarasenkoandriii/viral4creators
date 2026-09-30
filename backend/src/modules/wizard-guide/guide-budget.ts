@@ -25,6 +25,12 @@ export const GUIDE_OPERATIONS: readonly AiOperation[] = [
   'wizard-hint',
   'wizard-sibling',
   'wizard-translate',
+  // Голос советника (ТЗ Greeting 2.0 §4А.5, K1): «суточный лимит — тот
+  // же рубильник, что у советника». Та же дыра, что закрывал аудит
+  // волны C: четвёртая платная операция мимо общей суммы сделала бы
+  // «$2 в сутки» обещанием, а не потолком. Личный потолок голоса (В-14)
+  // — отдельно, в `VoiceBudgetService`: он про человека, этот — про фичу.
+  'voice-assistant-tts',
 ];
 
 export interface SpentReader {

@@ -55,6 +55,7 @@ import {
 } from '../../common/greeting-voice';
 import { BlobService } from '../storage/blob.service';
 import { PlanService } from '../plan/plan.service';
+import { VoiceBudgetService } from '../voice-budget/voice-budget.service';
 import {
   VoiceTranscriptionService,
   isSpeechlessReason,
@@ -137,6 +138,7 @@ export class GreetingVoiceService {
     private readonly blobService: BlobService,
     private readonly transcription: VoiceTranscriptionService,
     private readonly plans: PlanService,
+    private readonly voiceBudget: VoiceBudgetService,
   ) {}
 
   async createUploadUrl(
@@ -169,91 +171,131 @@ export class GreetingVoiceService {
       // загруженную запись, иначе она осталась бы в Blob сиротой — а
       // Условия обещают, что звук не хранится.
       await this.plans.assertCanSpendSession(sessionId);
-
-      let audio: Buffer;
-      let mimeType: string;
-      try {
-        const meta = await head(dto.pathname);
-        mimeType = meta.contentType || 'audio/webm';
-        audio = await this.blobService.downloadBuffer(dto.pathname);
-      } catch (e) {
-        throw new BadRequestException(
-          `Запись не найдена в хранилище — сначала загрузите её через voice/upload-url (${e instanceof Error ? e.message : String(e)})`,
-        );
-      }
-      // Подписанный PUT уже ограничен размером, но проверка здесь — не
-      // перестраховка: платный вызов не должен зависеть от того, чей
-      // клиент и чья ссылка положили файл.
-      if (audio.length > GREETING_VOICE_MAX_BYTES) {
-        throw new BadRequestException('Запись слишком длинная для реплики');
-      }
+      // Суточный потолок ГОЛОСА (В-14, этап K3) — поверх общего лимита:
+      // тот про все деньги человека, этот ловит зависший микрофон
+      // раньше, чем голос съест бюджет ролика.
+      await this.voiceBudget.assertCanSpendVoice(session.userId ?? null);
 
       const snapshot = session.greetingBriefSnapshot!;
-      const hints = voiceLanguageHints(snapshot.scriptLanguage, session.locale);
-      const names = [snapshot.recipientName, snapshot.senderName];
-      const run = async (strictScript: boolean) => {
-        // Провайдер — из админки (Gemini или Soniox). Одни и те же
-        // правила §4А.3 доезжают до обоих: Gemini — строками инструкции,
-        // Soniox — параметрами (`language_hints`, `_strict`,
-        // `context.terms`).
-        const r = await this.transcription.recognize(audio, mimeType, {
-          geminiPrompt: buildGreetingVoicePrompt({
-            hints,
-            names,
-            strictScript,
-          }),
-          languageHints: hints,
-          terms: names,
-          strictLanguage: strictScript,
-          operation: 'voice-assistant-stt',
-          sessionId,
-        });
-        return {
-          text: stripNonSpeech(r.text),
-          reason: r.reason,
-          language: r.language ?? null,
-        };
-      };
-
-      const first = await run(false);
-      if (!first.text && isUnavailable(first.reason)) {
-        return {
-          status: 'unavailable',
-          text: null,
-          scriptMismatch: false,
-          hints,
-          language: null,
-        };
-      }
-      const needRetry =
-        !!first.text && needsScriptRetry(first.text, hints, first.language);
-      // Повтор — ещё один платный вызов, и потолок проверяется перед ним
-      // так же, как перед первым (аудит 29.09.2026): между двумя вызовами
-      // лимит мог кончиться. Не пустили — отдаём первый ответ с флагом
-      // «переспросить», а не ошибку: текст у нас уже есть.
-      const allowed =
-        needRetry &&
-        (await this.plans.assertCanSpendSession(sessionId).then(
-          () => true,
-          () => false,
-        ));
-      const retried = allowed
-        ? await run(true)
-        : needRetry
-          ? { text: null, reason: undefined, language: null }
-          : undefined;
-      // Язык речи — по ПЕРВОЙ попытке: повтор идёт со строгими
-      // подсказками (`language_hints_strict`) и тянет определение к ним,
-      // а первая слушала свободно. Повтор — только если первая языка не
-      // сообщила.
-      const language = first.language ?? retried?.language ?? null;
-      return settleGreetingVoice(first.text, retried?.text, hints, language);
+      return await this.recognizeRecording({
+        pathname: dto.pathname,
+        hints: voiceLanguageHints(snapshot.scriptLanguage, session.locale),
+        names: [snapshot.recipientName, snapshot.senderName],
+        owner: { sessionId },
+        canSpendAgain: () =>
+          this.plans
+            .assertCanSpendSession(sessionId)
+            .then(() =>
+              this.voiceBudget.assertCanSpendVoice(session.userId ?? null),
+            )
+            .then(
+              () => true,
+              () => false,
+            ),
+      });
     } finally {
       // Транзитная копия: прочитана или нет — не храним. Не влияет на ответ.
       // С `await`: на Vercel работа, не дождавшаяся ответа, может не
       // выполниться вовсе (сквозной аудит голоса 29.09.2026).
       await this.blobService.deleteBlob(dto.pathname);
     }
+  }
+
+  /**
+   * Распознавание загруженной записи по правилам §4А.3 — общая часть
+   * расшифровки (K2) и разбора реплики (K3, `GreetingVoiceUnderstandService`).
+   *
+   * Вынесено, а не скопировано: правила (подсказки, имена, один повтор
+   * при латинице с проверкой лимита перед ним, «не расслышал» против
+   * «недоступно») — одни на оба маршрута, и две копии однажды
+   * разошлись бы. Запись здесь НЕ удаляется: владелец записи — вызывающий
+   * маршрут, и удаление стоит в его `finally` (шов check-docs «голос не
+   * остаётся у провайдера» проверяет это в каждом файле модуля). Потолки
+   * перед ПЕРВОЙ попыткой проверяет тоже вызывающий; перед повтором —
+   * `canSpendAgain`.
+   */
+  async recognizeRecording(input: {
+    pathname: string;
+    hints: SupportedLocale[];
+    names: ReadonlyArray<string | null | undefined>;
+    /** Чей расход: у сессии — `sessionId`, у брифа до сессии — `userId`. */
+    owner: { userId?: string | null; sessionId?: string | null };
+    /** Можно ли тратить на повтор — те же потолки, что перед первой попыткой. */
+    canSpendAgain: () => Promise<boolean>;
+  }): Promise<GreetingVoiceResult> {
+    const { hints, names } = input;
+    let audio: Buffer;
+    let mimeType: string;
+    try {
+      const meta = await head(input.pathname);
+      mimeType = meta.contentType || 'audio/webm';
+      audio = await this.blobService.downloadBuffer(input.pathname);
+    } catch (e) {
+      throw new BadRequestException(
+        `Запись не найдена в хранилище — сначала загрузите её через upload-url (${e instanceof Error ? e.message : String(e)})`,
+      );
+    }
+    // Подписанный PUT уже ограничен размером, но проверка здесь — не
+    // перестраховка: платный вызов не должен зависеть от того, чей
+    // клиент и чья ссылка положили файл.
+    if (audio.length > GREETING_VOICE_MAX_BYTES) {
+      throw new BadRequestException('Запись слишком длинная для реплики');
+    }
+
+    const run = async (strictScript: boolean) => {
+      // Провайдер — из админки (Gemini или Soniox). Одни и те же
+      // правила §4А.3 доезжают до обоих: Gemini — строками инструкции,
+      // Soniox — параметрами (`language_hints`, `_strict`,
+      // `context.terms`).
+      const r = await this.transcription.recognize(audio, mimeType, {
+        geminiPrompt: buildGreetingVoicePrompt({
+          hints,
+          names,
+          strictScript,
+        }),
+        languageHints: hints,
+        terms: names,
+        strictLanguage: strictScript,
+        operation: 'voice-assistant-stt',
+        ...(input.owner.sessionId
+          ? { sessionId: input.owner.sessionId }
+          : { userId: input.owner.userId ?? null }),
+      });
+      return {
+        text: stripNonSpeech(r.text),
+        reason: r.reason,
+        language: r.language ?? null,
+      };
+    };
+
+    const first = await run(false);
+    if (!first.text && isUnavailable(first.reason)) {
+      return {
+        status: 'unavailable',
+        text: null,
+        scriptMismatch: false,
+        hints,
+        language: null,
+      };
+    }
+    const needRetry =
+      !!first.text && needsScriptRetry(first.text, hints, first.language);
+    // Повтор — ещё один платный вызов, и потолок проверяется перед ним
+    // так же, как перед первым (аудит 29.09.2026): между двумя вызовами
+    // лимит мог кончиться. Не пустили — отдаём первый ответ с флагом
+    // «переспросить», а не ошибку: текст у нас уже есть.
+    const allowed = needRetry && (await input.canSpendAgain());
+    const retried = allowed
+      ? await run(true)
+      : needRetry
+        ? { text: null, reason: undefined, language: null }
+        : undefined;
+    // Язык речи — по ПЕРВОЙ попытке: повтор идёт со строгими
+    // подсказками (`language_hints_strict`) и тянет определение к ним,
+    // а первая слушала свободно. Повтор — только если первая языка не
+    // сообщила.
+    const language = first.language ?? retried?.language ?? null;
+    return settleGreetingVoice(first.text, retried?.text, hints, language);
   }
 
   private async load(sessionId: string): Promise<Session> {

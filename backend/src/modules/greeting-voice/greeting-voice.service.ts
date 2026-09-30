@@ -47,6 +47,13 @@ import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
  */
 const PRESET_VOICE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;
 
+/** Срок кеша роестра пресетов (аудит волны K2). */
+export const PRESET_CACHE_TTL_MS = 10 * 60 * 1000;
+/** Срок кеша ПУСТОГО роестра — сбой не должен прятать пресеты надолго. */
+export const PRESET_EMPTY_TTL_MS = 60 * 1000;
+/** Сколько голосовой разбор ждёт роестр, прежде чем идти без пресетов. */
+export const PRESET_VOICE_PATH_TIMEOUT_MS = 2500;
+
 function toView(snapshot: GreetingBriefSnapshot): GreetingVoiceView {
   return {
     senderVoice: snapshot.senderVoice ?? null,
@@ -74,10 +81,72 @@ export class GreetingVoiceService {
     return toView(session.greetingBriefSnapshot!);
   }
 
-  /** Роестр пресетных голосов xAI — для экрана выбора. */
+  /**
+   * Роестр пресетных голосов xAI — для экрана выбора и для голосового
+   * помощника (K5).
+   *
+   * Кеш в памяти экземпляра (аудит волны K2): разбор КАЖДОЙ реплики в
+   * сессии со сценарием сверяет выбор голоса с роестром, и живой GET к
+   * xAI с тридцатисекундным потолком на каждой реплике — это и задержка,
+   * и лишний трафик. Роестр пополняется у провайдера
+   * медленно (см. `GrokVideoService.listPresetVoices`), десять минут
+   * устаревания ему не вредят. Пустой ответ (нет ключа, HTTP-ошибка)
+   * кешируется коротко: минутный сбой не должен прятать пресеты на
+   * десять минут. Исключение не кешируется вовсе.
+   *
+   * Одновременные промахи делят один запрос.
+   */
   listPresetVoices(): Promise<GrokPresetVoice[]> {
-    return this.grokVideo.listPresetVoices();
+    const now = this.now();
+    if (this.presetCache && this.presetCache.expiresAt > now) {
+      return Promise.resolve(this.presetCache.voices);
+    }
+    if (!this.presetInFlight) {
+      this.presetInFlight = this.grokVideo
+        .listPresetVoices()
+        .then((voices) => {
+          this.presetCache = {
+            voices,
+            expiresAt:
+              this.now() +
+              (voices.length ? PRESET_CACHE_TTL_MS : PRESET_EMPTY_TTL_MS),
+          };
+          return voices;
+        })
+        .finally(() => {
+          this.presetInFlight = null;
+        });
+    }
+    return this.presetInFlight;
   }
+
+  /**
+   * Тот же роестр для голосового разбора: не дольше `timeoutMs`, сбой и
+   * таймаут — пустой список (как у экрана, который прячет блок пресетов).
+   * Опоздавший ответ всё равно ляжет в кеш — следующая реплика его увидит.
+   */
+  async listPresetVoicesQuick(
+    timeoutMs = PRESET_VOICE_PATH_TIMEOUT_MS,
+  ): Promise<GrokPresetVoice[]> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<GrokPresetVoice[]>((resolve) => {
+      timer = setTimeout(() => resolve([]), timeoutMs);
+    });
+    try {
+      return await Promise.race([
+        this.listPresetVoices().catch(() => [] as GrokPresetVoice[]),
+        timeout,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private presetCache: { voices: GrokPresetVoice[]; expiresAt: number } | null =
+    null;
+  private presetInFlight: Promise<GrokPresetVoice[]> | null = null;
+  /** Часы — полем, чтобы спек проверял срок кеша без ожидания. */
+  now: () => number = () => Date.now();
 
   /**
    * `null` снимает выбор — озвучка возвращается к голосу по умолчанию

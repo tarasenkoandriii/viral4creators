@@ -85,6 +85,15 @@ export interface TtsProvider {
   /** Настроен ли — по нему решается «пропустить» против «сломалось». */
   configured(): boolean;
   synthesize(request: SynthesisRequest): Promise<SynthesisOutcome>;
+  /**
+   * Голос, которым провайдер говорит, когда `voiceId` не передан
+   * (переменная окружения стенда или умолчание модели); `undefined` —
+   * такого голоса нет (Resemble без `RESEMBLE_VOICE_ID`). Нужен тем, кто
+   * кеширует звук по голосу (аудиокеш советника, ТЗ Greeting 2.0 §4А.4):
+   * смена голоса по умолчанию обязана менять ключ кеша. Необязателен —
+   * `VeoPassthroughService` голосов не имеет.
+   */
+  defaultVoice?(): string | undefined;
   /** Каталог голосов для выбора в манифесте бренда. */
   voices(language?: string): Promise<{ voices: VoiceOption[]; error?: string }>;
 }

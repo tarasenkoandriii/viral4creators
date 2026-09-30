@@ -83,9 +83,10 @@ describe('WizardGuideService — чекбокс ИИ (§3)', () => {
       { frames: [1, 2, 3] },
     );
     await svc.setEnabled('u1', 'p1', false);
+    // Голос гасится вместе с советником (Greeting 2.0 §4А.5, В-10).
     expect(prisma.project.update).toHaveBeenCalledWith({
       where: { id: 'p1' },
-      data: { aiGuideEnabled: false },
+      data: { aiGuideEnabled: false, aiGuideVoice: false },
     });
   });
 
@@ -141,5 +142,85 @@ describe('WizardGuideService — чекбокс ИИ (§3)', () => {
     });
     await svc.stateOf('u1', 'p1');
     expect(prisma.session.count.mock.calls[0][0].where.status).toBeUndefined();
+  });
+});
+
+describe('WizardGuideService — «голосом» (Greeting 2.0 §4А.5, В-10)', () => {
+  it('по умолчанию голос выключен', async () => {
+    const { svc } = build({ type: 'GREETING_VIDEO', aiGuideEnabled: true });
+    expect((await svc.stateOf('u1', 'p1')).voice).toBe(false);
+  });
+
+  it('при выключенном советнике голос не сообщается включённым', async () => {
+    // Столбец мог остаться `true` у старой строки — наружу всё равно
+    // `false`: без советника у голоса нет реплик.
+    const { svc } = build({
+      type: 'GREETING_VIDEO',
+      aiGuideEnabled: false,
+      aiGuideVoice: true,
+    });
+    expect((await svc.stateOf('u1', 'p1')).voice).toBe(false);
+  });
+
+  it('включённый советник с голосом — voice: true', async () => {
+    const { svc } = build({
+      type: 'GREETING_VIDEO',
+      aiGuideEnabled: true,
+      aiGuideVoice: true,
+    });
+    expect((await svc.stateOf('u1', 'p1')).voice).toBe(true);
+  });
+
+  it('голос без советника — 409, запись не трогается', async () => {
+    const { svc, prisma } = build({
+      type: 'GREETING_VIDEO',
+      aiGuideEnabled: false,
+      aiGuideVoice: false,
+    });
+    await expect(svc.setVoice('u1', 'p1', true)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(prisma.project.update).not.toHaveBeenCalled();
+  });
+
+  it('голос включается и посреди сценария (галочка — нет)', async () => {
+    // «Линия с начала» (§3.2) — про подсказки, а голос их не меняет.
+    const { svc, prisma } = build(
+      { type: 'GREETING_VIDEO', aiGuideEnabled: true, aiGuideVoice: false },
+      { sessions: 3 },
+    );
+    await svc.setVoice('u1', 'p1', true);
+    expect(prisma.project.update).toHaveBeenCalledWith({
+      where: { id: 'p1' },
+      data: { aiGuideVoice: true },
+    });
+  });
+
+  it('выключить голос можно всегда', async () => {
+    const { svc, prisma } = build({
+      type: 'GREETING_VIDEO',
+      aiGuideEnabled: false,
+      aiGuideVoice: true,
+    });
+    await svc.setVoice('u1', 'p1', false);
+    expect(prisma.project.update).toHaveBeenCalledWith({
+      where: { id: 'p1' },
+      data: { aiGuideVoice: false },
+    });
+  });
+
+  it('выключение советника гасит и голос', async () => {
+    // Иначе повторное включение советов через месяц молча включило бы
+    // платную озвучку, о которой человек уже не помнит.
+    const { svc, prisma } = build({
+      type: 'GREETING_VIDEO',
+      aiGuideEnabled: true,
+      aiGuideVoice: true,
+    });
+    await svc.setEnabled('u1', 'p1', false);
+    expect(prisma.project.update).toHaveBeenCalledWith({
+      where: { id: 'p1' },
+      data: { aiGuideEnabled: false, aiGuideVoice: false },
+    });
   });
 });

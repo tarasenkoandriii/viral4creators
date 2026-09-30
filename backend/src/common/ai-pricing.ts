@@ -282,7 +282,18 @@ export type AiOperation =
    * раз-два за товар, эта — команды и ответы мастеру, и при голосовом
    * управлении целиком (§4А.7) их десятки за сессию. Смешав строки, не
    * увидеть, во что обходится голос как способ управления. */
-  | 'voice-assistant-stt';
+  | 'voice-assistant-stt'
+  /** Разбор распознанной реплики в поля брифа и команды (этап K3 ТЗ
+   * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §4А.3, строка
+   * «Числа, даты») — отдельный текстовый вызов в JSON-режиме после
+   * распознавания. Своя строка: «сколько стоит услышать» и «сколько
+   * стоит понять» — разные вопросы, и оба входят в потолок голоса (В-14). */
+  | 'voice-assistant-understand'
+  /** Голос советника — озвучка подсказки (этап K1 ТЗ
+   * docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §4А.4–4А.5).
+   * Отдельно от 'voiceover': та озвучивает ролик, эта — реплики
+   * помощника, и входит в суточный потолок голоса (В-14). */
+  | 'voice-assistant-tts';
 
 export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   analysis: 'Разбор референса',
@@ -331,6 +342,8 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'greeting-setting': 'Варианты сеттинга для кадра',
   'greeting-register': 'Настроение «особого повода»',
   'voice-assistant-stt': 'Голосовой ввод в мастере поздравления',
+  'voice-assistant-understand': 'Голосовой помощник: разбор реплики',
+  'voice-assistant-tts': 'Голос советника: озвучка подсказки',
 };
 
 export interface ModelRate {

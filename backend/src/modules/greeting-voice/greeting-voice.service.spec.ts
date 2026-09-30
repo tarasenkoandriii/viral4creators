@@ -2,7 +2,12 @@
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { GreetingVoiceService } from './greeting-voice.service';
+import {
+  GreetingVoiceService,
+  PRESET_CACHE_TTL_MS,
+  PRESET_EMPTY_TTL_MS,
+  PRESET_VOICE_PATH_TIMEOUT_MS,
+} from './greeting-voice.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { SessionService } from '../../common/session.service';
 import type { GrokVideoService } from '../generation/grok-video.service';
@@ -275,5 +280,69 @@ describe('GreetingVoiceService — пресетный голос xAI', () => {
     const { svc, listPresetVoices } = build();
     await expect(svc.listPresetVoices()).resolves.toHaveLength(1);
     expect(listPresetVoices).toHaveBeenCalled();
+  });
+});
+
+describe('роестр пресетов: кеш и короткий путь голоса (аудит волны K2)', () => {
+  const EVE = [{ voiceId: 'eve', name: 'Eve', language: 'multilingual' }];
+
+  it('второй запрос в пределах срока — из кеша', async () => {
+    const { svc, listPresetVoices } = build();
+    let now = 1_000;
+    svc.now = () => now;
+    await svc.listPresetVoices();
+    now += PRESET_CACHE_TTL_MS - 1;
+    await expect(svc.listPresetVoices()).resolves.toEqual(EVE);
+    expect(listPresetVoices).toHaveBeenCalledTimes(1);
+    now += 2;
+    await svc.listPresetVoices();
+    expect(listPresetVoices).toHaveBeenCalledTimes(2);
+  });
+
+  it('пустой роестр кешируется коротко, исключение — не кешируется', async () => {
+    const { svc, listPresetVoices } = build();
+    let now = 0;
+    svc.now = () => now;
+    listPresetVoices.mockResolvedValueOnce([]);
+    await expect(svc.listPresetVoices()).resolves.toEqual([]);
+    now += PRESET_EMPTY_TTL_MS + 1;
+    await expect(svc.listPresetVoices()).resolves.toEqual(EVE);
+    expect(listPresetVoices).toHaveBeenCalledTimes(2);
+
+    const b = build();
+    b.listPresetVoices.mockRejectedValueOnce(new Error('network'));
+    await expect(b.svc.listPresetVoices()).rejects.toThrow('network');
+    await expect(b.svc.listPresetVoices()).resolves.toEqual(EVE);
+  });
+
+  it('одновременные промахи делят один запрос', async () => {
+    const { svc, listPresetVoices } = build();
+    await Promise.all([svc.listPresetVoices(), svc.listPresetVoices()]);
+    expect(listPresetVoices).toHaveBeenCalledTimes(1);
+  });
+
+  it('голосовой путь не ждёт дольше потолка; опоздавший ответ ложится в кеш', async () => {
+    const { svc, listPresetVoices } = build();
+    let release: (v: unknown) => void = () => undefined;
+    listPresetVoices.mockReturnValueOnce(
+      new Promise((r) => {
+        release = r;
+      }),
+    );
+    await expect(svc.listPresetVoicesQuick(10)).resolves.toEqual([]);
+    release(EVE);
+    await new Promise((r) => setImmediate(r));
+    await expect(svc.listPresetVoicesQuick(10)).resolves.toEqual(EVE);
+    expect(listPresetVoices).toHaveBeenCalledTimes(1);
+  });
+
+  it('сбой на голосовом пути — пустой список, а не исключение', async () => {
+    const { svc, listPresetVoices } = build();
+    listPresetVoices.mockRejectedValueOnce(new Error('xai down'));
+    await expect(svc.listPresetVoicesQuick()).resolves.toEqual([]);
+  });
+
+  it('потолок голосового пути — пара секунд, а не тридцать', () => {
+    expect(PRESET_VOICE_PATH_TIMEOUT_MS).toBeLessThanOrEqual(3000);
   });
 });

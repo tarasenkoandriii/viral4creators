@@ -5,6 +5,11 @@
  *        { fileName, fileSize, mimeType }  → { uploadUrl, pathname }
  *   POST /sessions/:sessionId/voice/transcribe
  *        { pathname }  → { status, text, scriptMismatch, hints, language }
+ *   POST /sessions/:sessionId/voice/understand (этап K3)
+ *        { pathname, screen, pending? }  → VoiceUnderstandResult
+ *        (`common/greeting-voice-intent.ts`) — распознавание + разбор в
+ *        поля брифа и команды; до старта сессии тот же разбор идёт через
+ *        `projects/:projectId/greeting-voice/understand`.
  *
  * `language` — язык, на котором говорили, определённый провайдером по
  * звуку (Soniox); у Gemini — `null`.
@@ -14,7 +19,16 @@
  * применяет: разбор в поля брифа и команды — этап K3.
  */
 
-import { Body, Controller, Param, Post } from '@nestjs/common';
+import { Body, Controller, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { RateLimit, RateLimitGuard } from '../../common/rate-limit';
+import {
+  VOICE_PROCESS_RATE_LIMIT,
+  VOICE_UPLOAD_RATE_LIMIT,
+} from './voice-rate-limits';
+import { Request } from 'express';
+import { localeFromRequest } from '../../common/locale';
+import { VoiceUnderstandResult } from '../../common/greeting-voice-intent';
+import { GreetingVoiceUnderstandService } from './greeting-voice-understand.service';
 import {
   GreetingVoiceResult,
   GreetingVoiceService,
@@ -22,14 +36,20 @@ import {
 import { VoiceUploadUrl } from './voice.service';
 import {
   GreetingVoiceTranscribeRequestDto,
+  GreetingVoiceUnderstandRequestDto,
   GreetingVoiceUploadUrlRequestDto,
 } from './dto/greeting-voice.dto';
 
 @Controller('sessions/:sessionId/voice')
 export class GreetingVoiceController {
-  constructor(private readonly voice: GreetingVoiceService) {}
+  constructor(
+    private readonly voice: GreetingVoiceService,
+    private readonly understanding: GreetingVoiceUnderstandService,
+  ) {}
 
   @Post('upload-url')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(VOICE_UPLOAD_RATE_LIMIT)
   createUploadUrl(
     @Param('sessionId') sessionId: string,
     @Body() dto: GreetingVoiceUploadUrlRequestDto,
@@ -38,10 +58,29 @@ export class GreetingVoiceController {
   }
 
   @Post('transcribe')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(VOICE_PROCESS_RATE_LIMIT)
   transcribe(
     @Param('sessionId') sessionId: string,
     @Body() dto: GreetingVoiceTranscribeRequestDto,
   ): Promise<GreetingVoiceResult> {
     return this.voice.transcribe(sessionId, dto);
+  }
+
+  @Post('understand')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(VOICE_PROCESS_RATE_LIMIT)
+  understand(
+    @Req() req: Request,
+    @Param('sessionId') sessionId: string,
+    @Body() dto: GreetingVoiceUnderstandRequestDto,
+  ): Promise<VoiceUnderstandResult> {
+    // Язык интерфейса — из `Accept-Language` (его ставит клиент на
+    // каждый запрос): подписи карточки и реплика без языка речи.
+    return this.understanding.understandForSession(
+      sessionId,
+      dto,
+      localeFromRequest(req),
+    );
   }
 }

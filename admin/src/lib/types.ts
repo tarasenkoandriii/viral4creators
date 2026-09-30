@@ -205,6 +205,32 @@ export interface SpeechRecognitionProviderSettingsView {
   options: Array<{ key: SpeechRecognitionProviderKey; configured: boolean }>;
 }
 
+// ── Голосовой помощник (этап K3 ТЗ Greeting 2.0, 29.09.2026) ──
+// Зеркалит backend/src/modules/admin-panel/admin-voice-assistant-settings.service.ts.
+/** Тариф или `ANONYMOUS` — общий потолок сессий без владельца (0 — голос без входа выключен). */
+export type VoiceAssistantPlan = 'LITE' | 'STANDARD' | 'PREMIUM' | 'ANONYMOUS';
+export type VoiceAssistantProviderKey = 'elevenlabs' | 'resemble' | 'soniox';
+
+export interface VoiceAssistantCapView {
+  /** Действующий суточный потолок голоса, USD (сутки UTC). */
+  usd: number;
+  /** Умолчание В-14 для тарифа. */
+  defaultUsd: number;
+  source: 'admin' | 'default';
+}
+
+export interface VoiceAssistantSettingsView {
+  caps: Record<VoiceAssistantPlan, VoiceAssistantCapView>;
+  voice: { provider: VoiceAssistantProviderKey; voiceId: string | null; source: 'admin' | 'default' };
+  providers: Array<{ key: VoiceAssistantProviderKey; configured: boolean }>;
+}
+
+export interface SetVoiceAssistantInput {
+  caps?: Partial<Record<VoiceAssistantPlan, number>>;
+  /** `null` — вернуть голос по умолчанию. */
+  voice?: { provider: VoiceAssistantProviderKey; voiceId: string | null } | null;
+}
+
 export interface VoiceoverProviderOptionView {
   key: VoiceoverProviderKey;
   /** Настроен ли ключ/аккаунт на этом стенде — у `veo` всегда `true`. */

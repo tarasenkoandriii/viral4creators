@@ -25,7 +25,10 @@ import {
   MaxLength,
   Min,
   NotEquals,
+  ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import {
   AdminSessionGuard,
   AdminAuthenticatedRequest,
@@ -44,6 +47,8 @@ import { AdminAbTestService } from './admin-ab-test.service';
 import { AdminFeedImportService } from './admin-feed-import.service';
 import { AdminVoiceoverSettingsService } from './admin-voiceover-settings.service';
 import { AdminSpeechRecognitionSettingsService } from './admin-speech-recognition-settings.service';
+import { AdminVoiceAssistantSettingsService } from './admin-voice-assistant-settings.service';
+import { EXPLICIT_TTS_PROVIDER_KEYS } from '../tts/default-tts-provider';
 import { SPEECH_RECOGNITION_PROVIDER_KEYS } from '../../common/speech-recognition-provider';
 import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
 import { AdminTutorialVoiceSettingsService } from './admin-tutorial-voice-settings.service';
@@ -326,6 +331,64 @@ export class SetSpeechRecognitionProviderDto {
 }
 
 /**
+ * «Голосовой помощник» (ТЗ Greeting 2.0 §4А.4, §4А.7.5): суточные потолки
+ * голоса по тарифу (В-14) в долларах и пресет голоса помощника (В-11).
+ * Всё необязательно: не присланное не трогается.
+ */
+export class VoiceAssistantCapsDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1000)
+  LITE?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1000)
+  STANDARD?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1000)
+  PREMIUM?: number;
+
+  /** Общий потолок сессий без владельца; 0 (умолчание) — голос без входа выключен. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1000)
+  ANONYMOUS?: number;
+}
+
+export class VoiceAssistantVoiceDto {
+  @IsIn(EXPLICIT_TTS_PROVIDER_KEYS as unknown as string[])
+  provider!: string;
+
+  /** Пусто или `null` — голос провайдера по умолчанию. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(200)
+  voiceId?: string | null;
+}
+
+export class SetVoiceAssistantDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => VoiceAssistantCapsDto)
+  caps?: VoiceAssistantCapsDto;
+
+  /** `null` — вернуть голос по умолчанию. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @ValidateNested()
+  @Type(() => VoiceAssistantVoiceDto)
+  voice?: VoiceAssistantVoiceDto | null;
+}
+
+/**
  * Выключатель сохранения фона при дубляже
  * (docs-tz/TZ-Voice-Replace-Keep-Background.md, §9 — третий уровень
  * отката). Два значения, а не булево: в теле запроса `false` и
@@ -478,6 +541,8 @@ export class AdminPanelController {
     private readonly tutorialLocalesSettings: AdminTutorialLocalesSettingsService,
     // «Распознавание речи» (Soniox, 29.09.2026) — в конец по той же причине.
     private readonly speechRecognitionSettings: AdminSpeechRecognitionSettingsService,
+    // «Голосовой помощник» (этап K3, 29.09.2026) — в конец по той же причине.
+    private readonly voiceAssistantSettings: AdminVoiceAssistantSettingsService,
   ) {}
 
   @Get('sessions')
@@ -591,6 +656,31 @@ export class AdminPanelController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     return this.speechRecognitionSettings.set(dto.provider, req.userId);
+  }
+
+  /**
+   * «Голосовой помощник» — суточные потолки голоса по тарифу (В-14) и
+   * пресет голоса помощника (В-11). Действует сразу, без передеплоя.
+   */
+  @Get('settings/voice-assistant')
+  async getVoiceAssistant(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.voiceAssistantSettings.view();
+  }
+
+  @Patch('settings/voice-assistant')
+  async setVoiceAssistant(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetVoiceAssistantDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.voiceAssistantSettings.set(
+      {
+        ...(dto.caps ? { caps: { ...dto.caps } } : {}),
+        ...(dto.voice !== undefined ? { voice: dto.voice } : {}),
+      },
+      req.userId,
+    );
   }
 
   /**

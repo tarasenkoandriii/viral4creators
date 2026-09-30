@@ -151,6 +151,7 @@ export function sweepFileKind(
   );
   switch (scope) {
     case 'sessions':
+      if (isTransientVoiceRecording(pathname, scope)) return 'voice';
       if (rest.startsWith('generated')) return 'generated';
       if (rest.startsWith('original')) return 'original';
       if (rest.startsWith('previews/')) return 'previews';
@@ -163,6 +164,7 @@ export function sweepFileKind(
       const file = rest.split('/').pop() ?? '';
       if (file.startsWith('photo')) return 'photo';
       if (file.startsWith('voice')) return 'voice';
+      if (isTransientVoiceRecording(pathname, scope)) return 'voice';
       return 'other';
     }
     case 'brand-manifests':
@@ -193,6 +195,39 @@ export function sweepFileKind(
       // транзитное: готовый ролик живёт в `tutorial-videos/`.
       return rest.endsWith('.png') ? 'previews' : 'other';
   }
+}
+
+/**
+ * Транзитные голосовые записи (аудит волны K, 29.09.2026): реплика
+ * мастера поздравления (`sessions/<id>/voice-<ts>.<ext>`, K2/K3), реплика
+ * брифа до сессии (`projects/<id>/greeting-voice-<ts>.<ext>`, K3) и
+ * диктовка описания товара (`projects/<id>/items/<id>/voice-<ts>.<ext>`).
+ *
+ * Их удаляет `finally` обработки — но только если обработка БЫЛА:
+ * клиент, получивший ссылку и загрузивший файл, но не позвавший
+ * расшифровку (закрыл вкладку, упала сеть), оставлял запись навсегда —
+ * владелец жив, и метла сирот её не трогала. Условия (3.4) обещают, что
+ * звук не хранится, поэтому такие файлы удаляются по возрасту, ЖИВ
+ * владелец или нет. Час — с запасом больше любой обработки (минуты).
+ *
+ * Клоны голоса (`users/<id>/voices/…`) и озвучка роликов (`voiceover…`)
+ * сюда не попадают: это не транзит, а данные человека.
+ */
+export const VOICE_RECORDING_MAX_AGE_MS = 60 * 60 * 1000;
+
+const TRANSIENT_VOICE: Partial<Record<SweepScope, readonly RegExp[]>> = {
+  sessions: [/^sessions\/[^/]+\/voice-\d+\.[a-z0-9]+$/],
+  projects: [
+    /^projects\/[^/]+\/greeting-voice-\d+\.[a-z0-9]+$/,
+    /^projects\/[^/]+\/items\/[^/]+\/voice-\d+\.[a-z0-9]+$/,
+  ],
+};
+
+export function isTransientVoiceRecording(
+  pathname: string,
+  scope: SweepScope,
+): boolean {
+  return (TRANSIENT_VOICE[scope] ?? []).some((re) => re.test(pathname));
 }
 
 /** `<префикс>/<id>/что-угодно` → id; всё остальное → null. */
@@ -238,6 +273,16 @@ export function orphanSweepPlan(
   };
   const seen = new Set<string>();
   const orphans = new Set<string>();
+  const markDelete = (blob: BlobRef) => {
+    plan.delete.push(blob.pathname);
+    plan.byKind[sweepFileKind(blob.pathname, scope)] += 1;
+    if (
+      !plan.oldestUploadedAt ||
+      blob.uploadedAt.toISOString() < plan.oldestUploadedAt
+    ) {
+      plan.oldestUploadedAt = blob.uploadedAt.toISOString();
+    }
+  };
   for (const blob of blobs) {
     const id = ownerIdOf(blob.pathname, scope);
     if (!id) {
@@ -248,20 +293,24 @@ export function orphanSweepPlan(
       seen.add(id);
       plan.ownerIds.push(id);
     }
+    const age = now.getTime() - blob.uploadedAt.getTime();
+    // Транзитная голосовая запись старше часа — удаляется и у живого
+    // владельца (см. `isTransientVoiceRecording`). Владелец сиротой не
+    // считается: он жив, просто запись не дошла до обработки.
+    if (
+      isTransientVoiceRecording(blob.pathname, scope) &&
+      age >= VOICE_RECORDING_MAX_AGE_MS
+    ) {
+      markDelete(blob);
+      continue;
+    }
     if (live.has(id)) continue;
-    if (now.getTime() - blob.uploadedAt.getTime() < minAgeMs) {
+    if (age < minAgeMs) {
       plan.skippedTooNew += 1;
       continue;
     }
     orphans.add(id);
-    plan.delete.push(blob.pathname);
-    plan.byKind[sweepFileKind(blob.pathname, scope)] += 1;
-    if (
-      !plan.oldestUploadedAt ||
-      blob.uploadedAt.toISOString() < plan.oldestUploadedAt
-    ) {
-      plan.oldestUploadedAt = blob.uploadedAt.toISOString();
-    }
+    markDelete(blob);
   }
   plan.orphanOwners = orphans.size;
   return plan;

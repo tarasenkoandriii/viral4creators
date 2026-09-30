@@ -116,7 +116,7 @@ export class ResembleService implements TtsProvider {
     return !!this.key();
   }
 
-  private defaultVoice(): string | undefined {
+  defaultVoice(): string | undefined {
     // Намеренно без захардкоженного ID — у Resemble нет универсального
     // голоса каталога, аналогичного дефолту ElevenLabs; выдумывать его
     // означало бы дать команду синтезировать несуществующим голосом.

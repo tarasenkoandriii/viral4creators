@@ -957,13 +957,13 @@ describe('хук, которого на стенде может не быть', 
     // Без «ролик не соберётся» запрет выглядит стилистическим, и
     // модель торгуется с ним: «покажу, но мягко».
     const prompt = buildScenarioPrompt('greeting-settings', 'ru', step);
-    const rule = prompt
-      .split('\n')
-      .find(
-        (l) =>
-          l.includes('НЕ УПОМИНАТЬ В ШАГАХ ВООБЩЕ') &&
-          !l.includes('greeting-sticker-card'),
-      );
+    const rule = prompt.split('\n').find(
+      (l) =>
+        l.includes('НЕ УПОМИНАТЬ В ШАГАХ ВООБЩЕ') &&
+        // Правило, а не строка хука: с этапа K3 помеченных хуков на
+        // экранах поздравления несколько (поля «Особого повода»).
+        !l.trimStart().startsWith('- [data-qa='),
+    );
     expect(rule).toBeDefined();
     expect(rule).toContain('не собирается');
     // И даёт выход, а не только тупик: иначе шаг обучалки про

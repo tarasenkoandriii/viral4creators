@@ -20,10 +20,17 @@
  * 4. **Подписи кнопок берутся из словаря и роутера, а не из ответа.**
  *    Модель называет только идентификатор (§5.7) — и незнакомый
  *    идентификатор здесь просто не рисуется, молча.
+ * 5. **Голос (ТЗ Greeting 2.0 §4А.4, K1) — второй канал той же строки.**
+ *    Звучит ровно раскрытый текст, по ключу его кеша; до первого
+ *    касания на странице — только текст и «коснитесь, чтобы советник
+ *    заговорил» (браузеры iOS и WebView без жеста звук не дают); «без
+ *    звука» виден всегда, пока голос включён, и помнится на устройстве;
+ *    уход с шага и размонтирование глушат реплику. Правила — в
+ *    `lib/hint-audio.ts`, состояние страницы — в `lib/hint-audio-session.ts`.
  */
 
-import { useEffect, useReducer, useState } from 'react';
-import { ChevronRight, Lightbulb } from 'lucide-react';
+import { useEffect, useReducer, useRef, useState } from 'react';
+import { ChevronRight, Lightbulb, Volume2, VolumeX } from 'lucide-react';
 import { Spinner } from './ui';
 import { useI18n } from '../lib/i18n-context';
 import { useHelp } from '../features/projects/help-context';
@@ -36,9 +43,20 @@ import {
   waitsForIdle,
 } from '../lib/hint-line';
 import {
+  getHintAudio,
   requestWizardHint,
   sendWizardComplaint,
 } from '../services/wizard-guide-api';
+import { hintVoicePlan, readMuted, writeMuted } from '../lib/hint-audio';
+import {
+  claimVoiceBudgetNotice,
+  hasGesture,
+  hintPlayer,
+  isVoiceBudgetExhaustedToday,
+  markGesture,
+  markVoiceBudgetExhausted,
+  subscribeGesture,
+} from '../lib/hint-audio-session';
 import type { GuideAction } from '../types';
 
 /**
@@ -53,6 +71,35 @@ function noticeText(code: string, t: { personalLimit: string }): string | null {
   return code === 'personal-limit' ? t.personalLimit : null;
 }
 
+/** localStorage, которого может не быть (приватный режим, WebView). */
+function deviceStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Было ли касание на странице — с подпиской на первое. */
+function useFirstGesture(listen: boolean): boolean {
+  const [gestured, setGestured] = useState(hasGesture);
+  useEffect(() => subscribeGesture(() => setGestured(true)), []);
+  // Слушаем страницу, только пока голос включён: отпирание плеера —
+  // это беззвучное проигрывание, и у человека без голоса ему незачем
+  // трогать аудиосессию устройства.
+  useEffect(() => {
+    if (!listen || hasGesture()) return;
+    const on = () => markGesture();
+    window.addEventListener('pointerdown', on, true);
+    window.addEventListener('keydown', on, true);
+    return () => {
+      window.removeEventListener('pointerdown', on, true);
+      window.removeEventListener('keydown', on, true);
+    };
+  }, [listen]);
+  return gestured;
+}
+
 /** Слаг документа → ключ словаря. Список закрыт на сервере (§5.7). */
 const DOC_KEYS: Record<string, 'offer' | 'termsOfUse'> = {
   offer: 'offer',
@@ -63,6 +110,7 @@ export function HintLine({
   projectId,
   stepId,
   enabled,
+  voice = false,
   stepLabels,
   onGoToStep,
   onEvent,
@@ -72,6 +120,11 @@ export function HintLine({
   stepId: string;
   /** Галочка стоит И фича включена оператором. */
   enabled: boolean;
+  /**
+   * Советник «голосом» (`guide.voice`, ТЗ Greeting 2.0 §4А.5, В-10).
+   * Не передан — голоса нет, строка работает как прежде.
+   */
+  voice?: boolean;
   /**
    * Подписи шагов, на которые СЕЙЧАС можно перейти, — из них собираются
    * кнопки. Именно достижимых, а не всех: сервер проверяет, что шаг
@@ -110,6 +163,23 @@ export function HintLine({
   // к предыдущему.
   useEffect(() => setComplaint(null), [stepId]);
 
+  // ── Голос (§4А.4) ─────────────────────────────────────────────────
+  const voiceOn = enabled && voice;
+  const gestured = useFirstGesture(voiceOn);
+  const [muted, setMuted] = useState(() => readMuted(deviceStorage()));
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
+  /** Ключ кеша подсказки, приехавшей на шаг, — по нему просят звук. */
+  const [spoken, setSpoken] = useState<{
+    stepId: string;
+    key: string | null;
+  } | null>(null);
+  /** Какой ключ уже озвучивали — повтор той же реплики не звучит. */
+  const spokenKeyRef = useRef<string | null>(null);
+  /** Запрос звука в полёте: ответ на ушедший шаг роняется. */
+  const pendingRef = useRef<string | null>(null);
+  const [budgetNotice, setBudgetNotice] = useState(false);
+
   useEffect(() => {
     dispatch(enabled ? { type: 'enabled' } : { type: 'disabled' });
   }, [enabled]);
@@ -147,6 +217,7 @@ export function HintLine({
     requestWizardHint(projectId, { stepId: loadingStep, locale }, ctl.signal)
       .then((res) => {
         if (!alive) return;
+        setSpoken({ stepId: loadingStep, key: res.key ?? null });
         dispatch({
           type: 'result',
           hint: res.hint,
@@ -164,6 +235,66 @@ export function HintLine({
       ctl.abort();
     };
   }, [loadingStep, projectId, locale]);
+
+  const hintKey =
+    state.phase === 'shown' && state.hint && spoken?.stepId === state.stepId
+      ? spoken.key
+      : null;
+  const voicePlan = hintVoicePlan({
+    voice: voiceOn,
+    muted,
+    gestured,
+    budgetExhausted: isVoiceBudgetExhaustedToday(),
+    hintKey,
+    spokenKey: spokenKeyRef.current,
+  });
+
+  // Реплика звучит, когда раскрытый текст есть, касание было и звук не
+  // выключен. Отмена — не очисткой эффекта: план сменится на `done` в
+  // ту же секунду, как ключ помечен озвученным, и очистка уронила бы
+  // собственный ответ. Ответ сверяется с `pendingRef`, который гасит
+  // уход с шага.
+  useEffect(() => {
+    if (voicePlan !== 'speak' || !hintKey) return;
+    spokenKeyRef.current = hintKey;
+    pendingRef.current = hintKey;
+    void getHintAudio(projectId, hintKey, locale).then((answer) => {
+      if (pendingRef.current !== hintKey) return;
+      pendingRef.current = null;
+      if (answer.kind === 'play') {
+        if (!mutedRef.current) hintPlayer.play(answer.url);
+      } else if (answer.kind === 'budget-exhausted') {
+        // Дальше голос молчит до конца суток UTC (и микрофон тоже —
+        // источник общий), а мастер работает текстом. Сказать об этом —
+        // одному месту на странице.
+        markVoiceBudgetExhausted();
+        if (claimVoiceBudgetNotice()) setBudgetNotice(true);
+      }
+    });
+  }, [voicePlan, hintKey, projectId, locale]);
+
+  // Уход с шага и размонтирование глушат реплику: голос про шаг, которого
+  // уже нет на экране, хуже тишины.
+  useEffect(
+    () => () => {
+      pendingRef.current = null;
+      hintPlayer.stop();
+      setBudgetNotice(false);
+    },
+    [stepId]
+  );
+  useEffect(() => {
+    if (!voiceOn) hintPlayer.stop();
+  }, [voiceOn]);
+
+  const toggleMute = () => {
+    // Кнопка — тоже касание: отпирает звук, если его ещё не было.
+    markGesture();
+    const next = !muted;
+    setMuted(next);
+    writeMuted(deviceStorage(), next);
+    if (next) hintPlayer.stop();
+  };
 
   if (!isVisible(state)) return null;
 
@@ -185,29 +316,64 @@ export function HintLine({
 
   return (
     <div className="mb-3 rounded-lg border border-[var(--border)] p-3">
-      {open ? (
-        header
-      ) : (
-        <button
-          type="button"
-          className="w-full text-left"
-          aria-busy={busy}
-          aria-label={busy ? t.loading : t.title}
-          onClick={() => {
-            // Считается именно КЛИК: показ по таймеру простоя — это не
-            // внимание человека, а наша догадка о нём, и мешать их в
-            // одной частоте значит потерять смысл обеих.
-            onEvent?.('hint_open');
-            dispatch({ type: 'open' });
-          }}
-        >
-          {header}
-        </button>
-      )}
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          {open ? (
+            header
+          ) : (
+            <button
+              type="button"
+              className="w-full text-left"
+              aria-busy={busy}
+              aria-label={busy ? t.loading : t.title}
+              onClick={() => {
+                // Считается именно КЛИК: показ по таймеру простоя — это
+                // не внимание человека, а наша догадка о нём, и мешать
+                // их в одной частоте значит потерять смысл обеих.
+                onEvent?.('hint_open');
+                dispatch({ type: 'open' });
+              }}
+            >
+              {header}
+            </button>
+          )}
+        </div>
+        {/* «Без звука» — на виду всегда, пока голос включён (§4А.4), а
+            не только под раскрытым советом: заговорить он может в любую
+            секунду, и искать кнопку в этот момент поздно. */}
+        {voiceOn && (
+          <button
+            type="button"
+            className="shrink-0 rounded-full p-1 text-[var(--muted)]"
+            aria-pressed={muted}
+            aria-label={muted ? t.voiceUnmute : t.voiceMute}
+            title={muted ? t.voiceUnmute : t.voiceMute}
+            onClick={toggleMute}
+          >
+            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          </button>
+        )}
+      </div>
 
       {open && (
         <div className="mt-2 space-y-2">
           {state.hint && <p className="text-sm">{state.hint}</p>}
+          {voicePlan === 'await-gesture' && (
+            <button
+              type="button"
+              className="text-xs text-accent underline decoration-dotted underline-offset-2"
+              // Само касание и есть разрешение: плеер отпирается здесь,
+              // синхронно, и реплика звучит, как только приедет файл.
+              onClick={markGesture}
+            >
+              {t.voiceTapToHear}
+            </button>
+          )}
+          {budgetNotice && (
+            <p className="text-xs text-[var(--muted)]">
+              {t.voiceBudgetExhausted}
+            </p>
+          )}
           {state.notice && (
             <p className="text-sm text-[var(--muted)]">
               {noticeText(state.notice, t)}

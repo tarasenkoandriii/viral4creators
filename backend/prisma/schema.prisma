@@ -513,6 +513,12 @@ model Project {
   /// которой выключен лендинговый ассистент: фича, тратящая деньги на
   /// каждом шаге у каждого пользователя, включается сознательно.
   aiGuideEnabled Boolean @default(false)
+  /// Советник «голосом» (ТЗ Greeting 2.0 §4А.4–4А.5, решение В-10):
+  /// реплики советника озвучиваются. Отдельный переключатель рядом с
+  /// чекбоксом советника, по умолчанию выключен — синтез стоит денег на
+  /// каждой новой подсказке. Смысл имеет только при `aiGuideEnabled`:
+  /// сервис сбрасывает его вместе с советником.
+  aiGuideVoice   Boolean @default(false)
 
   clientSiteTutorialDraft ClientSiteTutorialDraft?
   /// Бриф ролика-поздравления (ТЗ TZ-Greeting-Video-Project-Type.md §3.2)
@@ -3150,6 +3156,38 @@ model WizardHintCache {
 
   @@index([createdAt])
   @@map("wizard_hint_cache")
+}
+
+/// Аудиокеш голоса советника (ТЗ Greeting 2.0 §4А.4, этап K1): одна и та
+/// же подсказка тем же голосом на том же языке не синтезируется дважды.
+///
+/// Отдельная таблица, а не колонка `WizardHintCache`: у одной подсказки
+/// бывает несколько озвучек (сменили голос помощника в админке, другой
+/// язык), и строка кеша подсказки переписывается свежим текстом по
+/// тому же ключу, когда протухает, — колонка молча отдала бы звук
+/// старого текста. Поэтому ключ здесь — хеш от ключа подсказки, голоса,
+/// языка И самого текста.
+model WizardHintAudio {
+  /// sha256(hintKey | provider | voiceId | lang | text)
+  key        String   @id
+  /// Ключ `WizardHintCache` — для разбора и уборки, не для поиска.
+  hintKey    String
+  provider   String
+  voiceId    String
+  lang       String
+  pathname   String
+  url        String
+  characters Int
+  hits       Int      @default(0)
+  createdAt  DateTime @default(now())
+  /// Последняя выдача из кеша. По ней суточная уборка убирает строку и
+  /// файл, не звучавшие 30 дней (`pruneWizardHintAudio`): файлы лежат
+  /// под общим префиксом, и метла `sweep-orphans` их не видит.
+  lastUsedAt DateTime @default(now())
+
+  @@index([hintKey])
+  @@index([lastUsedAt])
+  @@map("wizard_hint_audio")
 }
 
 /// Ситуация: что случается на конкретном шаге конкретного сценария

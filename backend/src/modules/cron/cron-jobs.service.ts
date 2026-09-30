@@ -72,6 +72,7 @@ import {
   pruneWizardHints,
   pruneWizardStepEvents,
 } from '../wizard-guide/wizard-telemetry';
+import { pruneWizardHintAudio } from '../wizard-guide/hint-audio-prune';
 import {
   pruneAssistantExchanges,
   pruneAssistantEvents,
@@ -989,6 +990,17 @@ export class CronJobsService {
           );
           return 0;
         }),
+        // Голос советника (ТЗ Greeting 2.0 §4А.4, K1): озвучка, не
+        // звучавшая 30 дней, — строка и файл. Префикс общий, метла
+        // `sweep-orphans` его не видит, так что убирает только это.
+        pruneWizardHintAudio(this.prisma, this.blobService, now).catch(
+          (error: unknown) => {
+            this.logger.warn(
+              `не удалось убрать аудиокеш советника: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return 0;
+          },
+        ),
       ]);
     this.logger.log(
       `Cleaned up ${adminResult.count} expired admin session(s), ${userResult.count} expired user session(s), ${assistantExchangesPruned} assistant exchange(s)` +

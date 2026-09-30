@@ -223,6 +223,8 @@ describe('SiblingsService (§6.4)', () => {
       'wizard-hint',
       'wizard-sibling',
       'wizard-translate',
+      // Голос советника (Greeting 2.0 §4А.5, K1) — тот же рубильник.
+      'voice-assistant-tts',
     ]);
   });
 

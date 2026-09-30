@@ -4,6 +4,7 @@
  *   GET   /projects/:projectId/wizard-guide
  *   PATCH /projects/:projectId/wizard-guide
  *   POST  /projects/:projectId/wizard-guide/hint
+ *   GET   /projects/:projectId/wizard-guide/hint-audio?key=&lang=
  *
  * Та же конвенция, что у `GreetingBriefController`: `projectId` в пути,
  * `TelegramIdentityGuard` опознаёт звонящего, владение проверяет сервис.
@@ -13,16 +14,21 @@
  */
 
 import {
+  BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Get,
   HttpCode,
   Param,
   Patch,
   Post,
+  Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -41,8 +47,13 @@ import {
   IdentifiedRequest,
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
-import { WizardGuideService, WizardGuideState } from './wizard-guide.service';
+import {
+  AI_GUIDE_VOICE_NEEDS_GUIDE,
+  WizardGuideService,
+  WizardGuideState,
+} from './wizard-guide.service';
 import { WizardTelemetryService } from './wizard-telemetry.service';
+import { HintAudioResult, HintAudioService } from './hint-audio.service';
 import { CANDIDATE_TEXT_MAX, ExperienceService } from './experience.service';
 import { SiblingsService } from './siblings.service';
 import {
@@ -52,9 +63,38 @@ import {
   type WizardEventKind,
 } from './wizard-telemetry';
 
+/**
+ * Оба поля необязательны, но хотя бы одно обязано быть (проверка в
+ * контроллере): `enabled` — галочка советника, `voice` — «голосом»
+ * (ТЗ Greeting 2.0 §4А.5, В-10). Прежний клиент шлёт только `enabled`
+ * и работает как работал.
+ */
 export class SetWizardGuideDto {
+  @IsOptional()
   @IsBoolean()
-  enabled!: boolean;
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  voice?: boolean;
+}
+
+/** Запрос озвучки подсказки (ТЗ Greeting 2.0 §4А.4, K1). */
+export class HintAudioQueryDto {
+  /** Ключ кеша подсказки — тот, что пришёл с самой подсказкой. */
+  @IsString()
+  @MaxLength(500)
+  key!: string;
+
+  /**
+   * Принимается ради совместимости и НЕ используется: язык озвучки
+   * берётся из ключа подсказки — текст написан на нём (аудит волны 1:
+   * иначе русский текст уходил бы в синтез как `en`, а одна подсказка
+   * синтезировалась бы по разу на каждый язык).
+   */
+  @IsOptional()
+  @IsIn(SUPPORTED_LOCALES as unknown as string[])
+  lang?: string;
 }
 
 export class WizardHintDto {
@@ -130,6 +170,7 @@ export class WizardGuideController {
     private readonly telemetry: WizardTelemetryService,
     private readonly experience: ExperienceService,
     private readonly siblings: SiblingsService,
+    private readonly audio: HintAudioService,
   ) {}
 
   @Get()
@@ -166,6 +207,41 @@ export class WizardGuideController {
       dto.stepId,
       dto.locale as SupportedLocale,
     );
+  }
+
+  /**
+   * Озвучка подсказки (ТЗ Greeting 2.0 §4А.4, этап K1).
+   *
+   * 200 `{ url }` — файл в Blob; 204 — сказать вслух нечего (голос
+   * выключен, подсказки нет, реплика не для регистра повода, синтез не
+   * удался); 200 `{ url: null, reason: 'budget-exhausted' }` — кончился
+   * потолок голоса этого человека (В-14), о чём помощник говорит один
+   * раз. Почему причина в теле, а не в заголовке, — у `HintAudioResult`.
+   *
+   * `GET`, хотя первый вызов платный: повтор идемпотентен ровно как
+   * кеш — второй раз тот же файл, без синтеза. Лимит частоты — как у
+   * подсказки: озвучка бывает не чаще самой подсказки.
+   */
+  @Get('hint-audio')
+  @UseGuards(RateLimitGuard)
+  @RateLimit([
+    { name: 'wizard-hint-audio', limit: 20, windowSec: 60 },
+    { name: 'wizard-hint-audio-hour', limit: 120, windowSec: 3600 },
+  ])
+  async hintAudio(
+    @Req() req: IdentifiedRequest,
+    @Param('projectId') projectId: string,
+    @Query() dto: HintAudioQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<HintAudioResult | undefined> {
+    const result = await this.audio.audioFor(
+      req.telegramUserId,
+      projectId,
+      dto.key,
+    );
+    if (result) return result;
+    res.status(204);
+    return undefined;
   }
 
   /**
@@ -244,11 +320,38 @@ export class WizardGuideController {
   }
 
   @Patch()
-  set(
+  async set(
     @Req() req: IdentifiedRequest,
     @Param('projectId') projectId: string,
     @Body() dto: SetWizardGuideDto,
   ): Promise<WizardGuideState> {
-    return this.guide.setEnabled(req.telegramUserId, projectId, dto.enabled);
+    if (dto.enabled === undefined && dto.voice === undefined) {
+      throw new BadRequestException('Нужно поле enabled или voice');
+    }
+    // Противоречивое сочетание отвергается ДО любой записи: иначе
+    // советник успел бы выключиться, а ответ пришёл бы 409 — человек
+    // видел бы ошибку при уже изменённом состоянии (аудит волны 1).
+    if (dto.voice === true && dto.enabled === false) {
+      throw new ConflictException(AI_GUIDE_VOICE_NEEDS_GUIDE);
+    }
+    let state: WizardGuideState | null = null;
+    // Сначала советник, потом голос: `{ enabled: true, voice: true }`
+    // одним запросом должен включить оба, а голос без включённого
+    // советника отвергается (409).
+    if (dto.enabled !== undefined) {
+      state = await this.guide.setEnabled(
+        req.telegramUserId,
+        projectId,
+        dto.enabled,
+      );
+    }
+    if (dto.voice !== undefined) {
+      state = await this.guide.setVoice(
+        req.telegramUserId,
+        projectId,
+        dto.voice,
+      );
+    }
+    return state as WizardGuideState;
   }
 }

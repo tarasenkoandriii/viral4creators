@@ -7,6 +7,14 @@
 
 import { api } from './api';
 import type { WizardGuideState, WizardHintResult } from '../types';
+import { interpretHintAudio, type HintAudioAnswer } from '../lib/hint-audio';
+
+/**
+ * Подсказка с ключом кеша — по нему просят озвучку (ТЗ Greeting 2.0
+ * §4А.4, K1). Отдельным типом здесь, а не полем в `types`: ключ нужен
+ * только голосу, и остальным потребителям подсказки его знать незачем.
+ */
+export type WizardHintWithKey = WizardHintResult & { key?: string };
 
 function unwrap<T>(res: { data?: T }, what: string): T {
   if (res.data === undefined) throw new Error(`Пустой ответ: ${what}`);
@@ -35,6 +43,42 @@ export async function setWizardGuide(
 }
 
 /**
+ * Переключатель «голосом» (ТЗ Greeting 2.0 §4А.5, В-10). Без включённого
+ * советника сервер отвечает 409 — голос это второй канал советника.
+ */
+export async function setWizardGuideVoice(
+  projectId: string,
+  voice: boolean
+): Promise<WizardGuideState> {
+  return unwrap(
+    await api.patch<WizardGuideState>(base(projectId), { voice }),
+    'wizard-guide'
+  );
+}
+
+/**
+ * Озвучка подсказки (§4А.4). Никогда не бросает: сбой сети, 204 и всё
+ * незнакомое — тишина, текст остаётся на экране. `{ kind:
+ * 'budget-exhausted' }` — потолок голоса на сегодня (В-14): о нём
+ * говорят один раз. Причина приходит телом, а не заголовком — у бэкенда
+ * другой домен, и свой заголовок браузер скрипту не показал бы.
+ */
+export async function getHintAudio(
+  projectId: string,
+  key: string,
+  lang: string
+): Promise<HintAudioAnswer> {
+  try {
+    const qs = new URLSearchParams({ key, lang }).toString();
+    const res = await api.get<unknown>(`${base(projectId)}/hint-audio?${qs}`);
+    // 204 — тело пустое, `res` приходит пустой строкой.
+    return interpretHintAudio(res && typeof res === 'object' ? res.data : null);
+  } catch {
+    return { kind: 'silent' };
+  }
+}
+
+/**
  * Подсказка на шаге. `signal` обязателен по смыслу, а не по типу:
  * уход с шага и снятие галочки должны отменять вызов, иначе ответ
  * приедет на экран, которого уже нет.
@@ -43,9 +87,9 @@ export async function requestWizardHint(
   projectId: string,
   body: { stepId: string; locale: string },
   signal?: AbortSignal
-): Promise<WizardHintResult> {
+): Promise<WizardHintWithKey> {
   return unwrap(
-    await api.post<WizardHintResult>(`${base(projectId)}/hint`, body, {
+    await api.post<WizardHintWithKey>(`${base(projectId)}/hint`, body, {
       signal,
     }),
     'hint'

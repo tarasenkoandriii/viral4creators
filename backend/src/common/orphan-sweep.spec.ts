@@ -1,4 +1,5 @@
 import {
+  isTransientVoiceRecording,
   orphanSweepPlan,
   ownerIdOf,
   sessionIdOf,
@@ -293,5 +294,84 @@ describe('область tutorial-video-frames', () => {
     expect(
       ownerIdOf('tutorial-videos/1/tva-7.mp4', 'tutorial-video-frames'),
     ).toBeNull();
+  });
+});
+
+/**
+ * Аудит волны K: транзитные голосовые записи, загруженные, но не
+ * дошедшие до обработки, удаляются через час — и у ЖИВОГО владельца.
+ */
+describe('транзитные голосовые записи', () => {
+  const HOUR = 60 * 60 * 1000;
+
+  it('распознаются только три вида записей; клоны голоса и озвучка — нет', () => {
+    expect(
+      isTransientVoiceRecording(
+        'sessions/s1/voice-1757000000000.webm',
+        'sessions',
+      ),
+    ).toBe(true);
+    expect(
+      isTransientVoiceRecording(
+        'projects/p1/greeting-voice-1757000000000.m4a',
+        'projects',
+      ),
+    ).toBe(true);
+    expect(
+      isTransientVoiceRecording(
+        'projects/p1/items/i1/voice-1757000000000.ogg',
+        'projects',
+      ),
+    ).toBe(true);
+    expect(
+      isTransientVoiceRecording('sessions/s1/voiceover-1.mp3', 'sessions'),
+    ).toBe(false);
+    expect(
+      isTransientVoiceRecording('users/u1/voices/v1/sample.webm', 'users'),
+    ).toBe(false);
+    expect(
+      isTransientVoiceRecording('sessions/s1/generated.mp4', 'sessions'),
+    ).toBe(false);
+    // Не в своей области — не наша запись.
+    expect(
+      isTransientVoiceRecording('sessions/s1/voice-1.webm', 'projects'),
+    ).toBe(false);
+  });
+
+  it('у живого владельца: старше часа — удаляется, моложе — нет; остальное живого не трогается', () => {
+    const plan = orphanSweepPlan(
+      [
+        blob('sessions/live/voice-1.webm', HOUR),
+        blob('sessions/live/voice-2.webm', HOUR - 1),
+        blob('sessions/live/generated.mp4', 3 * DAY),
+      ],
+      ['live'],
+      NOW,
+      DAY,
+      'sessions',
+    );
+    expect(plan.delete).toEqual(['sessions/live/voice-1.webm']);
+    expect(plan.byKind.voice).toBe(1);
+    // Владелец жив — сиротой он не считается.
+    expect(plan.orphanOwners).toBe(0);
+  });
+
+  it('запись брифа до сессии и диктовка товара — так же', () => {
+    const plan = orphanSweepPlan(
+      [
+        blob('projects/live/greeting-voice-1.webm', 2 * HOUR),
+        blob('projects/live/items/i1/voice-1.webm', 2 * HOUR),
+        blob('projects/live/items/i1/photo.jpg', 3 * DAY),
+      ],
+      ['live'],
+      NOW,
+      DAY,
+      'projects',
+    );
+    expect(plan.delete).toEqual([
+      'projects/live/greeting-voice-1.webm',
+      'projects/live/items/i1/voice-1.webm',
+    ]);
+    expect(plan.byKind.voice).toBe(2);
   });
 });

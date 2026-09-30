@@ -545,8 +545,10 @@ export const QA_HOOKS: Record<string, QaHook> = {
   // описания и платного классификатора. Поэтому вопроса о настроении,
   // который карточка задаёт ТОЛЬКО при `OTHER` (29.09.2026), в кадре не
   // будет никогда, — и модель, прочитавшая о нём в подписи шага, не
-  // должна обещать его диктором. Хука у повода нет, так что сменить
-  // повод сценарий не может в принципе; запрет здесь — про реплики.
+  // должна обещать его диктором. С этапа K3 у повода есть хук
+  // (`greeting-field-occasion`, его адресует голос), но описание хука
+  // запрещает сценарию менять повод, а поля «Особого повода» помечены
+  // `absentWhen`; запрет здесь — про реплики.
   'greeting-brief-card': {
     route: 'greeting-video',
     description:
@@ -557,6 +559,78 @@ export const QA_HOOKS: Record<string, QaHook> = {
   'greeting-brief-save': {
     route: 'greeting-video',
     description: 'кнопка сохранения брифа поздравления',
+  },
+  // ── Поля брифа (этап K3 голосового помощника, 29.09.2026) ─────────
+  //
+  // Хук на каждом поле брифа нужен голосу: карточка «я понял так»
+  // адресует поле тем же `data-qa`, что и обучалка (§4А.7.1 ТЗ Greeting
+  // 2.0), — потерянный хук ломает обе одинаково, то есть заметно.
+  //
+  // Для обучалки это одиннадцать НОВЫХ целей на экране, где раньше была
+  // одна карточка, и модель, увидев поле, захочет в него что-то ввести.
+  // Поэтому описание каждого поля говорит, ЧТО с ним можно: текстовые
+  // поля — `fill`, списки и группы кнопок — только waitFor/assertVisible
+  // (`fill` в `<select>` вариант не выбирает, а клик по группе — ничего),
+  // повод — не менять (от него на фикстуре зависят тоны). Поля «Особого
+  // повода» на стенде не рисуются вовсе: там день рождения.
+  'greeting-field-occasion': {
+    route: 'greeting-video',
+    description:
+      'список «Повод» в брифе (select). Только waitFor/assertVisible: на стенде повод — день рождения, от него зависят доступные тоны; менять его сценарию нельзя, fill вариант списка всё равно не выбирает',
+  },
+  'greeting-field-custom-occasion': {
+    route: 'greeting-video',
+    description: 'поле «Какой именно повод» — описание «Особого повода»',
+    absentWhen: {
+      why: 'поле рисуется только при «Особом поводе», а на стенде повод — день рождения',
+    },
+  },
+  'greeting-field-mood': {
+    route: 'greeting-video',
+    description: 'вопрос «Какое это событие по настроению?» — пять ответов',
+    absentWhen: {
+      why: 'вопрос о настроении задаётся только при «Особом поводе», а на стенде повод — день рождения',
+    },
+  },
+  'greeting-field-recipient': {
+    route: 'greeting-video',
+    description:
+      'поле «Кому» (fill — имя получателя, до 120 символов). Введённое сохраняется только кнопкой greeting-brief-save',
+  },
+  'greeting-field-sender': {
+    route: 'greeting-video',
+    description:
+      'поле «От кого», необязательное (fill — имя отправителя, до 120 символов)',
+  },
+  'greeting-field-tone': {
+    route: 'greeting-video',
+    description:
+      'группа кнопок «Тон». Только waitFor/assertVisible: клик по группе ничего не выбирает, а недоступные поводу тоны видны серыми',
+  },
+  'greeting-field-message': {
+    route: 'greeting-video',
+    description:
+      'поле «Текст поздравления», необязательное (fill — короткий текст; пустое — сценарий напишет модель)',
+  },
+  'greeting-field-script-language': {
+    route: 'greeting-video',
+    description:
+      'список «Язык поздравления» (select). Только waitFor/assertVisible: fill вариант списка не выбирает',
+  },
+  'greeting-field-presenter': {
+    route: 'greeting-video',
+    description:
+      'выбор «Ведущий»: без ведущего (Grok) или говорящий аватар (Hedra, только на PREMIUM). Только waitFor/assertVisible',
+  },
+  'greeting-field-resolution': {
+    route: 'greeting-video',
+    description:
+      'список «Качество» (select), потолок зависит от тарифа. Только waitFor/assertVisible',
+  },
+  'greeting-field-date': {
+    route: 'greeting-video',
+    description:
+      'поле «Дата события», необязательное (input type=date). Только waitFor/assertVisible: ввод даты зависит от локали браузера, fill в него ненадёжен',
   },
   'greeting-start': {
     route: 'greeting-video',
@@ -581,7 +655,7 @@ export const QA_HOOKS: Record<string, QaHook> = {
   'greeting-script-edit': {
     route: 'greeting-video-ready',
     description:
-      'поле правки текста поздравления. Видно ТОЛЬКО когда сценарий уже собран',
+      'поле правки текста поздравления (fill — текст целиком, до 2000 символов). Видно ТОЛЬКО когда сценарий уже собран; сохраняется только кнопкой «Сохранить текст» рядом',
   },
   'greeting-character-block': {
     route: 'greeting-video-ready',
@@ -612,6 +686,124 @@ export const QA_HOOKS: Record<string, QaHook> = {
   'greeting-music-card': {
     route: 'greeting-video-ready',
     description: 'карточка музыкальной темы',
+  },
+  // ── Элементы карточек сессии (этап K5 голосового помощника) ───────
+  //
+  // Каталог голоса — `SESSION_FIELD_HOOKS` в
+  // `common/greeting-voice-intent.ts`; спек сверяет его с этим блоком.
+  // Для обучалки правило то же, что у полей брифа: текстовые поля —
+  // `fill`, группы кнопок-вариантов — только waitFor/assertVisible
+  // (клик по группе ничего не выбирает), а то, чего на фикстуре может
+  // не оказаться, помечено `absentWhen` с причиной.
+  'greeting-references-label': {
+    route: 'greeting-video-drafting',
+    description:
+      'поле «Подпись» в форме добавления или правки фото (fill — до 80 символов)',
+    absentWhen: {
+      why: 'форма открывается кнопкой «Добавить фото» (файл выбирать не нужно) или карандашом на готовом фото — на свежем экране её нет',
+    },
+  },
+  'greeting-references-description': {
+    route: 'greeting-video-drafting',
+    description:
+      'поле «Описание» в форме добавления или правки фото, необязательное (fill — до 2000 символов)',
+    absentWhen: {
+      why: 'форма открывается кнопкой «Добавить фото» (файл выбирать не нужно) или карандашом на готовом фото — на свежем экране её нет',
+    },
+  },
+  'greeting-voice-preset': {
+    route: 'greeting-video-ready',
+    description:
+      'группа кнопок «пусть говорит ведущий в кадре» — пресетные голоса модели. Только waitFor/assertVisible: названия голосов приходят от провайдера и меняются',
+    // Контейнер группы: клик попал бы в случайную кнопку внутри.
+    clickCost: 'forbidden',
+    absentWhen: {
+      env: 'GROK_API_KEY',
+      why: 'без GROK_API_KEY роестр голосов пуст, и блока пресетов нет в DOM',
+    },
+  },
+  'greeting-voice-clone': {
+    route: 'greeting-video-ready',
+    description:
+      'блок «Свои голоса» в карточке голоса: список клонов, запись образца, удаление. Есть на экране всегда (без клонов — пустой список и запись). Только waitFor/assertVisible',
+    // Внутри — запись образца и удаление клона: клик по обёртке мог бы
+    // попасть в них.
+    clickCost: 'forbidden',
+  },
+  'greeting-voice-custom': {
+    route: 'greeting-video-ready',
+    description:
+      'кнопка «Вернуть обычный голос» — снимает выбранный голос (click — бесплатно)',
+    absentWhen: {
+      why: 'кнопка есть только когда голос уже выбран; на фикстуре читает голос по умолчанию',
+    },
+  },
+  'greeting-music-theme': {
+    route: 'greeting-video-ready',
+    description:
+      'группа кнопок музыкальных тем, подходящих поводу. Только waitFor/assertVisible',
+    clickCost: 'forbidden',
+    absentWhen: {
+      why: 'темы — лицензированные файлы, которые загружает владелец продукта; пока каталог пуст, группы нет',
+    },
+  },
+  'greeting-music-enabled': {
+    route: 'greeting-video-ready',
+    description:
+      'кнопка «Убрать музыку» — снимает выбранную музыку (click — бесплатно)',
+    absentWhen: {
+      why: 'кнопка есть только когда музыка уже выбрана; на фикстуре музыки нет',
+    },
+  },
+  'greeting-music-query': {
+    route: 'greeting-video-ready',
+    description:
+      'строка поиска музыки в библиотеках со свободной лицензией (fill — до 100 символов). Сам поиск — соседней кнопкой',
+    absentWhen: {
+      why: 'блок поиска рисуется только если на стенде настроен хоть один источник библиотеки музыки',
+    },
+  },
+  'greeting-cards-title': {
+    route: 'greeting-video-ready',
+    description:
+      'поле «В начале» — подпись в первом кадре (fill — до 70 символов). Сохраняется кнопкой карточки',
+  },
+  'greeting-cards-closing': {
+    route: 'greeting-video-ready',
+    description:
+      'поле «В конце» — подпись в последнем кадре (fill — до 70 символов). Сохраняется кнопкой карточки',
+  },
+  'greeting-sticker-query': {
+    route: 'greeting-video-ready',
+    description:
+      'строка поиска наклейки (fill — до 100 символов). Сам поиск — соседней кнопкой',
+    absentWhen: {
+      env: 'PIXABAY_API_KEY',
+      why: 'без PIXABAY_API_KEY карточки наклейки нет в DOM вовсе, а у серьёзных поводов поиска нет и при ключе',
+    },
+  },
+  'greeting-sticker-placement': {
+    route: 'greeting-video-ready',
+    description:
+      'группа кнопок «Где показывать» у выбранной наклейки. Только waitFor/assertVisible',
+    clickCost: 'forbidden',
+    absentWhen: {
+      why: 'кнопки места есть только у уже выбранной наклейки; на фикстуре наклейки нет',
+    },
+  },
+  'greeting-sticker-enabled': {
+    route: 'greeting-video-ready',
+    description:
+      'кнопка «Убрать наклейку» — снимает выбранную наклейку (click — бесплатно)',
+    absentWhen: {
+      why: 'кнопка есть только когда наклейка выбрана; на фикстуре наклейки нет',
+    },
+  },
+  'greeting-scenes-count': {
+    route: 'greeting-video-ready',
+    description:
+      'группа кнопок «Сколько сцен» (от одной до потолка повода). Только waitFor/assertVisible',
+    clickCost: 'forbidden',
   },
   'greeting-video-card': {
     route: 'greeting-video-ready',

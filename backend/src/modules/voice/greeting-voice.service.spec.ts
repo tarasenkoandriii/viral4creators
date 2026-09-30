@@ -33,6 +33,7 @@ function build(
     replies?: Array<{ text: string | null; reason?: string }>;
     audio?: Buffer;
     spendRefused?: boolean;
+    voiceRefused?: boolean;
   } = {},
 ) {
   const sessions = {
@@ -60,14 +61,20 @@ function build(
       ? jest.fn().mockRejectedValue(new Error('потолок'))
       : jest.fn().mockResolvedValue(undefined),
   };
+  const voiceBudget = {
+    assertCanSpendVoice: opts.voiceRefused
+      ? jest.fn().mockRejectedValue(new Error('потолок голоса'))
+      : jest.fn().mockResolvedValue(undefined),
+  };
   mockedHead.mockResolvedValue({ contentType: 'audio/webm' } as any);
   const service = new GreetingVoiceService(
     sessions as any,
     blob as any,
     transcription as any,
     plans as any,
+    voiceBudget as any,
   );
-  return { service, sessions, blob, transcription, plans };
+  return { service, sessions, blob, transcription, plans, voiceBudget };
 }
 
 describe('settleGreetingVoice — ветвление итога без сети', () => {
@@ -327,5 +334,31 @@ describe('GreetingVoiceService', () => {
       text: 'Marina',
       scriptMismatch: true,
     });
+  });
+
+  // Этап K3 (В-14): суточный потолок голоса — и на пути K2 тоже.
+  it('потолок ГОЛОСА исчерпан — отказ до распознавания, запись удалена, проверен владелец сессии', async () => {
+    const { service, blob, transcription, voiceBudget } = build({
+      session: greetingSession({ userId: 'u-7' }),
+      voiceRefused: true,
+    });
+    await expect(service.transcribe(SID, { pathname: PATH })).rejects.toThrow(
+      'потолок голоса',
+    );
+    expect(voiceBudget.assertCanSpendVoice).toHaveBeenCalledWith('u-7');
+    expect(transcription.recognize).not.toHaveBeenCalled();
+    expect(blob.deleteBlob).toHaveBeenCalledWith(PATH);
+  });
+
+  it('потолок голоса кончился между попытками — повтора нет', async () => {
+    const { service, transcription, voiceBudget } = build({
+      replies: [{ text: 'Marina' }, { text: 'Марина' }],
+    });
+    voiceBudget.assertCanSpendVoice
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('потолок голоса'));
+    const r = await service.transcribe(SID, { pathname: PATH });
+    expect(transcription.recognize).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ text: 'Marina', scriptMismatch: true });
   });
 });

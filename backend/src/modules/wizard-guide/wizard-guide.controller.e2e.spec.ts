@@ -23,6 +23,7 @@ import { WizardHintService } from './wizard-hint.service';
 import { WizardTelemetryService } from './wizard-telemetry.service';
 import { ExperienceService } from './experience.service';
 import { SiblingsService } from './siblings.service';
+import { HintAudioService } from './hint-audio.service';
 import { TelegramIdentityGuard } from '../telegram-auth/telegram-identity.guard';
 import { RateLimitGuard } from '../../common/rate-limit';
 import { ResponseInterceptor } from '../../common/interceptors/response.interceptor';
@@ -35,8 +36,10 @@ const doubles = {
       enabled: false,
       canEnable: true,
       available: true,
+      voice: false,
     }),
-    setEnabled: jest.fn(),
+    setEnabled: jest.fn().mockResolvedValue({ enabled: true }),
+    setVoice: jest.fn().mockResolvedValue({ enabled: true, voice: true }),
     scenarioOf: jest.fn().mockResolvedValue('CLIENT_SITE'),
   },
   hints: {
@@ -47,6 +50,7 @@ const doubles = {
   telemetry: { record: jest.fn().mockResolvedValue(1) },
   experience: { addCandidate: jest.fn().mockResolvedValue({ id: 'c1' }) },
   siblings: { classify: jest.fn().mockResolvedValue(null) },
+  audio: { audioFor: jest.fn() },
 };
 
 async function boot(identified: boolean): Promise<INestApplication> {
@@ -58,6 +62,7 @@ async function boot(identified: boolean): Promise<INestApplication> {
       { provide: WizardTelemetryService, useValue: doubles.telemetry },
       { provide: ExperienceService, useValue: doubles.experience },
       { provide: SiblingsService, useValue: doubles.siblings },
+      { provide: HintAudioService, useValue: doubles.audio },
     ],
   })
     .overrideGuard(TelegramIdentityGuard)
@@ -200,7 +205,104 @@ describe('маршруты советника (e2e, один контролле�
       'available',
       'canEnable',
       'enabled',
+      'voice',
     ]);
+  });
+
+  // ── Голос советника (ТЗ Greeting 2.0 §4А.4–4А.5, K1) ────────────
+
+  it('озвучка есть — 200 и ссылка в общем конверте', async () => {
+    doubles.audio.audioFor.mockResolvedValueOnce({ url: 'https://b/x.mp3' });
+    const res = await request(app.getHttpServer())
+      .get('/api/projects/p1/wizard-guide/hint-audio')
+      .query({ key: 'GREETING_VIDEO|brief|ru|k|d', lang: 'uk' })
+      .expect(200);
+    expect(res.body.data).toEqual({ url: 'https://b/x.mp3' });
+    // Язык запроса в сервис не идёт: озвучка — на языке из ключа.
+    expect(doubles.audio.audioFor).toHaveBeenCalledWith(
+      'u1',
+      'p1',
+      'GREETING_VIDEO|brief|ru|k|d',
+    );
+  });
+
+  it('сказать вслух нечего — 204 без тела', async () => {
+    doubles.audio.audioFor.mockResolvedValueOnce(null);
+    const res = await request(app.getHttpServer())
+      .get('/api/projects/p1/wizard-guide/hint-audio')
+      .query({ key: 'GREETING_VIDEO|brief|ru|k|d', lang: 'ru' })
+      .expect(204);
+    expect(res.text).toBe('');
+  });
+
+  it('потолок голоса — причина в теле, её видит клиент на другом домене', async () => {
+    doubles.audio.audioFor.mockResolvedValueOnce({
+      url: null,
+      reason: 'budget-exhausted',
+    });
+    const res = await request(app.getHttpServer())
+      .get('/api/projects/p1/wizard-guide/hint-audio')
+      .query({ key: 'GREETING_VIDEO|brief|ru|k|d', lang: 'ru' })
+      .expect(200);
+    expect(res.body.data).toEqual({ url: null, reason: 'budget-exhausted' });
+  });
+
+  it('озвучка: незнакомый язык и пустой ключ отвергаются на входе', async () => {
+    await request(app.getHttpServer())
+      .get('/api/projects/p1/wizard-guide/hint-audio')
+      .query({ key: 'k', lang: 'fr' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .get('/api/projects/p1/wizard-guide/hint-audio')
+      .query({ lang: 'ru' })
+      .expect(400);
+    expect(doubles.audio.audioFor).not.toHaveBeenCalled();
+  });
+
+  it('PATCH { voice } переключает голос, галочку не трогает', async () => {
+    const res = await request(app.getHttpServer())
+      .patch('/api/projects/p1/wizard-guide')
+      .send({ voice: true })
+      .expect(200);
+    expect(res.body.data).toMatchObject({ voice: true });
+    expect(doubles.guide.setVoice).toHaveBeenCalledWith('u1', 'p1', true);
+    expect(doubles.guide.setEnabled).not.toHaveBeenCalled();
+  });
+
+  it('PATCH { enabled, voice } — сначала советник, потом голос', async () => {
+    await request(app.getHttpServer())
+      .patch('/api/projects/p1/wizard-guide')
+      .send({ enabled: true, voice: true })
+      .expect(200);
+    const enabledAt = doubles.guide.setEnabled.mock.invocationCallOrder[0];
+    const voiceAt = doubles.guide.setVoice.mock.invocationCallOrder[0];
+    expect(enabledAt).toBeLessThan(voiceAt);
+  });
+
+  it('озвучка: lang необязателен', async () => {
+    doubles.audio.audioFor.mockResolvedValueOnce(null);
+    await request(app.getHttpServer())
+      .get('/api/projects/p1/wizard-guide/hint-audio')
+      .query({ key: 'GREETING_VIDEO|brief|ru|k|d' })
+      .expect(204);
+  });
+
+  it('PATCH { enabled: false, voice: true } — 409 ДО любой записи', async () => {
+    await request(app.getHttpServer())
+      .patch('/api/projects/p1/wizard-guide')
+      .send({ enabled: false, voice: true })
+      .expect(409);
+    expect(doubles.guide.setEnabled).not.toHaveBeenCalled();
+    expect(doubles.guide.setVoice).not.toHaveBeenCalled();
+  });
+
+  it('PATCH без полей — 400, а не молчаливое «ничего»', async () => {
+    await request(app.getHttpServer())
+      .patch('/api/projects/p1/wizard-guide')
+      .send({})
+      .expect(400);
+    expect(doubles.guide.setEnabled).not.toHaveBeenCalled();
+    expect(doubles.guide.setVoice).not.toHaveBeenCalled();
   });
 });
 
@@ -223,6 +325,10 @@ describe('маршруты советника без личности', () => {
       .expect(403);
     await request(app.getHttpServer())
       .get('/api/projects/p1/wizard-guide')
+      .expect(403);
+    await request(app.getHttpServer())
+      .get('/api/projects/p1/wizard-guide/hint-audio')
+      .query({ key: 'k', lang: 'ru' })
       .expect(403);
   });
 });

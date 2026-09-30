@@ -539,3 +539,29 @@ describe('WizardHintService (§5)', () => {
     expect(translation.translate).not.toHaveBeenCalled();
   });
 });
+
+describe('WizardHintService — ключ для озвучки (Greeting 2.0 §4А.4, K1)', () => {
+  it('подсказка из кеша несёт ключ, под которым лежит', async () => {
+    const { svc, prisma } = build({
+      cached: { hint: 'из кеша', actions: [], createdAt: new Date() },
+    });
+    const r = await svc.hint('u1', 'p1', 'record');
+    expect(r.key).toBe(
+      prisma.wizardHintCache.findUnique.mock.calls[0][0].where.key,
+    );
+  });
+
+  it('свежая подсказка несёт тот же ключ, под которым записана в кеш', async () => {
+    const { svc, prisma } = build();
+    const r = await svc.hint('u1', 'p1', 'record');
+    expect(r.source).toBe('model');
+    expect(r.key).toBe(
+      prisma.wizardHintCache.upsert.mock.calls[0][0].where.key,
+    );
+  });
+
+  it('молчание ключа не несёт — озвучивать нечего', async () => {
+    const { svc } = build({ globalOn: false });
+    expect((await svc.hint('u1', 'p1', 'record')).key).toBeUndefined();
+  });
+});

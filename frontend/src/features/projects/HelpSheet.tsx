@@ -28,6 +28,7 @@ import { Info, X } from 'lucide-react';
 import { Alert, Button, Card, Spinner } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
 import { helpTopicOf } from '../../lib/greeting-help';
+import { mediaPlaybackRef } from '../../lib/media-playback';
 import { HelpContext, useHelp } from './help-context';
 import {
   getTutorialHelp,
@@ -83,6 +84,9 @@ function HelpSheet({
   const [view, setView] = useState<TutorialHelpView | null>(null);
   const [error, setError] = useState(false);
   const [playing, setPlaying] = useState(false);
+  // Ролик звучит — микрофон помощника его не пишет (`media-playback.ts`):
+  // иначе дикторский текст ушёл бы на разбор как реплика человека.
+  const [videoRef] = useState(() => mediaPlaybackRef());
 
   useEffect(() => {
     if (!topic) return;
@@ -155,6 +159,7 @@ function HelpSheet({
               playing ? (
                 <video
                   data-qa="tutorial-help-video"
+                  ref={videoRef}
                   className="mt-4 w-full rounded-xl"
                   src={view.videoUrl}
                   controls

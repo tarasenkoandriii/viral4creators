@@ -27,6 +27,9 @@ import { AdminExperienceService } from './admin-experience.service';
 import { AdminWizardGuideService } from './admin-wizard-guide.service';
 import { SiblingsService } from './siblings.service';
 import { TranslationService } from './translation.service';
+import { HintAudioService } from './hint-audio.service';
+import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
+import { PlatformSettingsService } from '../../common/platform-settings.service';
 
 @Global()
 @Module({
@@ -34,8 +37,19 @@ import { TranslationService } from './translation.service';
     { provide: PrismaService, useValue: {} },
     { provide: AiUsageService, useValue: {} },
     { provide: PlanService, useValue: {} },
+    // Глобальный `TtsModule` на проде — синтез голоса советника (K1) и
+    // настройки, которые читает потолок голоса (`VoiceBudgetModule` их
+    // сам не объявляет и берёт оттуда же).
+    { provide: TtsProviderResolverService, useValue: {} },
+    { provide: PlatformSettingsService, useValue: {} },
   ],
-  exports: [PrismaService, AiUsageService, PlanService],
+  exports: [
+    PrismaService,
+    AiUsageService,
+    PlanService,
+    TtsProviderResolverService,
+    PlatformSettingsService,
+  ],
 })
 class GlobalStubsModule {}
 
@@ -54,6 +68,7 @@ describe('WizardGuideModule', () => {
       AdminWizardGuideService,
       SiblingsService,
       TranslationService,
+      HintAudioService,
     ]) {
       expect(moduleRef.get(token, { strict: false })).toBeDefined();
     }

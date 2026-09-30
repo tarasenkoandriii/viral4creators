@@ -60,6 +60,9 @@ import {
   listBrandManifests,
 } from '../../services/projects-api';
 import { recordInviteEvent } from '../../services/invite-api';
+import { useRenderVoiceConsent } from '../voice/VoiceConsentFlow';
+import { mediaPlaybackRef } from '../../lib/media-playback';
+import { VoiceConsentCard } from '../voice/VoiceConsentCard';
 import {
   createGreetingSession,
   deleteGreetingReference,
@@ -117,6 +120,7 @@ import {
   greetingSteps,
   type GreetingStepId,
 } from '../../lib/greeting-steps';
+import { greetingStepLabels, stepIsReachable } from '../../lib/voice-nav';
 import {
   getWizardGuide,
   setWizardGuide,
@@ -167,7 +171,44 @@ import type { GeneratedVideo, GenerationPrompt, PlanId } from '../../types';
 import { GenerationStatus, ModerationStatus } from '../../types';
 import { HelpButton, HelpProvider } from './HelpSheet';
 import { useMemo } from 'react';
-import { rulesOf, type GreetingRegisterRules } from '../../lib/greeting-policy';
+import {
+  rulesOf,
+  type GreetingRegisterRules,
+  type ToneChange,
+} from '../../lib/greeting-policy';
+import {
+  BRIEF_VOICE_TARGETS,
+  BRIEF_VOICE_TARGET_LIST,
+  applyBriefVoiceFields,
+  toneForCommand,
+  type BriefVoiceRefusal,
+  type ToneCommand,
+} from '../../lib/voice-brief';
+import type { VoiceField } from '../../lib/voice-types';
+// K5 (§4А.7.1): элементы сессии голосом — те же обработчики, что кнопки.
+import {
+  SESSION_VOICE_TARGETS,
+  cardsVoiceSave,
+  planCardsVoice,
+  planMusicVoice,
+  planReferenceVoice,
+  planScenesVoice,
+  planScriptVoice,
+  planStickerVoice,
+  planVoiceChoice,
+  refusalLines,
+  needsSave,
+  saveEffect,
+  type ReferenceFormsState,
+  type SessionVoiceTexts,
+} from '../../lib/voice-fields';
+import { listUserVoices } from '../../services/projects-api';
+import { useFeature } from '../../lib/plan-context';
+import type { VoiceCommandHandler } from '../voice/voice-commands';
+import { useVoiceCommand, useVoiceFieldApplier } from '../voice/voice-commands';
+import { VoiceCommandsProvider } from '../voice/VoiceCommandsProvider';
+import { VoiceAssistant } from '../voice/VoiceAssistant';
+import { VoiceToggle } from '../../components/VoiceToggle';
 import {
   cardsSummary,
   characterRegister,
@@ -337,15 +378,15 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
     if (updated) setGuide(updated);
   };
 
-  const stepsView = toStepsView(
-    greetingSteps(facts, {
-      brief: w.occasionLabel,
-      references: w.referencesHeading,
-      script: w.scriptHeading,
-      video: w.videoHeading,
-    }),
-    currentStepId
-  );
+  // «Голосом» (В-10) — второй канал советника: без включённого советника
+  // голоса нет. Старый сервер поля `voice` не присылает — голоса нет.
+  const voiceOn = !!guide?.available && !!guide.enabled && !!guide.voice;
+
+  // Список шагов — один на степпер и на голос (K6, §4А.7.2): голосу
+  // уходят ЭТИ `steps` и ЭТОТ `stepsView`, а подписи — из того же
+  // соответствия, по которому голос называет шаг в отказе.
+  const steps = greetingSteps(facts, greetingStepLabels(w));
+  const stepsView = toStepsView(steps, currentStepId);
 
   /**
    * Клик по шагу — ПРОКРУТКА к секции, а не переключение экрана (§4.5).
@@ -362,7 +403,7 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
   // стоит, незачем.
   const reachable = new Map<string, string>();
   stepsView.targets.forEach((target, i) => {
-    if (target && i !== stepsView.current)
+    if (target && stepIsReachable(stepsView, i))
       reachable.set(target, stepsView.steps[i]);
   });
   const goToTarget = (id: string): void => {
@@ -374,157 +415,185 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
     // Провайдер оборачивает ВЕСЬ мастер: лист справки один на девять
     // карточек, и открывает его любая из них.
     <HelpProvider>
-      <div className="animate-fadeIn space-y-4">
-        <ScreenHeader
-          title={w.title}
-          back={routes.project(projectId)}
-          hint={w.hint}
-        />
-        <Stepper
-          qa={GREETING_STEPPER_QA}
-          steps={stepsView.steps}
-          current={stepsView.current}
-          selectable={stepsView.selectable}
-          done={stepsView.done}
-          onSelect={(i) => {
-            const target = stepsView.targets[i];
-            if (target) goToStep(target);
-          }}
-        />
-
-        {readiness && (
-          <ReadinessPanel
-            readiness={readiness}
-            canGoToStep={(stepId) => reachable.has(stepId)}
-            onGoToStep={goToTarget}
+      <VoiceCommandsProvider>
+        <div className="animate-fadeIn space-y-4">
+          <ScreenHeader
+            title={w.title}
+            back={routes.project(projectId)}
+            hint={w.hint}
           />
-        )}
-
-        <HintLine
-          projectId={projectId}
-          stepId={currentStepId}
-          enabled={!!guide?.available && !!guide?.enabled}
-          stepLabels={Object.fromEntries(reachable)}
-          onGoToStep={goToTarget}
-          onEvent={(kind, detail) => track(kind, currentStepId, detail)}
-        />
-
-        {/* Чекбокс живёт на первом шаге и только там: включить советы
-          можно ТОЛЬКО в начале сценария (§3.2). У поздравления первый
-          шаг — бриф, то есть всё время до создания сессии. */}
-        {guide?.available && guide.canEnable && (
-          <Card className="p-4">
-            <label className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={guide.enabled}
-                onChange={(e) => void toggleGuide(e.target.checked)}
-              />
-              <span>
-                <span className="font-medium">
-                  {dict.wizardGuide.checkboxLabel}
-                </span>
-                <span className="block text-sm text-[var(--muted)]">
-                  {dict.wizardGuide.checkboxHint}
-                </span>
-              </span>
-            </label>
-          </Card>
-        )}
-        {!guide?.canEnable && guide?.available && guide.enabled && (
-          <div className="text-right">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void toggleGuide(false)}
-            >
-              {dict.wizardGuide.disableButton}
-            </Button>
-          </div>
-        )}
-
-        <div id={greetingAnchorId('brief')}>
-          <BriefStep
-            brief={brief}
-            manifests={manifests}
-            plan={plan}
-            sessionId={sessionId}
-            onSaved={setBrief}
-            onSessionEdited={(r) => afterSessionEdit(r.sessionId)}
-            onStartSession={async () => {
-              const session = await createGreetingSession(projectId);
-              setSessionId(session.sessionId);
-              setReadiness(await getSessionReadiness(session.sessionId));
+          <Stepper
+            qa={GREETING_STEPPER_QA}
+            steps={stepsView.steps}
+            current={stepsView.current}
+            selectable={stepsView.selectable}
+            done={stepsView.done}
+            onSelect={(i) => {
+              const target = stepsView.targets[i];
+              if (target) goToStep(target);
             }}
           />
-        </div>
 
-        {sessionId && (
-          <div id={greetingAnchorId('references')}>
-            {/* Клик по шагу «Фото» после сборки сценария приводит на
+          {readiness && (
+            <ReadinessPanel
+              readiness={readiness}
+              canGoToStep={(stepId) => reachable.has(stepId)}
+              onGoToStep={goToTarget}
+            />
+          )}
+
+          <HintLine
+            projectId={projectId}
+            stepId={currentStepId}
+            enabled={!!guide?.available && !!guide?.enabled}
+            voice={voiceOn}
+            stepLabels={Object.fromEntries(reachable)}
+            onGoToStep={goToTarget}
+            onEvent={(kind, detail) => track(kind, currentStepId, detail)}
+          />
+
+          {/* Чекбокс живёт на первом шаге и только там: включить советы
+          можно ТОЛЬКО в начале сценария (§3.2). У поздравления первый
+          шаг — бриф, то есть всё время до создания сессии. */}
+          {guide?.available && guide.canEnable && (
+            <Card className="p-4">
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={guide.enabled}
+                  onChange={(e) => void toggleGuide(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">
+                    {dict.wizardGuide.checkboxLabel}
+                  </span>
+                  <span className="block text-sm text-[var(--muted)]">
+                    {dict.wizardGuide.checkboxHint}
+                  </span>
+                </span>
+              </label>
+            </Card>
+          )}
+          {/* «Голосом» (В-10) — под чекбоксом советника, но НЕ под
+            `canEnable`: канал подсказок можно сменить на любом шаге. */}
+          {guide?.available && guide.enabled && (
+            <Card className="p-4">
+              <VoiceToggle
+                projectId={projectId}
+                guide={guide}
+                onChange={setGuide}
+              />
+            </Card>
+          )}
+          {!guide?.canEnable && guide?.available && guide.enabled && (
+            <div className="text-right">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void toggleGuide(false)}
+              >
+                {dict.wizardGuide.disableButton}
+              </Button>
+            </div>
+          )}
+
+          <div id={greetingAnchorId('brief')}>
+            <BriefStep
+              brief={brief}
+              manifests={manifests}
+              plan={plan}
+              sessionId={sessionId}
+              onSaved={setBrief}
+              onSessionEdited={(r) => afterSessionEdit(r.sessionId)}
+              onStartSession={async () => {
+                const session = await createGreetingSession(projectId);
+                setSessionId(session.sessionId);
+                setReadiness(await getSessionReadiness(session.sessionId));
+              }}
+            />
+          </div>
+
+          {sessionId && (
+            <div id={greetingAnchorId('references')}>
+              {/* Клик по шагу «Фото» после сборки сценария приводит на
               серый экран: референсы после генерации не меняют. Это
               правда, но кликабельность и редактируемость здесь
               расходятся, и интерфейс обязан сказать почему (§4.5). */}
-            {prompt && (
-              <Alert tone="info" className="mb-2">
-                {w.referencesLockedHint}
-              </Alert>
-            )}
-            <ReferencesStep
-              key={`${sessionId}:${revision}`}
-              sessionId={sessionId}
-              disabled={!!prompt}
-            />
-          </div>
-        )}
+              {prompt && (
+                <Alert tone="info" className="mb-2">
+                  {w.referencesLockedHint}
+                </Alert>
+              )}
+              <ReferencesStep
+                key={`${sessionId}:${revision}`}
+                sessionId={sessionId}
+                disabled={!!prompt}
+              />
+            </div>
+          )}
 
-        {sessionId && (
-          <div id={greetingAnchorId('script')}>
-            <ScriptStep
-              sessionId={sessionId}
-              prompt={prompt}
-              videoDone={video?.status === GenerationStatus.COMPLETE}
-              onGenerated={(p) => {
-                setPrompt(p);
-                void getSessionReadiness(sessionId).then(setReadiness);
-              }}
-              onEdited={(r) => {
-                if (r.newVersion) {
-                  void afterSessionEdit(r.sessionId);
-                  return;
-                }
-                setPrompt(r.prompt);
-                void getSessionReadiness(sessionId).then(setReadiness);
-              }}
-            />
-          </div>
-        )}
+          {sessionId && (
+            <div id={greetingAnchorId('script')}>
+              <ScriptStep
+                sessionId={sessionId}
+                prompt={prompt}
+                videoDone={video?.status === GenerationStatus.COMPLETE}
+                onGenerated={(p) => {
+                  setPrompt(p);
+                  void getSessionReadiness(sessionId).then(setReadiness);
+                }}
+                onEdited={(r) => {
+                  if (r.newVersion) {
+                    void afterSessionEdit(r.sessionId);
+                    return;
+                  }
+                  setPrompt(r.prompt);
+                  void getSessionReadiness(sessionId).then(setReadiness);
+                }}
+              />
+            </div>
+          )}
 
-        {sessionId && prompt && (
-          <CharacterBlock
-            sessionId={sessionId}
-            stepKey={`${sessionId}:${revision}`}
-            brief={brief}
-          />
-        )}
-
-        {sessionId && prompt && (
-          <div id={greetingAnchorId('video')}>
-            <VideoStep
-              key={sessionId}
+          {sessionId && prompt && (
+            <CharacterBlock
               sessionId={sessionId}
-              video={video}
-              onVideo={(v) => {
-                setVideo(v);
-                void getSessionReadiness(sessionId).then(setReadiness);
-              }}
-              recipientName={brief.recipientName}
-              senderName={brief.senderName}
+              stepKey={`${sessionId}:${revision}`}
+              brief={brief}
             />
-          </div>
-        )}
-      </div>
+          )}
+
+          {sessionId && prompt && (
+            <div id={greetingAnchorId('video')}>
+              <VideoStep
+                key={sessionId}
+                sessionId={sessionId}
+                video={video}
+                onVideo={(v) => {
+                  setVideo(v);
+                  void getSessionReadiness(sessionId).then(setReadiness);
+                }}
+                recipientName={brief.recipientName}
+                senderName={brief.senderName}
+                consentBrief={brief}
+                prompt={prompt}
+              />
+            </div>
+          )}
+
+          {/* Голосовой помощник (этап K3, В-15) — только у включивших
+          «голосом»: снятие компонента закрывает микрофон. Последним в
+          ленте — панель прилипает к низу экрана и не закрывает шаги. */}
+          {voiceOn && (
+            <VoiceAssistant
+              projectId={projectId}
+              sessionId={sessionId}
+              step={currentStepId}
+              nav={{ steps, view: stepsView, facts, go: goToStep }}
+            />
+          )}
+        </div>
+      </VoiceCommandsProvider>
     </HelpProvider>
   );
 }
@@ -646,6 +715,122 @@ function BriefStep({
     ? predictedSessionResets(policy, occasion, registerNow, selections)
     : [];
 
+  // ── Голос (этап K3, ТЗ Greeting 2.0 §4А.2 п. 3–4) ─────────────────────
+  // Карточка «я понял так» применяется сюда, в те же setState, что у
+  // ручного ввода, и по тем же правилам (`applyBriefVoiceFields`): повод
+  // — через сброс тона `applyOccasionPatch`, тон — только допустимый.
+  const v = dict.voiceAssistant;
+  const [voiceToneChange, setVoiceToneChange] = useState<{
+    change: ToneChange | null;
+    seq: number;
+  }>({ change: null, seq: 0 });
+  const describeVoiceField = (f: VoiceField): string => {
+    if (typeof f.value === 'boolean') return f.value ? v.valueYes : v.valueNo;
+    const T = BRIEF_VOICE_TARGETS;
+    const names: Partial<Record<string, Record<string, string>>> = {
+      [T.occasion]: w.occasion,
+      [T.mood]: w.mood,
+      [T.tone]: w.tone,
+      [T.scriptLanguage]: GREETING_SCRIPT_LANGUAGE_NAMES,
+      [T.presenter]: { grok: w.providerGrok, hedra: w.providerHedra },
+    };
+    return names[f.target]?.[f.value] ?? f.value;
+  };
+  const refusalReason = (reason: BriefVoiceRefusal): string =>
+    reason === 'tone-unavailable'
+      ? w.toneUnavailable
+      : reason === 'not-other'
+        ? v.refusedNotOther
+        : v.refusedInvalid;
+  useVoiceFieldApplier({
+    targets: BRIEF_VOICE_TARGET_LIST,
+    describe: describeVoiceField,
+    apply: (fields) => {
+      const r = applyBriefVoiceFields(policy, occ, fields, (next) =>
+        effectiveServerRegister(brief, next)
+      );
+      if (r.occPatch) {
+        const occPatch = r.occPatch;
+        setOcc((prev) => ({ ...prev, ...occPatch }));
+        setVoiceToneChange((prev) => ({
+          change: r.toneChange,
+          seq: prev.seq + 1,
+        }));
+      }
+      const p = r.patch;
+      if (p.recipientName !== undefined) setRecipientName(p.recipientName);
+      if (p.senderName !== undefined) setSenderName(p.senderName);
+      if (p.personalMessage !== undefined)
+        setPersonalMessage(p.personalMessage);
+      if (p.scriptLanguage !== undefined) setScriptLanguage(p.scriptLanguage);
+      if (p.presenterProvider !== undefined)
+        setPresenterProvider(p.presenterProvider);
+      if (p.resolution !== undefined) setResolution(p.resolution);
+      if (p.occasionDate !== undefined) setOccasionDate(p.occasionDate);
+      const refusals = r.refused.map((x) =>
+        v.refusedField
+          .replace(
+            '{field}',
+            fields.find((f) => f.target === x.target)?.label ?? x.target
+          )
+          .replace('{reason}', refusalReason(x.reason))
+      );
+      // Бриф голос не сохраняет — строка после «Да» называет кнопку (K5).
+      return {
+        refusals,
+        effects:
+          fields.length > refusals.length
+            ? [needsSave(w.editSubmitButton)]
+            : [],
+      };
+    },
+  });
+  // «Серьёзнее», «легче», «без шуток» — не отдельное действие, а
+  // предложенный тон на той же карточке «я понял так»: применится только
+  // после «Да» и через те же правила регистра, что пилюля тона.
+  const toneCommand = (command: ToneCommand): VoiceCommandHandler => ({
+    propose: (args) => {
+      const r = toneForCommand(
+        command,
+        tone,
+        policy,
+        occasion,
+        registerNow,
+        args?.tone
+      );
+      if ('tone' in r) {
+        return {
+          kind: 'propose',
+          card: {
+            kind: 'fill',
+            fields: [
+              {
+                target: BRIEF_VOICE_TARGETS.tone,
+                value: r.tone,
+                label: w.toneLabel,
+              },
+            ],
+          },
+        };
+      }
+      const lighter = command === 'tone-lighter';
+      const text =
+        r.refusal === 'unavailable'
+          ? lighter
+            ? v.toneLighterUnavailable
+            : v.toneSeriousUnavailable
+          : command === 'no-jokes'
+            ? v.noJokesAlready
+            : lighter
+              ? v.toneLighterAlready
+              : v.toneSeriousAlready;
+      return { kind: 'refuse', text };
+    },
+  });
+  useVoiceCommand('tone-serious', toneCommand('tone-serious'));
+  useVoiceCommand('tone-lighter', toneCommand('tone-lighter'));
+  useVoiceCommand('no-jokes', toneCommand('no-jokes'));
+
   const fieldsNow = () => ({
     occasion: occasion as string,
     customOccasionText: occasion === 'OTHER' ? customOccasionText.trim() : null,
@@ -748,10 +933,12 @@ function BriefStep({
           policy={policy}
           serverRegister={serverRegister}
           serverRegisterFor={(next) => effectiveServerRegister(brief, next)}
+          announcedToneChange={voiceToneChange}
         />
 
         <Field label={w.recipientNameLabel}>
           <Input
+            data-qa="greeting-field-recipient"
             value={recipientName}
             onChange={(e) => setRecipientName(e.target.value.slice(0, 120))}
             placeholder={w.recipientNamePlaceholder}
@@ -760,6 +947,7 @@ function BriefStep({
 
         <Field label={w.senderNameLabel}>
           <Input
+            data-qa="greeting-field-sender"
             value={senderName}
             onChange={(e) => setSenderName(e.target.value.slice(0, 120))}
             placeholder={w.senderNamePlaceholder}
@@ -772,6 +960,7 @@ function BriefStep({
           counter={`${personalMessage.length}/2000`}
         >
           <Textarea
+            data-qa="greeting-field-message"
             rows={3}
             value={personalMessage}
             onChange={(e) => setPersonalMessage(e.target.value.slice(0, 2000))}
@@ -781,6 +970,7 @@ function BriefStep({
 
         <Field label={w.scriptLanguageLabel} hint={w.scriptLanguageHint}>
           <Select
+            data-qa="greeting-field-script-language"
             value={scriptLanguage}
             onChange={(e) =>
               setScriptLanguage(e.target.value as GreetingScriptLanguage)
@@ -794,7 +984,7 @@ function BriefStep({
           </Select>
         </Field>
 
-        <div>
+        <div data-qa="greeting-field-presenter">
           <span className="label">{w.presenterProviderLabel}</span>
           <Pills
             value={presenterProvider}
@@ -823,6 +1013,7 @@ function BriefStep({
 
         <Field label={w.resolutionLabel}>
           <Select
+            data-qa="greeting-field-resolution"
             value={resolution}
             onChange={(e) =>
               setResolution(e.target.value as GreetingResolution)
@@ -838,6 +1029,7 @@ function BriefStep({
 
         <Field label={w.occasionDateLabel}>
           <Input
+            data-qa="greeting-field-date"
             type="date"
             value={occasionDate}
             onChange={(e) => setOccasionDate(e.target.value)}
@@ -928,6 +1120,53 @@ function BriefStep({
   );
 }
 
+// ── Голос в элементах сессии (этап K5, ТЗ Greeting 2.0 §4А.7.1) ─────────
+//
+// Каждая карточка ниже регистрирует свои хуки (`SESSION_VOICE_TARGETS`)
+// и применяет подтверждённое «Да» ТЕМИ ЖЕ обработчиками, что её кнопки;
+// что применимо к текущему состоянию, решают `plan*Voice` из
+// `lib/voice-fields.ts`. Хуки регистрируются, только пока карточка на
+// экране (`targets` пуст — поле не попадёт на карточку «я понял так»).
+
+/** Строки отказов K5: свой раздел словаря плюс причины, уже написанные
+ * на экране (наклейки под запретом регистра, «сценарий не собран»). */
+function useSessionVoiceTexts(): SessionVoiceTexts {
+  const { dict } = useI18n();
+  const vf = dict.voiceFields;
+  const w = dict.greetingVideoWizard;
+  return {
+    refusedField: dict.voiceAssistant.refusedField,
+    invalid: vf.invalid,
+    notOnScreen: vf.notOnScreen,
+    busy: vf.busy,
+    tooMany: vf.tooMany,
+    ambiguous: vf.ambiguous,
+    ambiguousNone: vf.ambiguousNone,
+    manual: vf.manual,
+    conflict: vf.conflict,
+    already: vf.already,
+    unavailable: {
+      'sticker-register': w.stickerUnavailable,
+      'no-search': vf.noSearch,
+      'no-sticker': vf.noSticker,
+      'no-script': w.scriptEmpty,
+      // Та же строка, что стоит над карточкой кадров после сборки.
+      'references-locked': w.referencesLockedHint,
+      'form-closed': vf.formClosed,
+      'two-forms': vf.twoForms,
+    },
+  };
+}
+
+/** Значение галочки и пустого титра на карточке «я понял так». */
+function describeSessionValue(
+  value: string | boolean,
+  vf: { valueOn: string; valueOff: string; cardRemove: string }
+): string {
+  if (typeof value === 'boolean') return value ? vf.valueOn : vf.valueOff;
+  return value === '' ? vf.cardRemove : value;
+}
+
 // ── Шаг 2: референс-изображения (доп. запрос — до 7, скетч) ─────────────
 
 function ReferencesStep({
@@ -991,6 +1230,36 @@ function ReferencesStep({
     !disabled &&
     images !== null &&
     images.length < MAX_GREETING_REFERENCE_IMAGES;
+
+  // Голос (K5): подпись и описание живут ТОЛЬКО в открытой форме кадра —
+  // её и заполняет голос (форма регистрируется сама, `voiceActive`).
+  // Нет формы, их две или правки заперты — карточка отвечает причиной,
+  // а не молчит: «Да» на такое ничего бы не сделало.
+  const openForms = (adding ? 1 : 0) + (editingId !== null ? 1 : 0);
+  const referenceForms: ReferenceFormsState = disabled
+    ? 'locked'
+    : openForms === 0
+      ? 'none'
+      : openForms === 1
+        ? 'one'
+        : 'two';
+  const voiceTexts = useSessionVoiceTexts();
+  useVoiceFieldApplier({
+    targets:
+      images === null || referenceForms === 'one'
+        ? []
+        : [
+            SESSION_VOICE_TARGETS.referenceLabel,
+            SESSION_VOICE_TARGETS.referenceDescription,
+          ],
+    describe: (f) => describeSessionValue(f.value, dict.voiceFields),
+    apply: (fields) =>
+      refusalLines(
+        planReferenceVoice(referenceForms, saving, fields).refused,
+        fields,
+        voiceTexts
+      ),
+  });
 
   return (
     <Card className="p-5" data-qa="greeting-references-card">
@@ -1093,6 +1362,7 @@ function ReferencesStep({
           {adding && !disabled && (
             <ReferenceUploader
               sessionId={sessionId}
+              voiceActive={referenceForms === 'one'}
               onDone={(next) => {
                 setAdding(false);
                 setImages(next);
@@ -1123,6 +1393,7 @@ function ReferencesStep({
                       <ReferenceEditor
                         sessionId={sessionId}
                         image={img}
+                        voiceActive={referenceForms === 'one'}
                         onDone={(next) => {
                           setEditingId(null);
                           setImages(next);
@@ -1203,13 +1474,52 @@ function ReferencesStep({
   );
 }
 
+/**
+ * Голос в открытую форму кадра (K5): те же `setLabel`/`setDescription`,
+ * что `onChange` полей, с теми же потолками (`planReferenceVoice`).
+ * Сохраняет человек той же кнопкой — голос форму не отправляет, а
+ * строка после «Да» называет эту кнопку (`button`).
+ */
+function useReferenceFormVoice(
+  active: boolean,
+  busy: boolean,
+  button: string,
+  setLabel: (v: string) => void,
+  setDescription: (v: string) => void
+): void {
+  const { dict } = useI18n();
+  const voiceTexts = useSessionVoiceTexts();
+  useVoiceFieldApplier({
+    targets: active
+      ? [
+          SESSION_VOICE_TARGETS.referenceLabel,
+          SESSION_VOICE_TARGETS.referenceDescription,
+        ]
+      : [],
+    describe: (f) => describeSessionValue(f.value, dict.voiceFields),
+    apply: (fields) => {
+      const plan = planReferenceVoice(active ? 'one' : 'none', busy, fields);
+      if (plan.label !== undefined) setLabel(plan.label);
+      if (plan.description !== undefined) setDescription(plan.description);
+      const filled = plan.label !== undefined || plan.description !== undefined;
+      return {
+        refusals: refusalLines(plan.refused, fields, voiceTexts),
+        effects: filled ? [needsSave(button)] : [],
+      };
+    },
+  });
+}
+
 function ReferenceUploader({
   sessionId,
+  voiceActive,
   onDone,
   onCancel,
   onError,
 }: {
   sessionId: string;
+  /** Единственная открытая форма кадра — голос пишет в неё (K5). */
+  voiceActive: boolean;
   onDone: (images: GreetingReferenceImageView[]) => void;
   onCancel: () => void;
   onError: (msg: string | null) => void;
@@ -1225,6 +1535,14 @@ function ReferenceUploader({
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => () => revokeObjectUrl(preview), [preview]);
+
+  useReferenceFormVoice(
+    voiceActive,
+    uploading,
+    w.addReference,
+    setLabel,
+    setDescription
+  );
 
   const pick = (f: File | undefined) => {
     if (!f) return;
@@ -1299,6 +1617,7 @@ function ReferenceUploader({
         <div className="min-w-0 flex-1 space-y-2">
           <Field label={w.referenceLabelLabel}>
             <Input
+              data-qa="greeting-references-label"
               value={label}
               maxLength={80}
               placeholder={w.referenceLabelPlaceholder}
@@ -1313,6 +1632,7 @@ function ReferenceUploader({
         counter={`${description.length}/2000`}
       >
         <Textarea
+          data-qa="greeting-references-description"
           rows={2}
           value={description}
           onChange={(e) => setDescription(e.target.value.slice(0, 2000))}
@@ -1354,11 +1674,14 @@ function ReferenceUploader({
 function ReferenceEditor({
   sessionId,
   image,
+  voiceActive,
   onDone,
   onCancel,
 }: {
   sessionId: string;
   image: GreetingReferenceImageView;
+  /** Единственная открытая форма кадра — голос пишет в неё (K5). */
+  voiceActive: boolean;
   onDone: (images: GreetingReferenceImageView[]) => void;
   onCancel: () => void;
 }) {
@@ -1368,6 +1691,13 @@ function ReferenceEditor({
   const [description, setDescription] = useState(image.description ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useReferenceFormVoice(
+    voiceActive,
+    saving,
+    w.saveReferenceButton,
+    setLabel,
+    setDescription
+  );
 
   const submit = async () => {
     if (!label.trim()) return;
@@ -1396,6 +1726,7 @@ function ReferenceEditor({
     >
       <Field label={w.referenceLabelLabel}>
         <Input
+          data-qa="greeting-references-label"
           value={label}
           maxLength={80}
           placeholder={w.referenceLabelPlaceholder}
@@ -1409,6 +1740,7 @@ function ReferenceEditor({
         counter={`${description.length}/2000`}
       >
         <Textarea
+          data-qa="greeting-references-description"
           rows={2}
           value={description}
           onChange={(e) => setDescription(e.target.value.slice(0, 2000))}
@@ -1508,6 +1840,48 @@ function ScriptStep({
       setLoading(false);
     }
   };
+
+  // Голос в поле правки (K5): ПОЛНЫЙ текст в то же поле, что `onChange`,
+  // с тем же потолком; сохраняет человек той же кнопкой — сервер
+  // проверит текст тем же путём правки (модерация, регистр, версия).
+  // Во время пересборки — отказ: ответ сервера перезапишет поле.
+  const voiceTexts = useSessionVoiceTexts();
+  useVoiceFieldApplier({
+    targets: [SESSION_VOICE_TARGETS.scriptText],
+    describe: (f) => String(f.value),
+    apply: (fields) => {
+      const plan = planScriptVoice(!!prompt, loading || savingText, fields);
+      if (plan.text !== undefined) {
+        setText(plan.text);
+        setSavedText(false);
+      }
+      return {
+        refusals: refusalLines(plan.refused, fields, voiceTexts),
+        effects: plan.text !== undefined ? [needsSave(w.saveScriptButton)] : [],
+      };
+    },
+  });
+
+  // Голосом «пересобери сценарий» (этап K3) — та же кнопка, что на
+  // экране: карточка «я понял так» с действием, по «Да» — `generate`.
+  // Сборка платная, поэтому молча не запускается. У готового ролика
+  // кнопки нет — нет и команды (сервер ответил бы 409).
+  useVoiceCommand(
+    'regenerate-script',
+    videoDone || loading
+      ? null
+      : {
+          propose: () => ({
+            kind: 'propose',
+            card: {
+              kind: 'action',
+              command: 'regenerate-script',
+              label: prompt ? w.regenerateScriptButton : w.generateScriptButton,
+            },
+          }),
+          run: () => void generate(),
+        }
+  );
 
   return (
     <Card className="p-5" data-qa="greeting-script-card">
@@ -1735,7 +2109,10 @@ function SenderVoiceStep({
     };
   }, [sessionId]);
 
-  const apply = async (fn: () => Promise<GreetingVoiceView>) => {
+  /** @returns ошибку, показанную на экране, или `null` — сохранено (K5). */
+  const apply = async (
+    fn: () => Promise<GreetingVoiceView>
+  ): Promise<string | null> => {
     setBusy(true);
     setError(null);
     try {
@@ -1743,8 +2120,11 @@ function SenderVoiceStep({
       // Ответ на выбор — тоже прочитанное состояние, даже если первое
       // чтение не прошло.
       setVoiceLoaded(true);
+      return null;
     } catch (e) {
-      setError(errorMessage(e));
+      const message = errorMessage(e);
+      setError(message);
+      return message;
     } finally {
       setBusy(false);
     }
@@ -1754,6 +2134,89 @@ function SenderVoiceStep({
   const presetName =
     presets?.find((p) => p.voiceId === voice.presetVoiceId)?.name ??
     voice.presetVoiceId;
+
+  // Кнопки карточки и голос (K5) — одни и те же три обработчика.
+  const clear = () =>
+    apply(() =>
+      voice.presetVoiceId
+        ? selectGreetingPresetVoice(sessionId, null)
+        : selectGreetingSenderVoice(sessionId, null)
+    );
+  const pickClone = (voiceId: string) =>
+    apply(() => selectGreetingSenderVoice(sessionId, voiceId));
+  const pickPreset = (voiceId: string) =>
+    apply(() => selectGreetingPresetVoice(sessionId, voiceId));
+
+  // Готовые клоны — тот же список, что показывает `MyVoicesSection` (и тот
+  // же гейт тарифа): голос выбирает только клон, который виден на экране.
+  // Перечитывается после каждого выбора — новый клон, дообученный рядом,
+  // станет доступен голосу со следующей реплики.
+  const cloning = useFeature('voiceCloning');
+  const [clones, setClones] = useState<
+    Array<{ voiceId: string; label: string }>
+  >([]);
+  useEffect(() => {
+    if (!cloning.allowed) {
+      setClones([]);
+      return;
+    }
+    let alive = true;
+    listUserVoices()
+      .then(
+        (list) =>
+          alive &&
+          setClones(
+            list
+              .filter((v) => v.status === 'ready' && v.resembleVoiceId)
+              .map((v) => ({ voiceId: v.resembleVoiceId!, label: v.label }))
+          )
+      )
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [cloning.allowed, voice]);
+
+  const voiceTexts = useSessionVoiceTexts();
+  const presetList = presets ?? [];
+  useVoiceFieldApplier({
+    targets: [
+      SESSION_VOICE_TARGETS.voicePreset,
+      SESSION_VOICE_TARGETS.voiceClone,
+      SESSION_VOICE_TARGETS.voiceCustom,
+    ],
+    describe: (f) =>
+      (f.target === SESSION_VOICE_TARGETS.voicePreset
+        ? presetList.find((p) => p.voiceId === f.value)?.name
+        : f.target === SESSION_VOICE_TARGETS.voiceClone
+          ? clones.find((c) => c.voiceId === f.value)?.label
+          : undefined) ?? describeSessionValue(f.value, dict.voiceFields),
+    apply: (fields) => {
+      const plan = planVoiceChoice(
+        {
+          presets: presetList,
+          clones,
+          presetVoiceId: voice.presetVoiceId,
+          cloneVoiceId: voice.senderVoice?.resembleVoiceId ?? null,
+        },
+        busy,
+        fields
+      );
+      const a = plan.action;
+      const refusals = refusalLines(plan.refused, fields, voiceTexts);
+      const saving =
+        a?.kind === 'clear'
+          ? clear()
+          : a?.kind === 'preset'
+            ? pickPreset(a.voiceId)
+            : a?.kind === 'clone'
+              ? pickClone(a.voiceId)
+              : null;
+      if (!saving) return { refusals, effects: [] };
+      // «Готово» — после ответа сервера, а не до него.
+      return saving.then((err) => ({ refusals, effects: [saveEffect(err)] }));
+    },
+  });
 
   const summary = voiceSummary(
     voiceLoaded
@@ -1775,17 +2238,13 @@ function SenderVoiceStep({
           <>
             <HelpButton cardHook="greeting-voice-card" />
             {chosen && (
+              // Галочка «свой голос» (K5): «выключить» — эта же кнопка.
               <Button
+                data-qa="greeting-voice-custom"
                 size="sm"
                 variant="ghost"
                 loading={busy}
-                onClick={() =>
-                  void apply(() =>
-                    voice.presetVoiceId
-                      ? selectGreetingPresetVoice(sessionId, null)
-                      : selectGreetingSenderVoice(sessionId, null)
-                  )
-                }
+                onClick={() => void clear()}
               >
                 {w.senderVoiceClear}
               </Button>
@@ -1808,11 +2267,9 @@ function SenderVoiceStep({
             : w.senderVoiceDefault}
       </p>
 
-      <div className="mt-3">
+      <div className="mt-3" data-qa="greeting-voice-clone">
         <MyVoicesSection
-          onPick={(voiceId) =>
-            void apply(() => selectGreetingSenderVoice(sessionId, voiceId))
-          }
+          onPick={(voiceId) => void pickClone(voiceId)}
           disabled={busy}
           pickedVoiceId={voice.senderVoice?.resembleVoiceId ?? null}
         />
@@ -1833,7 +2290,10 @@ function SenderVoiceStep({
           <p className="mt-1 text-xs text-silver-400">
             {w.presetVoiceLanguageNote}
           </p>
-          <ul className="mt-2 flex flex-wrap gap-2">
+          <ul
+            className="mt-2 flex flex-wrap gap-2"
+            data-qa="greeting-voice-preset"
+          >
             {presets.map((preset) => (
               <li key={preset.voiceId}>
                 <Button
@@ -1841,11 +2301,7 @@ function SenderVoiceStep({
                   variant="outline"
                   disabled={busy}
                   active={voice.presetVoiceId === preset.voiceId}
-                  onClick={() =>
-                    void apply(() =>
-                      selectGreetingPresetVoice(sessionId, preset.voiceId)
-                    )
-                  }
+                  onClick={() => void pickPreset(preset.voiceId)}
                 >
                   {preset.name}
                 </Button>
@@ -1900,19 +2356,46 @@ function ScenesStep({
     onSummary?.(summary);
   }, [onSummary, summary]);
 
-  if (!view) return null;
-
-  const choose = async (sceneCount: number) => {
+  /** @returns ошибку, показанную на экране, или `null` — сохранено (K5). */
+  const choose = async (sceneCount: number): Promise<string | null> => {
     setBusy(true);
     setError(null);
     try {
       setView(await setGreetingScenes(sessionId, sceneCount));
+      return null;
     } catch (e) {
-      setError(errorMessage(e));
+      const message = errorMessage(e);
+      setError(message);
+      return message;
     } finally {
       setBusy(false);
     }
   };
+
+  // Голос (K5): число сцен — тот же `choose(n)`, что у кнопки; число вне
+  // 1…maxScenes — отказ (других кнопок на экране нет). Хук — до раннего
+  // выхода: правило хуков; пока карточки нет, целей нет.
+  const voiceTexts = useSessionVoiceTexts();
+  useVoiceFieldApplier({
+    targets: view ? [SESSION_VOICE_TARGETS.scenesCount] : [],
+    describe: (f) =>
+      typeof f.value !== 'string' || !/^\d+$/.test(f.value)
+        ? String(f.value)
+        : Number(f.value) === 1
+          ? w.scenesOne
+          : w.scenesMany.replace('{n}', String(Number(f.value))),
+    apply: (fields) => {
+      const plan = planScenesVoice(view, busy, fields);
+      const refusals = refusalLines(plan.refused, fields, voiceTexts);
+      if (plan.count === null) return { refusals, effects: [] };
+      return choose(plan.count).then((err) => ({
+        refusals,
+        effects: [saveEffect(err)],
+      }));
+    },
+  });
+
+  if (!view) return null;
 
   const counts = Array.from({ length: view.maxScenes }, (_, i) => i + 1);
 
@@ -1931,7 +2414,7 @@ function ScenesStep({
         </Alert>
       )}
 
-      <ul className="flex flex-wrap gap-2">
+      <ul className="flex flex-wrap gap-2" data-qa="greeting-scenes-count">
         {counts.map((n) => (
           <li key={n}>
             <Button
@@ -1998,13 +2481,19 @@ function StickerStep({
     };
   }, [sessionId]);
 
-  const run = async (fn: () => Promise<GreetingStickerView>) => {
+  /** @returns ошибку, показанную на экране, или `null` — сохранено (K5). */
+  const run = async (
+    fn: () => Promise<GreetingStickerView>
+  ): Promise<string | null> => {
     setBusy(true);
     setError(null);
     try {
       setView(await fn());
+      return null;
     } catch (e) {
-      setError(errorMessage(e));
+      const message = errorMessage(e);
+      setError(message);
+      return message;
     } finally {
       setBusy(false);
     }
@@ -2020,14 +2509,6 @@ function StickerStep({
     onSummary?.(summary);
   }, [onSummary, summary]);
 
-  if (!view || hidden) return null;
-  // У торжественных, деликатных и траурных поводов наклеек нет (сервер
-  // откажет в выборе): поиск картинок нельзя ограничить настроением.
-  // Этап D: карточка не пропадает молча, а объясняет почему — пустое
-  // место на месте знакомой секции выглядит поломкой. Уже выбранную
-  // раньше наклейку показываем — её нужно иметь возможность снять.
-  const stickersAllowed = view.allowed !== false;
-
   const placementLabels: Record<string, string> = {
     'top-left': w.stickerTopLeft,
     'top-right': w.stickerTopRight,
@@ -2036,6 +2517,70 @@ function StickerStep({
     center: w.stickerCenter,
     full: w.stickerFull,
   };
+
+  // Кнопки карточки и голос (K5) — одни и те же обработчики.
+  const clear = () => run(() => clearGreetingSticker(sessionId));
+  const move = (placement: string) =>
+    run(() => moveGreetingSticker(sessionId, placement));
+
+  // Голос (K5): место — тот же `move`, «без наклейки» — тот же `clear`,
+  // строка поиска — то же поле (без запуска поиска: выдачу сервер разбора
+  // не видит, картинку выбирают руками). Под запретом регистра — отказ
+  // той же строкой, что на экране. Хук — до раннего выхода.
+  const voiceTexts = useSessionVoiceTexts();
+  const onScreen = !!view && !hidden;
+  useVoiceFieldApplier({
+    targets: onScreen
+      ? [
+          SESSION_VOICE_TARGETS.stickerQuery,
+          SESSION_VOICE_TARGETS.stickerPlacement,
+          SESSION_VOICE_TARGETS.stickerEnabled,
+        ]
+      : [],
+    describe: (f) =>
+      f.target === SESSION_VOICE_TARGETS.stickerPlacement &&
+      typeof f.value === 'string'
+        ? (placementLabels[f.value] ?? f.value)
+        : describeSessionValue(f.value, dict.voiceFields),
+    apply: (fields) => {
+      const plan = planStickerVoice(
+        onScreen && view
+          ? {
+              selected: view.selected,
+              configured: view.configured,
+              allowed: view.allowed !== false,
+            }
+          : null,
+        busy,
+        fields
+      );
+      if (plan.query !== undefined) setQuery(plan.query);
+      const refusals = refusalLines(plan.refused, fields, voiceTexts);
+      // Строка поиска ждёт кнопку «Найти»; место и «убрать» сохраняет
+      // тот же обработчик, что у кнопок, — ждём его ответа.
+      const typed =
+        plan.query !== undefined ? [needsSave(w.stickerSearch)] : [];
+      const saving =
+        plan.action?.kind === 'clear'
+          ? clear()
+          : plan.action?.kind === 'move'
+            ? move(plan.action.placement)
+            : null;
+      if (!saving) return { refusals, effects: typed };
+      return saving.then((err) => ({
+        refusals,
+        effects: [saveEffect(err), ...typed],
+      }));
+    },
+  });
+
+  if (!view || hidden) return null;
+  // У торжественных, деликатных и траурных поводов наклеек нет (сервер
+  // откажет в выборе): поиск картинок нельзя ограничить настроением.
+  // Этап D: карточка не пропадает молча, а объясняет почему — пустое
+  // место на месте знакомой секции выглядит поломкой. Уже выбранную
+  // раньше наклейку показываем — её нужно иметь возможность снять.
+  const stickersAllowed = view.allowed !== false;
 
   return (
     <Card className="p-5" data-qa="greeting-sticker-card">
@@ -2047,11 +2592,13 @@ function StickerStep({
           <>
             <HelpButton cardHook="greeting-sticker-card" />
             {view.selected && (
+              // Галочка «наклейка» (K5): «выключить» — эта же кнопка.
               <Button
+                data-qa="greeting-sticker-enabled"
                 size="sm"
                 variant="ghost"
                 loading={busy}
-                onClick={() => void run(() => clearGreetingSticker(sessionId))}
+                onClick={() => void clear()}
               >
                 {w.stickerClear}
               </Button>
@@ -2075,7 +2622,10 @@ function StickerStep({
           />
           <div className="min-w-0">
             <p className="text-xs text-silver-400">{w.stickerPicked}</p>
-            <ul className="mt-1.5 flex flex-wrap gap-1.5">
+            <ul
+              className="mt-1.5 flex flex-wrap gap-1.5"
+              data-qa="greeting-sticker-placement"
+            >
               {STICKER_PLACEMENTS.map((placement) => (
                 <li key={placement}>
                   <Button
@@ -2083,9 +2633,7 @@ function StickerStep({
                     variant="outline"
                     disabled={busy}
                     active={view.selected?.placement === placement}
-                    onClick={() =>
-                      void run(() => moveGreetingSticker(sessionId, placement))
-                    }
+                    onClick={() => void move(placement)}
                   >
                     {placementLabels[placement]}
                   </Button>
@@ -2104,6 +2652,7 @@ function StickerStep({
         <>
           <div className="flex flex-wrap items-center gap-2">
             <Input
+              data-qa="greeting-sticker-query"
               value={query}
               onChange={(e) => setQuery(e.target.value.slice(0, 100))}
               placeholder={w.stickerSearchPlaceholder}
@@ -2201,24 +2750,70 @@ function CardsStep({
     };
   }, [sessionId]);
 
-  const save = async () => {
+  /**
+   * Значения — явным аргументом, а не из замыкания: голос (K5) кладёт
+   * текст в поле и сразу сохраняет, а `setTitle` до следующего рендера
+   * замыкание не обновит. Кнопка зовёт с текущими полями.
+   *
+   * `keep` — поле, набранное руками и НЕ сохранённое, которое голос не
+   * трогал: ответ сервера его не перезаписывает (в сервер ушло прежнее
+   * сохранённое значение, `cardsVoiceSave`).
+   *
+   * @returns ошибку, показанную на экране, или `null` — сохранено (K5).
+   */
+  const save = async (
+    values = { title, closing },
+    keep: { title: boolean; closing: boolean } = {
+      title: false,
+      closing: false,
+    }
+  ): Promise<string | null> => {
     setBusy(true);
     setError(null);
     try {
       const next = await updateGreetingCards(sessionId, {
-        title: title.trim() || null,
-        closing: closing.trim() || null,
+        title: values.title.trim() || null,
+        closing: values.closing.trim() || null,
       });
       setView(next);
-      setTitle(next.cards.title ?? '');
-      setClosing(next.cards.closing ?? '');
+      if (!keep.title) setTitle(next.cards.title ?? '');
+      if (!keep.closing) setClosing(next.cards.closing ?? '');
       setSaved(true);
+      return null;
     } catch (e) {
-      setError(errorMessage(e));
+      const message = errorMessage(e);
+      setError(message);
+      return message;
     } finally {
       setBusy(false);
     }
   };
+
+  // Голос (K5): текст — в те же поля, что `onChange` (тот же потолок),
+  // затем то же «Сохранить». Пустая строка — убрать титр, как стёртое
+  // руками поле. Хук — до раннего выхода.
+  const voiceTexts = useSessionVoiceTexts();
+  useVoiceFieldApplier({
+    targets: view
+      ? [SESSION_VOICE_TARGETS.cardsTitle, SESSION_VOICE_TARGETS.cardsClosing]
+      : [],
+    describe: (f) => describeSessionValue(f.value, dict.voiceFields),
+    apply: (fields) => {
+      const plan = planCardsVoice(!!view, busy, fields);
+      const refusals = refusalLines(plan.refused, fields, voiceTexts);
+      const s = cardsVoiceSave(plan, view?.cards ?? null);
+      if (!s) return { refusals, effects: [] };
+      // В поле — только продиктованное; второе поле остаётся как набрано
+      // руками, а в сервер уходит его СОХРАНЁННОЕ значение.
+      if (plan.title !== undefined) setTitle(plan.title);
+      if (plan.closing !== undefined) setClosing(plan.closing);
+      setSaved(false);
+      return save(s.values, s.keep).then((err) => ({
+        refusals,
+        effects: [saveEffect(err)],
+      }));
+    },
+  });
 
   // По сохранённому, а не по набранному: сводка — о том, что уйдёт в ролик.
   const summary = cardsSummary(view?.cards ?? null, w);
@@ -2250,6 +2845,7 @@ function CardsStep({
       <div className="space-y-3">
         <Field label={w.cardsTitleLabel} hint={w.cardsTitleHint}>
           <Input
+            data-qa="greeting-cards-title"
             value={title}
             onChange={(e) => {
               setTitle(e.target.value.slice(0, MAX_GREETING_CARD_LENGTH));
@@ -2275,6 +2871,7 @@ function CardsStep({
 
         <Field label={w.cardsClosingLabel} hint={w.cardsClosingHint}>
           <Input
+            data-qa="greeting-cards-closing"
             value={closing}
             onChange={(e) => {
               setClosing(e.target.value.slice(0, MAX_GREETING_CARD_LENGTH));
@@ -2369,14 +2966,20 @@ function MusicThemeStep({
     };
   }, [sessionId]);
 
-  const apply = async (fn: () => Promise<GreetingMusicView>) => {
+  /** @returns ошибку, показанную на экране, или `null` — сохранено (K5). */
+  const apply = async (
+    fn: () => Promise<GreetingMusicView>
+  ): Promise<string | null> => {
     setBusy(true);
     setError(null);
     try {
       setMusic(await fn());
       setMusicLoaded(true);
+      return null;
     } catch (e) {
-      setError(errorMessage(e));
+      const message = errorMessage(e);
+      setError(message);
+      return message;
     } finally {
       setBusy(false);
     }
@@ -2392,6 +2995,39 @@ function MusicThemeStep({
   useEffect(() => {
     onSummary?.(summary);
   }, [onSummary, summary]);
+
+  // Голос (K5): тема — тот же `choose(id)`, «без музыки» — тот же
+  // `choose(null)`, что «Убрать»; тема — только из списка на экране (он
+  // уже отфильтрован поводом). Строка поиска библиотеки — то же поле, без
+  // запуска поиска. Хук — до раннего выхода.
+  const voiceTexts = useSessionVoiceTexts();
+  useVoiceFieldApplier({
+    targets: music
+      ? [
+          SESSION_VOICE_TARGETS.musicTheme,
+          SESSION_VOICE_TARGETS.musicEnabled,
+          SESSION_VOICE_TARGETS.musicQuery,
+        ]
+      : [],
+    describe: (f) =>
+      (f.target === SESSION_VOICE_TARGETS.musicTheme
+        ? music?.themes.find((t) => t.id === f.value)?.title
+        : undefined) ?? describeSessionValue(f.value, dict.voiceFields),
+    apply: (fields) => {
+      const plan = planMusicVoice(music, busy, fields);
+      if (plan.query !== undefined) setQuery(plan.query);
+      const refusals = refusalLines(plan.refused, fields, voiceTexts);
+      // Строка поиска ждёт кнопку «Искать»; тему и «без музыки» сохраняет
+      // тот же `choose`, что у кнопок, — ждём его ответа.
+      const typed =
+        plan.query !== undefined ? [needsSave(w.musicLibrarySearch)] : [];
+      if (plan.choose === undefined) return { refusals, effects: typed };
+      return choose(plan.choose).then((err) => ({
+        refusals,
+        effects: [saveEffect(err), ...typed],
+      }));
+    },
+  });
 
   if (!music) return null;
 
@@ -2416,7 +3052,9 @@ function MusicThemeStep({
           <>
             <HelpButton cardHook="greeting-music-card" />
             {music.selected && (
+              // Галочка «музыка» (K5): «выключить» — эта же кнопка.
               <Button
+                data-qa="greeting-music-enabled"
                 size="sm"
                 variant="ghost"
                 loading={busy}
@@ -2455,7 +3093,10 @@ function MusicThemeStep({
       )}
 
       {music.themes.length > 0 && (
-        <ul className="mt-3 flex flex-wrap gap-2">
+        <ul
+          className="mt-3 flex flex-wrap gap-2"
+          data-qa="greeting-music-theme"
+        >
           {music.themes.map((theme) => (
             <li key={theme.id}>
               <Button
@@ -2484,6 +3125,7 @@ function MusicThemeStep({
           <p className="text-xs text-silver-400">{w.musicLibraryHint}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Input
+              data-qa="greeting-music-query"
               value={query}
               onChange={(e) => setQuery(e.target.value.slice(0, 100))}
               placeholder={w.musicLibraryPlaceholder}
@@ -2743,6 +3385,8 @@ function VideoStep({
   onVideo,
   recipientName,
   senderName,
+  consentBrief,
+  prompt,
 }: {
   sessionId: string;
   video: GeneratedVideo | undefined;
@@ -2750,6 +3394,9 @@ function VideoStep({
   /** Имена из брифа — только для текста сообщения при вручении (№26). */
   recipientName: string;
   senderName?: string | null;
+  /** K7: бриф и сценарий — для сводки перед согласием голосом (§4А.7.4). */
+  consentBrief: GreetingBriefView;
+  prompt: GenerationPrompt | undefined;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -2760,6 +3407,10 @@ function VideoStep({
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inFlight = useRef(false);
+  const startingRef = useRef(false);
+  // Готовый ролик, играющий вслух, микрофон помощника не пишет как речь
+  // (`media-playback.ts`, аудит волны 2). Один реф на компонент.
+  const [videoPlaybackRef] = useState(() => mediaPlaybackRef());
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -2794,6 +3445,12 @@ function VideoStep({
   }, [sessionId]);
 
   const start = async () => {
+    // Повторный вход — двойное нажатие или нажатие поверх голосового
+    // старта: `starting` из замыкания ещё прежний, ref — уже нет (K7).
+    if (startingRef.current) return;
+    startingRef.current = true;
+    // Нажали сами — сводка для голоса больше не нужна (K7).
+    consent.cancel();
     setStarting(true);
     setError(null);
     setLocked(false);
@@ -2813,9 +3470,43 @@ function VideoStep({
         recordInviteEvent('wall');
       } else setError(errorMessage(e));
     } finally {
+      startingRef.current = false;
       setStarting(false);
     }
   };
+
+  // K7 (§4А.7.4): согласие голосом нажимает ЭТУ ЖЕ кнопку — `start`, —
+  // но только после сводки с ценой. Кнопка при этом остаётся: голос —
+  // второй путь к ней, а не замена.
+  const consent = useRenderVoiceConsent({
+    facts: {
+      sessionId,
+      promptId: prompt?.promptId ?? null,
+      scriptText: prompt?.finalText ?? '',
+      recipient: consentBrief.recipientName,
+      occasion: consentBrief.occasion,
+      customOccasion: consentBrief.customOccasionText,
+      resolution: consentBrief.resolution,
+      presenter: consentBrief.presenterProvider,
+    },
+    occasionLabel:
+      consentBrief.occasion === 'OTHER' && consentBrief.customOccasionText
+        ? consentBrief.customOccasionText
+        : w.occasion[consentBrief.occasion],
+    qualityLabel: `${consentBrief.resolution} · ${
+      consentBrief.presenterProvider === 'hedra'
+        ? w.providerHedra
+        : w.providerGrok
+    }`,
+    block: starting
+      ? 'busy'
+      : !video || video.status === GenerationStatus.FAILED
+        ? null
+        : video.status === GenerationStatus.COMPLETE
+          ? 'done'
+          : 'in-progress',
+    start: () => void start(),
+  });
 
   return (
     <>
@@ -2825,6 +3516,18 @@ function VideoStep({
           action={<HelpButton cardHook="greeting-video-card" />}
         />
         {error && <Alert tone="error">{error}</Alert>}
+
+        {consent.summary && (
+          <VoiceConsentCard
+            summary={consent.summary}
+            buttonLabel={
+              video?.status === GenerationStatus.FAILED
+                ? w.retryButton
+                : w.generateVideoButton
+            }
+            onCancel={consent.cancel}
+          />
+        )}
 
         {!video && (
           <Button
@@ -2879,6 +3582,7 @@ function VideoStep({
             <Badge tone="success">{w.videoReady}</Badge>
             {video.downloadUrl && (
               <video
+                ref={videoPlaybackRef}
                 src={video.downloadUrl}
                 controls
                 className="w-full rounded-xl border border-silver-200/70 dark:border-silver-800"

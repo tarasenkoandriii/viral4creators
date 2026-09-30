@@ -7,6 +7,8 @@ import {
   setVoiceoverProviderDefault,
   getSpeechRecognitionSettings,
   setSpeechRecognitionProvider,
+  getVoiceAssistantSettings,
+  setVoiceAssistantSettings,
   getAudioSeparationSettings,
   getTutorialLocalesSettings,
   setTutorialLocalesSettings,
@@ -36,6 +38,9 @@ import type {
   VoiceoverProviderSettingsView,
   SpeechRecognitionProviderKey,
   SpeechRecognitionProviderSettingsView,
+  VoiceAssistantPlan,
+  VoiceAssistantProviderKey,
+  VoiceAssistantSettingsView,
   AudioSeparationSettingsView,
   TutorialLocalesSettingsView,
   TutorialMotion,
@@ -738,6 +743,213 @@ function SpeechRecognitionCard() {
               'Внимание: ключа Soniox на стенде нет — пока его не заведут, расшифровывает Gemini.'}
           </p>
         </>
+      )}
+    </div>
+  );
+}
+
+const VOICE_ASSISTANT_PLANS: VoiceAssistantPlan[] = ['LITE', 'STANDARD', 'PREMIUM', 'ANONYMOUS'];
+
+const VOICE_ASSISTANT_CAP_LABEL: Record<VoiceAssistantPlan, string> = {
+  LITE: 'Потолок голоса LITE, $ в сутки',
+  STANDARD: 'Потолок голоса STANDARD, $ в сутки',
+  PREMIUM: 'Потолок голоса PREMIUM, $ в сутки',
+  ANONYMOUS: 'Без входа (общий на всех гостей), $ в сутки',
+};
+
+const VOICE_ASSISTANT_PROVIDER_LABEL: Record<VoiceAssistantProviderKey, string> = {
+  elevenlabs: 'ElevenLabs',
+  resemble: 'Resemble',
+  soniox: 'Soniox (по умолчанию)',
+};
+
+/**
+ * «Голосовой помощник» — этап K3 ТЗ Greeting 2.0 (§4А.4, §4А.7.5).
+ *
+ * Суточный потолок голоса по тарифу (решение В-14): распознавание, разбор
+ * реплики и озвучка подсказок вместе; исчерпан — голос выключается до конца
+ * суток UTC, мастер работает руками. `0` — голос для тарифа выключен.
+ * Голос помощника — отдельный пресет (В-11), не «Озвучка по умолчанию»:
+ * смена голоса роликов не должна молча менять голос, которым мастер
+ * разговаривает с человеком.
+ */
+function VoiceAssistantCard() {
+  const [state, setState] = useState<VoiceAssistantSettingsView | null>(null);
+  const [caps, setCaps] = useState<Record<VoiceAssistantPlan, string>>({
+    LITE: '',
+    STANDARD: '',
+    PREMIUM: '',
+    ANONYMOUS: '',
+  });
+  const [provider, setProvider] = useState<VoiceAssistantProviderKey>('soniox');
+  const [voiceId, setVoiceId] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const apply = (s: VoiceAssistantSettingsView) => {
+    setState(s);
+    setCaps({
+      LITE: String(s.caps.LITE.usd),
+      STANDARD: String(s.caps.STANDARD.usd),
+      PREMIUM: String(s.caps.PREMIUM.usd),
+      ANONYMOUS: String(s.caps.ANONYMOUS.usd),
+    });
+    setProvider(s.voice.provider);
+    setVoiceId(s.voice.voiceId ?? '');
+  };
+
+  const load = () => {
+    setError(null);
+    getVoiceAssistantSettings()
+      .then(apply)
+      .catch((err) =>
+        setError(err instanceof ApiRequestError ? err.message : 'Не удалось загрузить настройки голосового помощника'),
+      );
+  };
+
+  useEffect(load, []);
+
+  const capsDirty = !!state && VOICE_ASSISTANT_PLANS.some((p) => Number(caps[p]) !== state.caps[p].usd);
+  const voiceDirty = !!state && (provider !== state.voice.provider || voiceId.trim() !== (state.voice.voiceId ?? ''));
+
+  const save = async () => {
+    const parsed: Partial<Record<VoiceAssistantPlan, number>> = {};
+    for (const p of VOICE_ASSISTANT_PLANS) {
+      const raw = caps[p].trim();
+      const usd = Number(raw);
+      if (raw === '' || !Number.isFinite(usd) || usd < 0 || usd > 1000) {
+        setError(`Потолок ${p} — число долларов от 0 до 1000`);
+        return;
+      }
+      if (state && usd !== state.caps[p].usd) parsed[p] = usd;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      apply(
+        await setVoiceAssistantSettings({
+          ...(Object.keys(parsed).length ? { caps: parsed } : {}),
+          ...(voiceDirty ? { voice: { provider, voiceId: voiceId.trim() || null } } : {}),
+        }),
+      );
+      setSavedAt(Date.now());
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить настройки голосового помощника');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetVoice = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      apply(await setVoiceAssistantSettings({ voice: null }));
+      setSavedAt(Date.now());
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.message : 'Не удалось сбросить голос помощника');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selected = state?.providers.find((o) => o.key === provider);
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Голосовой помощник</h2>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Голос в мастере поздравления: распознавание реплик, разбор в поля брифа и озвучка подсказок. Потолок — на
+        человека в сутки (UTC), по тарифу, долей суточного лимита; исчерпан — голос выключается до конца суток, мастер
+        работает руками. 0 — голос для тарифа выключен. «Без входа» — один общий потолок на все сессии без владельца;
+        по умолчанию 0, то есть голосом можно только после входа через Telegram. Голос помощника — отдельный от
+        «Озвучки по умолчанию».
+        Изменения действуют сразу, без передеплоя.
+      </p>
+
+      {error && (
+        <p style={{ color: 'var(--signal-critical)', marginBottom: 12 }}>
+          {error}
+          {!state && (
+            <button type="button" onClick={load} style={{ marginLeft: 8 }}>
+              Повторить
+            </button>
+          )}
+        </p>
+      )}
+
+      {!state && !error && <p className="muted">Загрузка…</p>}
+
+      {state && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {VOICE_ASSISTANT_PLANS.map((p) => (
+            <label key={p} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {VOICE_ASSISTANT_CAP_LABEL[p]}
+              <input
+                type="number"
+                min={0}
+                max={1000}
+                step="0.01"
+                value={caps[p]}
+                disabled={saving}
+                style={{ width: 100 }}
+                onChange={(e) => setCaps((prev) => ({ ...prev, [p]: e.target.value }))}
+              />
+              <span className="muted" style={{ fontSize: 13 }}>
+                {state.caps[p].source === 'admin'
+                  ? `задано здесь; умолчание $${state.caps[p].defaultUsd}`
+                  : 'умолчание'}
+              </span>
+            </label>
+          ))}
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            Голос помощника
+            <select
+              aria-label="Провайдер голоса помощника"
+              value={provider}
+              disabled={saving}
+              onChange={(e) => setProvider(e.target.value as VoiceAssistantProviderKey)}
+            >
+              {state.providers.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {VOICE_ASSISTANT_PROVIDER_LABEL[o.key]}
+                  {o.configured ? ' — настроен' : ' — НЕ настроен на этом стенде'}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              placeholder="ID голоса (пусто — голос провайдера по умолчанию)"
+              value={voiceId}
+              disabled={saving}
+              maxLength={200}
+              style={{ width: 320 }}
+              onChange={(e) => setVoiceId(e.target.value)}
+            />
+          </label>
+          <p className="muted" style={{ fontSize: 13 }}>
+            {state.voice.source === 'admin' ? 'Голос задан здесь.' : 'Голос не менялся — Soniox, голос по умолчанию.'}{' '}
+            {selected && !selected.configured &&
+              'Внимание: у выбранного провайдера нет ключа на этом стенде — подсказки звучать не будут, останутся текстом.'}{' '}
+            {provider === 'resemble' && !voiceId.trim() &&
+              'У Resemble нет голоса по умолчанию — без ID голоса озвучка пропускается.'}
+          </p>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button type="button" disabled={saving || (!capsDirty && !voiceDirty)} onClick={() => void save()}>
+              Сохранить
+            </button>
+            {state.voice.source === 'admin' && (
+              <button type="button" disabled={saving} onClick={() => void resetVoice()}>
+                Вернуть голос по умолчанию
+              </button>
+            )}
+            {saving && <span className="muted">Сохраняю…</span>}
+            {savedAt && !saving && !capsDirty && !voiceDirty && <span className="muted">Сохранено</span>}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1661,6 +1873,7 @@ export default function SettingsPage() {
 
       <VoiceoverProviderCard />
       <SpeechRecognitionCard />
+      <VoiceAssistantCard />
       <AudioSeparationCard />
       <TutorialVoiceCard />
       <TutorialLocalesCard />

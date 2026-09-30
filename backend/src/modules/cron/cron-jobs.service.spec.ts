@@ -1436,3 +1436,23 @@ describe('CronJobsService.runBlog — генерация + перевод + бэ
     });
   });
 });
+
+describe('CronJobsService — аудиокеш голоса советника (Greeting 2.0 §4А.4)', () => {
+  it('суточная уборка убирает озвучку, не звучавшую 30 дней, вместе с файлом', async () => {
+    const { service, prisma, blobService } = build();
+    let listed = false;
+    (prisma as Record<string, unknown>).wizardHintAudio = {
+      findMany: jest.fn(async (args: { where: { lastUsedAt?: unknown } }) => {
+        if (!args.where.lastUsedAt) return [];
+        if (listed) return [];
+        listed = true;
+        return [{ key: 'k', pathname: 'wizard-hint-audio/k.mp3' }];
+      }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
+    await service.runCleanupSessions();
+    expect(blobService.deleteMany).toHaveBeenCalledWith([
+      'wizard-hint-audio/k.mp3',
+    ]);
+  });
+});

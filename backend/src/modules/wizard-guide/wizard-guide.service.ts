@@ -59,7 +59,17 @@ export interface WizardGuideState {
    * переключатель хуже отсутствующего, потому что обещает.
    */
   available: boolean;
+  /**
+   * Советник «голосом» (ТЗ Greeting 2.0 §4А.4, В-10). Всегда `false`,
+   * пока советник выключен: голос — второй канал того же советника, а
+   * не отдельная фича, и без первого у второго нет реплик.
+   */
+  voice: boolean;
 }
+
+/** Голос без советника включить нельзя — объяснение для 409. */
+export const AI_GUIDE_VOICE_NEEDS_GUIDE =
+  'Голос советника включается вместе с советником — сначала включите советы ИИ';
 
 @Injectable()
 export class WizardGuideService {
@@ -83,6 +93,7 @@ export class WizardGuideService {
         await this.progressOf(projectId, project.type),
       ),
       available: await this.available(),
+      voice: project.aiGuideEnabled && project.aiGuideVoice === true,
     };
   }
 
@@ -107,10 +118,45 @@ export class WizardGuideService {
     if (enabled !== project.aiGuideEnabled) {
       await this.prisma.project.update({
         where: { id: projectId },
-        data: { aiGuideEnabled: enabled },
+        // Выключение советника гасит и голос: иначе повторное включение
+        // советов через месяц молча включило бы и платную озвучку, о
+        // которой человек уже не помнит (В-10: голос по умолчанию
+        // выключен).
+        data: enabled
+          ? { aiGuideEnabled: true }
+          : { aiGuideEnabled: false, aiGuideVoice: false },
       });
       this.logger.log(
         `проект ${projectId}: советы ИИ ${enabled ? 'включены' : 'выключены'}`,
+      );
+    }
+    return this.stateOf(userId, projectId);
+  }
+
+  /**
+   * Переключатель «голосом» (ТЗ Greeting 2.0 §4А.5, В-10).
+   *
+   * В отличие от самой галочки советника, голос можно включить и
+   * выключить на любом шаге: он не меняет ни одной подсказки, только
+   * канал, которым она доходит, — «линия с начала» (§3.2) здесь не
+   * при чём. Нужен лишь включённый советник: без него говорить нечего.
+   */
+  async setVoice(
+    userId: string,
+    projectId: string,
+    voice: boolean,
+  ): Promise<WizardGuideState> {
+    const project = await this.ownProject(userId, projectId);
+    if (voice && !project.aiGuideEnabled) {
+      throw new ConflictException(AI_GUIDE_VOICE_NEEDS_GUIDE);
+    }
+    if (voice !== project.aiGuideVoice) {
+      await this.prisma.project.update({
+        where: { id: projectId },
+        data: { aiGuideVoice: voice },
+      });
+      this.logger.log(
+        `проект ${projectId}: голос советника ${voice ? 'включён' : 'выключен'}`,
       );
     }
     return this.stateOf(userId, projectId);
@@ -131,15 +177,18 @@ export class WizardGuideService {
   private async ownProject(
     userId: string,
     projectId: string,
-  ): Promise<{ type: string; aiGuideEnabled: boolean }> {
+  ): Promise<{ type: string; aiGuideEnabled: boolean; aiGuideVoice: boolean }> {
     // Владение проверяется здесь, явно: маршруты мини-аппа опознают
     // звонящего `TelegramIdentityGuard`, а принадлежность проекта
     // сервисы проверяют сами (конвенция `GreetingBriefController`).
-    const row: { type: string; aiGuideEnabled: boolean } | null =
-      await this.prisma.project.findFirst({
-        where: { id: projectId, userId, deletedAt: null },
-        select: { type: true, aiGuideEnabled: true },
-      });
+    const row: {
+      type: string;
+      aiGuideEnabled: boolean;
+      aiGuideVoice: boolean;
+    } | null = await this.prisma.project.findFirst({
+      where: { id: projectId, userId, deletedAt: null },
+      select: { type: true, aiGuideEnabled: true, aiGuideVoice: true },
+    });
     if (!row) throw new NotFoundException(PROJECT_NOT_FOUND);
     return row;
   }
