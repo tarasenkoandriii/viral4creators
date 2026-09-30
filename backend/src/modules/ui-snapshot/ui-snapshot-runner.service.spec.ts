@@ -30,7 +30,9 @@ jest.mock('./perceptual-hash', () => ({
 
 import { Logger } from '@nestjs/common';
 import {
+  COMPARISON_PAGE_CSS,
   FREEZE_MOTION_CSS,
+  HIDE_VIDEO_CONTENT_CSS,
   maskAndFreezeInPage,
   PERSONAL_TEXT_MASK_CSS,
   PERSONAL_TEXT_MASK_PREFIX,
@@ -1253,8 +1255,18 @@ describe('UiSnapshotRunnerService — кадр не зависит от моме
     ).not.toHaveProperty('concurrency');
     expect(page.evaluate).toHaveBeenCalledWith(
       maskAndFreezeInPage,
-      FREEZE_MOTION_CSS,
+      COMPARISON_PAGE_CSS,
     );
+  });
+
+  it('содержимое <video> в сравниваемом кадре прячется, место под плеер остаётся (мигание postprod-video)', () => {
+    expect(COMPARISON_PAGE_CSS).toContain(FREEZE_MOTION_CSS);
+    expect(COMPARISON_PAGE_CSS).toContain(HIDE_VIDEO_CONTENT_CSS);
+    expect(HIDE_VIDEO_CONTENT_CSS).toMatch(
+      /^video\{visibility:hidden!important\}$/,
+    );
+    // display:none сдвинул бы раскладку под плеером — её сравнивать нужно.
+    expect(HIDE_VIDEO_CONTENT_CSS).not.toContain('display');
   });
 
   it('экран не осел — кадр всё равно снимается и сравнивается, без ошибки маршрута', async () => {

@@ -287,6 +287,24 @@ export const FREEZE_MOTION_CSS =
   'caret-color:transparent!important}';
 
 /**
+ * Содержимое `<video>` в сравниваемом кадре — всегда пустое место.
+ *
+ * Найдено по снимкам прода 30.09.2026 (страница «Снимки интерфейса»):
+ * после заморозки анимаций «мигал» только `postprod-video`. Пара
+ * «было/стало» показала причину: плеер ролика в кадре обычно чёрный
+ * (первый кадр ещё не декодирован, `preload="metadata"`), но изредка
+ * успевал подгрузиться — и в снимок попадали кадр ролика и полоса
+ * управления, а через тик снова чёрный прямоугольник. Это содержимое
+ * ролика пользователя, а не интерфейс: сравнивать его нечего.
+ * `visibility:hidden`, а не `display:none` — место под плеер и вся
+ * раскладка вокруг остаются в кадре и по-прежнему сравниваются.
+ */
+export const HIDE_VIDEO_CONTENT_CSS = 'video{visibility:hidden!important}';
+
+/** Всё, что вставляется в страницу перед сравниваемым снимком. */
+export const COMPARISON_PAGE_CSS = FREEZE_MOTION_CSS + HIDE_VIDEO_CONTENT_CSS;
+
+/**
  * Оседание сравниваемого кадра — вторая половина того же разбора.
  *
  * `goto(..., networkidle2)` отпускает, когда в полёте НЕ БОЛЕЕ ДВУХ
@@ -859,7 +877,7 @@ export class UiSnapshotRunnerService {
         // `FREEZE_MOTION_CSS`: без этого кадр зависел от того, КОГДА
         // он снят, и крон «мигал» парами.
         await settleForComparison(page);
-        await page.evaluate(maskAndFreezeInPage, FREEZE_MOTION_CSS);
+        await page.evaluate(maskAndFreezeInPage, COMPARISON_PAGE_CSS);
       }
 
       const screenshot = await page.screenshot({ type: 'png' });
