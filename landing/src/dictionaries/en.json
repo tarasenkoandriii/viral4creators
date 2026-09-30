@@ -315,7 +315,7 @@
   "greetingsLanding": {
     "meta": {
       "title": "Make a greeting video online in five minutes — viral4creators",
-      "description": "Pick an occasion, name the recipient — the service builds a personal greeting video. Birthday, wedding, anniversary, graduation, housewarming and nineteen more occasions. Free, no sign-up.",
+      "description": "Pick an occasion, name the recipient — the service builds a personal greeting video. Birthday, wedding, anniversary, graduation, housewarming and nineteen more occasions. Sign in with Telegram, no separate sign-up.",
       "keywords": [
         "greeting video",
         "birthday video message",
@@ -326,42 +326,61 @@
       ]
     },
     "hero": {
-      "badge": "Free · No sign-up",
+      "badge": "Free for now · Sign in with Telegram",
       "title": "A personal greeting video in five minutes",
       "subtitle": "Birthday, wedding, anniversary, graduation, housewarming — pick the occasion, name the recipient, and the service builds a video with words meant for them.",
       "cta": "Make a greeting",
-      "note": "Runs in the browser and as a Telegram Mini App — nothing to install."
+      "note": "Runs in the browser and as a Telegram Mini App — nothing to install. All you need is a Telegram account: inside Telegram you are signed in automatically, in a browser with the Telegram login button."
     },
     "samples": {
       "title": "What it looks like",
-      "lead": "Videos their authors published themselves and allowed to be shown here."
+      "lead": "Videos their authors published as a page themselves; the editors pick which ones appear here."
+    },
+    "how": {
+      "title": "How it works",
+      "lead": "Four screens of the wizard, from the occasion to the finished video. Below are diagrams of those screens, not screenshots of the interface.",
+      "leadReal": "Four screens of the wizard, from the occasion to the finished video. Below are real frames from the product.",
+      "shotAlt": "Greeting wizard screen",
+      "items": [
+        {
+          "title": "Occasion and brief",
+          "text": "The occasion, the recipient's name, who it is from and the tone. This is also where you pick the greeting language — any of five — and type your own text if you have one: the service then leaves it as is."
+        },
+        {
+          "title": "Video character",
+          "text": "Voice, music, on-screen captions and number of scenes — in one block. It adapts to the occasion: whatever does not fit it is unavailable, and the screen says why."
+        },
+        {
+          "title": "Script",
+          "text": "The service writes a short text for the occasion and tone. You see all of it, and before rendering you can edit it by hand or have it rewritten."
+        },
+        {
+          "title": "Finished video",
+          "text": "A vertical 9:16 video. Download it, send it as a link or publish it as a page of its own."
+        }
+      ]
     },
     "occasions": {
       "title": "Twenty-four occasions",
-      "lead": "Pick yours — it decides not only the label but what the service actually writes.",
-      "sensitiveNote": "Three of them — an apology, words of support and a condolence — are handled differently: a playful tone is not offered, and the text does not congratulate."
-    },
-    "steps": {
-      "title": "Four steps",
-      "lead": "From the occasion to a finished file.",
-      "items": [
-        {
-          "title": "Describe the occasion",
-          "text": "Occasion, recipient's name, who it is from, and the tone. You can write your own text right away — then the AI leaves it alone."
+      "lead": "Pick yours — it decides what the service writes and how the video looks.",
+      "groups": {
+        "festive": {
+          "title": "Holidays",
+          "text": "A festive frame and any of three tones: warm, playful or formal."
         },
-        {
-          "title": "Add photos",
-          "text": "Up to seven images — the recipient, a place, anything. This step is optional: the video works without them too."
+        "calm": {
+          "title": "Not a party",
+          "text": "Warm and solemn occasions: no balloons, confetti or other party decorations in the frame."
         },
-        {
-          "title": "Check the script",
-          "text": "The service writes a short text for the occasion and tone. You see all of it and can edit it before rendering."
-        },
-        {
-          "title": "Get the video",
-          "text": "Download the finished video, send it as a link, or publish it as its own page."
+        "delicate": {
+          "title": "Delicate",
+          "text": "The text does not congratulate; the playful tone, stickers and festive catalogue music are unavailable."
         }
-      ]
+      },
+      "other": {
+        "title": "Your own occasion",
+        "text": "Describe it in words — the service will ask what kind of event it is by mood. If the description makes it clear the occasion is one of mourning, the video is handled more strictly whatever was chosen."
+      }
     },
     "features": {
       "title": "What the video is made of",
@@ -389,9 +408,56 @@
         }
       ]
     },
+    "audience": {
+      "title": "Who it is for",
+      "items": [
+        {
+          "title": "Family",
+          "text": "Mum's birthday, your parents' anniversary, the first day at school, a new baby — a video with the name and words for one particular person."
+        },
+        {
+          "title": "Friends",
+          "text": "A wedding, a housewarming, a graduation — or a playful greeting when the occasion allows it."
+        },
+        {
+          "title": "Colleagues and HR",
+          "text": "A promotion, a retirement, a farewell to a colleague, a corporate greeting — in a formal tone or a warm one. Each video is for one recipient."
+        },
+        {
+          "title": "Delicate occasions",
+          "text": "An apology, words of support for someone who is ill, a condolence. The service writes with restraint and does not congratulate, and the frame and music stay calm."
+        }
+      ]
+    },
+    "privacy": {
+      "title": "Your data and delicate occasions",
+      "lead": "In short, what happens to what you enter.",
+      "items": [
+        {
+          "title": "The recipient's name",
+          "text": "It is needed so the text addresses the person. It does not land in a public page title on its own: you write the title yourself when publishing, and the name appears there only if you type it."
+        },
+        {
+          "title": "Photos",
+          "text": "Up to seven images: the frame is drawn and the video is built from them, and for that they are passed to the generation models. A photo you delete at the upload step is erased from storage."
+        },
+        {
+          "title": "Surprise",
+          "text": "The video is an ordinary file and an ordinary link — you decide when to send it. The public page opens with a cover: the video starts when the recipient taps “Open” themselves. Scheduled delivery does not exist yet."
+        },
+        {
+          "title": "Condolence",
+          "text": "For mourning and delicate occasions the service does not congratulate, joke or add party decorations, and the text it writes is also checked for a festive tone. Your own text is never blocked for its style — those are your words."
+        },
+        {
+          "title": "Publishing",
+          "text": "A page for the video appears only if you publish it, and you can take it down — its files are deleted with it. A video reaches the showcase on this page only if the editors pick it."
+        }
+      ]
+    },
     "price": {
       "title": "What it costs",
-      "text": "Nothing right now: all three plans are free and switch inside the app. The plan decides the resolution — 480p, 720p or 1080p."
+      "text": "The plans are free right now and switch inside the app. The plan decides the video resolution — 480p, 720p or 1080p (with attached photos usually no higher than 720p) — and the daily generation limit: once it is used up, you can continue the next day."
     },
     "faq": {
       "title": "Frequently asked",
@@ -402,11 +468,15 @@
         },
         {
           "question": "What language will the greeting be in?",
-          "answer": "In the one you choose: English, German, Spanish, Ukrainian or Russian. It defaults to the app language, but the greeting language is a separate setting — the service writes and voices the text in it."
+          "answer": "In any of five: English, German, Spanish, Ukrainian or Russian. The greeting language is chosen in the brief and defaults to the app language; the service writes and voices the text in it."
+        },
+        {
+          "question": "Where do I type my own text?",
+          "answer": "At the brief step, before the script is built: the service then takes it as is and does not rewrite it. A script that has already been built can be edited by hand at the “Script” step — before rendering."
         },
         {
           "question": "What happens to the photos and the recipient's name?",
-          "answer": "They are used for your video only. The recipient's name never lands in a public title on its own: if you publish the video as a page, the title carries the occasion, and the name only if you put it there yourself. Details are in the terms of use."
+          "answer": "They are used for your video only. The recipient's name never lands in a public title on its own: if you publish the video as a page, you write the title yourself, and the name appears there only if you type it. Details are in the terms of use."
         },
         {
           "question": "Can I keep it a surprise?",
@@ -414,11 +484,15 @@
         },
         {
           "question": "What if I don't like the result?",
-          "answer": "You can edit the script or have it rewritten before rendering, and render the video again. If the video is already finished, an edit creates a new version and the finished one is kept. All plans are free right now, so re-rendering costs nothing."
+          "answer": "You can edit the script by hand or have it rewritten before rendering, and render the video again. If the video is already finished, an edit creates a new version and the finished one is kept. Re-rendering costs no money: if you have purchased generations, one of them is used; otherwise the attempt counts toward the plan's daily limit."
         },
         {
           "question": "Can I record something other than a greeting?",
-          "answer": "Yes. Besides holidays there is an apology, words of support for someone who is ill, and a condolence. For those the service writes differently and does not congratulate, and the playful tone and festive catalogue music are unavailable. If you describe your own occasion, say a funeral, the service treats it as mourning too."
+          "answer": "Yes. Besides holidays there is an apology, words of support for someone who is ill, and a condolence. For those the service writes differently and does not congratulate, and the playful tone, stickers and festive catalogue music are unavailable. If you describe your own occasion, say a funeral, the service treats it as mourning too."
+        },
+        {
+          "question": "Do I need to sign up?",
+          "answer": "Not separately — you need a Telegram account. Inside Telegram you are signed in automatically; in an ordinary browser, use the Telegram login button. Without signing in the greeting cannot be saved: the project belongs to your account."
         }
       ]
     },
@@ -426,6 +500,28 @@
       "title": "Who are we greeting?",
       "text": "Pick the occasion and the name — the service does the rest.",
       "cta": "Make a greeting"
+    },
+    "steps": {
+      "title": "Four steps",
+      "lead": "From the occasion to a finished file.",
+      "items": [
+        {
+          "title": "Describe the occasion",
+          "text": "Occasion, recipient's name, who it is from, and the tone. You can write your own text right away — then the AI leaves it alone."
+        },
+        {
+          "title": "Add photos",
+          "text": "Up to seven images — the recipient, a place, anything. This step is optional: the video works without them too."
+        },
+        {
+          "title": "Check the script",
+          "text": "The service writes a short text for the occasion and tone. You see all of it and can edit it before rendering."
+        },
+        {
+          "title": "Get the video",
+          "text": "Download the finished video, send it as a link, or publish it as its own page."
+        }
+      ]
     },
     "backToMain": "About the service and other video types →"
   },

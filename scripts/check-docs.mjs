@@ -2000,6 +2000,109 @@ function checkGuideSeams() {
     }
   }
 
+  // 16-бис. OG-карточки страницы поздравлений — тот же приём, что шов 16:
+  //     `scripts/og-greetings-cards.mjs` запекает заголовок и бейдж
+  //     первого экрана `greetingsLanding.hero` и пишет отпечаток рядом.
+  //     Поменяли текст — перезапустите генератор (этап H ТЗ Greeting 2.0).
+  const greetOgLockPath = "scripts/assets/og-greetings-cards.lock.json";
+  const greetOgLock = JSON.parse(read(greetOgLockPath));
+  for (const locale of ["ru", "uk", "en", "de", "es"]) {
+    const hero = JSON.parse(read(`landing/src/dictionaries/${locale}.json`))
+      .greetingsLanding.hero;
+    const actual = createHash("sha256")
+      .update(`${hero.title}\n${hero.badge ?? ""}`)
+      .digest("hex")
+      .slice(0, 16);
+    if (greetOgLock[locale] !== actual) {
+      problems.push(
+        `OG-карточка greetings-${locale}.jpg нарисована по старому тексту ` +
+          "первого экрана — перезапустите `node scripts/og-greetings-cards.mjs` " +
+          "и закоммитьте картинки вместе с " +
+          greetOgLockPath,
+      );
+    }
+  }
+
+  // 17-бис. Кадры страницы поздравлений: список локалей в
+  //     `landing/src/lib/greeting-frames.ts` ↔ файлы `greet-shot-*` на
+  //     диске ↔ бюджеты. Те же две тихие ошибки, что в шве 17 (объявили
+  //     локаль без файлов — 404 и ложная оговорка; положили файлы без
+  //     локали — мёртвый груз), плюс бюджет схем волны 1 (§5.3 ТЗ Greeting
+  //     2.0: hero ≤90 КБ, кадр ≤120 КБ). Текстовую сторону и правила
+  //     рисования держит `landing/scripts/greeting-frames.test.ts`.
+  const greetFramesSrc = read("landing/src/lib/greeting-frames.ts");
+  const greetListMatch = greetFramesSrc.match(
+    /GREETING_REAL_FRAME_LOCALES: readonly Locale\[\] = \[([^\]]*)\]/,
+  );
+  if (!greetListMatch) {
+    problems.push(
+      "не удалось разобрать GREETING_REAL_FRAME_LOCALES в landing/src/lib/greeting-frames.ts " +
+        "— поправьте регулярку шва 17-бис в scripts/check-docs.mjs (сломан шов, а не код)",
+    );
+  }
+  const greetShotLocales = new Set(
+    (greetListMatch?.[1] ?? "")
+      .split(",")
+      .map((x) => x.trim().replace(/^'|'$/g, ""))
+      .filter(Boolean),
+  );
+  const greetDirFiles = fs.readdirSync(path.join(ROOT, shotDir));
+  const greetShotRe = /^greet-shot-[a-z]{2}-[1-4]\.avif$/;
+  const greetOnDisk = new Map();
+  for (const file of greetDirFiles) {
+    if (!/^greet-shot-/.test(file)) continue;
+    if (!greetShotRe.test(file)) {
+      problems.push(
+        `${shotDir}/${file}: имя не похоже на кадр мастера поздравлений — ` +
+          "ожидается greet-shot-<локаль>-<1..4>.avif; страница такой файл не ищет",
+      );
+      continue;
+    }
+    const locale = file.split("-")[2];
+    greetOnDisk.set(locale, (greetOnDisk.get(locale) ?? 0) + 1);
+    const bytes = fs.statSync(path.join(ROOT, shotDir, file)).size;
+    if (bytes > SHOT_MAX_BYTES) {
+      problems.push(
+        `${shotDir}/${file} весит ${Math.round(bytes / 1024)} КБ при бюджете ` +
+          `${SHOT_MAX_BYTES / 1024} КБ`,
+      );
+    }
+  }
+  for (const locale of greetShotLocales) {
+    const have = greetOnDisk.get(locale) ?? 0;
+    if (have !== 4) {
+      problems.push(
+        `локаль «${locale}» объявлена в GREETING_REAL_FRAME_LOCALES, но кадров на диске ` +
+          `${have} из 4 — страница пообещает настоящие кадры и отдаст 404`,
+      );
+    }
+  }
+  for (const [locale, count] of greetOnDisk) {
+    if (!greetShotLocales.has(locale)) {
+      problems.push(
+        `в ${shotDir} лежат кадры поздравлений локали «${locale}» (${count} шт.), но её нет в ` +
+          "GREETING_REAL_FRAME_LOCALES — страница их не показывает",
+      );
+    }
+  }
+  for (const [file, max] of [
+    ["greet-hero.svg", 90 * 1024],
+    ["greet-frame-1.svg", 120 * 1024],
+    ["greet-frame-2.svg", 120 * 1024],
+    ["greet-frame-3.svg", 120 * 1024],
+    ["greet-frame-4.svg", 120 * 1024],
+  ]) {
+    const full = path.join(ROOT, shotDir, file);
+    if (!fs.existsSync(full)) {
+      problems.push(`${shotDir}/${file} нет — страница поздравлений отдаст 404 вместо схемы`);
+    } else if (fs.statSync(full).size > max) {
+      problems.push(
+        `${shotDir}/${file} весит ${Math.round(fs.statSync(full).size / 1024)} КБ ` +
+          `при бюджете ${max / 1024} КБ`,
+      );
+    }
+  }
+
   // ── Длительность ролика обучалки считается ОДИН раз, в плане ──────
   //
   // Этап A ТЗ `docs-tz/TZ-Tutorial-Video-Voiced.md`. До него писатель
@@ -2876,6 +2979,64 @@ function checkGuideSeams() {
     problems.push(
       "список регистров пуст — шов на порядок строгости ничего не сверил",
     );
+  }
+
+  /**
+   * Шов «группы поводов на лендинге = регистры каталога» (этап H ТЗ
+   * Greeting 2.0, §5.2 п.4 и §8.4).
+   *
+   * Страница поздравлений делит поводы на «Праздники / Без праздника /
+   * Деликатные» по регистру, и подпись группы обещает то, что делает
+   * политика регистра (шутки, наклейки, праздничная музыка). Регистры на
+   * лендинге — копия: пакет не может импортировать бэкенд. Копия, которую
+   * никто не сверяет, отстаёт молча — и страница обещает «без шуток» над
+   * поводом, где сервер их разрешает. Подробную сверку (обещания групп ↔
+   * `REGISTER_POLICY`, тоны) делает `landing/scripts/greeting-occasions.test.ts`;
+   * здесь — узкая проверка из корня, чтобы расхождение ловилось и там,
+   * где тесты лендинга не гоняют.
+   */
+  {
+    const specs =
+      /export const GREETING_OCCASION_SPECS[\s\S]*?> = \{([\s\S]*?)\n\};/.exec(
+        read("backend/src/common/greeting-occasions.ts"),
+      )?.[1] ?? "";
+    const backendReg = new Map(
+      [...specs.matchAll(/^ {2}([A-Z_]+): \{[\s\S]*?register: '([A-Z_]+)'/gm)].map(
+        (m) => [m[1], m[2]],
+      ),
+    );
+    const copyBody =
+      /GREETING_OCCASION_REGISTER = \{([\s\S]*?)\} as const/.exec(
+        read("landing/src/lib/greeting-occasions.ts"),
+      )?.[1] ?? "";
+    const landingReg = new Map(
+      [...copyBody.matchAll(/^ {2}([A-Z_]+): '([A-Z_]+)',/gm)].map((m) => [
+        m[1],
+        m[2],
+      ]),
+    );
+    if (backendReg.size === 0 || landingReg.size === 0) {
+      // Молчащий шов хуже отсутствующего: пустой разбор — «всё совпало».
+      problems.push(
+        "шов групп поводов не разобрал каталог бэкенда или копию лендинга " +
+          "(landing/src/lib/greeting-occasions.ts) — поправьте регулярки шва, а не код",
+      );
+    }
+    for (const [code, reg] of backendReg) {
+      if (landingReg.get(code) !== reg) {
+        problems.push(
+          `повод ${code}: в каталоге бэкенда регистр ${reg}, на лендинге ` +
+            `${landingReg.get(code) ?? "нет"} — группа на странице обещает не то`,
+        );
+      }
+    }
+    for (const code of landingReg.keys()) {
+      if (!backendReg.has(code)) {
+        problems.push(
+          `повод ${code} есть на лендинге (greeting-occasions.ts), но не в каталоге бэкенда`,
+        );
+      }
+    }
   }
 
   if (problems.length > 0) {

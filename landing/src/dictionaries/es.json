@@ -315,7 +315,7 @@
   "greetingsLanding": {
     "meta": {
       "title": "Video de felicitación online en cinco minutos — viral4creators",
-      "description": "Elige la ocasión, nombra al destinatario y el servicio arma un video de felicitación personal. Cumpleaños, boda, aniversario, graduación, estreno de casa y diecinueve ocasiones más. Gratis, sin registro.",
+      "description": "Elige la ocasión, nombra al destinatario y el servicio arma un video de felicitación personal. Cumpleaños, boda, aniversario, graduación, estreno de casa y diecinueve ocasiones más. Acceso con Telegram, sin registro aparte.",
       "keywords": [
         "video de felicitación",
         "video de cumpleaños",
@@ -326,42 +326,61 @@
       ]
     },
     "hero": {
-      "badge": "Gratis · Sin registro",
+      "badge": "Gratis por ahora · Acceso con Telegram",
       "title": "Un video de felicitación personal en cinco minutos",
       "subtitle": "Cumpleaños, boda, aniversario, graduación, estreno de casa: elige la ocasión, nombra al destinatario y el servicio arma un video con palabras pensadas para él.",
       "cta": "Crear felicitación",
-      "note": "Funciona en el navegador y como Telegram Mini App: no hay nada que instalar."
+      "note": "Funciona en el navegador y como Telegram Mini App: no hay nada que instalar. Solo necesitas una cuenta de Telegram: dentro de Telegram el acceso es automático; en el navegador, con el botón de acceso de Telegram."
     },
     "samples": {
       "title": "Cómo se ve",
-      "lead": "Videos que sus autores publicaron por su cuenta y permitieron mostrar aquí."
+      "lead": "Videos que sus autores publicaron por su cuenta como página; la redacción elige cuáles aparecen aquí."
+    },
+    "how": {
+      "title": "Cómo funciona",
+      "lead": "Cuatro pantallas del asistente, de la ocasión al video terminado. Abajo hay esquemas de esas pantallas, no capturas de la interfaz.",
+      "leadReal": "Cuatro pantallas del asistente, de la ocasión al video terminado. Abajo hay fotogramas reales del producto.",
+      "shotAlt": "Pantalla del asistente de felicitaciones",
+      "items": [
+        {
+          "title": "Ocasión y brief",
+          "text": "La ocasión, el nombre del destinatario, de parte de quién y el tono. Aquí también eliges el idioma de la felicitación —cualquiera de cinco— y escribes tu propio texto si lo tienes: el servicio no lo reescribe."
+        },
+        {
+          "title": "Carácter del video",
+          "text": "Voz, música, rótulos en pantalla y número de escenas, en un solo bloque. Se adapta a la ocasión: lo que no encaja no está disponible, y la pantalla explica por qué."
+        },
+        {
+          "title": "Guion",
+          "text": "El servicio escribe un texto corto según la ocasión y el tono. Se ve entero y, antes de generar, puedes corregirlo a mano o pedir que se reescriba."
+        },
+        {
+          "title": "Video terminado",
+          "text": "Un video vertical 9:16. Puedes descargarlo, enviarlo como enlace o publicarlo como página propia."
+        }
+      ]
     },
     "occasions": {
       "title": "Veinticuatro ocasiones",
-      "lead": "Elige la tuya: de ella depende no solo la etiqueta, sino lo que el servicio escribe realmente.",
-      "sensitiveNote": "Tres de ellas —disculpa, palabras de apoyo y pésame— el servicio las trata de otra manera: no ofrece tono humorístico y el texto no felicita."
-    },
-    "steps": {
-      "title": "Cuatro pasos",
-      "lead": "De la ocasión al archivo final.",
-      "items": [
-        {
-          "title": "Cuenta la ocasión",
-          "text": "Ocasión, nombre del destinatario, de parte de quién y el tono. Puedes escribir tu propio texto de una vez: entonces la IA no lo toca."
+      "lead": "Elige la tuya: de ella depende lo que escribe el servicio y cómo se ve el video.",
+      "groups": {
+        "festive": {
+          "title": "Fiestas",
+          "text": "Un fotograma festivo y cualquiera de los tres tonos: cálido, humorístico o formal."
         },
-        {
-          "title": "Añade fotos",
-          "text": "Hasta siete imágenes: el destinatario, un lugar, lo que quieras. El paso es opcional: el video también se arma sin ellas."
+        "calm": {
+          "title": "Sin fiesta",
+          "text": "Ocasiones cálidas y solemnes: sin globos, confeti ni otra decoración de fiesta en el fotograma."
         },
-        {
-          "title": "Revisa el guion",
-          "text": "El servicio escribe un texto corto según la ocasión y el tono. Se ve entero y puedes corregirlo a mano antes de generar."
-        },
-        {
-          "title": "Recibe el video",
-          "text": "El video final se puede descargar, enviar por enlace o publicar como página propia."
+        "delicate": {
+          "title": "Delicadas",
+          "text": "El texto no felicita; el tono humorístico, los stickers y la música festiva del catálogo no están disponibles."
         }
-      ]
+      },
+      "other": {
+        "title": "Tu propia ocasión",
+        "text": "Descríbela con palabras: el servicio te preguntará qué tipo de evento es por su ánimo. Si la descripción deja claro que es un duelo, el video se trata con más sobriedad, se haya elegido lo que se haya elegido."
+      }
     },
     "features": {
       "title": "De qué se compone el vídeo",
@@ -389,9 +408,56 @@
         }
       ]
     },
+    "audience": {
+      "title": "Para quién",
+      "items": [
+        {
+          "title": "Familia",
+          "text": "El cumpleaños de mamá, el aniversario de tus padres, el primer día de colegio, un bebé: un video con el nombre y las palabras para una persona concreta."
+        },
+        {
+          "title": "Amigos",
+          "text": "Una boda, un estreno de casa, una graduación, o una felicitación con humor cuando la ocasión lo permite."
+        },
+        {
+          "title": "Compañeros y RR. HH.",
+          "text": "Un ascenso, una jubilación, la despedida de un compañero, una felicitación corporativa, en tono formal o cálido. Cada video es para un destinatario."
+        },
+        {
+          "title": "Ocasiones delicadas",
+          "text": "Una disculpa, palabras de apoyo para alguien enfermo, un pésame. El servicio escribe con mesura y no felicita, y el fotograma y la música se mantienen serenos."
+        }
+      ]
+    },
+    "privacy": {
+      "title": "Datos y ocasiones delicadas",
+      "lead": "En breve, qué pasa con lo que introduces.",
+      "items": [
+        {
+          "title": "Nombre del destinatario",
+          "text": "Hace falta para que el texto se dirija a la persona. No llega por sí solo al título de una página pública: el título lo escribes tú al publicar, y el nombre aparece ahí solo si lo escribes."
+        },
+        {
+          "title": "Fotos",
+          "text": "Hasta siete imágenes: con ellas se dibuja el fotograma y se arma el video, y para eso se envían a los modelos de generación. Una foto que borras en el paso de carga se elimina del almacenamiento."
+        },
+        {
+          "title": "Sorpresa",
+          "text": "El video es un archivo normal y un enlace normal: cuándo enviarlo lo decides tú. La página pública se abre con una portada: el video empieza cuando el destinatario pulsa «Abrir». La entrega programada todavía no existe."
+        },
+        {
+          "title": "Pésame",
+          "text": "En ocasiones de duelo y delicadas el servicio no felicita, no bromea ni pone decoración de fiesta, y el texto que escribe se revisa además por si suena festivo. Tu propio texto nunca se bloquea por su estilo: son tus palabras."
+        },
+        {
+          "title": "Publicación",
+          "text": "La página del video existe solo si la publicas, y puedes retirarla: con ella se borran sus archivos. Un video llega a la vitrina de esta página solo si lo elige la redacción."
+        }
+      ]
+    },
     "price": {
       "title": "Cuánto cuesta",
-      "text": "Por ahora nada: los tres planes son gratuitos y se cambian dentro de la aplicación. El plan define la resolución: 480p, 720p o 1080p."
+      "text": "Los planes son gratuitos por ahora y se cambian dentro de la aplicación. El plan define la resolución del video —480p, 720p o 1080p (con fotos adjuntas, normalmente no más de 720p)— y el límite diario de generaciones: cuando se agota, puedes seguir al día siguiente."
     },
     "faq": {
       "title": "Preguntas frecuentes",
@@ -402,11 +468,15 @@
         },
         {
           "question": "¿En qué idioma será la felicitación?",
-          "answer": "En el que elijas: español, inglés, alemán, ucraniano o ruso. Por defecto es el idioma de la app, pero el idioma de la felicitación se elige aparte: en él el servicio escribe y locuta el texto."
+          "answer": "En cualquiera de cinco: español, inglés, alemán, ucraniano o ruso. El idioma de la felicitación se elige en el brief y por defecto es el de la app; en él el servicio escribe y locuta el texto."
+        },
+        {
+          "question": "¿Dónde escribo mi propio texto?",
+          "answer": "En el paso del brief, antes de que se arme el guion: el servicio lo toma tal cual y no lo reescribe. Un guion ya armado se puede corregir a mano en el paso «Guion», antes de generar."
         },
         {
           "question": "¿Qué pasa con las fotos y el nombre del destinatario?",
-          "answer": "Se usan solo para tu video. El nombre del destinatario nunca aparece por sí solo en un título público: si publicas el video como página, el título lleva la ocasión, y el nombre solo si tú lo escribes ahí. Los detalles están en las condiciones de uso."
+          "answer": "Se usan solo para tu video. El nombre del destinatario nunca aparece por sí solo en un título público: si publicas el video como página, el título lo escribes tú, y el nombre aparece ahí solo si lo escribes. Los detalles están en las condiciones de uso."
         },
         {
           "question": "¿Puedo mantenerlo en secreto?",
@@ -414,11 +484,15 @@
         },
         {
           "question": "¿Y si no me gusta el resultado?",
-          "answer": "Puedes corregir el guion o pedir que se reescriba antes de generar, y volver a generar el video. Si el video ya está listo, un cambio crea una nueva versión y el terminado se conserva. Ahora mismo todos los planes son gratuitos, así que volver a generar no cuesta nada."
+          "answer": "Puedes corregir el guion a mano o pedir que se reescriba antes de generar, y volver a generar el video. Si el video ya está listo, un cambio crea una nueva versión y el terminado se conserva. Volver a generar no cuesta dinero: si tienes generaciones compradas, se usa una de ellas; si no, el intento cuenta para el límite diario del plan."
         },
         {
           "question": "¿Puedo grabar algo que no sea una felicitación?",
-          "answer": "Sí. Además de las fiestas hay una disculpa, palabras de apoyo para alguien enfermo y un pésame. Para esos el servicio escribe de otra forma y no felicita, y el tono humorístico y la música festiva del catálogo no están disponibles. Si describes tu propia ocasión, por ejemplo un funeral, el servicio también la trata como duelo."
+          "answer": "Sí. Además de las fiestas hay una disculpa, palabras de apoyo para alguien enfermo y un pésame. Para esos el servicio escribe de otra forma y no felicita, y el tono humorístico, los stickers y la música festiva del catálogo no están disponibles. Si describes tu propia ocasión, por ejemplo un funeral, el servicio también la trata como duelo."
+        },
+        {
+          "question": "¿Hace falta registrarse?",
+          "answer": "No por separado: necesitas una cuenta de Telegram. Dentro de Telegram el acceso es automático; en un navegador normal, con el botón de acceso de Telegram. Sin iniciar sesión la felicitación no se puede guardar: el proyecto pertenece a tu cuenta."
         }
       ]
     },
@@ -426,6 +500,28 @@
       "title": "¿A quién felicitamos?",
       "text": "Elige la ocasión y el nombre: el resto lo hace el servicio.",
       "cta": "Crear felicitación"
+    },
+    "steps": {
+      "title": "Cuatro pasos",
+      "lead": "De la ocasión al archivo final.",
+      "items": [
+        {
+          "title": "Cuenta la ocasión",
+          "text": "Ocasión, nombre del destinatario, de parte de quién y el tono. Puedes escribir tu propio texto de una vez: entonces la IA no lo toca."
+        },
+        {
+          "title": "Añade fotos",
+          "text": "Hasta siete imágenes: el destinatario, un lugar, lo que quieras. El paso es opcional: el video también se arma sin ellas."
+        },
+        {
+          "title": "Revisa el guion",
+          "text": "El servicio escribe un texto corto según la ocasión y el tono. Se ve entero y puedes corregirlo a mano antes de generar."
+        },
+        {
+          "title": "Recibe el video",
+          "text": "El video final se puede descargar, enviar por enlace o publicar como página propia."
+        }
+      ]
     },
     "backToMain": "Sobre el servicio y otros tipos de video →"
   },

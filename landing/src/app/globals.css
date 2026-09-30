@@ -2562,3 +2562,96 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
   min-height: 44px;
   margin: -11px 0;
 }
+
+/* ── Страница поздравлений, этап H (greeting.*) ───────────────────────
+   Всё под `.greeting-page` (класс на `<main>` страницы поздравлений) —
+   по той же причине, что `.tutorial-page` выше: `globals.css` один на
+   все площадки, и правила для `h1`/`h2`/`.hero` без области действия
+   уехали бы на главную, обучалку, блог и правовые страницы. Общие
+   раскладки кадров (`.frames-grid`, `.frame-card`, `.frame-shot`,
+   `.hero-grid`, `.hero-shot`, `.audience-grid`, `.login-grid`) уже
+   объявлены без области и переиспользуются как есть; здесь только то,
+   чего у них нет. Гарнитура не меняется — те же причины, что у образца
+   (§5.5 ТЗ Greeting 2.0: ни веб-шрифтов, ни анимаций по скроллу). */
+
+.greeting-page h1,
+.greeting-page h2 {
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.greeting-page section h2 {
+  font-size: clamp(28px, 2.6vw, 34px);
+}
+
+.greeting-page p {
+  text-wrap: pretty;
+}
+
+/* Мера строки: немецкий — самая длинная локаль, и подписи карточек
+   «Данные и деликатные поводы» читаются сплошным текстом. */
+.greeting-page .faq p,
+.greeting-page .occasion-group-text {
+  max-width: 68ch;
+}
+
+/* Первый экран: вторая колонка под кадр. Сетки-фона, как у обучалки,
+   нет намеренно — «технический» фон продаёт инструмент, а здесь
+   человек покупает подарок; мягкое тёплое свечение за кадром вместо
+   неё. Чистый CSS, ноль байт. */
+.greeting-page .hero {
+  position: relative;
+  overflow: hidden;
+}
+
+.greeting-page .hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 50% 60% at 78% 45%,
+    var(--accent-soft),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.greeting-page .hero .wrap {
+  position: relative;
+  z-index: 1;
+}
+
+@media (min-width: 900px) {
+  .greeting-page .hero {
+    padding: 72px 0 56px;
+  }
+}
+
+/* Группы поводов: заголовок группы, одна строка о том, что сервер
+   делает для её регистра, и плитки. Плитки — общие `.occasion-grid`/
+   `.occasion-tile`, их не трогаем. */
+.greeting-page .occasion-groups {
+  display: grid;
+  gap: 28px;
+  margin-top: 8px;
+}
+
+.greeting-page .occasion-group h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  color: var(--fg);
+}
+
+.greeting-page .occasion-group-text {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Деликатные — левой линейкой, а не цветом: цвет прочитался бы как
+   «предупреждение», а это не опасность, а другой способ писать. */
+.greeting-page .occasion-group-delicate,
+.greeting-page .occasion-group-other {
+  border-left: 2px solid var(--border);
+  padding-left: 16px;
+}

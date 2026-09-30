@@ -315,7 +315,7 @@
   "greetingsLanding": {
     "meta": {
       "title": "Grußvideo online in fünf Minuten erstellen — viral4creators",
-      "description": "Anlass wählen, Empfänger nennen — der Dienst erstellt ein persönliches Grußvideo. Geburtstag, Hochzeit, Jahrestag, Abschluss, Einweihungsfeier und neunzehn weitere Anlässe. Kostenlos, ohne Registrierung.",
+      "description": "Anlass wählen, Empfänger nennen — der Dienst erstellt ein persönliches Grußvideo. Geburtstag, Hochzeit, Jahrestag, Abschluss, Einweihungsfeier und neunzehn weitere Anlässe. Anmeldung über Telegram, keine separate Registrierung.",
       "keywords": [
         "Grußvideo",
         "Geburtstagsvideo",
@@ -326,42 +326,61 @@
       ]
     },
     "hero": {
-      "badge": "Kostenlos · Ohne Registrierung",
+      "badge": "Derzeit kostenlos · Anmeldung über Telegram",
       "title": "Ein persönliches Grußvideo in fünf Minuten",
       "subtitle": "Geburtstag, Hochzeit, Jahrestag, Abschluss, Einweihungsfeier — wählen Sie den Anlass, nennen Sie den Empfänger, und der Dienst baut ein Video mit Worten genau für ihn.",
       "cta": "Grußvideo erstellen",
-      "note": "Läuft im Browser und als Telegram Mini App — nichts zu installieren."
+      "note": "Läuft im Browser und als Telegram Mini App — nichts zu installieren. Sie brauchen nur ein Telegram-Konto: In Telegram erfolgt die Anmeldung automatisch, im Browser über die Telegram-Anmeldeschaltfläche."
     },
     "samples": {
       "title": "So sieht es aus",
-      "lead": "Videos, die ihre Urheber selbst veröffentlicht und zur Anzeige hier freigegeben haben."
+      "lead": "Videos, die ihre Urheber selbst als Seite veröffentlicht haben; welche hier erscheinen, wählt die Redaktion aus."
+    },
+    "how": {
+      "title": "So funktioniert es",
+      "lead": "Vier Bildschirme des Assistenten, vom Anlass bis zum fertigen Video. Unten sind Schemata dieser Bildschirme, keine Screenshots der Oberfläche.",
+      "leadReal": "Vier Bildschirme des Assistenten, vom Anlass bis zum fertigen Video. Unten sind echte Aufnahmen aus dem Produkt.",
+      "shotAlt": "Bildschirm des Grußvideo-Assistenten",
+      "items": [
+        {
+          "title": "Anlass und Briefing",
+          "text": "Anlass, Name des Empfängers, von wem und Ton. Hier wählen Sie auch die Sprache des Grußes — eine von fünf — und schreiben Ihren eigenen Text, falls Sie einen haben: Der Dienst schreibt ihn dann nicht um."
+        },
+        {
+          "title": "Charakter des Videos",
+          "text": "Stimme, Musik, Einblendungen und Anzahl der Szenen — in einem Block. Er passt sich dem Anlass an: Was nicht dazu passt, ist nicht verfügbar, und der Bildschirm erklärt, warum."
+        },
+        {
+          "title": "Skript",
+          "text": "Der Dienst schreibt einen kurzen Text passend zu Anlass und Ton. Er ist vollständig sichtbar und lässt sich vor dem Rendern von Hand anpassen oder neu schreiben."
+        },
+        {
+          "title": "Fertiges Video",
+          "text": "Ein Hochformat-Video in 9:16. Sie können es herunterladen, als Link verschicken oder als eigene Seite veröffentlichen."
+        }
+      ]
     },
     "occasions": {
       "title": "Vierundzwanzig Anlässe",
-      "lead": "Wählen Sie Ihren — er bestimmt nicht nur die Bezeichnung, sondern auch, was der Dienst tatsächlich schreibt.",
-      "sensitiveNote": "Drei davon — Entschuldigung, Worte der Unterstützung und Beileid — behandelt der Dienst anders: ein scherzhafter Ton wird nicht angeboten, und der Text gratuliert nicht."
-    },
-    "steps": {
-      "title": "Vier Schritte",
-      "lead": "Vom Anlass zur fertigen Datei.",
-      "items": [
-        {
-          "title": "Den Anlass beschreiben",
-          "text": "Anlass, Name des Empfängers, von wem der Gruß kommt, und der Ton. Sie können den Text auch gleich selbst schreiben — dann rührt die KI ihn nicht an."
+      "lead": "Wählen Sie Ihren — er bestimmt, was der Dienst schreibt und wie das Video aussieht.",
+      "groups": {
+        "festive": {
+          "title": "Feiertage",
+          "text": "Ein festliches Bild und jeder der drei Töne: herzlich, humorvoll oder förmlich."
         },
-        {
-          "title": "Fotos hinzufügen",
-          "text": "Bis zu sieben Bilder — der Empfänger, ein Ort, was immer Sie möchten. Dieser Schritt ist optional: Das Video entsteht auch ohne."
+        "calm": {
+          "title": "Ohne Feier",
+          "text": "Herzliche und feierliche Anlässe: keine Luftballons, kein Konfetti und keine andere Partydeko im Bild."
         },
-        {
-          "title": "Das Skript prüfen",
-          "text": "Der Dienst schreibt einen kurzen Text passend zu Anlass und Ton. Er ist vollständig sichtbar und lässt sich vor dem Rendern von Hand anpassen."
-        },
-        {
-          "title": "Das Video erhalten",
-          "text": "Das fertige Video können Sie herunterladen, als Link verschicken oder als eigene Seite veröffentlichen."
+        "delicate": {
+          "title": "Heikle Anlässe",
+          "text": "Der Text gratuliert nicht; scherzhafter Ton, Sticker und festliche Katalogmusik sind nicht verfügbar."
         }
-      ]
+      },
+      "other": {
+        "title": "Eigener Anlass",
+        "text": "Beschreiben Sie ihn in Worten — der Dienst fragt, was für ein Ereignis es von der Stimmung her ist. Geht aus der Beschreibung hervor, dass es ein Trauerfall ist, wird das Video strenger behandelt, egal was gewählt wurde."
+      }
     },
     "features": {
       "title": "Woraus das Video besteht",
@@ -389,9 +408,56 @@
         }
       ]
     },
+    "audience": {
+      "title": "Für wen",
+      "items": [
+        {
+          "title": "Familie",
+          "text": "Mamas Geburtstag, der Hochzeitstag der Eltern, der erste Schultag, ein Baby — ein Video mit Namen und Worten für genau einen Menschen."
+        },
+        {
+          "title": "Freunde",
+          "text": "Hochzeit, Einweihungsfeier, Abschluss — oder ein humorvoller Gruß, wenn der Anlass es zulässt."
+        },
+        {
+          "title": "Kollegen und HR",
+          "text": "Beförderung, Ruhestand, Abschied von einem Kollegen, ein Gruß im Namen des Unternehmens — förmlich oder herzlich. Jedes Video ist für einen Empfänger."
+        },
+        {
+          "title": "Heikle Anlässe",
+          "text": "Eine Entschuldigung, Worte der Unterstützung für jemanden, der krank ist, ein Beileid. Der Dienst schreibt zurückhaltend und gratuliert nicht, Bild und Musik bleiben ruhig."
+        }
+      ]
+    },
+    "privacy": {
+      "title": "Daten und heikle Anlässe",
+      "lead": "Kurz gesagt: was mit dem passiert, was Sie eingeben.",
+      "items": [
+        {
+          "title": "Name des Empfängers",
+          "text": "Er wird gebraucht, damit der Text die Person anspricht. In den Titel einer öffentlichen Seite gelangt er nicht von selbst: Den Titel schreiben Sie beim Veröffentlichen selbst, der Name steht dort nur, wenn Sie ihn eintragen."
+        },
+        {
+          "title": "Fotos",
+          "text": "Bis zu sieben Bilder: Aus ihnen entstehen das Bild und das Video, dafür werden sie an die Generierungsmodelle übergeben. Ein Foto, das Sie im Upload-Schritt löschen, wird aus dem Speicher entfernt."
+        },
+        {
+          "title": "Überraschung",
+          "text": "Das Video ist eine gewöhnliche Datei und ein gewöhnlicher Link — wann Sie ihn verschicken, entscheiden Sie. Die öffentliche Seite öffnet sich mit einem Titelbild: Das Video startet erst, wenn der Empfänger selbst auf „Öffnen“ tippt. Eine geplante Zustellung gibt es noch nicht."
+        },
+        {
+          "title": "Beileid",
+          "text": "Bei Trauerfällen und heiklen Anlässen gratuliert der Dienst nicht, scherzt nicht und setzt keine Partydeko ein; der von ihm geschriebene Text wird zusätzlich auf festlichen Ton geprüft. Ihr eigener Text wird wegen seines Stils nicht blockiert — es sind Ihre Worte."
+        },
+        {
+          "title": "Veröffentlichung",
+          "text": "Eine Seite für das Video entsteht nur, wenn Sie sie veröffentlichen, und Sie können sie zurückziehen — ihre Dateien werden dabei gelöscht. In die Auswahl auf dieser Seite gelangt ein Video nur durch die Redaktion."
+        }
+      ]
+    },
     "price": {
       "title": "Was es kostet",
-      "text": "Derzeit nichts: Alle drei Tarife sind kostenlos und lassen sich direkt in der App umschalten. Der Tarif bestimmt die Auflösung — 480p, 720p oder 1080p."
+      "text": "Die Tarife sind derzeit kostenlos und lassen sich direkt in der App umschalten. Der Tarif bestimmt die Auflösung des Videos — 480p, 720p oder 1080p (mit angehängten Fotos meist höchstens 720p) — und das Tageslimit für Generierungen: Ist es aufgebraucht, geht es am nächsten Tag weiter."
     },
     "faq": {
       "title": "Häufige Fragen",
@@ -402,11 +468,15 @@
         },
         {
           "question": "In welcher Sprache ist der Gruß?",
-          "answer": "In der, die Sie wählen: Deutsch, Englisch, Spanisch, Ukrainisch oder Russisch. Standard ist die Sprache der Oberfläche, die Sprache des Grußes lässt sich aber separat wählen — in ihr schreibt und vertont der Dienst den Text."
+          "answer": "In einer von fünf: Deutsch, Englisch, Spanisch, Ukrainisch oder Russisch. Die Sprache des Grußes wählen Sie im Briefing, Standard ist die Sprache der Oberfläche; in ihr schreibt und vertont der Dienst den Text."
+        },
+        {
+          "question": "Wo trage ich meinen eigenen Text ein?",
+          "answer": "Im Briefing, bevor das Skript entsteht: Der Dienst übernimmt ihn dann unverändert. Ein bereits erstelltes Skript lässt sich im Schritt „Skript“ von Hand anpassen — vor dem Rendern."
         },
         {
           "question": "Was passiert mit den Fotos und dem Namen des Empfängers?",
-          "answer": "Sie werden nur für Ihr Video verwendet. Der Name des Empfängers landet nie von selbst in einem öffentlichen Titel: Veröffentlichen Sie das Video als Seite, steht dort der Anlass — der Name nur, wenn Sie ihn selbst eintragen. Einzelheiten in den Nutzungsbedingungen."
+          "answer": "Sie werden nur für Ihr Video verwendet. Der Name des Empfängers landet nie von selbst in einem öffentlichen Titel: Veröffentlichen Sie das Video als Seite, schreiben Sie den Titel selbst — der Name steht dort nur, wenn Sie ihn eintragen. Einzelheiten in den Nutzungsbedingungen."
         },
         {
           "question": "Kann es eine Überraschung bleiben?",
@@ -414,18 +484,44 @@
         },
         {
           "question": "Und wenn mir das Ergebnis nicht gefällt?",
-          "answer": "Sie können das Skript vor dem Rendern bearbeiten oder neu schreiben lassen und das Video erneut erzeugen. Ist das Video schon fertig, entsteht bei einer Änderung eine neue Version, und das fertige bleibt erhalten. Alle Tarife sind derzeit kostenlos, ein erneutes Rendern kostet also nichts."
+          "answer": "Sie können das Skript vor dem Rendern von Hand bearbeiten oder neu schreiben lassen und das Video erneut erzeugen. Ist das Video schon fertig, entsteht bei einer Änderung eine neue Version, und das fertige bleibt erhalten. Ein erneutes Rendern kostet kein Geld: Haben Sie Generierungen gekauft, wird eine davon verbraucht, sonst zählt der Versuch zum Tageslimit des Tarifs."
         },
         {
           "question": "Kann ich etwas anderes als einen Gruß aufnehmen?",
-          "answer": "Ja. Neben den Feiertagen gibt es eine Entschuldigung, Worte der Unterstützung für jemanden, der krank ist, und ein Beileid. Dafür schreibt der Dienst anders und gratuliert nicht; scherzhafter Ton und festliche Katalogmusik sind nicht verfügbar. Beschreiben Sie einen eigenen Anlass, etwa eine Beerdigung, behandelt der Dienst auch ihn als Trauerfall."
+          "answer": "Ja. Neben den Feiertagen gibt es eine Entschuldigung, Worte der Unterstützung für jemanden, der krank ist, und ein Beileid. Dafür schreibt der Dienst anders und gratuliert nicht; scherzhafter Ton, Sticker und festliche Katalogmusik sind nicht verfügbar. Beschreiben Sie einen eigenen Anlass, etwa eine Beerdigung, behandelt der Dienst auch ihn als Trauerfall."
+        },
+        {
+          "question": "Muss ich mich registrieren?",
+          "answer": "Nicht separat — Sie brauchen ein Telegram-Konto. In Telegram erfolgt die Anmeldung automatisch, im normalen Browser über die Telegram-Anmeldeschaltfläche. Ohne Anmeldung lässt sich der Gruß nicht speichern: Das Projekt gehört zu Ihrem Konto."
         }
       ]
     },
     "finalCta": {
-      "title": "Wen begrüßen wir?",
+      "title": "Wen beglückwünschen wir?",
       "text": "Anlass und Name wählen — den Rest übernimmt der Dienst.",
       "cta": "Grußvideo erstellen"
+    },
+    "steps": {
+      "title": "Vier Schritte",
+      "lead": "Vom Anlass zur fertigen Datei.",
+      "items": [
+        {
+          "title": "Den Anlass beschreiben",
+          "text": "Anlass, Name des Empfängers, von wem der Gruß kommt, und der Ton. Sie können den Text auch gleich selbst schreiben — dann rührt die KI ihn nicht an."
+        },
+        {
+          "title": "Fotos hinzufügen",
+          "text": "Bis zu sieben Bilder — der Empfänger, ein Ort, was immer Sie möchten. Dieser Schritt ist optional: Das Video entsteht auch ohne."
+        },
+        {
+          "title": "Das Skript prüfen",
+          "text": "Der Dienst schreibt einen kurzen Text passend zu Anlass und Ton. Er ist vollständig sichtbar und lässt sich vor dem Rendern von Hand anpassen."
+        },
+        {
+          "title": "Das Video erhalten",
+          "text": "Das fertige Video können Sie herunterladen, als Link verschicken oder als eigene Seite veröffentlichen."
+        }
+      ]
     },
     "backToMain": "Über den Dienst und andere Videoarten →"
   },

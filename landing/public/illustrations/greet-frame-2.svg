@@ -1,0 +1,116 @@
+<!-- Кадр 2 «Характер ролика» (этап H ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §5.3).
+     Главное, что надо показать, — блок ПОДСТРАИВАЕТСЯ под повод (§3.5):
+     слева повод (свеча — деликатный), справа блок с пятью строками
+     (голос, музыка, карточки, наклейка, сцены); строка наклейки не
+     спрятана, а погашена штриховкой с замком — «недоступно для этого
+     повода». Сверху — сводка выбранного, снизу — «рекомендуемые
+     настройки». Ни букв, ни цифр. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 540" role="img" aria-hidden="true" focusable="false">
+  <rect width="840" height="540" fill="#08080a"/>
+  <defs>
+    <linearGradient id="g2cta" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8098ff"/>
+      <stop offset="1" stop-color="#5c7dff"/>
+    </linearGradient>
+    <radialGradient id="g2glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#6c8cff" stop-opacity=".15"/>
+      <stop offset="1" stop-color="#6c8cff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="g2hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="10" height="10" fill="#0e0e11"/>
+      <path d="M0 0V10" stroke="#26262c" stroke-width="4"/>
+    </pattern>
+    <filter id="g2lift" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity=".55"/>
+    </filter>
+  </defs>
+  <ellipse cx="560" cy="270" rx="320" ry="250" fill="url(#g2glow)"/>
+
+  <!-- Дальний план: выбранный повод. -->
+  <g filter="url(#g2lift)">
+    <rect x="44" y="176" width="176" height="188" rx="20" fill="#17171c" stroke="#30303a" stroke-width="3"/>
+  </g>
+  <g fill="none" stroke="#6c8cff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M118 300v-50h16v50"/>
+    <path d="M126 250c-7-8 0-15 0-20 5 6 8 13 0 20"/>
+    <path d="M100 300h52"/>
+  </g>
+  <rect x="80" y="322" width="104" height="11" rx="5.5" fill="#9a9a9a" opacity=".32"/>
+
+  <!-- Повод → правила блока. -->
+  <path d="M220 270H300" stroke="#6c8cff" stroke-width="4" opacity=".9"/>
+  <circle cx="220" cy="270" r="7" fill="#6c8cff"/>
+  <path d="M292 262l10 8-10 8" fill="none" stroke="#6c8cff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Передний план: блок «Характер ролика». -->
+  <g filter="url(#g2lift)">
+    <rect x="316" y="40" width="484" height="460" rx="22" fill="#101014" stroke="#26262c" stroke-width="3"/>
+  </g>
+  <rect x="344" y="66" width="180" height="18" rx="6" fill="#ececec" opacity=".45"/>
+
+  <!-- Сводка выбранного: чипы. -->
+  <g fill="#6c8cff" fill-opacity=".14" stroke="#6c8cff" stroke-opacity=".6" stroke-width="2.5">
+    <rect x="344" y="100" width="92" height="28" rx="14"/>
+    <rect x="444" y="100" width="72" height="28" rx="14"/>
+    <rect x="524" y="100" width="104" height="28" rx="14"/>
+    <rect x="636" y="100" width="64" height="28" rx="14"/>
+  </g>
+
+  <!-- Пять строк. Значок, подпись-полоска, выбранное значение справа. -->
+  <g fill="#17171c" stroke="#30303a" stroke-width="3">
+    <rect x="344" y="146" width="428" height="52" rx="13"/>
+    <rect x="344" y="206" width="428" height="52" rx="13"/>
+    <rect x="344" y="266" width="428" height="52" rx="13"/>
+    <rect x="344" y="386" width="428" height="52" rx="13"/>
+  </g>
+  <!-- Наклейка: недоступна для деликатного повода — видна, но погашена. -->
+  <rect x="344" y="326" width="428" height="52" rx="13" fill="url(#g2hatch)" stroke="#26262c" stroke-width="3" stroke-dasharray="8 6"/>
+
+  <g fill="none" stroke="#6c8cff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <!-- голос: волна -->
+    <path d="M364 172h4 M372 164v16 M378 158v28 M384 166v12 M390 162v20 M396 172h4"/>
+    <!-- музыка -->
+    <path d="M374 250v-24l16-4v22 M374 250a5 4 0 1 1-1-.2 M390 244a5 4 0 1 1-1-.2"/>
+    <!-- карточки -->
+    <path d="M366 284h22v18h-22z M370 280h22v18"/>
+    <!-- сцены -->
+    <path d="M364 404h12v14h-12z M380 404h12v14h-12z M372 400v-4h16v4"/>
+  </g>
+  <!-- наклейка: погашенный значок и замок -->
+  <g fill="none" stroke="#5a5a62" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M366 342h20l6 6v16h-26z M386 342v6h6"/>
+    <rect x="736" y="350" width="18" height="14" rx="3"/>
+    <path d="M740 350v-5a5 5 0 0 1 10 0v5"/>
+  </g>
+
+  <g fill="#9a9a9a" opacity=".45">
+    <rect x="412" y="166" width="120" height="12" rx="6"/>
+    <rect x="412" y="226" width="96" height="12" rx="6"/>
+    <rect x="412" y="286" width="140" height="12" rx="6"/>
+    <rect x="412" y="406" width="84" height="12" rx="6"/>
+  </g>
+  <rect x="412" y="346" width="110" height="12" rx="6" fill="#5a5a62" opacity=".5"/>
+  <rect x="412" y="364" width="200" height="6" rx="3" fill="#5a5a62" opacity=".35"/>
+
+  <!-- Выбранные значения справа. -->
+  <g fill="#08080a" stroke="#3c3c46" stroke-width="2.5">
+    <rect x="652" y="160" width="100" height="24" rx="12"/>
+    <rect x="652" y="220" width="100" height="24" rx="12"/>
+    <rect x="652" y="280" width="100" height="24" rx="12"/>
+    <rect x="652" y="400" width="100" height="24" rx="12"/>
+  </g>
+  <g fill="#9a9a9a" opacity=".5">
+    <rect x="666" y="168" width="54" height="8" rx="4"/>
+    <rect x="666" y="228" width="44" height="8" rx="4"/>
+    <rect x="666" y="288" width="60" height="8" rx="4"/>
+    <rect x="666" y="408" width="40" height="8" rx="4"/>
+  </g>
+  <g fill="none" stroke="#9a9a9a" stroke-width="2.4" stroke-linecap="round" opacity=".6">
+    <path d="M734 169l4 4 4-4 M734 229l4 4 4-4 M734 289l4 4 4-4 M734 409l4 4 4-4"/>
+  </g>
+
+  <!-- «Рекомендуемые настройки». -->
+  <rect x="344" y="452" width="200" height="34" rx="11" fill="url(#g2cta)"/>
+  <path d="M368 469a9 9 0 1 1 3 7 M366 476v-7h7" fill="none" stroke="#08080a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="392" y="464" width="126" height="10" rx="5" fill="#08080a" opacity=".55"/>
+</svg>
