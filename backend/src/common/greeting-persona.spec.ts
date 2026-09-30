@@ -423,11 +423,10 @@ describe('сцены бренд-бука (CONTRACT5 п.10)', () => {
     expect(isFaceCheckedScenePhoto('не url')).toBe(false);
     expect(isFaceCheckedScenePhoto(null)).toBe(false);
   });
-  it('непроверенное фото сцены — только словами; скетч и выключенный режим — можно', () => {
+  it('непроверенное фото сцены — только словами; скетч — можно', () => {
     const legacy = 'https://x/brand-manifests/m/scenes/s1/photo.jpg';
     expect(brandSceneImageAllowed(scene(legacy))).toBe(false);
     expect(brandSceneImageAllowed(scene(legacy, { url: 'u' }))).toBe(true);
-    expect(brandSceneImageAllowed(scene(legacy), false)).toBe(true);
     const plan = greetingVideoReferences({
       images: [],
       brandScenes: [

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- тестовые двойники */
 import { NotFoundException } from '@nestjs/common';
 import {
   applySnapshotEdit,
@@ -9,6 +10,11 @@ import {
   PERSONAL_MANIFEST_GREETING_ONLY,
   PERSONA_VOICE_ONLY_PERSONAL,
 } from '../../common/greeting-persona';
+import {
+  greetingScriptInputs,
+  greetingScriptStale,
+} from '../greeting-prompt/script-inputs';
+import { composeEditedPrompt } from '../greeting-session-edit/greeting-session-edit.service';
 
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 jest.mock('@prisma/client', () => ({ Prisma: {} }));
@@ -780,5 +786,138 @@ describe('CONTRACT5 п.5а/п.5в — сессии и личный бренд-б
       service.updateSnapshot('s1', { ttsVoiceId: 'rv-p' }),
     ).rejects.toThrow(PERSONA_VOICE_ONLY_PERSONAL);
     expect(sessions.updateSession).not.toHaveBeenCalled();
+  });
+  const snap = (kind: string) => ({
+    brandManifestId: 'bm1',
+    title: 'Я',
+    styleNotes: null,
+    voiceNotes: null,
+    filters: null,
+    effects: null,
+    characters: [],
+    snapshotAt: '2026-09-30T00:00:00.000Z',
+    editedAt: null,
+    kind,
+  });
+
+  it('CONTRACT6 п.5: голос персоны в личном бренд-буке при выключенном режиме — PERSONA_DISABLED', async () => {
+    const old = process.env.PERSONA_ENABLED;
+    process.env.PERSONA_ENABLED = 'false';
+    try {
+      const { service, sessions, prisma } = build();
+      sessions.getSession.mockResolvedValue({
+        sessionId: 's1',
+        userId: 'u1',
+        brandManifestSnapshot: snap('PERSONAL'),
+      });
+      prisma.userVoice.findFirst.mockImplementation(
+        async (args: { where?: { personaId?: unknown } }) =>
+          args?.where?.personaId ? { id: 'uv-p' } : null,
+      );
+      await expect(
+        service.updateSnapshot('s1', { ttsVoiceId: 'rv-p' }),
+      ).rejects.toMatchObject({
+        response: { code: 'PERSONA_DISABLED' },
+      });
+      expect(sessions.updateSession).not.toHaveBeenCalled();
+    } finally {
+      process.env.PERSONA_ENABLED = old;
+    }
+  });
+
+  it('CONTRACT6 п.2: снимок поздравления во время рендера — 409 с кодом; товарная сессия — как раньше', async () => {
+    const { service, sessions } = build();
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      userId: 'u1',
+      brandManifestSnapshot: snap('COMPANY'),
+      greetingBriefSnapshot: { occasion: 'BIRTHDAY' },
+      generatedVideo: { status: 'processing' },
+    });
+    await expect(
+      service.updateSnapshot('s1', { styleNotes: 'x' }),
+    ).rejects.toMatchObject({
+      response: { code: 'GREETING_CHANGE_DURING_RENDER' },
+    });
+    expect(sessions.updateSession).not.toHaveBeenCalled();
+
+    sessions.getSession.mockResolvedValue({
+      sessionId: 's1',
+      userId: 'u1',
+      brandManifestSnapshot: snap('COMPANY'),
+      generatedVideo: { status: 'processing' },
+    });
+    sessions.updateSession.mockResolvedValue({
+      brandManifestSnapshot: snap('COMPANY'),
+    });
+    await service.updateSnapshot('s1', { styleNotes: 'x' });
+    expect(sessions.updateSession).toHaveBeenCalled();
+  });
+});
+
+/**
+ * CONTRACT6 (регрессия аудита): смена режима озвучки у поздравления со
+ * сценарием перештамповывает сценарий под замком 'prompt' — иначе рендер
+ * отказывал «сценарий устарел» после любого выбора в карточке голоса.
+ */
+describe('ProjectSessionService.updateSnapshot — поздравление (CONTRACT6)', () => {
+  it('voiceMode сменился — сценарий перестроен под новый режим, отпечаток свежий', async () => {
+    const brief = {
+      occasion: 'BIRTHDAY',
+      customOccasionText: null,
+      recipientName: 'Марина',
+      tone: 'WARM',
+      presetVoiceId: null,
+      senderVoice: null,
+    };
+    const brand = {
+      brandManifestId: 'bm1',
+      title: 'Бренд',
+      styleNotes: null,
+      voiceNotes: null,
+      filters: null,
+      effects: null,
+      characters: [],
+      snapshotAt: '2026-09-05T10:00:00.000Z',
+      editedAt: null,
+      voiceMode: 'voiceover',
+    };
+    let row: any = {
+      sessionId: 's1',
+      greetingBriefSnapshot: brief,
+      greetingReferenceImages: [],
+      brandManifestSnapshot: brand,
+    };
+    row.generationPrompt = {
+      ...composeEditedPrompt(
+        null,
+        brief as never,
+        'Марина, с днём рождения!',
+        [],
+        'voiceover',
+        () => ({ status: 'approved' as never, flags: [] }),
+        brand,
+      ),
+      greetingScriptInputs: greetingScriptInputs(row),
+    };
+    const { service, sessions } = build();
+    Object.assign(sessions, {
+      claimWork: jest.fn().mockResolvedValue(true),
+      releaseWork: jest.fn().mockResolvedValue(undefined),
+    });
+    sessions.getSession.mockImplementation(async () => row);
+    sessions.updateSession.mockImplementation(async (_id: string, p: any) => {
+      row = { ...row, ...p };
+      return row;
+    });
+
+    await service.updateSnapshot('s1', { voiceMode: 'veo' });
+
+    expect(row.brandManifestSnapshot.voiceMode).toBe('veo');
+    expect(greetingScriptStale(row.generationPrompt, row)).toBe(false);
+    expect(row.generationPrompt.finalText).not.toContain(
+      'does NOT say the line out loud',
+    );
+    expect((sessions as any).releaseWork).toHaveBeenCalledWith('s1', 'prompt');
   });
 });

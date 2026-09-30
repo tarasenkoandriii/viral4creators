@@ -18,7 +18,9 @@ import {
   type CharacterPart,
   characterRegister,
   characterSummaryLine,
+  characterLockOf,
 } from '../../../lib/greeting-character';
+import { Alert } from '../../../components/ui';
 import { SenderVoiceStep } from './SenderVoiceStep';
 import { MusicThemeStep } from './MusicThemeStep';
 import { CardsStep } from './CardsStep';
@@ -44,11 +46,14 @@ export function CharacterBlock({
   sessionId,
   stepKey,
   brief,
+  videoStatus = null,
 }: {
   sessionId: string;
   /** Ключ пересоздания карточек: новая версия сессии — новое состояние. */
   stepKey: string;
   brief: Pick<GreetingBriefView, 'occasion' | 'occasionRegister'>;
+  /** Статус ролика сессии: готов или снимается — карточки заперты. */
+  videoStatus?: string | null;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -75,6 +80,17 @@ export function CharacterBlock({
 
   const rules = rulesOf(policy, characterRegister(policy, brief));
   const line = characterSummaryLine(summary, w);
+  // Проверочный аудит CONTRACT6: у готового ролика карточки правились на
+  // месте и меняли снимок уже врученного ролика, а нового рендера та же
+  // сессия не даёт. Готов — заперто с выходом «правьте бриф или текст»;
+  // снимается — заперто до конца рендера. Голос — тот же отказ.
+  const lock = characterLockOf(videoStatus);
+  const lockText =
+    lock === 'done'
+      ? dict.greetingUi.characterLockedDone
+      : lock === 'busy'
+        ? dict.greetingUi.videoBusyEditHint
+        : null;
 
   return (
     <section className="space-y-4" data-qa="greeting-character-block">
@@ -88,37 +104,56 @@ export function CharacterBlock({
             {line}
           </p>
         )}
+        {lockText && (
+          <Alert tone="info" className="mt-2">
+            {lockText}
+          </Alert>
+        )}
       </div>
-      {/* Ключ у каждой карточки свой, с общим префиксом версии сессии:
+      {/* `fieldset disabled` гасит все кнопки и поля пяти карточек разом
+          (включая кнопки внутри `MyVoicesSection`), не трогая их
+          `data-qa`: хуки обучалки остаются на месте. */}
+      <fieldset
+        disabled={!!lock}
+        aria-disabled={!!lock}
+        className="m-0 min-w-0 space-y-4 border-0 p-0"
+      >
+        {/* Ключ у каждой карточки свой, с общим префиксом версии сессии:
           пять братьев с ОДНИМ ключом — это дубликат, на который React
           ругается и при смене версии может потерять или задвоить
           карточку, а её `data-qa` — хук сценария обучалки. */}
-      <SenderVoiceStep
-        key={`${stepKey}:voice`}
-        sessionId={sessionId}
-        onSummary={report.voice}
-      />
-      <MusicThemeStep
-        key={`${stepKey}:music`}
-        sessionId={sessionId}
-        rules={rules}
-        onSummary={report.music}
-      />
-      <CardsStep
-        key={`${stepKey}:cards`}
-        sessionId={sessionId}
-        onSummary={report.cards}
-      />
-      <StickerStep
-        key={`${stepKey}:sticker`}
-        sessionId={sessionId}
-        onSummary={report.sticker}
-      />
-      <ScenesStep
-        key={`${stepKey}:scenes`}
-        sessionId={sessionId}
-        onSummary={report.scenes}
-      />
+        <SenderVoiceStep
+          key={`${stepKey}:voice`}
+          sessionId={sessionId}
+          onSummary={report.voice}
+          lockText={lockText}
+        />
+        <MusicThemeStep
+          key={`${stepKey}:music`}
+          sessionId={sessionId}
+          rules={rules}
+          onSummary={report.music}
+          lockText={lockText}
+        />
+        <CardsStep
+          key={`${stepKey}:cards`}
+          sessionId={sessionId}
+          onSummary={report.cards}
+          lockText={lockText}
+        />
+        <StickerStep
+          key={`${stepKey}:sticker`}
+          sessionId={sessionId}
+          onSummary={report.sticker}
+          lockText={lockText}
+        />
+        <ScenesStep
+          key={`${stepKey}:scenes`}
+          sessionId={sessionId}
+          onSummary={report.scenes}
+          lockText={lockText}
+        />
+      </fieldset>
     </section>
   );
 }

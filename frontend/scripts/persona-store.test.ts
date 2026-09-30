@@ -134,6 +134,46 @@ async function main() {
     eq(n, 1);
   });
 
+  await check(
+    'cacheFailure: «выключено» кешируется на maxAgeMs, сбой сети — нет',
+    async () => {
+      let calls = 0;
+      let clock = 0;
+      let err: Error = new Error('disabled');
+      const store = createPersonaStore(
+        async () => {
+          calls += 1;
+          throw err;
+        },
+        {
+          maxAgeMs: 1000,
+          now: () => clock,
+          cacheFailure: (e) => (e as Error).message === 'disabled',
+        }
+      );
+      await store.ensure();
+      await store.ensure();
+      eq(calls, 1);
+      clock += 1000;
+      await store.ensure();
+      eq(calls, 2);
+      // Обычный сбой не держится: каждый ensure — новый запрос.
+      err = new Error('net');
+      clock += 1000;
+      await store.ensure();
+      await store.ensure();
+      eq(calls, 4);
+    }
+  );
+
+  await check('без cacheFailure отказ не кешируется (как раньше)', async () => {
+    const s = setup();
+    s.failNext(true);
+    await s.store.ensure();
+    await s.store.ensure();
+    eq(s.calls(), 2);
+  });
+
   console.log(`persona-store: ${passed} проверок пройдено`);
   if (failed) {
     console.error(`persona-store: ${failed} провалено`);

@@ -62,6 +62,7 @@ import type {
 } from '../types/project';
 
 import type { BrandManifestKind, CardStyle } from '../lib/persona-greeting';
+import { EmptyResponseError } from '../lib/greeting-errors';
 
 // ── Error helpers ──────────────────────────────────────────────────────
 
@@ -127,6 +128,8 @@ export function errorMessage(
     if (!err.response) return t.network;
     return t.generic;
   }
+  // Текст пустого ответа — для журнала, не для человека.
+  if (err instanceof EmptyResponseError) return t.generic;
   return err instanceof Error ? err.message : t.generic;
 }
 
@@ -149,8 +152,10 @@ export function errorCode(err: unknown): string {
   return 'client';
 }
 
+// Пустой ответ — своим классом (CONTRACT6 G-FE п. 8): русская строка
+// «Пустой ответ: <имя запроса>» уходила человеку как текст ошибки.
 function unwrap<T>(res: { data?: T }, what: string): T {
-  if (res.data === undefined) throw new Error(`Пустой ответ: ${what}`);
+  if (res.data === undefined) throw new EmptyResponseError(what);
   return res.data;
 }
 

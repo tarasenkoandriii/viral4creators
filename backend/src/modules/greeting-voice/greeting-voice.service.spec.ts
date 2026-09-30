@@ -11,6 +11,11 @@ import {
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { SessionService } from '../../common/session.service';
 import type { GrokVideoService } from '../generation/grok-video.service';
+import {
+  greetingScriptInputs,
+  greetingScriptStale,
+} from '../greeting-prompt/script-inputs';
+import { composeEditedPrompt } from '../greeting-session-edit/greeting-session-edit.service';
 
 const READY = {
   id: 'uv1',
@@ -40,6 +45,10 @@ function build(
         : over.session,
     ),
     updateSession,
+    // CONTRACT6: смена голоса пишется под замком 'prompt' (перештамповка
+    // сценария, `writeWithGreetingRestamp`).
+    claimWork: jest.fn().mockResolvedValue(true),
+    releaseWork: jest.fn().mockResolvedValue(undefined),
   };
   const prisma = { userVoice: { findFirst } };
   const listPresetVoices = jest
@@ -460,5 +469,50 @@ describe('CONTRACT5 — голос персоны отправителем: фл
     expect(
       updateSession.mock.calls[0][1].greetingBriefSnapshot.usesPersona,
     ).toBe(true);
+  });
+});
+
+/**
+ * CONTRACT6 (регрессия аудита): карточка голоса стоит ПОСЛЕ сценария —
+ * выбор голоса перештамповывает сценарий, и рендер не отказывает
+ * «сценарий устарел».
+ */
+describe('GreetingVoiceService — перештамповка сценария (CONTRACT6)', () => {
+  it('пресет после сценария — в той же записи сценарий под новый голос', async () => {
+    const brief = {
+      occasion: 'BIRTHDAY',
+      customOccasionText: null,
+      recipientName: 'Аня',
+      tone: 'WARM',
+      presetVoiceId: null,
+      senderVoice: null,
+    };
+    const session: any = {
+      sessionId: 's1',
+      userId: 'u1',
+      greetingBriefSnapshot: brief,
+      greetingReferenceImages: [],
+    };
+    session.generationPrompt = {
+      ...composeEditedPrompt(
+        null,
+        brief as never,
+        'Аня, с днём рождения!',
+        [],
+        'voiceover',
+        () => ({ status: 'approved' as never, flags: [] }),
+        null,
+      ),
+      greetingScriptInputs: greetingScriptInputs(session),
+    };
+    const { svc, updateSession } = build({ session });
+
+    await svc.selectPreset('s1', 'eve');
+
+    const patch = updateSession.mock.calls[0][1];
+    expect(patch.generationPrompt.finalText).toContain('<AUDIO_0>');
+    expect(
+      greetingScriptStale(patch.generationPrompt, { ...session, ...patch }),
+    ).toBe(false);
   });
 });

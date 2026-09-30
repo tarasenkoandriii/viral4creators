@@ -34,7 +34,18 @@ export interface PersonaStore<T> {
 
 export function createPersonaStore<T>(
   fetcher: () => Promise<T>,
-  opts: { maxAgeMs: number; now?: () => number }
+  opts: {
+    maxAgeMs: number;
+    now?: () => number;
+    /**
+     * Отказ, который живёт столько же, сколько свежий ответ (CONTRACT6
+     * G-FE п. 14): 404 `PERSONA_DISABLED` — это «режим выключен», а не
+     * сбой. Без кеша каждый смонтированный вход, бриф и бренд-бук заново
+     * спрашивали сервер и получали тот же 404. Остальные ошибки (сеть,
+     * 5xx) не кешируются — следующий экран пробует снова.
+     */
+    cacheFailure?: (error: unknown) => boolean;
+  }
 ): PersonaStore<T> {
   const now = opts.now ?? (() => Date.now());
   let state: StoreState<T> = { kind: 'loading' };
@@ -69,10 +80,11 @@ export function createPersonaStore<T>(
   return {
     get: () => state,
     ensure() {
+      const cacheable =
+        state.kind === 'ready' ||
+        (state.kind === 'failed' && !!opts.cacheFailure?.(state.error));
       const fresh =
-        loadedAt !== null &&
-        state.kind === 'ready' &&
-        now() - loadedAt < opts.maxAgeMs;
+        loadedAt !== null && cacheable && now() - loadedAt < opts.maxAgeMs;
       return fresh ? Promise.resolve(state) : load();
     },
     refresh: load,

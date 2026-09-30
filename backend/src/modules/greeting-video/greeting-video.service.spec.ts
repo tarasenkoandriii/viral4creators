@@ -6,6 +6,7 @@ import { GreetingVideoService } from './greeting-video.service';
 import { RenderAccessService } from '../render-access/render-access.service';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { ModerationStatus } from '../../common/types/prompt.types';
+import { GREETING_PROMPT_LOCK_TTL_MS } from '../greeting-prompt/script-inputs';
 
 const BRIEF = {
   sourceGreetingBriefId: 'gb1',
@@ -454,11 +455,15 @@ describe('GreetingVideoService — говорящий аватар', () => {
  * ради сужения типа для компилятора. Это одно условие в одной точке.
  */
 describe('GreetingVideoService.startVideo — условия читаются готовностью', () => {
-  it('сценарий без промпта — отказ прежним текстом, до Grok', async () => {
+  it('сценарий без промпта — отказ по-русски с кодом, до Grok', async () => {
     const { svc, startGeneration } = build({ generationPrompt: null });
-    await expect(svc.startVideo('s1')).rejects.toThrow(
-      'No prompt yet — call POST /sessions/:id/greeting-prompt first.',
+    const err = await svc.startVideo('s1').catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toEqual(
+      expect.objectContaining({ code: 'GREETING_SCRIPT_MISSING' }),
     );
+    expect(err.message).toMatch(/Сценария ещё нет/);
+    expect(err.message).not.toMatch(/POST|greeting-prompt/);
     expect(startGeneration).not.toHaveBeenCalled();
   });
 
@@ -563,9 +568,14 @@ describe('GreetingVideoService.startVideo — кредит при сбое ст�
     // возврата второй клик стоил бы человеку генерации за 409.
     const { svc, credits, sessions } = build();
     credits.reserveForGeneration.mockResolvedValue(true);
-    sessions.claimWork.mockResolvedValue(false);
-    await expect(svc.startVideo('s1')).rejects.toBeInstanceOf(
-      ConflictException,
+    // Занят именно замок рендера: замок правки ('prompt') свободен.
+    sessions.claimWork.mockImplementation((_id: string, kind: string) =>
+      Promise.resolve(kind !== 'generate'),
+    );
+    const err = await svc.startVideo('s1').catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toEqual(
+      expect.objectContaining({ code: 'GREETING_RENDER_IN_PROGRESS' }),
     );
     expect(credits.refundIfReserved).toHaveBeenCalled();
   });
@@ -783,5 +793,324 @@ describe('CONTRACT5 п.14 — персона проверяется заново
     await expect(svc.startVideo('s1')).rejects.toThrow(/Образ ведущего/);
     expect(startGeneration).not.toHaveBeenCalled();
     expect(credits.reserveForGeneration).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * CONTRACT6 (сквозной аудит Greeting, G-B1): гонки старта, устаревший
+ * сценарий, потолок тарифа, повтор без затирания, коды отказов.
+ */
+describe('CONTRACT6 — старт рендера поздравления', () => {
+  const HEDRA_BRIEF = {
+    ...BRIEF,
+    requestedPresenterProvider: 'hedra',
+    resolvedPresenterProvider: 'hedra',
+  };
+  const PHOTO = {
+    id: 'img1',
+    label: 'Мама',
+    description: null,
+    photoUrl: 'https://blob.test/sessions/s1/ref-1.jpg',
+    photoPathname: 'sessions/s1/ref-1.jpg',
+    hasFace: false,
+  };
+  const codeOf = (e: any) => e?.getResponse?.()?.code;
+
+  it('замок правки занят — 409 с кодом, до права на рендер и провайдера', async () => {
+    const { svc, sessions, credits, startGeneration } = build();
+    sessions.claimWork.mockImplementation((_id: string, kind: string) =>
+      Promise.resolve(kind !== 'prompt'),
+    );
+    const err = await svc.startVideo('s1').catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(codeOf(err)).toBe('GREETING_EDIT_IN_PROGRESS');
+    expect(credits.reserveForGeneration).not.toHaveBeenCalled();
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('старт держит замок правки и снимает его в конце, решения — по перечитанной сессии', async () => {
+    const { svc, sessions, startGeneration } = build();
+    // Первое чтение — до замка, второе — под ним: сценарий успели стереть.
+    sessions.getSession
+      .mockResolvedValueOnce({
+        sessionId: 's1',
+        userId: 'u1',
+        greetingBriefSnapshot: BRIEF,
+        generationPrompt: { finalText: 'сцена', moderationStatus: 'APPROVED' },
+        greetingReferenceImages: [],
+      })
+      .mockResolvedValueOnce({
+        sessionId: 's1',
+        userId: 'u1',
+        greetingBriefSnapshot: BRIEF,
+        generationPrompt: null,
+        greetingReferenceImages: [],
+      });
+    const err = await svc.startVideo('s1').catch((e) => e);
+    expect(codeOf(err)).toBe('GREETING_SCRIPT_MISSING');
+    expect(startGeneration).not.toHaveBeenCalled();
+    expect(sessions.claimWork).toHaveBeenCalledWith(
+      's1',
+      'prompt',
+      expect.any(Number),
+    );
+    expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'prompt');
+  });
+
+  it('успешный старт тоже снимает замок правки', async () => {
+    const { svc, sessions } = build();
+    await svc.startVideo('s1');
+    expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'prompt');
+  });
+
+  it('идущий рендер возвращается без замков и без права на рендер', async () => {
+    const running = {
+      generatedVideoId: 'v0',
+      status: GenerationStatus.PROCESSING,
+    };
+    const { svc, sessions, credits } = build({ generatedVideo: running });
+    await expect(svc.startVideo('s1')).resolves.toBe(running);
+    expect(sessions.claimWork).not.toHaveBeenCalled();
+    expect(credits.reserveForGeneration).not.toHaveBeenCalled();
+  });
+
+  for (const provider of ['grok', 'hedra'] as const) {
+    it(`${provider}: ролик появился между чтением и замком рендера — 409, замок снят, кредит возвращён`, async () => {
+      const brief = provider === 'hedra' ? HEDRA_BRIEF : BRIEF;
+      const base = {
+        sessionId: 's1',
+        userId: 'u1',
+        greetingBriefSnapshot: brief,
+        generationPrompt: {
+          finalText: 'сцена "Привет"',
+          moderationStatus: 'APPROVED',
+        },
+        greetingReferenceImages: [PHOTO],
+      };
+      const { svc, sessions, credits, startGeneration, hedra } = build();
+      credits.reserveForGeneration.mockResolvedValue(true);
+      sessions.getSession
+        .mockResolvedValueOnce(base)
+        .mockResolvedValueOnce(base)
+        .mockResolvedValueOnce({
+          ...base,
+          generatedVideo: {
+            generatedVideoId: 'v9',
+            status: GenerationStatus.PENDING,
+          },
+        });
+      const err = await svc.startVideo('s1').catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(codeOf(err)).toBe('GREETING_RENDER_IN_PROGRESS');
+      expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'generate');
+      expect(credits.refundIfReserved).toHaveBeenCalled();
+      expect(startGeneration).not.toHaveBeenCalled();
+      expect(hedra.submit).not.toHaveBeenCalled();
+    });
+  }
+
+  it('hedra: замок рендера снимается и после успешной записи PROCESSING', async () => {
+    const { svc, sessions, updateSession } = build({
+      greetingBriefSnapshot: HEDRA_BRIEF,
+      generationPrompt: {
+        finalText: 'сцена "Привет"',
+        moderationStatus: 'APPROVED',
+      },
+      greetingReferenceImages: [PHOTO],
+    });
+    const v = await svc.startVideo('s1');
+    expect(v.status).toBe(GenerationStatus.PROCESSING);
+    const writeOrder = updateSession.mock.invocationCallOrder[0];
+    const release = sessions.releaseWork.mock.calls.findIndex(
+      (c: unknown[]) => c[1] === 'generate',
+    );
+    expect(release).toBeGreaterThanOrEqual(0);
+    expect(
+      sessions.releaseWork.mock.invocationCallOrder[release],
+    ).toBeGreaterThan(writeOrder);
+  });
+
+  it('BYPASSED (обход через общий approve) — отказ как у флага', async () => {
+    const { svc, startGeneration } = build({
+      generationPrompt: {
+        finalText: 'сцена',
+        moderationStatus: ModerationStatus.BYPASSED,
+      },
+    });
+    const err = await svc.startVideo('s1').catch((e) => e);
+    expect(codeOf(err)).toBe('GREETING_SCRIPT_FLAGGED');
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('готовый ролик не перерендеривается на месте — 409 с кодом, до денег', async () => {
+    const { svc, credits, startGeneration } = build({
+      generatedVideo: {
+        generatedVideoId: 'v0',
+        status: GenerationStatus.COMPLETE,
+      },
+    });
+    const err = await svc.startVideo('s1').catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(codeOf(err)).toBe('GREETING_VIDEO_ALREADY_READY');
+    expect(credits.reserveForGeneration).not.toHaveBeenCalled();
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('повтор после сбоя: свой файл попытки, упавшая попытка — в истории', async () => {
+    const failed = {
+      generatedVideoId: 'old',
+      pathname: 'sessions/s1/generated-old.mp4',
+      status: GenerationStatus.FAILED,
+    };
+    const { svc, updateSession } = build({ generatedVideo: failed });
+    const v = await svc.startVideo('s1');
+    expect(v.pathname).toBe(`sessions/s1/generated-${v.generatedVideoId}.mp4`);
+    expect(v.pathname).not.toBe(failed.pathname);
+    const patch = updateSession.mock.calls[0][1];
+    expect(patch.videoHistory).toEqual([failed]);
+  });
+
+  it('hedra: озвучка аватара тоже в файле попытки', async () => {
+    const { svc, uploadBuffer } = build({
+      greetingBriefSnapshot: HEDRA_BRIEF,
+      generationPrompt: {
+        finalText: 'сцена "Привет"',
+        moderationStatus: 'APPROVED',
+      },
+      greetingReferenceImages: [PHOTO],
+    });
+    const v = await svc.startVideo('s1');
+    expect(uploadBuffer).toHaveBeenCalledWith(
+      `sessions/s1/avatar-speech-${v.generatedVideoId}.mp3`,
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(v.voiceoverPathname).toBe(
+      `sessions/s1/avatar-speech-${v.generatedVideoId}.mp3`,
+    );
+  });
+
+  it.each([
+    ['STANDARD', '1080p', '720p'],
+    ['LITE', '1080p', '480p'],
+    ['LITE', '720p', '480p'],
+    ['PREMIUM', '1080p', '1080p'],
+    ['STANDARD', '480p', '480p'],
+  ])(
+    'потолок тарифа у денег: %s, бриф %s → %s',
+    async (plan, briefRes, expected) => {
+      const { svc, plans, startGeneration } = build({
+        greetingBriefSnapshot: { ...BRIEF, resolvedResolution: briefRes },
+      });
+      plans.planOfSession.mockResolvedValue(plan);
+      const v = await svc.startVideo('s1');
+      expect(startGeneration).toHaveBeenCalledWith(
+        expect.objectContaining({ resolution: expected }),
+      );
+      expect(v.resolution).toBe(expected);
+    },
+  );
+
+  it('нет брифа — код и русский текст', async () => {
+    const { svc } = build({ greetingBriefSnapshot: null });
+    const err = await svc.startVideo('s1').catch((e) => e);
+    expect(codeOf(err)).toBe('GREETING_NOT_GREETING_SESSION');
+    expect(err.message).toMatch(/поздравлен/);
+  });
+});
+
+describe('CONTRACT6 п.4 — устаревший сценарий', () => {
+  it('фото сменились после сборки — 409 с кодом до права на рендер', async () => {
+    const { greetingScriptInputs } = jest.requireActual(
+      '../greeting-prompt/script-inputs',
+    );
+    const stampedFor = greetingScriptInputs({
+      greetingBriefSnapshot: BRIEF,
+      greetingReferenceImages: [],
+    });
+    const { svc, credits, startGeneration } = build({
+      generationPrompt: {
+        finalText: 'сцена',
+        moderationStatus: 'APPROVED',
+        greetingScriptInputs: stampedFor,
+      },
+      greetingReferenceImages: [
+        {
+          id: 'new',
+          label: 'торт',
+          description: null,
+          photoUrl: 'https://blob.test/sessions/s1/new.jpg',
+          photoPathname: 'sessions/s1/new.jpg',
+          hasFace: false,
+        },
+      ],
+    });
+    const err = await svc.startVideo('s1').catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe('GREETING_SCRIPT_STALE');
+    expect(credits.reserveForGeneration).not.toHaveBeenCalled();
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
+  it('входы те же — рендер идёт', async () => {
+    const { greetingScriptInputs } = jest.requireActual(
+      '../greeting-prompt/script-inputs',
+    );
+    const { svc, startGeneration } = build({
+      generationPrompt: {
+        finalText: 'сцена',
+        moderationStatus: 'APPROVED',
+        greetingScriptInputs: greetingScriptInputs({
+          greetingBriefSnapshot: BRIEF,
+          greetingReferenceImages: [],
+        }),
+      },
+    });
+    await svc.startVideo('s1');
+    expect(startGeneration).toHaveBeenCalled();
+  });
+});
+
+describe('CONTRACT6 — аудит: замки старта', () => {
+  it('hedra: сбой перечитывания под замком рендера снимает замок', async () => {
+    const base = {
+      sessionId: 's1',
+      userId: 'u1',
+      greetingBriefSnapshot: {
+        ...BRIEF,
+        requestedPresenterProvider: 'hedra',
+        resolvedPresenterProvider: 'hedra',
+      },
+      generationPrompt: {
+        finalText: 'сцена "Привет"',
+        moderationStatus: 'APPROVED',
+      },
+      greetingReferenceImages: [
+        {
+          id: 'img1',
+          label: 'Мама',
+          description: null,
+          photoUrl: 'https://blob.test/sessions/s1/ref-1.jpg',
+          photoPathname: 'sessions/s1/ref-1.jpg',
+          hasFace: false,
+        },
+      ],
+    };
+    const { svc, sessions } = build();
+    sessions.getSession
+      .mockResolvedValueOnce(base)
+      .mockResolvedValueOnce(base)
+      .mockRejectedValueOnce(new Error('база недоступна'));
+    await expect(svc.startVideo('s1')).rejects.toThrow('база недоступна');
+    expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'generate');
+  });
+
+  it('замок правки старт берёт с общим сроком', async () => {
+    const { svc, sessions } = build();
+    await svc.startVideo('s1');
+    const call = sessions.claimWork.mock.calls.find(
+      (c: unknown[]) => c[1] === 'prompt',
+    );
+    expect(call?.[2]).toBe(GREETING_PROMPT_LOCK_TTL_MS);
   });
 });

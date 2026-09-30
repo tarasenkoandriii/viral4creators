@@ -125,7 +125,17 @@ export type ConsentState =
 export const CONSENT_INITIAL: ConsentState = { phase: 'idle' };
 
 /** Почему старт сейчас невозможен вообще (кнопки нет или она занята). */
-export type ConsentBlock = 'busy' | 'in-progress' | 'done';
+/**
+ * `flagged` и `not-ready` (CONTRACT6 G-FE п. 4) — кнопка погашена с
+ * причиной: сценарий не прошёл проверку или не выполнен обязательный
+ * пункт готовности. Голос не нажимает то, что не нажимается пальцем.
+ */
+export type ConsentBlock =
+  | 'busy'
+  | 'in-progress'
+  | 'done'
+  | 'flagged'
+  | 'not-ready';
 
 export type ConsentEvent =
   /** Сервер отдал `consent`. `summary` — сводка по СЕЙЧАС (null — старт недоступен). */
@@ -277,14 +287,32 @@ export function consentRoute(
   return 'interrupt';
 }
 
-/** Цена человеческими словами; `null` — назвать нельзя (согласия нет). */
+/**
+ * Цена человеческими словами; `null` — назвать нельзя (согласия нет).
+ *
+ * `costCredit` — числовые формы по `{balance}` (CONTRACT6 G-FE п. 12):
+ * «из 1 доступной», «из 3 доступных» у ru/uk, «de 1 disponible» у es.
+ * Строка — прежний вид словаря, принимается как есть.
+ */
 export function chargeText(
   charge: RenderCharge,
-  texts: { costCredit: string; costIncluded: string }
+  texts: {
+    costCredit: string | Partial<Record<Intl.LDMLPluralRule, string>>;
+    costIncluded: string;
+  },
+  locale = 'ru'
 ): string | null {
   switch (charge.kind) {
-    case 'credit':
-      return texts.costCredit.replace('{balance}', String(charge.balance));
+    case 'credit': {
+      const forms = texts.costCredit;
+      const template =
+        typeof forms === 'string'
+          ? forms
+          : (forms[new Intl.PluralRules(locale).select(charge.balance)] ??
+            forms.other ??
+            '');
+      return template.replace('{balance}', String(charge.balance));
+    }
     case 'included':
       return texts.costIncluded;
     case 'unknown':

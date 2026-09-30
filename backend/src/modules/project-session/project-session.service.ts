@@ -31,6 +31,8 @@ import {
 } from '../../common/greeting-persona';
 import { PRESENTER_LOOK_INCLUDE } from '../greeting-brief/greeting-brief.service';
 import { isPersonaVoice } from '../user-voices/persona-voice';
+import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
+import { writeWithGreetingRestamp } from '../greeting-session-edit/restamp';
 import type { GreetingPresenterVariant } from '../../common/types/greeting.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sessionData, SessionService } from '../../common/session.service';
@@ -382,6 +384,13 @@ export class ProjectSessionService {
         'у этой сессии нет снимка брендбука — править нечего',
       );
     }
+    // CONTRACT6 п.2: голос и оформление поздравления читаются рендером из
+    // снимка — посреди рендера их не менять. Только у поздравления:
+    // товарная ветка этим маршрутом правит голос у ГОТОВОГО ролика
+    // перед переозвучкой, и её поведение волна не трогает.
+    if (session.greetingBriefSnapshot) {
+      assertGreetingNotRendering(session);
+    }
     // Доп. запрос владельца продукта: дубляж — премиальный уровень
     // озвучки (см. тот же гейт в brand-manifest.service.ts). Правка
     // снимка — тоже активный выбор voiceMode, а не то же самое, что
@@ -402,14 +411,23 @@ export class ProjectSessionService {
     // TTS_PROVIDER. Анонимная сессия (`session.userId` нет) клонов не
     // имеет — запрос не нужен.
     const voiceId = dto.ttsVoiceId?.trim();
+    const personaVoice =
+      !!voiceId &&
+      !!session.userId &&
+      (await isPersonaVoice(this.prisma, session.userId, voiceId));
     // CONTRACT5 п.5а: клон голоса персоны — только в личном бренд-буке.
-    if (
-      voiceId &&
-      session.userId &&
-      session.brandManifestSnapshot.kind !== 'PERSONAL' &&
-      (await isPersonaVoice(this.prisma, session.userId, voiceId))
-    ) {
+    // Первым: в корпоративном его нельзя и при включённом режиме.
+    if (personaVoice && session.brandManifestSnapshot.kind !== 'PERSONAL') {
       throw new BadRequestException(PERSONA_VOICE_ONLY_PERSONAL);
+    }
+    // CONTRACT6 п.5: голос персоны — часть режима «Я в кадре»; при
+    // выключенном режиме его не назначить и в личный бренд-бук (как у
+    // голоса отправителя, `GreetingVoiceService.resolveOwnClone`).
+    if (personaVoice && !personaEnabled()) {
+      throw new BadRequestException({
+        code: PERSONA_DISABLED_CODE,
+        message: PERSONA_DISABLED_MESSAGE,
+      });
     }
     const isResembleClone =
       !!voiceId && !!session.userId
@@ -447,10 +465,27 @@ export class ProjectSessionService {
             },
           }
         : {};
-    const updated = await this.sessions.updateSession(sessionId, {
-      brandManifestSnapshot: next,
-      ...resetApproval,
-    });
+    // CONTRACT6 (регрессия аудита): у поздравления режим озвучки входит в
+    // отпечаток сценария — смена режима без перештамповки делала рендер
+    // невозможным («сценарий устарел»). Пишем под замком 'prompt' по
+    // перечитанному снимку и перештамповываем сценарий той же записью;
+    // снятие одобрения поздравлению не нужно — рендер смотрит на
+    // модерацию и отпечаток, а не на `approvedAt`.
+    const updated = session.greetingBriefSnapshot
+      ? await writeWithGreetingRestamp(this.sessions, sessionId, (fresh) => ({
+          brandManifestSnapshot: fresh.brandManifestSnapshot
+            ? applySnapshotEdit(
+                fresh.brandManifestSnapshot,
+                dto,
+                tts.providerKey,
+                isResembleClone,
+              )
+            : next,
+        }))
+      : await this.sessions.updateSession(sessionId, {
+          brandManifestSnapshot: next,
+          ...resetApproval,
+        });
     if (!updated?.brandManifestSnapshot) {
       throw new NotFoundException(SESSION_NOT_FOUND);
     }

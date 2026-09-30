@@ -30,12 +30,33 @@ import type {
   SessionScriptEditResult,
   UpdateGreetingBriefInput,
 } from '../types/project';
-import type { ItemSessionSummary } from './projects-api';
+import { errorMessage, type ItemSessionSummary } from './projects-api';
 import type { GreetingPolicyView } from '../lib/greeting-policy';
+import type { Dictionary } from '../lib/get-dictionary';
+import {
+  EmptyResponseError,
+  describeGreetingError,
+} from '../lib/greeting-errors';
 
+// Пустой ответ — своим классом, а не русской строкой: текст ошибки
+// `errorMessage` показывал человеку как есть (CONTRACT6 G-FE п. 8).
 function unwrap<T>(res: { data?: T }, what: string): T {
-  if (res.data === undefined) throw new Error(`Пустой ответ: ${what}`);
+  if (res.data === undefined) throw new EmptyResponseError(what);
   return res.data;
+}
+
+/**
+ * Текст отказа для экранов поздравления: известный код сервера — перевод
+ * словаря `greetingErrors`, иначе прежний `errorMessage` с переводами
+ * `dict.errors` (текст сервера, 403/404/409, «нет связи»).
+ */
+export function greetingErrorMessage(err: unknown, dict: Dictionary): string {
+  return describeGreetingError(
+    err,
+    dict.greetingErrors,
+    dict.errors.generic,
+    (e) => errorMessage(e, undefined, dict.errors)
+  );
 }
 
 interface PresignedUpload {

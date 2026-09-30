@@ -32,6 +32,7 @@ import {
   registerOfBrief,
 } from '../../common/greeting-policy';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
+import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
 
 @Injectable()
 export class GreetingScenesService {
@@ -46,7 +47,7 @@ export class GreetingScenesService {
     sessionId: string,
     sceneCount: number,
   ): Promise<GreetingScenesView> {
-    const session = await this.load(sessionId);
+    const session = await this.loadForEdit(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     const next = normalizeSceneCount(sceneCount);
     // Этап B: потолок сцен — по регистру повода (траурному ролику нарезка
@@ -86,6 +87,18 @@ export class GreetingScenesService {
       ),
       durations: splitSceneDurations(GREETING_SCENE_SECONDS, sceneCount),
     };
+  }
+
+  /**
+   * Сессия для правки выбора: пока ролик считается — 409 с кодом
+   * (CONTRACT6 п.2, `assertGreetingNotRendering`): рендер и постобработка
+   * читают выбор из снимка, смена посреди рендера дала бы ролик ни по
+   * прежнему, ни по новому выбору.
+   */
+  private async loadForEdit(sessionId: string): Promise<Session> {
+    const session = await this.load(sessionId);
+    assertGreetingNotRendering(session);
+    return session;
   }
 
   private async load(sessionId: string): Promise<Session> {

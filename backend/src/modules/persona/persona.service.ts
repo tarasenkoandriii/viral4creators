@@ -37,7 +37,10 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
-import { UserVoicesService } from '../user-voices/user-voices.service';
+import {
+  UserVoicesService,
+  forgetVoiceInBrandManifests,
+} from '../user-voices/user-voices.service';
 import { PlanService } from '../plan/plan.service';
 import { ResembleService } from '../tts/resemble.service';
 import { checkFaces, FaceCheckGenerator, FaceCheckResult } from './face-check';
@@ -941,6 +944,15 @@ export class PersonaService {
         const p = pathnameFromBlobUrl(v.sampleUrl, 'users/');
         if (p) await this.blob.deleteBlob(p);
         await this.prisma.userVoice.deleteMany({ where: { id: v.id } });
+        // CONTRACT6 п.4: и в обход сервиса голос уходит из бренд-буков —
+        // как в `UserVoicesService.remove`.
+        if (v.resembleVoiceId) {
+          await forgetVoiceInBrandManifests(
+            this.prisma,
+            userId,
+            v.resembleVoiceId,
+          );
+        }
       }
     }
   }

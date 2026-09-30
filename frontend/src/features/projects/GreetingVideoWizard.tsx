@@ -41,6 +41,8 @@ import { ReadinessPanel } from '../../components/ReadinessPanel';
 import { HintLine } from '../../components/HintLine';
 import { useWizardEvents } from '../../lib/useWizardEvents';
 import { toStepsView } from '../../lib/wizard-steps';
+import { isVideoBusy } from '../../lib/greeting-render';
+import { EmptyResponseError } from '../../lib/greeting-errors';
 import {
   greetingFactsOf,
   greetingStepOf,
@@ -135,13 +137,19 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
         // дочитывания после перезагрузки вкладки степпер показывал
         // первый шаг даже у готового ролика, а кликабельный степпер
         // поверх вранья хуже некликабельного.
-        const full = await getSession(latest.sessionId).catch(() => null);
-        if (full) {
-          setPrompt(full.generationPrompt);
-          setVideo(full.generatedVideo);
-        }
-        const ready = await getSessionReadiness(latest.sessionId);
-        setReadiness(ready);
+        //
+        // Сбой дочитывания — ошибка загрузки с «Повторить», а не пустой
+        // сценарий (CONTRACT6 G-FE п. 2): раньше `.catch(() => null)`
+        // показывал «сценария нет» у готового ролика, и кнопка «Собрать»
+        // предлагала заплатить ещё раз. Готовность — необязательная
+        // строка над шагами: её сбой экран не ломает.
+        const full = await getSession(latest.sessionId);
+        if (!full) throw new EmptyResponseError('session');
+        setPrompt(full.generationPrompt);
+        setVideo(full.generatedVideo);
+        setReadiness(
+          await getSessionReadiness(latest.sessionId).catch(() => null)
+        );
       }
     } catch (e) {
       setLoadError(e);
@@ -164,6 +172,9 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
    * середине экрана, значило бы мерить случайность.
    */
   const facts = greetingFactsOf(sessionId, prompt, video);
+  // Ролик снимается — правки, которые меняют ролик, ждут (сервер ответил
+  // бы 409): бриф, текст, пересборка (CONTRACT6 G-FE п. 5).
+  const videoBusy = isVideoBusy(video?.status);
   const currentStepId = greetingStepOf(facts);
 
   useEffect(() => {
@@ -210,15 +221,30 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
   const afterSessionEdit = async (nextSessionId: string): Promise<void> => {
     setSessionId(nextSessionId);
     const [full, b, ready] = await Promise.all([
-      getSession(nextSessionId).catch(() => null),
+      getSession(nextSessionId)
+        .then((f) => f ?? { failed: new EmptyResponseError('session') })
+        .catch((e: unknown) => ({ failed: e as unknown })),
       getGreetingBrief(projectId).catch(() => null),
       getSessionReadiness(nextSessionId).catch(() => null),
     ]);
-    setPrompt(full?.generationPrompt);
-    setVideo(full?.generatedVideo);
+    // Как при загрузке: не дочитали сессию — не рисуем «сценария нет»,
+    // а показываем ошибку с повтором (`load` перечитает всё).
+    if ('failed' in full) {
+      setLoadError(full.failed);
+      return;
+    }
+    setPrompt(full.generationPrompt);
+    setVideo(full.generatedVideo);
     if (b) setBrief(b);
     if (ready) setReadiness(ready);
     setRevision((r) => r + 1);
+  };
+
+  /** Перечитать готовность; сбой — оставить прежнюю строку, не падать. */
+  const refreshReadiness = (id: string): void => {
+    void getSessionReadiness(id)
+      .then(setReadiness)
+      .catch(() => undefined);
   };
 
   const toggleGuide = async (next: boolean): Promise<void> => {
@@ -353,12 +379,15 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
               manifests={manifests}
               plan={plan}
               sessionId={sessionId}
+              videoBusy={videoBusy}
               onSaved={setBrief}
               onSessionEdited={(r) => afterSessionEdit(r.sessionId)}
               onStartSession={async () => {
                 const session = await createGreetingSession(projectId);
                 setSessionId(session.sessionId);
-                setReadiness(await getSessionReadiness(session.sessionId));
+                setReadiness(
+                  await getSessionReadiness(session.sessionId).catch(() => null)
+                );
               }}
             />
           </div>
@@ -378,6 +407,9 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
                 key={`${sessionId}:${revision}`}
                 sessionId={sessionId}
                 disabled={!!prompt}
+                // Фото меняют пункты готовности («лицо ведущего», «фото»)
+                // — строка над шагами не должна отставать (п. 7).
+                onChanged={() => refreshReadiness(sessionId)}
               />
             </div>
           )}
@@ -388,9 +420,10 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
                 sessionId={sessionId}
                 prompt={prompt}
                 videoDone={video?.status === GenerationStatus.COMPLETE}
+                videoBusy={videoBusy}
                 onGenerated={(p) => {
                   setPrompt(p);
-                  void getSessionReadiness(sessionId).then(setReadiness);
+                  refreshReadiness(sessionId);
                 }}
                 onEdited={(r) => {
                   if (r.newVersion) {
@@ -398,7 +431,7 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
                     return;
                   }
                   setPrompt(r.prompt);
-                  void getSessionReadiness(sessionId).then(setReadiness);
+                  refreshReadiness(sessionId);
                 }}
               />
             </div>
@@ -409,6 +442,7 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
               sessionId={sessionId}
               stepKey={`${sessionId}:${revision}`}
               brief={brief}
+              videoStatus={video?.status ?? null}
             />
           )}
 
@@ -420,12 +454,14 @@ export function GreetingVideoWizard({ projectId }: { projectId: string }) {
                 video={video}
                 onVideo={(v) => {
                   setVideo(v);
-                  void getSessionReadiness(sessionId).then(setReadiness);
+                  refreshReadiness(sessionId);
                 }}
                 recipientName={brief.recipientName}
                 senderName={brief.senderName}
                 consentBrief={brief}
                 prompt={prompt}
+                readiness={readiness}
+                onGoToScript={() => goToStep('script')}
               />
             </div>
           )}

@@ -18,7 +18,7 @@
 | **идентичность** | `TelegramIdentityGuard`: initData из Telegram, cookie обычного логина или `X-Dev-User-Id` при `ALLOW_DEV_AUTH`. Для cookie любой не-GET запрос дополнительно проверяется по `Origin` против `CORS_ORIGIN` (этап 41, `common/csrf.ts`) — 403 «Cross-origin request rejected» |
 | **оператор** | `AdminSessionGuard` (cookie админки) + флаг `isOperator` (`assertOperator` первой строкой каждого обработчика) |
 | **вход/выход** | маршруты `telegram-login/*` и `admin/auth/*` под `OriginGuard` (этап 49): форма с чужого сайта не может ни посадить посетителя в чужую сессию, ни выкинуть оператора. С этапа 54 входы (`callback`, `dev-login`) и `POST /api/sessions` ещё и под `RateLimitGuard` — 10 (входы) / 30 (сессии) запросов в минуту с одного адреса, счётчик в базе (`rate_limits`); сверх — 429 с `Retry-After` |
-| **секрет крона** | заголовок `Authorization: Bearer $CRON_SECRET`, сравнение constant-time. Переменная не задана — 503 на всех десяти маршрутах (этап 54, Б-3.3); открыты без секрета они только на dev-стенде (`ALLOW_DEV_AUTH=true` вне production) |
+| **секрет крона** | заголовок `Authorization: Bearer $CRON_SECRET`, сравнение constant-time. Переменная не задана — 503 на всех маршрутах `cron.controller.ts` (на 30.09.2026 их двадцать пять — столько же, сколько записей `crons` в `backend/vercel.json`; этап 54, Б-3.3); открыты без секрета они только на dev-стенде (`ALLOW_DEV_AUTH=true` вне production) |
 
 ## Служебные
 
@@ -68,8 +68,8 @@
 | `POST /api/sessions/:id/product/image/confirm` | открыто | подтвердить загрузку фото: проверяет, что файл реально лежит по этому пути, сверяет путь с префиксом сессии (целиком, а не «начинается с» — иначе `..` уводит в чужую сессию) и только после этого записывает путь и тип в сессию (В-1.8, этап 123) |
 | `PATCH /api/sessions/:id/brand-manifest` | открыто | правки копии манифеста для этого ролика (§12) |
 | `POST /api/sessions/:id/prompt` | открыто | собрать промпт (GPT-5); 409, если сборка уже идёт (замок, ТЗ §30.3) |
-| `PATCH /api/sessions/:id/prompt` | открыто | правки промпта; необязательное поле `voiceoverScript` — текст озвучки (§15.2), не передан — прежний текст сохраняется |
-| `POST /api/sessions/:id/prompt/approve` | открыто | утвердить промпт |
+| `PATCH /api/sessions/:id/prompt` | открыто | правки промпта; необязательное поле `voiceoverScript` — текст озвучки (§15.2), не передан — прежний текст сохраняется. Сессия-поздравление — 400: сцена и озвучка у неё одна реплика, текст правится `PATCH /api/sessions/:id/greeting-script` (раздел «Поздравления» ниже) |
+| `POST /api/sessions/:id/prompt/approve` | открыто | утвердить промпт. Сессия-поздравление — 400 `GREETING_APPROVE_NOT_SUPPORTED`: ручного одобрения у неё нет, помеченный проверкой текст исправляется на шаге «Сценарий» |
 | `POST /api/sessions/:id/generate` | открыто | генерация ролика (Veo); повтор при записанном идущем рендере возвращает его же, параллельный запуск в окне старта — 409 (замок, ТЗ §30.3); `quality: 'standard'` — только с признаком пакета `fullQualityVideo` (403 у Lite) |
 | `GET /api/sessions/:id/generate` | открыто | статус генерации; здесь же опрашивается обрезка кадра (§16.1) |
 | `POST /api/sessions/:id/export` | открыто | этап 75: автоэкспорт под площадки, ярус A — пакетная дешёвая обрезка готового файла под несколько форматов ТОГО ЖЕ семейства кадра, один платёж на весь батч (`doc/MULTI-FORMAT-EXPORT-SPEC.md`) |
@@ -308,3 +308,135 @@
 | `GET /api/admin/tutorial-scenarios?subjectKey=&locale=&costly=&approved=&page=&pageSize=` | оператор | список сценариев для автозаписи обучающих видео, сгенерированных ИИ по крону (§4.10 doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md, этап 94); read-only плюс одобрение и правка шагов (ниже) |
 | `PATCH /api/admin/tutorial-scenarios/:id/approve` | оператор | явное одобрение траты на costly-сценарий перед автоматическим исполнением (§4.11 того же ТЗ) — идемпотентно, `approved`/`approvedBy`/`approvedAt` ставятся только один раз; бесплатный сценарий (`costly: false`) отвечает 400, одобрение ему не требуется |
 | `PATCH /api/admin/tutorial-scenarios/:id/steps` | оператор | заменить шаги сценария написанными руками (`steps`: JSON-строка) — сгенерированный сценарий приходит с плейсхолдерами селекторов, и без этого рычага он не доходит до первого кадра. Строка помечается `generatedBy: manual`, генератор её больше не трогает; одобрение и результат прошлого прогона сбрасываются |
+
+## Поздравления, «Я в кадре», голосовой помощник (ТЗ Greeting 2.0)
+
+Проект типа `GREETING_VIDEO` (ТЗ `docs-tz/TZ-Greeting-Video-Project-Type.md`,
+`docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md` §6). Сверено с
+контроллерами 30.09.2026. Доступ «UUID сессии» — как «открыто» выше
+(предъявитель — UUID сессии, поверх `SessionOwnerGuard`). Отказы с
+машинным кодом отдают его в `error.details.code`, текст — по-русски
+(перечень кодов — в конце раздела). Общие для платных маршрутов отказы
+(403 — тариф, блокировка, суточный потолок трат; 403 — стена
+бесплатного тарифа у рендера) здесь не повторяются. Пока ролик сессии
+`PENDING`/`PROCESSING`, все правки оформления сессии отвечают 409
+`GREETING_CHANGE_DURING_RENDER`.
+
+### Бриф, политика, сессии
+
+| Метод и путь | Доступ | Назначение и ключевые отказы |
+| --- | --- | --- |
+| `GET /api/greeting/policy` | открыто | вся матрица регистров, поводов и тонов (§3.3); `Cache-Control: public, max-age=300` |
+| `GET /api/projects/:projectId/greeting-brief` | идентичность | бриф проекта; чужой или удалённый проект — 404 `GREETING_BRIEF_NOT_FOUND` |
+| `PATCH /api/projects/:projectId/greeting-brief` | идентичность | правка брифа проекта (до сессии). 400: `OTHER` без текста — `GREETING_OCCASION_TEXT_REQUIRED`; `OTHER` без ответа о настроении; тон, запрещённый регистром повода; чужой бренд-бук — `GREETING_BRAND_NOT_FOUND`; скетч-ведущий на Hedra; 403: Hedra не на PREMIUM, разрешение выше тарифа; выбор себя ведущим (`presenter`) при выключенном режиме — 404 `PERSONA_DISABLED` |
+| `POST /api/projects/:projectId/greeting-brief/sessions` | идентичность | начать сессию из брифа (тот же ответ, что `POST /api/sessions`); снимок брифа копирует образ-ведущего — при выключенном режиме 400 `PERSONA_DISABLED` |
+| `GET /api/projects/:projectId/greeting-brief/sessions` | идентичность | сессии (версии) этого поздравления |
+| `PATCH /api/sessions/:sessionId/greeting-brief` | UUID сессии | правка брифа из сессии → `{ sessionId, newVersion, brief, resetFields, promptCleared }`; после готового ролика — новая сессия-версия, готовый ролик остаётся. 400: смена бренд-бука здесь (он меняется `PATCH …/brand-manifest`), правила брифа как выше; 409: ролик считается — `GREETING_CHANGE_DURING_RENDER`, замок занят — `GREETING_EDIT_IN_PROGRESS`, ролик запустили в то же мгновение — `GREETING_EDIT_AFTER_RENDER_STARTED` |
+| `PATCH /api/sessions/:sessionId/greeting-script` | UUID сессии | `{ speech }` → сцена и озвучка пересобираются вместе → `{ sessionId, newVersion, prompt, registerMismatch, registerWarning }`; 400 — пустой, длиннее предела, образ знаменитости; 409 — как у правки брифа |
+| `PATCH /api/sessions/:sessionId/brand-manifest` | UUID сессии | снимок бренд-бука сессии (общий маршрут, см. выше); у поздравления — 409 во время рендера, голос персоны при выключенном режиме — `PERSONA_DISABLED` |
+
+### Сценарий и ролик
+
+| Метод и путь | Доступ | Назначение и ключевые отказы |
+| --- | --- | --- |
+| `POST /api/sessions/:sessionId/greeting-prompt` | UUID сессии | собрать или пересобрать сценарий (модерация текста, отпечаток входов для проверки устаревания). 400 — не поздравление (`GREETING_NOT_GREETING_SESSION`), образ знаменитости, голос персоны на Hedra без образа (`GREETING_PERSONA_VOICE_NEEDS_PRESENTER`); 409 — ролик считается (`GREETING_CHANGE_DURING_RENDER`), ролик уже готов (`GREETING_VIDEO_ALREADY_READY`), сборка уже идёт (`GREETING_EDIT_IN_PROGRESS`) |
+| `POST /api/sessions/:sessionId/greeting-video` | UUID сессии | запустить рендер (Grok или Hedra по брифу); все проверки — до списания кредита. 400: не поздравление, сценария нет (`GREETING_SCRIPT_MISSING`), сценарий помечен проверкой — FLAGGED или BYPASSED (`GREETING_SCRIPT_FLAGGED`), правило регистра, лицо на фото без согласия, режим персоны выключен (`PERSONA_DISABLED`), голос персоны на Hedra без образа, голос бренд-бука удалён (`GREETING_BRAND_VOICE_UNAVAILABLE`), нет ключа провайдера (`GREETING_PROVIDER_UNAVAILABLE`); 409: сценарий устарел (`GREETING_SCRIPT_STALE`), старт уже идёт (`GREETING_RENDER_IN_PROGRESS`), идёт правка (`GREETING_EDIT_IN_PROGRESS`), ролик уже готов (`GREETING_VIDEO_ALREADY_READY`; повтор — только после FAILED). Разрешение Grok понижается до потолка тарифа без отказа |
+| `GET /api/sessions/:sessionId/greeting-video` | UUID сессии | опрос идущего рендера |
+
+### Оформление ролика
+
+| Метод и путь | Доступ | Назначение и ключевые отказы |
+| --- | --- | --- |
+| `GET /api/sessions/:sessionId/greeting-references` | UUID сессии | фото-референсы сессии |
+| `POST /api/sessions/:sessionId/greeting-references/generate` | UUID сессии | нарисовать кадр по брифу (платно; `{ setting? }`); 429 — 10/мин и 60/ч на человека; 400 — не поздравление, 7 фото (`GREETING_REFERENCE_LIMIT`), образ знаменитости; 502 — сбой модели, 422 — модель отказалась |
+| `POST /api/sessions/:sessionId/greeting-references/settings` | UUID сессии | три варианта сеттинга под повод (платный текстовый вызов, поэтому POST); 429 — 20/мин и 200/ч |
+| `POST /api/sessions/:sessionId/greeting-references/upload-url` | UUID сессии | presigned PUT для своего фото; 400 — не поздравление, 7 фото |
+| `POST /api/sessions/:sessionId/greeting-references/confirm` | UUID сессии | подтвердить загрузку; при включённом режиме персоны — платная проверка лица и серверная копия файла; 429 — 20/мин и 200/ч; 400 — `GREETING_REFERENCE_PATH_INVALID`, `GREETING_REFERENCE_ALREADY_ADDED`, `GREETING_REFERENCE_UPLOAD_MISSING`, `GREETING_REFERENCE_LIMIT` |
+| `PATCH /api/sessions/:sessionId/greeting-references/:imageId` | UUID сессии | подпись (`label`), описание, `faceConsent: true` (согласие изображённого); 404 — `GREETING_REFERENCE_NOT_FOUND` |
+| `DELETE /api/sessions/:sessionId/greeting-references/:imageId` | UUID сессии | удалить фото; 404 — `GREETING_REFERENCE_NOT_FOUND` |
+| `GET /api/sessions/:sessionId/greeting-voice` | UUID сессии | выбранный голос отправителя |
+| `GET /api/sessions/:sessionId/greeting-voice/presets` | UUID сессии | пресетные голоса Grok (реестр провайдера) |
+| `PATCH /api/sessions/:sessionId/greeting-voice` | UUID сессии | `{ presetVoiceId }` или `{ resembleVoiceId }` — выбор взаимоисключающий; 400 — неверный id, голос персоны на Hedra без образа (`GREETING_PERSONA_VOICE_NEEDS_PRESENTER`); 404 — своего голоса нет или не готов, голос персоны при выключенном режиме (`PERSONA_DISABLED`) |
+| `GET/PATCH /api/sessions/:sessionId/greeting-music` | UUID сессии | музыка: тема каталога (`{ themeId }`); 400 — правило регистра |
+| `POST /api/sessions/:sessionId/greeting-music/upload-url` · `…/confirm` · `…/link` | UUID сессии | свой файл или прямая https-ссылка; 400 — без подтверждения прав на музыку, путь не этой сессии, файла нет в хранилище |
+| `GET/POST /api/sessions/:sessionId/greeting-music/library` | UUID сессии | поиск в библиотеке (`?q=`) и выбор трека из выдачи; 400 — библиотека не настроена, трека нет в выдаче |
+| `GET /api/sessions/:sessionId/greeting-sticker?q=` | UUID сессии | поиск наклеек (Pixabay, выдача кешируется на сутки); 400 — не настроен `PIXABAY_API_KEY` |
+| `POST/PATCH/DELETE /api/sessions/:sessionId/greeting-sticker` | UUID сессии | выбрать из выдачи (`{ query, stickerId, placement? }`), переместить, убрать; 400 — правило регистра, наклейки нет в выдаче; 404 — наклейка не выбрана |
+| `GET/PATCH /api/sessions/:sessionId/greeting-scenes` | UUID сессии | число сцен (`{ sceneCount }`); 400 — правило регистра |
+| `GET/PATCH /api/sessions/:sessionId/greeting-cards` | UUID сессии | титульная и финальная карточки (`{ title, closing }`); 400 — текст не прошёл проверку содержания |
+
+### «Я в кадре» (за флагом `PERSONA_ENABLED`, `doc/DEPLOYMENT.md`)
+
+Флаг выключен — маршруты ниже отвечают 404 `PERSONA_DISABLED`, кроме
+`GET /api/personas/me` при уже созданной персоне (`enabled: false`) и
+удаления (`DELETE /api/personas/me`, `DELETE …/looks/:id`) — право на
+удаление.
+
+| Метод и путь | Доступ | Назначение и ключевые отказы |
+| --- | --- | --- |
+| `GET /api/personas/consent-text?locale=` | идентичность | текст согласия и его версия |
+| `POST /api/personas` | идентичность | согласие → `{ personaId, selfieUploadUrl, livenessUploadUrl }`; 10/ч на человека; 400 — без согласия; 409 — устаревшая версия текста, проверенная персона уже есть; 403 — закрыто по возрасту |
+| `POST /api/personas/me/verify` | идентичность | проверка селфи и ролика живости (Gemini), оценка возраста, базовый образ; 6/ч на человека; 400 — файл не загружен или велик; отказ младше 18 — постоянный |
+| `GET /api/personas/me` | идентичность | персона, образы, голос, квота; без URL селфи |
+| `DELETE /api/personas/me` | идентичность | отзыв согласия и удаление файлов, образов, скетчей, голоса; 503 — хранилище приняло не всё (строка остаётся отозванной, крон дочищает) |
+| `POST /api/personas/me/looks` | идентичность | новый образ (`{ preset?, description?, targetAge?, sourceLookId? }`); 400 — возраст вне 18…90, образ знаменитости, чужой образ-источник; 403 — не проверена; 429 — квота `persona-look`; 502/422 — сбой или отказ модели |
+| `PATCH/DELETE /api/personas/me/looks/:id` | идентичность | переименование; удаление образа с файлами (503 — файл не удалился) |
+| `POST /api/personas/me/looks/:id/regenerate` | идентичность | перегенерировать базовый образ; 3 за 10 мин; 400 — не базовый; 409 — селфи удалено по сроку (`PERSONA_SOURCES_PURGED`) или образ уже создаётся; 429 — суточный потолок |
+| `GET /api/personas/voice-consent-phrase?locale=` | идентичность | фраза согласия для записи голоса персоны и её версия (`consentPhraseVersion` в `POST /api/voices/clone` с `forPersona: true`) |
+| `GET/PATCH /api/admin/settings/persona-look-quota` | оператор | квота образов по тарифу, в сутки и месяц (В-7) |
+| `GET /api/cron/persona-sources-purge` | `CRON_SECRET` | удаляет селфи и ролик живости через 30 дней, дочищает прерванные удаления, повторяет удаление голосов у Resemble; работает при любом значении флага |
+
+### Голосовой помощник мастера (§4А)
+
+| Метод и путь | Доступ | Назначение и ключевые отказы |
+| --- | --- | --- |
+| `POST /api/projects/:projectId/greeting-voice/upload-url` | идентичность | presigned PUT для голосовой реплики в брифе (до сессии); 20/мин и 300/ч на человека |
+| `POST /api/projects/:projectId/greeting-voice/understand` | идентичность | разбор реплики в брифе → `{ status, transcript, language, intent, confidence, reply, scriptMismatch, reason? }`; ничего не применяет; общее окно распознавания и разбора 20/мин и 300/ч |
+| `POST /api/sessions/:sessionId/voice/upload-url` · `…/transcribe` · `…/understand` | UUID сессии | то же после старта сессии: ссылка на запись, дословная расшифровка, разбор; лимиты те же |
+| `GET/PATCH /api/projects/:projectId/wizard-guide` | идентичность | состояние советника; `PATCH { enabled?, voice? }` — 400 без полей, 409 — голос без советника |
+| `POST /api/projects/:projectId/wizard-guide/hint` | идентичность | подсказка на шаге; 20/мин и 120/ч на человека |
+| `POST /api/projects/:projectId/wizard-guide/hint-audio` | идентичность | `{ key }` → `{ url }` озвучки, 204 — сказать нечего, `{ url: null, reason: 'budget-exhausted' }` — потолок голоса; своё окно 20/мин и 120/ч |
+| `POST /api/projects/:projectId/wizard-guide/speak` | идентичность | проактивная речь (K4): `{ kind: refusal \| answer \| video-ready \| consent-summary, locale, refusal?, topic? }`, ответы как у `hint-audio`; 400 — `refusal` без кода отказа; своё окно 20/мин и 120/ч |
+| `POST /api/projects/:projectId/wizard-guide/events` | идентичность | телеметрия шагов, всегда 200; 20/мин |
+| `POST /api/projects/:projectId/wizard-guide/complaint` | идентичность | «непонятно» к подсказке, всегда 200; 10/мин |
+| `GET/PATCH /api/admin/settings/voice-assistant` | оператор | потолки голоса по тарифу (В-14) и голос помощника (В-11) |
+| `GET/PATCH /api/admin/settings/speech-recognition-provider` | оператор | распознавание речи: Gemini или Soniox |
+| `GET /api/admin/wizard-guide/stats` · `…/hints` · `…/steps` | оператор | сводка кеша подсказок, лента подсказок с фильтрами, частоты по шагам |
+| `GET /api/admin/wizard-guide/experience`; `PUT …/experience/:id/texts/:locale`; `POST …/experience/:id/texts/:locale/reviewed`; `POST …/experience/:id/publish`; `PATCH …/experience/:id` | оператор | записи опыта советника: тексты по локалям, отметка проверки, публикация |
+| `GET/POST /api/admin/wizard-guide/candidates`; `POST …/candidates/:id/classify` · `promote` · `merge` · `unmerge` · `attach` · `reject`; `GET/PATCH /api/admin/wizard-guide/siblings` | оператор | кандидаты из жалоб, сведение дублей и его пороги |
+| `GET /api/cron/voice-uploads-sweep` | `CRON_SECRET` | уборка необработанных голосовых записей старше часа и сводок перед согласием (каждые 15 минут) |
+| `POST /api/admin/ui-snapshot/greeting-frames` · `…/greeting-frames/fixture-video` | оператор | съёмка кадров лендинга поздравлений (этап I); фикстурный ролик — платно |
+
+### Коды отказов поздравления
+
+`backend/src/common/greeting-errors.ts` (`GREETING_ERROR_CODES`). Клиент
+переводит код словарём `greetingErrors`; незнакомый код — показывается
+текст сервера.
+
+| Код | HTTP | Где | Смысл |
+| --- | --- | --- | --- |
+| `GREETING_NOT_GREETING_SESSION` | 400 | `greeting-video`, `greeting-prompt`, правки из сессии, `greeting-references` (upload-url, generate, settings) | у сессии нет брифа поздравления |
+| `GREETING_SCRIPT_MISSING` | 400 | `POST …/greeting-video` | сценария ещё нет |
+| `GREETING_SCRIPT_FLAGGED` | 400 | `POST …/greeting-video` | сценарий помечен проверкой (FLAGGED или BYPASSED) — исправить текст на шаге «Сценарий» |
+| `GREETING_SCRIPT_STALE` | 409 | `POST …/greeting-video` | после сборки сменились фото или их порядок, голос, режим озвучки или образ ведущего — собрать заново |
+| `GREETING_APPROVE_NOT_SUPPORTED` | 400 | `POST /api/sessions/:id/prompt/approve` | у поздравления нет ручного одобрения |
+| `GREETING_RENDER_IN_PROGRESS` | 409 | `POST …/greeting-video` | второй старт при идущем |
+| `GREETING_VIDEO_ALREADY_READY` | 409 | `POST …/greeting-video`, `POST …/greeting-prompt` | ролик готов — другой делается новой версией через правку брифа |
+| `GREETING_EDIT_IN_PROGRESS` | 409 | `POST …/greeting-video`, правки брифа и сценария, `POST …/greeting-prompt` | держится замок правки или сборки сценария |
+| `GREETING_EDIT_AFTER_RENDER_STARTED` | 409 | правки брифа и сценария, `POST …/greeting-prompt` | ролик запустили в то же мгновение — правка не сохранена |
+| `GREETING_OCCASION_TEXT_REQUIRED` | 400 | правка брифа | повод «Другое» без текста |
+| `GREETING_BRIEF_NOT_FOUND` | 404 | бриф проекта | бриф не найден или проект удалён |
+| `GREETING_BRAND_NOT_FOUND` | 400 | бриф проекта | выбранный бренд-бук не найден |
+| `GREETING_PROVIDER_UNAVAILABLE` | 400 | `POST …/greeting-video` | нет ключа Grok или Hedra на стенде |
+| `GREETING_CHANGE_DURING_RENDER` | 409 | голос, музыка, наклейка, сцены, карточки, фото, снимок бренд-бука, правки брифа и сценария, `greeting-prompt` | ролик сейчас собирается |
+| `GREETING_REFERENCE_LIMIT` | 400 | `greeting-references` (upload-url, confirm, generate) | уже 7 фото |
+| `GREETING_REFERENCE_PATH_INVALID` | 400 | `greeting-references/confirm` | файл загружен не для этой сессии |
+| `GREETING_REFERENCE_ALREADY_ADDED` | 400 | `greeting-references/confirm` | фото уже добавлено |
+| `GREETING_REFERENCE_UPLOAD_MISSING` | 400 | `greeting-references/confirm` | файла нет в хранилище |
+| `GREETING_REFERENCE_NOT_FOUND` | 404 | `greeting-references/:imageId` | фото не найдено |
+| `GREETING_PERSONA_VOICE_NEEDS_PRESENTER` | 400 | `PATCH …/greeting-voice`, `greeting-prompt`, `greeting-video`, `POST …/postprod/revoice` | голос персоны на Hedra только вместе со своим образом-ведущим |
+| `GREETING_BRAND_VOICE_UNAVAILABLE` | 400 | `greeting-video`, `POST …/postprod/revoice` | клон голоса бренд-бука удалён, ждёт удаления или чужой |
+
+Код режима персоны — `PERSONA_DISABLED` (404, у рендера и снимков сессии
+— 400): режим выключен флагом. Его отдают и `PATCH …/brand-manifest`, и
+`POST …/postprod/revoice`.

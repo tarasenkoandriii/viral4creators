@@ -8,7 +8,7 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useId, useCallback } from 'react';
 import { Type } from 'lucide-react';
 import {
   Card,
@@ -19,14 +19,15 @@ import {
   Button,
 } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
-import { errorMessage } from '../../../services/projects-api';
 import {
+  greetingErrorMessage,
   getGreetingCards,
   updateGreetingCards,
   MAX_GREETING_CARD_LENGTH,
 } from '../../../services/greeting-api';
 import type { GreetingCardsView } from '../../../types/project';
 import { HelpButton } from '../HelpSheet';
+import { CardLoadError } from './CardLoadError';
 import {
   SESSION_VOICE_TARGETS,
   planCardsVoice,
@@ -35,7 +36,10 @@ import {
   saveEffect,
 } from '../../../lib/voice-fields';
 import { useVoiceFieldApplier } from '../../voice/voice-commands';
-import { cardsSummary } from '../../../lib/greeting-character';
+import {
+  cardsSummary,
+  lockedFieldRefusals,
+} from '../../../lib/greeting-character';
 import {
   useSessionVoiceTexts,
   describeSessionValue,
@@ -54,9 +58,15 @@ import {
 export function CardsStep({
   sessionId,
   onSummary,
+  lockText = null,
 }: {
   sessionId: string;
   onSummary?: (value: string | null) => void;
+  /**
+   * Карточка заперта (ролик готов или снимается): причина для голоса —
+   * тот же отказ, что подпись на экране (`CharacterBlock`).
+   */
+  lockText?: string | null;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -66,9 +76,15 @@ export function CardsStep({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Первое чтение не прошло — карточка с причиной и «Повторить» (п. 10). */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  const fid = useId();
 
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
     getGreetingCards(sessionId)
       .then((v) => {
         if (!alive) return;
@@ -76,11 +92,14 @@ export function CardsStep({
         setTitle(v.cards.title ?? '');
         setClosing(v.cards.closing ?? '');
       })
-      .catch(() => undefined);
+      .catch((e: unknown) => {
+        if (alive) setLoadError(greetingErrorMessage(e, dict));
+      });
     return () => {
       alive = false;
     };
-  }, [sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- словарь: текст ошибки на момент сбоя
+  }, [sessionId, attempt]);
 
   /**
    * Значения — явным аргументом, а не из замыкания: голос (K5) кладёт
@@ -113,7 +132,7 @@ export function CardsStep({
       setSaved(true);
       return null;
     } catch (e) {
-      const message = errorMessage(e);
+      const message = greetingErrorMessage(e, dict);
       setError(message);
       return message;
     } finally {
@@ -131,6 +150,8 @@ export function CardsStep({
       : [],
     describe: (f) => describeSessionValue(f.value, dict.voiceFields),
     apply: (fields) => {
+      if (lockText)
+        return lockedFieldRefusals(fields, voiceTexts.refusedField, lockText);
       const plan = planCardsVoice(!!view, busy, fields);
       const refusals = refusalLines(plan.refused, fields, voiceTexts);
       const s = cardsVoiceSave(plan, view?.cards ?? null);
@@ -153,7 +174,17 @@ export function CardsStep({
     onSummary?.(summary);
   }, [onSummary, summary]);
 
-  if (!view) return null;
+  if (!view) {
+    return loadError ? (
+      <CardLoadError
+        qa="greeting-cards-card"
+        icon={<Type size={18} />}
+        title={w.cardsHeading}
+        message={loadError}
+        onRetry={retry}
+      />
+    ) : null;
+  }
 
   const dirty =
     title.trim() !== (view.cards.title ?? '') ||
@@ -175,11 +206,16 @@ export function CardsStep({
       )}
 
       <div className="space-y-3">
-        <Field label={w.cardsTitleLabel} hint={w.cardsTitleHint}>
+        <Field
+          label={w.cardsTitleLabel}
+          hint={w.cardsTitleHint}
+          htmlFor={`${fid}-title`}
+        >
           {/* Титры пишет человек, подсказка собрана из брифа с именем —
               личный текст, на кадре лендинга размывается (этап I ТЗ
               Greeting 2.0, §5.3). */}
           <Input
+            id={`${fid}-title`}
             data-qa="greeting-cards-title"
             data-qa-mask="personal-card-title"
             value={title}
@@ -207,8 +243,13 @@ export function CardsStep({
           </Button>
         )}
 
-        <Field label={w.cardsClosingLabel} hint={w.cardsClosingHint}>
+        <Field
+          label={w.cardsClosingLabel}
+          hint={w.cardsClosingHint}
+          htmlFor={`${fid}-closing`}
+        >
           <Input
+            id={`${fid}-closing`}
             data-qa="greeting-cards-closing"
             data-qa-mask="personal-card-closing"
             value={closing}

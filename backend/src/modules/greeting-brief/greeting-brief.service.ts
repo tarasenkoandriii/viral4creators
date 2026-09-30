@@ -50,6 +50,10 @@ import {
 } from '../../common/types/greeting.types';
 import { GreetingRegisterClassifier } from './greeting-register-classifier.service';
 import { SupportedLocale, isSupportedLocale } from '../../common/locale';
+import {
+  GREETING_ERROR_CODES,
+  greetingError,
+} from '../../common/greeting-errors';
 
 interface GreetingBriefRow {
   id: string;
@@ -278,7 +282,10 @@ export class GreetingBriefService {
         : current.customOccasionText;
     if (occasion === 'OTHER' && !customOccasionText) {
       throw new BadRequestException(
-        'customOccasionText is required when occasion is OTHER',
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_OCCASION_TEXT_REQUIRED,
+          'Для повода «Другое» напишите, что за повод.',
+        ),
       );
     }
 
@@ -487,8 +494,12 @@ export class GreetingBriefService {
         where: { projectId, project: { userId, deletedAt: null } },
       });
     if (!row) {
+      // Без идентификатора в тексте: его читает человек (CONTRACT6 п.7).
       throw new NotFoundException(
-        `Greeting brief not found for project ${projectId}`,
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_BRIEF_NOT_FOUND,
+          'Бриф поздравления не найден — возможно, проект удалён.',
+        ),
       );
     }
     return row;
@@ -504,7 +515,10 @@ export class GreetingBriefService {
     });
     if (!manifest) {
       throw new BadRequestException(
-        `Brand manifest ${brandManifestId} not found`,
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_BRAND_NOT_FOUND,
+          'Выбранный бренд-бук не найден — выберите другой или уберите его.',
+        ),
       );
     }
   }

@@ -361,3 +361,35 @@ describe('GreetingBriefService — ответ о настроении отдел
     expect(lost.userOccasionRegister).toBeNull();
   });
 });
+
+/** CONTRACT6 п.7 (G-B1): отказы брифа — по-русски, с кодом, без UUID. */
+describe('GreetingBriefService — коды отказов', () => {
+  it('бриф не найден — код, без идентификатора проекта в тексте', async () => {
+    const { service, prisma } = build();
+    prisma.greetingBrief.findFirst.mockResolvedValue(null);
+    const projectId = '3f2a9c1e-0000-4000-8000-000000000001';
+    const err = await service.getBrief('u1', projectId).catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_BRIEF_NOT_FOUND');
+    expect(err.message).not.toContain(projectId);
+    expect(err.message).toMatch(/[а-я]/);
+  });
+
+  it('повод «Другое» без текста — код и русский текст', async () => {
+    const { service } = build();
+    const err = await service
+      .updateBrief('u1', 'p1', { occasion: 'OTHER', customOccasionText: '' })
+      .catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_OCCASION_TEXT_REQUIRED');
+    expect(err.message).toMatch(/Другое/);
+  });
+
+  it('чужой бренд-бук — код, без идентификатора в тексте', async () => {
+    const { service, prisma } = build();
+    prisma.brandManifest.findFirst.mockResolvedValue(null);
+    const err = await service
+      .updateBrief('u1', 'p1', { brandManifestId: 'bm-secret-id' })
+      .catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_BRAND_NOT_FOUND');
+    expect(err.message).not.toContain('bm-secret-id');
+  });
+});

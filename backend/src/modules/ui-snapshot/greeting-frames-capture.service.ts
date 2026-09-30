@@ -45,6 +45,7 @@ import {
 } from '../../common/types/generation.types';
 import { GreetingPromptService } from '../greeting-prompt/greeting-prompt.service';
 import { GreetingVideoService } from '../greeting-video/greeting-video.service';
+import { GreetingSessionEditService } from '../greeting-session-edit/greeting-session-edit.service';
 import { PostProductionService } from '../postprod/postprod.service';
 import { FIXTURE_IDS } from '../tutorial-runner/fixture-seed';
 import { CAPTURE_DEVICE_SCALE_FACTOR } from '../tutorial-runner/tutorial-video-assembly';
@@ -117,7 +118,9 @@ export type FixtureVideoAction =
   | 'poll'
   | 'poll-post'
   | 'script-and-render'
-  | 'render';
+  | 'render'
+  /** Готовый ролик переснять: новая версия сессии и рендер её (CONTRACT6). */
+  | 'new-version-render';
 
 export function fixtureVideoAction(state: {
   hasPrompt: boolean;
@@ -134,7 +137,10 @@ export function fixtureVideoAction(state: {
     // новый рендер поверх идущей озвучки оплатил бы обе работы, а
     // слушать ролик до её конца бессмысленно — голоса в нём ещё нет.
     if (state.postStatus === 'pending') return 'poll-post';
-    return state.rerender ? 'render' : 'none';
+    // Готовый ролик на месте не перерендеривается (409
+    // GREETING_VIDEO_ALREADY_READY, §3.6 ТЗ): переснять — значит завести
+    // новую версию сессии тем же сценарием и рендерить её.
+    return state.rerender ? 'new-version-render' : 'none';
   }
   if (
     state.videoStatus === GenerationStatus.PENDING ||
@@ -199,6 +205,8 @@ export class GreetingFramesCaptureService {
     // ничего не запускает и не оплачивает: он забирает результат уже
     // идущей задачи, как это делает опрос статуса у товарки.
     private readonly postprod: PostProductionService,
+    // Новая версия сессии под перерендер готового ролика (CONTRACT6).
+    private readonly edits: GreetingSessionEditService,
   ) {}
 
   async capture(options: {
@@ -314,6 +322,7 @@ export class GreetingFramesCaptureService {
 
     let video: GeneratedVideo | undefined = current;
     let started = false;
+    let sessionId = row.id;
     switch (action) {
       case 'none':
         break;
@@ -332,10 +341,22 @@ export class GreetingFramesCaptureService {
         video = await this.video.startVideo(row.id);
         started = true;
         break;
+      case 'new-version-render': {
+        // Новая версия — последняя сессия проекта: следующий вызов (опрос)
+        // и мастер найдут именно её, а прежний ролик останется в старой.
+        const fork = await this.edits.forkForRerender(row.id);
+        sessionId = fork.sessionId;
+        if (!fork.promptKept) {
+          await this.prompt.generateGreetingPrompt(sessionId);
+        }
+        video = await this.video.startVideo(sessionId);
+        started = true;
+        break;
+      }
     }
     const stage = fixtureVideoStage(video, started);
     return {
-      sessionId: row.id,
+      sessionId,
       stage,
       video,
       ...(stage === 'complete' && video?.postStatus === 'failed'

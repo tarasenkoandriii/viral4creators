@@ -26,6 +26,7 @@ import {
 } from '../../common/types/greeting.types';
 import { MAX_CARD_TEXT_LENGTH } from '../../common/greeting-cards';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
 
 @Injectable()
 export class GreetingCardsService {
@@ -52,7 +53,7 @@ export class GreetingCardsService {
     sessionId: string,
     cards: GreetingCards,
   ): Promise<GreetingCardsView> {
-    const session = await this.load(sessionId);
+    const session = await this.loadForEdit(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     const next: GreetingCards = {
       title: clean(cards.title),
@@ -78,6 +79,18 @@ export class GreetingCardsService {
       greetingBriefSnapshot: { ...snapshot, cards: next },
     });
     return { ...(await this.get(sessionId)), cards: next };
+  }
+
+  /**
+   * Сессия для правки выбора: пока ролик считается — 409 с кодом
+   * (CONTRACT6 п.2, `assertGreetingNotRendering`): рендер и постобработка
+   * читают выбор из снимка, смена посреди рендера дала бы ролик ни по
+   * прежнему, ни по новому выбору.
+   */
+  private async loadForEdit(sessionId: string): Promise<Session> {
+    const session = await this.load(sessionId);
+    assertGreetingNotRendering(session);
+    return session;
   }
 
   private async load(sessionId: string): Promise<Session> {

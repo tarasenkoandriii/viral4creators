@@ -70,3 +70,19 @@ export async function startAfterSave(
   await startSession();
   return true;
 }
+
+/**
+ * Что сказать под кнопкой «Сохранить» брифа (CONTRACT6 G-FE п. 6).
+ *
+ * Раньше плашка «Сохранено» висела и после новой правки — человек
+ * уходил, уверенный, что всё записано. Правка после сохранения —
+ * «есть несохранённые изменения»; вернул как было — снова «сохранено»:
+ * на экране ровно то, что лежит на сервере.
+ */
+export function briefSaveState(
+  saved: boolean,
+  dirty: boolean
+): 'saved' | 'unsaved' | null {
+  if (dirty) return 'unsaved';
+  return saved ? 'saved' : null;
+}

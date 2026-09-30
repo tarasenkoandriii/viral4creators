@@ -94,6 +94,35 @@ function toView(row: UserVoiceRow): UserVoiceView {
   };
 }
 
+/**
+ * Удалённый голос — прочь из бренд-буков пользователя (CONTRACT6 п.4).
+ * Бренд-бук хранит `ttsVoiceId` строкой без связи с `UserVoice`, и после
+ * удаления голоса новый ролик по нему озвучивался бы клоном, согласие на
+ * который забрали (у Resemble удаление может и не пройти сразу — список
+ * повтора). Только бренд-буки ЭТОГО пользователя: чужих его голос не
+ * касается. Снимки уже созданных сессий не трогаем — их ловит проверка у
+ * денег (`personaRenderProblem`, голос бренд-бука).
+ */
+export async function forgetVoiceInBrandManifests(
+  prisma: {
+    brandManifest: {
+      updateMany(args: {
+        where: { userId: string; ttsVoiceId: string };
+        data: { ttsVoiceId: null; ttsProvider: null };
+      }): Promise<unknown>;
+    };
+  },
+  userId: string,
+  resembleVoiceId: string,
+): Promise<void> {
+  await prisma.brandManifest.updateMany({
+    where: { userId, ttsVoiceId: resembleVoiceId },
+    // Провайдер без голоса ничего не значит — так же чистит правка
+    // снимка (`applySnapshotEdit`: голос null → провайдер null).
+    data: { ttsVoiceId: null, ttsProvider: null },
+  });
+}
+
 @Injectable()
 export class UserVoicesService {
   private readonly logger = new Logger(UserVoicesService.name);
@@ -306,6 +335,13 @@ export class UserVoicesService {
       await this.blob.deleteBlob(pathname);
     }
     await this.prisma.userVoice.delete({ where: { id } });
+    if (row.resembleVoiceId) {
+      await forgetVoiceInBrandManifests(
+        this.prisma,
+        userId,
+        row.resembleVoiceId,
+      );
+    }
   }
 
   /**

@@ -272,6 +272,31 @@ check('chargeText — цена словами; неизвестная — null',
   eq(chargeText({ kind: 'unknown', reason: 'no-data' }, t), null);
 });
 
+check('chargeText — числовые формы по балансу (ru/uk/es)', () => {
+  const ru = {
+    costCredit: {
+      one: 'из {balance} доступной',
+      few: 'из {balance} доступных',
+      many: 'из {balance} доступных',
+      other: 'из {balance} доступных',
+    },
+    costIncluded: '',
+  };
+  eq(chargeText({ kind: 'credit', balance: 1 }, ru, 'ru'), 'из 1 доступной');
+  eq(chargeText({ kind: 'credit', balance: 21 }, ru, 'ru'), 'из 21 доступной');
+  eq(chargeText({ kind: 'credit', balance: 3 }, ru, 'ru'), 'из 3 доступных');
+  eq(chargeText({ kind: 'credit', balance: 11 }, ru, 'ru'), 'из 11 доступных');
+  const es = {
+    costCredit: {
+      one: 'de {balance} disponible',
+      other: 'de {balance} disponibles',
+    },
+    costIncluded: '',
+  };
+  eq(chargeText({ kind: 'credit', balance: 1 }, es, 'es'), 'de 1 disponible');
+  eq(chargeText({ kind: 'credit', balance: 2 }, es, 'es'), 'de 2 disponibles');
+});
+
 // ── runConsent: сеть между фразой и решением ─────────────────────────
 
 async function checkAsync(name: string, fn: () => Promise<void>) {

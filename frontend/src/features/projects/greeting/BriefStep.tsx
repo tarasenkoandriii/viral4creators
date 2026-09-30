@@ -8,7 +8,7 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useId } from 'react';
 import { Gift, Check, UserRound } from 'lucide-react';
 import {
   Card,
@@ -22,12 +22,14 @@ import {
   Button,
 } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
-import { errorMessage } from '../../../services/projects-api';
 import {
   updateSessionGreetingBrief,
   updateGreetingBrief,
+  greetingErrorMessage,
 } from '../../../services/greeting-api';
 import {
+  briefSaveState,
+  changedBriefFields,
   sessionBriefPatch,
   startAfterSave,
 } from '../../../lib/greeting-brief-diff';
@@ -126,6 +128,7 @@ export function BriefStep({
   manifests,
   plan,
   sessionId,
+  videoBusy = false,
   onSaved,
   onSessionEdited,
   onStartSession,
@@ -135,6 +138,12 @@ export function BriefStep({
   plan: PlanId;
   /** Есть — правка идёт в сессию (этап C, §3.6), нет — в бриф проекта. */
   sessionId: string | null;
+  /**
+   * Ролик снимается — «Сохранить» гаснет с подписью (CONTRACT6 G-FE
+   * п. 5): правка во время рендера получила бы 409, а подпись объясняет
+   * это до нажатия.
+   */
+  videoBusy?: boolean;
   onSaved: (brief: GreetingBriefView) => void;
   onSessionEdited: (result: SessionBriefEditResult) => Promise<void>;
   onStartSession: () => Promise<void>;
@@ -142,6 +151,9 @@ export function BriefStep({
   const { dict, locale } = useI18n();
   const w = dict.greetingVideoWizard;
   const hasSession = !!sessionId;
+  // a11y (CONTRACT6 G-FE п. 11): подпись поля связана с полем — клик по
+  // ней ставит фокус, скринридер читает подпись у поля.
+  const fid = useId();
 
   // Этап D (§3.4, §3.5): повод, настроение и тон — одним куском, его
   // правит общий с экраном создания блок `GreetingOccasionFields`.
@@ -421,10 +433,16 @@ export function BriefStep({
   /** Что было на экране при открытии или после последнего сохранения. */
   const baseline = useRef<ReturnType<typeof fieldsNow> | null>(null);
   if (!baseline.current) baseline.current = fieldsNow();
+  // Бренд-бук — отдельно: он уходит только в бриф проекта (до старта).
+  const baselineManifest = useRef(brandManifestId);
+  const dirty =
+    Object.keys(changedBriefFields(baseline.current, fieldsNow())).length > 0 ||
+    (!hasSession && brandManifestId !== baselineManifest.current);
+  const saveState = briefSaveState(saved, dirty);
 
   /** `true` — сохранено; ошибку показывает сам (`start` ждёт ответа). */
   const save = async (): Promise<boolean> => {
-    if (!canSave) return false;
+    if (!canSave || videoBusy) return false;
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -464,13 +482,14 @@ export function BriefStep({
           brandManifestId: brandManifestId || null,
         });
         baseline.current = fields;
+        baselineManifest.current = brandManifestId;
         onSaved(updated);
       }
       setSaved(true);
       setSaveCount((n) => n + 1);
       return true;
     } catch (e) {
-      setError(errorMessage(e));
+      setError(greetingErrorMessage(e, dict));
       return false;
     } finally {
       setSaving(false);
@@ -485,7 +504,7 @@ export function BriefStep({
       // собралась бы из СТАРОГО брифа, а ошибку `save` уже показал.
       await startAfterSave(save, onStartSession);
     } catch (e) {
-      setError(errorMessage(e));
+      setError(greetingErrorMessage(e, dict));
     } finally {
       setStarting(false);
     }
@@ -521,8 +540,9 @@ export function BriefStep({
             что выдуманное имя на маркетинговом кадре запрещено, а без
             имён кадр брифа не снять. `data-qa` рядом — хук голоса, его
             не трогаем. */}
-        <Field label={w.recipientNameLabel}>
+        <Field label={w.recipientNameLabel} htmlFor={`${fid}-recipient`}>
           <Input
+            id={`${fid}-recipient`}
             data-qa={BRIEF_VOICE_TARGETS.recipient}
             data-qa-mask="personal-recipient"
             value={recipientName}
@@ -533,8 +553,9 @@ export function BriefStep({
           />
         </Field>
 
-        <Field label={w.senderNameLabel}>
+        <Field label={w.senderNameLabel} htmlFor={`${fid}-sender`}>
           <Input
+            id={`${fid}-sender`}
             data-qa={BRIEF_VOICE_TARGETS.sender}
             data-qa-mask="personal-sender"
             value={senderName}
@@ -549,8 +570,10 @@ export function BriefStep({
           label={w.personalMessageLabel}
           hint={w.personalMessageHint}
           counter={`${personalMessage.length}/${BRIEF_MESSAGE_MAX}`}
+          htmlFor={`${fid}-message`}
         >
           <Textarea
+            id={`${fid}-message`}
             data-qa={BRIEF_VOICE_TARGETS.message}
             data-qa-mask="personal-message"
             rows={3}
@@ -562,8 +585,13 @@ export function BriefStep({
           />
         </Field>
 
-        <Field label={w.scriptLanguageLabel} hint={w.scriptLanguageHint}>
+        <Field
+          label={w.scriptLanguageLabel}
+          hint={w.scriptLanguageHint}
+          htmlFor={`${fid}-language`}
+        >
           <Select
+            id={`${fid}-language`}
             data-qa={BRIEF_VOICE_TARGETS.scriptLanguage}
             value={scriptLanguage}
             onChange={(e) =>
@@ -583,6 +611,7 @@ export function BriefStep({
           <Pills
             value={presenterProvider}
             onChange={setPresenterProvider}
+            ariaLabel={w.presenterProviderLabel}
             options={[
               { value: 'grok', label: w.providerGrok },
               {
@@ -660,8 +689,9 @@ export function BriefStep({
           </div>
         )}
 
-        <Field label={w.resolutionLabel}>
+        <Field label={w.resolutionLabel} htmlFor={`${fid}-resolution`}>
           <Select
+            id={`${fid}-resolution`}
             data-qa={BRIEF_VOICE_TARGETS.resolution}
             value={resolution}
             onChange={(e) =>
@@ -676,8 +706,9 @@ export function BriefStep({
           </Select>
         </Field>
 
-        <Field label={w.occasionDateLabel}>
+        <Field label={w.occasionDateLabel} htmlFor={`${fid}-date`}>
           <Input
+            id={`${fid}-date`}
             data-qa={BRIEF_VOICE_TARGETS.date}
             type="date"
             value={occasionDate}
@@ -688,8 +719,10 @@ export function BriefStep({
         <Field
           label={w.manifestLabel}
           hint={hasSession ? w.manifestSessionHint : undefined}
+          htmlFor={`${fid}-manifest`}
         >
           <Select
+            id={`${fid}-manifest`}
             value={brandManifestId}
             onChange={(e) => setBrandManifestId(e.target.value)}
             disabled={hasSession || manifests.length === 0}
@@ -704,10 +737,15 @@ export function BriefStep({
         </Field>
 
         {error && <Alert tone="error">{error}</Alert>}
-        {saved && !error && (
+        {saveState === 'unsaved' && !error && (
+          <p className="text-xs text-silver-400">
+            {dict.greetingUi.briefUnsavedNote}
+          </p>
+        )}
+        {saveState === 'saved' && !error && (
           <Alert tone="success">
             <Check size={14} className="inline mr-1" />
-            {w.editSubmitButton}
+            {dict.greetingUi.briefSavedNote}
             {/* Этап C (§3.6): молча ничего не пропадает — сброшенное
                 называется рядом с «Сохранено». */}
             {editResult && editResult.resetFields.length > 0 && (
@@ -747,7 +785,7 @@ export function BriefStep({
           <Button
             data-qa="greeting-brief-save"
             variant="outline"
-            disabled={!canSave || saving || starting}
+            disabled={!canSave || saving || starting || videoBusy}
             loading={saving}
             onClick={() => void save()}
           >
@@ -764,6 +802,11 @@ export function BriefStep({
             </Button>
           )}
         </div>
+        {videoBusy && (
+          <p className="text-xs text-silver-400">
+            {dict.greetingUi.videoBusyEditHint}
+          </p>
+        )}
       </div>
     </Card>
   );

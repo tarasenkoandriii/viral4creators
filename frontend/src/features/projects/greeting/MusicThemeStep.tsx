@@ -9,7 +9,7 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import { Music, Upload } from 'lucide-react';
 import {
   Card,
@@ -20,7 +20,6 @@ import {
   Field,
 } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
-import { errorMessage } from '../../../services/projects-api';
 import { mediaPlaybackRef } from '../../../lib/media-playback';
 import {
   getGreetingMusic,
@@ -31,6 +30,7 @@ import {
   MAX_GREETING_MUSIC_BYTES,
   uploadGreetingMusic,
   linkGreetingMusic,
+  greetingErrorMessage,
 } from '../../../services/greeting-api';
 import type { GreetingMusicView } from '../../../types/project';
 import type { GreetingRegisterRules } from '../../../lib/greeting-policy';
@@ -46,6 +46,7 @@ import { useVoiceFieldApplier } from '../../voice/voice-commands';
 import {
   musicSummary,
   showOwnMusicWarning,
+  lockedFieldRefusals,
 } from '../../../lib/greeting-character';
 import {
   useSessionVoiceTexts,
@@ -89,11 +90,17 @@ export function MusicThemeStep({
   sessionId,
   rules = null,
   onSummary,
+  lockText = null,
 }: {
   sessionId: string;
   /** Правила регистра брифа; `null` — таблица не загрузилась. */
   rules?: GreetingRegisterRules | null;
   onSummary?: (value: string | null) => void;
+  /**
+   * Карточка заперта (ролик готов или снимается): причина для голоса —
+   * тот же отказ, что подпись на экране (`CharacterBlock`).
+   */
+  lockText?: string | null;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -104,11 +111,21 @@ export function MusicThemeStep({
   const [musicLoaded, setMusicLoaded] = useState(false);
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState('');
+  /**
+   * Запрос, по которому показана выдача библиотеки (CONTRACT6 G-FE п. 3):
+   * сервер ищет трек в кеше ЭТОГО запроса, а не того, что сейчас в поле.
+   */
+  const [libraryQuery, setLibraryQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Первое чтение не прошло — строка причины и «Повторить» (п. 10). */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
     getGreetingMusic(sessionId)
       .then((m) => {
         if (!alive) return;
@@ -118,16 +135,22 @@ export function MusicThemeStep({
       // Запрос не прошёл — показываем пустую витрину, но БЕЗ блока
       // поиска: настроена библиотека или нет, мы в этот момент не
       // знаем, а рисовать поиск «на всякий случай» — ровно та ложь,
-      // из-за которой признак и стал обязательным.
-      .catch(
-        () =>
-          alive &&
-          setMusic({ themes: [], selected: null, libraryEnabled: false })
-      );
+      // из-за которой признак и стал обязательным. И говорим, что не
+      // загрузилось, с «Повторить»: пустая витрина без причины выглядела
+      // как «музыки нет».
+      .catch((e: unknown) => {
+        if (!alive) return;
+        setMusic(
+          (prev) =>
+            prev ?? { themes: [], selected: null, libraryEnabled: false }
+        );
+        setLoadError(greetingErrorMessage(e, dict));
+      });
     return () => {
       alive = false;
     };
-  }, [sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- словарь: текст ошибки на момент сбоя
+  }, [sessionId, attempt]);
 
   /** @returns ошибку, показанную на экране, или `null` — сохранено (K5). */
   const apply = async (
@@ -138,9 +161,10 @@ export function MusicThemeStep({
     try {
       setMusic(await fn());
       setMusicLoaded(true);
+      setLoadError(null);
       return null;
     } catch (e) {
-      const message = errorMessage(e);
+      const message = greetingErrorMessage(e, dict);
       setError(message);
       return message;
     } finally {
@@ -177,6 +201,8 @@ export function MusicThemeStep({
         ? music?.themes.find((t) => t.id === f.value)?.title
         : undefined) ?? describeSessionValue(f.value, dict.voiceFields),
     apply: (fields) => {
+      if (lockText)
+        return lockedFieldRefusals(fields, voiceTexts.refusedField, lockText);
       const plan = planMusicVoice(music, busy, fields);
       if (plan.query !== undefined) setQuery(plan.query);
       const refusals = refusalLines(plan.refused, fields, voiceTexts);
@@ -233,6 +259,16 @@ export function MusicThemeStep({
       {error && (
         <Alert tone="error" onDismiss={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+      {loadError && (
+        <Alert tone="error" title={dict.greetingUi.cardLoadFailed}>
+          <div className="flex items-center justify-between gap-3">
+            <span>{loadError}</span>
+            <Button size="sm" variant="outline" onClick={retry}>
+              {dict.greetingUi.cardRetryButton}
+            </Button>
+          </div>
         </Alert>
       )}
 
@@ -309,11 +345,14 @@ export function MusicThemeStep({
               size="sm"
               loading={busy}
               disabled={!query.trim()}
-              onClick={() =>
-                void apply(() =>
-                  searchGreetingMusicLibrary(sessionId, query.trim())
-                )
-              }
+              onClick={() => {
+                const q = query.trim();
+                void apply(async () => {
+                  const next = await searchGreetingMusicLibrary(sessionId, q);
+                  setLibraryQuery(q);
+                  return next;
+                });
+              }}
             >
               {w.musicLibrarySearch}
             </Button>
@@ -348,7 +387,7 @@ export function MusicThemeStep({
                       void apply(() =>
                         selectGreetingMusicFromLibrary(
                           sessionId,
-                          query.trim(),
+                          libraryQuery,
                           t.provider,
                           t.providerTrackId
                         )
@@ -419,6 +458,7 @@ function MusicUploader({
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const fid = useId();
 
   const pick = (f: File | undefined) => {
     if (!f) return;
@@ -458,7 +498,7 @@ function MusicUploader({
           : await linkGreetingMusic(sessionId, url.trim(), title.trim(), rights)
       );
     } catch (e) {
-      onError(errorMessage(e));
+      onError(greetingErrorMessage(e, dict));
     } finally {
       setUploading(false);
     }
@@ -493,8 +533,13 @@ function MusicUploader({
       </div>
 
       {!file && (
-        <Field label={w.musicLinkLabel} hint={w.musicLinkHint}>
+        <Field
+          label={w.musicLinkLabel}
+          hint={w.musicLinkHint}
+          htmlFor={`${fid}-link`}
+        >
           <Input
+            id={`${fid}-link`}
             value={url}
             onChange={(e) => setUrl(e.target.value.trim())}
             placeholder="https://…"
@@ -505,8 +550,9 @@ function MusicUploader({
 
       {(file || url.trim()) && (
         <>
-          <Field label={w.musicTitleLabel}>
+          <Field label={w.musicTitleLabel} htmlFor={`${fid}-title`}>
             <Input
+              id={`${fid}-title`}
               data-qa-mask="personal-music-title"
               value={title}
               onChange={(e) => setTitle(e.target.value.slice(0, 80))}

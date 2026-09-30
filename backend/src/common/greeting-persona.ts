@@ -26,6 +26,7 @@ import {
   activeSnapshotSceneImage,
 } from './active-image';
 import { refusalsOf } from '../modules/persona/persona-view';
+import { GREETING_ERROR_CODES, greetingError } from './greeting-errors';
 
 // ── Флаг ────────────────────────────────────────────────────────────────
 
@@ -50,6 +51,28 @@ export const PERSONA_VOICE_ONLY_PERSONAL =
 /** Тот же код, что отдают маршруты персоны (`GET /personas/me` → 404). */
 export const PERSONA_DISABLED_CODE = 'PERSONA_DISABLED';
 export const PERSONA_DISABLED_MESSAGE = 'Режим «Я в кадре» сейчас недоступен.';
+
+/**
+ * Голос персоны отправителем на Hedra без образа-ведущего (CONTRACT6
+ * п.3). У Hedra голос — ВХОД липсинка: портретом без образа становится
+ * первое фото сессии (`hedraPortrait`) — чужое лицо, которое заговорило
+ * бы голосом автора. У Grok так не бывает: при своём голосе модель
+ * снимает ролик без звука, и озвучка ложится поверх, лицо ею не движется.
+ */
+export const PERSONA_VOICE_NEEDS_PRESENTER_MESSAGE =
+  'Голос вашей персоны у говорящего аватара (Hedra) можно выбрать только вместе с вашим образом-ведущим — иначе вашим голосом заговорит чужое лицо. ' +
+  'Выберите свой образ в брифе, ведущего Grok или другой голос.';
+
+export function personaVoiceNeedsPresenter(
+  brief: Pick<GreetingBriefSnapshot, 'resolvedPresenterProvider' | 'presenter'>,
+  senderVoice: { personaVoice?: boolean } | null | undefined,
+): boolean {
+  return (
+    senderVoice?.personaVoice === true &&
+    brief.resolvedPresenterProvider === 'hedra' &&
+    !brief.presenter
+  );
+}
 
 // ── Ведущий-образ (§4.8) ─────────────────────────────────────────────────
 
@@ -234,16 +257,23 @@ export const SHOWCASE_SESSION_UNKNOWN =
  * Персона бывает только у поздравления, поэтому товарный ролик проходит
  * без чтения сессии. У поздравления без данных сессии (сессию удалили) —
  * отказ: не узнать, есть ли в ролике лицо автора, а ошибка в эту сторону
- * публикует человека без его галочки. Схема страницы признака персоны не
+ * публикует человека без его галочки. При выключенном режиме — без отказа
+ * (CONTRACT6 п.7), как до этапа G. Схема страницы признака персоны не
  * хранит (см. отчёт этапа G — предложено добавить колонку).
  */
 export function showcaseRefusal(
   projectType: string | null | undefined,
   sessionData: unknown | null | undefined,
+  enabled: boolean = personaEnabled(),
 ): string | null {
   if (projectType !== 'GREETING_VIDEO') return null;
   if (sessionData === null || sessionData === undefined) {
-    return SHOWCASE_SESSION_UNKNOWN;
+    // CONTRACT6 п.7: при выключенном режиме витрина ведёт себя как до
+    // этапа G — стёртая сессия не повод отказать оператору: при
+    // выключенном режиме ролик с персоной не снять (рендер отказывает,
+    // `personaRenderProblem`). Уцелевшая сессия с персоной и без
+    // галочки автора — отказ и при выключенном режиме (ниже).
+    return enabled ? SHOWCASE_SESSION_UNKNOWN : null;
   }
   if (
     sessionDataUsesPersona(sessionData) &&
@@ -303,15 +333,22 @@ export function isFaceCheckedScenePhoto(
 }
 
 /**
- * Можно ли отправить в модель ИЗОБРАЖЕНИЕ сцены бренд-бука (п.10). При
- * включённом режиме — только скетч (он рисует место без людей) или фото,
- * проверенное при загрузке; старые, непроверенные фото идут словами.
+ * Можно ли отправить в модель ИЗОБРАЖЕНИЕ сцены бренд-бука (п.10).
+ * Скетч — всегда (он рисует место без людей). Фото:
+ *  - при включённом режиме — только проверенное при загрузке; старые,
+ *    непроверенные идут словами;
+ *  - при выключенном — никогда (CONTRACT6 п.8). До этапа G сцены
+ *    бренд-бука в поздравление не попадали вовсе (Г-6), а проверки лица
+ *    при выключенном режиме нет — пропуск фото изображением отправлял бы
+ *    в видеомодель чьё угодно лицо без вопроса о согласии. Словами сцена
+ *    доходит и так.
  */
 export function brandSceneImageAllowed(
   scene: Pick<BrandSceneSnapshot, 'photoUrl' | 'sketch'>,
   enabled: boolean = personaEnabled(),
 ): boolean {
-  if (!enabled || scene.sketch) return true;
+  if (scene.sketch) return true;
+  if (!enabled) return false;
   return isFaceCheckedScenePhoto(scene.photoUrl);
 }
 
@@ -424,7 +461,9 @@ export function hedraPortrait(
  *    ИИ-ведущего: человек выбирал себя, и ролик с чужим лицом вместо
  *    своего — не то, за что он платит.
  * 2. Скетч-ведущий на Hedra — отказ (см. `HEDRA_SKETCH_PRESENTER_REFUSAL`).
- * 3. Фото с лицом без согласия (Г-8) — у Grok все референсы уходят в
+ * 3. Голос персоны на Hedra без образа-ведущего — отказ (CONTRACT6 п.3,
+ *    `personaVoiceNeedsPresenter`).
+ * 4. Фото с лицом без согласия (Г-8) — у Grok все референсы уходят в
  *    модель, поэтому отказ с перечнем фото. У Hedra в модель идёт только
  *    портрет, и заблокированное фото портретом не станет (`hedraPortrait`)
  *    — отказывать там не за что.
@@ -447,6 +486,17 @@ export function assertGreetingReferencesAllowed(
     brief.presenter?.variant,
   );
   if (providerProblem) throw new BadRequestException(providerProblem);
+  // CONTRACT6 п.3: голос персоны мог быть выбран при Grok, а провайдер
+  // потом сменён в брифе на Hedra (или образ снят) — выбор голоса этого
+  // уже не видит, поэтому то же правило и здесь, до денег.
+  if (personaVoiceNeedsPresenter(brief, brief.senderVoice)) {
+    throw new BadRequestException(
+      greetingError(
+        GREETING_ERROR_CODES.GREETING_PERSONA_VOICE_NEEDS_PRESENTER,
+        PERSONA_VOICE_NEEDS_PRESENTER_MESSAGE,
+      ),
+    );
+  }
   if (brief.resolvedPresenterProvider === 'hedra') return;
   const blocked = images.filter((img) => referenceNeedsFaceConsent(img));
   if (blocked.length) {

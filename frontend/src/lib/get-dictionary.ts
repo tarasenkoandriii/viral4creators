@@ -17,8 +17,12 @@ type PluralForms = Partial<Record<Intl.LDMLPluralRule, string>>;
 
 export type Dictionary = Omit<
   typeof ru,
-  'manifestsListScreen' | 'manifestScreen' | 'deleteConfirm'
+  'manifestsListScreen' | 'manifestScreen' | 'deleteConfirm' | 'voiceConsent'
 > & {
+  /** Цена перед генерацией — числовые формы по балансу (CONTRACT6 G-FE п. 12). */
+  voiceConsent: Omit<typeof ru.voiceConsent, 'costCredit'> & {
+    costCredit: PluralForms;
+  };
   manifestsListScreen: Omit<typeof ru.manifestsListScreen, 'usedInProjects'> & {
     usedInProjects: PluralForms;
   };

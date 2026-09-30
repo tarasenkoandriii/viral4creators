@@ -20,7 +20,13 @@ import {
   Patch,
   Post,
   Req,
+  UseGuards,
 } from '@nestjs/common';
+import {
+  RateLimit,
+  RateLimitGuard,
+  RateLimitRule,
+} from '../../common/rate-limit';
 import { TelegramIdentifiedRequest } from '../telegram-auth/telegram-identity.middleware';
 import { GreetingReferenceService } from './greeting-reference.service';
 import {
@@ -30,6 +36,34 @@ import {
   GreetingReferenceUploadUrlRequestDto,
 } from './dto/greeting-reference.dto';
 import { GreetingReferenceImageView } from '../../common/types/greeting.types';
+
+/**
+ * Частота платных маршрутов (CONTRACT6 п.1) — по образцу голосовых
+ * (`voice-rate-limits.ts`). Суточный потолок считает деньги ПОСЛЕ вызова,
+ * и пачка параллельных запросов проходит его одновременно; окно делает
+ * этот перебор маленьким. Кадр — самый дорогой (модель изображений):
+ * 10 в минуту человеку хватает с запасом. По человеку: за одним адресом
+ * мини-аппа сидит весь оператор связи; анонимный — по адресу.
+ */
+export const GREETING_FRAME_RATE_LIMIT: RateLimitRule[] = [
+  { name: 'greeting-frame', limit: 10, windowSec: 60, by: 'user' },
+  { name: 'greeting-frame-hour', limit: 60, windowSec: 3600, by: 'user' },
+];
+/** Варианты сеттинга — дешёвый текстовый вызов, окно шире. */
+export const GREETING_SETTINGS_RATE_LIMIT: RateLimitRule[] = [
+  { name: 'greeting-settings', limit: 20, windowSec: 60, by: 'user' },
+  { name: 'greeting-settings-hour', limit: 200, windowSec: 3600, by: 'user' },
+];
+/** Подтверждение фото — при включённом режиме платная проверка лица. */
+export const GREETING_REFERENCE_CONFIRM_RATE_LIMIT: RateLimitRule[] = [
+  { name: 'greeting-ref-confirm', limit: 20, windowSec: 60, by: 'user' },
+  {
+    name: 'greeting-ref-confirm-hour',
+    limit: 200,
+    windowSec: 3600,
+    by: 'user',
+  },
+];
 
 @Controller('sessions/:sessionId/greeting-references')
 export class GreetingReferenceController {
@@ -45,13 +79,15 @@ export class GreetingReferenceController {
   /**
    * Референс-кадр по брифу сессии (фича №6).
    *
-   * Без гарда, как и соседи: у этого контроллера предъявитель — сам
+   * Без гарда личности, как и соседи: у этого контроллера предъявитель — сам
    * UUID сессии, и `GREETING_VIDEO` доступен на каждом тарифе (см.
    * доккомментарий сервиса). `telegramUserId` берётся из глобального
    * middleware и может быть пустым — он нужен только чтобы приписать
    * расход пользователю в отчёте, а не чтобы разрешить вызов.
    */
   @Post('generate')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(GREETING_FRAME_RATE_LIMIT)
   generate(
     @Req() req: TelegramIdentifiedRequest,
     @Param('sessionId') sessionId: string,
@@ -73,6 +109,8 @@ export class GreetingReferenceController {
    * кешировать и дёргать повторно бесплатно, — а нельзя.
    */
   @Post('settings')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(GREETING_SETTINGS_RATE_LIMIT)
   settings(
     @Req() req: TelegramIdentifiedRequest,
     @Param('sessionId') sessionId: string,
@@ -89,6 +127,8 @@ export class GreetingReferenceController {
   }
 
   @Post('confirm')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(GREETING_REFERENCE_CONFIRM_RATE_LIMIT)
   confirm(
     @Param('sessionId') sessionId: string,
     @Body() dto: GreetingReferenceConfirmRequestDto,

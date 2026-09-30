@@ -80,6 +80,7 @@ export function GreetingOccasionFields({
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const customId = useId();
+  const occasionId = useId();
   const [toneChange, setToneChange] = useState<ToneChange | null>(null);
   const announcedSeq = announcedToneChange?.seq;
   const announced = announcedToneChange?.change ?? null;
@@ -126,8 +127,9 @@ export function GreetingOccasionFields({
 
   return (
     <>
-      <Field label={w.occasionLabel}>
+      <Field label={w.occasionLabel} htmlFor={occasionId}>
         <Select
+          id={occasionId}
           data-qa="greeting-field-occasion"
           value={value.occasion}
           onChange={(e) =>

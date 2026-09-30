@@ -98,6 +98,15 @@ describe('assistant knowledge base', () => {
     }
   });
 
+  it.each(LOCALES)(
+    '%s.md does not advertise personalBrand (persona is behind PERSONA_ENABLED until the legal gate)',
+    (locale) => {
+      // Раньше в списке функций тарифа стоял сырой ключ «personalBrand» —
+      // подписи у него нет, а сам режим выключен флагом.
+      expect(buildAll()[locale]).not.toContain('personalBrand');
+    },
+  );
+
   it('generated.ts committed alongside the source matches the build script output (CI parity check)', () => {
     const fresh = buildAll();
     for (const locale of LOCALES) {

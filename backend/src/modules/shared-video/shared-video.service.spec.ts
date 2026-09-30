@@ -987,11 +987,43 @@ describe('витрина и ролик с персоной (этап G, §4.9)',
     expect(prisma.session.findUnique).not.toHaveBeenCalled();
   });
 
-  it('поздравление, сессия которого удалена, — отказ: персону не проверить', async () => {
-    const { service, prisma } = build({
-      found: row({ status: 'PUBLISHED', projectType: 'GREETING_VIDEO' }),
+  it('поздравление, сессия которого удалена, — отказ при включённом режиме: персону не проверить', async () => {
+    const old = process.env.PERSONA_ENABLED;
+    process.env.PERSONA_ENABLED = 'true';
+    try {
+      const { service, prisma } = build({
+        found: row({ status: 'PUBLISHED', projectType: 'GREETING_VIDEO' }),
+      });
+      prisma.session.findUnique.mockResolvedValueOnce(null as never);
+      await expect(service.setShowcase('sv1', true)).rejects.toThrow(/удалена/);
+    } finally {
+      process.env.PERSONA_ENABLED = old;
+    }
+  });
+
+  it('CONTRACT6 п.7: при выключенном режиме стёртая сессия поздравления — не отказ', async () => {
+    const old = process.env.PERSONA_ENABLED;
+    process.env.PERSONA_ENABLED = 'false';
+    try {
+      const { service, prisma } = build({
+        found: row({ status: 'PUBLISHED', projectType: 'GREETING_VIDEO' }),
+      });
+      prisma.session.findUnique.mockResolvedValueOnce(null as never);
+      await service.setShowcase('sv1', true);
+      expect(prisma.sharedVideoPage.update).toHaveBeenCalled();
+    } finally {
+      process.env.PERSONA_ENABLED = old;
+    }
+  });
+
+  it('CONTRACT6 п.7: публикация не состоялась (страница уже есть) — галочка прежней не переписывается', async () => {
+    const { service, sessions } = build({
+      session: personaSession(),
+      open: { id: 'sv0', status: 'PUBLISHED' },
     });
-    prisma.session.findUnique.mockResolvedValueOnce(null as never);
-    await expect(service.setShowcase('sv1', true)).rejects.toThrow(/удалена/);
+    await expect(service.create('u1', 's2', {})).rejects.toThrow(
+      ConflictException,
+    );
+    expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 });

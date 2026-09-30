@@ -379,22 +379,6 @@ export class SharedVideoService {
     await this.plans.assertUserNotBlocked(userId);
     const session = await this.ownSession(userId, sessionId);
     const snap = snapshotFromSession(session, dto);
-    // Этап G (§4.9): галочка «можно показать в витрине» для ролика с
-    // персоной — отдельное явное решение автора при публикации. Пишется в
-    // снимок сессии (у страницы своего поля нет — см. `showcaseRefusal`),
-    // каждая публикация решает заново: снятая галочка стирает прежнюю.
-    const greeting = session.greetingBriefSnapshot;
-    if (greeting?.usesPersona) {
-      await this.sessions.updateSession(sessionId, {
-        greetingBriefSnapshot: {
-          ...greeting,
-          personaShowcaseConsentAt:
-            dto.allowShowcaseWithPersona === true
-              ? new Date().toISOString()
-              : null,
-        },
-      });
-    }
     const libraryEntryId = await this.resolveLibraryEntryId(
       session.librarySourceKey,
     );
@@ -422,6 +406,26 @@ export class SharedVideoService {
         data: { userId, sessionId, libraryEntryId, ...snap },
       })) as SharedVideoRow;
     });
+    // Этап G (§4.9): галочка «можно показать в витрине» для ролика с
+    // персоной — отдельное явное решение автора при публикации. Пишется в
+    // снимок сессии (у страницы своего поля нет — см. `showcaseRefusal`),
+    // каждая публикация решает заново: снятая галочка стирает прежнюю.
+    // CONTRACT6 п.7: только ПОСЛЕ создания страницы — отказ выше (уже
+    // есть открытая страница) раньше всё равно переписывал галочку, и
+    // неудавшаяся публикация без галочки снимала согласие с уже
+    // опубликованной страницы в витрине.
+    const greeting = session.greetingBriefSnapshot;
+    if (greeting?.usesPersona) {
+      await this.sessions.updateSession(sessionId, {
+        greetingBriefSnapshot: {
+          ...greeting,
+          personaShowcaseConsentAt:
+            dto.allowShowcaseWithPersona === true
+              ? new Date().toISOString()
+              : null,
+        },
+      });
+    }
     return toView(await this.keepOwnCopy(row));
   }
 

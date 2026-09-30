@@ -122,17 +122,17 @@ Alle Tarife sind derzeit kostenlos und werden vom Nutzer selbst in der Mini-App 
 
 ### Lite
 Разбор референса и генерация ролика в 16:9 или 9:16 — самый короткий путь от примера к результату.
-KI-Skizze statt des Bildes, Grußvideo, personalBrand
+KI-Skizze statt des Bildes, Grußvideo
 16:9/9:16 only
 
 ### Standard
 Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.
-Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes, Grußvideo, personalBrand
+Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes, Grußvideo
 any aspect ratio
 
 ### Premium
 Всё вместе с библиотекой разборов, дубляжом (полная замена звука Veo своим голосом) и говорящим аватаром для поздравлений: готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
-Bibliothek fertiger Analysen, Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Synchronisation (modelleigene Stimme vollständig ersetzt), Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes, Grußvideo, Externe API per Schlüssel, Das Video in anderen Sprachen, personalBrand
+Bibliothek fertiger Analysen, Bewertung der Referenzrelevanz, Audit eines fertigen Videos, Veröffentlichung über den Dienst, Marken-Manifest, Eigene Szenen und Referenz-Slots, Austausch von Personen im Foto, Beliebiges Seitenverhältnis, Vollständiges Veo-Modell, Eigene Stimme klonen, Synchronisation (modelleigene Stimme vollständig ersetzt), Tutorial-Video für die Website des Kunden, KI-Skizze statt des Bildes, Grußvideo, Externe API per Schlüssel, Das Video in anderen Sprachen
 any aspect ratio
 
 ## Pipeline-Regeln

@@ -32,7 +32,17 @@ import {
   scriptLanguageOf,
   speechLanguage,
 } from '../../common/greeting-language';
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  Optional,
+} from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import {
+  PersonaRenderDb,
+  personaRenderProblem,
+} from '../greeting-video/persona-render-check';
 import { BlobService } from '../storage/blob.service';
 import { SessionService } from '../../common/session.service';
 import {
@@ -270,6 +280,13 @@ export class PostProductionService {
     private readonly sessions: SessionService,
     private readonly aiUsage: AiUsageService,
     private readonly plans: PlanService,
+    /**
+     * Для проверки «Я в кадре» у переозвучки (CONTRACT6 п.5): голос
+     * персоны, режим и удалённый клон — по базе, как у рендера.
+     * Необязателен только ради тестов, собирающих сервис вручную: без
+     * базы проверка отказывает ролику с персоной (fail-closed).
+     */
+    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   /**
@@ -609,6 +626,24 @@ export class PostProductionService {
         throw new PostProdError(
           'переозвучка недоступна — в этом ролике голос ведёт сама Veo, отдельной звуковой дорожки нет',
         );
+      }
+
+      // CONTRACT6 п.5: переозвучка — новый синтез голосом из снимка, и
+      // проверка «Я в кадре» та же, что у рендера (`personaRenderProblem`):
+      // голос персоны при выключенном режиме, удалённый голос персоны или
+      // клон бренд-бука, отозванная персона — отказ ДО платного синтеза.
+      if (fresh) {
+        const problem = await personaRenderProblem(
+          this.prisma as unknown as PersonaRenderDb | undefined,
+          fresh,
+        );
+        if (problem) {
+          throw new BadRequestException(
+            problem.code
+              ? { code: problem.code, message: problem.message }
+              : problem.message,
+          );
+        }
       }
 
       const source = freshVideo.renderedUrl ?? freshVideo.downloadUrl;

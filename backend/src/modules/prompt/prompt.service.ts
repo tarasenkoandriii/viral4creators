@@ -54,6 +54,10 @@ import { PlanService } from '../plan/plan.service';
 import { readinessOfSession } from '../../common/wizard-readiness.session';
 import { hasSceneSource, sceneSource } from '../../common/scene-source';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  GREETING_ERROR_CODES,
+  greetingError,
+} from '../../common/greeting-errors';
 
 /**
  * Замок сборки промпта (этап 47, В-2.3): клиентский таймаут вызова —
@@ -96,6 +100,11 @@ function parseGeminiApiError(error: unknown): {
 export const GREETING_PROMPT_PATCH_REFUSAL =
   'У поздравления текст правится на шаге «Сценарий» (PATCH /sessions/:id/greeting-script): ' +
   'так сцена и озвучка меняются вместе.';
+
+/** Отказ общего одобрения промпта для сессии-поздравления (CONTRACT6 п.1). */
+export const GREETING_APPROVE_REFUSAL =
+  'У поздравления нет ручного одобрения сценария: исправьте текст на шаге «Сценарий» ' +
+  'и сохраните его заново.';
 
 @Injectable()
 export class PromptService {
@@ -857,6 +866,19 @@ Please respond with a valid JSON object only, with one key "variants": an array 
     const session = await this.sessionService.getSession(sessionId);
     if (!session) {
       throw new BadRequestException(SESSION_NOT_FOUND);
+    }
+
+    // CONTRACT6 п.1: у поздравления нет ручного одобрения. Этот общий
+    // путь превращал FLAGGED в BYPASSED — и рендер, смотревший только на
+    // FLAGGED, пропускал помеченный модерацией текст. Отказ — как у
+    // `updatePrompt` выше; рендер к тому же не пускает и BYPASSED.
+    if (session.greetingBriefSnapshot) {
+      throw new BadRequestException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_APPROVE_NOT_SUPPORTED,
+          GREETING_APPROVE_REFUSAL,
+        ),
+      );
     }
 
     if (!session.generationPrompt) {

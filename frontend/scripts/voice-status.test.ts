@@ -174,32 +174,57 @@ check('длинная без строки сервера — наша «коро
   });
 });
 
-check('ссылку не выдали по размеру (400) — «слишком длинно»', () => {
-  const tooLong = uploadRefusalOf(400, {
-    error: { message: 'Запись длиннее минуты — реплика должна быть короче' },
-  });
-  eq(
-    [tooLong?.status, tooLong?.reason, tooLong?.reply],
-    ['unavailable', 'too-long', null]
-  );
-  // Сырой ответ валидатора — массив строк.
-  eq(
-    uploadRefusalOf(400, {
-      message: ['fileSize must not be greater than 4194304'],
-    })?.reason,
-    'too-long'
-  );
-  // Другая 400 и другой код — не про длину.
-  eq(
-    uploadRefusalOf(400, { error: { message: 'mimeType не подходит' } }),
-    null
-  );
-  eq(
-    uploadRefusalOf(403, { error: { message: 'Запись длиннее минуты' } }),
-    null
-  );
-  eq(uploadRefusalOf(400, null), null);
-});
+check(
+  'ссылку не выдали по размеру (400) — «слишком длинно» по признаку, не по тексту',
+  () => {
+    const tooLong = uploadRefusalOf(400, {
+      error: {
+        message: 'Запись длиннее минуты — реплика должна быть короче',
+        details: { reason: 'too-long' },
+      },
+    });
+    eq(
+      [tooLong?.status, tooLong?.reason, tooLong?.reply],
+      ['unavailable', 'too-long', null]
+    );
+    // Код в details — тоже признак.
+    eq(
+      uploadRefusalOf(400, {
+        error: { message: 'x', details: { code: 'VOICE_TOO_LONG' } },
+      })?.reason,
+      'too-long'
+    );
+    // Текст без признака — уже НЕ «слишком длинно» (CONTRACT6 G-FE п. 13).
+    eq(
+      uploadRefusalOf(400, {
+        error: {
+          message: 'Запись длиннее минуты — реплика должна быть короче',
+        },
+      }),
+      null
+    );
+    eq(
+      uploadRefusalOf(400, {
+        message: ['fileSize must not be greater than 4194304'],
+      }),
+      null
+    );
+    // Другая 400 и другой код — не про длину.
+    eq(
+      uploadRefusalOf(400, {
+        error: { message: 'mimeType не подходит', details: { code: 'OTHER' } },
+      }),
+      null
+    );
+    eq(
+      uploadRefusalOf(403, {
+        error: { message: 'x', details: { reason: 'too-long' } },
+      }),
+      null
+    );
+    eq(uploadRefusalOf(400, null), null);
+  }
+);
 
 console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);
 if (failed) process.exit(1);

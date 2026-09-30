@@ -4,6 +4,7 @@
 // изменёнными полями.
 
 import {
+  briefSaveState,
   changedBriefFields,
   sessionBriefPatch,
   startAfterSave,
@@ -136,6 +137,16 @@ await checkAsync('бриф сохранился — сессия начинае�
   );
   eq([ok, started], [true, true]);
 });
+
+check(
+  'briefSaveState — «сохранено» гаснет от правки, вернул как было — снова сохранено',
+  () => {
+    eq(briefSaveState(false, false), null);
+    eq(briefSaveState(true, false), 'saved');
+    eq(briefSaveState(true, true), 'unsaved');
+    eq(briefSaveState(false, true), 'unsaved');
+  }
+);
 
 console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);
 if (failed) process.exit(1);

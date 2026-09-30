@@ -163,6 +163,42 @@ export function oneYearLater(from: Date): Date {
   return d;
 }
 
+/**
+ * Дата напоминания (CONTRACT6 G-FE п. 9): есть дата повода в брифе
+ * (`occasionDate`, `YYYY-MM-DD`) — ближайшая её годовщина ПОСЛЕ
+ * сегодняшнего дня; нет или она битая — прежнее допущение «год от
+ * сегодня». Годовщина, а не сама дата: к сегодняшнему поводу ролик уже
+ * сделан, напоминание нужно к следующему.
+ *
+ * 29 февраля в невисокосный год — 28-е: `Date.UTC` сам увёл бы на 1
+ * марта, а повод в марте — уже другой день.
+ *
+ * `fromOccasion` — какой текст показать: «дата повода» или «допущение».
+ */
+export function reminderDateFor(
+  occasionDate: string | null | undefined,
+  today: Date
+): { date: Date; fromOccasion: boolean } {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(occasionDate ?? '');
+  const month = m ? Number(m[2]) - 1 : NaN;
+  const day = m ? Number(m[3]) : NaN;
+  if (!m || month < 0 || month > 11 || day < 1 || day > 31) {
+    return { date: oneYearLater(today), fromOccasion: false };
+  }
+  const todayUtc = Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate()
+  );
+  const on = (year: number): Date => {
+    const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    return new Date(Date.UTC(year, month, Math.min(day, last)));
+  };
+  let year = Math.max(Number(m[1]) + 1, today.getUTCFullYear());
+  while (on(year).getTime() <= todayUtc) year += 1;
+  return { date: on(year), fromOccasion: true };
+}
+
 /** Небольшой стабильный хеш для UID — не криптография, а уникальность. */
 function hash(s: string): number {
   let h = 0;

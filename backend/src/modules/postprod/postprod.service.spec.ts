@@ -1942,6 +1942,58 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       brandManifestSnapshot: { voiceMode: 'voiceover', ttsVoiceId: 'brand-1' },
     });
 
+    it('CONTRACT6 п.5: голос персоны при выключенном режиме — отказ с кодом до синтеза, замок снят', async () => {
+      const old = process.env.PERSONA_ENABLED;
+      process.env.PERSONA_ENABLED = 'false';
+      try {
+        const { svc, tts, plans, sessions } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot: {
+              presenter: null,
+              resolvedPresenterProvider: 'grok',
+              senderVoice: {
+                userVoiceId: 'uv-p',
+                resembleVoiceId: 'rv-p',
+                label: 'Я',
+                personaVoice: true,
+              },
+            },
+          }),
+        });
+        let err: unknown;
+        try {
+          await svc.reVoice('s1', DONE_VIDEO);
+        } catch (e) {
+          err = e;
+        }
+        expect((err as { getResponse(): unknown }).getResponse()).toMatchObject(
+          { code: 'PERSONA_DISABLED' },
+        );
+        expect(tts.synthesize).not.toHaveBeenCalled();
+        expect(plans.assertCanSpendSession).not.toHaveBeenCalled();
+        expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'revoice');
+      } finally {
+        process.env.PERSONA_ENABLED = old;
+      }
+    });
+
+    it('CONTRACT6 п.5: клон Resemble в бренд-буке без базы для проверки — отказ, синтеза нет', async () => {
+      const { svc, tts } = build({
+        session: session({
+          brandManifestSnapshot: {
+            voiceMode: 'voiceover',
+            ttsVoiceId: 'rv-gone',
+            ttsProvider: 'resemble',
+          },
+        }),
+      });
+      await expect(svc.reVoice('s1', DONE_VIDEO)).rejects.toThrow(
+        /Голос из бренд-бука удалён/,
+      );
+      expect(tts.synthesize).not.toHaveBeenCalled();
+    });
+
     it('видео с голосом Veo — переозвучивать нечего, отдельной дорожки нет', async () => {
       const { svc } = build({ session: session() /* voiceMode: 'veo' */ });
       await expect(svc.reVoice('s1', DONE_VIDEO)).rejects.toThrow(

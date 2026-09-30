@@ -8,6 +8,7 @@ import { api } from '../services/api';
 import { usePersonaMe } from '../features/persona/usePersonaMe';
 import type { GreetingReferenceImageView } from '../types/project';
 import { personaStateFromLoad, type PersonaState } from './persona-greeting';
+import { EmptyResponseError } from './greeting-errors';
 
 /**
  * Состояние персоны для блока «Кто в кадре» и личного бренд-бука —
@@ -33,6 +34,6 @@ export async function confirmReferenceFaceConsent(
     { faceConsent: true }
   );
   if (res.data === undefined)
-    throw new Error('Пустой ответ: greeting-references');
+    throw new EmptyResponseError('greeting-references');
   return res.data;
 }

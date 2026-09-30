@@ -13,6 +13,7 @@ import type { SessionService } from '../../common/session.service';
 import type { BlobService } from '../storage/blob.service';
 import type { SketchGeneratorService } from '../image-sketch/sketch-generator.service';
 import type { AiUsageService } from '../ai-usage/ai-usage.service';
+import type { PlanService } from '../plan/plan.service';
 
 /**
  * `generateFrame` (фича №6) — проверяется не «картинка нарисовалась», а
@@ -64,8 +65,18 @@ function setup(
     recordGemini: jest.fn().mockResolvedValue(undefined),
   } as unknown as AiUsageService;
 
-  const service = new GreetingReferenceService(sessions, blob, frames, aiUsage);
-  return { service, sessions, blob, frames, aiUsage };
+  const plans = {
+    assertCanSpendSession: jest.fn().mockResolvedValue(undefined),
+  } as unknown as PlanService;
+
+  const service = new GreetingReferenceService(
+    sessions,
+    blob,
+    frames,
+    aiUsage,
+    plans,
+  );
+  return { service, sessions, blob, frames, aiUsage, plans };
 }
 
 describe('generateFrame (№6)', () => {

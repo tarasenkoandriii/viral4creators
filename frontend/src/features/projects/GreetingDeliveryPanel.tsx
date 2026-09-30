@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import {
   CalendarPlus,
   Copy,
@@ -7,14 +7,16 @@ import {
   Send,
   Share2,
 } from 'lucide-react';
-import { Alert, Button, Card } from '../../components/ui';
+import { Alert, Button, Card, Field, Input } from '../../components/ui';
+import { useI18n } from '../../lib/i18n-context';
+import { INTL_LOCALE } from '../../lib/intl-locale';
 import { getTelegramWebApp, openTelegramLink } from '../../lib/telegram';
 import { GreetingQrCode } from './GreetingQrCode';
 import type { Dictionary } from '../../lib/get-dictionary';
 import {
   deliveryMessage,
   mailtoUrl,
-  oneYearLater,
+  reminderDateFor,
   reminderIcs,
   telegramShareUrl,
   whatsappShareUrl,
@@ -46,14 +48,23 @@ export function GreetingDeliveryPanel({
   videoUrl,
   recipientName,
   senderName,
+  occasionDate,
 }: {
   dict: Dictionary;
   videoUrl: string;
   recipientName: string;
   senderName?: string | null;
+  /** Дата повода из брифа (`YYYY-MM-DD`) — от неё считается напоминание. */
+  occasionDate?: string | null;
 }) {
   const t = dict.greetingDelivery;
+  const { locale } = useI18n();
   const [copied, setCopied] = useState(false);
+  // Буфер обмена запрещён (политика страницы, старый webview Telegram) —
+  // ссылка показывается полем, откуда её можно скопировать руками
+  // (CONTRACT6 G-FE п. 9). Раньше сбой молча глотался.
+  const [manualCopy, setManualCopy] = useState(false);
+  const linkFieldId = useId();
   const message = deliveryMessage(t.messageTemplate, recipientName, senderName);
 
   const openExternal = (url: string) => {
@@ -70,12 +81,12 @@ export function GreetingDeliveryPanel({
 
   const copy = async () => {
     try {
+      if (!navigator.clipboard?.writeText) throw new Error('no clipboard');
       await navigator.clipboard.writeText(videoUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Буфер обмена может быть запрещён политикой страницы — ссылка
-      // видна в поле рядом, человек скопирует её руками.
+      setManualCopy(true);
     }
   };
 
@@ -99,7 +110,8 @@ export function GreetingDeliveryPanel({
    * календарём, включая офлайновый, и не требует у человека ни одного
    * разрешения на доступ к его данным.
    */
-  const remindDate = oneYearLater(new Date());
+  const remind = reminderDateFor(occasionDate, new Date());
+  const remindDate = remind.date;
   const downloadReminder = () => {
     const ics = reminderIcs({
       summary: t.remindSummary.replace('{recipient}', recipientName.trim()),
@@ -166,6 +178,22 @@ export function GreetingDeliveryPanel({
         </Button>
       </div>
 
+      {manualCopy && (
+        <Field
+          label={dict.greetingUi.copyManualLabel}
+          hint={dict.greetingUi.copyManualHint}
+          htmlFor={linkFieldId}
+        >
+          <Input
+            id={linkFieldId}
+            readOnly
+            value={videoUrl}
+            autoFocus
+            onFocus={(e) => e.currentTarget.select()}
+          />
+        </Field>
+      )}
+
       {/* Цена решения названа прямо, а не спрятана в справку: ссылка
           открывается без входа, и в кадре — имя получателя. Человек
           вправе знать это ДО того, как перешлёт её в общий чат. */}
@@ -187,12 +215,16 @@ export function GreetingDeliveryPanel({
         >
           {t.remindButton}
         </Button>
-        {/* Дата — допущение, и об этом сказано человеку, а не только в
-            коде: настоящего числа повода в брифе нет. */}
+        {/* Дата повода есть в брифе — от неё; нет — допущение «год от
+            сегодня», и об этом сказано человеку, а не только в коде.
+            Формат даты — по языку интерфейса, а не браузера. */}
         <p className="mt-2 text-xs text-[var(--muted)]">
-          {t.remindHint.replace(
+          {(remind.fromOccasion
+            ? dict.greetingUi.remindHintOccasion
+            : t.remindHint
+          ).replace(
             '{date}',
-            remindDate.toLocaleDateString(undefined, {
+            remindDate.toLocaleDateString(INTL_LOCALE[locale] ?? 'ru-RU', {
               day: 'numeric',
               month: 'long',
               year: 'numeric',

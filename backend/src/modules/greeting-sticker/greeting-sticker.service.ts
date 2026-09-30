@@ -50,6 +50,7 @@ import {
   registerOfBrief,
 } from '../../common/greeting-policy';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
 
 const PIXABAY_API = 'https://pixabay.com/api/';
 const TIMEOUT_MS = 10_000;
@@ -114,7 +115,7 @@ export class GreetingStickerService {
     stickerId: string,
     placement: string | null,
   ): Promise<GreetingStickerView> {
-    const session = await this.load(sessionId);
+    const session = await this.loadForEdit(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     // Этап B (Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
     // проверка ДО поиска и скачивания — отказ не должен стоить запроса к
@@ -170,7 +171,7 @@ export class GreetingStickerService {
     sessionId: string,
     placement: string,
   ): Promise<GreetingStickerView> {
-    const session = await this.load(sessionId);
+    const session = await this.loadForEdit(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     if (!snapshot.sticker) {
       throw new NotFoundException('Наклейка не выбрана');
@@ -187,7 +188,7 @@ export class GreetingStickerService {
 
   /** Снять наклейку. Файл остаётся до уборки сессии — он уже оплачен трафиком. */
   async clear(sessionId: string): Promise<GreetingStickerView> {
-    const session = await this.load(sessionId);
+    const session = await this.loadForEdit(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     await this.sessions.updateSession(sessionId, {
       greetingBriefSnapshot: { ...snapshot, sticker: null },
@@ -247,6 +248,18 @@ export class GreetingStickerService {
       );
     }
     return Buffer.from(res.data);
+  }
+
+  /**
+   * Сессия для правки выбора: пока ролик считается — 409 с кодом
+   * (CONTRACT6 п.2, `assertGreetingNotRendering`): рендер и постобработка
+   * читают выбор из снимка, смена посреди рендера дала бы ролик ни по
+   * прежнему, ни по новому выбору.
+   */
+  private async loadForEdit(sessionId: string): Promise<Session> {
+    const session = await this.load(sessionId);
+    assertGreetingNotRendering(session);
+    return session;
   }
 
   private async load(sessionId: string): Promise<Session> {

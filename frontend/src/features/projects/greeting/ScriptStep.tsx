@@ -7,7 +7,7 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useId } from 'react';
 import { Check, Pencil, RefreshCw } from 'lucide-react';
 import {
   Card,
@@ -18,10 +18,10 @@ import {
   Button,
 } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
-import { errorMessage } from '../../../services/projects-api';
 import {
   updateGreetingScript,
   generateGreetingPrompt,
+  greetingErrorMessage,
 } from '../../../services/greeting-api';
 import { type GenerationPrompt, ModerationStatus } from '../../../types';
 import type { SessionScriptEditResult } from '../../../types/project';
@@ -46,6 +46,7 @@ export function ScriptStep({
   onGenerated,
   onEdited,
   videoDone,
+  videoBusy = false,
 }: {
   sessionId: string;
   prompt: GenerationPrompt | undefined;
@@ -57,9 +58,16 @@ export function ScriptStep({
    * этом доступна — она заводит новую версию.
    */
   videoDone: boolean;
+  /**
+   * Ролик снимается (CONTRACT6 G-FE п. 5): «Сохранить текст»,
+   * «Пересобрать» и голосовая пересборка гаснут с подписью — сервер
+   * ответил бы 409 на любую правку во время рендера.
+   */
+  videoBusy?: boolean;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
+  const fid = useId();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /**
@@ -77,6 +85,7 @@ export function ScriptStep({
   }, [current]);
 
   const saveText = async () => {
+    if (videoBusy) return;
     setSavingText(true);
     setError(null);
     setSavedText(false);
@@ -88,19 +97,20 @@ export function ScriptStep({
       setSavedText(true);
       onEdited(r);
     } catch (e) {
-      setError(errorMessage(e));
+      setError(greetingErrorMessage(e, dict));
     } finally {
       setSavingText(false);
     }
   };
 
   const generate = async () => {
+    if (videoBusy) return;
     setLoading(true);
     setError(null);
     try {
       onGenerated(await generateGreetingPrompt(sessionId));
     } catch (e) {
-      setError(errorMessage(e));
+      setError(greetingErrorMessage(e, dict));
     } finally {
       setLoading(false);
     }
@@ -115,7 +125,11 @@ export function ScriptStep({
     targets: [SESSION_VOICE_TARGETS.scriptText],
     describe: (f) => String(f.value),
     apply: (fields) => {
-      const plan = planScriptVoice(!!prompt, loading || savingText, fields);
+      const plan = planScriptVoice(
+        !!prompt,
+        loading || savingText || videoBusy,
+        fields
+      );
       if (plan.text !== undefined) {
         setText(plan.text);
         setSavedText(false);
@@ -133,7 +147,7 @@ export function ScriptStep({
   // кнопки нет — нет и команды (сервер ответил бы 409).
   useVoiceCommand(
     'regenerate-script',
-    videoDone || loading
+    videoDone || loading || videoBusy
       ? null
       : {
           propose: () => ({
@@ -161,11 +175,13 @@ export function ScriptStep({
             label={w.editScriptLabel}
             hint={w.editScriptHint}
             counter={`${text.length}/2000`}
+            htmlFor={`${fid}-text`}
           >
             {/* Текст сценария пересказывает бриф с именами — личный
                 текст, на кадре лендинга размывается (этап I ТЗ Greeting
                 2.0, §5.3). */}
             <Textarea
+              id={`${fid}-text`}
               data-qa="greeting-script-edit"
               data-qa-mask="personal-script"
               rows={4}
@@ -192,7 +208,10 @@ export function ScriptStep({
               icon={<Pencil size={14} />}
               loading={savingText}
               disabled={
-                !text.trim() || text.trim() === current.trim() || loading
+                !text.trim() ||
+                text.trim() === current.trim() ||
+                loading ||
+                videoBusy
               }
               onClick={() => void saveText()}
             >
@@ -204,13 +223,18 @@ export function ScriptStep({
                 size="sm"
                 icon={<RefreshCw size={14} />}
                 loading={loading}
-                disabled={savingText}
+                disabled={savingText || videoBusy}
                 onClick={() => void generate()}
               >
                 {w.regenerateScriptButton}
               </Button>
             )}
           </div>
+          {videoBusy && (
+            <p className="text-xs text-silver-400">
+              {dict.greetingUi.videoBusyEditHint}
+            </p>
+          )}
         </div>
       ) : (
         <div className="space-y-3">

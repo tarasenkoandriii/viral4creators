@@ -68,26 +68,48 @@ export interface VoiceStatusTexts {
 }
 
 /**
- * Отказ выдачи ссылки загрузки (`…/upload-url`) по размеру записи —
- * сервер отвечает 400 («Запись длиннее минуты», или проверка `fileSize`
- * в DTO). Это не «распознавание недоступно», а та же причина, что
- * `too-long`: человек должен услышать «короче», на своём языке, а не
- * русский текст сервера.
+ * Машинные коды «запись слишком длинная» в `error.details.code`. Свой
+ * список, а не одна строка: код даёт сервер, и имя у него может быть
+ * общим для голоса или своим у поздравления.
+ */
+export const TOO_LONG_CODES: readonly string[] = [
+  'too-long',
+  'VOICE_TOO_LONG',
+  'GREETING_VOICE_TOO_LONG',
+];
+
+/**
+ * Отказ выдачи ссылки загрузки (`…/upload-url`) по размеру записи. Это
+ * не «распознавание недоступно», а та же причина, что `too-long`:
+ * человек должен услышать «короче», на своём языке, а не русский текст
+ * сервера.
+ *
+ * Решение — по машинному признаку (CONTRACT6 G-FE п. 13): `reason:
+ * 'too-long'` (фильтр пропускает `reason` в `error.details`) или код из
+ * `TOO_LONG_CODES`. Раньше решал текст («длинн|минут|filesize…»):
+ * переформулированный отказ сервера молча превращался в «недоступно»,
+ * а любая 400 со словом «минута» — в «слишком длинно». Отказ без
+ * признака — обычное «недоступно»: клиент режет реплику на 45 с
+ * (`voice-listen.ts`), так что до этого отказа честная запись и так не
+ * доходит.
  */
 export function uploadRefusalOf(
   httpStatus: number | undefined,
   body: unknown
 ): VoiceUnderstandResult | null {
   if (httpStatus !== 400 || !body || typeof body !== 'object') return null;
-  // Конверт `{ error: { message } }` или сырой ответ валидатора, где
-  // `message` бывает массивом строк.
-  const b = body as { error?: { message?: unknown }; message?: unknown };
-  const raw = b.error?.message ?? b.message;
-  const texts = (Array.isArray(raw) ? raw : [raw]).filter(
-    (m): m is string => typeof m === 'string'
-  );
-  if (!texts.some((m) => /длинн|минут|filesize|larger|greater/i.test(m)))
-    return null;
+  const b = body as {
+    error?: { details?: { reason?: unknown; code?: unknown } };
+    reason?: unknown;
+    code?: unknown;
+  };
+  const details = b.error?.details;
+  const reason = details?.reason ?? b.reason;
+  const code = details?.code ?? b.code;
+  const tooLong =
+    reason === 'too-long' ||
+    (typeof code === 'string' && TOO_LONG_CODES.includes(code));
+  if (!tooLong) return null;
   return { ...voiceResultOfStatus('unavailable'), reason: 'too-long' };
 }
 

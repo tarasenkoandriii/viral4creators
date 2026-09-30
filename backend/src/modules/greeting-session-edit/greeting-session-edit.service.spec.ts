@@ -32,6 +32,7 @@ import {
 import { GenerationStatus } from '../../common/types/generation.types';
 import { ModerationStatus } from '../../common/types/prompt.types';
 import type { GreetingBriefSnapshot } from '../../common/types/greeting.types';
+import { GREETING_PROMPT_LOCK_TTL_MS } from '../greeting-prompt/script-inputs';
 
 const snap = (over: Partial<GreetingBriefSnapshot> = {}) =>
   ({
@@ -804,5 +805,89 @@ describe('этап G — ведущий-образ в правке из сесс
     const b = store.get(r.sessionId)!
       .greetingBriefSnapshot as GreetingBriefSnapshot;
     expect(b.personaShowcaseConsentAt).toBeNull();
+  });
+});
+
+/** CONTRACT6 п.3/п.4 (G-B1): отпечаток входов и страховка записи. */
+describe('CONTRACT6 — правка и старт ролика', () => {
+  it('правленый сценарий несёт отпечаток входов', async () => {
+    const { service, store } = build();
+    const r = await service.updateScript('s1', 'Марина, ты лучшая');
+    expect(typeof r.prompt.greetingScriptInputs).toBe('string');
+    expect(
+      (store.get('s1')!.generationPrompt as { greetingScriptInputs?: string })
+        .greetingScriptInputs,
+    ).toBe(r.prompt.greetingScriptInputs);
+  });
+
+  it('ролик запустился сразу после записи брифа — прежний бриф и сценарий возвращены, бриф проекта не тронут, 409', async () => {
+    const { service, store, sessions, prisma } = build();
+    const before = store.get('s1')!;
+    const passthrough = async (id: string) => store.get(id);
+    sessions.getSession
+      .mockImplementationOnce(passthrough)
+      .mockImplementationOnce(passthrough)
+      .mockImplementationOnce(async (id: string) => ({
+        ...store.get(id),
+        generatedVideo: { status: 'processing' },
+      }));
+    const err = await service
+      .updateBrief('s1', { recipientName: 'Аня', tone: 'WARM' })
+      .catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_EDIT_AFTER_RENDER_STARTED');
+    const s = store.get('s1')!;
+    expect(s.greetingBriefSnapshot).toEqual(before.greetingBriefSnapshot);
+    expect(s.generationPrompt).toEqual(before.generationPrompt);
+    expect(prisma.greetingBrief.update).not.toHaveBeenCalled();
+  });
+
+  it('правка во время рендера — 409 с кодом', async () => {
+    const { service } = build({ generatedVideo: { status: 'processing' } });
+    const err = await service
+      .updateScript('s1', 'Марина, ты лучшая')
+      .catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_CHANGE_DURING_RENDER');
+  });
+
+  it('замок правки занят — 409 с кодом', async () => {
+    const { service, sessions } = build();
+    sessions.claimWork.mockResolvedValue(false);
+    const err = await service
+      .updateScript('s1', 'Марина, ты лучшая')
+      .catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_EDIT_IN_PROGRESS');
+  });
+});
+
+describe('CONTRACT6 — перерендер новой версией и срок замка', () => {
+  it('готовый ролик — новая версия с тем же сценарием', async () => {
+    const { service, store } = build({
+      generatedVideo: { status: 'complete' },
+    });
+    const r = await service.forkForRerender('s1');
+    expect(r.newVersion).toBe(true);
+    expect(r.sessionId).not.toBe('s1');
+    expect(r.promptKept).toBe(true);
+    const v2 = store.get(r.sessionId)!;
+    expect(v2.generatedVideo).toBeUndefined();
+    expect((v2.generationPrompt as { promptId: string }).promptId).toBe(
+      'p-old',
+    );
+    // Готовый ролик остался в прежней сессии.
+    expect(store.get('s1')!.generatedVideo).toEqual({ status: 'complete' });
+  });
+
+  it('ролик не готов — версия не нужна', async () => {
+    const { service } = build();
+    const r = await service.forkForRerender('s1');
+    expect(r).toEqual({ sessionId: 's1', newVersion: false, promptKept: true });
+  });
+
+  it('замок правки — общий срок, не короче потолка функции', async () => {
+    const { service, sessions } = build();
+    await service.updateScript('s1', 'Марина, ты лучшая');
+    const ttl = sessions.claimWork.mock.calls[0][2];
+    expect(ttl).toBe(GREETING_PROMPT_LOCK_TTL_MS);
+    expect(ttl).toBeGreaterThanOrEqual(300_000);
   });
 });

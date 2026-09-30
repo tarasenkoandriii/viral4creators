@@ -12,6 +12,7 @@ jest.mock('@prisma/client', () => ({
 import {
   FACE_CONSENT_NOT_NEEDED,
   GreetingReferenceService,
+  REFERENCE_UPLOAD_MISSING_MESSAGE,
 } from './greeting-reference.service';
 
 const OLD_FLAG = process.env.PERSONA_ENABLED;
@@ -52,6 +53,9 @@ function setup(
     deleteBlob: jest.fn().mockResolvedValue(true),
   };
   const aiUsage = { recordGemini: jest.fn().mockResolvedValue(undefined) };
+  const plans = {
+    assertCanSpendSession: jest.fn().mockResolvedValue(undefined),
+  };
   const generateContent = jest.fn().mockResolvedValue({
     text: opts.modelText === undefined ? '{"faces": 1}' : opts.modelText,
   });
@@ -60,6 +64,7 @@ function setup(
     blob as any,
     {} as any,
     aiUsage as any,
+    plans as any,
   );
   if (opts.noClient) {
     // Геттер `genai` создаёт клиент лениво и бросает без ключа — так же
@@ -72,7 +77,7 @@ function setup(
   } else {
     (service as any).geminiClient = { models: { generateContent } };
   }
-  return { service, sessions, blob, aiUsage, generateContent };
+  return { service, sessions, blob, aiUsage, generateContent, plans };
 }
 
 const saved = (sessions: { updateSession: jest.Mock }) =>
@@ -131,7 +136,7 @@ describe('confirm — проверка лица при загрузке (Г-8)',
     const { service, sessions } = setup({ downloadFails: true });
     await expect(
       service.confirm('s1', { pathname: PATH, label: 'Мама' }),
-    ).rejects.toThrow(/not found in storage/);
+    ).rejects.toThrow(REFERENCE_UPLOAD_MISSING_MESSAGE);
     expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 

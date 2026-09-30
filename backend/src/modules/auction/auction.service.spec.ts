@@ -114,6 +114,8 @@ function build() {
     portfolioItem: { findUnique: jest.fn().mockResolvedValue(portfolioItem()) },
     // Этап G: проверка «ролик с персоной» читает страницы и сессии.
     sharedVideoPage: { findMany: jest.fn().mockResolvedValue([]) },
+    // CONTRACT6 п.6: и заявки на публикацию (копия `publications/<id>/…`).
+    publicationRequest: { findMany: jest.fn().mockResolvedValue([]) },
     session: { findMany: jest.fn().mockResolvedValue([]) },
     brandManifest: {
       findUnique: jest
@@ -1752,7 +1754,7 @@ describe('create — лицо и голос автора не продаются
     );
     expect(prisma.session.findMany).toHaveBeenCalledWith({
       where: { id: { in: ['s9'] } },
-      select: { data: true },
+      select: { id: true, data: true },
     });
     expect(prisma.auctionListing.create).not.toHaveBeenCalled();
   });
@@ -1797,6 +1799,7 @@ describe('auction-persona-guard', () => {
   it('videoUsesPersona — пустые ссылки не ходят в БД', async () => {
     const prisma = {
       sharedVideoPage: { findMany: jest.fn() },
+      publicationRequest: { findMany: jest.fn() },
       session: { findMany: jest.fn() },
     };
     await expect(videoUsesPersona(prisma, [null, undefined])).resolves.toBe(

@@ -13,6 +13,8 @@ import {
   stickerCardHidden,
   stickerSummary,
   voiceSummary,
+  characterLockOf,
+  lockedFieldRefusals,
 } from '../src/lib/greeting-character';
 import type { GreetingPolicyView } from '../src/lib/greeting-policy';
 
@@ -199,6 +201,34 @@ check('своя музыка: предупреждение только там, 
   eq(showOwnMusicWarning(warn, { adding: false, selected: null }), false);
   eq(showOwnMusicWarning(quiet, { adding: true, selected: null }), false);
   eq(showOwnMusicWarning(null, { adding: true, selected: null }), false);
+});
+
+check('замок карточек: готов — done, снимается — busy, иначе открыто', () => {
+  eq(characterLockOf('complete'), 'done');
+  eq(characterLockOf('pending'), 'busy');
+  eq(characterLockOf('processing'), 'busy');
+  // Упавший рендер — карточки открыты: «Повторить» снимет с правками.
+  eq(characterLockOf('failed'), null);
+  eq(characterLockOf(undefined), null);
+  eq(characterLockOf(null), null);
+});
+
+check('голос в запертых карточках — отказ по строке на каждое поле', () => {
+  eq(
+    lockedFieldRefusals(
+      [
+        { target: 'greeting-music-theme', label: 'Музыка' },
+        { target: 'greeting-scenes-count', label: '' },
+      ],
+      'Не применил «{field}»: {reason}.',
+      'Ролик готов. Поправьте бриф.'
+    ),
+    [
+      'Не применил «Музыка»: Ролик готов. Поправьте бриф.',
+      'Не применил «greeting-scenes-count»: Ролик готов. Поправьте бриф.',
+    ]
+  );
+  eq(lockedFieldRefusals([], 'x', 'y'), []);
 });
 
 console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);

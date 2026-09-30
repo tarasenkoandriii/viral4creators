@@ -122,17 +122,17 @@ Todos los planes son gratuitos por ahora y el propio usuario los cambia en la mi
 
 ### Lite
 Разбор референса и генерация ролика в 16:9 или 9:16 — самый короткий путь от примера к результату.
-Boceto IA en lugar de la imagen, Vídeo de felicitación, personalBrand
+Boceto IA en lugar de la imagen, Vídeo de felicitación
 16:9/9:16 only
 
 ### Standard
 Весь функционал сервиса, кроме библиотеки готовых разборов и дубляжа: бренд, персонажи, сцены, релевантность, аудит, публикация, любые форматы кадра, озвучка своим голосом поверх звука Veo.
-Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Vídeo tutorial del sitio del cliente, Boceto IA en lugar de la imagen, Vídeo de felicitación, personalBrand
+Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Vídeo tutorial del sitio del cliente, Boceto IA en lugar de la imagen, Vídeo de felicitación
 any aspect ratio
 
 ### Premium
 Всё вместе с библиотекой разборов, дубляжом (полная замена звука Veo своим голосом) и говорящим аватаром для поздравлений: готовые сценарии под аудиторию вашего товара и мгновенный разбор уже виденных роликов.
-Biblioteca de análisis listos, Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Doblaje (reemplazo completo de la voz del modelo), Vídeo tutorial del sitio del cliente, Boceto IA en lugar de la imagen, Vídeo de felicitación, API externa con clave, El vídeo en otros idiomas, personalBrand
+Biblioteca de análisis listos, Evaluación de relevancia de la referencia, Auditoría de un vídeo terminado, Publicación a través del servicio, Manifiesto de marca, Escenas propias y espacios de referencia, Sustitución de personajes en la foto, Cualquier formato de imagen, Modelo Veo completo, Clonar tu propia voz, Doblaje (reemplazo completo de la voz del modelo), Vídeo tutorial del sitio del cliente, Boceto IA en lugar de la imagen, Vídeo de felicitación, API externa con clave, El vídeo en otros idiomas
 any aspect ratio
 
 ## Reglas del pipeline

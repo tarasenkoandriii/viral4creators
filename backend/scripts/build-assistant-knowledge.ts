@@ -291,6 +291,15 @@ function buildKnowledge(locale: Locale): string {
   lines.push('');
 
   // ── Тарифы и возможности ───────────────────────────────────────────
+  // Признаки, которые консультант не называет среди возможностей тарифа.
+  // `personalBrand` — режим «Я в кадре»: он за флагом `PERSONA_ENABLED`
+  // (выключен до юридического шлюза), и у него нет подписи в
+  // `planScreen.featureLabels`, поэтому в базу попадал сырой ключ
+  // «personalBrand» и обещание функции, которой посетитель не увидит.
+  const HIDDEN_PLAN_FEATURES = new Set<PlanFeature>([
+    'avatarLipsync',
+    'personalBrand',
+  ]);
   lines.push(`## ${t.plans}`);
   lines.push('');
   lines.push(PLANS_BILLING_ENABLED ? t.billingOn : t.billingOff);
@@ -304,7 +313,7 @@ function buildKnowledge(locale: Locale): string {
     lines.push(`### ${plan.title}`);
     lines.push(plan.summary);
     const included = (Object.keys(plan.features) as PlanFeature[]).filter(
-      (f) => plan.features[f] && f !== 'avatarLipsync',
+      (f) => plan.features[f] && !HIDDEN_PLAN_FEATURES.has(f),
     );
     if (included.length) {
       lines.push(included.map((f) => featureLabels?.[f] ?? f).join(', '));

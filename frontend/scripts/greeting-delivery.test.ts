@@ -16,6 +16,7 @@ import {
   deliveryMessage,
   mailtoUrl,
   oneYearLater,
+  reminderDateFor,
   reminderIcs,
   telegramShareUrl,
   whatsappShareUrl,
@@ -143,6 +144,29 @@ it('ics — запятая в имени не разрывает поле', () =
   });
   assert.ok(ics.includes('SUMMARY:Поздравить Марину\\, снова'));
   assert.ok(ics.includes('DESCRIPTION:Сделать ролик\\; как в прошлом году'));
+});
+
+it('напоминание: годовщина даты повода из брифа, после сегодня', () => {
+  const today = new Date(Date.UTC(2026, 8, 30)); // 30.09.2026
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  // Повод на следующей неделе — ролик к нему уже делается, напоминание к следующему году.
+  let r = reminderDateFor('2026-10-05', today);
+  assert.equal(iso(r.date), '2027-10-05');
+  assert.equal(r.fromOccasion, true);
+  // Старая дата — ближайшая годовщина после сегодня.
+  assert.equal(iso(reminderDateFor('2020-05-01', today).date), '2027-05-01');
+  assert.equal(iso(reminderDateFor('2020-12-24', today).date), '2026-12-24');
+  // Сегодняшняя годовщина — уже не «после сегодня».
+  assert.equal(iso(reminderDateFor('2025-09-30', today).date), '2027-09-30');
+  // 29 февраля в невисокосный год — 28-е, а не 1 марта.
+  r = reminderDateFor('2024-02-29', today);
+  assert.equal(iso(r.date), '2027-02-28');
+  // Нет даты или битая — прежнее «год от сегодня».
+  r = reminderDateFor(null, today);
+  assert.equal(iso(r.date), '2027-09-30');
+  assert.equal(r.fromOccasion, false);
+  assert.equal(reminderDateFor('2026-13-01', today).fromOccasion, false);
+  assert.equal(reminderDateFor('abc', today).fromOccasion, false);
 });
 
 console.log(`\n${passed} проверок пройдено`);

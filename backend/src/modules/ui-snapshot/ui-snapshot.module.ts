@@ -9,6 +9,7 @@ import { TutorialFramesCaptureService } from './tutorial-frames-capture.service'
 import { GreetingFramesCaptureService } from './greeting-frames-capture.service';
 import { GreetingPromptModule } from '../greeting-prompt/greeting-prompt.module';
 import { GreetingVideoModule } from '../greeting-video/greeting-video.module';
+import { GreetingSessionEditModule } from '../greeting-session-edit/greeting-session-edit.module';
 
 /**
  * UiSnapshotModule — крон-обход интерфейса TMA (Часть А ТЗ, §3
@@ -43,6 +44,9 @@ import { GreetingVideoModule } from '../greeting-video/greeting-video.module';
     // поздравления про снимки не знают.
     GreetingPromptModule,
     GreetingVideoModule,
+    // Переснять готовый ролик фикстуры — новой версией сессии (CONTRACT6:
+    // готовый ролик на месте не перерендеривается).
+    GreetingSessionEditModule,
   ],
   controllers: [UiSnapshotAdminController],
   providers: [

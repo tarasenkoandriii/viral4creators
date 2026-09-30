@@ -203,6 +203,18 @@ describe('GreetingVoiceService', () => {
         mimeType: 'audio/webm',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+    // Код и причина — клиент узнаёт «слишком длинно» по ним, не по тексту.
+    const err = await service
+      .createUploadUrl(SID, {
+        fileName: 'a',
+        fileSize: greetingVoiceMaxBytesFor('audio/webm') + 1,
+        mimeType: 'audio/webm',
+      })
+      .catch((e: BadRequestException) => e);
+    expect((err as BadRequestException).getResponse()).toMatchObject({
+      code: 'GREETING_VOICE_TOO_LONG',
+      reason: 'too-long',
+    });
     expect(blob.createUploadUrl).not.toHaveBeenCalled();
     expect(voiceUploads.remember).not.toHaveBeenCalled();
   });

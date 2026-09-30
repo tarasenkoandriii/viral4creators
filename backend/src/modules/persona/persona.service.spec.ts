@@ -112,6 +112,10 @@ function build(opts: {
       findMany: jest.fn(async () => [] as Row[]),
       deleteMany: jest.fn(async () => ({ count: 1 })),
     },
+    // CONTRACT6 п.4: голос персоны уходит и из бренд-буков пользователя.
+    brandManifest: {
+      updateMany: jest.fn(async (_args: unknown) => ({ count: 0 })),
+    },
   };
   const blob = {
     createUploadUrl: jest.fn(async (p: string) => ({ uploadUrl: `put:${p}` })),
@@ -951,6 +955,11 @@ describe('Волна исправлений (CONTRACT5)', () => {
     expect(resemble.deleteVoice).toHaveBeenCalledWith('r1');
     expect(h.prisma.userVoice.deleteMany).toHaveBeenCalledWith({
       where: { id: 'v1' },
+    });
+    // CONTRACT6 п.4: и в обход сервиса голос уходит из бренд-буков.
+    expect(h.prisma.brandManifest.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'u1', ttsVoiceId: 'r1' },
+      data: { ttsVoiceId: null, ttsProvider: null },
     });
   });
 });

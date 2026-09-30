@@ -383,9 +383,13 @@ export function assertGreetingVoiceSize(dto: {
 }): number {
   const maxBytes = greetingVoiceMaxBytesFor(dto.mimeType);
   if (dto.fileSize > maxBytes) {
-    throw new BadRequestException(
-      'Запись длиннее минуты — реплика должна быть короче',
-    );
+    // `code`/`reason` — чтобы клиент узнавал отказ по коду, а не по тексту
+    // (фильтр пропускает оба в `error.details`).
+    throw new BadRequestException({
+      code: 'GREETING_VOICE_TOO_LONG',
+      reason: 'too-long',
+      message: 'Запись длиннее минуты — реплика должна быть короче',
+    });
   }
   return maxBytes;
 }

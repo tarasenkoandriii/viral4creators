@@ -61,7 +61,6 @@ import {
   ModerationStatus,
 } from '../../common/types/prompt.types';
 import {
-  GREETING_EDIT_BUSY_MESSAGE,
   ResettableField,
   contentTypeOf,
   editModeOf,
@@ -80,8 +79,20 @@ import {
 } from '../../common/greeting-policy';
 import { normalizeVoiceMode } from '../../common/voice-mode';
 import { SceneAsset } from '../../common/types/reference.types';
+import {
+  GREETING_PROMPT_LOCK_TTL_MS,
+  assertNoRenderAfterWrite,
+  editDuringRender,
+  greetingScriptInputs,
+} from '../greeting-prompt/script-inputs';
+import {
+  GREETING_ERROR_CODES,
+  greetingError,
+} from '../../common/greeting-errors';
 
-const EDIT_CLAIM_TTL_MS = 60 * 1000;
+// Общий срок замка 'prompt' поздравления: правка не должна считать
+// протухшим замок ещё идущего старта ролика (CONTRACT6 п.5 аудита).
+const EDIT_CLAIM_TTL_MS = GREETING_PROMPT_LOCK_TTL_MS;
 
 export const MAX_GREETING_SPEECH_LENGTH = 2000;
 
@@ -138,7 +149,7 @@ export class GreetingSessionEditService {
     }
     const first = await this.load(sessionId);
     if (editModeOf(first.generatedVideo) === 'busy') {
-      throw new ConflictException(GREETING_EDIT_BUSY_MESSAGE);
+      throw editDuringRender();
     }
 
     // Замок — ДО проверок и записей, а решения — по сессии, перечитанной
@@ -149,8 +160,7 @@ export class GreetingSessionEditService {
     try {
       const session = await this.load(sessionId);
       const mode = editModeOf(session.generatedVideo);
-      if (mode === 'busy')
-        throw new ConflictException(GREETING_EDIT_BUSY_MESSAGE);
+      if (mode === 'busy') throw editDuringRender();
       const userId = session.userId;
       if (!userId || !session.projectId) {
         throw new NotFoundException(SESSION_NOT_FOUND);
@@ -233,6 +243,13 @@ export class GreetingSessionEditService {
         greetingBriefSnapshot: snapshot,
         ...(meaningChanged ? { generationPrompt: undefined } : {}),
       });
+      // CONTRACT6 п.3: ролик, запущенный в то же мгновение (замок истёк),
+      // считается по прежнему брифу — вернуть его и отказать. Бриф
+      // проекта ещё не тронут.
+      await assertNoRenderAfterWrite(this.sessions, sessionId, {
+        greetingBriefSnapshot: before,
+        generationPrompt: session.generationPrompt,
+      });
       await this.briefs.writeResolved(userId, session.projectId, next);
       return {
         sessionId,
@@ -276,15 +293,14 @@ export class GreetingSessionEditService {
     }
     const first = await this.load(sessionId);
     if (editModeOf(first.generatedVideo) === 'busy') {
-      throw new ConflictException(GREETING_EDIT_BUSY_MESSAGE);
+      throw editDuringRender();
     }
 
     await this.claim(sessionId);
     try {
       const session = await this.load(sessionId);
       const mode = editModeOf(session.generatedVideo);
-      if (mode === 'busy')
-        throw new ConflictException(GREETING_EDIT_BUSY_MESSAGE);
+      if (mode === 'busy') throw editDuringRender();
 
       let target: Session = session;
       let newVersion = false;
@@ -312,16 +328,69 @@ export class GreetingSessionEditService {
         // тем же `buildSceneDescription`, что и при сборке.
         target.brandManifestSnapshot ?? null,
       );
+      const stamped: GenerationPrompt = {
+        ...prompt,
+        // CONTRACT6 п.4: под какие фото, образ и голос собрана сцена.
+        greetingScriptInputs: greetingScriptInputs(target),
+      };
       await this.sessions.updateSession(target.sessionId, {
-        generationPrompt: prompt,
+        generationPrompt: stamped,
       });
+      if (!newVersion) {
+        await assertNoRenderAfterWrite(this.sessions, sessionId, {
+          generationPrompt: session.generationPrompt,
+        });
+      }
       const warning = registerWarningFor(brief, speech);
       return {
         sessionId: target.sessionId,
         newVersion,
-        prompt,
+        prompt: stamped,
         registerMismatch: warning !== null,
         registerWarning: warning,
+      };
+    } finally {
+      await this.sessions.releaseWork(sessionId, 'prompt');
+    }
+  }
+
+  // ── перерендер готового ролика новой версией ────────────────────────
+
+  /**
+   * CONTRACT6 п.6: готовый ролик на месте не перерендеривается
+   * (`GREETING_VIDEO_ALREADY_READY`). Кому нужен другой ролик тем же
+   * брифом и сценарием (оператор фикстуры, `fixtureVideo({ rerender })`),
+   * тот заводит новую версию сессии — ровно как правка после готового
+   * ролика, только без правки. Сценарий переносится, если все фото
+   * скопировались (`forkVersion`); иначе его нужно собрать заново, и
+   * вызывающий узнаёт об этом по `promptKept`.
+   *
+   * Ролик не готов — версия не нужна: возвращается та же сессия.
+   */
+  async forkForRerender(
+    sessionId: string,
+  ): Promise<{ sessionId: string; newVersion: boolean; promptKept: boolean }> {
+    await this.claim(sessionId);
+    try {
+      const session = await this.load(sessionId);
+      const mode = editModeOf(session.generatedVideo);
+      if (mode === 'busy') throw editDuringRender();
+      if (mode !== 'new-version') {
+        return {
+          sessionId,
+          newVersion: false,
+          promptKept: !!session.generationPrompt,
+        };
+      }
+      const created = await this.forkVersion(
+        session,
+        session.greetingBriefSnapshot!,
+        { keepPrompt: true },
+      );
+      return {
+        sessionId: created.sessionId,
+        newVersion: true,
+        promptKept: created.promptKept,
       };
     } finally {
       await this.sessions.releaseWork(sessionId, 'prompt');
@@ -337,8 +406,14 @@ export class GreetingSessionEditService {
       'prompt',
       EDIT_CLAIM_TTL_MS,
     );
-    if (!claimed)
-      throw new ConflictException(GREETING_PROMPT_IN_FLIGHT_MESSAGE);
+    if (!claimed) {
+      throw new ConflictException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_EDIT_IN_PROGRESS,
+          GREETING_PROMPT_IN_FLIGHT_MESSAGE,
+        ),
+      );
+    }
   }
 
   /**
@@ -460,7 +535,12 @@ export class GreetingSessionEditService {
     const session = await this.sessions.getSession(sessionId);
     if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     if (!session.greetingBriefSnapshot) {
-      throw new BadRequestException('Это не сессия-поздравление.');
+      throw new BadRequestException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_NOT_GREETING_SESSION,
+          'Это не сессия-поздравление.',
+        ),
+      );
     }
     return session;
   }

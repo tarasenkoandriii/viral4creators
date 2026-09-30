@@ -187,3 +187,43 @@ export function showOwnMusicWarning(
   if (state.adding) return true;
   return !!state.selected && (state.selected.source ?? 'catalog') !== 'catalog';
 }
+
+// ── Замок карточек после рендера (проверочный аудит CONTRACT6) ──────────
+
+/**
+ * Можно ли сейчас править карточки «Характера ролика».
+ *
+ * - `done` — ролик готов: правка на месте меняла бы снимок уже
+ *   врученного ролика, а новый рендер той же сессии сервер не даёт
+ *   (409 `GREETING_VIDEO_ALREADY_READY`). Другой ролик — через правку
+ *   брифа или текста: появится новая версия сессии, где карточки снова
+ *   открыты.
+ * - `busy` — ролик снимается: сервер ответил бы 409
+ *   `GREETING_CHANGE_DURING_RENDER`.
+ */
+export type CharacterLock = 'done' | 'busy';
+
+export function characterLockOf(
+  videoStatus: string | null | undefined
+): CharacterLock | null {
+  if (videoStatus === 'complete') return 'done';
+  if (videoStatus === 'pending' || videoStatus === 'processing') return 'busy';
+  return null;
+}
+
+/**
+ * Голос в запертых карточках — тот же отказ, что на экране, по строке на
+ * поле (формат `refusedField`: «Не применил «{field}»: {reason}.»).
+ */
+export function lockedFieldRefusals(
+  fields: ReadonlyArray<{ target: string; label: string }>,
+  refusedField: string,
+  reason: string
+): string[] {
+  const why = reason.replace(/[.。]\s*$/, '');
+  return fields.map((f) =>
+    refusedField
+      .replace('{field}', f.label || f.target)
+      .replace('{reason}', why)
+  );
+}

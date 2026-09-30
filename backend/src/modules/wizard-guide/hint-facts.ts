@@ -360,11 +360,11 @@ const ANSWERS: Readonly<Record<SupportedLocale, AnswerTexts>> = {
     nextAvatarPhoto: 'Добавьте фото — оно станет портретом аватара.',
     nextScript: 'Соберите сценарий.',
     nextFixFlagged:
-      'Поправьте свой текст или повод на брифе: сценарий помечен проверкой.',
+      'Исправьте текст на шаге «Сценарий» и сохраните его заново: сценарий помечен проверкой.',
     nextRender: 'Запустите генерацию ролика.',
     nextDone: 'Ролик готов — его можно посмотреть и отправить.',
     flagged:
-      'Сценарий помечен автоматической проверкой содержания и не отрендерится. Поправьте свой текст или повод на брифе — повтор не поможет.',
+      'Сценарий помечен автоматической проверкой содержания и не отрендерится. Исправьте текст на шаге «Сценарий» и сохраните его заново — повтор не поможет.',
     notFlagged: 'Претензий к сценарию нет.',
     noScript: 'Сценарий ещё не собран.',
   },
@@ -394,11 +394,11 @@ const ANSWERS: Readonly<Record<SupportedLocale, AnswerTexts>> = {
     nextAvatarPhoto: 'Додайте фото — воно стане портретом аватара.',
     nextScript: 'Зберіть сценарій.',
     nextFixFlagged:
-      'Виправте свій текст або привід на брифі: сценарій позначено перевіркою.',
+      'Виправте текст на кроці «Сценарій» і збережіть його знову: сценарій позначено перевіркою.',
     nextRender: 'Запустіть генерацію ролика.',
     nextDone: 'Ролик готовий — його можна переглянути й надіслати.',
     flagged:
-      'Сценарій позначено автоматичною перевіркою вмісту, і він не відрендериться. Виправте свій текст або привід на брифі — повтор не допоможе.',
+      'Сценарій позначено автоматичною перевіркою вмісту, і він не відрендериться. Виправте текст на кроці «Сценарій» і збережіть його знову — повтор не допоможе.',
     notFlagged: 'До сценарію претензій немає.',
     noScript: 'Сценарій ще не зібрано.',
   },
@@ -430,11 +430,11 @@ const ANSWERS: Readonly<Record<SupportedLocale, AnswerTexts>> = {
     nextAvatarPhoto: "Add a photo — it becomes the avatar's portrait.",
     nextScript: 'Build the script.',
     nextFixFlagged:
-      'Edit your text or the occasion in the brief: the script was flagged by the check.',
+      'Fix the text in the «Script» step and save it again: the script was flagged by the check.',
     nextRender: 'Start generating the video.',
     nextDone: 'The video is ready — you can watch and send it.',
     flagged:
-      'The script was flagged by the automatic content check and will not render. Edit your text or the occasion in the brief — retrying will not help.',
+      'The script was flagged by the automatic content check and will not render. Fix the text in the «Script» step and save it again — retrying will not help.',
     notFlagged: 'The script has no issues.',
     noScript: 'The script has not been built yet.',
   },
@@ -467,11 +467,11 @@ const ANSWERS: Readonly<Record<SupportedLocale, AnswerTexts>> = {
       'Fügen Sie ein Foto hinzu — es wird das Porträt des Avatars.',
     nextScript: 'Erstellen Sie das Skript.',
     nextFixFlagged:
-      'Ändern Sie Ihren Text oder den Anlass im Briefing: Das Skript wurde von der Prüfung markiert.',
+      'Korrigieren Sie den Text im Schritt «Skript» und speichern Sie ihn erneut: Das Skript wurde von der Prüfung markiert.',
     nextRender: 'Starten Sie die Generierung des Videos.',
     nextDone: 'Das Video ist fertig — Sie können es ansehen und senden.',
     flagged:
-      'Das Skript wurde von der automatischen Inhaltsprüfung markiert und wird nicht gerendert. Ändern Sie Ihren Text oder den Anlass im Briefing — ein erneuter Versuch hilft nicht.',
+      'Das Skript wurde von der automatischen Inhaltsprüfung markiert und wird nicht gerendert. Korrigieren Sie den Text im Schritt «Skript» und speichern Sie ihn erneut — ein erneuter Versuch hilft nicht.',
     notFlagged: 'Am Skript gibt es nichts auszusetzen.',
     noScript: 'Das Skript ist noch nicht erstellt.',
   },
@@ -503,11 +503,11 @@ const ANSWERS: Readonly<Record<SupportedLocale, AnswerTexts>> = {
     nextAvatarPhoto: 'Añade una foto — será el retrato del avatar.',
     nextScript: 'Crea el guion.',
     nextFixFlagged:
-      'Corrige tu texto o la ocasión en el briefing: el guion fue marcado por la revisión.',
+      'Corrige el texto en el paso «Guion» y guárdalo de nuevo: el guion fue marcado por la revisión.',
     nextRender: 'Inicia la generación del vídeo.',
     nextDone: 'El vídeo está listo — puedes verlo y enviarlo.',
     flagged:
-      'La revisión automática de contenido marcó el guion y no se renderizará. Corrige tu texto o la ocasión en el briefing — repetir no ayudará.',
+      'La revisión automática de contenido marcó el guion y no se renderizará. Corrige el texto en el paso «Guion» y guárdalo de nuevo — repetir no ayudará.',
     notFlagged: 'El guion no tiene problemas.',
     noScript: 'El guion aún no está creado.',
   },
@@ -600,6 +600,10 @@ export function greetingAnswer(
     case 'what-next':
       return nextOf(state, t);
     case 'script-flagged':
+      // Совет — тот же, что в отказе `startVideo` («исправьте текст на
+      // шаге «Сценарий» и сохраните заново»): раньше ведущий советовал
+      // править бриф, а кнопка рендера — текст, и человек слышал два
+      // разных пути из одной беды.
       if (!state?.hasPrompt) return t.noScript;
       return state.promptFlagged ? t.flagged : t.notFlagged;
     default:

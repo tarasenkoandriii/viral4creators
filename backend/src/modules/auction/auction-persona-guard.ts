@@ -13,13 +13,28 @@
  *  - ссылка на НАШ файл под `sessions/<id>/…` — сессия по пути;
  *  - ссылка, совпадающая с опубликованной страницей автора
  *    (`SharedVideoPage.videoUrl`, в том числе собственная копия файла) —
- *    сессия страницы.
+ *    сессия страницы;
+ *  - ссылка на копию заявки на публикацию (`publications/<id>/video.mp4`,
+ *    `PublicationService.keepOwnCopy`) или совпадающая с `videoUrl` заявки
+ *    — сессия заявки (CONTRACT6 п.6: раньше такая ссылка не узнавалась,
+ *    и ролик с персоной, выложенный по ссылке публикации, уходил в лот).
+ *
+ * Fail-closed, как витрина (`showcaseRefusal`): страница ПОЗДРАВЛЕНИЯ
+ * нашлась, а её сессии нет (стёрта) — считаем, что персона может быть:
+ * не узнать, есть ли на ролике лицо автора, а ошибка в эту сторону
+ * продаёт человека без его согласия. Как и у витрины (CONTRACT6 п.7) —
+ * только при включённом `PERSONA_ENABLED`: при выключенном ролик с
+ * персоной не снять, и стёртая сессия (уборка по сроку) не должна
+ * закрывать аукцион всем поздравлениям разом.
  * Ролик, перезалитый на чужой хостинг, так не узнать — это ограничение
  * записано в отчёте этапа; схема портфолио ссылки на сессию не хранит.
  */
 
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
-import { sessionDataUsesPersona } from '../../common/greeting-persona';
+import {
+  personaEnabled,
+  sessionDataUsesPersona,
+} from '../../common/greeting-persona';
 
 export const PERSONAL_MANIFEST_NOT_FOR_SALE =
   'Личный бренд-бук не продаётся на аукционе: в нём ваше лицо и голос.';
@@ -36,19 +51,35 @@ export function sessionIdFromVideoUrl(
   return id && id !== '..' ? id : null;
 }
 
+/** Id заявки из ссылки на её копию `publications/<id>/…`; иначе `null`. */
+export function publicationIdFromVideoUrl(
+  url: string | null | undefined,
+): string | null {
+  const path = pathnameFromBlobUrl(url, 'publications/');
+  if (!path) return null;
+  const id = path.split('/')[1];
+  return id && id !== '..' ? id : null;
+}
+
 /** Минимум Prisma для проверки (структурно — ради тестов без БД). */
 export interface PersonaVideoReader {
   sharedVideoPage: {
     findMany(args: {
       where: Record<string, unknown>;
+      select: { sessionId: true; projectType: true };
+    }): Promise<Array<{ sessionId: string; projectType?: string | null }>>;
+  };
+  publicationRequest: {
+    findMany(args: {
+      where: Record<string, unknown>;
       select: { sessionId: true };
-    }): Promise<Array<{ sessionId: string }>>;
+    }): Promise<Array<{ sessionId: string | null }>>;
   };
   session: {
     findMany(args: {
       where: Record<string, unknown>;
-      select: { data: true };
-    }): Promise<Array<{ data: unknown }>>;
+      select: { id: true; data: true };
+    }): Promise<Array<{ id: string; data: unknown }>>;
   };
 }
 
@@ -59,6 +90,7 @@ export interface PersonaVideoReader {
 export async function videoUsesPersona(
   prisma: PersonaVideoReader,
   urls: Array<string | null | undefined>,
+  enabled: boolean = personaEnabled(),
 ): Promise<boolean> {
   const list = urls.filter((u): u is string => !!u);
   if (!list.length) return false;
@@ -67,13 +99,32 @@ export async function videoUsesPersona(
   );
   const pages = await prisma.sharedVideoPage.findMany({
     where: { videoUrl: { in: list } },
-    select: { sessionId: true },
+    select: { sessionId: true, projectType: true },
   });
   for (const p of pages) ids.add(p.sessionId);
+  const publicationIds = list
+    .map(publicationIdFromVideoUrl)
+    .filter((id): id is string => !!id);
+  const publications = await prisma.publicationRequest.findMany({
+    where: {
+      OR: [
+        { videoUrl: { in: list } },
+        ...(publicationIds.length ? [{ id: { in: publicationIds } }] : []),
+      ],
+    },
+    select: { sessionId: true },
+  });
+  for (const r of publications) if (r.sessionId) ids.add(r.sessionId);
   if (!ids.size) return false;
   const sessions = await prisma.session.findMany({
     where: { id: { in: [...ids] } },
-    select: { data: true },
+    select: { id: true, data: true },
   });
-  return sessions.some((s) => sessionDataUsesPersona(s.data));
+  if (sessions.some((s) => sessionDataUsesPersona(s.data))) return true;
+  // Страница поздравления без сессии — не проверить, значит «может быть».
+  if (!enabled) return false;
+  const found = new Set(sessions.map((s) => s.id));
+  return pages.some(
+    (p) => p.projectType === 'GREETING_VIDEO' && !found.has(p.sessionId),
+  );
 }

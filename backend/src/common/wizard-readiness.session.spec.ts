@@ -116,6 +116,26 @@ describe('готовность по сессии', () => {
     expect(r.canGenerate).toBe(false);
   });
 
+  // CONTRACT6 п.1: обход флага общим `approvePrompt` (BYPASSED) и
+  // непроверенный текст (PENDING) — не «чистый» сценарий поздравления.
+  it.each(['bypassed', 'pending'])(
+    'сценарий со статусом %s тоже не готов',
+    (status) => {
+      const r = readinessOfSession(
+        greeting({ prompt: { moderationStatus: status } }),
+      );
+      expect(r.items.find((i) => i.key === 'scriptClean')?.done).toBe(false);
+      expect(r.canGenerate).toBe(false);
+    },
+  );
+
+  it('одобренный сценарий — чистый', () => {
+    const r = readinessOfSession(
+      greeting({ prompt: { moderationStatus: 'approved' } }),
+    );
+    expect(r.items.find((i) => i.key === 'scriptClean')?.done).toBe(true);
+  });
+
   it('фото товара читается резолвером, а не наличием поля', () => {
     // При применённом скетче в генерацию уходит скетч; «фото есть»
     // обязано означать то же, что прочитает `GenerationService`.

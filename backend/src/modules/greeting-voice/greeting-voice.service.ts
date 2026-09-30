@@ -42,10 +42,18 @@ import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 import {
   PERSONA_DISABLED_CODE,
   PERSONA_DISABLED_MESSAGE,
+  PERSONA_VOICE_NEEDS_PRESENTER_MESSAGE,
   nextUsesPersona,
+  personaVoiceNeedsPresenter,
   personaEnabled,
   snapshotUsesPersona,
 } from '../../common/greeting-persona';
+import {
+  GREETING_ERROR_CODES,
+  greetingError,
+} from '../../common/greeting-errors';
+import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
+import { writeWithGreetingRestamp } from '../greeting-session-edit/restamp';
 
 /**
  * Идентификаторы роестра xAI — строчные слова («eve», «leo», «carina»).
@@ -166,21 +174,38 @@ export class GreetingVoiceService {
     resembleVoiceId: string | null,
   ): Promise<GreetingVoiceView> {
     const session = await this.load(sessionId);
+    assertGreetingNotRendering(session);
     const snapshot = session.greetingBriefSnapshot!;
     const next = resembleVoiceId
       ? await this.resolveOwnClone(session.userId, resembleVoiceId)
       : null;
+    if (personaVoiceNeedsPresenter(snapshot, next)) {
+      throw new BadRequestException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_PERSONA_VOICE_NEEDS_PRESENTER,
+          PERSONA_VOICE_NEEDS_PRESENTER_MESSAGE,
+        ),
+      );
+    }
     // Свой клон гасит пресетный голос: произносить реплику может
     // кто-то ОДИН — либо модель в кадре, либо наш синтез поверх.
-    return this.write(
-      sessionId,
-      {
-        ...snapshot,
+    return this.write(sessionId, (fresh) => {
+      // Под замком — по перечитанному снимку: образ могли снять между
+      // чтениями, и проверка выше тогда устарела бы.
+      if (personaVoiceNeedsPresenter(fresh, next)) {
+        throw new BadRequestException(
+          greetingError(
+            GREETING_ERROR_CODES.GREETING_PERSONA_VOICE_NEEDS_PRESENTER,
+            PERSONA_VOICE_NEEDS_PRESENTER_MESSAGE,
+          ),
+        );
+      }
+      return {
+        ...fresh,
         senderVoice: next,
         ...(next ? { presetVoiceId: null } : {}),
-      },
-      session,
-    );
+      };
+    });
   }
 
   /**
@@ -200,45 +225,50 @@ export class GreetingVoiceService {
     presetVoiceId: string | null,
   ): Promise<GreetingVoiceView> {
     const session = await this.load(sessionId);
-    const snapshot = session.greetingBriefSnapshot!;
+    assertGreetingNotRendering(session);
     const next = presetVoiceId?.trim().toLowerCase() || null;
     if (next && !PRESET_VOICE_ID_PATTERN.test(next)) {
       throw new BadRequestException('Неверный идентификатор голоса');
     }
-    return this.write(
-      sessionId,
-      {
-        ...snapshot,
-        presetVoiceId: next,
-        ...(next ? { senderVoice: null } : {}),
-      },
-      session,
-    );
+    return this.write(sessionId, (fresh) => ({
+      ...fresh,
+      presetVoiceId: next,
+      ...(next ? { senderVoice: null } : {}),
+    }));
   }
 
+  /**
+   * CONTRACT6 (регрессия аудита): смена голоса пишется под замком
+   * 'prompt' по перечитанной сессии, и собранный сценарий
+   * перештамповывается под новый голос той же записью
+   * (`writeWithGreetingRestamp`). Иначе карточка голоса, стоящая ПОСЛЕ
+   * сценария, делала рендер невозможным: отпечаток сценария включает
+   * голос, и старт отвечал «сценарий устарел».
+   */
   private async write(
     sessionId: string,
-    draft: GreetingBriefSnapshot,
-    session: Session,
+    change: (current: GreetingBriefSnapshot) => GreetingBriefSnapshot,
   ): Promise<GreetingVoiceView> {
-    // Этап G (§4.7): признак персоны пересчитывается при каждой смене
-    // голоса — выбрали клон персоны — ролик с персоной; сняли — признак
-    // остаётся, только если персона есть в кадре или в бренд-буке.
-    // После готового ролика признак не снимается (CONTRACT5 п.5б).
-    const snapshot: GreetingBriefSnapshot = {
-      ...draft,
-      usesPersona: nextUsesPersona(
-        draft.usesPersona,
-        snapshotUsesPersona({
-          presenter: draft.presenter ?? null,
-          manifestKind: session.brandManifestSnapshot?.kind ?? null,
-          senderVoice: draft.senderVoice ?? null,
-        }),
-        session.generatedVideo,
-      ),
-    };
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: snapshot,
+    let snapshot!: GreetingBriefSnapshot;
+    await writeWithGreetingRestamp(this.sessions, sessionId, (session) => {
+      const draft = change(session.greetingBriefSnapshot!);
+      // Этап G (§4.7): признак персоны пересчитывается при каждой смене
+      // голоса — выбрали клон персоны — ролик с персоной; сняли — признак
+      // остаётся, только если персона есть в кадре или в бренд-буке.
+      // После готового ролика признак не снимается (CONTRACT5 п.5б).
+      snapshot = {
+        ...draft,
+        usesPersona: nextUsesPersona(
+          draft.usesPersona,
+          snapshotUsesPersona({
+            presenter: draft.presenter ?? null,
+            manifestKind: session.brandManifestSnapshot?.kind ?? null,
+            senderVoice: draft.senderVoice ?? null,
+          }),
+          session.generatedVideo,
+        ),
+      };
+      return { greetingBriefSnapshot: snapshot };
     });
     return toView(snapshot);
   }

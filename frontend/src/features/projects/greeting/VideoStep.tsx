@@ -20,10 +20,7 @@ import {
 } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
 import { navigate, routes } from '../../../lib/router';
-import {
-  isGenerationLocked,
-  errorMessage,
-} from '../../../services/projects-api';
+import { isGenerationLocked } from '../../../services/projects-api';
 import { recordInviteEvent } from '../../../services/invite-api';
 import { useRenderVoiceConsent } from '../../voice/VoiceConsentFlow';
 import { mediaPlaybackRef } from '../../../lib/media-playback';
@@ -34,6 +31,7 @@ import {
 } from '../../voice/voice-proactive-bus';
 import {
   getGreetingVideoStatus,
+  greetingErrorMessage,
   startGreetingVideo,
 } from '../../../services/greeting-api';
 import {
@@ -41,12 +39,20 @@ import {
   GenerationStatus,
   type GenerationPrompt,
   ModerationStatus,
+  type Readiness,
 } from '../../../types';
+import {
+  GREETING_SCRIPT_STALE,
+  greetingErrorCodeOfError,
+} from '../../../lib/greeting-errors';
+import {
+  renderBlockOf,
+  renderPollDelay,
+  renderPollErrorKind,
+} from '../../../lib/greeting-render';
 import { GreetingDeliveryPanel } from '../GreetingDeliveryPanel';
 import type { GreetingBriefView } from '../../../types/project';
 import { HelpButton } from '../HelpSheet';
-
-const POLL_INTERVAL_MS = 4000;
 
 // ── Шаг 4: видео ──────────────────────────────────────────────────────────
 
@@ -66,6 +72,8 @@ export function VideoStep({
   senderName,
   consentBrief,
   prompt,
+  readiness,
+  onGoToScript,
 }: {
   sessionId: string;
   video: GeneratedVideo | undefined;
@@ -76,6 +84,10 @@ export function VideoStep({
   /** K7: бриф и сценарий — для сводки перед согласием голосом (§4А.7.4). */
   consentBrief: GreetingBriefView;
   prompt: GenerationPrompt | undefined;
+  /** Готовность сессии: невыполненный обязательный пункт гасит кнопку. */
+  readiness: Readiness | null;
+  /** Прокрутить к шагу «Сценарий» — выход из «сценарий устарел». */
+  onGoToScript?: () => void;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -84,38 +96,103 @@ export function VideoStep({
   // а состояние «нужен доступ», и рисуется оно по-другому.
   const [locked, setLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * Старт отказал `GREETING_SCRIPT_STALE`: сценарий собран для других
+   * фото или образа. Рядом с отказом — путь к «Пересобрать»; новая
+   * сборка (новый `prompt`) снимает плашку.
+   */
+  const [staleScript, setStaleScript] = useState(false);
+  useEffect(() => {
+    setStaleScript(false);
+  }, [prompt]);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Опрос включён (ролик в работе), даже если сейчас ждёт паузу. */
+  const pollingRef = useRef(false);
+  /** Сбоев связи подряд — от них пауза до следующей попытки. */
+  const failuresRef = useRef(0);
   const inFlight = useRef(false);
   const startingRef = useRef(false);
+  // Опрос — таймер, а колбэк из мастера — новая стрелка на каждый рендер:
+  // таймер зовёт последний, а не тот, что был при запуске.
+  const onVideoRef = useRef(onVideo);
+  onVideoRef.current = onVideo;
+  /**
+   * Беда с опросом (CONTRACT6 G-FE п. 1): `reconnecting` — нет связи,
+   * пробуем снова сами; `stopped` — сервер отказал (4xx), нужна кнопка.
+   */
+  const [pollTrouble, setPollTrouble] = useState<
+    { kind: 'reconnecting' } | { kind: 'stopped'; message: string } | null
+  >(null);
   // Готовый ролик, играющий вслух, микрофон помощника не пишет как речь
   // (`media-playback.ts`, аудит волны 2). Один реф на компонент.
   const [videoPlaybackRef] = useState(() => mediaPlaybackRef());
 
-  const stopPolling = useCallback(() => {
+  const clearPollTimer = useCallback(() => {
     if (pollRef.current) {
-      clearInterval(pollRef.current);
+      clearTimeout(pollRef.current);
       pollRef.current = null;
     }
   }, []);
 
-  const startPolling = useCallback(() => {
-    stopPolling();
-    inFlight.current = false;
-    pollRef.current = setInterval(async () => {
-      if (inFlight.current) return;
-      if (typeof document !== 'undefined' && document.hidden) return;
-      inFlight.current = true;
-      try {
-        const status = await getGreetingVideoStatus(sessionId);
-        if (status) onVideo(status);
-        if (isTerminal(status)) stopPolling();
-      } catch {
-        stopPolling();
-      } finally {
-        inFlight.current = false;
+  const stopPolling = useCallback(() => {
+    pollingRef.current = false;
+    clearPollTimer();
+  }, [clearPollTimer]);
+
+  /**
+   * Один шаг опроса. Раньше опрос был `setInterval`, и первый же сетевой
+   * сбой гасил его насовсем: ролик доснимался, а экран до перезагрузки
+   * крутил «генерируется». Теперь сбой связи — пауза с удвоением
+   * (`renderPollDelay`) и строка «нет связи, пробуем снова»; 4xx — стоп с
+   * причиной и кнопкой; скрытая вкладка не опрашивает, а возобновляет
+   * опрос по `visibilitychange`/`online` (эффект ниже).
+   */
+  const pollOnce = useCallback(async (): Promise<void> => {
+    pollRef.current = null;
+    if (!pollingRef.current || inFlight.current) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
+    inFlight.current = true;
+    let next: number | null = null;
+    try {
+      const status = await getGreetingVideoStatus(sessionId);
+      failuresRef.current = 0;
+      setPollTrouble(null);
+      if (status) onVideoRef.current(status);
+      if (isTerminal(status)) pollingRef.current = false;
+      else next = renderPollDelay(0);
+    } catch (e) {
+      const httpStatus = (e as { response?: { status?: number } })?.response
+        ?.status;
+      if (renderPollErrorKind(httpStatus) === 'stop') {
+        pollingRef.current = false;
+        setPollTrouble({
+          kind: 'stopped',
+          message: greetingErrorMessage(e, dict),
+        });
+      } else {
+        failuresRef.current += 1;
+        setPollTrouble({ kind: 'reconnecting' });
+        next = renderPollDelay(failuresRef.current);
       }
-    }, POLL_INTERVAL_MS);
-  }, [sessionId, stopPolling, onVideo]);
+    } finally {
+      inFlight.current = false;
+    }
+    if (next !== null && pollingRef.current) {
+      clearPollTimer();
+      pollRef.current = setTimeout(() => void pollOnce(), next);
+    }
+  }, [sessionId, dict, clearPollTimer]);
+
+  const startPolling = useCallback(
+    (delay = renderPollDelay(0)) => {
+      clearPollTimer();
+      pollingRef.current = true;
+      failuresRef.current = 0;
+      setPollTrouble(null);
+      pollRef.current = setTimeout(() => void pollOnce(), delay);
+    },
+    [clearPollTimer, pollOnce]
+  );
 
   useEffect(() => {
     if (video && !isTerminal(video)) startPolling();
@@ -123,16 +200,48 @@ export function VideoStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- запуск только по смене sessionId
   }, [sessionId]);
 
+  // Вернулась связь или вкладка — спросить сразу, не дожидаясь паузы
+  // (после нескольких сбоев она дорастает до минуты).
+  useEffect(() => {
+    const resume = () => {
+      if (!pollingRef.current || inFlight.current) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      clearPollTimer();
+      void pollOnce();
+    };
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('online', resume);
+    return () => {
+      document.removeEventListener('visibilitychange', resume);
+      window.removeEventListener('online', resume);
+    };
+  }, [pollOnce, clearPollTimer]);
+
+  // CONTRACT6 G-FE п. 4: кнопка гаснет с причиной, а не отказом после
+  // нажатия. Правило одно на кнопку и на согласие голосом.
+  const renderBlock = renderBlockOf({
+    moderationStatus: prompt?.moderationStatus,
+    readiness,
+  });
+  const renderBlockText =
+    renderBlock === 'flagged'
+      ? dict.greetingUi.renderBlockedFlagged
+      : renderBlock === 'not-ready'
+        ? dict.greetingUi.renderBlockedNotReady
+        : null;
+
   const start = async () => {
     // Повторный вход — двойное нажатие или нажатие поверх голосового
     // старта: `starting` из замыкания ещё прежний, ref — уже нет (K7).
     if (startingRef.current) return;
+    if (renderBlock) return;
     startingRef.current = true;
     // Нажали сами — сводка для голоса больше не нужна (K7).
     consent.cancel();
     setStarting(true);
     setError(null);
     setLocked(false);
+    setStaleScript(false);
     try {
       const v = await startGreetingVideo(sessionId);
       onVideo(v);
@@ -147,7 +256,10 @@ export function VideoStep({
         // и считать её только в товарке значило бы недосчитать ровно
         // тех, кто пришёл за поздравлением.
         recordInviteEvent('wall');
-      } else setError(errorMessage(e));
+      } else {
+        setError(greetingErrorMessage(e, dict));
+        setStaleScript(greetingErrorCodeOfError(e) === GREETING_SCRIPT_STALE);
+      }
       // K4: отказ старта (стена, суточный лимит) помощник объясняет и
       // голосом — у включивших «голосом»; экран показал его сам.
       announceStartRefusal(e);
@@ -183,7 +295,7 @@ export function VideoStep({
     block: starting
       ? 'busy'
       : !video || video.status === GenerationStatus.FAILED
-        ? null
+        ? renderBlock
         : video.status === GenerationStatus.COMPLETE
           ? 'done'
           : 'in-progress',
@@ -207,6 +319,23 @@ export function VideoStep({
           action={<HelpButton cardHook="greeting-video-card" />}
         />
         {error && <Alert tone="error">{error}</Alert>}
+        {staleScript && (
+          <Alert tone="info" className="mt-2">
+            <div className="flex items-center justify-between gap-3">
+              <span>
+                {dict.greetingUi.scriptStaleHint.replace(
+                  '{button}',
+                  w.regenerateScriptButton
+                )}
+              </span>
+              {onGoToScript && (
+                <Button size="sm" variant="outline" onClick={onGoToScript}>
+                  {dict.greetingUi.scriptStaleButton}
+                </Button>
+              )}
+            </div>
+          </Alert>
+        )}
 
         {consent.summary && (
           <VoiceConsentCard
@@ -224,11 +353,16 @@ export function VideoStep({
           <Button
             data-qa="greeting-render"
             loading={starting}
+            disabled={!!renderBlock}
             onClick={() => void start()}
           >
             {w.generateVideoButton}
           </Button>
         )}
+        {renderBlockText &&
+          (!video || video.status === GenerationStatus.FAILED) && (
+            <p className="mt-2 text-xs text-silver-400">{renderBlockText}</p>
+          )}
 
         {locked && (
           <Alert tone="info" className="mt-3">
@@ -260,10 +394,33 @@ export function VideoStep({
             {w.videoProcessing}
           </Alert>
         )}
+        {pollTrouble?.kind === 'reconnecting' && (
+          <Alert tone="warning" className="mt-2">
+            {dict.greetingUi.pollReconnecting}
+          </Alert>
+        )}
+        {pollTrouble?.kind === 'stopped' && (
+          <Alert tone="error" className="mt-2">
+            <div className="flex items-center justify-between gap-3">
+              <span>{pollTrouble.message}</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => startPolling(0)}
+              >
+                {dict.greetingUi.pollRetryButton}
+              </Button>
+            </div>
+          </Alert>
+        )}
         {video && video.status === GenerationStatus.FAILED && (
           <div className="space-y-2">
             <Alert tone="error">{video.error?.message ?? w.videoFailed}</Alert>
-            <Button loading={starting} onClick={() => void start()}>
+            <Button
+              loading={starting}
+              disabled={!!renderBlock}
+              onClick={() => void start()}
+            >
               {w.retryButton}
             </Button>
           </div>
@@ -306,6 +463,7 @@ export function VideoStep({
             videoUrl={video.downloadUrl}
             recipientName={recipientName}
             senderName={senderName}
+            occasionDate={consentBrief.occasionDate}
           />
         )}
 

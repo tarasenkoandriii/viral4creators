@@ -462,9 +462,11 @@ describe('ведущий-образ и бренд-бук в сцене (этап
         ],
       },
     );
-    expect(scene).toContain('<IMAGE_1> — Офис');
+    // CONTRACT6 п.8 (G-B2): при выключенном `PERSONA_ENABLED` фото сцены
+    // бренд-бука картинкой в модель не уходит — только словами.
+    expect(scene).not.toContain('<IMAGE_1>');
     expect(scene).toContain(
-      'Possible settings from the brand: пляж на закате.',
+      'Possible settings from the brand: Офис; пляж на закате.',
     );
     // Кавычки и переводы строк из заметки не ломают реплику в кавычках.
     expect(scene).toContain(

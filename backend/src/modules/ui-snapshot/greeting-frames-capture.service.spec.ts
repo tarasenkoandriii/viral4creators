@@ -66,14 +66,22 @@ function build() {
       postStatus: 'complete',
     })),
   };
+  const edits = {
+    forkForRerender: jest.fn().mockResolvedValue({
+      sessionId: 'sess-v2',
+      newVersion: true,
+      promptKept: true,
+    }),
+  };
   const service = new GreetingFramesCaptureService(
     runner as any,
     prisma as any,
     prompt as any,
     video as any,
     postprod as any,
+    edits as any,
   );
-  return { service, runner, prisma, prompt, video, postprod };
+  return { service, runner, prisma, prompt, video, postprod, edits };
 }
 
 describe('GREETING_FRAME_SHOTS — что на каком кадре', () => {
@@ -207,7 +215,12 @@ describe('fixtureVideoAction — ролик фикстуры не оплачив
     [{ hasPrompt: true, videoStatus: null }, 'render'],
     [{ hasPrompt: true, videoStatus: 'failed' }, 'render'],
     // Переснять готовый — только явным флагом.
-    [{ hasPrompt: true, videoStatus: 'complete', rerender: true }, 'render'],
+    // Готовый на месте не перерендеривается (409 ALREADY_READY) — новая
+    // версия сессии (CONTRACT6).
+    [
+      { hasPrompt: true, videoStatus: 'complete', rerender: true },
+      'new-version-render',
+    ],
     [{ hasPrompt: true, videoStatus: 'processing', rerender: true }, 'poll'],
     // Картинка готова, озвучка ещё кладётся — только опрос постобработки,
     // и `rerender` её не перебивает (оплатили бы обе работы).
@@ -389,6 +402,70 @@ describe('GreetingFramesCaptureService.fixtureVideo — постобработк
 
     expect(result.stage).toBe('complete');
     expect(result.postError).toBe('ffmpeg: нет звука');
+    expect(video.startVideo).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * CONTRACT6: готовый ролик на месте не перерендеривается — сервер отвечает
+ * 409 GREETING_VIDEO_ALREADY_READY. Двойник `startVideo` ведёт себя так
+ * же, иначе прежний путь «рендер поверх готового» прошёл бы зелёным.
+ */
+describe('GreetingFramesCaptureService.fixtureVideo — перерендер готового', () => {
+  const done = {
+    id: 'sess-done',
+    data: { generationPrompt: {} },
+    liveData: {
+      generatedVideo: { status: 'complete', postStatus: 'complete' },
+    },
+  };
+  const likeServer = (video: any) =>
+    video.startVideo.mockImplementation(async (id: string) => {
+      if (id === 'sess-done') {
+        throw Object.assign(new Error('Ролик уже готов'), {
+          code: 'GREETING_VIDEO_ALREADY_READY',
+        });
+      }
+      return { status: 'processing' };
+    });
+
+  it('rerender — новая версия с тем же сценарием, рендер её, sessionId новой', async () => {
+    const { service, prisma, video, edits, prompt } = build();
+    prisma.session.findFirst.mockResolvedValue(done);
+    likeServer(video);
+
+    const result = await service.fixtureVideo({ rerender: true });
+
+    expect(edits.forkForRerender).toHaveBeenCalledWith('sess-done');
+    expect(video.startVideo).toHaveBeenCalledWith('sess-v2');
+    expect(prompt.generateGreetingPrompt).not.toHaveBeenCalled();
+    expect(result.sessionId).toBe('sess-v2');
+    expect(result.stage).toBe('started');
+  });
+
+  it('сценарий не перенёсся (фото не скопировалось) — сначала сборка в новой версии', async () => {
+    const { service, prisma, video, edits, prompt } = build();
+    prisma.session.findFirst.mockResolvedValue(done);
+    likeServer(video);
+    edits.forkForRerender.mockResolvedValue({
+      sessionId: 'sess-v2',
+      newVersion: true,
+      promptKept: false,
+    });
+
+    await service.fixtureVideo({ rerender: true });
+
+    expect(prompt.generateGreetingPrompt).toHaveBeenCalledWith('sess-v2');
+    expect(video.startVideo).toHaveBeenCalledWith('sess-v2');
+  });
+
+  it('без rerender готовый не трогается и версия не заводится', async () => {
+    const { service, prisma, edits, video } = build();
+    prisma.session.findFirst.mockResolvedValue(done);
+
+    await service.fixtureVideo();
+
+    expect(edits.forkForRerender).not.toHaveBeenCalled();
     expect(video.startVideo).not.toHaveBeenCalled();
   });
 });

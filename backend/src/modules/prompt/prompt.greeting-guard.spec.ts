@@ -42,3 +42,37 @@ describe('PATCH /sessions/:id/prompt для поздравления', () => {
     );
   });
 });
+
+/**
+ * CONTRACT6 п.1: общий `approvePrompt` превращал FLAGGED в BYPASSED, а
+ * рендер поздравления смотрел только на FLAGGED — помеченный текст уходил
+ * в ролик. Для поздравления одобрения нет вовсе.
+ */
+describe('POST /sessions/:id/prompt/approve для поздравления', () => {
+  it('400 с кодом, флаг не превращается в BYPASSED и ничего не пишется', async () => {
+    const prompt = { finalText: 'x', moderationStatus: 'flagged' };
+    const s = serviceWith({
+      sessionId: 's1',
+      greetingBriefSnapshot: { occasion: 'BIRTHDAY' },
+      generationPrompt: prompt,
+    });
+    const err = await s.approvePrompt('s1').catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toEqual(
+      expect.objectContaining({ code: 'GREETING_APPROVE_NOT_SUPPORTED' }),
+    );
+    expect(err.message).toMatch(/Сценарий/);
+    expect(prompt.moderationStatus).toBe('flagged');
+    expect(
+      (s as unknown as { sessionService: { updateSession: jest.Mock } })
+        .sessionService.updateSession,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('товарная сессия одобряется как раньше: FLAGGED → BYPASSED', async () => {
+    const prompt = { finalText: 'x', moderationStatus: 'flagged' };
+    const s = serviceWith({ sessionId: 's1', generationPrompt: prompt });
+    const out = await s.approvePrompt('s1');
+    expect(out.moderationStatus).toBe('bypassed');
+  });
+});

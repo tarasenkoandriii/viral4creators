@@ -47,7 +47,7 @@ export function useRenderVoiceConsent(input: RenderConsentInput): {
   summary: ConsentSummary | null;
   cancel: () => void;
 } {
-  const { dict } = useI18n();
+  const { dict, locale } = useI18n();
   const c = dict.voiceConsent;
   const [state, setState] = useState<ConsentState>(CONSENT_INITIAL);
   // Автомат читается через ref: реплики приходят асинхронно, и решение
@@ -88,7 +88,7 @@ export function useRenderVoiceConsent(input: RenderConsentInput): {
                 .replace('{recipient}', s.recipient)
                 .replace('{occasion}', s.occasion)
                 .replace('{quality}', s.quality)
-                .replace('{cost}', chargeText(s.charge, c) ?? ''),
+                .replace('{cost}', chargeText(s.charge, c, locale) ?? ''),
         };
       }
       case 'start':
@@ -106,6 +106,8 @@ export function useRenderVoiceConsent(input: RenderConsentInput): {
           busy: c.refuseBusy,
           'in-progress': c.refuseInProgress,
           done: c.refuseDone,
+          flagged: dict.greetingUi.refuseFlagged,
+          'not-ready': dict.greetingUi.refuseNotReady,
         }[effect.reason];
         return { tone: 'warning', text };
       }

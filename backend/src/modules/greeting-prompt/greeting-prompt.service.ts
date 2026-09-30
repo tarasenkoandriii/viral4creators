@@ -74,12 +74,20 @@ import {
   scriptLanguageForPrompt,
   scriptLanguageOf,
 } from '../../common/greeting-language';
+import { editModeOf } from '../../common/greeting-session-edit';
 import {
-  GREETING_EDIT_BUSY_MESSAGE,
-  editModeOf,
-} from '../../common/greeting-session-edit';
+  GREETING_PROMPT_LOCK_TTL_MS,
+  assertNoRenderAfterWrite,
+  editDuringRender,
+  greetingScriptInputs,
+} from './script-inputs';
+import {
+  GREETING_ERROR_CODES,
+  greetingError,
+} from '../../common/greeting-errors';
 
-const GREETING_PROMPT_CLAIM_TTL_MS = 3 * 60 * 1000;
+// Общий срок замка 'prompt' поздравления (см. `GREETING_PROMPT_LOCK_TTL_MS`).
+const GREETING_PROMPT_CLAIM_TTL_MS = GREETING_PROMPT_LOCK_TTL_MS;
 
 export const GREETING_PROMPT_IN_FLIGHT_MESSAGE =
   'Сценарий уже собирается — дождитесь ответа первого запроса.';
@@ -193,7 +201,10 @@ export class GreetingPromptService {
     const brief = session.greetingBriefSnapshot;
     if (!brief) {
       throw new BadRequestException(
-        'This session has no greeting brief — it was not created from a GREETING_VIDEO project.',
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_NOT_GREETING_SESSION,
+          'Это не поздравление: у сессии нет брифа поздравления.',
+        ),
       );
     }
 
@@ -215,10 +226,14 @@ export class GreetingPromptService {
     // не переписывается на месте: правка из шага «Сценарий» или брифа
     // заводит новую версию, и готовый ролик остаётся со своим текстом.
     const mode = editModeOf(session.generatedVideo);
-    if (mode === 'busy')
-      throw new ConflictException(GREETING_EDIT_BUSY_MESSAGE);
+    if (mode === 'busy') throw editDuringRender();
     if (mode === 'new-version' && session.generationPrompt) {
-      throw new ConflictException(GREETING_PROMPT_AFTER_VIDEO_MESSAGE);
+      throw new ConflictException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_VIDEO_ALREADY_READY,
+          GREETING_PROMPT_AFTER_VIDEO_MESSAGE,
+        ),
+      );
     }
 
     const likeness =
@@ -245,10 +260,39 @@ export class GreetingPromptService {
       GREETING_PROMPT_CLAIM_TTL_MS,
     );
     if (!claimed) {
-      throw new ConflictException(GREETING_PROMPT_IN_FLIGHT_MESSAGE);
+      throw new ConflictException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_EDIT_IN_PROGRESS,
+          GREETING_PROMPT_IN_FLIGHT_MESSAGE,
+        ),
+      );
     }
 
     try {
+      // CONTRACT6 п.3: решения — по сессии, перечитанной под замком.
+      // Старт ролика держит тот же замок 'prompt' на всё время старта,
+      // поэтому ролик, запущенный между первым чтением и замком, виден
+      // здесь; а тот, что запустится после, будет ждать нас.
+      const locked = await this.sessions.getSession(sessionId);
+      const lockedMode = editModeOf(locked?.generatedVideo);
+      if (lockedMode === 'busy') throw editDuringRender();
+      if (lockedMode === 'new-version' && locked?.generationPrompt) {
+        throw new ConflictException(
+          greetingError(
+            GREETING_ERROR_CODES.GREETING_VIDEO_ALREADY_READY,
+            GREETING_PROMPT_AFTER_VIDEO_MESSAGE,
+          ),
+        );
+      }
+      // Дальше — только перечитанное: правка брифа могла закончиться
+      // между первым чтением и замком.
+      const current = locked ?? session;
+      const brief =
+        current.greetingBriefSnapshot ?? session.greetingBriefSnapshot!;
+      assertGreetingReferencesAllowed(
+        brief,
+        current.greetingReferenceImages ?? [],
+      );
       const occasionText =
         brief.occasion === 'OTHER' && brief.customOccasionText
           ? brief.customOccasionText
@@ -266,7 +310,7 @@ export class GreetingPromptService {
             sessionId,
             brief,
             occasionText,
-            scriptLanguageOf(brief, session.locale),
+            scriptLanguageOf(brief, current.locale),
           );
 
       // Режим озвучки — тот же, что прочитает постобработка
@@ -280,9 +324,9 @@ export class GreetingPromptService {
         brief,
         occasionText,
         speech,
-        session.greetingReferenceImages ?? [],
-        normalizeVoiceMode(session.brandManifestSnapshot?.voiceMode),
-        session.brandManifestSnapshot ?? null,
+        current.greetingReferenceImages ?? [],
+        normalizeVoiceMode(current.brandManifestSnapshot?.voiceMode),
+        current.brandManifestSnapshot ?? null,
       );
 
       // Найдено при аудите пайплайна GREETING_VIDEO (находка №2): раньше
@@ -326,10 +370,19 @@ export class GreetingPromptService {
         voiceoverScript: speech,
         finalVoiceoverScript: speech,
         voiceoverScriptSource: 'field',
+        // Под какие фото, образ и голос собрана сцена — рендер сверит
+        // (CONTRACT6 п.4, `script-inputs.ts`).
+        greetingScriptInputs: greetingScriptInputs(current),
       };
 
       const updated = await this.sessions.updateSession(sessionId, {
         generationPrompt: prompt,
+      });
+      // CONTRACT6 п.3: страховка на истёкший замок (старт держит его не
+      // дольше TTL). Ролик успел запуститься — возвращаем прежний сценарий,
+      // по которому он считается, и говорим об этом прямо.
+      await assertNoRenderAfterWrite(this.sessions, sessionId, {
+        generationPrompt: current.generationPrompt,
       });
       return updated?.generationPrompt ?? prompt;
     } finally {

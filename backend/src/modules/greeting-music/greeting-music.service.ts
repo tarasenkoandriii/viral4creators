@@ -52,6 +52,7 @@ import {
   MAX_MUSIC_BYTES,
 } from './dto/greeting-music.dto';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
 
 /**
  * Под какую длину искать трек. Ролик пятнадцать секунд, но искать
@@ -147,7 +148,7 @@ export class GreetingMusicService {
     sessionId: string,
     themeId: string | null,
   ): Promise<GreetingMusicView> {
-    const session = await this.load(sessionId);
+    const session = await this.loadForEdit(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     let selected: GreetingMusicView['selected'] = null;
     if (themeId) {
@@ -212,7 +213,7 @@ export class GreetingMusicService {
     sessionId: string,
     dto: GreetingMusicConfirmRequestDto,
   ): Promise<GreetingMusicView> {
-    const session = await this.load(sessionId);
+    const session = await this.loadForEdit(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     // Путь выдали мы сами, но пришёл он от клиента — сессия в пути
     // обязана совпасть с сессией в маршруте, иначе это способ
@@ -267,7 +268,7 @@ export class GreetingMusicService {
     sessionId: string,
     dto: GreetingMusicLinkRequestDto,
   ): Promise<GreetingMusicView> {
-    const session = await this.load(sessionId);
+    const session = await this.loadForEdit(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     if (!dto.rightsConfirmed) {
       throw new BadRequestException(
@@ -336,7 +337,7 @@ export class GreetingMusicService {
     provider: string,
     providerTrackId: string,
   ): Promise<GreetingMusicView> {
-    const session = await this.load(sessionId);
+    const session = await this.loadForEdit(sessionId);
     const snapshot = session.greetingBriefSnapshot!;
     if (!this.audio.enabled) {
       throw new BadRequestException(
@@ -406,6 +407,18 @@ export class GreetingMusicService {
       snapshot.occasion,
       registerOfBrief(snapshot),
     );
+  }
+
+  /**
+   * Сессия для правки выбора: пока ролик считается — 409 с кодом
+   * (CONTRACT6 п.2, `assertGreetingNotRendering`): рендер и постобработка
+   * читают выбор из снимка, смена посреди рендера дала бы ролик ни по
+   * прежнему, ни по новому выбору.
+   */
+  private async loadForEdit(sessionId: string): Promise<Session> {
+    const session = await this.load(sessionId);
+    assertGreetingNotRendering(session);
+    return session;
   }
 
   private async load(sessionId: string): Promise<Session> {

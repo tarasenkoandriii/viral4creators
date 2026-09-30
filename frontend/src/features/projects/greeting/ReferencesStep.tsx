@@ -9,7 +9,7 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useId } from 'react';
 import {
   ImageIcon,
   Sparkles,
@@ -30,7 +30,6 @@ import {
   Textarea,
 } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
-import { errorMessage } from '../../../services/projects-api';
 import {
   listGreetingReferences,
   suggestGreetingSceneSettings,
@@ -39,6 +38,7 @@ import {
   deleteGreetingReference,
   uploadGreetingReference,
   updateGreetingReference,
+  greetingErrorMessage,
 } from '../../../services/greeting-api';
 import { SketchSlotActions } from '../../sketch/SketchSlotActions';
 import { revokeObjectUrl } from '../../../lib/object-url';
@@ -67,9 +67,16 @@ const REFERENCE_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
 export function ReferencesStep({
   sessionId,
   disabled,
+  onChanged,
 }: {
   sessionId: string;
   disabled: boolean;
+  /**
+   * Список фото изменился (добавили, удалили, скетч, согласие на лицо):
+   * мастер перечитывает готовность — пункты «лицо ведущего» и «фото»
+   * считаются по ним (CONTRACT6 G-FE п. 7).
+   */
+  onChanged?: () => void;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -90,7 +97,8 @@ export function ReferencesStep({
   const load = useCallback(() => {
     listGreetingReferences(sessionId)
       .then(setImages)
-      .catch((e) => setError(errorMessage(e)));
+      .catch((e) => setError(greetingErrorMessage(e, dict)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- словарь: текст ошибки на момент сбоя
   }, [sessionId]);
 
   useEffect(() => {
@@ -102,8 +110,9 @@ export function ReferencesStep({
     setError(null);
     try {
       setImages(await fn());
+      onChanged?.();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(greetingErrorMessage(e, dict));
     } finally {
       setSaving(false);
     }
@@ -115,7 +124,7 @@ export function ReferencesStep({
     try {
       setSettings(await suggestGreetingSceneSettings(sessionId));
     } catch (e) {
-      setError(errorMessage(e));
+      setError(greetingErrorMessage(e, dict));
     } finally {
       setSettingsBusy(false);
     }
@@ -261,6 +270,7 @@ export function ReferencesStep({
               onDone={(next) => {
                 setAdding(false);
                 setImages(next);
+                onChanged?.();
               }}
               onCancel={() => setAdding(false)}
               onError={setError}
@@ -292,6 +302,7 @@ export function ReferencesStep({
                         onDone={(next) => {
                           setEditingId(null);
                           setImages(next);
+                          onChanged?.();
                         }}
                         onCancel={() => setEditingId(null)}
                       />
@@ -376,7 +387,10 @@ export function ReferencesStep({
                     originalDeleted={img.originalDeleted}
                     description={img.description ?? img.label}
                     disabled={saving || disabled}
-                    onSlot={() => void load()}
+                    onSlot={() => {
+                      load();
+                      onChanged?.();
+                    }}
                   />
                 </li>
               ))}
@@ -462,6 +476,7 @@ function ReferenceUploader({
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const fid = useId();
 
   useEffect(() => () => revokeObjectUrl(preview), [preview]);
 
@@ -504,7 +519,7 @@ function ReferenceUploader({
       );
       onDone(next);
     } catch (e) {
-      onError(errorMessage(e));
+      onError(greetingErrorMessage(e, dict));
     } finally {
       setUploading(false);
     }
@@ -544,8 +559,9 @@ function ReferenceUploader({
           onChange={(e) => pick(e.target.files?.[0])}
         />
         <div className="min-w-0 flex-1 space-y-2">
-          <Field label={w.referenceLabelLabel}>
+          <Field label={w.referenceLabelLabel} htmlFor={`${fid}-label`}>
             <Input
+              id={`${fid}-label`}
               data-qa="greeting-references-label"
               data-qa-mask="personal-reference-label"
               value={label}
@@ -560,8 +576,10 @@ function ReferenceUploader({
       <Field
         label={w.referenceDescLabel}
         counter={`${description.length}/2000`}
+        htmlFor={`${fid}-description`}
       >
         <Textarea
+          id={`${fid}-description`}
           data-qa="greeting-references-description"
           data-qa-mask="personal-reference-description"
           rows={2}
@@ -622,6 +640,7 @@ function ReferenceEditor({
   const [description, setDescription] = useState(image.description ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fid = useId();
   useReferenceFormVoice(
     voiceActive,
     saving,
@@ -641,7 +660,7 @@ function ReferenceEditor({
       });
       onDone(next);
     } catch (e) {
-      setError(errorMessage(e));
+      setError(greetingErrorMessage(e, dict));
     } finally {
       setSaving(false);
     }
@@ -655,8 +674,9 @@ function ReferenceEditor({
         void submit();
       }}
     >
-      <Field label={w.referenceLabelLabel}>
+      <Field label={w.referenceLabelLabel} htmlFor={`${fid}-label`}>
         <Input
+          id={`${fid}-label`}
           data-qa="greeting-references-label"
           data-qa-mask="personal-reference-label"
           value={label}
@@ -670,8 +690,10 @@ function ReferenceEditor({
       <Field
         label={w.referenceDescLabel}
         counter={`${description.length}/2000`}
+        htmlFor={`${fid}-description`}
       >
         <Textarea
+          id={`${fid}-description`}
           data-qa="greeting-references-description"
           data-qa-mask="personal-reference-description"
           rows={2}

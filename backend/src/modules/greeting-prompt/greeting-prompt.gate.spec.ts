@@ -152,3 +152,63 @@ describe('GreetingPromptService — проверки этапа G до замк�
     expect(prompt.finalText).toContain('<IMAGE_1> — Офис');
   });
 });
+
+/** CONTRACT6 п.3/п.4 (G-B1): замок, отпечаток входов, страховка записи. */
+describe('GreetingPromptService — CONTRACT6', () => {
+  it('сценарий несёт отпечаток входов — тот, что сверит рендер', async () => {
+    const { service } = build({ greetingReferenceImages: [] });
+    const prompt = await service.generateGreetingPrompt('s1');
+    expect(typeof prompt.greetingScriptInputs).toBe('string');
+    expect(JSON.parse(prompt.greetingScriptInputs!).voiceMode).toBeDefined();
+  });
+
+  it('ролик запустился между первым чтением и замком — 409 с кодом, запись не идёт', async () => {
+    const { service, sessions } = build();
+    sessions.getSession
+      .mockResolvedValueOnce({
+        sessionId: 's1',
+        greetingBriefSnapshot: BRIEF,
+        greetingReferenceImages: [],
+      })
+      .mockResolvedValueOnce({
+        sessionId: 's1',
+        greetingBriefSnapshot: BRIEF,
+        greetingReferenceImages: [],
+        generatedVideo: { status: 'pending' },
+      });
+    const err = await service.generateGreetingPrompt('s1').catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_CHANGE_DURING_RENDER');
+    expect(sessions.updateSession).not.toHaveBeenCalled();
+    expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'prompt');
+  });
+
+  it('ролик запустился после записи (истёкший замок) — прежний сценарий возвращён, 409', async () => {
+    const old = { promptId: 'old', finalText: 'старый' };
+    const { service, sessions } = build({ generationPrompt: old });
+    const s = {
+      sessionId: 's1',
+      greetingBriefSnapshot: BRIEF,
+      greetingReferenceImages: [],
+      generationPrompt: old,
+    };
+    sessions.getSession
+      .mockResolvedValueOnce(s)
+      .mockResolvedValueOnce(s)
+      .mockResolvedValueOnce({
+        ...s,
+        generatedVideo: { status: 'processing' },
+      });
+    const err = await service.generateGreetingPrompt('s1').catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_EDIT_AFTER_RENDER_STARTED');
+    expect(sessions.updateSession).toHaveBeenLastCalledWith('s1', {
+      generationPrompt: old,
+    });
+  });
+
+  it('нет брифа — код и русский текст', async () => {
+    const { service } = build({ greetingBriefSnapshot: null });
+    const err = await service.generateGreetingPrompt('s1').catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_NOT_GREETING_SESSION');
+    expect(err.message).not.toMatch(/GREETING_VIDEO|session/);
+  });
+});

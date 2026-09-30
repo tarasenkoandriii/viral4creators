@@ -69,6 +69,12 @@ import {
   checkFaces,
   mayContainFace,
 } from '../persona/face-check';
+import { PlanService } from '../plan/plan.service';
+import {
+  GREETING_ERROR_CODES,
+  greetingError,
+} from '../../common/greeting-errors';
+import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
 
 /** Согласие подтверждают только для фото, на котором лицо найдено. */
 export const FACE_CONSENT_NOT_NEEDED =
@@ -103,6 +109,49 @@ const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
 /** docs.x.ai reference-to-video: до 7 `reference_images` за один запрос. */
 export const MAX_GREETING_REFERENCE_IMAGES = 7;
+
+/**
+ * Тексты отказов с кодами (CONTRACT6 п.9): раньше шли по-английски, с
+ * путём хранилища и id фото внутри — человек видел внутренности, а экран
+ * не мог отличить «лимит» от «файл не загрузился» иначе, чем по тексту.
+ */
+export const REFERENCE_NOT_GREETING_MESSAGE =
+  'Фото для ролика можно добавить только в поздравлении.';
+export const REFERENCE_LIMIT_MESSAGE = `Можно добавить не больше ${MAX_GREETING_REFERENCE_IMAGES} фото — удалите одно, чтобы добавить новое.`;
+export const REFERENCE_PATH_INVALID_MESSAGE =
+  'Этот файл загружен не для этого поздравления. Загрузите фото ещё раз.';
+export const REFERENCE_ALREADY_ADDED_MESSAGE = 'Это фото уже добавлено.';
+export const REFERENCE_UPLOAD_MISSING_MESSAGE =
+  'Фото не дошло до хранилища. Загрузите его ещё раз.';
+export const REFERENCE_NOT_FOUND_MESSAGE =
+  'Фото не найдено — возможно, его уже удалили. Обновите список.';
+
+function notGreeting(): BadRequestException {
+  return new BadRequestException(
+    greetingError(
+      GREETING_ERROR_CODES.GREETING_NOT_GREETING_SESSION,
+      REFERENCE_NOT_GREETING_MESSAGE,
+    ),
+  );
+}
+
+function limitReached(): BadRequestException {
+  return new BadRequestException(
+    greetingError(
+      GREETING_ERROR_CODES.GREETING_REFERENCE_LIMIT,
+      REFERENCE_LIMIT_MESSAGE,
+    ),
+  );
+}
+
+function referenceNotFound(): NotFoundException {
+  return new NotFoundException(
+    greetingError(
+      GREETING_ERROR_CODES.GREETING_REFERENCE_NOT_FOUND,
+      REFERENCE_NOT_FOUND_MESSAGE,
+    ),
+  );
+}
 
 /** Подпись сгенерированного кадра — по ней он отличим от загруженного
  * и в списке, и в поддержке, когда человек спросит «откуда это». */
@@ -164,6 +213,13 @@ export class GreetingReferenceService {
     private readonly blob: BlobService,
     private readonly frames: SketchGeneratorService,
     private readonly aiUsage: AiUsageService,
+    /**
+     * Потолок расхода (CONTRACT6 п.1): рисование кадра, варианты
+     * сеттинга и проверка лица — платные вызовы модели, а маршруты
+     * открыты по UUID сессии. Без проверки заблокированный или
+     * исчерпавший суточный потолок человек тратил бы здесь без края.
+     */
+    private readonly plans: PlanService,
   ) {}
 
   async list(sessionId: string): Promise<GreetingReferenceImageView[]> {
@@ -176,17 +232,9 @@ export class GreetingReferenceService {
     dto: GreetingReferenceUploadUrlRequestDto,
   ): Promise<{ uploadUrl: string; pathname: string; imageId: string }> {
     const session = await this.load(sessionId);
-    if (!session.greetingBriefSnapshot) {
-      throw new BadRequestException(
-        'This session has no greeting brief — reference images only apply to GREETING_VIDEO sessions.',
-      );
-    }
+    if (!session.greetingBriefSnapshot) throw notGreeting();
     const current = session.greetingReferenceImages ?? [];
-    if (current.length >= MAX_GREETING_REFERENCE_IMAGES) {
-      throw new BadRequestException(
-        `At most ${MAX_GREETING_REFERENCE_IMAGES} reference images per session (Grok reference-to-video limit) — delete one first`,
-      );
-    }
+    if (current.length >= MAX_GREETING_REFERENCE_IMAGES) throw limitReached();
     const imageId = newGreetingReferenceId();
     const pathname = greetingReferencePathname(
       sessionId,
@@ -206,28 +254,40 @@ export class GreetingReferenceService {
     dto: GreetingReferenceConfirmRequestDto,
   ): Promise<GreetingReferenceImageView[]> {
     const session = await this.load(sessionId);
+    assertGreetingNotRendering(session);
     const prefix = `sessions/${sessionId}/greeting-refs/`;
     if (!dto.pathname.startsWith(prefix)) {
-      throw new BadRequestException(`pathname must start with "${prefix}"`);
+      throw new BadRequestException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_REFERENCE_PATH_INVALID,
+          REFERENCE_PATH_INVALID_MESSAGE,
+        ),
+      );
     }
     const imageId = dto.pathname.slice(prefix.length).split('/')[0];
     const images = session.greetingReferenceImages ?? [];
     if (images.some((s) => s.id === imageId)) {
       throw new BadRequestException(
-        `Reference image ${imageId} already confirmed`,
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_REFERENCE_ALREADY_ADDED,
+          REFERENCE_ALREADY_ADDED_MESSAGE,
+        ),
       );
     }
-    if (images.length >= MAX_GREETING_REFERENCE_IMAGES) {
-      throw new BadRequestException(
-        `At most ${MAX_GREETING_REFERENCE_IMAGES} reference images per session`,
-      );
-    }
+    if (images.length >= MAX_GREETING_REFERENCE_IMAGES) throw limitReached();
     let data: Buffer;
     try {
       data = await this.blob.downloadBuffer(dto.pathname);
     } catch (e) {
+      // Путь и текст ошибки хранилища — в лог, не человеку.
+      this.logger.warn(
+        `сессия ${sessionId}: фото ${dto.pathname} не прочитано: ${e instanceof Error ? e.message : String(e)}`,
+      );
       throw new BadRequestException(
-        `Reference photo not found in storage at "${dto.pathname}" — upload it first (${e instanceof Error ? e.message : String(e)})`,
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_REFERENCE_UPLOAD_MISSING,
+          REFERENCE_UPLOAD_MISSING_MESSAGE,
+        ),
       );
     }
     const mimeType = dto.pathname.endsWith('.png') ? 'image/png' : 'image/jpeg';
@@ -235,6 +295,12 @@ export class GreetingReferenceService {
     // на фото лицо — ДО записи, чтобы фото с лицом ни мгновения не лежало
     // в сессии «разрешённым». Проверяются ТЕ ЖЕ байты, что станут файлом
     // сессии ниже.
+    // Проверка лица — платный вызов модели (CONTRACT6 п.1): потолок
+    // расхода до него. При выключенном режиме вызова нет — и проверки
+    // потолка тоже, загрузка фото сама по себе ничего не стоит.
+    if (personaEnabled()) {
+      await this.plans.assertCanSpendSession(sessionId);
+    }
     const face = personaEnabled()
       ? await this.checkFace(sessionId, session.userId ?? null, data, mimeType)
       : undefined;
@@ -307,17 +373,10 @@ export class GreetingReferenceService {
   ): Promise<GreetingReferenceImageView[]> {
     const session = await this.load(sessionId);
     const brief = session.greetingBriefSnapshot;
-    if (!brief) {
-      throw new BadRequestException(
-        'Session has no greeting brief — reference frame generation is only for GREETING_VIDEO sessions',
-      );
-    }
+    if (!brief) throw notGreeting();
+    assertGreetingNotRendering(session);
     const images = session.greetingReferenceImages ?? [];
-    if (images.length >= MAX_GREETING_REFERENCE_IMAGES) {
-      throw new BadRequestException(
-        `At most ${MAX_GREETING_REFERENCE_IMAGES} reference images per session — delete one first`,
-      );
-    }
+    if (images.length >= MAX_GREETING_REFERENCE_IMAGES) throw limitReached();
 
     // Фича №35 и здесь, а не только на сборке сценария: свой повод
     // (`customOccasionText`) — единственный пользовательский текст,
@@ -350,6 +409,9 @@ export class GreetingReferenceService {
       presenter: brief.resolvedPresenterProvider,
       setting: chosenSetting || null,
     });
+    // CONTRACT6 п.1: потолок расхода — после дешёвых отказов выше (им
+    // незачем читать бюджет), но до платного вызова модели изображений.
+    await this.plans.assertCanSpendSession(sessionId);
     const outcome = await this.frames.generate({ prompt, source: null });
 
     if (outcome.status === 'failed') {
@@ -429,11 +491,10 @@ export class GreetingReferenceService {
   ): Promise<string[]> {
     const session = await this.load(sessionId);
     const brief = session.greetingBriefSnapshot;
-    if (!brief) {
-      throw new BadRequestException(
-        'Session has no greeting brief — scene settings are only for GREETING_VIDEO sessions',
-      );
-    }
+    if (!brief) throw notGreeting();
+    // CONTRACT6 п.1: вне `try` ниже — отказ по бюджету обязан дойти до
+    // человека, а не превратиться в «вариантов нет» пустым списком.
+    await this.plans.assertCanSpendSession(sessionId);
     const prompt = buildSettingsPrompt(
       brief.occasion,
       brief.customOccasionText,
@@ -469,11 +530,10 @@ export class GreetingReferenceService {
     dto: GreetingReferenceUpdateRequestDto,
   ): Promise<GreetingReferenceImageView[]> {
     const session = await this.load(sessionId);
+    assertGreetingNotRendering(session);
     const images = session.greetingReferenceImages ?? [];
     const target = images.find((s) => s.id === imageId);
-    if (!target) {
-      throw new NotFoundException(`Reference image ${imageId} not found`);
-    }
+    if (!target) throw referenceNotFound();
     // Этап G (Г-8): «у меня есть согласие этого человека». Только `true` —
     // отозвать согласие значит удалить фото или сделать скетч, а не
     // тихо снять отметку с уже отправленного в модель кадра. Для фото без
@@ -509,10 +569,10 @@ export class GreetingReferenceService {
     imageId: string,
   ): Promise<GreetingReferenceImageView[]> {
     const session = await this.load(sessionId);
+    assertGreetingNotRendering(session);
     const images = session.greetingReferenceImages ?? [];
     const image = images.find((s) => s.id === imageId);
-    if (!image)
-      throw new NotFoundException(`Reference image ${imageId} not found`);
+    if (!image) throw referenceNotFound();
     const next = images.filter((s) => s.id !== imageId);
     await this.sessions.updateSession(sessionId, {
       greetingReferenceImages: next,

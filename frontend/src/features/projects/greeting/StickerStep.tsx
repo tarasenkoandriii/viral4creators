@@ -7,12 +7,12 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Sticker } from 'lucide-react';
 import { Card, CardHeader, Button, Alert, Input } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
-import { errorMessage } from '../../../services/projects-api';
 import {
+  greetingErrorMessage,
   searchGreetingStickers,
   clearGreetingSticker,
   moveGreetingSticker,
@@ -23,6 +23,7 @@ import {
   STICKER_PLACEMENTS,
 } from '../../../types/project';
 import { HelpButton } from '../HelpSheet';
+import { CardLoadError } from './CardLoadError';
 import {
   SESSION_VOICE_TARGETS,
   planStickerVoice,
@@ -34,6 +35,7 @@ import { useVoiceFieldApplier } from '../../voice/voice-commands';
 import {
   stickerCardHidden,
   stickerSummary,
+  lockedFieldRefusals,
 } from '../../../lib/greeting-character';
 import {
   useSessionVoiceTexts,
@@ -56,26 +58,51 @@ import {
 export function StickerStep({
   sessionId,
   onSummary,
+  lockText = null,
 }: {
   sessionId: string;
   onSummary?: (value: string | null) => void;
+  /**
+   * Карточка заперта (ролик готов или снимается): причина для голоса —
+   * тот же отказ, что подпись на экране (`CharacterBlock`).
+   */
+  lockText?: string | null;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const [view, setView] = useState<GreetingStickerView | null>(null);
   const [query, setQuery] = useState('');
+  /**
+   * Запрос, по которому показана выдача (CONTRACT6 G-FE п. 3). Сервер
+   * берёт наклейку из кеша ЭТОГО запроса; раньше уходил текст поля —
+   * человек искал «торт», дописывал «ы» и кликал по картинке из выдачи
+   * «торт»: сервер искал её среди «торты» и отказывал.
+   */
+  const [resultsQuery, setResultsQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Первое чтение не прошло — карточка с причиной и «Повторить» (п. 10). */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
     searchGreetingStickers(sessionId, '')
-      .then((v) => alive && setView(v))
-      .catch(() => undefined);
+      .then((v) => {
+        if (!alive) return;
+        setView(v);
+        setResultsQuery('');
+      })
+      .catch((e: unknown) => {
+        if (alive) setLoadError(greetingErrorMessage(e, dict));
+      });
     return () => {
       alive = false;
     };
-  }, [sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- словарь: текст ошибки на момент сбоя
+  }, [sessionId, attempt]);
 
   /** @returns ошибку, показанную на экране, или `null` — сохранено (K5). */
   const run = async (
@@ -87,7 +114,7 @@ export function StickerStep({
       setView(await fn());
       return null;
     } catch (e) {
-      const message = errorMessage(e);
+      const message = greetingErrorMessage(e, dict);
       setError(message);
       return message;
     } finally {
@@ -139,6 +166,8 @@ export function StickerStep({
         ? (placementLabels[f.value] ?? f.value)
         : describeSessionValue(f.value, dict.voiceFields),
     apply: (fields) => {
+      if (lockText)
+        return lockedFieldRefusals(fields, voiceTexts.refusedField, lockText);
       const plan = planStickerVoice(
         onScreen && view
           ? {
@@ -170,7 +199,18 @@ export function StickerStep({
     },
   });
 
-  if (!view || hidden) return null;
+  if (!view) {
+    return loadError ? (
+      <CardLoadError
+        qa="greeting-sticker-card"
+        icon={<Sticker size={18} />}
+        title={w.stickerHeading}
+        message={loadError}
+        onRetry={retry}
+      />
+    ) : null;
+  }
+  if (hidden) return null;
   // У торжественных, деликатных и траурных поводов наклеек нет (сервер
   // откажет в выборе): поиск картинок нельзя ограничить настроением.
   // Этап D: карточка не пропадает молча, а объясняет почему — пустое
@@ -258,9 +298,14 @@ export function StickerStep({
               size="sm"
               loading={busy}
               disabled={!query.trim()}
-              onClick={() =>
-                void run(() => searchGreetingStickers(sessionId, query.trim()))
-              }
+              onClick={() => {
+                const q = query.trim();
+                void run(async () => {
+                  const next = await searchGreetingStickers(sessionId, q);
+                  setResultsQuery(q);
+                  return next;
+                });
+              }}
             >
               {w.stickerSearch}
             </Button>
@@ -276,7 +321,7 @@ export function StickerStep({
                     className="block w-full rounded-xl border border-silver-200/70 p-2 hover:border-sky-400 disabled:opacity-50 dark:border-silver-800"
                     onClick={() =>
                       void run(() =>
-                        selectGreetingSticker(sessionId, query.trim(), r.id)
+                        selectGreetingSticker(sessionId, resultsQuery, r.id)
                       )
                     }
                   >

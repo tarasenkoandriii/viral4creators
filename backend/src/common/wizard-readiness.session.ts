@@ -45,6 +45,13 @@ export interface ReadinessSession {
   } | null;
 }
 
+/** Статусы модерации, с которыми сценарий поздравления не рендерится. */
+const NOT_CLEAN: ReadonlySet<string> = new Set([
+  ModerationStatus.FLAGGED,
+  ModerationStatus.BYPASSED,
+  ModerationStatus.PENDING,
+]);
+
 /** Говорящий аватар — единственный ведущий, которому нужно лицо. */
 export const AVATAR_PRESENTER = 'hedra';
 
@@ -76,8 +83,14 @@ export function readinessOfSession(session: ReadinessSession): Readiness {
       // Модерация помечает сценарий флагом, и рендер после этого
       // откажет. У greeting нет экрана ручного одобрения, поэтому это
       // не «предупреждение», а настоящее препятствие.
-      promptFlagged:
-        session.generationPrompt?.moderationStatus === ModerationStatus.FLAGGED,
+      //
+      // CONTRACT6 п.1: «чистый» — только одобренный проверкой. BYPASSED
+      // (флаг, обойдённый общим `approvePrompt`) и PENDING (проверки не
+      // было) — тоже препятствие: у поздравления нет законного пути ни к
+      // одному из них, и появиться они могли только в обход.
+      promptFlagged: NOT_CLEAN.has(
+        session.generationPrompt?.moderationStatus ?? '',
+      ),
     });
   }
 

@@ -24,7 +24,11 @@ export type PersonaLoad =
  * 30 с: переход «бренд-буки → Я в кадре → бриф» не перечитывает
  * персону, а вернувшийся через минуту человек видит свежую.
  */
-const personaStore = createPersonaStore(getPersonaMe, { maxAgeMs: 30_000 });
+const personaStore = createPersonaStore(getPersonaMe, {
+  maxAgeMs: 30_000,
+  // «Режим выключен» (404) — ответ, а не сбой: живёт те же 30 с.
+  cacheFailure: isPersonaDisabled,
+});
 
 function toLoad(s: StoreState<PersonaMe>): PersonaLoad {
   if (s.kind === 'loading') return { kind: 'loading' };

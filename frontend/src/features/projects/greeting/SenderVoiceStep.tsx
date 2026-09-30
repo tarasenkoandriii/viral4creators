@@ -7,16 +7,17 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Mic } from 'lucide-react';
 import { Card, CardHeader, Button, Alert } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
-import { errorMessage, listUserVoices } from '../../../services/projects-api';
+import { listUserVoices } from '../../../services/projects-api';
 import {
   getGreetingVoice,
   listGreetingPresetVoices,
   selectGreetingPresetVoice,
   selectGreetingSenderVoice,
+  greetingErrorMessage,
 } from '../../../services/greeting-api';
 import { MyVoicesSection } from '../../brand/VoicePicker';
 import type {
@@ -32,7 +33,10 @@ import {
 } from '../../../lib/voice-fields';
 import { useFeature } from '../../../lib/plan-context';
 import { useVoiceFieldApplier } from '../../voice/voice-commands';
-import { voiceSummary } from '../../../lib/greeting-character';
+import {
+  voiceSummary,
+  lockedFieldRefusals,
+} from '../../../lib/greeting-character';
 import {
   useSessionVoiceTexts,
   describeSessionValue,
@@ -55,10 +59,16 @@ import {
 export function SenderVoiceStep({
   sessionId,
   onSummary,
+  lockText = null,
 }: {
   sessionId: string;
   /** Значение для сводки блока «Характер ролика». */
   onSummary?: (value: string | null) => void;
+  /**
+   * Карточка заперта (ролик готов или снимается): причина для голоса —
+   * тот же отказ, что подпись на экране (`CharacterBlock`).
+   */
+  lockText?: string | null;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
@@ -74,18 +84,29 @@ export function SenderVoiceStep({
   const [voiceLoaded, setVoiceLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Выбор не прочитан — строка причины и «Повторить» (CONTRACT6 G-FE
+   * п. 10). Раньше карточка молча показывала «голос по умолчанию», хотя
+   * клон мог быть уже выбран.
+   */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
     // Роестр грузится вместе с выбором: он не стоит денег (обычный
     // GET у провайдера) и нужен сразу — без него второй вариант
     // выглядел бы пустым местом.
     void Promise.all([
-      getGreetingVoice(sessionId).catch(() => null),
+      getGreetingVoice(sessionId).catch((e: unknown) => ({ failed: e })),
       listGreetingPresetVoices(sessionId).catch(() => [] as GrokPresetVoice[]),
     ]).then(([v, list]) => {
       if (!alive) return;
-      if (v) {
+      if ('failed' in v) {
+        setLoadError(greetingErrorMessage(v.failed, dict));
+      } else {
         setVoice(v);
         setVoiceLoaded(true);
       }
@@ -94,7 +115,8 @@ export function SenderVoiceStep({
     return () => {
       alive = false;
     };
-  }, [sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- словарь: текст ошибки на момент сбоя
+  }, [sessionId, attempt]);
 
   /** @returns ошибку, показанную на экране, или `null` — сохранено (K5). */
   const apply = async (
@@ -107,9 +129,10 @@ export function SenderVoiceStep({
       // Ответ на выбор — тоже прочитанное состояние, даже если первое
       // чтение не прошло.
       setVoiceLoaded(true);
+      setLoadError(null);
       return null;
     } catch (e) {
-      const message = errorMessage(e);
+      const message = greetingErrorMessage(e, dict);
       setError(message);
       return message;
     } finally {
@@ -179,6 +202,8 @@ export function SenderVoiceStep({
           ? clones.find((c) => c.voiceId === f.value)?.label
           : undefined) ?? describeSessionValue(f.value, dict.voiceFields),
     apply: (fields) => {
+      if (lockText)
+        return lockedFieldRefusals(fields, voiceTexts.refusedField, lockText);
       const plan = planVoiceChoice(
         {
           presets: presetList,
@@ -243,6 +268,16 @@ export function SenderVoiceStep({
       {error && (
         <Alert tone="error" onDismiss={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+      {loadError && (
+        <Alert tone="error" title={dict.greetingUi.cardLoadFailed}>
+          <div className="flex items-center justify-between gap-3">
+            <span>{loadError}</span>
+            <Button size="sm" variant="outline" onClick={retry}>
+              {dict.greetingUi.cardRetryButton}
+            </Button>
+          </div>
         </Alert>
       )}
 

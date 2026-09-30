@@ -55,7 +55,7 @@ export const OCCASION_LABELS: Readonly<
     MOTHERS_DAY: 'День матері',
     FATHERS_DAY: 'День батька',
     DEFENDERS_DAY: 'День захисників і захисниць',
-    TEACHERS_DAY: 'День учителя',
+    TEACHERS_DAY: 'День вчителя',
     FIRST_SCHOOL_DAY: 'Перший день у школі',
     NEW_BABY: 'Народження дитини',
     BAPTISM: 'Хрестини',
@@ -315,7 +315,7 @@ export const SESSION_SCREEN_LABELS: Readonly<
     stickerUnavailable:
       'Наклейки недоступны для этого повода: поиск картинок нельзя ограничить настроением.',
     referencesLockedHint:
-      'Сценарий уже собран — фото больше не влияют на него. Чтобы поменять их, соберите сценарий заново.',
+      'Сценарий уже собран, поэтому фото закрыты для правки. Они откроются снова, когда сценарий сбросится: так бывает после сохранения брифа с новым поводом, именами, тоном, текстом, языком или ведущим — рядом с «Сохранено» появится «соберите сценарий заново».',
     scriptEmpty: 'Сценарий ещё не собран.',
   },
   uk: {
@@ -335,7 +335,7 @@ export const SESSION_SCREEN_LABELS: Readonly<
     stickerUnavailable:
       'Наліпки недоступні для цього приводу: пошук картинок не можна обмежити настроєм.',
     referencesLockedHint:
-      'Сценарій уже зібрано — фото більше на нього не впливають. Щоб змінити їх, зберіть сценарій заново.',
+      'Сценарій уже зібрано, тому фото закриті для правки. Вони відкриються знову, коли сценарій скинеться: так буває після збереження брифу з новим приводом, іменами, тоном, текстом, мовою або ведучим — поруч зі «Збережено» зʼявиться «зберіть сценарій заново».',
     scriptEmpty: 'Сценарій ще не зібрано.',
   },
   en: {
@@ -355,7 +355,7 @@ export const SESSION_SCREEN_LABELS: Readonly<
     stickerUnavailable:
       "Stickers are not available for this occasion: image search can't be limited by mood.",
     referencesLockedHint:
-      'The script is already built, so photos no longer affect it. To change them, build the script again.',
+      'The script is already built, so photos are locked. They unlock when the script is reset: this happens after you save the brief with a new occasion, names, tone, text, language or presenter — “build the script again” will appear next to “Saved”.',
     scriptEmpty: 'No script generated yet.',
   },
   de: {
@@ -375,7 +375,7 @@ export const SESSION_SCREEN_LABELS: Readonly<
     stickerUnavailable:
       'Sticker sind für diesen Anlass nicht verfügbar: Die Bildsuche lässt sich nicht nach Stimmung einschränken.',
     referencesLockedHint:
-      'Das Skript steht bereits, Fotos wirken sich nicht mehr darauf aus. Zum Ändern das Skript neu erstellen.',
+      'Das Skript steht bereits, daher sind die Fotos gesperrt. Sie werden wieder frei, wenn das Skript zurückgesetzt wird: nach dem Speichern des Briefings mit neuem Anlass, Namen, Ton, Text, Sprache oder Moderator — neben „Gespeichert“ erscheint dann „Skript neu erstellen“.',
     scriptEmpty: 'Noch kein Skript generiert.',
   },
   es: {
@@ -395,7 +395,7 @@ export const SESSION_SCREEN_LABELS: Readonly<
     stickerUnavailable:
       'Las pegatinas no están disponibles para esta ocasión: la búsqueda de imágenes no se puede limitar por ánimo.',
     referencesLockedHint:
-      'El guion ya está montado, así que las fotos ya no influyen en él. Para cambiarlas, vuelve a montar el guion.',
+      'El guion ya está montado, así que las fotos están bloqueadas. Se desbloquean cuando el guion se restablece: ocurre al guardar el brief con otra ocasión, nombres, tono, texto, idioma o presentador; junto a «Guardado» aparecerá «vuelve a montar el guion».',
     scriptEmpty: 'Aún no se ha generado ningún guion.',
   },
 };

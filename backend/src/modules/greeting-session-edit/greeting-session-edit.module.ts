@@ -18,5 +18,7 @@ import { GreetingSessionEditService } from './greeting-session-edit.service';
   imports: [GreetingBriefModule, PromptModule, StorageModule],
   controllers: [GreetingSessionEditController],
   providers: [GreetingSessionEditService],
+  // Перерендер фикстуры новой версией (`UiSnapshotModule`, CONTRACT6).
+  exports: [GreetingSessionEditService],
 })
 export class GreetingSessionEditModule {}

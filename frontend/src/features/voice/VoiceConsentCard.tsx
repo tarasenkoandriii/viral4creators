@@ -28,9 +28,9 @@ export function VoiceConsentCard({
   buttonLabel: string;
   onCancel: () => void;
 }) {
-  const { dict } = useI18n();
+  const { dict, locale } = useI18n();
   const c = dict.voiceConsent;
-  const cost = chargeText(summary.charge, c);
+  const cost = chargeText(summary.charge, c, locale);
   // Третье поле — маска личного текста (этап I ТЗ Greeting 2.0, §5.3):
   // кому и «особый повод» пишет человек, и на кадре лендинга они
   // размываются. Качество и цена — текст продукта.

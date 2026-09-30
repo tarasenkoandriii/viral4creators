@@ -127,6 +127,21 @@ import {
   avatarQuotaPerDay,
 } from '../../common/avatar-quota';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  GREETING_ERROR_CODES,
+  greetingError,
+} from '../../common/greeting-errors';
+import {
+  GREETING_PROMPT_LOCK_TTL_MS,
+  greetingScriptStale,
+} from '../greeting-prompt/script-inputs';
+import { maxGreetingResolutionFor } from '../project/greeting-config';
+import {
+  GREETING_RESOLUTIONS,
+  GreetingResolution,
+} from '../../common/types/greeting.types';
+import { PlanId } from '../../common/plans';
+import { Session } from '../../common/types/session.types';
 
 /** Модель аватара у Hedra — та же, что зовёт пилот (`ActorsService`). */
 const HEDRA_MODEL = 'hedra-character-3';
@@ -155,6 +170,89 @@ import {
 const GREETING_VIDEO_CLAIM_TTL_MS = 5 * 60 * 1000;
 export const GREETING_VIDEO_IN_FLIGHT_MESSAGE =
   'Генерация ролика уже запускается — дождитесь ответа первого запроса.';
+
+/** Второй старт при уже идущем — с кодом, чтобы клиент не разбирал текст. */
+const renderInFlight = () =>
+  new ConflictException(
+    greetingError(
+      GREETING_ERROR_CODES.GREETING_RENDER_IN_PROGRESS,
+      GREETING_VIDEO_IN_FLIGHT_MESSAGE,
+    ),
+  );
+
+const notGreetingSession = () =>
+  new BadRequestException(
+    greetingError(
+      GREETING_ERROR_CODES.GREETING_NOT_GREETING_SESSION,
+      'Это не поздравление: у сессии нет брифа поздравления.',
+    ),
+  );
+
+/** Ролик в работе (PENDING/PROCESSING) или `null`. */
+function inFlightOf(
+  session: Pick<Session, 'generatedVideo'>,
+): GeneratedVideo | null {
+  const v = session.generatedVideo;
+  return v &&
+    (v.status === GenerationStatus.PENDING ||
+      v.status === GenerationStatus.PROCESSING)
+    ? v
+    : null;
+}
+
+export const GREETING_EDIT_IN_PROGRESS_MESSAGE =
+  'Сейчас сохраняется правка брифа или сценария либо уже запускается ролик. ' +
+  'Подождите несколько секунд и нажмите ещё раз.';
+
+export const GREETING_SCRIPT_STALE_MESSAGE =
+  'Сценарий собран для других фото, образа или голоса. Соберите его заново на шаге «Сценарий».';
+
+export const GREETING_VIDEO_ALREADY_READY_MESSAGE =
+  'Ролик уже готов. Чтобы сделать другой, поправьте бриф — появится новая версия, ' +
+  'а готовый ролик останется.';
+
+/**
+ * Потолок разрешения по тарифу — у денег (CONTRACT6 п.5). Бриф хранит
+ * разрешение, разрешённое тарифом на момент сохранения; тариф мог с тех
+ * пор понизиться. Понижаем, а не отказываем — тот же выбор, что у
+ * reference mode Grok (`effectiveGrokResolution`): ролик всё равно
+ * будет, а записанное и оплаченное разрешение — фактическое.
+ */
+export function greetingResolutionCap(
+  requested: GreetingResolution,
+  plan: PlanId,
+): GreetingResolution {
+  const cap = maxGreetingResolutionFor(plan);
+  return GREETING_RESOLUTIONS.indexOf(requested) >
+    GREETING_RESOLUTIONS.indexOf(cap)
+    ? cap
+    : requested;
+}
+
+/** Путь файла попытки: у каждой свой, прежний ролик не затирается (п.6). */
+function attemptPath(sessionId: string, attemptId: string, file: string) {
+  return `sessions/${sessionId}/${file}-${attemptId}.${file === 'avatar-speech' ? 'mp3' : 'mp4'}`;
+}
+
+/**
+ * Прошлые попытки в историю — как `generation.service.ts`: только
+ * завершённые (упавшая), чтобы их файлы оставались перечислены для
+ * метлы (`sessionBlobPathnames` читает `videoHistory`).
+ */
+function historyWith(session: Session | null | undefined): {
+  videoHistory: GeneratedVideo[];
+} {
+  const previous = session?.generatedVideo;
+  const finished =
+    previous &&
+    (previous.status === GenerationStatus.COMPLETE ||
+      previous.status === GenerationStatus.FAILED);
+  return {
+    videoHistory: finished
+      ? [previous, ...(session?.videoHistory ?? [])]
+      : (session?.videoHistory ?? []),
+  };
+}
 
 /** Полная нативная длительность Grok (§7 ТЗ не задаёт длину ролика явно —
  * взят потолок провайдера как самый безопасный дефолт для короткого
@@ -193,46 +291,110 @@ export class GreetingVideoService {
   async startVideo(sessionId: string): Promise<GeneratedVideo> {
     await this.plans.assertCanSpendSession(sessionId);
 
-    const session = await this.sessions.getSession(sessionId);
-    if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
+    const first = await this.sessions.getSession(sessionId);
+    if (!first) throw new NotFoundException(SESSION_NOT_FOUND);
+    if (!first.greetingBriefSnapshot) throw notGreetingSession();
+    // Идущий рендер опрашивают тем же запросом — ни замков, ни проверок,
+    // ни права на рендер: кредит за него уже списан (этап 132, §8.1.1).
+    const running = inFlightOf(first);
+    if (running) return running;
+
+    // CONTRACT6 п.3: правка брифа/сценария и старт не идут разом. Правка
+    // держит замок 'prompt' от чтения до записи; старт берёт тот же замок
+    // и все решения принимает по сессии, перечитанной уже под ним. Иначе
+    // бриф, сохранённый между проверками ниже и записью ролика, дал бы
+    // ролик по старому сценарию при новом брифе — и кредит за него.
+    // Замок берётся ДО права на рендер: отказ здесь ничего не стоит.
+    const claimed = await this.sessions.claimWork(
+      sessionId,
+      'prompt',
+      // Один срок со всеми держателями замка 'prompt' (CONTRACT6 п.5).
+      GREETING_PROMPT_LOCK_TTL_MS,
+    );
+    if (!claimed) {
+      throw new ConflictException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_EDIT_IN_PROGRESS,
+          GREETING_EDIT_IN_PROGRESS_MESSAGE,
+        ),
+      );
+    }
+    try {
+      const session = await this.sessions.getSession(sessionId);
+      if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
+      return await this.startLocked(sessionId, session);
+    } finally {
+      await this.sessions.releaseWork(sessionId, 'prompt');
+    }
+  }
+
+  /** Все проверки и старт — под замком 'prompt' (см. `startVideo`). */
+  private async startLocked(
+    sessionId: string,
+    session: Session,
+  ): Promise<GeneratedVideo> {
     const brief = session.greetingBriefSnapshot;
-    if (!brief) {
-      throw new BadRequestException(
-        'This session has no greeting brief — it was not created from a GREETING_VIDEO project.',
+    if (!brief) throw notGreetingSession();
+    // Между первым чтением и замком рендер мог запустить соседний запрос —
+    // возвращаем его же, как `generation.service.ts` (М-2.7).
+    const running = inFlightOf(session);
+    if (running) return running;
+    // CONTRACT6 п.6, §3.6 ТЗ: готовый ролик остаётся. Другой ролик —
+    // новая версия сессии через правку брифа или сценария; повторный
+    // рендер на месте затёр бы ролик, ссылка на который могла уже уйти
+    // получателю. Интерфейс кнопки для этого и не показывает — отказ
+    // закрывает прямой вызов API.
+    if (session.generatedVideo?.status === GenerationStatus.COMPLETE) {
+      throw new ConflictException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_VIDEO_ALREADY_READY,
+          GREETING_VIDEO_ALREADY_READY_MESSAGE,
+        ),
       );
     }
     // Тот же список, что рисует строку «до готового ролика» на экране
     // (§7.2 п.3): человек должен видеть условия по дороге, а не узнавать
-    // о них, нажав кнопку. Тексты отказов прежние.
+    // о них, нажав кнопку.
     const ready = readinessOfSession(session);
     const done = (key: string) =>
       ready.items.find((i) => i.key === key)?.done === true;
 
     if (!session.generationPrompt || !done('script')) {
       throw new BadRequestException(
-        'No prompt yet — call POST /sessions/:id/greeting-prompt first.',
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_SCRIPT_MISSING,
+          'Сценария ещё нет — соберите его на шаге «Сценарий».',
+        ),
       );
     }
-    // Найдено при аудите пайплайна (находка №2): GREETING_VIDEO теперь
-    // модерирует текст сценария (`GreetingPromptService.
-    // generateGreetingPrompt`, через `PromptService.moderateText`), но у
-    // этого типа проекта нет отдельного экрана ручного одобрения, чтобы
-    // осознанно обойти флаг (как `approvePrompt()`'s FLAGGED → BYPASSED у
-    // SINGLE/LINE) — без этой проверки флаг был бы записан в БД, но ничто
-    // ниже по конвейеру на него бы не посмотрело, и видео всё равно бы
-    // сгенерировалось.
+    // Найдено при аудите пайплайна (находка №2): GREETING_VIDEO
+    // модерирует текст сценария, но у этого типа проекта нет экрана
+    // ручного одобрения, чтобы осознанно обойти флаг. Пропускается только
+    // чистый (APPROVED) сценарий: `scriptClean` в готовности считает
+    // «грязным» и FLAGGED, и BYPASSED — второй мог появиться через общий
+    // `approvePrompt`, который до CONTRACT6 п.1 поздравлений не отличал.
     //
-    // Совет в тексте отказа — «исправить текст»: с этапа C ТЗ
-    // docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md (§3.6) текст
-    // правится прямо в сессии (`PATCH /sessions/:id/greeting-script`,
-    // `PATCH /sessions/:id/greeting-brief`). На этапе A, пока правка до
-    // сессии не доходила, здесь честно советовали создать новое
-    // поздравление.
+    // Совет в тексте отказа — «исправить текст»: с этапа C (§3.6) текст
+    // правится прямо в сессии (`PATCH /sessions/:id/greeting-script`).
     if (!done('scriptClean')) {
       throw new BadRequestException(
-        'Текст сценария не прошёл автоматическую проверку контента ' +
-          `(${(session.generationPrompt.moderationFlags ?? []).join(', ') || 'без деталей'}). ` +
-          'Исправьте текст на шаге «Сценарий» и сохраните его заново.',
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_SCRIPT_FLAGGED,
+          'Текст сценария не прошёл автоматическую проверку контента ' +
+            `(${(session.generationPrompt.moderationFlags ?? []).join(', ') || 'без деталей'}). ` +
+            'Исправьте текст на шаге «Сценарий» и сохраните его заново.',
+        ),
+      );
+    }
+    // CONTRACT6 п.4: сцена вшивает метки фото, образ и голос на момент
+    // сборки. Сменились после — сценарий устарел, и рендер по нему
+    // перепутал бы фото или голос. Отказ до списания.
+    if (greetingScriptStale(session.generationPrompt, session)) {
+      throw new ConflictException(
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_SCRIPT_STALE,
+          GREETING_SCRIPT_STALE_MESSAGE,
+        ),
       );
     }
 
@@ -281,42 +443,20 @@ export class GreetingVideoService {
       );
     }
 
-    const inFlight = session.generatedVideo;
-    if (
-      inFlight &&
-      (inFlight.status === GenerationStatus.PENDING ||
-        inFlight.status === GenerationStatus.PROCESSING)
-    ) {
-      return inFlight;
-    }
-
-    // Право на рендер — ПОСЛЕ ветки повтора выше (этап 132, §8.1.1 ТЗ):
-    // идущий рендер опрашивают тем же запросом, и проверка выше неё
-    // давала бы стену человеку, чей ролик уже считается, а кредит уже
-    // списан.
-    //
-    // Идентификатор попытки рождается здесь, а не в двух ветках ниже,
-    // как было раньше: это ключ, по которому кредит списывается и
-    // возвращается, и он обязан быть одним и тем же для кредита и для
-    // самого ролика.
+    // Идентификатор попытки рождается здесь: это ключ, по которому кредит
+    // списывается и возвращается, и он обязан быть одним и тем же для
+    // кредита и для самого ролика (и для пути его файла, п.6).
     const attemptId = uuidv4();
     await this.renderAccess.assertCanRender(session.userId ?? null, attemptId, {
       projectId: session.projectId ?? null,
     });
 
     // Всё, что может бросить МЕЖДУ списанием кредита и стартом рендера,
-    // обязано кредит вернуть. Найдено аудитом этапа 132, и случаев тут
-    // два, оба настоящие:
-    //
-    //  1. **Сбой старта.** Тарифный гейт аватара, незаданный ключ Grok,
-    //     неудачный синтез голоса, отказ провайдера — кредит списан,
-    //     рендера нет. Ровно та же дыра, что закрывал Г-2.3 в товарке;
-    //     здесь она открылась заново, потому что кредитов у греетинга
-    //     раньше не было вовсе.
-    //  2. **Гонка двух кликов.** Замок `claimWork` стоит ВНУТРИ методов
-    //     ниже, то есть ПОСЛЕ списания: два быстрых нажатия резервируют
-    //     по кредиту каждое, один старт выигрывает замок, второй
-    //     получает 409 — и его кредит сгорал бы ни за что.
+    // обязано кредит вернуть (аудит этапа 132): сбой старта (тарифный
+    // гейт аватара, незаданный ключ, неудачный синтез, отказ провайдера)
+    // и гонка двух кликов — замок `claimWork('generate')` стоит ВНУТРИ
+    // методов ниже, то есть ПОСЛЕ списания, и проигравший замок или
+    // перечитывание (п.2) получает 409 с возвратом кредита.
     //
     // `refundIfReserved` идемпотентен и безопасен, если резерва не
     // было (обычный суточный лимит), поэтому зовём его на любом отказе,
@@ -363,6 +503,27 @@ export class GreetingVideoService {
         );
       throw error;
     }
+  }
+
+  /**
+   * CONTRACT6 п.2: проверка «рендер уже идёт» в `startVideo` сделана до
+   * замка 'generate'. Запрос, прочитавший сессию до записи ролика
+   * соседом и взявший замок после его `releaseWork`, запустил бы второй
+   * платный рендер. Перечитываем под замком; ролик уже идёт — замок
+   * снимаем и отказываем (кредит вернёт `startLocked`). Возвращается
+   * свежая сессия — по ней пишется история попыток (п.6).
+   */
+  private async freshUnderGenerateLock(sessionId: string): Promise<Session> {
+    const fresh = await this.sessions.getSession(sessionId);
+    if (!fresh || inFlightOf(fresh)) {
+      await this.sessions.releaseWork(sessionId, 'generate');
+      if (!fresh) throw new NotFoundException(SESSION_NOT_FOUND);
+      this.logger.warn(
+        `сессия ${sessionId}: ролик стартовал параллельно между чтением и замком — отказ`,
+      );
+      throw renderInFlight();
+    }
+    return fresh;
   }
 
   /** GET /sessions/:id/greeting-video — polls the in-flight render. */
@@ -420,8 +581,15 @@ export class GreetingVideoService {
     await this.plans.assertSession(sessionId, 'avatarLipsync');
 
     if (!this.hedra.configured()) {
+      // Имя переменной окружения — оператору в лог, человеку — без неё.
+      this.logger.error(
+        'HEDRA_API_KEY не задан — говорящий аватар не подключён',
+      );
       throw new BadRequestException(
-        'HEDRA_API_KEY не задан на этом стенде — говорящий аватар не подключён',
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_PROVIDER_UNAVAILABLE,
+          'Говорящий аватар сейчас недоступен — попробуйте позже.',
+        ),
       );
     }
 
@@ -467,11 +635,11 @@ export class GreetingVideoService {
       'generate',
       GREETING_VIDEO_CLAIM_TTL_MS,
     );
-    if (!claimed) {
-      throw new ConflictException(GREETING_VIDEO_IN_FLIGHT_MESSAGE);
-    }
+    if (!claimed) throw renderInFlight();
 
     try {
+      // Внутри `try`: сбой чтения тоже обязан снять замок (`finally`).
+      const fresh = await this.freshUnderGenerateLock(sessionId);
       // Синтез до платного вызова Hedra: если голос не выйдет, мы не
       // заплатим за аватар, которому нечего говорить. Тот же довод, по
       // которому пилот проверяет ключ Hedra ДО обращения к Resemble.
@@ -480,11 +648,14 @@ export class GreetingVideoService {
         brief,
         speech,
         sessionLocale,
+        generatedVideoId,
       );
 
       const resolution = brief.resolvedResolution;
       const aspectRatio = '9:16';
-      const pathname = `sessions/${sessionId}/generated.mp4`;
+      // П.6: свой файл у каждой попытки — повтор после сбоя не затирает
+      // прежний, и оба перечислены для метлы (текущий + `videoHistory`).
+      const pathname = attemptPath(sessionId, generatedVideoId, 'generated');
 
       const { jobId } = await this.hedra.submit({
         prompt: script,
@@ -512,6 +683,7 @@ export class GreetingVideoService {
       };
       const updated = await this.sessions.updateSession(sessionId, {
         generatedVideo: video,
+        ...historyWith(fresh),
       });
       // Расход пишется по ОЦЕНКЕ длительности озвучки: фактическую
       // длину ролика Hedra сообщит только в готовой задаче, а
@@ -525,9 +697,12 @@ export class GreetingVideoService {
         calls: 1,
       });
       return updated?.generatedVideo ?? video;
-    } catch (error) {
+    } finally {
+      // CONTRACT6 п.2: замок снимается и после успеха — ролик уже записан
+      // как PROCESSING, и повтор увидит его перечитыванием. Раньше замок
+      // Hedra после успеха висел до истечения TTL (5 минут), а Grok
+      // снимал его сразу — поведение двух веток расходилось.
       await this.sessions.releaseWork(sessionId, 'generate');
-      throw error;
     }
   }
 
@@ -544,7 +719,9 @@ export class GreetingVideoService {
     sessionId: string,
     brief: GreetingBriefSnapshot,
     speech: string,
-    sessionLocale?: string | null,
+    sessionLocale: string | null | undefined,
+    /** Ключ попытки — в пути файла, чтобы повтор не затирал прежний (п.6). */
+    attemptId: string,
   ): Promise<{ url: string; patch: Partial<GeneratedVideo> }> {
     const tts = await this.ttsResolver.resolve();
     const outcome = await tts.synthesize({
@@ -565,7 +742,7 @@ export class GreetingVideoService {
       sessionId,
       characters: outcome.characters,
     });
-    const pathname = `sessions/${sessionId}/avatar-speech.mp3`;
+    const pathname = attemptPath(sessionId, attemptId, 'avatar-speech');
     const { url } = await this.blob.uploadBuffer(
       pathname,
       outcome.audio,
@@ -710,8 +887,14 @@ export class GreetingVideoService {
     generatedVideoId: string,
   ): Promise<GeneratedVideo> {
     if (!this.grokVideo.isConfigured()) {
+      this.logger.error(
+        'GROK_API_KEY не задан — рендер поздравлений не подключён',
+      );
       throw new BadRequestException(
-        'GROK_API_KEY не задан на этом стенде — генерация видео для GREETING_VIDEO не подключена',
+        greetingError(
+          GREETING_ERROR_CODES.GREETING_PROVIDER_UNAVAILABLE,
+          'Генерация ролика сейчас недоступна — попробуйте позже.',
+        ),
       );
     }
     const claimed = await this.sessions.claimWork(
@@ -719,13 +902,28 @@ export class GreetingVideoService {
       'generate',
       GREETING_VIDEO_CLAIM_TTL_MS,
     );
-    if (!claimed) {
-      throw new ConflictException(GREETING_VIDEO_IN_FLIGHT_MESSAGE);
+    if (!claimed) throw renderInFlight();
+    // Всё до `try` ниже должно снять замок при сбое — иначе он висел бы
+    // до TTL, и повтор после ошибки получал бы «уже запускается».
+    let fresh: Session;
+    let plan: PlanId;
+    try {
+      fresh = await this.freshUnderGenerateLock(sessionId);
+      plan = await this.plans.planOfSession(sessionId);
+    } catch (error) {
+      await this.sessions.releaseWork(sessionId, 'generate');
+      throw error;
     }
 
-    const requestedResolution = brief.resolvedResolution;
+    // CONTRACT6 п.5: потолок тарифа — у денег. Бриф хранит разрешение,
+    // разрешённое на момент сохранения; тариф мог понизиться с тех пор.
+    const requestedResolution = greetingResolutionCap(
+      brief.resolvedResolution,
+      plan,
+    );
     const aspectRatio = '9:16'; // §5.3: короткий вертикальный ролик — тот же формат, что аватар-пилот по умолчанию.
-    const pathname = `sessions/${sessionId}/generated.mp4`;
+    // П.6: свой файл у каждой попытки (см. ветку Hedra).
+    const pathname = attemptPath(sessionId, generatedVideoId, 'generated');
 
     // Активное изображение слота (оригинал или применённый скетч, §6.3
     // AI-SKETCH-SPEC.md) — никогда голый photoUrl напрямую, тот же
@@ -796,6 +994,7 @@ export class GreetingVideoService {
       };
       const updated = await this.sessions.updateSession(sessionId, {
         generatedVideo: video,
+        ...historyWith(fresh),
       });
       await this.aiUsage.record({
         operation: 'generation',
@@ -838,7 +1037,7 @@ export class GreetingVideoService {
       return this.markFailed(
         sessionId,
         current,
-        'Grok reported completion but returned no video',
+        'Grok сообщил о готовности, но файла в ответе нет',
       );
     }
 

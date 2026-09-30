@@ -380,6 +380,24 @@ describe('greetingAnswer — ответы только из фактов', () =>
     ).toMatch(/повтор не поможет/);
   });
 
+  it.each([
+    ['ru', /шаге «Сценарий» и сохраните его заново/],
+    ['uk', /кроці «Сценарій» і збережіть його знову/],
+    ['en', /«Script» step and save it again/],
+    ['de', /Schritt «Skript» und speichern Sie ihn erneut/],
+    ['es', /paso «Guion» y guárdalo de nuevo/],
+  ] as const)(
+    '%s: совет при пометке — как отказ сервера (шаг «Сценарий», сохранить заново), не бриф',
+    (locale, advice) => {
+      const flagged = state({ hasPrompt: true, promptFlagged: true });
+      const answer = greetingAnswer('script-flagged', flagged, locale);
+      expect(answer).toMatch(advice);
+      expect(answer).not.toMatch(/брифе|брифі|brief|Briefing|briefing/);
+      // «Что дальше» при помеченном сценарии даёт тот же совет.
+      expect(greetingAnswer('what-next', flagged, locale)).toMatch(advice);
+    },
+  );
+
   it('незнакомая тема — null («не знаю»), а не ответ наугад', () => {
     expect(greetingAnswer('price' as never, state(), 'ru')).toBeNull();
   });

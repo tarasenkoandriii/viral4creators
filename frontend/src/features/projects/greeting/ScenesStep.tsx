@@ -7,17 +7,18 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Film } from 'lucide-react';
 import { Card, CardHeader, Alert, Button } from '../../../components/ui';
 import { useI18n } from '../../../lib/i18n-context';
-import { errorMessage } from '../../../services/projects-api';
 import {
+  greetingErrorMessage,
   getGreetingScenes,
   setGreetingScenes,
 } from '../../../services/greeting-api';
 import type { GreetingScenesView } from '../../../types/project';
 import { HelpButton } from '../HelpSheet';
+import { CardLoadError } from './CardLoadError';
 import {
   SESSION_VOICE_TARGETS,
   planScenesVoice,
@@ -25,7 +26,10 @@ import {
   saveEffect,
 } from '../../../lib/voice-fields';
 import { useVoiceFieldApplier } from '../../voice/voice-commands';
-import { scenesSummary } from '../../../lib/greeting-character';
+import {
+  scenesSummary,
+  lockedFieldRefusals,
+} from '../../../lib/greeting-character';
 import { useSessionVoiceTexts } from '../../voice/greeting-session-voice';
 
 // ── Сколько сцен снимать (фича №7) ───────────────────────────────────────
@@ -44,25 +48,39 @@ import { useSessionVoiceTexts } from '../../voice/greeting-session-voice';
 export function ScenesStep({
   sessionId,
   onSummary,
+  lockText = null,
 }: {
   sessionId: string;
   onSummary?: (value: string | null) => void;
+  /**
+   * Карточка заперта (ролик готов или снимается): причина для голоса —
+   * тот же отказ, что подпись на экране (`CharacterBlock`).
+   */
+  lockText?: string | null;
 }) {
   const { dict } = useI18n();
   const w = dict.greetingVideoWizard;
   const [view, setView] = useState<GreetingScenesView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Первое чтение не прошло — карточка с причиной и «Повторить» (п. 10). */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
     getGreetingScenes(sessionId)
       .then((v) => alive && setView(v))
-      .catch(() => undefined);
+      .catch((e: unknown) => {
+        if (alive) setLoadError(greetingErrorMessage(e, dict));
+      });
     return () => {
       alive = false;
     };
-  }, [sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- словарь: текст ошибки на момент сбоя
+  }, [sessionId, attempt]);
 
   // Карточки нет, пока не загрузилась, — и в сводке её тоже нет.
   const summary = scenesSummary(view);
@@ -78,7 +96,7 @@ export function ScenesStep({
       setView(await setGreetingScenes(sessionId, sceneCount));
       return null;
     } catch (e) {
-      const message = errorMessage(e);
+      const message = greetingErrorMessage(e, dict);
       setError(message);
       return message;
     } finally {
@@ -99,6 +117,8 @@ export function ScenesStep({
           ? w.scenesOne
           : w.scenesMany.replace('{n}', String(Number(f.value))),
     apply: (fields) => {
+      if (lockText)
+        return lockedFieldRefusals(fields, voiceTexts.refusedField, lockText);
       const plan = planScenesVoice(view, busy, fields);
       const refusals = refusalLines(plan.refused, fields, voiceTexts);
       if (plan.count === null) return { refusals, effects: [] };
@@ -109,7 +129,17 @@ export function ScenesStep({
     },
   });
 
-  if (!view) return null;
+  if (!view) {
+    return loadError ? (
+      <CardLoadError
+        qa="greeting-scenes-card"
+        icon={<Film size={18} />}
+        title={w.scenesHeading}
+        message={loadError}
+        onRetry={retry}
+      />
+    ) : null;
+  }
 
   const counts = Array.from({ length: view.maxScenes }, (_, i) => i + 1);
 

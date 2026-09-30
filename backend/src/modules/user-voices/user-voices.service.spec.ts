@@ -34,6 +34,7 @@ function build() {
       delete: jest.Mock;
       count: jest.Mock;
     };
+    brandManifest: { updateMany: jest.Mock };
     $executeRaw: jest.Mock;
     $transaction: jest.Mock;
   } = {
@@ -46,6 +47,8 @@ function build() {
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
     },
+    // CONTRACT6 п.4: удалённый голос уходит из бренд-буков пользователя.
+    brandManifest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     // Е-4.2 шестого аудита: `confirmClone` резервирует слот транзакцией
     // с advisory-lock — мок просто вызывает переданный колбэк с тем же
     // `prisma`, чтобы существующие моки `userVoice.count`/`.create` в
@@ -336,6 +339,16 @@ describe('UserVoicesService.remove', () => {
     });
   });
 
+  it('CONTRACT6 п.4: голос уходит из бренд-буков ЭТОГО пользователя (голос и провайдер)', async () => {
+    const { svc, prisma } = build();
+    prisma.userVoice.findUnique.mockResolvedValue(row());
+    await svc.remove(USER, 'v1');
+    expect(prisma.brandManifest.updateMany).toHaveBeenCalledWith({
+      where: { userId: USER, ttsVoiceId: 'resemble-uuid-1' },
+      data: { ttsVoiceId: null, ttsProvider: null },
+    });
+  });
+
   it('без resembleVoiceId — Resemble не трогаем, остальное удаляем', async () => {
     const { svc, prisma, resemble, blob } = build();
     prisma.userVoice.findUnique.mockResolvedValue(
@@ -345,6 +358,7 @@ describe('UserVoicesService.remove', () => {
     expect(resemble.deleteVoice).not.toHaveBeenCalled();
     expect(blob.deleteBlob).toHaveBeenCalled();
     expect(prisma.userVoice.delete).toHaveBeenCalled();
+    expect(prisma.brandManifest.updateMany).not.toHaveBeenCalled();
   });
 });
 
