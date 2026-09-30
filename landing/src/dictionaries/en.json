@@ -382,6 +382,61 @@
         "text": "Describe it in words — the service will ask what kind of event it is by mood. If the description makes it clear the occasion is one of mourning, the video is handled more strictly whatever was chosen."
       }
     },
+    "persona": {
+      "title": "You on screen",
+      "lead": "You can present your own greeting: one selfie from the camera — and from then on you are on screen in any look, and in your own voice if you like.",
+      "likeness": "The AI draws your looks using your selfie as a reference — this is not a trained model of your face. The likeness is close but not guaranteed, and you may look slightly different from one video to the next.",
+      "steps": [
+        {
+          "title": "Consent comes before the camera",
+          "text": "First you read what the service does with your face and voice, where it keeps them and how to delete them. The camera turns on only after you tick the box. The mode is for your own face only: the rules forbid creating a persona of your mum or partner."
+        },
+        {
+          "title": "A selfie and a three-second clip",
+          "text": "A front-facing photo and a short clip turning your head are taken with the camera inside the app — it has no option to pick from the gallery. An automatic check looks for one live face rather than a screen or a printout. It guards against someone else's photo; it is not an identity check."
+        },
+        {
+          "title": "Adults only, 18+",
+          "text": "AI estimates the age in the photo as a range. If the lower bound is under 18, the mode is unavailable; the estimate is used only for this access decision — not for analytics or advertising. A look's age cannot be set below 18, and the model is forbidden to depict a minor."
+        },
+        {
+          "title": "Looks and sketch avatars",
+          "text": "Business, evening, festive, sport, winter — or in your own words; a look's age goes from 18 to 90. Any look can become a sketch avatar. There is no cap on how many looks you keep; creating them uses your plan's daily and monthly quota."
+        }
+      ],
+      "items": [
+        {
+          "title": "Your own voice",
+          "text": "On the Standard plan and above you can record your voice; at the start of the recording you read a consent phrase aloud (it is not recognised automatically). The voice is used only in your greetings — as the sender's voice — and in your personal brand book."
+        },
+        {
+          "title": "Personal brand book",
+          "text": "Signature, tone, card style and default look — so you don't set them up for every greeting. For greetings only."
+        },
+        {
+          "title": "Not for auction",
+          "text": "A video with you in it and your personal brand book cannot be put up for auction: your face and voice are not sold along with a video."
+        },
+        {
+          "title": "Showcase only with your tick",
+          "text": "The editors cannot pick a video where you are on screen for the showcase on this page unless you ticked a separate box when publishing."
+        },
+        {
+          "title": "Delete your persona, any time",
+          "text": "One button deletes the selfie, the check clip, looks, sketches and the voice from our storage; the voice clone is deleted at the provider at our request, and retried if that fails. Copies that video services received while making videos are kept under their own rules, and deleted files may still open from a cache for a short while. Finished videos stay with you; published pages showing you can be taken down."
+        }
+      ],
+      "privacy": [
+        {
+          "title": "Face",
+          "text": "The selfie and check clip are kept in our cloud storage, sent only to Google Gemini — to check them and draw your looks — and deleted 30 days after your latest look; after that, new looks are built from your base look. When a video is made, the finished looks go to the video services (xAI, Hedra). If a photo for a video may show a face, the service asks you to confirm that person's consent or to replace the face with a sketch."
+        },
+        {
+          "title": "Voice",
+          "text": "A voice clone is made from your recording, which starts with you reading the consent phrase aloud (it is not recognised automatically), and is used only as your voice — in a video from you or in your personal brand book. It is deleted together with the whole mode, at the provider at our request."
+        }
+      ]
+    },
     "features": {
       "title": "What the video is made of",
       "lead": "Fifteen seconds of vertical video — and several ways to make them yours rather than generic.",

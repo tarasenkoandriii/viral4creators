@@ -25,6 +25,7 @@ import {
   greetingFrame,
   greetingFramesAreReal,
   greetingHero,
+  greetingPersonaScheme,
 } from '../src/lib/greeting-frames';
 
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -74,6 +75,15 @@ for (const locale of locales) {
   assert.deepEqual([hero.width, hero.height], [840, 540]);
 }
 
+// Схема «Вы в кадре» (этап J) — всегда схема, тот же холст: настоящий
+// кадр этого экрана — лицо человека, для рекламы нужно отдельное согласие.
+{
+  const persona = greetingPersonaScheme();
+  assert.equal(persona.real, false, '«Вы в кадре» не может быть «снимком»');
+  assert.equal(persona.src, '/illustrations/greet-persona.svg');
+  assert.deepEqual([persona.width, persona.height], [840, 540]);
+}
+
 // Номер вне 1…4 — ошибка вызывающего, а не битая картинка на странице.
 for (const bad of [0, GREETING_FRAME_COUNT + 1, 1.5, Number.NaN]) {
   assert.throws(
@@ -85,7 +95,8 @@ for (const bad of [0, GREETING_FRAME_COUNT + 1, 1.5, Number.NaN]) {
 
 /**
  * Файлы схем: на месте, в бюджете, и без того, что Уровень 1 запрещает.
- * Бюджеты — §5.3 ТЗ (≤90 КБ hero, ≤120 КБ кадр).
+ * Бюджеты — §5.3 ТЗ (≤90 КБ hero, ≤120 КБ кадр; схема «Вы в кадре» —
+ * кадр, этап J).
  *
  * «Без текста» проверяется по элементам, а не по символам: цифры в
  * SVG — это координаты. `<text>` сделал бы картинку зависимой от
@@ -99,6 +110,7 @@ const schemes = [
     file: `greet-frame-${i + 1}.svg`,
     max: 120 * 1024,
   })),
+  { file: 'greet-persona.svg', max: 120 * 1024 },
 ];
 for (const { file, max } of schemes) {
   const full = path.join(PUBLIC, 'illustrations', file);
@@ -176,5 +188,6 @@ for (const { file, max } of schemes) {
 
 console.log(
   `greeting-frames: ok (${locales.length} локалей × ${GREETING_FRAME_COUNT} кадров + hero; ` +
-    `с настоящими кадрами: ${GREETING_REAL_FRAME_LOCALES.length || 'ни одной, пока схемы'})`,
+    `с настоящими кадрами: ${GREETING_REAL_FRAME_LOCALES.length || 'ни одной, пока схемы'}; ` +
+    'схема «Вы в кадре» в бюджете)',
 );

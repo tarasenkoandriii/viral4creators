@@ -382,6 +382,61 @@
         "text": "Descríbela con palabras: el servicio te preguntará qué tipo de evento es por su ánimo. Si la descripción deja claro que es un duelo, el video se trata con más sobriedad, se haya elegido lo que se haya elegido."
       }
     },
+    "persona": {
+      "title": "Tú en pantalla",
+      "lead": "Puedes presentar tú mismo tu felicitación: un selfie con la cámara y, a partir de ahí, sales en pantalla con cualquier look y, si quieres, con tu propia voz.",
+      "likeness": "La IA dibuja tus looks tomando tu selfie como referencia: no es un modelo entrenado de tu cara. El parecido es cercano pero no está garantizado, y de un video a otro puedes verte algo distinto.",
+      "steps": [
+        {
+          "title": "El consentimiento, antes de la cámara",
+          "text": "Primero lees qué hace el servicio con tu cara y tu voz, dónde las guarda y cómo borrarlas. La cámara solo se enciende después de que marques la casilla. El modo es solo para tu propia cara: las reglas prohíben crear la persona de tu madre o tu pareja."
+        },
+        {
+          "title": "Un selfie y un clip de tres segundos",
+          "text": "Una foto de frente y un clip corto girando la cabeza se hacen con la cámara dentro de la aplicación: no tiene opción de elegir de la galería. Una comprobación automática busca una sola cara real, no una pantalla ni una impresión. Protege frente a fotos ajenas; no es una comprobación de identidad."
+        },
+        {
+          "title": "Solo mayores de 18",
+          "text": "Una IA estima la edad de la foto como un rango. Si el límite inferior es menor de 18, el modo no está disponible; la estimación solo sirve para esta decisión de acceso, no para analítica ni publicidad. La edad de un look no puede fijarse por debajo de 18, y el modelo tiene prohibido representar a un menor."
+        },
+        {
+          "title": "Looks y avatares boceto",
+          "text": "De negocios, de noche, festivo, deportivo, de invierno, o con tus propias palabras; la edad del look va de 18 a 90. Cualquier look puede convertirse en un avatar boceto. Puedes guardar looks sin límite de cantidad; crearlos consume la cuota diaria y mensual de tu plan."
+        }
+      ],
+      "items": [
+        {
+          "title": "Tu propia voz",
+          "text": "Desde el plan Standard puedes grabar tu voz; al inicio de la grabación lees en voz alta una frase de consentimiento (no se reconoce automáticamente). La voz suena solo en tus felicitaciones, como voz del remitente, y en tu brand book personal."
+        },
+        {
+          "title": "Brand book personal",
+          "text": "Firma, tono, estilo de las tarjetas y look por defecto, para no configurarlos en cada felicitación. Solo para felicitaciones."
+        },
+        {
+          "title": "No se subasta",
+          "text": "Un video en el que sales y tu brand book personal no se pueden poner en subasta: tu cara y tu voz no se venden junto con un video."
+        },
+        {
+          "title": "Vitrina solo con tu casilla",
+          "text": "La redacción no puede elegir para la vitrina de esta página un video en el que sales en pantalla si al publicarlo no marcaste una casilla aparte."
+        },
+        {
+          "title": "Borrar tu persona cuando quieras",
+          "text": "Un botón elimina de nuestro almacenamiento el selfie, el clip de comprobación, los looks, los bocetos y la voz; el clon de voz se elimina en el proveedor a petición nuestra y, si falla, se reintenta. Las copias que los servicios de video recibieron al crear los videos se rigen por sus propias reglas, y los archivos borrados aún pueden abrirse desde una caché durante poco tiempo. Los videos terminados se quedan contigo; las páginas publicadas en las que sales se pueden retirar."
+        }
+      ],
+      "privacy": [
+        {
+          "title": "Cara",
+          "text": "El selfie y el clip de comprobación se guardan en nuestro almacenamiento en la nube, se envían solo a Google Gemini, para revisarlos y dibujar tus looks, y se eliminan 30 días después de tu último look; a partir de entonces, los nuevos looks se crean desde tu look base. Al crear un video, los looks terminados los reciben los servicios de video (xAI, Hedra). Si una foto para el video puede mostrar una cara, el servicio te pide confirmar el consentimiento de esa persona o sustituir la cara por un boceto."
+        },
+        {
+          "title": "Voz",
+          "text": "El clon de voz se crea a partir de tu grabación, al inicio de la cual lees en voz alta la frase de consentimiento (no se reconoce automáticamente), y solo suena como tu voz: en un video tuyo o en tu brand book personal. Se elimina junto con todo el modo, en el proveedor a petición nuestra."
+        }
+      ]
+    },
     "features": {
       "title": "De qué se compone el vídeo",
       "lead": "Quince segundos de vídeo vertical y varias maneras de hacerlos tuyos en lugar de genéricos.",

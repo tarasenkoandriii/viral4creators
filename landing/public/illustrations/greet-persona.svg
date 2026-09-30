@@ -1,0 +1,93 @@
+<!-- Схема секции «Вы в кадре» (этап J ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §5.2 п.5).
+     Слева — экран съёмки: галочка согласия (камера только после неё), рамка
+     лица со стрелками поворота головы (ролик живости), кнопка съёмки. Лицо —
+     условный силуэт, не портрет: настоящее лицо на рекламной странице
+     требует отдельного согласия (§5.2 п.1). Справа — плитки образов
+     (деловой, вечерний, праздничный — выбран, спортивный, зимний, скетч
+     пунктиром), ниже — голос и удаление. Ни букв, ни цифр: схема одна на
+     пять локалей. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 540" role="img" aria-hidden="true" focusable="false">
+  <rect width="840" height="540" fill="#08080a"/>
+  <defs>
+    <radialGradient id="gpglow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#6c8cff" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#6c8cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gpcta" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8098ff"/>
+      <stop offset="1" stop-color="#5c7dff"/>
+    </linearGradient>
+    <filter id="gplift" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity=".55"/>
+    </filter>
+  </defs>
+  <ellipse cx="200" cy="260" rx="230" ry="230" fill="url(#gpglow)"/>
+
+  <!-- Экран съёмки. -->
+  <g filter="url(#gplift)">
+    <rect x="64" y="56" width="276" height="428" rx="26" fill="#101014" stroke="#26262c" stroke-width="3"/>
+  </g>
+  <!-- Согласие: отмеченная галочка и строка-заглушка текста. -->
+  <rect x="92" y="84" width="26" height="26" rx="7" fill="#6c8cff" fill-opacity=".2" stroke="#6c8cff" stroke-width="3"/>
+  <path d="M98 97l6 6 10-12" fill="none" stroke="#ececec" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="130" y="91" width="150" height="12" rx="6" fill="#9a9a9a" opacity=".28"/>
+
+  <!-- Рамка лица и силуэт. -->
+  <rect x="92" y="130" width="220" height="250" rx="18" fill="#0c0c10" stroke="#23232a" stroke-width="2"/>
+  <ellipse cx="202" cy="236" rx="70" ry="88" fill="none" stroke="#6c8cff" stroke-width="3" stroke-dasharray="10 8" opacity=".8"/>
+  <circle cx="202" cy="224" r="40" fill="#2c2c36"/>
+  <path d="M132 380c6-44 36-66 70-66s64 22 70 66z" fill="#2c2c36"/>
+  <!-- Поворот головы влево и вправо. -->
+  <g fill="none" stroke="#8098ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M118 206q-14 30 0 60 M112 256l6 10 10-4"/>
+    <path d="M286 206q14 30 0 60 M292 256l-6 10-10-4"/>
+  </g>
+
+  <!-- Кнопка съёмки. -->
+  <circle cx="202" cy="432" r="26" fill="none" stroke="#3a3a44" stroke-width="3"/>
+  <circle cx="202" cy="432" r="18" fill="url(#gpcta)"/>
+
+  <!-- Переход: из селфи — в образы. -->
+  <path d="M344 270c26 0 34-40 58-40" fill="none" stroke="#6c8cff" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9" opacity=".8"/>
+  <path d="M394 222l10 8-10 8" fill="none" stroke="#6c8cff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Образы. -->
+  <rect x="412" y="70" width="112" height="128" rx="16" fill="#17171c" stroke="#34343c" stroke-width="3"/>
+  <circle cx="468.0" cy="120" r="22" fill="#6c8cff" fill-opacity=".55"/>
+  <path d="M430.0 186c4-26 20-36 38-36s34 10 38 36z" fill="#6c8cff" fill-opacity=".32"/>
+  <path d="M468.0 152l-6 8 6 24 6-24z" fill="#ececec" opacity=".6"/>
+  <rect x="540" y="70" width="112" height="128" rx="16" fill="#17171c" stroke="#34343c" stroke-width="3"/>
+  <circle cx="596.0" cy="120" r="22" fill="#b38cff" fill-opacity=".55"/>
+  <path d="M558.0 186c4-26 20-36 38-36s34 10 38 36z" fill="#b38cff" fill-opacity=".32"/>
+  <path d="M580.0 154q16 14 32 0" fill="none" stroke="#ececec" stroke-width="3" stroke-linecap="round" opacity=".6"/><circle cx="596.0" cy="161" r="3.5" fill="#ececec" opacity=".7"/>
+  <rect x="668" y="70" width="112" height="128" rx="16" fill="#6c8cff" fill-opacity=".14" stroke="#6c8cff" stroke-width="3"/>
+  <circle cx="724.0" cy="120" r="22" fill="#ffb86c" fill-opacity=".55"/>
+  <path d="M686.0 186c4-26 20-36 38-36s34 10 38 36z" fill="#ffb86c" fill-opacity=".32"/>
+  <path d="M710.0 102l14-30 14 30z" fill="#ffb86c" opacity=".85"/><g fill="#ececec" opacity=".55"><circle cx="688.0" cy="92" r="3"/><circle cx="758.0" cy="100" r="3"/><circle cx="764.0" cy="132" r="2.5"/><circle cx="684.0" cy="140" r="2.5"/></g>
+  <rect x="412" y="216" width="112" height="128" rx="16" fill="#17171c" stroke="#34343c" stroke-width="3"/>
+  <circle cx="468.0" cy="266" r="22" fill="#5fd3a0" fill-opacity=".55"/>
+  <path d="M430.0 332c4-26 20-36 38-36s34 10 38 36z" fill="#5fd3a0" fill-opacity=".32"/>
+  <rect x="445.0" y="254" width="46" height="8" rx="4" fill="#ececec" opacity=".55"/>
+  <rect x="540" y="216" width="112" height="128" rx="16" fill="#17171c" stroke="#34343c" stroke-width="3"/>
+  <circle cx="596.0" cy="266" r="22" fill="#8fd3ff" fill-opacity=".55"/>
+  <path d="M558.0 332c4-26 20-36 38-36s34 10 38 36z" fill="#8fd3ff" fill-opacity=".32"/>
+  <path d="M573.0 260a23 23 0 0 1 46 0z" fill="#8fd3ff" opacity=".8"/><circle cx="596.0" cy="234" r="6" fill="#ececec" opacity=".75"/><rect x="570.0" y="298" width="52" height="9" rx="4.5" fill="#ececec" opacity=".45"/>
+  <rect x="668" y="216" width="112" height="128" rx="16" fill="#17171c" stroke="#34343c" stroke-width="3"/>
+  <g fill="none" stroke="#c8c8c8" stroke-width="3" stroke-linecap="round" stroke-dasharray="7 6" opacity=".75"><circle cx="724.0" cy="266" r="22"/><path d="M686.0 332c4-26 20-36 38-36s34 10 38 36"/></g>
+
+  <!-- Голос: микрофон и волна. -->
+  <rect x="412" y="382" width="240" height="64" rx="32" fill="#101014" stroke="#26262c" stroke-width="3"/>
+  <g fill="none" stroke="#ececec" stroke-width="3" stroke-linecap="round" opacity=".7">
+    <rect x="438" y="398" width="16" height="24" rx="8"/>
+    <path d="M432 414a14 14 0 0 0 28 0 M446 428v8"/>
+  </g>
+  <g stroke="#6c8cff" stroke-width="4" stroke-linecap="round">
+    <path d="M482 414v0 M496 404v20 M510 396v36 M524 406v16 M538 400v28 M552 408v12 M566 398v32 M580 404v20 M594 410v8 M608 406v16 M622 412v4"/>
+  </g>
+
+  <!-- Удалить всё: корзина. -->
+  <rect x="668" y="382" width="112" height="64" rx="16" fill="#17171c" stroke="#34343c" stroke-width="3"/>
+  <g fill="none" stroke="#9a9a9a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity=".8">
+    <path d="M708 400h32 M718 400v-5h12v5 M712 400l3 32h18l3-32 M721 408v16 M727 408v16"/>
+  </g>
+</svg>

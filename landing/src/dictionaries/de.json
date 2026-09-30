@@ -382,6 +382,61 @@
         "text": "Beschreiben Sie ihn in Worten — der Dienst fragt, was für ein Ereignis es von der Stimmung her ist. Geht aus der Beschreibung hervor, dass es ein Trauerfall ist, wird das Video strenger behandelt, egal was gewählt wurde."
       }
     },
+    "persona": {
+      "title": "Sie im Bild",
+      "lead": "Ihr Grußvideo können Sie selbst moderieren: ein Selfie mit der Kamera — und danach sind Sie in jedem Look im Bild, auf Wunsch mit Ihrer eigenen Stimme.",
+      "likeness": "Die KI zeichnet Ihre Looks mit Ihrem Selfie als Vorlage — das ist kein trainiertes Modell Ihres Gesichts. Die Ähnlichkeit ist groß, aber nicht garantiert, und von Video zu Video können Sie etwas anders aussehen.",
+      "steps": [
+        {
+          "title": "Einwilligung vor der Kamera",
+          "text": "Zuerst lesen Sie, was der Dienst mit Gesicht und Stimme macht, wo er sie speichert und wie Sie sie löschen. Die Kamera geht erst nach Ihrem Häkchen an. Der Modus gilt nur für Ihr eigenes Gesicht: Eine Persona von Mutter oder Partner anzulegen, verbieten die Regeln."
+        },
+        {
+          "title": "Selfie und Drei-Sekunden-Clip",
+          "text": "Ein Foto von vorn und ein kurzer Clip mit Kopfdrehung werden in der App mit der Kamera aufgenommen — eine Auswahl aus der Galerie gibt es dort nicht. Eine automatische Prüfung achtet auf ein einziges lebendiges Gesicht statt Bildschirm oder Ausdruck. Das schützt vor fremden Fotos und ist keine Identitätsprüfung."
+        },
+        {
+          "title": "Erst ab 18",
+          "text": "Eine KI schätzt das Alter auf dem Foto als Spanne. Liegt die Untergrenze unter 18, ist der Modus nicht verfügbar; die Schätzung dient nur dieser Zulassung — nicht für Analysen oder Werbung. Das Alter eines Looks lässt sich nicht unter 18 einstellen, und dem Modell ist verboten, Minderjährige darzustellen."
+        },
+        {
+          "title": "Looks und Sketch-Avatare",
+          "text": "Business, Abend, Fest, Sport, Winter — oder in eigenen Worten; das Alter eines Looks reicht von 18 bis 90. Aus jedem Look wird auf Wunsch ein Sketch-Avatar. Looks speichern Sie ohne Obergrenze; neue erstellen Sie im Rahmen des Tages- und Monatskontingents Ihres Tarifs."
+        }
+      ],
+      "items": [
+        {
+          "title": "Ihre eigene Stimme",
+          "text": "Ab dem Standard-Tarif können Sie Ihre Stimme aufnehmen; zu Beginn der Aufnahme lesen Sie einen Einwilligungssatz laut vor (er wird nicht automatisch erkannt). Die Stimme erklingt nur in Ihren Grußvideos — als Stimme des Absenders — und in Ihrem persönlichen Brand Book."
+        },
+        {
+          "title": "Persönliches Brand Book",
+          "text": "Signatur, Ton, Kartenstil und Standard-Look — damit Sie sie nicht für jedes Grußvideo neu einstellen. Nur für Grußvideos."
+        },
+        {
+          "title": "Nicht für die Auktion",
+          "text": "Ein Video mit Ihnen und Ihr persönliches Brand Book lassen sich nicht versteigern: Ihr Gesicht und Ihre Stimme werden nicht mit einem Video verkauft."
+        },
+        {
+          "title": "Auswahl nur mit Ihrem Häkchen",
+          "text": "Ein Video, in dem Sie im Bild sind, kann die Redaktion nicht in die Auswahl auf dieser Seite aufnehmen, wenn Sie beim Veröffentlichen kein gesondertes Häkchen gesetzt haben."
+        },
+        {
+          "title": "Persona löschen, jederzeit",
+          "text": "Ein Knopf löscht Selfie, Prüfclip, Looks, Sketches und die Stimme aus unserem Speicher; den Stimmklon löscht der Anbieter auf unsere Anfrage, bei einem Fehler erneut. Kopien, die Videodienste beim Erstellen von Videos erhalten haben, unterliegen deren Regeln, und gelöschte Dateien können noch kurz aus einem Cache abrufbar sein. Fertige Videos bleiben bei Ihnen; veröffentlichte Seiten mit Ihnen lassen sich zurückziehen."
+        }
+      ],
+      "privacy": [
+        {
+          "title": "Gesicht",
+          "text": "Selfie und Prüfclip liegen in unserem Cloud-Speicher, werden nur an Google Gemini gesendet — zur Prüfung und zum Zeichnen Ihrer Looks — und 30 Tage nach Ihrem letzten Look gelöscht; danach entstehen neue Looks aus Ihrem Basis-Look. Beim Erstellen eines Videos erhalten die Videodienste (xAI, Hedra) die fertigen Looks. Kann auf einem Foto für das Video ein Gesicht zu sehen sein, bittet der Dienst Sie, die Einwilligung dieser Person zu bestätigen oder das Gesicht durch einen Sketch zu ersetzen."
+        },
+        {
+          "title": "Stimme",
+          "text": "Ein Stimmklon entsteht aus Ihrer Aufnahme, zu deren Beginn Sie den Einwilligungssatz laut vorlesen (er wird nicht automatisch erkannt), und erklingt nur als Ihre Stimme — in einem Video von Ihnen oder in Ihrem persönlichen Brand Book. Er wird zusammen mit dem gesamten Modus gelöscht, beim Anbieter auf unsere Anfrage."
+        }
+      ]
+    },
     "features": {
       "title": "Woraus das Video besteht",
       "lead": "Fünfzehn Sekunden Hochformat — und mehrere Wege, sie persönlich statt schablonenhaft zu machen.",

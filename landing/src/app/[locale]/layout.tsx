@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getDictionary } from '../../lib/get-dictionary';
+import { clientDictionary, getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../lib/i18n';
 import { localeAlternates } from '../../lib/alternates';
 import { ogImageUrl, socialMeta } from '../../lib/social-meta';
@@ -52,7 +52,10 @@ export default function LocaleLayout({
   const dict = getDictionary(locale);
 
   return (
-    <DictionaryProvider dict={dict} locale={locale}>
+    // `clientDictionary`: всё, что уходит клиентскому провайдеру, лежит в
+    // HTML каждой страницы (RSC-данные), — тексты «Вы в кадре» туда
+    // попасть не должны (см. get-dictionary.ts).
+    <DictionaryProvider dict={clientDictionary(dict)} locale={locale}>
       {/* Корневой <html lang> задан один раз в app/layout.tsx (там, где
           он физически рендерится) и не может быть переписан отсюда —
           вложенный layout меняет его через маленький клиентский эффект,

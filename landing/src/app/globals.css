@@ -2655,3 +2655,75 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
   border-left: 2px solid var(--border);
   padding-left: 16px;
 }
+
+/* «Вы в кадре» (этап J, §5.2 п.5) — секция выключена константой
+   `PERSONA_SECTION_ENABLED`, но правила заведены вместе с разметкой:
+   включение должно быть одной строкой, без вёрстки в день шлюза. Шаги
+   слева, схема справа на ≥900px, ниже — под шагами; тот же порог, что у
+   первого экрана. Карточки под ними — общие `.login-grid`/`.login-card`. */
+.greeting-page .persona-grid {
+  display: grid;
+  gap: 32px;
+  margin-top: 8px;
+}
+
+.greeting-page .persona-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 20px;
+}
+
+.greeting-page .persona-step {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.greeting-page .persona-step strong {
+  display: block;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+
+.greeting-page .persona-step p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  max-width: 60ch;
+}
+
+/* Номер шага — кружок той же гаммы, что акцент страницы; `aria-hidden`
+   в разметке: порядок и так несёт `ol`. */
+.greeting-page .persona-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* Оговорка о сходстве — левой линейкой, как деликатные поводы: это не
+   предупреждение об опасности, а честная граница возможности. */
+.greeting-page .persona-likeness {
+  margin: 28px 0 20px;
+  border-left: 2px solid var(--border);
+  padding-left: 16px;
+  color: var(--muted);
+  max-width: 68ch;
+}
+
+@media (min-width: 900px) {
+  .greeting-page .persona-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 46%);
+    gap: 48px;
+    align-items: center;
+  }
+}

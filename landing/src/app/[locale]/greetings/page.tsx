@@ -18,10 +18,12 @@ import {
 } from '../../../lib/greeting-frames';
 import { frameSizes } from '../../../lib/tutorial-frames';
 import {
+  greetingPrivacyItems,
   greetingSectionOrder,
   type GreetingSectionId,
 } from '../../../lib/greeting-sections';
 import { OccasionGroups } from './OccasionGroups';
+import { PersonaSection } from './PersonaSection';
 
 /**
  * Посадочная страница четвёртого типа проекта — роликов-поздравлений
@@ -51,10 +53,12 @@ import { OccasionGroups } from './OccasionGroups';
  *    и своя база — это отдельная работа, а не строчка в разметке;
  *  - секции группового режима (§4 п.5 ТЗ) — фичи №10 компаньон-ТЗ пока
  *    нет, а ТЗ прямо требует не публиковать пустое обещание;
- *  - секции «Вы в кадре» (§5.2 п.5 ТЗ Greeting 2.0). Режим «Я в кадре» в
- *    коде есть, но в проде за выключенным `PERSONA_ENABLED`; секция
- *    включается одной константой в `lib/greeting-sections.ts`, до того
- *    её нет в разметке (тест `scripts/greeting-sections.test.ts`);
+ *  - секции «Вы в кадре» (§5.2 п.5 ТЗ Greeting 2.0) — пока. Режим «Я в
+ *    кадре» в коде есть, но в проде за выключенным `PERSONA_ENABLED`.
+ *    Секция построена на этапе J (`PersonaSection.tsx`, тексты
+ *    `greetingsLanding.persona`) и включается одной константой в
+ *    `lib/greeting-sections.ts`; до того её нет в разметке (тест
+ *    `scripts/greeting-sections.test.ts`);
  *  - таблицы сравнения с рынком — обзора конкурентов для поздравлений в
  *    репозитории нет, таблица без него была бы выдуманной (§5.5, В-8).
  *
@@ -149,11 +153,11 @@ export default function GreetingsLandingPage({
   /**
    * Каждая секция — по своему идентификатору из `lib/greeting-sections.ts`.
    * Таблица полная (`Record`): новый идентификатор в списке не соберётся,
-   * пока у него нет строки здесь. У `persona` строка — `null`, и это не
-   * забытая заглушка: секции нет, пока режим «Я в кадре» не в проде.
-   * Включить константу, оставив здесь `null`, не даст тест секций.
+   * пока у него нет строки здесь. Строка `persona` есть всегда (этап J),
+   * но вызывается, только если `persona` есть в `greetingSectionOrder()`,
+   * то есть только при включённой `PERSONA_SECTION_ENABLED`.
    */
-  const sections: Record<GreetingSectionId, (() => ReactNode) | null> = {
+  const sections: Record<GreetingSectionId, () => ReactNode> = {
     /* Первый экран по образцу обучалки: текст слева, кадр справа на
        ≥900px, ниже — под текстом (`.hero-grid`, `.hero-shot` — общие
        правила этапа E обучалки). Кадр — статичный файл из `public/`, а
@@ -261,7 +265,10 @@ export default function GreetingsLandingPage({
       </section>
     ),
 
-    persona: null,
+    /* «Вы в кадре» (§5.2 п.5). Тексты — только из раздела
+       `greetingsLanding.persona`; вне этой строки и дополнений к
+       «Данным» ниже страница их не читает (тест секций). */
+    persona: () => <PersonaSection texts={g.persona} />,
 
     /* Возможности — то, что реально отличает ролик-поздравление от
        открытки (этап 5 плана docs-tz/AUDIT-Greeting-Landing-And-
@@ -326,20 +333,23 @@ export default function GreetingsLandingPage({
        траурный регистр и проверка текста (`REGISTER_POLICY`,
        `textFitsRegister`); снятие страницы удаляет её файлы
        (`SharedVideoService.withdraw`); витрина — только отбор оператора
-       (`showcasedAt`). Про лицо и голос — ни слова, пока «Я в кадре» за
-       флагом: проверка лица на фото тоже живёт за `PERSONA_ENABLED`. */
+       (`showcasedAt`). Про лицо и голос — только вместе с секцией «Вы в
+       кадре», той же константой (`greetingPrivacyItems`): проверка лица
+       на фото тоже живёт за `PERSONA_ENABLED`. */
     privacy: () => (
       <section className="details" id="privacy">
         <div className="wrap">
           <h2>{g.privacy.title}</h2>
           <p className="section-lead">{g.privacy.lead}</p>
           <div className="login-grid">
-            {g.privacy.items.map((item) => (
-              <article className="login-card" key={item.title}>
-                <strong>{item.title}</strong>
-                <p>{item.text}</p>
-              </article>
-            ))}
+            {greetingPrivacyItems(g.privacy.items, g.persona.privacy).map(
+              (item) => (
+                <article className="login-card" key={item.title}>
+                  <strong>{item.title}</strong>
+                  <p>{item.text}</p>
+                </article>
+              ),
+            )}
           </div>
         </div>
       </section>
@@ -394,7 +404,7 @@ export default function GreetingsLandingPage({
           обучалку, блог и правовые страницы. */}
       <main id="top" className="greeting-page">
         {greetingSectionOrder().map((id) => (
-          <Fragment key={id}>{sections[id]?.()}</Fragment>
+          <Fragment key={id}>{sections[id]()}</Fragment>
         ))}
       </main>
 

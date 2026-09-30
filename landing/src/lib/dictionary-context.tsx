@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, type ReactNode } from 'react';
-import type { Dictionary } from './get-dictionary';
+import type { ClientDictionary } from './get-dictionary';
 import type { Locale } from './i18n';
 
 /**
@@ -13,14 +13,17 @@ import type { Locale } from './i18n';
  * Серверные компоненты (page.tsx, layout.tsx) читают словарь напрямую
  * через `getDictionary(locale)` — контекст им не нужен.
  */
-const DictionaryContext = createContext<{ dict: Dictionary; locale: Locale } | null>(null);
+// Тип — `ClientDictionary`, а не `Dictionary`: провайдер получает словарь
+// без текстов «Вы в кадре» (см. `clientDictionary` в get-dictionary.ts),
+// и клиентский код не должен даже по типу рассчитывать на них.
+const DictionaryContext = createContext<{ dict: ClientDictionary; locale: Locale } | null>(null);
 
 export function DictionaryProvider({
   dict,
   locale,
   children,
 }: {
-  dict: Dictionary;
+  dict: ClientDictionary;
   locale: Locale;
   children: ReactNode;
 }) {
@@ -29,7 +32,7 @@ export function DictionaryProvider({
   );
 }
 
-export function useDictionary(): { dict: Dictionary; locale: Locale } {
+export function useDictionary(): { dict: ClientDictionary; locale: Locale } {
   const ctx = useContext(DictionaryContext);
   if (!ctx) {
     // Громкая ошибка вместо тихого рендера с пустым текстом — тот же

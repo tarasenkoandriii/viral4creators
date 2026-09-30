@@ -21,3 +21,28 @@ export type Dictionary = typeof ru;
 export function getDictionary(locale: Locale): Dictionary {
   return dictionaries[locale] ?? dictionaries[defaultLocale];
 }
+
+/**
+ * Словарь для клиентского дерева (`DictionaryProvider` в
+ * `app/[locale]/layout.tsx`) — без текстов секции «Вы в кадре».
+ *
+ * Зачем: всё, что серверный layout отдаёт клиентскому компоненту
+ * пропсом, Next сериализует в RSC-данные КАЖДОЙ страницы — они лежат
+ * в HTML скриптом `self.__next_f.push(...)`. Словарь целиком уходит
+ * провайдеру, и без этой вырезки тексты `greetingsLanding.persona`
+ * (о лице, селфи и голосе) были бы в исходнике главной, блога и самой
+ * страницы поздравлений задолго до юридического шлюза (§5.2 п.5 ТЗ
+ * `docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md`). Клиентским
+ * компонентам эти тексты не нужны и после шлюза: секцию и дополнения
+ * к «Данным» рисует серверная страница, поэтому вырезаются всегда, а не
+ * по константе. Держит `scripts/greeting-sections.test.ts`.
+ */
+export type ClientDictionary = Omit<Dictionary, 'greetingsLanding'> & {
+  greetingsLanding: Omit<Dictionary['greetingsLanding'], 'persona'>;
+};
+
+export function clientDictionary(dict: Dictionary): ClientDictionary {
+  const { persona, ...greetingsLanding } = dict.greetingsLanding;
+  void persona;
+  return { ...dict, greetingsLanding };
+}

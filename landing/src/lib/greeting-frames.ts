@@ -89,3 +89,15 @@ export function greetingHero(locale: Locale): FrameImage {
   void locale;
   return { src: '/illustrations/greet-hero.svg', ...SCHEME, real: false };
 }
+
+/**
+ * Схема секции «Вы в кадре» (этап J, §5.2 п.5). Всегда схема: настоящий
+ * кадр этого экрана — чьё-то лицо, а лицо реального человека на
+ * рекламной странице требует отдельного согласия (§5.2 п.1). Поэтому
+ * силуэт и плитки образов, без текста — холст тот же 840×540, оправа та
+ * же `.frame-shot`. Бюджет и «ни текста, ни ссылок» держит
+ * `scripts/greeting-frames.test.ts`.
+ */
+export function greetingPersonaScheme(): FrameImage {
+  return { src: '/illustrations/greet-persona.svg', ...SCHEME, real: false };
+}
