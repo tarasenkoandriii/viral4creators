@@ -287,6 +287,24 @@ describe('TtsController (ТЗ §15.3)', () => {
       expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('resemble');
       expect(ttsResolver.resolve).not.toHaveBeenCalled();
     });
+
+    // Контракт Soniox: «Голос по умолчанию» в пикере — без voiceId.
+    it.each([undefined, '', '  '])(
+      'preview provider=soniox с пустым voiceId (%p) — синтез голосом по умолчанию (voiceId: null)',
+      async (voiceId) => {
+        const { ctl, ttsResolver, tts } = build();
+        const r = await ctl.preview(req, {
+          text: 'Привет',
+          provider: 'soniox',
+          voiceId,
+        });
+        expect(r.ok).toBe(true);
+        expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('soniox');
+        expect(tts.synthesize).toHaveBeenCalledWith(
+          expect.objectContaining({ voiceId: null }),
+        );
+      },
+    );
   });
 
   // Доп. запрос владельца продукта: проба репликами ОРИГИНАЛА, не

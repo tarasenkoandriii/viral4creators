@@ -2154,6 +2154,17 @@
     "GREETING_PERSONA_VOICE_NEEDS_PRESENTER": "Die Stimme Ihrer Persona beim sprechenden Avatar (Hedra) ist nur zusammen mit Ihrem eigenen Look als Moderator wählbar — sonst spräche ein fremdes Gesicht mit Ihrer Stimme. Wählen Sie Ihren Look im Briefing, den Grok-Moderator oder eine andere Stimme.",
     "GREETING_BRAND_VOICE_UNAVAILABLE": "Die Stimme aus dem Brandbook wurde gelöscht — wählen Sie in der Videogestaltung eine andere Stimme oder entfernen Sie das Brandbook."
   },
+  "voiceProvider": {
+    "label": "Sprachsynthese-Anbieter",
+    "optionDefault": "Standard (wie im Dienst)",
+    "optionElevenlabs": "ElevenLabs",
+    "optionResemble": "Resemble",
+    "optionSoniox": "Soniox",
+    "hint": "Stimmenkatalog, Hörprobe und die Vertonung selbst laufen über den gewählten Anbieter. „Standard“ ist der, der im Dienst gerade aktiv ist.",
+    "sonioxDefaultVoice": "Soniox-Standardstimme",
+    "sonioxDefaultHint": "Eine Stimme muss nicht gewählt werden — Soniox spricht mit seiner Standardstimme.",
+    "sonioxNoWordTiming": "Soniox liefert kein wortgenaues Timing: Untertitel zu dieser Vertonung werden nur ungefähr gesetzt."
+  },
   "wizardReadiness": {
     "title": "Bis zum fertigen Video",
     "ready": "Alles bereit — kann eingereicht werden",

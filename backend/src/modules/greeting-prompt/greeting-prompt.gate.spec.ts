@@ -30,7 +30,7 @@ const BRIEF = {
   addedAt: '2026-09-30T00:00:00.000Z',
 };
 
-function build(sessionOver: Record<string, unknown> = {}) {
+function build(sessionOver: Record<string, unknown> = {}, prisma?: unknown) {
   const sessions = {
     getSession: jest.fn().mockResolvedValue({
       sessionId: 's1',
@@ -57,6 +57,7 @@ function build(sessionOver: Record<string, unknown> = {}) {
     { recordGemini: jest.fn() } as never,
     plans as never,
     promptService as never,
+    prisma as never,
   );
   process.env.GEMINI_API_KEY = OLD_KEY;
   return { service, sessions, promptService };
@@ -106,6 +107,27 @@ describe('GreetingPromptService — проверки этапа G до замк�
     await expect(service.generateGreetingPrompt('s1')).rejects.toBeInstanceOf(
       BadRequestException,
     );
+    expect(sessions.claimWork).not.toHaveBeenCalled();
+  });
+
+  it('голос персоны из бренд-бука на Hedra без образа — отказ с кодом до замка (CONTRACT6 п.3)', async () => {
+    const findFirst = jest.fn().mockResolvedValue({ id: 'uv-p' });
+    const { service, sessions } = build(
+      {
+        userId: 'u1',
+        greetingBriefSnapshot: {
+          ...BRIEF,
+          requestedPresenterProvider: 'hedra',
+          resolvedPresenterProvider: 'hedra',
+        },
+        brandManifestSnapshot: { kind: 'PERSONAL', ttsVoiceId: 'rv-p' },
+      },
+      { userVoice: { findFirst } },
+    );
+    await expect(service.generateGreetingPrompt('s1')).rejects.toMatchObject({
+      response: { code: 'GREETING_PERSONA_VOICE_NEEDS_PRESENTER' },
+    });
+    expect(findFirst).toHaveBeenCalled();
     expect(sessions.claimWork).not.toHaveBeenCalled();
   });
 

@@ -2154,6 +2154,17 @@
     "GREETING_PERSONA_VOICE_NEEDS_PRESENTER": "La voz de tu persona en el avatar parlante (Hedra) solo se puede elegir junto con tu propia imagen como presentador; si no, una cara ajena hablaría con tu voz. Elige tu imagen en el brief, el presentador Grok u otra voz.",
     "GREETING_BRAND_VOICE_UNAVAILABLE": "La voz del brandbook se eliminó: elige otra voz en el diseño del vídeo o quita el brandbook."
   },
+  "voiceProvider": {
+    "label": "Proveedor de síntesis",
+    "optionDefault": "Predeterminado (como en el servicio)",
+    "optionElevenlabs": "ElevenLabs",
+    "optionResemble": "Resemble",
+    "optionSoniox": "Soniox",
+    "hint": "El catálogo de voces, la prueba y la locución se harán con el proveedor elegido. «Predeterminado» es el que está activo ahora en el servicio.",
+    "sonioxDefaultVoice": "Voz predeterminada de Soniox",
+    "sonioxDefaultHint": "No hace falta elegir voz: Soniox usará su voz predeterminada.",
+    "sonioxNoWordTiming": "Soniox no da tiempos por palabra: los subtítulos de esta locución se colocarán de forma aproximada."
+  },
   "wizardReadiness": {
     "title": "Hasta el vídeo terminado",
     "ready": "Todo listo — se puede enviar",

@@ -60,8 +60,12 @@ import { SceneAsset } from '../../common/types/reference.types';
 import { BrandManifestSnapshot } from '../../common/types/brand-manifest.types';
 import {
   assertGreetingReferencesAllowed,
+  brandPersonaVoiceNeedsPresenter,
   greetingVideoReferences,
 } from '../../common/greeting-persona';
+import { PrismaService } from '../../prisma/prisma.service';
+import { isPersonaVoice } from '../user-voices/persona-voice';
+import type { Session } from '../../common/types/session.types';
 import { MAX_GREETING_REFERENCE_IMAGES } from '../greeting-reference/greeting-reference.service';
 import {
   VoiceMode,
@@ -187,8 +191,27 @@ export class GreetingPromptService {
     private readonly aiUsage: AiUsageService,
     private readonly plans: PlanService,
     private readonly promptService: PromptService,
+    // Необязателен ради юнит-тестов без базы: без него голос бренда не
+    // опознаётся как голос персоны здесь, но тот же запрет повторно стоит
+    // у денег (`personaRenderProblem`, greeting-video).
+    private readonly prisma?: PrismaService,
   ) {
     this.genai = createGeminiClient();
+  }
+
+  /**
+   * Голос бренд-бука — голос персоны автора (CONTRACT6 п.3, см.
+   * `brandPersonaVoiceNeedsPresenter`). В базу ходим, только когда ответ
+   * что-то решает: Hedra без образа и без клона отправителя.
+   */
+  private async brandPersonaVoice(
+    session: Pick<Session, 'userId' | 'brandManifestSnapshot'>,
+    brief: GreetingBriefSnapshot,
+  ): Promise<boolean> {
+    if (!brandPersonaVoiceNeedsPresenter(brief, true)) return false;
+    const voiceId = session.brandManifestSnapshot?.ttsVoiceId;
+    if (!this.prisma || !session.userId || !voiceId) return false;
+    return isPersonaVoice(this.prisma, session.userId, voiceId);
   }
 
   async generateGreetingPrompt(sessionId: string): Promise<GenerationPrompt> {
@@ -248,6 +271,7 @@ export class GreetingPromptService {
     assertGreetingReferencesAllowed(
       brief,
       session.greetingReferenceImages ?? [],
+      await this.brandPersonaVoice(session, brief),
     );
 
     // Тот же замок, что уже используют другие платные сборки промпта
@@ -292,6 +316,7 @@ export class GreetingPromptService {
       assertGreetingReferencesAllowed(
         brief,
         current.greetingReferenceImages ?? [],
+        await this.brandPersonaVoice(current, brief),
       );
       const occasionText =
         brief.occasion === 'OTHER' && brief.customOccasionText

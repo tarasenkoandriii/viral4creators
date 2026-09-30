@@ -74,6 +74,31 @@ export function personaVoiceNeedsPresenter(
   );
 }
 
+/**
+ * Тот же запрет CONTRACT6 п.3, но для голоса персоны из PERSONAL
+ * бренд-бука. Без клона отправителя говорящий аватар озвучивается голосом
+ * бренда (`avatarVoiceChoice` в greeting-video.service.ts) — и лицо с
+ * первого фото заговорило бы голосом автора в обход проверки
+ * `senderVoice`. Условие зеркалит `avatarVoiceChoice`: клон отправителя
+ * перебивает голос бренда, значит тогда голос бренда не звучит. Признак
+ * `brandPersonaVoice` — только по базе (`isPersonaVoice`), снимок его не
+ * несёт, поэтому считает вызывающий.
+ */
+export function brandPersonaVoiceNeedsPresenter(
+  brief: Pick<
+    GreetingBriefSnapshot,
+    'resolvedPresenterProvider' | 'presenter' | 'senderVoice'
+  >,
+  brandPersonaVoice: boolean,
+): boolean {
+  return (
+    brandPersonaVoice &&
+    brief.resolvedPresenterProvider === 'hedra' &&
+    !brief.presenter &&
+    !brief.senderVoice?.resembleVoiceId
+  );
+}
+
 // ── Ведущий-образ (§4.8) ─────────────────────────────────────────────────
 
 /** Что нужно от строки `PersonaLook` (структурно — без клиента Prisma). */
@@ -474,6 +499,8 @@ export function hedraPortrait(
 export function assertGreetingReferencesAllowed(
   brief: GreetingBriefSnapshot,
   images: SceneAsset[],
+  /** Голос бренд-бука — голос персоны (по базе, см. `brandPersonaVoiceNeedsPresenter`). */
+  brandPersonaVoice = false,
 ): void {
   if (brief.presenter && !personaEnabled()) {
     throw new BadRequestException({
@@ -489,7 +516,10 @@ export function assertGreetingReferencesAllowed(
   // CONTRACT6 п.3: голос персоны мог быть выбран при Grok, а провайдер
   // потом сменён в брифе на Hedra (или образ снят) — выбор голоса этого
   // уже не видит, поэтому то же правило и здесь, до денег.
-  if (personaVoiceNeedsPresenter(brief, brief.senderVoice)) {
+  if (
+    personaVoiceNeedsPresenter(brief, brief.senderVoice) ||
+    brandPersonaVoiceNeedsPresenter(brief, brandPersonaVoice)
+  ) {
     throw new BadRequestException(
       greetingError(
         GREETING_ERROR_CODES.GREETING_PERSONA_VOICE_NEEDS_PRESENTER,

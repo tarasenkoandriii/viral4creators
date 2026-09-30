@@ -17,6 +17,10 @@ import {
   SubtitleTheme,
 } from '../../../common/subtitles';
 import { IsJsonObject } from './json-object.validator';
+import {
+  EXPLICIT_TTS_PROVIDER_KEYS,
+  ExplicitTtsProviderKey,
+} from '../../tts/default-tts-provider';
 import type {
   BrandManifestKind,
   JsonObject,
@@ -121,6 +125,23 @@ export class BrandManifestRequestDto {
   @IsString()
   @Length(1, 120)
   ttsVoiceId?: string | null;
+
+  /**
+   * Явный выбор провайдера синтеза для голоса бренда (тот же смысл, что
+   * `UpdateBrandSnapshotRequestDto.ttsProvider` у снимка сессии): голос
+   * пришёл из каталога ИМЕННО этого провайдера, и тег должен это
+   * помнить, иначе синтез уйдёт к активному на стенде провайдеру с
+   * чужим voiceId. `'veo'` не пропускается — это «не озвучивать», а не
+   * провайдер. `null`/не передано — прежнее поведение (клон → resemble,
+   * иначе активный на стенде). Читается только вместе с `ttsVoiceId`
+   * (см. `manifestDataFromDto`).
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsIn(EXPLICIT_TTS_PROVIDER_KEYS, {
+    message: `ttsProvider must be one of: ${EXPLICIT_TTS_PROVIDER_KEYS.join(', ')}`,
+  })
+  ttsProvider?: ExplicitTtsProviderKey | null;
 
   /** Модель провайдера синтеза; null — модель стенда. */
   @IsOptional()

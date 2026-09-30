@@ -242,7 +242,9 @@ export class TtsController {
         : await this.ttsResolver.resolve();
     const outcome = await tts.synthesize({
       text: previewText,
-      voiceId: dto.voiceId ?? null,
+      // Пусто — голос по умолчанию выбранного провайдера (контракт Soniox:
+      // `provider: 'soniox'` без voiceId звучит `SONIOX_TTS_VOICE`/Maya).
+      voiceId: dto.voiceId?.trim() || null,
       model: dto.model ?? null,
     });
 

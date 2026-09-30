@@ -602,6 +602,69 @@ describe('applySnapshotEdit', () => {
     expect(next.ttsProvider).toBe('resemble');
   });
 
+  // Контракт Soniox: «голос Soniox по умолчанию» (SONIOX_TTS_VOICE/Maya).
+  it('Soniox без voiceId — тег не обнуляется, голос отмечен как выбранный', () => {
+    const next = applySnapshotEdit(
+      { ...base, ttsVoiceId: null, ttsProvider: null },
+      { ttsVoiceId: null, ttsProvider: 'soniox' },
+      'resemble',
+      false,
+      now,
+    );
+    expect(next.ttsVoiceId).toBeNull();
+    expect(next.ttsProvider).toBe('soniox');
+    // Иначе syncSnapshotVoice перед рендером вернул бы голос бренда.
+    expect(next.voiceEditedAt).toBe('2026-09-05T11:00:00.000Z');
+  });
+
+  it('elevenlabs/resemble без voiceId — тег очищается, как раньше', () => {
+    for (const p of ['elevenlabs', 'resemble'] as const) {
+      const next = applySnapshotEdit(
+        { ...base, ttsVoiceId: 'old', ttsProvider: p },
+        { ttsVoiceId: null, ttsProvider: p },
+        'soniox',
+        false,
+        now,
+      );
+      expect(next.ttsProvider).toBeNull();
+    }
+  });
+
+  it('пересылка того же Soniox по умолчанию с правкой стиля — voiceEditedAt не ставится', () => {
+    const same = applySnapshotEdit(
+      { ...base, ttsVoiceId: null, ttsProvider: 'soniox' },
+      { ttsVoiceId: null, ttsProvider: 'soniox', styleNotes: 'x' },
+      'resemble',
+      false,
+      now,
+    );
+    expect(same.ttsProvider).toBe('soniox');
+    expect(same.voiceEditedAt).toBeUndefined();
+  });
+
+  it('старый клиент без ttsProvider: смена активного провайдера стенда не «замораживает» голос', () => {
+    const same = applySnapshotEdit(
+      { ...base, ttsVoiceId: 'v1', ttsProvider: 'elevenlabs' },
+      { ttsVoiceId: 'v1', styleNotes: 'x' },
+      'resemble',
+      false,
+      now,
+    );
+    expect(same.voiceEditedAt).toBeUndefined();
+  });
+
+  it('свой клон с эхом неверного тега — итоговый тег resemble, voiceEditedAt не ставится', () => {
+    const next = applySnapshotEdit(
+      { ...base, ttsVoiceId: 'clone-1', ttsProvider: 'elevenlabs' },
+      { ttsVoiceId: 'clone-1', ttsProvider: 'elevenlabs', styleNotes: 'x' },
+      'soniox',
+      true,
+      now,
+    );
+    expect(next.ttsProvider).toBe('resemble');
+    expect(next.voiceEditedAt).toBeUndefined();
+  });
+
   it('replaces the character list wholesale', () => {
     const next = applySnapshotEdit(
       {

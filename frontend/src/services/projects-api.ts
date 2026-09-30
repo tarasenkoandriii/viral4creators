@@ -63,6 +63,7 @@ import type {
 
 import type { BrandManifestKind, CardStyle } from '../lib/persona-greeting';
 import { EmptyResponseError } from '../lib/greeting-errors';
+import type { ExplicitTtsProvider } from '../lib/tts-provider-choice';
 
 // ── Error helpers ──────────────────────────────────────────────────────
 
@@ -394,6 +395,13 @@ export interface ManifestInput {
   /** Озвучка (§15.1, этап 35). */
   voiceMode?: VoiceMode;
   ttsVoiceId?: string | null;
+  /**
+   * Контракт S-BE/S-FE (Soniox): явный провайдер голоса бренда. `null`
+   * или не передано — тег выводит сервер (клон → resemble, иначе
+   * активный на стенде); `'soniox'` без `ttsVoiceId` — его голос по
+   * умолчанию.
+   */
+  ttsProvider?: ExplicitTtsProvider | null;
   ttsModel?: string | null;
   /** Движение камеры (§29, этап 46). */
   cameraMove?: CameraMove;
@@ -786,7 +794,7 @@ export interface BrandSnapshotInput {
    * `UpdateBrandSnapshotRequestDto.ttsProvider` на бэкенде. `'veo'` не
    * входит намеренно: это не провайдер синтеза, а «не озвучивать вовсе».
    */
-  ttsProvider?: 'elevenlabs' | 'resemble' | 'soniox';
+  ttsProvider?: ExplicitTtsProvider;
   ttsModel?: string | null;
   /** Движение камеры (§29, этап 46). */
   cameraMove?: CameraMove;

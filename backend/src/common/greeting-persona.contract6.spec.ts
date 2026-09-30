@@ -10,6 +10,7 @@ import {
   SHOWCASE_NEEDS_AUTHOR_CONSENT,
   SHOWCASE_SESSION_UNKNOWN,
   assertGreetingReferencesAllowed,
+  brandPersonaVoiceNeedsPresenter,
   brandSceneImageAllowed,
   greetingVideoReferences,
   personaVoiceNeedsPresenter,
@@ -132,6 +133,47 @@ describe('голос персоны на Hedra без образа-ведуще�
     expect(() =>
       assertGreetingReferencesAllowed(
         brief({ senderVoice: PERSONA_VOICE }),
+        [],
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe('голос персоны из бренд-бука на Hedra без образа (CONTRACT6 п.3)', () => {
+  it('условие зеркалит avatarVoiceChoice: клон отправителя перебивает голос бренда', () => {
+    const hedra = brief({ resolvedPresenterProvider: 'hedra' });
+    expect(brandPersonaVoiceNeedsPresenter(hedra, true)).toBe(true);
+    expect(brandPersonaVoiceNeedsPresenter(hedra, false)).toBe(false);
+    expect(
+      brandPersonaVoiceNeedsPresenter(
+        brief({ resolvedPresenterProvider: 'hedra', presenter: PRESENTER }),
+        true,
+      ),
+    ).toBe(false);
+    expect(brandPersonaVoiceNeedsPresenter(brief(), true)).toBe(false);
+    expect(
+      brandPersonaVoiceNeedsPresenter(
+        brief({ resolvedPresenterProvider: 'hedra', senderVoice: PLAIN_VOICE }),
+        true,
+      ),
+    ).toBe(false);
+  });
+
+  it('assertGreetingReferencesAllowed — отказ с кодом при голосе персоны бренда', () => {
+    const err = thrown(() =>
+      assertGreetingReferencesAllowed(
+        brief({ resolvedPresenterProvider: 'hedra' }),
+        [],
+        true,
+      ),
+    );
+    expect((err as BadRequestException).getResponse()).toEqual({
+      code: 'GREETING_PERSONA_VOICE_NEEDS_PRESENTER',
+      message: PERSONA_VOICE_NEEDS_PRESENTER_MESSAGE,
+    });
+    expect(() =>
+      assertGreetingReferencesAllowed(
+        brief({ resolvedPresenterProvider: 'hedra' }),
         [],
       ),
     ).not.toThrow();

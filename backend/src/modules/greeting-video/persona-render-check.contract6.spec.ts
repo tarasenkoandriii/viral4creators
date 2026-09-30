@@ -162,6 +162,71 @@ describe('голос бренд-бука (CONTRACT6 п.4)', () => {
   });
 });
 
+describe('голос персоны из бренд-бука на Hedra без образа (CONTRACT6 п.3)', () => {
+  // Без клона отправителя аватар говорит голосом бренда
+  // (`avatarVoiceChoice`) — лицо с первого фото заговорило бы голосом автора.
+  const personalBrand = brand({ kind: 'PERSONAL', ttsVoiceId: 'rv-p' });
+  const personaDb = () =>
+    db({ voices: { 'rv-p': [{ id: 'uv-p', userId: 'u1', personaId: 'p1' }] } });
+  const hedraBrief = (over: Record<string, unknown> = {}) => ({
+    presenter: null,
+    senderVoice: null,
+    resolvedPresenterProvider: 'hedra',
+    ...over,
+  });
+
+  it('Hedra без образа и без клона отправителя — отказ с кодом', async () => {
+    await expect(
+      personaRenderProblem(
+        personaDb(),
+        session({
+          greetingBriefSnapshot: hedraBrief(),
+          brandManifestSnapshot: personalBrand,
+        }),
+      ),
+    ).resolves.toEqual({
+      code: 'GREETING_PERSONA_VOICE_NEEDS_PRESENTER',
+      message: PERSONA_VOICE_NEEDS_PRESENTER_MESSAGE,
+    });
+  });
+
+  it('с образом, на Grok или с клоном отправителя (голос бренда не звучит) — пропускает', async () => {
+    for (const over of [
+      { presenter: { lookId: 'l1', url: 'https://blob.test/me.jpg' } },
+      { resolvedPresenterProvider: 'grok' },
+      {
+        senderVoice: {
+          userVoiceId: 'uv2',
+          resembleVoiceId: 'rv2',
+          label: 'Мой',
+        },
+      },
+    ]) {
+      await expect(
+        personaRenderProblem(
+          personaDb(),
+          session({
+            greetingBriefSnapshot: hedraBrief(over),
+            brandManifestSnapshot: personalBrand,
+          }),
+        ),
+      ).resolves.toBeNull();
+    }
+  });
+
+  it('обычный (не персоны) голос бренда на Hedra без образа — пропускает', async () => {
+    await expect(
+      personaRenderProblem(
+        db({ voices: { 'rv-p': [{ id: 'uv-x', userId: 'u1' }] } }),
+        session({
+          greetingBriefSnapshot: hedraBrief(),
+          brandManifestSnapshot: personalBrand,
+        }),
+      ),
+    ).resolves.toBeNull();
+  });
+});
+
 describe('голос персоны на Hedra без образа (CONTRACT6 п.3)', () => {
   const personaVoice = {
     userVoiceId: 'uv-p',

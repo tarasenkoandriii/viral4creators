@@ -24,6 +24,7 @@ import {
   PersonaStateRow,
   personaEnabled,
   personaUsable,
+  brandPersonaVoiceNeedsPresenter,
   personaVoiceNeedsPresenter,
 } from '../../common/greeting-persona';
 import { isPersonaVoice } from '../user-voices/persona-voice';
@@ -200,7 +201,13 @@ export async function personaRenderProblem(
     return { message: PERSONA_VOICE_ONLY_PERSONAL };
   }
   // CONTRACT6 п.3: голос персоны на Hedra без образа — лицо чужое.
-  if (brief && personaVoiceNeedsPresenter(brief, brief.senderVoice)) {
+  // То же для голоса персоны из бренд-бука: без клона отправителя
+  // аватар говорит голосом бренда (`avatarVoiceChoice`).
+  if (
+    brief &&
+    (personaVoiceNeedsPresenter(brief, brief.senderVoice) ||
+      brandPersonaVoiceNeedsPresenter(brief, brandPersonaVoice))
+  ) {
     return {
       code: GREETING_ERROR_CODES.GREETING_PERSONA_VOICE_NEEDS_PRESENTER,
       message: PERSONA_VOICE_NEEDS_PRESENTER_MESSAGE,

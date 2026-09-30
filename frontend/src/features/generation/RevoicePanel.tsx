@@ -39,6 +39,11 @@
  * (`postprod.service.ts` теперь зовёт именно тегированный провайдер, а
  * не сверяет его с платформенным дефолтом) — предпрослушка ниже
  * показывает ровно то, что получится после оплаты, а не другой голос.
+ *
+ * Контракт S-FE (Soniox): Soniox — третий явный провайдер, и ему голос
+ * выбирать не обязательно — пустой voiceId сохраняется как
+ * `ttsProvider: 'soniox', ttsVoiceId: null` («голос Soniox по
+ * умолчанию») и так же прослушивается (`hasSynthesisVoice`).
  */
 
 import { useState } from 'react';
@@ -62,11 +67,15 @@ import { usesOwnVoice } from '../../lib/voice-mode';
 import { useI18n } from '../../lib/i18n-context';
 import type { BrandManifestSnapshot } from '../../types';
 import type { GeneratedVideo } from '../../services/api';
+import {
+  effectiveProvider as resolveEffectiveProvider,
+  hasSynthesisVoice,
+  type ExplicitTtsProvider,
+} from '../../lib/tts-provider-choice';
 
 const MAX_SCRIPT_LENGTH = 5000;
 
-/** Зеркалит backend/src/modules/tts/default-tts-provider.ts EXPLICIT_TTS_PROVIDER_KEYS. */
-type ExplicitProvider = 'elevenlabs' | 'resemble' | 'soniox';
+type ExplicitProvider = ExplicitTtsProvider;
 
 export function RevoicePanel({
   sessionId,
@@ -124,11 +133,16 @@ export function RevoicePanel({
   // (тот же смысл, что читает `postprod.service.ts` при синтезе).
   // Именно им, не платформенным дефолтом, идёт предпрослушка ниже —
   // иначе она показывала бы не тот голос, что получится после оплаты.
+  // Тот же провайдер получает и VoicePicker ниже (аудит S-FE).
   const effectiveProvider =
-    providerOverride ?? snapshot?.ttsProvider ?? undefined;
+    resolveEffectiveProvider(providerOverride, snapshot?.ttsProvider) ??
+    undefined;
+  // Контракт S-FE: у Soniox свой голос по умолчанию — предпрослушка и
+  // переозвучка без выбранного voiceId для него законны.
+  const canPrelisten = hasSynthesisVoice(ttsVoiceId, effectiveProvider);
 
   const prelisten = async () => {
-    if (!script.trim() || !ttsVoiceId.trim() || prelistening) return;
+    if (!script.trim() || !canPrelisten || prelistening) return;
     setPrelistening(true);
     setPrelistenNote(null);
     setPrelistenAudio(null);
@@ -256,7 +270,10 @@ export function RevoicePanel({
           disabled={busy}
           voiceProvider={snapshot?.ttsProvider}
           sessionId={sessionId}
-          providerOverride={providerOverride}
+          // Действующий провайдер, а не только явный выбор: сохранённый
+          // тег снимка (например Soniox без голоса) должен определять
+          // каталог, пункт «голос по умолчанию» и пометку о тайминге.
+          providerOverride={effectiveProvider}
           onProviderOverrideChange={(p) =>
             setProviderOverride(p as ExplicitProvider | null)
           }
@@ -268,13 +285,13 @@ export function RevoicePanel({
           block
           variant="outline"
           loading={prelistening}
-          disabled={prelistening || !script.trim() || !ttsVoiceId.trim()}
+          disabled={prelistening || !script.trim() || !canPrelisten}
           icon={<Volume2 size={14} />}
           onClick={() => void prelisten()}
         >
           {dict.revoicePanel.prelistenCta}
         </Button>
-        {!ttsVoiceId.trim() && (
+        {!canPrelisten && (
           <p className="text-xs text-silver-400">
             {dict.revoicePanel.prelistenHint}
           </p>

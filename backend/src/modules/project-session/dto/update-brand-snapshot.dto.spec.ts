@@ -83,4 +83,10 @@ describe('UpdateBrandSnapshotRequestDto under the real ValidationPipe settings',
     await bad({ characters: many });
     await ok({ characters: many.slice(0, 20) });
   });
+
+  it('ttsProvider: soniox (в том числе без голоса) и null проходят, veo — нет', async () => {
+    await ok({ ttsVoiceId: null, ttsProvider: 'soniox' });
+    await ok({ ttsVoiceId: 'v1', ttsProvider: null });
+    await bad({ ttsVoiceId: 'v1', ttsProvider: 'veo' });
+  });
 });

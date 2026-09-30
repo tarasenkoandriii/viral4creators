@@ -115,6 +115,10 @@ import {
 import { normalizeVoiceMode, usesOwnVoice } from '../../common/voice-mode';
 import { HedraClientService } from '../actors/hedra-client.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
+import {
+  EXPLICIT_TTS_PROVIDER_KEYS,
+  ExplicitTtsProviderKey,
+} from '../tts/default-tts-provider';
 import { speakableText } from '../../common/voiceover-script';
 import { hedraResolution } from '../../common/hedra-resolution';
 import {
@@ -646,6 +650,7 @@ export class GreetingVideoService {
       const voice = await this.synthesizeAvatarSpeech(
         sessionId,
         brief,
+        fresh.brandManifestSnapshot,
         speech,
         sessionLocale,
         generatedVideoId,
@@ -709,24 +714,28 @@ export class GreetingVideoService {
   /**
    * Озвучка для аватара.
    *
-   * Тот же провайдер, что и у постобработки, и тот же выбор голоса: у
-   * поздравления это клон отправителя (`senderVoice.resembleVoiceId`),
-   * если он выбран, иначе платформенный голос по умолчанию. Пресетные
+   * Тот же выбор голоса и провайдера, что у постобработки (см.
+   * `avatarVoiceChoice`): клон отправителя, иначе голос бренда его же
+   * провайдером, иначе платформенный голос по умолчанию. Пресетные
    * голоса xAI сюда не годятся принципиально — они существуют внутри
    * видеомодели, отдельным файлом их не получить.
    */
   private async synthesizeAvatarSpeech(
     sessionId: string,
     brief: GreetingBriefSnapshot,
+    brand: AvatarBrandVoice | null | undefined,
     speech: string,
     sessionLocale: string | null | undefined,
     /** Ключ попытки — в пути файла, чтобы повтор не затирал прежний (п.6). */
     attemptId: string,
   ): Promise<{ url: string; patch: Partial<GeneratedVideo> }> {
-    const tts = await this.ttsResolver.resolve();
+    const choice = avatarVoiceChoice(brief, brand);
+    const tts = choice.provider
+      ? this.ttsResolver.resolveByKey(choice.provider)
+      : await this.ttsResolver.resolve();
     const outcome = await tts.synthesize({
       text: speech,
-      voiceId: brief.senderVoice?.resembleVoiceId ?? null,
+      voiceId: choice.voiceId,
       // Этап C (§3.8): язык поздравления — явно; буквы текста решают,
       // только если спорят с ним (см. `speechLanguage`).
       language: speechLanguage(scriptLanguageOf(brief, sessionLocale), speech),
@@ -1113,4 +1122,47 @@ export class GreetingVideoService {
     });
     return updated?.generatedVideo ?? failed;
   }
+}
+
+/** Голос бренда из снимка сессии — только то, что нужно выбору голоса. */
+export interface AvatarBrandVoice {
+  ttsVoiceId?: string | null;
+  ttsProvider?: string | null;
+}
+
+/**
+ * Голос и провайдер озвучки говорящего аватара. Раньше синтез всегда шёл
+ * через активный на стенде провайдер (`resolve()`) — и клон отправителя
+ * (UUID Resemble) на стенде с Soniox/ElevenLabs уходил чужому
+ * провайдеру: заведомо обречённый платный вызов. Теперь — тот же
+ * порядок, что у `PostProductionService.planWork`/`synthesize`, где тег
+ * провайдера — источник правды:
+ * 1. клон отправителя — всегда Resemble (клонирование идёт только через
+ *    него);
+ * 2. голос бренда с явным тегом — провайдером из тега; у Soniox голос
+ *    может быть пуст — это его голос по умолчанию (`SONIOX_TTS_VOICE`);
+ * 3. иначе — провайдер стенда (`provider: null`) и его голос по
+ *    умолчанию. voiceId бренда без понятного тега (старая запись или
+ *    `'veo'`) не пересылается: чей он — неизвестно, а чужой id у
+ *    провайдера — тот же обречённый вызов.
+ */
+export function avatarVoiceChoice(
+  brief: Pick<GreetingBriefSnapshot, 'senderVoice'>,
+  brand: AvatarBrandVoice | null | undefined,
+): { voiceId: string | null; provider: ExplicitTtsProviderKey | null } {
+  const clone = brief.senderVoice?.resembleVoiceId;
+  if (clone) return { voiceId: clone, provider: 'resemble' };
+  const tag = brand?.ttsProvider;
+  if (isExplicitProvider(tag)) {
+    return { voiceId: brand?.ttsVoiceId?.trim() || null, provider: tag };
+  }
+  return { voiceId: null, provider: null };
+}
+
+function isExplicitProvider(
+  value: string | null | undefined,
+): value is ExplicitTtsProviderKey {
+  return (EXPLICIT_TTS_PROVIDER_KEYS as readonly string[]).includes(
+    value ?? '',
+  );
 }

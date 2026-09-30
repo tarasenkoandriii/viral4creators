@@ -40,6 +40,14 @@ describe('brand-manifest DTOs under the real ValidationPipe settings', () => {
     await bad(BrandManifestRequestDto, { title: '' });
     await bad(BrandManifestRequestDto, { userId: 'someone-else' }); // never client-settable
   });
+  it('manifest: явный ttsProvider — только настоящие провайдеры синтеза или null', async () => {
+    for (const p of ['elevenlabs', 'resemble', 'soniox', null]) {
+      await ok(BrandManifestRequestDto, { ttsVoiceId: null, ttsProvider: p });
+    }
+    // 'veo' — «не озвучивать», не провайдер; мусор — отказ, не умолчание.
+    await bad(BrandManifestRequestDto, { ttsProvider: 'veo' });
+    await bad(BrandManifestRequestDto, { ttsProvider: 'openai' });
+  });
   it('character: label/description only — photoUrl comes from the Blob flow', async () => {
     await ok(BrandCharacterRequestDto, {
       label: 'Модель 1',

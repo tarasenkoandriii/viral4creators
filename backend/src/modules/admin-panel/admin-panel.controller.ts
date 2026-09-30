@@ -320,7 +320,8 @@ export class AdjustCreditDto {
 }
 
 /** Доп. запрос владельца продукта: ручной селектор «Озвучка по
- * умолчанию» — три допустимых значения, см.
+ * умолчанию» — четыре допустимых значения (elevenlabs, resemble,
+ * soniox, veo), см.
  * `../tts/default-tts-provider.ts`. */
 export class SetVoiceoverProviderDto {
   @IsIn(VOICEOVER_PROVIDER_KEYS as unknown as string[])

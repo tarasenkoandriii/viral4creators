@@ -1,4 +1,10 @@
-import { IsBoolean, IsOptional, IsString, Length } from 'class-validator';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  Length,
+  ValidateIf,
+} from 'class-validator';
 
 /**
  * POST /tts/preview (ТЗ §15.3, этап 36) — послушать голос до генерации.
@@ -21,8 +27,13 @@ export class PreviewVoiceRequestDto {
   })
   text?: string;
 
-  /** Голос; пусто — голос по умолчанию стенда. */
+  /**
+   * Голос; пусто — голос по умолчанию провайдера (у Soniox —
+   * `SONIOX_TTS_VOICE`/Maya). Пустая строка допустима: так пикер шлёт
+   * пункт «Голос по умолчанию», и отказ 400 на пробе был бы ложным.
+   */
   @IsOptional()
+  @ValidateIf((_, v) => v !== '')
   @IsString()
   @Length(1, 120)
   voiceId?: string;

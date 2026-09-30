@@ -2,7 +2,10 @@
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { GreetingVideoService } from './greeting-video.service';
+import {
+  avatarVoiceChoice,
+  GreetingVideoService,
+} from './greeting-video.service';
 import { RenderAccessService } from '../render-access/render-access.service';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { ModerationStatus } from '../../common/types/prompt.types';
@@ -85,16 +88,20 @@ function build(sessionOver: Record<string, unknown> = {}) {
     submit: jest.fn().mockResolvedValue({ jobId: 'hj1' }),
     status: jest.fn().mockResolvedValue({ status: 'pending' }),
   };
-  const ttsResolver = {
-    resolve: jest.fn().mockResolvedValue({
-      providerKey: 'resemble',
-      synthesize: jest.fn().mockResolvedValue({
-        ok: true,
-        audio: Buffer.from('mp3'),
-        mimeType: 'audio/mpeg',
-        characters: 42,
-      }),
+  // Один и тот же двойник провайдера из `resolve()` и `resolveByKey()`:
+  // какой ключ запрошен, проверяют отдельные тесты по вызовам резолвера.
+  const ttsProvider = {
+    providerKey: 'resemble',
+    synthesize: jest.fn().mockResolvedValue({
+      ok: true,
+      audio: Buffer.from('mp3'),
+      mimeType: 'audio/mpeg',
+      characters: 42,
     }),
+  };
+  const ttsResolver = {
+    resolve: jest.fn().mockResolvedValue(ttsProvider),
+    resolveByKey: jest.fn().mockReturnValue(ttsProvider),
   };
   const prisma = {
     persona: {
@@ -358,6 +365,32 @@ describe('GreetingVideoService — говорящий аватар', () => {
     await svc.startVideo('s1');
     expect(provider.synthesize).toHaveBeenCalledWith(
       expect.objectContaining({ voiceId: 'rv1' }),
+    );
+  });
+
+  it('клон отправителя идёт в Resemble по ключу, а не к активному провайдеру стенда', async () => {
+    // На стенде с Soniox/ElevenLabs UUID Resemble ушёл бы чужому
+    // провайдеру — заведомо обречённый платный вызов.
+    const { svc, ttsResolver } = build(withPortrait());
+    await svc.startVideo('s1');
+    expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('resemble');
+    expect(ttsResolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it('без клона — голос бренда его провайдером (Soniox по умолчанию, voiceId null)', async () => {
+    const { svc, ttsResolver } = build(
+      withPortrait({
+        greetingBriefSnapshot: { ...HEDRA_BRIEF, senderVoice: null },
+        brandManifestSnapshot: { ttsVoiceId: null, ttsProvider: 'soniox' },
+      }),
+    );
+    const provider = await ttsResolver.resolve();
+    ttsResolver.resolve.mockClear();
+    await svc.startVideo('s1');
+    expect(ttsResolver.resolveByKey).toHaveBeenCalledWith('soniox');
+    expect(ttsResolver.resolve).not.toHaveBeenCalled();
+    expect(provider.synthesize).toHaveBeenCalledWith(
+      expect.objectContaining({ voiceId: null }),
     );
   });
 
@@ -1112,5 +1145,41 @@ describe('CONTRACT6 — аудит: замки старта', () => {
       (c: unknown[]) => c[1] === 'prompt',
     );
     expect(call?.[2]).toBe(GREETING_PROMPT_LOCK_TTL_MS);
+  });
+});
+
+describe('avatarVoiceChoice — голос и провайдер озвучки аватара', () => {
+  const clone = {
+    senderVoice: { userVoiceId: 'uv1', resembleVoiceId: 'rv1', label: 'Я' },
+  };
+  it('клон отправителя — Resemble, даже если у бренда другой тег', () => {
+    expect(
+      avatarVoiceChoice(clone, { ttsVoiceId: 'Adrian', ttsProvider: 'soniox' }),
+    ).toEqual({ voiceId: 'rv1', provider: 'resemble' });
+  });
+  it('голос бренда с тегом — этим провайдером и этим голосом', () => {
+    expect(
+      avatarVoiceChoice(
+        { senderVoice: null },
+        { ttsVoiceId: 'el-1', ttsProvider: 'elevenlabs' },
+      ),
+    ).toEqual({ voiceId: 'el-1', provider: 'elevenlabs' });
+  });
+  it('Soniox без голоса — его голос по умолчанию (voiceId null)', () => {
+    expect(
+      avatarVoiceChoice({}, { ttsVoiceId: null, ttsProvider: 'soniox' }),
+    ).toEqual({ voiceId: null, provider: 'soniox' });
+  });
+  it('без тега или с тегом veo — стенд по умолчанию, чужой voiceId не пересылается', () => {
+    for (const ttsProvider of [null, 'veo', 'garbage']) {
+      expect(avatarVoiceChoice({}, { ttsVoiceId: 'x', ttsProvider })).toEqual({
+        voiceId: null,
+        provider: null,
+      });
+    }
+    expect(avatarVoiceChoice({}, undefined)).toEqual({
+      voiceId: null,
+      provider: null,
+    });
   });
 });

@@ -505,8 +505,9 @@ export class ProjectSessionService {
  * (клон → `resemble`, иначе активный на стенде). Этап 91 (доп. запрос
  * владельца продукта — явный выбор провайдера в `RevoicePanel`, «и
  * только если человеку подходит — жмёт переозвучить») добавил
- * `dto.ttsProvider`: явный выбор ОДНОГО ИЗ ДВУХ настоящих провайдеров
- * синтеза (`elevenlabs`/`resemble` — DTO не пропускает `'veo'`, см. её
+ * `dto.ttsProvider`: явный выбор одного из настоящих провайдеров
+ * синтеза (изначально `elevenlabs`/`resemble`, с 29.09.2026 и `soniox`
+ * — `EXPLICIT_TTS_PROVIDER_KEYS`; DTO не пропускает `'veo'`, см. её
  * доккомментарий) для ОДНОЙ сессии, в обход платформенного дефолта —
  * тот же смысл, что `resolveByKey` уже даёт `/tts/voices`/`/tts/preview`
  * (см. их доккомментарии), теперь распространённый и на само сохранение
@@ -534,15 +535,11 @@ export function applySnapshotEdit(
     ...(dto.ttsVoiceId !== undefined
       ? {
           ttsVoiceId: dto.ttsVoiceId,
-          // §4.2 + Е-4.1: голос очищен (null) — провайдер тоже не нужен;
-          // свой клон на Resemble — провайдер безусловно 'resemble'.
-          // Этап 91: иначе — явный выбор клиента (`dto.ttsProvider`),
-          // если он есть, иначе — прежнее поведение (активный на стенде).
-          ttsProvider: dto.ttsVoiceId
-            ? isResembleClone
-              ? 'resemble'
-              : (dto.ttsProvider ?? activeProviderKey)
-            : null,
+          ttsProvider: snapshotTtsProvider(
+            dto,
+            activeProviderKey,
+            isResembleClone,
+          ),
         }
       : {}),
     ...(dto.ttsModel !== undefined ? { ttsModel: dto.ttsModel } : {}),
@@ -588,13 +585,48 @@ export function applySnapshotEdit(
     editedAt: now.toISOString(),
     // Форма шлёт голос при каждом сохранении — отметка ставится только
     // при реальной смене, иначе правка стиля «замораживала» бы голос.
+    // Явно выбранный тег тоже голос: «Soniox по умолчанию» и «голоса
+    // нет» — оба с `ttsVoiceId: null`, и без сравнения тега такая смена
+    // не ставила бы отметку — перед рендером `syncSnapshotVoice` молча
+    // вернул бы голос бренда поверх выбора человека. Только при явном
+    // `dto.ttsProvider`: старый клиент тег не шлёт, и выведенный сервером
+    // тег (смена активного провайдера стенда) не должен «замораживать»
+    // голос при правке стиля.
     ...((dto.ttsVoiceId !== undefined &&
-      (dto.ttsVoiceId ?? null) !== (current.ttsVoiceId ?? null)) ||
+      ((dto.ttsVoiceId ?? null) !== (current.ttsVoiceId ?? null) ||
+        (dto.ttsProvider !== undefined &&
+          // Свой клон при том же voiceId — итоговый тег всегда
+          // 'resemble': эхо исторически неверного тега (этапы 73–76)
+          // голоса не меняет и не должно отключать автообновление из
+          // бренда (`syncSnapshotVoice`).
+          !isResembleClone &&
+          snapshotTtsProvider(dto, activeProviderKey, isResembleClone) !==
+            (current.ttsProvider ?? null)))) ||
     (dto.ttsModel !== undefined &&
       (dto.ttsModel ?? null) !== (current.ttsModel ?? null))
       ? { voiceEditedAt: now.toISOString() }
       : {}),
   };
+}
+
+/**
+ * Тег провайдера для правки голоса снимка. §4.2 + Е-4.1: свой клон на
+ * Resemble — безусловно 'resemble'; этап 91: иначе явный выбор клиента
+ * (`dto.ttsProvider`), иначе — активный на стенде. Голос очищен (null) —
+ * тег тоже не нужен, КРОМЕ явного Soniox: у него есть голос по
+ * умолчанию (`SONIOX_TTS_VOICE`/Maya, `SonioxTtsService.defaultVoice`),
+ * и `{ ttsProvider: 'soniox', ttsVoiceId: null }` — осознанный выбор
+ * этого голоса, а не «голоса нет». У elevenlabs/resemble без voiceId
+ * синтеза нет — там тег по-прежнему очищается.
+ */
+function snapshotTtsProvider(
+  dto: UpdateBrandSnapshotRequestDto,
+  activeProviderKey: string,
+  isResembleClone: boolean,
+): string | null {
+  if (!dto.ttsVoiceId) return dto.ttsProvider === 'soniox' ? 'soniox' : null;
+  if (isResembleClone) return 'resemble';
+  return dto.ttsProvider ?? activeProviderKey;
 }
 
 function toSummary(row: SessionListRow): ItemSessionSummary {

@@ -2154,6 +2154,17 @@
     "GREETING_PERSONA_VOICE_NEEDS_PRESENTER": "Your persona’s voice for the talking avatar (Hedra) can only be used together with your own look as presenter — otherwise a stranger’s face would speak with your voice. Choose your look in the brief, the Grok presenter or another voice.",
     "GREETING_BRAND_VOICE_UNAVAILABLE": "The brand book voice was deleted — choose another voice in the video settings or remove the brand book."
   },
+  "voiceProvider": {
+    "label": "Synthesis provider",
+    "optionDefault": "Default (as on the service)",
+    "optionElevenlabs": "ElevenLabs",
+    "optionResemble": "Resemble",
+    "optionSoniox": "Soniox",
+    "hint": "The voice catalog, the preview and the voiceover itself will go through the chosen provider. “Default” is the one currently active on the service.",
+    "sonioxDefaultVoice": "Soniox default voice",
+    "sonioxDefaultHint": "Picking a voice is optional — Soniox will use its default voice.",
+    "sonioxNoWordTiming": "Soniox has no per-word timing: subtitles for this voiceover will be placed approximately."
+  },
   "wizardReadiness": {
     "title": "To a finished video",
     "ready": "All set — ready to submit",

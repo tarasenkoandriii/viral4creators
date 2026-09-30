@@ -37,6 +37,14 @@ import type { Dictionary } from '../../lib/get-dictionary';
 import { useFeature } from '../../lib/plan-context';
 import { haptic } from '../../lib/telegram';
 import type { UserVoice } from '../../types';
+import {
+  EXPLICIT_TTS_PROVIDERS,
+  allowsDefaultVoice,
+  lacksWordTiming,
+  parseExplicitProvider,
+  showProviderMismatch,
+  type ExplicitTtsProvider,
+} from '../../lib/tts-provider-choice';
 
 /**
  * Выбор голоса из каталога провайдера. Каталог не копируется в базу: он
@@ -76,6 +84,7 @@ export function VoicePicker({
   sessionId,
   providerOverride,
   onProviderOverrideChange,
+  providerSelect,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -104,13 +113,20 @@ export function VoicePicker({
    * провайдера, в обход платформенного дефолта, тем же приёмом, что уже
    * поддержан бэкендом для `/tts/voices`/`/tts/preview` (см. их
    * доккомментарии). Селектор рисует и держит состояние вызывающий
-   * (`RevoicePanel`) — здесь только используется, чтобы не удваивать
-   * его в `BrandSnapshotEditor.tsx`/`ManifestScreen.tsx`, которые этот
-   * проп не передают (там `undefined` — прежнее поведение без изменений).
+   * (`RevoicePanel`) — здесь только используется. Контракт S-FE
+   * (Soniox): бренд-бук и снимок в мастере теперь тоже передают его —
+   * вместе с `providerSelect`, чтобы селектор нарисовал сам пикер.
    */
   providerOverride?: string | null;
   /** Только для проброса в `MyVoicesSection` — см. её `onPick`. */
   onProviderOverrideChange?: (p: string | null) => void;
+  /**
+   * Контракт S-FE (Soniox): нарисовать селектор провайдера прямо здесь —
+   * бренд-буку и снимку в мастере он нужен тот же, и держать три копии
+   * селектора значило бы три разных правила сброса голоса. `RevoicePanel`
+   * рисует свой (со своей подсказкой) и этот флаг не передаёт.
+   */
+  providerSelect?: boolean;
 }) {
   const { dict } = useI18n();
   const [state, setState] = useState<VoiceCatalogue | null>(null);
@@ -158,6 +174,18 @@ export function VoicePicker({
   }, [providerOverride]);
 
   const chosen = state?.voices.find((v) => v.voiceId === value) ?? null;
+  // У Soniox свой голос по умолчанию есть на сервере, поэтому пустой
+  // выбор здесь — не «голос стенда», а конкретный голос Soniox.
+  const sonioxDefault = allowsDefaultVoice(providerOverride);
+
+  // Смена провайдера делает сохранённый voiceId чужим идентификатором —
+  // сбрасываем голос, как это давно делает селектор в `RevoicePanel`.
+  const selectProvider = (p: ExplicitTtsProvider | null) => {
+    onProviderOverrideChange?.(p);
+    onChange('');
+    setAudio(null);
+    setPreviewNote(null);
+  };
 
   // Проба стоит денег и ограничена числом в сутки, поэтому она по
   // нажатию, а не автоматически при выборе голоса.
@@ -201,6 +229,29 @@ export function VoicePicker({
 
   return (
     <div>
+      {providerSelect && (
+        <Field
+          label={dict.voiceProvider.label}
+          htmlFor="m-tts-provider"
+          hint={dict.voiceProvider.hint}
+        >
+          <Select
+            id="m-tts-provider"
+            value={providerOverride ?? ''}
+            onChange={(e) =>
+              selectProvider(parseExplicitProvider(e.target.value))
+            }
+            disabled={disabled}
+          >
+            <option value="">{dict.voiceProvider.optionDefault}</option>
+            {EXPLICIT_TTS_PROVIDERS.map((p) => (
+              <option key={p} value={p}>
+                {providerLabel(p, dict)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
       <Field
         label={dict.voicePicker.label}
         htmlFor="m-tts-voice"
@@ -210,7 +261,11 @@ export function VoicePicker({
             : // Подсказка про умолчание уместна ровно тогда, когда голос не
               // выбран: висеть над выбранным голосом ей незачем.
               (catalogueError(state?.error, dict) ??
-              (value ? undefined : dict.voicePicker.defaultHint))
+              (value
+                ? undefined
+                : sonioxDefault
+                  ? dict.voiceProvider.sonioxDefaultHint
+                  : dict.voicePicker.defaultHint))
         }
       >
         <Select
@@ -219,7 +274,11 @@ export function VoicePicker({
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled || loading}
         >
-          <option value="">{dict.voicePicker.defaultOption}</option>
+          <option value="">
+            {sonioxDefault
+              ? dict.voiceProvider.sonioxDefaultVoice
+              : dict.voicePicker.defaultOption}
+          </option>
           {/* Сохранённый голос мог исчезнуть из каталога — показываем его
               отдельной строкой, иначе выбор молча сбросился бы на
               умолчание, а пользователь узнал бы об этом по звуку. */}
@@ -241,16 +300,28 @@ export function VoicePicker({
             что value — чужой идентификатор, и звук не получится.
             Этап 91: при активном явном `providerOverride` это
             предупреждение — шум, а не сигнал (пользователь СОЗНАТЕЛЬНО
-            смотрит каталог другого провайдера, ещё не сохранившись). */}
-        {!providerOverride &&
-          value &&
-          voiceProvider &&
-          state?.provider &&
-          voiceProvider !== state.provider && (
-            <p className="mt-1 text-xs text-amber-500">
-              {dict.voicePicker.providerMismatch}
-            </p>
-          )}
+            смотрит каталог другого провайдера, ещё не сохранившись).
+            Контракт S-FE: то же при явном теге, сохранённом в бренде —
+            синтез идёт по тегу, а не по активному на стенде. */}
+        {showProviderMismatch({
+          explicitProvider: providerOverride,
+          voiceId: value,
+          voiceProvider,
+          catalogueProvider: state?.provider,
+        }) && (
+          <p className="mt-1 text-xs text-amber-500">
+            {dict.voicePicker.providerMismatch}
+          </p>
+        )}
+
+        {/* Контракт S-FE: у Soniox нет пословного тайминга — субтитры
+            такой озвучки строятся эвристикой, и это стоит знать до
+            оплаты, а не по готовому ролику. */}
+        {lacksWordTiming(providerOverride, state?.provider) && (
+          <p className="mt-1 text-xs text-silver-400">
+            {dict.voiceProvider.sonioxNoWordTiming}
+          </p>
+        )}
 
         {/* §15.3: послушать голос ДО генерации. Фраза своя — голос,
             прочитавший чужой текст, о вашем ролике говорит мало. */}
@@ -321,6 +392,12 @@ export function VoicePicker({
       </div>
     </div>
   );
+}
+
+function providerLabel(p: ExplicitTtsProvider, dict: Dictionary): string {
+  if (p === 'elevenlabs') return dict.voiceProvider.optionElevenlabs;
+  if (p === 'resemble') return dict.voiceProvider.optionResemble;
+  return dict.voiceProvider.optionSoniox;
 }
 
 // ── Мои клонированные голоса (этап 73, TODO п.32) ──────────────────────

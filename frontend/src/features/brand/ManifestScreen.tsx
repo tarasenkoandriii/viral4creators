@@ -88,6 +88,10 @@ import type {
 import { LoadError, ScreenHeader } from '../projects/shared';
 import { SketchSlotActions } from '../sketch/SketchSlotActions';
 import { VoicePicker } from './VoicePicker';
+import {
+  parseExplicitProvider,
+  savedProviderTag,
+} from '../../lib/tts-provider-choice';
 import { voiceModeHint } from '../../lib/voice-mode';
 import { JsonField } from './JsonField';
 import {
@@ -382,6 +386,11 @@ function StyleForm({
     manifest.voiceMode ?? 'voiceover'
   );
   const [ttsVoiceId, setTtsVoiceId] = useState(manifest.ttsVoiceId ?? '');
+  // Контракт S-FE (Soniox): явный провайдер голоса. Начальное значение —
+  // сохранённый тег: иначе любое сохранение формы (она шлёт голос каждый
+  // раз) дало бы серверу вывести тег заново и молча стёрло бы явный выбор.
+  const initialProvider = parseExplicitProvider(manifest.ttsProvider);
+  const [ttsProvider, setTtsProvider] = useState(initialProvider);
   const [cameraMove, setCameraMove] = useState<CameraMove>(
     manifest.cameraMove ?? 'none'
   );
@@ -406,6 +415,8 @@ function StyleForm({
     (voiceNotes.trim() || null) !== (manifest.voiceNotes ?? null) ||
     voiceMode !== (manifest.voiceMode ?? 'voiceover') ||
     (ttsVoiceId.trim() || null) !== (manifest.ttsVoiceId ?? null) ||
+    savedProviderTag(ttsProvider, ttsVoiceId) !==
+      savedProviderTag(initialProvider, manifest.ttsVoiceId ?? '') ||
     cameraMove !== (manifest.cameraMove ?? 'none') ||
     subtitlesMode !== (manifest.subtitlesMode ?? 'off') ||
     subtitleTheme !== (manifest.subtitleTheme ?? 'classic') ||
@@ -428,6 +439,8 @@ function StyleForm({
         voiceNotes: voiceNotes.trim() || null,
         voiceMode,
         ttsVoiceId: ttsVoiceId.trim() || null,
+        // `null` — «по умолчанию»: тег выведет сервер, как до контракта.
+        ttsProvider: savedProviderTag(ttsProvider, ttsVoiceId),
         cameraMove,
         subtitlesMode,
         subtitleTheme,
@@ -554,6 +567,11 @@ function StyleForm({
             onChange={setTtsVoiceId}
             disabled={saving}
             voiceProvider={manifest.ttsProvider}
+            providerSelect
+            providerOverride={ttsProvider}
+            onProviderOverrideChange={(p) =>
+              setTtsProvider(parseExplicitProvider(p))
+            }
           />
         )}
 

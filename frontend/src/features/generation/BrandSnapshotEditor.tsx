@@ -38,6 +38,11 @@ import type {
   SubtitleTheme,
 } from '../../types';
 import { VoicePicker } from '../brand/VoicePicker';
+import {
+  hasSynthesisVoice,
+  parseExplicitProvider,
+  savedProviderTag,
+} from '../../lib/tts-provider-choice';
 import { voiceModeHint } from '../../lib/voice-mode';
 import type { JsonObject } from '../../types/project';
 import { useI18n } from '../../lib/i18n-context';
@@ -78,6 +83,13 @@ export const BrandSnapshotEditor = forwardRef<
     snapshot.voiceMode ?? 'veo'
   );
   const [ttsVoiceId, setTtsVoiceId] = useState(snapshot.ttsVoiceId ?? '');
+  // Контракт S-FE (Soniox): явный провайдер голоса ЭТОГО ролика.
+  // Начальное значение — сохранённый тег снимка: форма шлёт голос при
+  // каждом сохранении, и без тега сервер вывел бы его заново (активный на
+  // стенде), молча заменив, скажем, Soniox на ElevenLabs.
+  const initialProvider = parseExplicitProvider(snapshot.ttsProvider);
+  const [ttsProvider, setTtsProvider] = useState(initialProvider);
+  const providerTag = savedProviderTag(ttsProvider, ttsVoiceId);
   const [subtitlesMode, setSubtitlesMode] = useState<SubtitlesMode>(
     snapshot.subtitlesMode ?? 'off'
   );
@@ -107,6 +119,8 @@ export const BrandSnapshotEditor = forwardRef<
     cameraMove !== (snapshot.cameraMove ?? 'none') ||
     voiceMode !== (snapshot.voiceMode ?? 'veo') ||
     (ttsVoiceId.trim() || null) !== (snapshot.ttsVoiceId ?? null) ||
+    providerTag !==
+      savedProviderTag(initialProvider, snapshot.ttsVoiceId ?? '') ||
     subtitlesMode !== (snapshot.subtitlesMode ?? 'off') ||
     subtitleTheme !== (snapshot.subtitleTheme ?? 'classic') ||
     JSON.stringify(filters) !== JSON.stringify(snapshot.filters) ||
@@ -134,6 +148,8 @@ export const BrandSnapshotEditor = forwardRef<
         cameraMove,
         voiceMode,
         ttsVoiceId: ttsVoiceId.trim() || null,
+        // DTO снимка `null` не принимает: «по умолчанию» — просто не слать.
+        ...(providerTag ? { ttsProvider: providerTag } : {}),
         subtitlesMode,
         subtitleTheme,
         filters,
@@ -171,7 +187,10 @@ export const BrandSnapshotEditor = forwardRef<
     setVoiceToBrandNote(null);
     const voice = ttsVoiceId.trim() || null;
     try {
-      const next = await updateBrandSnapshot(sessionId, { ttsVoiceId: voice });
+      const next = await updateBrandSnapshot(sessionId, {
+        ttsVoiceId: voice,
+        ...(providerTag ? { ttsProvider: providerTag } : {}),
+      });
       onSaved(next);
     } catch (e) {
       setVoiceToBrandNote(errorMessage(e));
@@ -181,6 +200,7 @@ export const BrandSnapshotEditor = forwardRef<
     try {
       await updateBrandManifest(snapshot.brandManifestId, {
         ttsVoiceId: voice,
+        ttsProvider: providerTag,
       });
       setVoiceToBrandNote(dict.brandSnapshotEditor.voiceSavedToBrand);
     } catch (e) {
@@ -277,10 +297,17 @@ export const BrandSnapshotEditor = forwardRef<
             disabled={saving}
             voiceProvider={snapshot.ttsProvider}
             sessionId={sessionId}
+            providerSelect
+            providerOverride={ttsProvider}
+            onProviderOverrideChange={(p) =>
+              setTtsProvider(parseExplicitProvider(p))
+            }
           />
         )}
 
-        {voiceMode !== 'veo' && ttsVoiceId.trim() && (
+        {/* Soniox озвучивает и без выбранного голоса — такой выбор тоже
+            можно унести в бренд-бук. */}
+        {voiceMode !== 'veo' && hasSynthesisVoice(ttsVoiceId, providerTag) && (
           <div className="mt-1 flex items-center gap-2">
             <Button
               variant="outline"

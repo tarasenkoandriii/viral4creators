@@ -180,6 +180,82 @@ describe('manifestDataFromDto', () => {
       ttsProvider: 'elevenlabs',
     });
   });
+
+  // Явный выбор провайдера в VoicePicker бренд-бука (контракт Soniox).
+  it('явный ttsProvider побеждает активный на стенде провайдер', () => {
+    expect(
+      manifestDataFromDto(
+        { ttsVoiceId: 'Adrian', ttsProvider: 'soniox' },
+        'resemble',
+      ),
+    ).toEqual({ ttsVoiceId: 'Adrian', ttsProvider: 'soniox' });
+  });
+
+  it('ttsProvider: null — прежнее поведение, активный на стенде', () => {
+    expect(
+      manifestDataFromDto({ ttsVoiceId: 'v1', ttsProvider: null }, 'resemble'),
+    ).toEqual({ ttsVoiceId: 'v1', ttsProvider: 'resemble' });
+  });
+
+  it('Soniox без voiceId — «голос Soniox по умолчанию», тег сохраняется', () => {
+    expect(
+      manifestDataFromDto(
+        { ttsVoiceId: null, ttsProvider: 'soniox' },
+        'resemble',
+      ),
+    ).toEqual({ ttsVoiceId: null, ttsProvider: 'soniox' });
+  });
+
+  it('elevenlabs/resemble без voiceId — тег очищается, как раньше', () => {
+    for (const p of ['elevenlabs', 'resemble'] as const) {
+      expect(
+        manifestDataFromDto({ ttsVoiceId: null, ttsProvider: p }, 'soniox'),
+      ).toEqual({ ttsVoiceId: null, ttsProvider: null });
+    }
+  });
+
+  it('ttsVoiceId не передан — явный ttsProvider один тег не меняет', () => {
+    expect(manifestDataFromDto({ ttsProvider: 'soniox' }, 'resemble')).toEqual(
+      {},
+    );
+  });
+
+  it('свой клон с явным тегом не-resemble — 400, а не молчаливая подмена', () => {
+    expect(() =>
+      manifestDataFromDto(
+        { ttsVoiceId: 'clone-1', ttsProvider: 'soniox' },
+        'resemble',
+        true,
+      ),
+    ).toThrow(BadRequestException);
+    expect(
+      manifestDataFromDto(
+        { ttsVoiceId: 'clone-1', ttsProvider: 'resemble' },
+        'soniox',
+        true,
+      ),
+    ).toEqual({ ttsVoiceId: 'clone-1', ttsProvider: 'resemble' });
+  });
+
+  it('эхо исторически неверного тега клона (этапы 73–76) — не 400, а молча resemble', () => {
+    expect(
+      manifestDataFromDto(
+        { ttsVoiceId: 'clone-1', ttsProvider: 'elevenlabs' },
+        'resemble',
+        true,
+        'elevenlabs',
+      ),
+    ).toEqual({ ttsVoiceId: 'clone-1', ttsProvider: 'resemble' });
+    // Новый выбор, отличный от сохранённого, — по-прежнему 400.
+    expect(() =>
+      manifestDataFromDto(
+        { ttsVoiceId: 'clone-1', ttsProvider: 'soniox' },
+        'resemble',
+        true,
+        'elevenlabs',
+      ),
+    ).toThrow(BadRequestException);
+  });
 });
 
 describe('views', () => {

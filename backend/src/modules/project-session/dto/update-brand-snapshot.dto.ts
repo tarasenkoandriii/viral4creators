@@ -110,14 +110,15 @@ export class UpdateBrandSnapshotRequestDto {
    * (`VeoPassthroughService.synthesize()` всегда `skipped: true`);
    * отправка ttsProvider тут имеет смысл только вместе с `ttsVoiceId` —
    * без него сервер тег всё равно не сохранит (см. `applySnapshotEdit`).
-   * Необязательное поле: не задано — прежнее поведение (клон → всегда
-   * `resemble`, иначе активный на стенде провайдер).
+   * Необязательное поле: не задано или `null` — прежнее поведение (клон →
+   * всегда `resemble`, иначе активный на стенде провайдер). `'soniox'`
+   * при `ttsVoiceId: null` — «голос Soniox по умолчанию», тег сохраняется.
    */
   @IsOptional()
   @IsIn(EXPLICIT_TTS_PROVIDER_KEYS, {
     message: `ttsProvider must be one of: ${EXPLICIT_TTS_PROVIDER_KEYS.join(', ')}`,
   })
-  ttsProvider?: ExplicitTtsProviderKey;
+  ttsProvider?: ExplicitTtsProviderKey | null;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)

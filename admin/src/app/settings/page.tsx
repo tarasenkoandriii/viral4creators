@@ -649,7 +649,7 @@ function VoiceoverProviderCard() {
           <p className="muted" style={{ fontSize: 13 }}>
             {state.source === 'admin'
               ? 'Задано вручную на этом экране.'
-              : 'Ещё не менялось здесь — используется прежнее умолчание (переменная окружения TTS_PROVIDER или ElevenLabs).'}
+              : 'Ещё не менялось здесь — используется прежнее умолчание (переменная окружения TTS_PROVIDER или Resemble).'}
             {' '}
             {state.active !== 'veo' &&
               !state.options.find((o) => o.key === state.active)?.configured &&

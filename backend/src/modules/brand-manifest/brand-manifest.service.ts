@@ -89,6 +89,9 @@ export const DEFAULT_LOOK_ONLY_PERSONAL =
   'Образ по умолчанию есть только у личного бренд-бука.';
 export const DEFAULT_LOOK_NOT_FOUND =
   'Образ не найден среди ваших образов (он удалён или принадлежит не вам).';
+/** Свой клон голоса выпущен Resemble — озвучить его другим провайдером нельзя. */
+export const CLONE_NEEDS_RESEMBLE =
+  'Ваш клонированный голос работает только через Resemble — выберите Resemble или другой голос.';
 import { BrandCharacterRequestDto } from './dto/brand-character-request.dto';
 import { AddCharacterFromSessionCastDto } from './dto/add-character-from-session-cast.dto';
 import {
@@ -380,7 +383,12 @@ export class BrandManifestService {
     const isResembleClone = await this.isOwnResembleVoice(userId, dto);
     const tts = await this.ttsResolver.resolve();
     const data = {
-      ...manifestDataFromDto(dto, tts.providerKey, isResembleClone),
+      ...manifestDataFromDto(
+        dto,
+        tts.providerKey,
+        isResembleClone,
+        current.ttsProvider ?? null,
+      ),
       ...lookData,
     };
     if (Object.keys(data).length === 0) return toManifestView(current);
@@ -991,11 +999,16 @@ export class BrandManifestService {
 
 /**
  * `activeProviderKey` — `TtsProvider.providerKey` активного на стенде
- * провайдера (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md §4.2). Клиент НЕ
- * присылает `ttsProvider` — DTO такого поля не имеет; голос и
- * провайдер, который его выпустил, всегда меняются вместе, и решает
- * это сервисный слой, не клиент, который не знает, какой провайдер
- * сейчас активен.
+ * провайдера (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md §4.2). Голос и
+ * провайдер, который его выпустил, всегда меняются вместе. Раньше тег
+ * решал только сервер; теперь клиент МОЖЕТ прислать явный
+ * `dto.ttsProvider` (выбор провайдера в `VoicePicker` — голос взят из
+ * каталога именно этого провайдера), и тогда тег — его выбор. Не
+ * прислал — прежнее поведение: клон → resemble, иначе активный на стенде.
+ * Исключение — Soniox без voiceId: это «голос Soniox по умолчанию»
+ * (`SONIOX_TTS_VOICE`/Maya, см. `SonioxTtsService.defaultVoice`), и тег
+ * сохраняется; у elevenlabs/resemble без voiceId синтеза нет — тег
+ * очищается, как и раньше.
  */
 export function manifestDataFromDto(
   dto: BrandManifestRequestDto,
@@ -1013,6 +1026,9 @@ export function manifestDataFromDto(
   // которого есть доступ к БД) решает это ДО вызова — функция остаётся
   // чистой ради юнит-теста в изоляции.
   isResembleClone = false,
+  // Тег, уже сохранённый в строке (правка) — чтобы отличить эхо формы от
+  // нового выбора, см. проверку клона ниже. При создании — `null`.
+  currentTtsProvider: string | null = null,
 ): Record<string, unknown> {
   const data: Record<string, unknown> = {};
   if (dto.title !== undefined) data.title = dto.title.trim();
@@ -1044,11 +1060,30 @@ export function manifestDataFromDto(
     // (`UserVoice.resembleVoiceId`, проверено вызывающим), иначе —
     // активный на стенде TTS_PROVIDER; голос очищен — провайдер тоже
     // не нужен.
+    // Клон физически живёт на Resemble: явный тег другого провайдера
+    // значил бы синтез чужим провайдером с UUID Resemble — заведомо
+    // обречённый платный вызов. Молча переписывать НОВЫЙ выбор клиента
+    // нельзя (он увидел бы «Soniox», а звучал бы Resemble) — отказ. Но
+    // форма эхом шлёт тег, который отдал сервер, а у старых бренд-буков с
+    // клоном он исторически неверный (`elevenlabs`, этапы 73–76): отказ
+    // на эхо запер бы любую правку такого бренд-бука. Эхо (тот же тег,
+    // что в строке) молча переписывается на 'resemble' ниже.
+    if (
+      voiceId &&
+      isResembleClone &&
+      dto.ttsProvider &&
+      dto.ttsProvider !== 'resemble' &&
+      dto.ttsProvider !== currentTtsProvider
+    ) {
+      throw new BadRequestException(CLONE_NEEDS_RESEMBLE);
+    }
     data.ttsProvider = voiceId
       ? isResembleClone
         ? 'resemble'
-        : activeProviderKey
-      : null;
+        : (dto.ttsProvider ?? activeProviderKey)
+      : dto.ttsProvider === 'soniox'
+        ? 'soniox'
+        : null;
   }
   if (dto.ttsModel !== undefined) {
     data.ttsModel = dto.ttsModel?.trim() || null;
