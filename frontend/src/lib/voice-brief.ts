@@ -31,7 +31,6 @@ import {
 } from '../types/project';
 import {
   GREETING_REGISTER_ORDER,
-  allowedTones,
   toneOptions,
   type GreetingPolicyView,
   type ToneChange,
@@ -248,80 +247,42 @@ export function applyBriefVoiceFields(
   return { occPatch, toneChange, patch, refused };
 }
 
-/**
- * Тоны от лёгкого к серьёзному — для команд «серьёзнее» и «легче».
- * «Поддерживающий» — между тёплым и официальным: он о сочувствии, а не
- * о дистанции. Это порядок для команды, а не правило допустимости:
- * допустимость — только по таблице сервера (`allowedTones`).
- */
-export const TONE_SERIOUSNESS: readonly GreetingTone[] = [
-  'FUNNY',
-  'WARM',
-  'SUPPORTIVE',
-  'FORMAL',
-  'RESPECTFUL',
-];
-
 export type ToneCommand = Extract<
   VoiceCommand,
   'tone-serious' | 'tone-lighter' | 'no-jokes'
 >;
 
-export function isToneCommand(c: VoiceCommand): c is ToneCommand {
-  return c === 'tone-serious' || c === 'tone-lighter' || c === 'no-jokes';
-}
-
 /**
  * Команда тона → новый тон или отказ.
  *
- * Целевой тон называет СЕРВЕР (`args.tone`, `checkCommand` в
+ * Целевой тон называет ТОЛЬКО сервер (`args.tone`, `checkCommand` в
  * `greeting-voice-intent.ts`) — по своей шкале и по тому же регистру.
- * Своя шкала здесь только запасная, когда `args.tone` нет (старый
- * сервер): две шкалы, решающие одно, разошлись бы (аудит волны 1).
- * Последнее слово всё равно за экраном — тон из `args` сверяется с
- * `toneOptions` на ТЕКУЩЕМ состоянии брифа, которое могло измениться
- * после разбора.
+ * Своей шкалы здесь нет: две шкалы, решающие одно, разошлись бы (аудит
+ * волны 1), а запасная шкала для старого сервера после выкладки была
+ * мёртвым кодом (финальный аудит). Нет `args.tone` (или он не из списка)
+ * — `manual`: «голосом этого пока нельзя, сделайте руками». Последнее
+ * слово всё равно за экраном — тон сверяется с `toneOptions` на ТЕКУЩЕМ
+ * состоянии брифа, которое могло измениться после разбора.
  *
- * - `already` — в эту сторону тонов нет вовсе («серьёзнее» уважительного,
- *   «без шуток», когда шуток и так нет);
- * - `unavailable` — есть, но регистр повода их гасит («смешнее» на
+ * - `already` — этот тон уже выбран;
+ * - `unavailable` — регистр повода его гасит («смешнее» на
  *   соболезновании): отказ той же причиной, что серая пилюля на экране.
- *
- * Шаг — к БЛИЖАЙШЕМУ допустимому тону, а не к крайнему: «серьёзнее» —
- * это на ступень, а не сразу в официальный.
  */
 export function toneForCommand(
-  command: ToneCommand,
+  // Какая из трёх команд — решил сервер, назвав тон; параметр остаётся
+  // ради подписи вызова у карточки брифа.
+  _command: ToneCommand,
   current: GreetingTone,
   policy: GreetingPolicyView | null,
   occasion: GreetingOccasion,
   register: GreetingRegister | null,
   argsTone?: string
-): { tone: GreetingTone } | { refusal: 'already' | 'unavailable' } {
+): { tone: GreetingTone } | { refusal: 'already' | 'unavailable' | 'manual' } {
   const named = argsTone === undefined ? null : oneOf(GREETING_TONES, argsTone);
-  if (named) {
-    if (named === current) return { refusal: 'already' };
-    const option = toneOptions(policy, occasion, register).find(
-      (o) => o.tone === named
-    );
-    return option?.allowed ? { tone: named } : { refusal: 'unavailable' };
-  }
-  if (command === 'no-jokes' && current !== 'FUNNY') {
-    return { refusal: 'already' };
-  }
-  const allowed = allowedTones(policy, occasion, register);
-  const ok = (t: GreetingTone) => allowed === null || allowed.includes(t);
-  const at = TONE_SERIOUSNESS.indexOf(current);
-  const direction = command === 'tone-lighter' ? -1 : 1;
-  const candidates: GreetingTone[] = [];
-  for (
-    let i = at + direction;
-    i >= 0 && i < TONE_SERIOUSNESS.length;
-    i += direction
-  ) {
-    candidates.push(TONE_SERIOUSNESS[i]);
-  }
-  if (candidates.length === 0) return { refusal: 'already' };
-  const next = candidates.find(ok);
-  return next ? { tone: next } : { refusal: 'unavailable' };
+  if (!named) return { refusal: 'manual' };
+  if (named === current) return { refusal: 'already' };
+  const option = toneOptions(policy, occasion, register).find(
+    (o) => o.tone === named
+  );
+  return option?.allowed ? { tone: named } : { refusal: 'unavailable' };
 }

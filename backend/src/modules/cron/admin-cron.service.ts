@@ -160,6 +160,12 @@ const JOB_REGISTRY: CronJobInfo[] = [
       'сырые строки удаляются. Отчёты «за всё время» после этого собираются из двух источников — свёртки и свежих строк.',
   },
   {
+    jobKey: 'voice-uploads-sweep',
+    description:
+      'Удаление необработанных голосовых записей (реплики мастера поздравления и брифа, диктовка описания товара) ' +
+      'старше часа — файл и строка учёта. Каждые 15 минут: Условия обещают, что звук не хранится.',
+  },
+  {
     jobKey: 'sweep-orphans',
     description:
       'Метла по осиротевшим файлам хранилища (sessions/projects/brand-manifests/publications). ' +
@@ -298,6 +304,8 @@ export class AdminCronService {
         return this.jobs.runAiUsageRollup();
       case 'cleanup-sessions':
         return this.jobs.runCleanupSessions();
+      case 'voice-uploads-sweep':
+        return this.jobs.runVoiceUploadsSweep();
       case 'sweep-orphans':
         return this.jobs.runSweepOrphans({
           dryRun: debugMode ? '1' : undefined,

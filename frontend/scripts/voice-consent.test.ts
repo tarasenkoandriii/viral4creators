@@ -255,7 +255,9 @@ check('consentRoute — куда идёт реплика', () => {
   eq(consentRoute('fill', true, true), 'interrupt');
   eq(consentRoute('help', false, true), 'pass');
   eq(consentRoute('fill', false, true), 'interrupt');
-  eq(consentRoute('navigate', false, true), 'interrupt');
+  // Переход ничего не меняет в данных — сводка остаётся (финальный аудит).
+  eq(consentRoute('navigate', false, true), 'pass');
+  eq(consentRoute('navigate', true, true), 'pass');
   eq(consentRoute('command', false, true), 'interrupt');
   eq(consentRoute('fill', false, false), 'pass');
 });

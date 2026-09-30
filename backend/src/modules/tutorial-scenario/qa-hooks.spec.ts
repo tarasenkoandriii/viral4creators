@@ -224,3 +224,31 @@ describe('элементы карточек сессии (этап K5 — гол
     );
   });
 });
+
+describe('контейнеры групп кнопок (финальный аудит ветки K)', () => {
+  it('брифовые группы — тон, настроение, ведущий — нажимать нельзя', () => {
+    for (const key of [
+      BRIEF_FIELD_HOOKS.tone,
+      BRIEF_FIELD_HOOKS.mood,
+      BRIEF_FIELD_HOOKS.presenter,
+    ]) {
+      expect({ key, clickCost: QA_HOOKS[key]?.clickCost }).toEqual({
+        key,
+        clickCost: 'forbidden',
+      });
+    }
+  });
+
+  it('любой хук, описанный как «группа кнопок», — clickCost: forbidden', () => {
+    const groups = Object.entries(QA_HOOKS).filter(([, h]) =>
+      /группа кнопок/i.test(h.description),
+    );
+    expect(groups.length).toBeGreaterThanOrEqual(7);
+    for (const [key, hook] of groups) {
+      expect({ key, clickCost: hook.clickCost }).toEqual({
+        key,
+        clickCost: 'forbidden',
+      });
+    }
+  });
+});

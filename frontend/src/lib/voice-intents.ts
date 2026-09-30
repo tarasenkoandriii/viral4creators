@@ -8,11 +8,13 @@
  * исполняет план — так правила «что можно голосом» живут в одном месте
  * и проверяются без браузера (`scripts/voice-intents.test.ts`).
  *
- * Реестр расширяемый: K3 знает `fill`, `command`, `confirm`, `cancel`,
- * `unknown`; волна 2 добавит `navigate` (K6), `help` (K6), `consent` (K7)
- * — `withIntentHandler(registry, 'navigate', …)`, не трогая этот файл.
- * Интент без обработчика не теряется молча: человек слышит, что голосом
- * этого пока нельзя.
+ * Реестр расширяемый: здесь — `fill`, `command`, `confirm`, `cancel`,
+ * `unknown`; `navigate` и `help` (K6) добавляет `withNavHelpHandlers`
+ * (`voice-nav.ts`) через `withIntentHandler`, не трогая этот файл.
+ * `consent` (K7) сюда не попадает вовсе: деньги не должны зависеть от
+ * реестра — его до реестра забирает `consentRoute` (`voice-consent.ts`,
+ * порядок — `voice-route.ts`). Интент без обработчика не теряется
+ * молча: человек слышит, что голосом этого пока нельзя.
  */
 
 import type { VoiceCard } from './voice-confirm';
@@ -38,7 +40,12 @@ export type VoicePlan =
 export type VoiceCommandOutcome =
   | { kind: 'propose'; card: VoiceCard }
   /** Отказ с причиной — той же, что написана на экране. */
-  | { kind: 'refuse'; text: string };
+  | { kind: 'refuse'; text: string }
+  /**
+   * Команда есть, но сказанное в этой форме голосом не выполнить
+   * (сервер не назвал тон) — «пока руками», как у команды без обработчика.
+   */
+  | { kind: 'manual' };
 
 export interface VoiceReplyTexts {
   /** «Не понял, скажите иначе». */
@@ -102,7 +109,9 @@ export const K3_INTENT_HANDLERS: VoiceIntentRegistry = {
       : { kind: 'reply', text: ctx.texts.nothingPending },
   command: (intent, ctx, result) => {
     const outcome = ctx.command(intent.command, intent.args);
-    if (!outcome) return replyOr(result, ctx.texts.manual);
+    if (!outcome || outcome.kind === 'manual') {
+      return replyOr(result, ctx.texts.manual);
+    }
     return outcome.kind === 'propose'
       ? { kind: 'propose', card: outcome.card }
       : { kind: 'reply', text: outcome.text };

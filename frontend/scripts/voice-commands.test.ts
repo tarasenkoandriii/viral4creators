@@ -174,6 +174,21 @@ check('K5: все владельцы зовутся сразу, до перво�
   await p;
 });
 
+check('значения брифа: читаются в момент вызова, снятие — только своё', () => {
+  const reg = new VoiceCommandRegistry();
+  eq(reg.screenValues(), null);
+  let tone = 'WARM';
+  const off = reg.setScreenValues(() => ({ tone }));
+  tone = 'FUNNY';
+  eq(reg.screenValues(), { tone: 'FUNNY' });
+  // Новая карточка брифа заменила старую; снятие старой её не снимает.
+  const off2 = reg.setScreenValues(() => ({ tone: 'FORMAL' }));
+  off();
+  eq(reg.screenValues(), { tone: 'FORMAL' });
+  off2();
+  eq(reg.screenValues(), null);
+});
+
 void queue.then(() => {
   console.log(
     failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`

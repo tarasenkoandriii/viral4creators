@@ -126,7 +126,7 @@ export interface HintResult {
   notice?: string;
   /**
    * Ключ кеша подсказки — по нему клиент просит озвучку
-   * (`GET …/wizard-guide/hint-audio?key=`, ТЗ Greeting 2.0 §4А.4, K1).
+   * (`POST …/wizard-guide/hint-audio` `{ key }`, ТЗ Greeting 2.0 §4А.4, K1).
    * Только у подсказок, которые лежат в кеше: озвучивается ровно тот
    * текст, что на экране, а не пересказ, собранный заново.
    */

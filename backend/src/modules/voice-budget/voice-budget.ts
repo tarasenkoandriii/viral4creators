@@ -17,6 +17,7 @@
  * честная сессия на 60 реплик стоит $0.25–1.80 (замер §4А.7.5).
  */
 
+import type { AiOperation } from '../../common/ai-pricing';
 import type { PlanId } from '../../common/plans';
 
 /** Микродолларов в долларе — та же единица, что у `ai_usage.costMicroUsd`. */
@@ -28,11 +29,11 @@ const USD = 1_000_000;
  * а ограничивает их сумма: оператор настраивает «сколько в сутки стоит
  * голос», а не каждую его часть.
  *
- * Строки, а не `AiOperation[]`: операцию синтеза (`voice-assistant-tts`)
- * заводит этап K1, и потолок обязан считать её с первой же записи —
- * независимо от того, в каком порядке этапы сольются.
+ * Типизировано `AiOperation`: опечатка в имени операции молча вывела бы
+ * её из-под потолка (строка расхода есть, а сумма её не видит) — теперь
+ * это ошибка сборки.
  */
-export const VOICE_OPERATIONS: readonly string[] = [
+export const VOICE_OPERATIONS: readonly AiOperation[] = [
   'voice-assistant-stt',
   'voice-assistant-understand',
   'voice-assistant-tts',

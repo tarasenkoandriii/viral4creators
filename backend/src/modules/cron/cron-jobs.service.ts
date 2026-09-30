@@ -79,6 +79,10 @@ import {
 } from '../assistant/assistant-prune';
 import { buildRunSummary } from './cron-run-summary';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
+import {
+  VoiceUploadService,
+  VoiceUploadSweepResult,
+} from '../voice-upload/voice-upload.service';
 
 /**
  * `triggeredBy` для прогонов НАСТОЯЩЕГО Vercel Cron (`CronController` →
@@ -218,6 +222,7 @@ export class CronJobsService {
     private readonly portfolioWatermark: PortfolioWatermarkService,
     private readonly balances: ProviderBalancesService,
     private readonly apiVideo: ApiVideoJobWorker,
+    private readonly voiceUploads: VoiceUploadService,
   ) {}
 
   /**
@@ -724,6 +729,31 @@ export class CronJobsService {
       return await this.aiUsage.rollupOldMonths();
     } finally {
       await releaseJobLock(this.prisma, 'ai-usage-rollup', acquired);
+    }
+  }
+
+  /**
+   * Необработанные голосовые записи старше часа — файл и строка учёта
+   * (финальный аудит ветки K, 30.09.2026; см. доккомментарий
+   * `VoiceUploadService`). Каждые 15 минут: Условия (3.4) обещают, что
+   * звук не хранится, и суточная метла для этого и медленна, и до
+   * голосовых файлов на объёме не доходит — она остаётся страховкой.
+   */
+  async runVoiceUploadsSweep(): Promise<VoiceUploadSweepResult> {
+    const acquired = await tryAcquireJobLock(
+      this.prisma,
+      'voice-uploads-sweep',
+    );
+    if (!acquired) {
+      this.logger.warn(
+        'Уборка голосовых записей: предыдущий прогон ещё держит замок — пропуск',
+      );
+      return { deleted: 0, failed: 0, hasMore: false, skipped: true };
+    }
+    try {
+      return await this.voiceUploads.sweepExpired();
+    } finally {
+      await releaseJobLock(this.prisma, 'voice-uploads-sweep', acquired);
     }
   }
 

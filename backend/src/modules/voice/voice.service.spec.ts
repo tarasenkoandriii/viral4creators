@@ -12,6 +12,8 @@ import { head } from '@vercel/blob';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { VoiceService, audioExtension, voicePathname } from './voice.service';
 import {
+  AUDIO_TOO_LONG_REASON,
+  FALLBACK_REFUSED_REASON,
   VoiceTranscriptionService,
   baseMime,
   cleanTranscript,
@@ -61,6 +63,11 @@ const sonioxMock = (over: Record<string, unknown> = {}) => ({
 const mockedHead = head as jest.MockedFunction<typeof head>;
 const USER = 'u1';
 const AUDIO = Buffer.from('opus-bytes');
+
+const voiceUploads = {
+  remember: jest.fn().mockResolvedValue(undefined),
+  forget: jest.fn().mockResolvedValue(undefined),
+};
 
 describe('helpers', () => {
   it('baseMime strips codec parameters', () => {
@@ -312,6 +319,86 @@ describe('VoiceTranscriptionService.recognize — провайдер из адм
     ).recognize(AUDIO, 'audio/webm', opts);
     expect(soniox.transcribe).not.toHaveBeenCalled();
   });
+  // Финальный аудит ветки K: потолок длины и вход перед запасным путём.
+  const svc = (soniox: ReturnType<typeof sonioxMock>) =>
+    new VoiceTranscriptionService(
+      usageMock() as never,
+      settingsMock('soniox') as never,
+      soniox as never,
+    );
+
+  it('Soniox сообщил длительность больше потолка — «слишком длинно» без текста; ровно на потолке — текст', async () => {
+    const long = sonioxMock({
+      transcribe: jest.fn().mockResolvedValue({
+        text: 'длинная речь',
+        seconds: 61,
+        audioMs: 60_001,
+        billable: true,
+      }),
+    });
+    const r = await svc(long).recognize(AUDIO, 'audio/webm', {
+      ...opts,
+      maxDurationMs: 60_000,
+    });
+    expect(r).toEqual({
+      text: null,
+      reason: AUDIO_TOO_LONG_REASON,
+      durationMs: 60_001,
+    });
+    expect(mockGenerate).not.toHaveBeenCalled();
+
+    const edge = sonioxMock({
+      transcribe: jest.fn().mockResolvedValue({
+        text: 'ровно минута',
+        seconds: 60,
+        audioMs: 60_000,
+        billable: true,
+      }),
+    });
+    const ok = await svc(edge).recognize(AUDIO, 'audio/webm', {
+      ...opts,
+      maxDurationMs: 60_000,
+    });
+    expect(ok).toMatchObject({ text: 'ровно минута', durationMs: 60_000 });
+  });
+
+  it('Soniox упал, а вход закрыт — Gemini не зовётся; вход открыт — зовётся', async () => {
+    const failing = () =>
+      sonioxMock({
+        transcribe: jest.fn().mockResolvedValue({
+          text: null,
+          reason: 'Soniox: 500',
+          seconds: 0,
+          billable: true,
+        }),
+      });
+    const refused = jest.fn().mockResolvedValue(false);
+    const r = await svc(failing()).recognize(AUDIO, 'audio/webm', {
+      ...opts,
+      canFallback: refused,
+    });
+    expect(r).toEqual({ text: null, reason: FALLBACK_REFUSED_REASON });
+    expect(refused).toHaveBeenCalledTimes(1);
+    expect(mockGenerate).not.toHaveBeenCalled();
+
+    mockGenerate.mockResolvedValue({ text: 'так' });
+    const allowed = jest.fn().mockResolvedValue(true);
+    const r2 = await svc(failing()).recognize(AUDIO, 'audio/webm', {
+      ...opts,
+      canFallback: allowed,
+    });
+    expect(r2).toEqual({ text: 'так' });
+    expect(mockGenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it('вход не спрашивается, когда Soniox ответил или не услышал речи', async () => {
+    const canFallback = jest.fn().mockResolvedValue(false);
+    await svc(sonioxMock()).recognize(AUDIO, 'audio/webm', {
+      ...opts,
+      canFallback,
+    });
+    expect(canFallback).not.toHaveBeenCalled();
+  });
 });
 
 describe('VoiceService — запись не остаётся у Сервиса (сквозной аудит голоса)', () => {
@@ -326,7 +413,7 @@ describe('VoiceService — запись не остаётся у Сервиса 
     const blob = {
       createUploadUrl: jest.fn(),
       downloadBuffer: jest.fn().mockResolvedValue(AUDIO),
-      deleteBlob: jest.fn().mockResolvedValue(undefined),
+      deleteBlob: jest.fn().mockResolvedValue(true),
     };
     const access = accessMock();
     if (over.spend) access.assertCanSpendUser = over.spend;
@@ -339,6 +426,7 @@ describe('VoiceService — запись не остаётся у Сервиса 
       blob as any,
       transcription as any,
       access as any,
+      voiceUploads as any,
     );
     return { svc, prisma, blob, access };
   }
@@ -365,6 +453,20 @@ describe('VoiceService — запись не остаётся у Сервиса 
       svc.transcribe(USER, 'p1', 'i1', { pathname: PATH }),
     ).rejects.toThrow('db down');
     expect(blob.deleteBlob).toHaveBeenCalledWith(PATH);
+  });
+
+  it('строка учёта снимается только после настоящего удаления записи', async () => {
+    voiceUploads.forget.mockClear();
+    const ok = build2();
+    await ok.svc.transcribe(USER, 'p1', 'i1', { pathname: PATH });
+    expect(voiceUploads.forget).toHaveBeenCalledWith(PATH);
+
+    voiceUploads.forget.mockClear();
+    const failed = build2();
+    failed.blob.deleteBlob.mockResolvedValue(false);
+    await failed.svc.transcribe(USER, 'p1', 'i1', { pathname: PATH });
+    // Не удалилось — строка остаётся, крон voice-uploads-sweep повторит.
+    expect(voiceUploads.forget).not.toHaveBeenCalled();
   });
 
   it('проверка лимита знает проект — по нему выбирается сценарий тестового доступа', async () => {
@@ -400,7 +502,7 @@ describe('VoiceService', () => {
         .fn()
         .mockResolvedValue({ uploadUrl: 'https://put' }),
       downloadBuffer: jest.fn().mockResolvedValue(AUDIO),
-      deleteBlob: jest.fn().mockResolvedValue(undefined),
+      deleteBlob: jest.fn().mockResolvedValue(true),
     };
     const transcription = {
       transcribe: jest.fn().mockResolvedValue(transcribeResult),
@@ -411,6 +513,7 @@ describe('VoiceService', () => {
       blob as any,
       transcription as any,
       accessMock() as any,
+      voiceUploads as any,
     );
     return { svc, prisma, blob, transcription };
   }

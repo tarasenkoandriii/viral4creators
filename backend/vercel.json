@@ -90,6 +90,10 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/cron/voice-uploads-sweep",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/ai-usage-rollup",
       "schedule": "0 4 * * 1"
     }

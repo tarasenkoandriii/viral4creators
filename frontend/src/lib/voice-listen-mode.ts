@@ -60,7 +60,9 @@ export type ListenEvent =
   | { type: 'hold-end'; keep: boolean }
   | { type: 'processed'; seq: number }
   | { type: 'disable' }
-  | { type: 'budget-exhausted' };
+  | { type: 'budget-exhausted' }
+  /** Потолок больше не исчерпан (сменился тариф) — снова к кнопке. */
+  | { type: 'unblock' };
 
 export const LISTEN_INITIAL: ListenState = {
   phase: 'off',
@@ -74,6 +76,13 @@ export function listenReducer(
   event: ListenEvent
 ): ListenState {
   const { phase } = state;
+  // Сменился тариф — потолок уже не тот (изменение контракта 6): к
+  // кнопке, а не сразу слушать — микрофон открывается нажатием.
+  if (event.type === 'unblock') {
+    return phase === 'blocked'
+      ? { ...LISTEN_INITIAL, seq: state.seq + 1 }
+      : state;
+  }
   // Потолок и неподдержка — конечные состояния до перезагрузки: ни
   // кнопка, ни автозапуск не должны открывать микрофон, который тут же
   // получит 403 или упадёт.
@@ -173,4 +182,47 @@ export function autoListenDecision(opts: {
 }): 'listen' | 'wait-tap' | 'off' {
   if (!opts.voiceOn || opts.blocked || !opts.supported) return 'off';
   return opts.armed && opts.permission === 'granted' ? 'listen' : 'wait-tap';
+}
+
+/** Ровно то, что нужно от окна, документа и Telegram, — фейки в тесте. */
+export interface PageHideEnv {
+  window: {
+    addEventListener(type: 'pagehide', l: () => void): void;
+    removeEventListener(type: 'pagehide', l: () => void): void;
+  };
+  document: {
+    readonly visibilityState: string;
+    addEventListener(type: 'visibilitychange', l: () => void): void;
+    removeEventListener(type: 'visibilitychange', l: () => void): void;
+  };
+  /** Telegram `deactivated` — в типах `lib/telegram.ts` его нет. */
+  telegram: {
+    onEvent?: (event: string, handler: () => void) => void;
+    offEvent?: (event: string, handler: () => void) => void;
+  } | null;
+}
+
+/**
+ * Свёрнутый Telegram (`deactivated`), другая вкладка, закрытие страницы
+ * — микрофон закрывается: слушать того, кто ушёл, незачем, а индикатора
+ * он не видит. В Telegram на iOS свёрнутый мини-апп не всегда шлёт
+ * `visibilitychange` — поэтому и его собственное событие.
+ *
+ * @returns отписка от всех трёх источников.
+ */
+export function watchPageHidden(
+  env: PageHideEnv,
+  release: () => void
+): () => void {
+  const onVisibility = () => {
+    if (env.document.visibilityState === 'hidden') release();
+  };
+  env.window.addEventListener('pagehide', release);
+  env.document.addEventListener('visibilitychange', onVisibility);
+  env.telegram?.onEvent?.('deactivated', release);
+  return () => {
+    env.window.removeEventListener('pagehide', release);
+    env.document.removeEventListener('visibilitychange', onVisibility);
+    env.telegram?.offEvent?.('deactivated', release);
+  };
 }

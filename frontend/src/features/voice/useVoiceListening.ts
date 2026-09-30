@@ -20,9 +20,11 @@ import {
   SPEECH_DETECTOR_DEFAULTS,
   initialDetector,
   pickRecorderMime,
+  pauseDetector,
   resumeDetector,
   rmsOf,
   stepDetector,
+  voiceMaxBytesFor,
   type SpeechDetectorEvent,
   type SpeechDetectorState,
 } from '../../lib/voice-listen';
@@ -31,14 +33,14 @@ import {
   autoListenDecision,
   listenReducer,
   isCurrentUtterance,
+  watchPageHidden,
   type ListenEvent,
   type ListenState,
   type MicPermission,
 } from '../../lib/voice-listen-mode';
 import { getTelegramWebApp } from '../../lib/telegram';
+import { isMicBusy } from '../../lib/media-playback';
 
-/** Потолок записи на сервере (`GREETING_VOICE_MAX_BYTES`): больше — не шлём. */
-const MAX_UTTERANCE_BYTES = 4 * 1024 * 1024;
 const ARMED_KEY = 'greeting-voice-listen-armed';
 const CONFIG = SPEECH_DETECTOR_DEFAULTS;
 
@@ -102,6 +104,8 @@ export interface VoiceListening {
   talkStop: () => void;
   /** Потолок голоса исчерпан — закрыть и не открывать до перезагрузки. */
   budgetExhausted: () => void;
+  /** Потолок снят (сменился тариф) — кнопка снова работает. */
+  unblock: () => void;
 }
 
 /** Голос советника (K1) — чтобы не записать его как реплику человека. */
@@ -110,11 +114,21 @@ export interface VoicePlayback {
   stop: () => void;
 }
 
-/** Telegram `deactivated` — в типах `lib/telegram.ts` его нет. */
-type TelegramEvents = {
-  onEvent?: (event: string, handler: () => void) => void;
-  offEvent?: (event: string, handler: () => void) => void;
-};
+/** Что известно об отрезке, кроме звука. */
+export interface UtteranceMeta {
+  /**
+   * Фраза упёрлась в потолок длины (`maxUtteranceMs`) и обрезана:
+   * отправлена как есть, а человеку стоит проверить, что поняли всё
+   * (изменение контракта 4).
+   */
+  truncated: boolean;
+  /**
+   * Отрезок больше серверного потолка своего типа
+   * (`voiceMaxBytesFor`): загружать его незачем — сервер откажет. Звук
+   * не отправляется, помощник говорит «слишком длинно».
+   */
+  tooLarge: boolean;
+}
 
 export function useVoiceListening(opts: {
   /** Голос включён («голосом» советника). Выключили — микрофон закрыт. */
@@ -129,9 +143,15 @@ export function useVoiceListening(opts: {
   onUtterance: (
     audio: Blob,
     mimeType: string,
-    isCurrent: () => boolean
+    isCurrent: () => boolean,
+    meta: UtteranceMeta
   ) => Promise<void>;
   playback?: VoicePlayback;
+  /**
+   * Микрофон занят другой записью (образец голоса) — детектор на паузе,
+   * начатый отрезок выбрасывается. По умолчанию — общий `isMicBusy`.
+   */
+  micBusy?: () => boolean;
 }): VoiceListening {
   const supported = listeningSupported();
   const [state, setState] = useState<ListenState>(() =>
@@ -150,6 +170,8 @@ export function useVoiceListening(opts: {
   onUtteranceRef.current = opts.onUtterance;
   const playbackRef = useRef(opts.playback);
   playbackRef.current = opts.playback;
+  const micBusyRef = useRef(opts.micBusy ?? isMicBusy);
+  micBusyRef.current = opts.micBusy ?? isMicBusy;
 
   const mountedRef = useRef(true);
   const streamRef = useRef<MediaStream | null>(null);
@@ -192,12 +214,20 @@ export function useVoiceListening(opts: {
   }, []);
 
   const process = useCallback(
-    async (blob: Blob, mime: string, seq: number) => {
+    async (
+      blob: Blob,
+      mime: string,
+      seq: number,
+      meta: Omit<UtteranceMeta, 'tooLarge'>
+    ) => {
       const isCurrent = () =>
         mountedRef.current && isCurrentUtterance(stateRef.current, seq);
       try {
-        if (blob.size > 0 && blob.size <= MAX_UTTERANCE_BYTES && isCurrent()) {
-          await onUtteranceRef.current(blob, mime, isCurrent);
+        if (blob.size > 0 && isCurrent()) {
+          await onUtteranceRef.current(blob, mime, isCurrent, {
+            ...meta,
+            tooLarge: blob.size > voiceMaxBytesFor(mime),
+          });
         }
       } finally {
         if (mountedRef.current && isCurrent()) {
@@ -246,7 +276,7 @@ export function useVoiceListening(opts: {
    * а не после ответа сервера.
    */
   const stopRecorder = useCallback(
-    (keep: boolean, seq: number, releaseStream = false) => {
+    (keep: boolean, seq: number, releaseStream = false, truncated = false) => {
       const rec = recorderRef.current;
       recorderRef.current = null;
       if (!rec) return;
@@ -265,7 +295,9 @@ export function useVoiceListening(opts: {
           if (streamRef.current === stream) streamRef.current = null;
         }
         const mime = rec.mimeType || 'audio/webm';
-        void process(new Blob(chunks, { type: mime }), mime, seq);
+        void process(new Blob(chunks, { type: mime }), mime, seq, {
+          truncated,
+        });
       };
       if (rec.state !== 'inactive') rec.stop();
     },
@@ -280,7 +312,12 @@ export function useVoiceListening(opts: {
           return;
         case 'end':
           apply({ type: 'utterance', keep: event.keep });
-          stopRecorder(event.keep, stateRef.current.seq);
+          stopRecorder(
+            event.keep,
+            stateRef.current.seq,
+            false,
+            event.reason === 'max-length'
+          );
           return;
         case 'barge-in':
           // Человек заговорил поверх советника: советник замолкает, а
@@ -363,6 +400,14 @@ export function useVoiceListening(opts: {
         // Во время разбора детектор на паузе: ответ помощника и
         // следующая фраза не должны наложиться.
         if (phase !== 'listening' && phase !== 'recording') return;
+        // Микрофон взяла запись образца голоса — пауза, как под
+        // репликой советника, но без перебивания (изменение контракта 5).
+        if (micBusyRef.current()) {
+          const r = pauseDetector(detectorRef.current);
+          detectorRef.current = r.state;
+          for (const ev of r.events) onDetector(ev, stream);
+          return;
+        }
         analyser.getFloatTimeDomainData(buf);
         const playing = playbackRef.current?.isPlaying() ?? false;
         const r = stepDetector(
@@ -382,22 +427,26 @@ export function useVoiceListening(opts: {
     apply({ type: 'disable' });
   }, [apply, releaseAll]);
 
-  const talkStop = useCallback(() => {
-    if (stateRef.current.phase !== 'holding') return;
-    if (talkTimerRef.current !== null)
-      window.clearTimeout(talkTimerRef.current);
-    talkTimerRef.current = null;
-    const keep =
-      !!recorderRef.current &&
-      Date.now() - talkStartedRef.current >= CONFIG.minSpeechMs;
-    apply({ type: 'hold-end', keep });
-    if (keep) {
-      stopRecorder(true, stateRef.current.seq, true);
-    } else {
-      stopRecorder(false, stateRef.current.seq);
-      releaseAll();
-    }
-  }, [apply, releaseAll, stopRecorder]);
+  const talkStopWith = useCallback(
+    (truncated: boolean) => {
+      if (stateRef.current.phase !== 'holding') return;
+      if (talkTimerRef.current !== null)
+        window.clearTimeout(talkTimerRef.current);
+      talkTimerRef.current = null;
+      const keep =
+        !!recorderRef.current &&
+        Date.now() - talkStartedRef.current >= CONFIG.minSpeechMs;
+      apply({ type: 'hold-end', keep });
+      if (keep) {
+        stopRecorder(true, stateRef.current.seq, true, truncated);
+      } else {
+        stopRecorder(false, stateRef.current.seq);
+        releaseAll();
+      }
+    },
+    [apply, releaseAll, stopRecorder]
+  );
+  const talkStop = useCallback(() => talkStopWith(false), [talkStopWith]);
 
   const talkStart = useCallback(() => {
     if (stateRef.current.phase !== 'off') return;
@@ -417,14 +466,19 @@ export function useVoiceListening(opts: {
       talkStartedRef.current = Date.now();
       // Потолок ручной фразы (§4А.3, строка «Тишина»: «у „удерживать и
       // говорить“ — потолок длительности записи»).
-      talkTimerRef.current = window.setTimeout(talkStop, CONFIG.maxUtteranceMs);
+      talkTimerRef.current = window.setTimeout(
+        () => talkStopWith(true),
+        CONFIG.maxUtteranceMs
+      );
     })();
-  }, [apply, openStream, releaseAll, startRecorder, talkStop]);
+  }, [apply, openStream, releaseAll, startRecorder, talkStopWith]);
 
   const budgetExhausted = useCallback(() => {
     releaseAll();
     apply({ type: 'budget-exhausted' });
   }, [apply, releaseAll]);
+
+  const unblock = useCallback(() => apply({ type: 'unblock' }), [apply]);
 
   // Выключили «голосом» — микрофон закрыт немедленно.
   useEffect(() => {
@@ -465,20 +519,20 @@ export function useVoiceListening(opts: {
   // — микрофон закрывается: слушать того, кто ушёл, незачем, а индикатора
   // он не видит. В Telegram на iOS свёрнутый мини-апп не всегда шлёт
   // `visibilitychange` — поэтому и его собственное событие.
-  useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState === 'hidden') disable();
-    };
-    const tg = getTelegramWebApp() as TelegramEvents | null;
-    window.addEventListener('pagehide', disable);
-    document.addEventListener('visibilitychange', onHide);
-    tg?.onEvent?.('deactivated', disable);
-    return () => {
-      window.removeEventListener('pagehide', disable);
-      document.removeEventListener('visibilitychange', onHide);
-      tg?.offEvent?.('deactivated', disable);
-    };
-  }, [disable]);
+  useEffect(
+    () =>
+      watchPageHidden(
+        {
+          window,
+          document,
+          telegram: getTelegramWebApp() as Parameters<
+            typeof watchPageHidden
+          >[0]['telegram'],
+        },
+        disable
+      ),
+    [disable]
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -488,5 +542,13 @@ export function useVoiceListening(opts: {
     };
   }, [releaseAll]);
 
-  return { state, enable, disable, talkStart, talkStop, budgetExhausted };
+  return {
+    state,
+    enable,
+    disable,
+    talkStart,
+    talkStop,
+    budgetExhausted,
+    unblock,
+  };
 }

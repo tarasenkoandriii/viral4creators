@@ -47,7 +47,12 @@ import {
   requestWizardHint,
   sendWizardComplaint,
 } from '../services/wizard-guide-api';
-import { hintVoicePlan, readMuted, writeMuted } from '../lib/hint-audio';
+import {
+  VOICE_BUDGET_EXHAUSTED,
+  hintVoicePlan,
+  readMuted,
+  writeMuted,
+} from '../lib/hint-audio';
 import {
   claimVoiceBudgetNotice,
   hasGesture,
@@ -56,6 +61,7 @@ import {
   markGesture,
   markVoiceBudgetExhausted,
   subscribeGesture,
+  useVoiceBudgetOwner,
 } from '../lib/hint-audio-session';
 import type { GuideAction } from '../types';
 
@@ -179,6 +185,9 @@ export function HintLine({
   /** Запрос звука в полёте: ответ на ушедший шаг роняется. */
   const pendingRef = useRef<string | null>(null);
   const [budgetNotice, setBudgetNotice] = useState(false);
+  const budgetOwner = useVoiceBudgetOwner();
+  const budgetOwnerRef = useRef(budgetOwner);
+  budgetOwnerRef.current = budgetOwner;
 
   useEffect(() => {
     dispatch(enabled ? { type: 'enabled' } : { type: 'disabled' });
@@ -244,7 +253,7 @@ export function HintLine({
     voice: voiceOn,
     muted,
     gestured,
-    budgetExhausted: isVoiceBudgetExhaustedToday(),
+    budgetExhausted: isVoiceBudgetExhaustedToday(budgetOwner),
     hintKey,
     spokenKey: spokenKeyRef.current,
   });
@@ -258,20 +267,20 @@ export function HintLine({
     if (voicePlan !== 'speak' || !hintKey) return;
     spokenKeyRef.current = hintKey;
     pendingRef.current = hintKey;
-    void getHintAudio(projectId, hintKey, locale).then((answer) => {
+    void getHintAudio(projectId, hintKey).then((answer) => {
       if (pendingRef.current !== hintKey) return;
       pendingRef.current = null;
       if (answer.kind === 'play') {
         if (!mutedRef.current) hintPlayer.play(answer.url);
-      } else if (answer.kind === 'budget-exhausted') {
+      } else if (answer.kind === VOICE_BUDGET_EXHAUSTED) {
         // Дальше голос молчит до конца суток UTC (и микрофон тоже —
         // источник общий), а мастер работает текстом. Сказать об этом —
         // одному месту на странице.
-        markVoiceBudgetExhausted();
+        markVoiceBudgetExhausted(budgetOwnerRef.current);
         if (claimVoiceBudgetNotice()) setBudgetNotice(true);
       }
     });
-  }, [voicePlan, hintKey, projectId, locale]);
+  }, [voicePlan, hintKey, projectId]);
 
   // Уход с шага и размонтирование глушат реплику: голос про шаг, которого
   // уже нет на экране, хуже тишины.

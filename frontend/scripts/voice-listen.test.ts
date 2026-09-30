@@ -8,6 +8,7 @@
 import {
   SPEECH_DETECTOR_DEFAULTS as C,
   initialDetector,
+  pauseDetector,
   pickRecorderMime,
   resumeDetector,
   rmsOf,
@@ -363,6 +364,32 @@ check(
     );
   }
 );
+
+check(
+  'потолок фразы — 45 с (изменение контракта 4), меньше серверных 60 с',
+  () => {
+    eq(C.maxUtteranceMs, 45_000);
+  }
+);
+
+check('микрофон занят: начатый отрезок выброшен, тишина не копится', () => {
+  // Отрезок начался, потом микрофон взяла запись образца.
+  const started = run(frames(500, LOUD));
+  eq(started.state.phase, 'speech');
+  const p = pauseDetector(started.state);
+  eq(
+    p.events.map((e) => [e.type, (e as { keep?: boolean }).keep]),
+    [['end', false]]
+  );
+  eq([p.state.phase, p.state.quietMs], ['idle', 0]);
+  // Долгая пауза «занято» не гасит микрофон: счёт тишины стоит.
+  let st = run(frames(C.idleStopMs - 1000, QUIET)).state;
+  for (let i = 0; i < 1000; i++) st = pauseDetector(st).state;
+  eq([st.quietMs, st.stopped], [0, false]);
+  // Погашенный тишиной детектор пауза не оживляет.
+  const stopped = run(frames(C.idleStopMs + 100, QUIET)).state;
+  eq(pauseDetector(stopped).state, stopped);
+});
 
 console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);
 if (failed) process.exit(1);

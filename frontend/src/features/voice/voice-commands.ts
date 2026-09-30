@@ -23,7 +23,11 @@ import type {
   VoiceFieldApplyEffect,
 } from '../../lib/voice-confirm';
 import type { VoiceCommandOutcome } from '../../lib/voice-intents';
-import type { VoiceCommand, VoiceField } from '../../lib/voice-types';
+import type {
+  VoiceCommand,
+  VoiceField,
+  VoiceScreenCurrent,
+} from '../../lib/voice-types';
 
 /**
  * Отчёт владельца полей (K5): отказы — по одной строке на НЕ применённое
@@ -95,6 +99,22 @@ export class VoiceCommandRegistry {
 
   private applierFor(target: string): VoiceFieldApplier | null {
     return this.ownerOf(target)?.() ?? null;
+  }
+
+  // Значения брифа на экране (изменение контракта 1): владелец один —
+  // карточка брифа; снялась — `current` в запросе нет.
+  private screen: Getter<VoiceScreenCurrent | null> | null = null;
+
+  setScreenValues(get: Getter<VoiceScreenCurrent | null>): () => void {
+    this.screen = get;
+    return () => {
+      if (this.screen === get) this.screen = null;
+    };
+  }
+
+  /** Текущие (несохранённые) значения брифа; `null` — брифа на экране нет. */
+  screenValues(): VoiceScreenCurrent | null {
+    return this.screen?.() ?? null;
   }
 
   canFill(target: string): boolean {
@@ -189,6 +209,20 @@ export function useVoiceFieldApplier(applier: VoiceFieldApplier): void {
   const ref = useRef(applier);
   ref.current = applier;
   useEffect(() => registry?.addApplier(() => ref.current), [registry]);
+}
+
+/**
+ * Отдать помощнику текущие значения брифа (изменение контракта 1).
+ * Геттер читается через ref в момент отправки реплики — значения те,
+ * что на экране СЕЙЧАС, а не при монтировании.
+ */
+export function useVoiceScreenValues(
+  get: () => VoiceScreenCurrent | null
+): void {
+  const registry = useVoiceCommands();
+  const ref = useRef(get);
+  ref.current = get;
+  useEffect(() => registry?.setScreenValues(() => ref.current()), [registry]);
 }
 
 /** Зарегистрировать команду; `null` — команды сейчас нет на экране. */

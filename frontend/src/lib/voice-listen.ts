@@ -65,9 +65,12 @@ export const SPEECH_DETECTOR_DEFAULTS: SpeechDetectorConfig = {
   // Пауза между словами в спокойной речи — до полусекунды; 0,9 с не
   // режет фразу на вдохе, но и не держит человека в ожидании ответа.
   hangoverMs: 900,
-  // Реплика — ответ на вопрос или команда, а не диктовка (потолок
-  // записи на сервере — 4 МБ, `GREETING_VOICE_MAX_BYTES`).
-  maxUtteranceMs: 15_000,
+  // Реплика — ответ или команда, но и поздравительный текст голосом:
+  // 15 с его обрезали. 45 с — с запасом до потолка сервера
+  // (`VOICE_UTTERANCE_MAX_MS` = 60 с, изменение контракта 4): клиент
+  // режет раньше, и до отказа `too-long` честная запись не доходит.
+  // Обрезанная фраза всё равно уходит на разбор — с предупреждением.
+  maxUtteranceMs: 45_000,
   idleStopMs: 20_000,
   bargeInFactor: 2,
   bargeInMs: 150,
@@ -134,14 +137,6 @@ export function speechThreshold(
   config: SpeechDetectorConfig
 ): number {
   return Math.max(config.minRms, noiseFloor * config.noiseFactor);
-}
-
-export function isSpeechFrame(
-  rms: number,
-  noiseFloor: number,
-  config: SpeechDetectorConfig
-): boolean {
-  return rms >= speechThreshold(noiseFloor, config);
 }
 
 const idleOf = (state: SpeechDetectorState): SpeechDetectorState => ({
@@ -277,6 +272,36 @@ export function stepDetector(
 }
 
 /**
+ * Кадр, пока микрофон нужен другому (изменение контракта 5: запись
+ * образца голоса, `isMicBusy`): детектор на паузе так же, как под
+ * репликой советника, но без перебивания — человек говорит не нам.
+ * Начатый отрезок выбрасывается (`end`, `keep: false`): в нём уже
+ * голос, записанный для образца, а не реплика помощнику. Тишина на это
+ * время не копится — 20 с считаются после записи, а не во время неё.
+ */
+export function pauseDetector(state: SpeechDetectorState): {
+  state: SpeechDetectorState;
+  events: SpeechDetectorEvent[];
+} {
+  if (state.stopped) return { state, events: [] };
+  if (state.phase === 'speech') {
+    return {
+      state: { ...idleOf(state), quietMs: 0 },
+      events: [
+        {
+          type: 'end',
+          keep: false,
+          reason: 'playback',
+          speechMs: state.speechMs,
+          durationMs: state.utterMs,
+        },
+      ],
+    };
+  }
+  return { state: { ...state, quietMs: 0, bargeMs: 0 }, events: [] };
+}
+
+/**
  * Снова слушать после ответа помощника: 20 с считаются с этого момента,
  * а не с конца фразы — пока шёл разбор, человек ждал, а не молчал.
  */
@@ -292,6 +317,43 @@ export function rmsOf(samples: ArrayLike<number>): number {
   let sum = 0;
   for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
   return Math.sqrt(sum / samples.length);
+}
+
+/**
+ * Потолок байт отрезка по типу — зеркало `greetingVoiceMaxBytesFor`
+ * сервера (`backend/src/common/greeting-voice.ts`; сверка —
+ * `scripts/voice-sync.test.ts`): минута речи по щедрому битрейту типа,
+ * но не больше общих 4 МБ. Отрезок больше — сервер откажет ещё на
+ * выдаче ссылки загрузки, поэтому клиент его не шлёт вовсе, а сразу
+ * говорит «слишком длинно».
+ */
+export const VOICE_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+const VOICE_UPLOAD_MAX_MS = 60_000;
+const VOICE_BYTES_PER_SECOND: Readonly<Record<string, number>> = {
+  'audio/webm': 24_000,
+  'audio/ogg': 24_000,
+  'audio/opus': 24_000,
+  'audio/mp4': 32_000,
+  'audio/m4a': 32_000,
+  'audio/x-m4a': 32_000,
+  'audio/aac': 32_000,
+  'audio/mpeg': 40_000,
+  'audio/mp3': 40_000,
+  'audio/wav': 96_000,
+  'audio/flac': 96_000,
+};
+
+export function voiceMaxBytesFor(mimeType: string | null | undefined): number {
+  const base = String(mimeType ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  const rate = VOICE_BYTES_PER_SECOND[base];
+  if (!rate) return VOICE_UPLOAD_MAX_BYTES;
+  return Math.min(
+    VOICE_UPLOAD_MAX_BYTES,
+    Math.ceil((rate * VOICE_UPLOAD_MAX_MS) / 1000)
+  );
 }
 
 /**

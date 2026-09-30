@@ -9,7 +9,11 @@
  * в `hint-audio-session.ts`; здесь её нет, чтобы не было двух копий.
  */
 
-import type { VoiceStatus, VoiceUnderstandResult } from './voice-types';
+import type {
+  VoiceReason,
+  VoiceStatus,
+  VoiceUnderstandResult,
+} from './voice-types';
 
 /**
  * Сбой запроса (сеть, любой HTTP-код, подпись PUT в Blob) — всегда
@@ -59,6 +63,32 @@ export interface VoiceStatusTexts {
   notHeard: string;
   unavailable: string;
   budgetExhausted: string;
+  /** Фраза длиннее потолка — когда сервер не прислал своей строки. */
+  tooLong: string;
+}
+
+/**
+ * Отказ выдачи ссылки загрузки (`…/upload-url`) по размеру записи —
+ * сервер отвечает 400 («Запись длиннее минуты», или проверка `fileSize`
+ * в DTO). Это не «распознавание недоступно», а та же причина, что
+ * `too-long`: человек должен услышать «короче», на своём языке, а не
+ * русский текст сервера.
+ */
+export function uploadRefusalOf(
+  httpStatus: number | undefined,
+  body: unknown
+): VoiceUnderstandResult | null {
+  if (httpStatus !== 400 || !body || typeof body !== 'object') return null;
+  // Конверт `{ error: { message } }` или сырой ответ валидатора, где
+  // `message` бывает массивом строк.
+  const b = body as { error?: { message?: unknown }; message?: unknown };
+  const raw = b.error?.message ?? b.message;
+  const texts = (Array.isArray(raw) ? raw : [raw]).filter(
+    (m): m is string => typeof m === 'string'
+  );
+  if (!texts.some((m) => /длинн|минут|filesize|larger|greater/i.test(m)))
+    return null;
+  return { ...voiceResultOfStatus('unavailable'), reason: 'too-long' };
 }
 
 export interface VoiceStatusOutcome {
@@ -67,6 +97,27 @@ export interface VoiceStatusOutcome {
   tone: 'info' | 'warning' | 'error';
   /** Выключить прослушивание (и больше не включать его сегодня). */
   stopForToday: boolean;
+  /**
+   * Выключить прослушивание до нажатия — не до завтра (изменение
+   * контракта 2): оператор закрыл голос, нужен вход, исчерпан лимит
+   * аккаунта. Слушать дальше значит слать реплики в тот же отказ.
+   */
+  stopUntilTap: boolean;
+}
+
+/**
+ * Отказы, после которых слушать бессмысленно, пока человек не нажмёт
+ * сам: следующая фраза получит тот же ответ, а строка — тот же текст.
+ * `too-long` сюда не входит: отказ одной фразе, следующая пройдёт.
+ */
+export const STOP_UNTIL_TAP_REASONS: readonly VoiceReason[] = [
+  'operator-off',
+  'login-required',
+  'account-limit',
+];
+
+export function stopsUntilTap(reason: VoiceReason | null | undefined): boolean {
+  return !!reason && STOP_UNTIL_TAP_REASONS.includes(reason);
 }
 
 /**
@@ -82,7 +133,7 @@ export interface VoiceStatusOutcome {
  * `claimVoiceBudgetNotice`. Микрофон гаснет в любом случае.
  */
 export function voiceStatusOutcome(
-  result: Pick<VoiceUnderstandResult, 'status' | 'reply'>,
+  result: Pick<VoiceUnderstandResult, 'status' | 'reply' | 'reason'>,
   texts: VoiceStatusTexts,
   mayAnnounceBudget: boolean
 ): VoiceStatusOutcome | null {
@@ -90,18 +141,29 @@ export function voiceStatusOutcome(
     case 'ok':
       return null;
     case 'not-heard':
-      return { text: texts.notHeard, tone: 'info', stopForToday: false };
-    case 'unavailable':
       return {
-        text: result.reply || texts.unavailable,
+        text: texts.notHeard,
+        tone: 'info',
+        stopForToday: false,
+        stopUntilTap: false,
+      };
+    case 'unavailable':
+      // `too-long` — тоже здесь: `reply` сервера («короче, пожалуйста»),
+      // без него — наша строка; микрофон слушает дальше.
+      return {
+        text:
+          result.reply ||
+          (result.reason === 'too-long' ? texts.tooLong : texts.unavailable),
         tone: 'warning',
         stopForToday: false,
+        stopUntilTap: stopsUntilTap(result.reason),
       };
     case 'budget-exhausted':
       return {
         text: mayAnnounceBudget ? texts.budgetExhausted : null,
         tone: 'warning',
         stopForToday: true,
+        stopUntilTap: false,
       };
   }
 }

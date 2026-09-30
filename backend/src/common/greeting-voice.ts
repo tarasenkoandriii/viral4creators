@@ -37,6 +37,81 @@ import {
 export const GREETING_VOICE_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
+ * Потолок длины реплики — 60 секунд (финальный аудит ветки K, 30.09.2026,
+ * изменение контракта 4). Клиент режет фразу на 45 секундах, так что сюда
+ * упирается только испорченная или подменённая запись; отказ —
+ * `status: 'unavailable'`, `reason: 'too-long'`, без платного разбора.
+ */
+export const VOICE_UTTERANCE_MAX_MS = 60_000;
+
+/**
+ * Верхняя граница битрейта по типу записи, байт в секунду. Берётся
+ * ЩЕДРАЯ граница, а не типичная: по ней байты переводятся в секунды, и
+ * завышенный битрейт даёт заниженную длительность — короткую фразу в
+ * тяжёлой кодировке мы не отвергнем, а минуту в лёгкой пропустим в
+ * худшем случае до следующей проверки (длительность от Soniox).
+ *
+ *  - opus (webm/ogg — Chrome, Firefox, Telegram Android): MediaRecorder
+ *    пишет речь на 32–128 кбит/с; граница — 192 кбит/с;
+ *  - AAC (mp4/m4a — Safari, iOS): 128–192 кбит/с; граница — 256 кбит/с;
+ *  - mp3: до 320 кбит/с;
+ *  - wav/flac: 48 кГц × 16 бит × моно = 96 КБ/с — упирается в
+ *    `GREETING_VOICE_MAX_BYTES` раньше минуты (≈43 с).
+ */
+const VOICE_BYTES_PER_SECOND: Readonly<Record<string, number>> = {
+  'audio/webm': 24_000,
+  'audio/ogg': 24_000,
+  'audio/opus': 24_000,
+  'audio/mp4': 32_000,
+  'audio/m4a': 32_000,
+  'audio/x-m4a': 32_000,
+  'audio/aac': 32_000,
+  'audio/mpeg': 40_000,
+  'audio/mp3': 40_000,
+  'audio/wav': 96_000,
+  'audio/flac': 96_000,
+};
+
+function baseAudioMime(mimeType: string | null | undefined): string {
+  return String(mimeType ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Потолок байт записи данного типа — минута по щедрому битрейту, но не
+ * больше общего `GREETING_VOICE_MAX_BYTES`. Им ограничена ссылка на
+ * загрузку (Blob сам не примет больше) и проверка перед распознаванием.
+ * Тип неизвестен — общий потолок.
+ */
+export function greetingVoiceMaxBytesFor(
+  mimeType: string | null | undefined,
+): number {
+  const rate = VOICE_BYTES_PER_SECOND[baseAudioMime(mimeType)];
+  if (!rate) return GREETING_VOICE_MAX_BYTES;
+  return Math.min(
+    GREETING_VOICE_MAX_BYTES,
+    Math.ceil((rate * VOICE_UTTERANCE_MAX_MS) / 1000),
+  );
+}
+
+/**
+ * Длиннее ли запись минуты. Длительность от провайдера (Soniox сообщает
+ * её по звуку) — главный признак; нет её — оценка по размеру и типу.
+ */
+export function greetingVoiceTooLong(input: {
+  bytes: number;
+  mimeType: string | null | undefined;
+  durationMs?: number | null;
+}): boolean {
+  if (typeof input.durationMs === 'number' && input.durationMs > 0) {
+    return input.durationMs > VOICE_UTTERANCE_MAX_MS;
+  }
+  return input.bytes > greetingVoiceMaxBytesFor(input.mimeType);
+}
+
+/**
  * Доля латиницы, начиная с которой ответ на кириллическом языке считается
  * транслитерацией и разбирается повторно (§4А.3, строка «Ответ
  * латиницей»). В DA этого нет вовсе — правило наше.

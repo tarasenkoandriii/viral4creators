@@ -1826,7 +1826,10 @@
     "actionStarted": "Запускаю: {action}.",
     "actionStale": "Это действие сейчас недоступно — сделайте руками.",
     "valueYes": "да",
-    "valueNo": "нет"
+    "valueNo": "нет",
+    "truncated": "Фраза длинная — могла обрезаться, проверьте.",
+    "processingWait": "Договорите после ответа — сейчас я не слушаю.",
+    "tooLong": "Фраза слишком длинная — скажите короче."
   },
   "voiceNav": {
     "here": "Вы уже на шаге «{step}».",
@@ -1882,6 +1885,12 @@
     "saved": "Готово — сохранено.",
     "filledNeedsSave": "Заполнил — нажмите «{button}».",
     "notSaved": "Не сохранилось: {reason}."
+  },
+  "voiceBrief": {
+    "missingCustomOccasion": "скажите, какой именно повод",
+    "missingMood": "ответьте, какое это событие по настроению",
+    "missingRecipient": "назовите получателя",
+    "missingJoin": "; "
   },
   "wizardReadiness": {
     "title": "До готового ролика",

@@ -1826,7 +1826,10 @@
     "actionStarted": "Запускаю: {action}.",
     "actionStale": "Ця дія зараз недоступна — зробіть вручну.",
     "valueYes": "так",
-    "valueNo": "ні"
+    "valueNo": "ні",
+    "truncated": "Фраза довга — могла обрізатися, перевірте.",
+    "processingWait": "Договоріть після відповіді — зараз я не слухаю.",
+    "tooLong": "Фраза задовга — скажіть коротше."
   },
   "voiceNav": {
     "here": "Ви вже на кроці «{step}».",
@@ -1882,6 +1885,12 @@
     "saved": "Готово — збережено.",
     "filledNeedsSave": "Заповнив — натисніть «{button}».",
     "notSaved": "Не збереглося: {reason}."
+  },
+  "voiceBrief": {
+    "missingCustomOccasion": "скажіть, який саме привід",
+    "missingMood": "дайте відповідь, яка це подія за настроєм",
+    "missingRecipient": "назвіть отримувача",
+    "missingJoin": "; "
   },
   "wizardReadiness": {
     "title": "До готового ролика",

@@ -54,6 +54,8 @@ jest.mock('../ab-test/ab-test-worker.service', () => ({
   AbTestWorkerService: class {},
 }));
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   CronJobsService,
   VERCEL_CRON_TRIGGERED_BY,
@@ -333,6 +335,13 @@ function build() {
       .mockResolvedValue({ watched: 2, low: 0, unreadable: 0, notified: 0 }),
   };
 
+  // Уборка необработанных голосовых записей (финальный аудит ветки K).
+  const voiceUploads = {
+    sweepExpired: jest
+      .fn()
+      .mockResolvedValue({ deleted: 0, failed: 0, hasMore: false }),
+  };
+
   const service = new CronJobsService(
     sessionService as never,
     projectService as never,
@@ -361,9 +370,11 @@ function build() {
     portfolioWatermark as never,
     balances as never,
     apiVideo as never,
+    voiceUploads as never,
   );
   return {
     service,
+    voiceUploads,
     library,
     sessionService,
     auctionService,
@@ -929,6 +940,7 @@ describe('CronJobsService — метла идёт до конца курсора
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     return { service, blobService };
   }
@@ -995,6 +1007,7 @@ describe('CronJobsService — метла идёт до конца курсора
       {
         runCleanupTick: jest.fn().mockResolvedValue({ expired: 0, purged: 0 }),
       } as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -1454,5 +1467,55 @@ describe('CronJobsService — аудиокеш голоса советника (
     expect(blobService.deleteMany).toHaveBeenCalledWith([
       'wizard-hint-audio/k.mp3',
     ]);
+  });
+});
+
+describe('CronJobsService — voice-uploads-sweep (финальный аудит ветки K)', () => {
+  it('под замком зовёт уборку записей старше часа и снимает замок', async () => {
+    const { service, voiceUploads, prisma } = build();
+    voiceUploads.sweepExpired.mockResolvedValue({
+      deleted: 3,
+      failed: 0,
+      hasMore: false,
+    });
+    await expect(service.runVoiceUploadsSweep()).resolves.toEqual({
+      deleted: 3,
+      failed: 0,
+      hasMore: false,
+    });
+    expect(voiceUploads.sweepExpired).toHaveBeenCalledTimes(1);
+    expect(prisma.cronJobLock.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ jobKey: 'voice-uploads-sweep' }),
+      }),
+    );
+  });
+
+  it('замок занят — пропуск, уборка не зовётся', async () => {
+    const { service, voiceUploads, prisma } = build();
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+    await expect(service.runVoiceUploadsSweep()).resolves.toEqual({
+      deleted: 0,
+      failed: 0,
+      hasMore: false,
+      skipped: true,
+    });
+    expect(voiceUploads.sweepExpired).not.toHaveBeenCalled();
+  });
+
+  it('расписание — минутами (не реже получаса), а не раз в сутки', () => {
+    const json = JSON.parse(
+      readFileSync(join(__dirname, '..', '..', '..', 'vercel.json'), 'utf8'),
+    ) as { crons: Array<{ path: string; schedule: string }> };
+    const slot = json.crons.find(
+      (c) => c.path === '/api/cron/voice-uploads-sweep',
+    );
+    expect(slot).toBeDefined();
+    const m = /^\*\/(\d+) \* \* \* \*$/.exec(slot!.schedule);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeLessThanOrEqual(30);
   });
 });

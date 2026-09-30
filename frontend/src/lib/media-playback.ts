@@ -123,3 +123,68 @@ export function onMediaPlayingChange(
 ): () => void {
   return page.onChange(cb);
 }
+
+// ── «Микрофон занят» (изменение контракта 5, финальный аудит) ───────────
+
+/**
+ * Микрофон страницы занят другой записью — образцом своего голоса
+ * (`MyVoicesSection`). Помощник на это время ставит прослушивание на
+ * паузу так же, как при воспроизведении: иначе запись образца ушла бы
+ * на платный разбор как реплика, а реплика — в образец.
+ *
+ * Счётчик, а не флаг: две записи подряд (вторая началась, пока первая
+ * дописывалась) не должны снять «занято» первым же отпусканием.
+ */
+export interface MicBusyRegistry {
+  acquire(): () => void;
+  isBusy(): boolean;
+  onChange(cb: (busy: boolean) => void): () => void;
+}
+
+export function createMicBusyRegistry(): MicBusyRegistry {
+  let holders = 0;
+  const listeners = new Set<(busy: boolean) => void>();
+  const notify = (): void => {
+    const busy = holders > 0;
+    for (const cb of [...listeners]) cb(busy);
+  };
+  return {
+    acquire() {
+      holders += 1;
+      if (holders === 1) notify();
+      let released = false;
+      // Повторный вызов того же `release` (эффект и `finally` оба
+      // отпускают) не должен отпустить чужой захват.
+      return () => {
+        if (released) return;
+        released = true;
+        holders -= 1;
+        if (holders === 0) notify();
+      };
+    },
+    isBusy: () => holders > 0,
+    onChange(cb) {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
+    },
+  };
+}
+
+const mic = createMicBusyRegistry();
+
+/** Взять микрофон страницы; вернёт отпускание (повтор безвреден). */
+export function acquireMicBusy(): () => void {
+  return mic.acquire();
+}
+
+/** Занят ли микрофон другой записью. */
+export function isMicBusy(): boolean {
+  return mic.isBusy();
+}
+
+/** Подписка на «занят / свободен»; вернёт отписку. */
+export function onMicBusyChange(cb: (busy: boolean) => void): () => void {
+  return mic.onChange(cb);
+}

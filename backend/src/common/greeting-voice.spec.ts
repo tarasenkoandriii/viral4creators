@@ -6,6 +6,9 @@ import {
   latinShare,
   needsScriptRetry,
   stripNonSpeech,
+  VOICE_UTTERANCE_MAX_MS,
+  greetingVoiceMaxBytesFor,
+  greetingVoiceTooLong,
   voiceLanguageHints,
 } from './greeting-voice';
 
@@ -145,4 +148,64 @@ it('потолок реплики заметно ниже потолка дик�
   // 15 МБ — описание товара; реплика мастера — команда или значение поля.
   expect(GREETING_VOICE_MAX_BYTES).toBeLessThan(15 * 1024 * 1024);
   expect(GREETING_VOICE_MAX_BYTES).toBeGreaterThan(0);
+});
+
+// Финальный аудит ветки K (30.09.2026), изменение контракта 4.
+
+describe('потолок реплики — минута', () => {
+  it('байты по типу: минута по щедрому битрейту, не больше общего потолка', () => {
+    expect(VOICE_UTTERANCE_MAX_MS).toBe(60_000);
+    // opus 192 кбит/с, AAC 256 кбит/с, mp3 320 кбит/с — ровно минута.
+    expect(greetingVoiceMaxBytesFor('audio/webm')).toBe(1_440_000);
+    expect(greetingVoiceMaxBytesFor('audio/webm;codecs=opus')).toBe(1_440_000);
+    expect(greetingVoiceMaxBytesFor('AUDIO/OGG; codecs=opus')).toBe(1_440_000);
+    expect(greetingVoiceMaxBytesFor('audio/mp4')).toBe(1_920_000);
+    expect(greetingVoiceMaxBytesFor('audio/x-m4a')).toBe(1_920_000);
+    expect(greetingVoiceMaxBytesFor('audio/mpeg')).toBe(2_400_000);
+    // Несжатое упирается в общий потолок раньше минуты; неизвестное — он же.
+    expect(greetingVoiceMaxBytesFor('audio/wav')).toBe(
+      GREETING_VOICE_MAX_BYTES,
+    );
+    expect(greetingVoiceMaxBytesFor('audio/x-unknown')).toBe(
+      GREETING_VOICE_MAX_BYTES,
+    );
+    expect(greetingVoiceMaxBytesFor(null)).toBe(GREETING_VOICE_MAX_BYTES);
+  });
+
+  it('длительность от провайдера главнее оценки по размеру', () => {
+    const big = greetingVoiceMaxBytesFor('audio/webm') + 1;
+    expect(
+      greetingVoiceTooLong({
+        bytes: 10,
+        mimeType: 'audio/webm',
+        durationMs: 60_001,
+      }),
+    ).toBe(true);
+    expect(
+      greetingVoiceTooLong({
+        bytes: 10,
+        mimeType: 'audio/webm',
+        durationMs: 60_000,
+      }),
+    ).toBe(false);
+    // Длительность есть — тяжёлая по байтам, но короткая запись проходит.
+    expect(
+      greetingVoiceTooLong({
+        bytes: big,
+        mimeType: 'audio/webm',
+        durationMs: 5_000,
+      }),
+    ).toBe(false);
+    // Нет длительности (или мусор) — оценка по размеру и типу.
+    expect(greetingVoiceTooLong({ bytes: big, mimeType: 'audio/webm' })).toBe(
+      true,
+    );
+    expect(
+      greetingVoiceTooLong({
+        bytes: big - 1,
+        mimeType: 'audio/webm',
+        durationMs: 0,
+      }),
+    ).toBe(false);
+  });
 });

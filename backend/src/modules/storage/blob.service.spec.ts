@@ -139,3 +139,15 @@ describe('BlobService.listByPrefix — курсор наружу', () => {
     expect((await service.listByPrefix('sessions/')).cursor).toBeNull();
   });
 });
+
+describe('BlobService.deleteBlob — говорит, удалось ли (финальный аудит ветки K)', () => {
+  it('удалено — true; хранилище отказало — false, но не бросает', async () => {
+    await expect(service.deleteBlob('sessions/s1/voice-1.webm')).resolves.toBe(
+      true,
+    );
+    mockedDel.mockRejectedValueOnce(new Error('token expired'));
+    await expect(service.deleteBlob('sessions/s1/voice-2.webm')).resolves.toBe(
+      false,
+    );
+  });
+});

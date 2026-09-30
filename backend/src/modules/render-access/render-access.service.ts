@@ -37,6 +37,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PlanService } from '../plan/plan.service';
 import { CreditLedgerService } from '../credit-ledger/credit-ledger.service';
 import { hasRenderRight, wallEnabled } from '../../common/free-tier';
+import { renderPathOf } from '../../common/render-charge';
 
 /**
  * Код отказа — читает клиент, чтобы нарисовать стену, а не общую
@@ -109,9 +110,20 @@ export class RenderAccessService {
     const batch = opts.mode === 'batch';
     const creditsAllowed = !batch;
 
+    // Путь выбирает чистая `renderPathOf` (common/render-charge.ts) — та
+    // же, по которой клиент называет цену перед согласием голосом (K7).
+    // Право читается из базы только там, где оно что-то решает: стена
+    // включена и владелец есть.
+    const wallOn = wallEnabled();
+    const path = renderPathOf({
+      wallEnabled: wallOn,
+      signedIn: !!userId,
+      hasRight: wallOn && !!userId ? await this.hasRight(userId) : false,
+    });
+
     // Рубильник выключен — ведём себя ровно как до этапа 132: кредит,
     // если он есть, иначе суточный потолок. Ни одного нового отказа.
-    if (!wallEnabled()) {
+    if (path === 'credit-or-limit') {
       const usedCredit = creditsAllowed
         ? await this.credits.reserveForGeneration(userId, generatedVideoId)
         : false;
@@ -127,9 +139,9 @@ export class RenderAccessService {
     // начисляют без identity). Отказываем стеной, а не суточным
     // лимитом: «попробуйте завтра» там, где нужно «войдите», — худший
     // из возможных ответов.
-    if (!userId) throw new GenerationLockedException();
+    if (path === 'wall' || !userId) throw new GenerationLockedException();
 
-    if (await this.hasRight(userId)) {
+    if (path === 'limit') {
       if (!batch) {
         await this.plans.assertCanSpendUser(userId, {
           projectId: opts.projectId ?? null,

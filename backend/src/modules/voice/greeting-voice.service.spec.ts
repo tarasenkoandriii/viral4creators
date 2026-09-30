@@ -8,7 +8,14 @@ import {
   greetingVoicePathname,
   settleGreetingVoice,
 } from './greeting-voice.service';
-import { GREETING_VOICE_MAX_BYTES } from '../../common/greeting-voice';
+import {
+  VOICE_UTTERANCE_MAX_MS,
+  greetingVoiceMaxBytesFor,
+} from '../../common/greeting-voice';
+import {
+  AUDIO_TOO_LONG_REASON,
+  FALLBACK_REFUSED_REASON,
+} from './voice-transcription.service';
 
 const mockedHead = head as jest.MockedFunction<typeof head>;
 const SID = 'sess-1';
@@ -30,7 +37,11 @@ function greetingSession(over: Record<string, unknown> = {}) {
 function build(
   opts: {
     session?: unknown;
-    replies?: Array<{ text: string | null; reason?: string }>;
+    replies?: Array<{
+      text: string | null;
+      reason?: string;
+      durationMs?: number | null;
+    }>;
     audio?: Buffer;
     spendRefused?: boolean;
     voiceRefused?: boolean;
@@ -48,7 +59,7 @@ function build(
     downloadBuffer: jest
       .fn()
       .mockResolvedValue(opts.audio ?? Buffer.from('opus')),
-    deleteBlob: jest.fn().mockResolvedValue(undefined),
+    deleteBlob: jest.fn().mockResolvedValue(true),
   };
   const replies = [...(opts.replies ?? [{ text: 'серьёзнее' }])];
   const transcription = {
@@ -66,6 +77,10 @@ function build(
       ? jest.fn().mockRejectedValue(new Error('потолок голоса'))
       : jest.fn().mockResolvedValue(undefined),
   };
+  const voiceUploads = {
+    remember: jest.fn().mockResolvedValue(undefined),
+    forget: jest.fn().mockResolvedValue(undefined),
+  };
   mockedHead.mockResolvedValue({ contentType: 'audio/webm' } as any);
   const service = new GreetingVoiceService(
     sessions as any,
@@ -73,8 +88,17 @@ function build(
     transcription as any,
     plans as any,
     voiceBudget as any,
+    voiceUploads as any,
   );
-  return { service, sessions, blob, transcription, plans, voiceBudget };
+  return {
+    service,
+    sessions,
+    blob,
+    transcription,
+    plans,
+    voiceBudget,
+    voiceUploads,
+  };
 }
 
 describe('settleGreetingVoice — ветвление итога без сети', () => {
@@ -155,8 +179,32 @@ describe('GreetingVoiceService', () => {
     expect(blob.createUploadUrl).toHaveBeenCalledWith(
       r.pathname,
       'audio/webm',
-      GREETING_VOICE_MAX_BYTES,
+      greetingVoiceMaxBytesFor('audio/webm'),
     );
+  });
+
+  it('upload-url: путь учтён до выдачи ссылки; запись длиннее минуты по размеру типа — 400', async () => {
+    const { service, blob, voiceUploads } = build();
+    const r = await service.createUploadUrl(SID, {
+      fileName: 'a',
+      fileSize: 10,
+      mimeType: 'audio/ogg;codecs=opus',
+    });
+    expect(voiceUploads.remember).toHaveBeenCalledWith(r.pathname);
+    expect(voiceUploads.remember.mock.invocationCallOrder[0]).toBeLessThan(
+      blob.createUploadUrl.mock.invocationCallOrder[0],
+    );
+    blob.createUploadUrl.mockClear();
+    voiceUploads.remember.mockClear();
+    await expect(
+      service.createUploadUrl(SID, {
+        fileName: 'a',
+        fileSize: greetingVoiceMaxBytesFor('audio/webm') + 1,
+        mimeType: 'audio/webm',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(blob.createUploadUrl).not.toHaveBeenCalled();
+    expect(voiceUploads.remember).not.toHaveBeenCalled();
   });
 
   it('чужой pathname — отказ до всякого платного вызова', async () => {
@@ -260,15 +308,59 @@ describe('GreetingVoiceService', () => {
     expect(blob.deleteBlob).toHaveBeenCalledWith(PATH);
   });
 
-  it('запись длиннее реплики — отказ без вызова модели, запись удалена', async () => {
-    const { service, blob, transcription } = build({
-      audio: Buffer.alloc(GREETING_VOICE_MAX_BYTES + 1),
+  it('запись длиннее минуты по размеру типа — too-long без вызова модели, запись и строка удалены', async () => {
+    const { service, blob, transcription, voiceUploads } = build({
+      audio: Buffer.alloc(greetingVoiceMaxBytesFor('audio/webm') + 1),
     });
-    await expect(
-      service.transcribe(SID, { pathname: PATH }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    const r = await service.transcribe(SID, { pathname: PATH });
+    expect(r).toMatchObject({
+      status: 'unavailable',
+      text: null,
+      reason: 'too-long',
+    });
     expect(transcription.recognize).not.toHaveBeenCalled();
     expect(blob.deleteBlob).toHaveBeenCalledWith(PATH);
+    expect(voiceUploads.forget).toHaveBeenCalledWith(PATH);
+  });
+
+  it('удаление записи не удалось — строка учёта остаётся для крона', async () => {
+    const { service, blob, voiceUploads } = build();
+    blob.deleteBlob.mockResolvedValue(false);
+    await service.transcribe(SID, { pathname: PATH });
+    expect(blob.deleteBlob).toHaveBeenCalledWith(PATH);
+    expect(voiceUploads.forget).not.toHaveBeenCalled();
+  });
+
+  it('ровно на потолке типа — распознаётся (граница не сдвинута)', async () => {
+    const { service, transcription } = build({
+      audio: Buffer.alloc(greetingVoiceMaxBytesFor('audio/webm')),
+    });
+    const r = await service.transcribe(SID, { pathname: PATH });
+    expect(r.status).toBe('ok');
+    expect(transcription.recognize).toHaveBeenCalled();
+  });
+
+  it('длительность от провайдера больше минуты — too-long; потолок и вход пробрасываются в recognize', async () => {
+    const { service, transcription } = build({
+      replies: [
+        { text: null, reason: AUDIO_TOO_LONG_REASON, durationMs: 61_000 },
+      ],
+    });
+    const canSpendAgain = jest.fn().mockResolvedValue(true);
+    const r = await service.transcribe(SID, { pathname: PATH }, canSpendAgain);
+    expect(r).toMatchObject({ status: 'unavailable', reason: 'too-long' });
+    const opts = transcription.recognize.mock.calls[0][2];
+    expect(opts.maxDurationMs).toBe(VOICE_UTTERANCE_MAX_MS);
+    // Запасной путь после сбоя Soniox спрашивает тот же вход, что повтор.
+    expect(opts.canFallback).toBe(canSpendAgain);
+  });
+
+  it('запасной путь не пущен потолком — «недоступно», не «не расслышал»', async () => {
+    const { service } = build({
+      replies: [{ text: null, reason: FALLBACK_REFUSED_REASON }],
+    });
+    const r = await service.transcribe(SID, { pathname: PATH });
+    expect(r.status).toBe('unavailable');
   });
 
   it('язык речи от провайдера доезжает до ответа — из ПЕРВОЙ попытки', async () => {

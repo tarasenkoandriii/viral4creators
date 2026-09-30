@@ -177,16 +177,23 @@ export class BlobService {
    * строки в логах, транзитные видео копились, и заметить это могла бы
    * только метла. `deleteMany` рядом в такой же ситуации пишет warn —
    * теперь одиночное удаление ведёт себя так же.
+   *
+   * Возвращает, удалось ли (финальный аудит ветки K): голосовая запись
+   * снимает строку учёта `VoiceUpload` только после настоящего удаления —
+   * иначе крон `voice-uploads-sweep` не повторил бы попытку. Остальным
+   * вызывающим результат не нужен, и они его не читают.
    */
-  async deleteBlob(pathname: string): Promise<void> {
+  async deleteBlob(pathname: string): Promise<boolean> {
     try {
       await del(pathname);
+      return true;
     } catch (error) {
       this.logger.warn(
         `не удалось удалить ${pathname}: ${
           error instanceof Error ? error.message : String(error)
         } — файл подберёт метла (sweep-orphans), если он под её префиксом`,
       );
+      return false;
     }
   }
 

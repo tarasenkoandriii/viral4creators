@@ -59,13 +59,11 @@ import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 import { SupportedLocale } from '../../common/locale';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
-import {
-  GREETING_VOICE_MAX_BYTES,
-  voiceLanguageHints,
-} from '../../common/greeting-voice';
+import { voiceLanguageHints } from '../../common/greeting-voice';
 import {
   REPLIES,
   VoiceBriefState,
+  VoiceReason,
   VoiceSessionState,
   VoiceUnderstandContext,
   VoiceUnderstandResult,
@@ -73,6 +71,7 @@ import {
   briefStateFromSnapshot,
   buildUnderstandPrompt,
   normalizeModelAnswer,
+  overlayCurrentBrief,
   quickPendingAnswer,
   quickNavigationAnswer,
   replyLocaleOf,
@@ -107,9 +106,15 @@ import { GreetingStickerService } from '../greeting-sticker/greeting-sticker.ser
 import { GreetingScenesService } from '../greeting-scenes/greeting-scenes.service';
 import { WizardGuideService } from '../wizard-guide/wizard-guide.service';
 import { planAllows } from '../../common/plans';
-import { GreetingVoiceService } from './greeting-voice.service';
+import {
+  GreetingVoiceResult,
+  GreetingVoiceService,
+  assertGreetingVoiceSize,
+} from './greeting-voice.service';
+import { VoiceUploadService } from '../voice-upload/voice-upload.service';
 import { audioExtension, VoiceUploadUrl } from './voice.service';
 import {
+  GreetingVoiceTranscribeRequestDto,
   GreetingVoiceUnderstandRequestDto,
   GreetingVoiceUploadUrlRequestDto,
   ProjectGreetingVoiceUnderstandRequestDto,
@@ -120,6 +125,29 @@ import {
  * советник выключен оператором.
  */
 type VoiceRefusal = 'voice-cap' | 'account-limit' | 'login' | 'operator-off';
+
+/**
+ * Причина в ответе (изменение контракта 2 финального аудита): клиент по
+ * ней решает, слушать ли дальше. Потолок голоса причины не получает — у
+ * него свой статус `budget-exhausted`.
+ */
+const REASON_OF: Readonly<Record<VoiceRefusal, VoiceReason | null>> = {
+  'voice-cap': null,
+  'account-limit': 'account-limit',
+  login: 'login-required',
+  'operator-off': 'operator-off',
+};
+
+/** Исключение потолка → причина отказа; прочее — `null` (наружу как есть). */
+function refusalOf(e: unknown): VoiceRefusal | null {
+  if (e instanceof VoiceBudgetExhaustedException) return 'voice-cap';
+  if (e instanceof VoiceLoginRequiredException) return 'login';
+  if (e instanceof DailySpendLimitExceededException) return 'account-limit';
+  return null;
+}
+
+/** Что нужно входу (`gate`): чей расход и общий лимит. */
+type GateInput = Pick<RunInput, 'userId' | 'assertPlanSpend'>;
 
 /** Ключ записи брифа до сессии: в префиксе проекта и с отметкой времени. Экспорт — для тестов. */
 export function projectGreetingVoicePathname(
@@ -204,6 +232,7 @@ export class GreetingVoiceUnderstandService {
     private readonly stickers: GreetingStickerService,
     private readonly scenes: GreetingScenesService,
     private readonly guide: WizardGuideService,
+    private readonly voiceUploads: VoiceUploadService,
   ) {
     this.genai = geminiApiKey() ? createGeminiClient() : null;
   }
@@ -216,11 +245,16 @@ export class GreetingVoiceUnderstandService {
     dto: GreetingVoiceUploadUrlRequestDto,
   ): Promise<VoiceUploadUrl> {
     await this.loadProjectBrief(userId, projectId);
+    // Потолок байт — по типу записи (минута, изменение контракта 4).
+    const maxBytes = assertGreetingVoiceSize(dto);
     const pathname = projectGreetingVoicePathname(projectId, dto.mimeType);
+    // Учёт выданного пути — до ссылки: необработанную запись удалит крон
+    // `voice-uploads-sweep` в пределах часа (финальный аудит ветки K).
+    await this.voiceUploads.remember(pathname);
     const { uploadUrl } = await this.blobService.createUploadUrl(
       pathname,
       dto.mimeType,
-      GREETING_VOICE_MAX_BYTES,
+      maxBytes,
     );
     return { uploadUrl, pathname };
   }
@@ -240,7 +274,9 @@ export class GreetingVoiceUnderstandService {
       pathname: dto.pathname,
       screen: dto.screen,
       pending: dto.pending ?? null,
-      brief: briefStateFromRow(row),
+      // Значения на экране поверх сохранённого — только для проверки и
+      // модели (изменение контракта 1); ничего не сохраняется.
+      brief: overlayCurrentBrief(briefStateFromRow(row), dto.current),
       scope: 'project',
       hasScript: false,
       uiLocale,
@@ -268,7 +304,10 @@ export class GreetingVoiceUnderstandService {
       pathname: dto.pathname,
       screen: dto.screen,
       pending: dto.pending ?? null,
-      brief: briefStateFromSnapshot(session.greetingBriefSnapshot!),
+      brief: overlayCurrentBrief(
+        briefStateFromSnapshot(session.greetingBriefSnapshot!),
+        dto.current,
+      ),
       scope: 'session',
       hasScript: !!session.generationPrompt,
       uiLocale,
@@ -278,6 +317,67 @@ export class GreetingVoiceUnderstandService {
       assertPlanSpend: () => this.plans.assertCanSpendSession(sessionId),
       sessionState: () => this.sessionState(session),
     });
+  }
+
+  /**
+   * `POST /sessions/:sessionId/voice/transcribe` (K2) — за тем же входом,
+   * что разбор (финальный аудит ветки K): выключатель оператора и
+   * потолки до платного вызова, и они же — перед повтором и запасным
+   * путём. Клиент мастера этим маршрутом больше не пользуется, но маршрут
+   * жив, и обходить выключатель через него было нельзя.
+   */
+  async transcribeForSession(
+    sessionId: string,
+    dto: GreetingVoiceTranscribeRequestDto,
+  ): Promise<GreetingVoiceResult> {
+    const session = await this.loadSession(sessionId);
+    const prefix = `sessions/${sessionId}/`;
+    if (!dto.pathname.startsWith(prefix)) {
+      throw new BadRequestException(`pathname должен начинаться с «${prefix}»`);
+    }
+    const input: GateInput = {
+      userId: session.userId ?? null,
+      assertPlanSpend: () => this.plans.assertCanSpendSession(sessionId),
+    };
+    // Подсказки языка — те же, что уйдут распознаванию: ответ отказа
+    // честно говорит, с какими языками слушали бы.
+    const snapshot = session.greetingBriefSnapshot!;
+    const hints = voiceLanguageHints(snapshot.scriptLanguage, session.locale);
+    const refusedWith = (why: VoiceRefusal): GreetingVoiceResult => ({
+      status: why === 'voice-cap' ? 'budget-exhausted' : 'unavailable',
+      text: null,
+      scriptMismatch: false,
+      hints,
+      language: null,
+      reason: REASON_OF[why],
+    });
+    try {
+      const refusal = await this.gate(input);
+      if (refusal) return refusedWith(refusal);
+      try {
+        return await this.greetingVoice.transcribe(sessionId, dto, () =>
+          this.gate(input).then(
+            (r) => r === null,
+            () => false,
+          ),
+        );
+      } catch (e) {
+        // Внутри расшифровки потолки проверяются ещё раз (K2), и между
+        // двумя проверками лимит мог кончиться: тот же ответ, что у
+        // входа, а не 403.
+        const why = refusalOf(e);
+        if (why) return refusedWith(why);
+        throw e;
+      }
+    } finally {
+      // Отказ входа тоже обязан убрать запись; после расшифровки она уже
+      // удалена — повтор безвреден.
+      // Строка учёта снимается только после настоящего удаления: не
+      // удалилось — крон `voice-uploads-sweep` повторит (аудит после раунда).
+      if (await this.blobService.deleteBlob(dto.pathname)) {
+        await this.voiceUploads.forget(dto.pathname);
+      }
+    }
   }
 
   // ── Общий путь ────────────────────────────────────────────────────────
@@ -312,6 +412,27 @@ export class GreetingVoiceUnderstandService {
         language,
         scriptMismatch: recognized.scriptMismatch,
       };
+
+      // Длиннее минуты (изменение контракта 4) — без платного разбора;
+      // клиент показывает реплику и слушает дальше.
+      if (recognized.reason === 'too-long') {
+        return {
+          ...base,
+          status: 'unavailable',
+          transcript: null,
+          intent: null,
+          confidence: 0,
+          reply: t.transcriptTooLong,
+          reason: 'too-long',
+        };
+      }
+      // Недоступно — возможно, не провайдер, а вход: запасной путь после
+      // сбоя Soniox не пущен потолком, или выключатель щёлкнул между
+      // вызовами. Тогда ответ — причиной входа, а не «недоступно».
+      if (recognized.status === 'unavailable') {
+        const why = await this.gate(input).catch(() => null);
+        if (why) return this.refused(why, input.uiLocale, null, language);
+      }
 
       if (recognized.status !== 'ok' || !recognized.text) {
         return {
@@ -418,7 +539,11 @@ export class GreetingVoiceUnderstandService {
     } finally {
       // Транзитная копия — не храним ни при каком исходе. С `await`: на
       // Vercel работа, не дождавшаяся ответа, может не выполниться вовсе.
-      await this.blobService.deleteBlob(input.pathname);
+      // Строка учёта снимается только после настоящего удаления: не
+      // удалилось — крон `voice-uploads-sweep` повторит (аудит после раунда).
+      if (await this.blobService.deleteBlob(input.pathname)) {
+        await this.voiceUploads.forget(input.pathname);
+      }
     }
   }
 
@@ -426,7 +551,7 @@ export class GreetingVoiceUnderstandService {
    * Можно ли тратить на голос: `null` — да, иначе причина отказа.
    * Блокировка оператором и прочие отказы — наружу как есть (403).
    */
-  private async gate(input: RunInput): Promise<VoiceRefusal | null> {
+  private async gate(input: GateInput): Promise<VoiceRefusal | null> {
     // Выключатель оператора (аудит волны K, B2): голосовой помощник —
     // канал советника, и тот же переключатель, что гасит подсказки и их
     // озвучку (`hint-audio`), гасит и разбор реплик — до любого платного
@@ -438,9 +563,8 @@ export class GreetingVoiceUnderstandService {
       await this.voiceBudget.assertCanSpendVoice(input.userId);
       return null;
     } catch (e) {
-      if (e instanceof VoiceBudgetExhaustedException) return 'voice-cap';
-      if (e instanceof VoiceLoginRequiredException) return 'login';
-      if (e instanceof DailySpendLimitExceededException) return 'account-limit';
+      const why = refusalOf(e);
+      if (why) return why;
       throw e;
     }
   }
@@ -470,6 +594,7 @@ export class GreetingVoiceUnderstandService {
               ? t.unavailable
               : t.accountLimit,
       scriptMismatch: false,
+      reason: REASON_OF[why],
     };
   }
 

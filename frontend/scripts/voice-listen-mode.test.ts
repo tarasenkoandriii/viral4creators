@@ -10,6 +10,7 @@ import {
   isCurrentUtterance,
   listenReducer,
   micOpen,
+  watchPageHidden,
   type ListenEvent,
   type ListenState,
 } from '../src/lib/voice-listen-mode';
@@ -227,6 +228,75 @@ check('потолок делает ответ в полёте устаревши
   const s = run([{ type: 'hold-start' }, { type: 'hold-end', keep: true }]);
   const b = listenReducer(s, { type: 'budget-exhausted' });
   eq(isCurrentUtterance(b, s.seq), false);
+});
+
+/** Цель событий: слушатели по типу, `fire` — как браузер. */
+class FakeTarget {
+  private readonly ls = new Map<string, Set<() => void>>();
+  visibilityState = 'visible';
+  addEventListener(t: string, l: () => void) {
+    if (!this.ls.has(t)) this.ls.set(t, new Set());
+    this.ls.get(t)!.add(l);
+  }
+  removeEventListener(t: string, l: () => void) {
+    this.ls.get(t)?.delete(l);
+  }
+  onEvent(t: string, l: () => void) {
+    this.addEventListener(t, l);
+  }
+  offEvent(t: string, l: () => void) {
+    this.removeEventListener(t, l);
+  }
+  fire(t: string) {
+    for (const l of [...(this.ls.get(t) ?? [])]) l();
+  }
+  count() {
+    let n = 0;
+    for (const s of this.ls.values()) n += s.size;
+    return n;
+  }
+}
+
+check('микрофон гаснет: pagehide, скрытая вкладка, свёрнутый Telegram', () => {
+  const win = new FakeTarget();
+  const doc = new FakeTarget();
+  const tg = new FakeTarget();
+  let released = 0;
+  const off = watchPageHidden(
+    { window: win, document: doc, telegram: tg },
+    () => released++
+  );
+  // Видимая вкладка сменила видимость на видимую — не уход.
+  doc.fire('visibilitychange');
+  eq(released, 0);
+  doc.visibilityState = 'hidden';
+  doc.fire('visibilitychange');
+  win.fire('pagehide');
+  tg.fire('deactivated');
+  eq(released, 3);
+  off();
+  eq([win.count(), doc.count(), tg.count()], [0, 0, 0]);
+  win.fire('pagehide');
+  eq(released, 3);
+  // Вне Telegram — только окно и документ.
+  const off2 = watchPageHidden(
+    { window: win, document: doc, telegram: null },
+    () => released++
+  );
+  win.fire('pagehide');
+  eq(released, 4);
+  off2();
+});
+
+check('потолок снят сменой тарифа — к кнопке, не сразу слушать', () => {
+  const b = listenReducer(LISTEN_INITIAL, { type: 'budget-exhausted' });
+  const u = listenReducer(b, { type: 'unblock' });
+  eq([u.phase, u.resumeTo, u.notice], ['off', 'off', null]);
+  // Устаревший ответ до снятия не оживёт.
+  eq(u.seq > b.seq, true);
+  // Не заблокирован — ничего не меняется.
+  const on = listenReducer(LISTEN_INITIAL, { type: 'enable' });
+  eq(listenReducer(on, { type: 'unblock' }), on);
 });
 
 console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);

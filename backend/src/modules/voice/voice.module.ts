@@ -9,6 +9,7 @@ import { SonioxSttClient } from './soniox-stt.client';
 import { GreetingVoiceUnderstandService } from './greeting-voice-understand.service';
 import { ProjectGreetingVoiceController } from './project-greeting-voice.controller';
 import { VoiceBudgetModule } from '../voice-budget/voice-budget.module';
+import { VoiceUploadModule } from '../voice-upload/voice-upload.module';
 import { GreetingVoiceModule } from '../greeting-voice/greeting-voice.module';
 import { GreetingMusicModule } from '../greeting-music/greeting-music.module';
 import { GreetingCardsModule } from '../greeting-cards/greeting-cards.module';
@@ -38,6 +39,9 @@ import { PlatformSettingsService } from '../../common/platform-settings.service'
   // ТЕХ ЖЕ представлений, что они отдают экрану.
   imports: [
     StorageModule,
+    // Учёт выданных ссылок на запись — крон удаляет необработанные в
+    // пределах часа (финальный аудит ветки K).
+    VoiceUploadModule,
     VoiceBudgetModule,
     GreetingVoiceModule,
     GreetingMusicModule,

@@ -245,73 +245,29 @@ check('дата — только настоящий ISO', () => {
 
 // ── Команды тона ───────────────────────────────────────────────────────
 
-check('«серьёзнее» — на ступень к ближайшему допустимому', () => {
-  eq(
-    toneForCommand('tone-serious', 'FUNNY', policy, 'BIRTHDAY', 'CELEBRATORY'),
-    { tone: 'WARM' }
-  );
-  // У дня рождения нет «поддерживающего» — шаг через него к официальному.
-  eq(
-    toneForCommand('tone-serious', 'WARM', policy, 'BIRTHDAY', 'CELEBRATORY'),
-    { tone: 'FORMAL' }
-  );
+check('без args.tone — «пока руками»: своей шкалы у клиента нет', () => {
+  for (const c of ['tone-serious', 'tone-lighter', 'no-jokes'] as const) {
+    eq(toneForCommand(c, 'FUNNY', policy, 'BIRTHDAY', 'CELEBRATORY'), {
+      refusal: 'manual',
+    });
+  }
 });
 
-check('«легче» на соболезновании — отказ «недоступно», а не молчание', () => {
-  eq(
-    toneForCommand(
-      'tone-lighter',
-      'SUPPORTIVE',
-      policy,
-      'CONDOLENCE',
-      'MOURNING'
-    ),
-    { refusal: 'unavailable' }
-  );
-  eq(
-    toneForCommand(
-      'tone-lighter',
-      'RESPECTFUL',
-      policy,
-      'CONDOLENCE',
-      'MOURNING'
-    ),
-    { tone: 'SUPPORTIVE' }
-  );
-});
-
-check('край шкалы — «уже»', () => {
+check('args.tone не из списка — тоже «пока руками», а не догадка', () => {
   eq(
     toneForCommand(
       'tone-serious',
-      'RESPECTFUL',
+      'FUNNY',
       policy,
-      'CONDOLENCE',
-      'MOURNING'
+      'BIRTHDAY',
+      'CELEBRATORY',
+      'SERIOUS'
     ),
-    {
-      refusal: 'already',
-    }
-  );
-  eq(
-    toneForCommand('tone-lighter', 'FUNNY', policy, 'BIRTHDAY', 'CELEBRATORY'),
-    {
-      refusal: 'already',
-    }
+    { refusal: 'manual' }
   );
 });
 
-check('«без шуток»: у шуточного — серьёзнее, у остальных — «и так нет»', () => {
-  eq(toneForCommand('no-jokes', 'FUNNY', policy, 'BIRTHDAY', 'CELEBRATORY'), {
-    tone: 'WARM',
-  });
-  eq(toneForCommand('no-jokes', 'FORMAL', policy, 'BIRTHDAY', 'CELEBRATORY'), {
-    refusal: 'already',
-  });
-});
-
-check('тон из args сервера важнее своей шкалы', () => {
-  // Своя шкала от «тёплого» дала бы «официальный»; сервер назвал другой.
+check('тон из args сервера — применяется, если допустим', () => {
   eq(
     toneForCommand(
       'tone-serious',
@@ -326,13 +282,13 @@ check('тон из args сервера важнее своей шкалы', () =
   eq(
     toneForCommand(
       'tone-lighter',
-      'FORMAL',
+      'RESPECTFUL',
       policy,
-      'BIRTHDAY',
-      'CELEBRATORY',
-      'WARM'
+      'CONDOLENCE',
+      'MOURNING',
+      'SUPPORTIVE'
     ),
-    { tone: 'WARM' }
+    { tone: 'SUPPORTIVE' }
   );
 });
 
@@ -364,20 +320,6 @@ check(
     );
   }
 );
-
-check('args.tone не из списка — запасная шкала', () => {
-  eq(
-    toneForCommand(
-      'tone-serious',
-      'FUNNY',
-      policy,
-      'BIRTHDAY',
-      'CELEBRATORY',
-      'SERIOUS'
-    ),
-    { tone: 'WARM' }
-  );
-});
 
 console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);
 if (failed) process.exit(1);

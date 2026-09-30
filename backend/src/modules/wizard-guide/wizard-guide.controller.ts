@@ -4,7 +4,7 @@
  *   GET   /projects/:projectId/wizard-guide
  *   PATCH /projects/:projectId/wizard-guide
  *   POST  /projects/:projectId/wizard-guide/hint
- *   GET   /projects/:projectId/wizard-guide/hint-audio?key=&lang=
+ *   POST  /projects/:projectId/wizard-guide/hint-audio  { key }
  *
  * Та же конвенция, что у `GreetingBriefController`: `projectId` в пути,
  * `TelegramIdentityGuard` опознаёт звонящего, владение проверяет сервис.
@@ -23,7 +23,6 @@ import {
   Param,
   Patch,
   Post,
-  Query,
   Req,
   Res,
   UseGuards,
@@ -79,8 +78,11 @@ export class SetWizardGuideDto {
   voice?: boolean;
 }
 
-/** Запрос озвучки подсказки (ТЗ Greeting 2.0 §4А.4, K1). */
-export class HintAudioQueryDto {
+/**
+ * Запрос озвучки подсказки (ТЗ Greeting 2.0 §4А.4, K1) — тело `POST`
+ * (финальный аудит ветки K, изменение контракта 3).
+ */
+export class HintAudioRequestDto {
   /** Ключ кеша подсказки — тот, что пришёл с самой подсказкой. */
   @IsString()
   @MaxLength(500)
@@ -192,9 +194,12 @@ export class WizardGuideController {
   @Post('hint')
   @HttpCode(200)
   @UseGuards(RateLimitGuard)
+  // По человеку (финальный аудит ветки K): за одним адресом в мини-аппе
+  // сидит весь оператор связи, и окно по адресу делили бы чужие люди.
+  // Анонимного здесь нет — маршрут под `TelegramIdentityGuard`.
   @RateLimit([
-    { name: 'wizard-hint', limit: 20, windowSec: 60 },
-    { name: 'wizard-hint-hour', limit: 120, windowSec: 3600 },
+    { name: 'wizard-hint', limit: 20, windowSec: 60, by: 'user' },
+    { name: 'wizard-hint-hour', limit: 120, windowSec: 3600, by: 'user' },
   ])
   hint(
     @Req() req: IdentifiedRequest,
@@ -218,20 +223,30 @@ export class WizardGuideController {
    * потолок голоса этого человека (В-14), о чём помощник говорит один
    * раз. Почему причина в теле, а не в заголовке, — у `HintAudioResult`.
    *
-   * `GET`, хотя первый вызов платный: повтор идемпотентен ровно как
-   * кеш — второй раз тот же файл, без синтеза. Лимит частоты — как у
-   * подсказки: озвучка бывает не чаще самой подсказки.
+   * `POST` с ключом в теле (финальный аудит ветки K, изменение
+   * контракта 3): первый вызов платный, а `GET` с ключом в строке
+   * запроса мог повторить предзагрузчик, кеш или прокси — и ключ
+   * подсказки оседал бы в журналах доступа. Ответ по-прежнему
+   * идемпотентен ровно как кеш: второй раз тот же файл, без синтеза.
+   * Лимит частоты — как у подсказки (озвучка бывает не чаще самой
+   * подсказки) и так же по человеку.
    */
-  @Get('hint-audio')
+  @Post('hint-audio')
+  @HttpCode(200)
   @UseGuards(RateLimitGuard)
   @RateLimit([
-    { name: 'wizard-hint-audio', limit: 20, windowSec: 60 },
-    { name: 'wizard-hint-audio-hour', limit: 120, windowSec: 3600 },
+    { name: 'wizard-hint-audio', limit: 20, windowSec: 60, by: 'user' },
+    {
+      name: 'wizard-hint-audio-hour',
+      limit: 120,
+      windowSec: 3600,
+      by: 'user',
+    },
   ])
   async hintAudio(
     @Req() req: IdentifiedRequest,
     @Param('projectId') projectId: string,
-    @Query() dto: HintAudioQueryDto,
+    @Body() dto: HintAudioRequestDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<HintAudioResult | undefined> {
     const result = await this.audio.audioFor(

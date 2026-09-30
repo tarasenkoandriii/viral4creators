@@ -7,10 +7,12 @@
 
 import {
   serverMessageOf,
+  uploadRefusalOf,
   voiceResultOfError,
   voiceResultOfStatus,
   voiceStatusOutcome,
 } from '../src/lib/voice-status';
+import type { VoiceReason } from '../src/lib/voice-types';
 
 let failed = 0;
 let passed = 0;
@@ -34,11 +36,13 @@ const texts = {
   notHeard: 'NOT_HEARD',
   unavailable: 'UNAVAILABLE',
   budgetExhausted: 'BUDGET',
+  tooLong: 'TOO_LONG',
 };
 const r = (
   status: 'ok' | 'not-heard' | 'unavailable' | 'budget-exhausted',
-  reply: string | null = null
-) => ({ status, reply });
+  reply: string | null = null,
+  reason: VoiceReason | null = null
+) => ({ status, reply, reason });
 
 check('ok — не статус, а разбор: строки нет', () => {
   eq(voiceStatusOutcome(r('ok'), texts, false), null);
@@ -49,6 +53,7 @@ check('не расслышал — всегда наша строка, микр�
     text: 'NOT_HEARD',
     tone: 'info',
     stopForToday: false,
+    stopUntilTap: false,
   });
 });
 
@@ -59,6 +64,7 @@ check(
       text: 'UNAVAILABLE',
       tone: 'warning',
       stopForToday: false,
+      stopUntilTap: false,
     });
     eq(
       voiceStatusOutcome(
@@ -66,7 +72,12 @@ check(
         texts,
         false
       ),
-      { text: 'Войдите, чтобы говорить', tone: 'warning', stopForToday: false }
+      {
+        text: 'Войдите, чтобы говорить',
+        tone: 'warning',
+        stopForToday: false,
+        stopUntilTap: false,
+      }
     );
   }
 );
@@ -78,11 +89,13 @@ check(
       text: 'BUDGET',
       tone: 'warning',
       stopForToday: true,
+      stopUntilTap: false,
     });
     eq(voiceStatusOutcome(r('budget-exhausted'), texts, false), {
       text: null,
       tone: 'warning',
       stopForToday: true,
+      stopUntilTap: false,
     });
   }
 );
@@ -114,6 +127,78 @@ check('пустой разбор со статусом — без интента
     reply: null,
     scriptMismatch: false,
   });
+});
+
+check(
+  'причина: оператор/вход/лимит аккаунта — гасить до нажатия; длинная — слушать',
+  () => {
+    for (const reason of [
+      'operator-off',
+      'login-required',
+      'account-limit',
+    ] as const) {
+      eq(
+        voiceStatusOutcome(r('unavailable', 'ПРИЧИНА', reason), texts, false),
+        {
+          text: 'ПРИЧИНА',
+          tone: 'warning',
+          stopForToday: false,
+          stopUntilTap: true,
+        }
+      );
+    }
+    eq(
+      voiceStatusOutcome(r('unavailable', 'КОРОЧЕ', 'too-long'), texts, false),
+      {
+        text: 'КОРОЧЕ',
+        tone: 'warning',
+        stopForToday: false,
+        stopUntilTap: false,
+      }
+    );
+    // Без `reply` — наша общая строка, судьба микрофона та же.
+    eq(
+      voiceStatusOutcome(r('unavailable', null, 'operator-off'), texts, false)
+        ?.text,
+      'UNAVAILABLE'
+    );
+  }
+);
+
+check('длинная без строки сервера — наша «короче», не «недоступно»', () => {
+  eq(voiceStatusOutcome(r('unavailable', null, 'too-long'), texts, false), {
+    text: 'TOO_LONG',
+    tone: 'warning',
+    stopForToday: false,
+    stopUntilTap: false,
+  });
+});
+
+check('ссылку не выдали по размеру (400) — «слишком длинно»', () => {
+  const tooLong = uploadRefusalOf(400, {
+    error: { message: 'Запись длиннее минуты — реплика должна быть короче' },
+  });
+  eq(
+    [tooLong?.status, tooLong?.reason, tooLong?.reply],
+    ['unavailable', 'too-long', null]
+  );
+  // Сырой ответ валидатора — массив строк.
+  eq(
+    uploadRefusalOf(400, {
+      message: ['fileSize must not be greater than 4194304'],
+    })?.reason,
+    'too-long'
+  );
+  // Другая 400 и другой код — не про длину.
+  eq(
+    uploadRefusalOf(400, { error: { message: 'mimeType не подходит' } }),
+    null
+  );
+  eq(
+    uploadRefusalOf(403, { error: { message: 'Запись длиннее минуты' } }),
+    null
+  );
+  eq(uploadRefusalOf(400, null), null);
 });
 
 console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);

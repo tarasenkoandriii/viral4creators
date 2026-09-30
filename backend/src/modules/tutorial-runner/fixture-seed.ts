@@ -112,6 +112,18 @@ export interface FixtureSeedResult {
 }
 
 /**
+ * Советник и его голос у проектов фикстуры — выключены (финальный аудит
+ * ветки K, 30.09.2026). В `create` это и так умолчание схемы, но `update`
+ * его не трогал: включи кто-нибудь советника на стенде руками — и каждый
+ * следующий прогон снимал бы подсказки, озвучку и панель голоса в кадрах
+ * обучалки, а озвучка ещё и тратила бы деньги. Экспорт — для спека.
+ */
+export const GUIDE_OFF = {
+  aiGuideEnabled: false,
+  aiGuideVoice: false,
+} as const;
+
+/**
  * Заводит/обновляет фикстурного пользователя со всей цепочкой данных,
  * которую ждут шаги сценариев обучалки (манифест бренда → персонаж →
  * проект → товар → сессия с готовым роликом). Ничего не удаляет и не
@@ -238,7 +250,7 @@ export async function seedFixtureUser(
 
   const project = await prisma.project.upsert({
     where: { id: FIXTURE_IDS.project },
-    update: { userId: user.id, brandManifestId: manifest.id },
+    update: { userId: user.id, brandManifestId: manifest.id, ...GUIDE_OFF },
     create: {
       id: FIXTURE_IDS.project,
       userId: user.id,
@@ -285,7 +297,7 @@ export async function seedFixtureUser(
    */
   const clientSiteProject = await prisma.project.upsert({
     where: { id: FIXTURE_IDS.clientSiteProject },
-    update: { userId: user.id },
+    update: { userId: user.id, ...GUIDE_OFF },
     create: {
       id: FIXTURE_IDS.clientSiteProject,
       userId: user.id,
@@ -510,7 +522,10 @@ export async function seedFixtureUser(
   ) => {
     const greetingProject = await prisma.project.upsert({
       where: { id: projectId },
-      update: { userId: user.id },
+      // Советник и его голос — выключены при КАЖДОМ сидировании, а не
+      // только при создании: включённый кем-то голос открывал бы панель
+      // «управление голосом» и платную озвучку в кадрах обучалки.
+      update: { userId: user.id, ...GUIDE_OFF },
       create: {
         id: projectId,
         userId: user.id,

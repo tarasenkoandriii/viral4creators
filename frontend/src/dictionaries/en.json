@@ -1806,7 +1806,10 @@
     "actionStarted": "Starting: {action}.",
     "actionStale": "That action isn't available right now — please do it by hand.",
     "valueYes": "yes",
-    "valueNo": "no"
+    "valueNo": "no",
+    "truncated": "That was a long phrase — it may have been cut off, please check.",
+    "processingWait": "Finish after my reply — I'm not listening right now.",
+    "tooLong": "That phrase is too long — please say it more briefly."
   },
   "voiceNav": {
     "here": "You’re already on “{step}”.",
@@ -1862,6 +1865,12 @@
     "saved": "Done — saved.",
     "filledNeedsSave": "Filled in — press “{button}”.",
     "notSaved": "Didn't save: {reason}."
+  },
+  "voiceBrief": {
+    "missingCustomOccasion": "say what the occasion is",
+    "missingMood": "tell me what kind of event this is, mood-wise",
+    "missingRecipient": "name the recipient",
+    "missingJoin": "; "
   },
   "wizardReadiness": {
     "title": "To a finished video",

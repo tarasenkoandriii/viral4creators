@@ -5,6 +5,7 @@ import {
   IsDefined,
   IsIn,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -122,6 +123,18 @@ class VoiceUnderstandBodyDto {
   @ValidateNested()
   @Type(() => VoicePendingDto)
   pending?: VoicePendingDto;
+
+  /**
+   * Значения полей брифа НА ЭКРАНЕ, ещё не сохранённые (изменение
+   * контракта 1 финального аудита ветки K): `{ occasion?, mood?, tone?,
+   * … }`, строки или `null`. Здесь проверяется только форма — объект;
+   * каждое значение сервис проверяет правилами DTO брифа
+   * (`overlayCurrentBrief`), и неверное поле ИГНОРИРУЕТСЯ, а не валит
+   * запрос: одно испорченное значение не должно стоить человеку реплики.
+   */
+  @IsOptional()
+  @IsObject()
+  current?: Record<string, unknown>;
 }
 
 /** POST /sessions/:sessionId/voice/understand — запись уже в Blob (upload-url K2). */

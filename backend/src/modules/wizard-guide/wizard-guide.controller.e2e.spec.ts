@@ -214,8 +214,8 @@ describe('маршруты советника (e2e, один контролле�
   it('озвучка есть — 200 и ссылка в общем конверте', async () => {
     doubles.audio.audioFor.mockResolvedValueOnce({ url: 'https://b/x.mp3' });
     const res = await request(app.getHttpServer())
-      .get('/api/projects/p1/wizard-guide/hint-audio')
-      .query({ key: 'GREETING_VIDEO|brief|ru|k|d', lang: 'uk' })
+      .post('/api/projects/p1/wizard-guide/hint-audio')
+      .send({ key: 'GREETING_VIDEO|brief|ru|k|d', lang: 'uk' })
       .expect(200);
     expect(res.body.data).toEqual({ url: 'https://b/x.mp3' });
     // Язык запроса в сервис не идёт: озвучка — на языке из ключа.
@@ -229,8 +229,8 @@ describe('маршруты советника (e2e, один контролле�
   it('сказать вслух нечего — 204 без тела', async () => {
     doubles.audio.audioFor.mockResolvedValueOnce(null);
     const res = await request(app.getHttpServer())
-      .get('/api/projects/p1/wizard-guide/hint-audio')
-      .query({ key: 'GREETING_VIDEO|brief|ru|k|d', lang: 'ru' })
+      .post('/api/projects/p1/wizard-guide/hint-audio')
+      .send({ key: 'GREETING_VIDEO|brief|ru|k|d', lang: 'ru' })
       .expect(204);
     expect(res.text).toBe('');
   });
@@ -241,20 +241,36 @@ describe('маршруты советника (e2e, один контролле�
       reason: 'budget-exhausted',
     });
     const res = await request(app.getHttpServer())
-      .get('/api/projects/p1/wizard-guide/hint-audio')
-      .query({ key: 'GREETING_VIDEO|brief|ru|k|d', lang: 'ru' })
+      .post('/api/projects/p1/wizard-guide/hint-audio')
+      .send({ key: 'GREETING_VIDEO|brief|ru|k|d', lang: 'ru' })
       .expect(200);
     expect(res.body.data).toEqual({ url: null, reason: 'budget-exhausted' });
   });
 
+  it('озвучка — только POST: GET со строкой запроса больше не маршрут', async () => {
+    await request(app.getHttpServer())
+      .get('/api/projects/p1/wizard-guide/hint-audio')
+      .query({ key: 'GREETING_VIDEO|brief|ru|k|d' })
+      .expect(404);
+    expect(doubles.audio.audioFor).not.toHaveBeenCalled();
+  });
+
+  it('озвучка: тело без языка — достаточно ключа', async () => {
+    doubles.audio.audioFor.mockResolvedValueOnce({ url: 'https://b/x.mp3' });
+    await request(app.getHttpServer())
+      .post('/api/projects/p1/wizard-guide/hint-audio')
+      .send({ key: 'GREETING_VIDEO|brief|ru|k|d' })
+      .expect(200);
+  });
+
   it('озвучка: незнакомый язык и пустой ключ отвергаются на входе', async () => {
     await request(app.getHttpServer())
-      .get('/api/projects/p1/wizard-guide/hint-audio')
-      .query({ key: 'k', lang: 'fr' })
+      .post('/api/projects/p1/wizard-guide/hint-audio')
+      .send({ key: 'k', lang: 'fr' })
       .expect(400);
     await request(app.getHttpServer())
-      .get('/api/projects/p1/wizard-guide/hint-audio')
-      .query({ lang: 'ru' })
+      .post('/api/projects/p1/wizard-guide/hint-audio')
+      .send({ lang: 'ru' })
       .expect(400);
     expect(doubles.audio.audioFor).not.toHaveBeenCalled();
   });
@@ -282,8 +298,8 @@ describe('маршруты советника (e2e, один контролле�
   it('озвучка: lang необязателен', async () => {
     doubles.audio.audioFor.mockResolvedValueOnce(null);
     await request(app.getHttpServer())
-      .get('/api/projects/p1/wizard-guide/hint-audio')
-      .query({ key: 'GREETING_VIDEO|brief|ru|k|d' })
+      .post('/api/projects/p1/wizard-guide/hint-audio')
+      .send({ key: 'GREETING_VIDEO|brief|ru|k|d' })
       .expect(204);
   });
 
@@ -327,8 +343,8 @@ describe('маршруты советника без личности', () => {
       .get('/api/projects/p1/wizard-guide')
       .expect(403);
     await request(app.getHttpServer())
-      .get('/api/projects/p1/wizard-guide/hint-audio')
-      .query({ key: 'k', lang: 'ru' })
+      .post('/api/projects/p1/wizard-guide/hint-audio')
+      .send({ key: 'k', lang: 'ru' })
       .expect(403);
   });
 });

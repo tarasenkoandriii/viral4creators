@@ -1806,7 +1806,10 @@
     "actionStarted": "Starte: {action}.",
     "actionStale": "Diese Aktion ist gerade nicht verfügbar — bitte von Hand.",
     "valueYes": "ja",
-    "valueNo": "nein"
+    "valueNo": "nein",
+    "truncated": "Der Satz war lang — er wurde womöglich abgeschnitten, bitte prüfen.",
+    "processingWait": "Sprechen Sie nach meiner Antwort weiter — gerade höre ich nicht zu.",
+    "tooLong": "Der Satz ist zu lang — bitte kürzer sagen."
   },
   "voiceNav": {
     "here": "Du bist schon beim Schritt „{step}“.",
@@ -1862,6 +1865,12 @@
     "saved": "Fertig — gespeichert.",
     "filledNeedsSave": "Ausgefüllt — tippen Sie auf „{button}“.",
     "notSaved": "Nicht gespeichert: {reason}."
+  },
+  "voiceBrief": {
+    "missingCustomOccasion": "sagen Sie, welcher Anlass es genau ist",
+    "missingMood": "sagen Sie, welche Stimmung das Ereignis hat",
+    "missingRecipient": "nennen Sie den Empfänger",
+    "missingJoin": "; "
   },
   "wizardReadiness": {
     "title": "Bis zum fertigen Video",

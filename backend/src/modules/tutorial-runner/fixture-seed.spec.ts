@@ -258,6 +258,19 @@ describe('seedFixtureUser: тариф', () => {
     expect(warning).toContain('reference-slots');
   });
 
+  it('советник и его голос выключены у КАЖДОГО проекта фикстуры — и в update (финальный аудит ветки K)', async () => {
+    const { prisma, project } = build();
+    await seedFixtureUser(prisma as any, '42');
+    expect(project.mock.calls.length).toBeGreaterThanOrEqual(5);
+    for (const [args] of project.mock.calls as any[]) {
+      expect({ id: args.where.id, ...args.update }).toMatchObject({
+        id: args.where.id,
+        aiGuideEnabled: false,
+        aiGuideVoice: false,
+      });
+    }
+  });
+
   it('у PREMIUM предупреждения нет', async () => {
     const { prisma, user } = build();
     user.mockResolvedValue({ id: 'u', telegramId: '42', plan: 'PREMIUM' });

@@ -1806,7 +1806,10 @@
     "actionStarted": "Iniciando: {action}.",
     "actionStale": "Esa acción no está disponible ahora — hazla a mano.",
     "valueYes": "sí",
-    "valueNo": "no"
+    "valueNo": "no",
+    "truncated": "La frase era larga: puede que se haya cortado, compruébelo.",
+    "processingWait": "Termine después de mi respuesta: ahora no estoy escuchando.",
+    "tooLong": "La frase es demasiado larga: dígala más breve."
   },
   "voiceNav": {
     "here": "Ya estás en el paso «{step}».",
@@ -1862,6 +1865,12 @@
     "saved": "Listo — guardado.",
     "filledNeedsSave": "Rellenado — pulsa «{button}».",
     "notSaved": "No se guardó: {reason}."
+  },
+  "voiceBrief": {
+    "missingCustomOccasion": "di cuál es exactamente la ocasión",
+    "missingMood": "responde qué ánimo tiene el evento",
+    "missingRecipient": "di el nombre del destinatario",
+    "missingJoin": "; "
   },
   "wizardReadiness": {
     "title": "Hasta el vídeo terminado",

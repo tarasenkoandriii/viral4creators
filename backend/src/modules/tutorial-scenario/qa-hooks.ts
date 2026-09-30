@@ -587,7 +587,11 @@ export const QA_HOOKS: Record<string, QaHook> = {
   },
   'greeting-field-mood': {
     route: 'greeting-video',
-    description: 'вопрос «Какое это событие по настроению?» — пять ответов',
+    // Контейнер группы, а не кнопка (финальный аудит ветки K): клик по
+    // нему ничего не выбирает — ждать и проверять можно, нажимать нет.
+    clickCost: 'forbidden',
+    description:
+      'группа кнопок вопроса «Какое это событие по настроению?» — пять ответов. Только waitFor/assertVisible',
     absentWhen: {
       why: 'вопрос о настроении задаётся только при «Особом поводе», а на стенде повод — день рождения',
     },
@@ -604,6 +608,7 @@ export const QA_HOOKS: Record<string, QaHook> = {
   },
   'greeting-field-tone': {
     route: 'greeting-video',
+    clickCost: 'forbidden',
     description:
       'группа кнопок «Тон». Только waitFor/assertVisible: клик по группе ничего не выбирает, а недоступные поводу тоны видны серыми',
   },
@@ -619,8 +624,9 @@ export const QA_HOOKS: Record<string, QaHook> = {
   },
   'greeting-field-presenter': {
     route: 'greeting-video',
+    clickCost: 'forbidden',
     description:
-      'выбор «Ведущий»: без ведущего (Grok) или говорящий аватар (Hedra, только на PREMIUM). Только waitFor/assertVisible',
+      'группа кнопок «Ведущий»: без ведущего (Grok) или говорящий аватар (Hedra, только на PREMIUM). Только waitFor/assertVisible',
   },
   'greeting-field-resolution': {
     route: 'greeting-video',

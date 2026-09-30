@@ -501,6 +501,22 @@ export class CronController {
   }
 
   /**
+   * GET /api/cron/voice-uploads-sweep — необработанные голосовые записи
+   * старше часа (финальный аудит ветки K) — см. доккомментарий на
+   * `CronJobsService.runVoiceUploadsSweep`. Каждые 15 минут.
+   */
+  @Get('voice-uploads-sweep')
+  async voiceUploadsSweep(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'voice-uploads-sweep',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runVoiceUploadsSweep(),
+    );
+  }
+
+  /**
    * GET /api/cron/ai-usage-rollup
    *
    * Свёртка журнала расходов (doc/TODO.md §I-Б.5): месяцы старше срока

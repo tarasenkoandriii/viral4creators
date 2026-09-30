@@ -37,6 +37,7 @@ import {
 import { VoiceUploadUrlRequestDto } from './dto/voice-upload-url-request.dto';
 import { TranscribeRequestDto } from './dto/transcribe-request.dto';
 import { PlanService } from '../plan/plan.service';
+import { VoiceUploadService } from '../voice-upload/voice-upload.service';
 import { ITEM_DESCRIPTION_MAX } from '../project/dto/product-item-request.dto';
 
 export interface VoiceUploadUrl {
@@ -90,6 +91,7 @@ export class VoiceService {
     private readonly blobService: BlobService,
     private readonly transcription: VoiceTranscriptionService,
     private readonly plans: PlanService,
+    private readonly voiceUploads: VoiceUploadService,
   ) {}
 
   async createUploadUrl(
@@ -100,6 +102,9 @@ export class VoiceService {
   ): Promise<VoiceUploadUrl> {
     await this.assertOwnedItem(userId, projectId, itemId);
     const pathname = voicePathname(projectId, itemId, dto.mimeType);
+    // Учёт выданного пути — до ссылки: необработанную запись удалит крон
+    // `voice-uploads-sweep` в пределах часа (финальный аудит ветки K).
+    await this.voiceUploads.remember(pathname);
     // Blob's allowedContentTypes must match the Content-Type the browser
     // sends — MediaRecorder sends the parameterised form, so pass it through as-is.
     const { uploadUrl } = await this.blobService.createUploadUrl(
@@ -175,7 +180,11 @@ export class VoiceService {
     } finally {
       // Транзитная копия — не храним ни при каком исходе. С `await`: на
       // Vercel работа, не дождавшаяся ответа, может не выполниться вовсе.
-      await this.blobService.deleteBlob(dto.pathname);
+      // Строка учёта снимается только после настоящего удаления: не
+      // удалилось — крон `voice-uploads-sweep` повторит (аудит после раунда).
+      if (await this.blobService.deleteBlob(dto.pathname)) {
+        await this.voiceUploads.forget(dto.pathname);
+      }
     }
   }
 

@@ -9,19 +9,25 @@
  *    просить «коснитесь».
  * 2. **Один плеер** — почему именно один, сказано в `hint-audio.ts`.
  * 3. **Потолок голоса исчерпан.** Помнится до конца суток UTC в
- *    localStorage — тем же ключом, что у микрофона, — и помощник
+ *    localStorage — тем же ключом, что у микрофона (свой на человека,
+ *    с тарифом рядом), — и помощник
  *    говорит об этом один раз на страницу (§4А.7.5), сколько бы каналов
  *    ни узнали о нём.
  * 4. **Играет ли реплика** — микрофону, чтобы не записать советника.
  */
 
+import { useEffect, useMemo, useState } from 'react';
 import {
-  budgetExhaustedOn,
+  createBudgetMemory,
   createHintPlayer,
   createOnceClaim,
-  rememberBudgetExhausted,
+  dropLegacyBudgetKey,
+  voiceBudgetUserOf,
   type AudioLike,
+  type VoiceBudgetOwner,
 } from './hint-audio';
+import { usePlanState } from './plan-context';
+import { getTelegramWebApp } from './telegram';
 
 export const hintPlayer = createHintPlayer(
   () => new Audio() as unknown as AudioLike
@@ -57,13 +63,6 @@ export function isHintPlaying(): boolean {
   return hintPlayer.playing;
 }
 
-/** Подписка на начало и конец реплики; возвращает отписку. */
-export function onHintPlayingChange(
-  cb: (playing: boolean) => void
-): () => void {
-  return hintPlayer.onPlayingChange(cb);
-}
-
 /** Замолчать сейчас — человек заговорил поверх советника. */
 export function stopHint(): void {
   hintPlayer.stop();
@@ -79,17 +78,59 @@ function deviceStorage(): Storage | null {
   }
 }
 
+/** Идентификатор человека для ключа потолка (`voiceBudgetUserOf`). */
+function budgetUserId(): string {
+  const tg = getTelegramWebApp()?.initDataUnsafe as
+    | { user?: { id?: number } }
+    | undefined;
+  return voiceBudgetUserOf({
+    telegramUserId: tg?.user?.id ?? null,
+    devUserId:
+      import.meta.env.VITE_ALLOW_DEV_AUTH === 'true'
+        ? import.meta.env.VITE_DEV_USER_ID || '123'
+        : null,
+  });
+}
+
+/**
+ * Чей потолок сейчас: человек и его тариф. Тариф — из общего контекста
+ * режима; сменился — новое значение, и запомненное «исчерпан» для
+ * прежнего тарифа больше не действует (изменение контракта 6).
+ */
+export function useVoiceBudgetOwner(): VoiceBudgetOwner {
+  const plan = usePlanState()?.plan ?? null;
+  const [userId] = useState(budgetUserId);
+  useEffect(dropLegacyOnce, []);
+  return useMemo(() => ({ userId, plan }), [userId, plan]);
+}
+
+let legacyDropped = false;
+/** Старый общий ключ — убрать один раз на страницу. */
+function dropLegacyOnce(): void {
+  if (legacyDropped) return;
+  legacyDropped = true;
+  dropLegacyBudgetKey(deviceStorage());
+}
+
+const budgetMemory = createBudgetMemory(deviceStorage);
+
 /**
  * Потолок голоса исчерпан сегодня (UTC). Общий для советника и
  * микрофона: узнал один — молчит и второй, до конца суток, а не до
  * перезагрузки страницы.
  */
-export function isVoiceBudgetExhaustedToday(now: Date = new Date()): boolean {
-  return budgetExhaustedOn(deviceStorage(), now);
+export function isVoiceBudgetExhaustedToday(
+  owner: VoiceBudgetOwner,
+  now: Date = new Date()
+): boolean {
+  return budgetMemory.isExhausted(owner, now);
 }
 
-export function markVoiceBudgetExhausted(now: Date = new Date()): void {
-  rememberBudgetExhausted(deviceStorage(), now);
+export function markVoiceBudgetExhausted(
+  owner: VoiceBudgetOwner,
+  now: Date = new Date()
+): void {
+  budgetMemory.mark(owner, now);
 }
 
 /**

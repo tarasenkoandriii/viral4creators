@@ -21,7 +21,11 @@
 
 import axios from 'axios';
 import { api } from './api';
-import { serverMessageOf, voiceResultOfError } from '../lib/voice-status';
+import {
+  serverMessageOf,
+  uploadRefusalOf,
+  voiceResultOfError,
+} from '../lib/voice-status';
 import type {
   VoiceUnderstandContext,
   VoiceUnderstandResult,
@@ -70,6 +74,7 @@ export async function understandVoice(
   context: VoiceUnderstandContext
 ): Promise<VoiceUnderstandResult> {
   const base = voiceBase(scope);
+  let stage: 'upload-url' | 'later' = 'upload-url';
   try {
     const target = unwrap(
       await api.post<PresignedUpload>(`${base}/upload-url`, {
@@ -79,6 +84,7 @@ export async function understandVoice(
       }),
       'voice-upload-url'
     );
+    stage = 'later';
     await axios.put(target.uploadUrl, audio, {
       headers: { 'Content-Type': mimeType },
     });
@@ -92,6 +98,12 @@ export async function understandVoice(
   } catch (e) {
     // Любой сбой — «недоступно», но не потолок (см. `voiceResultOfError`).
     const body = axios.isAxiosError(e) ? e.response?.data : undefined;
-    return voiceResultOfError(serverMessageOf(body));
+    const message = serverMessageOf(body);
+    // Ссылку не выдали из-за размера — это «слишком длинно», а не сбой.
+    const refusal =
+      stage === 'upload-url' && axios.isAxiosError(e)
+        ? uploadRefusalOf(e.response?.status, body)
+        : null;
+    return refusal ?? voiceResultOfError(message);
   }
 }

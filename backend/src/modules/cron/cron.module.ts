@@ -24,6 +24,7 @@ import { ImageSketchModule } from '../image-sketch/image-sketch.module';
 import { AuctionModule } from '../auction/auction.module';
 import { PortfolioModule } from '../portfolio/portfolio.module';
 import { ApiKeyModule } from '../api-key/api-key.module';
+import { VoiceUploadModule } from '../voice-upload/voice-upload.module';
 
 /**
  * CronModule
@@ -99,6 +100,8 @@ import { ApiKeyModule } from '../api-key/api-key.module';
     PortfolioModule,
     // Этап 145: воркер заявок внешнего API.
     ApiKeyModule,
+    // Финальный аудит ветки K: уборка необработанных голосовых записей.
+    VoiceUploadModule,
   ],
   controllers: [CronController, AdminCronController],
   providers: [CronJobsService, AdminCronService],

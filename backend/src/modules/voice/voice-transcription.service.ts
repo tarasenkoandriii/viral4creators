@@ -74,7 +74,22 @@ export interface TranscriptionResult {
    * расшифровки — не то же самое, и подменять одно другим нельзя.
    */
   language?: string | null;
+  /** Длительность звука по данным провайдера, мс (Soniox); у Gemini нет. */
+  durationMs?: number | null;
 }
+
+/**
+ * Причина «запись длиннее допустимого» — по длительности, которую сообщил
+ * провайдер (`recognize`, опция `maxDurationMs`). Текст при этом не
+ * отдаётся: его платный разбор не нужен.
+ */
+export const AUDIO_TOO_LONG_REASON = 'audio too long';
+
+/**
+ * Причина «запасной путь не пущен»: Soniox не справился, а потолок
+ * расхода к этому моменту уже исчерпан (`recognize`, опция `canFallback`).
+ */
+export const FALLBACK_REFUSED_REASON = 'fallback refused by spend limits';
 
 /** Normalise the model's reply — exported for tests. */
 export function cleanTranscript(raw: string | undefined): string | null {
@@ -164,6 +179,17 @@ export class VoiceTranscriptionService {
       operation: AiOperation;
       userId?: string | null;
       sessionId?: string | null;
+      /**
+       * Потолок длительности, мс. Провайдер сообщил длительность больше —
+       * `AUDIO_TOO_LONG_REASON` без текста и без запасного пути.
+       */
+      maxDurationMs?: number;
+      /**
+       * Можно ли платить за запасной Gemini после сбоя Soniox — те же
+       * потолки, что перед первой попыткой (финальный аудит ветки K):
+       * первый вызов уже оплачен, и между ним и вторым лимит мог кончиться.
+       */
+      canFallback?: () => Promise<boolean>;
     },
   ): Promise<TranscriptionResult> {
     // Настройка из БД — единственное, что здесь может бросить. Голосовой
@@ -199,16 +225,41 @@ export class VoiceTranscriptionService {
             ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
           });
         }
-        if (r.text) return { text: r.text, language: r.language ?? null };
+        const durationMs = r.audioMs ?? null;
+        // Длительность — в ответ, только если провайдер её сообщил.
+        const withDuration = durationMs !== null ? { durationMs } : {};
+        if (
+          opts.maxDurationMs !== undefined &&
+          durationMs !== null &&
+          durationMs > opts.maxDurationMs
+        ) {
+          return { text: null, reason: AUDIO_TOO_LONG_REASON, durationMs };
+        }
+        if (r.text) {
+          return {
+            text: r.text,
+            language: r.language ?? null,
+            ...withDuration,
+          };
+        }
         // «Не услышал» — это ответ, а не сбой: Gemini ту же тишину
         // не расслышит, а платить второй раз незачем.
-        if (!isSpeechlessReason(r.reason)) {
-          this.logger.warn(
-            `распознавание: Soniox не справился (${r.reason ?? 'без причины'}) — расшифровывает Gemini`,
-          );
-        } else {
-          return { text: null, reason: r.reason };
+        if (isSpeechlessReason(r.reason)) {
+          return { text: null, reason: r.reason, ...withDuration };
         }
+        if (opts.canFallback && !(await opts.canFallback())) {
+          this.logger.warn(
+            `распознавание: Soniox не справился (${r.reason ?? 'без причины'}), а потолок расхода исчерпан — Gemini не зовём`,
+          );
+          return {
+            text: null,
+            reason: FALLBACK_REFUSED_REASON,
+            ...withDuration,
+          };
+        }
+        this.logger.warn(
+          `распознавание: Soniox не справился (${r.reason ?? 'без причины'}) — расшифровывает Gemini`,
+        );
       } else {
         this.logger.warn(
           'распознавание: выбран Soniox, но SONIOX_API_KEY не задан — расшифровывает Gemini',

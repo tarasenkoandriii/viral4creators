@@ -171,6 +171,20 @@ check('command без обработчика → «пока руками»', () 
   );
 });
 
+check(
+  'обработчик ответил «manual» (сервер не назвал тон) → «пока руками»',
+  () => {
+    eq(
+      dispatchVoiceResult(
+        result({ kind: 'command', command: 'tone-serious' }),
+        R,
+        ctx({ command: () => ({ kind: 'manual' }) })
+      ),
+      { kind: 'reply', text: 'MANUAL' }
+    );
+  }
+);
+
 check('unknown → переспрос сервера (названием поля), иначе «не понял»', () => {
   eq(
     dispatchVoiceResult(

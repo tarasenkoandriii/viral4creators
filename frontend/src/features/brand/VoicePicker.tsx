@@ -29,6 +29,7 @@ import {
   uploadVoiceSample,
   type VoiceCatalogue,
 } from '../../services/projects-api';
+import { acquireMicBusy, mediaPlaybackRef } from '../../lib/media-playback';
 import { releaseMicrophone } from '../../lib/mic-recorder';
 import { revokeObjectUrl } from '../../lib/object-url';
 import { useI18n } from '../../lib/i18n-context';
@@ -406,6 +407,17 @@ export function MyVoicesSection({
   // дотянуться до его дорожек можно было ровно из одного места —
   // обработчика `onstop`, то есть только через кнопку «Стоп».
   const streamRef = useRef<MediaStream | null>(null);
+  // Пока пишется образец, микрофон занят — прослушивание голосового
+  // помощника мастера на паузе, иначе образец ушёл бы на разбор как
+  // команда (контракт P-раунда ветки K, п. 5). Снятие — вместе с
+  // микрофоном: `onstop`, `releaseMic` (отмена, ошибка, уход с экрана).
+  const micBusyRef = useRef<(() => void) | null>(null);
+  const freeMicBusy = () => {
+    micBusyRef.current?.();
+    micBusyRef.current = null;
+  };
+  // Прослушивание записанного образца вслух — тоже не речь человека.
+  const [samplePlaybackRef] = useState(() => mediaPlaybackRef());
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
   const micSupported =
@@ -465,6 +477,11 @@ export function MyVoicesSection({
       stopTimer();
       releaseMic();
     },
+    // Уборка — только при уходе с экрана. `stopTimer`/`releaseMic` читают
+    // одни ref'ы (запись, поток, таймер, «микрофон занят»), поэтому
+    // устаревшее замыкание здесь безопасно, а зависимости перезапускали
+    // бы уборку на каждом рендере — и гасили бы идущую запись.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
   const stopTimer = () => {
@@ -480,6 +497,7 @@ export function MyVoicesSection({
     );
     recorderRef.current = null;
     streamRef.current = null;
+    freeMicBusy();
     // Куски выбрасываются ТОЛЬКО если запись прервали мы: после «Стоп»
     // они ещё нужны собственному `onstop`, который соберёт из них образец.
     if (interrupted) chunksRef.current = [];
@@ -514,6 +532,11 @@ export function MyVoicesSection({
 
   const startRecording = async () => {
     setError(null);
+    // Занят уже с запроса разрешения: помощник не должен перехватить
+    // микрофон, пока человек отвечает на окно браузера.
+    freeMicBusy();
+    const releaseBusy = acquireMicBusy();
+    micBusyRef.current = releaseBusy;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -525,6 +548,10 @@ export function MyVoicesSection({
       rec.onstop = () => {
         stream.getTracks().forEach((tr) => tr.stop());
         streamRef.current = null;
+        // Своё снятие, а не общее: `onstop` приходит позже «Стоп», и к
+        // тому времени могла начаться новая запись со своим захватом.
+        releaseBusy();
+        if (micBusyRef.current === releaseBusy) micBusyRef.current = null;
         const blob = new Blob(chunksRef.current, { type: mime });
         if (blob.size === 0) {
           setError(t.emptyRecording);
@@ -759,7 +786,12 @@ export function MyVoicesSection({
           ) : (
             <div className="space-y-3">
               {sampleObjectUrl && (
-                <audio className="w-full" controls src={sampleObjectUrl} />
+                <audio
+                  ref={samplePlaybackRef}
+                  className="w-full"
+                  controls
+                  src={sampleObjectUrl}
+                />
               )}
               <Field label={t.labelFieldLabel} htmlFor="my-voice-label">
                 <Input

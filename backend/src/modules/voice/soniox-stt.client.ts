@@ -68,6 +68,12 @@ export interface SonioxSttResult {
    * узнаёт язык человека из его речи, а не из настроек.
    */
   language?: string | null;
+  /**
+   * Длительность звука по данным самого Soniox, мс (`audio_duration_ms`);
+   * `null` — обработка до неё не дошла. По ней мастер поздравления
+   * отвергает запись длиннее минуты (финальный аудит ветки K).
+   */
+  audioMs?: number | null;
 }
 
 interface SonioxToken {
@@ -282,12 +288,14 @@ export class SonioxSttClient {
                 seconds,
                 language: parsed.language,
                 billable: true,
+                ...(audioMs !== null ? { audioMs } : {}),
               }
             : {
                 text: null,
                 reason: 'no speech recognised',
                 seconds,
                 billable: true,
+                ...(audioMs !== null ? { audioMs } : {}),
               };
         }
         if (status.status === 'error') {
@@ -296,6 +304,7 @@ export class SonioxSttClient {
             reason: `Soniox: ${status.error_message ?? 'ошибка распознавания'}`,
             seconds: billedSeconds(audioMs, 0),
             billable: true,
+            ...(audioMs !== null ? { audioMs } : {}),
           };
         }
       }
@@ -304,6 +313,7 @@ export class SonioxSttClient {
         reason: 'Soniox: распознавание не уложилось во время',
         seconds: billedSeconds(audioMs, 0),
         billable: true,
+        ...(audioMs !== null ? { audioMs } : {}),
       };
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
@@ -313,6 +323,7 @@ export class SonioxSttClient {
         reason,
         seconds: billedSeconds(audioMs, 0),
         billable: transcriptionId !== null,
+        ...(audioMs !== null ? { audioMs } : {}),
       };
     } finally {
       // Обещание Условий (3.4): запись не остаётся у провайдера.

@@ -8,10 +8,14 @@ import {
   SILENT_WAV,
   VOICE_BUDGET_DAY_KEY,
   budgetExhaustedOn,
+  createBudgetMemory,
+  dropLegacyBudgetKey,
   createHintPlayer,
   createOnceClaim,
   rememberBudgetExhausted,
   utcDay,
+  voiceBudgetKey,
+  voiceBudgetUserOf,
   hintVoicePlan,
   interpretHintAudio,
   readMuted,
@@ -229,7 +233,10 @@ check('stop до первой реплики не создаёт элемент'
 
 // ── Потолок голоса: общий источник на сутки UTC (аудит волны 1) ─────
 
-check('ключ и формат — те же, что у микрофона', () => {
+const ann = { userId: 'tg-1', plan: 'LITE' };
+
+check('ключ — с человеком (изменение контракта 6), сутки — UTC', () => {
+  eq(voiceBudgetKey('tg-1'), 'greeting-voice-budget-day:tg-1');
   eq(VOICE_BUDGET_DAY_KEY, 'greeting-voice-budget-day');
   eq(utcDay(new Date('2026-09-29T23:59:59Z')), '2026-09-29');
 });
@@ -242,22 +249,118 @@ check('сутки считаются по UTC, а не по часам устр�
 check('исчерпан сегодня — помнится, завтра — нет', () => {
   const s = memory();
   const today = new Date('2026-09-29T10:00:00Z');
-  eq(budgetExhaustedOn(s, today), false);
-  rememberBudgetExhausted(s, today);
-  eq(s.data[VOICE_BUDGET_DAY_KEY], '2026-09-29');
-  eq(budgetExhaustedOn(s, new Date('2026-09-29T23:00:00Z')), true);
-  eq(budgetExhaustedOn(s, new Date('2026-09-30T00:00:01Z')), false);
+  eq(budgetExhaustedOn(s, today, ann), false);
+  rememberBudgetExhausted(s, today, ann);
+  eq(JSON.parse(s.data[voiceBudgetKey('tg-1')]), {
+    day: '2026-09-29',
+    plan: 'LITE',
+  });
+  eq(budgetExhaustedOn(s, new Date('2026-09-29T23:00:00Z'), ann), true);
+  eq(budgetExhaustedOn(s, new Date('2026-09-30T00:00:01Z'), ann), false);
 });
 
-check('запись микрофона (тот же ключ) видна советнику', () => {
+check('флаг одного человека не глушит другого на том же устройстве', () => {
   const s = memory();
-  s.setItem('greeting-voice-budget-day', '2026-09-29');
-  eq(budgetExhaustedOn(s, new Date('2026-09-29T12:00:00Z')), true);
+  const at = new Date('2026-09-29T12:00:00Z');
+  rememberBudgetExhausted(s, at, ann);
+  eq(budgetExhaustedOn(s, at, { userId: 'tg-2', plan: 'LITE' }), false);
+  // Старый общий ключ (без человека) больше не читается.
+  const old = memory();
+  old.setItem('greeting-voice-budget-day', '2026-09-29');
+  eq(budgetExhaustedOn(old, at, ann), false);
+});
+
+check('сменился тариф — флаг сброшен; тариф неизвестен — флаг в силе', () => {
+  const s = memory();
+  const at = new Date('2026-09-29T12:00:00Z');
+  rememberBudgetExhausted(s, at, ann);
+  eq(budgetExhaustedOn(s, at, { userId: 'tg-1', plan: 'PREMIUM' }), false);
+  eq(budgetExhaustedOn(s, at, { userId: 'tg-1', plan: null }), true);
+  // Запись без тарифа (старый формат) не действует ни для какого тарифа.
+  s.setItem(
+    voiceBudgetKey('tg-1'),
+    JSON.stringify({ day: '2026-09-29', plan: null })
+  );
+  eq(budgetExhaustedOn(s, at, { userId: 'tg-1', plan: 'PREMIUM' }), false);
+  eq(budgetExhaustedOn(s, at, { userId: 'tg-1', plan: null }), false);
+});
+
+check(
+  'потолок узнан до тарифа: в памяти сразу, на устройство — с тарифом',
+  () => {
+    const s = memory();
+    const at = new Date('2026-09-29T12:00:00Z');
+    const mem = createBudgetMemory(() => s);
+    mem.mark({ userId: 'tg-1', plan: null }, at);
+    eq(Object.keys(s.data), []);
+    eq(mem.isExhausted({ userId: 'tg-1', plan: null }, at), true);
+    // Другой человек — не он.
+    eq(mem.isExhausted({ userId: 'tg-2', plan: null }, at), false);
+    // Тариф пришёл — записано с ним.
+    eq(mem.isExhausted({ userId: 'tg-1', plan: 'LITE' }, at), true);
+    eq(JSON.parse(s.data[voiceBudgetKey('tg-1')]), {
+      day: '2026-09-29',
+      plan: 'LITE',
+    });
+    // Сменили тариф — флаг снят.
+    eq(mem.isExhausted({ userId: 'tg-1', plan: 'PREMIUM' }, at), false);
+    // С известным тарифом — пишется сразу.
+    const s2 = memory();
+    createBudgetMemory(() => s2).mark(ann, at);
+    eq(budgetExhaustedOn(s2, at, ann), true);
+    // Отложенное «исчерпан» вчерашнего дня сегодня не действует.
+    const mem3 = createBudgetMemory(() => memory());
+    mem3.mark({ userId: 'tg-1', plan: null }, at);
+    eq(
+      mem3.isExhausted(
+        { userId: 'tg-1', plan: null },
+        new Date('2026-09-30T00:00:01Z')
+      ),
+      false
+    );
+  }
+);
+
+check('старый общий ключ убирается; бросающее хранилище — без падения', () => {
+  const data: Record<string, string> = {
+    'greeting-voice-budget-day': '2026-09-29',
+    [voiceBudgetKey('tg-1')]: 'x',
+  };
+  dropLegacyBudgetKey({
+    getItem: (k) => data[k] ?? null,
+    setItem: (k, v) => {
+      data[k] = v;
+    },
+    removeItem: (k) => {
+      delete data[k];
+    },
+  });
+  eq(Object.keys(data), [voiceBudgetKey('tg-1')]);
+  dropLegacyBudgetKey({
+    ...broken,
+    removeItem: () => {
+      throw new Error('SecurityError');
+    },
+  });
+  dropLegacyBudgetKey(null);
+});
+
+check('испорченная запись — не исчерпан, без падения', () => {
+  const s = memory();
+  s.setItem(voiceBudgetKey('tg-1'), '2026-09-29');
+  eq(budgetExhaustedOn(s, new Date('2026-09-29T12:00:00Z'), ann), false);
+});
+
+check('чей телефон: Telegram, иначе дев-вход, иначе браузер', () => {
+  eq(voiceBudgetUserOf({ telegramUserId: 42, devUserId: '7' }), 'tg-42');
+  eq(voiceBudgetUserOf({ telegramUserId: null, devUserId: '7' }), 'dev-7');
+  eq(voiceBudgetUserOf({ telegramUserId: ' ', devUserId: null }), 'browser');
+  eq(voiceBudgetUserOf({}), 'browser');
 });
 
 check('бросающее хранилище — потолок не исчерпан, и без падения', () => {
-  eq(budgetExhaustedOn(broken, new Date()), false);
-  rememberBudgetExhausted(broken, new Date());
+  eq(budgetExhaustedOn(broken, new Date(), ann), false);
+  rememberBudgetExhausted(broken, new Date(), ann);
 });
 
 check('о потолке говорит ровно один', () => {

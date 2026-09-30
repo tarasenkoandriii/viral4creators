@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { X } from 'lucide-react';
 import { Button } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
@@ -11,6 +12,11 @@ import { chargeText, type ConsentSummary } from '../../lib/voice-consent';
  *
  * Своей кнопки «Запустить» здесь нет намеренно: запуск руками — та же
  * кнопка шага, и второй кнопки с тем же действием быть не должно.
+ *
+ * `role="group"`, а не `dialog`: сводка — часть страницы, фокус не
+ * запирается. Объявляет её читалке строка помощника: ответ на
+ * «генерируй» (`summaryLine` — кому, повод, качество и цена, или
+ * «условия изменились») звучит из области объявлений `VoiceAssistant`.
  */
 export function VoiceConsentCard({
   summary,
@@ -31,13 +37,16 @@ export function VoiceConsentCard({
     [c.quality, summary.quality],
   ];
   if (cost) rows.push([c.cost, cost]);
+  const titleId = useId();
   return (
     <div
       className="mb-3 rounded-xl border border-accent/30 bg-accent/5 p-3"
-      role="dialog"
-      aria-label={c.title}
+      role="group"
+      aria-labelledby={titleId}
     >
-      <p className="text-sm font-medium">{c.title}</p>
+      <p id={titleId} className="text-sm font-medium">
+        {c.title}
+      </p>
       <dl className="mt-2 space-y-1 text-sm">
         {rows.map(([label, value]) => (
           <div key={label} className="flex gap-2">

@@ -18,7 +18,7 @@ import {
 } from '../voice-budget/voice-budget.service';
 import { DailySpendLimitExceededException } from '../../common/spend-limits';
 import { REPLIES } from '../../common/greeting-voice-intent';
-import { GREETING_VOICE_MAX_BYTES } from '../../common/greeting-voice';
+import { greetingVoiceMaxBytesFor } from '../../common/greeting-voice';
 
 const PID = 'proj-1';
 const SID = 'sess-1';
@@ -142,7 +142,7 @@ function build(
   };
   const blob = {
     createUploadUrl: jest.fn().mockResolvedValue({ uploadUrl: 'https://put' }),
-    deleteBlob: jest.fn().mockResolvedValue(undefined),
+    deleteBlob: jest.fn().mockResolvedValue(true),
   };
   const greetingVoice = {
     recognizeRecording: opts.recognizeThrows
@@ -176,6 +176,10 @@ function build(
   const guide = {
     available: jest.fn().mockResolvedValue(opts.guideOff ? false : true),
   };
+  const voiceUploads = {
+    remember: jest.fn().mockResolvedValue(undefined),
+    forget: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new GreetingVoiceUnderstandService(
     prisma as any,
     sessions as any,
@@ -190,6 +194,7 @@ function build(
     stickers as any,
     scenes as any,
     guide as any,
+    voiceUploads as any,
   );
   const generateContent = opts.modelThrows
     ? jest.fn().mockRejectedValue(new Error('gemini down'))
@@ -222,6 +227,7 @@ function build(
     stickers,
     scenes,
     guide,
+    voiceUploads,
   };
 }
 
@@ -274,7 +280,12 @@ describe('маршрут брифа до сессии — владелец и п
     expect(b.blob.createUploadUrl).toHaveBeenCalledWith(
       r.pathname,
       'audio/webm',
-      GREETING_VOICE_MAX_BYTES,
+      greetingVoiceMaxBytesFor('audio/webm'),
+    );
+    // Путь учтён ДО выдачи ссылки — крон удалит необработанную запись.
+    expect(b.voiceUploads.remember).toHaveBeenCalledWith(r.pathname);
+    expect(b.voiceUploads.remember.mock.invocationCallOrder[0]).toBeLessThan(
+      b.blob.createUploadUrl.mock.invocationCallOrder[0],
     );
     expect(b.prisma.greetingBrief.findFirst).toHaveBeenCalledWith({
       where: { projectId: PID, project: { userId: 'u-1', deletedAt: null } },
@@ -344,6 +355,8 @@ describe('разбор реплики — путь целиком', () => {
       status: 'budget-exhausted',
       intent: null,
       reply: REPLIES.ru.budgetExhausted,
+      // У потолка голоса свой статус — причины нет.
+      reason: null,
     });
     expect(b.greetingVoice.recognizeRecording).not.toHaveBeenCalled();
     expect(b.generateContent).not.toHaveBeenCalled();
@@ -358,6 +371,7 @@ describe('разбор реплики — путь целиком', () => {
       status: 'unavailable',
       intent: null,
       reply: REPLIES.ru.accountLimit,
+      reason: 'account-limit',
     });
     expect(b.voiceBudget.assertCanSpendVoice).not.toHaveBeenCalled();
     expect(b.greetingVoice.recognizeRecording).not.toHaveBeenCalled();
@@ -610,6 +624,7 @@ describe('маршрут сессии', () => {
     expect(r).toMatchObject({
       status: 'unavailable',
       reply: REPLIES.ru.loginRequired,
+      reason: 'login-required',
     });
     expect(b.voiceBudget.assertCanSpendVoice).toHaveBeenCalledWith(null);
     expect(b.greetingVoice.recognizeRecording).not.toHaveBeenCalled();
@@ -889,6 +904,7 @@ describe('выключатель советника у оператора (ау�
       status: 'unavailable',
       intent: null,
       reply: REPLIES.ru.unavailable,
+      reason: 'operator-off',
     });
     expect(b.greetingVoice.recognizeRecording).not.toHaveBeenCalled();
     expect(b.generateContent).not.toHaveBeenCalled();
@@ -913,5 +929,228 @@ describe('выключатель советника у оператора (ау�
     expect(b.greetingVoice.recognizeRecording).toHaveBeenCalled();
     expect(b.generateContent).not.toHaveBeenCalled();
     expect(r.status).toBe('unavailable');
+    expect(r.reason).toBe('operator-off');
+  });
+});
+
+describe('финальный аудит ветки K (30.09.2026)', () => {
+  it('значения на экране: сохранён день рождения, на экране «Особый повод» — настроение принимается, в инструкции — экран', async () => {
+    const b = build({
+      model: {
+        kind: 'fill',
+        confidence: 0.9,
+        fields: [{ target: 'greeting-field-mood', value: 'SOLEMN' }],
+      },
+    });
+    const r = await project(b, {
+      current: {
+        occasion: 'OTHER',
+        customOccasionText: 'Выпускной',
+        tone: 'NOT-A-TONE',
+      },
+    });
+    expect(r.intent).toMatchObject({
+      kind: 'fill',
+      fields: [{ target: 'greeting-field-mood', value: 'SOLEMN' }],
+    });
+    const prompt = b.generateContent.mock.calls[0][0].contents[0].text;
+    expect(prompt).toContain('occasion=OTHER');
+    expect(prompt).toContain('Выпускной');
+    // Неверное значение не попало никуда — тон сохранённый.
+    expect(prompt).toContain('tone=WARM');
+    // Ничего не сохраняется.
+    expect(b.prisma.greetingBrief.findFirst).toHaveBeenCalledTimes(1);
+    expect((b.prisma.greetingBrief as any).update).toBeUndefined();
+  });
+
+  it('значения на экране — и на маршруте сессии; без current — сохранённый бриф', async () => {
+    const b = build({
+      model: {
+        kind: 'fill',
+        confidence: 0.9,
+        fields: [{ target: 'greeting-field-mood', value: 'SOLEMN' }],
+      },
+    });
+    const withCurrent = await b.service.understandForSession(
+      SID,
+      {
+        pathname: SPATH,
+        screen: SCREEN,
+        current: { occasion: 'OTHER', customOccasionText: 'Юбилей' },
+      } as any,
+      'ru',
+    );
+    expect(withCurrent.intent?.kind).toBe('fill');
+    const without = await b.service.understandForSession(
+      SID,
+      { pathname: SPATH, screen: SCREEN } as any,
+      'ru',
+    );
+    expect(without.intent?.kind).not.toBe('fill');
+  });
+
+  it('запись длиннее минуты — unavailable/too-long без разбора, запись и строка учёта удалены', async () => {
+    const b = build({
+      recognized: {
+        status: 'unavailable',
+        text: null,
+        reason: 'too-long',
+      },
+    });
+    const r = await project(b);
+    expect(r).toMatchObject({
+      status: 'unavailable',
+      transcript: null,
+      intent: null,
+      reason: 'too-long',
+      reply: REPLIES.ru.transcriptTooLong,
+    });
+    expect(b.generateContent).not.toHaveBeenCalled();
+    expect(b.blob.deleteBlob).toHaveBeenCalledWith(PPATH);
+    expect(b.voiceUploads.forget).toHaveBeenCalledWith(PPATH);
+  });
+
+  it('распознавание недоступно, а потолок к этому времени исчерпан — ответ причиной потолка', async () => {
+    const b = build({
+      recognized: { status: 'unavailable', text: null },
+      voiceRefusals: [null, exhausted()],
+    });
+    const r = await project(b);
+    expect(r).toMatchObject({ status: 'budget-exhausted', reason: null });
+  });
+
+  it('распознавание недоступно при открытом входе — просто «недоступно»', async () => {
+    const b = build({ recognized: { status: 'unavailable', text: null } });
+    const r = await project(b);
+    expect(r).toMatchObject({
+      status: 'unavailable',
+      reply: REPLIES.ru.unavailable,
+    });
+    expect(r.reason ?? null).toBeNull();
+  });
+
+  describe('K2 transcribe — за тем же входом', () => {
+    const withTranscribe = (b: ReturnType<typeof build>) => {
+      (b.greetingVoice as any).transcribe = jest.fn().mockResolvedValue({
+        status: 'ok',
+        text: 'серьёзнее',
+        scriptMismatch: false,
+        hints: ['ru'],
+        language: null,
+      });
+      return (b.greetingVoice as any).transcribe as jest.Mock;
+    };
+
+    it('выключатель оператора — unavailable/operator-off без распознавания, запись удалена', async () => {
+      const b = build({ guideOff: true });
+      const transcribe = withTranscribe(b);
+      const r = await b.service.transcribeForSession(SID, { pathname: SPATH });
+      expect(r).toMatchObject({
+        status: 'unavailable',
+        text: null,
+        reason: 'operator-off',
+      });
+      expect(transcribe).not.toHaveBeenCalled();
+      expect(b.plans.assertCanSpendSession).not.toHaveBeenCalled();
+      expect(b.blob.deleteBlob).toHaveBeenCalledWith(SPATH);
+      expect(b.voiceUploads.forget).toHaveBeenCalledWith(SPATH);
+    });
+
+    it('потолок голоса — budget-exhausted, лимит аккаунта — account-limit', async () => {
+      const cap = build({ voiceRefusals: [exhausted()] });
+      withTranscribe(cap);
+      expect(
+        await cap.service.transcribeForSession(SID, { pathname: SPATH }),
+      ).toMatchObject({ status: 'budget-exhausted' });
+      const acc = build({
+        planRefusal: new DailySpendLimitExceededException('лимит'),
+      });
+      withTranscribe(acc);
+      expect(
+        await acc.service.transcribeForSession(SID, { pathname: SPATH }),
+      ).toMatchObject({ status: 'unavailable', reason: 'account-limit' });
+    });
+
+    it('вход открыт — распознавание, повтор и запасной путь спрашивают тот же вход', async () => {
+      const b = build();
+      const transcribe = withTranscribe(b);
+      const r = await b.service.transcribeForSession(SID, { pathname: SPATH });
+      expect(r).toMatchObject({ status: 'ok', text: 'серьёзнее' });
+      const canSpendAgain = transcribe.mock
+        .calls[0][2] as () => Promise<boolean>;
+      await expect(canSpendAgain()).resolves.toBe(true);
+      b.guide.available.mockResolvedValue(false);
+      await expect(canSpendAgain()).resolves.toBe(false);
+      expect(b.blob.deleteBlob).toHaveBeenCalledWith(SPATH);
+    });
+
+    it('потолок кончился между входом и расшифровкой (403 изнутри K2) — тот же 200 budget-exhausted, подсказки языка настоящие', async () => {
+      const b = build();
+      const transcribe = withTranscribe(b);
+      transcribe.mockRejectedValue(exhausted());
+      const r = await b.service.transcribeForSession(SID, { pathname: SPATH });
+      expect(r).toEqual({
+        status: 'budget-exhausted',
+        text: null,
+        scriptMismatch: false,
+        hints: ['uk', 'ru'],
+        language: null,
+        reason: null,
+      });
+      const other = build();
+      withTranscribe(other).mockRejectedValue(
+        new ForbiddenException('приостановлено'),
+      );
+      await expect(
+        other.service.transcribeForSession(SID, { pathname: SPATH }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('отказ входа — подсказки языка сессии, не пустой список', async () => {
+      const b = build({ guideOff: true });
+      withTranscribe(b);
+      const r = await b.service.transcribeForSession(SID, { pathname: SPATH });
+      expect(r.hints).toEqual(['uk', 'ru']);
+    });
+
+    it('удаление не удалось — строка учёта остаётся (оба finally)', async () => {
+      const b = build({ guideOff: true });
+      withTranscribe(b);
+      b.blob.deleteBlob.mockResolvedValue(false);
+      await b.service.transcribeForSession(SID, { pathname: SPATH });
+      expect(b.blob.deleteBlob).toHaveBeenCalledWith(SPATH);
+      expect(b.voiceUploads.forget).not.toHaveBeenCalled();
+
+      const u = build();
+      u.blob.deleteBlob.mockResolvedValue(false);
+      await project(u);
+      expect(u.blob.deleteBlob).toHaveBeenCalledWith(PPATH);
+      expect(u.voiceUploads.forget).not.toHaveBeenCalled();
+    });
+
+    it('чужой путь — 400 до входа, запись не трогаем', async () => {
+      const b = build();
+      withTranscribe(b);
+      await expect(
+        b.service.transcribeForSession(SID, {
+          pathname: 'sessions/other/voice-1.webm',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(b.guide.available).not.toHaveBeenCalled();
+      expect(b.blob.deleteBlob).not.toHaveBeenCalled();
+    });
+  });
+
+  it('upload-url брифа: запись длиннее минуты по размеру типа — 400, ссылки нет', async () => {
+    const b = build();
+    await expect(
+      b.service.createProjectUploadUrl('u-1', PID, {
+        fileName: 'a',
+        fileSize: 5 * 1024 * 1024,
+        mimeType: 'audio/mp4',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(b.blob.createUploadUrl).not.toHaveBeenCalled();
+    expect(b.voiceUploads.remember).not.toHaveBeenCalled();
   });
 });

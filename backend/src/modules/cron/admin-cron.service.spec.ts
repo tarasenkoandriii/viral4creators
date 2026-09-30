@@ -120,6 +120,9 @@ function build() {
     runCleanupSessions: jest
       .fn()
       .mockResolvedValue({ deletedCount: 7, deletedBlobs: 3 }),
+    runVoiceUploadsSweep: jest
+      .fn()
+      .mockResolvedValue({ deleted: 2, failed: 0, hasMore: false }),
     runSweepOrphans: jest
       .fn()
       .mockResolvedValue({ deleted: 0, dryRun: false, byKind: {} }),

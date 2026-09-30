@@ -47,8 +47,10 @@ import { Session } from '../../common/types/session.types';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 import { SupportedLocale } from '../../common/locale';
 import {
-  GREETING_VOICE_MAX_BYTES,
+  VOICE_UTTERANCE_MAX_MS,
   buildGreetingVoicePrompt,
+  greetingVoiceMaxBytesFor,
+  greetingVoiceTooLong,
   needsScriptRetry,
   stripNonSpeech,
   voiceLanguageHints,
@@ -57,16 +59,29 @@ import { BlobService } from '../storage/blob.service';
 import { PlanService } from '../plan/plan.service';
 import { VoiceBudgetService } from '../voice-budget/voice-budget.service';
 import {
+  AUDIO_TOO_LONG_REASON,
   VoiceTranscriptionService,
   isSpeechlessReason,
 } from './voice-transcription.service';
+import { VoiceUploadService } from '../voice-upload/voice-upload.service';
+import type { VoiceReason } from '../../common/greeting-voice-intent';
 import { audioExtension, VoiceUploadUrl } from './voice.service';
 import {
   GreetingVoiceTranscribeRequestDto,
   GreetingVoiceUploadUrlRequestDto,
 } from './dto/greeting-voice.dto';
 
-export type GreetingVoiceStatus = 'ok' | 'not-heard' | 'unavailable';
+/**
+ * `budget-exhausted` — потолок голоса (В-14): с финального аудита ветки K
+ * расшифровка стоит за тем же входом, что разбор
+ * (`GreetingVoiceUnderstandService.transcribeForSession`), и отвечает теми
+ * же статусами, а не 403.
+ */
+export type GreetingVoiceStatus =
+  | 'ok'
+  | 'not-heard'
+  | 'unavailable'
+  | 'budget-exhausted';
 
 export interface GreetingVoiceResult {
   status: GreetingVoiceStatus;
@@ -92,6 +107,26 @@ export interface GreetingVoiceResult {
    * кто-то другой.
    */
   language: string | null;
+  /**
+   * Причина отказа — тот же словарь, что у разбора (изменение контракта 2
+   * финального аудита): `too-long` — запись длиннее минуты; остальные —
+   * отказ входа (выключатель оператора, нужен вход, лимит аккаунта).
+   */
+  reason?: VoiceReason | null;
+}
+
+/** Результат «запись длиннее минуты» — без платного разбора. */
+export function tooLongGreetingVoice(
+  hints: SupportedLocale[],
+): GreetingVoiceResult {
+  return {
+    status: 'unavailable',
+    text: null,
+    scriptMismatch: false,
+    hints,
+    language: null,
+    reason: 'too-long',
+  };
 }
 
 /** Ключ записи в Blob: по времени, чтобы новый дубль не гонялся со старым. Экспорт — для тестов. */
@@ -139,6 +174,7 @@ export class GreetingVoiceService {
     private readonly transcription: VoiceTranscriptionService,
     private readonly plans: PlanService,
     private readonly voiceBudget: VoiceBudgetService,
+    private readonly voiceUploads: VoiceUploadService,
   ) {}
 
   async createUploadUrl(
@@ -146,11 +182,15 @@ export class GreetingVoiceService {
     dto: GreetingVoiceUploadUrlRequestDto,
   ): Promise<VoiceUploadUrl> {
     await this.load(sessionId);
+    const maxBytes = assertGreetingVoiceSize(dto);
     const pathname = greetingVoicePathname(sessionId, dto.mimeType);
+    // Учёт выданного пути — до ссылки: необработанную запись удалит крон
+    // `voice-uploads-sweep` в пределах часа (финальный аудит ветки K).
+    await this.voiceUploads.remember(pathname);
     const { uploadUrl } = await this.blobService.createUploadUrl(
       pathname,
       dto.mimeType,
-      GREETING_VOICE_MAX_BYTES,
+      maxBytes,
     );
     return { uploadUrl, pathname };
   }
@@ -158,6 +198,12 @@ export class GreetingVoiceService {
   async transcribe(
     sessionId: string,
     dto: GreetingVoiceTranscribeRequestDto,
+    /**
+     * Вход до повтора и запасного пути — у маршрута это тот же `gate()`,
+     * что у разбора (выключатель оператора и потолки). Без него — только
+     * потолки, как было на K2.
+     */
+    canSpendAgain?: () => Promise<boolean>,
   ): Promise<GreetingVoiceResult> {
     const session = await this.load(sessionId);
     const prefix = `sessions/${sessionId}/`;
@@ -182,22 +228,28 @@ export class GreetingVoiceService {
         hints: voiceLanguageHints(snapshot.scriptLanguage, session.locale),
         names: [snapshot.recipientName, snapshot.senderName],
         owner: { sessionId },
-        canSpendAgain: () =>
-          this.plans
-            .assertCanSpendSession(sessionId)
-            .then(() =>
-              this.voiceBudget.assertCanSpendVoice(session.userId ?? null),
-            )
-            .then(
-              () => true,
-              () => false,
-            ),
+        canSpendAgain:
+          canSpendAgain ??
+          (() =>
+            this.plans
+              .assertCanSpendSession(sessionId)
+              .then(() =>
+                this.voiceBudget.assertCanSpendVoice(session.userId ?? null),
+              )
+              .then(
+                () => true,
+                () => false,
+              )),
       });
     } finally {
       // Транзитная копия: прочитана или нет — не храним. Не влияет на ответ.
       // С `await`: на Vercel работа, не дождавшаяся ответа, может не
       // выполниться вовсе (сквозной аудит голоса 29.09.2026).
-      await this.blobService.deleteBlob(dto.pathname);
+      // Строка учёта снимается только после настоящего удаления: не
+      // удалилось — крон `voice-uploads-sweep` повторит (аудит после раунда).
+      if (await this.blobService.deleteBlob(dto.pathname)) {
+        await this.voiceUploads.forget(dto.pathname);
+      }
     }
   }
 
@@ -237,9 +289,11 @@ export class GreetingVoiceService {
     }
     // Подписанный PUT уже ограничен размером, но проверка здесь — не
     // перестраховка: платный вызов не должен зависеть от того, чей
-    // клиент и чья ссылка положили файл.
-    if (audio.length > GREETING_VOICE_MAX_BYTES) {
-      throw new BadRequestException('Запись слишком длинная для реплики');
+    // клиент и чья ссылка положили файл. Длиннее минуты по оценке
+    // размера и типа — отказ `too-long` без платного вызова (изменение
+    // контракта 4 финального аудита).
+    if (greetingVoiceTooLong({ bytes: audio.length, mimeType })) {
+      return tooLongGreetingVoice(hints);
     }
 
     const run = async (strictScript: boolean) => {
@@ -257,6 +311,12 @@ export class GreetingVoiceService {
         terms: names,
         strictLanguage: strictScript,
         operation: 'voice-assistant-stt',
+        // Длительность от Soniox — точнее оценки по размеру: минута и
+        // больше — отказ без текста и без запасного пути.
+        maxDurationMs: VOICE_UTTERANCE_MAX_MS,
+        // Сбой Soniox уже оплачен; запасной Gemini — второй платный
+        // вызов, и потолки проверяются перед ним заново.
+        canFallback: input.canSpendAgain,
         ...(input.owner.sessionId
           ? { sessionId: input.owner.sessionId }
           : { userId: input.owner.userId ?? null }),
@@ -269,6 +329,9 @@ export class GreetingVoiceService {
     };
 
     const first = await run(false);
+    if (first.reason === AUDIO_TOO_LONG_REASON) {
+      return tooLongGreetingVoice(hints);
+    }
     if (!first.text && isUnavailable(first.reason)) {
       return {
         status: 'unavailable',
@@ -306,6 +369,25 @@ export class GreetingVoiceService {
     }
     return session;
   }
+}
+
+/**
+ * Размер записи против потолка её типа (минута по щедрому битрейту,
+ * `greetingVoiceMaxBytesFor`) — до выдачи ссылки. Отдаёт потолок: им же
+ * ограничена сама ссылка, и Blob больше не примет. Экспорт — для
+ * маршрута брифа до сессии.
+ */
+export function assertGreetingVoiceSize(dto: {
+  fileSize: number;
+  mimeType: string;
+}): number {
+  const maxBytes = greetingVoiceMaxBytesFor(dto.mimeType);
+  if (dto.fileSize > maxBytes) {
+    throw new BadRequestException(
+      'Запись длиннее минуты — реплика должна быть короче',
+    );
+  }
+  return maxBytes;
 }
 
 /**

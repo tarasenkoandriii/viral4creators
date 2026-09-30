@@ -5,6 +5,7 @@
 
 import {
   createMediaPlaybackRegistry,
+  createMicBusyRegistry,
   mediaPlaybackRef,
   withMediaPlayback,
   type MediaLike,
@@ -212,6 +213,29 @@ check('детектор речи: советник ИЛИ ролик; глуши
   // Ролик перебиванием не останавливается — его ставит на паузу человек.
   eq(v.paused, false);
 });
+
+check(
+  'микрофон занят: счётчик захватов, повторное отпускание безвредно',
+  () => {
+    const m = createMicBusyRegistry();
+    const seen: boolean[] = [];
+    const off = m.onChange((b) => seen.push(b));
+    eq(m.isBusy(), false);
+    const a = m.acquire();
+    const b = m.acquire();
+    eq(m.isBusy(), true);
+    a();
+    a(); // эффект и finally оба отпускают — чужой захват цел
+    eq(m.isBusy(), true);
+    b();
+    eq(m.isBusy(), false);
+    // Подписчик слышит только смену: занят → свободен, без повторов.
+    eq(seen, [true, false]);
+    off();
+    m.acquire();
+    eq(seen, [true, false]);
+  }
+);
 
 if (failed) {
   console.error(`\n${failed} проверок упало`);

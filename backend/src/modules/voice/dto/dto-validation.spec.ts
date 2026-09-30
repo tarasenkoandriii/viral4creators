@@ -152,3 +152,29 @@ describe('understand DTOs', () => {
     });
   });
 });
+
+// Финальный аудит ветки K, изменение контракта 1: значения на экране.
+describe('understand DTOs — current', () => {
+  const screen = { step: 'brief' };
+  it('объект со значениями (даже неверными) принимается на обоих маршрутах: значения проверяет сервис', async () => {
+    await ok(GreetingVoiceUnderstandRequestDto, {
+      pathname: 'sessions/s1/voice-1.webm',
+      screen,
+      current: { occasion: 'OTHER', tone: null, mood: 'НЕТ-ТАКОГО' },
+    });
+    await ok(ProjectGreetingVoiceUnderstandRequestDto, {
+      pathname: 'projects/p1/greeting-voice-1.webm',
+      screen,
+      current: { recipientName: 'Мама' },
+    });
+  });
+  it('не объект — 400', async () => {
+    for (const current of [['occasion'], 'OTHER', 5]) {
+      await bad(GreetingVoiceUnderstandRequestDto, {
+        pathname: 'sessions/s1/voice-1.webm',
+        screen,
+        current,
+      });
+    }
+  });
+});

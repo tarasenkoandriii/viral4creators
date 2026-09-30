@@ -3729,6 +3729,7 @@ function checkVoiceRetentionSeam() {
   // делать это в `finally`, а не только в ветке успеха.
   let sonioxUploaders = 0;
   let blobCleaners = 0;
+  let uploadIssuers = 0;
   // Тело блока по открывающей скобке. Все блоки `finally` файла, а не
   // первый (аудит 29.09.2026), и с раскрытием вызовов `this.метод(` —
   // уборка, вынесенная в свой метод, должна засчитываться, а вынесенная
@@ -3782,6 +3783,31 @@ function checkVoiceRetentionSeam() {
           `${DIR}/${f}: удаление записи из Blob не стоит в finally — отказ по лимиту или исключение оставят файл у Сервиса`,
         );
       }
+      // Строка учёта выданной ссылки (финальный аудит ветки K,
+      // 30.09.2026) снимается там же, где удаляется файл: иначе крон
+      // `voice-uploads-sweep` час спустя «удалял» бы уже удалённое, а
+      // главное — забытая строка значит, что учёт и удаление разошлись.
+      if (
+        !fins.some((b) => /\bawait\s+this\.voiceUploads\.forget\(/.test(b))
+      ) {
+        problems.push(
+          `${DIR}/${f}: запись удаляется, но строка учёта (voiceUploads.forget) не снимается в том же finally`,
+        );
+      }
+    }
+
+    // Каждая выданная ссылка на запись учитывается ДО выдачи: без строки
+    // `VoiceUpload` необработанную запись удалит только суточная метла,
+    // а она до голосовых файлов на объёме не доходит.
+    if (/\bblobService\.createUploadUrl\(/.test(src)) {
+      uploadIssuers++;
+      const issue = src.search(/\bblobService\.createUploadUrl\(/);
+      const remember = src.search(/\bawait\s+this\.voiceUploads\.remember\(/);
+      if (remember < 0 || remember > issue) {
+        problems.push(
+          `${DIR}/${f}: ссылка на загрузку записи выдаётся без учёта (voiceUploads.remember до createUploadUrl) — крон voice-uploads-sweep её не увидит`,
+        );
+      }
     }
 
     if (!/SONIOX_API_BASE/.test(src) || !/['"`]\/files['"`]/.test(src))
@@ -3828,7 +3854,9 @@ function checkVoiceRetentionSeam() {
       `ok   голос не остаётся у провайдера: файлов модуля голоса ${files.length}, ` +
         `звук внутри запроса в ${inline}, путей к Files API 0, отправок в ` +
         `Soniox ${sonioxUploaders}, все с уборкой в finally; удалений из ` +
-        `Blob ${blobCleaners}, все в finally и с await — обещание ` +
+        `Blob ${blobCleaners}, все в finally и с await и со снятием строки ` +
+        `учёта; выдач ссылок на запись ${uploadIssuers}, все с учётом до ` +
+        "выдачи (крон voice-uploads-sweep) — обещание " +
         "пункта 3.4 Условий держится кодом",
     );
   }

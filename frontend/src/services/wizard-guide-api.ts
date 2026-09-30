@@ -62,15 +62,20 @@ export async function setWizardGuideVoice(
  * 'budget-exhausted' }` — потолок голоса на сегодня (В-14): о нём
  * говорят один раз. Причина приходит телом, а не заголовком — у бэкенда
  * другой домен, и свой заголовок браузер скрипту не показал бы.
+ *
+ * POST с телом `{ key }` (изменение контракта 3): запрос может запустить
+ * платный синтез, а GET — безопасный метод, который браузер и прокси
+ * вправе повторить или предзагрузить. Язык озвучки сервер берёт из
+ * ключа подсказки — отдельного `lang` нет.
  */
 export async function getHintAudio(
   projectId: string,
-  key: string,
-  lang: string
+  key: string
 ): Promise<HintAudioAnswer> {
   try {
-    const qs = new URLSearchParams({ key, lang }).toString();
-    const res = await api.get<unknown>(`${base(projectId)}/hint-audio?${qs}`);
+    const res = await api.post<unknown>(`${base(projectId)}/hint-audio`, {
+      key,
+    });
     // 204 — тело пустое, `res` приходит пустой строкой.
     return interpretHintAudio(res && typeof res === 'object' ? res.data : null);
   } catch {

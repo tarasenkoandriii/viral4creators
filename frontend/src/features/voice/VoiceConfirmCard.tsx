@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Check, X } from 'lucide-react';
 import { Button } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
@@ -9,27 +10,37 @@ import type { VoiceField } from '../../lib/voice-types';
  * списком «поле → значение», применяется только после «Да». Ответить
  * можно кнопкой или голосом (интенты `confirm` / `cancel`) — оба пути
  * ведут в один и тот же обработчик `VoiceAssistant`.
+ *
+ * `role="group"`, а не `dialog`: карточка — часть страницы, фокус в неё
+ * не переносится и за ней не запирается (финальный аудит, доступность).
+ * О её появлении читалке говорит область объявлений `VoiceAssistant`.
  */
 export function VoiceConfirmCard({
   card,
   describe,
+  note,
   onConfirm,
   onCancel,
 }: {
   card: VoiceCard;
   describe: (field: VoiceField) => string;
+  /** Предупреждение к карточке (фраза обрезана по длине). */
+  note?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   const { dict } = useI18n();
   const v = dict.voiceAssistant;
+  const titleId = useId();
   return (
     <div
       className="rounded-xl border border-accent/30 bg-accent/5 p-3"
-      role="dialog"
-      aria-label={v.confirmTitle}
+      role="group"
+      aria-labelledby={titleId}
     >
-      <p className="text-sm font-medium">{v.confirmTitle}</p>
+      <p id={titleId} className="text-sm font-medium">
+        {v.confirmTitle}
+      </p>
       {card.kind === 'fill' ? (
         <dl className="mt-2 space-y-1 text-sm">
           {card.fields.map((f) => (
@@ -41,6 +52,11 @@ export function VoiceConfirmCard({
         </dl>
       ) : (
         <p className="mt-2 text-sm font-medium">{card.label}</p>
+      )}
+      {note && (
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+          {note}
+        </p>
       )}
       <p className="mt-2 text-xs text-silver-400">{v.confirmHint}</p>
       <div className="mt-2 flex gap-2">
