@@ -20,7 +20,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { BlogService } from './blog.service';
+import { BLOG_POST_NOT_FOUND, BlogService } from './blog.service';
 import {
   AdminBlogPostDetail,
   AdminBlogPostPage,
@@ -62,7 +62,7 @@ export class BlogController {
     @Param('slug') slug: string,
     @Query('locale') locale?: string,
   ): Promise<PublicBlogPostDetail> {
-    if (!slug.trim()) throw new NotFoundException('Blog post not found');
+    if (!slug.trim()) throw new NotFoundException(BLOG_POST_NOT_FOUND);
     return this.service.publicGetBySlug(slug, locale ?? DEFAULT_LOCALE);
   }
 }

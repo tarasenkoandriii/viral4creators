@@ -69,6 +69,7 @@ export class CronController {
     low: number;
     unreadable: number;
     notified: number;
+    skippedUnused: number;
   }> {
     assertCronSecret(authHeader);
     return this.jobs.runAndLog(

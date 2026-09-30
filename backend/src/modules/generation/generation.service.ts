@@ -130,6 +130,15 @@ const DEFAULT_QUALITY: VideoQuality = 'fast';
  */
 const GENERATE_CLAIM_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Провайдер видео временно не отвечает (429/5xx, сетевой обрыв). Класс
+ * исключения — ServiceUnavailableException: по нему воркеры партии и A/B
+ * ретраят; текст — человеку, подробности провайдера — только в лог.
+ */
+export const GENERATION_PROVIDER_BUSY =
+  'Сервис генерации видео сейчас перегружен — попробуйте ещё раз через пару минут';
+export const GENERATION_PROVIDER_BUSY_CODE = 'GENERATION_PROVIDER_BUSY';
+
 export const GENERATION_IN_FLIGHT_MESSAGE =
   'Генерация уже запускается — дождитесь ответа первого запроса.';
 
@@ -803,9 +812,14 @@ export class GenerationService {
       const transient =
         typeof status === 'number' && (status === 429 || status >= 500);
       if (transient) {
-        throw new ServiceUnavailableException(
+        // Статус и текст провайдера — в лог; человеку — смысл и код.
+        this.logger.warn(
           `Veo временно недоступен (${status}): ${this.extractErrorMessage(error)}`,
         );
+        throw new ServiceUnavailableException({
+          code: GENERATION_PROVIDER_BUSY_CODE,
+          message: GENERATION_PROVIDER_BUSY,
+        });
       }
       // Текст провайдера — только в лог (он уже записан выше): человеку
       // он ничего не объяснит, а внутренние подробности наружу незачем.
@@ -1083,9 +1097,11 @@ export class GenerationService {
           (httpStatus === 429 || httpStatus >= 500)) ||
         /timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(message);
       if (transient) {
-        throw new ServiceUnavailableException(
-          `Grok временно недоступен: ${message}`,
-        );
+        this.logger.warn(`Grok временно недоступен: ${message}`);
+        throw new ServiceUnavailableException({
+          code: GENERATION_PROVIDER_BUSY_CODE,
+          message: GENERATION_PROVIDER_BUSY,
+        });
       }
       // Текст провайдера — только в лог (записан выше), как у Veo.
       throw new BadRequestException(

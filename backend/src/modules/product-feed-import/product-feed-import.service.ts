@@ -168,7 +168,9 @@ export class ProductFeedImportService {
           : undefined,
       });
     if (!run || run.userId !== userId || run.projectId !== projectId) {
-      throw new NotFoundException(`Feed import ${runId} not found`);
+      throw new NotFoundException(
+        'Импорт фида не найден — возможно, его уже удалили',
+      );
     }
     return run;
   }

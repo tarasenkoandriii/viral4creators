@@ -155,7 +155,7 @@ describe('AnalysisPreviewsService', () => {
       svc.confirm('s1', [
         { key: 'scene:s2', pathname: 'sessions/OTHER/previews/scene-s2.jpg' },
       ]),
-    ).rejects.toThrow(/must be the value returned/);
+    ).rejects.toThrow(/Кадры-превью разбора не сохранились/);
   });
 
   it('подтверждённые кадры досохраняются в библиотеку (этап 39, А-2.10)', async () => {

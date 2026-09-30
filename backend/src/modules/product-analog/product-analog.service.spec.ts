@@ -311,9 +311,16 @@ describe('processPhoto', () => {
     mockedHead.mockRejectedValue(
       new Error('Vercel Blob: The requested blob does not exist'),
     );
-    await expect(svc.processPhoto(USER, 'p1', 'i1', dto)).rejects.toThrow(
-      /upload it first/,
+    const err = await svc
+      .processPhoto(USER, 'p1', 'i1', dto)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    // Человеку — что сделать; путь в хранилище и текст ошибки Blob — в лог.
+    expect((err as Error).message).toBe(
+      'Фото товара не загрузилось — попробуйте загрузить его ещё раз',
     );
+    expect((err as Error).message).not.toContain(dto.pathname);
+    expect((err as Error).message).not.toContain('Vercel Blob');
   });
 
   it('happy path: hash → no cache → limit ok → lens (billed → counted) → gemini → persist', async () => {

@@ -20,6 +20,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { head } from '@vercel/blob';
@@ -41,6 +42,21 @@ import {
   PutCastingRequestDto,
 } from './dto/casting.dto';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+
+/**
+ * Отказы кастинга читает человек в мастере. Внутренний ключ персонажа
+ * («c1») ему ничего не говорит — в тексте подпись персонажа из разбора
+ * («Женщина в красной куртке»), а ключ и пути хранилища — в лог.
+ */
+const log = new Logger('CastingService');
+
+/** Персонажа с таким ключом нет в разборе — чаще всего устаревшая вкладка. */
+export const CHARACTER_NOT_IN_ANALYSIS =
+  'Такого персонажа нет в разборе ролика — обновите страницу';
+
+/** Загруженное фото не нашлось там, куда его велели положить. */
+const CAST_PHOTO_UPLOAD_FAILED =
+  'Фото персонажа не загрузилось — попробуйте загрузить его ещё раз';
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
@@ -64,12 +80,13 @@ export function normaliseCasting(
   dto: PutCastingRequestDto,
   now: Date = new Date(),
 ): CharacterCasting {
-  const known = new Set(
-    (session.videoAnalysis?.characters ?? []).map((c) => c.id),
+  const labels = new Map(
+    (session.videoAnalysis?.characters ?? []).map((c) => [c.id, c.label]),
   );
+  const known = new Set(labels.keys());
   if (known.size === 0) {
     throw new BadRequestException(
-      'The analysis found no characters to cast (or the analysis is not complete yet)',
+      'В разборе ролика нет персонажей для замены — или разбор ещё не закончен',
     );
   }
   // URL → персонаж снимка. Принимаются ОБА варианта изображения:
@@ -88,19 +105,26 @@ export function normaliseCasting(
   const casts: CharacterCast[] = [];
   for (const d of dto.casts) {
     if (!known.has(d.characterId)) {
-      throw new BadRequestException(
-        `Unknown character "${d.characterId}" — not in this analysis`,
-      );
+      log.warn(`кастинг: персонажа ${d.characterId} нет в разборе`);
+      throw new BadRequestException(CHARACTER_NOT_IN_ANALYSIS);
     }
+    const name = `«${labels.get(d.characterId) || 'без подписи'}»`;
     if (seen.has(d.characterId)) {
-      throw new BadRequestException(`Duplicate cast for "${d.characterId}"`);
+      throw new BadRequestException(
+        `Персонаж ${name} указан в кастинге дважды`,
+      );
     }
     seen.add(d.characterId);
     casts.push({
       characterId: d.characterId,
       active: d.active,
       order: d.active ? d.order : 0,
-      replacement: replacementFrom(d, previous.get(d.characterId), brandPhotos),
+      replacement: replacementFrom(
+        d,
+        name,
+        previous.get(d.characterId),
+        brandPhotos,
+      ),
     });
   }
 
@@ -117,6 +141,8 @@ export function normaliseCasting(
 
 function replacementFrom(
   d: CharacterCastDto,
+  /** Подпись персонажа из разбора, уже в кавычках, — для текста отказа. */
+  name: string,
   prev: CharacterCast | undefined,
   brandPhotos: Map<string, BrandCharacterSnapshot>,
 ): CastReplacement {
@@ -127,7 +153,7 @@ function replacementFrom(
     case 'text':
       if (!r.description?.trim()) {
         throw new BadRequestException(
-          `Text replacement for "${d.characterId}" needs a description`,
+          `Для замены персонажа ${name} текстом опишите, кем его заменить`,
         );
       }
       return {
@@ -140,7 +166,7 @@ function replacementFrom(
       const kept = prev?.replacement.kind === 'photo' ? prev.replacement : null;
       if (!kept?.photoUrl) {
         throw new BadRequestException(
-          `No uploaded photo for "${d.characterId}" — upload one via characters/${d.characterId}/photo first`,
+          `Для замены персонажа ${name} по фото сначала загрузите фото`,
         );
       }
       return {
@@ -151,12 +177,12 @@ function replacementFrom(
     case 'brand': {
       if (r.photoUrl && !brandPhotos.has(r.photoUrl)) {
         throw new BadRequestException(
-          `photoUrl for "${d.characterId}" is not a brand character photo of this session`,
+          `Для персонажа ${name} выбрано фото не из бренд-бука этого ролика — выберите персонажа бренда заново`,
         );
       }
       if (!r.photoUrl && !r.description?.trim()) {
         throw new BadRequestException(
-          `Brand replacement for "${d.characterId}" needs a photo or a description`,
+          `Для замены персонажа ${name} персонажем бренда нужно его фото или описание`,
         );
       }
       const snap = r.photoUrl ? (brandPhotos.get(r.photoUrl) ?? null) : null;
@@ -244,17 +270,21 @@ export class CastingService {
     this.assertKnown(session, characterId);
     const expectedPrefix = `sessions/${sessionId}/characters/${characterId}/`;
     if (!dto.pathname.startsWith(expectedPrefix)) {
-      throw new BadRequestException(
-        `pathname must start with "${expectedPrefix}"`,
+      log.warn(
+        `кастинг, сессия ${sessionId}: путь фото ${dto.pathname} не под ${expectedPrefix}`,
       );
+      throw new BadRequestException(CAST_PHOTO_UPLOAD_FAILED);
     }
     let url: string;
     try {
       url = (await head(dto.pathname)).url;
     } catch (e) {
-      throw new BadRequestException(
-        `Photo not found in storage at "${dto.pathname}" — upload it first via the photo/upload-url step (${e instanceof Error ? e.message : String(e)})`,
+      log.warn(
+        `кастинг, сессия ${sessionId}: фото ${dto.pathname} не нашлось в хранилище (${
+          e instanceof Error ? e.message : String(e)
+        })`,
       );
+      throw new BadRequestException(CAST_PHOTO_UPLOAD_FAILED);
     }
 
     const current = session.characterCasting ?? { casts: [], updatedAt: '' };
@@ -342,9 +372,8 @@ export class CastingService {
       (c) => c.id === characterId,
     );
     if (!ok) {
-      throw new NotFoundException(
-        `Character "${characterId}" is not in this session's analysis`,
-      );
+      log.warn(`кастинг: персонажа ${characterId} нет в разборе`);
+      throw new NotFoundException(CHARACTER_NOT_IN_ANALYSIS);
     }
   }
 }

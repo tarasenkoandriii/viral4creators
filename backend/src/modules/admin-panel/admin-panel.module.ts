@@ -19,6 +19,7 @@ import { AdminTutorialLocalesSettingsService } from './admin-tutorial-locales-se
 import { AudioSeparationModule } from '../audio-separation/audio-separation.module';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { ProviderBalancesService } from './provider-balances.service';
+import { ProviderUsageService } from './provider-usage.service';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { AdminVideoProviderSettingsService } from './admin-video-provider-settings.service';
 import { AdminGrokTransportSettingsService } from './admin-grok-transport-settings.service';
@@ -71,6 +72,8 @@ import { AdminTestTicketsService } from './admin-test-tickets.service';
     AdminTesterInvitesService,
     AdminTestTicketsService,
     ProviderBalancesService,
+    // Кем продукт пользуется сейчас — для сторожа остатков (30.09.2026).
+    ProviderUsageService,
     AdminPanelService,
     AdminUsersService,
     AdminBillingService,

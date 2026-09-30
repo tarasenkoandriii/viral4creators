@@ -21,8 +21,22 @@
 
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CronJobsService } from './cron-jobs.service';
+import { JOB_LOCK_MS } from '../../common/cron-job-lock';
+import { CronJobsService, VERCEL_CRON_TRIGGERED_BY } from './cron-jobs.service';
 import { buildRunSummary } from './cron-run-summary';
+import {
+  CronHistoryQuery,
+  CronSummaryQuery,
+  HISTORY_DEFAULT_LIMIT,
+  HISTORY_MAX_LIMIT,
+} from './cron-history-query';
+import {
+  ceilToMinute,
+  countExpectedRuns,
+  loadVercelSchedules,
+  parseCronExpression,
+} from './cron-schedule';
+import { CRON_LOG_RETENTION_DAYS } from './cron-retention';
 
 export interface CronJobInfo {
   jobKey: string;
@@ -43,6 +57,77 @@ export interface CronRunLogRow {
   summary: string | null;
   debugLog: unknown;
   errorMessage: string | null;
+}
+
+/** Сколько последних неуспешных прогонов на джоб отдаёт сводка. */
+export const SUMMARY_RECENT_FAILURES = 5;
+
+/**
+ * Запас на «тик ещё не записан»: Vercel стартует функцию не ровно в
+ * минуту расписания, и строка `CronRunLog` появляется спустя секунды
+ * после тика. Без запаса сводка «за сегодня» сразу после тика
+ * показывала ложное `missed: 1`. Последние три минуты не ожидаются.
+ */
+export const SUMMARY_EXPECTED_GRACE_MS = 3 * 60_000;
+
+export interface CronFailureRow {
+  id: string;
+  startedAt: Date;
+  triggeredBy: string;
+  durationMs: number | null;
+  summary: string | null;
+  errorMessage: string | null;
+}
+
+export interface CronJobSummary {
+  jobKey: string;
+  /** Cron-выражение из vercel.json; null — у джоба нет расписания. */
+  schedule: string | null;
+  /** Сколько раз джоб должен был стартовать по расписанию в
+   * `[since, min(until, now))`; null — расписание неизвестно/не разобрано. */
+  expected: number | null;
+  /** Прогоны от Vercel Cron (`triggeredBy = 'vercel-cron'`) за весь период. */
+  scheduledRuns: number;
+  /** Они же, но только в окне ожидания `[expectedSince, expectedUntil)` —
+   * именно с ними сравнивается `expected`. */
+  scheduledRunsInWindow: number;
+  /** Ручные запуски оператором из админки. */
+  manualRuns: number;
+  /** max(0, expected − scheduledRunsInWindow); null — если expected неизвестно. */
+  missed: number | null;
+  total: number;
+  byStatus: Record<CronRunStatusValue, number>;
+  medianDurationMs: number | null;
+  maxDurationMs: number | null;
+  /** RUNNING-строки, начатые раньше, чем `now − JOB_LOCK_MS`: замок
+   * джоба уже истёк, а прогон так и не записал итог — зависший/убитый. */
+  stuckRunning: number;
+  stuck: boolean;
+  recentFailures: CronFailureRow[];
+}
+
+export interface CronSummary {
+  since: Date;
+  until: Date;
+  /**
+   * Окно подсчёта `expected` и `scheduledRunsInWindow`:
+   * `[max(since, now − срок хранения), min(until, now − запас))`, обе
+   * границы округлены вверх до минуты. Старше срока хранения строки уже
+   * удалены уборкой — ожидать их значило бы рисовать ложные пропуски;
+   * последние минуты — см. `SUMMARY_EXPECTED_GRACE_MS`.
+   * Округление до минуты: тик по расписанию всегда на целой минуте, а
+   * строка стартует с задержкой в секунды — считать строки в
+   * `[ceil(S), ceil(U))` = относить строку к минуте её тика (при
+   * задержке старта меньше минуты).
+   */
+  expectedSince: Date;
+  expectedUntil: Date;
+  expectedGraceMs: number;
+  retentionDays: number;
+  lockMs: number;
+  /** false — vercel.json не найден, `expected` у всех null. */
+  schedulesLoaded: boolean;
+  jobs: CronJobSummary[];
 }
 
 /**
@@ -196,14 +281,222 @@ export class AdminCronService {
    * Без `jobKey` — последние прогоны по всем джобам вперемешку (клиент
    * сам берёт последний на каждый jobKey — тот же приём, что
    * `lastRunFor()` у Solar Shop); с `jobKey` — история одного джоба.
+   *
+   * Период `[since, until)`, `limit` (потолок `HISTORY_MAX_LIMIT`) и
+   * курсор `before` = id последней строки предыдущей страницы: порядок
+   * `startedAt desc, id desc` — стабильный и при одинаковом startedAt.
+   * Страница неполная (< limit) — дальше строк нет.
    */
-  async getHistory(jobKey?: string, limit = 50): Promise<CronRunLogRow[]> {
+  async getHistory(
+    query: Partial<CronHistoryQuery> = {},
+  ): Promise<CronRunLogRow[]> {
+    const limit = Math.min(
+      Math.max(1, query.limit ?? HISTORY_DEFAULT_LIMIT),
+      HISTORY_MAX_LIMIT,
+    );
+    const where: Record<string, unknown> = {};
+    if (query.jobKey) where.jobKey = query.jobKey;
+    if (query.since || query.until) {
+      where.startedAt = {
+        ...(query.since ? { gte: query.since } : {}),
+        ...(query.until ? { lt: query.until } : {}),
+      };
+    }
     const rows = await this.prisma.cronRunLog.findMany({
-      where: jobKey ? { jobKey } : undefined,
-      orderBy: { startedAt: 'desc' },
+      where,
+      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
       take: limit,
+      ...(query.before ? { cursor: { id: query.before }, skip: 1 } : {}),
     });
     return rows as CronRunLogRow[];
+  }
+
+  /**
+   * Агрегат за период по каждому jobKey — «проверить сутки целиком»
+   * одним запросом, а не листая историю по 50 строк. Все подсчёты — на
+   * стороне БД (groupBy + percentile_cont): у двухминутных джобов за
+   * сутки ~720 строк на КАЖДЫЙ, тащить их в процесс ради счётчиков
+   * незачем. Опирается на индекс `(jobKey, startedAt)` и `(startedAt)`.
+   */
+  async getSummary(
+    query: CronSummaryQuery,
+    now: Date = new Date(),
+  ): Promise<CronSummary> {
+    const { since, until } = query;
+    const range = { gte: since, lt: until };
+    const stuckBefore = new Date(
+      Math.min(until.getTime(), now.getTime() - JOB_LOCK_MS),
+    );
+
+    const retentionStart = new Date(
+      now.getTime() - CRON_LOG_RETENTION_DAYS * 86_400_000,
+    );
+    const expectedSince = ceilToMinute(
+      new Date(Math.max(since.getTime(), retentionStart.getTime())),
+    );
+    const expectedUntil = ceilToMinute(
+      new Date(
+        Math.min(until.getTime(), now.getTime() - SUMMARY_EXPECTED_GRACE_MS),
+      ),
+    );
+    const windowOpen = expectedUntil.getTime() > expectedSince.getTime();
+
+    const [groups, medians, stuckGroups, windowGroups] = await Promise.all([
+      this.prisma.cronRunLog.groupBy({
+        by: ['jobKey', 'status', 'triggeredBy'],
+        where: { startedAt: range },
+        _count: { _all: true },
+        _max: { durationMs: true },
+      }),
+      this.prisma.$queryRaw<
+        Array<{ jobKey: string; median: number | string | null }>
+      >`SELECT "jobKey", percentile_cont(0.5) WITHIN GROUP (ORDER BY "durationMs") AS median
+        FROM "cron_run_logs"
+        WHERE "startedAt" >= ${since} AND "startedAt" < ${until} AND "durationMs" IS NOT NULL
+        GROUP BY "jobKey"`,
+      stuckBefore.getTime() > since.getTime()
+        ? this.prisma.cronRunLog.groupBy({
+            by: ['jobKey'],
+            where: {
+              status: 'RUNNING',
+              startedAt: { gte: since, lt: stuckBefore },
+            },
+            _count: { _all: true },
+          })
+        : Promise.resolve(
+            [] as Array<{ jobKey: string; _count: { _all: number } }>,
+          ),
+      windowOpen
+        ? this.prisma.cronRunLog.groupBy({
+            by: ['jobKey'],
+            where: {
+              triggeredBy: VERCEL_CRON_TRIGGERED_BY,
+              startedAt: { gte: expectedSince, lt: expectedUntil },
+            },
+            _count: { _all: true },
+          })
+        : Promise.resolve(
+            [] as Array<{ jobKey: string; _count: { _all: number } }>,
+          ),
+    ]);
+
+    const schedules = loadVercelSchedules();
+    const keys = JOB_REGISTRY.map((j) => j.jobKey);
+    for (const g of groups as Array<{ jobKey: string }>) {
+      if (!keys.includes(g.jobKey)) keys.push(g.jobKey);
+    }
+
+    const jobs: CronJobSummary[] = keys.map((jobKey) => {
+      const byStatus: Record<CronRunStatusValue, number> = {
+        RUNNING: 0,
+        SUCCESS: 0,
+        FAILED: 0,
+      };
+      let scheduledRuns = 0;
+      let manualRuns = 0;
+      let maxDurationMs: number | null = null;
+      for (const g of groups as Array<{
+        jobKey: string;
+        status: CronRunStatusValue;
+        triggeredBy: string;
+        _count: { _all: number };
+        _max: { durationMs: number | null };
+      }>) {
+        if (g.jobKey !== jobKey) continue;
+        const n = g._count._all;
+        byStatus[g.status] = (byStatus[g.status] ?? 0) + n;
+        if (g.triggeredBy === VERCEL_CRON_TRIGGERED_BY) scheduledRuns += n;
+        else manualRuns += n;
+        const m = g._max.durationMs;
+        if (m != null && (maxDurationMs == null || m > maxDurationMs)) {
+          maxDurationMs = m;
+        }
+      }
+      const medianRow = medians.find((r) => r.jobKey === jobKey);
+      const medianDurationMs =
+        medianRow && medianRow.median != null
+          ? Math.round(Number(medianRow.median))
+          : null;
+      const stuckRunning =
+        (
+          stuckGroups as Array<{ jobKey: string; _count: { _all: number } }>
+        ).find((g) => g.jobKey === jobKey)?._count._all ?? 0;
+      const scheduledRunsInWindow =
+        (
+          windowGroups as Array<{ jobKey: string; _count: { _all: number } }>
+        ).find((g) => g.jobKey === jobKey)?._count._all ?? 0;
+
+      const schedule = schedules?.[jobKey] ?? null;
+      let expected: number | null = null;
+      if (schedule) {
+        try {
+          expected = windowOpen
+            ? countExpectedRuns(
+                parseCronExpression(schedule),
+                expectedSince,
+                expectedUntil,
+              )
+            : 0;
+        } catch (error) {
+          this.logger.warn(
+            `сводка кронов: расписание ${jobKey} не разобрано: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+      return {
+        jobKey,
+        schedule,
+        expected,
+        scheduledRuns,
+        scheduledRunsInWindow,
+        manualRuns,
+        missed:
+          expected == null
+            ? null
+            : Math.max(0, expected - scheduledRunsInWindow),
+        total: byStatus.RUNNING + byStatus.SUCCESS + byStatus.FAILED,
+        byStatus,
+        medianDurationMs,
+        maxDurationMs,
+        stuckRunning,
+        stuck: stuckRunning > 0,
+        recentFailures: [],
+      };
+    });
+
+    await Promise.all(
+      jobs
+        .filter((j) => j.byStatus.FAILED > 0)
+        .map(async (j) => {
+          j.recentFailures = (await this.prisma.cronRunLog.findMany({
+            where: { jobKey: j.jobKey, status: 'FAILED', startedAt: range },
+            orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+            take: SUMMARY_RECENT_FAILURES,
+            select: {
+              id: true,
+              startedAt: true,
+              triggeredBy: true,
+              durationMs: true,
+              summary: true,
+              errorMessage: true,
+            },
+          })) as CronFailureRow[];
+        }),
+    );
+
+    return {
+      since,
+      until,
+      expectedSince,
+      expectedUntil,
+      expectedGraceMs: SUMMARY_EXPECTED_GRACE_MS,
+      retentionDays: CRON_LOG_RETENTION_DAYS,
+      lockMs: JOB_LOCK_MS,
+      schedulesLoaded: schedules != null,
+      jobs,
+    };
   }
 
   async run(

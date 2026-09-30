@@ -390,9 +390,13 @@ describe('GenerationService.generateVideo — возврат кредита пр
     generateVideos.mockRejectedValue(
       Object.assign(new Error('internal error'), { status: 503 }),
     );
-    await expect(svc.generateVideo('s1')).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
-    );
+    const busy = svc.generateVideo('s1');
+    await expect(busy).rejects.toBeInstanceOf(ServiceUnavailableException);
+    // Текст и статус провайдера — в лог; человеку — русская фраза и код.
+    await expect(busy).rejects.toMatchObject({
+      response: { code: 'GENERATION_PROVIDER_BUSY' },
+    });
+    await expect(busy).rejects.not.toThrow(/internal error|503/);
     expect(creditLedger.refundIfReserved).toHaveBeenCalled();
   });
 

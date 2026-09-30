@@ -79,7 +79,7 @@ export class CreatorInquiryService {
         where: { id: dto.brandManifestId },
       });
       if (!manifest || manifest.userId !== userId) {
-        throw new NotFoundException('brand manifest not found');
+        throw new NotFoundException('Бренд-бук не найден');
       }
     }
 
@@ -114,7 +114,7 @@ export class CreatorInquiryService {
       where: { id },
     });
     if (!inquiry || inquiry.customerId !== userId) {
-      throw new NotFoundException('inquiry not found');
+      throw new NotFoundException('Заявка не найдена');
     }
     return inquiry;
   }
@@ -192,13 +192,14 @@ export class CreatorInquiryService {
     const creator = await this.prisma.creatorProfile.findUnique({
       where: { id: dto.creatorProfileId },
     });
-    if (!creator) throw new NotFoundException('creator profile not found');
+    if (!creator) throw new NotFoundException('Исполнитель не найден');
     // Аудит-фикс: раньше принимался любой существующий creatorProfileId,
     // включая исполнителя, который уже не принимает заказы.
     if (!creator.isAcceptingOrders) {
-      throw new ConflictException(
-        'this creator is not accepting orders anymore',
-      );
+      throw new ConflictException({
+        code: 'CREATOR_NOT_ACCEPTING_ORDERS',
+        message: 'Этот исполнитель больше не принимает заказы',
+      });
     }
 
     const updated = await this.prisma.creatorInquiry.update({

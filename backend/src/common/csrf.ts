@@ -74,6 +74,11 @@ export function isOriginAllowed(
   return allowed.includes(originHeader.replace(/\/+$/, ''));
 }
 
-/** Текст отказа один на оба барьера — чтобы его было видно в логах. */
+/**
+ * Текст отказа один на все барьеры — чтобы его было видно в логах.
+ * По-русски (финальная партия A3): его читает и человек, у которого
+ * открыт чужой домен, а «CSRF» в скобках оставлен как раз для поиска
+ * по логам.
+ */
 export const CSRF_REJECTED_MESSAGE =
-  'Cross-origin request rejected (CSRF protection)';
+  'Запрос пришёл с чужого сайта и отклонён (защита от CSRF)';

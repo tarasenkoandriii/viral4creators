@@ -330,9 +330,13 @@ function build() {
   };
   // Сторож остатков у провайдеров (этап 143).
   const balances = {
-    watch: jest
-      .fn()
-      .mockResolvedValue({ watched: 2, low: 0, unreadable: 0, notified: 0 }),
+    watch: jest.fn().mockResolvedValue({
+      watched: 2,
+      low: 0,
+      unreadable: 0,
+      notified: 0,
+      skippedUnused: 1,
+    }),
   };
 
   // Уборка необработанных голосовых записей (финальный аудит ветки K).

@@ -55,9 +55,18 @@ import { PhotoUploadUrlRequestDto } from './dto/photo-upload-url-request.dto';
 import { ProcessPhotoRequestDto } from './dto/process-photo-request.dto';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
-import { MAX_PHOTO_BYTES } from '../../common/photo-limits';
+import { MAX_PHOTO_BYTES, photoSizeMb } from '../../common/photo-limits';
+import { PRODUCT_ITEM_NOT_FOUND } from '../../common/user-facing-errors';
 
 const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'];
+
+/**
+ * Фото не дошло до хранилища или пришло не по пути своего товара. Путь
+ * и текст ошибки хранилища — в лог: человеку они ничего не скажут, а
+ * сделать ему нужно одно и то же — загрузить фото ещё раз.
+ */
+const ANALOG_PHOTO_UPLOAD_FAILED =
+  'Фото товара не загрузилось — попробуйте загрузить его ещё раз';
 
 export interface PhotoUploadUrl {
   uploadUrl: string;
@@ -158,12 +167,12 @@ export class ProductAnalogService {
 
     if (dto.fileSize > MAX_PHOTO_BYTES) {
       throw new BadRequestException(
-        `Photo exceeds the 10MB limit (received ${dto.fileSize} bytes)`,
+        `Фото больше 10 МБ (${photoSizeMb(dto.fileSize)} МБ) — выберите файл поменьше`,
       );
     }
     if (!ALLOWED_MIME.includes(dto.mimeType)) {
       throw new BadRequestException(
-        `Invalid image format. Allowed: ${ALLOWED_MIME.join(', ')}`,
+        'Такой формат фото не подходит — нужен PNG, JPEG или WebP',
       );
     }
 
@@ -191,9 +200,10 @@ export class ProductAnalogService {
     // item's own key — never let one item claim another's photo.
     const expectedPrefix = `projects/${projectId}/items/${itemId}/`;
     if (!dto.pathname.startsWith(expectedPrefix)) {
-      throw new BadRequestException(
-        `pathname must start with "${expectedPrefix}"`,
+      this.logger.warn(
+        `товар ${itemId}: фото пришло с чужим путём ${dto.pathname}`,
       );
+      throw new BadRequestException(ANALOG_PHOTO_UPLOAD_FAILED);
     }
 
     // (a) public URL + bytes + hash. head() throws if nothing was PUT.
@@ -206,9 +216,12 @@ export class ProductAnalogService {
       mimeType = meta.contentType || 'image/jpeg';
       bytes = await this.blobService.downloadBuffer(dto.pathname);
     } catch (e) {
-      throw new BadRequestException(
-        `Photo not found in storage at "${dto.pathname}" — upload it first via the upload-url step (${e instanceof Error ? e.message : String(e)})`,
+      this.logger.warn(
+        `товар ${itemId}: фото ${dto.pathname} не нашлось в хранилище (${
+          e instanceof Error ? e.message : String(e)
+        })`,
       );
+      throw new BadRequestException(ANALOG_PHOTO_UPLOAD_FAILED);
     }
     const photoHash = hashPhoto(bytes);
 
@@ -362,9 +375,7 @@ export class ProductAnalogService {
       },
     });
     if (!item) {
-      throw new NotFoundException(
-        `Item ${itemId} not found in project ${projectId}`,
-      );
+      throw new NotFoundException(PRODUCT_ITEM_NOT_FOUND);
     }
     return item;
   }

@@ -2,7 +2,11 @@
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { PromptService } from './prompt.service';
+import {
+  ANALYSIS_NOT_READY,
+  PRODUCT_INFO_MISSING,
+  PromptService,
+} from './prompt.service';
 import { ModerationStatus } from '../../common/types/prompt.types';
 import { SessionStatus } from '../../common/types/session.types';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
@@ -478,7 +482,7 @@ describe('PromptService.generateAbVariants — набор вариантов о�
       videoAnalysis: { status: 'pending' },
     });
     await expect(svc.generateAbVariants('s1', 3)).rejects.toThrow(
-      'Video analysis is not complete. Please analyze video first.',
+      ANALYSIS_NOT_READY,
     );
   });
 
@@ -552,7 +556,7 @@ describe('PromptService.generateAbVariants — набор вариантов о�
       videoAnalysis: { status: 'processing' },
     });
     await expect(svc.generateAbVariants('s1', 3)).rejects.toThrow(
-      'Video analysis is not complete',
+      ANALYSIS_NOT_READY,
     );
   });
 
@@ -789,7 +793,7 @@ describe('PromptService.generatePrompt — условия читаются го�
       videoAnalysis: { status: 'pending', sceneBreakdown: '' },
     });
     await expect(svc.generatePrompt('s1')).rejects.toThrow(
-      'Video analysis is not complete. Please wait for analysis to finish.',
+      'Разбор видео-образца ещё идёт — дождитесь, пока он закончится',
     );
     expect(post).not.toHaveBeenCalled();
     // «До замка» — не украшение: барьер стоит перед `claimWork`, и
@@ -805,7 +809,7 @@ describe('PromptService.generatePrompt — условия читаются го�
       productInformation: null,
     });
     await expect(svc.generatePrompt('s1')).rejects.toThrow(
-      'Product information not provided. Please submit product details first.',
+      PRODUCT_INFO_MISSING,
     );
     expect(post).not.toHaveBeenCalled();
     expect(sessions.claimWork).not.toHaveBeenCalled();
@@ -958,9 +962,7 @@ describe('PromptService.generatePrompt — шаблон сцены вместо 
     const { svc, post } = buildReady(
       onTemplate({ sceneTemplate: { templateId: 'распаковка' } }),
     );
-    await expect(svc.generatePrompt('s1')).rejects.toThrow(
-      'Video analysis not complete. Please analyze video first.',
-    );
+    await expect(svc.generatePrompt('s1')).rejects.toThrow(ANALYSIS_NOT_READY);
     expect(post).not.toHaveBeenCalled();
   });
 
@@ -978,9 +980,7 @@ describe('PromptService.generatePrompt — шаблон сцены вместо 
 
   it('ни разбора, ни шаблона — прежний отказ', async () => {
     const { svc, post } = buildReady(onTemplate({ sceneTemplate: null }));
-    await expect(svc.generatePrompt('s1')).rejects.toThrow(
-      'Video analysis not complete. Please analyze video first.',
-    );
+    await expect(svc.generatePrompt('s1')).rejects.toThrow(ANALYSIS_NOT_READY);
     expect(post).not.toHaveBeenCalled();
   });
 });

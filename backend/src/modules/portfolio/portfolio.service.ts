@@ -40,6 +40,13 @@ function isNotifyWorthy(likeCount: number): boolean {
   return likeCount === 1 || likeCount % 10 === 0;
 }
 
+/** Работы нет, она чужая или не опубликована — снаружи это одно и то же. */
+export const PORTFOLIO_ITEM_NOT_FOUND = 'Работа не найдена';
+
+/** Режим CUSTOM без своего текста — водяному знаку нечего печатать. */
+const CUSTOM_WATERMARK_TEXT_REQUIRED =
+  'Для своего водяного знака впишите его текст';
+
 @Injectable()
 export class PortfolioService {
   constructor(
@@ -52,9 +59,10 @@ export class PortfolioService {
       where: { userId },
     });
     if (!profile) {
-      throw new ForbiddenException(
-        'complete the creator quiz first (POST /creator-profiles/quiz)',
-      );
+      throw new ForbiddenException({
+        code: 'CREATOR_PROFILE_REQUIRED',
+        message: 'Сначала пройдите анкету исполнителя',
+      });
     }
     return profile;
   }
@@ -65,9 +73,7 @@ export class PortfolioService {
   ): Promise<PortfolioItemView> {
     const profile = await this.ownCreatorProfileOrThrow(userId);
     if (dto.watermarkMode === 'CUSTOM' && !dto.watermarkText) {
-      throw new ConflictException(
-        'watermarkText is required when watermarkMode is CUSTOM',
-      );
+      throw new ConflictException(CUSTOM_WATERMARK_TEXT_REQUIRED);
     }
     const item = await this.prisma.portfolioItem.create({
       data: {
@@ -108,16 +114,14 @@ export class PortfolioService {
     const profile = await this.ownCreatorProfileOrThrow(userId);
     const item = await this.prisma.portfolioItem.findUnique({ where: { id } });
     if (!item || item.creatorProfileId !== profile.id) {
-      throw new NotFoundException('portfolio item not found');
+      throw new NotFoundException(PORTFOLIO_ITEM_NOT_FOUND);
     }
     if (
       dto.watermarkMode === 'CUSTOM' &&
       dto.watermarkText === undefined &&
       !item.watermarkText
     ) {
-      throw new ConflictException(
-        'watermarkText is required when watermarkMode is CUSTOM',
-      );
+      throw new ConflictException(CUSTOM_WATERMARK_TEXT_REQUIRED);
     }
 
     const nextMode = dto.watermarkMode ?? item.watermarkMode;
@@ -170,7 +174,7 @@ export class PortfolioService {
     const profile = await this.ownCreatorProfileOrThrow(userId);
     const item = await this.prisma.portfolioItem.findUnique({ where: { id } });
     if (!item || item.creatorProfileId !== profile.id) {
-      throw new NotFoundException('portfolio item not found');
+      throw new NotFoundException(PORTFOLIO_ITEM_NOT_FOUND);
     }
     // Аудит-фикс: AuctionListing.portfolioItem — onDelete: Restrict
     // (ТЗ на маркетплейс §22.5, намеренно — WON-лот несёт финансовую
@@ -187,9 +191,11 @@ export class PortfolioService {
     });
     const liveStatuses: readonly string[] = LIVE_AUCTION_LISTING_STATUSES;
     if (listings.some((l) => liveStatuses.includes(l.status))) {
-      throw new ConflictException(
-        'this work has an active or won auction listing — withdraw it from the auction first',
-      );
+      throw new ConflictException({
+        code: 'PORTFOLIO_ITEM_ON_AUCTION',
+        message:
+          'Работа выставлена на аукцион или уже продана на нём — сначала снимите её с торгов',
+      });
     }
     await this.prisma.$transaction([
       this.prisma.auctionListing.deleteMany({ where: { portfolioItemId: id } }),
@@ -229,7 +235,7 @@ export class PortfolioService {
         : undefined,
     });
     if (!item || item.status !== 'PUBLISHED') {
-      throw new NotFoundException('portfolio item not found');
+      throw new NotFoundException(PORTFOLIO_ITEM_NOT_FOUND);
     }
     return this.toView(
       item,
@@ -345,7 +351,7 @@ export class PortfolioService {
   ): Promise<{ likeCount: number; likedByViewer: boolean }> {
     const item = await this.prisma.portfolioItem.findUnique({ where: { id } });
     if (!item || item.status !== 'PUBLISHED') {
-      throw new NotFoundException('portfolio item not found');
+      throw new NotFoundException(PORTFOLIO_ITEM_NOT_FOUND);
     }
     try {
       await this.prisma.$transaction([

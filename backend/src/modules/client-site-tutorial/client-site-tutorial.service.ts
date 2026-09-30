@@ -660,8 +660,12 @@ export class ClientSiteTutorialService {
       // давало ровно то же самое.
       await this.wipeFrames(draft.id).catch(() => undefined);
       if (err instanceof FrameDecodeError) {
+        // Текст декодера — в лог: человеку он ничего не объяснит.
+        this.logger.warn(
+          `черновик ${draft.id}: кадр предпросмотра не читается (${err.message})`,
+        );
         throw new BadRequestException(
-          `кадр предпросмотра не читается (${err.message}) — отмените последний шаг и повторите его`,
+          'кадр предпросмотра не читается — отмените последний шаг и повторите его',
         );
       }
       throw new ServiceUnavailableException(

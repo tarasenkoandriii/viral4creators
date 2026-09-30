@@ -9,7 +9,10 @@ jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 // сгенерированного клиента в песочнице нет (см. doc/PRODUCT-PROJECT-
 // SPEC.md — известное ограничение), поэтому require настоящего файла
 // падает ДО того, как jest успевает замокать сам PrismaService.
-jest.mock('../project/project.service', () => ({ ProjectService: class {} }));
+jest.mock('../project/project.service', () => ({
+  ProjectService: class {},
+  PROJECT_LINE_LIMIT: 'PROJECT_LINE_LIMIT',
+}));
 
 const configState = {
   cronBatch: 5,
@@ -517,8 +520,13 @@ describe('runTick — фаза 2 (завести позиции)', () => {
     const { service, prisma, projectService } = setup({
       items: [itemRow()],
     });
+    // Лимит узнаётся по машинному коду, а не по тексту: текст отказа
+    // для человека (русский) и может меняться.
     projectService.addItem.mockRejectedValue(
-      new BadRequestException('Line limit reached'),
+      new BadRequestException({
+        code: 'PROJECT_LINE_LIMIT',
+        message: 'В линейке может быть не больше 500 товаров — лимит исчерпан.',
+      }),
     );
     const result = await service.runTick();
     expect(result.skippedItems).toBe(1);

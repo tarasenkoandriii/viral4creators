@@ -14,6 +14,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { SessionService } from '../../common/session.service';
@@ -55,6 +56,8 @@ export interface SceneTemplateView {
 
 @Injectable()
 export class SceneTemplateService {
+  private readonly logger = new Logger(SceneTemplateService.name);
+
   constructor(private readonly sessions: SessionService) {}
 
   /**
@@ -118,7 +121,14 @@ export class SceneTemplateService {
     // готовому ролику (та же ошибка, что аудиты ловили в `locale` на
     // этапах 147 и 148).
     if (!isSceneTemplateId(templateId)) {
-      throw new BadRequestException(`Приём: ${SCENE_TEMPLATE_IDS.join(', ')}`);
+      // Внутренние ключи приёмов — в лог; человек выбирает из списка
+      // на экране, и ключ ему ничего не скажет.
+      this.logger.warn(
+        `сессия ${sessionId}: незнакомый приём «${templateId}», есть: ${SCENE_TEMPLATE_IDS.join(', ')}`,
+      );
+      throw new BadRequestException(
+        'Такого приёма сцены нет — выберите приём из списка',
+      );
     }
 
     // Референс уже разобран — приём не выбирается. Не потому, что

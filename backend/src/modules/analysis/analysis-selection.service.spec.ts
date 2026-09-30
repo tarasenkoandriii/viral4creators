@@ -42,6 +42,6 @@ describe('AnalysisSelectionService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
       svc.put('s1', { droppedScenes: [], droppedExtras: ['e7'] }),
-    ).rejects.toThrow(/extras group/);
+    ).rejects.toThrow('Разбор ролика изменился — обновите страницу');
   });
 });

@@ -97,9 +97,22 @@ function parseGeminiApiError(error: unknown): {
  * PromptService generates and manages text-to-video prompts
  */
 /** Отказ общей правки промпта для сессии-поздравления (этап C, §3.6 п.4). */
+// Одной строкой и без маршрута API: человеку путь ничего не говорит,
+// а шов текстов отказа принимает константу, только если видит её
+// значение целиком (склейка `' … ' + ' … '` выпала бы из проверки).
 export const GREETING_PROMPT_PATCH_REFUSAL =
-  'У поздравления текст правится на шаге «Сценарий» (PATCH /sessions/:id/greeting-script): ' +
-  'так сцена и озвучка меняются вместе.';
+  'У поздравления текст правится на шаге «Сценарий» — так сцена и озвучка меняются вместе.';
+
+/** Готового разбора образца нет — промпт собирать не из чего. */
+export const ANALYSIS_NOT_READY =
+  'Готового разбора видео-образца нет — дождитесь его окончания или выберите шаблон сцены';
+
+/** Шаг «Товар» не пройден — без него промпту нечего рекламировать. */
+export const PRODUCT_INFO_MISSING =
+  'Сначала заполните шаг «Товар» — без него промпт не собрать';
+
+/** Промпта ещё нет — править и переписывать нечего. */
+export const PROMPT_MISSING = 'Промпт ещё не собран — сначала соберите его';
 
 /** Отказ общего одобрения промпта для сессии-поздравления (CONTRACT6 п.1). */
 export const GREETING_APPROVE_REFUSAL =
@@ -205,20 +218,16 @@ export class PromptService {
     const source = sceneSource(session);
     const spec = source.spec;
     if (!hasSceneSource(session)) {
-      throw new BadRequestException(
-        'Video analysis not complete. Please analyze video first.',
-      );
+      throw new BadRequestException(ANALYSIS_NOT_READY);
     }
 
     if (!session.productInformation || !done('product')) {
-      throw new BadRequestException(
-        'Product information not provided. Please submit product details first.',
-      );
+      throw new BadRequestException(PRODUCT_INFO_MISSING);
     }
 
     if (!done('analysis')) {
       throw new BadRequestException(
-        'Video analysis is not complete. Please wait for analysis to finish.',
+        'Разбор видео-образца ещё идёт — дождитесь, пока он закончится',
       );
     }
 
@@ -533,12 +542,10 @@ Please respond with a valid JSON object only, with two keys:
       !abSource.fromTemplate &&
       session.videoAnalysis?.status !== 'complete'
     ) {
-      throw new BadRequestException(
-        'Video analysis is not complete. Please analyze video first.',
-      );
+      throw new BadRequestException(ANALYSIS_NOT_READY);
     }
     if (!session.productInformation) {
-      throw new BadRequestException('Product information not provided.');
+      throw new BadRequestException(PRODUCT_INFO_MISSING);
     }
     if (!session.generationPrompt?.finalText) {
       throw new BadRequestException(
@@ -795,9 +802,7 @@ Please respond with a valid JSON object only, with one key "variants": an array 
     }
 
     if (!session.generationPrompt) {
-      throw new BadRequestException(
-        'No prompt exists. Please generate a prompt first.',
-      );
+      throw new BadRequestException(PROMPT_MISSING);
     }
 
     // Run moderation on edited text
@@ -882,9 +887,7 @@ Please respond with a valid JSON object only, with one key "variants": an array 
     }
 
     if (!session.generationPrompt) {
-      throw new BadRequestException(
-        'No prompt exists. Please generate a prompt first.',
-      );
+      throw new BadRequestException(PROMPT_MISSING);
     }
 
     // Mark as approved

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { CRON_LOG_RETENTION_DAYS } from './cron-retention';
 import { SessionService } from '../../common/session.service';
 import { ProjectService } from '../project/project.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -119,15 +120,9 @@ export const VERCEL_CRON_TRIGGERED_BY = 'vercel-cron';
  * их поведение по ошибке — сюда переехало тело каждого маршрута, имя
  * метода стало `runX` вместо прежнего имени handler'а.
  */
-/**
- * Сколько дней держим журнал прогонов кронов (`CronRunLog`).
- *
- * Тридцать: журнал открывают, чтобы понять, что было на днях —
- * «почему вчера не пришёл отчёт», «когда последний раз собиралось
- * видео». За всю историю проекта в него не заглядывал никто, а растёт
- * он быстро: каждый двухминутный джоб пишет по ~720 строк в сутки.
- */
-export const CRON_LOG_RETENTION_DAYS = 30;
+/** Срок хранения журнала кронов — см. `cron-retention.ts`; реэкспорт
+ * для прежних импортов отсюда. */
+export { CRON_LOG_RETENTION_DAYS };
 
 export const CLEANUP_MAX_PASSES = 20;
 export const CLEANUP_TIME_BUDGET_MS = 120_000;
@@ -319,6 +314,7 @@ export class CronJobsService {
     low: number;
     unreadable: number;
     notified: number;
+    skippedUnused: number;
   }> {
     return this.balances.watch();
   }

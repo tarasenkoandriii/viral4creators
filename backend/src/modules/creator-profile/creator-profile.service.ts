@@ -38,6 +38,17 @@ function displayNameOf(user: {
   return user.firstName ?? (user.username ? `@${user.username}` : null);
 }
 
+/** У человека ещё нет анкеты исполнителя — повторяется в трёх методах. */
+export const OWN_CREATOR_PROFILE_MISSING =
+  'Анкета исполнителя ещё не заполнена';
+
+/**
+ * Короткая ссылка (vanity-slug) уникальна по всем исполнителям. Код
+ * `CREATOR_SLUG_TAKEN` отличает этот 409 от «анкета уже есть»
+ * (`CREATOR_PROFILE_EXISTS`) — оба приходят из одной формы анкеты.
+ */
+const CREATOR_SLUG_TAKEN = 'Такая короткая ссылка уже занята — выберите другую';
+
 @Injectable()
 export class CreatorProfileService {
   constructor(private readonly prisma: PrismaService) {}
@@ -48,15 +59,19 @@ export class CreatorProfileService {
     dto: CreatorQuizDto,
   ): Promise<CreatorProfileView> {
     if (!dto.consent) {
-      throw new ForbiddenException(
-        'explicit consent is required to become a Creator',
-      );
+      throw new ForbiddenException({
+        code: 'CREATOR_CONSENT_REQUIRED',
+        message: 'Чтобы стать исполнителем, подтвердите согласие',
+      });
     }
     const existing = await this.prisma.creatorProfile.findUnique({
       where: { userId },
     });
     if (existing) {
-      throw new ConflictException('this user already has a creator profile');
+      throw new ConflictException({
+        code: 'CREATOR_PROFILE_EXISTS',
+        message: 'Анкета исполнителя у вас уже есть',
+      });
     }
 
     let profile;
@@ -96,7 +111,10 @@ export class CreatorProfileService {
       });
     } catch (e: unknown) {
       if ((e as { code?: string })?.code === 'P2002') {
-        throw new ConflictException('this vanity link is already taken');
+        throw new ConflictException({
+          code: 'CREATOR_SLUG_TAKEN',
+          message: CREATOR_SLUG_TAKEN,
+        });
       }
       throw e;
     }
@@ -109,8 +127,7 @@ export class CreatorProfileService {
       where: { userId },
       include: { socialLinks: true, user: true },
     });
-    if (!profile)
-      throw new NotFoundException('no creator profile for this user');
+    if (!profile) throw new NotFoundException(OWN_CREATOR_PROFILE_MISSING);
     return this.toView(profile, profile.user);
   }
 
@@ -127,8 +144,7 @@ export class CreatorProfileService {
     const existing = await this.prisma.creatorProfile.findUnique({
       where: { userId },
     });
-    if (!existing)
-      throw new NotFoundException('no creator profile for this user');
+    if (!existing) throw new NotFoundException(OWN_CREATOR_PROFILE_MISSING);
 
     let updated;
     try {
@@ -164,7 +180,10 @@ export class CreatorProfileService {
       });
     } catch (e: unknown) {
       if ((e as { code?: string })?.code === 'P2002') {
-        throw new ConflictException('this vanity link is already taken');
+        throw new ConflictException({
+          code: 'CREATOR_SLUG_TAKEN',
+          message: CREATOR_SLUG_TAKEN,
+        });
       }
       throw e;
     }
@@ -182,7 +201,7 @@ export class CreatorProfileService {
       where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
       include: { socialLinks: true, user: true },
     });
-    if (!profile) throw new NotFoundException('creator profile not found');
+    if (!profile) throw new NotFoundException('Исполнитель не найден');
     return this.toView(profile, profile.user);
   }
 
@@ -224,8 +243,7 @@ export class CreatorProfileService {
       where: { userId },
       include: { portfolioItems: true },
     });
-    if (!profile)
-      throw new NotFoundException('no creator profile for this user');
+    if (!profile) throw new NotFoundException(OWN_CREATOR_PROFILE_MISSING);
     return {
       profileViewCount: profile.viewCount,
       totalPortfolioViews: profile.portfolioItems.reduce(

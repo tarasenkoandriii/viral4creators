@@ -70,9 +70,13 @@ function build() {
       retried: 0,
       gaveUp: 0,
     }),
-    runBalancesWatch: jest
-      .fn()
-      .mockResolvedValue({ watched: 2, low: 1, unreadable: 0, notified: 1 }),
+    runBalancesWatch: jest.fn().mockResolvedValue({
+      watched: 2,
+      low: 1,
+      unreadable: 0,
+      notified: 1,
+      skippedUnused: 0,
+    }),
     runReport: jest
       .fn()
       .mockResolvedValue({ sent: true, text: 'суточный отчёт' }),
@@ -378,11 +382,279 @@ describe('AdminCronService — история', () => {
     const { service, prisma } = build();
     await service.getHistory();
     expect(prisma.cronRunLog.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: undefined }),
+      expect.objectContaining({ where: {}, take: 50 }),
     );
-    await service.getHistory('publish');
+    await service.getHistory({ jobKey: 'publish' });
     expect(prisma.cronRunLog.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { jobKey: 'publish' } }),
     );
+  });
+});
+
+describe('AdminCronService — история за период и постранично', () => {
+  it('since/until → startedAt [gte, lt), limit, стабильный порядок', async () => {
+    const { service, prisma } = build();
+    const since = new Date('2026-09-29T00:00:00Z');
+    const until = new Date('2026-09-30T00:00:00Z');
+    await service.getHistory({ jobKey: 'publish', since, until, limit: 500 });
+    expect(prisma.cronRunLog.findMany).toHaveBeenCalledWith({
+      where: { jobKey: 'publish', startedAt: { gte: since, lt: until } },
+      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+      take: 500,
+    });
+  });
+
+  it('before → курсор Prisma с пропуском самой строки-курсора', async () => {
+    const { service, prisma } = build();
+    await service.getHistory({ before: 'row-9' });
+    expect(prisma.cronRunLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: { id: 'row-9' }, skip: 1 }),
+    );
+  });
+
+  it('limit сверх потолка режется и в самом сервисе', async () => {
+    const { service, prisma } = build();
+    await service.getHistory({ limit: 100000 });
+    expect(prisma.cronRunLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 500 }),
+    );
+  });
+});
+
+describe('AdminCronService — сводка за период', () => {
+  const since = new Date('2026-09-29T00:00:00Z');
+  const until = new Date('2026-09-30T00:00:00Z');
+  const now = new Date('2026-09-30T12:00:00Z');
+
+  function buildSummary(opts: {
+    groups: unknown[];
+    medians?: unknown[];
+    stuck?: unknown[];
+    window?: unknown[];
+    failures?: unknown[];
+  }) {
+    const groupBy = jest.fn(
+      (args: { by: string[]; where: Record<string, unknown> }) =>
+        Promise.resolve(
+          args.by.length > 1
+            ? opts.groups
+            : args.where.status === 'RUNNING'
+              ? (opts.stuck ?? [])
+              : (opts.window ?? []),
+        ),
+    );
+    const prisma = {
+      cronRunLog: {
+        groupBy,
+        findMany: jest.fn().mockResolvedValue(opts.failures ?? []),
+      },
+      $queryRaw: jest.fn().mockResolvedValue(opts.medians ?? []),
+    };
+    const service = new AdminCronService({} as never, prisma as never);
+    return { service, prisma };
+  }
+
+  it('ожидалось по vercel.json vs было, статусы, длительности', async () => {
+    const { service } = buildSummary({
+      groups: [
+        {
+          jobKey: 'api-video',
+          status: 'SUCCESS',
+          triggeredBy: 'vercel-cron',
+          _count: { _all: 700 },
+          _max: { durationMs: 1200 },
+        },
+        {
+          jobKey: 'api-video',
+          status: 'FAILED',
+          triggeredBy: 'vercel-cron',
+          _count: { _all: 5 },
+          _max: { durationMs: 9000 },
+        },
+        {
+          jobKey: 'api-video',
+          status: 'SUCCESS',
+          triggeredBy: 'operator-1',
+          _count: { _all: 2 },
+          _max: { durationMs: 300 },
+        },
+      ],
+      medians: [{ jobKey: 'api-video', median: 410.5 }],
+      // В окне ожидания — 700 из 705: пять прогонов стартовали вне окна.
+      window: [{ jobKey: 'api-video', _count: { _all: 700 } }],
+      failures: [{ id: 'f1', summary: 'Ошибка: x', errorMessage: 'x' }],
+    });
+    const s = await service.getSummary({ since, until }, now);
+    const job = s.jobs.find((j) => j.jobKey === 'api-video');
+    expect(job).toMatchObject({
+      schedule: '*/2 * * * *',
+      expected: 720,
+      scheduledRuns: 705,
+      scheduledRunsInWindow: 700,
+      manualRuns: 2,
+      missed: 20,
+      total: 707,
+      byStatus: { SUCCESS: 702, FAILED: 5, RUNNING: 0 },
+      medianDurationMs: 411,
+      maxDurationMs: 9000,
+      stuck: false,
+      recentFailures: [{ id: 'f1', summary: 'Ошибка: x', errorMessage: 'x' }],
+    });
+    // Джоб без прогонов всё равно в сводке — с ожиданием и missed.
+    const report = s.jobs.find((j) => j.jobKey === 'report');
+    expect(report).toMatchObject({ expected: 1, scheduledRuns: 0, missed: 1 });
+    expect(s.schedulesLoaded).toBe(true);
+    expect(s.lockMs).toBe(11 * 60 * 1000);
+  });
+
+  it('последние неуспешные запрашиваются только у джобов с FAILED', async () => {
+    const { service, prisma } = buildSummary({
+      groups: [
+        {
+          jobKey: 'publish',
+          status: 'FAILED',
+          triggeredBy: 'vercel-cron',
+          _count: { _all: 1 },
+          _max: { durationMs: 10 },
+        },
+      ],
+    });
+    await service.getSummary({ since, until }, now);
+    expect(prisma.cronRunLog.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.cronRunLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          jobKey: 'publish',
+          status: 'FAILED',
+          startedAt: { gte: since, lt: until },
+        },
+        take: 5,
+      }),
+    );
+  });
+
+  it('текущие сутки: ожидание — до now минус запас, окно в ответе', async () => {
+    const { service, prisma } = buildSummary({ groups: [] });
+    const s = await service.getSummary(
+      {
+        since: new Date('2026-09-30T00:00:00Z'),
+        until: new Date('2026-10-01T00:00:00Z'),
+      },
+      now,
+    );
+    // now 12:00 − 3 мин запаса = 11:57; тики */2 в [00:00, 11:57) — 359.
+    expect(s.expectedUntil).toEqual(new Date('2026-09-30T11:57:00Z'));
+    expect(s.expectedGraceMs).toBe(3 * 60_000);
+    expect(s.jobs.find((j) => j.jobKey === 'api-video')?.expected).toBe(359);
+    // Строки для сравнения берутся из того же окна.
+    expect(prisma.cronRunLog.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        by: ['jobKey'],
+        where: {
+          triggeredBy: 'vercel-cron',
+          startedAt: {
+            gte: new Date('2026-09-30T00:00:00Z'),
+            lt: new Date('2026-09-30T11:57:00Z'),
+          },
+        },
+      }),
+    );
+  });
+
+  it('сразу после тика ложного missed нет', async () => {
+    // Тик 12:00 ещё не записан (now 12:00:05): он вне окна ожидания.
+    const { service } = buildSummary({
+      groups: [],
+      window: [{ jobKey: 'api-video', _count: { _all: 359 } }],
+    });
+    const s = await service.getSummary(
+      {
+        since: new Date('2026-09-30T00:00:00Z'),
+        until: new Date('2026-10-01T00:00:00Z'),
+      },
+      new Date('2026-09-30T12:00:05Z'),
+    );
+    // 12:00:05 − 3 мин = 11:57:05 → вверх до 11:58 → тики до 11:56 — 359.
+    expect(s.jobs.find((j) => j.jobKey === 'api-video')).toMatchObject({
+      expected: 359,
+      missed: 0,
+    });
+  });
+
+  it('начало окна — не раньше срока хранения журнала', async () => {
+    const { service } = buildSummary({ groups: [] });
+    const s = await service.getSummary(
+      {
+        since: new Date('2026-08-30T00:00:00Z'),
+        until: new Date('2026-09-02T00:00:00Z'),
+      },
+      now,
+    );
+    // now 2026-09-30T12:00 − 30 дней = 2026-08-31T12:00.
+    expect(s.expectedSince).toEqual(new Date('2026-08-31T12:00:00Z'));
+    expect(s.retentionDays).toBe(30);
+    // report (0 6 * * *) в [08-31T12:00, 09-02T00:00) — только 1 сентября 06:00.
+    expect(s.jobs.find((j) => j.jobKey === 'report')?.expected).toBe(1);
+  });
+
+  it('зависший RUNNING: старше замка JOB_LOCK_MS → stuck', async () => {
+    const { service, prisma } = buildSummary({
+      groups: [
+        {
+          jobKey: 'blog',
+          status: 'RUNNING',
+          triggeredBy: 'vercel-cron',
+          _count: { _all: 2 },
+          _max: { durationMs: null },
+        },
+      ],
+      stuck: [{ jobKey: 'blog', _count: { _all: 1 } }],
+    });
+    const recentNow = new Date('2026-09-29T10:00:00Z');
+    const s = await service.getSummary({ since, until }, recentNow);
+    const blog = s.jobs.find((j) => j.jobKey === 'blog');
+    expect(blog).toMatchObject({ stuckRunning: 1, stuck: true });
+    expect(prisma.cronRunLog.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        by: ['jobKey'],
+        where: {
+          status: 'RUNNING',
+          startedAt: {
+            gte: since,
+            lt: new Date(recentNow.getTime() - 11 * 60 * 1000),
+          },
+        },
+      }),
+    );
+  });
+
+  it('период целиком моложе замка — запрос зависших не делается', async () => {
+    const { service, prisma } = buildSummary({ groups: [] });
+    const justNow = new Date(since.getTime() + 60_000);
+    await service.getSummary({ since, until }, justNow);
+    expect(prisma.cronRunLog.groupBy).toHaveBeenCalledTimes(1);
+  });
+
+  it('jobKey не из реестра попадает в конец сводки, без расписания', async () => {
+    const { service } = buildSummary({
+      groups: [
+        {
+          jobKey: 'legacy-job',
+          status: 'SUCCESS',
+          triggeredBy: 'vercel-cron',
+          _count: { _all: 3 },
+          _max: { durationMs: 5 },
+        },
+      ],
+    });
+    const s = await service.getSummary({ since, until }, now);
+    const last = s.jobs[s.jobs.length - 1];
+    expect(last).toMatchObject({
+      jobKey: 'legacy-job',
+      schedule: null,
+      expected: null,
+      missed: null,
+      total: 3,
+    });
   });
 });

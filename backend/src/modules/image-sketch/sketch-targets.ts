@@ -39,7 +39,10 @@ import {
   personaSelfLikenessEligible,
 } from '../persona/persona-looks.rules';
 import { activeRowImage } from '../../common/active-image';
-import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  PRODUCT_ITEM_NOT_FOUND,
+  SESSION_NOT_FOUND,
+} from '../../common/user-facing-errors';
 
 /** Слот, прочитанный со всех сторон сразу: и для генерации, и для UI. */
 export interface SketchSlot {
@@ -248,7 +251,7 @@ export class SketchTargetsService {
     );
     if (!cast) {
       throw new NotFoundException(
-        `Персонаж ${target.subId} не выбран в этой сессии`,
+        'Этот персонаж не выбран в сессии — обновите страницу',
       );
     }
     return {
@@ -366,7 +369,9 @@ export class SketchTargetsService {
     const session = await this.loadSession(target.id, userId);
     const scene = (session.scenes ?? []).find((s) => s.id === target.subId);
     if (!scene) {
-      throw new NotFoundException(`Сцена ${target.subId} не найдена в сессии`);
+      throw new NotFoundException(
+        'Эта сцена уже удалена из сессии — обновите страницу',
+      );
     }
     return {
       target,
@@ -421,7 +426,7 @@ export class SketchTargetsService {
     );
     if (!image) {
       throw new NotFoundException(
-        `Референс-изображение ${target.subId} не найдено в сессии`,
+        'Это фото уже убрали из поздравления — обновите страницу',
       );
     }
     return {
@@ -549,7 +554,7 @@ export class SketchTargetsService {
       include: { activeSketch: true },
     });
     if (!row) {
-      throw new NotFoundException(`Item ${target.id} not found`);
+      throw new NotFoundException(PRODUCT_ITEM_NOT_FOUND);
     }
     const image = activeRowImage(row);
     return {

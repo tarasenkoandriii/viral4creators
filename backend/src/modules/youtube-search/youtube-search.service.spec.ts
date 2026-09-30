@@ -196,7 +196,7 @@ describe('YoutubeSearchService.search', () => {
     const err = await service.search('u1', 'shoes').catch((e) => e);
     expect(err).toBeInstanceOf(HttpException);
     expect((err as HttpException).getStatus()).toBe(429);
-    expect((err as HttpException).message).toMatch(/20\/20/);
+    expect((err as HttpException).message).toMatch(/20 из 20/);
     expect(mockedAxios.get).not.toHaveBeenCalled();
   });
 
@@ -267,7 +267,7 @@ describe('YoutubeSearchService.search', () => {
     const { service, usage } = build();
     const err = await service.search('u1', 'shoes').catch((e) => e);
     expect((err as HttpException).getStatus()).toBe(429);
-    expect((err as HttpException).message).toMatch(/quota/i);
+    expect((err as HttpException).message).toMatch(/для всего сервиса/);
     // Слот был занят до запроса и возвращён после отказа Google:
     // чужая авария не должна съедать суточную квоту пользователя.
     expect(usage.reserve).toHaveBeenCalledTimes(1);
@@ -307,14 +307,19 @@ describe('YoutubeSearchService.search', () => {
     const { service } = build();
     const bad = await service.search('u1', 'shoes').catch((e) => e);
     expect((bad as HttpException).getStatus()).toBe(503);
-    expect((bad as HttpException).message).toMatch(/YOUTUBE_API_KEY/);
+    // Подсказка про ключ — оператору в лог, человеку — другие пути.
+    expect((bad as HttpException).message).toMatch(/вставьте ссылку/);
+    expect((bad as HttpException).message).not.toMatch(
+      /YOUTUBE_API_KEY|keyInvalid/,
+    );
 
     mockedAxios.get.mockRejectedValueOnce(
       axiosError(0, undefined, 'ECONNRESET'),
     );
     const net = await service.search('u1', 'shoes').catch((e) => e);
     expect((net as HttpException).getStatus()).toBe(502);
-    expect((net as HttpException).message).toMatch(/ECONNRESET/);
+    expect((net as HttpException).message).toMatch(/не отвечает/);
+    expect((net as HttpException).message).not.toMatch(/ECONNRESET/);
   });
 });
 

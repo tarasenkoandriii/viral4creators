@@ -7,7 +7,11 @@ jest.mock('../../common/session.service', () => ({ SessionService: class {} }));
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { BadRequestException } from '@nestjs/common';
-import { GREETING_PROMPT_PATCH_REFUSAL, PromptService } from './prompt.service';
+import {
+  GREETING_PROMPT_PATCH_REFUSAL,
+  PROMPT_MISSING,
+  PromptService,
+} from './prompt.service';
 
 function serviceWith(session: Record<string, unknown>) {
   const s = Object.create(PromptService.prototype) as PromptService;
@@ -31,15 +35,15 @@ describe('PATCH /sessions/:id/prompt для поздравления', () => {
     await expect(s.updatePrompt('s1', 'новый промпт')).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(GREETING_PROMPT_PATCH_REFUSAL).toContain('greeting-script');
+    expect(GREETING_PROMPT_PATCH_REFUSAL).toContain('«Сценарий»');
+    // Маршрут API человеку ничего не говорит — в тексте отказа его нет.
+    expect(GREETING_PROMPT_PATCH_REFUSAL).not.toMatch(/\/sessions|PATCH/);
   });
 
   it('у товарной сессии отказа нет — проверка только для поздравления', async () => {
     const s = serviceWith({ sessionId: 's1' });
     // Без промпта товарная сессия получает свой прежний отказ, не наш.
-    await expect(s.updatePrompt('s1', 'x')).rejects.toThrow(
-      /generate a prompt first/,
-    );
+    await expect(s.updatePrompt('s1', 'x')).rejects.toThrow(PROMPT_MISSING);
   });
 });
 

@@ -34,6 +34,7 @@ import { PlanService } from '../plan/plan.service';
 import { AbTestVariantStatus, Prisma, WorkflowKind } from '@prisma/client';
 import { logWorkflowStage } from '../../common/workflow-stage-events';
 import { usesTemplate } from '../../common/scene-templates';
+import { LIBRARY_ENTRY_NOT_FOUND } from '../../common/user-facing-errors';
 
 /** Число вариантов на один запуск — решение владельца продукта: всегда 3. */
 export const AB_TEST_VARIANT_COUNT = 3;
@@ -137,9 +138,7 @@ export class AbTestService {
           select: { id: true },
         });
     if (!abTemplateId && !entry) {
-      throw new NotFoundException(
-        `Library entry for source ${source.librarySourceKey} not found`,
-      );
+      throw new NotFoundException(LIBRARY_ENTRY_NOT_FOUND);
     }
 
     // Е-2.5 шестого аудита: не было НИКАКОЙ защиты от конкурентного
@@ -271,7 +270,9 @@ export class AbTestService {
       include: { variants: { orderBy: { variantIndex: 'asc' } } },
     });
     if (!run || run.userId !== userId || run.projectId !== projectId) {
-      throw new NotFoundException(`A/B run ${runId} not found`);
+      throw new NotFoundException(
+        'A/B-тест не найден — возможно, его уже удалили',
+      );
     }
 
     const views: AbTestVariantView[] = [];

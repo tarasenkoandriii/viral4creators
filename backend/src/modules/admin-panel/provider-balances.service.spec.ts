@@ -29,6 +29,17 @@ const grok = (items: any[]) => items.find((i) => i.provider === 'GROK');
 const notifyDouble = () =>
   ({ alert: jest.fn().mockResolvedValue(true) }) as never;
 
+/**
+ * Кем продукт пользуется (30.09.2026). По умолчанию — всеми: так
+ * устроен мир до этой правки, и старые проверки о нём и написаны.
+ */
+const usageDouble = (unused: Record<string, string> = {}) =>
+  ({
+    usage: jest.fn().mockResolvedValue({
+      unused: new Map(Object.entries(unused)),
+    }),
+  }) as never;
+
 describe('ProviderBalancesService', () => {
   let restore: () => void = () => undefined;
   afterEach(() => restore());
@@ -42,7 +53,9 @@ describe('ProviderBalancesService', () => {
       XAI_TEAM_ID: undefined,
     });
     const row = grok(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
     );
     expect(row.state).toBe('not-configured');
     expect(row.detail).toContain('XAI_MANAGEMENT_KEY');
@@ -58,7 +71,7 @@ describe('ProviderBalancesService', () => {
       json: async () => ({ total: { val: '-1250' } }),
     });
     (globalThis as any).fetch = fetchMock;
-    await new ProviderBalancesService(notifyDouble()).list(true);
+    await new ProviderBalancesService(notifyDouble(), usageDouble()).list(true);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain(XAI_MANAGEMENT_BASE);
     expect(url).not.toContain('//api.x.ai');
@@ -78,7 +91,9 @@ describe('ProviderBalancesService', () => {
       json: async () => ({ total: { val: '-1827' } }),
     });
     const row = grok(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
     );
     expect(row.state).toBe('ok');
     expect(row.amountMicroUsd).toBe(18_270_000);
@@ -94,7 +109,9 @@ describe('ProviderBalancesService', () => {
       json: async () => ({ total: { val: '340' } }),
     });
     const row = grok(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
     );
     expect(row.amountMicroUsd).toBe(-3_400_000);
   });
@@ -112,7 +129,9 @@ describe('ProviderBalancesService', () => {
       }),
     });
     const row = grok(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
     );
     expect(row.changes.purchasedMicroUsd).toBe(20_000_000);
     expect(row.changes.spentMicroUsd).toBe(1_730_000);
@@ -134,7 +153,9 @@ describe('ProviderBalancesService', () => {
       }),
     });
     const row = grok(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
     );
     expect(row.changes.matchesTotal).toBe(false);
     expect(row.detail).toMatch(/неполн/);
@@ -155,7 +176,9 @@ describe('ProviderBalancesService', () => {
       }),
     });
     const row = grok(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
     );
     expect(row.state).toBe('ok');
     expect(row.rawBody).toBeUndefined();
@@ -174,7 +197,9 @@ describe('ProviderBalancesService', () => {
         .fn()
         .mockResolvedValue({ ok: false, status });
       const row = grok(
-        await new ProviderBalancesService(notifyDouble()).list(true),
+        await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+          true,
+        ),
       );
       expect(row.state).toBe('error');
       expect(row.detail).toMatch(expected);
@@ -188,7 +213,9 @@ describe('ProviderBalancesService', () => {
       json: async () => ({ changes: [] }),
     });
     const row = grok(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
     );
     expect(row.detail).toMatch(/постоплат/);
   });
@@ -201,7 +228,10 @@ describe('ProviderBalancesService', () => {
     (globalThis as any).fetch = jest
       .fn()
       .mockResolvedValue({ ok: false, status: 401 });
-    const items = await new ProviderBalancesService(notifyDouble()).list(true);
+    const items = await new ProviderBalancesService(
+      notifyDouble(),
+      usageDouble(),
+    ).list(true);
     expect(JSON.stringify(items)).not.toContain('секретный-ключ');
   });
 
@@ -212,7 +242,7 @@ describe('ProviderBalancesService', () => {
       json: async () => ({ total: { val: '-100' } }),
     });
     (globalThis as any).fetch = fetchMock;
-    const svc = new ProviderBalancesService(notifyDouble());
+    const svc = new ProviderBalancesService(notifyDouble(), usageDouble());
     await svc.list(true);
     await svc.list();
     await svc.list();
@@ -230,7 +260,9 @@ describe('ProviderBalancesService', () => {
       }),
     });
     const row = grok(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
     );
     expect(row.state).toBe('error');
     expect(row.rawBody).toContain('changes');
@@ -246,7 +278,9 @@ describe('ProviderBalancesService', () => {
       }),
     });
     const row = grok(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
     );
     expect(row.rawBody!.length).toBeLessThan(4200);
     expect(row.rawBody).toContain('обрезано');
@@ -257,7 +291,10 @@ describe('ProviderBalancesService', () => {
       XAI_MANAGEMENT_KEY: undefined,
       XAI_TEAM_ID: undefined,
     });
-    const items = await new ProviderBalancesService(notifyDouble()).list(true);
+    const items = await new ProviderBalancesService(
+      notifyDouble(),
+      usageDouble(),
+    ).list(true);
     const unsupported = items.filter((i) => i.state === 'unsupported');
     expect(unsupported.length).toBeGreaterThan(5);
     for (const row of unsupported) expect(row.detail).toBeTruthy();
@@ -272,7 +309,7 @@ describe('ссылка на консоль провайдера', () => {
     const before = process.env.XAI_MANAGEMENT_KEY;
     delete process.env.XAI_MANAGEMENT_KEY;
     try {
-      const svc = new ProviderBalancesService(notifyDouble());
+      const svc = new ProviderBalancesService(notifyDouble(), usageDouble());
       const items = await svc.list(true);
       const grok = items.find((i) => i.provider === 'GROK');
       expect(grok?.state).toBe('not-configured');
@@ -285,7 +322,7 @@ describe('ссылка на консоль провайдера', () => {
 
   it('у провайдеров без API остатка ссылка тоже есть', async () => {
     // «Смотрите в кабинете» без адреса — половина ответа.
-    const svc = new ProviderBalancesService(notifyDouble());
+    const svc = new ProviderBalancesService(notifyDouble(), usageDouble());
     const items = await svc.list(true);
     const openai = items.find((i) => i.provider === 'OPENAI');
     expect(openai?.state).toBe('unsupported');
@@ -293,7 +330,7 @@ describe('ссылка на консоль провайдера', () => {
   });
 
   it('у кого консоли не назвали — поля нет, а не пустая строка', async () => {
-    const svc = new ProviderBalancesService(notifyDouble());
+    const svc = new ProviderBalancesService(notifyDouble(), usageDouble());
     const items = await svc.list(true);
     const ffmpeg = items.find((i) => i.provider === 'FFMPEG');
     expect(ffmpeg?.dashboardUrl).toBeUndefined();
@@ -335,7 +372,9 @@ describe('ProviderBalancesService — остаток в единицах (эта
     (globalThis as any).fetch = fetchMock;
 
     const el = row(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
       'ELEVENLABS',
     );
 
@@ -367,7 +406,9 @@ describe('ProviderBalancesService — остаток в единицах (эта
     (globalThis as any).fetch = fetchMock;
 
     const serp = row(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
       'SERPAPI',
     );
 
@@ -393,7 +434,9 @@ describe('ProviderBalancesService — остаток в единицах (эта
     }));
 
     const serp = row(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
       'SERPAPI',
     );
 
@@ -402,9 +445,63 @@ describe('ProviderBalancesService — остаток в единицах (эта
     expect(JSON.stringify(serp)).not.toContain('sk-secret');
   });
 
+  it('отказ провайдера назван его словами, а не голым «400»', async () => {
+    // Инцидент 30.09.2026: пять дней «провайдер ответил 400».
+    restore = withEnv({
+      VOICE_API_KEY: 'vk-secret',
+      SERPAPI_API_KEY: undefined,
+    });
+    (globalThis as any).fetch = jest.fn(async () => ({
+      ok: false,
+      status: 400,
+      text: async () =>
+        JSON.stringify({
+          detail: {
+            status: 'missing_permissions',
+            message:
+              'The API key vk-secret is missing the permission user_read',
+          },
+        }),
+    }));
+
+    const el = row(
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
+      'ELEVENLABS',
+    );
+
+    expect(el.state).toBe('error');
+    expect(el.detail).toBe(
+      'провайдер ответил 400: missing_permissions: The API key … is missing the permission user_read',
+    );
+    expect(JSON.stringify(el)).not.toContain('vk-secret');
+  });
+
+  it('тело отказа не JSON — остаётся один статус, без падения', async () => {
+    restore = withEnv({ VOICE_API_KEY: 'vk', SERPAPI_API_KEY: undefined });
+    (globalThis as any).fetch = jest.fn(async () => ({
+      ok: false,
+      status: 400,
+      text: async () => '<html>Bad Request</html>',
+    }));
+
+    const el = row(
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
+      'ELEVENLABS',
+    );
+
+    expect(el.detail).toBe('провайдер ответил 400');
+  });
+
   it('нет ключа — «не настроено» с именем переменной, а не ошибка', async () => {
     restore = withEnv({ VOICE_API_KEY: undefined, SERPAPI_API_KEY: undefined });
-    const items = await new ProviderBalancesService(notifyDouble()).list(true);
+    const items = await new ProviderBalancesService(
+      notifyDouble(),
+      usageDouble(),
+    ).list(true);
     expect(row(items, 'ELEVENLABS').state).toBe('not-configured');
     expect(row(items, 'ELEVENLABS').detail).toContain('VOICE_API_KEY');
     expect(row(items, 'SERPAPI').detail).toContain('SERPAPI_API_KEY');
@@ -417,7 +514,9 @@ describe('ProviderBalancesService — остаток в единицах (эта
     });
 
     const el = row(
-      await new ProviderBalancesService(notifyDouble()).list(true),
+      await new ProviderBalancesService(notifyDouble(), usageDouble()).list(
+        true,
+      ),
       'ELEVENLABS',
     );
 
@@ -427,7 +526,10 @@ describe('ProviderBalancesService — остаток в единицах (эта
 
   it('оба больше не числятся среди «остаток не отдаёт»', async () => {
     restore = withEnv({ VOICE_API_KEY: undefined, SERPAPI_API_KEY: undefined });
-    const items = await new ProviderBalancesService(notifyDouble()).list(true);
+    const items = await new ProviderBalancesService(
+      notifyDouble(),
+      usageDouble(),
+    ).list(true);
     expect(row(items, 'ELEVENLABS').state).not.toBe('unsupported');
     expect(row(items, 'SERPAPI').state).not.toBe('unsupported');
     // И строка у каждого ровно одна: список провайдеров без API остатка
@@ -474,7 +576,7 @@ describe('ProviderBalancesService — после аудита этапа 142', (
       ).unref?.(),
     );
     await Promise.race([
-      new ProviderBalancesService(notifyDouble()).list(true),
+      new ProviderBalancesService(notifyDouble(), usageDouble()).list(true),
       late,
     ]);
 
@@ -493,7 +595,10 @@ describe('ProviderBalancesService — после аудита этапа 142', (
       throw new Error(`Failed to parse URL from ${url}`);
     });
 
-    const items = await new ProviderBalancesService(notifyDouble()).list(true);
+    const items = await new ProviderBalancesService(
+      notifyDouble(),
+      usageDouble(),
+    ).list(true);
     const serp = items.find((i) => i.provider === 'SERPAPI');
 
     expect(serp?.state).toBe('error');
@@ -511,7 +616,10 @@ describe('ProviderBalancesService — после аудита этапа 142', (
       SERPAPI_API_KEY: undefined,
       XAI_MANAGEMENT_KEY: undefined,
     });
-    const items = await new ProviderBalancesService(notifyDouble()).list(true);
+    const items = await new ProviderBalancesService(
+      notifyDouble(),
+      usageDouble(),
+    ).list(true);
     const shown = items.map((i) => i.provider).sort();
 
     expect(shown).toEqual([...AI_PROVIDERS].sort());
@@ -558,7 +666,10 @@ describe('ProviderBalancesService.watch (этап 143)', () => {
     );
     const notify = quiet();
 
-    const result = await new ProviderBalancesService(notify as never).watch();
+    const result = await new ProviderBalancesService(
+      notify as never,
+      usageDouble(),
+    ).watch();
 
     expect(result.low).toBe(2);
     expect(result.watched).toBe(2);
@@ -583,7 +694,10 @@ describe('ProviderBalancesService.watch (этап 143)', () => {
     }));
     const notify = quiet();
 
-    const result = await new ProviderBalancesService(notify as never).watch();
+    const result = await new ProviderBalancesService(
+      notify as never,
+      usageDouble(),
+    ).watch();
 
     expect(result.low).toBe(0);
     expect(notify.alert).not.toHaveBeenCalled();
@@ -604,7 +718,7 @@ describe('ProviderBalancesService.watch (этап 143)', () => {
       json: async () => ({ character_count: 0, character_limit: 1_000_000 }),
     }));
     (globalThis as any).fetch = fetchMock;
-    const svc = new ProviderBalancesService(quiet() as never);
+    const svc = new ProviderBalancesService(quiet() as never, usageDouble());
 
     await svc.list();
     const afterFirst = fetchMock.mock.calls.length;
@@ -627,7 +741,10 @@ describe('ProviderBalancesService.watch (этап 143)', () => {
     }));
     const notify = quiet();
 
-    const result = await new ProviderBalancesService(notify as never).watch();
+    const result = await new ProviderBalancesService(
+      notify as never,
+      usageDouble(),
+    ).watch();
 
     expect(result.unreadable).toBe(1);
     expect(notify.alert.mock.calls[0][0]).toBe('balance-unreadable:ELEVENLABS');
@@ -666,7 +783,7 @@ describe('ProviderBalancesService.watch (этап 143)', () => {
       ).unref?.(),
     );
     await Promise.race([
-      new ProviderBalancesService(notify as never).watch(),
+      new ProviderBalancesService(notify as never, usageDouble()).watch(),
       late,
     ]);
 
@@ -689,9 +806,98 @@ describe('ProviderBalancesService.watch (этап 143)', () => {
     }));
     const notify = { alert: jest.fn().mockResolvedValue(false) };
 
-    const result = await new ProviderBalancesService(notify as never).watch();
+    const result = await new ProviderBalancesService(
+      notify as never,
+      usageDouble(),
+    ).watch();
 
     expect(result.unreadable).toBe(1);
     expect(result.notified).toBe(0);
+  });
+});
+
+describe('ProviderBalancesService — неиспользуемый провайдер (30.09.2026)', () => {
+  let restore: () => void = () => undefined;
+  afterEach(() => restore());
+
+  // Живой случай владельца: ElevenLabs отложен, ключ остался, провайдер
+  // отвечает 400 — и сторож будил канал ошибок каждый день.
+  const elevenRefuses = () => {
+    restore = withEnv({
+      VOICE_API_KEY: 'vk',
+      SERPAPI_API_KEY: 'sk',
+      XAI_MANAGEMENT_KEY: undefined,
+      XAI_TEAM_ID: undefined,
+      BALANCE_ALERT_SERPAPI_SEARCHES: '100',
+    });
+    (globalThis as any).fetch = jest.fn(async (url: string) =>
+      String(url).includes('elevenlabs')
+        ? { ok: false, status: 400, json: async () => ({}) }
+        : {
+            ok: true,
+            status: 200,
+            json: async () => ({ total_searches_left: 5 }),
+          },
+    );
+  };
+
+  it('сторож молчит о неиспользуемом, но о прочих кричит как раньше', async () => {
+    elevenRefuses();
+    const notify = { alert: jest.fn().mockResolvedValue(true) };
+
+    const result = await new ProviderBalancesService(
+      notify as never,
+      usageDouble({ ELEVENLABS: 'отложен' }),
+    ).watch();
+
+    expect(result.unreadable).toBe(0);
+    expect(result.skippedUnused).toBe(1);
+    expect(result.low).toBe(1);
+    expect(notify.alert.mock.calls.map((c) => c[0])).toEqual([
+      'balance-low:SERPAPI',
+    ]);
+  });
+
+  it('используемый провайдер с тем же отказом по-прежнему тревожит', async () => {
+    // Обратная сторона: выбери владелец ElevenLabs снова — и 400 снова
+    // должен дойти до канала, иначе сторож слеп ровно там, где нужен.
+    elevenRefuses();
+    const notify = { alert: jest.fn().mockResolvedValue(true) };
+
+    const result = await new ProviderBalancesService(
+      notify as never,
+      usageDouble(),
+    ).watch();
+
+    expect(result.unreadable).toBe(1);
+    expect(result.skippedUnused).toBe(0);
+    expect(notify.alert.mock.calls.map((c) => c[0])).toContain(
+      'balance-unreadable:ELEVENLABS',
+    );
+  });
+
+  it('экран получает пометку и причину, а остаток всё равно спрошен', async () => {
+    // «Обновить» на экране — единственный способ увидеть остаток
+    // отложенного провайдера перед тем, как вернуть его в дело.
+    elevenRefuses();
+    const svc = new ProviderBalancesService(
+      notifyDouble(),
+      usageDouble({ ELEVENLABS: 'не выбран «Озвучкой по умолчанию»' }),
+    );
+
+    const items = await svc.list(true);
+    const eleven = items.find((i) => i.provider === 'ELEVENLABS')!;
+    const serp = items.find((i) => i.provider === 'SERPAPI')!;
+
+    expect(eleven.inUse).toBe(false);
+    expect(eleven.usageNote).toContain('Озвучкой по умолчанию');
+    expect(eleven.state).toBe('error');
+    expect(serp.inUse).toBe(true);
+    expect(serp.usageNote).toBeUndefined();
+    expect(
+      ((globalThis as any).fetch as jest.Mock).mock.calls.some((c) =>
+        String(c[0]).includes('elevenlabs'),
+      ),
+    ).toBe(true);
   });
 });

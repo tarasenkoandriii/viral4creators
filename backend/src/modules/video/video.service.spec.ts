@@ -86,7 +86,7 @@ describe('VideoService — что вообще пускается в храни�
     const { svc, blob, sessions } = build();
     await expect(
       svc.generateUploadUrl('s1', 'huge.mp4', 100 * MB + 1, 'video/mp4'),
-    ).rejects.toThrow(/maximum size of 100MB/);
+    ).rejects.toThrow(/больше 100 МБ/);
     // Ни ссылки, ни отметки о новом референсе: отказ обязан быть до
     // сброса производного состояния, иначе неудачная попытка загрузки
     // стирала бы кастинг и разбор прежнего ролика.
@@ -123,7 +123,7 @@ describe('VideoService — что вообще пускается в храни�
     const { svc, blob, sessions } = build();
     await expect(
       svc.generateUploadUrl('s1', 'a.bin', 10, mimeType),
-    ).rejects.toThrow(/Invalid video format/);
+    ).rejects.toThrow(/формат видео не подходит/);
     expect(blob.createUploadUrl).not.toHaveBeenCalled();
     expect(sessions.updateSession).not.toHaveBeenCalled();
   });

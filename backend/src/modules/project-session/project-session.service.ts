@@ -16,6 +16,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -53,7 +54,9 @@ import { UpdateBrandSnapshotRequestDto } from './dto/update-brand-snapshot.dto';
 import {
   SESSION_NOT_FOUND,
   PROJECT_NOT_FOUND,
+  PRODUCT_ITEM_NOT_FOUND,
 } from '../../common/user-facing-errors';
+import { GREETING_ERROR_CODES } from '../../common/greeting-errors';
 
 /** Structural row shapes (see project.service.ts for why not Prisma types). */
 interface ItemWithProjectRow extends SnapshotItemSource {
@@ -105,6 +108,8 @@ export interface ItemSessionSummary {
 
 @Injectable()
 export class ProjectSessionService {
+  private readonly logger = new Logger(ProjectSessionService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
@@ -159,9 +164,7 @@ export class ProjectSessionService {
         },
       });
     if (!item) {
-      throw new NotFoundException(
-        `Item ${itemId} not found in project ${projectId}`,
-      );
+      throw new NotFoundException(PRODUCT_ITEM_NOT_FOUND);
     }
 
     const now = new Date();
@@ -235,17 +238,23 @@ export class ProjectSessionService {
         },
       });
     if (!brief) {
-      throw new NotFoundException(
-        `Greeting brief not found for project ${projectId}`,
-      );
+      // Код тот же, что у самого брифа (greeting-brief.service), — у
+      // клиента на него уже есть перевод в пяти локалях.
+      throw new NotFoundException({
+        code: GREETING_ERROR_CODES.GREETING_BRIEF_NOT_FOUND,
+        message: 'Бриф поздравления не найден — возможно, проект удалён.',
+      });
     }
     // Не должно случиться при обычном флоу (бриф создаётся только вместе
     // с GREETING_VIDEO-проектом, §4.1), но проект тип мог сменить PATCH
     // /projects/:id (ProjectService.updateProject допускает смену type) —
     // защита от рассинхрона, а не догадка.
     if (brief.project.type !== 'GREETING_VIDEO') {
+      this.logger.warn(
+        `проект ${projectId}: бриф поздравления есть, а тип проекта ${brief.project.type}`,
+      );
       throw new NotFoundException(
-        `Project ${projectId} is not a GREETING_VIDEO project`,
+        'Этот проект больше не поздравление — ролик-поздравление из него не собрать',
       );
     }
 
@@ -306,9 +315,7 @@ export class ProjectSessionService {
       select: { id: true },
     });
     if (!owned) {
-      throw new NotFoundException(
-        `Item ${itemId} not found in project ${projectId}`,
-      );
+      throw new NotFoundException(PRODUCT_ITEM_NOT_FOUND);
     }
     // Найдено доп. аудитом (MEDIUM, этап 89): единственная выборка Session
     // в проекте без `deletedAt: null` — без этого фильтра мягко удалённая

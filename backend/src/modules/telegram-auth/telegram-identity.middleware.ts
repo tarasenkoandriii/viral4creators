@@ -91,7 +91,9 @@ export class TelegramIdentityMiddleware implements NestMiddleware {
         } catch (err) {
           if (err instanceof TelegramInitDataInvalidError) {
             this.logger.warn(`initData rejected: ${err.message}`);
-            throw new UnauthorizedException('Invalid Telegram initData');
+            throw new UnauthorizedException(
+              'Telegram не подтвердил вход — закройте приложение и откройте его в Telegram заново',
+            );
           }
           throw err;
         }

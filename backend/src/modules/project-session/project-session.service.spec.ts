@@ -739,6 +739,29 @@ describe('ProjectSessionService.createFromGreetingBrief — этап G (§4.7, �
     return b;
   };
 
+  it('брифа нет — 404 с кодом GREETING_BRIEF_NOT_FOUND и без номера проекта (финальная партия A3)', async () => {
+    const { service } = withBrief(null);
+    const err = await service
+      .createFromGreetingBrief('u1', 'p1')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotFoundException);
+    expect((err as NotFoundException).getResponse()).toMatchObject({
+      code: 'GREETING_BRIEF_NOT_FOUND',
+    });
+    expect((err as Error).message).not.toContain('p1');
+  });
+
+  it('тип проекта сменили — 404 по-русски, без внутреннего имени типа', async () => {
+    const { service } = withBrief(
+      briefRow({ project: { ...briefRow().project, type: 'PRODUCT' } }),
+    );
+    const err = await service
+      .createFromGreetingBrief('u1', 'p1')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotFoundException);
+    expect((err as Error).message).not.toMatch(/GREETING_VIDEO|p1/);
+  });
+
   it('образ копируется в снимок, ролик помечен как ролик с персоной', async () => {
     const { service, sessions } = withBrief(briefRow());
     await service.createFromGreetingBrief('u1', 'p1');

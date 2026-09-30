@@ -44,7 +44,10 @@ import {
 import { head } from '@vercel/blob';
 import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
-import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  SESSION_NOT_FOUND,
+  VOICE_RECORDING_UPLOAD_FAILED,
+} from '../../common/user-facing-errors';
 import { SupportedLocale } from '../../common/locale';
 import {
   VOICE_UTTERANCE_MAX_MS,
@@ -208,7 +211,10 @@ export class GreetingVoiceService {
     const session = await this.load(sessionId);
     const prefix = `sessions/${sessionId}/`;
     if (!dto.pathname.startsWith(prefix)) {
-      throw new BadRequestException(`pathname должен начинаться с «${prefix}»`);
+      this.logger.warn(
+        `сессия ${sessionId}: запись пришла с чужим путём ${dto.pathname}`,
+      );
+      throw new BadRequestException(VOICE_RECORDING_UPLOAD_FAILED);
     }
     try {
       // Каждая реплика — платный вызов, а при голосовом управлении их
@@ -283,9 +289,12 @@ export class GreetingVoiceService {
       mimeType = meta.contentType || 'audio/webm';
       audio = await this.blobService.downloadBuffer(input.pathname);
     } catch (e) {
-      throw new BadRequestException(
-        `Запись не найдена в хранилище — сначала загрузите её через upload-url (${e instanceof Error ? e.message : String(e)})`,
+      this.logger.warn(
+        `запись ${input.pathname} не нашлась в хранилище (${
+          e instanceof Error ? e.message : String(e)
+        })`,
       );
+      throw new BadRequestException(VOICE_RECORDING_UPLOAD_FAILED);
     }
     // Подписанный PUT уже ограничен размером, но проверка здесь — не
     // перестраховка: платный вызов не должен зависеть от того, чей

@@ -20,6 +20,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -33,7 +34,13 @@ import { isItemComplete } from '../project/project.service';
 import { PlanService } from '../plan/plan.service';
 import { CatalogBatchItemStatus, WorkflowKind } from '@prisma/client';
 import { logWorkflowStage } from '../../common/workflow-stage-events';
-import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  LIBRARY_ENTRY_NOT_FOUND,
+  PROJECT_NOT_FOUND,
+} from '../../common/user-facing-errors';
+
+/** Партии нет или она чужая — снаружи это одно и то же. */
+const BATCH_NOT_FOUND = 'Партия не найдена — возможно, её уже удалили';
 
 export interface StartCatalogBatchResult {
   batchId: string;
@@ -66,6 +73,8 @@ export interface CatalogBatchStatusView {
 
 @Injectable()
 export class CatalogBatchService {
+  private readonly logger = new Logger(CatalogBatchService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
@@ -136,9 +145,10 @@ export class CatalogBatchService {
       select: { id: true },
     });
     if (!entry) {
-      throw new NotFoundException(
-        `Library entry for source ${source.librarySourceKey} not found`,
+      this.logger.warn(
+        `партия: разбора ${source.librarySourceKey} нет в библиотеке`,
       );
+      throw new NotFoundException(LIBRARY_ENTRY_NOT_FOUND);
     }
 
     const requestedIds = dto.productItemIds.filter(
@@ -156,6 +166,7 @@ export class CatalogBatchService {
     // `any` и каскадом даёт implicit-any на параметры колбэков ниже.
     interface ProductItemSlim {
       id: string;
+      title: string | null;
       price: { toString(): string } | number | string | null;
       description: string | null;
       photoUrl: string | null;
@@ -168,6 +179,7 @@ export class CatalogBatchService {
       where: { id: { in: requestedIds }, projectId, deletedAt: null },
       select: {
         id: true,
+        title: true,
         price: true,
         description: true,
         photoUrl: true,
@@ -176,8 +188,13 @@ export class CatalogBatchService {
     const foundIds = new Set(items.map((i: ProductItemSlim) => i.id));
     const missing = requestedIds.filter((id) => !foundIds.has(id));
     if (missing.length > 0) {
+      // Номера — в лог; человеку — сколько, а какие, он увидит в
+      // обновлённом списке (найденных товаров нет — назвать их нечем).
+      this.logger.warn(
+        `партия проекта ${projectId}: нет товаров ${missing.join(', ')}`,
+      );
       throw new NotFoundException(
-        `Товары не найдены в проекте ${projectId}: ${missing.join(', ')}`,
+        `Товаров партии не нашлось: ${missing.length} — возможно, их удалили; обновите список`,
       );
     }
     // Защитная проверка сверх обычного §7.4 isItemComplete: партия не
@@ -191,7 +208,7 @@ export class CatalogBatchService {
     if (incomplete.length > 0) {
       throw new BadRequestException(
         `Не заполнены до конца (нужны фото, цена и описание): ${incomplete
-          .map((i: ProductItemSlim) => i.id)
+          .map((i: ProductItemSlim) => `«${i.title?.trim() || 'без названия'}»`)
           .join(', ')}`,
       );
     }
@@ -361,7 +378,7 @@ export class CatalogBatchService {
       },
     });
     if (!run || run.userId !== userId || run.projectId !== projectId) {
-      throw new NotFoundException(`Batch ${batchId} not found`);
+      throw new NotFoundException(BATCH_NOT_FOUND);
     }
 
     const views: CatalogBatchItemView[] = [];
@@ -463,7 +480,7 @@ export class CatalogBatchService {
       select: { id: true, userId: true, projectId: true, provider: true },
     });
     if (!run || run.userId !== userId || run.projectId !== projectId) {
-      throw new NotFoundException(`Batch ${batchId} not found`);
+      throw new NotFoundException(BATCH_NOT_FOUND);
     }
 
     // Е-2.4 шестого аудита (рецидив класса Д-2.2 в новом коде этапа 74):

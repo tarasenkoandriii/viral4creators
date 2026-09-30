@@ -32,8 +32,9 @@ export class TelegramIdentityGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest<TelegramIdentifiedRequest>();
     if (!req.telegramUserId) {
+      // Про dev-обход стенда человеку знать незачем — он в doc/LOCAL-DEVELOPMENT.md.
       throw new UnauthorizedException(
-        'This endpoint requires a Telegram identity (open inside Telegram, log in with the Telegram button, or use the dev bypass on a local stand).',
+        'Нужно войти через Telegram: откройте приложение в Telegram или нажмите «Войти через Telegram»',
       );
     }
     return true;

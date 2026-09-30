@@ -86,6 +86,7 @@ import type {
   AdminFeedImportListResult,
   CronJobInfo,
   CronRunLog,
+  CronSummary,
   AvatarVideo,
   SoundCheckState,
   WorkflowWindow,
@@ -694,9 +695,18 @@ export function getCronRegistry() {
 }
 
 /** Без jobKey — последние прогоны по всем джобам вперемешку; страница
- * сама берёт последний на каждый jobKey (см. lastRunFor() в page.tsx). */
-export function getCronHistory(jobKey?: string) {
-  return apiGet<CronRunLog[]>('/admin/cron/history', jobKey ? { jobKey } : undefined);
+ * сама берёт последний на каждый jobKey (см. lastRunFor() в page.tsx).
+ * since/until — ISO, полуинтервал [since, until); limit — до 500;
+ * before — id последней строки предыдущей страницы. */
+export function getCronHistory(
+  params: { jobKey?: string; since?: string; until?: string; limit?: number; before?: string } = {},
+) {
+  return apiGet<CronRunLog[]>('/admin/cron/history', params);
+}
+
+/** Сводка по каждому джобу за период [since, until). */
+export function getCronSummary(since: string, until: string) {
+  return apiGet<CronSummary>('/admin/cron/summary', { since, until });
 }
 
 export function runCronJob(jobKey: string, debug: boolean) {

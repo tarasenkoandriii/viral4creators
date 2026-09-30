@@ -120,6 +120,14 @@ export interface BalanceWatchResult {
    * в истории крона в точности как здоровый (аудит этапа 143).
    */
   watched: number;
+  /**
+   * Сколько провайдеров сторожили бы, но пропустили, потому что продукт
+   * ими сейчас не пользуется (`inUse: false`). Отдельным числом, а не
+   * «минус из watched»: иначе отложенный провайдер в истории крона
+   * неотличим от выключенного порогом, а это разные решения разных
+   * людей.
+   */
+  skippedUnused: number;
   concerns: BalanceConcern[];
 }
 
@@ -130,6 +138,7 @@ export function balanceWatch(
 ): BalanceWatchResult {
   const concerns: BalanceConcern[] = [];
   let watched = 0;
+  let skippedUnused = 0;
   for (const item of items) {
     // Сторожить нечего у того, у кого остатка не спрашивают вовсе.
     if (item.state !== 'ok' && item.state !== 'error') continue;
@@ -137,6 +146,17 @@ export function balanceWatch(
     // остаток не читается: иначе нечинимое состояние кричало бы вечно.
     const limit = limitFor(item, thresholds);
     if (limit <= 0) continue;
+    // Провайдер, которым продукт сейчас не пользуется, не может встать
+    // и остановить продукт — крик о его остатке ложный по определению
+    // (запрос владельца 30.09.2026: отложенный ElevenLabs отвечал 400
+    // и будил канал каждый день). Проверка ПОСЛЕ порога: выключенный
+    // нулём — решение оператора, и считать его «пропущенным из-за
+    // неиспользования» значило бы врать в отчёте крона. Строго
+    // `=== false`: поле не вычислено — значит используется.
+    if (item.inUse === false) {
+      skippedUnused++;
+      continue;
+    }
     watched++;
 
     if (item.state === 'error') {
@@ -171,5 +191,5 @@ export function balanceWatch(
       });
     }
   }
-  return { watched, concerns };
+  return { watched, skippedUnused, concerns };
 }

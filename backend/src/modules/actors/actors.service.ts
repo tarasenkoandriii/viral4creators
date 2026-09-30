@@ -455,7 +455,9 @@ export class ActorsService {
 
     const current = session.avatarVideo;
     if (!current) {
-      throw new NotFoundException('Avatar generation has not been initiated');
+      throw new NotFoundException(
+        'Аватар-ролик для этой сессии ещё не запускали',
+      );
     }
 
     if (

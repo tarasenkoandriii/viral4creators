@@ -6,6 +6,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { head } from '@vercel/blob';
@@ -35,6 +36,17 @@ import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 export const MAX_SCENES = 5;
 
+/**
+ * Отказы читает человек в мастере: ключ сцены (`sc_…`), путь хранилища
+ * и ключ кандидата ему ничего не говорят — они уходят в лог.
+ */
+/** Сцены нет — удалена в соседней вкладке или вкладка устарела. */
+export const SCENE_NOT_FOUND = 'Сцена не найдена — обновите страницу';
+
+/** Загруженное фото сцены не нашлось там, куда его велели положить. */
+const SCENE_PHOTO_UPLOAD_FAILED =
+  'Фото сцены не загрузилось — попробуйте загрузить его ещё раз';
+
 export function newSceneId(): string {
   return `sc_${randomBytes(6).toString('hex')}`;
 }
@@ -49,6 +61,8 @@ export function scenePathname(
 
 @Injectable()
 export class ReferenceAssetsService {
+  private readonly logger = new Logger(ReferenceAssetsService.name);
+
   constructor(
     private readonly plans: PlanService,
     private readonly sessions: SessionService,
@@ -71,7 +85,7 @@ export class ReferenceAssetsService {
     await this.plans.assertUser(session.userId ?? null, 'referenceAssets');
     if ((session.scenes ?? []).length >= MAX_SCENES) {
       throw new BadRequestException(
-        `At most ${MAX_SCENES} scenes per session — delete one first`,
+        `Своих сцен может быть не больше ${MAX_SCENES} — удалите одну, чтобы добавить новую`,
       );
     }
     const sceneId = newSceneId();
@@ -91,23 +105,31 @@ export class ReferenceAssetsService {
     const session = await this.load(sessionId);
     const prefix = `sessions/${sessionId}/scenes/`;
     if (!dto.pathname.startsWith(prefix)) {
-      throw new BadRequestException(`pathname must start with "${prefix}"`);
+      this.logger.warn(
+        `сцена, сессия ${sessionId}: путь ${dto.pathname} не под ${prefix}`,
+      );
+      throw new BadRequestException(SCENE_PHOTO_UPLOAD_FAILED);
     }
     const sceneId = dto.pathname.slice(prefix.length).split('/')[0];
     const scenes = session.scenes ?? [];
     if (scenes.some((s) => s.id === sceneId)) {
-      throw new BadRequestException(`Scene ${sceneId} already confirmed`);
+      throw new BadRequestException('Эта сцена уже добавлена');
     }
     if (scenes.length >= MAX_SCENES) {
-      throw new BadRequestException(`At most ${MAX_SCENES} scenes per session`);
+      throw new BadRequestException(
+        `Своих сцен может быть не больше ${MAX_SCENES}`,
+      );
     }
     let url: string;
     try {
       url = (await head(dto.pathname)).url;
     } catch (e) {
-      throw new BadRequestException(
-        `Scene photo not found in storage at "${dto.pathname}" — upload it first (${e instanceof Error ? e.message : String(e)})`,
+      this.logger.warn(
+        `сцена, сессия ${sessionId}: фото ${dto.pathname} не нашлось в хранилище (${
+          e instanceof Error ? e.message : String(e)
+        })`,
       );
+      throw new BadRequestException(SCENE_PHOTO_UPLOAD_FAILED);
     }
     const scene: SceneAsset = {
       id: sceneId,
@@ -130,7 +152,8 @@ export class ReferenceAssetsService {
     const session = await this.load(sessionId);
     const scenes = session.scenes ?? [];
     if (!scenes.some((s) => s.id === sceneId)) {
-      throw new NotFoundException(`Scene ${sceneId} not found`);
+      this.logger.warn(`сессия ${sessionId}: сцены ${sceneId} нет`);
+      throw new NotFoundException(SCENE_NOT_FOUND);
     }
     const next = scenes.map((s) =>
       s.id === sceneId
@@ -152,7 +175,10 @@ export class ReferenceAssetsService {
     const session = await this.load(sessionId);
     const scenes = session.scenes ?? [];
     const scene = scenes.find((s) => s.id === sceneId);
-    if (!scene) throw new NotFoundException(`Scene ${sceneId} not found`);
+    if (!scene) {
+      this.logger.warn(`сессия ${sessionId}: сцены ${sceneId} нет`);
+      throw new NotFoundException(SCENE_NOT_FOUND);
+    }
     const next = scenes.filter((s) => s.id !== sceneId);
     const selection = session.referenceSelection
       ? {
@@ -189,19 +215,29 @@ export class ReferenceAssetsService {
     const session = await this.load(sessionId);
     await this.plans.assertUser(session.userId ?? null, 'referenceAssets');
     const plan = buildReferencePlan(session);
-    const known = new Set(plan.candidates.map((c) => c.id));
+    const labels = new Map<string, string>(
+      plan.candidates.map((c) => [c.id, c.label]),
+    );
     const seen = new Set<string>();
     for (const id of dto.slots) {
-      if (!known.has(id)) {
+      if (!labels.has(id)) {
+        this.logger.warn(
+          `сессия ${sessionId}: ${id} не среди кандидатов в референсы`,
+        );
         throw new BadRequestException(
-          `"${id}" is not a reference candidate of this session`,
+          'Среди выбранных картинок есть та, которой больше нет в ролике — обновите страницу',
         );
       }
-      if (seen.has(id)) throw new BadRequestException(`Duplicate slot "${id}"`);
+      if (seen.has(id)) {
+        const label = labels.get(id) || 'без подписи';
+        throw new BadRequestException(`Картинка «${label}» выбрана дважды`);
+      }
       seen.add(id);
     }
     if (dto.slots.length > REFERENCE_IMAGE_CAP) {
-      throw new BadRequestException(`At most ${REFERENCE_IMAGE_CAP} slots`);
+      throw new BadRequestException(
+        `Опорных картинок может быть не больше ${REFERENCE_IMAGE_CAP}`,
+      );
     }
     const selection: ReferenceSelection = {
       slots: dto.slots,

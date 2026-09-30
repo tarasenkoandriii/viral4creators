@@ -155,6 +155,9 @@ const ITEMS_INCLUDE = {
   },
 };
 
+/** Машинный код отказа «лимит товаров линейки исчерпан». */
+export const PROJECT_LINE_LIMIT = 'PROJECT_LINE_LIMIT';
+
 @Injectable()
 export class ProjectService {
   private readonly logger = new Logger(ProjectService.name);
@@ -202,7 +205,7 @@ export class ProjectService {
     if (dto.type === 'GREETING_VIDEO') {
       if (!dto.greetingBrief) {
         throw new BadRequestException(
-          'greetingBrief is required for type GREETING_VIDEO',
+          'Для поздравления заполните бриф: повод, кому и от кого',
         );
       }
       return this.createGreetingVideoProject(
@@ -244,7 +247,7 @@ export class ProjectService {
   ): Promise<ProjectView> {
     if (brief.occasion === 'OTHER' && !brief.customOccasionText?.trim()) {
       throw new BadRequestException(
-        'customOccasionText is required when occasion is OTHER',
+        'Для «Особого повода» опишите своими словами, что за событие',
       );
     }
 
@@ -400,7 +403,7 @@ export class ProjectService {
       // LINE → SINGLE only if it can actually hold what's already there.
       if (dto.type === 'SINGLE' && items.length > 1) {
         throw new BadRequestException(
-          `Cannot change to SINGLE: project has ${items.length} items, a SINGLE project holds exactly one. Remove the extra items first.`,
+          `Проект нельзя сделать «Одним товаром»: товаров в нём ${items.length}, а нужен ровно один. Сначала удалите лишние.`,
         );
       }
       // ТЗ TZ-Greeting-Video-Project-Type.md §4.1/§4.3: a GREETING_VIDEO
@@ -418,7 +421,7 @@ export class ProjectService {
       // away from it while a ClientSiteTutorialDraft still exists).
       if (dto.type === 'GREETING_VIDEO') {
         throw new BadRequestException(
-          'Cannot change project type to GREETING_VIDEO via PATCH — create a new project of that type instead (POST /projects with a greetingBrief).',
+          'Готовый проект нельзя превратить в поздравление — создайте новый проект-поздравление.',
         );
       }
       data.type = dto.type;
@@ -432,7 +435,7 @@ export class ProjectService {
       // the country would silently re-denominate every one of them.
       if (items.some((item) => item.price !== null)) {
         throw new BadRequestException(
-          'Cannot change country: some items already have a price in the current currency. Clear the prices first, or create a separate project for the other country (spec §7.1).',
+          'Страну сменить нельзя: у товаров уже есть цены в валюте проекта. Сначала уберите цены или заведите для другой страны отдельный проект.',
         );
       }
       const countryCode = dto.countryCode.toUpperCase();
@@ -594,13 +597,17 @@ export class ProjectService {
 
     if (project.type === 'SINGLE' && count >= 1) {
       throw new BadRequestException(
-        'A SINGLE project holds exactly one item. Switch the project to LINE to add more.',
+        'В проекте «Один товар» товар ровно один — чтобы добавить ещё, переключите проект на «Линейку».',
       );
     }
     if (project.type === 'LINE' && count >= this.lineItemLimit) {
-      throw new BadRequestException(
-        `Line limit reached: at most ${this.lineItemLimit} items per project (PROJECT_LINE_ITEM_LIMIT).`,
-      );
+      // Код `PROJECT_LINE_LIMIT` читает импорт фида
+      // (product-feed-import-worker): по нему он перестаёт звать addItem
+      // до конца запуска. Текст для человека, на него не опираться.
+      throw new BadRequestException({
+        code: PROJECT_LINE_LIMIT,
+        message: `В линейке может быть не больше ${this.lineItemLimit} товаров — лимит исчерпан.`,
+      });
     }
 
     const row: ItemRow = await this.prisma.productItem.create({
@@ -840,7 +847,7 @@ export class ProjectService {
     if (dto.countryCode) return dto.countryCode.toUpperCase();
     if (dto.type !== 'CLIENT_SITE') {
       throw new BadRequestException(
-        'countryCode is required for SINGLE and LINE projects',
+        'Выберите страну — от неё зависят валюта и цены товаров',
       );
     }
     const previous = await this.prisma.project.findFirst({
@@ -881,7 +888,7 @@ export class ProjectService {
     const currency = currencyForCountry(countryCode);
     if (!currency) {
       throw new BadRequestException(
-        `Unknown countryCode "${countryCode}" — expected an ISO 3166-1 alpha-2 code from GET /reference/countries.`,
+        `Страну «${countryCode}» мы не знаем — выберите её из списка.`,
       );
     }
     return currency;
@@ -923,9 +930,8 @@ export class ProjectService {
       },
     });
     if (!row) {
-      throw new NotFoundException(
-        `Item ${itemId} not found in project ${projectId}`,
-      );
+      this.logger.warn(`товара ${itemId} нет в проекте ${projectId}`);
+      throw new NotFoundException('Товар не найден');
     }
     return row;
   }
@@ -945,9 +951,10 @@ export class ProjectService {
       select: { id: true, kind: true },
     });
     if (!manifest) {
-      throw new BadRequestException(
-        `Brand manifest ${brandManifestId} not found`,
+      this.logger.warn(
+        `бренд-бук ${brandManifestId} не найден у пользователя ${userId}`,
       );
+      throw new BadRequestException('Бренд-бук не найден');
     }
     if (
       projectType !== undefined &&

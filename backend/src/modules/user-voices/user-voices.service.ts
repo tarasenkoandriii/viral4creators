@@ -123,6 +123,13 @@ export async function forgetVoiceInBrandManifests(
   });
 }
 
+/**
+ * Образец для клона не дошёл до хранилища или пришёл не по своему пути.
+ * Путь и текст ошибки хранилища — в лог (финальная партия A3).
+ */
+const VOICE_SAMPLE_UPLOAD_FAILED =
+  'Запись голоса не загрузилась — запишите или загрузите её ещё раз';
+
 @Injectable()
 export class UserVoicesService {
   private readonly logger = new Logger(UserVoicesService.name);
@@ -166,9 +173,10 @@ export class UserVoicesService {
     await this.plans.assertCanSpendUser(userId);
     const expectedPrefix = `users/${userId}/voices/`;
     if (!dto.pathname.startsWith(expectedPrefix)) {
-      throw new BadRequestException(
-        `pathname must start with "${expectedPrefix}"`,
+      this.logger.warn(
+        `пользователь ${userId}: образец голоса пришёл с чужим путём ${dto.pathname}`,
       );
+      throw new BadRequestException(VOICE_SAMPLE_UPLOAD_FAILED);
     }
     if (!dto.consent) {
       throw new BadRequestException(
@@ -193,9 +201,12 @@ export class UserVoicesService {
     try {
       sampleUrl = (await head(dto.pathname)).url;
     } catch (e) {
-      throw new BadRequestException(
-        `Запись не найдена в хранилище по пути "${dto.pathname}" — сначала загрузите её через voices/upload-url (${e instanceof Error ? e.message : String(e)})`,
+      this.logger.warn(
+        `пользователь ${userId}: образец голоса ${dto.pathname} не нашёлся в хранилище (${
+          e instanceof Error ? e.message : String(e)
+        })`,
       );
+      throw new BadRequestException(VOICE_SAMPLE_UPLOAD_FAILED);
     }
 
     // voiceId уже был определён в createUploadUrl и зашит в pathname —

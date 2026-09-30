@@ -556,7 +556,7 @@ describe('character photo', () => {
       svc.confirmCharacterPhoto(USER, 'bm1', 'bc1', {
         pathname: 'brand-manifests/bm1/characters/bc1/photo.jpg',
       }),
-    ).rejects.toThrow(/upload it first/);
+    ).rejects.toThrow(/Фото не загрузилось/);
     prisma.brandCharacter.update.mockResolvedValue(
       characterRow({ photoUrl: 'https://blob/cdn/photo.jpg' }),
     );
@@ -593,7 +593,7 @@ describe('brand scenes (§17.1) — same flow as characters, other table', () =>
     prisma.brandManifest.findFirst.mockResolvedValue(manifestRow());
     await expect(
       svc.addScene(USER, 'bm1', { description: 'без названия' }),
-    ).rejects.toThrow(/label is required to add a scene/);
+    ).rejects.toThrow('Подпишите сцену — без подписи её не добавить');
     prisma.brandScene.create.mockResolvedValue(sceneRow());
     const v = await svc.addScene(USER, 'bm1', {
       label: '  Шоурум ',
@@ -617,7 +617,7 @@ describe('brand scenes (§17.1) — same flow as characters, other table', () =>
     ).rejects.toThrow(NotFoundException);
     await expect(
       svc.updateScene(USER, 'bm1', 'bs1', { label: 'x' }),
-    ).rejects.toThrow(/Scene bs1 not found/);
+    ).rejects.toThrow('Сцена не найдена в бренд-буке');
     expect(prisma.brandScene.findFirst.mock.calls[0][0].where).toEqual({
       id: 'bs1',
       brandManifestId: 'bm1',

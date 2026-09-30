@@ -126,6 +126,17 @@ describe('ProductService — фото товара (В-1.8)', () => {
     expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 
+  it('размер в отказе округляется вверх: 10 МБ + 1 байт — не «10,0 МБ»', async () => {
+    const { service } = build({ createUploadUrl: jest.fn() });
+    await expect(
+      service.generateProductImageUploadUrl('s1', {
+        fileName: 'p.jpg',
+        fileSize: 10 * 1024 * 1024 + 1,
+        mimeType: 'image/jpeg',
+      } as never),
+    ).rejects.toThrow('Фото больше 10 МБ (10,1 МБ) — выберите файл поменьше');
+  });
+
   it('подтверждение проверяет, что файл реально лежит в хранилище', async () => {
     const { service, sessions } = build({
       getPublicUrl: jest.fn().mockResolvedValue('https://blob/p.jpg'),
@@ -150,21 +161,25 @@ describe('ProductService — фото товара (В-1.8)', () => {
       service.confirmProductImage('s1', {
         pathname: 'sessions/s1/product-image.jpeg',
       }),
-    ).rejects.toThrow(/не найдено/);
+    ).rejects.toThrow(
+      'Фото товара не загрузилось — попробуйте загрузить его ещё раз',
+    );
     expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 
   it('чужой путь не подтверждается', async () => {
     // Путь приходит от клиента: без этой проверки подтверждением чужого
     // пути можно было бы подставить в свою сессию чужой файл.
-    const { service, sessions } = build({
-      getPublicUrl: jest.fn().mockResolvedValue('https://blob/p.jpg'),
+    const getPublicUrl = jest.fn().mockResolvedValue('https://blob/p.jpg');
+    const { service, sessions } = build({ getPublicUrl });
+    const refused = service.confirmProductImage('s1', {
+      pathname: 'sessions/ДРУГАЯ/product-image.jpeg',
     });
-    await expect(
-      service.confirmProductImage('s1', {
-        pathname: 'sessions/ДРУГАЯ/product-image.jpeg',
-      }),
-    ).rejects.toThrow(/sessions\/s1\/product-image\./);
+    await expect(refused).rejects.toThrow(/Фото товара не загрузилось/);
+    // Путь хранилища — в лог, не человеку.
+    await expect(refused).rejects.not.toThrow(/sessions\//);
+    // Отсечено по пути, до обращения к хранилищу.
+    expect(getPublicUrl).not.toHaveBeenCalled();
     expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 
@@ -172,14 +187,14 @@ describe('ProductService — фото товара (В-1.8)', () => {
     // `startsWith` такой путь пропускает, а хранилище его нормализует:
     // записав его себе, можно было бы заставить уборку своей сессии
     // удалить чужое фото, а генерацию — подставить его первым кадром.
-    const { service, sessions } = build({
-      getPublicUrl: jest.fn().mockResolvedValue('https://blob/p.jpg'),
-    });
+    const getPublicUrl = jest.fn().mockResolvedValue('https://blob/p.jpg');
+    const { service, sessions } = build({ getPublicUrl });
     await expect(
       service.confirmProductImage('s1', {
         pathname: 'sessions/s1/product-image.png/../../ЧУЖАЯ/product-image.png',
       }),
-    ).rejects.toThrow(/png\|jpeg\|webp/);
+    ).rejects.toThrow(/Фото товара не загрузилось/);
+    expect(getPublicUrl).not.toHaveBeenCalled();
     expect(sessions.updateSession).not.toHaveBeenCalled();
   });
 

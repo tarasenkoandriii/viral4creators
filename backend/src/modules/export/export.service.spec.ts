@@ -208,12 +208,12 @@ describe('ExportService (TODO §35, doc/MULTI-FORMAT-EXPORT-SPEC.md, этап 75
   });
 
   describe('startRerender — ярус B', () => {
-    it('формат того же семейства, что уже отрендерен — 400 с указанием на дешёвый /export', async () => {
+    it('формат того же семейства, что уже отрендерен — 400 с указанием на обычный экспорт', async () => {
       // VIDEO.renderedAspectRatio === '9:16' — запрос '3:4' (тоже семейство 9:16) отвергается.
       const { svc } = build();
       await expect(
         svc.startRerender('s1', '3:4', undefined, undefined),
-      ).rejects.toThrow('POST /export');
+      ).rejects.toThrow('используйте обычный экспорт');
     });
 
     it('формат уже запрошен (не failed) — 400, второй раз не заказываем', async () => {
@@ -408,7 +408,7 @@ describe('ExportService (TODO §35, doc/MULTI-FORMAT-EXPORT-SPEC.md, этап 75
         );
       await expect(
         svc.startRerender('s1', '16:9', undefined, undefined),
-      ).rejects.toThrow('уже запрошен параллельным запросом');
+      ).rejects.toThrow('только что запросили в соседней вкладке');
       expect(sessions.createSession).not.toHaveBeenCalled();
       expect(generation.generateVideo).not.toHaveBeenCalled();
     });

@@ -89,6 +89,22 @@ export const DEFAULT_LOOK_ONLY_PERSONAL =
   'Образ по умолчанию есть только у личного бренд-бука.';
 export const DEFAULT_LOOK_NOT_FOUND =
   'Образ не найден среди ваших образов (он удалён или принадлежит не вам).';
+/**
+ * Размер для текста «фото больше 10 МБ»: вверх до десятой и с запятой.
+ * Обычное округление превращало 10 МБ + 1 байт в «(10.0 МБ)» — отказ,
+ * который противоречит сам себе.
+ */
+function photoSizeMb(bytes: number): string {
+  return String(Math.ceil((bytes / 1024 / 1024) * 10) / 10).replace('.', ',');
+}
+
+/** Бренд-бука нет или он чужой — снаружи это одно и то же. */
+export const BRAND_MANIFEST_NOT_FOUND = 'Бренд-бук не найден';
+
+/** Фото персонажа или сцены не нашлось там, куда его велели положить. */
+const ASSET_PHOTO_UPLOAD_FAILED =
+  'Фото не загрузилось — попробуйте загрузить его ещё раз';
+
 /** Свой клон голоса выпущен Resemble — озвучить его другим провайдером нельзя. */
 export const CLONE_NEEDS_RESEMBLE =
   'Ваш клонированный голос работает только через Resemble — выберите Resemble или другой голос.';
@@ -294,7 +310,7 @@ export class BrandManifestService {
       personal ? 'personalBrand' : 'brandManifest',
     );
     if (!dto.title?.trim()) {
-      throw new BadRequestException('title is required to create a manifest');
+      throw new BadRequestException('Назовите бренд-бук');
     }
     // Доп. запрос владельца продукта: дубляж (voiceMode: 'dub') —
     // премиальный уровень озвучки, отдельный от обычного voiceover,
@@ -656,9 +672,16 @@ export class BrandManifestService {
     dto: BrandCharacterRequestDto,
   ): Promise<BrandCharacterView> {
     await this.findOwn(userId, manifestId);
+    // Две ветки с литералами, а не тернарник: шов текстов отказа
+    // проверяет первый аргумент исключения, и выражение он бы пропустил.
+    if (!dto.label?.trim() && kind === 'characters') {
+      throw new BadRequestException(
+        'Подпишите персонажа — без подписи его не добавить',
+      );
+    }
     if (!dto.label?.trim()) {
       throw new BadRequestException(
-        `label is required to add a ${kind === 'characters' ? 'character' : 'scene'}`,
+        'Подпишите сцену — без подписи её не добавить',
       );
     }
     const row = await this.delegate(kind).create({
@@ -726,7 +749,7 @@ export class BrandManifestService {
     await this.findOwnAsset(kind, userId, manifestId, assetId);
     if (dto.fileSize > MAX_PHOTO_BYTES) {
       throw new BadRequestException(
-        `Photo exceeds the 10MB limit (received ${dto.fileSize} bytes)`,
+        `Фото больше 10 МБ (${photoSizeMb(dto.fileSize)} МБ) — выберите файл поменьше`,
       );
     }
     const pathname = assetPhotoPathname(
@@ -754,17 +777,21 @@ export class BrandManifestService {
     const previous = await this.findOwnAsset(kind, userId, manifestId, assetId);
     const expectedPrefix = `brand-manifests/${manifestId}/${kind}/${assetId}/`;
     if (!dto.pathname.startsWith(expectedPrefix)) {
-      throw new BadRequestException(
-        `pathname must start with "${expectedPrefix}"`,
+      this.logger.warn(
+        `бренд-бук ${manifestId}: путь фото ${dto.pathname} не под ${expectedPrefix}`,
       );
+      throw new BadRequestException(ASSET_PHOTO_UPLOAD_FAILED);
     }
     let url: string;
     try {
       url = (await head(dto.pathname)).url;
     } catch (e) {
-      throw new BadRequestException(
-        `Photo not found in storage at "${dto.pathname}" — upload it first via the photo/upload-url step (${e instanceof Error ? e.message : String(e)})`,
+      this.logger.warn(
+        `бренд-бук ${manifestId}: фото ${dto.pathname} не нашлось в хранилище (${
+          e instanceof Error ? e.message : String(e)
+        })`,
       );
+      throw new BadRequestException(ASSET_PHOTO_UPLOAD_FAILED);
     }
     if (kind === 'scenes' && personaEnabled()) {
       url = await this.faceCheckedScenePhoto(
@@ -960,7 +987,8 @@ export class BrandManifestService {
       ...(include ? { include } : {}),
     });
     if (!row) {
-      throw new NotFoundException(`Brand manifest ${manifestId} not found`);
+      this.logger.warn(`бренд-бук ${manifestId} не найден у ${userId}`);
+      throw new NotFoundException(BRAND_MANIFEST_NOT_FOUND);
     }
     return row;
   }
@@ -979,9 +1007,13 @@ export class BrandManifestService {
       },
     });
     if (!row) {
-      throw new NotFoundException(
-        `${kind === 'characters' ? 'Character' : 'Scene'} ${assetId} not found in manifest ${manifestId}`,
+      this.logger.warn(
+        `бренд-бук ${manifestId}: ${kind === 'characters' ? 'персонажа' : 'сцены'} ${assetId} нет`,
       );
+      if (kind === 'characters') {
+        throw new NotFoundException('Персонаж не найден в бренд-буке');
+      }
+      throw new NotFoundException('Сцена не найдена в бренд-буке');
     }
     return row;
   }

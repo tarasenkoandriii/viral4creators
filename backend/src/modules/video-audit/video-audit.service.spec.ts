@@ -11,7 +11,12 @@ afterAll(() => {
   if (keyBefore === undefined) delete process.env.GEMINI_API_KEY;
   else process.env.GEMINI_API_KEY = keyBefore;
 });
-import { VideoAuditService } from './video-audit.service';
+import {
+  AUDIT_NO_VIDEO,
+  AUDIT_NOT_FOUND,
+  AUDIT_PROMPT_MISSING,
+  VideoAuditService,
+} from './video-audit.service';
 import type { Session } from '../../common/types/session.types';
 
 /** Учёт расходов (ТЗ §26) — в тестах он ничего не должен делать. */
@@ -166,13 +171,13 @@ describe('VideoAuditService.run — automatic audit', () => {
           status: 'processing',
         },
       } as never).service.run('s1', {}),
-    ).rejects.toThrow(/generate the video first/);
+    ).rejects.toThrow(AUDIT_NO_VIDEO);
     await expect(
       build({ ...baseSession, generationPrompt: undefined }).service.run(
         's1',
         {},
       ),
-    ).rejects.toThrow(/no prompt/);
+    ).rejects.toThrow(AUDIT_PROMPT_MISSING);
   });
 
   it('uploads the generated video to Gemini, parses the brief, stores it newest-first, cleans the file', async () => {
@@ -302,6 +307,10 @@ describe('VideoAuditService.applyFix', () => {
     const { service } = build(withAudit);
     await expect(service.applyFix('s1', { auditId: 'nope' })).rejects.toThrow(
       NotFoundException,
+    );
+    // Номер проверки — в лог, не в текст (финальная партия A3).
+    await expect(service.applyFix('s1', { auditId: 'nope' })).rejects.toThrow(
+      AUDIT_NOT_FOUND,
     );
     await expect(service.applyFix('s1', { auditId: 'au0' })).rejects.toThrow(
       BadRequestException,

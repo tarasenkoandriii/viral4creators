@@ -57,8 +57,11 @@ describe('выбор приёма', () => {
     // ролику (та же ошибка, что аудиты ловили в `locale` на этапах 147
     // и 148).
     const { service, sessions } = build({});
-    await expect(service.put('s1', 'распаковка')).rejects.toThrow(
-      BadRequestException,
+    const refused = service.put('s1', 'распаковка');
+    await expect(refused).rejects.toThrow(BadRequestException);
+    // Ключи приёмов (`unboxing`…) человеку не показываются.
+    await expect(refused).rejects.toThrow(
+      'Такого приёма сцены нет — выберите приём из списка',
     );
     expect(sessions.updateSession).not.toHaveBeenCalled();
   });

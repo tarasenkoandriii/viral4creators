@@ -179,6 +179,7 @@ describe('balanceWatch — после аудита этапа 143', () => {
     const items = [row({ state: 'error', detail: 'аккаунт на постоплате' })];
     expect(balanceWatch(items, { usd: 0, units: {} })).toEqual({
       watched: 0,
+      skippedUnused: 0,
       concerns: [],
     });
     // А с ненулевым порогом — по-прежнему повод.
@@ -245,5 +246,60 @@ describe('concernFingerprint', () => {
       text: '',
     });
     expect(low).not.toBe(dead);
+  });
+});
+
+describe('balanceWatch — неиспользуемые провайдеры (30.09.2026)', () => {
+  // Запрос владельца: отложенный ElevenLabs отвечал 400, и канал ошибок
+  // получал «остаток не читается» каждый день.
+  const unreadable = row({
+    provider: 'ELEVENLABS',
+    state: 'error',
+    detail: 'провайдер ответил 400',
+  });
+
+  it('о неиспользуемом не тревожит ни «не читается», ни «мало»', () => {
+    const low = row({
+      provider: 'ELEVENLABS',
+      units: { left: 1, label: 'символов' },
+      inUse: false,
+    });
+    const result = balanceWatch([{ ...unreadable, inUse: false }, low], limits);
+    expect(result.concerns).toEqual([]);
+    expect(result.watched).toBe(0);
+    expect(result.skippedUnused).toBe(2);
+  });
+
+  it('используемый — и явно, и без поля — сторожится как раньше', () => {
+    // Поле не вычислено — значит «используется»: молчание по умолчанию
+    // было бы худшим исходом для сторожа.
+    const result = balanceWatch(
+      [unreadable, { ...unreadable, provider: 'SERPAPI', inUse: true }],
+      limits,
+    );
+    expect(result.concerns.map((c) => c.kind)).toEqual([
+      'unreadable',
+      'unreadable',
+    ]);
+    expect(result.skippedUnused).toBe(0);
+  });
+
+  it('выключенный нулём не числится «пропущенным из-за неиспользования»', () => {
+    // Порог в ноль — решение оператора, отложенный провайдер — решение
+    // владельца; отчёт крона не должен их путать.
+    const result = balanceWatch([{ ...unreadable, inUse: false }], {
+      usd: 10,
+      units: { ELEVENLABS: 0 },
+    });
+    expect(result.skippedUnused).toBe(0);
+    expect(result.watched).toBe(0);
+  });
+
+  it('у кого остатка не спрашивают, в пропущенные тоже не идут', () => {
+    const result = balanceWatch(
+      [row({ provider: 'RESEMBLE', state: 'unsupported', inUse: false })],
+      limits,
+    );
+    expect(result.skippedUnused).toBe(0);
   });
 });

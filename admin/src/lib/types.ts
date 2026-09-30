@@ -959,6 +959,50 @@ export interface CronRunLog {
   errorMessage: string | null;
 }
 
+/** Сводка за период — `GET /admin/cron/summary` (AdminCronService.getSummary). */
+export interface CronFailure {
+  id: string;
+  startedAt: string;
+  triggeredBy: string;
+  durationMs: number | null;
+  summary: string | null;
+  errorMessage: string | null;
+}
+
+export interface CronJobSummary {
+  jobKey: string;
+  schedule: string | null;
+  /** По расписанию vercel.json в окне expectedSince..expectedUntil; null — неизвестно. */
+  expected: number | null;
+  scheduledRuns: number;
+  manualRuns: number;
+  /** Прогоны Vercel Cron в окне ожидания — с ними сравнивается expected. */
+  scheduledRunsInWindow: number;
+  missed: number | null;
+  total: number;
+  byStatus: Record<CronRunStatus, number>;
+  medianDurationMs: number | null;
+  maxDurationMs: number | null;
+  /** RUNNING дольше замка JOB_LOCK_MS — зависший/убитый прогон. */
+  stuckRunning: number;
+  stuck: boolean;
+  recentFailures: CronFailure[];
+}
+
+export interface CronSummary {
+  since: string;
+  until: string;
+  /** Окно подсчёта expected: [max(since, now − срок хранения),
+   * min(until, now − запас)), границы округлены вверх до минуты. */
+  expectedSince: string;
+  expectedUntil: string;
+  expectedGraceMs: number;
+  retentionDays: number;
+  lockMs: number;
+  schedulesLoaded: boolean;
+  jobs: CronJobSummary[];
+}
+
 // ── Пилот говорящего AI-аватара (backend/src/modules/actors, этап 72,
 // doc/AVATAR-LIPSYNC-PIPELINE-SPEC.md) — admin-only, ручной запуск. ──
 
@@ -1584,6 +1628,14 @@ export interface ProviderBalance {
   changes?: ProviderBalanceChanges;
   /** Сырой ответ — только когда остаток разобрать не удалось. */
   rawBody?: string;
+  /**
+   * `false` — продукт этим провайдером сейчас не пользуется (не выбран
+   * «Озвучкой по умолчанию» и не встречается в свежих брендбуках и
+   * сессиях), и сторож остатков о нём молчит. Нет поля — используется.
+   */
+  inUse?: boolean;
+  /** Почему провайдер сочтён неиспользуемым. */
+  usageNote?: string;
   checkedAt: string;
 }
 

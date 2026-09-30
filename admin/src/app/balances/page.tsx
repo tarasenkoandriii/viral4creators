@@ -51,6 +51,17 @@ const STATE_COLOR: Record<ProviderBalance['state'], string> = {
   error: 'var(--signal-critical)',
 };
 
+/**
+ * Неиспользуемый провайдер — не ошибка (запрос владельца 30.09.2026).
+ * ElevenLabs отложен, ключ остался, и его отказ красным на экране
+ * звал разбираться с тем, от чего ничего не зависит. Остаток при этом
+ * по-прежнему спрашивается: «Обновить» — способ увидеть его перед тем,
+ * как вернуть провайдера в дело.
+ */
+function unused(row: ProviderBalance): boolean {
+  return row.inUse === false;
+}
+
 export default function BalancesPage() {
   const [items, setItems] = useState<ProviderBalance[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -144,11 +155,28 @@ export default function BalancesPage() {
                     </span>
                   )}
                 </td>
-                <td style={{ color: STATE_COLOR[row.state] }}>
-                  {STATE_LABEL[row.state]}
+                <td
+                  style={{
+                    color: unused(row) ? 'var(--muted)' : STATE_COLOR[row.state],
+                  }}
+                >
+                  {unused(row) ? 'не используется' : STATE_LABEL[row.state]}
                 </td>
                 <td className="muted" style={{ fontSize: 13 }}>
-                  {row.detail ?? '—'}
+                  {unused(row) ? (
+                    <>
+                      {row.usageNote ?? 'продукт этим провайдером сейчас не пользуется'}
+                      {/* Ответ провайдера не прячется совсем: он
+                          пригодится, когда провайдера решат вернуть. */}
+                      {row.detail && (
+                        <div style={{ fontSize: 12 }}>
+                          {STATE_LABEL[row.state]}: {row.detail}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    (row.detail ?? '—')
+                  )}
                   {/* Ссылка в КОНЦЕ строки, по запросу владельца: наше
                       число у GROK расходится с консолью, и пока это не
                       разобрано, экран обязан давать дорогу к

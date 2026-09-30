@@ -17,7 +17,12 @@
     "strictBindCallApply": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
-    "strict": true
+    "strict": true,
+    // Расписания кронов (`vercel.json`) вшиваются в сборку импортом,
+    // а не читаются с диска: файл, открытый `readFileSync` по
+    // вычисляемому пути, трассировщик Vercel (nft) может не положить в
+    // бандл функции — см. `src/modules/cron/cron-schedule.ts`.
+    "resolveJsonModule": true
   },
   // `test/types` — объявление `@prisma/client` как `any` ТОЛЬКО для
   // `tsconfig.typecheck.json` (песочница без `prisma generate`). Без

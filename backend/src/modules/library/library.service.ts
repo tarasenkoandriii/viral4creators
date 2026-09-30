@@ -61,7 +61,10 @@ import {
   LibraryRecommendation,
   LibraryVisibility,
 } from './library.types';
-import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  LIBRARY_ENTRY_NOT_FOUND,
+  SESSION_NOT_FOUND,
+} from '../../common/user-facing-errors';
 
 /** How many rows the ranking looks at before sorting — cheap, table is small. */
 const CANDIDATE_LIMIT = 200;
@@ -449,7 +452,7 @@ export class LibraryService {
     const row: LibraryRow | null =
       await this.prisma.analysisLibraryEntry.findUnique({ where: { id } });
     if (!row || !canView(row, viewerId)) {
-      throw new NotFoundException(`Library entry ${id} not found`);
+      throw new NotFoundException(LIBRARY_ENTRY_NOT_FOUND);
     }
     return toView(row, viewerId);
   }
@@ -506,11 +509,14 @@ export class LibraryService {
       });
     // Same rule as viewing: you cannot take what you cannot see (§21.3).
     if (!row || !canView(row, viewerId)) {
-      throw new NotFoundException(`Library entry ${entryId} not found`);
+      throw new NotFoundException(LIBRARY_ENTRY_NOT_FOUND);
     }
     const analysis = reviveAnalysis(row.analysis);
     if (!analysis) {
-      throw new NotFoundException(`Library entry ${entryId} has no analysis`);
+      this.logger.warn(`разбор библиотеки ${entryId}: анализ не читается`);
+      throw new NotFoundException(
+        'Этот разбор из библиотеки повреждён — выберите другой',
+      );
     }
     await this.sessions.updateSession(sessionId, {
       ...(row.sourceType === 'youtube' && row.sourceUrl
@@ -623,7 +629,7 @@ export class LibraryService {
       !row.hiddenReason
     ) {
       throw new BadRequestException(
-        'hiddenReason is required when hiding a library entry',
+        'Чтобы скрыть разбор, укажите причину скрытия',
       );
     }
     const data: Record<string, unknown> = {};
@@ -745,7 +751,9 @@ export class LibraryService {
   private async requireRow(id: string): Promise<LibraryRow> {
     const row: LibraryRow | null =
       await this.prisma.analysisLibraryEntry.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException(`Library entry ${id} not found`);
+    // Админский путь: оператор знает, какую запись открыл, — номер в
+    // тексте ему не нужен, а шов проверяет весь файл целиком.
+    if (!row) throw new NotFoundException('Запись библиотеки не найдена');
     return row;
   }
 }

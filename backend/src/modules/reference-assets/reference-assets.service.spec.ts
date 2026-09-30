@@ -130,7 +130,7 @@ describe('scenes', () => {
         fileSize: 10,
         mimeType: 'image/jpeg',
       }),
-    ).rejects.toThrow(/At most 5/);
+    ).rejects.toThrow(/не больше 5 — удалите одну/);
   });
 
   it('confirm verifies the blob, appends the scene; rejects foreign paths and duplicates', async () => {
@@ -156,20 +156,21 @@ describe('scenes', () => {
         pathname: 'sessions/s1/scenes/sc_1/photo.png',
         label: 'x',
       }),
-    ).rejects.toThrow(/already confirmed/);
-    await expect(
-      service.confirmScene('s1', {
-        pathname: 'sessions/s2/scenes/sc_9/photo.png',
-        label: 'x',
-      }),
-    ).rejects.toThrow(/must start with/);
+    ).rejects.toThrow('Эта сцена уже добавлена');
+    // Путь хранилища и ключ сцены — в лог, человеку — одна фраза.
+    const foreign = service.confirmScene('s1', {
+      pathname: 'sessions/s2/scenes/sc_9/photo.png',
+      label: 'x',
+    });
+    await expect(foreign).rejects.toThrow(/Фото сцены не загрузилось/);
+    await expect(foreign).rejects.not.toThrow(/sessions\/|sc_9/);
     mockedHead.mockRejectedValueOnce(new Error('404'));
-    await expect(
-      service.confirmScene('s1', {
-        pathname: 'sessions/s1/scenes/sc_2/photo.png',
-        label: 'x',
-      }),
-    ).rejects.toThrow(/not found in storage/);
+    const missing = service.confirmScene('s1', {
+      pathname: 'sessions/s1/scenes/sc_2/photo.png',
+      label: 'x',
+    });
+    await expect(missing).rejects.toThrow(/Фото сцены не загрузилось/);
+    await expect(missing).rejects.not.toThrow(/sessions\/|404/);
   });
 
   it('update edits label/description; delete removes the scene, its blob and its slot', async () => {
@@ -222,7 +223,7 @@ describe('slots', () => {
     ).rejects.toThrow(BadRequestException);
     await expect(
       service.putSlots('s1', { slots: ['product', 'product'] }),
-    ).rejects.toThrow(/Duplicate/);
+    ).rejects.toThrow(/выбрана дважды/);
     const v = await service.putSlots('s1', {
       slots: ['product', 'scene:sc_a'],
     });

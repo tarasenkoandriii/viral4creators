@@ -3113,24 +3113,94 @@ function checkGuideSeams() {
  */
 function checkUserFacingErrorSeams() {
   const DIRS = [
+    "backend/src/modules/analysis",
     "backend/src/modules/auction",
+    "backend/src/modules/blog",
+    "backend/src/modules/brand-manifest",
+    "backend/src/modules/casting",
     "backend/src/modules/client-site-tutorial",
+    "backend/src/modules/creator-inquiry",
+    "backend/src/modules/creator-profile",
     "backend/src/modules/generation",
+    "backend/src/modules/portfolio",
     "backend/src/modules/postprod",
+    "backend/src/modules/product",
+    "backend/src/modules/project",
+    "backend/src/modules/prompt",
     "backend/src/modules/publication",
+    "backend/src/modules/reference-assets",
     "backend/src/modules/shared-video",
     "backend/src/modules/tutorial-runner",
+    // Финальная партия A3 (30.09.2026): остальные пользовательские
+    // модули. После неё английских отказов вне админки не остаётся —
+    // кроме осознанных исключений ниже (DELIBERATE).
+    "backend/src/modules/ab-test",
+    "backend/src/modules/api-key",
+    "backend/src/modules/catalog-batch",
+    "backend/src/modules/export",
+    "backend/src/modules/image-sketch",
+    "backend/src/modules/library",
+    "backend/src/modules/product-analog",
+    "backend/src/modules/product-feed-import",
+    "backend/src/modules/project-session",
+    "backend/src/modules/publishing-channel",
+    "backend/src/modules/relevance",
+    "backend/src/modules/telegram-auth",
+    "backend/src/modules/telegram-login",
+    "backend/src/modules/user-voices",
+    "backend/src/modules/video",
+    "backend/src/modules/video-audit",
+    "backend/src/modules/voice",
+    "backend/src/modules/youtube-search",
+  ];
+  // Модули, которые целиком админские, хотя имя файла под шаблон
+  // `-admin.`/`admin-` не подходит. Оператору номер записи в тексте
+  // нужен (`сессия ${sessionId} не найдена`), поэтому в DIRS их нет. Но
+  // «админский» здесь — утверждение, и шов его проверяет: все маршруты
+  // модуля под `admin/`, и ни один НЕадминский контроллер вне модуля не
+  // зовёт его сервисы. Появится пользовательский маршрут — модуль
+  // выпадет отсюда с ошибкой, и его тексты придётся проверять.
+  const ADMIN_ONLY_DIRS = new Map([
+    [
+      "backend/src/modules/actors",
+      "пилот аватара: @Controller('admin/actors') под AdminSessionGuard; " +
+        "пользовательские пути (поздравление, виртуальная студия) зовут " +
+        "Hedra своими сервисами, а не ActorsService",
+    ],
+  ]);
+  // Осознанные исключения: точный текст в точном файле и причина.
+  // Запись, которая больше ничего не находит, — ошибка: исключение,
+  // пережившее свой код, молча пропустило бы следующий текст.
+  const DELIBERATE = [
+    {
+      file: "backend/src/modules/telegram-login/telegram-login.service.ts",
+      text: "'Cannot POST /telegram-login/dev-login'",
+      why:
+        "dev-вход вне стенда разработки прикидывается несуществующим " +
+        "маршрутом — текст повторяет стандартный 404 Nest; русский выдал " +
+        "бы, что маршрут есть",
+    },
   ];
   // Первый аргумент — литерал, константа или тело с машинным кодом
   // `{ code: '…', message: <литерал|константа> }` (образец —
   // common/greeting-errors.ts): текст в теле читает человек так же, как
   // строку, и без этой ветки отказ с кодом выпадал бы из проверки молча.
   const EXCEPTIONS =
-    /new (NotFoundException|BadRequestException|ForbiddenException|ConflictException)\(\s*(?:\{\s*code:\s*(?:'[^']*'|[A-Za-z_][\w.]*),\s*message:\s*)?((`[^`]*`)|('[^']*')|("[^"]*")|([A-Z][A-Z0-9_]*))/g;
+    /new (NotFoundException|BadRequestException|ForbiddenException|UnauthorizedException|ConflictException|ServiceUnavailableException|UnprocessableEntityException|PayloadTooLargeException|GoneException|HttpException)\(\s*(?:\{\s*code:\s*(?:'[^']*'|[A-Za-z_][\w.]*),\s*message:\s*)?((`[^`]*`)|('[^']*')|("[^"]*")|([A-Z][A-Z0-9_]*))/g;
   // Подстановка именно идентификатора — `${id}`, `${projectId}`,
   // `${sessionId}`, `${draftId}`. Числа лимитов, селекторы и текст
   // чужой ошибки — это содержательные подстановки, они остаются.
   const ID_SUBST = /\$\{[^}]*\b[Ii]d\b[^}]*\}|\$\{\s*id\s*\}|\$\{[^}]*Id\s*\}/;
+  // Путь хранилища (`${dto.pathname}`, `${path}`) и текст чужой ошибки
+  // (`${this.extractErrorMessage(error)}`, `${e.message}`, `${String(e)}`)
+  // человеку тоже ничего не говорят — им место в логе. Префикс пути
+  // (`${expectedPrefix}`, `${prefix}`) — тот же путь хранилища, только
+  // обрезанный: финальная партия A3 нашла «pathname должен начинаться
+  // с «sessions/<uuid>/»» в пяти местах голоса (аудит второй
+  // партии A3, 30.09.2026: «Veo временно недоступен (503): <текст Veo>»
+  // уходил на экран, потому что ServiceUnavailableException шов не видел).
+  const LEAK_SUBST =
+    /\$\{[^}]*(?:[Pp]athname|\b[Pp]ath|[Pp]refix)\b[^}]*\}|\$\{[^}]*(?:extractErrorMessage|\.message\b|String\(\s*(?:e|err|error)\s*\))[^}]*\}/;
 
   // Общие тексты (`backend/src/common/user-facing-errors.ts`) — такой
   // же законный аргумент, как литерал: это те же русские строки, просто
@@ -3168,6 +3238,27 @@ function checkUserFacingErrorSeams() {
     );
   }
 
+  // Русские отказы, которые живут в других общих файлах `common/`
+  // (`PERSONAL_MANIFEST_GREETING_ONLY` в greeting-persona.ts,
+  // `OTHER_MOOD_REQUIRED` в greeting-policy.ts): их бросают проект и
+  // бренд-бук, и без этой ветки добавление таких каталогов в DIRS
+  // упиралось бы в ложное «константы нет». Берутся ТОЛЬКО русские и
+  // без подстановки идентификатора: английская общая константа в
+  // отказе по-прежнему падает как «нет среди русских текстов».
+  // Значение — одна строка целиком ('…' или `…`); склейку `'…' + '…'`
+  // шов не видит, и она честно падает как неизвестная константа.
+  for (const file of walk(path.join(ROOT, "backend/src/common")).filter(
+    (f) => f.endsWith(".ts") && !f.endsWith(".spec.ts"),
+  )) {
+    const src = fs.readFileSync(file, "utf8");
+    for (const m of src.matchAll(
+      /^export const ([A-Z][A-Z0-9_]*) =\s*(?:'([^']*)'|`([^`]*)`);/gm,
+    )) {
+      const text = m[2] ?? m[3];
+      if (/[а-яА-ЯёЁ]/.test(text) && !ID_SUBST.test(text)) shared.add(m[1]);
+    }
+  }
+
   const dirFiles = DIRS.flatMap((dir) =>
     walk(path.join(ROOT, dir)).filter(
       (f) =>
@@ -3202,12 +3293,20 @@ function checkUserFacingErrorSeams() {
 
   let checked = 0;
   let viaShared = 0;
+  const deliberateUsed = new Set();
   for (const file of dirFiles) {
     const rel = path.relative(ROOT, file);
     const src = fs.readFileSync(file, "utf8");
     for (const m of src.matchAll(EXCEPTIONS)) {
       checked++;
       const msg = m[2];
+      const allowed = DELIBERATE.findIndex(
+        (d) => d.file === rel && d.text === msg,
+      );
+      if (allowed >= 0) {
+        deliberateUsed.add(allowed);
+        continue;
+      }
       if (/^[A-Z][A-Z0-9_]*$/.test(msg)) {
         if (shared.has(msg)) {
           viaShared++;
@@ -3215,7 +3314,8 @@ function checkUserFacingErrorSeams() {
         }
         problems.push(
           `${rel}: отказ собран из константы ${msg}, которой нет среди ` +
-            "русских текстов в backend/src/common/user-facing-errors.ts",
+            "русских текстов (backend/src/common/, константы проверяемых " +
+            "модулей)",
         );
         continue;
       }
@@ -3230,6 +3330,66 @@ function checkUserFacingErrorSeams() {
           `${rel}: в тексте отказа подставляется идентификатор — ${msg}; ` +
             "человеку он ничего не говорит, а наружу светить его незачем",
         );
+      }
+      if (LEAK_SUBST.test(msg)) {
+        problems.push(
+          `${rel}: в тексте отказа путь хранилища или текст чужой ошибки — ` +
+            `${msg}; это в logger, человеку — своя русская фраза`,
+        );
+      }
+    }
+  }
+
+  DELIBERATE.forEach((d, i) => {
+    if (!deliberateUsed.has(i)) {
+      problems.push(
+        `${d.file}: осознанное исключение ${d.text} больше не находится — ` +
+          "уберите его из DELIBERATE этого шва (или текст переехал без него)",
+      );
+    }
+  });
+
+  // Админские целиком модули: утверждение проверяется, а не
+  // принимается на веру (см. ADMIN_ONLY_DIRS выше).
+  const controllerPaths = (src) =>
+    [...src.matchAll(/@Controller\(\s*'([^']*)'/g)].map((c) => c[1]);
+  const backendControllers = walk(path.join(ROOT, "backend/src")).filter(
+    (f) => f.endsWith(".controller.ts"),
+  );
+  for (const [dir, why] of ADMIN_ONLY_DIRS) {
+    const files = walk(path.join(ROOT, dir)).filter(
+      (f) => f.endsWith(".ts") && !f.endsWith(".spec.ts"),
+    );
+    const classes = new Set();
+    for (const f of files) {
+      const src = stripComments(fs.readFileSync(f, "utf8"));
+      for (const c of src.matchAll(/export class (\w+)/g)) classes.add(c[1]);
+      if (!f.endsWith(".controller.ts")) continue;
+      for (const route of controllerPaths(src)) {
+        if (!route.startsWith("admin/")) {
+          problems.push(
+            `${path.relative(ROOT, f)}: маршрут '${route}' не админский, а ` +
+              `модуль числится админским целиком (${why}) — уберите его из ` +
+              "ADMIN_ONLY_DIRS в DIRS и переведите тексты",
+          );
+        }
+      }
+    }
+    for (const f of backendControllers) {
+      if (f.startsWith(path.join(ROOT, dir) + path.sep)) continue;
+      const src = stripComments(fs.readFileSync(f, "utf8"));
+      const routes = controllerPaths(src);
+      if (routes.length > 0 && routes.every((r) => r.startsWith("admin/"))) {
+        continue;
+      }
+      for (const cls of classes) {
+        if (new RegExp(`\\b${cls}\\b`).test(src)) {
+          problems.push(
+            `${path.relative(ROOT, f)}: неадминский контроллер зовёт ${cls} ` +
+              `из ${dir}, который числится админским целиком — его отказы ` +
+              "теперь видит человек: модуль из ADMIN_ONLY_DIRS в DIRS",
+          );
+        }
       }
     }
   }
@@ -3266,7 +3426,9 @@ function checkUserFacingErrorSeams() {
     console.log(
       `ok   тексты отказов пользовательских модулей: проверено ${checked} ` +
         `(из них ${viaShared} через общие константы), все по-русски и без ` +
-        `внутренних идентификаторов; английских «… not found» с ` +
+        `внутренних идентификаторов; осознанных исключений ` +
+        `${DELIBERATE.length}, админских целиком модулей ` +
+        `${ADMIN_ONLY_DIRS.size} (маршруты сверены); английских «… not found» с ` +
         `идентификатором по бэкенду: ${families}`,
     );
   }

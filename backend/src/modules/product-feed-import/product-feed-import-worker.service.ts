@@ -43,7 +43,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { loadConfiguration } from '../../config/configuration';
-import { ProjectService } from '../project/project.service';
+import { PROJECT_LINE_LIMIT, ProjectService } from '../project/project.service';
 import { BlobService } from '../storage/blob.service';
 import {
   photoPathname,
@@ -504,10 +504,17 @@ export class ProductFeedImportWorkerService {
         if (e instanceof BadRequestException) {
           const message = e.message;
           await this.resolveItem(item, 'SKIPPED', message);
-          // «Line limit reached» — лимит товаров проекта уже достигнут;
+          // Лимит товаров проекта уже достигнут (код PROJECT_LINE_LIMIT);
           // повторять тот же вызов на каждой следующей строке этого
-          // запуска бессмысленно — все они провалятся с тем же текстом.
-          if (message.includes('Line limit reached')) {
+          // запуска бессмысленно — все они провалятся так же. Решаем по
+          // машинному коду, а не по тексту: текст отказа — для человека
+          // и меняется (перевод A3 молча сломал сверку по английскому).
+          const body = e.getResponse();
+          const code =
+            typeof body === 'object' && body !== null && 'code' in body
+              ? (body as { code?: unknown }).code
+              : undefined;
+          if (code === PROJECT_LINE_LIMIT) {
             await this.skipRemainderOfRun(
               item.runId,
               item.id,

@@ -69,12 +69,14 @@ export class VideoService {
     }
 
     if (fileSize > MAX_VIDEO_BYTES) {
-      throw new BadRequestException('Video file exceeds maximum size of 100MB');
+      throw new BadRequestException(
+        'Видео больше 100 МБ — выберите файл поменьше или вставьте ссылку на YouTube',
+      );
     }
 
     if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
       throw new BadRequestException(
-        `Invalid video format. Allowed formats: ${ALLOWED_MIME_TYPES.join(', ')}`,
+        'Такой формат видео не подходит — нужен MP4, MOV или AVI',
       );
     }
 

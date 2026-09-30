@@ -11,6 +11,7 @@ const mockGenerate = jest.fn();
 import { head } from '@vercel/blob';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { VoiceService, audioExtension, voicePathname } from './voice.service';
+import { VOICE_RECORDING_UPLOAD_FAILED } from '../../common/user-facing-errors';
 import {
   AUDIO_TOO_LONG_REASON,
   FALLBACK_REFUSED_REASON,
@@ -563,9 +564,13 @@ describe('VoiceService', () => {
   it('transcribe: 400 when nothing was uploaded', async () => {
     const { svc } = build();
     mockedHead.mockRejectedValue(new Error('does not exist'));
-    await expect(svc.transcribe(USER, 'p1', 'i1', dto)).rejects.toThrow(
-      /upload it first/,
-    );
+    const err = await svc
+      .transcribe(USER, 'p1', 'i1', dto)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    // Путь и текст хранилища — в лог, человеку — одно действие.
+    expect((err as Error).message).toBe(VOICE_RECORDING_UPLOAD_FAILED);
+    expect((err as Error).message).not.toContain('does not exist');
   });
 
   it('transcribe (default apply): writes description, bumps project, deletes the transit blob', async () => {

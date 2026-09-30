@@ -74,7 +74,9 @@ export function normalizeRequest(
   // этом можно было только посмотрев готовое.
   const locale = text(input.locale);
   if (locale && !(SUPPORTED_LOCALES as readonly string[]).includes(locale)) {
-    throw new BadRequestException(`locale: ${SUPPORTED_LOCALES.join(', ')}`);
+    throw new BadRequestException(
+      `locale: одно из ${SUPPORTED_LOCALES.join(', ')}`,
+    );
   }
   return {
     productItemId,

@@ -67,6 +67,75 @@ export function redactKey(text: string, key: string | undefined): string {
   return out;
 }
 
+/** Сколько текста отказа провайдера пускаем на экран и в канал. */
+export const REFUSAL_MESSAGE_LIMIT = 200;
+
+/** Машинный код ошибки: только `snake_case`, иначе это не код. */
+const REFUSAL_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * Ключ вычищается ДО обрезки (аудит 30.09.2026): иначе ключ, стоящий на
+ * границе обрезки, теряет хвост, перестаёт совпадать с `key`, и его
+ * начало уходит в `detail` мимо `redactKey`.
+ */
+function shortText(
+  value: unknown,
+  key: string | undefined,
+): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = redactKey(value, key).replace(/\s+/g, ' ').trim();
+  if (!text) return undefined;
+  return text.length > REFUSAL_MESSAGE_LIMIT
+    ? `${text.slice(0, REFUSAL_MESSAGE_LIMIT)}…`
+    : text;
+}
+
+/**
+ * Почему провайдер отказал — словами провайдера, но только безопасной
+ * частью (инцидент 30.09.2026: сторож пятый день писал «провайдер
+ * ответил 400», и понять из этого, что не так, было нельзя).
+ *
+ * Тело целиком наружу не идёт — оно может повторить ключ (шапка
+ * файла). Берутся только поля, которые провайдеры отводят под причину:
+ *  - ElevenLabs: `{"detail": {"code", "status", "message", …}}`
+ *    (https://elevenlabs.io/docs/developers/resources/errors; `status`
+ *    там назван устаревшим, но старые ответы несут только его),
+ *    а на ошибки валидации — `{"detail": [{"msg": …}]}` или строка;
+ *  - SerpApi: `{"error": "…"}`.
+ * Код пропускается, только если похож на код (`snake_case`), текст —
+ * обрезается и всё равно проходит `redactKey`. `undefined` — ничего
+ * пригодного в теле нет, и тогда честнее показать один статус.
+ */
+export function describeRefusal(
+  body: unknown,
+  key: string | undefined,
+): string | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const b = body as Record<string, unknown>;
+  let code: string | undefined;
+  let message: string | undefined;
+
+  const detail = b.detail;
+  if (typeof detail === 'string') {
+    message = shortText(detail, key);
+  } else if (Array.isArray(detail)) {
+    const first = detail[0] as Record<string, unknown> | undefined;
+    message = shortText(first?.msg, key);
+  } else if (detail && typeof detail === 'object') {
+    const d = detail as Record<string, unknown>;
+    const raw = [d.code, d.status].find(
+      (v): v is string => typeof v === 'string' && REFUSAL_CODE.test(v),
+    );
+    code = raw;
+    message = shortText(d.message, key);
+  }
+  message ??= shortText(b.error, key) ?? shortText(b.message, key);
+
+  if (!code && !message) return undefined;
+  const text = [code, message].filter(Boolean).join(': ');
+  return redactKey(text, key);
+}
+
 function finite(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value)
     ? value

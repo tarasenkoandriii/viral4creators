@@ -753,9 +753,14 @@ describe('/finish — заморозка и заливка кадров', () => 
     const { service } = setup({
       draft: makeDraftRow({ ...FRAMES, roundScreenshots: ['мусор', 'мусор'] }),
     });
-    await expect(
-      service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' }),
-    ).rejects.toThrow(/data:image/);
+    // Подробность декодера («data:image/...;base64») — в лог; человеку —
+    // что делать.
+    const refused = service.finish('user1', 'proj1', {
+      expectedVersion: 3,
+      title: 'Т',
+    });
+    await expect(refused).rejects.toThrow(/кадр предпросмотра не читается/);
+    await expect(refused).rejects.not.toThrow(/data:image/);
   });
 
   it('черновик без единого кадра не финишируется — и это тот же список, что на экране', async () => {

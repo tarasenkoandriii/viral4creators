@@ -34,6 +34,7 @@ import { PlanService } from '../plan/plan.service';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { languageNameForLocale, normalizeLocale } from '../../common/locale';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import { ANALYSIS_NOT_STARTED } from './analysis-errors';
 
 /**
  * Замок разбора (этап 47, В-2.3). Сам разбор — синхронный `await` до
@@ -190,7 +191,9 @@ export class AnalysisService {
     }
 
     if (!session.originalVideo) {
-      throw new BadRequestException('No reference video registered yet');
+      throw new BadRequestException(
+        'Сначала загрузите видео-образец — разбирать пока нечего',
+      );
     }
 
     // ТЗ §25.3: заблокированному платные вызовы запрещены.
@@ -619,7 +622,7 @@ export class AnalysisService {
     }
 
     if (!session.videoAnalysis) {
-      throw new BadRequestException('Analysis not started');
+      throw new BadRequestException(ANALYSIS_NOT_STARTED);
     }
 
     return session.videoAnalysis;
@@ -641,7 +644,7 @@ export class AnalysisService {
     }
 
     if (!session.videoAnalysis) {
-      throw new BadRequestException('Analysis not started');
+      throw new BadRequestException(ANALYSIS_NOT_STARTED);
     }
 
     // Update with user edits

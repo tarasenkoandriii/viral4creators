@@ -206,7 +206,8 @@ describe('ProjectService', () => {
           countryCode: 'UA',
           brandManifestId: 'someone-elses',
         }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+        // Идентификатор бренд-бука — в лог, не в текст отказа.
+      ).rejects.toMatchObject({ status: 400, message: 'Бренд-бук не найден' });
       expect(prisma.brandManifest.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'someone-elses', userId: USER },
@@ -430,7 +431,7 @@ describe('ProjectService', () => {
             recipientName: 'Аня',
           },
         }),
-      ).rejects.toThrow(/customOccasionText/);
+      ).rejects.toThrow(/опишите своими словами/);
       expect(plans.assertUser).not.toHaveBeenCalled();
     });
 
@@ -694,9 +695,12 @@ describe('ProjectService', () => {
       prisma.project.findFirst.mockResolvedValue(
         projectRow({ items: items(500) }),
       );
-      await expect(service.addItem(USER, 'p1', {})).rejects.toThrow(
-        /at most 500 items/,
-      );
+      const refused = service.addItem(USER, 'p1', {});
+      await expect(refused).rejects.toThrow(/не больше 500 товаров/);
+      // Импорт фида узнаёт лимит по этому коду — не по тексту.
+      await expect(refused).rejects.toMatchObject({
+        response: { code: 'PROJECT_LINE_LIMIT' },
+      });
       expect(prisma.productItem.create).toHaveBeenCalledTimes(1);
     });
 
@@ -712,7 +716,7 @@ describe('ProjectService', () => {
         projectRow({ items: items(2) }),
       );
       await expect(small.addItem(USER, 'p1', {})).rejects.toThrow(
-        /at most 2 items/,
+        /не больше 2 товаров/,
       );
     });
 
@@ -721,7 +725,7 @@ describe('ProjectService', () => {
         projectRow({ type: 'SINGLE', items: items(1) }),
       );
       await expect(service.addItem(USER, 'p1', {})).rejects.toThrow(
-        /SINGLE project holds exactly one/,
+        /товар ровно один/,
       );
     });
 
@@ -755,7 +759,7 @@ describe('ProjectService', () => {
       );
       await expect(
         service.updateProject(USER, 'p1', { type: 'SINGLE' }),
-      ).rejects.toThrow(/Cannot change to SINGLE/);
+      ).rejects.toThrow(/нельзя сделать «Одним товаром»: товаров в нём 2/);
     });
 
     it('refuses a country change once any item has a price (would re-denominate)', async () => {
@@ -764,7 +768,7 @@ describe('ProjectService', () => {
       );
       await expect(
         service.updateProject(USER, 'p1', { countryCode: 'PL' }),
-      ).rejects.toThrow(/Cannot change country/);
+      ).rejects.toThrow(/Страну сменить нельзя/);
     });
 
     it('allows a country change while no prices exist and re-derives currency', async () => {

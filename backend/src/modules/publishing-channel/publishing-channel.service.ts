@@ -67,6 +67,12 @@ function isPlatform(v: string): v is PublicationPlatform {
   return v === 'YOUTUBE' || v === 'TIKTOK';
 }
 
+/** Площадки в адресе нет среди поддерживаемых (ручная правка ссылки). */
+const UNKNOWN_PLATFORM = 'Такой площадки для публикации нет';
+
+/** Канала нет или он чужой — снаружи это одно и то же. */
+const CHANNEL_NOT_FOUND = 'Канал не найден — возможно, его уже отключили';
+
 @Injectable()
 export class PublishingChannelService {
   private readonly logger = new Logger(PublishingChannelService.name);
@@ -100,7 +106,7 @@ export class PublishingChannelService {
     extended = false,
   ): Promise<string> {
     if (!isPlatform(platformRaw)) {
-      throw new NotFoundException(`Unknown platform ${platformRaw}`);
+      throw new NotFoundException(UNKNOWN_PLATFORM);
     }
     // Подключение канала имеет смысл ровно для тех, кому доступна очередь
     // публикации (§23) — тот же гейт, что у самой публикации.
@@ -134,7 +140,7 @@ export class PublishingChannelService {
     state: string | undefined,
   ): Promise<PublishingChannelView> {
     if (!isPlatform(platformRaw)) {
-      throw new NotFoundException(`Unknown platform ${platformRaw}`);
+      throw new NotFoundException(UNKNOWN_PLATFORM);
     }
     const payload = verifyOAuthState(state, this.tokenKey());
     if (!payload || payload.platform !== platformRaw) {
@@ -207,7 +213,7 @@ export class PublishingChannelService {
         where: { id },
       });
     if (!row || row.userId !== userId) {
-      throw new NotFoundException(`Channel ${id} not found`);
+      throw new NotFoundException(CHANNEL_NOT_FOUND);
     }
     // Best-effort отзыв гранта у провайдера — не блокирует удаление строки.
     try {
@@ -239,10 +245,10 @@ export class PublishingChannelService {
       await this.prisma.publishingChannel.findUnique({
         where: { id: channelId },
       });
-    if (!row) throw new NotFoundException(`Channel ${channelId} not found`);
+    if (!row) throw new NotFoundException(CHANNEL_NOT_FOUND);
     if (row.status !== 'ACTIVE') {
       throw new ForbiddenException(
-        `Канал ${row.title} отключён (${row.status}) — переподключите его`,
+        `Канал ${row.title} отключён — переподключите его`,
       );
     }
     const stillFresh =
@@ -274,9 +280,14 @@ export class PublishingChannelService {
       return { accessToken: refreshed.accessToken, channel: updated };
     } catch (error) {
       await this.markRevoked(row.id);
+      // Текст площадки — в лог: человеку из него понятно одно, и это
+      // уже сказано ниже (финальная партия A3).
       const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `канал ${row.id}: не удалось обновить токен — ${message}`,
+      );
       throw new ForbiddenException(
-        `Не удалось обновить токен канала ${row.title}: ${message} — переподключите канал`,
+        `Доступ к каналу ${row.title} истёк — переподключите канал`,
       );
     }
   }

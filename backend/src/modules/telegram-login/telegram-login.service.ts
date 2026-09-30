@@ -77,8 +77,9 @@ export class TelegramLoginService {
       parsed = validateTelegramLoginWidgetPayload(payload, { botToken });
     } catch (err) {
       if (err instanceof TelegramLoginWidgetInvalidError) {
+        this.logger.warn(`вход через виджет Telegram отклонён: ${err.message}`);
         throw new UnauthorizedException(
-          'Invalid Telegram Login Widget payload',
+          'Telegram не подтвердил вход — нажмите «Войти через Telegram» ещё раз',
         );
       }
       throw err;

@@ -37,6 +37,10 @@ import {
 import { VoiceUploadUrlRequestDto } from './dto/voice-upload-url-request.dto';
 import { TranscribeRequestDto } from './dto/transcribe-request.dto';
 import { PlanService } from '../plan/plan.service';
+import {
+  PRODUCT_ITEM_NOT_FOUND,
+  VOICE_RECORDING_UPLOAD_FAILED,
+} from '../../common/user-facing-errors';
 import { VoiceUploadService } from '../voice-upload/voice-upload.service';
 import { ITEM_DESCRIPTION_MAX } from '../project/dto/product-item-request.dto';
 
@@ -125,9 +129,10 @@ export class VoiceService {
 
     const expectedPrefix = `projects/${projectId}/items/${itemId}/`;
     if (!dto.pathname.startsWith(expectedPrefix)) {
-      throw new BadRequestException(
-        `pathname must start with "${expectedPrefix}"`,
+      this.logger.warn(
+        `товар ${itemId}: запись пришла с чужим путём ${dto.pathname}`,
       );
+      throw new BadRequestException(VOICE_RECORDING_UPLOAD_FAILED);
     }
 
     // Всё, что после проверки префикса, — внутри `try`, а удаление
@@ -148,9 +153,12 @@ export class VoiceService {
         mimeType = meta.contentType || 'audio/webm';
         audio = await this.blobService.downloadBuffer(dto.pathname);
       } catch (e) {
-        throw new BadRequestException(
-          `Recording not found in storage at "${dto.pathname}" — upload it first via the voice/upload-url step (${e instanceof Error ? e.message : String(e)})`,
+        this.logger.warn(
+          `товар ${itemId}: запись ${dto.pathname} не нашлась в хранилище (${
+            e instanceof Error ? e.message : String(e)
+          })`,
         );
+        throw new BadRequestException(VOICE_RECORDING_UPLOAD_FAILED);
       }
 
       const result = await this.transcription.transcribe(audio, mimeType, {
@@ -207,9 +215,7 @@ export class VoiceService {
       select: { id: true },
     });
     if (!item) {
-      throw new NotFoundException(
-        `Item ${itemId} not found in project ${projectId}`,
-      );
+      throw new NotFoundException(PRODUCT_ITEM_NOT_FOUND);
     }
   }
 }

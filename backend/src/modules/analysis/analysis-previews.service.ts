@@ -19,6 +19,7 @@
 import { LibraryService } from '../library/library.service';
 import {
   BadRequestException,
+  Logger,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -28,6 +29,7 @@ import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import { VideoAnalysis } from '../../common/types/analysis.types';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import { ANALYSIS_ITEM_UNKNOWN, ANALYSIS_NOT_STARTED } from './analysis-errors';
 
 /** 480px JPEG frames are ~30-60 KB; the cap is generous on purpose. */
 export const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
@@ -99,6 +101,8 @@ export function applyPreviewUrls(
 
 @Injectable()
 export class AnalysisPreviewsService {
+  private readonly logger = new Logger(AnalysisPreviewsService.name);
+
   constructor(
     private readonly sessions: SessionService,
     private readonly blob: BlobService,
@@ -115,9 +119,10 @@ export class AnalysisPreviewsService {
     const unique = [...new Set(keys)];
     for (const k of unique) {
       if (!known.has(k)) {
-        throw new BadRequestException(
-          `"${k}" is not a character or scene of this session's analysis`,
+        this.logger.warn(
+          `сессия ${sessionId}: превью для ${k} — нет в разборе`,
         );
+        throw new BadRequestException(ANALYSIS_ITEM_UNKNOWN);
       }
     }
     return Promise.all(
@@ -144,18 +149,22 @@ export class AnalysisPreviewsService {
   ): Promise<VideoAnalysis> {
     const session = await this.load(sessionId);
     const analysis = session.videoAnalysis;
-    if (!analysis) throw new BadRequestException('Analysis not started');
+    if (!analysis) throw new BadRequestException(ANALYSIS_NOT_STARTED);
     const known = previewKeysOf(analysis);
     const urls: Record<string, string> = {};
     for (const { key, pathname } of items) {
       if (!known.has(key)) {
-        throw new BadRequestException(
-          `"${key}" is not a character or scene of this session's analysis`,
+        this.logger.warn(
+          `сессия ${sessionId}: подтверждение превью ${key} — нет в разборе`,
         );
+        throw new BadRequestException(ANALYSIS_ITEM_UNKNOWN);
       }
       if (pathname !== previewPathname(sessionId, key)) {
+        this.logger.warn(
+          `сессия ${sessionId}: превью ${key} пришло с чужим путём ${pathname}`,
+        );
         throw new BadRequestException(
-          `pathname for "${key}" must be the value returned by upload-url`,
+          'Кадры-превью разбора не сохранились — обновите страницу',
         );
       }
       try {

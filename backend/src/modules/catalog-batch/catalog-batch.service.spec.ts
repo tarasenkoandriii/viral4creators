@@ -288,26 +288,32 @@ describe('CatalogBatchService.create', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('запрошен товар не из этого проекта — 404 с перечислением пропавших', async () => {
+  it('запрошен товар не из этого проекта — 404 с числом пропавших, без их номеров и номера проекта', async () => {
     const { service } = setup({ items: [productItem('pi1')] });
-    await expect(
-      service.create('user1', 'proj1', {
+    const err = await service
+      .create('user1', 'proj1', {
         sourceSessionId: 'src-session',
         productItemIds: ['pi1', 'pi-ghost'],
-      }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotFoundException);
+    expect((err as Error).message).toMatch(/не нашлось: 1/);
+    expect((err as Error).message).not.toMatch(/pi-ghost|proj1/);
   });
 
-  it('незаполненный товар (нет цены/описания) — 400, партия не создаётся', async () => {
+  it('незаполненный товар (нет цены/описания) — 400, партия не создаётся; в тексте название, а не номер', async () => {
     const { service } = setup({
-      items: [productItem('pi1', { price: null })],
+      items: [productItem('pi1', { price: null, title: 'Кроссовки' })],
     });
-    await expect(
-      service.create('user1', 'proj1', {
+    const err = await service
+      .create('user1', 'proj1', {
         sourceSessionId: 'src-session',
         productItemIds: ['pi1'],
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toContain('«Кроссовки»');
+    expect((err as Error).message).not.toContain('pi1');
   });
 
   it('товар без фото — 400, даже если isItemComplete (цена+описание) прошла: нет ручной остановки, значит нельзя ставить в очередь заведомо провальный товар', async () => {

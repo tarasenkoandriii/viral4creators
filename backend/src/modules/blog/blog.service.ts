@@ -41,6 +41,17 @@ export function nonOriginalLocales(originalLocale: string): string[] {
   return PRODUCT_LOCALES.filter((l) => l !== originalLocale);
 }
 
+/** Статьи нет, она удалена или ещё не опубликована — для витрины это одно и то же. */
+export const BLOG_POST_NOT_FOUND = 'Статья не найдена';
+
+/** Статус статьи словами — отказ модерации читает оператор, а не enum. */
+const BLOG_STATUS_LABELS: Record<BlogPostStatus, string> = {
+  DRAFT: 'черновик',
+  APPROVED: 'одобрена',
+  PUBLISHED: 'опубликована',
+  REJECTED: 'отклонена',
+};
+
 @Injectable()
 export class BlogService {
   private readonly logger = new Logger(BlogService.name);
@@ -52,7 +63,7 @@ export class BlogService {
       where: { id },
       include: { translations: true },
     });
-    if (!row) throw new NotFoundException('Blog post not found');
+    if (!row) throw new NotFoundException(BLOG_POST_NOT_FOUND);
     return row;
   }
 
@@ -222,7 +233,7 @@ export class BlogService {
       row.status !== BlogPostStatus.REJECTED
     ) {
       throw new BadRequestException(
-        `Post is ${row.status}, only DRAFT or REJECTED can be approved`,
+        `Одобрить можно только черновик или отклонённую статью, а эта — ${BLOG_STATUS_LABELS[row.status]}`,
       );
     }
     const updated = await this.prisma.blogPost.update({
@@ -247,11 +258,11 @@ export class BlogService {
     const row = await this.requireRow(id);
     if (row.status === BlogPostStatus.PUBLISHED) {
       throw new BadRequestException(
-        'Published post cannot be rejected — unpublish it first',
+        'Опубликованную статью отклонить нельзя — сначала снимите её с публикации',
       );
     }
     if (!reason.trim()) {
-      throw new BadRequestException('reason is required to reject a post');
+      throw new BadRequestException('Укажите причину отклонения');
     }
     const updated = await this.prisma.blogPost.update({
       where: { id },
@@ -271,7 +282,7 @@ export class BlogService {
     const row = await this.requireRow(id);
     if (row.status !== BlogPostStatus.APPROVED) {
       throw new BadRequestException(
-        `Post is ${row.status}, only APPROVED can be published`,
+        `Опубликовать можно только одобренную статью, а эта — ${BLOG_STATUS_LABELS[row.status]}`,
       );
     }
     const updated = await this.prisma.blogPost.update({
@@ -297,7 +308,9 @@ export class BlogService {
   ): Promise<AdminBlogPostDetail> {
     const row = await this.requireRow(id);
     if (row.status !== BlogPostStatus.PUBLISHED) {
-      throw new BadRequestException(`Post is ${row.status}, not PUBLISHED`);
+      throw new BadRequestException(
+        `Снять с публикации можно только опубликованную статью, а эта — ${BLOG_STATUS_LABELS[row.status]}`,
+      );
     }
     const updated = await this.prisma.blogPost.update({
       where: { id },
@@ -376,7 +389,7 @@ export class BlogService {
       },
     });
     if (!row || row.status !== BlogPostStatus.PUBLISHED) {
-      throw new NotFoundException('Blog post not found');
+      throw new NotFoundException(BLOG_POST_NOT_FOUND);
     }
     const translation = row.translations[0];
     const isRequestedLocale =

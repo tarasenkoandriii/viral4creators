@@ -55,7 +55,10 @@ import { GoogleGenAI } from '@google/genai';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
-import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  SESSION_NOT_FOUND,
+  VOICE_RECORDING_UPLOAD_FAILED,
+} from '../../common/user-facing-errors';
 import { SupportedLocale } from '../../common/locale';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
@@ -282,7 +285,8 @@ export class GreetingVoiceUnderstandService {
     const row = await this.loadProjectBrief(userId, projectId);
     const prefix = `projects/${projectId}/greeting-voice-`;
     if (!dto.pathname.startsWith(prefix)) {
-      throw new BadRequestException(`pathname должен начинаться с «${prefix}»`);
+      this.logger.warn(`запись пришла с чужим путём ${dto.pathname}`);
+      throw new BadRequestException(VOICE_RECORDING_UPLOAD_FAILED);
     }
     return this.run({
       pathname: dto.pathname,
@@ -314,7 +318,8 @@ export class GreetingVoiceUnderstandService {
     const session = await this.loadSession(sessionId);
     const prefix = `sessions/${sessionId}/`;
     if (!dto.pathname.startsWith(prefix)) {
-      throw new BadRequestException(`pathname должен начинаться с «${prefix}»`);
+      this.logger.warn(`запись пришла с чужим путём ${dto.pathname}`);
+      throw new BadRequestException(VOICE_RECORDING_UPLOAD_FAILED);
     }
     return this.run({
       pathname: dto.pathname,
@@ -350,7 +355,8 @@ export class GreetingVoiceUnderstandService {
     const session = await this.loadSession(sessionId);
     const prefix = `sessions/${sessionId}/`;
     if (!dto.pathname.startsWith(prefix)) {
-      throw new BadRequestException(`pathname должен начинаться с «${prefix}»`);
+      this.logger.warn(`запись пришла с чужим путём ${dto.pathname}`);
+      throw new BadRequestException(VOICE_RECORDING_UPLOAD_FAILED);
     }
     const input: GateInput = {
       userId: session.userId ?? null,

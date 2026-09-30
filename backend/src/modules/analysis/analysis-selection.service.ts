@@ -8,6 +8,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { SessionService } from '../../common/session.service';
@@ -19,6 +20,7 @@ import {
   selectableIds,
 } from '../../common/analysis-selection';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import { ANALYSIS_ITEM_UNKNOWN } from './analysis-errors';
 
 export interface AnalysisSelectionView {
   scenes: SceneSelectionRow[];
@@ -28,6 +30,8 @@ export interface AnalysisSelectionView {
 
 @Injectable()
 export class AnalysisSelectionService {
+  private readonly logger = new Logger(AnalysisSelectionService.name);
+
   constructor(private readonly sessions: SessionService) {}
 
   async get(sessionId: string): Promise<AnalysisSelectionView> {
@@ -46,16 +50,16 @@ export class AnalysisSelectionService {
     const known = selectableIds(session.videoAnalysis);
     for (const id of input.droppedScenes) {
       if (!known.scenes.has(id)) {
-        throw new BadRequestException(
-          `"${id}" is not a scene of this session's analysis`,
-        );
+        this.logger.warn(`сессия ${sessionId}: сцены ${id} нет в разборе`);
+        throw new BadRequestException(ANALYSIS_ITEM_UNKNOWN);
       }
     }
     for (const id of input.droppedExtras) {
       if (!known.extras.has(id)) {
-        throw new BadRequestException(
-          `"${id}" is not an extras group of this session's analysis`,
+        this.logger.warn(
+          `сессия ${sessionId}: группы массовки ${id} нет в разборе`,
         );
+        throw new BadRequestException(ANALYSIS_ITEM_UNKNOWN);
       }
     }
     const selection: AnalysisSelection = {

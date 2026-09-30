@@ -199,10 +199,9 @@ export class ExportService {
     // рендера) этого ограничения не имеет и продолжает работать.
     if (session.greetingBriefSnapshot) {
       throw new BadRequestException(
-        'Перерендер в другое соотношение сторон (tier B) для ' +
-          'роликов-поздравлений пока не поддерживается — используйте ' +
-          'дешёвый экспорт (POST /export) для кропа в другой формат той ' +
-          'же ориентации.',
+        'Перерендер в другое соотношение сторон для поздравлений пока не ' +
+          'поддерживается — обычный экспорт обрежет кадр в другой формат ' +
+          'той же ориентации.',
       );
     }
 
@@ -212,8 +211,8 @@ export class ExportService {
     );
     if (aspectRatioFamily(target) === sourceFamily) {
       throw new BadRequestException(
-        `формат ${target} — того же семейства кадра, что уже отрендерен; ` +
-          'используйте дешёвый POST /export вместо повторного рендера',
+        `Формат ${target} той же ориентации, что готовый ролик, — ` +
+          'используйте обычный экспорт: повторный рендер не нужен',
       );
     }
     const already = (video.exportVariants ?? []).find(
@@ -221,7 +220,7 @@ export class ExportService {
     );
     if (already) {
       throw new BadRequestException(
-        `формат ${target} уже запрошен (статус: ${already.status})`,
+        `Формат ${target} уже запрошен — дождитесь результата`,
       );
     }
 
@@ -250,7 +249,7 @@ export class ExportService {
       );
       if (stillAlready) {
         throw new BadRequestException(
-          `формат ${target} уже запрошен параллельным запросом (статус: ${stillAlready.status})`,
+          `Формат ${target} только что запросили в соседней вкладке — дождитесь результата`,
         );
       }
 
@@ -378,7 +377,7 @@ export class ExportService {
     if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     let video = session.generatedVideo;
     if (!video) {
-      throw new NotFoundException('Video generation has not been initiated');
+      throw new NotFoundException('Ролика ещё нет — сначала сгенерируйте его');
     }
 
     video = await this.postprod.pollExport(sessionId, video);

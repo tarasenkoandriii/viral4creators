@@ -40,10 +40,12 @@ import {
   thresholdsFromEnv,
 } from '../../common/balance-alerts';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
+import { ProviderUsageService } from './provider-usage.service';
 import {
   BalanceUnits,
   ELEVENLABS_SUBSCRIPTION_URL,
   SERPAPI_ACCOUNT_URL,
+  describeRefusal,
   parseElevenLabsBalance,
   parseSerpApiBalance,
   redactKey,
@@ -73,6 +75,20 @@ export function balanceNote(changes?: XaiChangesSummary): string | undefined {
   }
   const money = (micro: number) => `$${(micro / 1_000_000).toFixed(2)}`;
   return `пополнено ${money(changes.purchasedMicroUsd)}, списано ${money(changes.spentMicroUsd)} за ${changes.entries} записей`;
+}
+
+/**
+ * Тело отказа как JSON, или `undefined`. Не бросает: причина отказа —
+ * подробность, и сорваться на ней значило бы потерять сам статус.
+ */
+async function refusalBody(res: Response): Promise<unknown> {
+  try {
+    if (typeof res.text === 'function') return JSON.parse(await res.text());
+    if (typeof res.json === 'function') return await res.json();
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Сколько держать ответ, прежде чем спрашивать снова. */
@@ -134,7 +150,10 @@ export class ProviderBalancesService {
   private readonly logger = new Logger(ProviderBalancesService.name);
   private cache: { at: number; items: ProviderBalance[] } | null = null;
 
-  constructor(private readonly notify: TelegramNotifyService) {}
+  constructor(
+    private readonly notify: TelegramNotifyService,
+    private readonly usage: ProviderUsageService,
+  ) {}
 
   /**
    * Сторож остатков (этап 143): раз в сутки посмотреть и, если есть о
@@ -155,9 +174,13 @@ export class ProviderBalancesService {
     low: number;
     unreadable: number;
     notified: number;
+    skippedUnused: number;
   }> {
     const items = await this.list(true);
-    const { watched, concerns } = balanceWatch(items, thresholdsFromEnv());
+    const { watched, skippedUnused, concerns } = balanceWatch(
+      items,
+      thresholdsFromEnv(),
+    );
     // Сообщения ПАРАЛЛЕЛЬНО (аудит этапа 143): у отправки в Telegram
     // свой таймаут в пять секунд, и три подряд ложились поверх десяти
     // секунд на сами остатки — двадцать пять в худшем случае, снова
@@ -173,6 +196,7 @@ export class ProviderBalancesService {
       low: concerns.filter((c) => c.kind === 'low').length,
       unreadable: concerns.filter((c) => c.kind === 'unreadable').length,
       notified: sent.filter(Boolean).length,
+      skippedUnused,
     };
   }
 
@@ -200,10 +224,15 @@ export class ProviderBalancesService {
     // это уже было на сборке дорожек (находка аудита этапа 139), а
     // уйти в фон у serverless нельзя. Ни один из трёх наружу не
     // бросает, так что `Promise.all` здесь ничего не теряет.
-    const asked = await Promise.all([
-      this.xai(),
-      this.elevenLabs(),
-      this.serpApi(),
+    // Остаток спрашивается и у НЕИСПОЛЬЗУЕМЫХ провайдеров (запрос
+    // владельца 30.09.2026): отложенный провайдер остаётся выбором в
+    // админке, и перед тем как вернуть его, остаток надо увидеть —
+    // кнопкой «Обновить» на этом же экране. Использование выясняется
+    // параллельно с остатками, а не после: это запросы к своей базе,
+    // и ждать чужих десяти секунд им незачем.
+    const [asked, usage] = await Promise.all([
+      Promise.all([this.xai(), this.elevenLabs(), this.serpApi()]),
+      this.usage.usage(),
     ]);
     const items = [
       ...asked,
@@ -216,6 +245,8 @@ export class ProviderBalancesService {
     ].map((item) => ({
       ...item,
       dashboardUrl: DASHBOARD_URL[item.provider],
+      inUse: !usage.unused.has(item.provider),
+      usageNote: usage.unused.get(item.provider),
     }));
     this.cache = { at: Date.now(), items };
     return items;
@@ -291,12 +322,20 @@ export class ProviderBalancesService {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (!res.ok) {
+        // Ни адреса, ни тела целиком: у SerpApi в адресе ключ, а тело
+        // ошибки у обоих провайдеров может его повторить. Но и голый
+        // статус — не ответ (инцидент 30.09.2026: «провайдер ответил
+        // 400» пять дней подряд без единой зацепки), поэтому из тела
+        // берётся одна причина — см. `describeRefusal`.
+        const reason = describeRefusal(await refusalBody(res), input.key);
+        const detail = reason
+          ? `провайдер ответил ${res.status}: ${reason}`
+          : `провайдер ответил ${res.status}`;
+        this.logger.warn(`остаток ${input.provider} не прочитан: ${detail}`);
         return {
           provider: input.provider,
           state: 'error',
-          // Ни адреса, ни тела: у SerpApi в адресе ключ, а тело ошибки
-          // у обоих провайдеров может его повторить.
-          detail: `провайдер ответил ${res.status}`,
+          detail,
           checkedAt,
         };
       }

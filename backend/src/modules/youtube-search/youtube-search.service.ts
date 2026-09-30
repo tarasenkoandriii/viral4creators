@@ -130,6 +130,13 @@ export function decodeEntities(s: string): string {
     .replace(/&#39;|&apos;/g, "'");
 }
 
+/**
+ * Поиск выключен на стенде или Google отверг ключ — человеку это одно и
+ * то же: искать сейчас нельзя, есть два других пути к референсу.
+ */
+const YOUTUBE_SEARCH_OFF =
+  'Поиск по YouTube сейчас недоступен — вставьте ссылку на ролик или загрузите файл';
+
 @Injectable()
 export class YoutubeSearchService {
   private readonly logger = new Logger(YoutubeSearchService.name);
@@ -163,9 +170,8 @@ export class YoutubeSearchService {
 
     const q = query.trim();
     if (!this.apiKey) {
-      throw new ServiceUnavailableException(
-        'YouTube search is not configured (YOUTUBE_API_KEY). Paste a YouTube link or upload a file instead.',
-      );
+      this.logger.warn('поиск по YouTube выключен: не задан YOUTUBE_API_KEY');
+      throw new ServiceUnavailableException(YOUTUBE_SEARCH_OFF);
     }
     // Слот занимается ДО обращения к Google (Б-1.9): квота у Google
     // общая на весь деплой, и перебор одного пользователя выключает
@@ -174,7 +180,7 @@ export class YoutubeSearchService {
     if (!(await this.usage.reserve(userId))) {
       const status = await this.usage.status(userId);
       throw new HttpException(
-        `Daily YouTube search limit reached (${status.used}/${status.limit} today). Paste a link or upload a file instead, or try again tomorrow.`,
+        `Дневной лимит поиска по YouTube исчерпан (${status.used} из ${status.limit} за сегодня) — вставьте ссылку или загрузите файл, либо попробуйте завтра`,
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
@@ -448,17 +454,21 @@ export class YoutubeSearchService {
       (reason === 'quotaExceeded' || reason === 'dailyLimitExceeded')
     ) {
       return new HttpException(
-        'YouTube Data API daily quota is exhausted for this deployment. Paste a link or upload a file instead, or try again tomorrow.',
+        'Поиск по YouTube на сегодня исчерпан для всего сервиса — вставьте ссылку или загрузите файл, либо попробуйте завтра',
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
     if (status === 400 || status === 403) {
-      return new ServiceUnavailableException(
-        `YouTube search rejected the request (${reason ?? status}) — check YOUTUBE_API_KEY and that YouTube Data API v3 is enabled.`,
+      // Подсказка оператору — в лог; человеку ни ключ, ни причина Google
+      // ничего не дадут (финальная партия A3).
+      this.logger.warn(
+        `YouTube отклонил запрос (${reason ?? status}) — проверьте YOUTUBE_API_KEY и что YouTube Data API v3 включён`,
       );
+      return new ServiceUnavailableException(YOUTUBE_SEARCH_OFF);
     }
+    this.logger.warn(`YouTube не ответил (${status ?? code ?? 'сеть'})`);
     return new HttpException(
-      `YouTube search is unavailable right now (${status ?? code ?? 'network'}). Paste a link or upload a file instead.`,
+      'Поиск по YouTube сейчас не отвечает — вставьте ссылку на ролик или загрузите файл',
       HttpStatus.BAD_GATEWAY,
     );
   }

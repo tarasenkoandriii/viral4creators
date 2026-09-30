@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
@@ -14,10 +15,29 @@ import { SessionStatus } from '../../common/types/session.types';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 
 /**
+ * Размер для текста «фото больше 10 МБ»: вверх до десятой и с запятой.
+ * Обычное округление превращало 10 МБ + 1 байт в «(10.0 МБ)» — отказ,
+ * который противоречит сам себе.
+ */
+function photoSizeMb(bytes: number): string {
+  return String(Math.ceil((bytes / 1024 / 1024) * 10) / 10).replace('.', ',');
+}
+
+/** Фото товара грузится после названия и описания — шаг «Товар» не пройден. */
+export const PRODUCT_INFO_FIRST =
+  'Сначала заполните название и описание товара, потом загружайте фото';
+
+/** Загруженное фото не нашлось или пришло не по своему пути. */
+const PRODUCT_PHOTO_UPLOAD_FAILED =
+  'Фото товара не загрузилось — попробуйте загрузить его ещё раз';
+
+/**
  * ProductService handles product information submission and image uploads
  */
 @Injectable()
 export class ProductService {
+  private readonly logger = new Logger(ProductService.name);
+
   constructor(
     private readonly sessionService: SessionService,
     private readonly blobService: BlobService,
@@ -56,7 +76,8 @@ export class ProductService {
     });
 
     if (!updatedSession) {
-      throw new NotFoundException(`Failed to update session ${sessionId}`);
+      this.logger.warn(`сессия ${sessionId} исчезла между чтением и записью`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
 
     return {
@@ -86,16 +107,14 @@ export class ProductService {
 
     // Validate product info has been added
     if (!session.productInformation) {
-      throw new BadRequestException(
-        'Product information must be submitted before uploading image',
-      );
+      throw new BadRequestException(PRODUCT_INFO_FIRST);
     }
 
     // Validate file size (max 10MB)
     const maxSize = 10 * 1024 * 1024; // 10MB
     if (dto.fileSize > maxSize) {
       throw new BadRequestException(
-        `Image file size exceeds maximum of 10MB. Received: ${dto.fileSize} bytes`,
+        `Фото больше 10 МБ (${photoSizeMb(dto.fileSize)} МБ) — выберите файл поменьше`,
       );
     }
 
@@ -103,7 +122,7 @@ export class ProductService {
     const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
     if (!allowedTypes.includes(dto.mimeType)) {
       throw new BadRequestException(
-        `Invalid image format. Allowed: ${allowedTypes.join(', ')}`,
+        'Такой формат фото не подходит — нужен PNG, JPEG или WebP',
       );
     }
 
@@ -159,9 +178,7 @@ export class ProductService {
       throw new NotFoundException(SESSION_NOT_FOUND);
     }
     if (!session.productInformation) {
-      throw new BadRequestException(
-        'Product information must be submitted before uploading image',
-      );
+      throw new BadRequestException(PRODUCT_INFO_FIRST);
     }
 
     // Путь приходит от клиента, поэтому проверяется не «начинается с», а
@@ -182,19 +199,21 @@ export class ProductService {
     };
     const mimeType = MIME_BY_EXTENSION[extension.toLowerCase()];
     if (!mimeType) {
-      throw new BadRequestException(
-        `pathname должен быть ровно "${prefix}<png|jpeg|webp>" — это не файл этой сессии`,
+      this.logger.warn(
+        `сессия ${sessionId}: фото товара пришло с чужим путём ${dto.pathname}`,
       );
+      throw new BadRequestException(PRODUCT_PHOTO_UPLOAD_FAILED);
     }
 
     try {
       await this.blobService.getPublicUrl(dto.pathname);
     } catch (e) {
-      throw new BadRequestException(
-        `Фото не найдено в хранилище по пути "${dto.pathname}" — загрузите его ещё раз (${
+      this.logger.warn(
+        `сессия ${sessionId}: фото товара ${dto.pathname} не нашлось в хранилище (${
           e instanceof Error ? e.message : String(e)
         })`,
       );
+      throw new BadRequestException(PRODUCT_PHOTO_UPLOAD_FAILED);
     }
 
     const updated = await this.sessionService.updateSession(sessionId, {
@@ -215,7 +234,8 @@ export class ProductService {
     // подтверждающий шаг и заводится (тот же приём, что в
     // `submitProductInfo` выше).
     if (!updated) {
-      throw new NotFoundException(`Failed to update session ${sessionId}`);
+      this.logger.warn(`сессия ${sessionId} исчезла между чтением и записью`);
+      throw new NotFoundException(SESSION_NOT_FOUND);
     }
 
     return { success: true, pathname: dto.pathname };

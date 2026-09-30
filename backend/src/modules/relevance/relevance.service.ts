@@ -61,13 +61,13 @@ export class RelevanceService {
     const analysis = session.videoAnalysis;
     if (!analysis || analysis.status !== AnalysisStatus.COMPLETE) {
       throw new BadRequestException(
-        'Relevance needs a completed video analysis first',
+        'Сначала дождитесь разбора видео-образца — без него релевантность не оценить',
       );
     }
     const product = session.productInformation;
     if (!product?.productName && !product?.productDescription) {
       throw new BadRequestException(
-        'Relevance needs the product name or description first',
+        'Сначала заполните шаг «Товар» — без названия или описания релевантность не оценить',
       );
     }
     const locale = normalizeLocale(session.locale);

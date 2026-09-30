@@ -117,16 +117,23 @@ describe('normaliseCasting', () => {
     expect(() =>
       normaliseCasting(session, undefined, {
         casts: [
+          { characterId: 'c9', active: true, order: 1, replacement: none },
+        ],
+      }),
+    ).toThrow('Такого персонажа нет в разборе ролика — обновите страницу');
+    expect(() =>
+      normaliseCasting(session, undefined, {
+        casts: [
           { characterId: 'c1', active: true, order: 1, replacement: none },
           { characterId: 'c1', active: true, order: 2, replacement: none },
         ],
       }),
-    ).toThrow(/Duplicate/);
+    ).toThrow('Персонаж «Аня» указан в кастинге дважды');
     expect(() =>
       normaliseCasting({ videoAnalysis: undefined } as never, undefined, {
         casts: [],
       }),
-    ).toThrow(/no characters/);
+    ).toThrow(/нет персонажей для замены/);
   });
 
   it('text replacement needs a description; it is trimmed', () => {
@@ -141,7 +148,7 @@ describe('normaliseCasting', () => {
           },
         ],
       }),
-    ).toThrow(/needs a description/);
+    ).toThrow(/персонажа «Аня» текстом опишите/);
     const c = normaliseCasting(session, undefined, {
       casts: [
         {
@@ -171,7 +178,7 @@ describe('normaliseCasting', () => {
           },
         ],
       }),
-    ).toThrow(/upload one/);
+    ).toThrow(/персонажа «Аня» по фото сначала загрузите фото/);
     const existing: CharacterCasting = {
       updatedAt: '',
       casts: [
@@ -229,7 +236,7 @@ describe('normaliseCasting', () => {
           },
         ],
       }),
-    ).toThrow(/not a brand character photo/);
+    ).toThrow(/фото не из бренд-бука/);
     expect(() =>
       normaliseCasting(session, undefined, {
         casts: [
@@ -241,7 +248,7 @@ describe('normaliseCasting', () => {
           },
         ],
       }),
-    ).toThrow(/needs a photo or a description/);
+    ).toThrow(/нужно его фото или описание/);
     const c = normaliseCasting(session, undefined, {
       casts: [
         {
@@ -384,17 +391,21 @@ describe('CastingService', () => {
 
   it('confirmPhoto rejects a pathname from another session/character and a missing blob', async () => {
     const { service } = build({ ...session } as Session);
-    await expect(
-      service.confirmPhoto('s1', 'c1', {
-        pathname: 'sessions/s2/characters/c1/photo.png',
-      }),
-    ).rejects.toThrow(/must start with/);
+    // Путь хранилища и ключи — в лог, человеку — одна понятная фраза.
+    mockedHead.mockClear();
+    const foreign = service.confirmPhoto('s1', 'c1', {
+      pathname: 'sessions/s2/characters/c1/photo.png',
+    });
+    await expect(foreign).rejects.toThrow(/Фото персонажа не загрузилось/);
+    await expect(foreign).rejects.not.toThrow(/sessions\//);
+    // Чужой путь отсекается ДО обращения к хранилищу.
+    expect(mockedHead).not.toHaveBeenCalled();
     mockedHead.mockRejectedValueOnce(new Error('404'));
-    await expect(
-      service.confirmPhoto('s1', 'c1', {
-        pathname: 'sessions/s1/characters/c1/photo.png',
-      }),
-    ).rejects.toThrow(/not found in storage/);
+    const missing = service.confirmPhoto('s1', 'c1', {
+      pathname: 'sessions/s1/characters/c1/photo.png',
+    });
+    await expect(missing).rejects.toThrow(/Фото персонажа не загрузилось/);
+    await expect(missing).rejects.not.toThrow(/sessions\/|404/);
   });
 
   it('confirmPhoto проверяет тариф — «превью как фото» больше не обходит гейт (§6.8)', async () => {

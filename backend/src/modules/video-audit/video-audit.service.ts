@@ -61,6 +61,27 @@ const USER_REPORTED_PREFIX: Readonly<Record<string, string>> = {
   es: 'El usuario informó',
 };
 
+/**
+ * Тексты отказов аудита и проверки звука (финальная партия A3,
+ * 30.09.2026). Раньше половина шла по-английски, а «Audit <uuid> not
+ * found» показывал человеку внутренний номер проверки.
+ */
+/** Готового ролика нет — проверять нечего (аудит и проверка звука). */
+export const AUDIT_NO_VIDEO =
+  'Проверять пока нечего — сначала сгенерируйте ролик';
+/** Постобработка идёт — готового файла ещё нет (аудит и проверка звука). */
+export const AUDIT_VIDEO_POSTPROCESSING =
+  'Ролик ещё обрабатывается — дождитесь готовой версии и проверьте её';
+/** У сессии нет собранного промпта — поправлять нечего. */
+export const AUDIT_PROMPT_MISSING =
+  'У этого ролика нет промпта — исправлять нечего';
+/** Проверки с таким номером в истории сессии нет (устаревшая вкладка). */
+export const AUDIT_NOT_FOUND =
+  'Эта проверка не найдена — обновите страницу и выберите её заново';
+/** В выбранной проверке нет предложенного исправления промпта. */
+export const AUDIT_NO_FIX =
+  'В этой проверке нет исправления промпта — применять нечего';
+
 const MODEL = GEMINI_MODEL;
 const MAX_HISTORY = 20;
 
@@ -158,21 +179,17 @@ export class VideoAuditService {
     await this.plans.assertUser(session.userId ?? null, 'audit');
     const video = session.generatedVideo;
     if (!video || video.status !== GenerationStatus.COMPLETE) {
-      throw new BadRequestException(
-        'No completed video to audit — generate the video first',
-      );
+      throw new BadRequestException(AUDIT_NO_VIDEO);
     }
     // Пока постобработка идёт, готового файла ещё нет, а исходник уже
     // не тот, что увидит пользователь: честнее попросить подождать, чем
     // потратить платный вызов на устаревший кадр.
     if (video.postStatus === 'pending') {
-      throw new BadRequestException(
-        'Ролик ещё обрабатывается — дождитесь готовой версии и проверьте её',
-      );
+      throw new BadRequestException(AUDIT_VIDEO_POSTPROCESSING);
     }
     const promptText = session.generationPrompt?.finalText;
     if (!promptText) {
-      throw new BadRequestException('Session has no prompt to revise');
+      throw new BadRequestException(AUDIT_PROMPT_MISSING);
     }
     // §35.5 (этап 59): отчёт читает селлер — на его UI-локали, а не на
     // языке диалога ролика (тот остаётся в promptFix.suggestedText нетронутым).
@@ -279,14 +296,10 @@ export class VideoAuditService {
     await this.plans.assertUser(session.userId ?? null, 'audit');
     const video = session.generatedVideo;
     if (!video || video.status !== GenerationStatus.COMPLETE) {
-      throw new BadRequestException(
-        'No completed video to check — generate the video first',
-      );
+      throw new BadRequestException(AUDIT_NO_VIDEO);
     }
     if (video.postStatus === 'pending') {
-      throw new BadRequestException(
-        'Ролик ещё обрабатывается — дождитесь готовой версии и проверьте её',
-      );
+      throw new BadRequestException(AUDIT_VIDEO_POSTPROCESSING);
     }
     const locale = normalizeLocale(session.locale);
     const languageName = languageNameForLocale(locale);
@@ -344,16 +357,17 @@ export class VideoAuditService {
       (a) => a.auditId === dto.auditId,
     );
     if (!audit) {
-      throw new NotFoundException(
-        `Audit ${dto.auditId} not found in this session`,
+      this.logger.warn(
+        `сессия ${sessionId}: проверки ${dto.auditId} нет в истории`,
       );
+      throw new NotFoundException(AUDIT_NOT_FOUND);
     }
     const text = dto.text?.trim() || audit.promptFix?.suggestedText;
     if (!text) {
-      throw new BadRequestException('This audit has no prompt fix to apply');
+      throw new BadRequestException(AUDIT_NO_FIX);
     }
     if (!session.generationPrompt) {
-      throw new BadRequestException('Session has no prompt');
+      throw new BadRequestException(AUDIT_PROMPT_MISSING);
     }
 
     // Same semantics as PromptService.updatePrompt: the new text becomes the
