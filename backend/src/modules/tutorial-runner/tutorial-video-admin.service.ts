@@ -89,6 +89,10 @@ export class TutorialVideoAdminService {
       this.prisma.tutorialVideoAsset.findMany({
         where,
         orderBy: { createdAt: 'desc' },
+        // Отпечаток сборки — служебный и тяжёлый (≈600 знаков на кадр с
+        // 01.10.2026, до 24 КБ на ролик): админке он не нужен, а
+        // страница в 100 строк весила бы мегабайты.
+        omit: { contentHash: true },
         skip: (filter.page - 1) * filter.pageSize,
         take: filter.pageSize,
       }),

@@ -142,4 +142,61 @@ describe('selectSweepableAssets', () => {
       ]),
     ).toEqual(['approved-old']);
   });
+
+  describe('свежие провалы — для потолка попыток (аудит 01.10.2026)', () => {
+    const failed = (id: string) =>
+      asset({ id, blobUrl: null, assemblyStatus: 'failed' });
+
+    it('держит до failedKeep провалов свежее проигрываемого ролика', () => {
+      const rows = [
+        failed('f1'),
+        failed('f2'),
+        failed('f3'),
+        failed('f4'),
+        asset({ id: 'ok', assemblyStatus: 'complete' }),
+        failed('old'),
+      ];
+      // f1 — ещё и «последняя попытка»; f4 — сверх потолка; old —
+      // старше удачной сборки, считать его незачем.
+      expect(doomed2(rows, 3)).toEqual(['f4', 'old']);
+    });
+
+    it('без failedKeep — прежнее правило (одна свежая строка)', () => {
+      expect(doomed2([failed('f1'), failed('f2')], 0)).toEqual(['f2']);
+    });
+
+    it('провалы считаются по парам отдельно', () => {
+      const rows = [
+        failed('a1'),
+        failed('a2'),
+        asset({
+          id: 'b1',
+          subjectKey: '2',
+          blobUrl: null,
+          assemblyStatus: 'failed',
+        }),
+        asset({
+          id: 'b2',
+          subjectKey: '2',
+          blobUrl: null,
+          assemblyStatus: 'failed',
+        }),
+      ];
+      expect(doomed2(rows, 2)).toEqual([]);
+      expect(doomed2(rows, 1)).toEqual(['a2', 'b2']);
+    });
+
+    it('провал с файлом — не «попытка», а проигрываемый ролик', () => {
+      const rows = [
+        failed('f1'),
+        asset({ id: 'fb', assemblyStatus: 'failed' }),
+        failed('f2'),
+      ];
+      expect(doomed2(rows, 3)).toEqual(['f2']);
+    });
+  });
 });
+
+function doomed2(rows: SweepableAsset[], keep: number): string[] {
+  return selectSweepableAssets(rows, keep).map((r) => r.id);
+}

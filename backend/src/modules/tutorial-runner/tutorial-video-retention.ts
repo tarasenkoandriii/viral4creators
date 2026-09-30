@@ -32,6 +32,11 @@ export interface SweepableAsset {
    * самое, что читает потребитель.
    */
   blobUrl: string | null;
+  /**
+   * Нужен только четвёртой роли — «свежие провалы» (см. ниже). Нет
+   * поля — строка в этой роли не участвует.
+   */
+  assemblyStatus?: string;
 }
 
 /**
@@ -47,13 +52,24 @@ export interface SweepableAsset {
  * Оставляем на пару до трёх строк, по одной на каждую роль:
  *  - первую любого статуса (последняя попытка — её видит оператор);
  *  - первую с `blobUrl` (проигрываемый файл есть всегда);
- *  - первую `reviewed` с `blobUrl` (её видит посетитель).
+ *  - первую `reviewed` с `blobUrl` (её видит посетитель);
+ *  - до `failedKeep` провалов (`failed` без файла), что свежее
+ *    последнего проигрываемого ролика пары.
+ *
+ * Четвёртая роль — находка аудита 01.10.2026. Потолок попыток сборки
+ * (`MAX_ASSEMBLY_ATTEMPTS`) считает провалы того же содержимого ПО
+ * СТРОКАМ, а подметальщик на каждом тике опроса оставлял от них одну
+ * (самую свежую) — счёт не доходил до потолка никогда, и падающая
+ * задача уходила и оплачивалась каждый час. Провалы СТАРШЕ
+ * проигрываемого ролика не нужны: после них сборка удалась.
  *
  * Всё остальное — в возврат, в том же порядке, в каком пришло.
  */
 export function selectSweepableAssets<T extends SweepableAsset>(
   rows: readonly T[],
+  failedKeep = 0,
 ): T[] {
+  const failedKept = new Map<string, number>();
   const seenPair = new Set<string>();
   const seenPlayable = new Set<string>();
   const seenReviewed = new Set<string>();
@@ -81,6 +97,15 @@ export function selectSweepableAssets<T extends SweepableAsset>(
     // строка не заслуживает.
     if (row.reviewed && row.blobUrl && !seenReviewed.has(pair)) {
       seenReviewed.add(pair);
+      keep = true;
+    }
+    if (
+      row.assemblyStatus === 'failed' &&
+      !row.blobUrl &&
+      !seenPlayable.has(pair) &&
+      (failedKept.get(pair) ?? 0) < failedKeep
+    ) {
+      failedKept.set(pair, (failedKept.get(pair) ?? 0) + 1);
       keep = true;
     }
     if (!keep) doomed.push(row);

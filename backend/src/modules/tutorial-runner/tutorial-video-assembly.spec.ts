@@ -1,9 +1,14 @@
+import { PNG } from 'pngjs';
 import {
   evenFrameSeconds,
   framesFromSteps,
   narrationFrameSeconds,
   planSlideshow,
   slideshowContentHash,
+  slideshowFingerprint,
+  sameSlideshowContent,
+  fingerprintRest,
+  TUTORIAL_FRAME_SENSITIVITY,
   slideshowDurationMs,
   uniformFrames,
   SECONDS_PER_FRAME,
@@ -1184,5 +1189,183 @@ describe('указатель клика (этап H)', () => {
     h.update('0:2::');
     h.update(Buffer.from([7]));
     expect(none).toBe(h.digest('hex'));
+  });
+});
+
+describe('slideshowFingerprint / sameSlideshowContent — кадры сличаются перцептивно', () => {
+  // Кадр 390×844 (как CAPTURE_VIEWPORT): белый фон, серый «блок
+  // интерфейса» и прямоугольник, которым рисуем разницу.
+  function png(patch?: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    v: number;
+  }): Uint8Array {
+    const W = 390;
+    const H = 844;
+    const img = new PNG({ width: W, height: H });
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let v = y > 100 && y < 300 && x > 20 && x < 370 ? 120 : 255;
+        if (
+          patch &&
+          x >= patch.x &&
+          x < patch.x + patch.w &&
+          y >= patch.y &&
+          y < patch.y + patch.h
+        ) {
+          v = patch.v;
+        }
+        const i = (y * W + x) * 4;
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+        img.data[i + 3] = 255;
+      }
+    }
+    return new Uint8Array(PNG.sync.write(img));
+  }
+  const f = (bytes: Uint8Array, stepIndex = 0) => ({
+    stepIndex,
+    bytes,
+    seconds: 2,
+  });
+  const base = png();
+  // Мигающий курсор / сменившаяся минута — одна крошечная область.
+  const jitter = png({ x: 200, y: 400, w: 2, h: 14, v: 0 });
+  // Появилась целая строка текста (≈ 20 знаков) — это правка экрана.
+  const newLine = png({ x: 20, y: 500, w: 200, h: 16, v: 0 });
+
+  it('точная часть — прежний slideshowContentHash: строки до правки совпадают', () => {
+    const fp = slideshowFingerprint([f(base)], 'a.mp3', null, 'none');
+    const legacy = slideshowContentHash([f(base)], 'a.mp3', null, 'none');
+    expect(fp.split('|')[0]).toBe(legacy);
+    expect(sameSlideshowContent(legacy, fp)).toBe(true);
+  });
+
+  it('дрожание кадра — тот же ролик, новая строка текста — другой', () => {
+    const a = slideshowFingerprint([f(base)], null, null, 'none');
+    const b = slideshowFingerprint([f(jitter)], null, null, 'none');
+    const c = slideshowFingerprint([f(newLine)], null, null, 'none');
+    expect(a).not.toBe(b);
+    expect(sameSlideshowContent(a, b)).toBe(true);
+    expect(sameSlideshowContent(a, c)).toBe(false);
+  });
+
+  it('всё, кроме картинки, сличается точно', () => {
+    const a = slideshowFingerprint([f(base)], 'a.mp3', null, 'none');
+    expect(
+      sameSlideshowContent(
+        a,
+        slideshowFingerprint([f(jitter)], 'b.mp3', null, 'none'),
+      ),
+    ).toBe(false);
+    expect(
+      sameSlideshowContent(
+        a,
+        slideshowFingerprint([f(jitter)], 'a.mp3', 'подписи', 'none'),
+      ),
+    ).toBe(false);
+    expect(
+      sameSlideshowContent(
+        a,
+        slideshowFingerprint([f(jitter)], 'a.mp3', null, 'fade'),
+      ),
+    ).toBe(false);
+    expect(
+      sameSlideshowContent(
+        a,
+        slideshowFingerprint(
+          [{ ...f(jitter), seconds: 3 }],
+          'a.mp3',
+          null,
+          'none',
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it('другое число кадров или другой шаг — другой ролик', () => {
+    const a = slideshowFingerprint([f(base)], null, null, 'none');
+    expect(
+      sameSlideshowContent(
+        a,
+        slideshowFingerprint([f(base), f(base, 1)], null, null, 'none'),
+      ),
+    ).toBe(false);
+    expect(
+      sameSlideshowContent(
+        a,
+        slideshowFingerprint([f(jitter, 1)], null, null, 'none'),
+      ),
+    ).toBe(false);
+  });
+
+  it('не-PNG кадр сличается только точно', () => {
+    const raw1 = slideshowFingerprint(
+      [f(new Uint8Array([1, 2]))],
+      null,
+      null,
+      'none',
+    );
+    const raw2 = slideshowFingerprint(
+      [f(new Uint8Array([1, 3]))],
+      null,
+      null,
+      'none',
+    );
+    expect(raw1.split('|')[2]).toMatch(/^raw:/);
+    expect(sameSlideshowContent(raw1, raw2)).toBe(false);
+  });
+
+  it('пустой или чужой прежний отпечаток — не совпадение', () => {
+    const a = slideshowFingerprint([f(base)], null, null, 'none');
+    expect(sameSlideshowContent(null, a)).toBe(false);
+    expect(sameSlideshowContent('', a)).toBe(false);
+    expect(sameSlideshowContent('старый-sha', a)).toBe(false);
+  });
+
+  it('порог строже снимка интерфейса: тумблер/значок в одной ячейке — «другой»', () => {
+    // Значок 16×16 в одной ячейке сетки: ночной снимок (3 ячейки) счёл
+    // бы экран прежним, ролик обязан пересобраться.
+    const icon = png({ x: 40, y: 360, w: 16, h: 16, v: 0 });
+    const a = slideshowFingerprint([f(base)], null, null, 'none');
+    const b = slideshowFingerprint([f(icon)], null, null, 'none');
+    expect(sameSlideshowContent(a, b)).toBe(false);
+    expect(
+      sameSlideshowContent(a, b, { cellDelta: 12, minChangedCells: 3 }),
+    ).toBe(true);
+    expect(TUTORIAL_FRAME_SENSITIVITY).toEqual({
+      cellDelta: 8,
+      minChangedCells: 1,
+    });
+  });
+
+  it('чувствительность передаётся явно', () => {
+    const a = slideshowFingerprint([f(base)], null, null, 'none');
+    const b = slideshowFingerprint([f(jitter)], null, null, 'none');
+    expect(
+      sameSlideshowContent(a, b, { cellDelta: 1, minChangedCells: 1 }),
+    ).toBe(false);
+  });
+
+  it('указатель: субпиксельный сдвиг — тот же ролик, заметный — другой', () => {
+    const at = (x: number, y: number) =>
+      slideshowFingerprint(
+        [{ ...f(base), pointer: { x, y } }],
+        null,
+        null,
+        'none',
+      );
+    expect(sameSlideshowContent(at(0.5, 0.5), at(0.5001, 0.4999))).toBe(true);
+    expect(sameSlideshowContent(at(0.5, 0.5), at(0.52, 0.5))).toBe(false);
+    // Точная часть указатель по-прежнему видит полностью.
+    expect(at(0.5, 0.5).split('|')[0]).not.toBe(at(0.5001, 0.5).split('|')[0]);
+  });
+
+  it('средняя часть — без картинки', () => {
+    const a = slideshowFingerprint([f(base)], 'a.mp3', null, 'none');
+    const c = slideshowFingerprint([f(newLine)], 'a.mp3', null, 'none');
+    expect(fingerprintRest(a)).toBe(fingerprintRest(c));
+    expect(fingerprintRest('голый-sha')).toBeNull();
   });
 });

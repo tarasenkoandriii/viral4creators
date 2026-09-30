@@ -135,6 +135,9 @@ export const SENSITIVITY_ENV = {
  */
 export function resolveChangeSensitivity(
   env: Record<string, string | undefined>,
+  /** Свои имена и умолчания — у кадров обучалки (`tutorial-video-assembly.ts`). */
+  names: { cellDelta: string; minChangedCells: string } = SENSITIVITY_ENV,
+  defaults: ChangeSensitivity = DEFAULT_CHANGE_SENSITIVITY,
 ): { sensitivity: ChangeSensitivity; invalid: string[] } {
   const invalid: string[] = [];
   const read = (name: string, fallback: number, max: number): number => {
@@ -149,14 +152,10 @@ export function resolveChangeSensitivity(
   };
   return {
     sensitivity: {
-      cellDelta: read(
-        SENSITIVITY_ENV.cellDelta,
-        DEFAULT_CHANGE_SENSITIVITY.cellDelta,
-        255,
-      ),
+      cellDelta: read(names.cellDelta, defaults.cellDelta, 255),
       minChangedCells: read(
-        SENSITIVITY_ENV.minChangedCells,
-        DEFAULT_CHANGE_SENSITIVITY.minChangedCells,
+        names.minChangedCells,
+        defaults.minChangedCells,
         GRID_COLS * GRID_ROWS,
       ),
     },

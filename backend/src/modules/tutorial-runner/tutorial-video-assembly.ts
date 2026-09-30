@@ -31,6 +31,11 @@
  */
 
 import { createHash } from 'crypto';
+import {
+  ChangeSensitivity,
+  computeSnapshotHash,
+  hasChanged,
+} from '../ui-snapshot/perceptual-hash';
 
 /** Сколько секунд держим один кадр в кадре — достаточно, чтобы успеть
  * прочитать экран, не настолько долго, чтобы 10-шаговый сценарий
@@ -1224,4 +1229,128 @@ export function planSlideshow(
     durationMs,
     motion,
   };
+}
+
+/**
+ * Отпечаток, который пишется в `contentHash` строки ролика:
+ * `точный|без-байтов-кадров|кадр1,кадр2,…`.
+ *
+ * Найдено на проде 30.09.2026: точный отпечаток (`slideshowContentHash`)
+ * не совпадал почти никогда — `tutorial-assembly-poll` за сутки
+ * показывал по 3–7 сборок КАЖДЫЙ час на девять сценариев, хотя
+ * интерфейс не менялся. Причина та же, что у «мигающего» ночного
+ * снимка: кадр живой страницы побайтово не повторяется (фаза
+ * анимации, догрузившийся плеер, сглаживание). Итог — лишние задачи
+ * ffmpeg, мусор в Blob и, главное, одобренный оператором ролик,
+ * который через час заменяется новым неодобренным того же вида.
+ *
+ * Поэтому кадры сличаются той же сеткой, что и ночной снимок
+ * интерфейса (`hasChanged`), но со своими, более строгими порогами
+ * (`TUTORIAL_FRAME_SENSITIVITY`). Всё остальное — реплики, дорожки,
+ * подписи, длительности, указатель (с шагом ≈2 px), движение —
+ * сравнивается ТОЧНО (средняя часть).
+ *
+ * Точный отпечаток стоит первым ради строк, записанных до этой
+ * правки: у них `contentHash` — голый sha, и совпадение по первой
+ * части по-прежнему значит «тот же ролик», так что деплой ничего не
+ * пересобирает зря.
+ */
+const POINTER_FINGERPRINT_STEPS = 200;
+
+export function slideshowFingerprint(
+  frames: Parameters<typeof slideshowContentHash>[0],
+  voiceoverUrl: string | null,
+  captionsAss: string | null,
+  motion: SlideshowMotion,
+): string {
+  const exact = slideshowContentHash(frames, voiceoverUrl, captionsAss, motion);
+  // Указатель в средней части — с шагом 1/200 кадра (≈2 px), а не с
+  // точностью съёмки (1e-4): субпиксельный сдвиг цели между прогонами
+  // иначе менял бы среднюю часть, и перцептивное сличение не
+  // наступало бы вовсе (аудит 01.10.2026).
+  const rest = slideshowContentHash(
+    frames.map((f) => ({
+      ...f,
+      bytes: new Uint8Array(0),
+      pointer: f.pointer
+        ? {
+            x: Math.round(f.pointer.x * POINTER_FINGERPRINT_STEPS),
+            y: Math.round(f.pointer.y * POINTER_FINGERPRINT_STEPS),
+          }
+        : f.pointer,
+    })),
+    voiceoverUrl,
+    captionsAss,
+    motion,
+  );
+  return `${exact}|${rest}|${frames.map((f) => frameToken(f.bytes)).join(',')}`;
+}
+
+/** Средняя часть отпечатка — всё, кроме картинки кадров. По ней
+ * выбираются кандидаты для перцептивного сличения. */
+export function fingerprintRest(fingerprint: string): string | null {
+  const parts = fingerprint.split('|');
+  return parts.length === 3 ? parts[1] : null;
+}
+
+/**
+ * Кадр как отпечаток: сетка яркостей для PNG (что и отдаёт
+ * `page.screenshot()`), иначе — sha байтов с префиксом `raw:` (такой кадр
+ * сличается только точно). Разделителей `|` и `,` в обоих нет.
+ */
+function frameToken(bytes: Uint8Array): string {
+  try {
+    return computeSnapshotHash(Buffer.from(bytes));
+  } catch {
+    return `raw:${createHash('sha256').update(Buffer.from(bytes)).digest('hex')}`;
+  }
+}
+
+/**
+ * Чувствительность сличения кадров обучалки — СВОЯ, строже ночного
+ * снимка интерфейса (аудит 01.10.2026, замер на настоящем шрифте):
+ * при порогах снимка (12 уровней, 3 ячейки) «тот же экран» получался
+ * и у переключённого тумблера (2 ячейки по 47), и у надписи на кнопке
+ * «Далее» → «Продолжить» (2 ячейки по 21), и у заполненного поля (11).
+ * Цена ошибки здесь другая: ложное «изменилось» — одна лишняя сборка,
+ * а не тревога в Telegram; пропущенное — ролик показывает старый
+ * экран. Поэтому 8 уровней и одна ячейка: курсор (4), смена минуты
+ * (5) и поворот спиннера (8) — ещё «тот же», тумблер, надпись и поле —
+ * «другой». Цифра в строке (≤5) не ловится — такой правкой ролик не
+ * устаревает. Переменные окружения — свои, чтобы подстройка ночного
+ * снимка не меняла пересборку роликов и наоборот.
+ */
+export const TUTORIAL_FRAME_SENSITIVITY: ChangeSensitivity = {
+  cellDelta: 8,
+  minChangedCells: 1,
+};
+export const TUTORIAL_FRAME_SENSITIVITY_ENV = {
+  cellDelta: 'TUTORIAL_FRAME_CELL_DELTA',
+  minChangedCells: 'TUTORIAL_FRAME_MIN_CHANGED_CELLS',
+} as const;
+
+/**
+ * «Из этого получится тот же ролик»: точная часть совпала, либо
+ * совпали все входы, кроме картинки, кадров столько же и ни один кадр
+ * не изменился заметно. `stored` — `contentHash` прежней строки
+ * (голый sha старого формата или null — сличается только точно).
+ */
+export function sameSlideshowContent(
+  stored: string | null | undefined,
+  current: string,
+  sensitivity: ChangeSensitivity = TUTORIAL_FRAME_SENSITIVITY,
+): boolean {
+  if (!stored) return false;
+  const a = stored.split('|');
+  const b = current.split('|');
+  if (a[0] === b[0]) return true;
+  if (a.length !== 3 || b.length !== 3 || a[1] !== b[1]) return false;
+  const fa = a[2] === '' ? [] : a[2].split(',');
+  const fb = b[2] === '' ? [] : b[2].split(',');
+  if (fa.length !== fb.length) return false;
+  return fa.every((t, i) => {
+    const u = fb[i];
+    if (t.startsWith('raw:') || u.startsWith('raw:')) return t === u;
+    return !hasChanged(t, u, sensitivity);
+  });
 }

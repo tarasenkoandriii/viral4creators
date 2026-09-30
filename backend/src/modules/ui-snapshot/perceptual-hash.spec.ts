@@ -546,3 +546,20 @@ describe('resolveChangeSensitivity', () => {
     expect(r.invalid).toEqual([SENSITIVITY_ENV.minChangedCells]);
   });
 });
+
+describe('resolveChangeSensitivity — свои имена и умолчания', () => {
+  it('читает переданные имена, умолчания — переданные', () => {
+    const names = { cellDelta: 'X_DELTA', minChangedCells: 'X_CELLS' };
+    const defaults = { cellDelta: 8, minChangedCells: 1 };
+    expect(resolveChangeSensitivity({}, names, defaults).sensitivity).toEqual(
+      defaults,
+    );
+    const r = resolveChangeSensitivity(
+      { X_DELTA: '5', X_CELLS: 'abc', UI_SNAPSHOT_CELL_DELTA: '40' },
+      names,
+      defaults,
+    );
+    expect(r.sensitivity).toEqual({ cellDelta: 5, minChangedCells: 1 });
+    expect(r.invalid).toEqual(['X_CELLS']);
+  });
+});

@@ -61,9 +61,9 @@
  *
  * Первый — не собирать лишнего. §7.2 ТЗ обещает, что ролики
  * пересобираются при изменении интерфейса или текста шага, а не по
- * расписанию; исполняет это `contentHash` (`slideshowContentHash` от
- * байтов кадров, дорожек, длительностей и СОДЕРЖИМОГО подписей):
- * совпал с отпечатком последнего собранного ролика пары — задача не
+ * расписанию; исполняет это `contentHash` (`slideshowFingerprint` от
+ * кадров — перцептивно, как ночной снимок интерфейса, — дорожек,
+ * длительностей и СОДЕРЖИМОГО подписей): совпал с отпечатком последнего собранного ролика пары — задача не
  * отправляется и строка не заводится. Первая ночь после выката
  * этапа E пересоберёт весь уже собранный набор — до пятидесяти
  * платных задач единоразово: подписи меняют картинку, и это ровно
@@ -134,11 +134,16 @@ import {
   CAPTURE_VIEWPORT,
   evenFrameSeconds,
   narrationFrameSeconds,
+  fingerprintRest,
   planSlideshow,
-  slideshowContentHash,
+  sameSlideshowContent,
+  slideshowFingerprint,
+  TUTORIAL_FRAME_SENSITIVITY,
+  TUTORIAL_FRAME_SENSITIVITY_ENV,
   SlideshowFrame,
   ZOOM_MAX_SECONDS,
 } from './tutorial-video-assembly';
+import { resolveChangeSensitivity } from '../ui-snapshot/perceptual-hash';
 import {
   hasTutorialSteps,
   parseTutorialLocales,
@@ -423,6 +428,10 @@ const ASSEMBLY_POLL_LOCK = 'tutorial-assembly-poll';
  * уже перестают читать, а платить за него продолжают.
  */
 const MAX_ASSEMBLY_ATTEMPTS = 3;
+/** Сколько последних провалов пары сличать перцептивно — с запасом
+ * над `MAX_ASSEMBLY_ATTEMPTS`: среди них бывают провалы другого
+ * содержимого той же пары. */
+const FAILED_CANDIDATES_TAKE = 20;
 
 /** Потолок на скачивание готового ролика у внешнего сервиса. Ролик
  *  обучалки — считаные мегабайты; минуты хватает с запасом, а
@@ -2069,7 +2078,7 @@ export class TutorialScenarioRunnerService {
     // успешный сценарий каждую ночь, получая побайтово тот же mp4, а
     // подметальщик той же ночью выносил вчерашний. Теперь вход
     // сравнивается с отпечатком последнего СОБРАННОГО ролика пары.
-    const contentHash = slideshowContentHash(
+    const contentHash = slideshowFingerprint(
       planFrames,
       narration.mode === 'whole' ? narration.url : null,
       captionsAss,
@@ -2090,13 +2099,27 @@ export class TutorialScenarioRunnerService {
         select: { id: true, contentHash: true },
       })
       .catch(() => null)) as { id: string; contentHash: string | null } | null;
-    if (previous?.contentHash && previous.contentHash === contentHash) {
+    // Сличение перцептивное по кадрам и точное по всему остальному
+    // (`sameSlideshowContent`): побайтовое совпадение кадров живой
+    // страницы не повторялось почти никогда — прод 30.09.2026 собирал
+    // заново половину набора каждый час.
+    const { sensitivity, invalid } = resolveChangeSensitivity(
+      process.env,
+      TUTORIAL_FRAME_SENSITIVITY_ENV,
+      TUTORIAL_FRAME_SENSITIVITY,
+    );
+    if (invalid.length > 0) {
+      this.logger.warn(
+        `чувствительность кадров обучалки: неверные ${invalid.join(', ')} — взяты умолчания`,
+      );
+    }
+    if (sameSlideshowContent(previous?.contentHash, contentHash, sensitivity)) {
       // Ни строки, ни файлов: новая строка с тем же роликом — это
       // лишний mp4 в Blob и лишняя работа подметальщику, а не
       // история. Regression-результат прогона уже записан выше по
       // стеку, он от сборки не зависит.
       this.logger.log(
-        `сценарий ${scenario.subjectKey} (${scenario.locale}): кадры и озвучка не изменились с ролика ${previous.id} — сборка не нужна`,
+        `сценарий ${scenario.subjectKey} (${scenario.locale}): кадры и озвучка не изменились с ролика ${previous?.id} — сборка не нужна`,
       );
       return;
     }
@@ -2119,16 +2142,31 @@ export class TutorialScenarioRunnerService {
     // отпечаток — счёт начинается заново, и починка не требует
     // трогать базу руками. Это и есть выход из отказа, который иначе
     // пришлось бы описывать в инструкции.
-    const failedSameContent = (await this.prisma.tutorialVideoAsset
-      .count({
-        where: {
-          subjectKey: scenario.subjectKey,
-          locale: scenario.locale,
-          assemblyStatus: 'failed',
-          contentHash,
-        },
-      })
-      .catch(() => 0)) as number;
+    //
+    // «То же содержимое» — в том же смысле, что и у предпроверки выше:
+    // точное равенство при дрожащих байтах кадров не повторялось бы, и
+    // потолок не наступал бы никогда. Кандидаты — провалы с теми же
+    // входами, кроме картинки (средняя часть отпечатка), их сличает
+    // `sameSlideshowContent`.
+    const rest = fingerprintRest(contentHash);
+    const failedRows = rest
+      ? ((await this.prisma.tutorialVideoAsset
+          .findMany({
+            where: {
+              subjectKey: scenario.subjectKey,
+              locale: scenario.locale,
+              assemblyStatus: 'failed',
+              contentHash: { contains: `|${rest}|` },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: FAILED_CANDIDATES_TAKE,
+            select: { contentHash: true },
+          })
+          .catch(() => [])) as { contentHash: string | null }[])
+      : [];
+    const failedSameContent = failedRows.filter((r) =>
+      sameSlideshowContent(r.contentHash, contentHash, sensitivity),
+    ).length;
     if (failedSameContent >= MAX_ASSEMBLY_ATTEMPTS) {
       this.logger.warn(
         `сценарий ${scenario.subjectKey} (${scenario.locale}): сборка этого содержимого проваливалась ${failedSameContent} раз(а) — больше не пробуем, пока не изменятся кадры или реплики`,
@@ -2585,11 +2623,13 @@ export class TutorialScenarioRunnerService {
         subjectKey: true,
         locale: true,
         reviewed: true,
-        // `assemblyStatus` здесь НЕ выбирается: правило ролей считает
-        // по `blobUrl` — ровно по тому, что читают потребители ролика
-        // (см. `SweepableAsset.blobUrl`). Статус остаётся только в
-        // условии выборки, чтобы не трогать строки в работе.
+        // Роли «проигрываемый» и «одобренный» считаются по `blobUrl` —
+        // ровно по тому, что читают потребители ролика (см.
+        // `SweepableAsset.blobUrl`). Статус нужен только роли «свежие
+        // провалы»: без неё потолок попыток не набирался никогда
+        // (аудит 01.10.2026).
         blobUrl: true,
+        assemblyStatus: true,
       },
     })) as {
       id: string;
@@ -2597,9 +2637,13 @@ export class TutorialScenarioRunnerService {
       locale: string;
       reviewed: boolean;
       blobUrl: string | null;
+      assemblyStatus: string;
     }[];
 
-    const doomed = selectSweepableAssets(rows).slice(0, ASSET_DELETE_LIMIT);
+    const doomed = selectSweepableAssets(rows, MAX_ASSEMBLY_ATTEMPTS).slice(
+      0,
+      ASSET_DELETE_LIMIT,
+    );
     if (doomed.length === 0) return 0;
 
     // Заявки публикации — одним запросом на всех кандидатов, а не по

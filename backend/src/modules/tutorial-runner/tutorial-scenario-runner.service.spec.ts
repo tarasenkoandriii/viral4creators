@@ -318,6 +318,33 @@ function build(scenarios: unknown[]) {
  * этапа B). Двойник обязан различать запросы так же, как их
  * различает база.
  */
+/** Первый прогон и отпечаток заведённой им строки ролика — чтобы
+ * подложить «провалы того же содержимого» второму прогону. */
+async function firstRunHash(built: {
+  service: { run(): Promise<unknown> };
+  prisma: { tutorialVideoAsset: { create: jest.Mock } };
+  ffmpeg: { submit: jest.Mock };
+}): Promise<string> {
+  await built.service.run();
+  const hash = built.prisma.tutorialVideoAsset.create.mock.calls[0][0].data
+    .contentHash as string;
+  built.ffmpeg.submit.mockClear();
+  return hash;
+}
+
+/** Провалившиеся строки пары для выборки кандидатов потолка попыток. */
+function failedRows(
+  built: { prisma: { tutorialVideoAsset: { findMany: jest.Mock } } },
+  hashes: string[],
+) {
+  built.prisma.tutorialVideoAsset.findMany.mockImplementation(
+    async (args: { where?: { assemblyStatus?: unknown } }) =>
+      args?.where?.assemblyStatus === 'failed'
+        ? hashes.map((contentHash) => ({ contentHash }))
+        : [],
+  );
+}
+
 function stubAssets(
   prisma: { tutorialVideoAsset: { findMany: jest.Mock } },
   rows: Record<string, unknown>[],
@@ -1468,6 +1495,33 @@ describe('TutorialScenarioRunnerService', () => {
         );
       });
 
+      it('байты кадров другие, а экран тот же — не собираем (прод 30.09.2026)', async () => {
+        // Точная часть отпечатка разошлась (кадр живой страницы
+        // побайтово не повторяется), входы кроме картинки и сами
+        // экраны — те же. Сличение обязано идти через
+        // `sameSlideshowContent`, а не через равенство строк.
+        const first = voicedRun();
+        await first.service.run();
+        const hash = first.prisma.tutorialVideoAsset.create.mock.calls[0][0]
+          .data.contentHash as string;
+        const [exact, ...tail] = hash.split('|');
+        const jittered = [
+          exact.replace(/^./, (c) => (c === 'a' ? 'b' : 'a')),
+          ...tail,
+        ].join('|');
+        expect(jittered).not.toBe(hash);
+
+        const second = voicedRun();
+        second.prisma.tutorialVideoAsset.findFirst.mockResolvedValue({
+          id: 'tva-yesterday',
+          contentHash: jittered,
+        });
+        await second.service.run();
+
+        expect(second.ffmpeg.submit).not.toHaveBeenCalled();
+        expect(second.prisma.tutorialVideoAsset.create).not.toHaveBeenCalled();
+      });
+
       it('отпечаток другой — собираем, как обычно', async () => {
         const { service, ffmpeg, prisma } = voicedRun();
         prisma.tutorialVideoAsset.findFirst.mockResolvedValue({
@@ -1631,7 +1685,8 @@ describe('TutorialScenarioRunnerService', () => {
           // котором внешний сервис стабильно спотыкается, давал вечный
           // цикл: каждую ночь та же задача, та же оплата, тот же алерт.
           const built = narratedRun();
-          built.prisma.tutorialVideoAsset.count.mockResolvedValue(3);
+          const hash = await firstRunHash(built);
+          failedRows(built, [hash, hash, hash]);
 
           await built.service.run();
 
@@ -1647,7 +1702,22 @@ describe('TutorialScenarioRunnerService', () => {
           // бросать после первого промаха значило бы терять ролики
           // из-за икоты.
           const built = narratedRun();
-          built.prisma.tutorialVideoAsset.count.mockResolvedValue(2);
+          const hash = await firstRunHash(built);
+          failedRows(built, [hash, hash]);
+
+          await built.service.run();
+
+          expect(built.ffmpeg.submit).toHaveBeenCalled();
+        });
+
+        it('три провала ДРУГОГО содержимого той же пары — пробуем', async () => {
+          // Кандидаты выбраны по средней части отпечатка, но кадры у
+          // них другие — это не «то же содержимое».
+          const built = narratedRun();
+          const hash = await firstRunHash(built);
+          const [exact, rest] = hash.split('|');
+          const other = `${exact.replace(/^./, (c) => (c === 'a' ? 'b' : 'a'))}|${rest}|raw:чужой-кадр`;
+          failedRows(built, [other, other, other]);
 
           await built.service.run();
 
@@ -1658,15 +1728,13 @@ describe('TutorialScenarioRunnerService', () => {
           // Иначе поправленная реплика не сняла бы блокировку, и
           // выходом из отказа была бы правка базы руками.
           const built = narratedRun();
-          built.prisma.tutorialVideoAsset.count.mockResolvedValue(0);
+          const hash = await firstRunHash(built);
 
-          await built.service.run();
-
-          expect(built.prisma.tutorialVideoAsset.count).toHaveBeenCalledWith(
+          expect(built.prisma.tutorialVideoAsset.findMany).toHaveBeenCalledWith(
             expect.objectContaining({
               where: expect.objectContaining({
                 assemblyStatus: 'failed',
-                contentHash: expect.any(String),
+                contentHash: { contains: `|${hash.split('|')[1]}|` },
               }),
             }),
           );
@@ -3616,6 +3684,30 @@ describe('TutorialScenarioRunnerService', () => {
             (c: { where: { id: string } }[]) => c[0].where.id,
           ),
         ).toEqual(['yesterday', 'earlier']);
+      });
+
+      it('свежие провалы живут до потолка попыток (аудит 01.10.2026)', async () => {
+        // Потолок считает провалы по строкам; подметая их до одной,
+        // подметальщик делал его недостижимым — и падающая задача
+        // уходила каждый час.
+        const { service, prisma } = build([]);
+        const failed = (id: string) =>
+          video({ id, assemblyStatus: 'failed', blobUrl: null });
+        stubAssets(prisma, [
+          failed('f1'),
+          failed('f2'),
+          failed('f3'),
+          failed('f4'),
+          video({ id: 'ok' }),
+        ]);
+
+        await service.pollAssemblies();
+
+        expect(
+          prisma.tutorialVideoAsset.delete.mock.calls.map(
+            (c: { where: { id: string } }[]) => c[0].where.id,
+          ),
+        ).toEqual(['f4']);
       });
 
       it('ролики обучалки по сайту заказчика не трогаются вовсе', async () => {

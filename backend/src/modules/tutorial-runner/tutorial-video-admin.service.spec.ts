@@ -44,6 +44,8 @@ describe('TutorialVideoAdminService.list (§4.9, этап 99)', () => {
     expect(prisma.tutorialVideoAsset.findMany).toHaveBeenCalledWith({
       where: expectedWhere,
       orderBy: { createdAt: 'desc' },
+      // Служебный отпечаток сборки (до 24 КБ) админке не отдаётся.
+      omit: { contentHash: true },
       skip: 20,
       take: 20,
     });
