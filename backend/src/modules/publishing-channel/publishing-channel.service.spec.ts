@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PublishingChannelService } from './publishing-channel.service';
 import { signOAuthState } from './oauth-state.util';
@@ -10,8 +11,13 @@ import { encryptToken } from '../../common/token-crypto';
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 const TOKEN_KEY = Buffer.alloc(32, 7).toString('base64');
+// `mock`-префикс — чтобы фабрика jest.mock могла читать переменную, а тест
+// без ключа — подменить её на время одного случая.
+let mockTokenKey: string | undefined;
 jest.mock('../../config/configuration', () => ({
-  loadConfiguration: () => ({ publishing: { channelTokenKey: TOKEN_KEY } }),
+  loadConfiguration: () => ({
+    publishing: { channelTokenKey: mockTokenKey ?? TOKEN_KEY },
+  }),
 }));
 
 const plansMock = () => ({
@@ -145,6 +151,20 @@ describe('PublishingChannelService', () => {
       await expect(service.buildAuthUrl('u1', 'FACEBOOK')).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    it('503 с названной причиной, если не задан CHANNEL_TOKEN_KEY (а не голый 500)', async () => {
+      const { service, tiktok } = setup();
+      mockTokenKey = '';
+      try {
+        await expect(service.buildAuthUrl('u1', 'TIKTOK')).rejects.toThrow(
+          ServiceUnavailableException,
+        );
+      } finally {
+        mockTokenKey = undefined;
+      }
+      // До площадки не доходим: вход в TikTok без места для токена — зря.
+      expect(tiktok.buildAuthUrl).not.toHaveBeenCalled();
     });
 
     it('403, если провайдер не настроен на сервере (нет ключей)', async () => {

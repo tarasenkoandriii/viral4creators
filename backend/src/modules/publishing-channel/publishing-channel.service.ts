@@ -15,6 +15,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanService } from '../plan/plan.service';
@@ -115,6 +116,16 @@ export class PublishingChannelService {
     if (!provider.configured()) {
       throw new ForbiddenException(
         `${platformRaw} не настроен на сервере — обратитесь к владельцу продукта`,
+      );
+    }
+    // Без ключа шифрования токенов подпись `state` бросала голый Error →
+    // 500 «Внутренняя ошибка сервера» на экране «Каналы» (01.10.2026, первое
+    // подключение TikTok на проде). Причина — настройка сервера, а не сбой:
+    // называем её до похода к площадке, иначе человек пройдёт вход в
+    // TikTok/Google, а токен всё равно некуда будет сохранить.
+    if (!this.tokenKey().trim()) {
+      throw new ServiceUnavailableException(
+        'Подключение каналов не настроено на сервере (нет ключа шифрования) — обратитесь к владельцу продукта',
       );
     }
     if (extended && platformRaw !== 'YOUTUBE') {

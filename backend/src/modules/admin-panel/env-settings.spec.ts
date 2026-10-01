@@ -65,6 +65,14 @@ const SECRET_KEYS = [
   // fixture-входа регресс-раннера обучалки — тот же класс, что
   // CRON_SECRET выше.
   'FIXTURE_USER_TOKEN',
+  // Каналы выгрузки (01.10.2026): ключ шифрования токенов каналов и пары
+  // OAuth-приложений. Client key/ID формально не секрет, но показывать
+  // значение незачем — вопрос оператора «задан ли».
+  'CHANNEL_TOKEN_KEY',
+  'TIKTOK_CLIENT_KEY',
+  'TIKTOK_CLIENT_SECRET',
+  'GOOGLE_OAUTH_CLIENT_ID',
+  'GOOGLE_OAUTH_CLIENT_SECRET',
 ];
 
 /**
@@ -543,5 +551,35 @@ describe('getEnvSettings — пороги сторожа остатков', () =
     );
     expect(row.severity).toBe('warning');
     expect(row.ok).toBe(false);
+  });
+});
+
+describe('getEnvSettings — каналы выгрузки (01.10.2026)', () => {
+  it('без CHANNEL_TOKEN_KEY — жёлтый и называет, что сломано', () => {
+    const row = find(getEnvSettings({}), 'CHANNEL_TOKEN_KEY');
+    expect(row.severity).toBe('warning');
+    expect(row.message).toContain('Подключить');
+  });
+
+  it('с CHANNEL_TOKEN_KEY — зелёный', () => {
+    const row = find(
+      getEnvSettings({ CHANNEL_TOKEN_KEY: randomBytes(32).toString('base64') }),
+      'CHANNEL_TOKEN_KEY',
+    );
+    expect(row.severity).toBe('ok');
+  });
+
+  it('половина пары TikTok — жёлтый с объяснением, обе — зелёный', () => {
+    const half = find(
+      getEnvSettings({ TIKTOK_CLIENT_KEY: 'k' }),
+      'TIKTOK_CLIENT_KEY',
+    );
+    expect(half.severity).toBe('warning');
+    expect(half.message).toContain('половина');
+    const both = find(
+      getEnvSettings({ TIKTOK_CLIENT_KEY: 'k', TIKTOK_CLIENT_SECRET: 's' }),
+      'TIKTOK_CLIENT_KEY',
+    );
+    expect(both.severity).toBe('ok');
   });
 });

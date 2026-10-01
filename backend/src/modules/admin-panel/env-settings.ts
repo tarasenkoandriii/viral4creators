@@ -959,6 +959,53 @@ export function getEnvSettings(
     });
   }
 
+  // ── Каналы выгрузки (YouTube/TikTok) ──
+  //
+  // Добавлено 01.10.2026: первое подключение TikTok на проде упало
+  // «Внутренней ошибкой сервера», а причина — не заданный CHANNEL_TOKEN_KEY
+  // — нигде в админке не была видна. Значения не показываем: ключ
+  // шифрования и секреты OAuth-приложений.
+
+  {
+    const set = Boolean(env.CHANNEL_TOKEN_KEY?.trim());
+    results.push({
+      key: 'CHANNEL_TOKEN_KEY',
+      group: 'Каналы выгрузки',
+      required: false,
+      set,
+      ok: set,
+      severity: set ? 'ok' : 'warning',
+      message: set
+        ? 'Задан — OAuth-токены подключённых каналов шифруются AES-256-GCM. Не менять: после смены уже подключённые каналы придётся подключать заново.'
+        : 'Не задан — подключить YouTube/TikTok нельзя (кнопка «Подключить» откажет), публикация в каналы не работает. Сгенерировать: openssl rand -base64 32.',
+    });
+  }
+
+  for (const [label, idKey, secretKey] of [
+    ['TikTok', 'TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'],
+    ['YouTube', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET'],
+  ] as const) {
+    const idSet = Boolean(env[idKey]?.trim());
+    const secretSet = Boolean(env[secretKey]?.trim());
+    const set = idSet && secretSet;
+    // Половина пары хуже, чем ничего: провайдер считается «не
+    // настроенным», и оператор не поймёт, почему, глядя на одну строку.
+    const half = idSet !== secretSet;
+    results.push({
+      key: `${idKey} + ${secretKey}`,
+      group: 'Каналы выгрузки',
+      required: false,
+      set,
+      ok: set,
+      severity: set ? 'ok' : 'warning',
+      message: set
+        ? `Заданы оба — подключение канала ${label} доступно (нужен ещё API_PUBLIC_URL для адреса возврата).`
+        : half
+          ? `Задана только половина пары — ${label} считается не настроенным: нужны оба ключа.`
+          : `Не заданы — кнопка «Подключить ${label}» откажет «не настроен на сервере».`,
+    });
+  }
+
   // ── Обучалка по САЙТУ ЗАКАЗЧИКА (doc/CLIENT-SITE-TUTORIAL-SPEC.md,
   //    этапы 111–114) — отдельная фича, не путать с группой выше ──
   //
