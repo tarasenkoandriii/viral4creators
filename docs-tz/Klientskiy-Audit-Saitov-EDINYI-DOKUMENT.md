@@ -9,6 +9,8 @@
 > ТМА, Next.js admin/landing, Prisma 7 + Postgres/Supabase. Backend, фронт,
 > админка и лендинг — на Vercel (backend — план Pro). Hetzner/Dokploy сейчас —
 > только узел `live-login-relay`. Раннеры сканов — на отдельном VPS-воркере (§5.2).
+>
+> **Детализация как отдельного TMA — `docs-tz/TZ-QA-TMA.md`.**
 
 ## Оглавление
 - **Часть I. Техническое задание** — §0 суть и красная линия, §0-бис нулевой
