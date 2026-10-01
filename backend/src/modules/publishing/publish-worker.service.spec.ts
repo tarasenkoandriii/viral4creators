@@ -68,6 +68,7 @@ function setup(
     init: jest.fn().mockResolvedValue({
       publishId: 'pub-1',
       uploadUrl: 'https://upload.example/tt-1',
+      bytes: Buffer.from('mp4'),
     }),
     uploadBytes: jest.fn().mockResolvedValue(undefined),
     pollStatus: jest.fn(),
@@ -309,9 +310,11 @@ describe('PublishWorkerService', () => {
         stillPending: 1,
       });
       expect(tiktok.init).toHaveBeenCalledTimes(1);
+      // Байты из init — ролик из Blob второй раз не качается.
       expect(tiktok.uploadBytes).toHaveBeenCalledWith(
         'https://upload.example/tt-1',
         row().videoUrl,
+        Buffer.from('mp4'),
       );
       expect(prisma.publicationRequest.update).toHaveBeenCalledWith({
         where: { id: 'req1' },

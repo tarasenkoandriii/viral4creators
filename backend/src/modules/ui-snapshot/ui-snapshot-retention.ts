@@ -253,8 +253,19 @@ export async function pruneUiSnapshots(
   const t0 = timer();
   const now = opts.now ?? new Date();
   const clock = opts.clock ?? Date.now;
-  const deadline =
-    opts.deadlineMs ?? now.getTime() + UI_SNAPSHOT_PRUNE_TIME_BUDGET_MS;
+  // Дедлайн — от тех же часов, по которым он проверяется (`clock`), а не
+  // от `now`: `now` — точка отсчёта сроков хранения, и в тестах она
+  // зафиксирована. Считать бюджет от неё значило сравнивать настоящие
+  // часы с выдуманной датой — спек начал падать 01.10.2026 после 03:00Z,
+  // как только настоящее время обогнало зашитое `NOW` на бюджет.
+  // Заводится при первой проверке (после первой страницы): первая
+  // страница не спрашивает бюджет вовсе, и её время ограничено размером
+  // страницы, а не часами.
+  let deadline: number | null = opts.deadlineMs ?? null;
+  const pastDeadline = () => {
+    deadline ??= clock() + UI_SNAPSHOT_PRUNE_TIME_BUDGET_MS;
+    return clock() >= deadline;
+  };
   const plainCutoff = new Date(
     now.getTime() - UI_SNAPSHOT_PLAIN_RETENTION_DAYS * DAY_MS,
   );
@@ -291,7 +302,7 @@ export async function pruneUiSnapshots(
       if (s.done) continue;
       if (
         pages >= UI_SNAPSHOT_PRUNE_MAX_PAGES ||
-        (pages > 0 && clock() >= deadline)
+        (pages > 0 && pastDeadline())
       ) {
         result.hasMore = true;
         break outer;

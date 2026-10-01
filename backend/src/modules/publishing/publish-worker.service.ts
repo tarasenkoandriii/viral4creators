@@ -387,7 +387,7 @@ export class PublishWorkerService {
         where: { id: row.id },
         data: { uploadJobId: init.publishId },
       });
-      await this.tiktok.uploadBytes(init.uploadUrl, row.videoUrl);
+      await this.tiktok.uploadBytes(init.uploadUrl, row.videoUrl, init.bytes);
       return false; // готовность — на следующих тиках, через poll
     }
     const poll = await this.tiktok.pollStatus(row.uploadJobId, accessToken);

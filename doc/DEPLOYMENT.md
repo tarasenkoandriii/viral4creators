@@ -412,7 +412,12 @@ Telegram-логин, который их и породил.
        OAuth-клиент Google Cloud Console (тип Web application) с
        включённым YouTube Data API v3.
      - `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` — приложение TikTok
-       for Developers (продукты Login Kit + Content Posting API).
+       for Developers (продукты Login Kit + Content Posting API, в
+       Content Posting API включён Direct Post; scope
+       `user.info.basic,video.publish`).
+     - `TIKTOK_PUBLISH_PRIVACY` — видимость публикации, по умолчанию
+       `SELF_ONLY` (до аудита TikTok другого нельзя); перед каждой
+       публикацией сверяется с creator_info аккаунта.
      - `CHANNEL_TOKEN_KEY` — 32 байта base64, шифрует OAuth-токены
        каналов в БД (`common/token-crypto.ts`, AES-256-GCM).
        Сгенерировать: `openssl rand -base64 32`.

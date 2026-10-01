@@ -36,13 +36,16 @@ describe('TiktokOAuthService', () => {
   });
 
   describe('buildAuthUrl', () => {
-    it('строит ссылку с scope video.publish и redirect_uri на платформенный callback', () => {
+    it('строит ссылку с scope user.info.basic,video.publish и redirect_uri на платформенный callback', () => {
       const url = service.buildAuthUrl('signed-state');
       const parsed = new URL(url);
       expect(parsed.origin + parsed.pathname).toBe(
         'https://www.tiktok.com/v2/auth/authorize/',
       );
-      expect(parsed.searchParams.get('scope')).toBe('video.publish');
+      // user.info.basic — без него /v2/user/info/ отказывает (01.10.2026).
+      expect(parsed.searchParams.get('scope')).toBe(
+        'user.info.basic,video.publish',
+      );
       expect(parsed.searchParams.get('redirect_uri')).toBe(
         'https://api.example.com/channels/oauth/TIKTOK/callback',
       );

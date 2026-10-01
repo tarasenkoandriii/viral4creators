@@ -553,6 +553,20 @@ describe('pruneUiSnapshots — потолок прогона', () => {
     expect(clock).not.toHaveBeenCalled();
   });
 
+  it('бюджет считается по настоящим часам, а не от now (01.10.2026)', async () => {
+    // `now` из прошлого (как зашитое NOW в этих тестах) не должна
+    // делать бюджет исчерпанным с первой же проверки.
+    // Две комбинации — две страницы, значит бюджет спрашивается.
+    const db = fakeDb([
+      ...longTail(3),
+      ...longTail(3, { routeKey: 'home', locale: 'uk', theme: 'light' }),
+    ]);
+    const res = await pruneUiSnapshots(db.prisma, db.blob, {
+      now: new Date('2020-01-01T00:00:00Z'),
+    });
+    expect(res.hasMore).toBe(false);
+  });
+
   it('пустая таблица: ноль страниц, ms не отрицательное', async () => {
     const db = fakeDb([]);
     const res = await pruneUiSnapshots(db.prisma, db.blob, { now: NOW });

@@ -11,7 +11,11 @@ import { loadConfiguration } from '../../config/configuration';
 const AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/';
 const USER_INFO_URL = 'https://open.tiktokapis.com/v2/user/info/';
-const SCOPE = 'video.publish';
+// `user.info.basic` обязателен: без него `/v2/user/info/` в
+// `fetchChannelInfo` отвечает scope_not_authorized, и подключение канала
+// падает на последнем шаге. В работающей интеграции SilverFinance scope —
+// ровно эта пара (01.10.2026).
+const SCOPE = 'user.info.basic,video.publish';
 
 export interface TiktokTokens {
   accessToken: string;

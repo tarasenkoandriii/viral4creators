@@ -5,11 +5,11 @@
  * N), `pollStatus` опрашивает готовность на последующих тиках (N+1…) —
  * TikTok обрабатывает видео асинхронно, синхронного «готово» не бывает.
  *
- * `privacy_level` жёстко `SELF_ONLY` (не поле формы): Content Posting
- * API для НЕАУДИРОВАННЫХ приложений разрешает публиковать только в
- * приватном режиме — это ограничение площадки (см. ТЗ §14.1/§14.4), а
- * не выбор оператора; в отличие от YouTube, где приватность настоящая
- * настройка API, не завязанная на аудит.
+ * `privacy_level` — `TIKTOK_PUBLISH_PRIVACY`, по умолчанию `SELF_ONLY` (не
+ * поле формы): Content Posting API для НЕАУДИРОВАННЫХ приложений
+ * разрешает публиковать только в приватном режиме — это ограничение
+ * площадки (см. ТЗ §14.1/§14.4). После аудита переменная переключает
+ * видимость без деплоя; значение сверяется с creator_info.
  */
 
 import { Injectable } from '@nestjs/common';
@@ -17,6 +17,28 @@ import axios from 'axios';
 
 const INIT_URL = 'https://open.tiktokapis.com/v2/post/publish/video/init/';
 const STATUS_URL = 'https://open.tiktokapis.com/v2/post/publish/status/fetch/';
+const CREATOR_INFO_URL =
+  'https://open.tiktokapis.com/v2/post/publish/creator_info/query/';
+
+/**
+ * Видимость публикации — `TIKTOK_PUBLISH_PRIVACY`, по умолчанию
+ * `SELF_ONLY` (единственное, что разрешено неаудированному приложению).
+ * Значение сверяется с `privacy_level_options` из creator_info — так же,
+ * как в работающей интеграции SilverFinance (`src/lib/server/tiktok.ts`).
+ */
+export function tiktokPublishPrivacy(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return env.TIKTOK_PUBLISH_PRIVACY?.trim() || 'SELF_ONLY';
+}
+
+export interface TiktokCreatorInfo {
+  privacyOptions: string[];
+  commentDisabled: boolean;
+  duetDisabled: boolean;
+  stitchDisabled: boolean;
+  maxDurationSec: number | null;
+}
 
 /** М-6.5 седьмого аудита: без таймаутов зависший TLS держал крон-тик до
  * убийства функции Vercel, не снимая лок строки штатно. */
@@ -50,6 +72,9 @@ export interface TiktokUploadInput {
 export interface TiktokInitResult {
   publishId: string;
   uploadUrl: string;
+  /** Байты ролика, уже скачанные для `video_size`: заливка берёт их,
+   * а не качает ролик из Blob второй раз (счёт Blob, 01.10.2026). */
+  bytes: Buffer;
 }
 
 export interface TiktokPollResult {
@@ -60,16 +85,73 @@ export interface TiktokPollResult {
 
 @Injectable()
 export class TiktokUploadService {
+  /**
+   * Шаг 0 — creator_info/query. TikTok требует вызывать его перед прямой
+   * публикацией (UX-правила Content Posting API): он отдаёт допустимые
+   * уровни видимости и запреты аккаунта на комментарии/дуэты/стичи.
+   * Портировано из работающей интеграции SilverFinance (01.10.2026).
+   */
+  async creatorInfo(accessToken: string): Promise<TiktokCreatorInfo> {
+    const res = await axios.post(
+      CREATOR_INFO_URL,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+        validateStatus: () => true,
+        timeout: REQUEST_TIMEOUT_MS,
+      },
+    );
+    if (res.status < 400) assertTiktokOk(res.data, 'creator_info');
+    if (res.status >= 400) {
+      throw Object.assign(
+        new Error(
+          `TikTok: creator_info не удался (${res.status}): ${describe(res.data)}`,
+        ),
+        { status: res.status },
+      );
+    }
+    const d = (res.data?.data ?? {}) as Record<string, unknown>;
+    return {
+      privacyOptions: Array.isArray(d.privacy_level_options)
+        ? (d.privacy_level_options as unknown[]).map(String)
+        : [],
+      commentDisabled: d.comment_disabled === true,
+      duetDisabled: d.duet_disabled === true,
+      stitchDisabled: d.stitch_disabled === true,
+      maxDurationSec:
+        typeof d.max_video_post_duration_sec === 'number'
+          ? d.max_video_post_duration_sec
+          : null,
+    };
+  }
+
   /** Шаг 1 — сообщить площадке размер файла, получить publish_id + upload_url. */
   async init(
     input: TiktokUploadInput,
     accessToken: string,
   ): Promise<TiktokInitResult> {
+    const info = await this.creatorInfo(accessToken);
+    const privacy = tiktokPublishPrivacy();
+    if (
+      info.privacyOptions.length > 0 &&
+      !info.privacyOptions.includes(privacy)
+    ) {
+      throw Object.assign(
+        new Error(
+          `TikTok: видимость ${privacy} аккаунту недоступна — разрешены ${info.privacyOptions.join(', ')} (переменная TIKTOK_PUBLISH_PRIVACY)`,
+        ),
+        { status: 400 },
+      );
+    }
     const source = await axios.get<ArrayBuffer>(input.videoUrl, {
       responseType: 'arraybuffer',
       timeout: DOWNLOAD_TIMEOUT_MS,
     });
-    const size = source.data.byteLength;
+    const bytes = Buffer.from(source.data);
+    const size = bytes.byteLength;
     // TikTok не разделяет title/description на площадке — единая подпись
     // (caption) до 2200 символов.
     const caption = [input.title, input.description]
@@ -81,10 +163,11 @@ export class TiktokUploadService {
       {
         post_info: {
           title: caption,
-          privacy_level: 'SELF_ONLY',
-          disable_duet: false,
-          disable_comment: false,
-          disable_stitch: false,
+          privacy_level: privacy,
+          // Не включаем то, что аккаунт запретил (creator_info).
+          disable_duet: info.duetDisabled,
+          disable_comment: info.commentDisabled,
+          disable_stitch: info.stitchDisabled,
         },
         source_info: {
           source: 'FILE_UPLOAD',
@@ -115,16 +198,26 @@ export class TiktokUploadService {
         { status: res.status },
       );
     }
-    return { publishId, uploadUrl };
+    return { publishId, uploadUrl, bytes };
   }
 
   /** Шаг 2 (тот же тик, что init) — залить байты в полученный upload_url. */
-  async uploadBytes(uploadUrl: string, videoUrl: string): Promise<void> {
-    const source = await axios.get<ArrayBuffer>(videoUrl, {
-      responseType: 'arraybuffer',
-      timeout: DOWNLOAD_TIMEOUT_MS,
-    });
-    const bytes = Buffer.from(source.data);
+  async uploadBytes(
+    uploadUrl: string,
+    videoUrl: string,
+    /** Байты из `init` — без второго скачивания из Blob. */
+    preloaded?: Buffer,
+  ): Promise<void> {
+    const bytes =
+      preloaded ??
+      Buffer.from(
+        (
+          await axios.get<ArrayBuffer>(videoUrl, {
+            responseType: 'arraybuffer',
+            timeout: DOWNLOAD_TIMEOUT_MS,
+          })
+        ).data,
+      );
     const res = await axios.put(uploadUrl, bytes, {
       headers: {
         'Content-Type': 'video/mp4',
