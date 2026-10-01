@@ -147,6 +147,153 @@ jobs:
       - name: счётчики в документах совпадают с реальностью
         run: node scripts/check-docs.mjs
 
+  # Бэкенд клиентских сайтов (Э0 ИИ-помощника, ядро site-core общее с QA).
+  # Свой проект и своя postgres-схема `sites` со своей историей миграций —
+  # поэтому своя джоба и своя база, а не шаги в джобе backend.
+  sites-backend:
+    name: sites-backend — тесты, типы, линт, схема
+    runs-on: ubuntu-latest
+
+    services:
+      # pgvector, а не голый postgres:16: первая же миграция делает
+      # CREATE EXTENSION vector (фрагменты знаний помощника). Мажорная
+      # версия та же, что у Supabase и джобы backend.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sites
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # `?schema=sites` — migrate кладёт таблицы и `_prisma_migrations` в
+      # схему `sites`, как на проде (prisma.config.ts).
+      SITES_DIRECT_URL: postgresql://postgres:postgres@localhost:5432/sites?schema=sites
+      SITES_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sites
+      # Второй клиент Prisma (AssistPublicDb) — под логин-ролью в
+      # assist_public; роль создаёт шаг после миграций, как владелец на
+      # Supabase (doc/DEPLOYMENT.md, 6.4). Пароль — только для CI-базы.
+      ASSIST_PUBLIC_DATABASE_URL: postgresql://assist_widget_ci:assist_widget_ci@localhost:5432/sites
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: sites-backend/package-lock.json
+
+      # `postinstall` зовёт `prisma generate` — в CI сеть до
+      # binaries.prisma.sh есть.
+      - run: npm ci
+        working-directory: sites-backend
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true
+        working-directory: sites-backend
+
+      - name: prisma validate
+        run: npx prisma validate
+        working-directory: sites-backend
+
+      # Схемы — до миграций, как на Supabase: там `extensions` уже есть
+      # (pgvector живёт в ней), а `sites` создаём явно, чтобы шаг ниже
+      # проверял ровно ту последовательность, что пойдёт на прод.
+      - name: схемы sites и extensions
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/sites" -v ON_ERROR_STOP=1 \
+            -c 'CREATE SCHEMA IF NOT EXISTS sites' \
+            -c 'CREATE SCHEMA IF NOT EXISTS extensions'
+
+      - name: миграции накатываются на чистый Postgres 16 + pgvector
+        run: npx prisma migrate deploy
+        working-directory: sites-backend
+
+      # Логин-роль виджета — ровно тем же SQL, что владелец выполняет на
+      # Supabase (doc/DEPLOYMENT.md, 6.4): NOLOGIN-роль assist_public уже
+      # создана миграцией. Проверку прав делает assist-public-db.spec.ts.
+      - name: логин-роль виджета в assist_public
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/sites" -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE assist_widget_ci LOGIN PASSWORD 'assist_widget_ci' IN ROLE assist_public" \
+            -c "ALTER ROLE assist_widget_ci SET search_path = sites, extensions"
+
+      # Миграции написаны РУКАМИ — сверка базы со схемой обязана быть
+      # пустой (тот же шаг, что у backend; флаги Prisma 7).
+      - name: схема и миграции не разошлись
+        run: |
+          npx prisma migrate diff \
+            --from-config-datasource \
+            --to-schema prisma/schema.prisma \
+            --exit-code
+        working-directory: sites-backend
+
+      - name: типы (включая тесты и prisma.config.ts)
+        run: npx tsc --noEmit
+        working-directory: sites-backend
+
+      - name: линт
+        run: npx eslint "src/**/*.ts" prisma.config.ts --max-warnings 0
+        working-directory: sites-backend
+
+      # Здесь же — приёмка изоляции на реальной базе
+      # (src/prisma/assist-public-role.spec.ts): SELECT из assist_admin_*
+      # под ролью assist_public падает. При CI=true без базы набор не
+      # пропускается, а падает.
+      - name: тесты (в том числе изоляция под assist_public)
+        run: npx jest --ci
+        working-directory: sites-backend
+
+      # Копии чистых модулей backend/ в sites-backend/src/shared совпадают
+      # с источниками (решение Э0 «копия с проверкой»).
+      - name: общие модули синхронны с backend
+        run: node scripts/sync-sites-shared.mjs --check
+
+      # Изоляция «Сайт»/«Админка», слой 2 (ТЗ помощника §4.3-бис): код
+      # «Сайта» не импортирует assist-admin-* и наоборот, shared/ — не
+      # импортирует modules/. Самотест — чтобы «нарушений нет» не значило
+      # «проверка сломана».
+      - name: граф зависимостей sites-backend (самотест и проверка)
+        run: |
+          node scripts/check-sites-import-graph.mjs --self-test
+          node scripts/check-sites-import-graph.mjs
+
+  assist:
+    name: assist (TMA помощника) — типы, линт, тесты, сборка
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: assist/package-lock.json
+      - run: npm ci
+        working-directory: assist
+      # Копия site-tma-kit в assist/src/kit совпадает с источником.
+      - name: site-tma-kit синхронен
+        run: node scripts/sync-site-tma-kit.mjs --check
+      - name: типы
+        run: npx tsc --noEmit -p tsconfig.json
+        working-directory: assist
+      - name: типы проверочных скриптов
+        run: npm run typecheck:scripts
+        working-directory: assist
+      - name: линт
+        run: npm run lint
+        working-directory: assist
+      - name: unit-скрипты
+        run: npm test
+        working-directory: assist
+      - name: сборка
+        run: npx vite build
+        working-directory: assist
 
   frontend:
     name: frontend (TMA) — типы, линт, unit-скрипты, сборка

@@ -5,7 +5,7 @@
 
 COMPOSE = docker compose -f docker-compose.dev.yml
 
-.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs
+.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs ci-sites
 
 up:
 	@test -f .env.docker || cp .env.docker.example .env.docker
@@ -84,9 +84,42 @@ ci:
 	cd frontend && npx vite build
 	cd admin && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npx next build
 	cd landing && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npx next build
+	$(MAKE) ci-sites
+	node scripts/sync-site-tma-kit.mjs --check
+	cd assist && npx tsc --noEmit -p tsconfig.json
+	cd assist && npm run -s typecheck:scripts
+	cd assist && npm run -s lint
+	cd assist && for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done
+	cd assist && npx vite build
 	$(MAKE) ci-docs
 
 # Только документы — быстрая проверка перед коммитом правок в doc/.
 ci-docs:
 	node scripts/sync-legal.mjs --check
 	node scripts/check-docs.mjs
+
+# sites-backend (Э0 ИИ-помощника; джоба `sites-backend` в CI). Тот же
+# принцип, что у `ci`: недоступность binaries.prisma.sh — пропуск
+# `prisma validate` с сообщением, неверная схема — остановка. Миграции и
+# `migrate diff` — только в CI (нужен движок и Postgres с pgvector);
+# тест изоляции под `assist_public` без SITES_DIRECT_URL пропускается с
+# причиной в названии, а в CI обязателен.
+#
+# Клиент Prisma для `tsc`/`jest` в песочнице — генерацией с заглушкой
+# движка (см. doc/DEPLOYMENT.md, раздел sites-backend).
+ci-sites:
+	@cd sites-backend && out=$$(npx prisma validate 2>&1); status=$$?; \
+	if [ $$status -eq 0 ]; then \
+		echo "sites-backend prisma validate: схема в порядке"; \
+	elif echo "$$out" | grep -q 'binaries.prisma.sh'; then \
+		echo "sites-backend prisma validate ПРОПУЩЕН: нет сети до binaries.prisma.sh." \
+			"Схему проверит CI — остальные шаги идут как обычно."; \
+	else \
+		echo "$$out"; exit $$status; \
+	fi
+	cd sites-backend && npx tsc --noEmit
+	cd sites-backend && npx eslint "src/**/*.ts" prisma.config.ts --max-warnings 0
+	cd sites-backend && npx jest --ci
+	node scripts/sync-sites-shared.mjs --check
+	node scripts/check-sites-import-graph.mjs --self-test
+	node scripts/check-sites-import-graph.mjs

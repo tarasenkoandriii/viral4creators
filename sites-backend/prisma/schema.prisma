@@ -1,0 +1,322 @@
+// Схема `sites` — база sites-backend (ядро site-core, общее с QA, и
+// таблицы ИИ-помощника). Физически та же Postgres/Supabase, что у
+// генератора (backend/), но отдельная postgres-схема со своей историей
+// миграций: генератор и сайты не делят ни одной таблицы и ни одной
+// миграции (решение координатора Э0, п.2).
+//
+// Подключения (Prisma 7 — строк в этом файле нет вовсе):
+//  - CLI (`migrate deploy`/`migrate diff`) — `SITES_DIRECT_URL` из
+//    ../prisma.config.ts, обязательно с `?schema=sites`;
+//  - приложение — `SITES_DATABASE_URL` (пулер) через драйвер-адаптер с
+//    `schema: 'sites'` (src/prisma/prisma.service.ts).
+//
+// Миграции пишутся РУКАМИ (как в backend, doc/TELEGRAM-ADMIN.md §5), CI
+// сверяет их со схемой `prisma migrate diff --exit-code`. Имена таблиц —
+// по ТЗ помощника §4.17 и QA-ТЗ §4.7/§1.5: `site_*` — ядро, `assist_*` —
+// помощник, `qa_*` — QA (в Э0 не создаются).
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  // pgvector — в схеме `extensions`: там его держит Supabase, и там же его
+  // создаёт первая миграция (CREATE EXTENSION … WITH SCHEMA extensions).
+  extensions = [vector(schema: "extensions")]
+}
+
+// ══ ОБЩЕЕ ЯДРО site-core (таблицы site_*) — одно на QA и Помощника ══
+
+/// Кабинет заказчика (= `AuditOwner` QA-ТЗ §4.7) — ТЕНАНТ всего, что ниже.
+model SiteAccount {
+  id     String @id @default(cuid())
+  /// owner | agency
+  type   String @default("owner")
+  /// UA | EU | US | other — уточняется в онбординге; умолчание нужно, чтобы
+  /// кабинет можно было создать при первом входе одним INSERT (§4.16).
+  region String @default("other")
+
+  /// Токен кабинета для TXT/файла/меты (QA §2.4): один на все хосты
+  /// кабинета, ротируемый. Уникален — по нему проверка находит кабинет.
+  verifyToken          String    @unique
+  verifyTokenRotatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members SiteAccountMember[]
+  sites   Site[]
+  hosts   SiteHost[]
+  invites SiteAccountInvite[]
+
+  @@map("site_accounts")
+}
+
+/// Участник кабинета. Человек узнаётся по `telegramId` — он один и тот же
+/// у человека в обоих ботах (Помощника и QA).
+model SiteAccountMember {
+  id        String      @id @default(cuid())
+  accountId String
+  account   SiteAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  telegramId   BigInt
+  /// owner | manager | operator — роль в кабинете.
+  role         String
+  /// { qa: admin|viewer|none, assist: manager|operator|none,
+  ///   assistAdmin: owner|employee|none } — права по продукту (ТЗ помощника
+  /// §3.2, QA §1.5). Умолчание для всех, кроме владельца, — `none`.
+  productRoles Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([accountId, telegramId])
+  /// Вход: «в каких кабинетах этот человек» — поиск по одному telegramId.
+  @@index([telegramId])
+  @@map("site_account_members")
+}
+
+/// Приглашение участника (ТЗ помощника §3.2, §4.16 `POST /sites/account/invites`):
+/// ссылка `t.me/<бот>?startapp=inv_<token>` из любого из двух ботов,
+/// одноразовая, 7 дней. В базе — только SHA-256 токена: утечка таблицы не
+/// даёт войти в чужой кабинет.
+model SiteAccountInvite {
+  id        String      @id @default(cuid())
+  accountId String
+  account   SiteAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  tokenHash    String    @unique
+  /// manager | operator — владельца пригласить нельзя.
+  role         String
+  productRoles Json
+  createdByTelegramId BigInt
+  expiresAt    DateTime
+  usedAt       DateTime?
+  usedByTelegramId BigInt?
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId])
+  @@map("site_account_invites")
+}
+
+/// Логический сайт («Магазин X»). Подтверждается не он, а его хосты.
+model Site {
+  id          String      @id @default(cuid())
+  accountId   String
+  account     SiteAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Под-клиент агентства (`EndClient` QA) — таблица появится вместе с QA.
+  endClientId String?
+  name        String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hosts       SiteHost[]
+  siteChunks  AssistSiteChunk[]
+  adminChunks AssistAdminChunk[]
+
+  /// Цель составного внешнего ключа хоста (siteId, accountId): база сама не
+  /// даст привязать хост кабинета A к сайту кабинета B.
+  @@unique([id, accountId])
+  @@index([accountId])
+  @@map("site_sites")
+}
+
+/// Хост = единица подтверждения владения: схема + FQDN (punycode) + порт.
+model SiteHost {
+  id        String      @id @default(cuid())
+  /// Денормализовано из Site: подтверждение — на пару (кабинет, хост),
+  /// QA §5.1, и уникальность ниже считается в пределах кабинета.
+  accountId String
+  account   SiteAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  siteId    String
+  site      Site        @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  scheme         String    @default("https")
+  /// FQDN, нормализованный, punycode, без точки на конце.
+  host           String
+  port           Int       @default(443)
+  /// *.myshopify.com и т.п. → подтверждение только через DNS.
+  publicPlatform Boolean   @default(false)
+  /// pending | verified | expired | revoked
+  status         String    @default("pending")
+  /// dns | file | meta
+  method         String?
+  verifiedAt     DateTime?
+  /// verifiedAt + 90 дней.
+  expiresAt      DateTime?
+  lastRecheckAt  DateTime?
+  revokedAt      DateTime?
+  /// Итог последней проверки (ручной или крона) для экрана: `{ ok, code,
+  /// message, at }`. Статус хоста он не заменяет — только объясняет.
+  lastCheck      Json?
+  /// Подтверждение этого кабинета отозвано ДРУГИМ кабинетом, подтвердившим
+  /// тот же хост (QA §5.1): повторное подтверждение заблокировано, пока
+  /// тот не снимет блокировку. Строку с блокировкой удалить нельзя — иначе
+  /// «удалить и добавить заново» обходило бы блокировку.
+  reverifyBlockedAt          DateTime?
+  reverifyBlockedByAccountId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  challenges SiteOwnershipChallenge[]
+
+  /// Дубль хоста в кабинете — ошибка при добавлении (QA §2.2), а не второй
+  /// Site; разные кабинеты один хост иметь могут.
+  @@unique([accountId, scheme, host, port])
+  /// Цель составного ключа challenge (hostId, accountId).
+  @@unique([id, accountId])
+  /// «Кто ещё подтвердил этот хост» (§4.16, authorizations).
+  @@index([host])
+  @@index([siteId])
+  /// Крон `site-ownership-recheck`: verified-хосты, давно не проверенные, — первыми.
+  @@index([status, lastRecheckAt])
+  @@map("site_hosts")
+}
+
+/// Выданный токен/метод проверки владения хостом (QA §4.7, §2.4).
+model SiteOwnershipChallenge {
+  id            String    @id @default(cuid())
+  /// Сверх полей QA §4.7: нужен Prisma-extension тенанта (каждая таблица
+  /// кабинета несёт accountId) и составному ключу на хост.
+  accountId     String
+  hostId        String
+  host          SiteHost  @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// dns | file | meta
+  method        String
+  token         String
+  /// pending | verified | failed | expired | revoked
+  status        String    @default("pending")
+  checkedAt     DateTime?
+  lastRecheckAt DateTime?
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([hostId])
+  @@index([accountId])
+  @@map("site_ownership_challenges")
+}
+
+/// Домены, владельцы которых отказались от любых наших проверок/обходов.
+/// Глобальный справочник — без тенанта.
+model SiteOptOutDomain {
+  id          String    @id @default(cuid())
+  domain      String    @unique
+  /// complaint | robots | email | operator
+  source      String
+  confirmedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@map("site_opt_out_domains")
+}
+
+/// Учёт расходов ИИ обоих продуктов — форма `AiUsage` генератора
+/// (backend/prisma/schema.prisma, model AiUsage) + кабинет/сайт/продукт.
+/// Внешних ключей нет намеренно: расход уже понесён, удаление кабинета или
+/// сайта не должно стирать историю затрат (тот же довод, что у
+/// `AiUsage.sessionId`).
+model SiteAiUsage {
+  id String @id @default(cuid())
+
+  /// NULL — вызов вне кабинета (публичная песочница лендинга).
+  accountId String?
+  siteId    String?
+  /// qa | assist
+  product   String
+
+  /// GEMINI | OPENAI | … — кто выставит счёт.
+  provider  String
+  /// assist-chat, assist-embed, qa-explain, …
+  operation String
+  model     String
+
+  inputTokens       Int @default(0)
+  cachedInputTokens Int @default(0)
+  outputTokens      Int @default(0)
+  seconds           Int @default(0)
+  calls             Int @default(1)
+  characters        Int @default(0)
+
+  costMicroUsd   Int     @default(0)
+  pricingVersion String
+  /// Ставки в прайсе не нашлось: объём записан, деньги — нули.
+  unpriced       Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([siteId, createdAt])
+  @@index([createdAt])
+  @@map("site_ai_usage")
+}
+
+/// Сессия веб-кабинета: вход виджетом Telegram в обычном браузере (не
+/// TMA). Глобальная таблица, вне тенанта: сессия — это ЛИЧНОСТЬ Telegram,
+/// а не членство в кабинете; права по-прежнему решает site_account_members
+/// на каждом запросе. Удаление участника сессии не трогает.
+///
+/// В базе — только SHA-256 токена (как у приглашений): утечка таблицы не
+/// даёт войти. Токен живёт только в HttpOnly-cookie браузера.
+model SiteWebSession {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  telegramId BigInt
+  /// Приложение, чьим ботом подписан вход. Веб-кабинет — `assist` (бот
+  /// помощника, ASSIST_BOT_TOKEN).
+  app        String
+  /// Из данных виджета на момент входа — для экрана «вы вошли как…».
+  username   String?
+  firstName  String?
+  createdAt  DateTime  @default(now())
+  /// Скользящее продление: не чаще раза в сутки (см. web-session.service).
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  /// Обрезанный User-Agent — для будущего списка «где вы вошли».
+  userAgent  String?
+  /// Хеш IP с суточной солью; сырой IP не хранится.
+  ipHash     String?
+
+  /// «Выйти везде»: все живые сессии человека.
+  @@index([telegramId])
+  /// Чистка просроченных.
+  @@index([expiresAt])
+  @@map("site_web_sessions")
+}
+
+// ══ Помощник: фрагменты знаний (минимум Э0 — для приёмки изоляции) ══
+//
+// Две НЕПЕРЕСЕКАЮЩИЕСЯ таблицы (ТЗ помощника §4.3-бис, слой 1): режима в
+// строке нет — он задан именем таблицы. Роль `assist_public` (миграция)
+// читает `assist_site_chunks` и не имеет НИКАКИХ прав на `assist_admin_*`.
+// Остальные поля (documentId, version, headingPath, tokens, embedModel) и
+// HNSW-индекс — в Э1, вместе с конвейером индексации.
+
+model AssistSiteChunk {
+  id        String                      @id @default(cuid())
+  siteId    String
+  site      Site                        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  text      String
+  embedding Unsupported("vector(768)")?
+  createdAt DateTime                    @default(now())
+
+  @@index([siteId])
+  @@map("assist_site_chunks")
+}
+
+model AssistAdminChunk {
+  id        String                      @id @default(cuid())
+  siteId    String
+  site      Site                        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  text      String
+  embedding Unsupported("vector(768)")?
+  createdAt DateTime                    @default(now())
+
+  @@index([siteId])
+  @@map("assist_admin_chunks")
+}

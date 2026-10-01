@@ -14,7 +14,7 @@
  * не задано ни то ни другое, используется фиксированная dev-строка (не
  * секрет, но и хешировать в деве точный IP не от кого).
  */
-import { createHash } from 'crypto';
+import { hashIpWithDailySalt } from '../../common/assist-chat-core';
 
 function ipHashSecret(env: NodeJS.ProcessEnv = process.env): string {
   return (
@@ -24,14 +24,14 @@ function ipHashSecret(env: NodeJS.ProcessEnv = process.env): string {
   );
 }
 
-/** `now` — для тестов; по умолчанию сегодняшняя дата UTC. */
+/**
+ * `now` — для тестов; по умолчанию сегодняшняя дата UTC. Само хеширование —
+ * в ядре `assist-chat-core`; здесь — откуда лендинг берёт секрет соли.
+ */
 export function hashVisitorIp(
   ip: string,
   now: Date = new Date(),
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const dailySalt = now.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
-  return createHash('sha256')
-    .update(`${ip}:${dailySalt}:${ipHashSecret(env)}`)
-    .digest('hex');
+  return hashIpWithDailySalt(ip, ipHashSecret(env), now);
 }

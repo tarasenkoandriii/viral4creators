@@ -864,6 +864,270 @@ Telegram-логин, который их и породил.
   недоступного `API_BASE_URL` — это баг конфигурации, а не сети:
   проверить, что переменная задана и указывает на `/api`).
 
+## 6. Бэкенд клиентских сайтов (sites-backend)
+
+Э0 ИИ-помощника для клиентских сайтов (`docs-tz/TZ-AI-Pomoshchnik-TMA.md`,
+план — `docs-tz/AI-Pomoshchnik-Plan-Etapov.md`): отдельный NestJS-проект
+`sites-backend/` с ядром `site-core` (кабинет, сайты, хосты, подтверждение
+владения — общее с QA, `docs-tz/TZ-QA-TMA.md` §1.5), модулями помощника и
+QA. Генератор (`backend/`) он не трогает и с ним не делит ни таблиц, ни
+миграций.
+
+### 6.1. Vercel-проект
+
+1. **Add New** → **Project** → тот же репозиторий.
+2. **Root Directory**: `sites-backend`. Framework Preset — как у
+   `backend` (запуск идёт через `sites-backend/server.js` →
+   `dist/main.js`, см. комментарий в файле).
+3. **Build Command** — дефолтный `npm run build`
+   (`prisma generate && prisma migrate deploy && nest build`): миграции
+   схемы `sites` накатываются при каждом деплое, как у backend.
+4. **План: Vercel Pro** (В-18 плана помощника) — кроны перепроверки
+   владения и обхода сайтов будут чаще раза в сутки, плюс `maxDuration`
+   стрима виджета. На Э0 в `vercel.json` один суточный крон
+   (`/cron/site-ownership-recheck`, его пропускает и Hobby), но проект
+   сразу заводится на Pro, чтобы не переезжать при первом частом кроне.
+5. Маршруты — без префикса `/api`: `GET /health`, `/sites/…`,
+   `/assist/…`, `/qa/…`, `/widget/v1/…` (ТЗ помощника §4.16, QA-ТЗ §4.8).
+
+### 6.2. База: схема `sites`
+
+Та же Supabase, что у backend, но отдельная postgres-схема `sites` со
+своей историей миграций (`sites._prisma_migrations`). pgvector — в схеме
+`extensions` (там его держит Supabase; первая миграция делает
+`CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions`). Схему
+`sites` в Data API (PostgREST) **не** открывать: Settings → API →
+Exposed schemas её не содержит, и так должно остаться.
+
+### 6.3. Переменные окружения
+
+Полный шаблон — `sites-backend/.env.example`. Секретов в репозитории нет.
+
+- `SITES_DATABASE_URL` — **пулерная** строка (Supavisor, transaction-режим,
+  порт 6543), та же, что `DATABASE_URL` у backend. `?schema=` не нужен:
+  схему выбирает драйвер-адаптер (`PrismaPg(…, { schema: 'sites' })`),
+  а не `search_path`, который пулер в transaction-режиме не держит.
+- `SITES_DIRECT_URL` — **прямая** строка (порт 5432), как `DIRECT_URL`
+  у backend, **обязательно с `?schema=sites`** — иначе `migrate deploy`
+  положит таблицы и свою историю в `public`, к таблицам генератора.
+- `CORS_ORIGIN` — через запятую: прод-адреса TMA помощника и QA плюс
+  `*.vercel.app` для превью (логика та же, что у backend).
+- `ASSIST_PUBLIC_DATABASE_URL` — строка логин-роли виджета (6.4); её
+  читает второй клиент Prisma `AssistPublicDb` (только публичные маршруты
+  виджета, Э2). Без неё сервис стартует с предупреждением; с тем же
+  пользователем, что `SITES_DATABASE_URL`, — **не стартует** (слой 3
+  изоляции выключился бы молча).
+- `ASSIST_BOT_TOKEN`, `QA_BOT_TOKEN` — токены двух ботов (@BotFather);
+  бот выбирается по заголовку `X-Telegram-App: assist|qa`, initData
+  проверяется токеном именно этого бота, перебора токенов нет. Нет токена
+  своего бота — вход в это приложение отвечает 503.
+- `ASSIST_WEBHOOK_SECRET`, `QA_WEBHOOK_SECRET` — секреты вебхуков (6.5).
+- `ALLOW_DEV_AUTH` — **в проде не задавать**. Дев-вход заголовком
+  `X-Dev-User-Id` работает только при `ALLOW_DEV_AUTH=true` и
+  `NODE_ENV !== 'production'` (то же правило, что у backend).
+- `ASSIST_SECRETS_KEY` — ключ шифрования секретов «Админки» (32 байта,
+  base64; `openssl rand -base64 32`).
+- `CRON_SECRET` — секрет кронов sites-backend (`sites-backend/vercel.json`,
+  сейчас `/cron/site-ownership-recheck`): Vercel Cron шлёт
+  `Authorization: Bearer <CRON_SECRET>`. Значение **своё** для этого
+  проекта (`openssl rand -hex 32`), не копия backend. Без переменной
+  крон-маршруты отвечают 503 (перепроверка владения не идёт).
+- `WEB_CABINET_ORIGINS` — через запятую **точные** origin веб-кабинета
+  (`https://<домен assist>`; без пути, без `*`). Только с них
+  принимаются изменяющие запросы по cookie (защита от CSRF), и они же
+  автоматически добавляются в CORS. В проде пустое значение закрывает
+  вход и все POST/PATCH/DELETE веб-кабинета (403). Подробно — 6.8.
+
+### 6.4. Роль `assist_public` и её логин (делает владелец руками)
+
+Публичные маршруты виджета ходят в базу под ролью `assist_public`: у неё
+есть `SELECT` на `assist_site_chunks`, `site_sites`, статусные колонки
+`site_hosts`, `INSERT` в `site_ai_usage` — и **нет никаких прав** на
+`assist_admin_*`, `site_accounts`, `site_account_members`,
+`site_ownership_challenges` (ТЗ помощника §4.3-бис, слой 3; §4.17).
+Саму роль создаёт миграция, но **без права входа** (`NOLOGIN`): пароль
+не должен попасть в репозиторий. Логин-роль владелец создаёт один раз в
+Supabase → SQL Editor:
+
+```sql
+-- пароль сгенерировать (openssl rand -base64 24) и хранить только в Vercel
+CREATE ROLE assist_widget LOGIN PASSWORD '<пароль>' IN ROLE assist_public;
+-- Supavisor пускает пользовательские роли; запросов вне своей схемы роль не
+-- делает, но search_path по умолчанию пусть не смотрит в public генератора:
+ALTER ROLE assist_widget SET search_path = sites, extensions;
+```
+
+Строка для `ASSIST_PUBLIC_DATABASE_URL` — пулерная, пользователь в форме
+`assist_widget.<project-ref>`. **ПРОВЕРИТЬ на Э0** (план помощника,
+«Приёмка Э0»): вход этой ролью через пулер Supabase (Supavisor) и то, что
+`SELECT 1 FROM sites.assist_admin_chunks` под ней отвечает
+`permission denied`. В CI то же проверяют
+`sites-backend/src/prisma/assist-public-role.spec.ts` (через
+`SET ROLE assist_public` на Postgres с pgvector; там же — белый список
+прав роли по ВСЕМ таблицам схемы `sites`, так что таблица новой миграции
+без явного GRANT проверяется автоматически) и
+`sites-backend/src/prisma/assist-public-db.spec.ts` — сам клиент
+`AssistPublicDb` под логин-ролью `assist_widget_ci`, созданной тем же SQL,
+что выше (шаг джобы `sites-backend`): `assist_site_chunks` читается,
+`assist_admin_chunks`, `site_accounts`, `site_account_members` — отказ.
+
+Пароль в строке подключения: символы `/ + =` из base64 нужно
+URL-кодировать (`%2F %2B %3D`); проще сгенерировать `openssl rand -hex 24`.
+Логин `ASSIST_PUBLIC_DATABASE_URL` обязан отличаться от логина
+`SITES_DATABASE_URL` — сервис это проверяет на старте.
+
+### 6.5. Два бота: BotFather и вебхуки
+
+Авторизация: глобальный гвард `TelegramIdentityGuard`
+(`sites-backend/src/modules/telegram-auth/`). Маршрут объявляет, кого
+пускает: `@AllowApps('assist' | 'qa' | 'any')` или
+`@PublicRoute('причина')`; маршрут без объявления закрыт (403). initData
+бота помощника не открывает маршруты `@AllowApps('qa')` и наоборот.
+
+**BotFather** (владелец, один раз на бота — помощника и QA):
+
+1. `/newbot` → имя и @username; токен — в Vercel как `ASSIST_BOT_TOKEN`
+   (или `QA_BOT_TOKEN`). В репозиторий и чаты токен не попадает.
+2. `/newapp` (или Bot Settings → Configure Mini App) — адрес TMA
+   (прод-домен `assist/` для помощника, QA-фронт для QA). Этот же
+   адрес — в `CORS_ORIGIN` sites-backend.
+3. Фронт каждого приложения шлёт `X-Telegram-App: assist` (или `qa`) —
+   это зашито в `site-tma-kit`, настраивать не нужно.
+
+**Вебхуки.** У каждого бота свой маршрут и свой секрет; секрет одного
+бота не открывает вебхук другого. Пока обрабатывается только `/start`
+(запись в лог, ответов бот не шлёт); прочие обновления — 200 без действий.
+
+| Бот | Маршрут | Секрет |
+|---|---|---|
+| помощника | `POST https://<sites-домен>/assist/webhook/telegram` | `ASSIST_WEBHOOK_SECRET` |
+| QA | `POST https://<sites-домен>/qa/webhook/telegram` | `QA_WEBHOOK_SECRET` |
+
+Секрет — 1–256 символов `A-Z a-z 0-9 _ -` (ограничение Telegram),
+например `openssl rand -hex 32`. Сначала секрет в Vercel и редеплой,
+потом `setWebhook` (иначе Telegram получит 503 и будет повторять).
+Регистрация — с машины владельца, токены подставляются из окружения
+оболочки, не вписываются в команду:
+
+```bash
+# Бот помощника
+curl -sS "https://api.telegram.org/bot${ASSIST_BOT_TOKEN}/setWebhook" \
+  --data-urlencode "url=https://<sites-домен>/assist/webhook/telegram" \
+  --data-urlencode "secret_token=${ASSIST_WEBHOOK_SECRET}" \
+  --data-urlencode 'allowed_updates=["message"]'
+
+# Бот QA
+curl -sS "https://api.telegram.org/bot${QA_BOT_TOKEN}/setWebhook" \
+  --data-urlencode "url=https://<sites-домен>/qa/webhook/telegram" \
+  --data-urlencode "secret_token=${QA_WEBHOOK_SECRET}" \
+  --data-urlencode 'allowed_updates=["message"]'
+
+# Проверка: url, pending_update_count, last_error_message
+curl -sS "https://api.telegram.org/bot${ASSIST_BOT_TOKEN}/getWebhookInfo"
+```
+
+Смена секрета: новый в Vercel → редеплой → повторный `setWebhook` с
+новым `secret_token`. Ответ 401 в `last_error_message` — секреты в Vercel
+и в `setWebhook` разошлись; 503 — переменная секрета не задана.
+
+### 6.6. Проверка после деплоя
+
+- `GET https://<sites-домен>.vercel.app/health` → 200,
+  `{"success":true,"data":{"status":"ok","database":"up",…}}`;
+  `degraded` — смотреть лог функции (строка «Нет связи с базой …» с
+  подсказкой, без пароля).
+- Вебхуки: `getWebhookInfo` обоих ботов без `last_error_message`;
+  `/start` боту — в логе функции строка `[assist] /start, update …`
+  (или `[qa]`).
+- Вход: TMA помощника открывает кабинет (initData бота помощника); тот
+  же запрос с `X-Telegram-App: qa` — 401.
+- Веб-кабинет — см. проверку в 6.8.
+- В Supabase: `\dt sites.*` — таблицы `site_*` и `assist_*_chunks`,
+  `sites._prisma_migrations` с записями всех миграций
+  `sites-backend/prisma/migrations/` (на Э0 — три: `…_sites_core_init`,
+  `…_site_core_host_checks`, `…_site_web_sessions`).
+
+### 6.7. Песочница разработки
+
+binaries.prisma.sh из песочницы недоступен (403), поэтому клиент Prisma
+генерируется с заглушкой движка:
+
+```bash
+cd sites-backend
+npm ci --ignore-scripts
+printf '#!/bin/sh\necho "schema-engine-cli 0"\n' > /tmp/se && chmod +x /tmp/se
+PRISMA_SCHEMA_ENGINE_BINARY=/tmp/se PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 npx prisma generate
+```
+
+После этого работают `npx tsc --noEmit`, `npx eslint`, `npx jest` и
+`make ci-sites`; `migrate deploy`/`migrate diff` — только в CI. Тест
+изоляции на реальной базе в песочнице пропускается с причиной в
+названии; с локальным Postgres + pgvector его можно прогнать, задав
+`SITES_DIRECT_URL=…?schema=sites` после применения миграции.
+
+### 6.8. Веб-кабинет: вход через Telegram в обычном браузере
+
+Тот же фронт `assist/` открывается не только в Telegram (TMA, initData),
+но и в браузере: кнопка «Войти через Telegram» (Telegram Login Widget
+бота помощника) → `POST /sites/auth/web-login` → серверная сессия
+(`sites.site_web_sessions`, в базе только SHA-256 токена) и
+HttpOnly-cookie `v4c_site_session` (`Secure; SameSite=Lax; Path=/`,
+7 дней, скользящее продление не чаще раза в сутки, потолок 30 дней от
+входа). Права в кабинете — те же, что в TMA: сессия означает «кто
+вошёл», членство и роли проверяются на каждом запросе.
+
+Владелец делает один раз:
+
+1. **BotFather → `/setdomain`** для **бота помощника** — домен кабинета
+   (прод-домен Vercel-проекта `assist`, без схемы и пути). Без этого
+   виджет пишет «Bot domain invalid». Домен у бота один; превью
+   `*.vercel.app` виджет не примет — вход проверяется на проде (или на
+   отдельном стенде со своим ботом). Токен не меняется — подпись
+   виджета проверяется тем же `ASSIST_BOT_TOKEN`.
+2. **Rewrite в Vercel-проекте `assist`** (файл `assist/vercel.json` ведёт
+   фронт): все запросы фронта к API идут на свой же домен, а Vercel
+   проксирует их в sites-backend — тогда cookie первосторонняя и
+   работает в Safari (ITP режет сторонние cookie):
+
+   ```json
+   {
+     "rewrites": [
+       { "source": "/api/:path*", "destination": "https://<sites-домен>/:path*" }
+     ]
+   }
+   ```
+
+   Правило `/api/*` должно стоять **раньше** SPA-фолбэка на
+   `index.html`. Vercel передаёт адрес посетителя в `x-forwarded-for` —
+   по нему считается лимит попыток входа.
+3. **`WEB_CABINET_ORIGINS`** в Vercel-проекте sites-backend —
+   `https://<домен assist>` (тот же, что в `/setdomain`), редеплой.
+4. **`VITE_ASSIST_BOT_USERNAME`** в Vercel-проекте `assist` — @username
+   бота помощника (без `@` или с ним): по нему фронт рисует виджет входа и
+   ссылки-приглашения `t.me/<бот>?startapp=inv_…`. Без переменной экран
+   входа пишет, что бот не настроен. Переменная сборки — после правки
+   нужен редеплой `assist`.
+
+Проверка после деплоя: в браузере (не в Telegram) открыть кабинет →
+«Войти через Telegram» → подтвердить в Telegram → кабинет открыт; в
+DevTools → Application → Cookies у домена кабинета есть
+`v4c_site_session` с флагами HttpOnly, Secure, SameSite=Lax;
+`GET /api/sites/auth/me` → `"via":"web"`. «Выйти» стирает cookie, а
+следующий запрос отвечает 401.
+
+Защита от CSRF (кроме `SameSite=Lax`): изменяющий запрос по cookie
+обязан нести заголовок `X-Telegram-App: assist` (HTML-форма его не
+поставит) и `Origin` (или `Referer`) из `WEB_CABINET_ORIGINS`. Cookie
+веб-кабинета не открывает маршруты QA (`@AllowApps('qa')` → 403).
+Удаление участника из кабинета веб-сессии не отзывает (доступ к
+кабинету пропадёт и так — роль проверяется на каждом запросе);
+«выйти на всех устройствах» — `POST /sites/auth/logout-all`.
+
+Лимит попыток входа — 10 в минуту с адреса, в памяти инстанса (на
+Vercel инстансов несколько, так что это потолок «на инстанс»;
+подобрать подпись перебором нельзя в любом случае). Общий лимит в базе —
+вместе со своим rate-limit sites-backend.
+
 ## Что не входит в этот документ
 
 - Сам `git init`/первый коммит — репозиторий, с которым велась работа,

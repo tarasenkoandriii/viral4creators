@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  // Сборка — только `src` без спеков: ошибка типов в тесте не должна
+  // ронять прод-сборку на Vercel (тот же урок, что у backend/, см. ci.yml).
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
+}

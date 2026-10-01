@@ -1,0 +1,252 @@
+/**
+ * Prisma-extension тенанта (ТЗ помощника §4.4, QA-ТЗ §4.7, приёмка Э0).
+ *
+ * Тенант — кабинет `SiteAccount`. Каждая таблица кабинета несёт его id, и
+ * запрос к ней БЕЗ кабинета обязан бросать, а не возвращать «всё»: одна
+ * забытая строка `where: { accountId }` в сервисе — и кабинет A видит
+ * хосты кабинета B (Klientskiy-Audit… §5.3).
+ *
+ * Два режима одной проверки (`scopeArgs`):
+ *  - `accountId` задан (`SitesDb.forAccount`) — кабинет ПОДСТАВЛЯЕТСЯ в
+ *    where/data; если вызывающий указал ДРУГОЙ кабинет — отказ, а не тихая
+ *    перезапись (это ошибка в коде, её надо увидеть);
+ *  - `accountId = null` (`SitesDb.guarded`) — ничего не подставляется,
+ *    но запрос без явного кабинета в where/data бросает.
+ *
+ * Чего extension НЕ покрывает (и не может — это граница Prisma):
+ *  - `$queryRaw`/`$executeRaw` — сырой SQL к таблицам кабинета обязан
+ *    принимать accountId параметром (проверка — ревью и тест сервиса);
+ *  - вложенные записи (`include`, nested `create`) — их держит база:
+ *    составные внешние ключи (siteId, accountId) у хоста и (hostId,
+ *    accountId) у challenge не дают связать строки разных кабинетов.
+ *
+ * Записи в таблицы кабинета — только скалярным `accountId` (unchecked
+ * input), не `account: { connect }`: иначе подставлять нечего.
+ */
+
+import { Prisma } from '@prisma/client';
+
+export class TenantScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TenantScopeError';
+  }
+}
+
+/**
+ * Модели кабинета → колонка тенанта. У самого кабинета это `id`.
+ * Новая модель обязана попасть либо сюда, либо в `NON_TENANT_MODELS` —
+ * это сторожит тест (tenant.spec.ts), иначе её забыли бы в обоих.
+ */
+export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
+  SiteAccount: 'id',
+  SiteAccountMember: 'accountId',
+  SiteAccountInvite: 'accountId',
+  Site: 'accountId',
+  SiteHost: 'accountId',
+  SiteOwnershipChallenge: 'accountId',
+  SiteAiUsage: 'accountId',
+};
+
+/**
+ * Модели вне тенанта — с причиной, почему.
+ */
+export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
+  SiteOptOutDomain: 'глобальный справочник отказов, общий для всех кабинетов',
+  // Сессия — личность Telegram (кто вошёл), а не членство: один человек в
+  // нескольких кабинетах — одна сессия; кабинет и роль проверяются на
+  // каждом запросе по site_account_members.
+  SiteWebSession: 'сессия веб-кабинета: личность Telegram, не кабинет',
+  // Фрагменты знаний изолируются по siteId (сайт уже принадлежит одному
+  // кабинету, внешний ключ на site_sites) и, главное, ролью БД
+  // assist_public; поиск — сырым SQL через репозитории с обязательным
+  // siteId (Э1, ТЗ помощника §4.4).
+  AssistSiteChunk: 'знания «Сайт»: скоуп по siteId в репозитории (Э1)',
+  AssistAdminChunk: 'знания «Админка»: скоуп по siteId в репозитории (Э1)',
+};
+
+const WHERE_OPERATIONS = new Set([
+  'findUnique',
+  'findUniqueOrThrow',
+  'findFirst',
+  'findFirstOrThrow',
+  'findMany',
+  'count',
+  'aggregate',
+  'groupBy',
+  'update',
+  'updateMany',
+  'updateManyAndReturn',
+  'delete',
+  'deleteMany',
+]);
+
+const CREATE_OPERATIONS = new Set([
+  'create',
+  'createMany',
+  'createManyAndReturn',
+]);
+
+const UPDATE_OPERATIONS = new Set([
+  'update',
+  'updateMany',
+  'updateManyAndReturn',
+]);
+
+type Args = Record<string, unknown>;
+
+function isRecord(v: unknown): v is Args {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function missing(model: string, operation: string, where: string): never {
+  throw new TenantScopeError(
+    `${model}.${operation}: запрос к таблице кабинета без кабинета (${where}) — ` +
+      'используйте SitesDb.forAccount(accountId) или SitesDb.system(причина)',
+  );
+}
+
+function conflict(model: string, operation: string, column: string): never {
+  throw new TenantScopeError(
+    `${model}.${operation}: ${column} в запросе не совпадает с кабинетом контекста`,
+  );
+}
+
+/** where: подставить кабинет (accountId задан) или потребовать его. */
+function scopeWhere(
+  model: string,
+  operation: string,
+  column: string,
+  where: unknown,
+  accountId: string | null,
+): Args {
+  const w: Args = isRecord(where) ? { ...where } : {};
+  if (accountId === null) {
+    const v = w[column];
+    if (typeof v !== 'string' || v === '') {
+      missing(model, operation, `where.${column}`);
+    }
+    return w;
+  }
+  if (w[column] !== undefined && w[column] !== accountId) {
+    conflict(model, operation, `where.${column}`);
+  }
+  w[column] = accountId;
+  return w;
+}
+
+/** data одной записи на создание. */
+function scopeCreateData(
+  model: string,
+  operation: string,
+  column: string,
+  data: unknown,
+  accountId: string | null,
+): Args {
+  const d: Args = isRecord(data) ? { ...data } : {};
+  if (accountId === null) {
+    const v = d[column];
+    if (typeof v !== 'string' || v === '') {
+      missing(model, operation, `data.${column}`);
+    }
+    return d;
+  }
+  if (d[column] !== undefined && d[column] !== accountId) {
+    conflict(model, operation, `data.${column}`);
+  }
+  d[column] = accountId;
+  return d;
+}
+
+/** Перенос строки в другой кабинет обновлением запрещён в обоих режимах. */
+function assertUpdateKeepsTenant(
+  model: string,
+  operation: string,
+  column: string,
+  data: unknown,
+  tenant: unknown,
+): void {
+  if (!isRecord(data) || data[column] === undefined) return;
+  if (data[column] !== tenant) conflict(model, operation, `data.${column}`);
+}
+
+/**
+ * Аргументы запроса → аргументы с кабинетом (или отказ). Исходный объект
+ * не меняется: вызывающий мог переиспользовать его для другого кабинета.
+ */
+export function scopeArgs(
+  model: string | undefined,
+  operation: string,
+  args: unknown,
+  accountId: string | null,
+): unknown {
+  if (accountId !== null && (typeof accountId !== 'string' || !accountId)) {
+    throw new TenantScopeError('Пустой кабинет в контексте тенанта');
+  }
+  if (!model) return args;
+  const column = TENANT_COLUMNS[model];
+  if (!column) return args;
+
+  const a: Args = isRecord(args) ? { ...args } : {};
+
+  if (WHERE_OPERATIONS.has(operation)) {
+    a.where = scopeWhere(model, operation, column, a.where, accountId);
+    if (UPDATE_OPERATIONS.has(operation)) {
+      assertUpdateKeepsTenant(
+        model,
+        operation,
+        column,
+        a.data,
+        (a.where as Args)[column],
+      );
+    }
+    return a;
+  }
+
+  if (CREATE_OPERATIONS.has(operation)) {
+    if (Array.isArray(a.data)) {
+      if (a.data.length === 0) return a;
+      a.data = a.data.map((d) =>
+        scopeCreateData(model, operation, column, d, accountId),
+      );
+    } else {
+      a.data = scopeCreateData(model, operation, column, a.data, accountId);
+    }
+    return a;
+  }
+
+  if (operation === 'upsert') {
+    a.where = scopeWhere(model, operation, column, a.where, accountId);
+    const tenant = (a.where as Args)[column];
+    a.create = scopeCreateData(model, operation, column, a.create, accountId);
+    if ((a.create as Args)[column] !== tenant) {
+      conflict(model, operation, `create.${column}`);
+    }
+    assertUpdateKeepsTenant(model, operation, column, a.update, tenant);
+    return a;
+  }
+
+  // Неизвестная операция (новая версия Prisma) — закрытый отказ: лучше
+  // упасть в тесте, чем молча пропустить запрос без кабинета.
+  throw new TenantScopeError(
+    `${model}.${operation}: операция не известна extension'у тенанта — добавьте её в prisma/tenant.ts`,
+  );
+}
+
+/**
+ * Extension для `$extends`. `accountId = null` — режим «только проверка».
+ */
+export function tenantExtension(accountId: string | null) {
+  return Prisma.defineExtension({
+    name: accountId === null ? 'sites-tenant-guard' : 'sites-tenant-scope',
+    query: {
+      $allModels: {
+        $allOperations({ model, operation, args, query }) {
+          return query(
+            scopeArgs(model, operation, args, accountId) as typeof args,
+          );
+        },
+      },
+    },
+  });
+}

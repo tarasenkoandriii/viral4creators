@@ -820,3 +820,109 @@ MVP 52–76 (65–95) и первой продажи 80–120 (100–150), не�
 **Открыто:** В-63 (экономика), В-64 (IP-pin), В-62 и заказ VPS в неделю
 0, В-1/В-22/В-19 и юрист в неделю 0; в лендинг-ТЗ передать вариант hero
 «пилот» и сноску о весах.
+
+## Э0 — сделано (01.10.2026)
+
+**Реализовано** (код — `sites-backend/`, `assist/`, `site-tma-kit/`;
+развёртывание — `doc/DEPLOYMENT.md` §6):
+- `sites-backend/` — отдельный NestJS-проект: своя postgres-схема `sites`
+  и три ручные миграции (`…_sites_core_init`, `…_site_core_host_checks`,
+  `…_site_web_sessions`), pgvector в `extensions`, таблицы `site_*`,
+  `site_ai_usage`, `assist_site_chunks`/`assist_admin_chunks`; роль
+  `assist_public` (NOLOGIN, явный список GRANT, на `assist_admin_*` — ничего)
+  и второй клиент `AssistPublicDb`; Prisma-extension тенанта (запрос к
+  таблице кабинета без кабинета бросает) и составные FK (хост ↔ сайт ↔
+  кабинет).
+- Ядро `site-core` (общее с QA): кабинет при первом входе (advisory-lock),
+  роли и `productRoles`, одноразовые приглашения на 7 дней (в базе — хеш),
+  сайты и хосты (https:443, punycode, дубль в кабинете — 409, публичные
+  платформы — только DNS), подтверждение DNS (DoH Cloudflare + Google,
+  совпадение обоих)/файл/мета ровно по `TZ-QA-TMA.md` §2.4, без перехода
+  на другой хост, SSRF-ворота на каждом хопе, 90 дней; пакетная проверка,
+  подсказка поддоменов, «кто ещё подтвердил», отзыв чужих с блокировкой;
+  `assertHostVerified(…, purpose)` с льготой 72 ч только для
+  `assist-widget`; крон `site-ownership-recheck` (сутки, бюджет 45 с).
+- Два бота в одном бэкенде: токен — строго по `X-Telegram-App`, перебора
+  нет; глобальный гвард (маршрут без `@AllowApps`/`@PublicRoute` закрыт);
+  вебхуки `/assist|qa/webhook/telegram` со своими секретами.
+- Веб-кабинет (требование владельца): тот же `assist/` в браузере, вход
+  Telegram Login Widget бота помощника → сессия в `site_web_sessions`
+  (только SHA-256 токена), HttpOnly-cookie `Secure; SameSite=Lax`, 7 дней
+  скользящих / 30 дней потолок; CSRF — обязательные `X-Telegram-App` и
+  `Origin` из `WEB_CABINET_ORIGINS`; cookie не открывает маршруты QA.
+- `backend/src/common/assist-chat-core` — вынос механики консультанта
+  (буфер разделителя, таймауты, стрим, разбор действий, маскирование,
+  ip-hash); лендинг переведён на него, спеки `assistant` не правились;
+  копии чистых модулей в `sites-backend/src/shared` — `sync-sites-shared`
+  с `--check`.
+- `assist/` (Vite, uk/ru/en) + общий `site-tma-kit` (копия с `--check`);
+  правило графа зависимостей `scripts/check-sites-import-graph.mjs`
+  (+ самотест); CI-джобы `sites-backend` (pgvector, миграции, логин-роль,
+  `migrate diff`, тесты изоляции на реальной базе) и `assist`;
+  `make ci-sites`.
+
+**Отложено (и почему):**
+- Копии `token-crypto`, `ai-pricing`, `gemini-client` и запись в
+  `site_ai_usage`, использование `ASSIST_SECRETS_KEY` — с первым
+  потребителем (Э1: индексация, Э4: секреты «Админки»); таблица и env уже
+  есть.
+- Свои `rate-limit`, `cron-job-lock`, `notify` для `sites-backend`
+  (нечистые модули, контракт Э0 п.3): лимит входа в веб-кабинет — в
+  памяти инстанса, уведомления об отзыве/истечении — пока в лог.
+- IP-pin исходящих запросов (В-64, к Э1): между проверкой адреса и
+  соединением остаётся окно DNS rebinding; смягчено тем, что проверяются
+  только https:443 с проверкой сертификата.
+- Сверка `X-Telegram-App` с origin TMA (§4.1): не делалась — подмена
+  заголовка ничего не даёт, подпись чужого бота не сходится.
+- Запись `AuthorizationRevocation` (QA §5.1) — вместе с QA.
+- Прочие поля фрагментов знаний и HNSW-индекс — Э1.
+
+**Нужно от владельца:**
+1. Vercel: проект `sites-backend` (Root `sites-backend`, preset как у
+   `backend`, план Pro) и проект `assist` (Root `assist`, Vite); в
+   `assist/vercel.json` заменить `sites-backend.example.invalid` на домен
+   sites-backend.
+2. Env `sites-backend` (§6.3): `SITES_DATABASE_URL`, `SITES_DIRECT_URL`
+   (`?schema=sites`), `ASSIST_PUBLIC_DATABASE_URL`, `ASSIST_BOT_TOKEN`,
+   `QA_BOT_TOKEN`, `ASSIST_WEBHOOK_SECRET`, `QA_WEBHOOK_SECRET`,
+   `CORS_ORIGIN`, `WEB_CABINET_ORIGINS`, `CRON_SECRET`,
+   `ASSIST_SECRETS_KEY`; env `assist`: `VITE_ASSIST_BOT_USERNAME`.
+3. BotFather: два бота (помощник и QA); у бота помощника `/setdomain` —
+   домен `assist`, Mini App URL — домен `assist` (у QA — его фронт).
+4. Supabase: логин-роль `assist_widget … IN ROLE assist_public` (§6.4) и
+   **проверка** входа ею через пулер (Supavisor) + отказ
+   `SELECT … sites.assist_admin_chunks`.
+5. `setWebhook` обоих ботов со своими `secret_token` (§6.5).
+
+**Результаты аудита Э0 (01.10.2026):**
+- Исправлено: (1) гонка «отзыв во время проверки» — успешная проверка
+  отозванного кабинета перезаписывала `revoked` + блокировку на
+  `verified` и возвращала ему L1 (обход, «Админка», QA); теперь запись
+  условная, а `assertHostVerified` не пускает строку с блокировкой ни
+  для одного назначения L1; (2) блокировка повторного подтверждения
+  становилась вечной, если подтверждение блокирующего кабинета истекло
+  или он удалил хост (снять её было некому, удалить хост — нельзя);
+  теперь она действует, пока блокирующий сам подтверждает хост;
+  (3) тест роли `assist_public` проверял руками составленный список
+  таблиц и не видел `site_account_invites`/`site_web_sessions` — теперь
+  белый список прав по ВСЕМ таблицам схемы из базы; (4) `site-tma-kit`
+  разбирал ответ `web-login` не той формы. Все — с тестом и мутационной
+  проверкой.
+- Проверено без замечаний: подписи initData/Login Widget (свой токен,
+  сроки, constant-time), CSRF и атрибуты cookie, хранение только хешей,
+  тенант-изоляция, приглашения (эскалация невозможна: приглашает только
+  владелец, роль `owner` не выдаётся, принятие одноразово и прав
+  существующего участника не меняет), льгота 72 ч, контракт фронт ↔ бэк,
+  поведение лендинга (вынос эквивалентен, спеки не тронуты).
+- Миграции накатаны на локальный Postgres 16 + pgvector, все модели
+  Prisma прочитаны/записаны через адаптер со схемой `sites`, тесты
+  изоляции на реальной базе зелёные. **Открыт риск для первого прогона
+  CI:** `prisma migrate diff` (в песочнице недоступен) может увидеть
+  расхождение типа `Unsupported("vector(768)")` с колонкой
+  `extensions.vector(768)`; если шаг упадёт — привести запись типа в
+  схеме к тому, что покажет diff.
+- Прогоны: `sites-backend` — tsc, eslint, jest 417 (2 пропущены без
+  базы; 434 из 434 на реальном Postgres); `backend` (assistant,
+  wizard-guide, assist-chat-core) — 512 из 512; `assist` — tsc,
+  typecheck:scripts, lint, скрипты, vite build; `sync-sites-shared`,
+  `sync-site-tma-kit`, граф зависимостей (+ самотест) — ок.

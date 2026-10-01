@@ -7,21 +7,21 @@
  * ответа: посетитель получил текст, кнопки — необязательное украшение.
  */
 import { PLAN_IDS } from '../../common/plans';
+import {
+  ActionKindValidators,
+  parseActionsBlock,
+} from '../../common/assist-chat-core';
 import { AssistantAction, AssistantActionKind } from './assistant.types';
 
-export const ACTIONS_DELIMITER = '<<<actions>>>';
-
-/** Не длиннее разделителя — используется буфером стриминга (assistant.service.ts). */
-export const ACTIONS_DELIMITER_MAX_PREFIX = ACTIONS_DELIMITER.length;
-
-const VALID_KINDS: readonly AssistantActionKind[] = [
-  'step',
-  'open-app',
-  'plan',
-  'faq',
-  'legal',
-  'video',
-];
+// Протокол разделителя и его разбор — общие с Помощником (ядро
+// `assist-chat-core`); здесь — только словарь действий лендинга.
+// Реэкспорт, чтобы промпт, сервис и спеки лендинга не меняли импорты.
+export {
+  ACTIONS_DELIMITER,
+  ACTIONS_DELIMITER_MAX_PREFIX,
+  splitActionsBlock,
+} from '../../common/assist-chat-core';
+export type { SplitResult } from '../../common/assist-chat-core';
 
 /** Разумный верхний предел длины `subjectKey` — не смысловая граница,
  * просто защита от бессмысленно длинной строки в JSON от модели. */
@@ -45,63 +45,29 @@ const VALID_LEGAL_SLUGS = ['offer', 'terms-of-use'];
  */
 export const FAQ_ITEMS_COUNT = 10;
 
-export interface SplitResult {
-  /** Текст ДО разделителя — то, что видит посетитель. */
-  text: string;
-  /** Всё, что было после разделителя (сырой JSON) — `null`, если разделителя не было вовсе. */
-  rawActionsJson: string | null;
-}
-
-/** Режет полный текст ответа модели по разделителю (не потоково — на уже собранном тексте). */
-export function splitActionsBlock(fullText: string): SplitResult {
-  const idx = fullText.indexOf(ACTIONS_DELIMITER);
-  if (idx === -1) return { text: fullText, rawActionsJson: null };
-  return {
-    text: fullText.slice(0, idx),
-    rawActionsJson: fullText.slice(idx + ACTIONS_DELIMITER.length),
-  };
-}
-
-function isValidAction(value: unknown): value is AssistantAction {
-  if (!value || typeof value !== 'object') return false;
-  const v = value as Record<string, unknown>;
-  if (
-    typeof v.kind !== 'string' ||
-    !VALID_KINDS.includes(v.kind as AssistantActionKind)
-  ) {
-    return false;
-  }
-  switch (v.kind as AssistantActionKind) {
-    case 'step':
-      // Этап 92: обучалка выросла до 10 шагов (десятый — «Постпродакшн»).
-      return typeof v.stepId === 'number' && v.stepId >= 1 && v.stepId <= 10;
-    case 'open-app':
-      return true;
-    case 'plan':
-      return (
-        typeof v.planId === 'string' &&
-        (PLAN_IDS as string[]).includes(v.planId)
-      );
-    case 'faq':
-      return (
-        typeof v.faqIndex === 'number' &&
-        v.faqIndex >= 0 &&
-        v.faqIndex < FAQ_ITEMS_COUNT
-      );
-    case 'legal':
-      return typeof v.slug === 'string' && VALID_LEGAL_SLUGS.includes(v.slug);
-    case 'video':
-      // Модель называет только subjectKey — url/title подставляет сервер
-      // (assistant.service.ts's resolveVideoActions), см. assistant.types.ts.
-      return (
-        typeof v.subjectKey === 'string' &&
-        v.subjectKey.trim().length > 0 &&
-        v.subjectKey.length <= SUBJECT_KEY_MAX_LENGTH
-      );
-    default:
-      return false;
-  }
-}
+/**
+ * Белый список `kind` лендинга и проверка полей каждого. Ключи объекта и
+ * есть белый список: `kind`, которого здесь нет, отбрасывается ядром.
+ */
+const ACTION_VALIDATORS: ActionKindValidators<AssistantActionKind> = {
+  // Этап 92: обучалка выросла до 10 шагов (десятый — «Постпродакшн»).
+  step: (v) => typeof v.stepId === 'number' && v.stepId >= 1 && v.stepId <= 10,
+  'open-app': () => true,
+  plan: (v) =>
+    typeof v.planId === 'string' && (PLAN_IDS as string[]).includes(v.planId),
+  faq: (v) =>
+    typeof v.faqIndex === 'number' &&
+    v.faqIndex >= 0 &&
+    v.faqIndex < FAQ_ITEMS_COUNT,
+  legal: (v) =>
+    typeof v.slug === 'string' && VALID_LEGAL_SLUGS.includes(v.slug),
+  // Модель называет только subjectKey — url/title подставляет сервер
+  // (assistant.service.ts's resolveVideoActions), см. assistant.types.ts.
+  video: (v) =>
+    typeof v.subjectKey === 'string' &&
+    v.subjectKey.trim().length > 0 &&
+    v.subjectKey.length <= SUBJECT_KEY_MAX_LENGTH,
+};
 
 /**
  * Разбирает и валидирует JSON после разделителя. Невалидно (битый JSON,
@@ -109,28 +75,15 @@ function isValidAction(value: unknown): value is AssistantAction {
  * без исключения: разделитель уже отрезан от текста (§5.4 — «разделитель
  * никогда не попадает в стрим»), молча остаться без кнопок безопаснее,
  * чем сломать уже показанный ответ.
+ *
+ * Аудит §10, п.8: не больше одного video-действия на ответ — это
+ * структурное ограничение в коде, а не только инструкция в промпте
+ * (модель может её не соблюсти). Первое встреченное сохраняется,
+ * остальные молча отбрасываются.
  */
 export function parseActions(rawActionsJson: string | null): AssistantAction[] {
-  if (!rawActionsJson) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawActionsJson);
-  } catch {
-    return [];
-  }
-  const items = (parsed as { items?: unknown[] })?.items;
-  if (!Array.isArray(items)) return [];
-  const valid = items.filter(isValidAction);
-  const limited = valid.slice(0, 3);
-  // Аудит §10, п.8: не больше одного video-действия на ответ — это
-  // структурное ограничение в коде, а не только инструкция в промпте
-  // (модель может её не соблюсти). Первое встреченное сохраняется,
-  // остальные молча отбрасываются.
-  let sawVideo = false;
-  return limited.filter((action) => {
-    if (action.kind !== 'video') return true;
-    if (sawVideo) return false;
-    sawVideo = true;
-    return true;
-  });
+  return parseActionsBlock<AssistantAction, AssistantActionKind>(
+    rawActionsJson,
+    { validators: ACTION_VALIDATORS, maxItems: 3, maxPerKind: { video: 1 } },
+  );
 }

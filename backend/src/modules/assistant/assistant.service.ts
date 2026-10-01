@@ -8,10 +8,10 @@
  * путей — расхождение между «что стримится» и «что приходит без стрима»
  * было бы отдельным источником багов.
  *
- * Буферизация разделителя `<<<actions>>>` (§5.4): держим неотправленным
- * хвост длиной до `ACTIONS_DELIMITER_MAX_PREFIX - 1` символов, пока не
- * станет ясно, что это не начало разделителя — стандартный приём для
- * потокового поиска подстроки на границе чанков.
+ * Буферизация разделителя `<<<actions>>>` (§5.4), таймауты и сам
+ * генератор событий вынесены в общее ядро `common/assist-chat-core`
+ * (ТЗ помощника §4.2) — Помощник использует ту же механику. Здесь —
+ * специфика лендинга: настройки, бюджет, промпт, видео, журнал.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
@@ -22,40 +22,29 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { AssistantSettingsService } from './assistant-settings.service';
 import { buildSystemInstruction } from './assistant-prompt';
-import {
-  ACTIONS_DELIMITER,
-  ACTIONS_DELIMITER_MAX_PREFIX,
-  parseActions,
-  splitActionsBlock,
-} from './actions';
+import { parseActions, splitActionsBlock } from './actions';
 import { containsForbiddenPromise, maskSensitiveEcho } from './post-filter';
 import { estimateCost } from '../../common/ai-pricing';
 import { hashVisitorIp } from './ip-hash';
 import { ASSISTANT_KNOWLEDGE, ASSISTANT_STEPS } from './knowledge/generated';
 import {
+  ChatStreamEvent,
+  chatUsageFromMeta,
+  DEFAULT_CHAT_TIMEOUTS,
+  GeminiUsageMeta,
+  runChatStream,
+  toGeminiContent,
+} from '../../common/assist-chat-core';
+import {
   AssistantAction,
-  AssistantChatMessage,
   AssistantChatRequest,
   AssistantErrorCode,
 } from './assistant.types';
 
-/** Ответ Gemini SDK в части `usageMetadata` (та же форма, что в `AiUsageService`). */
-interface GeminiUsageMeta {
-  promptTokenCount?: number;
-  candidatesTokenCount?: number;
-  thoughtsTokenCount?: number;
-  cachedContentTokenCount?: number;
-}
-
-export type AssistantStreamEvent =
-  | { type: 'token'; t: string }
-  | { type: 'actions'; items: AssistantAction[] }
-  | { type: 'done'; usage: { in: number; out: number; cached: number } }
-  | { type: 'error'; code: AssistantErrorCode; message: string };
-
-/** Таймауты Gemini (ТЗ §4.4): 30 с до первого токена, 90 с на весь ответ. */
-const FIRST_TOKEN_TIMEOUT_MS = 30_000;
-const TOTAL_TIMEOUT_MS = 90_000;
+export type AssistantStreamEvent = ChatStreamEvent<
+  AssistantAction,
+  AssistantErrorCode
+>;
 
 /** §6.5/§4.3 — локализованные тексты кодов ошибки для JSON/SSE `event: error`. */
 const ERROR_MESSAGES: Record<
@@ -131,7 +120,7 @@ export class AssistantService {
     // Найдено доп. аудитом (HIGH) — сигнал разрыва соединения от
     // AssistantController (`req`/`res` `close`), объединяемый ниже с
     // собственным AbortController этого метода (тем же, что уже дёргают
-    // таймауты FIRST_TOKEN_TIMEOUT_MS/TOTAL_TIMEOUT_MS): без него
+    // таймауты 30/90 с, `DEFAULT_CHAT_TIMEOUTS` ядра): без него
     // закрытая клиентом вкладка не останавливала стрим Gemini раньше
     // штатных 30/90 секунд.
     externalSignal?: AbortSignal,
@@ -218,141 +207,55 @@ export class AssistantService {
     );
     const contents = request.messages.map((m) => toGeminiContent(m));
 
-    const controller = new AbortController();
-    if (externalSignal) {
-      if (externalSignal.aborted) controller.abort();
-      else {
-        externalSignal.addEventListener('abort', () => controller.abort(), {
-          once: true,
-        });
-      }
-    }
-    const totalTimer = setTimeout(() => controller.abort(), TOTAL_TIMEOUT_MS);
-    let firstTokenTimer: ReturnType<typeof setTimeout> | null = setTimeout(
-      () => controller.abort(),
-      FIRST_TOKEN_TIMEOUT_MS,
-    );
-
-    let fullText = '';
-    let emittedLength = 0;
-    let delimiterFound = false;
-    let usageMeta: GeminiUsageMeta | null = null;
-
-    try {
-      const stream = await this.genai.models.generateContentStream({
-        model: settings.model,
-        contents,
-        config: {
-          systemInstruction,
-          abortSignal: controller.signal,
-          // Найдено доп. аудитом (HIGH): без явного потолка не было
-          // ничего, что остановило бы аномально длинный ответ раньше
-          // TOTAL_TIMEOUT_MS — 90 с стрима на неограниченный по
-          // токенам вывод, оплаченные как обычный запрос. Спек (§3.2/
-          // §6.2 doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md) целится в
-          // 300–600 токенов и 2–6 предложений на ответ; 2000 — щедрый
-          // запас поверх этого (под `<<<actions>>>`-блок и длинные
-          // ответы на составные вопросы), а не жёсткая обрезка нормального
-          // ответа.
-          maxOutputTokens: 2000,
-        },
-      });
-
-      for await (const chunk of stream) {
-        if (firstTokenTimer) {
-          clearTimeout(firstTokenTimer);
-          firstTokenTimer = null;
-        }
-        const chunkUsage = (chunk as { usageMetadata?: GeminiUsageMeta })
-          .usageMetadata;
-        if (chunkUsage) usageMeta = chunkUsage;
-
-        const piece = chunk.text ?? '';
-        if (!piece) continue;
-        fullText += piece;
-
-        if (!delimiterFound) {
-          const idx = fullText.indexOf(ACTIONS_DELIMITER);
-          if (idx !== -1) {
-            delimiterFound = true;
-            if (idx > emittedLength) {
-              yield { type: 'token', t: fullText.slice(emittedLength, idx) };
-              emittedLength = idx;
-            }
-          } else {
-            const safeLen = Math.max(
-              emittedLength,
-              fullText.length - (ACTIONS_DELIMITER_MAX_PREFIX - 1),
-            );
-            if (safeLen > emittedLength) {
-              yield {
-                type: 'token',
-                t: fullText.slice(emittedLength, safeLen),
-              };
-              emittedLength = safeLen;
-            }
-          }
-        }
-      }
-    } catch (error) {
-      clearTimeout(totalTimer);
-      if (firstTokenTimer) clearTimeout(firstTokenTimer);
-      this.logger.warn(
-        `ассистент: сбой стрима Gemini — ${error instanceof Error ? error.message : String(error)}`,
-      );
-      yield {
-        type: 'error',
-        code: 'upstream',
-        message: assistantErrorMessage('upstream', locale),
-      };
-      // Что успело накопиться — тоже записываем (§4.4 п.7: «клиент
-      // показывает то, что успело прийти»), деньги за неполный ответ уже
-      // потрачены независимо от того, как оборвался стрим.
-      if (fullText.trim()) {
-        await this.recordExchange(
-          request,
-          locale,
-          fullText,
-          usageMeta,
-          clientIpAddr,
-          Date.now() - startedAt,
-          settings.model,
+    // Таймауты Gemini (ТЗ §4.4): 30 с до первого токена, 90 с на весь
+    // ответ (`DEFAULT_CHAT_TIMEOUTS`). Найдено доп. аудитом (HIGH) —
+    // `externalSignal` объединяется с ними в ядре: без него закрытая
+    // клиентом вкладка не останавливала стрим Gemini раньше 30/90 секунд.
+    const genai = this.genai;
+    const outcome = yield* runChatStream<AssistantAction, AssistantErrorCode>({
+      timeouts: DEFAULT_CHAT_TIMEOUTS,
+      externalSignal,
+      openStream: (abortSignal) =>
+        genai.models.generateContentStream({
+          model: settings.model,
+          contents,
+          config: {
+            systemInstruction,
+            abortSignal,
+            // Найдено доп. аудитом (HIGH): без явного потолка не было
+            // ничего, что остановило бы аномально длинный ответ раньше
+            // общего таймаута — 90 с стрима на неограниченный по
+            // токенам вывод, оплаченные как обычный запрос. Спек (§3.2/
+            // §6.2 doc/LANDING-TUTORIAL-AI-CONSULTANT-SPEC.md) целится в
+            // 300–600 токенов и 2–6 предложений на ответ; 2000 — щедрый
+            // запас поверх этого (под `<<<actions>>>`-блок и длинные
+            // ответы на составные вопросы), а не жёсткая обрезка
+            // нормального ответа.
+            maxOutputTokens: 2000,
+          },
+        }),
+      resolveActions: (rawActionsJson) =>
+        this.resolveVideoActions(parseActions(rawActionsJson), locale),
+      upstreamError: (error) => {
+        this.logger.warn(
+          `ассистент: сбой стрима Gemini — ${error instanceof Error ? error.message : String(error)}`,
         );
-      }
-      return;
-    }
-    clearTimeout(totalTimer);
-    if (firstTokenTimer) clearTimeout(firstTokenTimer);
+        return {
+          code: 'upstream',
+          message: assistantErrorMessage('upstream', locale),
+        };
+      },
+    });
 
-    // Хвост, который не попал ни под один чанк-эмит выше (обычная
-    // концовка без разделителя, либо остаток внутри буфера ≤ 13 симв.).
-    if (!delimiterFound && fullText.length > emittedLength) {
-      yield { type: 'token', t: fullText.slice(emittedLength) };
-    }
-
-    const { rawActionsJson } = splitActionsBlock(fullText);
-    const actions = await this.resolveVideoActions(
-      parseActions(rawActionsJson),
-      locale,
-    );
-    if (actions.length > 0) {
-      yield { type: 'actions', items: actions };
-    }
-
-    const usage = {
-      in: usageMeta?.promptTokenCount ?? 0,
-      out:
-        (usageMeta?.candidatesTokenCount ?? 0) +
-        (usageMeta?.thoughtsTokenCount ?? 0),
-      cached: usageMeta?.cachedContentTokenCount ?? 0,
-    };
-    yield { type: 'done', usage };
-
+    // Что успело накопиться при сбое — тоже записываем (§4.4 п.7:
+    // «клиент показывает то, что успело прийти»), деньги за неполный
+    // ответ уже потрачены независимо от того, как оборвался стрим.
+    if (!outcome.ok && !outcome.fullText.trim()) return;
     await this.recordExchange(
       request,
       locale,
-      fullText,
-      usageMeta,
+      outcome.fullText,
+      outcome.usageMeta,
       clientIpAddr,
       Date.now() - startedAt,
       settings.model,
@@ -378,11 +281,11 @@ export class AssistantService {
     const maskedAnswer = maskSensitiveEcho(visibleText).slice(0, 4000);
     const flagged = containsForbiddenPromise(visibleText);
 
-    const inTokens = usageMeta?.promptTokenCount ?? 0;
-    const outTokens =
-      (usageMeta?.candidatesTokenCount ?? 0) +
-      (usageMeta?.thoughtsTokenCount ?? 0);
-    const cachedTokens = usageMeta?.cachedContentTokenCount ?? 0;
+    const {
+      in: inTokens,
+      out: outTokens,
+      cached: cachedTokens,
+    } = chatUsageFromMeta(usageMeta);
     // Своя оценка тем же прайсом, что и AiUsageService.record ниже —
     // строка AssistantExchange.costMicroUsd нужна для ленты/агрегатов
     // §10 независимо от AiUsage (разные таблицы, разное назначение), но
@@ -522,16 +425,4 @@ export class AssistantService {
       a === videoAction ? { ...a, url: resolvedUrl, title: resolvedTitle } : a,
     );
   }
-}
-
-function toGeminiContent(m: AssistantChatMessage): {
-  role: string;
-  parts: { text: string }[];
-} {
-  // Gemini использует роль 'model' для ответа модели, не 'assistant'
-  // (наш собственный контракт §4.3) — перевод один раз, здесь.
-  return {
-    role: m.role === 'user' ? 'user' : 'model',
-    parts: [{ text: m.content }],
-  };
 }

@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Значения тем — бит-в-бит из frontend/src/index.css (там же расчёт
+   контрастов WCAG): светлая — палитра SilverFinance, тёмная — палитра
+   тёмной темы Telegram. */
+:root {
+  color-scheme: light dark;
+  --accent: 3 105 161;
+  --accent-on: 255 255 255;
+  --silver-400: 95 107 129;
+  --silver-500: 84 96 122;
+  --silver-600: 90 100 121;
+  --silver-700: 71 79 96;
+  --silver-800: 47 53 67;
+  --silver-900: 28 32 41;
+  --silver-950: 17 20 26;
+}
+.dark {
+  --accent: 42 171 238;
+  --accent-on: 14 22 33;
+  --silver-400: 143 160 179;
+  --silver-500: 143 160 179;
+  --silver-600: 79 97 120;
+  --silver-700: 59 76 96;
+  --silver-800: 36 51 66;
+  --silver-900: 23 33 43;
+  --silver-950: 14 22 33;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  @apply bg-silver-50 text-silver-900 antialiased font-display;
+  margin: 0;
+  min-width: 320px;
+}
+.dark body {
+  @apply bg-silver-950 text-silver-100;
+}

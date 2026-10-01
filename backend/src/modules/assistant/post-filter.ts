@@ -5,21 +5,15 @@
  * переписывает ответ — он только (1) маскирует контакты/токены, если
  * модель их повторила из вопроса, и (2) помечает `flagged` для ревью в
  * админке (§10), не влияя на то, что уже увидел посетитель.
+ *
+ * Механика (шаблоны маскирования, поиск фраз) — в общем ядре
+ * `assist-chat-core`; здесь — список стоп-фраз лендинга.
  */
+import { containsAnyPhrase } from '../../common/assist-chat-core';
 
-const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-// Телефон — 7+ цифр подряд, с необязательными пробелами/дефисами/скобками
-// между ними, чтобы не маскировать обычные числа («25 секунд», «100 МБ»).
-const PHONE_PATTERN = /(?:\+?\d[\s().-]?){7,}\d/g;
-const TOKEN_PATTERN = /\b(sk-[A-Za-z0-9]{10,}|AIza[A-Za-z0-9_-]{10,})\b/g;
-
-/** Маскирует e-mail/телефоны/похожие на ключи строки в тексте ОТВЕТА модели. */
-export function maskSensitiveEcho(text: string): string {
-  return text
-    .replace(EMAIL_PATTERN, '[e-mail скрыт]')
-    .replace(TOKEN_PATTERN, '[ключ скрыт]')
-    .replace(PHONE_PATTERN, '[телефон скрыт]');
-}
+// Маскирование — как есть из ядра (подписи по умолчанию — лендинга);
+// реэкспорт держит прежний путь для `wizard-guide` и спеков.
+export { maskSensitiveEcho } from '../../common/assist-chat-core';
 
 /**
  * Короткий ручной список — не для НЛП-анализа, а для явных фраз,
@@ -38,6 +32,5 @@ const FORBIDDEN_PROMISES = [
 
 /** true — ответ стоит показать оператору на ревью (§10), не блокирует отправку. */
 export function containsForbiddenPromise(text: string): boolean {
-  const lower = text.toLowerCase();
-  return FORBIDDEN_PROMISES.some((phrase) => lower.includes(phrase));
+  return containsAnyPhrase(text, FORBIDDEN_PROMISES);
 }
