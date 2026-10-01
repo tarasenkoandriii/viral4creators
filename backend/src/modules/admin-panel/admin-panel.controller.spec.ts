@@ -77,7 +77,12 @@ function build() {
   // Этап 135: вкладка «Приглашения» и два действия оператора. `users`
   // здесь больше не заглушка — оба действия возвращают свежую карточку
   // пользователя, и это часть их контракта.
-  const users = { get: jest.fn().mockResolvedValue({ id: 'u1' }) };
+  const users = {
+    get: jest.fn().mockResolvedValue({ id: 'u1' }),
+    briefs: jest.fn().mockResolvedValue([]),
+  };
+  // Аватары плашек пользователя — последний параметр конструктора.
+  const avatars = { avatar: jest.fn().mockResolvedValue(null) };
   const referrals = {
     overview: jest.fn().mockResolvedValue({ window: 'week' }),
     revokeReferral: jest.fn().mockResolvedValue({ revoked: true }),
@@ -155,8 +160,10 @@ function build() {
     tutorialLocales as any,
     speechRecognition as any,
     voiceAssistant as any,
-    // «Квота образов «Я в кадре»» (этап F) — последний параметр.
+    // «Квота образов «Я в кадре»» (этап F).
     personaLookQuota as any,
+    // Аватары плашек пользователя — последний параметр.
+    avatars as any,
   );
   const req = { userId: 'op-1' } as AdminAuthenticatedRequest;
   return {
@@ -175,6 +182,7 @@ function build() {
     speechRecognition,
     voiceAssistant,
     personaLookQuota,
+    avatars,
     req,
   };
 }
@@ -900,5 +908,91 @@ describe('AdminPanelController — /admin/settings/persona-look-quota (этап 
       controller.setPersonaLookQuota(req, { LITE: { day: 1 } }),
     ).rejects.toThrow('не оператор');
     expect(personaLookQuota.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPanelController — плашка пользователя (users/brief, users/:id/avatar)', () => {
+  function response() {
+    const res: any = {
+      statusCode: 200,
+      headers: {} as Record<string, string>,
+      body: undefined as unknown,
+      ended: false,
+    };
+    res.status = jest.fn((code: number) => {
+      res.statusCode = code;
+      return res;
+    });
+    res.setHeader = jest.fn((k: string, v: string) => {
+      res.headers[k] = v;
+    });
+    res.send = jest.fn((b: unknown) => {
+      res.body = b;
+      res.ended = true;
+    });
+    res.end = jest.fn(() => {
+      res.ended = true;
+    });
+    return res;
+  }
+
+  it('users/brief объявлен раньше users/:id — иначе «brief» стал бы id', () => {
+    // Nest сопоставляет маршруты в порядке объявления методов класса.
+    const names = Object.getOwnPropertyNames(AdminPanelController.prototype);
+    expect(names.indexOf('userBriefs')).toBeGreaterThan(-1);
+    expect(names.indexOf('userBriefs')).toBeLessThan(names.indexOf('getUser'));
+  });
+
+  it('users/brief: оператор проверяется, id разобраны (пустые и дубли выкинуты)', async () => {
+    const { controller, adminPanel, users, req } = build();
+    await controller.userBriefs(req, 'a, b,,a');
+    expect(adminPanel.assertOperator).toHaveBeenCalledWith('op-1');
+    expect(users.briefs).toHaveBeenCalledWith(['a', 'b']);
+  });
+
+  it('users/brief: повторённый ?ids= (массив) разбирается, а не 500', async () => {
+    const { controller, users, req } = build();
+    await controller.userBriefs(req, ['a', 'b']);
+    expect(users.briefs).toHaveBeenCalledWith(['a', 'b']);
+  });
+
+  it('users/brief: не оператор — до данных не доходит', async () => {
+    const { controller, adminPanel, users, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new ForbiddenException());
+    await expect(controller.userBriefs(req, 'a')).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(users.briefs).not.toHaveBeenCalled();
+  });
+
+  it('avatar: есть фото — байты, тип и приватный кеш на сутки', async () => {
+    const { controller, avatars, req } = build();
+    const bytes = Buffer.from([0xff, 0xd8]);
+    avatars.avatar.mockResolvedValue({ bytes, type: 'image/jpeg' });
+    const res = response();
+    await controller.userAvatar(req, 'u1', res);
+    expect(avatars.avatar).toHaveBeenCalledWith('u1');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Type']).toBe('image/jpeg');
+    expect(res.headers['Cache-Control']).toBe('private, max-age=86400');
+    expect(res.body).toBe(bytes);
+  });
+
+  it('avatar: фото нет — пустой 404 без исключения (не пишет в лог ошибок)', async () => {
+    const { controller, req } = build();
+    const res = response();
+    await controller.userAvatar(req, 'u1', res);
+    expect(res.statusCode).toBe(404);
+    expect(res.ended).toBe(true);
+    expect(res.send).not.toHaveBeenCalled();
+  });
+
+  it('avatar: не оператор — Telegram не спрашивается', async () => {
+    const { controller, adminPanel, avatars, req } = build();
+    adminPanel.assertOperator.mockRejectedValue(new ForbiddenException());
+    await expect(controller.userAvatar(req, 'u1', response())).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(avatars.avatar).not.toHaveBeenCalled();
   });
 });

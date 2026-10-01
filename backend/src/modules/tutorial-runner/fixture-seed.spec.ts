@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- двойники Prisma */
 import { seedFixtureUser } from './fixture-seed';
 import { DEFAULT_VOICE_MODE, usesOwnVoice } from '../../common/voice-mode';
+import { TUTORIAL_DEMO_PRODUCT } from '../../common/tutorial-demo-product';
 
 function build() {
   const upsert = (id: string) =>
@@ -349,5 +350,40 @@ describe('seedFixtureUser: поздравление под кадр «готов
       expect(call?.[0].update.data).toEqual(expect.any(Object));
       expect(call?.[0].update.status).toEqual(expect.any(String));
     }
+  });
+});
+
+describe('seedFixtureUser: демо-товар в кадре (решение владельца 01.10.2026)', () => {
+  it('товар, бренд и проект — о демо-товаре, и в create, и в update', async () => {
+    const { prisma } = build();
+    await seedFixtureUser(prisma as any, '42');
+    const item = prisma.productItem.upsert.mock.calls[0][0];
+    for (const branch of [item.create, item.update]) {
+      expect(branch).toMatchObject({
+        title: TUTORIAL_DEMO_PRODUCT.title,
+        description: TUTORIAL_DEMO_PRODUCT.description,
+        category: TUTORIAL_DEMO_PRODUCT.category,
+      });
+    }
+    const manifest = prisma.brandManifest.upsert.mock.calls[0][0];
+    expect(manifest.update.title).toBe(TUTORIAL_DEMO_PRODUCT.brand);
+    const adProject = prisma.project.upsert.mock.calls[0][0];
+    expect(adProject.update.title).toContain(TUTORIAL_DEMO_PRODUCT.title);
+  });
+
+  it('в данных рекламного мастера нет служебных «Fixture…/заглушка/фикстурный»', async () => {
+    // Всё это попадает в кадр ролика для посетителей.
+    const { prisma, session } = build();
+    await seedFixtureUser(prisma as any, '42');
+    const seen = JSON.stringify([
+      prisma.productItem.upsert.mock.calls,
+      prisma.brandManifest.upsert.mock.calls,
+      prisma.brandCharacter.upsert.mock.calls,
+      prisma.project.upsert.mock.calls[0],
+      session.mock.calls,
+    ]);
+    expect(seen).not.toMatch(
+      /Fixture (Product|Brand|Model|Presenter|Project)|заглушк|[Фф]икстурн/,
+    );
   });
 });

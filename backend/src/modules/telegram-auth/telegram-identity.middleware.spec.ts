@@ -13,6 +13,7 @@
  */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
+import { createHmac } from 'crypto';
 import { ForbiddenException } from '@nestjs/common';
 import { TelegramIdentityMiddleware } from './telegram-identity.middleware';
 
@@ -198,5 +199,113 @@ describe('TelegramIdentityMiddleware — CSRF (Б-3.1)', () => {
         expect.objectContaining({ where: { telegramId: 'fixture-1' } }),
       );
     });
+  });
+});
+
+describe('TelegramIdentityMiddleware — имя и @username из initData', () => {
+  // Раньше upsert(update: {}) не писал их никогда, и в админке у
+  // пользователей TMA вместо @username висел голый cuid. Но и писать на
+  // каждый запрос нельзя — middleware стоит на всех маршрутах.
+  const BOT = 'bot-token-for-spec';
+  const env = { ...process.env };
+  beforeEach(() => {
+    process.env.TELEGRAM_BOT_TOKEN = BOT;
+  });
+  afterAll(() => {
+    process.env = env;
+  });
+
+  function signedInitData(user: Record<string, unknown>): string {
+    const fields: Record<string, string> = {
+      auth_date: String(Math.floor(Date.now() / 1000)),
+      user: JSON.stringify(user),
+    };
+    const dcs = Object.keys(fields)
+      .sort()
+      .map((k) => `${k}=${fields[k]}`)
+      .join('\n');
+    const secret = createHmac('sha256', 'WebAppData').update(BOT).digest();
+    const hash = createHmac('sha256', secret).update(dcs).digest('hex');
+    return new URLSearchParams({ ...fields, hash }).toString();
+  }
+
+  function run(
+    stored: Record<string, unknown>,
+    tgUser: Record<string, unknown>,
+  ) {
+    const { mw, prisma } = build(null);
+    prisma.user.upsert.mockResolvedValue({ id: 'usr_tg', ...stored });
+    (prisma.user as any).update = jest.fn().mockResolvedValue({});
+    const req = request('GET', undefined, undefined, {
+      'x-telegram-init-data': signedInitData(tgUser),
+    });
+    const next = jest.fn();
+    return { done: mw.use(req, {} as any, next), prisma, req, next };
+  }
+
+  it('совпадает с сохранённым — в базу не пишет', async () => {
+    const { done, prisma, req } = run(
+      { firstName: 'Аня', username: 'anya' },
+      { id: 777, first_name: 'Аня', username: 'anya' },
+    );
+    await done;
+    expect(req.telegramUserId).toBe('usr_tg');
+    expect((prisma.user as any).update).not.toHaveBeenCalled();
+  });
+
+  it('новый пользователь заводится сразу с именем — без второй записи', async () => {
+    const { done, prisma } = run(
+      { firstName: 'Аня', username: 'anya' },
+      { id: 777, first_name: 'Аня', username: 'anya' },
+    );
+    await done;
+    expect(prisma.user.upsert).toHaveBeenCalledWith({
+      where: { telegramId: '777' },
+      update: {},
+      create: { telegramId: '777', firstName: 'Аня', username: 'anya' },
+    });
+  });
+
+  it('пустые в базе — дописывает оба поля', async () => {
+    const { done, prisma } = run(
+      { firstName: null, username: null },
+      { id: 777, first_name: 'Аня', username: 'anya' },
+    );
+    await done;
+    expect((prisma.user as any).update).toHaveBeenCalledWith({
+      where: { id: 'usr_tg' },
+      data: { firstName: 'Аня', username: 'anya' },
+    });
+  });
+
+  it('поменялся только @username — пишет только его; убранный — null', async () => {
+    const { done, prisma } = run(
+      { firstName: 'Аня', username: 'old' },
+      { id: 777, first_name: 'Аня' },
+    );
+    await done;
+    expect((prisma.user as any).update).toHaveBeenCalledWith({
+      where: { id: 'usr_tg' },
+      data: { username: null },
+    });
+  });
+
+  it('сбой записи профиля не отнимает личность и не роняет запрос', async () => {
+    const { mw, prisma } = build(null);
+    prisma.user.upsert.mockResolvedValue({
+      id: 'usr_tg',
+      firstName: null,
+      username: null,
+    });
+    (prisma.user as any).update = jest
+      .fn()
+      .mockRejectedValue(new Error('db down'));
+    const req = request('GET', undefined, undefined, {
+      'x-telegram-init-data': signedInitData({ id: 777, first_name: 'Аня' }),
+    });
+    const next = jest.fn();
+    await mw.use(req, {} as any, next);
+    expect(req.telegramUserId).toBe('usr_tg');
+    expect(next).toHaveBeenCalled();
   });
 });

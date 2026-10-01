@@ -2,7 +2,11 @@
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AdminUsersService } from './admin-users.service';
+import {
+  AdminUsersService,
+  parseBriefIds,
+  USER_BRIEF_MAX_IDS,
+} from './admin-users.service';
 
 const counts = {
   sessions: 3,
@@ -594,5 +598,74 @@ describe('AdminUsersService — операции вне проекта (этап
     expect(detail.freeOutsideProject).toBe(true);
     expect(detail.testAccessUntil).toEqual(until);
     expect(detail.testDailyLimitUsd).toBe(7);
+  });
+});
+
+describe('parseBriefIds — ?ids= плашек админки', () => {
+  it('пустые и повторы выкидываются, пробелы срезаются, порядок первого появления', () => {
+    expect(parseBriefIds(' b,a,,b , a,')).toEqual(['b', 'a']);
+  });
+
+  it('?ids=a&ids=b,c (массив из query) — склеивается, а не падает', () => {
+    expect(parseBriefIds(['a', 'b,c', 'a'])).toEqual(['a', 'b', 'c']);
+  });
+
+  it('нет параметра — пустой список, не ошибка', () => {
+    expect(parseBriefIds(undefined)).toEqual([]);
+    expect(parseBriefIds('')).toEqual([]);
+  });
+
+  it('ровно потолок — можно; повторы сверх потолка не считаются', () => {
+    const ids = Array.from({ length: USER_BRIEF_MAX_IDS }, (_, i) => `u${i}`);
+    expect(parseBriefIds([...ids, ...ids].join(','))).toHaveLength(
+      USER_BRIEF_MAX_IDS,
+    );
+  });
+
+  it('больше потолка — 400 по-русски', () => {
+    const ids = Array.from(
+      { length: USER_BRIEF_MAX_IDS + 1 },
+      (_, i) => `u${i}`,
+    );
+    expect(() => parseBriefIds(ids.join(','))).toThrow(BadRequestException);
+    expect(() => parseBriefIds(ids.join(','))).toThrow(/не больше 200/);
+  });
+});
+
+describe('AdminUsersService.briefs', () => {
+  const brief = (id: string) => ({
+    id,
+    telegramId: `tg-${id}`,
+    username: null,
+    firstName: null,
+    isOperator: false,
+    isTestUser: false,
+  });
+
+  it('порядок — как в запросе, неизвестные просто отсутствуют', async () => {
+    const { svc, prisma } = build();
+    // База отдаёт в своём порядке и без неизвестного `zz`.
+    prisma.user.findMany.mockResolvedValue([brief('b'), brief('a')]);
+    const out = await svc.briefs(['a', 'zz', 'b']);
+    expect(out.map((r) => r.id)).toEqual(['a', 'b']);
+    const arg = prisma.user.findMany.mock.calls[0][0];
+    expect(arg.where).toEqual({ id: { in: ['a', 'zz', 'b'] } });
+    // Узкая выборка: плашке не нужны расходы и счётчики.
+    expect(Object.keys(arg.select).sort()).toEqual(
+      [
+        'firstName',
+        'id',
+        'isOperator',
+        'isTestUser',
+        'telegramId',
+        'username',
+      ].sort(),
+    );
+  });
+
+  it('пустой список — без запроса в базу', async () => {
+    const { svc, prisma } = build();
+    expect(await svc.briefs([])).toEqual([]);
+    expect(prisma.user.findMany).not.toHaveBeenCalled();
   });
 });

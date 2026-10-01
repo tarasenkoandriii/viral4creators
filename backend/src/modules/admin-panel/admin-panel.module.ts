@@ -27,6 +27,7 @@ import { AdminReferralsService } from './admin-referrals.service';
 import { InviteModule } from '../invite/invite.module';
 import { AdminTesterInvitesService } from './admin-tester-invites.service';
 import { AdminTestTicketsService } from './admin-test-tickets.service';
+import { AdminUserAvatarService } from './admin-user-avatar.service';
 
 @Module({
   // StorageModule здесь больше не нужен (этап 89): удаление сессии
@@ -76,6 +77,8 @@ import { AdminTestTicketsService } from './admin-test-tickets.service';
     ProviderUsageService,
     AdminPanelService,
     AdminUsersService,
+    // Аватары для плашек пользователя в админке — кеш в памяти процесса.
+    AdminUserAvatarService,
     AdminBillingService,
     // AdminMarketingService/AdminCatalogBatchService/AdminAbTestService/
     // AdminFeedImportService — только PrismaService, отдельного модуля не

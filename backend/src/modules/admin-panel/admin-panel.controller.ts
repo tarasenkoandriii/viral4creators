@@ -9,8 +9,10 @@ import {
   Put,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ArrayMaxSize,
   IsArray,
@@ -39,7 +41,8 @@ import {
   type ReferralsWindow,
 } from './admin-referrals.service';
 import { LiteUnlockService } from '../invite/lite-unlock.service';
-import { AdminUsersService } from './admin-users.service';
+import { AdminUsersService, parseBriefIds } from './admin-users.service';
+import { AdminUserAvatarService } from './admin-user-avatar.service';
 import { AdminBillingService } from './admin-billing.service';
 import { AdminMarketingService } from './admin-marketing.service';
 import { AdminCatalogBatchService } from './admin-catalog-batch.service';
@@ -586,6 +589,8 @@ export class AdminPanelController {
     private readonly voiceAssistantSettings: AdminVoiceAssistantSettingsService,
     // «Квота образов «Я в кадре»» (этап F, 30.09.2026) — в конец по той же причине.
     private readonly personaLookQuotaSettings: AdminPersonaLookQuotaSettingsService,
+    // Аватары плашек пользователя (UserBadge) — в конец по той же причине.
+    private readonly avatars: AdminUserAvatarService,
   ) {}
 
   @Get('sessions')
@@ -951,6 +956,47 @@ export class AdminPanelController {
   }
 
   // ── Пользователи (ТЗ §25, этап 30) ───────────────────────────────────
+
+  /**
+   * GET /admin/users/brief?ids=a,b — кто стоит за id в строках админки
+   * (плашка `UserBadge`: @username, имя, аватар вместо голого cuid).
+   * Объявлен ДО `users/:id`: Nest сопоставляет маршруты в порядке
+   * объявления, и ниже `brief` стал бы id пользователя.
+   */
+  @Get('users/brief')
+  async userBriefs(
+    @Req() req: AdminAuthenticatedRequest,
+    @Query('ids') ids?: string | string[],
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.users.briefs(parseBriefIds(ids));
+  }
+
+  /**
+   * GET /admin/users/:id/avatar — байты аватара из Telegram. `@Res()`
+   * без passthrough: общий `ResponseInterceptor` иначе завернул бы
+   * картинку в JSON-конверт. «Нет фото» — пустой 404 прямо здесь, а не
+   * исключением: у большинства пользователей фото нет или оно скрыто, и
+   * фильтр исключений писал бы на каждую плашку строку в лог.
+   */
+  @Get('users/:id/avatar')
+  async userAvatar(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    await this.adminPanel.assertOperator(req.userId);
+    const photo = await this.avatars.avatar(id);
+    if (!photo) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader('Content-Type', photo.type);
+    // private: картинка отдана под сессией оператора, общим кешам её
+    // держать незачем; сутки — как TTL кеша на сервере.
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.send(photo.bytes);
+  }
 
   @Get('users')
   async listUsers(

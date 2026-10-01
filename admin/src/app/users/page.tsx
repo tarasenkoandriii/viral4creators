@@ -15,7 +15,8 @@
 // манифесты и заявки, а разборы библиотеки оставляет без автора — такое
 // не делают в один клик из списка.
 
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { adjustCredit, cancelSubscription, getUser, listUsers, patchUser } from '../../lib/endpoints';
 import {
   FREE_SCENARIOS,
@@ -32,6 +33,8 @@ import type {
 import { ApiRequestError } from '../../lib/admin-api';
 import { chars, operationLabel, usd } from '../../lib/money';
 import { useAdminAuth } from '../../lib/admin-auth-context';
+import { userBriefs } from '../../lib/user-briefs';
+import { UserAvatar } from '../../components/UserBadge';
 
 const PLAN_LABEL: Record<PlanId, string> = {
   LITE: 'Lite',
@@ -74,10 +77,28 @@ function plural(n: number, one: string, few: string, many: string): string {
   return `${n} ${many}`;
 }
 
+// useSearchParams в app router требует границу Suspense, иначе статическая
+// сборка падает на этой странице («should be wrapped in a suspense
+// boundary»). Страница целиком клиентская, так что fallback — просто
+// пустота на мгновение до первой отрисовки.
 export default function UsersPage() {
+  return (
+    <Suspense fallback={null}>
+      <UsersPageInner />
+    </Suspense>
+  );
+}
+
+function UsersPageInner() {
   const { me } = useAdminAuth();
-  const [q, setQ] = useState('');
-  const [query, setQuery] = useState('');
+  // `?q=` из адреса: сюда ведут бейджи пользователя с других экранов
+  // (components/UserBadge.tsx) и «Расходы». Начальное значение — сразу из
+  // адреса (первая загрузка одна и уже с фильтром), а смена адреса без
+  // перемонтирования (оператор уже на /users и кликает бейдж в шапке,
+  // /users?q=A → /users?q=B) подхватывается эффектом ниже.
+  const urlQ = (useSearchParams().get('q') ?? '').trim();
+  const [q, setQ] = useState(urlQ);
+  const [query, setQuery] = useState(urlQ);
   const [plan, setPlan] = useState('');
   const [operatorsOnly, setOperatorsOnly] = useState(false);
   const [blockedOnly, setBlockedOnly] = useState(false);
@@ -88,6 +109,16 @@ export default function UsersPage() {
   const [busy, setBusy] = useState<string | null>(null);
   /** Чей блок тестового доступа раскрыт: он нужен единицам строк. */
   const [testPanel, setTestPanel] = useState<string | null>(null);
+  // Сравнение с прошлым значением адреса, а не с `query`: поиск, набранный
+  // руками, адрес не меняет — и не должен им же перетираться.
+  const lastUrlQ = useRef(urlQ);
+  useEffect(() => {
+    if (urlQ === lastUrlQ.current) return;
+    lastUrlQ.current = urlQ;
+    setQ(urlQ);
+    setQuery(urlQ);
+    setPage(1);
+  }, [urlQ]);
 
   // Этап 50 (В-5.10, В-5.12, В-5.13): поколение запроса — устаревший
   // ответ (страница 2 пришла позже страницы 3) не затирает свежий; ошибка
@@ -106,6 +137,9 @@ export default function UsersPage() {
       pageSize: 20,
     })
       .then((r) => {
+        // Список уже знает имена — кладём их в общий кеш подписей, чтобы
+        // кружок-аватар в строке не спрашивал `users/brief` заново.
+        userBriefs().prime(r.items);
         if (gen === loadGen.current) setResult(r);
       })
       .catch((e) => {
@@ -364,6 +398,7 @@ export default function UsersPage() {
                   <Fragment key={u.id}>
                   <tr style={{ borderTop: '1px solid #333' }}>
                     <td style={{ padding: '8px 0' }}>
+                      <UserAvatar userId={u.id} />{' '}
                       <strong>{displayName(u)}</strong>
                       {u.isOperator && (
                         <span className="badge-status badge-status-ok" style={{ marginLeft: 8 }}>

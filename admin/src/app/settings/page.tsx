@@ -65,6 +65,7 @@ import type {
   SetAiGuideSettingsInput,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 const PROVIDER_LABEL: Record<VoiceoverProviderKey, string> = {
   elevenlabs: 'ElevenLabs',
@@ -1614,7 +1615,8 @@ function FixtureSeedCard() {
       {result && (
         <div style={{ marginTop: 12 }}>
           <p style={{ marginBottom: 6 }}>
-            <span className="badge-status badge-status-ok">Готово</span> userId {result.userId}
+            <span className="badge-status badge-status-ok">Готово</span>{' '}
+            <UserBadge userId={result.userId} />
           </p>
           <ul className="muted" style={{ fontSize: 12, margin: 0, paddingLeft: 18 }}>
             {result.log.map((line) => (

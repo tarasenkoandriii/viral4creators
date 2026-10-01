@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { getSession, deleteSession } from '../../../lib/endpoints';
 import type { SessionDetail } from '../../../lib/types';
 import { ApiRequestError } from '../../../lib/admin-api';
+import UserBadge from '../../../components/UserBadge';
 import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { AudioTracksPanel } from '../../../components/AudioTracksPanel';
 
@@ -145,7 +146,12 @@ export default function SessionDetailPage() {
       <p className="muted" style={{ marginBottom: 20 }}>
         Статус: {session.status} · создана {new Date(session.createdAt).toLocaleString('ru-RU')} · последняя
         активность {new Date(session.lastActivityAt).toLocaleString('ru-RU')}
-        {session.userId && <> · пользователь {session.userId}</>}
+        {session.userId && (
+          <>
+            {' '}
+            · пользователь <UserBadge userId={session.userId} />
+          </>
+        )}
       </p>
 
       {session.productName && (

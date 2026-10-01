@@ -215,6 +215,55 @@ interface UserRowWithCounts {
   };
 }
 
+/**
+ * Кто стоит за id в строке админки (плашка `UserBadge`). Намеренно узкая
+ * выборка, а не `AdminUserSummary`: плашек на экране десятки, и каждая
+ * сводка тянула бы расходы и счётчики, которые в подписи не нужны.
+ */
+export interface AdminUserBrief {
+  id: string;
+  telegramId: string;
+  username: string | null;
+  firstName: string | null;
+  isOperator: boolean;
+  isTestUser: boolean;
+}
+
+/**
+ * Потолок id за один запрос `users/brief`. Экран админки со всеми
+ * строками страницы укладывается с запасом; больше — значит клиент
+ * собирает id не с экрана, а откуда-то ещё, и тогда отказ полезнее
+ * молчаливой обрезки (обрезка тихо оставила бы часть плашек без имени).
+ */
+export const USER_BRIEF_MAX_IDS = 200;
+
+/**
+ * `?ids=a,b,,a` → `['a','b']`. Пустые и повторы отбрасываются ДО
+ * проверки потолка: загрузчик админки склеивает id из разных
+ * компонентов, и один и тот же автор в двадцати строках — норма, а не
+ * повод для 400.
+ */
+export function parseBriefIds(raw: string | string[] | undefined): string[] {
+  // `?ids=a&ids=b` Express отдаёт массивом — склеиваем, иначе `.split`
+  // упал бы 500-й вместо разбора.
+  const ids = [
+    ...new Set(
+      [raw ?? '']
+        .flat()
+        .join(',')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (ids.length > USER_BRIEF_MAX_IDS) {
+    throw new BadRequestException(
+      `Слишком много пользователей за один запрос: ${ids.length}, можно не больше ${USER_BRIEF_MAX_IDS}`,
+    );
+  }
+  return ids;
+}
+
 @Injectable()
 export class AdminUsersService {
   private readonly logger = new Logger(AdminUsersService.name);
@@ -311,6 +360,33 @@ export class AdminUsersService {
       operators,
       blocked,
     };
+  }
+
+  /**
+   * Краткие карточки для плашек. Неизвестные id просто отсутствуют:
+   * id в строках админки бывает и служебным, и от удалённого
+   * пользователя — ошибка на весь пакет из-за одного такого оставила бы
+   * без имён весь экран. Порядок — как в запросе, чтобы ответ можно
+   * было сверять глазами с тем, что просили.
+   */
+  async briefs(ids: string[]): Promise<AdminUserBrief[]> {
+    if (!ids.length) return [];
+    const rows: AdminUserBrief[] = await this.prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        telegramId: true,
+        username: true,
+        firstName: true,
+        isOperator: true,
+        isTestUser: true,
+      },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return ids.flatMap((id) => {
+      const r = byId.get(id);
+      return r ? [r] : [];
+    });
   }
 
   async get(id: string): Promise<AdminUserDetail> {

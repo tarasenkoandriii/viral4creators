@@ -36,6 +36,7 @@ import { GenerationStatus } from '../../common/types/generation.types';
 import { AnalysisStatus } from '../../common/types/analysis.types';
 import { SessionStatus } from '../../common/types/session.types';
 import { DEFAULT_VOICE_MODE } from '../../common/voice-mode';
+import { TUTORIAL_DEMO_PRODUCT as DEMO } from '../../common/tutorial-demo-product';
 import { greetingBriefSnapshotFrom } from '../project-session/snapshot';
 
 export const FIXTURE_IDS = {
@@ -242,41 +243,60 @@ export async function seedFixtureUser(
     );
   }
 
+  // Тексты фикстуры попадают в кадр обучающих роликов для посетителей
+  // — поэтому они о демо-товаре (`common/tutorial-demo-product.ts`), а
+  // не «заглушка», и обновляются при КАЖДОМ сидировании: строки с
+  // фиксированными id принадлежат фикстуре, ничьих данных это не трогает.
+  const manifestText = {
+    title: DEMO.brand,
+    styleNotes:
+      'Динамичные ночные планы, блики на кузове, уверенный премиальный тон.',
+    voiceNotes: 'Спокойный уверенный голос, без спешки.',
+  };
   const manifest = await prisma.brandManifest.upsert({
     where: { id: FIXTURE_IDS.manifest },
-    update: { userId: user.id },
+    update: { userId: user.id, ...manifestText },
     create: {
       id: FIXTURE_IDS.manifest,
       userId: user.id,
-      title: 'Fixture Brand',
-      styleNotes:
-        'Фикстурный манифест бренда для автоматического исполнителя сценариев обучающих видео (этап 97).',
-      voiceNotes: 'Нейтральный, дружелюбный тон.',
+      ...manifestText,
     },
   });
   log.push(`Манифест бренда: ${manifest.id}`);
 
+  // Без фото — сценарии проверяют, что экран выбора персонажа
+  // открывается и показывает карточку, не саму картинку.
+  const characterText = {
+    label: 'Водитель',
+    description: 'Мужчина 30–40 лет в тёмной куртке, ночной город.',
+  };
   const character = await prisma.brandCharacter.upsert({
     where: { id: FIXTURE_IDS.character },
-    update: { brandManifestId: manifest.id },
+    update: { brandManifestId: manifest.id, ...characterText },
     create: {
       id: FIXTURE_IDS.character,
       brandManifestId: manifest.id,
-      label: 'Fixture Model',
-      description:
-        'Персонаж-заглушка без фото — сценарии проверяют, что экран выбора персонажа открывается и показывает карточку, не саму картинку.',
+      ...characterText,
     },
   });
   log.push(`Персонаж бренда: ${character.id}`);
 
+  // Пометка «демо» — чтобы в админке фикстурный проект не путался с
+  // настоящим «BMW viral3» того же аккаунта.
+  const DEMO_PROJECT_TITLE = `${DEMO.title} · демо`;
   const project = await prisma.project.upsert({
     where: { id: FIXTURE_IDS.project },
-    update: { userId: user.id, brandManifestId: manifest.id, ...GUIDE_OFF },
+    update: {
+      userId: user.id,
+      brandManifestId: manifest.id,
+      title: DEMO_PROJECT_TITLE,
+      ...GUIDE_OFF,
+    },
     create: {
       id: FIXTURE_IDS.project,
       userId: user.id,
       type: ProjectType.SINGLE,
-      title: 'Fixture Project',
+      title: DEMO_PROJECT_TITLE,
       countryCode: 'UA',
       currency: currencyForCountry('UA') ?? 'UAH',
       brandManifestId: manifest.id,
@@ -284,16 +304,18 @@ export async function seedFixtureUser(
   });
   log.push(`Проект: ${project.id}`);
 
+  const itemText = {
+    title: DEMO.title,
+    description: DEMO.description,
+    category: DEMO.category,
+  };
   const item = await prisma.productItem.upsert({
     where: { id: FIXTURE_IDS.item },
-    update: { projectId: project.id },
+    update: { projectId: project.id, ...itemText },
     create: {
       id: FIXTURE_IDS.item,
       projectId: project.id,
-      title: 'Fixture Product',
-      description:
-        'Товар-заглушка для регрессионных сценариев обучающих видео — без фото.',
-      category: 'demo',
+      ...itemText,
     },
   });
   log.push(`Товар: ${item.id}`);
@@ -387,15 +409,15 @@ export async function seedFixtureUser(
     analyzedAt: new Date().toISOString(),
     status: AnalysisStatus.COMPLETE,
     sceneBreakdown:
-      'Фикстурный разбор референса для регрессионных сценариев обучалки. ' +
-      'Сцена 1: крупный план товара на столе. Сцена 2: человек берёт товар в руки. ' +
-      'Сцена 3: товар в использовании, финальный кадр с логотипом.',
+      'Ролик для автомобиля: ночной город, динамичный монтаж. ' +
+      'Сцена 1: крупный план фар в ночном городе. Сцена 2: водитель садится в салон. ' +
+      'Сцена 3: машина уезжает по проспекту, финальный кадр с логотипом.',
     characters: [
       {
         id: 'c1',
-        label: 'Fixture Presenter',
+        label: 'Водитель',
         role: 'presenter',
-        appearance: 'Человек средних лет, светлая рубашка, нейтральный фон.',
+        appearance: 'Мужчина 30–40 лет, тёмная куртка, ночной город.',
         prominence: 'main' as const,
         previewAt: null,
         previewUrl: null,
@@ -406,7 +428,7 @@ export async function seedFixtureUser(
         id: 's1',
         start: 0,
         end: 3,
-        title: 'Крупный план товара на столе',
+        title: 'Крупный план фар в ночном городе',
         previewAt: null,
         previewUrl: null,
       },
@@ -414,7 +436,7 @@ export async function seedFixtureUser(
         id: 's2',
         start: 3,
         end: 6,
-        title: 'Человек берёт товар в руки',
+        title: 'Водитель садится в салон',
         previewAt: null,
         previewUrl: null,
       },
@@ -427,12 +449,13 @@ export async function seedFixtureUser(
    * при `s.prompt?.approvedAt` — без него до экрана запуска рендера
    * не дойти ни кликом, ни как-либо ещё.
    */
+  const DEMO_PROMPT =
+    'Ночной город, крупный план фар BMW, водитель садится в салон, купе уезжает по проспекту; финальный кадр с логотипом.';
   const approvedPrompt = (sessionId: string) => ({
     promptId: `${sessionId}-prompt`,
-    generatedText:
-      'Фикстурный промпт для регрессионных сценариев обучающих видео.',
-    finalText: 'Фикстурный промпт для регрессионных сценариев обучающих видео.',
-    characterCount: 62,
+    generatedText: DEMO_PROMPT,
+    finalText: DEMO_PROMPT,
+    characterCount: DEMO_PROMPT.length,
     generatedAt: new Date().toISOString(),
     approvedAt: new Date().toISOString(),
     moderationStatus: 'approved',

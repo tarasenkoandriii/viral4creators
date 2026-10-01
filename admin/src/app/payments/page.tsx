@@ -16,6 +16,7 @@ import type {
   PaymentStatus,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 const STATUS_LABEL: Record<PaymentStatus, string> = {
   PENDING: 'ждёт оплаты',
@@ -168,7 +169,9 @@ export default function PaymentsPage() {
               <tbody>
                 {result.items.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.telegramId}</td>
+                    <td>
+                      <UserBadge userId={row.userId} />
+                    </td>
                     <td>{purposeLabel(row)}</td>
                     <td>{METHOD_LABEL[row.method]}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>{amountLabel(row)}</td>

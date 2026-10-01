@@ -110,10 +110,20 @@ export class AdminAuthService {
 
     // Тот же telegramId-неймспейс, что у TMA-пользователей — вход через
     // админку не заводит параллельного "admin-пользователя".
+    //
+    // Имя и @username пишем при каждом входе — так же, как постоянный
+    // вход виджетом (telegram-login.service.ts): входы редки, а без этого
+    // оператор, пришедший через TMA, в плашках админки навсегда
+    // оставался голым cuid. Отсутствующее поле — null: убранный
+    // @username не должен висеть под человеком.
+    const profile = {
+      firstName: parsed.firstName ?? null,
+      username: parsed.username ?? null,
+    };
     const user = await this.prisma.user.upsert({
       where: { telegramId: String(parsed.id) },
-      update: {},
-      create: { telegramId: String(parsed.id) },
+      update: profile,
+      create: { telegramId: String(parsed.id), ...profile },
     });
 
     const token = randomBytes(32).toString('hex');

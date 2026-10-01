@@ -665,6 +665,21 @@ export interface AdminUserSummary {
   subscription: AdminUserSubscription | null;
 }
 
+/**
+ * Короткая карточка пользователя для подписи рядом с id на любом экране
+ * (`GET /admin/users/brief?ids=…`). Неизвестные id в ответе просто
+ * отсутствуют. `AdminUserSummary` структурно её надмножество — списком
+ * пользователей можно заранее наполнить кеш подписей.
+ */
+export interface AdminUserBrief {
+  id: string;
+  telegramId: string;
+  username: string | null;
+  firstName: string | null;
+  isOperator: boolean;
+  isTestUser: boolean;
+}
+
 export interface AdminUserListResult {
   items: AdminUserSummary[];
   total: number;

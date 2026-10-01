@@ -21,6 +21,7 @@ import { getCosts } from '../../lib/endpoints';
 import type { CostBucket, CostReport } from '../../lib/types';
 import { chars, operationLabel, share, usd } from '../../lib/money';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 function errText(e: unknown): string {
   return e instanceof ApiRequestError ? e.message : 'Не удалось выполнить запрос';
@@ -284,9 +285,7 @@ export default function CostsPage() {
                 {report.top.map((u) => (
                   <tr key={u.userId} style={{ borderTop: '1px solid #333' }}>
                     <td style={{ padding: '6px 0' }}>
-                      <a href={`/users?q=${encodeURIComponent(u.telegramId ?? '')}`}>
-                        {u.username ? `@${u.username}` : (u.telegramId ?? u.userId)}
-                      </a>
+                      <UserBadge userId={u.userId} />
                       {u.isBlocked && (
                         <span className="critical" style={{ marginLeft: 8, fontSize: 12 }}>
                           заблокирован

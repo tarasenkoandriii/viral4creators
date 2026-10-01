@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { listSessions, retrySessionGeneration, pollSessionStatus, runVideoAudit, applyFixAndRetry, getSessionVersions } from '../../lib/endpoints';
 import type { SessionListResult, SessionSortKey, SortDirection, AuditStateView, VideoVersion } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 const STATUSES = [
   '',
@@ -338,10 +339,11 @@ export default function SessionsPage() {
 
   const ownerLabel = (s: { ownerPlan: string | null; ownerUsername: string | null; ownerFirstName: string | null; userId: string | null }) => {
     if (!s.userId) return <span className="muted">аноним</span>;
-    const name = s.ownerUsername ? `@${s.ownerUsername}` : s.ownerFirstName ?? s.userId.slice(0, 8);
+    // Имя владельца приходит со списком, но аватара в нём нет — бейдж
+    // добирает его одним батч-запросом на всю страницу.
     return (
       <>
-        {name}
+        <UserBadge userId={s.userId} copy={false} />
         {s.ownerPlan && <span className="muted"> · {s.ownerPlan}</span>}
       </>
     );

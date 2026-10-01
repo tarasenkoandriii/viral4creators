@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './admin-api';
+import { apiGet, apiGetBlob, apiPost, apiPatch, apiPut, apiDelete } from './admin-api';
 import type {
   AudioTracksResult,
   AudioTrackView,
@@ -15,6 +15,7 @@ import type {
   ClientSiteDraftRow,
   ClientSiteDraftStatus,
   AdminLibraryEntry,
+  AdminUserBrief,
   AdminUserDetail,
   AdminUserListResult,
   CostReport,
@@ -578,6 +579,17 @@ export function listUsers(params: {
 
 export function getUser(id: string) {
   return apiGet<AdminUserDetail>(`/admin/users/${id}`);
+}
+
+/** Подписи для id пользователей на любом экране (до 200 id за раз).
+ *  Батчит и кеширует `lib/user-briefs.ts` — напрямую из страниц не звать. */
+export function getUserBriefs(ids: string[]) {
+  return apiGet<AdminUserBrief[]>('/admin/users/brief', { ids: ids.join(',') });
+}
+
+/** Аватар из Telegram; null — фото нет (бэкенд ответил 404). */
+export function getUserAvatar(id: string) {
+  return apiGetBlob(`/admin/users/${encodeURIComponent(id)}/avatar`);
 }
 
 export function patchUser(

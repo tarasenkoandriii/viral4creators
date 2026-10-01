@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { listAbTests } from '../../lib/endpoints';
 import type { AdminAbTestListResult } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 function errText(e: unknown): string {
   return e instanceof ApiRequestError ? e.message : 'Не удалось выполнить запрос';
@@ -88,8 +89,8 @@ export default function AbTestsPage() {
                     <td className="muted" style={{ fontFamily: 'monospace', fontSize: 12 }}>
                       {row.projectId}
                     </td>
-                    <td className="muted" style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                      {row.userId}
+                    <td className="muted" style={{ fontSize: 12 }}>
+                      <UserBadge userId={row.userId} />
                     </td>
                     <td className="muted" style={{ fontFamily: 'monospace', fontSize: 12 }}>
                       {row.sourceSessionId}

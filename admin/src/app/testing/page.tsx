@@ -37,6 +37,7 @@ import {
   type FreeScenario,
 } from '../../lib/free-scenarios';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 const STATUS_LABEL: Record<TicketStatus, string> = {
   NEW: 'Новая',
@@ -421,8 +422,7 @@ export default function TestingPage() {
                 {progress.map((p) => (
                   <tr key={p.userId}>
                     <td>
-                      {p.label}{' '}
-                      <span className="muted">#{p.telegramId}</span>
+                      <UserBadge userId={p.userId} />
                       {!p.accessActive && (
                         <div className="muted" style={{ fontSize: 12 }}>
                           доступ истёк {date(p.accessUntil)}
@@ -510,7 +510,9 @@ export default function TestingPage() {
                     style={{ cursor: 'pointer' }}
                   >
                     <td>#{t.number}</td>
-                    <td>{t.tester.label}</td>
+                    <td>
+                      <UserBadge userId={t.tester.id} copy={false} />
+                    </td>
                     <td className="muted">
                       {t.source === 'BOT' ? 'бот' : 'приложение'}
                       {t.attachments > 0 && ` · 📎${t.attachments}`}
@@ -544,7 +546,7 @@ export default function TestingPage() {
               #{detail.number} — {STATUS_LABEL[detail.status]}
             </h2>
             <span className="muted">
-              {detail.tester.label}, {date(detail.createdAt)}
+              <UserBadge userId={detail.tester.id} />, {date(detail.createdAt)}
             </span>
             <button
               type="button"

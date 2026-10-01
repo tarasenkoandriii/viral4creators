@@ -290,6 +290,8 @@
 | `GET /api/admin/sessions` | оператор | список сессий |
 | `GET/DELETE /api/admin/sessions/:id` | оператор | сессия / удалить — с этапа 89 тот же софт-delete через `SessionService.softDeleteSession`, что у пользовательского `DELETE /api/sessions/:id` выше |
 | `GET /api/admin/users?q=&plan=&operators=1&blocked=1&page=&pageSize=` | оператор | пользователи: режим, права, счётчики активности; сводка `byPlan` — по всей базе (§25) |
+| `GET /api/admin/users/brief?ids=a,b,…` | оператор | краткие карточки для бейджа пользователя в админке (01.10.2026): `id`, `telegramId`, `username`, `firstName`, `isOperator`, `isTestUser`; до 200 id, пустые и дубли отбрасываются, больше — 400; неизвестные id просто отсутствуют; порядок — как в запросе |
+| `GET /api/admin/users/:id/avatar` | оператор | фото профиля Telegram через Bot API (`getUserProfilePhotos` → `getFile`), байты `image/jpeg`, `Cache-Control: private, max-age=86400`; нет фото / скрыто / нечисловой `telegramId` — пустой 404. Токен бота клиенту не уходит; кеш в памяти процесса 24 ч |
 | `GET /api/admin/users/:id` | оператор | карточка пользователя + 10 последних сессий + баланс кредитов и подписка (§41, этап 62); расход по операциям с числом символов синтеза и подписи операций (`operationLabels` — своей копии словаря у админки нет; этап F ТЗ docs-tz/TZ-Tutorial-Video-Voiced.md) |
 | `PATCH /api/admin/users/:id` | оператор | режим, флаг оператора, блокировка (`isBlocked`, `blockedReason`); снять оператора или заблокировать САМОГО СЕБЯ нельзя (403) |
 | `POST /api/admin/users/:id/cancel-subscription` | оператор | отменить подписку пользователя (`cancelAtPeriodEnd: true`, без возврата денег) — тот же эффект, что кнопка «Отменить подписку» в TMA (§41, этап 62) |

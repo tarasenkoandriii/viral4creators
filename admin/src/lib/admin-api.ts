@@ -94,6 +94,25 @@ export async function apiGet<T>(path: string, query?: ApiReqOptions['query']): P
   return handle<T>(await apiReq(path, { method: 'GET', query }));
 }
 
+/**
+ * Двоичный ответ (аватар пользователя). `<img src>` прямо на бэкенд не
+ * годится: cookie AdminSession там сторонняя, браузер её не пошлёт —
+ * поэтому тот же fetch с credentials, что и у JSON-запросов. 404 — это
+ * ответ «фото нет», а не ошибка: возвращаем null, чтобы вызывающий мог
+ * запомнить отсутствие и не спрашивать снова.
+ */
+export async function apiGetBlob(path: string): Promise<Blob | null> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new ApiRequestError(`Сервер ответил ${response.status}`, response.status);
+  }
+  return response.blob();
+}
+
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return handle<T>(await apiReq(path, { method: 'POST', body }));
 }

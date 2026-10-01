@@ -32,6 +32,7 @@ import type {
   CronSummary,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 const STATUS_LABEL: Record<CronRunStatus, string> = {
   RUNNING: 'Выполняется',
@@ -437,7 +438,8 @@ export default function CronPage() {
                 <p style={{ fontSize: 13, fontWeight: 600 }}>{j.jobKey}</p>
                 {j.recentFailures.map((f) => (
                   <p key={f.id} className="critical" style={{ fontSize: 13 }}>
-                    {formatTime(f.startedAt)} · {f.triggeredBy} · {formatMs(f.durationMs)} —{' '}
+                    {formatTime(f.startedAt)} · <UserBadge userId={f.triggeredBy} copy={false} /> ·{' '}
+                    {formatMs(f.durationMs)} —{' '}
                     {f.errorMessage ?? f.summary ?? 'без текста ошибки'}
                   </p>
                 ))}
@@ -604,7 +606,9 @@ export default function CronPage() {
                                     {STATUS_LABEL[r.status]}
                                   </span>
                                 </td>
-                                <td>{r.triggeredBy}</td>
+                                <td>
+                                  <UserBadge userId={r.triggeredBy} />
+                                </td>
                                 <td>{formatMs(r.durationMs)}</td>
                                 <td className={r.status === 'FAILED' ? 'critical' : undefined}>
                                   {r.errorMessage ?? r.summary ?? '—'}

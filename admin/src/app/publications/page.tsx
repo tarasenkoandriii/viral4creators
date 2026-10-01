@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { approvePublication, listPublications, rejectPublication, retryPublication } from '../../lib/endpoints';
 import type { PublicationListResult, PublicationPrivacy, PublicationRequest, PublicationStatus } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 const STATUS_LABEL: Record<PublicationStatus, string> = {
   PENDING: 'ждёт решения',
@@ -223,7 +224,7 @@ export default function PublicationsPage() {
                               скачать
                             </a>
                             {' · автор '}
-                            {item.userId.slice(0, 8)}…
+                            <UserBadge userId={item.userId} />
                           </div>
                           {item.status === 'REJECTED' && item.rejectReason && (
                             <div style={{ fontSize: 12, marginTop: 4, color: 'var(--signal-critical)' }}>

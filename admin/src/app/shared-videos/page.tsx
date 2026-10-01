@@ -24,6 +24,7 @@ import type {
   SharedVideoStatus,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 const STATUS_LABEL: Record<SharedVideoStatus, string> = {
   PENDING: 'ждёт решения',
@@ -233,7 +234,7 @@ export default function SharedVideosPage() {
                               скачать
                             </a>
                             {' · автор '}
-                            {item.userId.slice(0, 8)}…
+                            <UserBadge userId={item.userId} />
                           </div>
                           {item.status === 'PUBLISHED' && (
                             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>

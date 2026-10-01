@@ -23,6 +23,7 @@ import type {
   LibraryVisibility,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 const VISIBILITY_LABEL: Record<LibraryVisibility, string> = {
   PUBLIC: 'в выдаче',
@@ -344,7 +345,7 @@ export default function LibraryPage() {
             </button>
           </h2>
           <p className="muted" style={{ fontSize: 12 }}>
-            Автор: {detail.ownerId ?? 'анонимная сессия'} · сессия:{' '}
+            Автор: <UserBadge userId={detail.ownerId} empty="анонимная сессия" /> · сессия:{' '}
             {detail.sessionId ?? '—'} · создан{' '}
             {new Date(detail.createdAt).toLocaleString('ru-RU')}
           </p>

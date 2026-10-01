@@ -191,10 +191,31 @@ describe('AdminAuthService.loginWithTelegram', () => {
 
     expect(prisma.user.upsert).toHaveBeenCalledWith({
       where: { telegramId: '4242' },
-      update: {},
-      create: { telegramId: '4242' },
+      update: { firstName: null, username: null },
+      create: { telegramId: '4242', firstName: null, username: null },
     });
     expect(result.token).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('имя и @username из виджета пишутся и новому, и существующему пользователю', async () => {
+    // Иначе оператор, пришедший раньше через TMA, в плашках админки так
+    // и остаётся голым cuid: TMA-вход раньше имени не писал вовсе.
+    const { service, prisma } = build();
+    await service.loginWithTelegram(
+      signedPayload({
+        id: 4242,
+        first_name: 'Андрій',
+        username: 'andrii',
+        auth_date: Math.floor(Date.now() / 1000),
+      }),
+    );
+    const call = prisma.user.upsert.mock.calls[0][0];
+    expect(call.update).toEqual({ firstName: 'Андрій', username: 'andrii' });
+    expect(call.create).toEqual({
+      telegramId: '4242',
+      firstName: 'Андрій',
+      username: 'andrii',
+    });
   });
 
   it('вход через Telegram НЕ раздаёт прав оператора', async () => {

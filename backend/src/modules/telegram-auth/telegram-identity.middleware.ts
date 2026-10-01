@@ -55,6 +55,7 @@ import {
 import { CSRF_REJECTED_MESSAGE, isOriginAllowed } from '../../common/csrf';
 import { isDevAuthAllowed } from '../admin-auth/dev-login';
 import { fixtureTelegramIdFromHeader } from '../../common/fixture-token';
+import { profileChanges, TelegramProfile } from './telegram-profile';
 
 export interface TelegramIdentifiedRequest extends Request {
   /** Internal User.id (не telegramId), выставлен только если Telegram-
@@ -81,11 +82,16 @@ export class TelegramIdentityMiddleware implements NestMiddleware {
       if (botToken) {
         try {
           const parsed = validateTelegramInitData(rawInitData, { botToken });
+          const profile = {
+            firstName: parsed.user.first_name ?? null,
+            username: parsed.user.username ?? null,
+          };
           const user = await this.prisma.user.upsert({
             where: { telegramId: String(parsed.user.id) },
             update: {},
-            create: { telegramId: String(parsed.user.id) },
+            create: { telegramId: String(parsed.user.id), ...profile },
           });
+          await this.syncProfile(user, profile);
           req.telegramUserId = user.id;
           return next();
         } catch (err) {
@@ -150,6 +156,35 @@ export class TelegramIdentityMiddleware implements NestMiddleware {
     }
 
     next();
+  }
+
+  /**
+   * Имя и @username из initData — в `User`, только если поменялись
+   * (см. telegram-profile.ts). Сбой записи не отнимает у запроса
+   * личность: подпись initData уже проверена, а подпись в админке —
+   * косметика, ради которой ронять действие пользователя нельзя.
+   */
+  private async syncProfile(
+    user: { id: string } & Partial<TelegramProfile>,
+    incoming: TelegramProfile,
+  ): Promise<void> {
+    const changes = profileChanges(
+      {
+        firstName: user.firstName ?? null,
+        username: user.username ?? null,
+      },
+      incoming,
+    );
+    if (!changes) return;
+    try {
+      await this.prisma.user.update({ where: { id: user.id }, data: changes });
+    } catch (err) {
+      this.logger.warn(
+        `профиль Telegram ${user.id} не обновлён: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   /**

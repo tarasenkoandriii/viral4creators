@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { listFeedImports } from '../../lib/endpoints';
 import type { AdminFeedImportListResult, AdminFeedImportStatus } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 function errText(e: unknown): string {
   return e instanceof ApiRequestError ? e.message : 'Не удалось выполнить запрос';
@@ -97,8 +98,8 @@ export default function FeedImportsPage() {
                     <td className="muted" style={{ fontFamily: 'monospace', fontSize: 12 }}>
                       {row.projectId}
                     </td>
-                    <td className="muted" style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                      {row.userId}
+                    <td className="muted" style={{ fontSize: 12 }}>
+                      <UserBadge userId={row.userId} />
                     </td>
                     <td
                       className="muted"

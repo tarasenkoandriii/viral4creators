@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useAdminAuth } from '../lib/admin-auth-context';
+import UserBadge from './UserBadge';
 
 type NavEntry =
   | { kind: 'link'; href: string; label: string }
@@ -156,7 +157,9 @@ export function AdminNav() {
           уехать на новую строку вместе и остаться у правого края, иначе
           кнопка отрывается от имени и висит слева сама по себе. */}
       <div className="admin-nav-me">
-        <span className="muted">{me.userId}</span>
+        <span className="muted">
+          <UserBadge userId={me.userId} copy={false} />
+        </span>
         <button type="button" onClick={() => void logout()}>
           Выйти
         </button>

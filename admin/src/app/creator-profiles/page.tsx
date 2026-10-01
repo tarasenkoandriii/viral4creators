@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { listCreatorProfiles, setCreatorProfileFeatured } from '../../lib/endpoints';
 import type { AdminCreatorProfile, AdminCreatorProfileListResult } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 const MARKETPLACE_URL = process.env.NEXT_PUBLIC_MARKETPLACE_URL ?? 'http://localhost:3004';
 
@@ -119,7 +120,9 @@ export default function CreatorProfilesPage() {
                 {result.items.map((item) => (
                   <tr key={item.id}>
                     <td>
-                      <div style={{ fontWeight: 600 }}>{item.displayName ?? item.userId.slice(0, 8) + '…'}</div>
+                      <div style={{ fontWeight: 600 }}>
+                        {item.displayName ?? <UserBadge userId={item.userId} copy={false} />}
+                      </div>
                       <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                         <a
                           href={`${MARKETPLACE_URL}/creator/${item.slug ?? item.id}`}

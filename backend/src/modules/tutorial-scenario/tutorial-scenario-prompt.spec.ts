@@ -1,3 +1,4 @@
+import { TUTORIAL_DEMO_PRODUCT } from '../../common/tutorial-demo-product';
 import { AssistantStepItem } from '../assistant/knowledge/generated';
 import {
   buildScenarioPrompt,
@@ -379,6 +380,14 @@ describe('buildScenarioPrompt — язык интерфейса (этап C)', (
     // находка, что у `languageNameForLocale`.
     const prompt = buildScenarioPrompt('1', 'uk', step);
     expect(prompt).toContain('Ukrainian');
+  });
+
+  it('генератор знает демо-товар и не выдумывает свой (01.10.2026)', () => {
+    const prompt = buildScenarioPrompt('1', 'ru', step);
+    expect(prompt).toContain(`«${TUTORIAL_DEMO_PRODUCT.title}»`);
+    expect(prompt).toContain(TUTORIAL_DEMO_PRODUCT.description);
+    expect(prompt).toMatch(/не придумывай другой товар/);
+    expect(prompt).toMatch(/К мастеру поздравлений это не относится/);
   });
 
   it('сказано, что assertText и fill пишутся на языке локали', () => {

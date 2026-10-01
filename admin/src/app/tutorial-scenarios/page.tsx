@@ -43,6 +43,7 @@ import {
 } from '../../lib/endpoints';
 import type { TutorialScenarioRow } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import UserBadge from '../../components/UserBadge';
 
 function errText(e: unknown): string {
   return e instanceof ApiRequestError ? e.message : 'Не удалось выполнить запрос';
@@ -496,9 +497,12 @@ export default function TutorialScenariosPage() {
                                       : 'Отметить вычитанными'}
                                 </button>
                                 <span className="muted" style={{ fontSize: 12 }}>
-                                  {row.narrationReviewedAt
-                                    ? `вычитал ${row.narrationReviewedBy ?? '—'} ${new Date(row.narrationReviewedAt).toLocaleDateString('ru-RU')}`
-                                    : 'отметка нужна, только если в «Настройках» включено требование вычитки — иначе озвучиваем сразу'}
+                                  {row.narrationReviewedAt ? (
+                                    <>
+                                      вычитал <UserBadge userId={row.narrationReviewedBy} copy={false} />{' '}
+                                      {new Date(row.narrationReviewedAt).toLocaleDateString('ru-RU')}
+                                    </>
+                                  ) : 'отметка нужна, только если в «Настройках» включено требование вычитки — иначе озвучиваем сразу'}
                                 </span>
                               </div>
                               <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
