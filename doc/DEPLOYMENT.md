@@ -873,6 +873,28 @@ Telegram-логин, который их и породил.
 QA. Генератор (`backend/`) он не трогает и с ним не делит ни таблиц, ни
 миграций.
 
+### 6.0. Проекты и временные домены (до решения В-1)
+
+Созданы 02.10.2026 в команде Vercel «Andrii's projects», репозиторий
+`viral4creators`, ветка `main`. Домены — поддомены `viral4creators.app`
+(DNS на Vercel, записи создаются сами); после выбора бренда (В-1) —
+переезд на свой домен с 301.
+
+| Vercel-проект | Root Directory | Домен |
+|---|---|---|
+| `assist-api` | `sites-backend` | `assist-api.viral4creators.app` |
+| `assist-tma` | `assist` | `assist-app.viral4creators.app` (TMA и веб-кабинет) |
+| `assist-widget` | `widget` | `assist-w.viral4creators.app` (загрузчик, iframe, API виджета через rewrite) |
+| `assist-landing` | `sites-landing` | `assist.viral4creators.app` |
+
+`assist/vercel.json` и `widget/vercel.json` проксируют на
+`https://assist-api.viral4creators.app`. Значения env с адресами:
+`ASSIST_TMA_URL=https://assist-app.viral4creators.app`,
+`ASSIST_WIDGET_ORIGIN=https://assist-w.viral4creators.app`,
+`WEB_CABINET_ORIGINS=https://assist-app.viral4creators.app`,
+`ASSIST_LANDING_ORIGINS=https://assist.viral4creators.app` (его же — в
+`CORS_ORIGIN`), у `assist-landing` — `SITE_URL=https://assist.viral4creators.app`.
+
 ### 6.1. Vercel-проект
 
 1. **Add New** → **Project** → тот же репозиторий.

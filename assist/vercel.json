@@ -4,7 +4,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://sites-backend.example.invalid/$1"
+      "destination": "https://assist-api.viral4creators.app/$1"
     }
   ]
 }

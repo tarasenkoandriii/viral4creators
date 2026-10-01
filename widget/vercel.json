@@ -6,11 +6,11 @@
   "rewrites": [
     {
       "source": "/widget/v1/:path*",
-      "destination": "https://sites-backend.example.invalid/widget/v1/:path*"
+      "destination": "https://assist-api.viral4creators.app/widget/v1/:path*"
     },
     {
       "source": "/w/v1/:path*",
-      "destination": "https://sites-backend.example.invalid/w/v1/:path*"
+      "destination": "https://assist-api.viral4creators.app/w/v1/:path*"
     }
   ],
   "headers": [
