@@ -3978,6 +3978,10 @@ model CreatorProfile {
   updatedAt DateTime @updatedAt
 
   @@index([isAcceptingOrders])
+  // Индекс создан миграцией 20261124090000_marketplace_stage0_sharing, а в
+  // схему не попал — шаг CI «схема и миграции не разошлись» падал на этом
+  // с сентября (найдено 01.10.2026). Схема догоняет базу, не наоборот.
+  @@index([isFeatured])
   @@map("creator_profiles")
 }
 
@@ -4128,6 +4132,8 @@ model PortfolioItem {
 
   @@index([creatorProfileId, status])
   @@index([status, createdAt])
+  // Та же история, что у `creator_profiles.isFeatured` выше.
+  @@index([collectionTag])
   @@map("portfolio_items")
 }
 

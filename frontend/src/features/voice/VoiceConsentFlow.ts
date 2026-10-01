@@ -73,7 +73,6 @@ export function useRenderVoiceConsent(input: RenderConsentInput): {
       Math.max(0, left)
     );
     return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- таймер на конкретную показанную сводку
   }, [state]);
 
   const lineOf = (effect: ConsentEffect): VoiceConsentLine | null => {
