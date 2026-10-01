@@ -11,12 +11,10 @@
  */
 
 import { api } from './api';
+import { unwrapApiData } from '../lib/unwrap-api-data';
 import type { GeneratedVideo, VideoQuality } from './api';
 
-function unwrap<T>(res: { data?: T }, what: string): T {
-  if (res.data === undefined) throw new Error(`Пустой ответ: ${what}`);
-  return res.data;
-}
+const unwrap = unwrapApiData;
 
 export async function startExportBatch(
   sessionId: string,

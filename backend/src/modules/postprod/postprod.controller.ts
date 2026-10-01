@@ -54,7 +54,7 @@ export class PostProdController {
         session.generatedVideo,
         { voiceoverScript: dto.voiceoverScript },
       );
-      return { success: true, data };
+      return data;
     } catch (e) {
       // `PostProdError` — обычный Error, не Nest HttpException (тот же
       // приём, что `ExportService.startBatch`, см. её доккомментарий):

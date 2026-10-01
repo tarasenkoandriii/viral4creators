@@ -1884,6 +1884,14 @@ II и III.
 - Тест уборки снимков (`ui-snapshot-retention.spec.ts`) падал после 03:00Z
   01.10.2026: бюджет времени считался от `now` (в тестах — зашитая дата), а
   сравнивался с настоящими часами. Теперь дедлайн — от тех же часов.
+- «Перерендерить» в Постпроде падал «undefined is not an object
+  (evaluating '….video.exportVariants')» (01.10.2026, формат TikTok):
+  `ExportController` и `PostprodController.reVoice` сами заворачивали ответ
+  в `{success, data}`, а `ResponseInterceptor` — ещё раз. Контроллеры
+  отдают голые данные; фронт (`lib/unwrap-api-data.ts`) терпит оба вида;
+  `check-docs` не пускает новый ручной конверт в контроллер. Остаток —
+  10 старых мест (analysis/generation/prompt/video), их снимает `api.ts`;
+  убрать при следующем касании этих контроллеров.
 
 **Аудит кронов прода за 30.09.2026 (через админку):** FAILED нет ни
 одного. Найдено: (1) **`TELEGRAM_ALERTS_CHAT_ID` и `TELEGRAM_STATS_CHAT_ID`

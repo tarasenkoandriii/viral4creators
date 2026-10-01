@@ -4509,6 +4509,72 @@ function checkUiCopyInternalPaths() {
 
 checkUiCopyInternalPaths();
 
+/**
+ * Контроллер не заворачивает ответ в `{ success, data }` сам.
+ *
+ * Конверт ставит глобальный `ResponseInterceptor`. Ручной давал двойной,
+ * и фронтенд читал данные у внутреннего конверта: «Перерендерить» падал с
+ * «undefined is not an object (evaluating 'z.video.exportVariants')»,
+ * переозвучка молча теряла ответ (найдено владельцем 01.10.2026).
+ */
+function checkNoManualEnvelope() {
+  // Старые контроллеры первых этапов: их ответы фронтенд читает через
+  // `api.ts`, который сам снимает второй конверт (`'data' in
+  // response.data && typeof response.data.data === 'object'`). Переписывать
+  // их без нужды — риск для работающих экранов; новые места запрещены.
+  const LEGACY = new Map([
+    ['backend/src/modules/analysis/analysis.controller.ts', 3],
+    ['backend/src/modules/generation/generation.controller.ts', 2],
+    ['backend/src/modules/prompt/prompt.controller.ts', 3],
+    ['backend/src/modules/video/video.controller.ts', 2],
+  ]);
+  const problems = [];
+  let files = 0;
+  let legacy = 0;
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(path.join(ROOT, dir), {
+      withFileTypes: true,
+    })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(rel);
+      else if (e.name.endsWith('.controller.ts')) {
+        files++;
+        const src = read(rel);
+        const re = /return\s*\{\s*success:\s*true\b/g;
+        const hits = [];
+        let m;
+        while ((m = re.exec(src))) {
+          hits.push(src.slice(0, m.index).split('\n').length);
+        }
+        const allowed = LEGACY.get(rel) ?? 0;
+        if (hits.length > allowed) {
+          for (const line of hits) {
+            problems.push(
+              `${rel}:${line} — конверт ставит ResponseInterceptor, верните данные` +
+                (allowed ? ` (старых мест здесь ${allowed}, стало ${hits.length})` : ''),
+            );
+          }
+        } else {
+          legacy += hits.length;
+        }
+      }
+    }
+  };
+  walk('backend/src');
+  if (files === 0) problems.push('контроллеры не найдены — шов ослеп');
+  if (problems.length > 0) {
+    failed++;
+    console.log('FAIL ручной конверт ответа в контроллерах:');
+    for (const x of problems) console.log(`  - ${x}`);
+  } else {
+    console.log(
+      `ok   контроллеры без нового ручного конверта ответа: файлов ${files}, старых мест (снимает api.ts) ${legacy}`,
+    );
+  }
+}
+
+checkNoManualEnvelope();
+
 if (failed) {
   console.error(
     `\n${failed} расхождени(е/я) между документами и кодом. ` +

@@ -24,14 +24,12 @@
  */
 
 import { api } from './api';
+import { unwrapApiData } from '../lib/unwrap-api-data';
 import type { GeneratedVideo } from './api';
 import type { VoiceMode } from '../types';
 import type { RevoiceBlock } from '../lib/revoice-eligibility';
 
-function unwrap<T>(res: { data?: T }, what: string): T {
-  if (res.data === undefined) throw new Error(`Пустой ответ: ${what}`);
-  return res.data;
-}
+const unwrap = unwrapApiData;
 
 export async function reVoiceVideo(
   sessionId: string,
