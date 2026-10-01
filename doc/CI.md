@@ -47,7 +47,8 @@ PRISMA_SCHEMA_ENGINE_BINARY=/tmp/se PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
 | `frontend` | `tsc`, **`typecheck:scripts`** (типы самих проверочных скриптов), eslint через `npm run lint` (с `--report-unused-disable-directives`), 77 unit-скриптов `npx tsx frontend/scripts/*.test.ts`, `vite build` |
 | `sites-landing` | `tsc`, `next lint --max-warnings 0`, unit-скрипты `npx tsx sites-landing/scripts/*.test.ts`, «сборка без `SITE_URL` падает», `next build`, проверка собранного HTML (`check:built`: canonical/hreflang/OG, реестр утверждений, секреты формы не в бандле), бюджет JS первой загрузки ≤ 110 КБ gzip, axe (WCAG 2.2 A/AA, обе темы, 360 px), Lighthouse CI (медиана 5 прогонов, бюджеты ТЗ лендинга §9) |
 | `next-apps` | матрица `admin` / `landing`: `tsc`, `next lint --max-warnings 0` (этап 53), `next build` |
-| `repo` | `sync-legal --check` — юридические тексты и их версия |
+| `changes` | выбирает, какие джобы запускать: файлы, изменённые с последнего **успешного** прогона на ветке, против правил `scripts/ci-changes.mjs` (у PR — с базой PR); нет базы или правка `ci.yml` — запускается всё. Остальные джобы, кроме `repo`, идут по `needs: changes` + `if` |
+| `repo` | на каждом коммите: `sync-legal --check` — юридические тексты и их версия; `check-vercel-ignore`; самотест `ci-changes`; `check-docs` без счётчиков тестов |
 
 ## Две проверки, ради которых всё и затевалось
 

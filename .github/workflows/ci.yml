@@ -27,8 +27,42 @@ env:
   NODE_VERSION: '20'
 
 jobs:
+  # Какие джобы запускать: только те, чьи папки (и зависимости) изменились
+  # с последнего УСПЕШНОГО прогона на ветке — scripts/ci-changes.mjs.
+  # Приватный репозиторий платит минутами Actions, полный прогон ≈28 мин.
+  changes:
+    name: что изменилось
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      backend: ${{ steps.f.outputs.backend }}
+      sites_backend: ${{ steps.f.outputs.sites_backend }}
+      assist: ${{ steps.f.outputs.assist }}
+      widget: ${{ steps.f.outputs.widget }}
+      sites_landing: ${{ steps.f.outputs.sites_landing }}
+      frontend: ${{ steps.f.outputs.frontend }}
+      admin: ${{ steps.f.outputs.admin }}
+      landing: ${{ steps.f.outputs.landing }}
+      next_apps: ${{ steps.f.outputs.next_apps }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - id: f
+        run: node scripts/ci-changes.mjs >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
   backend:
     name: backend — тесты, типы, линт
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -152,6 +186,8 @@ jobs:
   # поэтому своя джоба и своя база, а не шаги в джобе backend.
   sites-backend:
     name: sites-backend — тесты, типы, линт, схема
+    needs: changes
+    if: needs.changes.outputs.sites_backend == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -266,6 +302,8 @@ jobs:
 
   assist:
     name: assist (TMA помощника) — типы, линт, тесты, сборка
+    needs: changes
+    if: needs.changes.outputs.assist == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -301,6 +339,8 @@ jobs:
   # собранном загрузчике — scripts/size-budget.mjs (ТЗ §4.12).
   widget:
     name: widget (виджет помощника) — типы, линт, тесты, сборка, размер, e2e
+    needs: changes
+    if: needs.changes.outputs.widget == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -350,6 +390,8 @@ jobs:
   # строка матрицы `next-apps`: Lighthouse CI и axe есть только здесь.
   sites-landing:
     name: sites-landing — типы, линт, тесты, сборка, Lighthouse, axe
+    needs: changes
+    if: needs.changes.outputs.sites_landing == 'true'
     runs-on: ubuntu-latest
     env:
       # Домен-заглушка до решения В-1: сборке нужен абсолютный адрес.
@@ -424,6 +466,8 @@ jobs:
 
   frontend:
     name: frontend (TMA) — типы, линт, unit-скрипты, сборка
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -478,11 +522,13 @@ jobs:
 
   next-apps:
     name: ${{ matrix.app }} — типы и сборка
+    needs: changes
+    if: needs.changes.outputs.next_apps != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        app: [admin, landing]
+        app: ${{ fromJSON(needs.changes.outputs.next_apps) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -545,3 +591,15 @@ jobs:
       # скрипт проходит самотест на временном git-репозитории.
       - name: деплой только изменённых Vercel-проектов
         run: node scripts/check-vercel-ignore.mjs
+
+      # Правила выбора джоб (scripts/ci-changes.mjs) и то, что у каждой
+      # джобы есть условие. Здесь, а не в джобе backend: «репозиторий»
+      # идёт на каждом коммите.
+      - name: выбор джоб CI по изменённым папкам
+        run: node scripts/ci-changes.mjs --self-test
+
+      # Числа в документах — на каждом коммите (документы правятся и без
+      # кода). Без отчёта jest счётчики тестов пропускаются — их сверяет
+      # тот же скрипт в джобе backend, когда она идёт.
+      - name: числа в документах (без счётчиков тестов)
+        run: node scripts/check-docs.mjs
