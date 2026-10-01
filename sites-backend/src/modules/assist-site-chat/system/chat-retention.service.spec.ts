@@ -26,7 +26,14 @@ describeDb('ChatRetention — сроки хранения виджета', () =>
 
   it('диалоги/лиды по срокам сайта, указатели, токены, кэш, окна, деньги дня, версии сверх 20 (кроме опубликованной), события, черновики', async () => {
     const p = st.owner;
-    const now = new Date('2031-06-01T03:00:00Z');
+    // Настоящее «сейчас», а не дата в будущем: ретенция чистит ВСЮ базу, и
+    // «2031» стёрла бы живые диалоги, деньги и версии параллельных наборов
+    // на общей базе CI (так падал eval-platform). Свои строки — в прошлом.
+    const now = new Date();
+    const dayStr = (daysAgo: number) =>
+      new Date(now.getTime() - daysAgo * DAY).toISOString().slice(0, 10);
+    const oldDay = dayStr(61);
+    const keptDay = dayStr(12);
     const s = await st.site();
     await p.assistSite.update({
       where: { siteId: s.siteId },
@@ -124,10 +131,10 @@ describeDb('ChatRetention — сроки хранения виджета', () =>
       },
     });
     await p.assistBudgetDay.create({
-      data: { scope: 'site', key: s.siteId, day: '2031-04-01' },
+      data: { scope: 'site', key: s.siteId, day: oldDay },
     });
     await p.assistBudgetDay.create({
-      data: { scope: 'site', key: s.siteId, day: '2031-05-20' },
+      data: { scope: 'site', key: s.siteId, day: keptDay },
     });
     for (let v = 1; v <= 25; v++) {
       await p.assistSiteConfigVersion.create({
@@ -211,7 +218,7 @@ describeDb('ChatRetention — сроки хранения виджета', () =>
     const days = await p.assistBudgetDay.findMany({
       where: { scope: 'site', key: s.siteId },
     });
-    expect(days.map((d) => d.day)).toEqual(['2031-05-20']);
+    expect(days.map((d) => d.day)).toEqual([keptDay]);
     const versions = await p.assistSiteConfigVersion.findMany({
       where: { siteId: s.siteId, kind: 'widget' },
       orderBy: { version: 'asc' },
