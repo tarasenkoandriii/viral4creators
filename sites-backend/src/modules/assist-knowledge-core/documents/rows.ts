@@ -218,6 +218,24 @@ export function quarantineView(r: ChunkRow): QuarantineView {
   };
 }
 
+/**
+ * `stats` версии для кабинета. Прогресс сборки `stats.build` (W5) — рабочее
+ * состояние индексатора: очередь ref всех документов (до ~150 КБ на 2 000
+ * страниц), удаления, хеши, захват. Наружу — только `{ cursor, total }`
+ * (сколько из скольких), остальное остаётся в базе.
+ */
+export function versionStatsView(
+  stats: Prisma.JsonValue | null,
+): Record<string, unknown> {
+  const all = asRecord(stats);
+  if (!('build' in all)) return all;
+  const { build, ...rest } = all;
+  const b = asRecord(build as Prisma.JsonValue);
+  const n = (v: unknown) =>
+    typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  return { ...rest, build: { cursor: n(b.cursor), total: n(b.total) } };
+}
+
 export function versionView(
   r: VersionRow,
   published: number,
@@ -227,7 +245,7 @@ export function versionView(
     number: r.number,
     status: r.status as VersionStatus,
     trigger: r.trigger as VersionTrigger,
-    stats: asRecord(r.stats),
+    stats: versionStatsView(r.stats),
     gateReport: (r.gateReport as GateReport | null) ?? null,
     heldReason: r.heldReason,
     createdAt: r.createdAt.toISOString(),

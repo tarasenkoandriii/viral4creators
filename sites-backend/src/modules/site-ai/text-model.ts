@@ -15,7 +15,7 @@ import {
   chatUsageFromMeta,
   createChatAbort,
 } from '../../shared/assist-chat-core';
-import { createGeminiClient } from '../../shared/gemini-client';
+import { siteGeminiClient } from './dev-fake-gemini';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
 
 export interface GenerateRequest {
@@ -62,7 +62,7 @@ export class GeminiText {
 
   /** Клиент создаётся при первом вызове: без ключа сервис всё равно стартует. */
   protected getClient(): TextModelClient {
-    this.client ??= createGeminiClient();
+    this.client ??= siteGeminiClient();
     return this.client;
   }
 

@@ -35,6 +35,16 @@
  *     `AssistSite…`, `prisma.assistSite…`; в нейтральных — ни тех, ни
  *     других. Это слой 2 для сырого SQL: импорт репозитория правило 1
  *     ловит, а строку `FROM "sites"."assist_admin_chunks"` — только это.
+ *  8. (Э2) `public-db`: ПУБЛИЧНЫЙ код виджета — модуль `assist-widget`
+ *     (кроме папки `cabinet/`) и `assist-site-chat` (кроме папки `system/`)
+ *     — не импортирует клиентов основной роли (`prisma/sites-db.service`,
+ *     `prisma/prisma.service`) и сервисы, которые ходят ими в базу
+ *     (`assist-site-knowledge/site-knowledge.service`, `…/site-sources.service`,
+ *     `site-core/ownership/host-access.service`). Слой 3 (§4.3-бис):
+ *     маршрут посетителя работает ТОЛЬКО под assist_public (AssistPublicDb),
+ *     и случайный «удобный» импорт основного клиента — дыра, которую роль
+ *     БД уже не поймает. Спеки и `testing/` — можно (тесты сеют данные
+ *     владельцем схемы).
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
@@ -107,6 +117,36 @@ export const RULES = [
     why: '§5-бис.3 п.3: assist-ui-core не импортирует ни «Сайт», ни «Админку»',
     from: (m) => matches(m, UI_CORE),
     to: (m) => matches(m, [/^assist-site-/, ...ADMIN_MODE]),
+  },
+];
+
+/**
+ * Правило 8 (Э2): публичный код виджета ↛ клиенты основной роли. Зона
+ * задаётся путём внутри модуля, цель — путём от src.
+ */
+const PUBLIC_ZONES = [
+  { module: 'assist-widget', except: /^cabinet\// },
+  { module: 'assist-site-chat', except: /^system\// },
+];
+const MAIN_DB_TARGETS = [
+  /^prisma\/sites-db\.service$/,
+  /^prisma\/prisma\.service$/,
+  /^modules\/assist-site-knowledge\/site-knowledge\.service$/,
+  /^modules\/assist-site-knowledge\/site-sources\.service$/,
+  /^modules\/site-core\/ownership\/host-access\.service$/,
+];
+export const PATH_RULES = [
+  {
+    id: 'public-db',
+    why: 'Э2 §4.3-бис слой 3: публичный код виджета работает только под assist_public (AssistPublicDb)',
+    from: (moduleName, inModule) =>
+      !/\.spec\.ts$/.test(inModule) &&
+      !/(^|\/)testing\//.test(inModule) &&
+      PUBLIC_ZONES.some(
+        (z) => z.module === moduleName && !z.except.test(inModule),
+      ),
+    to: (target) =>
+      MAIN_DB_TARGETS.some((re) => re.test(target.replace(SOURCE_RE, ''))),
   },
 ];
 
@@ -240,6 +280,14 @@ export function findViolations(srcDir) {
           });
         }
         continue;
+      }
+      if (fromZone.kind === 'module') {
+        const inModule = rel.split('/').slice(2).join('/');
+        for (const rule of PATH_RULES) {
+          if (rule.from(fromZone.name, inModule) && rule.to(target)) {
+            violations.push({ file: rel, spec, rule: rule.id, why: rule.why });
+          }
+        }
       }
       if (toZone.kind !== 'module' || toZone.name === fromZone.name) continue;
       for (const rule of RULES) {
@@ -382,6 +430,26 @@ function selfTest() {
       'neutral-names',
     ],
     [
+      'modules/assist-site-chat/w.ts',
+      `import { SitesDb } from '../../prisma/sites-db.service';`,
+      'public-db',
+    ],
+    [
+      'modules/assist-widget/x.ts',
+      `import type { PrismaService } from 'src/prisma/prisma.service';`,
+      'public-db',
+    ],
+    [
+      'modules/assist-widget/deep/y.ts',
+      `import { HostAccessService } from '../../site-core/ownership/host-access.service';`,
+      'public-db',
+    ],
+    [
+      'modules/assist-site-chat/z.ts',
+      `import { SiteKnowledgeService } from '../assist-site-knowledge/site-knowledge.service';`,
+      'public-db',
+    ],
+    [
       'shared/l.ts',
       `import { G } from '../modules/telegram-auth/guard';`,
       'shared↛modules',
@@ -426,6 +494,26 @@ function selfTest() {
     [
       'modules/assist-knowledge-core/ok11.ts',
       `import { E } from '../site-ai/embedder';\nexport type Tables = { chunks: string };`,
+    ],
+    [
+      'modules/assist-site-chat/system/ok12.ts',
+      `import { SitesDb } from '../../../prisma/sites-db.service';\nimport { P } from '../../../prisma/prisma.service';`,
+    ],
+    [
+      'modules/assist-widget/cabinet/ok13.ts',
+      `import { SitesDb } from '../../../prisma/sites-db.service';`,
+    ],
+    [
+      'modules/assist-widget/ok14.ts',
+      `import { AssistPublicDb } from '../../prisma/assist-public-db.service';\nimport { evaluateHostAccess } from '../site-core/ownership/host-access';\nimport { T } from '../assist-site-knowledge/site-tables';\nimport { C } from '../assist-site-chat/chat-types';`,
+    ],
+    [
+      'modules/assist-site-chat/ok15.spec.ts',
+      `import { PrismaService } from '../../prisma/prisma.service';`,
+    ],
+    [
+      'modules/assist-site-setup/ok16.ts',
+      `import { SitesDb } from '../../prisma/sites-db.service';`,
     ],
     [
       'shared/ok5.ts',

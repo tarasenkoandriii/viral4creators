@@ -61,9 +61,16 @@ import {
   DEV_AUTH,
   SITES_API_URL,
 } from './lib/config';
-import { AssistContext, type AssistValue } from './lib/assist-context';
+import {
+  AssistContext,
+  useAssist,
+  type AssistValue,
+} from './lib/assist-context';
 import { createKnowledgeApi } from './lib/knowledge-api';
-import { sandboxIdFromLaunch } from './lib/knowledge-view';
+import { createPersonaApi } from './lib/persona-api';
+import { createWidgetApi } from './lib/widget-api';
+import { launchAction, type LaunchAction } from './lib/widget-view';
+import { createWizardApi } from './lib/wizard-api';
 import { navigate, useRoute, type Route } from './lib/router';
 import { KnowledgeScreen } from './screens/knowledge/KnowledgeScreen';
 import {
@@ -75,6 +82,14 @@ import { SandboxScreen } from './screens/SandboxScreen';
 import { SandboxTransferScreen } from './screens/SandboxTransferScreen';
 import { SectionPlaceholder } from './screens/SectionPlaceholder';
 import { WelcomeScreen } from './screens/WelcomeScreen';
+import { LandingDraftScreen, PlanScreen } from './screens/widget/LaunchScreens';
+import { PersonaScreen } from './screens/widget/PersonaScreen';
+import {
+  SiteSetupButtons,
+  WidgetHome,
+  WidgetScreen,
+} from './screens/widget/WidgetScreen';
+import { WizardScreen } from './screens/widget/WizardScreen';
 
 /**
  * Где мы: `checking` — веб, спрашиваем `/sites/auth/me`; `login` — веб без
@@ -139,13 +154,13 @@ export function App({ startParam }: { startParam: string | null }) {
   // перезапустится (StrictMode, смена фазы): иначе второй параллельный
   // GET /sites/account успел бы создать новичку пустой «свой» кабинет.
   const inviteJob = useRef<Promise<void> | null>(null);
-  // Песочница лендинга (startapp=sb_<id>) — экран переноса один раз за
-  // запуск: после «Не сейчас» человек не должен попадать туда снова.
-  const launchSandbox = useRef<string | null>(sandboxIdFromLaunch(startParam));
-  const consumeLaunchSandbox = useCallback(() => {
-    const id = launchSandbox.current;
-    launchSandbox.current = null;
-    return id;
+  // Payload лендинга (startapp=lp_/pl_/sb_/wd_…) — экран и атрибуция один
+  // раз за запуск: после «Не сейчас» человек не должен попадать туда снова.
+  const launch = useRef<LaunchAction | null>(launchAction(startParam));
+  const consumeLaunch = useCallback(() => {
+    const a = launch.current;
+    launch.current = null;
+    return a;
   }, []);
 
   const client = useMemo(
@@ -171,9 +186,18 @@ export function App({ startParam }: { startParam: string | null }) {
   const api = useMemo(() => createSitesApi(client), [client]);
   const webAuth = useMemo(() => createWebAuthApi(client), [client]);
   const knowledgeApi = useMemo(() => createKnowledgeApi(client), [client]);
+  const widgetApi = useMemo(() => createWidgetApi(client), [client]);
+  const personaApi = useMemo(() => createPersonaApi(client), [client]);
+  const wizardApi = useMemo(() => createWizardApi(client), [client]);
   const assist = useMemo<AssistValue>(
-    () => ({ knowledge: knowledgeApi, appDict }),
-    [knowledgeApi, appDict]
+    () => ({
+      knowledge: knowledgeApi,
+      appDict,
+      widget: widgetApi,
+      persona: personaApi,
+      wizard: wizardApi,
+    }),
+    [knowledgeApi, appDict, widgetApi, personaApi, wizardApi]
   );
 
   useEffect(() => {
@@ -370,7 +394,7 @@ export function App({ startParam }: { startParam: string | null }) {
           notice={notice}
           onSwitchAccount={switchAccount}
           onLogout={mode === 'web' ? logout : undefined}
-          consumeLaunchSandbox={consumeLaunchSandbox}
+          consumeLaunch={consumeLaunch}
         />
       </AssistContext.Provider>
     </KitContext.Provider>
@@ -417,14 +441,23 @@ function navActive(key: string, route: Route): boolean {
       'host-access',
       'onboarding-url',
       'sandbox-transfer',
+      'plan',
     ].includes(route.name);
   }
   if (key === 'members') {
     return route.name === 'members' || route.name === 'invite';
   }
   if (
+    key === 'widget' &&
+    ['widget', 'persona', 'widget-draft'].includes(route.name)
+  ) {
+    return true;
+  }
+  if (
     key === 'knowledge' &&
-    (route.name === 'knowledge' || route.name === 'sandbox')
+    (route.name === 'knowledge' ||
+      route.name === 'sandbox' ||
+      route.name === 'wizard')
   ) {
     return true;
   }
@@ -465,22 +498,27 @@ function Shell({
   notice,
   onSwitchAccount,
   onLogout,
-  consumeLaunchSandbox,
+  consumeLaunch,
 }: {
   appDict: AppDictionary;
   created: boolean;
   notice: Notice | null;
   onSwitchAccount: (id: string) => void;
   onLogout?: () => void;
-  consumeLaunchSandbox: () => string | null;
+  consumeLaunch: () => LaunchAction | null;
 }) {
   const { mode, dict } = useKit();
+  const { widget } = useAssist();
   const route = useRoute();
   useTelegramBackButton(route);
   useEffect(() => {
-    const sandboxId = consumeLaunchSandbox();
-    if (sandboxId) navigate({ name: 'sandbox-transfer', sandboxId }, true);
-  }, [consumeLaunchSandbox]);
+    const a = consumeLaunch();
+    if (!a) return;
+    // Атрибуция лендинга (§7.3): одна запись на кабинет — решает сервер;
+    // сбой не мешает человеку попасть на свой экран.
+    if (a.acquisition) widget.acquisition(a.acquisition).catch(() => undefined);
+    if (a.target) navigate(a.target, true);
+  }, [consumeLaunch, widget]);
   const web = mode !== 'tma';
 
   const tools = (
@@ -701,6 +739,9 @@ function Screen({
             key={`assist-${route.siteId}`}
             siteId={route.siteId}
           />
+          <div className="mb-4">
+            <SiteSetupButtons siteId={route.siteId} />
+          </div>
           <SiteScreen
             key={route.siteId}
             siteId={route.siteId}
@@ -733,11 +774,10 @@ function Screen({
       return <InviteGate />;
     case 'section':
       // «Знания» — Э1: выбор сайта и базы; «Виджет», «Диалоги» — плашки этапов.
-      return route.section === 'knowledge' ? (
-        <KnowledgeHome />
-      ) : (
-        <SectionPlaceholder t={appDict.section} section={route.section} />
-      );
+      // «Виджет» — Э2; «Диалоги» — плашка этапа.
+      if (route.section === 'knowledge') return <KnowledgeHome />;
+      if (route.section === 'widget') return <WidgetHome />;
+      return <SectionPlaceholder t={appDict.section} section={route.section} />;
     case 'onboarding-url':
       return <OnboardingUrlScreen />;
     case 'sandbox':
@@ -758,6 +798,22 @@ function Screen({
           sandboxId={route.sandboxId}
         />
       );
+    case 'widget':
+      return (
+        <WidgetScreen
+          key={route.siteId}
+          siteId={route.siteId}
+          tab={route.tab}
+        />
+      );
+    case 'persona':
+      return <PersonaScreen key={route.siteId} siteId={route.siteId} />;
+    case 'wizard':
+      return <WizardScreen key={route.siteId} siteId={route.siteId} />;
+    case 'plan':
+      return <PlanScreen plan={route.plan} />;
+    case 'widget-draft':
+      return <LandingDraftScreen key={route.draftId} draftId={route.draftId} />;
     case 'not-found':
       return <NotFound appDict={appDict} />;
   }

@@ -9,6 +9,12 @@
  * индексации: исключённое не возвращается. Prune окна отката — там же
  * (KnowledgeIndexer.afterPublish).
  *
+ * Э2 (W5) — сборка с дедлайном тика: indexCrawl получает дедлайн, большой
+ * сайт собирается пачками за несколько тиков (версия `building`, прогресс
+ * в ней же); пока сборка не закончена, прогон НЕ отмечается
+ * проиндексированным — следующий тик продолжит ту же версию. В начале
+ * тика — уборка зависших сборок (сайт выключили посреди сборки).
+ *
  * Снимок, а не «страницы прогона»: индексация читает ВСЕ страницы сайта
  * из site_pages (их пишет только обход). Так горячий прогон (5 страниц)
  * и полный (500) обрабатываются одинаково, а страница, которую прогон не
@@ -17,6 +23,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
+import type { BuildDeadline } from '../assist-knowledge-core/indexer';
 import { qualified } from '../assist-knowledge-core/tables';
 import { SiteKnowledgeService } from './site-knowledge.service';
 import { SITE_TABLES } from './site-tables';
@@ -28,6 +35,10 @@ export interface IndexTickResult {
   chunksEmbedded: number;
   chunksReused: number;
   budgetExhausted: boolean;
+  /** Сборок, приостановленных дедлайном (продолжит следующий тик). */
+  buildsPaused?: number;
+  /** Снятых зависших сборок (уборка). */
+  buildsReaped?: number;
 }
 
 /** Сайтов за тик — не больше (остальные — следующим тиком). */
@@ -90,7 +101,7 @@ export class SiteIndexingService {
     return created.id;
   }
 
-  async indexSite(c: Candidate) {
+  async indexSite(c: Candidate, deadline?: BuildDeadline) {
     const ctx = { accountId: c.accountId, siteId: c.siteId };
     const db = this.sitesDb.forAccount(c.accountId);
     const sourceId = await this.crawlSourceId(c.accountId, c.siteId);
@@ -108,17 +119,24 @@ export class SiteIndexingService {
         contentHash: true,
       },
     });
-    const out = await this.knowledge.engine.indexCrawl(ctx, {
-      sourceId,
-      crawlRunId: c.runId,
-      pages,
-      hotUrls: c.hotPages ?? [],
-      includeUgc: true,
-    });
-    if (out.busy) return out;
+    const out = await this.knowledge.engine.indexCrawl(
+      ctx,
+      {
+        sourceId,
+        crawlRunId: c.runId,
+        pages,
+        hotUrls: c.hotPages ?? [],
+        includeUgc: true,
+      },
+      deadline,
+    );
+    // Приостановлена — прогон не отмечен: следующий тик продолжит сборку.
+    if (out.busy || out.paused) return out;
+    // Продолженная сборка могла начаться с более раннего прогона: отмечаем
+    // ЕГО — более новый прогон соберётся следующим тиком (разницей).
     await db.assistSite.updateMany({
       where: { siteId: c.siteId },
-      data: { lastIndexedCrawlRunId: c.runId },
+      data: { lastIndexedCrawlRunId: out.crawlRunId ?? c.runId },
     });
     const documentsCount = await db.assistSiteDocument.count({
       where: { sourceId, status: 'active' },
@@ -139,13 +157,23 @@ export class SiteIndexingService {
       chunksEmbedded: 0,
       chunksReused: 0,
       budgetExhausted: false,
+      buildsPaused: 0,
+      buildsReaped: 0,
     };
+    try {
+      res.buildsReaped = await this.knowledge.engine.reapStaleBuilds();
+    } catch (e) {
+      this.logger.error(
+        `Уборка зависших сборок «Сайта» не удалась: ${(e as Error).message}`,
+      );
+    }
     for (const c of await this.candidates()) {
       if (Date.now() >= deadline) break;
       try {
-        const out = await this.indexSite(c);
+        const out = await this.indexSite(c, { deadlineAt: deadline });
         if (out.busy) continue;
         res.sitesTouched++;
+        if (out.paused) res.buildsPaused = (res.buildsPaused ?? 0) + 1;
         if (out.version) res.versionsCreated++;
         if (out.version?.status === 'held') res.versionsHeld++;
         res.chunksEmbedded += out.embedded;

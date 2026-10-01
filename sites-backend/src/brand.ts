@@ -102,3 +102,86 @@ export function parseTelegramApp(
     ? (v as TelegramApp)
     : null;
 }
+
+// ══ Э2: виджет на сайте заказчика (ТЗ §3-бис, §4.12, §4-бис) ══════════════
+//
+// Эти имена заказчик вставляет в вёрстку своего сайта (тег, JS API,
+// CSP-фрагмент) — переименование бренда (В-1) должно быть правкой ЭТОГО
+// блока и его зеркала `widget/src/brand.ts` (сверяет widget/scripts/brand.test.ts),
+// а не поиском по проекту. Домен — заглушка до решения В-1.
+
+/** Origin загрузчика, iframe-чата и публичного API виджета (Vercel-проект `widget`). */
+export const WIDGET_ORIGIN_DEFAULT = 'https://w.v4c.example.invalid';
+
+/** Путь загрузчика (версия протокола в пути — не ломаем установленные виджеты, §4.12). */
+export const WIDGET_LOADER_PATH = '/v1/loader.js';
+
+/** Путь HTML iframe-чата: отдаёт sites-backend с динамическим frame-ancestors. */
+export const WIDGET_FRAME_PATH = '/w/v1/frame';
+
+/** Глобальный объект JS API: `window.V4CAssist('open')` (§3-бис.2). */
+export const WIDGET_GLOBAL = 'V4CAssist';
+
+/** Якорь «своей кнопки»: `<a href="#v4c-assist">` открывает чат (§3-бис.3). */
+export const WIDGET_ANCHOR = '#v4c-assist';
+
+/** Параметр ссылки «посмотреть на сайте» (§3-бис.4): одноразовый токен. */
+export const WIDGET_PREVIEW_PARAM = 'v4c_preview';
+
+/** Префиксы публичных ключей сайта (§4.17). */
+export const WIDGET_PK_LIVE_PREFIX = 'pk_live_';
+export const WIDGET_PK_TEST_PREFIX = 'pk_test_';
+
+/**
+ * CHIPS-cookie указателя посетителя (§4-бис.3, Р-27): `__Host-` — без
+ * Domain, Path=/, Secure; плюс `Partitioned; HttpOnly; SameSite=None`.
+ * Это ПРЕФИКС: настоящее имя — `widgetResumeCookieName(pk)` ниже.
+ */
+export const WIDGET_RESUME_COOKIE = '__Host-v4c_resume';
+
+/**
+ * Имя cookie указателя ДЛЯ КЛЮЧА САЙТА: `<WIDGET_RESUME_COOKIE>_<8 hex>`.
+ * CHIPS партиционирует cookie по сайту ВЕРХНЕГО уровня (eTLD+1): два разных
+ * сайта клиентов на одном eTLD+1 (`a.example.com` и `b.example.com`, разные
+ * pk) делят одну секцию, и общее имя давало перезапись указателя друг друга
+ * (интеграция Э2). Суффикс — FNV-1a 32 бита от pk: не секрет (pk публичен),
+ * а короткое различимое имя; считается синхронно и в Node, и в браузере.
+ * Зеркало — `widget/src/shared/brand.ts` (сверяет widget/scripts/brand.test.ts).
+ */
+export function widgetResumeCookieName(pk: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < pk.length; i++) {
+    h ^= pk.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${WIDGET_RESUME_COOKIE}_${h.toString(16).padStart(8, '0')}`;
+}
+
+/** Заголовок visitor-token запросов iframe → API (не cookie: §4.13 п.2). */
+export const WIDGET_VISITOR_TOKEN_HEADER = 'X-Assist-Visitor';
+
+/** Заголовок сессии предпросмотра (после обмена `v4c_preview`). */
+export const WIDGET_PREVIEW_SESSION_HEADER = 'X-Assist-Preview';
+
+/**
+ * Метка протокола postMessage загрузчик ↔ iframe (§4.12): каждое сообщение
+ * несёт `{ ns: WIDGET_MESSAGE_NS, v: 1, type, … }`; чужое `ns`/`v` — игнор.
+ */
+export const WIDGET_MESSAGE_NS = 'v4c-widget';
+export const WIDGET_PROTOCOL_VERSION = 1;
+
+/** Префикс ключей sessionStorage страницы (`<pk>:ui`) и хранилища iframe. */
+export const WIDGET_STORAGE_PREFIX = 'v4c_w';
+
+/** Имя BroadcastChannel iframe: `<префикс>:<pk>:<origin родителя>` (§4-бис.7). */
+export const WIDGET_CHANNEL_PREFIX = 'v4c-widget';
+
+/** Метка HMAC visitor-token (ключ — производный от ASSIST_SECRETS_KEY, без нового секрета). */
+export const WIDGET_TOKEN_HMAC_LABEL = 'v4c-widget-visitor';
+
+/** Метка соли ipHash виджета (как `v4c-sandbox-ip` песочницы Э1). */
+export const WIDGET_IP_HASH_LABEL = 'v4c-widget-ip';
+
+/** Ссылка «Работает на …» в подвале чата (§3-бис.1) — с UTM. */
+export const WIDGET_POWERED_BY_URL =
+  'https://v4c.example.invalid/assistant?utm_source=widget&utm_medium=powered_by';

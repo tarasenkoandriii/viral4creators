@@ -16,7 +16,7 @@
  */
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { KNOWLEDGE_DEFAULTS } from '../../config/assist-defaults';
-import { createGeminiClient } from '../../shared/gemini-client';
+import { siteGeminiClient } from './dev-fake-gemini';
 
 export type EmbedTask = 'document' | 'query';
 
@@ -78,9 +78,9 @@ export function l2normalize(v: number[]): number[] {
 
 /** Настоящий транспорт: @google/genai, batchEmbedContents под капотом. */
 export function geminiEmbedTransport(): EmbedTransport {
-  let client: ReturnType<typeof createGeminiClient> | null = null;
+  let client: ReturnType<typeof siteGeminiClient> | null = null;
   return async ({ model, texts, taskType, dimensions }) => {
-    client ??= createGeminiClient();
+    client ??= siteGeminiClient();
     // Массив строк SDK превращает в ОТДЕЛЬНЫЕ contents (по одному на
     // текст) — проверено по tContentsForEmbed в @google/genai 1.52.
     const res = await client.models.embedContent({

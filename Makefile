@@ -5,7 +5,7 @@
 
 COMPOSE = docker compose -f docker-compose.dev.yml
 
-.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs ci-sites
+.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs ci-sites ci-widget ci-sites-landing
 
 up:
 	@test -f .env.docker || cp .env.docker.example .env.docker
@@ -84,6 +84,7 @@ ci:
 	cd frontend && npx vite build
 	cd admin && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npx next build
 	cd landing && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npx next build
+	$(MAKE) ci-sites-landing
 	$(MAKE) ci-sites
 	node scripts/sync-site-tma-kit.mjs --check
 	cd assist && npx tsc --noEmit -p tsconfig.json
@@ -91,7 +92,34 @@ ci:
 	cd assist && npm run -s lint
 	cd assist && for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done
 	cd assist && npx vite build
+	$(MAKE) ci-widget
 	$(MAKE) ci-docs
+
+# Лендинг клиентских сайтов (Л0–Л1; джоба `sites-landing` в CI): типы,
+# линт, unit-скрипты, «сборка без SITE_URL падает», сборка с доменом-
+# заглушкой, проверка собранного HTML и бюджет JS. axe и Lighthouse —
+# отдельно, им нужен запущенный `next start` и Chromium:
+#   cd sites-landing && npx next start -p 3010 &
+#   npm run axe && LHCI_BASE_URL=http://localhost:3010 CHROME_PATH=<chromium> npm run lhci
+ci-sites-landing:
+	cd sites-landing && npx tsc --noEmit
+	cd sites-landing && npx next lint --max-warnings 0
+	cd sites-landing && for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done
+	cd sites-landing && if SITE_URL= npx next build >/dev/null 2>&1; then echo "sites-landing: сборка без SITE_URL прошла"; exit 1; fi
+	cd sites-landing && SITE_URL=https://example.invalid PILOT_TELEGRAM_BOT_TOKEN=000000:make-sentinel npx next build >/dev/null
+	cd sites-landing && SITE_URL=https://example.invalid PILOT_TELEGRAM_BOT_TOKEN=000000:make-sentinel npm run -s check:built
+	cd sites-landing && npm run -s budget:js
+
+# Виджет помощника (Э2; джоба `widget` в CI): типы, линт, unit-скрипты,
+# сборка и размерный бюджет. E2E (Playwright) — `cd widget && npm run e2e`
+# отдельно: нужен Chromium и запущенные стенды.
+ci-widget:
+	cd widget && npm run -s typecheck
+	cd widget && npm run -s typecheck:scripts
+	cd widget && npm run -s lint
+	cd widget && for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done
+	cd widget && npm run -s build >/dev/null
+	cd widget && npm run -s size
 
 # Только документы — быстрая проверка перед коммитом правок в doc/.
 ci-docs:

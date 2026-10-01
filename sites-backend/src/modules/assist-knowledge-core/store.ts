@@ -20,7 +20,7 @@
  * вернул меньше k — повтор точным перебором по siteId (MATERIALIZED CTE).
  */
 import { KNOWLEDGE_DEFAULTS } from '../../config/assist-defaults';
-import type { PrismaService } from '../../prisma/prisma.service';
+import type { PrismaClient } from '@prisma/client';
 import { toVectorLiteral } from '../site-ai/embedder';
 import { rrfMerge } from './rrf';
 import { qualified, type KnowledgeTables } from './tables';
@@ -88,13 +88,21 @@ interface HitRow {
   ugc: boolean;
 }
 
+/**
+ * Клиент поиска — только сырой SQL. Э2: чат виджета ищет под ролью
+ * assist_public (AssistPublicDb), кабинет и крон — под основной
+ * (PrismaService); оба подходят (у роли есть SELECT на фрагменты, assist_sites
+ * — колонку knowledgeVersion).
+ */
+export type KnowledgeSearchDb = Pick<PrismaClient, '$queryRawUnsafe'>;
+
 export class KnowledgeStore {
   private readonly C: string;
   private readonly S: string;
 
   constructor(
     readonly tables: KnowledgeTables,
-    private readonly db: PrismaService,
+    private readonly db: KnowledgeSearchDb,
   ) {
     this.C = qualified(tables.chunks);
     this.S = qualified(tables.settings);

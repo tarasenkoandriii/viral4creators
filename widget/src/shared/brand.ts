@@ -1,0 +1,40 @@
+/**
+ * Публичные имена виджета — зеркало блока «Э2» файла
+ * `sites-backend/src/brand.ts` (сверяет scripts/brand.test.ts). Бренд не
+ * решён (В-1): переименование = правка этих двух файлов. Ни один другой
+ * файл виджета не пишет эти строки литералом (тот же тест).
+ */
+export const WIDGET_ORIGIN_DEFAULT = 'https://w.v4c.example.invalid';
+export const WIDGET_LOADER_PATH = '/v1/loader.js';
+export const WIDGET_FRAME_PATH = '/w/v1/frame';
+export const WIDGET_GLOBAL = 'V4CAssist';
+export const WIDGET_ANCHOR = '#v4c-assist';
+export const WIDGET_PREVIEW_PARAM = 'v4c_preview';
+export const WIDGET_PK_LIVE_PREFIX = 'pk_live_';
+export const WIDGET_PK_TEST_PREFIX = 'pk_test_';
+export const WIDGET_VISITOR_TOKEN_HEADER = 'X-Assist-Visitor';
+export const WIDGET_PREVIEW_SESSION_HEADER = 'X-Assist-Preview';
+export const WIDGET_MESSAGE_NS = 'v4c-widget';
+export const WIDGET_PROTOCOL_VERSION = 1;
+export const WIDGET_STORAGE_PREFIX = 'v4c_w';
+export const WIDGET_CHANNEL_PREFIX = 'v4c-widget';
+/** Префикс CHIPS-cookie указателя; имя для сайта — widgetResumeCookieName(pk). */
+export const WIDGET_RESUME_COOKIE = '__Host-v4c_resume';
+
+/**
+ * Имя cookie указателя ДЛЯ КЛЮЧА САЙТА: `<WIDGET_RESUME_COOKIE>_<8 hex>`.
+ * CHIPS партиционирует cookie по сайту ВЕРХНЕГО уровня (eTLD+1): два разных
+ * сайта клиентов на одном eTLD+1 (`a.example.com` и `b.example.com`, разные
+ * pk) делят одну секцию, и общее имя давало перезапись указателя друг друга
+ * (интеграция Э2). Суффикс — FNV-1a 32 бита от pk: не секрет (pk публичен),
+ * а короткое различимое имя; считается синхронно и в Node, и в браузере.
+ * Зеркало `sites-backend/src/brand.ts` (сверяет scripts/brand.test.ts).
+ */
+export function widgetResumeCookieName(pk: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < pk.length; i++) {
+    h ^= pk.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${WIDGET_RESUME_COOKIE}_${h.toString(16).padStart(8, '0')}`;
+}

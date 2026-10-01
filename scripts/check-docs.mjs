@@ -422,6 +422,8 @@ function envVarsInCode() {
     ...walk(path.join(ROOT, "admin/src")),
     ...walk(path.join(ROOT, "landing/src")),
     ...walk(path.join(ROOT, "frontend/src")),
+    // Л0–Л1 лендинга клиентских сайтов: SITE_URL и секреты формы пилота.
+    ...walk(path.join(ROOT, "sites-landing/src")),
   ].filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".spec.ts"));
   const found = new Set();
   for (const f of files) {

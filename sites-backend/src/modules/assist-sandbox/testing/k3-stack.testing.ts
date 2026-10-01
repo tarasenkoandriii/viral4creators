@@ -16,7 +16,10 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { KNOWLEDGE_DEFAULTS } from '../../../config/assist-defaults';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { SITES_DB_SCHEMA } from '../../../prisma/prisma.service';
-import type { AssistPublicDb } from '../../../prisma/assist-public-db.service';
+import {
+  assistPublicClientOptions,
+  type AssistPublicDb,
+} from '../../../prisma/assist-public-db.service';
 import type { SearchHit, SearchQuery } from '../../assist-knowledge-core/types';
 import type { EmbedTransport } from '../../site-ai/embedder';
 import {
@@ -80,9 +83,10 @@ export async function publicPrisma(
   owner: PrismaService,
 ): Promise<AssistPublicDb> {
   const url = await publicDbUrl(owner);
-  return new PrismaClient({
-    adapter: new PrismaPg(url, { schema: SITES_DB_SCHEMA }),
-  }) as unknown as AssistPublicDb;
+  // Те же опции, что у AssistPublicDb в проде (в т.ч. omit закрытых колонок, Э2).
+  return new PrismaClient(
+    assistPublicClientOptions(url),
+  ) as unknown as AssistPublicDb;
 }
 
 /** «Мешок слов» → 768 измерений: одинаковые слова — близкие векторы. */

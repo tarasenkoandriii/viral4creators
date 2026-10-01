@@ -21,6 +21,10 @@
     {
       "path": "/cron/assist-retention",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/cron/assist-budget-sweep",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

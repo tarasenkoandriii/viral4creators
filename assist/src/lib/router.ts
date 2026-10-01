@@ -12,6 +12,7 @@ import {
   isKnowledgeTab,
   type KnowledgeTab,
 } from './knowledge-view';
+import { PLAN_IDS, isWidgetTab, type WidgetTab } from './widget-view';
 
 export type Section = 'knowledge' | 'widget' | 'dialogs';
 
@@ -37,6 +38,13 @@ export type Route =
       tab: KnowledgeTab;
     }
   | { name: 'sandbox-transfer'; sandboxId: string }
+  // Э2: виджет (вкладки Вид/Установка/Где работает/Лиды), персона, мастер
+  // «Научите помощника», экраны payload лендинга (контракт Э2 §4 W4).
+  | { name: 'widget'; siteId: string; tab: WidgetTab }
+  | { name: 'persona'; siteId: string }
+  | { name: 'wizard'; siteId: string }
+  | { name: 'plan'; plan: string }
+  | { name: 'widget-draft'; draftId: string }
   | { name: 'not-found'; path: string };
 
 const SECTIONS: Section[] = ['knowledge', 'widget', 'dialogs'];
@@ -58,6 +66,16 @@ export function parseRoute(hash: string): Route {
   }
   if (p.length === 2 && p[0] === 'sandbox-transfer' && ID.test(p[1])) {
     return { name: 'sandbox-transfer', sandboxId: p[1] };
+  }
+  if (
+    p.length === 2 &&
+    p[0] === 'plan' &&
+    (PLAN_IDS as readonly string[]).includes(p[1])
+  ) {
+    return { name: 'plan', plan: p[1] };
+  }
+  if (p.length === 2 && p[0] === 'widget-draft' && ID.test(p[1])) {
+    return { name: 'widget-draft', draftId: p[1] };
   }
   if (p.length === 1 && (SECTIONS as string[]).includes(p[0])) {
     return { name: 'section', section: p[0] as Section };
@@ -83,6 +101,32 @@ export function parseRoute(hash: string): Route {
         mode: p[3],
         tab: p.length === 5 ? (p[4] as KnowledgeTab) : 'overview',
       };
+    }
+    // #/sites/:id/widget[/вкладка]; без вкладки — «Вид».
+    if (
+      (p.length === 3 || p.length === 4) &&
+      p[2] === 'widget' &&
+      ID.test(p[1]) &&
+      (p.length === 3 || (isWidgetTab(p[3]) && p[3] !== 'look'))
+    ) {
+      return {
+        name: 'widget',
+        siteId: p[1],
+        tab: p.length === 4 ? (p[3] as WidgetTab) : 'look',
+      };
+    }
+    if (p.length === 3 && p[2] === 'persona' && ID.test(p[1])) {
+      return { name: 'persona', siteId: p[1] };
+    }
+    // Мастер — адрес из ТЗ §4-тер.14: …/learning/site/onboarding.
+    if (
+      p.length === 5 &&
+      p[2] === 'learning' &&
+      p[3] === 'site' &&
+      p[4] === 'onboarding' &&
+      ID.test(p[1])
+    ) {
+      return { name: 'wizard', siteId: p[1] };
     }
     if (p.length === 4 && p[2] === 'hosts' && ID.test(p[1]) && ID.test(p[3])) {
       return { name: 'host', siteId: p[1], hostId: p[3] };
@@ -132,6 +176,16 @@ export function routeHref(r: Route): string {
       }`;
     case 'sandbox-transfer':
       return `#/sandbox-transfer/${r.sandboxId}`;
+    case 'widget':
+      return `#/sites/${r.siteId}/widget${r.tab === 'look' ? '' : `/${r.tab}`}`;
+    case 'persona':
+      return `#/sites/${r.siteId}/persona`;
+    case 'wizard':
+      return `#/sites/${r.siteId}/learning/site/onboarding`;
+    case 'plan':
+      return `#/plan/${r.plan}`;
+    case 'widget-draft':
+      return `#/widget-draft/${r.draftId}`;
     case 'not-found':
       return `#/${r.path}`;
   }

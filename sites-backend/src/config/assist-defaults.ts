@@ -144,3 +144,114 @@ export const SANDBOX_LIMITS = {
   /** Вес UGC в слиянии выдач (§6.5: мнение посетителя, не факт). */
   ugcPenalty: 0.005,
 } as const;
+
+/**
+ * Э2: виджет режима «Сайт» (ТЗ §4.5, §4.13, §4-бис, §3-бис, §6.3, §7.1;
+ * лендинг-ТЗ §5.3, §10.1). До Э4 тарифов нет: квота диалогов и суточный
+ * потолок — как у Start (решение координатора Э2, вопрос владельцу О-3).
+ * Места чтения — только через функции ниже (Э4 подменит их тарифом).
+ */
+export const WIDGET_DEFAULTS = {
+  /** Посетитель (§4.5): сообщений за сессию / за сутки. */
+  visitorMessagesPerSession: 30,
+  visitorMessagesPerDay: 60,
+  /** Частота (§4.13 п.2–3). */
+  sessionsPerIpPerMinute: 5,
+  messagesPerVisitorPerMinute: 10,
+  messagesPerVisitorPerHour: 60,
+  messagesPerIpSitePerMinute: 30,
+  /** Прогрессивное замедление: после N сообщений за сессию — пауза (§4.13 п.3). */
+  slowdownAfterMessages: 20,
+  slowdownMinMs: 2_000,
+  slowdownMaxMs: 5_000,
+  /** «Токен выдан < 1 с назад и сразу сообщение» — признак бота (§4.13 п.5). */
+  botTokenAgeMs: 1_000,
+  /** Вопрос (§4.13 п.4) и история из СВОЕЙ базы (последние реплики, §4.6 п.7). */
+  maxQuestionChars: 600,
+  historyTurns: 10,
+  /** `V4CAssist('context')` и заголовок страницы — данные, усечение (§3-бис.2, §4.6 п.5). */
+  maxContextChars: 500,
+  maxPageTitleChars: 200,
+  /** Ответ (§4.5): токенов вывода, потолок генерации (как у лендинга, 90 с). */
+  maxOutputTokens: 800,
+  answerTimeoutMs: 90_000,
+  /** Сброс накопленного текста стрима в базу (§4-бис.4). */
+  streamFlushMs: 500,
+  /** Резерв бюджета живёт дольше полного таймаута ответа (§4.5 уточнение 2). */
+  reservationTtlMs: 3 * 60 * 1000,
+  /** Не больше 3 кнопок-действий, одно видео (§4.9). */
+  maxActions: 3,
+  /** Прямой ответ проверенным ответом — порог сходства (§4.5 п.1). */
+  faqDirectSimilarity: 0.92,
+  /** Семантический кэш (§4.5, §4-тер.7). */
+  semanticCacheTtlMs: 24 * 60 * 60 * 1000,
+  semanticCacheMaxQuestionChars: 200,
+  /** Диалог закрывается через 30 мин тишины; > 30 ответов — ×2, > 60 — ×3 (§7.1). */
+  dialogIdleMs: 30 * 60 * 1000,
+  dialogWeightSteps: [30, 60],
+  /** До Э4: диалогов в месяц и суточный потолок сайта — как Start (§7.1, §7.3). */
+  dialogsPerMonth: 400,
+  siteDailyCapMicroUsd: 1.6 * MICRO_USD,
+  /** Потолок платформы (все сайты, сутки) — env ASSIST_WIDGET_PLATFORM_DAILY_CAP_USD. */
+  platformDailyCapMicroUsdDefault: 20 * MICRO_USD,
+  /** Сессия посетителя (§4.13 п.2), указатель (§4-бис.3), «продолжить» (§4-бис.1). */
+  visitorTokenTtlMs: 24 * 60 * 60 * 1000,
+  resumeTtlMs: 30 * 24 * 60 * 60 * 1000,
+  resumeDialogMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
+  /** Конфиг и HTML iframe кэшируются ≤ 5 мин (§3-бис.1, §4.12). */
+  configCacheSeconds: 300,
+  frameCacheSeconds: 300,
+  /** Предпросмотр (§3-бис.4): токен 30 мин, одноразовый; сессия — до закрытия вкладки, но ≤ 2 ч. */
+  previewTokenTtlMs: 30 * 60 * 1000,
+  previewSessionTtlMs: 2 * 60 * 60 * 1000,
+  /** Версий вида/персоны в истории (§3-бис.4: «последних 20 публикаций»). */
+  configHistoryKeep: 20,
+  /** Лид (§3.6 п.6): длины полей. */
+  leadFieldMaxChars: 200,
+  leadCommentMaxChars: 1_000,
+  leadDeliveryMaxAttempts: 5,
+  /** Лидов в час на посетителя (контракт §5: `widget-lead-visitor-hour`). */
+  leadsPerVisitorPerHour: 5,
+  /** Сроки хранения по умолчанию (§6.3) — колонки assist_sites. */
+  conversationRetentionDays: 90,
+  leadRetentionDays: 180,
+  /** z-index кнопки (§3-бис.3): ниже максимума на 647 — баннеры сайта выше. */
+  zIndexDefault: 2147483000,
+  /** Пинг загрузчика свежий (проверка установки, §3-бис.2). */
+  installPingFreshMs: 7 * 24 * 60 * 60 * 1000,
+  /** Тело публичных запросов виджета (кроме чата) — не больше. */
+  maxPublicBodyBytes: 4 * 1024,
+} as const;
+
+/** Квота диалогов сайта на период. Э4: из тарифа подписки. */
+export function widgetDialogQuota(_accountId: string): number {
+  return WIDGET_DEFAULTS.dialogsPerMonth;
+}
+
+/** Суточный денежный потолок ответов сайта: колонка или умолчание (§7.3). */
+export function widgetSiteDailyCapMicroUsd(row: {
+  dailyCapMicroUsd: number | null;
+}): number {
+  return row.dailyCapMicroUsd ?? WIDGET_DEFAULTS.siteDailyCapMicroUsd;
+}
+
+/** Мастер «Научите помощника» (§4-тер.9, §4-тер.11): платит платформа. */
+export const WIZARD_DEFAULTS = {
+  topics: 10,
+  /** Первый прогон черновиков + не больше 3 повторов. */
+  maxDraftRuns: 4,
+  /** Потолок одного прогона (≈ $0.1 по §4-тер.11 — с запасом). */
+  runCapMicroUsd: 0.15 * MICRO_USD,
+} as const;
+
+/** Лендинг (лендинг-ТЗ §5.3, §10.1): черновики вида и события. */
+export const LANDING_DEFAULTS = {
+  widgetDraftMaxBytes: 2 * 1024,
+  widgetDraftTtlMs: 7 * 24 * 60 * 60 * 1000,
+  widgetDraftsPerIpPerDay: 10,
+  eventsPerBatch: 20,
+  eventBodyMaxBytes: 4 * 1024,
+  /** Батчей событий в минуту с одного ipHash (sendBeacon при каждом скрытии вкладки). */
+  eventBatchesPerMinute: 30,
+  eventsRetentionDays: 90,
+} as const;

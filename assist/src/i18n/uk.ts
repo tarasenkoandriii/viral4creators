@@ -1,4 +1,5 @@
 import type { AppDictionary } from './ru';
+import { setupUk } from './setup-uk';
 
 export const appUk: AppDictionary = {
   nav: {
@@ -411,4 +412,6 @@ export const appUk: AppDictionary = {
   },
   notFound: 'Сторінку не знайдено',
   toSites: 'До сайтів',
+  // Э2 (W4): виджет, персона, лиды, мастер, полнота, payload лендинга.
+  setup: setupUk,
 };

@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["node"], "noEmit": true },
+  "include": [
+    "src",
+    "scripts",
+    "e2e",
+    "vite.loader.config.ts",
+    "vite.chat.config.ts",
+    "vite.dev.config.ts",
+    "playwright.config.ts"
+  ]
+}

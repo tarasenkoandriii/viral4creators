@@ -1,0 +1,443 @@
+import type { SetupDictionary } from './setup-ru';
+
+export const setupEn: SetupDictionary = {
+  common: {
+    save: 'Save draft',
+    saved: 'Draft saved.',
+    publish: 'Publish',
+    published: 'Version {n} published.',
+    publishedLabel: 'Live on the site — version {n}',
+    notPublished: 'Not published yet — visitors do not see the widget.',
+    draftChanged: 'There are unpublished changes.',
+    history: 'Publication history',
+    historyEmpty: 'Nothing published yet.',
+    version: 'Version {n}',
+    rolledBackFrom: 'rollback to version {n}',
+    rollback: 'Restore this version',
+    rollbackHint:
+      'A new version with these settings will be created; the current one stays in history.',
+    rolledBack: 'Version {n} restored (new version {m}).',
+    noAccess:
+      'No access — widget settings are available to the account owner and Assistant managers.',
+    on: 'On',
+    off: 'Off',
+  },
+  home: {
+    title: 'Widget',
+    intro:
+      'Look, installation and site addresses of the widget, the assistant’s character and the request form.',
+    noSites: 'Add a site first.',
+    widget: 'Widget',
+    persona: 'Character',
+    wizard: 'Teach the assistant',
+  },
+  widget: {
+    title: 'Widget',
+    tabs: {
+      look: 'Look',
+      install: 'Install',
+      hosts: 'Where it works',
+      leads: 'Requests',
+    },
+    operatorBlocked:
+      'The widget on this site has been stopped by the platform. Please contact support.',
+    paused: 'Chat is paused: visitors only see the request form.',
+    warnings: {
+      low_contrast:
+        'The colour was adjusted slightly so the button text stays readable (WCAG AA).',
+      host_not_verified:
+        '{origin} is not verified — the widget will not load there.',
+      host_grace:
+        'Verification of {origin} was removed — the widget works until {date}, then stops.',
+      powered_by_locked: '“Powered by …” cannot be removed on your plan.',
+      no_enabled_hosts: 'There is no verified address with the widget enabled.',
+      not_published: 'The widget is not published yet.',
+      other_chat_in_corner:
+        'Another chat was found in this corner of the site — pick another corner.',
+    },
+    adjust: {
+      contrast: 'Colour {from} changed to {to} so the text stays readable.',
+      powered: '“Powered by …” kept — it cannot be removed on your plan.',
+      truncated: 'A text that was too long was shortened to the limit.',
+      host: 'An unverified address was left out of the publication.',
+      other: 'The server adjusted a value ({path}).',
+    },
+    look: {
+      brand: 'Brand',
+      color: 'Main colour',
+      presets: 'Ready colours',
+      customColor: 'Custom colour (HEX)',
+      colorInvalid: 'Colour must be #RRGGBB.',
+      buttonText: 'Button text',
+      auto: 'Auto (black or white)',
+      custom: 'Custom colour',
+      contrastOk: 'Contrast {ratio}:1 — readable.',
+      contrastLow:
+        'Contrast {ratio}:1 is too low — the colour will change slightly on save.',
+      sample: 'Button sample',
+      name: 'Assistant name',
+      nameHint: 'Up to 30 characters. Shown as text — markup does not work.',
+      logo: 'Logo (chat header)',
+      avatar: 'Assistant avatar',
+      avatarIcon: 'Icon',
+      avatarUpload: 'Own image',
+      upload: 'Upload',
+      remove: 'Remove',
+      imageHint:
+        'PNG, JPEG or WebP up to 200 KB. Avatar — a square of 128 px or more.',
+      assetType: 'Only PNG, JPEG or WebP.',
+      assetSize: 'The image is larger than 200 KB.',
+      avatarSquare: 'The avatar must be a square of at least 128×128 px.',
+      uploaded: 'Image uploaded.',
+      icons: {
+        chat: 'Chat',
+        question: 'Question',
+        headset: 'Headset',
+        logo: 'Logo',
+      },
+      launcherIcon: 'Button icon',
+      font: 'Font',
+      fonts: {
+        site: 'Same as the site',
+        system: 'System',
+        inter: 'Inter',
+        roboto: 'Roboto',
+        montserrat: 'Montserrat',
+        manrope: 'Manrope',
+        'open-sans': 'Open Sans',
+        rubik: 'Rubik',
+      },
+      preset: 'Corners and density',
+      presetNames: { soft: 'Soft', strict: 'Strict', compact: 'Compact' },
+      theme: 'Theme',
+      themes: {
+        light: 'Light',
+        dark: 'Dark',
+        auto: 'As in the system',
+        site: 'As on the site (data-theme)',
+      },
+      poweredBy: '“Powered by …” label',
+      poweredByLocked: 'Can be removed on Business and higher.',
+      aiLabel: 'The “AI · may make mistakes” label is always shown.',
+      texts: 'Greeting and suggestions',
+      greeting: 'Greeting',
+      suggestions: 'Suggested questions',
+      suggestionsHint: 'Up to 3, one per line, up to 80 characters each.',
+      langs: { uk: 'Українська', ru: 'Русский', en: 'English' },
+      layout: 'Placement',
+      position: 'Corner',
+      positions: {
+        'bottom-right': 'Bottom right',
+        'bottom-left': 'Bottom left',
+        'top-right': 'Top right',
+        'top-left': 'Top left',
+      },
+      offsets: 'Offsets from the corner, px (0–200)',
+      desktop: 'Desktop',
+      phone: 'Phone',
+      offsetX: 'Horizontal',
+      offsetY: 'Vertical',
+      zIndex: 'z-index',
+      zIndexHint: 'Default 2147483000 — below cookie banners and site dialogs.',
+      mobile: 'On phones',
+      mobiles: {
+        fullscreen: 'Full screen',
+        sheet: 'Bottom sheet',
+        bubble: 'Window, like on desktop',
+      },
+      launcher: 'Button',
+      launchers: {
+        default: 'Floating button',
+        none: 'Own button on the site',
+      },
+      launcherNoneHint:
+        "Call {global}('open') from your button or link to {anchor}.",
+      openAt: 'Where to open the chat',
+      openAts: { corner: 'In the chosen corner', center: 'Centered' },
+      avoidOverlap: 'Do not cover other buttons and banners',
+      hideOnScroll: 'Hide the button while scrolling on phones',
+      publishHint:
+        'Publishing applies on the site within 5 minutes. You can roll back to any of the last 20 versions.',
+    },
+    preview: {
+      title: 'Preview',
+      desktop: 'Desktop',
+      phone: 'Phone',
+      light: 'Light',
+      dark: 'Dark',
+      intro:
+        'This is the real widget with draft settings — save the draft to see changes. Answers use the site knowledge and do not count toward your plan.',
+      needKeys: 'The preview needs the installation code.',
+      getKeys: 'Get the code',
+      unavailable: 'Preview is unavailable right now — try reloading.',
+      reload: 'Reload',
+      onSite: 'View on the site',
+      onSiteHint:
+        'The link works once and for 30 minutes: only you will see the draft look.',
+      chooseHost: 'Verified address',
+      noVerifiedHost: 'No verified addresses — verify the site first.',
+      open: 'Open',
+      mockTitle: 'A page of your site',
+    },
+    install: {
+      keysIntro:
+        'The installation code contains the site’s public key — it is not a secret, but it works only on verified addresses.',
+      getKeys: 'Get the installation code',
+      snippet: 'Embed code — before </body> or in <head>',
+      snippetHint:
+        'One tag on every page. Look and placement come from these settings — no need to change the code when you edit them.',
+      csp: 'If your site has a Content-Security-Policy, add',
+      cspHint:
+        'Add the address to the matching directives of your policy. Without connect-src the button uses the default look.',
+      testKey: 'Test key (localhost only)',
+      testKeyHint:
+        'For development: works only on http(s)://localhost and 127.0.0.1.',
+      platformsTitle: 'How to install',
+      platforms: [
+        {
+          name: 'Google Tag Manager',
+          text: 'New “Custom HTML” tag with this code, trigger — all pages.',
+        },
+        {
+          name: 'WordPress / WooCommerce',
+          text: 'Paste the code into the theme footer (footer.php) or use a plugin that inserts code into <head>/<body>.',
+        },
+        {
+          name: 'Tilda',
+          text: 'Site settings → More → “HTML code for the head section”, or a T123 block in the footer.',
+        },
+        {
+          name: 'Horoshop',
+          text: 'The custom code field for <head> or before </body> in site settings.',
+        },
+        {
+          name: 'Shopify',
+          text: 'Online Store → Themes → Edit code → theme.liquid, before </body>.',
+        },
+        {
+          name: 'React / Vue / Next.js',
+          text: 'Add the tag to the page template (Next.js — the Script component with strategy="afterInteractive").',
+        },
+      ],
+      attrsTitle: 'Per-page settings',
+      attrsText:
+        'Tag attributes change only that page: data-position, data-offset-x, data-offset-y, data-mobile, data-launcher, data-container, data-lang, data-theme, data-z-index, data-hide-on. Branding cannot be changed by attributes.',
+      check: 'Check installation',
+      checkHint:
+        'The check looks at the home page of each address and at widget loads. It does not verify ownership.',
+      checkedAt: 'Checked {date}',
+      results: {
+        ok: 'Installed and working',
+        csp_blocked: 'Installed, but probably blocked by CSP',
+        not_found: 'Code not found',
+        unverified_host:
+          'Address not verified — the widget does not work there',
+        fetch_failed: 'The site did not respond',
+      },
+      cspMissing: 'Missing in CSP: {list}',
+      noPing:
+        'The code is there, but the widget has never loaded. Open a page of the site and check again; if that does not help, CSP or an extension is probably blocking it.',
+      lastPing: 'Last widget load: {date}',
+      noHosts: 'The site has no addresses.',
+    },
+    hosts: {
+      intro:
+        'The widget loads only on verified addresses where it is enabled. Changes apply after publishing.',
+      enabled: 'Widget on this address',
+      masks: 'Show only on pages',
+      masksHint:
+        'Masks separated by commas, e.g. /catalog/*. Empty — everywhere.',
+      hideOn: 'Do not show on pages',
+      hideOnHint: 'For example /checkout* — not to distract during payment.',
+      suggestCheckout: 'Hide on /checkout*',
+      badMasks: 'Not valid (a mask starts with /): {list}',
+      verify: 'Verify address',
+      status: {
+        pending: 'Not verified',
+        verified: 'Verified',
+        expired: 'Verification expired',
+        revoked: 'Verification removed',
+      },
+      grace: 'Works until {date}',
+      live: 'Live on the site',
+      pause: 'Pause chat',
+      resume: 'Resume chat',
+      pauseHint:
+        'While the chat is paused, the assistant does not answer — visitors see the request form.',
+    },
+    leads: {
+      intro:
+        'The request form in the chat. Requests arrive in the Assistant Telegram bot. Changes apply immediately.',
+      fields: {
+        name: 'Name',
+        phone: 'Phone',
+        email: 'E-mail',
+        comment: 'Comment',
+      },
+      show: 'Show',
+      required: 'Required',
+      contactRequired: 'The form needs a phone or an e-mail field.',
+      consent: 'Consent text',
+      consentHint:
+        'Visitors see it next to the button, and you receive it with each request. Up to 1000 characters.',
+      channel: 'Where requests go',
+      channelBot: 'Assistant Telegram bot',
+      save: 'Save form',
+      saved: 'Form saved — already in effect.',
+    },
+  },
+  persona: {
+    title: 'Assistant character',
+    intro:
+      'Tone, languages and restrictions. This is data for the assistant: platform rules (no made-up facts, cite sources) always come first.',
+    tone: 'Tone',
+    tones: { business: 'Business', friendly: 'Friendly', brief: 'Brief' },
+    style: 'How you talk to customers',
+    styleHint: 'Up to 500 characters.',
+    languages: 'Answer languages',
+    langMode: 'Mode',
+    langModes: {
+      auto: 'Language of the question (if allowed)',
+      fixed: 'Always the default language',
+    },
+    allowed: 'Allowed languages',
+    allowedHint: 'Codes separated by commas: uk, ru, en.',
+    defaultLang: 'Default language',
+    langInvalid:
+      'Language codes are two Latin letters; the default must be among the allowed ones.',
+    forbidden: 'Topics to avoid',
+    forbiddenHint: 'One topic per line, up to 20.',
+    stopPhrases: 'Stop phrases',
+    stopHint:
+      'An answer containing such a phrase is not sent. One per line, up to 30.',
+    examples: 'Sample replies in your style',
+    examplesHint: 'Up to 5, one per line.',
+    handoff: 'When to call a human',
+    handoffHint: 'One rule per line, up to 10.',
+    publishHint:
+      'Before publishing, the assistant is checked against the platform’s mandatory questions.',
+    gate: {
+      blocked:
+        'Publishing cancelled: the character conflicts with the assistant’s mandatory rules.',
+      warn: 'Published with check remarks:',
+      notRan:
+        'The check did not run (no learning budget) — published without it.',
+      ok: 'Check passed.',
+    },
+  },
+  wizard: {
+    title: 'Teach the assistant',
+    intro:
+      '10 questions about your business. We drafted answers from your site — confirm or correct them, and the assistant will answer precisely.',
+    start: 'Start',
+    businessType: 'Business type',
+    types: { shop: 'Shop', services: 'Services', saas: 'Online service' },
+    drafts: 'Draft answers from the site',
+    draftsLeft: 'Draft refreshes left: {n}',
+    draft: 'From the site',
+    sources: 'Sources',
+    noDraft: 'No answer found on the site — write your own.',
+    answer: 'Your answer',
+    yes: 'Yes, correct',
+    saveAnswer: 'Save my answer',
+    skip: 'Skip',
+    status: {
+      pending: 'Waiting for an answer',
+      confirmed: 'Confirmed',
+      edited: 'Corrected',
+      skipped: 'Skipped',
+      saved: 'Saved',
+    },
+    targets: {
+      golden: 'Will become a verified answer.',
+      persona_forbid: 'Will become a restriction in the character (draft).',
+      handoff_rule: 'Will become a “when to call a human” rule (draft).',
+    },
+    complete: 'Finish and save',
+    completeHint:
+      'Answers become verified; restrictions and rules go to the character draft — publish it.',
+    done: 'The wizard is finished.',
+    summary: 'What the assistant understood about the site',
+    sections: 'Sections',
+    contacts: 'Contacts',
+    hours: 'Opening hours',
+    toPersona: 'Open character',
+  },
+  completeness: {
+    title: 'Knowledge completeness',
+    topics: 'Key topics: {covered} of {total}',
+    missing: 'Missing',
+    pages:
+      'Pages read {read}, skipped {skipped}, quarantined {quarantined}, excluded {excluded}.',
+    qualityNone: 'No quality check yet.',
+    quality: 'Last check: {passed} correct, {failed} with errors.',
+    review: 'Verified answers to review: {n}',
+    next: {
+      run_wizard: 'Run “Teach the assistant”',
+      answer_topics: 'Answer the topics',
+      review_quarantine: 'Review quarantine',
+      add_documents: 'Add documents',
+      publish_widget: 'Publish the widget',
+    },
+    topicNames: {
+      delivery: 'Delivery',
+      payment: 'Payment',
+      returns: 'Returns',
+      warranty: 'Warranty',
+      hours_contacts: 'Hours and contacts',
+      availability: 'Availability',
+      wholesale_discounts: 'Wholesale and discounts',
+      must_not_promise: 'What not to promise',
+      handoff_when: 'When to call a human',
+      top_question: 'Top question',
+      booking: 'Booking',
+      pricing: 'Pricing',
+      trial: 'Trial',
+      support: 'Support',
+    },
+  },
+  plan: {
+    title: 'Plan',
+    chosen: 'You chose the “{plan}” plan.',
+    names: {
+      trial: 'Trial',
+      start: 'Start',
+      business: 'Business',
+      pro: 'Pro',
+    },
+    text: 'Payment in the account will come later. Until then Start terms apply: 400 dialogs per month per site. Start by connecting your site.',
+    connect: 'Connect a site',
+  },
+  landingDraft: {
+    title: 'Look from the configurator',
+    intro:
+      'You set up the widget look on our website. Apply it to the widget draft?',
+    chooseSite: 'Site',
+    apply: 'Apply to draft',
+    applied: 'The look was applied to the draft — review and publish it.',
+    noSites: 'Add a site first — then you can apply the look to it.',
+    later: 'Not now',
+  },
+  errors: {
+    BAD_REQUEST: 'The request did not pass validation — reload the screen.',
+    WIDGET_CONFIG_INVALID:
+      'Settings did not pass validation: check the colour (#RRGGBB), the name and path masks.',
+    PERSONA_INVALID:
+      'The character did not pass validation: check field lengths and language codes.',
+    LEADS_CONFIG_INVALID:
+      'The form did not pass validation: it needs a phone or e-mail and a consent text.',
+    HOST_NOT_VERIFIED:
+      'The address is not verified — verify it on the site screen.',
+    WIDGET_NOT_PUBLISHED: 'The widget is not published yet.',
+    VERSION_NOT_FOUND: 'This version is no longer in history.',
+    VERSION_CONFLICT: 'Someone is publishing at the same time — try again.',
+    ASSET_TYPE: 'Only PNG, JPEG or WebP (avatar — a square of 128 px or more).',
+    ASSET_TOO_LARGE: 'The image is larger than 200 KB.',
+    PERSONA_GATE_FAILED:
+      'Publishing cancelled: the character conflicts with the assistant’s mandatory rules.',
+    KEYS_MISSING: 'Get the installation code first.',
+    WIZARD_DRAFT_LIMIT:
+      'Drafts were already refreshed the maximum number of times.',
+    WIZARD_NOT_STARTED: 'The wizard has not been started yet.',
+  },
+};

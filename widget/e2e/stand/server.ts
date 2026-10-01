@@ -1,0 +1,1004 @@
+/**
+ * Стенд e2e виджета (W1, контракт Э2 §8): два origin на одном процессе.
+ *
+ *  WIDGET  http://localhost:5181 — origin виджета: статика `dist/v1/*`,
+ *          HTML iframe `GET /w/v1/frame?pk=` с CSP (как W2 frame-html.ts) и
+ *          публичный API `/widget/v1/*` — МОК W2 (по умолчанию) или прокси
+ *          на настоящий sites-backend (`WIDGET_E2E_BACKEND=http://localhost:3010`,
+ *          интеграционный прогон координатора §9.3).
+ *  SITE    http://<любой>.localhost:5182 — «сайт заказчика»: страницы
+ *          собираются из спецификации в `?s=<base64url JSON>` (CSP-заголовок,
+ *          атрибуты тега, MPA-ссылки, SPA-кнопки, контейнер inline, чужой iframe).
+ *          `*.localhost` — защищённый контекст и общий сайт верхнего уровня
+ *          (`example.localhost` и `shop.example.localhost` — одна секция хранилища).
+ *
+ * Мок НЕ проверяет бизнес-правила W2/W3 (гвард по базе, деньги, маскирование) —
+ * только форму протокола и то, что нужно фронту: допуск origin, указатель
+ * (тело + CHIPS-cookie), идемпотентность clientRequestId, генерацию, которая
+ * не обрывается при разрыве соединения, продолжение стрима из «базы».
+ */
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { fileURLToPath } from 'node:url';
+import {
+  WIDGET_RESUME_COOKIE,
+  widgetResumeCookieName,
+} from '../../src/shared/brand';
+
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../..'
+);
+export const WIDGET_PORT = Number(process.env.WIDGET_E2E_WIDGET_PORT || 5181);
+export const SITE_PORT = Number(process.env.WIDGET_E2E_SITE_PORT || 5182);
+const WIDGET = `http://localhost:${WIDGET_PORT}`;
+const BACKEND = process.env.WIDGET_E2E_BACKEND || '';
+// Имя cookie указателя — СВОЁ для каждого pk (как sites-backend: CHIPS
+// делит секцию на eTLD+1, общее имя давало перезапись между сайтами).
+const cookieName = (pk: string) => widgetResumeCookieName(pk);
+const hasResumeCookie = (req: http.IncomingMessage) =>
+  Object.keys(cookies(req)).some((n) =>
+    n.startsWith(WIDGET_RESUME_COOKIE + '_')
+  );
+
+// ── модель мока ────────────────────────────────────────────────────────────
+
+interface Site {
+  pk: string;
+  siteId: string;
+  allowedOrigins: string[];
+  status: 'active' | 'lead_only' | 'off';
+  config: Record<string, unknown>;
+  hosts: Array<{ origin: string; pathMasks: string[]; hideOn: string[] }>;
+  allowClientPreview: boolean;
+  lead: unknown;
+  previewTokens: Record<string, Record<string, unknown>>;
+  /** Вид ни разу не опубликован: конфиг → 403 WIDGET_DISABLED (как sites-backend). */
+  unpublished?: boolean;
+}
+interface Msg {
+  id: string;
+  role: 'visitor' | 'assistant';
+  text: string;
+  sources: unknown[];
+  actions: unknown[];
+  streamState: 'streaming' | 'complete' | 'partial' | 'refused';
+  rating: number | null;
+  createdAt: string;
+  crid?: string;
+}
+interface Conv {
+  id: string;
+  siteId: string;
+  visitorId: string;
+  version: number;
+  messages: Msg[];
+  lastMessageAt: number;
+}
+interface Token {
+  visitorId: string;
+  siteId: string;
+  pk: string;
+  parentOrigin: string;
+  exp: number;
+  preview: boolean;
+}
+
+const bus = new EventEmitter();
+bus.setMaxListeners(1000);
+let M = fresh();
+
+function fresh() {
+  return {
+    clock: 0,
+    tokenDelayMs: 40,
+    sites: new Map<string, Site>(),
+    resumes: new Map<string, { visitorId: string; siteId: string }>(),
+    tokens: new Map<string, Token>(),
+    convs: [] as Conv[],
+    modelCalls: [] as Array<{
+      crid: string;
+      question: string;
+      page: unknown;
+      context: unknown;
+      uiLang: unknown;
+    }>,
+    pings: [] as Array<{ pk: string; v: string; c: string }>,
+    configHits: [] as string[],
+    leads: [] as unknown[],
+    feedback: [] as unknown[],
+    forgets: 0,
+    sessions: [] as Array<{
+      parentOrigin: string;
+      resumed: boolean;
+      resumeLost: boolean;
+      cookie: boolean;
+      body: boolean;
+      visitorId: string;
+    }>,
+    requests: [] as Array<{
+      method: string;
+      path: string;
+      origin: string | null;
+      hasVisitor: boolean;
+      cookie: boolean;
+    }>,
+  };
+}
+
+const now = () => Date.now() + M.clock;
+const rid = (p: string) => p + crypto.randomBytes(9).toString('base64url');
+
+function defaultSite(pk: string, patch: Partial<Site>): Site {
+  return {
+    pk,
+    siteId: 'site_' + pk.slice(-6),
+    allowedOrigins: [],
+    status: 'active',
+    config: {},
+    hosts: [],
+    allowClientPreview: false,
+    lead: {
+      fields: [
+        { field: 'name', required: false },
+        { field: 'phone', required: true },
+      ],
+      consentText: {
+        ru: 'Согласен на обработку данных (стенд)',
+        uk: 'Згоден на обробку даних (стенд)',
+      },
+    },
+    previewTokens: {},
+    ...patch,
+  };
+}
+
+// ── утилиты http ───────────────────────────────────────────────────────────
+
+function send(
+  res: http.ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {}
+) {
+  const buf =
+    typeof body === 'string' || Buffer.isBuffer(body)
+      ? body
+      : JSON.stringify(body);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    ...headers,
+  });
+  res.end(buf);
+}
+const ok = (
+  res: http.ServerResponse,
+  data: unknown,
+  h?: Record<string, string>
+) => send(res, 200, { success: true, data }, h);
+const fail = (res: http.ServerResponse, status: number, code: string) =>
+  send(res, status, { success: false, error: { code, message: code } });
+
+async function readBody(
+  req: http.IncomingMessage
+): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function cookies(req: http.IncomingMessage): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return out;
+}
+
+function frameCsp(site: Site | undefined): string {
+  const anc =
+    site && site.status !== 'off' && site.allowedOrigins.length
+      ? site.allowedOrigins.join(' ')
+      : "'none'";
+  return [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "img-src 'self'",
+    "font-src 'self'",
+    "connect-src 'self'",
+    `frame-ancestors ${anc}`,
+    "base-uri 'none'",
+    "form-action 'none'",
+    "require-trusted-types-for 'script'",
+    "trusted-types 'none'",
+  ].join('; ');
+}
+
+const FRAME_HTML =
+  '<!doctype html><html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+  '<link rel="stylesheet" href="/v1/chat.css"></head><body><div id="app"></div><script src="/v1/chat.js" defer></script></body></html>';
+
+const GIF = Buffer.from(
+  'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==',
+  'base64'
+);
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+// ── генерация ответа (не зависит от соединения, §4-бис.4) ─────────────────
+
+function answerFor(
+  q: string,
+  parentOrigin: string
+): { text: string; sources: unknown[]; actions: unknown[] } {
+  const words = Array.from({ length: 24 }, (_, i) => `слово${i + 1}`).join(' ');
+  return {
+    text:
+      `Ответ на вопрос «${q}». **Важно:** ${words}.\n\n` +
+      `- [Доставка](${parentOrigin}/delivery)\n- [Чужая ссылка](https://evil.example/steal)\n` +
+      `- ![картинка](https://evil.example/pixel.png)\n- [JS](javascript:alert(1)) <img src=x onerror="window.__xss=1"> [S1]`,
+    sources: [
+      { n: 1, url: `${parentOrigin}/delivery`, title: 'Доставка' },
+      { n: 2, url: 'https://evil.example/x', title: 'Чужой' },
+    ],
+    actions: [
+      { kind: 'link', label: 'Каталог', url: `${parentOrigin}/catalog` },
+      { kind: 'link', label: 'Плохая', url: 'javascript:alert(1)' },
+      { kind: 'lead', label: 'Оставить заявку' },
+    ],
+  };
+}
+
+function touch(conv: Conv) {
+  conv.version++;
+  conv.lastMessageAt = now();
+}
+
+function generate(conv: Conv, msg: Msg, q: string, parentOrigin: string) {
+  const a = answerFor(q, parentOrigin);
+  const tokens = a.text.match(/\S+\s*/g) || [];
+  let i = 0;
+  const tick = () => {
+    if (i >= tokens.length) {
+      msg.streamState = 'complete';
+      msg.sources = a.sources;
+      msg.actions = a.actions;
+      touch(conv);
+      bus.emit('m:' + msg.id);
+      return;
+    }
+    msg.text += tokens[i++];
+    touch(conv);
+    bus.emit('m:' + msg.id);
+    setTimeout(tick, M.tokenDelayMs);
+  };
+  setTimeout(tick, M.tokenDelayMs);
+}
+
+function waitChange(id: string, ms: number): Promise<void> {
+  return new Promise((r) => {
+    const t = setTimeout(done, ms);
+    function done() {
+      clearTimeout(t);
+      bus.off('m:' + id, done);
+      r();
+    }
+    bus.on('m:' + id, done);
+  });
+}
+
+// ── API виджета (мок W2) ───────────────────────────────────────────────────
+
+function auth(req: http.IncomingMessage): Token | null {
+  const t = req.headers['x-assist-visitor'];
+  if (typeof t !== 'string') return null;
+  const tok = M.tokens.get(t);
+  return tok && tok.exp > now() ? tok : null;
+}
+
+function msgView(m: Msg) {
+  const { crid: _c, ...v } = m;
+  return v;
+}
+
+async function api(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL
+) {
+  const p = url.pathname;
+  M.requests.push({
+    method: req.method || '',
+    path: p,
+    origin: (req.headers.origin as string) || null,
+    hasVisitor: !!req.headers['x-assist-visitor'],
+    cookie: hasResumeCookie(req),
+  });
+  if (p === '/widget/v1/config') {
+    const pk = url.searchParams.get('pk') || '';
+    M.configHits.push(pk);
+    const s = M.sites.get(pk);
+    const h = {
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=300',
+    };
+    if (!s)
+      return send(
+        res,
+        404,
+        { success: false, error: { code: 'WIDGET_UNKNOWN_KEY', message: '' } },
+        h
+      );
+    if (s.unpublished)
+      return send(
+        res,
+        403,
+        { success: false, error: { code: 'WIDGET_DISABLED', message: '' } },
+        h
+      );
+    return ok(
+      res,
+      {
+        status: s.status,
+        widgetVersion: 3,
+        config: s.config,
+        hosts: s.hosts,
+        allowClientPreview: s.allowClientPreview,
+        lead: s.lead,
+        suggestedQuestions: [
+          'Сколько стоит доставка?',
+          'Как оформить возврат?',
+        ],
+        poweredByUrl: 'https://powered.example/assistant?utm_source=widget',
+      },
+      h
+    );
+  }
+  if (p === '/widget/v1/ping') {
+    M.pings.push({
+      pk: url.searchParams.get('pk') || '',
+      v: url.searchParams.get('v') || '',
+      c: url.searchParams.get('c') || '',
+    });
+    res.writeHead(200, {
+      'Content-Type': 'image/gif',
+      'Cache-Control': 'no-store',
+    });
+    return res.end(GIF);
+  }
+  if (p.startsWith('/widget/v1/asset/')) {
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(PNG);
+  }
+  if (req.method === 'POST' && p === '/widget/v1/preview/exchange') {
+    const b = await readBody(req);
+    const s = M.sites.get(String(b.pk));
+    const cfg = s && s.previewTokens[String(b.token)];
+    if (!s || !cfg || !s.allowedOrigins.includes(String(b.parentOrigin)))
+      return fail(res, 403, 'PREVIEW_INVALID');
+    delete s.previewTokens[String(b.token)]; // одноразовый
+    return ok(res, {
+      previewSession: rid('ps_'),
+      expiresAt: new Date(now() + 7200e3).toISOString(),
+      config: cfg,
+    });
+  }
+  if (
+    req.method === 'POST' &&
+    (p === '/widget/v1/session' || p === '/widget/v1/session/resume')
+  ) {
+    const b = await readBody(req);
+    const s = M.sites.get(String(b.pk));
+    if (!s) return fail(res, 404, 'WIDGET_UNKNOWN_KEY');
+    // (в) Origin запроса — только origin iframe; (б) origin родителя — точный из списка.
+    if (
+      req.headers.origin !== WIDGET ||
+      !s.allowedOrigins.includes(String(b.parentOrigin))
+    )
+      return fail(res, 403, 'ORIGIN_DENIED');
+    const fromCookie = cookies(req)[cookieName(s.pk)];
+    const fromBody = typeof b.resumeKey === 'string' ? b.resumeKey : null;
+    let visitorId: string | null = null;
+    let resumeLost = false;
+    // Как sites-backend: при наличии cookie побеждает она (HttpOnly), тело —
+    // только для браузеров без CHIPS. Поэтому чужая cookie под тем же
+    // именем стоила бы диалога — имя своё у каждого pk.
+    const presented = fromCookie || fromBody;
+    if (presented) {
+      const r = M.resumes.get(presented);
+      if (r && r.siteId === s.siteId) visitorId = r.visitorId;
+      else resumeLost = true;
+    }
+    let resumeKey: string | null = null;
+    const headers: Record<string, string> = {};
+    if (!visitorId) {
+      visitorId = rid('v_');
+      resumeKey = crypto.randomBytes(32).toString('base64url');
+      M.resumes.set(resumeKey, { visitorId, siteId: s.siteId });
+      headers['Set-Cookie'] =
+        `${cookieName(s.pk)}=${resumeKey}; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=None; Partitioned`;
+    }
+    const token = rid('vt_');
+    M.tokens.set(token, {
+      visitorId,
+      siteId: s.siteId,
+      pk: s.pk,
+      parentOrigin: String(b.parentOrigin),
+      exp: now() + 24 * 3600e3,
+      preview: !!b.previewSession,
+    });
+    M.sessions.push({
+      parentOrigin: String(b.parentOrigin),
+      resumed: !resumeKey,
+      resumeLost,
+      cookie: !!fromCookie,
+      body: !!fromBody,
+      visitorId,
+    });
+    return ok(
+      res,
+      {
+        visitorToken: token,
+        expiresAt: new Date(now() + 24 * 3600e3).toISOString(),
+        resumeKey,
+        resumed: !resumeKey,
+        resumeLost,
+        preview: !!b.previewSession,
+      },
+      headers
+    );
+  }
+  const tok = auth(req);
+  if (p.startsWith('/widget/v1/') && !tok) {
+    return fail(
+      res,
+      401,
+      req.headers['x-assist-visitor'] ? 'SESSION_EXPIRED' : 'SESSION_REQUIRED'
+    );
+  }
+  const t = tok as Token;
+  const mine = () =>
+    M.convs
+      .filter((c) => c.visitorId === t.visitorId && c.siteId === t.siteId)
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+  if (req.method === 'GET' && p === '/widget/v1/state') {
+    const c = mine()[0];
+    const fresh7 = c && now() - c.lastMessageAt < 7 * 24 * 3600e3;
+    const since = url.searchParams.get('since');
+    return ok(res, {
+      conversation:
+        c && fresh7
+          ? {
+              id: c.id,
+              stateVersion: c.version,
+              messages:
+                since !== null && Number(since) === c.version
+                  ? []
+                  : c.messages.map(msgView),
+              streamingMessageId:
+                c.messages.find((m) => m.streamState === 'streaming')?.id ??
+                null,
+              lastMessageAt: new Date(c.lastMessageAt).toISOString(),
+            }
+          : null,
+      previousConversationId: c && !fresh7 ? c.id : null,
+    });
+  }
+  if (req.method === 'POST' && p === '/widget/v1/chat') {
+    const b = await readBody(req);
+    const q = typeof b.question === 'string' ? b.question : '';
+    const crid = typeof b.clientRequestId === 'string' ? b.clientRequestId : '';
+    if (!q || !crid) return fail(res, 400, 'BAD_REQUEST');
+    if (q.length > 600) return fail(res, 400, 'QUESTION_TOO_LONG');
+    // Функция/прокси оборвали поток до первого события (200 без meta).
+    if (q.includes('__empty_stream__')) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      return res.end();
+    }
+    const owned = mine().find((c) => c.id === b.conversationId);
+    let conv = owned;
+    let answer: Msg | undefined;
+    let replay = false;
+    // Идемпотентность — только в диалоге ЭТОГО посетителя (§4-бис.4).
+    if (owned) {
+      const vi = owned.messages.findIndex(
+        (m) => m.crid === crid && m.role === 'visitor'
+      );
+      if (vi >= 0) {
+        answer = owned.messages[vi + 1];
+        replay = true;
+      }
+    }
+    if (!answer) {
+      if (!conv) {
+        conv = {
+          id: rid('c_'),
+          siteId: t.siteId,
+          visitorId: t.visitorId,
+          version: 0,
+          messages: [],
+          lastMessageAt: now(),
+        };
+        M.convs.push(conv);
+      }
+      const v: Msg = {
+        id: rid('m_'),
+        role: 'visitor',
+        text: q,
+        sources: [],
+        actions: [],
+        streamState: 'complete',
+        rating: null,
+        createdAt: new Date(now()).toISOString(),
+        crid,
+      };
+      answer = {
+        id: rid('m_'),
+        role: 'assistant',
+        text: '',
+        sources: [],
+        actions: [],
+        streamState: 'streaming',
+        rating: null,
+        createdAt: new Date(now()).toISOString(),
+      };
+      conv.messages.push(v, answer);
+      touch(conv);
+      M.modelCalls.push({
+        crid,
+        question: q,
+        page: b.page,
+        context: b.context,
+        uiLang: b.uiLang,
+      });
+      const err = /error:([a-z_]+)/.exec(q);
+      if (err) {
+        conv.messages.pop();
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write(
+          `event: meta\ndata: ${JSON.stringify({ conversationId: conv.id, messageId: answer.id, replay: false })}\n\n`
+        );
+        res.end(
+          `event: error\ndata: ${JSON.stringify({ code: err[1], message: 'x' })}\n\n`
+        );
+        return;
+      }
+      generate(conv, answer, q, t.parentOrigin);
+    }
+    const c = conv as Conv;
+    const a = answer as Msg;
+    if (String(req.headers.accept).includes('application/json')) {
+      while (a.streamState === 'streaming') await waitChange(a.id, 10000);
+      return ok(res, {
+        conversationId: c.id,
+        messageId: a.id,
+        text: a.text,
+        sources: a.sources,
+        actions: a.actions,
+        refused: false,
+        streaming: false,
+      });
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.write(
+      `event: meta\ndata: ${JSON.stringify({ conversationId: c.id, messageId: a.id, replay })}\n\n`
+    );
+    let sent = 0;
+    let closed = false;
+    res.on('close', () => (closed = true));
+    for (;;) {
+      if (closed) return; // генерация продолжается без нас
+      if (a.text.length > sent) {
+        res.write(
+          `event: token\ndata: ${JSON.stringify({ t: a.text.slice(sent) })}\n\n`
+        );
+        sent = a.text.length;
+      }
+      if (a.streamState !== 'streaming') break;
+      await waitChange(a.id, 5000);
+    }
+    res.write(
+      `event: sources\ndata: ${JSON.stringify({ items: a.sources })}\n\n`
+    );
+    res.write(
+      `event: actions\ndata: ${JSON.stringify({ items: a.actions })}\n\n`
+    );
+    res.end(
+      `event: done\ndata: ${JSON.stringify({ usage: { in: 1, out: 1, cached: 0 } })}\n\n`
+    );
+    return;
+  }
+  const sm = /^\/widget\/v1\/messages\/([A-Za-z0-9_-]+)\/stream$/.exec(p);
+  if (req.method === 'GET' && sm) {
+    const a = mine()
+      .flatMap((c) => c.messages)
+      .find((m) => m.id === sm[1]);
+    if (!a) return fail(res, 404, 'NOT_FOUND');
+    const from = Math.max(0, Number(url.searchParams.get('from')) || 0);
+    if (a.streamState === 'streaming' && a.text.length <= from)
+      await waitChange(a.id, 2000);
+    const text = a.text.slice(from);
+    return ok(res, {
+      messageId: a.id,
+      text,
+      offset: from + text.length,
+      streamState: a.streamState,
+      sources: a.sources,
+      actions: a.actions,
+    });
+  }
+  if (req.method === 'POST' && p === '/widget/v1/lead') {
+    const b = await readBody(req);
+    if (b.consent !== true) return fail(res, 400, 'CONSENT_REQUIRED');
+    M.leads.push(b);
+    return ok(res, { ok: true });
+  }
+  if (req.method === 'POST' && p === '/widget/v1/handoff')
+    return ok(res, { mode: 'lead' });
+  if (req.method === 'POST' && p === '/widget/v1/feedback') {
+    M.feedback.push(await readBody(req));
+    return ok(res, { ok: true });
+  }
+  if (req.method === 'POST' && p === '/widget/v1/forget') {
+    const before = M.convs.length;
+    M.convs = M.convs.filter(
+      (c) => !(c.visitorId === t.visitorId && c.siteId === t.siteId)
+    );
+    for (const [k, r] of M.resumes)
+      if (r.visitorId === t.visitorId) M.resumes.delete(k);
+    M.forgets++;
+    return ok(
+      res,
+      { conversationsDeleted: before - M.convs.length },
+      {
+        'Set-Cookie': `${cookieName(
+          [...M.sites.values()].find((x) => x.siteId === t.siteId)?.pk ?? ''
+        )}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=None; Partitioned`,
+      }
+    );
+  }
+  return fail(res, 404, 'NOT_FOUND');
+}
+
+// ── прокси на настоящий sites-backend (интеграционный прогон) ─────────────
+
+function proxy(req: http.IncomingMessage, res: http.ServerResponse) {
+  const target = new URL(req.url || '/', BACKEND);
+  const fwd = http.request(
+    target,
+    {
+      method: req.method,
+      headers: {
+        ...req.headers,
+        host: target.host,
+        'x-forwarded-for': '127.0.0.1',
+      },
+    },
+    (r) => {
+      res.writeHead(r.statusCode || 502, r.headers);
+      r.pipe(res);
+    }
+  );
+  fwd.on('error', () => fail(res, 502, 'UPSTREAM'));
+  req.pipe(fwd);
+}
+
+// ── origin виджета ─────────────────────────────────────────────────────────
+
+const STATIC: Record<string, string> = {
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.woff2': 'font/woff2',
+};
+
+async function widgetServer(
+  req: http.IncomingMessage,
+  res: http.ServerResponse
+) {
+  const url = new URL(req.url || '/', WIDGET);
+  const p = url.pathname;
+  if (p.startsWith('/__mock/')) return control(req, res, p);
+  if (p === '/evil-frame.html') {
+    // Страница ТОГО ЖЕ origin виджета, но не наш iframe: подделка source.
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(
+      `<!doctype html><script>for (const s of ['closed','min']) parent.postMessage({ns:'v4c-widget',v:1,type:'ui-state',state:s}, '*');` +
+        `parent.postMessage({ns:'v4c-widget',v:1,type:'unavailable',code:'ORIGIN_DENIED'}, '*');</script>`
+    );
+  }
+  if (p.startsWith('/v1/')) {
+    const file = path.join(ROOT, 'dist', path.normalize(p).replace(/^\/+/, ''));
+    if (!file.startsWith(path.join(ROOT, 'dist')) || !fs.existsSync(file))
+      return fail(res, 404, 'NOT_FOUND');
+    res.writeHead(200, {
+      'Content-Type': STATIC[path.extname(file)] || 'application/octet-stream',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(fs.readFileSync(file));
+  }
+  if (BACKEND && (p.startsWith('/widget/v1/') || p.startsWith('/w/v1/')))
+    return proxy(req, res);
+  if (p === '/w/v1/frame') {
+    const s = M.sites.get(url.searchParams.get('pk') || '');
+    M.requests.push({
+      method: 'GET',
+      path: p,
+      origin: null,
+      hasVisitor: false,
+      cookie: hasResumeCookie(req),
+    });
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': frameCsp(s),
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
+    });
+    return res.end(FRAME_HTML);
+  }
+  if (p.startsWith('/widget/v1/')) return api(req, res, url);
+  return fail(res, 404, 'NOT_FOUND');
+}
+
+async function control(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  p: string
+) {
+  const b = req.method === 'POST' ? await readBody(req) : {};
+  switch (p) {
+    case '/__mock/reset':
+      M = fresh();
+      return ok(res, {});
+    case '/__mock/site': {
+      const pk = String(b.pk);
+      M.sites.set(pk, defaultSite(pk, b as Partial<Site>));
+      return ok(res, {});
+    }
+    case '/__mock/set':
+      if (typeof b.clock === 'number') M.clock = b.clock;
+      if (typeof b.tokenDelayMs === 'number') M.tokenDelayMs = b.tokenDelayMs;
+      return ok(res, {});
+    case '/__mock/log':
+      return ok(res, {
+        modelCalls: M.modelCalls,
+        pings: M.pings,
+        configHits: M.configHits,
+        leads: M.leads,
+        feedback: M.feedback,
+        forgets: M.forgets,
+        sessions: M.sessions,
+        requests: M.requests,
+        convs: M.convs.map((c) => ({
+          id: c.id,
+          visitorId: c.visitorId,
+          messages: c.messages.length,
+        })),
+      });
+  }
+  return fail(res, 404, 'NOT_FOUND');
+}
+
+// ── «сайт заказчика» ───────────────────────────────────────────────────────
+
+export interface StandSpec {
+  pk: string;
+  /** Атрибуты тега загрузчика (без data-site), например { 'data-position': 'top-left' }. */
+  attrs?: Record<string, string>;
+  csp?: string | null;
+  /** Номер страницы MPA (1…5). */
+  n?: number;
+  lang?: string;
+  theme?: 'light' | 'dark';
+  /** Сниппет очереди до тега (внешний файл — работает под строгим CSP). */
+  queue?: boolean;
+  /** Своя кнопка #own → V4CAssist('open'). */
+  ownButton?: boolean;
+  /** Контейнер inline #help-chat ('auto' — без заданной высоты). */
+  container?: boolean | 'auto';
+  /** Чужая фиксированная помеха в правом нижнем углу. */
+  obstacle?: boolean;
+  /** Длинная страница (прокрутка). */
+  long?: boolean;
+  /** Без тега загрузчика (замер «без виджета»). */
+  noWidget?: boolean;
+  /** iframe виджета напрямую, без загрузчика (проверка frame-ancestors). */
+  directFrame?: boolean;
+  /** Чужой iframe (другой origin), который шлёт поддельные сообщения. */
+  evilFrame?: string;
+  /** SPA-кнопки (History API). */
+  spa?: boolean;
+  /** Тяжёлый LCP-элемент (для замера CWV). */
+  heavy?: boolean;
+}
+
+export function encodeSpec(s: StandSpec): string {
+  return Buffer.from(JSON.stringify(s)).toString('base64url');
+}
+
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+function standHtml(spec: StandSpec, host: string): string {
+  const n = spec.n || 1;
+  const link = (k: number) => `/page?s=${encodeSpec({ ...spec, n: k })}`;
+  const attrs = Object.entries(spec.attrs || {})
+    .map(([k, v]) => ` ${esc(k)}="${esc(v)}"`)
+    .join('');
+  const parts: string[] = [];
+  parts.push(
+    `<!doctype html><html lang="${esc(spec.lang || 'ru')}"${spec.theme ? ` data-theme="${spec.theme}"` : ''}><head>`
+  );
+  parts.push(
+    `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`
+  );
+  parts.push(
+    `<title>Стенд ${n}</title><link rel="stylesheet" href="/stand.css"></head><body>`
+  );
+  parts.push(
+    `<header class="top"><h1 id="h">Страница ${n} — ${esc(host)}</h1></header>`
+  );
+  if (spec.heavy)
+    parts.push(
+      `<img id="hero" src="/hero.png" width="800" height="300" alt="hero">`
+    );
+  parts.push(
+    `<nav>${[1, 2, 3, 4, 5].map((k) => `<a id="p${k}" href="${link(k)}">стр. ${k}</a>`).join(' ')}</nav>`
+  );
+  parts.push(
+    `<p>Обычный текст сайта заказчика. <a id="anchor" href="#v4c-assist">Спросить помощника</a></p>`
+  );
+  if (spec.ownButton)
+    parts.push(`<button id="own" type="button">Наша кнопка помощи</button>`);
+  if (spec.spa)
+    parts.push(
+      `<button id="spa-next" type="button">SPA: дальше</button><button id="spa-back" type="button">SPA: назад</button>`
+    );
+  if (spec.container)
+    parts.push(
+      `<div id="help-chat"${spec.container === 'auto' ? ' class="auto"' : ''}></div>`
+    );
+  if (spec.obstacle)
+    parts.push(`<div id="cookie-banner">Мы используем cookie</div>`);
+  if (spec.long) parts.push(`<div class="long">длинная страница</div>`);
+  if (spec.evilFrame)
+    parts.push(
+      `<iframe id="evil" src="${esc(spec.evilFrame)}" width="10" height="10"></iframe>`
+    );
+  if (spec.directFrame)
+    parts.push(
+      `<iframe id="direct" src="${WIDGET}/w/v1/frame?pk=${encodeURIComponent(spec.pk)}" width="380" height="500"></iframe>`
+    );
+  if (spec.queue) parts.push(`<script src="/snippets/queue.js"></script>`);
+  if (spec.ownButton) parts.push(`<script src="/snippets/own.js"></script>`);
+  if (spec.spa) parts.push(`<script src="/snippets/spa.js"></script>`);
+  if (!spec.noWidget && !spec.directFrame)
+    parts.push(
+      `<script async src="${WIDGET}/v1/loader.js" data-site="${esc(spec.pk)}"${attrs}></script>`
+    );
+  parts.push(`</body></html>`);
+  return parts.join('\n');
+}
+
+const SNIPPETS: Record<string, string> = {
+  '/snippets/queue.js':
+    'window.V4CAssist = window.V4CAssist || function(){(V4CAssist.q=V4CAssist.q||[]).push(arguments)};',
+  '/snippets/own.js':
+    "document.getElementById('own').addEventListener('click', function(){ window.V4CAssist('open'); });",
+  '/snippets/spa.js':
+    "var k=1;document.getElementById('spa-next').addEventListener('click',function(){k++;history.pushState({k:k},'','/spa/'+k);document.title='SPA '+k;document.getElementById('h').textContent='SPA '+k;});" +
+    "document.getElementById('spa-back').addEventListener('click',function(){history.back();});",
+};
+
+const STAND_CSS = `body{font-family:Georgia,serif;margin:0;padding:16px}nav a{margin-right:8px}
+#help-chat{width:420px;height:520px;border:1px solid #ccc}#help-chat.auto{height:auto}
+#cookie-banner{position:fixed;right:0;bottom:0;width:100%;height:90px;background:#333;color:#fff;z-index:2147483647}
+.long{height:3000px}#hero{display:block;max-width:100%}`;
+
+function siteServer(req: http.IncomingMessage, res: http.ServerResponse) {
+  const host = req.headers.host || 'localhost';
+  const url = new URL(req.url || '/', `http://${host}`);
+  const p = url.pathname;
+  if (p === '/stand.css') {
+    res.writeHead(200, { 'Content-Type': 'text/css' });
+    return res.end(STAND_CSS);
+  }
+  if (p === '/hero.png') {
+    res.writeHead(200, { 'Content-Type': 'image/png' });
+    return res.end(PNG);
+  }
+  if (SNIPPETS[p]) {
+    res.writeHead(200, { 'Content-Type': 'text/javascript' });
+    return res.end(SNIPPETS[p]);
+  }
+  if (p === '/evil.html') {
+    // Чужой origin внутри страницы: пытается командовать и загрузчиком (parent), и iframe чата.
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(
+      `<!doctype html><script>
+      const m = (o) => Object.assign({ns:'v4c-widget',v:1}, o);
+      setInterval(() => {
+        parent.postMessage(m({type:'ui-state',state:'closed'}), '*');
+        parent.postMessage(m({type:'unavailable',code:'ORIGIN_DENIED'}), '*');
+        const targets = [];
+        for (let i = 0; i < parent.frames.length; i++) targets.push(parent.frames[i]);
+        // Окно того же origin, что страница, достаёт iframe чата через открытый shadowRoot
+        // (iframe в Shadow DOM нет в window.frames); чужому origin это недоступно.
+        try {
+          parent.document.querySelectorAll('[data-v4c]').forEach((h) => {
+            const f = h.shadowRoot && h.shadowRoot.querySelector('iframe');
+            if (f) targets.push(f.contentWindow);
+          });
+        } catch (e) {}
+        for (const t of targets) {
+          try { t.postMessage(m({type:'ask',question:'ВНЕДРЁННЫЙ ВОПРОС'}), '*'); } catch (e) {}
+        }
+      }, 200);
+      </script>`
+    );
+  }
+  if (p === '/page' || p.startsWith('/spa/')) {
+    let spec: StandSpec;
+    try {
+      spec = JSON.parse(
+        Buffer.from(url.searchParams.get('s') || '', 'base64url').toString(
+          'utf8'
+        )
+      );
+    } catch {
+      return fail(res, 400, 'BAD_SPEC');
+    }
+    const h: Record<string, string> = {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    };
+    if (spec.csp)
+      h['Content-Security-Policy'] = spec.csp.replace(/\{W\}/g, WIDGET);
+    res.writeHead(200, h);
+    return res.end(standHtml(spec, host));
+  }
+  res.writeHead(404);
+  res.end();
+}
+
+export function start(): Promise<() => void> {
+  const a = http.createServer((q, r) => void widgetServer(q, r));
+  const b = http.createServer(siteServer);
+  return new Promise((resolve) => {
+    let n = 0;
+    const done = () => ++n === 2 && resolve(() => (a.close(), b.close()));
+    a.listen(WIDGET_PORT, done);
+    b.listen(SITE_PORT, done);
+  });
+}
+
+if (
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+) {
+  void start().then(() =>
+    console.log(
+      `стенд: виджет ${WIDGET}, сайт http://*.localhost:${SITE_PORT}${BACKEND ? `, API → ${BACKEND}` : ' (мок W2)'}`
+    )
+  );
+}

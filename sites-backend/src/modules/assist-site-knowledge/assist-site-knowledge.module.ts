@@ -17,6 +17,8 @@ import { SiteKnowledgeController } from './site-knowledge.controller';
 import { SiteKnowledgeService } from './site-knowledge.service';
 import { SiteLearningController } from './site-learning.controller';
 import { SiteSourcesService } from './site-sources.service';
+import { SiteWizardController } from './wizard/site-wizard.controller';
+import { SiteWizardService } from './wizard/site-wizard.service';
 
 @Module({
   imports: [SiteCoreModule, SiteCrawlModule, AssistKnowledgeCoreModule],
@@ -25,6 +27,8 @@ import { SiteSourcesService } from './site-sources.service';
     SiteLearningController,
     AssistCrawlRunController,
     AssistEmbedRunController,
+    // Э2 (W5): мастер «Научите помощника» и полнота знаний.
+    SiteWizardController,
   ],
   providers: [
     SiteKnowledgeService,
@@ -32,6 +36,7 @@ import { SiteSourcesService } from './site-sources.service';
     SiteSourcesService,
     SiteKnowledgeNotifier,
     AssistCrawlScheduler,
+    SiteWizardService,
   ],
   exports: [SiteKnowledgeService, AssistCrawlScheduler],
 })

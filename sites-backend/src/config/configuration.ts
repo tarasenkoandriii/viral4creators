@@ -7,6 +7,9 @@
  * клиентских сайтов (sites-backend)».
  */
 
+import { devFakeGeminiProblem } from './dev-ai-env';
+import { widgetOrigin } from './widget-env';
+
 export interface SitesConfig {
   nodeEnv: string;
   port: number;
@@ -14,6 +17,10 @@ export interface SitesConfig {
   corsOrigins: string[];
   /** Пулерная строка Postgres (Supabase, порт 6543) — для приложения. */
   databaseUrl: string | undefined;
+  /** Э2: origin загрузчика/iframe/API виджета (ASSIST_WIDGET_ORIGIN). */
+  widgetOrigin: string;
+  /** Ошибка: dev-заглушка Gemini включена в production (dev-ai-env.ts). */
+  devFakeGeminiProblem?: string | null;
 }
 
 export function loadConfiguration(
@@ -34,6 +41,8 @@ export function loadConfiguration(
       ...splitList(env.WEB_CABINET_ORIGINS),
     ],
     databaseUrl: env.SITES_DATABASE_URL || undefined,
+    widgetOrigin: widgetOrigin(env),
+    devFakeGeminiProblem: devFakeGeminiProblem(env),
   };
 }
 
@@ -53,6 +62,9 @@ export function validateConfiguration(config: SitesConfig): void {
     throw new Error(
       'Не задана SITES_DATABASE_URL — пулерная строка Postgres (см. doc/DEPLOYMENT.md, раздел sites-backend)',
     );
+  }
+  if (config.devFakeGeminiProblem) {
+    throw new Error(config.devFakeGeminiProblem);
   }
   if (!Number.isInteger(config.port) || config.port <= 0) {
     throw new Error(

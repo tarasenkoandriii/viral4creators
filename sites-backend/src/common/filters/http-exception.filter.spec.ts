@@ -5,11 +5,18 @@ import {
   Logger,
   type ArgumentsHost,
 } from '@nestjs/common';
+import { setupError } from '../../modules/assist-site-setup/errors';
 import { HttpExceptionFilter } from './http-exception.filter';
 
 interface Out {
   status: number;
-  body: { error: { code: string; message: string } };
+  body: {
+    error: {
+      code: string;
+      message: string;
+      details?: Record<string, unknown>;
+    };
+  };
 }
 
 function run(exception: unknown): Out {
@@ -59,6 +66,20 @@ describe('HttpExceptionFilter: код ошибки', () => {
     expect(r.body.error).toMatchObject({
       code: 'KNOWLEDGE_BUSY',
       message: 'Сборка идёт',
+    });
+  });
+
+  it('кабинет Э2: `errors[]` полей доходит до клиента в details (контракт §6), лишние ключи — нет', () => {
+    const e = setupError(400, 'WIDGET_CONFIG_INVALID', 'Неверная настройка', {
+      errors: [{ path: 'colors.accent', code: 'color' }],
+    });
+    (e.getResponse() as Record<string, unknown>).internal = 'секрет';
+    const r = run(e);
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe('WIDGET_CONFIG_INVALID');
+    expect(r.body.error.details).toEqual({
+      code: 'WIDGET_CONFIG_INVALID',
+      errors: [{ path: 'colors.accent', code: 'color' }],
     });
   });
 });

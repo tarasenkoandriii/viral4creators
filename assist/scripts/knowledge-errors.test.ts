@@ -13,6 +13,7 @@ import {
   KNOWLEDGE_ERROR_CODES,
   knowledgeErrorText,
 } from '../src/lib/knowledge-errors';
+import { SETUP_ERROR_CODES } from '../src/lib/setup-errors';
 
 const MINE = [...KNOWLEDGE_ERROR_CODES] as string[];
 const KIT = [...API_ERROR_CODES] as string[];
@@ -84,8 +85,12 @@ for (const mod of [
       /(?:e1Error|knowledgeError)\(\s*(?:\d+\s*,\s*)?'([A-Z][A-Z0-9_]+)'/g
     )) {
       scanned += 1;
+      // Мастер (Э2, W5) — экран W4 переводит коды через setupErrorText.
+      const wizard =
+        f.pathname.includes('/assist-site-knowledge/wizard/') &&
+        (SETUP_ERROR_CODES as readonly string[]).includes(c);
       assert.ok(
-        MINE.includes(c) || KIT.includes(c) || GENERIC.includes(c),
+        MINE.includes(c) || KIT.includes(c) || GENERIC.includes(c) || wizard,
         `${f.pathname.split('/modules/')[1]}: код ${c} без перевода`
       );
     }

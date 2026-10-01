@@ -4,7 +4,7 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { describeDbFailure, describeTarget } from '../shared/db-error';
 import { SITES_DB_SCHEMA } from './prisma.service';
@@ -26,6 +26,66 @@ import { SITES_DB_SCHEMA } from './prisma.service';
  * Строка — `ASSIST_PUBLIC_DATABASE_URL` (doc/DEPLOYMENT.md, раздел 6.4).
  * Нужна с маршрутами виджета; до них её отсутствие — предупреждение.
  */
+/**
+ * Э2: колонки, которых у роли `assist_public` НЕТ (колоночные GRANT
+ * миграции `…_assist_widget`). Prisma без `select` выбирает всю строку (и
+ * `create`/`update` возвращают её через RETURNING) — запрос к закрытой
+ * колонке Postgres отвергает целиком (42501). Глобальный `omit` убирает их
+ * из каждого запроса публичного клиента.
+ *
+ * Типы Prisma об этом `omit` не знают (класс наследует PrismaClient без
+ * параметров): поле в типе есть, в значении — `undefined`. Публичный код
+ * эти поля не читает; новый код публичных маршрутов пишет явный `select`.
+ * Список сверяет assist-public-role.spec.ts с правами в базе.
+ */
+export const ASSIST_PUBLIC_OMIT = {
+  assistSite: {
+    recrawlEvery: true,
+    nextCrawlAt: true,
+    lastCrawlRunId: true,
+    lastIndexedCrawlRunId: true,
+    hotPages: true,
+    hotCheckedAt: true,
+    learningShareBp: true,
+    versionSeq: true,
+    widgetDraft: true,
+    personaDraft: true,
+    leadRetentionDays: true,
+    createdAt: true,
+    updatedAt: true,
+  },
+  assistSiteFaq: {
+    approvedByTelegramId: true,
+    approvedAt: true,
+    reviewAt: true,
+    conflictNote: true,
+    fromConversationId: true,
+    createdByTelegramId: true,
+    createdAt: true,
+  },
+  assistSandbox: { createdByTelegramId: true },
+  assistSiteConfigVersion: {
+    id: true,
+    accountId: true,
+    gateReport: true,
+    rolledBackFrom: true,
+    publishedByTelegramId: true,
+    createdAt: true,
+  },
+  assistSitePreviewToken: { createdByTelegramId: true, createdAt: true },
+  assistSiteAsset: { accountId: true, createdAt: true },
+} as const satisfies Prisma.GlobalOmitConfig;
+
+/** Опции клиента под ролью assist_public — одни и те же в проде и в тестах. */
+export function assistPublicClientOptions(
+  url: string,
+): Prisma.PrismaClientOptions {
+  return {
+    adapter: new PrismaPg(url, { schema: SITES_DB_SCHEMA }),
+    omit: ASSIST_PUBLIC_OMIT,
+  };
+}
+
 @Injectable()
 export class AssistPublicDb
   extends PrismaClient
@@ -34,11 +94,9 @@ export class AssistPublicDb
   private readonly logger = new Logger(AssistPublicDb.name);
 
   constructor() {
-    super({
-      adapter: new PrismaPg(process.env.ASSIST_PUBLIC_DATABASE_URL ?? '', {
-        schema: SITES_DB_SCHEMA,
-      }),
-    });
+    super(
+      assistPublicClientOptions(process.env.ASSIST_PUBLIC_DATABASE_URL ?? ''),
+    );
     // Адаптер ещё не подключался (это делает $connect), так что проверка
     // после super ничего не открывает — просто раньше места нет.
     assertDistinctLogin(

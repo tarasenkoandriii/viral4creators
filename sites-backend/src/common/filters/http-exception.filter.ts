@@ -30,9 +30,11 @@ export const INTERNAL_ERROR_MESSAGE =
 
 /**
  * Поля, которые исключение может передать клиенту помимо текста, — явным
- * списком, чтобы наружу не утекло ничего случайного.
+ * списком, чтобы наружу не утекло ничего случайного. `errors` — построчные
+ * ошибки полей кабинета Э2 (`WIDGET_CONFIG_INVALID` и др.: `{ path, code }[]`,
+ * контракт Э2 §6 «details — errors[]»): их кладёт только `setupError`.
  */
-const PASSTHROUGH_KEYS = ['reason', 'retryAfterMs'] as const;
+const PASSTHROUGH_KEYS = ['reason', 'retryAfterMs', 'errors'] as const;
 
 /** Машинный код отказа (`{ code: 'HOST_DUPLICATE', message }`). */
 const MACHINE_CODE = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
@@ -85,6 +87,7 @@ const CODE_BY_STATUS: Record<number, string> = {
   [HttpStatus.FORBIDDEN]: 'FORBIDDEN',
   [HttpStatus.NOT_FOUND]: 'NOT_FOUND',
   [HttpStatus.CONFLICT]: 'CONFLICT',
+  [HttpStatus.PAYLOAD_TOO_LARGE]: 'PAYLOAD_TOO_LARGE',
   [HttpStatus.UNPROCESSABLE_ENTITY]: 'VALIDATION_ERROR',
   [HttpStatus.TOO_MANY_REQUESTS]: 'RATE_LIMIT_EXCEEDED',
   [HttpStatus.SERVICE_UNAVAILABLE]: 'SERVICE_UNAVAILABLE',
@@ -99,6 +102,28 @@ function messageOf(value: unknown): string | undefined {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map(String).join('; ');
   return undefined;
+}
+
+/**
+ * Ошибка разбора тела (body-parser/raw-body: `http-errors` с `expose`,
+ * статусом 4xx и `type` вида `entity.too.large`/`entity.parse.failed`) —
+ * это отказ клиенту, а не авария: раньше слишком большое тело давало 500.
+ * Текст пакета наружу не отдаём — своя фраза по статусу.
+ */
+export function bodyParserStatus(exception: unknown): number | null {
+  if (!exception || typeof exception !== 'object') return null;
+  const e = exception as { expose?: unknown; status?: unknown; type?: unknown };
+  if (
+    e.expose === true &&
+    typeof e.status === 'number' &&
+    e.status >= 400 &&
+    e.status < 500 &&
+    typeof e.type === 'string' &&
+    /^(entity|request|charset|encoding)\./.test(e.type)
+  ) {
+    return e.status;
+  }
+  return null;
 }
 
 function stackOf(exception: unknown): string | undefined {
@@ -141,6 +166,16 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const line = `${request.method} ${safePath(request)} → ${status} ${errorCode}: ${errorMessage} [${requestId}]`;
       if (status >= 500) this.logger.error(line, stackOf(exception));
       else this.logger.warn(line);
+    } else if (bodyParserStatus(exception) !== null) {
+      status = bodyParserStatus(exception) as number;
+      errorCode = codeFromStatus(status);
+      errorMessage =
+        status === HttpStatus.PAYLOAD_TOO_LARGE
+          ? 'Тело запроса слишком большое'
+          : 'Неверное тело запроса';
+      this.logger.warn(
+        `${request.method} ${safePath(request)} → ${status} ${errorCode} [${requestId}]`,
+      );
     } else {
       // Не наше исключение: текст драйвера/провайдера — только в лог.
       const detail =

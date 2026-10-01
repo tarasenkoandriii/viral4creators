@@ -10,6 +10,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
+import type { BuildDeadline } from '../assist-knowledge-core/indexer';
 import { qualified } from '../assist-knowledge-core/tables';
 import {
   AdminKnowledgeService,
@@ -91,7 +92,7 @@ export class AdminIndexingService {
     return created.id;
   }
 
-  async indexSite(c: Candidate) {
+  async indexSite(c: Candidate, deadline?: BuildDeadline) {
     const ctx = { accountId: c.accountId, siteId: c.siteId };
     const db = this.sitesDb.forAccount(c.accountId);
     await this.knowledge.ensureSettings(ctx);
@@ -120,19 +121,24 @@ export class AdminIndexingService {
         contentHash: true,
       },
     });
-    const out = await this.knowledge.engine.indexCrawl(ctx, {
-      sourceId,
-      crawlRunId: c.runId,
-      pages,
-      // «Горячие страницы» — свойство публичного виджета; копия обновляется
-      // вместе с обходом, бюджет при исчерпании ей не положен.
-      hotUrls: [],
-      includeUgc: settings.includeUgcInAdmin,
-    });
-    if (out.busy) return out;
+    const out = await this.knowledge.engine.indexCrawl(
+      ctx,
+      {
+        sourceId,
+        crawlRunId: c.runId,
+        pages,
+        // «Горячие страницы» — свойство публичного виджета; копия обновляется
+        // вместе с обходом, бюджет при исчерпании ей не положен.
+        hotUrls: [],
+        includeUgc: settings.includeUgcInAdmin,
+      },
+      deadline,
+    );
+    // Э2: сборка с дедлайном тика — приостановленная не отмечает прогон.
+    if (out.busy || out.paused) return out;
     await db.assistAdminSettings.updateMany({
       where: { siteId: c.siteId },
-      data: { lastIndexedCrawlRunId: c.runId },
+      data: { lastIndexedCrawlRunId: out.crawlRunId ?? c.runId },
     });
     const documentsCount = await db.assistAdminDocument.count({
       where: { sourceId, status: 'active' },
@@ -151,10 +157,17 @@ export class AdminIndexingService {
       versionsCreated: 0,
       budgetExhausted: false,
     };
+    try {
+      await this.knowledge.engine.reapStaleBuilds();
+    } catch (e) {
+      this.logger.error(
+        `Уборка зависших сборок «Админки» не удалась: ${(e as Error).message}`,
+      );
+    }
     for (const c of await this.candidates()) {
       if (Date.now() >= deadline) break;
       try {
-        const out = await this.indexSite(c);
+        const out = await this.indexSite(c, { deadlineAt: deadline });
         if (out?.busy) continue;
         res.sitesTouched++;
         if (out?.version) res.versionsCreated++;

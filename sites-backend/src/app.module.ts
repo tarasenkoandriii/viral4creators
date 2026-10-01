@@ -18,6 +18,9 @@ import { AssistKnowledgeCoreModule } from './modules/assist-knowledge-core/assis
 import { AssistSiteKnowledgeModule } from './modules/assist-site-knowledge/assist-site-knowledge.module';
 import { AssistAdminKnowledgeModule } from './modules/assist-admin-knowledge/assist-admin-knowledge.module';
 import { AssistSandboxModule } from './modules/assist-sandbox/assist-sandbox.module';
+import { AssistSiteChatModule } from './modules/assist-site-chat/assist-site-chat.module';
+import { AssistSiteSetupModule } from './modules/assist-site-setup/assist-site-setup.module';
+import { AssistWidgetModule } from './modules/assist-widget/assist-widget.module';
 
 @Module({
   imports: [
@@ -36,6 +39,11 @@ import { AssistSandboxModule } from './modules/assist-sandbox/assist-sandbox.mod
     AssistSiteKnowledgeModule,
     AssistAdminKnowledgeModule,
     AssistSandboxModule,
+    // Э2 «MVP: виджет режима „Сайт“» (контракт /tmp/k/CONTRACT-E2.md):
+    // конвейер ответа, публичный виджет и лендинг, кабинет вида/персоны.
+    AssistSiteChatModule,
+    AssistWidgetModule,
+    AssistSiteSetupModule,
   ],
 })
 export class AppModule {}

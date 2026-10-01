@@ -1,0 +1,636 @@
+{
+  "common": {
+    "skipLink": "Skip to content",
+    "soon": "soon",
+    "soonTitle": "Not available yet: arrives in one of the next product stages",
+    "statusBanner": "{brand} is in development. Anything marked “soon” does not work yet — we are inviting 3–5 websites to a free pilot.",
+    "statusBannerCta": "Pilot terms",
+    "nav": {
+      "label": "Main navigation",
+      "home": "{brand} — home",
+      "assistant": "Assistant",
+      "howItWorks": "How it works",
+      "pricing": "Pricing",
+      "security": "Security",
+      "faq": "FAQ",
+      "pilot": "Join the pilot"
+    },
+    "localeSwitcher": {
+      "label": "Site language"
+    },
+    "footer": {
+      "label": "Site footer",
+      "about": "{brand} is an AI assistant for websites that answers visitors from your site’s own content. In development.",
+      "productHeading": "Assistant",
+      "legalHeading": "Documents",
+      "draftNote": "Legal pages are drafts pending legal review.",
+      "privacy": "Privacy policy",
+      "terms": "Pilot and site terms",
+      "cookies": "Cookies and browser storage",
+      "copyright": "© {year} {brand}"
+    },
+    "breadcrumbHome": "Home",
+    "breadcrumbLabel": "Breadcrumbs"
+  },
+  "pages": {
+    "home": {
+      "title": "{brand} — AI assistant and website QA",
+      "description": "{brand}: an AI assistant that answers from your website’s content, and website QA checks. Both in development — we are looking for pilot users."
+    },
+    "assistant": {
+      "title": "AI assistant for your website — {brand}",
+      "description": "An AI assistant that will answer visitors from your website’s content with a link to the source and send leads to your Telegram. In development: we are inviting 3–5 websites to a free pilot."
+    },
+    "how-it-works": {
+      "title": "How the AI assistant will work — {brand}",
+      "description": "How connecting the {brand} AI assistant will work: your site address, ownership verification, reading the site, one line of code. What it reads, how it answers and when it calls a human."
+    },
+    "security": {
+      "title": "Security and privacy — {brand}",
+      "description": "How {brand} is designed for security: an “AI” label, retention periods, GDPR roles, knowledge isolation, prompt-injection defences and site ownership verification."
+    },
+    "pricing": {
+      "title": "AI assistant pricing — {brand}",
+      "description": "Indicative {brand} AI assistant plans: Trial, Start, Business, Pro — dialog, site and knowledge limits. Prices are confirmed at launch; pilot users get 2 months free."
+    },
+    "faq": {
+      "title": "Questions and answers — {brand}",
+      "description": "Answers about the {brand} AI assistant: pricing and dialogs, ownership verification, site knowledge, languages, quality, privacy, Admin mode and installation."
+    },
+    "pilot": {
+      "title": "AI assistant pilot — {brand}",
+      "description": "We are looking for 3–5 websites (online store, SaaS, services) for a free 2-month pilot of the {brand} AI assistant. Terms and application."
+    },
+    "pilot-status": {
+      "title": "Pilot application — {brand}",
+      "description": "Result of submitting the pilot application."
+    },
+    "not-found": {
+      "title": "Page not found — {brand}",
+      "description": "This page does not exist."
+    }
+  },
+  "og": {
+    "home": "AI assistant and website QA",
+    "assistant": "An AI assistant for your website",
+    "how-it-works": "How the assistant will work",
+    "security": "Security and privacy",
+    "pricing": "Assistant pricing",
+    "faq": "Questions and answers",
+    "pilot": "Free 2-month pilot",
+    "badge": "in development"
+  },
+  "home": {
+    "hero": {
+      "title": "Assistants for your website — by {brand}",
+      "lead": "Two products, one dashboard: an AI assistant that answers visitors from your website’s content, and website QA. Both are in development — and we are looking for our first pilot users.",
+      "cta": "Join the assistant pilot"
+    },
+    "productsHeading": "Products",
+    "assistant": {
+      "claim": "site-answers",
+      "title": "AI assistant",
+      "text": "Will answer visitors from your website’s content with a link to the source and send leads to your Telegram.",
+      "more": "More about the assistant"
+    },
+    "qa": {
+      "claim": "qa-product",
+      "title": "QA: website checks",
+      "text": "Will check your website the way a visitor sees it and show you what broke."
+    },
+    "pilot": {
+      "claim": "pilot-form",
+      "heading": "Pilot: 2 months free",
+      "text": "We are looking for 3–5 websites — an online store, a SaaS product, a service business. You get the assistant before anyone else; we get real conversations to check quality, under a data processing agreement.",
+      "cta": "Apply"
+    }
+  },
+  "assistant": {
+    "hero": {
+      "pilot": {
+        "eyebrow": "AI assistant for websites · in development",
+        "title": "An AI assistant for your website. Looking for our first pilots",
+        "lead": "The assistant will answer visitors from your website’s content with a link to the source, honestly say “I don’t know”, and send leads to your Telegram. We are building it now — and inviting 3–5 websites to a free pilot.",
+        "note": "Everything described on this page is marked “soon”: it does not work yet.",
+        "cta": "Apply for the pilot",
+        "secondary": "How it will work"
+      },
+      "answers": {
+        "eyebrow": "AI assistant for websites",
+        "title": "An AI assistant that answers from your website’s content",
+        "lead": "Answers visitors from your pages with a link to the source, honestly says “I don’t know”, and sends leads to your Telegram.",
+        "note": "Live chat with an operator in Telegram, voice and on-screen guidance — soon.",
+        "cta": "Apply for the pilot",
+        "secondary": "How it works"
+      },
+      "preE6": {
+        "eyebrow": "AI assistant for websites",
+        "title": "An AI assistant that answers from your website’s content",
+        "lead": "Answers from your website’s content with a link to the source, while leads and live chat land in your Telegram.",
+        "note": "Voice and on-screen guidance — soon.",
+        "cta": "Apply for the pilot",
+        "secondary": "How it works"
+      },
+      "full": {
+        "eyebrow": "AI assistant for websites",
+        "title": "An AI assistant for your website that doesn’t just answer — it shows",
+        "lead": "Answers from your website’s content by text and voice, guides visitors through the interface with highlights and video, and sends leads to your Telegram.",
+        "note": "",
+        "cta": "Apply for the pilot",
+        "secondary": "How it works"
+      }
+    },
+    "recording": {
+      "claim": "demo-recording",
+      "heading": "What it will look like",
+      "text": "This is where a recording of the assistant on a real website will go — as soon as the first working version exists. We don’t show drawings in place of recordings.",
+      "placeholder": "The recording will appear after the first version launches",
+      "caption": "recording"
+    },
+    "promises": {
+      "heading": "What we are building",
+      "items": [
+        {
+          "claim": "site-answers",
+          "title": "Answers only from your website",
+          "text": "Knowledge comes from your pages, documents and FAQ. Every answer links to the source page."
+        },
+        {
+          "claim": "video",
+          "title": "Shows where to click",
+          "text": "Element highlighting and video walkthroughs of your screens — for websites with a user dashboard."
+        },
+        {
+          "claim": "telegram-handoff",
+          "title": "Telegram console",
+          "text": "Leads and live chat in your Telegram: an operator replies, and the visitor sees the reply in the widget."
+        }
+      ]
+    },
+    "steps": {
+      "heading": "How it will work — in short",
+      "items": [
+        {
+          "claim": "ownership-verification",
+          "title": "Enter your address and verify ownership",
+          "text": "A DNS record, a file or a meta tag — for each host separately."
+        },
+        {
+          "claim": "site-answers",
+          "title": "The assistant reads your site",
+          "text": "Public pages, plus the documents and FAQ you add."
+        },
+        {
+          "claim": "install-snippet",
+          "title": "Paste one line of code",
+          "text": "Add the loader tag to your site and the assistant appears in the corner you chose."
+        },
+        {
+          "claim": "leads",
+          "title": "Receive leads",
+          "text": "Contact details of visitors who agreed to leave them — in your Telegram."
+        }
+      ],
+      "more": "Learn more"
+    },
+    "modes": {
+      "heading": "Two modes",
+      "items": [
+        {
+          "claim": "site-answers",
+          "title": "“Site” — for visitors",
+          "text": "Answers about products, services, delivery and terms — from your pages."
+        },
+        {
+          "claim": "admin-read",
+          "title": "“Admin” — for staff",
+          "text": "An assistant inside your admin panel that follows your internal guidelines. The knowledge bases are separate: internal content never reaches visitors."
+        }
+      ]
+    },
+    "branding": {
+      "claim": "branding",
+      "heading": "A widget that matches your brand",
+      "text": "Colours, logo, font, any corner, dark theme, your own button or embedding into a page block."
+    },
+    "install": {
+      "heading": "Installation",
+      "items": [
+        {
+          "claim": "install-guides",
+          "title": "Platform guides",
+          "text": "WordPress, Shopify, Horoshop, Tilda, GTM, React — paste a single tag."
+        },
+        {
+          "claim": "wp-plugin",
+          "title": "WordPress plugin and npm package",
+          "text": "For those who prefer installing a package to pasting a tag."
+        }
+      ]
+    },
+    "limits": {
+      "heading": "Honest limits",
+      "items": [
+        {
+          "claim": "honest-unknown",
+          "title": "Doesn’t make things up",
+          "text": "If something isn’t on your site — prices, stock, delivery times — the assistant doesn’t invent it: it says “I don’t know” and offers to contact a person."
+        },
+        {
+          "claim": "ai-label",
+          "title": "Says it is an AI",
+          "text": "The “AI” label in the widget cannot be turned off on any plan."
+        },
+        {
+          "claim": "admin-actions",
+          "title": "Does nothing without your “Yes”",
+          "text": "In Admin mode, every action happens only after a staff member confirms it."
+        }
+      ],
+      "more": "Security and privacy"
+    },
+    "pricingTeaser": {
+      "heading": "Pricing — indicative",
+      "text": "Start, Business and Pro — {start}, {business} and {pro} dialogs per month. Over the limit, a lead form is shown by default, so your site is never left without the assistant; you can switch on extra dialogs from {minOverage} per dialog.",
+      "more": "All plans"
+    },
+    "pilot": {
+      "claim": "pilot-form",
+      "heading": "Looking for 3–5 pilots",
+      "text": "2 months free for an online store, SaaS product or service business. In return — access to conversations to check quality, under a data processing agreement (DPA).",
+      "cta": "Apply"
+    },
+    "faqTeaser": {
+      "heading": "Frequently asked questions",
+      "more": "All questions"
+    }
+  },
+  "howItWorks": {
+    "heading": "How the assistant will work",
+    "lead": "Below is how the product is designed. It is in development, so every block is marked “soon”. Real dashboard screenshots will appear together with the product — we don’t pass drawings off as screenshots.",
+    "stepsHeading": "Five steps",
+    "steps": [
+      {
+        "claim": "ownership-verification",
+        "title": "Site address and ownership verification",
+        "text": "You add the site in the Telegram dashboard and confirm it is yours: a DNS record, a file at the site root or a meta tag. Each host separately: a subdomain is not considered verified just because the main domain is."
+      },
+      {
+        "claim": "site-answers",
+        "title": "The assistant reads the site",
+        "text": "Public pages are crawled via the sitemap and links, respecting robots.txt. On top of that — documents (PDF, DOCX, TXT) and your own answers to frequent questions."
+      },
+      {
+        "claim": "branding",
+        "title": "Appearance",
+        "text": "Colour, logo, assistant name, screen corner, greeting and suggestions — in the dashboard configurator."
+      },
+      {
+        "claim": "install-snippet",
+        "title": "One line of code",
+        "text": "A loader tag on your site. The loader is light and starts after your page; the chat window loads only after a click."
+      },
+      {
+        "claim": "leads",
+        "title": "Conversations and leads",
+        "text": "Visitors ask questions, the assistant answers with a link to the source, and the contact details of those who agreed to leave them arrive in your Telegram."
+      }
+    ],
+    "readsHeading": "What the assistant reads",
+    "reads": [
+      {
+        "claim": "site-answers",
+        "text": "Your site’s public pages — re-crawled regularly; frequency depends on the plan."
+      },
+      {
+        "claim": "site-answers",
+        "text": "Documents you upload and manual answers to frequent questions."
+      },
+      {
+        "claim": "knowledge-isolation",
+        "text": "Never a private area: an admin panel is connected separately, into its own knowledge base."
+      }
+    ],
+    "answersHeading": "How it answers",
+    "answers": [
+      {
+        "claim": "source-links",
+        "text": "Every answer links to the page the fact came from."
+      },
+      {
+        "claim": "honest-unknown",
+        "text": "Numbers (prices, deadlines, amounts) are checked against the source; if it isn’t in the knowledge, it says “I don’t know” and offers to contact a person."
+      },
+      {
+        "claim": "languages",
+        "text": "Answers in the language of the question."
+      }
+    ],
+    "humanHeading": "When it calls a human",
+    "human": [
+      {
+        "claim": "telegram-handoff",
+        "text": "When a visitor asks for a person or the assistant doesn’t know the answer, a conversation card arrives in your Telegram, and the visitor sees the operator’s reply in the widget."
+      }
+    ],
+    "needHeading": "What we need from you",
+    "need": [
+      {
+        "claim": "ownership-verification",
+        "text": "Verify every host where the widget will run."
+      },
+      {
+        "claim": "install-snippet",
+        "text": "Paste one line of code — about ten minutes."
+      }
+    ],
+    "cta": "Apply for the pilot"
+  },
+  "security": {
+    "heading": "Security and privacy",
+    "lead": "How the product is designed for security. It is in development, so every point is marked “soon”: these are the requirements we are building it to, not a description of what already works.",
+    "siteNow": {
+      "claim": "landing-no-trackers",
+      "heading": "This website — already today",
+      "text": "No advertising trackers and no third-party analytics scripts. Page views are counted by Vercel Web Analytics without cookies; page speed is collected by our own endpoint without a visitor identifier. There is one cookie — your language choice, and only after you change it.",
+      "more": "Privacy policy"
+    },
+    "items": [
+      {
+        "claim": "ai-label",
+        "title": "The assistant says it is an AI",
+        "text": "The “AI assistant · may make mistakes” label in the widget header cannot be turned off on any plan — as required by Article 50 of the EU AI Act."
+      },
+      {
+        "claim": "visitor-forget",
+        "title": "Visitor data",
+        "text": "Conversations are kept for 90 days by default (the customer can choose 30 to 365), leads for 180 days. IP addresses only as a hash with a daily salt. Visitors can delete their own conversation from the widget menu."
+      },
+      {
+        "claim": "dpa",
+        "title": "Roles: you are the controller, we are the processor",
+        "text": "For your visitors’ data you are the controller and we are the processor. A data processing agreement (DPA) is part of connecting."
+      },
+      {
+        "claim": "knowledge-isolation",
+        "title": "Isolation",
+        "text": "Different customers’ knowledge never mixes, and within one customer the Admin knowledge is stored separately from the Site knowledge and never reaches visitors. This is checked by a test in every release."
+      },
+      {
+        "claim": "injection-defense",
+        "title": "Prompt-injection defences",
+        "text": "Page and document text is data, not commands: the assistant does not follow instructions it finds on a page."
+      },
+      {
+        "claim": "ownership-verification",
+        "title": "Ownership verification",
+        "text": "The widget runs only on hosts you verified with a DNS record, a file or a meta tag. We don’t accept “verification by widget code”: anyone can paste someone else’s code."
+      },
+      {
+        "claim": "api-secrets",
+        "title": "Your API secrets",
+        "text": "Keys for Admin mode are encrypted with a separate key and are not shown in the interface after saving."
+      }
+    ],
+    "openHeading": "Not decided yet",
+    "open": [
+      "The data storage region will be stated before launch.",
+      "The list of sub-processors and a downloadable DPA will appear with the paid launch.",
+      "A responsible-disclosure contact (security.txt) will appear together with the domain."
+    ],
+    "wording": "We don’t write “guaranteed” or “impossible to hack”: we describe how the system is designed and how that is tested.",
+    "cta": "Apply for the pilot"
+  },
+  "pricing": {
+    "heading": "AI assistant pricing",
+    "lead": "Indicative pricing for pilot users: prices are confirmed at launch. No payments are accepted now — the pilot is free for 2 months.",
+    "currencyNote": "Prices are indicative, in US dollars. After launch, payment is by card in Ukrainian hryvnia at the exchange rate, or with Telegram Stars.",
+    "checked": "Plan data as of {date}.",
+    "perMonth": "/mo",
+    "free": "0",
+    "trialDays": "{days} days free",
+    "plans": {
+      "trial": "Trial",
+      "start": "Start",
+      "business": "Business",
+      "pro": "Pro"
+    },
+    "limitsCaption": "Plan limits",
+    "featuresCaption": "Features by plan",
+    "planColumn": "Plan",
+    "parameterColumn": "Parameter",
+    "rows": {
+      "price": "Price per month",
+      "dialogs": "Dialogs per month",
+      "sites": "Websites",
+      "pages": "Pages in knowledge",
+      "documents": "Documents",
+      "operators": "Operators in Telegram",
+      "retention": "Conversation retention, days",
+      "overage": "Over the limit, per 100 dialogs"
+    },
+    "features": {
+      "voice": "Voice",
+      "video": "Video answers",
+      "adminRead": "Admin: read",
+      "adminActions": "Admin: actions",
+      "removePoweredBy": "No “Powered by”",
+      "ownLoaderDomain": "Own loader domain"
+    },
+    "yes": "yes",
+    "no": "—",
+    "overageStop": "stop",
+    "cta": "Apply for the pilot",
+    "dialogHeading": "What counts as a dialog",
+    "dialogText": "A dialog is a visitor session with at least one reply from the assistant; it closes after {idle} minutes of silence. A very long dialog counts as several: over {two} replies counts as 2, over {three} as 3.",
+    "overageHeading": "What happens over the limit",
+    "overageText": "By default, a soft stop: instead of answers the visitor sees a lead form, so your site is never left without the assistant. Optionally, extra dialogs from {minOverage} per dialog. On Trial — a stop.",
+    "annual": "Annual billing — {percent}% off.",
+    "honestHeading": "Good to know before signing up",
+    "honest": [
+      "For the widget to work, you need to verify ownership of every host.",
+      "Admin mode: reading — Business and above, actions — Pro only.",
+      "Trial: {trialDialogs} dialogs, 1 website, no voice."
+    ],
+    "agency": {
+      "claim": "agency",
+      "title": "For agencies",
+      "text": "A dedicated plan and a dashboard under your agency’s brand are planned."
+    }
+  },
+  "faq": {
+    "heading": "Questions and answers",
+    "lead": "The answers describe how the product is designed. It is in development — anything that doesn’t work yet is marked “soon”.",
+    "groups": [
+      {
+        "title": "Pricing and dialogs",
+        "items": [
+          {
+            "claim": "payment",
+            "q": "How much will it cost?",
+            "a": "Indicatively from {startPrice} a month for {startDialogs} dialogs; Trial is {trialDays} days free. Prices are confirmed at launch; payment is in Ukrainian hryvnia at the exchange rate or with Telegram Stars. Pilot users get 2 months free."
+          },
+          {
+            "claim": "payment",
+            "q": "What happens when the dialogs run out?",
+            "a": "By default, a lead form replaces the answers, so your site is never left without the assistant. You can switch on extra dialogs from {minOverage} per dialog."
+          }
+        ]
+      },
+      {
+        "title": "Ownership verification",
+        "items": [
+          {
+            "claim": "ownership-verification",
+            "q": "Why do I need to verify site ownership?",
+            "a": "So that nobody can put the assistant on someone else’s site in your name or read someone else’s pages as their own. Verification is a DNS record, a file or a meta tag."
+          },
+          {
+            "claim": "ownership-verification",
+            "q": "I have several subdomains. Do I verify each one?",
+            "a": "Yes, every host where the widget will run is verified separately."
+          }
+        ]
+      },
+      {
+        "title": "Knowledge and quality",
+        "items": [
+          {
+            "claim": "site-answers",
+            "q": "Where does the assistant get its answers?",
+            "a": "From your website’s public pages, uploaded documents and your answers to frequent questions. Every answer links to its source."
+          },
+          {
+            "claim": "honest-unknown",
+            "q": "What if it gets something wrong?",
+            "a": "The assistant doesn’t invent what isn’t in its knowledge: it says “I don’t know” and offers to contact a person. A wrong answer can be corrected in the dashboard."
+          },
+          {
+            "claim": "languages",
+            "q": "Which languages does it answer in?",
+            "a": "In the language of the visitor’s question."
+          }
+        ]
+      },
+      {
+        "title": "Privacy",
+        "items": [
+          {
+            "claim": "dpa",
+            "q": "What about GDPR?",
+            "a": "For visitor data you are the controller and we are the processor; a data processing agreement (DPA) is part of connecting. The assistant always says it is an AI."
+          },
+          {
+            "claim": "visitor-forget",
+            "q": "Can a visitor delete their conversation?",
+            "a": "Yes, with a button in the widget menu."
+          }
+        ]
+      },
+      {
+        "title": "Admin mode",
+        "items": [
+          {
+            "claim": "admin-read",
+            "q": "Can the assistant work inside our admin panel?",
+            "a": "Yes, as a staff assistant: following internal guidelines, with a separate knowledge base that never overlaps with the public one. Reading — Business and above; actions — Pro only and only with confirmation."
+          }
+        ]
+      },
+      {
+        "title": "Installation",
+        "items": [
+          {
+            "claim": "install-snippet",
+            "q": "How do I install the assistant?",
+            "a": "Paste one line of code on your site. There will be step-by-step guides for WordPress, Shopify, Horoshop, Tilda, GTM and React."
+          },
+          {
+            "claim": "voice",
+            "q": "Will there be voice?",
+            "a": "Yes, on the Business and Pro plans — in the stages after the first version."
+          }
+        ]
+      },
+      {
+        "title": "Pilot",
+        "items": [
+          {
+            "claim": "pilot-form",
+            "q": "What is the pilot?",
+            "a": "2 months of free use for 3–5 websites. In return — access to conversations to check quality, under a data processing agreement. You can apply right now."
+          }
+        ]
+      }
+    ]
+  },
+  "pilot": {
+    "heading": "AI assistant pilot",
+    "lead": "We are looking for 3–5 websites — an online store, a SaaS product with a user dashboard, or a service business — to be the first to install the assistant and help us make it better.",
+    "termsHeading": "Terms",
+    "terms": [
+      "2 months free after the first version launches.",
+      "3–5 websites in the pilot; we will write to you when the version is ready to install.",
+      "In return — access to your site’s conversations to check quality, under a data processing agreement (DPA).",
+      "Applying commits you to nothing: you can withdraw at any stage."
+    ],
+    "form": {
+      "heading": "Application",
+      "name": "Your name",
+      "contact": "How to reach you",
+      "contactHint": "Email or Telegram (@username).",
+      "site": "Website address",
+      "siteHint": "For example, https://shop.example",
+      "segment": "Website type",
+      "segments": {
+        "ecommerce": "Online store",
+        "saas": "SaaS / user dashboard",
+        "services": "Services",
+        "agency": "Agency (client websites)",
+        "other": "Other"
+      },
+      "message": "What matters to you (optional)",
+      "consent": "I agree to the processing of this data to review my application in accordance with the",
+      "consentLink": "privacy policy",
+      "honeypot": "Do not fill in this field",
+      "required": "required field",
+      "submit": "Send application",
+      "sending": "Sending…",
+      "result": {
+        "sent": "Thank you! Your application has been received — we will write to you as soon as the first version is ready for the pilot.",
+        "invalid": "Please check the fields marked below.",
+        "limited": "Too many applications from your network. Please try again in a few minutes.",
+        "unavailable": "Applications are temporarily unavailable. Your application was NOT sent — your data is still in the form; please try again later.",
+        "error": "Could not send. Your application was NOT sent — your data is still in the form; please try again."
+      },
+      "errors": {
+        "name": "Enter your name (up to 100 characters).",
+        "contact": "Enter an email or a Telegram username (@username).",
+        "site": "Enter the website address, e.g. https://shop.example.",
+        "segment": "Choose the website type.",
+        "message": "No more than 1000 characters.",
+        "consent": "Consent to data processing is required."
+      }
+    },
+    "status": {
+      "back": "Back to the application",
+      "home": "To the assistant page",
+      "result": {
+        "sent": "Thank you! Your application has been received — we will write to you as soon as the first version is ready for the pilot.",
+        "invalid": "Some fields were filled in incorrectly. Your application was NOT sent — go back to the form, check the fields and send it again.",
+        "limited": "Too many applications from your network. Please try again in a few minutes.",
+        "unavailable": "Applications are temporarily unavailable. Your application was NOT sent — please try again later.",
+        "error": "Could not send. Your application was NOT sent — please try again."
+      }
+    }
+  },
+  "legal": {
+    "draftBanner": "DRAFT pending legal review. The text is not final and may change.",
+    "onlyUk": "For now this document exists only in Ukrainian: we translate legal text only after legal review."
+  },
+  "notFound": {
+    "heading": "Page not found",
+    "text": "The address may have changed. Start from the home page.",
+    "home": "Home"
+  }
+}

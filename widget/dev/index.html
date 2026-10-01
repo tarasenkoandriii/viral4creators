@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Стенд «сайт заказчика»</title>
+  </head>
+  <body>
+    <h1>Стенд «сайт заказчика» (W1)</h1>
+    <!--
+      Ручная проверка исходников через vite (npm run dev, :5176; /widget/v1 и
+      /w/v1 проксируются на sites-backend :3010). iframe чата отдаёт бэкенд и
+      ссылается на /v1/chat.js — для чата нужна сборка (npm run build).
+
+      Основной стенд (тот же, что в e2e): npm run build && npx tsx e2e/stand/server.ts
+        виджет http://localhost:5181 (dist/v1 + HTML iframe с CSP + мок API W2;
+        WIDGET_E2E_BACKEND=http://localhost:3010 — прокси на настоящий бэкенд),
+        «сайты» http://<любой>.localhost:5182/page?s=<base64url спецификации>
+        (углы, inline, своя кнопка, CSP, Trusted Types, MPA/SPA — e2e/stand/server.ts).
+    -->
+    <p><a href="#v4c-assist">Спросить помощника (якорь)</a></p>
+    <script async src="/src/loader/index.ts" type="module" data-site="pk_test_devstand01"></script>
+  </body>
+</html>

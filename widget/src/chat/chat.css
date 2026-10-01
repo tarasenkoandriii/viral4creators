@@ -1,0 +1,351 @@
+/* Стили чата (W1): только CSS-переменные бренда (CSSOM), без внешних шрифтов (свой хостинг, §3-бис.1).
+   Контраст: текст на фоне/пузырях ≥ 4.5:1 в обеих темах; текст на основном цвете — чёрный/белый по контрасту. */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+}
+#app {
+  height: 100%;
+}
+.v4c-chat {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --mut: #545a63;
+  --bub: #f0f2f5;
+  --ln: #d5d9de;
+  --r: 14px;
+  --pad: 12px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.45 var(--v4c-font, system-ui, sans-serif);
+}
+.v4c-chat *,
+.v4c-chat *::before,
+.v4c-chat *::after {
+  box-sizing: inherit;
+}
+.v4c-chat.dark {
+  --bg: #16181d;
+  --fg: #eceef1;
+  --mut: #aab0b9;
+  --bub: #252930;
+  --ln: #3a3f48;
+}
+.v4c-chat.p-strict {
+  --r: 4px;
+}
+.v4c-chat.p-compact {
+  --r: 10px;
+  --pad: 8px;
+  font-size: 14px;
+}
+.hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px var(--pad);
+  background: var(--v4c-c, #1f5fd6);
+  color: var(--v4c-on, #fff);
+}
+.av {
+  display: flex;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(127, 127, 127, 0.25);
+}
+.av svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+.av img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.ttl {
+  flex: 1;
+  min-width: 0;
+}
+.nm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.nm > span:not(.ai) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.logo {
+  height: 18px;
+  max-width: 80px;
+  object-fit: contain;
+}
+.ai {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+}
+.sub {
+  font-size: 12px;
+}
+.x,
+.snd {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.x svg,
+.snd svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+.feed {
+  /* offsetParent для сообщений: позиция «последнего видимого» — от начала ленты */
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--pad);
+  overscroll-behavior: contain;
+}
+.msg {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 10px;
+}
+.msg.me {
+  align-items: flex-end;
+}
+.bub {
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: var(--r);
+  background: var(--bub);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.bot .bub {
+  white-space: normal;
+}
+.me .bub {
+  background: var(--v4c-c, #1f5fd6);
+  color: var(--v4c-on, #fff);
+}
+.bub p,
+.bub ul,
+.bub ol,
+.bub pre {
+  margin: 0 0 6px;
+}
+.bub > :last-child {
+  margin-bottom: 0;
+}
+.bub ul,
+.bub ol {
+  padding-left: 20px;
+}
+.bub pre,
+.bub code {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+.bub pre {
+  white-space: pre-wrap;
+}
+.bub a,
+.src a,
+.lnk,
+.pw {
+  color: inherit;
+  text-decoration: underline;
+}
+.src {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--mut);
+}
+.acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.act,
+.sugg button,
+.pri {
+  padding: 6px 12px;
+  border: 1px solid var(--v4c-c, #1f5fd6);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.pri {
+  background: var(--v4c-c, #1f5fd6);
+  color: var(--v4c-on, #fff);
+}
+.sugg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.fb {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--mut);
+}
+.fb button {
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+}
+.note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--mut);
+}
+.lnk {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.dots::after {
+  content: '…';
+  animation: v4c-blink 1s steps(2) infinite;
+}
+@keyframes v4c-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+.lead {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px solid var(--ln);
+  border-radius: var(--r);
+}
+.lt {
+  font-weight: 600;
+}
+.lead label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+.lead label.cons {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--mut);
+}
+.lead input:not([type='checkbox']),
+.lead textarea,
+.cmp textarea {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--ln);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.err {
+  color: #b3261e;
+  font-size: 13px;
+}
+.dark .err {
+  color: #ffb4ab;
+}
+.cmp {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px var(--pad);
+  border-top: 1px solid var(--ln);
+}
+.cmp textarea {
+  max-height: 120px;
+  resize: none;
+}
+.snd {
+  background: var(--v4c-c, #1f5fd6);
+  color: var(--v4c-on, #fff);
+}
+.snd:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ft {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px var(--pad) 8px;
+  font-size: 11px;
+  color: var(--mut);
+}
+.unav {
+  margin: auto;
+  padding: 16px;
+  text-align: center;
+  color: var(--mut);
+}
+.v4c-chat :focus-visible {
+  outline: 2px solid var(--v4c-c, #1f5fd6);
+  outline-offset: 2px;
+}
+.hd :focus-visible {
+  outline-color: var(--v4c-on, #fff);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dots::after {
+    animation: none;
+  }
+}

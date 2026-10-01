@@ -295,6 +295,133 @@ jobs:
         run: npx vite build
         working-directory: assist
 
+  # Э2 ИИ-помощника: виджет на сайте заказчика (контракт /tmp/k/CONTRACT-E2.md,
+  # пакет widget/): загрузчик (Shadow DOM, ≤ 12 КБ gzip) + iframe-чат
+  # (Preact, ≤ 60 КБ gzip). Бюджет размера и запрет HTML-приёмников в
+  # собранном загрузчике — scripts/size-budget.mjs (ТЗ §4.12).
+  widget:
+    name: widget (виджет помощника) — типы, линт, тесты, сборка, размер, e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: widget/package-lock.json
+      - run: npm ci
+        working-directory: widget
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        working-directory: widget
+      - name: типы
+        run: npm run typecheck
+        working-directory: widget
+      - name: типы скриптов, e2e и конфигов
+        run: npm run typecheck:scripts
+        working-directory: widget
+      - name: линт (в т.ч. запрет HTML-приёмников и eval)
+        run: npm run lint
+        working-directory: widget
+      - name: unit-скрипты (зеркало brand.ts с sites-backend и др.)
+        run: npm test
+        working-directory: widget
+      - name: сборка
+        run: npm run build
+        working-directory: widget
+      - name: размерный бюджет (загрузчик ≤ 12 КБ, чат ≤ 60 КБ gzip)
+        run: npm run size
+        working-directory: widget
+      # E2E — Chromium (Playwright); мобильные проекты — эмуляция вьюпорта,
+      # не iOS Safari (живые устройства — владелец). Шаг пропускается, пока
+      # спеков нет (каркас Э2).
+      - name: e2e (Playwright, Chromium)
+        run: |
+          if ls e2e/*.spec.ts >/dev/null 2>&1; then
+            npx playwright install --with-deps chromium
+            npm run e2e
+          else
+            echo "e2e: спеков нет — пропуск"
+          fi
+        working-directory: widget
+
+  # Лендинг клиентских сайтов (Л0–Л1 ТЗ лендинга помощника). Свой
+  # проект Next 14 со своими бюджетами (§9) — поэтому своя джоба, а не
+  # строка матрицы `next-apps`: Lighthouse CI и axe есть только здесь.
+  sites-landing:
+    name: sites-landing — типы, линт, тесты, сборка, Lighthouse, axe
+    runs-on: ubuntu-latest
+    env:
+      # Домен-заглушка до решения В-1: сборке нужен абсолютный адрес.
+      SITE_URL: https://example.invalid
+      # Приманка: собранный клиентский бандл проверяется на отсутствие
+      # этого значения (scripts/built/check-built.ts). Не секрет.
+      PILOT_TELEGRAM_BOT_TOKEN: '000000:ci-sentinel-must-not-leak'
+      PILOT_TELEGRAM_CHAT_ID: '-100000000000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: sites-landing/package-lock.json
+      - run: npm ci
+        working-directory: sites-landing
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true
+        working-directory: sites-landing
+      - name: типы
+        run: npx tsc --noEmit
+        working-directory: sites-landing
+      - name: линт
+        run: npx next lint --max-warnings 0
+        working-directory: sites-landing
+      - name: unit-скрипты
+        run: npm test
+        working-directory: sites-landing
+      # §14 Л0: прод-сборка без SITE_URL обязана падать — проверяем, что
+      # падает именно на проверке адреса (а не на чём-то случайном).
+      - name: сборка без SITE_URL падает
+        run: |
+          if SITE_URL= npx next build > no-site-url.log 2>&1; then
+            echo "сборка без SITE_URL прошла — замок снят"; exit 1
+          fi
+          grep -q 'SITE_URL не задан' no-site-url.log
+        working-directory: sites-landing
+      - name: сборка
+        run: npx next build
+        working-directory: sites-landing
+      - name: собранный HTML (SEO, реестр утверждений, секреты не в бандле)
+        run: npm run check:built
+        working-directory: sites-landing
+      - name: бюджет JS первой загрузки (≤ 110 КБ gzip)
+        run: npm run budget:js
+        working-directory: sites-landing
+      # Chromium для axe — той же версии, что playwright-core в devDeps.
+      - name: Chromium для axe
+        run: npx playwright-core install --with-deps chromium
+        working-directory: sites-landing
+      - name: axe (WCAG 2.2 A/AA) и 360 px
+        run: |
+          npx next start -p 3010 > next-start.log 2>&1 &
+          npx --yes wait-on@8 -t 60000 http://localhost:3010/robots.txt
+          npm run axe
+        working-directory: sites-landing
+      # Тот же запущенный сервер; Chrome — системный на раннере.
+      - name: Lighthouse CI (медиана 5 прогонов, бюджеты §9)
+        run: npx lhci autorun --config=lighthouserc.cjs
+        env:
+          LHCI_BASE_URL: http://localhost:3010
+        working-directory: sites-landing
+      - name: отчёты Lighthouse
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-sites-landing
+          path: sites-landing/.lighthouseci/reports
+          if-no-files-found: ignore
+
   frontend:
     name: frontend (TMA) — типы, линт, unit-скрипты, сборка
     runs-on: ubuntu-latest

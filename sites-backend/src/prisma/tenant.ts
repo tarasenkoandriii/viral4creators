@@ -69,6 +69,17 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistAdminKnowledgeVersion: 'accountId',
   AssistAdminFaq: 'accountId',
   AssistAdminExclusion: 'accountId',
+  // Э2: виджет «Сайта». Публичные маршруты ходят в эти таблицы клиентом
+  // AssistPublicDb (без extension, по siteId/visitorId/хешам) — тенант
+  // держит кабинетный код (экраны, Э3-лента диалогов) и составной FK.
+  AssistSiteConfigVersion: 'accountId',
+  AssistSiteConversation: 'accountId',
+  AssistSiteMessage: 'accountId',
+  AssistSiteLead: 'accountId',
+  AssistSitePreviewToken: 'accountId',
+  AssistSiteWizard: 'accountId',
+  AssistSiteAsset: 'accountId',
+  AssistAcquisition: 'accountId',
 };
 
 /**
@@ -96,6 +107,19 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
   AssistSandboxPage: 'страницы песочницы — по sandboxId',
   AssistSandboxChunk: 'фрагменты песочницы — по sandboxId',
   AssistSandboxMessage: 'вопросы и ответы песочницы — по sandboxId',
+  // Э2. Таблицы, которые пишет публичный маршрут виджета по siteId (кабинета
+  // в запросе посетителя нет и быть не может — он знает только pk).
+  AssistSiteVisitorResume:
+    'указатель посетителя (resumeKey) — по хешу ключа и siteId, пишет виджет',
+  AssistSitePeriodUsage: 'счётчик диалогов периода по siteId — пишет виджет',
+  AssistSiteSemanticCache: 'семантический кэш ответов по siteId — пишет виджет',
+  AssistSiteInstallPing: 'пинги загрузчика по (siteId, origin) — пишет виджет',
+  AssistBudgetDay:
+    'деньги дня сайта и платформы (scope, key, day) — пишет виджет; платформа вне кабинетов',
+  AssistBudgetReservation: 'резервы бюджета с TTL — по siteId, снимает крон',
+  AssistRateBucket: 'окна лимитов частоты (IP, посетитель) — вне кабинета',
+  AssistWidgetDraft: 'анонимный черновик вида с лендинга — кабинета ещё нет',
+  AssistLandingEvent: 'события лендинга — без кабинета и без идентификатора',
 };
 
 const WHERE_OPERATIONS = new Set([

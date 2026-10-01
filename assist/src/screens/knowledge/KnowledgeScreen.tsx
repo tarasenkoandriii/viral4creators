@@ -20,6 +20,7 @@ import type { AssistSettingsView } from '../../lib/knowledge-types';
 import { QuarantineTab } from './QuarantineTab';
 import { SourcesTab } from './SourcesTab';
 import { VersionsTab } from './VersionsTab';
+import { CompletenessCard } from '../widget/WizardScreen';
 
 /**
  * «Знания» сайта — ДВА экрана с одной вёрсткой (ТЗ §3.4, К-9): режим
@@ -180,6 +181,9 @@ function KnowledgeBody({
         tabs={KNOWLEDGE_TABS.map((k) => ({ key: k, label: t.tabs[k] }))}
       />
 
+      {tab === 'overview' && mode === 'site' && (
+        <CompletenessCard siteId={siteId} />
+      )}
       {tab === 'overview' && (
         <OverviewTab
           mode={mode}

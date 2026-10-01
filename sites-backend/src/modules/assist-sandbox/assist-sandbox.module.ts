@@ -5,6 +5,7 @@
  */
 import { Module } from '@nestjs/common';
 import { AssistKnowledgeCoreModule } from '../assist-knowledge-core/assist-knowledge-core.module';
+import { AssistSiteChatModule } from '../assist-site-chat/assist-site-chat.module';
 import { AssistSiteKnowledgeModule } from '../assist-site-knowledge/assist-site-knowledge.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { SiteCrawlModule } from '../site-crawl/site-crawl.module';
@@ -19,6 +20,8 @@ import { SandboxService } from './sandbox.service';
     SiteCrawlModule,
     AssistKnowledgeCoreModule,
     AssistSiteKnowledgeModule,
+    // Э2 (W3): ретенция виджета в том же кроне assist-retention.
+    AssistSiteChatModule,
   ],
   controllers: [
     PublicSandboxController,

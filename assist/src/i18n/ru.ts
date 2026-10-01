@@ -1,3 +1,5 @@
+import { setupRu } from './setup-ru';
+
 /**
  * Тексты, которые есть только у TMA Помощника (онбординг, разделы).
  * Общие экраны кабинета — в site-tma-kit/src/dictionaries.
@@ -412,6 +414,8 @@ export const appRu = {
   },
   notFound: 'Страница не найдена',
   toSites: 'К сайтам',
+  // Э2 (W4): виджет, персона, лиды, мастер, полнота, payload лендинга.
+  setup: setupRu,
 };
 
 export type AppDictionary = typeof appRu;

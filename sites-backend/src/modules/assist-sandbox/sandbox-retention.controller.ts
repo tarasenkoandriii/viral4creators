@@ -4,11 +4,15 @@
  * (каскадом страницы, фрагменты, сообщения) и сбрасывает суточные
  * счётчики старше 2 дней; чистит строки очереди обхода у прогонов,
  * завершённых больше 7 дней назад. Дальнейшие этапы добавят сюда сроки диалогов/лидов.
+ * Э2 (W3): + ретенция виджета — ChatRetention (assist-site-chat/system):
+ * диалоги/лиды по срокам сайта, указатели, токены предпросмотра, кэш,
+ * окна лимитов, строки денег, история версий, события и черновики лендинга.
  */
 import { Controller, Get, Headers } from '@nestjs/common';
 import { withCronLock } from '../../common/cron-job-lock';
 import { assertCronSecret } from '../../common/cron-secret';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ChatRetention } from '../assist-site-chat/system/chat-retention.service';
 import { SiteCrawlService } from '../site-crawl/crawl.service';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import { SandboxService } from './sandbox.service';
@@ -25,6 +29,7 @@ export class AssistRetentionController {
     private readonly prisma: PrismaService,
     private readonly sandbox: SandboxService,
     private readonly crawl: SiteCrawlService,
+    private readonly chat: ChatRetention,
   ) {}
 
   @Get('assist-retention')
@@ -39,6 +44,7 @@ export class AssistRetentionController {
         crawlQueueDeleted: await this.crawl.purgeFinishedQueue(
           new Date(Date.now() - CRAWL_QUEUE_RETENTION_MS),
         ),
+        ...(await this.chat.run()),
       }),
     );
     return r.ran

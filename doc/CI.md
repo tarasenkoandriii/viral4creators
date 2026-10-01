@@ -45,6 +45,7 @@ PRISMA_SCHEMA_ENGINE_BINARY=/tmp/se PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
 | --- | --- |
 | `backend` | `npm ci` (генерирует Prisma-клиент), `prisma validate`, `migrate deploy` на Postgres 16, **`migrate diff --exit-code`**, `tsc`, eslint, jest с **пофайловыми порогами покрытия** (этап 40: `blob-paths`, `ai-pricing`, `spend-limits`, `plan.service`, `plan.controller`; этап 49: `serpapi-usage`, `youtube-search-usage`, `telegram-notify`), сверка чисел в документах |
 | `frontend` | `tsc`, **`typecheck:scripts`** (типы самих проверочных скриптов), eslint через `npm run lint` (с `--report-unused-disable-directives`), 77 unit-скриптов `npx tsx frontend/scripts/*.test.ts`, `vite build` |
+| `sites-landing` | `tsc`, `next lint --max-warnings 0`, unit-скрипты `npx tsx sites-landing/scripts/*.test.ts`, «сборка без `SITE_URL` падает», `next build`, проверка собранного HTML (`check:built`: canonical/hreflang/OG, реестр утверждений, секреты формы не в бандле), бюджет JS первой загрузки ≤ 110 КБ gzip, axe (WCAG 2.2 A/AA, обе темы, 360 px), Lighthouse CI (медиана 5 прогонов, бюджеты ТЗ лендинга §9) |
 | `next-apps` | матрица `admin` / `landing`: `tsc`, `next lint --max-warnings 0` (этап 53), `next build` |
 | `repo` | `sync-legal --check` — юридические тексты и их версия |
 

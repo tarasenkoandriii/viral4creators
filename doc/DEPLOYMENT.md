@@ -1166,6 +1166,107 @@ Vercel инстансов несколько, так что это потоло�
    приватность документов держится на типе хранилища.
 7. **Длительность функции ≥ 60 с** — см. §6.1 п.4 (тик обхода — 45 с).
 
+### 6.10. Э2 «Виджет»: что сделать владельцу
+
+Миграция `…_assist_widget` (ключи и черновики в `assist_sites`, версии
+вида/персоны, диалоги и сообщения, лиды, бюджет дня и резервы с TTL,
+кэш, токены предпросмотра, пинги установки, картинки бренда, мастер,
+черновики/события/атрибуция лендинга; новые GRANT `assist_public` и
+сужение прав Э1 на `assist_site_faq`/`assist_sandboxes`/`assist_sites`).
+
+1. **Vercel-проект `widget`** (Root `widget`, Framework «Other», Build
+   `npm run build`, Output `dist`) и домен `w.<домен>` (В-1; сейчас
+   заглушка `w.v4c.example.invalid` в `sites-backend/src/brand.ts` и
+   `widget/src/shared/brand.ts`). В `widget/vercel.json` заменить
+   `sites-backend.example.invalid` на домен sites-backend: загрузчик,
+   HTML iframe (`/w/v1/frame`) и API (`/widget/v1/*`) — ОДИН origin через
+   rewrite (без CORS и без третьесторонних cookie, кроме секционированной
+   CHIPS-cookie указателя).
+2. **Env sites-backend**: `ASSIST_WIDGET_ORIGIN=https://w.<домен>`
+   (обязательна), `ASSIST_WIDGET_ENABLED` (рубильник платформы, по
+   умолчанию включено; `false` — все виджеты отвечают формой заявки),
+   `ASSIST_WIDGET_PLATFORM_DAILY_CAP_USD` (умолчание 20),
+   `ASSIST_PREVIEW_FRAME_ANCESTORS` (необязательно: кто встраивает
+   предпросмотр конфигуратора; умолчание — `ASSIST_TMA_URL`,
+   `WEB_CABINET_ORIGINS`, `https://web.telegram.org`). Ключ подписи
+   visitor-token и соль ipHash — производные от `ASSIST_SECRETS_KEY` (без
+   нового секрета). Описание — `src/config/widget-env.ts`.
+3. **Крон** `assist-budget-sweep` (каждые 5 мин) — уже в
+   `sites-backend/vercel.json`.
+4. **Проверка роли** после деплоя под логин-ролью виджета:
+   `SELECT "widgetDraft" FROM sites.assist_sites LIMIT 1` →
+   `permission denied`; `SELECT "publicKey" FROM sites.assist_sites LIMIT 1`
+   → работает.
+5. **Живые устройства** (приёмка Э2 п.1, п.3; §4-бис.10 п.6): iOS Safari
+   (в т.ч. ≥ 26.2 — CHIPS), Android Chrome, Lighthouse до/после на
+   стенд-сайте (медиана 5 прогонов) — см. контракт Э2 §8.
+
+## 7. Лендинг клиентских сайтов (sites-landing)
+
+Л0–Л1 ТЗ `docs-tz/TZ-AI-Pomoshchnik-Landing.md` (вариант Б, §2): отдельный
+Next.js 14-проект `sites-landing/` — витрина семейства «клиентские сайты»
+(Помощник + QA), посадочная Помощника, тарифы из снимка, форма пилота.
+Бренд и домен не решены (В-1): все публичные имена — в
+`sites-landing/src/brand.ts`, адрес сайта — env `SITE_URL`.
+
+### 7.1. Vercel-проект
+
+1. Vercel Dashboard → **Add New** → **Project** → тот же репозиторий.
+2. **Root Directory**: `sites-landing`. Framework Preset — Next.js. План
+   Hobby достаточен (кронов нет).
+3. **Environment Variables** (Production **и** Preview — без `SITE_URL`
+   сборка падает и в превью):
+   - `SITE_URL` — абсолютный адрес сайта, только origin:
+     `https://<домен>` без пути и завершающего слэша. Обязателен:
+     `next build` без него, с `http://`, `localhost`, путём или портом
+     падает (`sites-landing/next.config.js`); в продакшен-деплое
+     (`VERCEL_ENV=production`) запрещён и домен-заглушка `*.invalid`.
+     Значение впекается в сборку: canonical, hreflang, sitemap, OG и
+     JSON-LD строятся только от него. До решения В-1 — адрес
+     `*.vercel.app` этого проекта (только для превью/проверки; canonical
+     тогда указывает на него).
+   - `PILOT_TELEGRAM_BOT_TOKEN` — токен бота для заявок пилота (@BotFather).
+     Бот добавляется **администратором** служебного канала с правом
+     публикации. Только сервер, без `NEXT_PUBLIC_`; что значение не
+     попало в клиентский бандл, проверяет CI (`npm run check:built`).
+   - `PILOT_TELEGRAM_CHAT_ID` — id канала (`-100…`; узнать — переслать
+     сообщение из канала боту @userinfobot или вызвать `getUpdates`) или
+     `@username` публичного канала.
+   Без двух последних форма работает, но честно отвечает «приём заявок
+   временно недоступен, заявка не отправлена» (данные остаются в форме).
+4. **Analytics** → Enable (Vercel Web Analytics, без cookie). Скрипт
+   подключается только в сборке на Vercel (`VERCEL=1`); пользовательских
+   событий не нужно (на Hobby их нет).
+5. **Домен** — когда решён В-1: Settings → Domains → `<домен>`, затем
+   поменять `SITE_URL` и пересобрать. После смены бренда — правка
+   `src/brand.ts` и пересборка OG-карточек: `cd sites-landing && npm run og`
+   (нужен Chromium Playwright), коммит `public/og/*.jpg`.
+6. Search Console — после домена: добавить ресурс, отправить
+   `<домен>/sitemap.xml`.
+
+### 7.2. Проверка после деплоя
+
+- `<SITE_URL>/` → 307 на `/uk|/en|/ru` (по `Accept-Language`, иначе `/en`).
+- `<SITE_URL>/uk/assistant` — в исходнике `<link rel="canonical"
+  href="<SITE_URL>/uk/assistant">`, три `hreflang` и `x-default` →
+  `/en/assistant`, `og:image` открывается.
+- `<SITE_URL>/sitemap.xml` — 21 адрес (7 страниц × 3 локали),
+  `<SITE_URL>/robots.txt` — `Sitemap:` абсолютным адресом.
+- Форма `<SITE_URL>/uk/assistant/pilot`: тестовая заявка приходит в канал;
+  без env — сообщение «временно недоступно».
+- Логи функции `/api/vitals` (Vercel → Logs, фильтр `vital`) — строки
+  LCP/INP/CLS с реальных визитов (полевые CWV до событий `sites-backend`).
+
+### 7.3. Что нужно от владельца
+
+- **В-1**: имя бренда и домен → `src/brand.ts` (`name`, `legalEntity`),
+  `SITE_URL`, OG-карточки (`npm run og`).
+- Служебный канал и бот для заявок → два env выше.
+- **Юрист**: `sites-landing/legal/*.md` — черновики (политика, условия
+  пилота, cookie); после проверки — снять `draft` в
+  `src/lib/legal-docs.ts` (страницы станут индексируемыми) и дописать
+  контакт для запросов по данным. В черновиках — пометки «ПЕРЕВІРИТИ».
+
 ## Деплой только изменённых проектов
 
 Все Vercel-проекты подключены к одному репозиторию, и по умолчанию

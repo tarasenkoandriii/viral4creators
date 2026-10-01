@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "source": "docs-tz/TZ-AI-Pomoshchnik-TMA.md §7.1 (предложение, решает владелец — В-3); до Э4 — снимок, Э4 заменит живыми тарифами",
+  "currency": "USD",
+  "plans": [
+    {
+      "id": "trial",
+      "priceMonthly": 0,
+      "trialDays": 14,
+      "dialogsPerMonth": 50,
+      "sites": 1,
+      "pages": 50,
+      "documents": 5,
+      "recrawl": "manual",
+      "poweredByRemovable": false,
+      "retentionDays": 30
+    },
+    {
+      "id": "start",
+      "priceMonthly": 19,
+      "dialogsPerMonth": 400,
+      "sites": 1,
+      "pages": 300,
+      "documents": 20,
+      "recrawl": "weekly",
+      "poweredByRemovable": false,
+      "retentionDays": 90,
+      "overagePer100": 6
+    },
+    {
+      "id": "business",
+      "priceMonthly": 59,
+      "dialogsPerMonth": 1200,
+      "sites": 3,
+      "pages": 2000,
+      "documents": 200,
+      "recrawl": "daily",
+      "poweredByRemovable": true,
+      "retentionDays": 180,
+      "overagePer100": 5.5
+    },
+    {
+      "id": "pro",
+      "priceMonthly": 149,
+      "dialogsPerMonth": 3000,
+      "sites": 10,
+      "pages": 10000,
+      "documents": 1000,
+      "recrawl": "daily+hook",
+      "poweredByRemovable": true,
+      "retentionDays": 365,
+      "overagePer100": 5
+    }
+  ]
+}

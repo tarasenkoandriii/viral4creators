@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import * as brand from './brand';
 import {
   DEV_USER_HEADER,
   TELEGRAM_APP_HEADER,
@@ -50,5 +53,46 @@ describe('parseTelegramApp — выбор бота без перебора то�
     expect(parseTelegramApp('')).toBeNull();
     expect(parseTelegramApp('admin')).toBeNull();
     expect(parseTelegramApp(['assist', 'qa'])).toBeNull();
+  });
+});
+
+describe('brand Э2 — публичные имена виджета только здесь (В-1)', () => {
+  it('cookie указателя — __Host- (без Domain, Path=/, Secure)', () => {
+    expect(brand.WIDGET_RESUME_COOKIE.startsWith('__Host-')).toBe(true);
+  });
+
+  it('домены — заглушки .invalid, пока бренд не решён', () => {
+    expect(new URL(brand.WIDGET_ORIGIN_DEFAULT).hostname).toMatch(/\.invalid$/);
+    expect(new URL(brand.WIDGET_POWERED_BY_URL).hostname).toMatch(/\.invalid$/);
+  });
+
+  it('ни один файл src (кроме brand.ts) не пишет имена виджета литералом', () => {
+    const NAMES = [
+      brand.WIDGET_GLOBAL,
+      brand.WIDGET_PREVIEW_PARAM,
+      brand.WIDGET_RESUME_COOKIE,
+      brand.WIDGET_PK_LIVE_PREFIX,
+      brand.WIDGET_PK_TEST_PREFIX,
+      brand.WIDGET_MESSAGE_NS,
+      'w.v4c.example.invalid',
+    ];
+    const hits: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/\.ts$/.test(e.name) && !/brand(\.spec)?\.ts$/.test(e.name)) {
+          const code = fs
+            .readFileSync(full, 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/(^|[^:])\/\/.*$/gm, '$1');
+          for (const n of NAMES) {
+            if (code.includes(n)) hits.push(`${full}: «${n}»`);
+          }
+        }
+      }
+    };
+    walk(__dirname);
+    expect(hits).toEqual([]);
   });
 });

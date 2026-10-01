@@ -17,10 +17,11 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { tenantExtension } from './tenant';
 import { SITES_DB_SCHEMA } from './prisma.service';
+import { ASSIST_PUBLIC_OMIT } from './assist-public-db.service';
 
 const RAW_URL = process.env.SITES_DIRECT_URL;
 const IN_CI = process.env.CI === 'true';
@@ -120,6 +121,12 @@ if (!RAW_URL) {
       'assist_site_eval_cases',
       'assist_site_eval_runs',
       'assist_learning_spend',
+      // Э2: кабинетное и чужое публичному маршруту.
+      'assist_site_wizards',
+      'assist_acquisitions',
+      'assist_site_leads',
+      'assist_widget_drafts',
+      'assist_landing_events',
     ])('SELECT из %s под assist_public падает', async (table) => {
       await expect(
         asPublic(`SELECT 1 FROM ${S}."${table}" LIMIT 1`),
@@ -151,13 +158,57 @@ if (!RAW_URL) {
         asPublic(`SELECT "knowledgeVersion" FROM ${S}."assist_sites" LIMIT 1`),
       ).resolves.toBeUndefined();
       await expect(
-        asPublic(`SELECT 1 FROM ${S}."assist_site_faq" LIMIT 1`),
+        asPublic(
+          `SELECT "question", "answer", "variants", "lang", "status" FROM ${S}."assist_site_faq" LIMIT 1`,
+        ),
       ).resolves.toBeUndefined();
       await expect(
         asPublic(
           `UPDATE ${S}."assist_sites" SET "knowledgeVersion" = 1 WHERE false`,
         ),
       ).rejects.toMatchObject({ code: '42501' });
+    });
+
+    it('Э2: черновики и telegramId роли не видны', async () => {
+      for (const sql of [
+        `SELECT "widgetDraft" FROM ${S}."assist_sites" LIMIT 1`,
+        `SELECT "personaDraft" FROM ${S}."assist_sites" LIMIT 1`,
+        `SELECT "createdByTelegramId" FROM ${S}."assist_site_faq" LIMIT 1`,
+        `SELECT "approvedByTelegramId" FROM ${S}."assist_site_faq" LIMIT 1`,
+        `SELECT "createdByTelegramId" FROM ${S}."assist_sandboxes" LIMIT 1`,
+        `SELECT "createdByTelegramId" FROM ${S}."assist_site_preview_tokens" LIMIT 1`,
+        `SELECT "publishedByTelegramId" FROM ${S}."assist_site_config_versions" LIMIT 1`,
+        `UPDATE ${S}."assist_sandboxes" SET "accountId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_sandboxes" SET "transferredAt" = now() WHERE false`,
+        `UPDATE ${S}."assist_site_preview_tokens" SET "siteId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_leads" SET "deliveryState" = 'x' WHERE false`,
+        `DELETE FROM ${S}."assist_site_messages" WHERE false`,
+      ]) {
+        await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
+      }
+    });
+
+    it('Э2: виджет читает статус хоста с блокировкой и пишет свои таблицы', async () => {
+      await expect(
+        asPublic(
+          `SELECT "id", "siteId", "status", "expiresAt", "revokedAt", "reverifyBlockedAt" FROM ${S}."site_hosts" LIMIT 1`,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        asPublic(
+          `SELECT "publicKey", "widgetVersion", "chatPaused", "operatorBlockedAt", "ipSalt", "allowClientPreview", "leadsConfig", "siteSummary" FROM ${S}."assist_sites" LIMIT 1`,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        asPublic(
+          `INSERT INTO ${S}."assist_budget_days" ("scope", "key", "day", "updatedAt") VALUES ('site', 's', '2026-10-01', now()) ON CONFLICT DO NOTHING`,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        asPublic(
+          `INSERT INTO ${S}."assist_landing_events" ("id", "name") VALUES ('e1', 'view')`,
+        ),
+      ).resolves.toBeUndefined();
     });
 
     it('Э1: публичная песочница пишет только свои таблицы и счётчики', async () => {
@@ -201,16 +252,18 @@ if (!RAW_URL) {
     it('во всей схеме у assist_public нет прав сверх белого списка', async () => {
       const ALLOWED: Record<string, string[]> = {
         site_sites: ['SELECT'],
-        // Только колоночный SELECT статусных полей (миграция _sites_core_init).
+        // Только колоночный SELECT статусных полей (миграция _sites_core_init;
+        // Э2 добавил reverifyBlockedAt для гварда origin).
         site_hosts: ['column:SELECT'],
         site_ai_usage: ['INSERT'],
         assist_site_chunks: ['SELECT'],
-        // Э1 (миграция _assist_knowledge): поиск виджета/песочницы по
-        // опубликованной версии «Сайта».
-        assist_sites: ['SELECT'],
-        assist_site_faq: ['SELECT'],
-        // Э1: публичная песочница лендинга целиком под этой ролью.
-        assist_sandboxes: ['SELECT', 'INSERT', 'UPDATE'],
+        // Э1 → Э2: поиск виджета/песочницы по опубликованной версии «Сайта».
+        // Э2 сузил до колонок: черновики вида/персоны и настройки лидов — кабинету.
+        assist_sites: ['column:SELECT'],
+        assist_site_faq: ['column:SELECT'],
+        // Э1: публичная песочница лендинга под этой ролью; Э2 сузил до
+        // колонок (telegramId создателя, перенос, кабинет — не её).
+        assist_sandboxes: ['column:SELECT', 'column:INSERT', 'column:UPDATE'],
         assist_sandbox_pages: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
         assist_sandbox_chunks: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
         assist_sandbox_messages: ['SELECT', 'INSERT'],
@@ -218,6 +271,23 @@ if (!RAW_URL) {
         site_crawl_robots: ['SELECT', 'INSERT', 'UPDATE'],
         // Отказ доменов (L0): только колонка domain.
         site_opt_out_domains: ['column:SELECT'],
+        // Э2 (миграция _assist_widget): виджет «Сайта».
+        assist_site_config_versions: ['column:SELECT'],
+        assist_site_visitor_resumes: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+        assist_site_conversations: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+        assist_site_messages: ['SELECT', 'INSERT', 'UPDATE'],
+        assist_site_leads: ['INSERT'],
+        assist_budget_days: ['SELECT', 'INSERT', 'UPDATE'],
+        assist_budget_reservations: ['SELECT', 'INSERT', 'DELETE'],
+        assist_site_period_usage: ['SELECT', 'INSERT', 'UPDATE'],
+        assist_rate_buckets: ['SELECT', 'INSERT', 'UPDATE'],
+        assist_site_semantic_cache: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+        assist_site_preview_tokens: ['column:SELECT', 'column:UPDATE'],
+        assist_site_install_pings: ['SELECT', 'INSERT', 'UPDATE'],
+        assist_site_assets: ['column:SELECT'],
+        // Лендинг: только запись.
+        assist_widget_drafts: ['INSERT'],
+        assist_landing_events: ['INSERT'],
       };
       const TABLE_PRIVS = [
         'SELECT',
@@ -267,6 +337,32 @@ if (!RAW_URL) {
         if (got.length > 0 || ALLOWED[t]) actual[t] = got;
       }
       expect(actual).toEqual(ALLOWED);
+    });
+
+    /**
+     * Глобальный `omit` публичного клиента (ASSIST_PUBLIC_OMIT) обязан
+     * совпадать с колоночными правами: лишняя колонка в omit — тихо пустое
+     * поле, недостающая — 42501 на каждом запросе без select.
+     */
+    it('Э2: ASSIST_PUBLIC_OMIT = колонки без SELECT у роли', async () => {
+      const models = Prisma.dmmf.datamodel.models;
+      for (const [key, omitted] of Object.entries(ASSIST_PUBLIC_OMIT)) {
+        const model = models.find(
+          (m) => m.name.charAt(0).toLowerCase() + m.name.slice(1) === key,
+        );
+        expect(model).toBeDefined();
+        const table = model!.dbName ?? model!.name;
+        const closed: string[] = [];
+        for (const f of model!.fields) {
+          if (f.kind === 'object') continue;
+          const r = await client.query<{ ok: boolean }>(
+            `SELECT has_column_privilege('assist_public', $1, $2, 'SELECT') AS ok`,
+            [`${S}."${table}"`, f.dbName ?? f.name],
+          );
+          if (!r.rows[0].ok) closed.push(f.name);
+        }
+        expect(closed.sort()).toEqual(Object.keys(omitted).sort());
+      }
     });
 
     it('роль не может войти сама (NOLOGIN)', async () => {

@@ -55,6 +55,20 @@ class ProbeController {
   }
 }
 
+/** Проба маршрута загрузки картинок кабинета (потолок JSON 300 КБ). */
+@Controller('assist/sites')
+class AssetProbeController {
+  @Post(':id/widget/assets')
+  upload(@Body() body: { dataBase64?: string }) {
+    return { length: body?.dataBase64?.length ?? 0 };
+  }
+
+  @Post(':id/widget/draft')
+  draft(@Body() body: { dataBase64?: string }) {
+    return { length: body?.dataBase64?.length ?? 0 };
+  }
+}
+
 describe('приложение: конверт, ошибки, валидация, CORS, /health', () => {
   let app: INestApplication;
   const queryRaw = jest.fn();
@@ -63,7 +77,7 @@ describe('приложение: конверт, ошибки, валидация
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const moduleRef = await Test.createTestingModule({
-      controllers: [HealthController, ProbeController],
+      controllers: [HealthController, ProbeController, AssetProbeController],
       providers: [
         { provide: PrismaService, useValue: { $queryRaw: queryRaw } },
       ],
@@ -73,6 +87,7 @@ describe('приложение: конверт, ошибки, валидация
       app,
       loadConfiguration({
         CORS_ORIGIN: 'https://tma.example,*.vercel.app',
+        ASSIST_WIDGET_ORIGIN: 'https://w.widget.example',
       } as NodeJS.ProcessEnv),
     );
     await app.init();
@@ -181,5 +196,88 @@ describe('приложение: конверт, ошибки, валидация
       .get('/probe/ok')
       .set('Origin', 'https://evil.example');
     expect(foreign.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('CORS Э2: конфиг, пинг и картинки виджета — любому сайту, без cookie', async () => {
+    for (const path of [
+      '/widget/v1/config?pk=x',
+      '/widget/v1/ping?pk=x',
+      '/widget/v1/asset/abc',
+    ]) {
+      const res = await request(app.getHttpServer())
+        .get(path)
+        .set('Origin', 'https://any-shop.example');
+      expect(res.headers['access-control-allow-origin']).toBe('*');
+      expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+    }
+  });
+
+  it('CORS Э2: остальной виджет — только origin виджета, с credentials; чужой — без заголовков и не 500', async () => {
+    const own = await request(app.getHttpServer())
+      .post('/widget/v1/session')
+      .set('Origin', 'https://w.widget.example');
+    expect(own.headers['access-control-allow-origin']).toBe(
+      'https://w.widget.example',
+    );
+    expect(own.headers['access-control-allow-credentials']).toBe('true');
+    const foreign = await request(app.getHttpServer())
+      .post('/widget/v1/chat')
+      .set('Origin', 'https://tma.example');
+    expect(foreign.headers['access-control-allow-origin']).toBeUndefined();
+    expect(foreign.status).toBeLessThan(500);
+    const frame = await request(app.getHttpServer())
+      .get('/w/v1/frame?pk=x')
+      .set('Origin', 'https://evil.example');
+    expect(frame.headers['access-control-allow-origin']).toBeUndefined();
+    expect(frame.status).toBeLessThan(500);
+  });
+
+  it('Э2: картинка бренда 200 КБ (≈273 КБ base64) проходит только в маршрут загрузки; прочим — потолок по умолчанию', async () => {
+    const dataBase64 = Buffer.alloc(200 * 1024, 7).toString('base64');
+    const ok = await request(app.getHttpServer())
+      .post('/assist/sites/s1/widget/assets')
+      .send({ kind: 'logo', mime: 'image/png', dataBase64 })
+      .expect(201);
+    expect(ok.body.data.length).toBe(dataBase64.length);
+    const other = await request(app.getHttpServer())
+      .post('/assist/sites/s1/widget/draft')
+      .send({ dataBase64 });
+    expect(other.status).toBe(413);
+    expect(other.body.error.code).toBe('PAYLOAD_TOO_LARGE');
+    const tooBig = await request(app.getHttpServer())
+      .post('/assist/sites/s1/widget/assets')
+      .send({ dataBase64: 'A'.repeat(320 * 1024) });
+    expect(tooBig.status).toBe(413);
+    const broken = await request(app.getHttpServer())
+      .post('/probe/echo')
+      .set('Content-Type', 'application/json')
+      .send('{"name":');
+    expect(broken.status).toBe(400);
+    expect(broken.body.error.code).toBe('BAD_REQUEST');
+  });
+
+  it('CORS: чужой Origin на общем пути (лендинг) — 403 ORIGIN_DENIED в конверте, не 500, до обработчика', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/public/landing/event')
+      .set('Origin', 'https://evil.example')
+      .set('Content-Type', 'text/plain')
+      .send('{"events":[{"name":"x"}]}');
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({
+      success: false,
+      error: { code: 'ORIGIN_DENIED' },
+      meta: { path: '/public/landing/event' },
+    });
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    const preflight = await request(app.getHttpServer())
+      .options('/public/landing/event')
+      .set('Origin', 'https://evil.example')
+      .set('Access-Control-Request-Method', 'POST');
+    expect(preflight.status).toBe(403);
+    const probe = await request(app.getHttpServer())
+      .post('/probe/echo')
+      .set('Origin', 'https://evil.example')
+      .send({ name: 'a' });
+    expect(probe.status).toBe(403);
   });
 });

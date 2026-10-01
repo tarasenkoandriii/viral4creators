@@ -1,4 +1,5 @@
 import type { AppDictionary } from './ru';
+import { setupEn } from './setup-en';
 
 export const appEn: AppDictionary = {
   nav: {
@@ -420,4 +421,6 @@ export const appEn: AppDictionary = {
   },
   notFound: 'Page not found',
   toSites: 'To sites',
+  // Э2 (W4): виджет, персона, лиды, мастер, полнота, payload лендинга.
+  setup: setupEn,
 };

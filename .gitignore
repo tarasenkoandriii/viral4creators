@@ -28,6 +28,9 @@ coverage/
 .DS_Store
 __MACOSX/
 
+# Отчёты Lighthouse CI (sites-landing) — локальный артефакт.
+.lighthouseci/
+
 # Отчёт jest для scripts/check-docs.mjs (ТЗ §27) — рабочий файл, не коммит.
 jest-results.json
 .vercel
@@ -36,3 +39,4 @@ jest-results.json
 # прятал бы и их: sites-backend/ и assist/ появились в Э0 помощника).
 !sites-backend/.env.example
 !assist/.env.example
+!sites-landing/.env.example

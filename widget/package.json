@@ -1,0 +1,34 @@
+{
+  "name": "v4c-assist-widget",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Виджет ИИ-помощника на сайте заказчика: загрузчик (Shadow DOM) + iframe-чат (Preact) — ТЗ docs-tz/TZ-AI-Pomoshchnik-TMA.md §3-бис, §4.12, §4-бис",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.dev.config.ts",
+    "build": "vite build --config vite.loader.config.ts && vite build --config vite.chat.config.ts",
+    "size": "node scripts/size-budget.mjs",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
+    "test": "for f in scripts/*.test.ts; do echo \"── $f\"; npx tsx \"$f\" || exit 1; done",
+    "e2e": "playwright test",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"scripts/**/*.ts\" \"e2e/**/*.ts\""
+  },
+  "dependencies": {
+    "preact": "^10.29.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.14.0",
+    "@typescript-eslint/parser": "^6.14.0",
+    "eslint": "^8.55.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.0.1",
+    "prettier": "^3.1.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.2.2",
+    "vite": "5.4.21"
+  }
+}

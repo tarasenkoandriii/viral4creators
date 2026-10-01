@@ -48,10 +48,12 @@ model SiteAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members SiteAccountMember[]
-  sites   Site[]
-  hosts   SiteHost[]
-  invites SiteAccountInvite[]
+  members      SiteAccountMember[]
+  sites        Site[]
+  hosts        SiteHost[]
+  invites      SiteAccountInvite[]
+  /// Э2: атрибуция лендинга (вместо поля в ядре — лендинг-ТЗ §7.3, Д-8).
+  acquisitions AssistAcquisition[]
 
   @@map("site_accounts")
 }
@@ -140,6 +142,19 @@ model Site {
   adminFaq            AssistAdminFaq[]
   adminExclusions     AssistAdminExclusion[]
   sandboxes           AssistSandbox[]
+
+  // Э2: виджет режима «Сайт» (контракт /tmp/k/CONTRACT-E2.md).
+  siteConfigVersions AssistSiteConfigVersion[]
+  visitorResumes     AssistSiteVisitorResume[]
+  conversations      AssistSiteConversation[]
+  siteMessages       AssistSiteMessage[]
+  siteLeads          AssistSiteLead[]
+  periodUsage        AssistSitePeriodUsage[]
+  semanticCache      AssistSiteSemanticCache[]
+  previewTokens      AssistSitePreviewToken[]
+  installPings       AssistSiteInstallPing[]
+  wizard             AssistSiteWizard?
+  assistSiteAssets   AssistSiteAsset[]
 
   /// Цель составного внешнего ключа хоста (siteId, accountId): база сама не
   /// даст привязать хост кабинета A к сайту кабинета B.
@@ -522,6 +537,51 @@ model AssistSite {
   /// знаний «Сайта» (У-8); пересчитываются для новой опубликованной версии.
   suggestedQuestions    Json?
   suggestedForVersion   Int?
+
+  // ── Э2: виджет (ТЗ §3-бис, §3.5, §3.6, §4.5, §4.12, §4.13, §6.3) ──
+  // Роль assist_public читает ЭТУ таблицу только колоночным GRANT (миграция
+  // …_assist_widget): черновики персоны и вида ей не видны.
+
+  /// Публичный ключ сайта `pk_live_…` (виден в HTML заказчика — не секрет,
+  /// §4.13). null — виджет ещё не настраивали (ключ выдаёт кабинет).
+  publicKey          String?   @unique
+  /// `pk_test_…` — только localhost/127.0.0.1 (§4.17), без расхода тарифа нет.
+  testKey            String?   @unique
+  /// Опубликованная версия вида (assist_site_config_versions kind=widget);
+  /// 0 — не опубликован: загрузчик не показывает кнопку.
+  widgetVersion      Int       @default(0)
+  /// Черновики конфигуратора (§3-бис.4) и персоны (§3.5) — форма в
+  /// assist-site-setup/widget-config.ts и persona.ts. Публикация копирует
+  /// черновик в новую строку версий и поднимает widgetVersion/configVersion.
+  widgetDraft        Json?
+  personaDraft       Json?
+  /// Поля формы лида, текст согласия, каналы (§3.6 п.6). Э2 — только бот.
+  /// Действует сразу (без публикации); роль виджета читает — это и так
+  /// видно посетителю в форме.
+  leadsConfig        Json?
+  /// Рубильник владельца: чат отвечает формой заявки, модель не зовётся (§4.13 п.6).
+  chatPaused         Boolean   @default(false)
+  /// Рубильник оператора платформы (§8) — ставится только вручную/админкой.
+  operatorBlockedAt  DateTime?
+  /// `V4CAssist('preview')` разрешён (лендинг-ТЗ §4.3) — ставит ТОЛЬКО
+  /// оператор платформы (наш лендинг). Часть «к Л2».
+  allowClientPreview Boolean   @default(false)
+  /// Суточный денежный потолок ответов сайта; null — умолчание
+  /// WIDGET_DEFAULTS (до Э4 тарифов нет).
+  dailyCapMicroUsd   Int?
+  /// Соль ipHash сайта поверх суточной (§6.4): выгрузка одного сайта не
+  /// сопоставима с другим. Генерируется при выдаче ключа.
+  ipSalt             String?
+  /// Сводка сайта (§4.6 п.3) — СТРОГИЙ JSON (тип бизнеса, разделы, контакты,
+  /// часы; короткие строки без императивов), написан моделью по тексту
+  /// чужих страниц → в промпт только размеченным блоком данных. Владелец
+  /// видит её в TMA. Форма — assist-site-knowledge/wizard/site-summary.ts.
+  siteSummary        Json?
+  /// knowledgeVersion, по которой построена сводка.
+  siteSummaryVersion Int?
+  /// Срок хранения диалогов и лидов (§6.3), дни.
+  retentionDays      Int       @default(90)
+  leadRetentionDays  Int       @default(180)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1211,4 +1271,436 @@ model AssistAdminExclusion {
   @@unique([siteId, kind, value])
   @@index([accountId])
   @@map("assist_admin_exclusions")
+}
+
+// ══ Э2: виджет режима «Сайт» (ТЗ §3-бис, §4-бис, §4.5, §4.12–§4.13, §6.3) ══
+//
+// Публичные маршруты /widget/v1/* работают под ролью assist_public
+// (AssistPublicDb); GRANT-ы — миграция …_assist_widget, белый список —
+// src/prisma/assist-public-role.spec.ts. Всё здесь — режим «Сайт»: у
+// «Админки» (Э7) будут свои таблицы assist_admin_*, общих нет (К-9).
+
+/// Опубликованные версии вида виджета и персоны (§3-бис.4, §3.5): история
+/// — строками, откат = новая версия с содержимым старой (как у знаний).
+/// Последние 20 каждого вида хранятся, старше — удаляет ретенция.
+model AssistSiteConfigVersion {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// widget | persona
+  kind                  String
+  version               Int
+  /// Проверенная конфигурация (widget-config.ts / persona.ts, assist-site-setup).
+  config                Json
+  /// persona: отчёт прогона поднабора eval (§4-тер.8) перед публикацией.
+  gateReport            Json?
+  /// Откат — с какой версии скопировано.
+  rolledBackFrom        Int?
+  publishedByTelegramId BigInt?
+
+  createdAt DateTime @default(now())
+
+  @@unique([siteId, kind, version])
+  @@index([accountId])
+  @@map("assist_site_config_versions")
+}
+
+/// Указатель посетителя `resumeKey` (§4-бис.3, Р-27): в базе — SHA-256,
+/// сам ключ — в localStorage iframe и CHIPS-cookie. Привязан к сайту и
+/// origin родителя; 30 дней скользящий. Пишет публичный маршрут.
+model AssistSiteVisitorResume {
+  keyHash      String   @id
+  siteId       String
+  site         Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  visitorId    String
+  /// `https://shop.example.com` — origin родителя при выдаче.
+  parentOrigin String
+  lastSeenAt   DateTime @default(now())
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([siteId, visitorId])
+  @@index([expiresAt])
+  @@map("assist_site_visitor_resumes")
+}
+
+/// Диалог посетителя (§4.17, §4-бис.9). Источник истины истории — сервер
+/// (§4.13 п.4: история от клиента не принимается).
+model AssistSiteConversation {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  visitorId     String
+  /// Хеш IP: суточная соль + соль сайта (§6.3, §6.4).
+  ipHash        String
+  parentOrigin  String
+  /// Страница, где начат диалог (без query — §6.6).
+  pageUrl       String?
+  locale        String?
+  /// Засчитан в квоту диалогов периода (первый ответ модели, §4.5 п.3).
+  dialogCounted Boolean  @default(false)
+  /// Ответов модели в диалоге: > 30 — диалог за 2, > 60 — за 3 (§7.1).
+  answers       Int      @default(0)
+  /// §4.13 п.5: ответы только из FAQ/кэша, без генерации.
+  suspicious    Boolean  @default(false)
+  /// Флаги ревью (unsupported_number и т.п. в любом ответе диалога).
+  flagged       Boolean  @default(false)
+  /// lead | handoff | resolved | … — итог для аналитики (Э3).
+  outcome       String?
+  /// Э3: передача человеку. Э2 — handoff превращается в форму лида.
+  handoffState  String?
+  /// §4-бис.5: идущий сценарий/план (Э3/Э6-бис); Э2 — всегда null.
+  activePlanId  String?
+  /// Растёт с каждым изменением диалога — `GET /widget/v1/state?since=`.
+  stateVersion  Int      @default(0)
+  lastMessageAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages AssistSiteMessage[]
+  leads    AssistSiteLead[]
+
+  @@unique([id, accountId])
+  @@index([siteId, visitorId, lastMessageAt])
+  @@index([siteId, createdAt])
+  @@index([lastMessageAt])
+  @@index([accountId])
+  @@map("assist_site_conversations")
+}
+
+/// Сообщение диалога. Текст — МАСКИРОВАННЫЙ (вопрос и ответ, §4.7, приёмка
+/// Э2 п.6): сырой вопрос живёт только в памяти запроса.
+model AssistSiteMessage {
+  id             String                 @id @default(cuid())
+  accountId      String
+  siteId         String
+  site           Site                   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  conversationId String
+  conversation   AssistSiteConversation @relation(fields: [conversationId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// visitor | assistant | operator | system
+  role            String
+  text            String
+  /// [{ n, url, title }] — проверенные источники ответа (§4.6).
+  sources         Json?
+  /// Проверенные действия (§4.9): link | lead | handoff.
+  actions         Json?
+  /// unsupported_number | forbidden_promise | injection_suspect | …
+  flags           String[]
+  /// §4-бис.4: идемпотентность вопроса — уникальна В ПАРЕ с диалогом.
+  clientRequestId String?
+  /// streaming | complete | partial | refused
+  streamState     String   @default("complete")
+  /// Сколько символов text уже сброшено генерирующим экземпляром.
+  streamOffset    Int      @default(0)
+  /// none | faq | cache | model | template — каким путём получен ответ.
+  answerPath      String?
+  /// Ключ семантического кэша, из которого/в который ответ (👎 удаляет запись).
+  cacheKey        String?
+  /// 👍 = 1, 👎 = -1 (§4.17, §4-тер.7).
+  rating          Int?
+  inTokens        Int      @default(0)
+  outTokens       Int      @default(0)
+  cachedTokens    Int      @default(0)
+  costMicroUsd    Int      @default(0)
+  model           String?
+  latencyMs       Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([conversationId, clientRequestId])
+  @@index([conversationId, createdAt])
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("assist_site_messages")
+}
+
+/// Лид из формы виджета (§3.6 п.6, К-3: только явной отправкой формы).
+/// Таблица assist_site_* (а не assist_leads эскиза §4.17): лиды есть только
+/// у «Сайта», и схема имён §4.3-бис держит тест роли и граф.
+model AssistSiteLead {
+  id             String                  @id @default(cuid())
+  accountId      String
+  siteId         String
+  site           Site                    @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// Удалили диалог (`/widget/v1/forget`, ретенция) — лид остаётся без ссылки.
+  conversationId String?
+  conversation   AssistSiteConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  visitorId      String?
+
+  /// Поля формы — шифр ASSIST_SECRETS_KEY (AES-256-GCM), в открытом виде нет.
+  fieldsEnc     String
+  /// Какие поля заполнены (имена, без значений) — для экрана и метрик.
+  fieldNames    String[]
+  /// Текст согласия ровно в той редакции, что видел посетитель, и время.
+  consentText   String
+  consentAt     DateTime
+  pageUrl       String?
+  /// pending | delivered | failed
+  deliveryState String    @default("pending")
+  /// [{ channel: 'telegram', chatId, at }]
+  deliveredTo   Json?
+  attempts      Int       @default(0)
+  lockedUntil   DateTime?
+  lastError     String?
+  deliveredAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([siteId, createdAt])
+  @@index([deliveryState, lockedUntil])
+  @@index([conversationId])
+  @@index([accountId])
+  @@map("assist_site_leads")
+}
+
+/// Деньги дня (§4.5): scope `site` (key = siteId) и `platform` (key = `all`).
+/// Резерв — условным UPDATE ЭТОЙ строки (блокировка строки сериализует
+/// параллельные резервы): `spent + reserved + :est <= cap`. Строки дня может
+/// не быть — сначала INSERT … ON CONFLICT DO NOTHING (§4.5 уточнение 1).
+model AssistBudgetDay {
+  scope            String
+  key              String
+  /// YYYY-MM-DD (UTC).
+  day              String
+  spentMicroUsd    BigInt   @default(0)
+  reservedMicroUsd BigInt   @default(0)
+  updatedAt        DateTime @updatedAt
+
+  @@id([scope, key, day])
+  @@index([day])
+  @@map("assist_budget_days")
+}
+
+/// Резерв одного ответа с TTL (§4.5 уточнение 2): функцию убил maxDuration
+/// — резерв не вечный; просроченные снимает `assist-budget-sweep`
+/// (вычитает из reservedMicroUsd ровно один раз — DELETE … RETURNING).
+model AssistBudgetReservation {
+  id          String   @id
+  siteId      String
+  day         String
+  estMicroUsd BigInt
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([expiresAt])
+  @@index([siteId, day])
+  @@map("assist_budget_reservations")
+}
+
+/// Атомарный счётчик диалогов периода (§4.5 уточнение 3):
+/// `dialogs + :w <= quota` одним условным UPDATE.
+model AssistSitePeriodUsage {
+  siteId    String
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  /// YYYY-MM (UTC; Э4 — период подписки).
+  period    String
+  dialogs   Int      @default(0)
+  quota     Int
+  updatedAt DateTime @updatedAt
+
+  @@id([siteId, period])
+  @@map("assist_site_period_usage")
+}
+
+/// Семантический кэш ответов (§4.5, §4-тер.7): ключ — semanticCacheKey
+/// (siteId + режим + knowledgeVersion + configVersion + нормализованный
+/// вопрос). Смена версии = другой ключ; 👎 удаляет запись.
+model AssistSiteSemanticCache {
+  id               String   @id @default(cuid())
+  siteId           String
+  site             Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  key              String
+  /// { text, sources, actions, lang } — уже проверенный ответ.
+  answer           Json
+  knowledgeVersion Int
+  configVersion    Int
+  hits             Int      @default(0)
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+
+  @@unique([siteId, key])
+  @@index([expiresAt])
+  @@map("assist_site_semantic_cache")
+}
+
+/// Ограничения частоты в Postgres (§4.13 п.2–3): окно — строкой `bucket`
+/// (`2026-10-01T12:34` для минуты и т.п.), счётчик — условным UPSERT.
+model AssistRateBucket {
+  /// widget-session-ip | widget-msg-visitor-min | widget-msg-visitor-hour | widget-msg-ip-site-min | …
+  scope     String
+  key       String
+  bucket    String
+  count     Int      @default(0)
+  expiresAt DateTime
+
+  @@id([scope, key, bucket])
+  @@index([expiresAt])
+  @@map("assist_rate_buckets")
+}
+
+/// Одноразовые токены предпросмотра (§3-бис.4, аудит 01.10): `?v4c_preview=`
+/// на сайте и конфигуратор TMA. В базе — SHA-256; обмен на сессию
+/// предпросмотра — один раз; привязан к сайту и origin.
+model AssistSitePreviewToken {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  tokenHash           String    @unique
+  /// site — ссылка «посмотреть на сайте»; tma — конфигуратор в кабинете.
+  purpose             String
+  /// purpose=site: origin verified-хоста, где токен можно обменять.
+  origin              String?
+  /// Черновик вида на момент выдачи (или null — брать текущий черновик).
+  draft               Json?
+  createdByTelegramId BigInt
+  expiresAt           DateTime
+  usedAt              DateTime?
+  /// SHA-256 сессии предпросмотра (sessionStorage iframe) после обмена.
+  sessionHash         String?   @unique
+  sessionExpiresAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([siteId])
+  @@index([expiresAt])
+  @@index([accountId])
+  @@map("assist_site_preview_tokens")
+}
+
+/// Пинги загрузчика (§3-бис.2 «Проверить установку», §4.12): виджет
+/// загрузился на этом origin. Нет пинга при найденном теге — «вероятно, CSP».
+model AssistSiteInstallPing {
+  siteId        String
+  site          Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  origin        String
+  /// Origin подтверждён и виджет на нём включён в момент пинга.
+  allowed       Boolean
+  loaderVersion String?
+  /// Загрузчик получил конфиг fetch'ем (false — вероятно, CSP connect-src
+  /// сайта без нашего origin: кнопка в виде по умолчанию, проверка установки
+  /// подсказывает директиву).
+  configFetchOk Boolean?
+  firstSeenAt   DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+  count         Int      @default(1)
+
+  @@id([siteId, origin])
+  @@map("assist_site_install_pings")
+}
+
+/// Мастер «Научите помощника» (§4-тер.9): 10 тем с черновиками по сайту,
+/// ответы владельца → проверенные ответы origin = wizard.
+model AssistSiteWizard {
+  siteId    String @id
+  accountId String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// shop | services | saas — набор вопросов.
+  businessType  String
+  /// [{ topic, question, draft, draftSources, answer, status, faqId }] —
+  /// форма в assist-site-knowledge/wizard/wizard-types.ts.
+  items         Json      @default("[]")
+  /// in_progress | done
+  status        String    @default("in_progress")
+  /// Прогонов черновиков (платформа платит ≤ 1 + 3 повтора, §4-тер.11).
+  draftRuns     Int       @default(0)
+  spentMicroUsd Int       @default(0)
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([siteId, accountId])
+  @@index([accountId])
+  @@map("assist_site_wizards")
+}
+
+/// Логотип/аватар виджета (§3-бис.1): ТОЛЬКО растр PNG/JPEG/WebP ≤ 200 КБ
+/// (SVG в Э2 отвергается — растеризатора в sites-backend нет, вопрос О-6).
+/// Отдаётся `GET /widget/v1/asset/:id` с нашего origin (img-src 'self'),
+/// `nosniff`, immutable — в DOM вставляется только как <img src>.
+model AssistSiteAsset {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// logo | avatar
+  kind   String
+  /// image/png | image/jpeg | image/webp — по сигнатуре байтов, не по заголовку.
+  mime   String
+  sha256 String
+  bytes  Bytes
+  width  Int
+  height Int
+
+  createdAt DateTime @default(now())
+
+  @@index([siteId])
+  @@index([accountId])
+  @@map("assist_site_assets")
+}
+
+// ── Поддержка лендинга (лендинг-ТЗ §5.3, §7.3, §10.1; план «Поддержка лендинга» Э2) ──
+
+/// Анонимный черновик вида из конфигуратора лендинга (≤ 2 КБ, без логотипа,
+/// 7 дней) → payload `wd_<id>`. Часть «к Л3»: таблица — сейчас, маршрут и
+/// читатель — к Л3.
+model AssistWidgetDraft {
+  /// 128 бит случайности (base64url) — неугадываемый id в `startapp`.
+  id              String    @id
+  config          Json
+  /// Хеш IP с суточной солью — лимит 10 черновиков в сутки.
+  ipKey           String
+  appliedToSiteId String?
+  appliedAt       DateTime?
+  expiresAt       DateTime
+  createdAt       DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@map("assist_widget_drafts")
+}
+
+/// Атрибуция кабинета (лендинг-ТЗ §7.3): payload `lp_|wd_|pl_|sb_` и utm
+/// первого входа. Продуктовая запись — не поле ядра `site_accounts` (Д-8).
+model AssistAcquisition {
+  id          String      @id @default(cuid())
+  accountId   String
+  account     SiteAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Сырой payload startapp (`lp_spring`, `pl_start`…).
+  payload     String
+  /// lp | wd | pl | sb
+  source      String
+  campaign    String?
+  landingPath String?
+  utm         Json?
+  createdAt   DateTime    @default(now())
+
+  @@index([accountId])
+  @@map("assist_acquisitions")
+}
+
+/// Первичные события лендинга (лендинг-ТЗ §10.1): без идентификатора на
+/// устройстве; ipHash — суточный. Ретенция 90 дней.
+model AssistLandingEvent {
+  id        String   @id @default(cuid())
+  name      String
+  props     Json?
+  locale    String?
+  variant   String?
+  path      String?
+  ipHash    String?
+  createdAt DateTime @default(now())
+
+  @@index([name, createdAt])
+  @@index([createdAt])
+  @@map("assist_landing_events")
 }

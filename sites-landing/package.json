@@ -1,0 +1,38 @@
+{
+  "name": "@v4c/sites-landing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Лендинг семейства «клиентские сайты» (ИИ-помощник + QA). Next.js 14 App Router, uk/en/ru. ТЗ: docs-tz/TZ-AI-Pomoshchnik-Landing.md",
+  "scripts": {
+    "dev": "next dev -p 3010",
+    "build": "next build",
+    "start": "next start -p 3010",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "next lint --max-warnings 0",
+    "test": "for f in scripts/*.test.ts; do echo \"── $f\"; npx tsx \"$f\" || exit 1; done",
+    "check:built": "npx tsx scripts/built/check-built.ts",
+    "budget:js": "node scripts/built/first-load-js.mjs",
+    "axe": "node scripts/built/axe-check.mjs",
+    "lhci": "lhci autorun --config=lighthouserc.cjs",
+    "og": "node scripts/og-cards.mjs"
+  },
+  "dependencies": {
+    "@vercel/analytics": "^2.0.1",
+    "next": "^14.2.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "web-vitals": "^6.2.2"
+  },
+  "devDependencies": {
+    "@lhci/cli": "^0.15.1",
+    "@types/node": "^20.19.43",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "axe-core": "^4.13.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.35",
+    "playwright-core": "1.56.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
