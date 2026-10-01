@@ -34,4 +34,5 @@ jest-results.json
 .env*
 # Шаблоны переменных — без секретов, коммитятся (иначе .env* выше
 # прятал бы и их: sites-backend/ и assist/ появились в Э0 помощника).
-!.env.example
+!sites-backend/.env.example
+!assist/.env.example
