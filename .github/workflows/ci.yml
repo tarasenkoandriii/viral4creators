@@ -412,3 +412,9 @@ jobs:
       # версия — совпадать с TERMS_VERSION на бэкенде.
       - name: юридические тексты синхронны
         run: node scripts/sync-legal.mjs --check
+
+      # Каждый Vercel-проект деплоится только при изменениях в своей папке
+      # (scripts/vercel-ignore-build.sh): у всех стоит ignoreCommand, сам
+      # скрипт проходит самотест на временном git-репозитории.
+      - name: деплой только изменённых Vercel-проектов
+        run: node scripts/check-vercel-ignore.mjs

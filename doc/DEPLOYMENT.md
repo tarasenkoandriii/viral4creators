@@ -1166,6 +1166,50 @@ Vercel инстансов несколько, так что это потоло�
    приватность документов держится на типе хранилища.
 7. **Длительность функции ≥ 60 с** — см. §6.1 п.4 (тик обхода — 45 с).
 
+## Деплой только изменённых проектов
+
+Все Vercel-проекты подключены к одному репозиторию, и по умолчанию
+**каждый коммит деплоит их все**. Переключатель Vercel «Skip deployments
+when there are no changes to the root directory or its dependencies»
+(Settings → Build and Deployment → Root Directory) у нас **не работает**:
+он требует монорепо на npm/yarn/pnpm/bun workspaces (корневой
+`package.json` с `workspaces` и общим lockfile). У нас корневого
+`package.json` нет, у каждого пакета свой lockfile, и Vercel считает любое
+изменение глобальным (документация Vercel, Monorepos → Skipping unaffected
+projects → Requirements).
+
+Поэтому в `vercel.json` каждого проекта стоит `ignoreCommand` —
+`scripts/vercel-ignore-build.sh` с путями, которые читает его сборка:
+
+| Проект (Root Directory) | Собирается, если изменилось |
+|---|---|
+| `backend` | `backend/`, `landing/src/dictionaries/`, `frontend/src/dictionaries/` (из них `prebuild` собирает базу знаний консультанта) |
+| `frontend`, `admin`, `landing`, `marketplace`, `sites-backend`, `assist` (и новые `sites-landing`, `widget`) | только своя папка |
+
+Скрипт сравнивает `HEAD` с `VERCEL_GIT_PREVIOUS_SHA` — коммитом
+последнего **успешного** деплоя этого проекта на ветке, поэтому пачка
+коммитов или упавший прошлый деплой ничего не теряют. Нет базы или
+коммит не достаётся из неглубокого клона — проект собирается (лишний
+деплой дешевле пропущенного). Пропущенный деплой Vercel помечает
+«Canceled — Ignored Build Step».
+
+Что проверить в каждом проекте Vercel:
+- Settings → Build and Deployment → **Ignored Build Step** — «Automatic»
+  (команда из `vercel.json` главнее поля в панели; своё значение там
+  сбивает с толку при чтении настроек).
+- Root Directory → **Include files outside the root directory in the
+  Build Step** — включено (по умолчанию так): скрипт лежит в
+  `scripts/` в корне репозитория.
+- Переразвернуть принудительно: Deployments → Redeploy, снять галочку
+  «Use project's Ignore Build Step».
+- Сменили только переменные окружения — нужен ручной Redeploy: коммита
+  нет, скрипт про них не знает.
+
+Новый Vercel-проект в монорепо = строка в `PROJECTS`
+`scripts/check-vercel-ignore.mjs` и `ignoreCommand` в его `vercel.json`;
+проверка (`make ci-docs`, CI-джоба «репозиторий») падает, если
+`vercel.json` с командой нет, и прогоняет самотест скрипта.
+
 ## Что не входит в этот документ
 
 - Сам `git init`/первый коммит — репозиторий, с которым велась работа,

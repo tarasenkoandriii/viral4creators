@@ -96,6 +96,7 @@ ci:
 # Только документы — быстрая проверка перед коммитом правок в doc/.
 ci-docs:
 	node scripts/sync-legal.mjs --check
+	node scripts/check-vercel-ignore.mjs
 	node scripts/check-docs.mjs
 
 # sites-backend (Э0 ИИ-помощника; джоба `sites-backend` в CI). Тот же
