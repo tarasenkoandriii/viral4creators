@@ -2831,7 +2831,7 @@ jest-правилами), tsc чист, 21 миграция подряд на ч
   секрет-guard и делегирование, бизнес-логика уехала в
   `cron-jobs.service.spec.ts`) — точный итог подтверждён самим прогоном,
   а не подсчитан по тексту файлов.
-  Frontend: tsc, eslint 0, vite build, **76** unit-скриптов
+  Frontend: tsc, eslint 0, vite build, **77** unit-скриптов
   (+ `i18n.test.ts`, этап 55). Admin и landing: tsc + `next lint` +
   `next build` — landing собирает пять локалей
   (`/ru`, `/uk`, `/en`, `/de`, `/es`) статически, включая блог

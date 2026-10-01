@@ -76,8 +76,9 @@ import {
   type GreetingRevoiceVoice,
 } from '../../lib/revoice-greeting-voice';
 import { navigate } from '../../lib/router';
+import { revoiceSnapshotPatch } from '../../lib/revoice-snapshot-patch';
 import { useI18n } from '../../lib/i18n-context';
-import type { BrandManifestSnapshot } from '../../types';
+import type { BrandManifestSnapshot, VoiceMode } from '../../types';
 import type { GeneratedVideo } from '../../services/api';
 import {
   effectiveProvider as resolveEffectiveProvider,
@@ -132,6 +133,15 @@ export function RevoicePanel({
   const [prelistenAudio, setPrelistenAudio] = useState<string | null>(null);
   const [prelistening, setPrelistening] = useState(false);
   const [prelistenNote, setPrelistenNote] = useState<string | null>(null);
+  // Режим звука при переозвучке (01.10.2026, первая публикация в TikTok):
+  // ролик Grok в режиме `voiceover` вышел с двумя голосами — модель
+  // заговорила своим, а наш лёг поверх приглушённой дорожки. Режим жил
+  // только в мастере ДО рендера, и у готового ролика исправить это было
+  // нечем, кроме новой генерации. Здесь — тот же выбор, применяемый к
+  // уже снятому ролику: `dub` заменяет голос модели, фон остаётся.
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>(
+    snapshot?.voiceMode === 'dub' ? 'dub' : 'voiceover'
+  );
 
   // §15.1: у Veo своей звуковой дорожки нет — голос вшит в сам рендер,
   // переозвучить без перегенерации нечего; панель не показываем вовсе,
@@ -218,25 +228,23 @@ export function RevoicePanel({
     setBusy(true);
     setError(null);
     try {
-      // Поздравление: снимка бренда нет, голос не меняется здесь вовсе —
-      // сравнивать с ним и слать PATCH нечего (он и давал 404).
-      const voiceChanged =
-        !greetingVoice &&
-        (ttsVoiceId.trim() !== (snapshot?.ttsVoiceId ?? '').trim() ||
-          (!!providerOverride &&
-            providerOverride !== (snapshot?.ttsProvider ?? null)));
-      if (voiceChanged) {
-        // Голос — своя, независимая правка снимка бренда (тот же
-        // маршрут, что BrandSnapshotEditor), сохраняется первой: если
-        // она провалится (например чужой клон), переозвучка со старым
-        // голосом не запустится вовсе — не платим за то, что придётся
-        // тут же переделывать. Этап 91: явный выбор провайдера едет тем
-        // же запросом — без него сервер вывел бы тег сам (клон →
-        // resemble, иначе активный на стенде).
-        const nextSnapshot = await updateBrandSnapshot(sessionId, {
-          ttsVoiceId: ttsVoiceId.trim() || null,
-          ...(providerOverride ? { ttsProvider: providerOverride } : {}),
-        });
+      // Голос и режим звука — своя, независимая правка снимка бренда (тот
+      // же маршрут, что BrandSnapshotEditor), сохраняется первой: если она
+      // провалится (чужой клон, дубляж не по тарифу), переозвучка со
+      // старыми настройками не запустится вовсе — не платим за то, что
+      // придётся тут же переделывать. Этап 91: явный выбор провайдера
+      // едет тем же запросом — без него сервер вывел бы тег сам (клон →
+      // resemble, иначе активный на стенде). Поздравление: снимка бренда
+      // нет — патча тоже (он и давал 404).
+      const patch = revoiceSnapshotPatch({
+        isGreeting: !!greetingVoice,
+        snapshot,
+        ttsVoiceId,
+        providerOverride,
+        voiceMode,
+      });
+      if (patch) {
+        const nextSnapshot = await updateBrandSnapshot(sessionId, patch);
         onBrandUpdated(nextSnapshot);
       }
       await onReVoice(
@@ -362,6 +370,26 @@ export function RevoicePanel({
       />
       {errorAlerts}
       {scriptField}
+
+      <Field
+        label={dict.revoicePanel.modeLabel}
+        htmlFor="revoice-mode"
+        hint={
+          voiceMode === 'dub'
+            ? dict.voiceMode.hints.dub
+            : dict.revoicePanel.modeVoiceoverHint
+        }
+      >
+        <Select
+          id="revoice-mode"
+          value={voiceMode}
+          onChange={(e) => setVoiceMode(e.target.value as VoiceMode)}
+          disabled={busy}
+        >
+          <option value="voiceover">{dict.revoicePanel.modeVoiceover}</option>
+          <option value="dub">{dict.revoicePanel.modeDub}</option>
+        </Select>
+      </Field>
 
       <Field
         label={dict.revoicePanel.providerLabel}

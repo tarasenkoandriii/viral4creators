@@ -115,7 +115,7 @@ enum `ProjectType`; `20261117090100_client_site_tutorial_drafts` — две
 накатаны и сверены на локальном кластере `postgresql-16` этой же
 песочницы, `docker` тут недоступен, зато нашёлся отдельно установленный
 `psql`/`pg_ctlcluster`); frontend —
-tsc, eslint 0 warnings, vite build, 76 unit-скриптов; admin и
+tsc, eslint 0 warnings, vite build, 77 unit-скриптов; admin и
 landing — tsc, `next lint`, `next build`; `npm audit` на высоких в каждой
 джобе (пока предупреждением); переменные окружения из кода сверены с
 `DEPLOYMENT.md` и `.env.docker.example`.
