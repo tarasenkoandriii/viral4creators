@@ -66,6 +66,37 @@ export function normalizeVoiceMode(value: unknown): VoiceMode {
   return isVoiceMode(value) ? value : DEFAULT_VOICE_MODE;
 }
 
+/**
+ * Режим, которым ролик РЕАЛЬНО собирается в постобработке.
+ *
+ * Grok разговаривает в кадре, даже когда бриф просит тишины
+ * (`voiceModeBriefText`): первый же ролик в TikTok (01.10.2026, «Півасік
+ * 0.5») вышел с двумя голосами — первые 3,5 с говорит модель, дальше наш
+ * голос. В `voiceover` её дорожка подмешивается целиком, только тише, и
+ * чинить это нечем. Поэтому у Grok «свой голос поверх» собирается как
+ * дубляж: голос модели вырезается разделением, фон остаётся.
+ *
+ * Решение владельца продукта (01.10.2026): так на ЛЮБОМ тарифе, где есть
+ * свой голос, — тарифный гейт `voiceDub` относится к явному выбору
+ * дубляжа, а здесь дубляж — способ честно выполнить `voiceover`.
+ *
+ * Немого исходника (`silentSource`, поздравления со своим голосом) это не
+ * касается: голоса модели там нет, разделять нечего.
+ */
+export function effectiveVoiceMode(
+  mode: VoiceMode,
+  video: { provider?: string | null; silentSource?: boolean | null },
+): VoiceMode {
+  if (
+    mode === 'voiceover' &&
+    video.provider === 'grok' &&
+    !video.silentSource
+  ) {
+    return 'dub';
+  }
+  return mode;
+}
+
 /** Наш синтез участвует — значит нужен текст, голос и проход ffmpeg. */
 export function usesOwnVoice(mode: VoiceMode): boolean {
   return mode === 'voiceover' || mode === 'dub';

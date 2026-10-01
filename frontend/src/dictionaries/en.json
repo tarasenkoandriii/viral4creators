@@ -96,7 +96,7 @@
   "voiceMode": {
     "hints": {
       "veo": "The model synthesizes speech itself from the lines in the prompt. Nothing to configure, but the voice is different every time. Free — included in every render.",
-      "voiceover": "The chosen voice reads the lines while the clip's own sound stays underneath — music and atmosphere are kept. Standard plan and up: billed by character, on top of the render.",
+      "voiceover": "The chosen voice reads the lines while the clip's own sound stays underneath — music and atmosphere are kept. Standard plan and up: billed by character, on top of the render. For Grok videos the model's own voice is removed automatically — it tends to speak on its own.",
       "dub": "The chosen voice reads the lines and replaces the model's voice, while the clip's background — noise, music, ambience — stays. Use this if the model ended up speaking in its own voice anyway. Premium plan: billed by character, on top of the render."
     }
   },
@@ -1268,6 +1268,7 @@
     "modeVoiceover": "Voice over the video's sound",
     "modeDub": "Replace the model's voice (dub)",
     "modeVoiceoverHint": "The video's own sound stays as a quiet background. If the model speaks on camera, its voice will be heard together with the new one — choose dub then.",
+    "modeGrokNote": "This video was made by Grok: its own voice is removed automatically, the background stays.",
     "providerLabel": "Synthesis provider",
     "providerCurrent": "Keep current",
     "providerElevenlabs": "ElevenLabs",

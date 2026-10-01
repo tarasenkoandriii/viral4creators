@@ -96,7 +96,7 @@
   "voiceMode": {
     "hints": {
       "veo": "Das Modell synthetisiert die Sprache selbst anhand der Zeilen im Prompt. Nichts einzustellen, aber die Stimme ist jedes Mal neu. Kostenlos — in jeder Generierung enthalten.",
-      "voiceover": "Die gewählte Stimme liest die Zeilen, der Originalton des Clips bleibt im Hintergrund — Musik und Atmosphäre bleiben erhalten. Ab Standard: Abrechnung nach Zeichen, zusätzlich zum Rendering.",
+      "voiceover": "Die gewählte Stimme liest die Zeilen, der Originalton des Clips bleibt im Hintergrund — Musik und Atmosphäre bleiben erhalten. Ab Standard: Abrechnung nach Zeichen, zusätzlich zum Rendering. Bei Grok-Videos wird die Stimme des Modells automatisch entfernt — es spricht oft von selbst.",
       "dub": "Die gewählte Stimme liest die Zeilen und ersetzt die Stimme des Modells; der Hintergrund des Clips — Geräusche, Musik, Umgebung — bleibt erhalten. Nützlich, wenn das Modell doch mit eigener Stimme gesprochen hat. Premium: Abrechnung nach Zeichen, zusätzlich zum Rendering."
     }
   },
@@ -1274,6 +1274,7 @@
     "modeVoiceover": "Stimme über dem Videoton",
     "modeDub": "Stimme des Modells ersetzen (Synchronisation)",
     "modeVoiceoverHint": "Der Ton des Videos bleibt als leiser Hintergrund. Spricht das Modell selbst im Bild, hört man seine Stimme zusammen mit der neuen — wählen Sie dann die Synchronisation.",
+    "modeGrokNote": "Dieses Video stammt von Grok: Seine eigene Stimme wird automatisch entfernt, der Hintergrund bleibt.",
     "providerLabel": "Sprachsynthese-Anbieter",
     "providerCurrent": "Wie bisher",
     "providerElevenlabs": "ElevenLabs",

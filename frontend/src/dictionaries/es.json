@@ -96,7 +96,7 @@
   "voiceMode": {
     "hints": {
       "veo": "El propio modelo sintetiza el habla a partir de las líneas del prompt. No hay nada que configurar, pero la voz es distinta cada vez. Gratis — incluido en cada generación.",
-      "voiceover": "La voz elegida lee las líneas mientras el sonido original del clip queda de fondo — se conservan la música y el ambiente. Desde el plan Standard: se factura por carácter, además del coste del render.",
+      "voiceover": "La voz elegida lee las líneas mientras el sonido original del clip queda de fondo — se conservan la música y el ambiente. Desde el plan Standard: se factura por carácter, además del coste del render. En los vídeos de Grok la voz del modelo se elimina automáticamente: suele hablar por su cuenta.",
       "dub": "La voz elegida lee las líneas y sustituye a la voz del modelo, mientras que el fondo del clip — ruido, música, ambiente — se mantiene. Útil si el modelo terminó hablando con su propia voz. Plan Premium: se factura por carácter, además del coste del render."
     }
   },
@@ -1274,6 +1274,7 @@
     "modeVoiceover": "Voz sobre el sonido del vídeo",
     "modeDub": "Sustituir la voz del modelo (doblaje)",
     "modeVoiceoverHint": "El sonido del vídeo queda como fondo bajo. Si el modelo habla en cámara, su voz se oirá junto con la nueva; en ese caso elija el doblaje.",
+    "modeGrokNote": "Este vídeo lo hizo Grok: su propia voz se elimina automáticamente y el fondo se mantiene.",
     "providerLabel": "Proveedor de síntesis",
     "providerCurrent": "Como ahora",
     "providerElevenlabs": "ElevenLabs",

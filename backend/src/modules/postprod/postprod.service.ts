@@ -64,6 +64,7 @@ import {
 import { NATIVE, planBatchReframe } from '../../common/reframe';
 import { aspectRatioFamily } from '../../common/aspect-ratio';
 import {
+  effectiveVoiceMode,
   normalizeVoiceMode,
   usesOwnVoice,
   VoiceMode,
@@ -1236,12 +1237,17 @@ export class PostProductionService {
     // S2: при голосе Soniox режим бренда 'veo' не глушит озвучку
     // (`greetingVoiceMode`) — ту же функцию прочитали сцена и рендер Grok,
     // и ролик снят без звука: без нашей дорожки он вышел бы немым.
+    // `effectiveVoiceMode`: у Grok «поверх» собирается дубляжем — модель
+    // заговаривает сама, и её голос под нашим слышен вторым (01.10.2026).
     const voiceMode =
       video.speechBakedIn || presetVoiceId
         ? 'veo'
-        : greetingVoiceMode(
-            session?.greetingBriefSnapshot,
-            normalizeVoiceMode(brand?.voiceMode),
+        : effectiveVoiceMode(
+            greetingVoiceMode(
+              session?.greetingBriefSnapshot,
+              normalizeVoiceMode(brand?.voiceMode),
+            ),
+            video,
           );
     const subtitlesMode = normalizeSubtitlesMode(brand?.subtitlesMode);
     const subtitleTheme = normalizeSubtitleTheme(brand?.subtitleTheme);

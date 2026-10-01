@@ -371,25 +371,34 @@ export function RevoicePanel({
       {errorAlerts}
       {scriptField}
 
-      <Field
-        label={dict.revoicePanel.modeLabel}
-        htmlFor="revoice-mode"
-        hint={
-          voiceMode === 'dub'
-            ? dict.voiceMode.hints.dub
-            : dict.revoicePanel.modeVoiceoverHint
-        }
-      >
-        <Select
-          id="revoice-mode"
-          value={voiceMode}
-          onChange={(e) => setVoiceMode(e.target.value as VoiceMode)}
-          disabled={busy}
+      {video.provider === 'grok' ? (
+        // У Grok «поверх» сервер всё равно собирает дубляжем
+        // (`effectiveVoiceMode`, 01.10.2026) — выбирать нечего, а
+        // явный дубляж на Standard упёрся бы в тарифный гейт.
+        <p className="mb-3 text-xs text-silver-400">
+          {dict.revoicePanel.modeGrokNote}
+        </p>
+      ) : (
+        <Field
+          label={dict.revoicePanel.modeLabel}
+          htmlFor="revoice-mode"
+          hint={
+            voiceMode === 'dub'
+              ? dict.voiceMode.hints.dub
+              : dict.revoicePanel.modeVoiceoverHint
+          }
         >
-          <option value="voiceover">{dict.revoicePanel.modeVoiceover}</option>
-          <option value="dub">{dict.revoicePanel.modeDub}</option>
-        </Select>
-      </Field>
+          <Select
+            id="revoice-mode"
+            value={voiceMode}
+            onChange={(e) => setVoiceMode(e.target.value as VoiceMode)}
+            disabled={busy}
+          >
+            <option value="voiceover">{dict.revoicePanel.modeVoiceover}</option>
+            <option value="dub">{dict.revoicePanel.modeDub}</option>
+          </Select>
+        </Field>
+      )}
 
       <Field
         label={dict.revoicePanel.providerLabel}

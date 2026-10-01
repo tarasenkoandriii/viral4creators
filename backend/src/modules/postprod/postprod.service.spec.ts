@@ -981,6 +981,47 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       expect(api.submit.mock.calls[0][0].commands[0]).not.toContain('amix');
     });
 
+    describe('Grok: «поверх» собирается дубляжем (01.10.2026)', () => {
+      // Первый ролик в TikTok вышел с двумя голосами: Grok заговорил сам,
+      // а `voiceover` подмешивает его дорожку под наш голос.
+      const voiceover = () =>
+        session({ brandManifestSnapshot: { voiceMode: 'voiceover' } });
+
+      it('ролик Grok со звуком — голос модели вырезается, фон отдельным входом', async () => {
+        const { svc, api, separation } = build({ session: voiceover() });
+        separation.configured.mockReturnValue(true);
+        separation.separate.mockResolvedValue({
+          ok: true,
+          backgroundUrls: ['https://blob/no_vocals.mp3'],
+          seconds: 16,
+        });
+        const r = await svc.start('s1', { ...VIDEO, provider: 'grok' });
+        const call = api.submit.mock.calls[0][0];
+        expect(call.commands[0]).not.toContain('[0:a]');
+        expect(call.inputs.bg1).toBe('https://blob/no_vocals.mp3');
+        expect(r.voiceMode).toBe('dub');
+      });
+
+      it('немой ролик Grok — без разделения, режим как выбран', async () => {
+        const { svc, separation } = build({ session: voiceover() });
+        separation.configured.mockReturnValue(true);
+        const r = await svc.start('s1', {
+          ...VIDEO,
+          provider: 'grok',
+          silentSource: true,
+        });
+        expect(separation.separate).not.toHaveBeenCalled();
+        expect(r.voiceMode).toBe('voiceover');
+      });
+
+      it('Veo — «поверх» остаётся «поверх»', async () => {
+        const { svc, api } = build({ session: voiceover() });
+        const r = await svc.start('s1', { ...VIDEO, provider: 'veo' });
+        expect(api.submit.mock.calls[0][0].commands[0]).toContain('[0:a]');
+        expect(r.voiceMode).toBe('voiceover');
+      });
+    });
+
     it('дубляж с разделением: фон возвращается в микс отдельным входом', async () => {
       // docs-tz/TZ-Voice-Replace-Keep-Background.md: «дубляж» означает
       // заменить ГОЛОС, а не звук. Стем — это исходная дорожка без
