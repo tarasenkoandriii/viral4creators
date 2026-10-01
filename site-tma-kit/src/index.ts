@@ -23,6 +23,7 @@ export * from './errors';
 export * from './web-auth';
 export * from './account-select';
 export * from './invite';
+export * from './crawl';
 export type { Dictionary } from './dictionaries/ru';
 export { KitContext, useKit, type KitValue } from './kit-context';
 export { useAsync } from './use-async';

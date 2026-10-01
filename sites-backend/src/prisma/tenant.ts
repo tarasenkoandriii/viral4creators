@@ -46,6 +46,29 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   SiteHost: 'accountId',
   SiteOwnershipChallenge: 'accountId',
   SiteAiUsage: 'accountId',
+  // Э1: обход (site-crawl, общий с QA) — строки кабинета.
+  SitePage: 'accountId',
+  SiteCrawlRun: 'accountId',
+  SiteCrawlQueueItem: 'accountId',
+  // Э1: помощник — всё, что принадлежит сайту кабинета, несёт accountId
+  // (составной FK (siteId, accountId) → site_sites держит то же в базе).
+  AssistSite: 'accountId',
+  AssistLearningSpend: 'accountId',
+  AssistSiteSource: 'accountId',
+  AssistSiteDocument: 'accountId',
+  AssistSiteChunk: 'accountId',
+  AssistSiteKnowledgeVersion: 'accountId',
+  AssistSiteFaq: 'accountId',
+  AssistSiteExclusion: 'accountId',
+  AssistSiteEvalCase: 'accountId',
+  AssistSiteEvalRun: 'accountId',
+  AssistAdminSettings: 'accountId',
+  AssistAdminSource: 'accountId',
+  AssistAdminDocument: 'accountId',
+  AssistAdminChunk: 'accountId',
+  AssistAdminKnowledgeVersion: 'accountId',
+  AssistAdminFaq: 'accountId',
+  AssistAdminExclusion: 'accountId',
 };
 
 /**
@@ -57,12 +80,22 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
   // нескольких кабинетах — одна сессия; кабинет и роль проверяются на
   // каждом запросе по site_account_members.
   SiteWebSession: 'сессия веб-кабинета: личность Telegram, не кабинет',
-  // Фрагменты знаний изолируются по siteId (сайт уже принадлежит одному
-  // кабинету, внешний ключ на site_sites) и, главное, ролью БД
-  // assist_public; поиск — сырым SQL через репозитории с обязательным
-  // siteId (Э1, ТЗ помощника §4.4).
-  AssistSiteChunk: 'знания «Сайт»: скоуп по siteId в репозитории (Э1)',
-  AssistAdminChunk: 'знания «Админка»: скоуп по siteId в репозитории (Э1)',
+  // Э1. Фрагменты знаний (AssistSiteChunk/AssistAdminChunk) с Э1 — в
+  // тенанте (выше): у них появился accountId. Поиск по ним — сырым SQL
+  // через репозитории с обязательным siteId (§4.4) — extension его не видит.
+  SiteCronLock: 'замок крона: кроны идут по всем кабинетам',
+  SiteCrawlRobots:
+    'robots.txt/sitemap по origin — публичная информация, общий кэш всех кабинетов и песочниц',
+  AssistDailyCounter:
+    'суточные лимиты платформы (публичная песочница: IP, домен, деньги) — вне кабинета',
+  // Анонимная песочница лендинга не имеет кабинета (accountId NULL до
+  // переноса по sb_<id>); доступ — по неугадываемому id (+ cookie браузера
+  // у публичной); кабинетная песочница проверяется по siteId сайта,
+  // найденного через SitesDb.forAccount.
+  AssistSandbox: 'песочница: анонимная (без кабинета) или онбординг по siteId',
+  AssistSandboxPage: 'страницы песочницы — по sandboxId',
+  AssistSandboxChunk: 'фрагменты песочницы — по sandboxId',
+  AssistSandboxMessage: 'вопросы и ответы песочницы — по sandboxId',
 };
 
 const WHERE_OPERATIONS = new Set([

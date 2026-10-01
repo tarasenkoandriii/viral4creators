@@ -14,6 +14,7 @@ import { promises as dns } from 'dns';
 import {
   assertPubliclyRoutableUrl,
   fetchPubliclyRoutable,
+  isBlockedAddress,
   readBodyWithLimit,
   BodyTooLargeError,
   UnsafeExternalUrlError,
@@ -149,6 +150,82 @@ describe('assertPubliclyRoutableUrl — смешанные адреса', () => 
       addr('93.184.216.34', 4),
       addr('127.0.0.1', 4),
     ]);
+    await expect(
+      assertPubliclyRoutableUrl('https://seller.test/feed.yml'),
+    ).rejects.toBeInstanceOf(UnsafeExternalUrlError);
+  });
+});
+
+describe('isBlockedAddress — расширенный блок-лист (QA-ТЗ §5.4, В-64)', () => {
+  it.each([
+    // IPv4 в нестандартной записи — тот же loopback/частная сеть.
+    ['2130706433', 'десятичная запись 127.0.0.1'],
+    ['0177.0.0.1', 'восьмеричная запись'],
+    ['0x7f.1', 'hex + сокращённая запись'],
+    ['127.1', 'сокращённая запись'],
+    ['0x0a000001', 'hex целиком (10.0.0.1)'],
+    ['0.0.0.0', '0.0.0.0/8'],
+    ['255.255.255.255', 'broadcast'],
+    ['192.88.99.1', 'ретранслятор 6to4'],
+    // IPv6-обёртки IPv4.
+    ['::ffff:127.0.0.1', 'IPv4-mapped'],
+    ['::ffff:7f00:1', 'IPv4-mapped в hex-записи'],
+    ['::FFFF:A9FE:A9FE', 'IPv4-mapped метаданные облака, верхний регистр'],
+    ['::127.0.0.1', 'IPv4-compatible'],
+    ['::a00:1', 'IPv4-compatible в hex'],
+    ['::ffff:0:7f00:1', 'SIIT ::ffff:0:0:0/96'],
+    ['64:ff9b::a00:1', 'NAT64 → 10.0.0.1'],
+    ['64:ff9b::127.0.0.1', 'NAT64 с IPv4-хвостом'],
+    ['64:ff9b:1::5db8:d822', 'NAT64 локальный /48 (даже с публичным хвостом)'],
+    ['2002:7f00:1::', '6to4 → 127.0.0.1'],
+    ['2002:a9fe:a9fe::1', '6to4 → 169.254.169.254'],
+    ['2001::1', 'Teredo'],
+    ['2001:0:4136:e378:8000:63bf:3fff:fdd2', 'Teredo полной записью'],
+    ['2001:db8::1', 'документация'],
+    ['3fff::1', 'документация RFC 9637'],
+    ['100::1', 'discard'],
+    ['ff02::1', 'multicast'],
+    ['fe80::1%eth0', 'link-local с зоной'],
+    ['[::1]', 'loopback в скобках'],
+    ['fd00::1', 'ULA'],
+    ['::', 'unspecified'],
+    // Мусор — блок, а не «пропустить».
+    ['', 'пусто'],
+    ['example.com', 'не адрес'],
+    ['1.2.3.4.5', 'пять октетов'],
+    ['256.1.1.1', 'октет > 255'],
+    ['1::2::3', 'два ::'],
+    ['12345::1', 'группа длиннее 4'],
+  ])('%s (%s) — заблокирован', (ip) => {
+    expect(isBlockedAddress(ip)).toBe(true);
+  });
+
+  it.each([
+    ['93.184.216.34', 'публичный IPv4'],
+    ['8.8.8.8', 'публичный IPv4'],
+    ['2606:2800:220:1:248:1893:25c8:1946', 'публичный IPv6'],
+    ['2a00:1450:4001:82a::200e', 'публичный IPv6 с ::'],
+    ['::ffff:93.184.216.34', 'IPv4-mapped публичный'],
+    ['64:ff9b::5db8:d822', 'NAT64 → публичный 93.184.216.34'],
+    ['2002:5db8:d822::1', '6to4 → публичный'],
+    ['2001:4860:4860::8888', '2001:4860 — вне 2001::/23'],
+  ])('%s (%s) — разрешён', (ip) => {
+    expect(isBlockedAddress(ip)).toBe(false);
+  });
+
+  it('assertPubliclyRoutableUrl ловит hex-форму IPv4-mapped из резолвера', async () => {
+    lookupMock.mockResolvedValue([addr('::ffff:7f00:1', 6)]);
+    await expect(
+      assertPubliclyRoutableUrl('https://seller.test/feed.yml'),
+    ).rejects.toBeInstanceOf(UnsafeExternalUrlError);
+  });
+
+  it('assertPubliclyRoutableUrl ловит NAT64 и 6to4 на приватный IPv4', async () => {
+    lookupMock.mockResolvedValue([addr('64:ff9b::a00:1', 6)]);
+    await expect(
+      assertPubliclyRoutableUrl('https://seller.test/feed.yml'),
+    ).rejects.toBeInstanceOf(UnsafeExternalUrlError);
+    lookupMock.mockResolvedValue([addr('2002:7f00:1::', 6)]);
     await expect(
       assertPubliclyRoutableUrl('https://seller.test/feed.yml'),
     ).rejects.toBeInstanceOf(UnsafeExternalUrlError);

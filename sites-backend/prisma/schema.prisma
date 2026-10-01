@@ -24,7 +24,9 @@ datasource db {
   provider   = "postgresql"
   // pgvector — в схеме `extensions`: там его держит Supabase, и там же его
   // создаёт первая миграция (CREATE EXTENSION … WITH SCHEMA extensions).
-  extensions = [vector(schema: "extensions")]
+  // pg_trgm (Э1, гибридный поиск по артикулам, ТЗ помощника §4.3) — там же,
+  // миграция `…_assist_knowledge`.
+  extensions = [vector(schema: "extensions"), pg_trgm(schema: "extensions")]
 }
 
 // ══ ОБЩЕЕ ЯДРО site-core (таблицы site_*) — одно на QA и Помощника ══
@@ -87,14 +89,14 @@ model SiteAccountInvite {
   accountId String
   account   SiteAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
-  tokenHash    String    @unique
+  tokenHash           String    @unique
   /// manager | operator — владельца пригласить нельзя.
-  role         String
-  productRoles Json
+  role                String
+  productRoles        Json
   createdByTelegramId BigInt
-  expiresAt    DateTime
-  usedAt       DateTime?
-  usedByTelegramId BigInt?
+  expiresAt           DateTime
+  usedAt              DateTime?
+  usedByTelegramId    BigInt?
 
   createdAt DateTime @default(now())
 
@@ -114,9 +116,30 @@ model Site {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  hosts       SiteHost[]
-  siteChunks  AssistSiteChunk[]
-  adminChunks AssistAdminChunk[]
+  hosts SiteHost[]
+
+  // Э1: обход (общий с QA) и знания помощника. Все — составным ключом
+  // (siteId, accountId): строку чужого кабинета к сайту не привязать.
+  pages               SitePage[]
+  crawlRuns           SiteCrawlRun[]
+  assistSite          AssistSite?
+  assistAdminSettings AssistAdminSettings?
+  learningSpend       AssistLearningSpend[]
+  siteSources         AssistSiteSource[]
+  siteDocuments       AssistSiteDocument[]
+  siteChunks          AssistSiteChunk[]
+  siteVersions        AssistSiteKnowledgeVersion[]
+  siteFaq             AssistSiteFaq[]
+  siteExclusions      AssistSiteExclusion[]
+  siteEvalCases       AssistSiteEvalCase[]
+  siteEvalRuns        AssistSiteEvalRun[]
+  adminSources        AssistAdminSource[]
+  adminDocuments      AssistAdminDocument[]
+  adminChunks         AssistAdminChunk[]
+  adminVersions       AssistAdminKnowledgeVersion[]
+  adminFaq            AssistAdminFaq[]
+  adminExclusions     AssistAdminExclusion[]
+  sandboxes           AssistSandbox[]
 
   /// Цель составного внешнего ключа хоста (siteId, accountId): база сама не
   /// даст привязать хост кабинета A к сайту кабинета B.
@@ -135,24 +158,24 @@ model SiteHost {
   siteId    String
   site      Site        @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
 
-  scheme         String    @default("https")
+  scheme                     String    @default("https")
   /// FQDN, нормализованный, punycode, без точки на конце.
-  host           String
-  port           Int       @default(443)
+  host                       String
+  port                       Int       @default(443)
   /// *.myshopify.com и т.п. → подтверждение только через DNS.
-  publicPlatform Boolean   @default(false)
+  publicPlatform             Boolean   @default(false)
   /// pending | verified | expired | revoked
-  status         String    @default("pending")
+  status                     String    @default("pending")
   /// dns | file | meta
-  method         String?
-  verifiedAt     DateTime?
+  method                     String?
+  verifiedAt                 DateTime?
   /// verifiedAt + 90 дней.
-  expiresAt      DateTime?
-  lastRecheckAt  DateTime?
-  revokedAt      DateTime?
+  expiresAt                  DateTime?
+  lastRecheckAt              DateTime?
+  revokedAt                  DateTime?
   /// Итог последней проверки (ручной или крона) для экрана: `{ ok, code,
   /// message, at }`. Статус хоста он не заменяет — только объясняет.
-  lastCheck      Json?
+  lastCheck                  Json?
   /// Подтверждение этого кабинета отозвано ДРУГИМ кабинетом, подтвердившим
   /// тот же хост (QA §5.1): повторное подтверждение заблокировано, пока
   /// тот не снимет блокировку. Строку с блокировкой удалить нельзя — иначе
@@ -164,6 +187,9 @@ model SiteHost {
   updatedAt DateTime @updatedAt
 
   challenges SiteOwnershipChallenge[]
+  /// Э1: публичные страницы хоста. Удалили хост — страницы уходят вместе с
+  /// ним: без подтверждённого хоста их и обходить было нельзя.
+  pages      SitePage[]
 
   /// Дубль хоста в кабинете — ошибка при добавлении (QA §2.2), а не второй
   /// Site; разные кабинеты один хост иметь могут.
@@ -289,34 +315,900 @@ model SiteWebSession {
   @@map("site_web_sessions")
 }
 
-// ══ Помощник: фрагменты знаний (минимум Э0 — для приёмки изоляции) ══
-//
-// Две НЕПЕРЕСЕКАЮЩИЕСЯ таблицы (ТЗ помощника §4.3-бис, слой 1): режима в
-// строке нет — он задан именем таблицы. Роль `assist_public` (миграция)
-// читает `assist_site_chunks` и не имеет НИКАКИХ прав на `assist_admin_*`.
-// Остальные поля (documentId, version, headingPath, tokens, embedModel) и
-// HNSW-индекс — в Э1, вместе с конвейером индексации.
+/// Замок крона (аналог `CronJobLock` генератора, backend/prisma/schema.prisma):
+/// одна строка на крон, TTL — защита от упавшего процесса. Не advisory-lock:
+/// пулер Supabase в transaction-режиме не держит сессию между запросами.
+/// Глобальная таблица — кроны идут по всем кабинетам.
+model SiteCronLock {
+  jobKey         String    @id
+  /// null или прошлое — свободен.
+  lockedUntil    DateTime?
+  holder         String?
+  lastStartedAt  DateTime?
+  lastFinishedAt DateTime?
+  lastError      String?
 
-model AssistSiteChunk {
-  id        String                      @id @default(cuid())
+  @@map("site_cron_locks")
+}
+
+// ══ Обход публичных страниц `site-crawl` (Э1) — общий с QA ══
+//
+// Пишет ТОЛЬКО модуль site-crawl и ТОЛЬКО публичные страницы
+// `verified`-хостов сайта — без cookie и без сессии (ТЗ помощника §3.4, У-9).
+// Закрытая зона «Админки» сюда не попадает никогда (Э7: assist_admin_pages).
+// Знания помощника читают отсюда текст и строят СВОИ фрагменты в
+// assist_site_* / assist_admin_* — двумя независимыми конвейерами (Р-19).
+
+/// Публичная страница verified-хоста — кэш последнего обхода.
+model SitePage {
+  id        String   @id @default(cuid())
+  accountId String
   siteId    String
-  site      Site                        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  site      Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  hostId    String
+  host      SiteHost @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// Нормализованный URL (без фрагмента, без трекинговых параметров).
+  url            String
+  /// Куда привёл редирект в пределах того же хоста (если привёл).
+  finalUrl       String?
+  httpStatus     Int?
+  /// new | ok | not_modified | skipped | failed | gone
+  status         String    @default("new")
+  /// robots | noindex | not_html | too_large | redirect_offsite | ssrf |
+  /// excluded | limit | http_4xx | http_5xx | timeout | empty | duplicate
+  skipReason     String?
+  title          String?
+  /// Язык основного текста (`<html lang>` + эвристика букв): uk | ru | en | …
+  lang           String?
+  /// Основной текст, нормализованный (для хеша и для QA).
+  text           String?
+  /// Блоки извлечения для чанкера: [{ t: 'h'|'p'|'li'|'tr'|'faq', level?,
+  /// text, path: string[], ugc?: true }] — форма в site-crawl/types.ts.
+  blocks         Json?
+  /// SHA-256 нормализованного основного текста.
+  contentHash    String?
+  etag           String?
+  lastModified   String?
+  sitemapLastmod DateTime?
+  /// seed | sitemap | link | hot | manual
+  source         String    @default("seed")
+  depth          Int       @default(0)
+  failCount      Int       @default(0)
+  fetchedAt      DateTime?
+  /// Когда contentHash менялся в последний раз (переиндексация — по нему).
+  changedAt      DateTime?
+  goneAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([hostId, url])
+  @@index([siteId, changedAt])
+  @@index([accountId])
+  @@map("site_pages")
+}
+
+/// Прогон обхода сайта (очередь — Postgres с lease, не SKIP LOCKED: ТЗ §4.14).
+model SiteCrawlRun {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// assist | qa — чей запрос (расписание у продуктов своё).
+  product  String
+  /// initial | schedule | manual | webhook | hot
+  trigger  String
+  /// full | hot | urls
+  mode     String @default("full")
+  /// queued | running | done | failed | cancelled
+  status   String @default("queued")
+  maxPages Int
+  /// Параметры запроса: { urls?, excludePrefixes?, hostIds? }.
+  options  Json   @default("{}")
+
+  pagesSeen      Int   @default(0)
+  pagesChanged   Int   @default(0)
+  pagesUnchanged Int   @default(0)
+  pagesSkipped   Int   @default(0)
+  pagesFailed    Int   @default(0)
+  pagesGone      Int   @default(0)
+  /// Сводка для экрана: пропущенные по причинам, языки, найденная sitemap.
+  stats          Json?
+
+  lockedUntil           DateTime?
+  attempts              Int       @default(0)
+  requestedByTelegramId BigInt?
+  startedAt             DateTime?
+  finishedAt            DateTime?
+  error                 String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  queue SiteCrawlQueueItem[]
+
+  @@unique([id, accountId])
+  @@index([status, lockedUntil])
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("site_crawl_runs")
+}
+
+/// URL в очереди прогона. Поштучный lease: два тика не берут одну строку.
+model SiteCrawlQueueItem {
+  id        String       @id @default(cuid())
+  accountId String
+  runId     String
+  run       SiteCrawlRun @relation(fields: [runId, accountId], references: [id, accountId], onDelete: Cascade)
+  siteId    String
+  hostId    String
+
+  url      String
+  depth    Int    @default(0)
+  /// Больше — раньше: горячие и свежие по lastmod — первыми (ТЗ §4-тер.2).
+  priority Int    @default(0)
+  /// seed | sitemap | link | hot | manual
+  source   String @default("seed")
+  /// pending | done | skipped | failed
+  status   String @default("pending")
+
+  lockedUntil DateTime?
+  attempts    Int       @default(0)
+  lastError   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([runId, url])
+  @@index([runId, status, priority])
+  @@index([accountId])
+  @@map("site_crawl_queue")
+}
+
+/// robots.txt и sitemap по origin — публичная информация, кэш на 24 ч, общий
+/// для всех кабинетов и песочниц (не долбим чужой сайт повторно).
+model SiteCrawlRobots {
+  /// `https://host` (порт 443 не пишется).
+  origin       String   @id
+  httpStatus   Int?
+  /// Тело robots.txt (обрезано до лимита); null — не было или ошибка.
+  body         String?
+  sitemaps     String[]
+  crawlDelayMs Int?
+  fetchedAt    DateTime
+  expiresAt    DateTime
+
+  @@index([expiresAt])
+  @@map("site_crawl_robots")
+}
+
+// ══ Помощник: общее (assist_*) — Э1 ══
+
+/// Помощник на сайте. Э1 — только поля знаний; виджет, персона, ключи —
+/// Э2 (ТЗ §4.17). Роль assist_public ЧИТАЕТ эту таблицу (опубликованная
+/// версия знаний для поиска виджета) — поэтому настроек и секретов
+/// «Админки» здесь нет и не будет (У-10 → AssistAdminSettings).
+model AssistSite {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String @unique
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  enabled Boolean @default(false)
+
+  /// Опубликованная версия базы «Сайта» (0 — базы ещё нет). Поиск виджета
+  /// и песочницы видит ТОЛЬКО её; публикация — смена этого числа в одной
+  /// транзакции со статусом версии (ТЗ §4-тер.2).
+  knowledgeVersion Int @default(0)
+  /// Персона, запреты, примеры — ключ кэшей вместе с knowledgeVersion.
+  configVersion    Int @default(0)
+  /// Последний выданный номер версии (выдача — условным UPDATE … RETURNING).
+  versionSeq       Int @default(0)
+
+  /// manual | weekly | daily (daily — платные тарифы; до Э4 — по решению владельца)
+  recrawlEvery          String    @default("weekly")
+  nextCrawlAt           DateTime?
+  lastCrawlRunId        String?
+  /// Прогон обхода, по которому уже построена версия «Сайта».
+  lastIndexedCrawlRunId String?
+  /// «Горячие страницы» (≤ 10 URL): условный запрос ежедневно на всех тарифах.
+  hotPages              String[]
+  hotCheckedAt          DateTime?
+  /// Доля бюджета обучения кабинета, базисные пункты; null — поровну (Р-58).
+  learningShareBp       Int?
+  /// 5 вопросов, на которые помощник теперь отвечает (§3.4) — только из
+  /// знаний «Сайта» (У-8); пересчитываются для новой опубликованной версии.
+  suggestedQuestions    Json?
+  suggestedForVersion   Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Цель составного ключа 1:1 с сайтом (Prisma требует уникальности).
+  @@unique([siteId, accountId])
+  @@index([accountId])
+  @@index([nextCrawlAt])
+  @@map("assist_sites")
+}
+
+/// Расход бюджета обучения (эмбеддинги, eval, черновики) по сайту за месяц.
+/// Потолок — на ПОДПИСКУ кабинета (Р-58, ТЗ §4-тер.11): до Э4 подписок нет,
+/// потолок кабинета берётся из src/config/assist-defaults.ts (Trial/Start
+/// $0.5) и делится между сайтами поровну или по learningShareBp. Учёт денег
+/// — по-прежнему в site_ai_usage; здесь — счётчик для атомарной проверки
+/// «spent + оценка ≤ доля» одним условным UPDATE.
+model AssistLearningSpend {
+  accountId     String
+  siteId        String
+  site          Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// YYYY-MM (UTC).
+  period        String
+  spentMicroUsd BigInt   @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@id([siteId, period])
+  @@index([accountId, period])
+  @@map("assist_learning_spend")
+}
+
+/// Суточные счётчики платформы без кабинета: лимиты публичной песочницы
+/// (на IP / IPv6 /64, на eTLD+1), её денежный потолок. Атомарно:
+/// INSERT … ON CONFLICT DO UPDATE … WHERE value + :n <= :cap RETURNING.
+model AssistDailyCounter {
+  /// sandbox-ip | sandbox-domain | sandbox-money | sandbox-cabinet | …
+  scope     String
+  key       String
+  /// YYYY-MM-DD (UTC).
+  day       String
+  value     BigInt   @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@id([scope, key, day])
+  @@index([day])
+  @@map("assist_daily_counters")
+}
+
+// ══ Песочница (§3.1; лендинг-ТЗ §6) — без подтверждения владения (L0) ══
+//
+// Своя таблица фрагментов, а не assist_site_* с sandboxId (отступление от
+// эскиза §4.17 «знания песочницы — в assist_site_* с sandboxId»): у
+// анонимной песочницы нет ни кабинета, ни сайта, а в assist_site_* siteId и
+// accountId обязательны и держат изоляцию тенантов (составной FK +
+// extension). Режим тот же — «Сайт» (публичный текст), «Админке» сюда пути нет.
+
+model AssistSandbox {
+  /// 128 бит случайности (base64url), выдаёт код — неугадываемая ссылка.
+  id   String @id
+  /// public — анонимно с лендинга; cabinet — онбординг TMA по сайту кабинета.
+  kind String
+
+  /// null у анонимной до переноса (`sb_<id>` → кабинет).
+  accountId           String?
+  siteId              String?
+  site                Site?   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  createdByTelegramId BigInt?
+  /// SHA-256 cookie браузера, открывшего публичную песочницу: результат
+  /// виден только ему (лендинг-ТЗ §6.2).
+  browserKeyHash      String?
+
+  url               String
+  host              String
+  /// eTLD+1 (tldts) — лимит «≤ 3 новых обхода домена в сутки».
+  registrableDomain String
+  /// Хеш IPv4 или IPv6 /64 с суточной солью; сырой IP не хранится.
+  ipKey             String?
+
+  /// queued | crawling | indexing | ready | failed | blocked | expired
+  status       String  @default("queued")
+  statusReason String?
+  /// Честный прогресс для экрана ожидания: { sitemap, found, titles[] }.
+  progress     Json    @default("{}")
+  title        String?
+  lang         String?
+  themeColor   String?
+
+  pagesLimit         Int
+  pagesRead          Int       @default(0)
+  questionsLimit     Int
+  questions          Int       @default(0)
+  costMicroUsd       Int       @default(0)
+  /// 3–5 автоматически сгенерированных вопросов (из враждебного текста —
+  /// показываются как данные, не HTML).
+  suggestedQuestions Json?
+  /// Только с воркера QA (лендинг-ТЗ §6.4); до него — null.
+  screenshotKey      String?
+  /// Повторная песочница по домену в течение 24 ч берёт знания этой.
+  reusedFromId       String?
+  transferredAt      DateTime?
+
+  lockedUntil DateTime?
+  attempts    Int       @default(0)
+  /// 24 ч анонимно; 7 дней — в кабинете, пока сайт не подтверждён.
+  expiresAt   DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pages    AssistSandboxPage[]
+  chunks   AssistSandboxChunk[]
+  messages AssistSandboxMessage[]
+
+  @@index([registrableDomain, createdAt])
+  @@index([ipKey, createdAt])
+  @@index([siteId])
+  @@index([status, lockedUntil])
+  @@index([expiresAt])
+  @@map("assist_sandboxes")
+}
+
+model AssistSandboxPage {
+  id          String        @id @default(cuid())
+  sandboxId   String
+  sandbox     AssistSandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  url         String
+  title       String?
+  lang        String?
+  text        String
+  blocks      Json?
+  contentHash String
+  fetchedAt   DateTime      @default(now())
+
+  chunks AssistSandboxChunk[]
+
+  @@unique([sandboxId, url])
+  @@map("assist_sandbox_pages")
+}
+
+model AssistSandboxChunk {
+  id               String                      @id @default(cuid())
+  sandboxId        String
+  sandbox          AssistSandbox               @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  pageId           String
+  page             AssistSandboxPage           @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  url              String
+  title            String?
+  headingPath      String?
+  lang             String?
+  ordinal          Int                         @default(0)
+  text             String
+  tokens           Int                         @default(0)
+  contentHash      String
+  ugc              Boolean                     @default(false)
+  quarantined      Boolean                     @default(false)
+  quarantineReason String?
+  embedModel       String?
+  embedding        Unsupported("vector(768)")?
+  createdAt        DateTime                    @default(now())
+
+  @@index([sandboxId])
+  @@map("assist_sandbox_chunks")
+}
+
+model AssistSandboxMessage {
+  id        String        @id @default(cuid())
+  sandboxId String
+  sandbox   AssistSandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  /// visitor | assistant
+  role      String
   text      String
-  embedding Unsupported("vector(768)")?
-  createdAt DateTime                    @default(now())
+  /// [{ n, url, title }] — источники ответа.
+  sources   Json?
+  createdAt DateTime      @default(now())
+
+  @@index([sandboxId, createdAt])
+  @@map("assist_sandbox_messages")
+}
+
+// ══ Режим «Сайт» (assist_site_*) — знания для посетителей ══
+//
+// Слой 1 изоляции (ТЗ §4.3-бис): режим задан ИМЕНЕМ таблицы, общего поля
+// «режим» нет. Таблицы «Админки» ниже — тех же форм, но другие таблицы.
+// Роль assist_public: SELECT на assist_site_chunks и assist_site_faq (поиск
+// виджета), на остальное — ничего.
+
+/// Источник знаний «Сайта»; принадлежит режиму навсегда (сменить нельзя).
+model AssistSiteSource {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// crawl (публичный обход, один на сайт) | url | file | faq | manual
+  kind   String
+  title  String?
+  /// url: { urls: string[] }; crawl: { maxPages? }; file: { pages? }.
+  config Json    @default("{}")
+  /// pending_upload | processing | active | failed | disabled
+  status String  @default("active")
+  error  String?
+
+  /// Файл: приватный Blob `assist/<accountId>/<siteId>/site/…` (§4.4).
+  blobPathname      String?
+  fileName          String?
+  mimeType          String?
+  bytes             Int?
+  sha256            String?
+  /// «Этот файл увидят все посетители» — подтверждение при загрузке (§3.4).
+  publicConfirmedAt DateTime?
+
+  documentsCount      Int       @default(0)
+  lastSyncAt          DateTime?
+  /// Разбор файла кроном — с lease.
+  lockedUntil         DateTime?
+  attempts            Int       @default(0)
+  createdByTelegramId BigInt?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  documents AssistSiteDocument[]
+
+  @@unique([id, accountId])
+  @@index([siteId])
+  @@index([status, lockedUntil])
+  @@index([accountId])
+  @@map("assist_site_sources")
+}
+
+/// Документ = единица текста источника (страница, файл или его часть, пункт FAQ).
+model AssistSiteDocument {
+  id        String           @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site             @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  sourceId  String
+  source    AssistSiteSource @relation(fields: [sourceId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// Стабильный ключ в источнике: URL страницы | pathname#часть | faq:<id>.
+  ref         String
+  /// page | file | faq | manual
+  kind        String
+  url         String?
+  /// Для страниц обхода — site_pages.id (без FK: страницу удаляет обход).
+  sitePageId  String?
+  title       String?
+  lang        String?
+  /// Хеш последнего прочитанного текста.
+  contentHash String?
+  /// Хеш текста, по которому построены текущие фрагменты.
+  indexedHash String?
+  /// active | gone | excluded | failed | skipped
+  status      String    @default("active")
+  skipReason  String?
+  /// «Горячая страница» (≤ 10 на сайт, §4-тер.2).
+  hot         Boolean   @default(false)
+  goneAt      DateTime?
+  indexedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  chunks AssistSiteChunk[]
+
+  @@unique([sourceId, ref])
+  @@unique([id, accountId])
+  @@index([siteId, status])
+  @@index([accountId])
+  @@map("assist_site_documents")
+}
+
+/// Фрагмент знаний «Сайта». Версии базы — членством `versions` (номера
+/// версий, в которые входит фрагмент): неизменённый фрагмент переходит в
+/// новую версию без копии и без нового эмбеддинга; публикация — смена
+/// AssistSite.knowledgeVersion. Поиск — сырым SQL через репозиторий с
+/// обязательным siteId (§4.4): HNSW (частичный, `WHERE embedding IS NOT NULL`)
+/// и полнотекстовый индекс — в миграции, Prisma их не описывает (см.
+/// заголовок миграции …_assist_knowledge).
+model AssistSiteChunk {
+  id         String             @id @default(cuid())
+  accountId  String
+  siteId     String
+  site       Site               @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  documentId String
+  document   AssistSiteDocument @relation(fields: [documentId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// page | file | faq | manual — FAQ получает бонус в ранжировании.
+  sourceType                    String
+  url                           String?
+  title                         String?
+  /// «Доставка › По Украине».
+  headingPath                   String?
+  lang                          String?
+  ordinal                       Int                         @default(0)
+  text                          String
+  tokens                        Int                         @default(0)
+  /// SHA-256 нормализованного текста фрагмента.
+  contentHash                   String
+  /// SHA-256 текста с замаскированными цифрами: «изменились только числа» —
+  /// вектор не пересчитывается (§4-тер.2).
+  digitsMaskedHash              String
+  /// Номера версий базы, в которые входит фрагмент.
+  versions                      Int[]                       @default([])
+  /// Отзывы/комментарии посетителей сайта: пониженный вес, не факт (§6.5).
+  ugc                           Boolean                     @default(false)
+  /// Признаки инъекции — в поиск не идёт, ждёт решения владельца (§4-тер.7).
+  quarantined                   Boolean                     @default(false)
+  quarantineReason              String?
+  quarantineAllowedAt           DateTime?
+  quarantineAllowedByTelegramId BigInt?
+  /// Модель и размерность — в каждой строке: смена модели = переиндекс.
+  embedModel                    String?
+  embedding                     Unsupported("vector(768)")?
+  embeddedAt                    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([siteId])
+  @@index([documentId])
+  @@index([siteId, contentHash])
+  @@index([accountId])
+  @@index([text(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("assist_site_chunks")
 }
 
-model AssistAdminChunk {
-  id        String                      @id @default(cuid())
+/// Версия базы «Сайта» (§4-тер.2): building → checking → published | held | discarded.
+model AssistSiteKnowledgeVersion {
+  id        String @id @default(cuid())
+  accountId String
   siteId    String
-  site      Site                        @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  text      String
-  embedding Unsupported("vector(768)")?
-  createdAt DateTime                    @default(now())
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  number                Int
+  /// crawl | document | faq | exclusion | quarantine | rollback | manual
+  trigger               String
+  /// building | checking | published | held | discarded
+  status                String    @default("building")
+  parentNumber          Int?
+  /// «+12 страниц, −3, ~41; фрагментов 2 140; языки uk 92%, ru 8%».
+  stats                 Json      @default("{}")
+  /// Отчёт ворот аномалий: [{ check, value, threshold, held }].
+  gateReport            Json?
+  heldReason            String?
+  evalRunId             String?
+  crawlRunId            String?
+  createdByTelegramId   BigInt?
+  publishedByTelegramId BigInt?
+  checkedAt             DateTime?
+  publishedAt           DateTime?
+  discardedAt           DateTime?
+  /// Уведомление владельцу об удержании отправлено.
+  notifiedAt            DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([siteId, number])
+  @@index([siteId, status])
+  @@index([accountId])
+  @@map("assist_site_knowledge_versions")
+}
+
+/// FAQ = «проверенный ответ» (§4-тер.4). Публикует только человек с правом.
+model AssistSiteFaq {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  question             String
+  answer               String
+  variants             String[]
+  lang                 String?
+  /// owner | wizard | gap | operator_candidate | copied
+  origin               String    @default("owner")
+  sourceRefs           Json?
+  /// active | needs_review | archived
+  status               String    @default("active")
+  approvedByTelegramId BigInt?
+  approvedAt           DateTime?
+  reviewAt             DateTime?
+  conflictNote         String?
+  fromConversationId   String?
+  /// Документ знаний, в который проиндексирован ответ.
+  documentId           String?
+  createdByTelegramId  BigInt?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, status])
+  @@index([accountId])
+  @@map("assist_site_faq")
+}
+
+/// «Этого не знать» (§4-тер.12): удаление из ВСЕХ версий сразу; откат не
+/// возвращает, переобход не берёт.
+model AssistSiteExclusion {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// url | urlPrefix | chunkHash | document
+  kind                String
+  value               String
+  reason              String?
+  createdByTelegramId BigInt
+  appliedAt           DateTime?
+  chunksDeleted       Int       @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([siteId, kind, value])
+  @@index([accountId])
+  @@map("assist_site_exclusions")
+}
+
+/// Eval-кейс сайта (У-6: только «Сайт»; набор платформы — в коде).
+model AssistSiteEvalCase {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// source (по фрагменту) | golden (из проверенного ответа) | manual
+  kind            String
+  question        String
+  expected        String?
+  mustCite        String[]
+  mustNotSay      String[]
+  lang            String?
+  /// Кейс по фрагменту: изменился фрагмент → stale, а не провал (§4-тер.2).
+  sourceChunkHash String?
+  /// active | stale | archived
+  status          String   @default("active")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, status])
+  @@index([accountId])
+  @@map("assist_site_eval_cases")
+}
+
+model AssistSiteEvalRun {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// gate (инвариантный поднабор) | scheduled | manual
+  kind             String
+  knowledgeVersion Int?
+  model            String
+  passed           Int    @default(0)
+  failed           Int    @default(0)
+  stale            Int    @default(0)
+  report           Json   @default("{}")
+  costMicroUsd     Int    @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("assist_site_eval_runs")
+}
+
+// ══ Режим «Админка» (assist_admin_*) — роли assist_public НЕДОСТУПНЫ ══
+//
+// Формы — как у «Сайта» (общий код assist-knowledge-core работает по
+// таблицам, имена которых ему передаёт модуль режима), таблицы — свои.
+
+/// Настройки «Админки» (У-10): всё, чего не должна видеть роль assist_public.
+/// Э1 — знания; режим, хосты, секрет подписи, инструкции — Э7.
+model AssistAdminSettings {
+  siteId    String @id
+  accountId String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// «Сотрудникам тоже знать публичный сайт» — копия публичного обхода (Р-19).
+  includePublicInAdmin Boolean @default(true)
+  /// Отзывы/комментарии (ugc) в копию — по умолчанию нет (§3.4).
+  includeUgcInAdmin    Boolean @default(false)
+
+  /// Те же имена колонок, что у AssistSite: общий код версий работает по ним.
+  knowledgeVersion      Int     @default(0)
+  configVersion         Int     @default(0)
+  versionSeq            Int     @default(0)
+  lastIndexedCrawlRunId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, accountId])
+  @@index([accountId])
+  @@map("assist_admin_settings")
+}
+
+model AssistAdminSource {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// public_copy (копия публичного обхода) | url | file | faq | manual
+  /// (crawl_private — Э7)
+  kind   String
+  title  String?
+  config Json    @default("{}")
+  status String  @default("active")
+  error  String?
+
+  /// Приватный Blob `assist/<accountId>/<siteId>/admin/…`.
+  blobPathname String?
+  fileName     String?
+  mimeType     String?
+  bytes        Int?
+  sha256       String?
+
+  documentsCount      Int       @default(0)
+  lastSyncAt          DateTime?
+  lockedUntil         DateTime?
+  attempts            Int       @default(0)
+  createdByTelegramId BigInt?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  documents AssistAdminDocument[]
+
+  @@unique([id, accountId])
+  @@index([siteId])
+  @@index([status, lockedUntil])
+  @@index([accountId])
+  @@map("assist_admin_sources")
+}
+
+model AssistAdminDocument {
+  id        String            @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site              @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  sourceId  String
+  source    AssistAdminSource @relation(fields: [sourceId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  ref         String
+  kind        String
+  url         String?
+  sitePageId  String?
+  title       String?
+  lang        String?
+  contentHash String?
+  indexedHash String?
+  status      String    @default("active")
+  skipReason  String?
+  hot         Boolean   @default(false)
+  goneAt      DateTime?
+  indexedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  chunks AssistAdminChunk[]
+
+  @@unique([sourceId, ref])
+  @@unique([id, accountId])
+  @@index([siteId, status])
+  @@index([accountId])
+  @@map("assist_admin_documents")
+}
+
+model AssistAdminChunk {
+  id         String              @id @default(cuid())
+  accountId  String
+  siteId     String
+  site       Site                @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  documentId String
+  document   AssistAdminDocument @relation(fields: [documentId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  sourceType                    String
+  url                           String?
+  title                         String?
+  headingPath                   String?
+  lang                          String?
+  ordinal                       Int                         @default(0)
+  text                          String
+  tokens                        Int                         @default(0)
+  contentHash                   String
+  digitsMaskedHash              String
+  versions                      Int[]                       @default([])
+  ugc                           Boolean                     @default(false)
+  quarantined                   Boolean                     @default(false)
+  quarantineReason              String?
+  quarantineAllowedAt           DateTime?
+  quarantineAllowedByTelegramId BigInt?
+  embedModel                    String?
+  embedding                     Unsupported("vector(768)")?
+  embeddedAt                    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([siteId])
+  @@index([documentId])
+  @@index([siteId, contentHash])
+  @@index([accountId])
+  @@index([text(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("assist_admin_chunks")
+}
+
+model AssistAdminKnowledgeVersion {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  number                Int
+  trigger               String
+  status                String    @default("building")
+  parentNumber          Int?
+  stats                 Json      @default("{}")
+  gateReport            Json?
+  heldReason            String?
+  evalRunId             String?
+  crawlRunId            String?
+  createdByTelegramId   BigInt?
+  publishedByTelegramId BigInt?
+  checkedAt             DateTime?
+  publishedAt           DateTime?
+  discardedAt           DateTime?
+  notifiedAt            DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([siteId, number])
+  @@index([siteId, status])
+  @@index([accountId])
+  @@map("assist_admin_knowledge_versions")
+}
+
+model AssistAdminFaq {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  question             String
+  answer               String
+  variants             String[]
+  lang                 String?
+  origin               String    @default("owner")
+  sourceRefs           Json?
+  status               String    @default("active")
+  approvedByTelegramId BigInt?
+  approvedAt           DateTime?
+  reviewAt             DateTime?
+  conflictNote         String?
+  fromConversationId   String?
+  documentId           String?
+  createdByTelegramId  BigInt?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, status])
+  @@index([accountId])
+  @@map("assist_admin_faq")
+}
+
+model AssistAdminExclusion {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  kind                String
+  value               String
+  reason              String?
+  createdByTelegramId BigInt
+  appliedAt           DateTime?
+  chunksDeleted       Int       @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([siteId, kind, value])
+  @@index([accountId])
+  @@map("assist_admin_exclusions")
 }

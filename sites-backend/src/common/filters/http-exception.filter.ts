@@ -36,6 +36,12 @@ const PASSTHROUGH_KEYS = ['reason', 'retryAfterMs'] as const;
 
 /** Машинный код отказа (`{ code: 'HOST_DUPLICATE', message }`). */
 const MACHINE_CODE = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
+/**
+ * Код в поле `error` — только UPPER_SNAKE: Nest кладёт туда фразу статуса
+ * («Forbidden», «Conflict»), и её нельзя принять за код (клиент ветвится по
+ * `FORBIDDEN`, а не по «Forbidden»).
+ */
+const ERROR_FIELD_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
 
 export function detailsOf(
   responseObj: Record<string, unknown>,
@@ -127,7 +133,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         // код. Своё `error` берём, только если оно похоже на машинный
         // идентификатор; иначе код — по статусу (у backend здесь
         // оседает фраза, и клиент ветвится по тексту — не повторяем).
-        if (typeof obj.error === 'string' && MACHINE_CODE.test(obj.error)) {
+        if (typeof obj.error === 'string' && ERROR_FIELD_CODE.test(obj.error)) {
           errorCode = obj.error;
         }
         errorDetails = detailsOf(obj);

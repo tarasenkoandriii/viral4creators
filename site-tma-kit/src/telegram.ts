@@ -186,12 +186,30 @@ export function readStartParam(): string | null {
   return fromHash || null;
 }
 
+/**
+ * Hash после запуска без служебных параметров Telegram. Кнопка бота ведёт
+ * и на маршрут (уведомление «версия удержана» →
+ * `…#/sites/<id>/knowledge/site/versions`), и тогда Telegram дописывает
+ * параметры К НЕМУ: `#/sites/…/versions?tgWebAppData=…` (так их и
+ * разбирает telegram-web-app.js — `_path` до `?`). Срезать весь hash —
+ * значит открыть главную вместо экрана из уведомления. Маршрут
+ * сохраняется, параметры — нет; маршрута нет — пустой hash.
+ */
+export function launchHashRoute(hash: string): string {
+  const raw = hash.replace(/^#/, '');
+  if (!raw.includes('tgWebAppData=')) return hash;
+  if (!raw.startsWith('/')) return '';
+  const path = raw.split(/[?&]/, 1)[0];
+  return path.includes('=') ? '' : `#${path}`;
+}
+
 function stripTelegramLaunchHash(): void {
-  if (!window.location.hash.includes('tgWebAppData=')) return;
+  const hash = window.location.hash;
+  if (!hash.includes('tgWebAppData=')) return;
   window.history.replaceState(
     null,
     '',
-    window.location.pathname + window.location.search
+    window.location.pathname + window.location.search + launchHashRoute(hash)
   );
 }
 

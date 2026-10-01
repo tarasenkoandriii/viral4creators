@@ -6,6 +6,12 @@
  */
 
 import { useEffect, useState } from 'react';
+import type { KnowledgeMode } from './knowledge-types';
+import {
+  isKnowledgeMode,
+  isKnowledgeTab,
+  type KnowledgeTab,
+} from './knowledge-view';
 
 export type Section = 'knowledge' | 'widget' | 'dialogs';
 
@@ -20,6 +26,17 @@ export type Route =
   | { name: 'members' }
   | { name: 'invite' }
   | { name: 'section'; section: Section }
+  // Э1: онбординг шаги 2–3, песочница, знания, перенос песочницы лендинга
+  // (контракт Э1 §6, «Хеш-маршруты TMA» — бот ссылается на них).
+  | { name: 'onboarding-url' }
+  | { name: 'sandbox'; siteId: string }
+  | {
+      name: 'knowledge';
+      siteId: string;
+      mode: KnowledgeMode;
+      tab: KnowledgeTab;
+    }
+  | { name: 'sandbox-transfer'; sandboxId: string }
   | { name: 'not-found'; path: string };
 
 const SECTIONS: Section[] = ['knowledge', 'widget', 'dialogs'];
@@ -36,6 +53,12 @@ export function parseRoute(hash: string): Route {
   if (p.length === 2 && p[0] === 'members' && p[1] === 'invite') {
     return { name: 'invite' };
   }
+  if (p.length === 2 && p[0] === 'onboarding' && p[1] === 'url') {
+    return { name: 'onboarding-url' };
+  }
+  if (p.length === 2 && p[0] === 'sandbox-transfer' && ID.test(p[1])) {
+    return { name: 'sandbox-transfer', sandboxId: p[1] };
+  }
   if (p.length === 1 && (SECTIONS as string[]).includes(p[0])) {
     return { name: 'section', section: p[0] as Section };
   }
@@ -43,6 +66,24 @@ export function parseRoute(hash: string): Route {
     if (p.length === 1) return { name: 'sites' };
     if (p.length === 2 && p[1] === 'new') return { name: 'site-new' };
     if (p.length === 2 && ID.test(p[1])) return { name: 'site', siteId: p[1] };
+    if (p.length === 3 && p[2] === 'sandbox' && ID.test(p[1])) {
+      return { name: 'sandbox', siteId: p[1] };
+    }
+    // #/sites/:id/knowledge/site|admin[/вкладка]; без вкладки — сводка.
+    if (
+      (p.length === 4 || p.length === 5) &&
+      p[2] === 'knowledge' &&
+      ID.test(p[1]) &&
+      isKnowledgeMode(p[3]) &&
+      (p.length === 4 || isKnowledgeTab(p[4]))
+    ) {
+      return {
+        name: 'knowledge',
+        siteId: p[1],
+        mode: p[3],
+        tab: p.length === 5 ? (p[4] as KnowledgeTab) : 'overview',
+      };
+    }
     if (p.length === 4 && p[2] === 'hosts' && ID.test(p[1]) && ID.test(p[3])) {
       return { name: 'host', siteId: p[1], hostId: p[3] };
     }
@@ -81,6 +122,16 @@ export function routeHref(r: Route): string {
       return '#/members/invite';
     case 'section':
       return `#/${r.section}`;
+    case 'onboarding-url':
+      return '#/onboarding/url';
+    case 'sandbox':
+      return `#/sites/${r.siteId}/sandbox`;
+    case 'knowledge':
+      return `#/sites/${r.siteId}/knowledge/${r.mode}${
+        r.tab === 'overview' ? '' : `/${r.tab}`
+      }`;
+    case 'sandbox-transfer':
+      return `#/sandbox-transfer/${r.sandboxId}`;
     case 'not-found':
       return `#/${r.path}`;
   }

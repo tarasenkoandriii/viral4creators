@@ -49,6 +49,26 @@ export const DEV_USER_HEADER = 'X-Dev-User-Id';
  */
 export const WEB_SESSION_COOKIE = 'v4c_site_session';
 
+/**
+ * Э1: обход сайтов. Имя для групп robots.txt (заказчик пишет
+ * `User-agent: V4C-Assist`) и полный User-Agent с адресом страницы о боте
+ * (QA-ТЗ §5.5: IP-диапазоны, abuse-контакт, opt-out). Домен не решён
+ * (В-1/В-22) — адрес страницы заменится вместе с брендом.
+ */
+export const CRAWLER_ROBOTS_TOKEN = 'V4C-Assist';
+export const CRAWLER_USER_AGENT =
+  'Mozilla/5.0 (compatible; V4C-Assist/1.0; +https://v4c.example.invalid/assistant/bot)';
+
+/**
+ * Э1: ключ браузера публичной песочницы лендинга (лендинг-ТЗ §6.2:
+ * результат открывается только в браузере, запустившем песочницу). Ключ
+ * выдаётся один раз в ответе `POST /public/assist/sandbox`, лендинг хранит
+ * его в sessionStorage и шлёт этим заголовком; в базе — только SHA-256.
+ * Заголовок, а не cookie: лендинг и sites-backend — разные сайты, а
+ * сторонние cookie браузеры режут.
+ */
+export const SANDBOX_KEY_HEADER = 'X-Sandbox-Key';
+
 /** Значения заголовка `X-Telegram-App`. */
 export const TELEGRAM_APPS = ['assist', 'qa'] as const;
 export type TelegramApp = (typeof TELEGRAM_APPS)[number];

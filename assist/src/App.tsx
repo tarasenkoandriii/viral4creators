@@ -61,7 +61,18 @@ import {
   DEV_AUTH,
   SITES_API_URL,
 } from './lib/config';
+import { AssistContext, type AssistValue } from './lib/assist-context';
+import { createKnowledgeApi } from './lib/knowledge-api';
+import { sandboxIdFromLaunch } from './lib/knowledge-view';
 import { navigate, useRoute, type Route } from './lib/router';
+import { KnowledgeScreen } from './screens/knowledge/KnowledgeScreen';
+import {
+  KnowledgeHome,
+  SiteAssistCard,
+} from './screens/knowledge/KnowledgeHome';
+import { OnboardingUrlScreen } from './screens/OnboardingUrlScreen';
+import { SandboxScreen } from './screens/SandboxScreen';
+import { SandboxTransferScreen } from './screens/SandboxTransferScreen';
 import { SectionPlaceholder } from './screens/SectionPlaceholder';
 import { WelcomeScreen } from './screens/WelcomeScreen';
 
@@ -128,6 +139,14 @@ export function App({ startParam }: { startParam: string | null }) {
   // перезапустится (StrictMode, смена фазы): иначе второй параллельный
   // GET /sites/account успел бы создать новичку пустой «свой» кабинет.
   const inviteJob = useRef<Promise<void> | null>(null);
+  // Песочница лендинга (startapp=sb_<id>) — экран переноса один раз за
+  // запуск: после «Не сейчас» человек не должен попадать туда снова.
+  const launchSandbox = useRef<string | null>(sandboxIdFromLaunch(startParam));
+  const consumeLaunchSandbox = useCallback(() => {
+    const id = launchSandbox.current;
+    launchSandbox.current = null;
+    return id;
+  }, []);
 
   const client = useMemo(
     () =>
@@ -151,6 +170,11 @@ export function App({ startParam }: { startParam: string | null }) {
   );
   const api = useMemo(() => createSitesApi(client), [client]);
   const webAuth = useMemo(() => createWebAuthApi(client), [client]);
+  const knowledgeApi = useMemo(() => createKnowledgeApi(client), [client]);
+  const assist = useMemo<AssistValue>(
+    () => ({ knowledge: knowledgeApi, appDict }),
+    [knowledgeApi, appDict]
+  );
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -337,15 +361,18 @@ export function App({ startParam }: { startParam: string | null }) {
 
   return (
     <KitContext.Provider value={kit}>
-      <Shell
-        // Другой кабинет — другие данные: экраны монтируются заново.
-        key={account.data.account.id}
-        appDict={appDict}
-        created={account.data.created}
-        notice={notice}
-        onSwitchAccount={switchAccount}
-        onLogout={mode === 'web' ? logout : undefined}
-      />
+      <AssistContext.Provider value={assist}>
+        <Shell
+          // Другой кабинет — другие данные: экраны монтируются заново.
+          key={account.data.account.id}
+          appDict={appDict}
+          created={account.data.created}
+          notice={notice}
+          onSwitchAccount={switchAccount}
+          onLogout={mode === 'web' ? logout : undefined}
+          consumeLaunchSandbox={consumeLaunchSandbox}
+        />
+      </AssistContext.Provider>
     </KitContext.Provider>
   );
 }
@@ -388,10 +415,18 @@ function navActive(key: string, route: Route): boolean {
       'site',
       'host',
       'host-access',
+      'onboarding-url',
+      'sandbox-transfer',
     ].includes(route.name);
   }
   if (key === 'members') {
     return route.name === 'members' || route.name === 'invite';
+  }
+  if (
+    key === 'knowledge' &&
+    (route.name === 'knowledge' || route.name === 'sandbox')
+  ) {
+    return true;
   }
   if (route.name === 'section') return route.section === key;
   return route.name === key;
@@ -430,16 +465,22 @@ function Shell({
   notice,
   onSwitchAccount,
   onLogout,
+  consumeLaunchSandbox,
 }: {
   appDict: AppDictionary;
   created: boolean;
   notice: Notice | null;
   onSwitchAccount: (id: string) => void;
   onLogout?: () => void;
+  consumeLaunchSandbox: () => string | null;
 }) {
   const { mode, dict } = useKit();
   const route = useRoute();
   useTelegramBackButton(route);
+  useEffect(() => {
+    const sandboxId = consumeLaunchSandbox();
+    if (sandboxId) navigate({ name: 'sandbox-transfer', sandboxId }, true);
+  }, [consumeLaunchSandbox]);
   const web = mode !== 'tma';
 
   const tools = (
@@ -608,7 +649,7 @@ function Home({
       <WelcomeScreen
         t={appDict.welcome}
         created={created}
-        onConnect={() => navigate({ name: 'site-new' })}
+        onConnect={() => navigate({ name: 'onboarding-url' })}
       />
     );
   }
@@ -641,7 +682,7 @@ function Screen({
         <WelcomeScreen
           t={appDict.welcome}
           created={false}
-          onConnect={() => navigate({ name: 'site-new' })}
+          onConnect={() => navigate({ name: 'onboarding-url' })}
         />
       );
     case 'sites':
@@ -655,13 +696,19 @@ function Screen({
       );
     case 'site':
       return (
-        <SiteScreen
-          key={route.siteId}
-          siteId={route.siteId}
-          onOpenHost={(hostId) =>
-            navigate({ name: 'host', siteId: route.siteId, hostId })
-          }
-        />
+        <>
+          <SiteAssistCard
+            key={`assist-${route.siteId}`}
+            siteId={route.siteId}
+          />
+          <SiteScreen
+            key={route.siteId}
+            siteId={route.siteId}
+            onOpenHost={(hostId) =>
+              navigate({ name: 'host', siteId: route.siteId, hostId })
+            }
+          />
+        </>
       );
     case 'host':
       return (
@@ -685,7 +732,32 @@ function Screen({
     case 'invite':
       return <InviteGate />;
     case 'section':
-      return <SectionPlaceholder t={appDict.section} section={route.section} />;
+      // «Знания» — Э1: выбор сайта и базы; «Виджет», «Диалоги» — плашки этапов.
+      return route.section === 'knowledge' ? (
+        <KnowledgeHome />
+      ) : (
+        <SectionPlaceholder t={appDict.section} section={route.section} />
+      );
+    case 'onboarding-url':
+      return <OnboardingUrlScreen />;
+    case 'sandbox':
+      return <SandboxScreen key={route.siteId} siteId={route.siteId} />;
+    case 'knowledge':
+      return (
+        <KnowledgeScreen
+          key={`${route.siteId}-${route.mode}`}
+          siteId={route.siteId}
+          mode={route.mode}
+          tab={route.tab}
+        />
+      );
+    case 'sandbox-transfer':
+      return (
+        <SandboxTransferScreen
+          key={route.sandboxId}
+          sandboxId={route.sandboxId}
+        />
+      );
     case 'not-found':
       return <NotFound appDict={appDict} />;
   }

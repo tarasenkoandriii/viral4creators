@@ -21,6 +21,20 @@
  *     `assist-site-*`, ни `assist-admin-*` (§5-бис.3 п.3, У-19).
  *  4. `src/shared/**` (копии чистых модулей backend/) не импортирует
  *     `src/modules/**`: иначе «чистая» копия тянула бы за собой продукт.
+ *  5. (Э1) Нейтральные модули `assist-knowledge-core` (чанкер, эмбеддинги,
+ *     гибридный поиск, версии — по таблицам, имена которых передаёт модуль
+ *     режима) и `site-ai` (клиенты Gemini, учёт расходов, бюджет обучения)
+ *     не импортируют модули режимов (`assist-site-*`, `assist-admin-*`,
+ *     `assist-sandbox`, `assist-widget`).
+ *  6. (Э1) `site-crawl` общий с QA: не импортирует ни один продуктовый
+ *     модуль (`assist-*`, `qa-*`). Продукты сами решают, что и когда
+ *     обходить, и сами читают `site_pages`.
+ *  7. (Э1) Имена таблиц и моделей чужого режима в КОДЕ модуля (не в
+ *     комментариях): в модулях режима «Сайт» нет `assist_admin_…`,
+ *     `AssistAdmin…`, `prisma.assistAdmin…`; в «Админке» — `assist_site_…`,
+ *     `AssistSite…`, `prisma.assistSite…`; в нейтральных — ни тех, ни
+ *     других. Это слой 2 для сырого SQL: импорт репозитория правило 1
+ *     ловит, а строку `FROM "sites"."assist_admin_chunks"` — только это.
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
@@ -40,6 +54,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SITE_MODE = [
   /^assist-site-/,
+  /^assist-sandbox$/,
   /^assist-widget$/,
   /^assist-analytics$/,
   /^assist-voice-map$/,
@@ -47,6 +62,15 @@ const SITE_MODE = [
 ];
 const ADMIN_MODE = [/^assist-admin-/];
 const UI_CORE = [/^assist-ui-core$/];
+/** Э1: нейтральный общий код знаний и ИИ — без доступа к таблицам режима. */
+const NEUTRAL = [/^assist-knowledge-core$/, /^site-ai$/];
+const MODE_MODULES = [
+  /^assist-site-/,
+  /^assist-admin-/,
+  /^assist-sandbox$/,
+  /^assist-widget$/,
+];
+const PRODUCT_MODULES = [/^assist-/, /^qa-/];
 
 const matches = (name, patterns) =>
   name !== null && patterns.some((re) => re.test(name));
@@ -66,10 +90,51 @@ export const RULES = [
     to: (m) => matches(m, SITE_MODE) && m !== 'site-crawl',
   },
   {
+    id: 'core-neutral',
+    why: 'Э1: assist-knowledge-core и site-ai не импортируют модули режимов',
+    from: (m) => matches(m, NEUTRAL),
+    to: (m) => matches(m, MODE_MODULES),
+  },
+  {
+    id: 'crawl-product-neutral',
+    why: 'Э1: site-crawl общий с QA — не импортирует продуктовые модули',
+    from: (m) => m === 'site-crawl',
+    // «Админку» уже ловит правило site↛admin — одно нарушение, одно правило.
+    to: (m) => matches(m, PRODUCT_MODULES) && !matches(m, ADMIN_MODE),
+  },
+  {
     id: 'ui-core-neutral',
     why: '§5-бис.3 п.3: assist-ui-core не импортирует ни «Сайт», ни «Админку»',
     from: (m) => matches(m, UI_CORE),
     to: (m) => matches(m, [/^assist-site-/, ...ADMIN_MODE]),
+  },
+];
+
+/**
+ * Правило 7: имена таблиц/моделей чужого режима в коде модуля. Проверяется
+ * текст без комментариев. `assist_sites` (общая строка помощника) под
+ * `assist_site_` не попадает — после `assist_site` там `s`, а не `_`.
+ */
+const ADMIN_NAMES = /assist_admin_|\bAssistAdmin[A-Z]?\w*|\bassistAdmin[A-Z]\w*/;
+const SITE_NAMES = /assist_site_|\bAssistSite[A-Z]\w*|\bassistSite[A-Z]\w*/;
+export const LITERAL_RULES = [
+  {
+    id: 'site-names↛admin',
+    why: 'Э1 слой 2: в модуле «Сайта» нет имён таблиц/моделей «Админки»',
+    in: (m) => matches(m, SITE_MODE),
+    re: ADMIN_NAMES,
+  },
+  {
+    id: 'admin-names↛site',
+    why: 'Э1 слой 2: в модуле «Админки» нет имён таблиц/моделей «Сайта»',
+    in: (m) => matches(m, ADMIN_MODE),
+    re: SITE_NAMES,
+  },
+  {
+    id: 'neutral-names',
+    why: 'Э1: нейтральный модуль не называет таблиц режимов — их передаёт модуль режима',
+    in: (m) => matches(m, NEUTRAL),
+    re: new RegExp(`${ADMIN_NAMES.source}|${SITE_NAMES.source}`),
   },
 ];
 
@@ -147,6 +212,16 @@ export function findViolations(srcDir) {
     const fromZone = zoneOf(rel);
     if (fromZone.kind === 'other') continue;
     const source = fs.readFileSync(abs, 'utf8');
+    if (fromZone.kind === 'module') {
+      const code = stripComments(source);
+      for (const rule of LITERAL_RULES) {
+        if (!rule.in(fromZone.name)) continue;
+        const hit = code.match(rule.re);
+        if (hit) {
+          violations.push({ file: rel, spec: hit[0], rule: rule.id, why: rule.why });
+        }
+      }
+    }
     for (const spec of importSpecifiers(source)) {
       const target = resolveTarget(rel, spec);
       if (target === null) continue;
@@ -262,6 +337,51 @@ function selfTest() {
       'ui-core-neutral',
     ],
     [
+      'modules/assist-sandbox/n.ts',
+      `import { K } from '../assist-admin-knowledge/k';`,
+      'site↛admin',
+    ],
+    [
+      'modules/assist-knowledge-core/o.ts',
+      `import { L } from '../assist-site-knowledge/l';`,
+      'core-neutral',
+    ],
+    [
+      'modules/site-ai/p.ts',
+      `import { M } from '../assist-sandbox/m';`,
+      'core-neutral',
+    ],
+    [
+      'modules/site-crawl/q.ts',
+      `import { N } from '../assist-site-knowledge/n';`,
+      'crawl-product-neutral',
+    ],
+    [
+      'modules/site-crawl/r.ts',
+      `import { O } from '../qa-runs/o';`,
+      'crawl-product-neutral',
+    ],
+    [
+      'modules/assist-site-knowledge/s.ts',
+      `const sql = 'SELECT 1 FROM "sites"."assist_admin_chunks"';`,
+      'site-names↛admin',
+    ],
+    [
+      'modules/assist-sandbox/t.ts',
+      `await db.assistAdminFaq.findMany({});`,
+      'site-names↛admin',
+    ],
+    [
+      'modules/assist-admin-knowledge/u.ts',
+      `import type { AssistSiteChunk } from '@prisma/client';`,
+      'admin-names↛site',
+    ],
+    [
+      'modules/assist-knowledge-core/v.ts',
+      `export const T = { chunks: 'assist_site_chunks' };`,
+      'neutral-names',
+    ],
+    [
       'shared/l.ts',
       `import { G } from '../modules/telegram-auth/guard';`,
       'shared↛modules',
@@ -290,6 +410,22 @@ function selfTest() {
     [
       'modules/assist-ui-core/ok4.ts',
       `import { S } from '../../shared/assist-chat-core';`,
+    ],
+    [
+      'modules/assist-site-knowledge/ok8.ts',
+      `import { C } from '../assist-knowledge-core/chunker';\nimport { F } from '../site-crawl/fetcher';\nimport { G } from '../site-ai/embedder';\nconst t = { chunks: 'assist_site_chunks', site: 'assist_sites' };\n// assist_admin_chunks — в комментарии можно\nconst roles = { assistAdmin: ['owner'] };`,
+    ],
+    [
+      'modules/assist-admin-knowledge/ok9.ts',
+      `import { C } from '../assist-knowledge-core/chunker';\nconst t = { chunks: 'assist_admin_chunks', settings: 'assist_admin_settings' };`,
+    ],
+    [
+      'modules/assist-sandbox/ok10.ts',
+      `import { S } from '../assist-site-knowledge/search';\nimport { R } from '../site-crawl/robots';`,
+    ],
+    [
+      'modules/assist-knowledge-core/ok11.ts',
+      `import { E } from '../site-ai/embedder';\nexport type Tables = { chunks: string };`,
     ],
     [
       'shared/ok5.ts',

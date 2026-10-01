@@ -6,6 +6,9 @@
  *  - каждый хоп проходит `assertPubliclyRoutableUrl` (shared/
  *    external-url-guard — та же проверка, что внутри
  *    `fetchPubliclyRoutable`), редиректы движку сети не отдаются;
+ *  - сам запрос хопа (по умолчанию) — через IP-pin `pinnedFetch`
+ *    (site-crawl/net, Э1): сокет получает ровно проверенный адрес, без
+ *    второго резолва (DNS-rebinding, В-64);
  *  - редирект на ДРУГОЙ хост (или схему/порт) — отказ сразу: токен на
  *    чужом хосте не доказывает владение нашим (QA §2.4, приёмка Э0);
  *  - редиректы в пределах того же origin (`/` → `/uk/`) — до 3;
@@ -22,6 +25,11 @@ import {
   UnsafeExternalUrlError,
   assertPubliclyRoutableUrl,
 } from '../../../shared/external-url-guard';
+import {
+  PinnedHttpDeps,
+  SsrfBlockedError,
+  pinnedFetch,
+} from '../../site-crawl/net/pinned-fetch';
 import {
   VERIFY_MAX_SAME_HOST_REDIRECTS,
   VERIFY_TIMEOUT_MS,
@@ -43,9 +51,63 @@ export interface SafeHttpDeps {
   timeoutMs: number;
 }
 
+/**
+ * Сколько тела берёт один хоп проверки. Больше, чем читают потребители
+ * (`VERIFY_BODY_LIMIT_BYTES`, подсказка хостов): обрезка здесь — потолок
+ * памяти, а решение «файл-маркер слишком большой» остаётся за
+ * `readBodyWithLimit` вызывающего (он видит обрезанное тело длиннее
+ * своего лимита и бросает, как раньше).
+ */
+export const PINNED_HOP_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Один хоп через IP-pin (Э1, K1; закрывает отложенное Э0 «IP-pin»): адрес
+ * резолвится один раз, проверяется блок-листом и только он отдаётся
+ * сокету — DNS-rebinding между проверкой и подключением невозможен.
+ * Редиректы pinnedFetch НЕ проходит (`maxRedirects: 0`): их по-прежнему
+ * разбирает `fetchSameOrigin` (замок на origin, различение «чужой хост»).
+ * Отказ SSRF превращается в `UnsafeExternalUrlError` — его классифицирует
+ * ownership-checker (`UNSAFE_URL`).
+ */
+export function pinnedFetchLike(net: Partial<PinnedHttpDeps> = {}): FetchLike {
+  return async (input, init = {}) => {
+    if (init.signal?.aborted) throw init.signal.reason;
+    const headers: Record<string, string> = {};
+    new Headers(init.headers).forEach((v, k) => {
+      headers[k] = v;
+    });
+    try {
+      const res = await pinnedFetch(
+        input,
+        {
+          method: init.method === 'HEAD' ? 'HEAD' : 'GET',
+          headers,
+          maxBytes: PINNED_HOP_MAX_BYTES,
+          truncateAtMaxBytes: true,
+          timeoutMs: VERIFY_TIMEOUT_MS,
+          maxRedirects: 0,
+          sameOrigin: true,
+        },
+        net,
+      );
+      // 204/304 и т.п. не могут нести тело в конструкторе Response.
+      const nullBody = [101, 103, 204, 205, 304].includes(res.status);
+      return new Response(nullBody ? null : new Uint8Array(res.body), {
+        status: res.status,
+        headers: res.headers,
+      });
+    } catch (e) {
+      if (e instanceof SsrfBlockedError) {
+        throw new UnsafeExternalUrlError(e.message);
+      }
+      throw e;
+    }
+  };
+}
+
 export const DEFAULT_SAFE_HTTP_DEPS: SafeHttpDeps = {
   assertUrl: assertPubliclyRoutableUrl,
-  fetch: (i, init) => fetch(i, init),
+  fetch: pinnedFetchLike(),
   timeoutMs: VERIFY_TIMEOUT_MS,
 };
 

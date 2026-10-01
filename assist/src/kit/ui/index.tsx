@@ -202,3 +202,52 @@ export function ScreenTitle({
     </div>
   );
 }
+
+/** Поле ввода — те же классы, что у экранов кабинета (`AddSiteScreen`). */
+export const inputClass =
+  'w-full rounded-lg border border-silver-300 dark:border-silver-700 bg-transparent px-3 py-2 min-h-[44px] text-sm';
+
+/**
+ * Вкладки экрана. Прокрутка по горизонтали, а не перенос: в TMA узкая
+ * колонка, и шесть вкладок в две строки читаются как два разных меню.
+ */
+export function Tabs<K extends string>({
+  tabs,
+  active,
+  onChange,
+  label,
+}: {
+  tabs: Array<{ key: K; label: ReactNode; badge?: ReactNode }>;
+  active: K;
+  onChange: (key: K) => void;
+  label?: string;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label={label}
+      className="-mx-1 mb-4 flex gap-1 overflow-x-auto pb-1"
+    >
+      {tabs.map((t) => {
+        const on = t.key === active;
+        return (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            onClick={() => onChange(t.key)}
+            className={`shrink-0 inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm min-h-[36px] ${
+              on
+                ? 'bg-accent text-accent-on font-medium'
+                : 'bg-silver-200/60 dark:bg-silver-800/60 text-silver-600 dark:text-silver-300'
+            }`}
+          >
+            {t.label}
+            {t.badge}
+          </button>
+        );
+      })}
+    </div>
+  );
+}

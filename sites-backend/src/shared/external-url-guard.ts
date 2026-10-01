@@ -71,6 +71,7 @@ function isBlockedIpv4(ip: string): boolean {
   if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
   if (a === 192 && b === 0 && c === 0) return true; // 192.0.0.0/24 — IETF protocol assignments
   if (a === 192 && b === 0 && c === 2) return true; // 192.0.2.0/24 — TEST-NET-1
+  if (a === 192 && b === 88 && c === 99) return true; // 192.88.99.0/24 — ретрансляторы 6to4 (упразднены, RFC 7526)
   if (a === 192 && b === 168) return true; // 192.168.0.0/16
   if (a === 198 && (b === 18 || b === 19)) return true; // 198.18.0.0/15 — benchmarking
   if (a === 198 && b === 51 && c === 100) return true; // 198.51.100.0/24 — TEST-NET-2
@@ -79,23 +80,135 @@ function isBlockedIpv4(ip: string): boolean {
   return false;
 }
 
-/** IPv6 — тот же список смыслов, что и для IPv4, в терминах диапазонов v6. */
-function isBlockedIpv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  if (lower === '::1' || lower === '::') return true; // loopback / unspecified
-
-  // IPv4-отображённые адреса (::ffff:a.b.c.d) — проверяем как обёрнутый IPv4.
-  const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) return isBlockedIpv4(mapped[1]);
-
-  const firstHextet = parseInt(lower.split(':')[0] || '0', 16) || 0;
-  if (firstHextet >>> 6 === 0b1111111010) return true; // fe80::/10 — link-local
-  if (firstHextet >>> 9 === 0b1111110) return true; // fc00::/7 — unique local (ULA)
-  return false;
+/**
+ * IPv4 в ЛЮБОЙ записи, которую понимают URL-парсер и `inet_aton`:
+ * `127.0.0.1`, `2130706433`, `0177.0.0.1`, `0x7f.1`, `127.1` (последняя
+ * часть заполняет оставшиеся байты). Без этого `http://0x7f.1/` или
+ * адрес из чужого резолвера в «нестандартной» форме прошёл бы мимо
+ * проверки, которая ждёт ровно четыре десятичных октета. `null` — не IPv4.
+ */
+function parseIpv4Any(input: string): string | null {
+  const parts = input.split('.');
+  if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop(); // `127.0.0.1.`
+  if (parts.length === 0 || parts.length > 4) return null;
+  const nums: number[] = [];
+  for (const part of parts) {
+    let n: number;
+    if (/^0x[0-9a-f]*$/i.test(part))
+      n = part.length === 2 ? 0 : parseInt(part.slice(2), 16);
+    else if (/^0[0-7]+$/.test(part)) n = parseInt(part.slice(1), 8);
+    else if (/^(0|[1-9][0-9]*)$/.test(part)) n = Number(part);
+    else return null;
+    if (!Number.isFinite(n)) return null;
+    nums.push(n);
+  }
+  const last = nums[nums.length - 1];
+  const head = nums.slice(0, -1);
+  if (head.some((n) => n > 255)) return null;
+  if (last >= 256 ** (5 - nums.length)) return null;
+  let value = last;
+  head.forEach((n, i) => {
+    value += n * 256 ** (3 - i);
+  });
+  return [24, 16, 8, 0]
+    .map((shift) => Math.floor(value / 2 ** shift) % 256)
+    .join('.');
 }
 
-function isBlockedIp(family: 4 | 6, ip: string): boolean {
-  return family === 4 ? isBlockedIpv4(ip) : isBlockedIpv6(ip);
+/** IPv6 → восемь 16-битных групп (с хвостом `a.b.c.d`); `null` — не IPv6. */
+function parseIpv6(input: string): number[] | null {
+  let s = input.toLowerCase();
+  // Хвост в записи IPv4 (`::ffff:127.0.0.1`, `::127.0.0.1`) → две группы.
+  const dotted = s.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const octets = dotted[2].split('.').map(Number);
+    if (octets.some((o) => o > 255)) return null;
+    s =
+      dotted[1] +
+      ((octets[0] << 8) | octets[1]).toString(16) +
+      ':' +
+      ((octets[2] << 8) | octets[3]).toString(16);
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  if (halves.length === 1 && head.length !== 8) return null;
+  if (halves.length === 2 && head.length + tail.length > 7) return null;
+  const groups = [...head, ...tail];
+  if (groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  return [
+    ...head.map((g) => parseInt(g, 16)),
+    ...new Array<number>(fill).fill(0),
+    ...tail.map((g) => parseInt(g, 16)),
+  ];
+}
+
+/** IPv4, вложенный в две группы IPv6. */
+function embeddedIpv4(hi: number, lo: number): string {
+  return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join('.');
+}
+
+/**
+ * IPv6 — тот же список смыслов, что и для IPv4, плюс обёртки, через
+ * которые IPv4-адрес прячется в IPv6 (QA-ТЗ §5.4, В-64): адрес сравнивается
+ * по ЧИСЛАМ групп, а не по тексту — `::ffff:7f00:1` и `::ffff:127.0.0.1`
+ * один и тот же loopback.
+ */
+function isBlockedIpv6Groups(h: number[]): boolean {
+  const zeros = (from: number, to: number) =>
+    h.slice(from, to).every((g) => g === 0);
+  // ::ffff:0:0/96 — IPv4-отображённый: решает вложенный IPv4.
+  if (zeros(0, 5) && h[5] === 0xffff)
+    return isBlockedIpv4(embeddedIpv4(h[6], h[7]));
+  // ::/96 — `::`, `::1` и упразднённый IPv4-совместимый `::a.b.c.d`;
+  // ::ffff:0:0:0/96 (SIIT) — тоже не глобальный адрес.
+  if (zeros(0, 6)) return true;
+  if (zeros(0, 4) && h[4] === 0xffff && h[5] === 0) return true;
+  // 64:ff9b::/96 — NAT64 (RFC 6052): шлюз сходит на вложенный IPv4.
+  if (h[0] === 0x64 && h[1] === 0xff9b && zeros(2, 6)) {
+    return isBlockedIpv4(embeddedIpv4(h[6], h[7]));
+  }
+  // 64:ff9b:1::/48 — NAT64 для локального использования (RFC 8215).
+  if (h[0] === 0x64 && h[1] === 0xff9b && h[2] === 1) return true;
+  // 2002::/16 — 6to4: следующие 32 бита — IPv4 ретранслятора.
+  if (h[0] === 0x2002) return isBlockedIpv4(embeddedIpv4(h[1], h[2]));
+  // 2001::/23 — служебные назначения IETF, в т.ч. Teredo 2001::/32
+  // (внутри — замаскированный IPv4 клиента, проверять бессмысленно).
+  if (h[0] === 0x2001 && h[1] < 0x200) return true;
+  // 2001:db8::/32 и 3fff::/20 — документация (RFC 3849, RFC 9637).
+  if (h[0] === 0x2001 && h[1] === 0x0db8) return true;
+  if (h[0] === 0x3fff && h[1] < 0x1000) return true;
+  // Глобальный юникаст — только 2000::/3. Всё прочее (fe80::/10
+  // link-local, fc00::/7 ULA, ff00::/8 multicast, fec0::/10, 100::/64
+  // discard, 5f00::/16 …) извне недостижимо или служебное.
+  return (h[0] & 0xe000) !== 0x2000;
+}
+
+/**
+ * Можно ли серверу ходить на этот IP-адрес (результат резолва или
+ * IP-литерал из ссылки). `true` — НЕЛЬЗЯ: служебный, приватный,
+ * зарезервированный диапазон или строка вовсе не разобралась как адрес
+ * (консервативно). Принимает IPv4 в любой записи (`2130706433`,
+ * `0177.0.0.1`, `0x7f.1`), IPv6 со скобками и зоной (`[fe80::1%eth0]`).
+ *
+ * Общая для генератора (фид товаров) и sites-backend (обход сайтов,
+ * IP-pin — `site-crawl/net/pinned-fetch.ts`, копия через
+ * scripts/sync-sites-shared.mjs).
+ */
+export function isBlockedAddress(ip: string): boolean {
+  let s = String(ip ?? '').trim();
+  if (s.startsWith('[') && s.endsWith(']')) s = s.slice(1, -1);
+  const zone = s.indexOf('%');
+  if (zone >= 0) s = s.slice(0, zone);
+  if (!s) return true;
+  if (s.includes(':')) {
+    const groups = parseIpv6(s);
+    return groups ? isBlockedIpv6Groups(groups) : true;
+  }
+  const v4 = parseIpv4Any(s);
+  return v4 ? isBlockedIpv4(v4) : true;
 }
 
 /**
@@ -133,8 +246,8 @@ export async function assertPubliclyRoutableUrl(url: string): Promise<void> {
   // Блокируем, если ХОТЯ БЫ один из резолвящихся адресов небезопасен —
   // резолвер может отдать несколько A/AAAA-записей, и полагаться на
   // то, какую из них выберет клиент сети, нельзя.
-  for (const { address, family } of addresses) {
-    if (isBlockedIp(family === 6 ? 6 : 4, address)) {
+  for (const { address } of addresses) {
+    if (isBlockedAddress(address)) {
       throw new UnsafeExternalUrlError(UNSAFE_EXTERNAL_URL_MESSAGE);
     }
   }

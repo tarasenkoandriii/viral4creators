@@ -884,9 +884,13 @@ QA. Генератор (`backend/`) он не трогает и с ним не �
    схемы `sites` накатываются при каждом деплое, как у backend.
 4. **План: Vercel Pro** (В-18 плана помощника) — кроны перепроверки
    владения и обхода сайтов будут чаще раза в сутки, плюс `maxDuration`
-   стрима виджета. На Э0 в `vercel.json` один суточный крон
-   (`/cron/site-ownership-recheck`, его пропускает и Hobby), но проект
-   сразу заводится на Pro, чтобы не переезжать при первом частом кроне.
+   стрима виджета. С Э1 в `vercel.json` кроны раз в 2 минуты (обход,
+   две индексации) — Hobby их не пропустит.
+   **Длительность функции ≥ 60 с:** тик обхода работает до 45 с
+   (`CRAWL_DEFAULTS.tickBudgetMs`). Settings → Functions: Fluid compute
+   включён (по умолчанию 300 с) или Max Duration не меньше 60. В
+   `vercel.json` ключа `functions` нет намеренно: шаблон `server.js`
+   не совпадает с функцией zero-config сборки, и Vercel валит деплой.
 5. Маршруты — без префикса `/api`: `GET /health`, `/sites/…`,
    `/assist/…`, `/qa/…`, `/widget/v1/…` (ТЗ помощника §4.16, QA-ТЗ §4.8).
 
@@ -1127,6 +1131,40 @@ DevTools → Application → Cookies у домена кабинета есть
 Vercel инстансов несколько, так что это потолок «на инстанс»;
 подобрать подпись перебором нельзя в любом случае). Общий лимит в базе —
 вместе со своим rate-limit sites-backend.
+
+### 6.9. Э1 «Знания»: что сделать владельцу
+
+Миграция `…_assist_knowledge` (pg_trgm, таблицы обхода, знаний «Сайт» и
+«Админка», песочницы, бюджета обучения; HNSW и полнотекстовый индекс —
+частичным/выражением, Prisma их не видит — см. заголовок миграции).
+
+1. **До деплоя — pg_trgm на Supabase.** В SQL Editor:
+   `SELECT extnamespace::regnamespace FROM pg_extension WHERE extname IN ('vector','pg_trgm');`
+   Обе — в `extensions` (или pg_trgm ещё не установлен — тогда миграция
+   поставит его туда). Если pg_trgm стоит в `public` — сначала
+   `ALTER EXTENSION pg_trgm SET SCHEMA extensions;`, иначе миграция не
+   найдёт `"extensions"."gin_trgm_ops"`.
+2. **pgvector ≥ 0.8** желателен (итеративный скан HNSW с фильтром по
+   сайту): `SELECT extversion FROM pg_extension WHERE extname='vector';`.
+   Ниже — поиск работает, но код повторяет запрос точным перебором, когда
+   индекс отдал меньше k строк.
+3. **Env** (`sites-backend/.env.example`, раздел Э1): `GEMINI_API_KEY`,
+   `BLOB_READ_WRITE_TOKEN` (свой Blob-store проекта sites-backend:
+   Storage → Blob → Connect), `ASSIST_TMA_URL`, `ASSIST_LANDING_ORIGINS`
+   (+ эти же origin в `CORS_ORIGIN`), `ASSIST_SANDBOX_PUBLIC_ENABLED`
+   (рубильник публичной песочницы, по умолчанию закрыта),
+   `ASSIST_SANDBOX_PUBLIC_DAILY_CAP_USD` (умолчание 5).
+4. **Кроны** — уже в `sites-backend/vercel.json`: `assist-crawl-run`,
+   `assist-embed-run`, `assist-admin-embed-run` (каждые 2 мин — нужен
+   план Pro, В-18), `assist-retention` (03:00 UTC); все — по `CRON_SECRET`.
+5. **Роль `assist_public`**: новые GRANT-ы выдаёт миграция; проверка
+   после деплоя — под логин-ролью виджета `SELECT 1 FROM
+   sites.assist_admin_settings` → `permission denied`, `SELECT
+   "knowledgeVersion" FROM sites.assist_sites LIMIT 1` → работает.
+6. **Blob-store — приватный** (при создании: Access → Private).
+   Клиентский токен не может запретить загрузку с `access: 'public'`,
+   приватность документов держится на типе хранилища.
+7. **Длительность функции ≥ 60 с** — см. §6.1 п.4 (тик обхода — 45 с).
 
 ## Что не входит в этот документ
 

@@ -68,6 +68,15 @@ const ENTRIES = [
     to: 'telegram-login-widget.util.spec.ts',
   },
   { from: 'backend/src/modules/admin-auth/cookie.util.ts', to: 'cookie.util.ts' },
+  // Э1 (знания): ключ и клиент Gemini (эмбеддинги gemini-embedding-001,
+  // ответы песочницы), модель по умолчанию и прайс для записи в
+  // site_ai_usage. Чистые: SDK провайдера и ничего из backend.
+  // `token-crypto` — пока не нужен (секреты «Админки» — Э7, Э4).
+  { from: 'backend/src/common/gemini-client.ts', to: 'gemini-client.ts' },
+  { from: 'backend/src/common/gemini-client.spec.ts', to: 'gemini-client.spec.ts' },
+  { from: 'backend/src/common/gemini-model.ts', to: 'gemini-model.ts' },
+  { from: 'backend/src/common/ai-pricing.ts', to: 'ai-pricing.ts' },
+  { from: 'backend/src/common/ai-pricing.spec.ts', to: 'ai-pricing.spec.ts' },
 ];
 
 /** Импорты, которых в общем коде быть не может (см. шапку). */

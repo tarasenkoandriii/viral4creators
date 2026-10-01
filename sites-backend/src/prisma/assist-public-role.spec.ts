@@ -107,8 +107,19 @@ if (!RAW_URL) {
       'site_accounts',
       'site_account_members',
       'site_ownership_challenges',
-      'site_opt_out_domains',
       '_prisma_migrations',
+      // Э1: обход, источники, версии, исключения, бюджет — не публичное.
+      'site_pages',
+      'site_crawl_runs',
+      'site_crawl_queue',
+      'site_cron_locks',
+      'assist_site_sources',
+      'assist_site_documents',
+      'assist_site_knowledge_versions',
+      'assist_site_exclusions',
+      'assist_site_eval_cases',
+      'assist_site_eval_runs',
+      'assist_learning_spend',
     ])('SELECT из %s под assist_public падает', async (table) => {
       await expect(
         asPublic(`SELECT 1 FROM ${S}."${table}" LIMIT 1`),
@@ -123,6 +134,45 @@ if (!RAW_URL) {
       ).resolves.toBeUndefined();
       await expect(
         asPublic(`SELECT "method" FROM ${S}."site_hosts" LIMIT 1`),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+
+    it('site_opt_out_domains (Э1, песочница L0): domain читается, остальное — нет', async () => {
+      await expect(
+        asPublic(`SELECT "domain" FROM ${S}."site_opt_out_domains" LIMIT 1`),
+      ).resolves.toBeUndefined();
+      await expect(
+        asPublic(`SELECT "source" FROM ${S}."site_opt_out_domains" LIMIT 1`),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+
+    it('Э1: опубликованная версия и FAQ «Сайта» читаются (поиск виджета/песочницы)', async () => {
+      await expect(
+        asPublic(`SELECT "knowledgeVersion" FROM ${S}."assist_sites" LIMIT 1`),
+      ).resolves.toBeUndefined();
+      await expect(
+        asPublic(`SELECT 1 FROM ${S}."assist_site_faq" LIMIT 1`),
+      ).resolves.toBeUndefined();
+      await expect(
+        asPublic(
+          `UPDATE ${S}."assist_sites" SET "knowledgeVersion" = 1 WHERE false`,
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+
+    it('Э1: публичная песочница пишет только свои таблицы и счётчики', async () => {
+      await expect(
+        asPublic(
+          `INSERT INTO ${S}."assist_sandboxes" ("id", "kind", "url", "host", "registrableDomain", "pagesLimit", "questionsLimit", "expiresAt", "updatedAt") VALUES ('sb1', 'public', 'https://a.example/', 'a.example', 'a.example', 8, 10, now(), now())`,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        asPublic(
+          `INSERT INTO ${S}."assist_daily_counters" ("scope", "key", "day", "value", "updatedAt") VALUES ('sandbox-ip', 'k', '2026-10-01', 1, now()) ON CONFLICT ("scope", "key", "day") DO UPDATE SET "value" = ${S}."assist_daily_counters"."value" + 1`,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        asPublic(`DELETE FROM ${S}."assist_sandboxes" WHERE false`),
       ).rejects.toMatchObject({ code: '42501' });
     });
 
@@ -155,6 +205,19 @@ if (!RAW_URL) {
         site_hosts: ['column:SELECT'],
         site_ai_usage: ['INSERT'],
         assist_site_chunks: ['SELECT'],
+        // Э1 (миграция _assist_knowledge): поиск виджета/песочницы по
+        // опубликованной версии «Сайта».
+        assist_sites: ['SELECT'],
+        assist_site_faq: ['SELECT'],
+        // Э1: публичная песочница лендинга целиком под этой ролью.
+        assist_sandboxes: ['SELECT', 'INSERT', 'UPDATE'],
+        assist_sandbox_pages: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+        assist_sandbox_chunks: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+        assist_sandbox_messages: ['SELECT', 'INSERT'],
+        assist_daily_counters: ['SELECT', 'INSERT', 'UPDATE'],
+        site_crawl_robots: ['SELECT', 'INSERT', 'UPDATE'],
+        // Отказ доменов (L0): только колонка domain.
+        site_opt_out_domains: ['column:SELECT'],
       };
       const TABLE_PRIVS = [
         'SELECT',
@@ -177,6 +240,9 @@ if (!RAW_URL) {
           'site_web_sessions',
           'site_account_invites',
           'assist_admin_chunks',
+          'assist_admin_settings',
+          'site_pages',
+          'assist_sandboxes',
         ]),
       );
       const actual: Record<string, string[]> = {};

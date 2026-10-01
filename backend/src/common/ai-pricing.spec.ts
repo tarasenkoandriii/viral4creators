@@ -210,6 +210,28 @@ describe('ai-pricing (ТЗ §26)', () => {
     expect(costMicroUsd).toBeGreaterThan(0);
   });
 
+  it('gemini-embedding-001 (знания помощника) — только вход, $0.15 за 1M токенов', () => {
+    const { costMicroUsd, unpriced } = estimateCost(
+      'gemini-embedding-001',
+      { inputTokens: 1_000_000 },
+      {},
+    );
+    expect(unpriced).toBe(false);
+    expect(costMicroUsd).toBe(150_000);
+    expect(rateFor('gemini-embedding-001', {})!.provider).toBe('GEMINI');
+    // Выходных токенов у эмбеддинга нет — их число не меняет счёт.
+    expect(
+      estimateCost(
+        'gemini-embedding-001',
+        { inputTokens: 1_000, outputTokens: 1_000_000 },
+        {},
+      ).costMicroUsd,
+    ).toBe(150);
+    expect(priceEnvKey('gemini-embedding-001', 'input')).toBe(
+      'AI_PRICE_GEMINI_EMBEDDING_001_INPUT',
+    );
+  });
+
   it('мелкие суммы не округляются до нуля при показе', () => {
     expect(formatMicroUsd(0)).toBe('$0');
     expect(formatMicroUsd(4_200)).toBe('$0.0042');

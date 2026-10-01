@@ -4,6 +4,22 @@
     {
       "path": "/cron/site-ownership-recheck",
       "schedule": "17 4 * * *"
+    },
+    {
+      "path": "/cron/assist-crawl-run",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/cron/assist-embed-run",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/cron/assist-admin-embed-run",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/cron/assist-retention",
+      "schedule": "0 3 * * *"
     }
   ]
 }

@@ -443,6 +443,18 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
     outputPerMTok: 3.75 * USD,
     note: 'cloud.google.com, сверено 2026-09-13; вводная ставка до 2026-12-31, далее $1.50/$7.50',
   },
+  // Эмбеддинги знаний ИИ-помощника (sites-backend, ТЗ помощника §4.3;
+  // копия прайса — sites-backend/src/shared/ai-pricing.ts через
+  // scripts/sync-sites-shared.mjs). 768 измерений (MRL) — без доплаты:
+  // цена за входной токен та же, что у полных 3072. Выхода у эмбеддинга
+  // нет — только вход. Ставка из ТЗ помощника, источник вторичный; из этой
+  // среды официальная страница недоступна. PRICING_VERSION не поднята —
+  // прежние ставки не менялись (как при добавлении grok-imagine-image).
+  'gemini-embedding-001': {
+    provider: 'GEMINI',
+    inputPerMTok: 0.15 * USD,
+    note: 'вторичный источник (ТЗ помощника §4.3), 2026-10-01 — ПРОВЕРИТЬ ai.google.dev/gemini-api/docs/pricing; только вход, 768 измерений без доплаты',
+  },
   // Доп. запрос владельца продукта — статичное превью персонажа из
   // текста (`common/gemini-image-model.ts`). Проверено (не
   // предположено): developers.googleblog.com называет прямую цену за
