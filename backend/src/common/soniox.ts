@@ -20,7 +20,7 @@
  *   TTS (REST, запрос-ответ):
  *     POST https://tts-rt.soniox.com/tts         { model, language, voice, audio_format, text ≤ 5000 }
  *                                                → сырые байты аудио
- *     GET  https://tts-rt.soniox.com/tts/models  → { models: [{ languages: [{code,name}], voices: [{id,description,gender}] }] }
+ *     GET  https://api.soniox.com/v1/tts-models  → { models: [{ languages: [{code,name}], voices: [{id,description,gender}] }] }
  *
  * Авторизация везде — `Authorization: Bearer <SONIOX_API_KEY>`.
  *

@@ -201,10 +201,26 @@ const STEP_VOCABULARY = `- {"kind":"goto","route":"<ключ маршрута>",
  * Общие экраны (список проектов, тариф, кредиты) остаются обоим: они
  * ничьи и до них доходят оба мастера.
  */
+/**
+ * Экран другого мастера — граница семей тем (одна на промпт и валидатор).
+ *
+ * Экран ролика в постпроде (`postprod-video`) для поздравления — чужой с
+ * 01.10.2026: маршрут открывает рекламную сессию фикстуры, а не поздравление,
+ * и сценарий темы «Получите ролик» (поздравление) снимал экспорт
+ * рекламного ролика BMW с подписью о готовом поздравлении. Готовое
+ * поздравление — `greeting-video-done`. Список постпрода (`postprod`),
+ * проекты и тариф остаются общими.
+ */
+export function isForeignRoute(greeting: boolean, route: string): boolean {
+  return greeting
+    ? route.startsWith('generate') ||
+        route === 'item' ||
+        route === 'postprod-video'
+    : route.startsWith('greeting-video');
+}
+
 function routeVocabulary(greeting: boolean): string {
-  const foreign = greeting
-    ? (key: string) => key.startsWith('generate') || key === 'item'
-    : (key: string) => key.startsWith('greeting-video');
+  const foreign = (key: string) => isForeignRoute(greeting, key);
   return Object.entries(ROUTE_DESCRIPTIONS)
     .filter(([key]) => !foreign(key))
     .map(([key, desc]) => `- "${key}" — ${desc}`)
@@ -221,9 +237,7 @@ function routeVocabulary(greeting: boolean): string {
  */
 /** Селекторы — по той же границе семей, что и маршруты выше. */
 function qaVocabulary(greeting: boolean): string {
-  const foreign = greeting
-    ? (route: string) => route.startsWith('generate') || route === 'item'
-    : (route: string) => route.startsWith('greeting-video');
+  const foreign = (route: string) => isForeignRoute(greeting, route);
   const byRoute = new Map<string, string[]>();
   for (const [key, hook] of Object.entries(QA_HOOKS)) {
     if (foreign(hook.route)) continue;
@@ -404,7 +418,10 @@ function extractJson(text: string): Record<string, unknown> | null {
   }
 }
 
-export function parseScenarioResponse(text: string): ParseScenarioResult {
+export function parseScenarioResponse(
+  text: string,
+  subjectKey?: string,
+): ParseScenarioResult {
   const json = extractJson(text);
   if (!json) {
     return {
@@ -415,7 +432,7 @@ export function parseScenarioResponse(text: string): ParseScenarioResult {
       droppedPaidOperations: [],
     };
   }
-  return validateScenarioSteps(json.steps);
+  return validateScenarioSteps(json.steps, subjectKey);
 }
 
 /**
@@ -444,14 +461,54 @@ export function parseScenarioResponse(text: string): ParseScenarioResult {
  * руками. Селектор вне каталога отвергается тоже — ночью он всё равно
  * уронит сценарий, только позже и за деньги сборки.
  */
-export function validateScenarioSteps(rawSteps: unknown): ParseScenarioResult {
+export function validateScenarioSteps(
+  rawSteps: unknown,
+  /** Тема сценария — для границы семей (`isForeignRoute`). Без неё
+   * граница не проверяется (старые вызовы). */
+  subjectKey?: string,
+): ParseScenarioResult {
   const parsed = parseScenarioSteps(rawSteps);
   if (!parsed.ok) return parsed;
   return dropDanglingPaidOperations(
     rejectUnpricedModels(
-      rejectHooksOffRoute(rejectUnknownRoutes(rejectUnknownSelectors(parsed))),
+      rejectHooksOffRoute(
+        rejectForeignRoutes(
+          rejectUnknownRoutes(rejectUnknownSelectors(parsed)),
+          subjectKey,
+        ),
+      ),
     ),
   );
+}
+
+/**
+ * Отказ сценарию, который открывает экран ЧУЖОГО мастера (просмотр
+ * роликов 01.10.2026). Промпт такие маршруты не предлагает, но модель
+ * всё равно взяла `postprod-video` для темы поздравления — список в
+ * промпте был просьбой, а не границей.
+ */
+function rejectForeignRoutes(
+  parsed: ParseScenarioResult,
+  subjectKey: string | undefined,
+): ParseScenarioResult {
+  if (!parsed.ok || !subjectKey) return parsed;
+  const greeting = subjectKey.startsWith('greeting-');
+  for (let i = 0; i < parsed.steps.length; i++) {
+    const step = parsed.steps[i];
+    if (step.kind !== 'goto' || !isForeignRoute(greeting, step.route)) continue;
+    return {
+      ok: false,
+      steps: [],
+      reason:
+        `шаг ${i + 1} (goto): экран «${step.route}» — из другого мастера, ` +
+        (greeting
+          ? 'а тема — поздравление: его экраны — greeting-video*'
+          : 'а тема — рекламный мастер: экраны поздравления ему чужие'),
+      droppedNarrations: [],
+      droppedPaidOperations: [],
+    };
+  }
+  return parsed;
 }
 
 /**

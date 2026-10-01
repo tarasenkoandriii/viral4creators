@@ -1,3 +1,4 @@
+import * as fixtureSeedModule from './fixture-seed';
 import { TERMS_VERSION } from '../legal/legal.service';
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
@@ -3646,6 +3647,42 @@ describe('TutorialScenarioRunnerService', () => {
             (c: [string]) => c[0] === 'tutorial-assembly-poll:failed',
           ),
         ).toHaveLength(1);
+      });
+    });
+
+    describe('пересев фикстуры перед прогоном (01.10.2026)', () => {
+      // Браузер не нужен: пересев идёт до его запуска.
+      beforeEach(() =>
+        launchHeadlessBrowserMock.mockResolvedValue({ error: 'нет браузера' }),
+      );
+      afterEach(() => jest.restoreAllMocks());
+
+      it('каждый тик со сценариями начинается с пересева фикстуры', async () => {
+        const seed = jest
+          .spyOn(fixtureSeedModule, 'seedFixtureUser')
+          .mockResolvedValue({} as never);
+        const { service, prisma } = build([SCENARIO_OK]);
+        await service.run();
+        expect(seed).toHaveBeenCalledWith(prisma, 'fixture-1');
+      });
+
+      it('сбой пересева не отменяет прогон', async () => {
+        jest
+          .spyOn(fixtureSeedModule, 'seedFixtureUser')
+          .mockRejectedValue(new Error('база'));
+        const { service } = build([SCENARIO_OK]);
+        await expect(service.run()).resolves.toBeDefined();
+        // Дошли до запуска браузера — прогон не оборвался на пересеве.
+        expect(launchHeadlessBrowserMock).toHaveBeenCalled();
+      });
+
+      it('нет сценариев — фикстуру не трогаем', async () => {
+        const seed = jest
+          .spyOn(fixtureSeedModule, 'seedFixtureUser')
+          .mockResolvedValue({} as never);
+        const { service } = build([]);
+        await service.run();
+        expect(seed).not.toHaveBeenCalled();
       });
     });
 

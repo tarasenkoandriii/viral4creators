@@ -24,12 +24,14 @@ jest.mock('../../common/headless-chromium', () => ({
 
 import {
   BadRequestException,
+  GatewayTimeoutException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   ChromiumPageExplorer,
   SETTLE_FLOOR_MS,
 } from './chromium-page-explorer';
+import { FRAME_SOURCE_MARKS } from './foreign-frame-settle';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -595,5 +597,307 @@ describe('оседание перед кадром', () => {
     void page;
     await explorer.runRound(REQUEST);
     expect(explorer.slept).toEqual([]);
+  });
+});
+
+/**
+ * Стабилизация кадра чужого сайта (01.10.2026, перенос правок QA TMA
+ * §12). Сами исходники, уезжающие в страницу, проверены исполнением в
+ * `foreign-frame-settle.spec.ts`; здесь — ПОРЯДОК: что и когда
+ * разведчик вызывает вокруг снимков.
+ */
+describe('стабилизация кадра чужого сайта', () => {
+  /** Страница, которая журналирует, КАКОЙ исходник ей прислали. */
+  function marked(over: Record<string, any> = {}) {
+    const ctx = setup(over);
+    const page = ctx.page;
+    const tag = (src: string) =>
+      (Object.entries(FRAME_SOURCE_MARKS).find(([, m]) =>
+        src.startsWith(m),
+      )?.[0] ?? 'collect') as string;
+    page.evaluate = jest.fn(async (src: string) => {
+      const t = tag(src);
+      page.calls.push(`eval:${t}`);
+      return over.answer
+        ? over.answer(t, src)
+        : t === 'collect'
+          ? COLLECTED
+          : true;
+    });
+    page.setViewport = jest.fn(async (v: any) => {
+      page.calls.push(`viewport:${v.deviceScaleFactor ?? 'none'}`);
+    });
+    page.screenshot = jest.fn(async (o: any) => {
+      page.calls.push(`shot:${o.type}`);
+      if (over.failShot === o.type) throw new Error('снимок упал');
+      return 'Ykhk';
+    });
+    return ctx;
+  }
+  const after = (calls: string[], from: string) =>
+    calls.slice(calls.lastIndexOf(from));
+
+  it('заморозка до снимков, снятие — после обоих; затишье DSF — между DSF=2 и PNG', async () => {
+    const { explorer, page } = marked();
+    await explorer.runRound(REQUEST);
+    const tail = after(page.calls, 'eval:collect');
+    expect(tail).toEqual([
+      'eval:collect',
+      'eval:freeze',
+      'shot:jpeg',
+      'viewport:2',
+      'eval:repaint',
+      'eval:freeze',
+      'shot:png',
+      'viewport:1',
+      'eval:release',
+    ]);
+  });
+
+  it('оседание опрашивается ДО сбора элементов и снимка', async () => {
+    const { explorer, page } = marked();
+    await explorer.runRound(REQUEST);
+    expect(page.calls.indexOf('eval:probe')).toBeGreaterThan(-1);
+    expect(page.calls.indexOf('eval:probe')).toBeLessThan(
+      page.calls.indexOf('eval:collect'),
+    );
+  });
+
+  it('заморозка снимается, даже если лёгкий снимок упал', async () => {
+    // Страница живёт дальше — оставить ей transition:none нельзя.
+    const { explorer, page } = marked({ failShot: 'jpeg' });
+    await expect(explorer.runRound(REQUEST)).rejects.toThrow('снимок упал');
+    expect(page.calls).toContain('eval:release');
+  });
+
+  it('спиннер держит кадр мягко: ждём, пока не исчезнет, и снимаем', async () => {
+    let probes = 0;
+    const { explorer } = marked({
+      answer: (t: string) =>
+        t === 'probe'
+          ? { fontsLoading: false, busy: ++probes <= 2 ? 'div.spinner' : null }
+          : t === 'collect'
+            ? COLLECTED
+            : true,
+    });
+    const { exploration } = await explorer.runRound(REQUEST);
+    // Пол открытия + две паузы опроса.
+    expect(explorer.slept).toEqual([SETTLE_FLOOR_MS, 200, 200]);
+    expect(exploration.screenshotDataUrl).toContain('data:image/jpeg');
+  });
+
+  it('вечный спиннер не держит раунд дольше потолка', async () => {
+    const { explorer } = marked({
+      answer: (t: string) =>
+        t === 'probe'
+          ? { fontsLoading: false, busy: 'div.skeleton' }
+          : t === 'collect'
+            ? COLLECTED
+            : true,
+    });
+    const { exploration } = await explorer.runRound(REQUEST);
+    const waited = explorer.slept.slice(1).reduce((a, b) => a + b, 0);
+    expect(waited).toBeLessThanOrEqual(3_000);
+    expect(exploration.screenshotDataUrl).toBeDefined();
+  });
+
+  it('клик без перехода — цель в центр окна ДО оседания', async () => {
+    const { explorer, page } = marked();
+    await explorer.runRound({
+      ...REQUEST,
+      actions: [{ kind: 'click', selector: '#below' }],
+    });
+    const scroll = page.calls.indexOf('eval:scroll');
+    expect(scroll).toBeGreaterThan(page.calls.indexOf('click'));
+    expect(scroll).toBeLessThan(page.calls.indexOf('eval:probe'));
+    const src = page.evaluate.mock.calls.find(([s]: [string]) =>
+      s.startsWith(FRAME_SOURCE_MARKS.scroll),
+    )[0];
+    expect(src).toContain('"#below"');
+  });
+
+  it('целью считается последний fill, если клика не было', async () => {
+    const { explorer, page } = marked();
+    await explorer.runRound({
+      ...REQUEST,
+      actions: [{ kind: 'fill', selector: '#comment', value: 'x' }],
+    });
+    const src = page.evaluate.mock.calls.find(([s]: [string]) =>
+      s.startsWith(FRAME_SOURCE_MARKS.scroll),
+    )?.[0];
+    expect(src).toContain('"#comment"');
+  });
+
+  it('после перехода окно НЕ крутится — смысл кадра в верхе нового экрана', async () => {
+    let current = `${ORIGIN}/cabinet`;
+    const { explorer, page } = marked({
+      url: jest.fn(() => current),
+      locator: jest.fn(() => ({
+        fill: jest.fn(),
+        click: jest.fn(async () => {
+          current = `${ORIGIN}/orders`;
+        }),
+      })),
+    });
+    await explorer.runRound({
+      ...REQUEST,
+      actions: [{ kind: 'click', selector: '#orders' }],
+    });
+    expect(page.calls).not.toContain('eval:scroll');
+  });
+
+  it('раунд без действий окно не крутит', async () => {
+    const { explorer, page } = marked();
+    await explorer.runRound(REQUEST);
+    expect(page.calls).not.toContain('eval:scroll');
+  });
+
+  it('мало времени до конца раунда — оседание и затишье DSF не ждут, кадр снимается', async () => {
+    // Аудит 01.10.2026: новые ожидания берут только ОСТАТОК бюджета
+    // раунда (45 с), а не добавляются к худшему случаю сверху.
+    const { explorer, page } = marked({
+      answer: (t: string) =>
+        t === 'probe'
+          ? { fontsLoading: false, busy: 'div.spinner' }
+          : t === 'collect'
+            ? COLLECTED
+            : true,
+    });
+    // Медленный сайт: открытие съело почти весь раунд.
+    page.goto = jest.fn(async () => {
+      page.calls.push('goto');
+      explorer.clock += 43_000;
+    });
+    const { exploration } = await explorer.runRound(REQUEST);
+    expect(page.calls).not.toContain('eval:probe');
+    expect(page.calls).not.toContain('eval:repaint');
+    // Пол открытия уже пройден часами goto — ни одной паузы.
+    expect(explorer.slept).toEqual([]);
+    expect(exploration.screenshotDataUrl).toContain('data:image/jpeg');
+    expect(exploration.videoFrameDataUrl).toBeDefined();
+  });
+
+  it('остаток меньше потолка — оседание ждёт не дольше остатка', async () => {
+    const { explorer, page } = marked({
+      answer: (t: string) =>
+        t === 'probe'
+          ? { fontsLoading: false, busy: 'div.spinner' }
+          : t === 'collect'
+            ? COLLECTED
+            : true,
+    });
+    // Остаётся 45 000 − 41 500 − резерв 2 000 = 1 500 мс на оседание.
+    page.goto = jest.fn(async () => {
+      explorer.clock += 41_500;
+    });
+    await explorer.runRound(REQUEST);
+    const waited = explorer.slept.reduce((a, b) => a + b, 0);
+    expect(waited).toBeGreaterThan(0);
+    expect(waited).toBeLessThanOrEqual(1_500);
+  });
+
+  it('переигровка доворачивает к последнему шагу, если он не увёл', async () => {
+    const { explorer, page } = marked();
+    await explorer.replay({
+      steps: [
+        { kind: 'goto', route: `${ORIGIN}/cabinet` },
+        { kind: 'click', selector: '#below' },
+      ],
+      secrets: {},
+      allowedOrigin: ORIGIN,
+    });
+    expect(page.calls).toContain('eval:scroll');
+  });
+});
+
+describe('предупреждение о редиректе (01.10.2026)', () => {
+  it('просили /cabinet, открылся /login — предупреждение, кадр отдаётся', async () => {
+    const { explorer } = setup({ url: jest.fn(() => `${ORIGIN}/login`) });
+    const { exploration } = await explorer.runRound(REQUEST);
+    expect(exploration.redirectWarning).toContain('/login');
+    expect(exploration.redirectWarning).toContain('/cabinet');
+    expect(exploration.screenshotDataUrl).toContain('data:image/jpeg');
+  });
+
+  it('тот же экран — предупреждения нет', async () => {
+    const { explorer } = setup();
+    const { exploration } = await explorer.runRound(REQUEST);
+    expect(exploration.redirectWarning).toBeUndefined();
+  });
+
+  it('переигровка: важен экран последнего перехода, а не промежуточный', async () => {
+    const { explorer } = setup({ url: jest.fn(() => `${ORIGIN}/cabinet`) });
+    const { exploration } = await explorer.replay({
+      steps: [
+        { kind: 'goto', route: `${ORIGIN}/login` },
+        { kind: 'goto', route: `${ORIGIN}/cabinet` },
+      ],
+      secrets: {},
+      allowedOrigin: ORIGIN,
+    });
+    expect(exploration.redirectWarning).toBeUndefined();
+  });
+});
+
+describe('таймаут переигровки назван по-человечески (01.10.2026)', () => {
+  function timeoutError() {
+    const e = new Error('Waiting for selector `#submit` failed');
+    e.name = 'TimeoutError';
+    return e;
+  }
+
+  it('таймаут на шаге — 504 с шлюзом и номером шага, не голое «не уложилась»', async () => {
+    const { explorer } = setup({
+      locator: jest.fn(() => ({
+        fill: jest.fn(),
+        click: jest.fn().mockRejectedValue(timeoutError()),
+      })),
+    });
+    const err = await explorer
+      .replay({
+        steps: [
+          { kind: 'goto', route: `${ORIGIN}/login` },
+          { kind: 'fill', selector: '#email', value: 'a@b.c' },
+          { kind: 'click', selector: '#submit' },
+        ],
+        secrets: {},
+        allowedOrigin: ORIGIN,
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(GatewayTimeoutException);
+    expect(err.message).toContain(
+      'шлюз (куки/возраст/гео) или изменение сайта',
+    );
+    expect(err.message).toContain('шаге 3 из 3');
+  });
+
+  it('не-таймауты переигровки не переименовываются', async () => {
+    // Потерянный кред уже назван точно — «шлюз» здесь был бы враньём.
+    const { explorer } = setup();
+    const err = await explorer
+      .replay({
+        steps: [
+          { kind: 'goto', route: `${ORIGIN}/login` },
+          { kind: 'fill', selector: '#pass', value: '' },
+        ],
+        secrets: {},
+        allowedOrigin: ORIGIN,
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+  });
+
+  it('обычный раунд таймаут не переименовывает', async () => {
+    const { explorer } = setup({
+      locator: jest.fn(() => ({
+        fill: jest.fn(),
+        click: jest.fn().mockRejectedValue(timeoutError()),
+      })),
+    });
+    const err = await explorer
+      .runRound({ ...REQUEST, actions: [{ kind: 'click', selector: '#x' }] })
+      .catch((e) => e);
+    expect(err).not.toBeInstanceOf(GatewayTimeoutException);
+    expect(err.name).toBe('TimeoutError');
   });
 });

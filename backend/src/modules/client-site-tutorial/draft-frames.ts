@@ -79,10 +79,11 @@ export function draftFramePathname(
  * а `previewFrameCount` ещё не выставлен, и админка считала бы кадры
  * по другому правилу, чем они лежат.
  *
- * Тот же префикс — намеренно: уборка черновика (`wipeFrames`,
- * `DELETE`, каскад проекта) стирает его целиком и уносит обе
- * разновидности разом, без отдельного списка путей, который однажды
- * отстал бы.
+ * Тот же префикс — намеренно: уборка черновика (`DELETE`, каскад
+ * проекта) стирает его целиком и уносит обе разновидности разом, без
+ * отдельного списка путей, который однажды отстал бы. А `/finish` —
+ * НЕ целиком, только итоговые (`finalFrameIndex`): съёмочные кадры ему
+ * ещё копировать (01.10.2026, см. там же).
  */
 export function draftRoundFramePathname(
   draftId: string,
@@ -160,17 +161,38 @@ export function orderedFramePathnames(
   draftId: string,
   pathnames: readonly string[],
 ): string[] {
-  const prefix = draftFramePrefix(draftId);
   const numbered: Array<{ index: number; pathname: string }> = [];
   for (const pathname of pathnames) {
-    if (!pathname.startsWith(prefix)) continue;
-    // Номер и расширение, и ничего между ними: `12.png` — кадр,
-    // `round-12.png` — не кадр, `12.thumb.png` — тоже не кадр.
-    const m = /^(\d+)\.[a-z0-9]+$/i.exec(pathname.slice(prefix.length));
-    if (!m) continue;
-    numbered.push({ index: Number(m[1]), pathname });
+    const index = finalFrameIndex(draftId, pathname);
+    if (index === null) continue;
+    numbered.push({ index, pathname });
   }
   // По числу, а не по строке: иначе десятый кадр встал бы перед вторым.
   numbered.sort((a, b) => a.index - b.index);
   return numbered.map((n) => n.pathname);
+}
+
+/**
+ * Номер ИТОГОВОГО кадра ролика по пути в хранилище, или `null`, если
+ * это не итоговый кадр этого черновика (01.10.2026).
+ *
+ * Один фильтр на двух потребителей — админку (`orderedFramePathnames`)
+ * и уборку перед `/finish` (`wipeFinalFrames` в сервисе) — и это не
+ * вкус. До этой правки `/finish` стирал ВЕСЬ префикс, включая
+ * съёмочные `round-N.png`, и следом копировал их в итоговые кадры из
+ * уже удалённого: `copyBlob` отдавал `null`, ролик молча лишался
+ * кадров, а одобрение падало на пустом слайд-шоу. Два независимых
+ * определения «что есть итоговый кадр» однажды разошлись бы ровно так
+ * же — поэтому определение одно.
+ */
+export function finalFrameIndex(
+  draftId: string,
+  pathname: string,
+): number | null {
+  const prefix = draftFramePrefix(draftId);
+  if (!pathname.startsWith(prefix)) return null;
+  // Номер и расширение, и ничего между ними: `12.png` — кадр,
+  // `round-12.png` — не кадр, `12.thumb.png` — тоже не кадр.
+  const m = /^(\d+)\.[a-z0-9]+$/i.exec(pathname.slice(prefix.length));
+  return m ? Number(m[1]) : null;
 }

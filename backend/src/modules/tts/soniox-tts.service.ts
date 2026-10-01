@@ -29,6 +29,7 @@ import { mp3DurationSeconds } from '../../common/mp3-duration';
 import { detectLanguage } from '../../common/voiceover';
 import {
   SONIOX_DEFAULT_TTS_VOICE,
+  SONIOX_API_BASE,
   SONIOX_TTS_BASE,
   SONIOX_TTS_MAX_CHARACTERS,
   SONIOX_TTS_MODEL,
@@ -162,7 +163,13 @@ export class SonioxTtsService implements TtsProvider {
     const key = sonioxApiKey();
     if (!key) return { voices: [], error: 'SONIOX_API_KEY не задан' };
     try {
-      const res = await fetch(`${SONIOX_TTS_BASE}/tts/models`, {
+      // Справочник моделей живёт на API-хосте (`GET /v1/tts-models`,
+      // operationId `get_tts_models` в openapi.yaml Soniox), а не на
+      // хосте синтеза: прежний `tts-rt.soniox.com/tts/models` отвечал
+      // ошибкой, и экран голоса отправителя на проде писал «Каталог
+      // голосов Soniox не загрузился» (найдено в кадре обучалки
+      // 01.10.2026).
+      const res = await fetch(`${SONIOX_API_BASE}/tts-models`, {
         headers: { Authorization: `Bearer ${key}` },
         signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
       });

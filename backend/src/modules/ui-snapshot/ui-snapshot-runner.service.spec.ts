@@ -39,6 +39,7 @@ import {
   scrollToSection,
   settleForComparison,
   UiSnapshotRunnerService,
+  UNMASKED_SETTLE_BUDGET_MS,
 } from './ui-snapshot-runner.service';
 
 const ENV_KEYS = [
@@ -1310,14 +1311,82 @@ describe('UiSnapshotRunnerService — кадр не зависит от моме
     );
   });
 
-  it('немаскированный прогон не ждёт оседания и не замораживает — его кадры не меняются', async () => {
+  it('немаскированный прогон (кадры лендинга) ждёт оседания, но не маскирует и не замораживает', async () => {
+    const { page, calls } = withPage();
+    const { service } = build();
+
+    await service.run({ routeKeys: ['projects'], unmasked: true });
+
+    // Без оседания карточки лендинга выходили со спиннером (§12 спеки TMA).
+    expect(calls).toEqual(['idle', 'ready', 'screenshot']);
+    expect(page.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('немаскированный прогон: оба ожидания делят один потолок, а не по 5 с каждое', async () => {
     const { page } = withPage();
     const { service } = build();
 
     await service.run({ routeKeys: ['projects'], unmasked: true });
 
-    expect(page.waitForNetworkIdle).not.toHaveBeenCalled();
-    expect(page.evaluate).not.toHaveBeenCalled();
+    const idle = (page.waitForNetworkIdle.mock.calls[0] as any[])[0];
+    const ready = (page.waitForFunction.mock.calls[0] as any[])[1];
+    expect(idle.timeout).toBeLessThanOrEqual(UNMASKED_SETTLE_BUDGET_MS);
+    expect(ready.timeout).toBeLessThanOrEqual(UNMASKED_SETTLE_BUDGET_MS);
+  });
+
+  it('общий потолок: сеть съела бюджет — второе ожидание пропускается (timeout 0 у puppeteer — «вечно»)', async () => {
+    let t = 1_000;
+    const page = {
+      waitForNetworkIdle: jest.fn().mockImplementation(async () => {
+        t += 2_000;
+        throw new Error('timeout');
+      }),
+      waitForFunction: jest.fn().mockResolvedValue(undefined),
+    };
+    await settleForComparison(page, { budgetMs: 3_000, now: () => t });
+    expect(page.waitForNetworkIdle.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ timeout: 3_000 }),
+    );
+    // Остаток бюджета — второму ожиданию.
+    expect(page.waitForFunction.mock.calls[0][1]).toEqual({ timeout: 1_000 });
+
+    t = 1_000;
+    page.waitForNetworkIdle.mockImplementation(async () => {
+      t += 3_000;
+    });
+    page.waitForFunction.mockClear();
+    await settleForComparison(page, { budgetMs: 3_000, now: () => t });
+    expect(page.waitForFunction).not.toHaveBeenCalled();
+  });
+
+  it('сравниваемый прогон: по 5 с на каждое ожидание, как прежде', async () => {
+    const { page } = withPage();
+    const { service } = build();
+
+    await service.run({ routeKeys: ['projects'] });
+
+    expect((page.waitForNetworkIdle.mock.calls[0] as any[])[0].timeout).toBe(
+      5_000,
+    );
+    expect((page.waitForFunction.mock.calls[0] as any[])[1].timeout).toBe(
+      5_000,
+    );
+  });
+
+  it('немаскированный прогон: экран не осел — кадр всё равно снимается и уходит в Blob', async () => {
+    const { page } = withPage();
+    page.waitForNetworkIdle.mockRejectedValue(new Error('timeout'));
+    page.waitForFunction.mockRejectedValue(new Error('timeout'));
+    const { service } = build();
+
+    const result = await service.run({
+      routeKeys: ['projects'],
+      unmasked: true,
+    });
+
+    expect(result.outcomes[0].error).toBeUndefined();
+    expect(result.outcomes[0].blobUrl).toBeDefined();
+    expect(page.screenshot).toHaveBeenCalledTimes(1);
   });
 
   it('заморозка — на весь документ, включая псевдоэлементы, и снимает и анимации, и переходы', () => {

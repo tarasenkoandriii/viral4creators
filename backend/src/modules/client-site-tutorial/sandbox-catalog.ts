@@ -126,6 +126,44 @@ export const SANDBOX_ELEMENTS: readonly SandboxElement[] = [
     covers:
       'кадр снимается ПОСЛЕ waitForNetworkIdle, а не сразу: иначе ленивое содержимое в ролик не попадёт',
   },
+  // ── Стабилизация кадра чужого сайта (01.10.2026, перенос правок QA
+  // TMA §12; `foreign-frame-settle.ts`). ──
+  {
+    hook: 'sandbox-spinner',
+    screen: 'any',
+    description:
+      'спиннер первого экрана (role=progressbar, класс sandbox-spinner), исчезает по таймеру',
+    covers:
+      'кадр ждёт общих признаков загрузки (мягко, с потолком), а не только затишья сети: спиннер на таймере сети не тратит',
+  },
+  {
+    hook: 'sandbox-fade-in',
+    screen: 'any',
+    description:
+      'блок с медленным проявлением (fade-in дольше любого ожидания)',
+    covers:
+      'перед снимком конечные анимации доводятся finish(), а не гасятся animation:none — иначе блок с opacity:0 пропал бы из кадра',
+  },
+  {
+    hook: 'sandbox-video',
+    screen: 'any',
+    description: '<video> с живым потоком с холста',
+    covers:
+      'медиа чужого сайта не обрываются (часть его интерфейса) и не держат раунд: ожидание оседания мягкое',
+  },
+  {
+    hook: 'sandbox-below-fold',
+    screen: 'any',
+    description: 'кнопка ниже первого экрана',
+    covers:
+      'цель раунда без перехода доворачивается в центр окна (scrollIntoView center) перед кадром',
+  },
+  {
+    hook: 'sandbox-below-fold-result',
+    screen: 'any',
+    description: 'результат нажатия кнопки ниже первого экрана',
+    covers: null,
+  },
 ];
 
 /** Элементы, видимые на конкретном экране. */
@@ -153,3 +191,13 @@ export const SANDBOX_PATH = '/qa/site-sandbox';
  * оставаясь с виду прежним.
  */
 export const SANDBOX_LATE_BLOCK_MS = 1000;
+
+/**
+ * Копии чисел полигона (`SandboxClient.tsx`) — спиннер и проявление,
+ * 01.10.2026. Сверяет их с оригиналом и с границами оседания
+ * разведчика `foreign-frame-settle.spec.ts` (шов `check-docs` их пока
+ * не читает): спиннер обязан висеть дольше пола и меньше потолка,
+ * проявление — дольше обоих вместе.
+ */
+export const SANDBOX_SPINNER_MS = 2000;
+export const SANDBOX_FADE_MS = 5000;

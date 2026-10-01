@@ -1364,6 +1364,11 @@ export interface ClientSiteDraftDetails extends ClientSiteDraftRow {
    * видел пользователь. Без них одобрение шло бы вслепую. */
   frameUrls: string[];
   hasCredentials: boolean;
+  /** Сколько шагов дописал каждый раунд; раунд = кадр. По нему экран
+   * подписывает кадр его шагами (перенос QA TMA §12, 01.10.2026). */
+  stepsPerRound: number[];
+  /** Предупреждение стоп-листа §8.3 по каждому раунду, `null` — не было. */
+  roundDangerWarnings: (string | null)[];
 }
 
 export interface ClientSiteDraftListResult {

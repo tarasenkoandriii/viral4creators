@@ -34,6 +34,7 @@
 
 import {
   BadRequestException,
+  GatewayTimeoutException,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -44,10 +45,7 @@ import {
   parseCookieJar,
   restoreCookieJar,
 } from '../../common/cookie-jar';
-import {
-  launchHeadlessBrowser,
-  withTimeout,
-} from '../../common/headless-chromium';
+import { launchHeadlessBrowser } from '../../common/headless-chromium';
 import { DomainLockError, assertSameSite } from './draft-rounds';
 import { dangerWarningFor } from './danger-words';
 import { CollectedPage, collectPageExploration } from './page-exploration';
@@ -65,6 +63,19 @@ import {
 } from '../tutorial-runner/tutorial-video-assembly';
 import { LAUNCH_TIMEOUT_MS } from '../../common/headless-chromium';
 import { VIDEO_FRAME_CONTENT_TYPE } from './draft-frames';
+import {
+  DSF_REPAINT_CAP_MS,
+  FOREIGN_SETTLE_CEILING_MS,
+  DSF_REPAINT_QUIET_SOURCE,
+  FRAME_FREEZE_SOURCE,
+  FRAME_RELEASE_SOURCE,
+  describeReplayTimeout,
+  isForeignTimeout,
+  redirectWarningFor,
+  scrollTargetIntoCenterSource,
+  settleForeignFrame,
+  withForeignTimeout,
+} from './foreign-frame-settle';
 
 /**
  * Размер окна — общий для всех съёмщиков кадров продукта
@@ -131,6 +142,21 @@ const NETWORK_IDLE_MS = 400;
 export const SETTLE_FLOOR_MS = 1_500;
 /** Потолок на весь раунд целиком — страховка от суммы таймаутов. */
 const ROUND_TIMEOUT_MS = 45_000;
+
+/**
+ * Сколько времени раунда держать НЕТРОНУТЫМ под сами снимки (JPEG, PNG
+ * на плотности 2) и снятие кук (аудит этапа 01.10.2026).
+ *
+ * Мягкие ожидания стабилизации кадра (оседание до 3 с, затишье после
+ * DSF=2) добавились к прежней сумме таймаутов, и худший случай раунда
+ * (goto 20 + сеть 6 + клик 10 + навигация 6 + оседание 3 + DSF ≈1,3 +
+ * снимки) вылез за `ROUND_TIMEOUT_MS`. Поднимать потолок нельзя — он
+ * посчитан против потолка функции и ожидания наблюдателя (см. спек
+ * «бюджет раунда»). Поэтому новые ожидания берут только ОСТАТОК
+ * бюджета: не осталось — кадр снимается как есть, а не раунд падает
+ * по таймауту с уже потраченным слотом лимита.
+ */
+const SNAPSHOT_RESERVE_MS = 2_000;
 
 /**
  * Сколько ВСЕГО может занять один раунд у вызывающего по HTTP
@@ -251,7 +277,7 @@ export class ChromiumPageExplorer implements PageExplorer {
 
   async runRound(request: ExploreRoundRequest): Promise<ExploreRoundResult> {
     return this.inFreshBrowser(
-      (browser) => this.runInBrowser(browser, request),
+      (browser, deadline) => this.runInBrowser(browser, request, deadline),
       ROUND_TIMEOUT_MS,
       'раунд',
     );
@@ -267,11 +293,27 @@ export class ChromiumPageExplorer implements PageExplorer {
    * тридцати подряд.
    */
   async replay(request: ReplayRequest): Promise<ExploreRoundResult> {
-    return this.inFreshBrowser(
-      (browser) => this.replayInBrowser(browser, request),
-      REPLAY_TIMEOUT_MS,
-      'переигровка сценария',
-    );
+    const progress = { done: 0, total: request.steps.length };
+    try {
+      return await this.inFreshBrowser(
+        (browser, deadline) =>
+          this.replayInBrowser(browser, request, progress, deadline),
+        REPLAY_TIMEOUT_MS,
+        'переигровка сценария',
+      );
+    } catch (err) {
+      // Переигровка проходит заново ВЕСЬ вход, и таймаут на ней почти
+      // никогда не «сайт медленный»: чаще новый экран согласия на куки,
+      // проверка возраста/гео или переделанная форма, которых не было
+      // при записи. Голое «не уложилась в 20с» отправляло человека
+      // ждать и повторять — то есть тратить слоты лимита на то же самое.
+      if (isForeignTimeout(err)) {
+        throw new GatewayTimeoutException(
+          describeReplayTimeout((err as Error).message, progress),
+        );
+      }
+      throw err;
+    }
   }
 
   /**
@@ -280,7 +322,9 @@ export class ChromiumPageExplorer implements PageExplorer {
    * на serverless держит память инстанса до его смерти.
    */
   private async inFreshBrowser<T>(
-    work: (browser: ExplorerBrowser) => Promise<T>,
+    /** `deadline` — момент (по `now()`), когда раунд убьёт таймаут;
+     * новые мягкие ожидания меряются остатком до него. */
+    work: (browser: ExplorerBrowser, deadline: number) => Promise<T>,
     timeoutMs: number,
     what: string,
   ): Promise<T> {
@@ -298,8 +342,9 @@ export class ChromiumPageExplorer implements PageExplorer {
 
     const browser = launched.browser as unknown as ExplorerBrowser;
     try {
-      return await withTimeout(
-        work(browser),
+      const deadline = this.now() + timeoutMs;
+      return await withForeignTimeout(
+        work(browser, deadline),
         timeoutMs,
         `${what} не уложилась в ${Math.round(timeoutMs / 1000)}с — сайт заказчика отвечает слишком медленно`,
       );
@@ -311,6 +356,8 @@ export class ChromiumPageExplorer implements PageExplorer {
   private async replayInBrowser(
     browser: ExplorerBrowser,
     request: ReplayRequest,
+    progress: { done: number },
+    deadline: number,
   ): Promise<ExploreRoundResult> {
     const page = await browser.newPage();
     await page.setViewport(VIEWPORT);
@@ -324,12 +371,34 @@ export class ChromiumPageExplorer implements PageExplorer {
       );
     }
 
-    await this.openPage(page, first.route, request.allowedOrigin);
+    let redirectWarning = await this.openPage(
+      page,
+      first.route,
+      request.allowedOrigin,
+    );
+    progress.done = 1;
+
+    // Цель кадра — последний fill/click ПОСЛЕ последнего перехода и
+    // адрес до него: тот же смысл, что у раунда (см. `runInBrowser`).
+    let target: string | undefined;
+    let urlBeforeTarget = page.url();
 
     for (const step of rest) {
       if (step.kind === 'goto') {
-        await this.openPage(page, step.route, request.allowedOrigin);
+        // Предупреждение — о последнем переходе: промежуточный редирект
+        // (вход → кабинет) в переигровке ожидаем, важен экран кадра.
+        redirectWarning = await this.openPage(
+          page,
+          step.route,
+          request.allowedOrigin,
+        );
+        target = undefined;
+        progress.done += 1;
         continue;
+      }
+      if (step.kind === 'fill' || step.kind === 'click') {
+        target = step.selector;
+        urlBeforeTarget = page.url();
       }
       if (step.kind === 'fill') {
         // §7.3: пустое значение в сценарии означает «это было секретное
@@ -345,12 +414,15 @@ export class ChromiumPageExplorer implements PageExplorer {
           );
         }
         await this.fill(page, step.selector, value);
+        progress.done += 1;
         continue;
       }
       if (step.kind === 'click') {
         await this.click(page, step.selector, request.allowedOrigin);
+        progress.done += 1;
         continue;
       }
+      progress.done += 1;
       // `waitFor`/`assertVisible`/`assertText`/`triggerPaidOperation`
       // визард не записывает и не исполняет — они существуют для
       // сценариев НАШЕГО продукта. Пропускаем молча, а не падаем: чужой
@@ -358,13 +430,19 @@ export class ChromiumPageExplorer implements PageExplorer {
       // кода, и терять из-за этого работу пользователя незачем.
     }
 
-    const exploration = await this.snapshot(page, request.allowedOrigin);
+    const exploration = await this.snapshot(page, request.allowedOrigin, {
+      centerSelector:
+        target && page.url() === urlBeforeTarget ? target : undefined,
+      redirectWarning,
+      deadline,
+    });
     return { exploration, cookies: await this.harvestCookies(page) };
   }
 
   private async runInBrowser(
     browser: ExplorerBrowser,
     request: ExploreRoundRequest,
+    deadline: number,
   ): Promise<ExploreRoundResult> {
     const page = await browser.newPage();
     await page.setViewport(VIEWPORT);
@@ -377,7 +455,12 @@ export class ChromiumPageExplorer implements PageExplorer {
       this.logger.debug(`восстановлено кук: ${restored}`);
     }
 
-    await this.openPage(page, request.url, request.allowedOrigin);
+    const redirectWarning = await this.openPage(
+      page,
+      request.url,
+      request.allowedOrigin,
+    );
+    const urlBeforeActions = page.url();
 
     for (const action of request.actions) {
       if (action.kind === 'fill') {
@@ -387,8 +470,20 @@ export class ChromiumPageExplorer implements PageExplorer {
       }
     }
 
+    // Цель раунда — последний fill/click. Довернуть к ней окно имеет
+    // смысл, только если экран остался тем же: после перехода смысл
+    // кадра — верх НОВОГО экрана, и прокрутка к селектору, случайно
+    // совпавшему на новой странице, показала бы её середину. Переход
+    // определяется по адресу: SPA, перерисовавшая экран без смены
+    // адреса, обычно убирает и сам элемент — тогда прокрутка в странице
+    // просто не найдёт его.
+    const target = request.actions[request.actions.length - 1]?.selector;
     const exploration = await this.snapshot(page, request.allowedOrigin, {
       clickedSelector: lastClickedSelector(request.actions),
+      centerSelector:
+        target && page.url() === urlBeforeActions ? target : undefined,
+      redirectWarning,
+      deadline,
     });
 
     return { exploration, cookies: await this.harvestCookies(page) };
@@ -396,14 +491,15 @@ export class ChromiumPageExplorer implements PageExplorer {
 
   /** Переход + замок ДО первого действия: если `goto` увёл редиректом
    * на чужой сайт, вводить туда креды заказчика нельзя ни при каких
-   * условиях. */
+   * условиях. Возвращает предупреждение, если внутри сайта открылся
+   * другой экран (`redirectWarningFor`). */
   private async openPage(
     page: ExplorerPage,
     url: string,
     allowedOrigin: string,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const startedAt = this.now();
-    await withTimeout(
+    await withForeignTimeout(
       page.goto(url, {
         waitUntil: 'domcontentloaded',
         timeout: NAV_TIMEOUT_MS,
@@ -420,6 +516,7 @@ export class ChromiumPageExplorer implements PageExplorer {
     // недособранную страницу.
     await this.settle(page, startedAt);
     this.assertInside(allowedOrigin, page.url());
+    return redirectWarningFor(url, page.url());
   }
 
   /**
@@ -463,7 +560,7 @@ export class ChromiumPageExplorer implements PageExplorer {
     value: string,
   ): Promise<void> {
     const locator = this.locate(page, selector);
-    await withTimeout(
+    await withForeignTimeout(
       locator.fill(value) as Promise<unknown>,
       ACTION_TIMEOUT_MS,
       `поле ${selector} не найдено или не заполняется`,
@@ -487,7 +584,7 @@ export class ChromiumPageExplorer implements PageExplorer {
       })
       .catch(() => null);
     const startedAt = this.now();
-    await withTimeout(
+    await withForeignTimeout(
       locator.click() as Promise<unknown>,
       ACTION_TIMEOUT_MS,
       `кнопка ${selector} не найдена или не кликается`,
@@ -517,8 +614,43 @@ export class ChromiumPageExplorer implements PageExplorer {
   private async snapshot(
     page: ExplorerPage,
     allowedOrigin: string,
-    opts: { clickedSelector?: string } = {},
+    opts: {
+      clickedSelector?: string;
+      /** Цель раунда, к которой довернуть окно (экран не сменился). */
+      centerSelector?: string;
+      redirectWarning?: string;
+      /** Дедлайн раунда (`inFreshBrowser`); без него — без ограничения
+       * остатком, только собственные потолки ожиданий. */
+      deadline?: number;
+    } = {},
   ): Promise<PageExploration> {
+    const leftMs = () =>
+      opts.deadline === undefined
+        ? Number.POSITIVE_INFINITY
+        : opts.deadline - this.now() - SNAPSHOT_RESERVE_MS;
+    // Сначала прокрутка, потом оседание: прокрутка сама может включить
+    // ленивую подгрузку (скелетоны, `loading=lazy`), и ждать надо уже её.
+    if (opts.centerSelector) {
+      await page
+        .evaluate(scrollTargetIntoCenterSource(opts.centerSelector))
+        .catch(() => false);
+    }
+    const settleBudget = Math.min(FOREIGN_SETTLE_CEILING_MS, leftMs());
+    const settled =
+      settleBudget > 0
+        ? await settleForeignFrame(
+            (src) => page.evaluate(src),
+            { now: () => this.now(), sleep: (ms) => this.sleep(ms) },
+            settleBudget,
+          )
+        : { settled: false, holdingBy: 'бюджет раунда исчерпан' };
+    if (!settled.settled) {
+      // Не ошибка: снимаем как есть (потоковое видео, вечный скелетон).
+      this.logger.debug(
+        `кадр снят, не дождавшись оседания: ${settled.holdingBy}`,
+      );
+    }
+
     const collected = await this.collect(page, allowedOrigin);
     const elements = collected.elements.map(withDanger);
 
@@ -536,12 +668,39 @@ export class ChromiumPageExplorer implements PageExplorer {
         dangerWarningFor(opts.clickedSelector);
     }
 
-    const screenshotBase64 = await page.screenshot({
-      type: 'jpeg',
-      quality: SCREENSHOT_QUALITY,
-      encoding: 'base64',
-    });
+    // Заморозка — только на время снимков и с обязательным снятием в
+    // `finally`: страница живёт дальше (переигровка, следующий шаг).
+    await page.evaluate(FRAME_FREEZE_SOURCE).catch(() => undefined);
+    let screenshotBase64: string;
+    let videoFrameDataUrl: string | undefined;
+    try {
+      screenshotBase64 = await page.screenshot({
+        type: 'jpeg',
+        quality: SCREENSHOT_QUALITY,
+        encoding: 'base64',
+      });
+      videoFrameDataUrl = await this.captureVideoFrame(page, leftMs);
+    } finally {
+      await page.evaluate(FRAME_RELEASE_SOURCE).catch(() => undefined);
+    }
 
+    return {
+      currentUrl: page.url(),
+      screenshotDataUrl: `data:image/jpeg;base64,${screenshotBase64}`,
+      ...(videoFrameDataUrl ? { videoFrameDataUrl } : {}),
+      elements,
+      looksLikeLogin: collected.looksLikeLogin,
+      ...(dangerWarning ? { dangerWarning } : {}),
+      ...(opts.redirectWarning
+        ? { redirectWarning: opts.redirectWarning }
+        : {}),
+    };
+  }
+
+  private async captureVideoFrame(
+    page: ExplorerPage,
+    leftMs: () => number,
+  ): Promise<string | undefined> {
     /**
      * Второй кадр — съёмочный (вариант А, 29.09.2026).
      *
@@ -560,6 +719,22 @@ export class ChromiumPageExplorer implements PageExplorer {
         ...CAPTURE_VIEWPORT,
         deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
       });
+      // Затишье после смены плотности: `srcset` выбирает новый
+      // кандидат, и снимок сразу после — старая картинка, растянутая
+      // вдвое. Мягко и с потолком: свой потолок в странице, наш —
+      // на случай, если страница не отвечает вовсе.
+      // Только если остаток бюджета вмещает весь потолок затишья: оно
+      // необязательное, а раунд — нет.
+      if (leftMs() >= DSF_REPAINT_CAP_MS + 500) {
+        await withForeignTimeout(
+          page.evaluate(DSF_REPAINT_QUIET_SOURCE),
+          DSF_REPAINT_CAP_MS + 500,
+          'затишье после смены плотности',
+        ).catch(() => undefined);
+      }
+      // Второй проход заморозки: догрузившаяся картинка могла запустить
+      // свою анимацию проявления.
+      await page.evaluate(FRAME_FREEZE_SOURCE).catch(() => undefined);
       const videoBase64 = await page.screenshot({
         type: 'png',
         encoding: 'base64',
@@ -581,15 +756,7 @@ export class ChromiumPageExplorer implements PageExplorer {
         })
         .catch(() => undefined);
     }
-
-    return {
-      currentUrl: page.url(),
-      screenshotDataUrl: `data:image/jpeg;base64,${screenshotBase64}`,
-      ...(videoFrameDataUrl ? { videoFrameDataUrl } : {}),
-      elements,
-      looksLikeLogin: collected.looksLikeLogin,
-      ...(dangerWarning ? { dangerWarning } : {}),
-    };
+    return videoFrameDataUrl;
   }
 
   /**

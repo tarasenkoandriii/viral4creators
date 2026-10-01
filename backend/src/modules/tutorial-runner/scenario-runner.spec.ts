@@ -2,6 +2,7 @@ import {
   FRAME_SETTLE_NETWORK_MS,
   FRAME_SETTLE_SPINNER_MS,
   measurePointer,
+  opensOtherStepScreen,
   runScenario,
   ScenarioPage,
   ScenarioRouteResolver,
@@ -765,5 +766,52 @@ describe('подготовка кадра (просмотр роликов пр�
     const { page, log } = recordingPage();
     await runScenario(page, [{ kind: 'goto', route: 'generate' }], resolveOk);
     expect(log).toEqual([]);
+  });
+});
+
+describe('кадр с экрана другого шага не снимается (01.10.2026)', () => {
+  it('goto → клик по позиции степпера: кадр после goto пропущен', async () => {
+    const shot = jest.fn().mockResolvedValue(new Uint8Array([1]));
+    const page = buildPage({ screenshot: shot });
+    const result = await runScenario(
+      page,
+      [
+        { kind: 'goto', route: 'generate-ready' },
+        { kind: 'click', selector: '[data-qa="wizard-step-analysis"]' },
+        { kind: 'waitFor', selector: '[data-qa="analysis-card"]' },
+      ],
+      resolveOk,
+      undefined,
+      true,
+    );
+    expect(result.frames.map((f) => f.stepIndex)).toEqual([1, 2]);
+    // Пропуск — не сбой кадра: в «не снялось» он не попадает.
+    expect(result.skippedFrames).toEqual([]);
+  });
+
+  it('после goto другой шаг или другой клик — кадр снимается', () => {
+    const goto = { kind: 'goto' as const, route: 'generate-ready' };
+    expect(
+      opensOtherStepScreen(goto, {
+        kind: 'click',
+        selector: '[data-qa="analysis-continue"]',
+      }),
+    ).toBe(false);
+    expect(
+      opensOtherStepScreen(goto, { kind: 'waitFor', selector: '#x' }),
+    ).toBe(false);
+    expect(opensOtherStepScreen(goto, undefined)).toBe(false);
+    expect(
+      opensOtherStepScreen(
+        { kind: 'click', selector: '[data-qa="x"]' },
+        { kind: 'click', selector: '[data-qa="wizard-step-prompt"]' },
+      ),
+    ).toBe(false);
+    expect(
+      opensOtherStepScreen(goto, {
+        kind: 'click',
+        selector: '[data-qa="wizard-step-prompt"]',
+      }),
+    ).toBe(true);
   });
 });

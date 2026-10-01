@@ -1,3 +1,4 @@
+import { QA_HOOKS } from './qa-hooks';
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 // `AiUsageService` тянет `SessionService`, а тот рантайм-импортирует
@@ -10,7 +11,16 @@ jest.mock('../ai-usage/ai-usage.service', () => ({ AiUsageService: class {} }));
 const generateContent = jest.fn();
 jest.mock('@google/genai', () => ({
   GoogleGenAI: class {
-    models = { generateContent };
+    // Ответ «модели» для темы поздравления — с экранами поздравления
+    // (01.10.2026: валидатор отвергает экран чужого мастера). Тесты
+    // задают ответ одним текстом на все темы; для поздравления он
+    // переводится на эквивалентный сценарий его семьи.
+    models = {
+      generateContent: (args: { contents: Array<{ text: string }> }) =>
+        Promise.resolve(generateContent(args)).then((res) =>
+          greetingize(args?.contents?.[0]?.text ?? '', res),
+        ),
+    };
   },
 }));
 
@@ -100,6 +110,52 @@ function build(storedLocales: string | null = null) {
   );
   return { service, prisma, aiUsage, settings };
 }
+
+function greetingize(prompt: string, res: any): any {
+  if (!res || typeof res.text !== 'string') return res;
+  // Тема поздравления узнаётся по промпту: в нём нет экранов рекламного
+  // мастера. Сценарий переводится на экраны своей семьи с сохранением
+  // всего остального (реплик, платных маркеров) — тесты проверяют их.
+  if (!/"greeting-video"/.test(prompt) || /"generate-ready"/.test(prompt)) {
+    return res;
+  }
+  if (res.text === FREE_SCENARIO_TEXT) {
+    return { ...res, text: GREETING_SCENARIO_TEXT };
+  }
+  let json: any;
+  try {
+    json = JSON.parse(res.text);
+  } catch {
+    return res;
+  }
+  if (!Array.isArray(json?.steps)) return res;
+  json.steps = json.steps.map((st: any) => {
+    if (st?.kind === 'goto' && !String(st.route).startsWith('greeting-')) {
+      return { ...st, route: 'greeting-video' };
+    }
+    // Только хуки каталога: выдуманный селектор обязан остаться выдуманным
+    // — его отказ проверяют отдельно.
+    const hook = /data-qa="([^"]+)"/.exec(String(st?.selector ?? ''))?.[1];
+    if (hook && hook in QA_HOOKS && !hook.startsWith('greeting-')) {
+      return {
+        ...st,
+        selector:
+          st.kind === 'click'
+            ? '[data-qa="greeting-brief-save"]'
+            : '[data-qa="greeting-brief-card"]',
+      };
+    }
+    return st;
+  });
+  return { ...res, text: JSON.stringify(json) };
+}
+
+const GREETING_SCENARIO_TEXT = JSON.stringify({
+  steps: [
+    { route: 'greeting-video', kind: 'goto' },
+    { selector: '[data-qa="greeting-brief-card"]', kind: 'waitFor' },
+  ],
+});
 
 // Порядок ключей НАРОЧНО не тот, в каком их вернёт `jsonb`:
 // `selector` короче `kind`? нет — значит Postgres переставит. На этой

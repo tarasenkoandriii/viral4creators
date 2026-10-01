@@ -45,6 +45,47 @@ import {
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import { DraftStatus } from './draft-rounds';
 import { draftFramePrefix, orderedFramePathnames } from './draft-frames';
+import { createHash } from 'node:crypto';
+import { alignRoundWarnings } from './client-site-tutorial.service';
+
+/**
+ * Потолок провалившихся сборок ОДНОГО И ТОГО ЖЕ содержимого черновика
+ * (QA TMA §12, перенос 01.10.2026). То же число, что
+ * `MAX_ASSEMBLY_ATTEMPTS` у ночной обучалки
+ * (`tutorial-scenario-runner.service.ts`), но своя константа: та не
+ * экспортируется, а этот путь живёт по кнопке оператора, не по
+ * расписанию, и однажды может захотеть другое число.
+ *
+ * Зачем он здесь, где цикла по расписанию нет. Провал сборки
+ * возвращает черновик на одобрение (`releaseClientSiteDraft` в
+ * раннере), и кнопка «Одобрить» снова активна — с теми же кадрами.
+ * Кадр, на котором внешний сервис спотыкается стабильно, превращал
+ * каждое нажатие в оплаченную задачу, которая упадёт, а строки
+ * `failed` копились без счёта.
+ */
+export const MAX_ASSEMBLY_ATTEMPTS = 3;
+
+/**
+ * Потолок ожидания одного кадра при одобрении. Оператор ждёт ответа
+ * кнопки, а зависший запрос к хранилищу без потолка держал бы её до
+ * таймаута функции. `downloadBuffer` сигнала отмены не принимает
+ * (`BlobService` — общий сервис), поэтому это ограничение ОЖИДАНИЯ,
+ * а не самого запроса: зависший fetch доживёт своё в фоне, но
+ * одобрение откажет вовремя и с именем кадра.
+ */
+export const FRAME_DOWNLOAD_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
 
 export interface DraftQueueItem {
   id: string;
@@ -68,6 +109,13 @@ export interface DraftDetails extends DraftQueueItem {
    * вслепую, а предпросмотр терял бы половину смысла (§5.2). */
   frameUrls: string[];
   hasCredentials: boolean;
+  /** Сколько шагов дописал каждый раунд — один раунд = один кадр.
+   * Без этого оператор сопоставлял «кадр ↔ шаги» на глаз, а раунд
+   * бывает и из нескольких `fill` с одним `click` (перенос QA TMA §12). */
+  stepsPerRound: number[];
+  /** Предупреждение стоп-листа §8.3 по каждому раунду (`null` — не
+   * было), длина = `stepsPerRound.length`. */
+  roundDangerWarnings: (string | null)[];
 }
 
 interface DraftRow {
@@ -78,6 +126,7 @@ interface DraftRow {
   status: DraftStatus;
   steps: unknown;
   stepsPerRound: number[];
+  roundDangerWarnings?: unknown;
   previewFrameCount: number | null;
   requiresLiveLoginReplay: boolean;
   rejectionReason: string | null;
@@ -167,6 +216,11 @@ export class ClientSiteTutorialAdminService {
       steps: (row.steps as ScenarioStep[] | null) ?? [],
       frameUrls,
       hasCredentials: row.credentialsEnc !== null,
+      stepsPerRound: row.stepsPerRound,
+      roundDangerWarnings: alignRoundWarnings(
+        row.roundDangerWarnings,
+        row.stepsPerRound.length,
+      ),
     };
   }
 
@@ -196,6 +250,43 @@ export class ClientSiteTutorialAdminService {
       );
     }
 
+    // Дешёвые отказы — до скачивания кадров (аудит 01.10.2026): на
+    // стенде без ffmpeg-api незачем тянуть все кадры из хранилища, чтобы
+    // потом сказать «собирать нечем». Раньше эта проверка жила в
+    // `submitAssembly`, уже после захвата статуса, и отказ приходилось
+    // откатывать.
+    if (!this.ffmpeg.configured()) {
+      throw new ServiceUnavailableException(
+        'сборка видео не настроена на этом стенде (FFMPEG_API_KEY) — одобрять нечего собирать',
+      );
+    }
+
+    // Кадры и их отпечаток — ДО смены статуса: потолок попыток ниже
+    // обязан отказать, не трогая черновик, иначе отказ пришлось бы
+    // откатывать так же, как неудачную отправку.
+    const prepared = await this.prepareFrames(row.id);
+    // Число кадров в хранилище обязано совпасть с тем, что `/finish`
+    // записал в строку. Не совпало — какой-то кадр пропал (или лишний
+    // остался от чужого прогона), и сборка дала бы молча короткий или
+    // перемешанный ролик, который оператор одобрил, глядя на другой.
+    if (prepared.frameUrls.length !== frames) {
+      throw new BadRequestException(
+        `в хранилище ${prepared.frameUrls.length} кадр(ов), а при завершении записи было ${frames} — ролик вышел бы не тем, что вы видите. Отклоните черновик, чтобы пользователь заново нажал «Готово»`,
+      );
+    }
+    const failedSame = await this.prisma.tutorialVideoAsset.count({
+      where: {
+        clientSiteDraftId: row.id,
+        assemblyStatus: 'failed',
+        contentHash: prepared.contentHash,
+      },
+    });
+    if (failedSame >= MAX_ASSEMBLY_ATTEMPTS) {
+      throw new BadRequestException(
+        `сборка ролика из этих же кадров уже проваливалась ${failedSame} раз(а) — повтор оплатит ещё одну неудачу. Отклоните черновик с причиной: после правки шагов кадры изменятся, и счёт попыток начнётся заново`,
+      );
+    }
+
     // Статус меняется ПЕРВЫМ и условно: два оператора, нажавшие
     // «Одобрить» одновременно, не должны отправить две задачи сборки за
     // одни и те же деньги.
@@ -208,7 +299,7 @@ export class ClientSiteTutorialAdminService {
     }
 
     try {
-      await this.submitAssembly(row, frames, approvedBy);
+      await this.submitAssembly(row, frames, prepared, approvedBy);
     } catch (err) {
       // Одобрение ОТКАТЫВАЕТСЯ, если сборку отправить не удалось (аудит
       // этапа 116). Раньше неудача была best-effort: статус оставался
@@ -227,7 +318,84 @@ export class ClientSiteTutorialAdminService {
         .catch(() => undefined);
       throw err;
     }
+    await this.pruneFailedAssets(row.id);
     return toQueueItem(await this.require(id));
+  }
+
+  /**
+   * Ссылки на итоговые кадры и ТОЧНЫЙ отпечаток их байтов — для
+   * `contentHash` строки ролика и потолка попыток.
+   *
+   * Точный sha, а не перцептивное сличение, как у ночной обучалки:
+   * там кадры каждую ночь снимаются заново и побайтово не повторяются,
+   * а здесь это одни и те же файлы в Blob, пока пользователь не
+   * перезапишет черновик. Совпадение байтов здесь и есть «то же
+   * содержимое», без порогов, которые пришлось бы настраивать.
+   *
+   * Голый hex — формат, который `sameSlideshowContent` понимает как
+   * старый, если строка когда-нибудь попадёт в общее сличение.
+   */
+  private async prepareFrames(
+    draftId: string,
+  ): Promise<{ frameUrls: string[]; contentHash: string }> {
+    const frameUrls: string[] = [];
+    const whole = createHash('sha256');
+    for (const pathname of await this.framePathnames(draftId)) {
+      let bytes: Buffer;
+      try {
+        bytes = await withTimeout(
+          this.blob.downloadBuffer(pathname),
+          FRAME_DOWNLOAD_TIMEOUT_MS,
+          `скачивание дольше ${FRAME_DOWNLOAD_TIMEOUT_MS} мс`,
+        );
+      } catch (err) {
+        // Кадр, который мы не можем прочитать, не прочитает и внешний
+        // ffmpeg-api — отправлять такую задачу значит заплатить за
+        // провал. Называем, какой именно кадр.
+        this.logger.warn(
+          `черновик ${draftId}: кадр ${pathname} не читается (${err instanceof Error ? err.message : String(err)})`,
+        );
+        throw new ServiceUnavailableException(
+          `кадр ${pathname.split('/').pop()} не читается из хранилища — попросите пользователя повторить «Готово» или отклоните черновик`,
+        );
+      }
+      whole.update(createHash('sha256').update(bytes).digest('hex'));
+      whole.update(',');
+      frameUrls.push(await this.blob.getPublicUrl(pathname));
+    }
+    return { frameUrls, contentHash: whole.digest('hex') };
+  }
+
+  /**
+   * Строки `failed` черновика не копятся вечно: держим
+   * `MAX_ASSEMBLY_ATTEMPTS` последних — ровно столько, сколько нужно
+   * потолку попыток выше. Ночная метла (`sweepOldAssets`) роликов
+   * черновиков сознательно не трогает, так что убирать их больше
+   * некому.
+   *
+   * Только строки без файла: у `failed` бывает частичный mp4 прошлой
+   * попытки, и удалить строку раньше файла значило бы потерять путь к
+   * нему навсегда. Таких единицы, а уборка — best-effort: одобрение уже
+   * состоялось, и сбой здесь не повод его ронять.
+   */
+  private async pruneFailedAssets(draftId: string): Promise<void> {
+    try {
+      const stale = (await this.prisma.tutorialVideoAsset.findMany({
+        where: { clientSiteDraftId: draftId, assemblyStatus: 'failed' },
+        orderBy: { createdAt: 'desc' },
+        skip: MAX_ASSEMBLY_ATTEMPTS,
+        select: { id: true, blobUrl: true },
+      })) as { id: string; blobUrl: string | null }[];
+      const ids = stale.filter((r) => !r.blobUrl).map((r) => r.id);
+      if (ids.length === 0) return;
+      await this.prisma.tutorialVideoAsset.deleteMany({
+        where: { id: { in: ids }, assemblyStatus: 'failed' },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `черновик ${draftId}: старые провалы сборки не убраны (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
   }
 
   async reject(id: string, reason: string): Promise<DraftQueueItem> {
@@ -274,18 +442,10 @@ export class ClientSiteTutorialAdminService {
   private async submitAssembly(
     row: DraftRow,
     frames: number,
+    prepared: { frameUrls: string[]; contentHash: string },
     approvedBy: string,
   ): Promise<void> {
-    if (!this.ffmpeg.configured()) {
-      throw new ServiceUnavailableException(
-        'сборка видео не настроена на этом стенде (FFMPEG_API_KEY) — одобрять нечего собирать',
-      );
-    }
-
-    const frameUrls: string[] = [];
-    for (const pathname of await this.framePathnames(row.id)) {
-      frameUrls.push(await this.blob.getPublicUrl(pathname));
-    }
+    const { frameUrls, contentHash } = prepared;
     // `uniformFrames` — все кадры по `SECONDS_PER_FRAME`, то же
     // поведение, что до этапа A ТЗ `TZ-Tutorial-Video-Voiced.md`.
     // Без движения — явно, а не умолчанием: §8 того же ТЗ этот путь
@@ -342,6 +502,9 @@ export class ClientSiteTutorialAdminService {
         // первая её редакция знала одного и сносила кадры ЖИВЫХ
         // черновиков.
         assemblyStatus: 'preparing',
+        // Точный отпечаток кадров — по нему `approve` считает провалы
+        // того же содержимого (`MAX_ASSEMBLY_ATTEMPTS`).
+        contentHash,
         // Из плана, а не произведением у писателя — см. `durationMs`
         // в `SlideshowPlan` (этап A).
         durationMs: plan.durationMs,

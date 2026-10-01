@@ -122,7 +122,7 @@ export class TutorialScenarioAdminService {
     // Та же проверка, что у ответа модели (сквозной аудит 29.09.2026):
     // ручная правка исполняется тем же ночным кроном, значит платные
     // кнопки в ней так же опасны — см. `validateScenarioSteps`.
-    const parsed = validateScenarioSteps(rawSteps);
+    const parsed = validateScenarioSteps(rawSteps, row.subjectKey);
     if (!parsed.ok) {
       throw new BadRequestException(
         `Шаги не приняты: ${parsed.reason ?? 'не разобрались'}`,

@@ -284,7 +284,11 @@ export async function runScenario(
     try {
       await runStep(page, step, resolveRoute, stepTimeoutMs);
       results.push({ index: i, step, ok: true });
-      if (captureFrames && page.screenshot) {
+      if (
+        captureFrames &&
+        page.screenshot &&
+        !opensOtherStepScreen(step, steps[i + 1])
+      ) {
         // Best-effort: неудачный скриншот (страница в переходном
         // состоянии, редкая гонка CDP) не должен ронять весь регресс-
         // прогон ради необязательного кадра для слайд-шоу.
@@ -334,6 +338,30 @@ export async function runScenario(
     skippedPaidClicks,
     skippedFrames,
   };
+}
+
+/**
+ * Кадр за этим шагом показал бы экран ДРУГОГО шага обучалки
+ * (просмотр роликов 01.10.2026).
+ *
+ * Мастер открывается на пройденной сессии (`generate-ready`) на
+ * последнем шаге — «Ролик готов», — и сценарий шага «Разбор» сразу
+ * кликает позицию степпера. Кадр после `goto` при этом — экран шага 9
+ * в ролике про шаг 3, с подписью «открываем мастер»: посетитель видит
+ * не тот экран. Перехода по URL на нужную позицию у мастера нет, поэтому
+ * такой кадр просто не снимается: первым кадром ролика становится экран
+ * после клика. Только для пары `goto` → клик по позиции степпера
+ * (`wizard-step-*`): после других переходов экран — тот, о котором шаг.
+ */
+export function opensOtherStepScreen(
+  step: ScenarioStep,
+  next: ScenarioStep | undefined,
+): boolean {
+  return (
+    step.kind === 'goto' &&
+    next?.kind === 'click' &&
+    /\[data-qa=["']?wizard-step-/.test(next.selector)
+  );
 }
 
 /** Сколько ждать оседания экрана перед кадром — мягко, не осело —

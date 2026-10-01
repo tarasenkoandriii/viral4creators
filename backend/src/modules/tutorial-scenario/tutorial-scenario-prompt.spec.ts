@@ -31,7 +31,11 @@ describe('buildScenarioPrompt — каталог селекторов (этап 
       ['2', (route) => route.startsWith('greeting-video')],
       [
         'greeting-brief',
-        (route) => route.startsWith('generate') || route === 'item',
+        // `postprod-video` — экран рекламной сессии фикстуры (01.10.2026).
+        (route) =>
+          route.startsWith('generate') ||
+          route === 'item' ||
+          route === 'postprod-video',
       ],
     ];
     for (const [subjectKey, foreign] of cases) {
@@ -1074,5 +1078,35 @@ describe('кнопка релевантности: недостижимая по
     expect(QA_HOOKS['greeting-sticker-card'].absentWhen?.env).toBe(
       'PIXABAY_API_KEY',
     );
+  });
+});
+
+describe('граница семей в валидаторе (01.10.2026)', () => {
+  const steps = (route: string) => [{ kind: 'goto', route }];
+  it('поздравление на экране рекламного ролика — отказ', () => {
+    const r = validateScenarioSteps(steps('postprod-video'), 'greeting-video');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/из другого мастера/);
+    expect(
+      validateScenarioSteps(steps('generate-ready'), 'greeting-brief').ok,
+    ).toBe(false);
+  });
+  it('рекламный шаг на экране поздравления — отказ', () => {
+    expect(validateScenarioSteps(steps('greeting-video'), '3').ok).toBe(false);
+  });
+  it('свои и общие экраны проходят; без темы граница не проверяется', () => {
+    expect(
+      validateScenarioSteps(steps('greeting-video-done'), 'greeting-video').ok,
+    ).toBe(true);
+    expect(validateScenarioSteps(steps('postprod'), 'greeting-video').ok).toBe(
+      true,
+    );
+    expect(validateScenarioSteps(steps('postprod-video'), '10').ok).toBe(true);
+    expect(validateScenarioSteps(steps('postprod-video')).ok).toBe(true);
+  });
+  it('ответ модели проверяется с темой', () => {
+    const text = JSON.stringify({ steps: steps('postprod-video') });
+    expect(parseScenarioResponse(text, 'greeting-video').ok).toBe(false);
+    expect(parseScenarioResponse(text, '10').ok).toBe(true);
   });
 });

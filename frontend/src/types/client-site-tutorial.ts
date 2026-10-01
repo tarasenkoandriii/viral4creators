@@ -43,6 +43,10 @@ export interface PageExploration {
   /** На странице видно поле пароля — визард зовёт `/login`, а не `/step`. */
   looksLikeLogin: boolean;
   dangerWarning?: string;
+  /** Сайт открыл не тот экран, что просили (редирект на вход/в кабинет
+   * внутри того же сайта). Текст готовый, с сервера; раунд не
+   * блокирует — кадр снят с того, что открылось. */
+  redirectWarning?: string;
 }
 
 export interface ClientSiteDraftView {

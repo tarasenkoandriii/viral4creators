@@ -51,6 +51,7 @@ import {
 } from '@nestjs/common';
 import {
   ClientSiteTutorialService,
+  alignRoundWarnings,
   pickLoginProofSelector,
 } from './client-site-tutorial.service';
 import { RelaySessionGoneError } from './live-login-relay.client';
@@ -115,6 +116,9 @@ function setup(
      * `clientSiteDraftId` (находка Б-4 аудита лендинга). `null` —
      * ролика ещё нет. */
     videoAsset?: unknown;
+    /** Хранилище целиком — там, где важно, ЧТО в нём лежит после
+     * операции, а не какие вызовы были (см. `memoryBlob`). */
+    blob?: BlobService;
   } = {},
 ) {
   const draftRow = opts.draft === undefined ? makeDraftRow() : opts.draft;
@@ -172,17 +176,19 @@ function setup(
     ...opts.explorer,
   };
 
-  const blob = {
-    uploadBuffer: jest
-      .fn()
-      .mockImplementation((pathname: string) =>
-        Promise.resolve({ url: `https://blob.example/${pathname}` }),
-      ),
-    listByPrefix: jest
-      .fn()
-      .mockResolvedValue({ blobs: opts.existingFrames ?? [], cursor: null }),
-    deleteMany: jest.fn().mockResolvedValue(0),
-  } as unknown as BlobService;
+  const blob =
+    opts.blob ??
+    ({
+      uploadBuffer: jest
+        .fn()
+        .mockImplementation((pathname: string) =>
+          Promise.resolve({ url: `https://blob.example/${pathname}` }),
+        ),
+      listByPrefix: jest
+        .fn()
+        .mockResolvedValue({ blobs: opts.existingFrames ?? [], cursor: null }),
+      deleteMany: jest.fn().mockResolvedValue(0),
+    } as unknown as BlobService);
 
   const relay = {
     configured: jest.fn(() => opts.relayConfigured ?? true),
@@ -792,7 +798,230 @@ describe('/finish — заморозка и заливка кадров', () => 
   });
 });
 
+/**
+ * Хранилище с состоянием: путь → тип содержимого. Моки вызовов выше
+ * проверяют порядок, но не видят главного — что осталось лежать. Блокер
+ * QA 01.10.2026 (стирание съёмочных кадров перед их копированием) по
+ * одним вызовам не ловился: `copyBlob` звался, просто копировать было
+ * уже нечего.
+ */
+function memoryBlob(initial: Record<string, string>) {
+  const store = new Map<string, string>(Object.entries(initial));
+  const blob = {
+    store,
+    uploadBuffer: jest.fn((pathname: string, _b: Buffer, type: string) => {
+      store.set(pathname, type);
+      return Promise.resolve({ url: `https://blob.example/${pathname}` });
+    }),
+    // Как настоящий `BlobService.copyBlob`: исходника нет — `null`.
+    copyBlob: jest.fn((from: string, to: string, type = 'image/jpeg') => {
+      if (!store.has(from)) return Promise.resolve(null);
+      store.set(to, type);
+      return Promise.resolve(`https://blob.example/${to}`);
+    }),
+    listByPrefix: jest.fn((prefix: string) =>
+      Promise.resolve({
+        blobs: [...store.keys()]
+          .filter((k) => k.startsWith(prefix))
+          .map((pathname) => ({ pathname, uploadedAt: new Date() })),
+        cursor: null,
+      }),
+    ),
+    deleteMany: jest.fn((paths: string[]) => {
+      for (const p of paths) store.delete(p);
+      return Promise.resolve(paths.length);
+    }),
+  };
+  return blob;
+}
+
+describe('/finish — съёмочные кадры переживают уборку (блокер QA 01.10.2026)', () => {
+  const ROUNDS = {
+    steps: [
+      { kind: 'goto', route: 'https://shop.example.com' },
+      { kind: 'click', selector: '#next' },
+    ],
+    stepsPerRound: [1, 1],
+    roundScreenshots: [
+      'data:image/jpeg;base64,/9j/AAA=',
+      'data:image/jpeg;base64,/9j/BBB=',
+    ],
+    roundVideoFrames: [
+      'https://blob.example/tutorial-video-frames/draft1/round-0.png',
+      'https://blob.example/tutorial-video-frames/draft1/round-1.png',
+    ],
+  };
+
+  it('итоговые кадры собираются из съёмочных, и съёмочные остаются на месте', async () => {
+    const blob = memoryBlob({
+      'tutorial-video-frames/draft1/round-0.png': 'image/png',
+      'tutorial-video-frames/draft1/round-1.png': 'image/png',
+      // Хвост прошлого, более длинного /finish — его стереть надо.
+      'tutorial-video-frames/draft1/7.jpg': 'image/jpeg',
+    });
+    const { service } = setup({
+      draft: makeDraftRow(ROUNDS),
+      blob: blob as unknown as BlobService,
+    });
+
+    await service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' });
+
+    expect([...blob.store.keys()].sort()).toEqual([
+      'tutorial-video-frames/draft1/0.png',
+      'tutorial-video-frames/draft1/1.png',
+      'tutorial-video-frames/draft1/round-0.png',
+      'tutorial-video-frames/draft1/round-1.png',
+    ]);
+    // Оба кадра — съёмочные (PNG), а не откат на предпросмотр: откат
+    // здесь означал бы, что исходник исчез до копирования.
+    expect(blob.uploadBuffer).not.toHaveBeenCalled();
+  });
+
+  it('повторный /finish после resume тоже находит съёмочные кадры', async () => {
+    const blob = memoryBlob({
+      'tutorial-video-frames/draft1/round-0.png': 'image/png',
+      'tutorial-video-frames/draft1/round-1.png': 'image/png',
+    });
+    const { service } = setup({
+      draft: makeDraftRow(ROUNDS),
+      blob: blob as unknown as BlobService,
+    });
+    await service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' });
+    await service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' });
+
+    expect(blob.store.get('tutorial-video-frames/draft1/0.png')).toBe(
+      'image/png',
+    );
+    expect(blob.store.get('tutorial-video-frames/draft1/1.png')).toBe(
+      'image/png',
+    );
+  });
+
+  it('пропавший съёмочный кадр заменяется кадром предпросмотра, а не выпадает', async () => {
+    const blob = memoryBlob({
+      // round-1 нет: заливка съёмочного кадра раунда не удалась.
+      'tutorial-video-frames/draft1/round-0.png': 'image/png',
+    });
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: makeDraftRow(ROUNDS),
+      blob: blob as unknown as BlobService,
+    });
+
+    await service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' });
+
+    expect(blob.store.get('tutorial-video-frames/draft1/0.png')).toBe(
+      'image/png',
+    );
+    expect(blob.store.get('tutorial-video-frames/draft1/1.jpg')).toBe(
+      'image/jpeg',
+    );
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data.previewFrameCount).toBe(2);
+  });
+
+  it('проигрыш гонки чужому /finish не стирает итоговые кадры победителя', async () => {
+    const blob = memoryBlob({
+      'tutorial-video-frames/draft1/round-0.png': 'image/png',
+      'tutorial-video-frames/draft1/round-1.png': 'image/png',
+    });
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: makeDraftRow(ROUNDS),
+      blob: blob as unknown as BlobService,
+      updateCount: 0,
+    });
+    // Первое чтение — наш черновик в работе; повторное, после
+    // проигранной гонки — уже отправленный другой вкладкой.
+    clientSiteTutorialDraft.findUnique
+      .mockResolvedValueOnce(makeDraftRow(ROUNDS))
+      .mockResolvedValueOnce(
+        makeDraftRow({ ...ROUNDS, status: 'PENDING_REVIEW' }),
+      );
+
+    await expect(
+      service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(blob.store.has('tutorial-video-frames/draft1/0.png')).toBe(true);
+    expect(blob.store.has('tutorial-video-frames/draft1/1.png')).toBe(true);
+  });
+});
+
+describe('/finish — отставшая вкладка не портит чужие кадры (аудит 01.10.2026)', () => {
+  const ROUNDS = {
+    steps: [{ kind: 'goto', route: 'https://shop.example.com' }],
+    stepsPerRound: [1],
+    roundScreenshots: ['data:image/jpeg;base64,/9j/AAA='],
+    roundVideoFrames: [
+      'https://blob.example/tutorial-video-frames/draft1/round-0.png',
+    ],
+  };
+
+  it('устаревшая версия — 409 ДО любой работы с хранилищем', async () => {
+    const blob = memoryBlob({
+      'tutorial-video-frames/draft1/round-0.png': 'image/png',
+      'tutorial-video-frames/draft1/0.png': 'image/png',
+    });
+    const { service } = setup({
+      draft: makeDraftRow(ROUNDS),
+      blob: blob as unknown as BlobService,
+    });
+    await expect(
+      service.finish('user1', 'proj1', { expectedVersion: 2, title: 'Т' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(blob.listByPrefix).not.toHaveBeenCalled();
+    expect(blob.copyBlob).not.toHaveBeenCalled();
+    expect(blob.uploadBuffer).not.toHaveBeenCalled();
+  });
+
+  it('сбой заливки при черновике, уже отправленном другой вкладкой, — итоговые не стираются', async () => {
+    const blob = memoryBlob({
+      'tutorial-video-frames/draft1/round-0.png': 'image/png',
+      'tutorial-video-frames/draft1/0.png': 'image/png',
+    });
+    blob.copyBlob.mockRejectedValueOnce(new Error('хранилище икнуло'));
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: makeDraftRow(ROUNDS),
+      blob: blob as unknown as BlobService,
+    });
+    clientSiteTutorialDraft.findUnique
+      .mockResolvedValueOnce(makeDraftRow(ROUNDS))
+      .mockResolvedValueOnce(
+        makeDraftRow({ ...ROUNDS, status: 'PENDING_REVIEW' }),
+      );
+    await expect(
+      service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    // Первое стирание (перед заливкой) — наше законное; второго, после
+    // сбоя, быть не должно: листинг под уборку — ровно один.
+    expect(blob.listByPrefix).toHaveBeenCalledTimes(1);
+  });
+
+  it('сбой заливки при черновике в работе — за собой убираем', async () => {
+    const blob = memoryBlob({
+      'tutorial-video-frames/draft1/round-0.png': 'image/png',
+    });
+    blob.copyBlob.mockRejectedValueOnce(new Error('хранилище икнуло'));
+    const { service } = setup({
+      draft: makeDraftRow(ROUNDS),
+      blob: blob as unknown as BlobService,
+    });
+    await expect(
+      service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(blob.listByPrefix).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('DELETE — за собой убирают и в хранилище', () => {
+  it('DELETE уносит и съёмочные кадры раундов — префикс целиком', async () => {
+    const blob = memoryBlob({
+      'tutorial-video-frames/draft1/round-0.png': 'image/png',
+      'tutorial-video-frames/draft1/0.png': 'image/png',
+    });
+    const { service } = setup({ blob: blob as unknown as BlobService });
+    await service.remove('user1', 'proj1');
+    expect(blob.store.size).toBe(0);
+  });
+
   it('черновик, доходивший до /finish, уносит свои кадры', async () => {
     const { service, blob, clientSiteTutorialDraft } = setup({
       draft: makeDraftRow({ previewFrameCount: 2 }),
@@ -923,6 +1152,10 @@ describe('/live-login/complete', () => {
     expect(data.requiresLiveLoginReplay).toBe(true);
     // Без свежего PageExploration визарду нечем было бы продолжить.
     expect(result.exploration).toBeDefined();
+    // Живой вход ничего «опасного» не нажимал от нашего имени — но
+    // место в массиве предупреждений за раундом всё равно держится,
+    // иначе следующее съехало бы на чужой кадр.
+    expect(data.roundDangerWarnings).toEqual([null, null]);
   });
 
   it('буквальная последовательность кликов НЕ записывается', async () => {
@@ -1283,5 +1516,65 @@ describe('готовый ролик у владельца проекта (Б-4)'
     const view = await service.getState('user1', 'proj1');
 
     expect(view?.video).toBeNull();
+  });
+});
+
+describe('предупреждение стоп-листа доживает до оператора (перенос QA TMA §12)', () => {
+  it('/step сохраняет предупреждение своего раунда', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      explorer: {
+        runRound: jest.fn().mockResolvedValue({
+          exploration: { ...EXPLORATION, dangerWarning: 'похоже на оплату' },
+          cookies: [],
+        }),
+      },
+    });
+    await service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      clickSelector: '#pay',
+      fills: [],
+    });
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    // Черновик до колонки (`undefined`) — ранний раунд без пометки.
+    expect(data.roundDangerWarnings).toEqual([null, 'похоже на оплату']);
+  });
+
+  it('раунд без предупреждения держит место `null`', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: makeDraftRow({ roundDangerWarnings: ['было'] }),
+    });
+    await service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      clickSelector: '#next',
+      fills: [],
+    });
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data.roundDangerWarnings).toEqual(['было', null]);
+  });
+
+  it('/undo снимает предупреждение отменённого раунда, а не чужое', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: makeDraftRow({
+        steps: [
+          { kind: 'goto', route: 'https://shop.example.com' },
+          { kind: 'click', selector: '#a' },
+          { kind: 'click', selector: '#pay' },
+        ],
+        stepsPerRound: [1, 1, 1],
+        roundScreenshots: ['кадр-1', 'кадр-2', 'кадр-3'],
+        roundDangerWarnings: [null, 'удаление', 'оплата'],
+      }),
+    });
+    await service.undo('user1', 'proj1', 3);
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data.roundDangerWarnings).toEqual([null, 'удаление']);
+  });
+
+  it('alignRoundWarnings выравнивает по левому краю и чистит мусор', () => {
+    expect(alignRoundWarnings(undefined, 2)).toEqual([null, null]);
+    expect(alignRoundWarnings(['x'], 3)).toEqual([null, null, 'x']);
+    expect(alignRoundWarnings(['a', 'b', 'c'], 2)).toEqual(['b', 'c']);
+    expect(alignRoundWarnings([42, '', 'ok'], 3)).toEqual([null, null, 'ok']);
+    expect(alignRoundWarnings('не массив', 1)).toEqual([null]);
   });
 });

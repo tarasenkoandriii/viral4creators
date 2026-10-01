@@ -117,7 +117,7 @@ import {
   withTimeout,
 } from '../../common/headless-chromium';
 import { runScenario, ScenarioFrame, ScenarioPage } from './scenario-runner';
-import { FIXTURE_IDS } from './fixture-seed';
+import { FIXTURE_IDS, seedFixtureUser } from './fixture-seed';
 import {
   FRESH_WIZARD_ROUTE,
   FixtureRouteContext,
@@ -1198,6 +1198,27 @@ export class TutorialScenarioRunnerService {
       };
     }
 
+    // Каждый тик — с чистой фикстуры (просмотр роликов 01.10.2026).
+    // Сценарии кликают переключатели и одобряют промпт в СОХРАНЁННЫХ
+    // сессиях фикстуры, и состояние переходило в следующий прогон:
+    // ролик шага 6 говорил «включаем учёт рекомендаций», а галочка в
+    // кадре через раз оказывалась снятой — прошлый прогон её уже
+    // включил, этот выключил. Пересев — те же upsert'ы, что у кнопки
+    // «Завести фикстуру»: десяток запросов, оплаченный ролик готового
+    // поздравления он не трогает. Сбой — не повод не снимать: будет
+    // прежнее состояние, как до этой правки.
+    try {
+      await seedFixtureUser(
+        this.prisma as unknown as Parameters<typeof seedFixtureUser>[0],
+        telegramId,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `фикстура: пересев перед прогоном не удался, снимаем на прежнем состоянии: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
     const ctx = await this.resolveFixtureContext(user.id);
     // Потолок открывается ОДИН раз на тик и ведётся в памяти — см.
     // `openBudget`. Читается до запуска браузера: если он уже выбран,

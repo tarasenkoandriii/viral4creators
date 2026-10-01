@@ -16,6 +16,7 @@ import {
   draftRoundFramePathname,
   frameExtension,
   orderedFramePathnames,
+  finalFrameIndex,
 } from './draft-frames';
 
 describe('путь в хранилище', () => {
@@ -166,5 +167,23 @@ describe('итоговые кадры по листингу хранилища',
 
   it('пустой листинг — пустой список, а не ошибка', () => {
     expect(orderedFramePathnames('d', [])).toEqual([]);
+  });
+});
+
+describe('finalFrameIndex — что /finish вправе стереть (блокер QA 01.10.2026)', () => {
+  const P = 'tutorial-video-frames/d/';
+
+  it('итоговый кадр — номер и расширение', () => {
+    expect(finalFrameIndex('d', `${P}0.png`)).toBe(0);
+    expect(finalFrameIndex('d', `${P}12.jpg`)).toBe(12);
+  });
+
+  it('съёмочный кадр раунда — НЕ итоговый: его ещё копировать', () => {
+    expect(finalFrameIndex('d', `${P}round-0.png`)).toBeNull();
+  });
+
+  it('чужой черновик и посторонние имена — не итоговые', () => {
+    expect(finalFrameIndex('d', 'tutorial-video-frames/dd/0.png')).toBeNull();
+    expect(finalFrameIndex('d', `${P}0.thumb.png`)).toBeNull();
   });
 });

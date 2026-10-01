@@ -21,7 +21,12 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
-import { ClientSiteTutorialAdminService } from './client-site-tutorial-admin.service';
+import {
+  ClientSiteTutorialAdminService,
+  FRAME_DOWNLOAD_TIMEOUT_MS,
+  MAX_ASSEMBLY_ATTEMPTS,
+} from './client-site-tutorial-admin.service';
+import { createHash } from 'node:crypto';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { BlobService } from '../storage/blob.service';
 import type { FfmpegApiService } from '../postprod/ffmpeg-api.service';
@@ -57,6 +62,10 @@ function setup(
     submit?: jest.Mock;
     /** Что лежит в хранилище под префиксом кадров этого черновика. */
     storedFrames?: string[];
+    /** Сколько провалов того же содержимого уже записано. */
+    failedSame?: number;
+    /** Строки `failed` сверх потолка — то, что найдёт уборка. */
+    staleFailed?: Array<{ id: string; blobUrl: string | null }>;
   } = {},
 ) {
   const row = opts.row === undefined ? makeRow() : opts.row;
@@ -69,6 +78,9 @@ function setup(
   const tutorialVideoAsset = {
     create: jest.fn().mockResolvedValue({ id: 'asset1' }),
     update: jest.fn().mockResolvedValue({}),
+    count: jest.fn().mockResolvedValue(opts.failedSame ?? 0),
+    findMany: jest.fn().mockResolvedValue(opts.staleFailed ?? []),
+    deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
   };
   const project = {
     findUnique: jest.fn().mockResolvedValue({ userId: 'owner-1' }),
@@ -87,6 +99,11 @@ function setup(
    * должен.
    */
   const blob = {
+    // Байты кадра = его путь: отпечаток меняется вместе с кадром и
+    // считается в тесте той же формулой без доступа к хранилищу.
+    downloadBuffer: jest
+      .fn()
+      .mockImplementation((p: string) => Promise.resolve(Buffer.from(p))),
     getPublicUrl: jest
       .fn()
       .mockImplementation((p: string) => Promise.resolve(`https://blob/${p}`)),
@@ -190,6 +207,16 @@ describe('карточка заявки', () => {
       ],
     });
     expect((await service.details('draft1')).frameUrls).toHaveLength(3);
+  });
+
+  it('оператор видит раскладку «кадр ↔ шаги» и предупреждения по раундам', async () => {
+    const { service } = setup({
+      row: makeRow({ roundDangerWarnings: ['похоже на оплату'] }),
+    });
+    const details = await service.details('draft1');
+    expect(details.stepsPerRound).toEqual([1, 1]);
+    // Выравнивание по левому краю — как пишет сервис визарда.
+    expect(details.roundDangerWarnings).toEqual([null, 'похоже на оплату']);
   });
 
   it('шаги видны целиком — по ним и принимается решение', async () => {
@@ -395,17 +422,129 @@ describe('одобрение запускает сборку — и только
   });
 
   it('не настроенный ffmpeg — отказ с причиной, а не «одобрено» без ролика', async () => {
-    const { service, submit, clientSiteTutorialDraft } = setup({
+    const { service, submit, clientSiteTutorialDraft, blob } = setup({
       ffmpegConfigured: false,
     });
     await expect(service.approve('draft1', 'op')).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
     expect(submit).not.toHaveBeenCalled();
-    // И статус вернулся на проверку — кнопка «Одобрить» осталась рабочей.
-    expect(
-      clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data,
-    ).toEqual({ status: 'PENDING_REVIEW' });
+    // Отказ — до захвата статуса и до скачивания кадров (аудит
+    // 01.10.2026): откатывать нечего, тянуть кадры незачем.
+    expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+    expect(blob.downloadBuffer).not.toHaveBeenCalled();
+  });
+
+  it('кадров в хранилище меньше, чем записал /finish, — отказ, а не короткий ролик', async () => {
+    const { service, submit, clientSiteTutorialDraft } = setup({
+      storedFrames: ['tutorial-video-frames/draft1/0.png'],
+    });
+    await expect(service.approve('draft1', 'op')).rejects.toThrow(
+      /в хранилище 1 кадр\(ов\), а при завершении записи было 2/,
+    );
+    expect(submit).not.toHaveBeenCalled();
+    expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('зависшее скачивание кадра — отказ по потолку ожидания, с именем кадра', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    try {
+      const { service, blob, submit } = setup();
+      (blob.downloadBuffer as jest.Mock).mockReturnValueOnce(
+        new Promise(() => undefined),
+      );
+      const pending = service.approve('draft1', 'op');
+      // Отказ ловится сразу, чтобы промис не считался необработанным,
+      // пока таймеры двигаются вручную.
+      const caught = pending.catch((e: unknown) => e);
+      await jest.advanceTimersByTimeAsync(FRAME_DOWNLOAD_TIMEOUT_MS);
+      expect(((await caught) as Error).message).toMatch(/0\.png/);
+      expect(submit).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('строка ролика несёт точный отпечаток байтов кадров', async () => {
+    const { service, tutorialVideoAsset } = setup();
+    await service.approve('draft1', 'op');
+    const sha = (b: string | Buffer) =>
+      createHash('sha256').update(b).digest('hex');
+    const expected = sha(
+      [
+        'tutorial-video-frames/draft1/0.png',
+        'tutorial-video-frames/draft1/1.jpg',
+      ]
+        .map((p) => `${sha(p)},`)
+        .join(''),
+    );
+    expect(tutorialVideoAsset.create.mock.calls[0][0].data.contentHash).toBe(
+      expected,
+    );
+  });
+
+  it('провалы считаются по ЭТОМУ черновику и ЭТОМУ содержимому', async () => {
+    const { service, tutorialVideoAsset } = setup();
+    await service.approve('draft1', 'op');
+    const where = tutorialVideoAsset.count.mock.calls[0][0].where;
+    expect(where).toEqual({
+      clientSiteDraftId: 'draft1',
+      assemblyStatus: 'failed',
+      contentHash: tutorialVideoAsset.create.mock.calls[0][0].data.contentHash,
+    });
+  });
+
+  it('третий провал тех же кадров — отказ по-русски, статус не тронут, задача не ушла', async () => {
+    const { service, submit, clientSiteTutorialDraft } = setup({
+      failedSame: MAX_ASSEMBLY_ATTEMPTS,
+    });
+    await expect(service.approve('draft1', 'op')).rejects.toThrow(
+      /уже проваливалась 3 раз/,
+    );
+    expect(submit).not.toHaveBeenCalled();
+    expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('до потолка — сборка уходит', async () => {
+    const { service, submit } = setup({
+      failedSame: MAX_ASSEMBLY_ATTEMPTS - 1,
+    });
+    await service.approve('draft1', 'op');
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('нечитаемый кадр — отказ с именем кадра ДО одобрения', async () => {
+    const { service, blob, submit, clientSiteTutorialDraft } = setup();
+    (blob.downloadBuffer as jest.Mock).mockRejectedValueOnce(new Error('404'));
+    await expect(service.approve('draft1', 'op')).rejects.toThrow(/0\.png/);
+    expect(submit).not.toHaveBeenCalled();
+    expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('строки failed черновика сверх потолка убираются, с файлом — остаются', async () => {
+    const { service, tutorialVideoAsset } = setup({
+      staleFailed: [
+        { id: 'old-1', blobUrl: null },
+        { id: 'old-2', blobUrl: 'https://blob/tutorial-videos/частичный.mp4' },
+      ],
+    });
+    await service.approve('draft1', 'op');
+    expect(tutorialVideoAsset.findMany.mock.calls[0][0]).toMatchObject({
+      where: { clientSiteDraftId: 'draft1', assemblyStatus: 'failed' },
+      orderBy: { createdAt: 'desc' },
+      skip: MAX_ASSEMBLY_ATTEMPTS,
+    });
+    expect(tutorialVideoAsset.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['old-1'] }, assemblyStatus: 'failed' },
+    });
+  });
+
+  it('сбой уборки провалов не роняет состоявшееся одобрение', async () => {
+    const { service, tutorialVideoAsset } = setup();
+    tutorialVideoAsset.findMany.mockRejectedValueOnce(new Error('БД икнула'));
+    await expect(service.approve('draft1', 'op')).resolves.toMatchObject({
+      id: 'draft1',
+    });
   });
 
   it('пропавший кадр не роняет карточку заявки целиком', async () => {

@@ -871,6 +871,13 @@ function PageStage(props: {
         </p>
       </Card>
 
+      {/* Рядом с кадром: человек должен понять, что смотрит на ДРУГОЙ
+          экран (чаще всего кончилась сессия), до того как выберет шаг.
+          Текст — с сервера, как и у предупреждения стоп-листа. */}
+      {exploration.redirectWarning && (
+        <Alert tone="warning">{exploration.redirectWarning}</Alert>
+      )}
+
       {exploration.dangerWarning && (
         <Alert tone="warning">{exploration.dangerWarning}</Alert>
       )}

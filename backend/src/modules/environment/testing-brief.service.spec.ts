@@ -1,6 +1,9 @@
 import { TestingBriefService } from './testing-brief.service';
 
 const NOW = new Date('2026-09-26T12:00:00.000Z');
+// Срок доступа — от настоящих часов: зашитая дата 2026-10-01 протухла
+// ровно 01.10.2026, и тест упал на календаре, а не на коде.
+const ACCESS_UNTIL = new Date(Date.now() + 7 * 86_400_000);
 
 function build(
   over: {
@@ -15,7 +18,7 @@ function build(
       ? {
           id: 'u1',
           isTestUser: true,
-          testAccessUntil: new Date('2026-10-01T00:00:00.000Z'),
+          testAccessUntil: ACCESS_UNTIL,
           freeScenarios: ['PRODUCT_VIDEO'],
           freeOutsideProject: true,
           testDailyLimitUsd: 5,
@@ -47,7 +50,7 @@ describe('бриф тестировщика', () => {
     const brief = await service.of('42');
     expect(brief.scenarios).toEqual(['PRODUCT_VIDEO']);
     expect(brief.freeOutsideProject).toBe(true);
-    expect(brief.accessUntil).toBe('2026-10-01T00:00:00.000Z');
+    expect(brief.accessUntil).toBe(ACCESS_UNTIL.toISOString());
     expect(brief.spentTodayMicroUsd).toBe(1_200_000);
     expect(brief.dailyLimitMicroUsd).toBe(5_000_000);
   });

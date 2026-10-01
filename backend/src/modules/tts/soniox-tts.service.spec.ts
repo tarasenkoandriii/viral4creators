@@ -165,3 +165,32 @@ describe('SonioxTtsService.synthesize', () => {
     });
   });
 });
+
+describe('SonioxTtsService.voices — справочник на API-хосте (01.10.2026)', () => {
+  const prev = process.env.SONIOX_API_KEY;
+  afterEach(() => {
+    process.env.SONIOX_API_KEY = prev;
+  });
+  it('GET https://api.soniox.com/v1/tts-models с ключом', async () => {
+    process.env.SONIOX_API_KEY = 'k';
+    const fn = mockFetch({
+      json: {
+        models: [
+          {
+            id: 'tts-rt-v2',
+            languages: [{ code: 'ru' }],
+            voices: [{ id: 'Maya' }],
+          },
+        ],
+      },
+    });
+    const out = await new SonioxTtsService().voices('ru');
+    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://api.soniox.com/v1/tts-models');
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      'Bearer k',
+    );
+    expect(out.error).toBeUndefined();
+    expect(out.voices).toHaveLength(1);
+  });
+});

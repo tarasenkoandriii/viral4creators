@@ -327,6 +327,21 @@ export const COMPARISON_PAGE_CSS = FREEZE_MOTION_CSS + HIDE_VIDEO_CONTENT_CSS;
 const SETTLE_NETWORK_IDLE_MS = 500;
 const SETTLE_TIMEOUT_MS = 5_000;
 
+/**
+ * Общий потолок оседания НЕМАСКИРОВАННОГО кадра (01.10.2026) — один на
+ * оба ожидания, а не по `SETTLE_TIMEOUT_MS` на каждое (до 10 с).
+ *
+ * Почему короче, чем у сравниваемого. Медиа здесь не обрываются, и на
+ * экране с роликом сеть не затихает вовсе — первое ожидание всегда
+ * выбирает потолок целиком. А съёмка поздравлений — 4 кадра × до 5
+ * локалей = 20 прогонов (у каждого свой запуск браузера) в ОДНОМ
+ * HTTP-запросе под потолком функции 300 с: по 10 с оседания на кадр
+ * дали бы +200 с к и без того ~100–150 с съёмки. С общим потолком 3 с
+ * добавка не больше 60 с. Спиннер карточки (ради которого оседание и
+ * включено) сходит за доли секунды после ответа API — 3 с хватает.
+ */
+export const UNMASKED_SETTLE_BUDGET_MS = 3_000;
+
 export type SnapshotTheme = 'light' | 'dark';
 
 export interface UiSnapshotRunOptions {
@@ -872,15 +887,25 @@ export class UiSnapshotRunnerService {
       // чтобы не сдвигать раскладку остального экрана (иначе маскирование
       // само стало бы источником ложных "изменилось").
       //
-      // Немаскированный прогон пропускает этот шаг целиком — см.
+      // Оседание — для ЛЮБОГО прогона (§12 спеки TMA, 01.10.2026):
+      // немаскированные кадры идут в лендинг и обучалку, и карточка со
+      // спиннером там — брак, хоть она ни с чем и не сравнивается.
+      // Ожидания мягкие. У сравниваемого — до `SETTLE_TIMEOUT_MS` на
+      // каждое из двух (сеть, затем шрифты/спиннер), то есть до 10 с;
+      // у немаскированного — общий потолок `UNMASKED_SETTLE_BUDGET_MS`
+      // на оба: медиа в нём не обрезаются, и потоковое видео не даёт
+      // сети затихнуть (расчёт — у константы).
+      // Сначала дождаться, пока экран осядет, затем (только сравниваемый)
+      // замаскировать и заморозить движение — см. `FREEZE_MOTION_CSS`:
+      // без этого кадр зависел от того, КОГДА он снят, и крон «мигал».
+      await settleForComparison(
+        page,
+        view.unmasked ? { budgetMs: UNMASKED_SETTLE_BUDGET_MS } : {},
+      );
+      // Маски и заморозку немаскированный прогон пропускает — см.
       // `UiSnapshotRunOptions.unmasked`: ему кадр нужен именно такой,
-      // какой есть, и в сравнении он не участвует.
+      // какой есть (с видео и живой анимацией), в сравнении он не участвует.
       if (!view.unmasked) {
-        // Сначала дождаться, пока экран осядет, затем замаскировать и
-        // заморозить движение — см. `SETTLE_TIMEOUT_MS` и
-        // `FREEZE_MOTION_CSS`: без этого кадр зависел от того, КОГДА
-        // он снят, и крон «мигал» парами.
-        await settleForComparison(page);
         await page.evaluate(maskAndFreezeInPage, COMPARISON_PAGE_CSS);
       }
 
@@ -1281,23 +1306,39 @@ interface SettlePage {
 }
 
 /**
- * Дождаться, пока сравниваемый кадр осядет: полное затишье сети,
+ * Дождаться, пока кадр осядет (сравниваемый и немаскированный — оба,
+ * см. `captureOne`; у немаскированного общий потолок
+ * `UNMASKED_SETTLE_BUDGET_MS`): полное затишье сети,
  * загруженные шрифты, ни одного спиннера (см. `SETTLE_TIMEOUT_MS`).
  * Оба ожидания мягкие — не осевший экран снимается как есть.
  */
-export async function settleForComparison(page: SettlePage): Promise<void> {
+export async function settleForComparison(
+  page: SettlePage,
+  opts: { budgetMs?: number; now?: () => number } = {},
+): Promise<void> {
+  const now = opts.now ?? Date.now;
+  // Без `budgetMs` — прежнее поведение сравниваемого прогона: по
+  // `SETTLE_TIMEOUT_MS` на каждое ожидание. С ним — один дедлайн на оба.
+  const deadline =
+    opts.budgetMs !== undefined ? now() + opts.budgetMs : undefined;
+  const timeoutLeft = () =>
+    deadline === undefined ? SETTLE_TIMEOUT_MS : deadline - now();
   await page
     .waitForNetworkIdle({
       idleTime: SETTLE_NETWORK_IDLE_MS,
-      timeout: SETTLE_TIMEOUT_MS,
+      timeout: timeoutLeft(),
     })
     .catch(() => undefined);
+  const left = timeoutLeft();
+  // `timeout: 0` у puppeteer — «ждать вечно», поэтому исчерпанный
+  // бюджет — пропуск второго ожидания, а не ноль.
+  if (left <= 0) return;
   await page
     .waitForFunction(
       () =>
         document.fonts.status === 'loaded' &&
         document.querySelector('.animate-spin') === null,
-      { timeout: SETTLE_TIMEOUT_MS },
+      { timeout: left },
     )
     .catch(() => undefined);
 }

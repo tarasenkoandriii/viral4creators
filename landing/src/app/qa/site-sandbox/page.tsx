@@ -1,5 +1,5 @@
-import type { Metadata } from 'next';
-import { SandboxClient } from './SandboxClient';
+import type { Metadata } from "next";
+import { SandboxClient } from "./SandboxClient";
 
 /**
  * Полигон для разведчика чужих сайтов (`chromium-page-explorer.ts`),
@@ -32,6 +32,16 @@ import { SandboxClient } from './SandboxClient';
  *     кадр снимается после `waitForNetworkIdle`, а не до;
  *   - переход по кнопке внутри того же origin — обычный раунд.
  *
+ * С 01.10.2026 (перенос правок QA TMA §12 на обучалку) — стабилизация
+ * кадра чужого сайта (`foreign-frame-settle.ts`):
+ *
+ *   - спиннер, исчезающий по таймеру, — мягкое ожидание общих
+ *     признаков загрузки, а не только сети;
+ *   - fade-in дольше любого ожидания — `finish()` конечных анимаций
+ *     перед снимком;
+ *   - `<video>` с живым потоком — медиа не обрываются и не держат раунд;
+ *   - кнопка ниже первого экрана — цель раунда в центре кадра.
+ *
  * ## Чего здесь СОЗНАТЕЛЬНО нет
  *
  * Внешних переходов и настоящих форм: замок `assertStillInside` обязан
@@ -47,7 +57,7 @@ import { SandboxClient } from './SandboxClient';
  * `check-docs` читает исходники, а не сборку.
  */
 export const metadata: Metadata = {
-  title: 'QA sandbox — viral4creators',
+  title: "QA sandbox — viral4creators",
   // Страница служебная: в выдаче ей делать нечего, а ссылок на неё нет
   // ниоткуда (в `sitemap.ts` она не перечислена, в `robots.ts` закрыта
   // отдельным `Disallow`). Три замка, а не один: любой из них могут

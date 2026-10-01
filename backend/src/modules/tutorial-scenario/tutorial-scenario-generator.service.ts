@@ -618,7 +618,7 @@ export class TutorialScenarioGeneratorService {
           outputTokens: res.usageMetadata?.candidatesTokenCount ?? 0,
         }).costMicroUsd;
 
-        const parsed = parseScenarioResponse(res.text ?? '');
+        const parsed = parseScenarioResponse(res.text ?? '', subjectKey);
         if (!parsed.ok) {
           result.failed++;
           result.failures.push({

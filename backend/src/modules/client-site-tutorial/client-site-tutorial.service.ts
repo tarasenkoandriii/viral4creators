@@ -72,6 +72,7 @@ import {
   draftFramePathname,
   draftRoundFramePathname,
   draftFramePrefix,
+  finalFrameIndex,
 } from './draft-frames';
 import { BlobService } from '../storage/blob.service';
 import {
@@ -194,6 +195,9 @@ interface DraftRow {
   stepsPerRound: number[];
   roundScreenshots: unknown;
   roundVideoFrames: unknown;
+  /** См. `alignRoundWarnings`. `undefined` — строка из теста или
+   * клиента до миграции, читается как «предупреждений нет». */
+  roundDangerWarnings?: unknown;
   lastUrl: string | null;
   cookiesEnc: string | null;
   credentialsEnc: string | null;
@@ -570,6 +574,13 @@ export class ClientSiteTutorialService {
         stepsPerRound: next.stepsPerRound,
         roundScreenshots: next.roundScreenshots as object,
         roundVideoFrames: next.roundVideoFrames as object,
+        // Снимается предупреждение отменённого раунда; у оставшегося
+        // последнего — прежнее: переигровка заново ничего не нажимала
+        // «впервые», и её текст кнопки ничего нового не скажет.
+        roundDangerWarnings: alignRoundWarnings(
+          draft.roundDangerWarnings,
+          state.roundScreenshots.length,
+        ).slice(0, -1) as object,
         lastUrl: replayed.exploration.currentUrl,
         cookiesEnc: this.encryptCookies(replayed.cookies),
         version: { increment: 1 },
@@ -617,6 +628,13 @@ export class ClientSiteTutorialService {
     input: { expectedVersion: number; title: string },
   ): Promise<DraftView> {
     const { draft } = await this.loadEditableDraft(userId, projectId);
+    // Версия — ДО любой работы с хранилищем (аудит 01.10.2026). Без
+    // этой сверки отставшая вкладка доходила до заливки, перезаписывала
+    // итоговые кадры по тем же путям своими, устаревшими, и только
+    // потом получала 409 — а кадры победителя были уже испорчены.
+    // Сверка в `updateMany` ниже остаётся: между чтением и захватом
+    // строки окно всё равно есть.
+    if (draft.version !== input.expectedVersion) throw this.conflict();
     const state = this.toRoundsState(draft);
     assertRoundsConsistent(state);
     /**
@@ -641,10 +659,15 @@ export class ClientSiteTutorialService {
       );
     }
 
-    // Стереть прошлый префикс ПЕРЕД заливкой (§15 п.4): повторный
+    // Стереть прошлые ИТОГОВЫЕ кадры ПЕРЕД заливкой (§15 п.4): повторный
     // `/finish` после `resume` + `/undo` короче прошлого оставил бы
     // «хвостовые» файлы с номерами ≥ нового previewFrameCount навсегда.
-    await this.wipeFrames(draft.id);
+    //
+    // Только итоговые, не весь префикс (01.10.2026, блокер QA): под
+    // тем же префиксом лежат съёмочные `round-N.png`, из которых
+    // `uploadFrames` ниже и копирует кадры ролика. Стирание целиком
+    // уносило их до копирования — ролик молча оставался без кадров.
+    await this.wipeFinalFrames(draft.id);
     let uploaded: number;
     try {
       uploaded = await this.uploadFrames(
@@ -658,7 +681,12 @@ export class ClientSiteTutorialService {
       // (аудит этапа 116). Убираем сразу и называем причину: раньше
       // сюда прилетала generic 500 без текста, и повторное «Готово»
       // давало ровно то же самое.
-      await this.wipeFrames(draft.id).catch(() => undefined);
+      // Только если черновик всё ещё в работе — по той же причине, что
+      // и в ветке 409 ниже: пока мы заливали, другая вкладка могла
+      // завершить запись, и итоговые кадры под этими путями теперь её.
+      await this.wipeFinalFramesIfStillDrafting(projectId, draft.id).catch(
+        () => undefined,
+      );
       if (err instanceof FrameDecodeError) {
         // Текст декодера — в лог: человеку он ничего не объяснит.
         this.logger.warn(
@@ -689,8 +717,14 @@ export class ClientSiteTutorialService {
     });
     if (claim.count === 0) {
       // Кадры уже в Blob, а строка не наша — убираем за собой, иначе
-      // осиротевший префикс останется навсегда.
-      await this.wipeFrames(draft.id);
+      // осиротевший префикс останется навсегда. Итоговые, не съёмочные:
+      // черновик остаётся в работе, и его раунды ещё понадобятся.
+      //
+      // Но только если черновик всё ещё в работе: проигрыш гонки
+      // ДРУГОМУ `/finish` (вторая вкладка) значит, что итоговые кадры
+      // под этими путями теперь принадлежат победителю, и стереть их —
+      // оставить одобрению пустую заявку (01.10.2026).
+      await this.wipeFinalFramesIfStillDrafting(projectId, draft.id);
       throw this.conflict();
     }
 
@@ -875,6 +909,13 @@ export class ClientSiteTutorialService {
         stepsPerRound: next.stepsPerRound,
         roundScreenshots: next.roundScreenshots as object,
         roundVideoFrames: next.roundVideoFrames as object,
+        roundDangerWarnings: [
+          ...alignRoundWarnings(
+            draft.roundDangerWarnings,
+            state.roundScreenshots.length,
+          ),
+          null,
+        ] as object,
         lastUrl: round.exploration.currentUrl,
         requiresLiveLoginReplay: true,
         ...(cookiesEnc ? { cookiesEnc } : {}),
@@ -1052,6 +1093,15 @@ export class ClientSiteTutorialService {
         stepsPerRound: next.stepsPerRound,
         roundScreenshots: next.roundScreenshots as object,
         roundVideoFrames: next.roundVideoFrames as object,
+        // Предупреждение стоп-листа сохраняется для оператора (§8.3,
+        // перенос QA TMA §12): раньше оно жило только в ответе визарду.
+        roundDangerWarnings: [
+          ...alignRoundWarnings(
+            draft.roundDangerWarnings,
+            state.roundScreenshots.length,
+          ),
+          round.exploration.dangerWarning ?? null,
+        ] as object,
         lastUrl: round.exploration.currentUrl,
         cookiesEnc: this.encryptCookies(round.cookies),
         ...(extra.credentialsEnc
@@ -1319,14 +1369,50 @@ export class ClientSiteTutorialService {
   /** Стирает ВЕСЬ префикс кадров черновика, а не файлы 0..n-1 по
    * известному счётчику: счётчик мог быть меньше, чем лежит на самом
    * деле (прошлый, более длинный прогон), и разница осталась бы
-   * навсегда. */
+   * навсегда. Целиком — только при удалении черновика: `/finish`
+   * зовёт `wipeFinalFrames`, см. там. */
   private async wipeFrames(draftId: string): Promise<void> {
+    await this.wipeMatching(draftId, () => true);
+  }
+
+  /**
+   * Стирает только ИТОГОВЫЕ кадры ролика (`{n}.{ext}`) — тем же
+   * фильтром, по которому их читает админка (`finalFrameIndex`).
+   * Съёмочные `round-N.*` остаются: это исходник, из которого
+   * `uploadFrames` кладёт итоговые, и пока черновик жив, он нужен
+   * каждому следующему `/finish`.
+   */
+  private async wipeFinalFrames(draftId: string): Promise<void> {
+    await this.wipeMatching(
+      draftId,
+      (pathname) => finalFrameIndex(draftId, pathname) !== null,
+    );
+  }
+
+  /** Уборка итоговых кадров после неудачного `/finish` — только если
+   * черновик всё ещё `DRAFTING` (или исчез): иначе их уже залил и
+   * закрепил за собой другой `/finish`. */
+  private async wipeFinalFramesIfStillDrafting(
+    projectId: string,
+    draftId: string,
+  ): Promise<void> {
+    const now = await this.findDraft(projectId);
+    if (!now || now.status === 'DRAFTING') {
+      await this.wipeFinalFrames(draftId);
+    }
+  }
+
+  private async wipeMatching(
+    draftId: string,
+    matches: (pathname: string) => boolean,
+  ): Promise<void> {
     const prefix = draftFramePrefix(draftId);
     let cursor: string | undefined;
     do {
       const page = await this.blob.listByPrefix(prefix, { cursor });
-      if (page.blobs.length > 0) {
-        await this.blob.deleteMany(page.blobs.map((b) => b.pathname));
+      const doomed = page.blobs.map((b) => b.pathname).filter(matches);
+      if (doomed.length > 0) {
+        await this.blob.deleteMany(doomed);
       }
       cursor = page.cursor ?? undefined;
     } while (cursor);
@@ -1342,9 +1428,11 @@ export class ClientSiteTutorialService {
    * до этой правки, и у раундов, где второй снимок не удался; в обоих
    * случаях ролик собирается как раньше, просто мягче.
    *
-   * Съёмочный переносится `copyBlob`, а не перезаливкой: байты уже в
-   * хранилище, и гонять их через функцию значило бы платить трафиком
-   * за то, что умеет сам Blob.
+   * Съёмочный переносится `copyBlob`. Серверного копирования он НЕ
+   * делает — сам скачивает исходник и заливает его заново, — так что
+   * трафик через функцию тот же, что у перезаливки; выигрыш в другом:
+   * байты не идут через строку БД и data-URL, а `null` при отсутствии
+   * исходника — внятный сигнал для отката на предпросмотр ниже.
    */
   private async uploadFrames(
     draftId: string,
@@ -1357,12 +1445,21 @@ export class ClientSiteTutorialService {
         // `copyBlob` — `image/jpeg`, и съёмочный кадр (PNG) уехал бы в
         // хранилище с чужим типом. Имя файла при этом говорило бы
         // правду, а заголовок — нет, и разошлись бы они молча.
-        await this.blob.copyBlob(
+        const copied = await this.blob.copyBlob(
           draftRoundFramePathname(draftId, i, VIDEO_FRAME_CONTENT_TYPE),
           draftFramePathname(draftId, i, VIDEO_FRAME_CONTENT_TYPE),
           VIDEO_FRAME_CONTENT_TYPE,
         );
-        continue;
+        if (copied) continue;
+        // `null` — исходника нет (или хранилище не отдало его). Раньше
+        // здесь стоял безусловный `continue`, и кадр молча выпадал из
+        // ролика: ни лога, ни отказа, а одобрение потом падало на
+        // пустом слайд-шоу (блокер QA 01.10.2026). Запасной путь —
+        // кадр предпросмотра того же раунда: он лежит в строке и есть
+        // всегда, ролик станет мягче на один кадр, но не короче.
+        this.logger.warn(
+          `черновик ${draftId}: съёмочный кадр раунда ${i} не скопировался — беру кадр предпросмотра`,
+        );
       }
       const { buffer, contentType } = decodeFrameDataUrl(frames[i]);
       await this.blob.uploadBuffer(
@@ -1546,6 +1643,29 @@ function lastRoundIsLiveMarker(state: {
   if (size !== 1) return false;
   const last = state.steps[state.steps.length - 1];
   return last?.kind === 'assertVisible';
+}
+
+/**
+ * Предупреждения стоп-листа по раундам — ровно `rounds` штук.
+ *
+ * Выравнивание по ЛЕВОМУ краю, тот же приём, что у `roundVideoFrames`
+ * в `toRoundsState`: у черновика, начатого до колонки, предупреждений
+ * нет у РАННИХ раундов. Длиннее нужного (не бывает, но строка БД —
+ * чужой ввод) — обрезается слева по тому же правилу: свежие раунды
+ * важнее. Не-строки читаются как «предупреждения нет».
+ *
+ * Экспортируется для админки: оператор видит ту же раскладку, что
+ * пишется здесь, и второй, независимый разбор однажды бы разошёлся.
+ */
+export function alignRoundWarnings(
+  raw: unknown,
+  rounds: number,
+): (string | null)[] {
+  const list = (Array.isArray(raw) ? raw : []).map((w) =>
+    typeof w === 'string' && w.length > 0 ? w : null,
+  );
+  if (list.length >= rounds) return list.slice(list.length - rounds);
+  return [...Array.from({ length: rounds - list.length }, () => null), ...list];
 }
 
 /** Адрес первого шага сценария — с него начинается любая переигровка. */
