@@ -40,8 +40,17 @@ describe('диагностика сбоя связи с БД (этап 29)', () 
   });
 
   it('переживает не-Error и отсутствующий DATABASE_URL', () => {
-    const info = describeDbFailure('строка вместо ошибки', undefined);
-    expect(info.target).toBeNull();
-    expect(info.message).toContain('строка вместо ошибки');
+    // `undefined` включает умолчание параметра — `process.env.DATABASE_URL`.
+    // В CI она задана (Postgres сервиса), и тест падал только там
+    // (найдено 01.10.2026): «отсутствующий» надо обеспечить в окружении.
+    const saved = process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL;
+    try {
+      const info = describeDbFailure('строка вместо ошибки', undefined);
+      expect(info.target).toBeNull();
+      expect(info.message).toContain('строка вместо ошибки');
+    } finally {
+      if (saved !== undefined) process.env.DATABASE_URL = saved;
+    }
   });
 });

@@ -74,7 +74,7 @@ ci:
 		echo "$$out"; exit $$status; \
 	fi
 	cd backend && npx eslint "src/**/*.ts" --max-warnings 0
-	cd backend && npx jest --ci \
+	cd backend && DATABASE_URL=postgresql://postgres:postgres@localhost:5432/viral4creators npx jest --ci \
 		--transform '{"^.+\\.(t|j)s$$":["ts-jest",{"diagnostics":false}]}' \
 		--coverage --coverageReporters=text-summary \
 		--json --outputFile=jest-results.json
