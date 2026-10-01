@@ -1,6 +1,6 @@
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
-import { AudioTrackService } from './audio-track.service';
+import { AudioTrackService, trackBackground } from './audio-track.service';
 import { GenerationStatus } from '../../common/types/generation.types';
 
 interface GenerateRequest {
@@ -613,5 +613,82 @@ describe('AudioTrackService — субтитры дорожки (этап 141)',
     await svc.build('s1', 'de');
 
     expect(saved(prisma).subtitlesSrt).toBeUndefined();
+  });
+});
+
+/**
+ * Фон дорожки — как у оригинала (01.10.2026). Первый ролик Grok в TikTok
+ * звучал двумя голосами; языковая дорожка, собранная поверх рендера,
+ * повторила бы то же самое на каждом языке.
+ */
+describe('trackBackground', () => {
+  it('Grok со звуком в voiceover — дубляж (голос модели не берём)', () => {
+    expect(
+      trackBackground({ provider: 'grok', voiceMode: 'voiceover' }),
+    ).toEqual({ mode: 'dub', sourceHasNoAudio: false, backgroundUrls: [] });
+  });
+
+  it('дубляж с сохранёнными стемами — фон из них', () => {
+    expect(
+      trackBackground({
+        provider: 'grok',
+        voiceMode: 'dub',
+        backgroundStemUrls: ['https://blob.test/bg1.mp3'],
+      }).backgroundUrls,
+    ).toEqual(['https://blob.test/bg1.mp3']);
+  });
+
+  it('Veo в voiceover — как было, поверх рендера', () => {
+    expect(
+      trackBackground({ provider: 'veo', voiceMode: 'voiceover' }),
+    ).toEqual({
+      mode: 'voiceover',
+      sourceHasNoAudio: false,
+      backgroundUrls: [],
+    });
+  });
+
+  it('немой рендер — помечен, стемов нет', () => {
+    expect(
+      trackBackground({
+        provider: 'grok',
+        voiceMode: 'voiceover',
+        silentSource: true,
+        backgroundStemUrls: ['https://blob.test/bg1.mp3'],
+      }),
+    ).toEqual({
+      mode: 'voiceover',
+      sourceHasNoAudio: true,
+      backgroundUrls: [],
+    });
+  });
+});
+
+describe('AudioTrackService — сборка дорожки ролика Grok', () => {
+  it('стемы фона уходят в задачу, дорожка рендера — нет', async () => {
+    const { svc, ffmpeg } = build({
+      session: {
+        sessionId: 's1',
+        locale: 'ru',
+        generationPrompt: { finalVoiceoverScript: SPEECH },
+        generatedVideo: {
+          generatedVideoId: 'v1',
+          status: GenerationStatus.COMPLETE,
+          provider: 'grok',
+          voiceMode: 'dub',
+          backgroundStemUrls: [
+            'https://blob.test/sessions/s1/background-1.mp3',
+          ],
+          renderedUrl: 'https://blob.test/raw.mp4',
+          downloadUrl: 'https://blob.test/post.mp4',
+        },
+      },
+    });
+    await svc.build('s1', 'de');
+    const job = ffmpeg.submit.mock.calls[0][0];
+    expect(job.inputs.bg1).toBe(
+      'https://blob.test/sessions/s1/background-1.mp3',
+    );
+    expect(job.commands[0]).not.toContain('[0:a]');
   });
 });

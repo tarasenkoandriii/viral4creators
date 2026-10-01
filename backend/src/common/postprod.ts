@@ -715,6 +715,12 @@ export interface AudioTrackJobOptions {
   voiceInputKey: string;
   /** Ключ музыкальной подложки, если она была у оригинала. */
   musicInputKey?: string | null;
+  /**
+   * Ключи стемов фона без голоса модели (`GeneratedVideo.
+   * backgroundStemUrls`, 01.10.2026). Только для `dub`: тогда фоном
+   * служат они, а не дорожка рендера — в ней голос модели.
+   */
+  backgroundInputKeys?: string[];
   mode: 'voiceover' | 'dub';
   /** У исходника нет звуковой дорожки вовсе (`silentSource`). */
   sourceHasNoAudio?: boolean;
@@ -742,10 +748,35 @@ export function planAudioTrackJob(opts: AudioTrackJobOptions): PostProdPlan {
   const outputName = opts.outputName ?? 'track.m4a';
   const delayMs = Math.max(0, Math.round(opts.voiceDelayMs ?? 0));
   const usesSource = opts.mode === 'voiceover' && !opts.sourceHasNoAudio;
+  const backgroundKeys = (opts.backgroundInputKeys ?? [])
+    .map((k) => k.trim())
+    .filter((k) => k.length > 0);
+  if (backgroundKeys.length > 0 && opts.mode !== 'dub') {
+    // Та же причина, что у `planPostProduction`: молча проигнорировать
+    // значило бы собрать дорожку с голосом модели под видом «с фоном».
+    throw new PostProdError(
+      'фоновые стемы допустимы только в режиме dub: в voiceover исходная дорожка подмешивается целиком',
+    );
+  }
 
-  const inputKeys = [inputKey, voiceKey, ...(musicKey ? [musicKey] : [])];
+  const inputKeys = [
+    inputKey,
+    voiceKey,
+    ...(musicKey ? [musicKey] : []),
+    ...backgroundKeys,
+  ];
+  const firstBackgroundIndex = musicKey ? 3 : 2;
   const filters = audioMixFilters({
-    source: usesSource ? { duck: opts.duck ?? DEFAULT_DUCK } : null,
+    source: backgroundKeys.length
+      ? // Фон без голоса модели — приглушать нечего, под речью его
+        // уводит компрессор (`BACKGROUND_DUCK`), как в основной сборке.
+        {
+          duck: 1,
+          stemIndexes: backgroundKeys.map((_, i) => firstBackgroundIndex + i),
+        }
+      : usesSource
+        ? { duck: opts.duck ?? DEFAULT_DUCK }
+        : null,
     voice: { index: 1, delayMs, tempoRate: opts.tempoRate ?? null },
     music: musicKey
       ? { index: 2, volume: opts.musicVolume ?? DEFAULT_MUSIC_VOLUME }
@@ -769,10 +800,9 @@ export function planAudioTrackJob(opts: AudioTrackJobOptions): PostProdPlan {
     command,
     inputKeys,
     crop: null,
-    // `backgroundStems: 0` — не заглушка, а факт: альтернативная
-    // звуковая дорожка собирается из голоса и подложки, исходной
-    // дорожки ролика в ней нет вовсе, разделять нечего.
-    audio: { mode: opts.mode, delayMs, backgroundStems: 0 },
+    // Стемы фона — у дорожки ролика Grok, собранного дубляжем: без них
+    // фоном служила бы дорожка рендера с голосом модели (01.10.2026).
+    audio: { mode: opts.mode, delayMs, backgroundStems: backgroundKeys.length },
     subtitles: false,
   };
 }

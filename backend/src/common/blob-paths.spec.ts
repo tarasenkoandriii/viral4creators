@@ -131,6 +131,21 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
     ]);
   });
 
+  it('копии стемов фона удаляются с сессией, чужой префикс — нет', () => {
+    const withStems = {
+      sessionId: 's1',
+      generatedVideo: {
+        backgroundStemUrls: [
+          'https://blob.test/sessions/s1/background-1.mp3',
+          'https://blob.test/sessions/s2/background-1.mp3',
+        ],
+      },
+    } as unknown as Session;
+    expect(sessionBlobPathnames(withStems)).toEqual([
+      'sessions/s1/background-1.mp3',
+    ]);
+  });
+
   it('ссылка на чужой хост нам не принадлежит — удалять нечего', () => {
     const asLink = {
       sessionId: 's1',

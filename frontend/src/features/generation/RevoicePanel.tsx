@@ -371,7 +371,7 @@ export function RevoicePanel({
       {errorAlerts}
       {scriptField}
 
-      {video.provider === 'grok' ? (
+      {video.provider === 'grok' && !video.silentSource ? (
         // У Grok «поверх» сервер всё равно собирает дубляжем
         // (`effectiveVoiceMode`, 01.10.2026) — выбирать нечего, а
         // явный дубляж на Standard упёрся бы в тарифный гейт.

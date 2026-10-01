@@ -116,7 +116,10 @@ interface BackgroundOutcome {
   keys: string[];
   inputs: Record<string, string>;
   note: string;
-  patch?: Pick<GeneratedVideo, 'backgroundStatus' | 'backgroundError'>;
+  patch?: Pick<
+    GeneratedVideo,
+    'backgroundStatus' | 'backgroundError' | 'backgroundStemUrls'
+  >;
 }
 
 interface Work {
@@ -272,6 +275,11 @@ export function exportBatchExpired(
   const earliest = Math.min(...timestamps);
   return now - earliest > EXPORT_DEADLINE_MS;
 }
+
+/** Сколько ждать один стем у провайдера разделения при копировании. */
+const STEM_COPY_TIMEOUT_MS = 30_000;
+/** Потолок стема: ролик до минуты, wav 48 кГц стерео — около 11 МБ. */
+const MAX_STEM_BYTES = 40 * 1024 * 1024;
 
 @Injectable()
 export class PostProductionService {
@@ -1524,7 +1532,13 @@ export class PostProductionService {
       keys: [],
       inputs: {},
       note: '',
-      patch: { backgroundStatus: status, backgroundError: error },
+      // Копии прошлого удачного разделения больше не описывают этот
+      // ролик (переозвучка могла сменить исходник) — снимаем ссылки.
+      patch: {
+        backgroundStatus: status,
+        backgroundError: error,
+        backgroundStemUrls: undefined,
+      },
     });
 
     if (work.voiceMode !== 'dub' || work.sourceHasNoAudio) return notApplicable;
@@ -1563,12 +1577,68 @@ export class PostProductionService {
       inputs[key] = url;
       return key;
     });
+    // Свои копии — для языковых дорожек, которые соберутся позже
+    // (ссылки провайдера временные). Сама эта сборка берёт стемы прямо
+    // у провайдера: копия ей не нужна, а лишнее чтение из Blob — это
+    // платный исходящий трафик.
+    const stemCopies = await this.keepStemCopies(
+      sessionId,
+      outcome.backgroundUrls,
+    );
     return {
       keys,
       inputs,
       note: `фон сохранён (${keys.length} стем(ов), ${outcome.seconds?.toFixed(1)} с)`,
-      patch: { backgroundStatus: 'kept', backgroundError: undefined },
+      patch: {
+        backgroundStatus: 'kept',
+        backgroundError: undefined,
+        backgroundStemUrls: stemCopies,
+      },
     };
+  }
+
+  /**
+   * Скопировать стемы фона к себе в Blob. Лучшая попытка: не вышло хоть
+   * с одним — не храним ни одного (неполный фон хуже отсутствующего:
+   * без барабанов «фон» звучит как брак), а ролик собирается как обычно.
+   */
+  private async keepStemCopies(
+    sessionId: string,
+    urls: string[],
+  ): Promise<string[] | undefined> {
+    try {
+      // Параллельно (аудит): последовательно три стема по 30 с съели бы
+      // заметную часть захвата переозвучки (`REVOICE_CLAIM_TTL_MS`).
+      const copies = await Promise.all(
+        urls.map(async (url, i) => {
+          const res = await fetch(url, {
+            signal: AbortSignal.timeout(STEM_COPY_TIMEOUT_MS),
+          });
+          if (!res.ok) throw new Error(`стем ${i + 1}: HTTP ${res.status}`);
+          const buffer = Buffer.from(await res.arrayBuffer());
+          if (buffer.length === 0 || buffer.length > MAX_STEM_BYTES) {
+            throw new Error(`стем ${i + 1}: размер ${buffer.length} байт`);
+          }
+          const ext =
+            /\.(mp3|wav|flac|m4a|ogg)(?:\?|$)/i.exec(url)?.[1] ?? 'mp3';
+          const type =
+            res.headers.get('content-type')?.split(';')[0]?.trim() ||
+            'audio/mpeg';
+          const { url: kept } = await this.blob.uploadBuffer(
+            `sessions/${sessionId}/background-${i + 1}.${ext.toLowerCase()}`,
+            buffer,
+            type,
+          );
+          return kept;
+        }),
+      );
+      return copies.length ? copies : undefined;
+    } catch (e) {
+      this.logger.warn(
+        `копия фона для языковых дорожек не сохранена: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return undefined;
+    }
   }
 
   private async buildCards(

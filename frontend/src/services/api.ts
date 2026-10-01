@@ -778,6 +778,8 @@ export interface GeneratedVideo {
    * нужно было добавлять эти поля с самого начала.
    */
   provider?: 'veo' | 'grok';
+  /** Рендер заказан без звука (`generate_audio: false`) — голоса модели нет. */
+  silentSource?: boolean;
   resolution?: '480p' | '720p' | '1080p';
   avoidText?: string;
   chainSegmentsDone?: number;

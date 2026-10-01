@@ -101,3 +101,38 @@ describe('planAudioTrackJob', () => {
     ).toThrow(PostProdError);
   });
 });
+
+describe('planAudioTrackJob — фон без голоса модели (01.10.2026)', () => {
+  // Grok говорит в кадре сам: дорожка, собранная поверх рендера,
+  // звучала бы двумя голосами. У дубляжа фоном служат стемы.
+  it('dub со стемами: фон из стемов, дорожки рендера в миксе нет', () => {
+    const track = planAudioTrackJob({
+      ...base,
+      mode: 'dub',
+      musicInputKey: 'music',
+      backgroundInputKeys: ['bg1'],
+    });
+    expect(track.inputKeys).toEqual(['source', 'voice', 'music', 'bg1']);
+    expect(track.command).toContain('[3:a]');
+    expect(track.command).not.toContain('[0:a]');
+    expect(track.command).toContain('sidechaincompress');
+    expect(track.audio?.backgroundStems).toBe(1);
+  });
+
+  it('dub без стемов: только голос — ни рендера, ни стемов', () => {
+    const track = planAudioTrackJob({ ...base, mode: 'dub' });
+    expect(track.command).not.toContain('[0:a]');
+    expect(track.audio?.backgroundStems).toBe(0);
+  });
+
+  it('стемы в voiceover — отказ, а не тихий голос модели под видом фона', () => {
+    expect(() =>
+      planAudioTrackJob({ ...base, backgroundInputKeys: ['bg1'] }),
+    ).toThrow(PostProdError);
+  });
+
+  it('немой рендер в voiceover — дорожку рендера не трогаем', () => {
+    const track = planAudioTrackJob({ ...base, sourceHasNoAudio: true });
+    expect(track.command).not.toContain('[0:a]');
+  });
+});

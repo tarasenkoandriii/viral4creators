@@ -52,6 +52,7 @@ import { SubtitleAlignment } from '../../common/subtitles';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { planTrackFit, TrackFit } from '../../common/audio-track-fit';
 import { planAudioTrackJob } from '../../common/postprod';
+import { effectiveVoiceMode } from '../../common/voice-mode';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import {
   buildTrackTranslationPrompt,
@@ -225,6 +226,7 @@ export class AudioTrackService {
       status === 'READY'
         ? await this.submitMix({
             musicUrl: session.greetingBriefSnapshot?.musicTheme?.url ?? null,
+            ...trackBackground(video),
             videoUrl: sourceRenderUrl(video),
             voiceUrl: url,
             tempoRate,
@@ -273,6 +275,10 @@ export class AudioTrackService {
   private async submitMix(input: {
     /** Подложка, если она была у оригинала: её берём из снимка брифа. */
     musicUrl: string | null;
+    /** Как собран оригинал — см. `trackBackground`. */
+    mode: 'voiceover' | 'dub';
+    sourceHasNoAudio: boolean;
+    backgroundUrls: string[];
     videoUrl: string | null;
     voiceUrl: string;
     tempoRate: number | null;
@@ -282,10 +288,13 @@ export class AudioTrackService {
     if (!input.videoUrl) return null;
     const musicUrl = input.musicUrl;
     try {
+      const backgroundKeys = input.backgroundUrls.map((_, i) => `bg${i + 1}`);
       const plan = planAudioTrackJob({
         voiceInputKey: 'voice',
         musicInputKey: musicUrl ? 'music' : null,
-        mode: 'voiceover',
+        backgroundInputKeys: backgroundKeys,
+        mode: input.mode,
+        sourceHasNoAudio: input.sourceHasNoAudio,
         tempoRate: input.tempoRate,
         voiceDelayMs: Math.round(input.speechStartSeconds * 1000),
         totalDurationSeconds: input.videoSeconds,
@@ -295,6 +304,9 @@ export class AudioTrackService {
           source: input.videoUrl,
           voice: input.voiceUrl,
           ...(musicUrl ? { music: musicUrl } : {}),
+          ...Object.fromEntries(
+            backgroundKeys.map((k, i) => [k, input.backgroundUrls[i]]),
+          ),
         },
         outputs: [plan.outputName],
         commands: [plan.command],
@@ -466,6 +478,47 @@ function sourceRenderUrl(video: {
   downloadUrl?: string | null;
 }): string | null {
   return video.renderedUrl ?? video.downloadUrl ?? null;
+}
+
+/**
+ * Чем звучит фон языковой дорожки — так же, как собран оригинал.
+ *
+ * До 01.10.2026 дорожка всегда клала перевод поверх дорожки рендера
+ * (`voiceover`). У Grok в ней голос модели, и он звучал вместе с
+ * переводом — то же двоение, что в первом ролике в TikTok. Теперь:
+ * оригинал собран дубляжем (в том числе автоматически у Grok,
+ * `effectiveVoiceMode`) — фоном служат сохранённые стемы без голоса,
+ * а если их нет, фона нет вовсе: тишина под голосом лучше чужой речи.
+ * Немой рендер (`silentSource`) дорожки не имеет — `[0:a]` в фильтре
+ * уронил бы сборку.
+ */
+export function trackBackground(video: {
+  voiceMode?: string | null;
+  provider?: string | null;
+  silentSource?: boolean | null;
+  backgroundStemUrls?: string[] | null;
+}): {
+  mode: 'voiceover' | 'dub';
+  sourceHasNoAudio: boolean;
+  backgroundUrls: string[];
+} {
+  const mode = effectiveVoiceMode(
+    video.voiceMode === 'dub' ? 'dub' : 'voiceover',
+    video,
+  );
+  const sourceHasNoAudio = video.silentSource === true;
+  if (mode !== 'dub' || sourceHasNoAudio) {
+    return {
+      mode: mode === 'dub' ? 'dub' : 'voiceover',
+      sourceHasNoAudio,
+      backgroundUrls: [],
+    };
+  }
+  return {
+    mode: 'dub',
+    sourceHasNoAudio,
+    backgroundUrls: (video.backgroundStemUrls ?? []).filter(Boolean),
+  };
 }
 
 /** Пояснение для карточки: у решения «отдать человеку» причина обязана быть. */

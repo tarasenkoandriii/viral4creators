@@ -60,6 +60,13 @@ export function sessionBlobPathnames(session: Session): string[] {
   if (session.generatedVideo?.subtitlePathname) {
     paths.add(session.generatedVideo.subtitlePathname);
   }
+  // Копии стемов фона для языковых дорожек (01.10.2026,
+  // `GeneratedVideo.backgroundStemUrls`) — только под префиксом СВОЕЙ
+  // сессии: путь выводится из URL, а URL пришёл из данных.
+  for (const url of session.generatedVideo?.backgroundStemUrls ?? []) {
+    const path = pathnameFromBlobUrl(url, prefix);
+    if (path) paths.add(path);
+  }
   // Текст-карточки промпта (`text-card.service.ts`, `sessions/<id>/
   // text-card-<role>.png`) — М-5.8 седьмого аудита, тот же класс, что
   // Е-2.6: путь хранится в `generationPrompt.onScreenTextMoments[]`.

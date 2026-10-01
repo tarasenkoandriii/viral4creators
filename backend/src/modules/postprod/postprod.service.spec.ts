@@ -1023,6 +1023,10 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
     });
 
     it('дубляж с разделением: фон возвращается в микс отдельным входом', async () => {
+      // Копия стемов идёт по сети — в тестах её нет.
+      const fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockRejectedValue(new Error('сети в тестах нет'));
       // docs-tz/TZ-Voice-Replace-Keep-Background.md: «дубляж» означает
       // заменить ГОЛОС, а не звук. Стем — это исходная дорожка без
       // голоса модели.
@@ -1052,6 +1056,7 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
           model: 'htdemucs',
         }),
       );
+      fetchSpy.mockRestore();
     });
 
     // Исход сохранения фона теперь переживает прогон (27.09.2026).
@@ -1061,6 +1066,19 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
     describe('исход сохранения фона записывается в сессию', () => {
       const dubbed = () =>
         session({ brandManifestSnapshot: { voiceMode: 'dub' } });
+      // Копия стемов (01.10.2026) качает файл по сети — в тестах сети
+      // нет: по умолчанию отказ, нужные случаи подставляют свой ответ.
+      const networkFetch = global.fetch;
+      beforeEach(() => {
+        global.fetch = jest
+          .fn()
+          .mockRejectedValue(
+            new Error('сети в тестах нет'),
+          ) as unknown as typeof fetch;
+      });
+      afterAll(() => {
+        global.fetch = networkFetch;
+      });
 
       it('фон отделён — kept, без причины', async () => {
         const { svc, separation } = build({ session: dubbed() });
@@ -1075,6 +1093,66 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
 
         expect(r.backgroundStatus).toBe('kept');
         expect(r.backgroundError).toBeUndefined();
+      });
+
+      describe('копия стемов для языковых дорожек (01.10.2026)', () => {
+        const realFetch = global.fetch;
+        afterEach(() => {
+          global.fetch = realFetch;
+        });
+
+        it('kept — стем скопирован к нам, ссылка сохранена в ролике', async () => {
+          global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            headers: { get: () => 'audio/mpeg' },
+            arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+          }) as unknown as typeof fetch;
+          const { svc, separation, blob, api } = build({ session: dubbed() });
+          separation.configured.mockReturnValue(true);
+          separation.separate.mockResolvedValue({
+            ok: true,
+            backgroundUrls: ['https://replicate.test/no_vocals.mp3'],
+            seconds: 21,
+          });
+
+          const r = await svc.start('s1', VIDEO);
+
+          const paths = blob.uploadBuffer.mock.calls.map(
+            (c: unknown[]) => c[0],
+          );
+          expect(paths).toContain('sessions/s1/background-1.mp3');
+          expect(r.backgroundStemUrls).toEqual([
+            'https://blob.test/sessions/s1/background-1.mp3',
+          ]);
+          // Сама сборка берёт стем у провайдера — чтение нашей копии
+          // было бы лишним платным трафиком Blob.
+          expect(api.submit.mock.calls[0][0].inputs.bg1).toBe(
+            'https://replicate.test/no_vocals.mp3',
+          );
+        });
+
+        it('копия не удалась — ролик собирается, фон kept, ссылок нет', async () => {
+          global.fetch = jest.fn().mockResolvedValue({
+            ok: false,
+            status: 410,
+          }) as unknown as typeof fetch;
+          const { svc, separation, api } = build({ session: dubbed() });
+          separation.configured.mockReturnValue(true);
+          separation.separate.mockResolvedValue({
+            ok: true,
+            backgroundUrls: ['https://replicate.test/no_vocals.mp3'],
+            seconds: 21,
+          });
+
+          const r = await svc.start('s1', VIDEO);
+
+          expect(r.backgroundStatus).toBe('kept');
+          expect(r.backgroundStemUrls).toBeUndefined();
+          expect(api.submit.mock.calls[0][0].inputs.bg1).toBe(
+            'https://replicate.test/no_vocals.mp3',
+          );
+        });
       });
 
       it('платный прогон ничего не вернул — failed с причиной', async () => {
