@@ -16,11 +16,12 @@
  * тоже здесь (translate), его текст — не маскируется (голос бизнеса).
  */
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import {
-  HANDOFF_DEFAULTS,
-  widgetSiteDailyCapMicroUsd,
-} from '../../../config/assist-defaults';
+import { HANDOFF_DEFAULTS } from '../../../config/assist-defaults';
 import { PrismaService } from '../../../prisma/prisma.service';
+import {
+  readState,
+  siteDailyCapMicroUsd,
+} from '../../assist-billing/public/entitlements';
 import { AnswerEngine } from '../../assist-knowledge-core/answer/answer-engine';
 import { questionLang } from '../../assist-knowledge-core/answer/prompt';
 import { maskForJournal } from '../../assist-site-chat/answer-checks';
@@ -287,10 +288,19 @@ export class HandoffAi {
     },
     fn: () => Promise<{ value: T; cost: number }>,
   ): Promise<T | null> {
+    // Э4: суточный потолок сайта — от тарифа кабинета (§7.3).
+    const owner = await this.prisma.site.findUnique({
+      where: { id: h.siteId },
+      select: { accountId: true },
+    });
+    const plan = owner
+      ? await readState(this.prisma, owner.accountId, this.now())
+      : { planId: null };
     const reserved = await this.budget.reserve(this.prisma, {
       siteId: h.siteId,
-      siteCapMicroUsd: widgetSiteDailyCapMicroUsd(
-        h.site ?? { dailyCapMicroUsd: null },
+      siteCapMicroUsd: siteDailyCapMicroUsd(
+        h.site?.dailyCapMicroUsd ?? null,
+        plan,
       ),
       estMicroUsd: HANDOFF_DEFAULTS.aiEstimateMicroUsd,
       now: this.now(),

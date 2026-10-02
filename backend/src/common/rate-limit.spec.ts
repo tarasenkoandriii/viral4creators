@@ -9,6 +9,7 @@ jest.mock('../prisma/prisma.service', () => ({ PrismaService: class {} }));
 import { HttpException, Logger } from '@nestjs/common';
 import {
   clientIp,
+  rateLimitSubject,
   pruneRateLimits,
   RATE_LIMIT_KEY,
   RateLimitGuard,
@@ -38,6 +39,17 @@ function build(count: number | Error, rule?: RateLimitRule) {
 }
 
 const RULE: RateLimitRule = { name: 'login', limit: 3, windowSec: 60 };
+
+const ORIGINAL_ENV = { ...process.env };
+beforeEach(() => {
+  // Бэкенд генератора живёт на Vercel — по умолчанию тесты там же
+  // (заголовок XFF переписан платформой). Вне Vercel — отдельные тесты.
+  process.env = { ...ORIGINAL_ENV, VERCEL: '1' };
+  delete process.env.TRUSTED_PROXY_CIDRS;
+});
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+});
 
 beforeAll(() => {
   jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -71,7 +83,9 @@ describe('RateLimitGuard', () => {
     expect(sql).toContain('INSERT INTO "rate_limits"');
     expect(sql).toContain('ON CONFLICT ("key") DO UPDATE');
     expect(sql).toContain('RETURNING "count"');
-    expect(params[0]).toBe('login|203.0.113.7');
+    // Ш0.7: в ключе — HMAC адреса, не сам адрес.
+    expect(params[0]).toBe(`login|${rateLimitSubject('203.0.113.7')}`);
+    expect(String(params[0])).not.toContain('203.0.113.7');
     // Окно выровнено по минуте, а не «сейчас минус 60 секунд».
     expect(params[1]).toEqual(new Date('2026-09-07T10:15:00.000Z'));
   });
@@ -171,7 +185,7 @@ describe('RateLimitGuard — два правила (§7.1)', () => {
 });
 
 describe('clientIp', () => {
-  it('первый адрес из x-forwarded-for; без заголовка — адрес сокета', () => {
+  it('на Vercel — первый адрес из x-forwarded-for; без заголовка — адрес сокета', () => {
     expect(
       clientIp({
         headers: { 'x-forwarded-for': '198.51.100.2, 10.0.0.9' },
@@ -185,6 +199,86 @@ describe('clientIp', () => {
       clientIp({ headers: {}, socket: { remoteAddress: '::1' } } as never),
     ).toBe('::1');
     expect(clientIp({ headers: {} } as never)).toBe('unknown');
+  });
+});
+
+/**
+ * Ш0.7 аудита 02.10.2026 (риск В-4): вне Vercel первый адрес XFF пишет
+ * клиент. Подмена заголовка давала новое окно на каждый запрос.
+ */
+describe('clientIp — вне Vercel (Docker за Traefik/Dokploy)', () => {
+  const req = (xff: string | undefined, peer: string) =>
+    ({
+      headers: xff === undefined ? {} : { 'x-forwarded-for': xff },
+      socket: { remoteAddress: peer },
+    }) as never;
+
+  beforeEach(() => {
+    delete process.env.VERCEL;
+  });
+
+  it('без доверенных прокси XFF игнорируется — адрес сокета', () => {
+    expect(clientIp(req('1.2.3.4', '203.0.113.9'))).toBe('203.0.113.9');
+  });
+
+  it('подмена XFF клиентом не меняет адрес (обход лимита закрыт)', () => {
+    process.env.TRUSTED_PROXY_CIDRS = '10.0.0.0/8';
+    // Клиент прислал «1.2.3.4», Traefik (10.0.1.2) дописал настоящий.
+    expect(clientIp(req('1.2.3.4, 198.51.100.7', '10.0.1.2'))).toBe(
+      '198.51.100.7',
+    );
+    expect(clientIp(req('5.6.7.8, 198.51.100.7', '10.0.1.2'))).toBe(
+      '198.51.100.7',
+    );
+  });
+
+  it('соединение НЕ от доверенного прокси — XFF не читается вовсе', () => {
+    process.env.TRUSTED_PROXY_CIDRS = '10.0.0.0/8';
+    expect(clientIp(req('198.51.100.7', '203.0.113.9'))).toBe('203.0.113.9');
+  });
+
+  it('цепочка из доверенных прокси пропускается справа налево', () => {
+    process.env.TRUSTED_PROXY_CIDRS = '10.0.0.0/8, 172.16.0.0/12';
+    expect(clientIp(req('198.51.100.7, 172.18.0.5', '::ffff:10.0.1.2'))).toBe(
+      '198.51.100.7',
+    );
+  });
+
+  it('мусор в XFF — дальше не верим, адрес сокета', () => {
+    process.env.TRUSTED_PROXY_CIDRS = '10.0.0.0/8';
+    expect(clientIp(req('not-an-ip', '10.0.1.2'))).toBe('10.0.1.2');
+  });
+
+  it('мусор посреди цепочки: адрес левее него (его писал клиент) не берётся', () => {
+    // Аудит Ш0: прежний откат отдавал `chain[0]`, то есть подставленный
+    // клиентом адрес, — и новое окно лимита на каждый запрос.
+    process.env.TRUSTED_PROXY_CIDRS = '10.0.0.0/8, 172.16.0.0/12';
+    expect(clientIp(req('6.6.6.6, garbage, 172.18.0.5', '10.0.1.2'))).toBe(
+      '172.18.0.5',
+    );
+    expect(clientIp(req('6.6.6.6, garbage', '10.0.1.2'))).toBe('10.0.1.2');
+  });
+});
+
+describe('rateLimitSubject — Ш0.7', () => {
+  it('HMAC: стабилен, 32 hex, не содержит адреса и зависит от секрета', () => {
+    const a = rateLimitSubject('203.0.113.7', { CRON_SECRET: 's1' });
+    expect(a).toMatch(/^[0-9a-f]{32}$/);
+    expect(rateLimitSubject('203.0.113.7', { CRON_SECRET: 's1' })).toBe(a);
+    expect(rateLimitSubject('203.0.113.7', { CRON_SECRET: 's2' })).not.toBe(a);
+    expect(rateLimitSubject('203.0.113.8', { CRON_SECRET: 's1' })).not.toBe(a);
+  });
+
+  it('лог превышения лимита — без адреса', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    warn.mockClear();
+    const { guard, context } = build(4, RULE);
+    await expect(
+      guard.canActivate(context({ 'x-forwarded-for': '203.0.113.7' }) as never),
+    ).rejects.toBeInstanceOf(HttpException);
+    const logged = warn.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toContain('login: 4 запросов');
+    expect(logged).not.toContain('203.0.113.7');
   });
 });
 
@@ -242,8 +336,8 @@ describe('RateLimitGuard — счёт по человеку (by: user)', () => {
     const { guard, prisma, context } = withUser('u1');
     await guard.canActivate(context as never);
     const key = String(prisma.$queryRaw.mock.calls[0][1]);
-    expect(key).toBe('paid|u:u1');
-    expect(key).not.toContain('203.0.113.7');
+    expect(key).toBe(`paid|${rateLimitSubject('u:u1')}`);
+    expect(key).not.toBe(`paid|${rateLimitSubject('203.0.113.7')}`);
   });
 
   it('у двух человек за одним адресом окна разные', async () => {
@@ -261,6 +355,8 @@ describe('RateLimitGuard — счёт по человеку (by: user)', () => {
     // закрывает вход остальным.
     const { guard, prisma, context } = withUser(undefined);
     await guard.canActivate(context as never);
-    expect(String(prisma.$queryRaw.mock.calls[0][1])).toBe('paid|203.0.113.7');
+    expect(String(prisma.$queryRaw.mock.calls[0][1])).toBe(
+      `paid|${rateLimitSubject('203.0.113.7')}`,
+    );
   });
 });

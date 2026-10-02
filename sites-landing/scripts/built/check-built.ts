@@ -18,6 +18,11 @@
  *     (`ASSIST_WIDGET_PK`); ссылок в Telegram (`t.me`, `startapp`) в HTML
  *     нет; конфигуратор `/assistant/widget` собран, адреса продукта в
  *     клиентском коде — те, что заданы env (а не литералы).
+ *  8. Л4–Л5: `/try` — форма песочницы и `sandbox` live, без deeplink до
+ *     запуска; документация — только uk/en (ru — не страница сайта), код
+ *     вставки и CSP в ней — для origin виджета из env; страница бота — с
+ *     формой opt-out без JS; служебные страницы результата opt-out —
+ *     `noindex`; поле адреса в hero ведёт в песочницу GET-формой.
  *
  * Запуск: `npm run check:built` после `next build` с тем же `SITE_URL`.
  */
@@ -28,6 +33,7 @@ import { CLAIMS } from '../../src/lib/claims';
 import { getDictionary } from '../../src/lib/get-dictionary';
 import { locales } from '../../src/lib/i18n';
 import { PAGES } from '../../src/lib/pages';
+import { cspLines, embedTag } from '../../src/lib/install';
 import { attr, claimViolations, elementsWith, headTags, jsonLdViolations } from '../lib/html';
 import { readAssistEnv } from '../../src/lib/assist-env';
 import { WIDGET_NAMES } from '../../src/brand';
@@ -50,7 +56,7 @@ const decode = (s: string) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').rep
 
 let pages = 0;
 for (const page of PAGES) {
-  for (const locale of locales) {
+  for (const locale of page.locales ?? locales) {
     const rel = `${locale}${page.path}.html`;
     const where = `/${locale}${page.path}`;
     if (!fs.existsSync(path.join(APP, rel))) {
@@ -67,14 +73,17 @@ for (const page of PAGES) {
     if (!canonical || attr(canonical, 'href') !== url) problems.push(`${where}: canonical ${canonical}`);
     for (const l of locales) {
       const t = linkHref(html, 'alternate', l);
-      if (!t || attr(t, 'href') !== `${origin}/${l}${page.path}`) problems.push(`${where}: hreflang ${l} — ${t}`);
+      const exists = (page.locales ?? locales).includes(l);
+      if (exists && (!t || attr(t, 'href') !== `${origin}/${l}${page.path}`)) problems.push(`${where}: hreflang ${l} — ${t}`);
+      if (!exists && t) problems.push(`${where}: hreflang ${l} на несуществующую версию`);
     }
     const xd = linkHref(html, 'alternate', 'x-default');
     if (!xd || attr(xd, 'href') !== `${origin}/en${page.path}`) problems.push(`${where}: x-default — ${xd}`);
     const ogImage = meta(html, 'og:image');
-    const expectedImage = `${origin}/og/${page.key}-${locale}.jpg`;
+    const ogKey = page.og ?? page.key;
+    const expectedImage = `${origin}/og/${ogKey}-${locale}.jpg`;
     if (ogImage !== expectedImage) problems.push(`${where}: og:image ${ogImage}`);
-    if (!fs.existsSync(path.join(ROOT, 'public', 'og', `${page.key}-${locale}.jpg`))) problems.push(`${where}: нет файла OG`);
+    if (!fs.existsSync(path.join(ROOT, 'public', 'og', `${ogKey}-${locale}.jpg`))) problems.push(`${where}: нет файла OG`);
     if (meta(html, 'og:url') !== url) problems.push(`${where}: og:url ${meta(html, 'og:url')}`);
     if (meta(html, 'twitter:card') !== 'summary_large_image') problems.push(`${where}: twitter:card`);
     const title = /<title>([^<]*)<\/title>/.exec(html)?.[1];
@@ -88,13 +97,16 @@ for (const page of PAGES) {
       const th = table.outer.match(/<th\b[^>]*>/g) ?? [];
       if (th.some((t) => !/\sscope="(col|row)"/.test(t))) problems.push(`${where}: th без scope`);
     }
-    if (/\{[a-zA-Z]+\}/.test(html.replace(/<script[\s\S]*?<\/script>/g, ''))) problems.push(`${where}: неподставленный плейсхолдер`);
+    // Код в <pre>/<code> — примеры (шаблонные строки JS `${t}`), не плейсхолдеры словаря.
+    if (/\{[a-zA-Z]+\}/.test(html.replace(/<script[\s\S]*?<\/script>|<pre[\s\S]*?<\/pre>|<code>[\s\S]*?<\/code>/g, ''))) problems.push(`${where}: неподставленный плейсхолдер`);
+    if (/%%[A-Za-z]+%%/.test(html)) problems.push(`${where}: неподставленный плейсхолдер документации`);
   }
 }
 
 // 3. noindex на служебных
 const noindexFiles = [
   ...locales.flatMap((l) => ['sent', 'unavailable'].map((c) => `${l}/assistant/pilot/status/${c}.html`)),
+  ...locales.flatMap((l) => ['sent', 'invalid', 'limited', 'unavailable', 'error'].map((c) => `${l}/assistant/bot/status/${c}.html`)),
   'legal/privacy.html',
   'legal/terms.html',
   'legal/cookies.html',
@@ -164,6 +176,27 @@ for (const l of locales) {
   if (!w.includes('data-testid="cfg-stage"') || !w.includes('data-claim="configurator"')) problems.push(`/${l}/assistant/widget: нет конфигуратора`);
   if (assist.widgetPk && !w.includes(`${assist.widgetOrigin}${WIDGET_NAMES.loaderPath}`)) problems.push(`/${l}/assistant/widget: адрес загрузчика не из env`);
 }
+// 8. Л4–Л5.
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+for (const l of locales) {
+  const t = read(`${l}/assistant/try.html`);
+  if (!t.includes('data-claim="sandbox" data-claim-status="live"') || !t.includes('id="sb-url"')) problems.push(`/${l}/assistant/try: нет формы песочницы`);
+  if (!t.includes('data-claim="sandbox-screenshot" data-claim-status="soon"')) problems.push(`/${l}/assistant/try: скриншот должен быть «скоро» (воркера QA нет)`);
+  const a = read(`${l}/assistant.html`);
+  const tryForms = elementsWith(a, /^<form\b[^>]*class="try-form"/).filter((f) => attr(f.open, 'method') === 'get' && attr(f.open, 'action') === `/${l}/assistant/try`);
+  if (tryForms.length !== 2 || tryForms.some((f) => !/<input\b[^>]*name="url"/.test(f.outer))) problems.push(`/${l}/assistant: поле адреса в hero и финале → /try`);
+  const b = read(`${l}/assistant/bot.html`);
+  if (!elementsWith(b, /^<form\b/).some((f) => attr(f.open, 'method') === 'post' && attr(f.open, 'action') === '/api/opt-out')) problems.push(`/${l}/assistant/bot: нет формы opt-out без JS`);
+}
+for (const l of ['uk', 'en']) {
+  const d = read(`${l}/docs/assistant.html`);
+  if (!d.includes(esc(embedTag(assist.widgetOrigin)))) problems.push(`/${l}/docs/assistant: код вставки не для origin виджета из env`);
+  const c = read(`${l}/docs/assistant/csp.html`);
+  if (!c.includes(esc(cspLines(assist.widgetOrigin)))) problems.push(`/${l}/docs/assistant/csp: директивы CSP не для origin из env`);
+}
+for (const rel of ['ru/docs/assistant.html', 'ru/docs/assistant/js-api.html']) {
+  if (fs.existsSync(path.join(APP, rel)) && !(meta(read(rel), 'robots') ?? '').includes('noindex')) problems.push(`${rel}: документации на ru нет — страница должна быть 404/noindex`);
+}
 {
   const bundle = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
   // Адреса продукта приходят пропсами из сборки, в клиентском JS их нет литералами.
@@ -174,5 +207,5 @@ assert.deepEqual(problems, [], `собранный сайт:\n${problems.join('\
 console.log(
   `ok   собранный сайт: ${pages} страниц × локалей — lang, один h1, canonical, hreflang+x-default, OG/Twitter, реестр утверждений, таблицы, JSON-LD без цен/оферт; ` +
     `noindex у ${noindexFiles.length} служебных; ${files.length} клиентских файлов без секретов${token ? ' (с приманкой токена)' : ' (БЕЗ приманки: PILOT_TELEGRAM_BOT_TOKEN не задан)'}; ` +
-      `${htmlFiles.length} HTML без тега загрузчика и ссылок в Telegram; живой виджет ${assist.widgetPk ? 'есть (ключ задан)' : 'не подключён (нет ключа) — блок «запись»'}; конфигуратор собран`,
+      `${htmlFiles.length} HTML без тега загрузчика и ссылок в Telegram; живой виджет ${assist.widgetPk ? 'есть (ключ задан)' : 'не подключён (нет ключа) — блок «запись»'}; конфигуратор собран; песочница, страница бота с opt-out, документация uk/en с кодом для origin из env`,
 );

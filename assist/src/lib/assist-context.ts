@@ -7,6 +7,7 @@
 
 import { createContext, useContext } from 'react';
 import type { AppDictionary } from '../i18n';
+import type { BillingApi } from './billing-api';
 import type { HandoffApi } from './handoff-api';
 import type { KnowledgeApi } from './knowledge-api';
 import type { LearningApi } from './learning-api';
@@ -26,6 +27,8 @@ export interface AssistValue {
   handoff: HandoffApi;
   learning: LearningApi;
   stats: StatsApi;
+  /** Э4: тариф и оплата. */
+  billing: BillingApi;
 }
 
 export const AssistContext = createContext<AssistValue | null>(null);

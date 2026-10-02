@@ -46,6 +46,10 @@ import {
   restoreCookieJar,
 } from '../../common/cookie-jar';
 import { launchHeadlessBrowser } from '../../common/headless-chromium';
+import {
+  egressProxyChromiumArgs,
+  startEgressFilterProxy,
+} from '../../common/egress-filter-proxy';
 import { DomainLockError, assertSameSite } from './draft-rounds';
 import { dangerWarningFor } from './danger-words';
 import { CollectedPage, collectPageExploration } from './page-exploration';
@@ -328,8 +332,28 @@ export class ChromiumPageExplorer implements PageExplorer {
     timeoutMs: number,
     what: string,
   ): Promise<T> {
-    const launched = await launchHeadlessBrowser();
+    // Фильтрующий прокси — на КАЖДЫЙ раунд свой, в этом же процессе
+    // (Ш0.3, риск К-3 аудита 02.10.2026). `assertPubliclyRoutableUrl`
+    // сервиса проверяет только адрес перехода и только до него; всё,
+    // что страница грузит дальше — картинки, fetch/XHR, iframe,
+    // WebSocket, редиректы, — и повторный резолв DNS (rebinding) идут
+    // через прокси, который резолвит один раз, режет служебные адреса и
+    // подключается к уже проверенному IP. Отдельного сервиса нет и не
+    // нужно: на Vercel прокси живёт ровно столько же, сколько браузер,
+    // и слушает только 127.0.0.1 этого инстанса.
+    const proxy = await startEgressFilterProxy();
+    let launched: Awaited<ReturnType<typeof launchHeadlessBrowser>>;
+    try {
+      launched = await launchHeadlessBrowser({
+        untrustedContent: true,
+        extraArgs: egressProxyChromiumArgs(proxy.url),
+      });
+    } catch (err) {
+      await proxy.close();
+      throw err;
+    }
     if ('error' in launched) {
+      await proxy.close();
       // 503, а не 500: браузер — внешняя по отношению к бизнес-логике
       // инфраструктура, и «сейчас не получилось» честнее, чем
       // «внутренняя ошибка». Сервис по этому исключению вернёт слот
@@ -350,6 +374,15 @@ export class ChromiumPageExplorer implements PageExplorer {
       );
     } finally {
       await browser.close().catch(() => undefined);
+      const blocked = proxy.stats()['blocked-address'];
+      if (blocked > 0) {
+        // Без адресов и URL — только счёт: сам факт «страница заказчика
+        // пыталась во внутреннюю сеть» и есть сигнал.
+        this.logger.warn(
+          `${what}: прокси отклонил ${blocked} обращений к служебным адресам`,
+        );
+      }
+      await proxy.close();
     }
   }
 

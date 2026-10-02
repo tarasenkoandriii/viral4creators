@@ -8,6 +8,7 @@
 import type { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { SiteCrawlService } from '../site-crawl/crawl.service';
+import { setPlan } from '../assist-billing/testing/billing-fixtures.testing';
 import {
   createSite,
   describeDb,
@@ -91,6 +92,10 @@ describeDb('AssistCrawlScheduler (реальный Postgres)', () => {
       { recrawlEvery: 'weekly', nextCrawlAt: null, enabled: false },
     );
 
+    // Э4: лимит страниц — «страниц в знаниях» тарифа кабинета (§7.1):
+    // у `due` — Business (2000), у `fresh` — пробный (50).
+    await setPlan(prisma, due.accountId, 'business');
+
     const r = await scheduler.scheduleDue(now);
     expect(r.runsRequested).toBeGreaterThanOrEqual(2);
 
@@ -99,8 +104,10 @@ describeDb('AssistCrawlScheduler (реальный Postgres)', () => {
       product: 'assist',
       trigger: 'schedule',
       mode: 'full',
-      maxPages: 500,
+      maxPages: 2000,
     });
+    const [freshRun] = await runsOf(fresh.siteId);
+    expect(freshRun).toMatchObject({ maxPages: 50 });
     const dueSettings = await prisma.assistSite.findFirst({
       where: { siteId: due.siteId },
     });

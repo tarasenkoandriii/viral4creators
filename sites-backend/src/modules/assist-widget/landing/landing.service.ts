@@ -23,9 +23,14 @@ import {
 import { parseWidgetConfig } from '../../assist-site-setup/widget-config';
 import { WidgetRateLimit } from '../rate-limit';
 import { widgetError } from '../widget-errors';
-import snapshot from './assist-plans.snapshot.json';
+import { publicPlans } from '../../assist-billing/plans';
+import {
+  DIALOG_IDLE_MS,
+  DIALOG_WEIGHT_STEPS,
+  PUBLIC_DIALOG_WEIGHTS,
+} from '../../assist-billing/units';
 import type {
-  AssistPlansSnapshot,
+  AssistPlansResponse,
   LandingEventBatch,
   WidgetDraftCreated,
 } from './landing-types';
@@ -173,8 +178,13 @@ export class LandingService {
     return { accepted: events.length };
   }
 
-  plans(): AssistPlansSnapshot {
-    return snapshot as AssistPlansSnapshot;
+  /** Э4: живые тарифы (было — файл-снимок до Э4). */
+  plans(): AssistPlansResponse {
+    return publicPlans({
+      idleCloseMinutes: DIALOG_IDLE_MS / 60_000,
+      weightSteps: DIALOG_WEIGHT_STEPS,
+      weights: PUBLIC_DIALOG_WEIGHTS,
+    });
   }
 
   /** «к Л3» */

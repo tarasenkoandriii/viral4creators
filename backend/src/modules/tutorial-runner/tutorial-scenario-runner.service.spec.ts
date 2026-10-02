@@ -4069,6 +4069,39 @@ describe('TutorialScenarioRunnerService', () => {
       );
     });
 
+    it('ролик по сайту заказчика собран — «одноразовые» данные входа стёрты сразу (Ш0.5)', async () => {
+      const { service, prisma, ffmpeg } = build([]);
+      ffmpeg.configured.mockReturnValue(true);
+      stubAssets(prisma, [
+        {
+          id: 'tva-1',
+          subjectKey: '1',
+          scenarioId: null,
+          clientSiteDraftId: 'draft-7',
+          frameCount: 2,
+          assemblyJobId: 'job-1',
+          assemblyStartedAt: new Date(),
+        },
+      ]);
+      ffmpeg.status.mockResolvedValue({
+        status: 'completed',
+        outputs: { 'tutorial.mp4': 'https://ffmpeg-api.example.com/out.mp4' },
+      });
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => FAKE_MP4.buffer,
+      }) as unknown as typeof fetch;
+
+      await service.pollAssemblies();
+
+      // Условие `secretsOneShot: true` — стирается только у тех, кто
+      // выбрал «одноразово»; остальные живут свой срок (30 дней).
+      expect(prisma.clientSiteTutorialDraft.updateMany).toHaveBeenCalledWith({
+        where: { id: 'draft-7', secretsOneShot: true },
+        data: { credentialsEnc: null, cookiesEnc: null },
+      });
+    });
+
     it('у регрессионной сборки черновика нет — откатывать нечего', async () => {
       const { service, prisma, ffmpeg } = build([]);
       ffmpeg.configured.mockReturnValue(true);

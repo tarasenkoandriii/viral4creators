@@ -1,6 +1,6 @@
 /**
  * Бюджет обучения — K2 (ТЗ §4-тер.11, Р-58): месячный потолок подписки
- * кабинета (до Э4 — learningBudgetCapMicroUsd из config/assist-defaults),
+ * кабинета (Э4: из тарифа — assist-billing/limits.ts, `learningBudgetCap`),
  * делится между сайтами кабинета с помощником поровну или по
  * AssistSite.learningShareBp. Таблица assist_learning_spend: резерв —
  * одним условным UPDATE … WHERE spent <= доля − оценка (строку периода
@@ -16,7 +16,7 @@
  * страницы» (§4-тер.11). Это решают вызывающие; здесь только счётчик.
  */
 import { Injectable } from '@nestjs/common';
-import { learningBudgetCapMicroUsd } from '../../config/assist-defaults';
+import { learningBudgetCap } from '../assist-billing/limits';
 import { SitesDb } from '../../prisma/sites-db.service';
 
 export interface LearningBudgetStatus {
@@ -71,11 +71,12 @@ export class LearningBudget {
       where: { OR: [{ enabled: true }, { siteId }] },
       select: { siteId: true, learningShareBp: true },
     });
-    return siteShareMicroUsd(
-      learningBudgetCapMicroUsd(accountId),
-      siteId,
-      sites,
+    const cap = await learningBudgetCap(
+      this.sitesDb.system('тариф кабинета — потолок бюджета обучения (Р-58)'),
+      accountId,
+      this.now(),
     );
+    return siteShareMicroUsd(cap, siteId, sites);
   }
 
   private async ensureRow(

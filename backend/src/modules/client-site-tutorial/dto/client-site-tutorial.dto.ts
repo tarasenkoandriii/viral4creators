@@ -103,6 +103,13 @@ export class LoginRequestDto {
   @ValidateNested({ each: true })
   @Type(() => LoginFieldDto)
   fields!: LoginFieldDto[];
+
+  /** «Одноразово» (Ш0.5 аудита 02.10.2026): стереть данные входа после
+   * первой успешной сборки ролика. Не передан — прежний выбор черновика
+   * не меняется; по умолчанию данные живут 30 дней с последнего раунда. */
+  @IsOptional()
+  @IsBoolean()
+  forgetAfterBuild?: boolean;
 }
 
 export class UndoRequestDto {

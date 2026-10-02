@@ -28,8 +28,14 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
-import { createHmac, timingSafeEqual } from 'crypto';
 import { loadConfiguration } from '../../config/configuration';
+import {
+  formatWayForPayAmount as formatAmount,
+  safeEqualString as safeEqual,
+  wayforpayAckSignature,
+  wayforpayCallbackSignature,
+  wayforpayPurchaseSignature,
+} from '../../common/wayforpay-signature';
 
 const PURCHASE_URL = 'https://secure.wayforpay.com/pay';
 const API_URL = 'https://api.wayforpay.com/api';
@@ -85,18 +91,18 @@ export class WayForPayService {
   buildPurchaseForm(input: PurchaseFormInput): PurchaseForm {
     const { wayforpayMerchantAccount, wayforpayDomain } = this.cfg();
     const orderDate = Math.floor(Date.now() / 1000);
-    const signature = this.hmacMd5(
-      [
-        wayforpayMerchantAccount,
-        wayforpayDomain,
-        input.orderReference,
-        String(orderDate),
-        formatAmount(input.amount),
-        input.currency,
-        input.productName,
-        '1',
-        formatAmount(input.amount),
-      ].join(';'),
+    // Подпись — чистый common/wayforpay-signature.ts (общий с sites-backend).
+    const signature = wayforpayPurchaseSignature(
+      {
+        merchantAccount: wayforpayMerchantAccount,
+        merchantDomainName: wayforpayDomain,
+        orderReference: input.orderReference,
+        orderDate,
+        amount: input.amount,
+        currency: input.currency,
+        productName: input.productName,
+      },
+      this.cfg().wayforpayMerchantSecret,
     );
     return {
       url: PURCHASE_URL,
@@ -130,17 +136,9 @@ export class WayForPayService {
     reasonCode: number | string;
     merchantSignature: string;
   }): boolean {
-    const expected = this.hmacMd5(
-      [
-        body.merchantAccount,
-        body.orderReference,
-        String(body.amount),
-        body.currency,
-        body.authCode ?? '',
-        body.cardPan ?? '',
-        body.transactionStatus,
-        String(body.reasonCode),
-      ].join(';'),
+    const expected = wayforpayCallbackSignature(
+      body,
+      this.cfg().wayforpayMerchantSecret,
     );
     // Е-1.6 шестого аудита: было обычное `===` — непоследовательно с
     // `stars-invoice-payload.util.ts`, которая для той же задачи (сверка
@@ -160,8 +158,10 @@ export class WayForPayService {
     signature: string;
   } {
     const time = Math.floor(Date.now() / 1000);
-    const signature = this.hmacMd5(
-      [orderReference, 'accept', String(time)].join(';'),
+    const signature = wayforpayAckSignature(
+      orderReference,
+      time,
+      this.cfg().wayforpayMerchantSecret,
     );
     return { orderReference, status: 'accept', time, signature };
   }
@@ -178,18 +178,17 @@ export class WayForPayService {
   }): Promise<ChargeResult> {
     const { wayforpayMerchantAccount, wayforpayDomain } = this.cfg();
     const orderDate = Math.floor(Date.now() / 1000);
-    const signature = this.hmacMd5(
-      [
-        wayforpayMerchantAccount,
-        wayforpayDomain,
-        input.orderReference,
-        String(orderDate),
-        formatAmount(input.amount),
-        input.currency,
-        input.productName,
-        '1',
-        formatAmount(input.amount),
-      ].join(';'),
+    const signature = wayforpayPurchaseSignature(
+      {
+        merchantAccount: wayforpayMerchantAccount,
+        merchantDomainName: wayforpayDomain,
+        orderReference: input.orderReference,
+        orderDate,
+        amount: input.amount,
+        currency: input.currency,
+        productName: input.productName,
+      },
+      this.cfg().wayforpayMerchantSecret,
     );
     const res = await axios.post<{
       transactionStatus?: string;
@@ -211,42 +210,24 @@ export class WayForPayService {
       productPrice: [formatAmount(input.amount)],
       productCount: [1],
     });
-    const status = res.data.transactionStatus ?? 'Declined';
+    // Аудит Э4: 2xx без `transactionStatus` (ошибка запроса — например,
+    // «Duplicate Order ID» при повторе того же orderReference) — исход
+    // списания НЕИЗВЕСТЕН, а не отказ банка. Как `Declined` он помечал
+    // платёж FAILED, и следующая попытка продления шла НОВЫМ номером заказа
+    // (риск второго списания, если первое прошло). `Unknown` не входит в
+    // терминальные статусы — Payment остаётся PENDING, повтор тем же
+    // orderReference (billing-renewal: orderReferenceFor).
+    const status =
+      typeof res.data?.transactionStatus === 'string' &&
+      res.data.transactionStatus
+        ? res.data.transactionStatus
+        : 'Unknown';
     return {
       ok: status === 'Approved',
       transactionStatus: status,
-      reasonCode: res.data.reasonCode ?? -1,
-      recToken: res.data.recToken ?? null,
+      reasonCode: res.data?.reasonCode ?? -1,
+      recToken: res.data?.recToken ?? null,
       rawPayload: res.data,
     };
   }
-
-  private hmacMd5(data: string): string {
-    const { wayforpayMerchantSecret } = this.cfg();
-    return createHmac('md5', wayforpayMerchantSecret)
-      .update(data, 'utf8')
-      .digest('hex');
-  }
-}
-
-function formatAmount(amount: number): string {
-  // WayForPay ждёт сумму в ОСНОВНЫХ единицах валюты с точкой, без хвостовых
-  // нулей сверх необходимого (документированный пример — "0.13").
-  return String(Math.round(amount * 100) / 100);
-}
-
-/** Сравнение постоянного времени (Е-1.6 шестого аудита) — тот же приём,
- * что `safeEqual` в `stars-invoice-payload.util.ts`. `timingSafeEqual`
- * требует буферы одинаковой длины (иначе бросает исключение), поэтому при
- * несовпадении длин сверяем буфер сам с собой — время выполнения этой
- * ветки не должно отличаться от штатной и тем самым не выдаёт длину
- * ожидаемой подписи атакующему. */
-function safeEqual(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, 'utf8');
-  const bufB = Buffer.from(b, 'utf8');
-  if (bufA.length !== bufB.length) {
-    timingSafeEqual(bufB, bufB);
-    return false;
-  }
-  return timingSafeEqual(bufA, bufB);
 }

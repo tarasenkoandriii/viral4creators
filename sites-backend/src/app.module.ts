@@ -25,6 +25,8 @@ import { AssistSiteHandoffModule } from './modules/assist-site-handoff/assist-si
 import { AssistSiteLearningModule } from './modules/assist-site-learning/assist-site-learning.module';
 import { AssistAnalyticsModule } from './modules/assist-analytics/assist-analytics.module';
 import { AssistDigestModule } from './modules/assist-digest/assist-digest.module';
+import { AssistBillingModule } from './modules/assist-billing/assist-billing.module';
+import { PlatformAdminModule } from './modules/platform-admin/platform-admin.module';
 
 @Module({
   imports: [
@@ -55,6 +57,10 @@ import { AssistDigestModule } from './modules/assist-digest/assist-digest.module
     AssistSiteLearningModule,
     AssistAnalyticsModule,
     AssistDigestModule,
+    // Э4 «Тарифы и оплата»: тариф кабинета, счётчик единиц, Stars/WayForPay,
+    // крон продления; внутренний API вкладки «Помощник» админки платформы.
+    AssistBillingModule,
+    PlatformAdminModule,
   ],
 })
 export class AppModule {}

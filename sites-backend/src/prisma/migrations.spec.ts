@@ -45,6 +45,13 @@ function migrations(): Migration[] {
     }));
 }
 
+/**
+ * Таблицы, удалённые более поздней миграцией (DROP TABLE): старые миграции
+ * их создают и меняют законно. Э4: счётчик диалогов по сайту заменён
+ * счётчиком единиц подписки (…_assist_billing).
+ */
+const DROPPED_TABLES = new Set(['assist_site_period_usage']);
+
 describe('миграции схемы sites', () => {
   const tables = mappedTables();
   const migs = migrations();
@@ -60,7 +67,9 @@ describe('миграции схемы sites', () => {
       for (const r of m.sql.matchAll(
         /(?:ALTER|CREATE) TABLE(?: IF NOT EXISTS)?\s+"([^"]+)"/g,
       )) {
-        if (!tables.has(r[1])) unknown.push(`${m.name}: "${r[1]}"`);
+        if (!tables.has(r[1]) && !DROPPED_TABLES.has(r[1])) {
+          unknown.push(`${m.name}: "${r[1]}"`);
+        }
       }
     }
     expect(unknown).toEqual([]);

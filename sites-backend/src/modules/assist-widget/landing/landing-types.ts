@@ -18,25 +18,12 @@ export interface LandingEventBatch {
   }>;
 }
 
-/** GET /public/assist/plans — до Э4 снимок `assist-plans.snapshot.json` той же формы. */
-export interface AssistPlansSnapshot {
-  version: number;
-  source: string;
-  currency: 'USD';
-  plans: Array<{
-    id: 'trial' | 'start' | 'business' | 'pro';
-    priceMonthly: number;
-    trialDays?: number;
-    dialogsPerMonth: number;
-    sites: number;
-    pages: number;
-    documents: number;
-    recrawl: string;
-    poweredByRemovable: boolean;
-    retentionDays: number;
-    overagePer100?: number;
-  }>;
-}
+/**
+ * GET /public/assist/plans — Э4: живые тарифы из `ASSIST_PLANS`
+ * (assist-billing/plans.ts, `publicPlans`) в форме файла-снимка лендинга
+ * `sites-landing/assist-plans.snapshot.json` (+ `dialogWeights`).
+ */
+export type { PublicPlansResponse as AssistPlansResponse } from '../../assist-billing/plans';
 
 /** POST /public/widget-drafts — «к Л3»: конфигурация вида ≤ 2 КБ (parseWidgetConfig без hosts и картинок). */
 export interface WidgetDraftCreated {

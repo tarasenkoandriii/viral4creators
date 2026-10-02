@@ -26,8 +26,11 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const NEXT = path.join(ROOT, '.next');
 const BUDGET_KB = Number(process.env.FIRST_LOAD_BUDGET_KB ?? 110);
-/** Маршруты с другим бюджетом §9 (`/widget`, позже `/try`). */
-const ROUTE_BUDGET_KB = { '/[locale]/assistant/widget/page': Number(process.env.WIDGET_PAGE_BUDGET_KB ?? 160) };
+/** Маршруты с другим бюджетом §9 (`/widget`, `/try`). */
+const ROUTE_BUDGET_KB = {
+  '/[locale]/assistant/widget/page': Number(process.env.WIDGET_PAGE_BUDGET_KB ?? 160),
+  '/[locale]/assistant/try/page': Number(process.env.TRY_PAGE_BUDGET_KB ?? 160),
+};
 const app = JSON.parse(fs.readFileSync(path.join(NEXT, 'app-build-manifest.json'), 'utf8')).pages;
 const build = JSON.parse(fs.readFileSync(path.join(NEXT, 'build-manifest.json'), 'utf8'));
 
@@ -77,4 +80,4 @@ if (!Object.keys(ROUTE_BUDGET_KB).every((k) => app[k])) {
   console.error(`FAIL маршрута с отдельным бюджетом нет в сборке: ${Object.keys(ROUTE_BUDGET_KB).filter((k) => !app[k])}`);
   process.exit(1);
 }
-console.log(`ok   JS первой загрузки: статические маршруты ≤ ${BUDGET_KB} КБ gzip, /widget ≤ ${ROUTE_BUDGET_KB['/[locale]/assistant/widget/page']} КБ`);
+console.log(`ok   JS первой загрузки: статические маршруты ≤ ${BUDGET_KB} КБ gzip, /widget и /try ≤ ${ROUTE_BUDGET_KB['/[locale]/assistant/widget/page']} КБ`);

@@ -1578,3 +1578,213 @@ describe('предупреждение стоп-листа доживает до
     expect(alignRoundWarnings('не массив', 1)).toEqual([null]);
   });
 });
+
+// ── Ш0.5/Ш0.6 аудита 02.10.2026 (риски В-1, В-2) ──────────────────────
+
+/** Кука в форме CDP. */
+function cdpCookie(name: string, domain: string) {
+  return {
+    name,
+    value: `${name}-value`,
+    domain,
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    expires: -1,
+  };
+}
+
+const MIXED_JAR = [
+  cdpCookie('sid', '.shop.example.com'),
+  cdpCookie('auth', 'auth.example.com'),
+  cdpCookie('SID', '.google.com'),
+  cdpCookie('c_user', '.facebook.com'),
+  cdpCookie('_ga', '.doubleclick.net'),
+];
+
+function storedCookieNames(enc: string): string[] {
+  const { decryptCookieJar } = jest.requireActual('../../common/cookie-jar');
+  return decryptCookieJar(enc, KEY)
+    .cookies.map((c: { name: string }) => c.name)
+    .sort();
+}
+
+describe('Ш0.5: в базу — только куки сайта заказчика', () => {
+  it('живой вход: SSO-сессия Google/Facebook не попадает ни в раунд, ни в cookiesEnc', async () => {
+    const ctx = setup({
+      relay: {
+        fetchResult: jest.fn().mockResolvedValue({
+          cookies: MIXED_JAR,
+          finalUrl: 'https://shop.example.com/cabinet',
+        }),
+      },
+    });
+    const { ticket } = await ctx.service.startLiveLogin('user1', 'proj1');
+    await ctx.service.completeLiveLogin('user1', 'proj1', {
+      ticket,
+      expectedVersion: 3,
+    });
+
+    const roundCookies = (ctx.explorer.runRound as jest.Mock).mock.calls[0][0]
+      .cookies as Array<{ name: string }>;
+    expect(roundCookies.map((c) => c.name).sort()).toEqual(['auth', 'sid']);
+
+    const data =
+      ctx.clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(storedCookieNames(data.cookiesEnc)).toEqual(['auth', 'sid']);
+    expect(data.secretsUsedAt).toBeInstanceOf(Date);
+  });
+
+  it('/step: сторонние куки из jar разведчика тоже отбрасываются', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      explorer: {
+        runRound: jest
+          .fn()
+          .mockResolvedValue({ exploration: EXPLORATION, cookies: MIXED_JAR }),
+      },
+    });
+    await service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      fills: [],
+      clickSelector: '#next',
+    });
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(storedCookieNames(data.cookiesEnc)).toEqual(['auth', 'sid']);
+    // Отметка «секреты использовались» — от неё считается срок хранения.
+    expect(data.secretsUsedAt).toBeInstanceOf(Date);
+  });
+
+  it('/login с «одноразово» запоминает выбор; без флага — не трогает его', async () => {
+    const { service, clientSiteTutorialDraft } = setup();
+    const fields = [{ selector: '#pass', value: 'p', sensitive: true }];
+    await service.login('user1', 'proj1', {
+      expectedVersion: 3,
+      submitSelector: '#submit',
+      fields,
+      forgetAfterBuild: true,
+    });
+    expect(
+      clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data
+        .secretsOneShot,
+    ).toBe(true);
+
+    await service.login('user1', 'proj1', {
+      expectedVersion: 3,
+      submitSelector: '#submit',
+      fields,
+    });
+    expect(
+      clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data,
+    ).not.toHaveProperty('secretsOneShot');
+  });
+});
+
+describe('Ш0.6: кадры — по неугадываемому пути', () => {
+  it('/explore заводит случайный frameKey, и съёмочный кадр ложится под него', async () => {
+    const { service, clientSiteTutorialDraft, blob } = setup({
+      draft: null,
+      explorer: {
+        runRound: jest.fn().mockResolvedValue({
+          exploration: {
+            ...EXPLORATION,
+            videoFrameDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+          },
+          cookies: [],
+        }),
+      },
+    });
+    await service.explore('user1', 'proj1', 'https://shop.example.com');
+
+    const data = clientSiteTutorialDraft.create.mock.calls[0][0].data;
+    expect(data.frameKey).toMatch(/^[A-Za-z0-9_-]{24}$/);
+    expect(data.secretsUsedAt).toBeInstanceOf(Date);
+    const pathname = (blob.uploadBuffer as jest.Mock).mock.calls[0][0];
+    expect(pathname).toBe(
+      `tutorial-video-frames/draft1/${data.frameKey}/round-0.png`,
+    );
+  });
+
+  it('ключи двух черновиков разные', async () => {
+    const keys = new Set<string>();
+    for (let i = 0; i < 2; i++) {
+      const { service, clientSiteTutorialDraft } = setup({ draft: null });
+      await service.explore('user1', 'proj1', 'https://shop.example.com');
+      keys.add(clientSiteTutorialDraft.create.mock.calls[0][0].data.frameKey);
+    }
+    expect(keys.size).toBe(2);
+  });
+
+  it('/finish раскладывает итоговые кадры в ту же папку-ключ, корень пуст', async () => {
+    const K = 'k'.repeat(24);
+    const blob = memoryBlob({
+      [`tutorial-video-frames/draft1/${K}/round-0.png`]: 'image/png',
+    });
+    const { service } = setup({
+      draft: makeDraftRow({
+        frameKey: K,
+        roundScreenshots: ['data:image/jpeg;base64,/9j/AAA='],
+        roundVideoFrames: [
+          `https://blob.example/tutorial-video-frames/draft1/${K}/round-0.png`,
+        ],
+      }),
+      blob: blob as unknown as BlobService,
+    });
+    await service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' });
+    expect([...blob.store.keys()].sort()).toEqual([
+      `tutorial-video-frames/draft1/${K}/0.png`,
+      `tutorial-video-frames/draft1/${K}/round-0.png`,
+    ]);
+    // Съёмочный нашёлся по ключу — отката на предпросмотр не было.
+    expect(blob.uploadBuffer).not.toHaveBeenCalled();
+  });
+});
+
+describe('аудит Ш0: уборка кадров снова отвечает за новые кадры', () => {
+  it('новый съёмочный кадр снимает отметку framesPurgedAt', async () => {
+    const { service, clientSiteTutorialDraft, blob } = setup({
+      draft: makeDraftRow({
+        frameKey: 'k'.repeat(24),
+        framesPurgedAt: new Date('2026-09-01T00:00:00Z'),
+      }),
+      explorer: {
+        runRound: jest.fn().mockResolvedValue({
+          exploration: {
+            ...EXPLORATION,
+            videoFrameDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+          },
+          cookies: [],
+        }),
+      },
+    });
+    // В общем моке `update` нет (сбой заливки кадра глотается) — здесь он
+    // нужен, чтобы увидеть, ЧТО пишется вместе со ссылкой на кадр.
+    const update = jest.fn().mockResolvedValue(makeDraftRow());
+    Object.assign(clientSiteTutorialDraft, { update });
+    Object.assign(blob, {
+      getPublicUrl: jest.fn().mockResolvedValue('https://blob.example/f.png'),
+    });
+    await service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      fills: [],
+      clickSelector: '#next',
+    });
+    const frameWrite = update.mock.calls.find(
+      (c) => 'roundVideoFrames' in c[0].data,
+    );
+    expect(frameWrite?.[0].data.framesPurgedAt).toBeNull();
+  });
+
+  it('/finish заливает итоговые кадры и снимает отметку framesPurgedAt', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: makeDraftRow({
+        roundScreenshots: ['data:image/jpeg;base64,/9j/AAA='],
+        framesPurgedAt: new Date('2026-09-01T00:00:00Z'),
+      }),
+    });
+    await service.finish('user1', 'proj1', { expectedVersion: 3, title: 'Т' });
+    const claim = (
+      clientSiteTutorialDraft.updateMany as jest.Mock
+    ).mock.calls.find((c) => c[0].data.status === 'PENDING_REVIEW');
+    expect(claim?.[0].data).toHaveProperty('framesPurgedAt', null);
+  });
+});

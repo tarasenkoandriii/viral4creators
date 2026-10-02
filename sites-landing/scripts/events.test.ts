@@ -49,8 +49,15 @@ assert.deepEqual(
     configurator_save: ['result'],
     tma_click: ['payload', 'place'],
     pilot_submit: ['result'],
+    // Л4: исход запуска, источник вопроса, вид лимита — без адреса сайта и текста вопроса.
+    sandbox_start: ['result'],
+    sandbox_ready: [],
+    sandbox_question: ['source'],
+    sandbox_limit_hit: ['kind'],
   },
 );
+assert.equal(makeEvent('sandbox_start', { result: 'ok', url: 'https://shop.example.com' }), null, 'адрес сайта в события не уходит');
+assert.equal(makeEvent('sandbox_question', { source: 'typed', text: 'Скільки коштує?' }), null, 'текст вопроса в события не уходит');
 for (const spec of Object.values(EVENT_PROPS)) {
   for (const allowed of Object.values(spec)) {
     assert.ok(Array.isArray(allowed), 'свойство события без перечня значений');

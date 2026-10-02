@@ -60,6 +60,12 @@
  *     «Админка» — только assistAdmin: owner, У-27); его не импортирует ни
  *     один модуль — иначе «Сайт» получил бы путь к данным «Админки» через
  *     оркестратор.
+ * 11. (Э4) `public-zone-e4`: публичный код (зоны правила 8 и папка
+ *     `public/` модуля `assist-billing`) берёт из `assist-billing` только
+ *     `public/**`, чистые `plans`, `units`, `subscription-state`, типы и
+ *     `*.module`: кабинет тарифа, оплата и крон ходят основным клиентом
+ *     (и держат секреты провайдеров), а квота виджета — только под
+ *     assist_public (assist-billing/public/entitlements.ts).
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
@@ -154,6 +160,8 @@ const PUBLIC_ZONES = [
   { module: 'assist-site-handoff', only: /^public\// },
   { module: 'assist-site-learning', only: /^public\// },
   { module: 'assist-analytics', only: /^public\// },
+  // Э4: квота и тариф кабинета под assist_public.
+  { module: 'assist-billing', only: /^public\// },
 ];
 const inPublicZone = (moduleName, inModule) =>
   !/\.spec\.ts$/.test(inModule) &&
@@ -166,6 +174,9 @@ const inPublicZone = (moduleName, inModule) =>
 /** Э3: модули, из которых публичный код берёт только public/, типы и *-config. */
 const E3_MODULES =
   /^modules\/(assist-site-handoff|assist-site-learning|assist-analytics|assist-digest)\/(.+)$/;
+/** Э4: что публичный код может взять из assist-billing (правило 11). */
+const E4_BILLING = /^modules\/assist-billing\/(.+)$/;
+const E4_ALLOWED = /^(public\/.+|plans|units|subscription-state|[\w-]*types|[\w-]+\.module)$/;
 const MAIN_DB_TARGETS = [
   /^prisma\/sites-db\.service$/,
   /^prisma\/prisma\.service$/,
@@ -196,6 +207,16 @@ export const PATH_RULES = [
         /(^|[/-])types$/.test(rest) ||
         /-config$/.test(rest)
       );
+    },
+  },
+  {
+    id: 'public-zone-e4',
+    why: 'Э4: публичный код берёт из assist-billing только public/, plans, units, subscription-state, *types (оплата и кабинет — основная роль и секреты)',
+    from: inPublicZone,
+    to: (target, moduleName) => {
+      const m = E4_BILLING.exec(target.replace(SOURCE_RE, ''));
+      if (!m || moduleName === 'assist-billing') return false;
+      return !E4_ALLOWED.test(m[1]);
     },
   },
 ];
@@ -538,6 +559,21 @@ function selfTest() {
       'digest-leaf',
     ],
     [
+      'modules/assist-site-chat/ah.ts',
+      `import { AssistBilling } from '../assist-billing/billing.service';`,
+      'public-zone-e4',
+    ],
+    [
+      'modules/assist-widget/ai.ts',
+      `import { AssistPayments } from '../assist-billing/payments.service';`,
+      'public-zone-e4',
+    ],
+    [
+      'modules/assist-billing/public/aj.ts',
+      `import { PrismaService } from '../../../prisma/prisma.service';`,
+      'public-db',
+    ],
+    [
       'shared/l.ts',
       `import { G } from '../modules/telegram-auth/guard';`,
       'shared↛modules',
@@ -622,6 +658,18 @@ function selfTest() {
     [
       'modules/assist-site-chat/system/ok21.ts',
       `import { IntegrationsService } from '../../assist-analytics/integrations.service';`,
+    ],
+    [
+      'modules/assist-site-chat/ok22.ts',
+      `import { claimUnits } from '../assist-billing/public/entitlements';\nimport { ASSIST_PLANS } from '../assist-billing/plans';\nimport { unitsDelta } from '../assist-billing/units';\nimport type { SubscriptionState } from '../assist-billing/subscription-state';\nimport type { BillingOverview } from '../assist-billing/api-types';`,
+    ],
+    [
+      'modules/assist-billing/ok23.ts',
+      `import { PrismaService } from '../../prisma/prisma.service';\nimport { readState } from './public/entitlements';`,
+    ],
+    [
+      'modules/site-ai/ok24.ts',
+      `import { learningBudgetCap } from '../assist-billing/limits';`,
     ],
     [
       'shared/ok5.ts',

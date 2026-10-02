@@ -65,14 +65,21 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import {
-  WIDGET_DEFAULTS,
-  widgetSiteDailyCapMicroUsd,
-} from '../../config/assist-defaults';
+import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
+import { readWidgetPlatformSettings } from '../../common/platform-settings';
 import { widgetPlatformEnabled } from '../../config/widget-env';
 import { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import { runChatStream } from '../../shared/assist-chat-core';
 import type { ChatUsageSummary } from '../../shared/assist-chat-core';
+import {
+  effectiveLimit,
+  markExhausted,
+  readState,
+  readUsage,
+  siteDailyCapMicroUsd,
+} from '../assist-billing/public/entitlements';
+import type { SubscriptionState } from '../assist-billing/subscription-state';
+import { isNewDialog, unitsDelta } from '../assist-billing/units';
 import { questionLang } from '../assist-knowledge-core/answer/prompt';
 import { detectInjection } from '../assist-knowledge-core/injection';
 import { semanticCacheKey } from '../assist-knowledge-core/semantic-cache-key';
@@ -97,7 +104,6 @@ import {
   DialogQuota,
   SiteBudget,
   answerEstimateMicroUsd,
-  dialogWeightStep,
   type BudgetReservation,
 } from './budget';
 import { SiteChatModel } from './chat-model';
@@ -382,7 +388,10 @@ export class SiteChatService {
       this.sameQuestionOtherVisitors(input, question, now),
     ]);
     const avail = chatAvailability({
-      platformEnabled: widgetPlatformEnabled(this.env),
+      // env — аварийный рычаг владельца деплоя, админка (§8 п.5) — второй.
+      platformEnabled:
+        widgetPlatformEnabled(this.env) &&
+        (await readWidgetPlatformSettings(db)).enabled,
       site: {
         enabled: row.enabled,
         chatPaused: row.chatPaused,
@@ -404,12 +413,8 @@ export class SiteChatService {
     // ── 3. Диалог и сообщения (вопрос — маскированным) ──
     const hosts = await this.siteHosts(site.siteId, site.parentOrigin);
     const history = conv ? await this.history(conv.id) : [];
-    if (
-      conv &&
-      now.getTime() - conv.lastMessageAt.getTime() >
-        WIDGET_DEFAULTS.dialogIdleMs
-    ) {
-      // 30 мин тишины — новый диалог для квоты (§7.1).
+    if (conv && isNewDialog(conv.lastMessageAt, now)) {
+      // 30 мин тишины — новый диалог для квоты (§7.1, assist-billing/units).
       await db.assistSiteConversation.update({
         where: { id: conv.id },
         data: { answers: 0, dialogCounted: false },
@@ -620,9 +625,37 @@ export class SiteChatService {
       question,
       answerLang: lang,
     });
+    // Э4: тариф кабинета — суточный потолок сайта и квота единиц (без кэша:
+    // оплата действует со следующего вопроса). Предпросмотр конфигуратора
+    // квоту не тратит и без тарифа живёт в потолке пробного.
+    const plan = await readState(db, site.accountId, now);
+    // Мягкий стоп (§3.10): тарифа нет или лимит периода выбран, а вопрос
+    // открыл бы новый диалог, — отказ ДО платной работы (эмбеддинг, поиск).
+    // Последнее слово — у атомарного захвата единиц перед моделью.
+    if (
+      !site.preview &&
+      !(await this.quotaLeft(
+        site.accountId,
+        plan,
+        conv?.dialogCounted ?? false,
+      ))
+    ) {
+      this.logger.warn(`ask: site_quota (лимит тарифа, site ${site.siteId})`);
+      ctx.trace.rule ??= 'site_quota';
+      return this.finishStatic(ctx, {
+        kind: 'site_quota',
+        path: 'refusal',
+        state: 'refused',
+        lead: true,
+        error: 'site_quota',
+      });
+    }
     const reserved = await this.budget.reserve(db, {
       siteId: site.siteId,
-      siteCapMicroUsd: widgetSiteDailyCapMicroUsd(row),
+      siteCapMicroUsd: siteDailyCapMicroUsd(
+        row.dailyCapMicroUsd,
+        site.preview && !plan.planId ? { planId: 'trial' } : plan,
+      ),
       estMicroUsd: est,
       now,
     });
@@ -694,7 +727,7 @@ export class SiteChatService {
       }
       if (
         !site.preview &&
-        !(await this.claimDialog(site.siteId, site.accountId, convId, now))
+        !(await this.claimDialog(site.accountId, convId, plan))
       ) {
         this.logger.warn(`ask: site_quota (диалоги, site ${site.siteId})`);
         return await this.finishStatic(ctx, {
@@ -1419,15 +1452,17 @@ export class SiteChatService {
   // ── Квота диалогов (§4.5 уточнение 3) ─────────────────────────────────
 
   /**
-   * Засчитать ответ модели: первый в диалоге — диалог в квоту (одним
-   * условным UPDATE флага: два параллельных вопроса одного диалога не
-   * засчитают его дважды), 31-й и 61-й — ещё по единице (§7.1).
+   * Засчитать ответ модели (§7.1, assist-billing/units): ответ, которым
+   * диалог впервые засчитывается, — диалог в квоту (одним условным UPDATE
+   * флага: два параллельных вопроса одного диалога не засчитают его
+   * дважды), 31-й и 61-й — ещё по весу. Единицы — счётчик периода
+   * ПОДПИСКИ кабинета (условный UPDATE); не поместились — флаг и счёт
+   * ответов откатываются, модель не зовётся (мягкий стоп).
    */
   private async claimDialog(
-    siteId: string,
     accountId: string,
     convId: string,
-    now: Date,
+    plan: SubscriptionState,
   ): Promise<boolean> {
     const db = this.db;
     const won = await db.$queryRawUnsafe<Array<{ id: string }>>(
@@ -1441,9 +1476,15 @@ export class SiteChatService {
       convId,
     );
     const n = counted[0]?.answers ?? 1;
-    const weight = won.length ? 1 : dialogWeightStep(n) && n > 1 ? 1 : 0;
-    if (!weight) return true;
-    const ok = await this.quota.claim(db, { siteId, accountId, weight, now });
+    // Э4: режим «Сайт» текстом — вес 1 (голос Э5 и «Админка» Э7 — свои веса).
+    const units = unitsDelta(1, n, won.length > 0);
+    if (units === 0) return true;
+    const ok = await this.quota.claim(db, {
+      accountId,
+      state: plan,
+      units,
+      dialogs: won.length ? 1 : 0,
+    });
     if (!ok) {
       await db.$executeRawUnsafe(
         `UPDATE "sites"."assist_site_conversations"
@@ -1453,6 +1494,20 @@ export class SiteChatService {
       );
     }
     return ok;
+  }
+
+  /** Есть ли место для ещё одного диалога (чтение; захват — claimDialog). */
+  private async quotaLeft(
+    accountId: string,
+    plan: SubscriptionState,
+    counted: boolean,
+  ): Promise<boolean> {
+    if (!plan.planId) return false;
+    if (counted) return true;
+    const usage = await readUsage(this.db, accountId, plan.periodKey);
+    if (usage.units < effectiveLimit(plan, usage)) return true;
+    if (plan.periodKey) await markExhausted(this.db, accountId, plan.periodKey);
+    return false;
   }
 
   // ── Чтение контекста (всё — под assist_public) ─────────────────────────

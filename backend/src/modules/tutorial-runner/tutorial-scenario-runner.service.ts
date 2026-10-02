@@ -2964,6 +2964,26 @@ export class TutorialScenarioRunnerService {
         }`,
       );
     }
+
+    // «Одноразово» (Ш0.5 аудита 02.10.2026, риск В-1): ролик по сайту
+    // заказчика собран — данные входа больше не нужны, стираем сразу.
+    // Отдельной обёрткой по той же причине, что уборка кадров выше:
+    // сбой здесь не делает собранный ролик несобранным, а пропущенное
+    // подберёт крон `client-site-retention`.
+    if (asset.clientSiteDraftId) {
+      try {
+        await this.prisma.clientSiteTutorialDraft.updateMany({
+          where: { id: asset.clientSiteDraftId, secretsOneShot: true },
+          data: { credentialsEnc: null, cookiesEnc: null },
+        });
+      } catch (e) {
+        this.logger.warn(
+          `черновик ${asset.clientSiteDraftId}: данные входа «одноразово» не стёрлись (${
+            e instanceof Error ? e.message : String(e)
+          }) — подберёт крон client-site-retention`,
+        );
+      }
+    }
   }
 
   private async failAssembly(

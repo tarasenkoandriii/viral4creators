@@ -18,7 +18,8 @@ import {
   randomV6Prefix,
 } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import { LandingService } from '../../modules/assist-widget/landing/landing.service';
-import snapshot from '../../modules/assist-widget/landing/assist-plans.snapshot.json';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { PIXEL_GIF } from '../../modules/assist-widget/widget-config.service';
 import {
   LANDING_ORIGIN,
@@ -148,9 +149,32 @@ describeDb(
       });
     });
 
-    it('GET /public/assist/plans — снимок той же формы, с кэшем', async () => {
+    it('GET /public/assist/plans — Э4: живые тарифы той же формы, что снимок лендинга, с кэшем', async () => {
       const r = await request(srv()).get('/public/assist/plans').expect(200);
-      expect(r.body.data).toEqual(snapshot);
+      const landing = JSON.parse(
+        readFileSync(
+          join(
+            __dirname,
+            '..',
+            '..',
+            '..',
+            '..',
+            'sites-landing',
+            'assist-plans.snapshot.json',
+          ),
+          'utf8',
+        ),
+      ) as Record<string, unknown>;
+      const strip = ({
+        source: _s,
+        checkedAt: _c,
+        note: _n,
+        ...rest
+      }: Record<string, unknown>) => rest;
+      const { dialogWeights, ...live } = strip(r.body.data);
+      expect(live).toEqual(strip(landing));
+      expect(dialogWeights).toEqual({ text: 1, voice: 2, admin: 3 });
+      expect(r.body.data.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       expect(r.headers['cache-control']).toContain('s-maxage=');
     });
 

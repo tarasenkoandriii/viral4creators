@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { BRAND } from '../src/brand';
 import { parseLegalMarkdown } from '../src/lib/legal-markdown';
 import { LEGAL_DOCS, legalMarkdown, legalTitle } from '../src/lib/legal-docs';
+import { SESSION_KEY } from '../src/lib/sandbox';
 
 for (const doc of LEGAL_DOCS) {
   const md = legalMarkdown(doc.slug);
@@ -23,6 +24,8 @@ for (const doc of LEGAL_DOCS) {
 // Политика описывает ровно то, что делает сайт: cookie одна — язык.
 const cookies = legalMarkdown('cookies');
 assert.ok(cookies.includes('NEXT_LOCALE'));
+// Л4: песочница пишет в sessionStorage вкладки — ключ назван в cookie-политике тем же именем, что в коде.
+assert.ok(cookies.includes(SESSION_KEY) && cookies.includes('sessionStorage'), 'cookies: нет ключа песочницы в sessionStorage');
 const privacy = legalMarkdown('privacy');
-for (const must of ['Vercel Web Analytics', 'Telegram', 'згода']) assert.ok(privacy.includes(must), `privacy: нет «${must}»`);
+for (const must of ['Vercel Web Analytics', 'Telegram', 'згода', 'Пісочниця', 'контролер', '24 години', 'приберіть мій сайт']) assert.ok(privacy.includes(must), `privacy: нет «${must}»`);
 console.log(`ok   юр-черновики: ${LEGAL_DOCS.length} документа, помечены, плейсхолдеры подставлены, разметка разбирается`);

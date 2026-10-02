@@ -1703,3 +1703,53 @@ describe('CronJobsService — persona-sources-purge (этап E Greeting 2.0, В
     expect(slot!.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
   });
 });
+
+describe('CronJobsService — client-site-retention (Ш0.5/Ш0.6 аудита 02.10.2026)', () => {
+  it('под замком прогоняет сроки хранения обучалки и снимает замок', async () => {
+    const { service, prisma } = build();
+    const p = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+    p.clientSiteTutorialDraft = {
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+    };
+    p.tutorialVideoAsset = {
+      ...(p.tutorialVideoAsset ?? {}),
+      findMany: jest.fn().mockResolvedValue([]),
+    };
+    await expect(service.runClientSiteRetention()).resolves.toEqual({
+      secretsExpired: 2,
+      secretsOneShot: 0,
+      framesPurged: 0,
+      framesFailed: 0,
+    });
+    expect(prisma.cronJobLock.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ jobKey: 'client-site-retention' }),
+      }),
+    );
+  });
+
+  it('замок занят — пропуск, база не трогается', async () => {
+    const { service, prisma } = build();
+    const p = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+    p.clientSiteTutorialDraft = { updateMany: jest.fn(), findMany: jest.fn() };
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+    await expect(service.runClientSiteRetention()).resolves.toMatchObject({
+      skipped: true,
+    });
+    expect(p.clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('в расписании vercel.json — раз в сутки', () => {
+    const json = JSON.parse(
+      readFileSync(join(__dirname, '..', '..', '..', 'vercel.json'), 'utf8'),
+    ) as { crons: Array<{ path: string; schedule: string }> };
+    const slot = json.crons.find(
+      (c) => c.path === '/api/cron/client-site-retention',
+    );
+    expect(slot!.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
+  });
+});

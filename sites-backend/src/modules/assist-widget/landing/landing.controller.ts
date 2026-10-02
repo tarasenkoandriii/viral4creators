@@ -1,7 +1,7 @@
 /**
  * Маршруты лендинга — W2 (лендинг-ТЗ §17.3 п.1; контракт Э2 §6):
  *   POST /public/landing/event        204 (sendBeacon)
- *   GET  /public/assist/plans         снимок тарифов (кэш)
+ *   GET  /public/assist/plans         живые тарифы ASSIST_PLANS (кэш; Э4)
  *   POST /public/widget-drafts        «к Л3»
  *
  * События: sendBeacon шлёт тело и как `application/json`, и как
@@ -23,7 +23,7 @@ import { PublicRoute } from '../../telegram-auth/allow-apps.decorator';
 import { clientIp } from '../../telegram-auth/web/web-request';
 import { widgetError } from '../widget-errors';
 import type {
-  AssistPlansSnapshot,
+  AssistPlansResponse,
   LandingEventBatch,
   WidgetDraftCreated,
 } from './landing-types';
@@ -82,7 +82,7 @@ export class LandingPublicController {
   }
 
   @Get('assist/plans')
-  plans(@Res({ passthrough: true }) res: Response): AssistPlansSnapshot {
+  plans(@Res({ passthrough: true }) res: Response): AssistPlansResponse {
     res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=3600');
     return this.landing.plans();
   }

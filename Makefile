@@ -94,15 +94,16 @@ ci:
 	cd assist && npx vite build
 	$(MAKE) ci-widget
 	$(MAKE) ci-integrations
+	$(MAKE) ci-relay
 	$(MAKE) ci-docs
 
-# Лендинг клиентских сайтов (Л0–Л3; джоба `sites-landing` в CI): типы,
+# Лендинг клиентских сайтов (Л0–Л5; джоба `sites-landing` в CI): типы,
 # линт, unit-скрипты, «сборка без SITE_URL падает», сборка с адресами
 # лабораторного стенда, проверка собранного HTML и бюджет JS. axe, e2e
 # виджета и Lighthouse — отдельно, им нужны стенд, `next start` и Chromium:
 #   cd widget && npm run build
 #   cd sites-landing && npm run stand & npx next start -p 3010 &
-#   npm run axe && npm run e2e:widget && LHCI_BASE_URL=http://localhost:3010 CHROME_PATH=<chromium> npm run lhci
+#   npm run axe && npm run e2e:widget && npm run e2e:sandbox && LHCI_BASE_URL=http://localhost:3010 CHROME_PATH=<chromium> npm run lhci
 #   npm run cwv:widget   # замер с/без виджета (медиана 5), --write — в src/lib/widget-measure.json
 LANDING_STAND_ENV = SITE_URL=https://assist.viral4creators.app PILOT_TELEGRAM_BOT_TOKEN=000000:make-sentinel \
 	ASSIST_WIDGET_ORIGIN=http://localhost:3011 ASSIST_API_ORIGIN=http://localhost:3011 \
@@ -137,6 +138,14 @@ ci-integrations:
 	cd assist-integrations && npm run -s build >/dev/null
 	cd assist-integrations && npm run -s php:lint
 	cd assist-integrations && npm run -s php:test >/dev/null
+
+# Реле живого входа (Э-С Ш0.2; джоба `live-login-relay` в CI): копии
+# фильтра исходящего трафика из backend/src/common, линт, тесты, сборка.
+ci-relay:
+	node scripts/sync-relay-shared.mjs --check
+	cd live-login-relay && npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0
+	cd live-login-relay && npx jest --ci
+	cd live-login-relay && npx tsc -p tsconfig.json --noEmit --incremental false
 
 # Только документы — быстрая проверка перед коммитом правок в doc/.
 ci-docs:

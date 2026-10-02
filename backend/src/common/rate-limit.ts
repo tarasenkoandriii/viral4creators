@@ -60,8 +60,11 @@ import {
   SetMetadata,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { createHmac } from 'crypto';
 import { Request, Response } from 'express';
+import { isIP } from 'net';
 import { PrismaService } from '../prisma/prisma.service';
+import { Cidr, isIpInCidr, parseCidr } from './egress-filter-proxy';
 
 export interface RateLimitRule {
   /** Сколько запросов на один ключ за окно. */
@@ -134,12 +137,17 @@ export class RateLimitGuard implements CanActivate {
         rule.by === 'user' && req.telegramUserId
           ? `u:${req.telegramUserId}`
           : ip;
-      const verdict = await this.hit(`${rule.name}|${who}`, rule, now);
+      // Ш0.7 аудита 02.10.2026 (риск В-4): ни в ключе `rate_limits`, ни
+      // в логе — ни сырого адреса, ни id человека. Окну нужна только
+      // РАЗЛИЧИМОСТЬ, а не сам адрес; HMAC с секретом не даёт перебрать
+      // 2³² адресов IPv4 по хешу из дампа таблицы.
+      const subject = rateLimitSubject(who);
+      const verdict = await this.hit(`${rule.name}|${subject}`, rule, now);
       if (verdict.count > rule.limit) {
         const res = context.switchToHttp().getResponse<Response>();
         res.setHeader('Retry-After', String(verdict.retryAfterSec));
         this.logger.warn(
-          `${rule.name}: ${verdict.count} запросов за окно от ${who} при лимите ${rule.limit}`,
+          `${rule.name}: ${verdict.count} запросов за окно от ${subject.slice(0, 12)}… при лимите ${rule.limit}`,
         );
         throw new HttpException(
           RATE_LIMIT_MESSAGE,
@@ -221,14 +229,106 @@ export async function pruneRateLimits(
 }
 
 /**
- * Адрес клиента за прокси Vercel: первый элемент `x-forwarded-for`
- * выставляет сама платформа, подделать его снаружи нельзя — свой заголовок
- * клиента Vercel затирает. Локально и в Docker заголовка нет — берём
- * адрес сокета.
+ * Секрет HMAC для ключей `rate_limits` (Ш0.7). Отдельная переменная не
+ * обязательна: тот же порядок, что у хеша IP консультанта
+ * (`modules/assistant/ip-hash.ts`) — `ASSISTANT_IP_HASH_SECRET`, затем
+ * `CRON_SECRET` (обязателен на проде), локально — фиксированная строка.
  */
-export function clientIp(req: Request): string {
+function rateLimitSecret(env: NodeJS.ProcessEnv): string {
+  return (
+    env.RATE_LIMIT_KEY_SECRET?.trim() ||
+    env.ASSISTANT_IP_HASH_SECRET?.trim() ||
+    env.CRON_SECRET?.trim() ||
+    'dev-only-rate-limit-salt'
+  );
+}
+
+/**
+ * То, что попадает в ключ окна и в лог: `HMAC-SHA256(секрет, адрес или
+ * u:id)`, 32 hex-символа. Стабильно между запросами (окно считается) и
+ * между экземплярами (секрет общий), но обратно в адрес не переводится.
+ */
+export function rateLimitSubject(
+  who: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return createHmac('sha256', rateLimitSecret(env))
+    .update(who)
+    .digest('hex')
+    .slice(0, 32);
+}
+
+/** `::ffff:203.0.113.7` → `203.0.113.7`; остальное — как есть. */
+function normalizeIp(raw: string | undefined): string {
+  const ip = (raw ?? '').trim();
+  return ip.toLowerCase().startsWith('::ffff:') && isIP(ip.slice(7)) === 4
+    ? ip.slice(7)
+    : ip;
+}
+
+/** `TRUSTED_PROXY_CIDRS` — через запятую; кривые записи пропускаются. */
+function trustedProxies(env: NodeJS.ProcessEnv): Cidr[] {
+  const out: Cidr[] = [];
+  for (const spec of (env.TRUSTED_PROXY_CIDRS ?? '').split(',')) {
+    if (!spec.trim()) continue;
+    try {
+      out.push(parseCidr(spec));
+    } catch {
+      // Кривая запись = «этому прокси не доверяем»: безопасная сторона.
+    }
+  }
+  return out;
+}
+
+/**
+ * Адрес клиента (Ш0.7 аудита 02.10.2026, риск В-4).
+ *
+ * До Ш0.7 здесь безусловно брался первый адрес `X-Forwarded-For`. На
+ * Vercel это верно — платформа сама переписывает заголовок, — но вне
+ * Vercel (Docker за Traefik/Dokploy, локальный запуск) первый адрес
+ * пишет КЛИЕНТ: подставив случайный, он получал новое окно на каждый
+ * запрос, и лимит консультанта не работал вовсе.
+ *
+ * Теперь:
+ *  - на Vercel (`VERCEL` задан платформой) — первый адрес XFF, как раньше;
+ *  - вне Vercel XFF читается, ТОЛЬКО если соединение пришло от прокси
+ *    из `TRUSTED_PROXY_CIDRS`; цепочка идёт справа налево, доверенные
+ *    звенья пропускаются, берётся первый недоверенный адрес — его
+ *    дописал ближайший к нам доверенный прокси, подделать его клиент не
+ *    может;
+ *  - иначе — адрес сокета.
+ */
+export function clientIp(
+  req: Request,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const forwarded = req.headers['x-forwarded-for'];
-  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  const candidate = first?.split(',')[0]?.trim();
-  return candidate || req.ip || req.socket?.remoteAddress || 'unknown';
+  const header = Array.isArray(forwarded) ? forwarded.join(',') : forwarded;
+  const chain = (header ?? '')
+    .split(',')
+    .map((s) => normalizeIp(s))
+    .filter(Boolean);
+  const peer = normalizeIp(req.socket?.remoteAddress || req.ip);
+
+  if (env.VERCEL?.trim()) {
+    return chain[0] || peer || 'unknown';
+  }
+  if (!peer) return 'unknown';
+
+  const trusted = trustedProxies(env);
+  const isTrusted = (ip: string) =>
+    isIP(ip) !== 0 && trusted.some((c) => isIpInCidr(ip, c));
+  if (!isTrusted(peer)) return peer;
+
+  // `last` — самый левый адрес, до которого дошли по доверенным звеньям.
+  // Мусор в цепочке — дальше не верим и берём `last`, а НЕ `chain[0]`:
+  // левее мусора всё писал клиент (аудит Ш0 02.10.2026 — прежний откат
+  // на `chain[0]` отдавал подставленный клиентом адрес).
+  let last = peer;
+  for (let i = chain.length - 1; i >= 0; i--) {
+    if (isIP(chain[i]) === 0) break;
+    if (!isTrusted(chain[i])) return chain[i];
+    last = chain[i];
+  }
+  return last;
 }

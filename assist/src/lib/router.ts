@@ -61,6 +61,9 @@ export type Route =
   | { name: 'goals'; siteId: string }
   | { name: 'integrations'; siteId: string }
   | { name: 'learning'; siteId: string; tab: LearningTab }
+  // Э4: тариф и оплата (§3.10); `#/billing/<тариф>` — выбранный тариф
+  // (payload `pl_` лендинга, кнопка «Оплатить»).
+  | { name: 'billing'; plan: string | null }
   | { name: 'not-found'; path: string };
 
 const SECTIONS: Section[] = ['knowledge', 'widget', 'dialogs'];
@@ -94,6 +97,17 @@ export function parseRoute(hash: string): Route {
     return { name: 'widget-draft', draftId: p[1] };
   }
   if (p.length === 1 && p[0] === 'stats') return { name: 'stats-sites' };
+  if (p.length === 1 && p[0] === 'billing') {
+    return { name: 'billing', plan: null };
+  }
+  if (
+    p.length === 2 &&
+    p[0] === 'billing' &&
+    (PLAN_IDS as readonly string[]).includes(p[1]) &&
+    p[1] !== 'trial'
+  ) {
+    return { name: 'billing', plan: p[1] };
+  }
   if (p.length === 1 && (SECTIONS as string[]).includes(p[0])) {
     return { name: 'section', section: p[0] as Section };
   }
@@ -268,6 +282,8 @@ export function routeHref(r: Route): string {
       return `#/sites/${r.siteId}/learning/site${
         r.tab === 'queue' ? '' : `/${r.tab}`
       }`;
+    case 'billing':
+      return r.plan ? `#/billing/${r.plan}` : '#/billing';
     case 'not-found':
       return `#/${r.path}`;
   }

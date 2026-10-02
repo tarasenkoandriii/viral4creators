@@ -7,6 +7,12 @@
  * запросе вместо старта).
  */
 
+import {
+  DEFAULT_ALLOWED_PORTS,
+  EgressUpstream,
+  parseCidr,
+} from './shared/egress-filter-proxy';
+
 export class ConfigError extends Error {}
 
 /**
@@ -42,6 +48,127 @@ export interface RelayConfig {
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   /** `null` — ходим напрямую. По умолчанию именно так. */
   browserProxy: BrowserProxy | null;
+  /** Фильтрующий прокси браузера (Ш0.2) — см. `parseEgressFilter`. */
+  egressFilter: EgressFilterConfig;
+}
+
+/**
+ * Фильтр исходящего трафика браузера (Ш0.2, риск К-1 аудита
+ * docs-tz/AUDIT-Merge-Assistant-Tutorial-QA-2026-10-02.md).
+ *
+ * Включён по умолчанию, и выключить его в production НЕЛЬЗЯ: реле
+ * открывает в Chromium страницу, которую задал пользователь, и
+ * показывает её экран вживую. Без фильтра страница уводит браузер на
+ * `169.254.169.254`, в сеть Docker или на панель Dokploy — и атакующий
+ * видит ответ глазами. `off` оставлен только для локальной отладки.
+ */
+export interface EgressFilterConfig {
+  enabled: boolean;
+  /** Публичные адреса/подсети САМОГО хоста (`LIVE_LOGIN_EGRESS_DENY`). */
+  denyCidrs: string[];
+  allowedPorts: number[];
+}
+
+export function parseEgressFilter(env: NodeJS.ProcessEnv): EgressFilterConfig {
+  const mode = env.LIVE_LOGIN_EGRESS_FILTER?.trim().toLowerCase() || 'on';
+  if (mode !== 'on' && mode !== 'off') {
+    throw new ConfigError(
+      `LIVE_LOGIN_EGRESS_FILTER: ожидается on или off, получено ${JSON.stringify(mode)}`,
+    );
+  }
+  if (mode === 'off' && env.NODE_ENV?.trim() === 'production') {
+    throw new ConfigError(
+      'LIVE_LOGIN_EGRESS_FILTER=off в production запрещён: без фильтра страница заказчика достаёт внутреннюю сеть хоста (doc/LIVE-LOGIN-RELAY-EGRESS.md)',
+    );
+  }
+
+  const denyCidrs = (env.LIVE_LOGIN_EGRESS_DENY ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const spec of denyCidrs) {
+    try {
+      parseCidr(spec);
+    } catch {
+      // Кривая запись не должна тихо превращаться в «запрета нет».
+      throw new ConfigError(
+        `LIVE_LOGIN_EGRESS_DENY: не адрес и не подсеть — ${JSON.stringify(spec)}`,
+      );
+    }
+  }
+
+  const rawPorts = env.LIVE_LOGIN_EGRESS_ALLOWED_PORTS?.trim();
+  const allowedPorts = rawPorts
+    ? rawPorts.split(',').map((p) => {
+        const n = Number(p.trim());
+        if (!Number.isInteger(n) || n < 1 || n > 65535) {
+          throw new ConfigError(
+            `LIVE_LOGIN_EGRESS_ALLOWED_PORTS: не порт — ${JSON.stringify(p)}`,
+          );
+        }
+        return n;
+      })
+    : [...DEFAULT_ALLOWED_PORTS];
+
+  return { enabled: mode === 'on', denyCidrs, allowedPorts };
+}
+
+/**
+ * Предупреждения старта о фильтре (аудит Ш0 02.10.2026).
+ *
+ * Пустой `LIVE_LOGIN_EGRESS_DENY` в production — фильтр работает, но
+ * публичные адреса САМОГО сервера для него обычные: страница доходит
+ * до Traefik хоста по его IP «изнутри» (источник — адрес контейнера), и
+ * любое правило Traefik «пускать только из частных сетей» перестаёт
+ * что-либо значить. Не отказ стартовать — переменная заводится руками
+ * (doc/LIVE-LOGIN-RELAY-EGRESS.md, шаг 1), и падение реле до этого шага
+ * ломало бы живой вход целиком; но строка в логе обязана быть.
+ */
+export function egressStartupWarnings(
+  config: Pick<RelayConfig, 'egressFilter'>,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const out: string[] = [];
+  if (
+    config.egressFilter.enabled &&
+    config.egressFilter.denyCidrs.length === 0 &&
+    env.NODE_ENV?.trim() === 'production'
+  ) {
+    out.push(
+      'LIVE_LOGIN_EGRESS_DENY пуст: публичные адреса сервера не запрещены фильтру браузера — задайте их (doc/LIVE-LOGIN-RELAY-EGRESS.md, шаг 1)',
+    );
+  }
+  return out;
+}
+
+/**
+ * `LIVE_LOGIN_BROWSER_PROXY_URL` при включённом фильтре становится
+ * ВЫШЕСТОЯЩИМ прокси фильтра: Chromium ходит в фильтр, фильтр —
+ * проверенным IP через этот выход. SOCKS4 фильтр не умеет (у него нет
+ * логина), поэтому такая пара отклоняется при старте, а не тихо идёт
+ * мимо фильтра.
+ */
+export function upstreamFromBrowserProxy(
+  proxy: BrowserProxy | null,
+): EgressUpstream | null {
+  if (!proxy) return null;
+  const url = new URL(proxy.server);
+  if (
+    url.protocol !== 'http:' &&
+    url.protocol !== 'https:' &&
+    url.protocol !== 'socks5:'
+  ) {
+    throw new ConfigError(
+      `LIVE_LOGIN_BROWSER_PROXY_URL: схема ${url.protocol} не поддерживается фильтром исходящего трафика — используйте http, https или socks5`,
+    );
+  }
+  return {
+    protocol: url.protocol,
+    host: url.hostname.replace(/^\[|\]$/g, ''),
+    port: Number(url.port),
+    username: proxy.username,
+    password: proxy.password,
+  };
 }
 
 /** Схемы, которые понимает `--proxy-server` Chromium. */
@@ -118,6 +245,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
     );
   }
 
+  const browserProxy = parseBrowserProxy(env.LIVE_LOGIN_BROWSER_PROXY_URL);
+  const egressFilter = parseEgressFilter(env);
+  // Пара «фильтр + вышестоящий выход» проверяется при старте: схема,
+  // которую фильтр не умеет, — отказ стартовать, а не обход фильтра.
+  if (egressFilter.enabled) upstreamFromBrowserProxy(browserProxy);
+
   return {
     port: parsePositiveInt(env.PORT, 8088, 'PORT'),
     puppeteerExecutablePath,
@@ -161,7 +294,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
       'WS_AUTH_TIMEOUT_MS',
     ),
     logLevel: parseLogLevel(env.LOG_LEVEL),
-    browserProxy: parseBrowserProxy(env.LIVE_LOGIN_BROWSER_PROXY_URL),
+    browserProxy,
+    egressFilter,
   };
 }
 

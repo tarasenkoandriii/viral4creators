@@ -52,7 +52,7 @@ export const ASSIST_PUBLIC_OMIT = {
     widgetDraft: true,
     personaDraft: true,
     leadRetentionDays: true,
-    createdAt: true,
+    // Э4: createdAt открыт роли — начало пробного периода (min по кабинету).
     updatedAt: true,
   },
   assistSiteFaq: {

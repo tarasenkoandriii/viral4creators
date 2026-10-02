@@ -617,10 +617,14 @@ Telegram-логин, который их и породил.
        ОС/дистрибутива); задана — модуль вообще не трогает
        `@sparticuz/chromium-min`/GitHub. На Vercel не задавать.
      - `CHROMIUM_PACK_URL` — переопределяет URL архива Chromium (по
-       умолчанию `chromium-v127.0.0-pack.tar` с релизов
+       умолчанию `chromium-v153.0.0-pack.x64.tar` с релизов
        github.com/Sparticuz/chromium, версия прибита гвоздями под
-       протокол установленного `puppeteer-core` 23.x). Менять только
-       вместе с версией `puppeteer-core`.
+       протокол установленного `puppeteer-core` ~25.11 — Chrome 153;
+       до Ш0.4 аудита 02.10.2026 здесь был 127 2024 года). Менять только
+       вместе с версией `puppeteer-core` (`revisions.chrome` его пакета).
+       Обучалка по сайту заказчика запускает этот браузер только через
+       фильтрующий прокси в процессе (`common/egress-filter-proxy.ts`,
+       Ш0.3): своих переменных у прокси на Vercel нет.
      - `AWS_EXECUTION_ENV`, `AWS_LAMBDA_JS_RUNTIME` — не задаются
        вручную нигде: модуль сам подставляет `AWS_LAMBDA_JS_RUNTIME`,
        если не видит ни одной из них, — подсказка рантайма, без которой
@@ -639,6 +643,20 @@ Telegram-логин, который их и породил.
        встроенное значение для разработки (`dev-only-assistant-ip-salt`,
        годится только для dev-стенда, НЕ для прод). Генерируется так же,
        что и остальные секреты: `openssl rand -hex 16`.
+   - **Ограничитель частоты (`common/rate-limit.ts`, Ш0.7 аудита
+     02.10.2026)** — обе переменные необязательны:
+     - `RATE_LIMIT_KEY_SECRET` — секрет HMAC, которым адрес (или id
+       человека) превращается в ключ таблицы `rate_limits` и в строку
+       лога; сырого адреса там больше нет. Не задан — берётся
+       `ASSISTANT_IP_HASH_SECRET`, затем `CRON_SECRET`, затем dev-строка.
+       Смена значения просто обнуляет текущие окна (максимум на час).
+     - `TRUSTED_PROXY_CIDRS` — нужен ТОЛЬКО вне Vercel (Docker за
+       Traefik/nginx): подсети прокси через запятую, от которых
+       `X-Forwarded-For` считается правдой (например, сеть Docker
+       `172.16.0.0/12`). Не задан — вне Vercel заголовок игнорируется и
+       берётся адрес соединения. На Vercel (`VERCEL` выставляет
+       платформа) заголовок переписан самой платформой и читается как
+       раньше; переменную там не задавать.
    - **Первый случай браузерного похода лендинга в backend напрямую**
      (`NEXT_PUBLIC_API_BASE_URL` у `landing`-проекта, раздел 4 ниже) —
      `CORS_ORIGIN` этого backend-проекта ДОЛЖЕН включать origin
@@ -1260,10 +1278,76 @@ store Э1).
    заказчик вписывает в плагин WordPress или свой бэкенд. Без переменной —
    `<домен кабинета>/api/…` (rewrite `assist/vercel.json`; рабочий, но
    лишнее плечо). Переменная сборки — после правки редеплой `assist`.
+   Пример кода вебхука целей (TMA «Интеграции», лендинг) читает
+   `ASSIST_GOAL_WEBHOOK_SECRET` — это переменная на сервере ЗАКАЗЧИКА
+   (секрет с экрана «Интеграции»), не нашего бэкенда.
 6. **Проверка роли** после деплоя под логин-ролью виджета:
    `SELECT "summary" FROM sites.assist_site_handoffs LIMIT 1` →
    `permission denied`; `SELECT "state" FROM sites.assist_site_handoffs
    LIMIT 1` → работает.
+
+### 6.12. Э4 «Тарифы и оплата»: что сделать владельцу
+
+Миграция `…_assist_billing`: подписки кабинетов (`assist_subscriptions`),
+счётчик единиц периода (`assist_account_usage`, заменил счётчик Э2 по
+сайту `assist_site_period_usage` — он удалён), платежи (`assist_payments`),
+принятые Условия и DPA, настройки/журнал/кандидаты eval вкладки «Помощник»
+админки платформы; GRANT `assist_public` — чтение тарифа без шифра
+recToken, захват единиц, рубильник платформы, `assist_sites.createdAt`.
+Тарифы и цены в USD — `sites-backend/src/modules/assist-billing/plans.ts`
+(`ASSIST_PLANS`, ТЗ §7.1); к оплате — гривна (WayForPay) и Stars по курсу
+из env, сумму считает сервер. Новый крон `assist-billing-tick` (каждые 10
+мин; кронов в проекте — 12).
+
+**Переменные sites-backend** (Production; в Preview — только если нужна
+проверка оплаты на стенде с тестовым мерчантом):
+
+| Переменная | Что это | Обязательна |
+|---|---|---|
+| `ASSIST_WAYFORPAY_MERCHANT_ACCOUNT` | login мерчанта WayForPay Помощника (свой; можно тот же, что у генератора, — решает владелец) | для оплаты картой |
+| `ASSIST_WAYFORPAY_MERCHANT_SECRET` | SecretKey мерчанта — подпись форм, вебхуков и списаний (HMAC-MD5) | для оплаты картой |
+| `ASSIST_WAYFORPAY_DOMAIN` | домен магазина в кабинете WayForPay (`merchantDomainName`) | для оплаты картой |
+| `SITES_PUBLIC_URL` | https-origin sites-backend без пути — `serviceUrl` вебхука `…/assist/billing/webhook/wayforpay` | для оплаты картой |
+| `ASSIST_UAH_PER_USD` | курс гривны к ориентиру USD (умолчание 41.5) | нет |
+| `ASSIST_STARS_PER_USD` | сколько Stars за $1 получает бот (умолчание 77 ≈ $0.013/⭐ — ПРОВЕРИТЬ) | нет |
+| `ASSIST_STARS_SUBSCRIPTION_MAX` | потолок цены подписки Stars с автопродлением (умолчание 10 000 ⭐ — ПРОВЕРИТЬ в Bot API); дороже — разовая оплата 30 дней | нет |
+| `ASSIST_TERMS_URL`, `ASSIST_DPA_URL` | https-ссылки на Условия и DPA от юриста (В-10); версии — `LEGAL_DOCUMENTS` в `assist-billing/billing-env.ts` | до первой продажи |
+| `SITES_INTERNAL_SECRET` | ≥ 16 символов, общий с backend — внутренний API вкладки «Помощник» | для вкладки |
+
+Уже заданные и используемые: `ASSIST_BOT_TOKEN` (Stars выставляет и
+принимает бот Помощника, не бот генератора), `ASSIST_TMA_URL` (возврат с
+формы WayForPay — `<TMA>/#/billing`), `ASSIST_SECRETS_KEY` (ключ шифра
+recToken выводится из него), `CRON_SECRET`.
+
+**Переменные backend** (генератор, вкладка «Помощник» админки):
+`SITES_BACKEND_URL` (https-origin sites-backend) и тот же
+`SITES_INTERNAL_SECRET`. Без них вкладка показывает «не подключено»,
+остальная админка работает. DSN схемы `sites` генератору НЕ нужен.
+
+1. **WayForPay.** В кабинете мерчанта: домен = `ASSIST_WAYFORPAY_DOMAIN`;
+   «Регулярные платежи» включить, если нужно автопродление картой и
+   автодокупка (без них WayForPay не присылает `recToken`: оплата картой
+   работает, продление — вручную). URL вебхука задаётся формой
+   (`serviceUrl`), отдельно в кабинете не нужен.
+2. **Stars.** В BotFather у бота Помощника — Payments → Telegram Stars
+   (без провайдера). Повторить `setWebhook` бота Помощника (§6.5, §6.11) с
+   `allowed_updates=["message","callback_query","my_chat_member","pre_checkout_query"]`
+   — без `pre_checkout_query` Telegram отклонит оплату по таймауту.
+3. **Пилоты.** Кабинеты, работавшие до Э4, получают пробный период от
+   первого сайта (14 дней). Пилотам (В-13) — ручной тариф во вкладке
+   «Помощник» админки → «Кабинеты и сайты» → «Задать тариф вручную»
+   (например, Pro на 60 дней с пометкой «пилот»).
+4. **Проверка после деплоя.** `GET <sites-backend>/public/assist/plans` —
+   живые тарифы; TMA → «Тариф и оплата»: принять Условия и DPA, оплатить
+   Start тестовой картой WayForPay → тариф сменился без перезагрузки
+   виджета; Stars — тестовым аккаунтом. Под логин-ролью виджета
+   `SELECT "recTokenEnc" FROM sites.assist_subscriptions LIMIT 1` →
+   `permission denied`; `SELECT "planId" FROM sites.assist_subscriptions
+   LIMIT 1` → работает.
+5. **Админка платформы.** Вкладка «Система → Помощник (клиентские
+   сайты)»: сводка, кабинеты (ручной тариф, продление, блокировка сайта,
+   сообщение владельцу), ревью (журнал доступа), анти-абьюз, рубильник и
+   потолок платформы (env остаётся верхней границей), расходы `assist-*`.
 
 ## 7. Лендинг клиентских сайтов (sites-landing)
 
@@ -1374,6 +1458,24 @@ Next.js 14-проект `sites-landing/` — витрина семейства �
    (медиана 5 прогонов с/без виджета, пороги ΔLCP ≤ 100 мс, ΔTBT ≤ 30 мс,
    ΔCLS ≤ 0.01, INP открытия ≤ 200 мс); «Сохранить и подключить» → TMA
    предлагает применить вид (e2e на живых устройствах).
+
+### 7.5. Л4–Л5: песочница по URL и opt-out — что сделать владельцу
+
+1. **Включить публичную песочницу** у `assist-api`:
+   `ASSIST_SANDBOX_PUBLIC_ENABLED=true` (суточный потолок —
+   `ASSIST_SANDBOX_PUBLIC_DAILY_CAP_USD`, умолчание 5; §6.9) и origin
+   лендинга в `CORS_ORIGIN` и `ASSIST_LANDING_ORIGINS` (§6.0). Пока
+   рубильник выключен, `/assistant/try` честно отвечает «недоступно —
+   оставьте заявку».
+2. **Opt-out обходчика** (`/assistant/bot` → `/api/opt-out`) уходит в тот
+   же служебный канал, что форма пилота (`PILOT_TELEGRAM_BOT_TOKEN`,
+   `PILOT_TELEGRAM_CHAT_ID`); домен вносит оператор в
+   `sites.site_opt_out_domains` (до 72 ч). Публичного маршрута opt-out в
+   продукте пока нет.
+3. Домен страницы бота в `CRAWLER_USER_AGENT` (`sites-backend/src/brand.ts`)
+   — `https://assist.viral4creators.app/<loc>/assistant/bot` до решения В-1.
+4. Плагин WordPress и npm-пакет на лендинге — `soon`, пока не
+   опубликованы (после бренда).
 
 ## Версия Node
 

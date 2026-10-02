@@ -19,6 +19,12 @@
  *     поправка `parseWidgetConfig`).
  *  5. Наши черновики (умолчание, крайние, случайные) проходят настоящий
  *     `parseWidgetConfig` БЕЗ поправок и не больше 2 КБ.
+ *  6. Песочница (Л4): ответы сервера (`SandboxView`, `SandboxAnswer`,
+ *     `PublicSandboxCreated`) и наши копии взаимно присваиваются; тела
+ *     запросов — поля DTO; маршруты контроллера; заголовок ключа; лимиты
+ *     `SANDBOX_LIMITS.public` (их называют тексты страницы); коды отказа
+ *     публичных маршрутов — все обработаны, лишних нет; id песочницы
+ *     сервера влезает в `sb_<id>`.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -47,16 +53,21 @@ import {
   themeColors,
   type DraftConfig,
 } from '../src/lib/widget-draft';
+import { SANDBOX_ERROR_CODES, SANDBOX_ID_RE, SANDBOX_PUBLIC_LIMITS, sandboxEndpoint } from '../src/lib/sandbox';
 
 const REPO = path.resolve(__dirname, '..', '..');
 const BACK = path.join(REPO, 'sites-backend', 'src');
 const LANDING_TYPES = path.join(BACK, 'modules/assist-widget/landing/landing-types.ts');
 const LANDING_SERVICE = path.join(BACK, 'modules/assist-widget/landing/landing.service.ts');
+const SANDBOX_TYPES = path.join(BACK, 'modules/assist-knowledge-core/api-types.ts');
+const SANDBOX_SERVICE = path.join(BACK, 'modules/assist-sandbox/sandbox.service.ts');
+const SANDBOX_CONTROLLER = path.join(BACK, 'modules/assist-sandbox/public-sandbox.controller.ts');
+const SANDBOX_DTO = path.join(BACK, 'modules/assist-sandbox/sandbox.dto.ts');
 const WIDGET_CONFIG = path.join(BACK, 'modules/assist-site-setup/widget-config.ts');
 const DEFAULTS = path.join(BACK, 'config/assist-defaults.ts');
 const OURS = path.resolve(__dirname, '..', 'src/lib');
 
-for (const f of [LANDING_TYPES, LANDING_SERVICE, WIDGET_CONFIG, DEFAULTS]) assert.ok(fs.existsSync(f), `нет источника ${f}`);
+for (const f of [LANDING_TYPES, LANDING_SERVICE, WIDGET_CONFIG, DEFAULTS, SANDBOX_TYPES, SANDBOX_SERVICE, SANDBOX_CONTROLLER, SANDBOX_DTO]) assert.ok(fs.existsSync(f), `нет источника ${f}`);
 
 // ── 1. Типы ──
 {
@@ -72,6 +83,14 @@ declare const created: B.WidgetDraftCreated;
 export const readable: { id: string; expiresAt: string } = created;
 declare const draft: D.DraftConfig;
 export const asConfig: Omit<WidgetConfig, 'hosts'> = draft;
+import type * as SB from ${JSON.stringify(noExt(SANDBOX_TYPES))};
+import type * as S from ${JSON.stringify(path.join(OURS, 'sandbox'))};
+declare const sv: SB.SandboxView; declare const ov: S.SandboxView;
+export const v1: S.SandboxView = sv; export const v2: SB.SandboxView = ov;
+declare const sa: SB.SandboxAnswer; declare const oa: S.SandboxAnswer;
+export const a1: S.SandboxAnswer = sa; export const a2: SB.SandboxAnswer = oa;
+declare const sc: SB.PublicSandboxCreated; declare const oc: S.PublicSandboxCreated;
+export const c1: S.PublicSandboxCreated = sc; export const c2: SB.PublicSandboxCreated = oc;
 `;
   const file = path.join(os.tmpdir(), `l23-contract-${process.pid}.ts`);
   fs.writeFileSync(file, src);
@@ -116,6 +135,33 @@ assert.equal(numFrom(serviceSrc, 'MAX_PATH_CHARS'), EVENT_LIMITS.maxPathChars);
 assert.equal(numFrom(defaultsSrc, 'eventsPerBatch'), EVENT_LIMITS.eventsPerBatch);
 assert.equal(numFrom(defaultsSrc, 'eventBodyMaxBytes'), EVENT_LIMITS.bodyMaxBytes);
 assert.equal(numFrom(defaultsSrc, 'widgetDraftMaxBytes'), DRAFT_MAX_BYTES);
+
+// ── 6. Песочница ──
+{
+  const pub = /public: \{([\s\S]*?)\n {2}\},/.exec(/export const SANDBOX_LIMITS = \{([\s\S]*?)\n\} as const;/.exec(defaultsSrc)![1])![1];
+  assert.equal(numFrom(pub, 'pages'), SANDBOX_PUBLIC_LIMITS.pages, 'страниц на песочницу');
+  assert.equal(numFrom(pub, 'questions'), SANDBOX_PUBLIC_LIMITS.questions, 'вопросов');
+  assert.equal(numFrom(pub, 'ttlMs'), SANDBOX_PUBLIC_LIMITS.ttlHours * 3600_000, 'время жизни');
+  assert.equal(numFrom(pub, 'perIpPerDay'), SANDBOX_PUBLIC_LIMITS.perIpPerDay, 'песочниц в сутки на IP');
+  assert.equal(numFrom(pub, 'newCrawlsPerDomainPerDay'), SANDBOX_PUBLIC_LIMITS.newCrawlsPerDomainPerDay, 'обходов eTLD+1 в сутки');
+  assert.equal(numFrom(defaultsSrc, 'maxQuestionChars'), SANDBOX_PUBLIC_LIMITS.maxQuestionChars, 'длина вопроса');
+  const dto = fs.readFileSync(SANDBOX_DTO, 'utf8');
+  assert.match(dto, new RegExp(`MaxLength\\(${SANDBOX_PUBLIC_LIMITS.maxUrlChars}\\)\\s*\\n\\s*url!: string`), 'длина адреса в DTO');
+  assert.match(dto, /question!: string/);
+  const ctrl = fs.readFileSync(SANDBOX_CONTROLLER, 'utf8');
+  assert.match(ctrl, /@Controller\('public\/assist\/sandbox'\)/);
+  assert.match(ctrl, /@Get\(':id'\)/);
+  assert.match(ctrl, /@Post\(':id\/chat'\)/);
+  assert.match(ctrl, /SANDBOX_KEY_HEADER/);
+  assert.equal(sandboxEndpoint('https://api.example.com'), 'https://api.example.com/public/assist/sandbox');
+  const svc = fs.readFileSync(SANDBOX_SERVICE, 'utf8');
+  // Коды публичных маршрутов: всё, что бросает сервис, кроме кабинетных.
+  const CABINET_ONLY = ['SANDBOX_LIMIT_ACCOUNT', 'SANDBOX_TRANSFERRED'];
+  const thrown = [...new Set([...svc.matchAll(/e1Error\(\s*\d+,\s*'([A-Z_]+)'/g)].map((m) => m[1]))].filter((c) => !CABINET_ONLY.includes(c)).sort();
+  assert.deepEqual([...SANDBOX_ERROR_CODES].sort(), thrown, 'коды отказа песочницы: обработаны не все или лишние');
+  assert.match(svc, /randomBytes\(16\)\.toString\('base64url'\)/, 'id песочницы — 128 бит base64url (22 символа) — влезает в sb_<id>');
+  assert.ok(SANDBOX_ID_RE.test(Buffer.alloc(16, 255).toString('base64url')));
+}
 
 // Все события, которые лендинг вообще может собрать.
 const allEvents = LANDING_EVENT_NAMES.flatMap((name) => {
@@ -244,7 +290,7 @@ async function main() {
   }
 
   console.log(
-    `ok   контракт с sites-backend: типы (события, ответ черновика, вид) сходятся; пределы событий и черновика совпадают; ${allEvents.length} возможных событий проходят ${how}; контраст и автокоррекция совпадают на ${colors.length} цветах × 4 цвета текста; ${drafts.length} черновиков проходят parseWidgetConfig без поправок и ≤ 2 КБ`,
+    `ok   контракт с sites-backend: типы (события, ответ черновика, вид, песочница) сходятся; песочница — маршруты, DTO, лимиты, ${SANDBOX_ERROR_CODES.length} кодов отказа; пределы событий и черновика совпадают; ${allEvents.length} возможных событий проходят ${how}; контраст и автокоррекция совпадают на ${colors.length} цветах × 4 цвета текста; ${drafts.length} черновиков проходят parseWidgetConfig без поправок и ≤ 2 КБ`,
   );
 }
 

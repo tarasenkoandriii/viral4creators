@@ -26,15 +26,19 @@ export function pathFor(locale: Locale, path: string): string {
 export function localeAlternates(
   path: string,
   current: Locale,
-  opts: { xDefault?: Locale; env?: NodeJS.ProcessEnv } = {},
+  opts: { xDefault?: Locale; env?: NodeJS.ProcessEnv; only?: readonly Locale[] } = {},
 ): NonNullable<Metadata['alternates']> {
   const origin = siteUrl(opts.env);
   const abs = (l: Locale) => `${origin}${pathFor(l, path)}`;
+  // Страница не во всех локалях (документация — uk/en): hreflang только на
+  // существующие версии, `x-default` — на `en`, если она есть.
+  const list = opts.only ?? locales;
+  const xDefault = opts.xDefault ?? (list.includes(X_DEFAULT_LOCALE) ? X_DEFAULT_LOCALE : list[0]);
   return {
     canonical: abs(current),
     languages: {
-      ...Object.fromEntries(locales.map((l) => [l, abs(l)])),
-      'x-default': abs(opts.xDefault ?? X_DEFAULT_LOCALE),
+      ...Object.fromEntries(list.map((l) => [l, abs(l)])),
+      'x-default': abs(xDefault),
     },
   };
 }

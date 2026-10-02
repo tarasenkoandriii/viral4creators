@@ -242,7 +242,7 @@ Telegram login and a project it becomes:
 
 ## API Documentation
 
-`doc/API.md` is the current, complete route list (473 routes in 84 controller files; CI checks the count). The older
+`doc/API.md` is the current, complete route list (489 routes in 85 controller files; CI checks the count). The older
 [specs/001-ugc-video-generator/contracts/openapi.yaml](specs/001-ugc-video-generator/contracts/openapi.yaml)
 covers only the ten routes of the first milestone and is kept as history.
 The external API for integrators (`/v1`, Premium) has its own machine-
@@ -254,7 +254,7 @@ separate limits document in [doc/API-LIMITS.md](doc/API-LIMITS.md);
 
 `.github/workflows/ci.yml` runs on every push: backend (Prisma client,
 migrations against a real Postgres 16, **`prisma migrate diff`** to catch
-a hand-written migration drifting from the schema, types, lint, 7740
+a hand-written migration drifting from the schema, types, lint, 7863
 tests with per-file coverage thresholds), frontend (types, lint, 77 unit
 scripts, build), admin and landing
 (types + lint + build), `npm audit --audit-level=high` in every job

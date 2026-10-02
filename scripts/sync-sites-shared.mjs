@@ -71,12 +71,21 @@ const ENTRIES = [
   // Э1 (знания): ключ и клиент Gemini (эмбеддинги gemini-embedding-001,
   // ответы песочницы), модель по умолчанию и прайс для записи в
   // site_ai_usage. Чистые: SDK провайдера и ничего из backend.
-  // `token-crypto` — пока не нужен (секреты «Админки» — Э7, Э4).
   { from: 'backend/src/common/gemini-client.ts', to: 'gemini-client.ts' },
   { from: 'backend/src/common/gemini-client.spec.ts', to: 'gemini-client.spec.ts' },
   { from: 'backend/src/common/gemini-model.ts', to: 'gemini-model.ts' },
   { from: 'backend/src/common/ai-pricing.ts', to: 'ai-pricing.ts' },
   { from: 'backend/src/common/ai-pricing.spec.ts', to: 'ai-pricing.spec.ts' },
+  // Э4 (тарифы и оплата помощника): подписи WayForPay (вынесены из
+  // billing/wayforpay.service.ts без изменения поведения), вырезание
+  // recToken/cardPan/authCode из сохраняемого ответа провайдера и AES-GCM
+  // для recToken в покое. Stars-payload генератора не копируется: у
+  // помощника счёт подписан id строки assist_payments (свой формат).
+  { from: 'backend/src/common/wayforpay-signature.ts', to: 'wayforpay-signature.ts' },
+  { from: 'backend/src/common/wayforpay-signature.spec.ts', to: 'wayforpay-signature.spec.ts' },
+  { from: 'backend/src/common/wayforpay-sanitize.ts', to: 'wayforpay-sanitize.ts' },
+  { from: 'backend/src/common/token-crypto.ts', to: 'token-crypto.ts' },
+  { from: 'backend/src/common/token-crypto.spec.ts', to: 'token-crypto.spec.ts' },
 ];
 
 /** Импорты, которых в общем коде быть не может (см. шапку). */

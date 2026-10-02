@@ -14,7 +14,12 @@
       "pricing": "Pricing",
       "security": "Security",
       "faq": "FAQ",
-      "pilot": "Join the pilot"
+      "pilot": "Join the pilot",
+      "try": "Try it on your site",
+      "tryShort": "Try it",
+      "integrations": "Integrations",
+      "docs": "Docs",
+      "bot": "Crawler and opt-out"
     },
     "localeSwitcher": {
       "label": "Site language"
@@ -73,6 +78,54 @@
     "not-found": {
       "title": "Page not found — {brand}",
       "description": "This page does not exist."
+    },
+    "try": {
+      "title": "Try the AI assistant on your own website — {brand}",
+      "description": "Enter your site address — the {brand} assistant reads a few public pages and answers questions about your site with a link to the source. No sign-up."
+    },
+    "bot": {
+      "title": "The {brand} crawler and how to remove your site",
+      "description": "Which bot reads your site, how to stop it with robots.txt and how to ask us to remove your domain from the {brand} sandbox crawling."
+    },
+    "bot-status": {
+      "title": "Site removal request — {brand}",
+      "description": "Result of sending a request to remove a site from crawling."
+    },
+    "integrations": {
+      "title": "Install the AI assistant on your platform — {brand}",
+      "description": "How to add the {brand} assistant widget to an HTML site, WordPress, WooCommerce, Shopify, Horoshop, Tilda, via Google Tag Manager or in React and Next.js."
+    },
+    "integrations-html": {
+      "title": "AI assistant on any website: one tag — {brand}",
+      "description": "How to add the {brand} AI assistant widget to any website with one script async tag in the head: host verification, the code, CSP and the install check."
+    },
+    "integrations-gtm": {
+      "title": "AI assistant via Google Tag Manager — {brand}",
+      "description": "How to add the {brand} AI assistant widget through Google Tag Manager: a Custom HTML tag, an All Pages trigger, host verification and CSP."
+    },
+    "integrations-wordpress": {
+      "title": "AI chatbot for WordPress — {brand}",
+      "description": "How to put the {brand} AI assistant on a WordPress site: a tag in the head via a theme hook, domain verification, cache and CSP. Plugin — coming soon."
+    },
+    "integrations-woocommerce": {
+      "title": "AI assistant for WooCommerce stores — {brand}",
+      "description": "The {brand} AI assistant on a WooCommerce store: installing the tag, a purchase goal from the order page and a signed webhook for orders and refunds."
+    },
+    "integrations-react": {
+      "title": "AI assistant for React and Next.js — {brand}",
+      "description": "How to add the {brand} AI assistant widget in Next.js with next/script or in React and Vue with one tag: SPA navigation, JS API and CSP."
+    },
+    "integrations-shopify": {
+      "title": "AI chat for Shopify — {brand}",
+      "description": "How to add the {brand} AI assistant widget to a Shopify theme (theme.liquid) and why it works only on the store's own domain, not on myshopify.com."
+    },
+    "integrations-horoshop": {
+      "title": "AI assistant for Horoshop stores — {brand}",
+      "description": "How to put the {brand} AI assistant widget on a Horoshop store: code in the head, domain verification with a meta tag or DNS, the install check."
+    },
+    "integrations-tilda": {
+      "title": "AI chatbot for Tilda — {brand}",
+      "description": "How to connect the {brand} AI assistant to a Tilda site: HTML code in HEAD, verification of your own domain only (not tilda.ws), republishing pages."
     }
   },
   "og": {
@@ -84,6 +137,10 @@
     "pricing": "Assistant pricing",
     "faq": "Questions and answers",
     "pilot": "Free 2-month pilot",
+    "try": "Try it on your own site",
+    "bot": "Crawler and opt-out",
+    "integrations": "Install on your platform",
+    "docs": "Assistant docs",
     "badge": "in development"
   },
   "home": {
@@ -259,7 +316,8 @@
           "title": "WordPress plugin and npm package",
           "text": "For those who prefer installing a package to pasting a tag."
         }
-      ]
+      ],
+      "more": "All platforms and guides"
     },
     "limits": {
       "heading": "Honest limits",
@@ -296,6 +354,15 @@
     "faqTeaser": {
       "heading": "Frequently asked questions",
       "more": "All questions"
+    },
+    "tryForm": {
+      "label": "Your site address",
+      "placeholder": "shop.example.com",
+      "submit": "Try it on your site"
+    },
+    "finalTry": {
+      "heading": "See how the assistant answers about your site",
+      "text": "Enter the address — within a minute the assistant reads a few public pages and answers your questions with a link to the source."
     }
   },
   "howItWorks": {
@@ -790,7 +857,7 @@
           {
             "claim": "install-snippet",
             "q": "How do I install the assistant?",
-            "a": "Paste one line of code on your site. There will be step-by-step guides for WordPress, Shopify, Horoshop, Tilda, GTM and React."
+            "a": "Paste one line of code on your site. There are step-by-step guides for any website, GTM, WordPress, WooCommerce, React and Next.js, Shopify, Horoshop and Tilda in the Integrations section, and attributes, JS API and CSP are in the docs."
           },
           {
             "claim": "voice",
@@ -879,5 +946,365 @@
     "heading": "Page not found",
     "text": "The address may have changed. Start from the home page.",
     "home": "Home"
+  },
+  "tryPage": {
+    "heading": "Try the assistant on your own site",
+    "lead": "Enter your site address: the assistant reads up to {pages} public pages and answers questions about your site with a link to the source. No sign-up; only you see the result, in this tab, for {hours} h.",
+    "sandbox": {
+      "formLabel": "Sandbox: the assistant on your site",
+      "urlLabel": "Your site address",
+      "urlHint": "https only, no login and no custom port, e.g. shop.example.com.",
+      "urlPlaceholder": "shop.example.com",
+      "terms": "By starting, you confirm the site is public or you have the right to analyse it. We read public pages only, respect robots.txt and delete everything after 24 hours.",
+      "start": "Try it",
+      "starting": "Starting…",
+      "urlProblems": {
+        "empty": "Enter your site address.",
+        "too-long": "The address is too long.",
+        "scheme": "An https:// address is required — the sandbox does not open http or other schemes.",
+        "credentials": "An address with a login and password will not work — the sandbox reads public pages only.",
+        "port": "Only the standard port 443 — no “:8080” in the address.",
+        "ip": "A domain name is required, not an IP address.",
+        "host": "This does not look like the address of a public website."
+      },
+      "waitingHeading": "Reading {host}",
+      "waitingQueued": "Queuing…",
+      "waitingSitemap": "Found the sitemap.",
+      "waitingProgress": "Pages found: {found}; read {read} of {limit}.",
+      "waitingIndexing": "Preparing knowledge for answers…",
+      "waitingTitles": "Pages we are reading:",
+      "waitingSlow": "The site responds slowly — we make at most one request per second so as not to load it.",
+      "resultHeading": "The assistant has read {host}",
+      "mockLabel": "Mock-up of {host} with the assistant button",
+      "mockCaption": "Mock-up, not a screenshot. The widget is not installed on {host}; the site is not affiliated with {brand}.",
+      "mockBadge": "mock-up",
+      "chatHeading": "Ask about your site",
+      "suggestedLabel": "Questions the assistant drafted from your site",
+      "questionLabel": "Your question",
+      "ask": "Ask",
+      "asking": "Looking for the answer…",
+      "you": "You",
+      "assistant": "Assistant",
+      "sources": "Sources:",
+      "sourceNoLink": "Not a link to this site — shown without a link",
+      "refused": "The pages we read have no answer — the assistant honestly says “I don't know”.",
+      "questionsLeft": "Questions left: {left}",
+      "sandboxNote": "This is a sandbox: the widget is not published and is not visible on your site. To put it on your site, connect the site and verify domain ownership (DNS, file or meta tag).",
+      "connect": "Connect this site in Telegram",
+      "connectNoBot": "Connecting in Telegram will appear here as soon as the assistant bot is open.",
+      "customize": "Customise the look",
+      "restart": "Another site",
+      "expires": "The sandbox will be deleted {time}.",
+      "problems": {
+        "unavailable": "The sandbox is unavailable right now. Leave a request — we will show the assistant on your site ourselves.",
+        "limit-ip": "Today's sandbox limit for your network is used up. You can continue in the assistant's cabinet in Telegram.",
+        "limit-domain": "This site has already been checked many times today — try tomorrow or leave a request.",
+        "rejected": "This address cannot be checked: a public https site is required.",
+        "opted-out": "The owner of this site has opted out of crawling — the sandbox does not open it.",
+        "blocked": "Sites of this category are not opened in the sandbox.",
+        "origin": "The request did not come from our site. Reload the page.",
+        "gone": "The sandbox has expired or was opened in another browser. Start a new one.",
+        "exhausted": "The questions for this sandbox are used up. Connect the site to continue.",
+        "not-ready": "The assistant is still reading the site — wait a few seconds.",
+        "answer-unavailable": "Could not answer. Please try again.",
+        "too-long": "The question is too long.",
+        "network": "No connection to the server. Check your internet and try again.",
+        "unexpected": "Something went wrong. Please try again.",
+        "failed": "Could not read the site: it did not respond, disallowed crawling in robots.txt or has no text. Try another address."
+      },
+      "pilotCta": "Leave a request",
+      "telegramCta": "Open in Telegram"
+    },
+    "limitsHeading": "What the sandbox does",
+    "limits": [
+      {
+        "claim": "sandbox",
+        "text": "Reads up to {pages} public pages of your site — the home page, the sitemap, links from the home page."
+      },
+      {
+        "claim": "sandbox",
+        "text": "Up to {questions} questions; answers come only from the pages read, with a link to the source."
+      },
+      {
+        "claim": "sandbox",
+        "text": "Up to {perDay} sandboxes a day per network; checking the same site again within a day comes from cache, without a new crawl."
+      },
+      {
+        "claim": "sandbox",
+        "text": "Everything is deleted after {hours} h; after connecting in Telegram it moves to your cabinet."
+      }
+    ],
+    "notHeading": "What the sandbox does not do",
+    "not": [
+      {
+        "claim": "sandbox",
+        "text": "It does not install the widget on your site or issue code — that requires verifying domain ownership."
+      },
+      {
+        "claim": "sandbox",
+        "text": "It does not enter private areas or read pages disallowed in robots.txt."
+      },
+      {
+        "claim": "sandbox",
+        "text": "It does not publish the result: there is no public link, the result is visible only in the tab where you started it."
+      },
+      {
+        "claim": "sandbox",
+        "text": "It does not request your site more often than once per second."
+      }
+    ],
+    "screenshot": {
+      "claim": "sandbox-screenshot",
+      "title": "A screenshot of your site with the widget",
+      "text": "The home page screenshot is taken only by an isolated browser worker with a network filter. Until it exists, you see a mock-up in your site's colours instead."
+    },
+    "owners": {
+      "claim": "crawler-opt-out",
+      "title": "For site owners",
+      "text": "The sandbox reads public pages only and respects robots.txt. Don't want it run for your site? You can disallow crawling yourself in robots.txt or ask us to remove the domain.",
+      "cta": "The crawler and how to remove a site"
+    },
+    "privacy": "For the sandbox we are the data controller: the network address is stored only as a hash with a daily salt, and everything is deleted after 24 hours."
+  },
+  "botPage": {
+    "heading": "The {brand} crawler",
+    "lead": "This bot reads public pages of websites when someone starts a {brand} assistant sandbox or when a site owner connects the assistant. Here is how to recognise it, stop it and remove your site.",
+    "uaHeading": "How to recognise the bot",
+    "uaText": "The bot identifies itself with this User-Agent:",
+    "behaviour": [
+      {
+        "claim": "sandbox",
+        "text": "The sandbox reads up to {pages} public pages of a site and deletes everything it read after 24 hours."
+      },
+      {
+        "claim": "sandbox",
+        "text": "No more than one request per second to a host; it does not enter private areas."
+      },
+      {
+        "claim": "crawler-opt-out",
+        "text": "It respects robots.txt: the rules of the User-agent: {token} group, or the general group without it."
+      },
+      {
+        "claim": "crawler-opt-out",
+        "text": "Sites on the core opt-out list are opened neither by the sandbox nor by crawling."
+      }
+    ],
+    "robotsHeading": "Stop the bot yourself",
+    "robotsText": "The fastest way is a rule in your site's robots.txt. It applies from the next crawl, without us:",
+    "optOutHeading": "Remove a site from crawling",
+    "optOutText": "We will add the domain to the core opt-out list — the sandbox and crawling will stop opening it. Handled manually, within 72 hours; until then, use robots.txt.",
+    "form": {
+      "domain": "Domain",
+      "domainHint": "For example shop.example.com — together with all subdomains.",
+      "contact": "E-mail or Telegram @username",
+      "contactHint": "We will write when the domain is on the list.",
+      "comment": "Comment (optional)",
+      "honeypot": "Do not fill in this field",
+      "consent": "I agree to the processing of this data to handle the request in accordance with the",
+      "required": "* — required fields",
+      "submit": "Send request"
+    },
+    "status": {
+      "sent": "Request received. We will add the domain to the opt-out list within 72 hours and write to you.",
+      "invalid": "Check the domain, contact and consent. The request was NOT sent — go back to the form.",
+      "limited": "Too many requests from your network. Try again in a few minutes.",
+      "unavailable": "Requests are temporarily unavailable. The request was NOT sent — for now, disallow the bot in robots.txt.",
+      "error": "Could not send. The request was NOT sent — please try again."
+    },
+    "statusBack": "Back to the form"
+  },
+  "integrations": {
+    "heading": "Install on your site",
+    "lead": "The assistant is installed with one tag in the head — on any site where you can add code. Below are step-by-step guides for popular platforms. Platform names are for compatibility only; we are not affiliated with them.",
+    "gridHeading": "Platforms",
+    "checkedStand": "Checked on our test stand.",
+    "checkedDocs": "Written from the platform's documentation.",
+    "open": "Guide: {name}",
+    "moreText": "The tag works here too, but there are no separate checked guides yet.",
+    "commonHeading": "What any platform needs",
+    "common": [
+      {
+        "claim": "ownership-verification",
+        "text": "Verify ownership of every host (with and without www separately): DNS, file or meta tag. Without it the widget will not appear."
+      },
+      {
+        "claim": "install-snippet",
+        "text": "One script async tag in the head of every page — take the site key from the cabinet."
+      },
+      {
+        "claim": "install-snippet",
+        "text": "If the site has a CSP — add the widget source to four directives."
+      },
+      {
+        "claim": "js-api",
+        "text": "Optionally — control the widget from your page code: open the chat, pass context, mark a goal."
+      }
+    ],
+    "docsCta": "Documentation"
+  },
+  "platformUi": {
+    "stepsHeading": "How to install",
+    "notesHeading": "Things to keep in mind",
+    "checkedStand": "This guide is checked on our test stand: the real widget loader is inserted with exactly this tag.",
+    "checkedDocs": "This guide is written from the platform's documentation; it has not yet been checked by a live install on the platform. Menu names may differ — follow the platform's help.",
+    "code": {
+      "embed": "Snippet",
+      "gtm": "Code for Custom HTML",
+      "wordpress": "Child theme functions.php",
+      "next": "Next.js: app/layout.tsx",
+      "spa": "React or Vue without Next.js",
+      "goal": "Purchase goal on the thank-you page",
+      "webhook": "Goal webhook from your server (Node.js)"
+    },
+    "keyNote": "The site key in the examples is a placeholder; the real code with your key is in the assistant's cabinet after host verification.",
+    "verifyAny": "Verify host ownership in the cabinet: a DNS record, a file or a meta tag on the home page.",
+    "verifyDnsOnly": "Hosts on *.{suffix} can only be verified via DNS — so the widget works only on your own domain, not on the platform's subdomain.",
+    "csp": "If the site sends a Content-Security-Policy, add the widget source to script-src, frame-src, img-src and connect-src.",
+    "extra": {
+      "wp-plugin": {
+        "title": "WordPress plugin",
+        "text": "The plugin (key in settings, “do not show on pages”, WooCommerce order goals, verified customer) is ready in the product code but not published yet. Until then — the tag, as described above."
+      },
+      "npm-package": {
+        "title": "npm package",
+        "text": "A wrapper around the same loader (typed JS API, a React component) is ready in the product code but not yet published to npm. Until then — the tag or next/script."
+      }
+    },
+    "docsLink": "Docs: attributes, JS API, CSP",
+    "back": "All platforms"
+  },
+  "platforms": {
+    "html": {
+      "name": "Any website (HTML)",
+      "card": "One tag in the head — for custom sites and any platform with a code field.",
+      "heading": "AI assistant on any website: one tag",
+      "lead": "If you can add code to the head of your pages, the assistant is installed with one tag.",
+      "steps": [
+        "Connect the site in the assistant's cabinet and verify ownership of every host.",
+        "Copy the snippet with your site key from the cabinet — it looks like the one below.",
+        "Paste the tag before </head> in the template shared by all pages.",
+        "Open your site: the assistant button appears in the chosen corner. Run the “Install check” in the cabinet."
+      ],
+      "notes": [
+        "The async attribute is required: the widget loads after your page, the chat window only after a click.",
+        "On a single page you can change the corner, offsets or language with data-* attributes — see the docs."
+      ]
+    },
+    "gtm": {
+      "name": "Google Tag Manager",
+      "card": "A Custom HTML tag with an All Pages trigger.",
+      "heading": "AI assistant via Google Tag Manager",
+      "lead": "If your site's code is already managed in Google Tag Manager, add the assistant there too, without a developer.",
+      "steps": [
+        "Connect the site in the assistant's cabinet and verify ownership of every host.",
+        "In Google Tag Manager: Tags → New → tag type “Custom HTML”.",
+        "Paste the snippet from the cabinet (it looks like the one below).",
+        "Trigger — “All Pages”. Save the tag and publish the container."
+      ],
+      "notes": [
+        "You do not need to enable “Support document.write”.",
+        "The widget appears after the GTM container loads on the page."
+      ]
+    },
+    "wordpress": {
+      "name": "WordPress",
+      "card": "A tag in the head via a theme hook or a code-insertion plugin.",
+      "heading": "AI assistant for a WordPress site",
+      "lead": "On WordPress the assistant is a tag in the head — via a child theme hook or any plugin that inserts code into the head.",
+      "steps": [
+        "Connect the site in the assistant's cabinet and verify domain ownership (a meta tag or DNS is easiest).",
+        "Add the function from the example below to your child theme's functions.php (or paste the snippet with a head-code plugin).",
+        "Clear the page cache if the site uses a caching plugin or a CDN.",
+        "Open the site and run the “Install check” in the cabinet."
+      ],
+      "notes": [
+        "Edit a child theme: updating the parent theme overwrites its functions.php."
+      ]
+    },
+    "woocommerce": {
+      "name": "WooCommerce",
+      "card": "The WordPress tag plus a purchase goal and an order webhook.",
+      "heading": "AI assistant for a WooCommerce store",
+      "lead": "The assistant is installed as on WordPress, and purchases are counted as a goal — from the order page or, more reliably, by a webhook from your server.",
+      "steps": [
+        "Install the tag as for WordPress (code below).",
+        "Create the “purchase” goal in the cabinet.",
+        "On the “Thank you for your order” page call the goal with the amount and order number — or send the event from your server with a signed webhook.",
+        "Send refunds and cancellations with the same webhook with status refunded or cancelled — the statistics subtract them."
+      ],
+      "notes": [
+        "The webhook is more reliable than a page event: blockers do not stop it, and it carries the real amount."
+      ]
+    },
+    "react": {
+      "name": "React, Next.js, Vue",
+      "card": "next/script in the root layout or one tag at app start.",
+      "heading": "AI assistant for React, Next.js and Vue",
+      "lead": "In a React, Next.js or Vue app the assistant uses the same loader — once for the whole app.",
+      "steps": [
+        "Connect the site in the assistant's cabinet and verify ownership of every host.",
+        "Next.js (App Router): add the Script component from next/script to the root layout (code below).",
+        "React or Vue without Next.js: insert the tag once at app start.",
+        "The widget follows page navigation by itself (History API); with a custom router call route from the JS API."
+      ],
+      "notes": [
+        "Do not put the tag in a component that mounts repeatedly: a second tag on the page is ignored, but it is wasted work."
+      ]
+    },
+    "shopify": {
+      "name": "Shopify",
+      "card": "A tag in theme.liquid; only on the store's own domain.",
+      "heading": "AI chat for a Shopify store",
+      "lead": "On Shopify the assistant is a tag in the theme template theme.liquid — on a store with your own domain.",
+      "steps": [
+        "Connect the store's own domain in the assistant's cabinet and verify it via DNS.",
+        "In Shopify admin: Online Store → Themes → “…” → Edit code → layout/theme.liquid.",
+        "Paste the snippet before </head> and save.",
+        "Open the store and run the “Install check” in the cabinet."
+      ],
+      "notes": [
+        "After updating or changing the theme, check that the tag is still in theme.liquid."
+      ]
+    },
+    "horoshop": {
+      "name": "Horoshop",
+      "card": "Code in the head field of the site settings.",
+      "heading": "AI assistant for a Horoshop store",
+      "lead": "On Horoshop the assistant is code in the field for custom head scripts.",
+      "steps": [
+        "Connect the store domain in the assistant's cabinet and verify it with a DNS record or a meta tag.",
+        "In the site settings find the field for custom code in the head (the menu item name is in the Horoshop help).",
+        "Paste the snippet, save and open the store.",
+        "Run the “Install check” in the cabinet."
+      ],
+      "notes": [
+        "The verification meta tag can go into the same head field as the snippet."
+      ]
+    },
+    "tilda": {
+      "name": "Tilda",
+      "card": "HTML code in HEAD in the site settings; own domain only.",
+      "heading": "AI chatbot for a Tilda site",
+      "lead": "On Tilda the assistant is added through the HTML code for HEAD in the site settings — on a site with your own domain.",
+      "steps": [
+        "Connect the site's own domain in the assistant's cabinet and verify it via DNS.",
+        "Site settings → “More” → “HTML code for the HEAD section”.",
+        "Paste the snippet and save.",
+        "Republish all pages — otherwise the code appears only on new ones."
+      ],
+      "notes": [
+        "On Tilda's free plan, adding code to HEAD may be unavailable — check your plan."
+      ]
+    }
+  },
+  "docsUi": {
+    "navLabel": "Documentation sections",
+    "codeLabel": "Code",
+    "pages": {
+      "docs": "Installation",
+      "docs-js-api": "JS API",
+      "docs-goals": "Goals and webhook",
+      "docs-csp": "CSP and troubleshooting"
+    }
   }
 }

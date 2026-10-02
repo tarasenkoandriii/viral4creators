@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
-import { Analytics } from '@vercel/analytics/next';
 import { assistEnv, eventsEndpoint } from '../lib/assist-env';
 import type { LoaderTag } from '../lib/widget-loader';
 import { LiveWidget } from './LiveWidget';
 import { Telemetry } from './Telemetry';
+import { VercelAnalytics } from './VercelAnalytics';
 import { WebVitals } from './WebVitals';
 
 /**
@@ -14,7 +14,9 @@ import { WebVitals } from './WebVitals';
  *
  * Vercel Web Analytics — только в сборке на Vercel (`VERCEL=1`): вне
  * Vercel скрипта `/_vercel/insights/script.js` нет, и он сыпал бы 404 в
- * консоль (локальный Lighthouse и CI). Без cookie, скрипт с того же origin.
+ * консоль (локальный Lighthouse и CI). Без cookie, скрипт с того же origin;
+ * адрес просмотра — без query и якоря (`VercelAnalytics`: адрес сайта из
+ * `/try?url=` и utm третьей стороне не уходят).
  *
  * Л2: события §10 (`Telemetry`, first-party, без cookie) — на всех
  * страницах; живой виджет — только там, где его передал layout
@@ -29,7 +31,7 @@ export function HtmlDocument({ lang, children, widget = null }: { lang: string; 
         <WebVitals />
         <Telemetry endpoint={events} />
         {widget && <LiveWidget src={widget.src} pk={widget.pk} lang={widget.lang} />}
-        {process.env.VERCEL === '1' && <Analytics />}
+        {process.env.VERCEL === '1' && <VercelAnalytics />}
       </body>
     </html>
   );

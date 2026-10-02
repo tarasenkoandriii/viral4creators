@@ -18,7 +18,7 @@ import {
 } from '../../lib/widget-view';
 import { LoadError, NoticeBar, type Notice } from '../knowledge/parts';
 
-/** `pl_<тариф>` с лендинга (лендинг-ТЗ §7.3): до Э4 оплаты нет — объясняем и ведём к сайту. */
+/** `pl_<тариф>` с лендинга (лендинг-ТЗ §7.3): сначала сайт, оплата — экран «Тариф и оплата» (Э4). */
 export function PlanScreen({ plan }: { plan: string }) {
   const { appDict } = useAssist();
   const t = appDict.setup.plan;
@@ -36,6 +36,14 @@ export function PlanScreen({ plan }: { plan: string }) {
         <Button onClick={() => navigate({ name: 'onboarding-url' })}>
           {t.connect}
         </Button>
+        {id !== 'trial' && (
+          <Button
+            variant="outline"
+            onClick={() => navigate({ name: 'billing', plan: id })}
+          >
+            {appDict.billing.title}
+          </Button>
+        )}
       </Card>
     </div>
   );

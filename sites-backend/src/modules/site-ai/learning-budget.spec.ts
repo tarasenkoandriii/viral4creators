@@ -3,6 +3,7 @@
  * на НАСТОЯЩЕМ Postgres (условный UPDATE нельзя проверить фейком честно).
  */
 import { randomUUID } from 'crypto';
+import { setPlan } from '../assist-billing/testing/billing-fixtures.testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
 import {
@@ -80,6 +81,9 @@ if (!RAW_URL) {
           data: { accountId, siteId, enabled: true },
         });
       }
+      // Э4: потолок — из тарифа кабинета; Start ($0.5) оплачен надолго,
+      // чтобы «новый месяц» 2099 года был внутри подписки.
+      await setPlan(prisma, accountId, 'start', { days: 40_000 });
     });
 
     afterAll(async () => {
@@ -124,6 +128,29 @@ if (!RAW_URL) {
       expect((await budget.status(accountId, siteA)).spentMicroUsd).toBe(
         250_000,
       );
+    });
+
+    it('Э4: потолок — по тарифу кабинета (Business $3), истёкший тариф — 0', async () => {
+      const acc = await prisma.siteAccount.create({
+        data: { verifyToken: `lb-${randomUUID()}` },
+      });
+      const s1 = (
+        await prisma.site.create({ data: { accountId: acc.id, name: 'X' } })
+      ).id;
+      await prisma.assistSite.create({
+        data: { accountId: acc.id, siteId: s1, enabled: true },
+      });
+      // Пробный (строки нет, сайт только что создан) — $0.5.
+      expect((await budget.status(acc.id, s1)).capMicroUsd).toBe(500_000);
+      await setPlan(prisma, acc.id, 'business');
+      expect((await budget.status(acc.id, s1)).capMicroUsd).toBe(3_000_000);
+      await setPlan(prisma, acc.id, 'business', {
+        from: new Date(Date.now() - 60 * 86_400_000),
+        days: 30,
+        method: 'manual',
+      });
+      expect((await budget.status(acc.id, s1)).capMicroUsd).toBe(0);
+      expect(await budget.reserve(acc.id, s1, 1)).toBe(false);
     });
 
     it('новый месяц — новый счётчик', async () => {

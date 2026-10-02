@@ -35,6 +35,16 @@ services:
       - WS_AUTH_TIMEOUT_MS=${WS_AUTH_TIMEOUT_MS:-5000}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - NODE_ENV=${NODE_ENV:-production}
+      # Фильтр исходящего трафика браузера (Ш0.2,
+      # doc/LIVE-LOGIN-RELAY-EGRESS.md). Включён всегда; `off` при
+      # NODE_ENV=production реле отвергает на старте.
+      - LIVE_LOGIN_EGRESS_FILTER=${LIVE_LOGIN_EGRESS_FILTER:-on}
+      # Публичные IPv4/IPv6 САМОГО сервера через запятую (IPv6 — подсеть
+      # /64 от Hetzner). Глобальные адреса общий список не ловит, а через
+      # них из контейнера видны опубликованные порты хоста.
+      - LIVE_LOGIN_EGRESS_DENY=${LIVE_LOGIN_EGRESS_DENY:-}
+      - LIVE_LOGIN_EGRESS_ALLOWED_PORTS=${LIVE_LOGIN_EGRESS_ALLOWED_PORTS:-80,443,8080,8443}
+      - LIVE_LOGIN_BROWSER_PROXY_URL=${LIVE_LOGIN_BROWSER_PROXY_URL:-}
     # Порт виден только внутри сети Docker: наружу сервис публикует
     # Traefik площадки по домену с сертификатом. `ports:` здесь означал бы
     # 8088, открытый на публичном IP хоста в обход reverse-proxy.
@@ -48,6 +58,13 @@ services:
     # вкладки уже на втором-третьем параллельном браузере. Это не «при
     # необходимости», а условие работы при MAX_CONCURRENT_SESSIONS > 1.
     shm_size: '512mb'
+    # Ш0.2: процесс без capabilities и без повышения привилегий. Реле
+    # слушает порт выше 1024, Chromium запущен с `--no-sandbox` — ни
+    # тому ни другому возможности ядра не нужны.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test:
         [
@@ -67,6 +84,15 @@ services:
     #
     # При локальном запуске такой сети нет — закомментируйте обе части
     # (здесь и внизу файла) вместе с возвратом `ports:` выше.
+    #
+    # Почему реле всё ещё в `dokploy-network` (Ш0.2 аудита предлагал
+    # отдельную сеть): Traefik площадки доходит до контейнера только
+    # через эту сеть, а другой маршрут (своя сеть + подключение к ней
+    # Traefik) без проверки на сервере не собрать. Вместо этого браузер
+    # ходит наружу ТОЛЬКО через фильтр в процессе реле, а сам контейнер
+    # закрыт правилами `DOCKER-USER` на хосте —
+    # doc/LIVE-LOGIN-RELAY-EGRESS.md, там же — как перейти на отдельную
+    # сеть, когда будет возможность проверить.
     networks:
       - dokploy-network
 

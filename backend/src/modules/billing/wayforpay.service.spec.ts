@@ -179,5 +179,31 @@ describe('WayForPayService', () => {
       });
       expect(result.ok).toBe(false);
     });
+
+    // Аудит Э4: ответ без transactionStatus — исход неизвестен; терминальный
+    // отказ (Declined/Expired/Voided) заставил бы продление сменить
+    // orderReference и рискнуть вторым списанием.
+    it.each([
+      [{ reason: 'Duplicate Order ID', reasonCode: 1112 }],
+      [{ transactionStatus: '' }],
+      [''],
+    ])(
+      'ответ %j без transactionStatus — ok:false, статус не терминальный',
+      async (data) => {
+        mockedAxios.post.mockResolvedValueOnce({ data });
+        const result = await service.chargeRecToken({
+          recToken: 'rt-1',
+          orderReference: 'renew-1',
+          amount: 799,
+          currency: 'UAH',
+          productName: 'Standard — месяц',
+        });
+        expect(result.ok).toBe(false);
+        expect(result.transactionStatus).toBe('Unknown');
+        expect(['Declined', 'Expired', 'Voided']).not.toContain(
+          result.transactionStatus,
+        );
+      },
+    );
   });
 });

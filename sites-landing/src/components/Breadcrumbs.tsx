@@ -2,6 +2,7 @@ import { fmt } from '../lib/format';
 import { getDictionary } from '../lib/get-dictionary';
 import type { Locale } from '../lib/i18n';
 import { href, page, type PageKey } from '../lib/pages';
+import { PLATFORMS } from '../lib/platforms';
 import { siteUrl } from '../lib/site-url';
 import { JsonLd } from './JsonLd';
 
@@ -36,8 +37,17 @@ export function Breadcrumbs({ locale, current }: { locale: Locale; current: Page
 }
 
 export function navLabel(locale: Locale, key: PageKey): string {
-  const n = getDictionary(locale).common.nav;
+  const dict = getDictionary(locale);
+  const n = dict.common.nav;
   const map: Record<PageKey, string> = {
+    ...(Object.fromEntries(PLATFORMS.map((p) => [`integrations-${p.slug}`, dict.platforms[p.slug].name])) as Record<`integrations-${(typeof PLATFORMS)[number]['slug']}`, string>),
+    try: n.try,
+    bot: n.bot,
+    integrations: n.integrations,
+    docs: n.docs,
+    'docs-js-api': dict.docsUi.pages['docs-js-api'],
+    'docs-goals': dict.docsUi.pages['docs-goals'],
+    'docs-csp': dict.docsUi.pages['docs-csp'],
     home: fmt(n.home),
     assistant: n.assistant,
     'how-it-works': n.howItWorks,

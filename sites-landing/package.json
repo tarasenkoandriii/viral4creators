@@ -17,6 +17,7 @@
     "og": "node scripts/og-cards.mjs",
     "stand": "tsx scripts/built/assist-stand.ts",
     "e2e:widget": "node scripts/built/widget-e2e.mjs",
+    "e2e:sandbox": "node scripts/built/sandbox-e2e.mjs",
     "cwv:widget": "node scripts/built/widget-cwv.mjs",
     "eval:landing": "tsx scripts/eval-landing.ts"
   },

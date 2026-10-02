@@ -153,15 +153,24 @@ describeDb('Приёмка Э2 п.6 — маскирование и логи (ch
     const leadRow = await st.owner.assistSiteLead.findUniqueOrThrow({
       where: { id: lead.leadId },
     });
-    expect(leadRow.fieldsEnc).not.toContain('765');
+    // Шифротекст — случайный base64: искать в нём «765» — флак; ищем номер
+    // целиком (в открытом виде он был бы виден подряд).
+    for (const plain of ['765 43 21', '7654321', 'Олена'])
+      expect(leadRow.fieldsEnc).not.toContain(plain);
     expect(leadRow.pageUrl).toBe(`${s.origin}/delivery`);
 
     const usage = await st.owner.siteAiUsage.findMany({
       where: { siteId: s.siteId },
     });
+    // Только содержательные поля: в cuid (`id`, `accountId`, `siteId`)
+    // и датах «765» встречается случайно — так тест и флакал в make ci.
     expect(
-      JSON.stringify(usage, (_k, v) =>
-        typeof v === 'bigint' ? v.toString() : v,
+      JSON.stringify(
+        usage.map(
+          ({ id: _i, accountId: _a, siteId: _s, createdAt: _c, ...rest }) =>
+            rest,
+        ),
+        (_k, v) => (typeof v === 'bigint' ? v.toString() : v),
       ),
     ).not.toMatch(/765|Олена|example\.org/);
 

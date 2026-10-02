@@ -406,7 +406,7 @@ export const setupEn: SetupDictionary = {
       business: 'Business',
       pro: 'Pro',
     },
-    text: 'Payment in the account will come later. Until then Start terms apply: 400 dialogs per month per site. Start by connecting your site.',
+    text: 'Connect your site first — the 14-day trial starts with your first site. You can pay for the plan now or later on the “Plan and billing” screen.',
     connect: 'Connect a site',
   },
   landingDraft: {

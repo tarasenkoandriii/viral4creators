@@ -1566,6 +1566,52 @@ export function getEnvSettings(
   }
 
   {
+    // Э4 ИИ-помощника: вкладка «Помощник» читает sites-backend по
+    // внутреннему API (без DSN схемы sites в генераторе).
+    const raw = env.SITES_BACKEND_URL;
+    const set = Boolean(raw?.trim());
+    const ok =
+      !set ||
+      /^https:\/\//.test((raw ?? '').trim()) ||
+      /^http:\/\/(localhost|sites-backend)(:\d+)?/.test((raw ?? '').trim());
+    results.push({
+      key: 'SITES_BACKEND_URL',
+      group: 'ИИ-помощник (sites-backend)',
+      required: false,
+      set,
+      ok,
+      severity: !ok ? 'critical' : set ? 'ok' : 'warning',
+      message: !ok
+        ? 'Адрес sites-backend должен быть https:// (кроме локального стенда).'
+        : set
+          ? 'Адрес бэкенда клиентских сайтов — вкладка «Помощник» ходит туда за данными.'
+          : 'Не задан — вкладка «Помощник» показывает «не подключено»; остальная админка работает.',
+      value: raw?.trim() || undefined,
+    });
+  }
+
+  {
+    const set = Boolean(env.SITES_INTERNAL_SECRET?.trim());
+    const longEnough = (env.SITES_INTERNAL_SECRET?.trim().length ?? 0) >= 16;
+    const urlSet = Boolean(env.SITES_BACKEND_URL?.trim());
+    results.push({
+      key: 'SITES_INTERNAL_SECRET',
+      group: 'ИИ-помощник (sites-backend)',
+      required: false,
+      set,
+      ok: (set && longEnough) || !urlSet,
+      severity: set && longEnough ? 'ok' : urlSet ? 'warning' : 'ok',
+      message:
+        set && longEnough
+          ? 'Задан — уходит заголовком X-Sites-Internal-Secret; у sites-backend то же значение. Без совпадения внутренний API отвечает 401.'
+          : urlSet
+            ? 'Адрес sites-backend задан, а секрет (≥ 16 символов) — нет: вкладка «Помощник» не откроется.'
+            : 'Не задан — как и адрес sites-backend; вкладка «Помощник» выключена.',
+      // Значение не показываем — секрет.
+    });
+  }
+
+  {
     // Версия сборки (этап 154). Не переменная настройки, а диагностика:
     // оператору нужно уметь ответить «на какой сборке это было», и
     // единственное место, где это видно человеку, — здесь. Наружу, в

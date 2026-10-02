@@ -54,6 +54,10 @@ model SiteAccount {
   invites      SiteAccountInvite[]
   /// Э2: атрибуция лендинга (вместо поля в ядре — лендинг-ТЗ §7.3, Д-8).
   acquisitions AssistAcquisition[]
+  /// Э4: подписка на Помощник, счётчик единиц периода, принятые документы.
+  assistSubscription AssistSubscription?
+  assistUsage        AssistAccountUsage[]
+  assistLegal        AssistLegalAcceptance[]
 
   @@map("site_accounts")
 }
@@ -149,7 +153,6 @@ model Site {
   conversations      AssistSiteConversation[]
   siteMessages       AssistSiteMessage[]
   siteLeads          AssistSiteLead[]
-  periodUsage        AssistSitePeriodUsage[]
   semanticCache      AssistSiteSemanticCache[]
   previewTokens      AssistSitePreviewToken[]
   installPings       AssistSiteInstallPing[]
@@ -1576,21 +1579,6 @@ model AssistBudgetReservation {
   @@map("assist_budget_reservations")
 }
 
-/// Атомарный счётчик диалогов периода (§4.5 уточнение 3):
-/// `dialogs + :w <= quota` одним условным UPDATE.
-model AssistSitePeriodUsage {
-  siteId    String
-  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  /// YYYY-MM (UTC; Э4 — период подписки).
-  period    String
-  dialogs   Int      @default(0)
-  quota     Int
-  updatedAt DateTime @updatedAt
-
-  @@id([siteId, period])
-  @@map("assist_site_period_usage")
-}
-
 /// Семантический кэш ответов (§4.5, §4-тер.7): ключ — semanticCacheKey
 /// (siteId + режим + knowledgeVersion + configVersion + нормализованный
 /// вопрос). Смена версии = другой ключ; 👎 удаляет запись.
@@ -2217,4 +2205,184 @@ model AssistSiteReportSubscription {
   @@id([siteId, telegramId, kind])
   @@index([accountId])
   @@map("assist_site_report_subscriptions")
+}
+
+// ══ Э4: тарифы и оплата (ТЗ помощника §7.1, §3.10, §4.1, §8; план Э4) ══
+//
+// Тариф — у КАБИНЕТА (подписки), а не у сайта: лимит единиц диалогов и
+// бюджеты обучения делятся между сайтами кабинета (Р-58). Деньги — в
+// минимальных единицах валюты платежа (копейки UAH, целые XTR) и оценка в
+// микродолларах (как site_ai_usage).
+
+/// Подписка кабинета. Нет строки — пробный период от первого сайта
+/// кабинета (assist-billing/subscription-state.ts); крон assist-billing-tick
+/// материализует её, чтобы удаление сайтов не перезапускало пробный.
+/// Периоды учёта — отрезки по 30 дней от anchorAt (у trial — 14 дней), пока
+/// не наступил paidThrough: продление сдвигает paidThrough, смена тарифа —
+/// anchorAt = paidThrough-старт (новый период и новый счётчик сразу).
+model AssistSubscription {
+  accountId String      @id
+  account   SiteAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// trial | start | business | pro (ASSIST_PLANS).
+  planId               String
+  /// active | expired — `expired` ставит крон по истечении льготы.
+  status               String    @default("active")
+  /// trial | stars | wayforpay | manual — чем продлевается.
+  method               String
+  anchorAt             DateTime
+  paidThrough          DateTime
+  /// Владелец отменил продление: доступ до paidThrough, затем expired.
+  cancelAtPeriodEnd    Boolean   @default(false)
+  /// recToken WayForPay — ТОЛЬКО шифром (token-crypto, ключ — производный
+  /// от ASSIST_SECRETS_KEY). Роли виджета не виден.
+  recTokenEnc          String?
+  /// Stars: charge последнего платежа подписки и плательщик — для отмены
+  /// продления в Telegram (editUserStarSubscription).
+  starsChargeId        String?
+  starsPayerTelegramId BigInt?
+  /// «Докупать автоматически» (§3.10): только при recToken; потолок — деньги
+  /// за период, оценка в микродолларах.
+  autoTopUp            Boolean   @default(false)
+  autoTopUpCapMicroUsd BigInt    @default(0)
+  /// Захват продления кроном (claim-before-charge, как billing-renewal).
+  renewClaimedAt       DateTime?
+  renewAttempts        Int       @default(0)
+  lastRenewError       String?
+  /// Пометка оператора платформы (ручной тариф пилота и т.п.).
+  note                 String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([paidThrough])
+  @@map("assist_subscriptions")
+}
+
+/// Счётчик единиц диалогов периода подписки (§7.1, Р-58): условный UPDATE
+/// `units + w <= лимит тарифа + докупка + авто-пакет` — один оператор, без
+/// «прочитал-решил». Пишет конвейер ответа под assist_public.
+model AssistAccountUsage {
+  accountId         String
+  account           SiteAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Начало периода (ISO) — ключ: новый период = новая строка.
+  periodKey         String
+  /// Единицы с весами (текст 1, голос 2, «Админка» 3; ×2 после 30 ответов).
+  units             Int         @default(0)
+  /// Диалогов (без весов) — для экрана и сводки.
+  dialogs           Int         @default(0)
+  /// Докупленные единицы этого периода (вручную и автоматически).
+  extraUnits        Int         @default(0)
+  /// Автодокупка: пакетов списано и сумма — против потолка владельца.
+  autoPacks         Int         @default(0)
+  autoSpentMicroUsd BigInt      @default(0)
+  /// Первый отказ по лимиту (мягкий стоп) — для уведомления 100%.
+  exhaustedAt       DateTime?
+  warned80At        DateTime?
+  warned100At       DateTime?
+  updatedAt         DateTime    @default(now()) @updatedAt
+
+  @@id([accountId, periodKey])
+  @@map("assist_account_usage")
+}
+
+/// Платёж (чекаут и факт). id — 128 бит случайности: им же подписан счёт
+/// Stars (`invoice_payload`) и он же `orderReference` WayForPay. Продление
+/// кроном и автодокупка — детерминированный id (повтор тика не спишет
+/// дважды). Без FK на кабинет: денежные записи переживают удаление кабинета.
+model AssistPayment {
+  id                  String    @id
+  accountId           String
+  /// subscription | renewal | topup | auto_topup
+  kind                String
+  planId              String?
+  /// Докупка: сколько единиц.
+  units               Int?
+  /// stars | wayforpay
+  method              String
+  /// pending | succeeded | failed | expired
+  status              String    @default("pending")
+  /// UAH | XTR
+  currency            String
+  amountMinor         Int
+  amountMicroUsd      BigInt    @default(0)
+  /// Stars — telegram_payment_charge_id; WayForPay — orderReference (= id).
+  providerRef         String?
+  /// Автопродление Stars: первый платёж подписки.
+  parentId            String?
+  /// Докупка: период, в который пошли единицы.
+  periodKey           String?
+  recurring           Boolean   @default(false)
+  createdByTelegramId BigInt?
+  payerTelegramId     BigInt?
+  failureReason       String?
+  /// Ответ провайдера без recToken/cardPan/authCode (wayforpay-sanitize).
+  rawPayload          Json?
+  expiresAt           DateTime?
+  paidAt              DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Идемпотентность колбэков: один charge/orderReference — одна строка.
+  @@unique([method, providerRef])
+  @@index([accountId, createdAt])
+  @@index([status, createdAt])
+  @@map("assist_payments")
+}
+
+/// Принятые Условия и DPA (§3.1, §6.1, №49): версия документа — в записи.
+model AssistLegalAcceptance {
+  id                   String      @id @default(cuid())
+  accountId            String
+  account              SiteAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// terms | dpa
+  document             String
+  version              String
+  /// Пункт DPA: обезличенные ответы «Сайта» — в eval платформы (§8 п.3, В-20).
+  evalConsent          Boolean     @default(false)
+  acceptedByTelegramId BigInt
+  acceptedAt           DateTime    @default(now())
+
+  @@unique([accountId, document, version])
+  @@map("assist_legal_acceptances")
+}
+
+/// Настройки платформы из админки (§8 п.5): рубильник виджета, потолок
+/// платформы. env остаётся верхней границей (рубильник env сильнее).
+model AssistPlatformSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  @@map("assist_platform_settings")
+}
+
+/// Журнал доступа операторов платформы к ответам и кабинетам (§6.6, §8 п.3).
+model AssistPlatformAccessLog {
+  id     String   @id @default(cuid())
+  /// id оператора в админке генератора (через внутренний API).
+  actor  String
+  action String
+  target String?
+  at     DateTime @default(now())
+
+  @@index([at])
+  @@map("assist_platform_access_log")
+}
+
+/// Кандидаты в eval платформы из ревью (§8 п.3): только «Сайт», только при
+/// согласии кабинета в DPA, текст уже маскирован.
+model AssistPlatformEvalCandidate {
+  id        String   @id @default(cuid())
+  accountId String
+  siteId    String
+  messageId String   @unique
+  question  String
+  answer    String
+  addedBy   String
+  createdAt DateTime @default(now())
+
+  @@map("assist_platform_eval_candidates")
 }

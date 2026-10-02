@@ -21,13 +21,33 @@ const require = createRequire(import.meta.url);
 const AXE = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 const BASE = (process.env.BASE_URL ?? 'http://localhost:3010').replace(/\/$/, '');
 const LOCALES = ['uk', 'en', 'ru'];
-const PATHS = ['', '/assistant', '/assistant/how-it-works', '/assistant/widget', '/assistant/security', '/assistant/pricing', '/assistant/faq', '/assistant/pilot'];
+const PLATFORMS = ['html', 'gtm', 'wordpress', 'woocommerce', 'react', 'shopify', 'horoshop', 'tilda'];
+const PATHS = [
+  '',
+  '/assistant',
+  '/assistant/how-it-works',
+  '/assistant/widget',
+  '/assistant/try',
+  '/assistant/integrations',
+  ...PLATFORMS.map((p) => `/assistant/integrations/${p}`),
+  '/assistant/bot',
+  '/assistant/security',
+  '/assistant/pricing',
+  '/assistant/faq',
+  '/assistant/pilot',
+];
+/** Документация — uk/en (§11). */
+const DOCS = ['/docs/assistant', '/docs/assistant/js-api', '/docs/assistant/goals', '/docs/assistant/csp'];
 const urls = [
   ...LOCALES.flatMap((l) => PATHS.map((p) => `/${l}${p}`)),
+  ...['uk', 'en'].flatMap((l) => DOCS.map((p) => `/${l}${p}`)),
   '/legal/privacy',
   '/uk/assistant/pilot/status/unavailable',
+  '/uk/assistant/bot/status/unavailable',
   '/no-such-page-404',
 ];
+const STAND = (process.env.STAND_URL ?? 'http://localhost:3011').replace(/\/$/, '');
+const stand = (p, body) => fetch(STAND + p, { method: 'POST', body: JSON.stringify(body ?? {}) }).then((r) => r.json()).catch(() => null);
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
 const browser = await chromium.launch();
@@ -80,6 +100,31 @@ for (const scheme of ['light', 'dark']) {
   await page.check('input[name="cfg-launcher"][value="none"]');
   await page.check('input[name="cfg-device"][value="desktop"]');
   await audit(page, `/uk/assistant/widget (своя кнопка) [${scheme}]`);
+  // Л4: песочница — предпроверка с ошибкой, ожидание, результат с ответом, отказ (стенд-мок).
+  await page.goto(`${BASE}/uk/assistant/try`, { waitUntil: 'networkidle' });
+  await page.fill('#sb-url', 'http://shop.example.com');
+  await page.click('form.sb-form button[type="submit"]');
+  await page.waitForSelector('#sb-url-error');
+  await audit(page, `/uk/assistant/try (ошибка адреса) [${scheme}]`);
+  if (await stand('/__stand/reset')) {
+    await page.fill('#sb-url', 'shop.example.com');
+    await page.click('form.sb-form button[type="submit"]');
+    await page.waitForSelector('[data-testid="sb-waiting"]');
+    await audit(page, `/uk/assistant/try (ожидание) [${scheme}]`);
+    await page.waitForSelector('[data-testid="sb-result"]', { timeout: 30000 });
+    await page.click('.sb-suggested button');
+    await page.waitForSelector('.sb-msg-assistant .sb-sources');
+    await audit(page, `/uk/assistant/try (результат и ответ) [${scheme}]`);
+    await page.click('.sb-next button');
+    await stand('/__stand/config', { sandboxError: { status: 503, code: 'SANDBOX_BUDGET' } });
+    await page.fill('#sb-url', 'shop.example.com');
+    await page.click('form.sb-form button[type="submit"]');
+    await page.waitForSelector('[data-testid="sb-problem"]');
+    await audit(page, `/uk/assistant/try (недоступно — заявка) [${scheme}]`);
+    await stand('/__stand/reset');
+  } else {
+    violations.push('стенд недоступен — состояния песочницы не проверены');
+  }
   // Л2: панель «покрутите виджет» после взаимодействия (если виджет есть в сборке).
   await page.goto(`${BASE}/uk/assistant`, { waitUntil: 'networkidle' });
   if (await page.$('[data-testid="playground"]')) {
@@ -136,4 +181,4 @@ if (violations.length || overflow.length) {
   console.error(['FAIL axe/360 px:', ...violations, ...overflow].join('\n'));
   process.exit(1);
 }
-console.log(`ok   axe (WCAG 2.2 A/AA): ${runs} прогонов (${urls.length} адресов × 2 темы + состояния FAQ, формы, конфигуратора, панели виджета) — 0 нарушений; форма пилота хранит данные при любом исходе, кроме «sent»; 360 px: без горизонтальной прокрутки, переключатель языка виден на ${urls.length} адресах`);
+console.log(`ok   axe (WCAG 2.2 A/AA): ${runs} прогонов (${urls.length} адресов × 2 темы + состояния FAQ, формы, конфигуратора, песочницы, панели виджета) — 0 нарушений; форма пилота хранит данные при любом исходе, кроме «sent»; 360 px: без горизонтальной прокрутки, переключатель языка виден на ${urls.length} адресах`);

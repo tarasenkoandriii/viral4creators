@@ -4,8 +4,9 @@
  * Mobile-профиль по умолчанию, медиана 5 прогонов на адрес (аудит 01.10:
  * один прогон шумнее порогов). Адреса — главная, посадочная Помощника,
  * тарифы, форма пилота, FAQ (клиентские компоненты) и конфигуратор
- * `/widget` (Л3, свои бюджеты §9: LCP 2.5 с, скрипты 160 КБ, TBT 200 мс).
- * `/try` (Л4) — добавить вместе с ним.
+ * `/widget` (Л3, свои бюджеты §9: LCP 2.5 с, скрипты 160 КБ, TBT 200 мс),
+ * песочница `/try` (Л4, те же бюджеты §9), страница платформы и
+ * документация (Л5, статические бюджеты).
  *
  * С виджетом (§9 п.5): в CI сборка указывает на стенд продукта
  * (`scripts/built/assist-stand.ts`, :3011 — тот же хост `localhost`, что и
@@ -20,8 +21,8 @@
  * Сервер: `next start` собранного сайта на :3010. Chrome — `CHROME_PATH`
  * (в песочнице — Chromium Playwright; на раннере GitHub — системный).
  */
-const PATHS = ['/uk', '/uk/assistant', '/en/assistant/pricing', '/ru/assistant/pilot', '/uk/assistant/faq'];
-const WIDGET_PATHS = ['/uk/assistant/widget'];
+const PATHS = ['/uk', '/uk/assistant', '/en/assistant/pricing', '/ru/assistant/pilot', '/uk/assistant/faq', '/uk/assistant/integrations/wordpress', '/en/docs/assistant'];
+const WIDGET_PATHS = ['/uk/assistant/widget', '/uk/assistant/try'];
 const BASE = process.env.LHCI_BASE_URL || 'http://localhost:3010';
 
 /**
@@ -60,8 +61,8 @@ module.exports = {
     assert: {
       // Медиана по прогонам — для числовых метрик (в каждой строке матрицы).
       assertMatrix: [
-        { matchingUrlPattern: '^(?!.*/assistant/widget).*$', aggregationMethod: 'median-run', assertions: assertions({ lcp: 2000, tbt: 150, scriptKb: 110 }) },
-        { matchingUrlPattern: '/assistant/widget', aggregationMethod: 'median-run', assertions: assertions({ lcp: 2500, tbt: 200, scriptKb: 160 }) },
+        { matchingUrlPattern: '^(?!.*/assistant/(widget|try)).*$', aggregationMethod: 'median-run', assertions: assertions({ lcp: 2000, tbt: 150, scriptKb: 110 }) },
+        { matchingUrlPattern: '/assistant/(widget|try)', aggregationMethod: 'median-run', assertions: assertions({ lcp: 2500, tbt: 200, scriptKb: 160 }) },
       ],
     },
     upload: {

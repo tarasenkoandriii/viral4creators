@@ -36,6 +36,16 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm install --include=dev && npm run build && npm prune --omit=dev
 
+# Не root (Ш0.2, риск К-1 аудита docs-tz/AUDIT-Merge-Assistant-Tutorial-QA-2026-10-02.md).
+# Chromium здесь исполняет JS чужих сайтов с `--no-sandbox` (без
+# user namespaces песочница в контейнере не поднимается). Эксплойт
+# рендерера при root-процессе получал бы root в контейнере; под `node`
+# (uid 1000, есть в базовом образе) — непривилегированного пользователя
+# без прав на код в /app (он принадлежит root и только читается).
+# Профиль браузера puppeteer кладёт во временный каталог (/tmp), HOME
+# пользователя — /home/node: обоим `node` писать может.
+USER node
+
 EXPOSE 8088
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "dist/main.js"]

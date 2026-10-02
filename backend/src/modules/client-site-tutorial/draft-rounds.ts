@@ -238,7 +238,7 @@ export class DomainLockError extends Error {}
  * клиента свой поддомен: именно такие адреса и бывают «сайтом
  * заказчика».
  */
-function registrableDomain(hostname: string): string | null {
+export function registrableDomain(hostname: string): string | null {
   return getDomain(hostname, { allowPrivateDomains: true });
 }
 

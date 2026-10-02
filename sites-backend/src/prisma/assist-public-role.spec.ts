@@ -137,6 +137,11 @@ if (!RAW_URL) {
       'assist_site_report_subscriptions',
       'assist_bot_messages',
       'assist_bot_users',
+      // Э4: деньги, документы и админка платформы — не публичное.
+      'assist_payments',
+      'assist_legal_acceptances',
+      'assist_platform_access_log',
+      'assist_platform_eval_candidates',
     ])('SELECT из %s под assist_public падает', async (table) => {
       await expect(
         asPublic(`SELECT 1 FROM ${S}."${table}" LIMIT 1`),
@@ -219,7 +224,13 @@ if (!RAW_URL) {
         `UPDATE ${S}."assist_site_conversations" SET "visitorId" = 'x' WHERE false`,
         `UPDATE ${S}."assist_site_conversations" SET "siteId" = 'x' WHERE false`,
         `UPDATE ${S}."assist_budget_days" SET "key" = 'x' WHERE false`,
-        `UPDATE ${S}."assist_site_period_usage" SET "quota" = 1000000 WHERE false`,
+        // Э4: докупку и автодокупку пишет только основная роль.
+        `UPDATE ${S}."assist_account_usage" SET "extraUnits" = 1000000 WHERE false`,
+        `UPDATE ${S}."assist_account_usage" SET "autoSpentMicroUsd" = 0 WHERE false`,
+        `SELECT "recTokenEnc" FROM ${S}."assist_subscriptions" LIMIT 1`,
+        `SELECT "starsChargeId" FROM ${S}."assist_subscriptions" LIMIT 1`,
+        `UPDATE ${S}."assist_subscriptions" SET "planId" = 'pro' WHERE false`,
+        `SELECT "updatedBy" FROM ${S}."assist_platform_settings" LIMIT 1`,
         `UPDATE ${S}."assist_rate_buckets" SET "expiresAt" = now() WHERE false`,
         `UPDATE ${S}."assist_site_semantic_cache" SET "siteId" = 'x' WHERE false`,
         `UPDATE ${S}."assist_site_visitor_resumes" SET "visitorId" = 'x' WHERE false`,
@@ -245,6 +256,18 @@ if (!RAW_URL) {
         `INSERT INTO ${S}."assist_site_forget_jobs" ("id", "siteId", "conversationIds") SELECT 'f', 's', ARRAY['c'] WHERE false`,
         `UPDATE ${S}."assist_site_preview_tokens" SET "result" = '{}' WHERE false`,
         `INSERT INTO ${S}."assist_site_event_counts" ("siteId", "day", "kind", "key", "hour", "count") SELECT 's', '2026-10-03', 'open', '', 1, 1 WHERE false ON CONFLICT ("siteId", "day", "kind", "key", "hour") DO UPDATE SET "count" = ${S}."assist_site_event_counts"."count" + EXCLUDED."count"`,
+      ]) {
+        await expect(asPublic(sql)).resolves.toBeUndefined();
+      }
+    });
+
+    it('Э4: виджет читает тариф кабинета и занимает единицы периода (ровно тот SQL, что шлёт entitlements.ts)', async () => {
+      for (const sql of [
+        `SELECT s."planId", s."status", s."method", s."anchorAt", s."paidThrough", s."cancelAtPeriodEnd", s."autoTopUp", s."autoTopUpCapMicroUsd", COALESCE((SELECT min(x."createdAt") FROM ${S}."assist_sites" x WHERE x."accountId" = 'a'), (SELECT min(y."createdAt") FROM ${S}."site_sites" y WHERE y."accountId" = 'a')) AS "trialStart" FROM (SELECT 1) AS one LEFT JOIN ${S}."assist_subscriptions" s ON s."accountId" = 'a'`,
+        `INSERT INTO ${S}."assist_account_usage" ("accountId", "periodKey", "updatedAt") SELECT 'a', 'p', now() WHERE false ON CONFLICT DO NOTHING`,
+        `UPDATE ${S}."assist_account_usage" SET "units" = "units" + 1, "dialogs" = "dialogs" + 1, "updatedAt" = now() WHERE "accountId" = 'a' AND "periodKey" = 'p' AND "units" + 1 <= 50 + "extraUnits" + CASE WHEN false AND "autoSpentMicroUsd" + 1 <= 0 THEN 100 ELSE 0 END`,
+        `UPDATE ${S}."assist_account_usage" SET "exhaustedAt" = COALESCE("exhaustedAt", now()), "updatedAt" = now() WHERE "accountId" = 'a' AND "periodKey" = 'p'`,
+        `SELECT "key", "value" FROM ${S}."assist_platform_settings" WHERE "key" = 'widget'`,
       ]) {
         await expect(asPublic(sql)).resolves.toBeUndefined();
       }
@@ -397,7 +420,11 @@ if (!RAW_URL) {
         assist_site_leads: ['column:SELECT', 'column:INSERT', 'column:UPDATE'],
         assist_budget_days: ['SELECT', 'INSERT', 'column:UPDATE'],
         assist_budget_reservations: ['SELECT', 'INSERT', 'DELETE'],
-        assist_site_period_usage: ['SELECT', 'INSERT', 'column:UPDATE'],
+        // Э4 (миграция _assist_billing): тариф кабинета без секретов
+        // продления, счётчик единиц (занять, мягкий стоп), рубильник платформы.
+        assist_subscriptions: ['column:SELECT'],
+        assist_account_usage: ['SELECT', 'column:INSERT', 'column:UPDATE'],
+        assist_platform_settings: ['column:SELECT'],
         assist_rate_buckets: ['SELECT', 'INSERT', 'column:UPDATE'],
         assist_site_semantic_cache: [
           'SELECT',

@@ -21,11 +21,51 @@
  * же внешний ffmpeg-api одной и той же командой.
  */
 
+import { randomBytes } from 'crypto';
+
 /** Общий префикс всех кадров одного черновика. Именно ПРЕФИКС, а не
  * список файлов: `/finish` обязан стереть то, что лежало здесь раньше,
- * включая «хвост» от прошлого, более длинного прогона (§15 п.4). */
+ * включая «хвост» от прошлого, более длинного прогона (§15 п.4).
+ *
+ * Это КОРЕНЬ черновика: под ним лежат и старые кадры (до Ш0.6 — прямо
+ * в нём), и новые (в подпапке-ключе, `draftFrameDir`). Листинг и
+ * стирание по корню уносят обе раскладки разом; метла сирот
+ * (`common/orphan-sweep.ts`) по-прежнему видит владельца первым
+ * сегментом пути. */
 export function draftFramePrefix(draftId: string): string {
   return `tutorial-video-frames/${draftId}/`;
+}
+
+/**
+ * Случайный ключ папки кадров черновика (Ш0.6, риск В-2 аудита
+ * docs-tz/AUDIT-Merge-Assistant-Tutorial-QA-2026-10-02.md).
+ *
+ * Кадры — снимки АВТОРИЗОВАННОГО кабинета заказчика (там бывают
+ * персональные данные его клиентов), а Blob у проекта публичный:
+ * файл открывается любым, кто знает адрес. До Ш0.6 адрес собирался из
+ * `draftId` и номера кадра — то есть подбирался. 144 бита случайности
+ * в пути делают его неугадываемым; листинга у публичного Blob нет.
+ *
+ * Свой ключ, а не `addRandomSuffix` хранилища: кадры читаются по
+ * ПОСТРОЕННОМУ пути (`uploadFrames` копирует `round-N` в `N`, админка
+ * сортирует по номеру), и случайный хвост у каждого файла сломал бы
+ * ровно эти места. Один ключ на черновик — путь по-прежнему строится,
+ * но только тем, кто знает ключ из строки БД.
+ */
+export function newFrameKey(): string {
+  return randomBytes(18).toString('base64url');
+}
+
+/** Папка, куда пишутся кадры черновика: `{корень}{ключ}/`, а у
+ * черновиков до Ш0.6 (`frameKey` пуст) — сам корень, как раньше: их
+ * съёмочные кадры уже лежат там, и `uploadFrames` должен их найти. */
+export function draftFrameDir(
+  draftId: string,
+  frameKey: string | null,
+): string {
+  return frameKey
+    ? `${draftFramePrefix(draftId)}${frameKey}/`
+    : draftFramePrefix(draftId);
 }
 
 /**
@@ -66,8 +106,9 @@ export function draftFramePathname(
   draftId: string,
   index: number,
   contentType: string,
+  frameKey: string | null = null,
 ): string {
-  return `${draftFramePrefix(draftId)}${index}.${frameExtension(contentType)}`;
+  return `${draftFrameDir(draftId, frameKey)}${index}.${frameExtension(contentType)}`;
 }
 
 /**
@@ -89,8 +130,9 @@ export function draftRoundFramePathname(
   draftId: string,
   index: number,
   contentType: string = VIDEO_FRAME_CONTENT_TYPE,
+  frameKey: string | null = null,
 ): string {
-  return `${draftFramePrefix(draftId)}round-${index}.${frameExtension(contentType)}`;
+  return `${draftFrameDir(draftId, frameKey)}round-${index}.${frameExtension(contentType)}`;
 }
 
 /**
@@ -192,7 +234,11 @@ export function finalFrameIndex(
   const prefix = draftFramePrefix(draftId);
   if (!pathname.startsWith(prefix)) return null;
   // Номер и расширение, и ничего между ними: `12.png` — кадр,
-  // `round-12.png` — не кадр, `12.thumb.png` — тоже не кадр.
-  const m = /^(\d+)\.[a-z0-9]+$/i.exec(pathname.slice(prefix.length));
+  // `round-12.png` — не кадр, `12.thumb.png` — тоже не кадр. Перед
+  // номером — необязательная папка-ключ (Ш0.6, `newFrameKey`): у
+  // черновиков до неё кадры лежат прямо в корне.
+  const m = /^(?:[A-Za-z0-9_-]{16,}\/)?(\d+)\.[a-z0-9]+$/i.exec(
+    pathname.slice(prefix.length),
+  );
   return m ? Number(m[1]) : null;
 }

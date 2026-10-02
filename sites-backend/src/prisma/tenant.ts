@@ -94,6 +94,12 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistSiteDailyTotal: 'accountId',
   AssistSiteExport: 'accountId',
   AssistSiteReportSubscription: 'accountId',
+  // Э4: тариф и оплата — строки кабинета. Счётчик единиц пишет конвейер
+  // ответа сырым SQL под assist_public (accountId — из контекста сайта).
+  AssistSubscription: 'accountId',
+  AssistAccountUsage: 'accountId',
+  AssistPayment: 'accountId',
+  AssistLegalAcceptance: 'accountId',
 };
 
 /**
@@ -125,7 +131,6 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
   // в запросе посетителя нет и быть не может — он знает только pk).
   AssistSiteVisitorResume:
     'указатель посетителя (resumeKey) — по хешу ключа и siteId, пишет виджет',
-  AssistSitePeriodUsage: 'счётчик диалогов периода по siteId — пишет виджет',
   AssistSiteSemanticCache: 'семантический кэш ответов по siteId — пишет виджет',
   AssistSiteInstallPing: 'пинги загрузчика по (siteId, origin) — пишет виджет',
   AssistBudgetDay:
@@ -141,6 +146,13 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
     'хвост forget посетителя по siteId — пишет виджет, доделывает системный код',
   AssistSiteEventCount:
     'суточные счётчики событий виджета по siteId — пишет виджет одним UPSERT',
+  // Э4: вкладка «Помощник» админки платформы — по всем кабинетам сразу.
+  AssistPlatformSetting:
+    'настройки платформы (рубильник, потолок) — вне кабинетов',
+  AssistPlatformAccessLog:
+    'журнал доступа операторов платформы — по всем кабинетам',
+  AssistPlatformEvalCandidate:
+    'кандидаты eval платформы из ревью — набор платформы, не кабинета',
 };
 
 const WHERE_OPERATIONS = new Set([

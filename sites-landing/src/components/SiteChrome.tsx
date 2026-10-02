@@ -5,7 +5,7 @@ import { fmt } from '../lib/format';
 import { isVisible } from '../lib/claims';
 import { getDictionary } from '../lib/get-dictionary';
 import { LOCALE_LABELS, LOCALE_SHORT, LOCALE_SWITCH_PARAM, locales, type Locale } from '../lib/i18n';
-import { href, type PageKey } from '../lib/pages';
+import { href, hrefLang, type PageKey } from '../lib/pages';
 
 /**
  * Одна шапка и один футер на все страницы (уроки Ф-2 и С-3, §0).
@@ -18,19 +18,25 @@ import { href, type PageKey } from '../lib/pages';
  *  - навигация переносится строками, а не прячется в «бургер» (бургер —
  *    это клиентский JS и ещё одна вещь, которая пропадает на телефоне).
  *
- * Пунктов «Документация», «Блог», «Войти», «Подключить» в Л1 нет: по
- * реестру утверждений это `hidden` (docs, blog, web-login, tma-connect).
+ * Пункты меню — по реестру: «Блог», «Войти», «Подключить» — `hidden`
+ * (blog, web-login, tma-connect). «Документація» (Л5) — uk/en: из ru-
+ * интерфейса ссылка ведёт на uk с `hrefLang`. Кнопка в шапке — главный CTA
+ * §3.1 «Попробовать на своём сайте» (песочница, Л4); без неё — заявка в пилот.
+ * `available` — локали страницы, если не все (документация): переключатель
+ * языка показывает только существующие версии.
  */
 export function SiteChrome({
   locale,
   path,
   current,
+  available = locales,
   children,
 }: {
   locale: Locale;
   /** Путь текущей страницы БЕЗ локали — для переключателя языка. */
   path: string;
   current?: PageKey;
+  available?: readonly Locale[];
   children: ReactNode;
 }) {
   const dict = getDictionary(locale);
@@ -39,10 +45,14 @@ export function SiteChrome({
     { key: 'how-it-works', label: dict.common.nav.howItWorks },
     // Конфигуратор `/widget` — Л3 (С2); без `configurator: live` пункта нет.
     ...(isVisible('configurator') ? [{ key: 'widget' as const, label: dict.common.nav.widget }] : []),
+    ...(isVisible('integrations') ? [{ key: 'integrations' as const, label: dict.common.nav.integrations }] : []),
     { key: 'pricing', label: dict.common.nav.pricing },
     { key: 'security', label: dict.common.nav.security },
     { key: 'faq', label: dict.common.nav.faq },
+    ...(isVisible('docs') ? [{ key: 'docs' as const, label: dict.common.nav.docs }] : []),
   ];
+  const navCurrent = current?.startsWith('docs') ? 'docs' : current?.startsWith('integrations') ? 'integrations' : current;
+  const sandbox = isVisible('sandbox');
   return (
     <>
       <a className="skip-link" href="#main">
@@ -56,7 +66,7 @@ export function SiteChrome({
           </a>
           <nav className="locale-switcher" aria-label={dict.common.localeSwitcher.label}>
             <ul>
-              {locales.map((l) => (
+              {available.map((l) => (
                 <li key={l}>
                   {l === locale ? (
                     <span aria-current="true" lang={l} title={LOCALE_LABELS[l]}>
@@ -77,15 +87,15 @@ export function SiteChrome({
               ))}
             </ul>
           </nav>
-          <a className="button button-small header-cta" href={href(locale, 'pilot')} data-cta="header">
-            {dict.common.nav.pilot}
+          <a className="button button-small header-cta" href={href(locale, sandbox ? 'try' : 'pilot')} data-cta="header">
+            {sandbox ? dict.common.nav.tryShort : dict.common.nav.pilot}
           </a>
         </div>
         <nav className="wrap main-nav" aria-label={dict.common.nav.label}>
           <ul>
             {nav.map((item) => (
               <li key={item.key}>
-                <a href={href(locale, item.key)} aria-current={item.key === current ? 'page' : undefined}>
+                <a href={href(locale, item.key)} hrefLang={hrefLang(locale, item.key)} aria-current={item.key === navCurrent ? 'page' : undefined}>
                   {item.label}
                 </a>
               </li>
@@ -104,12 +114,24 @@ export function SiteChrome({
             <ul className="footer-links">
               {nav.map((item) => (
                 <li key={item.key}>
-                  <a href={href(locale, item.key)}>{item.label}</a>
+                  <a href={href(locale, item.key)} hrefLang={hrefLang(locale, item.key)}>
+                    {item.label}
+                  </a>
                 </li>
               ))}
+              {sandbox && (
+                <li>
+                  <a href={href(locale, 'try')}>{dict.common.nav.try}</a>
+                </li>
+              )}
               <li>
                 <a href={href(locale, 'pilot')}>{dict.common.nav.pilot}</a>
               </li>
+              {isVisible('crawler-opt-out') && (
+                <li>
+                  <a href={href(locale, 'bot')}>{dict.common.nav.bot}</a>
+                </li>
+              )}
             </ul>
           </div>
           <div>

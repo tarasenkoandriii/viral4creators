@@ -23,18 +23,51 @@ export interface StarsInvoicePayload {
 
 const TTL_SECONDS = 30 * 60;
 
+/**
+ * Лимит Bot API на `payload` инвойса (`sendInvoice`/`createInvoiceLink`):
+ * «Bot-defined invoice payload, 1-128 bytes». Аудит Э4 (2026-10-02):
+ * прежний формат `base64url(JSON).hmac` весил ~184 байта для cuid
+ * пользователя — Telegram отклонял `createInvoiceLink`, Stars-оплата
+ * генератора не стартовала вовсе.
+ */
+export const STARS_INVOICE_PAYLOAD_MAX_BYTES = 128;
+
+/** Компактный формат v2: `v2:<S|C>:<target>:<userId>:<expiresAt36>.<hmac>`.
+ * Без base64 и JSON-ключей: ~90 байт для cuid, ~100 для uuid. HMAC —
+ * тот же SHA-256 на том же ключе, по всему телу до точки (вместе с
+ * префиксом версии), полная длина. */
+const V2_PREFIX = 'v2';
+const PURPOSE_CODE: Record<StarsInvoicePayload['purpose'], string> = {
+  SUBSCRIPTION: 'S',
+  CREDIT_PACK: 'C',
+};
+const SAFE_FIELD = /^[A-Za-z0-9_-]+$/;
+
 export function signStarsInvoicePayload(
   input: Omit<StarsInvoicePayload, 'expiresAt'>,
   rawKey: string | undefined,
 ): string {
   const key = resolveKey(rawKey);
-  const payload: StarsInvoicePayload = {
-    ...input,
-    expiresAt: Math.floor(Date.now() / 1000) + TTL_SECONDS,
-  };
-  const payloadB64 = base64url(JSON.stringify(payload));
-  const sig = hmac(payloadB64, key);
-  return `${payloadB64}.${sig}`;
+  if (!SAFE_FIELD.test(input.userId) || !SAFE_FIELD.test(input.target)) {
+    throw new Error(
+      `Stars payload: userId/target вне [A-Za-z0-9_-] — ${input.userId}/${input.target}`,
+    );
+  }
+  const expiresAt = Math.floor(Date.now() / 1000) + TTL_SECONDS;
+  const body = [
+    V2_PREFIX,
+    PURPOSE_CODE[input.purpose],
+    input.target,
+    input.userId,
+    expiresAt.toString(36),
+  ].join(':');
+  const raw = `${body}.${hmac(body, key)}`;
+  if (Buffer.byteLength(raw, 'utf8') > STARS_INVOICE_PAYLOAD_MAX_BYTES) {
+    throw new Error(
+      `Stars payload ${Buffer.byteLength(raw, 'utf8')} байт > лимита Bot API ${STARS_INVOICE_PAYLOAD_MAX_BYTES}`,
+    );
+  }
+  return raw;
 }
 
 /** Возвращает `null`, а не бросает — вызывающий (webhook.controller)
@@ -60,9 +93,39 @@ export function verifyStarsInvoicePayload(
   const key = resolveKey(rawKey);
   const parts = raw.split('.');
   if (parts.length !== 2) return null;
-  const [payloadB64, sig] = parts;
-  const expected = hmac(payloadB64, key);
+  const [body, sig] = parts;
+  const expected = hmac(body, key);
   if (!safeEqual(sig, expected)) return null;
+  const payload = body.startsWith(`${V2_PREFIX}:`)
+    ? parseV2(body)
+    : parseLegacy(body);
+  if (!payload) return null;
+  if (!opts.skipExpiry && payload.expiresAt < Math.floor(Date.now() / 1000)) {
+    return null;
+  }
+  return payload;
+}
+
+function parseV2(body: string): StarsInvoicePayload | null {
+  const f = body.split(':');
+  if (f.length !== 5) return null;
+  const [, code, target, userId, exp36] = f;
+  const purpose =
+    code === PURPOSE_CODE.SUBSCRIPTION
+      ? 'SUBSCRIPTION'
+      : code === PURPOSE_CODE.CREDIT_PACK
+        ? 'CREDIT_PACK'
+        : null;
+  const expiresAt = parseInt(exp36, 36);
+  if (!purpose || !target || !userId || !Number.isFinite(expiresAt)) {
+    return null;
+  }
+  return { userId, purpose, target, expiresAt };
+}
+
+/** Прежний формат `base64url(JSON)` — только проверка (подпись тем же
+ * ключом), новые инвойсы его не выпускают. */
+function parseLegacy(payloadB64: string): StarsInvoicePayload | null {
   let payload: StarsInvoicePayload;
   try {
     payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
@@ -70,14 +133,12 @@ export function verifyStarsInvoicePayload(
     return null;
   }
   if (
+    !payload ||
     typeof payload.userId !== 'string' ||
     (payload.purpose !== 'SUBSCRIPTION' && payload.purpose !== 'CREDIT_PACK') ||
     typeof payload.target !== 'string' ||
     typeof payload.expiresAt !== 'number'
   ) {
-    return null;
-  }
-  if (!opts.skipExpiry && payload.expiresAt < Math.floor(Date.now() / 1000)) {
     return null;
   }
   return payload;
@@ -91,10 +152,6 @@ function resolveKey(rawKey: string | undefined): string {
     );
   }
   return key;
-}
-
-function base64url(text: string): string {
-  return Buffer.from(text, 'utf8').toString('base64url');
 }
 
 function hmac(data: string, key: string): string {

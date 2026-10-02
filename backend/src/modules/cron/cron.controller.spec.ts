@@ -83,6 +83,12 @@ function build() {
     runPersonaSourcesPurge: jest
       .fn()
       .mockResolvedValue({ purged: 0, abandoned: 0, failed: 0 }),
+    runClientSiteRetention: jest.fn().mockResolvedValue({
+      secretsExpired: 0,
+      secretsOneShot: 0,
+      framesPurged: 0,
+      framesFailed: 0,
+    }),
     // Пятый аудит, Д-4.3: контроллер больше не зовёт `runX()` напрямую —
     // каждый маршрут оборачивает его в `runAndLog`. Мок здесь просто
     // прозрачно выполняет переданную задачу — сама логика записи
@@ -202,6 +208,11 @@ describe('CronController — секрет закрывает каждый из �
       (c) => c.personaSourcesPurge('Bearer подделка'),
       'runPersonaSourcesPurge',
     ],
+    [
+      'client-site-retention',
+      (c) => c.clientSiteRetention('Bearer подделка'),
+      'runClientSiteRetention',
+    ],
   ];
 
   it.each(cases)(
@@ -315,6 +326,11 @@ describe('CronController — каждый маршрут оборачивает 
       'persona-sources-purge',
       (c) => c.personaSourcesPurge(),
       'persona-sources-purge',
+    ],
+    [
+      'client-site-retention',
+      (c) => c.clientSiteRetention(),
+      'client-site-retention',
     ],
   ];
 

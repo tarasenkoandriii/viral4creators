@@ -6,6 +6,7 @@
  */
 import { Logger } from '@nestjs/common';
 import * as request from 'supertest';
+import { seedUsage } from '../../modules/assist-billing/testing/billing-fixtures.testing';
 import { WIDGET_VISITOR_TOKEN_HEADER } from '../../brand';
 import {
   describeDb,
@@ -152,7 +153,6 @@ describeDb('Э3 (W): конфиг, identify, 👎 и forget по HTTP', () => {
     expect(await status()).toBe('active');
     const now = new Date();
     const day = now.toISOString().slice(0, 10);
-    const period = now.toISOString().slice(0, 7);
     // Деньги сайта: потолок 5000 мкUSD, потрачено 4990 — минимальный ответ не влезет.
     await stack.prisma.assistSite.update({
       where: { siteId: f.siteId },
@@ -182,13 +182,8 @@ describeDb('Э3 (W): конфиг, identify, 👎 и forget по HTTP', () => {
       else process.env.ASSIST_WIDGET_PLATFORM_DAILY_CAP_USD = saved;
     }
     expect(await status()).toBe('active');
-    // Месячная квота диалогов выбрана.
-    await stack.prisma.$executeRawUnsafe(
-      `INSERT INTO "sites"."assist_site_period_usage" ("siteId","period","dialogs","quota","updatedAt")
-       VALUES ($1, $2, 3, 3, now())`,
-      f.siteId,
-      period,
-    );
+    // Э4: лимит единиц периода подписки выбран (пробный — 50).
+    await seedUsage(stack.prisma, f.accountId, { units: 50 });
     expect(await status()).toBe('lead_only');
   });
 

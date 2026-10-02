@@ -10,6 +10,11 @@
  *  - потолок платформы → platform_budget + форма заявки; крон — по CRON_SECRET.
  */
 import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
+import { readState } from '../../modules/assist-billing/public/entitlements';
+import {
+  seedUsage,
+  usageOf,
+} from '../../modules/assist-billing/testing/billing-fixtures.testing';
 import { describeDb } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import { utcDay } from '../../modules/assist-site-chat/budget';
 import { AssistBudgetSweepController } from '../../modules/assist-site-chat/system/budget-sweep.controller';
@@ -212,11 +217,9 @@ describeDb('Приёмка Э2 п.5 — бюджет и квота (budget)', ()
   });
 
   it('два параллельных «последних» диалога периода — открывается один (и 50 параллельных claim при остатке 1 — один true)', async () => {
+    // Э4: лимит — единицы периода ПОДПИСКИ кабинета (пробный — 50).
     const s = await st.stand('services');
-    const period = new Date().toISOString().slice(0, 7);
-    await st.owner.assistSitePeriodUsage.create({
-      data: { siteId: s.siteId, period, dialogs: 399, quota: 400 },
-    });
+    await seedUsage(st.owner, s.accountId, { units: 49 });
     st.model.delayMs = 5;
     st.model.calls.length = 0;
     const [a, b] = await Promise.all([
@@ -228,24 +231,24 @@ describeDb('Приёмка Э2 п.5 — бюджет и квота (budget)', ()
     expect(opened).toHaveLength(1);
     expect(refused).toHaveLength(1);
     expect(st.model.calls).toHaveLength(1);
-    const row = await st.owner.assistSitePeriodUsage.findUniqueOrThrow({
-      where: { siteId_period: { siteId: s.siteId, period } },
-    });
-    expect(row.dialogs).toBe(400);
+    expect((await usageOf(st.owner, s.accountId))!.units).toBe(50);
     const s2 = await st.site();
-    await st.owner.assistSitePeriodUsage.create({
-      data: { siteId: s2.siteId, period, dialogs: 399, quota: 400 },
-    });
+    const state = await seedUsage(st.owner, s2.accountId, { units: 49 });
     const claims = await Promise.all(
       Array.from({ length: 50 }, () =>
         st.quota.claim(st.publicDb, {
-          siteId: s2.siteId,
           accountId: s2.accountId,
-          weight: 1,
+          state,
+          units: 1,
+          dialogs: 1,
         }),
       ),
     );
     expect(claims.filter(Boolean)).toHaveLength(1);
+    expect((await usageOf(st.owner, s2.accountId))!.units).toBe(50);
+    expect(
+      (await readState(st.publicDb, s2.accountId, new Date())).planId,
+    ).toBe('trial');
   });
 
   it('диалог: 31-й ответ модели занимает вторую единицу квоты (×2, §7.1)', async () => {
@@ -261,19 +264,14 @@ describeDb('Приёмка Э2 п.5 — бюджет и квота (budget)', ()
       visitor,
       conversationId: conv,
     });
-    const period = new Date().toISOString().slice(0, 7);
-    const before = await st.owner.assistSitePeriodUsage.findUniqueOrThrow({
-      where: { siteId_period: { siteId: s.siteId, period } },
-    });
-    expect(before.dialogs).toBe(1);
+    const before = await usageOf(st.owner, s.accountId);
+    expect(before).toMatchObject({ units: 1, dialogs: 1 });
     await st.ask(s, 'Какой лимит запросов у API?', {
       visitor,
       conversationId: conv,
     });
-    const after = await st.owner.assistSitePeriodUsage.findUniqueOrThrow({
-      where: { siteId_period: { siteId: s.siteId, period } },
-    });
-    expect(after.dialogs).toBe(2);
+    const after = await usageOf(st.owner, s.accountId);
+    expect(after).toMatchObject({ units: 2, dialogs: 1 });
   });
 
   it('потолок платформы исчерпан → platform_budget + форма заявки, модель не зовётся', async () => {

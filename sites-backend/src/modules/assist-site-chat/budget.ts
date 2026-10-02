@@ -28,15 +28,21 @@
  */
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
 import {
-  WIDGET_DEFAULTS,
-  widgetDialogQuota,
-} from '../../config/assist-defaults';
+  effectivePlatformCapMicroUsd,
+  readWidgetPlatformSettings,
+} from '../../common/platform-settings';
 import { widgetPlatformDailyCapMicroUsd } from '../../config/widget-env';
 import type { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import { estimateCost } from '../../shared/ai-pricing';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
 import { KNOWLEDGE_DEFAULTS } from '../../config/assist-defaults';
+import {
+  claimUnits,
+  releaseUnits,
+} from '../assist-billing/public/entitlements';
+import type { SubscriptionState } from '../assist-billing/subscription-state';
 
 export type BudgetDenied = 'site_budget' | 'platform_budget';
 
@@ -56,7 +62,6 @@ export type BudgetDb = Pick<
 
 const DAYS = '"sites"."assist_budget_days"';
 const RES = '"sites"."assist_budget_reservations"';
-const PERIODS = '"sites"."assist_site_period_usage"';
 
 /** Ключ строки платформы (scope=platform). */
 export const PLATFORM_KEY = 'all';
@@ -126,7 +131,10 @@ export class SiteBudget {
     const now = p.now ?? new Date();
     const day = utcDay(now);
     const est = Math.max(1, Math.ceil(p.estMicroUsd));
-    const platformCap = widgetPlatformDailyCapMicroUsd(this.env);
+    const platformCap = effectivePlatformCapMicroUsd(
+      widgetPlatformDailyCapMicroUsd(this.env),
+      await readWidgetPlatformSettings(db),
+    );
     await this.sweep(db, now, p.siteId);
     await db.$executeRawUnsafe(
       `INSERT INTO ${DAYS} ("scope", "key", "day", "updatedAt")
@@ -269,42 +277,42 @@ export class SiteBudget {
 }
 
 /**
- * Квота диалогов периода (§4.5 уточнение 3, §7.1): при ПЕРВОМ ответе модели
- * в диалоге — `UPDATE … SET dialogs = dialogs + :w WHERE dialogs + :w <= quota`
- * (строка периода — INSERT ON CONFLICT DO NOTHING с quota из
- * widgetDialogQuota); вес w растёт на 31-м и 61-м ответе (×2, ×3).
- * Два параллельных «последних» диалога — открывается один.
- * Предпросмотр (site.preview) квоту не тратит.
+ * Квота диалогов (§4.5 уточнение 3, §7.1; Э4 — по тарифу КАБИНЕТА): при
+ * ответе модели, который засчитывает диалог (первый после открытия или 30
+ * минут тишины), и на 31-м/61-м ответе — занять единицы одним условным
+ * UPDATE счётчика периода подписки (assist-billing/public/entitlements).
+ * Два параллельных «последних» диалога — открывается один. Предпросмотр
+ * (site.preview) квоту не тратит — решает вызывающий.
  */
 @Injectable()
 export class DialogQuota {
   async claim(
     db: BudgetDb,
-    p: { siteId: string; accountId: string; weight: number; now?: Date },
+    p: {
+      accountId: string;
+      state: SubscriptionState;
+      units: number;
+      dialogs: number;
+    },
   ): Promise<boolean> {
-    const w = Math.max(1, Math.floor(p.weight));
-    const period = utcPeriod(p.now ?? new Date());
-    await db.$executeRawUnsafe(
-      `INSERT INTO ${PERIODS} ("siteId", "period", "dialogs", "quota", "updatedAt")
-       VALUES ($1, $2, 0, $3, now()) ON CONFLICT DO NOTHING`,
-      p.siteId,
-      period,
-      widgetDialogQuota(p.accountId),
-    );
-    const n = await db.$executeRawUnsafe(
-      `UPDATE ${PERIODS} SET "dialogs" = "dialogs" + $3, "updatedAt" = now()
-        WHERE "siteId" = $1 AND "period" = $2 AND "dialogs" + $3 <= "quota"`,
-      p.siteId,
-      period,
-      w,
-    );
-    return n === 1;
+    return claimUnits(db, p);
   }
-}
 
-/** Сколько ещё «единиц» диалога занять на n-м ответе модели (§7.1: ×2 после 30, ×3 после 60). */
-export function dialogWeightStep(answerNumber: number): number {
-  if (answerNumber === 1) return 1;
-  const steps: readonly number[] = WIDGET_DEFAULTS.dialogWeightSteps;
-  return steps.some((s) => answerNumber === s + 1) ? 1 : 0;
+  async release(
+    db: BudgetDb,
+    p: {
+      accountId: string;
+      state: SubscriptionState;
+      units: number;
+      dialogs: number;
+    },
+  ): Promise<void> {
+    if (!p.state.periodKey) return;
+    await releaseUnits(db, {
+      accountId: p.accountId,
+      periodKey: p.state.periodKey,
+      units: p.units,
+      dialogs: p.dialogs,
+    });
+  }
 }

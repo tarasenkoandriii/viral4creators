@@ -23,7 +23,8 @@ import { TelegramNotifyService } from '../notify/telegram-notify.service';
 import { AssistantSettingsService } from './assistant-settings.service';
 import { buildSystemInstruction } from './assistant-prompt';
 import { parseActions, splitActionsBlock } from './actions';
-import { containsForbiddenPromise, maskSensitiveEcho } from './post-filter';
+import { containsForbiddenPromise } from './post-filter';
+import { maskForJournal } from './journal-mask';
 import { estimateCost } from '../../common/ai-pricing';
 import { hashVisitorIp } from './ip-hash';
 import { ASSISTANT_KNOWLEDGE, ASSISTANT_STEPS } from './knowledge/generated';
@@ -278,7 +279,9 @@ export class AssistantService {
       locale,
     );
     const visibleText = text.trim();
-    const maskedAnswer = maskSensitiveEcho(visibleText).slice(0, 4000);
+    // Ш0.7: то же правило журнала, что у вопроса ниже и у помощника
+    // платформы (карты, IBAN, телефоны в свободной записи, e-mail, ключи).
+    const maskedAnswer = maskForJournal(visibleText).slice(0, 4000);
     const flagged = containsForbiddenPromise(visibleText);
 
     const {
@@ -314,7 +317,13 @@ export class AssistantService {
           locale,
           page: request.page,
           stepId: request.stepId ?? null,
-          question: (lastUserMessage?.content ?? '').slice(0, 600),
+          // Ш0.7 (риск В-4): вопрос посетителя — тоже ПДн, и живёт в
+          // журнале 30 дней. Маскируем ДО обрезки: иначе номер карты на
+          // границе 600 символов мог бы остаться наполовину открытым.
+          question: maskForJournal(lastUserMessage?.content ?? '').slice(
+            0,
+            600,
+          ),
           answer: maskedAnswer,
           actions: actions.length ? (actions as unknown as object) : undefined,
           inTokens,

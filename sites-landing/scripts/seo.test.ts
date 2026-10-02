@@ -21,7 +21,8 @@ process.env.SITE_URL = 'https://assist.example.com';
 
 import { localeAlternates } from '../src/lib/alternates';
 import { localeFromAcceptLanguage, locales } from '../src/lib/i18n';
-import { PAGES, pageMetadata } from '../src/lib/pages';
+import { PAGES, pageMetadata, pageLocales, type DocsKey } from '../src/lib/pages';
+import { loadDoc } from '../src/lib/docs';
 import { siteUrl, validateSiteUrl } from '../src/lib/site-url';
 import sitemap from '../src/app/sitemap';
 import robots from '../src/app/robots';
@@ -114,49 +115,60 @@ assert.throws(() => localeAlternates('', 'uk', { env: { NODE_ENV: 'production' }
 // ── 3. Метаданные страниц ──
 const OG_DIR = path.join(__dirname, '..', 'public', 'og');
 let metaCount = 0;
+const metaOf = (key: (typeof PAGES)[number]['key'], locale: (typeof locales)[number]) => {
+  // Документация берёт title/description из своего Markdown (uk/en).
+  if (key.startsWith('docs')) {
+    const doc = loadDoc(key as DocsKey, locale, { env: { widgetOrigin: 'https://w.example.com', apiOrigin: 'https://api.example.com' } });
+    return pageMetadata(key, locale, { title: doc.title, description: doc.description });
+  }
+  return pageMetadata(key, locale);
+};
 for (const page of PAGES) {
-  for (const locale of locales) {
-    const m = pageMetadata(page.key, locale);
+  for (const locale of pageLocales(page.key)) {
+    const m = metaOf(page.key, locale);
     const where = `${page.key}/${locale}`;
     const url = `${ORIGIN}/${locale}${page.path}`;
     assert.ok(typeof m.title === 'string' && m.title.length > 10 && !m.title.includes('{'), `${where}: title`);
     assert.ok(typeof m.description === 'string' && m.description.length > 50 && m.description.length <= 200, `${where}: description ${m.description?.length}`);
     assert.equal(m.alternates?.canonical, url, `${where}: canonical`);
     const langs = m.alternates?.languages as Record<string, string>;
-    assert.deepEqual(Object.keys(langs).sort(), ['en', 'ru', 'uk', 'x-default'], `${where}: hreflang`);
+    assert.deepEqual(Object.keys(langs).sort(), [...pageLocales(page.key), 'x-default'].sort(), `${where}: hreflang`);
+    assert.equal(langs['x-default'], `${ORIGIN}/en${page.path}`, `${where}: x-default → en`);
     for (const href of Object.values(langs)) assert.ok(href.startsWith(`${ORIGIN}/`), `${where}: относительный hreflang ${href}`);
     const og = m.openGraph as { url: string; images: Array<{ url: string; width: number; height: number }>; locale: string };
     const tw = m.twitter as { card: string; images: Array<{ url: string }>; title: string };
     assert.equal(og.url, url);
     assert.equal(tw.card, 'summary_large_image');
     assert.equal(tw.title, m.title, `${where}: twitter:title не свой`);
-    assert.equal(og.images[0].url, `${ORIGIN}/og/${page.key}-${locale}.jpg`);
+    const ogKey = page.og ?? page.key;
+    assert.equal(og.images[0].url, `${ORIGIN}/og/${ogKey}-${locale}.jpg`);
     assert.equal(tw.images[0].url, og.images[0].url);
-    assert.ok(fs.existsSync(path.join(OG_DIR, `${page.key}-${locale}.jpg`)), `${where}: нет OG-картинки — npm run og`);
+    assert.ok(fs.existsSync(path.join(OG_DIR, `${ogKey}-${locale}.jpg`)), `${where}: нет OG-картинки — npm run og`);
     metaCount++;
   }
 }
 // Заголовки уникальны в пределах локали.
 for (const locale of locales) {
-  const titles = PAGES.map((p) => pageMetadata(p.key, locale).title);
+  const titles = PAGES.filter((p) => pageLocales(p.key).includes(locale)).map((p) => metaOf(p.key, locale).title);
   assert.equal(new Set(titles).size, titles.length, `дубли title на ${locale}`);
 }
 
 // ── 4. sitemap и robots ──
 const sm = sitemap();
-assert.equal(sm.length, PAGES.length * locales.length);
+assert.equal(sm.length, PAGES.reduce((n, p) => n + pageLocales(p.key).length, 0));
 const urls = new Set(sm.map((e) => e.url));
 assert.equal(urls.size, sm.length, 'дубли в sitemap');
 for (const e of sm) {
   assert.ok(e.url.startsWith(`${ORIGIN}/`), e.url);
-  const page = PAGES.find((p) => locales.some((l) => e.url === `${ORIGIN}/${l}${p.path}`));
+  const page = PAGES.find((p) => pageLocales(p.key).some((l) => e.url === `${ORIGIN}/${l}${p.path}`));
   assert.ok(page, `в sitemap адрес вне реестра: ${e.url}`);
   assert.equal(e.lastModified, page.updated, `${e.url}: lastModified не из реестра`);
   const langs = e.alternates?.languages as Record<string, string>;
   assert.equal(langs['x-default'], `${ORIGIN}/en${page.path}`);
-  assert.equal(Object.keys(langs).length, locales.length + 1);
+  assert.equal(Object.keys(langs).length, pageLocales(page.key).length + 1);
 }
-for (const bad of ['/legal/', '/pilot/status/', '/api/']) assert.ok(![...urls].some((u) => u.includes(bad)), `в sitemap служебный ${bad}`);
+assert.ok(![...urls].some((u) => u.includes('/ru/docs/')), 'документации на ru нет — и в sitemap её быть не должно');
+for (const bad of ['/legal/', '/pilot/status/', '/bot/status/', '/api/']) assert.ok(![...urls].some((u) => u.includes(bad)), `в sitemap служебный ${bad}`);
 for (const p of PAGES) assert.match(p.updated, /^\d{4}-\d{2}-\d{2}$/);
 const rb = robots();
 assert.equal(rb.sitemap, `${ORIGIN}/sitemap.xml`);

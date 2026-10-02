@@ -267,6 +267,12 @@ const JOB_REGISTRY: CronJobInfo[] = [
       'и файлов незавершённых попыток старше суток. Раз в сутки.',
   },
   {
+    jobKey: 'client-site-retention',
+    description:
+      'Обучалка по сайту заказчика: стирание тестовых учётных данных и кук через 30 дней после последнего раунда ' +
+      '(или сразу после сборки ролика при «одноразово») и кадров в хранилище у решённых и брошенных черновиков. Раз в сутки.',
+  },
+  {
     jobKey: 'sweep-orphans',
     description:
       'Метла по осиротевшим файлам хранилища (sessions/projects/brand-manifests/publications). ' +
@@ -654,6 +660,8 @@ export class AdminCronService {
         return this.jobs.runVoiceUploadsSweep();
       case 'persona-sources-purge':
         return this.jobs.runPersonaSourcesPurge();
+      case 'client-site-retention':
+        return this.jobs.runClientSiteRetention();
       case 'sweep-orphans':
         return this.jobs.runSweepOrphans({
           dryRun: debugMode ? '1' : undefined,

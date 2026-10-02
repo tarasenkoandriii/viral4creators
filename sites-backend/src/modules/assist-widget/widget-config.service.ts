@@ -59,13 +59,20 @@ import {
   PLATFORM_KEY,
   answerEstimateMicroUsd,
   utcDay,
-  utcPeriod,
 } from '../assist-site-chat/budget';
 import {
-  widgetDialogQuota,
-  widgetSiteDailyCapMicroUsd,
-} from '../../config/assist-defaults';
+  effectiveLimit,
+  readState,
+  readUsage,
+  siteDailyCapMicroUsd,
+} from '../assist-billing/public/entitlements';
+import { assistPlanAllows } from '../assist-billing/plans';
+import type { SubscriptionState } from '../assist-billing/subscription-state';
 import { widgetPlatformDailyCapMicroUsd } from '../../config/widget-env';
+import {
+  effectivePlatformCapMicroUsd,
+  readWidgetPlatformSettings,
+} from '../../common/platform-settings';
 import { HandoffIntake } from '../assist-site-handoff/public/handoff-intake.service';
 import type { WidgetSiteContext } from '../assist-site-chat/chat-types';
 import type {
@@ -180,12 +187,25 @@ export class WidgetPublicConfigService {
       }));
     }
     const lead = leadsOf(site.leadsConfig);
+    // Э4: тариф кабинета — мягкий стоп (лимит единиц выбран, тариф истёк) и
+    // право убрать «на базе …» (Business+). Сбой чтения — как раньше:
+    // статус не трогаем, конвейер всё равно откажет сам.
+    const plan = await readState(this.db, site.accountId, now).catch(
+      (err: unknown) => {
+        this.logger.warn(
+          `plan read failed site=${site.siteId}: ${errName(err)}`,
+        );
+        return null;
+      },
+    );
+    const platform = await readWidgetPlatformSettings(this.db);
     const leadOnly =
       !widgetPlatformEnabled() ||
+      !platform.enabled ||
       !site.enabled ||
       site.chatPaused ||
       site.operatorBlockedAt !== null ||
-      (await this.spentOut(site, now));
+      (plan !== null && (await this.spentOut(site, now, plan)));
     const config = withoutHosts(published);
     const brand = (published.brand ?? {}) as Record<string, unknown>;
     const out: WidgetPublicConfig = {
@@ -196,7 +216,11 @@ export class WidgetPublicConfigService {
       allowClientPreview: site.allowClientPreview,
       lead: { fields: lead.fields, consentText: lead.consentText },
       suggestedQuestions: suggestedOf(site),
-      poweredByUrl: brand.poweredBy === false ? null : WIDGET_POWERED_BY_URL,
+      poweredByUrl:
+        brand.poweredBy === false &&
+        (plan === null || assistPlanAllows(plan.planId, 'removePoweredBy'))
+          ? null
+          : WIDGET_POWERED_BY_URL,
     };
     await this.addE3(out, published, site, kind, now);
     return out;
@@ -205,20 +229,22 @@ export class WidgetPublicConfigService {
   /**
    * Сегодня ответ модели заведомо не пройдёт: остаток суточного потолка
    * сайта или платформы меньше МИНИМАЛЬНОЙ оценки ответа (резерв откажет при
-   * любом вопросе) или месячная квота диалогов выбрана.
+   * любом вопросе), лимит единиц периода подписки выбран (с докупкой и
+   * авто-пакетом) или действующего тарифа нет (Э4, мягкий стоп §3.10).
    */
   async spentOut(
     site: Pick<WidgetSiteRow, 'siteId' | 'accountId'>,
     now: Date = new Date(),
+    plan?: SubscriptionState,
   ): Promise<boolean> {
     try {
+      const state = plan ?? (await readState(this.db, site.accountId, now));
+      if (!state.planId) return true;
       const rows = await this.db.$queryRawUnsafe<
         Array<{
           cap: bigint | number | null;
           site_used: bigint | number | null;
           platform_used: bigint | number | null;
-          dialogs: number | null;
-          quota: number | null;
         }>
       >(
         `SELECT
@@ -226,15 +252,10 @@ export class WidgetPublicConfigService {
            (SELECT "spentMicroUsd" + "reservedMicroUsd" FROM "sites"."assist_budget_days"
              WHERE "scope" = 'site' AND "key" = $1 AND "day" = $2) AS site_used,
            (SELECT "spentMicroUsd" + "reservedMicroUsd" FROM "sites"."assist_budget_days"
-             WHERE "scope" = 'platform' AND "key" = $3 AND "day" = $2) AS platform_used,
-           (SELECT "dialogs" FROM "sites"."assist_site_period_usage"
-             WHERE "siteId" = $1 AND "period" = $4) AS dialogs,
-           (SELECT "quota" FROM "sites"."assist_site_period_usage"
-             WHERE "siteId" = $1 AND "period" = $4) AS quota`,
+             WHERE "scope" = 'platform' AND "key" = $3 AND "day" = $2) AS platform_used`,
         site.siteId,
         utcDay(now),
         PLATFORM_KEY,
-        utcPeriod(now),
       );
       const r = rows[0];
       if (!r) return false;
@@ -243,16 +264,21 @@ export class WidgetPublicConfigService {
         historyChars: 0,
         questionChars: 1,
       });
-      const siteCap = widgetSiteDailyCapMicroUsd({
-        dailyCapMicroUsd: r.cap === null ? null : Number(r.cap),
-      });
+      const siteCap = siteDailyCapMicroUsd(
+        r.cap === null ? null : Number(r.cap),
+        state,
+      );
       const siteUsed = Number(r.site_used ?? 0);
       const platformUsed = Number(r.platform_used ?? 0);
-      const quota = r.quota ?? widgetDialogQuota(site.accountId);
+      const usage = await readUsage(this.db, site.accountId, state.periodKey);
       return (
         siteUsed + minAnswer > siteCap ||
-        platformUsed + minAnswer > widgetPlatformDailyCapMicroUsd() ||
-        (r.dialogs ?? 0) >= quota
+        platformUsed + minAnswer >
+          effectivePlatformCapMicroUsd(
+            widgetPlatformDailyCapMicroUsd(),
+            await readWidgetPlatformSettings(this.db),
+          ) ||
+        usage.units >= effectiveLimit(state, usage)
       );
     } catch (err) {
       this.logger.warn(

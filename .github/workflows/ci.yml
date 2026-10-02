@@ -48,6 +48,7 @@ jobs:
       frontend: ${{ steps.f.outputs.frontend }}
       admin: ${{ steps.f.outputs.admin }}
       landing: ${{ steps.f.outputs.landing }}
+      live_login_relay: ${{ steps.f.outputs.live_login_relay }}
       next_apps: ${{ steps.f.outputs.next_apps }}
     steps:
       - uses: actions/checkout@v4
@@ -491,7 +492,7 @@ jobs:
       - name: собранный HTML (SEO, реестр утверждений, виджет не в HTML, секреты не в бандле)
         run: npm run check:built
         working-directory: sites-landing
-      - name: бюджет JS первой загрузки (≤ 110 КБ, /widget ≤ 160 КБ gzip)
+      - name: бюджет JS первой загрузки (≤ 110 КБ, /widget и /try ≤ 160 КБ gzip)
         run: npm run budget:js
         working-directory: sites-landing
       - name: виджет для стенда (настоящий загрузчик)
@@ -507,11 +508,14 @@ jobs:
           npx next start -p 3010 > next-start.log 2>&1 &
           npx --yes wait-on@8 -t 60000 http://localhost:3010/robots.txt http://localhost:3011/widget/v1/config
         working-directory: sites-landing
-      - name: axe (WCAG 2.2 A/AA) и 360 px
+      - name: axe (WCAG 2.2 A/AA) и 360 px (+ состояния песочницы на стенде)
         run: npm run axe
         working-directory: sites-landing
       - name: e2e Л2–Л3 (живой виджет, preview, события, конфигуратор, черновик)
         run: npm run e2e:widget
+        working-directory: sites-landing
+      - name: e2e Л4–Л5 (песочница на моке стенда, безопасный рендер, sb_, отказы, код вставки)
+        run: npm run e2e:sandbox
         working-directory: sites-landing
       # Тот же запущенный сервер; Chrome — системный на раннере.
       - name: Lighthouse CI (медиана 5 прогонов, бюджеты §9, с виджетом)
@@ -633,6 +637,40 @@ jobs:
       - name: сборка
         run: npx next build
         working-directory: ${{ matrix.app }}
+
+  # Реле живого входа (Dokploy, не Vercel). До Э-С Ш0 его тесты не
+  # запускал никто, кроме человека: в CI реле не было вовсе. С Ш0.2 в нём
+  # фильтр исходящего трафика браузера — копия backend/src/common
+  # (scripts/sync-relay-shared.mjs), и расхождение копии ловится здесь.
+  live-login-relay:
+    name: live-login-relay — копии, типы, линт, тесты, сборка
+    needs: changes
+    if: needs.changes.outputs.live_login_relay == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: live-login-relay/package-lock.json
+      - name: копии фильтра совпадают с backend/src/common
+        run: node scripts/sync-relay-shared.mjs --check
+      - run: npm ci
+        working-directory: live-login-relay
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true
+        working-directory: live-login-relay
+      - name: линт
+        run: npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0
+        working-directory: live-login-relay
+      - name: тесты
+        run: npx jest --ci
+        working-directory: live-login-relay
+      - name: сборка (tsc, она же проверка типов src)
+        run: npm run build
+        working-directory: live-login-relay
 
   repo:
     name: репозиторий — юридические тексты

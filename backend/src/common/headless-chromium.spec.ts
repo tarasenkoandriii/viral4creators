@@ -8,24 +8,33 @@
 
 jest.mock('./fetch-with-retry', () => ({ fetchWithRetry: jest.fn() }));
 jest.mock('node:fs/promises', () => ({ stat: jest.fn(), rm: jest.fn() }));
+// Форма — как у настоящего пакета ≥ 132: ESM, `export default Chromium`,
+// без свойства `headless`. Через `require(esm)` модуль приезжает
+// пространством имён с `.default` — эту развилку код и проходит.
 jest.mock('@sparticuz/chromium-min', () => ({
-  executablePath: jest.fn(),
-  args: ['--single-process', '--no-sandbox'],
-  headless: true,
+  __esModule: true,
+  default: {
+    executablePath: jest.fn(),
+    args: [
+      '--single-process',
+      '--no-sandbox',
+      '--disable-web-security',
+      '--allow-running-insecure-content',
+      '--disable-site-isolation-trials',
+    ],
+  },
 }));
 jest.mock('puppeteer-core', () => ({ launch: jest.fn() }));
 
 import { fetchWithRetry } from './fetch-with-retry';
 import { stat, rm } from 'node:fs/promises';
-// `@sparticuz/chromium-min`'s .d.ts — `export = Chromium` (CJS export
-// assignment) — не пускает `import * as` без esModuleInterop (проект его
-// не включает); `import ... = require(...)` — родной TS-синтаксис под
-// именно этот случай, работает при любом esModuleInterop.
-import chromiumMin = require('@sparticuz/chromium-min');
+import chromiumMin from '@sparticuz/chromium-min';
 import * as puppeteerCore from 'puppeteer-core';
 import {
   resolveHeadlessBrowserLaunchPlan,
   launchHeadlessBrowser,
+  launchArgs,
+  UNTRUSTED_STRIPPED_ARGS,
   withTimeout,
   __resetHeadlessBrowserLaunchPlanForTests,
   HeadlessBrowserLaunchPlan,
@@ -179,11 +188,13 @@ describe('resolveHeadlessBrowserLaunchPlan', () => {
     expect(plan.source).toBe(
       `@sparticuz/chromium-min (serverless, ${LIB_DIR})`,
     );
-    expect(plan.args).toEqual(['--single-process', '--no-sandbox']);
-    expect(plan.headless).toBe(true);
+    expect(plan.args).toContain('--single-process');
+    // Ш0.4: пакет ≥ 132 поддерживает только chrome-headless-shell.
+    expect(plan.headless).toBe('shell');
     // Архива локально не было -> executablePath() зовётся с URL, не с packDir.
+    // Ш0.4: свежий Chromium и архив под архитектуру (x64 у Vercel).
     expect(executablePathMock).toHaveBeenCalledWith(
-      'https://github.com/Sparticuz/chromium/releases/download/v127.0.0/chromium-v127.0.0-pack.tar',
+      'https://github.com/Sparticuz/chromium/releases/download/v153.0.0/chromium-v153.0.0-pack.x64.tar',
     );
   });
 
@@ -366,5 +377,44 @@ describe('withTimeout', () => {
     await expect(
       withTimeout(neverResolves, 5, 'слишком долго'),
     ).rejects.toThrow('слишком долго');
+  });
+});
+
+describe('launchArgs — чужой сайт (Ш0.3)', () => {
+  const planArgs = [
+    '--single-process',
+    '--disable-web-security',
+    '--allow-running-insecure-content',
+    '--disable-site-isolation-trials',
+    '--no-sandbox',
+  ];
+
+  it('без опций план не трогается', () => {
+    expect(launchArgs(planArgs)).toEqual(planArgs);
+  });
+
+  it('untrustedContent снимает флаги, ослабляющие same-origin policy', () => {
+    const args = launchArgs(planArgs, { untrustedContent: true });
+    for (const weak of UNTRUSTED_STRIPPED_ARGS) {
+      expect(args).not.toContain(weak);
+    }
+    expect(args).toEqual(['--single-process', '--no-sandbox']);
+  });
+
+  it('extraArgs дописываются в конец (прокси)', () => {
+    expect(
+      launchArgs(['--a'], { extraArgs: ['--proxy-server=http://127.0.0.1:1'] }),
+    ).toEqual(['--a', '--proxy-server=http://127.0.0.1:1']);
+  });
+
+  it('launchHeadlessBrowser передаёт итоговые флаги в puppeteer.launch', async () => {
+    process.env.PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium';
+    launchMock.mockResolvedValue({ close: jest.fn() });
+    await launchHeadlessBrowser({
+      untrustedContent: true,
+      extraArgs: ['--proxy-server=http://127.0.0.1:9'],
+    });
+    const args = launchMock.mock.calls[0][0].args as string[];
+    expect(args[args.length - 1]).toBe('--proxy-server=http://127.0.0.1:9');
   });
 });

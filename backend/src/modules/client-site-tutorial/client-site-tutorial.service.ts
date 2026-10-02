@@ -73,8 +73,10 @@ import {
   draftRoundFramePathname,
   draftFramePrefix,
   finalFrameIndex,
+  newFrameKey,
 } from './draft-frames';
 import { BlobService } from '../storage/blob.service';
+import { firstPartyCookies } from './first-party-cookies';
 import {
   clientSiteReadiness,
   type Readiness,
@@ -202,6 +204,9 @@ interface DraftRow {
   cookiesEnc: string | null;
   credentialsEnc: string | null;
   requiresLiveLoginReplay: boolean;
+  /** Ш0.6: папка кадров в Blob. `undefined`/`null` — черновик до Ш0.6
+   * (или строка из теста), кадры по старым путям. */
+  frameKey?: string | null;
   status: DraftStatus;
   title: string | null;
   rejectionReason: string | null;
@@ -290,7 +295,10 @@ export class ClientSiteTutorialService {
       stepsPerRound: state.stepsPerRound,
       roundScreenshots: state.roundScreenshots as object,
       lastUrl: round.exploration.currentUrl,
-      cookiesEnc: this.encryptCookies(round.cookies),
+      cookiesEnc: this.encryptCookies(round.cookies, origin),
+      secretsUsedAt: new Date(),
+      // Ш0.6: неугадываемая папка кадров в публичном Blob.
+      frameKey: newFrameKey(),
     });
 
     // Съёмочный кадр — ПОСЛЕ создания строки: путь в Blob ключуется
@@ -341,7 +349,12 @@ export class ClientSiteTutorialService {
       // Тип — из самого кадра, а не из константы: имя файла обязано
       // описывать то, что в нём лежит, даже если съёмщик однажды
       // сменит формат и забудет сказать об этом здесь.
-      const pathname = draftRoundFramePathname(draft.id, index, contentType);
+      const pathname = draftRoundFramePathname(
+        draft.id,
+        index,
+        contentType,
+        draft.frameKey ?? null,
+      );
       await this.blob.uploadBuffer(pathname, buffer, contentType);
       const url = await this.blob.getPublicUrl(pathname);
       const state = this.toRoundsState(draft);
@@ -349,7 +362,11 @@ export class ClientSiteTutorialService {
       frames[index] = url;
       const updated = await this.prisma.clientSiteTutorialDraft.update({
         where: { id: draft.id },
-        data: { roundVideoFrames: frames as object },
+        // `framesPurgedAt: null` — в Blob снова есть кадры. Без сброса
+        // черновик, у которого уборка уже стёрла кадры, а человек вернулся
+        // и снял новые, больше никогда не попадал бы в уборку: её выборка
+        // берёт только `framesPurgedAt: null` (аудит Ш0 02.10.2026).
+        data: { roundVideoFrames: frames as object, framesPurgedAt: null },
       });
       return updated as unknown as DraftRow;
     } catch (err) {
@@ -420,6 +437,9 @@ export class ClientSiteTutorialService {
       expectedVersion: number;
       submitSelector: string;
       fields: Array<{ selector: string; value: string; sensitive: boolean }>;
+      /** «Одноразово» (Ш0.5): стереть данные входа после первой
+       * успешной сборки ролика. `undefined` — не менять выбор. */
+      forgetAfterBuild?: boolean;
     },
   ): Promise<RoundResult> {
     const { draft } = await this.loadEditableDraft(userId, projectId);
@@ -483,7 +503,7 @@ export class ClientSiteTutorialService {
       input.expectedVersion,
       actions,
       steps,
-      { credentialsEnc },
+      { credentialsEnc, secretsOneShot: input.forgetAfterBuild },
     );
   }
 
@@ -582,7 +602,8 @@ export class ClientSiteTutorialService {
           state.roundScreenshots.length,
         ).slice(0, -1) as object,
         lastUrl: replayed.exploration.currentUrl,
-        cookiesEnc: this.encryptCookies(replayed.cookies),
+        cookiesEnc: this.encryptCookies(replayed.cookies, draft.baseUrl),
+        secretsUsedAt: new Date(),
         version: { increment: 1 },
       },
     });
@@ -672,6 +693,7 @@ export class ClientSiteTutorialService {
     try {
       uploaded = await this.uploadFrames(
         draft.id,
+        draft.frameKey ?? null,
         state.roundScreenshots,
         state.roundVideoFrames,
       );
@@ -711,6 +733,8 @@ export class ClientSiteTutorialService {
         status: 'PENDING_REVIEW',
         title: input.title.trim(),
         previewFrameCount: uploaded,
+        // Итоговые кадры только что залиты — уборка снова за них отвечает.
+        framesPurgedAt: null,
         rejectionReason: null,
         version: { increment: 1 },
       },
@@ -855,7 +879,11 @@ export class ClientSiteTutorialService {
     // хост резолвится сейчас.
     await this.assertSafeUrl(result.finalUrl);
 
-    const cookiesEnc = this.encryptCookies(result.cookies);
+    // Ш0.5: реле снимает куки со ВСЕГО браузера, включая сессию
+    // заказчика у SSO-провайдера (Google, Facebook). Дальше — ни в раунд,
+    // ни в базу: только куки сайта заказчика.
+    const sessionCookies = this.siteCookies(result.cookies, draft.baseUrl);
+    const cookiesEnc = this.encryptCookies(sessionCookies, draft.baseUrl);
 
     // Обычный раунд поверх только что добытой сессии — никаких
     // действий, только открыть авторизованную страницу и посмотреть.
@@ -864,7 +892,7 @@ export class ClientSiteTutorialService {
     try {
       round = await this.explorer.runRound({
         url: result.finalUrl,
-        cookies: result.cookies,
+        cookies: sessionCookies,
         actions: [],
         allowedOrigin: draft.baseUrl,
       });
@@ -918,7 +946,7 @@ export class ClientSiteTutorialService {
         ] as object,
         lastUrl: round.exploration.currentUrl,
         requiresLiveLoginReplay: true,
-        ...(cookiesEnc ? { cookiesEnc } : {}),
+        ...(cookiesEnc ? { cookiesEnc, secretsUsedAt: new Date() } : {}),
         version: { increment: 1 },
       },
     });
@@ -1044,7 +1072,7 @@ export class ClientSiteTutorialService {
     expectedVersion: number,
     actions: RoundAction[],
     steps: ScenarioStep[],
-    extra: { credentialsEnc?: string } = {},
+    extra: { credentialsEnc?: string; secretsOneShot?: boolean } = {},
   ): Promise<RoundResult> {
     const state = this.toRoundsState(draft);
     assertRoundsConsistent(state);
@@ -1103,9 +1131,13 @@ export class ClientSiteTutorialService {
           round.exploration.dangerWarning ?? null,
         ] as object,
         lastUrl: round.exploration.currentUrl,
-        cookiesEnc: this.encryptCookies(round.cookies),
+        cookiesEnc: this.encryptCookies(round.cookies, draft.baseUrl),
+        secretsUsedAt: new Date(),
         ...(extra.credentialsEnc
           ? { credentialsEnc: extra.credentialsEnc }
+          : {}),
+        ...(extra.secretsOneShot !== undefined
+          ? { secretsOneShot: extra.secretsOneShot }
           : {}),
         version: { increment: 1 },
       },
@@ -1436,6 +1468,7 @@ export class ClientSiteTutorialService {
    */
   private async uploadFrames(
     draftId: string,
+    frameKey: string | null,
     frames: string[],
     videoFrames: (string | null)[] = [],
   ): Promise<number> {
@@ -1446,8 +1479,13 @@ export class ClientSiteTutorialService {
         // хранилище с чужим типом. Имя файла при этом говорило бы
         // правду, а заголовок — нет, и разошлись бы они молча.
         const copied = await this.blob.copyBlob(
-          draftRoundFramePathname(draftId, i, VIDEO_FRAME_CONTENT_TYPE),
-          draftFramePathname(draftId, i, VIDEO_FRAME_CONTENT_TYPE),
+          draftRoundFramePathname(
+            draftId,
+            i,
+            VIDEO_FRAME_CONTENT_TYPE,
+            frameKey,
+          ),
+          draftFramePathname(draftId, i, VIDEO_FRAME_CONTENT_TYPE, frameKey),
           VIDEO_FRAME_CONTENT_TYPE,
         );
         if (copied) continue;
@@ -1463,7 +1501,7 @@ export class ClientSiteTutorialService {
       }
       const { buffer, contentType } = decodeFrameDataUrl(frames[i]);
       await this.blob.uploadBuffer(
-        draftFramePathname(draftId, i, contentType),
+        draftFramePathname(draftId, i, contentType, frameKey),
         buffer,
         contentType,
       );
@@ -1489,9 +1527,31 @@ export class ClientSiteTutorialService {
     return map;
   }
 
-  private encryptCookies(cookies: CdpCookie[]): string | undefined {
-    if (cookies.length === 0) return undefined;
-    return encryptCookieJar(cookies, this.requireSecretKey());
+  /**
+   * Шифрует jar для `cookiesEnc` — ТОЛЬКО куки сайта заказчика (Ш0.5,
+   * `first-party-cookies.ts`). Фильтр стоит здесь, в единственной точке
+   * записи, а не у каждого вызывающего: раунд разведчика, `/undo` и
+   * живой вход отдают jar всего браузера, и забытый у одного из них
+   * фильтр снова положил бы в базу чужую SSO-сессию.
+   */
+  private encryptCookies(
+    cookies: CdpCookie[],
+    baseUrl: string,
+  ): string | undefined {
+    const kept = this.siteCookies(cookies, baseUrl);
+    if (kept.length === 0) return undefined;
+    return encryptCookieJar(kept, this.requireSecretKey());
+  }
+
+  private siteCookies(cookies: CdpCookie[], baseUrl: string): CdpCookie[] {
+    const { kept, dropped } = firstPartyCookies(cookies, baseUrl);
+    if (dropped > 0) {
+      // Числом, без доменов: какие сайты человек посещал — не наше дело.
+      this.logger.log(
+        `обучалка: ${dropped} кук сторонних доменов не сохранены (Ш0.5)`,
+      );
+    }
+    return kept;
   }
 
   private decryptCookies(enc: string | null): CdpCookie[] {

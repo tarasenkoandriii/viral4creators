@@ -93,7 +93,11 @@ LIVE-LOGIN-RELAY-SPEC.md` §4): сервис не должен поднимат�
 | `RESULT_CACHE_MS` | нет | `60000` | сколько результат (куки) остаётся доступен по `GET /sessions/:id/result` после закрытия сессии, прежде чем она выселяется из памяти |
 | `WS_AUTH_TIMEOUT_MS` | нет | `5000` | сколько ждать `{type:'auth',token}` первым сообщением WS-соединения, иначе разрыв |
 | `LOG_LEVEL` | нет | `info` | `debug` \| `info` \| `warn` \| `error` |
-| `NODE_ENV` | нет | — | не читается кодом сервиса напрямую, оставлен для совместимости с общими средствами мониторинга/логирования |
+| `NODE_ENV` | нет | — | `production` запрещает `LIVE_LOGIN_EGRESS_FILTER=off`; в остальном кодом не читается |
+| `LIVE_LOGIN_EGRESS_FILTER` | нет | `on` | фильтр исходящего трафика браузера (Ш0.2, [`doc/LIVE-LOGIN-RELAY-EGRESS.md`](../doc/LIVE-LOGIN-RELAY-EGRESS.md)): Chromium ходит наружу только через прокси в процессе реле, который режет служебные адреса и закрывает DNS-rebinding. `off` — только для локальной отладки |
+| `LIVE_LOGIN_EGRESS_DENY` | нет (на проде — **да**) | пусто | публичные IPv4/IPv6 (подсеть `/64`) самого сервера через запятую — общий список их не ловит |
+| `LIVE_LOGIN_EGRESS_ALLOWED_PORTS` | нет | `80,443,8080,8443` | порты назначения, на которые пускает фильтр |
+| `LIVE_LOGIN_BROWSER_PROXY_URL` | нет | — | выходной прокси браузера (`http`/`https`/`socks5`); при включённом фильтре — его вышестоящий, проверенный IP уходит туда `CONNECT ip:port` |
 
 Оба обязательных значения без дефолта — процесс не стартует, если их
 нет (см. `src/config.ts`, `ConfigError`). Числовые переменные, если
@@ -239,6 +243,15 @@ backend стартует нормально, просто функциональ
 6. Проверить `https://<домен-реле>/health` отвечает `{"ok":true,…}`,
    затем прописать `LIVE_LOGIN_RELAY_URL=https://<домен-реле>` в
    переменных Vercel-деплоя backend'а.
+7. Изоляция браузера (Ш0.2): `LIVE_LOGIN_EGRESS_DENY` с адресами
+   сервера, проверка `egressFilter: true` в строке старта и правила
+   `DOCKER-USER` — пошагово в
+   [`doc/LIVE-LOGIN-RELAY-EGRESS.md`](../doc/LIVE-LOGIN-RELAY-EGRESS.md).
+   Образ работает от пользователя `node`, без capabilities.
+
+Код `src/shared/` — копии `backend/src/common/{external-url-guard,egress-filter-proxy}.ts`:
+править источник в backend и запускать `node scripts/sync-relay-shared.mjs`
+(CI сверяет флагом `--check`).
 
 ## Тесты и линт
 

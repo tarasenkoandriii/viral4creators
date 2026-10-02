@@ -6,6 +6,10 @@
  * ИИ — фейки (testing/chat-stack.testing.ts).
  */
 import { randomUUID } from 'crypto';
+import {
+  seedUsage,
+  usageOf,
+} from '../../modules/assist-billing/testing/billing-fixtures.testing';
 import { describeDb } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import {
   ChatStack,
@@ -123,10 +127,7 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
       site: s.ctx({ preview: true, widgetVersion: 0 }),
     });
     expect(r.text).toContain('80 грн');
-    const usage = await st.owner.assistSitePeriodUsage.findMany({
-      where: { siteId: s.siteId },
-    });
-    expect(usage).toEqual([]);
+    expect(await usageOf(st.owner, s.accountId)).toBeNull();
   });
 
   it('приветствие, «спасибо», «позовіть людину» — шаблоном без модели; handoff → форма лида', async () => {
@@ -353,11 +354,9 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
   });
 
   it('квота диалогов: последний диалог периода открывается, следующий — site_quota + lead; повторный вопрос в открытом диалоге — без новой квоты', async () => {
+    // Э4: единицы периода подписки кабинета (пробный — 50 единиц).
     const s = await st.stand('saas');
-    const period = new Date().toISOString().slice(0, 7);
-    await st.owner.assistSitePeriodUsage.create({
-      data: { siteId: s.siteId, period, dialogs: 399, quota: 400 },
-    });
+    await seedUsage(st.owner, s.accountId, { units: 49 });
     const visitor = st.visitor();
     const ok = await st.ask(s, 'Сколько стоит тариф Старт?', { visitor });
     expect(ok.text).toContain('490');
@@ -370,10 +369,7 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
     const denied = await st.ask(s, 'Какой лимит запросов у API?');
     expect(denied.error).toMatchObject({ code: 'site_quota' });
     expect(denied.actions).toEqual([expect.objectContaining({ kind: 'lead' })]);
-    const row = await st.owner.assistSitePeriodUsage.findUniqueOrThrow({
-      where: { siteId_period: { siteId: s.siteId, period } },
-    });
-    expect(row.dialogs).toBe(400);
+    expect((await usageOf(st.owner, s.accountId))!.units).toBe(50);
   });
 
   it('стоп-фразы персоны → флаг; ответ с флагом в кэш не идёт', async () => {

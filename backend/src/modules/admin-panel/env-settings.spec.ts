@@ -73,6 +73,8 @@ const SECRET_KEYS = [
   'TIKTOK_CLIENT_SECRET',
   'GOOGLE_OAUTH_CLIENT_ID',
   'GOOGLE_OAUTH_CLIENT_SECRET',
+  // Э4 ИИ-помощника: общий секрет внутреннего API sites-backend.
+  'SITES_INTERNAL_SECRET',
 ];
 
 /**
@@ -113,6 +115,8 @@ const PUBLIC_VALUE_KEYS = [
   // чтобы понять, куда backend вообще ходит.
   'LIVE_LOGIN_RELAY_URL',
   'LIVE_LOGIN_RELAY_WS_URL',
+  // Э4 ИИ-помощника: адрес sites-backend для вкладки «Помощник».
+  'SITES_BACKEND_URL',
   'FFMPEG_API_BASE_URL',
   'VOICE_ID',
   'VOICE_MODEL',

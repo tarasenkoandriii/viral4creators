@@ -534,6 +534,22 @@ export class CronController {
   }
 
   /**
+   * GET /api/cron/client-site-retention — сроки хранения данных входа и
+   * кадров обучалки по сайту заказчика (Ш0.5/Ш0.6 аудита 02.10.2026) —
+   * см. `CronJobsService.runClientSiteRetention`. Раз в сутки.
+   */
+  @Get('client-site-retention')
+  async clientSiteRetention(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'client-site-retention',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runClientSiteRetention(),
+    );
+  }
+
+  /**
    * GET /api/cron/ai-usage-rollup
    *
    * Свёртка журнала расходов (doc/TODO.md §I-Б.5): месяцы старше срока

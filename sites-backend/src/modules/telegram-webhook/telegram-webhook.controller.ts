@@ -10,6 +10,10 @@
  * 200: иначе Telegram повторял бы обновление, копя очередь недоставленных.
  * Бот QA — по-прежнему только приём.
  *
+ * Э4: обновления оплаты Stars бота Помощника (`pre_checkout_query`,
+ * `message.successful_payment`) разбирает AssistPayments — до передачи
+ * человеку; владелец добавляет `pre_checkout_query` в allowed_updates.
+ *
  * Тело — не DTO: схему Update задаёт Telegram, а глобальный
  * `forbidNonWhitelisted` отверг бы любое новое поле. Разбираем руками
  * только то, что нужно.
@@ -20,11 +24,13 @@ import {
   Controller,
   Headers,
   HttpCode,
+  InternalServerErrorException,
   Logger,
   Optional,
   Post,
 } from '@nestjs/common';
 import type { TelegramApp } from '../../brand';
+import { AssistPayments } from '../assist-billing/payments.service';
 import { AssistBotUpdates } from '../assist-site-handoff/bot/assist-bot-updates.service';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import {
@@ -51,7 +57,10 @@ function updateId(update: unknown): string {
 export class TelegramWebhookController {
   private readonly logger = new Logger(TelegramWebhookController.name);
 
-  constructor(@Optional() private readonly updates?: AssistBotUpdates) {}
+  constructor(
+    @Optional() private readonly updates?: AssistBotUpdates,
+    @Optional() private readonly payments?: AssistPayments,
+  ) {}
 
   @Post('assist/webhook/telegram')
   @HttpCode(200)
@@ -60,6 +69,22 @@ export class TelegramWebhookController {
     @Body() update: unknown,
   ): Promise<{ ok: true }> {
     const res = this.handle('assist', secret, update);
+    // Э4: оплата Stars (pre_checkout_query — ответ ≤ 10 с; successful_payment
+    // — применить тариф). В отличие от прочих обновлений сбой здесь — НЕ 200:
+    // деньги уже списаны, и Telegram должен повторить доставку (применение
+    // идемпотентно: одна строка на telegram_payment_charge_id).
+    if (this.payments) {
+      let paid: boolean;
+      try {
+        paid = await this.payments.handleTelegramUpdate(update);
+      } catch (e) {
+        this.logger.error(
+          `[assist] оплата ${updateId(update)} не обработана: ${(e as Error | null)?.name ?? 'Error'}`,
+        );
+        throw new InternalServerErrorException('payment update failed');
+      }
+      if (paid) return res;
+    }
     if (this.updates) {
       await this.updates.handle(update).catch((e: unknown) => {
         this.logger.warn(

@@ -1,11 +1,10 @@
 /**
  * Умолчания помощника для Э1 (знания, обход, песочница) — ОДНО место.
  *
- * До Э4 тарифов нет (`ASSIST_PLANS`), а лимиты нужны уже сейчас: обход
- * ограничен числом страниц, бюджет обучения — потолком подписки (Р-58),
- * песочницы — лимитами лендинга. Здесь — значения тарифа Trial/Start из
- * ТЗ помощника §7.1/§4-тер.11 и лендинг-ТЗ §6.3. Э4 заменит чтение этих
- * констант на тариф кабинета; места чтения — только через функции ниже.
+ * С Э4 лимиты тарифа (единицы диалогов, страницы знаний, бюджеты
+ * обучения, суточный потолок сайта) живут в `ASSIST_PLANS`
+ * (modules/assist-billing/plans.ts) и читаются по тарифу кабинета; здесь —
+ * технические умолчания обхода, знаний, виджета и песочниц (лендинг-ТЗ §6.3).
  *
  * Деньги — в микродолларах (как site_ai_usage.costMicroUsd).
  */
@@ -97,19 +96,12 @@ export const KNOWLEDGE_DEFAULTS = {
   ],
 } as const;
 
-/**
+/*
  * Бюджет обучения — месячный потолок ПОДПИСКИ (Р-58: Trial/Start $0.5,
- * Business $3, Pro $8). До Э4 подписок нет → потолок кабинета = Trial/Start.
+ * Business $3, Pro $8). С Э4 — из тарифа кабинета:
+ * `ASSIST_PLANS[…].learningBudgetMicroUsd` (modules/assist-billing/plans.ts),
+ * читает site-ai/learning-budget.ts.
  */
-export const LEARNING_BUDGET_DEFAULT_MICRO_USD = 0.5 * MICRO_USD;
-
-/**
- * Потолок кабинета на текущий период. Э4: из тарифа подписки кабинета.
- * `accountId` в сигнатуре — чтобы Э4 не менял вызывающих.
- */
-export function learningBudgetCapMicroUsd(_accountId: string): number {
-  return LEARNING_BUDGET_DEFAULT_MICRO_USD;
-}
 
 /** Песочница в TMA (§3.1) и анонимная с лендинга (лендинг-ТЗ §6.3). */
 export const SANDBOX_LIMITS = {
@@ -147,9 +139,8 @@ export const SANDBOX_LIMITS = {
 
 /**
  * Э2: виджет режима «Сайт» (ТЗ §4.5, §4.13, §4-бис, §3-бис, §6.3, §7.1;
- * лендинг-ТЗ §5.3, §10.1). До Э4 тарифов нет: квота диалогов и суточный
- * потолок — как у Start (решение координатора Э2, вопрос владельцу О-3).
- * Места чтения — только через функции ниже (Э4 подменит их тарифом).
+ * лендинг-ТЗ §5.3, §10.1). Квота диалогов и суточный потолок сайта с Э4 —
+ * из тарифа кабинета (modules/assist-billing).
  */
 export const WIDGET_DEFAULTS = {
   /** Посетитель (§4.5): сообщений за сессию / за сутки. */
@@ -186,12 +177,10 @@ export const WIDGET_DEFAULTS = {
   /** Семантический кэш (§4.5, §4-тер.7). */
   semanticCacheTtlMs: 24 * 60 * 60 * 1000,
   semanticCacheMaxQuestionChars: 200,
-  /** Диалог закрывается через 30 мин тишины; > 30 ответов — ×2, > 60 — ×3 (§7.1). */
-  dialogIdleMs: 30 * 60 * 1000,
-  dialogWeightSteps: [30, 60],
-  /** До Э4: диалогов в месяц и суточный потолок сайта — как Start (§7.1, §7.3). */
-  dialogsPerMonth: 400,
-  siteDailyCapMicroUsd: 1.6 * MICRO_USD,
+  // Э4: правила счёта диалогов (30 мин тишины, ×2 после 30 ответов, веса)
+  // — modules/assist-billing/units.ts; лимит единиц и суточный потолок сайта
+  // («месячная себестоимость лимита / 10») — из тарифа кабинета
+  // (modules/assist-billing/plans.ts, public/entitlements.ts).
   /** Потолок платформы (все сайты, сутки) — env ASSIST_WIDGET_PLATFORM_DAILY_CAP_USD. */
   platformDailyCapMicroUsdDefault: 20 * MICRO_USD,
   /** Сессия посетителя (§4.13 п.2), указатель (§4-бис.3), «продолжить» (§4-бис.1). */
@@ -222,18 +211,6 @@ export const WIDGET_DEFAULTS = {
   /** Тело публичных запросов виджета (кроме чата) — не больше. */
   maxPublicBodyBytes: 4 * 1024,
 } as const;
-
-/** Квота диалогов сайта на период. Э4: из тарифа подписки. */
-export function widgetDialogQuota(_accountId: string): number {
-  return WIDGET_DEFAULTS.dialogsPerMonth;
-}
-
-/** Суточный денежный потолок ответов сайта: колонка или умолчание (§7.3). */
-export function widgetSiteDailyCapMicroUsd(row: {
-  dailyCapMicroUsd: number | null;
-}): number {
-  return row.dailyCapMicroUsd ?? WIDGET_DEFAULTS.siteDailyCapMicroUsd;
-}
 
 /** Мастер «Научите помощника» (§4-тер.9, §4-тер.11): платит платформа. */
 export const WIZARD_DEFAULTS = {

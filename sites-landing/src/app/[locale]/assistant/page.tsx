@@ -8,6 +8,7 @@ import { BRAND } from '../../../brand';
 import { heroVariant, isVisible } from '../../../lib/claims';
 import { liveWidgetTag } from '../../../lib/live-widget';
 import { WidgetPlayground } from '../../../components/WidgetPlayground';
+import { TryForm } from '../../../components/TryForm';
 import { faqGroups } from '../../../lib/faq';
 import { fmt } from '../../../lib/format';
 import { getDictionary } from '../../../lib/get-dictionary';
@@ -21,9 +22,10 @@ import { siteUrl } from '../../../lib/site-url';
  * реестра (`heroVariant()` → «answers»), блок 2 — живой виджет с панелью
  * «покрутите виджет» (если в сборке есть ключ нашего виджета; иначе —
  * место под запись, `demo-recording` — «скоро»), блок 6 ведёт в
- * конфигуратор. CTA — заявка в пилот. «Попробовать на своём сайте»,
- * «Подключить в Telegram» и сравнение — `hidden` (Л4–Л5) и в разметке
- * отсутствуют.
+ * конфигуратор. Л4–Л5 (С1, С3): hero — «preE6» (живой диалог в Telegram),
+ * поле адреса в hero и в конце страницы ведёт в песочницу `/try` (обычная
+ * GET-форма, без JS), блок 7 — в интеграции. «Подключить в Telegram» и
+ * сравнение — `hidden` и в разметке отсутствуют.
  */
 export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
   return pageMetadata('assistant', params.locale);
@@ -35,6 +37,7 @@ export default function AssistantPage({ params }: { params: { locale: Locale } }
   const a = dict.assistant;
   const hero = a.hero[heroVariant()];
   const liveTag = liveWidgetTag(locale);
+  const sandbox = isVisible('sandbox');
   const plan = (id: string) => PLANS.plans.find((p) => p.id === id)!;
   const faqTeaser = faqGroups(locale)
     .flatMap((g) => g.items)
@@ -49,8 +52,9 @@ export default function AssistantPage({ params }: { params: { locale: Locale } }
         <h1>{hero.title}</h1>
         <p className="lead">{hero.lead}</p>
         {hero.note && <p className="note">{hero.note}</p>}
+        {sandbox && <TryForm locale={locale} id="hero-url" place="hero" strings={a.tryForm} />}
         <p className="actions">
-          <a className="button" href={href(locale, 'pilot')} data-cta="hero">
+          <a className={sandbox ? 'button button-secondary' : 'button'} href={href(locale, 'pilot')} data-cta="hero">
             {hero.cta}
           </a>
           <a className="button button-secondary" href={href(locale, 'how-it-works')} data-cta="hero">
@@ -159,6 +163,13 @@ export default function AssistantPage({ params }: { params: { locale: Locale } }
               <ClaimCard key={item.title} className="card" claim={item.claim} dict={dict} title={item.title} text={item.text} />
             ))}
           </div>
+          {isVisible('integrations') && (
+            <p className="claim-cta">
+              <a href={href(locale, 'integrations')} data-cta="install">
+                {a.install.more}
+              </a>
+            </p>
+          )}
         </div>
       </section>
 
@@ -218,6 +229,13 @@ export default function AssistantPage({ params }: { params: { locale: Locale } }
           </p>
         </div>
       </section>
+
+      {sandbox && (
+        <section className="section wrap" aria-labelledby="final-try-heading">
+          <ClaimCard as="div" heading="h2" headingId="final-try-heading" claim="sandbox" dict={dict} title={a.finalTry.heading} text={a.finalTry.text} />
+          <TryForm locale={locale} id="final-url" place="final" strings={a.tryForm} />
+        </section>
+      )}
 
       {/* SoftwareApplication без `offers`: оплаты нет до Э4 (claim payment), а
           цена в разметке читалась бы как «можно купить». AggregateRating — никогда

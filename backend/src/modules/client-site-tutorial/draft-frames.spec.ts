@@ -14,6 +14,8 @@ import {
   draftFramePathname,
   draftFramePrefix,
   draftRoundFramePathname,
+  draftFrameDir,
+  newFrameKey,
   frameExtension,
   orderedFramePathnames,
   finalFrameIndex,
@@ -185,5 +187,56 @@ describe('finalFrameIndex — что /finish вправе стереть (бло
   it('чужой черновик и посторонние имена — не итоговые', () => {
     expect(finalFrameIndex('d', 'tutorial-video-frames/dd/0.png')).toBeNull();
     expect(finalFrameIndex('d', `${P}0.thumb.png`)).toBeNull();
+  });
+});
+
+describe('Ш0.6: папка-ключ кадров (риск В-2 аудита 02.10.2026)', () => {
+  const K = 'AbCdEfGhIjKlMnOpQrStUvWx';
+
+  it('ключ — 24 символа base64url и каждый раз новый', () => {
+    const a = newFrameKey();
+    const b = newFrameKey();
+    expect(a).toMatch(/^[A-Za-z0-9_-]{24}$/);
+    expect(a).not.toBe(b);
+  });
+
+  it('с ключом пути кадров — внутри папки-ключа, под общим корнем черновика', () => {
+    expect(draftFrameDir('d', K)).toBe(`tutorial-video-frames/d/${K}/`);
+    expect(draftRoundFramePathname('d', 2, 'image/png', K)).toBe(
+      `tutorial-video-frames/d/${K}/round-2.png`,
+    );
+    expect(draftFramePathname('d', 0, 'image/jpeg', K)).toBe(
+      `tutorial-video-frames/d/${K}/0.jpg`,
+    );
+    // Корень тот же — уборка по `draftFramePrefix` уносит и новые кадры,
+    // а метла сирот видит владельца первым сегментом.
+    expect(
+      draftFramePathname('d', 0, 'image/jpeg', K).startsWith(
+        draftFramePrefix('d'),
+      ),
+    ).toBe(true);
+  });
+
+  it('без ключа (черновик до Ш0.6) — прежние пути', () => {
+    expect(draftFrameDir('d', null)).toBe('tutorial-video-frames/d/');
+    expect(draftRoundFramePathname('d', 0)).toBe(
+      'tutorial-video-frames/d/round-0.png',
+    );
+  });
+
+  it('finalFrameIndex и сортировка понимают кадры в папке-ключе', () => {
+    expect(finalFrameIndex('d', `tutorial-video-frames/d/${K}/3.png`)).toBe(3);
+    expect(
+      finalFrameIndex('d', `tutorial-video-frames/d/${K}/round-3.png`),
+    ).toBeNull();
+    expect(
+      orderedFramePathnames('d', [
+        `tutorial-video-frames/d/${K}/10.png`,
+        `tutorial-video-frames/d/${K}/2.png`,
+      ]),
+    ).toEqual([
+      `tutorial-video-frames/d/${K}/2.png`,
+      `tutorial-video-frames/d/${K}/10.png`,
+    ]);
   });
 });

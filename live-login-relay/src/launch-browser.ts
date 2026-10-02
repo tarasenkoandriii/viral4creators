@@ -44,13 +44,18 @@ export function proxyArgs(proxy: BrowserProxy | null): string[] {
   return proxy ? [`--proxy-server=${proxy.server}`] : [];
 }
 
+/**
+ * `networkArgs` — флаги сети браузера, которые собирает
+ * `startBrowserNetwork` (`src/browser-network.ts`): фильтрующий прокси
+ * (по умолчанию) или прямой `proxyArgs` при выключенном фильтре.
+ */
 export async function launchRelayBrowser(
   executablePath: string,
-  proxy: BrowserProxy | null = null,
+  networkArgs: readonly string[] = [],
 ): Promise<Browser> {
   return puppeteer.launch({
     executablePath,
     headless: true,
-    args: [...DOCKER_CHROMIUM_ARGS, ...proxyArgs(proxy)],
+    args: [...DOCKER_CHROMIUM_ARGS, ...networkArgs],
   });
 }

@@ -67,10 +67,32 @@ export const FILTERS = {
     'sites-backend/src/modules/assist-site-setup/widget-config.ts',
     'sites-backend/src/config/assist-defaults.ts',
     'site-tma-kit/src/start-param.ts',
+    // Л4–Л5: тесты лендинга сверяют песочницу, код установки, имена и
+    // подпись вебхука целей с исходниками продукта и пакета интеграций.
+    'sites-backend/src/brand.ts',
+    'sites-backend/src/modules/assist-sandbox/',
+    'sites-backend/src/modules/assist-knowledge-core/api-types.ts',
+    'sites-backend/src/modules/assist-site-setup/snippet.ts',
+    'sites-backend/src/modules/assist-site-setup/keys.ts',
+    'sites-backend/src/modules/assist-analytics/webhook-signature.ts',
+    'sites-backend/src/modules/assist-analytics/goal-webhook.controller.ts',
+    'sites-backend/src/modules/assist-analytics/goal-webhook.service.ts',
+    'sites-backend/src/modules/site-core/hosts/host-normalize.ts',
+    'assist-integrations/',
   ],
   frontend: ['frontend/', 'backend/src/'],
   admin: ['admin/'],
   landing: ['landing/'],
+  // Реле живого входа (Э-С Ш0.2): свои исходники и источники копий
+  // фильтра исходящего трафика (scripts/sync-relay-shared.mjs).
+  live_login_relay: [
+    'live-login-relay/',
+    'backend/src/common/external-url-guard.ts',
+    'backend/src/common/egress-filter-proxy.ts',
+    'scripts/sync-relay-shared.mjs',
+    // Тест защит скрипта правил хоста (live-login-relay/test/egress-script.spec.ts).
+    'doc/relay-egress-docker-user.sh',
+  ],
 };
 /** Изменение любого из этих путей запускает всё. */
 /** `.nvmrc` — версия Node для всех джоб: её смена перепроверяет всё. */
@@ -140,9 +162,9 @@ function selfTest() {
   eq('виджет — и лендинг (стенд виджета)', on(['widget/src/loader/index.ts']), ['widget', 'sites_landing']);
   eq('.nvmrc — всё', on(['.nvmrc']), Object.keys(FILTERS));
   eq('формы событий лендинга', on(['sites-backend/src/modules/assist-widget/landing/landing.service.ts']), ['sites_backend', 'assist', 'sites_landing']);
-  eq('brand.ts бэкенда — бэк, assist, виджет, интеграции', on(['sites-backend/src/brand.ts']), ['sites_backend', 'assist', 'widget', 'assist_integrations']);
-  eq('плагин WordPress — только интеграции', on(['assist-integrations/wordpress/v4c-assist/v4c-assist.php']), ['assist_integrations']);
-  eq('векторы подписи — интеграции и бэк', on(['assist-integrations/fixtures/goal-webhook-vectors.json']), ['sites_backend', 'assist_integrations']);
+  eq('brand.ts бэкенда — бэк, assist, виджет, интеграции, лендинг', on(['sites-backend/src/brand.ts']), ['sites_backend', 'assist', 'widget', 'assist_integrations', 'sites_landing']);
+  eq('плагин WordPress — интеграции и лендинг (сверка документации)', on(['assist-integrations/wordpress/v4c-assist/v4c-assist.php']), ['assist_integrations', 'sites_landing']);
+  eq('векторы подписи — интеграции, бэк и лендинг', on(['assist-integrations/fixtures/goal-webhook-vectors.json']), ['sites_backend', 'assist_integrations', 'sites_landing']);
   eq('модуль sites-backend — бэк и assist', on(['sites-backend/src/modules/x.ts']), ['sites_backend', 'assist']);
   eq('миграция sites-backend — только бэк', on(['sites-backend/prisma/schema.prisma']), ['sites_backend']);
   eq('общий модуль backend — три джобы', on(['backend/src/common/plans.ts']), ['backend', 'sites_backend', 'frontend']);
@@ -151,6 +173,9 @@ function selfTest() {
   eq('next_apps', decide(['admin/src/a.tsx']).next_apps, ['admin']);
   eq('next_apps пусто', decide(['widget/x']).next_apps, []);
   eq('точный файл, не префикс', on(['scripts/sync-sites-shared.mjs.bak']), []);
+  eq('реле — только своя джоба', on(['live-login-relay/src/session.ts']), ['live_login_relay']);
+  eq('скрипт правил хоста реле', on(['doc/relay-egress-docker-user.sh']), ['live_login_relay']);
+  eq('фильтр исходящего трафика — бэк, его копии и реле', on(['backend/src/common/egress-filter-proxy.ts']), ['backend', 'sites_backend', 'frontend', 'live_login_relay']);
 
   // Каждая джоба ci.yml, кроме changes и repo, запускается по своему правилу.
   const full = readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
@@ -191,7 +216,7 @@ function selfTest() {
     console.error(`ci-changes --self-test: ${failed} ошибок`);
     process.exit(1);
   }
-  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — 17 случаев`);
+  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — 20 случаев`);
 }
 
 if (process.argv.includes('--self-test')) {

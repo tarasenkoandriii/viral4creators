@@ -18,8 +18,8 @@ import { isLocale, type Locale } from './i18n';
  * Имена событий фиксируются в коде (§10.2), как `AssistantEvent` у
  * консультанта. Из списка §10.2 здесь нет: `widget_question` — загрузчик
  * наружу не отдаёт ни текста, ни факта вопроса (§3-бис.2; вопросы считает
- * сам продукт), `sandbox_*` — Л4, `web_login` — В-13, `pricing_calc` —
- * калькулятора ещё нет.
+ * сам продукт), `web_login` — В-13, `pricing_calc` — калькулятора ещё нет.
+ * `sandbox_*` (Л4) — только перечни: ни адреса сайта, ни текста вопроса.
  */
 export const LANDING_EVENT_NAMES = [
   'page_view',
@@ -30,6 +30,10 @@ export const LANDING_EVENT_NAMES = [
   'configurator_save',
   'tma_click',
   'pilot_submit',
+  'sandbox_start',
+  'sandbox_ready',
+  'sandbox_question',
+  'sandbox_limit_hit',
 ] as const;
 export type LandingEventName = (typeof LANDING_EVENT_NAMES)[number];
 
@@ -38,7 +42,7 @@ export type LandingEventName = (typeof LANDING_EVENT_NAMES)[number];
  * `number`). Всё остальное отбрасывается до отправки — второй замок
  * после сервера (`cleanLandingEvent` отбрасывает событие целиком).
  */
-const PLACES = ['hero', 'header', 'recording', 'playground', 'branding', 'pilot', 'pricing', 'faq', 'final', 'configurator'] as const;
+const PLACES = ['hero', 'header', 'recording', 'playground', 'branding', 'pilot', 'pricing', 'faq', 'final', 'configurator', 'try', 'integrations', 'docs', 'bot', 'install'] as const;
 const CORNERS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'] as const;
 export const CONFIGURATOR_PARAMS = [
   'color',
@@ -63,6 +67,9 @@ export const CONFIGURATOR_PARAMS = [
 const SAVE_RESULTS = ['ok', 'rate_limited', 'invalid', 'denied', 'error'] as const;
 const PILOT_RESULTS = ['sent', 'invalid', 'limited', 'unavailable', 'error'] as const;
 const PAYLOAD_KINDS = ['wd', 'lp', 'pl', 'sb'] as const;
+/** Исход запуска песочницы — по проблеме (`lib/sandbox.ts` `SandboxProblem`), без подробностей. */
+export const SANDBOX_START_RESULTS = ['ok', 'unavailable', 'limit', 'rejected', 'opted_out', 'blocked', 'error'] as const;
+export const SANDBOX_LIMITS_HIT = ['ip', 'domain', 'questions', 'budget'] as const;
 
 type PropSpec = Record<string, readonly string[] | 'number'>;
 export const EVENT_PROPS: Record<LandingEventName, PropSpec> = {
@@ -74,6 +81,10 @@ export const EVENT_PROPS: Record<LandingEventName, PropSpec> = {
   configurator_save: { result: SAVE_RESULTS },
   tma_click: { payload: PAYLOAD_KINDS, place: PLACES },
   pilot_submit: { result: PILOT_RESULTS },
+  sandbox_start: { result: SANDBOX_START_RESULTS },
+  sandbox_ready: {},
+  sandbox_question: { source: ['suggested', 'typed'] },
+  sandbox_limit_hit: { kind: SANDBOX_LIMITS_HIT },
 };
 
 /** Пределы сервера (`landing.service.ts`, `LANDING_DEFAULTS`) — сверяет api-contract.test. */

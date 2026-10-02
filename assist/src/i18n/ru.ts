@@ -1,3 +1,4 @@
+import { billingRu } from './billing-ru';
 import { setupRu } from './setup-ru';
 import { e3Ru } from './e3-ru';
 
@@ -419,6 +420,8 @@ export const appRu = {
   setup: setupRu,
   // Э3 (T): диалоги, передача, вовлечение, статистика, цели, интеграции, обучение.
   e3: e3Ru,
+  // Э4: тариф и оплата, Условия и DPA.
+  billing: billingRu,
 };
 
 export type AppDictionary = typeof appRu;

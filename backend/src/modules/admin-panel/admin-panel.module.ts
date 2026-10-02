@@ -28,6 +28,8 @@ import { InviteModule } from '../invite/invite.module';
 import { AdminTesterInvitesService } from './admin-tester-invites.service';
 import { AdminTestTicketsService } from './admin-test-tickets.service';
 import { AdminUserAvatarService } from './admin-user-avatar.service';
+import { AdminAssistController } from './admin-assist.controller';
+import { AdminAssistClient } from './admin-assist.client';
 
 @Module({
   // StorageModule здесь больше не нужен (этап 89): удаление сессии
@@ -68,8 +70,11 @@ import { AdminUserAvatarService } from './admin-user-avatar.service';
     InviteModule,
     AudioSeparationModule,
   ],
-  controllers: [AdminPanelController],
+  // Э4 ИИ-помощника: вкладка «Помощник» — прокси к внутреннему API
+  // sites-backend (без DSN схемы sites в генераторе).
+  controllers: [AdminPanelController, AdminAssistController],
   providers: [
+    AdminAssistClient,
     AdminTesterInvitesService,
     AdminTestTicketsService,
     ProviderBalancesService,

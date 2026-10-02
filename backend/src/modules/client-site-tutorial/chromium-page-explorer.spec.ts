@@ -22,6 +22,16 @@ jest.mock('../../common/headless-chromium', () => ({
   withTimeout: jest.requireActual('../../common/headless-chromium').withTimeout,
 }));
 
+// Прокси — поддельный: настоящий поднимает сокет, а здесь проверяется
+// только то, что раунд ЕГО использует и всегда закрывает (Ш0.3).
+const proxyCloseMock = jest.fn().mockResolvedValue(undefined);
+const startEgressFilterProxyMock = jest.fn();
+jest.mock('../../common/egress-filter-proxy', () => ({
+  ...jest.requireActual('../../common/egress-filter-proxy'),
+  startEgressFilterProxy: (...args: unknown[]) =>
+    startEgressFilterProxyMock(...args),
+}));
+
 import {
   BadRequestException,
   GatewayTimeoutException,
@@ -141,6 +151,49 @@ const REQUEST = {
 
 beforeEach(() => {
   launchHeadlessBrowserMock.mockReset();
+  proxyCloseMock.mockClear();
+  startEgressFilterProxyMock.mockReset();
+  startEgressFilterProxyMock.mockResolvedValue({
+    url: 'http://127.0.0.1:41000',
+    port: 41000,
+    stats: () => ({ 'blocked-address': 0 }),
+    close: proxyCloseMock,
+  });
+});
+
+describe('фильтрующий прокси (Ш0.3, К-3)', () => {
+  it('браузер раунда идёт ТОЛЬКО через прокси и без флагов, ослабляющих SOP', async () => {
+    const { explorer } = setup();
+    await explorer.runRound(REQUEST);
+    expect(startEgressFilterProxyMock).toHaveBeenCalledTimes(1);
+    expect(launchHeadlessBrowserMock).toHaveBeenCalledWith({
+      untrustedContent: true,
+      extraArgs: [
+        '--proxy-server=http://127.0.0.1:41000',
+        '--proxy-bypass-list=<-loopback>',
+        '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+        '--disable-quic',
+      ],
+    });
+  });
+
+  it('прокси закрывается после раунда — и после закрытия браузера', async () => {
+    const { explorer, browser } = setup();
+    await explorer.runRound(REQUEST);
+    expect(proxyCloseMock).toHaveBeenCalledTimes(1);
+    expect(browser.close.mock.invocationCallOrder[0]).toBeLessThan(
+      proxyCloseMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('браузер не поднялся — прокси всё равно закрыт', async () => {
+    launchHeadlessBrowserMock.mockResolvedValue({ error: 'нет памяти' });
+    const explorer = new TestExplorer();
+    await expect(explorer.runRound(REQUEST)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    expect(proxyCloseMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('браузер не поднялся', () => {

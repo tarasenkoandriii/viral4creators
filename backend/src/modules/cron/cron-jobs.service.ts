@@ -85,6 +85,10 @@ import {
 import { buildRunSummary } from './cron-run-summary';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import {
+  ClientSiteDraftRetention,
+  ClientSiteRetentionResult,
+} from '../client-site-tutorial/draft-retention';
+import {
   VoiceUploadService,
   VoiceUploadSweepResult,
 } from '../voice-upload/voice-upload.service';
@@ -802,6 +806,41 @@ export class CronJobsService {
       return await this.personas.purgeExpiredSources();
     } finally {
       await releaseJobLock(this.prisma, 'persona-sources-purge', acquired);
+    }
+  }
+
+  /**
+   * Сроки хранения обучалки по сайту заказчика (Ш0.5/Ш0.6 аудита
+   * docs-tz/AUDIT-Merge-Assistant-Tutorial-QA-2026-10-02.md, риски В-1,
+   * В-2): креды и куки — 30 дней с последнего раунда или сразу после
+   * сборки при «одноразово», кадры в публичном Blob — после решения
+   * оператора или у брошенного черновика (`ClientSiteDraftRetention`).
+   * Раз в сутки: сроки — дни.
+   */
+  async runClientSiteRetention(): Promise<ClientSiteRetentionResult> {
+    const acquired = await tryAcquireJobLock(
+      this.prisma,
+      'client-site-retention',
+    );
+    if (!acquired) {
+      this.logger.warn(
+        'Сроки хранения обучалки: предыдущий прогон ещё держит замок — пропуск',
+      );
+      return {
+        secretsExpired: 0,
+        secretsOneShot: 0,
+        framesPurged: 0,
+        framesFailed: 0,
+        skipped: true,
+      };
+    }
+    try {
+      return await new ClientSiteDraftRetention(
+        this.prisma,
+        this.blobService,
+      ).run();
+    } finally {
+      await releaseJobLock(this.prisma, 'client-site-retention', acquired);
     }
   }
 

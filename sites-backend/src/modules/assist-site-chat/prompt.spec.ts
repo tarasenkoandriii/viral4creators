@@ -1,7 +1,7 @@
 import type { SearchHit } from '../assist-knowledge-core/types';
 import type { PersonaConfig } from '../assist-site-setup/persona';
 import { chatAvailability } from './availability';
-import { answerEstimateMicroUsd, dialogWeightStep } from './budget';
+import { answerEstimateMicroUsd } from './budget';
 import { buildSitePrompt, safeHistory, safePageUrl } from './prompt';
 import { cacheRejectReason } from './semantic-cache';
 import { answerLangOf, preModelRule } from './templates';
@@ -239,11 +239,7 @@ describe('правила без модели и язык', () => {
 });
 
 describe('квота и оценка', () => {
-  it('вес диалога: 1-й ответ — 1, 31-й и 61-й — ещё по 1', () => {
-    expect([1, 2, 30, 31, 32, 61, 62].map(dialogWeightStep)).toEqual([
-      1, 0, 0, 1, 0, 1, 0,
-    ]);
-  });
+  // Вес диалога (×2 после 30, ×3 после 60) — assist-billing/units.spec.ts (Э4).
   it('оценка ответа растёт с промптом и не ниже минимума', () => {
     const small = answerEstimateMicroUsd({
       systemChars: 1000,

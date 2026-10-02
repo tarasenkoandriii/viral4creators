@@ -45,6 +45,10 @@
     {
       "path": "/cron/assist-digest",
       "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/cron/assist-billing-tick",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

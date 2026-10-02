@@ -1,3 +1,4 @@
+import { billingUk } from './billing-uk';
 import type { AppDictionary } from './ru';
 import { setupUk } from './setup-uk';
 import { e3Uk } from './e3-uk';
@@ -417,4 +418,6 @@ export const appUk: AppDictionary = {
   setup: setupUk,
   // Э3 (T): диалоги, передача, вовлечение, статистика, цели, интеграции, обучение.
   e3: e3Uk,
+  // Э4: тариф и оплата, Условия и DPA.
+  billing: billingUk,
 };

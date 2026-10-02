@@ -307,6 +307,14 @@
 | `GET /api/admin/settings/assistant` | оператор | настройки ИИ-консультанта (включён/выключен, проактивный режим, дневной бюджет, модель) + счётчики за сегодня (§9/§10, этап 82) |
 | `PATCH /api/admin/settings/assistant` | оператор | изменить настройки консультанта — все поля необязательны, частичное обновление (тот же метод, что у остальных редактируемых admin/settings) |
 | `GET /api/admin/assistant?flagged=&locale=&stepId=&search=&page=&pageSize=&days=` | оператор | лента обменов вопрос/ответ с фильтрами + агрегаты за 7 и, опционально, 30 дней (§10, этап 82) |
+| `GET /api/admin/assist/summary?days=` | оператор | вкладка «Помощник» (ИИ-помощник клиентских сайтов, ТЗ помощника §8 п.1; Э4): кабинеты, сайты, хосты по статусу, диалоги/сутки, расход, выручка и маржа, отказы по причинам — прокси к внутреннему API sites-backend (`SITES_BACKEND_URL` + `SITES_INTERNAL_SECRET`) |
+| `GET /api/admin/assist/accounts?q=&limit=`, `GET /api/admin/assist/accounts/:id` | оператор | поиск кабинета по домену / Telegram id владельца / id; карточка: тариф, счётчик, сайты, платежи, документы (§8 п.2; журнал доступа) |
+| `POST /api/admin/assist/accounts/:id/plan` `{ planId, days, note? }`, `POST …/extend` `{ days }`, `POST …/message` `{ text }` | оператор | ручной тариф (пилот), продление, сообщение владельцу в бот Помощника |
+| `PATCH /api/admin/assist/sites/:siteId` `{ blocked?, dailyCapUsd? }` | оператор | блокировка сайта (виджет — только заявки) и ручной суточный потолок |
+| `GET /api/admin/assist/review?days=&limit=`, `POST /api/admin/assist/review/:messageId/eval` | оператор | флагованные ответы «Сайта» и 👎 (маскированы, журнал доступа); «в eval платформы» — только при согласии кабинета в DPA (§8 п.3) |
+| `GET /api/admin/assist/abuse?days=`, `POST /api/admin/assist/opt-out` `{ domain }`, `DELETE /api/admin/assist/opt-out/:domain` | оператор | suspicious-трафик, всплески, отказ доменов от обхода (§8 п.4) |
+| `GET /api/admin/assist/settings`, `PATCH /api/admin/assist/settings` `{ enabled?, dailyCapUsd? }` | оператор | рубильник виджета платформы и потолок (env — верхняя граница), модели — чтение (§8 п.5) |
+| `GET /api/admin/assist/costs?days=` | оператор | расходы `assist-*` (site_ai_usage) по операциям и топ-10 сайтов против выручки (§8 п.8) |
 | `GET /api/admin/tutorial-scenarios?subjectKey=&locale=&costly=&approved=&page=&pageSize=` | оператор | список сценариев для автозаписи обучающих видео, сгенерированных ИИ по крону (§4.10 doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md, этап 94); read-only плюс одобрение и правка шагов (ниже) |
 | `PATCH /api/admin/tutorial-scenarios/:id/approve` | оператор | явное одобрение траты на costly-сценарий перед автоматическим исполнением (§4.11 того же ТЗ) — идемпотентно, `approved`/`approvedBy`/`approvedAt` ставятся только один раз; бесплатный сценарий (`costly: false`) отвечает 400, одобрение ему не требуется |
 | `PATCH /api/admin/tutorial-scenarios/:id/steps` | оператор | заменить шаги сценария написанными руками (`steps`: JSON-строка) — сгенерированный сценарий приходит с плейсхолдерами селекторов, и без этого рычага он не доходит до первого кадра. Строка помечается `generatedBy: manual`, генератор её больше не трогает; одобрение и результат прошлого прогона сбрасываются |
@@ -389,6 +397,7 @@
 | `GET /api/personas/voice-consent-phrase?locale=` | идентичность | фраза согласия для записи голоса персоны и её версия (`consentPhraseVersion` в `POST /api/voices/clone` с `forPersona: true`) |
 | `GET/PATCH /api/admin/settings/persona-look-quota` | оператор | квота образов по тарифу, в сутки и месяц (В-7) |
 | `GET /api/cron/persona-sources-purge` | `CRON_SECRET` | удаляет селфи и ролик живости через 30 дней, дочищает прерванные удаления, повторяет удаление голосов у Resemble; работает при любом значении флага |
+| `GET /api/cron/client-site-retention` | `CRON_SECRET` | обучалка по сайту заказчика (Ш0.5/Ш0.6 аудита 02.10.2026): стирает `credentialsEnc`/`cookiesEnc` через 30 дней после последнего раунда или сразу после сборки при «одноразово» (`forgetAfterBuild` в `POST …/client-site-tutorial/login`), кадры в Blob — у решённых черновиков через 14 дней (одобренных — только после сборки ролика) и у брошенных через 30; раз в сутки |
 
 ### Голосовой помощник мастера (§4А)
 

@@ -13,12 +13,12 @@ import { siteUrl } from '../lib/site-url';
 export default function sitemap(): MetadataRoute.Sitemap {
   const origin = siteUrl();
   return PAGES.flatMap((page) =>
-    locales.map((locale) => ({
+    (page.locales ?? locales).map((locale) => ({
       url: `${origin}${pathFor(locale, page.path)}`,
       lastModified: page.updated,
       alternates: {
         languages: {
-          ...Object.fromEntries(locales.map((l) => [l, `${origin}${pathFor(l, page.path)}`])),
+          ...Object.fromEntries((page.locales ?? locales).map((l) => [l, `${origin}${pathFor(l, page.path)}`])),
           'x-default': `${origin}${pathFor(X_DEFAULT_LOCALE, page.path)}`,
         },
       },

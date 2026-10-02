@@ -66,6 +66,7 @@ import {
   useAssist,
   type AssistValue,
 } from './lib/assist-context';
+import { createBillingApi } from './lib/billing-api';
 import { createHandoffApi } from './lib/handoff-api';
 import { createKnowledgeApi } from './lib/knowledge-api';
 import { createLearningApi } from './lib/learning-api';
@@ -86,6 +87,7 @@ import { SandboxTransferScreen } from './screens/SandboxTransferScreen';
 import { SectionPlaceholder } from './screens/SectionPlaceholder';
 import { WelcomeScreen } from './screens/WelcomeScreen';
 import { LandingDraftScreen, PlanScreen } from './screens/widget/LaunchScreens';
+import { BillingScreen, UsageChip } from './screens/BillingScreen';
 import { PersonaScreen } from './screens/widget/PersonaScreen';
 import {
   SiteSetupButtons,
@@ -206,6 +208,7 @@ export function App({ startParam }: { startParam: string | null }) {
   const handoffApi = useMemo(() => createHandoffApi(client), [client]);
   const learningApi = useMemo(() => createLearningApi(client), [client]);
   const statsApi = useMemo(() => createStatsApi(client), [client]);
+  const billingApi = useMemo(() => createBillingApi(client), [client]);
   const assist = useMemo<AssistValue>(
     () => ({
       knowledge: knowledgeApi,
@@ -216,6 +219,7 @@ export function App({ startParam }: { startParam: string | null }) {
       handoff: handoffApi,
       learning: learningApi,
       stats: statsApi,
+      billing: billingApi,
     }),
     [
       knowledgeApi,
@@ -226,6 +230,7 @@ export function App({ startParam }: { startParam: string | null }) {
       handoffApi,
       learningApi,
       statsApi,
+      billingApi,
     ]
   );
 
@@ -568,6 +573,7 @@ function Shell({
 
   const tools = (
     <>
+      <UsageChip />
       <AccountSwitcher onSwitch={onSwitchAccount} />
       <LanguageSwitcher />
       {onLogout && (
@@ -858,6 +864,8 @@ function Screen({
       return <WizardScreen key={route.siteId} siteId={route.siteId} />;
     case 'plan':
       return <PlanScreen plan={route.plan} />;
+    case 'billing':
+      return <BillingScreen key={route.plan ?? ''} plan={route.plan} />;
     case 'widget-draft':
       return <LandingDraftScreen key={route.draftId} draftId={route.draftId} />;
     case 'dialogs':

@@ -20,10 +20,26 @@
  * `-min` весит 46 КБ и тянет бинарник в /tmp при первом вызове — размер
  * деплоя не меняется вовсе.
  *
- * Версия прибита гвоздями (127.0.0): URL архива содержит версию, а сам
- * Chromium должен совпадать с протоколом `puppeteer-core`. В проекте
- * `puppeteer-core` 23.x — тот ездит на Chrome 127, не на более свежий
- * (тот рассчитан на `puppeteer-core` 25.x).
+ * Версия прибита гвоздями: URL архива содержит версию, а сам Chromium
+ * должен совпадать с протоколом `puppeteer-core`. До 02.10.2026 здесь
+ * стоял 127.0.0 (июль 2024) при `puppeteer-core` 23.x — браузер с
+ * десятками опубликованных RCE V8, исполняющий JS чужих сайтов прямо в
+ * функции бэкенда со всеми её секретами (риск К-2 аудита
+ * docs-tz/AUDIT-Merge-Assistant-Tutorial-QA-2026-10-02.md, шаг Ш0.4).
+ * Теперь — 153.0.0 и `puppeteer-core` ~25.11 (его `revisions.chrome` —
+ * 153.0.8010.36; 25.12 уже ждёт 154, поэтому тильда, а не крышка).
+ *
+ * Оба пакета начиная с этих версий — только ESM. Бэкенд собирается в
+ * CommonJS, и `await import()` здесь компилируется в `require()`: Node
+ * 22.12+ и 24 (рантайм проекта — `engines.node: 24.x`) грузят ESM без
+ * верхнеуровневого `await` через `require` штатно. В jest оба модуля
+ * всегда подменяются (`jest.mock`), настоящий браузер в CI не
+ * поднимается.
+ *
+ * С 2025 года архив раскладывается по архитектуре
+ * (`chromium-v<версия>-pack.x64.tar`), а свойства `headless` у пакета
+ * больше нет: он поддерживает только `chrome-headless-shell`, и режим
+ * — `'shell'`.
  */
 
 // Флаги для системного Chromium в Docker-образе (если он когда-либо
@@ -41,7 +57,7 @@ const DOCKER_CHROMIUM_ARGS = [
 ];
 
 const DEFAULT_CHROMIUM_PACK_URL =
-  'https://github.com/Sparticuz/chromium/releases/download/v127.0.0/chromium-v127.0.0-pack.tar';
+  'https://github.com/Sparticuz/chromium/releases/download/v153.0.0/chromium-v153.0.0-pack.x64.tar';
 
 // Замеренные, не угаданные цифры (тот же прогон, что в оригинале):
 // загрузка+распаковка — около 3с один раз на инстанс, /tmp после
@@ -128,16 +144,51 @@ export function resolveHeadlessBrowserLaunchPlan(): Promise<HeadlessBrowserLaunc
 }
 
 /**
+ * Флаги serverless-сборки, которые ослабляют сам браузер, а не помогают
+ * ему уместиться в Lambda (`@sparticuz/chromium-min` ставит их всем
+ * подряд). Для СВОИХ страниц (обход TMA, og-картинки своего блога) это
+ * безразлично; для чужого сайта — нет: `--disable-web-security`
+ * выключает same-origin policy, и страница заказчика (или того, кто
+ * выдал себя за него) читала бы ответы других сайтов из-под нашего
+ * браузера. Снимаются при `untrustedContent` (Ш0.3).
+ */
+export const UNTRUSTED_STRIPPED_ARGS: readonly string[] = [
+  '--disable-web-security',
+  '--allow-running-insecure-content',
+  '--disable-site-isolation-trials',
+];
+
+export interface HeadlessLaunchOptions {
+  /** Дополнительные флаги — например, `--proxy-server` фильтрующего
+   * прокси (`common/egress-filter-proxy.ts`). */
+  extraArgs?: readonly string[];
+  /** Браузер откроет ЧУЖОЙ сайт — снять `UNTRUSTED_STRIPPED_ARGS`. */
+  untrustedContent?: boolean;
+}
+
+/** Итоговые флаги запуска: план + опции. Экспорт — для тестов. */
+export function launchArgs(
+  planArgs: readonly string[],
+  options: HeadlessLaunchOptions = {},
+): string[] {
+  const base = options.untrustedContent
+    ? planArgs.filter((a) => !UNTRUSTED_STRIPPED_ARGS.includes(a))
+    : [...planArgs];
+  return [...base, ...(options.extraArgs ?? [])];
+}
+
+/**
  * Удобный вход для вызывающих, которым не нужна сама схема плана —
  * сразу готовый `puppeteer-core` `Browser`. Вызывающий обязан сам
  * закрыть браузер (`browser.close()`) — этот модуль инстансы не
  * отслеживает и не переиспользует между вызовами, только план запуска.
  */
-export async function launchHeadlessBrowser(): Promise<
-  { browser: import('puppeteer-core').Browser } | { error: string }
-> {
+export async function launchHeadlessBrowser(
+  options: HeadlessLaunchOptions = {},
+): Promise<{ browser: import('puppeteer-core').Browser } | { error: string }> {
   const plan = await resolveHeadlessBrowserLaunchPlan();
   if (plan.kind === 'unavailable') return { error: plan.diagnostic };
+  const args = launchArgs(plan.args, options);
 
   // Запуск и его ожидание — РАЗНЫЕ вещи, и здесь это важно.
   // `withTimeout` устроен как `Promise.race` и запуск не отменяет:
@@ -157,7 +208,7 @@ export async function launchHeadlessBrowser(): Promise<
     launching = puppeteer.launch({
       executablePath: plan.executablePath,
       headless: plan.headless,
-      args: plan.args,
+      args,
     });
     const browser = await withTimeout(
       launching,
@@ -238,10 +289,11 @@ async function buildBrowserLaunchPlan(): Promise<HeadlessBrowserLaunchPlan> {
 
   try {
     const mod: unknown = await import('@sparticuz/chromium-min');
-    // Пакет CJS (`export = Chromium`), поэтому через `await import()` он
-    // приезжает то как сам объект, то завёрнутый в `.default`.
+    // Пакет ESM (`export default Chromium`): через `require(esm)` он
+    // приезжает пространством имён с `.default`, а подменённый в тестах —
+    // самим объектом. Берём то, что есть.
     const chromium = ((mod as { default?: unknown }).default ??
-      mod) as typeof import('@sparticuz/chromium-min');
+      mod) as typeof import('@sparticuz/chromium-min').default;
 
     let executablePath = await withTimeout(
       chromium.executablePath(haveLocalPack ? packDir : packUrl),
@@ -290,7 +342,9 @@ async function buildBrowserLaunchPlan(): Promise<HeadlessBrowserLaunchPlan> {
       // процессе этот лимит V8 накрывает уже не служебный код браузера,
       // а JavaScript самой страницы.
       args: [...chromium.args],
-      headless: chromium.headless,
+      // У пакета ≥ 132 свойства `headless` нет: поддерживается только
+      // `chrome-headless-shell` (флаг `--headless='shell'` уже в `args`).
+      headless: 'shell',
       source: `@sparticuz/chromium-min (serverless, ${expectedLibDir})`,
     };
   } catch (err) {

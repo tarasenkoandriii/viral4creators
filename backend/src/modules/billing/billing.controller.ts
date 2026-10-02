@@ -17,8 +17,10 @@ import {
   HttpCode,
   Post,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   IdentifiedRequest,
   TelegramIdentityGuard,
@@ -73,9 +75,22 @@ export class BillingController {
   // пришлось. Сам `handleTelegramUpdate` остался в этом сервисе и
   // вызывается диспетчером без единой правки.
 
+  /**
+   * Аудит Э4 (2026-10-02): квитанция `{orderReference, status:'accept',
+   * time, signature}` должна лежать на ВЕРХНЕМ уровне JSON — так её
+   * читает WayForPay. Возврат значения из хендлера заворачивался
+   * глобальным `ResponseInterceptor` в `{success, data, meta}`, провайдер
+   * квитанции не видел и повторял доставку. `@Res()` без `passthrough`
+   * выводит ответ из-под интерцептора (тот же приём, что у
+   * `sites-backend` assist-billing/billing-webhook.controller.ts).
+   */
   @Post('webhook/wayforpay')
   @HttpCode(200)
-  wayforpayWebhook(@Body() body: WayForPayWebhookBody) {
-    return this.service.handleWayForPayWebhook(body);
+  async wayforpayWebhook(
+    @Body() body: WayForPayWebhookBody,
+    @Res() res: Response,
+  ): Promise<void> {
+    const ack = await this.service.handleWayForPayWebhook(body);
+    res.status(200).json(ack);
   }
 }

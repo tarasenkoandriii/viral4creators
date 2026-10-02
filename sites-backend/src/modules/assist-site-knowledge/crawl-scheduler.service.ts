@@ -2,7 +2,8 @@
  * Расписание обхода помощника — K1 (§3.4, §4-тер.2, §4.15 assist-crawl-run):
  * сайты с assist_sites.enabled и наступившим nextCrawlAt (weekly/daily;
  * manual — только по кнопке) → SiteCrawlService.requestRun(mode full,
- * maxPages из config/assist-defaults, исключения url/urlPrefix из
+ * maxPages — «страниц в знаниях» тарифа кабинета (Э4, assist-billing/limits),
+ * исключения url/urlPrefix из
  * assist_site_exclusions); «горячие страницы» — ежедневно на всех
  * тарифах (mode hot, условный запрос), в том числе у сайтов с ручным
  * переобходом. Сам обход делает SiteCrawlService.tick (зовёт крон).
@@ -16,6 +17,7 @@
  */
 import { Injectable, Logger, ConflictException } from '@nestjs/common';
 import { CRAWL_DEFAULTS } from '../../config/assist-defaults';
+import { crawlMaxPages } from '../assist-billing/limits';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { siteCoreError } from '../site-core/site-core.constants';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
@@ -77,7 +79,7 @@ export class AssistCrawlScheduler {
           product: 'assist',
           trigger: 'schedule',
           mode: 'full',
-          maxPages: CRAWL_DEFAULTS.maxPages,
+          maxPages: await this.maxPages(s.accountId, now),
           ...(await this.exclusions(s.accountId, s.siteId)),
         });
         const every = recrawlIntervalMs(s.recrawlEvery) ?? 7 * DAY_MS;
@@ -135,6 +137,15 @@ export class AssistCrawlScheduler {
     return out;
   }
 
+  /** Лимит страниц обхода — «страниц в знаниях» тарифа кабинета (§7.1). */
+  private maxPages(accountId: string, now: Date): Promise<number> {
+    return crawlMaxPages(
+      this.sitesDb.system('тариф кабинета — лимит страниц обхода (§7.1)'),
+      accountId,
+      now,
+    );
+  }
+
   /** Ручной «переобойти» и первый обход после подтверждения хоста (K3 зовёт). */
   async requestNow(p: {
     accountId: string;
@@ -156,7 +167,7 @@ export class AssistCrawlScheduler {
       product: 'assist',
       trigger: p.trigger,
       mode: 'full',
-      maxPages: CRAWL_DEFAULTS.maxPages,
+      maxPages: await this.maxPages(p.accountId, now),
       requestedByTelegramId: p.byTelegramId ?? undefined,
       ...(await this.exclusions(p.accountId, p.siteId)),
     });

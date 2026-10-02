@@ -68,3 +68,33 @@ export const WIDGET_NAMES = {
   /** Якорь «своей кнопки»: ссылка на него открывает чат (`WIDGET_ANCHOR`). */
   anchor: '#v4c-assist',
 } as const;
+
+/**
+ * Публичные технические имена продукта, которые показывают документация
+ * и страницы платформ (Л5) — зеркало `sites-backend/src/brand.ts` (+
+ * `assist-integrations/npm/src/brand.ts`, `…/wordpress/…/brand.php`);
+ * сверяет `scripts/integrations.test.ts`. Переименование — вместе с В-1
+ * (у всех заказчиков — переустановка, аудит 01.10).
+ */
+export const PRODUCT_NAMES = {
+  /** TXT `_v4c-verify.<хост>` со значением `v4c-verify=<токен>`. */
+  verifyTxtPrefix: '_v4c-verify',
+  verifyTxtKey: 'v4c-verify',
+  verifyFilePath: '/.well-known/v4c-verify.txt',
+  verifyMetaName: 'v4c-verify',
+  /** Группа `User-agent:` в robots.txt заказчика для нашего обходчика. */
+  crawlerRobotsToken: 'V4C-Assist',
+  /** Полный User-Agent обходчика; в нём — адрес страницы о боте. */
+  crawlerUserAgent: 'Mozilla/5.0 (compatible; V4C-Assist/1.0; +https://v4c.example.invalid/assistant/bot)',
+  /** Заголовок ключа браузера публичной песочницы. */
+  sandboxKeyHeader: 'X-Sandbox-Key',
+  /** Подпись вебхука целей: `t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<тело>")>`. */
+  webhookSignatureHeader: 'X-Assist-Signature',
+  npmPackage: '@v4c/assist-widget',
+  wpPluginSlug: 'v4c-assist',
+  /** Разметка цели в вёрстке: клик и отправка формы. */
+  goalAttr: 'data-assist-goal',
+  goalSubmitAttr: 'data-assist-goal-submit',
+  /** Префикс `startapp` переноса песочницы (`site-tma-kit/src/start-param.ts`). */
+  sandboxStartPrefix: 'sb_',
+} as const;

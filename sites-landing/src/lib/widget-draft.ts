@@ -368,10 +368,19 @@ export function installSnippet(loaderSrc: string, c: DraftConfig, keyPlaceholder
 /** id черновика с сервера: 128 бит base64url (≤ 60 символов — лимит `startapp`). */
 export const DRAFT_ID_RE = /^[A-Za-z0-9_-]{16,57}$/;
 
+/**
+ * Единственное место, где лендинг строит ссылку в TMA (§7.2): payload —
+ * только `[A-Za-z0-9_-]`, ≤ 64 (лимит `startapp`). Читатели — `site-tma-kit`.
+ */
+export function tmaStartLink(bot: string, payload: string): string {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(payload)) throw new Error('tmaStartLink: недопустимый payload');
+  return `https://t.me/${encodeURIComponent(bot)}?startapp=${payload}`;
+}
+
 /** `t.me/<бот>?startapp=wd_<id>` — читатель `wd_` в TMA: «применить вид из конфигуратора?». */
 export function tmaDraftLink(bot: string, draftId: string): string {
   if (!DRAFT_ID_RE.test(draftId)) throw new Error('tmaDraftLink: негодный id черновика');
-  return `https://t.me/${encodeURIComponent(bot)}?startapp=wd_${draftId}`;
+  return tmaStartLink(bot, `wd_${draftId}`);
 }
 
 export type DraftResult =

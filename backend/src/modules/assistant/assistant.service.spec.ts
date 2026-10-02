@@ -207,6 +207,33 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
     expect(created.flagged).toBe(true);
   });
 
+  it('Ш0.7: вопрос посетителя маскируется в журнале (телефон, карта, e-mail)', async () => {
+    generateContentStream.mockResolvedValue(fakeStream([{ text: 'Ок.' }]));
+    const { svc, prisma } = build();
+    await drain(
+      svc.streamChat(
+        {
+          ...baseRequest,
+          messages: [
+            {
+              role: 'user',
+              content:
+                'Перезвоните +380 (67) 123-45-67, почта a.b@c.ua, карта 4111 1111 1111 1111',
+            },
+          ],
+        },
+        '1.2.3.4',
+      ),
+    );
+    const created = (prisma.assistantExchange.create as jest.Mock).mock
+      .calls[0][0].data;
+    expect(created.question).toBe(
+      'Перезвоните [телефон скрыт], почта [e-mail скрыт], карта [номер карты скрыт]',
+    );
+    // Сырой IP в журнал тоже не попадает — только хеш.
+    expect(JSON.stringify(created)).not.toContain('1.2.3.4');
+  });
+
   it('сбой стрима после первых токенов → error upstream, накопленное всё равно записывается', async () => {
     generateContentStream.mockResolvedValue(
       (async function* () {

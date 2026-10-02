@@ -1,3 +1,4 @@
+import { billingEn } from './billing-en';
 import type { AppDictionary } from './ru';
 import { setupEn } from './setup-en';
 import { e3En } from './e3-en';
@@ -426,4 +427,6 @@ export const appEn: AppDictionary = {
   setup: setupEn,
   // Э3 (T): диалоги, передача, вовлечение, статистика, цели, интеграции, обучение.
   e3: e3En,
+  // Э4: тариф и оплата, Условия и DPA.
+  billing: billingEn,
 };

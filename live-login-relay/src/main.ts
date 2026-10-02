@@ -4,12 +4,13 @@
  */
 
 import { createServer } from 'node:http';
-import { loadConfig, ConfigError } from './config';
+import { loadConfig, ConfigError, egressStartupWarnings } from './config';
 import { createLogger } from './logger';
 import { SessionManager } from './session-manager';
 import { handleHttpRequest } from './http-routes';
 import { createWsUpgradeHandler } from './ws-handler';
 import { launchRelayBrowser } from './launch-browser';
+import { startBrowserNetwork } from './browser-network';
 
 /** §13 спеки: «ждёт завершения всех закрытий не дольше 10с, затем
  * выходит». Не переменная окружения — это не настройка развёртывания, а
@@ -18,7 +19,7 @@ import { launchRelayBrowser } from './launch-browser';
  * как процесс убьют снаружи. */
 const SHUTDOWN_GRACE_MS = 10_000;
 
-function main(): void {
+async function main(): Promise<void> {
   let config;
   try {
     config = loadConfig();
@@ -32,6 +33,11 @@ function main(): void {
   }
 
   const logger = createLogger(config.logLevel);
+  for (const warning of egressStartupWarnings(config)) logger.warn(warning);
+
+  // Сеть браузера поднимается ДО сервера: реле, которое приняло бы
+  // сессию без фильтра, хуже реле, которое не стартовало.
+  const network = await startBrowserNetwork(config, logger);
 
   const sessionManager = new SessionManager({
     maxConcurrentSessions: config.maxConcurrentSessions,
@@ -41,14 +47,8 @@ function main(): void {
     navTimeoutMs: config.navTimeoutMs,
     logger,
     launchBrowser: () =>
-      launchRelayBrowser(config.puppeteerExecutablePath, config.browserProxy),
-    proxyAuth:
-      config.browserProxy?.username && config.browserProxy.password
-        ? {
-            username: config.browserProxy.username,
-            password: config.browserProxy.password,
-          }
-        : undefined,
+      launchRelayBrowser(config.puppeteerExecutablePath, network.launchArgs),
+    proxyAuth: network.proxyAuth,
   });
 
   let shuttingDown = false;
@@ -85,6 +85,10 @@ function main(): void {
       // затем, чтобы «прокси точно включён?» проверялось фактом, а не
       // пересказом содержимого переменных окружения.
       browserProxy: config.browserProxy?.server ?? null,
+      // Факт, а не пересказ переменных: включён ли фильтр исходящего
+      // трафика браузера (Ш0.2) и сколько запрещённых подсетей хоста.
+      egressFilter: network.filterUrl !== null,
+      egressDenyCidrs: config.egressFilter.denyCidrs.length,
     });
   });
 
@@ -113,6 +117,7 @@ function main(): void {
         graceMs: SHUTDOWN_GRACE_MS,
       });
     }
+    await network.close().catch(() => undefined);
     process.exit(0);
   };
 
@@ -151,4 +156,10 @@ function main(): void {
   });
 }
 
-main();
+main().catch((err) => {
+  // eslint-disable-next-line no-console
+  console.error(
+    `[live-login-relay] отказ стартовать: ${err instanceof Error ? err.message : String(err)}`,
+  );
+  process.exit(1);
+});

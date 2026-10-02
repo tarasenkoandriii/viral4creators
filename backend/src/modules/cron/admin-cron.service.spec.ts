@@ -130,6 +130,12 @@ function build() {
     runPersonaSourcesPurge: jest
       .fn()
       .mockResolvedValue({ purged: 1, abandoned: 0, failed: 0 }),
+    runClientSiteRetention: jest.fn().mockResolvedValue({
+      secretsExpired: 0,
+      secretsOneShot: 0,
+      framesPurged: 0,
+      framesFailed: 0,
+    }),
     runSweepOrphans: jest
       .fn()
       .mockResolvedValue({ deleted: 0, dryRun: false, byKind: {} }),
