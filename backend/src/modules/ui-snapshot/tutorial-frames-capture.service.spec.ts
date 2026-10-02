@@ -20,7 +20,7 @@ import { ACCOUNT_CONSENT_TEXT_VERSION } from '../client-site-tutorial/account-co
  * владелец подтверждённого хоста, кабинет сайтов отвечает режимом B.
  * Именно так съёмка выглядит на проде.
  */
-function accessInMemory(mode: 'A' | 'B' = 'B') {
+function accessInMemory(mode: 'A' | 'B' = 'B', policy?: string) {
   const rows: Array<Record<string, unknown>> = [];
   const prisma = {
     user: {
@@ -65,11 +65,11 @@ function accessInMemory(mode: 'A' | 'B' = 'B') {
     ),
   };
   const access = new ClientSiteAccessService(prisma as never, sites as never);
-  access.env = {};
+  access.env = policy ? { SITE_TUTORIAL_ACCOUNT_CONSENT: policy } : {};
   return { access, rows, prisma };
 }
 
-function build(o: { mode?: 'A' | 'B' } = {}) {
+function build(o: { mode?: 'A' | 'B'; policy?: string } = {}) {
   const runner = {
     findFixtureUser: jest.fn().mockResolvedValue({ id: 'usr_fixture' }),
     resolveFixtureContext: jest
@@ -78,7 +78,7 @@ function build(o: { mode?: 'A' | 'B' } = {}) {
     run: jest.fn(),
   };
   const tutorial = { remove: jest.fn().mockResolvedValue(undefined) };
-  const mem = accessInMemory(o.mode);
+  const mem = accessInMemory(o.mode, o.policy);
   const service = new TutorialFramesCaptureService(
     runner as never,
     tutorial as never,
@@ -333,7 +333,7 @@ describe('TutorialFramesCaptureService', () => {
     // Первый шаг — проверочный `assertVisible`, адрес печатает второй.
     expect(steps?.[1].value).toBe('https://viral4creators.app');
   });
-  describe('Э-С Ш1: мастер в режиме B ждёт подтверждения прав (П-Т2)', () => {
+  describe('Э-С Ш1, SITE_TUTORIAL_ACCOUNT_CONSENT=required: мастер в режиме B ждёт подтверждения прав (П-Т2)', () => {
     /**
      * Мастер как в браузере: после клика «Открыть» экран спрашивает режим
      * и, если нужна галочка, страницу НЕ открывает — `waitFor` кадра сайта
@@ -361,7 +361,7 @@ describe('TutorialFramesCaptureService', () => {
             'usr_fixture',
             String(opts.steps?.[1]?.value),
           );
-          const gated = view.mode === 'B' && !view.consent.accepted;
+          const gated = view.consent.required && !view.consent.accepted;
           return {
             total: 1,
             outcomes: [
@@ -394,7 +394,10 @@ describe('TutorialFramesCaptureService', () => {
     }
 
     it('фикстура без кабинета сайтов: по нашему домену все четыре карточки сняты', async () => {
-      const { service, runner, access, rows } = build({ mode: 'B' });
+      const { service, runner, access, rows } = build({
+        mode: 'B',
+        policy: 'required',
+      });
       wizardLikeBrowser(runner, access);
 
       const r = await service.capture({ locales: ['ru', 'en'] });
@@ -417,7 +420,10 @@ describe('TutorialFramesCaptureService', () => {
     });
 
     it('поддомен стенда из LANDING_PUBLIC_URL — тоже наш', async () => {
-      const { service, runner, access, rows } = build({ mode: 'B' });
+      const { service, runner, access, rows } = build({
+        mode: 'B',
+        policy: 'required',
+      });
       service.env = {
         LANDING_PUBLIC_URL: 'https://stage-landing.example.org/x',
       };
@@ -433,7 +439,10 @@ describe('TutorialFramesCaptureService', () => {
     });
 
     it('чужой siteUrl: служебной галочки нет, мастер не запускается, причина названа', async () => {
-      const { service, runner, access, rows, prisma } = build({ mode: 'B' });
+      const { service, runner, access, rows, prisma } = build({
+        mode: 'B',
+        policy: 'required',
+      });
       wizardLikeBrowser(runner, access);
 
       const r = await service.capture({
@@ -455,7 +464,10 @@ describe('TutorialFramesCaptureService', () => {
     });
 
     it('режим A (фикстура владеет подтверждённым хостом): служебная запись не нужна', async () => {
-      const { service, runner, access, prisma } = build({ mode: 'A' });
+      const { service, runner, access, prisma } = build({
+        mode: 'A',
+        policy: 'required',
+      });
       wizardLikeBrowser(runner, access);
 
       const r = await service.capture({ locales: ['ru'] });
@@ -463,5 +475,63 @@ describe('TutorialFramesCaptureService', () => {
       expect(r.locales[0].problems).toEqual([]);
       expect(prisma.siteTutorialAccountConsent.create).not.toHaveBeenCalled();
     });
+  });
+
+  describe('journal/off (по умолчанию journal): галочки нет — служебная запись не нужна', () => {
+    it.each([[undefined], ['journal'], ['off']])(
+      'политика %s: по нашему домену и по чужому мастер снимается, служебной строки нет',
+      async (policy) => {
+        for (const siteUrl of [undefined, 'https://bank.example.com']) {
+          const { service, runner, access, prisma } = build({
+            mode: 'B',
+            policy,
+          });
+          runner.run.mockImplementation(
+            async (opts: {
+              routeKeys: string[];
+              steps?: { value?: string }[];
+            }) => {
+              if (opts.routeKeys[0] !== 'site-tutorial') {
+                return {
+                  total: 1,
+                  outcomes: [{ routeKey: 'postprod-video', blobUrl: 'video' }],
+                };
+              }
+              const view = await access.resolve(
+                'usr_fixture',
+                String(opts.steps?.[1]?.value),
+              );
+              expect(view.consent.required).toBe(false);
+              return {
+                total: 1,
+                outcomes: [
+                  {
+                    routeKey: 'site-tutorial',
+                    stepsDone: 5,
+                    shots: [0, 1, 2, 3, 4].map((i) => ({
+                      stepIndex: i,
+                      url: `s${i + 1}`,
+                    })),
+                  },
+                ],
+              };
+            },
+          );
+
+          const r = await service.capture({ locales: ['ru'], siteUrl });
+
+          expect(r.locales[0].problems).toEqual([]);
+          expect(r.locales[0].cards).toEqual({
+            1: 's2',
+            2: 's4',
+            3: 's5',
+            4: 'video',
+          });
+          expect(
+            prisma.siteTutorialAccountConsent.create,
+          ).not.toHaveBeenCalled();
+        }
+      },
+    );
   });
 });

@@ -18,11 +18,12 @@
  *   6. SSRF-проверка (§8.2) и доменный замок (§8.1) — ПЕРЕД переходом и
  *      ПОСЛЕ него, потому что редирект на чужом сайте мог увести куда
  *      угодно;
- *   7. (Э-С Ш1) режим A/B по статусу хоста в sites-backend и ворота П-Т2:
- *      в режиме B `explore`/`login`/живой вход, а также `step`/`undo`/
- *      `refresh` (они тоже водят браузер под аккаунтом человека) — только
- *      после подтверждения прав на аккаунт (`site-access.service.ts`). До
- *      слота лимита и до браузера.
+ *   7. (Э-С Ш1) режим A/B по статусу хоста в sites-backend и П-Т2 перед
+ *      `explore`/`step`/`login`/`undo`/`refresh`/живым входом (они водят
+ *      браузер под аккаунтом человека): по переключателю
+ *      `SITE_TUTORIAL_ACCOUNT_CONSENT` — ворота 409 (`required`), строка
+ *      журнала (`journal`, по умолчанию) или ничего (`off`), см.
+ *      `site-access.service.ts`. До слота лимита и до браузера.
  */
 
 import {
@@ -180,8 +181,9 @@ export interface DraftView {
   /** Заполняется только у одобренного черновика — до одобрения
    * собирать нечего, и строки `TutorialVideoAsset` ещё не существует. */
   video: TutorialVideoView | null;
-  /** Режим (Э-С Ш1, П-Т1): `A` — свой подтверждённый сайт, `B` — чужой
-   * сайт со своим аккаунтом. Черновик до Ш1 — `B` до первой проверки. */
+  /** Режим (Э-С Ш1, П-Т1): `A` — подтверждённый сайт, `B` — сайт не
+   * подтверждён (метка, не ограничение). Черновик до Ш1 — `B` до первой
+   * проверки. */
   siteMode: SiteMode;
   /** Полное решение (плашка, подтверждение прав, ссылка «подтвердить
    * сайт») — только в `GET` черновика в работе: раунды его не пересчитывают
@@ -227,6 +229,8 @@ interface DraftRow {
   frameKey?: string | null;
   /** Э-С Ш1: режим черновика; `undefined`/`null` — до Ш1, читается как B. */
   siteMode?: string | null;
+  siteModeCheckedAt?: Date | null;
+  siteHostId?: string | null;
   status: DraftStatus;
   title: string | null;
   rejectionReason: string | null;
@@ -254,6 +258,7 @@ export class ClientSiteTutorialService {
     userId: string,
     projectId: string,
     url: string,
+    ipHash: string | null = null,
   ): Promise<RoundResult> {
     await this.assertOwnProject(userId, projectId);
     await this.plans.assertUser(userId, 'siteTutorial');
@@ -276,10 +281,10 @@ export class ClientSiteTutorialService {
     await this.assertSafeUrl(url);
     const origin = new URL(url).origin;
 
-    // Ш1/П-Т2: режим по статусу хоста и подтверждение прав в режиме B —
-    // до слота лимита и до браузера.
+    // Ш1/П-Т2: режим по статусу хоста и П-Т2 (ворота или журнал) — до
+    // слота лимита и до браузера.
     const access = await this.access.resolve(userId, origin);
-    this.access.requireConsent(access);
+    await this.access.gate(userId, origin, access, ipHash);
 
     await this.reserveRound(userId);
     let round;
@@ -415,6 +420,7 @@ export class ClientSiteTutorialService {
       fills: Array<{ selector: string; value: string }>;
       clickSelector?: string;
     },
+    ipHash: string | null = null,
   ): Promise<RoundResult> {
     const { draft } = await this.loadEditableDraft(userId, projectId);
 
@@ -445,7 +451,7 @@ export class ClientSiteTutorialService {
     // обходились подтверждение прав в B: черновик, начатый в A (хост потом
     // истёк/отозван), до Ш1 или до новой версии текста, водился бы по сайту
     // дальше без галочки. До занятия версии, слота и браузера.
-    await this.gateDrive(userId, draft);
+    await this.gateDrive(userId, draft, ipHash);
 
     return this.runAndPersist(
       userId,
@@ -476,13 +482,14 @@ export class ClientSiteTutorialService {
        * успешной сборки ролика. `undefined` — не менять выбор. */
       forgetAfterBuild?: boolean;
     },
+    ipHash: string | null = null,
   ): Promise<RoundResult> {
     const { draft } = await this.loadEditableDraft(userId, projectId);
     if (input.fields.length === 0) {
       throw new BadRequestException('форма входа без полей — нечего заполнять');
     }
     // Ш1/П-Т2: до шифрования кред и до занятия версии.
-    await this.gateDrive(userId, draft);
+    await this.gateDrive(userId, draft, ipHash);
 
     const actions: RoundAction[] = [
       ...input.fields.map((f) => ({
@@ -561,6 +568,7 @@ export class ClientSiteTutorialService {
     userId: string,
     projectId: string,
     expectedVersion: number,
+    ipHash: string | null = null,
   ): Promise<RoundResult> {
     const { draft } = await this.loadEditableDraft(userId, projectId);
     const state = this.toRoundsState(draft);
@@ -594,7 +602,7 @@ export class ClientSiteTutorialService {
 
     // Ш1/П-Т2: переигровка подставляет сохранённые креды и нажимает все
     // оставшиеся шаги под аккаунтом человека — те же ворота, что у `/login`.
-    await this.gateDrive(userId, draft);
+    await this.gateDrive(userId, draft, ipHash);
 
     // Переигровка прогоняет ВСЕ оставшиеся шаги, включая клики, — то
     // есть повтор отмены нажимает их на сайте заказчика второй раз.
@@ -810,6 +818,7 @@ export class ClientSiteTutorialService {
   async startLiveLogin(
     userId: string,
     projectId: string,
+    ipHash: string | null = null,
   ): Promise<LiveLoginStart> {
     const { draft } = await this.loadEditableDraft(userId, projectId);
     if (!this.relay.configured()) {
@@ -822,7 +831,7 @@ export class ClientSiteTutorialService {
     await this.assertSafeUrl(startUrl);
     assertSameSite(draft.baseUrl, startUrl);
     // Ш1/П-Т2: живой вход — тоже вход под аккаунтом человека.
-    await this.gateDrive(userId, draft);
+    await this.gateDrive(userId, draft, ipHash);
     // Квитанцию выдаём этим же ключом уже ПОСЛЕ того, как реле подняло
     // браузер, — значит отсутствие ключа обязано выясниться здесь
     // (аудит этапа 116): иначе слот живого входа списан, сессия на реле
@@ -893,6 +902,20 @@ export class ClientSiteTutorialService {
         throw new BadRequestException(err.message);
       }
       throw err;
+    }
+
+    // Ш1/П-Т2 (дефект 9 аудита): в `required` завершение живого входа —
+    // те же ворота, что старт: подтверждение могло устареть (новая версия
+    // текста) или режим смениться (хост отозван) за минуты сессии. Сессия
+    // на реле при отказе закрывается сразу, а не висит до стены. В
+    // `journal`/`off` здесь нечего делать: журнал записан на старте.
+    if (this.access.policy() === 'required') {
+      try {
+        await this.gateDrive(userId, draft, null);
+      } catch (err) {
+        await this.relay.cancelQuietly(sessionId);
+        throw err;
+      }
     }
 
     let result;
@@ -1025,8 +1048,11 @@ export class ClientSiteTutorialService {
     if (draft.status !== 'DRAFTING' && draft.status !== 'REJECTED') {
       return view;
     }
-    const access = await this.access.resolve(userId, draft.baseUrl);
-    await this.access.persistMode(draft.id, access);
+    // Свежий A — из черновика без похода в sites-backend (дефект 10);
+    // B перепроверяется: экрану нужен код причины.
+    const access = await this.access.resolveForDraft(userId, draft, {
+      needReason: true,
+    });
     return { ...view, siteMode: access.mode, access };
   }
 
@@ -1044,10 +1070,13 @@ export class ClientSiteTutorialService {
   ): Promise<SiteAccessView> {
     await this.assertOwnProject(userId, projectId);
     const draft = await this.findDraft(projectId);
+    // Явный `/access` всегда спрашивает кабинет сайтов заново (кэш раундов
+    // не действует), но «липкий A» при сбое — да.
+    if (draft) {
+      return this.access.resolveForDraft(userId, draft, { force: true });
+    }
     const target = await this.accessUrl(draft, url);
-    const access = await this.access.resolve(userId, target);
-    if (draft) await this.access.persistMode(draft.id, access);
-    return access;
+    return this.access.resolve(userId, target);
   }
 
   /** П-Т2: подтверждение прав на аккаунт (галочка + версия текста). */
@@ -1101,13 +1130,17 @@ export class ClientSiteTutorialService {
    * «посмотреть заново», а не раунд визарда — иначе перезагрузка
    * вкладки дописывала бы в сценарий пустые шаги.
    */
-  async refresh(userId: string, projectId: string): Promise<RoundResult> {
+  async refresh(
+    userId: string,
+    projectId: string,
+    ipHash: string | null = null,
+  ): Promise<RoundResult> {
     const { draft } = await this.loadEditableDraft(userId, projectId);
     const url = draft.lastUrl ?? draft.baseUrl;
     await this.assertSafeUrl(url);
     assertSameSite(draft.baseUrl, url);
     // Ш1/П-Т2: снимок открывает сайт с куками сессии человека.
-    await this.gateDrive(userId, draft);
+    await this.gateDrive(userId, draft, ipHash);
 
     await this.reserveRound(userId);
     let round;
@@ -1268,11 +1301,18 @@ export class ClientSiteTutorialService {
     };
   }
 
-  /** Ворота Ш1/П-Т2 для черновика: режим — в строку, B без подтверждения — 409. */
-  private async gateDrive(userId: string, draft: DraftRow): Promise<void> {
-    const access = await this.access.resolve(userId, draft.baseUrl);
-    await this.access.persistMode(draft.id, access);
-    this.access.requireConsent(access);
+  /**
+   * Ш1/П-Т2 для черновика: режим (из кэша черновика, если свежий, —
+   * дефект 10) и по переключателю — ворота 409 (`required`) или строка
+   * журнала (`journal`).
+   */
+  private async gateDrive(
+    userId: string,
+    draft: DraftRow,
+    ipHash: string | null,
+  ): Promise<void> {
+    const access = await this.access.resolveForDraft(userId, draft);
+    await this.access.gate(userId, draft.baseUrl, access, ipHash);
   }
 
   /** Адрес для решения о режиме: `baseUrl` черновика, иначе ссылка из тела. */

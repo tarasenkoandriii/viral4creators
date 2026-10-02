@@ -4,25 +4,33 @@
  *
  * Режим не выбирает пользователь — его определяет статус хоста во
  * внутреннем API `sites-backend` (`SitesInternalClient`):
- *  - **A «свой сайт»** — хост подтверждён (DNS/файл/мета) в кабинете
- *    сайтов, где этот человек владелец или менеджер. Привязка — по
- *    Telegram-id (кабинет у человека один на все боты).
- *  - **B «чужой сайт со своим аккаунтом»** — всё остальное, в том числе
- *    «sites-backend не настроен/не ответил»: обучалка работает дальше,
- *    только с защитами B. Подтверждение владения — повышение до A, а не
- *    ворота для всех (решение владельца 02.10.2026).
+ *  - **A «подтверждённый сайт»** — хост (или его родительский домен в
+ *    пределах того же регистрируемого домена) подтверждён DNS/файлом/метой
+ *    в кабинете сайтов, где этот человек владелец или менеджер. Привязка —
+ *    по Telegram-id (кабинет у человека один на все боты).
+ *  - **B «сайт не подтверждён»** — всё остальное, в том числе «sites-backend
+ *    не настроен/не ответил». Это МЕТКА, а не ограничение.
  *
- * Ворота П-Т2: в режиме B перед `explore`/`login`/живым входом нужно
- * подтверждение прав на аккаунт и согласия с условиями сайта — одно на
- * регистрируемый домен для всех черновиков пользователя, пока не сменится
- * версия текста (`account-consent.ts`). Без него — 409
- * `SITE_TUTORIAL_ACCOUNT_CONSENT_REQUIRED`.
+ * Решение владельца 02.10.2026: «для обучалки все сайты свои,
+ * подтверждение не требуется — максимум удобства для пользователей».
+ * Поэтому подтверждение прав на аккаунт (П-Т2) управляется переключателем
+ * `SITE_TUTORIAL_ACCOUNT_CONSENT` (`accountConsentPolicy`):
+ *  - `journal` (по умолчанию) — ничего не блокирует и галочку не
+ *    показывает; при первом запуске нашего браузера по домену в режиме B
+ *    пишется строка журнала (`locale = 'journal'`) в ту же таблицу;
+ *  - `required` — прежние ворота: в B без галочки 409
+ *    `SITE_TUTORIAL_ACCOUNT_CONSENT_REQUIRED` на explore/step/login/undo/
+ *    refresh/живой вход (старт и завершение);
+ *  - `off` — ни ворот, ни журнала.
  *
- * Не делает здесь (следующие шаги, не мешаем им): П-Т3 (пароль в B не
- * хранится) и П-Т4 (личное хранилище сессий) читают `siteMode` черновика;
- * П-Т6+ (лимиты логинов/доменов, запрещённые категории) — свои проверки
- * рядом с этими воротами.
+ * Кэш режима (аудит, дефект 10): решение лежит в черновике
+ * (`siteMode`/`siteModeCheckedAt`), и раунды визарда не ходят в
+ * sites-backend чаще раза в `SITE_MODE_CACHE_MS`; явные `/access` и
+ * `/verify-site` всегда спрашивают заново. «Липкий A» (дефект 1): сбой
+ * кабинета сайтов не превращает подтверждённый сайт в B, пока последняя
+ * удачная проверка A моложе `STICKY_A_MS` и хост тот же.
  */
+import { isIP } from 'net';
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -33,8 +41,11 @@ import {
   SitesRejectedError,
   sitesTelegramId,
 } from '../sites-internal/sites-internal.client';
+import { rateLimitSubject } from '../../common/rate-limit';
 import {
   ACCOUNT_CONSENT_LEGAL_REVIEWED,
+  AccountConsentPolicy,
+  accountConsentPolicy,
   ACCOUNT_CONSENT_TEXTS,
   ACCOUNT_CONSENT_TEXT_VERSION,
   AccountConsentLocale,
@@ -43,6 +54,13 @@ import {
 
 export type SiteMode = 'A' | 'B';
 
+export {
+  ACCOUNT_CONSENT_POLICIES,
+  DEFAULT_ACCOUNT_CONSENT_POLICY,
+  accountConsentPolicy,
+} from './account-consent';
+export type { AccountConsentPolicy } from './account-consent';
+
 /** Почему режим B (или `null` у A) — плашка фронтенда ветвится по коду. */
 export type SiteAccessReason =
   | Exclude<SitesHostReason, null>
@@ -50,7 +68,47 @@ export type SiteAccessReason =
   | 'not_configured'
   | 'no_telegram'
   | 'unsupported_url'
+  /** Адрес по IP: владение подтверждается только для доменного имени. */
+  | 'ip_address'
   | null;
+
+/** Раунды визарда не перепроверяют режим чаще (дефект 10 аудита). */
+export const SITE_MODE_CACHE_MS = 10 * 60 * 1000;
+/** Сколько держится A при недоступном кабинете сайтов (дефект 1 аудита). */
+export const STICKY_A_MS = 24 * 60 * 60 * 1000;
+
+/** Колонки режима черновика — для кэша и «липкого A». */
+export interface DraftModeColumns {
+  id: string;
+  baseUrl: string;
+  siteMode?: string | null;
+  siteModeCheckedAt?: Date | null;
+  siteHostId?: string | null;
+}
+
+/**
+ * Хеш адреса клиента для журнала подтверждений (дефект 8 аудита). Секрет
+ * общий с лимитами (`rateLimitSubject`), но если ни одного настоящего
+ * секрета нет — хеш считается фиксированной dev-солью, и перебор по
+ * пространству IPv4 вернул бы адрес. На проде в этом случае пишем NULL;
+ * сама функция лимитов не меняется (у неё другие потребители).
+ */
+export function consentIpHash(
+  ip: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (!ip || ip === 'unknown') return null;
+  const realSecret =
+    !!env.RATE_LIMIT_KEY_SECRET?.trim() ||
+    !!env.ASSISTANT_IP_HASH_SECRET?.trim() ||
+    !!env.CRON_SECRET?.trim();
+  if (!realSecret && env.NODE_ENV === 'production') return null;
+  return rateLimitSubject(ip, env);
+}
+
+function isIpHost(hostname: string): boolean {
+  return hostname.startsWith('[') || isIP(hostname) !== 0;
+}
 
 export interface SiteAccessView {
   mode: SiteMode;
@@ -62,10 +120,23 @@ export interface SiteAccessView {
   hostId: string | null;
   /** Где подтвердить сайт (TMA помощника / веб-кабинет), `SITES_VERIFY_URL`. */
   verifyUrl: string | null;
-  /** Можно ли завести хост в кабинет отсюда («Подтвердить сайт»). */
+  /**
+   * Показывать ли «Это мой сайт»: тупики (не настроено, нет Telegram,
+   * кабинет не ответил, http/порт/IP, отказ домена, не задан
+   * `SITES_VERIFY_URL` — подтверждать негде) и оператор кабинета без прав
+   * владельца/менеджера (флаг sites-backend) — `false`. Нет кабинета —
+   * `true`: `/verify-site` его создаст.
+   */
   canRegister: boolean;
+  /**
+   * Решение взято из черновика без запроса к кабинету сайтов (кэш раундов
+   * или «липкий A» при сбое) — `persistMode` его не перезаписывает.
+   */
+  cached: boolean;
   consent: {
-    /** Режим B — подтверждение обязательно перед входом и обходом. */
+    /** Действующий переключатель П-Т2 (`SITE_TUTORIAL_ACCOUNT_CONSENT`). */
+    policy: AccountConsentPolicy;
+    /** Галочка обязательна: только `required` и только в режиме B. */
     required: boolean;
     accepted: boolean;
     textVersion: string;
@@ -81,6 +152,27 @@ export const ACCOUNT_CONSENT_STALE = 'SITE_TUTORIAL_CONSENT_VERSION_STALE';
 
 /** `locale` служебной записи подтверждения (съёмка кадров лендинга). */
 export const SERVICE_CONSENT_LOCALE = 'service';
+/**
+ * `locale` строки журнала в режиме `journal`: галочку человеку не
+ * показывали, запись — «наш браузер впервые открыл этот домен под его
+ * аккаунтом», с версией текста, действовавшей тогда.
+ */
+export const JOURNAL_CONSENT_LOCALE = 'journal';
+
+/**
+ * Причины B, при которых «Это мой сайт» ведёт в тупик (дефект 4 аудита).
+ * `no_account` — НЕ тупик (решение «максимум удобства», 02.10.2026):
+ * `/verify-site` создаёт кабинет по Telegram-id (`registerHost`
+ * sites-backend → `ensureAccount`), как первый вход в TMA помощника.
+ */
+const NO_REGISTER_REASONS: ReadonlySet<SiteAccessReason> = new Set([
+  'not_configured',
+  'no_telegram',
+  'unavailable',
+  'unsupported_url',
+  'ip_address',
+  'opted_out',
+] as SiteAccessReason[]);
 
 function verifyUrlFrom(env: NodeJS.ProcessEnv): string | null {
   const raw = env.SITES_VERIFY_URL?.trim();
@@ -97,26 +189,49 @@ function verifyUrlFrom(env: NodeJS.ProcessEnv): string | null {
 export class ClientSiteAccessService {
   private readonly logger = new Logger(ClientSiteAccessService.name);
   env: NodeJS.ProcessEnv = process.env;
+  /** Тесты подменяют часы (кэш режима, «липкий A»). */
+  now: () => Date = () => new Date();
+  private warnedPolicy = false;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly sites: SitesInternalClient,
   ) {}
 
+  /** Действующий переключатель П-Т2; неизвестное значение — warn один раз. */
+  policy(): AccountConsentPolicy {
+    return accountConsentPolicy(this.env, (raw) => {
+      if (this.warnedPolicy) return;
+      this.warnedPolicy = true;
+      this.logger.warn(
+        `SITE_TUTORIAL_ACCOUNT_CONSENT=${JSON.stringify(raw.slice(0, 32))} не распознан (off|journal|required) — работаем как journal`,
+      );
+    });
+  }
+
   /**
    * Режим и подтверждение для адреса. Сеть к sites-backend — один
    * подписанный POST; любая неудача — режим B с причиной, не исключение.
+   * `prior` — колонки черновика: при недоступности кабинета сайтов свежий
+   * A того же хоста держится («липкий A»).
    */
-  async resolve(userId: string, url: string): Promise<SiteAccessView> {
+  async resolve(
+    userId: string,
+    url: string,
+    prior?: DraftModeColumns | null,
+  ): Promise<SiteAccessView> {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-    const domain = consentDomainOf(url);
     const telegramId = await this.telegramIdOf(userId);
     let status: SitesHostStatus | null = null;
     let reason: SiteAccessReason = null;
+    let sticky = false;
     if (!this.sites.configured()) reason = 'not_configured';
     else if (!telegramId) reason = 'no_telegram';
-    else if (parsed.protocol !== 'https:' || parsed.port) {
+    else if (isIpHost(parsed.hostname)) {
+      // Кабинет сайтов подтверждает доменное имя, не адрес (дефект 6).
+      reason = 'ip_address';
+    } else if (parsed.protocol !== 'https:' || parsed.port) {
       // Кабинет сайтов подтверждает только https:443 (MVP) — такой хост
       // не может быть «своим» по построению, B без похода в сеть.
       reason = 'unsupported_url';
@@ -132,48 +247,107 @@ export class ClientSiteAccessService {
               ? 'not_configured'
               : 'unavailable';
         if (reason === 'unavailable') {
+          sticky = this.stickyA(prior, host);
           this.logger.warn(
-            `режим обучалки: sites-backend недоступен (${(err as Error).name}) — режим B`,
+            `режим обучалки: sites-backend недоступен (${(err as Error).name}) — ${sticky ? 'держим A последней проверки' : 'режим B'}`,
           );
         }
       }
     }
-    const mode: SiteMode = status?.mode === 'A' ? 'A' : 'B';
-    const accepted = await this.hasConsent(userId, domain);
-    return {
+    const mode: SiteMode = sticky || status?.mode === 'A' ? 'A' : 'B';
+    const finalReason: SiteAccessReason =
+      mode === 'A' ? null : (reason ?? 'not_verified');
+    return this.view(userId, url, {
       mode,
-      host,
-      registrableDomain: domain,
-      reason: mode === 'A' ? null : (reason ?? 'not_verified'),
-      hostStatus: status?.status ?? null,
-      hostId: status?.hostId ?? null,
-      verifyUrl: verifyUrlFrom(this.env),
+      reason: finalReason,
+      hostStatus: sticky ? null : (status?.status ?? null),
+      hostId: sticky ? (prior?.siteHostId ?? null) : (status?.hostId ?? null),
+      // Без `SITES_VERIFY_URL` подтвердить владение негде — хост завёлся
+      // бы `pending` навсегда, а человек ушёл бы с «подтвердите там» без
+      // ссылки. Кнопку не показываем.
       canRegister:
-        reason !== 'not_configured' &&
-        reason !== 'no_telegram' &&
-        reason !== 'unsupported_url' &&
-        reason !== 'opted_out',
-      consent: {
-        required: mode === 'B',
-        accepted,
-        textVersion: ACCOUNT_CONSENT_TEXT_VERSION,
-        legalReviewed: ACCOUNT_CONSENT_LEGAL_REVIEWED,
-        texts: ACCOUNT_CONSENT_TEXTS,
-      },
-    };
+        mode === 'B' &&
+        verifyUrlFrom(this.env) !== null &&
+        !NO_REGISTER_REASONS.has(finalReason) &&
+        status?.canRegister !== false,
+      cached: sticky,
+    });
   }
 
   /**
-   * Ворота П-Т2 перед действием, которое водит наш браузер по сайту под
-   * аккаунтом человека (`explore`, `login`, живой вход): режим B без
-   * подтверждения — 409 с машинным кодом, фронтенд показывает галочку.
+   * Режим для черновика. Раунды (`force` нет) берут решение из черновика,
+   * если оно моложе `SITE_MODE_CACHE_MS`; экрану (`needReason`) нужен и
+   * код причины B, которого в черновике нет, — поэтому из кэша ему
+   * отдаётся только A (у A причины нет). Свежее решение пишется в
+   * черновик здесь же.
+   */
+  async resolveForDraft(
+    userId: string,
+    draft: DraftModeColumns,
+    opts: { force?: boolean; needReason?: boolean } = {},
+  ): Promise<SiteAccessView> {
+    const mode =
+      draft.siteMode === 'A' || draft.siteMode === 'B' ? draft.siteMode : null;
+    const checked = draft.siteModeCheckedAt?.getTime();
+    const fresh =
+      !opts.force &&
+      mode !== null &&
+      checked !== undefined &&
+      this.now().getTime() - checked < SITE_MODE_CACHE_MS &&
+      (mode === 'A' || !opts.needReason);
+    if (fresh) {
+      return this.view(userId, draft.baseUrl, {
+        mode,
+        // Раундам причина не нужна; ближайшая честная по колонкам.
+        reason:
+          mode === 'A'
+            ? null
+            : draft.siteHostId
+              ? 'not_verified'
+              : 'not_registered',
+        hostStatus: null,
+        hostId: draft.siteHostId ?? null,
+        canRegister: false,
+        cached: true,
+      });
+    }
+    const view = await this.resolve(userId, draft.baseUrl, draft);
+    await this.persistMode(draft.id, view);
+    return view;
+  }
+
+  /**
+   * Перед запуском нашего браузера по сайту под аккаунтом человека
+   * (`explore`, `step`, `login`, `undo`, `refresh`, живой вход): в
+   * `required` — ворота 409, в `journal` — строка журнала при первом
+   * запуске по домену в режиме B, в `off` — ничего.
+   */
+  async gate(
+    userId: string,
+    url: string,
+    view: SiteAccessView,
+    ipHash: string | null,
+  ): Promise<void> {
+    const policy = view.consent.policy;
+    if (policy === 'required') {
+      this.requireConsent(view);
+      return;
+    }
+    if (policy === 'journal' && view.mode === 'B' && !view.consent.accepted) {
+      await this.recordJournal(userId, url, ipHash);
+    }
+  }
+
+  /**
+   * Ворота П-Т2 (только `required`): режим B без подтверждения — 409 с
+   * машинным кодом, фронтенд показывает галочку.
    */
   requireConsent(view: SiteAccessView): void {
-    if (view.mode === 'B' && !view.consent.accepted) {
+    if (view.consent.required && !view.consent.accepted) {
       throw new ConflictException({
         error: ACCOUNT_CONSENT_REQUIRED,
         code: ACCOUNT_CONSENT_REQUIRED,
-        message: `сайт ${view.registrableDomain} не подтверждён как ваш: подтвердите, что аккаунт на нём ваш и запись не нарушает условия сайта, — или подтвердите владение сайтом`,
+        message: `сайт ${view.registrableDomain} не подтверждён: подтвердите, что аккаунт на нём ваш и запись не нарушает условия сайта`,
       });
     }
   }
@@ -184,6 +358,9 @@ export class ClientSiteAccessService {
    * должен из-за неё получать 409.
    */
   async persistMode(draftId: string, view: SiteAccessView): Promise<void> {
+    // Кэш и «липкий A» не обновляют отметку: иначе A при лежащем кабинете
+    // сайтов продлевался бы бесконечно, а кэш — сам себя.
+    if (view.cached) return;
     await this.prisma.clientSiteTutorialDraft.updateMany({
       where: { id: draftId },
       data: this.modeColumns(view),
@@ -223,6 +400,20 @@ export class ClientSiteAccessService {
     } catch (err) {
       // Повтор (двойное нажатие) — уже подтверждено, это не ошибка.
       if ((err as { code?: string })?.code !== 'P2002') throw err;
+      // Строка уже есть, но это может быть журнал (`journal`, человек
+      // галочку не видел): тогда она становится настоящим подтверждением
+      // — с языком, адресом и временем нажатия. Иначе после перехода
+      // journal → required человек не смог бы подтвердить (уникальный
+      // индекс) и упирался бы в 409 навсегда.
+      await this.prisma.siteTutorialAccountConsent.updateMany({
+        where: {
+          userId,
+          registrableDomain: domain,
+          textVersion: ACCOUNT_CONSENT_TEXT_VERSION,
+          locale: JOURNAL_CONSENT_LOCALE,
+        },
+        data: { locale: input.locale, ipHash, acceptedAt: new Date() },
+      });
     }
     return this.resolve(userId, url);
   }
@@ -252,6 +443,19 @@ export class ClientSiteAccessService {
       });
     } catch (err) {
       if ((err as { code?: string })?.code !== 'P2002') throw err;
+      // Строка журнала того же домена (съёмка шла в `journal`) в
+      // `required` подтверждением не считается — переводим её в
+      // служебную, иначе мастер ждал бы галочку, а съёмщик думал бы, что
+      // подтверждение есть.
+      await this.prisma.siteTutorialAccountConsent.updateMany({
+        where: {
+          userId,
+          registrableDomain: consentDomainOf(url),
+          textVersion: ACCOUNT_CONSENT_TEXT_VERSION,
+          locale: JOURNAL_CONSENT_LOCALE,
+        },
+        data: { locale: SERVICE_CONSENT_LOCALE, ipHash: null },
+      });
     }
   }
 
@@ -285,11 +489,100 @@ export class ClientSiteAccessService {
         code: 'SITE_TUTORIAL_SITES_UNAVAILABLE',
         message:
           err instanceof SitesNotConfiguredError
-            ? 'подтверждение сайтов не подключено на этом стенде — запись работает в режиме «чужой сайт»'
-            : 'кабинет сайтов сейчас не отвечает — попробуйте через минуту; запись можно продолжать в режиме «чужой сайт»',
+            ? 'подтверждение сайтов не подключено на этом стенде — записывать можно и без него'
+            : 'кабинет сайтов сейчас не отвечает — попробуйте через минуту; записывать можно и без подтверждения',
       });
     }
     return this.resolve(userId, url);
+  }
+
+  /**
+   * Строка журнала (`journal`): идемпотентно (уникальный индекс
+   * пользователь+домен+версия — P2002 молча), и сбой записи НЕ ломает
+   * запуск — в лог без домена и пользователя.
+   */
+  private async recordJournal(
+    userId: string,
+    url: string,
+    ipHash: string | null,
+  ): Promise<void> {
+    try {
+      await this.prisma.siteTutorialAccountConsent.create({
+        data: {
+          userId,
+          registrableDomain: consentDomainOf(url),
+          textVersion: ACCOUNT_CONSENT_TEXT_VERSION,
+          locale: JOURNAL_CONSENT_LOCALE,
+          ipHash,
+        },
+      });
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'P2002') return;
+      const code = (err as { code?: unknown })?.code;
+      this.logger.warn(
+        `журнал подтверждений обучалки не записан (${(err as Error)?.name ?? 'Error'}${typeof code === 'string' ? ` ${code}` : ''}) — запуск продолжается`,
+      );
+    }
+  }
+
+  /** A последней удачной проверки моложе суток и тот же хост. */
+  private stickyA(
+    prior: DraftModeColumns | null | undefined,
+    host: string,
+  ): boolean {
+    if (!prior || prior.siteMode !== 'A' || !prior.siteModeCheckedAt) {
+      return false;
+    }
+    let priorHost: string;
+    try {
+      priorHost = new URL(prior.baseUrl).hostname.toLowerCase();
+    } catch {
+      return false;
+    }
+    return (
+      priorHost === host &&
+      this.now().getTime() - prior.siteModeCheckedAt.getTime() < STICKY_A_MS
+    );
+  }
+
+  private async view(
+    userId: string,
+    url: string,
+    d: {
+      mode: SiteMode;
+      reason: SiteAccessReason;
+      hostStatus: SiteAccessView['hostStatus'];
+      hostId: string | null;
+      canRegister: boolean;
+      cached: boolean;
+    },
+  ): Promise<SiteAccessView> {
+    const domain = consentDomainOf(url);
+    const policy = this.policy();
+    // В `off` журнал не ведётся и не читается — запрос в базу не нужен.
+    const accepted =
+      policy === 'off'
+        ? false
+        : await this.hasConsent(userId, domain, policy === 'required');
+    return {
+      mode: d.mode,
+      host: new URL(url).hostname.toLowerCase(),
+      registrableDomain: domain,
+      reason: d.reason,
+      hostStatus: d.hostStatus,
+      hostId: d.hostId,
+      verifyUrl: verifyUrlFrom(this.env),
+      canRegister: d.canRegister,
+      cached: d.cached,
+      consent: {
+        policy,
+        required: policy === 'required' && d.mode === 'B',
+        accepted,
+        textVersion: ACCOUNT_CONSENT_TEXT_VERSION,
+        legalReviewed: ACCOUNT_CONSENT_LEGAL_REVIEWED,
+        texts: ACCOUNT_CONSENT_TEXTS,
+      },
+    };
   }
 
   /** Колонки черновика по решению (`siteMode`, `siteHostId`, отметка). */
@@ -308,7 +601,17 @@ export class ClientSiteAccessService {
     };
   }
 
-  private async hasConsent(userId: string, domain: string): Promise<boolean> {
+  /**
+   * Есть ли подтверждение текущей версии. В `required` строка журнала
+   * (`locale = 'journal'`) подтверждением НЕ считается: её писал сервер
+   * при запуске в `journal`, человек галочку не видел, — иначе переход
+   * journal → required пропускал бы всех, кто уже запускал обучалку.
+   */
+  private async hasConsent(
+    userId: string,
+    domain: string,
+    humanOnly: boolean,
+  ): Promise<boolean> {
     const row = await this.prisma.siteTutorialAccountConsent.findUnique({
       where: {
         userId_registrableDomain_textVersion: {
@@ -317,9 +620,10 @@ export class ClientSiteAccessService {
           textVersion: ACCOUNT_CONSENT_TEXT_VERSION,
         },
       },
-      select: { id: true },
+      select: { id: true, locale: true },
     });
-    return row !== null;
+    if (!row) return false;
+    return !humanOnly || row.locale !== JOURNAL_CONSENT_LOCALE;
   }
 
   private async telegramIdOf(userId: string): Promise<string | null> {

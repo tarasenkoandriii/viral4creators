@@ -46,6 +46,12 @@ export interface SitesHostStatus {
   expiresAt: string | null;
   optedOut: boolean;
   reason: SitesHostReason;
+  /**
+   * Может ли человек завести хост в кабинет («Это мой сайт»): `false` —
+   * он только оператор кабинетов и своего нет. Старый sites-backend поле
+   * не отдаёт — тогда `undefined`, кнопку решают остальные условия.
+   */
+  canRegister?: boolean;
 }
 
 export interface SitesRegisterResult extends SitesHostStatus {

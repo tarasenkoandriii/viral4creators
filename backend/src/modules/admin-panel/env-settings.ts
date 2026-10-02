@@ -49,6 +49,11 @@ import { PLAN_IDS } from '../../common/plans';
 import { MODEL_RATES, priceEnvKey } from '../../common/ai-pricing';
 import { isDevAuthAllowed } from '../admin-auth/dev-login';
 import { describeBuild } from '../../common/build-info';
+import { isUsableSitesSecret } from '../../common/sites-internal-signature';
+import {
+  ACCOUNT_CONSENT_POLICIES,
+  DEFAULT_ACCOUNT_CONSENT_POLICY,
+} from '../client-site-tutorial/account-consent';
 
 export interface EnvLike {
   [key: string]: string | undefined;
@@ -1032,6 +1037,77 @@ export function getEnvSettings(
   }
 
   {
+    // Э-С Ш1: режим A/B обучалки — подписанный HMAC запрос к sites-backend
+    // (`sites-internal.client.ts`). Адрес — общий SITES_BACKEND_URL ниже.
+    const set = Boolean(env.SITES_TUTORIAL_HMAC_SECRET?.trim());
+    const usable = isUsableSitesSecret(env.SITES_TUTORIAL_HMAC_SECRET);
+    const urlSet = Boolean(env.SITES_BACKEND_URL?.trim());
+    results.push({
+      key: 'SITES_TUTORIAL_HMAC_SECRET',
+      group: 'Обучалка по сайту заказчика',
+      required: false,
+      set,
+      ok: usable || (!set && !urlSet),
+      severity: usable ? 'ok' : set || urlSet ? 'warning' : 'ok',
+      message: usable
+        ? 'Задан — обучалка подписывает запросы режима A/B к sites-backend (HMAC тела с меткой времени). У sites-backend то же значение; без совпадения кабинет отвечает 401, и все сайты получают метку «не подтверждён».'
+        : set
+          ? 'Задан, но короче минимума — запросы режима A/B не отправляются: все сайты обучалки с меткой «не подтверждён» (запись работает).'
+          : urlSet
+            ? 'Адрес sites-backend задан, а секрет обучалки — нет: подтверждённые сайты не распознаются, все с меткой «не подтверждён» (запись работает).'
+            : 'Не задан — как и адрес sites-backend: режим A/B обучалки не определяется, карточка режима не показывается, запись работает.',
+      // Значение не показываем — секрет.
+    });
+  }
+
+  {
+    const raw = env.SITES_VERIFY_URL?.trim();
+    let ok = true;
+    if (raw) {
+      try {
+        ok = new URL(raw).protocol === 'https:';
+      } catch {
+        ok = false;
+      }
+    }
+    results.push({
+      key: 'SITES_VERIFY_URL',
+      group: 'Обучалка по сайту заказчика',
+      required: false,
+      set: Boolean(raw),
+      ok,
+      severity: ok ? 'ok' : 'warning',
+      message: !ok
+        ? 'Задан, но не https-адрес — в обучалке нет ни кнопки «Это мой сайт», ни ссылки «Открыть кабинет сайтов» (подтверждать негде). Запись работает.'
+        : raw
+          ? 'Куда обучалка ведёт подтверждать сайт (TMA помощника или веб-кабинет) — кнопки «Это мой сайт» и «Открыть кабинет сайтов».'
+          : 'Не задан — в обучалке нет ни кнопки «Это мой сайт», ни ссылки «Открыть кабинет сайтов» (подтверждать негде); подтвердить сайт можно в самом помощнике. Необязательно.',
+      value: raw || undefined,
+    });
+  }
+
+  {
+    const raw = env.SITE_TUTORIAL_ACCOUNT_CONSENT?.trim();
+    const known =
+      !raw ||
+      (ACCOUNT_CONSENT_POLICIES as readonly string[]).includes(
+        raw.toLowerCase(),
+      );
+    results.push({
+      key: 'SITE_TUTORIAL_ACCOUNT_CONSENT',
+      group: 'Обучалка по сайту заказчика',
+      required: false,
+      set: Boolean(raw),
+      ok: known,
+      severity: known ? 'ok' : 'warning',
+      message: !known
+        ? `Неизвестное значение — работает как ${DEFAULT_ACCOUNT_CONSENT_POLICY}. Допустимо: off | journal | required.`
+        : 'Подтверждение прав на аккаунт в обучалке (П-Т2): journal (по умолчанию) — ничего не блокирует, первая работа по домену пишется в журнал; required — галочка обязательна для неподтверждённых сайтов (409 до неё); off — ни галочки, ни журнала.',
+      value: raw || `${DEFAULT_ACCOUNT_CONSENT_POLICY} (по умолчанию)`,
+    });
+  }
+
+  {
     const raw = env.LIVE_LOGIN_RELAY_URL;
     const ok = raw === undefined || /^https?:\/\//.test(raw.trim());
     results.push({
@@ -1585,7 +1661,7 @@ export function getEnvSettings(
         ? 'Адрес sites-backend должен быть https:// (кроме локального стенда).'
         : set
           ? 'Адрес бэкенда клиентских сайтов — вкладка «Помощник» ходит туда за данными.'
-          : 'Не задан — вкладка «Помощник» показывает «не подключено»; остальная админка работает.',
+          : 'Не задан — вкладка «Помощник» показывает «не подключено», обучалка не распознаёт подтверждённые сайты (метка режима не показывается); остальное работает.',
       value: raw?.trim() || undefined,
     });
   }

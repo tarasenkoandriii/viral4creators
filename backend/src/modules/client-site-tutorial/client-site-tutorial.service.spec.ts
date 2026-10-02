@@ -47,6 +47,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import {
@@ -62,7 +63,14 @@ import type { PlanService } from '../plan/plan.service';
 import type { ClientSiteTutorialUsageService } from './client-site-tutorial-usage.service';
 import type { BlobService } from '../storage/blob.service';
 import type { LiveLoginRelayClient } from './live-login-relay.client';
-import { ClientSiteAccessService } from './site-access.service';
+import {
+  ClientSiteAccessService,
+  JOURNAL_CONSENT_LOCALE,
+  SITE_MODE_CACHE_MS,
+  STICKY_A_MS,
+  accountConsentPolicy,
+  consentIpHash,
+} from './site-access.service';
 import {
   SitesUnavailableError,
   type SitesInternalClient,
@@ -132,6 +140,10 @@ function setup(
     /** Есть ли подтверждение прав на аккаунт текущей версии. */
     consent?: boolean;
     telegramId?: string;
+    /** `SITE_TUTORIAL_ACCOUNT_CONSENT`; не задан — по умолчанию (`journal`). */
+    consentPolicy?: string;
+    /** `SITES_VERIFY_URL`; по умолчанию задан, `null` — не задан. */
+    verifyUrl?: string | null;
   } = {},
 ) {
   const draftRow = opts.draft === undefined ? makeDraftRow() : opts.draft;
@@ -245,11 +257,36 @@ function setup(
             r.registrableDomain === k.registrableDomain &&
             r.textVersion === k.textVersion,
         );
-        return Promise.resolve(hit ? { id: 'c1' } : null);
+        return Promise.resolve(
+          hit ? { id: 'c1', locale: hit.locale ?? 'ru' } : null,
+        );
       }),
+      // Уникальный индекс пользователь+домен+версия — как в базе.
       create: jest.fn().mockImplementation(({ data }: any) => {
+        const dup = consentRows.some(
+          (r) =>
+            r.userId === data.userId &&
+            r.registrableDomain === data.registrableDomain &&
+            r.textVersion === data.textVersion,
+        );
+        if (dup) return Promise.reject({ code: 'P2002' });
         consentRows.push(data);
         return Promise.resolve({ id: 'c2', ...data });
+      }),
+      updateMany: jest.fn().mockImplementation(({ where, data }: any) => {
+        let count = 0;
+        for (const r of consentRows) {
+          if (
+            r.userId === where.userId &&
+            r.registrableDomain === where.registrableDomain &&
+            r.textVersion === where.textVersion &&
+            r.locale === where.locale
+          ) {
+            Object.assign(r, data);
+            count++;
+          }
+        }
+        return Promise.resolve({ count });
       }),
     },
     clientSiteTutorialDraft: {
@@ -276,7 +313,17 @@ function setup(
     registerHost: jest.fn().mockResolvedValue({}),
   } as unknown as SitesInternalClient;
   const access = new ClientSiteAccessService(accessPrisma, sites);
-  access.env = {};
+  access.env = {
+    ...(opts.verifyUrl === null
+      ? {}
+      : {
+          SITES_VERIFY_URL:
+            opts.verifyUrl ?? 'https://t.me/assist_bot?startapp',
+        }),
+    ...(opts.consentPolicy === undefined
+      ? {}
+      : { SITE_TUTORIAL_ACCOUNT_CONSENT: opts.consentPolicy }),
+  };
 
   const service = new ClientSiteTutorialService(
     prisma,
@@ -1867,7 +1914,11 @@ describe('аудит Ш0: уборка кадров снова отвечает 
   });
 });
 
-describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение прав в B (П-Т2)', () => {
+describe('Э-С Ш1: режим A/B (П-Т1) и ворота П-Т2 при SITE_TUTORIAL_ACCOUNT_CONSENT=required', () => {
+  // Ворота 409 — только в `required` (решение владельца 02.10.2026: по
+  // умолчанию `journal`, ничего не блокирует). Здесь — прежнее поведение.
+  const setupR = (o: Parameters<typeof setup>[0] = {}) =>
+    setup({ consentPolicy: 'required', ...o });
   const LOGIN = {
     expectedVersion: 3,
     submitSelector: '#submit',
@@ -1877,7 +1928,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
     ((e as ConflictException).getResponse() as { code?: string }).code;
 
   it('B без подтверждения: /explore — 409 с кодом, ДО слота лимита и браузера', async () => {
-    const { service, usage, explorer, clientSiteTutorialDraft } = setup({
+    const { service, usage, explorer, clientSiteTutorialDraft } = setupR({
       draft: null,
       sitesMode: 'B',
     });
@@ -1892,7 +1943,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('B с подтверждением: /explore идёт, черновик помнит режим B и хост', async () => {
-    const { service, clientSiteTutorialDraft } = setup({
+    const { service, clientSiteTutorialDraft } = setupR({
       draft: null,
       sitesMode: 'B',
       consent: true,
@@ -1904,7 +1955,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('A (свой подтверждённый сайт): подтверждение прав не нужно', async () => {
-    const { service, clientSiteTutorialDraft } = setup({
+    const { service, clientSiteTutorialDraft } = setupR({
       draft: null,
       sitesMode: 'A',
     });
@@ -1923,7 +1974,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
     ],
     ['dev-пользователь без Telegram-id', { telegramId: 'dev-1' }, false],
   ])('%s — режим B, обучалка не падает', async (_n, o, asked) => {
-    const { service, sites } = setup({ draft: null, ...o });
+    const { service, sites } = setupR({ draft: null, ...o });
     const view = await service.siteAccess(
       'user1',
       'proj1',
@@ -1954,7 +2005,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('B без подтверждения: /login — 409 до шифрования кред и до занятия версии', async () => {
-    const { service, clientSiteTutorialDraft, usage, accessPrisma } = setup({
+    const { service, clientSiteTutorialDraft, usage, accessPrisma } = setupR({
       sitesMode: 'B',
     });
     const err = await service
@@ -1971,7 +2022,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('B без подтверждения: живой вход — 409, реле и лимит не тронуты', async () => {
-    const { service, relay, usage } = setup({ sitesMode: 'B' });
+    const { service, relay, usage } = setupR({ sitesMode: 'B' });
     const err = await service
       .startLiveLogin('user1', 'proj1')
       .catch((e: unknown) => e);
@@ -2005,7 +2056,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   ])(
     'B без подтверждения: %s — 409 до версии, слота и браузера',
     async (_n, call) => {
-      const { service, clientSiteTutorialDraft, usage, explorer } = setup({
+      const { service, clientSiteTutorialDraft, usage, explorer } = setupR({
         sitesMode: 'B',
         draft: makeDraftRow(THREE_ROUNDS),
       });
@@ -2029,7 +2080,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
       (svc: ClientSiteTutorialService) => svc.undo('user1', 'proj1', 3),
       (svc: ClientSiteTutorialService) => svc.refresh('user1', 'proj1'),
     ]) {
-      const { service } = setup({
+      const { service } = setupR({
         sitesMode: 'B',
         consent: true,
         draft: makeDraftRow(THREE_ROUNDS),
@@ -2039,7 +2090,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('подтверждение — на регистрируемый домен: shop. подтвердил — admin. того же сайта проходит, чужой домен — нет', async () => {
-    const { service, consentRows } = setup({
+    const { service, consentRows } = setupR({
       sitesMode: 'B',
       draft: makeDraftRow({ baseUrl: 'https://admin.example.com' }),
     });
@@ -2050,7 +2101,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
     });
     await expect(service.login('user1', 'proj1', LOGIN)).resolves.toBeDefined();
 
-    const other = setup({
+    const other = setupR({
       sitesMode: 'B',
       draft: makeDraftRow({
         baseUrl: 'https://example.org',
@@ -2068,7 +2119,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('подтверждение другого пользователя не считается', async () => {
-    const { service, consentRows } = setup({ sitesMode: 'B' });
+    const { service, consentRows } = setupR({ sitesMode: 'B' });
     consentRows.push({
       userId: 'user2',
       registrableDomain: 'example.com',
@@ -2080,7 +2131,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('смена версии текста: старое подтверждение не действует, подтверждение старой версии — 409 STALE', async () => {
-    const { service, consentRows, accessPrisma } = setup({ sitesMode: 'B' });
+    const { service, consentRows, accessPrisma } = setupR({ sitesMode: 'B' });
     consentRows.push({
       userId: 'user1',
       registrableDomain: 'example.com',
@@ -2104,7 +2155,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('подтверждение пишет {userId, домен, версия, язык, ipHash}; повтор не ломается', async () => {
-    const { service, accessPrisma } = setup({ sitesMode: 'B' });
+    const { service, accessPrisma } = setupR({ sitesMode: 'B' });
     const view = await service.acceptAccountConsent(
       'user1',
       'proj1',
@@ -2142,7 +2193,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('пересчёт при подтверждении сайта: GET черновика берёт свежий режим B→A и пишет его', async () => {
-    const { service, sites, accessPrisma } = setup({
+    const { service, sites, accessPrisma } = setupR({
       sitesMode: 'B',
       draft: makeDraftRow({ siteMode: 'B' }),
     });
@@ -2170,7 +2221,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('отзыв подтверждения сайта: A→B, и /login снова требует подтверждения прав', async () => {
-    const { service, sites } = setup({
+    const { service, sites } = setupR({
       sitesMode: 'A',
       draft: makeDraftRow({ siteMode: 'A' }),
     });
@@ -2191,7 +2242,7 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('одобренный черновик: GET не ходит в кабинет сайтов (фоновый опрос ролика)', async () => {
-    const { service, sites } = setup({
+    const { service, sites } = setupR({
       draft: makeDraftRow({ status: 'APPROVED' }),
     });
     const view = await service.getState('user1', 'proj1');
@@ -2200,14 +2251,14 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('«Подтвердить сайт»: хост заводится в кабинете по Telegram-id; без Telegram — 409', async () => {
-    const { service, sites } = setup({ sitesMode: 'B' });
+    const { service, sites } = setupR({ sitesMode: 'B' });
     const view = await service.registerSite('user1', 'proj1');
     expect(sites.registerHost).toHaveBeenCalledWith(
       '4242',
       'https://shop.example.com',
     );
     expect(view.mode).toBe('B');
-    const dev = setup({ telegramId: 'dev-7' });
+    const dev = setupR({ telegramId: 'dev-7' });
     await expect(
       dev.service.registerSite('user1', 'proj1'),
     ).rejects.toBeInstanceOf(ConflictException);
@@ -2215,10 +2266,617 @@ describe('Э-С Ш1: режим A/B (П-Т1) и подтверждение пр�
   });
 
   it('до первого /explore: ссылка с внутренним адресом отклоняется ещё на /access', async () => {
-    const { service, sites } = setup({ draft: null });
+    const { service, sites } = setupR({ draft: null });
     await expect(
       service.siteAccess('user1', 'proj1', 'http://127.0.0.1:8080/admin'),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(sites.hostStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('П-Т2 по переключателю SITE_TUTORIAL_ACCOUNT_CONSENT (решение владельца 02.10.2026)', () => {
+  const LOGIN = {
+    expectedVersion: 3,
+    submitSelector: '#submit',
+    fields: [{ selector: '#pass', value: 'секрет', sensitive: true }],
+  };
+  const codeOf = (e: unknown) =>
+    ((e as ConflictException).getResponse() as { code?: string }).code;
+  const createCalls = (accessPrisma: PrismaService) =>
+    (accessPrisma.siteTutorialAccountConsent.create as jest.Mock).mock.calls;
+
+  it('разбор значения: пусто — journal; регистр и пробелы не важны; неизвестное — journal с сигналом', () => {
+    const unknown: string[] = [];
+    const p = (v?: string) =>
+      accountConsentPolicy(
+        v === undefined ? {} : { SITE_TUTORIAL_ACCOUNT_CONSENT: v },
+        (raw) => unknown.push(raw),
+      );
+    expect(p()).toBe('journal');
+    expect(p('')).toBe('journal');
+    expect(p(' Required ')).toBe('required');
+    expect(p('off')).toBe('off');
+    expect(p('journal')).toBe('journal');
+    expect(p('yes')).toBe('journal');
+    expect(unknown).toEqual(['yes']);
+  });
+
+  it('неизвестное значение — warn в лог ОДИН раз, работаем как journal', async () => {
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      const { service, access } = setup({
+        draft: null,
+        sitesMode: 'B',
+        consentPolicy: 'strict',
+      });
+      for (let i = 0; i < 3; i++) {
+        const view = await service.siteAccess(
+          'user1',
+          'proj1',
+          'https://shop.example.com',
+        );
+        expect(view.consent).toMatchObject({
+          policy: 'journal',
+          required: false,
+        });
+      }
+      expect(access.policy()).toBe('journal');
+      const policyWarns = warn.mock.calls.filter((c) =>
+        String(c[0]).includes('SITE_TUTORIAL_ACCOUNT_CONSENT'),
+      );
+      expect(policyWarns).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('journal (по умолчанию): B без галочки — /explore идёт, журнал пишет строку один раз', async () => {
+    const { service, explorer, accessPrisma, access } = setup({
+      draft: null,
+      sitesMode: 'B',
+    });
+    const view = await service.siteAccess(
+      'user1',
+      'proj1',
+      'https://shop.example.com',
+    );
+    expect(view.mode).toBe('B');
+    expect(view.consent).toMatchObject({
+      policy: 'journal',
+      required: false,
+      accepted: false,
+    });
+
+    await service.explore(
+      'user1',
+      'proj1',
+      'https://shop.example.com/x',
+      'b'.repeat(32),
+    );
+    expect(explorer.runRound).toHaveBeenCalled();
+    expect(createCalls(accessPrisma)).toHaveLength(1);
+    expect(createCalls(accessPrisma)[0][0].data).toEqual({
+      userId: 'user1',
+      registrableDomain: 'example.com',
+      textVersion: ACCOUNT_CONSENT_TEXT_VERSION,
+      locale: JOURNAL_CONSENT_LOCALE,
+      ipHash: 'b'.repeat(32),
+    });
+    // Следующий запуск по тому же домену — строка уже есть, второй не пишем.
+    const again = await access.resolve('user1', 'https://admin.example.com');
+    expect(again.consent.accepted).toBe(true);
+    await access.gate('user1', 'https://admin.example.com', again, null);
+    expect(createCalls(accessPrisma)).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      '/step',
+      (svc: ClientSiteTutorialService) =>
+        svc.step(
+          'user1',
+          'proj1',
+          { expectedVersion: 3, fills: [], clickSelector: '#a' },
+          'h',
+        ),
+    ],
+    [
+      '/login',
+      (svc: ClientSiteTutorialService) =>
+        svc.login('user1', 'proj1', LOGIN, 'h'),
+    ],
+    [
+      '/undo',
+      (svc: ClientSiteTutorialService) => svc.undo('user1', 'proj1', 3, 'h'),
+    ],
+    [
+      '/refresh',
+      (svc: ClientSiteTutorialService) => svc.refresh('user1', 'proj1', 'h'),
+    ],
+    [
+      '/live-login/start',
+      (svc: ClientSiteTutorialService) =>
+        svc.startLiveLogin('user1', 'proj1', 'h'),
+    ],
+  ])(
+    'journal: %s в B без галочки не блокируется и пишет журнал',
+    async (_n, call) => {
+      const { service, accessPrisma } = setup({
+        sitesMode: 'B',
+        draft: makeDraftRow(THREE_ROUNDS),
+      });
+      await expect(call(service)).resolves.toBeDefined();
+      expect(createCalls(accessPrisma)).toHaveLength(1);
+      expect(createCalls(accessPrisma)[0][0].data).toMatchObject({
+        locale: JOURNAL_CONSENT_LOCALE,
+        ipHash: 'h',
+      });
+    },
+  );
+
+  it('journal: режим A — журнал не нужен (сайт подтверждён)', async () => {
+    const { service, accessPrisma } = setup({ draft: null, sitesMode: 'A' });
+    await service.explore('user1', 'proj1', 'https://shop.example.com');
+    expect(createCalls(accessPrisma)).toHaveLength(0);
+  });
+
+  it('journal: повтор (P2002) и сбой записи журнала НЕ ломают запуск; в лог — без домена и пользователя', async () => {
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      const a = setup({ draft: null, sitesMode: 'B' });
+      (
+        a.accessPrisma.siteTutorialAccountConsent.create as jest.Mock
+      ).mockRejectedValueOnce({ code: 'P2002' });
+      await expect(
+        a.service.explore('user1', 'proj1', 'https://shop.example.com'),
+      ).resolves.toBeDefined();
+
+      const b = setup({ draft: null, sitesMode: 'B' });
+      (
+        b.accessPrisma.siteTutorialAccountConsent.create as jest.Mock
+      ).mockRejectedValueOnce(
+        Object.assign(new Error('connection user1 example.com'), {
+          code: 'P1001',
+        }),
+      );
+      await expect(
+        b.service.explore('user1', 'proj1', 'https://shop.example.com'),
+      ).resolves.toBeDefined();
+      expect(b.explorer.runRound).toHaveBeenCalled();
+      const journalWarns = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('журнал'));
+      expect(journalWarns).toHaveLength(1);
+      expect(journalWarns[0]).toContain('P1001');
+      expect(journalWarns[0]).not.toMatch(/user1|example\.com/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('off: ни ворот, ни журнала, базу подтверждений не читаем', async () => {
+    const { service, accessPrisma } = setup({
+      sitesMode: 'B',
+      consentPolicy: 'off',
+      draft: makeDraftRow(THREE_ROUNDS),
+    });
+    await expect(service.login('user1', 'proj1', LOGIN)).resolves.toBeDefined();
+    await expect(service.refresh('user1', 'proj1')).resolves.toBeDefined();
+    const view = await service.siteAccess('user1', 'proj1');
+    expect(view.consent).toMatchObject({ policy: 'off', required: false });
+    expect(createCalls(accessPrisma)).toHaveLength(0);
+    expect(
+      accessPrisma.siteTutorialAccountConsent.findUnique,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('journal → required: строка журнала — не подтверждение; галочка превращает её в настоящую', async () => {
+    const j = setup({ sitesMode: 'B', draft: makeDraftRow(THREE_ROUNDS) });
+    await j.service.refresh('user1', 'proj1', 'h');
+    expect(createCalls(j.accessPrisma)[0][0].data.locale).toBe(
+      JOURNAL_CONSENT_LOCALE,
+    );
+    // Тот же человек, та же база — переключатель сменили на required.
+    j.access.env = {
+      ...j.access.env,
+      SITE_TUTORIAL_ACCOUNT_CONSENT: 'required',
+    };
+    const before = await j.service.siteAccess('user1', 'proj1');
+    expect(before.consent).toMatchObject({ required: true, accepted: false });
+    await expect(j.service.refresh('user1', 'proj1')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    const after = await j.service.acceptAccountConsent(
+      'user1',
+      'proj1',
+      { textVersion: ACCOUNT_CONSENT_TEXT_VERSION, locale: 'uk' },
+      'c'.repeat(32),
+    );
+    expect(after.consent.accepted).toBe(true);
+    expect(j.consentRows).toHaveLength(1);
+    expect(j.consentRows[0]).toMatchObject({
+      locale: 'uk',
+      ipHash: 'c'.repeat(32),
+    });
+    await expect(j.service.refresh('user1', 'proj1')).resolves.toBeDefined();
+  });
+
+  it('journal → required: служебное подтверждение съёмщика переводит строку журнала в service', async () => {
+    const j = setup({ sitesMode: 'B', draft: makeDraftRow(THREE_ROUNDS) });
+    await j.service.refresh('user1', 'proj1', 'h');
+    j.access.env = {
+      ...j.access.env,
+      SITE_TUTORIAL_ACCOUNT_CONSENT: 'required',
+    };
+    await j.access.recordServiceConsent('user1', 'https://shop.example.com');
+    expect(j.consentRows).toHaveLength(1);
+    expect(j.consentRows[0]).toMatchObject({ locale: 'service', ipHash: null });
+    const view = await j.access.resolve('user1', 'https://shop.example.com');
+    expect(view.consent).toMatchObject({ required: true, accepted: true });
+  });
+
+  it('/consent работает и в journal (на случай перехода в required)', async () => {
+    const { service, accessPrisma } = setup({ sitesMode: 'B' });
+    const view = await service.acceptAccountConsent(
+      'user1',
+      'proj1',
+      { textVersion: ACCOUNT_CONSENT_TEXT_VERSION, locale: 'ru' },
+      null,
+    );
+    expect(view.consent.accepted).toBe(true);
+    expect(createCalls(accessPrisma)[0][0].data.locale).toBe('ru');
+  });
+
+  describe('required: ворота и на /live-login/complete (дефект 9)', () => {
+    it('режим сменился на B за время сессии — 409, сессия реле закрыта, результат не забирается', async () => {
+      const ctx = setup({ sitesMode: 'A', consentPolicy: 'required' });
+      const start = await ctx.service.startLiveLogin('user1', 'proj1');
+      (ctx.sites.hostStatus as jest.Mock).mockResolvedValue({
+        mode: 'B',
+        host: 'shop.example.com',
+        registrableDomain: 'example.com',
+        hostId: 'host1',
+        status: 'revoked',
+        expiresAt: null,
+        optedOut: false,
+        reason: 'revoked',
+      });
+      const err = await ctx.service
+        .completeLiveLogin('user1', 'proj1', {
+          ticket: start.ticket,
+          expectedVersion: 3,
+        })
+        .catch((e: unknown) => e);
+      expect(codeOf(err)).toBe('SITE_TUTORIAL_ACCOUNT_CONSENT_REQUIRED');
+      expect(ctx.relay.cancelQuietly).toHaveBeenCalledWith('relay-1');
+      expect(ctx.relay.fetchResult).not.toHaveBeenCalled();
+    });
+
+    it('в journal завершение живого входа не проверяет режим заново', async () => {
+      const ctx = setup({ sitesMode: 'B' });
+      const start = await ctx.service.startLiveLogin('user1', 'proj1');
+      const calls = (ctx.sites.hostStatus as jest.Mock).mock.calls.length;
+      await expect(
+        ctx.service.completeLiveLogin('user1', 'proj1', {
+          ticket: start.ticket,
+          expectedVersion: 3,
+        }),
+      ).resolves.toBeDefined();
+      expect((ctx.sites.hostStatus as jest.Mock).mock.calls.length).toBe(calls);
+    });
+  });
+
+  describe('кэш режима на черновике (дефект 10)', () => {
+    const ago = (ms: number) => new Date(Date.now() - ms);
+
+    it('раунд со свежим решением (< 10 мин) не ходит в sites-backend и не переписывает отметку', async () => {
+      const { service, sites, accessPrisma } = setup({
+        sitesMode: 'B',
+        consentPolicy: 'required',
+        consent: true,
+        draft: makeDraftRow({
+          ...THREE_ROUNDS,
+          siteMode: 'B',
+          siteModeCheckedAt: ago(60_000),
+        }),
+      });
+      await service.step('user1', 'proj1', {
+        expectedVersion: 3,
+        fills: [],
+        clickSelector: '#a',
+      });
+      expect(sites.hostStatus).not.toHaveBeenCalled();
+      expect(
+        accessPrisma.clientSiteTutorialDraft.updateMany,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('кэш не обходит ворота required: свежий B без галочки — всё равно 409', async () => {
+      const { service, sites } = setup({
+        sitesMode: 'B',
+        consentPolicy: 'required',
+        draft: makeDraftRow({
+          siteMode: 'B',
+          siteModeCheckedAt: ago(60_000),
+        }),
+      });
+      const err = await service
+        .login('user1', 'proj1', LOGIN)
+        .catch((e: unknown) => e);
+      expect(codeOf(err)).toBe('SITE_TUTORIAL_ACCOUNT_CONSENT_REQUIRED');
+      expect(sites.hostStatus).not.toHaveBeenCalled();
+    });
+
+    it('решение старше 10 мин — перепроверка и новая отметка', async () => {
+      const { service, sites, accessPrisma } = setup({
+        sitesMode: 'A',
+        draft: makeDraftRow({
+          siteMode: 'A',
+          siteModeCheckedAt: ago(SITE_MODE_CACHE_MS + 1000),
+        }),
+      });
+      await service.login('user1', 'proj1', LOGIN);
+      expect(sites.hostStatus).toHaveBeenCalledTimes(1);
+      expect(
+        (accessPrisma.clientSiteTutorialDraft.updateMany as jest.Mock).mock
+          .calls[0][0].data.siteModeCheckedAt,
+      ).toBeInstanceOf(Date);
+    });
+
+    it('GET: свежий A — из черновика; B — перепроверяется (экрану нужна причина)', async () => {
+      const a = setup({
+        sitesMode: 'A',
+        draft: makeDraftRow({
+          siteMode: 'A',
+          siteHostId: 'host1',
+          siteModeCheckedAt: ago(60_000),
+        }),
+      });
+      const viewA = await a.service.getState('user1', 'proj1');
+      expect(viewA?.access).toMatchObject({ mode: 'A', hostId: 'host1' });
+      expect(a.sites.hostStatus).not.toHaveBeenCalled();
+
+      const b = setup({
+        sitesMode: 'B',
+        draft: makeDraftRow({
+          siteMode: 'B',
+          siteModeCheckedAt: ago(60_000),
+        }),
+      });
+      const viewB = await b.service.getState('user1', 'proj1');
+      expect(viewB?.access).toMatchObject({
+        mode: 'B',
+        reason: 'not_verified',
+      });
+      expect(b.sites.hostStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it('явный /access спрашивает кабинет сайтов всегда', async () => {
+      const { service, sites } = setup({
+        sitesMode: 'A',
+        draft: makeDraftRow({
+          siteMode: 'A',
+          siteModeCheckedAt: ago(1000),
+        }),
+      });
+      await service.siteAccess('user1', 'proj1');
+      expect(sites.hostStatus).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('«липкий A» при сбое кабинета сайтов (дефект 1)', () => {
+    const ago = (ms: number) => new Date(Date.now() - ms);
+
+    it('A моложе суток + sites-backend не ответил — остаётся A, черновик не переписывается', async () => {
+      const { service, accessPrisma } = setup({
+        sitesMode: 'down',
+        draft: makeDraftRow({
+          siteMode: 'A',
+          siteHostId: 'host1',
+          siteModeCheckedAt: ago(2 * 3600_000),
+        }),
+      });
+      const view = await service.siteAccess('user1', 'proj1');
+      expect(view).toMatchObject({
+        mode: 'A',
+        reason: null,
+        hostId: 'host1',
+        cached: true,
+      });
+      expect(
+        accessPrisma.clientSiteTutorialDraft.updateMany,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('A старше суток — B с причиной unavailable, без кнопки «Это мой сайт»', async () => {
+      const { service, accessPrisma } = setup({
+        sitesMode: 'down',
+        draft: makeDraftRow({
+          siteMode: 'A',
+          siteModeCheckedAt: ago(STICKY_A_MS + 1000),
+        }),
+      });
+      const view = await service.siteAccess('user1', 'proj1');
+      expect(view).toMatchObject({
+        mode: 'B',
+        reason: 'unavailable',
+        canRegister: false,
+      });
+      expect(
+        (accessPrisma.clientSiteTutorialDraft.updateMany as jest.Mock).mock
+          .calls[0][0].data.siteMode,
+      ).toBe('B');
+    });
+
+    it('другой хост — не держим A (resolve с колонками чужого черновика)', async () => {
+      const { access } = setup({ sitesMode: 'down' });
+      const view = await access.resolve('user1', 'https://admin.example.com', {
+        id: 'd',
+        baseUrl: 'https://shop.example.com',
+        siteMode: 'A',
+        siteModeCheckedAt: ago(1000),
+        siteHostId: 'host1',
+      });
+      expect(view).toMatchObject({ mode: 'B', reason: 'unavailable' });
+    });
+
+    it('B до сбоя — B (липким бывает только A)', async () => {
+      const { service } = setup({
+        sitesMode: 'down',
+        draft: makeDraftRow({
+          siteMode: 'B',
+          siteModeCheckedAt: ago(1000),
+        }),
+      });
+      await expect(service.siteAccess('user1', 'proj1')).resolves.toMatchObject(
+        { mode: 'B', reason: 'unavailable' },
+      );
+    });
+  });
+
+  describe('причины и кнопка «Это мой сайт» (дефекты 4, 6, 12)', () => {
+    it('адрес по IP — своя причина ip_address, в сеть не ходим, кнопки нет', async () => {
+      const { service, sites } = setup({ draft: null, sitesMode: 'B' });
+      const view = await service.siteAccess(
+        'user1',
+        'proj1',
+        'https://93.184.216.34/',
+      );
+      expect(view).toMatchObject({
+        mode: 'B',
+        reason: 'ip_address',
+        canRegister: false,
+      });
+      expect(sites.hostStatus).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['not_configured', { sitesMode: 'unconfigured' as const }],
+      ['no_telegram', { telegramId: 'dev-1' }],
+      ['unavailable', { sitesMode: 'down' as const }],
+    ])('%s — кнопки нет (тупик)', async (reason, o) => {
+      const { service } = setup({ draft: null, ...o });
+      await expect(
+        service.siteAccess('user1', 'proj1', 'https://shop.example.com'),
+      ).resolves.toMatchObject({ mode: 'B', reason, canRegister: false });
+    });
+
+    it('no_account — кнопка есть (кабинет создаст /verify-site); not_registered — есть; оператор без своего кабинета (canRegister=false с сервера) — нет', async () => {
+      const status = (over: Record<string, unknown>) => ({
+        mode: 'B',
+        host: 'shop.example.com',
+        registrableDomain: 'example.com',
+        hostId: null,
+        status: 'none',
+        expiresAt: null,
+        optedOut: false,
+        ...over,
+      });
+      const { service, sites } = setup({ draft: null, sitesMode: 'B' });
+      const ask = () =>
+        service.siteAccess('user1', 'proj1', 'https://shop.example.com');
+      (sites.hostStatus as jest.Mock).mockResolvedValueOnce(
+        status({ reason: 'no_account', canRegister: true }),
+      );
+      expect(await ask()).toMatchObject({
+        reason: 'no_account',
+        canRegister: true,
+      });
+      (sites.hostStatus as jest.Mock).mockResolvedValueOnce(
+        status({ reason: 'not_registered', canRegister: true }),
+      );
+      expect((await ask()).canRegister).toBe(true);
+      (sites.hostStatus as jest.Mock).mockResolvedValueOnce(
+        status({ reason: 'role', hostId: 'h', canRegister: false }),
+      );
+      expect((await ask()).canRegister).toBe(false);
+      // Старый sites-backend без поля — решают остальные условия.
+      (sites.hostStatus as jest.Mock).mockResolvedValueOnce(
+        status({ reason: 'not_registered' }),
+      );
+      expect((await ask()).canRegister).toBe(true);
+    });
+
+    it.each([
+      ['не задан', null],
+      ['не https', 'http://t.me/assist_bot'],
+      ['мусор', 'not a url'],
+    ])(
+      'SITES_VERIFY_URL %s — кнопки «Это мой сайт» нет (подтверждать негде)',
+      async (_n, verifyUrl) => {
+        const { service, sites } = setup({
+          draft: null,
+          sitesMode: 'B',
+          verifyUrl,
+        });
+        for (const reason of ['not_registered', 'no_account']) {
+          (sites.hostStatus as jest.Mock).mockResolvedValueOnce({
+            mode: 'B',
+            host: 'shop.example.com',
+            registrableDomain: 'example.com',
+            hostId: null,
+            status: 'none',
+            expiresAt: null,
+            optedOut: false,
+            reason,
+            canRegister: true,
+          });
+          await expect(
+            service.siteAccess('user1', 'proj1', 'https://shop.example.com'),
+          ).resolves.toMatchObject({
+            reason,
+            verifyUrl: null,
+            canRegister: false,
+          });
+        }
+      },
+    );
+
+    it('«Подтвердить сайт» при недоступном кабинете — нейтральный текст без «чужого сайта»', async () => {
+      const { service, sites } = setup({ sitesMode: 'B' });
+      (sites.registerHost as jest.Mock).mockRejectedValueOnce(
+        new SitesUnavailableError('нет связи'),
+      );
+      const err = await service
+        .registerSite('user1', 'proj1')
+        .catch((e: unknown) => e);
+      expect(codeOf(err)).toBe('SITE_TUTORIAL_SITES_UNAVAILABLE');
+      const msg = (
+        (err as ConflictException).getResponse() as { message: string }
+      ).message;
+      expect(msg).not.toMatch(/чуж/);
+    });
+  });
+
+  describe('хеш адреса для журнала (дефект 8)', () => {
+    it('на проде без настоящего секрета — NULL; с секретом и вне прода — HMAC', () => {
+      expect(consentIpHash('203.0.113.7', { NODE_ENV: 'production' })).toBe(
+        null,
+      );
+      for (const k of [
+        'RATE_LIMIT_KEY_SECRET',
+        'ASSISTANT_IP_HASH_SECRET',
+        'CRON_SECRET',
+      ]) {
+        expect(
+          consentIpHash('203.0.113.7', { NODE_ENV: 'production', [k]: 's' }),
+        ).toMatch(/^[0-9a-f]{32}$/);
+      }
+      expect(consentIpHash('203.0.113.7', { NODE_ENV: 'test' })).toMatch(
+        /^[0-9a-f]{32}$/,
+      );
+      expect(
+        consentIpHash('203.0.113.7', {
+          NODE_ENV: 'production',
+          CRON_SECRET: '   ',
+        }),
+      ).toBe(null);
+      expect(consentIpHash('unknown', {})).toBe(null);
+      expect(consentIpHash(null, {})).toBe(null);
+    });
   });
 });

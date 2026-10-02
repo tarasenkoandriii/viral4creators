@@ -12,6 +12,7 @@ import { FakeStore } from '../site-core/testing/fake-sites-db.testing';
 import {
   InternalSitesService,
   parseTelegramId,
+  tutorialCoverCandidates,
 } from './internal-sites.service';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -189,6 +190,160 @@ describe('InternalSitesService.hostStatus — режим A/B (П-Т1)', () => {
       const e = await svc.hostStatus(TG, u, NOW).catch((x: unknown) => x);
       expect(codeOf(e)).toBe('HOST_INVALID');
     }
+  });
+});
+
+describe('режим A по родительскому домену (решение владельца 02.10.2026)', () => {
+  /** Хост кабинета `acc` с произвольным именем. */
+  function seedHost(
+    store: FakeStore,
+    acc: string,
+    id: string,
+    host: string,
+    extra: Record<string, unknown>,
+  ) {
+    store.insert('SiteHost', {
+      id,
+      accountId: acc,
+      siteId: `s-${acc}`,
+      host,
+      ...extra,
+    });
+  }
+
+  it('кандидаты: хост и родители до регистрируемого домена; суффиксы PSL — только точное имя', () => {
+    expect(tutorialCoverCandidates('a.b.example.com')).toEqual([
+      'a.b.example.com',
+      'b.example.com',
+      'example.com',
+    ]);
+    expect(tutorialCoverCandidates('example.com')).toEqual(['example.com']);
+    expect(tutorialCoverCandidates('www.shop.example.co.uk')).toEqual([
+      'www.shop.example.co.uk',
+      'shop.example.co.uk',
+      'example.co.uk',
+    ]);
+    // Приватная часть PSL: alice.vercel.app — свой регистрируемый домен,
+    // vercel.app в кандидаты не попадает никогда.
+    expect(tutorialCoverCandidates('app.alice.vercel.app')).toEqual([
+      'app.alice.vercel.app',
+      'alice.vercel.app',
+    ]);
+    expect(tutorialCoverCandidates('alice.github.io')).toEqual([
+      'alice.github.io',
+    ]);
+    expect(tutorialCoverCandidates('vercel.app')).toEqual(['vercel.app']);
+  });
+
+  it.each(['https://app.example.com', 'https://www.example.com/x'])(
+    'подтверждён example.com — %s в режиме A',
+    async (u) => {
+      const { store, svc, seed, verified } = setup();
+      seed('A1', 'owner', null);
+      seedHost(store, 'A1', 'h-apex', 'example.com', verified);
+      await expect(svc.hostStatus(TG, u, NOW)).resolves.toMatchObject({
+        mode: 'A',
+        hostId: 'h-apex',
+        reason: null,
+      });
+    },
+  );
+
+  it('подтверждён shop.example.com — app.example.com НЕ покрыт', async () => {
+    const { svc, seed, verified } = setup();
+    seed('A1', 'owner', verified); // shop.example.com
+    await expect(
+      svc.hostStatus(TG, 'https://app.example.com', NOW),
+    ).resolves.toMatchObject({ mode: 'B', reason: 'not_registered' });
+  });
+
+  it('подтверждён alice.vercel.app — bob.vercel.app не покрыт (соседи на платформе)', async () => {
+    const { store, svc, seed, verified } = setup();
+    seed('A1', 'owner', null);
+    seedHost(store, 'A1', 'h-alice', 'alice.vercel.app', verified);
+    await expect(
+      svc.hostStatus(TG, 'https://bob.vercel.app', NOW),
+    ).resolves.toMatchObject({ mode: 'B', reason: 'not_registered' });
+    await expect(
+      svc.hostStatus(TG, 'https://app.alice.vercel.app', NOW),
+    ).resolves.toMatchObject({ mode: 'A', hostId: 'h-alice' });
+  });
+
+  it('родитель только pending — B not_verified с id родителя', async () => {
+    const { store, svc, seed } = setup();
+    seed('A1', 'owner', null);
+    seedHost(store, 'A1', 'h-apex', 'example.com', { status: 'pending' });
+    await expect(
+      svc.hostStatus(TG, 'https://app.example.com', NOW),
+    ).resolves.toMatchObject({
+      mode: 'B',
+      hostId: 'h-apex',
+      reason: 'not_verified',
+    });
+  });
+
+  it('точный хост pending, родитель подтверждён — A по родителю', async () => {
+    const { store, svc, seed, verified } = setup();
+    seed('A1', 'owner', { status: 'pending' }); // shop.example.com
+    seedHost(store, 'A1', 'h-apex', 'example.com', verified);
+    await expect(svc.hostStatus(TG, URL_, NOW)).resolves.toMatchObject({
+      mode: 'A',
+      hostId: 'h-apex',
+    });
+  });
+
+  it('родитель подтверждён в кабинете, где человек оператор, — B role', async () => {
+    const { store, svc, seed, verified } = setup();
+    seed('A1', 'operator', null);
+    seedHost(store, 'A1', 'h-apex', 'example.com', verified);
+    await expect(
+      svc.hostStatus(TG, 'https://app.example.com', NOW),
+    ).resolves.toMatchObject({ mode: 'B', reason: 'role', canRegister: false });
+  });
+
+  it('отказ (opt-out) самого поддомена — B, даже если родитель подтверждён', async () => {
+    const { store, svc, seed, verified } = setup();
+    seed('A1', 'owner', null);
+    seedHost(store, 'A1', 'h-apex', 'example.com', verified);
+    store.insert('SiteOptOutDomain', {
+      domain: 'app.example.com',
+      source: 'email',
+    });
+    await expect(
+      svc.hostStatus(TG, 'https://app.example.com', NOW),
+    ).resolves.toMatchObject({ mode: 'B', reason: 'opted_out' });
+  });
+
+  it('registerHost под подтверждённым родителем — хост не заводится, сразу A', async () => {
+    const { store, svc, seed, verified } = setup();
+    seed('A1', 'owner', null);
+    seedHost(store, 'A1', 'h-apex', 'example.com', verified);
+    await expect(
+      svc.registerHost(TG, 'https://app.example.com', NOW),
+    ).resolves.toMatchObject({
+      mode: 'A',
+      hostId: 'h-apex',
+      siteId: 's-A1',
+      created: false,
+    });
+    expect(store.rows('SiteHost')).toHaveLength(1);
+  });
+});
+
+describe('canRegister — можно ли отсюда завести хост (дефект 12)', () => {
+  it('нет кабинета — да (создастся); владелец/менеджер — да; только оператор — нет', async () => {
+    const a = setup();
+    expect((await a.svc.hostStatus(TG, URL_, NOW)).canRegister).toBe(true);
+    const b = setup();
+    b.seed('A1', 'manager', null);
+    expect((await b.svc.hostStatus(TG, URL_, NOW)).canRegister).toBe(true);
+    const c = setup();
+    c.seed('A1', 'operator', null);
+    expect((await c.svc.hostStatus(TG, URL_, NOW)).canRegister).toBe(false);
+    const d = setup();
+    d.seed('A1', 'operator', null);
+    d.seed('OWN', 'owner', null);
+    expect((await d.svc.hostStatus(TG, URL_, NOW)).canRegister).toBe(true);
   });
 });
 

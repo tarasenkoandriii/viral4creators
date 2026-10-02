@@ -1,7 +1,13 @@
 /**
  * Подтверждение прав на аккаунт и согласия с условиями сайта — режим B
- * обучалки «чужой сайт со своим аккаунтом» (Э-С Ш1; П-Т2, P0
+ * обучалки «сайт не подтверждён» (Э-С Ш1; П-Т2, P0
  * `docs-tz/SECURITY-PROPOSALS-2026-10-02.md` §2.3).
+ *
+ * С 02.10.2026 (решение владельца «для обучалки все сайты свои») галочка
+ * нужна только при `SITE_TUTORIAL_ACCOUNT_CONSENT=required`; по умолчанию
+ * (`journal`) тот же текст и версия пишутся строкой журнала
+ * (`locale = 'journal'`) при первом запуске браузера по домену, без
+ * показа человеку (`site-access.service.ts`).
  *
  * ЧЕРНОВИК ДО ЮРИСТА (вопрос 10 аудита слияния, §2.4 предложений): текст
  * написан разработчиком, чтобы механизм работал и запись подтверждения
@@ -58,4 +64,31 @@ export function parseConsentLocale(v: unknown): AccountConsentLocale {
     (ACCOUNT_CONSENT_LOCALES as readonly string[]).includes(v)
     ? (v as AccountConsentLocale)
     : 'en';
+}
+
+/** Переключатель П-Т2 (`SITE_TUTORIAL_ACCOUNT_CONSENT`). */
+export type AccountConsentPolicy = 'off' | 'journal' | 'required';
+export const ACCOUNT_CONSENT_POLICIES: readonly AccountConsentPolicy[] = [
+  'off',
+  'journal',
+  'required',
+];
+export const DEFAULT_ACCOUNT_CONSENT_POLICY: AccountConsentPolicy = 'journal';
+
+/**
+ * Значение переключателя. Пусто — `journal`; неизвестное — тоже `journal`
+ * (безопасная середина: не блокирует людей и не теряет журнал), а
+ * `onUnknown` получает сырое значение, чтобы вызывающий предупредил в лог.
+ */
+export function accountConsentPolicy(
+  env: NodeJS.ProcessEnv,
+  onUnknown?: (raw: string) => void,
+): AccountConsentPolicy {
+  const raw = env.SITE_TUTORIAL_ACCOUNT_CONSENT?.trim().toLowerCase();
+  if (!raw) return DEFAULT_ACCOUNT_CONSENT_POLICY;
+  if ((ACCOUNT_CONSENT_POLICIES as readonly string[]).includes(raw)) {
+    return raw as AccountConsentPolicy;
+  }
+  onUnknown?.(raw);
+  return DEFAULT_ACCOUNT_CONSENT_POLICY;
 }

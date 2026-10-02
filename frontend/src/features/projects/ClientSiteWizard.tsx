@@ -86,11 +86,15 @@ import type {
 import {
   ACCOUNT_CONSENT_REQUIRED,
   ACCOUNT_CONSENT_STALE,
+  canOfferVerify,
   consentLocaleOf,
   consentText,
   modeReasonKey,
   needsAccountConsent,
   safeVerifyUrl,
+  showsVerifyHint,
+  siteAccessErrorKey,
+  siteModeCardVisible,
 } from '../../lib/site-access';
 import { LiveLoginSession } from './LiveLoginSession';
 import { ScreenHeader } from './shared';
@@ -318,11 +322,14 @@ export function ClientSiteWizard({
     try {
       return await fn();
     } catch (err) {
-      setError(errorMessage(err));
+      // Отказы режима и «Подтвердить сайт» — по коду на языке интерфейса
+      // (дефект 7 аудита): текст сервера русский во всех локалях.
+      const code = apiErrorCode(err);
+      const localized = siteAccessErrorKey(code);
+      setError(localized ? t[localized] : errorMessage(err));
       // Ворота П-Т2: сервер сказал «нужно подтверждение прав» или «текст
       // подтверждения сменился» — перечитываем режим, и экран сам покажет
       // галочку с актуальным текстом.
-      const code = apiErrorCode(err);
       if (code === ACCOUNT_CONSENT_REQUIRED || code === ACCOUNT_CONSENT_STALE) {
         setConsentTicked(false);
         void refreshAccess();
@@ -386,7 +393,12 @@ export function ClientSiteWizard({
       setAccess(current);
       setConsentTicked(false);
     }
-    if (needsAccountConsent(current)) return;
+    if (needsAccountConsent(current)) {
+      // Повторное «Открыть» без галочки не должно молча ничего не делать
+      // (дефект 13 аудита): говорим, куда смотреть.
+      setNotice(t.consentFirst);
+      return;
+    }
     const result = await run(() => exploreSite(projectId, trimmed));
     if (result) applyRound(result);
   };
@@ -780,7 +792,7 @@ export function ClientSiteWizard({
               />
             </Field>
             <Alert tone="info">{t.ownSiteOnly}</Alert>
-            {access && (
+            {access && siteModeCardVisible(access, 'url') && (
               <SiteModeCard
                 t={t}
                 access={access}
@@ -822,30 +834,36 @@ export function ClientSiteWizard({
         </Card>
       )}
 
-      {/* Режим и галочка — над записью: вход и живой вход в режиме B
-          без подтверждения сервер всё равно не пустит (409). */}
-      {(stage === 'page' || stage === 'review') && access && (
-        <div className="mb-3 space-y-3">
-          <SiteModeCard
-            t={t}
-            access={access}
-            busy={busy}
-            onVerify={askRegisterSite}
-            onRecheck={recheckSite}
-          />
-          {editable && needsAccountConsent(access) && (
-            <AccountConsentCard
-              t={t}
-              access={access}
-              locale={locale}
-              ticked={consentTicked}
-              setTicked={setConsentTicked}
-              busy={busy}
-              onConfirm={confirmConsent}
-            />
-          )}
-        </div>
-      )}
+      {/* Режим и галочка — над записью. Галочка — только когда сервер
+          требует (`SITE_TUTORIAL_ACCOUNT_CONSENT=required`); метка режима
+          на экране страницы — только тогда же (см. `siteModeCardVisible`). */}
+      {(stage === 'page' || stage === 'review') &&
+        access &&
+        (siteModeCardVisible(access, stage) ||
+          (editable && needsAccountConsent(access))) && (
+          <div className="mb-3 space-y-3">
+            {siteModeCardVisible(access, stage) && (
+              <SiteModeCard
+                t={t}
+                access={access}
+                busy={busy}
+                onVerify={askRegisterSite}
+                onRecheck={recheckSite}
+              />
+            )}
+            {editable && needsAccountConsent(access) && (
+              <AccountConsentCard
+                t={t}
+                access={access}
+                locale={locale}
+                ticked={consentTicked}
+                setTicked={setConsentTicked}
+                busy={busy}
+                onConfirm={confirmConsent}
+              />
+            )}
+          </div>
+        )}
 
       {stage === 'page' && exploration && (
         <PageStage
@@ -921,9 +939,11 @@ export function ClientSiteWizard({
 type Dict = ReturnType<typeof useI18n>['dict']['clientSiteWizard'];
 
 /**
- * Плашка режима (Э-С Ш1, П-Т1). A — зелёная, без действий. B — что это
- * значит, почему (по коду сервера) и путь наверх: «это мой сайт» (хост в
- * кабинет сайтов), ссылка в кабинет, «проверить снова».
+ * Плашка режима (Э-С Ш1, П-Т1). A — «подтверждённый сайт», без действий.
+ * B — «сайт не подтверждён»: это метка, а не ограничение (решение
+ * владельца 02.10.2026); почему (по коду сервера) и, если сервер говорит,
+ * что путь есть, — необязательное «это мой сайт», ссылка в кабинет,
+ * «проверить снова». Без давления и без обещаний «снять ограничения».
  */
 function SiteModeCard(props: {
   t: Dict;
@@ -944,17 +964,26 @@ function SiteModeCard(props: {
   const reasonKey = modeReasonKey(access.reason);
   const verifyUrl = safeVerifyUrl(access);
   const registered = access.hostId !== null;
+  const offerVerify = canOfferVerify(access);
   return (
     <Card className="p-4 space-y-3">
       <div>
         <strong className="block">{t.modeBTitle}</strong>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          {t.modeBText.replace('{host}', access.host)}
+          {(access.consent.required
+            ? t.modeBTextRequired
+            : t.modeBText
+          ).replace('{host}', access.host)}
         </p>
         {reasonKey && <p className="mt-1 text-sm">{t[reasonKey]}</p>}
+        {showsVerifyHint(access) && (
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            {t.modeBVerifyHint}
+          </p>
+        )}
       </div>
       <div className="flex flex-wrap gap-2">
-        {access.canRegister && !registered && (
+        {offerVerify && (
           <Button
             size="sm"
             variant="outline"
@@ -965,7 +994,7 @@ function SiteModeCard(props: {
             {t.verifySiteButton}
           </Button>
         )}
-        {verifyUrl && (registered || access.canRegister) && (
+        {verifyUrl && (registered || offerVerify) && (
           <Button
             size="sm"
             variant="ghost"
@@ -975,7 +1004,7 @@ function SiteModeCard(props: {
             {t.verifySiteOpen}
           </Button>
         )}
-        {(registered || access.reason === 'unavailable') && (
+        {registered && (
           <Button
             size="sm"
             variant="ghost"

@@ -75,6 +75,8 @@ const SECRET_KEYS = [
   'GOOGLE_OAUTH_CLIENT_SECRET',
   // Э4 ИИ-помощника: общий секрет внутреннего API sites-backend.
   'SITES_INTERNAL_SECRET',
+  // Э-С Ш1: HMAC-секрет запросов режима A/B обучалки к sites-backend.
+  'SITES_TUTORIAL_HMAC_SECRET',
 ];
 
 /**
@@ -117,6 +119,11 @@ const PUBLIC_VALUE_KEYS = [
   'LIVE_LOGIN_RELAY_WS_URL',
   // Э4 ИИ-помощника: адрес sites-backend для вкладки «Помощник».
   'SITES_BACKEND_URL',
+  // Э-С Ш1: ссылка «Открыть кабинет сайтов» (публичный адрес TMA или
+  // кабинета) и переключатель П-Т2 (off | journal | required) — не
+  // секреты, видеть значение и есть смысл строки.
+  'SITES_VERIFY_URL',
+  'SITE_TUTORIAL_ACCOUNT_CONSENT',
   'FFMPEG_API_BASE_URL',
   'VOICE_ID',
   'VOICE_MODEL',
@@ -585,5 +592,55 @@ describe('getEnvSettings — каналы выгрузки (01.10.2026)', () => 
       'TIKTOK_CLIENT_KEY',
     );
     expect(both.severity).toBe('ok');
+  });
+});
+
+describe('getEnvSettings — обучалка: режим A/B и П-Т2 (Э-С Ш1)', () => {
+  it('SITE_TUTORIAL_ACCOUNT_CONSENT: пусто — journal по умолчанию, неизвестное — жёлтый', () => {
+    const empty = find(getEnvSettings({}), 'SITE_TUTORIAL_ACCOUNT_CONSENT');
+    expect(empty.ok).toBe(true);
+    expect(empty.value).toContain('journal');
+    for (const v of ['off', 'journal', 'required', 'REQUIRED']) {
+      expect(
+        find(
+          getEnvSettings({ SITE_TUTORIAL_ACCOUNT_CONSENT: v }),
+          'SITE_TUTORIAL_ACCOUNT_CONSENT',
+        ).ok,
+      ).toBe(true);
+    }
+    const bad = find(
+      getEnvSettings({ SITE_TUTORIAL_ACCOUNT_CONSENT: 'strict' }),
+      'SITE_TUTORIAL_ACCOUNT_CONSENT',
+    );
+    expect(bad.ok).toBe(false);
+    expect(bad.severity).toBe('warning');
+  });
+
+  it('SITES_TUTORIAL_HMAC_SECRET: адрес sites-backend без секрета — жёлтый; короткий — жёлтый; ничего — зелёный', () => {
+    const row = (env: EnvLike) =>
+      find(getEnvSettings(env), 'SITES_TUTORIAL_HMAC_SECRET');
+    expect(row({}).severity).toBe('ok');
+    expect(row({ SITES_BACKEND_URL: 'https://s.example' }).severity).toBe(
+      'warning',
+    );
+    expect(row({ SITES_TUTORIAL_HMAC_SECRET: 'short' }).severity).toBe(
+      'warning',
+    );
+    expect(
+      row({ SITES_TUTORIAL_HMAC_SECRET: randomBytes(32).toString('hex') })
+        .severity,
+    ).toBe('ok');
+  });
+
+  it('SITES_VERIFY_URL: только https', () => {
+    const row = (v?: string) =>
+      find(
+        getEnvSettings(v ? { SITES_VERIFY_URL: v } : {}),
+        'SITES_VERIFY_URL',
+      );
+    expect(row().ok).toBe(true);
+    expect(row('https://t.me/x_bot').ok).toBe(true);
+    expect(row('http://x.example').ok).toBe(false);
+    expect(row('javascript:alert(1)').ok).toBe(false);
   });
 });

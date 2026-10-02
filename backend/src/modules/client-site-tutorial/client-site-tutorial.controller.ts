@@ -38,8 +38,8 @@ import {
   LiveLoginStart,
   RoundResult,
 } from './client-site-tutorial.service';
-import type { SiteAccessView } from './site-access.service';
-import { clientIp, rateLimitSubject } from '../../common/rate-limit';
+import { consentIpHash, type SiteAccessView } from './site-access.service';
+import { clientIp } from '../../common/rate-limit';
 import {
   AccountConsentRequestDto,
   RegisterSiteRequestDto,
@@ -71,7 +71,12 @@ export class ClientSiteTutorialController {
     @Param('projectId') projectId: string,
     @Body() dto: ExploreRequestDto,
   ): Promise<RoundResult> {
-    return this.service.explore(req.telegramUserId, projectId, dto.url);
+    return this.service.explore(
+      req.telegramUserId,
+      projectId,
+      dto.url,
+      ipHashOf(req),
+    );
   }
 
   @Post('step')
@@ -80,7 +85,7 @@ export class ClientSiteTutorialController {
     @Param('projectId') projectId: string,
     @Body() dto: StepRequestDto,
   ): Promise<RoundResult> {
-    return this.service.step(req.telegramUserId, projectId, dto);
+    return this.service.step(req.telegramUserId, projectId, dto, ipHashOf(req));
   }
 
   @Post('login')
@@ -89,7 +94,12 @@ export class ClientSiteTutorialController {
     @Param('projectId') projectId: string,
     @Body() dto: LoginRequestDto,
   ): Promise<RoundResult> {
-    return this.service.login(req.telegramUserId, projectId, dto);
+    return this.service.login(
+      req.telegramUserId,
+      projectId,
+      dto,
+      ipHashOf(req),
+    );
   }
 
   @Post('undo')
@@ -102,6 +112,7 @@ export class ClientSiteTutorialController {
       req.telegramUserId,
       projectId,
       dto.expectedVersion,
+      ipHashOf(req),
     );
   }
 
@@ -124,7 +135,11 @@ export class ClientSiteTutorialController {
     @Req() req: IdentifiedRequest,
     @Param('projectId') projectId: string,
   ): Promise<LiveLoginStart> {
-    return this.service.startLiveLogin(req.telegramUserId, projectId);
+    return this.service.startLiveLogin(
+      req.telegramUserId,
+      projectId,
+      ipHashOf(req),
+    );
   }
 
   @Post('live-login/complete')
@@ -142,7 +157,7 @@ export class ClientSiteTutorialController {
     @Req() req: IdentifiedRequest,
     @Param('projectId') projectId: string,
   ): Promise<RoundResult> {
-    return this.service.refresh(req.telegramUserId, projectId);
+    return this.service.refresh(req.telegramUserId, projectId, ipHashOf(req));
   }
 
   @Post('resume')
@@ -166,7 +181,8 @@ export class ClientSiteTutorialController {
 
   /**
    * П-Т2: галочка «аккаунт мой, условия сайта не нарушаю» с версией
-   * текста. IP — только HMAC (`rateLimitSubject`), сырой не хранится.
+   * текста (нужна только при `SITE_TUTORIAL_ACCOUNT_CONSENT=required`).
+   * IP — только HMAC (`consentIpHash`), сырой не хранится.
    */
   @Post('consent')
   @HttpCode(200)
@@ -175,12 +191,11 @@ export class ClientSiteTutorialController {
     @Param('projectId') projectId: string,
     @Body() dto: AccountConsentRequestDto,
   ): Promise<SiteAccessView> {
-    const ip = clientIp(req);
     return this.service.acceptAccountConsent(
       req.telegramUserId,
       projectId,
       { url: dto.url, textVersion: dto.textVersion, locale: dto.locale },
-      ip && ip !== 'unknown' ? rateLimitSubject(ip) : null,
+      ipHashOf(req),
     );
   }
 
@@ -203,4 +218,12 @@ export class ClientSiteTutorialController {
   ): Promise<void> {
     await this.service.remove(req.telegramUserId, projectId);
   }
+}
+
+/**
+ * Хеш адреса для журнала подтверждений (П-Т2): HMAC, сырой адрес не
+ * хранится; на проде без настоящего секрета — `null` (дефект 8 аудита).
+ */
+function ipHashOf(req: IdentifiedRequest): string | null {
+  return consentIpHash(clientIp(req));
 }

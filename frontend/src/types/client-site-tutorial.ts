@@ -99,7 +99,12 @@ export type SiteAccessReason =
   | 'not_configured'
   | 'no_telegram'
   | 'unsupported_url'
+  /** Адрес по IP — владение подтверждается только для доменного имени. */
+  | 'ip_address'
   | null;
+
+/** Переключатель П-Т2 на сервере (`SITE_TUTORIAL_ACCOUNT_CONSENT`). */
+export type AccountConsentPolicy = 'off' | 'journal' | 'required';
 
 export type ConsentLocale = 'uk' | 'ru' | 'en';
 
@@ -113,8 +118,14 @@ export interface SiteAccessView {
   hostId: string | null;
   /** Где подтвердить сайт (TMA помощника / веб-кабинет); `null` — не задано. */
   verifyUrl: string | null;
+  /** Показывать «Это мой сайт»: сервер знает, ведёт ли кнопка куда-то. */
   canRegister: boolean;
+  /** Решение взято из черновика без запроса к кабинету сайтов. */
+  cached?: boolean;
   consent: {
+    /** Старый сервер поле не отдаёт. */
+    policy?: AccountConsentPolicy;
+    /** Галочка обязательна (только `required` и режим B) — решает сервер. */
     required: boolean;
     accepted: boolean;
     textVersion: string;

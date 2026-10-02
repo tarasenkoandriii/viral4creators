@@ -11,11 +11,13 @@
  * нужно: её пришлось бы синхронизировать с членством.
  *
  *  - `hostStatus` ТОЛЬКО ЧИТАЕТ: кабинет не создаётся, хост не заводится.
- *    Режим A (П-Т1) — хост подтверждён (`assertHostVerified(…, 'tutorial')`,
+ *    Режим A (П-Т1) — подтверждён (`assertHostVerified(…, 'tutorial')`,
  *    L1 без льготы 72 ч) в кабинете, где человек — владелец или менеджер
- *    (те, кто вправе подтверждать владение, QA §1.5). Оператор кабинета —
- *    режим B: его пригласили отвечать в чате, а не водить наш браузер по
- *    сайту от имени владельца. Иначе — B.
+ *    (те, кто вправе подтверждать владение, QA §1.5), ровно этот хост ИЛИ
+ *    его родительское имя в пределах того же регистрируемого домена
+ *    (`tutorialCoverCandidates`, решение владельца 02.10.2026). Оператор
+ *    кабинета — режим B: его пригласили отвечать в чате, а не водить наш
+ *    браузер по сайту от имени владельца. Иначе — B.
  *  - `registerHost` — по явному действию человека в TMA генератора
  *    («Подтвердить сайт», с согласием на привязку на экране): кабинет
  *    находится или создаётся (как первый вход в TMA помощника), хост
@@ -64,6 +66,12 @@ export interface TutorialHostStatus {
     | 'revoked'
     | 'role'
     | 'opted_out';
+  /**
+   * Может ли человек завести хост отсюда (`registerHost`): кабинета нет
+   * (создастся) или в каком-то он владелец/менеджер. Только оператор —
+   * `false`, генератор не показывает «Это мой сайт».
+   */
+  canRegister: boolean;
 }
 
 export interface TutorialRegisterResult extends TutorialHostStatus {
@@ -74,6 +82,38 @@ export interface TutorialRegisterResult extends TutorialHostStatus {
 }
 
 const MANAGE_ROLES = new Set(['owner', 'manager']);
+
+/**
+ * Имена, подтверждение которых покрывает `host` для ОБУЧАЛКИ: сам хост и
+ * его родители вверх до регистрируемого домена включительно (eTLD+1 по
+ * PSL с приватной частью). Подтверждён `example.com` → покрыты
+ * `app.example.com` и `www.example.com`; подтверждён `shop.example.com` —
+ * только он и его поддомены, но не `app.example.com`. Суффиксы PSL
+ * (`vercel.app`, `github.io`) регистрируемым доменом не бывают, поэтому
+ * соседей не покрывают никогда; у имени без регистрируемого домена —
+ * только точное совпадение. Порядок — от самого хоста к домену (ближайшее
+ * подтверждение важнее).
+ *
+ * Только обучалка: общее правило подтверждения (`verificationCovers`,
+ * Р-18 — поддомены не наследуются) для виджета и обхода не меняется.
+ * Обучалка ходит по сайту под аккаунтом самого человека, а не публикует
+ * ничего от имени домена, — и владелец решил, что подтверждённый apex
+ * достаточен для его поддоменов.
+ */
+export function tutorialCoverCandidates(host: string): string[] {
+  const domain = registrableDomain(host);
+  if (!domain || (host !== domain && !host.endsWith(`.${domain}`))) {
+    return [host];
+  }
+  const parts = host.split('.');
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const name = parts.slice(i).join('.');
+    out.push(name);
+    if (name === domain) break;
+  }
+  return out;
+}
 
 /** telegramId генератора — строка из цифр (у dev-пользователей её нет). */
 export function parseTelegramId(raw: unknown): bigint {
@@ -119,11 +159,15 @@ export class InternalSitesService {
         expiresAt: null,
         optedOut,
         reason: optedOut ? 'opted_out' : 'no_account',
+        canRegister: true,
       };
     }
-    const found = await this.findHosts(all, addr);
+    const canRegister = all.some((m) => MANAGE_ROLES.has(m.role));
+    const found = await this.findHosts(all, addr, true);
     const managed = found.filter((f) => MANAGE_ROLES.has(f.m.role));
-    for (const f of managed) {
+    // Отказ домена (`optOutCandidates` самого хоста) — режима A нет, даже
+    // если подтверждён родитель: его проверка opt-out ребёнка не видит.
+    for (const f of optedOut ? [] : managed) {
       try {
         await this.access.assertHostVerified(f.host.id, TUTORIAL_PURPOSE, {
           accountId: f.m.accountId,
@@ -137,6 +181,7 @@ export class InternalSitesService {
           expiresAt: f.host.expiresAt,
           optedOut: false,
           reason: null,
+          canRegister,
         };
       } catch {
         // Не подтверждён/истёк/отозван/opt-out — следующий кандидат; итог
@@ -153,6 +198,7 @@ export class InternalSitesService {
         expiresAt: null,
         optedOut,
         reason: optedOut ? 'opted_out' : 'not_registered',
+        canRegister,
       };
     }
     const status = effectiveStatus(best.host, now);
@@ -172,6 +218,7 @@ export class InternalSitesService {
             : status === 'expired'
               ? 'expired'
               : 'not_verified',
+      canRegister,
     };
   }
 
@@ -182,7 +229,7 @@ export class InternalSitesService {
   ): Promise<TutorialRegisterResult> {
     const addr = normalizeHostInput(url);
     const all = await this.accounts.memberships(telegramId);
-    const existing = (await this.findHosts(all, addr)).find((f) =>
+    const existing = (await this.findHosts(all, addr, false)).find((f) =>
       MANAGE_ROLES.has(f.m.role),
     );
     if (existing) {
@@ -194,6 +241,23 @@ export class InternalSitesService {
         created: false,
         accountCreated: false,
       };
+    }
+    // Уже A через подтверждённый родительский домен — заводить отдельный
+    // хост (и просить подтверждать его заново) незачем.
+    const covered = await this.hostStatus(telegramId, url, now);
+    if (covered.mode === 'A' && covered.hostId) {
+      const parent = (await this.findHosts(all, addr, true)).find(
+        (f) => f.host.id === covered.hostId,
+      );
+      if (parent) {
+        return {
+          ...covered,
+          hostId: parent.host.id,
+          siteId: parent.host.siteId,
+          created: false,
+          accountCreated: false,
+        };
+      }
     }
     // Кабинет: СВОЙ (владелец), иначе тот, где человек менеджер; нет
     // такого — как при первом входе в TMA помощника (последний, куда
@@ -274,18 +338,31 @@ export class InternalSitesService {
     }
   }
 
+  /**
+   * Хосты кабинетов человека: ровно этот (`withParents = false`) или ещё и
+   * родительские имена в пределах регистрируемого домена (режим обучалки).
+   * Порядок: кабинеты — как в членствах, внутри — от самого хоста к
+   * домену; при равенстве — точное совпадение раньше любого родителя.
+   */
   private async findHosts(
     memberships: AccountMembership[],
     addr: HostAddress,
+    withParents: boolean,
   ): Promise<Array<{ m: AccountMembership; host: SiteHost }>> {
+    const names = withParents
+      ? tutorialCoverCandidates(addr.host)
+      : [addr.host];
+    const rank = (h: string) => names.indexOf(h);
     const out: Array<{ m: AccountMembership; host: SiteHost }> = [];
     for (const m of memberships) {
-      const host = await this.db.forAccount(m.accountId).siteHost.findFirst({
-        where: { scheme: addr.scheme, host: addr.host, port: addr.port },
+      const hosts = await this.db.forAccount(m.accountId).siteHost.findMany({
+        where: { scheme: addr.scheme, host: { in: names }, port: addr.port },
       });
-      if (host) out.push({ m, host });
+      hosts.sort((a, b) => rank(a.host) - rank(b.host));
+      for (const host of hosts) out.push({ m, host });
     }
-    return out;
+    // Стабильная сортировка: ближайшее имя — первым, кабинеты в своём порядке.
+    return out.sort((a, b) => rank(a.host.host) - rank(b.host.host));
   }
 
   private async isOptedOut(host: string): Promise<boolean> {
