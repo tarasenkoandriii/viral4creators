@@ -35,6 +35,17 @@ import {
 
 jest.setTimeout(120_000);
 
+/**
+ * Окна лимитов фиксированные (floor(now / минута)): серия запросов,
+ * попавшая на смену минуты, начинается в одном окне и кончается в
+ * другом — лимит «не срабатывает» (так упал CI на 1bfb425 в 18:48:00).
+ * Перед серией ждём начала минуты, если до её конца меньше 20 с.
+ */
+async function awaitMinuteHeadroom(needMs = 20_000): Promise<void> {
+  const left = 60_000 - (Date.now() % 60_000);
+  if (left < needMs) await new Promise((r) => setTimeout(r, left + 50));
+}
+
 describeDb('Э5: голос виджета по HTTP', () => {
   let stack: WidgetStack;
   const fake = new FakeSoniox();
@@ -183,6 +194,7 @@ describeDb('Э5: голос виджета по HTTP', () => {
   it('лимиты посетителя: 7-я запись за минуту — RATE_LIMITED; суточный выбран — VOICE_LIMIT', async () => {
     const f = await voiceFixture();
     const { token, visitorId } = await session(f);
+    await awaitMinuteHeadroom();
     for (let i = 0; i < 6; i++)
       await voicePost(token, fakeRecording()).expect(200);
     const seventh = await voicePost(token, fakeRecording()).expect(429);
@@ -211,6 +223,7 @@ describeDb('Э5: голос виджета по HTTP', () => {
     const f = await voiceFixture();
     const ip = `${randomV6Prefix()}::1`;
     // 3 посетителя × 6 записей = 18 — минутный потолок IP (§4.13 п.2–3).
+    await awaitMinuteHeadroom();
     for (let v = 0; v < 3; v++) {
       const { token } = await session(f, ip);
       for (let i = 0; i < 6; i++)
