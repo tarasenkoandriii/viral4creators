@@ -23,8 +23,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: '20'
+# Версия Node — ОДНА, в `.nvmrc` (24 — как `engines.node` пакетов и Node
+# Vercel-проектов). Раньше здесь стояло '20' при сборке прода на 24: зелёный
+# CI был не про ту сборку. Числовой `node-version:` в .github запрещён
+# проверкой scripts/check-node-version.mjs (джоба «репозиторий»).
 
 jobs:
   # Какие джобы запускать: только те, чьи папки (и зависимости) изменились
@@ -52,7 +54,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
       - id: f
         run: node scripts/ci-changes.mjs >> "$GITHUB_OUTPUT"
         env:
@@ -89,7 +91,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
@@ -221,7 +223,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
           cache: npm
           cache-dependency-path: sites-backend/package-lock.json
 
@@ -309,7 +311,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
           cache: npm
           cache-dependency-path: assist/package-lock.json
       - run: npm ci
@@ -346,11 +348,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
           cache: npm
           cache-dependency-path: widget/package-lock.json
       - run: npm ci
         working-directory: widget
+      # Строго, без continue-on-error — осознанно, в отличие от остальных
+      # пакетов: с --omit=dev здесь только рантайм виджета (Preact), а он
+      # исполняется на ЧУЖИХ сайтах заказчиков. Высокая уязвимость в нём —
+      # повод остановиться, а не строка в логе.
       - name: npm audit (high)
         run: npm audit --audit-level=high --omit=dev
         working-directory: widget
@@ -373,16 +379,13 @@ jobs:
         run: npm run size
         working-directory: widget
       # E2E — Chromium (Playwright); мобильные проекты — эмуляция вьюпорта,
-      # не iOS Safari (живые устройства — владелец). Шаг пропускается, пока
-      # спеков нет (каркас Э2).
+      # не iOS Safari (живые устройства — владелец). Без условия «спеков нет —
+      # пропуск»: пустой набор не должен выглядеть пройденной проверкой —
+      # Playwright без тестов падает сам («No tests found»).
       - name: e2e (Playwright, Chromium)
         run: |
-          if ls e2e/*.spec.ts >/dev/null 2>&1; then
-            npx playwright install --with-deps chromium
-            npm run e2e
-          else
-            echo "e2e: спеков нет — пропуск"
-          fi
+          npx playwright install --with-deps chromium
+          npm run e2e
         working-directory: widget
 
   # Лендинг клиентских сайтов (Л0–Л1 ТЗ лендинга помощника). Свой
@@ -404,7 +407,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
           cache: npm
           cache-dependency-path: sites-landing/package-lock.json
       - run: npm ci
@@ -473,7 +476,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -533,7 +536,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
           cache: npm
           cache-dependency-path: ${{ matrix.app }}/package-lock.json
 
@@ -578,7 +581,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: '.nvmrc'
 
       # doc/legal/*.md — единственный источник правды; сгенерированные
       # модули в frontend/ и landing/ обязаны ему соответствовать, а
@@ -595,6 +598,10 @@ jobs:
       # Правила выбора джоб (scripts/ci-changes.mjs) и то, что у каждой
       # джобы есть условие. Здесь, а не в джобе backend: «репозиторий»
       # идёт на каждом коммите.
+      # Версия Node в одном месте (.nvmrc) и совпадает с engines.node.
+      - name: версия Node — одна (.nvmrc)
+        run: node scripts/check-node-version.mjs
+
       - name: выбор джоб CI по изменённым папкам
         run: node scripts/ci-changes.mjs --self-test
 

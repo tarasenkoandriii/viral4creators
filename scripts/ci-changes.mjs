@@ -51,13 +51,24 @@ export const FILTERS = {
   ],
   assist: ['assist/', 'site-tma-kit/', 'sites-backend/src/', 'scripts/sync-site-tma-kit.mjs'],
   widget: ['widget/', 'sites-backend/src/brand.ts'],
-  sites_landing: ['sites-landing/'],
+  // Лендинг: CI собирает виджет и гоняет его на стенде; тест контракта
+  // читает формы событий/черновиков и контраст из sites-backend; deeplink
+  // `wd_` — из кита.
+  sites_landing: [
+    'sites-landing/',
+    'widget/',
+    'sites-backend/src/modules/assist-widget/landing/',
+    'sites-backend/src/modules/assist-site-setup/widget-config.ts',
+    'sites-backend/src/config/assist-defaults.ts',
+    'site-tma-kit/src/start-param.ts',
+  ],
   frontend: ['frontend/', 'backend/src/'],
   admin: ['admin/'],
   landing: ['landing/'],
 };
 /** Изменение любого из этих путей запускает всё. */
-export const GLOBAL = ['.github/workflows/ci.yml', 'scripts/ci-changes.mjs'];
+/** `.nvmrc` — версия Node для всех джоб: её смена перепроверяет всё. */
+export const GLOBAL = ['.github/workflows/ci.yml', 'scripts/ci-changes.mjs', '.nvmrc'];
 /** Джобы матрицы next-apps (их имя в матрице = ключ FILTERS). */
 export const NEXT_APPS = ['admin', 'landing'];
 
@@ -120,7 +131,9 @@ function selfTest() {
   eq('нет базы — всё', on(null), Object.keys(FILTERS));
   eq('ci.yml — всё', on(['.github/workflows/ci.yml']), Object.keys(FILTERS));
   eq('только документы — ничего', on(['doc/DEPLOYMENT.md', 'docs-tz/x.md', 'README.md']), []);
-  eq('виджет', on(['widget/src/loader/index.ts']), ['widget']);
+  eq('виджет — и лендинг (стенд виджета)', on(['widget/src/loader/index.ts']), ['widget', 'sites_landing']);
+  eq('.nvmrc — всё', on(['.nvmrc']), Object.keys(FILTERS));
+  eq('формы событий лендинга', on(['sites-backend/src/modules/assist-widget/landing/landing.service.ts']), ['sites_backend', 'assist', 'sites_landing']);
   eq('brand.ts бэкенда — бэк, assist, виджет', on(['sites-backend/src/brand.ts']), ['sites_backend', 'assist', 'widget']);
   eq('модуль sites-backend — бэк и assist', on(['sites-backend/src/modules/x.ts']), ['sites_backend', 'assist']);
   eq('миграция sites-backend — только бэк', on(['sites-backend/prisma/schema.prisma']), ['sites_backend']);
@@ -170,7 +183,7 @@ function selfTest() {
     console.error(`ci-changes --self-test: ${failed} ошибок`);
     process.exit(1);
   }
-  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — 13 случаев`);
+  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — 15 случаев`);
 }
 
 if (process.argv.includes('--self-test')) {

@@ -126,6 +126,7 @@ ci-docs:
 	node scripts/sync-legal.mjs --check
 	node scripts/check-vercel-ignore.mjs
 	node scripts/ci-changes.mjs --self-test
+	node scripts/check-node-version.mjs
 	node scripts/check-docs.mjs
 
 # sites-backend (Э0 ИИ-помощника; джоба `sites-backend` в CI). Тот же
