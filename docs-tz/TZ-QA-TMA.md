@@ -1025,7 +1025,13 @@ lastRecheckAt, revokedAt) и **не дублирует** поля подтвер
 - `Finding` — ownerRef, targetId, класс, интрузивность, severity, refs, fix,
   status, dedupKey, artifacts.
 - `SuppressionRule` — targetId, ruleId/dedupKey, reason, createdBy.
-- `ScanCredential` — targetId, ownerRef, enc, keyVersion, createdAt,
+- `ScanCredential` — **заменяется** общим реестром тестовых учётных
+  записей сайта `site_test_accounts` + `site_credentials` в `sites-backend`
+  (этап «Э-С», Ш2; `docs-tz/AUDIT-Merge-Assistant-Tutorial-QA-2026-10-02.md`):
+  те же креды нужны обучалке, сайты одни и те же, на сайте несколько
+  тестовых пользователей разных ролей и пакетов — Э7b берёт учётку из
+  реестра арендой `qa-login` и получает матрицу ролей (проверка
+  разграничения доступа). Прежнее описание: targetId, ownerRef, enc, keyVersion, createdAt,
   expiresAt, lastUsedAt (шифрование — `SITE_AUDIT_CRED_KEY` через
   `token-crypto.ts`, расшифровка только в воркере, §3.6; рекомендация
   аудита — асимметричный конверт под ключ воркера, §3.6).
