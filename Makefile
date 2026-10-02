@@ -110,7 +110,8 @@ LANDING_STAND_ENV = SITE_URL=https://assist.viral4creators.app PILOT_TELEGRAM_BO
 ci-sites-landing:
 	cd sites-landing && npx tsc --noEmit
 	cd sites-landing && npx next lint --max-warnings 0
-	cd sites-landing && for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done
+	# Unit-скрипты — с тем же env стенда, что в CI: иначе тест, читающий ASSIST_*, зелёный локально и красный в CI.
+	cd sites-landing && $(LANDING_STAND_ENV) sh -c 'for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done'
 	cd sites-landing && if SITE_URL= npx next build >/dev/null 2>&1; then echo "sites-landing: сборка без SITE_URL прошла"; exit 1; fi
 	cd sites-landing && $(LANDING_STAND_ENV) npx next build >/dev/null
 	cd sites-landing && $(LANDING_STAND_ENV) npm run -s check:built
