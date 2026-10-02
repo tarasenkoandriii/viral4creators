@@ -15,6 +15,7 @@ import { HostsTab } from './HostsTab';
 import { InstallTab } from './InstallTab';
 import { LeadsTab } from './LeadsTab';
 import { LookTab } from './LookTab';
+import { EngagementTab } from './EngagementTab';
 
 /** Раздел «Виджет» из навигации: выбор сайта → виджет, характер, мастер. */
 export function WidgetHome() {
@@ -190,6 +191,9 @@ export function WidgetScreen({
         <HostsTab siteId={siteId} view={v} onView={setView} />
       )}
       {tab === 'leads' && <LeadsTab siteId={siteId} />}
+      {tab === 'engagement' && (
+        <EngagementTab siteId={siteId} view={v} onView={setView} />
+      )}
     </div>
   );
 }

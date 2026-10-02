@@ -14,6 +14,11 @@
  * ассетов (assist_site_assets), никаких внешних URL.
  */
 
+import {
+  parseEngagementConfig,
+  type EngagementConfig,
+} from './engagement-config';
+
 export const WIDGET_POSITIONS = [
   'bottom-right',
   'bottom-left',
@@ -125,6 +130,12 @@ export interface WidgetConfig {
     hideOnScrollMobile: boolean;
   };
   hosts: WidgetHostRule[];
+  /**
+   * Э3 (§3.6 п.4–5, §5-тер.12): проактивные триггеры, лимиты навязчивости,
+   * сценарии. Необязательное: версии Э2 без поля читаются как
+   * `defaultEngagementConfig()`. Разбор — engagement-config.ts (T).
+   */
+  engagement?: EngagementConfig;
 }
 
 /** Что сервер поправил при сохранении (контраст и т.п.) — показать владельцу. */
@@ -807,7 +818,10 @@ function enforceContrast(c: Ctx, brand: WidgetConfig['brand']): void {
  * AA (≥ 4.5:1 текст, ≥ 3:1 иконка/границы) для светлой и тёмной тем,
  * не проходит — ближайший проходящий оттенок + adjustment `contrast_darkened`.
  */
-export function parseWidgetConfig(input: unknown): WidgetConfigParse {
+export function parseWidgetConfig(
+  input: unknown,
+  opts: { verifiedOrigins?: string[] } = {},
+): WidgetConfigParse {
   const c = new Ctx();
   if (!isObj(input)) {
     return { ok: false, errors: [{ path: '', code: 'type' }] };
@@ -819,13 +833,32 @@ export function parseWidgetConfig(input: unknown): WidgetConfigParse {
   const texts = parseTexts(c, input.texts);
   const layout = parseLayout(c, input.layout);
   const hosts = parseHosts(c, input.hosts);
+  // Э3: вовлечение — строгий разбор engagement-config.ts (неизвестное поле,
+  // триггер Э3-бис, ссылка не на verified-хост — ошибка, не умолчание).
+  let engagement: EngagementConfig | undefined;
+  if (input.engagement !== undefined && input.engagement !== null) {
+    const e = parseEngagementConfig(input.engagement, opts);
+    if (e.ok) engagement = e.config;
+    else {
+      for (const x of e.errors) {
+        c.err(x.path ? `engagement.${x.path}` : 'engagement', x.code);
+      }
+    }
+  }
   if (c.errors.length || !brand) {
     return { ok: false, errors: c.errors };
   }
   enforceContrast(c, brand);
   return {
     ok: true,
-    config: { schema: 1, brand, texts, layout, hosts },
+    config: {
+      schema: 1,
+      brand,
+      texts,
+      layout,
+      hosts,
+      ...(engagement ? { engagement } : {}),
+    },
     adjustments: c.adjustments,
   };
 }
@@ -867,6 +900,8 @@ export function parseWidgetConfigPatch(
     texts: { ...base.texts },
     layout: base.layout,
     hosts: base.hosts,
+    // Вовлечение partial не меняет (предпросмотр вида), но и не теряет.
+    ...(base.engagement ? { engagement: base.engagement } : {}),
   };
   for (const key of PATCH_SECTIONS) {
     const v = patch[key];

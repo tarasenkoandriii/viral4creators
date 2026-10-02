@@ -1,0 +1,38 @@
+{
+  "comment": "Э3: общие векторы подписи вебхука целей s2s и userHash identify — сверяют sites-backend (assist-analytics/webhook-signature.spec.ts, A), npm-пакет и плагин WordPress (T). Формат подписи: t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<сырое тело>\")>; userHash = hex HMAC-SHA256(секрет идентичности, externalId). Менять — только вместе со всеми тремя.",
+  "webhook": [
+    {
+      "name": "покупка",
+      "secret": "whsec_test_0123456789abcdef0123456789abcdef",
+      "body": "{\"goalKey\":\"purchase\",\"orderId\":\"A-1042\",\"value\":1299,\"currency\":\"UAH\",\"status\":\"completed\",\"occurredAt\":\"2026-10-03T10:00:00.000Z\"}",
+      "t": 1790000000,
+      "header": "t=1790000000,v1=0e5df24277549e2f6d956a2ee1221ee755d22e429513e915803fe00d2691f901"
+    },
+    {
+      "name": "возврат",
+      "secret": "whsec_test_0123456789abcdef0123456789abcdef",
+      "body": "{\"goalKey\":\"purchase\",\"orderId\":\"A-1042\",\"status\":\"refunded\",\"occurredAt\":\"2026-10-04T08:30:00.000Z\"}",
+      "t": 1790080000,
+      "header": "t=1790080000,v1=58ce40da7c7a404566e30b39306a8dd3fbb1e79dc255d08155a1222d5cafcfb1"
+    },
+    {
+      "name": "только подпись: кириллица в теле считается по байтам UTF-8 (тело не обязано быть валидным событием)",
+      "secret": "whsec_test_0123456789abcdef0123456789abcdef",
+      "body": "{\"goalKey\":\"заявка-тест\",\"orderId\":\"Z:9.9\",\"status\":\"completed\",\"occurredAt\":\"2026-10-03T10:00:00.000Z\"}",
+      "t": 1790000300,
+      "header": "t=1790000300,v1=7b5a579ef51b67f7938cd4218e14cd0813cf7c72511d1990d8cf39aaaf1438ba"
+    }
+  ],
+  "identity": [
+    {
+      "secret": "idsec_test_fedcba9876543210",
+      "externalId": "customer-42",
+      "userHash": "fd3621beda880744bef63586ba3f7a078b5caf6a9aa64bec38004a57c230e7ae"
+    },
+    {
+      "secret": "idsec_test_fedcba9876543210",
+      "externalId": "user@example.com",
+      "userHash": "44f8cbff867ded9230ca7fd16d07bc2871e30fa531c7bb194409b42578386c7d"
+    }
+  ]
+}

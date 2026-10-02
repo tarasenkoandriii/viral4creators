@@ -39,3 +39,32 @@ export const BRAND = {
 } as const;
 
 export const BRAND_IS_PLACEHOLDER = BRAND.name === '<бренд>';
+
+/**
+ * Адреса продукта по умолчанию (Л2–Л3) — ВРЕМЕННЫЕ домены до решения В-1
+ * (`doc/DEPLOYMENT.md` §6.0): виджет, API и кабинет живут на поддоменах
+ * `viral4creators.app`. Переопределяются env (`ASSIST_WIDGET_ORIGIN`,
+ * `ASSIST_API_ORIGIN`; проверка — `lib/assist-env.ts` и `next.config.js`),
+ * после В-1 — правка этих строк. Компоненты адресов литералом не пишут.
+ *
+ * Чего здесь нет: публичного ключа нашего виджета (`ASSIST_WIDGET_PK`) и
+ * имени бота (`ASSIST_BOT_USERNAME`) — только из env и без дефолта: без
+ * ключа живого виджета на лендинге нет, без бота — нет кнопки «в Telegram»
+ * (§7.1: выдуманное имя уводит к чужому боту).
+ */
+export const ASSIST_DEFAULTS = {
+  widgetOrigin: 'https://assist-w.viral4creators.app',
+  apiOrigin: 'https://assist-api.viral4creators.app',
+} as const;
+
+/**
+ * Публичные имена виджета — зеркало `widget/src/shared/brand.ts`
+ * (`WIDGET_LOADER_PATH`, `WIDGET_GLOBAL`); сверяет `scripts/assist-env.test.ts`.
+ * Меняются вместе с В-1 (аудит 01.10: «v4c» в публичных именах).
+ */
+export const WIDGET_NAMES = {
+  loaderPath: '/v1/loader.js',
+  global: 'V4CAssist',
+  /** Якорь «своей кнопки»: ссылка на него открывает чат (`WIDGET_ANCHOR`). */
+  anchor: '#v4c-assist',
+} as const;

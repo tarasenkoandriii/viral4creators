@@ -53,7 +53,8 @@ import { InstallCheckService } from './install-check.service';
 import { defaultPersona } from './persona';
 import { PersonaService } from './persona.service';
 import { SiteSetupController } from './site-setup.controller';
-import { buildCspSnippet } from './snippet';
+import { publicEngagement } from './engagement-config';
+import { buildCspSnippet, buildEmbedSnippet } from './snippet';
 import { SVG_SCRIPT, jpegBytes, pngBytes } from './testing/images.testing';
 import { defaultWidgetConfig, type WidgetConfig } from './widget-config';
 import { WidgetSettingsService } from './widget-settings.service';
@@ -296,7 +297,7 @@ describeDb(
 
       const routes = (
         id: string,
-      ): Array<['get' | 'post' | 'patch', string, object?]> => [
+      ): Array<['get' | 'post' | 'patch' | 'put', string, object?]> => [
         ['get', `/assist/sites/${id}/widget`],
         ['post', `/assist/sites/${id}/widget/keys`],
         ['patch', `/assist/sites/${id}/widget/draft`, { config: {} }],
@@ -316,6 +317,8 @@ describeDb(
         ['post', `/assist/sites/${id}/persona/rollback/1`],
         ['get', `/assist/sites/${id}/leads-config`],
         ['patch', `/assist/sites/${id}/leads-config`, { config: {} }],
+        // Э3 (T): сценарии вовлечения.
+        ['put', `/assist/sites/${id}/scenarios`, { scenarios: [] }],
       ];
 
       it('оператор помощника получает 403 на КАЖДОМ маршруте, ничего не меняя', async () => {
@@ -749,9 +752,12 @@ describeDb(
           select: { publicKey: true, widgetVersion: true },
         });
         expect(row.widgetVersion).toBe(0); // вид ещё не опубликован
-        const ex = await new WidgetPublicConfigService(
-          publicDb,
-        ).exchangePreview(
+        // Э3: у сервиса W появились зависимости передачи и целей — обмену
+        // предпросмотра они не нужны (конструктор — W, здесь только вызов).
+        const PublicConfig = WidgetPublicConfigService as unknown as new (
+          db: AssistPublicDb,
+        ) => WidgetPublicConfigService;
+        const ex = await new PublicConfig(publicDb).exchangePreview(
           {
             pk: row.publicKey as string,
             token: r.body.data.token,
@@ -1024,6 +1030,253 @@ describeDb(
     });
 
     // ── Проверка установки (приёмка п.2) ─────────────────────────────────
+
+    // ── Э3 (T): вовлечение — триггеры, лимиты, сценарии ──────────────────
+
+    describe('Э3: вовлечение в черновике и публикации вида', () => {
+      let f: Fx;
+      beforeAll(async () => {
+        f = await fixture();
+      });
+
+      const trigger = (over: Record<string, unknown> = {}) => ({
+        key: 'delivery',
+        enabled: true,
+        condition: { kind: 'time_on_page', seconds: 20 },
+        pathMasks: [],
+        text: { uk: 'Підказати з доставкою?' },
+        onAccept: { kind: 'open' },
+        ...over,
+      });
+      const scenario = (over: Record<string, unknown> = {}) => ({
+        key: 'pick',
+        enabled: true,
+        title: { uk: 'Підібрати' },
+        steps: [
+          {
+            key: 'budget',
+            question: { uk: 'Бюджет?' },
+            answer: { type: 'number', min: 0, max: null },
+          },
+        ],
+        final: { kind: 'lead' },
+        showInGreeting: true,
+        ...over,
+      });
+      const engagement = (over: Record<string, unknown> = {}) => ({
+        schema: 1,
+        triggers: [trigger()],
+        limits: {
+          perVisit: 1,
+          excludedPaths: ['/checkout*'],
+          notOnFirstScreenMobile: true,
+        },
+        scenarios: [scenario()],
+        ...over,
+      });
+      const patchEngagement = (e: unknown) =>
+        request(srv())
+          .patch(`/assist/sites/${f.siteId}/widget/draft`)
+          .set(as(f.owner))
+          .send({ config: { engagement: e } });
+
+      it('PATCH draft { config: { engagement } } — только вовлечение, вид не трогается', async () => {
+        const before = (
+          await request(srv())
+            .get(`/assist/sites/${f.siteId}/widget`)
+            .set(as(f.owner))
+        ).body.data.draft;
+        const r = await patchEngagement(engagement());
+        expect(r.status).toBe(200);
+        expect(r.body.data.draft.engagement.triggers).toHaveLength(1);
+        expect(r.body.data.draft.brand).toEqual(before.brand);
+        expect(r.body.data.draft.hosts).toEqual(before.hosts);
+      });
+
+      it('триггер Э3-бис — 400 ENGAGEMENT_INVALID с errors[]; черновик прежний', async () => {
+        const before = await prisma.assistSite.findFirstOrThrow({
+          where: { siteId: f.siteId },
+          select: { widgetDraft: true },
+        });
+        const r = await patchEngagement(
+          engagement({
+            triggers: [trigger({ condition: { kind: 'return_visit' } })],
+          }),
+        );
+        expect(r.status).toBe(400);
+        expect(r.body.error.code).toBe('ENGAGEMENT_INVALID');
+        expect(r.body.error.details.errors).toEqual([
+          {
+            path: 'engagement.triggers[0].condition.kind',
+            code: 'not_allowed',
+          },
+        ]);
+        const after = await prisma.assistSite.findFirstOrThrow({
+          where: { siteId: f.siteId },
+          select: { widgetDraft: true },
+        });
+        expect(after.widgetDraft).toEqual(before.widgetDraft);
+      });
+
+      it('ссылка финала: verified-хост — да; pending/в льготе/чужой — host_not_verified', async () => {
+        const link = (host: string) =>
+          engagement({
+            scenarios: [
+              scenario({
+                final: {
+                  kind: 'link',
+                  url: `https://${host}/sale`,
+                  label: { uk: 'Знижки' },
+                },
+              }),
+            ],
+          });
+        for (const host of [f.pending.host, f.grace.host, 'evil.example.net']) {
+          const r = await patchEngagement(link(host));
+          expect([host, r.status, r.body.error?.details?.errors]).toEqual([
+            host,
+            400,
+            [
+              {
+                path: 'engagement.scenarios[0].final.url',
+                code: 'host_not_verified',
+              },
+            ],
+          ]);
+        }
+        const ok = await patchEngagement(link(f.verified.host));
+        expect(ok.status).toBe(200);
+        expect(ok.body.data.draft.engagement.scenarios[0].final.url).toBe(
+          `https://${f.verified.host}/sale`,
+        );
+      });
+
+      it('PUT /scenarios — заменяет только сценарии; триггер в удалённый сценарий — scenario_unknown', async () => {
+        await patchEngagement(
+          engagement({
+            triggers: [
+              trigger(),
+              trigger({
+                key: 'to-pick',
+                onAccept: { kind: 'scenario', scenarioKey: 'pick' },
+              }),
+            ],
+          }),
+        );
+        const put = await request(srv())
+          .put(`/assist/sites/${f.siteId}/scenarios`)
+          .set(as(f.owner))
+          .send({
+            scenarios: [scenario(), scenario({ key: 'quiz', enabled: false })],
+          });
+        expect(put.status).toBe(200);
+        const d = put.body.data.draft.engagement;
+        expect(d.scenarios.map((s: { key: string }) => s.key)).toEqual([
+          'pick',
+          'quiz',
+        ]);
+        expect(d.triggers.map((t: { key: string }) => t.key)).toEqual([
+          'delivery',
+          'to-pick',
+        ]);
+        const broken = await request(srv())
+          .put(`/assist/sites/${f.siteId}/scenarios`)
+          .set(as(f.owner))
+          .send({ scenarios: [scenario({ key: 'quiz' })] });
+        expect(broken.status).toBe(400);
+        expect(broken.body.error.code).toBe('ENGAGEMENT_INVALID');
+        expect(broken.body.error.details.errors).toEqual([
+          {
+            path: 'engagement.triggers[1].onAccept.scenarioKey',
+            code: 'scenario_unknown',
+          },
+        ]);
+        const bad = await request(srv())
+          .put(`/assist/sites/${f.siteId}/scenarios`)
+          .set(as(f.owner))
+          .send({ scenarios: [scenario({ final: { kind: 'refund' } })] });
+        expect(bad.body.error.details.errors).toEqual([
+          { path: 'engagement.scenarios[0].final.kind', code: 'not_allowed' },
+        ]);
+      });
+
+      it('публикация: вовлечение — в версии вида; откат возвращает и его; публичная часть без выключенного', async () => {
+        const pub = await request(srv())
+          .post(`/assist/sites/${f.siteId}/widget/publish`)
+          .set(as(f.owner));
+        expect(pub.status).toBe(200);
+        const v1 = pub.body.data.publishedVersion;
+        expect(pub.body.data.published.engagement.scenarios).toHaveLength(2);
+        const p = publicEngagement(pub.body.data.published.engagement);
+        expect(p.scenarios.map((s) => s.key)).toEqual(['pick']);
+        expect(p.triggers.map((t) => t.key)).toEqual(['delivery', 'to-pick']);
+        // Новая версия без вовлечения → откат к v1 возвращает его.
+        await patchEngagement(engagement({ triggers: [], scenarios: [] }));
+        const pub2 = await request(srv())
+          .post(`/assist/sites/${f.siteId}/widget/publish`)
+          .set(as(f.owner));
+        expect(pub2.body.data.published.engagement.triggers).toEqual([]);
+        const back = await request(srv())
+          .post(`/assist/sites/${f.siteId}/widget/rollback/${v1}`)
+          .set(as(f.owner));
+        expect(back.status).toBe(200);
+        expect(
+          back.body.data.published.engagement.triggers.map(
+            (t: { key: string }) => t.key,
+          ),
+        ).toEqual(['delivery', 'to-pick']);
+      });
+
+      it('публикация перепроверяет ссылку: хост потерял подтверждение — ENGAGEMENT_INVALID', async () => {
+        const g = await fixture();
+        const link = engagement({
+          triggers: [],
+          scenarios: [
+            scenario({
+              final: {
+                kind: 'link',
+                url: `https://${g.verified.host}/sale`,
+                label: { uk: 'Знижки' },
+              },
+            }),
+          ],
+        });
+        const saved = await request(srv())
+          .patch(`/assist/sites/${g.siteId}/widget/draft`)
+          .set(as(g.owner))
+          .send({ config: { engagement: link } });
+        expect(saved.status).toBe(200);
+        await prisma.siteHost.update({
+          where: { id: g.verified.id },
+          data: { status: 'pending', verifiedAt: null, expiresAt: null },
+        });
+        const pub = await request(srv())
+          .post(`/assist/sites/${g.siteId}/widget/publish`)
+          .set(as(g.owner));
+        expect(pub.status).toBe(400);
+        expect(pub.body.error.code).toBe('ENGAGEMENT_INVALID');
+      });
+
+      it('инструкции установки (GTM/npm/WP) — после ключей, тег тот же, что snippet', async () => {
+        const before = await request(srv())
+          .get(`/assist/sites/${f.siteId}/widget`)
+          .set(as(f.owner));
+        expect(before.body.data.installGuides).toBeUndefined();
+        const r = await request(srv())
+          .post(`/assist/sites/${f.siteId}/widget/keys`)
+          .set(as(f.owner));
+        const g = r.body.data.installGuides;
+        expect(g.gtm.html).toBe(r.body.data.snippet);
+        expect(g.gtm.html).toBe(
+          buildEmbedSnippet({
+            publicKey: r.body.data.publicKey,
+            widgetOrigin: W,
+          }),
+        );
+        expect(g.wordpress.siteKey).toBe(r.body.data.publicKey);
+        expect(g.npm.code).toContain(`siteKey: '${r.body.data.publicKey}'`);
+      });
+    });
 
     describe('проверка установки: CSP без директив → csp_blocked с перечнем', () => {
       let f: Fx;

@@ -41,3 +41,10 @@ declare const process: {
   argv: string[];
   env: Record<string, string | undefined>;
 };
+
+// Э3: `widget-api.test.ts` сверяет инструкции установки с серверным
+// `snippet.ts`, а тот импортирует `keys.ts` (генератор ключа на
+// `randomBytes`). Сам тест ключей не генерирует — нужен только тип.
+declare module 'crypto' {
+  export function randomBytes(size: number): Uint8Array;
+}

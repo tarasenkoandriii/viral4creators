@@ -44,7 +44,7 @@ export function ClaimCard({
   text?: ReactNode;
   as?: Tag;
   heading?: 'h2' | 'h3';
-  cta?: { href: string; label: string };
+  cta?: { href: string; label: string; place?: string };
   className?: string;
   headingId?: string;
 }) {
@@ -75,7 +75,7 @@ export function ClaimCard({
       )}
       {cta && !soon && (
         <p className="claim-cta">
-          <a className="button button-secondary" href={cta.href}>
+          <a className="button button-secondary" href={cta.href} data-cta={cta.place}>
             {cta.label}
           </a>
         </p>

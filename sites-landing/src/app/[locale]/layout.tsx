@@ -5,6 +5,7 @@ import { JsonLd } from '../../components/JsonLd';
 import { getDictionary } from '../../lib/get-dictionary';
 import { fmt } from '../../lib/format';
 import { isLocale, locales } from '../../lib/i18n';
+import { liveWidgetTag } from '../../lib/live-widget';
 import { siteUrl } from '../../lib/site-url';
 
 /** Все локали — статика на сборке. Неизвестная локаль — 404, не рендер. */
@@ -23,7 +24,7 @@ export default function LocaleLayout({ children, params }: { children: React.Rea
   const dict = getDictionary(params.locale);
   const origin = siteUrl();
   return (
-    <HtmlDocument lang={params.locale}>
+    <HtmlDocument lang={params.locale} widget={liveWidgetTag(params.locale)}>
       {/* Organization + WebSite — на всех страницах (§8.3). */}
       <JsonLd
         data={{

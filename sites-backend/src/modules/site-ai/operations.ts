@@ -19,6 +19,13 @@ export const SITE_AI_OPERATIONS = [
   // пока той же GEMINI_MODEL — О-4).
   'assist-chat',
   'assist-classify',
+  // Э3: передача человеку — сводка и черновик оператору (№11, №14) и
+  // перевод сообщений (№12); платит суточный бюджет сайта+платформы, как
+  // ответ посетителю (обслуживание диалога, не обучение). Черновик
+  // проверенного ответа владельцу (№4) и симуляция (№31) — assist-learn /
+  // assist-eval (бюджет обучения).
+  'assist-handoff',
+  'assist-translate',
 ] as const;
 export type SiteAiOperation = (typeof SITE_AI_OPERATIONS)[number];
 

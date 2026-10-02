@@ -8,6 +8,12 @@
  *
  * Подделка конвейера пишет диалог и сообщения ПОД РОЛЬЮ виджета (как W3) —
  * так тесты state/stream/forget видят настоящие строки и права роли.
+ *
+ * Э3 (W): стыки с H/A/L (`HandoffIntake`, `GoalIntake`, `EventCounts`,
+ * `LearningSignals`, `ForgetJobs`) по умолчанию — подделки, записывающие
+ * вход (W проверяет СВОЮ сторону: допуск, формат, порядок вызовов); их
+ * владельцы и интеграционный прогон зовут `startWidgetStack({ real: […] })`
+ * с настоящими реализациями.
  */
 import {
   DynamicModule,
@@ -45,6 +51,31 @@ import { OWNER_PRODUCT_ROLES } from '../../site-core/account/roles';
 import { TelegramAuthModule } from '../../telegram-auth/telegram-auth.module';
 import { TEST_ASSIST_TOKEN } from '../../telegram-auth/test-init-data';
 import { AssistWidgetModule } from '../assist-widget.module';
+import {
+  EventCounts,
+  type WidgetEventKind,
+} from '../../assist-analytics/public/event-counts.service';
+import {
+  GoalIntake,
+  type GoalIntakeResult,
+} from '../../assist-analytics/public/goal-intake.service';
+import type { PublicGoal } from '../../assist-analytics/goal-types';
+import {
+  HandoffIntake,
+  type HandoffAvailability,
+  type HandoffRequestInput,
+  type HandoffRequestResult,
+  type VisitorHandoffView,
+} from '../../assist-site-handoff/public/handoff-intake.service';
+import { ForgetJobs } from '../../assist-site-learning/public/forget-jobs';
+import {
+  LearningSignals,
+  type LearningSignal,
+} from '../../assist-site-learning/public/learning-signals';
+import type {
+  WidgetSiteContext,
+  WidgetVisitor,
+} from '../../assist-site-chat/chat-types';
 import { WIDGET_ORIGIN_DEFAULT } from '../../../brand';
 
 export const DAY = 24 * 60 * 60 * 1000;
@@ -224,6 +255,143 @@ export class FakeCache {
   }
 }
 
+/** Передача человеку (H) — подделка: ответ задаёт тест, вход записывается. */
+export class FakeHandoff {
+  readonly requests: HandoffRequestInput[] = [];
+  readonly cancels: Array<{
+    siteId: string;
+    visitorId: string;
+    conversationId: string;
+  }> = [];
+  readonly views = new Map<string, VisitorHandoffView>();
+  availabilityValue: HandoffAvailability = {
+    available: true,
+    reason: null,
+    etaMinutes: 4,
+    etaText: { ru: '~4 минуты' },
+  };
+  /** Следующий ответ request: `human` (по умолчанию) или `lead`. */
+  next: 'human' | HandoffRequestResult = 'human';
+  async availability(): Promise<HandoffAvailability> {
+    return this.availabilityValue;
+  }
+  async request(input: HandoffRequestInput): Promise<HandoffRequestResult> {
+    this.requests.push(input);
+    if (this.next !== 'human') return this.next;
+    if (!input.conversationId)
+      return { mode: 'lead', reason: 'no_conversation' };
+    const existing = this.views.get(input.conversationId);
+    if (
+      existing &&
+      (existing.state === 'waiting' || existing.state === 'active')
+    ) {
+      return {
+        mode: 'human',
+        handoff: existing,
+        etaMinutes: 4,
+        existing: true,
+      };
+    }
+    const now = input.now ?? new Date();
+    const view: VisitorHandoffView = {
+      id: `h_${this.requests.length}_${input.conversationId.slice(-6)}`,
+      state: 'waiting',
+      requestedAt: now.toISOString(),
+      takenAt: null,
+      timeoutAt: new Date(now.getTime() + 5 * 60_000).toISOString(),
+    };
+    this.views.set(input.conversationId, view);
+    return { mode: 'human', handoff: view, etaMinutes: 4, existing: false };
+  }
+  async cancel(
+    site: WidgetSiteContext,
+    visitor: WidgetVisitor,
+    conversationId: string,
+  ): Promise<boolean> {
+    this.cancels.push({
+      siteId: site.siteId,
+      visitorId: visitor.visitorId,
+      conversationId,
+    });
+    const v = this.views.get(conversationId);
+    if (!v || v.state !== 'waiting') return false;
+    this.views.set(conversationId, { ...v, state: 'cancelled' });
+    return true;
+  }
+  async visitorView(
+    _site: WidgetSiteContext,
+    _visitor: WidgetVisitor,
+    conversationId: string,
+  ): Promise<VisitorHandoffView | null> {
+    return this.views.get(conversationId) ?? null;
+  }
+  async relay(): Promise<void> {}
+  async openFor(): Promise<null> {
+    return null;
+  }
+}
+
+/** Цели (A) — подделка: результат задаёт тест. */
+export class FakeGoals {
+  readonly fromLoaderCalls: Array<Parameters<GoalIntake['fromLoader']>[0]> = [];
+  readonly fromIframeCalls: Array<Parameters<GoalIntake['fromIframe']>[0]> = [];
+  result: GoalIntakeResult = 'recorded';
+  goals: PublicGoal[] = [];
+  async publicGoals(): Promise<PublicGoal[]> {
+    return this.goals;
+  }
+  async fromLoader(
+    p: Parameters<GoalIntake['fromLoader']>[0],
+  ): Promise<GoalIntakeResult> {
+    this.fromLoaderCalls.push(p);
+    return this.result;
+  }
+  async fromIframe(
+    p: Parameters<GoalIntake['fromIframe']>[0],
+  ): Promise<GoalIntakeResult> {
+    this.fromIframeCalls.push(p);
+    return this.result;
+  }
+  async recordBuiltinLead(): Promise<void> {}
+}
+
+export class FakeEventCounts {
+  readonly batches: Array<{
+    siteId: string;
+    events: Array<{ kind: WidgetEventKind; key: string | null }>;
+  }> = [];
+  async record(p: {
+    siteId: string;
+    events: Array<{ kind: WidgetEventKind; key: string | null }>;
+    now: Date;
+  }): Promise<void> {
+    this.batches.push({ siteId: p.siteId, events: p.events });
+  }
+}
+
+export class FakeSignals {
+  readonly signals: LearningSignal[] = [];
+  async record(s: LearningSignal): Promise<void> {
+    this.signals.push(s);
+  }
+}
+
+/** Хвост forget (L) — подделка; `liveAtEnqueue` — сколько диалогов ещё было в базе в момент вызова. */
+export class FakeForgetJobs {
+  readonly jobs: Array<{
+    siteId: string;
+    conversationIds: string[];
+    liveAtEnqueue: number;
+  }> = [];
+  constructor(private readonly db: AssistPublicDb) {}
+  async enqueue(siteId: string, conversationIds: string[]): Promise<void> {
+    const liveAtEnqueue = await this.db.assistSiteConversation.count({
+      where: { siteId, id: { in: conversationIds } },
+    });
+    this.jobs.push({ siteId, conversationIds, liveAtEnqueue });
+  }
+}
+
 export interface WidgetStack {
   app: INestApplication;
   prisma: PrismaService;
@@ -231,8 +399,18 @@ export interface WidgetStack {
   chat: FakeSiteChat;
   leads: FakeLeads;
   cache: FakeCache;
+  handoff: FakeHandoff;
+  goals: FakeGoals;
+  events: FakeEventCounts;
+  signals: FakeSignals;
+  forget: FakeForgetJobs;
   accounts: string[];
   close(): Promise<void>;
+}
+
+/** Какие стыки Э3 взять настоящими (владельцы H/A/L, интеграционный прогон). */
+export interface WidgetStackOptions {
+  real?: Array<'handoff' | 'goals' | 'events' | 'signals' | 'forget'>;
 }
 
 const ENV_KEYS = [
@@ -245,7 +423,9 @@ const ENV_KEYS = [
   'ALLOW_DEV_AUTH',
 ] as const;
 
-export async function startWidgetStack(): Promise<WidgetStack> {
+export async function startWidgetStack(
+  opts: WidgetStackOptions = {},
+): Promise<WidgetStack> {
   const saved: Record<string, string | undefined> = {};
   for (const k of ENV_KEYS) saved[k] = process.env[k];
   process.env.ASSIST_SECRETS_KEY = TEST_SECRETS_KEY;
@@ -261,7 +441,13 @@ export async function startWidgetStack(): Promise<WidgetStack> {
   const chat = new FakeSiteChat(publicDb);
   const leads = new FakeLeads();
   const cache = new FakeCache();
-  const mod = await Test.createTestingModule({
+  const handoff = new FakeHandoff();
+  const goals = new FakeGoals();
+  const events = new FakeEventCounts();
+  const signals = new FakeSignals();
+  const forget = new FakeForgetJobs(publicDb);
+  const real = new Set(opts.real ?? []);
+  let builder = Test.createTestingModule({
     imports: [
       WidgetTestInfra.with({ prisma, publicDb }),
       TelegramAuthModule,
@@ -273,8 +459,23 @@ export async function startWidgetStack(): Promise<WidgetStack> {
     .overrideProvider(SiteLeadsService)
     .useValue(leads)
     .overrideProvider(SemanticCache)
-    .useValue(cache)
-    .compile();
+    .useValue(cache);
+  if (!real.has('handoff')) {
+    builder = builder.overrideProvider(HandoffIntake).useValue(handoff);
+  }
+  if (!real.has('goals')) {
+    builder = builder.overrideProvider(GoalIntake).useValue(goals);
+  }
+  if (!real.has('events')) {
+    builder = builder.overrideProvider(EventCounts).useValue(events);
+  }
+  if (!real.has('signals')) {
+    builder = builder.overrideProvider(LearningSignals).useValue(signals);
+  }
+  if (!real.has('forget')) {
+    builder = builder.overrideProvider(ForgetJobs).useValue(forget);
+  }
+  const mod = await builder.compile();
   const app = mod.createNestApplication();
   // Лендинг — в общем списке CORS (как в проде: /public/* идёт по CORS_ORIGIN).
   configureApp(app, loadConfiguration({ CORS_ORIGIN: LANDING_ORIGIN }));
@@ -287,6 +488,11 @@ export async function startWidgetStack(): Promise<WidgetStack> {
     chat,
     leads,
     cache,
+    handoff,
+    goals,
+    events,
+    signals,
+    forget,
     accounts,
     async close() {
       await app.close();
@@ -333,7 +539,12 @@ let tgNext = 7_300_000_000 + Math.floor(Math.random() * 1_000_000) * 10;
 export async function widgetFixture(
   stack: WidgetStack,
   hosts: HostSpec[],
-  opts: { publish?: boolean; enabled?: boolean } = {},
+  opts: {
+    publish?: boolean;
+    enabled?: boolean;
+    /** Э3: вовлечение в опубликованном виде (как сохранил бы разбор T). */
+    engagement?: unknown;
+  } = {},
 ): Promise<WidgetFixture> {
   const { prisma } = stack;
   const acc = await prisma.siteAccount.create({
@@ -408,7 +619,13 @@ export async function widgetFixture(
         siteId: site.id,
         kind: 'widget',
         version: 1,
-        config: { ...defaultWidgetConfig('Магазин'), hosts: rules } as object,
+        config: {
+          ...defaultWidgetConfig('Магазин'),
+          hosts: rules,
+          ...(opts.engagement !== undefined
+            ? { engagement: opts.engagement }
+            : {}),
+        } as object,
       },
     });
   }

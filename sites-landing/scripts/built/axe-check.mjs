@@ -21,7 +21,7 @@ const require = createRequire(import.meta.url);
 const AXE = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 const BASE = (process.env.BASE_URL ?? 'http://localhost:3010').replace(/\/$/, '');
 const LOCALES = ['uk', 'en', 'ru'];
-const PATHS = ['', '/assistant', '/assistant/how-it-works', '/assistant/security', '/assistant/pricing', '/assistant/faq', '/assistant/pilot'];
+const PATHS = ['', '/assistant', '/assistant/how-it-works', '/assistant/widget', '/assistant/security', '/assistant/pricing', '/assistant/faq', '/assistant/pilot'];
 const urls = [
   ...LOCALES.flatMap((l) => PATHS.map((p) => `/${l}${p}`)),
   '/legal/privacy',
@@ -67,6 +67,25 @@ for (const scheme of ['light', 'dark']) {
   await page.waitForSelector('.field-error', { timeout: 5000 });
   await audit(page, `/uk/assistant/pilot (ошибки полей) [${scheme}]`);
   if (scheme === 'light') await formKeepsDataUnlessSent(page);
+  // Л3: конфигуратор в «трудных» состояниях — поправка контраста, ошибка
+  // логотипа, показанный код, телефон с тёмным макетом, своя кнопка.
+  await page.goto(`${BASE}/uk/assistant/widget`, { waitUntil: 'networkidle' });
+  await page.fill('label:has-text("Свій колір") input', '#FFEE00');
+  await page.setInputFiles('input[type="file"]', { name: 'x.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg/>') });
+  await page.click('button:has-text("Отримати код")');
+  await page.check('input[name="cfg-device"][value="phone"]');
+  await page.check('input[name="cfg-surface"][value="dark"]');
+  await page.waitForSelector('.cfg-adjusted');
+  await audit(page, `/uk/assistant/widget (поправка контраста, ошибка логотипа, код, телефон/тёмный) [${scheme}]`);
+  await page.check('input[name="cfg-launcher"][value="none"]');
+  await page.check('input[name="cfg-device"][value="desktop"]');
+  await audit(page, `/uk/assistant/widget (своя кнопка) [${scheme}]`);
+  // Л2: панель «покрутите виджет» после взаимодействия (если виджет есть в сборке).
+  await page.goto(`${BASE}/uk/assistant`, { waitUntil: 'networkidle' });
+  if (await page.$('[data-testid="playground"]')) {
+    await page.check('input[name="pg-corner"][value="bottom-left"]');
+    await audit(page, `/uk/assistant (панель «покрутите виджет») [${scheme}]`);
+  }
   await ctx.close();
 }
 
@@ -117,4 +136,4 @@ if (violations.length || overflow.length) {
   console.error(['FAIL axe/360 px:', ...violations, ...overflow].join('\n'));
   process.exit(1);
 }
-console.log(`ok   axe (WCAG 2.2 A/AA): ${runs} прогонов (${urls.length} адресов × 2 темы + 4 состояния) — 0 нарушений; форма пилота хранит данные при любом исходе, кроме «sent»; 360 px: без горизонтальной прокрутки, переключатель языка виден на ${urls.length} адресах`);
+console.log(`ok   axe (WCAG 2.2 A/AA): ${runs} прогонов (${urls.length} адресов × 2 темы + состояния FAQ, формы, конфигуратора, панели виджета) — 0 нарушений; форма пилота хранит данные при любом исходе, кроме «sent»; 360 px: без горизонтальной прокрутки, переключатель языка виден на ${urls.length} адресах`);

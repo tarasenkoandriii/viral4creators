@@ -79,6 +79,18 @@ const WIDGET_OPEN_PATHS = [
   /^\/widget\/v1\/ping(\?|$)/,
   /^\/widget\/v1\/asset\/[^/?]+(\?|$)/,
 ];
+/**
+ * Э3 (координатор): маршруты, которые зовёт СТРАНИЦА заказчика (загрузчик в
+ * origin сайта) — счётчики событий, цели, режим выбора цели (§4.16,
+ * §5-тер.14). Origin — любой сайт (CORS отражает его, без cookie);
+ * допуск решает гвард по pk + точному verified public-хосту (W), как у
+ * чата. Из iframe (origin виджета) эти же маршруты зовутся без credentials.
+ */
+const WIDGET_PAGE_PATHS = [
+  /^\/widget\/v1\/event(\?|$)/,
+  /^\/widget\/v1\/goal(\?|$)/,
+  /^\/widget\/v1\/goal-picker\/(session|pick)(\?|$)/,
+];
 const WIDGET_PATHS = /^\/(widget|w)\/v1\//;
 
 const METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'];
@@ -97,6 +109,14 @@ export function corsOptionsDelegate(cfg: {
       return callback(null, {
         origin: '*',
         methods: ['GET', 'OPTIONS'],
+        credentials: false,
+        maxAge: 600,
+      });
+    }
+    if (WIDGET_PAGE_PATHS.some((re) => re.test(url))) {
+      return callback(null, {
+        origin: true,
+        methods: ['POST', 'OPTIONS'],
         credentials: false,
         maxAge: 600,
       });

@@ -16,7 +16,7 @@ import { siteUrl } from './site-url';
  * «каждый деплой — всё изменилось» хуже, чем отсутствие `lastmod` (§8.1).
  * Правите тексты страницы — правьте дату.
  */
-export type PageKey = 'home' | 'assistant' | 'how-it-works' | 'security' | 'pricing' | 'faq' | 'pilot';
+export type PageKey = 'home' | 'assistant' | 'how-it-works' | 'widget' | 'security' | 'pricing' | 'faq' | 'pilot';
 
 export interface PageDef {
   key: PageKey;
@@ -28,13 +28,14 @@ export interface PageDef {
 }
 
 export const PAGES: readonly PageDef[] = [
-  { key: 'home', path: '', updated: '2026-10-01' },
-  { key: 'assistant', path: '/assistant', updated: '2026-10-01', parent: 'home' },
-  { key: 'how-it-works', path: '/assistant/how-it-works', updated: '2026-10-01', parent: 'assistant' },
-  { key: 'security', path: '/assistant/security', updated: '2026-10-01', parent: 'assistant' },
-  { key: 'pricing', path: '/assistant/pricing', updated: '2026-10-01', parent: 'assistant' },
-  { key: 'faq', path: '/assistant/faq', updated: '2026-10-01', parent: 'assistant' },
-  { key: 'pilot', path: '/assistant/pilot', updated: '2026-10-01', parent: 'assistant' },
+  { key: 'home', path: '', updated: '2026-10-02' },
+  { key: 'assistant', path: '/assistant', updated: '2026-10-02', parent: 'home' },
+  { key: 'how-it-works', path: '/assistant/how-it-works', updated: '2026-10-02', parent: 'assistant' },
+  { key: 'widget', path: '/assistant/widget', updated: '2026-10-02', parent: 'assistant' },
+  { key: 'security', path: '/assistant/security', updated: '2026-10-02', parent: 'assistant' },
+  { key: 'pricing', path: '/assistant/pricing', updated: '2026-10-02', parent: 'assistant' },
+  { key: 'faq', path: '/assistant/faq', updated: '2026-10-02', parent: 'assistant' },
+  { key: 'pilot', path: '/assistant/pilot', updated: '2026-10-02', parent: 'assistant' },
 ];
 
 export function page(key: PageKey): PageDef {

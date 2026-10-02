@@ -1,0 +1,19 @@
+{
+  "name": "@v4c/assist-widget",
+  "version": "0.1.0",
+  "description": "Виджет ИИ-помощника для React/Vue/Next.js: тонкая обёртка над loader.js с CDN (обновления виджета — без пересборки сайта)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./react": { "types": "./dist/react.d.ts", "default": "./dist/react.js" },
+    "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" }
+  },
+  "files": ["dist"],
+  "sideEffects": false,
+  "peerDependencies": { "react": ">=17" },
+  "peerDependenciesMeta": { "react": { "optional": true } },
+  "license": "UNLICENSED",
+  "private": true
+}

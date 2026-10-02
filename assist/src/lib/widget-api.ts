@@ -31,6 +31,7 @@ import {
   WIDGET_WARNING_CODES,
   type AssetView,
   type ConfigHistoryItem,
+  type InstallGuides,
   type InstallCheckHost,
   type InstallCheckView,
   type PreviewTokenResult,
@@ -42,6 +43,11 @@ import {
   type WidgetSettingsView,
   type WidgetWarning,
 } from './widget-types';
+import {
+  parseEngagement,
+  type EngagementConfig,
+  type ScenarioConfig,
+} from './engagement-types';
 
 type Obj = Record<string, unknown>;
 export const obj = (v: unknown): Obj =>
@@ -183,6 +189,35 @@ export function parseWidgetConfig(v: unknown): WidgetConfig {
     hosts: arr(o.hosts)
       .map(hostRule)
       .filter((x): x is WidgetHostRule => !!x),
+    // Э3: вовлечение не теряется при сохранении вида целиком (вкладка «Вид»
+    // шлёт полную конфигурацию — без поля сервер стёр бы триггеры).
+    ...(o.engagement && typeof o.engagement === 'object'
+      ? { engagement: parseEngagement(o.engagement) }
+      : {}),
+  };
+}
+
+/** Инструкции установки: строки — только текст (рисуются и копируются). */
+export function parseInstallGuides(v: unknown): InstallGuides | null {
+  const o = obj(v);
+  const gtm = obj(o.gtm);
+  const npm = obj(o.npm);
+  const wp = obj(o.wordpress);
+  const js = obj(o.jsApi);
+  if (typeof gtm.html !== 'string' || !gtm.html) return null;
+  return {
+    gtm: { html: gtm.html },
+    npm: {
+      install: text(npm.install),
+      code: text(npm.code),
+      react: text(npm.react),
+    },
+    wordpress: {
+      pluginSlug: text(wp.pluginSlug),
+      siteKey: PUBLIC_KEY.test(text(wp.siteKey)) ? text(wp.siteKey) : '',
+      widgetOrigin: safeWidgetOrigin(wp.widgetOrigin) ?? '',
+    },
+    jsApi: { goal: text(js.goal), identify: text(js.identify) },
   };
 }
 
@@ -276,6 +311,8 @@ export function parseWidgetSettings(v: unknown): WidgetSettingsView {
   if (Array.isArray(o.assets)) {
     out.assets = o.assets.map(parseAsset).filter((x): x is AssetView => !!x);
   }
+  const guides = pk ? parseInstallGuides(o.installGuides) : null;
+  if (guides) out.installGuides = guides;
   return out;
 }
 
@@ -331,6 +368,16 @@ export interface WidgetApi {
   checkInstall(siteId: string): Promise<InstallCheckView>;
   setPaused(siteId: string, chatPaused: boolean): Promise<WidgetSettingsView>;
   uploadAsset(siteId: string, body: AssetUpload): Promise<AssetView>;
+  /** Э3: только вовлечение поверх черновика (`{ config: { engagement } }`). */
+  saveEngagement(
+    siteId: string,
+    engagement: EngagementConfig
+  ): Promise<WidgetSettingsView>;
+  /** Э3: `PUT /assist/sites/:id/scenarios`. */
+  saveScenarios(
+    siteId: string,
+    scenarios: ScenarioConfig[]
+  ): Promise<WidgetSettingsView>;
   /** Атрибуция лендинга (`lp_`/`pl_`/`sb_`/`wd_`) — первый запуск. */
   acquisition(payload: string): Promise<{ recorded: boolean }>;
   /** «к Л3»: черновик вида с лендинга (`wd_<id>`). */
@@ -370,6 +417,16 @@ export function createWidgetApi(client: ApiClient): WidgetApi {
       if (!a) throw new ApiError('bad_response', 'asset', 200);
       return a;
     },
+    saveEngagement: async (id, engagement) =>
+      view(
+        client.request('PATCH', `${site(id)}/draft`, { config: { engagement } })
+      ),
+    saveScenarios: async (id, scenarios) =>
+      view(
+        client.request('PUT', `/assist/sites/${seg(id)}/scenarios`, {
+          scenarios,
+        })
+      ),
     acquisition: async (payload) => {
       const o = obj(
         await client.request('POST', '/assist/acquisition', { payload })

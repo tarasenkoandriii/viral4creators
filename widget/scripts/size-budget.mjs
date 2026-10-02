@@ -20,7 +20,16 @@ const KB = 1024;
 
 export const BUDGETS = [
   { name: 'loader', files: ['dist/v1/loader.js'], maxGzip: 12 * KB },
-  { name: 'chat', files: ['dist/v1/chat.js', 'dist/v1/chat.css'], maxGzip: 60 * KB },
+  {
+    name: 'chat',
+    files: ['dist/v1/chat.js', 'dist/v1/chat.css'],
+    maxGzip: 60 * KB,
+  },
+  // Э3: режим выбора цели (только владельцу по `?v4c_goal=`, §5-тер.1).
+  { name: 'picker', files: ['dist/v1/picker.js'], maxGzip: 10 * KB },
+  // Э3 (интеграция): вовлечение и цели — ленивый чанк загрузчика (после
+  // load + простоя или при первом взаимодействии, только при целях/триггерах).
+  { name: 'engage', files: ['dist/v1/engage.js'], maxGzip: 8 * KB },
 ];
 
 export const LOADER_SINKS = [
@@ -57,11 +66,18 @@ for (const b of BUDGETS) {
   }
 }
 
-const loader = fs.readFileSync(path.join(ROOT, 'dist/v1/loader.js'), 'utf8');
-for (const re of LOADER_SINKS) {
-  if (re.test(loader)) {
-    ok = false;
-    console.error(`загрузчик: найден запрещённый приёмник ${re} (§4.12)`);
+// Загрузчик и режим выбора цели исполняются в origin заказчика.
+for (const [label, file] of [
+  ['загрузчик', 'dist/v1/loader.js'],
+  ['режим выбора цели', 'dist/v1/picker.js'],
+  ['чанк вовлечения и целей', 'dist/v1/engage.js'],
+]) {
+  const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  for (const re of LOADER_SINKS) {
+    if (re.test(code)) {
+      ok = false;
+      console.error(`${label}: найден запрещённый приёмник ${re} (§4.12)`);
+    }
   }
 }
 process.exit(ok ? 0 : 1);

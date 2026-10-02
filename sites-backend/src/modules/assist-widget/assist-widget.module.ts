@@ -6,7 +6,10 @@
  * основной ролью). Конвейер ответа — W3 (assist-site-chat).
  */
 import { Module } from '@nestjs/common';
+import { AssistAnalyticsModule } from '../assist-analytics/assist-analytics.module';
 import { AssistSiteChatModule } from '../assist-site-chat/assist-site-chat.module';
+import { AssistSiteHandoffModule } from '../assist-site-handoff/assist-site-handoff.module';
+import { AssistSiteLearningModule } from '../assist-site-learning/assist-site-learning.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { AcquisitionController } from './cabinet/acquisition.controller';
 import { AcquisitionService } from './cabinet/acquisition.service';
@@ -19,14 +22,24 @@ import { WidgetOriginGuard } from './origin-guard';
 import { WidgetRateLimit } from './rate-limit';
 import { WidgetChatService } from './widget-chat.service';
 import { WidgetPublicConfigService } from './widget-config.service';
+import { WidgetEngagementController } from './widget-engagement.controller';
+import { WidgetEngagementService } from './widget-engagement.service';
 import { WidgetPublicController } from './widget-public.controller';
 import { WidgetSessionService } from './widget-session.service';
 import { WidgetStateService } from './widget-state.service';
 
 @Module({
-  imports: [SiteCoreModule, AssistSiteChatModule],
+  imports: [
+    SiteCoreModule,
+    AssistSiteChatModule,
+    // Э3: передача человеку, цели/счётчики, хвост forget (публичные части — public/ модулей).
+    AssistSiteHandoffModule,
+    AssistAnalyticsModule,
+    AssistSiteLearningModule,
+  ],
   controllers: [
     WidgetPublicController,
+    WidgetEngagementController,
     WidgetFrameController,
     LandingPublicController,
     AcquisitionController,
@@ -39,6 +52,7 @@ import { WidgetStateService } from './widget-state.service';
     WidgetStateService,
     WidgetChatService,
     WidgetPublicConfigService,
+    WidgetEngagementService,
     LandingService,
     AcquisitionService,
     LandingDraftService,

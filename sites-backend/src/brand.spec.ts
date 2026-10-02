@@ -75,6 +75,10 @@ describe('brand Э2 — публичные имена виджета тольк�
       brand.WIDGET_PK_TEST_PREFIX,
       brand.WIDGET_MESSAGE_NS,
       'w.v4c.example.invalid',
+      // Э3.
+      brand.WIDGET_GOAL_PICKER_PARAM,
+      brand.GOAL_WEBHOOK_SIGNATURE_HEADER,
+      brand.WIDGET_NPM_PACKAGE,
     ];
     const hits: string[] = [];
     const walk = (dir: string): void => {

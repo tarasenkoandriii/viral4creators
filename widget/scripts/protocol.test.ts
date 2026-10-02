@@ -216,6 +216,110 @@ assert.equal(
   'команды «отдай историю» нет'
 );
 
+// Э3: цель родитель → iframe
+const goal = {
+  type: 'goal',
+  goalKey: 'purchase',
+  detector: 'js',
+  docId: 'd0123456789ab',
+  path: '/thanks',
+  orderId: 'A-1042',
+  value: 1299,
+  currency: 'UAH',
+};
+assert.deepEqual(parseParentMessage(envelope(goal)), goal);
+for (const [bad, why] of [
+  [{ orderId: 'ivan@example.com' }, 'orderId-e-mail'],
+  [{ orderId: '+380 67 123 45 67' }, 'orderId-телефон'],
+  [{ path: '/thanks?email=a@b.c' }, 'query в пути'],
+  [{ detector: 's2s' }, 'детектор сервера'],
+  [{ goalKey: 'Bad Key' }, 'ключ'],
+  [{ value: -5 }, 'отрицательная сумма'],
+  [{ currency: 'uah' }, 'валюта'],
+  [{ docId: 'x' }, 'docId'],
+] as const)
+  assert.equal(
+    parseParentMessage(envelope({ ...goal, ...bad })),
+    null,
+    `goal: ${why}`
+  );
+// Э3: проактивный сигнал
+assert.deepEqual(
+  parseParentMessage(
+    envelope({
+      type: 'proactive',
+      triggerKey: 'delivery',
+      action: 'prefill',
+      scenarioKey: null,
+      question: '  Сколько стоит доставка?  ',
+    })
+  ),
+  {
+    type: 'proactive',
+    triggerKey: 'delivery',
+    action: 'prefill',
+    scenarioKey: null,
+    question: 'Сколько стоит доставка?',
+  }
+);
+assert.equal(
+  parseParentMessage(
+    envelope({
+      type: 'proactive',
+      triggerKey: 'x',
+      action: 'scenario',
+      scenarioKey: null,
+      question: null,
+    })
+  ),
+  null,
+  'сценарий без ключа'
+);
+assert.equal(
+  parseParentMessage(
+    envelope({
+      type: 'proactive',
+      triggerKey: 'x',
+      action: 'send',
+      scenarioKey: null,
+      question: 'q',
+    })
+  ),
+  null,
+  'действия «отправить» нет — только префилл'
+);
+// Э3: iframe → загрузчик: счётчик без текста, состояние передачи
+assert.deepEqual(
+  parseFrameMessage(envelope({ type: 'count', kind: 'link_click', key: null })),
+  { type: 'count', kind: 'link_click', key: null }
+);
+assert.deepEqual(
+  parseFrameMessage(
+    envelope({ type: 'count', kind: 'scenario_done', key: 'pick-tour' })
+  ),
+  { type: 'count', kind: 'scenario_done', key: 'pick-tour' }
+);
+assert.equal(
+  parseFrameMessage(envelope({ type: 'count', kind: 'link_click', key: 'x' })),
+  null,
+  'у link_click ключа нет'
+);
+assert.equal(
+  parseFrameMessage(
+    envelope({ type: 'count', kind: 'proactive_shown', key: 'x' })
+  ),
+  null,
+  'проактивные счётчики шлёт загрузчик сам'
+);
+assert.deepEqual(
+  parseFrameMessage(envelope({ type: 'handoff-state', state: 'active' })),
+  { type: 'handoff-state', state: 'active' }
+);
+assert.equal(
+  parseFrameMessage(envelope({ type: 'handoff-state', state: 'taken' })),
+  null
+);
+
 // pk
 assert.ok(isPk('pk_test_abcdefgh'));
 assert.ok(!isPk('pk_live_short'));

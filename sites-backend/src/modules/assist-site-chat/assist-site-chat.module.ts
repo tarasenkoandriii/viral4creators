@@ -5,7 +5,10 @@
  * `chat-public-db`: вне папки system/ — только AssistPublicDb).
  */
 import { Module } from '@nestjs/common';
+import { AssistAnalyticsModule } from '../assist-analytics/assist-analytics.module';
 import { AssistKnowledgeCoreModule } from '../assist-knowledge-core/assist-knowledge-core.module';
+import { AssistSiteHandoffModule } from '../assist-site-handoff/assist-site-handoff.module';
+import { AssistSiteLearningModule } from '../assist-site-learning/assist-site-learning.module';
 import { SiteAiModule } from '../site-ai/site-ai.module';
 import { DialogQuota, SiteBudget } from './budget';
 import { SiteChatModel } from './chat-model';
@@ -21,7 +24,15 @@ import { LeadDelivery } from './system/lead-delivery.service';
 import { PersonaGateRunner } from './system/persona-gate.runner';
 
 @Module({
-  imports: [SiteAiModule, AssistKnowledgeCoreModule],
+  imports: [
+    SiteAiModule,
+    AssistKnowledgeCoreModule,
+    // Э3: передача человеку (H — открытая передача, эскалация), сигналы
+    // очереди (L), встроенная цель «Заявка» и сверка identify (A).
+    AssistSiteHandoffModule,
+    AssistSiteLearningModule,
+    AssistAnalyticsModule,
+  ],
   controllers: [AssistBudgetSweepController],
   providers: [
     SiteChatService,
@@ -44,6 +55,8 @@ import { PersonaGateRunner } from './system/persona-gate.runner';
     PersonaGate,
     ChatRetention,
     LeadDelivery,
+    // Э3: деньги дня — сводке/черновику/переводу передачи (H, HandoffAi).
+    SiteBudget,
   ],
 })
 export class AssistSiteChatModule {}

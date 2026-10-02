@@ -13,6 +13,12 @@ import {
   type KnowledgeTab,
 } from './knowledge-view';
 import { PLAN_IDS, isWidgetTab, type WidgetTab } from './widget-view';
+import {
+  isLearningTab,
+  isStatsTab,
+  type LearningTab,
+  type StatsTab,
+} from './e3-view';
 
 export type Section = 'knowledge' | 'widget' | 'dialogs';
 
@@ -45,6 +51,16 @@ export type Route =
   | { name: 'wizard'; siteId: string }
   | { name: 'plan'; plan: string }
   | { name: 'widget-draft'; draftId: string }
+  // Э3 (T): диалоги и передача, статистика, цели, интеграции, обучение
+  // (контракт Э3 §4 T, «TMA (хеш-маршруты)»; бот ссылается на них).
+  | { name: 'dialogs'; siteId: string }
+  | { name: 'dialog'; siteId: string; cid: string }
+  | { name: 'handoff'; siteId: string }
+  | { name: 'stats'; siteId: string; tab: StatsTab }
+  | { name: 'stats-sites' }
+  | { name: 'goals'; siteId: string }
+  | { name: 'integrations'; siteId: string }
+  | { name: 'learning'; siteId: string; tab: LearningTab }
   | { name: 'not-found'; path: string };
 
 const SECTIONS: Section[] = ['knowledge', 'widget', 'dialogs'];
@@ -77,6 +93,7 @@ export function parseRoute(hash: string): Route {
   if (p.length === 2 && p[0] === 'widget-draft' && ID.test(p[1])) {
     return { name: 'widget-draft', draftId: p[1] };
   }
+  if (p.length === 1 && p[0] === 'stats') return { name: 'stats-sites' };
   if (p.length === 1 && (SECTIONS as string[]).includes(p[0])) {
     return { name: 'section', section: p[0] as Section };
   }
@@ -117,6 +134,51 @@ export function parseRoute(hash: string): Route {
     }
     if (p.length === 3 && p[2] === 'persona' && ID.test(p[1])) {
       return { name: 'persona', siteId: p[1] };
+    }
+    if (p.length === 3 && p[2] === 'dialogs' && ID.test(p[1])) {
+      return { name: 'dialogs', siteId: p[1] };
+    }
+    if (
+      p.length === 4 &&
+      p[2] === 'dialogs' &&
+      ID.test(p[1]) &&
+      ID.test(p[3])
+    ) {
+      return { name: 'dialog', siteId: p[1], cid: p[3] };
+    }
+    if (p.length === 3 && ID.test(p[1])) {
+      if (p[2] === 'handoff') return { name: 'handoff', siteId: p[1] };
+      if (p[2] === 'goals') return { name: 'goals', siteId: p[1] };
+      if (p[2] === 'integrations') {
+        return { name: 'integrations', siteId: p[1] };
+      }
+    }
+    // #/sites/:id/stats[/overview|conversions|topics]; без вкладки — обзор.
+    if (
+      (p.length === 3 || p.length === 4) &&
+      p[2] === 'stats' &&
+      ID.test(p[1]) &&
+      (p.length === 3 || (isStatsTab(p[3]) && p[3] !== 'overview'))
+    ) {
+      return {
+        name: 'stats',
+        siteId: p[1],
+        tab: p.length === 4 ? (p[3] as StatsTab) : 'overview',
+      };
+    }
+    // #/sites/:id/learning/site[/queue|golden|quality]; без вкладки — очередь.
+    if (
+      (p.length === 4 || p.length === 5) &&
+      p[2] === 'learning' &&
+      p[3] === 'site' &&
+      ID.test(p[1]) &&
+      (p.length === 4 || (isLearningTab(p[4]) && p[4] !== 'queue'))
+    ) {
+      return {
+        name: 'learning',
+        siteId: p[1],
+        tab: p.length === 5 ? (p[4] as LearningTab) : 'queue',
+      };
     }
     // Мастер — адрес из ТЗ §4-тер.14: …/learning/site/onboarding.
     if (
@@ -186,6 +248,26 @@ export function routeHref(r: Route): string {
       return `#/plan/${r.plan}`;
     case 'widget-draft':
       return `#/widget-draft/${r.draftId}`;
+    case 'dialogs':
+      return `#/sites/${r.siteId}/dialogs`;
+    case 'dialog':
+      return `#/sites/${r.siteId}/dialogs/${r.cid}`;
+    case 'handoff':
+      return `#/sites/${r.siteId}/handoff`;
+    case 'stats':
+      return `#/sites/${r.siteId}/stats${
+        r.tab === 'overview' ? '' : `/${r.tab}`
+      }`;
+    case 'stats-sites':
+      return '#/stats';
+    case 'goals':
+      return `#/sites/${r.siteId}/goals`;
+    case 'integrations':
+      return `#/sites/${r.siteId}/integrations`;
+    case 'learning':
+      return `#/sites/${r.siteId}/learning/site${
+        r.tab === 'queue' ? '' : `/${r.tab}`
+      }`;
     case 'not-found':
       return `#/${r.path}`;
   }

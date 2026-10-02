@@ -44,8 +44,25 @@
  *    модель действительно будет вызвана (§4.5 уточнение 3).
  *  - Генерация идёт фоновой задачей (EventChannel): разрыв соединения её
  *    не останавливает (§4-бис.4). `AskInput.signal` поэтому не используется.
+ *
+ * Э3 (H, контракт Э3 §4 «H», решения 5, 21, 23):
+ *  - открытая передача человеку (HandoffIntake.openFor) — вопрос НЕ идёт
+ *    модели: сохраняется маскированным, событие `handoff` + `done`, пересылка
+ *    оператору — HandoffIntake.relay (системный код по id);
+ *  - «позовите человека» — передача (если доступна), иначе форма заявки (Э2);
+ *  - ранняя эскалация (№13, detectEscalation по настройкам передачи):
+ *    `sensitive` — шаблон без модели + «позвать человека»; остальные —
+ *    обычный ответ + кнопка `handoff` (или `lead`, если передача недоступна);
+ *  - «не нашёл» (пустой поиск) — к форме заявки добавляется `handoff`;
+ *  - сигналы очереди обучения (L): `empty_search`, `no_answer`, `flag:*`,
+ *    `repeat` (тот же вопрос за 24 ч, триграммы ≥ 0.85), просьба человека
+ *    после ответа модели — в HandoffIntake.request;
+ *  - `openedBy` — при создании диалога; `trace` (№34) — у каждого ответа;
+ *  - удержание хвоста стрима: в базу не сбрасывается конец текста, который
+ *    может оказаться началом телефона/e-mail/карты (уже записанное начало
+ *    после маскирования не меняется — склейка W по offset не ломается).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import {
@@ -60,6 +77,13 @@ import { questionLang } from '../assist-knowledge-core/answer/prompt';
 import { detectInjection } from '../assist-knowledge-core/injection';
 import { semanticCacheKey } from '../assist-knowledge-core/semantic-cache-key';
 import type { SearchHit } from '../assist-knowledge-core/types';
+import type { EscalationKind } from '../assist-site-handoff/api-types';
+import { HandoffIntake } from '../assist-site-handoff/public/handoff-intake.service';
+import type {
+  LearningKind,
+  LearningSignalSource,
+} from '../assist-site-learning/api-types';
+import { LearningSignals } from '../assist-site-learning/public/learning-signals';
 import { parsePersona, type PersonaConfig } from '../assist-site-setup/persona';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import {
@@ -79,6 +103,7 @@ import {
 import { SiteChatModel } from './chat-model';
 import type {
   AnswerPath,
+  AnswerTrace,
   AskInput,
   SiteAction,
   SiteAnswerSource,
@@ -100,6 +125,8 @@ import { StreamTextGuard } from './stream-guard';
 import {
   TEMPLATE_TEXT,
   answerLangOf,
+  handoffAction,
+  handoffWaitText,
   leadAction,
   preModelRule,
   type ChatLang,
@@ -121,6 +148,41 @@ export function answerCrid(crid: string): string {
   return `${crid}${ANSWER_CRID_SUFFIX}`;
 }
 
+/** «Тот же вопрос повторён» (§9.1 (г)): окно и порог триграмм (решение 9). */
+const REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const REPEAT_SIMILARITY = 0.85;
+/** `openedBy` (§5-тер.12 п.10): формат проверяет W, здесь — защита записи. */
+const OPENED_BY = /^(?:user|(?:proactive|scenario):[A-Za-z0-9_-]{1,40})$/;
+
+/**
+ * Сколько символов СЫРОГО текста стрима можно сбросить в базу (решение 23):
+ * хвост, который может оказаться началом телефона/карты/IBAN (цифры с
+ * разделителями в конце) или e-mail/токена (последнее «слово» без
+ * пробела), остаётся в памяти до следующего сброса или конца ответа.
+ * Тогда маска уже записанного начала больше не меняется.
+ */
+const FLUSH_TAIL_WINDOW = 160;
+
+export function stableFlushLength(raw: string): number {
+  let cut = raw.length;
+  // Последнее слово без пробела после него (e-mail, токен растут без пробелов).
+  const word = /\S+$/.exec(raw);
+  if (word) cut = word.index;
+  // Цифровой хвост с разделителями: «+38 (067) 12 » — продолжение номера.
+  // Окно — конец текста (номер карты/IBAN короче), без квадратичного скана.
+  const from = Math.max(0, raw.length - FLUSH_TAIL_WINDOW);
+  const tail = /[+(]?\d[\d\s().+-]*$/.exec(raw.slice(from));
+  if (tail) {
+    const at = from + tail.index;
+    cut = Math.min(cut, at);
+    // IBAN начинается буквами страны: «UA21 3223…».
+    if (/(?:^|[^\p{L}])[A-Z]{2}$/u.test(raw.slice(0, at))) {
+      cut = Math.min(cut, at - 2);
+    }
+  }
+  return Math.max(0, cut);
+}
+
 interface SiteRow {
   enabled: boolean;
   chatPaused: boolean;
@@ -135,6 +197,7 @@ interface ConvRow {
   answers: number;
   dialogCounted: boolean;
   lastMessageAt: Date;
+  suspicious: boolean;
 }
 
 interface Turn {
@@ -164,6 +227,8 @@ export class SiteChatService {
   random: () => number = Math.random;
   /** Опрос базы при повторе streaming-ответа (§4-бис.4). */
   replayPollMs = 500;
+  /** Сброс текста стрима в базу не чаще (тесты склейки ставят 0). */
+  streamFlushMs: number = WIDGET_DEFAULTS.streamFlushMs;
   private readonly inflight = new Set<Promise<void>>();
 
   constructor(
@@ -174,6 +239,10 @@ export class SiteChatService {
     private readonly cache: SemanticCache,
     private readonly model: SiteChatModel,
     private readonly usage: AiUsageRecorder,
+    // Э3 (H): передача человеку и сигналы очереди обучения (L). Необязательны
+    // — стенды Э2 собирают конвейер без них (поведение Э2).
+    @Optional() private readonly handoff?: HandoffIntake,
+    @Optional() private readonly signals?: LearningSignals,
   ) {}
 
   /** Поток событий ответа. Генерация не обрывается при разрыве соединения (§4-бис.4). */
@@ -273,12 +342,19 @@ export class SiteChatService {
             answers: true,
             dialogCounted: true,
             lastMessageAt: true,
+            suspicious: true,
           },
         })
       : null;
     if (conv) {
       const existing = await this.answerByCrid(conv.id, input.clientRequestId);
       if (existing) return this.replay(conv.id, existing, emit);
+      // Э3: идёт передача человеку — вопрос оператору, не модели (решение 5).
+      const open = this.handoff
+        ? await this.handoff.openFor(site.siteId, conv.id)
+        : null;
+      if (open)
+        return this.relayToOperator(input, conv.id, open, question, now, emit);
     }
 
     // ── 2. Рубильники и лимиты посетителя ──
@@ -352,6 +428,10 @@ export class SiteChatService {
           pageUrl: safePageUrl(input.page.url, hosts),
           locale: input.uiLang?.slice(0, 8) ?? null,
           suspicious: avail.ok ? avail.suspicious : false,
+          openedBy:
+            typeof input.openedBy === 'string' && OPENED_BY.test(input.openedBy)
+              ? input.openedBy
+              : null,
           lastMessageAt: now,
         },
         select: {
@@ -359,6 +439,7 @@ export class SiteChatService {
           answers: true,
           dialogCounted: true,
           lastMessageAt: true,
+          suspicious: true,
         },
       });
     }
@@ -374,6 +455,8 @@ export class SiteChatService {
             conversationId: convId,
             role: 'visitor',
             text: maskForJournal(question),
+            // Э3: язык вопроса — перевод оператору (№12), язык передачи.
+            lang: questionLang(question, null),
             clientRequestId: input.clientRequestId,
             streamState: 'complete',
             createdAt: now,
@@ -413,6 +496,22 @@ export class SiteChatService {
       emit,
       lang,
       started: now.getTime(),
+      site,
+      trace: {
+        rule: null,
+        chunkIds: [],
+        faqId: null,
+        cache: false,
+        translated: false,
+      },
+      extraActions: [],
+      learn: {
+        visitorId: input.visitor.visitorId,
+        suspicious: conv.suspicious || (avail.ok && avail.suspicious),
+        question: maskForJournal(question),
+        lang: questionLang(question, null),
+        embedding: null,
+      },
     };
     ref.ctx = ctx;
 
@@ -435,10 +534,22 @@ export class SiteChatService {
     // ── 4. Правила без модели ──
     const rule = preModelRule(question);
     if (rule === 'greeting' || rule === 'thanks') {
+      ctx.trace.rule = rule;
       return this.finishStatic(ctx, { kind: rule, path: 'template' });
     }
     if (rule === 'handoff') {
-      // Э2: «позвать человека» = форма лида (контракт §1 п.12).
+      ctx.trace.rule = 'handoff';
+      // Э3: «позовите человека» — передача, если доступна (§3.7 п.1–2).
+      if (await this.tryHumanHandoff(ctx, input, 'visitor', null)) return;
+      if (this.handoff && !site.preview) {
+        await this.handoff.afterAnswerSignal(
+          site,
+          input.visitor,
+          convId,
+          ctx.learn.suspicious,
+        );
+      }
+      // Иначе, как в Э2: «позвать человека» = форма лида.
       await this.setOutcome(convId, 'handoff');
       return this.finishStatic(ctx, {
         kind: 'handoff',
@@ -447,12 +558,24 @@ export class SiteChatService {
       });
     }
     if (detectInjection(question).quarantine) {
+      ctx.trace.rule = 'injection';
       return this.finishStatic(ctx, {
         kind: 'injection',
         path: 'refusal',
         flags: ['injection_suspect'],
       });
     }
+    // Э3 (№13): ранняя эскалация — правила из настроек передачи сайта.
+    const escalation = await this.escalation(site.siteId, question);
+    if (escalation) {
+      ctx.trace.rule = `escalation:${escalation}`;
+      ctx.extraActions = [await this.humanAction(ctx)];
+      if (escalation === 'sensitive') {
+        return this.finishStatic(ctx, { kind: 'sensitive', path: 'template' });
+      }
+    }
+    // Тот же вопрос за 24 ч после ответа — посетитель недоволен (L, §9.1 (г)).
+    await this.repeatSignal(ctx);
     const firstMessage = !history.some((t) => t.role === 'user');
     // Контекст страницы (`V4CAssist('context')`) меняет ответ — такой вопрос
     // не берётся из кэша и не кладётся в него (ключ кэша о контексте не знает).
@@ -473,6 +596,7 @@ export class SiteChatService {
         key: cacheKey,
       });
       if (cached) {
+        ctx.trace.cache = true;
         return this.finishAnswer(ctx, {
           text: cached.text,
           sources: cached.sources,
@@ -506,6 +630,7 @@ export class SiteChatService {
       const code =
         reserved.denied === 'site_budget' ? 'site_quota' : 'platform_budget';
       this.logger.warn(`ask: ${code} (site ${site.siteId})`);
+      ctx.trace.rule ??= code;
       return this.finishStatic(ctx, {
         kind: code,
         path: 'refusal',
@@ -520,6 +645,7 @@ export class SiteChatService {
       const qLang = questionLang(question, null);
       const emb = await this.search.embedQuestion(site, question);
       actual += emb.costMicroUsd;
+      ctx.learn.embedding = emb.vector.length ? emb.vector : null;
       const faq = await this.search.findDirectFaq(
         site,
         question,
@@ -527,6 +653,7 @@ export class SiteChatService {
         emb.vector,
       );
       if (faq) {
+        ctx.trace.faqId = faq.faqId;
         return await this.finishAnswer(ctx, {
           text: faq.answer,
           sources: [],
@@ -538,6 +665,7 @@ export class SiteChatService {
       }
       if (avail.suspicious) {
         await this.markSuspicious(convId);
+        ctx.trace.rule ??= 'suspicious';
         return await this.finishStatic(ctx, {
           kind: 'suspicious',
           path: 'refusal',
@@ -548,12 +676,21 @@ export class SiteChatService {
         vector: emb.vector,
       });
       actual += found.costMicroUsd;
+      ctx.trace.translated = found.translated;
       if (!found.hits.length) {
-        return await this.finishStatic(ctx, {
+        ctx.trace.rule ??= 'no_knowledge';
+        // §3.7 п.1: помощник не нашёл ответа — предложить и человека.
+        if (!ctx.extraActions.length) {
+          const human = await this.humanAction(ctx);
+          if (human.kind === 'handoff') ctx.extraActions = [human];
+        }
+        await this.finishStatic(ctx, {
           kind: 'no_knowledge',
           path: 'refusal',
           lead: true,
         });
+        await this.learnSignal(ctx, 'unknown', 'empty_search', null);
+        return;
       }
       if (
         !site.preview &&
@@ -626,6 +763,7 @@ export class SiteChatService {
       knowledgeLang: p.knowledgeLang,
       allowedLinkHosts: p.hosts,
     });
+    ctx.trace.chunkIds = [...prompt.sourceMap.values()].map((h) => h.chunkId);
     const siteHosts = new Set(p.hosts);
     const linkUrls = new Set<string>([
       ...p.hits.map((h) => h.url).filter((u): u is string => !!u),
@@ -663,17 +801,17 @@ export class SiteChatService {
     let failed: { code: WidgetStreamErrorCode; message: string } | null = null;
     let lastFlush = Date.now();
     let flushed = 0;
-    const flush = async (force = false) => {
-      const text = maskForJournal(guard.text);
-      if (
-        !force &&
-        (Date.now() - lastFlush < WIDGET_DEFAULTS.streamFlushMs ||
-          text.length === flushed)
-      ) {
-        return;
-      }
+    let flushedRaw = 0;
+    const flush = async () => {
+      if (Date.now() - lastFlush < this.streamFlushMs) return;
+      // Решение 23: хвост, который может стать телефоном/e-mail, — в памяти.
+      const raw = guard.text;
+      const cut = Math.max(flushedRaw, stableFlushLength(raw));
+      const text = maskForJournal(raw.slice(0, cut));
+      if (text.length === flushed) return;
       lastFlush = Date.now();
       flushed = text.length;
+      flushedRaw = cut;
       await this.db.assistSiteMessage.update({
         where: { id: ctx.answerId },
         data: { text, streamOffset: text.length },
@@ -734,6 +872,7 @@ export class SiteChatService {
           costMicroUsd: cost,
           model: this.model.model,
           latencyMs,
+          trace: this.traceOf(ctx, 'model'),
         },
         select: { id: true },
       });
@@ -764,6 +903,9 @@ export class SiteChatService {
         WIDGET_DEFAULTS.maxActions,
       );
     }
+    // Э3: «позвать человека» модели — передача (если доступна), иначе лид;
+    // эскалация (№13) добавляет кнопку человека.
+    actions = await this.withHumanActions(ctx, actions);
     let storedCacheKey: string | null = null;
     if (p.cacheKey) {
       const put = await this.cache.put({
@@ -799,6 +941,7 @@ export class SiteChatService {
         costMicroUsd: cost,
         model: this.model.model,
         latencyMs,
+        trace: this.traceOf(ctx, 'model'),
       },
       select: { id: true },
     });
@@ -819,7 +962,299 @@ export class SiteChatService {
         cached: units.cachedInputTokens,
       },
     });
+    // Сигналы очереди обучения (L): «не знаю» без источников, флаги проверки.
+    if (!sources.length) {
+      await this.learnSignal(ctx, 'unknown', 'no_answer', masked);
+    } else if (flags.length) {
+      await this.learnSignal(ctx, 'wrong', `flag:${flags[0]}`, masked);
+    }
     return cost;
+  }
+
+  // ── Э3: передача человеку, эскалация, сигналы, trace ──────────────────
+
+  /**
+   * Открытая передача: вопрос сохраняется маскированным и уходит оператору
+   * (HandoffIntake.relay — системный код по id), модель не вызывается.
+   */
+  private async relayToOperator(
+    input: AskInput,
+    convId: string,
+    open: { id: string; state: 'waiting' | 'active' },
+    question: string,
+    now: Date,
+    emit: Emit,
+  ): Promise<void> {
+    const site = input.site;
+    const id = randomUUID();
+    try {
+      await this.db.assistSiteMessage.createMany({
+        data: [
+          {
+            id,
+            accountId: site.accountId,
+            siteId: site.siteId,
+            conversationId: convId,
+            role: 'visitor',
+            text: maskForJournal(question),
+            lang: questionLang(question, null),
+            clientRequestId: input.clientRequestId,
+            streamState: 'complete',
+            createdAt: now,
+          },
+        ],
+      });
+    } catch (e) {
+      // Повтор того же clientRequestId — уже переслано, второй раз не шлём.
+      if ((e as { code?: string }).code !== 'P2002') throw e;
+      const prev = await this.db.assistSiteMessage.findFirst({
+        where: {
+          conversationId: convId,
+          clientRequestId: input.clientRequestId,
+        },
+        select: { id: true },
+      });
+      emit({
+        type: 'meta',
+        conversationId: convId,
+        messageId: prev?.id ?? id,
+        replay: true,
+      });
+      emit({ type: 'handoff', state: open.state, relayed: true });
+      emit({ type: 'done', usage: ZERO_USAGE });
+      return;
+    }
+    await this.handoff?.touchVisitor(open.id, now);
+    await this.touch(convId, now);
+    emit({
+      type: 'meta',
+      conversationId: convId,
+      messageId: id,
+      replay: false,
+    });
+    emit({ type: 'handoff', state: open.state, relayed: true });
+    emit({ type: 'done', usage: ZERO_USAGE });
+    await this.handoff
+      ?.relay(id)
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `ask: пересылка оператору не удалась (msg ${id}): ${(e as Error | null)?.name ?? 'Error'}`,
+        ),
+      );
+  }
+
+  /** «Позовите человека»: создать передачу; false — недоступна (дальше Э2-путь). */
+  private async tryHumanHandoff(
+    ctx: Finish,
+    input: AskInput,
+    reason: 'visitor' | 'escalation',
+    escalation: EscalationKind | null,
+  ): Promise<boolean> {
+    if (!this.handoff || input.site.preview) return false;
+    const r = await this.handoff
+      .request({
+        site: input.site,
+        visitor: input.visitor,
+        conversationId: ctx.convId,
+        reason,
+        escalation,
+        uiLang:
+          input.uiLang === 'uk' ||
+          input.uiLang === 'ru' ||
+          input.uiLang === 'en'
+            ? input.uiLang
+            : null,
+        pageUrl: input.page.url,
+        identity: null,
+        now: this.now(),
+      })
+      .catch((e: unknown) => {
+        this.logger.warn(
+          `ask: передача не создана (site ${input.site.siteId}): ${(e as Error | null)?.name ?? 'Error'}`,
+        );
+        return null;
+      });
+    if (!r || r.mode !== 'human') return false;
+    const avail = await this.handoff
+      .availability(input.site, this.now())
+      .catch(() => null);
+    const text = handoffWaitText(
+      ctx.lang,
+      r.etaMinutes,
+      (avail?.etaText ?? {}) as Partial<Record<ChatLang, string>>,
+    );
+    await this.storeFinal(ctx, {
+      text,
+      sources: [],
+      actions: [],
+      path: 'template',
+      cacheKey: null,
+      flags: [],
+      state: 'complete',
+    });
+    ctx.emit({ type: 'token', t: text });
+    ctx.emit({
+      type: 'handoff',
+      state: r.handoff.state === 'active' ? 'active' : 'waiting',
+      relayed: false,
+    });
+    ctx.emit({ type: 'done', usage: ZERO_USAGE });
+    return true;
+  }
+
+  private async escalation(
+    siteId: string,
+    question: string,
+  ): Promise<EscalationKind | null> {
+    if (!this.handoff) return null;
+    return this.handoff.escalationFor(siteId, question).catch(() => null);
+  }
+
+  private async humanAvailable(ctx: Finish): Promise<boolean> {
+    if (ctx.humanAvailable === undefined) {
+      ctx.humanAvailable =
+        !!this.handoff &&
+        !ctx.site.preview &&
+        (await this.handoff
+          .availability(ctx.site, this.now())
+          .then((a) => a.available)
+          .catch(() => false));
+    }
+    return ctx.humanAvailable;
+  }
+
+  /** Кнопка человека: передача, если доступна сейчас; иначе — форма заявки. */
+  private async humanAction(ctx: Finish): Promise<SiteAction> {
+    return (await this.humanAvailable(ctx))
+      ? handoffAction(ctx.lang)
+      : leadAction(ctx.lang);
+  }
+
+  /**
+   * Действия ответа + кнопка эскалации. `handoff` от модели при недоступной
+   * передаче — форма заявки (как в Э2), а не обещание оператора.
+   */
+  private async withHumanActions(
+    ctx: Finish,
+    actions: SiteAction[],
+  ): Promise<SiteAction[]> {
+    if (!this.handoff) return actions;
+    let out = actions;
+    if (
+      out.some((a) => a.kind === 'handoff') &&
+      !(await this.humanAvailable(ctx))
+    ) {
+      out = out.map((a) => (a.kind === 'handoff' ? leadAction(ctx.lang) : a));
+    }
+    return mergeActions(out, ctx.extraActions);
+  }
+
+  private traceOf(ctx: Finish, path: AnswerPath): Prisma.InputJsonValue {
+    const t: AnswerTrace = {
+      knowledgeVersion: ctx.site.knowledgeVersion,
+      configVersion: ctx.site.configVersion,
+      path,
+      ...ctx.trace,
+    };
+    return t as unknown as Prisma.InputJsonValue;
+  }
+
+  /** Сигнал очереди обучения (L); сбой записи не роняет ответ посетителю. */
+  private async learnSignal(
+    ctx: Finish,
+    kind: Exclude<LearningKind, 'voice_miss'>,
+    signal: LearningSignalSource,
+    answerMasked: string | null,
+    over: { messageId?: string; question?: string } = {},
+  ): Promise<void> {
+    if (!this.signals || ctx.site.preview) return;
+    await this.signals
+      .record({
+        accountId: ctx.site.accountId,
+        siteId: ctx.site.siteId,
+        kind,
+        signal,
+        conversationId: ctx.convId,
+        messageId: over.messageId ?? ctx.answerId,
+        visitorId: ctx.learn.visitorId,
+        suspicious: ctx.learn.suspicious,
+        questionMasked: over.question ?? ctx.learn.question,
+        answerMasked,
+        lang: ctx.learn.lang,
+        embedding: over.messageId ? null : ctx.learn.embedding,
+      })
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `ask: сигнал обучения ${signal} не записан (msg ${ctx.answerId}): ${(e as Error | null)?.name ?? 'Error'}`,
+        ),
+      );
+  }
+
+  /**
+   * «Тот же вопрос повторён в течение 24 ч» (§9.1 (г), решение 9): триграммы
+   * маскированных вопросов этого посетителя ≥ 0.85 и на прошлый уже был
+   * ответ — элемент `unhappy`/`repeat` к тому ответу.
+   */
+  private async repeatSignal(ctx: Finish): Promise<void> {
+    if (!this.signals || ctx.site.preview) return;
+    try {
+      const prev = await this.db.$queryRawUnsafe<
+        Array<{
+          id: string;
+          text: string;
+          conversationId: string;
+          createdAt: Date;
+        }>
+      >(
+        `SELECT m."id", m."text", m."conversationId", m."createdAt"
+           FROM "sites"."assist_site_messages" m
+           JOIN "sites"."assist_site_conversations" c ON c."id" = m."conversationId"
+          WHERE c."siteId" = $1 AND c."visitorId" = $2 AND m."role" = 'visitor'
+            AND m."createdAt" > $3
+            AND m."clientRequestId" IS DISTINCT FROM $4
+            AND "extensions".similarity(m."text", $5) >= $6
+          ORDER BY m."createdAt" DESC LIMIT 1`,
+        ctx.site.siteId,
+        ctx.learn.visitorId,
+        new Date(this.now().getTime() - REPEAT_WINDOW_MS),
+        // Свой (только что записанный) вопрос не считается повтором.
+        await this.ownCrid(ctx),
+        ctx.learn.question,
+        REPEAT_SIMILARITY,
+      );
+      if (!prev.length) return;
+      const answer = await this.db.assistSiteMessage.findFirst({
+        where: {
+          conversationId: prev[0].conversationId,
+          role: 'assistant',
+          createdAt: { gt: prev[0].createdAt },
+          answerPath: { in: ['model', 'faq', 'cache'] },
+          streamState: 'complete',
+        },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, text: true },
+      });
+      if (!answer) return;
+      await this.learnSignal(ctx, 'unhappy', 'repeat', answer.text, {
+        messageId: answer.id,
+        question: prev[0].text,
+      });
+    } catch (e) {
+      this.logger.warn(
+        `ask: проверка повтора не удалась (msg ${ctx.answerId}): ${(e as Error | null)?.name ?? 'Error'}`,
+      );
+    }
+  }
+
+  private async ownCrid(ctx: Finish): Promise<string | null> {
+    const own = await this.db.assistSiteMessage.findUnique({
+      where: { id: ctx.answerId },
+      select: { clientRequestId: true },
+    });
+    const crid = own?.clientRequestId ?? null;
+    return crid?.endsWith(ANSWER_CRID_SUFFIX)
+      ? crid.slice(0, -ANSWER_CRID_SUFFIX.length)
+      : crid;
   }
 
   // ── Ответы без модели ──────────────────────────────────────────────────
@@ -836,7 +1271,10 @@ export class SiteChatService {
     },
   ): Promise<void> {
     const text = TEMPLATE_TEXT[p.kind][ctx.lang];
-    const actions = p.lead ? [leadAction(ctx.lang)] : [];
+    const actions = mergeActions(
+      p.lead ? [leadAction(ctx.lang)] : [],
+      ctx.extraActions,
+    );
     if (!p.error) {
       return this.finishAnswer(ctx, {
         text,
@@ -863,7 +1301,7 @@ export class SiteChatService {
 
   private async finishAnswer(
     ctx: Finish,
-    a: {
+    raw: {
       text: string;
       sources: SiteAnswerSource[];
       actions: SiteAction[];
@@ -873,6 +1311,10 @@ export class SiteChatService {
       state?: 'complete' | 'refused';
     },
   ): Promise<void> {
+    const a = {
+      ...raw,
+      actions: await this.withHumanActions(ctx, raw.actions),
+    };
     await this.storeFinal(ctx, { ...a, state: a.state ?? 'complete' });
     ctx.emit({ type: 'token', t: a.text });
     if (a.sources.length) ctx.emit({ type: 'sources', items: a.sources });
@@ -905,6 +1347,7 @@ export class SiteChatService {
         answerPath: a.path,
         cacheKey: a.cacheKey,
         latencyMs: Date.now() - ctx.started,
+        trace: this.traceOf(ctx, a.path),
       },
       select: { id: true },
     });
@@ -1138,4 +1581,30 @@ interface Finish {
   emit: Emit;
   lang: ChatLang;
   started: number;
+  // ── Э3 (H) ──
+  site: AskInput['site'];
+  /** «Почему так ответил» (№34) — копится по ходу конвейера. */
+  trace: Omit<AnswerTrace, 'knowledgeVersion' | 'configVersion' | 'path'>;
+  /** Кнопка человека от эскалации/«не нашёл» (§3.7 п.1). */
+  extraActions: SiteAction[];
+  /** Передача доступна сейчас (кэш на запрос). */
+  humanAvailable?: boolean;
+  /** Для сигналов очереди обучения (тексты — маскированные). */
+  learn: {
+    visitorId: string;
+    suspicious: boolean;
+    question: string;
+    lang: string | null;
+    embedding: number[] | null;
+  };
+}
+
+/** Действия без повторов по виду (две «оставить заявку» — одна), ≤ maxActions. */
+function mergeActions(a: SiteAction[], b: SiteAction[]): SiteAction[] {
+  const out: SiteAction[] = [];
+  for (const x of [...a, ...b]) {
+    if (x.kind !== 'link' && out.some((y) => y.kind === x.kind)) continue;
+    out.push(x);
+  }
+  return out.slice(0, WIDGET_DEFAULTS.maxActions);
 }

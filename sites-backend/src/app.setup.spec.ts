@@ -69,6 +69,20 @@ class AssetProbeController {
   }
 }
 
+/** Э3: пробы сырого тела вебхука целей и text/plain от sendBeacon. */
+@Controller()
+class RawBodyProbeController {
+  @Post('assist/v1/sites/:id/goal-events')
+  webhook(@Body() body: unknown) {
+    return { type: typeof body, body };
+  }
+
+  @Post('widget/v1/event')
+  event(@Body() body: unknown) {
+    return { type: typeof body, body };
+  }
+}
+
 describe('приложение: конверт, ошибки, валидация, CORS, /health', () => {
   let app: INestApplication;
   const queryRaw = jest.fn();
@@ -77,7 +91,12 @@ describe('приложение: конверт, ошибки, валидация
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const moduleRef = await Test.createTestingModule({
-      controllers: [HealthController, ProbeController, AssetProbeController],
+      controllers: [
+        HealthController,
+        ProbeController,
+        AssetProbeController,
+        RawBodyProbeController,
+      ],
       providers: [
         { provide: PrismaService, useValue: { $queryRaw: queryRaw } },
       ],
@@ -230,6 +249,56 @@ describe('приложение: конверт, ошибки, валидация
       .set('Origin', 'https://evil.example');
     expect(frame.headers['access-control-allow-origin']).toBeUndefined();
     expect(frame.status).toBeLessThan(500);
+  });
+
+  it('CORS Э3: события, цели и выбор цели — со страницы любого сайта, без cookie (допуск — гвард)', async () => {
+    for (const path of [
+      '/widget/v1/event',
+      '/widget/v1/goal',
+      '/widget/v1/goal-picker/session',
+      '/widget/v1/goal-picker/pick',
+    ]) {
+      const pre = await request(app.getHttpServer())
+        .options(path)
+        .set('Origin', 'https://any-shop.example')
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'content-type');
+      expect(pre.headers['access-control-allow-origin']).toBe(
+        'https://any-shop.example',
+      );
+      expect(pre.headers['access-control-allow-credentials']).toBeUndefined();
+    }
+    // Чат по-прежнему только с origin виджета.
+    const chat = await request(app.getHttpServer())
+      .post('/widget/v1/chat')
+      .set('Origin', 'https://any-shop.example');
+    expect(chat.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('Э3: вебхук целей получает СЫРОЕ тело строкой (подпись по байтам); sendBeacon text/plain — строкой, JSON — объектом', async () => {
+    const raw = '{"b":1,  "a":"тест"}';
+    const hook = await request(app.getHttpServer())
+      .post('/assist/v1/sites/s1/goal-events')
+      .set('Content-Type', 'application/json')
+      .send(raw)
+      .expect(201);
+    expect(hook.body.data).toEqual({ type: 'string', body: raw });
+    const beacon = await request(app.getHttpServer())
+      .post('/widget/v1/event')
+      .set('Content-Type', 'text/plain;charset=UTF-8')
+      .send('{"pk":"x"}')
+      .expect(201);
+    expect(beacon.body.data).toEqual({ type: 'string', body: '{"pk":"x"}' });
+    const asJson = await request(app.getHttpServer())
+      .post('/widget/v1/event')
+      .send({ pk: 'x' })
+      .expect(201);
+    expect(asJson.body.data).toEqual({ type: 'object', body: { pk: 'x' } });
+    const tooBig = await request(app.getHttpServer())
+      .post('/assist/v1/sites/s1/goal-events')
+      .set('Content-Type', 'application/json')
+      .send('x'.repeat(5 * 1024));
+    expect(tooBig.status).toBe(413);
   });
 
   it('Э2: картинка бренда 200 КБ (≈273 КБ base64) проходит только в маршрут загрузки; прочим — потолок по умолчанию', async () => {

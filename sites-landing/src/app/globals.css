@@ -749,3 +749,601 @@ thead th {
   margin: 0;
   padding: 12px 0 24px;
 }
+
+/* ── Л2: живой виджет на главной Помощника, панель «покрутите виджет» ── */
+.live-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  background: var(--surface);
+}
+
+.playground {
+  margin-top: 16px;
+}
+
+.playground-h {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+/* ── Л3: конфигуратор `/assistant/widget` ── */
+.cfg {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+@media (min-width: 960px) {
+  .cfg {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    align-items: start;
+  }
+  .cfg-preview {
+    position: sticky;
+    top: 12px;
+  }
+}
+
+.cfg-h {
+  font-size: 1.25rem;
+  margin: 0 0 12px;
+}
+
+.cfg-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  padding: 12px 14px 14px;
+  margin: 0 0 14px;
+  min-width: 0;
+}
+
+.cfg-group .cfg-group {
+  border: 0;
+  padding: 6px 0 0;
+  margin: 0;
+}
+
+.cfg-group legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.cfg-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.cfg-option,
+.cfg-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+.cfg-option input,
+.cfg-check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.cfg-ico {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+}
+
+.cfg-ico svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+.cfg-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.cfg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.cfg-field input[type='text'],
+.cfg-field input[type='number'],
+.cfg-field select,
+.cfg-field textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  padding: 8px 10px;
+  min-height: 40px;
+  width: 100%;
+}
+
+.cfg-field input[type='color'] {
+  width: 56px;
+  height: 40px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--bg);
+}
+
+.cfg-field input[type='file'] {
+  font: inherit;
+  max-width: 100%;
+}
+
+.cfg-field-color {
+  flex: 0 0 auto;
+}
+
+.cfg-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.cfg-swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+
+.cfg-swatch[aria-checked='true'] {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--text);
+}
+
+.cfg-hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 6px 0 0;
+}
+
+.cfg-error {
+  color: var(--error-text);
+  margin: 6px 0 0;
+}
+
+.cfg-saved {
+  color: var(--ok-text);
+}
+
+.cfg-adjusted {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-small);
+  background: var(--soon-bg);
+  color: var(--soon-text);
+}
+
+.cfg-contrast {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.cfg-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.cfg-toolbar .cfg-group {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.badge-mock {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+/* Макет предпросмотра: значения бренда — CSS-переменные (уже проверенный HEX). */
+.cfg-stage {
+  --cfg-surface: #ffffff;
+  --cfg-text: #111827;
+  --cfg-muted: #4b5563;
+  --cfg-bubble: #f1f3f5;
+  --cfg-line: #d1d5db;
+  --cfg-bs: 56px;
+  --cfg-br: 50%;
+  --cfg-pr: 16px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #f8fafc;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+}
+
+.cfg-font-site {
+  font-family: var(--font);
+}
+
+.cfg-desktop {
+  width: 100%;
+  height: 440px;
+}
+
+@media (min-width: 600px) {
+  .cfg-desktop {
+    height: auto;
+    aspect-ratio: 16 / 11;
+    min-height: 400px;
+  }
+}
+
+.cfg-phone {
+  width: 300px;
+  max-width: 100%;
+  height: 560px;
+  margin: 0 auto;
+  border-radius: 28px;
+  border-width: 8px;
+  border-color: #1f2937;
+}
+
+.cfg-surface-dark {
+  --cfg-surface: #16181d;
+  --cfg-text: #e6e8ec;
+  --cfg-muted: #a3a8b3;
+  --cfg-bubble: #23262d;
+  --cfg-line: #3a3f4a;
+}
+
+.cfg-preset-strict {
+  --cfg-br: 12px;
+  --cfg-pr: 6px;
+}
+
+.cfg-preset-compact {
+  --cfg-bs: 48px;
+  --cfg-pr: 10px;
+}
+
+.cfg-page {
+  position: absolute;
+  inset: 0;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: min-content;
+  gap: 10px;
+}
+
+.cfg-b {
+  display: block;
+  border-radius: 6px;
+  background: #e2e8f0;
+}
+
+.cfg-b-nav {
+  grid-column: 1 / -1;
+  height: 22px;
+  background: #cbd5e1;
+}
+
+.cfg-b-hero {
+  grid-column: 1 / -1;
+  height: 90px;
+}
+
+.cfg-b-l1,
+.cfg-b-l2 {
+  grid-column: 1 / -1;
+  height: 10px;
+}
+
+.cfg-b-l2 {
+  width: 70%;
+}
+
+.cfg-b-card {
+  height: 80px;
+  background: #e5e7eb;
+}
+
+.cfg-page-saas .cfg-b-hero {
+  height: 60px;
+  grid-column: 1 / 3;
+}
+
+.cfg-page-blog .cfg-b-card {
+  grid-column: 1 / -1;
+  height: 40px;
+}
+
+.cfg-launcher {
+  position: absolute;
+  width: var(--cfg-bs);
+  height: var(--cfg-bs);
+  border-radius: var(--cfg-br);
+  border: 0;
+  padding: 0;
+  background: var(--cfg-c);
+  color: var(--cfg-t);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.24);
+  cursor: pointer;
+  z-index: 2;
+}
+
+.cfg-launcher svg {
+  width: 55%;
+  height: 55%;
+  fill: currentColor;
+}
+
+.cfg-panel {
+  position: absolute;
+  z-index: 1;
+  width: min(300px, calc(100% - 2 * var(--cfg-x)));
+  max-height: calc(100% - var(--cfg-bs) - 2 * var(--cfg-y) - 12px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--cfg-pr);
+  overflow: hidden;
+  background: var(--cfg-surface);
+  color: var(--cfg-text);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.cfg-pos-bottom-right .cfg-launcher,
+.cfg-pos-bottom-right .cfg-panel,
+.cfg-pos-top-right .cfg-launcher,
+.cfg-pos-top-right .cfg-panel {
+  right: var(--cfg-x);
+}
+
+.cfg-pos-bottom-left .cfg-launcher,
+.cfg-pos-bottom-left .cfg-panel,
+.cfg-pos-top-left .cfg-launcher,
+.cfg-pos-top-left .cfg-panel {
+  left: var(--cfg-x);
+}
+
+.cfg-pos-bottom-right .cfg-launcher,
+.cfg-pos-bottom-left .cfg-launcher {
+  bottom: var(--cfg-y);
+}
+
+.cfg-pos-top-right .cfg-launcher,
+.cfg-pos-top-left .cfg-launcher {
+  top: var(--cfg-y);
+}
+
+.cfg-pos-bottom-right .cfg-panel,
+.cfg-pos-bottom-left .cfg-panel {
+  bottom: calc(var(--cfg-y) + var(--cfg-bs) + 12px);
+}
+
+.cfg-pos-top-right .cfg-panel,
+.cfg-pos-top-left .cfg-panel {
+  top: calc(var(--cfg-y) + var(--cfg-bs) + 12px);
+}
+
+/* Своя кнопка: окна у угла без значка или по центру. */
+.cfg-own.cfg-pos-bottom-right .cfg-panel,
+.cfg-own.cfg-pos-bottom-left .cfg-panel {
+  bottom: var(--cfg-y);
+}
+
+.cfg-own.cfg-pos-top-right .cfg-panel,
+.cfg-own.cfg-pos-top-left .cfg-panel {
+  top: var(--cfg-y);
+}
+
+.cfg-own.cfg-at-center .cfg-panel {
+  left: 50%;
+  right: auto;
+  top: 50%;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+}
+
+/* Телефон: на весь экран / шторка / окно в углу. */
+.cfg-phone.cfg-mm-fullscreen .cfg-panel {
+  inset: 0;
+  width: auto;
+  max-height: none;
+  border-radius: 0;
+  transform: none;
+}
+
+.cfg-phone.cfg-mm-sheet .cfg-panel {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: auto;
+  width: auto;
+  height: 85%;
+  max-height: none;
+  border-radius: 16px 16px 0 0;
+  transform: none;
+}
+
+.cfg-phone.cfg-mm-fullscreen .cfg-launcher,
+.cfg-phone.cfg-mm-sheet .cfg-launcher {
+  z-index: 3;
+}
+
+.cfg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--cfg-c);
+  color: var(--cfg-t);
+}
+
+.cfg-avatar {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid currentColor;
+  overflow: hidden;
+  flex: none;
+}
+
+.cfg-avatar svg {
+  width: 60%;
+  height: 60%;
+  fill: currentColor;
+}
+
+.cfg-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+.cfg-name {
+  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cfg-ai {
+  font-size: 0.7rem;
+  font-weight: 700;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.cfg-x {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+}
+
+.cfg-x svg,
+.cfg-send svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+.cfg-body {
+  padding: 12px;
+  flex: 1;
+  overflow: auto;
+}
+
+.cfg-bubble {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--cfg-bubble);
+  white-space: pre-line;
+}
+
+.cfg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+
+.cfg-chip {
+  border: 1px solid var(--cfg-c);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.cfg-input {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--cfg-line);
+  border-radius: 10px;
+  color: var(--cfg-muted);
+}
+
+.cfg-send {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  color: var(--cfg-c);
+}
+
+.cfg-powered {
+  margin: 6px 12px 8px;
+  font-size: 0.75rem;
+  color: var(--cfg-muted);
+  text-align: center;
+}
+
+.cfg-live-note {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 4px solid var(--accent);
+  background: var(--surface);
+}
+
+.cfg-out {
+  margin-top: 20px;
+}
+
+.cfg-code {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  padding: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.85rem;
+}
+
+.cfg-fonts-claim {
+  margin-top: 16px;
+}
+
+.perf-measured {
+  margin: 12px 0 0;
+}

@@ -27,6 +27,7 @@ import {
 import * as S from '../../sites-backend/src/modules/assist-site-setup/widget-config';
 import * as SP from '../../sites-backend/src/modules/assist-site-setup/persona';
 import * as SL from '../../sites-backend/src/modules/assist-site-setup/leads-config';
+import { buildInstallGuides } from '../../sites-backend/src/modules/assist-site-setup/snippet';
 
 // ═══ 1. Перечни и лимиты — те же, что у сервера ════════════════════════
 assert.deepEqual(T.WIDGET_POSITIONS, S.WIDGET_POSITIONS);
@@ -118,6 +119,11 @@ const FULL_VIEW = {
   operatorBlocked: false,
   widgetOrigin: 'https://w.v4c.example.invalid',
   draftChanged: false,
+  // Э3 (T): инструкции установки — ровно то, что строит сервер.
+  installGuides: buildInstallGuides({
+    publicKey: 'pk_live_ABCDEFGHIJKLMNOPQRSTUVWX',
+    widgetOrigin: 'https://w.v4c.example.invalid',
+  }),
   assets: [
     {
       id: 'a1',
@@ -135,6 +141,7 @@ assert.deepEqual(keys(v.hosts[0]), SERVER.get('WidgetHostView'));
 assert.deepEqual(keys(v.warnings[0]), SERVER.get('WidgetWarning'));
 assert.deepEqual(keys(v.history[0]), SERVER.get('ConfigHistoryItem'));
 assert.deepEqual(keys(v.assets![0]), SERVER.get('AssetView'));
+assert.deepEqual(v.installGuides, FULL_VIEW.installGuides);
 assert.equal(v.chatPaused, true);
 assert.equal(v.history[0].rolledBackFrom, 1);
 // Конфигурация с сервера читается без потерь.

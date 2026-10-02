@@ -2,10 +2,11 @@ import type { ExtractedBlock } from '../site-crawl/types';
 import {
   chunkBlocks,
   chunkFaq,
+  embeddingText,
   estimateTokens,
   HEADING_SEPARATOR,
 } from './chunker';
-import { contentHash } from './hashing';
+import { contentHash, digitsMaskedHash } from './hashing';
 
 const OPTS = { minTokens: 300, maxTokens: 500, overlapTokens: 50, lang: 'uk' };
 
@@ -149,5 +150,21 @@ describe('чанкер (§4.3)', () => {
     expect(c.ugc).toBe(false);
     expect(c.headingPath).toBeNull();
     expect(c.lang).toBe('uk');
+  });
+
+  it('FAQ эмбеддится только вопросом (с вариантами); хеш — новой схемы', () => {
+    const c = chunkFaq(
+      'Як повернути? (повернення / обмін)',
+      'Протягом 14 днів.',
+      'uk',
+    );
+    expect(embeddingText('faq', c.text)).toBe(
+      'Як повернути? (повернення / обмін)',
+    );
+    // Прочие фрагменты — весь текст.
+    expect(embeddingText('page', 'a\nb')).toBe('a\nb');
+    // Старый вектор «вопрос+ответ» не копируется по хешу в новую сборку.
+    expect(c.contentHash).not.toBe(contentHash(c.text));
+    expect(c.digitsMaskedHash).not.toBe(digitsMaskedHash(c.text));
   });
 });

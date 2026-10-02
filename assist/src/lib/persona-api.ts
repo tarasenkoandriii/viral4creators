@@ -48,6 +48,17 @@ export function parsePersona(v: unknown): PersonaConfig {
     stopPhrases: strs(o.stopPhrases),
     examples: strs(o.examples),
     handoffTriggers: strs(o.handoffTriggers),
+    // Э3 №19: процедуры не теряются при сохранении персоны.
+    ...(Array.isArray(o.procedures)
+      ? {
+          procedures: arr(o.procedures)
+            .map((x) => obj(x))
+            .filter(
+              (x) => typeof x.when === 'string' && typeof x.steps === 'string'
+            )
+            .map((x) => ({ when: x.when as string, steps: x.steps as string })),
+        }
+      : {}),
   };
 }
 

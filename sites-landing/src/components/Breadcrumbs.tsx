@@ -41,6 +41,7 @@ export function navLabel(locale: Locale, key: PageKey): string {
     home: fmt(n.home),
     assistant: n.assistant,
     'how-it-works': n.howItWorks,
+    widget: n.widget,
     pricing: n.pricing,
     security: n.security,
     faq: n.faq,

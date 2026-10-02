@@ -14,7 +14,11 @@
     "budget:js": "node scripts/built/first-load-js.mjs",
     "axe": "node scripts/built/axe-check.mjs",
     "lhci": "lhci autorun --config=lighthouserc.cjs",
-    "og": "node scripts/og-cards.mjs"
+    "og": "node scripts/og-cards.mjs",
+    "stand": "tsx scripts/built/assist-stand.ts",
+    "e2e:widget": "node scripts/built/widget-e2e.mjs",
+    "cwv:widget": "node scripts/built/widget-cwv.mjs",
+    "eval:landing": "tsx scripts/eval-landing.ts"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",

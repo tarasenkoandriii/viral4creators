@@ -64,3 +64,16 @@ export class AcceptInviteDto {
   @MaxLength(160)
   token!: string;
 }
+
+/** Э3 (H): PATCH /sites/account/members/:memberId — права проверяет сервис строго. */
+export class MemberPatchDto {
+  // Значение роли проверяет сервис: не manager|operator — 400
+  // MEMBER_ROLES_INVALID (код, который TMA переводит), а не общий BAD_REQUEST.
+  @IsOptional()
+  @IsString()
+  role?: 'manager' | 'operator';
+
+  @IsOptional()
+  @IsObject()
+  productRoles?: Record<string, unknown>;
+}

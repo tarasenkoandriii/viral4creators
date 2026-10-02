@@ -1,4 +1,5 @@
 import { setupRu } from './setup-ru';
+import { e3Ru } from './e3-ru';
 
 /**
  * Тексты, которые есть только у TMA Помощника (онбординг, разделы).
@@ -416,6 +417,8 @@ export const appRu = {
   toSites: 'К сайтам',
   // Э2 (W4): виджет, персона, лиды, мастер, полнота, payload лендинга.
   setup: setupRu,
+  // Э3 (T): диалоги, передача, вовлечение, статистика, цели, интеграции, обучение.
+  e3: e3Ru,
 };
 
 export type AppDictionary = typeof appRu;

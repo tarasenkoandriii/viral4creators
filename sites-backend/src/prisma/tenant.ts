@@ -80,6 +80,20 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistSiteWizard: 'accountId',
   AssistSiteAsset: 'accountId',
   AssistAcquisition: 'accountId',
+  // Э3 (контракт /tmp/k/CONTRACT-E3.md): передача человеку, обучение,
+  // цели и статистика. Передачу, сигнал очереди и событие цели создаёт
+  // публичный маршрут клиентом AssistPublicDb (без extension, с accountId
+  // из контекста сайта) — тенант держит кабинетный и системный код.
+  AssistSiteHandoff: 'accountId',
+  AssistBotMessage: 'accountId',
+  AssistSiteLearningItem: 'accountId',
+  AssistSiteLearningCluster: 'accountId',
+  AssistSiteGoal: 'accountId',
+  AssistSiteGoalEvent: 'accountId',
+  AssistSiteIntegration: 'accountId',
+  AssistSiteDailyTotal: 'accountId',
+  AssistSiteExport: 'accountId',
+  AssistSiteReportSubscription: 'accountId',
 };
 
 /**
@@ -120,6 +134,13 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
   AssistRateBucket: 'окна лимитов частоты (IP, посетитель) — вне кабинета',
   AssistWidgetDraft: 'анонимный черновик вида с лендинга — кабинета ещё нет',
   AssistLandingEvent: 'события лендинга — без кабинета и без идентификатора',
+  // Э3.
+  AssistBotUser:
+    'человек в боте Помощника (нажал Start/заблокировал) — личность Telegram, не кабинет',
+  AssistSiteForgetJob:
+    'хвост forget посетителя по siteId — пишет виджет, доделывает системный код',
+  AssistSiteEventCount:
+    'суточные счётчики событий виджета по siteId — пишет виджет одним UPSERT',
 };
 
 const WHERE_OPERATIONS = new Set([

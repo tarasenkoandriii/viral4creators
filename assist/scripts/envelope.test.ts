@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { ApiError, unwrapEnvelope } from '../src/kit/envelope';
+import { ApiError, fieldErrors, unwrapEnvelope } from '../src/kit/envelope';
 import { createApiClient, joinUrl } from '../src/kit/api-client';
 import { createSitesApi } from '../src/kit/sites-api';
 import { buildAuthHeaders } from '../src/kit/telegram';
@@ -12,6 +12,57 @@ function catchErr(fn: () => unknown): ApiError {
     return e as ApiError;
   }
   throw new Error('не бросило');
+}
+
+// Э3 (интеграция): details ошибки сохраняются — ошибки полей форм.
+{
+  const e = catchErr(() =>
+    unwrapEnvelope(
+      {
+        success: false,
+        error: {
+          code: 'ENGAGEMENT_INVALID',
+          message: 'x',
+          details: {
+            code: 'ENGAGEMENT_INVALID',
+            errors: [
+              { path: 'triggers[0].text.ru', code: 'too_long' },
+              { path: 'limits.perVisit', code: 'range' },
+              { path: 'bad', code: 'Not A Code' },
+              { path: 1, code: 'type' },
+              'junk',
+            ],
+          },
+        },
+      },
+      400,
+      'x'
+    )
+  );
+  assert.equal(e.code, 'ENGAGEMENT_INVALID');
+  assert.deepEqual(e.details?.code, 'ENGAGEMENT_INVALID');
+  assert.deepEqual(fieldErrors(e), [
+    { path: 'triggers[0].text.ru', code: 'too_long' },
+    { path: 'limits.perVisit', code: 'range' },
+  ]);
+  // Без details / details не объект — пусто, не падение.
+  const plain = catchErr(() =>
+    unwrapEnvelope(
+      { success: false, error: { code: 'X', message: 'm', details: 'str' } },
+      400,
+      'x'
+    )
+  );
+  assert.equal(plain.details, undefined);
+  assert.deepEqual(fieldErrors(plain), []);
+  assert.deepEqual(fieldErrors(new Error('x')), []);
+  const many = new ApiError('HANDOFF_CONFIG_INVALID', 'm', 400, undefined, {
+    errors: Array.from({ length: 80 }, (_, i) => ({
+      path: `p${i}`,
+      code: 'type',
+    })),
+  });
+  assert.equal(fieldErrors(many).length, 50);
 }
 
 // Обычный конверт.

@@ -1,12 +1,19 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "types": ["node"], "noEmit": true },
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "noEmit": true
+  },
   "include": [
     "src",
     "scripts",
     "e2e",
     "vite.loader.config.ts",
     "vite.chat.config.ts",
+    "vite.picker.config.ts",
+    "vite.engage.config.ts",
     "vite.dev.config.ts",
     "playwright.config.ts"
   ]

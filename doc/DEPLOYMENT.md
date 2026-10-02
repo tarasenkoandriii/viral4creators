@@ -1223,6 +1223,48 @@ Vercel инстансов несколько, так что это потоло�
    (в т.ч. ≥ 26.2 — CHIPS), Android Chrome, Lighthouse до/после на
    стенд-сайте (медиана 5 прогонов) — см. контракт Э2 §8.
 
+### 6.11. Э3 «Передача человеку, статистика, обучение»: что сделать владельцу
+
+Миграция `…_assist_handoff` (передачи человеку, сообщения бота и люди,
+нажавшие Start, очередь обучения и кластеры, хвост forget, цели и события
+целей, секреты интеграций, суточные свёртки, счётчики событий виджета,
+экспорт, подписки на отчёты; новые GRANT `assist_public` и сужение
+табличных UPDATE Э2 до колонок). Новых переменных sites-backend нет
+(у `assist` — одна, п.5): бот —
+`ASSIST_BOT_TOKEN`, ссылки — `ASSIST_TMA_URL`, шифр секретов —
+`ASSIST_SECRETS_KEY`, экспорт CSV — `BLOB_READ_WRITE_TOKEN` (приватный
+store Э1).
+
+1. **Вебхук бота Помощника — с кнопками.** «Взять», «Черновик»,
+   «Шаблон», «Предложить как проверенный ответ» — это `callback_query`, а
+   блокировка бота человеком — `my_chat_member`. Повторить `setWebhook`
+   из §6.5 для бота Помощника с
+   `allowed_updates=["message","callback_query","my_chat_member"]` (бот QA
+   — без изменений).
+2. **Операторы нажимают Start** у бота Помощника: карточки передачи и
+   отчёты уходят только тем, кто это сделал (экран «Операторы» в TMA
+   показывает, кто нет).
+3. **Кроны** — уже в `sites-backend/vercel.json`: `assist-handoff-tick`
+   (каждые 2 мин), `assist-analytics-run` (каждые 10 мин),
+   `assist-analytics-rollup` (04:40 UTC), `assist-learn-rollup` (05:20
+   UTC), `assist-digest` (06:30 UTC; по понедельникам — отчёт недели).
+   Всего кронов в проекте — 11 (проверить лимит плана Vercel).
+4. **Плагин WordPress** — zip из `assist-integrations/wordpress/v4c-assist`
+   (установка zip-файлом до модерации каталога WordPress, план §6.3);
+   **npm-пакет** `@v4c/assist-widget` — публикация после решения бренда
+   (В-1: имя пакета — `WIDGET_NPM_PACKAGE` в `sites-backend/src/brand.ts`).
+5. **`VITE_ASSIST_PUBLIC_API_ORIGIN`** в Vercel-проекте `assist` —
+   https-origin sites-backend без пути (`https://assist-api.viral4creators.app`):
+   экран «Интеграции» показывает от него полный адрес вебхука целей s2s
+   (сервер отдаёт только путь `/assist/v1/sites/<id>/goal-events`), его
+   заказчик вписывает в плагин WordPress или свой бэкенд. Без переменной —
+   `<домен кабинета>/api/…` (rewrite `assist/vercel.json`; рабочий, но
+   лишнее плечо). Переменная сборки — после правки редеплой `assist`.
+6. **Проверка роли** после деплоя под логин-ролью виджета:
+   `SELECT "summary" FROM sites.assist_site_handoffs LIMIT 1` →
+   `permission denied`; `SELECT "state" FROM sites.assist_site_handoffs
+   LIMIT 1` → работает.
+
 ## 7. Лендинг клиентских сайтов (sites-landing)
 
 Л0–Л1 ТЗ `docs-tz/TZ-AI-Pomoshchnik-Landing.md` (вариант Б, §2): отдельный
@@ -1256,6 +1298,22 @@ Next.js 14-проект `sites-landing/` — витрина семейства �
      `@username` публичного канала.
    Без двух последних форма работает, но честно отвечает «приём заявок
    временно недоступен, заявка не отправлена» (данные остаются в форме).
+   Связь с продуктом (Л2–Л3; проверка — `src/lib/assist-env.ts` и
+   `next.config.js`, негодное значение роняет сборку):
+   - `ASSIST_WIDGET_ORIGIN` — origin виджета, по умолчанию временный
+     `https://assist-w.viral4creators.app` (§6.0, умолчание — в
+     `src/brand.ts`); только `https://домен`;
+   - `ASSIST_API_ORIGIN` — origin sites-backend для событий §10 и черновиков
+     конфигуратора, по умолчанию `https://assist-api.viral4creators.app`;
+   - `ASSIST_WIDGET_PK` — публичный ключ НАШЕГО сайта-клиента (`pk_live_…`,
+     кабинет TMA → Виджет → Ключи). Без него живого виджета на лендинге нет
+     (блок «запись», панели «покрутите виджет» нет). Не секрет;
+   - `ASSIST_BOT_USERNAME` — @username бота помощника (без дефолта). Без него
+     в конфигураторе нет «Сохранить и подключить» (ссылка
+     `t.me/<бот>?startapp=wd_<id>`);
+   - `ASSIST_LANDING_EVENTS` — `off` выключает события §10 (по умолчанию
+     включены). На Vercel `http://localhost` и `pk_test_` запрещены — они
+     только для лабораторного стенда (`npm run stand`).
 4. **Analytics** → Enable (Vercel Web Analytics, без cookie). Скрипт
    подключается только в сборке на Vercel (`VERCEL=1`); пользовательских
    событий не нужно (на Hobby их нет).
@@ -1272,7 +1330,7 @@ Next.js 14-проект `sites-landing/` — витрина семейства �
 - `<SITE_URL>/uk/assistant` — в исходнике `<link rel="canonical"
   href="<SITE_URL>/uk/assistant">`, три `hreflang` и `x-default` →
   `/en/assistant`, `og:image` открывается.
-- `<SITE_URL>/sitemap.xml` — 21 адрес (7 страниц × 3 локали),
+- `<SITE_URL>/sitemap.xml` — 24 адреса (8 страниц × 3 локали),
   `<SITE_URL>/robots.txt` — `Sitemap:` абсолютным адресом.
 - Форма `<SITE_URL>/uk/assistant/pilot`: тестовая заявка приходит в канал;
   без env — сообщение «временно недоступно».
@@ -1288,6 +1346,34 @@ Next.js 14-проект `sites-landing/` — витрина семейства �
   пилота, cookie); после проверки — снять `draft` в
   `src/lib/legal-docs.ts` (страницы станут индексируемыми) и дописать
   контакт для запросов по данным. В черновиках — пометки «ПЕРЕВІРИТИ».
+
+### 7.4. Л2–Л3: живой виджет и конфигуратор — что сделать владельцу
+
+Проверено только на лабораторном стенде (мок API, настоящий загрузчик);
+на живом бэкенде — у владельца:
+
+1. **Наш сайт как клиент** (§4.1 ТЗ лендинга): в TMA помощника создать сайт
+   «лендинг», подтвердить хост `assist.viral4creators.app` (DNS), включить
+   виджет на нём в виде и опубликовать; обход знаний — страницы лендинга
+   uk/en/ru. Ключ `pk_live_…` → `ASSIST_WIDGET_PK` проекта `assist-landing`,
+   редеплой.
+2. **`allowClientPreview`** для этого сайта — SQL оператора (контракт Э2
+   §1 п.17): `UPDATE sites.assist_sites SET "allowClientPreview" = true
+   WHERE "siteId" = '<id сайта лендинга>';` — только у нашего лендинга. Без флага
+   панель «покрутите виджет» меняет только угол, конфигуратор — только
+   макет.
+3. **sites-backend**: `ASSIST_LANDING_ORIGINS=https://assist.viral4creators.app`
+   и тот же адрес в `CORS_ORIGIN` (§6.0) — иначе события и черновики
+   получают `ORIGIN_DENIED`. Суточный потолок бюджета сайта лендинга — в
+   админке платформы (§4.4).
+4. `ASSIST_BOT_USERNAME` проекта `assist-landing` — бот помощника.
+5. Приёмка на живом: `cd sites-landing && SITE_URL=https://assist.viral4creators.app
+   ASSIST_WIDGET_PK=pk_live_… npm run eval:landing` (30 вопросов, ≈ 30
+   диалогов бюджета; выход 1 — есть ответы без ссылки или с выдуманными
+   числами) и `BASE_URL=https://assist.viral4creators.app npm run cwv:widget`
+   (медиана 5 прогонов с/без виджета, пороги ΔLCP ≤ 100 мс, ΔTBT ≤ 30 мс,
+   ΔCLS ≤ 0.01, INP открытия ≤ 200 мс); «Сохранить и подключить» → TMA
+   предлагает применить вид (e2e на живых устройствах).
 
 ## Версия Node
 

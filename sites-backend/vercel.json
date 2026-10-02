@@ -25,6 +25,26 @@
     {
       "path": "/cron/assist-budget-sweep",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/cron/assist-handoff-tick",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/cron/assist-learn-rollup",
+      "schedule": "20 5 * * *"
+    },
+    {
+      "path": "/cron/assist-analytics-run",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/cron/assist-analytics-rollup",
+      "schedule": "40 4 * * *"
+    },
+    {
+      "path": "/cron/assist-digest",
+      "schedule": "30 6 * * *"
     }
   ]
 }

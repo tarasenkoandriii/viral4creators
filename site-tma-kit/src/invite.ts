@@ -41,3 +41,51 @@ export function inviteProductRoles(
   if (app === 'qa') return { qa: role === 'manager' ? 'admin' : 'viewer' };
   return { assist: role, assistAdmin };
 }
+
+/** Коды отказов правок участников (сервер — site-core, агент H Э3). */
+export const MEMBER_ERROR_CODES = [
+  'MEMBER_NOT_FOUND',
+  'MEMBER_LAST_OWNER',
+  'MEMBER_ROLES_INVALID',
+] as const;
+export type MemberErrorCode = (typeof MEMBER_ERROR_CODES)[number];
+
+export function isMemberErrorCode(v: unknown): v is MemberErrorCode {
+  return (
+    typeof v === 'string' &&
+    (MEMBER_ERROR_CODES as readonly string[]).includes(v)
+  );
+}
+
+interface MemberLike {
+  memberId?: string;
+  telegramId: string;
+  role: 'owner' | 'manager' | 'operator';
+}
+
+/**
+ * Что можно сделать с участником `m` (кнопки экрана; решает всё равно
+ * сервер): роль меняет только владелец и не у владельца; удалить —
+ * владелец (не владельца), себя — любой не-владелец («выйти»). Без
+ * `memberId` (id не прошёл проверку сегмента пути) — ничего.
+ */
+export function memberActions(
+  me: MemberLike,
+  m: MemberLike
+): { changeRole: boolean; remove: boolean; leave: boolean } {
+  const none = { changeRole: false, remove: false, leave: false };
+  if (!m.memberId) return none;
+  const self = m.telegramId === me.telegramId;
+  if (self) return { ...none, leave: m.role !== 'owner' };
+  if (me.role !== 'owner' || m.role === 'owner') return none;
+  return { changeRole: true, remove: true, leave: false };
+}
+
+/** PATCH роли: роль кабинета + права продукта той же роли (как приглашение). */
+export function memberRolePatch(
+  app: 'assist' | 'qa',
+  role: InviteRole,
+  assistAdmin: AdminRole
+): { role: InviteRole; productRoles: Partial<ProductRoles> } {
+  return { role, productRoles: inviteProductRoles(app, role, assistAdmin) };
+}

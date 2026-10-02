@@ -46,6 +46,20 @@ const uk = {
   errGeneric: 'Не вдалося надіслати запитання. Спробуйте ще раз.',
   unavailable: 'Помічник недоступний на цій сторінці.',
   typing: 'Помічник пише…',
+  // Э3: передача людині, сценарії.
+  callHuman: 'Покликати людину',
+  handoffAsk: 'Покликати людину?',
+  etaMinutes: 'Зазвичай відповідаємо за ~{n} хв.',
+  handoffYes: 'Покликати',
+  handoffWaiting: 'Кличемо оператора…',
+  handoffActive: 'Оператор у чаті',
+  handoffCancel: 'Не чекати',
+  handoffLead:
+    'Зараз немає вільних операторів — залиште контакт, і вам відповідять.',
+  handoffMissed:
+    'Оператор не встиг відповісти — залиште контакт, і вам відповідять.',
+  operator: 'Оператор',
+  next: 'Далі',
 };
 
 type Dict = typeof uk;
@@ -94,6 +108,20 @@ const ru: Dict = {
   errGeneric: 'Не удалось отправить вопрос. Попробуйте ещё раз.',
   unavailable: 'Помощник недоступен на этой странице.',
   typing: 'Помощник пишет…',
+  // Э3: передача человеку, сценарии.
+  callHuman: 'Позвать человека',
+  handoffAsk: 'Позвать человека?',
+  etaMinutes: 'Обычно отвечаем за ~{n} мин.',
+  handoffYes: 'Позвать',
+  handoffWaiting: 'Зовём оператора…',
+  handoffActive: 'Оператор в чате',
+  handoffCancel: 'Не ждать',
+  handoffLead:
+    'Сейчас нет свободных операторов — оставьте контакт, и вам ответят.',
+  handoffMissed:
+    'Оператор не успел ответить — оставьте контакт, и вам ответят.',
+  operator: 'Оператор',
+  next: 'Далее',
 };
 
 const en: Dict = {
@@ -141,6 +169,20 @@ const en: Dict = {
   errGeneric: 'Could not send the question. Please try again.',
   unavailable: 'The assistant is not available on this page.',
   typing: 'Assistant is typing…',
+  // E3: human handoff, scenarios.
+  callHuman: 'Talk to a person',
+  handoffAsk: 'Call a person?',
+  etaMinutes: 'We usually reply in ~{n} min.',
+  handoffYes: 'Call',
+  handoffWaiting: 'Calling an operator…',
+  handoffActive: 'An operator is in the chat',
+  handoffCancel: 'Stop waiting',
+  handoffLead:
+    'No operators are available right now — leave your contact and we will reply.',
+  handoffMissed:
+    'The operator could not reply in time — leave your contact and we will reply.',
+  operator: 'Operator',
+  next: 'Next',
 };
 
 export const DICTS: Record<UiLang, Dict> = { uk, ru, en };

@@ -255,3 +255,90 @@ export const LANDING_DEFAULTS = {
   eventBatchesPerMinute: 30,
   eventsRetentionDays: 90,
 } as const;
+
+// ══ Э3 (контракт /tmp/k/CONTRACT-E3.md) ══════════════════════════════
+
+const MIN = 60 * 1000;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
+
+/** Передача человеку (§3.7). Настраиваемое владельцем — handoff-config.ts (H). */
+export const HANDOFF_DEFAULTS = {
+  /** Опрос iframe, пока передача waiting/active и вкладка видима (§3.7 п.4; приёмка «≤ 5 с»). */
+  widgetPollMs: 3_000,
+  /** Сколько ждать рассылки карточек в запросе посетителя (остальное — крон). */
+  dispatchWaitMs: 5_000,
+  /** Lease строки передачи при рассылке/напоминании. */
+  leaseMs: 60_000,
+  /** Попыток рассылки до «пропущено» без карточек. */
+  maxDispatchAttempts: 5,
+  /** Сообщения бота, на которые можно ответить реплаем/кнопкой. */
+  botMessageTtlMs: 7 * DAY,
+  /** Медиана «~N минут» — по передачам за этот срок (§3.7 п.2). */
+  etaWindowMs: 7 * DAY,
+  /** Медиана считается от этого числа передач с ответом. */
+  etaMinSamples: 5,
+  /** Ответ оператора посетителю ≤ символов (Telegram даёт 4096). */
+  replyMaxChars: 2_000,
+  /** «Позвать человека» — не чаще на посетителя в час. */
+  requestsPerVisitorPerHour: 5,
+  /** Вызов модели для сводки/черновика/перевода (оценка резерва бюджета дня). */
+  aiEstimateMicroUsd: 3_000,
+} as const;
+
+/** Обучение на диалогах (§4-тер.3–4, §4-тер.8, §4-тер.11). */
+export const LEARNING_DEFAULTS = {
+  /** Косинус к центроиду кластера (§4-тер.3 п.2; ориентир §9.1 «сходство ≥ 0.85»). */
+  clusterSimilarity: 0.85,
+  /** «Повторный пробел»: unknown по решённому кластеру через ≥ N дней (§4-тер.3 п.4). */
+  reopenAfterMs: 14 * DAY,
+  /** Срок пересмотра проверенного ответа: 180 дней; с числами — 30 (§4-тер.4). */
+  reviewAfterMs: 180 * DAY,
+  reviewAfterWithNumbersMs: 30 * DAY,
+  /** «Тот же вопрос повторён в течение 24 ч» (§4-тер.3 unhappy, §9.1 (г)). */
+  repeatWindowMs: 24 * HOUR,
+  /** Триграммное сходство маскированных вопросов для «повтора» (вектор вопросов не храним). */
+  repeatTrigramSimilarity: 0.85,
+  /** Примеров в карточке кластера. */
+  maxExamples: 5,
+  /** Плановый eval до Э4 (Trial/Start — раз в месяц, Р-36). */
+  scheduledEvalEveryMs: 30 * DAY,
+  /** Симуляция №31 (MVP-лайт): персонажей и вопросов каждому. */
+  simulationPersonas: 10,
+  simulationTurns: 3,
+  /** Оценка стоимости черновика проверенного ответа (≈ $0.009, §4-тер.11). */
+  draftEstimateMicroUsd: 10_000,
+  forgetJobsPerTick: 50,
+} as const;
+
+/** Цели, статистика, экспорт, отчёты (§5-тер.1–2, §5-тер.7, §5-тер.10, §5-тер.15). */
+export const ANALYTICS_DEFAULTS = {
+  /** Прямая атрибуция: цель ≤ 30 мин после клика по действию помощника (§5-тер.2). */
+  directWindowMs: 30 * MIN,
+  /** Слияние page-события загрузчика с verified того же заказа (§5-тер.1 «Дедуп»). */
+  mergeWindowMs: 30 * MIN,
+  /** Цель без срабатываний — stale (§5-тер.1 «не срабатывала 7 дней»). */
+  goalStaleAfterMs: 7 * DAY,
+  goalsPerSite: 30,
+  /** POST /widget/v1/event и /goal: батч и тело (§5-тер.14). */
+  eventsPerBatch: 20,
+  eventBodyMaxBytes: 4 * 1024,
+  /** Вебхук s2s: тело, окно подписи, лимит на сайт. */
+  webhookBodyMaxBytes: 4 * 1024,
+  webhookSignatureWindowSec: 300,
+  webhooksPerSitePerMinute: 120,
+  /** Экспорт CSV (§5-тер.7): строк, срок ссылки, журнал. */
+  exportMaxRows: 100_000,
+  exportLinkTtlMs: 24 * HOUR,
+  exportsPerTick: 3,
+  /** Хранение (§5-тер.15): события целей и свёртки — 13 мес. */
+  goalEventsRetentionMs: 396 * DAY,
+  dailyTotalsRetentionMs: 396 * DAY,
+  /** Диалог «закрыт» для свёртки и разметки — без активности (§9.1). */
+  conversationIdleMs: 30 * MIN,
+  /** Тревоги (№29): всплеск доли относительно среднего за 7 дней, при объёме ≥ N диалогов. */
+  alertSpikeRatio: 2,
+  alertMinDialogs: 20,
+  /** Минуты оператора на вопрос по умолчанию (§5-тер.2 «разгрузка людей»). */
+  minutesPerQuestion: 3,
+} as const;

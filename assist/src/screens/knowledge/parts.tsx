@@ -4,13 +4,27 @@ import { Alert, Button } from '../../kit/ui';
 import { useAssist } from '../../lib/assist-context';
 import { useErrorText } from '../../lib/use-error-text';
 
-export type Notice = { tone: 'success' | 'warning' | 'danger'; text: string };
+export type Notice = {
+  tone: 'success' | 'warning' | 'danger';
+  text: string;
+  /** Ошибки полей формы (Э3: `details.errors[]`) — списком под текстом. */
+  lines?: string[];
+};
 
 export function NoticeBar({ notice }: { notice: Notice | null }) {
   if (!notice) return null;
   return (
     <div className="mb-3">
-      <Alert tone={notice.tone}>{notice.text}</Alert>
+      <Alert tone={notice.tone}>
+        {notice.text}
+        {notice.lines && notice.lines.length > 0 && (
+          <ul className="mt-1 list-disc pl-5 text-xs" data-field-errors="">
+            {notice.lines.map((l, i) => (
+              <li key={i}>{l}</li>
+            ))}
+          </ul>
+        )}
+      </Alert>
     </div>
   );
 }

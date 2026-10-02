@@ -11,31 +11,58 @@
  *  - iframe `${origin}${WIDGET_FRAME_PATH}?pk=…` с referrerpolicy="origin" и
  *    allow="microphone" (Э5) — лениво по клику/восстановлению окна;
  *  - пинг установки — картинкой `/widget/v1/ping?pk=&v=&c=0|1`;
- *  - в sessionStorage страницы — ТОЛЬКО `<prefix>:<pk>:ui` = open|min|closed.
+ *  - в sessionStorage страницы — ТОЛЬКО `<prefix>:<pk>:ui` = open|min|closed
+ *    (Э3 — плюс в том же значении счётчик проактивных сигналов визита и
+ *    «посетитель закрыл»: лимиты навязчивости переживают MPA-переходы без
+ *    нового ключа, §5-тер.16 п.2).
+ *
+ * Э3 (W): проактивные триггеры MVP с лимитами навязчивости §5-тер.12 п.1–5,
+ * 8–10 (пузырь `role="status"`, ничего не открывается само, ≤ 1–2 за визит,
+ * не раньше 10 с, не на первом экране телефона, не после закрытия, не на
+ * исключённых путях, только при status `active`); детекторы целей (url —
+ * раз на документ, click — раз на цель за документ, form_submit — только
+ * не отменённый сайтом, авто tel:/мессенджеры, `V4CAssist('goal')`);
+ * цель уходит в живой iframe (атрибуция direct/assisted), иначе — сама
+ * (`unassisted`); счётчики событий — пакетом через sendBeacon при скрытии;
+ * `navigator.webdriver` — без аналитики; `?v4c_goal=` → чанк picker.js.
+ *
+ * Интеграция Э3: триггеры, пузырь и детекторы целей — в ленивом чанке
+ * `engage.js` (src/engage/, бюджет загрузчика 12 КБ не поднимается). Здесь
+ * остались лёгкие слушатели: клик, отправка формы (решение «отменена ли
+ * сайтом» — в момент события), путь документа и `V4CAssist('goal')` копятся
+ * в очереди `EngEvent` до загрузки чанка и отдаются ему — цели, случившиеся
+ * раньше (url «спасибо», клик по tel:), не теряются. Чанк грузится только
+ * если в конфиге есть цели/триггеры: после `load` + простоя или сразу при
+ * первом взаимодействии.
  */
 import { natives as N } from './natives';
 import {
   WIDGET_ANCHOR,
+  WIDGET_ENGAGE_PATH,
   WIDGET_FRAME_PATH,
   WIDGET_GLOBAL,
+  WIDGET_GOAL_ATTR,
+  WIDGET_GOAL_PICKER_PARAM,
   WIDGET_LOADER_PATH,
   WIDGET_ORIGIN_DEFAULT,
+  WIDGET_PICKER_PATH,
   WIDGET_PREVIEW_PARAM,
   WIDGET_PROTOCOL_VERSION,
   WIDGET_STORAGE_PREFIX,
 } from '../shared/brand';
 import {
   POSITIONS,
-  applyPreviewPatch,
+  applyLookPatch,
   defaultPublicConfig,
   isObj,
-  parsePublicConfig,
+  parseLoaderConfig,
   shownOn,
   type Position,
   type PublicConfig,
   type UiLang,
   type ViewConfig,
 } from '../shared/config';
+import type { EngageApi, EngageStart, EngEvent, GoalMsg } from '../engage/host';
 import {
   cleanContext,
   cleanIdentify,
@@ -55,7 +82,7 @@ import { WidgetUi } from './ui';
 
 type QueuedCall = IArguments | unknown[];
 type GlobalApi = ((...args: unknown[]) => void) & { q?: QueuedCall[]; l?: 1 };
-type EventName = 'open' | 'close' | 'lead' | 'handoff';
+type EventName = 'open' | 'close' | 'lead' | 'handoff' | 'goal';
 type UiState = 'open' | 'min' | 'closed';
 
 const LABELS: Record<UiLang, { open: string; close: string; frame: string }> = {
@@ -75,6 +102,14 @@ const LABELS: Record<UiLang, { open: string; close: string; frame: string }> = {
     frame: 'AI assistant chat',
   },
 };
+
+/** Случайный id документа (дедуп целей «раз на документ», не идентификатор посетителя). */
+function rid(): string {
+  let s = '';
+  for (const b of crypto.getRandomValues(new Uint8Array(12)))
+    s += (b & 63).toString(36);
+  return 'd' + s;
+}
 
 const W = window as unknown as Record<string, GlobalApi | undefined>;
 
@@ -123,38 +158,62 @@ function storage(): Storage | null {
   }
 }
 
+/**
+ * Поля и методы без `private` — стык с чанком engage.js (`EngageHost`,
+ * src/engage/host.ts): чанк получает сам объект загрузчика.
+ */
 class Loader {
+  readonly N = N;
   private readonly origin: string;
   private readonly pk: string;
   private readonly attrs: TagAttrs;
-  private readonly lang: UiLang;
+  readonly lang: UiLang;
   private readonly uiKey: string;
   private readonly previewToken: string | null;
-  private cfg: PublicConfig = defaultPublicConfig();
+  cfg: PublicConfig = defaultPublicConfig();
   private view: ViewConfig;
   private cfgLoaded = false;
-  private ui: WidgetUi | null = null;
+  ui: WidgetUi | null = null;
   private frameWin: Window | null = null;
   private ready = false;
   private outbox: ParentMessage[] = [];
   private listeners: Record<
     EventName,
-    Array<(e: { type: EventName; at: number }) => void>
+    Array<(e: { type: EventName; at: number; key?: string }) => void>
   > = {
     open: [],
     close: [],
     lead: [],
     handoff: [],
+    goal: [],
   };
+  private readonly pickerToken: string | null;
+  // ── Э3: вовлечение, счётчики, цели ──
+  private readonly docId = rid();
+  readonly t0 = Date.now();
+  /** navigator.webdriver (наши воркеры, QA) — без аналитики (§5-тер.1). */
+  readonly analytics = navigator.webdriver !== true;
+  private uiState: UiState = 'closed';
+  /** Визит (вкладка): показано сигналов, посетитель закрыл сигнал/окно. */
+  shown = 0;
+  stop = false;
+  private batch: Array<{ kind: string; key: string | null }> = [];
+  private viewed = false;
+  prevPath = '';
+  routeAt = this.t0;
+  /** Чанк engage.js; до загрузки — очередь событий (null — чанк не нужен). */
+  private eng: EngageApi | null = null;
+  private engQ: EngEvent[] | null = [['r', location.pathname]];
+  private engLoad = false;
   private pendingPreview: unknown[] = [];
   private unavailable = false;
-  private hidden = false;
-  private destroyed = false;
+  hidden = false;
+  destroyed = false;
   private lastHref: string;
   private opener: Element | null = null;
   private scrollLock: [string, string] | null = null;
   private timers: number[] = [];
-  private cleanups: Array<() => void> = [];
+  readonly cleanups: Array<() => void> = [];
 
   constructor(script: HTMLScriptElement | null, attrs: TagAttrs) {
     this.origin = widgetOrigin(script);
@@ -168,16 +227,27 @@ class Loader {
     this.uiKey = `${WIDGET_STORAGE_PREFIX}:${this.pk}:ui`;
     this.lastHref = location.href;
     this.view = this.withAttrs(this.cfg.config);
-    this.previewToken = this.takePreviewToken() || attrs.previewToken;
+    this.previewToken =
+      this.takeParam(WIDGET_PREVIEW_PARAM) || attrs.previewToken;
+    this.pickerToken = this.takeParam(WIDGET_GOAL_PICKER_PARAM);
+    try {
+      const r = document.referrer && new URL(document.referrer);
+      if (r && r.origin === location.origin) this.prevPath = r.pathname;
+    } catch {
+      /* без «пришёл со страницы» */
+    }
   }
 
-  /** `?v4c_preview=` — одноразовый токен: передать iframe и сразу убрать из адреса (§3-бис.4). */
-  private takePreviewToken(): string | null {
+  /**
+   * `?v4c_preview=` / `?v4c_goal=` — одноразовый токен: передать дальше и
+   * сразу убрать из адреса (`Referer` не унесёт его на чужой сайт, §3-бис.4).
+   */
+  private takeParam(name: string): string | null {
     try {
       const u = new URL(location.href);
-      const t = u.searchParams.get(WIDGET_PREVIEW_PARAM);
+      const t = u.searchParams.get(name);
       if (t === null) return null;
-      u.searchParams.delete(WIDGET_PREVIEW_PARAM);
+      u.searchParams.delete(name);
       N.replaceUrl(u.href);
       this.lastHref = location.href;
       return /^[A-Za-z0-9_.~-]{8,256}$/.test(t) ? t : null;
@@ -208,6 +278,8 @@ class Loader {
     const prev = this.readUi();
     this.mount(prev === 'open');
     this.listen();
+    this.listenGoals();
+    if (this.pickerToken) this.loadPicker(this.pickerToken);
     for (const call of queue) this.call(Array.prototype.slice.call(call));
     this.loadConfig();
     const afterLoad = () => {
@@ -222,21 +294,30 @@ class Loader {
     else N.on(window, 'load', afterLoad, { once: true });
   }
 
-  private later(fn: () => void, ms: number) {
+  later(fn: () => void, ms: number) {
     this.timers.push(N.later(() => !this.destroyed && fn(), ms));
   }
 
   // ── хранилище страницы: ТОЛЬКО состояние окна (§4-бис.2) ────────────────
 
   private readUi(): UiState | null {
-    const v = storage()?.getItem(this.uiKey) || '';
-    const s = v.split(':')[0];
-    return s === 'open' || s === 'min' || s === 'closed' ? s : null;
+    const p = (storage()?.getItem(this.uiKey) || '').split(':');
+    const s = p[0];
+    // Э3: счётчик сигналов визита и «закрыл» — в том же значении (без нового ключа).
+    this.shown = Number(p[2]) || 0;
+    this.stop = p[3] === '1';
+    return s === 'open' || s === 'min' || s === 'closed'
+      ? (this.uiState = s)
+      : null;
   }
 
-  private writeUi(s: UiState) {
+  writeUi(s: UiState = this.uiState) {
+    this.uiState = s;
     try {
-      storage()?.setItem(this.uiKey, `${s}:${Date.now()}`);
+      storage()?.setItem(
+        this.uiKey,
+        `${s}:${Date.now()}:${this.shown}:${this.stop ? 1 : 0}`
+      );
     } catch {
       /* хранилище недоступно — окно просто не восстановится */
     }
@@ -278,13 +359,13 @@ class Loader {
     this.watchViewport();
   }
 
-  private isInline(): boolean {
+  isInline(): boolean {
     return (
       !!this.ui && !!this.attrs.container && this.ui.panel.className === 'I'
     );
   }
 
-  private allowed(): boolean {
+  allowed(): boolean {
     if (this.unavailable || this.destroyed || this.cfg.status === 'off')
       return false;
     const local = isTestKey(this.pk) && isLocalHost(location.hostname);
@@ -302,6 +383,11 @@ class Loader {
   private refreshVisibility() {
     const ok = this.allowed();
     this.ui?.visible(ok && !this.hidden);
+    if (ok && this.configSettled && !this.viewed) {
+      this.viewed = true;
+      this.count('widget_view');
+    }
+    if (!ok || this.hidden) this.eng?.unbubble();
     // hide() при открытом окне — закрыть: иначе невидимое окно держит
     // блокировку прокрутки страницы (мобильный fullscreen/sheet).
     if ((!ok || this.hidden) && this.ui?.isOpen()) this.close();
@@ -380,7 +466,7 @@ class Loader {
       .then((r) => r.json())
       .then((body: unknown) => {
         if (isObj(body) && body.success === true) {
-          this.cfg = parsePublicConfig(body.data);
+          this.cfg = parseLoaderConfig(body.data);
           this.cfgLoaded = true;
           return;
         }
@@ -400,9 +486,10 @@ class Loader {
       .then(() => {
         if (this.destroyed) return;
         this.setView(this.cfg.config);
+        this.configSettled = true;
         this.refreshVisibility();
         this.scheduleOverlap();
-        this.configSettled = true;
+        this.engDecide();
         const pv = this.pendingPreview;
         this.pendingPreview = [];
         for (const p of pv) this.preview(p);
@@ -479,6 +566,9 @@ class Loader {
           break;
         case 'event':
           if (m.name === 'lead' || m.name === 'handoff') this.emit(m.name);
+          break;
+        case 'count':
+          this.count(m.kind, m.key);
           break;
         case 'unavailable':
           this.unavailable = true;
@@ -585,7 +675,7 @@ class Loader {
     });
   }
 
-  private post(m: ParentMessage) {
+  post(m: ParentMessage) {
     if (!this.frameWin || !this.ready) {
       if (m.type !== 'init') this.outbox.push(m);
       return;
@@ -604,19 +694,155 @@ class Loader {
     this.refreshVisibility();
     this.post({ type: 'route', page: this.page() });
     this.scheduleOverlap();
+    this.ev(['r', location.pathname]);
+    this.routeAt = Date.now();
   }
 
-  private emit(name: EventName) {
-    // Наружу — только тип и время: ни текста, ни полей лида (§3-бис.2).
+  private emit(name: EventName, key?: string) {
+    // Наружу — только тип и время (у цели — ещё ключ): ни текста, ни полей лида (§3-бис.2).
     const at = Date.now();
     for (const cb of this.listeners[name].slice())
       N.later(() => {
         try {
-          cb({ type: name, at });
+          cb(key ? { type: name, at, key } : { type: name, at });
         } catch {
           /* чужой колбэк не ломает виджет */
         }
       }, 0);
+  }
+
+  // ── Э3: счётчики событий (§4.16) ───────────────────────────────────────
+
+  count(kind: string, key: string | null = null) {
+    if (!this.analytics) return;
+    this.batch.push({ kind, key });
+    if (this.batch.length >= 20) this.flush();
+  }
+
+  /** Пакет счётчиков — sendBeacon text/plain (переживает уход со страницы). */
+  private flush() {
+    if (this.batch.length)
+      N.beacon(
+        `${this.origin}/widget/v1/event`,
+        JSON.stringify({ pk: this.pk, events: this.batch.splice(0, 20) })
+      );
+  }
+
+  // ── Э3: цели и вовлечение — ленивый чанк engage.js ─────────────────────
+
+  /** Цель из чанка: живой iframe этого документа → direct/assisted (решение 12), иначе маяк (unassisted). */
+  sendGoal(m: GoalMsg) {
+    m = { ...m, docId: this.docId };
+    this.emit('goal', m.goalKey);
+    if (this.frameWin && this.ready) return this.post(m);
+    const { type: _t, ...body } = m;
+    N.beacon(
+      `${this.origin}/widget/v1/goal`,
+      JSON.stringify({ pk: this.pk, ...body })
+    );
+  }
+
+  /** Событие для чанка: сразу ему или в очередь (взаимодействие — грузить чанк сейчас). */
+  private ev(e: EngEvent) {
+    if (this.eng) return this.eng.ev(e);
+    const q = this.engQ;
+    if (!q) return;
+    if (q.length < 50) q.push(e);
+    if (e[0] !== 'r' && this.configSettled) this.loadEngage();
+  }
+
+  /** После конфига: чанк нужен, только если есть цели (и аналитика) или триггеры. */
+  private engDecide() {
+    const e = this.cfg.rawEngagement;
+    const g = this.cfg.rawGoals;
+    if (!(
+      (this.analytics && Array.isArray(g) && g.length) ||
+      (isObj(e) && Array.isArray(e.triggers) && e.triggers.length)
+    ))
+      return void (this.engQ = null);
+    if (this.engQ && this.engQ.some((x) => x[0] !== 'r'))
+      return this.loadEngage();
+    const idle = () => {
+      const ric = (
+        window as { requestIdleCallback?: typeof requestIdleCallback }
+      ).requestIdleCallback;
+      if (ric) ric(() => this.loadEngage(), { timeout: 3000 });
+      else this.later(() => this.loadEngage(), 1500);
+    };
+    if (document.readyState === 'complete') idle();
+    else N.on(window, 'load', idle, { once: true });
+  }
+
+  private loadEngage() {
+    if (this.engLoad || !this.engQ || this.destroyed) return;
+    this.engLoad = true;
+    import(/* @vite-ignore */ this.origin + WIDGET_ENGAGE_PATH)
+      .then((m: { start: EngageStart }) => {
+        const q = this.engQ || [];
+        this.engQ = null;
+        if (this.destroyed) return;
+        const api = m.start(this);
+        this.eng = api;
+        for (const e of q) api.ev(e);
+      })
+      .catch(() => {
+        // Чанк не загрузился (CSP без script-src виджета, сеть) — без целей и сигналов.
+        this.engQ = null;
+      });
+  }
+
+  private listenGoals() {
+    const onClick = (ev: Event) => {
+      const t = ev.target as Element | null;
+      // Цель клика — только элемент (у текстового узла/документа нет closest).
+      const a = t instanceof Element && t.closest('a[href]');
+      if (t instanceof Element)
+        this.ev([
+          'c',
+          t,
+          (a && a.getAttribute('href')) || '',
+          location.pathname,
+        ]);
+    };
+    // Отправка формы — на window в фазе всплытия: обработчики сайта уже
+    // отработали; отменённая сайтом (`preventDefault`) — не цель (§5-тер.1).
+    const onSubmit = (ev: Event) => {
+      const f = ev.target as Element;
+      if (!ev.defaultPrevented && f && f.tagName === 'FORM')
+        this.ev([
+          's',
+          f,
+          (ev as SubmitEvent).submitter || null,
+          location.pathname,
+        ]);
+    };
+    const onHide = () => document.visibilityState === 'hidden' && this.flush();
+    N.on(document, 'click', onClick, true);
+    N.on(window, 'submit', onSubmit);
+    N.on(document, 'visibilitychange', onHide);
+    N.on(window, 'pagehide', () => this.flush());
+    this.cleanups.push(() => {
+      N.off(document, 'click', onClick, true);
+      N.off(window, 'submit', onSubmit);
+      N.off(document, 'visibilitychange', onHide);
+    });
+  }
+
+  /** `?v4c_goal=` → чанк режима выбора цели. Trusted Types без политики — честный отказ (О-8). */
+  private loadPicker(token: string) {
+    try {
+      const s = N.el('script');
+      s.setAttribute('data-pk', this.pk);
+      s.setAttribute('data-token', token);
+      s.src = this.origin + WIDGET_PICKER_PATH;
+      (document.head || document.documentElement).appendChild(s);
+    } catch {
+      console.warn(
+        WIDGET_GLOBAL +
+          ': goal picker blocked by Trusted Types — mark the element with ' +
+          WIDGET_GOAL_ATTR
+      );
+    }
   }
 
   // ── JS API (§3-бис.2) ───────────────────────────────────────────────────
@@ -632,6 +858,8 @@ class Loader {
     }
     if (this.ui.isOpen()) return;
     if (!this.opener) this.opener = document.activeElement;
+    this.eng?.unbubble();
+    this.count('open');
     this.ui.show(true);
     this.lockScroll(true);
     this.openFrame();
@@ -645,6 +873,8 @@ class Loader {
     if (!this.ui || this.isInline() || !this.ui.isOpen()) return;
     this.ui.show(false);
     this.lockScroll(false);
+    // Закрыл окно — сигналов до конца визита больше нет (§5-тер.12 п.4).
+    this.stop = true;
     this.writeUi(state === 'min' ? 'min' : 'closed');
     this.post({ type: 'close' });
     // Возврат фокуса (§3-бис.3 «доступность»): на кнопку или на то, что открыло окно.
@@ -681,7 +911,7 @@ class Loader {
       return;
     }
     if (!this.cfg.allowClientPreview || !isObj(partial)) return;
-    this.setView(applyPreviewPatch(this.cfg.config, partial));
+    this.setView(applyLookPatch(this.cfg.config, partial));
     this.post({ type: 'preview', partialConfig: partial });
   }
 
@@ -723,13 +953,21 @@ class Loader {
         return;
       case 'on':
         if (
-          (a === 'open' || a === 'close' || a === 'lead' || a === 'handoff') &&
+          (a === 'open' ||
+            a === 'close' ||
+            a === 'lead' ||
+            a === 'handoff' ||
+            a === 'goal') &&
           typeof b === 'function'
         )
           this.listeners[a].push(
             b as (e: { type: EventName; at: number }) => void
           );
         return;
+      case 'goal':
+        // До чанка (и до конфига) — в очередь: вызов со страницы «спасибо»
+        // (часто — из очереди до загрузки) не теряется; разбор — в чанке.
+        return this.ev(['g', args]);
       case 'route':
         this.lastHref = '';
         return this.route();
@@ -742,6 +980,7 @@ class Loader {
 
   destroy() {
     this.close();
+    this.flush();
     this.destroyed = true;
     for (const t of this.timers) clearTimeout(t);
     for (const c of this.cleanups.splice(0)) c();

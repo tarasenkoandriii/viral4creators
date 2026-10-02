@@ -10,9 +10,14 @@
  * Статус меняется одной строкой при релизе этапа продукта (точки
  * синхронизации С0–С8, `docs-tz/AI-Pomoshchnik-Plan-Etapov.md` §5).
  *
- * Сейчас — точка **С0** (Л1, до продукта): `live` только бренд и форма
- * пилота; всё про продукт — `soon`; то, чего нет даже в ближайших
- * этапах или что лендинг ещё не умеет показать честно, — `hidden`.
+ * Сейчас — точка **С2** (после TMA Э2, MVP; лендинг Л2–Л3): `live` —
+ * ровно список С2 плана (§5): ответы по сайту со ссылкой-источником,
+ * честное «не знаю», лиды, бренд, 4 угла, своя кнопка, inline, состояние
+ * между страницами, живой виджет на лендинге, конфигуратор. Остальное про
+ * продукт — `soon` (даже то, что сделано в Э2, но в С2 не названо:
+ * установка, подтверждение владения, метка «ИИ», изоляция — решает
+ * владелец одной строкой); чего нет в ближайших этапах — `hidden`.
+ * С0 (Л1) — бренд, форма пилота, правда о самом лендинге — тоже `live`.
  *
  * Тесты: `scripts/claims.test.ts` (каждый `claim` в словарях — из этой
  * таблицы, hidden не рендерится, soon — с меткой и без ссылок, вариант
@@ -35,13 +40,25 @@ export const CLAIMS = {
   /** Про сам лендинг: без трекеров, Vercel Web Analytics без cookie (§10.1). */
   'landing-no-trackers': { stage: 'Л0', status: 'live' },
 
-  // ── С2 (TMA Э2, MVP) ──
-  'site-answers': { stage: 'TMA-Э2', status: 'soon' },
-  'source-links': { stage: 'TMA-Э2', status: 'soon' },
-  'honest-unknown': { stage: 'TMA-Э2', status: 'soon' },
-  leads: { stage: 'TMA-Э2', status: 'soon' },
-  branding: { stage: 'TMA-Э2', status: 'soon' },
-  corners: { stage: 'TMA-Э2', status: 'soon' },
+  // ── С2 (TMA Э2, MVP; лендинг Л2–Л3) — live ровно по списку С2 плана §5 ──
+  'site-answers': { stage: 'TMA-Э2', status: 'live' },
+  'source-links': { stage: 'TMA-Э2', status: 'live' },
+  'honest-unknown': { stage: 'TMA-Э2', status: 'live' },
+  leads: { stage: 'TMA-Э2', status: 'live' },
+  branding: { stage: 'TMA-Э2', status: 'live' },
+  corners: { stage: 'TMA-Э2', status: 'live' },
+  /** «Своя кнопка» заказчика (`V4CAssist('open')`, якорь) — С2. */
+  'custom-button': { stage: 'TMA-Э2', status: 'live' },
+  /** Встраивание чата в блок страницы (inline) — С2. */
+  'inline-embed': { stage: 'TMA-Э2', status: 'live' },
+  /** Диалог продолжается при переходе между страницами (§4-бис) — С2. */
+  'cross-page-state': { stage: 'TMA-Э2', status: 'live' },
+  /** Живой виджет нашего помощника на лендинге — Л2 (С2). */
+  'live-widget': { stage: 'Л2 (С2)', status: 'live' },
+  /** Конфигуратор без регистрации `/assistant/widget` — Л3 (С2). */
+  configurator: { stage: 'Л3 (С2)', status: 'live' },
+
+  // ── Сделано в Э2, но в списке С2 не названо — остаётся soon до решения владельца ──
   'install-snippet': { stage: 'TMA-Э2', status: 'soon' },
   'install-guides': { stage: 'TMA-Э2', status: 'soon' },
   'ownership-verification': { stage: 'TMA-Э2', status: 'soon' },
@@ -51,6 +68,9 @@ export const CLAIMS = {
   'injection-defense': { stage: 'TMA-Э2', status: 'soon' },
   'visitor-forget': { stage: 'TMA-Э2', status: 'soon' },
   languages: { stage: 'TMA-Э2', status: 'soon' },
+  /** 6 шрифтов с нашего хостинга (О-6 контракта Э2): в виджете их ещё нет — системный. */
+  'widget-fonts': { stage: 'TMA-Э2 (О-6)', status: 'soon' },
+  /** Запись работы — место блока 2, пока живой виджет не подключён (нет ASSIST_WIDGET_PK). */
   'demo-recording': { stage: 'Л2 (после TMA-Э2)', status: 'soon' },
 
   // ── С3 (TMA Э3) ──
@@ -81,12 +101,8 @@ export const CLAIMS = {
   'qa-product': { stage: 'QA-ТЗ', status: 'soon' },
 
   // ── hidden: нет в ближайших этапах или лендинг ещё не умеет показать ──
-  /** Живой виджет на лендинге — Л2. */
-  'live-widget': { stage: 'Л2', status: 'hidden' },
   /** «Попробовать на своём сайте» — Л4 (публичная песочница). */
   sandbox: { stage: 'Л4', status: 'hidden' },
-  /** Конфигуратор без регистрации — Л3. */
-  configurator: { stage: 'Л3', status: 'hidden' },
   /** «Подключить в Telegram»: читатели payload в TMA и открытый продукт (§7.2, урок Б-1). */
   'tma-connect': { stage: 'TMA-Э2 + читатель lp_', status: 'hidden' },
   /** Веб-вход в кабинет — нет в этапах продукта (В-13). */

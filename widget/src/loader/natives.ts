@@ -23,6 +23,7 @@ const nPush = history.pushState;
 const nReplace = history.replaceState;
 const nSetTimeout = W.setTimeout;
 const nQuery = D.querySelector;
+const nBeacon = navigator.sendBeacon;
 
 export const natives = {
   on(
@@ -68,6 +69,14 @@ export const natives = {
       return apply(nQuery, D, [sel]);
     } catch {
       return null;
+    }
+  },
+  /** sendBeacon text/plain (простой запрос, переживает уход со страницы). */
+  beacon(url: string, body: string): boolean {
+    try {
+      return !!nBeacon && apply(nBeacon, navigator, [url, body]);
+    } catch {
+      return false;
     }
   },
   apply,

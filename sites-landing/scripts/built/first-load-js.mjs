@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
  * Бюджет JS первой загрузки (ТЗ §9): ≤ 110 КБ gzip на статических
- * страницах (без нашего виджета — его ещё нет).
+ * страницах, ≤ 160 КБ на `/widget` (конфигуратор — клиентский по сути,
+ * §9 п.2); «без виджета» — загрузчик нашего виджета не часть первой
+ * загрузки (вставляется после load/idle), его бюджет 12 КБ держит `widget/`.
  *
  * Считаем сами, а не берём число из вывода `next build`: нужен gzip
  * ровно того, что браузер грузит при первом заходе на маршрут, —
@@ -24,6 +26,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const NEXT = path.join(ROOT, '.next');
 const BUDGET_KB = Number(process.env.FIRST_LOAD_BUDGET_KB ?? 110);
+/** Маршруты с другим бюджетом §9 (`/widget`, позже `/try`). */
+const ROUTE_BUDGET_KB = { '/[locale]/assistant/widget/page': Number(process.env.WIDGET_PAGE_BUDGET_KB ?? 160) };
 const app = JSON.parse(fs.readFileSync(path.join(NEXT, 'app-build-manifest.json'), 'utf8')).pages;
 const build = JSON.parse(fs.readFileSync(path.join(NEXT, 'build-manifest.json'), 'utf8'));
 
@@ -51,9 +55,10 @@ let failed = false;
 for (const key of Object.keys(app).filter((k) => k.endsWith('/page')).sort()) {
   const files = filesFor(key);
   const total = files.reduce((s, f) => s + gz(f), 0);
-  const over = total > BUDGET_KB * 1024;
+  const budget = ROUTE_BUDGET_KB[key] ?? BUDGET_KB;
+  const over = total > budget * 1024;
   failed ||= over;
-  rows.push(`${over ? 'FAIL' : 'ok  '} ${kb(total).padStart(6)} КБ  ${key}`);
+  rows.push(`${over ? 'FAIL' : 'ok  '} ${kb(total).padStart(6)} КБ  ${key}${budget !== BUDGET_KB ? ` (бюджет ${budget})` : ''}`);
   // web-vitals не должен попасть в первую загрузку.
   for (const f of files) {
     if (/largest-contentful-paint/.test(fs.readFileSync(path.join(NEXT, f), 'utf8'))) {
@@ -68,4 +73,8 @@ if (failed) {
   console.error(`FAIL бюджет JS первой загрузки ${BUDGET_KB} КБ gzip превышен`);
   process.exit(1);
 }
-console.log(`ok   JS первой загрузки: все маршруты ≤ ${BUDGET_KB} КБ gzip`);
+if (!Object.keys(ROUTE_BUDGET_KB).every((k) => app[k])) {
+  console.error(`FAIL маршрута с отдельным бюджетом нет в сборке: ${Object.keys(ROUTE_BUDGET_KB).filter((k) => !app[k])}`);
+  process.exit(1);
+}
+console.log(`ok   JS первой загрузки: статические маршруты ≤ ${BUDGET_KB} КБ gzip, /widget ≤ ${ROUTE_BUDGET_KB['/[locale]/assistant/widget/page']} КБ`);

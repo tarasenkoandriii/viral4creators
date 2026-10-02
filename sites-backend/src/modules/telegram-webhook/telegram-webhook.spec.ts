@@ -16,8 +16,11 @@ import * as request from 'supertest';
 import { HttpExceptionFilter } from '../../common/filters/http-exception.filter';
 import { VALIDATION_PIPE_OPTIONS } from '../../common/validation-pipe';
 import { TelegramAuthModule } from '../telegram-auth/telegram-auth.module';
-import { TelegramWebhookModule } from './telegram-webhook.module';
-import { isStartCommand } from './telegram-webhook.controller';
+import { AssistBotUpdates } from '../assist-site-handoff/bot/assist-bot-updates.service';
+import {
+  TelegramWebhookController,
+  isStartCommand,
+} from './telegram-webhook.controller';
 import { assertBotWebhookSecret } from './webhook-secret';
 
 const ASSIST_SECRET = 'assist-webhook-secret_A1';
@@ -96,13 +99,24 @@ describe('POST /assist|qa/webhook/telegram (HTTP)', () => {
   let app: INestApplication;
   const saved = { ...process.env };
   const logs: string[] = [];
+  /** Э3: разбор обновлений бота Помощника (H) — подделка, база не нужна. */
+  const handled: unknown[] = [];
+  const updates = {
+    fail: false,
+    async handle(u: unknown) {
+      handled.push(u);
+      if (this.fail) throw new Error('сбой разбора (фейк)');
+    },
+  };
 
   beforeAll(async () => {
     Object.assign(process.env, ENV);
     const moduleRef = await Test.createTestingModule({
       // Гвард двух ботов — глобальный, как в AppModule: вебхук обязан
       // пройти мимо него без initData.
-      imports: [TelegramAuthModule, TelegramWebhookModule],
+      imports: [TelegramAuthModule],
+      controllers: [TelegramWebhookController],
+      providers: [{ provide: AssistBotUpdates, useValue: updates }],
     }).compile();
     app = moduleRef.createNestApplication({ logger: false });
     app.useGlobalFilters(new HttpExceptionFilter());
@@ -168,6 +182,41 @@ describe('POST /assist|qa/webhook/telegram (HTTP)', () => {
       .set('X-Telegram-Bot-Api-Secret-Token', ASSIST_SECRET)
       .send({ update_id: 43, my_chat_member: { new_field: true } })
       .expect(200);
+  });
+
+  it('Э3: обновление помощника уходит в AssistBotUpdates, QA — нет; без секрета — не уходит', async () => {
+    handled.length = 0;
+    await request(app.getHttpServer())
+      .post('/assist/webhook/telegram')
+      .set('X-Telegram-Bot-Api-Secret-Token', ASSIST_SECRET)
+      .send({ update_id: 50, callback_query: { id: 'q', data: 'h:take:x' } })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/qa/webhook/telegram')
+      .set('X-Telegram-Bot-Api-Secret-Token', QA_SECRET)
+      .send({ update_id: 51, message: { text: '/start' } })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/assist/webhook/telegram')
+      .send({ update_id: 52, message: { text: '/start' } })
+      .expect(401);
+    expect(handled).toEqual([
+      { update_id: 50, callback_query: { id: 'q', data: 'h:take:x' } },
+    ]);
+  });
+
+  it('Э3: сбой разбора обновления — всё равно 200 (Telegram не копит повторы)', async () => {
+    updates.fail = true;
+    try {
+      const res = await request(app.getHttpServer())
+        .post('/assist/webhook/telegram')
+        .set('X-Telegram-Bot-Api-Secret-Token', ASSIST_SECRET)
+        .send({ update_id: 53, message: { text: 'x' } });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true });
+    } finally {
+      updates.fail = false;
+    }
   });
 
   it('секрет не настроен — 503', async () => {

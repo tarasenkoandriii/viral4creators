@@ -1,5 +1,6 @@
 import type { AppDictionary } from './ru';
 import { setupUk } from './setup-uk';
+import { e3Uk } from './e3-uk';
 
 export const appUk: AppDictionary = {
   nav: {
@@ -414,4 +415,6 @@ export const appUk: AppDictionary = {
   toSites: 'До сайтів',
   // Э2 (W4): виджет, персона, лиды, мастер, полнота, payload лендинга.
   setup: setupUk,
+  // Э3 (T): диалоги, передача, вовлечение, статистика, цели, интеграции, обучение.
+  e3: e3Uk,
 };

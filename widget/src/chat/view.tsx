@@ -2,10 +2,16 @@
  * Разметка чата (Preact). Тексты — только как дочерние текстовые узлы
  * (Preact экранирует), никакого dangerouslySetInnerHTML (линт). Метка
  * «ИИ · может ошибаться» — всегда, не зависит от конфига (К-6).
+ *
+ * Э3: ответы оператора отличимы от ИИ — подпись «Оператор», метка «ИИ» —
+ * только у ответов модели; передача (подтверждение «~N минут», ожидание с
+ * отменой, «оператор в чате»), сценарии (шаги и финал).
  */
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { ChatController, ChatState, UiMessage } from './controller';
+import type { Scenario } from '../shared/scenarios';
+import type { LangText } from '../shared/engagement';
 import { parseMarkdown, safeHref, type Block, type Inline } from './markdown';
 import type { SiteAction, SiteAnswerSource } from './api';
 import type { LeadField } from '../shared/config';
@@ -110,10 +116,12 @@ function Actions({
   items,
   allowed,
   onAction,
+  onLink,
 }: {
   items: SiteAction[];
   allowed: string[];
   onAction: (a: SiteAction) => void;
+  onLink: () => void;
 }) {
   if (!items.length) return null;
   return (
@@ -128,6 +136,7 @@ function Actions({
               href={href}
               target="_top"
               rel="noopener noreferrer"
+              onClick={onLink}
             >
               {a.label}
             </a>
@@ -159,9 +168,20 @@ function Message({
         <div class="bub">{m.text}</div>
       </div>
     );
+  if (m.role === 'operator' || m.role === 'system')
+    return (
+      <div
+        class={`msg ${m.role === 'operator' ? 'op' : 'sys'}`}
+        data-mid={m.id}
+      >
+        {m.role === 'operator' && <div class="who">{t.operator}</div>}
+        <div class="bub">{m.text}</div>
+      </div>
+    );
   const server = m.id.indexOf('p-') !== 0;
   return (
     <div class="msg bot" data-mid={m.id}>
+      <div class="who ai">{t.ai}</div>
       <div class="bub">
         {m.text ? (
           <Markdown blocks={parseMarkdown(m.text, s.allowedOrigins)} />
@@ -177,6 +197,7 @@ function Message({
           items={m.actions}
           allowed={s.allowedOrigins}
           onAction={(a) => c.actionClicked(a)}
+          onLink={() => c.linkClicked()}
         />
       </div>
       {m.streamState === 'partial' && (
@@ -227,7 +248,13 @@ function LeadForm({ s, c }: { s: ChatState; c: ChatController }) {
   const [vals, setVals] = useState<Partial<Record<LeadField, string>>>({
     name: s.prefill.name,
     email: s.prefill.email,
+    comment: s.prefill.comment,
   });
+  // Ответы сценария квалификации (№40) — в комментарий, который видит посетитель.
+  const shown =
+    s.prefill.comment && !s.cfg.lead.fields.some((f) => f.field === 'comment')
+      ? [...s.cfg.lead.fields, { field: 'comment' as const, required: false }]
+      : s.cfg.lead.fields;
   const [consent, setConsent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const label: Record<LeadField, string> = {
@@ -245,7 +272,7 @@ function LeadForm({ s, c }: { s: ChatState; c: ChatController }) {
   const submit = async (e: Event) => {
     e.preventDefault();
     const fields: Partial<Record<LeadField, string>> = {};
-    for (const f of s.cfg.lead.fields) {
+    for (const f of shown) {
       const v = (vals[f.field] || '').trim();
       if (f.required && !v) return setErr(t.leadInvalid);
       if (v && f.field === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v))
@@ -264,7 +291,7 @@ function LeadForm({ s, c }: { s: ChatState; c: ChatController }) {
   return (
     <form class="lead" onSubmit={submit} noValidate>
       <div class="lt">{t.leadTitle}</div>
-      {s.cfg.lead.fields.map((f) => (
+      {shown.map((f) => (
         <label key={f.field}>
           <span>
             {label[f.field]}
@@ -326,6 +353,161 @@ function LeadForm({ s, c }: { s: ChatState; c: ChatController }) {
         {t.submit}
       </button>
     </form>
+  );
+}
+
+function lt(v: LangText, s: ChatState): string {
+  return v[s.lang] || v.uk || v.ru || v.en || '';
+}
+
+/** Передача человеку: подтверждение, ожидание (с отменой), «оператор в чате». */
+function Handoff({ s, c }: { s: ChatState; c: ChatController }) {
+  const t = s.t;
+  const h = s.handoff;
+  if (s.handoffAsk)
+    return (
+      <div class="note ho" role="alertdialog" aria-label={t.handoffAsk}>
+        <span>
+          {t.handoffAsk}
+          {s.eta ? ` ${s.eta}` : ''}
+        </span>
+        <button type="button" class="lnk" onClick={() => c.handoff()}>
+          {t.handoffYes}
+        </button>
+        <button type="button" class="lnk" onClick={() => c.cancelAskHandoff()}>
+          {t.cancel}
+        </button>
+      </div>
+    );
+  if (!h || (h.state !== 'waiting' && h.state !== 'active')) return null;
+  return (
+    <div class="note ho" role="status" data-handoff={h.state}>
+      {h.state === 'waiting' ? (
+        <>
+          <span>
+            {t.handoffWaiting}
+            {s.eta ? ` ${s.eta}` : ''}
+          </span>
+          <button type="button" class="lnk" onClick={() => c.cancelHandoff()}>
+            {t.handoffCancel}
+          </button>
+        </>
+      ) : (
+        <span>{t.handoffActive}</span>
+      )}
+    </div>
+  );
+}
+
+function ScenarioStepView({ s, c }: { s: ChatState; c: ChatController }) {
+  const t = s.t;
+  const [val, setVal] = useState('');
+  const sc = s.scen;
+  if (!sc) return null;
+  const f = sc.s.final;
+  if (sc.done)
+    return f.kind === 'link' ? (
+      <div class="acts scen">
+        {(() => {
+          const href = safeHref(f.url, s.allowedOrigins);
+          return href ? (
+            <a
+              class="act"
+              href={href}
+              target="_top"
+              rel="noopener noreferrer"
+              onClick={() => c.linkClicked()}
+            >
+              {lt(f.label, s)}
+            </a>
+          ) : null;
+        })()}
+      </div>
+    ) : null;
+  const step = sc.s.steps[sc.step];
+  const a = step.answer;
+  const submit = (e: Event) => {
+    e.preventDefault();
+    const v = val.trim();
+    if (a.type === 'number') {
+      const n = Number(v.replace(',', '.'));
+      if (
+        !v ||
+        !isFinite(n) ||
+        (a.min !== null && n < a.min) ||
+        (a.max !== null && n > a.max)
+      )
+        return;
+    } else if (a.type === 'text' && !v) return;
+    setVal('');
+    c.answerStep(v);
+  };
+  return (
+    <div class="scen" data-step={step.key}>
+      <div class="msg bot">
+        <div class="bub">{lt(step.question, s)}</div>
+      </div>
+      {a.type === 'choice' ? (
+        <div class="sugg">
+          {a.options.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => c.answerStep(lt(o.label, s))}
+            >
+              {lt(o.label, s)}
+            </button>
+          ))}
+        </div>
+      ) : a.type === 'none' ? (
+        <div class="sugg">
+          <button type="button" onClick={() => c.answerStep('')}>
+            {t.next}
+          </button>
+        </div>
+      ) : (
+        <form class="sa" onSubmit={submit}>
+          <input
+            type={a.type === 'number' ? 'number' : 'text'}
+            maxLength={a.type === 'text' ? a.maxChars : 30}
+            aria-label={lt(step.question, s)}
+            value={val}
+            onInput={(e) => setVal((e.target as HTMLInputElement).value)}
+          />
+          <button type="submit" class="pri">
+            {t.next}
+          </button>
+        </form>
+      )}
+      <button type="button" class="lnk" onClick={() => c.cancelScenario()}>
+        {t.cancel}
+      </button>
+    </div>
+  );
+}
+
+function ScenarioButtons({
+  list,
+  s,
+  c,
+}: {
+  list: Scenario[];
+  s: ChatState;
+  c: ChatController;
+}) {
+  if (!list.length) return null;
+  return (
+    <div class="sugg scn">
+      {list.map((x) => (
+        <button
+          key={x.key}
+          type="button"
+          onClick={() => c.startScenario(x.key)}
+        >
+          {lt(x.title, s) || x.key}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -472,15 +654,27 @@ export function App({
         {s.messages.map((m) => (
           <Message key={m.id} m={m} s={s} c={c} />
         ))}
-        {!s.messages.length && !leadOnly && suggestions.length > 0 && (
-          <div class="sugg">
-            {suggestions.map((q, i) => (
-              <button key={i} type="button" onClick={() => c.ask(q)}>
-                {q}
-              </button>
-            ))}
-          </div>
+        {!s.messages.length &&
+          !leadOnly &&
+          suggestions.length > 0 &&
+          !s.scen && (
+            <div class="sugg">
+              {suggestions.map((q, i) => (
+                <button key={i} type="button" onClick={() => c.ask(q)}>
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
+        {!s.messages.length && !leadOnly && !s.scen && (
+          <ScenarioButtons
+            list={s.scenarios.filter((x) => x.showInGreeting)}
+            s={s}
+            c={c}
+          />
         )}
+        <ScenarioStepView key={s.scen ? s.scen.s.key : ''} s={s} c={c} />
+        <Handoff s={s} c={c} />
         {s.notice && (
           <div class="note" role="status">
             {s.notice.text}
@@ -537,6 +731,18 @@ export function App({
         </form>
       )}
       <footer class="ft">
+        {s.cfg.handoff &&
+          s.cfg.handoff.enabled &&
+          !leadOnly &&
+          !s.handoffAsk &&
+          !(
+            s.handoff &&
+            (s.handoff.state === 'waiting' || s.handoff.state === 'active')
+          ) && (
+            <button type="button" class="lnk" onClick={() => c.askHandoff()}>
+              {t.callHuman}
+            </button>
+          )}
         {s.messages.length > 0 && (
           <button type="button" class="lnk" onClick={() => c.askForget(true)}>
             {t.forget}

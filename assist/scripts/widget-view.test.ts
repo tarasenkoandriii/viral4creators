@@ -35,6 +35,7 @@ const member = (
   role: AccountMember['role'],
   assist: AccountMember['productRoles']['assist']
 ): AccountMember => ({
+  memberId: 'm1',
   telegramId: '1',
   role,
   productRoles: { qa: 'none', assist, assistAdmin: 'none' },

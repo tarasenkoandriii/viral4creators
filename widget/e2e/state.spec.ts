@@ -362,8 +362,9 @@ test('§4-бис.10 п.7 приватность: в хранилище и cookie
   expect(Object.keys(dump.session)).toEqual([
     `${WIDGET_STORAGE_PREFIX}:${pk}:ui`,
   ]);
+  // Э3: в том же значении — сигналов за визит и «закрыл» (без нового ключа).
   expect(dump.session[`${WIDGET_STORAGE_PREFIX}:${pk}:ui`]).toMatch(
-    /^(open|min|closed):\d+$/
+    /^(open|min|closed):\d+:[0-2]:[01]$/
   );
   const flat = JSON.stringify(dump);
   for (const bad of ['Секретный', '380501112233', 'черновик', 'vt_', 'resume'])

@@ -37,6 +37,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  *  - assist: тесты сверяют формы с исходниками sites-backend/src, кит —
  *    site-tma-kit (sync-site-tma-kit);
  *  - widget: тест бренда импортирует sites-backend/src/brand.ts;
+ *  - assist_integrations (Э3: npm-пакет, плагин WordPress, GTM): зеркала
+ *    бренда сверяются с sites-backend/src/brand.ts; векторы подписи
+ *    вебхука целей (assist-integrations/fixtures/) читает и спек
+ *    sites-backend — поэтому они же запускают sites_backend;
  *  - frontend: unit-скрипты импортируют backend/src.
  * Тест «джобы ↔ правила» ниже падает, если в ci.yml появилась джоба без
  * условия или условие без правила.
@@ -48,12 +52,14 @@ export const FILTERS = {
     'backend/src/common/',
     'scripts/sync-sites-shared.mjs',
     'scripts/check-sites-import-graph.mjs',
+    'assist-integrations/fixtures/',
   ],
   assist: ['assist/', 'site-tma-kit/', 'sites-backend/src/', 'scripts/sync-site-tma-kit.mjs'],
   widget: ['widget/', 'sites-backend/src/brand.ts'],
-  // Лендинг: CI собирает виджет и гоняет его на стенде; тест контракта
-  // читает формы событий/черновиков и контраст из sites-backend; deeplink
-  // `wd_` — из кита.
+  assist_integrations: ['assist-integrations/', 'sites-backend/src/brand.ts'],
+  // Лендинг (Л2–Л3): CI собирает виджет и гоняет его e2e на стенде; тест
+  // контракта читает формы событий/черновиков и контраст из sites-backend;
+  // deeplink `wd_` — из кита.
   sites_landing: [
     'sites-landing/',
     'widget/',
@@ -134,7 +140,9 @@ function selfTest() {
   eq('виджет — и лендинг (стенд виджета)', on(['widget/src/loader/index.ts']), ['widget', 'sites_landing']);
   eq('.nvmrc — всё', on(['.nvmrc']), Object.keys(FILTERS));
   eq('формы событий лендинга', on(['sites-backend/src/modules/assist-widget/landing/landing.service.ts']), ['sites_backend', 'assist', 'sites_landing']);
-  eq('brand.ts бэкенда — бэк, assist, виджет', on(['sites-backend/src/brand.ts']), ['sites_backend', 'assist', 'widget']);
+  eq('brand.ts бэкенда — бэк, assist, виджет, интеграции', on(['sites-backend/src/brand.ts']), ['sites_backend', 'assist', 'widget', 'assist_integrations']);
+  eq('плагин WordPress — только интеграции', on(['assist-integrations/wordpress/v4c-assist/v4c-assist.php']), ['assist_integrations']);
+  eq('векторы подписи — интеграции и бэк', on(['assist-integrations/fixtures/goal-webhook-vectors.json']), ['sites_backend', 'assist_integrations']);
   eq('модуль sites-backend — бэк и assist', on(['sites-backend/src/modules/x.ts']), ['sites_backend', 'assist']);
   eq('миграция sites-backend — только бэк', on(['sites-backend/prisma/schema.prisma']), ['sites_backend']);
   eq('общий модуль backend — три джобы', on(['backend/src/common/plans.ts']), ['backend', 'sites_backend', 'frontend']);
@@ -183,7 +191,7 @@ function selfTest() {
     console.error(`ci-changes --self-test: ${failed} ошибок`);
     process.exit(1);
   }
-  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — 15 случаев`);
+  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — 17 случаев`);
 }
 
 if (process.argv.includes('--self-test')) {

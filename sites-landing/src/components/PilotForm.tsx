@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState, type FormEvent } from 'react';
+import { track } from '../lib/track';
 import {
   HONEYPOT_FIELD,
   PILOT_LIMITS,
@@ -77,6 +78,7 @@ export function PilotForm({ locale, strings, privacyHref }: { locale: string; st
     }
     setBusy(false);
     setResult(code);
+    track('pilot_submit', { result: code });
     if (code === 'sent') form.reset();
     statusRef.current?.focus();
   }

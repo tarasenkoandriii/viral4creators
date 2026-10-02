@@ -21,6 +21,10 @@ import { AssistSandboxModule } from './modules/assist-sandbox/assist-sandbox.mod
 import { AssistSiteChatModule } from './modules/assist-site-chat/assist-site-chat.module';
 import { AssistSiteSetupModule } from './modules/assist-site-setup/assist-site-setup.module';
 import { AssistWidgetModule } from './modules/assist-widget/assist-widget.module';
+import { AssistSiteHandoffModule } from './modules/assist-site-handoff/assist-site-handoff.module';
+import { AssistSiteLearningModule } from './modules/assist-site-learning/assist-site-learning.module';
+import { AssistAnalyticsModule } from './modules/assist-analytics/assist-analytics.module';
+import { AssistDigestModule } from './modules/assist-digest/assist-digest.module';
 
 @Module({
   imports: [
@@ -44,6 +48,13 @@ import { AssistWidgetModule } from './modules/assist-widget/assist-widget.module
     AssistSiteChatModule,
     AssistWidgetModule,
     AssistSiteSetupModule,
+    // Э3 «Передача человеку, сценарии, аналитика, обучение» (контракт
+    // /tmp/k/CONTRACT-E3.md): передача в Telegram, обучение на диалогах,
+    // цели и статистика, утренняя сводка и отчёт недели.
+    AssistSiteHandoffModule,
+    AssistSiteLearningModule,
+    AssistAnalyticsModule,
+    AssistDigestModule,
   ],
 })
 export class AppModule {}

@@ -6,7 +6,12 @@
  * Атрибуты тега (`data-site` и др.) переопределяют для страницы ТОЛЬКО
  * позицию/язык/режим — бренд и права атрибутами не меняются (§3-бис.2).
  */
-import { WIDGET_LOADER_PATH } from '../../brand';
+import {
+  WIDGET_GLOBAL,
+  WIDGET_LOADER_PATH,
+  WIDGET_NPM_PACKAGE,
+  WP_PLUGIN_SLUG,
+} from '../../brand';
 import { parsePublicKey } from './keys';
 import type { WidgetConfig } from './widget-config';
 
@@ -14,7 +19,8 @@ export interface SnippetOptions {
   publicKey: string;
   /** Origin загрузчика: env ASSIST_WIDGET_ORIGIN или WIDGET_ORIGIN_DEFAULT. */
   widgetOrigin: string;
-  config: WidgetConfig;
+  /** Не влияет на тег (только data-site); оставлено ради совместимости Э2. */
+  config?: WidgetConfig;
 }
 
 /** Значение атрибута — только безопасные символы (ключ и origin уже проверены). */
@@ -68,4 +74,69 @@ export function buildCspSnippet(widgetOrigin: string): string {
   return WIDGET_CSP_DIRECTIVES.map((d) =>
     d === 'img-src' ? `${d} ${origin} data:;` : `${d} ${origin};`,
   ).join('\n');
+}
+
+// ── Э3: инструкции установки WordPress / npm / GTM (T; ТЗ §3-бис.2) ────
+
+/**
+ * Готовый текст для экрана «Установка» по способу. ВСЁ — данные (рисуются
+ * текстом, копируются кнопкой); публичные имена — только из brand.ts.
+ * Тег во всех способах ОДИН — `buildEmbedSnippet` (загрузчик ждёт ровно
+ * его: `data-site` + путь загрузчика с CDN; npm-пакет и плагин вставляют
+ * тот же тег, шаблон GTM — `assist-integrations/gtm/custom-html.html`,
+ * сверку держит `assist-integrations/scripts/gtm.test.ts`).
+ */
+export interface InstallGuides {
+  /** Google Tag Manager → «Пользовательский HTML», триггер All Pages. */
+  gtm: { html: string };
+  /** React/Vue/Next.js — обёртка над тем же загрузчиком (не вшивает его). */
+  npm: { install: string; code: string; react: string };
+  /** Плагин WordPress/WooCommerce: что вписать в его настройки. */
+  wordpress: { pluginSlug: string; siteKey: string; widgetOrigin: string };
+  /** JS API страницы (цели §5-тер.1, identify §3-бис.2). */
+  jsApi: { goal: string; identify: string };
+}
+
+/** Строка JS в одинарных кавычках: ключ и origin уже проверены, но экранируем. */
+function jsStr(v: string): string {
+  return `'${v.replace(/[\\'\n\r<>&\u2028\u2029]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`)}'`;
+}
+
+export function buildInstallGuides(o: {
+  publicKey: string;
+  widgetOrigin: string;
+}): InstallGuides {
+  const pk = parsePublicKey(o.publicKey);
+  if (!pk) throw new Error('snippet: неверный публичный ключ');
+  const origin = checkedOrigin(o.widgetOrigin);
+  const tag = buildEmbedSnippet({
+    publicKey: pk.key,
+    widgetOrigin: origin,
+  });
+  const opts = `{ siteKey: ${jsStr(pk.key)}, origin: ${jsStr(origin)} }`;
+  return {
+    gtm: { html: tag },
+    npm: {
+      install: `npm install ${WIDGET_NPM_PACKAGE}`,
+      code: [
+        `import { loadAssist } from ${jsStr(WIDGET_NPM_PACKAGE)};`,
+        '',
+        `const assist = loadAssist(${opts});`,
+      ].join('\n'),
+      react: [
+        `import { AssistWidget } from ${jsStr(`${WIDGET_NPM_PACKAGE}/react`)};`,
+        '',
+        `<AssistWidget siteKey=${jsStr(pk.key)} origin=${jsStr(origin)} />`,
+      ].join('\n'),
+    },
+    wordpress: {
+      pluginSlug: WP_PLUGIN_SLUG,
+      siteKey: pk.key,
+      widgetOrigin: origin,
+    },
+    jsApi: {
+      goal: `${WIDGET_GLOBAL}('goal', 'purchase', { value: 1299, currency: 'UAH', orderId: 'A-1042' });`,
+      identify: `${WIDGET_GLOBAL}('identify', { name: 'Ірина', email: 'iryna@example.com', externalId: 'customer-42', userHash: '<HMAC з вашого сервера>' });`,
+    },
+  };
 }

@@ -216,6 +216,21 @@ export const en: Dictionary = {
       manager: 'Manager',
       operator: 'Operator',
     },
+    changeRole: 'Role',
+    remove: 'Remove from account',
+    leave: 'Leave account',
+    confirm: 'Sure? Tap again',
+    removed: 'Member removed from the account.',
+    left: 'You left the account.',
+    roleSaved: 'Role changed.',
+    errors: {
+      MEMBER_NOT_FOUND:
+        'Member not found — they may have been removed already.',
+      MEMBER_LAST_OWNER:
+        'Not allowed: the account must keep at least one owner.',
+      MEMBER_ROLES_INVALID:
+        'This role or these permissions cannot be assigned.',
+    },
   },
   invite: {
     title: 'Invite a member',
@@ -237,6 +252,8 @@ export const en: Dictionary = {
     noBot: 'The Telegram link will appear once the bot username is set.',
     expires: 'Single-use, valid until {date}.',
     once: 'The link is shown only once — copy it now and send it to the person.',
+    managerSeesAll:
+      'An Assistant manager sees statistics and dialogs of all sites in the account.',
     agencyWarning:
       'The role applies to the whole account: the member will see all of its sites. Do not invite an agency’s end clients — handing a site over to a client comes later.',
     another: 'Create another',

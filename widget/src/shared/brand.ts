@@ -38,3 +38,10 @@ export function widgetResumeCookieName(pk: string): string {
   }
   return `${WIDGET_RESUME_COOKIE}_${h.toString(16).padStart(8, '0')}`;
 }
+
+// Э3 (зеркало блока «Э3» sites-backend/src/brand.ts).
+export const WIDGET_GOAL_PICKER_PARAM = 'v4c_goal';
+export const WIDGET_PICKER_PATH = '/v1/picker.js';
+export const WIDGET_ENGAGE_PATH = '/v1/engage.js';
+export const WIDGET_GOAL_ATTR = 'data-assist-goal';
+export const WIDGET_GOAL_SUBMIT_ATTR = 'data-assist-goal-submit';

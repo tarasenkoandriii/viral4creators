@@ -74,6 +74,12 @@ export interface SiteAccount {
 }
 
 export interface AccountMember {
+  /**
+   * Э3: id участника для PATCH/DELETE `/sites/account/members/:memberId`
+   * (сервер Э3 отдаёт всегда). Пустая строка — id не прошёл проверку
+   * сегмента пути: правок для такой строки нет.
+   */
+  memberId: string;
   telegramId: string;
   role: AccountRole;
   productRoles: ProductRoles;

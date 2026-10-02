@@ -65,6 +65,12 @@ export class WidgetChatDto {
   @IsOptional()
   @IsIn(['uk', 'ru', 'en'])
   uiLang!: 'uk' | 'ru' | 'en' | null;
+
+  /** Э3: `user` | `proactive:<ключ>` | `scenario:<ключ>` — формат и ключ проверяет сервис. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  openedBy?: string | null;
 }
 
 export class WidgetLeadDto {
@@ -86,6 +92,54 @@ export class WidgetLeadDto {
   @IsString()
   @MaxLength(2048)
   pageUrl!: string | null;
+
+  /** Э3: `V4CAssist('identify')` — режется до WidgetIdentity (cleanIdentity). */
+  @IsOptional()
+  @IsObject()
+  identity?: Record<string, unknown> | null;
+}
+
+/** Э3: «позвать человека» (§3.7). Старый iframe Э2 шлёт `{}` — все поля необязательны. */
+export class WidgetHandoffDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  conversationId?: string | null;
+
+  @IsOptional()
+  @IsIn(['uk', 'ru', 'en'])
+  uiLang?: 'uk' | 'ru' | 'en' | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  pageUrl?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9_-]{1,32}$/)
+  scenarioKey?: string | null;
+
+  @IsOptional()
+  @IsObject()
+  identity?: Record<string, unknown> | null;
+}
+
+export class WidgetHandoffCancelDto {
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{1,64}$/)
+  conversationId!: string;
+}
+
+/** Э3: обмен `?v4c_goal=` на сессию режима выбора цели. */
+export class WidgetGoalPickerSessionDto {
+  @IsString()
+  @MaxLength(80)
+  pk!: string;
+
+  @IsString()
+  @MaxLength(200)
+  token!: string;
 }
 
 export class WidgetFeedbackDto {

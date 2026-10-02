@@ -128,7 +128,12 @@ export function normalizeHttpsUrl(raw: string): URL | null {
   return u;
 }
 
-function ctxOf(m: AccountMembership, siteId: string): KnowledgeCtx {
+/** Кто меняет FAQ: участник кабинета или системный код (Э3, telegramId = null). */
+type FaqActor = Pick<AccountMembership, 'accountId'> & {
+  telegramId: bigint | null;
+};
+
+function ctxOf(m: { accountId: string }, siteId: string): KnowledgeCtx {
   return { accountId: m.accountId, siteId };
 }
 
@@ -522,10 +527,7 @@ export class ModeKnowledgeCore {
   // ── FAQ ───────────────────────────────────────────────────────────────
 
   /** Источник `faq` — один на сайт и режим; создаётся при первом FAQ. */
-  private async faqSource(
-    m: AccountMembership,
-    siteId: string,
-  ): Promise<SourceRow> {
+  private async faqSource(m: FaqActor, siteId: string): Promise<SourceRow> {
     const rows = this.rows(m);
     const found = await rows.source.findFirst({
       where: { siteId, kind: 'faq' },
@@ -554,7 +556,7 @@ export class ModeKnowledgeCore {
   }
 
   private async indexFaq(
-    m: AccountMembership,
+    m: FaqActor,
     siteId: string,
     faq: {
       id: string;
@@ -594,17 +596,36 @@ export class ModeKnowledgeCore {
     await this.syncFaqCount(m, siteId, src.id);
   }
 
-  private async syncFaqCount(
-    m: AccountMembership,
-    siteId: string,
-    sourceId: string,
-  ) {
+  private async syncFaqCount(m: FaqActor, siteId: string, sourceId: string) {
     const rows = this.rows(m);
     const n = await rows.faq.count({ where: { siteId, status: 'active' } });
     await rows.source.update({
       where: { id: sourceId },
       data: { documentsCount: n, lastSyncAt: new Date() },
     });
+  }
+
+  /**
+   * Э3 (L, обучение): переиндексировать FAQ как он есть в строке — без
+   * участника кабинета (хвост forget посетителя снял дословный вариант;
+   * правка проверенного ответа в статусе needs_review — он остаётся в
+   * поиске, §4-тер.4 путь (3)). Архивный — ничего (его нет в индексе).
+   */
+  async reindexFaq(
+    ctx: KnowledgeCtx,
+    fid: string,
+    byTelegramId: bigint | null,
+  ): Promise<boolean> {
+    const actor: FaqActor = {
+      accountId: ctx.accountId,
+      telegramId: byTelegramId,
+    };
+    const row = await this.rows(actor).faq.findFirst({
+      where: { id: fid, siteId: ctx.siteId },
+    });
+    if (!row || row.status === 'archived') return false;
+    await this.indexFaq(actor, ctx.siteId, row);
+    return true;
   }
 
   async createFaq(

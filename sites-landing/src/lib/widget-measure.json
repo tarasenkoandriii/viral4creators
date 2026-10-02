@@ -1,0 +1,10 @@
+{
+  "date": "2026-10-02",
+  "runs": 5,
+  "loaderKb": 10.4,
+  "chatKb": 22.5,
+  "dLcpMs": 3,
+  "dTbtMs": 16,
+  "dCls": 0,
+  "how": "scripts/built/widget-cwv.mjs: Lighthouse mobile, медиана 5 прогонов /uk/assistant с виджетом и без (адрес загрузчика заблокирован), http://localhost:3010; INP открытия чата 88 мс"
+}

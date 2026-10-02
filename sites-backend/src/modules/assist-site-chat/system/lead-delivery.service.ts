@@ -15,8 +15,14 @@
  * — О-9). Без ASSIST_BOT_TOKEN/ASSIST_TMA_URL sendToMembers не зовётся
  * вовсе: его запасная ветка пишет текст сообщения в лог, а здесь в тексте —
  * поля лида.
+ *
+ * Э3 (A): identify посетителя (`identityEnc`) — строка «Покупатель на
+ * сайте: …» с пометкой «проверен» (userHash сошёлся с секретом
+ * идентичности сайта — IntegrationsService.verifyUserHash) или «заявлено
+ * сайтом, не проверено» (секрета нет / подпись не та / без userHash);
+ * итог — в `identityVerified` (null — identify не было).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { WIDGET_DEFAULTS } from '../../../config/assist-defaults';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { SitesDb } from '../../../prisma/sites-db.service';
@@ -26,6 +32,12 @@ import {
   type BotNotifyEnv,
   type FetchLike,
 } from '../../assist-knowledge-core/notify';
+import { IntegrationsService } from '../../assist-analytics/integrations.service';
+import {
+  decryptIdentity,
+  identityKey,
+} from '../../assist-analytics/public/identity-crypto';
+import type { WidgetIdentity } from '../chat-types';
 import { decryptLeadFields, leadKey, type LeadFields } from '../lead-crypto';
 
 /** Lease захвата строки: дольше одной отправки на всех получателей. */
@@ -45,6 +57,7 @@ interface LeadRow {
   consentAt: Date;
   pageUrl: string | null;
   attempts: number;
+  identityEnc: string | null;
 }
 
 const FIELD_LABEL: Record<keyof LeadFields, string> = {
@@ -61,12 +74,31 @@ export function leadMessageText(p: {
   fields: LeadFields;
   consentText: string;
   consentAt: Date;
+  /** Э3: identify посетителя и итог сверки userHash. */
+  identity?: WidgetIdentity | null;
+  identityVerified?: boolean | null;
 }): string {
   const lines = [`Новая заявка с сайта «${p.siteName}»`];
   if (p.pageUrl) lines.push(`Страница: ${p.pageUrl}`);
   for (const k of ['name', 'phone', 'email', 'comment'] as const) {
     const v = p.fields[k];
     if (v) lines.push(`${FIELD_LABEL[k]}: ${v}`);
+  }
+  if (p.identity) {
+    const who = [
+      p.identity.name,
+      p.identity.email,
+      p.identity.externalId ? `id ${p.identity.externalId}` : null,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    lines.push(
+      `Покупатель на сайте: ${who} — ${
+        p.identityVerified
+          ? 'проверен (подпись сайта сошлась)'
+          : 'заявлено сайтом, не проверено'
+      }`,
+    );
   }
   lines.push(
     '',
@@ -86,6 +118,7 @@ export class LeadDelivery {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sitesDb: SitesDb,
+    @Optional() private readonly integrations?: IntegrationsService,
   ) {}
 
   async deliver(leadId: string): Promise<'delivered' | 'retry' | 'failed'> {
@@ -96,7 +129,7 @@ export class LeadDelivery {
         WHERE "id" = $1 AND "deliveryState" = 'pending'
           AND ("lockedUntil" IS NULL OR "lockedUntil" < $3)
         RETURNING "id", "accountId", "siteId", "conversationId", "fieldsEnc",
-                  "consentText", "consentAt", "pageUrl", "attempts"`,
+                  "consentText", "consentAt", "pageUrl", "attempts", "identityEnc"`,
       leadId,
       new Date(now.getTime() + LEAD_LEASE_MS),
       now,
@@ -167,6 +200,7 @@ export class LeadDelivery {
     const key = leadKey(this.env);
     const fields = key ? decryptLeadFields(lead.fieldsEnc, lead.id, key) : null;
     if (!fields) return { delivered: [], error: 'decrypt_failed' };
+    const identity = await this.identityOf(lead);
     const site = await this.prisma.site.findUnique({
       where: { id: lead.siteId },
       select: { name: true },
@@ -186,6 +220,8 @@ export class LeadDelivery {
       fields,
       consentText: lead.consentText,
       consentAt: lead.consentAt,
+      identity: identity?.identity ?? null,
+      identityVerified: identity?.verified ?? null,
     });
     const delivered: bigint[] = [];
     for (const chatId of chatIds) {
@@ -202,6 +238,33 @@ export class LeadDelivery {
       if (n > 0) delivered.push(chatId);
     }
     return { delivered, error: delivered.length ? null : 'not_delivered' };
+  }
+
+  /** identify лида: расшифровка и сверка userHash; итог — в identityVerified. */
+  private async identityOf(
+    lead: LeadRow,
+  ): Promise<{ identity: WidgetIdentity; verified: boolean } | null> {
+    if (!lead.identityEnc) return null;
+    const key = identityKey(this.env);
+    const identity = key
+      ? decryptIdentity(lead.identityEnc, lead.id, key)
+      : null;
+    if (!identity) return null;
+    let verified = false;
+    if (identity.externalId && identity.userHash && this.integrations) {
+      verified =
+        (await this.integrations.verifyUserHash(
+          lead.siteId,
+          identity.externalId,
+          identity.userHash,
+        )) === true;
+    }
+    await this.prisma.assistSiteLead.update({
+      where: { id: lead.id },
+      data: { identityVerified: verified },
+      select: { id: true },
+    });
+    return { identity, verified };
   }
 
   /** Крон: недоставленные с истёкшим lease. */

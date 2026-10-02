@@ -38,6 +38,7 @@ export const setupEn: SetupDictionary = {
       install: 'Install',
       hosts: 'Where it works',
       leads: 'Requests',
+      engagement: 'Engagement',
     },
     operatorBlocked:
       'The widget on this site has been stopped by the platform. Please contact support.',
@@ -439,5 +440,7 @@ export const setupEn: SetupDictionary = {
     WIZARD_DRAFT_LIMIT:
       'Drafts were already refreshed the maximum number of times.',
     WIZARD_NOT_STARTED: 'The wizard has not been started yet.',
+    ENGAGEMENT_INVALID:
+      'Triggers or scenarios failed validation: check texts, delays and links.',
   },
 };

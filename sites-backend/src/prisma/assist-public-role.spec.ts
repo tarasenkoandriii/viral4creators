@@ -124,9 +124,19 @@ if (!RAW_URL) {
       // Э2: кабинетное и чужое публичному маршруту.
       'assist_site_wizards',
       'assist_acquisitions',
-      'assist_site_leads',
       'assist_widget_drafts',
       'assist_landing_events',
+      // Э3: кабинет, секреты, свёртки, бот — не публичное.
+      'assist_site_learning_items',
+      'assist_site_learning_clusters',
+      'assist_site_forget_jobs',
+      'assist_site_goal_events',
+      'assist_site_integrations',
+      'assist_site_daily_totals',
+      'assist_site_exports',
+      'assist_site_report_subscriptions',
+      'assist_bot_messages',
+      'assist_bot_users',
     ])('SELECT из %s под assist_public падает', async (table) => {
       await expect(
         asPublic(`SELECT 1 FROM ${S}."${table}" LIMIT 1`),
@@ -185,6 +195,98 @@ if (!RAW_URL) {
         `DELETE FROM ${S}."assist_site_messages" WHERE false`,
       ]) {
         await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
+      }
+    });
+
+    it('Э3: закрытые колонки и системные поля передачи/лида/сообщения роли не видны', async () => {
+      for (const sql of [
+        `SELECT "fieldsEnc" FROM ${S}."assist_site_leads" LIMIT 1`,
+        `SELECT "identityEnc" FROM ${S}."assist_site_leads" LIMIT 1`,
+        `UPDATE ${S}."assist_site_leads" SET "identityVerified" = true WHERE false`,
+        `SELECT "authorMemberId" FROM ${S}."assist_site_messages" LIMIT 1`,
+        `UPDATE ${S}."assist_site_messages" SET "translation" = '{}' WHERE false`,
+        `UPDATE ${S}."assist_site_messages" SET "role" = 'operator' WHERE false`,
+        `SELECT "assignedTelegramId" FROM ${S}."assist_site_handoffs" LIMIT 1`,
+        `SELECT "summary" FROM ${S}."assist_site_handoffs" LIMIT 1`,
+        `UPDATE ${S}."assist_site_handoffs" SET "assignedMemberId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_handoffs" SET "takenAt" = now() WHERE false`,
+        `SELECT "createdByTelegramId" FROM ${S}."assist_site_goals" LIMIT 1`,
+        `UPDATE ${S}."assist_site_goal_events" SET "trust" = 'verified' WHERE false`,
+        `UPDATE ${S}."assist_site_learning_items" SET "status" = 'resolved' WHERE false`,
+        `SELECT "currency" FROM ${S}."assist_sites" LIMIT 1`,
+        `SELECT "result" FROM ${S}."assist_site_preview_tokens" LIMIT 1`,
+        // Сужение Э2: счётчики — только свои колонки.
+        `UPDATE ${S}."assist_site_conversations" SET "visitorId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_conversations" SET "siteId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_budget_days" SET "key" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_period_usage" SET "quota" = 1000000 WHERE false`,
+        `UPDATE ${S}."assist_rate_buckets" SET "expiresAt" = now() WHERE false`,
+        `UPDATE ${S}."assist_site_semantic_cache" SET "siteId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_visitor_resumes" SET "visitorId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_install_pings" SET "siteId" = 'x' WHERE false`,
+      ]) {
+        await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
+      }
+    });
+
+    it('Э3: виджет создаёт передачу, сигнал очереди, событие цели и счётчик; отвязывает лид', async () => {
+      for (const sql of [
+        `SELECT "handoffConfig", "handoffEtaMinutes", "timezone", "analytics" FROM ${S}."assist_sites" LIMIT 1`,
+        `SELECT "id", "state", "timeoutAt", "takenAt" FROM ${S}."assist_site_handoffs" LIMIT 1`,
+        `UPDATE ${S}."assist_site_handoffs" SET "state" = 'cancelled', "closedAt" = now(), "closedBy" = 'visitor' WHERE false`,
+        `UPDATE ${S}."assist_site_conversations" SET "handoffState" = 'waiting' WHERE false`,
+        `UPDATE ${S}."assist_site_messages" SET "trace" = '{}', "lang" = 'uk' WHERE false`,
+        `UPDATE ${S}."assist_site_leads" SET "visitorId" = NULL WHERE "siteId" = 's' AND "visitorId" = 'v'`,
+        `SELECT "detectors", "status" FROM ${S}."assist_site_goals" LIMIT 1`,
+        // Ровно те колонки, что шлёт Prisma createMany (поля + @default).
+        `INSERT INTO ${S}."assist_site_handoffs" ("id", "accountId", "siteId", "conversationId", "state", "reason", "escalation", "visitorLang", "pageUrl", "identityEnc", "requestedAt", "timeoutAt", "reminders", "attempts", "costMicroUsd", "createdAt", "updatedAt") SELECT 'h', 'a', 's', 'c', 'waiting', 'visitor', NULL, 'uk', NULL, NULL, now(), now(), 0, 0, 0, now(), now() WHERE false`,
+        `INSERT INTO ${S}."assist_site_learning_items" ("id", "accountId", "siteId", "kind", "conversationId", "messageId", "visitorId", "suspicious", "signal", "questionMasked", "answerMasked", "lang", "questionEmbedding", "status", "createdAt", "updatedAt") SELECT 'i', 'a', 's', 'unknown', 'c', 'm', 'v', false, 'no_answer', 'q', NULL, 'uk', NULL, 'new', now(), now() WHERE false ON CONFLICT DO NOTHING`,
+        `INSERT INTO ${S}."assist_site_goal_events" ("id", "accountId", "siteId", "goalId", "occurredAt", "source", "trust", "clientEventId", "status", "attribution") SELECT 'e', 'a', 's', 'g', now(), 'loader', 'page', 'd:k:url', 'completed', 'unassisted' WHERE false ON CONFLICT DO NOTHING`,
+        `INSERT INTO ${S}."assist_site_forget_jobs" ("id", "siteId", "conversationIds") SELECT 'f', 's', ARRAY['c'] WHERE false`,
+        `UPDATE ${S}."assist_site_preview_tokens" SET "result" = '{}' WHERE false`,
+        `INSERT INTO ${S}."assist_site_event_counts" ("siteId", "day", "kind", "key", "hour", "count") SELECT 's', '2026-10-03', 'open', '', 1, 1 WHERE false ON CONFLICT ("siteId", "day", "kind", "key", "hour") DO UPDATE SET "count" = ${S}."assist_site_event_counts"."count" + EXCLUDED."count"`,
+      ]) {
+        await expect(asPublic(sql)).resolves.toBeUndefined();
+      }
+    });
+
+    it('Э3 (решение 8): ON CONFLICT под ролью — с целью только там, где у роли SELECT на колонки цели; иначе без цели', async () => {
+      // С целью конфликта Postgres требует SELECT на её колонки (и на
+      // RETURNING). Ровно те UPSERT, что шлёт публичный код Э3:
+      // EventCounts (A, W /event) и лимиты окон W (передача 5/ч, цели и
+      // события на IP) — assist_rate_buckets, как rate-limit.ts.
+      for (const sql of [
+        `INSERT INTO ${S}."assist_site_event_counts" ("siteId", "day", "kind", "key", "hour", "count") SELECT 's', '2026-10-03', 'open', '', 1, 1 WHERE false ON CONFLICT ("siteId", "day", "kind", "key", "hour") DO UPDATE SET "count" = ${S}."assist_site_event_counts"."count" + EXCLUDED."count"`,
+        `INSERT INTO ${S}."assist_rate_buckets" ("scope", "key", "bucket", "count", "expiresAt") VALUES ('widget-handoff-visitor-h', 'k', '2026-10-03T10', 1, now()) ON CONFLICT ("scope", "key", "bucket") DO UPDATE SET "count" = ${S}."assist_rate_buckets"."count" + 1 WHERE ${S}."assist_rate_buckets"."count" < 5 RETURNING "count"`,
+      ]) {
+        await expect(asPublic(sql)).resolves.toBeUndefined();
+      }
+      // Очередь обучения (L), события целей (A), задания forget (L): у роли
+      // только INSERT — цель конфликта упала бы 42501, поэтому код шлёт
+      // `ON CONFLICT DO NOTHING` без цели (Prisma skipDuplicates — так же).
+      for (const sql of [
+        `INSERT INTO ${S}."assist_site_learning_items" ("id", "accountId", "siteId", "kind", "conversationId", "messageId", "visitorId", "suspicious", "signal", "questionMasked", "answerMasked", "lang", "questionEmbedding", "status", "createdAt", "updatedAt") SELECT 'i', 'a', 's', 'unknown', 'c', 'm', 'v', false, 'no_answer', 'q', NULL, 'uk', NULL, 'new', now(), now() WHERE false ON CONFLICT ("messageId", "kind") DO NOTHING`,
+        `INSERT INTO ${S}."assist_site_goal_events" ("id", "accountId", "siteId", "goalId", "occurredAt", "source", "trust", "clientEventId", "status", "attribution") SELECT 'e', 'a', 's', 'g', now(), 'loader', 'page', 'd:k:url', 'completed', 'unassisted' WHERE false ON CONFLICT ("siteId", "clientEventId") DO NOTHING`,
+        `INSERT INTO ${S}."assist_site_goal_events" ("id", "accountId", "siteId", "goalId", "occurredAt", "source", "trust", "orderId", "status", "attribution") SELECT 'e', 'a', 's', 'g', now(), 'loader', 'page', 'A-1', 'completed', 'unassisted' WHERE false ON CONFLICT ("siteId", "goalId", "orderId") DO NOTHING`,
+      ]) {
+        await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
+      }
+      // Публичный код этих таблиц действительно шлёт вариант без цели.
+      const fs = await import('fs');
+      const path = await import('path');
+      const read = (rel: string) =>
+        fs.readFileSync(path.join(__dirname, '..', 'modules', rel), 'utf8');
+      const signals = read('assist-site-learning/public/learning-signals.ts');
+      expect(signals).toMatch(/ON CONFLICT DO NOTHING/);
+      expect(signals).not.toMatch(/ON CONFLICT \(/);
+      const goals = read('assist-analytics/public/goal-intake.service.ts');
+      expect(goals).not.toMatch(/ON CONFLICT \(/);
+      expect(goals.match(/skipDuplicates: true/g)?.length).toBe(2);
+      for (const rel of [
+        'assist-site-handoff/public/handoff-intake.service.ts',
+        'assist-site-learning/public/forget-jobs.ts',
+      ]) {
+        expect(read(rel)).not.toMatch(/ON CONFLICT \(/);
       }
     });
 
@@ -271,20 +373,52 @@ if (!RAW_URL) {
         site_crawl_robots: ['SELECT', 'INSERT', 'UPDATE'],
         // Отказ доменов (L0): только колонка domain.
         site_opt_out_domains: ['column:SELECT'],
-        // Э2 (миграция _assist_widget): виджет «Сайта».
+        // Э2 (миграция _assist_widget): виджет «Сайта». Э3 (_assist_handoff)
+        // сузил табличные UPDATE до колонок счётчиков и сроков.
         assist_site_config_versions: ['column:SELECT'],
-        assist_site_visitor_resumes: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
-        assist_site_conversations: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
-        assist_site_messages: ['SELECT', 'INSERT', 'UPDATE'],
-        assist_site_leads: ['INSERT'],
-        assist_budget_days: ['SELECT', 'INSERT', 'UPDATE'],
+        assist_site_visitor_resumes: [
+          'SELECT',
+          'INSERT',
+          'DELETE',
+          'column:UPDATE',
+        ],
+        assist_site_conversations: [
+          'SELECT',
+          'INSERT',
+          'DELETE',
+          'column:UPDATE',
+        ],
+        assist_site_messages: [
+          'column:SELECT',
+          'column:INSERT',
+          'column:UPDATE',
+        ],
+        // Э3: + отвязка visitorId после forget и identify в шифре.
+        assist_site_leads: ['column:SELECT', 'column:INSERT', 'column:UPDATE'],
+        assist_budget_days: ['SELECT', 'INSERT', 'column:UPDATE'],
         assist_budget_reservations: ['SELECT', 'INSERT', 'DELETE'],
-        assist_site_period_usage: ['SELECT', 'INSERT', 'UPDATE'],
-        assist_rate_buckets: ['SELECT', 'INSERT', 'UPDATE'],
-        assist_site_semantic_cache: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+        assist_site_period_usage: ['SELECT', 'INSERT', 'column:UPDATE'],
+        assist_rate_buckets: ['SELECT', 'INSERT', 'column:UPDATE'],
+        assist_site_semantic_cache: [
+          'SELECT',
+          'INSERT',
+          'DELETE',
+          'column:UPDATE',
+        ],
         assist_site_preview_tokens: ['column:SELECT', 'column:UPDATE'],
-        assist_site_install_pings: ['SELECT', 'INSERT', 'UPDATE'],
+        assist_site_install_pings: ['SELECT', 'INSERT', 'column:UPDATE'],
         assist_site_assets: ['column:SELECT'],
+        // Э3 (миграция _assist_handoff): передача, очередь, цели, счётчики.
+        assist_site_handoffs: [
+          'column:SELECT',
+          'column:INSERT',
+          'column:UPDATE',
+        ],
+        assist_site_learning_items: ['column:INSERT'],
+        assist_site_forget_jobs: ['INSERT'],
+        assist_site_goals: ['column:SELECT'],
+        assist_site_goal_events: ['INSERT'],
+        assist_site_event_counts: ['SELECT', 'INSERT', 'column:UPDATE'],
         // Лендинг: только запись.
         assist_widget_drafts: ['INSERT'],
         assist_landing_events: ['INSERT'],

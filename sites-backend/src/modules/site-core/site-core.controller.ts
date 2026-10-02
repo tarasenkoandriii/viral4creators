@@ -7,6 +7,8 @@
  *   GET    /sites/account                          мой кабинет (создаётся при первом входе)
  *   POST   /sites/account/invites                  приглашение участника (владелец)
  *   POST   /sites/account/invites/accept           принять приглашение (startapp=inv_…)
+ *   PATCH  /sites/account/members/:memberId        роль и права участника (владелец; Э3, H)
+ *   DELETE /sites/account/members/:memberId        удалить участника (владелец) / выйти (сам)
  *   GET    /sites                                  сайты кабинета
  *   POST   /sites                                  создать сайт (имя) + первый хост
  *   POST   /sites/:id/hosts                        добавить хост
@@ -31,6 +33,7 @@ import {
   Get,
   HttpCode,
   Param,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -52,6 +55,7 @@ import {
   ChallengeDto,
   CreateInviteDto,
   CreateSiteDto,
+  MemberPatchDto,
   MethodDto,
 } from './site-core.dto';
 import { SitesService } from './sites/sites.service';
@@ -88,6 +92,29 @@ export class SiteAccountController {
   ) {
     const m = await this.accounts.acceptInvite(req.identity, dto.token);
     return this.accounts.accountInfo(m, false);
+  }
+
+  /** Э3 (H, план Э3 «роли кабинета»): смена роли/прав — владелец. */
+  @Patch('members/:memberId')
+  @UseGuards(SiteAccountGuard)
+  @RequireAccountRoles('owner')
+  updateMember(
+    @Membership() m: AccountMembership,
+    @Param('memberId') memberId: string,
+    @Body() dto: MemberPatchDto,
+  ) {
+    return this.accounts.updateMember(m, memberId, dto);
+  }
+
+  /** Э3 (H): удалить участника (владелец) или выйти из кабинета (сам). */
+  @Delete('members/:memberId')
+  @UseGuards(SiteAccountGuard)
+  deleteMember(
+    @Membership() m: AccountMembership,
+    @Param('memberId') memberId: string,
+    @Req() req: IdentifiedRequest,
+  ) {
+    return this.accounts.deleteMember(m, memberId, req.identity);
   }
 }
 

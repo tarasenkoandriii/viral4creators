@@ -113,6 +113,10 @@ function PersonaForm({
       lists.handoffTriggers,
       LIST_MAX.handoffTriggers
     ).map((s) => s.slice(0, ITEM_MAX.handoffTriggers)),
+    // Э3 №19: незаполненные процедуры не отправляем (сервер: required).
+    procedures: (draft.procedures ?? [])
+      .map((p) => ({ when: p.when.trim(), steps: p.steps.trim() }))
+      .filter((p) => p.when && p.steps),
   });
 
   const accept = (v: PersonaSettingsView) => {
@@ -231,6 +235,10 @@ function PersonaForm({
         {listField('examples', t.examples, t.examplesHint)}
         {listField('handoffTriggers', t.handoff, t.handoffHint)}
       </Card>
+      <ProceduresCard
+        value={draft.procedures ?? []}
+        onChange={(procedures) => setDraft({ ...draft, procedures })}
+      />
       {gate && (
         <Alert
           tone={
@@ -307,5 +315,66 @@ function PersonaForm({
         }
       />
     </div>
+  );
+}
+
+/**
+ * Э3 №19: текстовые процедуры «когда — сделай» (до 10). Данные для
+ * промпта персоны: новых действий модели не дают (только ссылка, заявка,
+ * передача человеку). Пустая строка не уходит (сервер ответил бы required).
+ */
+function ProceduresCard({
+  value,
+  onChange,
+}: {
+  value: Array<{ when: string; steps: string }>;
+  onChange: (v: Array<{ when: string; steps: string }>) => void;
+}) {
+  const { appDict } = useAssist();
+  const t = appDict.e3.procedures;
+  const set = (i: number, patch: Partial<{ when: string; steps: string }>) =>
+    onChange(value.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  return (
+    <Card className="space-y-3">
+      <div className="font-semibold">{t.title}</div>
+      <div className="text-xs text-silver-500">{t.hint}</div>
+      {value.map((p, i) => (
+        <div
+          key={i}
+          className="space-y-1 border-t border-silver-200 dark:border-silver-800 pt-2"
+        >
+          <input
+            aria-label={t.when}
+            placeholder={t.when}
+            className={inputClass}
+            maxLength={PERSONA_LIMITS.procedureWhen}
+            value={p.when}
+            onChange={(e) => set(i, { when: e.target.value })}
+          />
+          <textarea
+            aria-label={t.steps}
+            placeholder={t.steps}
+            className={textareaClass}
+            maxLength={PERSONA_LIMITS.procedureSteps}
+            value={p.steps}
+            onChange={(e) => set(i, { steps: e.target.value })}
+          />
+          <Button
+            variant="ghost"
+            onClick={() => onChange(value.filter((_, j) => j !== i))}
+          >
+            {appDict.e3.common.remove}
+          </Button>
+        </div>
+      ))}
+      {value.length < PERSONA_LIMITS.procedures && (
+        <Button
+          variant="outline"
+          onClick={() => onChange([...value, { when: '', steps: '' }])}
+        >
+          {t.add}
+        </Button>
+      )}
+    </Card>
   );
 }

@@ -12,6 +12,12 @@
  *     значения (CI собирает с токеном-приманкой в env) в `.next/static`.
  *  5. Таблицы — с `<caption>` и `th[scope]` (урок Ф-7).
  *  6. JSON-LD разбирается и не содержит цен/оферт и рейтингов (§8.3, С0).
+ *  7. Л2–Л3: тега загрузчика виджета в HTML нет ни на одной странице (он
+ *     вставляется после load/idle); живой блок и панель «покрутите виджет»
+ *     на `/assistant` — ровно тогда, когда сборка знает ключ виджета
+ *     (`ASSIST_WIDGET_PK`); ссылок в Telegram (`t.me`, `startapp`) в HTML
+ *     нет; конфигуратор `/assistant/widget` собран, адреса продукта в
+ *     клиентском коде — те, что заданы env (а не литералы).
  *
  * Запуск: `npm run check:built` после `next build` с тем же `SITE_URL`.
  */
@@ -23,6 +29,8 @@ import { getDictionary } from '../../src/lib/get-dictionary';
 import { locales } from '../../src/lib/i18n';
 import { PAGES } from '../../src/lib/pages';
 import { attr, claimViolations, elementsWith, headTags, jsonLdViolations } from '../lib/html';
+import { readAssistEnv } from '../../src/lib/assist-env';
+import { WIDGET_NAMES } from '../../src/brand';
 
 const ROOT = path.join(__dirname, '..', '..');
 const APP = path.join(ROOT, '.next', 'server', 'app');
@@ -127,8 +135,44 @@ for (const l of locales) {
   if (token && html.includes(token)) problems.push(`/${l}/assistant/pilot: токен в HTML`);
 }
 
+// 7. Живой виджет и конфигуратор (Л2–Л3).
+const assist = readAssistEnv(process.env);
+const htmlFiles: string[] = [];
+const walkHtml = (d: string) => {
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) walkHtml(p);
+    else if (e.name.endsWith('.html')) htmlFiles.push(p);
+  }
+};
+walkHtml(APP);
+const loaderRe = new RegExp(`<script\\b[^>]*\\ssrc="[^"]*${WIDGET_NAMES.loaderPath.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`);
+for (const f of htmlFiles) {
+  const html = fs.readFileSync(f, 'utf8');
+  const rel = path.relative(APP, f);
+  if (loaderRe.test(html) || /<script\b[^>]*\sdata-site=/.test(html)) problems.push(`${rel}: тег загрузчика виджета в HTML (должен вставляться после load/idle)`);
+  const visible = html.replace(/<script[\s\S]*?<\/script>/g, '');
+  if (/t\.me\/|startapp=/.test(visible)) problems.push(`${rel}: ссылка в Telegram в статическом HTML`);
+}
+for (const l of locales) {
+  const html = read(`${l}/assistant.html`);
+  const hasLive = html.includes('data-claim="live-widget"') && html.includes('data-testid="playground"');
+  if (assist.widgetPk && !hasLive) problems.push(`/${l}/assistant: ключ виджета задан, а живого блока нет`);
+  if (!assist.widgetPk && (hasLive || html.includes('data-testid="playground"'))) problems.push(`/${l}/assistant: живой блок без ключа виджета`);
+  if (!assist.widgetPk && !html.includes('data-claim="demo-recording"')) problems.push(`/${l}/assistant: без ключа нет места под запись`);
+  const w = read(`${l}/assistant/widget.html`);
+  if (!w.includes('data-testid="cfg-stage"') || !w.includes('data-claim="configurator"')) problems.push(`/${l}/assistant/widget: нет конфигуратора`);
+  if (assist.widgetPk && !w.includes(`${assist.widgetOrigin}${WIDGET_NAMES.loaderPath}`)) problems.push(`/${l}/assistant/widget: адрес загрузчика не из env`);
+}
+{
+  const bundle = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  // Адреса продукта приходят пропсами из сборки, в клиентском JS их нет литералами.
+  if (bundle.includes('assist-w.viral4creators.app') && assist.widgetOrigin !== 'https://assist-w.viral4creators.app') problems.push('клиентский бандл: адрес виджета литералом, мимо env');
+}
+
 assert.deepEqual(problems, [], `собранный сайт:\n${problems.join('\n')}`);
 console.log(
   `ok   собранный сайт: ${pages} страниц × локалей — lang, один h1, canonical, hreflang+x-default, OG/Twitter, реестр утверждений, таблицы, JSON-LD без цен/оферт; ` +
-    `noindex у ${noindexFiles.length} служебных; ${files.length} клиентских файлов без секретов${token ? ' (с приманкой токена)' : ' (БЕЗ приманки: PILOT_TELEGRAM_BOT_TOKEN не задан)'}`,
+    `noindex у ${noindexFiles.length} служебных; ${files.length} клиентских файлов без секретов${token ? ' (с приманкой токена)' : ' (БЕЗ приманки: PILOT_TELEGRAM_BOT_TOKEN не задан)'}; ` +
+      `${htmlFiles.length} HTML без тега загрузчика и ссылок в Telegram; живой виджет ${assist.widgetPk ? 'есть (ключ задан)' : 'не подключён (нет ключа) — блок «запись»'}; конфигуратор собран`,
 );

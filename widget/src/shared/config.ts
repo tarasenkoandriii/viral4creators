@@ -12,6 +12,15 @@
  * из списка, тексты — строки с лимитом длины (в DOM — только textContent),
  * картинки — только id наших ассетов (путь строим сами).
  */
+import {
+  ALWAYS_EXCLUDED,
+  parseEngagement,
+  parseGoals,
+  parseHandoff,
+  type Engagement,
+  type Goal,
+  type HandoffInfo,
+} from './engagement';
 
 export const POSITIONS = [
   'bottom-right',
@@ -115,6 +124,18 @@ export interface PublicConfig {
   };
   suggestedQuestions: string[];
   poweredByUrl: string | null;
+  /** Э3: триггеры и лимиты навязчивости (engagement.ts) — разбирает iframe и чанк engage.js. */
+  engagement: Engagement;
+  /** Э3: активные цели с детекторами загрузчика (разбирает чанк engage.js). */
+  goals: Goal[];
+  /**
+   * Э3: сырые `engagement`/`goals` для ленивого чанка engage.js — загрузчик
+   * их НЕ разбирает (бюджет 12 КБ), только решает, нужен ли чанк.
+   */
+  rawEngagement: unknown;
+  rawGoals: unknown;
+  /** Э3: передача человеку (null — сервер Э2 или сбой у H). */
+  handoff: HandoffInfo | null;
 }
 
 export function defaultViewConfig(): ViewConfig {
@@ -161,6 +182,15 @@ export function defaultPublicConfig(): PublicConfig {
     },
     suggestedQuestions: [],
     poweredByUrl: null,
+    engagement: {
+      triggers: [],
+      perVisit: 1,
+      excludedPaths: ALWAYS_EXCLUDED.slice(),
+    },
+    goals: [],
+    rawEngagement: null,
+    rawGoals: null,
+    handoff: null,
   };
 }
 
@@ -244,8 +274,10 @@ export function cleanOrigin(v: unknown): string | null {
  * Разбор `config` (вид без hosts) поверх базы: каждое поле — по своему
  * правилу, неизвестные ключи отбрасываются. Используется и для полного
  * конфига (база — умолчание), и для `preview(partial)` (база — текущий).
+ * `mergeLook` — бренд и раскладка (всё, что рисует ЗАГРУЗЧИК: бюджет
+ * 12 КБ, тексты чата ему не нужны), `mergeView` — плюс тексты (iframe).
  */
-export function mergeView(base: ViewConfig, raw: unknown): ViewConfig {
+export function mergeLook(base: ViewConfig, raw: unknown): ViewConfig {
   const out: ViewConfig = JSON.parse(JSON.stringify(base));
   if (!isObj(raw)) return out;
   const b = raw.brand;
@@ -282,20 +314,6 @@ export function mergeView(base: ViewConfig, raw: unknown): ViewConfig {
     if ('theme' in b) ob.theme = oneOf(THEMES, b.theme, ob.theme);
     if ('poweredBy' in b) ob.poweredBy = bool(b.poweredBy, ob.poweredBy);
   }
-  if (isObj(raw.texts)) {
-    for (const lang of UI_LANGS) {
-      const t = raw.texts[lang];
-      if (!isObj(t)) continue;
-      const greeting = text(t.greeting, LIMITS.greeting) ?? '';
-      const suggestions = Array.isArray(t.suggestions)
-        ? t.suggestions
-            .slice(0, LIMITS.suggestions)
-            .map((s) => text(s, LIMITS.suggestion))
-            .filter((s): s is string => !!s)
-        : [];
-      out.texts[lang] = { greeting, suggestions };
-    }
-  }
   const l = raw.layout;
   if (isObj(l)) {
     const ol = out.layout;
@@ -325,8 +343,37 @@ export function mergeView(base: ViewConfig, raw: unknown): ViewConfig {
   return out;
 }
 
-/** Строгий разбор ответа `GET /widget/v1/config` (поле `data` конверта). */
-export function parsePublicConfig(raw: unknown): PublicConfig {
+/** Тексты приветствия и подсказок по языкам (только iframe). */
+function mergeTexts(out: ViewConfig, raw: unknown): ViewConfig {
+  if (!isObj(raw)) return out;
+  if (isObj(raw.texts)) {
+    for (const lang of UI_LANGS) {
+      const t = raw.texts[lang];
+      if (!isObj(t)) continue;
+      const greeting = text(t.greeting, LIMITS.greeting) ?? '';
+      const suggestions = Array.isArray(t.suggestions)
+        ? t.suggestions
+            .slice(0, LIMITS.suggestions)
+            .map((s) => text(s, LIMITS.suggestion))
+            .filter((s): s is string => !!s)
+        : [];
+      out.texts[lang] = { greeting, suggestions };
+    }
+  }
+  return out;
+}
+
+export function mergeView(base: ViewConfig, raw: unknown): ViewConfig {
+  return mergeTexts(mergeLook(base, raw), raw);
+}
+
+/**
+ * Разбор ответа `GET /widget/v1/config` для ЗАГРУЗЧИКА: статус, хосты, вид
+ * кнопки (бренд и раскладка), предпросмотр, вовлечение и цели. Форма лида,
+ * тексты, подсказки и передача — только iframe (`parsePublicConfig`): в
+ * бюджет загрузчика 12 КБ их разбор не входит, поля остаются умолчаниями.
+ */
+export function parseLoaderConfig(raw: unknown): PublicConfig {
   const d = defaultPublicConfig();
   if (!isObj(raw)) return d;
   d.status = oneOf(
@@ -335,7 +382,7 @@ export function parsePublicConfig(raw: unknown): PublicConfig {
     'active'
   );
   d.widgetVersion = intIn(raw.widgetVersion, 0, 1e9, 0);
-  d.config = mergeView(defaultViewConfig(), raw.config);
+  d.config = mergeLook(defaultViewConfig(), raw.config);
   if (Array.isArray(raw.hosts)) {
     for (const h of raw.hosts.slice(0, LIMITS.hosts)) {
       if (!isObj(h)) continue;
@@ -349,6 +396,16 @@ export function parsePublicConfig(raw: unknown): PublicConfig {
     }
   }
   d.allowClientPreview = raw.allowClientPreview === true;
+  d.rawEngagement = raw.engagement;
+  d.rawGoals = raw.goals;
+  return d;
+}
+
+/** Строгий разбор ответа `GET /widget/v1/config` (поле `data` конверта) — iframe. */
+export function parsePublicConfig(raw: unknown): PublicConfig {
+  const d = parseLoaderConfig(raw);
+  if (!isObj(raw)) return d;
+  d.config = mergeView(d.config, raw.config);
   if (isObj(raw.lead)) {
     const lead = raw.lead;
     if (Array.isArray(lead.fields)) {
@@ -386,6 +443,9 @@ export function parsePublicConfig(raw: unknown): PublicConfig {
       d.poweredByUrl = null;
     }
   }
+  d.handoff = parseHandoff(raw.handoff);
+  d.engagement = parseEngagement(raw.engagement);
+  d.goals = parseGoals(raw.goals);
   return d;
 }
 
@@ -398,6 +458,11 @@ export function applyPreviewPatch(
   partial: unknown
 ): ViewConfig {
   return mergeView(base, partial);
+}
+
+/** То же для загрузчика: только бренд и раскладка кнопки (тексты рисует iframe). */
+export function applyLookPatch(base: ViewConfig, partial: unknown): ViewConfig {
+  return mergeLook(base, partial);
 }
 
 /** Относительная яркость WCAG 2.x для `#rrggbb`. */

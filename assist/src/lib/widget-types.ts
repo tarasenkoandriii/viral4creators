@@ -6,113 +6,39 @@
  * тексту `api-types.ts`.
  */
 
-export const WIDGET_POSITIONS = [
-  'bottom-right',
-  'bottom-left',
-  'top-right',
-  'top-left',
-] as const;
-export type WidgetPosition = (typeof WIDGET_POSITIONS)[number];
+import type { EngagementConfig } from './engagement-types';
+import type { WidgetHostRule, WidgetLook } from '../kit/widget-look';
 
-export const WIDGET_MOBILE_MODES = ['fullscreen', 'sheet', 'bubble'] as const;
-export type WidgetMobileMode = (typeof WIDGET_MOBILE_MODES)[number];
+// Вид виджета (перечни, лимиты, пресеты, фоны, форма бренда/раскладки) —
+// из кита (`site-tma-kit/src/widget-look.ts`, общий с лендингом); здесь —
+// только то, что знает кабинет Помощника (хосты, вовлечение).
+export {
+  HEX_COLOR,
+  WIDGET_COLOR_PRESETS,
+  WIDGET_FONTS,
+  WIDGET_LAUNCHER_ICONS,
+  WIDGET_MOBILE_MODES,
+  WIDGET_POSITIONS,
+  WIDGET_PRESETS,
+  WIDGET_SURFACES,
+  WIDGET_TEXT_LIMITS,
+  WIDGET_THEMES,
+  WIDGET_UI_LANGS,
+  type WidgetFont,
+  type WidgetHostRule,
+  type WidgetLauncherIcon,
+  type WidgetMobileMode,
+  type WidgetOffset,
+  type WidgetPosition,
+  type WidgetPreset,
+  type WidgetTheme,
+  type WidgetUiLang,
+} from '../kit/widget-look';
 
-export const WIDGET_THEMES = ['light', 'dark', 'auto', 'site'] as const;
-export type WidgetTheme = (typeof WIDGET_THEMES)[number];
-
-export const WIDGET_FONTS = [
-  'site',
-  'system',
-  'inter',
-  'roboto',
-  'montserrat',
-  'manrope',
-  'open-sans',
-  'rubik',
-] as const;
-export type WidgetFont = (typeof WIDGET_FONTS)[number];
-
-export const WIDGET_PRESETS = ['soft', 'strict', 'compact'] as const;
-export type WidgetPreset = (typeof WIDGET_PRESETS)[number];
-
-export const WIDGET_LAUNCHER_ICONS = [
-  'chat',
-  'question',
-  'headset',
-  'logo',
-] as const;
-export type WidgetLauncherIcon = (typeof WIDGET_LAUNCHER_ICONS)[number];
-
-export const WIDGET_UI_LANGS = ['uk', 'ru', 'en'] as const;
-export type WidgetUiLang = (typeof WIDGET_UI_LANGS)[number];
-
-export const WIDGET_TEXT_LIMITS = {
-  name: 30,
-  greeting: 300,
-  suggestion: 80,
-  suggestions: 3,
-  pathMask: 200,
-  pathMasks: 20,
-  offsetMax: 200,
-} as const;
-
-/** Пресеты основного цвета — проходят AA в обеих темах (сервер проверяет). */
-export const WIDGET_COLOR_PRESETS = [
-  '#2563EB',
-  '#7C3AED',
-  '#DB2777',
-  '#DC2626',
-  '#C2410C',
-  '#047857',
-  '#0F766E',
-  '#1F2937',
-] as const;
-
-/** Фоны чата светлой/тёмной темы (как у сервера и чата W1). */
-export const WIDGET_SURFACES = { light: '#FFFFFF', dark: '#16181D' } as const;
-
-export interface WidgetOffset {
-  x: number;
-  y: number;
-}
-
-export interface WidgetHostRule {
-  hostId: string;
-  enabled: boolean;
-  pathMasks: string[];
-  hideOn: string[];
-}
-
-export interface WidgetConfig {
-  schema: 1;
-  brand: {
-    primaryColor: string;
-    buttonTextColor: 'auto' | string;
-    logoAssetId: string | null;
-    avatar:
-      | { kind: 'icon'; icon: WidgetLauncherIcon }
-      | { kind: 'asset'; assetId: string };
-    launcherIcon: WidgetLauncherIcon;
-    name: string;
-    font: WidgetFont;
-    preset: WidgetPreset;
-    theme: WidgetTheme;
-    poweredBy: boolean;
-  };
-  texts: Partial<
-    Record<WidgetUiLang, { greeting: string; suggestions: string[] }>
-  >;
-  layout: {
-    position: WidgetPosition;
-    offset: { desktop: WidgetOffset; mobile: WidgetOffset };
-    zIndex: number;
-    mobile: WidgetMobileMode;
-    launcher: 'default' | 'none';
-    openAt: 'corner' | 'center';
-    avoidOverlap: boolean;
-    hideOnScrollMobile: boolean;
-  };
+export interface WidgetConfig extends WidgetLook {
   hosts: WidgetHostRule[];
+  /** Э3 (T): триггеры, лимиты, сценарии — публикуются вместе с видом. */
+  engagement?: EngagementConfig;
 }
 
 export interface WidgetConfigAdjustment {
@@ -182,6 +108,16 @@ export interface WidgetSettingsView {
   widgetOrigin?: string;
   draftChanged?: boolean;
   assets?: AssetView[];
+  /** Э3 (T): инструкции GTM / npm / WordPress — при выданных ключах. */
+  installGuides?: InstallGuides;
+}
+
+/** Повтор `InstallGuides` из `assist-site-setup/snippet.ts`. */
+export interface InstallGuides {
+  gtm: { html: string };
+  npm: { install: string; code: string; react: string };
+  wordpress: { pluginSlug: string; siteKey: string; widgetOrigin: string };
+  jsApi: { goal: string; identify: string };
 }
 
 export interface PreviewTokenResult {
@@ -231,6 +167,9 @@ export const PERSONA_LIMITS = {
   handoffTriggers: 10,
   handoffTrigger: 100,
   allowedLangs: 10,
+  procedures: 10,
+  procedureWhen: 200,
+  procedureSteps: 800,
 } as const;
 
 export interface PersonaConfig {
@@ -242,6 +181,8 @@ export interface PersonaConfig {
   stopPhrases: string[];
   examples: string[];
   handoffTriggers: string[];
+  /** Э3 №19: до 10 «когда — сделай» (сервер не пишет пустой список). */
+  procedures?: Array<{ when: string; steps: string }>;
 }
 
 export interface PersonaGateView {

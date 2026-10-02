@@ -9,6 +9,15 @@
  *
  * Каждый запрос фильтрует по (siteId, visitorId) из ПРОВЕРЕННОГО токена —
  * id из URL сам по себе ничего не открывает (§6.4, §4-бис.10 п.9).
+ *
+ * Э3 (W): `state` несёт последнюю передачу человеку диалога
+ * (`HandoffIntake.visitorView`, H) — iframe опрашивает раз в 3 с, пока она
+ * waiting/active (решение 3); 👎 на ответ → сигнал очереди обучения
+ * (`LearningSignals.record`, L: `wrong`, а у отказа/шаблона — `unhappy`);
+ * `forget` → `ForgetJobs.enqueue` ДО удаления диалогов (хвост — дословные
+ * варианты проверенных ответов, L) и отвязка `visitorId` у лидов
+ * (ограничение Э2 «к Э3»: лид остаётся владельцу, но уже не связан с
+ * посетителем).
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
@@ -18,6 +27,10 @@ import type {
   SiteAnswerSource,
 } from '../assist-site-chat/chat-types';
 import { SemanticCache } from '../assist-site-chat/semantic-cache';
+import { HandoffIntake } from '../assist-site-handoff/public/handoff-intake.service';
+import { ForgetJobs } from '../assist-site-learning/public/forget-jobs';
+import { LearningSignals } from '../assist-site-learning/public/learning-signals';
+import { maskForJournal } from '../assist-site-chat/answer-checks';
 import type {
   WidgetForgetResponse,
   WidgetMessageView,
@@ -124,6 +137,9 @@ export class WidgetStateService {
   constructor(
     private readonly db: AssistPublicDb,
     private readonly cache: SemanticCache,
+    private readonly handoff: HandoffIntake,
+    private readonly signals: LearningSignals,
+    private readonly forgetJobs: ForgetJobs,
   ) {}
 
   async state(
@@ -164,6 +180,13 @@ export class WidgetStateService {
       orderBy: { createdAt: 'desc' },
       select: { id: true },
     });
+    // Передача — всегда (и при совпавшем since): «Взять» оператора может не
+    // менять stateVersion, а iframe по ней решает, опрашивать ли дальше.
+    const handoff = await this.handoff.visitorView(
+      ctx.site,
+      ctx.visitor,
+      last.id,
+    );
     return {
       conversation: {
         id: last.id,
@@ -171,6 +194,7 @@ export class WidgetStateService {
         messages: rows.map(toView),
         streamingMessageId: streaming?.id ?? null,
         lastMessageAt: last.lastMessageAt.toISOString(),
+        handoff,
       },
       previousConversationId: null,
     };
@@ -198,6 +222,8 @@ export class WidgetStateService {
         answerPath: true,
         cacheKey: true,
         conversationId: true,
+        createdAt: true,
+        lang: true,
       },
     });
   }
@@ -289,6 +315,7 @@ export class WidgetStateService {
     if (rating === -1 && m.answerPath === 'cache' && m.cacheKey) {
       await this.cache.evict({ siteId: ctx.site.siteId, key: m.cacheKey });
     }
+    if (rating === -1) await this.thumbsDown(ctx, m);
     this.logger.log(
       `feedback site=${ctx.site.siteId} msg=${m.id} rating=${rating}`,
     );
@@ -296,16 +323,96 @@ export class WidgetStateService {
   }
 
   /**
+   * 👎 → сигнал очереди обучения (L). Тексты уже маскированы конвейером
+   * (журнал Э2); `maskForJournal` ещё раз — дешёвый второй замок: строку с
+   * контактом L отвергнет целиком. Сбой сигнала не роняет оценку (в лог —
+   * только id и имя ошибки).
+   */
+  private async thumbsDown(
+    ctx: VisitorContext,
+    m: {
+      id: string;
+      text: string;
+      answerPath: string | null;
+      conversationId: string;
+      createdAt: Date;
+      lang: string | null;
+    },
+  ): Promise<void> {
+    try {
+      const [question, conv] = await Promise.all([
+        this.db.assistSiteMessage.findFirst({
+          where: {
+            conversationId: m.conversationId,
+            siteId: ctx.site.siteId,
+            role: 'visitor',
+            createdAt: { lte: m.createdAt },
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          select: { text: true, lang: true },
+        }),
+        this.db.assistSiteConversation.findFirst({
+          where: { id: m.conversationId, siteId: ctx.site.siteId },
+          select: { suspicious: true },
+        }),
+      ]);
+      if (!question || !question.text.trim()) return;
+      await this.signals.record({
+        accountId: ctx.site.accountId,
+        siteId: ctx.site.siteId,
+        // Отказ/шаблон помощник и не утверждал — посетитель недоволен
+        // (unhappy); ответ по знаниям/кэшу/модели — «неверно» (wrong).
+        kind:
+          m.answerPath === 'refusal' || m.answerPath === 'template'
+            ? 'unhappy'
+            : 'wrong',
+        signal: 'thumbs_down',
+        conversationId: m.conversationId,
+        messageId: m.id,
+        visitorId: ctx.visitor.visitorId,
+        suspicious: conv?.suspicious === true,
+        questionMasked: maskForJournal(question.text),
+        answerMasked: m.text ? maskForJournal(m.text) : null,
+        lang: question.lang ?? m.lang ?? null,
+        embedding: null,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `thumbs_down signal failed site=${ctx.site.siteId} msg=${m.id}: ${
+          err instanceof Error ? err.name : typeof err
+        }`,
+      );
+    }
+  }
+
+  /**
    * Право посетителя на удаление (§6.3): все диалоги этого visitorId на
-   * этом сайте (сообщения — каскадом FK, лиды — SET NULL) и все его
-   * указатели resumeKey. Повтор — 0, не ошибка.
+   * этом сайте (сообщения, передачи, очередь обучения из диалога — каскадом
+   * FK) и все его указатели resumeKey; лиды остаются владельцу, но
+   * `visitorId` у них обнуляется (Э3). Хвост, который роль убрать не может
+   * (дословные варианты проверенных ответов), — задание L, поставленное ДО
+   * удаления (после него id диалогов уже не найти). Повтор — 0, не ошибка.
    */
   async forget(ctx: VisitorContext): Promise<WidgetForgetResponse> {
     const where = {
       siteId: ctx.site.siteId,
       visitorId: ctx.visitor.visitorId,
     };
-    const [convs] = await this.db.$transaction([
+    const ids = await this.db.assistSiteConversation.findMany({
+      where,
+      select: { id: true },
+    });
+    if (ids.length) {
+      await this.forgetJobs.enqueue(
+        ctx.site.siteId,
+        ids.map((c) => c.id),
+      );
+    }
+    const [, convs] = await this.db.$transaction([
+      this.db.assistSiteLead.updateMany({
+        where,
+        data: { visitorId: null },
+      }),
       this.db.assistSiteConversation.deleteMany({ where }),
       this.db.assistSiteVisitorResume.deleteMany({ where }),
     ]);

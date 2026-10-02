@@ -26,6 +26,8 @@ export const SETUP_ERROR_CODES = [
   'KEYS_MISSING',
   'WIZARD_DRAFT_LIMIT',
   'WIZARD_NOT_STARTED',
+  // Э3 (T): триггеры и сценарии вовлечения.
+  'ENGAGEMENT_INVALID',
 ] as const;
 export type SetupErrorCode = (typeof SETUP_ERROR_CODES)[number];
 

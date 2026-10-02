@@ -5,7 +5,13 @@
  */
 
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { json, type NextFunction, type Request, type Response } from 'express';
+import {
+  json,
+  text,
+  type NextFunction,
+  type Request,
+  type Response,
+} from 'express';
 import helmet from 'helmet';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -22,6 +28,21 @@ import { SitesConfig } from './config/configuration';
  */
 export const ASSET_UPLOAD_PATH = '/assist/sites/:id/widget/assets';
 export const ASSET_UPLOAD_JSON_LIMIT = '300kb';
+
+/**
+ * Э3: вебхук целей s2s (§5-тер.1) подписан по СЫРОМУ телу — JSON-парсер
+ * его бы пересобрал (порядок ключей, пробелы, кириллица) и подпись не
+ * сошлась бы. На этом пути тело приходит строкой (любой Content-Type,
+ * ≤ 4 КБ), разбирает его сам маршрут (A) ПОСЛЕ проверки подписи.
+ */
+export const GOAL_WEBHOOK_PATH = '/assist/v1/sites/:id/goal-events';
+/**
+ * Э3: события и цели со страницы шлются и `navigator.sendBeacon`
+ * (text/plain — простой запрос без preflight, переживает закрытие вкладки):
+ * text/plain на этих путях — строкой ≤ 4 КБ, JSON — как обычно.
+ */
+export const WIDGET_BEACON_PATHS = ['/widget/v1/event', '/widget/v1/goal'];
+export const SMALL_BODY_LIMIT = '4kb';
 
 export function configureApp(app: INestApplication, config: SitesConfig) {
   // API отдаёт только JSON: CSP/COEP ему не нужны, а nosniff, HSTS и
@@ -49,6 +70,30 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       assetJson(req, res, next);
     },
   );
+  const rawText = text({ type: () => true, limit: SMALL_BODY_LIMIT });
+  app.use(
+    GOAL_WEBHOOK_PATH,
+    function goalWebhookRawText(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      rawText(req, res, next);
+    },
+  );
+  const beaconText = text({ type: 'text/plain', limit: SMALL_BODY_LIMIT });
+  for (const path of WIDGET_BEACON_PATHS) {
+    app.use(
+      path,
+      function widgetBeaconText(
+        req: Request,
+        res: Response,
+        next: NextFunction,
+      ) {
+        beaconText(req, res, next);
+      },
+    );
+  }
   app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());

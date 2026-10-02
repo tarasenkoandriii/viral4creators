@@ -37,7 +37,7 @@ import type { LearningBudget } from '../site-ai/learning-budget';
 import type { AiUsageRecorder } from '../site-ai/usage-recorder';
 import type { ExtractedBlock } from '../site-crawl/types';
 import type { AnswerEngine } from './answer/answer-engine';
-import { chunkBlocks, chunkFaq } from './chunker';
+import { chunkBlocks, chunkFaq, embeddingText } from './chunker';
 import { INVARIANT_CASES } from './eval/invariant-cases';
 import { runInvariantEval } from './eval/invariant-eval';
 import {
@@ -799,13 +799,16 @@ export class KnowledgeIndexer {
     // Эмбеддинг — если бюджет позволяет; нет — фрагмент всё равно
     // включается и находится полнотекстом (решение человека не ждёт денег).
     let vector: number[] | null = null;
-    const tokens = estimateEmbedTokens(c.text);
+    const tokens = estimateEmbedTokens(embeddingText(c.sourceType, c.text));
     const est = estimateCost(KNOWLEDGE_DEFAULTS.embedModel, {
       inputTokens: tokens,
     }).costMicroUsd;
     if (await this.deps.budget.reserve(ctx.accountId, ctx.siteId, est)) {
       try {
-        const r = await this.deps.embedder.embed([c.text], 'document');
+        const r = await this.deps.embedder.embed(
+          [embeddingText(c.sourceType, c.text)],
+          'document',
+        );
         vector = r.vectors[0] ?? null;
         await this.recordEmbed(ctx, r.model, r.inputTokens, est);
       } catch (e) {
@@ -1749,7 +1752,9 @@ export class KnowledgeIndexer {
           vector: null,
         };
         if (!nc.quarantined && !nc.copyFrom)
-          needTokens += estimateEmbedTokens(d.text);
+          needTokens += estimateEmbedTokens(
+            embeddingText(u.input.kind, d.text),
+          );
         fresh.push(nc);
       }
       const changed = fresh.length > 0 || keep.length !== old.length || !docId;
@@ -1796,7 +1801,7 @@ export class KnowledgeIndexer {
     let embedded: { model: string; inputTokens: number } | null = null;
     if (toEmbed.length) {
       const r = await this.deps.embedder.embed(
-        toEmbed.map((f) => f.draft.text),
+        toEmbed.map((f) => embeddingText(f.sourceType, f.draft.text)),
         'document',
       );
       toEmbed.forEach((f, i) => (f.vector = r.vectors[i]));

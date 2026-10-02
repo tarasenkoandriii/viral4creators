@@ -15,8 +15,13 @@
  * п.10), а функция Node живёт, пока обработчик не ответил, — поэтому
  * доставка ЖДЁТСЯ, но не дольше LEAD_DELIVERY_WAIT_MS и без ошибки наружу:
  * лид уже записан, остальное довезёт крон. В лог — только id и код (§6.6).
+ *
+ * Э3 (A): `identity` (identify) — строгой формой и шифром в `identityEnc`
+ * (ключ — производный от ASSIST_SECRETS_KEY, AAD = id лида); после записи —
+ * встроенная цель «Заявка» (`GoalIntake.recordBuiltinLead`, предпросмотр не
+ * считается). Сбой записи цели лид не роняет (в лог — код).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
 import { AssistPublicDb } from '../../prisma/assist-public-db.service';
@@ -26,7 +31,17 @@ import {
   type LeadField,
   type LeadsConfig,
 } from '../assist-site-setup/leads-config';
-import type { WidgetSiteContext, WidgetVisitor } from './chat-types';
+import {
+  encryptIdentity,
+  identityKey,
+  normalizeIdentity,
+} from '../assist-analytics/public/identity-crypto';
+import { GoalIntake } from '../assist-analytics/public/goal-intake.service';
+import type {
+  WidgetIdentity,
+  WidgetSiteContext,
+  WidgetVisitor,
+} from './chat-types';
 import { chatError } from './chat-errors';
 import { encryptLeadFields, leadKey, type LeadFields } from './lead-crypto';
 import { LeadDelivery } from './system/lead-delivery.service';
@@ -40,6 +55,11 @@ export interface LeadSubmitInput {
   consent: boolean;
   uiLang: 'uk' | 'ru' | 'en';
   pageUrl: string | null;
+  /**
+   * Э3: `V4CAssist('identify')` — только вместе с лидом (К-3). Хранится
+   * шифром (`identityEnc`); userHash сверяет доставка (системный код).
+   */
+  identity?: WidgetIdentity | null;
 }
 
 export const LEAD_DELIVERY_WAIT_MS = 5_000;
@@ -146,6 +166,7 @@ export class SiteLeadsService {
   constructor(
     private readonly db: AssistPublicDb,
     private readonly delivery: LeadDelivery,
+    @Optional() private readonly goals?: GoalIntake,
   ) {}
 
   async submit(input: LeadSubmitInput): Promise<{ leadId: string }> {
@@ -187,6 +208,8 @@ export class SiteLeadsService {
       : null;
     const id = randomUUID();
     const now = this.now();
+    const identity = normalizeIdentity(input.identity ?? null);
+    const idKey = identity ? identityKey(this.env) : null;
     await this.db.assistSiteLead.createMany({
       data: [
         {
@@ -200,6 +223,9 @@ export class SiteLeadsService {
           consentText,
           consentAt: now,
           pageUrl: leadPageUrl(input.pageUrl),
+          ...(identity && idKey
+            ? { identityEnc: encryptIdentity(identity, id, idKey) }
+            : {}),
           createdAt: now,
         },
       ],
@@ -212,6 +238,23 @@ export class SiteLeadsService {
       });
     }
     this.logger.log(`лид ${id} принят (site ${site.siteId})`);
+    if (this.goals) {
+      await this.goals
+        .recordBuiltinLead({
+          accountId: site.accountId,
+          siteId: site.siteId,
+          leadId: id,
+          conversationId: conv?.id ?? null,
+          preview: site.preview,
+          pageUrl: leadPageUrl(input.pageUrl),
+          occurredAt: now,
+        })
+        .catch((e: unknown) =>
+          this.logger.warn(
+            `лид ${id}: цель «Заявка» не записана (${(e as Error | null)?.name ?? 'Error'})`,
+          ),
+        );
+    }
     await this.deliverSoon(id);
     return { leadId: id };
   }

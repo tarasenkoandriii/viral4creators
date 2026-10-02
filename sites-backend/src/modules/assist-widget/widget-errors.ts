@@ -25,6 +25,10 @@ export const WIDGET_ERROR_STATUS: Record<WidgetErrorCode, number> = {
   SITE_QUOTA: 429,
   PLATFORM_BUDGET: 503,
   UPSTREAM: 502,
+  // Э3:
+  GOAL_ORDER_ID_INVALID: 422,
+  PICKER_INVALID: 403,
+  EVENT_INVALID: 400,
 };
 
 const MESSAGE: Record<WidgetErrorCode, string> = {
@@ -43,6 +47,9 @@ const MESSAGE: Record<WidgetErrorCode, string> = {
   SITE_QUOTA: 'Помощник сейчас не отвечает — оставьте заявку',
   PLATFORM_BUDGET: 'Помощник сейчас не отвечает — оставьте заявку',
   UPSTREAM: 'Ответ прервался — повторите вопрос',
+  GOAL_ORDER_ID_INVALID: 'Номер заказа похож на контакт — не принят',
+  PICKER_INVALID: 'Ссылка выбора цели недействительна или уже использована',
+  EVENT_INVALID: 'Неверный пакет событий',
 };
 
 export function widgetError(

@@ -287,6 +287,13 @@ export function chunkBlocks(
   });
 }
 
+/**
+ * Схема вектора FAQ — в хешах фрагмента: фрагменты, посчитанные по старой
+ * схеме («вопрос+ответ»), не совпадут по contentHash/digitsMaskedHash, и их
+ * вектор не будет скопирован в новую сборку — FAQ переэмбеддится.
+ */
+const FAQ_EMBED_SCHEME = 'faq-q:';
+
 export function chunkFaq(
   question: string,
   answer: string,
@@ -300,9 +307,23 @@ export function chunkFaq(
     text,
     headingPath: null,
     tokens: estimateTokens(text),
-    contentHash: contentHash(text),
-    digitsMaskedHash: digitsMaskedHash(text),
+    contentHash: contentHash(`${FAQ_EMBED_SCHEME}${text}`),
+    digitsMaskedHash: digitsMaskedHash(`${FAQ_EMBED_SCHEME}${text}`),
     ugc: false,
     lang,
   };
+}
+
+/**
+ * Текст, по которому считается вектор фрагмента (task=document). У FAQ —
+ * только первая строка («вопрос (варианты)»), без ответа: прямой путь
+ * виджета (§4.5 п.1, порог 0.92) сравнивает вектор ВОПРОСА посетителя, и
+ * на настоящем эмбеддере вектор «вопрос+ответ» почти никогда не даёт
+ * ≥ 0.92 — проверенный ответ тонул бы в словах ответа. Поиск по смыслу
+ * для FAQ от этого только точнее (вопрос↔вопрос); полнотекст идёт по text.
+ */
+export function embeddingText(sourceType: string, text: string): string {
+  if (sourceType !== 'faq') return text;
+  const nl = text.indexOf('\n');
+  return nl < 0 ? text : text.slice(0, nl);
 }

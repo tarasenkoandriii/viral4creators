@@ -5,7 +5,9 @@ import { Faq } from '../../../components/Faq';
 import { JsonLd } from '../../../components/JsonLd';
 import { SiteChrome, StatusBanner } from '../../../components/SiteChrome';
 import { BRAND } from '../../../brand';
-import { heroVariant } from '../../../lib/claims';
+import { heroVariant, isVisible } from '../../../lib/claims';
+import { liveWidgetTag } from '../../../lib/live-widget';
+import { WidgetPlayground } from '../../../components/WidgetPlayground';
 import { faqGroups } from '../../../lib/faq';
 import { fmt } from '../../../lib/format';
 import { getDictionary } from '../../../lib/get-dictionary';
@@ -15,12 +17,13 @@ import { formatNumber, formatUsd, PLANS } from '../../../lib/plans';
 import { siteUrl } from '../../../lib/site-url';
 
 /**
- * Главная Помощника (§3.2) в варианте Л1 «пилот» (точка С0 плана):
- * hero выводится из реестра (`heroVariant()`), блок 2 — место под запись
- * (без живого виджета, `demo-recording` — soon), всё про продукт — с
- * меткой «скоро», CTA — заявка в пилот. Блоки «Попробовать на своём
- * сайте», «Подключить в Telegram», конфигуратор и сравнение — `hidden`
- * (Л2–Л5) и в разметке отсутствуют.
+ * Главная Помощника (§3.2), точка С2 плана (Л2–Л3): hero выводится из
+ * реестра (`heroVariant()` → «answers»), блок 2 — живой виджет с панелью
+ * «покрутите виджет» (если в сборке есть ключ нашего виджета; иначе —
+ * место под запись, `demo-recording` — «скоро»), блок 6 ведёт в
+ * конфигуратор. CTA — заявка в пилот. «Попробовать на своём сайте»,
+ * «Подключить в Telegram» и сравнение — `hidden` (Л4–Л5) и в разметке
+ * отсутствуют.
  */
 export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
   return pageMetadata('assistant', params.locale);
@@ -31,6 +34,7 @@ export default function AssistantPage({ params }: { params: { locale: Locale } }
   const dict = getDictionary(locale);
   const a = dict.assistant;
   const hero = a.hero[heroVariant()];
+  const liveTag = liveWidgetTag(locale);
   const plan = (id: string) => PLANS.plans.find((p) => p.id === id)!;
   const faqTeaser = faqGroups(locale)
     .flatMap((g) => g.items)
@@ -46,33 +50,59 @@ export default function AssistantPage({ params }: { params: { locale: Locale } }
         <p className="lead">{hero.lead}</p>
         {hero.note && <p className="note">{hero.note}</p>}
         <p className="actions">
-          <a className="button" href={href(locale, 'pilot')}>
+          <a className="button" href={href(locale, 'pilot')} data-cta="hero">
             {hero.cta}
           </a>
-          <a className="button button-secondary" href={href(locale, 'how-it-works')}>
+          <a className="button button-secondary" href={href(locale, 'how-it-works')} data-cta="hero">
             {hero.secondary}
           </a>
         </p>
       </section>
 
-      {/* Блок 2: запись работы — пока её нет, честная заглушка с подписью. */}
-      <section className="section wrap" aria-labelledby="recording-heading">
-        <ClaimCard
-          as="div"
-          heading="h2"
-          headingId="recording-heading"
-          claim={a.recording.claim}
-          dict={dict}
-          title={a.recording.heading}
-          text={a.recording.text}
-        />
-        <figure className="recording">
-          <div className="recording-frame" role="img" aria-label={a.recording.placeholder}>
-            <span>{a.recording.placeholder}</span>
+      {/* Блок 2 (§3.2): живой виджет — если он есть в сборке (Л2, С2);
+          иначе место под запись с честной подписью. */}
+      {liveTag ? (
+        <section className="section wrap" aria-labelledby="live-heading">
+          <div className="live-block">
+            <ClaimCard
+              as="div"
+              heading="h2"
+              headingId="live-heading"
+              claim={a.live.claim}
+              dict={dict}
+              title={a.live.heading}
+              text={fmt(a.live.text)}
+            />
+            <p className="note">{a.live.note}</p>
+            <WidgetPlayground strings={a.live.playground} />
+            {isVisible('configurator') && (
+              <p className="claim-cta">
+                <a href={href(locale, 'widget')} data-cta="playground">
+                  {a.live.more}
+                </a>
+              </p>
+            )}
           </div>
-          <figcaption>{a.recording.caption}</figcaption>
-        </figure>
-      </section>
+        </section>
+      ) : (
+        <section className="section wrap" aria-labelledby="recording-heading">
+          <ClaimCard
+            as="div"
+            heading="h2"
+            headingId="recording-heading"
+            claim={a.recording.claim}
+            dict={dict}
+            title={a.recording.heading}
+            text={a.recording.text}
+          />
+          <figure className="recording">
+            <div className="recording-frame" role="img" aria-label={a.recording.placeholder}>
+              <span>{a.recording.placeholder}</span>
+            </div>
+            <figcaption>{a.recording.caption}</figcaption>
+          </figure>
+        </section>
+      )}
 
       <section className="section section-alt" aria-labelledby="promises-heading">
         <div className="wrap">
@@ -117,6 +147,7 @@ export default function AssistantPage({ params }: { params: { locale: Locale } }
           dict={dict}
           title={a.branding.heading}
           text={a.branding.text}
+          cta={isVisible('configurator') ? { href: href(locale, 'widget'), label: a.branding.cta, place: 'branding' } : undefined}
         />
       </section>
 
@@ -174,7 +205,7 @@ export default function AssistantPage({ params }: { params: { locale: Locale } }
           dict={dict}
           title={a.pilot.heading}
           text={a.pilot.text}
-          cta={{ href: href(locale, 'pilot'), label: a.pilot.cta }}
+          cta={{ href: href(locale, 'pilot'), label: a.pilot.cta, place: 'pilot' }}
         />
       </section>
 

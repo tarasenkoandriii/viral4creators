@@ -28,7 +28,9 @@ export type SetupCode =
   | 'ASSET_TOO_LARGE'
   | 'PERSONA_GATE_FAILED'
   | 'KEYS_MISSING'
-  | 'VERSION_CONFLICT';
+  | 'VERSION_CONFLICT'
+  // Э3 (T): триггеры/сценарии вовлечения (details — errors[]).
+  | 'ENGAGEMENT_INVALID';
 
 export interface FieldError {
   path: string;

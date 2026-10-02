@@ -3,10 +3,12 @@
  *   POST /assist/webhook/telegram — бот помощника, ASSIST_WEBHOOK_SECRET;
  *   POST /qa/webhook/telegram     — бот QA, QA_WEBHOOK_SECRET.
  *
- * Э0: только приём и `/start` в лог — ответов боту нет (отправка
- * сообщений, кнопка Mini App, оператор передачи — следующие этапы).
- * Любое другое обновление — тоже 200: иначе Telegram повторял бы его,
- * копя очередь недоставленных.
+ * Э0: только приём и `/start` в лог. Э3 (H): обновления бота Помощника
+ * разбирает AssistBotUpdates (`/start` → assist_bot_users, кнопки
+ * передачи, реплаи операторов) — ДО ответа 200 (на Vercel работа после
+ * ответа не гарантирована). Сбой разбора — только в лог, ответ всё равно
+ * 200: иначе Telegram повторял бы обновление, копя очередь недоставленных.
+ * Бот QA — по-прежнему только приём.
  *
  * Тело — не DTO: схему Update задаёт Telegram, а глобальный
  * `forbidNonWhitelisted` отверг бы любое новое поле. Разбираем руками
@@ -19,9 +21,11 @@ import {
   Headers,
   HttpCode,
   Logger,
+  Optional,
   Post,
 } from '@nestjs/common';
 import type { TelegramApp } from '../../brand';
+import { AssistBotUpdates } from '../assist-site-handoff/bot/assist-bot-updates.service';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import {
   WEBHOOK_SECRET_HEADER,
@@ -47,13 +51,23 @@ function updateId(update: unknown): string {
 export class TelegramWebhookController {
   private readonly logger = new Logger(TelegramWebhookController.name);
 
+  constructor(@Optional() private readonly updates?: AssistBotUpdates) {}
+
   @Post('assist/webhook/telegram')
   @HttpCode(200)
-  assist(
+  async assist(
     @Headers(WEBHOOK_SECRET_HEADER.toLowerCase()) secret: string | undefined,
     @Body() update: unknown,
-  ): { ok: true } {
-    return this.handle('assist', secret, update);
+  ): Promise<{ ok: true }> {
+    const res = this.handle('assist', secret, update);
+    if (this.updates) {
+      await this.updates.handle(update).catch((e: unknown) => {
+        this.logger.warn(
+          `[assist] обновление ${updateId(update)} не обработано: ${(e as Error | null)?.name ?? 'Error'}`,
+        );
+      });
+    }
+    return res;
   }
 
   @Post('qa/webhook/telegram')

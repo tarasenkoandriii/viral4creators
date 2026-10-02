@@ -44,6 +44,13 @@ export type WidgetStreamErrorCode = (typeof WIDGET_STREAM_ERRORS)[number];
 export type WidgetChatEvent =
   | { type: 'meta'; conversationId: string; messageId: string; replay: boolean }
   | { type: 'sources'; items: SiteAnswerSource[] }
+  /**
+   * Э3 (§3.7): в диалоге идёт передача человеку — вопрос НЕ ушёл модели, а
+   * передан оператору (`relayed`); ответ оператора придёт опросом
+   * `GET /widget/v1/state`. Следом — `done` без текста. Событие шлёт H
+   * (конвейер), рисует W.
+   */
+  | { type: 'handoff'; state: 'waiting' | 'active'; relayed: boolean }
   | ChatStreamEvent<SiteAction, WidgetStreamErrorCode>;
 
 /** Как получен ответ (assist_site_messages.answerPath). */
@@ -93,6 +100,50 @@ export interface AskInput {
   uiLang: string | null;
   /** Генерация доводится до конца даже при разрыве соединения (§4-бис.4). */
   signal?: AbortSignal;
+  /**
+   * Э3 (§5-тер.12 п.10): кто начал диалог — `user` | `proactive:<ключ>` |
+   * `scenario:<ключ>`; пишется в assist_site_conversations.openedBy только
+   * при СОЗДАНИИ диалога. W проверяет формат (ключ — из опубликованной
+   * конфигурации вовлечения), H пишет.
+   */
+  openedBy?: string | null;
+}
+
+/**
+ * Э3: `V4CAssist('identify', …)` (§3-бис.2) — данные залогиненного
+ * покупателя сайта. Без `userHash` — «заявлено», с ним — сверяет СИСТЕМНЫЙ
+ * код секретом идентичности сайта (assist_site_integrations, роли виджета
+ * недоступен). Живёт в памяти iframe; на сервер — ТОЛЬКО с лидом или
+ * передачей человеку (К-3), шифром (как поля лида). Разбор — W.
+ */
+export interface WidgetIdentity {
+  name: string | null;
+  email: string | null;
+  /** `^[A-Za-z0-9._:@-]{1,128}$` — id покупателя в системе заказчика. */
+  externalId: string | null;
+  /** hex HMAC-SHA256(секрет идентичности сайта, externalId) — 64 символа. */
+  userHash: string | null;
+}
+
+/**
+ * «Почему так ответил» (№34, §2.8): что конвейер положил в ответ —
+ * assist_site_messages.trace. Пишет H (конвейер), показывает T (диалог в
+ * TMA, только `assist: manager`). Без текста фрагментов — только ссылки.
+ */
+export interface AnswerTrace {
+  knowledgeVersion: number;
+  configVersion: number;
+  path: AnswerPath;
+  /** Фрагменты, попавшие в промпт (id), в порядке S1…Sn. */
+  chunkIds: string[];
+  /** Проверенный ответ (прямой путь или первый источник). */
+  faqId: string | null;
+  /** Правило без модели: greeting | thanks | handoff | escalation:<вид> | injection | … */
+  rule: string | null;
+  /** Ответ из семантического кэша. */
+  cache: boolean;
+  /** Второй поиск по переводу вопроса (§4-тер.10). */
+  translated: boolean;
 }
 
 export interface AskOutcome {

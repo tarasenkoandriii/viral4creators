@@ -204,8 +204,69 @@ assert.deepEqual(launchAction('pl_vip'), {
   target: null,
 });
 // Приглашение, мусор, пусто — ни атрибуции, ни экрана.
-for (const sp of ['inv_abc', 'st_x', 'lp_<script>', 'xx_1', '', null]) {
+for (const sp of ['inv_abc', 'lp_<script>', 'xx_1', 'st_a.b', '', null]) {
   assert.deepEqual(launchAction(sp), { acquisition: null, target: null });
 }
+
+// ═══ Э3 (T): `st_<siteId>` — кнопка сводки/отчёта недели → статистика ═══
+// Не атрибуция лендинга: на сервер ничего не уходит.
+assert.deepEqual(launchAction('st_ck1'), {
+  acquisition: null,
+  target: { name: 'stats', siteId: 'ck1', tab: 'overview' },
+});
+assert.deepEqual(screenOf('st_ck1'), {
+  name: 'stats',
+  siteId: 'ck1',
+  tab: 'overview',
+});
+
+// ═══ Э3 (T): новые маршруты — разбор и обратная сборка ═══════════════════
+const E3_ROUTES: Route[] = [
+  { name: 'dialogs', siteId: 's1' },
+  { name: 'dialog', siteId: 's1', cid: 'c_9' },
+  { name: 'handoff', siteId: 's1' },
+  { name: 'stats', siteId: 's1', tab: 'overview' },
+  { name: 'stats', siteId: 's1', tab: 'conversions' },
+  { name: 'stats', siteId: 's1', tab: 'topics' },
+  { name: 'stats-sites' },
+  { name: 'goals', siteId: 's1' },
+  { name: 'integrations', siteId: 's1' },
+  { name: 'learning', siteId: 's1', tab: 'queue' },
+  { name: 'learning', siteId: 's1', tab: 'golden' },
+  { name: 'learning', siteId: 's1', tab: 'quality' },
+  { name: 'widget', siteId: 's1', tab: 'engagement' },
+];
+for (const r of E3_ROUTES) {
+  assert.deepEqual(parseRoute(routeHref(r)), r, routeHref(r));
+}
+assert.equal(
+  routeHref({ name: 'stats', siteId: 's1', tab: 'overview' }),
+  '#/sites/s1/stats'
+);
+assert.equal(
+  routeHref({ name: 'learning', siteId: 's1', tab: 'queue' }),
+  '#/sites/s1/learning/site'
+);
+assert.equal(
+  routeHref({ name: 'widget', siteId: 's1', tab: 'engagement' }),
+  '#/sites/s1/widget/engagement'
+);
+// Один адрес у одного экрана; мусор и чужие сегменты — не наши.
+for (const bad of [
+  '#/sites/s1/stats/overview',
+  '#/sites/s1/stats/money',
+  '#/sites/s1/learning/site/queue',
+  '#/sites/s1/learning/site/nope',
+  '#/sites/s1/learning/admin',
+  '#/sites/s1/dialogs/a.b',
+  '#/sites/s1/dialogs/c1/x',
+  '#/sites/s1/goals/x',
+  '#/sites/a%2Fb/handoff',
+  '#/stats/x',
+]) {
+  assert.equal(parseRoute(bad).name, 'not-found', bad);
+}
+// Мастер «Научите помощника» остаётся на своём адресе.
+assert.equal(parseRoute('#/sites/s1/learning/site/onboarding').name, 'wizard');
 
 console.log('router: ok');

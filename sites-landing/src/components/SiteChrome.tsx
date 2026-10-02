@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { BRAND } from '../brand';
 import { pathFor } from '../lib/alternates';
 import { fmt } from '../lib/format';
+import { isVisible } from '../lib/claims';
 import { getDictionary } from '../lib/get-dictionary';
 import { LOCALE_LABELS, LOCALE_SHORT, LOCALE_SWITCH_PARAM, locales, type Locale } from '../lib/i18n';
 import { href, type PageKey } from '../lib/pages';
@@ -36,6 +37,8 @@ export function SiteChrome({
   const nav: Array<{ key: PageKey; label: string }> = [
     { key: 'assistant', label: dict.common.nav.assistant },
     { key: 'how-it-works', label: dict.common.nav.howItWorks },
+    // Конфигуратор `/widget` — Л3 (С2); без `configurator: live` пункта нет.
+    ...(isVisible('configurator') ? [{ key: 'widget' as const, label: dict.common.nav.widget }] : []),
     { key: 'pricing', label: dict.common.nav.pricing },
     { key: 'security', label: dict.common.nav.security },
     { key: 'faq', label: dict.common.nav.faq },
@@ -74,7 +77,7 @@ export function SiteChrome({
               ))}
             </ul>
           </nav>
-          <a className="button button-small header-cta" href={href(locale, 'pilot')}>
+          <a className="button button-small header-cta" href={href(locale, 'pilot')} data-cta="header">
             {dict.common.nav.pilot}
           </a>
         </div>
@@ -133,7 +136,7 @@ export function SiteChrome({
   );
 }
 
-/** Плашка «продукт в разработке» на страницах Помощника (точка С0). */
+/** Плашка «ранняя версия: «скоро» ещё не работает» на страницах Помощника. */
 export function StatusBanner({ locale }: { locale: Locale }) {
   const dict = getDictionary(locale);
   return (

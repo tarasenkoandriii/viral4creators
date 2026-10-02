@@ -1,0 +1,22 @@
+{
+  "name": "v4c-assist-integrations",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Интеграции виджета помощника (Э3, ТЗ §3-бис.2): npm-пакет-обёртка загрузчика, плагин WordPress/WooCommerce, шаблон GTM — и общие векторы подписи вебхука целей",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p npm/tsconfig.build.json",
+    "test": "for f in scripts/*.test.ts; do echo \"── $f\"; npx tsx \"$f\" || exit 1; done",
+    "php:lint": "find wordpress -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null",
+    "php:test": "php wordpress/tests/run.php",
+    "format": "prettier --write \"npm/src/**/*.ts\" \"scripts/**/*.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.2.43",
+    "prettier": "^3.1.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.2.2"
+  }
+}

@@ -7,7 +7,13 @@
  * же сайтами и подтверждениями. Кабинет создаётся при первом входе.
  */
 
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import { SitesDb } from '../../../prisma/sites-db.service';
 import type { RequestIdentity } from '../../telegram-auth/identity';
@@ -39,6 +45,8 @@ export function hashInviteToken(token: string): string {
 export const INVITE_START_PREFIX = 'inv_';
 
 export interface MemberView {
+  /** Э3 (H): id участника — для PATCH/DELETE /sites/account/members/:memberId. */
+  memberId: string;
   telegramId: string;
   role: AccountRole;
   productRoles: ProductRoles;
@@ -86,6 +94,7 @@ function toMembership(row: MemberRow): AccountMembership | null {
 
 function memberView(m: AccountMembership): MemberView {
   return {
+    memberId: m.memberId,
     telegramId: m.telegramId.toString(),
     role: m.role,
     productRoles: m.productRoles,
@@ -93,6 +102,15 @@ function memberView(m: AccountMembership): MemberView {
 }
 
 const canManage = (role: AccountRole) => role === 'owner' || role === 'manager';
+
+/** Коды участников (Э3, H) — конверт как у siteCoreError (`error` + `code`). */
+function memberError(
+  Ctor: new (body: Record<string, unknown>) => HttpException,
+  code: 'MEMBER_NOT_FOUND' | 'MEMBER_LAST_OWNER' | 'MEMBER_ROLES_INVALID',
+  message: string,
+): HttpException {
+  return new Ctor({ error: code, code, message });
+}
 
 @Injectable()
 export class AccountService {
@@ -303,5 +321,130 @@ export class AccountService {
     const m = toMembership(row);
     if (!m) throw invalid();
     return m;
+  }
+
+  /**
+   * Э3 (H): смена роли/прав участника — только владелец (гвард маршрута).
+   * Владелец у кабинета один: его роль не меняется (`MEMBER_LAST_OWNER`),
+   * его права — «Всё» и так. `productRoles` — частично: переданные ключи
+   * заменяют свои, остальные остаются (опечатка — 400, а не «тихо none»).
+   */
+  async updateMember(
+    membership: AccountMembership,
+    memberId: string,
+    input: { role?: unknown; productRoles?: unknown },
+  ): Promise<AccountInfo> {
+    const db = this.db.forAccount(membership.accountId);
+    const row = (await db.siteAccountMember.findFirst({
+      where: { id: memberId },
+    })) as MemberRow | null;
+    if (!row) {
+      throw memberError(
+        NotFoundException,
+        'MEMBER_NOT_FOUND',
+        'Участник не найден',
+      );
+    }
+    const current = toMembership(row);
+    if (!current) {
+      throw memberError(
+        NotFoundException,
+        'MEMBER_NOT_FOUND',
+        'Участник не найден',
+      );
+    }
+    if (current.role === 'owner') {
+      throw memberError(
+        ConflictException,
+        'MEMBER_LAST_OWNER',
+        'Владелец кабинета один — его роль не меняется',
+      );
+    }
+    const data: { role?: AccountRole; productRoles?: ProductRoles } = {};
+    if (input.role !== undefined) {
+      const role = parseAccountRole(input.role);
+      if (role !== 'manager' && role !== 'operator') {
+        throw memberError(
+          BadRequestException,
+          'MEMBER_ROLES_INVALID',
+          'Роль: менеджер или оператор',
+        );
+      }
+      data.role = role;
+    }
+    if (input.productRoles !== undefined) {
+      const raw = input.productRoles;
+      const partial =
+        raw !== null && typeof raw === 'object' && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>)
+          : null;
+      const checked = partial ? validateProductRolesInput(partial) : null;
+      if (!partial || !checked) {
+        throw memberError(
+          BadRequestException,
+          'MEMBER_ROLES_INVALID',
+          'Недопустимые права по продукту',
+        );
+      }
+      data.productRoles = {
+        ...current.productRoles,
+        ...(Object.fromEntries(
+          Object.keys(partial).map((k) => [
+            k,
+            checked[k as keyof ProductRoles],
+          ]),
+        ) as Partial<ProductRoles>),
+      };
+    }
+    if (Object.keys(data).length) {
+      await db.siteAccountMember.update({
+        where: { id: memberId },
+        data,
+      });
+    }
+    return this.accountInfo(membership, false);
+  }
+
+  /**
+   * Э3 (H): удалить участника. Владелец — любого, кроме себя (последний
+   * владелец — `MEMBER_LAST_OWNER`); участник — только себя («выйти из
+   * кабинета»). Ответ — кабинет, в котором человек теперь работает
+   * (после выхода — следующий его кабинет или новый свой).
+   */
+  async deleteMember(
+    membership: AccountMembership,
+    memberId: string,
+    identity: RequestIdentity,
+  ): Promise<AccountInfo> {
+    const db = this.db.forAccount(membership.accountId);
+    const row = (await db.siteAccountMember.findFirst({
+      where: { id: memberId },
+    })) as MemberRow | null;
+    const target = row ? toMembership(row) : null;
+    if (!target) {
+      throw memberError(
+        NotFoundException,
+        'MEMBER_NOT_FOUND',
+        'Участник не найден',
+      );
+    }
+    const self = target.memberId === membership.memberId;
+    if (!self && membership.role !== 'owner') {
+      throw forbidden(
+        'ACCOUNT_ROLE_REQUIRED',
+        'Удалить другого участника может только владелец кабинета',
+      );
+    }
+    if (target.role === 'owner') {
+      throw memberError(
+        ConflictException,
+        'MEMBER_LAST_OWNER',
+        'Владелец кабинета не может удалить себя — кабинет останется без владельца',
+      );
+    }
+    await db.siteAccountMember.deleteMany({ where: { id: memberId } });
+    if (!self) return this.accountInfo(membership, false);
+    const { membership: next, created } = await this.ensureAccount(identity);
+    return this.accountInfo(next, created);
   }
 }

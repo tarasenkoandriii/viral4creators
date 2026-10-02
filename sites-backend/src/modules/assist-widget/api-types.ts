@@ -14,11 +14,25 @@ import type {
   SiteAction,
   SiteAnswerSource,
   WidgetChatEvent,
+  WidgetIdentity,
 } from '../assist-site-chat/chat-types';
+import type { PublicGoal } from '../assist-analytics/goal-types';
+import type { WidgetEventKind } from '../assist-analytics/public/event-counts.service';
+import type { PublicEngagementConfig } from '../assist-site-setup/engagement-config';
 import type { LeadField } from '../assist-site-setup/leads-config';
 import type { WidgetConfig } from '../assist-site-setup/widget-config';
+import type { VisitorHandoffView } from '../assist-site-handoff/public/handoff-intake.service';
 
-export type { SiteAction, SiteAnswerSource, WidgetChatEvent };
+export type {
+  SiteAction,
+  SiteAnswerSource,
+  WidgetChatEvent,
+  WidgetIdentity,
+  PublicGoal,
+  PublicEngagementConfig,
+  VisitorHandoffView,
+  WidgetEventKind,
+};
 
 /** GET /widget/v1/config?pk= — публичный (кэш 5 мин по pk, БЕЗ решения о допуске, §4.13 п.1). */
 export interface WidgetPublicConfig {
@@ -38,6 +52,19 @@ export interface WidgetPublicConfig {
   /** Подсказки-вопросы (из знаний, если владелец не задал), по языкам. */
   suggestedQuestions: string[];
   poweredByUrl: string | null;
+  /**
+   * Э3 (необязательные — кэш конфига 5 мин и старые загрузчики):
+   * триггеры/лимиты/сценарии опубликованного вида (T, engagement-config.ts);
+   */
+  engagement?: PublicEngagementConfig;
+  /** передача человеку включена (решение «сейчас» — `POST handoff`, H); */
+  handoff?: {
+    enabled: boolean;
+    etaMinutes: number | null;
+    etaText: Partial<Record<'uk' | 'ru' | 'en', string>>;
+  };
+  /** активные цели с детекторами загрузчика (A, goal-types.ts). */
+  goals?: PublicGoal[];
 }
 
 /** POST /widget/v1/session — тело. resumeKey — из localStorage iframe ИЛИ CHIPS-cookie. */
@@ -85,6 +112,12 @@ export interface WidgetStateView {
     /** Идущий ответ — продолжение по `/messages/:id/stream`. */
     streamingMessageId: string | null;
     lastMessageAt: string;
+    /**
+     * Э3: последняя передача человеку этого диалога (открытая или закрытая
+     * < 24 ч) — iframe опрашивает `state` раз в 3 с, пока она waiting/active
+     * и вкладка видима (§3.7 п.4); `missed` — показать форму заявки.
+     */
+    handoff?: VisitorHandoffView | null;
   } | null;
   /** Предыдущий диалог старше resumeDialogMaxAgeMs — ссылка «предыдущий разговор». */
   previousConversationId: string | null;
@@ -98,6 +131,8 @@ export interface WidgetChatRequest {
   page: { url: string | null; title: string | null };
   context: Record<string, string | number> | null;
   uiLang: 'uk' | 'ru' | 'en' | null;
+  /** Э3: `user` | `proactive:<ключ>` | `scenario:<ключ>` — только для нового диалога. */
+  openedBy?: string | null;
 }
 
 /** JSON-ответ чата (Accept: application/json — запасной путь без SSE). */
@@ -110,6 +145,11 @@ export interface WidgetChatJsonResponse {
   refused: boolean;
   /** Ответ ещё пишется другим экземпляром (повтор clientRequestId) — дочитать стримом. */
   streaming: boolean;
+  /**
+   * Э3 (W, необязательное): вопрос ушёл человеку (событие стрима `handoff`)
+   * — ответа модели нет, `messageId` пуст; iframe опрашивает `state`.
+   */
+  handoff?: { state: 'waiting' | 'active'; relayed: boolean } | null;
 }
 
 /** GET /widget/v1/messages/:id/stream?from=<offset> — продолжение стрима опросом (≤ 8 с ожидания). */
@@ -130,6 +170,8 @@ export interface WidgetLeadRequest {
   consent: boolean;
   uiLang: 'uk' | 'ru' | 'en';
   pageUrl: string | null;
+  /** Э3: `V4CAssist('identify')` — только вместе с лидом (К-3). */
+  identity?: WidgetIdentity | null;
 }
 
 /** POST /widget/v1/feedback */
@@ -156,9 +198,93 @@ export interface WidgetForgetResponse {
   conversationsDeleted: number;
 }
 
-/** POST /widget/v1/handoff — Э2: «позвать человека» = форма лида (Э3 — передача). */
-export interface WidgetHandoffResponse {
-  mode: 'lead';
+/** POST /widget/v1/handoff — Э3 (§3.7): «позвать человека». */
+export interface WidgetHandoffRequest {
+  conversationId: string | null;
+  uiLang: 'uk' | 'ru' | 'en' | null;
+  pageUrl: string | null;
+  /** Сценарий закончился передачей (ScenarioFinal.kind = handoff). */
+  scenarioKey?: string | null;
+  identity?: WidgetIdentity | null;
+}
+
+/**
+ * `human` — передача создана/уже открыта: показать «Обычно отвечаем за ~N
+ * минут», опрашивать state; `lead` — нерабочее время / нет операторов /
+ * выключено / нет диалога → сразу форма заявки (§3.7 п.2).
+ */
+export type WidgetHandoffResponse =
+  | {
+      mode: 'human';
+      handoff: VisitorHandoffView;
+      etaMinutes: number | null;
+      existing: boolean;
+    }
+  | {
+      mode: 'lead';
+      reason?: 'disabled' | 'off_hours' | 'no_operators' | 'no_conversation';
+    };
+
+/** POST /widget/v1/handoff/cancel — посетитель передумал (только waiting). */
+export interface WidgetHandoffCancelRequest {
+  conversationId: string;
+}
+
+/**
+ * POST /widget/v1/event — счётчики событий (§4.16; A — EventCounts). С
+ * СТРАНИЦЫ (загрузчик): Origin = verified public-хост сайта; без cookie;
+ * батч ≤ 20, тело ≤ 4 КБ; неизвестное поле — 400. Ответ 204.
+ */
+export interface WidgetEventBatch {
+  pk: string;
+  events: Array<{ kind: WidgetEventKind; key: string | null }>;
+}
+
+/**
+ * POST /widget/v1/goal (§5-тер.1). Два входа одного маршрута:
+ *  - из загрузчика (Origin = страница сайта, тело с `pk`, без токена) —
+ *    attribution unassisted;
+ *  - из iframe (visitor-token в заголовке, Origin виджета) — с диалогом и
+ *    кликом по действию помощника (direct/assisted).
+ * 204 — принято/дубль/тихо отброшено; 422 GOAL_ORDER_ID_INVALID — orderId
+ * похож на контакт (§5-тер.16 п.1).
+ */
+export interface WidgetGoalRequest {
+  pk?: string;
+  goalKey: string;
+  detector: 'url' | 'click' | 'form_submit' | 'js';
+  docId: string;
+  path: string | null;
+  orderId?: string | null;
+  value?: number | null;
+  currency?: string | null;
+  /** Только из iframe: */
+  conversationId?: string | null;
+  lastAssistClickAt?: string | null;
+  assist?: {
+    proactive: string | null;
+    scenario: string | null;
+    link: boolean;
+  } | null;
+}
+
+/** POST /widget/v1/goal-picker/session — обмен `?v4c_goal=` (30 мин, один раз; Origin = verified-хост токена). */
+export interface WidgetGoalPickerSessionRequest {
+  pk: string;
+  token: string;
+}
+export interface WidgetGoalPickerSessionResponse {
+  pickerSession: string;
+  expiresAt: string;
+}
+
+/** POST /widget/v1/goal-picker/pick — выбранный элемент → assist_site_preview_tokens.result. */
+export interface WidgetGoalPickRequest {
+  pickerSession: string;
+  kind: 'click' | 'form_submit';
+  descriptor: import('../assist-analytics/goal-types').ElementDescriptor;
+  path: string;
+  label: string;
 }
 
 /** Коды ошибок REST виджета (UPPER_SNAKE); стрим — нижним регистром (chat-types). */
@@ -180,5 +306,9 @@ export const WIDGET_ERROR_CODES = [
   // JSON-путь чата (`Accept` без SSE): модель упала/прервалась — 502 без
   // текста провайдера; в стриме это событие `error` с кодом `upstream`.
   'UPSTREAM',
+  // Э3:
+  'GOAL_ORDER_ID_INVALID',
+  'PICKER_INVALID',
+  'EVENT_INVALID',
 ] as const;
 export type WidgetErrorCode = (typeof WIDGET_ERROR_CODES)[number];

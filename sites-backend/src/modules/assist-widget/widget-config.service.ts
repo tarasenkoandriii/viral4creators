@@ -14,6 +14,24 @@
  * оракул допуска).
  * preview/exchange: одноразовый условный UPDATE (usedAt IS NULL AND
  * expiresAt > now AND siteId по pk AND origin совпал) → sessionHash.
+ *
+ * Э3 (W): в конфиге — `engagement` (публичная часть вовлечения
+ * опубликованного вида, T: `publicEngagement`; из `config` она убрана —
+ * выключенные триггеры наружу не идут), `handoff` (включена ли передача и
+ * «~N минут», H: `HandoffIntake.availability`), `goals` (активные цели с
+ * детекторами загрузчика, A: `GoalIntake.publicGoals`). Эти части
+ * НЕОБЯЗАТЕЛЬНЫ: сбой одной из них — поле отсутствует (лог — имя ошибки),
+ * а не 500 на загрузчик всех посетителей сайта.
+ *
+ * Интеграция Э3: `status: 'lead_only'` и тогда, когда СЕГОДНЯ ответ модели
+ * заведомо будет отказан — суточный денежный потолок сайта или платформы
+ * исчерпан так, что не влезает даже минимальная оценка ответа, или месячная
+ * квота диалогов выбрана (`site_quota`/`platform_budget` конвейера).
+ * Загрузчик при этом не показывает проактивные сигналы (§5-тер.12), iframe —
+ * сразу форма заявки. Одно чтение трёх строк счётчиков (ровно тех, что
+ * резервирует конвейер); ответ кэшируется CDN 5 мин — задержка «квота
+ * кончилась/обнулилась → статус» ≤ 5 мин, приемлемо. Ошибка чтения — статус
+ * не трогаем (конвейер всё равно откажет сам).
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -32,6 +50,24 @@ import {
   type LeadsConfig,
 } from '../assist-site-setup/leads-config';
 import type { WidgetConfig } from '../assist-site-setup/widget-config';
+import {
+  parseEngagementConfig,
+  publicEngagement,
+} from '../assist-site-setup/engagement-config';
+import { GoalIntake } from '../assist-analytics/public/goal-intake.service';
+import {
+  PLATFORM_KEY,
+  answerEstimateMicroUsd,
+  utcDay,
+  utcPeriod,
+} from '../assist-site-chat/budget';
+import {
+  widgetDialogQuota,
+  widgetSiteDailyCapMicroUsd,
+} from '../../config/assist-defaults';
+import { widgetPlatformDailyCapMicroUsd } from '../../config/widget-env';
+import { HandoffIntake } from '../assist-site-handoff/public/handoff-intake.service';
+import type { WidgetSiteContext } from '../assist-site-chat/chat-types';
 import type {
   WidgetPreviewExchangeRequest,
   WidgetPreviewExchangeResponse,
@@ -61,8 +97,30 @@ const SUGGESTED_MAX_CHARS = 200;
 function withoutHosts(
   config: Record<string, unknown>,
 ): Omit<WidgetConfig, 'hosts'> {
-  const { hosts: _hosts, ...rest } = config;
+  // engagement — отдельным полем ответа (только включённое, T).
+  const { hosts: _hosts, engagement: _engagement, ...rest } = config;
   return rest as unknown as Omit<WidgetConfig, 'hosts'>;
+}
+
+/** Контекст сайта для решений без посетителя (доступность передачи). */
+function siteContext(
+  site: WidgetSiteRow,
+  keyKind: 'live' | 'test',
+): WidgetSiteContext {
+  return {
+    accountId: site.accountId,
+    siteId: site.siteId,
+    knowledgeVersion: site.knowledgeVersion,
+    configVersion: site.configVersion,
+    widgetVersion: site.widgetVersion,
+    parentOrigin: '',
+    keyKind,
+    preview: false,
+  };
+}
+
+function errName(err: unknown): string {
+  return err instanceof Error ? err.name : typeof err;
 }
 
 function leadsOf(raw: unknown): LeadsConfig {
@@ -94,7 +152,11 @@ export const PIXEL_GIF = Buffer.from(
 export class WidgetPublicConfigService {
   private readonly logger = new Logger(WidgetPublicConfigService.name);
 
-  constructor(private readonly db: AssistPublicDb) {}
+  constructor(
+    private readonly db: AssistPublicDb,
+    private readonly handoff: HandoffIntake,
+    private readonly goals: GoalIntake,
+  ) {}
 
   async config(
     pk: string,
@@ -122,10 +184,11 @@ export class WidgetPublicConfigService {
       !widgetPlatformEnabled() ||
       !site.enabled ||
       site.chatPaused ||
-      site.operatorBlockedAt !== null;
+      site.operatorBlockedAt !== null ||
+      (await this.spentOut(site, now));
     const config = withoutHosts(published);
     const brand = (published.brand ?? {}) as Record<string, unknown>;
-    return {
+    const out: WidgetPublicConfig = {
       status: leadOnly ? 'lead_only' : 'active',
       widgetVersion: site.widgetVersion,
       config,
@@ -135,6 +198,112 @@ export class WidgetPublicConfigService {
       suggestedQuestions: suggestedOf(site),
       poweredByUrl: brand.poweredBy === false ? null : WIDGET_POWERED_BY_URL,
     };
+    await this.addE3(out, published, site, kind, now);
+    return out;
+  }
+
+  /**
+   * Сегодня ответ модели заведомо не пройдёт: остаток суточного потолка
+   * сайта или платформы меньше МИНИМАЛЬНОЙ оценки ответа (резерв откажет при
+   * любом вопросе) или месячная квота диалогов выбрана.
+   */
+  async spentOut(
+    site: Pick<WidgetSiteRow, 'siteId' | 'accountId'>,
+    now: Date = new Date(),
+  ): Promise<boolean> {
+    try {
+      const rows = await this.db.$queryRawUnsafe<
+        Array<{
+          cap: bigint | number | null;
+          site_used: bigint | number | null;
+          platform_used: bigint | number | null;
+          dialogs: number | null;
+          quota: number | null;
+        }>
+      >(
+        `SELECT
+           (SELECT "dailyCapMicroUsd" FROM "sites"."assist_sites" WHERE "siteId" = $1) AS cap,
+           (SELECT "spentMicroUsd" + "reservedMicroUsd" FROM "sites"."assist_budget_days"
+             WHERE "scope" = 'site' AND "key" = $1 AND "day" = $2) AS site_used,
+           (SELECT "spentMicroUsd" + "reservedMicroUsd" FROM "sites"."assist_budget_days"
+             WHERE "scope" = 'platform' AND "key" = $3 AND "day" = $2) AS platform_used,
+           (SELECT "dialogs" FROM "sites"."assist_site_period_usage"
+             WHERE "siteId" = $1 AND "period" = $4) AS dialogs,
+           (SELECT "quota" FROM "sites"."assist_site_period_usage"
+             WHERE "siteId" = $1 AND "period" = $4) AS quota`,
+        site.siteId,
+        utcDay(now),
+        PLATFORM_KEY,
+        utcPeriod(now),
+      );
+      const r = rows[0];
+      if (!r) return false;
+      const minAnswer = answerEstimateMicroUsd({
+        systemChars: 0,
+        historyChars: 0,
+        questionChars: 1,
+      });
+      const siteCap = widgetSiteDailyCapMicroUsd({
+        dailyCapMicroUsd: r.cap === null ? null : Number(r.cap),
+      });
+      const siteUsed = Number(r.site_used ?? 0);
+      const platformUsed = Number(r.platform_used ?? 0);
+      const quota = r.quota ?? widgetDialogQuota(site.accountId);
+      return (
+        siteUsed + minAnswer > siteCap ||
+        platformUsed + minAnswer > widgetPlatformDailyCapMicroUsd() ||
+        (r.dialogs ?? 0) >= quota
+      );
+    } catch (err) {
+      this.logger.warn(
+        `quota read failed site=${site.siteId}: ${errName(err)}`,
+      );
+      return false;
+    }
+  }
+
+  private async addE3(
+    out: WidgetPublicConfig,
+    published: Record<string, unknown>,
+    site: WidgetSiteRow,
+    kind: 'live' | 'test',
+    now: Date,
+  ): Promise<void> {
+    if (published.engagement !== undefined && published.engagement !== null) {
+      try {
+        const parsed = parseEngagementConfig(published.engagement);
+        if (parsed.ok) out.engagement = publicEngagement(parsed.config);
+        else this.logger.warn(`engagement invalid site=${site.siteId}`);
+      } catch (err) {
+        this.logger.warn(
+          `engagement failed site=${site.siteId}: ${errName(err)}`,
+        );
+      }
+    }
+    const [handoff, goals] = await Promise.allSettled([
+      this.handoff.availability(siteContext(site, kind), now),
+      this.goals.publicGoals(site.siteId),
+    ]);
+    if (handoff.status === 'fulfilled') {
+      const a = handoff.value;
+      out.handoff = {
+        // «Включена» — настройка владельца; рабочие часы и операторы решает
+        // `POST handoff` в момент нажатия (кэш конфига — 5 минут).
+        enabled: a.available || a.reason !== 'disabled',
+        etaMinutes: a.etaMinutes,
+        etaText: a.etaText,
+      };
+    } else {
+      this.logger.warn(
+        `handoff availability failed site=${site.siteId}: ${errName(handoff.reason)}`,
+      );
+    }
+    if (goals.status === 'fulfilled') out.goals = goals.value;
+    else {
+      this.logger.warn(
+        `public goals failed site=${site.siteId}: ${errName(goals.reason)}`,
+      );
+    }
   }
 
   async asset(

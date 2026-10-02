@@ -147,6 +147,37 @@ export class WidgetOriginGuard {
     return { decision, row };
   }
 
+  /**
+   * Э3: запрос СО СТРАНИЦЫ заказчика (загрузчик — счётчики `event`, цели
+   * `goal` без visitor-token): `Origin` страницы обязан быть ТОЧНЫМ
+   * допущенным хостом pk — те же правила, что у parentOrigin в `session`
+   * (verified/льгота, включён в опубликованном виде; pk_test_ — localhost).
+   * Предпросмотра здесь нет: со страницы владелец не считает себе цели.
+   */
+  async resolvePage(p: {
+    pk: string;
+    pageOrigin: string | undefined;
+    now?: Date;
+  }): Promise<{ decision: OriginDecision; row: WidgetSiteRow | null }> {
+    const now = p.now ?? new Date();
+    const found = await findSiteByKey(this.db, p.pk);
+    if (!found) {
+      return { decision: { ok: false, code: 'WIDGET_UNKNOWN_KEY' }, row: null };
+    }
+    const origin = exactOrigin(p.pageOrigin);
+    if (!origin) return { decision: DENIED, row: found.site };
+    const decision = await this.decide({
+      site: found.site,
+      keyKind: found.kind,
+      parentOrigin: origin,
+      preview: false,
+      previewPurpose: null,
+      previewOrigin: null,
+      now,
+    });
+    return { decision, row: found.site };
+  }
+
   private async decide(p: {
     site: WidgetSiteRow;
     keyKind: KeyKind;

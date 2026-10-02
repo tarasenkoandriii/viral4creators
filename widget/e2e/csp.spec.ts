@@ -127,3 +127,71 @@ test('CSP без connect-src: пинг c=0, вид по умолчанию, ча
     'rgb(170, 0, 0)'
   );
 });
+
+test('Э3: Trusted Types — загрузчик, триггер и цели работают; режим выбора цели — честный отказ (О-8)', async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(Navigator.prototype, 'webdriver', {
+      get: () => false,
+    })
+  );
+  const warnings: string[] = [];
+  const urls: string[] = [];
+  page.on('console', (m) => m.type() === 'warning' && warnings.push(m.text()));
+  page.on('request', (r) => urls.push(r.url()));
+  const pk = newPk();
+  await site(pk, {
+    pickerTokens: {
+      tok_goal_tt_123456789012345: 'http://example.localhost:5182',
+    },
+    goals: [
+      {
+        key: 'call',
+        detectors: [{ kind: 'click', config: { auto: 'tel' } }],
+        valueMode: 'none',
+      },
+    ],
+    engagement: {
+      schema: 1,
+      triggers: [
+        {
+          key: 'tt',
+          enabled: true,
+          condition: { kind: 'time_on_page', seconds: 10 },
+          pathMasks: [],
+          text: { ru: 'Помочь?' },
+          onAccept: { kind: 'open' },
+        },
+      ],
+      limits: { perVisit: 1, excludedPaths: [], notOnFirstScreenMobile: true },
+      scenarios: [],
+    },
+  });
+  await page.goto(
+    stand('example.localhost', { pk, csp: TT, goalsKit: true }) +
+      '&v4c_goal=tok_goal_tt_123456789012345'
+  );
+  await expect(launcher(page)).toBeVisible();
+  // Токен из адреса убран и без чанка.
+  expect(page.url()).not.toContain('v4c_goal');
+  await expect(page.locator('[data-v4c-picker]')).toHaveCount(0);
+  expect(urls.some((u) => u.includes('/v1/picker.js'))).toBe(false);
+  expect(warnings.join('\n')).toContain('Trusted Types');
+  // Триггер под TT — пузырь (textContent, без политики).
+  await expect(page.locator('[data-v4c] .g')).toHaveCount(1, {
+    timeout: 14_000,
+  });
+  await page.evaluate(() =>
+    document
+      .getElementById('tel')!
+      .addEventListener('click', (e) => e.preventDefault())
+  );
+  await page.locator('#tel').click();
+  await expect
+    .poll(async () => (await log()).goals.map((g) => g.goalKey))
+    .toEqual(['call']);
+  await openChat(page);
+  // Нарушения TT от загрузчика нет: picker не вставлялся (сеттер src бросил до вставки).
+  expect((await violations(page)).filter((v) => !/picker/.test(v))).toEqual([]);
+});

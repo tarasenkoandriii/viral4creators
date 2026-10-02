@@ -22,6 +22,11 @@ export type RateScope =
   | 'widget-msg-visitor-day'
   | 'widget-msg-ip-site-min'
   | 'widget-lead-visitor-hour'
+  // Э3:
+  | 'widget-handoff-visitor-hour'
+  | 'widget-event-ip-min'
+  | 'widget-goal-ip-min'
+  | 'widget-picker-ip-min'
   | 'landing-event-ip-min'
   | 'landing-draft-ip-day';
 

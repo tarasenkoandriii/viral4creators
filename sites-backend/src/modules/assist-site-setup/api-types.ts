@@ -5,6 +5,7 @@
  * BigInt наружу не отдаётся. Менять — только через координатора.
  */
 import type { LeadsConfig } from './leads-config';
+import type { InstallGuides } from './snippet';
 import type { PersonaConfig } from './persona';
 import type { WidgetConfig, WidgetConfigAdjustment } from './widget-config';
 
@@ -71,6 +72,11 @@ export interface WidgetSettingsView {
   widgetOrigin?: string;
   draftChanged?: boolean;
   assets?: AssetView[];
+  /**
+   * (Э3, T, необязательное) инструкции установки GTM / npm / WordPress и
+   * примеры JS API — при выданных ключах (тот же тег, что `snippet`).
+   */
+  installGuides?: InstallGuides;
 }
 
 export interface PersonaGateView {

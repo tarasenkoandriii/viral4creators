@@ -66,7 +66,10 @@ import {
   useAssist,
   type AssistValue,
 } from './lib/assist-context';
+import { createHandoffApi } from './lib/handoff-api';
 import { createKnowledgeApi } from './lib/knowledge-api';
+import { createLearningApi } from './lib/learning-api';
+import { createStatsApi } from './lib/stats-api';
 import { createPersonaApi } from './lib/persona-api';
 import { createWidgetApi } from './lib/widget-api';
 import { launchAction, type LaunchAction } from './lib/widget-view';
@@ -90,6 +93,17 @@ import {
   WidgetScreen,
 } from './screens/widget/WidgetScreen';
 import { WizardScreen } from './screens/widget/WizardScreen';
+import {
+  DialogScreen,
+  DialogsHome,
+  DialogsScreen,
+} from './screens/e3/DialogsScreens';
+import { GoalsScreen } from './screens/e3/GoalsScreen';
+import { HandoffScreen } from './screens/e3/HandoffScreen';
+import { IntegrationsScreen } from './screens/e3/IntegrationsScreen';
+import { LearningScreen } from './screens/e3/LearningScreen';
+import { SiteE3Buttons } from './screens/e3/parts';
+import { StatsScreen, StatsSitesScreen } from './screens/e3/StatsScreens';
 
 /**
  * Где мы: `checking` — веб, спрашиваем `/sites/auth/me`; `login` — веб без
@@ -189,6 +203,9 @@ export function App({ startParam }: { startParam: string | null }) {
   const widgetApi = useMemo(() => createWidgetApi(client), [client]);
   const personaApi = useMemo(() => createPersonaApi(client), [client]);
   const wizardApi = useMemo(() => createWizardApi(client), [client]);
+  const handoffApi = useMemo(() => createHandoffApi(client), [client]);
+  const learningApi = useMemo(() => createLearningApi(client), [client]);
+  const statsApi = useMemo(() => createStatsApi(client), [client]);
   const assist = useMemo<AssistValue>(
     () => ({
       knowledge: knowledgeApi,
@@ -196,8 +213,20 @@ export function App({ startParam }: { startParam: string | null }) {
       widget: widgetApi,
       persona: personaApi,
       wizard: wizardApi,
+      handoff: handoffApi,
+      learning: learningApi,
+      stats: statsApi,
     }),
-    [knowledgeApi, appDict, widgetApi, personaApi, wizardApi]
+    [
+      knowledgeApi,
+      appDict,
+      widgetApi,
+      personaApi,
+      wizardApi,
+      handoffApi,
+      learningApi,
+      statsApi,
+    ]
   );
 
   useEffect(() => {
@@ -457,7 +486,23 @@ function navActive(key: string, route: Route): boolean {
     key === 'knowledge' &&
     (route.name === 'knowledge' ||
       route.name === 'sandbox' ||
-      route.name === 'wizard')
+      route.name === 'wizard' ||
+      route.name === 'learning')
+  ) {
+    return true;
+  }
+  // Э3: лента, передача, статистика, цели, интеграции — под «Диалогами».
+  if (
+    key === 'dialogs' &&
+    [
+      'dialogs',
+      'dialog',
+      'handoff',
+      'stats',
+      'stats-sites',
+      'goals',
+      'integrations',
+    ].includes(route.name)
   ) {
     return true;
   }
@@ -739,8 +784,9 @@ function Screen({
             key={`assist-${route.siteId}`}
             siteId={route.siteId}
           />
-          <div className="mb-4">
+          <div className="mb-4 space-y-2">
             <SiteSetupButtons siteId={route.siteId} />
+            <SiteE3Buttons siteId={route.siteId} />
           </div>
           <SiteScreen
             key={route.siteId}
@@ -773,10 +819,10 @@ function Screen({
     case 'invite':
       return <InviteGate />;
     case 'section':
-      // «Знания» — Э1: выбор сайта и базы; «Виджет», «Диалоги» — плашки этапов.
-      // «Виджет» — Э2; «Диалоги» — плашка этапа.
+      // «Знания» — Э1: выбор сайта и базы; «Виджет» — Э2; «Диалоги» — Э3.
       if (route.section === 'knowledge') return <KnowledgeHome />;
       if (route.section === 'widget') return <WidgetHome />;
+      if (route.section === 'dialogs') return <DialogsHome />;
       return <SectionPlaceholder t={appDict.section} section={route.section} />;
     case 'onboarding-url':
       return <OnboardingUrlScreen />;
@@ -814,6 +860,32 @@ function Screen({
       return <PlanScreen plan={route.plan} />;
     case 'widget-draft':
       return <LandingDraftScreen key={route.draftId} draftId={route.draftId} />;
+    case 'dialogs':
+      return <DialogsScreen key={route.siteId} siteId={route.siteId} />;
+    case 'dialog':
+      return (
+        <DialogScreen key={route.cid} siteId={route.siteId} cid={route.cid} />
+      );
+    case 'handoff':
+      return <HandoffScreen key={route.siteId} siteId={route.siteId} />;
+    case 'stats':
+      return (
+        <StatsScreen key={route.siteId} siteId={route.siteId} tab={route.tab} />
+      );
+    case 'stats-sites':
+      return <StatsSitesScreen />;
+    case 'goals':
+      return <GoalsScreen key={route.siteId} siteId={route.siteId} />;
+    case 'integrations':
+      return <IntegrationsScreen key={route.siteId} siteId={route.siteId} />;
+    case 'learning':
+      return (
+        <LearningScreen
+          key={route.siteId}
+          siteId={route.siteId}
+          tab={route.tab}
+        />
+      );
     case 'not-found':
       return <NotFound appDict={appDict} />;
   }

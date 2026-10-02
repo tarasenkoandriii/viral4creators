@@ -13,6 +13,11 @@
  * пишет его не реже 500 мс).
  *
  * В логах — только id, коды и время; ни вопроса, ни ответа (§6.6, п.6).
+ *
+ * Э3 (W): `openedBy` нового диалога (`user` | `proactive:<ключ>` |
+ * `scenario:<ключ>`) — формат и ключ из ОПУБЛИКОВАННОЙ конфигурации
+ * вовлечения (неверное — null, вопрос не отвергается); событие стрима
+ * `handoff` (вопрос ушёл оператору) проходит как есть — его рисует iframe.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import type { Response } from 'express';
@@ -25,6 +30,14 @@ import type {
   WidgetStreamErrorCode,
 } from '../assist-site-chat/chat-types';
 import { SiteChatService } from '../assist-site-chat/site-chat.service';
+import { AssistPublicDb } from '../../prisma/assist-public-db.service';
+import { publishedWidgetConfig } from './site-access';
+import {
+  cleanOpenedBy,
+  engagementKeys,
+  openedByNeedsKeys,
+  type EngagementKeys,
+} from './widget-engagement';
 import type { WidgetChatJsonResponse, WidgetErrorCode } from './api-types';
 import { WidgetRateLimit } from './rate-limit';
 import type { VisitorContext } from './widget-session.service';
@@ -120,6 +133,7 @@ interface Collected {
   actions: SiteAction[];
   done: boolean;
   error: { code: WidgetStreamErrorCode } | null;
+  handoff: { state: 'waiting' | 'active'; relayed: boolean } | null;
 }
 
 function emptyCollected(): Collected {
@@ -132,6 +146,7 @@ function emptyCollected(): Collected {
     actions: [],
     done: false,
     error: null,
+    handoff: null,
   };
 }
 
@@ -157,6 +172,9 @@ function collect(c: Collected, e: WidgetChatEvent): void {
     case 'error':
       c.error = { code: e.code };
       break;
+    case 'handoff':
+      c.handoff = { state: e.state, relayed: e.relayed };
+      break;
   }
 }
 
@@ -172,7 +190,14 @@ export class WidgetChatService {
     private readonly chat: SiteChatService,
     private readonly rate: WidgetRateLimit,
     private readonly state: WidgetStateService,
+    private readonly db: AssistPublicDb,
   ) {}
+
+  /** Ключи вовлечения опубликованного вида (только когда openedBy их требует). */
+  private async publishedKeys(ctx: VisitorContext): Promise<EngagementKeys> {
+    const published = await publishedWidgetConfig(this.db, ctx.site);
+    return engagementKeys(published);
+  }
 
   /** Проверки W2 до конвейера: длина, частота, недоверенные данные. */
   async prepare(
@@ -209,9 +234,17 @@ export class WidgetChatService {
       ],
       now,
     );
+    const keys = openedByNeedsKeys(dto.openedBy)
+      ? await this.publishedKeys(ctx)
+      : null;
+    const openedBy = cleanOpenedBy(
+      dto.openedBy,
+      () => keys ?? { triggers: new Set(), scenarios: new Set() },
+    );
     return {
       site: ctx.site,
       visitor: ctx.visitor,
+      ...(openedBy ? { openedBy } : {}),
       conversationId:
         typeof dto.conversationId === 'string' && dto.conversationId
           ? dto.conversationId
@@ -288,6 +321,20 @@ export class WidgetChatService {
     if (c.error) {
       throw widgetError(REST_CODE[c.error.code] ?? 'UPSTREAM');
     }
+    // Вопрос ушёл человеку (Э3): ответа модели нет — iframe опрашивает state.
+    const conversationId = c.conversationId ?? input.conversationId;
+    if (c.handoff && conversationId) {
+      return {
+        conversationId,
+        messageId: c.messageId ?? '',
+        text: '',
+        sources: [],
+        actions: [],
+        refused: false,
+        streaming: false,
+        handoff: c.handoff,
+      };
+    }
     if (!c.conversationId || !c.messageId) throw widgetError('UPSTREAM');
     const stored = await this.state.message(ctx, c.messageId);
     const streaming = stored?.streamState === 'streaming';
@@ -335,7 +382,7 @@ export class WidgetChatService {
   private logResult(ctx: VisitorContext, c: Collected, started: number) {
     this.logger.log(
       `chat site=${ctx.site.siteId} conv=${c.conversationId ?? '-'} msg=${c.messageId ?? '-'} ` +
-        `replay=${c.replay} done=${c.done} error=${c.error?.code ?? '-'} ms=${Date.now() - started}`,
+        `replay=${c.replay} done=${c.done} error=${c.error?.code ?? '-'} handoff=${c.handoff?.state ?? '-'} ms=${Date.now() - started}`,
     );
   }
 }

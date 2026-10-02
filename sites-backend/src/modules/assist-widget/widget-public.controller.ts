@@ -6,7 +6,7 @@
  *   POST /widget/v1/chat               SSE | JSON
  *   GET  /widget/v1/messages/:id/stream?from=
  *   POST /widget/v1/lead
- *   POST /widget/v1/handoff            Э2: { mode: 'lead' }
+ *   POST /widget/v1/handoff            Э3: HandoffIntake.request (H), 5/ч на посетителя
  *   POST /widget/v1/feedback
  *   POST /widget/v1/forget
  *   POST /widget/v1/preview/exchange
@@ -37,7 +37,10 @@ import { WIDGET_VISITOR_TOKEN_HEADER } from '../../brand';
 import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
 import { widgetOrigin } from '../../config/widget-env';
 import { LEAD_FIELDS, type LeadField } from '../assist-site-setup/leads-config';
-import { SiteLeadsService } from '../assist-site-chat/leads.service';
+import {
+  SiteLeadsService,
+  type LeadSubmitInput,
+} from '../assist-site-chat/leads.service';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import { clientIp } from '../telegram-auth/web/web-request';
 import type {
@@ -50,6 +53,8 @@ import type {
   WidgetStreamChunk,
 } from './api-types';
 import { cleanPageUrl, WidgetChatService } from './widget-chat.service';
+import { cleanIdentity } from './widget-engagement';
+import { WidgetEngagementService } from './widget-engagement.service';
 import { PIXEL_GIF, WidgetPublicConfigService } from './widget-config.service';
 import { widgetError } from './widget-errors';
 import { WidgetRateLimit } from './rate-limit';
@@ -62,6 +67,7 @@ import { WidgetStateService } from './widget-state.service';
 import {
   WidgetChatDto,
   WidgetFeedbackDto,
+  WidgetHandoffDto,
   WidgetLeadDto,
   WidgetPreviewExchangeDto,
   WidgetSessionDto,
@@ -133,6 +139,7 @@ export class WidgetPublicController {
     private readonly chat: WidgetChatService,
     private readonly leads: SiteLeadsService,
     private readonly rate: WidgetRateLimit,
+    private readonly engagement: WidgetEngagementService,
   ) {}
 
   @Get('config')
@@ -303,7 +310,8 @@ export class WidgetPublicController {
       const own = await this.state.ownsConversation(ctx, dto.conversationId);
       conversationId = own ? dto.conversationId : null;
     }
-    await this.leads.submit({
+    // Э3: identify — только вместе с лидом (К-3); шифрует и сверяет A.
+    const input: LeadSubmitInput = {
       site: ctx.site,
       visitor: ctx.visitor,
       conversationId,
@@ -311,7 +319,9 @@ export class WidgetPublicController {
       consent: dto.consent,
       uiLang: dto.uiLang,
       pageUrl: cleanPageUrl(dto.pageUrl),
-    });
+      identity: cleanIdentity(dto.identity),
+    };
+    await this.leads.submit(input);
     return { ok: true };
   }
 
@@ -319,13 +329,14 @@ export class WidgetPublicController {
   @HttpCode(200)
   async handoff(
     @Headers(TOKEN_HEADER) token: string | undefined,
+    @Body() dto: WidgetHandoffDto,
     @Req() req: Request,
   ): Promise<WidgetHandoffResponse> {
-    await this.sessions.authenticate({
+    const ctx = await this.sessions.authenticate({
       token,
       requestOrigin: tokenRequestOrigin(req),
     });
-    return { mode: 'lead' };
+    return this.engagement.handoff(ctx, dto);
   }
 
   @Post('feedback')

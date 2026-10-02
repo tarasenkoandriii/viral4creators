@@ -13,6 +13,16 @@
  *                  pending — неотвеченный вопрос (повтор с тем же clientRequestId),
  *                  preview / pview — сессия предпросмотра и черновой вид.
  * В хранилище страницы заказчика iframe не пишет ничего (другой origin).
+ *
+ * Э3 (W): передача человеку (подтверждение «~N минут» → `POST handoff`,
+ * опрос `state` раз в 3 с, пока передача waiting/active и вкладка видима;
+ * `missed` → форма заявки; отмена ожидания; событие стрима `handoff`),
+ * сценарии (шаги, типы ответов, финал), проактивный сигнал (префилл без
+ * автоотправки, сценарий, `openedBy`), цели из загрузчика с диалогом и
+ * временем клика по действию помощника, `identify` — ТОЛЬКО в памяти и
+ * только в лид/передачу, склейка стрима (при несовпадении префикса —
+ * текст целиком из `state`). Ответы сценария и identify не пишутся ни в
+ * одно хранилище.
  */
 import {
   ApiError,
@@ -20,6 +30,7 @@ import {
   parseChatEvent,
   parseChatJson,
   parseChunk,
+  parseHandoffResponse,
   parsePreviewExchange,
   parseSession,
   parseState,
@@ -29,10 +40,12 @@ import {
   type Auth,
   type SiteAction,
   type StreamErrorCode,
+  type VisitorHandoffView,
   type WidgetChatEvent,
   type WidgetMessageView,
   type WidgetStateView,
 } from './api';
+import { parseScenarios, type Scenario } from '../shared/scenarios';
 import { SseParser } from './sse';
 import { DICTS, type Dict } from './i18n';
 import { WIDGET_CHANNEL_PREFIX, WIDGET_STORAGE_PREFIX } from '../shared/brand';
@@ -48,7 +61,7 @@ import {
   type UiLang,
   type ViewConfig,
 } from '../shared/config';
-import type { ParentMessage } from '../shared/protocol';
+import type { FrameMessage, ParentMessage } from '../shared/protocol';
 
 export interface UiMessage extends WidgetMessageView {
   /** Вопрос этой вкладки, ещё не перечитанный с сервера (сырой текст — только в памяти). */
@@ -76,10 +89,38 @@ export interface ChatState {
   lead: 'hidden' | 'form' | 'sent';
   resumedBanner: boolean;
   confirmForget: boolean;
-  prefill: { name?: string; email?: string };
+  prefill: { name?: string; email?: string; comment?: string };
   allowedOrigins: string[];
   draft: string;
+  /** Э3: последняя передача человеку диалога. */
+  handoff: VisitorHandoffView | null;
+  /** Э3: «Позвать человека? Обычно отвечаем за ~N минут» — ждёт подтверждения. */
+  handoffAsk: { scenarioKey: string | null } | null;
+  /** «~N минут» (ответ POST handoff или конфиг). */
+  eta: string | null;
+  scenarios: Scenario[];
+  /** Идущий сценарий: шаг и ответы (только в памяти). */
+  scen: {
+    s: Scenario;
+    step: number;
+    answers: Array<{ q: string; a: string }>;
+    done: boolean;
+  } | null;
 }
+
+/** Ответ проактивного сигнала/сценария, отмеченный для атрибуции цели. */
+interface AssistMarks {
+  proactive: string | null;
+  scenario: string | null;
+  link: boolean;
+}
+
+type Identity = {
+  name?: string;
+  email?: string;
+  externalId?: string;
+  userHash?: string;
+};
 
 interface Pending {
   crid: string;
@@ -91,6 +132,8 @@ interface Pending {
 type Init = Extract<ParentMessage, { type: 'init' }>;
 
 const DIALOG_IDLE_MS = 30 * 60 * 1000;
+/** Опрос ответа оператора (HANDOFF_DEFAULTS.widgetPollMs, решение 3). */
+export const HANDOFF_POLL_MS = 3000;
 
 export function uuid(): string {
   const c = window.crypto;
@@ -120,11 +163,7 @@ export class ChatController {
   private auth: Auth = { token: null, preview: null };
   private pk: string;
   private parentOrigin: string;
-  private toParent: (
-    m:
-      | { type: 'event'; name: 'lead' | 'handoff' }
-      | { type: 'unavailable'; code: string }
-  ) => void;
+  private toParent: (m: FrameMessage) => void;
   private conversationId: string | null = null;
   private stateVersion = -1;
   private page: { url: string | null; title: string | null } = {
@@ -137,6 +176,17 @@ export class ChatController {
   private loops = new Set<string>();
   private booted = false;
   private pollTimer = 0;
+  // ── Э3 ──
+  private handoffTimer = 0;
+  private identity: Identity = {};
+  /** Кто открыл НОВЫЙ диалог: proactive:<ключ> | scenario:<ключ> (иначе user). */
+  private openedBy: string | null = null;
+  private marks: AssistMarks = { proactive: null, scenario: null, link: false };
+  /** Последний клик посетителя по действию помощника (ссылка, кнопка сценария). */
+  private lastClick: number | null = null;
+  private missedSeen: string | null = null;
+  /** Цели, пришедшие до сессии (см. sendGoal). */
+  private goalQ: Array<Extract<ParentMessage, { type: 'goal' }>> = [];
 
   constructor(
     pk: string,
@@ -165,7 +215,17 @@ export class ChatController {
       prefill: {},
       allowedOrigins: [parentOrigin],
       draft: this.ss('draft') || '',
+      handoff: null,
+      handoffAsk: null,
+      eta: null,
+      scenarios: [],
+      scen: null,
     };
+    document.addEventListener('visibilitychange', () => {
+      // Вернулся на вкладку во время передачи — сразу свежий ответ оператора.
+      if (document.visibilityState === 'visible' && this.handoffTimer)
+        void this.pollHandoff();
+    });
   }
 
   // ── подписка UI ─────────────────────────────────────────────────────────
@@ -245,8 +305,21 @@ export class ChatController {
         this.page = { url: m.page.url, title: m.page.title };
         return;
       case 'identify':
-        // Э2: только предзаполнение формы лида, в памяти iframe (userHash — Э3).
-        this.set({ prefill: { name: m.name, email: m.email } });
+        // Э3: в памяти iframe; на сервер — только с лидом или передачей (К-3).
+        this.identity = {
+          name: m.name,
+          email: m.email,
+          externalId: m.externalId,
+          userHash: m.userHash,
+        };
+        this.set({
+          prefill: { ...this.state.prefill, name: m.name, email: m.email },
+        });
+        return;
+      case 'proactive':
+        return this.onProactive(m);
+      case 'goal':
+        void this.sendGoal(m);
         return;
       case 'preview':
         // «к Л2»: второй замок — флаг из конфига сервера здесь же.
@@ -297,15 +370,18 @@ export class ChatController {
 
   private async boot(previewToken: string | null) {
     try {
-      const cfg = parsePublicConfig(
-        await request(
-          'GET',
-          `/widget/v1/config?pk=${encodeURIComponent(this.pk)}`,
-          this.auth
-        )
+      const raw = await request(
+        'GET',
+        `/widget/v1/config?pk=${encodeURIComponent(this.pk)}`,
+        this.auth
       );
+      const cfg = parsePublicConfig(raw);
       const origins = [this.parentOrigin, ...cfg.hosts.map((h) => h.origin)];
-      this.set({ cfg, allowedOrigins: origins });
+      this.set({
+        cfg,
+        allowedOrigins: origins,
+        scenarios: parseScenarios(isObj(raw) ? raw.engagement : null),
+      });
       this.applyView(cfg.config);
     } catch {
       /* без конфига — вид по умолчанию */
@@ -313,6 +389,7 @@ export class ChatController {
     try {
       await this.preview(previewToken);
       const s = await this.session(false);
+      for (const g of this.goalQ.splice(0)) void this.sendGoal(g);
       if (this.state.cfg.status === 'lead_only')
         this.set({ lead: 'form', notice: { text: this.state.t.errDisabled } });
       this.set({ phase: 'ready' });
@@ -470,18 +547,25 @@ export class ChatController {
     if (!c) {
       this.conversationId = null;
       this.stateVersion = -1;
+      this.setHandoff(null);
       if (!this.state.busy) this.set({ messages: [] });
       return;
     }
     this.conversationId = c.id;
     this.stateVersion = c.stateVersion;
+    this.setHandoff(c.handoff);
     if (this.state.busy) return; // свой стрим допишет сам
     const keep = this.state.messages.filter((m) => this.following.has(m.id));
     const merged: UiMessage[] = c.messages.map((m) => {
       const k = keep.find((x) => x.id === m.id);
       const old = this.state.messages.find((x) => x.id === m.id);
+      // Склейка стрима (решение 23): своё дочитанное длиннее — только если
+      // текст базы его НАЧАЛО; иначе (маска телефона на стыке сброса)
+      // правда — текст из state целиком.
       const base: UiMessage =
-        k && k.text.length > m.text.length ? { ...m, text: k.text } : m;
+        k && k.text.length > m.text.length && k.text.indexOf(m.text) === 0
+          ? { ...m, text: k.text }
+          : m;
       return old && old.rated ? { ...base, rated: true } : base;
     });
     this.set({ messages: merged });
@@ -642,6 +726,8 @@ export class ChatController {
     this.upsert(mid, {}, true);
     let gotDone = false;
     let replaceText = false;
+    let relayed = false;
+    let streamed = false;
     let lastError: StreamErrorCode | null = null;
     const body = {
       conversationId: p.conv,
@@ -650,6 +736,8 @@ export class ChatController {
       page: this.page,
       context: this.context,
       uiLang: this.state.lang,
+      // Э3: кто открыл диалог — только для нового (сервер пишет при создании).
+      openedBy: p.conv ? null : this.openedBy || 'user',
     };
     const handle = (ev: WidgetChatEvent) => {
       switch (ev.type) {
@@ -686,6 +774,15 @@ export class ChatController {
         case 'error':
           lastError = ev.code;
           break;
+        case 'handoff':
+          // Вопрос ушёл человеку: ответа модели не будет — заглушка «пишет…»
+          // не нужна, ответ оператора придёт опросом state.
+          relayed = true;
+          gotDone = true;
+          this.set({
+            messages: this.state.messages.filter((x) => x.id !== mid),
+          });
+          break;
       }
     };
     try {
@@ -721,6 +818,14 @@ export class ChatController {
       const ct = res.headers.get('content-type') || '';
       if (ct.indexOf('application/json') >= 0 || !res.body) {
         const j = parseChatJson(unwrap(res.status, await res.json()));
+        if (j.handoff) {
+          this.conversationId = j.conversationId;
+          handle({ type: 'handoff', ...j.handoff });
+          this.set({ busy: false });
+          this.ss('pending', null);
+          void this.refreshState();
+          return;
+        }
         handle({
           type: 'meta',
           conversationId: j.conversationId,
@@ -739,6 +844,7 @@ export class ChatController {
         });
         gotDone = !j.streaming;
       } else {
+        streamed = true;
         const reader = res.body.getReader();
         const dec = new TextDecoder();
         const sse = new SseParser();
@@ -786,6 +892,11 @@ export class ChatController {
       return;
     }
     this.ss('pending', null);
+    this.openedBy = null;
+    if (relayed) {
+      void this.refreshState();
+      return;
+    }
     if (mid.indexOf('p-') === 0) {
       // Поток закрылся без meta (функция/прокси оборвали до начала ответа):
       // дочитывать нечего, а заглушка «печатает…» висела бы вечно.
@@ -797,6 +908,9 @@ export class ChatController {
     }
     this.following.delete(mid);
     this.signal('message:' + mid);
+    // Сверка с базой (склейка стрима, решение 23): дописанное ПОТОКОМ могло
+    // быть маскировано на стыке сброса — правда в state (JSON-путь уже из базы).
+    if (streamed) void this.refreshState();
   }
 
   private streamError(code: StreamErrorCode, mid: string) {
@@ -889,14 +1003,241 @@ export class ChatController {
     this.set({ lead: 'form' });
   }
 
+  // ── Э3: передача человеку (§3.7) ───────────────────────────────────────
+
+  private etaText(minutes: number | null): string | null {
+    const h = this.state.cfg.handoff;
+    const t = h && h.etaText[this.state.lang];
+    if (minutes) return this.state.t.etaMinutes.replace('{n}', String(minutes));
+    if (t) return t;
+    const n = h && h.etaMinutes;
+    return n ? this.state.t.etaMinutes.replace('{n}', String(n)) : null;
+  }
+
+  /** «Позвать человека?» — подтверждение с «~N минут» (§3.7 п.1). */
+  askHandoff(scenarioKey: string | null = null) {
+    this.set({ handoffAsk: { scenarioKey }, eta: this.etaText(null) });
+  }
+
+  cancelAskHandoff() {
+    this.set({ handoffAsk: null });
+  }
+
   async handoff() {
+    const ask = this.state.handoffAsk;
+    this.set({ handoffAsk: null });
+    const id = this.identityBody();
     try {
-      const r = await this.api('POST', '/widget/v1/handoff', {});
-      if (isObj(r) && r.mode === 'lead') this.set({ lead: 'form' });
-    } catch {
-      this.set({ lead: 'form' });
+      const r = parseHandoffResponse(
+        await this.api('POST', '/widget/v1/handoff', {
+          conversationId: this.conversationId,
+          uiLang: this.state.lang,
+          pageUrl: this.page.url,
+          scenarioKey: ask ? ask.scenarioKey : null,
+          ...(id ? { identity: id } : {}),
+        })
+      );
+      if (r.mode === 'lead') {
+        this.set({
+          lead: 'form',
+          notice: { text: this.state.t.handoffLead },
+        });
+      } else {
+        this.set({ eta: this.etaText(r.etaMinutes) });
+        this.setHandoff(r.handoff);
+      }
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'RATE_LIMITED')
+        this.set({ notice: { text: this.state.t.errRate } });
+      else this.set({ lead: 'form' });
     }
     this.toParent({ type: 'event', name: 'handoff' });
+  }
+
+  /** Посетитель передумал ждать (только waiting — дальше решает сервер). */
+  async cancelHandoff() {
+    const c = this.conversationId;
+    if (!c) return;
+    try {
+      await this.api('POST', '/widget/v1/handoff/cancel', {
+        conversationId: c,
+      });
+    } catch {
+      /* состояние подтянет опрос */
+    }
+    await this.refreshState();
+  }
+
+  /** Новое состояние передачи: опрос, форма заявки при missed, сигнал загрузчику. */
+  private setHandoff(h: VisitorHandoffView | null) {
+    const prev = this.state.handoff;
+    if (
+      prev === h ||
+      (prev &&
+        h &&
+        prev.id === h.id &&
+        prev.state === h.state &&
+        prev.takenAt === h.takenAt)
+    )
+      return;
+    this.set({ handoff: h });
+    const open = !!h && (h.state === 'waiting' || h.state === 'active');
+    clearInterval(this.handoffTimer);
+    this.handoffTimer = 0;
+    if (open) {
+      // Опрос state раз в 3 с, пока передача открыта и вкладка видима (решение 3).
+      this.handoffTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') void this.pollHandoff();
+      }, HANDOFF_POLL_MS);
+    }
+    if (h && h.state === 'missed' && this.missedSeen !== h.id) {
+      this.missedSeen = h.id;
+      this.set({ lead: 'form', notice: { text: this.state.t.handoffMissed } });
+    }
+    if (h && (!prev || prev.state !== h.state))
+      this.toParent({ type: 'handoff-state', state: h.state });
+  }
+
+  private async pollHandoff() {
+    if (this.state.phase !== 'ready' || this.state.busy) return;
+    try {
+      const st = parseState(
+        await this.api('GET', `/widget/v1/state?since=${this.stateVersion}`)
+      );
+      const c = st.conversation;
+      if (c && c.stateVersion !== this.stateVersion) await this.refreshState();
+      else if (c) this.setHandoff(c.handoff);
+    } catch {
+      /* следующий тик */
+    }
+  }
+
+  // ── Э3: identify, проактивный сигнал, сценарии, цели ───────────────────
+
+  /** identify — только то, что дала страница; на сервер — лишь с лидом/передачей. */
+  private identityBody(): Identity | null {
+    const i = this.identity;
+    return i.name || i.email || i.externalId ? i : null;
+  }
+
+  private onProactive(m: Extract<ParentMessage, { type: 'proactive' }>) {
+    this.marks.proactive = m.triggerKey;
+    // Новый диалог — «открыт сигналом»; идущий диалог не переподписываем.
+    if (!this.conversationId) this.openedBy = 'proactive:' + m.triggerKey;
+    if (m.action === 'prefill' && m.question) {
+      // Префилл без автоотправки (§5-тер.12): посетитель отправит сам.
+      this.setDraft(m.question);
+    } else if (m.action === 'scenario' && m.scenarioKey) {
+      this.startScenario(m.scenarioKey, true);
+    }
+  }
+
+  startScenario(key: string, fromProactive = false) {
+    const s = this.state.scenarios.find((x) => x.key === key);
+    if (!s || this.state.phase !== 'ready') return;
+    this.marks.scenario = key;
+    this.lastClick = Date.now();
+    if (!fromProactive && !this.conversationId)
+      this.openedBy = 'scenario:' + key;
+    this.toParent({ type: 'count', kind: 'scenario_started', key });
+    this.set({ scen: { s, step: 0, answers: [], done: false } });
+    if (!s.steps.length) this.finishScenario();
+  }
+
+  /** Ответ на шаг сценария (только в памяти iframe). */
+  answerStep(value: string) {
+    const sc = this.state.scen;
+    if (!sc || sc.done) return;
+    const step = sc.s.steps[sc.step];
+    const q =
+      step.question[this.state.lang] || Object.values(step.question)[0] || '';
+    const answers = value ? [...sc.answers, { q, a: value }] : sc.answers;
+    this.lastClick = Date.now();
+    if (sc.step + 1 < sc.s.steps.length)
+      this.set({ scen: { ...sc, step: sc.step + 1, answers } });
+    else {
+      this.set({ scen: { ...sc, answers } });
+      this.finishScenario();
+    }
+  }
+
+  cancelScenario() {
+    this.set({ scen: null });
+  }
+
+  private finishScenario() {
+    const sc = this.state.scen;
+    if (!sc) return;
+    this.set({ scen: { ...sc, done: true } });
+    this.toParent({ type: 'count', kind: 'scenario_done', key: sc.s.key });
+    const summary = sc.answers.map((x) => `${x.q} — ${x.a}`).join('; ');
+    const f = sc.s.final;
+    if (f.kind === 'lead') {
+      // Вопросы квалификации (№40) — в комментарий заявки, посетитель видит его.
+      this.set({
+        lead: 'form',
+        prefill: { ...this.state.prefill, comment: summary.slice(0, 1000) },
+      });
+    } else if (f.kind === 'handoff') this.askHandoff(sc.s.key);
+    else if (f.kind === 'ask') {
+      const title = sc.s.title[this.state.lang] || '';
+      const q = [title, summary].filter(Boolean).join(': ').slice(0, 600);
+      if (q) void this.ask(q);
+      this.set({ scen: null });
+    }
+  }
+
+  /** Клик по действию помощника (ссылка ответа/сценария) — для атрибуции и счётчика. */
+  linkClicked() {
+    this.lastClick = Date.now();
+    this.marks.link = true;
+    this.toParent({ type: 'count', kind: 'link_click', key: null });
+  }
+
+  /**
+   * Цель, пойманная загрузчиком этого документа (решение 12): с посетителем,
+   * диалогом и временем последнего клика по действию помощника — атрибуцию
+   * direct/assisted решает сервер (A). keepalive — страница может уходить.
+   */
+  private async sendGoal(m: Extract<ParentMessage, { type: 'goal' }>) {
+    if (!this.auth.token) {
+      // iframe прислал ready раньше, чем получил сессию: загрузчик уже отдал
+      // цель сюда (не маяком) — держим до сессии, иначе она теряется.
+      if (this.state.phase === 'boot' && this.goalQ.length < 10)
+        this.goalQ.push(m);
+      return;
+    }
+    const body = JSON.stringify({
+      goalKey: m.goalKey,
+      detector: m.detector,
+      docId: m.docId,
+      path: m.path,
+      orderId: m.orderId,
+      value: m.value,
+      currency: m.currency,
+      conversationId: this.conversationId,
+      lastAssistClickAt: this.lastClick
+        ? new Date(this.lastClick).toISOString()
+        : null,
+      assist: this.marks,
+    });
+    const go = () =>
+      fetch('/widget/v1/goal', {
+        method: 'POST',
+        keepalive: true,
+        credentials: 'omit',
+        headers: headers(this.auth, { 'Content-Type': 'application/json' }),
+        body,
+      });
+    try {
+      const r = await go();
+      if (r.status === 401) {
+        await this.session(true);
+        await go();
+      }
+    } catch {
+      /* цель — не критично для посетителя */
+    }
   }
 
   async submitLead(
@@ -905,6 +1246,7 @@ export class ChatController {
   ): Promise<string | null> {
     const t = this.state.t;
     if (!consent) return t.consentRequired;
+    const id = this.identityBody();
     try {
       await this.api('POST', '/widget/v1/lead', {
         conversationId: this.conversationId,
@@ -912,6 +1254,7 @@ export class ChatController {
         consent: true,
         uiLang: this.state.lang,
         pageUrl: this.page.url,
+        ...(id ? { identity: id } : {}),
       });
     } catch (e) {
       const code = e instanceof ApiError ? e.code : '';
@@ -921,7 +1264,7 @@ export class ChatController {
           ? t.leadInvalid
           : t.errGeneric;
     }
-    this.set({ lead: 'sent' });
+    this.set({ lead: 'sent', scen: null });
     // Наружу — только тип события, без полей (§3-бис.2).
     this.toParent({ type: 'event', name: 'lead' });
     return null;
@@ -955,7 +1298,13 @@ export class ChatController {
       lead: this.state.cfg.status === 'lead_only' ? 'form' : 'hidden',
       resumedBanner: false,
       notice: own ? { text: this.state.t.forgotten } : null,
+      scen: null,
+      handoffAsk: null,
     });
+    this.setHandoff(null);
+    this.identity = {};
+    this.lastClick = null;
+    this.marks = { proactive: null, scenario: null, link: false };
     try {
       await this.session(true);
     } catch (e) {
@@ -973,8 +1322,9 @@ export class ChatController {
   }
 
   actionClicked(a: SiteAction) {
+    this.lastClick = Date.now();
     if (a.kind === 'lead') this.openLead();
-    else if (a.kind === 'handoff') void this.handoff();
+    else if (a.kind === 'handoff') this.askHandoff();
   }
 
   saveScroll(id: string | null) {

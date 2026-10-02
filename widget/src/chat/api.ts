@@ -68,7 +68,40 @@ export type WidgetChatEvent =
   | { type: 'token'; t: string }
   | { type: 'actions'; items: SiteAction[] }
   | { type: 'done' }
-  | { type: 'error'; code: StreamErrorCode; message: string };
+  | { type: 'error'; code: StreamErrorCode; message: string }
+  /** Э3: вопрос ушёл человеку (открыта передача) — модели нет, следом done. */
+  | { type: 'handoff'; state: 'waiting' | 'active'; relayed: boolean };
+
+/** Э3: передача человеку глазами посетителя (VisitorHandoffView, H). */
+export const HANDOFF_STATES = [
+  'waiting',
+  'active',
+  'closed',
+  'missed',
+  'cancelled',
+] as const;
+export type HandoffState = (typeof HANDOFF_STATES)[number];
+export interface VisitorHandoffView {
+  id: string;
+  state: HandoffState;
+  requestedAt: string;
+  takenAt: string | null;
+  timeoutAt: string;
+}
+
+/** POST /widget/v1/handoff — ответ. */
+export type WidgetHandoffResponse =
+  | {
+      mode: 'human';
+      handoff: VisitorHandoffView;
+      etaMinutes: number | null;
+      existing: boolean;
+    }
+  | {
+      mode: 'lead';
+      reason:
+        'disabled' | 'off_hours' | 'no_operators' | 'no_conversation' | null;
+    };
 
 export interface WidgetSessionRequest {
   pk: string;
@@ -106,6 +139,8 @@ export interface WidgetStateView {
     messages: WidgetMessageView[];
     streamingMessageId: string | null;
     lastMessageAt: string;
+    /** Э3: последняя передача человеку (undefined — сервер Э2). */
+    handoff: VisitorHandoffView | null;
   } | null;
   previousConversationId: string | null;
 }
@@ -127,6 +162,8 @@ export interface WidgetChatJsonResponse {
   actions: SiteAction[];
   refused: boolean;
   streaming: boolean;
+  /** Э3: вопрос ушёл человеку — ответа модели нет. */
+  handoff: { state: 'waiting' | 'active'; relayed: boolean } | null;
 }
 
 export interface WidgetStreamChunk {
@@ -268,6 +305,64 @@ export function parseSession(v: unknown): WidgetSessionResponse {
   };
 }
 
+function isoOrNull(v: unknown): string | null {
+  return typeof v === 'string' && v.length <= 40 && !isNaN(Date.parse(v))
+    ? v
+    : null;
+}
+
+export function parseHandoffView(v: unknown): VisitorHandoffView | null {
+  if (!isObj(v) || !HANDOFF_STATES.includes(v.state as HandoffState))
+    return null;
+  try {
+    return {
+      id: id(v.id),
+      state: v.state as HandoffState,
+      requestedAt: isoOrNull(v.requestedAt) || '',
+      takenAt: isoOrNull(v.takenAt),
+      timeoutAt: isoOrNull(v.timeoutAt) || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function parseHandoffResponse(v: unknown): WidgetHandoffResponse {
+  if (isObj(v) && v.mode === 'human') {
+    const h = parseHandoffView(v.handoff);
+    if (h)
+      return {
+        mode: 'human',
+        handoff: h,
+        etaMinutes:
+          typeof v.etaMinutes === 'number' && Number.isInteger(v.etaMinutes)
+            ? v.etaMinutes
+            : null,
+        existing: v.existing === true,
+      };
+  }
+  // Ответ не той формы — безопасный путь: форма заявки (§3.7 п.2).
+  const r = isObj(v) ? v.reason : null;
+  return {
+    mode: 'lead',
+    reason:
+      r === 'disabled' ||
+      r === 'off_hours' ||
+      r === 'no_operators' ||
+      r === 'no_conversation'
+        ? r
+        : null,
+  };
+}
+
+function relayedState(
+  v: unknown
+): { state: 'waiting' | 'active'; relayed: boolean } | null {
+  return isObj(v) && (v.state === 'waiting' || v.state === 'active')
+    ? { state: v.state, relayed: v.relayed === true }
+    : null;
+}
+
 export function parseState(v: unknown): WidgetStateView {
   if (!isObj(v)) throw new ApiError('BAD_RESPONSE', 0);
   const c = v.conversation;
@@ -284,6 +379,7 @@ export function parseState(v: unknown): WidgetStateView {
               : null,
           lastMessageAt:
             typeof c.lastMessageAt === 'string' ? c.lastMessageAt : '',
+          handoff: parseHandoffView(c.handoff),
         }
       : null,
     previousConversationId:
@@ -296,9 +392,12 @@ export function parseState(v: unknown): WidgetStateView {
 
 export function parseChatJson(v: unknown): WidgetChatJsonResponse {
   if (!isObj(v)) throw new ApiError('BAD_RESPONSE', 0);
+  const handoff = relayedState(v.handoff);
   return {
     conversationId: id(v.conversationId),
-    messageId: id(v.messageId),
+    // Вопрос ушёл человеку — ответа модели (и его id) нет.
+    messageId: handoff && v.messageId === '' ? '' : id(v.messageId),
+    handoff,
     text: str(v.text ?? '', MAX_TEXT),
     sources: list(v.sources, parseSource),
     actions: list(v.actions, parseAction, 3),
@@ -347,6 +446,10 @@ export function parseChatEvent(
       return { type: 'actions', items: list(data.items, parseAction, 3) };
     case 'done':
       return { type: 'done' };
+    case 'handoff': {
+      const h = relayedState(data);
+      return h ? { type: 'handoff', ...h } : null;
+    }
     case 'error':
       return {
         type: 'error',

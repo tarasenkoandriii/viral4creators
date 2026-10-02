@@ -39,7 +39,12 @@ import {
 } from './assets';
 import { setupError, type FieldError } from './errors';
 import { generatePublicKey } from './keys';
-import { buildCspSnippet, buildEmbedSnippet } from './snippet';
+import { defaultEngagementConfig, parseScenarios } from './engagement-config';
+import {
+  buildCspSnippet,
+  buildEmbedSnippet,
+  buildInstallGuides,
+} from './snippet';
 import {
   defaultWidgetConfig,
   parseWidgetConfig,
@@ -285,7 +290,23 @@ export class WidgetSettingsService {
   ): Promise<WidgetSettingsView> {
     const db = this.db(m);
     const { site, row } = await loadAssistSite(db, m.accountId, siteId);
-    const parsed = parseWidgetConfig(config);
+    const hosts = await this.hosts(db, siteId);
+    // Э3: `{ config: { engagement } }` — только вовлечение поверх текущего
+    // черновика (контракт §6); иначе — полная конфигурация, как в Э2.
+    let input = config;
+    if (
+      isPlainObj(config) &&
+      Object.keys(config).length === 1 &&
+      'engagement' in config
+    ) {
+      input = {
+        ...this.draftOf(site.name, row, hosts),
+        engagement: config.engagement,
+      };
+    }
+    const parsed = parseWidgetConfig(input, {
+      verifiedOrigins: verifiedOrigins(hosts, this.now()),
+    });
     if (!parsed.ok) throw this.invalid(parsed.errors);
     const errors = await this.checkRefs(db, siteId, parsed.config);
     if (errors.length) throw this.invalid(errors);
@@ -304,8 +325,11 @@ export class WidgetSettingsService {
     const { site, row } = await loadAssistSite(db, m.accountId, siteId);
     const hosts = await this.hosts(db, siteId);
     const draft = this.draftOf(site.name, row, hosts);
-    // Повторная проверка: черновик мог быть записан старой версией кода.
-    const parsed = parseWidgetConfig(draft);
+    // Повторная проверка: черновик мог быть записан старой версией кода, а
+    // хост ссылки сценария — потерять подтверждение после сохранения.
+    const parsed = parseWidgetConfig(draft, {
+      verifiedOrigins: verifiedOrigins(hosts, this.now()),
+    });
     if (!parsed.ok) throw this.invalid(parsed.errors);
     const refErrors = await this.checkRefs(db, siteId, parsed.config);
     if (refErrors.length) throw this.invalid(refErrors);
@@ -336,6 +360,43 @@ export class WidgetSettingsService {
     });
     const fresh = await db.assistSite.findFirstOrThrow({ where: { siteId } });
     return this.view(db, site, fresh, adjustments);
+  }
+
+  /**
+   * `PUT /assist/sites/:id/scenarios` (§4.16): только сценарии вовлечения в
+   * черновике вида; триггеры и лимиты не трогаются. Триггер, который вёл в
+   * удалённый сценарий, — ошибка `scenario_unknown` (владелец решает сам).
+   */
+  async saveScenarios(
+    m: AccountMembership,
+    siteId: string,
+    scenarios: unknown,
+  ): Promise<WidgetSettingsView> {
+    const db = this.db(m);
+    const { site, row } = await loadAssistSite(db, m.accountId, siteId);
+    const hosts = await this.hosts(db, siteId);
+    const origins = verifiedOrigins(hosts, this.now());
+    const sc = parseScenarios(scenarios, { verifiedOrigins: origins });
+    if (!sc.ok) {
+      throw this.invalid(
+        sc.errors.map((e) => ({ ...e, path: `engagement.${e.path}` })),
+      );
+    }
+    const draft = this.draftOf(site.name, row, hosts);
+    const engagement = {
+      ...(draft.engagement ?? defaultEngagementConfig()),
+      scenarios: sc.scenarios,
+    };
+    const parsed = parseWidgetConfig(
+      { ...draft, engagement },
+      { verifiedOrigins: origins },
+    );
+    if (!parsed.ok) throw this.invalid(parsed.errors);
+    const saved = await db.assistSite.update({
+      where: { id: row.id },
+      data: { widgetDraft: parsed.config as unknown as Prisma.InputJsonValue },
+    });
+    return this.view(db, site, saved, parsed.adjustments);
   }
 
   async rollback(
@@ -526,6 +587,16 @@ export class WidgetSettingsService {
   // ── Внутреннее ──────────────────────────────────────────────────────
 
   private invalid(errors: FieldError[]) {
+    // Ошибки только во вовлечении — свой код (контракт §6, T): экран
+    // «Вовлечение» показывает их у полей, а не общим «вид не прошёл».
+    if (errors.length && errors.every((e) => e.path.startsWith('engagement'))) {
+      return setupError(
+        400,
+        'ENGAGEMENT_INVALID',
+        'Триггеры или сценарии не прошли проверку',
+        { errors },
+      );
+    }
     return setupError(
       400,
       'WIDGET_CONFIG_INVALID',
@@ -709,6 +780,12 @@ export class WidgetSettingsService {
           })
         : '',
       cspSnippet: buildCspSnippet(origin),
+      installGuides: row.publicKey
+        ? buildInstallGuides({
+            publicKey: row.publicKey,
+            widgetOrigin: origin,
+          })
+        : undefined,
       chatPaused: row.chatPaused,
       operatorBlocked: row.operatorBlockedAt !== null,
       widgetOrigin: origin,
@@ -716,6 +793,20 @@ export class WidgetSettingsService {
       assets: assets.map(assetView),
     };
   }
+}
+
+function isPlainObj(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** Origins подтверждённых СЕЙЧАС https-хостов (льгота 72 ч — не подтверждение). */
+export function verifiedOrigins(hosts: HostRow[], now: Date): string[] {
+  return hosts
+    .filter((h) => {
+      const a = evaluateHostAccess(h, 'assist-widget', now);
+      return h.scheme === 'https' && a.ok && !a.grace;
+    })
+    .map(hostOriginOf);
 }
 
 function assetView(a: {

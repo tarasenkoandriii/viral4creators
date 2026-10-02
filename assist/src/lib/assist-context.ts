@@ -7,7 +7,10 @@
 
 import { createContext, useContext } from 'react';
 import type { AppDictionary } from '../i18n';
+import type { HandoffApi } from './handoff-api';
 import type { KnowledgeApi } from './knowledge-api';
+import type { LearningApi } from './learning-api';
+import type { StatsApi } from './stats-api';
 import type { PersonaApi } from './persona-api';
 import type { WidgetApi } from './widget-api';
 import type { WizardApi } from './wizard-api';
@@ -19,6 +22,10 @@ export interface AssistValue {
   widget: WidgetApi;
   persona: PersonaApi;
   wizard: WizardApi;
+  /** Э3 (T): диалоги и передача (H), обучение (L), цели и статистика (A). */
+  handoff: HandoffApi;
+  learning: LearningApi;
+  stats: StatsApi;
 }
 
 export const AssistContext = createContext<AssistValue | null>(null);

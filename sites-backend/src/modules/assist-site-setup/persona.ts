@@ -27,6 +27,10 @@ export const PERSONA_LIMITS = {
   handoffTriggers: 10,
   handoffTrigger: 100,
   allowedLangs: 10,
+  /** Э3 №19: «когда — сделай». */
+  procedures: 10,
+  procedureWhen: 200,
+  procedureSteps: 800,
 } as const;
 
 export interface PersonaConfig {
@@ -48,6 +52,14 @@ export interface PersonaConfig {
   examples: string[];
   /** Мастер: «когда звать человека» → правила передачи (§3.7 п.1). */
   handoffTriggers: string[];
+  /**
+   * Э3 (№19 «текстовые процедуры»): до 10 правил «когда … — сделай …»
+   * (`when` ≤ 200, `steps` ≤ 800 символов), в промпт — размеченным блоком
+   * персоны (H, prompt.ts). Необязательное: персоны Э2 без поля — `[]`.
+   * Разбор — T (persona.ts). Процедура не даёт модели новых действий:
+   * только link/lead/handoff §4.9.
+   */
+  procedures?: Array<{ when: string; steps: string }>;
 }
 
 export type PersonaParse =
@@ -219,6 +231,8 @@ export function parsePersona(input: unknown): PersonaParse {
     L.handoffTrigger,
   );
 
+  const procedures = parseProcedures(errors, input.procedures);
+
   if (errors.length || !tone || style === null || !languages) {
     return { ok: false, errors };
   }
@@ -233,6 +247,66 @@ export function parsePersona(input: unknown): PersonaParse {
       stopPhrases,
       examples,
       handoffTriggers,
+      // Пустой список не пишем: персона Э2 и персона без процедур — одно и
+      // то же (сравнение «черновик ≠ публикация», ключ кэша).
+      ...(procedures.length ? { procedures } : {}),
     },
   };
+}
+
+/**
+ * Процедуры (№19): до 10 пар «когда» (одна строка ≤ 200) — «сделай»
+ * (несколько строк ≤ 800). Обе части обязательны; лишние поля — ошибка
+ * (владелец не должен думать, что, скажем, `action` что-то включает:
+ * новых действий модели процедура не даёт). Дубликаты «когда» — ошибка.
+ */
+function parseProcedures(
+  errors: Errors,
+  v: unknown,
+): NonNullable<PersonaConfig['procedures']> {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) {
+    errors.push({ path: 'procedures', code: 'type' });
+    return [];
+  }
+  if (v.length > PERSONA_LIMITS.procedures) {
+    errors.push({ path: 'procedures', code: 'too_many' });
+    return [];
+  }
+  const out: NonNullable<PersonaConfig['procedures']> = [];
+  v.forEach((item, i) => {
+    const p = `procedures[${i}]`;
+    if (!isObj(item)) {
+      errors.push({ path: p, code: 'type' });
+      return;
+    }
+    for (const k of Object.keys(item)) {
+      if (k !== 'when' && k !== 'steps') {
+        errors.push({ path: `${p}.${k}`, code: 'unknown' });
+      }
+    }
+    const when = text(
+      errors,
+      `${p}.when`,
+      item.when,
+      PERSONA_LIMITS.procedureWhen,
+      false,
+    );
+    const steps = text(
+      errors,
+      `${p}.steps`,
+      item.steps,
+      PERSONA_LIMITS.procedureSteps,
+      true,
+    );
+    if (when === '') errors.push({ path: `${p}.when`, code: 'required' });
+    if (steps === '') errors.push({ path: `${p}.steps`, code: 'required' });
+    if (!when || !steps) return;
+    if (out.some((x) => x.when.toLowerCase() === when.toLowerCase())) {
+      errors.push({ path: `${p}.when`, code: 'duplicate' });
+      return;
+    }
+    out.push({ when, steps });
+  });
+  return out;
 }

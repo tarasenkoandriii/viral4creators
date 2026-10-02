@@ -38,5 +38,14 @@ assert.match(
   /max-age=300\b/,
   'загрузчик — короткий кэш'
 );
+// Чанк вовлечения и целей — ES-модуль, загрузчик берёт его import() с
+// origin виджета на странице заказчика: без CORS модуль не исполнится.
+assert.match(
+  header('/v1/engage.js', 'Cache-Control') ?? '',
+  /max-age=300\b/,
+  'engage.js — короткий кэш, как у загрузчика'
+);
+assert.equal(header('/v1/engage.js', 'Access-Control-Allow-Origin'), '*');
+assert.equal(header('/v1/engage.js', 'X-Content-Type-Options'), 'nosniff');
 assert.ok(cfg.ignoreCommand, 'ignoreCommand пропал');
-console.log('vercel.json: шрифты immutable, загрузчик — 5 мин');
+console.log('vercel.json: шрифты immutable, загрузчик и engage.js — 5 мин');

@@ -37,7 +37,8 @@ export type TemplateKind =
   | 'injection'
   | 'suspicious'
   | 'partial'
-  | 'visitor_limit';
+  | 'visitor_limit'
+  | 'sensitive';
 
 export const TEMPLATE_TEXT: Record<TemplateKind, Record<ChatLang, string>> = {
   greeting: {
@@ -95,7 +96,47 @@ export const TEMPLATE_TEXT: Record<TemplateKind, Record<ChatLang, string>> = {
     ru: 'Слишком много сообщений. Оставьте заявку — менеджер ответит.',
     en: 'Too many messages. Leave a request and a manager will reply.',
   },
+  // Э3 (№13): чувствительная тема — без генерации, предложить человека.
+  sensitive: {
+    uk: 'Це питання краще обговорити з людиною. Я можу покликати оператора або ви можете залишити заявку.',
+    ru: 'Этот вопрос лучше обсудить с человеком. Я могу позвать оператора, или вы можете оставить заявку.',
+    en: "It's better to discuss this with a person. I can call an operator, or you can leave a request.",
+  },
 };
+
+/** Э3 (§3.7 п.2): «позовите человека» сработало — передача создана. */
+export function handoffWaitText(
+  lang: ChatLang,
+  etaMinutes: number | null,
+  etaText: Partial<Record<ChatLang, string>>,
+): string {
+  const head: Record<ChatLang, string> = {
+    uk: 'Кличу оператора — зачекайте, будь ласка, відповідь зʼявиться тут.',
+    ru: 'Зову оператора — подождите, пожалуйста, ответ появится здесь.',
+    en: "I'm calling an operator — please wait, the reply will appear here.",
+  };
+  const eta: Record<ChatLang, (n: number) => string> = {
+    uk: (n) => `Зазвичай відповідаємо за ~${n} хв.`,
+    ru: (n) => `Обычно отвечаем за ~${n} мин.`,
+    en: (n) => `We usually reply in ~${n} min.`,
+  };
+  const tail =
+    etaMinutes !== null && etaMinutes > 0
+      ? eta[lang](etaMinutes)
+      : (etaText[lang]?.trim() ?? '');
+  return tail ? `${head[lang]} ${tail}` : head[lang];
+}
+
+export const HANDOFF_LABEL: Record<ChatLang, string> = {
+  uk: 'Покликати оператора',
+  ru: 'Позвать оператора',
+  en: 'Talk to a person',
+};
+
+/** Действие «позвать человека» (§4.9): в Э3 — передача, если доступна. */
+export function handoffAction(lang: ChatLang): SiteAction {
+  return { kind: 'handoff', label: HANDOFF_LABEL[lang] };
+}
 
 export const LEAD_LABEL: Record<ChatLang, string> = {
   uk: 'Залишити заявку',

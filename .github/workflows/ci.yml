@@ -43,6 +43,7 @@ jobs:
       sites_backend: ${{ steps.f.outputs.sites_backend }}
       assist: ${{ steps.f.outputs.assist }}
       widget: ${{ steps.f.outputs.widget }}
+      assist_integrations: ${{ steps.f.outputs.assist_integrations }}
       sites_landing: ${{ steps.f.outputs.sites_landing }}
       frontend: ${{ steps.f.outputs.frontend }}
       admin: ${{ steps.f.outputs.admin }}
@@ -388,28 +389,78 @@ jobs:
           npm run e2e
         working-directory: widget
 
-  # Лендинг клиентских сайтов (Л0–Л1 ТЗ лендинга помощника). Свой
-  # проект Next 14 со своими бюджетами (§9) — поэтому своя джоба, а не
-  # строка матрицы `next-apps`: Lighthouse CI и axe есть только здесь.
-  sites-landing:
-    name: sites-landing — типы, линт, тесты, сборка, Lighthouse, axe
+  # Э3 ИИ-помощника: интеграции виджета (контракт /tmp/k/CONTRACT-E3.md,
+  # пакет assist-integrations/): npm-пакет `@v4c/assist-widget` (обёртка
+  # загрузчика с CDN + серверные помощники подписи), плагин
+  # WordPress/WooCommerce (PHP без зависимостей), шаблон GTM. Зеркала бренда
+  # и общие векторы подписи вебхука целей — scripts/*.test.ts и тест PHP.
+  assist-integrations:
+    name: assist-integrations (npm, WordPress, GTM) — типы, тесты, сборка, PHP
     needs: changes
-    if: needs.changes.outputs.sites_landing == 'true'
+    if: needs.changes.outputs.assist_integrations == 'true'
     runs-on: ubuntu-latest
-    env:
-      # Домен-заглушка до решения В-1: сборке нужен абсолютный адрес.
-      SITE_URL: https://example.invalid
-      # Приманка: собранный клиентский бандл проверяется на отсутствие
-      # этого значения (scripts/built/check-built.ts). Не секрет.
-      PILOT_TELEGRAM_BOT_TOKEN: '000000:ci-sentinel-must-not-leak'
-      PILOT_TELEGRAM_CHAT_ID: '-100000000000'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
           cache: npm
-          cache-dependency-path: sites-landing/package-lock.json
+          cache-dependency-path: assist-integrations/package-lock.json
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.4'
+          tools: none
+      - run: npm ci
+        working-directory: assist-integrations
+      - name: типы
+        run: npm run typecheck
+        working-directory: assist-integrations
+      - name: unit-скрипты (зеркала бренда, векторы подписи, код вставки GTM)
+        run: npm test
+        working-directory: assist-integrations
+      - name: сборка npm-пакета
+        run: npm run build
+        working-directory: assist-integrations
+      - name: PHP — синтаксис (7.4 — нижняя версия плагина)
+        run: npm run php:lint
+        working-directory: assist-integrations
+      - name: PHP — тесты плагина без WordPress
+        run: npm run php:test
+        working-directory: assist-integrations
+
+  # Лендинг клиентских сайтов (Л0–Л3 ТЗ лендинга помощника). Свой
+  # проект Next 14 со своими бюджетами (§9) — поэтому своя джоба, а не
+  # строка матрицы `next-apps`: Lighthouse CI и axe есть только здесь.
+  # Л2–Л3: проверки собранного сайта идут С ВИДЖЕТОМ — сборка указывает на
+  # лабораторный стенд продукта (scripts/built/assist-stand.ts, :3011) с
+  # настоящим загрузчиком из widget/dist; тесты сверяют копии типов и правил
+  # с sites-backend/src (widget-config.ts, landing-types.ts — без npm ci бэкенда).
+  sites-landing:
+    name: sites-landing — типы, линт, тесты, сборка, e2e виджета, Lighthouse, axe
+    needs: changes
+    if: needs.changes.outputs.sites_landing == 'true'
+    runs-on: ubuntu-latest
+    env:
+      # Временный домен лендинга (doc/DEPLOYMENT.md §6.0): сборке нужен абсолютный адрес.
+      SITE_URL: https://assist.viral4creators.app
+      # Приманка: собранный клиентский бандл проверяется на отсутствие
+      # этого значения (scripts/built/check-built.ts). Не секрет.
+      PILOT_TELEGRAM_BOT_TOKEN: '000000:ci-sentinel-must-not-leak'
+      PILOT_TELEGRAM_CHAT_ID: '-100000000000'
+      # Лабораторный стенд продукта вместо живых assist-w/assist-api (секретов в CI нет).
+      ASSIST_WIDGET_ORIGIN: http://localhost:3011
+      ASSIST_API_ORIGIN: http://localhost:3011
+      ASSIST_WIDGET_PK: pk_live_landingstand01
+      ASSIST_BOT_USERNAME: assist_stand_bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: |
+            sites-landing/package-lock.json
+            widget/package-lock.json
       - run: npm ci
         working-directory: sites-landing
       - name: npm audit (high)
@@ -437,24 +488,33 @@ jobs:
       - name: сборка
         run: npx next build
         working-directory: sites-landing
-      - name: собранный HTML (SEO, реестр утверждений, секреты не в бандле)
+      - name: собранный HTML (SEO, реестр утверждений, виджет не в HTML, секреты не в бандле)
         run: npm run check:built
         working-directory: sites-landing
-      - name: бюджет JS первой загрузки (≤ 110 КБ gzip)
+      - name: бюджет JS первой загрузки (≤ 110 КБ, /widget ≤ 160 КБ gzip)
         run: npm run budget:js
         working-directory: sites-landing
-      # Chromium для axe — той же версии, что playwright-core в devDeps.
+      - name: виджет для стенда (настоящий загрузчик)
+        run: npm ci && npm run build
+        working-directory: widget
+      # Chromium для axe и e2e — той же версии, что playwright-core в devDeps.
       - name: Chromium для axe
         run: npx playwright-core install --with-deps chromium
         working-directory: sites-landing
-      - name: axe (WCAG 2.2 A/AA) и 360 px
+      - name: стенд продукта и сайт
         run: |
+          npm run stand > stand.log 2>&1 &
           npx next start -p 3010 > next-start.log 2>&1 &
-          npx --yes wait-on@8 -t 60000 http://localhost:3010/robots.txt
-          npm run axe
+          npx --yes wait-on@8 -t 60000 http://localhost:3010/robots.txt http://localhost:3011/widget/v1/config
+        working-directory: sites-landing
+      - name: axe (WCAG 2.2 A/AA) и 360 px
+        run: npm run axe
+        working-directory: sites-landing
+      - name: e2e Л2–Л3 (живой виджет, preview, события, конфигуратор, черновик)
+        run: npm run e2e:widget
         working-directory: sites-landing
       # Тот же запущенный сервер; Chrome — системный на раннере.
-      - name: Lighthouse CI (медиана 5 прогонов, бюджеты §9)
+      - name: Lighthouse CI (медиана 5 прогонов, бюджеты §9, с виджетом)
         run: npx lhci autorun --config=lighthouserc.cjs
         env:
           LHCI_BASE_URL: http://localhost:3010

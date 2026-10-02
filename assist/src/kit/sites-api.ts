@@ -100,9 +100,16 @@ function parseRoles(v: unknown): ProductRoles {
   };
 }
 
+const MEMBER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 function parseMember(v: unknown): AccountMember {
   const o = obj(v);
   return {
+    // id — только безопасный сегмент пути (иначе '' — правок для строки нет).
+    memberId:
+      typeof o.memberId === 'string' && MEMBER_ID.test(o.memberId)
+        ? o.memberId
+        : '',
     telegramId: String(o.telegramId ?? ''),
     role: parseRole(o.role),
     productRoles: parseRoles(o.productRoles),
@@ -246,6 +253,17 @@ export function parseRevoke(v: unknown): RevokeResult {
 
 const enc = encodeURIComponent;
 
+/** Тело PATCH участника (повтор `MemberPatchRequest` сервера). */
+export interface MemberPatch {
+  role?: 'manager' | 'operator';
+  productRoles?: Partial<ProductRoles>;
+}
+
+function memberSeg(id: string): string {
+  if (!MEMBER_ID.test(id)) throw new Error('memberId: неверный формат');
+  return id;
+}
+
 export function createSitesApi(client: ApiClient) {
   return {
     account: async () =>
@@ -267,6 +285,26 @@ export function createSitesApi(client: ApiClient) {
         await client.request('POST', '/sites/account/invites/accept', {
           token,
         })
+      ),
+    /**
+     * Э3: смена роли участника (только владелец; владельца не понизить).
+     * Ответ — кабинет целиком (список участников уже с изменением).
+     */
+    patchMember: async (memberId: string, patch: MemberPatch) =>
+      parseAccountInfo(
+        await client.request(
+          'PATCH',
+          `/sites/account/members/${memberSeg(memberId)}`,
+          patch
+        )
+      ),
+    /** Э3: удалить участника (владелец) или выйти из кабинета (себя — любой). */
+    removeMember: async (memberId: string) =>
+      parseAccountInfo(
+        await client.request(
+          'DELETE',
+          `/sites/account/members/${memberSeg(memberId)}`
+        )
       ),
     listSites: async () => parseSites(await client.request('GET', '/sites')),
     /** Создать сайт (имя) + первый хост. */

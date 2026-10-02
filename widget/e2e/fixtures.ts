@@ -53,6 +53,7 @@ export interface MockLog {
     page: { url: string | null; title: string | null };
     context: unknown;
     uiLang: unknown;
+    openedBy?: string | null;
   }>;
   pings: Array<{ pk: string; v: string; c: string }>;
   configHits: string[];
@@ -74,7 +75,25 @@ export interface MockLog {
     hasVisitor: boolean;
     cookie: boolean;
   }>;
-  convs: Array<{ id: string; visitorId: string; messages: number }>;
+  convs: Array<{
+    id: string;
+    visitorId: string;
+    messages: number;
+    openedBy: string | null;
+    handoff: { id: string; state: string } | null;
+  }>;
+  // Э3
+  events: Array<{
+    pk: string;
+    origin: string | null;
+    contentType: string;
+    events: Array<{ kind: string; key: string | null }>;
+  }>;
+  goals: Array<Record<string, unknown>>;
+  goalCalls: number;
+  handoffs: Array<Record<string, unknown>>;
+  cancels: number;
+  picks: Array<Record<string, unknown>>;
 }
 
 export async function log(): Promise<MockLog> {
@@ -90,6 +109,12 @@ export interface SiteOpts {
   allowClientPreview?: boolean;
   previewTokens?: Record<string, Record<string, unknown>>;
   unpublished?: boolean;
+  // Э3
+  engagement?: unknown;
+  goals?: unknown;
+  handoff?: unknown;
+  handoffMode?: 'human' | 'lead';
+  pickerTokens?: Record<string, string>;
 }
 
 /** Сайт в моке: по умолчанию разрешён A и SHOP (verified-хосты одного сайта). */
@@ -108,7 +133,31 @@ export async function site(pk: string, o: SiteOpts = {}) {
     allowClientPreview: o.allowClientPreview ?? false,
     previewTokens: o.previewTokens ?? {},
     unpublished: o.unpublished ?? false,
+    engagement: o.engagement,
+    goals: o.goals,
+    handoff: o.handoff,
+    handoffMode: o.handoffMode ?? 'human',
+    pickerTokens: o.pickerTokens ?? {},
   });
+}
+
+/**
+ * Аналитика в Playwright выключена сама: `navigator.webdriver === true`
+ * (§5-тер.1, наши воркеры/QA). Тестам целей и счётчиков — «обычный» браузер.
+ */
+export async function humanBrowser(page: Page) {
+  await page.addInitScript(() =>
+    Object.defineProperty(Navigator.prototype, 'webdriver', {
+      get: () => false,
+    })
+  );
+}
+
+/** Все счётчики событий из пакетов загрузчика (вид:ключ). */
+export async function eventKinds(): Promise<string[]> {
+  return (await log()).events.flatMap((b) =>
+    b.events.map((e) => (e.key ? `${e.kind}:${e.key}` : e.kind))
+  );
 }
 
 export function stand(host: string, spec: StandSpec, path = '/page'): string {

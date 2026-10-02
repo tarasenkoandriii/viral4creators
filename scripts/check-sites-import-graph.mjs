@@ -44,7 +44,22 @@
  *     маршрут посетителя работает ТОЛЬКО под assist_public (AssistPublicDb),
  *     и случайный «удобный» импорт основного клиента — дыра, которую роль
  *     БД уже не поймает. Спеки и `testing/` — можно (тесты сеют данные
- *     владельцем схемы).
+ *     владельцем схемы). Э3: публичные зоны — ещё папки `public/` модулей
+ *     `assist-site-handoff`, `assist-site-learning`, `assist-analytics`.
+ *  9. (Э3) `public-zone-e3`: публичный код (все зоны правила 8) берёт из
+ *     ДРУГИХ модулей Э3 (`assist-site-handoff`, `assist-site-learning`,
+ *     `assist-analytics`, `assist-digest`) только `public/**`, типы
+ *     (`*types.ts`), чистые настройки (`*-config.ts`) и `*.module.ts`
+ *     (проводка DI). Сервисы кабинета и
+ *     системы этих модулей ходят основным клиентом — транзитивный импорт
+ *     правило 8 не видит (оно проверяет прямой импорт клиента). Внутри
+ *     СВОЕГО модуля публичная часть может звать свой `system/` по id (как
+ *     лид Э2 → LeadDelivery) — это граница модуля, её держит ревью.
+ * 10. (Э3) `digest-leaf`: модуль `assist-digest` — единственный, кто
+ *     собирает числа «Сайта» и «Админки» в одно сообщение (раздел
+ *     «Админка» — только assistAdmin: owner, У-27); его не импортирует ни
+ *     один модуль — иначе «Сайт» получил бы путь к данным «Админки» через
+ *     оркестратор.
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
@@ -74,6 +89,8 @@ const ADMIN_MODE = [/^assist-admin-/];
 const UI_CORE = [/^assist-ui-core$/];
 /** Э1: нейтральный общий код знаний и ИИ — без доступа к таблицам режима. */
 const NEUTRAL = [/^assist-knowledge-core$/, /^site-ai$/];
+/** Э3: оркестратор утренней сводки/отчёта — лист графа (правило 10). */
+const DIGEST = 'assist-digest';
 const MODE_MODULES = [
   /^assist-site-/,
   /^assist-admin-/,
@@ -113,6 +130,12 @@ export const RULES = [
     to: (m) => matches(m, PRODUCT_MODULES) && !matches(m, ADMIN_MODE),
   },
   {
+    id: 'digest-leaf',
+    why: 'Э3: assist-digest (числа «Сайта» и «Админки» в одном отчёте) не импортирует ни один модуль',
+    from: (m) => m !== DIGEST,
+    to: (m) => m === DIGEST,
+  },
+  {
     id: 'ui-core-neutral',
     why: '§5-бис.3 п.3: assist-ui-core не импортирует ни «Сайт», ни «Админку»',
     from: (m) => matches(m, UI_CORE),
@@ -127,7 +150,22 @@ export const RULES = [
 const PUBLIC_ZONES = [
   { module: 'assist-widget', except: /^cabinet\// },
   { module: 'assist-site-chat', except: /^system\// },
+  // Э3: только папка public/ (остальное — кабинет и система).
+  { module: 'assist-site-handoff', only: /^public\// },
+  { module: 'assist-site-learning', only: /^public\// },
+  { module: 'assist-analytics', only: /^public\// },
 ];
+const inPublicZone = (moduleName, inModule) =>
+  !/\.spec\.ts$/.test(inModule) &&
+  !/(^|\/)testing\//.test(inModule) &&
+  PUBLIC_ZONES.some(
+    (z) =>
+      z.module === moduleName &&
+      (z.only ? z.only.test(inModule) : !z.except.test(inModule)),
+  );
+/** Э3: модули, из которых публичный код берёт только public/, типы и *-config. */
+const E3_MODULES =
+  /^modules\/(assist-site-handoff|assist-site-learning|assist-analytics|assist-digest)\/(.+)$/;
 const MAIN_DB_TARGETS = [
   /^prisma\/sites-db\.service$/,
   /^prisma\/prisma\.service$/,
@@ -139,14 +177,26 @@ export const PATH_RULES = [
   {
     id: 'public-db',
     why: 'Э2 §4.3-бис слой 3: публичный код виджета работает только под assist_public (AssistPublicDb)',
-    from: (moduleName, inModule) =>
-      !/\.spec\.ts$/.test(inModule) &&
-      !/(^|\/)testing\//.test(inModule) &&
-      PUBLIC_ZONES.some(
-        (z) => z.module === moduleName && !z.except.test(inModule),
-      ),
+    from: inPublicZone,
     to: (target) =>
       MAIN_DB_TARGETS.some((re) => re.test(target.replace(SOURCE_RE, ''))),
+  },
+  {
+    id: 'public-zone-e3',
+    why: 'Э3: публичный код берёт из модулей Э3 только public/, *types.ts и *-config.ts (их сервисы ходят основным клиентом)',
+    from: inPublicZone,
+    to: (target, moduleName) => {
+      const m = E3_MODULES.exec(target.replace(SOURCE_RE, ''));
+      if (!m || m[1] === moduleName) return false;
+      const rest = m[2];
+      return !(
+        rest.startsWith('public/') ||
+        // Модуль Nest — проводка DI, не код доступа к базе.
+        /^[\w-]+\.module$/.test(rest) ||
+        /(^|[/-])types$/.test(rest) ||
+        /-config$/.test(rest)
+      );
+    },
   },
 ];
 
@@ -284,7 +334,10 @@ export function findViolations(srcDir) {
       if (fromZone.kind === 'module') {
         const inModule = rel.split('/').slice(2).join('/');
         for (const rule of PATH_RULES) {
-          if (rule.from(fromZone.name, inModule) && rule.to(target)) {
+          if (
+            rule.from(fromZone.name, inModule) &&
+            rule.to(target, fromZone.name)
+          ) {
             violations.push({ file: rel, spec, rule: rule.id, why: rule.why });
           }
         }
@@ -450,6 +503,41 @@ function selfTest() {
       'public-db',
     ],
     [
+      'modules/assist-site-handoff/public/aa.ts',
+      `import { SitesDb } from '../../../prisma/sites-db.service';`,
+      'public-db',
+    ],
+    [
+      'modules/assist-analytics/public/ab.ts',
+      `import { PrismaService } from 'src/prisma/prisma.service';`,
+      'public-db',
+    ],
+    [
+      'modules/assist-widget/ac.ts',
+      `import { HandoffDispatcher } from '../assist-site-handoff/system/handoff-dispatcher.service';`,
+      'public-zone-e3',
+    ],
+    [
+      'modules/assist-site-chat/ad.ts',
+      `import { GoalsService } from '../assist-analytics/goals.service';`,
+      'public-zone-e3',
+    ],
+    [
+      'modules/assist-site-learning/public/ae.ts',
+      `import { ConversationsService } from '../../assist-site-handoff/cabinet/conversations.service';`,
+      'public-zone-e3',
+    ],
+    [
+      'modules/assist-analytics/af.ts',
+      `import { AssistDigestService } from '../assist-digest/digest.service';`,
+      'digest-leaf',
+    ],
+    [
+      'modules/assist-site-handoff/system/ag.ts',
+      `export { X } from '../../assist-digest/report-text';`,
+      'digest-leaf',
+    ],
+    [
       'shared/l.ts',
       `import { G } from '../modules/telegram-auth/guard';`,
       'shared↛modules',
@@ -514,6 +602,26 @@ function selfTest() {
     [
       'modules/assist-site-setup/ok16.ts',
       `import { SitesDb } from '../../prisma/sites-db.service';`,
+    ],
+    [
+      'modules/assist-widget/ok17.ts',
+      `import { HandoffIntake } from '../assist-site-handoff/public/handoff-intake.service';\nimport type { GoalView } from '../assist-analytics/api-types';\nimport type { PublicGoal } from '../assist-analytics/goal-types';\nimport { effectiveHandoffConfig } from '../assist-site-handoff/public/handoff-config';\nimport { defaultAnalyticsConfig } from '../assist-analytics/analytics-config';\nimport { LearningSignals } from '../assist-site-learning/public/learning-signals';\nimport { AssistAnalyticsModule } from '../assist-analytics/assist-analytics.module';`,
+    ],
+    [
+      'modules/assist-site-handoff/public/ok18.ts',
+      `import { HandoffDispatcher } from '../system/handoff-dispatcher.service';\nimport type { HandoffView } from '../api-types';`,
+    ],
+    [
+      'modules/assist-site-handoff/system/ok19.ts',
+      `import { PrismaService } from '../../../prisma/prisma.service';\nimport { LearningCandidates } from '../../assist-site-learning/learning-queue.service';`,
+    ],
+    [
+      'modules/assist-digest/ok20.ts',
+      `import { AdminDigestSource } from '../assist-admin-knowledge/admin-digest';\nimport { StatsService } from '../assist-analytics/stats.service';\nimport { SitesDb } from '../../prisma/sites-db.service';`,
+    ],
+    [
+      'modules/assist-site-chat/system/ok21.ts',
+      `import { IntegrationsService } from '../../assist-analytics/integrations.service';`,
     ],
     [
       'shared/ok5.ts',

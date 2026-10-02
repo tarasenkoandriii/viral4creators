@@ -38,6 +38,7 @@ export const setupUk: SetupDictionary = {
       install: 'Встановлення',
       hosts: 'Де працює',
       leads: 'Заявки',
+      engagement: 'Залучення',
     },
     operatorBlocked:
       'Віджет на цьому сайті зупинено адміністрацією платформи. Напишіть у підтримку.',
@@ -438,5 +439,7 @@ export const setupUk: SetupDictionary = {
     WIZARD_DRAFT_LIMIT:
       'Чернетки вже оновлювалися максимальну кількість разів.',
     WIZARD_NOT_STARTED: 'Майстер ще не розпочато.',
+    ENGAGEMENT_INVALID:
+      'Тригери або сценарії не пройшли перевірку: перевірте тексти, затримки й посилання.',
   },
 };

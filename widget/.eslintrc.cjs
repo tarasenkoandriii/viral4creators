@@ -59,7 +59,7 @@ module.exports = {
     },
     {
       // Загрузчик — origin заказчика: ни строки разметки, ни внешних модулей.
-      files: ['src/loader/**/*.ts'],
+      files: ['src/loader/**/*.ts', 'src/engage/**/*.ts'],
       rules: {
         'no-restricted-imports': [
           'error',

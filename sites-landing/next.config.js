@@ -50,6 +50,77 @@ function validateSiteUrl(raw, opts = {}) {
 }
 
 /**
+ * Связь с продуктом (Л2–Л3) — зеркало `src/lib/assist-env.ts` (совпадение
+ * держит `scripts/assist-env.test.ts`). Умолчания адресов — временные
+ * домены `src/brand.ts` (`ASSIST_DEFAULTS`); читаем их из исходника, чтобы
+ * не держать третью копию строк.
+ */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
+
+/** @param {string} raw @param {string} name @param {{ onVercel: boolean }} opts */
+function validateAssistOrigin(raw, name, opts) {
+  let url;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    throw new Error(`${name} не URL: «${raw}»`);
+  }
+  const host = url.hostname.toLowerCase();
+  const local = LOCAL_HOSTS.has(host);
+  if ((url.pathname !== '/' && url.pathname !== '') || url.search || url.hash || url.username || url.password) {
+    throw new Error(`${name} — только origin (https://домен), без пути и параметров: «${raw}»`);
+  }
+  if (url.protocol === 'https:' && !url.port && !local) return `https://${host}`;
+  if (local && !opts.onVercel && (url.protocol === 'http:' || url.protocol === 'https:')) {
+    return `${url.protocol}//${host}${url.port ? `:${url.port}` : ''}`;
+  }
+  throw new Error(`${name} должен быть https://домен без порта (http://localhost — только для стенда вне Vercel): «${raw}»`);
+}
+
+/** @param {Record<string, string | undefined>} env @param {Record<string, string>} defaults */
+function validateAssistEnv(env, defaults) {
+  const onVercel = env.VERCEL === '1';
+  /** @param {string | undefined} v */
+  const pick = (v) => (v && v.trim() ? v : null);
+  const out = {
+    ASSIST_WIDGET_ORIGIN: validateAssistOrigin(pick(env.ASSIST_WIDGET_ORIGIN) ?? defaults.widgetOrigin, 'ASSIST_WIDGET_ORIGIN', { onVercel }),
+    ASSIST_API_ORIGIN: validateAssistOrigin(pick(env.ASSIST_API_ORIGIN) ?? defaults.apiOrigin, 'ASSIST_API_ORIGIN', { onVercel }),
+    ASSIST_WIDGET_PK: '',
+    ASSIST_BOT_USERNAME: '',
+    ASSIST_LANDING_EVENTS: '',
+  };
+  const pk = pick(env.ASSIST_WIDGET_PK);
+  if (pk) {
+    const m = /^pk_(live|test)_[A-Za-z0-9_-]{8,64}$/.exec(pk.trim());
+    if (!m) throw new Error(`ASSIST_WIDGET_PK — не публичный ключ виджета (pk_live_…): «${pk}»`);
+    if (m[1] === 'test' && onVercel) throw new Error('ASSIST_WIDGET_PK: pk_test_ работает только на localhost — на Vercel нужен pk_live_');
+    out.ASSIST_WIDGET_PK = pk.trim();
+  }
+  const bot = pick(env.ASSIST_BOT_USERNAME);
+  if (bot) {
+    const name = bot.trim().replace(/^@/, '');
+    if (!/^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(name) || !/bot$/i.test(name)) {
+      throw new Error(`ASSIST_BOT_USERNAME — не имя бота Telegram (…bot): «${bot}»`);
+    }
+    out.ASSIST_BOT_USERNAME = name;
+  }
+  const events = (env.ASSIST_LANDING_EVENTS ?? '').trim().toLowerCase();
+  if (events && events !== 'on' && events !== 'off') {
+    throw new Error(`ASSIST_LANDING_EVENTS — on|off, получено «${env.ASSIST_LANDING_EVENTS}»`);
+  }
+  out.ASSIST_LANDING_EVENTS = events;
+  return out;
+}
+
+function assistDefaults() {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, 'src/brand.ts'), 'utf8');
+  const widgetOrigin = /widgetOrigin: '([^']+)'/.exec(src)?.[1];
+  const apiOrigin = /apiOrigin: '([^']+)'/.exec(src)?.[1];
+  if (!widgetOrigin || !apiOrigin) throw new Error('next.config: не нашлось ASSIST_DEFAULTS в src/brand.ts');
+  return { widgetOrigin, apiOrigin };
+}
+
+/**
  * Проверка — только у `next build`. `next lint` тоже грузит конфиг в фазе
  * PHASE_PRODUCTION_BUILD, но адрес сайта ему не нужен, и требовать
  * SITE_URL у линтера значило бы приучить ставить заглушку «чтобы
@@ -79,6 +150,12 @@ module.exports = (phase) => {
     // воркера тот же.
     env.SITE_URL = validateSiteUrl(process.env.SITE_URL, { production: process.env.VERCEL_ENV === 'production' });
   }
+  if (phase === PHASE_PRODUCTION_BUILD) {
+    // Связь с продуктом (Л2–Л3): негодный адрес/ключ/бот — ошибка сборки,
+    // не молчаливый фолбэк. Впекаются всегда (пустая строка = «не задано»),
+    // чтобы рантайм и клиентский код видели ровно проверенное.
+    Object.assign(env, validateAssistEnv(process.env, assistDefaults()));
+  }
   return {
     env,
     reactStrictMode: true,
@@ -100,3 +177,5 @@ module.exports = (phase) => {
 
 module.exports.validateSiteUrl = validateSiteUrl;
 module.exports.isNextBuild = isNextBuild;
+module.exports.validateAssistEnv = validateAssistEnv;
+module.exports.assistDefaults = assistDefaults;

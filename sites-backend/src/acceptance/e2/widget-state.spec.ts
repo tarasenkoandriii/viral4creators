@@ -462,9 +462,10 @@ describeDb('Состояние, чат и forget виджета по HTTP (W2: �
     expect(got.visitor.visitorId).not.toBe('');
     await authed('post', '/widget/v1/lead', y).send(base).expect(200);
     expect(stack.leads.inputs.at(-1)!.conversationId).toBeNull();
+    // Э3: без своего диалога передачи нет — форма заявки (причину даёт H).
     expect(
       (await authed('post', '/widget/v1/handoff', y).expect(200)).body.data,
-    ).toEqual({ mode: 'lead' });
+    ).toMatchObject({ mode: 'lead' });
   });
 
   it('интеграция Э2: same-origin GET iframe приходит БЕЗ Origin — state/stream работают; межсайтовый GET и POST без Origin — ORIGIN_DENIED', async () => {

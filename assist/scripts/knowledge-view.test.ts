@@ -40,6 +40,7 @@ const member = (
   role: AccountMember['role'],
   roles: Partial<ProductRoles> = {}
 ): AccountMember => ({
+  memberId: 'm1',
   telegramId: '1',
   role,
   productRoles: { qa: 'none', assist: 'none', assistAdmin: 'none', ...roles },

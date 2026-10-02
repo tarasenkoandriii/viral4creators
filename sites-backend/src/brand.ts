@@ -185,3 +185,30 @@ export const WIDGET_IP_HASH_LABEL = 'v4c-widget-ip';
 /** Ссылка «Работает на …» в подвале чата (§3-бис.1) — с UTM. */
 export const WIDGET_POWERED_BY_URL =
   'https://v4c.example.invalid/assistant?utm_source=widget&utm_medium=powered_by';
+
+// ══ Э3: цели, выбор цели на сайте, интеграции (ТЗ §5-тер.1, §3-бис.2) ═════
+// Те же правила, что у блока Э2: заказчик пишет эти имена в вёрстку,
+// плагин и вебхук своего бэкенда. Зеркала: widget/src/shared/brand.ts
+// (параметр выбора, путь чанка, атрибуты) и
+// assist-integrations/npm/src/brand.ts + assist-integrations/wordpress
+// (имя пакета, слаг плагина, заголовок подписи) — сверяют их тесты.
+
+/** `?v4c_goal=<токен>` — одноразовый режим выбора цели на сайте (§5-тер.1). */
+export const WIDGET_GOAL_PICKER_PARAM = 'v4c_goal';
+/** Отдельный чанк режима выбора (в загрузчик не входит — бюджет 12 КБ). */
+export const WIDGET_PICKER_PATH = '/v1/picker.js';
+/**
+ * Ленивый чанк вовлечения и целей (триггеры, пузырь, детекторы целей):
+ * загрузчик грузит его после `load` + простоя или при первом взаимодействии
+ * и только если в конфиге есть цели/триггеры — бюджет загрузчика 12 КБ.
+ */
+export const WIDGET_ENGAGE_PATH = '/v1/engage.js';
+/** Разметка цели в вёрстке заказчика: клик и отправка формы. */
+export const WIDGET_GOAL_ATTR = 'data-assist-goal';
+export const WIDGET_GOAL_SUBMIT_ATTR = 'data-assist-goal-submit';
+/** Подпись вебхука целей s2s: `t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<тело>")>`. */
+export const GOAL_WEBHOOK_SIGNATURE_HEADER = 'X-Assist-Signature';
+/** npm-пакет обёртки загрузчика (§3-бис.2 «React/Vue/Next.js»). */
+export const WIDGET_NPM_PACKAGE = '@v4c/assist-widget';
+/** Слаг плагина WordPress/WooCommerce (каталог WordPress — ревью, план §6.3). */
+export const WP_PLUGIN_SLUG = 'v4c-assist';

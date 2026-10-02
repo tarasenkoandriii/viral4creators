@@ -23,7 +23,12 @@ import { chromium } from 'playwright-core';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const LOCALES = ['uk', 'en', 'ru'];
-const PAGES = ['home', 'assistant', 'how-it-works', 'security', 'pricing', 'faq', 'pilot'];
+const ALL_PAGES = ['home', 'assistant', 'how-it-works', 'widget', 'security', 'pricing', 'faq', 'pilot'];
+// `npm run og -- --only widget` — пересобрать только эти карточки (остальные
+// файлы не трогаются: JPEG пересъёмки побайтно не совпадает).
+const onlyIdx = process.argv.indexOf('--only');
+const PAGES = onlyIdx > 0 ? process.argv[onlyIdx + 1].split(',') : ALL_PAGES;
+for (const p of PAGES) if (!ALL_PAGES.includes(p)) throw new Error(`og-cards: неизвестная страница ${p}`);
 const brandSrc = fs.readFileSync(path.join(ROOT, 'src/brand.ts'), 'utf8');
 const BRAND = /name: '([^']+)'/.exec(brandSrc)?.[1];
 if (!BRAND) throw new Error('og-cards: не нашлось BRAND.name в src/brand.ts');

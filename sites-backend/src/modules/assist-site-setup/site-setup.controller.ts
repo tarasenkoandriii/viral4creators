@@ -13,6 +13,7 @@
  *   POST   /assist/sites/:id/persona/publish
  *   POST   /assist/sites/:id/persona/rollback/:ver
  *   GET|PATCH /assist/sites/:id/leads-config         { config }
+ *   PUT    /assist/sites/:id/scenarios               { scenarios }  (Э3, T)
  * Права: @AllowApps('assist'), SiteAccountGuard, productRoles.assist = manager
  * (оператор — 403), как у знаний «Сайта» Э1.
  */
@@ -25,6 +26,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -70,6 +72,16 @@ export class SiteSetupController {
     @Body() body: { config?: unknown },
   ) {
     return this.widget.saveDraft(m, id, body?.config);
+  }
+
+  /** Э3 (§4.16): сценарии вовлечения в черновике вида. */
+  @Put(':id/scenarios')
+  scenarios(
+    @Membership() m: AccountMembership,
+    @Param('id') id: string,
+    @Body() body: { scenarios?: unknown },
+  ) {
+    return this.widget.saveScenarios(m, id, body?.scenarios);
   }
 
   @Post(':id/widget/publish')

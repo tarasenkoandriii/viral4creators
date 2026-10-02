@@ -6,7 +6,15 @@
  * `scripts/widget-view.test.ts`.
  */
 
-import { parseStartParam, type AccountMember } from '../kit';
+import {
+  HEX_COLOR as HEX,
+  WCAG_AA_TEXT,
+  WCAG_AA_UI,
+  autoTextColor,
+  contrastRatio,
+  parseStartParam,
+  type AccountMember,
+} from '../kit';
 import { PUBLIC_KEY, safeWidgetOrigin } from './widget-api';
 import { WIDGET_LOADER_PATH } from './widget-brand';
 import {
@@ -33,7 +41,14 @@ export function canManageWidget(me: AccountMember): boolean {
 
 // ── Вкладки ──────────────────────────────────────────────────────────
 
-export const WIDGET_TABS = ['look', 'install', 'hosts', 'leads'] as const;
+export const WIDGET_TABS = [
+  'look',
+  'install',
+  'hosts',
+  'leads',
+  // Э3 (T): триггеры, лимиты навязчивости, сценарии.
+  'engagement',
+] as const;
 export type WidgetTab = (typeof WIDGET_TABS)[number];
 
 export function isWidgetTab(v: unknown): v is WidgetTab {
@@ -42,31 +57,9 @@ export function isWidgetTab(v: unknown): v is WidgetTab {
   );
 }
 
-// ── Контраст (WCAG 2.x) — зеркало серверного widget-config.ts ────────
+// ── Контраст (WCAG 2.x) — из кита (widget-look.ts, сверка с сервером) ──
 
-const HEX = /^#[0-9a-fA-F]{6}$/;
-
-function luminance(hex: string): number {
-  const n = parseInt(hex.slice(1), 16);
-  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
-    const c = v / 255;
-    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
-}
-
-export function contrastRatio(a: string, b: string): number {
-  if (!HEX.test(a) || !HEX.test(b)) return 1;
-  const la = luminance(a);
-  const lb = luminance(b);
-  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
-}
-
-export function autoTextColor(bg: string): '#000000' | '#FFFFFF' {
-  return contrastRatio(bg, '#000000') >= contrastRatio(bg, '#FFFFFF')
-    ? '#000000'
-    : '#FFFFFF';
-}
+export { autoTextColor, contrastRatio };
 
 /** Цвет текста на кнопке (авто — чёрный/белый). */
 export function buttonText(brand: WidgetConfig['brand']): string {
@@ -87,7 +80,7 @@ export function contrastHint(brand: WidgetConfig['brand']): {
   if (!HEX.test(brand.primaryColor)) return { ok: false, text: 1, ui: 1 };
   const text = contrastRatio(brand.primaryColor, buttonText(brand));
   const ui = contrastRatio(brand.primaryColor, WIDGET_SURFACES.light);
-  return { ok: text >= 4.5 && ui >= 3, text, ui };
+  return { ok: text >= WCAG_AA_TEXT && ui >= WCAG_AA_UI, text, ui };
 }
 
 /** HEX из поля ввода: `#abc`/`abc123` → `#AABBCC`/`#ABC123`; мусор — null. */
@@ -228,7 +221,8 @@ export type LaunchTarget =
   | { name: 'onboarding-url' }
   | { name: 'plan'; plan: string }
   | { name: 'sandbox-transfer'; sandboxId: string }
-  | { name: 'widget-draft'; draftId: string };
+  | { name: 'widget-draft'; draftId: string }
+  | { name: 'stats'; siteId: string; tab: 'overview' };
 
 export interface LaunchAction {
   /** start_param целиком → `POST /assist/acquisition` (одна запись на кабинет). */
@@ -270,6 +264,15 @@ export function launchAction(
       return {
         acquisition: raw,
         target: { name: 'widget-draft', draftId: p.value },
+      };
+    // Э3: кнопка утренней сводки/отчёта недели — экран статистики сайта.
+    // Это не атрибуция лендинга: на сервер ничего не шлём.
+    case 'st':
+      return {
+        acquisition: null,
+        target: /^[A-Za-z0-9_-]{1,60}$/.test(p.value)
+          ? { name: 'stats', siteId: p.value, tab: 'overview' }
+          : null,
       };
     default:
       return { acquisition: null, target: null };

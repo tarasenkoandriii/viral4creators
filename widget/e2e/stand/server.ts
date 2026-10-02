@@ -16,6 +16,17 @@
  * только форму протокола и то, что нужно фронту: допуск origin, указатель
  * (тело + CHIPS-cookie), идемпотентность clientRequestId, генерацию, которая
  * не обрывается при разрыве соединения, продолжение стрима из «базы».
+ *
+ * Э3 (W): мок проверяет ТО ЖЕ, что сервер W на своей стороне стыка
+ * (`assist-widget/widget-engagement*.ts`): Origin виджета на маршрутах по
+ * visitor-token (GET без Origin — same-origin), Origin страницы = допущенный
+ * хост pk на `event`/`goal` загрузчика и `goal-picker/*`, белый список полей
+ * пакета событий (неизвестное — 400 EVENT_INVALID, ≤ 20, ≤ 4 КБ, text/plain
+ * от sendBeacon), формат цели (orderId-контакт — 422). Бизнес-правила
+ * владельцев стыков воспроизведены упрощённо и ПОМЕЧЕНЫ: передача (H) —
+ * ответ оператора кладёт `/__mock/operator`; дедуп и атрибуция целей (A) —
+ * docId+ключ+детектор, orderId, direct ≤ 30 мин после клика по действию
+ * помощника / assisted / unassisted.
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -58,10 +69,25 @@ interface Site {
   previewTokens: Record<string, Record<string, unknown>>;
   /** Вид ни разу не опубликован: конфиг → 403 WIDGET_DISABLED (как sites-backend). */
   unpublished?: boolean;
+  /** Э3: публичная часть вовлечения/цели/передача — как отдаёт config. */
+  engagement?: unknown;
+  goals?: unknown;
+  handoff?: unknown;
+  /** Ответ POST handoff: human (по умолчанию) или lead. */
+  handoffMode?: 'human' | 'lead';
+  /** Токены режима выбора цели: токен → origin, на который выдан. */
+  pickerTokens?: Record<string, string>;
+}
+interface Handoff {
+  id: string;
+  state: 'waiting' | 'active' | 'closed' | 'missed' | 'cancelled';
+  requestedAt: string;
+  takenAt: string | null;
+  timeoutAt: string;
 }
 interface Msg {
   id: string;
-  role: 'visitor' | 'assistant';
+  role: 'visitor' | 'assistant' | 'operator';
   text: string;
   sources: unknown[];
   actions: unknown[];
@@ -77,6 +103,8 @@ interface Conv {
   version: number;
   messages: Msg[];
   lastMessageAt: number;
+  handoff?: Handoff;
+  openedBy?: string | null;
 }
 interface Token {
   visitorId: string;
@@ -95,6 +123,8 @@ function fresh() {
   return {
     clock: 0,
     tokenDelayMs: 40,
+    /** Задержка ответа `POST session` (гонка «iframe готов, токена ещё нет»). */
+    sessionDelayMs: 0,
     sites: new Map<string, Site>(),
     resumes: new Map<string, { visitorId: string; siteId: string }>(),
     tokens: new Map<string, Token>(),
@@ -105,6 +135,7 @@ function fresh() {
       page: unknown;
       context: unknown;
       uiLang: unknown;
+      openedBy?: unknown;
     }>,
     pings: [] as Array<{ pk: string; v: string; c: string }>,
     configHits: [] as string[],
@@ -126,6 +157,20 @@ function fresh() {
       hasVisitor: boolean;
       cookie: boolean;
     }>,
+    // Э3
+    events: [] as Array<{
+      pk: string;
+      origin: string | null;
+      contentType: string;
+      events: unknown[];
+    }>,
+    goals: [] as Array<Record<string, unknown>>,
+    goalCalls: 0,
+    handoffs: [] as Array<Record<string, unknown>>,
+    cancels: 0,
+    picks: [] as Array<Record<string, unknown>>,
+    pickerSessions: new Map<string, { pk: string; origin: string }>(),
+    usedPickerTokens: new Set<string>(),
   };
 }
 
@@ -242,6 +287,12 @@ function answerFor(
   q: string,
   parentOrigin: string
 ): { text: string; sources: unknown[]; actions: unknown[] } {
+  if (q.includes('__mask__'))
+    return {
+      text: 'Звоните менеджеру +380 67 123 45 67 в рабочее время.',
+      sources: [],
+      actions: [],
+    };
   const words = Array.from({ length: 24 }, (_, i) => `слово${i + 1}`).join(' ');
   return {
     text:
@@ -271,6 +322,10 @@ function generate(conv: Conv, msg: Msg, q: string, parentOrigin: string) {
   let i = 0;
   const tick = () => {
     if (i >= tokens.length) {
+      // «__mask__» (решение 23): поток успел отдать телефон, а в базе он уже
+      // маскирован на стыке сброса — правда в state, клиент должен взять её.
+      if (q.includes('__mask__'))
+        msg.text = msg.text.replace(/\+?\d[\d ]{6,}\d/g, '[телефон скрыт]');
       msg.streamState = 'complete';
       msg.sources = a.sources;
       msg.actions = a.actions;
@@ -305,6 +360,118 @@ function auth(req: http.IncomingMessage): Token | null {
   if (typeof t !== 'string') return null;
   const tok = M.tokens.get(t);
   return tok && tok.exp > now() ? tok : null;
+}
+
+/**
+ * Как `tokenRequestOrigin` + `authenticate` sites-backend: запрос по
+ * visitor-token — только с origin виджета; GET без Origin — same-origin.
+ */
+function tokenOriginOk(req: http.IncomingMessage): boolean {
+  const o = req.headers.origin;
+  if (o === undefined)
+    return (
+      (req.method === 'GET' || req.method === 'HEAD') &&
+      (req.headers['sec-fetch-site'] === undefined ||
+        req.headers['sec-fetch-site'] === 'same-origin')
+    );
+  return o === WIDGET;
+}
+
+/** Тело маршрута страницы: JSON или text/plain-строка sendBeacon, ≤ 4 КБ. */
+async function readPageBody(
+  req: http.IncomingMessage
+): Promise<Record<string, unknown> | null> {
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  const buf = Buffer.concat(chunks);
+  if (buf.length > 4096) return null;
+  try {
+    const v = JSON.parse(buf.toString('utf8'));
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+const EVENT_KINDS = [
+  'widget_view',
+  'open',
+  'proactive_shown',
+  'proactive_accepted',
+  'proactive_dismissed',
+  'scenario_started',
+  'scenario_done',
+  'link_click',
+];
+const ONLY = (o: Record<string, unknown>, keys: string[]) =>
+  Object.keys(o).every((k) => keys.includes(k));
+
+function validEventBatch(b: Record<string, unknown> | null): boolean {
+  if (!b || !ONLY(b, ['pk', 'events']) || typeof b.pk !== 'string')
+    return false;
+  const ev = b.events;
+  return (
+    Array.isArray(ev) &&
+    ev.length > 0 &&
+    ev.length <= 20 &&
+    ev.every(
+      (e) =>
+        e &&
+        typeof e === 'object' &&
+        ONLY(e, ['kind', 'key']) &&
+        EVENT_KINDS.includes(e.kind) &&
+        (e.key === null ||
+          (typeof e.key === 'string' && /^[a-z0-9_-]{1,32}$/.test(e.key)))
+    )
+  );
+}
+
+const GOAL_FIELDS = [
+  'pk',
+  'goalKey',
+  'detector',
+  'docId',
+  'path',
+  'orderId',
+  'value',
+  'currency',
+  'conversationId',
+  'lastAssistClickAt',
+  'assist',
+];
+
+/** Формат цели — как parseGoalRequest (W): null — 400, 'ORDER' — 422. */
+function goalFormat(
+  b: Record<string, unknown> | null,
+  iframe: boolean
+): 'ok' | 'bad' | 'order' {
+  if (!b || !ONLY(b, GOAL_FIELDS)) return 'bad';
+  if (
+    !iframe &&
+    ['conversationId', 'lastAssistClickAt', 'assist'].some(
+      (k) => b[k] !== undefined && b[k] !== null
+    )
+  )
+    return 'bad';
+  if (!iframe && typeof b.pk !== 'string') return 'bad';
+  if (typeof b.goalKey !== 'string' || !/^[a-z0-9_-]{1,40}$/.test(b.goalKey))
+    return 'bad';
+  if (!['url', 'click', 'form_submit', 'js'].includes(String(b.detector)))
+    return 'bad';
+  if (typeof b.docId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(b.docId))
+    return 'bad';
+  if (
+    b.orderId !== undefined &&
+    b.orderId !== null &&
+    (typeof b.orderId !== 'string' ||
+      !/^[A-Za-z0-9._:-]{1,64}$/.test(b.orderId))
+  )
+    return 'order';
+  return 'ok';
+}
+
+function siteOfPk(pk: unknown): Site | undefined {
+  return typeof pk === 'string' ? M.sites.get(pk) : undefined;
 }
 
 function msgView(m: Msg) {
@@ -361,9 +528,190 @@ async function api(
           'Как оформить возврат?',
         ],
         poweredByUrl: 'https://powered.example/assistant?utm_source=widget',
+        ...(s.engagement !== undefined ? { engagement: s.engagement } : {}),
+        ...(s.goals !== undefined ? { goals: s.goals } : {}),
+        ...(s.handoff !== undefined ? { handoff: s.handoff } : {}),
       },
       h
     );
+  }
+  // ── Э3: маршруты СТРАНИЦЫ (загрузчик, picker.js): CORS отражает origin ──
+  const pageRoute =
+    p === '/widget/v1/event' ||
+    p === '/widget/v1/goal' ||
+    p === '/widget/v1/goal-picker/session' ||
+    p === '/widget/v1/goal-picker/pick';
+  const reqOrigin = (req.headers.origin as string) || '';
+  const cors: Record<string, string> =
+    pageRoute && reqOrigin
+      ? {
+          'Access-Control-Allow-Origin': reqOrigin,
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, X-Assist-Visitor',
+          Vary: 'Origin',
+        }
+      : {};
+  if (pageRoute && req.method === 'OPTIONS') {
+    res.writeHead(204, cors);
+    return res.end();
+  }
+  if (req.method === 'POST' && p === '/widget/v1/event') {
+    const b = await readPageBody(req);
+    if (!validEventBatch(b))
+      return send(
+        res,
+        400,
+        { success: false, error: { code: 'EVENT_INVALID', message: '' } },
+        cors
+      );
+    const s = siteOfPk((b as Record<string, unknown>).pk);
+    if (!s || !s.allowedOrigins.includes(reqOrigin))
+      return send(
+        res,
+        403,
+        { success: false, error: { code: 'ORIGIN_DENIED', message: '' } },
+        cors
+      );
+    M.events.push({
+      pk: s.pk,
+      origin: reqOrigin,
+      contentType: String(req.headers['content-type'] || ''),
+      events: (b as { events: unknown[] }).events,
+    });
+    res.writeHead(204, cors);
+    return res.end();
+  }
+  if (req.method === 'POST' && p === '/widget/v1/goal') {
+    M.goalCalls++;
+    const iframeTok = req.headers['x-assist-visitor'];
+    const b = await readPageBody(req);
+    let siteId: string;
+    let visitor: Token | null = null;
+    if (iframeTok !== undefined) {
+      visitor = auth(req);
+      if (!visitor) return fail(res, 401, 'SESSION_EXPIRED');
+      if (!tokenOriginOk(req)) return fail(res, 403, 'ORIGIN_DENIED');
+      siteId = visitor.siteId;
+    } else {
+      const s = siteOfPk(b && b.pk);
+      if (!s || !s.allowedOrigins.includes(reqOrigin))
+        return send(
+          res,
+          403,
+          { success: false, error: { code: 'ORIGIN_DENIED', message: '' } },
+          cors
+        );
+      siteId = s.siteId;
+    }
+    const f = goalFormat(b, !!visitor);
+    if (f !== 'ok')
+      return send(
+        res,
+        f === 'order' ? 422 : 400,
+        {
+          success: false,
+          error: {
+            code: f === 'order' ? 'GOAL_ORDER_ID_INVALID' : 'BAD_REQUEST',
+            message: '',
+          },
+        },
+        cors
+      );
+    const g = b as Record<string, unknown>;
+    // Упрощённо как A: дедуп «раз на документ» (docId+ключ+детектор, кроме js) и по orderId.
+    const dup = M.goals.some(
+      (x) =>
+        x.siteId === siteId &&
+        x.goalKey === g.goalKey &&
+        ((g.detector !== 'js' &&
+          x.docId === g.docId &&
+          x.detector === g.detector) ||
+          (!!g.orderId && x.orderId === g.orderId))
+    );
+    if (!dup) {
+      const click =
+        typeof g.lastAssistClickAt === 'string'
+          ? Date.parse(g.lastAssistClickAt)
+          : NaN;
+      const own =
+        visitor &&
+        M.convs.some(
+          (c) => c.id === g.conversationId && c.visitorId === visitor!.visitorId
+        );
+      M.goals.push({
+        ...g,
+        siteId,
+        source: visitor ? 'iframe' : 'loader',
+        attribution: !visitor
+          ? 'unassisted'
+          : !isNaN(click) && now() - click <= 30 * 60_000
+            ? 'direct'
+            : own
+              ? 'assisted'
+              : 'unassisted',
+      });
+    }
+    res.writeHead(204, cors);
+    return res.end();
+  }
+  if (req.method === 'POST' && p === '/widget/v1/goal-picker/session') {
+    const b = await readBody(req);
+    const s = siteOfPk(b.pk);
+    const tok = String(b.token);
+    const forOrigin = s && s.pickerTokens && s.pickerTokens[tok];
+    if (
+      !s ||
+      !forOrigin ||
+      forOrigin !== reqOrigin ||
+      M.usedPickerTokens.has(tok)
+    )
+      return send(
+        res,
+        403,
+        { success: false, error: { code: 'PICKER_INVALID', message: '' } },
+        cors
+      );
+    M.usedPickerTokens.add(tok);
+    const session = crypto.randomBytes(32).toString('base64url');
+    M.pickerSessions.set(session, { pk: s.pk, origin: reqOrigin });
+    return send(
+      res,
+      200,
+      {
+        success: true,
+        data: {
+          pickerSession: session,
+          expiresAt: new Date(now() + 30 * 60_000).toISOString(),
+        },
+      },
+      cors
+    );
+  }
+  if (req.method === 'POST' && p === '/widget/v1/goal-picker/pick') {
+    const b = await readBody(req);
+    const ses = M.pickerSessions.get(String(b.pickerSession));
+    const d = b.descriptor as Record<string, unknown> | undefined;
+    if (!ses || ses.origin !== reqOrigin)
+      return send(
+        res,
+        403,
+        { success: false, error: { code: 'PICKER_INVALID', message: '' } },
+        cors
+      );
+    // Как parseDescriptor (W): поле ввода выбрать нельзя.
+    if (
+      !d ||
+      ['input', 'textarea', 'select', 'option'].includes(String(d.tag)) ||
+      (b.kind !== 'click' && b.kind !== 'form_submit')
+    )
+      return send(
+        res,
+        400,
+        { success: false, error: { code: 'BAD_REQUEST', message: '' } },
+        cors
+      );
+    M.picks.push(b);
+    return send(res, 200, { success: true, data: { ok: true } }, cors);
   }
   if (p === '/widget/v1/ping') {
     M.pings.push({
@@ -402,6 +750,8 @@ async function api(
     (p === '/widget/v1/session' || p === '/widget/v1/session/resume')
   ) {
     const b = await readBody(req);
+    if (M.sessionDelayMs)
+      await new Promise((r) => setTimeout(r, M.sessionDelayMs));
     const s = M.sites.get(String(b.pk));
     if (!s) return fail(res, 404, 'WIDGET_UNKNOWN_KEY');
     // (в) Origin запроса — только origin iframe; (б) origin родителя — точный из списка.
@@ -470,6 +820,7 @@ async function api(
       req.headers['x-assist-visitor'] ? 'SESSION_EXPIRED' : 'SESSION_REQUIRED'
     );
   }
+  if (!tokenOriginOk(req)) return fail(res, 403, 'ORIGIN_DENIED');
   const t = tok as Token;
   const mine = () =>
     M.convs
@@ -493,6 +844,7 @@ async function api(
                 c.messages.find((m) => m.streamState === 'streaming')?.id ??
                 null,
               lastMessageAt: new Date(c.lastMessageAt).toISOString(),
+              handoff: c.handoff ?? null,
             }
           : null,
       previousConversationId: c && !fresh7 ? c.id : null,
@@ -510,6 +862,30 @@ async function api(
       return res.end();
     }
     const owned = mine().find((c) => c.id === b.conversationId);
+    // Э3 (упрощённо как H): открытая передача — вопрос уходит человеку, модели нет.
+    if (
+      owned &&
+      owned.handoff &&
+      (owned.handoff.state === 'waiting' || owned.handoff.state === 'active')
+    ) {
+      owned.messages.push({
+        id: rid('m_'),
+        role: 'visitor',
+        text: q,
+        sources: [],
+        actions: [],
+        streamState: 'complete',
+        rating: null,
+        createdAt: new Date(now()).toISOString(),
+        crid,
+      });
+      touch(owned);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(
+        `event: handoff\ndata: ${JSON.stringify({ type: 'handoff', state: owned.handoff.state, relayed: true })}\n\n`
+      );
+      return res.end(`event: done\ndata: {}\n\n`);
+    }
     let conv = owned;
     let answer: Msg | undefined;
     let replay = false;
@@ -532,6 +908,7 @@ async function api(
           version: 0,
           messages: [],
           lastMessageAt: now(),
+          openedBy: typeof b.openedBy === 'string' ? b.openedBy : null,
         };
         M.convs.push(conv);
       }
@@ -564,6 +941,7 @@ async function api(
         page: b.page,
         context: b.context,
         uiLang: b.uiLang,
+        openedBy: b.openedBy ?? null,
       });
       const err = /error:([a-z_]+)/.exec(q);
       if (err) {
@@ -650,8 +1028,50 @@ async function api(
     M.leads.push(b);
     return ok(res, { ok: true });
   }
-  if (req.method === 'POST' && p === '/widget/v1/handoff')
-    return ok(res, { mode: 'lead' });
+  if (req.method === 'POST' && p === '/widget/v1/handoff') {
+    const b = await readBody(req);
+    M.handoffs.push(b);
+    const s = [...M.sites.values()].find((x) => x.siteId === t.siteId);
+    const c = mine().find((x) => x.id === b.conversationId);
+    if (!s || s.handoffMode === 'lead' || !c)
+      return ok(res, {
+        mode: 'lead',
+        reason: c ? 'off_hours' : 'no_conversation',
+      });
+    if (
+      c.handoff &&
+      (c.handoff.state === 'waiting' || c.handoff.state === 'active')
+    )
+      return ok(res, {
+        mode: 'human',
+        handoff: c.handoff,
+        etaMinutes: 4,
+        existing: true,
+      });
+    c.handoff = {
+      id: rid('h_'),
+      state: 'waiting',
+      requestedAt: new Date(now()).toISOString(),
+      takenAt: null,
+      timeoutAt: new Date(now() + 5 * 60_000).toISOString(),
+    };
+    return ok(res, {
+      mode: 'human',
+      handoff: c.handoff,
+      etaMinutes: 4,
+      existing: false,
+    });
+  }
+  if (req.method === 'POST' && p === '/widget/v1/handoff/cancel') {
+    const b = await readBody(req);
+    const c = mine().find((x) => x.id === b.conversationId);
+    if (!c) return fail(res, 404, 'NOT_FOUND');
+    if (c.handoff && c.handoff.state === 'waiting') {
+      c.handoff = { ...c.handoff, state: 'cancelled' };
+      M.cancels++;
+    }
+    return ok(res, { ok: true });
+  }
   if (req.method === 'POST' && p === '/widget/v1/feedback') {
     M.feedback.push(await readBody(req));
     return ok(res, { ok: true });
@@ -774,9 +1194,45 @@ async function control(
       M.sites.set(pk, defaultSite(pk, b as Partial<Site>));
       return ok(res, {});
     }
+    case '/__mock/operator': {
+      // Ответ оператора (H, вебхук-реплай) в последний диалог посетителя сайта pk.
+      const s = M.sites.get(String(b.pk));
+      const c = M.convs
+        .filter((x) => s && x.siteId === s.siteId)
+        .sort((x, y) => y.lastMessageAt - x.lastMessageAt)[0];
+      if (!c) return fail(res, 404, 'NOT_FOUND');
+      if (typeof b.state === 'string' && c.handoff)
+        c.handoff = {
+          ...c.handoff,
+          state: b.state as Handoff['state'],
+          takenAt: c.handoff.takenAt || new Date(now()).toISOString(),
+        };
+      if (typeof b.text === 'string') {
+        if (c.handoff && c.handoff.state === 'waiting')
+          c.handoff = {
+            ...c.handoff,
+            state: 'active',
+            takenAt: new Date(now()).toISOString(),
+          };
+        c.messages.push({
+          id: rid('m_'),
+          role: 'operator',
+          text: b.text,
+          sources: [],
+          actions: [],
+          streamState: 'complete',
+          rating: null,
+          createdAt: new Date(now()).toISOString(),
+        });
+      }
+      touch(c);
+      return ok(res, { at: Date.now() });
+    }
     case '/__mock/set':
       if (typeof b.clock === 'number') M.clock = b.clock;
       if (typeof b.tokenDelayMs === 'number') M.tokenDelayMs = b.tokenDelayMs;
+      if (typeof b.sessionDelayMs === 'number')
+        M.sessionDelayMs = b.sessionDelayMs;
       return ok(res, {});
     case '/__mock/log':
       return ok(res, {
@@ -792,7 +1248,15 @@ async function control(
           id: c.id,
           visitorId: c.visitorId,
           messages: c.messages.length,
+          openedBy: c.openedBy ?? null,
+          handoff: c.handoff ?? null,
         })),
+        events: M.events,
+        goals: M.goals,
+        goalCalls: M.goalCalls,
+        handoffs: M.handoffs,
+        cancels: M.cancels,
+        picks: M.picks,
       });
   }
   return fail(res, 404, 'NOT_FOUND');
@@ -829,6 +1293,8 @@ export interface StandSpec {
   spa?: boolean;
   /** Тяжёлый LCP-элемент (для замера CWV). */
   heavy?: boolean;
+  /** Э3: элементы для целей и режима выбора (tel:, мессенджер, кнопки, формы, поле ввода). */
+  goalsKit?: boolean;
 }
 
 export function encodeSpec(s: StandSpec): string {
@@ -880,6 +1346,16 @@ function standHtml(spec: StandSpec, host: string): string {
     );
   if (spec.obstacle)
     parts.push(`<div id="cookie-banner">Мы используем cookie</div>`);
+  if (spec.goalsKit)
+    parts.push(
+      `<p><a id="tel" href="tel:+380441234567">Позвонить</a> <a id="tg" href="https://t.me/shop_example">Telegram</a></p>` +
+        `<p><button id="buy" type="button" data-assist-goal="buy">Купить</button> ` +
+        `<button id="order" type="button">Оформить заказ</button> ` +
+        `<a id="danger" href="/danger?s=${encodeSpec(spec)}">Опасная ссылка</a></p>` +
+        `<form id="f-ok" action="/thanks" method="get"><input type="hidden" name="s" value="${encodeSpec(spec)}"><input id="field" name="q" placeholder="Поле"><button id="send" type="submit">Отправить</button></form>` +
+        `<form id="f-pd" data-assist-goal-submit="sub"><button id="send-pd" type="submit">Подписаться</button></form>` +
+        `<div id="editable" contenteditable="true">Редактируемый текст</div><div id="clicked"></div>`
+    );
   if (spec.long) parts.push(`<div class="long">длинная страница</div>`);
   if (spec.evilFrame)
     parts.push(
@@ -892,6 +1368,7 @@ function standHtml(spec: StandSpec, host: string): string {
   if (spec.queue) parts.push(`<script src="/snippets/queue.js"></script>`);
   if (spec.ownButton) parts.push(`<script src="/snippets/own.js"></script>`);
   if (spec.spa) parts.push(`<script src="/snippets/spa.js"></script>`);
+  if (spec.goalsKit) parts.push(`<script src="/snippets/goals.js"></script>`);
   if (!spec.noWidget && !spec.directFrame)
     parts.push(
       `<script async src="${WIDGET}/v1/loader.js" data-site="${esc(spec.pk)}"${attrs}></script>`
@@ -905,6 +1382,10 @@ const SNIPPETS: Record<string, string> = {
     'window.V4CAssist = window.V4CAssist || function(){(V4CAssist.q=V4CAssist.q||[]).push(arguments)};',
   '/snippets/own.js':
     "document.getElementById('own').addEventListener('click', function(){ window.V4CAssist('open'); });",
+  // Форма с preventDefault сайта (AJAX) и «действие сайта» на кнопке — для режима выбора.
+  '/snippets/goals.js':
+    "document.getElementById('f-pd').addEventListener('submit',function(e){e.preventDefault();document.getElementById('clicked').textContent='ajax';});" +
+    "document.getElementById('order').addEventListener('click',function(){document.getElementById('clicked').textContent='order';});",
   '/snippets/spa.js':
     "var k=1;document.getElementById('spa-next').addEventListener('click',function(){k++;history.pushState({k:k},'','/spa/'+k);document.title='SPA '+k;document.getElementById('h').textContent='SPA '+k;});" +
     "document.getElementById('spa-back').addEventListener('click',function(){history.back();});",
@@ -957,7 +1438,14 @@ function siteServer(req: http.IncomingMessage, res: http.ServerResponse) {
       </script>`
     );
   }
-  if (p === '/page' || p.startsWith('/spa/')) {
+  if (
+    p === '/page' ||
+    p.startsWith('/spa/') ||
+    p === '/thanks' ||
+    p === '/danger' ||
+    p.startsWith('/checkout/') ||
+    p.startsWith('/product/')
+  ) {
     let spec: StandSpec;
     try {
       spec = JSON.parse(

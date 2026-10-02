@@ -126,3 +126,67 @@ test('CWV песочницы: медиана 5 прогонов с виджет�
   // Открытое окно после load: каркас fixed-позиции не сдвигает вёрстку.
   expect(m('open', 'cls') - m('base', 'cls')).toBeLessThanOrEqual(0.01);
 });
+
+test('Э3 (§5-тер.16 п.3, песочничный замер): CWV с триггерами и детекторами целей — до/после', async ({
+  browser,
+}) => {
+  test.setTimeout(240_000);
+  const plain = newPk();
+  await site(plain);
+  const e3 = newPk();
+  await site(e3, {
+    engagement: {
+      schema: 1,
+      triggers: [
+        {
+          key: 't1',
+          enabled: true,
+          condition: { kind: 'time_on_page', seconds: 10 },
+          pathMasks: [],
+          text: { ru: 'Подсказать?' },
+          onAccept: { kind: 'open' },
+        },
+        {
+          key: 't2',
+          enabled: true,
+          condition: { kind: 'scroll_depth', percent: 50 },
+          pathMasks: [],
+          text: { ru: 'Помочь?' },
+          onAccept: { kind: 'open' },
+        },
+      ],
+      limits: { perVisit: 1, excludedPaths: [], notOnFirstScreenMobile: true },
+      scenarios: [],
+    },
+    goals: [
+      { key: 'call', detectors: [{ kind: 'click', config: { auto: 'tel' } }] },
+      {
+        key: 'thanks',
+        detectors: [
+          { kind: 'url', config: { pathMask: '/thanks', fromPathMask: null } },
+        ],
+      },
+    ],
+  });
+  const runs = { base: [] as Vitals[], e2: [] as Vitals[], e3: [] as Vitals[] };
+  for (let i = 0; i < 5; i++) {
+    runs.base.push(
+      await measure(browser, { pk: plain, heavy: true, noWidget: true })
+    );
+    runs.e2.push(await measure(browser, { pk: plain, heavy: true }));
+    runs.e3.push(await measure(browser, { pk: e3, heavy: true }));
+  }
+  const m = (k: keyof typeof runs, f: keyof Vitals) =>
+    median(runs[k].map((r) => r[f]));
+  const rep = (['base', 'e2', 'e3'] as const)
+    .map(
+      (k) =>
+        `${k}: LCP ${m(k, 'lcp').toFixed(0)} мс, TBT ${m(k, 'tbt').toFixed(0)} мс, CLS ${m(k, 'cls').toFixed(3)}`
+    )
+    .join(' | ');
+  console.log(`CWV Э3 (Chromium песочницы, CPU×4, медиана 5): ${rep}`);
+  test.info().annotations.push({ type: 'cwv-e3', description: rep });
+  expect(m('e3', 'lcp') - m('base', 'lcp')).toBeLessThanOrEqual(100);
+  expect(m('e3', 'tbt') - m('base', 'tbt')).toBeLessThanOrEqual(30);
+  expect(m('e3', 'cls') - m('base', 'cls')).toBeLessThanOrEqual(0.01);
+});

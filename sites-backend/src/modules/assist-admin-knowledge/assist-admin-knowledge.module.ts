@@ -8,6 +8,7 @@ import { Module } from '@nestjs/common';
 import { AssistKnowledgeCoreModule } from '../assist-knowledge-core/assist-knowledge-core.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { SiteCrawlModule } from '../site-crawl/site-crawl.module';
+import { AdminDigestSource } from './admin-digest';
 import { AdminIndexingService } from './admin-indexing.service';
 import { AdminKnowledgeController } from './admin-knowledge.controller';
 import { AdminKnowledgeService } from './admin-knowledge.service';
@@ -22,7 +23,13 @@ import { AssistAdminEmbedRunController } from './cron/assist-admin-embed-run.con
     AdminLearningController,
     AssistAdminEmbedRunController,
   ],
-  providers: [AdminKnowledgeService, AdminIndexingService, AdminSourcesService],
-  exports: [AdminKnowledgeService],
+  providers: [
+    AdminKnowledgeService,
+    AdminIndexingService,
+    AdminSourcesService,
+    // Э3: факты для утренней сводки/отчёта недели (A, assist-digest).
+    AdminDigestSource,
+  ],
+  exports: [AdminKnowledgeService, AdminDigestSource],
 })
 export class AssistAdminKnowledgeModule {}

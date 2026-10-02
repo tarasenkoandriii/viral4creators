@@ -1,5 +1,6 @@
 import type { AppDictionary } from './ru';
 import { setupEn } from './setup-en';
+import { e3En } from './e3-en';
 
 export const appEn: AppDictionary = {
   nav: {
@@ -423,4 +424,6 @@ export const appEn: AppDictionary = {
   toSites: 'To sites',
   // Э2 (W4): виджет, персона, лиды, мастер, полнота, payload лендинга.
   setup: setupEn,
+  // Э3 (T): диалоги, передача, вовлечение, статистика, цели, интеграции, обучение.
+  e3: e3En,
 };

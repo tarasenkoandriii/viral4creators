@@ -114,6 +114,10 @@ export function InviteScreen() {
           </label>
         )}
       </Card>
+      {app === 'assist' && role === 'manager' && (
+        // О-14 (Э3): у агентства менеджер видит все сайты кабинета.
+        <Alert tone="warning">{t.managerSeesAll}</Alert>
+      )}
       <Alert tone="accent">{t.agencyWarning}</Alert>
       {error && <Alert tone="danger">{error}</Alert>}
       <Button

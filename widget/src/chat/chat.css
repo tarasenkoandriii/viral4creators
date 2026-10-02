@@ -159,6 +159,42 @@ body {
   background: var(--v4c-c, #1f5fd6);
   color: var(--v4c-on, #fff);
 }
+/* Э3: кто ответил — «ИИ» только у модели, «Оператор» — у человека. */
+.who {
+  margin: 0 0 2px;
+  font-size: 11px;
+  color: var(--mut);
+}
+.op .bub {
+  border: 1px solid var(--v4c-c, #1f5fd6);
+  background: var(--bg);
+}
+.sys .bub {
+  background: transparent;
+  color: var(--mut);
+  font-size: 13px;
+}
+.ho {
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: var(--bub);
+  color: var(--fg);
+}
+.scen .sa {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+.scen .sa input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--mut);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
 .bub p,
 .bub ul,
 .bub ol,

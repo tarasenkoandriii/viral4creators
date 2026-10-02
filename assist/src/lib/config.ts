@@ -5,6 +5,7 @@
  */
 
 import type { DevAuth } from '../kit';
+import { publicApiBase } from './public-api';
 
 export const APP_ID = 'assist' as const;
 
@@ -24,6 +25,18 @@ export const SITES_API_URL: string =
 export const ASSIST_BOT_USERNAME: string | null =
   (import.meta.env.VITE_ASSIST_BOT_USERNAME ?? '').replace(/^@/, '').trim() ||
   null;
+
+/**
+ * Публичный адрес API для адресов на сервере заказчика (вебхук целей s2s):
+ * `VITE_ASSIST_PUBLIC_API_ORIGIN` (прод — `https://assist-api.<домен>`),
+ * иначе абсолютный `VITE_SITES_API_URL`, иначе origin кабинета + `/api`
+ * (тот же rewrite) — см. lib/public-api.ts.
+ */
+export const PUBLIC_API_BASE: string = publicApiBase(
+  import.meta.env.VITE_ASSIST_PUBLIC_API_ORIGIN,
+  SITES_API_URL,
+  typeof location !== 'undefined' ? location.origin : ''
+);
 
 export const DEV_AUTH: DevAuth = {
   // Только для локального стенда; в прод-сборке переменная не задаётся.

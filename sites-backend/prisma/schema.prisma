@@ -156,6 +156,21 @@ model Site {
   wizard             AssistSiteWizard?
   assistSiteAssets   AssistSiteAsset[]
 
+  // Э3: передача человеку, обучение на диалогах, цели и статистика
+  // (контракт /tmp/k/CONTRACT-E3.md).
+  handoffs           AssistSiteHandoff[]
+  botMessages        AssistBotMessage[]
+  learningItems      AssistSiteLearningItem[]
+  learningClusters   AssistSiteLearningCluster[]
+  forgetJobs         AssistSiteForgetJob[]
+  goals              AssistSiteGoal[]
+  goalEvents         AssistSiteGoalEvent[]
+  integrations       AssistSiteIntegration[]
+  dailyTotals        AssistSiteDailyTotal[]
+  eventCounts        AssistSiteEventCount[]
+  exports            AssistSiteExport[]
+  reportSubscriptions AssistSiteReportSubscription[]
+
   /// Цель составного внешнего ключа хоста (siteId, accountId): база сама не
   /// даст привязать хост кабинета A к сайту кабинета B.
   @@unique([id, accountId])
@@ -583,6 +598,24 @@ model AssistSite {
   retentionDays      Int       @default(90)
   leadRetentionDays  Int       @default(180)
 
+  // ── Э3: передача человеку, аналитика (контракт /tmp/k/CONTRACT-E3.md) ──
+  /// Настройки передачи человеку (§3.7): включена, рабочие часы, сколько
+  /// ждать оператора до формы заявки, напоминания, шаблоны ответов, язык
+  /// операторов. Форма — assist-site-handoff/public/handoff-config.ts (H).
+  /// Секретов нет: роль виджета читает (доступность и «~N минут»).
+  handoffConfig      Json?
+  /// Медиана «запрос → первый ответ оператора» за 7 дней, минуты (§3.7 п.2);
+  /// пересчитывает крон assist-handoff-tick. null — данных ещё нет (текст владельца).
+  handoffEtaMinutes  Int?
+  /// Часовой пояс сайта (рабочие часы, сутки статистики, отчёт по понедельникам).
+  timezone           String    @default("Europe/Kyiv")
+  /// Основная валюта отчётов (§5-тер.6 «Деньги»). Роли виджета не нужна.
+  currency           String    @default("UAH")
+  /// Настройки аналитики (§5-тер.14): минуты оператора на вопрос, CIDR офиса
+  /// (сверяются с сырым IP при приёме, в события не пишутся), исключённые
+  /// пути. Форма — assist-analytics/analytics-config.ts (A). Без секретов.
+  analytics          Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -965,7 +998,15 @@ model AssistSiteFaq {
   approvedAt           DateTime?
   reviewAt             DateTime?
   conflictNote         String?
+  /// Э3: диалог, из которого родился ответ (очередь обучения). Диалог удалён
+  /// (forget посетителя, ретенция) — ссылка обнуляется базой (FK SET NULL,
+  /// §4-тер.12): ответ — текст владельца, он остаётся.
   fromConversationId   String?
+  fromConversation     AssistSiteConversation? @relation("FaqFromConversation", fields: [fromConversationId], references: [id], onDelete: SetNull)
+  /// Э3: откуда взяты варианты формулировок `[{ variant, conversationId }]`
+  /// — дословный вопрос посетителя удаляется из `variants` по его forget
+  /// (§4-тер.12; обработка assist_site_forget_jobs — L).
+  variantRefs          Json?
   /// Документ знаний, в который проиндексирован ответ.
   documentId           String?
   createdByTelegramId  BigInt?
@@ -975,6 +1016,7 @@ model AssistSiteFaq {
 
   @@index([siteId, status])
   @@index([accountId])
+  @@index([fromConversationId])
   @@map("assist_site_faq")
 }
 
@@ -1019,12 +1061,20 @@ model AssistSiteEvalCase {
   sourceChunkHash String?
   /// active | stale | archived
   status          String   @default("active")
+  /// Э3: кейс из диалога («правильно отказал», «ответил неверно», §4-тер.8 п.3)
+  /// — удаляется вместе с диалогом (forget посетителя, §4-тер.15 п.12).
+  fromConversationId String?
+  fromConversation   AssistSiteConversation? @relation("EvalCaseFromConversation", fields: [fromConversationId], references: [id], onDelete: Cascade)
+  /// Э3: кейс проверенного ответа (kind = golden) — его id (без FK: архив
+  /// ответа архивирует кейс кодом, история прогонов остаётся).
+  faqId              String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([siteId, status])
   @@index([accountId])
+  @@index([fromConversationId])
   @@map("assist_site_eval_cases")
 }
 
@@ -1355,6 +1405,9 @@ model AssistSiteConversation {
   handoffState  String?
   /// §4-бис.5: идущий сценарий/план (Э3/Э6-бис); Э2 — всегда null.
   activePlanId  String?
+  /// Э3 (§5-тер.12 п.10): кто начал диалог — user | proactive:<триггер> |
+  /// scenario:<ключ>. Пишет виджет при создании диалога.
+  openedBy      String?
   /// Растёт с каждым изменением диалога — `GET /widget/v1/state?since=`.
   stateVersion  Int      @default(0)
   lastMessageAt DateTime @default(now())
@@ -1364,6 +1417,13 @@ model AssistSiteConversation {
 
   messages AssistSiteMessage[]
   leads    AssistSiteLead[]
+
+  // Э3: всё, что удаляется/отвязывается вместе с диалогом (forget, ретенция).
+  handoffs       AssistSiteHandoff[]
+  learningItems  AssistSiteLearningItem[]
+  goalEvents     AssistSiteGoalEvent[]
+  faqFrom        AssistSiteFaq[]          @relation("FaqFromConversation")
+  evalCasesFrom  AssistSiteEvalCase[]     @relation("EvalCaseFromConversation")
 
   @@unique([id, accountId])
   @@index([siteId, visitorId, lastMessageAt])
@@ -1411,6 +1471,22 @@ model AssistSiteMessage {
   model           String?
   latencyMs       Int?
 
+  // ── Э3 ──
+  /// Язык текста (uk|ru|en|…) — для перевода оператору (№12, §4-тер.10).
+  lang            String?
+  /// Перевод для другой стороны: у сообщения посетителя — `{ lang, text }`
+  /// на язык оператора (видит оператор); у ответа оператора — оригинал
+  /// `{ lang, text }`, а в `text` — перевод на язык посетителя. Пишет
+  /// системный код передачи (H); роли виджета писать не нужно.
+  translation     Json?
+  /// Ответ оператора: кто (участник кабинета). Роли виджета не виден.
+  authorMemberId  String?
+  /// «Почему так ответил» (№34): `{ knowledgeVersion, configVersion,
+  /// chunkIds[], faqId, rule, cache }` — пишет конвейер ответа.
+  trace           Json?
+  /// Сообщение посетителя во время передачи доставлено оператору в бот.
+  relayedAt       DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1438,6 +1514,12 @@ model AssistSiteLead {
   fieldsEnc     String
   /// Какие поля заполнены (имена, без значений) — для экрана и метрик.
   fieldNames    String[]
+  /// Э3: `V4CAssist('identify', { name, email, externalId, userHash })` —
+  /// шифр ASSIST_SECRETS_KEY (как fieldsEnc); `userHash` сверяет системная
+  /// доставка секретом идентичности сайта (assist_site_integrations).
+  identityEnc   String?
+  /// null — не было identify; true/false — userHash сошёлся/нет (пишет доставка).
+  identityVerified Boolean?
   /// Текст согласия ровно в той редакции, что видел посетитель, и время.
   consentText   String
   consentAt     DateTime
@@ -1555,7 +1637,8 @@ model AssistSitePreviewToken {
   site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
 
   tokenHash           String    @unique
-  /// site — ссылка «посмотреть на сайте»; tma — конфигуратор в кабинете.
+  /// site — ссылка «посмотреть на сайте»; tma — конфигуратор в кабинете;
+  /// goal (Э3) — режим выбора цели на сайте (`?v4c_goal=`).
   purpose             String
   /// purpose=site: origin verified-хоста, где токен можно обменять.
   origin              String?
@@ -1567,6 +1650,9 @@ model AssistSitePreviewToken {
   /// SHA-256 сессии предпросмотра (sessionStorage iframe) после обмена.
   sessionHash         String?   @unique
   sessionExpiresAt    DateTime?
+  /// Э3, purpose = goal (WYSIWYG-выбор цели, §5-тер.1): выбранный на сайте
+  /// элемент `{ descriptor, path, label, at }` — пишет загрузчик, читает TMA.
+  result              Json?
 
   createdAt DateTime @default(now())
 
@@ -1703,4 +1789,432 @@ model AssistLandingEvent {
   @@index([name, createdAt])
   @@index([createdAt])
   @@map("assist_landing_events")
+}
+
+// ══ Э3: передача человеку, обучение на диалогах, цели и статистика ══════
+//
+// Контракт /tmp/k/CONTRACT-E3.md; ТЗ §3.7, §4-тер.3–4, §4-тер.12–14,
+// §5-тер.1–2, §5-тер.6–7, §5-тер.14–16. Миграция …_assist_handoff;
+// GRANT роли assist_public — там же, белый список — assist-public-role.spec.ts.
+
+/// Передача диалога человеку (§3.7). Одна ОТКРЫТАЯ (waiting|active) на
+/// диалог — частичный уникальный индекс в миграции (Prisma его не видит).
+/// Посетитель создаёт строку (роль виджета, createMany); карточки в бот,
+/// «Взять», ответы, напоминания и таймауты — системный код (H).
+model AssistSiteHandoff {
+  id             String                 @id @default(cuid())
+  accountId      String
+  siteId         String
+  site           Site                   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  conversationId String
+  conversation   AssistSiteConversation @relation(fields: [conversationId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// waiting | active | closed | missed | cancelled
+  state               String    @default("waiting")
+  /// visitor (кнопка/фраза) | escalation (правило №13) | no_answer | scenario
+  reason              String
+  /// Правило ранней эскалации (№13): irritation | complaint | refund | wholesale | sensitive …
+  escalation          String?
+  visitorLang         String?
+  operatorLang        String?
+  /// Страница без query (§6.6).
+  pageUrl             String?
+  /// Сводка для оператора (№14): `{ text, lang, model }` — по МАСКИРОВАННЫМ сообщениям.
+  summary             Json?
+  /// Последний ИИ-черновик ответа оператору (№11): `{ text, lang, sources[] }`.
+  draft               Json?
+  /// identify посетителя (шифр, как у лида) — только с явной передачей (К-3).
+  identityEnc         String?
+  identityVerified    Boolean?
+  assignedMemberId    String?
+  assignedTelegramId  BigInt?
+  requestedAt         DateTime  @default(now())
+  /// Карточки разосланы (успешно хотя бы одному).
+  deliveredAt         DateTime?
+  takenAt             DateTime?
+  firstReplyAt        DateTime?
+  lastOperatorAt      DateTime?
+  lastVisitorAt       DateTime?
+  remindedAt          DateTime?
+  reminders           Int       @default(0)
+  /// Срок «нет оператора → форма заявки посетителю» (§3.7 п.6).
+  timeoutAt           DateTime
+  missedAt            DateTime?
+  closedAt            DateTime?
+  /// operator | visitor | timeout | system
+  closedBy            String?
+  /// Разосланные карточки `[{ memberId, chatId, messageId }]` — правка «Взял …».
+  cards               Json?
+  attempts            Int       @default(0)
+  lockedUntil         DateTime?
+  costMicroUsd        Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, state])
+  @@index([state, timeoutAt])
+  @@index([conversationId])
+  @@index([accountId])
+  @@map("assist_site_handoffs")
+}
+
+/// Сообщения бота Помощника, на которые можно ответить реплаем или нажать
+/// кнопку (§3.7 п.3–4): (chatId, messageId) → передача/диалог. Без этой
+/// таблицы реплай оператора не к чему привязать. Срок — expiresAt.
+model AssistBotMessage {
+  chatId         BigInt
+  messageId      Int
+  accountId      String
+  siteId         String
+  site           Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// handoff_card | relay | operator_echo | candidate_prompt | lead |
+  /// operator_in (реплай оператора — дедуп повторов Telegram) | draft | draft_sent
+  kind           String
+  handoffId      String?
+  conversationId String?
+  /// Участник кабинета, которому отправлено.
+  memberId       String?
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+
+  @@id([chatId, messageId])
+  @@index([handoffId])
+  @@index([expiresAt])
+  @@index([accountId])
+  @@map("assist_bot_messages")
+}
+
+/// Человек в боте Помощника (личность Telegram, не кабинет): нажал Start —
+/// ему можно писать; бот заблокирован (403) — не слать. Карточки передачи
+/// уходят только участникам с startedAt и без blockedAt (§3.7, О-9 Э2).
+model AssistBotUser {
+  telegramId   BigInt    @id
+  startedAt    DateTime?
+  blockedAt    DateTime?
+  /// language_code из Telegram — язык интерфейса оператора по умолчанию.
+  languageCode String?
+  updatedAt    DateTime  @updatedAt
+
+  @@map("assist_bot_users")
+}
+
+/// Элемент очереди обучения «Сайта» (§4-тер.3, §4-тер.14). Создаёт код
+/// маршрута чата/👎 (роль виджета, INSERT без RETURNING) — вопрос и ответ
+/// УЖЕ маскированы. Вектор вопроса — тот, что посчитан для поиска.
+/// Удаляется вместе с диалогом (forget, ретенция — «как диалоги режима»).
+model AssistSiteLearningItem {
+  id             String                  @id @default(cuid())
+  accountId      String
+  siteId         String
+  site           Site                    @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// unknown | wrong | unhappy | operator_fix | voice_miss
+  kind           String
+  conversationId String?
+  conversation   AssistSiteConversation? @relation(fields: [conversationId, accountId], references: [id, accountId], onDelete: Cascade)
+  messageId      String?
+  /// Для счёта РАЗНЫХ посетителей кластера (§4-тер.15 п.9).
+  visitorId      String?
+  /// Трафик suspicious (§4.13 п.5) кластер не растит.
+  suspicious     Boolean                 @default(false)
+  /// Источник сигнала: no_answer | empty_search | thumbs_down | flag:<x> | repeat | handoff_after_answer | operator | label
+  signal         String?
+  questionMasked String
+  answerMasked   String?
+  lang           String?
+  questionEmbedding Unsupported("vector(768)")?
+  clusterId      String?
+  cluster        AssistSiteLearningCluster? @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  /// Кандидат оператора (Р-33): ответ — кандидат, не знание.
+  proposedAnswer       String?
+  proposedByTelegramId BigInt?
+  proposedAt           DateTime?
+  /// new | proposed | resolved | ignored
+  status         String                  @default("new")
+  /// golden | source | out_of_scope | ignore | accepted | rejected
+  resolution     String?
+  faqId          String?
+  resolvedByTelegramId BigInt?
+  resolvedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([messageId, kind])
+  @@index([siteId, status])
+  @@index([siteId, createdAt])
+  @@index([clusterId])
+  @@index([conversationId])
+  @@index([accountId])
+  @@map("assist_site_learning_items")
+}
+
+/// Кластер очереди (§4-тер.3 п.2): похожие вопросы разных посетителей.
+/// Строит крон assist-learn-rollup по векторам элементов (модель не нужна).
+model AssistSiteLearningCluster {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// Подпись — типичный вопрос кластера (маскированный).
+  label            String
+  /// Преобладающий тип сигнала.
+  kind             String
+  size             Int       @default(0)
+  /// Разные посетители без suspicious (§4-тер.7 «накрутка пробелов»).
+  distinctVisitors Int       @default(0)
+  centroid         Unsupported("vector(768)")?
+  lang             String?
+  firstSeenAt      DateTime
+  lastSeenAt       DateTime
+  /// open | resolved | ignored
+  status           String    @default("open")
+  /// golden | source | out_of_scope | ignore
+  resolution       String?
+  faqId            String?
+  resolvedByTelegramId BigInt?
+  resolvedAt       DateTime?
+  /// Переоткрыт: снова unknown через ≥ 14 дней после решения (§4-тер.3 п.4).
+  reopenedAt       DateTime?
+
+  items AssistSiteLearningItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([siteId, status])
+  @@index([accountId])
+  @@map("assist_site_learning_clusters")
+}
+
+/// Хвост права посетителя на удаление (§4-тер.12): то, что роль виджета
+/// не может сделать сама (варианты формулировок в проверенных ответах),
+/// доделывает системный код по этой записи. Диалоги, очередь, кейсы eval,
+/// передачи удаляет сам forget (каскады FK).
+model AssistSiteForgetJob {
+  id              String    @id @default(cuid())
+  siteId          String
+  site            Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  conversationIds String[]
+  createdAt       DateTime  @default(now())
+  processedAt     DateTime?
+
+  @@index([processedAt])
+  @@index([siteId])
+  @@map("assist_site_forget_jobs")
+}
+
+/// Цель заказчика (§5-тер.1): шаблон + детекторы. До 30 на сайт.
+model AssistSiteGoal {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// Ключ для `V4CAssist('goal', key)` и `data-assist-goal="<key>"`.
+  key        String
+  /// lead | purchase | call | booking | subscribe | messenger | custom
+  template   String
+  name       String
+  /// `[{ kind: click|form_submit|url|js|builtin|s2s|crm, config }]` — форма в
+  /// assist-analytics/goal-types.ts. Загрузчик получает только свои виды.
+  detectors  Json
+  /// none | fixed | event
+  valueMode  String   @default("none")
+  fixedValue Decimal? @db.Decimal(14, 2)
+  currency   String?
+  /// active | paused | stale (детектор не срабатывал 7 дней)
+  status     String   @default("active")
+  lastFiredAt DateTime?
+  createdByTelegramId BigInt?
+
+  events AssistSiteGoalEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, key])
+  @@index([accountId])
+  @@map("assist_site_goals")
+}
+
+/// Срабатывание цели (§5-тер.1–2). Роль виджета только ВСТАВЛЯЕТ (дедуп —
+/// ON CONFLICT DO NOTHING по clientEventId/orderId); вебхук s2s, возвраты и
+/// «verified важнее page» — системный код (A). orderId — псевдонимный ПД
+/// (13 мес, удаление по запросу субъекта через заказчика).
+model AssistSiteGoalEvent {
+  id        String         @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site           @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  goalId    String
+  goal      AssistSiteGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  occurredAt    DateTime
+  receivedAt    DateTime @default(now())
+  /// loader | iframe | s2s | crm | builtin
+  source        String
+  /// verified | builtin | page
+  trust         String
+  /// Дедуп загрузчика/iframe: `<docId>:<goalKey>:<detector>` (раз на документ).
+  clientEventId String?
+  /// `^[A-Za-z0-9._:-]{1,64}$`, не похож на контакт (иначе 422).
+  orderId       String?
+  value         Decimal? @db.Decimal(14, 2)
+  currency      String?
+  /// completed | refunded | cancelled
+  status        String   @default("completed")
+  path          String?
+  /// direct | assisted | unassisted | unknown (§5-тер.2)
+  attribution   String
+  /// `{ proactive, scenario, link }` — что из помощника было в документе.
+  assist        Json?
+  /// Диалог (если был в этом документе). forget/ретенция — ссылка обнуляется.
+  conversationId String?
+  conversation   AssistSiteConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@unique([siteId, goalId, orderId])
+  @@unique([siteId, clientEventId])
+  @@index([siteId, occurredAt])
+  @@index([goalId, occurredAt])
+  @@index([conversationId])
+  @@index([accountId])
+  @@map("assist_site_goal_events")
+}
+
+/// Секреты интеграций сайта (§5-тер.1 s2s, §3-бис.2 identify): шифр
+/// ASSIST_SECRETS_KEY, показ один раз. Отдельно от assist_sites — ту
+/// таблицу читает роль виджета (тот же довод, что У-10). Роли — НИЧЕГО.
+model AssistSiteIntegration {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// goal_webhook | identity
+  kind                String
+  secretEnc           String
+  keyVersion          Int       @default(1)
+  config              Json      @default("{}")
+  /// active | revoked
+  status              String    @default("active")
+  createdByTelegramId BigInt?
+  rotatedAt           DateTime?
+  lastUsedAt          DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, kind])
+  @@index([accountId])
+  @@map("assist_site_integrations")
+}
+
+/// Суточная свёртка «Обзора» и «Конверсий» (§5-тер.6, §5-тер.10): экран
+/// статистики читает только её (≤ 1 с на 13 месяцах). Пересчёт дня
+/// идемпотентен (перезапись строки). `group` — под контрольную группу
+/// Э3-бис; в Э3 всегда `all`.
+model AssistSiteDailyTotal {
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// YYYY-MM-DD в часовом поясе сайта.
+  day       String
+  group     String @default("all")
+
+  dialogs           Int    @default(0)
+  /// Решённые без человека (§9.1 а–г).
+  resolved          Int    @default(0)
+  answers           Int    @default(0)
+  unknown           Int    @default(0)
+  handoffs          Int    @default(0)
+  handoffsMissed    Int    @default(0)
+  leads             Int    @default(0)
+  thumbsUp          Int    @default(0)
+  thumbsDown        Int    @default(0)
+  widgetViews       Int    @default(0)
+  opens             Int    @default(0)
+  proactiveShown    Int    @default(0)
+  proactiveAccepted Int    @default(0)
+  costMicroUsd      BigInt @default(0)
+  /// goalId → { direct, assisted, unassisted, refunds, value: { verified, page }, currency }
+  conversions       Json   @default("{}")
+  /// Триггер → { shown, accepted, dismissed, dialogs, conversions }
+  proactive         Json   @default("{}")
+  computedAt        DateTime @default(now())
+
+  @@id([siteId, day, group])
+  @@index([accountId])
+  @@map("assist_site_daily_totals")
+}
+
+/// Счётчики событий виджета за сутки (§4.16 `/widget/v1/event`): показ
+/// виджета, открытие, триггеры (показан/принят/закрыт), сценарии. Без
+/// посетителя и без страницы — только (сайт, день, вид, ключ). Пишет роль
+/// виджета одним UPSERT; сырых событий нет (поведение — Э3-бис).
+model AssistSiteEventCount {
+  siteId String
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  /// YYYY-MM-DD (UTC; свёртка переводит в сутки сайта по часу — см. A).
+  day    String
+  /// widget_view | open | proactive_shown | proactive_accepted | proactive_dismissed | scenario_started | scenario_done | link_click
+  kind   String
+  /// Ключ триггера/сценария; '' — без ключа.
+  key    String @default("")
+  /// Час UTC (0–23) — сутки сайта в другом поясе собираются из часов.
+  hour   Int    @default(0)
+  count  Int    @default(0)
+
+  @@id([siteId, day, kind, key, hour])
+  @@map("assist_site_event_counts")
+}
+
+/// Экспорт CSV (§5-тер.7): формирует крон в приватный Blob, ссылка 24 ч,
+/// запись — журнал кабинета 1 год.
+model AssistSiteExport {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// daily | conversions | dialogs
+  kind                  String
+  params                Json
+  /// Текст реплик (только владелец кабинета).
+  withText              Boolean   @default(false)
+  requestedByTelegramId BigInt
+  /// queued | running | done | failed | expired
+  status                String    @default("queued")
+  blobKey               String?
+  rows                  Int?
+  error                 String?
+  attempts              Int       @default(0)
+  lockedUntil           DateTime?
+  expiresAt             DateTime?
+  finishedAt            DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([status, lockedUntil])
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("assist_site_exports")
+}
+
+/// Отписка от отчёта недели / утренней сводки (§5-тер.7): по умолчанию
+/// подписаны владелец и `assist: manager`; строка — явный выбор человека.
+model AssistSiteReportSubscription {
+  accountId  String
+  siteId     String
+  site       Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  telegramId BigInt
+  /// weekly | digest
+  kind       String
+  enabled    Boolean
+  updatedAt  DateTime @updatedAt
+
+  @@id([siteId, telegramId, kind])
+  @@index([accountId])
+  @@map("assist_site_report_subscriptions")
 }

@@ -23,6 +23,7 @@ import {
   WIDGET_PROTOCOL_VERSION,
 } from './brand';
 import { POSITIONS, UI_LANGS, cleanOrigin, isObj, oneOf, text } from './config';
+import { ENG_KEY, GOAL_KEY, ORDER_ID } from './engagement';
 
 type Obj = Record<string, unknown>;
 
@@ -62,7 +63,31 @@ export type ParentMessage =
     }
   | { type: 'position'; position: WidgetPosition }
   /** «к Л2»: черновой вид во вкладке, только при allowClientPreview. */
-  | { type: 'preview'; partialConfig: unknown };
+  | { type: 'preview'; partialConfig: unknown }
+  /**
+   * Э3 (§5-тер.1–2): загрузчик поймал цель, а iframe этого документа жив —
+   * iframe отправит её С посетителем и диалогом (direct/assisted). Значения
+   * — только ключ, детектор, docId, путь, orderId/value/currency (их
+   * проверяет и загрузчик, и сервер).
+   */
+  | {
+      type: 'goal';
+      goalKey: string;
+      detector: 'url' | 'click' | 'form_submit' | 'js';
+      docId: string;
+      path: string | null;
+      orderId: string | null;
+      value: number | null;
+      currency: string | null;
+    }
+  /** Э3 (§3.6 п.4–5): посетитель принял проактивный сигнал → префилл или сценарий. */
+  | {
+      type: 'proactive';
+      triggerKey: string;
+      action: 'prefill' | 'scenario' | 'open';
+      scenarioKey: string | null;
+      question: string | null;
+    };
 
 /** iframe → родитель. */
 export type FrameMessage =
@@ -70,6 +95,20 @@ export type FrameMessage =
   | { type: 'resize'; height: number }
   | { type: 'ui-state'; state: 'open' | 'min' | 'closed' }
   | { type: 'event'; name: 'open' | 'close' | 'lead' | 'handoff' }
+  /**
+   * Э3: счётчик для `POST /widget/v1/event` (загрузчик копит батч): только
+   * вид и ключ триггера/сценария — без текста и без посетителя.
+   */
+  | {
+      type: 'count';
+      kind: 'link_click' | 'scenario_started' | 'scenario_done';
+      key: string | null;
+    }
+  /** Э3: передача человеку изменилась — загрузчик держит iframe живым (не сворачивает в «закрыт»). */
+  | {
+      type: 'handoff-state';
+      state: 'waiting' | 'active' | 'closed' | 'missed' | 'cancelled';
+    }
   /** Чат недоступен на этом origin (origin_denied и т.п.) — загрузчик убирает кнопку. */
   | { type: 'unavailable'; code: string };
 
@@ -155,6 +194,52 @@ export function cleanIdentify(
   return out;
 }
 
+const DOC_ID = /^[A-Za-z0-9_-]{8,64}$/;
+const DETECTORS = ['url', 'click', 'form_submit', 'js'] as const;
+
+/**
+ * Цель (Э3): ключ, детектор, docId, путь (без query), orderId/value/currency
+ * — тот же формат, что проверяет сервер (A и W, widget-engagement.ts).
+ */
+export function cleanGoal(
+  m: Record<string, unknown>
+): Extract<ParentMessage, { type: 'goal' }> | null {
+  const path = m.path;
+  const value = m.value;
+  if (
+    typeof m.goalKey !== 'string' ||
+    !GOAL_KEY.test(m.goalKey) ||
+    !(DETECTORS as readonly unknown[]).includes(m.detector) ||
+    typeof m.docId !== 'string' ||
+    !DOC_ID.test(m.docId) ||
+    (path !== null &&
+      (typeof path !== 'string' ||
+        path.charAt(0) !== '/' ||
+        path.length > 512 ||
+        /[?#\s]/.test(path))) ||
+    (m.orderId !== null &&
+      (typeof m.orderId !== 'string' || !ORDER_ID.test(m.orderId))) ||
+    (value !== null &&
+      (typeof value !== 'number' ||
+        !isFinite(value) ||
+        value < 0 ||
+        value > 1e9)) ||
+    (m.currency !== null &&
+      (typeof m.currency !== 'string' || !/^[A-Z]{3}$/.test(m.currency)))
+  )
+    return null;
+  return {
+    type: 'goal',
+    goalKey: m.goalKey,
+    detector: m.detector as (typeof DETECTORS)[number],
+    docId: m.docId,
+    path: path as string | null,
+    orderId: m.orderId as string | null,
+    value: value as number | null,
+    currency: m.currency as string | null,
+  };
+}
+
 export function cleanQuestion(v: unknown): string | null {
   const q = text(v, MAX_QUESTION + 1);
   if (q === null) return null;
@@ -228,6 +313,33 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
         ? { type: 'preview', partialConfig: m.partialConfig }
         : null;
     }
+    case 'goal':
+      return cleanGoal(m);
+    case 'proactive': {
+      const action = m.action;
+      if (
+        typeof m.triggerKey !== 'string' ||
+        !ENG_KEY.test(m.triggerKey) ||
+        (action !== 'prefill' && action !== 'scenario' && action !== 'open')
+      )
+        return null;
+      const scenarioKey =
+        action === 'scenario' &&
+        typeof m.scenarioKey === 'string' &&
+        ENG_KEY.test(m.scenarioKey)
+          ? m.scenarioKey
+          : null;
+      if (action === 'scenario' && !scenarioKey) return null;
+      const question = action === 'prefill' ? cleanQuestion(m.question) : null;
+      if (action === 'prefill' && !question) return null;
+      return {
+        type: 'proactive',
+        triggerKey: m.triggerKey,
+        action,
+        scenarioKey,
+        question,
+      };
+    }
     default:
       return null;
   }
@@ -261,6 +373,21 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
     case 'unavailable':
       return typeof m.code === 'string' && /^[A-Za-z_]{1,40}$/.test(m.code)
         ? { type: 'unavailable', code: m.code }
+        : null;
+    case 'count':
+      return (m.kind === 'link_click' && m.key === null) ||
+        ((m.kind === 'scenario_started' || m.kind === 'scenario_done') &&
+          typeof m.key === 'string' &&
+          ENG_KEY.test(m.key))
+        ? { type: 'count', kind: m.kind, key: m.key as string | null }
+        : null;
+    case 'handoff-state':
+      return m.state === 'waiting' ||
+        m.state === 'active' ||
+        m.state === 'closed' ||
+        m.state === 'missed' ||
+        m.state === 'cancelled'
+        ? { type: 'handoff-state', state: m.state }
         : null;
     default:
       return null;
