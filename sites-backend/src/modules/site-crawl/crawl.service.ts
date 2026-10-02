@@ -34,6 +34,7 @@ import { CRAWL_DEFAULTS } from '../../config/assist-defaults';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { registrableDomain } from '../site-core/hosts/host-normalize';
+import { uiElementsHash, uiMapKey } from '../site-core/ui-map/ui-map';
 import {
   evaluateHostAccess,
   HostPurpose,
@@ -872,6 +873,7 @@ export class SiteCrawlService {
         },
       });
     }
+    await this.storeUiMap(ctx, host, page, now);
     if (page.lang) {
       ctx.stats.langs = ctx.stats.langs ?? {};
       ctx.stats.langs[page.lang] = (ctx.stats.langs[page.lang] ?? 0) + 1;
@@ -895,6 +897,61 @@ export class SiteCrawlService {
       };
     }
     return { kind: changed ? 'changed' : 'unchanged' };
+  }
+
+  /**
+   * Э6 (§4.12): карта интерфейса страницы — `site_ui_maps`, источник
+   * `crawl`. Другой набор элементов (вёрстка сменилась) — счётчик промахов
+   * подсветки с нуля: сигнал «карта устарела» относился к старой карте.
+   * Нет элементов — карта обхода снимается (подсвечивать нечего). Сбой
+   * записи карты прогон не роняет: знания важнее подсветки.
+   */
+  private async storeUiMap(
+    ctx: RunCtx,
+    host: SiteHost,
+    page: ExtractedPage,
+    now: Date,
+  ): Promise<void> {
+    const key = uiMapKey(page.url);
+    if (!key) return;
+    const where = {
+      siteId: ctx.run.siteId,
+      host: key.host,
+      path: key.path,
+      source: 'crawl',
+    };
+    try {
+      const elements = page.uiElements ?? [];
+      if (!elements.length) {
+        await ctx.db.siteUiMap.deleteMany({ where });
+        return;
+      }
+      const elementsHash = uiElementsHash(elements);
+      const existing = await ctx.db.siteUiMap.findFirst({
+        where,
+        select: { id: true, elementsHash: true },
+      });
+      const data = {
+        hostId: host.id,
+        elements: elements as unknown as Prisma.InputJsonValue,
+        elementsHash,
+        capturedAt: now,
+        ...(existing?.elementsHash !== elementsHash
+          ? { staleSignals: 0, lastStaleAt: null }
+          : {}),
+      };
+      if (existing) {
+        await ctx.db.siteUiMap.update({ where: { id: existing.id }, data });
+      } else {
+        await ctx.db.siteUiMap.create({
+          data: { ...data, ...where, accountId: ctx.run.accountId },
+        });
+      }
+    } catch (e) {
+      this.logger.warn(
+        `карта интерфейса ${key.host}${key.path}: ${e instanceof Error ? e.name : 'error'}`,
+      );
+    }
   }
 
   /** Страница пропущена: текст убираем — пропущенное не должно попасть в знания. */

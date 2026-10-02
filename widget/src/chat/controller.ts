@@ -33,6 +33,7 @@ import {
   parseHandoffResponse,
   parsePreviewExchange,
   parseSession,
+  parseVideoLink,
   parseState,
   request,
   streamCodeOfRest,
@@ -111,6 +112,8 @@ export interface ChatState {
   } | null;
   /** Э5: голос — кнопки, запись, озвучка (src/chat/voice.ts). */
   voice: VoiceUi;
+  /** Э6: открытый ролик обучалки (подписанная ссылка своего origin). */
+  video: { url: string; title: string } | null;
 }
 
 /** Ответ проактивного сигнала/сценария, отмеченный для атрибуции цели. */
@@ -230,6 +233,7 @@ export class ChatController {
       scenarios: [],
       scen: null,
       voice: voiceOff(),
+      video: null,
     };
     this.voice = new VoiceController({
       ui: () => this.state.voice,
@@ -352,6 +356,9 @@ export class ChatController {
         return this.onProactive(m);
       case 'goal':
         void this.sendGoal(m);
+        return;
+      case 'highlight-result':
+        void this.highlightResult(m.elementId, m.found);
         return;
       case 'preview':
         // «к Л2»: второй замок — флаг из конфига сервера здесь же.
@@ -1366,6 +1373,59 @@ export class ChatController {
     this.lastClick = Date.now();
     if (a.kind === 'lead') this.openLead();
     else if (a.kind === 'handoff') this.askHandoff();
+    else if (a.kind === 'video') void this.openVideo(a.videoId);
+    else if (a.kind === 'highlight') {
+      // Э6: подсветку делает загрузчик (DOM страницы iframe недоступен);
+      // ждём итог только по элементу, который сами попросили показать.
+      this.highlightAsked.set(a.elementId, this.page.url);
+      this.toParent({
+        type: 'highlight',
+        elementId: a.elementId,
+        selector: a.selector,
+        caption: a.caption,
+      });
+    }
+  }
+
+  // ── Э6: видео и «показать на экране» ──────────────────────────────────
+
+  /** Элементы, которые посетитель попросил показать: id → страница. */
+  private readonly highlightAsked = new Map<string, string | null>();
+
+  /** Ролик: подписанная ссылка по клику (третий барьер — на сервере). */
+  private async openVideo(videoId: string) {
+    try {
+      const v = parseVideoLink(
+        await this.api('POST', '/widget/v1/video', { videoId })
+      );
+      this.set({ video: { url: v.url, title: v.title } });
+    } catch {
+      this.set({ notice: { text: this.state.t.videoUnavailable } });
+    }
+  }
+
+  closeVideo() {
+    this.set({ video: null });
+  }
+
+  /**
+   * Итог подсветки от загрузчика. Не нашёл — ТИХО (посетителю ничего не
+   * показываем) шлём сигнал «карта устарела»; ответ «сообщение подделано
+   * страницей» не опасен — только по элементу, который мы сами просили.
+   */
+  private async highlightResult(elementId: string, found: boolean) {
+    if (!this.highlightAsked.has(elementId)) return;
+    const pageUrl = this.highlightAsked.get(elementId) ?? null;
+    this.highlightAsked.delete(elementId);
+    if (found || !pageUrl) return;
+    try {
+      await this.api('POST', '/widget/v1/highlight-miss', {
+        elementId,
+        pageUrl,
+      });
+    } catch {
+      /* сигнал не дошёл — не беда посетителю */
+    }
   }
 
   saveScroll(id: string | null) {

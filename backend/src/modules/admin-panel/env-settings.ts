@@ -1108,6 +1108,35 @@ export function getEnvSettings(
   }
 
   {
+    // Э-С Ш2: где лежат данные входа черновиков обучалки. `sites` —
+    // хранилище sites-backend (AES-256-GCM с версией ключа и AAD, аренда в
+    // режиме A, журнал доступа); иначе — колонки черновика, как до Ш2.
+    const raw = env.SITE_TUTORIAL_CREDENTIALS_STORE?.trim();
+    const on = raw?.toLowerCase() === 'sites';
+    const known = !raw || on || raw.toLowerCase() === 'columns';
+    const channel =
+      Boolean(env.SITES_BACKEND_URL?.trim()) &&
+      isUsableSitesSecret(env.SITES_TUTORIAL_HMAC_SECRET);
+    const ok = known && (!on || channel);
+    results.push({
+      key: 'SITE_TUTORIAL_CREDENTIALS_STORE',
+      group: 'Обучалка по сайту заказчика',
+      required: false,
+      set: Boolean(raw),
+      ok,
+      severity: ok && on ? 'ok' : 'warning',
+      message: !known
+        ? 'Неизвестное значение — данные входа пишутся в колонки черновика. Допустимо: sites | columns.'
+        : on && !channel
+          ? 'sites, но канал к sites-backend не настроен (SITES_BACKEND_URL + SITES_TUTORIAL_HMAC_SECRET) — данные входа пишутся в колонки черновика, в лог — предупреждение.'
+          : on
+            ? 'Данные входа обучалки — в хранилище sites-backend (Э-С Ш2): режим A — тестовые учётки реестра сайта по аренде, B — личные записи. Нужен SITE_CREDENTIALS_KEYS у sites-backend: без него запись идёт в колонки черновика (предупреждение в лог). Существующие черновики переносит скрипт move:client-site-credentials (doc/DEPLOYMENT.md).'
+            : 'Не задан — данные входа обучалки по-старому в колонках черновика (ключ SITE_TUTORIAL_TOKEN_KEY). Включение хранилища sites-backend — значение sites после SITE_CREDENTIALS_KEYS у sites-backend (doc/DEPLOYMENT.md, Э-С Ш2).',
+      value: raw || 'columns (по умолчанию)',
+    });
+  }
+
+  {
     const raw = env.LIVE_LOGIN_RELAY_URL;
     const ok = raw === undefined || /^https?:\/\//.test(raw.trim());
     results.push({

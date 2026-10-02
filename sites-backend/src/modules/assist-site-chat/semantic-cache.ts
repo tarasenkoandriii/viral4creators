@@ -75,7 +75,10 @@ function parseCached(v: Prisma.JsonValue): CachedAnswer | null {
           typeof a === 'object' &&
           (SITE_ACTION_KINDS as readonly string[]).includes(
             (a as SiteAction).kind,
-          ),
+          ) &&
+          // Э6: подсветка — про страницу, на которой задан вопрос; ключ
+          // кэша страницы не знает (см. `put`).
+          (a as SiteAction).kind !== 'highlight',
       )
     : [];
   return {
@@ -123,6 +126,11 @@ export class SemanticCache {
     const answer: CachedAnswer = {
       ...p.answer,
       text: maskForJournal(p.answer.text),
+      // Э6: подсветка ссылается на элемент ТОЙ страницы, где спросили, а
+      // ключ кэша о странице не знает — в кэш не кладётся. Ролик — про
+      // сайт: кладётся, но на выдаче из кэша сверяется заново
+      // (site-chat.service `liveMediaActions`) и ещё раз на клике.
+      actions: p.answer.actions.filter((a) => a.kind !== 'highlight'),
     };
     const now = this.now();
     const n = await this.db.$executeRawUnsafe(

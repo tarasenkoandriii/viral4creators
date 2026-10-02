@@ -50,6 +50,13 @@ export interface ExploreRoundResult {
   /** Cookie jar на момент конца раунда — вызывающий шифрует и кладёт в
    * `draft.cookiesEnc`. */
   cookies: CdpCookie[];
+  /**
+   * Раунд вводил в поле пароля или кода (`type=password`, `autocomplete`
+   * пароля/одноразового кода) — это вход: вызывающий ставит черновику
+   * липкий `loginUsedAt` (аудит Э6, Д1). `undefined` — реализация без
+   * проверки (тесты оркестрации), читается как «нет».
+   */
+  sensitiveFill?: boolean;
 }
 
 /**

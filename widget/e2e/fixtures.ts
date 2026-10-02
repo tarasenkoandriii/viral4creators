@@ -98,6 +98,10 @@ export interface MockLog {
   // Э5
   voice: Array<{ pk: string; bytes: number; type: string; visitorId: string }>;
   tts: Array<{ pk: string; messageId: string; ok: boolean }>;
+  // Э6
+  videoLinks: Array<{ pk: string; videoId: string; ok: boolean }>;
+  videoRedirects: number;
+  highlightMisses: Array<{ pk: string; elementId: string; pageUrl: string }>;
 }
 
 export async function log(): Promise<MockLog> {

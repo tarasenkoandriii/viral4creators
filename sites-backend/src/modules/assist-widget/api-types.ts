@@ -324,5 +324,8 @@ export const WIDGET_ERROR_CODES = [
   'VOICE_LIMIT',
   'VOICE_NOT_HEARD',
   'AUDIO_INVALID',
+  // Э6: ролик выключен владельцем, снят за логином, чужого сайта, тариф без
+  // видео или ссылка истекла — посетителю одно «видео недоступно».
+  'VIDEO_UNAVAILABLE',
 ] as const;
 export type WidgetErrorCode = (typeof WIDGET_ERROR_CODES)[number];

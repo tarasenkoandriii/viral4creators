@@ -22,6 +22,9 @@ import { escapeData } from '../assist-knowledge-core/answer/prompt';
 import { detectInjection } from '../assist-knowledge-core/injection';
 import type { SearchHit } from '../assist-knowledge-core/types';
 import type { PersonaConfig } from '../assist-site-setup/persona';
+import { MEDIA_DEFAULTS } from '../assist-site-media/media-config';
+import type { PromptVideo } from '../assist-site-media/public/site-videos';
+import type { UiMapElement } from '../site-core/ui-map/ui-map';
 import { bareHost } from './answer-checks';
 
 export interface SitePromptInput {
@@ -39,6 +42,10 @@ export interface SitePromptInput {
   knowledgeLang: string | null;
   /** Разрешённые URL для link (настройки сайта + фрагменты). */
   allowedLinkHosts: string[];
+  /** Э6: ролики обучалки ЭТОГО сайта (V#), если видео доступно тарифу. */
+  videos?: PromptVideo[];
+  /** Э6: элементы карты интерфейса страницы посетителя (E# — по порядку). */
+  uiElements?: UiMapElement[];
 }
 
 export interface SitePrompt {
@@ -227,6 +234,45 @@ export function contextBlock(
     : '';
 }
 
+/**
+ * Э6 (§4.6 п.6, §4.9): ролики сайта и элементы страницы — данные и
+ * перечень того, что можно назвать в действиях `video`/`highlight`.
+ * Название ролика и подпись элемента — текст ЧУЖИХ страниц/черновика:
+ * размечены как данные, строки с признаками инъекции не попадают вовсе
+ * (тогда и сослаться на них модель не сможет — проверка действия идёт по
+ * тем же спискам). Блока нет — модель про эти действия не узнаёт.
+ */
+export function mediaBlock(
+  videos: PromptVideo[] = [],
+  elements: UiMapElement[] = [],
+): string {
+  const parts: string[] = [];
+  const vs = videos
+    .filter((v) => !detectInjection(v.title).quarantine)
+    .map(
+      (v) =>
+        `<video id="${v.ref}" lang="${attr(v.locale, 8)}"${v.durationSec ? ` seconds="${v.durationSec}"` : ''}>${line(v.title, 120)}</video>`,
+    );
+  if (vs.length) {
+    parts.push(
+      `Видеоинструкции этого сайта (данные):\n${vs.join('\n')}\nЕсли видео отвечает на вопрос «как сделать», можно добавить ОДНУ кнопку {"kind":"video","label":"Смотреть видео","video":"V1"} — только id из этого списка.`,
+    );
+  }
+  const es: string[] = [];
+  elements.slice(0, MEDIA_DEFAULTS.promptElements).forEach((e, i) => {
+    if (detectInjection(e.label).quarantine) return;
+    es.push(
+      `<element id="E${i + 1}" tag="${e.tag}">${line(e.label, 80)}</element>`,
+    );
+  });
+  if (es.length) {
+    parts.push(
+      `Элементы текущей страницы посетителя (данные):\n${es.join('\n')}\nЕсли посетитель спрашивает, где на этой странице кнопка, поле или ссылка, можно добавить ОДНУ кнопку {"kind":"highlight","label":"Показать на странице","element":"E1"} — только id из этого списка; сам элемент не нажимай и не обещай нажать.`,
+    );
+  }
+  return parts.join('\n\n');
+}
+
 export function buildSitePrompt(input: SitePromptInput): SitePrompt {
   const system = [
     siteFrame(input),
@@ -260,6 +306,7 @@ export function buildSitePrompt(input: SitePromptInput): SitePrompt {
     ...(blocks.length ? blocks : ['(фрагментов не найдено)']),
     page,
     contextBlock(input.context),
+    mediaBlock(input.videos, input.uiElements),
     `<question>\n${escapeData(input.question)}\n</question>`,
   ]
     .filter(Boolean)

@@ -3,6 +3,7 @@ import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { PublicationModule } from '../publication/publication.module';
 import { StorageModule } from '../storage/storage.module';
+import { ClientSiteMediaModule } from '../client-site-media/client-site-media.module';
 import { TutorialScenarioRunnerService } from './tutorial-scenario-runner.service';
 import { TutorialVideoAdminController } from './tutorial-video-admin.controller';
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
@@ -52,6 +53,8 @@ import { FixtureSeedAdminController } from './fixture-seed-admin.controller';
     AdminAuthModule,
     AdminPanelModule,
     PublicationModule,
+    // Э6 помощника: собранный ролик привязанного черновика → ролики сайта.
+    ClientSiteMediaModule,
   ],
   controllers: [TutorialVideoAdminController, FixtureSeedAdminController],
   providers: [TutorialScenarioRunnerService, TutorialVideoAdminService],

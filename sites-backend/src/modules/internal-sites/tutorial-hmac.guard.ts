@@ -41,6 +41,20 @@ import { InternalRequestLedger } from './request-ledger';
 export type InternalRequest = Request & { internalBody?: unknown };
 
 export const INTERNAL_SITES_BODY_LIMIT_BYTES = 8 * 1024;
+/**
+ * Э-С Ш2: маршруты хранилища учётных данных несут куки сессии (до 256 КБ
+ * открытого текста, `CREDENTIAL_MAX_BYTES`) — свой потолок, остальные
+ * маршруты остаются на 8 КБ.
+ */
+export const INTERNAL_CREDENTIALS_PATH = '/internal/sites/credentials';
+export const INTERNAL_CREDENTIALS_BODY_LIMIT_BYTES = 320 * 1024;
+
+export function internalBodyLimit(path: string): number {
+  return path === INTERNAL_CREDENTIALS_PATH ||
+    path.startsWith(`${INTERNAL_CREDENTIALS_PATH}/`)
+    ? INTERNAL_CREDENTIALS_BODY_LIMIT_BYTES
+    : INTERNAL_SITES_BODY_LIMIT_BYTES;
+}
 
 function err(
   Ctor: new (body: Record<string, unknown>) => HttpException,
@@ -69,14 +83,14 @@ export class TutorialHmacGuard implements CanActivate {
       );
     }
     const raw = typeof req.body === 'string' ? req.body : '';
-    if (Buffer.byteLength(raw, 'utf8') > INTERNAL_SITES_BODY_LIMIT_BYTES) {
+    const path = (req.originalUrl ?? req.url ?? '').split('?')[0];
+    if (Buffer.byteLength(raw, 'utf8') > internalBodyLimit(path)) {
       throw err(
         BadRequestException,
         'INTERNAL_BAD_BODY',
         'Тело слишком большое',
       );
     }
-    const path = (req.originalUrl ?? req.url ?? '').split('?')[0];
     const now = this.now();
     const check = verifySitesRequest(secret, {
       method: req.method,

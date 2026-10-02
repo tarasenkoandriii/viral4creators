@@ -13,14 +13,34 @@ import type {
   ChatUsageSummary,
 } from '../../shared/assist-chat-core';
 
-/** Действия ответа «Сайта» в Э2 (§4.9): ссылка, форма лида, «позвать человека» (→ форма лида до Э3). */
-export const SITE_ACTION_KINDS = ['link', 'lead', 'handoff'] as const;
+/**
+ * Действия ответа «Сайта» (§4.9): Э2 — ссылка, форма лида, «позвать
+ * человека»; Э6 — ролик обучалки сайта (`video`: id строки
+ * assist_site_videos, ссылку iframe берёт по клику) и подсветка элемента
+ * карты интерфейса (`highlight`: селектор и подпись — из карты сервера,
+ * не от модели).
+ */
+export const SITE_ACTION_KINDS = [
+  'link',
+  'lead',
+  'handoff',
+  'video',
+  'highlight',
+] as const;
 export type SiteActionKind = (typeof SITE_ACTION_KINDS)[number];
 
 export type SiteAction =
   | { kind: 'link'; label: string; url: string }
   | { kind: 'lead'; label: string }
-  | { kind: 'handoff'; label: string };
+  | { kind: 'handoff'; label: string }
+  | { kind: 'video'; label: string; videoId: string; title: string }
+  | {
+      kind: 'highlight';
+      label: string;
+      elementId: string;
+      selector: string;
+      caption: string;
+    };
 
 /** Источник ответа — только номера из промпта (§4.6), URL — из метаданных фрагмента. */
 export interface SiteAnswerSource {

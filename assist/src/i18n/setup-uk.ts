@@ -30,6 +30,7 @@ export const setupUk: SetupDictionary = {
     widget: 'Віджет',
     persona: 'Характер',
     wizard: 'Навчіть помічника',
+    videos: 'Відео',
   },
   widget: {
     title: 'Віджет',

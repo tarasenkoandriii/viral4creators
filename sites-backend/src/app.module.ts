@@ -29,6 +29,9 @@ import { AssistBillingModule } from './modules/assist-billing/assist-billing.mod
 import { PlatformAdminModule } from './modules/platform-admin/platform-admin.module';
 import { InternalSitesModule } from './modules/internal-sites/internal-sites.module';
 import { AssistSiteVoiceModule } from './modules/assist-site-voice/assist-site-voice.module';
+import { AssistSiteMediaModule } from './modules/assist-site-media/assist-site-media.module';
+import { InternalSiteMediaModule } from './modules/internal-sites/site-media.module';
+import { SiteCredentialsModule } from './modules/site-credentials/site-credentials.module';
 
 @Module({
   imports: [
@@ -68,6 +71,15 @@ import { AssistSiteVoiceModule } from './modules/assist-site-voice/assist-site-v
     InternalSitesModule,
     // Э5 «Голос»: микрофон и озвучка виджета (Soniox), кабинет голоса.
     AssistSiteVoiceModule,
+    // Э6 «Видео и подсветка»: экран «Видео» кабинета (публичная часть — в
+    // конвейере ответа и маршрутах виджета); ролики и карта из обучалки
+    // генератора — внутренний API (HMAC, тот же канал Ш1).
+    AssistSiteMediaModule,
+    InternalSiteMediaModule,
+    // Э-С Ш2: тестовые учётные записи сайта (общие с QA) и хранилище их
+    // секретов — экран кабинета и крон сроков; канал генератора — в
+    // InternalSitesModule.
+    SiteCredentialsModule,
   ],
 })
 export class AppModule {}

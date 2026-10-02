@@ -18,13 +18,45 @@ import {
   type UiLang,
   type ViewConfig,
 } from '../shared/config';
+import { UI_ELEMENT_ID, cleanSelector } from '../shared/protocol';
 
 // ── типы (повтор api-types.ts / chat-types.ts) ─────────────────────────────
 
 export type SiteAction =
   | { kind: 'link'; label: string; url: string }
   | { kind: 'lead'; label: string }
-  | { kind: 'handoff'; label: string };
+  | { kind: 'handoff'; label: string }
+  /** Э6: ролик обучалки сайта — ссылку iframe берёт по клику (`POST /widget/v1/video`). */
+  | { kind: 'video'; label: string; videoId: string; title: string }
+  /** Э6: подсветка элемента страницы — селектор и подпись из карты сервера. */
+  | {
+      kind: 'highlight';
+      label: string;
+      elementId: string;
+      selector: string;
+      caption: string;
+    };
+
+/** Э6: `POST /widget/v1/video` — подписанная ссылка своего origin. */
+export interface WidgetVideoLink {
+  url: string;
+  title: string;
+  expiresAt: string;
+}
+
+const VIDEO_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** Путь подписанной ссылки: только свой origin, только этот маршрут. */
+const VIDEO_PATH = /^\/widget\/v1\/video\/v1\.[A-Za-z0-9_.-]{1,300}$/;
+
+export function parseVideoLink(v: unknown): WidgetVideoLink {
+  if (!isObj(v) || typeof v.url !== 'string' || !VIDEO_PATH.test(v.url))
+    throw new ApiError('BAD_RESPONSE', 0);
+  return {
+    url: v.url,
+    title: text(v.title, 120) ?? '',
+    expiresAt: typeof v.expiresAt === 'string' ? v.expiresAt : '',
+  };
+}
 
 export interface SiteAnswerSource {
   n: number;
@@ -249,6 +281,25 @@ export function parseAction(v: unknown): SiteAction | null {
       ? { kind: 'link', label, url: v.url }
       : null;
   if (v.kind === 'lead' || v.kind === 'handoff') return { kind: v.kind, label };
+  if (v.kind === 'video')
+    return typeof v.videoId === 'string' && VIDEO_ID.test(v.videoId)
+      ? {
+          kind: 'video',
+          label,
+          videoId: v.videoId,
+          title: text(v.title, 120) ?? label,
+        }
+      : null;
+  if (v.kind === 'highlight') {
+    const selector = cleanSelector(v.selector);
+    const caption = text(v.caption, 80);
+    return typeof v.elementId === 'string' &&
+      UI_ELEMENT_ID.test(v.elementId) &&
+      selector &&
+      caption
+      ? { kind: 'highlight', label, elementId: v.elementId, selector, caption }
+      : null;
+  }
   return null;
 }
 

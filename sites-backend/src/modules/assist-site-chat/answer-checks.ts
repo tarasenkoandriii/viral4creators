@@ -23,7 +23,17 @@ import {
 import { detectInjection } from '../assist-knowledge-core/injection';
 import type { SearchHit } from '../assist-knowledge-core/types';
 import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
-import type { SiteAction, SiteAnswerSource } from './chat-types';
+import type { PromptVideo } from '../assist-site-media/public/site-videos';
+import {
+  ELEMENT_REF_RE,
+  VIDEO_REF_RE,
+} from '../assist-site-media/media-config';
+import type { UiMapElement } from '../site-core/ui-map/ui-map';
+import type {
+  SiteAction,
+  SiteActionKind,
+  SiteAnswerSource,
+} from './chat-types';
 
 /** Маркеры источников `[S3]`, `[S1, S2]`, `[S1][S2]` (как у песочницы Э1). */
 const MARKER = /\[\s*S\s*\d+(?:\s*[,;]\s*S?\s*\d+)*\s*\]/gi;
@@ -94,14 +104,51 @@ export function cleanLabel(raw: unknown): string | null {
 }
 
 /**
+ * Э6: что модели можно назвать в `video`/`highlight` — ровно то, что ЭТОТ
+ * запрос положил в промпт (`V#` — ролики сайта, `E#` — элементы карты
+ * страницы посетителя, по порядку). Второй барьер против ролика чужого
+ * сайта: id ролика, селектор и подпись берутся отсюда, не из текста модели.
+ */
+export interface MediaAllowed {
+  videos: PromptVideo[];
+  elements: UiMapElement[];
+}
+
+/** `E1`… → элемент карты (номер — позиция в промпте). */
+export function elementByRef(
+  elements: UiMapElement[],
+  ref: unknown,
+): UiMapElement | null {
+  if (typeof ref !== 'string') return null;
+  const m = ELEMENT_REF_RE.exec(ref);
+  return m ? (elements[Number(m[1]) - 1] ?? null) : null;
+}
+
+/** `V1`… → ролик из списка этого запроса. */
+export function videoByRef(
+  videos: PromptVideo[],
+  ref: unknown,
+): PromptVideo | null {
+  if (typeof ref !== 'string' || !VIDEO_REF_RE.test(ref)) return null;
+  return videos.find((v) => v.ref === ref) ?? null;
+}
+
+/**
  * Действия из блока `<<<actions>>>` (parseActionsBlock из assist-chat-core):
  * kind только из SITE_ACTION_KINDS; link — https, хост сайта, URL есть среди
- * фрагментов или настроек сайта; ≤ 3; подписи — текст ≤ 60.
+ * фрагментов или настроек сайта; ≤ 3; подписи — текст ≤ 60. Э6: `video` и
+ * `highlight` — только ссылки на списки этого запроса (`media`), не больше
+ * одного каждого (как «не больше одного видео» лендинга, `actions.ts`).
  */
 export function validateSiteActions(
   raw: string | null,
-  allowed: { linkUrls: Set<string>; siteHosts: Set<string> },
+  allowed: {
+    linkUrls: Set<string>;
+    siteHosts: Set<string>;
+    media?: MediaAllowed;
+  },
 ): SiteAction[] {
+  const media: MediaAllowed = allowed.media ?? { videos: [], elements: [] };
   const hosts = new Set([...allowed.siteHosts].map(bareHost));
   const urls = new Set(
     [...allowed.linkUrls]
@@ -122,21 +169,40 @@ export function validateSiteActions(
     return n !== null && urls.has(n);
   };
   const parsed = parseActionsBlock<
-    { kind: 'link' | 'lead' | 'handoff' } & Record<string, unknown>,
-    'link' | 'lead' | 'handoff'
+    { kind: SiteActionKind } & Record<string, unknown>,
+    SiteActionKind
   >(raw, {
     validators: {
       link: (f) => cleanLabel(f.label) !== null && linkOk(f.url),
       lead: (f) => cleanLabel(f.label) !== null,
       handoff: (f) => cleanLabel(f.label) !== null,
+      video: (f) =>
+        cleanLabel(f.label) !== null && !!videoByRef(media.videos, f.video),
+      highlight: (f) =>
+        cleanLabel(f.label) !== null &&
+        !!elementByRef(media.elements, f.element),
     },
     maxItems: WIDGET_DEFAULTS.maxActions,
-    maxPerKind: { lead: 1, handoff: 1 },
+    maxPerKind: { lead: 1, handoff: 1, video: 1, highlight: 1 },
   });
   return parsed.map((a): SiteAction => {
     const label = cleanLabel(a.label) as string;
     if (a.kind === 'link') {
       return { kind: 'link', label, url: new URL(a.url as string).toString() };
+    }
+    if (a.kind === 'video') {
+      const v = videoByRef(media.videos, a.video) as PromptVideo;
+      return { kind: 'video', label, videoId: v.id, title: v.title };
+    }
+    if (a.kind === 'highlight') {
+      const e = elementByRef(media.elements, a.element) as UiMapElement;
+      return {
+        kind: 'highlight',
+        label,
+        elementId: e.id,
+        selector: e.selector,
+        caption: e.label,
+      };
     }
     return { kind: a.kind, label };
   });

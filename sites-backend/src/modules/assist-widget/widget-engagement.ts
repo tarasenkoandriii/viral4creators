@@ -11,6 +11,7 @@
  */
 import { ANALYTICS_DEFAULTS } from '../../config/assist-defaults';
 import {
+  SERVER_EVENT_KINDS,
   WIDGET_EVENT_KINDS,
   type WidgetEventKind,
 } from '../assist-analytics/public/event-counts.service';
@@ -107,7 +108,10 @@ export function parseEventBatch(raw: unknown): WidgetEventBatch | null {
   const events: WidgetEventBatch['events'] = [];
   for (const e of list) {
     if (!isObj(e) || !onlyKeys(e, ['kind', 'key'])) return null;
-    if (!(WIDGET_EVENT_KINDS as readonly unknown[]).includes(e.kind)) {
+    if (
+      !(WIDGET_EVENT_KINDS as readonly unknown[]).includes(e.kind) ||
+      (SERVER_EVENT_KINDS as readonly unknown[]).includes(e.kind)
+    ) {
       return null;
     }
     const key = e.key === undefined ? null : e.key;

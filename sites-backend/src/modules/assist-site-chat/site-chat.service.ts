@@ -100,11 +100,18 @@ import { verifyVoiceTicket } from '../assist-site-voice/public/voice-ticket';
 import { voiceTicketKey } from '../../config/voice-env';
 import { parsePersona, type PersonaConfig } from '../assist-site-setup/persona';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
+import { MEDIA_DEFAULTS } from '../assist-site-media/media-config';
+import {
+  promptVideos,
+  videoAllowedByPlan,
+} from '../assist-site-media/public/site-videos';
+import { pageUiElements } from '../assist-site-media/public/ui-map';
 import {
   maskForJournal,
   postFilterAnswer,
   resolveCitations,
   validateSiteActions,
+  type MediaAllowed,
 } from './answer-checks';
 import { chatAvailability } from './availability';
 import {
@@ -632,7 +639,7 @@ export class SiteChatService {
         return this.finishAnswer(ctx, {
           text: cached.text,
           sources: cached.sources,
-          actions: cached.actions,
+          actions: await this.liveMediaActions(site, cached.actions, now),
           path: 'cache',
           cacheKey,
           flags: [],
@@ -779,6 +786,7 @@ export class SiteChatService {
         cacheKey: firstMessage ? cacheKey : null,
         firstMessage,
         suspicious: avail.suspicious,
+        videoAllowed: videoAllowedByPlan(plan.planId),
       });
     } finally {
       await this.budget.settle(
@@ -807,9 +815,17 @@ export class SiteChatService {
       cacheKey: string | null;
       firstMessage: boolean;
       suspicious: boolean;
+      /** Э6: видео в ответах — возможность тарифа (Business+). */
+      videoAllowed: boolean;
     },
   ): Promise<number> {
     const site = p.input.site;
+    const media = await this.mediaFor(
+      site.siteId,
+      p.input.page.url,
+      p.hosts,
+      p.videoAllowed,
+    );
     const prompt = buildSitePrompt({
       siteName: p.siteName,
       persona: p.persona,
@@ -822,6 +838,8 @@ export class SiteChatService {
       answerLang: p.lang,
       knowledgeLang: p.knowledgeLang,
       allowedLinkHosts: p.hosts,
+      videos: media.videos,
+      uiElements: media.elements,
     });
     ctx.trace.chunkIds = [...prompt.sourceMap.values()].map((h) => h.chunkId);
     const siteHosts = new Set(p.hosts);
@@ -848,7 +866,7 @@ export class SiteChatService {
         totalMs: WIDGET_DEFAULTS.answerTimeoutMs,
       },
       resolveActions: async (raw) =>
-        validateSiteActions(raw, { linkUrls, siteHosts }),
+        validateSiteActions(raw, { linkUrls, siteHosts, media }),
       upstreamError: (e) => {
         this.logger.warn(
           `ask: модель недоступна (site ${site.siteId}, msg ${ctx.answerId}): ${(e as Error | null)?.name ?? 'Error'}`,
@@ -1542,6 +1560,65 @@ export class SiteChatService {
     if (usage.units < effectiveLimit(plan, usage)) return true;
     if (plan.periodKey) await markExhausted(this.db, accountId, plan.periodKey);
     return false;
+  }
+
+  // ── Э6: видео и подсветка (§4.9, §4.11, §4.12) ─────────────────────────
+
+  /**
+   * Что модели можно предложить в `video`/`highlight` — списки ЭТОГО
+   * сайта и ЭТОЙ страницы (барьер 1: `promptVideos` по siteId). Подписи с
+   * признаками инъекции — вон до промпта, чтобы номера E#/V# в промпте и в
+   * проверке действия совпадали. Сбой чтения — ответ без кнопок видео и
+   * подсветки, а не ошибка (как список видео лендинга).
+   */
+  private async mediaFor(
+    siteId: string,
+    pageUrl: string | null,
+    hosts: string[],
+    videoAllowed: boolean,
+  ): Promise<MediaAllowed> {
+    try {
+      const [videos, elements] = await Promise.all([
+        videoAllowed ? promptVideos(this.db, siteId) : Promise.resolve([]),
+        pageUiElements(this.db, siteId, pageUrl, hosts),
+      ]);
+      return {
+        videos: videos.filter((v) => !detectInjection(v.title).quarantine),
+        elements: elements
+          .filter((e) => !detectInjection(e.label).quarantine)
+          .slice(0, MEDIA_DEFAULTS.promptElements),
+      };
+    } catch (e) {
+      this.logger.warn(
+        `ask: видео/карта недоступны (site ${siteId}): ${(e as Error | null)?.name ?? 'Error'}`,
+      );
+      return { videos: [], elements: [] };
+    }
+  }
+
+  /**
+   * Ответ из кэша: кнопка ролика — только если ролик и сейчас доступен
+   * этому сайту (владелец мог выключить, тариф — смениться). Подсветки в
+   * кэше нет (semantic-cache.ts).
+   */
+  private async liveMediaActions(
+    site: AskInput['site'],
+    actions: SiteAction[],
+    now: Date,
+  ): Promise<SiteAction[]> {
+    if (!actions.some((a) => a.kind === 'video')) return actions;
+    let live = new Set<string>();
+    try {
+      const plan = await readState(this.db, site.accountId, now);
+      if (videoAllowedByPlan(plan.planId)) {
+        live = new Set(
+          (await promptVideos(this.db, site.siteId)).map((v) => v.id),
+        );
+      }
+    } catch {
+      /* не проверили — без кнопки ролика */
+    }
+    return actions.filter((a) => a.kind !== 'video' || live.has(a.videoId));
   }
 
   // ── Чтение контекста (всё — под assist_public) ─────────────────────────

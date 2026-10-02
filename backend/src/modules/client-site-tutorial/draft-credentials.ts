@@ -47,10 +47,12 @@ export const MAX_CREDENTIALS_BYTES = 16 * 1024;
 export class CredentialsTooLargeError extends Error {}
 export class CredentialsCorruptedError extends Error {}
 
-export function encryptCredentials(
-  fields: DraftCredentialField[],
-  key: string,
-): string {
+/**
+ * Открытый формат набора (JSON списка полей) — его же шифрует хранилище
+ * `sites-backend` (Э-С Ш2, назначение `login-fields`), и формат знает
+ * ровно одно место.
+ */
+export function serializeCredentials(fields: DraftCredentialField[]): string {
   const json = JSON.stringify(
     fields.map((f) => ({ selector: f.selector, value: f.value })),
   );
@@ -60,7 +62,14 @@ export function encryptCredentials(
       `учётные данные не помещаются в ${MAX_CREDENTIALS_BYTES} байт (получилось ${size})`,
     );
   }
-  return encryptToken(json, key);
+  return json;
+}
+
+export function encryptCredentials(
+  fields: DraftCredentialField[],
+  key: string,
+): string {
+  return encryptToken(serializeCredentials(fields), key);
 }
 
 /**
@@ -72,9 +81,22 @@ export function decryptCredentials(
   stored: string,
   key: string,
 ): DraftCredentialField[] {
+  let plain: string;
+  try {
+    plain = decryptToken(stored, key);
+  } catch (err) {
+    throw new CredentialsCorruptedError(
+      `учётные данные черновика не читаются: ${(err as Error).message}`,
+    );
+  }
+  return parseCredentials(plain);
+}
+
+/** Разбор открытого JSON набора (из колонки после расшифровки или из хранилища). */
+export function parseCredentials(plain: string): DraftCredentialField[] {
   let raw: unknown;
   try {
-    raw = JSON.parse(decryptToken(stored, key));
+    raw = JSON.parse(plain);
   } catch (err) {
     throw new CredentialsCorruptedError(
       `учётные данные черновика не читаются: ${(err as Error).message}`,

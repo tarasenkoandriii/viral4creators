@@ -415,6 +415,8 @@ export class ChromiumPageExplorer implements PageExplorer {
     // адрес до него: тот же смысл, что у раунда (см. `runInBrowser`).
     let target: string | undefined;
     let urlBeforeTarget = page.url();
+    // Аудит Э6, Д1: ввод в поле пароля/кода — вход (липкий `loginUsedAt`).
+    let sensitiveFill = false;
 
     for (const step of rest) {
       if (step.kind === 'goto') {
@@ -446,7 +448,7 @@ export class ChromiumPageExplorer implements PageExplorer {
             `для поля ${step.selector} не сохранены учётные данные — переиграть вход нечем`,
           );
         }
-        await this.fill(page, step.selector, value);
+        if (await this.fill(page, step.selector, value)) sensitiveFill = true;
         progress.done += 1;
         continue;
       }
@@ -469,7 +471,11 @@ export class ChromiumPageExplorer implements PageExplorer {
       redirectWarning,
       deadline,
     });
-    return { exploration, cookies: await this.harvestCookies(page) };
+    return {
+      exploration,
+      cookies: await this.harvestCookies(page),
+      sensitiveFill,
+    };
   }
 
   private async runInBrowser(
@@ -495,9 +501,12 @@ export class ChromiumPageExplorer implements PageExplorer {
     );
     const urlBeforeActions = page.url();
 
+    let sensitiveFill = false;
     for (const action of request.actions) {
       if (action.kind === 'fill') {
-        await this.fill(page, action.selector, action.value);
+        if (await this.fill(page, action.selector, action.value)) {
+          sensitiveFill = true;
+        }
       } else {
         await this.click(page, action.selector, request.allowedOrigin);
       }
@@ -519,7 +528,11 @@ export class ChromiumPageExplorer implements PageExplorer {
       deadline,
     });
 
-    return { exploration, cookies: await this.harvestCookies(page) };
+    return {
+      exploration,
+      cookies: await this.harvestCookies(page),
+      sensitiveFill,
+    };
   }
 
   /** Переход + замок ДО первого действия: если `goto` увёл редиректом
@@ -587,17 +600,29 @@ export class ChromiumPageExplorer implements PageExplorer {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  /**
+   * Заполнить поле. Возвращает `true`, если поле — пароль или код
+   * (`type=password`, `autocomplete` пароля/одноразового кода): это вход,
+   * и черновик получает липкий `loginUsedAt` (аудит Э6, Д1). Проверка — ДО
+   * ввода (после него SPA может перерисовать форму); не удалась — сомнение,
+   * то есть «да».
+   */
   private async fill(
     page: ExplorerPage,
     selector: string,
     value: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    const sensitive = await Promise.resolve()
+      .then(() => page.evaluate(sensitiveFieldSource(selector)))
+      .then((r) => r === true)
+      .catch(() => true);
     const locator = this.locate(page, selector);
     await withForeignTimeout(
       locator.fill(value) as Promise<unknown>,
       ACTION_TIMEOUT_MS,
       `поле ${selector} не найдено или не заполняется`,
     );
+    return sensitive;
   }
 
   private async click(
@@ -856,6 +881,26 @@ export class ChromiumPageExplorer implements PageExplorer {
       throw err;
     }
   }
+}
+
+/**
+ * Источник для `page.evaluate`: поле по селектору — пароль или код?
+ * Строкой (как `page-exploration.ts`): уезжает в браузер. Селектор —
+ * JSON-литералом, без склейки. Невалидный для `querySelector` селектор или
+ * поля нет — `false` (ввод тогда упадёт сам и раунд не сохранится).
+ */
+export function sensitiveFieldSource(selector: string): string {
+  return `(() => {
+  try {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return false;
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    const ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+    return type === 'password' || /(current|new)-password|one-time-code/.test(ac);
+  } catch (e) {
+    return false;
+  }
+})()`;
 }
 
 /** Селектор последнего клика раунда — только он может нести

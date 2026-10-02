@@ -3,8 +3,10 @@
  * `GET /w/v1/frame?pk=` (не статикой) с заголовками:
  *   Content-Security-Policy: default-src 'none'; script-src 'self';
  *     style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self';
- *     media-src blob: (Э5: озвучка ответа — байты `POST /widget/v1/tts`
- *     проигрываются из Blob-URL; другого источника звука у чата нет);
+ *     media-src blob: 'self' <хосты роликов> (Э5: озвучка ответа — байты
+ *     `POST /widget/v1/tts` из Blob-URL; Э6: ролик обучалки — подписанная
+ *     ссылка `/widget/v1/video/:token` своего origin и её редирект на
+ *     хранилище роликов, config/media-env.ts ASSIST_VIDEO_HOSTS);
  *     frame-ancestors <frameAncestors()>; base-uri 'none'; form-action 'none';
  *     require-trusted-types-for 'script'; trusted-types 'none'
  *   Cache-Control: public, max-age=0, s-maxage=<frameCacheSeconds>
@@ -51,7 +53,14 @@ const ANCESTOR_SOURCE =
  * иначе дописала бы свою директиву. Негодное — отбрасывается; ничего не
  * осталось — `'none'`.
  */
-export function frameCsp(ancestors: string): string {
+/** Источник media-src: `https://*.x.y`, `https://x.y`, `http://localhost:*`. */
+const MEDIA_SOURCE =
+  /^(?:https:\/\/(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+|http:\/\/(?:localhost|127\.0\.0\.1):\*)$/;
+
+export function frameCsp(
+  ancestors: string,
+  mediaSources: string[] = [],
+): string {
   const sources = ancestors
     .split(/\s+/)
     .filter((s) => s && ANCESTOR_SOURCE.test(s));
@@ -67,7 +76,12 @@ export function frameCsp(ancestors: string): string {
     "font-src 'self'",
     "connect-src 'self'",
     // Э5: озвучка ответа — Blob-URL из байтов `POST /widget/v1/tts`.
-    'media-src blob:',
+    // Э6: ролик — подписанная ссылка своего origin и редирект на хранилище
+    // роликов (только источники правильной формы — как frame-ancestors).
+    [
+      "media-src blob: 'self'",
+      ...mediaSources.filter((m) => MEDIA_SOURCE.test(m)),
+    ].join(' '),
     `frame-ancestors ${fa}`,
     "base-uri 'none'",
     "form-action 'none'",

@@ -1,4 +1,5 @@
 import { billingEn } from './billing-en';
+import { mediaEn } from './media-en';
 import type { AppDictionary } from './ru';
 import { setupEn } from './setup-en';
 import { e3En } from './e3-en';
@@ -429,4 +430,6 @@ export const appEn: AppDictionary = {
   e3: e3En,
   // Э4: тариф и оплата, Условия и DPA.
   billing: billingEn,
+  // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).
+  media: mediaEn,
 };

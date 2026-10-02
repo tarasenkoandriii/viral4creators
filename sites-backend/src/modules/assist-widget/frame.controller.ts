@@ -11,6 +11,7 @@
 import { Controller, Get, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
+import { videoMediaSources } from '../../config/media-env';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import { frameCsp, frameHtml } from './frame-html';
 import { WidgetPublicConfigService } from './widget-config.service';
@@ -39,7 +40,10 @@ export class WidgetFrameController {
     res.status(200);
     res.removeHeader('X-Frame-Options');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Content-Security-Policy', frameCsp(ancestors));
+    res.setHeader(
+      'Content-Security-Policy',
+      frameCsp(ancestors, videoMediaSources()),
+    );
     res.setHeader(
       'Cache-Control',
       `public, max-age=0, s-maxage=${WIDGET_DEFAULTS.frameCacheSeconds}`,

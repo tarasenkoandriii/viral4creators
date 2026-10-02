@@ -30,6 +30,7 @@ export const setupEn: SetupDictionary = {
     widget: 'Widget',
     persona: 'Character',
     wizard: 'Teach the assistant',
+    videos: 'Videos',
   },
   widget: {
     title: 'Widget',

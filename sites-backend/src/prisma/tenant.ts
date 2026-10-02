@@ -100,6 +100,16 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistAccountUsage: 'accountId',
   AssistPayment: 'accountId',
   AssistLegalAcceptance: 'accountId',
+  // Э6: ролики обучалки генератора на сайте помощника (пишет внутренний API
+  // по siteId сайта кабинета, читает кабинет и — по siteId — виджет под
+  // assist_public) и карта интерфейса страниц (обход кабинета, Ш4 — общая).
+  AssistSiteVideo: 'accountId',
+  SiteUiMap: 'accountId',
+  // Э-С Ш2: тестовые учётные записи сайта, их секреты и аренды — строки
+  // кабинета (составной FK держит то же в базе).
+  SiteTestAccount: 'accountId',
+  SiteCredential: 'accountId',
+  SiteCredentialLease: 'accountId',
 };
 
 /**
@@ -158,6 +168,12 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
     'кандидаты eval платформы из ревью — набор платформы, не кабинета',
   // Э5: кэш озвучки ответов «Сайта» — пишет публичный маршрут по siteId.
   AssistSiteTtsCache: 'кэш озвучки ответов по siteId — пишет виджет',
+  // Э-С Ш2, режим B: владелец — пользователь генератора, не кабинет.
+  UserSiteSession:
+    'личная запись режима B: владелец — пользователь генератора (ownerRef), кабинета нет',
+  UserSiteSecret: 'секрет личной записи режима B — по sessionId',
+  SiteCredentialAudit:
+    'журнал доступа к учётным данным: обе зоны (кабинет и личные записи), без FK',
 };
 
 const WHERE_OPERATIONS = new Set([

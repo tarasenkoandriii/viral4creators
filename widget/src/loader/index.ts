@@ -43,6 +43,7 @@ import {
   WIDGET_GLOBAL,
   WIDGET_GOAL_ATTR,
   WIDGET_GOAL_PICKER_PARAM,
+  WIDGET_HIGHLIGHT_PATH,
   WIDGET_LOADER_PATH,
   WIDGET_ORIGIN_DEFAULT,
   WIDGET_PICKER_PATH,
@@ -574,6 +575,9 @@ class Loader {
           this.unavailable = true;
           this.refreshVisibility();
           break;
+        case 'highlight':
+          this.highlight(m);
+          break;
         case 'resize':
           break;
       }
@@ -826,6 +830,39 @@ class Loader {
       N.off(window, 'submit', onSubmit);
       N.off(document, 'visibilitychange', onHide);
     });
+  }
+
+  // ── Э6: «показать на экране» — ленивый чанк highlight.js ─────────────
+
+  /**
+   * Селектор и подпись — из карты сервера (iframe лишь передал их); чанк
+   * ищет ровно один видимый элемент и подсвечивает. Мобильное окно на весь
+   * экран сначала сворачивается — иначе показывать некуда. Итог — в iframe:
+   * не нашёл → сигнал «карта устарела».
+   */
+  private highlight(m: {
+    elementId: string;
+    selector: string;
+    caption: string;
+  }) {
+    if (this.ui?.isOpen() && this.ui.isMobile() && !this.isInline())
+      this.close('min');
+    import(/* @vite-ignore */ this.origin + WIDGET_HIGHLIGHT_PATH)
+      .then(
+        (x: { highlight: (s: string, c: string, n: typeof N) => boolean }) =>
+          x.highlight(m.selector, m.caption, N)
+      )
+      // Чанк не загрузился (CSP без script-src виджета, сеть) — это не
+      // «вёрстка сменилась»: сигнала нет.
+      .catch(() => null)
+      .then((found) => {
+        if (found !== null)
+          this.post({
+            type: 'highlight-result',
+            elementId: m.elementId,
+            found: found === true,
+          });
+      });
   }
 
   /** `?v4c_goal=` → чанк режима выбора цели. Trusted Types без политики — честный отказ (О-8). */

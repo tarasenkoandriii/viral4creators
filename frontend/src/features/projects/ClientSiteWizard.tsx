@@ -97,6 +97,7 @@ import {
   siteModeCardVisible,
 } from '../../lib/site-access';
 import { LiveLoginSession } from './LiveLoginSession';
+import { ClientSiteTestAccounts } from './ClientSiteTestAccounts';
 import { ScreenHeader } from './shared';
 import { Stepper } from '../../components/ui';
 import { ReadinessPanel } from '../../components/ReadinessPanel';
@@ -864,6 +865,12 @@ export function ClientSiteWizard({
             )}
           </div>
         )}
+
+      {/* Э-С Ш2: тестовые учётные записи сайта (A — реестр, общий с QA;
+          B — личный сохранённый вход). Свёрнуто, грузится по раскрытию. */}
+      {draft && (stage === 'page' || stage === 'review') && (
+        <ClientSiteTestAccounts projectId={projectId} />
+      )}
 
       {stage === 'page' && exploration && (
         <PageStage

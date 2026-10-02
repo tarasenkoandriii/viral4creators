@@ -9,6 +9,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import type { HostPurpose } from '../site-core/ownership/host-access';
+import type { UiMapElement } from '../site-core/ui-map/ui-map';
 
 /** Блок основного текста страницы — вход чанкера (assist-knowledge-core). */
 export type ExtractedBlockType = 'h' | 'p' | 'li' | 'tr' | 'faq' | 'pre';
@@ -44,6 +45,11 @@ export interface ExtractedPage {
   canonical: string | null;
   /** `<meta name="theme-color">` — фон публичной песочницы без скриншота. */
   themeColor: string | null;
+  /**
+   * Э6: карта интерфейса страницы (кнопки, ссылки своего сайта, поля) —
+   * extract/ui-map.ts; обход пишет её в `site_ui_maps` (источник `crawl`).
+   */
+  uiElements?: UiMapElement[];
 }
 
 export type SkipReason =

@@ -80,6 +80,10 @@ const uk = {
   voiceFailed: 'Не вдалося розпізнати — спробуйте ще раз або напишіть.',
   voiceRetry: 'Голос завантажується — натисніть ще раз.',
   byVoice: 'голосом',
+  // Э6: ролик обучалки сайта в окне чата.
+  videoTitle: 'Відео',
+  videoClose: 'Закрити відео',
+  videoUnavailable: 'Відео зараз недоступне.',
 };
 
 type Dict = typeof uk;
@@ -161,6 +165,9 @@ const ru: Dict = {
   voiceFailed: 'Не удалось распознать — попробуйте ещё раз или напишите.',
   voiceRetry: 'Голос загружается — нажмите ещё раз.',
   byVoice: 'голосом',
+  videoTitle: 'Видео',
+  videoClose: 'Закрыть видео',
+  videoUnavailable: 'Видео сейчас недоступно.',
 };
 
 const en: Dict = {
@@ -241,6 +248,9 @@ const en: Dict = {
   voiceFailed: "Couldn't recognise that — try again or type.",
   voiceRetry: 'Voice is loading — tap again.',
   byVoice: 'by voice',
+  videoTitle: 'Video',
+  videoClose: 'Close video',
+  videoUnavailable: 'The video is unavailable right now.',
 };
 
 export const DICTS: Record<UiLang, Dict> = { uk, ru, en };

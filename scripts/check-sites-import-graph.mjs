@@ -71,11 +71,25 @@
  *     модулей только `site-core` и `telegram-auth`, и его не импортирует
  *     никто: канал «генератор → кабинет» действует от имени любого
  *     telegramId и не должен становиться входом в помощник или QA.
+ * 14. (Э-С Ш2) зона секретов: `site-credentials-scope` — модуль
+ *     `site-credentials` (тестовые учётки сайта и хранилище их секретов)
+ *     берёт из модулей только `site-core` и `telegram-auth`;
+ *     `credentials-zone` — импортировать его могут только `internal-sites`
+ *     (канал генератора) и `qa-*` (аренда `qa-login`), ни один модуль
+ *     помощника и ни один публичный код; `credentials-crypto-private` —
+ *     `site-credentials/credential-crypto` (ключи и расшифровка) не
+ *     импортирует никто вне модуля; `credentials-names` — имён таблиц и
+ *     моделей хранилища нет в коде других модулей (сырой SQL мимо сервиса).
  * 13. (Э5) `public-zone-e5`: голос посетителя — папка `public/` модуля
  *     `assist-site-voice` — публичная зона правила 8 (только assist_public);
  *     публичный код других модулей берёт из `assist-site-voice` только
  *     `public/**`, типы, `*-config` и `*.module`: кабинет голоса
  *     (`cabinet/`) ходит основным клиентом.
+ * 14. (Э6) `public-zone-e6`: видео и подсветка посетителя — папка `public/`
+ *     модуля `assist-site-media` — публичная зона правила 8; публичный код
+ *     других модулей берёт из `assist-site-media` только `public/**`, типы,
+ *     `*-config` и `*.module`: кабинет экрана «Видео» (`cabinet/`) ходит
+ *     основным клиентом.
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
@@ -109,6 +123,9 @@ const NEUTRAL = [/^assist-knowledge-core$/, /^site-ai$/];
 const DIGEST = 'assist-digest';
 /** Э-С Ш1: внутренний API обучалки генератора — лист графа (правило 12). */
 const INTERNAL_SITES = 'internal-sites';
+/** Э-С Ш2: зона секретов — тестовые учётки и их шифротексты (правило 14). */
+const CREDENTIALS = 'site-credentials';
+const CREDENTIALS_CONSUMERS = [/^internal-sites$/, /^qa-/];
 const MODE_MODULES = [
   /^assist-site-/,
   /^assist-admin-/,
@@ -155,9 +172,22 @@ export const RULES = [
   },
   {
     id: 'internal-sites-scope',
-    why: 'Э-С Ш1: internal-sites (внутренний API генератора) берёт из модулей только ядро site-core и telegram-auth',
+    why: 'Э-С Ш1/Ш2: internal-sites (внутренний API генератора) берёт из модулей только ядра site-core, site-credentials и telegram-auth',
     from: (m) => m === INTERNAL_SITES,
+    to: (m) =>
+      m !== 'site-core' && m !== 'telegram-auth' && m !== CREDENTIALS,
+  },
+  {
+    id: 'site-credentials-scope',
+    why: 'Э-С Ш2: site-credentials (секреты тестовых учёток) берёт из модулей только site-core и telegram-auth',
+    from: (m) => m === CREDENTIALS,
     to: (m) => m !== 'site-core' && m !== 'telegram-auth',
+  },
+  {
+    id: 'credentials-zone',
+    why: 'Э-С Ш2: site-credentials импортируют только internal-sites и qa-* — помощник и публичный код к секретам дороги не имеют',
+    from: (m) => m !== CREDENTIALS && !matches(m, CREDENTIALS_CONSUMERS),
+    to: (m) => m === CREDENTIALS,
   },
   {
     id: 'internal-sites-leaf',
@@ -188,6 +218,8 @@ const PUBLIC_ZONES = [
   { module: 'assist-billing', only: /^public\// },
   // Э5: распознавание и озвучка посетителя под assist_public.
   { module: 'assist-site-voice', only: /^public\// },
+  // Э6: ролики и карта интерфейса для посетителя под assist_public.
+  { module: 'assist-site-media', only: /^public\// },
 ];
 const inPublicZone = (moduleName, inModule) =>
   !/\.spec\.ts$/.test(inModule) &&
@@ -206,6 +238,8 @@ const E4_ALLOWED = /^(public\/.+|plans|units|subscription-state|[\w-]*types|[\w-
 /** Э5: что публичный код может взять из assist-site-voice (правило 13). */
 const E5_VOICE = /^modules\/assist-site-voice\/(.+)$/;
 const E5_ALLOWED = /^(public\/.+|[\w-]*types|[\w-]+-config|[\w-]+\.module)$/;
+/** Э6: что публичный код может взять из assist-site-media (правило 14). */
+const E6_MEDIA = /^modules\/assist-site-media\/(.+)$/;
 const MAIN_DB_TARGETS = [
   /^prisma\/sites-db\.service$/,
   /^prisma\/prisma\.service$/,
@@ -214,6 +248,15 @@ const MAIN_DB_TARGETS = [
   /^modules\/site-core\/ownership\/host-access\.service$/,
 ];
 export const PATH_RULES = [
+  {
+    id: 'credentials-crypto-private',
+    why: 'Э-С Ш2: ключи и расшифровка (site-credentials/credential-crypto) — только внутри модуля site-credentials',
+    from: (moduleName) => moduleName !== CREDENTIALS,
+    to: (target) =>
+      /^modules\/site-credentials\/credential-crypto$/.test(
+        target.replace(SOURCE_RE, ''),
+      ),
+  },
   {
     id: 'public-db',
     why: 'Э2 §4.3-бис слой 3: публичный код виджета работает только под assist_public (AssistPublicDb)',
@@ -258,6 +301,17 @@ export const PATH_RULES = [
       return !E5_ALLOWED.test(m[1]);
     },
   },
+  {
+    id: 'public-zone-e6',
+    why: 'Э6: публичный код берёт из assist-site-media только public/, *types, *-config и *.module (кабинет «Видео» — основная роль)',
+    from: inPublicZone,
+    to: (target, moduleName) => {
+      const m = E6_MEDIA.exec(target.replace(SOURCE_RE, ''));
+      if (!m || moduleName === 'assist-site-media') return false;
+      // Тот же набор, что у голоса (правило 13).
+      return !E5_ALLOWED.test(m[1]);
+    },
+  },
 ];
 
 /**
@@ -267,6 +321,8 @@ export const PATH_RULES = [
  */
 const ADMIN_NAMES = /assist_admin_|\bAssistAdmin[A-Z]?\w*|\bassistAdmin[A-Z]\w*/;
 const SITE_NAMES = /assist_site_|\bAssistSite[A-Z]\w*|\bassistSite[A-Z]\w*/;
+const CREDENTIAL_NAMES =
+  /\b(site_test_accounts|site_credentials|site_credential_leases|site_credential_audit|user_site_sessions|user_site_secrets)\b|\b(siteTestAccount|siteCredential|siteCredentialLease|siteCredentialAudit|userSiteSession|userSiteSecret)\b/;
 export const LITERAL_RULES = [
   {
     id: 'site-names↛admin',
@@ -279,6 +335,12 @@ export const LITERAL_RULES = [
     why: 'Э1 слой 2: в модуле «Админки» нет имён таблиц/моделей «Сайта»',
     in: (m) => matches(m, ADMIN_MODE),
     re: SITE_NAMES,
+  },
+  {
+    id: 'credentials-names',
+    why: 'Э-С Ш2: имена таблиц/моделей хранилища учётных данных — только в site-credentials (internal-sites и qa-* ходят через сервис)',
+    in: (m) => m !== CREDENTIALS,
+    re: CREDENTIAL_NAMES,
   },
   {
     id: 'neutral-names',
@@ -643,6 +705,51 @@ function selfTest() {
       'public-zone-e5',
     ],
     [
+      'modules/site-credentials/aq.ts',
+      `import { AssistBilling } from '../assist-billing/billing.service';`,
+      'site-credentials-scope',
+    ],
+    [
+      'modules/assist-site-chat/ar.ts',
+      `import { SiteCredentialsService } from '../site-credentials/site-credentials.service';`,
+      'credentials-zone',
+    ],
+    [
+      'modules/assist-widget/public-x/as.ts',
+      `import type { TestAccountView } from 'src/modules/site-credentials/site-credentials.service';`,
+      'credentials-zone',
+    ],
+    [
+      'modules/qa-runs/at.ts',
+      `import { openCredential } from '../site-credentials/credential-crypto';`,
+      'credentials-crypto-private',
+    ],
+    [
+      'modules/assist-admin-knowledge/au.ts',
+      `const rows = await db.siteCredential.findMany({});`,
+      'credentials-names',
+    ],
+    [
+      'modules/site-core/av.ts',
+      `const sql = 'SELECT 1 FROM "sites"."user_site_secrets"';`,
+      'credentials-names',
+    ],
+    [
+      'modules/assist-widget/aq.ts',
+      `import { SiteVideosService } from '../assist-site-media/cabinet/site-videos.service';`,
+      'public-zone-e6',
+    ],
+    [
+      'modules/assist-site-media/public/ar.ts',
+      `import { PrismaService } from '../../../prisma/prisma.service';`,
+      'public-db',
+    ],
+    [
+      'modules/internal-sites/as.ts',
+      `import { promptVideos } from '../assist-site-media/public/site-videos';`,
+      'internal-sites-scope',
+    ],
+    [
       'shared/l.ts',
       `import { G } from '../modules/telegram-auth/guard';`,
       'shared↛modules',
@@ -755,6 +862,30 @@ function selfTest() {
     [
       'modules/assist-site-voice/public/ok28.ts',
       `import { AssistPublicDb } from '../../../prisma/assist-public-db.service';\nimport { VoiceSettingsService } from '../cabinet/voice-settings.service';\nimport { claimUnits } from '../../assist-billing/public/entitlements';`,
+    ],
+    [
+      'modules/internal-sites/ok29.ts',
+      `import { SiteCredentialsService } from '../site-credentials/site-credentials.service';\nimport { isCredentialPurpose } from '../site-credentials/credential-types';`,
+    ],
+    [
+      'modules/qa-runs/ok30.ts',
+      `import { SiteCredentialsService } from '../site-credentials/site-credentials.service';`,
+    ],
+    [
+      'modules/site-credentials/ok31.ts',
+      `import { openCredential } from './credential-crypto';\nimport { HostAccessService } from '../site-core/ownership/host-access.service';\nconst r = db.siteCredential;\n// site_credentials в комментарии — можно`,
+    ],
+    [
+      'modules/assist-site-chat/ok29.ts',
+      `import { promptVideos } from '../assist-site-media/public/site-videos';\nimport type { SiteVideosView } from '../assist-site-media/api-types';\nimport { MEDIA_DEFAULTS } from '../assist-site-media/media-config';\nimport { AssistSiteMediaModule } from '../assist-site-media/assist-site-media.module';`,
+    ],
+    [
+      'modules/assist-site-media/cabinet/ok30.ts',
+      `import { SitesDb } from '../../../prisma/sites-db.service';\nimport { readState } from '../../assist-billing/public/entitlements';`,
+    ],
+    [
+      'modules/internal-sites/ok31.ts',
+      `import { cleanUiElements } from '../site-core/ui-map/ui-map';\nimport { isAllowedVideoUrl } from '../../config/media-env';`,
     ],
     [
       'shared/ok5.ts',

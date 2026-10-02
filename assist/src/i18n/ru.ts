@@ -1,4 +1,5 @@
 import { billingRu } from './billing-ru';
+import { mediaRu } from './media-ru';
 import { setupRu } from './setup-ru';
 import { e3Ru } from './e3-ru';
 
@@ -422,6 +423,8 @@ export const appRu = {
   e3: e3Ru,
   // Э4: тариф и оплата, Условия и DPA.
   billing: billingRu,
+  // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).
+  media: mediaRu,
 };
 
 export type AppDictionary = typeof appRu;

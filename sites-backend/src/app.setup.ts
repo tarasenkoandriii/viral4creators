@@ -53,6 +53,9 @@ export const SMALL_BODY_LIMIT = '4kb';
  */
 export const INTERNAL_SITES_PATH = '/internal/sites';
 export const INTERNAL_SITES_BODY_LIMIT = '8kb';
+/** Э-С Ш2: хранилище учётных данных — куки сессии до 256 КБ (свой потолок). */
+export const INTERNAL_CREDENTIALS_PATH = '/internal/sites/credentials';
+export const INTERNAL_CREDENTIALS_BODY_LIMIT = '320kb';
 
 /**
  * Э5: запись вопроса голосом приходит сырыми байтами (`Content-Type:
@@ -112,6 +115,22 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       },
     );
   }
+  // Э-С Ш2: раньше общего `/internal/sites` — разобранное тело (`_body`)
+  // следующий парсер не трогает, и потолок здесь свой.
+  const credentialsText = text({
+    type: () => true,
+    limit: INTERNAL_CREDENTIALS_BODY_LIMIT,
+  });
+  app.use(
+    INTERNAL_CREDENTIALS_PATH,
+    function internalCredentialsRawText(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      credentialsText(req, res, next);
+    },
+  );
   const internalText = text({
     type: () => true,
     limit: INTERNAL_SITES_BODY_LIMIT,

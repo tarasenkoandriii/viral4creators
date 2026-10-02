@@ -3,6 +3,7 @@ import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { StorageModule } from '../storage/storage.module';
 import { SitesInternalModule } from '../sites-internal/sites-internal.module';
+import { ClientSiteMediaModule } from '../client-site-media/client-site-media.module';
 import { ChromiumPageExplorer } from './chromium-page-explorer';
 import { ClientSiteTutorialAdminController } from './client-site-tutorial-admin.controller';
 import { ClientSiteTutorialAdminService } from './client-site-tutorial-admin.service';
@@ -12,6 +13,14 @@ import { ClientSiteTutorialUsageService } from './client-site-tutorial-usage.ser
 import { LiveLoginRelayClient } from './live-login-relay.client';
 import { PAGE_EXPLORER } from './page-explorer';
 import { ClientSiteAccessService } from './site-access.service';
+import { ClientSiteTestAccountsController } from './client-site-test-accounts.controller';
+import { ClientSiteTestAccountsService } from './client-site-test-accounts.service';
+import {
+  DraftSecretsStore,
+  defaultDraftSecretsStore,
+} from './draft-secrets-store';
+import { PrismaService } from '../../prisma/prisma.service';
+import { SitesInternalClient } from '../sites-internal/sites-internal.client';
 
 /**
  * Обучалка по сайту заказчика (doc/CLIENT-SITE-TUTORIAL-SPEC.md; этап
@@ -42,10 +51,14 @@ import { ClientSiteAccessService } from './site-access.service';
     AdminAuthModule,
     AdminPanelModule,
     SitesInternalModule,
+    // Э6 помощника: привязка к сайту помощника, ролики и карта интерфейса.
+    ClientSiteMediaModule,
   ],
   controllers: [
     ClientSiteTutorialController,
     ClientSiteTutorialAdminController,
+    // Э-С Ш2: экран «Тестовые учётные записи» мастера.
+    ClientSiteTestAccountsController,
   ],
   providers: [
     ClientSiteTutorialService,
@@ -54,6 +67,14 @@ import { ClientSiteAccessService } from './site-access.service';
     LiveLoginRelayClient,
     ClientSiteAccessService,
     { provide: PAGE_EXPLORER, useClass: ChromiumPageExplorer },
+    // Э-С Ш2: данные входа черновика — хранилище sites-backend или колонки.
+    {
+      provide: DraftSecretsStore,
+      useFactory: (prisma: PrismaService, sites: SitesInternalClient) =>
+        defaultDraftSecretsStore(prisma, sites),
+      inject: [PrismaService, SitesInternalClient],
+    },
+    ClientSiteTestAccountsService,
   ],
   exports: [
     ClientSiteTutorialService,

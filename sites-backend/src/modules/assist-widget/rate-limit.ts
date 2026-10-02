@@ -38,7 +38,12 @@ export type RateScope =
   | 'widget-stt-ip-site-min'
   | 'widget-stt-ip-site-day'
   | 'widget-tts-ip-site-min'
-  | 'widget-tts-ip-site-day';
+  | 'widget-tts-ip-site-day'
+  // Э6: ссылки на ролики и сигналы «элемент не найден» (посетитель и IP+сайт).
+  | 'widget-video-visitor-min'
+  | 'widget-video-ip-site-min'
+  | 'widget-uimiss-visitor-min'
+  | 'widget-uimiss-ip-site-min';
 
 export interface RateHit {
   scope: RateScope;

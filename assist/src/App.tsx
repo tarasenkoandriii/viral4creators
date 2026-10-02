@@ -73,6 +73,7 @@ import { createLearningApi } from './lib/learning-api';
 import { createStatsApi } from './lib/stats-api';
 import { createPersonaApi } from './lib/persona-api';
 import { createVoiceApi } from './lib/voice-api';
+import { createMediaApi } from './lib/media-api';
 import { createWidgetApi } from './lib/widget-api';
 import { launchAction, type LaunchAction } from './lib/widget-view';
 import { createWizardApi } from './lib/wizard-api';
@@ -96,6 +97,7 @@ import {
   WidgetScreen,
 } from './screens/widget/WidgetScreen';
 import { WizardScreen } from './screens/widget/WizardScreen';
+import { VideosScreen } from './screens/widget/VideosScreen';
 import {
   DialogScreen,
   DialogsHome,
@@ -106,6 +108,8 @@ import { HandoffScreen } from './screens/e3/HandoffScreen';
 import { IntegrationsScreen } from './screens/e3/IntegrationsScreen';
 import { LearningScreen } from './screens/e3/LearningScreen';
 import { SiteE3Buttons } from './screens/e3/parts';
+import { TestAccountsScreen } from './kit/screens/TestAccountsScreen';
+import { TestAccountsButton } from './screens/TestAccountsButton';
 import { StatsScreen, StatsSitesScreen } from './screens/e3/StatsScreens';
 
 /**
@@ -211,6 +215,7 @@ export function App({ startParam }: { startParam: string | null }) {
   const statsApi = useMemo(() => createStatsApi(client), [client]);
   const billingApi = useMemo(() => createBillingApi(client), [client]);
   const voiceApi = useMemo(() => createVoiceApi(client), [client]);
+  const mediaApi = useMemo(() => createMediaApi(client), [client]);
   const assist = useMemo<AssistValue>(
     () => ({
       knowledge: knowledgeApi,
@@ -223,6 +228,7 @@ export function App({ startParam }: { startParam: string | null }) {
       stats: statsApi,
       billing: billingApi,
       voice: voiceApi,
+      media: mediaApi,
     }),
     [
       knowledgeApi,
@@ -235,6 +241,7 @@ export function App({ startParam }: { startParam: string | null }) {
       statsApi,
       billingApi,
       voiceApi,
+      mediaApi,
     ]
   );
 
@@ -480,6 +487,7 @@ function navActive(key: string, route: Route): boolean {
       'onboarding-url',
       'sandbox-transfer',
       'plan',
+      'test-accounts',
     ].includes(route.name);
   }
   if (key === 'members') {
@@ -487,7 +495,7 @@ function navActive(key: string, route: Route): boolean {
   }
   if (
     key === 'widget' &&
-    ['widget', 'persona', 'widget-draft'].includes(route.name)
+    ['widget', 'persona', 'widget-draft', 'videos'].includes(route.name)
   ) {
     return true;
   }
@@ -797,6 +805,7 @@ function Screen({
           <div className="mb-4 space-y-2">
             <SiteSetupButtons siteId={route.siteId} />
             <SiteE3Buttons siteId={route.siteId} />
+            <TestAccountsButton siteId={route.siteId} />
           </div>
           <SiteScreen
             key={route.siteId}
@@ -864,6 +873,10 @@ function Screen({
       );
     case 'persona':
       return <PersonaScreen key={route.siteId} siteId={route.siteId} />;
+    case 'videos':
+      return <VideosScreen key={route.siteId} siteId={route.siteId} />;
+    case 'test-accounts':
+      return <TestAccountsScreen key={route.siteId} siteId={route.siteId} />;
     case 'wizard':
       return <WizardScreen key={route.siteId} siteId={route.siteId} />;
     case 'plan':

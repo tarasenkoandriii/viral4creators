@@ -64,6 +64,10 @@ export type Route =
   // Э4: тариф и оплата (§3.10); `#/billing/<тариф>` — выбранный тариф
   // (payload `pl_` лендинга, кнопка «Оплатить»).
   | { name: 'billing'; plan: string | null }
+  // Э6: ролики обучалки сайта и карта «показать на экране».
+  | { name: 'videos'; siteId: string }
+  // Э-С Ш2: тестовые учётные записи сайта (общие с обучалкой и QA).
+  | { name: 'test-accounts'; siteId: string }
   | { name: 'not-found'; path: string };
 
 const SECTIONS: Section[] = ['knowledge', 'widget', 'dialogs'];
@@ -148,6 +152,12 @@ export function parseRoute(hash: string): Route {
     }
     if (p.length === 3 && p[2] === 'persona' && ID.test(p[1])) {
       return { name: 'persona', siteId: p[1] };
+    }
+    if (p.length === 3 && p[2] === 'videos' && ID.test(p[1])) {
+      return { name: 'videos', siteId: p[1] };
+    }
+    if (p.length === 3 && p[2] === 'test-accounts' && ID.test(p[1])) {
+      return { name: 'test-accounts', siteId: p[1] };
     }
     if (p.length === 3 && p[2] === 'dialogs' && ID.test(p[1])) {
       return { name: 'dialogs', siteId: p[1] };
@@ -256,6 +266,10 @@ export function routeHref(r: Route): string {
       return `#/sites/${r.siteId}/widget${r.tab === 'look' ? '' : `/${r.tab}`}`;
     case 'persona':
       return `#/sites/${r.siteId}/persona`;
+    case 'videos':
+      return `#/sites/${r.siteId}/videos`;
+    case 'test-accounts':
+      return `#/sites/${r.siteId}/test-accounts`;
     case 'wizard':
       return `#/sites/${r.siteId}/learning/site/onboarding`;
     case 'plan':

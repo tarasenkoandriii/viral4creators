@@ -23,7 +23,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "eval:platform": "ts-node src/modules/assist-site-chat/eval/run-live.ts",
-    "eval:voice": "ts-node src/modules/assist-site-voice/eval/run-live.ts"
+    "eval:voice": "ts-node src/modules/assist-site-voice/eval/run-live.ts",
+    "credentials:rotate": "ts-node src/modules/site-credentials/scripts/rotate-credential-keys.ts"
   },
   "dependencies": {
     "@google/genai": "^1.52.0",

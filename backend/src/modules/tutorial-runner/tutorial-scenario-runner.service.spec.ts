@@ -229,6 +229,8 @@ function build(scenarios: unknown[]) {
     // Откат черновика обучалки при провале сборки (аудит 27.09.2026).
     clientSiteTutorialDraft: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // Э-С Ш2: ссылка на запись хранилища — нет (данные в колонках).
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     // Замок опроса сборок живёт внутри `pollAssemblies()` (правка
     // аудита 27.09.2026): его берёт и суточный прогон тоже.
@@ -4098,7 +4100,14 @@ describe('TutorialScenarioRunnerService', () => {
       // выбрал «одноразово»; остальные живут свой срок (30 дней).
       expect(prisma.clientSiteTutorialDraft.updateMany).toHaveBeenCalledWith({
         where: { id: 'draft-7', secretsOneShot: true },
-        data: { credentialsEnc: null, cookiesEnc: null },
+        // Э-С Ш2: и ссылки на запись хранилища sites-backend.
+        data: {
+          credentialsEnc: null,
+          cookiesEnc: null,
+          siteTestAccountId: null,
+          userSiteSessionId: null,
+          storeHasCredentials: false,
+        },
       });
     });
 

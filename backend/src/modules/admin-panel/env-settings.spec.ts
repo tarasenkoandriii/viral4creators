@@ -124,6 +124,8 @@ const PUBLIC_VALUE_KEYS = [
   // секреты, видеть значение и есть смысл строки.
   'SITES_VERIFY_URL',
   'SITE_TUTORIAL_ACCOUNT_CONSENT',
+  // Э-С Ш2: где лежат данные входа обучалки (sites | columns) — не секрет.
+  'SITE_TUTORIAL_CREDENTIALS_STORE',
   'FFMPEG_API_BASE_URL',
   'VOICE_ID',
   'VOICE_MODEL',
@@ -642,5 +644,33 @@ describe('getEnvSettings — обучалка: режим A/B и П-Т2 (Э-С �
     expect(row('https://t.me/x_bot').ok).toBe(true);
     expect(row('http://x.example').ok).toBe(false);
     expect(row('javascript:alert(1)').ok).toBe(false);
+  });
+});
+
+describe('getEnvSettings — обучалка: хранилище данных входа (Э-С Ш2)', () => {
+  const row = (env: EnvLike) =>
+    find(getEnvSettings(env), 'SITE_TUTORIAL_CREDENTIALS_STORE');
+  const channel = {
+    SITES_BACKEND_URL: 'https://sites.example.app',
+    SITES_TUTORIAL_HMAC_SECRET: 's'.repeat(40),
+  };
+
+  it('не задан — колонки, жёлтый с подсказкой, как включить', () => {
+    const r = row({});
+    expect(r.ok).toBe(true);
+    expect(r.severity).toBe('warning');
+    expect(r.value).toContain('columns');
+    expect(r.message).toContain('SITE_CREDENTIALS_KEYS');
+  });
+
+  it('sites без канала — не ok (запись уйдёт в колонки); с каналом — зелёный', () => {
+    expect(row({ SITE_TUTORIAL_CREDENTIALS_STORE: 'sites' }).ok).toBe(false);
+    const on = row({ SITE_TUTORIAL_CREDENTIALS_STORE: 'sites', ...channel });
+    expect(on.ok).toBe(true);
+    expect(on.severity).toBe('ok');
+  });
+
+  it('неизвестное значение — жёлтый', () => {
+    expect(row({ SITE_TUTORIAL_CREDENTIALS_STORE: 'vault' }).ok).toBe(false);
   });
 });

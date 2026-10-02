@@ -34,6 +34,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -43,11 +44,7 @@ import {
   UnsafeExternalUrlError,
   assertPubliclyRoutableUrl,
 } from '../../common/external-url-guard';
-import {
-  CdpCookie,
-  decryptCookieJar,
-  encryptCookieJar,
-} from '../../common/cookie-jar';
+import { CdpCookie, CookieJarTooLargeError } from '../../common/cookie-jar';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import {
   DomainLockError,
@@ -68,9 +65,19 @@ import { PageExploration } from './page-exploration.types';
 import { ClientSiteTutorialUsageService } from './client-site-tutorial-usage.service';
 import {
   CredentialsTooLargeError,
-  decryptCredentials,
-  encryptCredentials,
+  DraftCredentialField,
+  serializeCredentials,
 } from './draft-credentials';
+import {
+  DraftSecrets,
+  DraftSecretsPatch,
+  DraftSecretsRow,
+  DraftSecretsStore,
+  DraftSecretsUnavailableError,
+  DraftSecretsUser,
+  draftSecretsLocation,
+} from './draft-secrets-store';
+import { SitesInternalClient } from '../sites-internal/sites-internal.client';
 import {
   FrameDecodeError,
   decodeFrameDataUrl,
@@ -99,6 +106,11 @@ import {
   readLiveTicket,
 } from './live-login-ticket';
 import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
+import { randomBytes } from 'crypto';
+import {
+  isSensitiveSelector,
+  stepsShowLogin,
+} from '../client-site-media/requires-login';
 import {
   ClientSiteAccessService,
   SiteAccessView,
@@ -231,6 +243,14 @@ interface DraftRow {
   siteMode?: string | null;
   siteModeCheckedAt?: Date | null;
   siteHostId?: string | null;
+  /** Э-С Ш2: ссылка на запись хранилища sites-backend (A — учётка реестра,
+   * B — личная запись); обе пусты — данные входа в колонках. */
+  siteTestAccountId?: string | null;
+  userSiteSessionId?: string | null;
+  storeHasCredentials?: boolean;
+  /** Аудит Э6, Д1: липкий признак реального входа — только ставится
+   * (`loginMark`); `undefined` — строка из теста. */
+  loginUsedAt?: Date | null;
   status: DraftStatus;
   title: string | null;
   rejectionReason: string | null;
@@ -250,7 +270,18 @@ export class ClientSiteTutorialService {
     private readonly relay: LiveLoginRelayClient,
     @Inject(PAGE_EXPLORER) private readonly explorer: PageExplorer,
     private readonly access: ClientSiteAccessService,
-  ) {}
+    // Э-С Ш2: где лежат данные входа. Без провайдера (тесты оркестрации) —
+    // свой экземпляр: без env хранилища он пишет в колонки, как до Ш2.
+    @Optional() secretsStore?: DraftSecretsStore,
+  ) {
+    this.secrets =
+      secretsStore ??
+      new DraftSecretsStore(prisma, new SitesInternalClient(), () =>
+        this.requireSecretKey(),
+      );
+  }
+
+  private readonly secrets: DraftSecretsStore;
 
   /** Первый раунд: фиксирует `baseUrl`, открывает страницу, создаёт
    * черновик (§5.2 `/explore`). */
@@ -319,6 +350,27 @@ export class ClientSiteTutorialService {
       },
     );
 
+    // Ш2: куки первого раунда — в хранилище (A — реестр сайта, B — личная
+    // запись) или, пока оно не настроено, в колонку черновика.
+    const modeColumns = this.access.modeColumns(access);
+    const secretsPatch = await this.writeSecrets(
+      userId,
+      {
+        // Строки ещё нет — ключ личной записи B (`draft:<id>`) обязан быть
+        // уникальным: общий `draft:new` сводил в ОДНУ запись хранилища все
+        // новые черновики пользователя (куки одного читал другой, а на
+        // другом сайте — 409 USER_SESSION_ORIGIN_MISMATCH на каждом
+        // `/explore`). Найдено при аудите Э6, Д1.
+        id: `new-${randomBytes(9).toString('base64url')}`,
+        projectId,
+        baseUrl: origin,
+        credentialsEnc: null,
+        cookiesEnc: null,
+        siteMode: modeColumns.siteMode,
+        siteHostId: modeColumns.siteHostId,
+      },
+      { cookies: this.siteCookies(round.cookies, origin) },
+    );
     const created = await this.createDraft({
       projectId,
       baseUrl: origin,
@@ -326,12 +378,12 @@ export class ClientSiteTutorialService {
       stepsPerRound: state.stepsPerRound,
       roundScreenshots: state.roundScreenshots as object,
       lastUrl: round.exploration.currentUrl,
-      cookiesEnc: this.encryptCookies(round.cookies, origin),
+      ...secretsPatch,
       secretsUsedAt: new Date(),
       // Ш0.6: неугадываемая папка кадров в публичном Blob.
       frameKey: newFrameKey(),
       // Ш1: режим, с которым черновик начат.
-      ...this.access.modeColumns(access),
+      ...modeColumns,
     });
 
     // Съёмочный кадр — ПОСЛЕ создания строки: путь в Blob ключуется
@@ -459,6 +511,9 @@ export class ClientSiteTutorialService {
       input.expectedVersion,
       actions,
       steps,
+      // Ввод в поле, похожее на пароль/код, — вход (аудит Э6, Д1); тип
+      // поля на странице проверяет ещё и разведчик (`sensitiveFill`).
+      { login: input.fills.some((f) => isSensitiveSelector(f.selector)) },
     );
   }
 
@@ -512,27 +567,29 @@ export class ClientSiteTutorialService {
       { kind: 'click', selector: input.submitSelector },
     ];
 
-    // Шифруем ДО запуска браузера: если креды не помещаются в потолок,
+    // Сохранённое — ОДИН раз на раунд (в режиме A это аренда): куки для
+    // раунда и поля для слияния.
+    const stored = await this.readSecrets(userId, draft);
+
+    // Проверяем потолок ДО запуска браузера: если креды не помещаются,
     // незачем тратить раунд из суточного лимита ради того, чтобы упасть
     // на записи.
-    let credentialsEnc: string | undefined;
+    let fields: DraftCredentialField[] | undefined;
     if (sensitive.length) {
+      // Креды ДОПИСЫВАЮТСЯ к уже сохранённым, а не заменяют их
+      // (аудит этапа 116). Форма входа, разнесённая на два экрана —
+      // сначала email, потом пароль, — это ровно тот случай, который
+      // §14 п.8 объявляет поддержанным: раньше второй `/login` стирал
+      // то, что сохранил первый, и черновик становился неотменяемым
+      // (переигровка падала на поле без секрета) и непересобираемым.
+      const merged = new Map<string, string>();
+      for (const field of stored.fields) {
+        merged.set(field.selector, field.value);
+      }
+      for (const field of sensitive) merged.set(field.selector, field.value);
+      fields = [...merged].map(([selector, value]) => ({ selector, value }));
       try {
-        // Креды ДОПИСЫВАЮТСЯ к уже сохранённым, а не заменяют их
-        // (аудит этапа 116). Форма входа, разнесённая на два экрана —
-        // сначала email, потом пароль, — это ровно тот случай, который
-        // §14 п.8 объявляет поддержанным: раньше второй `/login` стирал
-        // то, что сохранил первый, и черновик становился неотменяемым
-        // (переигровка падала на поле без секрета) и непересобираемым.
-        const merged = new Map<string, string>();
-        for (const field of this.decryptSecretFields(draft.credentialsEnc)) {
-          merged.set(field.selector, field.value);
-        }
-        for (const field of sensitive) merged.set(field.selector, field.value);
-        credentialsEnc = encryptCredentials(
-          [...merged].map(([selector, value]) => ({ selector, value })),
-          this.requireSecretKey(),
-        );
+        serializeCredentials(fields);
       } catch (err) {
         if (err instanceof CredentialsTooLargeError) {
           throw new BadRequestException(err.message);
@@ -547,7 +604,8 @@ export class ClientSiteTutorialService {
       input.expectedVersion,
       actions,
       steps,
-      { credentialsEnc, secretsOneShot: input.forgetAfterBuild },
+      // Успешный `/login` — вход всегда (аудит Э6, Д1).
+      { fields, secretsOneShot: input.forgetAfterBuild, stored, login: true },
     );
   }
 
@@ -604,6 +662,10 @@ export class ClientSiteTutorialService {
     // оставшиеся шаги под аккаунтом человека — те же ворота, что у `/login`.
     await this.gateDrive(userId, draft, ipHash);
 
+    // Ш2: креды для переигровки — до занятия версии (недоступное хранилище
+    // не должно сжигать версию и слот).
+    const stored = await this.readSecrets(userId, draft);
+
     // Переигровка прогоняет ВСЕ оставшиеся шаги, включая клики, — то
     // есть повтор отмены нажимает их на сайте заказчика второй раз.
     // Занимаем версию до браузера, как и обычный раунд.
@@ -614,7 +676,7 @@ export class ClientSiteTutorialService {
     try {
       replayed = await this.explorer.replay({
         steps: undone.next.steps,
-        secrets: this.decryptSecrets(draft.credentialsEnc),
+        secrets: secretsMap(stored.fields),
         allowedOrigin: draft.baseUrl,
       });
     } catch (err) {
@@ -635,6 +697,19 @@ export class ClientSiteTutorialService {
       replayed.exploration.screenshotDataUrl,
       null,
     );
+    const secretsPatch = await this.writeSecrets(userId, draft, {
+      cookies: this.siteCookies(replayed.cookies, draft.baseUrl),
+    });
+    // Переигровка входа (секретные поля, ввод в пароль/код, сохранённые
+    // поля входа, живой вход в оставшихся шагах) — вход (аудит Э6, Д1).
+    const loginMark = this.loginMark(
+      draft,
+      stepsShowLogin(undone.next.steps) ||
+        undone.next.requiresLiveLoginReplay ||
+        stored.loginEvidence ||
+        replayed.sensitiveFill === true,
+      secretsPatch,
+    );
 
     const claim = await this.prisma.clientSiteTutorialDraft.updateMany({
       where: { id: draft.id, version: claimed, status: 'DRAFTING' },
@@ -651,7 +726,8 @@ export class ClientSiteTutorialService {
           state.roundScreenshots.length,
         ).slice(0, -1) as object,
         lastUrl: replayed.exploration.currentUrl,
-        cookiesEnc: this.encryptCookies(replayed.cookies, draft.baseUrl),
+        ...secretsPatch,
+        ...loginMark,
         secretsUsedAt: new Date(),
         version: { increment: 1 },
       },
@@ -848,6 +924,11 @@ export class ClientSiteTutorialService {
       );
     }
 
+    // Живой вход — вход (аудит Э6, Д1): флаг ставится уже на старте —
+    // человек мог войти и бросить сессию, а куки реле не всегда доезжают
+    // до `complete`; лишний флаг лишь скрывает ролик от посетителей.
+    await this.markLoginUsed(draft);
+
     let session;
     try {
       session = await this.relay.createSession({
@@ -949,7 +1030,6 @@ export class ClientSiteTutorialService {
     // заказчика у SSO-провайдера (Google, Facebook). Дальше — ни в раунд,
     // ни в базу: только куки сайта заказчика.
     const sessionCookies = this.siteCookies(result.cookies, draft.baseUrl);
-    const cookiesEnc = this.encryptCookies(sessionCookies, draft.baseUrl);
 
     // Обычный раунд поверх только что добытой сессии — никаких
     // действий, только открыть авторизованную страницу и посмотреть.
@@ -985,6 +1065,10 @@ export class ClientSiteTutorialService {
       screenshot: round.exploration.screenshotDataUrl,
       live: true,
     });
+    // Ш2: живая сессия — в хранилище (или в колонку, пока оно не настроено).
+    const secretsPatch = await this.writeSecrets(userId, draft, {
+      cookies: sessionCookies,
+    });
 
     // Версия в `where` (аудит этапа 116). Без неё этот путь был
     // единственной мутацией модуля без оптимистичной блокировки, а он
@@ -1012,7 +1096,11 @@ export class ClientSiteTutorialService {
         ] as object,
         lastUrl: round.exploration.currentUrl,
         requiresLiveLoginReplay: true,
-        ...(cookiesEnc ? { cookiesEnc, secretsUsedAt: new Date() } : {}),
+        // Живой вход — вход всегда (аудит Э6, Д1), даже без кук сайта.
+        ...this.loginMark(draft, true),
+        ...(sessionCookies.length
+          ? { ...secretsPatch, secretsUsedAt: new Date() }
+          : {}),
         version: { increment: 1 },
       },
     });
@@ -1141,13 +1229,17 @@ export class ClientSiteTutorialService {
     assertSameSite(draft.baseUrl, url);
     // Ш1/П-Т2: снимок открывает сайт с куками сессии человека.
     await this.gateDrive(userId, draft, ipHash);
+    const { cookies, loginEvidence } = await this.readSecrets(userId, draft);
+    // Снимок с прочитанными полями входа/паролем учётки — вход (аудит Э6,
+    // Д1): флаг — до браузера, чтобы карта из этого снимка не ушла.
+    if (loginEvidence) await this.markLoginUsed(draft);
 
     await this.reserveRound(userId);
     let round;
     try {
       round = await this.explorer.runRound({
         url,
-        cookies: this.decryptCookies(draft.cookiesEnc),
+        cookies,
         actions: [],
         allowedOrigin: draft.baseUrl,
       });
@@ -1158,6 +1250,34 @@ export class ClientSiteTutorialService {
     await this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
 
     return { draft: this.toView(draft), exploration: round.exploration };
+  }
+
+  /**
+   * Аудит Э6, Д1: липкий признак реального входа для правки строки раунда.
+   * Только ставится (раньше поставленный не переписывается); `{}` — входа
+   * не было, поле не трогаем. Патч хранилища мог принести свой признак
+   * (привязка к записи, где уже лежали секреты).
+   */
+  private loginMark(
+    draft: { loginUsedAt?: Date | null },
+    evidence: boolean,
+    patch?: DraftSecretsPatch,
+  ): { loginUsedAt?: Date } {
+    if (!evidence && !patch?.loginUsedAt) return {};
+    return { loginUsedAt: draft.loginUsedAt ?? new Date() };
+  }
+
+  /** То же отдельной записью — для путей без правки строки раунда (старт
+   * живого входа, снимок). Без версии: флаг не мешает ни одной вкладке. */
+  private async markLoginUsed(draft: {
+    id: string;
+    loginUsedAt?: Date | null;
+  }): Promise<void> {
+    if (draft.loginUsedAt) return;
+    await this.prisma.clientSiteTutorialDraft.updateMany({
+      where: { id: draft.id, loginUsedAt: null },
+      data: { loginUsedAt: new Date() },
+    });
   }
 
   /** Возврат отклонённого черновика в работу (§5.2 `/resume`, §14 п.10). */
@@ -1199,6 +1319,11 @@ export class ClientSiteTutorialService {
     // к хранилищу, потерянные навсегда кадры авторизованного кабинета
     // — заметно дороже.
     await this.wipeFrames(draft.id);
+    // Ш2: данные входа в хранилище — стереть (личная запись B — целиком, у
+    // учётки реестра A — секреты). Сбой — в лог: истекут по сроку там.
+    if (draftSecretsLocation(draft) !== 'columns') {
+      await this.secrets.forget(await this.secrets.userOf(userId), draft);
+    }
     await this.prisma.clientSiteTutorialDraft.deleteMany({
       where: { projectId },
     });
@@ -1214,7 +1339,15 @@ export class ClientSiteTutorialService {
     expectedVersion: number,
     actions: RoundAction[],
     steps: ScenarioStep[],
-    extra: { credentialsEnc?: string; secretsOneShot?: boolean } = {},
+    extra: {
+      /** Полный набор полей входа для записи (`/login`). */
+      fields?: DraftCredentialField[];
+      secretsOneShot?: boolean;
+      /** Уже прочитанное сохранённое (`/login` читает для слияния). */
+      stored?: DraftSecrets;
+      /** Раунд — вход сам по себе (`/login`, ввод в поле пароля/кода). */
+      login?: boolean;
+    } = {},
   ): Promise<RoundResult> {
     const state = this.toRoundsState(draft);
     assertRoundsConsistent(state);
@@ -1222,6 +1355,10 @@ export class ClientSiteTutorialService {
     const url = draft.lastUrl ?? draft.baseUrl;
     await this.assertSafeUrl(url);
     assertSameSite(draft.baseUrl, url);
+
+    // Ш2: сессия — до занятия версии: недоступное хранилище не сжигает ни
+    // версию, ни слот лимита.
+    const stored = extra.stored ?? (await this.readSecrets(userId, draft));
 
     // Версия занимается ДО браузера — см. `claimRound`. Повтор того же
     // запроса (оборвалась связь, клиент сдался по таймауту) иначе
@@ -1233,7 +1370,7 @@ export class ClientSiteTutorialService {
     try {
       round = await this.explorer.runRound({
         url,
-        cookies: this.decryptCookies(draft.cookiesEnc),
+        cookies: stored.cookies,
         actions,
         allowedOrigin: draft.baseUrl,
       });
@@ -1256,6 +1393,18 @@ export class ClientSiteTutorialService {
       throw err;
     }
 
+    const secretsPatch = await this.writeSecrets(userId, draft, {
+      cookies: this.siteCookies(round.cookies, draft.baseUrl),
+      fields: extra.fields,
+    });
+    const loginMark = this.loginMark(
+      draft,
+      extra.login === true ||
+        stored.loginEvidence ||
+        round.sensitiveFill === true,
+      secretsPatch,
+    );
+
     const claim = await this.prisma.clientSiteTutorialDraft.updateMany({
       where: { id: draft.id, version: claimed, status: 'DRAFTING' },
       data: {
@@ -1273,11 +1422,9 @@ export class ClientSiteTutorialService {
           round.exploration.dangerWarning ?? null,
         ] as object,
         lastUrl: round.exploration.currentUrl,
-        cookiesEnc: this.encryptCookies(round.cookies, draft.baseUrl),
+        ...secretsPatch,
+        ...loginMark,
         secretsUsedAt: new Date(),
-        ...(extra.credentialsEnc
-          ? { credentialsEnc: extra.credentialsEnc }
-          : {}),
         ...(extra.secretsOneShot !== undefined
           ? { secretsOneShot: extra.secretsOneShot }
           : {}),
@@ -1693,38 +1840,69 @@ export class ClientSiteTutorialService {
     return frames.length;
   }
 
-  /** Секретные значения полей входа по селектору — для переигровки
-   * (§7.3). Нечитаемая запись не гасится пустым списком: молча войти
-   * «наполовину» хуже, чем честно сказать, что креды потеряны. */
-  private decryptSecretFields(
-    enc: string | null,
-  ): Array<{ selector: string; value: string }> {
-    if (!enc) return [];
-    return decryptCredentials(enc, this.requireSecretKey());
-  }
-
-  private decryptSecrets(enc: string | null): Record<string, string> {
-    const map: Record<string, string> = {};
-    for (const field of this.decryptSecretFields(enc)) {
-      map[field.selector] = field.value;
+  /**
+   * Данные входа черновика на раунд (Ш2: аренда в режиме A, чтение
+   * владельцем в B, колонки — пока хранилище не включено). Нечитаемая
+   * запись в колонках не гасится пустым списком: молча войти «наполовину»
+   * хуже, чем честно сказать, что креды потеряны.
+   */
+  private async readSecrets(
+    userId: string,
+    draft: DraftRow,
+  ): Promise<DraftSecrets> {
+    try {
+      return await this.secrets.read(
+        await this.secretsUser(userId, draft),
+        draft,
+      );
+    } catch (err) {
+      throw this.secretsError(err);
     }
-    return map;
   }
 
   /**
-   * Шифрует jar для `cookiesEnc` — ТОЛЬКО куки сайта заказчика (Ш0.5,
-   * `first-party-cookies.ts`). Фильтр стоит здесь, в единственной точке
-   * записи, а не у каждого вызывающего: раунд разведчика, `/undo` и
-   * живой вход отдают jar всего браузера, и забытый у одного из них
-   * фильтр снова положил бы в базу чужую SSO-сессию.
+   * Запись данных входа раунда — колонки черновика для той же записи, что
+   * сохраняет раунд. Только куки сайта заказчика (Ш0.5): фильтр — у
+   * вызывающих через `siteCookies`, в единственной точке каждого пути.
    */
-  private encryptCookies(
-    cookies: CdpCookie[],
-    baseUrl: string,
-  ): string | undefined {
-    const kept = this.siteCookies(cookies, baseUrl);
-    if (kept.length === 0) return undefined;
-    return encryptCookieJar(kept, this.requireSecretKey());
+  private async writeSecrets(
+    userId: string,
+    draft: DraftSecretsRow,
+    change: { fields?: DraftCredentialField[]; cookies?: CdpCookie[] },
+  ): Promise<DraftSecretsPatch> {
+    try {
+      return await this.secrets.write(
+        await this.secretsUser(userId, draft),
+        draft,
+        change,
+      );
+    } catch (err) {
+      throw this.secretsError(err);
+    }
+  }
+
+  /** Telegram-id нужен только хранилищу (режим A) — колонкам не нужен. */
+  private async secretsUser(
+    userId: string,
+    draft: DraftSecretsRow,
+  ): Promise<DraftSecretsUser> {
+    if (draftSecretsLocation(draft) === 'columns' && !this.secrets.enabled()) {
+      return { userId, telegramId: null };
+    }
+    return this.secrets.userOf(userId);
+  }
+
+  private secretsError(err: unknown): Error {
+    if (err instanceof DraftSecretsUnavailableError) {
+      return new ServiceUnavailableException(err.message);
+    }
+    if (
+      err instanceof CredentialsTooLargeError ||
+      err instanceof CookieJarTooLargeError
+    ) {
+      return new BadRequestException(err.message);
+    }
+    return err instanceof Error ? err : new Error(String(err));
   }
 
   private siteCookies(cookies: CdpCookie[], baseUrl: string): CdpCookie[] {
@@ -1736,17 +1914,6 @@ export class ClientSiteTutorialService {
       );
     }
     return kept;
-  }
-
-  private decryptCookies(enc: string | null): CdpCookie[] {
-    if (!enc) return [];
-    const { cookies, dropped } = decryptCookieJar(enc, this.requireSecretKey());
-    if (dropped > 0) {
-      this.logger.warn(
-        `черновик обучалки: ${dropped} кук отброшено при восстановлении`,
-      );
-    }
-    return cookies;
   }
 
   private toRoundsState(draft: DraftRow): DraftRoundsState {
@@ -1795,7 +1962,8 @@ export class ClientSiteTutorialService {
       rejectionReason: draft.rejectionReason,
       previewFrameCount: draft.previewFrameCount,
       version: draft.version,
-      hasCredentials: draft.credentialsEnc !== null,
+      hasCredentials:
+        draft.credentialsEnc !== null || draft.storeHasCredentials === true,
       liveLoginAvailable: this.relay.configured(),
       readiness: clientSiteReadiness({
         status: draft.status,
@@ -1935,3 +2103,10 @@ export function pickLoginProofSelector(exploration: PageExploration): string {
 /** Реэкспорт для тестов/контроллера — чтобы не тянуть `draft-rounds`
  * напрямую туда, где нужна только ошибка отмены. */
 export { UndoNotPossibleError };
+
+/** Поля входа → «селектор → значение» для переигровки (§7.3). */
+function secretsMap(fields: DraftCredentialField[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const field of fields) map[field.selector] = field.value;
+  return map;
+}

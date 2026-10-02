@@ -458,3 +458,98 @@
 Код режима персоны — `PERSONA_DISABLED` (404, у рендера и снимков сессии
 — 400): режим выключен флагом. Его отдают и `PATCH …/brand-manifest`, и
 `POST …/postprod/revoice`.
+
+## Э-С Ш2: тестовые учётные записи сайта и хранилище данных входа
+
+Генератор (backend), за `TelegramIdentityGuard`, владение проектом — как у
+`/site-tutorial` (чужой проект — 404). Пароль только на запись: в ответах
+его нет никогда, только флаги `secrets{password, loginFields, session}`.
+
+| Маршрут | Кто | Что |
+|---|---|---|
+| `GET /api/projects/:id/site-tutorial/test-accounts` | идентичность | экран «Тестовые учётные записи» мастера: `{ store: on\|off, mode: A\|B, hasDraft, accounts[], hosts[], sessions[], draftRecordId }`. `store: off` — `SITE_TUTORIAL_CREDENTIALS_STORE` ≠ `sites` или нет канала к sites-backend (данные входа в черновике, как до Ш2). Режим A — учётки реестра сайта черновика (общие с QA) и хосты сайта; B — личные записи пользователя по сайту черновика |
+| `POST /api/projects/:id/site-tutorial/test-accounts` | идентичность | только режим A: завести учётку `{ label, role?, plan?, username?, password?, hostIds?, products?, lifetimeDays?: 7\|30\|90, confirmedTestAccount }`; хосты по умолчанию — хост черновика, продукт — `tutorial`; лишнее поле — 400, строгую проверку значений делает sites-backend (`TEST_ACCOUNT_INVALID`) |
+| `PATCH /api/projects/:id/site-tutorial/test-accounts/:accountId` | идентичность | A — правка учётки (пустой `password` — не менять; `status: active\|frozen`); B — только `{ label }` личной записи |
+| `DELETE /api/projects/:id/site-tutorial/test-accounts/:accountId` | идентичность | «Забыть»: учётка реестра (A) или личная запись (B) вместе с секретами (crypto-shred); если это запись ЭТОГО черновика — ссылка в черновике обнуляется |
+
+Раунды обучалки (`explore`, `step`, `login`, `undo`, `refresh`,
+`live-login/complete`) с `SITE_TUTORIAL_CREDENTIALS_STORE=sites` пишут и
+читают данные входа через хранилище sites-backend: режим A — учётка реестра
+по ключу проекта (`project:<id>`) и аренда на каждый раунд, режим B —
+личная запись по ключу черновика (`draft:<id>`). Черновик уже в хранилище, а оно недоступно — 503 ДО занятия
+версии и слота лимита; хранилище не настроено при первой записи — колонки
+черновика и предупреждение в лог. `hasCredentials` черновика учитывает и
+хранилище (`storeHasCredentials`).
+
+sites-backend, кабинет (initData любого из двух ботов, владелец и менеджер
+кабинета; оператор — 403):
+
+| Маршрут | Что |
+|---|---|
+| `GET /sites/:siteId/test-accounts` | список учёток сайта без секретов |
+| `POST /sites/:siteId/test-accounts` | завести; тело — как выше, `label`, хотя бы один хост ЭТОГО сайта и продукт обязательны |
+| `PATCH /sites/:siteId/test-accounts/:id` | изменить; новый `lifetimeDays` оживляет истёкшую |
+| `DELETE /sites/:siteId/test-accounts/:id` | «Забыть»: учётка, секреты и аренды удаляются, строка журнала остаётся |
+| `GET /cron/site-credentials-retention` | `CRON_SECRET`; сроки учёток, секретов, личных записей, аренд и журнала |
+
+sites-backend, внутренний API генератора (HMAC как у Ш1 — `SITES_TUTORIAL_HMAC_SECRET`,
+метка ±5 мин, одноразовый id; тело до 320 КБ), все `POST`:
+
+| Маршрут | Тело → ответ |
+|---|---|
+| `/internal/sites/credentials/status` | `{}` → `{ configured, currentKeyVersion }` |
+| `/internal/sites/credentials/test-accounts/list` | `{ telegramId, hostId }` → `{ siteId, hosts[], accounts[] (coversHost) }`; хост не в кабинете, где человек владелец/менеджер, — 403 `HOST_NOT_MANAGED` |
+| `/internal/sites/credentials/test-accounts/upsert` | `{ telegramId, hostId, testAccountId?, clientRef?, account }` → учётка; по `clientRef` идемпотентно |
+| `/internal/sites/credentials/test-accounts/delete` | `{ telegramId, testAccountId }` |
+| `/internal/sites/credentials/test-accounts/put-secret` | `{ telegramId, testAccountId, purpose: password\|login-fields\|session-cookies, secret\|null }` |
+| `/internal/sites/credentials/test-accounts/forget-secrets` | `{ telegramId, testAccountId }` — секреты стёрты, учётка осталась |
+| `/internal/sites/credentials/lease` | `{ telegramId, testAccountId, hostId, product: tutorial\|qa, runRef? }` → `{ leaseId, expiresAt }` (2 мин); отказ — 403 `CREDENTIAL_LEASE_DENIED` с `reason: frozen\|expired\|product\|host\|host_not_verified` |
+| `/internal/sites/credentials/lease/redeem` | `{ telegramId, leaseId }` → `{ secrets }` ОДИН раз тем же вызывающим; иначе 403 `CREDENTIAL_LEASE_INVALID` (`used\|expired\|actor\|account\|not_found`) |
+| `/internal/sites/credentials/user-sessions/{upsert,list,update,put-secret,read,delete}` | режим B, `ownerRef: gen:<userId>`; секреты отдаёт только `read` и только владельцу (чужой — 404 `USER_SESSION_NOT_FOUND`, отказ в журнале) |
+
+Без `SITE_CREDENTIALS_KEYS` всё, что касается секретов, — 503
+`CREDENTIALS_NOT_CONFIGURED`; метаданные учёток работают. Нечитаемый секрет
+(ключ удалён, подмена шифротекста/AAD) — 409 `CREDENTIAL_UNREADABLE`.
+
+## Э6 помощника: видео-ответы и «показать на экране»
+
+ТЗ помощника §4.9 (`video`, `highlight`), §4.11, §4.12; развёртывание —
+`doc/DEPLOYMENT.md` §6.15.
+
+Генератор (backend), за `TelegramIdentityGuard`, владение проектом — как у
+`/site-tutorial` (чужой проект — 404):
+
+| Маршрут | Что |
+|---|---|
+| `GET /api/projects/:id/site-tutorial/assist-link` | `{ clientSiteId, siteName }` — к какому сайту ИИ-помощника привязан черновик |
+| `PUT /api/projects/:id/site-tutorial/assist-link` | `{ siteId \| null }`: привязать (только после `site-link` sites-backend — человек владелец или менеджер помощника этого сайта; иначе 403) или отвязать; набор роликов сайта переотправляется |
+
+sites-backend, кабинет (initData помощника, `productRoles.assist = manager`):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/videos` | `{ planAllowsVideo, videos[{ id, title, locale, durationMs, requiresLogin, enabled, syncedAt }], tutorialLink, uiMap{ pages, stalePages, lastCapturedAt } }` — адреса роликов в ответе нет |
+| `PATCH /assist/sites/:id/videos/:vid` | `{ enabled }`; включить ролик «за логином» — 409 `VIDEO_REQUIRES_LOGIN`, без видео в тарифе — 402 `VIDEO_PLAN_REQUIRED`; выключить — всегда |
+
+sites-backend, виджет (iframe, visitor-token; `GET` ссылки — без токена):
+
+| Маршрут | Что |
+|---|---|
+| `POST /widget/v1/video` | `{ videoId }` → `{ url: "/widget/v1/video/<токен>", title, expiresAt }` (10 мин); ролик — только этого сайта, включён, не за логином, тариф с видео; иначе 404 `VIDEO_UNAVAILABLE`; 10/мин на посетителя, 30/мин на IP+сайт |
+| `GET /widget/v1/video/:token` | 302 на ролик (`Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`); подпись над сайтом и роликом, строка ищется заново по (id, siteId токена); та же проверка, что у `POST` (сайт помощника есть, тариф с видео, ролик включён и не за логином) — иначе 404 `VIDEO_UNAVAILABLE` |
+| `POST /widget/v1/highlight-miss` | `{ elementId: u<8 hex>, pageUrl }` → `{ ok, recorded }` — сигнал «карта устарела»: счётчик промахов карты этой страницы этого сайта (только если такой элемент в карте есть) + событие `highlight_miss`; 10/мин на посетителя |
+
+Действия ответа чата (`event: actions`): `{ kind: "video", label, videoId,
+title }` и `{ kind: "highlight", label, elementId, selector, caption }` —
+id ролика, селектор и подпись берёт сервер из списков этого запроса
+(модель называет только `V#`/`E#`), не больше одного каждого; подсветка в
+семантический кэш не кладётся, ролик из кэша сверяется заново.
+
+sites-backend, внутренний API генератора (HMAC Ш1 — `SITES_TUTORIAL_HMAC_SECRET`,
+метка ±5 мин, одноразовый id; тело ≤ 8 КБ), все `POST`:
+
+| Маршрут | Тело → ответ |
+|---|---|
+| `/internal/sites/tutorial/site-link` | `{ telegramId, siteId }` → `{ siteId, siteName, hosts[] }`; не владелец/менеджер помощника кабинета сайта или сайта нет — 403 `SITE_LINK_FORBIDDEN` |
+| `/internal/sites/tutorial/site-videos` | `{ siteId, asOf, videos[≤15]{ externalId, draftId, ownerTelegramId, title, locale, durationMs, url, requiresLogin, stepHosts[] } }` → `{ siteId, accepted, removed, rejected[{ externalId, reason: owner\|url }], stale? }` — ПОЛНЫЙ набор сайта (замена); `asOf` — обязательная отметка набора (целое мс часов генератора > 0, взята ДО чтения его базы): набор старше последнего принятого (`site_sites.assistVideosAsOf`) — 200 `{ accepted: 0, removed: 0, rejected: [], stale: true }` без изменений (гонка двух синхронизаций), равный — принимается (повтор); хозяин каждого — владелец/менеджер помощника кабинета сайта; адрес — из `ASSIST_VIDEO_HOSTS`; шаг на неподтверждённом хосте → «за логином» и выключен |
+| `/internal/sites/tutorial/ui-map` | `{ telegramId, siteId, url, elements[≤100]{ selector, tag, label } }` → `{ siteId, path, elements }` — карта страницы из раунда обучалки (источник `tutorial`); страница — только на подтверждённом хосте этого сайта (иначе 403 `HOST_NOT_VERIFIED`) |

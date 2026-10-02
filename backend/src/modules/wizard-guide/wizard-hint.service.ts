@@ -411,6 +411,7 @@ export class WizardHintService {
         status: string;
         requiresLiveLoginReplay: boolean;
         credentialsEnc: string | null;
+        storeHasCredentials?: boolean;
       } | null = await this.prisma.clientSiteTutorialDraft.findUnique({
         where: { projectId },
         select: {
@@ -419,6 +420,8 @@ export class WizardHintService {
           status: true,
           requiresLiveLoginReplay: true,
           credentialsEnc: true,
+          // Э-С Ш2: поля входа могут лежать в хранилище sites-backend.
+          storeHasCredentials: true,
         },
       });
       return factsOfScenario({
@@ -428,7 +431,8 @@ export class WizardHintService {
               rounds: draft.stepsPerRound.length,
               title: draft.title,
               status: draft.status,
-              hasCredentials: !!draft.credentialsEnc,
+              hasCredentials:
+                !!draft.credentialsEnc || draft.storeHasCredentials === true,
               requiresLiveLoginReplay: draft.requiresLiveLoginReplay,
             }
           : null,

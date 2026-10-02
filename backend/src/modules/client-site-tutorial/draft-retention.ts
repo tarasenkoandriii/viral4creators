@@ -7,7 +7,7 @@
  *
  * | Что | Когда |
  * |---|---|
- * | `credentialsEnc` + `cookiesEnc` | через `SECRETS_RETENTION_DAYS` после последней записи раундом (`secretsUsedAt`; у строк до Ш0.5 — `updatedAt`) |
+ * | `credentialsEnc` + `cookiesEnc` (Ш2: или запись хранилища sites-backend по `siteTestAccountId`/`userSiteSessionId`) | через `SECRETS_RETENTION_DAYS` после последней записи раундом (`secretsUsedAt`; у строк до Ш0.5 — `updatedAt`) |
  * | то же, «одноразово» (`secretsOneShot`) | после первой успешной сборки ролика (сборщик стирает сразу, здесь — страховка) |
  * | кадры в Blob (весь префикс черновика) | одобрен и ролик собран, или отклонён — через `DECIDED_FRAMES_RETENTION_DAYS` без движения; брошенный в работе — через `ABANDONED_FRAMES_RETENTION_DAYS` |
  *
@@ -34,6 +34,7 @@ import { Logger } from '@nestjs/common';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { BlobService } from '../storage/blob.service';
 import { draftFramePrefix } from './draft-frames';
+import type { DraftSecretsRow, DraftSecretsStore } from './draft-secrets-store';
 
 export const SECRETS_RETENTION_DAYS = 30;
 export const DECIDED_FRAMES_RETENTION_DAYS = 14;
@@ -53,10 +54,31 @@ export interface ClientSiteRetentionResult {
 
 /** Условие «у строки есть хоть один секрет» — общее для двух правил. */
 const HAS_SECRETS = {
-  OR: [{ credentialsEnc: { not: null } }, { cookiesEnc: { not: null } }],
+  OR: [
+    { credentialsEnc: { not: null } },
+    { cookiesEnc: { not: null } },
+    // Э-С Ш2: данные входа в хранилище sites-backend.
+    { siteTestAccountId: { not: null } },
+    { userSiteSessionId: { not: null } },
+  ],
 };
 
-const WIPE_SECRETS = { credentialsEnc: null, cookiesEnc: null };
+const WIPE_SECRETS = {
+  credentialsEnc: null,
+  cookiesEnc: null,
+  siteTestAccountId: null,
+  userSiteSessionId: null,
+  storeHasCredentials: false,
+};
+
+/** Колонки для стирания записи хранилища (Ш2). */
+const STORE_SELECT = {
+  id: true,
+  projectId: true,
+  baseUrl: true,
+  siteTestAccountId: true,
+  userSiteSessionId: true,
+} as const;
 
 export class ClientSiteDraftRetention {
   constructor(
@@ -65,7 +87,54 @@ export class ClientSiteDraftRetention {
     private readonly logger: Pick<Logger, 'log' | 'warn'> = new Logger(
       'ClientSiteDraftRetention',
     ),
+    /** Э-С Ш2: стирание записей хранилища sites-backend; без него — только колонки (запись истечёт по сроку хранилища). */
+    private readonly secrets?: Pick<DraftSecretsStore, 'forget' | 'userOf'>,
   ) {}
+
+  /**
+   * Ш2: у черновиков из `where`, чьи данные входа в хранилище, — стереть
+   * там (личную запись B целиком, секреты учётки A). Колонки и ссылки
+   * обнуляет вызывающий (`WIPE_SECRETS`).
+   */
+  private async forgetInStore(where: object): Promise<void> {
+    if (!this.secrets) return;
+    const rows = (await this.prisma.clientSiteTutorialDraft.findMany({
+      where: {
+        AND: [
+          where,
+          {
+            OR: [
+              { siteTestAccountId: { not: null } },
+              { userSiteSessionId: { not: null } },
+            ],
+          },
+        ],
+      },
+      select: { ...STORE_SELECT, project: { select: { userId: true } } },
+      take: 500,
+    })) as Array<
+      Omit<DraftSecretsRow, 'credentialsEnc' | 'cookiesEnc'> & {
+        project?: { userId: string } | null;
+      }
+    >;
+    for (const r of rows) {
+      const userId = r.project?.userId;
+      if (!userId) continue;
+      try {
+        await this.secrets.forget(await this.secrets.userOf(userId), {
+          ...r,
+          credentialsEnc: null,
+          cookiesEnc: null,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `client-site-retention: данные входа черновика ${r.id} в хранилище не стёрлись (${
+            err instanceof Error ? err.name : 'error'
+          }) — истекут по сроку хранилища`,
+        );
+      }
+    }
+  }
 
   async run(now: Date = new Date()): Promise<ClientSiteRetentionResult> {
     // Кадры — ПЕРВЫМИ: их правило смотрит на `updatedAt`, а стирание
@@ -87,20 +156,17 @@ export class ClientSiteDraftRetention {
   /** Креды и куки, которыми не пользовались `SECRETS_RETENTION_DAYS`. */
   async expireSecrets(now: Date): Promise<number> {
     const cutoff = new Date(now.getTime() - SECRETS_RETENTION_DAYS * DAY_MS);
+    const stale = {
+      OR: [
+        { secretsUsedAt: { lt: cutoff } },
+        // Строки до Ш0.5: отметки нет, последняя правка — лучшая
+        // оценка последнего раунда.
+        { secretsUsedAt: null, updatedAt: { lt: cutoff } },
+      ],
+    };
+    await this.forgetInStore(stale);
     const { count } = await this.prisma.clientSiteTutorialDraft.updateMany({
-      where: {
-        AND: [
-          HAS_SECRETS,
-          {
-            OR: [
-              { secretsUsedAt: { lt: cutoff } },
-              // Строки до Ш0.5: отметки нет, последняя правка — лучшая
-              // оценка последнего раунда.
-              { secretsUsedAt: null, updatedAt: { lt: cutoff } },
-            ],
-          },
-        ],
-      },
+      where: { AND: [HAS_SECRETS, stale] },
       data: WIPE_SECRETS,
     });
     return count;
@@ -129,6 +195,7 @@ export class ClientSiteDraftRetention {
       ),
     ];
     if (ids.length === 0) return 0;
+    await this.forgetInStore({ id: { in: ids }, secretsOneShot: true });
     const { count } = await this.prisma.clientSiteTutorialDraft.updateMany({
       where: { id: { in: ids }, secretsOneShot: true },
       data: WIPE_SECRETS,

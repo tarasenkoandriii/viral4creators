@@ -26,6 +26,9 @@ import {
 /** Статус хоста — короче админского таймаута: это раунд визарда, а не отчёт. */
 const STATUS_TIMEOUT_MS = 5_000;
 const REGISTER_TIMEOUT_MS = 15_000;
+/** Хранилище учётных данных: запись кук сессии (до 256 КБ) — не дольше 10 с. */
+const CREDENTIALS_TIMEOUT_MS = 10_000;
+const CRED = '/internal/sites/credentials';
 
 export type SitesHostReason =
   | null
@@ -61,6 +64,107 @@ export interface SitesRegisterResult extends SitesHostStatus {
   accountCreated: boolean;
 }
 
+/** Э-С Ш2: хранилище учётных данных — назначения секретов. */
+export type SitesCredentialPurpose =
+  | 'password'
+  | 'login-fields'
+  | 'session-cookies';
+
+export type SitesCredentialSecrets = Partial<
+  Record<SitesCredentialPurpose, string>
+>;
+
+export interface SitesSecretFlags {
+  password: boolean;
+  loginFields: boolean;
+  session: boolean;
+}
+
+/** Тестовая учётка реестра сайта (режим A) — без секретов. */
+export interface SitesTestAccount {
+  id: string;
+  siteId: string;
+  label: string;
+  role: string | null;
+  plan: string | null;
+  username: string | null;
+  loginMethod: string;
+  hostIds: string[];
+  products: string[];
+  status: string;
+  confirmedTestAccount: boolean;
+  createdBy: string;
+  secrets: SitesSecretFlags;
+  lastUsedAt: string | null;
+  expiresAt: string;
+  createdAt: string;
+  /** Только в списке по хосту: учётка действует на хосте черновика. */
+  coversHost?: boolean;
+}
+
+/** Ввод учётки (как `parseTestAccountInput` sites-backend). */
+export interface SitesTestAccountInput {
+  label?: string;
+  role?: string | null;
+  plan?: string | null;
+  username?: string | null;
+  password?: string;
+  loginMethod?: 'password' | 'session' | 'sso';
+  hostIds?: string[];
+  products?: Array<'tutorial' | 'qa'>;
+  lifetimeDays?: number;
+  status?: 'active' | 'frozen';
+  confirmedTestAccount?: boolean;
+}
+
+/** Личная запись режима B — без секретов. */
+export interface SitesUserSession {
+  id: string;
+  origin: string;
+  label: string | null;
+  products: string[];
+  secrets: SitesSecretFlags;
+  lastUsedAt: string | null;
+  expiresAt: string;
+  createdAt: string;
+}
+
+/** Э6: результат проверки привязки черновика к сайту помощника. */
+export interface SitesSiteLink {
+  siteId: string;
+  siteName: string;
+  hosts: string[];
+}
+
+/** Э6: ролик для полного набора сайта (`site-videos`). */
+export interface SitesVideoInput {
+  externalId: string;
+  draftId: string;
+  ownerTelegramId: string;
+  title: string;
+  locale: string;
+  durationMs: number | null;
+  url: string;
+  requiresLogin: boolean;
+  stepHosts: string[];
+}
+
+export interface SitesVideoSyncResult {
+  siteId: string;
+  accepted: number;
+  removed: number;
+  rejected: Array<{ externalId: string; reason: string }>;
+  /** Набор старше последнего принятого (`asOf`) — ничего не изменено. */
+  stale?: boolean;
+}
+
+/** Э6: элемент карты интерфейса (sites-backend пересчитает id и почистит). */
+export interface SitesUiElementInput {
+  selector: string;
+  tag: string;
+  label: string;
+}
+
 export class SitesNotConfiguredError extends Error {
   constructor() {
     super(
@@ -72,7 +176,11 @@ export class SitesNotConfiguredError extends Error {
 
 /** Сеть, таймаут, 5xx, 401 (секреты не совпали) — «сейчас не получилось». */
 export class SitesUnavailableError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** Машинный код 5xx sites-backend, если он был (Ш2: CREDENTIALS_NOT_CONFIGURED). */
+    readonly code: string | null = null,
+  ) {
     super(message);
     this.name = 'SitesUnavailableError';
   }
@@ -145,6 +253,232 @@ export class SitesInternalClient {
     );
   }
 
+  // ── Э-С Ш2: хранилище учётных данных ──────────────────────────────
+
+  credentialsStatus(): Promise<{
+    configured: boolean;
+    currentKeyVersion: string | null;
+  }> {
+    return this.post(`${CRED}/status`, {}, STATUS_TIMEOUT_MS);
+  }
+
+  listTestAccounts(
+    telegramId: string,
+    hostId: string,
+  ): Promise<{
+    siteId: string;
+    hosts: Array<{ id: string; host: string; verified: boolean }>;
+    accounts: SitesTestAccount[];
+  }> {
+    return this.post(
+      `${CRED}/test-accounts/list`,
+      { telegramId, hostId },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  upsertTestAccount(
+    telegramId: string,
+    req: {
+      hostId: string;
+      testAccountId?: string | null;
+      clientRef?: string | null;
+      account: SitesTestAccountInput;
+    },
+  ): Promise<SitesTestAccount> {
+    return this.post(
+      `${CRED}/test-accounts/upsert`,
+      {
+        telegramId,
+        hostId: req.hostId,
+        account: req.account,
+        ...(req.testAccountId ? { testAccountId: req.testAccountId } : {}),
+        ...(req.clientRef ? { clientRef: req.clientRef } : {}),
+      },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  deleteTestAccount(
+    telegramId: string,
+    testAccountId: string,
+  ): Promise<{ deleted: boolean }> {
+    return this.post(
+      `${CRED}/test-accounts/delete`,
+      { telegramId, testAccountId },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  putTestAccountSecret(
+    telegramId: string,
+    testAccountId: string,
+    purpose: SitesCredentialPurpose,
+    secret: string | null,
+  ): Promise<SitesTestAccount> {
+    return this.post(
+      `${CRED}/test-accounts/put-secret`,
+      { telegramId, testAccountId, purpose, secret },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  forgetTestAccountSecrets(
+    telegramId: string,
+    testAccountId: string,
+  ): Promise<{ forgotten: number }> {
+    return this.post(
+      `${CRED}/test-accounts/forget-secrets`,
+      { telegramId, testAccountId },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  /** Аренда + погашение: секреты учётки на ОДИН раунд (режим A). */
+  async leaseSecrets(
+    telegramId: string,
+    req: { testAccountId: string; hostId: string; runRef?: string },
+  ): Promise<SitesCredentialSecrets> {
+    const lease = await this.post<{ leaseId: string }>(
+      `${CRED}/lease`,
+      {
+        telegramId,
+        testAccountId: req.testAccountId,
+        hostId: req.hostId,
+        product: 'tutorial',
+        ...(req.runRef ? { runRef: req.runRef } : {}),
+      },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+    const got = await this.post<{ secrets: SitesCredentialSecrets }>(
+      `${CRED}/lease/redeem`,
+      { telegramId, leaseId: lease.leaseId },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+    return got.secrets ?? {};
+  }
+
+  upsertUserSession(
+    ownerRef: string,
+    req: { origin: string; clientRef?: string | null; label?: string | null },
+  ): Promise<SitesUserSession> {
+    return this.post(
+      `${CRED}/user-sessions/upsert`,
+      {
+        ownerRef,
+        origin: req.origin,
+        ...(req.clientRef ? { clientRef: req.clientRef } : {}),
+        ...(req.label !== undefined ? { label: req.label } : {}),
+      },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  listUserSessions(
+    ownerRef: string,
+  ): Promise<{ sessions: SitesUserSession[] }> {
+    return this.post(
+      `${CRED}/user-sessions/list`,
+      { ownerRef },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  updateUserSession(
+    ownerRef: string,
+    sessionId: string,
+    label: string | null,
+  ): Promise<SitesUserSession> {
+    return this.post(
+      `${CRED}/user-sessions/update`,
+      { ownerRef, sessionId, label },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  putUserSessionSecret(
+    ownerRef: string,
+    sessionId: string,
+    purpose: SitesCredentialPurpose,
+    secret: string | null,
+  ): Promise<SitesUserSession> {
+    return this.post(
+      `${CRED}/user-sessions/put-secret`,
+      { ownerRef, sessionId, purpose, secret },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  async readUserSession(
+    ownerRef: string,
+    sessionId: string,
+    runRef?: string,
+  ): Promise<SitesCredentialSecrets> {
+    const got = await this.post<{ secrets: SitesCredentialSecrets }>(
+      `${CRED}/user-sessions/read`,
+      { ownerRef, sessionId, ...(runRef ? { runRef } : {}) },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+    return got.secrets ?? {};
+  }
+
+  deleteUserSession(
+    ownerRef: string,
+    sessionId: string,
+  ): Promise<{ deleted: boolean }> {
+    return this.post(
+      `${CRED}/user-sessions/delete`,
+      { ownerRef, sessionId },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
+  // ── Э6 помощника: ролики обучалки и карта интерфейса (ТЗ §4.11, §4.12) ──
+
+  /**
+   * Можно ли привязать черновик к сайту помощника: человек — владелец или
+   * менеджер помощника в кабинете сайта. Чужой и несуществующий —
+   * `SitesRejectedError(403, 'SITE_LINK_FORBIDDEN')`.
+   */
+  linkSite(telegramId: string, siteId: string): Promise<SitesSiteLink> {
+    return this.post<SitesSiteLink>(
+      '/internal/sites/tutorial/site-link',
+      { telegramId, siteId },
+      STATUS_TIMEOUT_MS,
+    );
+  }
+
+  /**
+   * Полный набор одобренных роликов сайта (замена на стороне sites-backend).
+   * `asOf` — отметка набора (мс, взята ДО чтения базы): набор старше уже
+   * принятого sites-backend отвергает (`stale: true`), не меняя ничего.
+   */
+  syncSiteVideos(
+    siteId: string,
+    videos: SitesVideoInput[],
+    asOf: number,
+  ): Promise<SitesVideoSyncResult> {
+    return this.post<SitesVideoSyncResult>(
+      '/internal/sites/tutorial/site-videos',
+      { siteId, asOf, videos },
+      REGISTER_TIMEOUT_MS,
+    );
+  }
+
+  /** Карта интерфейса страницы из раунда обучалки (источник `tutorial`). */
+  pushUiMap(
+    telegramId: string,
+    siteId: string,
+    url: string,
+    elements: SitesUiElementInput[],
+  ): Promise<{ siteId: string; path: string; elements: number }> {
+    return this.post(
+      '/internal/sites/tutorial/ui-map',
+      { telegramId, siteId, url, elements },
+      STATUS_TIMEOUT_MS,
+    );
+  }
+
   private async post<T>(
     path: string,
     payload: unknown,
@@ -213,6 +547,7 @@ export class SitesInternalClient {
         res.status === 401
           ? 'кабинет сайтов не принял подпись генератора (проверьте SITES_TUTORIAL_HMAC_SECRET с обеих сторон)'
           : 'кабинет сайтов вернул ошибку',
+        res.status === 401 ? null : code,
       );
     }
     if (!json || json.data === undefined || json.data === null) {

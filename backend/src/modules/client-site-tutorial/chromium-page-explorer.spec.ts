@@ -40,6 +40,7 @@ import {
 import {
   ChromiumPageExplorer,
   SETTLE_FLOOR_MS,
+  sensitiveFieldSource,
 } from './chromium-page-explorer';
 import { FRAME_SOURCE_MARKS } from './foreign-frame-settle';
 import { readFileSync } from 'node:fs';
@@ -952,5 +953,63 @@ describe('таймаут переигровки назван по-человеч
       .catch((e) => e);
     expect(err).not.toBeInstanceOf(GatewayTimeoutException);
     expect(err.name).toBe('TimeoutError');
+  });
+});
+
+describe('аудит Э6, Д1: ввод в поле пароля/кода — признак входа', () => {
+  /** evaluate: проверка поля (источник с `one-time-code`) → `field`. */
+  function withField(field: unknown) {
+    return setup({
+      evaluate: jest.fn(async (src: string) => {
+        if (src.includes('one-time-code')) {
+          if (field instanceof Error) throw field;
+          return field;
+        }
+        return COLLECTED;
+      }),
+    });
+  }
+  const FILL = {
+    ...REQUEST,
+    actions: [{ kind: 'fill' as const, selector: '#f', value: '1' }],
+  };
+
+  it('поле пароля — sensitiveFill; обычное — нет; без ввода — нет', async () => {
+    expect((await withField(true).explorer.runRound(FILL)).sensitiveFill).toBe(
+      true,
+    );
+    expect((await withField(false).explorer.runRound(FILL)).sensitiveFill).toBe(
+      false,
+    );
+    expect(
+      (await withField(true).explorer.runRound(REQUEST)).sensitiveFill,
+    ).toBe(false);
+  });
+
+  it('проверка поля не удалась — сомнение, то есть «да»', async () => {
+    expect(
+      (await withField(new Error('detached')).explorer.runRound(FILL))
+        .sensitiveFill,
+    ).toBe(true);
+  });
+
+  it('переигровка (/undo) с вводом в поле пароля — sensitiveFill', async () => {
+    const { explorer } = withField(true);
+    const out = await explorer.replay({
+      steps: [
+        { kind: 'goto', route: `${ORIGIN}/login` },
+        { kind: 'fill', selector: '#p', value: 'x' },
+      ],
+      secrets: {},
+      allowedOrigin: ORIGIN,
+    });
+    expect(out.sensitiveFill).toBe(true);
+  });
+
+  it('источник проверки: селектор — JSON-литералом, признаки — type и autocomplete', () => {
+    const src = sensitiveFieldSource('input[name="a\'b"]');
+    expect(src).toContain(JSON.stringify('input[name="a\'b"]'));
+    expect(src).toContain("type === 'password'");
+    expect(src).toContain('one-time-code');
   });
 });

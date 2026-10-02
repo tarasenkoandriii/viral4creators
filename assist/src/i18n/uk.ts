@@ -1,4 +1,5 @@
 import { billingUk } from './billing-uk';
+import { mediaUk } from './media-uk';
 import type { AppDictionary } from './ru';
 import { setupUk } from './setup-uk';
 import { e3Uk } from './e3-uk';
@@ -420,4 +421,6 @@ export const appUk: AppDictionary = {
   e3: e3Uk,
   // Э4: тариф и оплата, Условия и DPA.
   billing: billingUk,
+  // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).
+  media: mediaUk,
 };

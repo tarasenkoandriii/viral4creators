@@ -33,6 +33,7 @@ export const setupRu = {
     widget: 'Виджет',
     persona: 'Характер',
     wizard: 'Научите помощника',
+    videos: 'Видео',
   },
   widget: {
     title: 'Виджет',

@@ -49,6 +49,10 @@
     {
       "path": "/cron/assist-billing-tick",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/cron/site-credentials-retention",
+      "schedule": "50 3 * * *"
     }
   ]
 }

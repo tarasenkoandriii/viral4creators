@@ -131,6 +131,8 @@ interface DraftRow {
   requiresLiveLoginReplay: boolean;
   rejectionReason: string | null;
   credentialsEnc: string | null;
+  /** Э-С Ш2: поля входа лежат в хранилище sites-backend. */
+  storeHasCredentials?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -215,7 +217,8 @@ export class ClientSiteTutorialAdminService {
       ...toQueueItem(row),
       steps: (row.steps as ScenarioStep[] | null) ?? [],
       frameUrls,
-      hasCredentials: row.credentialsEnc !== null,
+      hasCredentials:
+        row.credentialsEnc !== null || row.storeHasCredentials === true,
       stepsPerRound: row.stepsPerRound,
       roundDangerWarnings: alignRoundWarnings(
         row.roundDangerWarnings,

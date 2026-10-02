@@ -144,6 +144,26 @@ export const ASSIST_PUBLIC_OMIT = {
     characters: true,
     createdAt: true,
   },
+  // Э6 (миграция …_assist_video_highlight): ролики — без хозяина, черновика
+  // и id генератора; карта интерфейса — элементы по странице и счётчик промахов.
+  assistSiteVideo: {
+    accountId: true,
+    externalId: true,
+    draftId: true,
+    ownerTelegramId: true,
+    syncedAt: true,
+    createdAt: true,
+    updatedAt: true,
+  },
+  siteUiMap: {
+    accountId: true,
+    hostId: true,
+    elementsHash: true,
+    capturedAt: true,
+    lastStaleAt: true,
+    createdAt: true,
+    updatedAt: true,
+  },
 } as const satisfies Prisma.GlobalOmitConfig;
 
 /** Опции клиента под ролью assist_public — одни и те же в проде и в тестах. */

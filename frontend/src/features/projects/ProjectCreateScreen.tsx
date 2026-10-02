@@ -38,7 +38,14 @@ import {
 } from '../../lib/greeting-occasion-fields';
 import { recommendedTone } from '../../lib/greeting-policy';
 import { useGreetingPolicy } from '../../lib/useGreetingPolicy';
-import { exploreSite } from '../../services/client-site-tutorial-api';
+import {
+  exploreSite,
+  setAssistLink,
+} from '../../services/client-site-tutorial-api';
+import {
+  clearPendingAssistSite,
+  pendingAssistSite,
+} from '../../lib/assist-site-link';
 import { deleteProject } from '../../services/projects-api';
 import { usePlanState } from '../../lib/plan-context';
 import { allows, lockLabel } from '../../lib/plan';
@@ -259,6 +266,16 @@ export function ProjectCreateScreen() {
       });
       projectId = project.id;
       await exploreSite(project.id, trimmed);
+      // Э6 помощника: пришли по ссылке «снять обучение» экрана «Видео» —
+      // привязать черновик к сайту помощника. Отказ (не владелец/менеджер,
+      // кабинет недоступен) обучалку не останавливает: ролик просто не
+      // попадёт в помощник, а снять его можно и так.
+      const assistSite = pendingAssistSite();
+      if (assistSite) {
+        await setAssistLink(project.id, assistSite)
+          .then(() => clearPendingAssistSite())
+          .catch(() => undefined);
+      }
       navigate(routes.siteTutorial(project.id), true);
     } catch (err) {
       setError(errorMessage(err));

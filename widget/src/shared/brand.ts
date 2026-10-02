@@ -45,3 +45,8 @@ export const WIDGET_PICKER_PATH = '/v1/picker.js';
 export const WIDGET_ENGAGE_PATH = '/v1/engage.js';
 export const WIDGET_GOAL_ATTR = 'data-assist-goal';
 export const WIDGET_GOAL_SUBMIT_ATTR = 'data-assist-goal-submit';
+
+// Э6: подсветка элемента страницы («показать на экране», ТЗ §4.12) — ленивый
+// чанк загрузчика: грузится только по клику посетителя на «Показать на
+// странице» (бюджет загрузчика 12 КБ не поднимается).
+export const WIDGET_HIGHLIGHT_PATH = '/v1/highlight.js';

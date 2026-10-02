@@ -23,11 +23,13 @@ import {
   Delete,
   Get,
   HttpCode,
+  Optional,
   Param,
   Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ClientSiteMediaService } from '../client-site-media/client-site-media.service';
 import {
   IdentifiedRequest,
   TelegramIdentityGuard,
@@ -55,7 +57,23 @@ import {
 @Controller('projects/:projectId/site-tutorial')
 @UseGuards(TelegramIdentityGuard)
 export class ClientSiteTutorialController {
-  constructor(private readonly service: ClientSiteTutorialService) {}
+  constructor(
+    private readonly service: ClientSiteTutorialService,
+    // Э6 помощника: карта интерфейса из раунда и набор роликов сайта при
+    // удалении черновика. Необязателен — стенды без него работают как раньше.
+    @Optional() private readonly media?: ClientSiteMediaService,
+  ) {}
+
+  /** Э6: элементы страницы раунда → карта интерфейса сайта помощника. */
+  private async withMap(
+    userId: string,
+    projectId: string,
+    round: Promise<RoundResult>,
+  ): Promise<RoundResult> {
+    const r = await round;
+    await this.media?.afterRound(userId, projectId, r.exploration);
+    return r;
+  }
 
   @Get()
   getState(
@@ -71,11 +89,15 @@ export class ClientSiteTutorialController {
     @Param('projectId') projectId: string,
     @Body() dto: ExploreRequestDto,
   ): Promise<RoundResult> {
-    return this.service.explore(
+    return this.withMap(
       req.telegramUserId,
       projectId,
-      dto.url,
-      ipHashOf(req),
+      this.service.explore(
+        req.telegramUserId,
+        projectId,
+        dto.url,
+        ipHashOf(req),
+      ),
     );
   }
 
@@ -85,7 +107,11 @@ export class ClientSiteTutorialController {
     @Param('projectId') projectId: string,
     @Body() dto: StepRequestDto,
   ): Promise<RoundResult> {
-    return this.service.step(req.telegramUserId, projectId, dto, ipHashOf(req));
+    return this.withMap(
+      req.telegramUserId,
+      projectId,
+      this.service.step(req.telegramUserId, projectId, dto, ipHashOf(req)),
+    );
   }
 
   @Post('login')
@@ -157,7 +183,11 @@ export class ClientSiteTutorialController {
     @Req() req: IdentifiedRequest,
     @Param('projectId') projectId: string,
   ): Promise<RoundResult> {
-    return this.service.refresh(req.telegramUserId, projectId, ipHashOf(req));
+    return this.withMap(
+      req.telegramUserId,
+      projectId,
+      this.service.refresh(req.telegramUserId, projectId, ipHashOf(req)),
+    );
   }
 
   @Post('resume')
@@ -216,7 +246,10 @@ export class ClientSiteTutorialController {
     @Req() req: IdentifiedRequest,
     @Param('projectId') projectId: string,
   ): Promise<void> {
+    // Э6: сайт помощника — до удаления строки, набор роликов — после.
+    const site = await this.media?.siteOfProject(projectId);
     await this.service.remove(req.telegramUserId, projectId);
+    if (site) await this.media?.syncSite(site);
   }
 }
 

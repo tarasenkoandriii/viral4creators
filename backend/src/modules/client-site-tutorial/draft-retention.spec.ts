@@ -26,6 +26,11 @@ interface Row {
   framesPurgedAt: Date | null;
   roundVideoFrames: unknown;
   previewFrameCount: number | null;
+  /** Э-С Ш2: запись хранилища sites-backend. */
+  siteTestAccountId?: string | null;
+  userSiteSessionId?: string | null;
+  storeHasCredentials?: boolean;
+  project?: { userId: string };
 }
 
 function row(over: Partial<Row> & { id: string }): Row {
@@ -39,6 +44,10 @@ function row(over: Partial<Row> & { id: string }): Row {
     framesPurgedAt: null,
     roundVideoFrames: ['https://blob/x/round-0.png'],
     previewFrameCount: 1,
+    siteTestAccountId: null,
+    userSiteSessionId: null,
+    storeHasCredentials: false,
+    project: { userId: 'u1' },
     ...over,
   };
 }
@@ -106,12 +115,30 @@ function fakeBlob(paths: string[], failOn?: string) {
 
 const quiet = { log: jest.fn(), warn: jest.fn() };
 
-function retention(rows: Row[], assets: any[] = [], blob = fakeBlob([])) {
+function retention(
+  rows: Row[],
+  assets: any[] = [],
+  blob = fakeBlob([]),
+  secrets?: any,
+) {
   const prisma = fakePrisma(rows, assets);
   return {
-    r: new ClientSiteDraftRetention(prisma as any, blob as any, quiet),
+    r: new ClientSiteDraftRetention(prisma as any, blob as any, quiet, secrets),
     prisma,
     blob,
+  };
+}
+
+/** Дублёр хранилища Ш2: что стёрто. */
+function fakeSecrets() {
+  const forgotten: string[] = [];
+  return {
+    forgotten,
+    userOf: jest.fn(async (userId: string) => ({ userId, telegramId: '1' })),
+    forget: jest.fn(async (_u: any, d: any) => {
+      forgotten.push(d.userSiteSessionId ?? d.siteTestAccountId);
+      return {};
+    }),
   };
 }
 
@@ -271,5 +298,71 @@ describe('Ш0.6: срок жизни кадров в публичном Blob', (
     const res = await r.run(NOW);
     expect(res).toMatchObject({ framesPurged: 0, framesFailed: 1 });
     expect(rej.framesPurgedAt).toBeNull();
+  });
+});
+
+describe('Э-С Ш2: данные входа в хранилище sites-backend', () => {
+  it('срок: запись хранилища стёрта там, ссылки и колонки обнулены; свежая — нетронута', async () => {
+    const old = row({
+      id: 'old',
+      credentialsEnc: null,
+      cookiesEnc: null,
+      userSiteSessionId: 'user-1',
+      storeHasCredentials: true,
+      secretsUsedAt: daysAgo(SECRETS_RETENTION_DAYS + 1),
+    });
+    const fresh = row({
+      id: 'fresh',
+      credentialsEnc: null,
+      cookiesEnc: null,
+      siteTestAccountId: 'site-2',
+    });
+    const secrets = fakeSecrets();
+    const { r } = retention([old, fresh], [], fakeBlob([]), secrets);
+    const res = await r.run(NOW);
+    expect(res.secretsExpired).toBe(1);
+    expect(secrets.forgotten).toEqual(['user-1']);
+    expect(old).toMatchObject({
+      userSiteSessionId: null,
+      siteTestAccountId: null,
+      storeHasCredentials: false,
+    });
+    expect(fresh.siteTestAccountId).toBe('site-2');
+  });
+
+  it('«одноразово»: после сборки — стёрто и в хранилище', async () => {
+    const once = row({
+      id: 'once',
+      status: 'APPROVED',
+      secretsOneShot: true,
+      credentialsEnc: null,
+      cookiesEnc: null,
+      siteTestAccountId: 'site-7',
+    });
+    const secrets = fakeSecrets();
+    const { r } = retention(
+      [once],
+      [{ clientSiteDraftId: 'once', assemblyStatus: 'complete' }],
+      fakeBlob([]),
+      secrets,
+    );
+    const res = await r.run(NOW);
+    expect(res.secretsOneShot).toBe(1);
+    expect(secrets.forgotten).toEqual(['site-7']);
+    expect(once.siteTestAccountId).toBeNull();
+  });
+
+  it('хранилище не отвечает — колонки и ссылки всё равно обнулены (запись истечёт по сроку там)', async () => {
+    const old = row({
+      id: 'old',
+      userSiteSessionId: 'user-1',
+      secretsUsedAt: daysAgo(SECRETS_RETENTION_DAYS + 1),
+    });
+    const secrets = fakeSecrets();
+    secrets.forget.mockRejectedValue(new Error('нет связи'));
+    const { r } = retention([old], [], fakeBlob([]), secrets);
+    await r.run(NOW);
+    expect(old.userSiteSessionId).toBeNull();
+    expect(old.credentialsEnc).toBeNull();
   });
 });

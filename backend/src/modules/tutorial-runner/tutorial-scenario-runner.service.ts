@@ -95,7 +95,9 @@
  * опасную для кошелька.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { defaultDraftSecretsStore } from '../client-site-tutorial/draft-secrets-store';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ClientSiteMediaService } from '../client-site-media/client-site-media.service';
 import { ProjectType } from '@prisma/client';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { SessionStatus } from '../../common/types/session.types';
@@ -553,6 +555,9 @@ export class TutorialScenarioRunnerService {
     private readonly settings: PlatformSettingsService,
     private readonly tts: TtsProviderResolverService,
     private readonly aiUsage: AiUsageService,
+    // Э6 помощника: ролик черновика, привязанного к сайту помощника, собран
+    // — обновить набор роликов сайта (необязателен: стенды без него).
+    @Optional() private readonly siteMedia?: ClientSiteMediaService,
   ) {}
 
   /**
@@ -2972,9 +2977,47 @@ export class TutorialScenarioRunnerService {
     // подберёт крон `client-site-retention`.
     if (asset.clientSiteDraftId) {
       try {
+        // Э-С Ш2: данные входа в хранилище sites-backend — стереть там
+        // (личная запись B целиком, секреты учётки A); колонки и ссылки —
+        // обнулить. Без записи хранилища — как до Ш2, только колонки.
+        const draft = (await this.prisma.clientSiteTutorialDraft.findFirst({
+          where: { id: asset.clientSiteDraftId, secretsOneShot: true },
+          select: {
+            id: true,
+            projectId: true,
+            baseUrl: true,
+            siteTestAccountId: true,
+            userSiteSessionId: true,
+            project: { select: { userId: true } },
+          },
+        })) as {
+          id: string;
+          projectId: string;
+          baseUrl: string;
+          siteTestAccountId: string | null;
+          userSiteSessionId: string | null;
+          project: { userId: string } | null;
+        } | null;
+        if (
+          draft?.project &&
+          (draft.siteTestAccountId || draft.userSiteSessionId)
+        ) {
+          const store = defaultDraftSecretsStore(this.prisma);
+          await store.forget(await store.userOf(draft.project.userId), {
+            ...draft,
+            credentialsEnc: null,
+            cookiesEnc: null,
+          });
+        }
         await this.prisma.clientSiteTutorialDraft.updateMany({
           where: { id: asset.clientSiteDraftId, secretsOneShot: true },
-          data: { credentialsEnc: null, cookiesEnc: null },
+          data: {
+            credentialsEnc: null,
+            cookiesEnc: null,
+            siteTestAccountId: null,
+            userSiteSessionId: null,
+            storeHasCredentials: false,
+          },
         });
       } catch (e) {
         this.logger.warn(
@@ -2983,6 +3026,13 @@ export class TutorialScenarioRunnerService {
           }) — подберёт крон client-site-retention`,
         );
       }
+    }
+
+    // Э6 помощника: собранный ролик привязанного к сайту помощника черновика
+    // — полный набор роликов сайта уходит в sites-backend. `syncForDraft`
+    // не бросает: сбой сети не делает собранный ролик несобранным.
+    if (asset.clientSiteDraftId && this.siteMedia) {
+      await this.siteMedia.syncForDraft(asset.clientSiteDraftId);
     }
   }
 

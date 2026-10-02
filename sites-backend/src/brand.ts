@@ -189,6 +189,12 @@ export const WIDGET_IP_HASH_LABEL = 'v4c-widget-ip';
  */
 export const WIDGET_VOICE_TICKET_HMAC_LABEL = 'v4c-widget-voice-ticket';
 
+/**
+ * Э6: метка HMAC подписанной ссылки на ролик (`GET /widget/v1/video/:token`,
+ * срок — минуты). Ключ — производный от ASSIST_SECRETS_KEY, нового секрета нет.
+ */
+export const WIDGET_VIDEO_LINK_HMAC_LABEL = 'v4c-widget-video-link';
+
 /** Ссылка «Работает на …» в подвале чата (§3-бис.1) — с UTM. */
 export const WIDGET_POWERED_BY_URL =
   'https://v4c.example.invalid/assistant?utm_source=widget&utm_medium=powered_by';
@@ -210,6 +216,11 @@ export const WIDGET_PICKER_PATH = '/v1/picker.js';
  * и только если в конфиге есть цели/триггеры — бюджет загрузчика 12 КБ.
  */
 export const WIDGET_ENGAGE_PATH = '/v1/engage.js';
+/**
+ * Э6: ленивый чанк «показать на экране» (подсветка элемента карты
+ * интерфейса) — загрузчик берёт его только по клику посетителя.
+ */
+export const WIDGET_HIGHLIGHT_PATH = '/v1/highlight.js';
 /** Разметка цели в вёрстке заказчика: клик и отправка формы. */
 export const WIDGET_GOAL_ATTR = 'data-assist-goal';
 export const WIDGET_GOAL_SUBMIT_ATTR = 'data-assist-goal-submit';

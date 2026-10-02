@@ -26,8 +26,22 @@ export const WIDGET_EVENT_KINDS = [
   'scenario_started',
   'scenario_done',
   'link_click',
+  // Э6 (пишет сервер на своих маршрутах): ролик открыт, элемент карты не
+  // найден на странице (сигнал «карта устарела»).
+  'video_play',
+  'highlight_miss',
 ] as const;
 export type WidgetEventKind = (typeof WIDGET_EVENT_KINDS)[number];
+
+/**
+ * Э6: виды, которые считает ТОЛЬКО сервер на своих маршрутах (ссылка на
+ * ролик выдана, сигнал «элемент не найден» принят) — пакет загрузчика
+ * `POST /widget/v1/event` их не принимает (страница не накручивает).
+ */
+export const SERVER_EVENT_KINDS: readonly WidgetEventKind[] = [
+  'video_play',
+  'highlight_miss',
+];
 
 /** Ключ триггера/сценария: короткий идентификатор конфигурации вида. */
 export const EVENT_KEY = /^[A-Za-z0-9_:.-]{1,64}$/;

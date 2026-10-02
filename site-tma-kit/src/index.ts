@@ -25,6 +25,7 @@ export * from './account-select';
 export * from './invite';
 export * from './crawl';
 export * from './widget-look';
+export * from './test-accounts';
 export type { Dictionary } from './dictionaries/ru';
 export { KitContext, useKit, type KitValue } from './kit-context';
 export { useAsync } from './use-async';

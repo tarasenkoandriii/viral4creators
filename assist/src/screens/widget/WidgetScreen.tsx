@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, GraduationCap, LayoutTemplate } from 'lucide-react';
+import { Bot, Clapperboard, GraduationCap, LayoutTemplate } from 'lucide-react';
 import { fmt, formatDate, useAsync, useKit } from '../../kit';
 import { Alert, Button, Card, ScreenTitle, Spinner, Tabs } from '../../kit/ui';
 import { useAssist } from '../../lib/assist-context';
@@ -90,6 +90,13 @@ export function SiteSetupButtons({ siteId }: { siteId: string }) {
         onClick={() => navigate({ name: 'wizard', siteId })}
       >
         {t.wizard}
+      </Button>
+      <Button
+        variant="outline"
+        icon={<Clapperboard size={16} />}
+        onClick={() => navigate({ name: 'videos', siteId })}
+      >
+        {t.videos}
       </Button>
     </div>
   );

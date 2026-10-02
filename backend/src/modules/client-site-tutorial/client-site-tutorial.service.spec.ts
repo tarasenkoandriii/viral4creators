@@ -76,6 +76,8 @@ import {
   type SitesInternalClient,
 } from '../sites-internal/sites-internal.client';
 import { ACCOUNT_CONSENT_TEXT_VERSION } from './account-consent';
+import { DraftSecretsStore } from './draft-secrets-store';
+import { FakeSitesCredentials } from '../../../test/fake-sites-credentials';
 
 /**
  * Проверяется ОРКЕСТРАЦИЯ раунда, без БД и без браузера: порядок
@@ -2877,6 +2879,491 @@ describe('П-Т2 по переключателю SITE_TUTORIAL_ACCOUNT_CONSENT (
       ).toBe(null);
       expect(consentIpHash('unknown', {})).toBe(null);
       expect(consentIpHash(null, {})).toBe(null);
+    });
+  });
+});
+
+describe('Э-С Ш2: данные входа в хранилище sites-backend', () => {
+  /** Сервис с хранилищем: `SITE_TUTORIAL_CREDENTIALS_STORE=sites`, поддельный API. */
+  function withStore(
+    opts: Parameters<typeof setup>[0] = {},
+    fake = new FakeSitesCredentials(),
+  ) {
+    const base = setup(opts);
+    const store = new DraftSecretsStore(
+      base.accessPrisma,
+      fake.client(),
+      () => KEY,
+      {
+        log: jest.fn(),
+        warn: jest.fn(),
+      },
+    );
+    store.env = { SITE_TUTORIAL_CREDENTIALS_STORE: 'sites' };
+    const service = new ClientSiteTutorialService(
+      base.prisma,
+      base.plans,
+      base.usage,
+      base.blob,
+      base.relay,
+      base.explorer,
+      base.access,
+      store,
+    );
+    return { ...base, fake, store, service };
+  }
+
+  const LOGIN = {
+    expectedVersion: 3,
+    submitSelector: '#submit',
+    fields: [
+      { selector: '#email', value: 'a@b.c', sensitive: false },
+      { selector: '#pass', value: 'пароль-B', sensitive: true },
+    ],
+  };
+
+  it('режим B: /login кладёт пароль в личную запись, колонки обнулены, наружу — только «есть данные»', async () => {
+    const { service, fake, clientSiteTutorialDraft } = withStore({
+      sitesMode: 'B',
+      draft: makeDraftRow({ siteMode: 'B' }),
+    });
+    await service.login('user1', 'proj1', LOGIN);
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data).toMatchObject({
+      credentialsEnc: null,
+      cookiesEnc: null,
+      siteTestAccountId: null,
+      userSiteSessionId: expect.stringMatching(/^user-/),
+      storeHasCredentials: true,
+    });
+    expect(JSON.stringify(data)).not.toContain('пароль-B');
+    const rec = fake.records.get(data.userSiteSessionId)!;
+    expect(rec.owner).toBe('gen:user1');
+    expect(rec.secrets['login-fields']).toContain('пароль-B');
+  });
+
+  it('режим B «как сейчас»: /undo переигрывает вход сохранённым паролем', async () => {
+    const fake = new FakeSitesCredentials();
+    const rec = (
+      await fake.client().upsertUserSession('gen:user1', {
+        origin: 'https://shop.example.com',
+        clientRef: 'project:proj1',
+      })
+    ).id;
+    await fake
+      .client()
+      .putUserSessionSecret(
+        'gen:user1',
+        rec,
+        'login-fields',
+        JSON.stringify([{ selector: '#pass', value: 'пароль-B' }]),
+      );
+    const { service, explorer } = withStore(
+      {
+        sitesMode: 'B',
+        draft: makeDraftRow({
+          ...THREE_ROUNDS,
+          siteMode: 'B',
+          userSiteSessionId: rec,
+        }),
+      },
+      fake,
+    );
+    await service.undo('user1', 'proj1', 3);
+    const replay = (explorer.replay as jest.Mock).mock.calls.at(-1)[0];
+    expect(replay.secrets).toEqual({ '#pass': 'пароль-B' });
+    expect(fake.calls).toContain('readUserSession');
+  });
+
+  it('режим A: /login заводит учётку реестра на хосте черновика, /undo берёт пароль арендой', async () => {
+    const { service, fake, clientSiteTutorialDraft, explorer } = withStore({
+      sitesMode: 'A',
+      draft: makeDraftRow({
+        ...THREE_ROUNDS,
+        siteMode: 'A',
+        siteHostId: 'host1',
+        siteModeCheckedAt: new Date(),
+      }),
+    });
+    await service.login('user1', 'proj1', LOGIN);
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data.siteTestAccountId).toMatch(/^site-/);
+    expect(fake.records.get(data.siteTestAccountId)!.hostIds).toEqual([
+      'host1',
+    ]);
+
+    clientSiteTutorialDraft.findUnique.mockResolvedValue(
+      makeDraftRow({
+        ...THREE_ROUNDS,
+        siteMode: 'A',
+        siteHostId: 'host1',
+        siteModeCheckedAt: new Date(),
+        siteTestAccountId: data.siteTestAccountId,
+      }),
+    );
+    await service.undo('user1', 'proj1', 3);
+    const replay = (explorer.replay as jest.Mock).mock.calls.at(-1)[0];
+    expect(replay.secrets).toEqual({ '#pass': 'пароль-B' });
+    expect(fake.calls.filter((c) => c.startsWith('leaseSecrets'))).toEqual(
+      expect.arrayContaining(['leaseSecrets:draft:draft1']),
+    );
+  });
+
+  it('черновик в хранилище, хранилище недоступно — 503 ДО занятия версии и слота', async () => {
+    const { service, fake, clientSiteTutorialDraft, usage } = withStore({
+      sitesMode: 'B',
+      draft: makeDraftRow({ siteMode: 'B', userSiteSessionId: 'user-9' }),
+    });
+    fake.offline = true;
+    await expect(
+      service.step('user1', 'proj1', {
+        expectedVersion: 3,
+        fills: [{ selector: '#a', value: 'x' }],
+      }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+    expect(usage.reserveRound).not.toHaveBeenCalled();
+  });
+
+  it('хранилище включено, но sites-backend без ключей — раунд пишет в колонки (фолбэк)', async () => {
+    const { service, fake, clientSiteTutorialDraft } = withStore({
+      sitesMode: 'B',
+      draft: makeDraftRow({ siteMode: 'B' }),
+    });
+    fake.unconfigured = true;
+    await service.login('user1', 'proj1', LOGIN);
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data.credentialsEnc).toEqual(expect.any(String));
+    expect(data.userSiteSessionId).toBeUndefined();
+  });
+
+  it('удаление черновика стирает личную запись в хранилище', async () => {
+    const fake = new FakeSitesCredentials();
+    const id = (
+      await fake.client().upsertUserSession('gen:user1', {
+        origin: 'https://shop.example.com',
+        clientRef: 'project:proj1',
+      })
+    ).id;
+    const { service: svc, clientSiteTutorialDraft } = withStore(
+      { sitesMode: 'B', draft: makeDraftRow({ userSiteSessionId: id }) },
+      fake,
+    );
+    await svc.remove('user1', 'proj1');
+    expect(fake.records.has(id)).toBe(false);
+    expect(clientSiteTutorialDraft.deleteMany).toHaveBeenCalled();
+  });
+
+  it('hasCredentials — и по хранилищу, без похода в sites-backend', async () => {
+    const { service, fake } = withStore({
+      draft: makeDraftRow({
+        status: 'PENDING_REVIEW',
+        userSiteSessionId: 'user-1',
+        storeHasCredentials: true,
+      }),
+    });
+    const view = (await service.getState('user1', 'proj1'))!;
+    expect(view.hasCredentials).toBe(true);
+    expect(fake.calls).toEqual([]);
+  });
+});
+
+describe('аудит Э6, Д1: липкий признак входа loginUsedAt', () => {
+  /** Кука первой стороны — её сайт ставит и на публичных страницах. */
+  const SITE_COOKIE = {
+    name: '_ga',
+    value: 'GA1.2.1',
+    domain: '.shop.example.com',
+    path: '/',
+    secure: true,
+    httpOnly: false,
+    expires: -1,
+  };
+  const roundWith = (over: Record<string, unknown> = {}) => ({
+    runRound: jest.fn().mockResolvedValue({
+      exploration: EXPLORATION,
+      cookies: [SITE_COOKIE],
+      ...over,
+    }),
+    replay: jest.fn().mockResolvedValue({
+      exploration: EXPLORATION,
+      cookies: [SITE_COOKIE],
+      ...over,
+    }),
+  });
+  /** Как в жизни: прошлые раунды писали куки и `secretsUsedAt`. */
+  const liveRow = (over: Record<string, unknown> = {}) =>
+    makeDraftRow({
+      secretsUsedAt: new Date('2027-01-20T10:00:00Z'),
+      loginUsedAt: null,
+      ...over,
+    });
+  const lastData = (draft: { updateMany: jest.Mock }) =>
+    draft.updateMany.mock.calls.at(-1)[0].data;
+
+  it('/explore с куками сайта — признака нет', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: null,
+      explorer: roundWith(),
+    });
+    await service.explore('user1', 'proj1', 'https://shop.example.com/');
+    const data = clientSiteTutorialDraft.create.mock.calls[0][0].data;
+    expect(data.cookiesEnc).toEqual(expect.any(String));
+    expect(data.secretsUsedAt).toEqual(expect.any(Date));
+    expect(data).not.toHaveProperty('loginUsedAt');
+  });
+
+  it('/step с обычным вводом и куками, secretsUsedAt стоит — признака нет', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: liveRow(),
+      explorer: roundWith(),
+    });
+    await service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      fills: [{ selector: 'input[name="q"]', value: 'чайник' }],
+      clickSelector: '#search',
+    });
+    const data = lastData(clientSiteTutorialDraft);
+    expect(data.cookiesEnc).toEqual(expect.any(String));
+    expect(data.secretsUsedAt).toEqual(expect.any(Date));
+    expect(data).not.toHaveProperty('loginUsedAt');
+  });
+
+  it('/step: разведчик увидел поле пароля/кода — признак ставится', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: liveRow(),
+      explorer: roundWith({ sensitiveFill: true }),
+    });
+    await service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      fills: [{ selector: '#field-2', value: '123456' }],
+    });
+    expect(lastData(clientSiteTutorialDraft).loginUsedAt).toEqual(
+      expect.any(Date),
+    );
+  });
+
+  it('/step: селектор похож на пароль/код — признак ставится', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: liveRow(),
+      explorer: roundWith(),
+    });
+    await service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      fills: [{ selector: 'input[name="otp"]', value: '123456' }],
+    });
+    expect(lastData(clientSiteTutorialDraft).loginUsedAt).toEqual(
+      expect.any(Date),
+    );
+  });
+
+  it('/login — признак ставится; уже стоявший не переписывается', async () => {
+    const LOGIN = {
+      expectedVersion: 3,
+      submitSelector: '#submit',
+      fields: [{ selector: '#email', value: 'a@b.c', sensitive: true }],
+    };
+    const a = setup({ draft: liveRow(), explorer: roundWith() });
+    await a.service.login('user1', 'proj1', LOGIN);
+    expect(lastData(a.clientSiteTutorialDraft).loginUsedAt).toEqual(
+      expect.any(Date),
+    );
+    const first = new Date('2027-01-01T00:00:00Z');
+    const b = setup({
+      draft: liveRow({ loginUsedAt: first }),
+      explorer: roundWith(),
+    });
+    await b.service.login('user1', 'proj1', LOGIN);
+    expect(lastData(b.clientSiteTutorialDraft).loginUsedAt).toBe(first);
+  });
+
+  it('раунд читает из колонок сохранённые поля входа — признак ставится (черновик до флага)', async () => {
+    const { encryptCredentials } = jest.requireActual('./draft-credentials');
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: liveRow({
+        credentialsEnc: encryptCredentials(
+          [{ selector: '#pass', value: 'x' }],
+          KEY,
+        ),
+      }),
+      explorer: roundWith(),
+    });
+    await service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      fills: [],
+      clickSelector: '#next',
+    });
+    expect(lastData(clientSiteTutorialDraft).loginUsedAt).toEqual(
+      expect.any(Date),
+    );
+  });
+
+  it('/undo, переигрывающий вход (секретное поле в оставшихся шагах), — признак ставится', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: liveRow({ ...THREE_ROUNDS }),
+      explorer: roundWith(),
+    });
+    await service.undo('user1', 'proj1', 3);
+    expect(lastData(clientSiteTutorialDraft).loginUsedAt).toEqual(
+      expect.any(Date),
+    );
+  });
+
+  it('/undo публичного сценария — признака нет', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: liveRow({
+        steps: [
+          { kind: 'goto', route: 'https://shop.example.com' },
+          { kind: 'click', selector: '#catalog' },
+          { kind: 'click', selector: '#buy' },
+        ],
+        stepsPerRound: [1, 1, 1],
+        roundScreenshots: ['к1', 'к2', 'к3'],
+      }),
+      explorer: roundWith(),
+    });
+    await service.undo('user1', 'proj1', 3);
+    expect(lastData(clientSiteTutorialDraft)).not.toHaveProperty('loginUsedAt');
+  });
+
+  it('живой вход: старт ставит признак сразу, завершение — тоже', async () => {
+    const { service, clientSiteTutorialDraft } = setup({ draft: liveRow() });
+    const start = await service.startLiveLogin('user1', 'proj1');
+    expect(clientSiteTutorialDraft.updateMany).toHaveBeenCalledWith({
+      where: { id: 'draft1', loginUsedAt: null },
+      data: { loginUsedAt: expect.any(Date) },
+    });
+    await service.completeLiveLogin('user1', 'proj1', {
+      ticket: start.ticket,
+      expectedVersion: 3,
+    });
+    expect(lastData(clientSiteTutorialDraft).loginUsedAt).toEqual(
+      expect.any(Date),
+    );
+  });
+
+  it('снимок (/refresh) с прочитанными полями входа — признак до браузера; без них — ничего', async () => {
+    const { encryptCredentials } = jest.requireActual('./draft-credentials');
+    const a = setup({
+      draft: liveRow({
+        credentialsEnc: encryptCredentials(
+          [{ selector: '#pass', value: 'x' }],
+          KEY,
+        ),
+      }),
+    });
+    await a.service.refresh('user1', 'proj1');
+    expect(a.clientSiteTutorialDraft.updateMany).toHaveBeenCalledWith({
+      where: { id: 'draft1', loginUsedAt: null },
+      data: { loginUsedAt: expect.any(Date) },
+    });
+    const b = setup({ draft: liveRow() });
+    await b.service.refresh('user1', 'proj1');
+    expect(b.clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+  });
+
+  describe('хранилище Ш2', () => {
+    function withStore(
+      opts: Parameters<typeof setup>[0],
+      fake = new FakeSitesCredentials(),
+    ) {
+      const base = setup(opts);
+      const store = new DraftSecretsStore(
+        base.accessPrisma,
+        fake.client(),
+        () => KEY,
+        { log: jest.fn(), warn: jest.fn() },
+      );
+      store.env = { SITE_TUTORIAL_CREDENTIALS_STORE: 'sites' };
+      const service = new ClientSiteTutorialService(
+        base.prisma,
+        base.plans,
+        base.usage,
+        base.blob,
+        base.relay,
+        base.explorer,
+        base.access,
+        store,
+      );
+      return { ...base, fake, store, service };
+    }
+
+    it('B: раунд по личной записи только с куками — признака нет; запись с полями входа — признак', async () => {
+      const fake = new FakeSitesCredentials();
+      const rec = (
+        await fake.client().upsertUserSession('gen:user1', {
+          origin: 'https://shop.example.com',
+          clientRef: 'draft:draft1',
+        })
+      ).id;
+      await fake
+        .client()
+        .putUserSessionSecret('gen:user1', rec, 'session-cookies', '[]');
+      const STEP = {
+        expectedVersion: 3,
+        fills: [],
+        clickSelector: '#next',
+      };
+      const a = withStore(
+        {
+          sitesMode: 'B',
+          draft: liveRow({ siteMode: 'B', userSiteSessionId: rec }),
+          explorer: roundWith(),
+        },
+        fake,
+      );
+      await a.service.step('user1', 'proj1', STEP);
+      expect(lastData(a.clientSiteTutorialDraft)).not.toHaveProperty(
+        'loginUsedAt',
+      );
+      await fake
+        .client()
+        .putUserSessionSecret(
+          'gen:user1',
+          rec,
+          'login-fields',
+          JSON.stringify([{ selector: '#pass', value: 'x' }]),
+        );
+      const b = withStore(
+        {
+          sitesMode: 'B',
+          draft: liveRow({ siteMode: 'B', userSiteSessionId: rec }),
+          explorer: roundWith(),
+        },
+        fake,
+      );
+      await b.service.step('user1', 'proj1', STEP);
+      expect(lastData(b.clientSiteTutorialDraft).loginUsedAt).toEqual(
+        expect.any(Date),
+      );
+    });
+
+    it('B: /explore двух черновиков пользователя — РАЗНЫЕ личные записи (не общий «draft:new»)', async () => {
+      const fake = new FakeSitesCredentials();
+      const ids: string[] = [];
+      for (const url of [
+        'https://shop.example.com/',
+        'https://other.example.org/',
+      ]) {
+        const { service, clientSiteTutorialDraft } = withStore(
+          {
+            sitesMode: 'B',
+            draft: null,
+            explorer: roundWith({
+              exploration: { ...EXPLORATION, currentUrl: url },
+              cookies: [{ ...SITE_COOKIE, domain: new URL(url).hostname }],
+            }),
+          },
+          fake,
+        );
+        await service.explore('user1', 'proj1', url);
+        const data = clientSiteTutorialDraft.create.mock.calls[0][0].data;
+        expect(data).not.toHaveProperty('loginUsedAt');
+        ids.push(data.userSiteSessionId);
+      }
+      expect(ids[0]).toEqual(expect.stringMatching(/^user-/));
+      expect(ids[1]).toEqual(expect.stringMatching(/^user-/));
+      expect(ids[0]).not.toBe(ids[1]);
     });
   });
 });

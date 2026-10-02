@@ -29,6 +29,7 @@ import { WidgetPublicController } from './widget-public.controller';
 import { WidgetSessionService } from './widget-session.service';
 import { WidgetStateService } from './widget-state.service';
 import { WidgetVoiceController } from './widget-voice.controller';
+import { WidgetMediaController } from './widget-media.controller';
 
 @Module({
   imports: [
@@ -45,6 +46,8 @@ import { WidgetVoiceController } from './widget-voice.controller';
     WidgetPublicController,
     WidgetEngagementController,
     WidgetVoiceController,
+    // Э6: ссылка на ролик, редирект по ней, сигнал «карта устарела».
+    WidgetMediaController,
     WidgetFrameController,
     LandingPublicController,
     AcquisitionController,

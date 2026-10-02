@@ -18,6 +18,7 @@ import { CRAWL_DEFAULTS } from '../../config/assist-defaults';
 import { BodyTooLargeError } from '../../shared/external-url-guard';
 import { optOutCandidates } from '../site-core/hosts/host-normalize';
 import { extractPage, looksLikeSpaShell } from './extract/extractor';
+import { extractUiElements } from './extract/ui-map';
 import {
   PINNED_HTTP_DEPS,
   PinnedHttpDeps,
@@ -192,6 +193,8 @@ export class PublicPageFetcher {
       return { ok: false, reason: 'spa', httpStatus: status };
     }
     if (!page.text) return { ok: false, reason: 'empty', httpStatus: status };
+    // Э6: карта интерфейса — из того же HTML (сети не ходит, как extractor).
+    page.uiElements = extractUiElements(html, finalUrl);
 
     return {
       ok: true,

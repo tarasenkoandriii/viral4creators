@@ -88,6 +88,7 @@ import {
   ClientSiteDraftRetention,
   ClientSiteRetentionResult,
 } from '../client-site-tutorial/draft-retention';
+import { defaultDraftSecretsStore } from '../client-site-tutorial/draft-secrets-store';
 import {
   VoiceUploadService,
   VoiceUploadSweepResult,
@@ -838,6 +839,9 @@ export class CronJobsService {
       return await new ClientSiteDraftRetention(
         this.prisma,
         this.blobService,
+        undefined,
+        // Э-С Ш2: данные входа в хранилище sites-backend стираются там же.
+        defaultDraftSecretsStore(this.prisma),
       ).run();
     } finally {
       await releaseJobLock(this.prisma, 'client-site-retention', acquired);

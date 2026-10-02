@@ -453,3 +453,28 @@ body {
     animation: none;
   }
 }
+
+/* Э6: ролик обучалки сайта внутри окна чата. */
+.vid {
+  margin: 8px 0;
+  border: 1px solid var(--ln);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+}
+.vid-h {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+}
+.vid video {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  background: #000;
+}

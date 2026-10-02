@@ -21,6 +21,7 @@
 
 import { readStoredThemePreference } from './theme';
 import { captureReferralCode } from './referral';
+import { assistSiteEntryUrl, captureAssistSiteLink } from './assist-site-link';
 
 export interface TelegramWebApp {
   initData: string;
@@ -167,7 +168,17 @@ function stripTelegramLaunchHash(): void {
 export function initTelegramWebApp(): void {
   // Код приглашения — ДО очистки hash'а (см. её доккомментарий).
   captureReferralCode();
+  // Э6 помощника: deep-link «снять обучение для сайта» — тоже до очистки.
+  const assistLink = captureAssistSiteLink();
   stripTelegramLaunchHash();
+  if (assistLink && typeof window !== 'undefined') {
+    // Сразу форма нового проекта «сайт заказчика» (роутер ещё не читал hash).
+    window.history.replaceState(
+      null,
+      '',
+      assistSiteEntryUrl(window.location.pathname)
+    );
+  }
   applyTheme();
   if (
     !getTelegramWebApp() &&

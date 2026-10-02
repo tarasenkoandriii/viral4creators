@@ -115,6 +115,8 @@ const all: Route[] = [
   { name: 'widget', siteId: 's1', tab: 'hosts' },
   { name: 'widget', siteId: 's1', tab: 'leads' },
   { name: 'persona', siteId: 's1' },
+  // Э6: экран «Видео».
+  { name: 'videos', siteId: 's1' },
   { name: 'wizard', siteId: 's1' },
   { name: 'plan', plan: 'business' },
   { name: 'widget-draft', draftId: 'd_1-x' },
@@ -167,6 +169,11 @@ assert.deepEqual(parseRoute('#/sites/ck1/persona'), {
   name: 'persona',
   siteId: 'ck1',
 });
+assert.deepEqual(parseRoute('#/sites/ck1/videos'), {
+  name: 'videos',
+  siteId: 'ck1',
+});
+assert.equal(parseRoute('#/sites/ck1/videos/x').name, 'not-found');
 assert.deepEqual(parseRoute('#/sites/ck1/learning/site/onboarding'), {
   name: 'wizard',
   siteId: 'ck1',

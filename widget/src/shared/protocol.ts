@@ -80,6 +80,12 @@ export type ParentMessage =
       value: number | null;
       currency: string | null;
     }
+  /**
+   * Э6 (§4.12): итог подсветки — элемент найден и подсвечен или нет
+   * (вёрстка сменилась — iframe шлёт сигнал «карта устарела»). Подделать
+   * может любой скрипт страницы — последствие: лишний сигнал своему же сайту.
+   */
+  | { type: 'highlight-result'; elementId: string; found: boolean }
   /** Э3 (§3.6 п.4–5): посетитель принял проактивный сигнал → префилл или сценарий. */
   | {
       type: 'proactive';
@@ -110,7 +116,14 @@ export type FrameMessage =
       state: 'waiting' | 'active' | 'closed' | 'missed' | 'cancelled';
     }
   /** Чат недоступен на этом origin (origin_denied и т.п.) — загрузчик убирает кнопку. */
-  | { type: 'unavailable'; code: string };
+  | { type: 'unavailable'; code: string }
+  /**
+   * Э6 (§4.9, §4.12): подсветить элемент карты интерфейса. Селектор и
+   * подпись — из карты СЕРВЕРА (не из текста модели); загрузчик ищет
+   * `querySelectorAll` и ставит подпись `textContent` — ничего больше
+   * из ответа модели на страницу заказчика не попадает.
+   */
+  | { type: 'highlight'; elementId: string; selector: string; caption: string };
 
 export type Envelope<T> = T & { ns: string; v: number };
 
@@ -240,6 +253,18 @@ export function cleanGoal(
   };
 }
 
+/** Э6: id элемента карты интерфейса (`u` + 8 hex, как в sites-backend). */
+export const UI_ELEMENT_ID = /^u[0-9a-f]{8}$/;
+
+/** Э6: селектор карты — печатный CSS без `<`, обратных кавычек и управляющих, ≤ 200. */
+export function cleanSelector(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  // eslint-disable-next-line no-control-regex
+  if (!s || s.length > 200 || /[\u0000-\u001f\u007f<`]/.test(s)) return null;
+  return s;
+}
+
 export function cleanQuestion(v: unknown): string | null {
   const q = text(v, MAX_QUESTION + 1);
   if (q === null) return null;
@@ -315,6 +340,12 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
     }
     case 'goal':
       return cleanGoal(m);
+    case 'highlight-result':
+      return typeof m.elementId === 'string' &&
+        UI_ELEMENT_ID.test(m.elementId) &&
+        typeof m.found === 'boolean'
+        ? { type: 'highlight-result', elementId: m.elementId, found: m.found }
+        : null;
     case 'proactive': {
       const action = m.action;
       if (
@@ -381,6 +412,16 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
           ENG_KEY.test(m.key))
         ? { type: 'count', kind: m.kind, key: m.key as string | null }
         : null;
+    case 'highlight': {
+      const selector = cleanSelector(m.selector);
+      const caption = text(m.caption, 80);
+      return typeof m.elementId === 'string' &&
+        UI_ELEMENT_ID.test(m.elementId) &&
+        selector &&
+        caption
+        ? { type: 'highlight', elementId: m.elementId, selector, caption }
+        : null;
+    }
     case 'handoff-state':
       return m.state === 'waiting' ||
         m.state === 'active' ||

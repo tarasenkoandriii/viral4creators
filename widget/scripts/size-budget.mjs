@@ -33,6 +33,9 @@ export const BUDGETS = [
   // Э5: голос — ленивый чанк iframe-чата (запись, детектор речи, плеер);
   // грузится, только когда голос включён в конфиге сайта.
   { name: 'voice', files: ['dist/v1/voice.js'], maxGzip: 4 * KB },
+  // Э6: «показать на экране» — ленивый чанк загрузчика, только по клику
+  // посетителя на «Показать на странице» (исполняется в origin заказчика).
+  { name: 'highlight', files: ['dist/v1/highlight.js'], maxGzip: 3 * KB },
 ];
 
 export const LOADER_SINKS = [
@@ -77,6 +80,8 @@ for (const [label, file] of [
   // Э5: чанк голоса живёт в iframe, но HTML-приёмников и eval в нём тоже
   // нет и не будет (Trusted Types iframe — 'none').
   ['чанк голоса', 'dist/v1/voice.js'],
+  // Э6: подсветка — в origin заказчика, как загрузчик.
+  ['чанк подсветки', 'dist/v1/highlight.js'],
 ]) {
   const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
   for (const re of LOADER_SINKS) {

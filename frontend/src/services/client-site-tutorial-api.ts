@@ -44,6 +44,29 @@ export async function exploreSite(
   );
 }
 
+/** Э6 помощника: к какому сайту ИИ-помощника привязан черновик. */
+export interface AssistLinkView {
+  clientSiteId: string | null;
+  siteName: string | null;
+}
+
+/**
+ * Привязать черновик к сайту помощника (`null` — отвязать). Сервер
+ * проверяет во внутреннем API sites-backend, что человек — владелец или
+ * менеджер помощника этого сайта; иначе 403.
+ */
+export async function setAssistLink(
+  projectId: string,
+  siteId: string | null
+): Promise<AssistLinkView> {
+  return unwrap(
+    await api.putJson<AssistLinkView>(`${base(projectId)}/assist-link`, {
+      siteId,
+    }),
+    'assist-link'
+  );
+}
+
 export async function stepSite(
   projectId: string,
   input: {

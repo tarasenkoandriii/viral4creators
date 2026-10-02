@@ -188,6 +188,14 @@ function fresh() {
       visitorId: string;
     }>,
     tts: [] as Array<{ pk: string; messageId: string; ok: boolean }>,
+    // Э6
+    videoLinks: [] as Array<{ pk: string; videoId: string; ok: boolean }>,
+    videoRedirects: 0,
+    highlightMisses: [] as Array<{
+      pk: string;
+      elementId: string;
+      pageUrl: string;
+    }>,
   };
 }
 
@@ -301,8 +309,10 @@ function frameCsp(site: Site | undefined): string {
     "img-src 'self'",
     "font-src 'self'",
     "connect-src 'self'",
-    // Э5: как frame-html.ts sites-backend — звук озвучки только из Blob-URL.
-    'media-src blob:',
+    // Э5/Э6: как frame-html.ts sites-backend — звук озвучки из Blob-URL,
+    // ролик — подписанная ссылка своего origin и её редирект (в моке — на
+    // свой же origin; в проде — хосты роликов ASSIST_VIDEO_HOSTS).
+    "media-src blob: 'self'",
     `frame-ancestors ${anc}`,
     "base-uri 'none'",
     "form-action 'none'",
@@ -335,6 +345,36 @@ function answerFor(
       text: 'Звоните менеджеру +380 67 123 45 67 в рабочее время.',
       sources: [],
       actions: [],
+    };
+  // Э6: действия подсветки и ролика — как их собрал бы сервер (селектор и
+  // подпись — из карты интерфейса, id ролика — из списка сайта).
+  if (q.includes('__hl__') || q.includes('__video__'))
+    return {
+      text: 'Кнопка «Купить» — справа от цены. Покажу на странице.',
+      sources: [],
+      actions: [
+        ...(q.includes('__hl__')
+          ? [
+              {
+                kind: 'highlight',
+                label: 'Показать на странице',
+                elementId: 'u1a2b3c4d',
+                selector: '#cta-buy',
+                caption: 'Кнопка «Купить»',
+              },
+            ]
+          : []),
+        ...(q.includes('__video__')
+          ? [
+              {
+                kind: 'video',
+                label: 'Смотреть видео',
+                videoId: q.includes('__video_gone__') ? 'vid_gone' : 'vid_ok',
+                title: 'Как оформить заказ',
+              },
+            ]
+          : []),
+      ],
     };
   const words = Array.from({ length: 24 }, (_, i) => `слово${i + 1}`).join(' ');
   return {
@@ -856,6 +896,19 @@ async function api(
       headers
     );
   }
+  // Э6: редирект подписанной ссылки на ролик — без visitor-token (его
+  // открывает <video> iframe), подпись в моке — форма токена.
+  if (req.method === 'GET' && p.startsWith('/widget/v1/video/')) {
+    if (!/^\/widget\/v1\/video\/v1\.[A-Za-z0-9_.-]+$/.test(p))
+      return fail(res, 404, 'VIDEO_UNAVAILABLE');
+    M.videoRedirects++;
+    res.writeHead(302, {
+      Location: `${WIDGET}/__media/tutorial.wav`,
+      'Cache-Control': 'private, no-store',
+      'Referrer-Policy': 'no-referrer',
+    });
+    return res.end();
+  }
   const tok = auth(req);
   if (p.startsWith('/widget/v1/') && !tok) {
     return fail(
@@ -895,6 +948,39 @@ async function api(
       { text, lang: 'uk', voiceTicket: `v1.9999999999.${'T'.repeat(43)}` },
       { 'Cache-Control': 'no-store' }
     );
+  }
+  // ── Э6: ссылка на ролик и сигнал «карта устарела» (упрощённо как
+  // assist-widget/widget-media.controller.ts: барьеры сайта — sites-backend).
+  if (req.method === 'POST' && p === '/widget/v1/video') {
+    const b = await readBody(req);
+    const videoId = typeof b.videoId === 'string' ? b.videoId : '';
+    const ok_ = videoId === 'vid_ok';
+    M.videoLinks.push({ pk: t.pk, videoId, ok: ok_ });
+    if (!ok_) return fail(res, 404, 'VIDEO_UNAVAILABLE');
+    return ok(
+      res,
+      {
+        url: `/widget/v1/video/v1.${t.siteId}.${videoId}.9999999999.${'s'.repeat(43)}`,
+        title: 'Как оформить заказ',
+        expiresAt: new Date(now() + 600e3).toISOString(),
+      },
+      { 'Cache-Control': 'no-store' }
+    );
+  }
+  if (req.method === 'POST' && p === '/widget/v1/highlight-miss') {
+    const b = await readBody(req);
+    if (
+      typeof b.elementId !== 'string' ||
+      !/^u[0-9a-f]{8}$/.test(b.elementId) ||
+      typeof b.pageUrl !== 'string'
+    )
+      return fail(res, 400, 'BAD_REQUEST');
+    M.highlightMisses.push({
+      pk: t.pk,
+      elementId: b.elementId,
+      pageUrl: b.pageUrl,
+    });
+    return ok(res, { ok: true, recorded: true });
   }
   if (req.method === 'POST' && p === '/widget/v1/tts') {
     const b = await readBody(req);
@@ -1234,6 +1320,15 @@ async function widgetServer(
         `parent.postMessage({ns:'v4c-widget',v:1,type:'unavailable',code:'ORIGIN_DENIED'}, '*');</script>`
     );
   }
+  if (p === '/__media/tutorial.wav') {
+    // Э6: «ролик» в моке — короткий звук (метаданные <video> читаются).
+    res.writeHead(200, {
+      'Content-Type': 'audio/wav',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(toneWav(1));
+  }
   if (p.startsWith('/v1/')) {
     const file = path.join(ROOT, 'dist', path.normalize(p).replace(/^\/+/, ''));
     if (!file.startsWith(path.join(ROOT, 'dist')) || !fs.existsSync(file))
@@ -1350,6 +1445,9 @@ async function control(
         picks: M.picks,
         voice: M.voice,
         tts: M.tts,
+        videoLinks: M.videoLinks,
+        videoRedirects: M.videoRedirects,
+        highlightMisses: M.highlightMisses,
       });
   }
   return fail(res, 404, 'NOT_FOUND');
@@ -1388,6 +1486,12 @@ export interface StandSpec {
   heavy?: boolean;
   /** Э3: элементы для целей и режима выбора (tel:, мессенджер, кнопки, формы, поле ввода). */
   goalsKit?: boolean;
+  /**
+   * Э6: кнопка для подсветки «показать на экране»: `v1` — `#cta-buy` (как в
+   * карте интерфейса), `v2` — вёрстка сменилась (`#cta-order`), `dup` — два
+   * элемента под одним селектором (неоднозначно — не подсвечиваем).
+   */
+  uiKit?: 'v1' | 'v2' | 'dup';
 }
 
 export function encodeSpec(s: StandSpec): string {
@@ -1449,6 +1553,18 @@ function standHtml(spec: StandSpec, host: string): string {
         `<form id="f-pd" data-assist-goal-submit="sub"><button id="send-pd" type="submit">Подписаться</button></form>` +
         `<div id="editable" contenteditable="true">Редактируемый текст</div><div id="clicked"></div>`
     );
+  if (spec.uiKit === 'v1')
+    parts.push(
+      `<div class="long-top"></div><p class="price">1 500 грн <button id="cta-buy" type="button">Купить</button></p>`
+    );
+  if (spec.uiKit === 'v2')
+    parts.push(
+      `<p class="price">1 500 грн <button id="cta-order" type="button">Оформить</button></p>`
+    );
+  if (spec.uiKit === 'dup')
+    parts.push(
+      `<p><button id="cta-buy" type="button">Купить</button><button id="cta-buy" type="button">Купить 2</button></p>`
+    );
   if (spec.long) parts.push(`<div class="long">длинная страница</div>`);
   if (spec.evilFrame)
     parts.push(
@@ -1487,7 +1603,7 @@ const SNIPPETS: Record<string, string> = {
 const STAND_CSS = `body{font-family:Georgia,serif;margin:0;padding:16px}nav a{margin-right:8px}
 #help-chat{width:420px;height:520px;border:1px solid #ccc}#help-chat.auto{height:auto}
 #cookie-banner{position:fixed;right:0;bottom:0;width:100%;height:90px;background:#333;color:#fff;z-index:2147483647}
-.long{height:3000px}#hero{display:block;max-width:100%}`;
+.long{height:3000px}#hero{display:block;max-width:100%}.long-top{height:1400px}`;
 
 function siteServer(req: http.IncomingMessage, res: http.ServerResponse) {
   const host = req.headers.host || 'localhost';

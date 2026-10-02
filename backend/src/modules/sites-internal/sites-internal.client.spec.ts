@@ -172,3 +172,82 @@ describe('SitesInternalClient (П-С3)', () => {
     }
   });
 });
+
+describe('SitesInternalClient: хранилище учётных данных (Э-С Ш2)', () => {
+  it('аренда → погашение: два подписанных запроса, секреты из второго', async () => {
+    const { c, calls } = client((url) =>
+      url.endsWith('/lease')
+        ? json(200, { success: true, data: { leaseId: 'L1' } })
+        : json(200, {
+            success: true,
+            data: { secrets: { 'login-fields': '[]' } },
+          }),
+    );
+    await expect(
+      c.leaseSecrets('4242', {
+        testAccountId: 'ta1',
+        hostId: 'h1',
+        runRef: 'draft:d1',
+      }),
+    ).resolves.toEqual({ 'login-fields': '[]' });
+    expect(calls.map((x) => new URL(x.url).pathname)).toEqual([
+      '/internal/sites/credentials/lease',
+      '/internal/sites/credentials/lease/redeem',
+    ]);
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      telegramId: '4242',
+      testAccountId: 'ta1',
+      hostId: 'h1',
+      product: 'tutorial',
+      runRef: 'draft:d1',
+    });
+    expect(JSON.parse(calls[1].init.body as string)).toEqual({
+      telegramId: '4242',
+      leaseId: 'L1',
+    });
+    for (const call of calls) {
+      expect(
+        verifySitesRequest(SECRET, {
+          method: 'POST',
+          path: new URL(call.url).pathname,
+          body: call.init.body as string,
+          headers: call.init.headers as Record<string, string>,
+          nowSeconds: Math.floor(NOW.getTime() / 1000),
+          expectedCaller: SITES_CALLER_TUTORIAL,
+        }).ok,
+      ).toBe(true);
+    }
+  });
+
+  it('503 CREDENTIALS_NOT_CONFIGURED — недоступность с кодом (генератор пишет в колонки)', async () => {
+    const { c } = client(() =>
+      json(503, {
+        success: false,
+        error: { code: 'CREDENTIALS_NOT_CONFIGURED', message: 'нет ключей' },
+      }),
+    );
+    const err = await c
+      .upsertUserSession('gen:u1', { origin: 'https://a.example.com' })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SitesUnavailableError);
+    expect((err as SitesUnavailableError).code).toBe(
+      'CREDENTIALS_NOT_CONFIGURED',
+    );
+  });
+
+  it('отказ аренды (403) — SitesRejectedError с кодом; не настроен — SitesNotConfiguredError', async () => {
+    const { c } = client(() =>
+      json(403, {
+        success: false,
+        error: { code: 'CREDENTIAL_LEASE_DENIED', message: 'хост' },
+      }),
+    );
+    await expect(
+      c.leaseSecrets('1', { testAccountId: 'a', hostId: 'h' }),
+    ).rejects.toMatchObject({ code: 'CREDENTIAL_LEASE_DENIED', status: 403 });
+    const { c: off } = client(() => json(200, {}), {});
+    await expect(off.credentialsStatus()).rejects.toBeInstanceOf(
+      SitesNotConfiguredError,
+    );
+  });
+});

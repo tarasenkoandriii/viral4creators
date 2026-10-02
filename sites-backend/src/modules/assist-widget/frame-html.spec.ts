@@ -31,8 +31,9 @@ describe('frameCsp', () => {
     expect(directive(csp, 'default-src')).toBe("'none'");
     expect(directive(csp, 'script-src')).toBe("'self'");
     expect(directive(csp, 'connect-src')).toBe("'self'");
-    // Э5: звук озвучки — только из Blob-URL, никаких внешних источников.
-    expect(directive(csp, 'media-src')).toBe('blob:');
+    // Э5: звук озвучки — только из Blob-URL; Э6: + свой origin (подписанная
+    // ссылка на ролик). Внешних источников без явного списка — нет.
+    expect(directive(csp, 'media-src')).toBe("blob: 'self'");
     expect(directive(csp, 'img-src')).toBe("'self'");
     expect(directive(csp, 'base-uri')).toBe("'none'");
     expect(directive(csp, 'form-action')).toBe("'none'");
@@ -100,5 +101,22 @@ describe('frameAncestors', () => {
         previewAncestors: ['https://web.telegram.org'],
       }),
     ).toBe('https://shop.ua https://web.telegram.org');
+  });
+});
+
+describe('frameCsp — Э6: хосты роликов в media-src', () => {
+  it('источники правильной формы попадают в media-src, мусор — нет', () => {
+    const csp = frameCsp('https://shop.example.com', [
+      'https://*.public.blob.vercel-storage.com',
+      'http://localhost:*',
+      "https://evil.com; script-src 'unsafe-inline'",
+      'javascript:alert(1)',
+      '*',
+    ]);
+    expect(directive(csp, 'media-src')).toBe(
+      "blob: 'self' https://*.public.blob.vercel-storage.com http://localhost:*",
+    );
+    expect(directive(csp, 'script-src')).toBe("'self'");
+    expect(csp).not.toMatch(/unsafe-/);
   });
 });

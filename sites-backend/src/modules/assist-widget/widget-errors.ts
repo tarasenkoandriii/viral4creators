@@ -34,6 +34,8 @@ export const WIDGET_ERROR_STATUS: Record<WidgetErrorCode, number> = {
   VOICE_LIMIT: 429,
   VOICE_NOT_HEARD: 422,
   AUDIO_INVALID: 400,
+  // Э6:
+  VIDEO_UNAVAILABLE: 404,
 };
 
 const MESSAGE: Record<WidgetErrorCode, string> = {
@@ -59,6 +61,7 @@ const MESSAGE: Record<WidgetErrorCode, string> = {
   VOICE_LIMIT: 'Голос на сегодня исчерпан — напишите текстом',
   VOICE_NOT_HEARD: 'Не расслышал — повторите или напишите текстом',
   AUDIO_INVALID: 'Запись не подходит — повторите или напишите текстом',
+  VIDEO_UNAVAILABLE: 'Видео сейчас недоступно',
 };
 
 export function widgetError(

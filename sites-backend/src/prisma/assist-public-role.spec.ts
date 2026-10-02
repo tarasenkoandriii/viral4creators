@@ -24,6 +24,16 @@ import { SITES_DB_SCHEMA } from './prisma.service';
 import { ASSIST_PUBLIC_OMIT } from './assist-public-db.service';
 
 const RAW_URL = process.env.SITES_DIRECT_URL;
+
+/** Э-С Ш2: хранилище учётных данных — роли виджета прав нет вовсе. */
+const CREDENTIAL_TABLES = [
+  'site_test_accounts',
+  'site_credentials',
+  'site_credential_leases',
+  'user_site_sessions',
+  'user_site_secrets',
+  'site_credential_audit',
+];
 const IN_CI = process.env.CI === 'true';
 
 /** `?schema=sites` нужен CLI Prisma; драйверу pg он ни к чему. */
@@ -144,10 +154,36 @@ if (!RAW_URL) {
       'assist_platform_eval_candidates',
       // Э-С Ш1: id запросов внутреннего API генератора — не публичное.
       'site_internal_requests',
+      // Э-С Ш2: тестовые учётки, их секреты, аренды, личные записи B и
+      // журнал доступа — роли виджета НИКАКИХ прав.
+      ...CREDENTIAL_TABLES,
     ])('SELECT из %s под assist_public падает', async (table) => {
       await expect(
         asPublic(`SELECT 1 FROM ${S}."${table}" LIMIT 1`),
       ).rejects.toMatchObject({ code: '42501' });
+    });
+
+    it('Э-С Ш2: на хранилище учётных данных у assist_public нет ни одной привилегии', async () => {
+      const res = await client.query<{ t: string; p: string }>(
+        `SELECT table_name AS t, privilege_type AS p
+           FROM information_schema.table_privileges
+          WHERE grantee = 'assist_public' AND table_schema = $1
+            AND table_name = ANY($2::text[])`,
+        [SITES_DB_SCHEMA, CREDENTIAL_TABLES],
+      );
+      expect(res.rows).toEqual([]);
+      const cols = await client.query(
+        `SELECT 1 FROM information_schema.column_privileges
+          WHERE grantee = 'assist_public' AND table_schema = $1
+            AND table_name = ANY($2::text[])`,
+        [SITES_DB_SCHEMA, CREDENTIAL_TABLES],
+      );
+      expect(cols.rows).toEqual([]);
+      for (const t of CREDENTIAL_TABLES) {
+        await expect(
+          asPublic(`DELETE FROM ${S}."${t}" WHERE false`),
+        ).rejects.toMatchObject({ code: '42501' });
+      }
     });
 
     it('site_hosts: статусные колонки читаются, служебные — нет', async () => {
@@ -294,6 +330,37 @@ if (!RAW_URL) {
         `UPDATE ${S}."assist_site_tts_cache" SET "audio" = '\\x00'::bytea WHERE false`,
         `DELETE FROM ${S}."assist_site_tts_cache" WHERE false`,
         `SELECT "voice", "lang", "characters" FROM ${S}."assist_site_tts_cache" LIMIT 1`,
+      ]) {
+        await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
+      }
+    });
+
+    it('Э6: видео и подсветка — ровно тот SQL, что шлёт assist-site-media/public (список, ролик для ссылки, карта страницы, сигнал «карта устарела»)', async () => {
+      for (const sql of [
+        `SELECT "id", "title", "locale", "durationMs" FROM ${S}."assist_site_videos" WHERE "siteId" = 's' AND "enabled" = true AND "requiresLogin" = false ORDER BY "title" ASC, "id" ASC LIMIT 8`,
+        `SELECT "id", "title", "url" FROM ${S}."assist_site_videos" WHERE "id" = 'v' AND "siteId" = 's' AND "enabled" = true AND "requiresLogin" = false LIMIT 1`,
+        // Prisma добавляет первичный ключ в SELECT списка (findMany с jsonb).
+        `SELECT "id", "source", "elements" FROM ${S}."site_ui_maps" WHERE "siteId" = 's' AND "host" = 'h' AND "path" = '/' OFFSET 0`,
+        `UPDATE ${S}."site_ui_maps" SET "staleSignals" = "staleSignals" + 1, "lastStaleAt" = now() WHERE "siteId" = 's' AND "host" = 'h' AND "path" = '/' AND "elements" @> '[{"id":"u00000000"}]'::jsonb`,
+      ]) {
+        await expect(asPublic(sql)).resolves.toBeUndefined();
+      }
+      for (const sql of [
+        // Хозяин, черновик и id генератора — не виджету; ролики пишет только
+        // внутренний API, включает — только кабинет.
+        `SELECT "ownerTelegramId" FROM ${S}."assist_site_videos" LIMIT 1`,
+        `SELECT "draftId" FROM ${S}."assist_site_videos" LIMIT 1`,
+        `SELECT "externalId" FROM ${S}."assist_site_videos" LIMIT 1`,
+        `UPDATE ${S}."assist_site_videos" SET "enabled" = true WHERE false`,
+        `UPDATE ${S}."assist_site_videos" SET "requiresLogin" = false WHERE false`,
+        `INSERT INTO ${S}."assist_site_videos" ("id", "accountId", "siteId", "externalId", "draftId", "ownerTelegramId", "title", "locale", "url", "syncedAt", "updatedAt") SELECT 'v', 'a', 's', 'e', 'd', 1, 't', 'ru', 'u', now(), now() WHERE false`,
+        `DELETE FROM ${S}."assist_site_videos" WHERE false`,
+        // Карту пишут обход и внутренний API; виджет — только счётчик промахов.
+        `UPDATE ${S}."site_ui_maps" SET "elements" = '[]'::jsonb WHERE false`,
+        `UPDATE ${S}."site_ui_maps" SET "path" = '/' WHERE false`,
+        `INSERT INTO ${S}."site_ui_maps" ("id", "accountId", "siteId", "hostId", "host", "path", "source", "elements", "elementsHash", "capturedAt", "updatedAt") SELECT 'm', 'a', 's', 'h', 'x', '/', 'crawl', '[]', 'x', now(), now() WHERE false`,
+        `DELETE FROM ${S}."site_ui_maps" WHERE false`,
+        `SELECT "hostId" FROM ${S}."site_ui_maps" LIMIT 1`,
       ]) {
         await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
       }
@@ -475,6 +542,11 @@ if (!RAW_URL) {
         // Э5 (миграция _assist_voice): кэш озвучки — чтение своей записи
         // и вставка без цели конфликта.
         assist_site_tts_cache: ['column:SELECT', 'column:INSERT'],
+        // Э6 (миграция _assist_video_highlight): ролики сайта — только
+        // чтение колонок показа и ссылки; карта интерфейса — элементы
+        // страницы и счётчик промахов «карта устарела».
+        assist_site_videos: ['column:SELECT'],
+        site_ui_maps: ['column:SELECT', 'column:UPDATE'],
         // Лендинг: только запись.
         assist_widget_drafts: ['INSERT'],
         assist_landing_events: ['INSERT'],

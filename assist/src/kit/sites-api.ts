@@ -9,6 +9,7 @@
  */
 
 import type { ApiClient } from './api-client';
+import { createTestAccountsApi } from './test-accounts';
 import { START_PREFIXES } from './start-param';
 import {
   assertVerifyToken,
@@ -266,6 +267,8 @@ function memberSeg(id: string): string {
 
 export function createSitesApi(client: ApiClient) {
   return {
+    /** Э-С Ш2: тестовые учётные записи сайта (общие с обучалкой генератора). */
+    testAccounts: createTestAccountsApi(client),
     account: async () =>
       parseAccountInfo(await client.request('GET', '/sites/account')),
     /** Приглашение (только владелец): роль кабинета + права по продукту. */

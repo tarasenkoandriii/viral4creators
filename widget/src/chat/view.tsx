@@ -769,6 +769,34 @@ export function App({
             </button>
           </div>
         )}
+        {s.video && (
+          <div
+            class="vid"
+            role="dialog"
+            aria-label={s.video.title || t.videoTitle}
+          >
+            <div class="vid-h">
+              <span>{s.video.title || t.videoTitle}</span>
+              <button
+                type="button"
+                class="lnk"
+                aria-label={t.videoClose}
+                onClick={() => c.closeVideo()}
+              >
+                ✕
+              </button>
+            </div>
+            {/* Э6: подписанная ссылка своего origin → редирект на хранилище
+                роликов (CSP iframe: media-src 'self' + хосты роликов). */}
+            <video
+              src={s.video.url}
+              controls
+              autoPlay
+              playsInline
+              preload="metadata"
+            />
+          </div>
+        )}
         {s.confirmForget && (
           <div class="note" role="alertdialog" aria-label={t.forgetAsk}>
             <span>{t.forgetAsk}</span>
