@@ -170,6 +170,20 @@ const ic = parseInstallCheck({
 assert.deepEqual(keys(ic), SERVER.get('InstallCheckView'));
 assert.deepEqual(ic.hosts[0].missingCsp, ['script-src', 'connect-src']);
 assert.equal(ic.hosts[0].result, 'csp_blocked');
+// Э5: предупреждение о микрофоне — только явное true.
+assert.equal(ic.hosts[0].microphoneBlocked, false);
+assert.equal(
+  parseInstallCheck({
+    hosts: [{ hostId: 'h1', microphoneBlocked: true }],
+  }).hosts[0].microphoneBlocked,
+  true
+);
+assert.equal(
+  parseInstallCheck({
+    hosts: [{ hostId: 'h1', microphoneBlocked: 'yes' }],
+  }).hosts[0].microphoneBlocked,
+  false
+);
 
 const ps = parsePersonaSettings({
   siteId: 's1',

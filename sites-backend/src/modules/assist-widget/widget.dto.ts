@@ -71,6 +71,12 @@ export class WidgetChatDto {
   @IsString()
   @MaxLength(80)
   openedBy?: string | null;
+
+  /** Э5: билет распознавания (`POST /widget/v1/voice`) — проверяет конвейер. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  voiceTicket?: string | null;
 }
 
 export class WidgetLeadDto {

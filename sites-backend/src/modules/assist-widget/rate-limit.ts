@@ -28,7 +28,17 @@ export type RateScope =
   | 'widget-goal-ip-min'
   | 'widget-picker-ip-min'
   | 'landing-event-ip-min'
-  | 'landing-draft-ip-day';
+  | 'landing-draft-ip-day'
+  // Э5: голос посетителя (распознавание и озвучка) — в минуту и в сутки.
+  | 'widget-stt-visitor-min'
+  | 'widget-stt-visitor-day'
+  | 'widget-tts-visitor-min'
+  | 'widget-tts-visitor-day'
+  // Э5: те же лимиты на ipHash+сайт — новый visitor-token их не обнуляет.
+  | 'widget-stt-ip-site-min'
+  | 'widget-stt-ip-site-day'
+  | 'widget-tts-ip-site-min'
+  | 'widget-tts-ip-site-day';
 
 export interface RateHit {
   scope: RateScope;

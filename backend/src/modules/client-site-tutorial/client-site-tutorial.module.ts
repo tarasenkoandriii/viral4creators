@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { StorageModule } from '../storage/storage.module';
+import { SitesInternalModule } from '../sites-internal/sites-internal.module';
 import { ChromiumPageExplorer } from './chromium-page-explorer';
 import { ClientSiteTutorialAdminController } from './client-site-tutorial-admin.controller';
 import { ClientSiteTutorialAdminService } from './client-site-tutorial-admin.service';
@@ -10,6 +11,7 @@ import { ClientSiteTutorialService } from './client-site-tutorial.service';
 import { ClientSiteTutorialUsageService } from './client-site-tutorial-usage.service';
 import { LiveLoginRelayClient } from './live-login-relay.client';
 import { PAGE_EXPLORER } from './page-explorer';
+import { ClientSiteAccessService } from './site-access.service';
 
 /**
  * Обучалка по сайту заказчика (doc/CLIENT-SITE-TUTORIAL-SPEC.md; этап
@@ -29,9 +31,18 @@ import { PAGE_EXPLORER } from './page-explorer';
  * 111 держал здесь заглушку, отвечавшую 503, и её замена включила фичу
  * целиком, без единой правки в сервисе и без единой правки в его тестах
  * (см. `page-explorer.ts`).
+ *
+ * Э-С Ш1: `SitesInternalModule` — клиент внутреннего API sites-backend
+ * (HMAC, без DSN `site_*`), `ClientSiteAccessService` — режим A/B и
+ * подтверждение прав на аккаунт в режиме B (П-Т1, П-Т2).
  */
 @Module({
-  imports: [StorageModule, AdminAuthModule, AdminPanelModule],
+  imports: [
+    StorageModule,
+    AdminAuthModule,
+    AdminPanelModule,
+    SitesInternalModule,
+  ],
   controllers: [
     ClientSiteTutorialController,
     ClientSiteTutorialAdminController,
@@ -41,8 +52,15 @@ import { PAGE_EXPLORER } from './page-explorer';
     ClientSiteTutorialUsageService,
     ClientSiteTutorialAdminService,
     LiveLoginRelayClient,
+    ClientSiteAccessService,
     { provide: PAGE_EXPLORER, useClass: ChromiumPageExplorer },
   ],
-  exports: [ClientSiteTutorialService, ClientSiteTutorialUsageService],
+  exports: [
+    ClientSiteTutorialService,
+    ClientSiteTutorialUsageService,
+    // Съёмка кадров лендинга (ui-snapshot): служебное подтверждение прав
+    // фикстуры по нашему домену — иначе мастер в режиме B ждёт галочку.
+    ClientSiteAccessService,
+  ],
 })
 export class ClientSiteTutorialModule {}

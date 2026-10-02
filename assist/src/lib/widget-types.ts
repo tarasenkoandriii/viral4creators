@@ -142,6 +142,8 @@ export interface InstallCheckHost {
   tagFound: boolean;
   lastPingAt: string | null;
   missingCsp: string[];
+  /** Э5: Permissions-Policy сайта запрещает микрофон виджета (голос не заработает). */
+  microphoneBlocked: boolean;
 }
 
 export interface InstallCheckView {

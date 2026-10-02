@@ -134,7 +134,11 @@ function start() {
     c.onParent(m);
   });
 
-  const close = () => toParent({ type: 'ui-state', state: 'closed' });
+  const close = () => {
+    // Э5: закрыли окно — микрофон и озвучка гаснут до ответа родителя.
+    c.voice.cancel();
+    toParent({ type: 'ui-state', state: 'closed' });
+  };
 
   // Клавиатура: Esc закрывает окно, Tab не выходит из чата (фокус-ловушка, §4.12).
   document.addEventListener('keydown', (e) => {

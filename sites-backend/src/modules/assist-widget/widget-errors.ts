@@ -29,6 +29,11 @@ export const WIDGET_ERROR_STATUS: Record<WidgetErrorCode, number> = {
   GOAL_ORDER_ID_INVALID: 422,
   PICKER_INVALID: 403,
   EVENT_INVALID: 400,
+  // Э5:
+  VOICE_UNAVAILABLE: 403,
+  VOICE_LIMIT: 429,
+  VOICE_NOT_HEARD: 422,
+  AUDIO_INVALID: 400,
 };
 
 const MESSAGE: Record<WidgetErrorCode, string> = {
@@ -50,6 +55,10 @@ const MESSAGE: Record<WidgetErrorCode, string> = {
   GOAL_ORDER_ID_INVALID: 'Номер заказа похож на контакт — не принят',
   PICKER_INVALID: 'Ссылка выбора цели недействительна или уже использована',
   EVENT_INVALID: 'Неверный пакет событий',
+  VOICE_UNAVAILABLE: 'Голос сейчас недоступен — напишите текстом',
+  VOICE_LIMIT: 'Голос на сегодня исчерпан — напишите текстом',
+  VOICE_NOT_HEARD: 'Не расслышал — повторите или напишите текстом',
+  AUDIO_INVALID: 'Запись не подходит — повторите или напишите текстом',
 };
 
 export function widgetError(

@@ -35,10 +35,13 @@ import {
   AlertTriangle,
   ArrowLeft,
   Download,
+  ExternalLink,
   Globe,
   KeyRound,
+  RefreshCw,
   Search,
   Send,
+  ShieldCheck,
   Trash2,
   Undo2,
 } from 'lucide-react';
@@ -46,15 +49,20 @@ import {
   Alert,
   Button,
   Card,
+  ConfirmDialog,
   Field,
   Input,
   Select,
   Spinner,
 } from '../../components/ui';
 import {
+  acceptAccountConsent,
+  apiErrorCode,
   completeLiveLogin,
   deleteSiteTutorial,
   exploreSite,
+  getSiteAccess,
+  verifySite,
   finishSiteTutorial,
   getSiteTutorial,
   loginSite,
@@ -73,7 +81,17 @@ import type {
   LiveLoginStart,
   PageElement,
   PageExploration,
+  SiteAccessView,
 } from '../../types/client-site-tutorial';
+import {
+  ACCOUNT_CONSENT_REQUIRED,
+  ACCOUNT_CONSENT_STALE,
+  consentLocaleOf,
+  consentText,
+  modeReasonKey,
+  needsAccountConsent,
+  safeVerifyUrl,
+} from '../../lib/site-access';
 import { LiveLoginSession } from './LiveLoginSession';
 import { ScreenHeader } from './shared';
 import { Stepper } from '../../components/ui';
@@ -123,7 +141,7 @@ export function ClientSiteWizard({
   /** Сегмент адреса; `undefined` — первый шаг (ввод ссылки). */
   step?: string;
 }) {
-  const { dict } = useI18n();
+  const { dict, locale } = useI18n();
   const t = dict.clientSiteWizard;
   const track = useWizardEvents(projectId);
   const currentStepRef = useRef<string>('url');
@@ -142,6 +160,15 @@ export function ClientSiteWizard({
    * её, а не `sessionId`, сервер ждёт обратно (подставленный клиентом
    * идентификатор указал бы на чужую сессию). */
   const [live, setLive] = useState<LiveLoginStart | null>(null);
+  /**
+   * Режим A/B и подтверждение прав (Э-С Ш1; П-Т1, П-Т2). Решает сервер по
+   * статусу хоста в кабинете сайтов; до первого `/explore` — по введённой
+   * ссылке, потом — из `GET` черновика. `null` — ещё не спрашивали.
+   */
+  const [access, setAccess] = useState<SiteAccessView | null>(null);
+  const [consentTicked, setConsentTicked] = useState(false);
+  /** Открыт диалог «Это мой сайт» (согласие на привязку кабинета сайтов). */
+  const [verifyAsk, setVerifyAsk] = useState(false);
 
   /**
    * Шаг из адреса на момент открытия экрана.
@@ -207,6 +234,7 @@ export function ClientSiteWizard({
           return;
         }
         setDraft(existing);
+        setAccess(existing.access);
         setTitle(existing.title ?? '');
         // Свежего кадра у нас нет — он приходит только ответом на
         // раунд, и отрисовать экран страницы без него нечем. Поэтому
@@ -291,6 +319,14 @@ export function ClientSiteWizard({
       return await fn();
     } catch (err) {
       setError(errorMessage(err));
+      // Ворота П-Т2: сервер сказал «нужно подтверждение прав» или «текст
+      // подтверждения сменился» — перечитываем режим, и экран сам покажет
+      // галочку с актуальным текстом.
+      const code = apiErrorCode(err);
+      if (code === ACCOUNT_CONSENT_REQUIRED || code === ACCOUNT_CONSENT_STALE) {
+        setConsentTicked(false);
+        void refreshAccess();
+      }
       // Частота отказов по шагам (§8) — один из источников кандидатов
       // опыта (§6.3). В телеметрию едет КОД, а не текст: текста
       // пользователя в этой таблице не бывает по построению.
@@ -312,7 +348,24 @@ export function ClientSiteWizard({
     }
   }
 
-  const explore = async () => {
+  /** Свежий режим: по черновику, а до него — по введённой ссылке. */
+  async function refreshAccess(): Promise<SiteAccessView | undefined> {
+    try {
+      const fresh = await getSiteAccess(
+        projectId,
+        draft ? undefined : url.trim() || undefined
+      );
+      setAccess(fresh);
+      return fresh;
+    } catch {
+      // Режим — подсказка экрана; решает всё равно сервер на действии.
+      return undefined;
+    }
+  }
+
+  /** `known` — режим, только что полученный вызывающим (состояние React
+   * обновится лишь к следующему рендеру). */
+  const explore = async (known?: SiteAccessView) => {
     const trimmed = url.trim();
     // Клиентская проверка — только чтобы поймать явную опечатку. Она НЕ
     // заменяет серверную: публичность адреса проверяет SSRF-guard.
@@ -323,8 +376,61 @@ export function ClientSiteWizard({
       setError(t.urlInvalid);
       return;
     }
+    // Режим — ДО обхода: в режиме B сначала галочка (П-Т2), и только
+    // потом наш браузер откроет сайт. Ссылку могли сменить — спрашиваем
+    // заново, если режим считался для другого хоста.
+    let current = known ?? access;
+    if (!current || current.host !== new URL(trimmed).hostname.toLowerCase()) {
+      current = (await run(() => getSiteAccess(projectId, trimmed))) ?? null;
+      if (!current) return;
+      setAccess(current);
+      setConsentTicked(false);
+    }
+    if (needsAccountConsent(current)) return;
     const result = await run(() => exploreSite(projectId, trimmed));
     if (result) applyRound(result);
+  };
+
+  /** П-Т2: галочка подтверждена — записать с версией текста и продолжить. */
+  const confirmConsent = async () => {
+    if (!access || !consentTicked) return;
+    const updated = await run(() =>
+      acceptAccountConsent(projectId, {
+        url: draft ? undefined : url.trim(),
+        textVersion: access.consent.textVersion,
+        locale: consentLocaleOf(locale),
+      })
+    );
+    if (!updated) return;
+    setAccess(updated);
+    setConsentTicked(false);
+    // До первого обхода подтверждение — часть нажатия «Открыть».
+    if (stage === 'url' && !needsAccountConsent(updated))
+      await explore(updated);
+  };
+
+  /** Ш1: «Это мой сайт» — сначала свой диалог согласия на привязку кабинета
+   * сайтов к аккаунту Telegram. Не `window.confirm`: в WebView Telegram он
+   * часто заблокирован и молча возвращает `false` — кнопка не делала бы
+   * ничего (аудит Ш1). */
+  const askRegisterSite = () => setVerifyAsk(true);
+
+  /** Согласие в диалоге дано — хост в кабинет сайтов, владение подтверждается там. */
+  const registerSite = async () => {
+    setVerifyAsk(false);
+    const updated = await run(() =>
+      verifySite(projectId, draft ? undefined : url.trim())
+    );
+    if (!updated) return;
+    setAccess(updated);
+    if (updated.mode === 'B') setNotice(t.verifySiteAdded);
+  };
+
+  const recheckSite = async () => {
+    const updated = await run(() =>
+      getSiteAccess(projectId, draft ? undefined : url.trim())
+    );
+    if (updated) setAccess(updated);
   };
 
   const submitStep = async (clickSelector?: string) => {
@@ -661,13 +767,39 @@ export function ClientSiteWizard({
                 type="url"
                 inputMode="url"
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  // Режим и галочка относятся к ПРЕЖНЕЙ ссылке: подтвердить
+                  // права на один домен, глядя на текст про другой, нельзя.
+                  setAccess(null);
+                  setConsentTicked(false);
+                }}
                 placeholder="https://cabinet.example.com"
                 disabled={busy}
                 autoFocus
               />
             </Field>
             <Alert tone="info">{t.ownSiteOnly}</Alert>
+            {access && (
+              <SiteModeCard
+                t={t}
+                access={access}
+                busy={busy}
+                onVerify={askRegisterSite}
+                onRecheck={recheckSite}
+              />
+            )}
+            {needsAccountConsent(access) && access && (
+              <AccountConsentCard
+                t={t}
+                access={access}
+                locale={locale}
+                ticked={consentTicked}
+                setTicked={setConsentTicked}
+                busy={busy}
+                onConfirm={confirmConsent}
+              />
+            )}
             <Button
               block
               size="lg"
@@ -688,6 +820,31 @@ export function ClientSiteWizard({
             </Button>
           </div>
         </Card>
+      )}
+
+      {/* Режим и галочка — над записью: вход и живой вход в режиме B
+          без подтверждения сервер всё равно не пустит (409). */}
+      {(stage === 'page' || stage === 'review') && access && (
+        <div className="mb-3 space-y-3">
+          <SiteModeCard
+            t={t}
+            access={access}
+            busy={busy}
+            onVerify={askRegisterSite}
+            onRecheck={recheckSite}
+          />
+          {editable && needsAccountConsent(access) && (
+            <AccountConsentCard
+              t={t}
+              access={access}
+              locale={locale}
+              ticked={consentTicked}
+              setTicked={setConsentTicked}
+              busy={busy}
+              onConfirm={confirmConsent}
+            />
+          )}
+        </div>
       )}
 
       {stage === 'page' && exploration && (
@@ -743,11 +900,141 @@ export function ClientSiteWizard({
           <img src={zoomed} alt="" className="max-h-full max-w-full" />
         </button>
       )}
+
+      {/* «Это мой сайт»: свой диалог вместо `window.confirm` (WebView
+          Telegram его часто блокирует). Не красный — это не удаление. */}
+      <ConfirmDialog
+        open={verifyAsk}
+        title={t.verifySiteButton}
+        danger={false}
+        busy={busy}
+        confirmLabel={t.verifySiteContinue}
+        onConfirm={() => void registerSite()}
+        onCancel={() => setVerifyAsk(false)}
+      >
+        {t.verifySiteConfirm}
+      </ConfirmDialog>
     </div>
   );
 }
 
 type Dict = ReturnType<typeof useI18n>['dict']['clientSiteWizard'];
+
+/**
+ * Плашка режима (Э-С Ш1, П-Т1). A — зелёная, без действий. B — что это
+ * значит, почему (по коду сервера) и путь наверх: «это мой сайт» (хост в
+ * кабинет сайтов), ссылка в кабинет, «проверить снова».
+ */
+function SiteModeCard(props: {
+  t: Dict;
+  access: SiteAccessView;
+  busy: boolean;
+  onVerify: () => void;
+  onRecheck: () => void;
+}) {
+  const { t, access, busy } = props;
+  if (access.mode === 'A') {
+    return (
+      <Alert tone="success">
+        <strong className="block">{t.modeATitle}</strong>
+        {t.modeAText.replace('{host}', access.host)}
+      </Alert>
+    );
+  }
+  const reasonKey = modeReasonKey(access.reason);
+  const verifyUrl = safeVerifyUrl(access);
+  const registered = access.hostId !== null;
+  return (
+    <Card className="p-4 space-y-3">
+      <div>
+        <strong className="block">{t.modeBTitle}</strong>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          {t.modeBText.replace('{host}', access.host)}
+        </p>
+        {reasonKey && <p className="mt-1 text-sm">{t[reasonKey]}</p>}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {access.canRegister && !registered && (
+          <Button
+            size="sm"
+            variant="outline"
+            icon={<ShieldCheck size={14} />}
+            disabled={busy}
+            onClick={props.onVerify}
+          >
+            {t.verifySiteButton}
+          </Button>
+        )}
+        {verifyUrl && (registered || access.canRegister) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<ExternalLink size={14} />}
+            onClick={() => window.open(verifyUrl, '_blank', 'noopener')}
+          >
+            {t.verifySiteOpen}
+          </Button>
+        )}
+        {(registered || access.reason === 'unavailable') && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<RefreshCw size={14} />}
+            disabled={busy}
+            onClick={props.onRecheck}
+          >
+            {t.verifySiteRecheck}
+          </Button>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Подтверждение прав на аккаунт и согласия с условиями сайта (П-Т2,
+ * режим B). Текст и его версия — с сервера: запись подтверждения хранит
+ * версию, и она обязана указывать на слова, которые человек видел.
+ */
+function AccountConsentCard(props: {
+  t: Dict;
+  access: SiteAccessView;
+  locale: string;
+  ticked: boolean;
+  setTicked: (v: boolean) => void;
+  busy: boolean;
+  onConfirm: () => void;
+}) {
+  const { t, access, busy } = props;
+  return (
+    <Card className="p-4 space-y-3">
+      <strong className="block">{t.consentTitle}</strong>
+      <p className="text-sm">{consentText(access, props.locale)}</p>
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={props.ticked}
+          disabled={busy}
+          onChange={(e) => props.setTicked(e.target.checked)}
+        />
+        <span className="font-medium">{t.consentCheckbox}</span>
+      </label>
+      <p className="text-xs text-[var(--muted)]">
+        {!access.consent.legalReviewed && `${t.consentDraftNote} `}
+        {t.consentVersion.replace('{version}', access.consent.textVersion)}
+      </p>
+      <Button
+        block
+        disabled={busy || !props.ticked}
+        loading={busy}
+        onClick={props.onConfirm}
+      >
+        {t.consentButton}
+      </Button>
+    </Card>
+  );
+}
 
 /**
  * Поле формы страницы заказчика. `<select>` рисуется настоящим

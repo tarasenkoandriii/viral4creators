@@ -107,6 +107,12 @@ export interface AskInput {
    * конфигурации вовлечения), H пишет.
    */
   openedBy?: string | null;
+  /**
+   * Э5 (§4.10, §7.1): билет распознавания из `POST /widget/v1/voice` — вопрос
+   * задан голосом (подпись над сайтом, посетителем и текстом,
+   * assist-site-voice/public/voice-ticket.ts). Сошёлся — диалог весом 2.
+   */
+  voiceTicket?: string | null;
 }
 
 /**

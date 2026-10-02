@@ -12,7 +12,9 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  Equals,
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -159,4 +161,52 @@ export class CompleteLiveLoginDto {
   @MinLength(16)
   @MaxLength(4096)
   ticket!: string;
+}
+
+/** Э-С Ш1: режим A/B для ссылки (до первого `/explore`) или черновика. */
+export class SiteAccessRequestDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(2048)
+  url?: string;
+}
+
+/**
+ * П-Т2: подтверждение прав на аккаунт и согласия с условиями сайта в
+ * режиме B. `accepted` — ровно `true` (галочка), `textVersion` — версия
+ * текста, который человек видел (сервер сверяет с текущей).
+ */
+export class AccountConsentRequestDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(2048)
+  url?: string;
+
+  @IsString()
+  @MaxLength(64)
+  textVersion!: string;
+
+  @IsIn(['uk', 'ru', 'en'])
+  locale!: 'uk' | 'ru' | 'en';
+
+  @Equals(true)
+  accepted!: true;
+}
+
+/**
+ * Ш1: «Подтвердить сайт» — завести хост в кабинете сайтов. `linkAccount`
+ * — явное согласие на экране: кабинет сайтов находится или создаётся по
+ * Telegram-аккаунту пользователя (вопрос 6 аудита слияния).
+ */
+export class RegisterSiteRequestDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(2048)
+  url?: string;
+
+  @Equals(true)
+  linkAccount!: true;
 }

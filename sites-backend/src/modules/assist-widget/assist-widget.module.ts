@@ -10,6 +10,7 @@ import { AssistAnalyticsModule } from '../assist-analytics/assist-analytics.modu
 import { AssistSiteChatModule } from '../assist-site-chat/assist-site-chat.module';
 import { AssistSiteHandoffModule } from '../assist-site-handoff/assist-site-handoff.module';
 import { AssistSiteLearningModule } from '../assist-site-learning/assist-site-learning.module';
+import { AssistSiteVoiceModule } from '../assist-site-voice/assist-site-voice.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { AcquisitionController } from './cabinet/acquisition.controller';
 import { AcquisitionService } from './cabinet/acquisition.service';
@@ -27,6 +28,7 @@ import { WidgetEngagementService } from './widget-engagement.service';
 import { WidgetPublicController } from './widget-public.controller';
 import { WidgetSessionService } from './widget-session.service';
 import { WidgetStateService } from './widget-state.service';
+import { WidgetVoiceController } from './widget-voice.controller';
 
 @Module({
   imports: [
@@ -36,10 +38,13 @@ import { WidgetStateService } from './widget-state.service';
     AssistSiteHandoffModule,
     AssistAnalyticsModule,
     AssistSiteLearningModule,
+    // Э5: голос посетителя (публичная часть — public/ модуля голоса).
+    AssistSiteVoiceModule,
   ],
   controllers: [
     WidgetPublicController,
     WidgetEngagementController,
+    WidgetVoiceController,
     WidgetFrameController,
     LandingPublicController,
     AcquisitionController,

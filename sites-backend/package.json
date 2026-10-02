@@ -22,7 +22,8 @@
     "sync-shared:check": "node ../scripts/sync-sites-shared.mjs --check",
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "eval:platform": "ts-node src/modules/assist-site-chat/eval/run-live.ts"
+    "eval:platform": "ts-node src/modules/assist-site-chat/eval/run-live.ts",
+    "eval:voice": "ts-node src/modules/assist-site-voice/eval/run-live.ts"
   },
   "dependencies": {
     "@google/genai": "^1.52.0",

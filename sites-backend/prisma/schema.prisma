@@ -174,6 +174,9 @@ model Site {
   exports            AssistSiteExport[]
   reportSubscriptions AssistSiteReportSubscription[]
 
+  // Э5: кэш озвучки ответов «Сайта» (ТЗ §4.10).
+  ttsCache           AssistSiteTtsCache[]
+
   /// Цель составного внешнего ключа хоста (siteId, accountId): база сама не
   /// даст привязать хост кабинета A к сайту кабинета B.
   @@unique([id, accountId])
@@ -362,6 +365,22 @@ model SiteCronLock {
   lastError      String?
 
   @@map("site_cron_locks")
+}
+
+/// Использованные id запросов внутреннего API «генератор → sites-backend»
+/// (Э-С Ш1, П-С3): защита от ПОВТОРА подписанного запроса внутри окна ±5
+/// мин (`src/shared/sites-internal-signature.ts`). Глобальная, вне тенанта:
+/// вызывающий — сервис генератора, а не кабинет. Строка заодно — журнал
+/// «кто (caller) какой маршрут звал»; без тела и без telegramId. Живёт
+/// сутки — чистит сам маршрут (internal-sites/request-replay.ts).
+model SiteInternalRequest {
+  requestId String   @id
+  caller    String
+  route     String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("site_internal_requests")
 }
 
 // ══ Обход публичных страниц `site-crawl` (Э1) — общий с QA ══
@@ -618,6 +637,16 @@ model AssistSite {
   /// (сверяются с сырым IP при приёме, в события не пишутся), исключённые
   /// пути. Форма — assist-analytics/analytics-config.ts (A). Без секретов.
   analytics          Json?
+
+  // ── Э5: голос (ТЗ §3.5, §4.10, §7.1–§7.3; план, Приложение А «Этап 5») ──
+  /// Голос виджета: { schema: 1, input, output, voiceId } — форма
+  /// assist-site-voice/voice-config.ts. Действует сразу, без публикации
+  /// персоны: в промпт не идёт и ключ семантического кэша не меняет. null —
+  /// голос выключен (умолчание §4.10). Секретов нет: роль виджета читает.
+  voiceConfig           Json?
+  /// Суточный денежный потолок голоса сайта (§4.10, «по образцу VoiceCapKey»)
+  /// — ставит оператор платформы; null — по тарифу (VOICE_DEFAULTS).
+  voiceDailyCapMicroUsd Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1396,6 +1425,10 @@ model AssistSiteConversation {
   locale        String?
   /// Засчитан в квоту диалогов периода (первый ответ модели, §4.5 п.3).
   dialogCounted Boolean  @default(false)
+  /// Э5: в диалоге был голос — распознавание вопроса или озвучка ответа
+  /// (§7.1, Р-58: такой диалог — 2 единицы). Сбрасывается вместе с
+  /// `answers`/`dialogCounted` после 30 минут тишины (новый диалог).
+  voice         Boolean  @default(false)
   /// Ответов модели в диалоге: > 30 — диалог за 2, > 60 — за 3 (§7.1).
   answers       Int      @default(0)
   /// §4.13 п.5: ответы только из FAQ/кэша, без генерации.
@@ -1571,6 +1604,9 @@ model AssistBudgetReservation {
   siteId      String
   day         String
   estMicroUsd BigInt
+  /// Э5: резерв голоса — держит ещё и строку `scope='voice'` (суточный
+  /// потолок голоса сайта, §4.10); снятие кроном вычитает и её.
+  voice       Boolean  @default(false)
   expiresAt   DateTime
   createdAt   DateTime @default(now())
 
@@ -2385,4 +2421,30 @@ model AssistPlatformEvalCandidate {
   createdAt DateTime @default(now())
 
   @@map("assist_platform_eval_candidates")
+}
+
+// ═══ Э5: голос виджета (ТЗ §4.10; план, Приложение А «Этап 5») ═══
+
+/// Кэш озвучки ответов «Сайта» (§4.10, аудит 1.2 К-9/У-16): ключ — хеш
+/// (голос, язык, текст), область — siteId (`<siteId>:site:<хеш>` по ТЗ;
+/// режима «Админка» тут нет и не будет: её ответы не кэшируются). 7 дней
+/// (FAQ-ответы повторяются); просроченное удаляет крон assist-retention.
+/// Звук — в базе (bytea), а не в Blob: ответ ≤ 1 200 символов ≈ 60–120 КБ
+/// mp3, и единая роль/транзакция проще второго хранилища с ключом.
+model AssistSiteTtsCache {
+  id         String   @id
+  siteId     String
+  site       Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  key        String
+  voice      String
+  lang       String
+  mime       String
+  audio      Bytes
+  characters Int
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@unique([siteId, key])
+  @@index([expiresAt])
+  @@map("assist_site_tts_cache")
 }

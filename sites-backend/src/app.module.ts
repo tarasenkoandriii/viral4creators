@@ -27,6 +27,8 @@ import { AssistAnalyticsModule } from './modules/assist-analytics/assist-analyti
 import { AssistDigestModule } from './modules/assist-digest/assist-digest.module';
 import { AssistBillingModule } from './modules/assist-billing/assist-billing.module';
 import { PlatformAdminModule } from './modules/platform-admin/platform-admin.module';
+import { InternalSitesModule } from './modules/internal-sites/internal-sites.module';
+import { AssistSiteVoiceModule } from './modules/assist-site-voice/assist-site-voice.module';
 
 @Module({
   imports: [
@@ -61,6 +63,11 @@ import { PlatformAdminModule } from './modules/platform-admin/platform-admin.mod
     // крон продления; внутренний API вкладки «Помощник» админки платформы.
     AssistBillingModule,
     PlatformAdminModule,
+    // Э-С Ш1 (П-С3, П-Т1): внутренний API обучалки генератора — режим A/B
+    // по статусу хоста и регистрация хоста, HMAC с меткой времени и id.
+    InternalSitesModule,
+    // Э5 «Голос»: микрофон и озвучка виджета (Soniox), кабинет голоса.
+    AssistSiteVoiceModule,
   ],
 })
 export class AppModule {}

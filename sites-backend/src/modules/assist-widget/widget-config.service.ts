@@ -33,7 +33,7 @@
  * кончилась/обнулилась → статус» ≤ 5 мин, приемлемо. Ошибка чтения — статус
  * не трогаем (конвейер всё равно откажет сам).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { WIDGET_POWERED_BY_URL } from '../../brand';
@@ -74,6 +74,8 @@ import {
   readWidgetPlatformSettings,
 } from '../../common/platform-settings';
 import { HandoffIntake } from '../assist-site-handoff/public/handoff-intake.service';
+import { SiteVoiceService } from '../assist-site-voice/public/site-voice.service';
+import { VOICE_DEFAULTS } from '../assist-site-voice/voice-config';
 import type { WidgetSiteContext } from '../assist-site-chat/chat-types';
 import type {
   WidgetPreviewExchangeRequest,
@@ -163,6 +165,8 @@ export class WidgetPublicConfigService {
     private readonly db: AssistPublicDb,
     private readonly handoff: HandoffIntake,
     private readonly goals: GoalIntake,
+    // Э5: голос (микрофон/озвучка) — необязателен для тестов Э2–Э4.
+    @Optional() private readonly voice?: SiteVoiceService,
   ) {}
 
   async config(
@@ -223,6 +227,26 @@ export class WidgetPublicConfigService {
           : WIDGET_POWERED_BY_URL,
     };
     await this.addE3(out, published, site, kind, now);
+    // Э5 (§4.10): голос — только при активном чате и тарифе с голосом;
+    // потолки решаются в момент запроса (кэш конфига — 5 минут).
+    if (this.voice && plan && out.status === 'active') {
+      try {
+        const a = await this.voice.access(site, plan);
+        if (a.input || a.output) {
+          out.voice = {
+            input: a.input,
+            output: a.output,
+            maxRecordMs: VOICE_DEFAULTS.maxRecordMs,
+            minSpeechMs: VOICE_DEFAULTS.minSpeechMs,
+            endSilenceMs: VOICE_DEFAULTS.endSilenceMs,
+          };
+        }
+      } catch (err) {
+        this.logger.warn(
+          `voice access failed site=${site.siteId}: ${errName(err)}`,
+        );
+      }
+    }
     return out;
   }
 

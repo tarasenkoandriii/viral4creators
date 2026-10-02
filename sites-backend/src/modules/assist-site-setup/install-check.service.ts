@@ -159,6 +159,47 @@ function attrOf(tag: string, name: string): string | null {
   return m ? decodeEntities(m[1] ?? m[2] ?? m[3] ?? '') : null;
 }
 
+/**
+ * Э5 (ТЗ §4.10 «Микрофон в чужом iframe»): политика страницы запрещает
+ * микрофон iframe виджета. `allow="microphone"` на iframe (загрузчик Э2)
+ * передаёт право, только если его разрешает страница верхнего уровня:
+ *  - нет заголовков — по умолчанию `self` + делегирование атрибутом: можно;
+ *  - `Permissions-Policy: microphone=()` или список без origin виджета
+ *    (и без `*`) — нельзя;
+ *  - устаревший `Feature-Policy: microphone 'none'` / список без нас — нельзя.
+ * Чистая функция (тест — install-check.spec).
+ */
+export function microphoneBlocked(
+  permissionsPolicy: string | null,
+  featurePolicy: string | null,
+  widgetOrigin: string,
+): boolean {
+  const ours = widgetOrigin.replace(/\/+$/, '').toLowerCase();
+  if (permissionsPolicy) {
+    for (const part of permissionsPolicy.split(',')) {
+      const m = /^\s*microphone\s*=\s*(.*?)\s*$/i.exec(part);
+      if (!m) continue;
+      const v = m[1];
+      if (v === '*') return false;
+      const list = /^\((.*)\)$/.exec(v);
+      if (!list) return true;
+      const items = list[1].split(/\s+/).filter(Boolean);
+      return !items.some(
+        (x) => x === '*' || x.replace(/^"|"$/g, '').toLowerCase() === ours,
+      );
+    }
+  }
+  if (featurePolicy) {
+    for (const part of featurePolicy.split(';')) {
+      const items = part.trim().split(/\s+/);
+      if (items[0]?.toLowerCase() !== 'microphone') continue;
+      const rest = items.slice(1).map((x) => x.toLowerCase());
+      return !rest.some((x) => x === '*' || x === ours);
+    }
+  }
+  return false;
+}
+
 /** CSP из `<meta http-equiv="Content-Security-Policy">` страницы. */
 export function metaCsp(html: string): string[] {
   const out: string[] = [];
@@ -290,6 +331,13 @@ export class InstallCheckService {
         out.push({ ...base, result: pingOk ? 'ok' : 'fetch_failed' });
         continue;
       }
+      // Э5: микрофон голоса — не ошибка установки (чат работает), а
+      // отдельное предупреждение владельцу.
+      const micBlocked = microphoneBlocked(
+        page.permissionsPolicy,
+        page.featurePolicy,
+        widgetOrigin,
+      );
       const tagFound = findLoaderTag(page.html, widgetOrigin, keys);
       const csp = [page.csp, ...metaCsp(page.html)].filter(Boolean).join(', ');
       const missing = missingCspDirectives(csp || null, widgetOrigin);
@@ -303,7 +351,13 @@ export class InstallCheckService {
       else if (pingOk) result = 'ok';
       // Тег есть, CSP на вид в порядке, но загрузчик ни разу не отозвался.
       else result = 'csp_blocked';
-      out.push({ ...base, tagFound, missingCsp: missing, result });
+      out.push({
+        ...base,
+        tagFound,
+        missingCsp: missing,
+        result,
+        ...(micBlocked ? { microphoneBlocked: true } : {}),
+      });
     }
     return { checkedAt: now.toISOString(), hosts: out };
   }
@@ -312,7 +366,12 @@ export class InstallCheckService {
     origin: string,
     hostname: string,
     system: Parameters<typeof isOptedOut>[0],
-  ): Promise<{ html: string; csp: string | null } | null> {
+  ): Promise<{
+    html: string;
+    csp: string | null;
+    permissionsPolicy: string | null;
+    featurePolicy: string | null;
+  } | null> {
     if (!origin.startsWith('https://')) return null;
     if (await isOptedOut(system, hostname)) return null;
     try {
@@ -336,6 +395,8 @@ export class InstallCheckService {
       return {
         html: decodeHtml(res.body, ct),
         csp: res.headers['content-security-policy'] ?? null,
+        permissionsPolicy: res.headers['permissions-policy'] ?? null,
+        featurePolicy: res.headers['feature-policy'] ?? null,
       };
     } catch {
       return null;

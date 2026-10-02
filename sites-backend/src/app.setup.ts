@@ -7,6 +7,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import {
   json,
+  raw,
   text,
   type NextFunction,
   type Request,
@@ -18,6 +19,7 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { VALIDATION_PIPE_OPTIONS } from './common/validation-pipe';
 import { corsDeniedHandler, corsOptionsDelegate } from './common/cors';
 import { SitesConfig } from './config/configuration';
+import { VOICE_DEFAULTS } from './modules/assist-site-voice/voice-config';
 
 /**
  * Э2: картинка бренда приходит JSON-ом `{ kind, mime, dataBase64 }` —
@@ -43,6 +45,22 @@ export const GOAL_WEBHOOK_PATH = '/assist/v1/sites/:id/goal-events';
  */
 export const WIDGET_BEACON_PATHS = ['/widget/v1/event', '/widget/v1/goal'];
 export const SMALL_BODY_LIMIT = '4kb';
+/**
+ * Э-С Ш1 (П-С3): внутренний API обучалки генератора подписан HMAC по СЫРОМУ
+ * телу (internal-sites/tutorial-hmac.guard.ts) — по той же причине, что
+ * вебхук целей: тело приходит строкой (≤ 8 КБ), JSON разбирает гвард ПОСЛЕ
+ * проверки подписи.
+ */
+export const INTERNAL_SITES_PATH = '/internal/sites';
+export const INTERNAL_SITES_BODY_LIMIT = '8kb';
+
+/**
+ * Э5: запись вопроса голосом приходит сырыми байтами (`Content-Type:
+ * audio/*`, ≤ 1 МБ — VOICE_DEFAULTS.maxAudioBytes): без multipart и base64
+ * (+33%). Больше потолка или не тот тип — отказ AUDIO_INVALID в общем
+ * конверте ещё до маршрута (тело дальше не читается).
+ */
+export const WIDGET_VOICE_PATH = '/widget/v1/voice';
 
 export function configureApp(app: INestApplication, config: SitesConfig) {
   // API отдаёт только JSON: CSP/COEP ему не нужны, а nosniff, HSTS и
@@ -94,6 +112,43 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       },
     );
   }
+  const internalText = text({
+    type: () => true,
+    limit: INTERNAL_SITES_BODY_LIMIT,
+  });
+  app.use(
+    INTERNAL_SITES_PATH,
+    function internalSitesRawText(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      internalText(req, res, next);
+    },
+  );
+  const voiceRaw = raw({
+    type: (req) => /^audio\//i.test(String(req.headers['content-type'] ?? '')),
+    limit: VOICE_DEFAULTS.maxAudioBytes,
+  });
+  app.use(
+    WIDGET_VOICE_PATH,
+    function widgetVoiceRaw(req: Request, res: Response, next: NextFunction) {
+      voiceRaw(req, res, (err?: unknown) => {
+        if (!err) return next();
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'AUDIO_INVALID',
+            message: 'Запись не подходит — повторите или напишите текстом',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+            path: WIDGET_VOICE_PATH,
+          },
+        });
+      });
+    },
+  );
   app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());

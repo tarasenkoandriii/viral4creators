@@ -254,6 +254,9 @@ export class WidgetChatService {
       page: cleanPage(dto.page),
       context: cleanContext(dto.context),
       uiLang: dto.uiLang ?? null,
+      ...(typeof dto.voiceTicket === 'string' && dto.voiceTicket
+        ? { voiceTicket: dto.voiceTicket }
+        : {}),
     };
   }
 

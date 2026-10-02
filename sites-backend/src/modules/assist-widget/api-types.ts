@@ -22,6 +22,7 @@ import type { PublicEngagementConfig } from '../assist-site-setup/engagement-con
 import type { LeadField } from '../assist-site-setup/leads-config';
 import type { WidgetConfig } from '../assist-site-setup/widget-config';
 import type { VisitorHandoffView } from '../assist-site-handoff/public/handoff-intake.service';
+import type { WidgetVoiceConfig } from '../assist-site-voice/api-types';
 
 export type {
   SiteAction,
@@ -65,6 +66,11 @@ export interface WidgetPublicConfig {
   };
   /** активные цели с детекторами загрузчика (A, goal-types.ts). */
   goals?: PublicGoal[];
+  /**
+   * Э5 (необязательное): голос — кнопка микрофона и/или «озвучить ответ»;
+   * нет поля — голоса нет (тариф, владелец, рубильник, ключ, lead_only).
+   */
+  voice?: WidgetVoiceConfig;
 }
 
 /** POST /widget/v1/session — тело. resumeKey — из localStorage iframe ИЛИ CHIPS-cookie. */
@@ -310,5 +316,13 @@ export const WIDGET_ERROR_CODES = [
   'GOAL_ORDER_ID_INVALID',
   'PICKER_INVALID',
   'EVENT_INVALID',
+  // Э5 (голос, assist-site-voice): голос выключен (тариф, владелец,
+  // рубильник, нет ключа); исчерпан потолок голоса сайта, деньги дня или
+  // единицы — чат продолжает текстом; речь не распознана; запись не того
+  // формата или размера.
+  'VOICE_UNAVAILABLE',
+  'VOICE_LIMIT',
+  'VOICE_NOT_HEARD',
+  'AUDIO_INVALID',
 ] as const;
 export type WidgetErrorCode = (typeof WIDGET_ERROR_CODES)[number];

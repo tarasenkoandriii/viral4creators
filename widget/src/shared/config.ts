@@ -136,6 +136,17 @@ export interface PublicConfig {
   rawGoals: unknown;
   /** Э3: передача человеку (null — сервер Э2 или сбой у H). */
   handoff: HandoffInfo | null;
+  /** Э5: голос (микрофон/озвучка); null — голоса на сайте нет. */
+  voice: VoiceConfigPublic | null;
+}
+
+/** Э5: `voice` публичного конфига (assist-site-voice/api-types.ts WidgetVoiceConfig). */
+export interface VoiceConfigPublic {
+  input: boolean;
+  output: boolean;
+  maxRecordMs: number;
+  minSpeechMs: number;
+  endSilenceMs: number;
 }
 
 export function defaultViewConfig(): ViewConfig {
@@ -191,6 +202,7 @@ export function defaultPublicConfig(): PublicConfig {
     rawEngagement: null,
     rawGoals: null,
     handoff: null,
+    voice: null,
   };
 }
 
@@ -402,6 +414,22 @@ export function parseLoaderConfig(raw: unknown): PublicConfig {
 }
 
 /** Строгий разбор ответа `GET /widget/v1/config` (поле `data` конверта) — iframe. */
+/** Числа — в разумных пределах: сервер доверенный, но версия могла разойтись. */
+function ms(v: unknown, min: number, max: number, def: number): number {
+  return typeof v === 'number' && v >= min && v <= max ? Math.round(v) : def;
+}
+
+export function parseVoice(v: unknown): VoiceConfigPublic | null {
+  if (!isObj(v) || (v.input !== true && v.output !== true)) return null;
+  return {
+    input: v.input === true,
+    output: v.output === true,
+    maxRecordMs: ms(v.maxRecordMs, 3_000, 60_000, 30_000),
+    minSpeechMs: ms(v.minSpeechMs, 100, 3_000, 400),
+    endSilenceMs: ms(v.endSilenceMs, 300, 5_000, 1_000),
+  };
+}
+
 export function parsePublicConfig(raw: unknown): PublicConfig {
   const d = parseLoaderConfig(raw);
   if (!isObj(raw)) return d;
@@ -444,6 +472,7 @@ export function parsePublicConfig(raw: unknown): PublicConfig {
     }
   }
   d.handoff = parseHandoff(raw.handoff);
+  d.voice = parseVoice(raw.voice);
   d.engagement = parseEngagement(raw.engagement);
   d.goals = parseGoals(raw.goals);
   return d;

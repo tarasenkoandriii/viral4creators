@@ -17,7 +17,12 @@
  *      строк означает «черновик изменился в другой вкладке» → 409;
  *   6. SSRF-проверка (§8.2) и доменный замок (§8.1) — ПЕРЕД переходом и
  *      ПОСЛЕ него, потому что редирект на чужом сайте мог увести куда
- *      угодно.
+ *      угодно;
+ *   7. (Э-С Ш1) режим A/B по статусу хоста в sites-backend и ворота П-Т2:
+ *      в режиме B `explore`/`login`/живой вход, а также `step`/`undo`/
+ *      `refresh` (они тоже водят браузер под аккаунтом человека) — только
+ *      после подтверждения прав на аккаунт (`site-access.service.ts`). До
+ *      слота лимита и до браузера.
  */
 
 import {
@@ -93,6 +98,12 @@ import {
   readLiveTicket,
 } from './live-login-ticket';
 import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  ClientSiteAccessService,
+  SiteAccessView,
+  SiteMode,
+} from './site-access.service';
+import type { AccountConsentLocale } from './account-consent';
 
 /** Ключ шифрования cookie jar и кред черновика. Своя переменная, а НЕ
  * `CHANNEL_TOKEN_KEY`: схема БД фиксирует правило «разные секреты разной
@@ -169,6 +180,13 @@ export interface DraftView {
   /** Заполняется только у одобренного черновика — до одобрения
    * собирать нечего, и строки `TutorialVideoAsset` ещё не существует. */
   video: TutorialVideoView | null;
+  /** Режим (Э-С Ш1, П-Т1): `A` — свой подтверждённый сайт, `B` — чужой
+   * сайт со своим аккаунтом. Черновик до Ш1 — `B` до первой проверки. */
+  siteMode: SiteMode;
+  /** Полное решение (плашка, подтверждение прав, ссылка «подтвердить
+   * сайт») — только в `GET` черновика в работе: раунды его не пересчитывают
+   * для экрана, только для ворот. */
+  access: SiteAccessView | null;
 }
 
 export interface LiveLoginStart {
@@ -207,6 +225,8 @@ interface DraftRow {
   /** Ш0.6: папка кадров в Blob. `undefined`/`null` — черновик до Ш0.6
    * (или строка из теста), кадры по старым путям. */
   frameKey?: string | null;
+  /** Э-С Ш1: режим черновика; `undefined`/`null` — до Ш1, читается как B. */
+  siteMode?: string | null;
   status: DraftStatus;
   title: string | null;
   rejectionReason: string | null;
@@ -225,6 +245,7 @@ export class ClientSiteTutorialService {
     private readonly blob: BlobService,
     private readonly relay: LiveLoginRelayClient,
     @Inject(PAGE_EXPLORER) private readonly explorer: PageExplorer,
+    private readonly access: ClientSiteAccessService,
   ) {}
 
   /** Первый раунд: фиксирует `baseUrl`, открывает страницу, создаёт
@@ -254,6 +275,11 @@ export class ClientSiteTutorialService {
 
     await this.assertSafeUrl(url);
     const origin = new URL(url).origin;
+
+    // Ш1/П-Т2: режим по статусу хоста и подтверждение прав в режиме B —
+    // до слота лимита и до браузера.
+    const access = await this.access.resolve(userId, origin);
+    this.access.requireConsent(access);
 
     await this.reserveRound(userId);
     let round;
@@ -299,6 +325,8 @@ export class ClientSiteTutorialService {
       secretsUsedAt: new Date(),
       // Ш0.6: неугадываемая папка кадров в публичном Blob.
       frameKey: newFrameKey(),
+      // Ш1: режим, с которым черновик начат.
+      ...this.access.modeColumns(access),
     });
 
     // Съёмочный кадр — ПОСЛЕ создания строки: путь в Blob ключуется
@@ -412,6 +440,13 @@ export class ClientSiteTutorialService {
         : { kind: 'click', selector: a.selector },
     );
 
+    // Ш1/П-Т2 (аудит Ш1): `/step` с `fills` по форме входа — тот же вход
+    // под аккаунтом, что и `/login`, только без шифрования. Без ворот здесь
+    // обходились подтверждение прав в B: черновик, начатый в A (хост потом
+    // истёк/отозван), до Ш1 или до новой версии текста, водился бы по сайту
+    // дальше без галочки. До занятия версии, слота и браузера.
+    await this.gateDrive(userId, draft);
+
     return this.runAndPersist(
       userId,
       draft,
@@ -446,6 +481,8 @@ export class ClientSiteTutorialService {
     if (input.fields.length === 0) {
       throw new BadRequestException('форма входа без полей — нечего заполнять');
     }
+    // Ш1/П-Т2: до шифрования кред и до занятия версии.
+    await this.gateDrive(userId, draft);
 
     const actions: RoundAction[] = [
       ...input.fields.map((f) => ({
@@ -554,6 +591,10 @@ export class ClientSiteTutorialService {
     // сравнивает строку хоста, а не то, куда она теперь резолвится.
     const replayStart = firstGotoRoute(undone.next.steps);
     if (replayStart) await this.assertSafeUrl(replayStart);
+
+    // Ш1/П-Т2: переигровка подставляет сохранённые креды и нажимает все
+    // оставшиеся шаги под аккаунтом человека — те же ворота, что у `/login`.
+    await this.gateDrive(userId, draft);
 
     // Переигровка прогоняет ВСЕ оставшиеся шаги, включая клики, — то
     // есть повтор отмены нажимает их на сайте заказчика второй раз.
@@ -780,6 +821,8 @@ export class ClientSiteTutorialService {
     const startUrl = draft.lastUrl ?? draft.baseUrl;
     await this.assertSafeUrl(startUrl);
     assertSameSite(draft.baseUrl, startUrl);
+    // Ш1/П-Т2: живой вход — тоже вход под аккаунтом человека.
+    await this.gateDrive(userId, draft);
     // Квитанцию выдаём этим же ключом уже ПОСЛЕ того, как реле подняло
     // браузер, — значит отсутствие ключа обязано выясниться здесь
     // (аудит этапа 116): иначе слот живого входа списан, сессия на реле
@@ -974,7 +1017,71 @@ export class ClientSiteTutorialService {
   async getState(userId: string, projectId: string): Promise<DraftView | null> {
     await this.assertOwnProject(userId, projectId);
     const draft = await this.findDraft(projectId);
-    return draft ? this.attachVideo(this.toView(draft)) : null;
+    if (!draft) return null;
+    const view = await this.attachVideo(this.toView(draft));
+    // Режим и плашка — только у черновика, который ещё можно водить по
+    // сайту: одобренный опрашивается фоном раз в 15 с, и каждый опрос
+    // ходил бы в sites-backend ни за что.
+    if (draft.status !== 'DRAFTING' && draft.status !== 'REJECTED') {
+      return view;
+    }
+    const access = await this.access.resolve(userId, draft.baseUrl);
+    await this.access.persistMode(draft.id, access);
+    return { ...view, siteMode: access.mode, access };
+  }
+
+  /**
+   * Режим и подтверждение для адреса (Ш1, П-Т1/П-Т2): до первого
+   * `/explore` — по введённой ссылке (экран показывает плашку и галочку
+   * ДО обхода), после — всегда по `baseUrl` черновика (ссылку из тела
+   * тогда не слушаем: сайт черновика сменить нельзя). Пересчёт «после
+   * подтверждения сайта» — этот же вызов.
+   */
+  async siteAccess(
+    userId: string,
+    projectId: string,
+    url?: string,
+  ): Promise<SiteAccessView> {
+    await this.assertOwnProject(userId, projectId);
+    const draft = await this.findDraft(projectId);
+    const target = await this.accessUrl(draft, url);
+    const access = await this.access.resolve(userId, target);
+    if (draft) await this.access.persistMode(draft.id, access);
+    return access;
+  }
+
+  /** П-Т2: подтверждение прав на аккаунт (галочка + версия текста). */
+  async acceptAccountConsent(
+    userId: string,
+    projectId: string,
+    input: { url?: string; textVersion: string; locale: AccountConsentLocale },
+    ipHash: string | null,
+  ): Promise<SiteAccessView> {
+    await this.assertOwnProject(userId, projectId);
+    const draft = await this.findDraft(projectId);
+    const target = await this.accessUrl(draft, input.url);
+    const access = await this.access.recordConsent(
+      userId,
+      target,
+      input,
+      ipHash,
+    );
+    if (draft) await this.access.persistMode(draft.id, access);
+    return access;
+  }
+
+  /** Ш1: «Подтвердить сайт» — завести хост в кабинете сайтов (режим A после подтверждения владения там). */
+  async registerSite(
+    userId: string,
+    projectId: string,
+    url?: string,
+  ): Promise<SiteAccessView> {
+    await this.assertOwnProject(userId, projectId);
+    const draft = await this.findDraft(projectId);
+    const target = await this.accessUrl(draft, url);
+    const access = await this.access.registerHost(userId, target);
+    if (draft) await this.access.persistMode(draft.id, access);
+    return access;
   }
 
   /**
@@ -999,6 +1106,8 @@ export class ClientSiteTutorialService {
     const url = draft.lastUrl ?? draft.baseUrl;
     await this.assertSafeUrl(url);
     assertSameSite(draft.baseUrl, url);
+    // Ш1/П-Т2: снимок открывает сайт с куками сессии человека.
+    await this.gateDrive(userId, draft);
 
     await this.reserveRound(userId);
     let round;
@@ -1157,6 +1266,41 @@ export class ClientSiteTutorialService {
       draft: this.toView(await this.requireDraft(draft.projectId)),
       exploration: round.exploration,
     };
+  }
+
+  /** Ворота Ш1/П-Т2 для черновика: режим — в строку, B без подтверждения — 409. */
+  private async gateDrive(userId: string, draft: DraftRow): Promise<void> {
+    const access = await this.access.resolve(userId, draft.baseUrl);
+    await this.access.persistMode(draft.id, access);
+    this.access.requireConsent(access);
+  }
+
+  /** Адрес для решения о режиме: `baseUrl` черновика, иначе ссылка из тела. */
+  private async accessUrl(
+    draft: DraftRow | null,
+    url: string | undefined,
+  ): Promise<string> {
+    if (draft) return draft.baseUrl;
+    if (!url) {
+      throw new BadRequestException('укажите ссылку на сайт');
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new BadRequestException(
+        'этот адрес нельзя открыть: укажите публичную ссылку на сайт заказчика',
+      );
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new BadRequestException(
+        'этот адрес нельзя открыть: укажите публичную ссылку на сайт заказчика',
+      );
+    }
+    // Те же правила, что у `/explore`: логин в ссылке и внутренние адреса
+    // отклоняются сразу, а не после галочки.
+    await this.assertSafeUrl(parsed.origin);
+    return parsed.origin;
   }
 
   private async loadEditableDraft(
@@ -1623,6 +1767,8 @@ export class ClientSiteTutorialService {
       // (`GET`), — раунды визарда о готовом видео ничего не знают и
       // знать не могут, они работают с ещё не одобренным черновиком.
       video: null,
+      siteMode: draft.siteMode === 'A' ? 'A' : 'B',
+      access: null,
     };
   }
 

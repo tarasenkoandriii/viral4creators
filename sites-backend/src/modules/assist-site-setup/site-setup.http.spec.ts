@@ -1364,6 +1364,37 @@ describeDb(
         });
       });
 
+      it('Э5: Permissions-Policy без микрофона для виджета → microphoneBlocked (чат при этом ok)', async () => {
+        const csp = `default-src 'self'; ${buildCspSnippet(W).replace(/\n/g, ' ')}`;
+        const blocked = page(tag(), csp);
+        net.site(f.verified.host, {
+          '/': {
+            ...blocked,
+            headers: {
+              ...blocked.headers,
+              'permissions-policy': 'camera=(), microphone=()',
+            },
+          },
+        });
+        let res = await check();
+        expect(res[f.verified.id]).toMatchObject({
+          result: 'ok',
+          microphoneBlocked: true,
+        });
+        net.site(f.verified.host, {
+          '/': {
+            ...blocked,
+            headers: {
+              ...blocked.headers,
+              'permissions-policy': `microphone=(self "${W}")`,
+            },
+          },
+        });
+        res = await check();
+        expect(res[f.verified.id].result).toBe('ok');
+        expect(res[f.verified.id]).not.toHaveProperty('microphoneBlocked');
+      });
+
       it('пинг без конфига (connect-src) → csp_blocked с connect-src; CSP из <meta> учитывается', async () => {
         await prisma.assistSiteInstallPing.update({
           where: {

@@ -60,6 +60,26 @@ const uk = {
     'Оператор не встиг відповісти — залиште контакт, і вам відповідять.',
   operator: 'Оператор',
   next: 'Далі',
+  // Э5: голос.
+  voiceMic: 'Сказати голосом',
+  voiceStop: 'Зупинити запис',
+  voiceListening: 'Слухаю…',
+  voiceSending: 'Розпізнаю…',
+  voicePaused: 'Голос на паузі — натисніть, щоб говорити',
+  voiceConsent:
+    'Голос розпізнає ІІ-помічник цього сайту: запис піде на розпізнавання й одразу видаляється. Увімкнути мікрофон?',
+  voiceConsentYes: 'Увімкнути',
+  voiceSpeak: 'Озвучити відповідь',
+  voiceStopSpeak: 'Зупинити озвучення',
+  voiceLimit: 'Голос на сьогодні вичерпано — пишіть текстом.',
+  voiceUnavailable: 'Голос зараз недоступний — пишіть текстом.',
+  voiceNotHeard: 'Не розчув — скажіть ще раз або напишіть.',
+  micDenied:
+    'Мікрофон заборонено — дозвольте його в налаштуваннях браузера або напишіть текстом.',
+  micFailed: 'Мікрофон недоступний — напишіть текстом.',
+  voiceFailed: 'Не вдалося розпізнати — спробуйте ще раз або напишіть.',
+  voiceRetry: 'Голос завантажується — натисніть ще раз.',
+  byVoice: 'голосом',
 };
 
 type Dict = typeof uk;
@@ -122,6 +142,25 @@ const ru: Dict = {
     'Оператор не успел ответить — оставьте контакт, и вам ответят.',
   operator: 'Оператор',
   next: 'Далее',
+  voiceMic: 'Сказать голосом',
+  voiceStop: 'Остановить запись',
+  voiceListening: 'Слушаю…',
+  voiceSending: 'Распознаю…',
+  voicePaused: 'Голос на паузе — нажмите, чтобы говорить',
+  voiceConsent:
+    'Голос распознаёт ИИ-помощник этого сайта: запись уйдёт на распознавание и сразу удаляется. Включить микрофон?',
+  voiceConsentYes: 'Включить',
+  voiceSpeak: 'Озвучить ответ',
+  voiceStopSpeak: 'Остановить озвучку',
+  voiceLimit: 'Голос на сегодня исчерпан — пишите текстом.',
+  voiceUnavailable: 'Голос сейчас недоступен — пишите текстом.',
+  voiceNotHeard: 'Не расслышал — скажите ещё раз или напишите.',
+  micDenied:
+    'Микрофон запрещён — разрешите его в настройках браузера или напишите текстом.',
+  micFailed: 'Микрофон недоступен — напишите текстом.',
+  voiceFailed: 'Не удалось распознать — попробуйте ещё раз или напишите.',
+  voiceRetry: 'Голос загружается — нажмите ещё раз.',
+  byVoice: 'голосом',
 };
 
 const en: Dict = {
@@ -183,6 +222,25 @@ const en: Dict = {
     'The operator could not reply in time — leave your contact and we will reply.',
   operator: 'Operator',
   next: 'Next',
+  voiceMic: 'Speak',
+  voiceStop: 'Stop recording',
+  voiceListening: 'Listening…',
+  voiceSending: 'Recognising…',
+  voicePaused: 'Voice paused — tap to speak',
+  voiceConsent:
+    "This site's AI assistant will recognise your voice: the recording is sent for transcription and deleted right away. Turn on the microphone?",
+  voiceConsentYes: 'Turn on',
+  voiceSpeak: 'Read the answer aloud',
+  voiceStopSpeak: 'Stop reading',
+  voiceLimit: 'Voice is used up for today — please type.',
+  voiceUnavailable: 'Voice is unavailable right now — please type.',
+  voiceNotHeard: "Didn't catch that — say it again or type.",
+  micDenied:
+    'Microphone is blocked — allow it in your browser settings or type instead.',
+  micFailed: 'Microphone is unavailable — please type.',
+  voiceFailed: "Couldn't recognise that — try again or type.",
+  voiceRetry: 'Voice is loading — tap again.',
+  byVoice: 'by voice',
 };
 
 export const DICTS: Record<UiLang, Dict> = { uk, ru, en };

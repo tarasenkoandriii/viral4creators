@@ -9,8 +9,67 @@
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { TutorialFramesCaptureService } from './tutorial-frames-capture.service';
+import {
+  ClientSiteAccessService,
+  SERVICE_CONSENT_LOCALE,
+} from '../client-site-tutorial/site-access.service';
+import { ACCOUNT_CONSENT_TEXT_VERSION } from '../client-site-tutorial/account-consent';
 
-function build() {
+/**
+ * Настоящий сервис режима (Э-С Ш1) поверх «базы» в памяти: фикстура — не
+ * владелец подтверждённого хоста, кабинет сайтов отвечает режимом B.
+ * Именно так съёмка выглядит на проде.
+ */
+function accessInMemory(mode: 'A' | 'B' = 'B') {
+  const rows: Array<Record<string, unknown>> = [];
+  const prisma = {
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ telegramId: '777000' }),
+    },
+    siteTutorialAccountConsent: {
+      findUnique: jest
+        .fn()
+        .mockImplementation(
+          ({ where }: { where: Record<string, Record<string, string>> }) => {
+            const k = where.userId_registrableDomain_textVersion;
+            const hit = rows.find(
+              (r) =>
+                r.userId === k.userId &&
+                r.registrableDomain === k.registrableDomain &&
+                r.textVersion === k.textVersion,
+            );
+            return Promise.resolve(hit ? { id: 'c1' } : null);
+          },
+        ),
+      create: jest
+        .fn()
+        .mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+          rows.push(data);
+          return Promise.resolve({ id: 'c2', ...data });
+        }),
+    },
+  };
+  const sites = {
+    configured: () => true,
+    hostStatus: jest.fn().mockImplementation((_tg: string, url: string) =>
+      Promise.resolve({
+        mode,
+        host: new URL(url).hostname,
+        registrableDomain: null,
+        hostId: null,
+        status: mode === 'A' ? 'verified' : 'none',
+        expiresAt: null,
+        optedOut: false,
+        reason: mode === 'A' ? null : 'no_account',
+      }),
+    ),
+  };
+  const access = new ClientSiteAccessService(prisma as never, sites as never);
+  access.env = {};
+  return { access, rows, prisma };
+}
+
+function build(o: { mode?: 'A' | 'B' } = {}) {
   const runner = {
     findFixtureUser: jest.fn().mockResolvedValue({ id: 'usr_fixture' }),
     resolveFixtureContext: jest
@@ -19,11 +78,14 @@ function build() {
     run: jest.fn(),
   };
   const tutorial = { remove: jest.fn().mockResolvedValue(undefined) };
+  const mem = accessInMemory(o.mode);
   const service = new TutorialFramesCaptureService(
     runner as never,
     tutorial as never,
+    mem.access,
   );
-  return { service, runner, tutorial };
+  service.env = {};
+  return { service, runner, tutorial, ...mem };
 }
 
 /** Прогон мастера отдаёт шесть кадров (пять шагов + итоговый),
@@ -270,5 +332,136 @@ describe('TutorialFramesCaptureService', () => {
       .find((o) => o.routeKeys[0] === 'site-tutorial')?.steps;
     // Первый шаг — проверочный `assertVisible`, адрес печатает второй.
     expect(steps?.[1].value).toBe('https://viral4creators.app');
+  });
+  describe('Э-С Ш1: мастер в режиме B ждёт подтверждения прав (П-Т2)', () => {
+    /**
+     * Мастер как в браузере: после клика «Открыть» экран спрашивает режим
+     * и, если нужна галочка, страницу НЕ открывает — `waitFor` кадра сайта
+     * не дожидается ничего. Решение берётся у настоящего сервиса режима.
+     */
+    function wizardLikeBrowser(
+      runner: { run: jest.Mock },
+      access: ClientSiteAccessService,
+    ) {
+      runner.run.mockImplementation(
+        async (opts: { routeKeys: string[]; steps?: { value?: string }[] }) => {
+          if (opts.routeKeys[0] !== 'site-tutorial') {
+            return {
+              total: 1,
+              outcomes: [
+                {
+                  routeKey: 'postprod-video',
+                  changed: false,
+                  blobUrl: 'video',
+                },
+              ],
+            };
+          }
+          const view = await access.resolve(
+            'usr_fixture',
+            String(opts.steps?.[1]?.value),
+          );
+          const gated = view.mode === 'B' && !view.consent.accepted;
+          return {
+            total: 1,
+            outcomes: [
+              gated
+                ? {
+                    routeKey: 'site-tutorial',
+                    changed: false,
+                    error:
+                      'waitFor [data-qa-mask="client-site-frame"]: таймаут',
+                    stepsDone: 3,
+                    shots: [
+                      { stepIndex: 0, url: 's1' },
+                      { stepIndex: 1, url: 's2' },
+                      { stepIndex: 2, url: 's3' },
+                    ],
+                  }
+                : {
+                    routeKey: 'site-tutorial',
+                    changed: false,
+                    stepsDone: 5,
+                    shots: [0, 1, 2, 3, 4].map((i) => ({
+                      stepIndex: i,
+                      url: `s${i + 1}`,
+                    })),
+                  },
+            ],
+          };
+        },
+      );
+    }
+
+    it('фикстура без кабинета сайтов: по нашему домену все четыре карточки сняты', async () => {
+      const { service, runner, access, rows } = build({ mode: 'B' });
+      wizardLikeBrowser(runner, access);
+
+      const r = await service.capture({ locales: ['ru', 'en'] });
+
+      for (const l of r.locales) {
+        expect(l.cards).toEqual({ 1: 's2', 2: 's4', 3: 's5', 4: 'video' });
+        expect(l.problems).toEqual([]);
+      }
+      // Одна служебная запись на домен, честно помеченная: текст человеку
+      // не показывался, адреса нет.
+      expect(rows).toEqual([
+        {
+          userId: 'usr_fixture',
+          registrableDomain: 'viral4creators.app',
+          textVersion: ACCOUNT_CONSENT_TEXT_VERSION,
+          locale: SERVICE_CONSENT_LOCALE,
+          ipHash: null,
+        },
+      ]);
+    });
+
+    it('поддомен стенда из LANDING_PUBLIC_URL — тоже наш', async () => {
+      const { service, runner, access, rows } = build({ mode: 'B' });
+      service.env = {
+        LANDING_PUBLIC_URL: 'https://stage-landing.example.org/x',
+      };
+      wizardLikeBrowser(runner, access);
+
+      const r = await service.capture({
+        locales: ['ru'],
+        siteUrl: 'https://cab.example.org',
+      });
+
+      expect(r.locales[0].problems).toEqual([]);
+      expect(rows[0]).toMatchObject({ registrableDomain: 'example.org' });
+    });
+
+    it('чужой siteUrl: служебной галочки нет, мастер не запускается, причина названа', async () => {
+      const { service, runner, access, rows, prisma } = build({ mode: 'B' });
+      wizardLikeBrowser(runner, access);
+
+      const r = await service.capture({
+        locales: ['ru'],
+        siteUrl: 'https://bank.example.com',
+      });
+
+      expect(prisma.siteTutorialAccountConsent.create).not.toHaveBeenCalled();
+      expect(rows).toEqual([]);
+      const wizardRuns = runner.run.mock.calls.filter(
+        ([o]: [{ routeKeys: string[] }]) => o.routeKeys[0] === 'site-tutorial',
+      );
+      expect(wizardRuns).toHaveLength(0);
+      expect(r.locales[0].problems.join(' ')).toMatch(
+        /example\.com не наш.*мастер не снимался/,
+      );
+      // Готовый ролик от сайта не зависит — снят.
+      expect(r.locales[0].cards).toEqual({ 4: 'video' });
+    });
+
+    it('режим A (фикстура владеет подтверждённым хостом): служебная запись не нужна', async () => {
+      const { service, runner, access, prisma } = build({ mode: 'A' });
+      wizardLikeBrowser(runner, access);
+
+      const r = await service.capture({ locales: ['ru'] });
+
+      expect(r.locales[0].problems).toEqual([]);
+      expect(prisma.siteTutorialAccountConsent.create).not.toHaveBeenCalled();
+    });
   });
 });

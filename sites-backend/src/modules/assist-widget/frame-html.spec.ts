@@ -31,6 +31,8 @@ describe('frameCsp', () => {
     expect(directive(csp, 'default-src')).toBe("'none'");
     expect(directive(csp, 'script-src')).toBe("'self'");
     expect(directive(csp, 'connect-src')).toBe("'self'");
+    // Э5: звук озвучки — только из Blob-URL, никаких внешних источников.
+    expect(directive(csp, 'media-src')).toBe('blob:');
     expect(directive(csp, 'img-src')).toBe("'self'");
     expect(directive(csp, 'base-uri')).toBe("'none'");
     expect(directive(csp, 'form-action')).toBe("'none'");

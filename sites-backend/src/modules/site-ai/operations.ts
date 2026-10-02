@@ -5,7 +5,8 @@
  *  - обучения (месячный, подписка; Р-58): assist-embed, assist-eval, assist-learn;
  *  - платформы (онбординг/лендинг, суточный потолок): assist-sandbox-*;
  *  - виджета (суточный потолок сайта + платформы, `assist_budget_days`):
- *    assist-chat, assist-classify.
+ *    assist-chat, assist-classify; голос (Э5) — ещё и потолок голоса сайта:
+ *    assist-stt, assist-tts.
  */
 export const SITE_AI_OPERATIONS = [
   'assist-embed',
@@ -26,6 +27,11 @@ export const SITE_AI_OPERATIONS = [
   // assist-eval (бюджет обучения).
   'assist-handoff',
   'assist-translate',
+  // Э5: голос виджета — распознавание вопроса (секунды Soniox) и озвучка
+  // ответа (символы). Платит суточный бюджет сайта+платформы и отдельный
+  // потолок голоса сайта (§4.10, §7.3); не бюджет обучения.
+  'assist-stt',
+  'assist-tts',
 ] as const;
 export type SiteAiOperation = (typeof SITE_AI_OPERATIONS)[number];
 

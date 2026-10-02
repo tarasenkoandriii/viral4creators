@@ -66,6 +66,16 @@
  *     `*.module`: кабинет тарифа, оплата и крон ходят основным клиентом
  *     (и держат секреты провайдеров), а квота виджета — только под
  *     assist_public (assist-billing/public/entitlements.ts).
+ * 12. (Э-С Ш1) `internal-sites-scope` / `internal-sites-leaf`: модуль
+ *     `internal-sites` (внутренний API обучалки генератора, HMAC) берёт из
+ *     модулей только `site-core` и `telegram-auth`, и его не импортирует
+ *     никто: канал «генератор → кабинет» действует от имени любого
+ *     telegramId и не должен становиться входом в помощник или QA.
+ * 13. (Э5) `public-zone-e5`: голос посетителя — папка `public/` модуля
+ *     `assist-site-voice` — публичная зона правила 8 (только assist_public);
+ *     публичный код других модулей берёт из `assist-site-voice` только
+ *     `public/**`, типы, `*-config` и `*.module`: кабинет голоса
+ *     (`cabinet/`) ходит основным клиентом.
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
@@ -97,6 +107,8 @@ const UI_CORE = [/^assist-ui-core$/];
 const NEUTRAL = [/^assist-knowledge-core$/, /^site-ai$/];
 /** Э3: оркестратор утренней сводки/отчёта — лист графа (правило 10). */
 const DIGEST = 'assist-digest';
+/** Э-С Ш1: внутренний API обучалки генератора — лист графа (правило 12). */
+const INTERNAL_SITES = 'internal-sites';
 const MODE_MODULES = [
   /^assist-site-/,
   /^assist-admin-/,
@@ -142,6 +154,18 @@ export const RULES = [
     to: (m) => m === DIGEST,
   },
   {
+    id: 'internal-sites-scope',
+    why: 'Э-С Ш1: internal-sites (внутренний API генератора) берёт из модулей только ядро site-core и telegram-auth',
+    from: (m) => m === INTERNAL_SITES,
+    to: (m) => m !== 'site-core' && m !== 'telegram-auth',
+  },
+  {
+    id: 'internal-sites-leaf',
+    why: 'Э-С Ш1: internal-sites — лист графа, его не импортирует ни один модуль (канал генератора не прорастает в продукты)',
+    from: (m) => m !== INTERNAL_SITES,
+    to: (m) => m === INTERNAL_SITES,
+  },
+  {
     id: 'ui-core-neutral',
     why: '§5-бис.3 п.3: assist-ui-core не импортирует ни «Сайт», ни «Админку»',
     from: (m) => matches(m, UI_CORE),
@@ -162,6 +186,8 @@ const PUBLIC_ZONES = [
   { module: 'assist-analytics', only: /^public\// },
   // Э4: квота и тариф кабинета под assist_public.
   { module: 'assist-billing', only: /^public\// },
+  // Э5: распознавание и озвучка посетителя под assist_public.
+  { module: 'assist-site-voice', only: /^public\// },
 ];
 const inPublicZone = (moduleName, inModule) =>
   !/\.spec\.ts$/.test(inModule) &&
@@ -177,6 +203,9 @@ const E3_MODULES =
 /** Э4: что публичный код может взять из assist-billing (правило 11). */
 const E4_BILLING = /^modules\/assist-billing\/(.+)$/;
 const E4_ALLOWED = /^(public\/.+|plans|units|subscription-state|[\w-]*types|[\w-]+\.module)$/;
+/** Э5: что публичный код может взять из assist-site-voice (правило 13). */
+const E5_VOICE = /^modules\/assist-site-voice\/(.+)$/;
+const E5_ALLOWED = /^(public\/.+|[\w-]*types|[\w-]+-config|[\w-]+\.module)$/;
 const MAIN_DB_TARGETS = [
   /^prisma\/sites-db\.service$/,
   /^prisma\/prisma\.service$/,
@@ -217,6 +246,16 @@ export const PATH_RULES = [
       const m = E4_BILLING.exec(target.replace(SOURCE_RE, ''));
       if (!m || moduleName === 'assist-billing') return false;
       return !E4_ALLOWED.test(m[1]);
+    },
+  },
+  {
+    id: 'public-zone-e5',
+    why: 'Э5: публичный код берёт из assist-site-voice только public/, *types, *-config и *.module (кабинет голоса — основная роль)',
+    from: inPublicZone,
+    to: (target, moduleName) => {
+      const m = E5_VOICE.exec(target.replace(SOURCE_RE, ''));
+      if (!m || moduleName === 'assist-site-voice') return false;
+      return !E5_ALLOWED.test(m[1]);
     },
   },
 ];
@@ -574,6 +613,36 @@ function selfTest() {
       'public-db',
     ],
     [
+      'modules/internal-sites/ak.ts',
+      `import { AssistBilling } from '../assist-billing/billing.service';`,
+      'internal-sites-scope',
+    ],
+    [
+      'modules/internal-sites/al.ts',
+      `import { PlatformAdmin } from '../platform-admin/platform-admin.service';`,
+      'internal-sites-scope',
+    ],
+    [
+      'modules/site-core/am.ts',
+      `import { InternalSitesService } from '../internal-sites/internal-sites.service';`,
+      'internal-sites-leaf',
+    ],
+    [
+      'modules/assist-site-voice/public/an.ts',
+      `import { SitesDb } from '../../../prisma/sites-db.service';`,
+      'public-db',
+    ],
+    [
+      'modules/assist-widget/ao.ts',
+      `import { VoiceSettingsService } from '../assist-site-voice/cabinet/voice-settings.service';`,
+      'public-zone-e5',
+    ],
+    [
+      'modules/assist-site-chat/ap.ts',
+      `import { X } from '../assist-site-voice/cabinet/voice-errors';`,
+      'public-zone-e5',
+    ],
+    [
       'shared/l.ts',
       `import { G } from '../modules/telegram-auth/guard';`,
       'shared↛modules',
@@ -670,6 +739,22 @@ function selfTest() {
     [
       'modules/site-ai/ok24.ts',
       `import { learningBudgetCap } from '../assist-billing/limits';`,
+    ],
+    [
+      'modules/internal-sites/ok25.ts',
+      `import { AccountService } from '../site-core/account/account.service';\nimport { PublicRoute } from '../telegram-auth/allow-apps.decorator';\nimport { verifySitesRequest } from '../../shared/sites-internal-signature';\nimport { SitesDb } from '../../prisma/sites-db.service';`,
+    ],
+    [
+      'modules/assist-widget/ok26.ts',
+      `import { SiteVoiceService } from '../assist-site-voice/public/site-voice.service';\nimport type { WidgetVoiceResponse } from '../assist-site-voice/api-types';\nimport { VOICE_DEFAULTS } from '../assist-site-voice/voice-config';\nimport { AssistSiteVoiceModule } from '../assist-site-voice/assist-site-voice.module';`,
+    ],
+    [
+      'modules/assist-site-voice/cabinet/ok27.ts',
+      `import { SitesDb } from '../../../prisma/sites-db.service';\nimport { PrismaService } from '../../../prisma/prisma.service';\nimport { SiteBudget } from '../../assist-site-chat/budget';`,
+    ],
+    [
+      'modules/assist-site-voice/public/ok28.ts',
+      `import { AssistPublicDb } from '../../../prisma/assist-public-db.service';\nimport { VoiceSettingsService } from '../cabinet/voice-settings.service';\nimport { claimUnits } from '../../assist-billing/public/entitlements';`,
     ],
     [
       'shared/ok5.ts',

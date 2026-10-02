@@ -8,10 +8,13 @@
  */
 
 import { api } from './api';
+import axios from 'axios';
 import type {
   ClientSiteDraftView,
   ClientSiteRoundResult,
+  ConsentLocale,
   LiveLoginStart,
+  SiteAccessView,
 } from '../types/client-site-tutorial';
 
 function unwrap<T>(res: { data?: T }, what: string): T {
@@ -143,5 +146,56 @@ export async function completeLiveLogin(
       { ticket, expectedVersion }
     ),
     'live login complete'
+  );
+}
+
+/** Машинный код отказа сервера (`error.code` конверта) или `null`. */
+export function apiErrorCode(err: unknown): string | null {
+  if (!axios.isAxiosError(err)) return null;
+  const code = (
+    err.response?.data as { error?: { code?: unknown } } | undefined
+  )?.error?.code;
+  return typeof code === 'string' ? code : null;
+}
+
+/** Э-С Ш1: режим A/B. До первого `/explore` — по ссылке, потом — по черновику. */
+export async function getSiteAccess(
+  projectId: string,
+  url?: string
+): Promise<SiteAccessView> {
+  return unwrap(
+    await api.post<SiteAccessView>(
+      `${base(projectId)}/access`,
+      url ? { url } : {}
+    ),
+    'site access'
+  );
+}
+
+/** П-Т2: подтверждение прав на аккаунт (режим B) с версией текста. */
+export async function acceptAccountConsent(
+  projectId: string,
+  input: { url?: string; textVersion: string; locale: ConsentLocale }
+): Promise<SiteAccessView> {
+  return unwrap(
+    await api.post<SiteAccessView>(`${base(projectId)}/consent`, {
+      ...input,
+      accepted: true,
+    }),
+    'account consent'
+  );
+}
+
+/** Ш1: «Это мой сайт» — завести хост в кабинете сайтов (согласие на привязку — на экране). */
+export async function verifySite(
+  projectId: string,
+  url?: string
+): Promise<SiteAccessView> {
+  return unwrap(
+    await api.post<SiteAccessView>(`${base(projectId)}/verify-site`, {
+      ...(url ? { url } : {}),
+      linkAccount: true,
+    }),
+    'verify site'
   );
 }

@@ -14,6 +14,7 @@
     "vite.chat.config.ts",
     "vite.picker.config.ts",
     "vite.engage.config.ts",
+    "vite.voice.config.ts",
     "vite.dev.config.ts",
     "playwright.config.ts"
   ]

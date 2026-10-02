@@ -79,7 +79,11 @@ import {
   siteDailyCapMicroUsd,
 } from '../assist-billing/public/entitlements';
 import type { SubscriptionState } from '../assist-billing/subscription-state';
-import { isNewDialog, unitsDelta } from '../assist-billing/units';
+import {
+  DIALOG_BASE_UNITS,
+  isNewDialog,
+  unitsDelta,
+} from '../assist-billing/units';
 import { questionLang } from '../assist-knowledge-core/answer/prompt';
 import { detectInjection } from '../assist-knowledge-core/injection';
 import { semanticCacheKey } from '../assist-knowledge-core/semantic-cache-key';
@@ -91,6 +95,9 @@ import type {
   LearningSignalSource,
 } from '../assist-site-learning/api-types';
 import { LearningSignals } from '../assist-site-learning/public/learning-signals';
+import { markVoiceDialog } from '../assist-site-voice/public/voice-dialog';
+import { verifyVoiceTicket } from '../assist-site-voice/public/voice-ticket';
+import { voiceTicketKey } from '../../config/voice-env';
 import { parsePersona, type PersonaConfig } from '../assist-site-setup/persona';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import {
@@ -417,7 +424,8 @@ export class SiteChatService {
       // 30 мин тишины — новый диалог для квоты (§7.1, assist-billing/units).
       await db.assistSiteConversation.update({
         where: { id: conv.id },
-        data: { answers: 0, dialogCounted: false },
+        // Э5: и отметка голоса — новый диалог считается заново (§7.1).
+        data: { answers: 0, dialogCounted: false, voice: false },
         select: { id: true },
       });
       conv = { ...conv, answers: 0, dialogCounted: false };
@@ -450,6 +458,25 @@ export class SiteChatService {
     }
     const convId = conv.id;
     const answerId = randomUUID();
+    // Э5 (§4.10, §7.1): вопрос задан голосом — билет распознавания на ЭТОТ
+    // текст этого посетителя; диалог — весом 2 (доплата, если он уже
+    // засчитан текстом; не поместилась — вопрос идёт как текстовый).
+    if (
+      input.voiceTicket &&
+      verifyVoiceTicket(voiceTicketKey(this.env), input.voiceTicket, {
+        siteId: site.siteId,
+        visitorId: input.visitor.visitorId,
+        text: question,
+        now,
+      })
+    ) {
+      await markVoiceDialog(db, {
+        accountId: site.accountId,
+        conversationId: convId,
+        state: await readState(db, site.accountId, now),
+        preview: site.preview,
+      });
+    }
     try {
       await db.assistSiteMessage.createMany({
         data: [
@@ -1470,14 +1497,21 @@ export class SiteChatService {
         WHERE "id" = $1 AND NOT "dialogCounted" RETURNING "id"`,
       convId,
     );
-    const counted = await db.$queryRawUnsafe<Array<{ answers: number }>>(
+    const counted = await db.$queryRawUnsafe<
+      Array<{ answers: number; voice: boolean }>
+    >(
       `UPDATE "sites"."assist_site_conversations" SET "answers" = "answers" + 1
-        WHERE "id" = $1 RETURNING "answers"`,
+        WHERE "id" = $1 RETURNING "answers", "voice"`,
       convId,
     );
     const n = counted[0]?.answers ?? 1;
-    // Э4: режим «Сайт» текстом — вес 1 (голос Э5 и «Админка» Э7 — свои веса).
-    const units = unitsDelta(1, n, won.length > 0);
+    // Э4: режим «Сайт» текстом — вес 1; Э5: в диалоге был голос — 2
+    // (assist-site-voice/public/voice-dialog.ts; «Админка» Э7 — свой вес).
+    const units = unitsDelta(
+      DIALOG_BASE_UNITS[counted[0]?.voice ? 'voice' : 'text'],
+      n,
+      won.length > 0,
+    );
     if (units === 0) return true;
     const ok = await this.quota.claim(db, {
       accountId,

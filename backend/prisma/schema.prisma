@@ -170,6 +170,8 @@ model User {
   serpApiUsage       SerpApiUsage[]
   youtubeSearchUsage YoutubeSearchUsage[]
   clientSiteTutorialUsage ClientSiteTutorialUsage[]
+  // Э-С Ш1 (П-Т2): подтверждения прав на аккаунт чужого сайта (режим B).
+  siteTutorialConsents SiteTutorialAccountConsent[]
   publications       PublicationRequest[]
   moderated          PublicationRequest[] @relation("PublicationModerator")
   libraryEntries     AnalysisLibraryEntry[]
@@ -3838,11 +3840,61 @@ model ClientSiteTutorialDraft {
   /// черновик в DRAFTING.
   previewFrameCount Int?
 
+  /// Режим обучалки (Э-С Ш1, П-Т1): `A` — «свой сайт» (хост подтверждён в
+  /// кабинете сайтов `sites-backend`, где пользователь — владелец или
+  /// менеджер), `B` — «чужой сайт со своим аккаунтом». Решает НЕ
+  /// пользователь, а статус хоста во внутреннем API; пересчитывается на
+  /// каждом действии, которое водит браузер по сайту, и при подтверждении.
+  /// sites-backend недоступен — `B`. NULL — черновик до Ш1 (до первой
+  /// проверки читается как `B`).
+  siteMode String?
+  /// Когда режим проверялся последний раз (раунд, экран черновика в работе,
+  /// «проверить снова» после подтверждения сайта).
+  siteModeCheckedAt DateTime?
+  /// Id хоста в кабинете `sites-backend` (ссылка между базами, без FK) —
+  /// для ссылки «подтвердить сайт» и для Ш2 (реестр учётных записей).
+  siteHostId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
   @@index([status])
   @@map("client_site_tutorial_drafts")
+}
+
+/// Подтверждение прав на аккаунт и согласия с условиями сайта в режиме B
+/// обучалки (Э-С Ш1, П-Т2 — P0 `docs-tz/SECURITY-PROPOSALS-2026-10-02.md`).
+///
+/// Технически проверить, что аккаунт на чужом сайте принадлежит этому
+/// человеку, нельзя — поэтому человек ПОДТВЕРЖДАЕТ это сам, галочкой под
+/// текстом с версией, а мы храним запись: кто, какой домен, какая версия
+/// текста, когда, с какого адреса (только HMAC IP, сырой не хранится). Без
+/// записи на жалобу «с вашего сервера вошли в мой аккаунт» нечего ответить.
+///
+/// Одно подтверждение — на регистрируемый домен (`shop.` и `admin.` одного
+/// сайта — один раз) для ВСЕХ черновиков этого пользователя, пока не
+/// сменится версия текста: новая версия — новое подтверждение (старые
+/// строки остаются журналом). Позже переезжает в `AuditLog` (Ш2, П-Т12).
+model SiteTutorialAccountConsent {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// eTLD+1 по PSL (`example.co.uk`), в нижнем регистре, punycode.
+  registrableDomain String
+  /// Версия показанного текста (`ACCOUNT_CONSENT_TEXT_VERSION`).
+  textVersion       String
+  /// Язык показанного текста (uk/ru/en) — для спора «что именно я видел»;
+  /// `service` — служебная запись съёмки кадров лендинга для НАШИХ доменов
+  /// (`recordServiceConsent`, ipHash NULL, своего маршрута нет).
+  locale            String
+  acceptedAt        DateTime @default(now())
+  /// HMAC-SHA256 адреса клиента (`rateLimitSubject`), 32 hex; NULL — адрес
+  /// не определился.
+  ipHash            String?
+
+  /// Имя задано явно: имя по умолчанию длиннее 63 символов Postgres.
+  @@unique([userId, registrableDomain, textVersion], map: "client_site_account_consents_user_domain_version_key")
+  @@map("client_site_account_consents")
 }
 
 enum ClientSiteTutorialDraftStatus {

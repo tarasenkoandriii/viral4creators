@@ -336,6 +336,8 @@ function parseInstallHost(v: unknown): InstallCheckHost | null {
     tagFound: o.tagFound === true,
     lastPingAt: str(o.lastPingAt),
     missingCsp: strs(o.missingCsp).filter((d) => /^[a-z-]{3,30}$/.test(d)),
+    // Э5: политика сайта запрещает микрофон iframe виджета.
+    microphoneBlocked: o.microphoneBlocked === true,
   };
 }
 

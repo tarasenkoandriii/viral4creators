@@ -236,6 +236,8 @@ export const setupEn: SetupDictionary = {
         fetch_failed: 'The site did not respond',
       },
       cspMissing: 'Missing in CSP: {list}',
+      micBlocked:
+        "The site's Permissions-Policy header blocks the widget microphone — voice questions won't work (chat does). Add the widget origin to microphone=(…).",
       noPing:
         'The code is there, but the widget has never loaded. Open a page of the site and check again; if that does not help, CSP or an extension is probably blocking it.',
       lastPing: 'Last widget load: {date}',
@@ -324,6 +326,35 @@ export const setupEn: SetupDictionary = {
       notRan:
         'The check did not run (no learning budget) — published without it.',
       ok: 'Check passed.',
+    },
+    voice: {
+      title: 'Voice',
+      intro:
+        'Microphone in the widget and read-aloud answers. Applies immediately, no persona publishing. A voice dialog counts as 2.',
+      input: 'Microphone: visitors ask by voice',
+      output: '“Read the answer aloud” button',
+      voice: 'Voice',
+      defaultVoice: 'Default ({name})',
+      listen: 'Listen',
+      save: 'Save voice',
+      saved: 'Voice saved.',
+      spent: 'Voice today: ${spent} of ${cap}',
+      privacy:
+        "The visitor's recording is sent for transcription and deleted right away — by us and by the provider. The first microphone tap tells the visitor who is listening.",
+      reasons: {
+        plan: 'Voice is available on Business and above.',
+        platform_off: 'Voice is temporarily off on the platform.',
+        no_provider: 'Voice is not connected on the platform yet.',
+        site_off: "The site's chat is paused — so is voice.",
+        owner_off: 'Voice is off.',
+      },
+      errors: {
+        VOICE_CONFIG_INVALID: 'Voice settings failed validation.',
+        VOICE_PLAN_REQUIRED: 'Voice is available on Business and above.',
+        VOICE_UNAVAILABLE: 'Voice is unavailable right now.',
+        VOICE_LIMIT: "The site's daily voice budget is used up — try tomorrow.",
+        UPSTREAM: 'The voice provider did not respond — try again.',
+      },
     },
   },
   wizard: {

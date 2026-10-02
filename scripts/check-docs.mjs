@@ -4226,6 +4226,79 @@ function checkVoiceRetentionSeam() {
 checkVoiceRetentionSeam();
 
 /**
+ * Шов «голос посетителя не остаётся ни у нас, ни у провайдера» (Э5
+ * помощника клиентских сайтов, приёмка Э5 п.1; ТЗ §4.10, §6.3). Тот же
+ * принцип, что у генератора выше, для sites-backend: файл публичной части
+ * голоса, где звук уходит к Soniox (`SONIOX_API_BASE` + `/files`), обязан
+ * удалять файл И транскрипцию в `finally` (с раскрытием `this.метод(`), а
+ * сервис голоса — затирать буфер записи в `finally`. Поведение (успех,
+ * отказ, таймаут, 409) проверяют спеки acceptance/e5/voice.spec.ts.
+ */
+function checkSitesVoiceRetentionSeam() {
+  const DIR = "sites-backend/src/modules/assist-site-voice/public";
+  const problems = [];
+  if (!fs.existsSync(path.join(ROOT, DIR))) {
+    console.log("FAIL голос посетителя: нет папки " + DIR + " — шов ослеп");
+    failed++;
+    return;
+  }
+  const blockAt = (src, openIdx) => {
+    let depth = 0;
+    for (let k = openIdx; k < src.length; k++) {
+      if (src[k] === "{") depth++;
+      else if (src[k] === "}" && --depth === 0) return src.slice(openIdx + 1, k);
+    }
+    return "";
+  };
+  const methodBody = (src, name) => {
+    const m = new RegExp(`\\b(?:private |public |protected )?async ${name}\\s*\\(`).exec(src);
+    if (!m) return "";
+    const sig = src.slice(m.index);
+    const close = sig.search(/\)\s*(?::[^{]*)?\{/);
+    return close < 0 ? "" : blockAt(src, m.index + sig.indexOf("{", close));
+  };
+  const finallyBodies = (src) =>
+    [...src.matchAll(/\bfinally\s*\{/g)].map((m) => {
+      let body = blockAt(src, m.index + m[0].length - 1);
+      for (const call of body.matchAll(/\bthis\.(\w+)\(/g)) body += "\n" + methodBody(src, call[1]);
+      return body;
+    });
+  let uploaders = 0;
+  let wipes = 0;
+  for (const f of fs.readdirSync(path.join(ROOT, DIR))) {
+    if (!f.endsWith(".ts") || f.endsWith(".spec.ts")) continue;
+    const src = stripComments(read(`${DIR}/${f}`));
+    const fins = finallyBodies(src);
+    if (/\bSONIOX_API_BASE\b/.test(src) && /['"`]\/files['"`]/.test(src)) {
+      uploaders++;
+      const ok =
+        /method:\s*['"]DELETE['"]/.test(src) &&
+        fins.some((b) => /\/files\/\$\{/.test(b) && /\/transcriptions\/\$\{/.test(b));
+      if (!ok)
+        problems.push(`${DIR}/${f}: звук посетителя уходит к Soniox, но удаление файла и транскрипции не стоит в finally`);
+    }
+    if (/\btranscribe\s*\(\s*ctx\b/.test(src) || /async transcribe\(\s*ctx/.test(src)) {
+      wipes++;
+      if (!fins.some((b) => /\baudio\.fill\(0\)/.test(b)))
+        problems.push(`${DIR}/${f}: запись посетителя не затирается в finally (audio.fill(0))`);
+    }
+  }
+  if (uploaders === 0) problems.push(`${DIR}: не нашёл отправки звука в Soniox — шов ослеп, поправьте его`);
+  if (wipes === 0) problems.push(`${DIR}: не нашёл сервиса распознавания посетителя — шов ослеп`);
+  if (problems.length) {
+    failed++;
+    console.log("FAIL голос посетителя не остаётся (Э5):");
+    for (const x of problems) console.log(`  - ${x}`);
+  } else {
+    console.log(
+      `ok   голос посетителя не остаётся (Э5): отправок в Soniox ${uploaders}, все с уборкой файла и транскрипции в finally; запись затирается в finally (${wipes})`,
+    );
+  }
+}
+
+checkSitesVoiceRetentionSeam();
+
+/**
  * Шов «субподрядчики в коде = субподрядчики в Условиях» (29.09.2026).
  *
  * Находка при добавлении Soniox: `doc/TODO.md` II.10 от 27.09.2026

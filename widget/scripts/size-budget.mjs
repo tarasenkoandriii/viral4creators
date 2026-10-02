@@ -30,6 +30,9 @@ export const BUDGETS = [
   // Э3 (интеграция): вовлечение и цели — ленивый чанк загрузчика (после
   // load + простоя или при первом взаимодействии, только при целях/триггерах).
   { name: 'engage', files: ['dist/v1/engage.js'], maxGzip: 8 * KB },
+  // Э5: голос — ленивый чанк iframe-чата (запись, детектор речи, плеер);
+  // грузится, только когда голос включён в конфиге сайта.
+  { name: 'voice', files: ['dist/v1/voice.js'], maxGzip: 4 * KB },
 ];
 
 export const LOADER_SINKS = [
@@ -71,6 +74,9 @@ for (const [label, file] of [
   ['загрузчик', 'dist/v1/loader.js'],
   ['режим выбора цели', 'dist/v1/picker.js'],
   ['чанк вовлечения и целей', 'dist/v1/engage.js'],
+  // Э5: чанк голоса живёт в iframe, но HTML-приёмников и eval в нём тоже
+  // нет и не будет (Trusted Types iframe — 'none').
+  ['чанк голоса', 'dist/v1/voice.js'],
 ]) {
   const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
   for (const re of LOADER_SINKS) {

@@ -7,7 +7,9 @@
  *  - `HostAccessService.assertHostVerified(hostId, purpose)` — уровни L0–L1;
  *  - `SiteAccountGuard` + `@RequireAccountRoles`/`@RequireProductRoles`/
  *    `@Membership()` — кабинет и права в их контроллерах;
- *  - `AccountService` — кабинет по telegramId.
+ *  - `AccountService` — кабинет по telegramId;
+ *  - `SitesService` — сайты и хосты кабинета (Э-С Ш1: внутренний API
+ *    обучалки генератора регистрирует хост тем же кодом, что экран TMA).
  *
  * `SitesDb` приходит из глобального PrismaModule; идентичность запроса —
  * из глобального `TelegramIdentityGuard` (telegram-auth).
@@ -41,6 +43,6 @@ import { SitesService } from './sites/sites.service';
     OwnershipRecheckService,
     HostAccessService,
   ],
-  exports: [AccountService, SiteAccountGuard, HostAccessService],
+  exports: [AccountService, SiteAccountGuard, HostAccessService, SitesService],
 })
 export class SiteCoreModule {}

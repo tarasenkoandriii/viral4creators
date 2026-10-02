@@ -182,6 +182,13 @@ export const WIDGET_TOKEN_HMAC_LABEL = 'v4c-widget-visitor';
 /** Метка соли ipHash виджета (как `v4c-sandbox-ip` песочницы Э1). */
 export const WIDGET_IP_HASH_LABEL = 'v4c-widget-ip';
 
+/**
+ * Э5: метка HMAC «билета голоса» — подпись «этот текст распознан у нас из
+ * речи посетителя» (вопрос голосом — диалог весом 2, §7.1). Ключ —
+ * производный от ASSIST_SECRETS_KEY, нового секрета нет.
+ */
+export const WIDGET_VOICE_TICKET_HMAC_LABEL = 'v4c-widget-voice-ticket';
+
 /** Ссылка «Работает на …» в подвале чата (§3-бис.1) — с UTM. */
 export const WIDGET_POWERED_BY_URL =
   'https://v4c.example.invalid/assistant?utm_source=widget&utm_medium=powered_by';

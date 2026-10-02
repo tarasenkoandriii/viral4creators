@@ -11,6 +11,10 @@
  * как и у штатной обучалки. Этап 114 — живой вход (§7.4): два маршрута
  * вокруг отдельного сервиса-реле, сам видеопоток через backend НЕ
  * идёт.
+ *
+ * Э-С Ш1: `/access` (режим A/B), `/consent` (подтверждение прав на
+ * аккаунт в режиме B, П-Т2), `/verify-site` (завести хост в кабинете
+ * сайтов sites-backend).
  */
 
 import {
@@ -34,7 +38,12 @@ import {
   LiveLoginStart,
   RoundResult,
 } from './client-site-tutorial.service';
+import type { SiteAccessView } from './site-access.service';
+import { clientIp, rateLimitSubject } from '../../common/rate-limit';
 import {
+  AccountConsentRequestDto,
+  RegisterSiteRequestDto,
+  SiteAccessRequestDto,
   CompleteLiveLoginDto,
   ExploreRequestDto,
   FinishRequestDto,
@@ -142,6 +151,48 @@ export class ClientSiteTutorialController {
     @Param('projectId') projectId: string,
   ): Promise<DraftView> {
     return this.service.resume(req.telegramUserId, projectId);
+  }
+
+  /** Э-С Ш1 (П-Т1): режим A/B и состояние подтверждения прав. */
+  @Post('access')
+  @HttpCode(200)
+  access(
+    @Req() req: IdentifiedRequest,
+    @Param('projectId') projectId: string,
+    @Body() dto: SiteAccessRequestDto,
+  ): Promise<SiteAccessView> {
+    return this.service.siteAccess(req.telegramUserId, projectId, dto.url);
+  }
+
+  /**
+   * П-Т2: галочка «аккаунт мой, условия сайта не нарушаю» с версией
+   * текста. IP — только HMAC (`rateLimitSubject`), сырой не хранится.
+   */
+  @Post('consent')
+  @HttpCode(200)
+  consent(
+    @Req() req: IdentifiedRequest,
+    @Param('projectId') projectId: string,
+    @Body() dto: AccountConsentRequestDto,
+  ): Promise<SiteAccessView> {
+    const ip = clientIp(req);
+    return this.service.acceptAccountConsent(
+      req.telegramUserId,
+      projectId,
+      { url: dto.url, textVersion: dto.textVersion, locale: dto.locale },
+      ip && ip !== 'unknown' ? rateLimitSubject(ip) : null,
+    );
+  }
+
+  /** Ш1: «Подтвердить сайт» — хост в кабинет сайтов (pending). */
+  @Post('verify-site')
+  @HttpCode(200)
+  verifySite(
+    @Req() req: IdentifiedRequest,
+    @Param('projectId') projectId: string,
+    @Body() dto: RegisterSiteRequestDto,
+  ): Promise<SiteAccessView> {
+    return this.service.registerSite(req.telegramUserId, projectId, dto.url);
   }
 
   @Delete()

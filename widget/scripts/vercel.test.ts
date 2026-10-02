@@ -47,5 +47,16 @@ assert.match(
 );
 assert.equal(header('/v1/engage.js', 'Access-Control-Allow-Origin'), '*');
 assert.equal(header('/v1/engage.js', 'X-Content-Type-Options'), 'nosniff');
+// Э5: чанк голоса — грузит iframe со своего origin (CORS не нужен), кэш
+// короткий: новая версия записи/детектора речи — у всех за 5 минут.
+assert.match(
+  header('/v1/voice.js', 'Cache-Control') ?? '',
+  /max-age=300\b/,
+  'voice.js — короткий кэш'
+);
+assert.equal(header('/v1/voice.js', 'X-Content-Type-Options'), 'nosniff');
+assert.equal(header('/v1/voice.js', 'Access-Control-Allow-Origin'), undefined);
 assert.ok(cfg.ignoreCommand, 'ignoreCommand пропал');
-console.log('vercel.json: шрифты immutable, загрузчик и engage.js — 5 мин');
+console.log(
+  'vercel.json: шрифты immutable, загрузчик, engage.js и voice.js — 5 мин'
+);

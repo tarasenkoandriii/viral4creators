@@ -54,6 +54,7 @@ export interface MockLog {
     context: unknown;
     uiLang: unknown;
     openedBy?: string | null;
+    voiceTicket?: string | null;
   }>;
   pings: Array<{ pk: string; v: string; c: string }>;
   configHits: string[];
@@ -94,6 +95,9 @@ export interface MockLog {
   handoffs: Array<Record<string, unknown>>;
   cancels: number;
   picks: Array<Record<string, unknown>>;
+  // Э5
+  voice: Array<{ pk: string; bytes: number; type: string; visitorId: string }>;
+  tts: Array<{ pk: string; messageId: string; ok: boolean }>;
 }
 
 export async function log(): Promise<MockLog> {
@@ -115,6 +119,10 @@ export interface SiteOpts {
   handoff?: unknown;
   handoffMode?: 'human' | 'lead';
   pickerTokens?: Record<string, string>;
+  // Э5
+  voice?: unknown;
+  voiceMode?: 'ok' | 'limit' | 'not_heard' | 'unavailable';
+  voiceText?: string;
 }
 
 /** Сайт в моке: по умолчанию разрешён A и SHOP (verified-хосты одного сайта). */
@@ -138,6 +146,9 @@ export async function site(pk: string, o: SiteOpts = {}) {
     handoff: o.handoff,
     handoffMode: o.handoffMode ?? 'human',
     pickerTokens: o.pickerTokens ?? {},
+    voice: o.voice,
+    voiceMode: o.voiceMode,
+    voiceText: o.voiceText,
   });
 }
 

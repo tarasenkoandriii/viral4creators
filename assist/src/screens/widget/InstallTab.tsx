@@ -134,6 +134,9 @@ export function InstallTab({
                     {fmt(t.cspMissing, { list: h.missingCsp.join(', ') })}
                   </Alert>
                 )}
+                {h.microphoneBlocked && (
+                  <Alert tone="warning">{t.micBlocked}</Alert>
+                )}
                 {h.result === 'csp_blocked' && h.missingCsp.length === 0 && (
                   <div className="text-xs text-silver-500">{t.noPing}</div>
                 )}

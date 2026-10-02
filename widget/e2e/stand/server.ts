@@ -77,6 +77,14 @@ interface Site {
   handoffMode?: 'human' | 'lead';
   /** Токены режима выбора цели: токен → origin, на который выдан. */
   pickerTokens?: Record<string, string>;
+  /**
+   * Э5: `voice` публичного конфига (как отдаёт сервер) и поведение мока
+   * распознавания/озвучки (упрощённо как assist-site-voice: деньги, тариф и
+   * провайдер — тесты sites-backend; здесь — форма протокола).
+   */
+  voice?: unknown;
+  voiceMode?: 'ok' | 'limit' | 'not_heard' | 'unavailable';
+  voiceText?: string;
 }
 interface Handoff {
   id: string;
@@ -136,6 +144,7 @@ function fresh() {
       context: unknown;
       uiLang: unknown;
       openedBy?: unknown;
+      voiceTicket?: unknown;
     }>,
     pings: [] as Array<{ pk: string; v: string; c: string }>,
     configHits: [] as string[],
@@ -171,7 +180,39 @@ function fresh() {
     picks: [] as Array<Record<string, unknown>>,
     pickerSessions: new Map<string, { pk: string; origin: string }>(),
     usedPickerTokens: new Set<string>(),
+    // Э5
+    voice: [] as Array<{
+      pk: string;
+      bytes: number;
+      type: string;
+      visitorId: string;
+    }>,
+    tts: [] as Array<{ pk: string; messageId: string; ok: boolean }>,
   };
+}
+
+/** Э5: WAV 0.4 с, 440 Гц — «озвучка» для WebAudio (decodeAudioData читает WAV). */
+function toneWav(seconds = 0.4, rate = 8000): Buffer {
+  const n = Math.floor(seconds * rate);
+  const b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0);
+  b.writeUInt32LE(36 + n * 2, 4);
+  b.write('WAVEfmt ', 8);
+  b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20);
+  b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(rate, 24);
+  b.writeUInt32LE(rate * 2, 28);
+  b.writeUInt16LE(2, 32);
+  b.writeUInt16LE(16, 34);
+  b.write('data', 36);
+  b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++)
+    b.writeInt16LE(
+      Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 8000),
+      44 + i * 2
+    );
+  return b;
 }
 
 const now = () => Date.now() + M.clock;
@@ -260,6 +301,8 @@ function frameCsp(site: Site | undefined): string {
     "img-src 'self'",
     "font-src 'self'",
     "connect-src 'self'",
+    // Э5: как frame-html.ts sites-backend — звук озвучки только из Blob-URL.
+    'media-src blob:',
     `frame-ancestors ${anc}`,
     "base-uri 'none'",
     "form-action 'none'",
@@ -531,6 +574,7 @@ async function api(
         ...(s.engagement !== undefined ? { engagement: s.engagement } : {}),
         ...(s.goals !== undefined ? { goals: s.goals } : {}),
         ...(s.handoff !== undefined ? { handoff: s.handoff } : {}),
+        ...(s.voice !== undefined ? { voice: s.voice } : {}),
       },
       h
     );
@@ -826,6 +870,52 @@ async function api(
     M.convs
       .filter((c) => c.visitorId === t.visitorId && c.siteId === t.siteId)
       .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+  // ── Э5: голос (упрощённо как assist-site-voice/public) ──
+  if (req.method === 'POST' && p === '/widget/v1/voice') {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    const bytes = Buffer.concat(chunks);
+    const type = String(req.headers['content-type'] || '');
+    M.voice.push({
+      pk: t.pk,
+      bytes: bytes.length,
+      type,
+      visitorId: t.visitorId,
+    });
+    const site = [...M.sites.values()].find((x) => x.siteId === t.siteId);
+    const mode = site?.voiceMode ?? 'ok';
+    if (!/^audio\//.test(type) || bytes.length < 512)
+      return fail(res, 400, 'AUDIO_INVALID');
+    if (mode === 'limit') return fail(res, 429, 'VOICE_LIMIT');
+    if (mode === 'unavailable') return fail(res, 403, 'VOICE_UNAVAILABLE');
+    if (mode === 'not_heard') return fail(res, 422, 'VOICE_NOT_HEARD');
+    const text = site?.voiceText ?? 'Скільки коштує доставка?';
+    return ok(
+      res,
+      { text, lang: 'uk', voiceTicket: `v1.9999999999.${'T'.repeat(43)}` },
+      { 'Cache-Control': 'no-store' }
+    );
+  }
+  if (req.method === 'POST' && p === '/widget/v1/tts') {
+    const b = await readBody(req);
+    const id = typeof b.messageId === 'string' ? b.messageId : '';
+    const site = [...M.sites.values()].find((x) => x.siteId === t.siteId);
+    const own = mine().some((c) =>
+      c.messages.some(
+        (m) =>
+          m.id === id && m.role !== 'visitor' && m.streamState === 'complete'
+      )
+    );
+    M.tts.push({ pk: t.pk, messageId: id, ok: own });
+    if (site?.voiceMode === 'limit') return fail(res, 429, 'VOICE_LIMIT');
+    if (!own) return fail(res, 404, 'NOT_FOUND');
+    res.writeHead(200, {
+      'Content-Type': 'audio/mpeg',
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(toneWav());
+  }
   if (req.method === 'GET' && p === '/widget/v1/state') {
     const c = mine()[0];
     const fresh7 = c && now() - c.lastMessageAt < 7 * 24 * 3600e3;
@@ -942,6 +1032,7 @@ async function api(
         context: b.context,
         uiLang: b.uiLang,
         openedBy: b.openedBy ?? null,
+        voiceTicket: b.voiceTicket ?? null,
       });
       const err = /error:([a-z_]+)/.exec(q);
       if (err) {
@@ -1257,6 +1348,8 @@ async function control(
         handoffs: M.handoffs,
         cancels: M.cancels,
         picks: M.picks,
+        voice: M.voice,
+        tts: M.tts,
       });
   }
   return fail(res, 404, 'NOT_FOUND');

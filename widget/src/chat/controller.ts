@@ -62,10 +62,13 @@ import {
   type ViewConfig,
 } from '../shared/config';
 import type { FrameMessage, ParentMessage } from '../shared/protocol';
+import { VoiceController, voiceOff, type VoiceUi } from './voice';
 
 export interface UiMessage extends WidgetMessageView {
   /** Вопрос этой вкладки, ещё не перечитанный с сервера (сырой текст — только в памяти). */
   local?: boolean;
+  /** Э5: вопрос задан голосом (пометка «голосом» у пузыря). */
+  byVoice?: boolean;
   rated?: boolean;
 }
 
@@ -106,6 +109,8 @@ export interface ChatState {
     answers: Array<{ q: string; a: string }>;
     done: boolean;
   } | null;
+  /** Э5: голос — кнопки, запись, озвучка (src/chat/voice.ts). */
+  voice: VoiceUi;
 }
 
 /** Ответ проактивного сигнала/сценария, отмеченный для атрибуции цели. */
@@ -127,6 +132,8 @@ interface Pending {
   q: string;
   conv: string | null;
   mid?: string;
+  /** Э5: билет распознавания — повтор после перезагрузки тоже «голосом». */
+  vt?: string | null;
 }
 
 type Init = Extract<ParentMessage, { type: 'init' }>;
@@ -159,6 +166,8 @@ function store(kind: 'local' | 'session'): Storage | null {
 
 export class ChatController {
   state: ChatState;
+  /** Э5: голос (запись, озвучка) — кнопки зовут его методы напрямую. */
+  readonly voice: VoiceController;
   private subs: Array<() => void> = [];
   private auth: Auth = { token: null, preview: null };
   private pk: string;
@@ -220,8 +229,27 @@ export class ChatController {
       eta: null,
       scenarios: [],
       scen: null,
+      voice: voiceOff(),
     };
+    this.voice = new VoiceController({
+      ui: () => this.state.voice,
+      setUi: (p) => this.set({ voice: { ...this.state.voice, ...p } }),
+      t: () => this.state.t,
+      notify: (text) => this.set({ notice: { text } }),
+      auth: () => this.auth,
+      refreshSession: async () => {
+        await this.session(true);
+      },
+      // Идёт ответ — распознанное не теряется: в поле ввода (как V4CAssist('ask')).
+      ask: (text, ticket) =>
+        this.state.busy ? this.setDraft(text) : void this.ask(text, ticket),
+      storage: (kind, name, value) =>
+        kind === 'local' ? this.ls(name, value) : this.ss(name, value),
+      broadcast: (msg) => this.signal(msg),
+    });
     document.addEventListener('visibilitychange', () => {
+      // Ушли со вкладки — открытый микрофон гаснет без отправки (§5-бис.7).
+      if (document.visibilityState === 'hidden') this.voice.hidden();
       // Вернулся на вкладку во время передачи — сразу свежий ответ оператора.
       if (document.visibilityState === 'visible' && this.handoffTimer)
         void this.pollHandoff();
@@ -300,6 +328,10 @@ export class ChatController {
         return;
       case 'context':
         this.context = m.data;
+        return;
+      case 'close':
+        // Окно закрыли — микрофон и озвучка гаснут сразу.
+        this.voice.cancel();
         return;
       case 'route':
         this.page = { url: m.page.url, title: m.page.title };
@@ -393,6 +425,10 @@ export class ChatController {
       if (this.state.cfg.status === 'lead_only')
         this.set({ lead: 'form', notice: { text: this.state.t.errDisabled } });
       this.set({ phase: 'ready' });
+      // Э5: голос — только при активном чате (lead_only — без голоса).
+      this.voice.configure(
+        this.state.cfg.status === 'active' ? this.state.cfg.voice : null
+      );
       await this.loadState(s ? s.resumed : false);
       this.openChannel();
     } catch (e) {
@@ -598,6 +634,7 @@ export class ChatController {
       const d = e.data;
       if (typeof d !== 'string' || d.length > 100) return;
       if (d === 'reset') void this.resetLocal(false);
+      else if (d.indexOf('voice-on:') === 0) this.voice.onChannel(d);
       else if (/^(message|state):[A-Za-z0-9_-]{1,64}$/.test(d))
         void this.refreshState();
     };
@@ -643,10 +680,11 @@ export class ChatController {
     this.set({ draft: text });
   }
 
-  async ask(question: string) {
+  async ask(question: string, voiceTicket: string | null = null) {
     const q = question.trim().slice(0, 600);
     if (!q || this.state.busy || this.state.phase !== 'ready') return;
     const p: Pending = { crid: uuid(), q, conv: this.conversationId };
+    if (voiceTicket) p.vt = voiceTicket;
     this.ss('pending', JSON.stringify(p));
     const now = new Date().toISOString();
     this.set({
@@ -662,6 +700,7 @@ export class ChatController {
           rating: null,
           createdAt: now,
           local: true,
+          ...(voiceTicket ? { byVoice: true } : {}),
         },
       ],
       notice: null,
@@ -738,6 +777,8 @@ export class ChatController {
       uiLang: this.state.lang,
       // Э3: кто открыл диалог — только для нового (сервер пишет при создании).
       openedBy: p.conv ? null : this.openedBy || 'user',
+      // Э5: вопрос голосом — билет распознавания (вес диалога решает сервер).
+      voiceTicket: p.vt || null,
     };
     const handle = (ev: WidgetChatEvent) => {
       switch (ev.type) {

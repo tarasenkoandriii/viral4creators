@@ -58,6 +58,8 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ClientSiteTutorialService } from '../client-site-tutorial/client-site-tutorial.service';
+import { ClientSiteAccessService } from '../client-site-tutorial/site-access.service';
+import { consentDomainOf } from '../client-site-tutorial/account-consent';
 import type { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import {
   UiSnapshotRunnerService,
@@ -67,6 +69,30 @@ import { CAPTURE_DEVICE_SCALE_FACTOR } from '../tutorial-runner/tutorial-video-a
 
 /** Сайт в кадре — только наш собственный (§9 ТЗ, решение владельца). */
 export const DEFAULT_CAPTURE_SITE_URL = 'https://viral4creators.app';
+
+/**
+ * Регистрируемые домены, по которым съёмщик сам ставит СЛУЖЕБНОЕ
+ * подтверждение прав (Э-С Ш1, П-Т2): наш продукт (`DEFAULT_CAPTURE_SITE_URL`)
+ * и публичные адреса стенда (`LANDING_PUBLIC_URL`, `TMA_PUBLIC_URL`, только
+ * https). Мастер в режиме B без подтверждения показывает галочку вместо
+ * страницы, и шаг `waitFor` кадра сайта не дождался бы ничего.
+ *
+ * Чужой `siteUrl` сюда не попадает намеренно: §9 ТЗ — сайт в кадре только
+ * наш, а служебная галочка за фикстуру по чужому домену была бы ровно тем
+ * обходом П-Т2, которого ворота не допускают для людей.
+ */
+export function ownCaptureDomains(env: NodeJS.ProcessEnv): Set<string> {
+  const out = new Set<string>([consentDomainOf(DEFAULT_CAPTURE_SITE_URL)]);
+  for (const raw of [env.LANDING_PUBLIC_URL, env.TMA_PUBLIC_URL]) {
+    try {
+      const u = new URL(String(raw ?? '').trim());
+      if (u.protocol === 'https:') out.add(consentDomainOf(u.origin));
+    } catch {
+      // Не задан или кривой — не наш домен, просто пропускаем.
+    }
+  }
+  return out;
+}
 
 /** Что печатаем в первое найденное поле для карточки 3. Ничего личного
  *  и ничего чужого: адрес нашего же домена. */
@@ -134,10 +160,13 @@ export interface CaptureResult {
 @Injectable()
 export class TutorialFramesCaptureService {
   private readonly logger = new Logger(TutorialFramesCaptureService.name);
+  /** Тесты подменяют env. */
+  env: NodeJS.ProcessEnv = process.env;
 
   constructor(
     private readonly runner: UiSnapshotRunnerService,
     private readonly tutorial: ClientSiteTutorialService,
+    private readonly access: ClientSiteAccessService,
   ) {}
 
   async capture(options: {
@@ -164,6 +193,9 @@ export class TutorialFramesCaptureService {
       };
     }
 
+    // Один раз на прогон, а не на локаль: подтверждение — на домен.
+    const consentProblem = await this.ensureCaptureConsent(user.id, siteUrl);
+
     const locales: CapturedLocale[] = [];
     for (const locale of options.locales) {
       locales.push(
@@ -174,10 +206,35 @@ export class TutorialFramesCaptureService {
           fieldValue,
           userId: user.id,
           clientSiteProjectId,
+          consentProblem,
         }),
       );
     }
     return { locales };
+  }
+
+  /**
+   * Э-С Ш1: фикстура — не владелец подтверждённого хоста, значит мастер в
+   * режиме B и до обхода спросит подтверждение прав (П-Т2). По нашему
+   * домену съёмщик ставит служебное подтверждение сам; по чужому — нет,
+   * и прогон мастера не начинается (`null` — можно снимать).
+   */
+  private async ensureCaptureConsent(
+    userId: string,
+    siteUrl: string,
+  ): Promise<string | null> {
+    try {
+      const view = await this.access.resolve(userId, siteUrl);
+      if (!view.consent.required || view.consent.accepted) return null;
+      if (!ownCaptureDomains(this.env).has(view.registrableDomain)) {
+        return `сайт ${view.registrableDomain} не наш: мастер в режиме B ждёт подтверждения прав, служебное ставится только по нашим доменам — мастер не снимался`;
+      }
+      await this.access.recordServiceConsent(userId, siteUrl);
+      return null;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return `подтверждение прав для съёмки не записано (${message}) — мастер не снимался`;
+    }
   }
 
   private async captureLocale(arg: {
@@ -187,6 +244,7 @@ export class TutorialFramesCaptureService {
     fieldValue: string;
     userId: string;
     clientSiteProjectId: string;
+    consentProblem: string | null;
   }): Promise<CapturedLocale> {
     const cards: Record<number, string> = {};
     const problems: string[] = [];
@@ -209,28 +267,34 @@ export class TutorialFramesCaptureService {
       };
     }
 
-    const wizard = await this.runner.run({
-      routeKeys: ['site-tutorial'],
-      locale: arg.locale,
-      theme: arg.theme,
-      unmasked: true,
-      deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
-      steps: captureSteps(arg.siteUrl, arg.fieldValue),
-      alerts: false,
-    });
-    const outcome = wizard.outcomes[0];
-    const byStep = new Map(
-      (outcome?.shots ?? []).map((shot) => [shot.stepIndex, shot.url]),
-    );
-    for (const [stepIndex, card] of CARD_BY_STEP_INDEX) {
-      const url = byStep.get(stepIndex);
-      if (url) cards[card] = url;
-    }
-    if (wizard.skipped) problems.push(wizard.skipped);
-    if (outcome?.error) {
-      problems.push(
-        `мастер: ${outcome.error} (выполнено шагов: ${outcome.stepsDone ?? 0})`,
+    if (arg.consentProblem) {
+      // Прогон мастера без подтверждения снял бы галочку вместо страницы
+      // и упал бы на `waitFor` — честнее не начинать и назвать причину.
+      problems.push(arg.consentProblem);
+    } else {
+      const wizard = await this.runner.run({
+        routeKeys: ['site-tutorial'],
+        locale: arg.locale,
+        theme: arg.theme,
+        unmasked: true,
+        deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
+        steps: captureSteps(arg.siteUrl, arg.fieldValue),
+        alerts: false,
+      });
+      const outcome = wizard.outcomes[0];
+      const byStep = new Map(
+        (outcome?.shots ?? []).map((shot) => [shot.stepIndex, shot.url]),
       );
+      for (const [stepIndex, card] of CARD_BY_STEP_INDEX) {
+        const url = byStep.get(stepIndex);
+        if (url) cards[card] = url;
+      }
+      if (wizard.skipped) problems.push(wizard.skipped);
+      if (outcome?.error) {
+        problems.push(
+          `мастер: ${outcome.error} (выполнено шагов: ${outcome.stepsDone ?? 0})`,
+        );
+      }
     }
 
     // Карточка 4 — отдельным прогоном и без шагов: готовый ролик это

@@ -136,6 +136,14 @@ export const ASSIST_PUBLIC_OMIT = {
     createdAt: true,
     updatedAt: true,
   },
+  // Э5 (миграция …_assist_voice): кэш озвучки — роль читает звук по ключу.
+  assistSiteTtsCache: {
+    id: true,
+    voice: true,
+    lang: true,
+    characters: true,
+    createdAt: true,
+  },
 } as const satisfies Prisma.GlobalOmitConfig;
 
 /** Опции клиента под ролью assist_public — одни и те же в проде и в тестах. */

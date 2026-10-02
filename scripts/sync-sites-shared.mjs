@@ -86,6 +86,19 @@ const ENTRIES = [
   { from: 'backend/src/common/wayforpay-sanitize.ts', to: 'wayforpay-sanitize.ts' },
   { from: 'backend/src/common/token-crypto.ts', to: 'token-crypto.ts' },
   { from: 'backend/src/common/token-crypto.spec.ts', to: 'token-crypto.spec.ts' },
+  // Э-С Ш1 (П-С3): HMAC внутреннего API генератор → sites-backend — один
+  // код подписи и проверки у обеих сторон.
+  { from: 'backend/src/common/sites-internal-signature.ts', to: 'sites-internal-signature.ts' },
+  { from: 'backend/src/common/sites-internal-signature.spec.ts', to: 'sites-internal-signature.spec.ts' },
+  // Э5 (голос виджета): адреса, модели и ключ Soniox (`SONIOX_API_KEY` —
+  // свой env sites-backend) и чистая часть клиента распознавания (тело
+  // транскрипции, разбор токенов, язык, секунды счёта) — вынесена из
+  // backend/src/modules/voice/soniox-stt.client.ts без изменения поведения.
+  // Сеть и уборку у провайдера в `finally` sites-backend держит своим
+  // клиентом (assist-site-voice/public/soniox-stt.client.ts) — с Nest.
+  { from: 'backend/src/common/soniox.ts', to: 'soniox.ts' },
+  { from: 'backend/src/common/soniox-stt-core.ts', to: 'soniox-stt-core.ts' },
+  { from: 'backend/src/common/soniox-stt-core.spec.ts', to: 'soniox-stt-core.spec.ts' },
 ];
 
 /** Импорты, которых в общем коде быть не может (см. шапку). */

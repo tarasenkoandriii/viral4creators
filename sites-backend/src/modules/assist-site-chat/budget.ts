@@ -19,8 +19,14 @@
  * Оценка est — по длине промпта и maxOutputTokens (сверху): перерасход ≤
  * «факт − оценка» одного ответа.
  *
- * Порядок блокировок везде один — строки сайтов (по возрастанию ключа),
- * затем строка платформы: резерв, списание и снятие не держат платформу,
+ * Э5 (голос, §4.10): резерв голоса (`voice` в reserve) держит ещё и строку
+ * `scope='voice'` сайта — отдельный суточный потолок голоса В ДОПОЛНЕНИЕ к
+ * потолкам сайта и платформы (голос тратит общие деньги дня, но не больше
+ * своего потолка); отказ — `voice_budget`. Строка резерва помечена
+ * `voice=true`: settle и sweep снимают и её.
+ *
+ * Порядок блокировок везде один — строка голоса сайта (если есть), строки
+ * сайтов (по возрастанию ключа), затем строка платформы: резерв, списание и снятие не держат платформу,
  * ожидая сайт, — взаимной блокировки нет. Перед резервом снимаются
  * просроченные резервы ЭТОГО сайта (§4.5 уточнение 2: «до прохода крона
  * они перестают учитываться») — отдельной транзакцией, чтобы отказ
@@ -44,7 +50,7 @@ import {
 } from '../assist-billing/public/entitlements';
 import type { SubscriptionState } from '../assist-billing/subscription-state';
 
-export type BudgetDenied = 'site_budget' | 'platform_budget';
+export type BudgetDenied = 'site_budget' | 'platform_budget' | 'voice_budget';
 
 export interface BudgetReservation {
   id: string;
@@ -52,6 +58,8 @@ export interface BudgetReservation {
   day: string;
   estMicroUsd: number;
   expiresAt: Date;
+  /** Э5: резерв держит и строку голоса сайта. */
+  voice?: boolean;
 }
 
 /** Клиент — публичный (маршрут виджета) или основной (крон): только сырой SQL и транзакции. */
@@ -123,6 +131,8 @@ export class SiteBudget {
       siteCapMicroUsd: number;
       estMicroUsd: number;
       now?: Date;
+      /** Э5: резерв голоса — ещё и суточный потолок голоса сайта. */
+      voiceCapMicroUsd?: number;
     },
   ): Promise<
     | { ok: true; reservation: BudgetReservation }
@@ -136,9 +146,10 @@ export class SiteBudget {
       await readWidgetPlatformSettings(db),
     );
     await this.sweep(db, now, p.siteId);
+    const voice = p.voiceCapMicroUsd !== undefined;
     await db.$executeRawUnsafe(
       `INSERT INTO ${DAYS} ("scope", "key", "day", "updatedAt")
-       VALUES ('site', $1, $2, now()), ('platform', $3, $2, now())
+       VALUES ('site', $1, $2, now()), ('platform', $3, $2, now())${voice ? `, ('voice', $1, $2, now())` : ''}
        ON CONFLICT DO NOTHING`,
       p.siteId,
       day,
@@ -150,9 +161,22 @@ export class SiteBudget {
       day,
       estMicroUsd: est,
       expiresAt: new Date(now.getTime() + WIDGET_DEFAULTS.reservationTtlMs),
+      ...(voice ? { voice: true } : {}),
     };
     try {
       await db.$transaction(async (tx) => {
+        if (voice) {
+          const v = await tx.$executeRawUnsafe(
+            `UPDATE ${DAYS} SET "reservedMicroUsd" = "reservedMicroUsd" + $3, "updatedAt" = now()
+              WHERE "scope" = 'voice' AND "key" = $1 AND "day" = $2
+                AND "spentMicroUsd" + "reservedMicroUsd" + $3 <= $4`,
+            p.siteId,
+            day,
+            est,
+            Math.max(0, Math.floor(p.voiceCapMicroUsd ?? 0)),
+          );
+          if (v !== 1) throw new Denied('voice_budget');
+        }
         const site = await tx.$executeRawUnsafe(
           `UPDATE ${DAYS} SET "reservedMicroUsd" = "reservedMicroUsd" + $3, "updatedAt" = now()
             WHERE "scope" = 'site' AND "key" = $1 AND "day" = $2
@@ -174,13 +198,14 @@ export class SiteBudget {
         );
         if (platform !== 1) throw new Denied('platform_budget');
         await tx.$executeRawUnsafe(
-          `INSERT INTO ${RES} ("id", "siteId", "day", "estMicroUsd", "expiresAt")
-           VALUES ($1, $2, $3, $4, $5)`,
+          `INSERT INTO ${RES} ("id", "siteId", "day", "estMicroUsd", "expiresAt", "voice")
+           VALUES ($1, $2, $3, $4, $5, $6)`,
           reservation.id,
           p.siteId,
           day,
           est,
           reservation.expiresAt,
+          voice,
         );
       });
     } catch (e) {
@@ -205,10 +230,12 @@ export class SiteBudget {
       );
       // Резерв уже снят кроном (функция жила дольше TTL) — только факт.
       const est = del.length ? Number(del[0].est) : 0;
-      for (const [scope, key] of [
+      const rows: Array<readonly [string, string]> = [
+        ...(reservation.voice ? [['voice', reservation.siteId] as const] : []),
         ['site', reservation.siteId],
         ['platform', PLATFORM_KEY],
-      ] as const) {
+      ];
+      for (const [scope, key] of rows) {
         await tx.$executeRawUnsafe(
           `UPDATE ${DAYS}
               SET "reservedMicroUsd" = GREATEST(0, "reservedMicroUsd" - $4),
@@ -233,26 +260,28 @@ export class SiteBudget {
     return db.$transaction(async (tx) => {
       const rows = siteId
         ? await tx.$queryRawUnsafe<
-            Array<{ siteId: string; day: string; est: bigint }>
+            Array<{ siteId: string; day: string; est: bigint; voice: boolean }>
           >(
             `DELETE FROM ${RES} WHERE "siteId" = $1 AND "expiresAt" <= $2
-             RETURNING "siteId", "day", "estMicroUsd" AS est`,
+             RETURNING "siteId", "day", "estMicroUsd" AS est, "voice"`,
             siteId,
             at,
           )
         : await tx.$queryRawUnsafe<
-            Array<{ siteId: string; day: string; est: bigint }>
+            Array<{ siteId: string; day: string; est: bigint; voice: boolean }>
           >(
             `DELETE FROM ${RES} WHERE "expiresAt" <= $1
-             RETURNING "siteId", "day", "estMicroUsd" AS est`,
+             RETURNING "siteId", "day", "estMicroUsd" AS est, "voice"`,
             at,
           );
       if (!rows.length) return 0;
       const bySite = new Map<string, number>();
+      const byVoice = new Map<string, number>();
       const byDay = new Map<string, number>();
       for (const r of rows) {
         const k = `${r.siteId}\u0000${r.day}`;
         bySite.set(k, (bySite.get(k) ?? 0) + Number(r.est));
+        if (r.voice) byVoice.set(k, (byVoice.get(k) ?? 0) + Number(r.est));
         byDay.set(r.day, (byDay.get(r.day) ?? 0) + Number(r.est));
       }
       const release = (scope: string, key: string, day: string, n: number) =>
@@ -264,6 +293,10 @@ export class SiteBudget {
           day,
           n,
         );
+      for (const k of [...byVoice.keys()].sort()) {
+        const [sid, day] = k.split('\u0000');
+        await release('voice', sid, day, byVoice.get(k) as number);
+      }
       for (const k of [...bySite.keys()].sort()) {
         const [sid, day] = k.split('\u0000');
         await release('site', sid, day, bySite.get(k) as number);

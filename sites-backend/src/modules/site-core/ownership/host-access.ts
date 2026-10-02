@@ -26,7 +26,14 @@ export type AssistPurpose =
   'assist-sandbox' | 'assist-widget' | 'assist-crawl' | 'assist-admin';
 /** QA определяет свои назначения сам; для ядра любое `qa-*` — L1 без льготы. */
 export type QaPurpose = `qa-${string}`;
-export type HostPurpose = AssistPurpose | QaPurpose;
+/**
+ * Обучалка по сайту заказчика генератора (Э-С Ш1): `tutorial` — режим A
+ * «свой сайт» (П-Т1), `tutorial-*` — следующие шаги (Ш2: `tutorial-login`,
+ * аренда учётки). L1 без льготы: льгота 72 ч — только у виджета, а чужой
+ * браузер по сайту с отозванным подтверждением — уже режим B.
+ */
+export type TutorialPurpose = 'tutorial' | `tutorial-${string}`;
+export type HostPurpose = AssistPurpose | QaPurpose | TutorialPurpose;
 
 export interface HostAccessRow {
   id: string;
@@ -49,7 +56,8 @@ function isKnownPurpose(p: string): p is HostPurpose {
     p === 'assist-widget' ||
     p === 'assist-crawl' ||
     p === 'assist-admin' ||
-    /^qa-[a-z0-9-]+$/.test(p)
+    /^qa-[a-z0-9-]+$/.test(p) ||
+    /^tutorial(-[a-z0-9-]+)?$/.test(p)
   );
 }
 

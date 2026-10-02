@@ -14,6 +14,7 @@ import type { LearningApi } from './learning-api';
 import type { StatsApi } from './stats-api';
 import type { PersonaApi } from './persona-api';
 import type { WidgetApi } from './widget-api';
+import type { VoiceApi } from './voice-api';
 import type { WizardApi } from './wizard-api';
 
 export interface AssistValue {
@@ -29,6 +30,8 @@ export interface AssistValue {
   stats: StatsApi;
   /** Э4: тариф и оплата. */
   billing: BillingApi;
+  /** Э5: голос виджета (раздел экрана характера). */
+  voice: VoiceApi;
 }
 
 export const AssistContext = createContext<AssistValue | null>(null);

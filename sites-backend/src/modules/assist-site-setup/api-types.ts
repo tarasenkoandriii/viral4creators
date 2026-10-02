@@ -120,6 +120,11 @@ export interface InstallCheckView {
     lastPingAt: string | null;
     /** Каких директив CSP не хватает (из заголовка страницы), если удалось понять. */
     missingCsp: string[];
+    /**
+     * Э5 (§4.10): Permissions-Policy/Feature-Policy страницы запрещает
+     * микрофон iframe виджета — голосом спросить не выйдет (чат работает).
+     */
+    microphoneBlocked?: boolean;
   }>;
 }
 

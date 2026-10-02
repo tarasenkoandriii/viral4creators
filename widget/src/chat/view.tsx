@@ -26,6 +26,12 @@ function Svg({ d }: { d: string }) {
 const CLOSE =
   'M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z';
 const SEND = 'M3 20.5 21 12 3 3.5v6.6l12 1.9-12 1.9z';
+// Э5: микрофон, «стоп», динамик.
+const MIC =
+  'M12 15a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v7a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V22h2v-3.1a7 7 0 0 0 6-6.9z';
+const STOP = 'M7 7h10v10H7z';
+const SPEAKER =
+  'M4 9v6h4l5 4V5L8 9H4zm12.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z';
 const ICONS: Record<string, string> = {
   chat: 'M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
   question:
@@ -165,6 +171,7 @@ function Message({
   if (m.role === 'visitor')
     return (
       <div class="msg me" data-mid={m.id}>
+        {m.byVoice && <div class="who">🎤 {t.byVoice}</div>}
         <div class="bub">{m.text}</div>
       </div>
     );
@@ -210,6 +217,29 @@ function Message({
       )}
       {server && m.streamState === 'complete' && m.text && (
         <div class="fb">
+          {s.voice.speak && (
+            <button
+              type="button"
+              class="spk"
+              aria-pressed={s.voice.playing === m.id}
+              aria-busy={s.voice.loading === m.id}
+              aria-label={
+                s.voice.playing === m.id || s.voice.loading === m.id
+                  ? t.voiceStopSpeak
+                  : t.voiceSpeak
+              }
+              title={t.voiceSpeak}
+              onClick={() => c.voice.speak(m.id)}
+            >
+              <Svg
+                d={
+                  s.voice.playing === m.id || s.voice.loading === m.id
+                    ? STOP
+                    : SPEAKER
+                }
+              />
+            </button>
+          )}
           {m.rated ? (
             <span>{t.thanks}</span>
           ) : (
@@ -511,6 +541,37 @@ function ScenarioButtons({
   );
 }
 
+/** Э5: индикатор открытого микрофона — точка, таймер, уровень (§5-бис.7). */
+function VoiceBar({ s, c }: { s: ChatState; c: ChatController }) {
+  const t = s.t;
+  const [, tick] = useState(0);
+  useLayoutEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, []);
+  const sec = Math.max(0, Math.floor((Date.now() - s.voice.since) / 1000));
+  const rec = s.voice.phase === 'recording';
+  return (
+    <div class="vbar" role="status" aria-live="polite">
+      <span class={`dot ${rec ? 'on' : ''}`} aria-hidden="true" />
+      <span>
+        {rec ? t.voiceListening : t.voiceSending}
+        {rec && ` 0:${sec < 10 ? '0' : ''}${sec}`}
+      </span>
+      {rec && (
+        <span class="lvl" aria-hidden="true">
+          <span style={{ width: `${Math.round(s.voice.level * 100)}%` }} />
+        </span>
+      )}
+      {rec && (
+        <button type="button" class="lnk" onClick={() => c.voice.press()}>
+          {t.voiceStop}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function App({
   c,
   onClose,
@@ -689,6 +750,25 @@ export function App({
           </div>
         )}
         {s.lead !== 'hidden' && <LeadForm s={s} c={c} />}
+        {s.voice.phase === 'consent' && (
+          <div class="note vconsent" role="alertdialog" aria-label={t.voiceMic}>
+            <span>{t.voiceConsent}</span>
+            <button
+              type="button"
+              class="lnk"
+              onClick={() => c.voice.consent(true)}
+            >
+              {t.voiceConsentYes}
+            </button>
+            <button
+              type="button"
+              class="lnk"
+              onClick={() => c.voice.consent(false)}
+            >
+              {t.cancel}
+            </button>
+          </div>
+        )}
         {s.confirmForget && (
           <div class="note" role="alertdialog" aria-label={t.forgetAsk}>
             <span>{t.forgetAsk}</span>
@@ -705,6 +785,10 @@ export function App({
           </div>
         )}
       </div>
+      {!leadOnly &&
+        (s.voice.phase === 'recording' || s.voice.phase === 'sending') && (
+          <VoiceBar s={s} c={c} />
+        )}
       {!leadOnly && (
         <form class="cmp" onSubmit={send}>
           <textarea
@@ -720,6 +804,27 @@ export function App({
               if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) send(e);
             }}
           />
+          {s.voice.mic && (
+            <button
+              type="button"
+              class={`mic ${s.voice.phase}`}
+              aria-pressed={s.voice.phase === 'recording'}
+              aria-label={
+                s.voice.phase === 'recording'
+                  ? t.voiceStop
+                  : s.voice.phase === 'paused'
+                    ? t.voicePaused
+                    : t.voiceMic
+              }
+              title={s.voice.phase === 'paused' ? t.voicePaused : t.voiceMic}
+              disabled={
+                s.phase !== 'ready' || s.busy || s.voice.phase === 'sending'
+              }
+              onClick={() => c.voice.press()}
+            >
+              <Svg d={s.voice.phase === 'recording' ? STOP : MIC} />
+            </button>
+          )}
           <button
             type="submit"
             class="snd"

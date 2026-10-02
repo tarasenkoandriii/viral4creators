@@ -27,6 +27,7 @@ import {
   type Notice,
 } from '../knowledge/parts';
 import { Field, HistoryList, Select } from './controls';
+import { VoiceSection } from './VoiceSection';
 
 /** «Характер помощника» (§3.5): тон, языки, запреты, стоп-фразы, примеры. */
 export function PersonaScreen({ siteId }: { siteId: string }) {
@@ -235,6 +236,14 @@ function PersonaForm({
         {listField('examples', t.examples, t.examplesHint)}
         {listField('handoffTriggers', t.handoff, t.handoffHint)}
       </Card>
+      <VoiceSection
+        siteId={siteId}
+        lang={
+          (['uk', 'ru', 'en'] as const).find(
+            (l) => l === draft.languages.default
+          ) ?? 'uk'
+        }
+      />
       <ProceduresCard
         value={draft.procedures ?? []}
         onChange={(procedures) => setDraft({ ...draft, procedures })}

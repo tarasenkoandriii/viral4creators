@@ -3,6 +3,8 @@
  * `GET /w/v1/frame?pk=` (не статикой) с заголовками:
  *   Content-Security-Policy: default-src 'none'; script-src 'self';
  *     style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self';
+ *     media-src blob: (Э5: озвучка ответа — байты `POST /widget/v1/tts`
+ *     проигрываются из Blob-URL; другого источника звука у чата нет);
  *     frame-ancestors <frameAncestors()>; base-uri 'none'; form-action 'none';
  *     require-trusted-types-for 'script'; trusted-types 'none'
  *   Cache-Control: public, max-age=0, s-maxage=<frameCacheSeconds>
@@ -64,6 +66,8 @@ export function frameCsp(ancestors: string): string {
     "img-src 'self'",
     "font-src 'self'",
     "connect-src 'self'",
+    // Э5: озвучка ответа — Blob-URL из байтов `POST /widget/v1/tts`.
+    'media-src blob:',
     `frame-ancestors ${fa}`,
     "base-uri 'none'",
     "form-action 'none'",

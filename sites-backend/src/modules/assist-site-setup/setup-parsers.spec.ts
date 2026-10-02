@@ -13,6 +13,7 @@ import { ASSET_MAX_BYTES, decodeBase64Strict, sniffImage } from './assets';
 import {
   findLoaderTag,
   metaCsp,
+  microphoneBlocked,
   missingCspDirectives,
 } from './install-check.service';
 import { generatePublicKey, parsePublicKey } from './keys';
@@ -160,6 +161,30 @@ describe('код вставки и CSP-фрагмент', () => {
     // Политика сайта = «default-src 'self'» + наш фрагмент → всё разрешено.
     const site = `default-src 'self'; ${csp.replace(/\n/g, ' ')}`;
     expect(missingCspDirectives(site, W)).toEqual([]);
+  });
+});
+
+describe('microphoneBlocked (Э5, §4.10: микрофон в чужом iframe)', () => {
+  it('нет заголовков или наш origin/* в списке — можно', () => {
+    expect(microphoneBlocked(null, null, W)).toBe(false);
+    expect(microphoneBlocked('camera=()', null, W)).toBe(false);
+    expect(microphoneBlocked('microphone=*', null, W)).toBe(false);
+    expect(
+      microphoneBlocked(`geolocation=(), microphone=(self "${W}")`, null, W),
+    ).toBe(false);
+    expect(
+      microphoneBlocked(null, `camera 'none'; microphone 'self' ${W}`, W),
+    ).toBe(false);
+  });
+  it("пустой список, только self, чужой origin, 'none' — нельзя", () => {
+    expect(microphoneBlocked('microphone=()', null, W)).toBe(true);
+    expect(microphoneBlocked('microphone=(self)', null, W)).toBe(true);
+    expect(
+      microphoneBlocked('microphone=("https://other.example")', null, W),
+    ).toBe(true);
+    expect(microphoneBlocked('microphone=self', null, W)).toBe(true);
+    expect(microphoneBlocked(null, "microphone 'none'", W)).toBe(true);
+    expect(microphoneBlocked(null, "microphone 'self'", W)).toBe(true);
   });
 });
 

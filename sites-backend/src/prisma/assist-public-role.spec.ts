@@ -142,6 +142,8 @@ if (!RAW_URL) {
       'assist_legal_acceptances',
       'assist_platform_access_log',
       'assist_platform_eval_candidates',
+      // Э-С Ш1: id запросов внутреннего API генератора — не публичное.
+      'site_internal_requests',
     ])('SELECT из %s под assist_public падает', async (table) => {
       await expect(
         asPublic(`SELECT 1 FROM ${S}."${table}" LIMIT 1`),
@@ -270,6 +272,30 @@ if (!RAW_URL) {
         `SELECT "key", "value" FROM ${S}."assist_platform_settings" WHERE "key" = 'widget'`,
       ]) {
         await expect(asPublic(sql)).resolves.toBeUndefined();
+      }
+    });
+
+    it('Э5: голос — ровно тот SQL, что шлёт assist-site-voice/public (конфиг, отметка диалога, резерв голоса, кэш озвучки)', async () => {
+      for (const sql of [
+        `SELECT "voiceConfig", "voiceDailyCapMicroUsd" FROM ${S}."assist_sites" LIMIT 1`,
+        `UPDATE ${S}."assist_site_conversations" SET "voice" = true WHERE "id" = 'c' AND NOT "voice" RETURNING "answers", "dialogCounted"`,
+        `UPDATE ${S}."assist_site_conversations" SET "voice" = false WHERE "id" = 'c'`,
+        `INSERT INTO ${S}."assist_budget_reservations" ("id", "siteId", "day", "estMicroUsd", "expiresAt", "voice") SELECT 'r', 's', '2026-10-05', 1, now(), true WHERE false`,
+        `INSERT INTO ${S}."assist_budget_days" ("scope", "key", "day", "updatedAt") SELECT 'voice', 's', '2026-10-05', now() WHERE false ON CONFLICT DO NOTHING`,
+        `SELECT "mime", "audio" FROM ${S}."assist_site_tts_cache" WHERE "siteId" = 's' AND "key" = 'k' AND "expiresAt" > now()`,
+        `INSERT INTO ${S}."assist_site_tts_cache" ("id", "siteId", "key", "voice", "lang", "mime", "audio", "characters", "expiresAt") SELECT 'i', 's', 'k', 'Maya', 'uk', 'audio/mpeg', '\\x00'::bytea, 1, now() WHERE false ON CONFLICT DO NOTHING`,
+      ]) {
+        await expect(asPublic(sql)).resolves.toBeUndefined();
+      }
+      for (const sql of [
+        // Голос посетителя не правит ничего, кроме своей отметки.
+        `UPDATE ${S}."assist_sites" SET "voiceConfig" = NULL WHERE false`,
+        `UPDATE ${S}."assist_sites" SET "voiceDailyCapMicroUsd" = 0 WHERE false`,
+        `UPDATE ${S}."assist_site_tts_cache" SET "audio" = '\\x00'::bytea WHERE false`,
+        `DELETE FROM ${S}."assist_site_tts_cache" WHERE false`,
+        `SELECT "voice", "lang", "characters" FROM ${S}."assist_site_tts_cache" LIMIT 1`,
+      ]) {
+        await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
       }
     });
 
@@ -446,6 +472,9 @@ if (!RAW_URL) {
         assist_site_goals: ['column:SELECT'],
         assist_site_goal_events: ['INSERT'],
         assist_site_event_counts: ['SELECT', 'INSERT', 'column:UPDATE'],
+        // Э5 (миграция _assist_voice): кэш озвучки — чтение своей записи
+        // и вставка без цели конфликта.
+        assist_site_tts_cache: ['column:SELECT', 'column:INSERT'],
         // Лендинг: только запись.
         assist_widget_drafts: ['INSERT'],
         assist_landing_events: ['INSERT'],

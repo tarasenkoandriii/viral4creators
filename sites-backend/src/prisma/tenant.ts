@@ -115,6 +115,9 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
   // тенанте (выше): у них появился accountId. Поиск по ним — сырым SQL
   // через репозитории с обязательным siteId (§4.4) — extension его не видит.
   SiteCronLock: 'замок крона: кроны идут по всем кабинетам',
+  // Э-С Ш1 (П-С3): id подписанных запросов генератора — защита от повтора.
+  SiteInternalRequest:
+    'использованные id внутреннего API генератора: вызывающий — сервис, не кабинет',
   SiteCrawlRobots:
     'robots.txt/sitemap по origin — публичная информация, общий кэш всех кабинетов и песочниц',
   AssistDailyCounter:
@@ -153,6 +156,8 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
     'журнал доступа операторов платформы — по всем кабинетам',
   AssistPlatformEvalCandidate:
     'кандидаты eval платформы из ревью — набор платформы, не кабинета',
+  // Э5: кэш озвучки ответов «Сайта» — пишет публичный маршрут по siteId.
+  AssistSiteTtsCache: 'кэш озвучки ответов по siteId — пишет виджет',
 };
 
 const WHERE_OPERATIONS = new Set([

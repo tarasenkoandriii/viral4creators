@@ -29,6 +29,9 @@ const NON_WIDGET: HostPurpose[] = [
   'qa-l2',
   'qa-l3',
   'qa-history',
+  // Э-С Ш1: обучалка генератора — L1 без льготы 72 ч (режим A).
+  'tutorial',
+  'tutorial-login',
 ];
 
 describe('evaluateHostAccess — уровни и льгота', () => {
@@ -136,6 +139,16 @@ describe('evaluateHostAccess — уровни и льгота', () => {
     expect(() =>
       evaluateHostAccess(row({}), 'assist-widgt' as HostPurpose, NOW),
     ).toThrow(/неизвестное/);
+    for (const typo of [
+      'tutorials',
+      'tutorial-',
+      'tutorial_login',
+      'Tutorial',
+    ]) {
+      expect(() =>
+        evaluateHostAccess(row({}), typo as HostPurpose, NOW),
+      ).toThrow(/неизвестное/);
+    }
   });
 });
 
@@ -157,12 +170,17 @@ describe('HostAccessService.assertHostVerified', () => {
     return { store, svc: new HostAccessService(store.sitesDb()) };
   }
 
-  it('2 ч после отзыва: assist-widget — да, assist-crawl и qa-* — 403', async () => {
+  it('2 ч после отзыва: assist-widget — да, assist-crawl, qa-* и tutorial — 403', async () => {
     const { svc } = setup();
     await expect(
       svc.assertHostVerified('h1', 'assist-widget', { now: NOW }),
     ).resolves.toMatchObject({ decision: { ok: true, grace: true } });
-    for (const p of ['assist-crawl', 'qa-l1', 'qa-l2'] as HostPurpose[]) {
+    for (const p of [
+      'assist-crawl',
+      'qa-l1',
+      'qa-l2',
+      'tutorial',
+    ] as HostPurpose[]) {
       await expect(
         svc.assertHostVerified('h1', p, { now: NOW }),
       ).rejects.toBeInstanceOf(HttpException);

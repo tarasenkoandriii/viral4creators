@@ -77,6 +77,51 @@ export interface ClientSiteDraftView {
    * визард заканчивался строкой «ролик собирается», после которой не
    * появлялось ничего. */
   video: ClientSiteTutorialVideo | null;
+  /** Режим (Э-С Ш1, П-Т1): `A` — свой подтверждённый сайт, `B` — чужой
+   * сайт со своим аккаунтом. Решает сервер по статусу хоста. */
+  siteMode: SiteMode;
+  /** Полное решение — только в `GET` черновика в работе. */
+  access: SiteAccessView | null;
+}
+
+export type SiteMode = 'A' | 'B';
+
+/** Почему режим B (`null` у A) — ветвление плашки. */
+export type SiteAccessReason =
+  | 'no_account'
+  | 'not_registered'
+  | 'not_verified'
+  | 'expired'
+  | 'revoked'
+  | 'role'
+  | 'opted_out'
+  | 'unavailable'
+  | 'not_configured'
+  | 'no_telegram'
+  | 'unsupported_url'
+  | null;
+
+export type ConsentLocale = 'uk' | 'ru' | 'en';
+
+/** Ответ `/access`, `/consent`, `/verify-site` (Э-С Ш1). */
+export interface SiteAccessView {
+  mode: SiteMode;
+  host: string;
+  registrableDomain: string;
+  reason: SiteAccessReason;
+  hostStatus: 'pending' | 'verified' | 'expired' | 'revoked' | 'none' | null;
+  hostId: string | null;
+  /** Где подтвердить сайт (TMA помощника / веб-кабинет); `null` — не задано. */
+  verifyUrl: string | null;
+  canRegister: boolean;
+  consent: {
+    required: boolean;
+    accepted: boolean;
+    textVersion: string;
+    legalReviewed: boolean;
+    /** Текст отдаёт сервер: в записи подтверждения хранится его версия. */
+    texts: Record<ConsentLocale, string>;
+  };
 }
 
 export interface ClientSiteTutorialVideo {

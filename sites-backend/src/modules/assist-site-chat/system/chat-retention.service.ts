@@ -4,7 +4,8 @@
  * лиды старше leadRetentionDays; просроченные resumeKey, токены
  * предпросмотра, кэш, окна лимитов; строки денег дня старше 40 дней;
  * версии вида/персоны сверх последних 20 (кроме опубликованной); события
- * лендинга старше 90 дней; черновики `wd_` после expiresAt.
+ * лендинга старше 90 дней; черновики `wd_` после expiresAt; (Э5) озвучка
+ * ответов после expiresAt (7 дней).
  * Пачками с бюджетом времени (функция Vercel). Зовётся из
  * AssistRetentionController (assist-sandbox/sandbox-retention.controller.ts —
  * правку вызова делает W3).
@@ -33,6 +34,8 @@ export interface ChatRetentionResult {
   configVersionsDeleted: number;
   landingEventsDeleted: number;
   widgetDraftsDeleted: number;
+  /** Э5: просроченная озвучка ответов (7 дней, §4.10). */
+  ttsCacheDeleted: number;
 }
 
 /** Строки денег дня храним 40 дней (сверка с отчётом расходов за месяц). */
@@ -64,6 +67,7 @@ export class ChatRetention {
       configVersionsDeleted: 0,
       landingEventsDeleted: 0,
       widgetDraftsDeleted: 0,
+      ttsCacheDeleted: 0,
     };
     // Диалоги — по сроку СВОЕГО сайта (30–365, §6.3); сообщения — каскадом,
     // лиды — SET NULL (у лида свой срок).
@@ -148,6 +152,12 @@ export class ChatRetention {
       deadline,
       `DELETE FROM ${S}."assist_widget_drafts" WHERE "id" IN (
          SELECT "id" FROM ${S}."assist_widget_drafts" WHERE "expiresAt" < $1 LIMIT $2)`,
+      now,
+    );
+    r.ttsCacheDeleted = await this.drain(
+      deadline,
+      `DELETE FROM ${S}."assist_site_tts_cache" WHERE "id" IN (
+         SELECT "id" FROM ${S}."assist_site_tts_cache" WHERE "expiresAt" < $1 LIMIT $2)`,
       now,
     );
     this.logger.log(`ретенция виджета: ${JSON.stringify(r)}`);

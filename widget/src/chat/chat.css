@@ -359,6 +359,73 @@ body {
   opacity: 0.45;
   cursor: default;
 }
+/* Э5: голос — микрофон, индикатор записи, озвучка. */
+.mic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--ln);
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.mic svg,
+.spk svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+.mic.recording {
+  border-color: #c62828;
+  background: #c62828;
+  color: #fff;
+}
+.mic.paused {
+  border-style: dashed;
+}
+.mic:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.vbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px var(--pad);
+  border-top: 1px solid var(--ln);
+  font-size: 13px;
+}
+.vbar .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--mut);
+}
+.vbar .dot.on {
+  background: #c62828;
+  animation: v4c-blink 1s steps(2) infinite;
+}
+.vbar .lvl {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ln);
+  overflow: hidden;
+}
+.vbar .lvl span {
+  display: block;
+  height: 100%;
+  background: #c62828;
+}
+.spk {
+  display: inline-flex;
+  align-items: center;
+}
 .ft {
   display: flex;
   justify-content: space-between;
@@ -381,7 +448,8 @@ body {
   outline-color: var(--v4c-on, #fff);
 }
 @media (prefers-reduced-motion: reduce) {
-  .dots::after {
+  .dots::after,
+  .vbar .dot.on {
     animation: none;
   }
 }
